@@ -23,15 +23,20 @@
   "homepage": "https://github.com/zhushanwen321/xyz-agent#readme",
   "dependencies": {
     "@tailwindcss/vite": "^4.2.2",
+    "@tauri-apps/api": "^2.10.1",
+    "@vueuse/core": "^14.2.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "markdown-it": "^14.1.1",
     "radix-vue": "^1.9.17",
+    "reka-ui": "^2.9.5",
     "tailwind-merge": "^3.5.0",
     "tailwindcss": "^4.2.2",
     "vue": "^3.5.32"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.10.1",
+    "@types/markdown-it": "^14.1.2",
     "@types/node": "^25.5.2",
     "@vitejs/plugin-vue": "^6.0.5",
     "typescript": "^6.0.2",
