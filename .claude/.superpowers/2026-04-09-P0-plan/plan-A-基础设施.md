@@ -702,6 +702,9 @@ running 5 tests
 ```rust
 pub mod event;
 pub mod transcript;
+
+pub use event::AgentEvent;
+pub use transcript::{TokenUsage, TranscriptEntry};
 ```
 
 - [ ] 更新 `src-tauri/src/lib.rs`
@@ -1132,8 +1135,10 @@ pub fn new_session(projects_dir: &Path, cwd: &str) -> Result<SessionMeta, AppErr
 fn extract_title(entries: &[TranscriptEntry]) -> Option<String> {
     entries.iter().find_map(|e| match e {
         TranscriptEntry::User { content, .. } => {
-            let title = if content.len() > 50 {
-                format!("{}...", &content[..50])
+            let chars: Vec<char> = content.chars().collect();
+            let title = if chars.len() > 50 {
+                let truncated: String = chars[..50].iter().collect();
+                format!("{}...", truncated)
             } else {
                 content.clone()
             };

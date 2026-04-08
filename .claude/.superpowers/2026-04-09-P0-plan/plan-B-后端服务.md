@@ -55,7 +55,6 @@ use crate::error::AppError;
 use crate::models::TokenUsage;
 use async_trait::async_trait;
 use futures::stream::Stream;
-use pin_project::pin_project;
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
 
@@ -731,6 +730,7 @@ pub mod session;
 ```rust
 use crate::db::{jsonl, session_index};
 use crate::error::AppError;
+use crate::models::TranscriptEntry;
 use crate::services::llm::LlmProvider;
 use serde_json::Value;
 use std::path::PathBuf;
@@ -742,51 +742,25 @@ pub struct AppState {
     pub provider: Arc<dyn LlmProvider>,
 }
 
-impl From<AppError> for String {
-    fn from(e: AppError) -> String {
-        e.to_string()
-    }
-}
-
 #[tauri::command]
 pub async fn new_session(cwd: String, state: State<'_, AppState>) -> Result<Value, String> {
-    let session_id = uuid::Uuid::new_v4().to_string();
-    let sanitized = cwd.replace('/', "_").replace('\\', "_");
-    let dir = state.config_dir.join("projects").join(&sanitized);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("create dir failed: {}", e))?;
-
-    let path = dir.join(format!("{}.jsonl", session_id));
-    // 写入空的 JSONL 文件（首条 system entry）
-    let system_entry = serde_json::json!({
-        "type": "system",
-        "uuid": uuid::Uuid::new_v4().to_string(),
-        "parent_uuid": null,
-        "timestamp": chrono::Utc::now().to_rfc3339(),
-        "session_id": session_id,
-        "content": format!("Session started in {}", cwd),
-    });
-    std::fs::write(&path, format!("{}\n", system_entry))
-        .map_err(|e| format!("write failed: {}", e))?;
+    let meta = session_index::new_session(&state.config_dir, &cwd)
+        .map_err(|e| e.to_string())?;
 
     Ok(serde_json::json!({
-        "session_id": session_id,
-        "path": path.to_string_lossy(),
+        "session_id": meta.id,
+        "title": meta.title,
     }))
 }
 
 #[tauri::command]
-pub async fn list_sessions(cwd: String, state: State<'_, AppState>) -> Result<Vec<Value>, String> {
-    let sanitized = cwd.replace('/', "_").replace('\\', "_");
-    let dir = state.config_dir.join("projects").join(&sanitized);
-    if !dir.exists() {
-        return Ok(vec![]);
-    }
-    session_index::list_sessions(&state.config_dir, &cwd).map_err(|e| e.to_string())
+pub async fn list_sessions(cwd: String, state: State<'_, AppState>) -> Result<Vec<session_index::SessionMeta>, String> {
+    session_index::list_sessions(&state.config_dir, &cwd)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn get_history(session_id: String, state: State<'_, AppState>) -> Result<Vec<Value>, String> {
-    // 扫描所有项目目录找到对应 session 文件
+pub async fn get_history(session_id: String, state: State<'_, AppState>) -> Result<Vec<TranscriptEntry>, String> {
     let projects_dir = state.config_dir.join("projects");
     if !projects_dir.exists() {
         return Err(format!("session {} not found", session_id));
@@ -874,9 +848,7 @@ pub async fn send_message(
     // 运行 AgentLoop
     let agent_loop = AgentLoop::new(provider, session_id.clone());
     let mut history_with_user = history;
-    history_with_user.push(
-        serde_json::from_value(serde_json::to_value(&user_entry).unwrap()).unwrap(),
-    );
+    history_with_user.push(user_entry.clone());
 
     let assistant_entry = agent_loop
         .run_turn(content, history_with_user, event_tx)
