@@ -1,7 +1,7 @@
 mod error;
 pub mod models;
+pub mod db;
 // 后续 Task 解除注释:
-// pub mod db;
 // pub mod services;
 // pub mod commands;
 
