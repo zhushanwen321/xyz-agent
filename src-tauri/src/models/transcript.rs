@@ -1,0 +1,206 @@
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenUsage {
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum TranscriptEntry {
+    #[serde(rename = "user")]
+    User {
+        uuid: String,
+        parent_uuid: Option<String>,
+        timestamp: String,
+        session_id: String,
+        content: String,
+    },
+    #[serde(rename = "assistant")]
+    Assistant {
+        uuid: String,
+        parent_uuid: Option<String>,
+        timestamp: String,
+        session_id: String,
+        content: String,
+        usage: Option<TokenUsage>,
+    },
+    #[serde(rename = "system")]
+    System {
+        uuid: String,
+        parent_uuid: Option<String>,
+        timestamp: String,
+        session_id: String,
+        content: String,
+    },
+    #[serde(rename = "custom_title")]
+    CustomTitle {
+        session_id: String,
+        title: String,
+    },
+    #[serde(rename = "summary")]
+    Summary {
+        session_id: String,
+        leaf_uuid: String,
+        summary: String,
+    },
+}
+
+impl TranscriptEntry {
+    pub fn new_user(session_id: &str, content: &str, parent_uuid: Option<String>) -> Self {
+        Self::User {
+            uuid: Uuid::new_v4().to_string(),
+            parent_uuid,
+            timestamp: Utc::now().to_rfc3339(),
+            session_id: session_id.to_string(),
+            content: content.to_string(),
+        }
+    }
+
+    pub fn new_assistant(
+        session_id: &str,
+        content: &str,
+        parent_uuid: Option<String>,
+        usage: Option<TokenUsage>,
+    ) -> Self {
+        Self::Assistant {
+            uuid: Uuid::new_v4().to_string(),
+            parent_uuid,
+            timestamp: Utc::now().to_rfc3339(),
+            session_id: session_id.to_string(),
+            content: content.to_string(),
+            usage,
+        }
+    }
+
+    pub fn uuid(&self) -> &str {
+        match self {
+            TranscriptEntry::User { uuid, .. } => uuid,
+            TranscriptEntry::Assistant { uuid, .. } => uuid,
+            TranscriptEntry::System { uuid, .. } => uuid,
+            TranscriptEntry::CustomTitle { .. } => "",
+            TranscriptEntry::Summary { .. } => "",
+        }
+    }
+
+    pub fn parent_uuid(&self) -> Option<&str> {
+        match self {
+            TranscriptEntry::User { parent_uuid, .. } => parent_uuid.as_deref(),
+            TranscriptEntry::Assistant { parent_uuid, .. } => parent_uuid.as_deref(),
+            TranscriptEntry::System { parent_uuid, .. } => parent_uuid.as_deref(),
+            TranscriptEntry::CustomTitle { .. } => None,
+            TranscriptEntry::Summary { .. } => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_user_entry_serialization_roundtrip() {
+        let entry = TranscriptEntry::User {
+            uuid: "u1".to_string(),
+            parent_uuid: None,
+            timestamp: "2026-01-01T00:00:00Z".to_string(),
+            session_id: "s1".to_string(),
+            content: "hello".to_string(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("\"type\":\"user\""));
+        assert!(json.contains("\"content\":\"hello\""));
+
+        let de: TranscriptEntry = serde_json::from_str(&json).unwrap();
+        assert!(matches!(de, TranscriptEntry::User { .. }));
+    }
+
+    #[test]
+    fn test_assistant_entry_with_usage() {
+        let entry = TranscriptEntry::Assistant {
+            uuid: "a1".to_string(),
+            parent_uuid: Some("u1".to_string()),
+            timestamp: "2026-01-01T00:00:00Z".to_string(),
+            session_id: "s1".to_string(),
+            content: "response".to_string(),
+            usage: Some(TokenUsage {
+                input_tokens: 100,
+                output_tokens: 50,
+            }),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("\"type\":\"assistant\""));
+        assert!(json.contains("\"input_tokens\":100"));
+
+        let de: TranscriptEntry = serde_json::from_str(&json).unwrap();
+        if let TranscriptEntry::Assistant { usage, .. } = de {
+            assert_eq!(usage.unwrap().input_tokens, 100);
+        } else {
+            panic!("Expected Assistant variant");
+        }
+    }
+
+    #[test]
+    fn test_custom_title_no_uuid_fields() {
+        let entry = TranscriptEntry::CustomTitle {
+            session_id: "s1".to_string(),
+            title: "My Chat".to_string(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("\"type\":\"custom_title\""));
+        assert!(!json.contains("uuid"));
+
+        let de: TranscriptEntry = serde_json::from_str(&json).unwrap();
+        assert!(matches!(de, TranscriptEntry::CustomTitle { .. }));
+    }
+
+    #[test]
+    fn test_summary_entry_serialization() {
+        let entry = TranscriptEntry::Summary {
+            session_id: "s1".to_string(),
+            leaf_uuid: "leaf-1".to_string(),
+            summary: "conversation about X".to_string(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("\"type\":\"summary\""));
+
+        let de: TranscriptEntry = serde_json::from_str(&json).unwrap();
+        assert!(matches!(de, TranscriptEntry::Summary { .. }));
+    }
+
+    #[test]
+    fn test_new_user_helper() {
+        let entry = TranscriptEntry::new_user("s1", "hi", None);
+        assert!(matches!(entry, TranscriptEntry::User { .. }));
+        assert_eq!(entry.parent_uuid(), None);
+        assert!(!entry.uuid().is_empty());
+    }
+
+    #[test]
+    fn test_new_assistant_helper() {
+        let entry = TranscriptEntry::new_assistant(
+            "s1",
+            "hello!",
+            Some("parent-uuid".to_string()),
+            None,
+        );
+        assert!(matches!(entry, TranscriptEntry::Assistant { .. }));
+        assert_eq!(entry.parent_uuid(), Some("parent-uuid"));
+    }
+
+    #[test]
+    fn test_parent_uuid_chain() {
+        let user = TranscriptEntry::new_user("s1", "q", None);
+        let user_uuid = user.uuid().to_string();
+        let assistant = TranscriptEntry::new_assistant(
+            "s1",
+            "a",
+            Some(user_uuid.clone()),
+            None,
+        );
+        assert_eq!(assistant.parent_uuid(), Some(user_uuid.as_str()));
+    }
+}
