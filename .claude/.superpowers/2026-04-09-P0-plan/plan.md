@@ -27,6 +27,15 @@
 | 9 | 前端组件 + Composables | [plan-C2-前端组件与联调.md](./plan-C2-前端组件与联调.md) |
 | 10 | 端到端联调 | [plan-C2-前端组件与联调.md](./plan-C2-前端组件与联调.md) |
 
+## P0 明确排除的功能（延后到 P1+）
+
+以下功能在 spec 中提及，但 P0 阶段不实现：
+
+- **auto-continue**（`AgentLoop` 中 `stop_reason != "end_turn"` 时自动继续）：P0 仅处理单轮请求-响应，不处理 `max_tokens` 用尽后的自动续写
+- **read_head_and_tail**（大文件只读首尾 64KB 优化）：P0 使用 `read_all_entries` 全量读取，文件大小在 P0 阶段可控
+- **上下文压缩**（三层压缩 50%/75%/90%）：P1 实现
+- **thinking_delta 实际展示**：P0 后端解析 `ThinkingDelta` 事件但前端不单独展示思考过程
+
 ## 依赖关系
 
 ```

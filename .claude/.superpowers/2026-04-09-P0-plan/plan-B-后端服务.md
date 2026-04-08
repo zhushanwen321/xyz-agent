@@ -350,7 +350,7 @@ cargo test --lib services::llm::tests
 - [ ] 提交 LLM Gateway：
 
 ```bash
-git add src-tauri/src/services/llr.rs src-tauri/src/services/mod.rs
+git add src-tauri/src/services/llm.rs src-tauri/src/services/mod.rs
 git commit -m "feat(services): add LLM Gateway with Anthropic streaming provider
 
 - LlmProvider trait with chat_stream returning typed Stream
@@ -381,6 +381,9 @@ use crate::services::llm::LlmProvider;
 use futures::StreamExt;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+
+// run_turn 构造 TranscriptEntry::Assistant 需要 chrono 和 uuid
+// （已在 Cargo.toml 依赖中，无需额外引入 crate，直接使用完整路径）
 
 pub struct AgentLoop {
     provider: Arc<dyn LlmProvider>,
@@ -728,13 +731,15 @@ pub mod session;
 ```rust
 use crate::db::{jsonl, session_index};
 use crate::error::AppError;
+use crate::services::llm::LlmProvider;
 use serde_json::Value;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tauri::State;
 
 pub struct AppState {
     pub config_dir: PathBuf,
-    // provider 在 lib.rs 集成时添加
+    pub provider: Arc<dyn LlmProvider>,
 }
 
 impl From<AppError> for String {
@@ -776,7 +781,7 @@ pub async fn list_sessions(cwd: String, state: State<'_, AppState>) -> Result<Ve
     if !dir.exists() {
         return Ok(vec![]);
     }
-    session_index::scan_sessions(&dir).map_err(|e| e.to_string())
+    session_index::list_sessions(&state.config_dir, &cwd).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -790,12 +795,12 @@ pub async fn get_history(session_id: String, state: State<'_, AppState>) -> Resu
     let entry = walkdir_for_session(&projects_dir, &session_id)
         .ok_or_else(|| format!("session {} not found", session_id))?;
 
-    jsonl::read_chain(&entry)
+    jsonl::read_all_entries(&entry)
         .map_err(|e| e.to_string())
 }
 
 /// 在 projects 目录下递归查找 session JSONL 文件
-fn walkdir_for_session(projects_dir: &PathBuf, session_id: &str) -> Option<PathBuf> {
+fn walkdir_for_session(projects_dir: &std::path::Path, session_id: &str) -> Option<std::path::PathBuf> {
     for entry in std::fs::read_dir(projects_dir).ok()? {
         let entry = entry.ok()?;
         let path = entry.path();
@@ -844,7 +849,7 @@ pub async fn send_message(
         .ok_or_else(|| format!("session {} not found", session_id))?;
 
     // 读取历史
-    let history = jsonl::read_chain(&session_path).map_err(|e| e.to_string())?;
+    let history = jsonl::read_all_entries(&session_path).map_err(|e| e.to_string())?;
 
     // 追加 User entry
     let parent_uuid = history.last().and_then(|e| match e {
@@ -884,7 +889,7 @@ pub async fn send_message(
     Ok(())
 }
 
-fn find_session_path(config_dir: &std::path::PathBuf, session_id: &str) -> Option<std::path::PathBuf> {
+fn find_session_path(config_dir: &std::path::Path, session_id: &str) -> Option<std::path::PathBuf> {
     let projects_dir = config_dir.join("projects");
     if !projects_dir.exists() {
         return None;
@@ -903,26 +908,7 @@ fn find_session_path(config_dir: &std::path::PathBuf, session_id: &str) -> Optio
 }
 ```
 
-### 6.4 更新 AppState 包含 provider
-
-- [ ] 更新 `commands/session.rs` 中的 `AppState`：
-
-```rust
-use crate::services::llm::LlmProvider;
-use std::sync::Arc;
-
-pub struct AppState {
-    pub config_dir: PathBuf,
-    pub provider: Arc<dyn LlmProvider>,
-}
-```
-
-```bash
-cargo check
-# 期望：编译通过
-```
-
-### 6.5 在 lib.rs 添加 mod commands
+### 6.4 在 lib.rs 添加 mod commands
 
 - [ ] 确保 `src-tauri/src/lib.rs` 中有 `mod commands;`
 
@@ -931,7 +917,7 @@ cargo build
 # 期望：编译通过
 ```
 
-### 6.6 Commit
+### 6.5 Commit
 
 ```bash
 git add src-tauri/src/services/event_bus.rs src-tauri/src/commands/

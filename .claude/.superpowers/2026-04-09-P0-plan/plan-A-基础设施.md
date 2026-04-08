@@ -170,7 +170,7 @@ touch error.rs
 
 ```rust
 fn main() {
-    xyz_agent_lib::run()
+    xyz_agent::run()
 }
 ```
 
