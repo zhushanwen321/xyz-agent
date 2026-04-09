@@ -59,62 +59,96 @@ impl Tool for BashTool {
             .and_then(|v| v.as_u64())
             .unwrap_or(DEFAULT_TIMEOUT_SECS);
 
-        let workdir = input
-            .get("workdir")
-            .and_then(|v| v.as_str())
-            .map(|d| {
-                let p = std::path::Path::new(d);
-                if p.is_absolute() {
-                    p.to_path_buf()
-                } else {
-                    self.workdir.join(p)
+        // Fix 1: Validate workdir parameter to ensure it's within the tool's base workdir
+        // Canonicalize base workdir once for comparison (handles symlinks)
+        let base_workdir = match self.workdir.canonicalize() {
+            Ok(p) => p,
+            Err(e) => return ToolResult { output: format!("Invalid base workdir: {e}"), is_error: true },
+        };
+
+        let cmd_workdir = if let Some(custom_dir) = input.get("workdir").and_then(|v| v.as_str()) {
+            let resolved = if std::path::Path::new(custom_dir).is_absolute() {
+                PathBuf::from(custom_dir)
+            } else {
+                self.workdir.join(custom_dir)
+            };
+            let canonical = match resolved.canonicalize() {
+                Ok(p) => p,
+                Err(e) => return ToolResult { output: format!("Invalid workdir: {e}"), is_error: true },
+            };
+            if !canonical.starts_with(&base_workdir) {
+                return ToolResult { output: "workdir must be within the project directory".into(), is_error: true };
+            }
+            canonical
+        } else {
+            self.workdir.clone()
+        };
+
+        // Fix 2: Spawn first so we can kill on timeout, then use tokio::select!
+        let mut child = match tokio::process::Command::new("bash")
+            .arg("-c")
+            .arg(command)
+            .current_dir(&cmd_workdir)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                return ToolResult {
+                    output: format!("Failed to spawn command: {e}"),
+                    is_error: true,
                 }
-            })
-            .unwrap_or_else(|| self.workdir.clone());
+            }
+        };
 
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(timeout),
-            run_command(&command, &workdir),
-        )
-        .await;
+        // Use tokio::select! to race between command completion and timeout
+        tokio::select! {
+            // Wait for the child process to complete and get its output
+            result = async {
+                let mut stdout = Vec::new();
+                let mut stderr = Vec::new();
 
-        match result {
-            Ok(output) => output,
-            Err(_) => ToolResult {
-                output: format!("Command timed out after {timeout}s"),
-                is_error: true,
-            },
+                // Manually read stdout and stderr while process is running
+                if let Some(mut stdout_child) = child.stdout.take() {
+                    let _ = tokio::io::copy(&mut stdout_child, &mut stdout).await;
+                }
+                if let Some(mut stderr_child) = child.stderr.take() {
+                    let _ = tokio::io::copy(&mut stderr_child, &mut stderr).await;
+                }
+
+                // Wait for process to exit
+                let status = child.wait().await?;
+                Ok::<_, std::io::Error>((status, stdout, stderr))
+            } => {
+                match result {
+                    Ok((status, stdout, stderr)) => {
+                        let output = std::process::Output {
+                            status,
+                            stdout,
+                            stderr,
+                        };
+                        process_output(output)
+                    }
+                    Err(e) => ToolResult {
+                        output: format!("Error waiting for command: {e}"),
+                        is_error: true,
+                    }
+                }
+            }
+            // Timeout branch - kill the child process
+            _ = tokio::time::sleep(std::time::Duration::from_secs(timeout)) => {
+                let _ = child.kill().await;
+                ToolResult {
+                    output: format!("Command timed out after {timeout}s"),
+                    is_error: true,
+                }
+            }
         }
     }
 }
 
-async fn run_command(command: &str, workdir: &std::path::Path) -> ToolResult {
-    let child = match tokio::process::Command::new("bash")
-        .arg("-c")
-        .arg(command)
-        .current_dir(workdir)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            return ToolResult {
-                output: format!("Failed to spawn command: {e}"),
-                is_error: true,
-            }
-        }
-    };
-
-    let output = match child.wait_with_output().await {
-        Ok(o) => o,
-        Err(e) => {
-            return ToolResult {
-                output: format!("Error waiting for command: {e}"),
-                is_error: true,
-            }
-        }
-    };
+fn process_output(output: std::process::Output) -> ToolResult {
 
     let exit_code = output.status.code().unwrap_or(-1);
     // 合并 stdout 和 stderr
@@ -226,7 +260,27 @@ mod tests {
             }))
             .await;
 
+        if result.is_error {
+            eprintln!("Error output: {}", result.output);
+        }
         assert!(!result.is_error);
         assert!(result.output.contains("sub"));
+    }
+
+    #[tokio::test]
+    async fn test_bash_workdir_escape_prevention() {
+        let dir = tempdir().unwrap();
+        let tool = make_tool(dir.path());
+
+        // Try to escape using .. - should be rejected
+        let result = tool
+            .call(serde_json::json!({
+                "command": "pwd",
+                "workdir": "../.."
+            }))
+            .await;
+
+        assert!(result.is_error);
+        assert!(result.output.contains("within the project directory"));
     }
 }
