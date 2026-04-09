@@ -67,3 +67,8 @@ LLM SSE → LlmStreamEvent → mpsc channel → EventBus → Tauri Event → Vue
 - Rust：services/ 不 import tauri，纯业务逻辑可独立测试
 - TypeScript：strict 模式，Composition API
 - 提交格式：Conventional Commits（feat/fix/refactor/test/docs/chore）
+
+### 其他
+
+- superpowers目录：.claude/.superpowers
+- 
