@@ -58,22 +58,30 @@ pub async fn send_message(
         conversation_summary: None,
     };
 
-    let new_entries = agent_loop
+    let event_tx_for_turn = event_tx.clone();
+    let result = agent_loop
         .run_turn(
             content,
             history,
             Some(user_entry.uuid().to_string()),
-            event_tx,
+            event_tx_for_turn,
             &state.tool_registry,
             &state.global_perms,
             &prompt_manager,
             &dynamic_context,
         )
-        .await
-        .map_err(|e| {
-            log::error!("[chat] agent_loop error: {e}");
-            e.to_string()
-        })?;
+        .await;
+
+    // 无论 run_turn 成功或失败，都发送 TurnComplete 让前端重置 isStreaming
+    let _ = event_tx.send(crate::models::event::AgentEvent::TurnComplete {
+        session_id: session_id.clone(),
+    });
+    drop(event_tx);
+
+    let new_entries = result.map_err(|e| {
+        log::error!("[chat] agent_loop error: {e}");
+        e.to_string()
+    })?;
 
     // 将所有新增 entries 写入 JSONL（assistant + tool_result，不含用户消息）
     for entry in &new_entries {

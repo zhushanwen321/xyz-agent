@@ -1,5 +1,6 @@
 use crate::error::AppError;
 use crate::models::{AgentEvent, AssistantContentBlock, TokenUsage, TranscriptEntry, UserContentBlock};
+use crate::services::context_manager::{ContextConfig, ContextManager, TokenBudget, trim_old_tool_results};
 use crate::services::data_context::DataContext;
 use crate::services::llm::{LlmProvider, LlmStreamEvent};
 use crate::services::prompt_manager::{DynamicContext, PromptManager};
@@ -243,6 +244,19 @@ impl AgentLoop {
         let session_id = &self.session_id;
         let agent_config = crate::services::config::load_agent_config().unwrap_or_default();
         let max_turns: usize = agent_config.max_turns as usize;
+        let keep_tool_results = agent_config.keep_tool_results;
+
+        let token_budget = TokenBudget::new(agent_config.context_window, agent_config.max_output_tokens);
+        let context_config = ContextConfig {
+            auto_compact_buffer: agent_config.auto_compact_buffer,
+            warning_buffer: agent_config.warning_buffer,
+            hard_limit_buffer: agent_config.hard_limit_buffer,
+            keep_tool_results: agent_config.keep_tool_results,
+            compact_max_output_tokens: agent_config.compact_max_output_tokens,
+            max_consecutive_failures: agent_config.max_consecutive_failures,
+        };
+        let mut context_manager = ContextManager::new(context_config, token_budget);
+
         let mut entries: Vec<TranscriptEntry> = Vec::new();
         let mut current_parent = parent_uuid;
         let mut data_context = DataContext::new();
@@ -253,7 +267,30 @@ impl AgentLoop {
             // history 已包含用户消息 + 本次循环产生的 assistant/tool_result entries
             let mut all = history.clone();
             all.extend(entries.iter().cloned());
-            let api_messages = history_to_api_messages(&all);
+
+            // Context management: 估算 token，超阈值时先 trim 再 compact
+            let estimated = context_manager.token_budget.estimate_entries(&all);
+            let mut api_messages = history_to_api_messages(&all);
+
+            if context_manager.needs_compact(estimated) {
+                log::info!(
+                    "[agent_loop] context over threshold ({estimated} tokens), trimming old tool results"
+                );
+                trim_old_tool_results(&mut api_messages, keep_tool_results);
+
+                let json_size = serde_json::to_string(&api_messages).unwrap_or_default();
+                let re_estimated = context_manager.token_budget.estimate_text(&json_size);
+                if context_manager.needs_compact(re_estimated) {
+                    log::info!("[agent_loop] still over threshold, calling LLM compact");
+                    match context_manager
+                        .compact_with_llm(api_messages.clone(), &*self.provider, &self.model)
+                        .await
+                    {
+                        Ok((compressed, _summary)) => api_messages = compressed,
+                        Err(e) => log::warn!("[agent_loop] compact_with_llm failed: {e}"),
+                    }
+                }
+            }
 
             log::info!(
                 "[agent_loop] iteration {iteration}, model={}, messages={}",
@@ -281,6 +318,9 @@ impl AgentLoop {
                 })?;
 
             let result = consume_stream(stream, &event_tx, session_id).await?;
+
+            // 更新 token budget，供下一轮估算
+            context_manager.token_budget.last_input_tokens = Some(result.usage.input_tokens);
 
             // 创建 assistant entry
             let uuid = uuid::Uuid::new_v4().to_string();
@@ -330,6 +370,7 @@ impl AgentLoop {
                     session_id: session_id.clone(),
                     tool_name: call.name.clone(),
                     tool_use_id: call.id.clone(),
+                    input: call.input.clone(),
                 });
             }
 
@@ -370,6 +411,7 @@ impl AgentLoop {
                     session_id: session_id.clone(),
                     tool_use_id: tr.id.clone(),
                     is_error: tr.is_error,
+                    output: tr.output.clone(),
                 });
             }
 
