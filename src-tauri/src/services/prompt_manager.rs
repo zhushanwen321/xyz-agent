@@ -1,6 +1,7 @@
 use serde_json::Value;
 
 /// 动态上下文：注入到系统提示词的环境信息
+#[derive(Clone)]
 pub struct DynamicContext {
     pub cwd: String,
     pub os: String,

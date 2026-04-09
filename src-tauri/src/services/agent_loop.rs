@@ -1,9 +1,12 @@
 use crate::error::AppError;
 use crate::models::{AgentEvent, AssistantContentBlock, TokenUsage, TranscriptEntry, UserContentBlock};
+use crate::services::data_context::DataContext;
 use crate::services::llm::{LlmProvider, LlmStreamEvent};
+use crate::services::prompt_manager::{DynamicContext, PromptManager};
 use crate::services::tool_executor::PendingToolCall;
 use crate::services::tool_registry::{PermissionContext, ToolRegistry};
 use futures::StreamExt;
+use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -234,11 +237,14 @@ impl AgentLoop {
         event_tx: tokio::sync::mpsc::UnboundedSender<AgentEvent>,
         tool_registry: &ToolRegistry,
         tool_perms: &PermissionContext,
+        prompt_manager: &PromptManager,
+        dynamic_context: &DynamicContext,
     ) -> Result<Vec<TranscriptEntry>, AppError> {
         let session_id = &self.session_id;
         let max_turns: usize = 50;
         let mut entries: Vec<TranscriptEntry> = Vec::new();
         let mut current_parent = parent_uuid;
+        let mut data_context = DataContext::new();
 
         let tool_schemas = tool_registry.tool_schemas(tool_perms);
 
@@ -254,10 +260,15 @@ impl AgentLoop {
                 api_messages.len()
             );
 
+            // 每轮将 DataContext 摘要注入动态上下文
+            let mut ctx = dynamic_context.clone();
+            ctx.data_context_summary = data_context.generate_summary();
+            let system = prompt_manager.build_system_prompt(&ctx);
+
             let stream = self
                 .provider
                 .chat_stream(
-                    vec![], // TODO: Plan C - system prompt from PromptManager
+                    system,
                     api_messages,
                     &self.model,
                     Some(tool_schemas.clone()),
@@ -305,9 +316,36 @@ impl AgentLoop {
                 result.tool_calls.len()
             );
 
+            // 构建 call_map 用于 DataContext 追踪
+            let call_map: HashMap<String, _> = result
+                .tool_calls
+                .iter()
+                .map(|c| (c.id.clone(), c.clone()))
+                .collect();
+
             let tool_results =
-                crate::services::tool_executor::execute_batch(result.tool_calls, tool_registry, tool_perms)
+                crate::services::tool_executor::execute_batch(result.tool_calls.clone(), tool_registry, tool_perms)
                     .await;
+
+            // 追踪 Read 工具调用，记录到 DataContext
+            for tr in &tool_results {
+                if !tr.is_error {
+                    if let Some(call) = call_map.get(&tr.id) {
+                        if call.name == "Read" {
+                            let file_path = call
+                                .input
+                                .get("file_path")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown");
+                            data_context.record_file_read(
+                                file_path,
+                                tr.output.len() as u64,
+                                tr.output.lines().count() as u32,
+                            );
+                        }
+                    }
+                }
+            }
 
             // 创建 tool_result user entry
             let mut user_blocks = Vec::new();
@@ -620,6 +658,21 @@ mod tests {
         }
     }
 
+    fn test_prompt_ctx() -> (PromptManager, DynamicContext) {
+        (
+            PromptManager::new(),
+            DynamicContext {
+                cwd: "/test".to_string(),
+                os: "test".to_string(),
+                model: "test-model".to_string(),
+                git_branch: None,
+                tool_names: vec![],
+                data_context_summary: None,
+                conversation_summary: None,
+            },
+        )
+    }
+
     /// consume_stream 的纯文本响应测试
     #[tokio::test]
     async fn test_consume_stream_text_only() {
@@ -697,11 +750,12 @@ mod tests {
         let registry = ToolRegistry::new(); // 空 registry，工具会返回 "Unknown tool" 错误
         let perms = PermissionContext::default();
         let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (prompt_manager, dynamic_context) = test_prompt_ctx();
 
         let agent_loop = AgentLoop::new(provider, "test-session".into(), "test-model".into());
 
         let entries = agent_loop
-            .run_turn("read test.txt".into(), vec![], None, event_tx, &registry, &perms)
+            .run_turn("read test.txt".into(), vec![], None, event_tx, &registry, &perms, &prompt_manager, &dynamic_context)
             .await
             .unwrap();
 
@@ -733,11 +787,12 @@ mod tests {
         let registry = ToolRegistry::new();
         let perms = PermissionContext::default();
         let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (prompt_manager, dynamic_context) = test_prompt_ctx();
 
         let agent_loop = AgentLoop::new(provider, "test-session".into(), "test-model".into());
 
         let entries = agent_loop
-            .run_turn("hello".into(), vec![], None, event_tx, &registry, &perms)
+            .run_turn("hello".into(), vec![], None, event_tx, &registry, &perms, &prompt_manager, &dynamic_context)
             .await
             .unwrap();
 
