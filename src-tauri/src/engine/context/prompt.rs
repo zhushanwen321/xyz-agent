@@ -19,7 +19,7 @@ pub struct PromptManager {
 impl PromptManager {
     pub fn new() -> Self {
         Self {
-            static_prompt: include_str!("../prompts/system_static.md").to_string(),
+            static_prompt: include_str!("../../prompts/system_static.md").to_string(),
         }
     }
 

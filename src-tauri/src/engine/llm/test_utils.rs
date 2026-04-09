@@ -1,23 +1,21 @@
 //! 测试工具：MockLlmProvider 提供预设的 LLM 流式响应，
 //! 用于在不调用真实 API 的情况下测试 agent_loop。
 
-use crate::error::AppError;
-use crate::models::TokenUsage;
+use crate::types::AppError;
+use crate::types::TokenUsage;
 use async_trait::async_trait;
 use futures::stream::{self, Stream};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use super::llm::{LlmProvider, LlmStreamEvent};
+use super::{LlmProvider, LlmStreamEvent};
 
-#[cfg(test)]
 pub struct MockLlmProvider {
     /// 预设的流式响应序列，每次 chat_stream 调用消费一个
     pub responses: Vec<Vec<LlmStreamEvent>>,
     pub call_count: AtomicUsize,
 }
 
-#[cfg(test)]
 impl MockLlmProvider {
     pub fn new(responses: Vec<Vec<LlmStreamEvent>>) -> Self {
         Self {
@@ -68,7 +66,6 @@ impl MockLlmProvider {
     }
 }
 
-#[cfg(test)]
 #[async_trait]
 impl LlmProvider for MockLlmProvider {
     async fn chat_stream(

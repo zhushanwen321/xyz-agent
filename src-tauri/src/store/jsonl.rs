@@ -5,8 +5,8 @@ use std::path::Path;
 use file_lock::{FileLock, FileOptions};
 use serde_json;
 
-use crate::error::AppError;
-use crate::models::transcript::TranscriptEntry;
+use crate::types::AppError;
+use crate::types::TranscriptEntry;
 
 /// 追加一行 JSONL，使用文件锁防止并发冲突
 pub fn append_entry(path: &Path, entry: &TranscriptEntry) -> Result<(), AppError> {
@@ -155,7 +155,7 @@ pub fn load_history(path: &Path) -> Result<LoadHistoryResult, AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::transcript::TokenUsage;
+    use crate::types::TokenUsage;
     use tempfile::TempDir;
 
     fn make_user(uuid: &str, parent: Option<&str>, session: &str, content: &str) -> TranscriptEntry {
@@ -164,7 +164,7 @@ mod tests {
             parent_uuid: parent.map(|s| s.to_string()),
             timestamp: "2026-01-01T00:00:00Z".to_string(),
             session_id: session.to_string(),
-            content: vec![crate::models::UserContentBlock::Text {
+            content: vec![crate::types::UserContentBlock::Text {
                 text: content.to_string(),
             }],
         }
@@ -176,7 +176,7 @@ mod tests {
             parent_uuid: Some(parent.to_string()),
             timestamp: "2026-01-01T00:00:01Z".to_string(),
             session_id: session.to_string(),
-            content: vec![crate::models::AssistantContentBlock::Text {
+            content: vec![crate::types::AssistantContentBlock::Text {
                 text: content.to_string(),
             }],
             usage: Some(TokenUsage { input_tokens: 10, output_tokens: 5 }),
