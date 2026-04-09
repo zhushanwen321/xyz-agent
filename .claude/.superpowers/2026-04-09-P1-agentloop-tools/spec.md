@@ -261,6 +261,20 @@ struct StreamResult {
 - 只重试 LLM 调用（网络/API 错误），最多 3 次
 - 工具执行失败 → 作为 `is_error: true` 的 ToolResult 回传 LLM
 
+> **vs Claude Code**：Claude Code 有多层恢复（withRetry 指数退避10次 + 模型 fallback + withheld 机制 + 上下文溢出恢复）。P1 只实现基础重试，后续逐步引入。
+
+### 终止条件
+
+| 退出路径 | 条件 |
+|---------|------|
+| `completed` | `stop_reason` 为 `end_turn`，无 tool_use |
+| `max_tokens` | `stop_reason` 为 `max_tokens`，无 tool_use |
+| `max_turns` | 迭代次数达到 `max_turns` 限制 |
+| `model_error` | LLM 调用重试耗尽 |
+| `aborted` | 用户中断（TODO：P1 不实现中断机制） |
+
+> **vs Claude Code**：Claude Code 有 10 种退出路径（含 `blocking_limit`、`stop_hook_prevented`、`hook_stopped`、`image_error` 等）。P1 简化为 5 种。
+
 ### MessageComplete 事件适配
 
 `AgentEvent::MessageComplete` 的 `content` 字段当前是 `String`。改为从 `Vec<AssistantContentBlock>` 中提取纯文本（拼接所有 Text block）。前端展示工具调用状态通过 `ToolCallStart/ToolCallEnd` 事件，不依赖 `MessageComplete.content`。
@@ -290,6 +304,8 @@ P1 实现：
 
 ToolRouter spec 中 ToolRegistry 的 `global_allowed`/`global_forbidden` 字段已移除，权限检查改为接收外部 `PermissionContext` 参数。
 
+> **vs Claude Code**：Claude Code 有四级决策（allow/deny/ask/passthrough）、LLM 分类器推测执行、竞态保护（ResolveOnce.claim）。P1 只有 allow/deny 两级，deny 永远优先。TODO：后续引入 ask 级别（用户确认对话框）和 LLM 辅助分类。
+
 ---
 
 ## AppState 和初始化
@@ -314,6 +330,12 @@ pub struct AppState {
 ```
 
 工具注册表**不可变**（Arc，非 RwLock）。后续动态变化通过消息层增量追加。
+
+### 工具 Schema 排序
+
+工具定义按名称字母排序后传给 LLM，保持稳定前缀。有利于 Anthropic API 的 prompt caching。
+
+> **vs Claude Code**：`assembleToolPool()` 将内置工具按 name 排序形成连续前缀，服务端在最后一个内置工具后设 cache breakpoint。
 
 ---
 
@@ -360,6 +382,10 @@ AgentLoop 构造时注入 ToolRegistry 和 PermissionContext。
 - 流式工具执行（参考 Claude Code StreamingToolExecutor）
 - 边执行边持久化（yield 模式，避免部分失败时丢失中间结果）
 - 工具注册表动态层（MCP 工具增量追加，不影响静态层缓存）
+- Hook 系统（参考 Claude Code 27 种事件类型，支持 pre/post tool use hooks）
+- 子 Agent 调度（同步/异步/fork 三种模式，上下文隔离与继承）
+- 多模态能力（图像理解、文件处理）
+- 可调试性（决策链路追踪、消息 replay）
 
 ## 约束
 
@@ -372,3 +398,45 @@ AgentLoop 构造时注入 ToolRegistry 和 PermissionContext。
 
 - **部分失败丢失**：`run_turn` 返回 `Vec<TranscriptEntry>` 统一持久化。如果 LLM 调用彻底失败（重试耗尽），已执行的中间工具结果随 Err 丢失。TODO：后续改为边执行边持久化。
 - **工具 schema 格式**：`tools` 参数使用 Anthropic 格式。多 provider 支持时需加转换层。
+
+## 与 agent-benchmark 维度对照
+
+### 1. Prompt 工程
+
+| 设计点 | Claude Code | 本 spec P1 | 差距 |
+|--------|------------|-----------|------|
+| Tool schema 排序 | 内置工具排序形成稳定前缀 | 按名称排序 | 基本对齐 |
+| Prompt cache | 全链路保护 | 工具排序 + 静态/动态分离 | 后续需 ContextManager 配合 |
+| 动态 tool prompt | `prompt()` 函数按上下文组装 | 固定 description | TODO |
+
+### 2. Context 工程
+
+| 设计点 | Claude Code | 本 spec P1 | 差距 |
+|--------|------------|-----------|------|
+| 上下文压缩 | 5 层梯度响应 | 不涉及（ContextManager spec） | 另文档 |
+| 工具结果预算 | applyToolResultBudget | 100KB 截断 | 基础对齐 |
+| Token 效率 | 每个 token 有预算控制 | 无 | 需 ContextManager |
+
+### 3. Harness 工程
+
+| 设计点 | Claude Code | 本 spec P1 | 差距 |
+|--------|------------|-----------|------|
+| 权限模型 | 4 级（allow/deny/ask/passthrough） | 2 级（allow/deny） | TODO: ask 级别 |
+| Fail-closed 默认值 | isConcurrencySafe=false, isReadOnly=false | Tool trait 同样设计 | 对齐 |
+| Hook 系统 | 27 种事件类型 | 无 | TODO |
+| 安全沙箱 | Bash 三层决策 + tree-sitter | 超时 + 输出截断 | TODO |
+| MCP 集成 | 动态合并 + server 前缀 | 不涉及（P3） | 另文档 |
+
+### 4. Agent Loop
+
+| 设计点 | Claude Code | 本 spec P1 | 差距 |
+|--------|------------|-----------|------|
+| 循环结构 | while-true + AsyncGenerator | while-true loop | 对齐 |
+| 终止条件 | 10 种退出路径 | 5 种 | P1 简化 |
+| 错误恢复 | withRetry + fallback + withheld + 熔断 | 3 次重试 | TODO: 指数退避 |
+| 流式工具执行 | StreamingToolExecutor | 不实现 | TODO |
+| 取消机制 | AbortController 传递链 | 不实现 | TODO |
+
+### 5-7. 子Agent / 多模态 / UX
+
+P1 不涉及，后续逐步引入。
