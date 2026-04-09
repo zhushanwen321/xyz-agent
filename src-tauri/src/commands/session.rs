@@ -9,6 +9,7 @@ use tauri::State;
 pub struct AppState {
     pub config_dir: PathBuf,
     pub provider: Arc<dyn LlmProvider>,
+    pub model: String,
 }
 
 #[tauri::command]

@@ -7,11 +7,16 @@ use std::sync::Arc;
 pub struct AgentLoop {
     provider: Arc<dyn LlmProvider>,
     session_id: String,
+    model: String,
 }
 
 impl AgentLoop {
-    pub fn new(provider: Arc<dyn LlmProvider>, session_id: String) -> Self {
-        Self { provider, session_id }
+    pub fn new(provider: Arc<dyn LlmProvider>, session_id: String, model: String) -> Self {
+        Self {
+            provider,
+            session_id,
+            model,
+        }
     }
 
     pub async fn run_turn(
@@ -29,8 +34,7 @@ impl AgentLoop {
             "content": user_message,
         }));
 
-        let model = "claude-sonnet-4-20250514";
-        let mut stream = self.provider.chat_stream(api_messages, model).await?;
+        let mut stream = self.provider.chat_stream(api_messages, &self.model).await?;
 
         let mut full_content = String::new();
         let mut final_usage = TokenUsage {
@@ -110,34 +114,63 @@ fn history_to_api_messages(history: &[TranscriptEntry]) -> Vec<serde_json::Value
         .collect()
 }
 
-/// 从环境变量或配置文件读取 Anthropic API key
-pub fn extract_api_key() -> Result<String, AppError> {
-    if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
-        return Ok(key);
-    }
+/// LLM 配置：从 .env 文件、环境变量、~/.xyz-agent/config.toml 读取
+pub struct LlmConfig {
+    pub api_key: String,
+    pub base_url: String,
+    pub model: String,
+}
 
+/// 加载 LLM 配置，优先级：环境变量 > .env 文件 > config.toml
+pub fn load_llm_config() -> Result<LlmConfig, AppError> {
+    // 尝试加载 .env 文件（项目根目录下的 .env）
+    // dotenvy 不会覆盖已存在的环境变量，所以环境变量优先级更高
+    let _ = dotenvy::dotenv();
+
+    let api_key = std::env::var("ANTHROPIC_API_KEY")
+        .or_else(|_| read_api_key_from_config_file())
+        .map_err(|_| {
+            AppError::Config(
+                "ANTHROPIC_API_KEY not found in .env, env, or ~/.xyz-agent/config.toml"
+                    .to_string(),
+            )
+        })?;
+
+    let base_url = std::env::var("ANTHROPIC_BASE_URL")
+        .unwrap_or_else(|_| "https://api.anthropic.com".to_string());
+
+    let model =
+        std::env::var("LLM_MODEL").unwrap_or_else(|_| "claude-sonnet-4-20250514".to_string());
+
+    Ok(LlmConfig {
+        api_key,
+        base_url,
+        model,
+    })
+}
+
+fn read_api_key_from_config_file() -> Result<String, ()> {
     let config_path = dirs::home_dir()
-        .ok_or_else(|| AppError::Config("cannot find home directory".to_string()))?
+        .ok_or(())?
         .join(".xyz-agent")
         .join("config.toml");
 
-    if config_path.exists() {
-        let content = std::fs::read_to_string(&config_path)
-            .map_err(|e| AppError::Config(format!("read config failed: {}", e)))?;
-        for line in content.lines() {
-            let trimmed = line.trim();
-            if let Some(key) = trimmed.strip_prefix("anthropic_api_key") {
-                let key = key.trim_start_matches(['=', ' ']).trim();
-                if !key.is_empty() {
-                    return Ok(key.to_string());
-                }
+    if !config_path.exists() {
+        return Err(());
+    }
+
+    let content = std::fs::read_to_string(&config_path).map_err(|_| ())?;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(key) = trimmed.strip_prefix("anthropic_api_key") {
+            let key = key.trim_start_matches(['=', ' ']).trim();
+            if !key.is_empty() {
+                return Ok(key.to_string());
             }
         }
     }
 
-    Err(AppError::Config(
-        "ANTHROPIC_API_KEY not found in env or ~/.xyz-agent/config.toml".to_string(),
-    ))
+    Err(())
 }
 
 #[cfg(test)]
@@ -234,22 +267,32 @@ mod tests {
     }
 
     #[test]
-    fn extract_api_key_missing_returns_error() {
-        // 保存并清除环境变量
-        let saved = std::env::var("ANTHROPIC_API_KEY").ok();
-        std::env::remove_var("ANTHROPIC_API_KEY");
+    fn load_llm_config_reads_from_env() {
+        let saved_key = std::env::var("ANTHROPIC_API_KEY").ok();
+        let saved_url = std::env::var("ANTHROPIC_BASE_URL").ok();
+        let saved_model = std::env::var("LLM_MODEL").ok();
 
-        let result = extract_api_key();
-        assert!(result.is_err());
-        if let Err(AppError::Config(msg)) = result {
-            assert!(msg.contains("ANTHROPIC_API_KEY not found"));
-        } else {
-            panic!("Expected Config error");
+        std::env::set_var("ANTHROPIC_API_KEY", "env-test-key");
+        std::env::set_var("ANTHROPIC_BASE_URL", "https://custom.api.com");
+        std::env::set_var("LLM_MODEL", "claude-opus-4");
+
+        let config = load_llm_config().unwrap();
+        assert_eq!(config.api_key, "env-test-key");
+        assert_eq!(config.base_url, "https://custom.api.com");
+        assert_eq!(config.model, "claude-opus-4");
+
+        // 恢复
+        match saved_key {
+            Some(v) => std::env::set_var("ANTHROPIC_API_KEY", v),
+            None => std::env::remove_var("ANTHROPIC_API_KEY"),
         }
-
-        // 恢复环境变量
-        if let Some(val) = saved {
-            std::env::set_var("ANTHROPIC_API_KEY", val);
+        match saved_url {
+            Some(v) => std::env::set_var("ANTHROPIC_BASE_URL", v),
+            None => std::env::remove_var("ANTHROPIC_BASE_URL"),
+        }
+        match saved_model {
+            Some(v) => std::env::set_var("LLM_MODEL", v),
+            None => std::env::remove_var("LLM_MODEL"),
         }
     }
 }

@@ -37,7 +37,8 @@ pub async fn send_message(
     let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
     event_bus::spawn_bridge(app, event_rx);
 
-    let agent_loop = AgentLoop::new(provider, session_id.clone());
+    let model = state.model.clone();
+    let agent_loop = AgentLoop::new(provider, session_id.clone(), model);
     history.push(user_entry.clone());
 
     let assistant_entry = agent_loop

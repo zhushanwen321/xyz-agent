@@ -20,13 +20,15 @@ pub fn run() {
                 .join(".xyz-agent");
             std::fs::create_dir_all(&config_dir).ok();
 
-            let api_key = agent_loop::extract_api_key()
-                .expect("ANTHROPIC_API_KEY not found");
-            let provider: Arc<dyn LlmProvider> = Arc::new(AnthropicProvider::new(api_key));
+            let llm_config = agent_loop::load_llm_config()
+                .expect("Failed to load LLM config");
+            let provider: Arc<dyn LlmProvider> =
+                Arc::new(AnthropicProvider::new(llm_config.api_key).with_base_url(llm_config.base_url));
 
             app.manage(AppState {
                 config_dir,
                 provider,
+                model: llm_config.model,
             });
             Ok(())
         })
