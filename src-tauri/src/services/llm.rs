@@ -68,6 +68,7 @@ impl LlmProvider for AnthropicProvider {
             .post(format!("{}/v1/messages", self.base_url))
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
+            .header("user-agent", "claude-code/2.1.88")
             .header("content-type", "application/json")
             .json(&serde_json::json!({
                 "model": model,
@@ -150,8 +151,9 @@ fn map_sse_event(event: eventsource_stream::Event) -> Result<LlmStreamEvent, App
     }
 }
 
-// ── 带指数退避的重试封装 ──────────────────────────────────────
+// ── 带指数退避的重试封装（网络不稳定时启用） ──────────────────
 
+#[allow(dead_code)]
 pub async fn chat_stream_with_retry(
     provider: &dyn LlmProvider,
     messages: Vec<serde_json::Value>,

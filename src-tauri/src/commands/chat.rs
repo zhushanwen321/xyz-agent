@@ -1,5 +1,5 @@
 use crate::commands::session::AppState;
-use crate::db::jsonl;
+use crate::db::{jsonl, session_index};
 use crate::models::TranscriptEntry;
 use crate::services::agent_loop::AgentLoop;
 use crate::services::event_bus;
@@ -12,19 +12,17 @@ pub async fn send_message(
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<(), String> {
-    let provider = state.provider.clone();
-    let config_dir = state.config_dir.clone();
+    let preview: String = content.chars().take(50).collect();
+    log::info!("[chat] send_message: session={session_id}, content={preview}");
 
-    // 查找 session JSONL 路径
-    let session_path = find_session_path(&config_dir, &session_id)
-        .ok_or_else(|| format!("session {} not found", session_id))?;
+    let provider = state.provider.clone();
+    let session_path = session_index::session_file_path(&state.data_dir, &session_id)
+        .ok_or_else(|| format!("session {session_id} not found"))?;
 
     let mut history = jsonl::read_all_entries(&session_path).map_err(|e| e.to_string())?;
+    log::debug!("[chat] history entries={}", history.len());
 
-    let parent_uuid = history
-        .last()
-        .map(|e| e.uuid().to_string())
-        .filter(|s| !s.is_empty());
+    let parent_uuid = history.last().map(|e| e.uuid().to_string());
     let user_entry = TranscriptEntry::User {
         uuid: uuid::Uuid::new_v4().to_string(),
         parent_uuid,
@@ -38,33 +36,20 @@ pub async fn send_message(
     event_bus::spawn_bridge(app, event_rx);
 
     let model = state.model.clone();
+    log::info!("[chat] starting agent_loop, model={model}");
     let agent_loop = AgentLoop::new(provider, session_id.clone(), model);
     history.push(user_entry.clone());
 
     let assistant_entry = agent_loop
         .run_turn(content, history, Some(user_entry.uuid().to_string()), event_tx)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            log::error!("[chat] agent_loop error: {e}");
+            e.to_string()
+        })?;
 
-    // 追加 Assistant entry
+    log::info!("[chat] response received, length={}", assistant_entry.content().len());
     jsonl::append_entry(&session_path, &assistant_entry).map_err(|e| e.to_string())?;
 
     Ok(())
-}
-
-fn find_session_path(
-    config_dir: &std::path::Path,
-    session_id: &str,
-) -> Option<std::path::PathBuf> {
-    let projects_dir = config_dir.join("projects");
-    for entry in std::fs::read_dir(&projects_dir).ok()? {
-        let path = entry.ok()?.path();
-        if path.is_dir() {
-            let target = path.join(format!("{}.jsonl", session_id));
-            if target.exists() {
-                return Some(target);
-            }
-        }
-    }
-    None
 }

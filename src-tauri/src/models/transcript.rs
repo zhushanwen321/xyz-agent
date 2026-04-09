@@ -50,6 +50,7 @@ pub enum TranscriptEntry {
 }
 
 impl TranscriptEntry {
+    #[allow(dead_code)]
     pub fn new_user(session_id: &str, content: &str, parent_uuid: Option<String>) -> Self {
         Self::User {
             uuid: Uuid::new_v4().to_string(),
@@ -60,6 +61,7 @@ impl TranscriptEntry {
         }
     }
 
+    #[allow(dead_code)]
     pub fn new_assistant(
         session_id: &str,
         content: &str,
@@ -86,6 +88,7 @@ impl TranscriptEntry {
         }
     }
 
+    #[allow(dead_code)]
     pub fn parent_uuid(&self) -> Option<&str> {
         match self {
             TranscriptEntry::User { parent_uuid, .. } => parent_uuid.as_deref(),
@@ -93,6 +96,16 @@ impl TranscriptEntry {
             TranscriptEntry::System { parent_uuid, .. } => parent_uuid.as_deref(),
             TranscriptEntry::CustomTitle { .. } => None,
             TranscriptEntry::Summary { .. } => None,
+        }
+    }
+
+    pub fn content(&self) -> &str {
+        match self {
+            TranscriptEntry::User { content, .. } => content,
+            TranscriptEntry::Assistant { content, .. } => content,
+            TranscriptEntry::System { content, .. } => content,
+            TranscriptEntry::CustomTitle { title, .. } => title,
+            TranscriptEntry::Summary { summary, .. } => summary,
         }
     }
 }

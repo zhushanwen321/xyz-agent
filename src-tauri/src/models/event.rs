@@ -25,6 +25,26 @@ pub enum AgentEvent {
     },
 }
 
+impl AgentEvent {
+    pub fn session_id(&self) -> &str {
+        match self {
+            AgentEvent::TextDelta { session_id, .. } => session_id,
+            AgentEvent::ThinkingDelta { session_id, .. } => session_id,
+            AgentEvent::MessageComplete { session_id, .. } => session_id,
+            AgentEvent::Error { session_id, .. } => session_id,
+        }
+    }
+
+    pub fn variant_name(&self) -> &'static str {
+        match self {
+            AgentEvent::TextDelta { .. } => "TextDelta",
+            AgentEvent::ThinkingDelta { .. } => "ThinkingDelta",
+            AgentEvent::MessageComplete { .. } => "MessageComplete",
+            AgentEvent::Error { .. } => "Error",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

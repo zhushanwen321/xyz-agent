@@ -1,5 +1,5 @@
 import { ref, onMounted, onUnmounted, watch, type Ref } from 'vue'
-import { sendMessage, getHistory, onAgentEvent } from '../lib/tauri'
+import { sendMessage, getHistory, onAgentEvent, isTauri } from '../lib/tauri'
 import type { AgentEvent, ChatMessage, TranscriptEntry } from '../types'
 
 function createMessage(role: ChatMessage['role'], content: string): ChatMessage {
@@ -13,7 +13,12 @@ export function useChat(sessionId: Ref<string | null>) {
   let unlisten: (() => void) | null = null
 
   onMounted(async () => {
+    if (!isTauri()) {
+      console.warn('[useChat] not in Tauri, event listener skipped')
+      return
+    }
     unlisten = await onAgentEvent((event: AgentEvent) => {
+      console.log('[useChat] agent event received:', event.type, 'session:', event.session_id)
       if (!sessionId.value || event.session_id !== sessionId.value) return
 
       switch (event.type) {
@@ -41,11 +46,23 @@ export function useChat(sessionId: Ref<string | null>) {
   })
 
   async function send(content: string) {
-    if (!sessionId.value || isStreaming.value) return
+    console.log('[useChat] send called, sessionId:', sessionId.value, 'isStreaming:', isStreaming.value)
+    if (!sessionId.value || isStreaming.value) {
+      console.warn('[useChat] send aborted: sessionId=', sessionId.value, 'isStreaming=', isStreaming.value)
+      return
+    }
     isStreaming.value = true
     messages.value.push(createMessage('user', content))
     streamingText.value = ''
-    await sendMessage(sessionId.value, content)
+    console.log('[useChat] calling sendMessage:', sessionId.value, content.slice(0, 50))
+    try {
+      await sendMessage(sessionId.value, content)
+      console.log('[useChat] sendMessage resolved')
+    } catch (err) {
+      console.error('[useChat] sendMessage rejected:', err)
+      messages.value.push(createMessage('system', `发送失败: ${err}`))
+      isStreaming.value = false
+    }
   }
 
   async function loadHistory(sid: string) {

@@ -27,6 +27,8 @@ impl AgentLoop {
         event_tx: tokio::sync::mpsc::UnboundedSender<AgentEvent>,
     ) -> Result<TranscriptEntry, AppError> {
         let session_id = &self.session_id;
+        let max_retries: usize = 3;
+        let retry_delay = std::time::Duration::from_secs(5);
 
         let mut api_messages = history_to_api_messages(&history);
         api_messages.push(serde_json::json!({
@@ -34,66 +36,117 @@ impl AgentLoop {
             "content": user_message,
         }));
 
-        let mut stream = self.provider.chat_stream(api_messages, &self.model).await?;
+        for attempt in 0..=max_retries {
+            if attempt > 0 {
+                log::warn!(
+                    "[agent_loop] retry {attempt}/{max_retries} after error, waiting {:?}",
+                    retry_delay
+                );
+                tokio::time::sleep(retry_delay).await;
+            }
 
-        let mut full_content = String::new();
-        let mut final_usage = TokenUsage {
-            input_tokens: 0,
-            output_tokens: 0,
-        };
+            log::info!(
+                "[agent_loop] calling chat_stream (attempt {}/{}), model={}, messages={}",
+                attempt + 1,
+                max_retries + 1,
+                self.model,
+                api_messages.len()
+            );
 
-        while let Some(item) = stream.next().await {
-            match item {
-                Ok(LlmStreamEvent::TextDelta { delta }) => {
-                    if delta.is_empty() {
-                        continue;
-                    }
-                    full_content.push_str(&delta);
-                    let _ = event_tx.send(AgentEvent::TextDelta {
-                        session_id: session_id.clone(),
-                        delta,
-                    });
-                }
-                Ok(LlmStreamEvent::ThinkingDelta { delta }) => {
-                    let _ = event_tx.send(AgentEvent::ThinkingDelta {
-                        session_id: session_id.clone(),
-                        delta,
-                    });
-                }
-                Ok(LlmStreamEvent::MessageStop { usage }) => {
-                    final_usage = usage;
-                    let _ = event_tx.send(AgentEvent::MessageComplete {
-                        session_id: session_id.clone(),
-                        role: "assistant".to_string(),
-                        content: full_content.clone(),
-                        usage: final_usage.clone(),
-                    });
-                }
-                Ok(LlmStreamEvent::Error { message }) => {
-                    let _ = event_tx.send(AgentEvent::Error {
-                        session_id: session_id.clone(),
-                        message,
-                    });
-                }
+            let stream = match self.provider.chat_stream(api_messages.clone(), &self.model).await {
+                Ok(s) => s,
                 Err(e) => {
-                    let _ = event_tx.send(AgentEvent::Error {
-                        session_id: session_id.clone(),
-                        message: e.to_string(),
-                    });
-                    return Err(e);
+                    log::error!("[agent_loop] chat_stream failed: {e}");
+                    if attempt == max_retries {
+                        let _ = event_tx.send(AgentEvent::Error {
+                            session_id: session_id.clone(),
+                            message: format!("请求失败（已重试 {max_retries} 次）: {e}"),
+                        });
+                        return Err(e);
+                    }
+                    continue;
+                }
+            };
+
+            log::debug!("[agent_loop] stream established, reading events...");
+
+            let mut full_content = String::new();
+            let mut final_usage = TokenUsage {
+                input_tokens: 0,
+                output_tokens: 0,
+            };
+            let mut got_error = false;
+            let mut stream = std::pin::pin!(stream);
+
+            while let Some(item) = stream.next().await {
+                match item {
+                    Ok(LlmStreamEvent::TextDelta { delta }) => {
+                        if delta.is_empty() {
+                            continue;
+                        }
+                        full_content.push_str(&delta);
+                        let _ = event_tx.send(AgentEvent::TextDelta {
+                            session_id: session_id.clone(),
+                            delta,
+                        });
+                    }
+                    Ok(LlmStreamEvent::ThinkingDelta { delta }) => {
+                        let _ = event_tx.send(AgentEvent::ThinkingDelta {
+                            session_id: session_id.clone(),
+                            delta,
+                        });
+                    }
+                    Ok(LlmStreamEvent::MessageStop { usage }) => {
+                        final_usage = usage;
+                        let _ = event_tx.send(AgentEvent::MessageComplete {
+                            session_id: session_id.clone(),
+                            role: "assistant".to_string(),
+                            content: full_content.clone(),
+                            usage: final_usage.clone(),
+                        });
+                    }
+                    Ok(LlmStreamEvent::Error { message }) => {
+                        log::error!("[agent_loop] API returned error: {message}");
+                        got_error = true;
+                        break;
+                    }
+                    Err(e) => {
+                        log::error!("[agent_loop] stream read error: {e}");
+                        got_error = true;
+                        break;
+                    }
                 }
             }
+
+            if got_error {
+                if attempt == max_retries {
+                    let _ = event_tx.send(AgentEvent::Error {
+                        session_id: session_id.clone(),
+                        message: format!("请求失败（已重试 {max_retries} 次），请稍后重试"),
+                    });
+                    return Err(AppError::Llm("API error after retries".to_string()));
+                }
+                // 重试前通知前端正在重试
+                let _ = event_tx.send(AgentEvent::Error {
+                    session_id: session_id.clone(),
+                    message: format!("请求出错，{}s 后重试 ({}/{})", retry_delay.as_secs(), attempt + 1, max_retries),
+                });
+                continue;
+            }
+
+            // 成功完成
+            let now = chrono::Utc::now().to_rfc3339();
+            return Ok(TranscriptEntry::Assistant {
+                uuid: uuid::Uuid::new_v4().to_string(),
+                parent_uuid,
+                timestamp: now,
+                session_id: session_id.clone(),
+                content: full_content,
+                usage: Some(final_usage),
+            });
         }
 
-        let now = chrono::Utc::now().to_rfc3339();
-        Ok(TranscriptEntry::Assistant {
-            uuid: uuid::Uuid::new_v4().to_string(),
-            parent_uuid,
-            timestamp: now,
-            session_id: session_id.clone(),
-            content: full_content,
-            usage: Some(final_usage),
-        })
+        unreachable!()
     }
 }
 

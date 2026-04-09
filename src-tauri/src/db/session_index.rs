@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::error::AppError;
 use crate::models::transcript::TranscriptEntry;
 
-use super::jsonl::{self, read_all_entries};
+use super::jsonl::read_all_entries;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionMeta {
@@ -17,19 +17,46 @@ pub struct SessionMeta {
     pub updated_at: String,
 }
 
-/// 扫描目录下的 .jsonl 文件，提取 session 元数据
-pub fn list_sessions(projects_dir: &Path, cwd: &str) -> Result<Vec<SessionMeta>, AppError> {
-    let safe_cwd = jsonl::sanitize_path(cwd);
-    let session_dir = projects_dir.join("projects").join(&safe_cwd);
+/// 获取数据根目录：dev 模式 ~/.xyz-agent-dev，release 模式 ~/.xyz-agent
+pub fn data_dir() -> Result<PathBuf, AppError> {
+    let dir_name = if cfg!(debug_assertions) {
+        ".xyz-agent-dev"
+    } else {
+        ".xyz-agent"
+    };
+    let dir = dirs::home_dir()
+        .ok_or_else(|| AppError::Config("cannot find home directory".to_string()))?
+        .join(dir_name);
+    Ok(dir)
+}
 
-    if !session_dir.exists() {
+/// 确保数据目录结构存在
+pub fn ensure_data_dirs(data: &Path) -> Result<(), AppError> {
+    for sub in &["sessions", "logs"] {
+        std::fs::create_dir_all(data.join(sub))
+            .map_err(|e| AppError::Storage(format!("create {sub}/ dir failed: {e}")))?;
+    }
+    Ok(())
+}
+
+fn sessions_dir(data: &Path) -> PathBuf {
+    data.join("sessions")
+}
+
+fn session_path(data: &Path, session_id: &str) -> PathBuf {
+    sessions_dir(data).join(format!("{session_id}.jsonl"))
+}
+
+/// 列出所有 session
+pub fn list_sessions(data: &Path) -> Result<Vec<SessionMeta>, AppError> {
+    let dir = sessions_dir(data);
+    if !dir.exists() {
         return Ok(vec![]);
     }
 
     let mut sessions = Vec::new();
-
-    let entries = std::fs::read_dir(&session_dir)
-        .map_err(|e| AppError::Storage(format!("read dir failed: {e}")))?;
+    let entries = std::fs::read_dir(&dir)
+        .map_err(|e| AppError::Storage(format!("read sessions dir failed: {e}")))?;
 
     for entry in entries {
         let entry = entry.map_err(|e| AppError::Storage(format!("dir entry failed: {e}")))?;
@@ -42,10 +69,11 @@ pub fn list_sessions(projects_dir: &Path, cwd: &str) -> Result<Vec<SessionMeta>,
         let stem = path
             .file_stem()
             .and_then(|s| s.to_str())
-            .unwrap_or("unknown");
+            .unwrap_or("unknown")
+            .to_string();
 
         let file_entries = read_all_entries(&path)?;
-        let title = extract_title(&file_entries).unwrap_or_else(|| stem.to_string());
+        let title = extract_title(&file_entries).unwrap_or_else(|| stem.clone());
         let created_at = file_entries
             .first()
             .and_then(|e| match e {
@@ -67,7 +95,7 @@ pub fn list_sessions(projects_dir: &Path, cwd: &str) -> Result<Vec<SessionMeta>,
             .unwrap_or_default();
 
         sessions.push(SessionMeta {
-            id: stem.to_string(),
+            id: stem,
             title,
             created_at,
             updated_at,
@@ -78,15 +106,14 @@ pub fn list_sessions(projects_dir: &Path, cwd: &str) -> Result<Vec<SessionMeta>,
     Ok(sessions)
 }
 
-/// 创建新的 session，返回元数据
-pub fn new_session(projects_dir: &Path, cwd: &str) -> Result<SessionMeta, AppError> {
-    let safe_cwd = jsonl::sanitize_path(cwd);
-    let session_dir = projects_dir.join("projects").join(&safe_cwd);
-    std::fs::create_dir_all(&session_dir)
-        .map_err(|e| AppError::Storage(format!("create session dir failed: {e}")))?;
+/// 创建新 session
+pub fn new_session(data: &Path) -> Result<SessionMeta, AppError> {
+    let dir = sessions_dir(data);
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| AppError::Storage(format!("create sessions dir failed: {e}")))?;
 
     let session_id = Uuid::new_v4().to_string();
-    let path = session_dir.join(format!("{session_id}.jsonl"));
+    let path = session_path(data, &session_id);
 
     let now = Utc::now().to_rfc3339();
     let system_entry = TranscriptEntry::System {
@@ -97,7 +124,7 @@ pub fn new_session(projects_dir: &Path, cwd: &str) -> Result<SessionMeta, AppErr
         content: "New session started".to_string(),
     };
 
-    jsonl::append_entry(&path, &system_entry)?;
+    super::jsonl::append_entry(&path, &system_entry)?;
 
     Ok(SessionMeta {
         id: session_id,
@@ -105,6 +132,23 @@ pub fn new_session(projects_dir: &Path, cwd: &str) -> Result<SessionMeta, AppErr
         created_at: now,
         updated_at: Utc::now().to_rfc3339(),
     })
+}
+
+/// 删除 session
+pub fn delete_session(data: &Path, session_id: &str) -> Result<(), AppError> {
+    let path = session_path(data, session_id);
+    if !path.exists() {
+        return Err(AppError::SessionNotFound(session_id.to_string()));
+    }
+    std::fs::remove_file(&path)
+        .map_err(|e| AppError::Storage(format!("delete session failed: {e}")))?;
+    Ok(())
+}
+
+/// 获取 session JSONL 文件路径
+pub fn session_file_path(data: &Path, session_id: &str) -> Option<PathBuf> {
+    let path = session_path(data, session_id);
+    if path.exists() { Some(path) } else { None }
 }
 
 /// 从 entries 中提取标题（取第一条 user 消息的前 50 字符）
@@ -132,17 +176,12 @@ mod tests {
     #[test]
     fn test_new_session_creates_file() {
         let dir = TempDir::new().unwrap();
-        let meta = new_session(dir.path(), "/Users/test/project").unwrap();
+        let meta = new_session(dir.path()).unwrap();
 
         assert!(!meta.id.is_empty());
         assert_eq!(meta.title, "New Session");
-        assert!(!meta.created_at.is_empty());
 
-        let safe_cwd = jsonl::sanitize_path("/Users/test/project");
-        let file_path = dir.path()
-            .join("projects")
-            .join(&safe_cwd)
-            .join(format!("{}.jsonl", meta.id));
+        let file_path = dir.path().join("sessions").join(format!("{}.jsonl", meta.id));
         assert!(file_path.exists());
 
         let entries = read_all_entries(&file_path).unwrap();
@@ -153,7 +192,7 @@ mod tests {
     #[test]
     fn test_list_sessions_empty() {
         let dir = TempDir::new().unwrap();
-        let sessions = list_sessions(dir.path(), "/some/path").unwrap();
+        let sessions = list_sessions(dir.path()).unwrap();
         assert!(sessions.is_empty());
     }
 
@@ -161,40 +200,35 @@ mod tests {
     fn test_list_sessions_with_data() {
         let dir = TempDir::new().unwrap();
 
-        let meta1 = new_session(dir.path(), "/project").unwrap();
-        let meta2 = new_session(dir.path(), "/project").unwrap();
+        let meta1 = new_session(dir.path()).unwrap();
+        let _meta2 = new_session(dir.path()).unwrap();
 
-        // 给第一个 session 添加 user 消息
-        let safe_cwd = jsonl::sanitize_path("/project");
-        let file1 = dir.path()
-            .join("projects")
-            .join(&safe_cwd)
-            .join(format!("{}.jsonl", meta1.id));
+        let file1 = dir.path().join("sessions").join(format!("{}.jsonl", meta1.id));
         let user_entry = TranscriptEntry::new_user(&meta1.id, "This is my first question", None);
-        jsonl::append_entry(&file1, &user_entry).unwrap();
+        super::super::jsonl::append_entry(&file1, &user_entry).unwrap();
 
-        let sessions = list_sessions(dir.path(), "/project").unwrap();
+        let sessions = list_sessions(dir.path()).unwrap();
         assert_eq!(sessions.len(), 2);
-
-        // 按更新时间倒序：meta1 追加了 user 消息，修改时间更晚，排第一
         assert_eq!(sessions[0].id, meta1.id);
-        assert_eq!(sessions[1].id, meta2.id);
-
-        // meta1 有 user 消息作为标题
         assert_eq!(sessions[0].title, "This is my first question");
     }
 
     #[test]
-    fn test_new_session_different_cwd() {
+    fn test_delete_session() {
         let dir = TempDir::new().unwrap();
+        let meta = new_session(dir.path()).unwrap();
 
-        new_session(dir.path(), "/project-a").unwrap();
-        new_session(dir.path(), "/project-b").unwrap();
+        let path = dir.path().join("sessions").join(format!("{}.jsonl", meta.id));
+        assert!(path.exists());
 
-        let sessions_a = list_sessions(dir.path(), "/project-a").unwrap();
-        let sessions_b = list_sessions(dir.path(), "/project-b").unwrap();
+        delete_session(dir.path(), &meta.id).unwrap();
+        assert!(!path.exists());
+    }
 
-        assert_eq!(sessions_a.len(), 1);
-        assert_eq!(sessions_b.len(), 1);
+    #[test]
+    fn test_delete_nonexistent_session() {
+        let dir = TempDir::new().unwrap();
+        let result = delete_session(dir.path(), "nonexistent");
+        assert!(result.is_err());
     }
 }

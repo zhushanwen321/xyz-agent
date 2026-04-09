@@ -64,7 +64,8 @@ pub fn read_all_entries(path: &Path) -> Result<Vec<TranscriptEntry>, AppError> {
     Ok(entries)
 }
 
-/// 通过 parent_uuid 回溯构建对话链
+/// 通过 parent_uuid 回溯构建对话链（分支切换时使用）
+#[allow(dead_code)]
 pub fn build_conversation_chain(
     entries: &[TranscriptEntry],
     leaf_uuid: Option<&str>,
@@ -99,6 +100,7 @@ pub fn build_conversation_chain(
 }
 
 /// 将路径转为安全的目录名（替换 / 为 -）
+#[allow(dead_code)]
 pub fn sanitize_path(path: &str) -> String {
     let sanitized = path.replace('/', "-");
     sanitized.trim_start_matches('-').to_string()
