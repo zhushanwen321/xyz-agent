@@ -106,6 +106,51 @@ pub fn sanitize_path(path: &str) -> String {
     sanitized.trim_start_matches('-').to_string()
 }
 
+// ── LoadHistoryResult：摘要感知的历史加载 ───────────────────────
+
+pub struct LoadHistoryResult {
+    pub entries: Vec<TranscriptEntry>,
+    pub conversation_summary: Option<String>,
+}
+
+/// 加载历史，摘要感知：找到最新的 Summary 条目，
+/// 返回 leaf_uuid 之后的条目 + 摘要文本
+pub fn load_history(path: &Path) -> Result<LoadHistoryResult, AppError> {
+    let all_entries = read_all_entries(path)?;
+
+    // 找到最新的 Summary 条目（从后往前搜索）
+    let latest_summary = all_entries.iter().rev().find_map(|e| {
+        if let TranscriptEntry::Summary {
+            summary, leaf_uuid, ..
+        } = e
+        {
+            Some((summary.clone(), leaf_uuid.clone()))
+        } else {
+            None
+        }
+    });
+
+    match latest_summary {
+        Some((summary_text, leaf_uuid)) => {
+            // 返回 leaf_uuid 之后的条目（排除 Summary 条目）
+            let entries_after = all_entries
+                .into_iter()
+                .skip_while(|e| e.uuid() != leaf_uuid)
+                .skip(1) // 跳过 leaf_uuid 条目本身
+                .filter(|e| !matches!(e, TranscriptEntry::Summary { .. }))
+                .collect();
+            Ok(LoadHistoryResult {
+                entries: entries_after,
+                conversation_summary: Some(summary_text),
+            })
+        }
+        None => Ok(LoadHistoryResult {
+            entries: all_entries,
+            conversation_summary: None,
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,5 +270,67 @@ mod tests {
         let entries = vec![u1];
         let chain = build_conversation_chain(&entries, Some("nonexistent"));
         assert!(chain.is_empty());
+    }
+
+    // ── load_history tests ──────────────────────────────────────
+
+    #[test]
+    fn test_load_history_no_summary_returns_all() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("test.jsonl");
+
+        let u1 = make_user("u1", None, "s1", "hello");
+        let a1 = make_assistant("a1", "u1", "s1", "hi");
+        let u2 = make_user("u2", Some("a1"), "s1", "bye");
+
+        append_entry(&path, &u1).unwrap();
+        append_entry(&path, &a1).unwrap();
+        append_entry(&path, &u2).unwrap();
+
+        let result = load_history(&path).unwrap();
+        assert!(result.conversation_summary.is_none());
+        assert_eq!(result.entries.len(), 3);
+    }
+
+    #[test]
+    fn test_load_history_with_summary_skips_old_entries() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("test.jsonl");
+
+        let u1 = make_user("u1", None, "s1", "old msg");
+        let a1 = make_assistant("a1", "u1", "s1", "old reply");
+        let summary = TranscriptEntry::Summary {
+            session_id: "s1".to_string(),
+            leaf_uuid: "a1".to_string(),
+            summary: "用户问了 old msg，助手回复了 old reply".to_string(),
+        };
+        let u2 = make_user("u2", Some("a1"), "s1", "new msg");
+        let a2 = make_assistant("a2", "u2", "s1", "new reply");
+
+        append_entry(&path, &u1).unwrap();
+        append_entry(&path, &a1).unwrap();
+        append_entry(&path, &summary).unwrap();
+        append_entry(&path, &u2).unwrap();
+        append_entry(&path, &a2).unwrap();
+
+        let result = load_history(&path).unwrap();
+        assert_eq!(
+            result.conversation_summary.as_deref().unwrap(),
+            "用户问了 old msg，助手回复了 old reply"
+        );
+        // 应只返回 leaf_uuid (a1) 之后的条目
+        assert_eq!(result.entries.len(), 2);
+        assert_eq!(result.entries[0].uuid(), "u2");
+        assert_eq!(result.entries[1].uuid(), "a2");
+    }
+
+    #[test]
+    fn test_load_history_empty_file() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("nonexistent.jsonl");
+
+        let result = load_history(&path).unwrap();
+        assert!(result.conversation_summary.is_none());
+        assert!(result.entries.is_empty());
     }
 }
