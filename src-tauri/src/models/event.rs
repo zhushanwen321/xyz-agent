@@ -27,11 +27,16 @@ pub enum AgentEvent {
         session_id: String,
         tool_name: String,
         tool_use_id: String,
+        input: serde_json::Value,
     },
     ToolCallEnd {
         session_id: String,
         tool_use_id: String,
         is_error: bool,
+        output: String,
+    },
+    TurnComplete {
+        session_id: String,
     },
 }
 
@@ -44,6 +49,7 @@ impl AgentEvent {
             AgentEvent::Error { session_id, .. } => session_id,
             AgentEvent::ToolCallStart { session_id, .. } => session_id,
             AgentEvent::ToolCallEnd { session_id, .. } => session_id,
+            AgentEvent::TurnComplete { session_id } => session_id,
         }
     }
 
@@ -55,6 +61,7 @@ impl AgentEvent {
             AgentEvent::Error { .. } => "Error",
             AgentEvent::ToolCallStart { .. } => "ToolCallStart",
             AgentEvent::ToolCallEnd { .. } => "ToolCallEnd",
+            AgentEvent::TurnComplete { .. } => "TurnComplete",
         }
     }
 }
@@ -144,11 +151,13 @@ mod tests {
             session_id: "s1".to_string(),
             tool_name: "search_web".to_string(),
             tool_use_id: "tool_123".to_string(),
+            input: serde_json::json!({"query": "test"}),
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"type\":\"ToolCallStart\""));
         assert!(json.contains("\"tool_name\":\"search_web\""));
         assert!(json.contains("\"tool_use_id\":\"tool_123\""));
+        assert!(json.contains("\"input\""));
 
         let de: AgentEvent = serde_json::from_str(&json).unwrap();
         assert!(matches!(de, AgentEvent::ToolCallStart { .. }));
@@ -160,16 +169,34 @@ mod tests {
             session_id: "s1".to_string(),
             tool_use_id: "tool_123".to_string(),
             is_error: false,
+            output: "result data".to_string(),
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"type\":\"ToolCallEnd\""));
         assert!(json.contains("\"is_error\":false"));
+        assert!(json.contains("\"output\":\"result data\""));
 
         let de: AgentEvent = serde_json::from_str(&json).unwrap();
-        if let AgentEvent::ToolCallEnd { is_error, .. } = de {
+        if let AgentEvent::ToolCallEnd {
+            is_error, output, ..
+        } = de
+        {
             assert_eq!(is_error, false);
+            assert_eq!(output, "result data");
         } else {
             panic!("Expected ToolCallEnd");
         }
+    }
+
+    #[test]
+    fn test_turn_complete_serialization() {
+        let event = AgentEvent::TurnComplete {
+            session_id: "s1".to_string(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"type\":\"TurnComplete\""));
+
+        let de: AgentEvent = serde_json::from_str(&json).unwrap();
+        assert!(matches!(de, AgentEvent::TurnComplete { .. }));
     }
 }

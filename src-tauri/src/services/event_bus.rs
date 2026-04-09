@@ -8,7 +8,13 @@ pub fn spawn_bridge(
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         while let Some(event) = rx.recv().await {
-            log::debug!("[event_bus] forwarding event: type={}, session={}", event.variant_name(), event.session_id());
+            // TextDelta/ThinkingDelta 是高频流式事件，不打印日志
+            match &event {
+                AgentEvent::TextDelta { .. } | AgentEvent::ThinkingDelta { .. } => {}
+                _ => {
+                    log::debug!("[event_bus] forwarding event: type={}, session={}", event.variant_name(), event.session_id());
+                }
+            }
             let _ = app_handle.emit("agent-event", &event);
         }
     })

@@ -65,6 +65,7 @@ impl TokenBudget {
 
 // ── Context compression config ──────────────────────────────────
 
+#[allow(dead_code)]
 pub struct ContextConfig {
     /// 低于此 buffer 时触发自动压缩
     pub auto_compact_buffer: u32,
@@ -150,8 +151,8 @@ pub fn deduplicate_tool_results(_messages: &mut Vec<serde_json::Value>) {
 // ── ContextManager ──────────────────────────────────────────────
 
 pub struct ContextManager {
-    config: ContextConfig,
-    token_budget: TokenBudget,
+    pub config: ContextConfig,
+    pub token_budget: TokenBudget,
     consecutive_failures: u32,
 }
 
