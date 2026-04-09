@@ -1,8 +1,10 @@
 use crate::commands::session::AppState;
 use crate::db::{jsonl, session_index};
-use crate::models::{AssistantContentBlock, TranscriptEntry, UserContentBlock};
+use crate::models::{TranscriptEntry, UserContentBlock};
 use crate::services::agent_loop::AgentLoop;
 use crate::services::event_bus;
+use crate::services::tool_registry::{PermissionContext, ToolRegistry};
+use crate::services::tools;
 use tauri::{AppHandle, State};
 
 #[tauri::command]
@@ -42,26 +44,50 @@ pub async fn send_message(
     let agent_loop = AgentLoop::new(provider, session_id.clone(), model);
     history.push(user_entry.clone());
 
-    let assistant_entry = agent_loop
-        .run_turn(content, history, Some(user_entry.uuid().to_string()), event_tx)
+    // 临时创建 ToolRegistry（Plan D 将移到 AppState）
+    let mut registry = ToolRegistry::new();
+    let workdir = std::env::current_dir().unwrap_or_default();
+    tools::register_builtin_tools(&mut registry, workdir);
+    let perms = PermissionContext::default();
+
+    let new_entries = agent_loop
+        .run_turn(
+            content,
+            history,
+            Some(user_entry.uuid().to_string()),
+            event_tx,
+            &registry,
+            &perms,
+        )
         .await
         .map_err(|e| {
             log::error!("[chat] agent_loop error: {e}");
             e.to_string()
         })?;
 
-    let text_len = match &assistant_entry {
-        TranscriptEntry::Assistant { content, .. } => content
-            .iter()
-            .filter_map(|b| match b {
-                AssistantContentBlock::Text { text } => Some(text.len()),
-                _ => None,
-            })
-            .sum::<usize>(),
-        _ => 0,
-    };
-    log::info!("[chat] response received, length={}", text_len);
-    jsonl::append_entry(&session_path, &assistant_entry).map_err(|e| e.to_string())?;
+    // 将所有新增 entries 写入 JSONL（assistant + tool_result，不含用户消息）
+    for entry in &new_entries {
+        jsonl::append_entry(&session_path, entry).map_err(|e| e.to_string())?;
+    }
+
+    let text_len: usize = new_entries
+        .iter()
+        .map(|e| match e {
+            TranscriptEntry::Assistant { content, .. } => content
+                .iter()
+                .filter_map(|b| match b {
+                    crate::models::AssistantContentBlock::Text { text } => Some(text.len()),
+                    _ => None,
+                })
+                .sum::<usize>(),
+            _ => 0,
+        })
+        .sum();
+    log::info!(
+        "[chat] response received, entries={}, total_text_len={}",
+        new_entries.len(),
+        text_len
+    );
 
     Ok(())
 }
