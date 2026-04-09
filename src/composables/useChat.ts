@@ -101,7 +101,7 @@ export function useChat(sessionId: Ref<string | null>) {
     }
     msgs.push(
       ...result.entries
-        .filter((e) => e.type === 'user' || e.type === 'assistant')
+        .filter((e): e is Extract<typeof e, { type: 'user' | 'assistant' }> => e.type === 'user' || e.type === 'assistant')
         .map((e) => ({
           id: e.uuid,
           role: e.type as 'user' | 'assistant',

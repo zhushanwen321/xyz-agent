@@ -2,6 +2,8 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { AgentEvent, LoadHistoryResult, SessionInfo } from '../types'
 
+export type { LoadHistoryResult }
+
 export function isTauri(): boolean {
   return !!(window as any).__TAURI_INTERNALS__
 }
