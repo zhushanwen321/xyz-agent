@@ -96,7 +96,7 @@ impl AgentLoop {
                             delta,
                         });
                     }
-                    Ok(LlmStreamEvent::MessageStop { usage }) => {
+                    Ok(LlmStreamEvent::MessageStop { usage, stop_reason: _ }) => {
                         final_usage = usage;
                         let _ = event_tx.send(AgentEvent::MessageComplete {
                             session_id: session_id.clone(),
@@ -110,6 +110,10 @@ impl AgentLoop {
                         got_error = true;
                         break;
                     }
+                    // tool_use 事件暂不处理，Task 12-13 实现 consume_stream 后接入
+                    Ok(LlmStreamEvent::ToolUseStart { .. }) => {}
+                    Ok(LlmStreamEvent::ToolUseInputDelta { .. }) => {}
+                    Ok(LlmStreamEvent::ToolUseEnd { .. }) => {}
                     Err(e) => {
                         log::error!("[agent_loop] stream read error: {e}");
                         got_error = true;
