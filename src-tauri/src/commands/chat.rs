@@ -48,7 +48,7 @@ pub async fn send_message(
     history_with_user.push(user_entry.clone());
 
     let assistant_entry = agent_loop
-        .run_turn(content, history_with_user, event_tx)
+        .run_turn(content, history_with_user, Some(user_entry.uuid().to_string()), event_tx)
         .await
         .map_err(|e| e.to_string())?;
 

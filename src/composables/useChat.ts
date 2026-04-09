@@ -16,6 +16,10 @@ export function useChat(sessionId: Ref<string | null>) {
         case 'TextDelta':
           streamingText.value += event.delta
           break
+        case 'ThinkingDelta':
+          // P0 暂不展示思考过程
+          console.debug('[ThinkingDelta]', event.delta)
+          break
         case 'MessageComplete':
           messages.value.push({
             id: crypto.randomUUID(),

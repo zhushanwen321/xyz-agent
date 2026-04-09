@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { AgentEvent, SessionInfo, TranscriptEntry } from '../types'
 
-export async function createSession(cwd: string): Promise<{ session_id: string; path: string }> {
+export async function createSession(cwd: string): Promise<{ session_id: string; title: string }> {
   return invoke('new_session', { cwd })
 }
 

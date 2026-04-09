@@ -21,6 +21,7 @@ impl AgentLoop {
         &self,
         user_message: String,
         history: Vec<TranscriptEntry>,
+        parent_uuid: Option<String>,
         event_tx: tokio::sync::mpsc::UnboundedSender<AgentEvent>,
     ) -> Result<TranscriptEntry, AppError> {
         let mut api_messages = history_to_api_messages(&history);
@@ -41,6 +42,9 @@ impl AgentLoop {
         while let Some(item) = stream.next().await {
             match item {
                 Ok(crate::services::llm::LlmStreamEvent::TextDelta { delta }) => {
+                    if delta.is_empty() {
+                        continue;
+                    }
                     full_content.push_str(&delta);
                     let _ = event_tx.send(AgentEvent::TextDelta {
                         session_id: self.session_id.clone(),
@@ -81,7 +85,7 @@ impl AgentLoop {
         let now = chrono::Utc::now().to_rfc3339();
         Ok(TranscriptEntry::Assistant {
             uuid: uuid::Uuid::new_v4().to_string(),
-            parent_uuid: None,
+            parent_uuid,
             timestamp: now,
             session_id: self.session_id.clone(),
             content: full_content,
