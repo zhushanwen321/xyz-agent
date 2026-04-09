@@ -11,9 +11,9 @@ ERRORS=0
 echo "=== File Size Check (max $LIMIT lines, excluding comments and blanks) ==="
 
 while IFS= read -r -d '' file; do
-    # 过滤注释行（// 和 /* */ 块注释）和空行，计数有效行
-    # 简单方案：用 sed 移除单行注释和空行，然后计数
-    effective_lines=$(sed 's|//.*||; /^[[:space:]]*$/d; /\/\*/,/\*\//d' "$file" | wc -l | tr -d ' ')
+    # 过滤注释行和空行，计数有效行
+    # 移除 // 注释行、空行、单行 /* ... */ 块注释
+    effective_lines=$(grep -vE '^\s*(//|/\*.*\*/\s*)?$' "$file" | wc -l | tr -d ' ')
 
     if [ "$effective_lines" -gt "$LIMIT" ]; then
         rel_path="${file#$ROOT_DIR/}"
