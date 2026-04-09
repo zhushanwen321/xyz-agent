@@ -1,4 +1,5 @@
 pub mod agent_loop;
+pub mod data_context;
 pub mod config;
 pub mod context_manager;
 pub mod event_bus;

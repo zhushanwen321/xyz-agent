@@ -3,6 +3,7 @@ use futures::future::join_all;
 use crate::services::tool_registry::{PermissionContext, ToolRegistry, ToolResult};
 
 /// A tool call extracted from LLM response, awaiting execution.
+#[derive(Clone)]
 pub struct PendingToolCall {
     pub id: String,
     pub name: String,

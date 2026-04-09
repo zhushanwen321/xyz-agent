@@ -3,6 +3,7 @@ use crate::db::{jsonl, session_index};
 use crate::models::{TranscriptEntry, UserContentBlock};
 use crate::services::agent_loop::AgentLoop;
 use crate::services::event_bus;
+use crate::services::prompt_manager::{DynamicContext, PromptManager};
 use crate::services::tool_registry::{PermissionContext, ToolRegistry};
 use crate::services::tools;
 use tauri::{AppHandle, State};
@@ -50,6 +51,20 @@ pub async fn send_message(
     tools::register_builtin_tools(&mut registry, workdir);
     let perms = PermissionContext::default();
 
+    let prompt_manager = PromptManager::new();
+    let dynamic_context = DynamicContext {
+        cwd: std::env::current_dir()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+        os: std::env::consts::OS.to_string(),
+        model: state.model.clone(),
+        git_branch: None,
+        tool_names: registry.tool_names(),
+        data_context_summary: None,
+        conversation_summary: None,
+    };
+
     let new_entries = agent_loop
         .run_turn(
             content,
@@ -58,6 +73,8 @@ pub async fn send_message(
             event_tx,
             &registry,
             &perms,
+            &prompt_manager,
+            &dynamic_context,
         )
         .await
         .map_err(|e| {
