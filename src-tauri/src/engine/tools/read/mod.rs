@@ -5,15 +5,17 @@ use serde_json;
 
 use crate::engine::tools::{Tool, ToolResult};
 
-const MAX_OUTPUT_BYTES: usize = 100_000;
+#[cfg(test)]
+const FALLBACK_MAX_OUTPUT_BYTES: usize = 100_000;
 
 pub struct ReadTool {
     workdir: PathBuf,
+    max_output_bytes: usize,
 }
 
 impl ReadTool {
-    pub fn new(workdir: PathBuf) -> Self {
-        Self { workdir }
+    pub fn new(workdir: PathBuf, max_output_bytes: usize) -> Self {
+        Self { workdir, max_output_bytes }
     }
 
     fn resolve_path(&self, file_path: &str) -> Result<PathBuf, String> {
@@ -89,8 +91,8 @@ impl Tool for ReadTool {
             output.push_str(&format!("{:>6}\t{}\n", line_num, line));
         }
 
-        if output.len() > MAX_OUTPUT_BYTES {
-            output.truncate(MAX_OUTPUT_BYTES);
+        if output.len() > self.max_output_bytes {
+            output.truncate(self.max_output_bytes);
             output.push_str("\n[truncated]");
         }
 
@@ -135,7 +137,7 @@ mod tests {
     use tempfile::tempdir;
 
     fn make_tool(workdir: &std::path::Path) -> ReadTool {
-        ReadTool::new(workdir.to_path_buf())
+        ReadTool::new(workdir.to_path_buf(), FALLBACK_MAX_OUTPUT_BYTES)
     }
 
     #[tokio::test]
@@ -200,7 +202,7 @@ mod tests {
 
         assert!(!result.is_error);
         assert!(result.output.ends_with("[truncated]"));
-        assert!(result.output.len() <= MAX_OUTPUT_BYTES + 20); // 允许少量余量
+        assert!(result.output.len() <= FALLBACK_MAX_OUTPUT_BYTES + 20); // 允许少量余量
     }
 
     #[tokio::test]

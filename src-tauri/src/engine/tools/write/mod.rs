@@ -86,7 +86,12 @@ impl Tool for WriteTool {
         // 对 workdir 做 canonicalize 以确保比较基准一致
         let workdir_canonical = match self.workdir.canonicalize() {
             Ok(p) => p,
-            Err(_) => self.workdir.clone(),
+            Err(e) => {
+                return ToolResult {
+                    output: format!("Invalid workdir: {e}"),
+                    is_error: true,
+                }
+            }
         };
 
         if !canonical_parent.starts_with(&workdir_canonical) {
@@ -96,7 +101,16 @@ impl Tool for WriteTool {
             };
         }
 
-        let final_path = canonical_parent.join(resolved.file_name().unwrap());
+        let file_name = match resolved.file_name() {
+            Some(name) => name,
+            None => {
+                return ToolResult {
+                    output: "Invalid file path: no file name component".into(),
+                    is_error: true,
+                }
+            }
+        };
+        let final_path = canonical_parent.join(file_name);
 
         match tokio::fs::write(&final_path, content).await {
             Ok(_) => ToolResult { output: "ok".into(), is_error: false },

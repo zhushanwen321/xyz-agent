@@ -5,16 +5,20 @@ use serde_json;
 
 use crate::engine::tools::{Tool, ToolResult};
 
-const MAX_OUTPUT_BYTES: usize = 100_000;
-const DEFAULT_TIMEOUT_SECS: u64 = 120;
+#[cfg(test)]
+const FALLBACK_MAX_OUTPUT_BYTES: usize = 100_000;
+#[cfg(test)]
+const FALLBACK_TIMEOUT_SECS: u64 = 120;
 
 pub struct BashTool {
     workdir: PathBuf,
+    default_timeout_secs: u64,
+    max_output_bytes: usize,
 }
 
 impl BashTool {
-    pub fn new(workdir: PathBuf) -> Self {
-        Self { workdir }
+    pub fn new(workdir: PathBuf, default_timeout_secs: u64, max_output_bytes: usize) -> Self {
+        Self { workdir, default_timeout_secs, max_output_bytes }
     }
 }
 
@@ -45,7 +49,8 @@ impl Tool for BashTool {
     }
 
     fn timeout_secs(&self) -> u64 {
-        DEFAULT_TIMEOUT_SECS
+        // executor 层超时 = 工具默认超时 + 60s 余量，避免与内部超时冲突
+        self.default_timeout_secs.saturating_add(60)
     }
 
     async fn call(&self, input: serde_json::Value) -> ToolResult {
@@ -57,7 +62,7 @@ impl Tool for BashTool {
         let timeout = input
             .get("timeout")
             .and_then(|v| v.as_u64())
-            .unwrap_or(DEFAULT_TIMEOUT_SECS);
+            .unwrap_or(self.default_timeout_secs);
 
         // Fix 1: Validate workdir parameter to ensure it's within the tool's base workdir
         // Canonicalize base workdir once for comparison (handles symlinks)
@@ -128,7 +133,7 @@ impl Tool for BashTool {
                             stdout,
                             stderr,
                         };
-                        process_output(output)
+                        process_output(output, self.max_output_bytes)
                     }
                     Err(e) => ToolResult {
                         output: format!("Error waiting for command: {e}"),
@@ -148,7 +153,7 @@ impl Tool for BashTool {
     }
 }
 
-fn process_output(output: std::process::Output) -> ToolResult {
+fn process_output(output: std::process::Output, max_output_bytes: usize) -> ToolResult {
 
     let exit_code = output.status.code().unwrap_or(-1);
     // 合并 stdout 和 stderr
@@ -161,8 +166,8 @@ fn process_output(output: std::process::Output) -> ToolResult {
         combined.push_str(&stderr);
     }
 
-    if combined.len() > MAX_OUTPUT_BYTES {
-        combined.truncate(MAX_OUTPUT_BYTES);
+    if combined.len() > max_output_bytes {
+        combined.truncate(max_output_bytes);
         combined.push_str("\n[truncated]");
     }
 
@@ -180,7 +185,7 @@ mod tests {
     use tempfile::tempdir;
 
     fn make_tool(workdir: &std::path::Path) -> BashTool {
-        BashTool::new(workdir.to_path_buf())
+        BashTool::new(workdir.to_path_buf(), FALLBACK_TIMEOUT_SECS, FALLBACK_MAX_OUTPUT_BYTES)
     }
 
     #[tokio::test]
@@ -243,7 +248,7 @@ mod tests {
 
         assert!(!result.is_error);
         assert!(result.output.contains("[truncated]"));
-        assert!(result.output.len() <= MAX_OUTPUT_BYTES + 20);
+        assert!(result.output.len() <= FALLBACK_MAX_OUTPUT_BYTES + 20);
     }
 
     #[tokio::test]
