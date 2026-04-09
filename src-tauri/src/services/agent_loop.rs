@@ -1,5 +1,5 @@
 use crate::error::AppError;
-use crate::models::{AgentEvent, AssistantContentBlock, TokenUsage, TranscriptEntry, UserContentBlock};
+use crate::models::{AgentEvent, AssistantContentBlock, TokenUsage, TranscriptEntry};
 use crate::services::llm::{LlmProvider, LlmStreamEvent};
 use futures::StreamExt;
 use std::sync::Arc;
@@ -53,7 +53,7 @@ impl AgentLoop {
                 api_messages.len()
             );
 
-            let stream = match self.provider.chat_stream(api_messages.clone(), &self.model).await {
+            let stream = match self.provider.chat_stream(vec![], api_messages.clone(), &self.model, None).await {
                 Ok(s) => s,
                 Err(e) => {
                     log::error!("[agent_loop] chat_stream failed: {e}");
@@ -161,36 +161,22 @@ fn history_to_api_messages(history: &[TranscriptEntry]) -> Vec<serde_json::Value
         .iter()
         .filter_map(|entry| match entry {
             TranscriptEntry::User { content, .. } => {
-                let texts: Vec<&str> = content
-                    .iter()
-                    .filter_map(|b| match b {
-                        UserContentBlock::Text { text } => Some(text.as_str()),
-                        _ => None,
-                    })
-                    .collect();
-                if texts.is_empty() {
+                if content.is_empty() {
                     None
                 } else {
                     Some(serde_json::json!({
                         "role": "user",
-                        "content": texts.concat(),
+                        "content": content,
                     }))
                 }
             }
             TranscriptEntry::Assistant { content, .. } => {
-                let texts: Vec<&str> = content
-                    .iter()
-                    .filter_map(|b| match b {
-                        AssistantContentBlock::Text { text } => Some(text.as_str()),
-                        _ => None,
-                    })
-                    .collect();
-                if texts.is_empty() {
+                if content.is_empty() {
                     None
                 } else {
                     Some(serde_json::json!({
                         "role": "assistant",
-                        "content": texts.concat(),
+                        "content": content,
                     }))
                 }
             }
@@ -261,6 +247,7 @@ fn read_api_key_from_config_file() -> Result<String, ()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::UserContentBlock;
 
     #[test]
     fn history_to_api_messages_filters_system_entries() {
@@ -305,9 +292,11 @@ mod tests {
         let messages = history_to_api_messages(&history);
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0]["role"], "user");
-        assert_eq!(messages[0]["content"], "hello");
+        assert_eq!(messages[0]["content"][0]["type"], "text");
+        assert_eq!(messages[0]["content"][0]["text"], "hello");
         assert_eq!(messages[1]["role"], "assistant");
-        assert_eq!(messages[1]["content"], "response");
+        assert_eq!(messages[1]["content"][0]["type"], "text");
+        assert_eq!(messages[1]["content"][0]["text"], "response");
     }
 
     #[test]
@@ -352,13 +341,66 @@ mod tests {
 
         let messages = history_to_api_messages(&history);
         assert_eq!(messages.len(), 3);
-        assert_eq!(messages[0]["content"], "first");
-        assert_eq!(messages[1]["content"], "second");
-        assert_eq!(messages[2]["content"], "third");
+        assert_eq!(messages[0]["content"][0]["text"], "first");
+        assert_eq!(messages[1]["content"][0]["text"], "second");
+        assert_eq!(messages[2]["content"][0]["text"], "third");
 
         assert_eq!(messages[0]["role"], "user");
         assert_eq!(messages[1]["role"], "assistant");
         assert_eq!(messages[2]["role"], "user");
+    }
+
+    #[test]
+    fn history_to_api_messages_preserves_tool_use_blocks() {
+        let history = vec![
+            TranscriptEntry::Assistant {
+                uuid: "a1".to_string(),
+                parent_uuid: None,
+                timestamp: "2026-01-01T00:00:00Z".to_string(),
+                session_id: "s1".to_string(),
+                content: vec![
+                    AssistantContentBlock::Text {
+                        text: "let me read that".to_string(),
+                    },
+                    AssistantContentBlock::ToolUse {
+                        id: "toolu_123".to_string(),
+                        name: "read_file".to_string(),
+                        input: serde_json::json!({"path": "/tmp/test"}),
+                    },
+                ],
+                usage: None,
+            },
+            TranscriptEntry::User {
+                uuid: "u1".to_string(),
+                parent_uuid: Some("a1".to_string()),
+                timestamp: "2026-01-01T00:00:01Z".to_string(),
+                session_id: "s1".to_string(),
+                content: vec![UserContentBlock::ToolResult {
+                    tool_use_id: "toolu_123".to_string(),
+                    content: "file content here".to_string(),
+                    is_error: false,
+                }],
+            },
+        ];
+
+        let messages = history_to_api_messages(&history);
+        assert_eq!(messages.len(), 2);
+
+        // assistant 消息包含 text + tool_use 两个 content block
+        assert_eq!(messages[0]["role"], "assistant");
+        let assistant_content = messages[0]["content"].as_array().unwrap();
+        assert_eq!(assistant_content.len(), 2);
+        assert_eq!(assistant_content[0]["type"], "text");
+        assert_eq!(assistant_content[1]["type"], "tool_use");
+        assert_eq!(assistant_content[1]["id"], "toolu_123");
+        assert_eq!(assistant_content[1]["name"], "read_file");
+
+        // user 消息包含 tool_result content block
+        assert_eq!(messages[1]["role"], "user");
+        let user_content = messages[1]["content"].as_array().unwrap();
+        assert_eq!(user_content.len(), 1);
+        assert_eq!(user_content[0]["type"], "tool_result");
+        assert_eq!(user_content[0]["tool_use_id"], "toolu_123");
     }
 
     #[test]

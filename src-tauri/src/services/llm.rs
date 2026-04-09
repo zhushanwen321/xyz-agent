@@ -37,8 +37,10 @@ pub enum LlmStreamEvent {
 pub trait LlmProvider: Send + Sync {
     async fn chat_stream(
         &self,
+        system: Vec<serde_json::Value>,
         messages: Vec<serde_json::Value>,
         model: &str,
+        tools: Option<Vec<serde_json::Value>>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<LlmStreamEvent, AppError>> + Send>>, AppError>;
 }
 
@@ -69,10 +71,23 @@ impl AnthropicProvider {
 impl LlmProvider for AnthropicProvider {
     async fn chat_stream(
         &self,
+        system: Vec<serde_json::Value>,
         messages: Vec<serde_json::Value>,
         model: &str,
+        tools: Option<Vec<serde_json::Value>>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<LlmStreamEvent, AppError>> + Send>>, AppError>
     {
+        let mut body = serde_json::json!({
+            "model": model,
+            "system": system,
+            "messages": messages,
+            "stream": true,
+            "max_tokens": 4096,
+        });
+        if let Some(tools) = tools {
+            body["tools"] = serde_json::json!(tools);
+        }
+
         let resp = self
             .client
             .post(format!("{}/v1/messages", self.base_url))
@@ -80,12 +95,7 @@ impl LlmProvider for AnthropicProvider {
             .header("anthropic-version", "2023-06-01")
             .header("user-agent", "claude-code/2.1.88")
             .header("content-type", "application/json")
-            .json(&serde_json::json!({
-                "model": model,
-                "messages": messages,
-                "stream": true,
-                "max_tokens": 4096,
-            }))
+            .json(&body)
             .send()
             .await
             .map_err(|e| AppError::Llm(format!("request failed: {e}")))?;
@@ -204,13 +214,15 @@ fn map_sse_event(event: eventsource_stream::Event) -> Result<LlmStreamEvent, App
 #[allow(dead_code)]
 pub async fn chat_stream_with_retry(
     provider: &dyn LlmProvider,
+    system: Vec<serde_json::Value>,
     messages: Vec<serde_json::Value>,
     model: &str,
+    tools: Option<Vec<serde_json::Value>>,
     max_retries: usize,
 ) -> Result<Pin<Box<dyn Stream<Item = Result<LlmStreamEvent, AppError>> + Send>>, AppError> {
     let mut attempt = 0;
     loop {
-        match provider.chat_stream(messages.clone(), model).await {
+        match provider.chat_stream(system.clone(), messages.clone(), model, tools.clone()).await {
             Ok(stream) => return Ok(stream),
             Err(e) if attempt < max_retries => {
                 let delay = std::time::Duration::from_secs(1u64 << attempt);
