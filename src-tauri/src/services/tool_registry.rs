@@ -41,6 +41,13 @@ impl ToolRegistry {
         }
     }
 
+    /// Cheap clone: `Arc<dyn Tool>` is reference-counted.
+    pub fn clone(&self) -> Self {
+        Self {
+            tools: self.tools.clone(),
+        }
+    }
+
     pub fn register(&mut self, tool: Arc<dyn Tool>) {
         self.tools.insert(tool.name().to_string(), tool);
     }
