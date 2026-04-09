@@ -23,6 +23,16 @@ pub enum AgentEvent {
         session_id: String,
         message: String,
     },
+    ToolCallStart {
+        session_id: String,
+        tool_name: String,
+        tool_use_id: String,
+    },
+    ToolCallEnd {
+        session_id: String,
+        tool_use_id: String,
+        is_error: bool,
+    },
 }
 
 impl AgentEvent {
@@ -32,6 +42,8 @@ impl AgentEvent {
             AgentEvent::ThinkingDelta { session_id, .. } => session_id,
             AgentEvent::MessageComplete { session_id, .. } => session_id,
             AgentEvent::Error { session_id, .. } => session_id,
+            AgentEvent::ToolCallStart { session_id, .. } => session_id,
+            AgentEvent::ToolCallEnd { session_id, .. } => session_id,
         }
     }
 
@@ -41,6 +53,8 @@ impl AgentEvent {
             AgentEvent::ThinkingDelta { .. } => "ThinkingDelta",
             AgentEvent::MessageComplete { .. } => "MessageComplete",
             AgentEvent::Error { .. } => "Error",
+            AgentEvent::ToolCallStart { .. } => "ToolCallStart",
+            AgentEvent::ToolCallEnd { .. } => "ToolCallEnd",
         }
     }
 }
@@ -121,6 +135,41 @@ mod tests {
             assert_eq!(delta, "x");
         } else {
             panic!("Expected TextDelta");
+        }
+    }
+
+    #[test]
+    fn test_tool_call_start_serialization() {
+        let event = AgentEvent::ToolCallStart {
+            session_id: "s1".to_string(),
+            tool_name: "search_web".to_string(),
+            tool_use_id: "tool_123".to_string(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"type\":\"ToolCallStart\""));
+        assert!(json.contains("\"tool_name\":\"search_web\""));
+        assert!(json.contains("\"tool_use_id\":\"tool_123\""));
+
+        let de: AgentEvent = serde_json::from_str(&json).unwrap();
+        assert!(matches!(de, AgentEvent::ToolCallStart { .. }));
+    }
+
+    #[test]
+    fn test_tool_call_end_serialization() {
+        let event = AgentEvent::ToolCallEnd {
+            session_id: "s1".to_string(),
+            tool_use_id: "tool_123".to_string(),
+            is_error: false,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"type\":\"ToolCallEnd\""));
+        assert!(json.contains("\"is_error\":false"));
+
+        let de: AgentEvent = serde_json::from_str(&json).unwrap();
+        if let AgentEvent::ToolCallEnd { is_error, .. } = de {
+            assert_eq!(is_error, false);
+        } else {
+            panic!("Expected ToolCallEnd");
         }
     }
 }
