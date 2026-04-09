@@ -19,7 +19,5 @@ export async function sendMessage(sessionId: string, content: string): Promise<v
 }
 
 export function onAgentEvent(handler: (event: AgentEvent) => void): Promise<UnlistenFn> {
-  return listen<AgentEvent>('agent-event', (event) => {
-    handler(event.payload)
-  })
+  return listen<AgentEvent>('agent-event', (e) => handler(e.payload))
 }

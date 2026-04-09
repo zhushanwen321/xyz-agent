@@ -1,6 +1,6 @@
 use crate::error::AppError;
 use crate::models::{AgentEvent, TokenUsage, TranscriptEntry};
-use crate::services::llm::LlmProvider;
+use crate::services::llm::{LlmProvider, LlmStreamEvent};
 use futures::StreamExt;
 use std::sync::Arc;
 
@@ -11,10 +11,7 @@ pub struct AgentLoop {
 
 impl AgentLoop {
     pub fn new(provider: Arc<dyn LlmProvider>, session_id: String) -> Self {
-        Self {
-            provider,
-            session_id,
-        }
+        Self { provider, session_id }
     }
 
     pub async fn run_turn(
@@ -24,6 +21,8 @@ impl AgentLoop {
         parent_uuid: Option<String>,
         event_tx: tokio::sync::mpsc::UnboundedSender<AgentEvent>,
     ) -> Result<TranscriptEntry, AppError> {
+        let session_id = &self.session_id;
+
         let mut api_messages = history_to_api_messages(&history);
         api_messages.push(serde_json::json!({
             "role": "user",
@@ -41,40 +40,40 @@ impl AgentLoop {
 
         while let Some(item) = stream.next().await {
             match item {
-                Ok(crate::services::llm::LlmStreamEvent::TextDelta { delta }) => {
+                Ok(LlmStreamEvent::TextDelta { delta }) => {
                     if delta.is_empty() {
                         continue;
                     }
                     full_content.push_str(&delta);
                     let _ = event_tx.send(AgentEvent::TextDelta {
-                        session_id: self.session_id.clone(),
+                        session_id: session_id.clone(),
                         delta,
                     });
                 }
-                Ok(crate::services::llm::LlmStreamEvent::ThinkingDelta { delta }) => {
+                Ok(LlmStreamEvent::ThinkingDelta { delta }) => {
                     let _ = event_tx.send(AgentEvent::ThinkingDelta {
-                        session_id: self.session_id.clone(),
+                        session_id: session_id.clone(),
                         delta,
                     });
                 }
-                Ok(crate::services::llm::LlmStreamEvent::MessageStop { usage }) => {
+                Ok(LlmStreamEvent::MessageStop { usage }) => {
                     final_usage = usage;
                     let _ = event_tx.send(AgentEvent::MessageComplete {
-                        session_id: self.session_id.clone(),
+                        session_id: session_id.clone(),
                         role: "assistant".to_string(),
                         content: full_content.clone(),
                         usage: final_usage.clone(),
                     });
                 }
-                Ok(crate::services::llm::LlmStreamEvent::Error { message }) => {
+                Ok(LlmStreamEvent::Error { message }) => {
                     let _ = event_tx.send(AgentEvent::Error {
-                        session_id: self.session_id.clone(),
-                        message: message.clone(),
+                        session_id: session_id.clone(),
+                        message,
                     });
                 }
                 Err(e) => {
                     let _ = event_tx.send(AgentEvent::Error {
-                        session_id: self.session_id.clone(),
+                        session_id: session_id.clone(),
                         message: e.to_string(),
                     });
                     return Err(e);
@@ -87,33 +86,26 @@ impl AgentLoop {
             uuid: uuid::Uuid::new_v4().to_string(),
             parent_uuid,
             timestamp: now,
-            session_id: self.session_id.clone(),
+            session_id: session_id.clone(),
             content: full_content,
             usage: Some(final_usage),
         })
     }
 }
 
-/// 将 TranscriptEntry 链转为 Anthropic {role, content} 数组
 fn history_to_api_messages(history: &[TranscriptEntry]) -> Vec<serde_json::Value> {
     history
         .iter()
-        .filter(|entry| {
-            matches!(
-                entry,
-                TranscriptEntry::User { .. } | TranscriptEntry::Assistant { .. }
-            )
-        })
-        .map(|entry| match entry {
-            TranscriptEntry::User { content, .. } => serde_json::json!({
+        .filter_map(|entry| match entry {
+            TranscriptEntry::User { content, .. } => Some(serde_json::json!({
                 "role": "user",
                 "content": content,
-            }),
-            TranscriptEntry::Assistant { content, .. } => serde_json::json!({
+            })),
+            TranscriptEntry::Assistant { content, .. } => Some(serde_json::json!({
                 "role": "assistant",
                 "content": content,
-            }),
-            _ => unreachable!(),
+            })),
+            _ => None,
         })
         .collect()
 }

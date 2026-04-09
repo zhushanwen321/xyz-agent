@@ -2,6 +2,10 @@ import { ref, onMounted, onUnmounted, watch, type Ref } from 'vue'
 import { sendMessage, getHistory, onAgentEvent } from '../lib/tauri'
 import type { AgentEvent, ChatMessage, TranscriptEntry } from '../types'
 
+function createMessage(role: ChatMessage['role'], content: string): ChatMessage {
+  return { id: crypto.randomUUID(), role, content, timestamp: new Date().toISOString() }
+}
+
 export function useChat(sessionId: Ref<string | null>) {
   const messages = ref<ChatMessage[]>([])
   const streamingText = ref('')
@@ -17,26 +21,15 @@ export function useChat(sessionId: Ref<string | null>) {
           streamingText.value += event.delta
           break
         case 'ThinkingDelta':
-          // P0 暂不展示思考过程
           console.debug('[ThinkingDelta]', event.delta)
           break
         case 'MessageComplete':
-          messages.value.push({
-            id: crypto.randomUUID(),
-            role: event.role as 'assistant',
-            content: event.content,
-            timestamp: new Date().toISOString(),
-          })
+          messages.value.push(createMessage('assistant', event.content))
           streamingText.value = ''
           isStreaming.value = false
           break
         case 'Error':
-          messages.value.push({
-            id: crypto.randomUUID(),
-            role: 'system',
-            content: `Error: ${event.message}`,
-            timestamp: new Date().toISOString(),
-          })
+          messages.value.push(createMessage('system', `Error: ${event.message}`))
           isStreaming.value = false
           break
       }
@@ -50,12 +43,7 @@ export function useChat(sessionId: Ref<string | null>) {
   async function send(content: string) {
     if (!sessionId.value || isStreaming.value) return
     isStreaming.value = true
-    messages.value.push({
-      id: crypto.randomUUID(),
-      role: 'user',
-      content,
-      timestamp: new Date().toISOString(),
-    })
+    messages.value.push(createMessage('user', content))
     streamingText.value = ''
     await sendMessage(sessionId.value, content)
   }
