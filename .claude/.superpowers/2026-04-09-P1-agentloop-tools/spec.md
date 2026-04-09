@@ -137,16 +137,18 @@ async fn chat_stream(
     model: &str,
 ) -> Result<Pin<Box<dyn Stream<Item = Result<LlmStreamEvent, AppError>> + Send>>, AppError>;
 
-// After
+// After（PromptManager spec 追加 system 参数）
 async fn chat_stream(
     &self,
+    system: Vec<serde_json::Value>,          // system prompt blocks（PromptManager 生成）
     messages: Vec<serde_json::Value>,
     model: &str,
     tools: Option<Vec<serde_json::Value>>,  // JSON Schema 工具定义列表
 ) -> Result<Pin<Box<dyn Stream<Item = Result<LlmStreamEvent, AppError>> + Send>>, AppError>;
 ```
 
-`tools` 为 `None` 时不传工具定义（纯对话模式）。
+`tools` 为 `None` 时不传工具定义（纯对话模式，如摘要请求）。
+`system` 由 PromptManager.build_system_prompt() 生成，含 cache breakpoint。
 
 **已知限制**：`serde_json::Value` 使用 Anthropic 格式。多 provider 支持时需加转换层。
 
@@ -184,13 +186,15 @@ pub fn history_to_api_messages(entries: &[TranscriptEntry]) -> Vec<serde_json::V
 // Before
 pub async fn run_turn(&self, ...) -> Result<TranscriptEntry, AppError>
 
-// After
+// After（含 PromptManager/ContextManager/DataContext 集成）
 pub async fn run_turn(
     &self,
     user_message: String,
     history: Vec<TranscriptEntry>,
     parent_uuid: Option<String>,
     event_tx: UnboundedSender<AgentEvent>,
+    prompt_manager: &PromptManager,
+    dynamic_context: &DynamicContext,
 ) -> Result<Vec<TranscriptEntry>, AppError>
 ```
 
@@ -199,10 +203,12 @@ pub async fn run_turn(
 ```
 entries: Vec<TranscriptEntry> = []
 tool_schemas = registry.tool_schemas(&perms)
+system = prompt_manager.build_system_prompt(dynamic_context)
 
 loop {
     api_messages = history_to_api_messages(&history) + entries
-    stream = provider.chat_stream(api_messages, model, Some(tool_schemas))
+    api_messages = context_manager.trim_old_tool_results(api_messages)  // 第一层裁剪
+    stream = provider.chat_stream(system, api_messages, model, Some(tool_schemas))
 
     (content_blocks, tool_calls, stop_reason, usage) = consume_stream(stream)
 

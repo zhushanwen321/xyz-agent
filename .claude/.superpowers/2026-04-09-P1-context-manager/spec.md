@@ -232,19 +232,29 @@ TranscriptEntry::Summary {
 
 ### JSONL 加载逻辑
 
-`load_history` 函数需更新：
+`load_history` 返回值改为 `LoadHistoryResult`，将 entries 和摘要分离：
+
+```rust
+pub struct LoadHistoryResult {
+    pub entries: Vec<TranscriptEntry>,   // leaf_uuid 之后的 entries（或全部）
+    pub conversation_summary: Option<String>,  // 摘要文本（如果有 Summary entry）
+}
+```
+
+加载流程：
 
 ```
 1. 读取全部 entries
 2. 查找最新 Summary entry
 3. 如果找到：
-   a. 构造合成 System message（包含摘要文本）
-   b. 只加载 leaf_uuid 之后的 entries
-   c. 返回 [System(摘要)] + [leaf_uuid 之后的 entries]
-4. 如果没有：返回全部 entries（当前行为）
+   a. 提取 summary 文本到 conversation_summary
+   b. entries = leaf_uuid 之后的 entries
+4. 如果没有：
+   a. entries = 全部 entries
+   b. conversation_summary = None
 ```
 
-这样 `history_to_api_messages` 不需要修改 — System entry 已经被处理。
+**不构造合成 System entry**。摘要通过 `DynamicContext.conversation_summary` 注入 PromptManager 的 system prompt。这样 `history_to_api_messages` 和 `TranscriptEntry::System` 的处理逻辑不需要修改。
 
 ### 熔断器
 
@@ -347,7 +357,7 @@ pub struct AppState {
 | 文件 | 变更 |
 |------|------|
 | `src-tauri/src/services/agent_loop.rs` | 集成 ContextManager（裁剪、估算、压缩、计数更新） |
-| `src-tauri/src/db/jsonl.rs` | `load_history` 增加 Summary 识别逻辑 |
+| `src-tauri/src/db/jsonl.rs` | `load_history` 返回 `LoadHistoryResult`，增加 Summary 识别逻辑 |
 | `src-tauri/src/commands/chat.rs` | 传递 ContextConfig，处理 Summary entry |
 | `src-tauri/src/lib.rs` | AppState 增加 ContextConfig |
 | `src/types/index.ts` | 新增 ContextEvent 类型（warning 等） |

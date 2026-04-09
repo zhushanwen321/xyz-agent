@@ -41,7 +41,8 @@ pub struct DynamicContext {
     pub model: String,
     pub git_branch: Option<String>,
     pub tool_names: Vec<String>,            // 可用工具名列表
-    pub data_context_summary: Option<String>,  // DataContext 摘要（P1 为 None）
+    pub data_context_summary: Option<String>,  // DataContext 填充（已读取文件摘要）
+    pub conversation_summary: Option<String>,  // ContextManager 填充（历史对话摘要）
 }
 
 impl PromptManager {
@@ -78,6 +79,9 @@ impl PromptManager {
         parts.push(format!("\n# Available Tools\n{}", ctx.tool_names.join(", ")));
         if let Some(summary) = &ctx.data_context_summary {
             parts.push(format!("\n# Data Context\n{}", summary));
+        }
+        if let Some(summary) = &ctx.conversation_summary {
+            parts.push(format!("\n# Conversation Summary\n{}", summary));
         }
         parts.join("\n")
     }
