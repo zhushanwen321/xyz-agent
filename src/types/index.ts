@@ -4,6 +4,8 @@ export type AgentEvent =
   | { type: 'ThinkingDelta'; session_id: string; delta: string }
   | { type: 'MessageComplete'; session_id: string; role: string; content: string; usage: TokenUsage }
   | { type: 'Error'; session_id: string; message: string }
+  | { type: 'ToolCallStart'; session_id: string; tool_name: string; tool_use_id: string }
+  | { type: 'ToolCallEnd'; session_id: string; tool_use_id: string; is_error: boolean }
 
 export interface TokenUsage {
   input_tokens: number
@@ -39,4 +41,10 @@ export interface SessionInfo {
   title: string
   created_at: string
   updated_at: string
+}
+
+// 与 Rust LoadHistoryResult 对应
+export interface LoadHistoryResult {
+  entries: TranscriptEntry[]
+  conversation_summary: string | null
 }

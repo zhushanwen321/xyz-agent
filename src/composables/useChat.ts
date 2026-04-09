@@ -1,15 +1,23 @@
 import { ref, onMounted, onUnmounted, watch, type Ref } from 'vue'
 import { sendMessage, getHistory, onAgentEvent, isTauri } from '../lib/tauri'
-import type { AgentEvent, ChatMessage, TranscriptEntry } from '../types'
+import type { AgentEvent, ChatMessage } from '../types'
 
 function createMessage(role: ChatMessage['role'], content: string): ChatMessage {
   return { id: crypto.randomUUID(), role, content, timestamp: new Date().toISOString() }
+}
+
+export interface ToolCallState {
+  tool_use_id: string
+  tool_name: string
+  is_running: boolean
+  is_error: boolean
 }
 
 export function useChat(sessionId: Ref<string | null>) {
   const messages = ref<ChatMessage[]>([])
   const streamingText = ref('')
   const isStreaming = ref(false)
+  const activeToolCalls = ref<Map<string, ToolCallState>>(new Map())
   let unlisten: (() => void) | null = null
 
   onMounted(async () => {
@@ -37,6 +45,24 @@ export function useChat(sessionId: Ref<string | null>) {
           messages.value.push(createMessage('system', `Error: ${event.message}`))
           isStreaming.value = false
           break
+        case 'ToolCallStart': {
+          const state: ToolCallState = {
+            tool_use_id: event.tool_use_id,
+            tool_name: event.tool_name,
+            is_running: true,
+            is_error: false,
+          }
+          activeToolCalls.value.set(event.tool_use_id, state)
+          break
+        }
+        case 'ToolCallEnd': {
+          const existing = activeToolCalls.value.get(event.tool_use_id)
+          if (existing) {
+            existing.is_running = false
+            existing.is_error = event.is_error
+          }
+          break
+        }
       }
     })
   })
@@ -52,6 +78,7 @@ export function useChat(sessionId: Ref<string | null>) {
       return
     }
     isStreaming.value = true
+    activeToolCalls.value.clear()
     messages.value.push(createMessage('user', content))
     streamingText.value = ''
     console.log('[useChat] calling sendMessage:', sessionId.value, content.slice(0, 50))
@@ -66,15 +93,23 @@ export function useChat(sessionId: Ref<string | null>) {
   }
 
   async function loadHistory(sid: string) {
-    const entries: TranscriptEntry[] = await getHistory(sid)
-    messages.value = entries
-      .filter((e) => e.type === 'user' || e.type === 'assistant')
-      .map((e) => ({
-        id: e.uuid,
-        role: e.type as 'user' | 'assistant',
-        content: extractTextContent(e.content),
-        timestamp: e.timestamp,
-      }))
+    const result = await getHistory(sid)
+    // 将 conversation_summary 作为系统消息插入历史顶部（如果有）
+    const msgs: ChatMessage[] = []
+    if (result.conversation_summary) {
+      msgs.push(createMessage('system', `[对话摘要] ${result.conversation_summary}`))
+    }
+    msgs.push(
+      ...result.entries
+        .filter((e) => e.type === 'user' || e.type === 'assistant')
+        .map((e) => ({
+          id: e.uuid,
+          role: e.type as 'user' | 'assistant',
+          content: extractTextContent(e.content),
+          timestamp: e.timestamp,
+        }))
+    )
+    messages.value = msgs
   }
 
   function extractTextContent(blocks: Array<{ type: string; text?: string }>): string {
@@ -88,5 +123,5 @@ export function useChat(sessionId: Ref<string | null>) {
     if (newId) loadHistory(newId)
   })
 
-  return { messages, streamingText, isStreaming, send }
+  return { messages, streamingText, isStreaming, activeToolCalls, send }
 }

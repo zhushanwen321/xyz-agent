@@ -7,6 +7,8 @@ mod services;
 
 use services::agent_loop;
 use services::llm::{AnthropicProvider, LlmProvider};
+use services::tool_registry::{PermissionContext, ToolRegistry};
+use services::tools;
 use std::sync::Arc;
 use tauri::Manager;
 
@@ -31,6 +33,11 @@ pub fn run() {
     let provider: Arc<dyn LlmProvider> =
         Arc::new(AnthropicProvider::new(llm_config.api_key).with_base_url(llm_config.base_url));
 
+    let mut tool_registry = ToolRegistry::new();
+    let workdir = std::env::current_dir().unwrap_or_default();
+    tools::register_builtin_tools(&mut tool_registry, workdir);
+    let global_perms = PermissionContext::default();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .setup(move |app| {
@@ -38,6 +45,8 @@ pub fn run() {
                 data_dir,
                 provider,
                 model: llm_config.model,
+                tool_registry,
+                global_perms,
             });
             Ok(())
         })

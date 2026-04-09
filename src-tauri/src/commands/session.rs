@@ -1,6 +1,7 @@
+use crate::db::jsonl::LoadHistoryResult;
 use crate::db::session_index;
-use crate::models::TranscriptEntry;
 use crate::services::llm::LlmProvider;
+use crate::services::tool_registry::{PermissionContext, ToolRegistry};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::State;
@@ -9,6 +10,8 @@ pub struct AppState {
     pub data_dir: PathBuf,
     pub provider: Arc<dyn LlmProvider>,
     pub model: String,
+    pub tool_registry: ToolRegistry,
+    pub global_perms: PermissionContext,
 }
 
 #[tauri::command]
@@ -29,10 +32,10 @@ pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<session_ind
 pub async fn get_history(
     session_id: String,
     state: State<'_, AppState>,
-) -> Result<Vec<TranscriptEntry>, String> {
+) -> Result<LoadHistoryResult, String> {
     let path = session_index::session_file_path(&state.data_dir, &session_id)
         .ok_or_else(|| format!("session {session_id} not found"))?;
-    crate::db::jsonl::read_all_entries(&path).map_err(|e| e.to_string())
+    crate::db::jsonl::load_history(&path).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

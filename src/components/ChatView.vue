@@ -9,7 +9,7 @@ const props = defineProps<{
 }>()
 
 const sessionIdRef = computed(() => props.currentSessionId) as Ref<string | null>
-const { messages, streamingText, isStreaming, send } = useChat(sessionIdRef)
+const { messages, streamingText, isStreaming, activeToolCalls, send } = useChat(sessionIdRef)
 
 const scrollContainer = ref<HTMLDivElement | null>(null)
 
@@ -46,6 +46,7 @@ function handleSend(content: string) {
           v-for="msg in messages"
           :key="msg.id"
           :message="msg"
+          :active-tool-calls="msg.role === 'assistant' ? activeToolCalls : undefined"
         />
 
         <MessageBubble

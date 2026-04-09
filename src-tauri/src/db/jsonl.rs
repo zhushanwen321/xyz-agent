@@ -108,6 +108,7 @@ pub fn sanitize_path(path: &str) -> String {
 
 // ── LoadHistoryResult：摘要感知的历史加载 ───────────────────────
 
+#[derive(serde::Serialize)]
 pub struct LoadHistoryResult {
     pub entries: Vec<TranscriptEntry>,
     pub conversation_summary: Option<String>,
