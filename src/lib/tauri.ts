@@ -42,3 +42,11 @@ export function onAgentEvent(handler: (event: AgentEvent) => void): Promise<Unli
     handler(e.payload)
   })
 }
+
+export async function getCurrentModel(): Promise<string> {
+  return invoke<string>('get_current_model')
+}
+
+export async function listTools(): Promise<string[]> {
+  return invoke<string[]>('list_tools')
+}

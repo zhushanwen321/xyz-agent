@@ -16,6 +16,7 @@ export function useChat(sessionId: Ref<string | null>) {
   const messages = ref<ChatMessage[]>([])
   const streamingText = ref('')
   const isStreaming = ref(false)
+  const tokenUsage = ref({ inputTokens: 0, outputTokens: 0 })
   let unlisten: (() => void) | null = null
 
   /** 找到最后一条 assistant 消息，将工具调用直接挂上去 */
@@ -56,6 +57,11 @@ export function useChat(sessionId: Ref<string | null>) {
         case 'MessageComplete': {
           streamingText.value = ''
           messages.value.push(createMessage('assistant', event.content))
+          // input_tokens 已包含历史消息，直接覆盖；output_tokens 累加
+          tokenUsage.value = {
+            inputTokens: event.usage.input_tokens,
+            outputTokens: tokenUsage.value.outputTokens + event.usage.output_tokens,
+          }
           break
         }
         case 'TurnComplete':
@@ -176,5 +182,5 @@ export function useChat(sessionId: Ref<string | null>) {
     if (newId) loadHistory(newId)
   })
 
-  return { messages, streamingText, isStreaming, send }
+  return { messages, streamingText, isStreaming, tokenUsage, send }
 }

@@ -30,27 +30,33 @@ const hasContent = computed(() => props.message.content || props.streamingText)
 </script>
 
 <template>
-  <div
-    class="flex"
-    :class="{
-      'justify-end': isUser,
-      'justify-start': !isUser,
-    }"
-  >
-    <div
-      class="max-w-[80%] rounded-lg px-4 py-2.5"
-      :class="{
-        'bg-primary text-primary-foreground': isUser,
-        'bg-muted': !isUser && !isSystem,
-        'bg-destructive/10 text-destructive': isSystem,
-      }"
-    >
-      <div class="mb-1 text-xs font-medium opacity-60">
-        {{ isUser ? 'You' : isSystem ? 'System' : 'Assistant' }}
+  <!-- User 消息 — 右对齐，深色卡片 -->
+  <div v-if="isUser" class="flex justify-end">
+    <div class="max-w-[85%] rounded-lg border border-border-default bg-bg-elevated px-4 py-3">
+      <div class="prose prose-sm max-w-none text-text-primary" v-html="renderedContent" />
+    </div>
+  </div>
+
+  <!-- System 消息 — 全宽，红色提示 -->
+  <div v-else-if="isSystem" class="rounded-md border border-accent-red/30 bg-accent-red/10 px-4 py-2.5">
+    <div class="flex items-center gap-2 text-xs font-medium text-accent-red">
+      <span>!</span>
+      <span>System</span>
+    </div>
+    <div class="mt-1 text-sm text-accent-red" v-html="renderedContent" />
+  </div>
+
+  <!-- Assistant 消息 — 左对齐，无背景 -->
+  <div v-else class="flex justify-start">
+    <div class="max-w-full">
+      <!-- 角色标签 -->
+      <div class="mb-2 flex items-center gap-1.5 font-mono text-[11px] text-accent">
+        <span class="text-accent">&lambda;</span>
+        <span class="font-medium">assistant</span>
       </div>
 
       <!-- 工具调用卡片 -->
-      <div v-if="message.toolCalls && message.toolCalls.length > 0" class="mb-2 space-y-1.5">
+      <div v-if="message.toolCalls && message.toolCalls.length > 0" class="mb-3 space-y-2">
         <ToolCallCard
           v-for="tc in message.toolCalls"
           :key="tc.tool_use_id"
@@ -61,12 +67,13 @@ const hasContent = computed(() => props.message.content || props.streamingText)
       <!-- 文本内容 -->
       <div
         v-if="hasContent"
-        class="prose prose-sm max-w-none dark:prose-invert"
+        class="prose prose-sm max-w-none text-text-primary"
         v-html="renderedContent"
       />
+      <!-- 流式光标 -->
       <span
         v-if="streamingText"
-        class="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-current"
+        class="ml-0.5 inline-block h-4 w-2 bg-accent animate-cursor-blink"
       />
     </div>
   </div>
