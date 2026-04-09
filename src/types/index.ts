@@ -3,9 +3,10 @@ export type AgentEvent =
   | { type: 'TextDelta'; session_id: string; delta: string }
   | { type: 'ThinkingDelta'; session_id: string; delta: string }
   | { type: 'MessageComplete'; session_id: string; role: string; content: string; usage: TokenUsage }
+  | { type: 'TurnComplete'; session_id: string }
   | { type: 'Error'; session_id: string; message: string }
-  | { type: 'ToolCallStart'; session_id: string; tool_name: string; tool_use_id: string }
-  | { type: 'ToolCallEnd'; session_id: string; tool_use_id: string; is_error: boolean }
+  | { type: 'ToolCallStart'; session_id: string; tool_name: string; tool_use_id: string; input: unknown }
+  | { type: 'ToolCallEnd'; session_id: string; tool_use_id: string; is_error: boolean; output: string }
 
 export interface TokenUsage {
   input_tokens: number
@@ -34,6 +35,16 @@ export interface ChatMessage {
   content: string
   timestamp: string
   isStreaming?: boolean
+  toolCalls?: ToolCallDisplay[]
+}
+
+/** 用于渲染的工具调用信息 */
+export interface ToolCallDisplay {
+  tool_use_id: string
+  tool_name: string
+  input: unknown
+  status: 'running' | 'completed' | 'error'
+  output?: string
 }
 
 export interface SessionInfo {

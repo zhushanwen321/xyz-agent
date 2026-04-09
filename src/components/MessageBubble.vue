@@ -2,12 +2,11 @@
 import { computed } from 'vue'
 import MarkdownIt from 'markdown-it'
 import type { ChatMessage } from '../types'
-import type { ToolCallState } from '../composables/useChat'
+import ToolCallCard from './ToolCallCard.vue'
 
 const props = defineProps<{
   message: ChatMessage
   streamingText?: string
-  activeToolCalls?: Map<string, ToolCallState>
 }>()
 
 const md = new MarkdownIt({
@@ -27,10 +26,7 @@ const renderedContent = computed(() => {
   return md.render(text)
 })
 
-const runningTools = computed(() => {
-  if (!props.activeToolCalls) return []
-  return Array.from(props.activeToolCalls.values()).filter((t) => t.is_running)
-})
+const hasContent = computed(() => props.message.content || props.streamingText)
 </script>
 
 <template>
@@ -53,19 +49,18 @@ const runningTools = computed(() => {
         {{ isUser ? 'You' : isSystem ? 'System' : 'Assistant' }}
       </div>
 
-      <!-- 正在运行的工具调用指示器 -->
-      <div v-if="runningTools.length > 0" class="mb-2 flex flex-wrap gap-1.5">
-        <span
-          v-for="tool in runningTools"
-          :key="tool.tool_use_id"
-          class="inline-flex items-center gap-1 rounded-md bg-secondary/80 px-2 py-0.5 text-xs text-secondary-foreground"
-        >
-          <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-400" />
-          {{ tool.tool_name }}
-        </span>
+      <!-- 工具调用卡片 -->
+      <div v-if="message.toolCalls && message.toolCalls.length > 0" class="mb-2 space-y-1.5">
+        <ToolCallCard
+          v-for="tc in message.toolCalls"
+          :key="tc.tool_use_id"
+          :tool-call="tc"
+        />
       </div>
 
+      <!-- 文本内容 -->
       <div
+        v-if="hasContent"
         class="prose prose-sm max-w-none dark:prose-invert"
         v-html="renderedContent"
       />
