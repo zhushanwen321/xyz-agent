@@ -73,8 +73,10 @@ impl MockLlmProvider {
 impl LlmProvider for MockLlmProvider {
     async fn chat_stream(
         &self,
+        _system: Vec<serde_json::Value>,
         _messages: Vec<serde_json::Value>,
         _model: &str,
+        _tools: Option<Vec<serde_json::Value>>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<LlmStreamEvent, AppError>> + Send>>, AppError>
     {
         let idx = self.call_count.fetch_add(1, Ordering::SeqCst);
@@ -101,7 +103,7 @@ mod tests {
             MockLlmProvider::text_response("hello world"),
         ]);
 
-        let mut stream = provider.chat_stream(vec![], "test-model").await.unwrap();
+        let mut stream = provider.chat_stream(vec![], vec![], "test-model", None).await.unwrap();
         let events: Vec<_> = stream.by_ref().collect().await;
 
         assert_eq!(events.len(), 2);
@@ -122,7 +124,7 @@ mod tests {
             vec![("toolu_1", "read_file", serde_json::json!({"path": "/tmp"}))],
         )]);
 
-        let mut stream = provider.chat_stream(vec![], "test-model").await.unwrap();
+        let mut stream = provider.chat_stream(vec![], vec![], "test-model", None).await.unwrap();
         let events: Vec<_> = stream.by_ref().collect().await;
 
         assert_eq!(events.len(), 4); // start + input_delta + end + message_stop
@@ -136,7 +138,7 @@ mod tests {
     async fn mock_errors_when_exhausted() {
         let provider = MockLlmProvider::new(vec![]);
 
-        let result = provider.chat_stream(vec![], "test-model").await;
+        let result = provider.chat_stream(vec![], vec![], "test-model", None).await;
         assert!(result.is_err());
     }
 
@@ -148,12 +150,12 @@ mod tests {
         ]);
 
         // 第一次调用
-        let mut s1 = provider.chat_stream(vec![], "m").await.unwrap();
+        let mut s1 = provider.chat_stream(vec![], vec![], "m", None).await.unwrap();
         let _: Vec<_> = s1.by_ref().collect().await;
         assert_eq!(provider.call_count.load(Ordering::SeqCst), 1);
 
         // 第二次调用
-        let mut s2 = provider.chat_stream(vec![], "m").await.unwrap();
+        let mut s2 = provider.chat_stream(vec![], vec![], "m", None).await.unwrap();
         let events: Vec<_> = s2.by_ref().collect().await;
         assert!(matches!(
             &events[0],
