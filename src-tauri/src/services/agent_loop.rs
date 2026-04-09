@@ -241,7 +241,8 @@ impl AgentLoop {
         dynamic_context: &DynamicContext,
     ) -> Result<Vec<TranscriptEntry>, AppError> {
         let session_id = &self.session_id;
-        let max_turns: usize = 50;
+        let agent_config = crate::services::config::load_agent_config().unwrap_or_default();
+        let max_turns: usize = agent_config.max_turns as usize;
         let mut entries: Vec<TranscriptEntry> = Vec::new();
         let mut current_parent = parent_uuid;
         let mut data_context = DataContext::new();
@@ -316,12 +317,21 @@ impl AgentLoop {
                 result.tool_calls.len()
             );
 
-            // 构建 call_map 用于 DataContext 追踪
+            // 构建 call_map 用于 DataContext 追踪 + ToolCallStart 事件
             let call_map: HashMap<String, _> = result
                 .tool_calls
                 .iter()
                 .map(|c| (c.id.clone(), c.clone()))
                 .collect();
+
+            // 在执行前发送 ToolCallStart 事件，前端可展示"正在执行"
+            for call in &result.tool_calls {
+                let _ = event_tx.send(AgentEvent::ToolCallStart {
+                    session_id: session_id.clone(),
+                    tool_name: call.name.clone(),
+                    tool_use_id: call.id.clone(),
+                });
+            }
 
             let tool_results =
                 crate::services::tool_executor::execute_batch(result.tool_calls.clone(), tool_registry, tool_perms)
@@ -350,12 +360,6 @@ impl AgentLoop {
             // 创建 tool_result user entry
             let mut user_blocks = Vec::new();
             for tr in &tool_results {
-                let _ = event_tx.send(AgentEvent::ToolCallStart {
-                    session_id: session_id.clone(),
-                    tool_name: String::new(),
-                    tool_use_id: tr.id.clone(),
-                });
-
                 user_blocks.push(UserContentBlock::ToolResult {
                     tool_use_id: tr.id.clone(),
                     content: tr.output.clone(),
