@@ -1,6 +1,8 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import type { AgentEvent, SessionInfo, TranscriptEntry } from '../types'
+import type { AgentEvent, LoadHistoryResult, SessionInfo } from '../types'
+
+export type { LoadHistoryResult }
 
 export function isTauri(): boolean {
   return !!(window as any).__TAURI_INTERNALS__
@@ -20,8 +22,8 @@ export async function listSessions(): Promise<SessionInfo[]> {
   return result as any
 }
 
-export async function getHistory(sessionId: string): Promise<TranscriptEntry[]> {
-  return invoke('get_history', { sessionId })
+export async function getHistory(sessionId: string): Promise<LoadHistoryResult> {
+  return invoke<LoadHistoryResult>('get_history', { sessionId })
 }
 
 export async function sendMessage(sessionId: string, content: string): Promise<void> {
@@ -39,4 +41,12 @@ export function onAgentEvent(handler: (event: AgentEvent) => void): Promise<Unli
     console.log('[tauri] agent-event:', e.payload.type, e.payload.session_id)
     handler(e.payload)
   })
+}
+
+export async function getCurrentModel(): Promise<string> {
+  return invoke<string>('get_current_model')
+}
+
+export async function listTools(): Promise<string[]> {
+  return invoke<string[]>('list_tools')
 }
