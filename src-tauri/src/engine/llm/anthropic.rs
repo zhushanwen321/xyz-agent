@@ -11,6 +11,7 @@ pub struct AnthropicProvider {
     client: reqwest::Client,
     api_key: String,
     base_url: String,
+    max_tokens: u32,
 }
 
 impl AnthropicProvider {
@@ -19,11 +20,17 @@ impl AnthropicProvider {
             client: reqwest::Client::new(),
             api_key,
             base_url: "https://api.anthropic.com".to_string(),
+            max_tokens: 4096,
         }
     }
 
     pub fn with_base_url(mut self, url: String) -> Self {
         self.base_url = url;
+        self
+    }
+
+    pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
+        self.max_tokens = max_tokens;
         self
     }
 }
@@ -43,7 +50,7 @@ impl LlmProvider for AnthropicProvider {
             "system": system,
             "messages": messages,
             "stream": true,
-            "max_tokens": 4096,
+            "max_tokens": self.max_tokens,
         });
         if let Some(tools) = tools {
             body["tools"] = serde_json::json!(tools);

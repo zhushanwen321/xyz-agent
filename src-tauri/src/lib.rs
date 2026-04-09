@@ -32,11 +32,15 @@ pub fn run() {
     );
 
     let provider: Arc<dyn LlmProvider> =
-        Arc::new(AnthropicProvider::new(llm_config.api_key).with_base_url(llm_config.base_url));
+        Arc::new(
+            AnthropicProvider::new(llm_config.api_key)
+                .with_base_url(llm_config.base_url)
+                .with_max_tokens(agent_config.max_output_tokens)
+        );
 
     let mut tool_registry = ToolRegistry::new();
     let workdir = std::env::current_dir().unwrap_or_default();
-    engine::tools::register_builtin_tools(&mut tool_registry, workdir);
+    engine::tools::register_builtin_tools(&mut tool_registry, workdir, &agent_config);
     let tool_registry = Arc::new(tool_registry);
     let global_perms = PermissionContext::default();
 

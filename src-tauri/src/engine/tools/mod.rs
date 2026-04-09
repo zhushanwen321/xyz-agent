@@ -243,11 +243,12 @@ async fn execute_single(
 // ── register_builtin_tools ────────────────────────────────────
 
 use std::path::PathBuf;
+use crate::engine::config::AgentConfig;
 
-pub fn register_builtin_tools(registry: &mut ToolRegistry, workdir: PathBuf) {
-    registry.register(Arc::new(read::ReadTool::new(workdir.clone())));
+pub fn register_builtin_tools(registry: &mut ToolRegistry, workdir: PathBuf, config: &AgentConfig) {
+    registry.register(Arc::new(read::ReadTool::new(workdir.clone(), config.tool_output_max_bytes)));
     registry.register(Arc::new(write::WriteTool::new(workdir.clone())));
-    registry.register(Arc::new(bash::BashTool::new(workdir)));
+    registry.register(Arc::new(bash::BashTool::new(workdir, config.bash_default_timeout_secs, config.tool_output_max_bytes)));
 }
 
 // ── Tests ─────────────────────────────────────────────────────
@@ -576,7 +577,7 @@ mod tests {
     fn test_register_all_builtin_tools() {
         let dir = tempdir().unwrap();
         let mut registry = ToolRegistry::new();
-        register_builtin_tools(&mut registry, dir.path().to_path_buf());
+        register_builtin_tools(&mut registry, dir.path().to_path_buf(), &AgentConfig::default());
 
         assert!(registry.get("Read").is_some());
         assert!(registry.get("Write").is_some());
@@ -587,7 +588,7 @@ mod tests {
     async fn test_builtin_tool_schemas_valid() {
         let dir = tempdir().unwrap();
         let mut registry = ToolRegistry::new();
-        register_builtin_tools(&mut registry, dir.path().to_path_buf());
+        register_builtin_tools(&mut registry, dir.path().to_path_buf(), &AgentConfig::default());
 
         for name in registry.tool_names() {
             let tool = registry.get(&name).unwrap();

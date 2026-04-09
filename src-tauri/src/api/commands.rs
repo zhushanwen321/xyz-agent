@@ -62,7 +62,8 @@ pub async fn send_message(
     let session_path = session::session_file_path(&state.data_dir, &session_id)
         .ok_or_else(|| format!("session {session_id} not found"))?;
 
-    let mut history = crate::store::jsonl::read_all_entries(&session_path).map_err(|e| e.to_string())?;
+    let LoadHistoryResult { entries: mut history, conversation_summary } =
+        crate::store::jsonl::load_history(&session_path).map_err(|e| e.to_string())?;
     log::debug!("[chat] history entries={}", history.len());
 
     let parent_uuid = history.last().map(|e| e.uuid().to_string());
@@ -96,7 +97,7 @@ pub async fn send_message(
         git_branch: None,
         tool_names: state.tool_registry.tool_names(),
         data_context_summary: None,
-        conversation_summary: None,
+        conversation_summary,
     };
 
     let event_tx_for_turn = event_tx.clone();
