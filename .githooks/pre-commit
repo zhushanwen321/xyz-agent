@@ -2,10 +2,15 @@
 # pre-commit: 确保代码质量
 set -e
 
+# 确保 PATH 包含常用工具路径
+export PATH="$HOME/.cargo/bin:$HOME/.local/bin:/usr/local/bin:$PATH"
+
+ROOT_DIR="$(git rev-parse --show-toplevel)"
+
 echo "[pre-commit] cargo test..."
-cd src-tauri && cargo test --quiet 2>&1 | tail -1
+cd "$ROOT_DIR/src-tauri" && cargo test --quiet 2>&1 | tail -3
 
 echo "[pre-commit] npm build..."
-cd .. && npm run build 2>&1 | tail -1
+cd "$ROOT_DIR" && npm run build 2>&1 | tail -1
 
 echo "[pre-commit] all checks passed"
