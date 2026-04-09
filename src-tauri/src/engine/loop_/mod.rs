@@ -1,7 +1,7 @@
 pub mod history;
 pub mod stream;
 
-use crate::engine::config;
+use crate::engine::config::AgentConfig;
 use crate::engine::context::data::DataContext;
 use crate::engine::context::prompt::{DynamicContext, PromptManager};
 use crate::engine::context::{ContextConfig, ContextManager, TokenBudget, trim_old_tool_results};
@@ -39,9 +39,9 @@ impl AgentLoop {
         tool_perms: &PermissionContext,
         prompt_manager: &PromptManager,
         dynamic_context: &DynamicContext,
+        agent_config: &AgentConfig,
     ) -> Result<Vec<TranscriptEntry>, AppError> {
         let session_id = &self.session_id;
-        let agent_config = config::load_agent_config().unwrap_or_default();
         let max_turns: usize = agent_config.max_turns as usize;
         let keep_tool_results = agent_config.keep_tool_results;
 
@@ -225,6 +225,10 @@ mod tests {
     use crate::engine::llm::test_utils::MockLlmProvider;
     use crate::types::AssistantContentBlock;
 
+    fn test_agent_config() -> AgentConfig {
+        AgentConfig::default()
+    }
+
     fn test_prompt_ctx() -> (PromptManager, DynamicContext) {
         (
             PromptManager::new(),
@@ -259,7 +263,7 @@ mod tests {
         let agent_loop = AgentLoop::new(provider, "test-session".into(), "test-model".into());
 
         let entries = agent_loop
-            .run_turn("read test.txt".into(), vec![], None, event_tx, &registry, &perms, &prompt_manager, &dynamic_context)
+            .run_turn("read test.txt".into(), vec![], None, event_tx, &registry, &perms, &prompt_manager, &dynamic_context, &test_agent_config())
             .await
             .unwrap();
 
@@ -285,7 +289,7 @@ mod tests {
         let agent_loop = AgentLoop::new(provider, "test-session".into(), "test-model".into());
 
         let entries = agent_loop
-            .run_turn("hello".into(), vec![], None, event_tx, &registry, &perms, &prompt_manager, &dynamic_context)
+            .run_turn("hello".into(), vec![], None, event_tx, &registry, &perms, &prompt_manager, &dynamic_context, &test_agent_config())
             .await
             .unwrap();
 

@@ -1,21 +1,10 @@
+use crate::api::AppState;
 use crate::engine::context::prompt::{DynamicContext, PromptManager};
 use crate::engine::loop_::AgentLoop;
-use crate::engine::llm::LlmProvider;
-use crate::engine::tools::{PermissionContext, ToolRegistry};
 use crate::store::jsonl::LoadHistoryResult;
 use crate::store::session;
 use crate::types::{AssistantContentBlock, TranscriptEntry, UserContentBlock};
-use std::path::PathBuf;
-use std::sync::Arc;
 use tauri::{AppHandle, State};
-
-pub struct AppState {
-    pub data_dir: PathBuf,
-    pub provider: Arc<dyn LlmProvider>,
-    pub model: String,
-    pub tool_registry: ToolRegistry,
-    pub global_perms: PermissionContext,
-}
 
 #[tauri::command]
 pub async fn new_session(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
@@ -121,6 +110,7 @@ pub async fn send_message(
             &state.global_perms,
             &prompt_manager,
             &dynamic_context,
+            &state.config,
         )
         .await;
 

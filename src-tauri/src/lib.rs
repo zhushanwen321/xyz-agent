@@ -27,12 +27,17 @@ pub fn run() {
         .expect("Failed to load LLM config");
     log::info!("model={}, base_url={}", llm_config.model, llm_config.base_url);
 
+    let agent_config = Arc::new(
+        config::load_agent_config().unwrap_or_default(),
+    );
+
     let provider: Arc<dyn LlmProvider> =
         Arc::new(AnthropicProvider::new(llm_config.api_key).with_base_url(llm_config.base_url));
 
     let mut tool_registry = ToolRegistry::new();
     let workdir = std::env::current_dir().unwrap_or_default();
     engine::tools::register_builtin_tools(&mut tool_registry, workdir);
+    let tool_registry = Arc::new(tool_registry);
     let global_perms = PermissionContext::default();
 
     tauri::Builder::default()
@@ -42,6 +47,7 @@ pub fn run() {
                 data_dir,
                 provider,
                 model: llm_config.model,
+                config: agent_config,
                 tool_registry,
                 global_perms,
             });
