@@ -66,11 +66,11 @@ fi
 # Rule 6: prompts/ 不能作为 Rust 模块导入
 echo "Checking: prompts/ module import (forbidden)..."
 PROMPTS_VIOLATION=""
-for f in "$SRC_DIR/lib.rs" "$SRC_DIR/api/mod.rs" "$SRC_DIR/engine/mod.rs"; do
-    if [ -f "$f" ] && grep -q "mod prompts" "$f" 2>/dev/null; then
-        PROMPTS_VIOLATION="$PROMPTS_VIOLATION $f"
+while IFS= read -r -d '' f; do
+    if grep -q "mod prompts" "$f" 2>/dev/null; then
+        PROMPTS_VIOLATION="$PROMPTS_VIOLATION ${f#$SRC_DIR/}"
     fi
-done
+done < <(find "$SRC_DIR" -name "*.rs" -print0 2>/dev/null)
 if [ -n "$PROMPTS_VIOLATION" ]; then
     echo "  ERROR: 'mod prompts' found in:$PROMPTS_VIOLATION"
     ERRORS=$((ERRORS + 1))
