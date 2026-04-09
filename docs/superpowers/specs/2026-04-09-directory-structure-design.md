@@ -55,7 +55,7 @@ types/  →  无外部依赖
 ```
 engine/
 ├── mod.rs              # pub(crate) re-exports
-├── loop/               # Agent 主循环
+├── loop_/              # Agent 主循环（注意：loop 是 Rust 关键字，用 loop_/ + pub mod loop_）
 │   ├── mod.rs          # AgentLoop struct, run_turn()
 │   ├── stream.rs       # consume_stream(), LlmStreamEvent 处理
 │   └── history.rs      # history_to_api_messages()
@@ -166,7 +166,7 @@ pub struct AppState {
 | `commands/session.rs` | `api/commands.rs` | 合并 session + chat |
 | `commands/chat.rs` | `api/commands.rs` | 同上 |
 | `services/event_bus.rs` | `api/event_bus.rs` | import tauri |
-| `services/agent_loop.rs` | `engine/loop/mod.rs` + `stream.rs` + `history.rs` | 拆分 3 文件 |
+| `services/agent_loop.rs` | `engine/loop_/mod.rs` + `stream.rs` + `history.rs` | 拆分 3 文件，loop_ 因 Rust 关键字 |
 | `services/llm.rs` | `engine/llm/mod.rs` + `anthropic.rs` | trait/impl 分离 |
 | `services/tool_registry.rs` + `tool_executor.rs` | `engine/tools/mod.rs` | 合并 |
 | `services/tools/*` | `engine/tools/read/`, `write/`, `bash/` | 目录级 |
@@ -179,7 +179,7 @@ pub struct AppState {
 | `models/transcript.rs` | `types/transcript.rs` | |
 | `error.rs` | `types/error.rs` | |
 | `services/test_utils.rs` | `engine/llm/test_utils.rs` | MockLlmProvider 归属 LLM 功能域 |
-| `logging.rs` | `lib.rs` 内联 | 启动级配置，lib.rs 豁免 500 行限制 |
+| `logging.rs` | 保留为根目录独立文件 | 启动级配置，lib.rs 通过 `mod logging` 引用，不过度膨胀 lib.rs |
 | `commands/mod.rs` | 删除 | 由 api/mod.rs 替代 |
 | `db/mod.rs` | 删除 | 由 store/mod.rs 替代 |
 | `models/mod.rs` | 删除 | 由 types/mod.rs 替代 |
@@ -236,7 +236,7 @@ grep -rn "async fn\|std::fs\|tokio::" src-tauri/src/types/
 
 新增目录：`engine/subagent/`、`engine/task_tree/`、`engine/memory/`
 
-仅修改：`engine/loop/mod.rs`（添加 SubAgent 调用入口）、`types/`（添加 TaskNode 等类型）
+仅修改：`engine/loop_/mod.rs`（添加 SubAgent 调用入口）、`types/`（添加 TaskNode 等类型）
 
 ### P3（MCP + Skills + Domain Pack）
 
