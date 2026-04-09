@@ -9,7 +9,7 @@ const props = defineProps<{
 }>()
 
 const sessionIdRef = computed(() => props.currentSessionId) as Ref<string | null>
-const { messages, streamingText, isStreaming, activeToolCalls, send } = useChat(sessionIdRef)
+const { messages, streamingText, isStreaming, send } = useChat(sessionIdRef)
 
 const scrollContainer = ref<HTMLDivElement | null>(null)
 
@@ -23,6 +23,7 @@ watch(
   },
 )
 
+/** 最后一条消息是 assistant 且正在流式输出时，streamingText 追加到该消息 */
 const isLastAssistantStreaming = computed(() => {
   if (!streamingText.value) return false
   const last = messages.value[messages.value.length - 1]
@@ -43,12 +44,13 @@ function handleSend(content: string) {
 
       <div class="mx-auto max-w-3xl space-y-4">
         <MessageBubble
-          v-for="msg in messages"
+          v-for="(msg, index) in messages"
           :key="msg.id"
           :message="msg"
-          :active-tool-calls="msg.role === 'assistant' ? activeToolCalls : undefined"
+          :streaming-text="isLastAssistantStreaming && index === messages.length - 1 ? streamingText : undefined"
         />
 
+        <!-- 流式文本独立气泡：仅在最后一条不是 assistant 时使用（如用户刚发送后） -->
         <MessageBubble
           v-if="streamingText && !isLastAssistantStreaming"
           :message="{
