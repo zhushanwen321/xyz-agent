@@ -4,8 +4,6 @@ use crate::models::{TranscriptEntry, UserContentBlock};
 use crate::services::agent_loop::AgentLoop;
 use crate::services::event_bus;
 use crate::services::prompt_manager::{DynamicContext, PromptManager};
-use crate::services::tool_registry::{PermissionContext, ToolRegistry};
-use crate::services::tools;
 use tauri::{AppHandle, State};
 
 #[tauri::command]
@@ -46,11 +44,6 @@ pub async fn send_message(
     history.push(user_entry.clone());
 
     // 临时创建 ToolRegistry（Plan D 将移到 AppState）
-    let mut registry = ToolRegistry::new();
-    let workdir = std::env::current_dir().unwrap_or_default();
-    tools::register_builtin_tools(&mut registry, workdir);
-    let perms = PermissionContext::default();
-
     let prompt_manager = PromptManager::new();
     let dynamic_context = DynamicContext {
         cwd: std::env::current_dir()
@@ -60,7 +53,7 @@ pub async fn send_message(
         os: std::env::consts::OS.to_string(),
         model: state.model.clone(),
         git_branch: None,
-        tool_names: registry.tool_names(),
+        tool_names: state.tool_registry.tool_names(),
         data_context_summary: None,
         conversation_summary: None,
     };
@@ -71,8 +64,8 @@ pub async fn send_message(
             history,
             Some(user_entry.uuid().to_string()),
             event_tx,
-            &registry,
-            &perms,
+            &state.tool_registry,
+            &state.global_perms,
             &prompt_manager,
             &dynamic_context,
         )

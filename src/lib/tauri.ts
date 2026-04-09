@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import type { AgentEvent, SessionInfo, TranscriptEntry } from '../types'
+import type { AgentEvent, LoadHistoryResult, SessionInfo } from '../types'
 
 export function isTauri(): boolean {
   return !!(window as any).__TAURI_INTERNALS__
@@ -20,8 +20,8 @@ export async function listSessions(): Promise<SessionInfo[]> {
   return result as any
 }
 
-export async function getHistory(sessionId: string): Promise<TranscriptEntry[]> {
-  return invoke('get_history', { sessionId })
+export async function getHistory(sessionId: string): Promise<LoadHistoryResult> {
+  return invoke<LoadHistoryResult>('get_history', { sessionId })
 }
 
 export async function sendMessage(sessionId: string, content: string): Promise<void> {
