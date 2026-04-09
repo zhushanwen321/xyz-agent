@@ -361,6 +361,19 @@ pub struct AppState {
 | `src-tauri/src/commands/chat.rs` | 传递 ContextConfig，处理 Summary entry |
 | `src-tauri/src/lib.rs` | AppState 增加 ContextConfig |
 | `src/types/index.ts` | 新增 ContextEvent 类型（warning 等） |
+| `src/components/StatusBar.vue` | 显示 token 消耗、上下文使用百分比、压缩警告 |
+
+## 前端变更详情
+
+### StatusBar.vue
+
+新增显示信息：
+
+1. **Token 消耗**：从 `MessageComplete` 事件的 `usage` 累计显示（如 "tokens: 12.4k"）
+2. **上下文使用百分比**：后端通过新的 AgentEvent 变体（`ContextWarning`）推送，或前端根据 token 消耗估算
+3. **压缩状态**：第二层压缩执行时显示"压缩中..."（通过 `ToolCallStart` 类似的状态指示器实现）
+
+> **注**：上下文百分比的精确计算依赖后端的 `last_input_tokens`。P1 可先用 `MessageComplete.usage` 的累计值作为近似值，显示格式如 "ctx: 45% | tokens: 12.4k"。精确的上下文百分比需要后端新增事件或 command。
 
 ## 约束
 

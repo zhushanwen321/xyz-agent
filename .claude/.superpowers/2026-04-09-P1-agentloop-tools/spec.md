@@ -382,6 +382,77 @@ AgentLoop 构造时注入 ToolRegistry 和 PermissionContext。
 | `src-tauri/src/commands/chat.rs` | 传递 ToolRegistry, 处理 Vec<TranscriptEntry> |
 | `src-tauri/src/lib.rs` | AppState 增加 ToolRegistry + PermissionContext |
 | `src/types/index.ts` | ContentBlock 类型, AgentEvent 新增变体 |
+| `src/composables/useChat.ts` | 处理 ToolCallStart/ToolCallEnd 事件，更新 loadHistory 处理 Vec<ContentBlock> |
+| `src/components/MessageBubble.vue` | 渲染工具调用状态（工具名、执行中/完成/错误状态） |
+| `src/components/ChatView.vue` | 流式消息中展示工具调用中间状态 |
+
+## 前端变更详情
+
+### types/index.ts
+
+新增类型：
+```typescript
+// Assistant 消息的 content block
+type AssistantContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'tool_use'; id: string; name: string; input: any }
+
+// User 消息的 content block
+type UserContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'tool_result'; tool_use_id: string; content: string; is_error: boolean }
+
+// AgentEvent 新增变体
+type AgentEvent =
+  | ... // 现有
+  | { type: 'ToolCallStart'; session_id: string; tool_name: string; tool_use_id: string }
+  | { type: 'ToolCallEnd'; session_id: string; tool_use_id: string; is_error: boolean }
+```
+
+TranscriptEntry 变更：
+```typescript
+// Before: content: string
+// After:
+type TranscriptEntry =
+  | { type: 'user'; ...; content: UserContentBlock[] }
+  | { type: 'assistant'; ...; content: AssistantContentBlock[] }
+  | ... // System, CustomTitle, Summary 不变
+```
+
+### useChat.ts
+
+1. **AgentEvent 处理新增**：
+   - `ToolCallStart` → 记录当前执行的工具（工具名 + tool_use_id），UI 展示"正在执行 xxx..."
+   - `ToolCallEnd` → 更新工具执行结果（成功/失败），UI 展示状态变化
+
+2. **loadHistory 更新**：
+   - `content` 从 `string` 改为 `ContentBlock[]`
+   - 渲染时需从 content blocks 中提取文本拼接，工具调用部分用折叠面板展示
+
+3. **状态管理新增**：
+```typescript
+interface ToolCallState {
+  tool_use_id: string
+  tool_name: string
+  is_running: boolean
+  is_error: boolean
+}
+const activeToolCalls = ref<Map<string, ToolCallState>>(new Map())
+```
+
+### MessageBubble.vue
+
+1. **工具调用展示**：在 assistant 消息中，ToolUse blocks 渲染为内联工具调用卡片：
+   - 显示工具名和参数摘要
+   - 执行中：旋转图标 + "执行中..."
+   - 完成：绿色勾
+   - 失败：红色叉 + 错误信息
+
+2. **ToolResult 展示**（在 user 消息中）：折叠面板，默认收起，点击展开查看完整结果
+
+### ChatView.vue
+
+流式传输期间，如果收到 ToolCallStart 事件，在 streamingText 下方显示工具执行状态指示器。
 
 ## TODO（后续优化）
 
