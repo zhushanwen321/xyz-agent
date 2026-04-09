@@ -84,6 +84,16 @@ User {
 - 前端渲染通过 SSE 事件（AgentEvent）实现，与存储格式解耦
 - 上下文压缩通过遍历 content block 处理
 
+### 数据迁移
+
+现有 JSONL 中 `content: String` 格式。改为 `content: Vec<ContentBlock>` 后旧数据反序列化失败。
+
+**方案**：使用 serde 自定义反序列化（`#[serde(deserialize_with = "...")]`）兼容两种格式：
+- 旧格式 `content: "text"` → 反序列化为 `vec![ContentBlock::Text { text: "text" }]`
+- 新格式 `content: [{type: "text", text: "..."}]` → 直接反序列化
+
+无需数据迁移脚本，向后兼容。
+
 ---
 
 ## LlmStreamEvent 扩展
@@ -91,8 +101,11 @@ User {
 新增 3 个变体（同 ToolRouter spec）：
 
 ```rust
+#[serde(rename = "tool_use_start")]
 ToolUseStart { id: String, name: String },
+#[serde(rename = "tool_use_input_delta")]
 ToolUseInputDelta { id: String, partial_input: String },
+#[serde(rename = "tool_use_end")]
 ToolUseEnd { id: String },
 ```
 
@@ -103,6 +116,14 @@ ToolUseEnd { id: String },
 - 解析 `content_block_delta` 中 `input_json_delta` → `ToolUseInputDelta`
 - 解析 `content_block_stop` → `ToolUseEnd`
 - **从 `message_delta` 提取 `stop_reason`**（目前只提取 usage）
+
+### ToolUseInputDelta 累积策略
+
+`input_json_delta` 是 JSON 字符串的增量片段，直接按 id 拼接即可：
+```rust
+HashMap<String, (String, String)>  // id → (name, accumulated_json)
+```
+`ToolUseStart` 时创建条目，`ToolUseInputDelta` 时拼接 `partial_input`，`ToolUseEnd` 时解析完整 JSON 为 `serde_json::Value`。
 
 ---
 
@@ -195,7 +216,7 @@ loop {
 
     // 执行工具
     results = executor.execute_batch(tool_calls, registry, perms)
-    emit ToolCallStart/ToolCallEnd events
+    emit ToolCallStart/ToolCallEnd events（包含 tool_name/tool_use_id）
 
     // 构造 tool_result 的 User entry
     user_content = results.iter().map(|r| UserContentBlock::ToolResult { ... }).collect()
@@ -227,15 +248,22 @@ struct StreamResult {
 处理逻辑：
 - `TextDelta` → 累积文本
 - `ThinkingDelta` → 转发事件
-- `ToolUseStart` → 记录新工具调用（id, name）
-- `ToolUseInputDelta` → 累积对应 id 的 JSON 输入
-- `ToolUseEnd` → 完成工具调用，加入 content_blocks 和 tool_calls
+- `ToolUseStart` → 在累积 Map 中创建条目：`(id → (name, ""))`
+- `ToolUseInputDelta` → 按 id 拼接 `partial_input` 到累积 Map
+- `ToolUseEnd` → 从累积 Map 取出完整 JSON，解析为 Value，构造 `AssistantContentBlock::ToolUse` 加入 content_blocks，同时构造 `PendingToolCall` 加入 tool_calls
 - `MessageStop` → 记录 usage 和 stop_reason
+- `Error` → 触发重试或返回错误
+
+**文本处理**：在 `ToolUseStart` 之前累积的文本，在 `ToolUseStart` 时 flush 为一个 `AssistantContentBlock::Text`。支持一段 assistant 消息中出现 "文本 → 工具调用1 → 工具调用2" 的混合 content。
 
 ### 重试策略
 
 - 只重试 LLM 调用（网络/API 错误），最多 3 次
 - 工具执行失败 → 作为 `is_error: true` 的 ToolResult 回传 LLM
+
+### MessageComplete 事件适配
+
+`AgentEvent::MessageComplete` 的 `content` 字段当前是 `String`。改为从 `Vec<AssistantContentBlock>` 中提取纯文本（拼接所有 Text block）。前端展示工具调用状态通过 `ToolCallStart/ToolCallEnd` 事件，不依赖 `MessageComplete.content`。
 
 ### 迭代限制
 
@@ -245,18 +273,22 @@ struct StreamResult {
 
 ## PermissionContext
 
-两层权限：
+独立结构体（不嵌入 ToolRegistry），两层权限：
 
 ```rust
 pub struct PermissionContext {
     pub global_allowed: Option<HashSet<String>>,    // None = 允许所有
     pub global_forbidden: HashSet<String>,
-    pub session_allowed: Option<HashSet<String>>,
-    pub session_forbidden: HashSet<String>,
+    pub session_allowed: Option<HashSet<String>>,   // P1: 不实现，为 None
+    pub session_forbidden: HashSet<String>,         // P1: 空
 }
 ```
 
-P1 实现：从 `config.toml` 读取 `allowed_tools` / `forbidden_tools`，存入 AppState。
+P1 实现：
+- **全局权限**：从 `config.toml` 读取 `allowed_tools` / `forbidden_tools`，存入 AppState
+- **Session 权限**：P1 不实现，字段为 None/空。后续通过 session 配置加载
+
+ToolRouter spec 中 ToolRegistry 的 `global_allowed`/`global_forbidden` 字段已移除，权限检查改为接收外部 `PermissionContext` 参数。
 
 ---
 
@@ -335,3 +367,8 @@ AgentLoop 构造时注入 ToolRegistry 和 PermissionContext。
 - JSON Schema 兼容 Anthropic tool definition 格式
 - 工具调用结果最大 100KB，超出截断
 - `max_turns` 默认 50，可配置
+
+## 已知限制
+
+- **部分失败丢失**：`run_turn` 返回 `Vec<TranscriptEntry>` 统一持久化。如果 LLM 调用彻底失败（重试耗尽），已执行的中间工具结果随 Err 丢失。TODO：后续改为边执行边持久化。
+- **工具 schema 格式**：`tools` 参数使用 Anthropic 格式。多 provider 支持时需加转换层。

@@ -43,8 +43,6 @@ pub struct ToolResult {
 ```rust
 pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool>>,
-    global_allowed: Option<HashSet<String>>,   // None = 允许所有
-    global_forbidden: HashSet<String>,
 }
 ```
 
@@ -172,33 +170,15 @@ pub enum AgentEvent {
 
 ## TranscriptEntry 扩展
 
-新增变体（`src-tauri/src/models/transcript.rs`）：
+> **已被 P1-AgentLoop 工具集成 spec 覆盖。**
+> tool_use/tool_result 改为嵌入 Assistant/User 的 content block 中，不再作为独立 entry。
+> 详见 `.claude/.superpowers/2026-04-09-P1-agentloop-tools/spec.md` 的 "TranscriptEntry 修订" 章节。
 
-```rust
-#[serde(rename = "tool_call")]
-ToolCall {
-    uuid: String,
-    parent_uuid: Option<String>,  // 指向触发它的 Assistant 消息
-    timestamp: String,
-    session_id: String,
-    tool_use_id: String,          // LLM 的 tool_use_id
-    name: String,
-    input: String,                // JSON string
-},
+~~新增变体（`src-tauri/src/models/transcript.rs`）：~~
 
-#[serde(rename = "tool_result")]
-ToolResult {
-    uuid: String,
-    parent_uuid: Option<String>,  // 指向对应的 ToolCall
-    timestamp: String,
-    session_id: String,
-    tool_use_id: String,
-    output: String,
-    is_error: bool,
-},
-```
+~~ToolCall, ToolResult 独立 entry~~
 
-工具记录独立存储，不嵌入 Assistant 消息。好处：(1) 上下文压缩可独立处理；(2) 前端可单独展示；(3) history_to_api_messages 可按需组装。
+~~工具记录独立存储，不嵌入 Assistant 消息。~~ → 已改为嵌入 content block。
 
 ---
 
@@ -228,7 +208,7 @@ loop {
 }
 ```
 
-最大轮次限制（如 20 轮），防止无限工具调用循环。
+最大轮次限制（默认 50，可配置），防止无限工具调用循环。详见 AgentLoop spec。
 
 ---
 
@@ -246,7 +226,7 @@ loop {
 | `src-tauri/src/services/llm.rs` | LlmStreamEvent 新增 3 个变体, SSE 解析更新 |
 | `src-tauri/src/services/agent_loop.rs` | run_turn 改多轮循环, 注入 ToolRegistry/Executor |
 | `src-tauri/src/models/event.rs` | AgentEvent 新增 2 个变体 |
-| `src-tauri/src/models/transcript.rs` | TranscriptEntry 新增 2 个变体 |
+| `src-tauri/src/models/transcript.rs` | TranscriptEntry content 改为 content block（见 AgentLoop spec） |
 | `src-tauri/src/commands/chat.rs` | 传递 ToolRegistry 到 AgentLoop |
 | `src-tauri/src/lib.rs` | AppState 增加 ToolRegistry, 注册内置工具 |
 | `src/types/index.ts` | AgentEvent 新增类型 |
