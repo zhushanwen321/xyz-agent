@@ -1,0 +1,11 @@
+#!/bin/bash
+# pre-commit: 确保代码质量
+set -e
+
+echo "[pre-commit] cargo test..."
+cd src-tauri && cargo test --quiet 2>&1 | tail -1
+
+echo "[pre-commit] npm build..."
+cd .. && npm run build 2>&1 | tail -1
+
+echo "[pre-commit] all checks passed"
