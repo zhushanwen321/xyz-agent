@@ -2,4 +2,6 @@ pub mod event;
 pub mod transcript;
 
 pub use event::AgentEvent;
-pub use transcript::{TokenUsage, TranscriptEntry};
+pub use transcript::{
+    AssistantContentBlock, TokenUsage, TranscriptEntry, UserContentBlock,
+};

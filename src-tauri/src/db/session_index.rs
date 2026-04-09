@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::error::AppError;
-use crate::models::transcript::TranscriptEntry;
+use crate::models::{transcript::TranscriptEntry, UserContentBlock};
 
 use super::jsonl::read_all_entries;
 
@@ -155,12 +155,19 @@ pub fn session_file_path(data: &Path, session_id: &str) -> Option<PathBuf> {
 fn extract_title(entries: &[TranscriptEntry]) -> Option<String> {
     entries.iter().find_map(|e| match e {
         TranscriptEntry::User { content, .. } => {
-            let chars: Vec<char> = content.chars().collect();
+            let text: String = content
+                .iter()
+                .filter_map(|b| match b {
+                    UserContentBlock::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect();
+            let chars: Vec<char> = text.chars().collect();
             let title = if chars.len() > 50 {
                 let truncated: String = chars[..50].iter().collect();
                 format!("{}...", truncated)
             } else {
-                content.clone()
+                text
             };
             Some(title)
         }

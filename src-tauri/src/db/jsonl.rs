@@ -118,7 +118,9 @@ mod tests {
             parent_uuid: parent.map(|s| s.to_string()),
             timestamp: "2026-01-01T00:00:00Z".to_string(),
             session_id: session.to_string(),
-            content: content.to_string(),
+            content: vec![crate::models::UserContentBlock::Text {
+                text: content.to_string(),
+            }],
         }
     }
 
@@ -128,7 +130,9 @@ mod tests {
             parent_uuid: Some(parent.to_string()),
             timestamp: "2026-01-01T00:00:01Z".to_string(),
             session_id: session.to_string(),
-            content: content.to_string(),
+            content: vec![crate::models::AssistantContentBlock::Text {
+                text: content.to_string(),
+            }],
             usage: Some(TokenUsage { input_tokens: 10, output_tokens: 5 }),
         }
     }

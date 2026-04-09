@@ -1,5 +1,5 @@
 use crate::error::AppError;
-use crate::models::{AgentEvent, TokenUsage, TranscriptEntry};
+use crate::models::{AgentEvent, AssistantContentBlock, TokenUsage, TranscriptEntry, UserContentBlock};
 use crate::services::llm::{LlmProvider, LlmStreamEvent};
 use futures::StreamExt;
 use std::sync::Arc;
@@ -141,7 +141,9 @@ impl AgentLoop {
                 parent_uuid,
                 timestamp: now,
                 session_id: session_id.clone(),
-                content: full_content,
+                content: vec![AssistantContentBlock::Text {
+                    text: full_content,
+                }],
                 usage: Some(final_usage),
             });
         }
@@ -154,14 +156,40 @@ fn history_to_api_messages(history: &[TranscriptEntry]) -> Vec<serde_json::Value
     history
         .iter()
         .filter_map(|entry| match entry {
-            TranscriptEntry::User { content, .. } => Some(serde_json::json!({
-                "role": "user",
-                "content": content,
-            })),
-            TranscriptEntry::Assistant { content, .. } => Some(serde_json::json!({
-                "role": "assistant",
-                "content": content,
-            })),
+            TranscriptEntry::User { content, .. } => {
+                let texts: Vec<&str> = content
+                    .iter()
+                    .filter_map(|b| match b {
+                        UserContentBlock::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                if texts.is_empty() {
+                    None
+                } else {
+                    Some(serde_json::json!({
+                        "role": "user",
+                        "content": texts.concat(),
+                    }))
+                }
+            }
+            TranscriptEntry::Assistant { content, .. } => {
+                let texts: Vec<&str> = content
+                    .iter()
+                    .filter_map(|b| match b {
+                        AssistantContentBlock::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                if texts.is_empty() {
+                    None
+                } else {
+                    Some(serde_json::json!({
+                        "role": "assistant",
+                        "content": texts.concat(),
+                    }))
+                }
+            }
             _ => None,
         })
         .collect()
@@ -245,7 +273,9 @@ mod tests {
                 parent_uuid: None,
                 timestamp: "2026-01-01T00:00:00Z".to_string(),
                 session_id: "s1".to_string(),
-                content: "hello".to_string(),
+                content: vec![UserContentBlock::Text {
+                    text: "hello".to_string(),
+                }],
             },
             TranscriptEntry::CustomTitle {
                 session_id: "s1".to_string(),
@@ -261,7 +291,9 @@ mod tests {
                 parent_uuid: Some("u1".to_string()),
                 timestamp: "2026-01-01T00:00:01Z".to_string(),
                 session_id: "s1".to_string(),
-                content: "response".to_string(),
+                content: vec![AssistantContentBlock::Text {
+                    text: "response".to_string(),
+                }],
                 usage: None,
             },
         ];
@@ -289,14 +321,18 @@ mod tests {
                 parent_uuid: None,
                 timestamp: "2026-01-01T00:00:00Z".to_string(),
                 session_id: "s1".to_string(),
-                content: "first".to_string(),
+                content: vec![UserContentBlock::Text {
+                    text: "first".to_string(),
+                }],
             },
             TranscriptEntry::Assistant {
                 uuid: "a1".to_string(),
                 parent_uuid: Some("u1".to_string()),
                 timestamp: "2026-01-01T00:00:01Z".to_string(),
                 session_id: "s1".to_string(),
-                content: "second".to_string(),
+                content: vec![AssistantContentBlock::Text {
+                    text: "second".to_string(),
+                }],
                 usage: None,
             },
             TranscriptEntry::User {
@@ -304,7 +340,9 @@ mod tests {
                 parent_uuid: Some("a1".to_string()),
                 timestamp: "2026-01-01T00:00:02Z".to_string(),
                 session_id: "s1".to_string(),
-                content: "third".to_string(),
+                content: vec![UserContentBlock::Text {
+                    text: "third".to_string(),
+                }],
             },
         ];
 

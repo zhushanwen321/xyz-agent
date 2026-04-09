@@ -10,10 +10,19 @@ export interface TokenUsage {
   output_tokens: number
 }
 
+// 与 Rust ContentBlock 对应
+export type AssistantContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'tool_use'; id: string; name: string; input: unknown }
+
+export type UserContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'tool_result'; tool_use_id: string; content: string; is_error: boolean }
+
 // 与 Rust TranscriptEntry 对应
 export type TranscriptEntry =
-  | { type: 'user'; uuid: string; parent_uuid: string | null; timestamp: string; session_id: string; content: string }
-  | { type: 'assistant'; uuid: string; parent_uuid: string | null; timestamp: string; session_id: string; content: string; usage: TokenUsage | null }
+  | { type: 'user'; uuid: string; parent_uuid: string | null; timestamp: string; session_id: string; content: UserContentBlock[] }
+  | { type: 'assistant'; uuid: string; parent_uuid: string | null; timestamp: string; session_id: string; content: AssistantContentBlock[]; usage: TokenUsage | null }
   | { type: 'system'; uuid: string; parent_uuid: string | null; timestamp: string; session_id: string; content: string }
 
 // 前端内部使用的消息模型

@@ -1,6 +1,6 @@
 use crate::commands::session::AppState;
 use crate::db::{jsonl, session_index};
-use crate::models::TranscriptEntry;
+use crate::models::{AssistantContentBlock, TranscriptEntry, UserContentBlock};
 use crate::services::agent_loop::AgentLoop;
 use crate::services::event_bus;
 use tauri::{AppHandle, State};
@@ -28,7 +28,9 @@ pub async fn send_message(
         parent_uuid,
         timestamp: chrono::Utc::now().to_rfc3339(),
         session_id: session_id.clone(),
-        content: content.clone(),
+        content: vec![UserContentBlock::Text {
+            text: content.clone(),
+        }],
     };
     jsonl::append_entry(&session_path, &user_entry).map_err(|e| e.to_string())?;
 
@@ -48,7 +50,17 @@ pub async fn send_message(
             e.to_string()
         })?;
 
-    log::info!("[chat] response received, length={}", assistant_entry.content().len());
+    let text_len = match &assistant_entry {
+        TranscriptEntry::Assistant { content, .. } => content
+            .iter()
+            .filter_map(|b| match b {
+                AssistantContentBlock::Text { text } => Some(text.len()),
+                _ => None,
+            })
+            .sum::<usize>(),
+        _ => 0,
+    };
+    log::info!("[chat] response received, length={}", text_len);
     jsonl::append_entry(&session_path, &assistant_entry).map_err(|e| e.to_string())?;
 
     Ok(())

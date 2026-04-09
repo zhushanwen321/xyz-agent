@@ -10,6 +10,70 @@ pub struct TokenUsage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
+pub enum AssistantContentBlock {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "tool_use")]
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum UserContentBlock {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "tool_result")]
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+        is_error: bool,
+    },
+}
+
+fn deserialize_assistant_content<'de, D>(
+    deserializer: D,
+) -> Result<Vec<AssistantContentBlock>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum ContentOrString {
+        Blocks(Vec<AssistantContentBlock>),
+        String(String),
+    }
+
+    match ContentOrString::deserialize(deserializer)? {
+        ContentOrString::Blocks(blocks) => Ok(blocks),
+        ContentOrString::String(s) => Ok(vec![AssistantContentBlock::Text { text: s }]),
+    }
+}
+
+fn deserialize_user_content<'de, D>(
+    deserializer: D,
+) -> Result<Vec<UserContentBlock>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum ContentOrString {
+        Blocks(Vec<UserContentBlock>),
+        String(String),
+    }
+
+    match ContentOrString::deserialize(deserializer)? {
+        ContentOrString::Blocks(blocks) => Ok(blocks),
+        ContentOrString::String(s) => Ok(vec![UserContentBlock::Text { text: s }]),
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
 pub enum TranscriptEntry {
     #[serde(rename = "user")]
     User {
@@ -17,7 +81,8 @@ pub enum TranscriptEntry {
         parent_uuid: Option<String>,
         timestamp: String,
         session_id: String,
-        content: String,
+        #[serde(deserialize_with = "deserialize_user_content")]
+        content: Vec<UserContentBlock>,
     },
     #[serde(rename = "assistant")]
     Assistant {
@@ -25,7 +90,8 @@ pub enum TranscriptEntry {
         parent_uuid: Option<String>,
         timestamp: String,
         session_id: String,
-        content: String,
+        #[serde(deserialize_with = "deserialize_assistant_content")]
+        content: Vec<AssistantContentBlock>,
         usage: Option<TokenUsage>,
     },
     #[serde(rename = "system")]
@@ -57,7 +123,9 @@ impl TranscriptEntry {
             parent_uuid,
             timestamp: Utc::now().to_rfc3339(),
             session_id: session_id.to_string(),
-            content: content.to_string(),
+            content: vec![UserContentBlock::Text {
+                text: content.into(),
+            }],
         }
     }
 
@@ -73,7 +141,9 @@ impl TranscriptEntry {
             parent_uuid,
             timestamp: Utc::now().to_rfc3339(),
             session_id: session_id.to_string(),
-            content: content.to_string(),
+            content: vec![AssistantContentBlock::Text {
+                text: content.into(),
+            }],
             usage,
         }
     }
@@ -98,16 +168,6 @@ impl TranscriptEntry {
             TranscriptEntry::Summary { .. } => None,
         }
     }
-
-    pub fn content(&self) -> &str {
-        match self {
-            TranscriptEntry::User { content, .. } => content,
-            TranscriptEntry::Assistant { content, .. } => content,
-            TranscriptEntry::System { content, .. } => content,
-            TranscriptEntry::CustomTitle { title, .. } => title,
-            TranscriptEntry::Summary { summary, .. } => summary,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -121,14 +181,29 @@ mod tests {
             parent_uuid: None,
             timestamp: "2026-01-01T00:00:00Z".to_string(),
             session_id: "s1".to_string(),
-            content: "hello".to_string(),
+            content: vec![UserContentBlock::Text {
+                text: "hello".to_string(),
+            }],
         };
         let json = serde_json::to_string(&entry).unwrap();
         assert!(json.contains("\"type\":\"user\""));
-        assert!(json.contains("\"content\":\"hello\""));
+        assert!(json.contains("\"type\":\"text\""));
+        assert!(json.contains("\"text\":\"hello\""));
 
         let de: TranscriptEntry = serde_json::from_str(&json).unwrap();
         assert!(matches!(de, TranscriptEntry::User { .. }));
+    }
+
+    #[test]
+    fn test_user_entry_old_format_deserialization() {
+        let json = r#"{"type":"user","uuid":"u1","parent_uuid":null,"timestamp":"2026-01-01T00:00:00Z","session_id":"s1","content":"hello"}"#;
+        let de: TranscriptEntry = serde_json::from_str(json).unwrap();
+        if let TranscriptEntry::User { content, .. } = de {
+            assert_eq!(content.len(), 1);
+            assert!(matches!(content[0], UserContentBlock::Text { ref text } if text == "hello"));
+        } else {
+            panic!("Expected User variant");
+        }
     }
 
     #[test]
@@ -138,7 +213,9 @@ mod tests {
             parent_uuid: Some("u1".to_string()),
             timestamp: "2026-01-01T00:00:00Z".to_string(),
             session_id: "s1".to_string(),
-            content: "response".to_string(),
+            content: vec![AssistantContentBlock::Text {
+                text: "response".to_string(),
+            }],
             usage: Some(TokenUsage {
                 input_tokens: 100,
                 output_tokens: 50,
@@ -151,6 +228,30 @@ mod tests {
         let de: TranscriptEntry = serde_json::from_str(&json).unwrap();
         if let TranscriptEntry::Assistant { usage, .. } = de {
             assert_eq!(usage.unwrap().input_tokens, 100);
+        } else {
+            panic!("Expected Assistant variant");
+        }
+    }
+
+    #[test]
+    fn test_assistant_entry_old_format_deserialization() {
+        let json = r#"{"type":"assistant","uuid":"a1","parent_uuid":"u1","timestamp":"2026-01-01T00:00:00Z","session_id":"s1","content":"response","usage":null}"#;
+        let de: TranscriptEntry = serde_json::from_str(json).unwrap();
+        if let TranscriptEntry::Assistant { content, .. } = de {
+            assert_eq!(content.len(), 1);
+            assert!(matches!(content[0], AssistantContentBlock::Text { ref text } if text == "response"));
+        } else {
+            panic!("Expected Assistant variant");
+        }
+    }
+
+    #[test]
+    fn test_assistant_tool_use_block() {
+        let json = r#"{"type":"assistant","uuid":"a1","parent_uuid":null,"timestamp":"2026-01-01T00:00:00Z","session_id":"s1","content":[{"type":"tool_use","id":"t1","name":"Read","input":{}}],"usage":null}"#;
+        let de: TranscriptEntry = serde_json::from_str(json).unwrap();
+        if let TranscriptEntry::Assistant { content, .. } = de {
+            assert_eq!(content.len(), 1);
+            assert!(matches!(content[0], AssistantContentBlock::ToolUse { ref id, ref name, .. } if id == "t1" && name == "Read"));
         } else {
             panic!("Expected Assistant variant");
         }

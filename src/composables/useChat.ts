@@ -72,9 +72,16 @@ export function useChat(sessionId: Ref<string | null>) {
       .map((e) => ({
         id: e.uuid,
         role: e.type as 'user' | 'assistant',
-        content: e.content,
+        content: extractTextContent(e.content),
         timestamp: e.timestamp,
       }))
+  }
+
+  function extractTextContent(blocks: Array<{ type: string; text?: string }>): string {
+    return blocks
+      .filter((b) => b.type === 'text' && b.text)
+      .map((b) => b.text!)
+      .join('')
   }
 
   watch(sessionId, (newId) => {
