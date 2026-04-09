@@ -1,2 +1,2 @@
-pub mod chat;
+pub mod jsonl;
 pub mod session;

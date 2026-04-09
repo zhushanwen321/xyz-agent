@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use serde_json;
 
-use crate::services::tool_registry::{Tool, ToolResult};
+use crate::engine::tools::{Tool, ToolResult};
 
 pub struct WriteTool {
     workdir: PathBuf,

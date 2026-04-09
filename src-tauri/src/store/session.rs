@@ -4,8 +4,8 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::error::AppError;
-use crate::models::{transcript::TranscriptEntry, UserContentBlock};
+use crate::types::AppError;
+use crate::types::{TranscriptEntry, UserContentBlock};
 
 use super::jsonl::read_all_entries;
 
@@ -212,7 +212,7 @@ mod tests {
 
         let file1 = dir.path().join("sessions").join(format!("{}.jsonl", meta1.id));
         let user_entry = TranscriptEntry::new_user(&meta1.id, "This is my first question", None);
-        super::super::jsonl::append_entry(&file1, &user_entry).unwrap();
+        crate::store::jsonl::append_entry(&file1, &user_entry).unwrap();
 
         let sessions = list_sessions(dir.path()).unwrap();
         assert_eq!(sessions.len(), 2);

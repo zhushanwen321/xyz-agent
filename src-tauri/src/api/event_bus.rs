@@ -1,4 +1,4 @@
-use crate::models::AgentEvent;
+use crate::types::AgentEvent;
 use tauri::{AppHandle, Emitter};
 
 /// 桥接 mpsc channel 到 Tauri Event
@@ -24,7 +24,7 @@ pub fn spawn_bridge(
 mod tests {
     #[test]
     fn agent_event_serializes_for_tauri() {
-        let event = crate::models::AgentEvent::TextDelta {
+        let event = crate::types::AgentEvent::TextDelta {
             session_id: "s1".to_string(),
             delta: "hello".to_string(),
         };

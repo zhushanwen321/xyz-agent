@@ -1,4 +1,4 @@
-use crate::error::AppError;
+use crate::types::AppError;
 
 /// Agent 全局配置，从 ~/.xyz-agent/config.toml 读取，缺失字段使用默认值
 pub struct AgentConfig {
@@ -105,6 +105,63 @@ fn parse_config_value(content: &str) -> AgentConfig {
     config
 }
 
+/// LLM 配置：从 .env 文件、环境变量、~/.xyz-agent/config.toml 读取
+pub struct LlmConfig {
+    pub api_key: String,
+    pub base_url: String,
+    pub model: String,
+}
+
+/// 加载 LLM 配置，优先级：环境变量 > .env 文件 > config.toml
+pub fn load_llm_config() -> Result<LlmConfig, AppError> {
+    let _ = dotenvy::dotenv();
+
+    let api_key = std::env::var("ANTHROPIC_API_KEY")
+        .or_else(|_| read_api_key_from_config_file())
+        .map_err(|_| {
+            AppError::Config(
+                "ANTHROPIC_API_KEY not found in .env, env, or ~/.xyz-agent/config.toml"
+                    .to_string(),
+            )
+        })?;
+
+    let base_url = std::env::var("ANTHROPIC_BASE_URL")
+        .unwrap_or_else(|_| "https://api.anthropic.com".to_string());
+
+    let model =
+        std::env::var("LLM_MODEL").unwrap_or_else(|_| "claude-sonnet-4-20250514".to_string());
+
+    Ok(LlmConfig {
+        api_key,
+        base_url,
+        model,
+    })
+}
+
+fn read_api_key_from_config_file() -> Result<String, ()> {
+    let config_path = dirs::home_dir()
+        .ok_or(())?
+        .join(".xyz-agent")
+        .join("config.toml");
+
+    if !config_path.exists() {
+        return Err(());
+    }
+
+    let content = std::fs::read_to_string(&config_path).map_err(|_| ())?;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(key) = trimmed.strip_prefix("anthropic_api_key") {
+            let key = key.trim_start_matches(['=', ' ']).trim();
+            if !key.is_empty() {
+                return Ok(key.to_string());
+            }
+        }
+    }
+
+    Err(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,5 +202,34 @@ mod tests {
         assert_eq!(config.tool_output_max_bytes, 100_000);
         // 有效值正常解析
         assert_eq!(config.bash_default_timeout_secs, 120);
+    }
+
+    #[test]
+    fn load_llm_config_reads_from_env() {
+        let saved_key = std::env::var("ANTHROPIC_API_KEY").ok();
+        let saved_url = std::env::var("ANTHROPIC_BASE_URL").ok();
+        let saved_model = std::env::var("LLM_MODEL").ok();
+
+        std::env::set_var("ANTHROPIC_API_KEY", "env-test-key");
+        std::env::set_var("ANTHROPIC_BASE_URL", "https://custom.api.com");
+        std::env::set_var("LLM_MODEL", "claude-opus-4");
+
+        let config = load_llm_config().unwrap();
+        assert_eq!(config.api_key, "env-test-key");
+        assert_eq!(config.base_url, "https://custom.api.com");
+        assert_eq!(config.model, "claude-opus-4");
+
+        match saved_key {
+            Some(v) => std::env::set_var("ANTHROPIC_API_KEY", v),
+            None => std::env::remove_var("ANTHROPIC_API_KEY"),
+        }
+        match saved_url {
+            Some(v) => std::env::set_var("ANTHROPIC_BASE_URL", v),
+            None => std::env::remove_var("ANTHROPIC_BASE_URL"),
+        }
+        match saved_model {
+            Some(v) => std::env::set_var("LLM_MODEL", v),
+            None => std::env::remove_var("LLM_MODEL"),
+        }
     }
 }

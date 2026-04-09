@@ -1,32 +1,29 @@
-mod commands;
-mod db;
-mod error;
+mod api;
+mod engine;
 mod logging;
-mod models;
-mod services;
+mod store;
+mod types;
 
-use services::agent_loop;
-use services::llm::{AnthropicProvider, LlmProvider};
-use services::tool_registry::{PermissionContext, ToolRegistry};
-use services::tools;
+use engine::config;
+use engine::llm::anthropic::AnthropicProvider;
+use engine::llm::LlmProvider;
+use engine::tools::{PermissionContext, ToolRegistry};
 use std::sync::Arc;
 use tauri::Manager;
 
-pub use commands::session::AppState;
+pub use api::AppState;
 
 pub fn run() {
-    // 先确定数据目录
-    let data_dir = db::session_index::data_dir()
+    let data_dir = store::session::data_dir()
         .expect("cannot determine data directory");
-    db::session_index::ensure_data_dirs(&data_dir)
+    store::session::ensure_data_dirs(&data_dir)
         .expect("cannot create data directories");
 
-    // 初始化日志（写到 data_dir/logs/）
     logging::init(&data_dir.join("logs"));
 
     log::info!("data_dir={}", data_dir.display());
 
-    let llm_config = agent_loop::load_llm_config()
+    let llm_config = config::load_llm_config()
         .expect("Failed to load LLM config");
     log::info!("model={}, base_url={}", llm_config.model, llm_config.base_url);
 
@@ -35,7 +32,7 @@ pub fn run() {
 
     let mut tool_registry = ToolRegistry::new();
     let workdir = std::env::current_dir().unwrap_or_default();
-    tools::register_builtin_tools(&mut tool_registry, workdir);
+    engine::tools::register_builtin_tools(&mut tool_registry, workdir);
     let global_perms = PermissionContext::default();
 
     tauri::Builder::default()
@@ -51,11 +48,13 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::session::new_session,
-            commands::session::list_sessions,
-            commands::session::get_history,
-            commands::session::delete_session,
-            commands::chat::send_message,
+            api::commands::new_session,
+            api::commands::list_sessions,
+            api::commands::get_history,
+            api::commands::delete_session,
+            api::commands::get_current_model,
+            api::commands::list_tools,
+            api::commands::send_message,
         ])
         .run(tauri::generate_context!())
         .expect("error while running xyz-agent");

@@ -1,5 +1,8 @@
-use crate::error::AppError;
-use crate::models::TranscriptEntry;
+pub mod data;
+pub mod prompt;
+
+use crate::types::AppError;
+use crate::types::TranscriptEntry;
 
 // ── Token budget estimation ─────────────────────────────────────
 
@@ -37,8 +40,8 @@ impl TokenBudget {
                 TranscriptEntry::User { content, .. } => content
                     .iter()
                     .map(|b| match b {
-                        crate::models::UserContentBlock::Text { text } => text.clone(),
-                        crate::models::UserContentBlock::ToolResult { content, .. } => {
+                        crate::types::UserContentBlock::Text { text } => text.clone(),
+                        crate::types::UserContentBlock::ToolResult { content, .. } => {
                             content.clone()
                         }
                     })
@@ -47,8 +50,8 @@ impl TokenBudget {
                 TranscriptEntry::Assistant { content, .. } => content
                     .iter()
                     .map(|b| match b {
-                        crate::models::AssistantContentBlock::Text { text } => text.clone(),
-                        crate::models::AssistantContentBlock::ToolUse { input, .. } => {
+                        crate::types::AssistantContentBlock::Text { text } => text.clone(),
+                        crate::types::AssistantContentBlock::ToolUse { input, .. } => {
                             input.to_string()
                         }
                     })
@@ -178,7 +181,7 @@ impl ContextManager {
     pub async fn compact_with_llm(
         &mut self,
         messages: Vec<serde_json::Value>,
-        provider: &dyn crate::services::llm::LlmProvider,
+        provider: &dyn crate::engine::llm::LlmProvider,
         model: &str,
     ) -> Result<(Vec<serde_json::Value>, Option<String>), AppError> {
         // 熔断检查
@@ -246,10 +249,10 @@ impl ContextManager {
         let mut stream = std::pin::pin!(stream);
         while let Some(item) = futures::StreamExt::next(&mut stream).await {
             match item {
-                Ok(crate::services::llm::LlmStreamEvent::TextDelta { delta }) => {
+                Ok(crate::engine::llm::LlmStreamEvent::TextDelta { delta }) => {
                     summary_text.push_str(&delta)
                 }
-                Ok(crate::services::llm::LlmStreamEvent::Error { message: _ }) => {
+                Ok(crate::engine::llm::LlmStreamEvent::Error { message: _ }) => {
                     self.consecutive_failures += 1;
                     return Ok((messages, None));
                 }
@@ -403,7 +406,7 @@ mod tests {
                 parent_uuid: None,
                 timestamp: "t".to_string(),
                 session_id: "s1".to_string(),
-                content: vec![crate::models::UserContentBlock::Text {
+                content: vec![crate::types::UserContentBlock::Text {
                     text: "a".repeat(400), // ~100 tokens
                 }],
             },
@@ -412,7 +415,7 @@ mod tests {
                 parent_uuid: Some("u1".to_string()),
                 timestamp: "t".to_string(),
                 session_id: "s1".to_string(),
-                content: vec![crate::models::AssistantContentBlock::Text {
+                content: vec![crate::types::AssistantContentBlock::Text {
                     text: "b".repeat(800), // ~200 tokens
                 }],
                 usage: None,
