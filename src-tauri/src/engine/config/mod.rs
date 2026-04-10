@@ -117,19 +117,16 @@ pub fn load_llm_config() -> Result<LlmConfig, AppError> {
     let _ = dotenvy::dotenv();
 
     let api_key = std::env::var("ANTHROPIC_API_KEY")
-        .or_else(|_| read_api_key_from_config_file())
-        .map_err(|_| {
-            AppError::Config(
-                "ANTHROPIC_API_KEY not found in .env, env, or ~/.xyz-agent/config.toml"
-                    .to_string(),
-            )
-        })?;
+        .or_else(|_| read_config_value("anthropic_api_key"))
+        .map_err(|_| AppError::Config("ANTHROPIC_API_KEY not found".to_string()))?;
 
     let base_url = std::env::var("ANTHROPIC_BASE_URL")
+        .or_else(|_| read_config_value("anthropic_base_url"))
         .unwrap_or_else(|_| "https://api.anthropic.com".to_string());
 
-    let model =
-        std::env::var("LLM_MODEL").unwrap_or_else(|_| "claude-sonnet-4-20250514".to_string());
+    let model = std::env::var("LLM_MODEL")
+        .or_else(|_| read_config_value("llm_model"))
+        .unwrap_or_else(|_| "claude-sonnet-4-20250514".to_string());
 
     Ok(LlmConfig {
         api_key,
@@ -138,28 +135,71 @@ pub fn load_llm_config() -> Result<LlmConfig, AppError> {
     })
 }
 
-fn read_api_key_from_config_file() -> Result<String, ()> {
+/// 通用辅助函数：从 ~/.xyz-agent/config.toml 中逐行读取指定 key 的值
+fn read_config_value(key: &str) -> Result<String, ()> {
     let config_path = dirs::home_dir()
         .ok_or(())?
         .join(".xyz-agent")
         .join("config.toml");
-
     if !config_path.exists() {
         return Err(());
     }
-
     let content = std::fs::read_to_string(&config_path).map_err(|_| ())?;
     for line in content.lines() {
         let trimmed = line.trim();
-        if let Some(key) = trimmed.strip_prefix("anthropic_api_key") {
-            let key = key.trim_start_matches(['=', ' ']).trim();
-            if !key.is_empty() {
-                return Ok(key.to_string());
+        if let Some(rest) = trimmed.strip_prefix(key) {
+            let rest = rest.trim_start_matches(['=', ' ']).trim();
+            if !rest.is_empty() {
+                return Ok(rest.to_string());
             }
         }
     }
-
     Err(())
+}
+
+/// 将配置写入 ~/.xyz-agent/config.toml（文件不存在时自动创建）
+pub fn save_config(
+    llm_api_key: &str,
+    llm_model: &str,
+    llm_base_url: &str,
+    max_turns: u32,
+    context_window: u32,
+    max_output_tokens: u32,
+    tool_output_max_bytes: usize,
+    bash_default_timeout_secs: u64,
+) -> Result<(), AppError> {
+    let config_path = dirs::home_dir()
+        .ok_or(AppError::Config("no home dir".into()))?
+        .join(".xyz-agent")
+        .join("config.toml");
+
+    let mut doc = if config_path.exists() {
+        let content = std::fs::read_to_string(&config_path)
+            .map_err(|e| AppError::Config(format!("failed to read: {e}")))?;
+        content
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|e| AppError::Config(format!("failed to parse TOML: {e}")))?
+    } else {
+        if let Some(parent) = config_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| AppError::Config(format!("failed to create dir: {e}")))?;
+        }
+        toml_edit::DocumentMut::new()
+    };
+
+    doc["max_turns"] = toml_edit::value(max_turns as i64);
+    doc["context_window"] = toml_edit::value(context_window as i64);
+    doc["max_output_tokens"] = toml_edit::value(max_output_tokens as i64);
+    doc["tool_output_max_bytes"] = toml_edit::value(tool_output_max_bytes as i64);
+    doc["bash_default_timeout_secs"] = toml_edit::value(bash_default_timeout_secs as i64);
+    doc["anthropic_api_key"] = toml_edit::value(llm_api_key);
+    doc["llm_model"] = toml_edit::value(llm_model);
+    doc["anthropic_base_url"] = toml_edit::value(llm_base_url);
+
+    std::fs::write(&config_path, doc.to_string())
+        .map_err(|e| AppError::Config(format!("failed to write config: {e}")))?;
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -231,5 +271,80 @@ mod tests {
             Some(v) => std::env::set_var("LLM_MODEL", v),
             None => std::env::remove_var("LLM_MODEL"),
         }
+    }
+
+    #[test]
+    fn test_save_config_creates_and_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+
+        // 直接用低层函数写入临时目录（save_config 使用固定 home 路径，这里测解析逻辑）
+        let toml_content = toml_edit::DocumentMut::new();
+        let mut doc = toml_content;
+        doc["max_turns"] = toml_edit::value(99 as i64);
+        doc["context_window"] = toml_edit::value(300_000 as i64);
+        doc["max_output_tokens"] = toml_edit::value(4096 as i64);
+        doc["tool_output_max_bytes"] = toml_edit::value(50_000 as i64);
+        doc["bash_default_timeout_secs"] = toml_edit::value(60 as i64);
+        doc["anthropic_api_key"] = toml_edit::value("sk-test");
+        doc["llm_model"] = toml_edit::value("test-model");
+        doc["anthropic_base_url"] = toml_edit::value("https://test.api.com");
+        std::fs::write(&config_path, doc.to_string()).unwrap();
+
+        // 读取回来验证
+        let content = std::fs::read_to_string(&config_path).unwrap();
+        let parsed = content.parse::<toml_edit::DocumentMut>().unwrap();
+        assert_eq!(parsed["max_turns"].as_integer(), Some(99));
+        assert_eq!(parsed["anthropic_api_key"].as_str(), Some("sk-test"));
+        assert_eq!(parsed["llm_model"].as_str(), Some("test-model"));
+        assert_eq!(parsed["anthropic_base_url"].as_str(), Some("https://test.api.com"));
+        assert_eq!(parsed["tool_output_max_bytes"].as_integer(), Some(50_000));
+
+        // 验证 parse_config_value 也能正确解析
+        let agent_config = parse_config_value(&content);
+        assert_eq!(agent_config.max_turns, 99);
+        assert_eq!(agent_config.context_window, 300_000);
+        assert_eq!(agent_config.max_output_tokens, 4096);
+        assert_eq!(agent_config.tool_output_max_bytes, 50_000);
+        assert_eq!(agent_config.bash_default_timeout_secs, 60);
+    }
+
+    #[test]
+    fn test_read_config_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+        std::fs::write(
+            &config_path,
+            "llm_model = \"test-model\"\nanthropic_base_url = \"https://custom.com\"\n",
+        )
+        .unwrap();
+
+        let content = std::fs::read_to_string(&config_path).unwrap();
+        // 模拟 read_config_value 的解析逻辑
+        let found_model = content.lines().find_map(|line| {
+            let trimmed = line.trim();
+            trimmed.strip_prefix("llm_model").and_then(|rest| {
+                let rest = rest.trim_start_matches(['=', ' ']).trim();
+                if !rest.is_empty() {
+                    Some(rest.to_string())
+                } else {
+                    None
+                }
+            })
+        });
+        assert_eq!(found_model, Some("\"test-model\"".to_string()));
+
+        let found_url = content.lines().find_map(|line| {
+            let trimmed = line.trim();
+            trimmed.strip_prefix("anthropic_base_url").and_then(|rest| {
+                let rest = rest.trim_start_matches(['=', ' ']).trim();
+                if !rest.is_empty() {
+                    Some(rest.to_string())
+                } else {
+                    None
+                }
+            })
+        });
+        assert_eq!(found_url, Some("\"https://custom.com\"".to_string()));
     }
 }

@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import MarkdownIt from 'markdown-it'
-import type { ChatMessage } from '../types'
+import type { ChatMessage, AssistantSegment } from '../types'
 import ToolCallCard from './ToolCallCard.vue'
 
 const props = defineProps<{
   message: ChatMessage
-  streamingText?: string
+  isStreaming?: boolean
 }>()
 
 const md = new MarkdownIt({
@@ -18,63 +18,70 @@ const md = new MarkdownIt({
 const isUser = computed(() => props.message.role === 'user')
 const isSystem = computed(() => props.message.role === 'system')
 
-const renderedContent = computed(() => {
-  let text = props.message.content
-  if (props.streamingText) {
-    text += props.streamingText
-  }
-  return md.render(text)
-})
+const segments = computed<AssistantSegment[]>(() => props.message.segments ?? [])
 
-const hasContent = computed(() => props.message.content || props.streamingText)
+function renderMarkdown(text: string): string {
+  return md.render(text)
+}
+
 </script>
 
 <template>
-  <!-- User 消息 — 右对齐，深色卡片 -->
-  <div v-if="isUser" class="flex justify-end">
-    <div class="max-w-[85%] rounded-lg border border-border-default bg-bg-elevated px-4 py-3">
-      <div class="prose prose-sm max-w-none text-text-primary" v-html="renderedContent" />
+  <!-- User 消息 — 左对齐，全宽背景 -->
+  <div v-if="isUser" class="flex items-start gap-2 border-l-[3px] border-l-[#a1a1aa] px-2 py-1.5" style="background-color: var(--color-bg-user)">
+    <div class="flex w-[76px] shrink-0 items-center gap-1.5">
+      <div class="flex h-4 w-4 items-center justify-center rounded bg-bg-inset text-[10px] font-mono font-bold text-text-secondary">U</div>
+      <span class="font-mono text-[10px] text-text-tertiary">User</span>
+    </div>
+    <div class="min-w-0 flex-1">
+      <div class="prose max-w-none text-text-primary" v-html="renderMarkdown(message.content)" />
     </div>
   </div>
 
   <!-- System 消息 — 全宽，红色提示 -->
-  <div v-else-if="isSystem" class="rounded-md border border-accent-red/30 bg-accent-red/10 px-4 py-2.5">
-    <div class="flex items-center gap-2 text-xs font-medium text-accent-red">
+  <div v-else-if="isSystem" class="rounded-md border border-accent-red/30 bg-accent-red/10 px-3 py-1.5">
+    <div class="flex items-center gap-2 text-[10px] font-medium text-accent-red">
       <span>!</span>
       <span>System</span>
     </div>
-    <div class="mt-1 text-sm text-accent-red" v-html="renderedContent" />
+    <div class="mt-1 text-[10px] text-accent-red" v-html="renderMarkdown(message.content)" />
   </div>
 
-  <!-- Assistant 消息 — 左对齐，无背景 -->
-  <div v-else class="flex justify-start">
-    <div class="max-w-full">
-      <!-- 角色标签 -->
-      <div class="mb-2 flex items-center gap-1.5 font-mono text-[11px] text-accent">
-        <span class="text-accent">&lambda;</span>
-        <span class="font-medium">assistant</span>
-      </div>
+  <!-- Assistant 消息 — 左对齐，全宽背景 -->
+  <div v-else class="flex items-start gap-2 border-l-[3px] border-l-accent px-2 py-1.5" style="background-color: var(--color-bg-ai)">
+    <div class="flex w-[76px] shrink-0 items-center gap-1.5">
+      <div class="flex h-4 w-4 items-center justify-center rounded text-[10px] font-mono font-bold text-accent" style="background:#22c55e22">&lambda;</div>
+      <span class="font-mono text-[10px] text-accent">Assistant</span>
+    </div>
 
-      <!-- 工具调用卡片 -->
-      <div v-if="message.toolCalls && message.toolCalls.length > 0" class="mb-3 space-y-2">
-        <ToolCallCard
-          v-for="tc in message.toolCalls"
-          :key="tc.tool_use_id"
-          :tool-call="tc"
+    <div class="min-w-0 flex-1">
+      <template v-if="segments.length > 0">
+        <template v-for="(seg, idx) in segments" :key="idx">
+          <!-- text segment -->
+          <div
+            v-if="seg.type === 'text' && seg.text"
+            :class="{ 'mb-2': idx < segments.length - 1 }"
+          >
+            <div class="prose max-w-none text-text-primary" v-html="renderMarkdown(seg.text)" />
+          </div>
+
+          <!-- tool segment -->
+          <div v-else-if="seg.type === 'tool'" class="mb-2">
+            <ToolCallCard :tool-call="seg.call" />
+          </div>
+        </template>
+
+        <!-- 流式闪烁光标 -->
+        <span
+          v-if="isStreaming"
+          class="mt-1 ml-1 inline-block h-3 w-1.5 bg-accent animate-cursor-blink"
         />
-      </div>
+      </template>
 
-      <!-- 文本内容 -->
-      <div
-        v-if="hasContent"
-        class="prose prose-sm max-w-none text-text-primary"
-        v-html="renderedContent"
-      />
-      <!-- 流式光标 -->
-      <span
-        v-if="streamingText"
-        class="ml-0.5 inline-block h-4 w-2 bg-accent animate-cursor-blink"
-      />
+      <!-- 无 segments 时用 content 渲染 -->
+      <div v-else-if="message.content">
+        <div class="prose max-w-none text-text-primary" v-html="renderMarkdown(message.content)" />
+      </div>
     </div>
   </div>
 </template>

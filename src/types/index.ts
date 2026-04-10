@@ -33,9 +33,10 @@ export interface ChatMessage {
   id: string
   role: 'user' | 'assistant' | 'system'
   content: string
+  segments?: AssistantSegment[]  // 新增：仅 assistant 消息使用
   timestamp: string
   isStreaming?: boolean
-  toolCalls?: ToolCallDisplay[]
+  toolCalls?: ToolCallDisplay[]  // 保留，向后兼容但不再使用
 }
 
 /** 用于渲染的工具调用信息 */
@@ -45,6 +46,25 @@ export interface ToolCallDisplay {
   input: unknown
   status: 'running' | 'completed' | 'error'
   output?: string
+}
+
+/** Assistant 消息内的有序片段 */
+export type AssistantSegment =
+  | { type: 'text'; text: string }
+  | { type: 'tool'; call: ToolCallDisplay }
+
+/** 工具危险等级 */
+export type ToolDangerLevel = 'safe' | 'caution'
+
+/** 工具危险等级映射 */
+export const TOOL_DANGER_LEVEL: Record<string, ToolDangerLevel> = {
+  Read: 'safe',
+  Bash: 'caution',
+  Write: 'caution',
+}
+
+export function getToolDangerLevel(toolName: string): ToolDangerLevel {
+  return TOOL_DANGER_LEVEL[toolName] ?? 'caution'
 }
 
 export interface SessionInfo {
@@ -58,4 +78,27 @@ export interface SessionInfo {
 export interface LoadHistoryResult {
   entries: TranscriptEntry[]
   conversation_summary: string | null
+}
+
+// 与 Rust AgentConfig 对应
+export interface ConfigResponse {
+  anthropic_api_key: string
+  llm_model: string
+  anthropic_base_url: string
+  max_turns: number
+  context_window: number
+  max_output_tokens: number
+  tool_output_max_bytes: number
+  bash_default_timeout_secs: number
+}
+
+export interface UpdateConfigRequest {
+  anthropic_api_key: string
+  llm_model: string
+  anthropic_base_url: string
+  max_turns: number
+  context_window: number
+  max_output_tokens: number
+  tool_output_max_bytes: number
+  bash_default_timeout_secs: number
 }

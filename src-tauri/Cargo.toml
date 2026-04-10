@@ -24,6 +24,7 @@ dirs = "6"
 file-lock = "2"
 dotenvy = "0.15"
 log = "0.4"
+toml_edit = "0.22"
 
 [dev-dependencies]
 tempfile = "3"

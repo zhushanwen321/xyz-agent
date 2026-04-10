@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import type { AgentEvent, LoadHistoryResult, SessionInfo } from '../types'
+import type { AgentEvent, ConfigResponse, LoadHistoryResult, SessionInfo, UpdateConfigRequest } from '../types'
 
 export type { LoadHistoryResult }
 
@@ -36,6 +36,10 @@ export async function deleteSession(sessionId: string): Promise<void> {
   return invoke('delete_session', { sessionId })
 }
 
+export async function renameSession(sessionId: string, newTitle: string): Promise<void> {
+  return invoke('rename_session', { sessionId, newTitle })
+}
+
 export function onAgentEvent(handler: (event: AgentEvent) => void): Promise<UnlistenFn> {
   return listen<AgentEvent>('agent-event', (e) => {
     console.log('[tauri] agent-event:', e.payload.type, e.payload.session_id)
@@ -49,4 +53,12 @@ export async function getCurrentModel(): Promise<string> {
 
 export async function listTools(): Promise<string[]> {
   return invoke<string[]>('list_tools')
+}
+
+export async function getConfig(): Promise<ConfigResponse> {
+  return invoke<ConfigResponse>('get_config')
+}
+
+export async function updateConfig(payload: UpdateConfigRequest): Promise<void> {
+  return invoke<void>('update_config', { payload })
 }

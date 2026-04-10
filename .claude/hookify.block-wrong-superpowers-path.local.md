@@ -4,16 +4,38 @@ enabled: true
 event: file
 action: block
 conditions:
-  - field: file_path
-    operator: regex_match
-    pattern: docs/superpowers/
+  any_of:
+    - field: file_path
+      operator: regex_match
+      pattern: docs/superpowers/
+    - field: file_path
+      operator: regex_match
+      pattern: \.claude/\.superpowers/(specs|plans)/
   - field: new_text
     operator: regex_match
     pattern: .+
 ---
 
-**禁止在 docs/superpowers/ 目录下创建或编辑文件。**
+**禁止创建或编辑以下位置的文件：**
 
-正确的 superpowers 目录是 `.claude/.superpowers/`，不是 `docs/superpowers/`。
+1. `docs/superpowers/` — 错误目录
+2. `.claude/.superpowers/specs/` — 错误结构
+3. `.claude/.superpowers/plans/` — 错误结构
 
-请将文件路径修改为 `.claude/.superpowers/` 下的对应位置。
+**正确的目录结构：**
+
+```
+.claude/.superpowers/
+└── yyyy-MM-dd-short-title/          # 任务目录（按日期+标题命名）
+    ├── spec.md                      # 设计规格文档
+    ├── plan.md                      # 实施计划文档
+    └── subtask-xxx/                 # 子任务目录（可选）
+        └── spec.md                  # 子任务规格
+```
+
+**命名规范：**
+- 任务目录：`yyyy-MM-dd-P{priority}-{short-title}` 或 `yyyy-MM-dd-{short-title}`
+- 设计文档：始终命名为 `spec.md`（放在任务目录内）
+- 计划文档：始终命名为 `plan.md`（放在任务目录内）
+
+请将文件移动到正确的位置。
