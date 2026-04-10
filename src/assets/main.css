@@ -13,6 +13,10 @@
   --color-bg-elevated: #18181b;
   --color-bg-inset: #1f1f23;
 
+  /* 消息角色背景 */
+  --color-bg-ai: #131517;
+  --color-bg-user: #1c1a14;
+
   /* 边框 */
   --color-border-default: #27272a;
   --color-border-hover: #3f3f46;

@@ -12,6 +12,8 @@
 | `--color-bg-surface` | `#111113` | 页面/面板背景 |
 | `--color-bg-elevated` | `#18181b` | 卡片/气泡/弹出层 |
 | `--color-bg-inset` | `#1f1f23` | 凹陷区域（代码块、输入框） |
+| `--color-bg-ai` | `#131517` | AI 消息背景（微蓝冷调） |
+| `--color-bg-user` | `#1c1a14` | User 消息背景（微暖调） |
 
 ### 边框
 
