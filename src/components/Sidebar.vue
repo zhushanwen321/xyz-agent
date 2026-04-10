@@ -4,7 +4,10 @@ import { useSession } from '../composables/useSession'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 
-const version = __APP_VERSION__
+defineProps<{
+  collapsed: boolean
+}>()
+
 const appName = __APP_NAME__
 const { sessions, currentSessionId, loadSessions, selectSession, createNewSession, deleteSession } = useSession()
 
@@ -14,14 +17,10 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="flex h-full w-[240px] flex-col border-r border-border-default bg-bg-elevated">
-    <!-- Logo 区域 -->
-    <div class="flex items-center gap-2 px-4 py-3">
-      <span class="font-mono text-sm font-semibold text-accent">$ {{ appName }}</span>
-      <span class="font-mono text-[10px] text-text-tertiary">v{{ version }}</span>
-    </div>
-
-    <Separator class="bg-border-default" />
+  <div
+    class="flex h-full shrink-0 flex-col border-r border-border-default bg-bg-elevated transition-all duration-200"
+    :class="collapsed ? 'w-0 overflow-hidden border-r-0' : 'w-[240px]'"
+  >
 
     <!-- 新建按钮 -->
     <div class="px-3 py-2">
