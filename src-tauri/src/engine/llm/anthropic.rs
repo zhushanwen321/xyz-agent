@@ -56,6 +56,17 @@ impl LlmProvider for AnthropicProvider {
             body["tools"] = serde_json::json!(tools);
         }
 
+        // 打印完整请求参数
+        let other_params = serde_json::json!({
+            "model": body["model"],
+            "stream": body["stream"],
+            "max_tokens": body["max_tokens"],
+            "tools": body.get("tools"),
+        });
+        log::info!("[llm] request system:\n{}", serde_json::to_string_pretty(&body["system"]).unwrap_or_default());
+        log::info!("[llm] request other params:\n{}", serde_json::to_string_pretty(&other_params).unwrap_or_default());
+        log::info!("[llm] request messages ({}):\n{}", messages.len(), serde_json::to_string_pretty(&messages).unwrap_or_default());
+
         let resp = self
             .client
             .post(format!("{}/v1/messages", self.base_url))
