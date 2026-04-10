@@ -3,6 +3,7 @@ import { sendMessage, getHistory, onAgentEvent, isTauri } from '../lib/tauri'
 import type {
   AgentEvent,
   AssistantContentBlock,
+  AssistantSegment,
   ChatMessage,
   ToolCallDisplay,
   UserContentBlock,
@@ -17,89 +18,97 @@ export function useChat(sessionId: Ref<string | null>) {
   const streamingText = ref('')
   const isStreaming = ref(false)
   const tokenUsage = ref({ inputTokens: 0, outputTokens: 0 })
+  const currentTurnSegments = ref<AssistantSegment[]>([])
   let unlisten: (() => void) | null = null
 
-  /** 找到最后一条 assistant 消息，将工具调用直接挂上去 */
-  function attachToolCallToLastAssistant(tc: ToolCallDisplay) {
-    const last = messages.value[messages.value.length - 1]
-    if (last?.role === 'assistant') {
-      if (!last.toolCalls) last.toolCalls = []
-      last.toolCalls.push(tc)
+  function appendTextToCurrentTurn(text: string) {
+    const segs = currentTurnSegments.value
+    if (segs.length > 0 && segs[segs.length - 1].type === 'text') {
+      ;(segs[segs.length - 1] as { type: 'text'; text: string }).text += text
+    } else {
+      segs.push({ type: 'text', text })
     }
   }
 
-  /** 在最后一条 assistant 消息中更新工具调用状态 */
-  function updateToolCallOnLastAssistant(tool_use_id: string, status: ToolCallDisplay['status'], output?: string) {
-    const last = messages.value[messages.value.length - 1]
-    if (last?.role === 'assistant' && last.toolCalls) {
-      const tc = last.toolCalls.find((t) => t.tool_use_id === tool_use_id)
-      if (tc) {
-        tc.status = status
-        if (output !== undefined) tc.output = output
-      }
-    }
+  function findToolSegment(tool_use_id: string): ToolCallDisplay | undefined {
+    const seg = currentTurnSegments.value.find(
+      (s): s is { type: 'tool'; call: ToolCallDisplay } =>
+        s.type === 'tool' && s.call.tool_use_id === tool_use_id,
+    )
+    return seg?.call
   }
 
   onMounted(async () => {
-    if (!isTauri()) {
-      console.warn('[useChat] not in Tauri, event listener skipped')
-      return
-    }
+    if (!isTauri()) return
     unlisten = await onAgentEvent((event: AgentEvent) => {
       if (!sessionId.value || event.session_id !== sessionId.value) return
 
       switch (event.type) {
         case 'TextDelta':
           streamingText.value += event.delta
+          appendTextToCurrentTurn(event.delta)
           break
         case 'ThinkingDelta':
           break
         case 'MessageComplete': {
+          // TextDelta 已逐字追加到 currentTurnSegments，
+          // 这里只清空 streamingText 并更新 tokenUsage
           streamingText.value = ''
-          messages.value.push(createMessage('assistant', event.content))
-          // input_tokens 已包含历史消息，直接覆盖；output_tokens 累加
           tokenUsage.value = {
             inputTokens: event.usage.input_tokens,
             outputTokens: tokenUsage.value.outputTokens + event.usage.output_tokens,
           }
           break
         }
-        case 'TurnComplete':
+        case 'TurnComplete': {
+          if (currentTurnSegments.value.length > 0) {
+            messages.value.push({
+              id: crypto.randomUUID(),
+              role: 'assistant',
+              content: '',
+              segments: [...currentTurnSegments.value],
+              timestamp: new Date().toISOString(),
+            })
+            currentTurnSegments.value = []
+          }
           isStreaming.value = false
           break
+        }
         case 'Error':
           messages.value.push(createMessage('system', `Error: ${event.message}`))
           isStreaming.value = false
           break
         case 'ToolCallStart': {
-          attachToolCallToLastAssistant({
-            tool_use_id: event.tool_use_id,
-            tool_name: event.tool_name,
-            input: event.input,
-            status: 'running',
+          currentTurnSegments.value.push({
+            type: 'tool',
+            call: {
+              tool_use_id: event.tool_use_id,
+              tool_name: event.tool_name,
+              input: event.input,
+              status: 'running',
+            },
           })
           break
         }
         case 'ToolCallEnd': {
-          updateToolCallOnLastAssistant(
-            event.tool_use_id,
-            event.is_error ? 'error' : 'completed',
-            event.output,
-          )
+          const tc = findToolSegment(event.tool_use_id)
+          if (tc) {
+            tc.status = event.is_error ? 'error' : 'completed'
+            tc.output = event.output
+          }
           break
         }
       }
     })
   })
 
-  onUnmounted(() => {
-    unlisten?.()
-  })
+  onUnmounted(() => { unlisten?.() })
 
   async function send(content: string) {
     if (!sessionId.value || isStreaming.value) return
     isStreaming.value = true
     messages.value.push(createMessage('user', content))
+    currentTurnSegments.value = []
     streamingText.value = ''
     try {
       await sendMessage(sessionId.value, content)
@@ -113,7 +122,6 @@ export function useChat(sessionId: Ref<string | null>) {
     const result = await getHistory(sid)
     const msgs: ChatMessage[] = []
 
-    // 预扫描：建立 tool_use_id → { output, is_error } 映射
     const toolOutputs = new Map<string, { output: string; is_error: boolean }>()
     for (const entry of result.entries) {
       if (entry.type === 'user') {
@@ -136,34 +144,38 @@ export function useChat(sessionId: Ref<string | null>) {
       if (entry.type === 'user') {
         const blocks = entry.content as UserContentBlock[]
         const hasText = blocks.some((b) => b.type === 'text')
-        if (!hasText) continue // 纯 tool_result 的 user entry 不渲染
+        if (!hasText) continue
         msgs.push({
           id: entry.uuid,
           role: 'user',
-          content: extractTextContent(blocks),
+          content: blocks.filter((b) => b.type === 'text').map((b) => (b as { type: 'text'; text: string }).text).join(''),
           timestamp: entry.timestamp,
         })
       } else if (entry.type === 'assistant') {
         const blocks = entry.content as AssistantContentBlock[]
-        const text = extractTextContent(blocks)
-        const toolCalls = blocks
-          .filter((b): b is Extract<AssistantContentBlock, { type: 'tool_use' }> => b.type === 'tool_use')
-          .map((b) => {
+        const segments: AssistantSegment[] = blocks.map((b) => {
+          if (b.type === 'text') {
+            return { type: 'text' as const, text: b.text }
+          } else {
             const result = toolOutputs.get(b.id)
             return {
-              tool_use_id: b.id,
-              tool_name: b.name,
-              input: b.input,
-              status: result ? (result.is_error ? 'error' as const : 'completed' as const) : 'completed' as const,
-              output: result?.output,
+              type: 'tool' as const,
+              call: {
+                tool_use_id: b.id,
+                tool_name: b.name,
+                input: b.input,
+                status: result ? (result.is_error ? 'error' as const : 'completed' as const) : 'completed' as const,
+                output: result?.output,
+              },
             }
-          })
+          }
+        })
         msgs.push({
           id: entry.uuid,
           role: 'assistant',
-          content: text,
+          content: '',
+          segments,
           timestamp: entry.timestamp,
-          toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
         })
       }
     }
@@ -171,16 +183,9 @@ export function useChat(sessionId: Ref<string | null>) {
     messages.value = msgs
   }
 
-  function extractTextContent(blocks: Array<{ type: string; text?: string }>): string {
-    return blocks
-      .filter((b) => b.type === 'text' && b.text)
-      .map((b) => b.text!)
-      .join('')
-  }
-
   watch(sessionId, (newId) => {
     if (newId) loadHistory(newId)
   })
 
-  return { messages, streamingText, isStreaming, tokenUsage, send }
+  return { messages, streamingText, isStreaming, tokenUsage, send, currentTurnSegments }
 }
