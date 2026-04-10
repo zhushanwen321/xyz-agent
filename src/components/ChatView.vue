@@ -12,7 +12,31 @@ const props = defineProps<{
 }>()
 
 const sessionIdRef = computed(() => props.currentSessionId) as Ref<string | null>
-const { messages, streamingText, isStreaming, tokenUsage, send } = useChat(sessionIdRef)
+const { messages, isStreaming, tokenUsage, send, currentTurnSegments } = useChat(sessionIdRef)
+
+// 流式时合并 currentTurnSegments 到最后一条 assistant 消息
+const displayMessages = computed(() => {
+  const msgs = [...messages.value]
+  if (isStreaming.value && currentTurnSegments.value.length > 0) {
+    const last = msgs[msgs.length - 1]
+    if (last?.role === 'assistant') {
+      msgs[msgs.length - 1] = {
+        ...last,
+        segments: [...(last.segments ?? []), ...currentTurnSegments.value],
+      }
+    } else {
+      msgs.push({
+        id: `streaming-${Date.now()}`,
+        role: 'assistant',
+        content: '',
+        segments: [...currentTurnSegments.value],
+        timestamp: new Date().toISOString(),
+        isStreaming: true,
+      })
+    }
+  }
+  return msgs
+})
 
 // 运行时配置（从后端获取一次）
 const modelName = ref('loading...')
@@ -31,8 +55,9 @@ onMounted(async () => {
 
 const scrollContainer = ref<HTMLDivElement | null>(null)
 
+// 监听 displayMessages 变化自动滚动
 watch(
-  [() => messages.value.length, streamingText],
+  [() => displayMessages.value.length, currentTurnSegments],
   async () => {
     await nextTick()
     if (scrollContainer.value) {
@@ -40,12 +65,6 @@ watch(
     }
   },
 )
-
-const isLastAssistantStreaming = computed(() => {
-  if (!streamingText.value) return false
-  const last = messages.value[messages.value.length - 1]
-  return last?.role === 'assistant'
-})
 
 function handleSend(content: string) {
   send(content)
@@ -60,22 +79,10 @@ function handleSend(content: string) {
 
       <div v-else class="mx-auto max-w-[720px] space-y-6">
         <MessageBubble
-          v-for="(msg, index) in messages"
+          v-for="msg in displayMessages"
           :key="msg.id"
           :message="msg"
-          :streaming-text="isLastAssistantStreaming && index === messages.length - 1 ? streamingText : undefined"
-        />
-
-        <!-- 流式文本独立气泡 -->
-        <MessageBubble
-          v-if="streamingText && !isLastAssistantStreaming"
-          :message="{
-            id: `streaming-${Date.now()}`,
-            role: 'assistant',
-            content: '',
-            timestamp: new Date().toISOString(),
-          }"
-          :streaming-text="streamingText"
+          :is-streaming="msg.isStreaming"
         />
       </div>
     </div>
