@@ -76,6 +76,8 @@ pub fn run() {
             api::commands::get_current_model,
             api::commands::list_tools,
             api::commands::send_message,
+            api::commands::get_config,
+            api::commands::update_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running xyz-agent");
