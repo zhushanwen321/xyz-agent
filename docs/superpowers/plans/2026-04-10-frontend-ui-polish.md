@@ -24,7 +24,11 @@
 
 - [ ] **Step 2: 在 lib.rs setup 中动态设置 75% 屏幕尺寸**
 
-在 `tauri::Builder::default().setup(move |app| { ... })` 回调内，在 `app.manage(...)` 之前，添加：
+在 `tauri::Builder::default().setup(move |app| { ... })` 回调内，在 `app.manage(...)` 之前，添加。注意需要额外的 import：
+
+```rust
+use tauri::PhysicalSize;
+```
 
 ```rust
 // 动态设置窗口大小为屏幕 75%
@@ -71,9 +75,35 @@ toml_edit = "0.22"
 
 - [ ] **Step 2: 扩展 LlmConfig 加载逻辑**
 
-在 `src-tauri/src/engine/config/mod.rs` 的 `load_llm_config()` 中，`base_url` 和 `model` 除了从环境变量读取外，也尝试从 config.toml 读取（环境变量优先）：
+在 `src-tauri/src/engine/config/mod.rs` 中添加通用辅助函数（替换 `read_api_key_from_config_file`）：
 
 ```rust
+/// 从 config.toml 读取指定 key 的值（剥离引号）
+fn read_config_value(key: &str) -> Result<String, ()> {
+    let config_path = dirs::home_dir()
+        .ok_or(())?
+        .join(".xyz-agent")
+        .join("config.toml");
+    if !config_path.exists() { return Err(()); }
+    let content = std::fs::read_to_string(&config_path).map_err(|_| ())?;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix(key) {
+            let rest = rest.trim_start_matches(['=', ' ']).trim();
+            if !rest.is_empty() { return Ok(rest.to_string()); }
+        }
+    }
+    Err(())
+}
+```
+
+修改 `load_llm_config()`，`base_url` 和 `model` 先从环境变量读取，fallback 到 config.toml：
+
+```rust
+let api_key = std::env::var("ANTHROPIC_API_KEY")
+    .or_else(|_| read_config_value("anthropic_api_key"))
+    .map_err(|_| AppError::Config("ANTHROPIC_API_KEY not found".to_string()))?;
+
 let base_url = std::env::var("ANTHROPIC_BASE_URL")
     .or_else(|_| read_config_value("anthropic_base_url"))
     .unwrap_or_else(|_| "https://api.anthropic.com".to_string());
@@ -83,7 +113,7 @@ let model = std::env::var("LLM_MODEL")
     .unwrap_or_else(|_| "claude-sonnet-4-20250514".to_string());
 ```
 
-添加一个通用辅助函数 `read_config_value(key: &str) -> Result<String, ()>`，复用现有的 `read_api_key_from_config_file` 逻辑但参数化 key。
+删除原有的 `read_api_key_from_config_file` 函数。
 
 - [ ] **Step 3: 实现 save_config 函数**
 
@@ -93,10 +123,14 @@ let model = std::env::var("LLM_MODEL")
 use toml_edit::{DocumentMut, Item};
 
 pub fn save_config(
-    agent: &AgentConfig,
     llm_api_key: &str,
     llm_model: &str,
     llm_base_url: &str,
+    max_turns: u32,
+    context_window: u32,
+    max_output_tokens: u32,
+    tool_output_max_bytes: usize,
+    bash_default_timeout_secs: u64,
 ) -> Result<(), AppError> {
     let config_path = dirs::home_dir()
         .ok_or(AppError::Config("no home dir".into()))?
@@ -109,7 +143,6 @@ pub fn save_config(
         content.parse::<DocumentMut>()
             .map_err(|e| AppError::Config(format!("failed to parse TOML: {e}")))?
     } else {
-        // 确保父目录存在
         if let Some(parent) = config_path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| AppError::Config(format!("failed to create dir: {e}")))?;
@@ -117,12 +150,12 @@ pub fn save_config(
         DocumentMut::new()
     };
 
-    // Agent 配置
-    doc["max_turns"] = Item::Value(toml_edit::value(agent.max_turns as i64));
-    doc["context_window"] = Item::Value(toml_edit::value(agent.context_window as i64));
-    doc["max_output_tokens"] = Item::Value(toml_edit::value(agent.max_output_tokens as i64));
-    doc["tool_output_max_bytes"] = Item::Value(toml_edit::value(agent.tool_output_max_bytes as i64));
-    doc["bash_default_timeout_secs"] = Item::Value(toml_edit::value(agent.bash_default_timeout_secs as i64));
+    // Agent 配置（从前端传入的值写入）
+    doc["max_turns"] = Item::Value(toml_edit::value(max_turns as i64));
+    doc["context_window"] = Item::Value(toml_edit::value(context_window as i64));
+    doc["max_output_tokens"] = Item::Value(toml_edit::value(max_output_tokens as i64));
+    doc["tool_output_max_bytes"] = Item::Value(toml_edit::value(tool_output_max_bytes as i64));
+    doc["bash_default_timeout_secs"] = Item::Value(toml_edit::value(bash_default_timeout_secs as i64));
 
     // LLM 配置
     doc["anthropic_api_key"] = Item::Value(toml_edit::value(llm_api_key));
@@ -189,10 +222,14 @@ pub async fn update_config(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     crate::engine::config::save_config(
-        &state.config,
         &payload.anthropic_api_key,
         &payload.llm_model,
         &payload.anthropic_base_url,
+        payload.max_turns,
+        payload.context_window,
+        payload.max_output_tokens,
+        payload.tool_output_max_bytes,
+        payload.bash_default_timeout_secs,
     )
     .map_err(|e| e.to_string())
 }
@@ -274,6 +311,92 @@ feat: AssistantSegment 类型 + 工具危险等级映射
 
 ---
 
+## Task 5: 前端 — MessageBubble + ChatView 视觉重构
+
+**Files:**
+- Modify: `src/components/MessageBubble.vue`
+- Modify: `src/components/ChatView.vue`
+
+- [ ] **Step 1: 重写 MessageBubble.vue**
+
+根据 spec 的视觉规范重写模板：
+
+- User 消息：右对齐，标题行 `→ User`，卡片背景 `bg-bg-elevated`，左侧 3px 灰色色条
+- Assistant 消息：左对齐，标题行 `λ Assistant`（λ 带绿色背景标签），遍历 `segments` 渲染
+  - text segment → 左对齐卡片 + 3px 绿色色条
+  - tool segment → 渲染 ToolCallCard（不再单独的 toolCalls 数组）
+- System 消息：保持现有红色样式不变
+- 新增 `isStreaming` prop：为 true 时在最后一个 text segment 后显示闪烁光标
+
+Assistant 消息不再使用 `streamingText` prop，改为通过 `segments` + `isStreaming` 渲染流式内容。
+
+- [ ] **Step 2: 修改 ChatView.vue 适配新数据模型**
+
+关键变更：
+1. 从 `useChat` 解构 `currentTurnSegments`
+2. 移除 `streamingText` 的使用（不再传递给 MessageBubble）
+3. 移除独立的流式 MessageBubble（第 69-79 行）
+4. 流式内容通过最后一条 assistant 消息的 segments 渲染
+
+```vue
+<script setup lang="ts">
+// ... 现有 imports 不变 ...
+const { messages, isStreaming, tokenUsage, send, currentTurnSegments } = useChat(sessionIdRef)
+
+// 流式时合并 currentTurnSegments 到最后一条 assistant 消息
+const displayMessages = computed(() => {
+  const msgs = [...messages.value]
+  if (isStreaming.value && currentTurnSegments.value.length > 0) {
+    const last = msgs[msgs.length - 1]
+    if (last?.role === 'assistant') {
+      msgs[msgs.length - 1] = {
+        ...last,
+        segments: [...(last.segments ?? []), ...currentTurnSegments.value],
+      }
+    } else {
+      msgs.push({
+        id: `streaming-${Date.now()}`,
+        role: 'assistant',
+        content: '',
+        segments: [...currentTurnSegments.value],
+        timestamp: new Date().toISOString(),
+        isStreaming: true,
+      })
+    }
+  }
+  return msgs
+})
+</script>
+
+<template>
+  <div class="flex h-full flex-1 flex-col bg-bg-surface">
+    <div ref="scrollContainer" class="flex-1 overflow-y-auto px-4 py-6">
+      <EmptyState v-if="messages.length === 0" />
+      <div v-else class="mx-auto max-w-[720px] space-y-6">
+        <MessageBubble
+          v-for="msg in displayMessages"
+          :key="msg.id"
+          :message="msg"
+          :is-streaming="msg.isStreaming"
+        />
+      </div>
+    </div>
+    <MessageInput :is-streaming="isStreaming" @send="handleSend" />
+    <StatusBar
+      :is-streaming="isStreaming"
+      :model-name="modelName"
+      :input-tokens="tokenUsage.inputTokens"
+      :output-tokens="tokenUsage.outputTokens"
+      :tool-count="toolCount"
+    />
+  </div>
+</template>
+```
+
+- [ ] **Step 3: 验证前端构建**
+
+---
+
 ## Task 4: 前端 — useChat 数据模型重构
 
 **Files:**
@@ -342,10 +465,8 @@ export function useChat(sessionId: Ref<string | null>) {
         case 'ThinkingDelta':
           break
         case 'MessageComplete': {
-          // 追加 text segment（不再创建新消息）
-          if (event.content) {
-            appendTextToCurrentTurn(event.content)
-          }
+          // TextDelta 已逐字追加到 currentTurnSegments，
+          // 这里只清空 streamingText 并更新 tokenUsage
           streamingText.value = ''
           tokenUsage.value = {
             inputTokens: event.usage.input_tokens,
@@ -500,10 +621,11 @@ refactor: useChat — AssistantSegment 模型替代 content+toolCalls
 
 ---
 
-## Task 5: 前端 — MessageBubble 视觉重构
+## Task 5: 前端 — MessageBubble + ChatView 视觉重构
 
 **Files:**
 - Modify: `src/components/MessageBubble.vue`
+- Modify: `src/components/ChatView.vue`
 
 - [ ] **Step 1: 重写 MessageBubble.vue**
 
@@ -870,9 +992,22 @@ feat: SettingsView + useSettings — 配置读写 UI
 - Modify: `src/App.vue`
 - Modify: `src/components/Sidebar.vue`
 
-- [ ] **Step 1: 修改 Sidebar.vue 支持折叠**
+- [ ] **Step 1: 修改 Sidebar.vue 支持折叠 + 移除重复 Logo**
 
-将 `w-[240px]` 改为动态宽度，通过 prop 控制：
+将 `w-[240px]` 改为动态宽度，通过 prop 控制。同时移除顶部 Logo 区域（第 18-24 行），因为 Topbar 已承担品牌展示：
+
+```vue
+<script setup lang="ts">
+const props = defineProps<{
+  collapsed?: boolean
+}>()
+</script>
+
+<template>
+  <div
+    class="flex h-full shrink-0 flex-col border-r border-border-default bg-bg-elevated transition-all duration-200"
+    :class="collapsed ? 'w-0 overflow-hidden' : 'w-[240px]'"
+  >
 
 ```vue
 <script setup lang="ts">
