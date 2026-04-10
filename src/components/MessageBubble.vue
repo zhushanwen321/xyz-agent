@@ -28,12 +28,12 @@ function renderMarkdown(text: string): string {
 
 <template>
   <!-- User 消息 — 左对齐，全宽背景 -->
-  <div v-if="isUser" class="flex items-start gap-1.5 border-l-[3px] border-l-[#a1a1aa] px-2 py-1.5" style="background-color: var(--color-bg-user)">
-    <div class="flex shrink-0 items-center gap-1.5">
+  <div v-if="isUser" class="flex items-start gap-2 border-l-[3px] border-l-[#a1a1aa] px-2 py-1.5" style="background-color: var(--color-bg-user)">
+    <div class="flex w-[76px] shrink-0 items-center gap-1.5">
       <div class="flex h-4 w-4 items-center justify-center rounded bg-bg-inset text-[10px] font-mono font-bold text-text-secondary">U</div>
       <span class="font-mono text-[10px] text-text-tertiary">User</span>
     </div>
-    <div class="flex-1">
+    <div class="min-w-0 flex-1">
       <div class="prose max-w-none text-text-primary" v-html="renderMarkdown(message.content)" />
     </div>
   </div>
@@ -48,13 +48,13 @@ function renderMarkdown(text: string): string {
   </div>
 
   <!-- Assistant 消息 — 左对齐，全宽背景 -->
-  <div v-else class="flex items-start gap-1.5 border-l-[3px] border-l-accent px-2 py-1.5" style="background-color: var(--color-bg-ai)">
-    <div class="flex shrink-0 items-center gap-1.5">
+  <div v-else class="flex items-start gap-2 border-l-[3px] border-l-accent px-2 py-1.5" style="background-color: var(--color-bg-ai)">
+    <div class="flex w-[76px] shrink-0 items-center gap-1.5">
       <div class="flex h-4 w-4 items-center justify-center rounded text-[10px] font-mono font-bold text-accent" style="background:#22c55e22">&lambda;</div>
       <span class="font-mono text-[10px] text-accent">Assistant</span>
     </div>
 
-    <div class="flex-1">
+    <div class="min-w-0 flex-1">
       <template v-if="segments.length > 0">
         <template v-for="(seg, idx) in segments" :key="idx">
           <!-- text segment -->
