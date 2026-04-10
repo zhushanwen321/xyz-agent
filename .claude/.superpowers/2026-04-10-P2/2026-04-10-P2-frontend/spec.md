@@ -1,58 +1,73 @@
-# P2-前端任务树 设计规格
+# P2-前端 设计规格
 
-**版本**: v2 | **日期**: 2026-04-10 | **状态**: 设计中
+**版本**: v3 | **日期**: 2026-04-10 | **状态**: 设计中
+
+> **Mockup 参考**：[mockup-reference.html](mockup-reference.html) — 可用浏览器直接打开查看 4 种场景的视觉方案。
 
 ---
 
 ## 目标
 
-前端展示任务树状态、SubAgent 执行进度、预算消耗。
+前端展示两种模式的任务状态：dispatch_agent（内嵌 + 侧边栏）和 orchestrate（独立树形视图）。
+
+---
 
 ## AgentEvent 新增变体
 
-```rust
-// 4 个新事件
-TaskCreated { session_id, task_id, parent_id, description, mode, subagent_type, budget }
-TaskProgress { session_id, task_id, usage }
-TaskCompleted { session_id, task_id, status, result_summary, usage }
-BudgetWarning { session_id, task_id, usage_percent }
-```
+```typescript
+// dispatch_agent 事件
+| { type: 'TaskCreated'; session_id: string; task_id: string; description: string; mode: string; subagent_type: string; budget: { max_tokens: number } }
+| { type: 'TaskProgress'; session_id: string; task_id: string; usage: { total_tokens: number; tool_uses: number; duration_ms: number } }
+| { type: 'TaskCompleted'; session_id: string; task_id: string; status: string; result_summary: string; usage: { total_tokens: number } }
+| { type: 'BudgetWarning'; session_id: string; task_id: string; usage_percent: number }
+| { type: 'TaskFeedback'; session_id: string; task_id: string; message: string; severity: string }
 
-触发时机：
-- TaskCreated — dispatch_agent 创建 TaskNode 后立即
-- TaskProgress — 每轮迭代后（节流 ≤ 1 次/2s）
-- TaskCompleted — SubAgent 结束时
-- BudgetWarning — 预算达 90% 时（只发一次）
+// orchestrate 事件
+| { type: 'OrchestrateNodeCreated'; session_id: string; node_id: string; parent_id: string | null; role: string; depth: number; description: string }
+| { type: 'OrchestrateNodeProgress'; session_id: string; node_id: string; usage: { total_tokens: number; tool_uses: number; duration_ms: number } }
+| { type: 'OrchestrateNodeCompleted'; session_id: string; node_id: string; status: string; result_summary: string; usage: { total_tokens: number } }
+| { type: 'OrchestrateNodeIdle'; session_id: string; node_id: string }
+| { type: 'OrchestrateFeedback'; session_id: string; node_id: string; direction: string; message: string; severity: string }
+```
 
 ---
 
 ## 前端类型
 
 ```typescript
-// TaskNode 类型
+// TaskNode（dispatch_agent）
 interface TaskNode {
   type: 'task_node'
   task_id: string
-  parent_id: string | null
   session_id: string
   description: string
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'budget_exhausted' | 'killed'
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'budget_exhausted' | 'killed' | 'paused'
   mode: 'preset' | 'fork'
   subagent_type: string | null
   budget: { max_tokens: number; max_turns: number; max_tool_calls: number }
   usage: { total_tokens: number; tool_uses: number; duration_ms: number }
-  children_ids: string[]
   created_at: string
   completed_at: string | null
   output_file: string | null
 }
 
-// AgentEvent 扩展（追加到现有联合类型）
-| { type: 'TaskCreated'; ... }
-| { type: 'TaskProgress'; ... }
-| { type: 'TaskCompleted'; ... }
-| { type: 'TaskFeedback'; session_id: string; task_id: string; message: string; severity: string }
-| { type: 'BudgetWarning'; ... }
+// OrchestrateNode
+interface OrchestrateNode {
+  type: 'orchestrate_node'
+  node_id: string
+  parent_id: string | null
+  session_id: string
+  role: 'orchestrator' | 'executor'
+  depth: number
+  description: string
+  status: 'pending' | 'running' | 'idle' | 'completed' | 'failed' | 'budget_exhausted' | 'killed' | 'paused'
+  directive: string
+  budget: { max_tokens: number; max_turns: number; max_tool_calls: number }
+  usage: { total_tokens: number; tool_uses: number; duration_ms: number }
+  feedback_history: Array<{ timestamp: string; direction: string; message: string; severity: string }>
+  reuse_count: number
+  children_ids: string[]
+}
 ```
 
 ---
@@ -61,8 +76,9 @@ interface TaskNode {
 
 ```typescript
 const taskNodes = ref<Map<string, TaskNode>>(new Map())
+const orchestrateNodes = ref<Map<string, OrchestrateNode>>(new Map())
 
-// 事件处理
+// dispatch_agent 事件处理
 case 'TaskCreated':
   taskNodes.value.set(event.task_id, { ...event, status: 'running',
     usage: { total_tokens: 0, tool_uses: 0, duration_ms: 0 }, children_ids: [] })
@@ -76,94 +92,128 @@ case 'TaskCompleted':
   if (node) { node.status = event.status; node.usage = event.usage }
   break
 
-// 暴露
-return { ..., taskNodes: readonly(taskNodes) }
+// orchestrate 事件处理
+case 'OrchestrateNodeCreated':
+  orchestrateNodes.value.set(event.node_id, { ...event, status: 'running',
+    usage: { total_tokens: 0, tool_uses: 0, duration_ms: 0 }, children_ids: [],
+    feedback_history: [], reuse_count: 0 })
+  break
+// ... 类似处理 Progress, Completed, Idle, Feedback
+
+// loadHistory 从 LoadHistoryResult 填充
+result.task_nodes.forEach(n => taskNodes.value.set(n.task_id, n))
+result.orchestrate_nodes.forEach(n => orchestrateNodes.value.set(n.node_id, n))
+
+return { ..., taskNodes: readonly(taskNodes), orchestrateNodes: readonly(orchestrateNodes) }
 ```
 
 ---
 
-## 新增组件
+## 核心交互模型
 
-### TaskTreeView.vue
+### Chat Tab 机制
 
-可折叠面板，展示树形任务列表：
+聊天窗口支持多个 Tab：
+- **Main Chat Tab**（默认）：主 Agent 对话
+- **SubAgent Tab**：每个后台 SubAgent 或编排节点可打开独立 Tab
+  - 复用现有聊天组件（MessageBubble, ToolCallCard）
+  - 实时流式输出（通过独立 event channel）
+  - Tab 只读（无输入框），底部状态栏显示预算/工具统计
+  - Tab 可关闭（× 按钮）
 
-```
-┌─ 任务树 ──────────────────────────────┐
-│ ● 探索代码结构      completed  3.5K t │
-│ ◉ 实现新功能        running   12.4K t │
-│   ├─ ✓ 分析接口    completed  8.2K t  │
-│   └─ ◉ 编写实现    running   4.2K t   │
-└───────────────────────────────────────┘
-```
+### 右侧 Sidebar
 
-状态图标：● pending, ◉ running, ✓ completed, ✗ failed, ⚡ budget_exhausted
-Token 显示：缩写格式（K/M），如 `3.5K t`
-
-### TaskTreeNode.vue
-
-递归组件，接收 TaskNode，渲染状态行 + 预算进度条（running 时）+ 子节点列表。
-
-### TaskDetail.vue
-
-点击节点展开详情面板：
-- 任务描述、模板类型、模式
-- 预算使用（进度条）
-- 工具调用次数、执行时长
-- 结果摘要（completed 时）
-- 反馈消息列表（来自 feedback 工具）
-- 操作按钮：running→[暂停][终止]，paused→[恢复][终止]
-- [查看对话]（调用 get_subagent_history 从独立 JSONL 加载）
+双 Tab 切换面板（可折叠）：
+- **SubAgents Tab**：活跃 SubAgent 卡片列表
+- **Orchestrate Tab**：编排树形视图
 
 ---
 
-## 现有组件变更
+## 展示策略
 
-### ToolCallCard.vue
+### dispatch_agent 三种模式
 
-工具名为 `dispatch_agent` 时渲染特殊卡片：
+**模式 1：同步阻塞 (sync=true, 单个)**
+- SubAgent 作为嵌套 Agent 卡片内嵌在 Assistant 消息中
+- 卡片结构：头像(λ) + 模板名 + 描述 + 进度/统计 + 状态图标
+- 运行中：spinner + 进度条 + token 计数
+- 完成：✓ + token/工具/时长统计 + [展开详情]
+- 不可展开为 Chat Tab（同步模式结束后已有完整结果）
 
-- 运行中：显示任务描述 + 模板名 + 预算进度条
-- 完成：显示状态 + token/工具/时长统计 + [查看详情]
+**模式 2：异步并行收集 (sync=true, 多个并发)**
+- 多个 SubAgent 卡片同时内嵌在 Assistant 消息中
+- 每个卡片独立显示 spinner + 进度条
+- 底部显示 "等待所有 Agent 完成..." 提示
+- 全部完成后主 Agent 继续回复
 
-### StatusBar.vue
+**模式 3：异步后台 (sync=false)**
+- Sidebar SubAgents Tab 中显示卡片（带进度条）
+- 点击卡片 → 打开 Chat Tab 显示实时输出
+- Sidebar 卡片状态：running（蓝色高亮）/ pending（灰色半透明）/ completed（✓）
+- 当前打开的 Tab 对应的卡片有蓝色边框高亮
 
-新增活跃任务数显示：`tasks: 2 running`
+### orchestrate 编排树
 
-### ChatView.vue
+**Sidebar Orchestrate Tab**：
+```
+[O] 重构认证模块    12K
+  ├─ [E] 分析现有代码  ✓ 8.2K
+  ├─ [E] 编写新逻辑   4.2K   ← 选中高亮
+  └─ [E] 编写测试     idle(2x)
+```
+- 图标：[O]=Orchestrator(蓝), [E]=Executor
+- 状态色：running=蓝, completed=绿, idle=黄, pending=灰, failed=红
+- 点击节点 → 打开 Chat Tab
 
-集成 TaskTreeView，位置为聊天区域右侧可折叠面板。
+**节点 Chat Tab 信息栏**（Tab 下方）：
+```
+[E] Executor | parent: [O] 重构认证模块 | depth: 1 | 4.2K / 50K | ⏸ ✕
+```
+- 显示：角色、父节点描述、深度、预算进度、操作按钮
+- 操作：暂停/恢复/终止（级联传播）
 
 ---
 
-## 约束
+## 用户操作
 
-- TaskNode 事件节流 ≤ 1 次/2s（防止高频更新）
-- 结果摘要 ≤ 2000 字符（前端展示用）
-- 无暂停/恢复 UI（P2 不实现用户干预）
-- SubAgent 的 TextDelta 不推送到前端（后端通过独立 channel + 桥接过滤）
+### dispatch_agent
+- 同步模式：无特殊操作，结果内嵌展示
+- 异步后台：
+  - 点击 Sidebar 卡片 → 打开 Chat Tab
+  - Chat Tab 内可暂停/恢复/终止
+  - 关闭 Tab 不终止任务
 
-## 已知限制
+### orchestrate 节点
+- 点击树节点 → 打开 Chat Tab（带节点信息栏）
+- 信息栏操作按钮：暂停/恢复/终止（级联传播到子节点）
+- 树节点 hover 显示 token 数和 reuse_count
+- idle 节点显示 reuse 次数标签（如 "2x"）
 
-- **无实时流式** — SubAgent 内部的 TextDelta 不推送到前端
-- **无日志 Tab** — 不展示 SubAgent 内部的工具调用日志
-- **无历史任务树** — 切换 session 后任务树从 JSONL 重新加载
+---
 
 ## LoadHistoryResult 类型更新
-
-后端 `LoadHistoryResult` 新增 `task_nodes` 字段，前端需同步更新：
 
 ```typescript
 interface LoadHistoryResult {
   entries: TranscriptEntry[]
   conversation_summary: string | null
-  task_nodes: TaskNode[]              // NEW
+  task_nodes: TaskNode[]
+  orchestrate_nodes: OrchestrateNode[]
+  pending_async_results: Array<{
+    task_id: string
+    description: string
+    status: string
+    result_summary: string
+  }>
 }
 ```
 
-`useChat.ts` 的 `loadHistory` 方法需要从返回值中提取 `task_nodes`，填充到 `taskNodes` ref：
-```typescript
-const result = await getHistory(sessionId)
-// 现有逻辑...
-result.task_nodes.forEach(node => taskNodes.value.set(node.task_id, node))
-```
+---
+
+## 约束
+
+- TaskProgress 节流 ≤1次/2s
+- OrchestrateNodeProgress 节流 ≤1次/2s
+- 结果摘要 ≤2000 字符
+- SubAgent 的 TextDelta 不推送到前端
+- 切换 session 时停止接收 Progress，切换回来从 JSONL 恢复

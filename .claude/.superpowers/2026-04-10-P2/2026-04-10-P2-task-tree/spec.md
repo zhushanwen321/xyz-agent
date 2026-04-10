@@ -1,75 +1,94 @@
 # P2-TaskTree 设计规格
 
-**版本**: v3 | **日期**: 2026-04-10 | **状态**: 设计中
+**版本**: v4 | **日期**: 2026-04-10 | **状态**: 设计中
 
 ---
 
 ## 目标
 
-管理 SubAgent 的树形结构：追踪节点状态、预算消耗。TreeNode 专属于 SubAgent，主 Agent 不是 TreeNode。
+管理 SubAgent（dispatch_agent）和编排节点（orchestrate）的树形结构。TaskNode 用于一次性 SubAgent，OrchestrateNode 用于编排模式。
 
-## 核心类型
+---
 
-### TaskNode
+## TaskNode（dispatch_agent 用）
 
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename = "task_node")]
 pub struct TaskNode {
-    pub task_id: String,
-    pub parent_id: Option<String>,      // 父 SubAgent 的 task_id（P2 通常为 None）
+    pub task_id: String,              // uuid 生成，同时作为 TranscriptEntry 的 uuid
+    pub parent_id: Option<String>,
     pub session_id: String,
-    pub description: String,            // 3-5 词摘要
+    pub description: String,
     pub status: TaskStatus,
-    pub mode: AgentMode,                // preset / fork
+    pub mode: AgentMode,              // preset / fork
     pub subagent_type: Option<String>,
-    pub created_at: String,             // ISO timestamp
+    pub created_at: String,
     pub completed_at: Option<String>,
-    // 关联
-    pub transcript_path: Option<String>,  // SubAgent 独立 JSONL 路径
-    pub output_file: Option<String>,      // 完整输出文件路径
-    // 预算
+    pub transcript_path: Option<String>,
+    pub output_file: Option<String>,
     pub budget: TaskBudget,
     pub usage: TaskUsage,
-    // 子节点
-    pub children_ids: Vec<String>,
-    // 控制
-    pub kill_requested: bool,           // 用户请求终止
+    pub children_ids: Vec<String>,    // P2 通常为空（不嵌套）
+    pub kill_requested: bool,
 }
 ```
 
-### TaskStatus 状态机（含用户干预）
+### TaskStatus 状态机
 
 ```
 pending → running → completed
                  → failed
                  → budget_exhausted
 running ⇄ paused              ← 用户干预
-running → killed              ← 用户干预
-paused → killed               ← 用户干预
+running/paused → killed       ← 用户干预
 ```
+
+---
+
+## OrchestrateNode（orchestrate 用）
 
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum TaskStatus {
-    #[serde(rename = "pending")]
-    Pending,
-    #[serde(rename = "running")]
-    Running,
-    #[serde(rename = "paused")]
-    Paused,
-    #[serde(rename = "completed")]
-    Completed,
-    #[serde(rename = "failed")]
-    Failed,
-    #[serde(rename = "budget_exhausted")]
-    BudgetExhausted,
-    #[serde(rename = "killed")]
-    Killed,
+#[serde(tag = "type", rename = "orchestrate_node")]
+pub struct OrchestrateNode {
+    pub node_id: String,
+    pub parent_id: Option<String>,
+    pub session_id: String,
+    pub role: NodeRole,               // Orchestrator / Executor
+    pub depth: u32,
+    pub description: String,
+    pub status: OrchestrateStatus,
+    pub directive: String,
+    pub agent_id: String,
+    pub conversation_path: PathBuf,
+    pub output_file: Option<PathBuf>,
+    pub budget: TaskBudget,
+    pub usage: TaskUsage,
+    pub children_ids: Vec<String>,
+    pub feedback_history: Vec<FeedbackMessage>,
+    pub reuse_count: u32,
+    pub last_active_at: String,
+    pub kill_requested: bool,
 }
 ```
 
-### TaskBudget / TaskUsage
+### OrchestrateStatus 状态机
+
+```
+pending → running → completed
+                 → failed
+                 → budget_exhausted
+running → idle            ← run_turn 结束，等待复用
+idle → running            ← 被复用
+running ⇄ paused          ← 用户干预
+running/paused/idle → killed  ← 级联终止
+idle → completed          ← 10分钟超时自动清理
+```
+
+---
+
+## 共享类型
 
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,11 +104,7 @@ pub struct TaskUsage {
     pub tool_uses: u32,
     pub duration_ms: u64,
 }
-```
 
-### AgentMode
-
-```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentMode {
     #[serde(rename = "preset")]
@@ -105,126 +120,101 @@ pub enum AgentMode {
 
 ```rust
 pub struct TaskTree {
-    nodes: HashMap<String, TaskNode>,
-    max_depth: usize,   // 默认 5（P2 实际上限 2：主→子）
-    max_width: usize,   // 默认 10
+    task_nodes: HashMap<String, TaskNode>,
+    orchestrate_nodes: HashMap<String, OrchestrateNode>,
 }
 ```
 
-AppState 中使用 `Arc<Mutex<TaskTree>>` 提供内部可变性。
+### TaskNode 方法
+- `create_task_node(...)` — 创建并注册
+- `update_status(id, status)` — 状态转换
+- `update_usage(id, usage)` — 用量更新
+- `request_kill(id)` — kill_requested=true
+- `request_pause(id)` / `request_resume(id)`
+- `should_pause(id) → bool` / `should_kill(id) → bool`
 
-关键方法：
-- `create_node(task_id, parent_id, ...)` — 创建并注册
-- `update_status(task_id, status)` — 状态转换
-- `update_usage(task_id, usage)` — 用量更新
-- `request_kill(task_id)` — 标记 kill_requested=true
-- `request_pause(task_id)` — 状态改为 Paused
-- `request_resume(task_id)` — 状态改为 Running
-- `should_pause(task_id) → bool` — 检查是否应暂停（AgentLoop 每轮检查）
-- `should_kill(task_id) → bool` — 检查是否应终止
+### OrchestrateNode 方法
+- `create_orchestrate_node(...)` — 创建并注册
+- `update_status(id, status)` — 状态转换
+- `append_feedback(id, msg)` — 追加反馈
+- `mark_idle(id)` — 标记空闲
+- `reactivate(id, new_directive, new_budget)` — 复用激活
+- `request_kill_tree(id)` — **级联终止**：递归设置所有子节点 kill_requested
+- `get_idle_agents(owner_id) → Vec<&OrchestrateNode>` — 获取可复用的空闲 Agent
+- `cleanup_idle(timeout_secs: u64)` — 清理超时空闲 Agent
 
 ---
 
 ## 持久化（Sidechain 模式）
 
-借鉴 Claude Code 的 sidechain 模式。SubAgent 对话与主 session 物理隔离。
-
 ### 目录结构
 
 ```
 {data_dir}/
-├── {session_id}.jsonl              # 主 session（不含 SubAgent 对话）
+├── {session_id}.jsonl                    # 主 session
 ├── {session_id}/
-│   └── subagents/
-│       ├── {task_id}.jsonl         # SubAgent 独立对话
-│       └── {task_id}.meta.json     # TaskNode 元数据快照
+│   ├── subagents/
+│   │   └── {task_id}.jsonl               # dispatch_agent SubAgent 对话
+│   └── orchestrate/
+│       └── {node_id}.jsonl               # orchestrate Agent 对话
 └── tasks/
     └── output/
-        └── {task_id}.txt           # SubAgent 完整输出
+        └── {task_id}.txt                 # 完整输出
 ```
 
-### TaskNode 元数据存主 JSONL
+### 元数据写入
 
-TaskNode 仍作为 TranscriptEntry 变体存入主 session JSONL：
+TaskNode 和 OrchestrateNode 都作为 TranscriptEntry 变体存入主 session JSONL。TranscriptEntry 新增变体：
 
 ```rust
-// TranscriptEntry 新增变体
-#[serde(rename = "task_node")]
-TaskNode { /* TaskNode 的全部字段 */ }
+// TranscriptEntry 扩展
+| TaskNode { ... }            // dispatch_agent 元数据
+| OrchestrateNode { ... }     // orchestrate 元数据
+| Feedback { ... }            // 反馈消息（可来自任一系统）
 ```
 
-TaskNode 变体**没有** `uuid` 和 `parent_uuid` 字段。`TranscriptEntry::uuid()` 和 `parent_uuid()` 需更新 match 分支，返回 `""` 和 `None`。
-
-### SubAgent 对话存独立 JSONL
-
-SubAgent 的 User/Assistant/Summary entry 写入 `{session_id}/subagents/{task_id}.jsonl`。格式与主 session JSONL 相同（每行一个 JSON 对象）。
-
-写入路径通过 `ToolExecutionContext` 中的 `data_dir` + `session_id` + `task_id` 构建。dispatch_agent 内部调用独立的 `append_entry` 写入。
-
-### 主 session 加载不受影响
-
-`load_history` 加载主 session JSONL，其中 TaskNode 变体的 `transcript_path` 字段指向 SubAgent 独立文件。主 Agent 的 User/Assistant entry 不受影响。
+### LoadHistoryResult 扩展
 
 ```rust
 pub struct LoadHistoryResult {
-    pub entries: Vec<TranscriptEntry>,       // 主 session entry（含 TaskNode）
+    pub entries: Vec<TranscriptEntry>,
     pub conversation_summary: Option<String>,
-    pub task_nodes: Vec<TaskNode>,           // 解析出的 TaskNode 列表
+    pub task_nodes: Vec<TaskNode>,
+    pub orchestrate_nodes: Vec<OrchestrateNode>,
+    // 异步任务：已完成但尚未注入的结果
+    pub pending_async_results: Vec<AsyncResult>,
+}
+
+pub struct AsyncResult {
+    pub task_id: String,
+    pub description: String,
+    pub status: String,       // completed / failed
+    pub result_summary: String,
+    pub output_file: Option<String>,
 }
 ```
-
-前端通过 `task_nodes` 展示任务树。需要查看 SubAgent 对话时，调用 `get_subagent_history(task_id)` 从独立 JSONL 加载。
 
 ---
 
-## 用户干预机制
-
-### 后端
-
-TaskTree 的 `request_kill` / `request_pause` / `request_resume` 由前端 Tauri command 调用：
+## AppState 扩展
 
 ```rust
-#[tauri::command]
-async fn pause_task(session_id: String, task_id: String, state: State<'_, AppState>) -> Result<(), String> {
-    state.task_tree.lock().await.request_pause(&task_id).map_err(|e| e.to_string())
+pub struct AppState {
+    // 现有字段...
+    pub task_tree: Arc<tokio::sync::Mutex<TaskTree>>,
+    pub concurrency_manager: Arc<ConcurrencyManager>,
+    pub background_tasks: Arc<tokio::sync::Mutex<HashMap<String, JoinHandle<()>>>>,
+    pub agent_templates: Arc<AgentTemplateRegistry>,
 }
 ```
-
-AgentLoop 每轮迭代检查：
-```rust
-if let Some(tree) = &task_tree {
-    let tree = tree.lock().await;
-    if tree.should_kill(&task_id) {
-        break; // 终止循环
-    }
-    while tree.should_pause(&task_id) {
-        drop(tree);
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        tree = task_tree.lock().await;
-    }
-}
-```
-
-### 前端
-
-TaskDetail.vue 中显示操作按钮：
-- running → [暂停] [终止]
-- paused → [恢复] [终止]
-- completed/failed → [查看对话]
 
 ---
 
 ## 约束
 
 - TaskTree 不 import tauri
-- AppState 使用 `Arc<Mutex<TaskTree>>`
-- SubAgent 对话存独立 JSONL（sidechain 模式）
-- TaskNode 元数据存主 session JSONL（append-only）
-- 禁止嵌套保证 max_depth ≤ 2（P2）
-- TranscriptEntry 的 `uuid()`/`parent_uuid()` 需更新
-
-## 已知限制
-
-- **不支持 SubAgent resume** — P2 不实现从断点恢复 SubAgent 执行
-- **无独立 compact** — SubAgent 的上下文压缩随 AgentLoop 复用主逻辑
-- **加载全量** — load_history 加载全部 TaskNode
+- SubAgent 禁止嵌套（dispatch_agent + orchestrate 都排除）
+- 编排深度 MAX_DEPTH=5
+- Agent 所有权：只有创建者可复用
+- 空闲超时 10 分钟
+- TranscriptEntry 的 uuid()/parent_uuid() 需更新 match 分支
