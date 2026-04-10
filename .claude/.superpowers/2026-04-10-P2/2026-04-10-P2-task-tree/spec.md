@@ -1,6 +1,6 @@
 # P2-TaskTree 设计规格
 
-**版本**: v5 | **日期**: 2026-04-10 | **状态**: 设计中
+**版本**: v6 | **日期**: 2026-04-11 | **状态**: 设计中
 
 ---
 
@@ -16,7 +16,7 @@
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename = "task_node")]
 pub struct TaskNode {
-    pub task_id: String,              // uuid 生成，同时作为 TranscriptEntry 的 uuid
+    pub task_id: String,              // "da_" + 8字符 base36，同时作为 TranscriptEntry 的 uuid
     pub parent_id: Option<String>,
     pub session_id: String,
     pub description: String,
@@ -53,7 +53,7 @@ running/paused → killed       ← 用户干预
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename = "orchestrate_node")]
 pub struct OrchestrateNode {
-    pub node_id: String,
+    pub node_id: String,              // "or_" + 8字符 base36
     pub parent_id: Option<String>,
     pub session_id: String,
     pub role: NodeRole,               // Orchestrator / Executor
@@ -230,6 +230,34 @@ pub struct AppState {
     pub agent_templates: Arc<AgentTemplateRegistry>,
 }
 ```
+
+---
+
+## ID 生成规则
+
+任务 ID 采用**类型前缀 + 随机 base36** 格式：
+
+```rust
+const TASK_ID_PREFIXES: &[(&str, &str)] = &[
+    ("dispatch_agent", "da_"),
+    ("orchestrate", "or_"),
+];
+
+// 36^8 ≈ 2.8 万亿组合，足以防止碰撞和暴力符号链接攻击
+fn generate_task_id(node_type: &str) -> String {
+    let prefix = TASK_ID_PREFIXES.iter().find(|(t, _)| t == &node_type).unwrap().1;
+    let random_part: String = (0..8)
+        .map(|_| rand::random::<u8>() % 36)
+        .map(|v| "0123456789abcdefghijklmnopqrstuvwxyz".chars().nth(v as usize).unwrap())
+        .collect();
+    format!("{}{}", prefix, random_part)
+}
+```
+
+前缀设计的优势：
+- **可观测性**：日志和 UI 中一眼区分 `da_3x7k9m2`（dispatch_agent）和 `or_5q8w1n4`（orchestrate）
+- **路由优化**：kill/progress 等操作根据前缀快速 dispatch 到正确处理器
+- **安全性**：36^8 ≈ 2.8 万亿组合，防止暴力符号链接攻击
 
 ---
 

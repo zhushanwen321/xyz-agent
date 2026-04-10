@@ -1,6 +1,6 @@
 # P2-orchestrate 设计规格
 
-**版本**: v2 | **日期**: 2026-04-10 | **状态**: 设计中
+**版本**: v3 | **日期**: 2026-04-11 | **状态**: 设计中
 
 ---
 
@@ -62,7 +62,7 @@ pub enum NodeRole {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename = "orchestrate_node")]
 pub struct OrchestrateNode {
-    pub node_id: String,               // uuid 生成
+    pub node_id: String,               // "or_" + 8字符 base36
     pub parent_id: Option<String>,     // 父节点 ID
     pub session_id: String,
     pub role: NodeRole,
