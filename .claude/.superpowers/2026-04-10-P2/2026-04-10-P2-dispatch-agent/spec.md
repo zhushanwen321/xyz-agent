@@ -1,6 +1,6 @@
 # P2-dispatch_agent 设计规格
 
-**版本**: v4 | **日期**: 2026-04-10 | **状态**: 设计中
+**版本**: v5 | **日期**: 2026-04-10 | **状态**: 设计中
 
 ---
 
@@ -22,7 +22,55 @@
 async fn call(&self, input: serde_json::Value, ctx: Option<&ToolExecutionContext>) -> ToolResult;
 ```
 
-现有工具实现接收 `ctx: Option<&ToolExecutionContext>`，P1 工具内部 `let _ = ctx;`。
+**迁移策略**：
+- `execute_batch` 和 `execute_single` 签名增加 `ctx: Option<&ToolExecutionContext>`
+- 现有 P1 工具（Read/Write/Bash）内部 `let _ = ctx;`
+- 仅在 `run_turn` 调用 `execute_batch` 时构建并传入 ctx
+
+---
+
+## AgentSpawner（分层架构解耦）
+
+dispatch_agent 和 orchestrate 在工具 `call()` 内部需要创建并运行 AgentLoop，但 tools 层不应直接依赖 engine/loop_ 模块。通过 AgentSpawner trait 解耦：
+
+```rust
+// 定义在 engine 层，不在 tools 层
+pub trait AgentSpawner: Send + Sync {
+    fn spawn_agent(&self, config: SpawnConfig) -> Result<SpawnHandle, AppError>;
+}
+
+pub struct SpawnConfig {
+    pub prompt: String,
+    pub history: Vec<TranscriptEntry>,
+    pub system_prompt_override: Option<String>,  // None = 用默认
+    pub tool_filter: Option<Vec<String>>,         // 白名单
+    pub budget: Option<TaskBudget>,
+    pub event_tx: UnboundedSender<AgentEvent>,
+    pub sync: bool,                               // true=阻塞等待, false=后台
+    // Fork 专用
+    pub fork_api_messages: Option<Vec<serde_json::Value>>,
+    pub fork_assistant_content: Option<Vec<AssistantContentBlock>>,
+    // 运行时依赖
+    pub dynamic_context: DynamicContext,
+    pub permission_context: PermissionContext,
+}
+
+pub struct SpawnHandle {
+    pub task_id: String,
+    pub join_handle: Option<JoinHandle<Result<AgentResult, AppError>>>,
+    // sync=true 时 join_handle = None（已等待完成）
+    // sync=false 时 join_handle = Some（后台执行中）
+}
+
+pub struct AgentResult {
+    pub entries: Vec<TranscriptEntry>,
+    pub usage: TaskUsage,
+    pub status: String,  // completed / failed / budget_exhausted
+    pub output_file: Option<PathBuf>,
+}
+```
+
+ToolExecutionContext 持有 `Arc<dyn AgentSpawner>`，dispatch_agent/orchestrate 通过它委托 AgentLoop 创建。
 
 ---
 
@@ -30,12 +78,10 @@ async fn call(&self, input: serde_json::Value, ctx: Option<&ToolExecutionContext
 
 ```rust
 pub struct ToolExecutionContext {
+    pub agent_spawner: Arc<dyn AgentSpawner>,      // AgentLoop 创建委托
     pub task_tree: Arc<Mutex<TaskTree>>,
-    pub concurrency_manager: Arc<ConcurrencyManager>,  // 全局并发控制
+    pub concurrency_manager: Arc<ConcurrencyManager>,
     pub agent_templates: Arc<AgentTemplateRegistry>,
-    pub provider: Arc<dyn LlmProvider>,
-    pub config: Arc<AgentConfig>,
-    pub prompt_manager: Arc<PromptManager>,
     pub data_dir: PathBuf,
     pub session_id: String,
     pub event_tx: UnboundedSender<AgentEvent>,
@@ -46,7 +92,7 @@ pub struct ToolExecutionContext {
 }
 ```
 
-**构建时机**：`consume_stream` 返回后，将 `api_messages` 和 `current_assistant_content` 保存为 `run_turn` 局部变量；`execute_batch` 调用前填入 ctx。
+**构建时机**：`consume_stream` 返回后，`api_messages` 和 `current_assistant_content` 作为循环局部变量保存；`execute_batch` 调用前填入 ctx 的对应字段。每次循环迭代重新计算 `api_messages`（经过 compact/trim 后的版本），Fork 模式拿到的就是当前迭代可见的历史。
 
 ---
 
@@ -94,19 +140,13 @@ impl PromptManager {
 
 ```
 1. 查找模板（preset）或使用 fork 上下文
-2. 过滤工具（排除 dispatch_agent + orchestrate）
-3. 创建 TaskNode(status=running, uuid=task_id, task_id 由 uuid 生成)
-4. 发送 TaskCreated 事件
-5. 创建独立 channel + 桥接 task
-6. 创建 BudgetGuard
-7. 创建子目录 {data_dir}/{session_id}/subagents/
-8. AgentLoop::run_turn(prompt, [], None, sub_tx, filtered_registry, ..., Some(budget_guard))
-9. 收集 entries → 写入独立 JSONL
-10. 截断结果 ≤100K → 完整输出存文件
-11. 更新 TaskNode → 写入主 JSONL（作为 TranscriptEntry 变体）
-12. 发送 TaskCompleted 事件
-13. 返回 XML ToolResult
+2. 构建 SpawnConfig（过滤工具、预算、event_tx 等）
+3. ctx.agent_spawner.spawn_agent(config) → 同步等待完成
+4. 创建 TaskNode → 发送事件 → 写入 JSONL
+5. 返回 XML ToolResult
 ```
+
+AgentSpawner 内部：创建独立 channel + 桥接 task、子目录、BudgetGuard、调用 run_turn、收集 entries、写入 JSONL。这些逻辑封装在 AgentSpawner 实现中，tools 层不感知。
 
 ### 异常处理
 - 模板不存在 → ToolResult::Error
@@ -131,16 +171,30 @@ impl PromptManager {
 
 ### 下一回合注入
 
-用户发送新消息时，`history_to_api_messages` 检查已完成的异步任务，按创建时间排序，每个任务注入 assistant + user 对：
+用户发送新消息时，`history_to_api_messages` 检查已完成的异步任务（从 TaskTree 或 AppState 读取），按创建时间排序。
+
+**注入规则（保证消息交替性）**：
+1. 检查 history 最后一条消息的 role
+2. 如果最后一条是 `user`：注入 assistant + user 对
+3. 如果最后一条是 `assistant`：将异步结果作为 text block 追加到该 assistant 的 content 中（不新建 assistant 消息），然后插入 user 消息
 
 ```json
+// 情况 A：最后一条是 user
 [
   {"role": "assistant", "content": "[Background task completed: {desc}]\n{result}"},
-  {"role": "user", "content": "[System: 以上是异步任务结果，请结合用户消息处理]"}
+  {"role": "user", "content": "[System: 以上是异步任务结果，请结合用户消息处理]"},
+  {"role": "user", "content": "用户实际消息"}
+]
+
+// 情况 B：最后一条是 assistant（当前回合中的 assistant）
+// 异步结果追加到已有 assistant content 末尾，不新建消息
+[
+  {"role": "user", "content": "[System: 异步任务 {desc} 已完成，结果已就绪]"},
+  {"role": "user", "content": "用户实际消息"}
 ]
 ```
 
-失败任务：`"[FAILED] {desc}: {error_message}"`，同样 assistant + user 对。
+失败任务：`"[FAILED] {desc}: {error_message}"`，遵循同样的交替性规则。
 
 ### 切换 Session
 

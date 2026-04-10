@@ -1,6 +1,6 @@
 # P2-orchestrate 设计规格
 
-**版本**: v1 | **日期**: 2026-04-10 | **状态**: 设计中
+**版本**: v2 | **日期**: 2026-04-10 | **状态**: 设计中
 
 ---
 
@@ -85,6 +85,7 @@ pub struct OrchestrateNode {
     pub last_active_at: String,        // 最后活跃时间
     // 控制
     pub kill_requested: bool,
+    pub pause_requested: bool,         // 用户暂停请求
 }
 ```
 
@@ -96,7 +97,7 @@ pending → running → completed
                  → budget_exhausted
 running → idle            ← run_turn 结束，等待复用
 idle → running            ← 被复用，追加新任务
-running ⇄ paused          ← 用户干预
+running ⇄ paused          ← 用户干预 / feedback error 暂停
 running/paused/idle → killed  ← 级联终止
 idle → completed          ← 10分钟超时
 ```
@@ -120,7 +121,34 @@ pub enum FeedbackDirection {
 pub enum FeedbackSeverity {
     Info,     // 继续执行
     Warning,  // 继续执行
-    Error,    // 暂停等待父节点响应
+    Error,    // 暂停 + 通知前端（不阻塞等待响应）
+}
+```
+
+---
+
+## AgentSpawner 集成
+
+orchestrate 与 dispatch_agent 共享同一个 `AgentSpawner` trait（定义在 dispatch-agent spec）。通过 `ToolExecutionContext.agent_spawner` 委托 AgentLoop 创建。
+
+### Orchestrator 的 SpawnConfig
+
+```rust
+// Orchestrator 的工具集包含 orchestrate + feedback + Read + Bash（受限）
+SpawnConfig {
+    tool_filter: Some(vec!["orchestrate", "feedback", "read", "bash"]),
+    system_prompt_override: Some(ORCHESTRATOR_SYSTEM_PROMPT),
+    // ... 其他字段同 dispatch_agent
+}
+```
+
+### Executor 的 SpawnConfig
+
+```rust
+SpawnConfig {
+    tool_filter: Some(vec!["feedback", "read", "write", "bash"]),
+    // Executor 不能调用 orchestrate 和 dispatch_agent
+    // ... 其他字段同 dispatch_agent
 }
 ```
 
@@ -149,6 +177,10 @@ Orchestrator 在 AgentLoop 中可以：
 4. 综合结果，决定是否需要调整
 5. 可选：复用空闲 Agent 或创建新 Agent
 
+### 异步结果注入
+
+与 dispatch_agent 相同的交替性保证。Orchestrator 的 AgentLoop 内部，当异步子节点完成时，结果注入到 Orchestrator 的 api_messages 中。注入规则见 dispatch-agent spec 的"异步模式 → 下一回合注入"。
+
 ---
 
 ## 深度控制
@@ -173,10 +205,17 @@ Orchestrator 在 AgentLoop 中可以：
 
 ## Feedback 机制（编排专用）
 
-### 分级反馈
+### 分级反馈（v2 修复：移除阻塞等待）
 
 - `severity=info/warning`：通知性质，Executor 继续执行，feedback 存入 `feedback_history`
-- `severity=error`：Executor 暂停执行，feedback 工具阻塞等待 Orchestrator 的响应作为 tool_result 返回
+- `severity=error`：**非阻塞暂停**
+  1. feedback 工具返回 ToolResult（确认已发送），Executor 继续执行当前工具调用
+  2. feedback 消息通过 event_tx 发送 `OrchestrateFeedback` 事件到前端
+  3. Executor 的 pause_requested 被设为 true
+  4. AgentLoop 下一轮 `run_turn` 开始时检查 `pause_requested` → 进入 paused 状态
+  5. 前端展示 feedback 内容，用户决定干预（调整/恢复/终止）
+
+**为什么移除阻塞等待**：Orchestrator 自身也在 AgentLoop 中执行。如果 Executor 阻塞等待 Orchestrator 响应，而 Orchestrator 正在同步等待该 Executor 完成，就会死锁。改为"暂停 + 通知前端 + 用户决策"模式。
 
 ### 反馈频率限制
 
@@ -223,6 +262,29 @@ Agent 只能被**创建者**复用。跨父节点复用禁止。
 
 ---
 
+## CancellationToken 集成
+
+AgentLoop 的 `run_turn` 支持 kill 和 pause 检测：
+
+```rust
+// run_turn 内部每轮循环检查
+if task_tree.should_kill(&node_id).await {
+    break; // status = killed
+}
+if task_tree.should_pause(&node_id).await {
+    // 暂停循环：每秒检查是否恢复
+    loop {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        if !task_tree.should_pause(&node_id).await { break; }
+        if task_tree.should_kill(&node_id).await { break; }
+    }
+}
+```
+
+这确保级联终止和用户暂停都能及时响应。
+
+---
+
 ## 级联终止
 
 ### 终止信号传播
@@ -259,10 +321,9 @@ OrchestrateNodeProgress { session_id, node_id, usage }
 OrchestrateNodeCompleted { session_id, node_id, status, result_summary, usage }
 OrchestrateNodeIdle { session_id, node_id }  // Agent 进入空闲
 OrchestrateFeedback { session_id, node_id, direction, message, severity }
-BudgetWarning { session_id, task_id: String, usage_percent }
 ```
 
-节流：Progress ≤1次/2s，BudgetWarning 只发一次。
+节流：Progress ≤1次/2s。
 
 ---
 
@@ -275,3 +336,4 @@ BudgetWarning { session_id, task_id: String, usage_percent }
 - 空闲超时 10 分钟
 - 级联终止
 - feedback 频率限制：10次/分钟/Executor
+- severity=error 不阻塞等待，改为暂停 + 通知

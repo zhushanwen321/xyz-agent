@@ -1,6 +1,6 @@
 # P2-TaskTree 设计规格
 
-**版本**: v4 | **日期**: 2026-04-10 | **状态**: 设计中
+**版本**: v5 | **日期**: 2026-04-10 | **状态**: 设计中
 
 ---
 
@@ -31,6 +31,7 @@ pub struct TaskNode {
     pub usage: TaskUsage,
     pub children_ids: Vec<String>,    // P2 通常为空（不嵌套）
     pub kill_requested: bool,
+    pub pause_requested: bool,
 }
 ```
 
@@ -70,6 +71,7 @@ pub struct OrchestrateNode {
     pub reuse_count: u32,
     pub last_active_at: String,
     pub kill_requested: bool,
+    pub pause_requested: bool,
 }
 ```
 
@@ -81,7 +83,7 @@ pending → running → completed
                  → budget_exhausted
 running → idle            ← run_turn 结束，等待复用
 idle → running            ← 被复用
-running ⇄ paused          ← 用户干预
+running ⇄ paused          ← 用户干预 / feedback error 暂停
 running/paused/idle → killed  ← 级联终止
 idle → completed          ← 10分钟超时自动清理
 ```
@@ -132,6 +134,27 @@ pub struct TaskTree {
 - `request_kill(id)` — kill_requested=true
 - `request_pause(id)` / `request_resume(id)`
 - `should_pause(id) → bool` / `should_kill(id) → bool`
+
+### AgentLoop 集成
+
+`run_turn` 每轮循环检查 pause/kill 状态：
+
+```rust
+// run_turn 内部
+if task_tree.should_kill(&node_id).await {
+    break; // → status = killed
+}
+if task_tree.should_pause(&node_id).await {
+    // 暂停循环：每秒检查是否恢复或终止
+    loop {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        if !task_tree.should_pause(&node_id).await { break; }
+        if task_tree.should_kill(&node_id).await { break; }
+    }
+}
+```
+
+这确保级联终止（request_kill_tree）和用户暂停操作能在 1 秒内响应。
 
 ### OrchestrateNode 方法
 - `create_orchestrate_node(...)` — 创建并注册
