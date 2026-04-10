@@ -62,6 +62,12 @@ src/
 核心数据流：
 LLM SSE → LlmStreamEvent → mpsc channel → EventBus → Tauri Event → Vue reactive state
 
+## 提示词工程准则
+
+**最高准则：在语义准确的情况下，尽量精简文字数量。**
+
+工具定义（description + input_schema）和 system prompt 的每个字段都必须为模型提供足够上下文以正确生成调用参数，但不写冗余描述。
+
 ## 代码规范
 
 - Rust：services/ 不 import tauri，纯业务逻辑可独立测试
