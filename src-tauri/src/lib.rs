@@ -9,7 +9,7 @@ use engine::llm::anthropic::AnthropicProvider;
 use engine::llm::LlmProvider;
 use engine::tools::{PermissionContext, ToolRegistry};
 use std::sync::Arc;
-use tauri::{Manager, PhysicalSize};
+use tauri::Manager;
 
 pub use api::AppState;
 
