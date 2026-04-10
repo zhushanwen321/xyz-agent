@@ -1,6 +1,6 @@
 # P2-dispatch_agent + SubAgent 生命周期 设计规格
 
-**版本**: v2 | **日期**: 2026-04-10 | **状态**: 设计中
+**版本**: v3 | **日期**: 2026-04-10 | **状态**: 设计中
 
 ---
 
@@ -232,13 +232,14 @@ fn build_fork_messages(
 
 ---
 
-## SubAgent JSONL 写入策略
+## SubAgent JSONL 写入策略（Sidechain 模式）
 
-SubAgent 产生的 entry 直接写入主 session JSONL：
+SubAgent 对话写入独立 JSONL：`{data_dir}/{session_id}/subagents/{task_id}.jsonl`
 
-- dispatch_agent 内部调用 `jsonl::append_entry(&session_path, entry)` 写入每个 SubAgent entry
-- session_path 从 `ToolExecutionContext.data_dir` + `session_id` 构建
-- 与主 Agent entry 混在同一 JSONL，通过 TaskNode 的 `transcript_start/end` uuid 范围关联
+- dispatch_agent 启动时创建目录和文件
+- SubAgent 产生的 User/Assistant/Summary entry 写入独立 JSONL
+- 主 session JSONL 只存 TaskNode 元数据 + 主 Agent 的 entry
+- dispatch_agent 完成后将 TaskNode（含 transcript_path）写入主 JSONL
 
 ---
 
@@ -270,6 +271,62 @@ SubAgent 产生的 entry 直接写入主 session JSONL：
 ## 同步 vs 异步
 
 P2 优先实现同步模式。异步模式预留接口，标记为 TODO。
+
+---
+
+## 反馈机制
+
+### feedback 工具
+
+SubAgent 内部可调用的内置工具，向父 Agent 发送中间消息：
+
+```json
+{
+  "name": "feedback",
+  "description": "向父 Agent 发送中间报告或请求指导",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "message": { "type": "string", "description": "要发送给父 Agent 的消息" },
+      "severity": { "enum": ["info", "warning", "error"], "default": "info" }
+    },
+    "required": ["message"]
+  }
+}
+```
+
+执行逻辑：
+- feedback 工具不在 tool_result 层面回传（SubAgent 继续执行）
+- 而是通过主 event_tx 发送 `AgentEvent::TaskFeedback` 事件到前端
+- 前端在 TaskDetail 面板中展示反馈消息列表
+- 父 Agent 在当前轮次**不会中断**处理 feedback（异步通知，非同步阻塞）
+
+只有 general-purpose 模板包含 feedback 工具。Explore/Plan（只读）不需要。
+
+### 用户干预
+
+前端通过 Tauri command 控制运行中的 SubAgent：
+
+| 操作 | 条件 | 效果 |
+|------|------|------|
+| 暂停 | status=running | AgentLoop 进入 sleep 循环，直到恢复 |
+| 恢复 | status=paused | AgentLoop 继续 |
+| 终止 | status=running/paused | AgentLoop break，返回已完成的部分结果 |
+
+后端通过 TaskTree 的 `request_pause` / `request_resume` / `request_kill` 实现。AgentLoop 每轮迭代检查 TaskTree 状态（通过 `Arc<Mutex<TaskTree>>` 共享）。
+
+### AgentEvent 新增
+
+```rust
+// 反馈事件
+#[serde(rename = "task_feedback")]
+TaskFeedback {
+    session_id: String,
+    task_id: String,
+    message: String,
+    severity: String,  // info/warning/error
+}
+```
 
 ---
 

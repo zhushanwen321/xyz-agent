@@ -51,6 +51,7 @@ interface TaskNode {
 | { type: 'TaskCreated'; ... }
 | { type: 'TaskProgress'; ... }
 | { type: 'TaskCompleted'; ... }
+| { type: 'TaskFeedback'; session_id: string; task_id: string; message: string; severity: string }
 | { type: 'BudgetWarning'; ... }
 ```
 
@@ -108,9 +109,11 @@ Token 显示：缩写格式（K/M），如 `3.5K t`
 点击节点展开详情面板：
 - 任务描述、模板类型、模式
 - 预算使用（进度条）
-- 工具调用次数
-- 执行时长
+- 工具调用次数、执行时长
 - 结果摘要（completed 时）
+- 反馈消息列表（来自 feedback 工具）
+- 操作按钮：running→[暂停][终止]，paused→[恢复][终止]
+- [查看对话]（调用 get_subagent_history 从独立 JSONL 加载）
 
 ---
 
