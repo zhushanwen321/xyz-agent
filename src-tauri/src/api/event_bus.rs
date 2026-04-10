@@ -16,7 +16,13 @@ pub fn spawn_bridge(
                 }
                 AgentEvent::ToolCallEnd { is_error, output, .. } => {
                     let level = if *is_error { log::Level::Warn } else { log::Level::Info };
-                    log::log!(level, "[event_bus] ToolCallEnd: is_error={}, output={}", is_error, &output[..output.len().min(200)]);
+                    // 在 char 边界处截断，避免 panic 在多字节 UTF-8 字符中间
+                    let truncated = output.char_indices()
+                        .take_while(|(i, _)| *i < 200)
+                        .last()
+                        .map(|(i, c)| &output[..i + c.len_utf8()])
+                        .unwrap_or(output);
+                    log::log!(level, "[event_bus] ToolCallEnd: is_error={}, output={}", is_error, truncated);
                 }
                 AgentEvent::Error { message, .. } => {
                     log::warn!("[event_bus] Error: {}", message);
