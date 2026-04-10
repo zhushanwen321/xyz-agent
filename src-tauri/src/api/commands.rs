@@ -64,6 +64,15 @@ pub async fn delete_session(
 }
 
 #[tauri::command]
+pub async fn rename_session(
+    session_id: String,
+    new_title: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    session::rename_session(&state.data_dir, &session_id, &new_title).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn get_current_model(state: State<'_, AppState>) -> Result<String, String> {
     Ok(state.model.clone())
 }

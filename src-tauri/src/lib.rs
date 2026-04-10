@@ -73,6 +73,7 @@ pub fn run() {
             api::commands::list_sessions,
             api::commands::get_history,
             api::commands::delete_session,
+            api::commands::rename_session,
             api::commands::get_current_model,
             api::commands::list_tools,
             api::commands::send_message,

@@ -10,7 +10,7 @@ const appName = __APP_NAME__
         $ {{ appName }}
       </div>
       <div class="text-sm text-text-secondary">
-        AI-powered coding agent
+        AI-powered agent
       </div>
     </div>
 

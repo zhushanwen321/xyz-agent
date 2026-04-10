@@ -36,6 +36,10 @@ export async function deleteSession(sessionId: string): Promise<void> {
   return invoke('delete_session', { sessionId })
 }
 
+export async function renameSession(sessionId: string, newTitle: string): Promise<void> {
+  return invoke('rename_session', { sessionId, newTitle })
+}
+
 export function onAgentEvent(handler: (event: AgentEvent) => void): Promise<UnlistenFn> {
   return listen<AgentEvent>('agent-event', (e) => {
     console.log('[tauri] agent-event:', e.payload.type, e.payload.session_id)
