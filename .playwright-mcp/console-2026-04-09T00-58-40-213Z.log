@@ -1,0 +1,113 @@
+[     146ms] [WARNING] [Vue warn]: Unhandled error during execution of mounted hook 
+  at <ChatView current-session-id=null > 
+  at <App> @ http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:1736
+[     293ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/core-CiOu3334.js?v=93dce5df:90:36)
+    at listen (http://localhost:1420/node_modules/.vite/deps/@tauri-apps_api_event.js?v=4856e3d4:74:12)
+    at onAgentEvent (http://localhost:1420/src/lib/tauri.ts:19:9)
+    at http://localhost:1420/src/composables/useChat.ts:17:20
+    at http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:3783:87
+    at callWithErrorHandling (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:1874:17)
+    at callWithAsyncErrorHandling (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:1881:15)
+    at hook.__weh.hook.__weh (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:3772:16)
+    at flushPostFlushCbs (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:2006:25)
+    at render (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:5907:4)
+[     293ms] TypeError: Cannot read properties of undefined (reading 'invoke')
+    at invoke (http://localhost:1420/node_modules/.vite/deps/core-CiOu3334.js?v=93dce5df:204:36)
+    at listSessions (http://localhost:1420/src/lib/tauri.ts:7:9)
+    at loadSessions (http://localhost:1420/src/composables/useSession.ts:7:26)
+    at http://localhost:1420/src/components/Sidebar.vue:13:4
+    at http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:3783:87
+    at callWithErrorHandling (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:1874:17)
+    at callWithAsyncErrorHandling (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:1881:15)
+    at hook.__weh.hook.__weh (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:3772:16)
+    at flushPostFlushCbs (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:2006:25)
+    at render (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:5907:4)
+[  873527ms] [WARNING] [Vue warn]: Unhandled error during execution of native event handler 
+  at <Primitive data-slot="button" data-variant=undefined data-size=undefined  ... > 
+  at <Button class="w-full" onClick=fn<createNewSession> > 
+  at <Sidebar> 
+  at <App> @ http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:1736
+[  873533ms] TypeError: Cannot read properties of undefined (reading 'invoke')
+    at invoke (http://localhost:1420/node_modules/.vite/deps/core-CiOu3334.js?v=93dce5df:204:36)
+    at createSession (http://localhost:1420/src/lib/tauri.ts:4:9)
+    at createNewSession (http://localhost:1420/src/composables/useSession.ts:13:24)
+    at callWithErrorHandling (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:1874:17)
+    at callWithAsyncErrorHandling (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:1881:15)
+    at HTMLButtonElement.invoker (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:7621:3)
+[  874303ms] [WARNING] [Vue warn]: Unhandled error during execution of native event handler 
+  at <Primitive data-slot="button" data-variant=undefined data-size=undefined  ... > 
+  at <Button class="w-full" onClick=fn<createNewSession> > 
+  at <Sidebar> 
+  at <App> @ http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:1736
+[  874305ms] TypeError: Cannot read properties of undefined (reading 'invoke')
+    at invoke (http://localhost:1420/node_modules/.vite/deps/core-CiOu3334.js?v=93dce5df:204:36)
+    at createSession (http://localhost:1420/src/lib/tauri.ts:4:9)
+    at createNewSession (http://localhost:1420/src/composables/useSession.ts:13:24)
+    at callWithErrorHandling (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:1874:17)
+    at callWithAsyncErrorHandling (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:1881:15)
+    at HTMLButtonElement.invoker (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:7621:3)
+[  874919ms] [WARNING] [Vue warn]: Unhandled error during execution of native event handler 
+  at <Primitive data-slot="button" data-variant=undefined data-size=undefined  ... > 
+  at <Button class="w-full" onClick=fn<createNewSession> > 
+  at <Sidebar> 
+  at <App> @ http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:1736
+[  874921ms] TypeError: Cannot read properties of undefined (reading 'invoke')
+    at invoke (http://localhost:1420/node_modules/.vite/deps/core-CiOu3334.js?v=93dce5df:204:36)
+    at createSession (http://localhost:1420/src/lib/tauri.ts:4:9)
+    at createNewSession (http://localhost:1420/src/composables/useSession.ts:13:24)
+    at callWithErrorHandling (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:1874:17)
+    at callWithAsyncErrorHandling (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:1881:15)
+    at HTMLButtonElement.invoker (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:7621:3)
+[  875173ms] [WARNING] [Vue warn]: Unhandled error during execution of native event handler 
+  at <Primitive data-slot="button" data-variant=undefined data-size=undefined  ... > 
+  at <Button class="w-full" onClick=fn<createNewSession> > 
+  at <Sidebar> 
+  at <App> @ http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:1736
+[  875174ms] TypeError: Cannot read properties of undefined (reading 'invoke')
+    at invoke (http://localhost:1420/node_modules/.vite/deps/core-CiOu3334.js?v=93dce5df:204:36)
+    at createSession (http://localhost:1420/src/lib/tauri.ts:4:9)
+    at createNewSession (http://localhost:1420/src/composables/useSession.ts:13:24)
+    at callWithErrorHandling (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:1874:17)
+    at callWithAsyncErrorHandling (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:1881:15)
+    at HTMLButtonElement.invoker (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:7621:3)
+[  875401ms] [WARNING] [Vue warn]: Unhandled error during execution of native event handler 
+  at <Primitive data-slot="button" data-variant=undefined data-size=undefined  ... > 
+  at <Button class="w-full" onClick=fn<createNewSession> > 
+  at <Sidebar> 
+  at <App> @ http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:1736
+[  875402ms] TypeError: Cannot read properties of undefined (reading 'invoke')
+    at invoke (http://localhost:1420/node_modules/.vite/deps/core-CiOu3334.js?v=93dce5df:204:36)
+    at createSession (http://localhost:1420/src/lib/tauri.ts:4:9)
+    at createNewSession (http://localhost:1420/src/composables/useSession.ts:13:24)
+    at callWithErrorHandling (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:1874:17)
+    at callWithAsyncErrorHandling (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:1881:15)
+    at HTMLButtonElement.invoker (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:7621:3)
+[  876747ms] [WARNING] [Vue warn]: Unhandled error during execution of mounted hook 
+  at <ChatView current-session-id=null > 
+  at <App> @ http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:1736
+[  876756ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/core-CiOu3334.js?v=93dce5df:90:36)
+    at listen (http://localhost:1420/node_modules/.vite/deps/@tauri-apps_api_event.js?v=4856e3d4:74:12)
+    at onAgentEvent (http://localhost:1420/src/lib/tauri.ts:19:9)
+    at http://localhost:1420/src/composables/useChat.ts?t=1775697196928:17:20
+    at http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:3783:87
+    at callWithErrorHandling (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:1874:17)
+    at callWithAsyncErrorHandling (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:1881:15)
+    at hook.__weh.hook.__weh (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:3772:16)
+    at flushPostFlushCbs (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:2006:25)
+    at flushJobs (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:2034:3)
+[  888785ms] [WARNING] [Vue warn]: Unhandled error during execution of mounted hook 
+  at <ChatView current-session-id=null > 
+  at <App> @ http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:1736
+[  888816ms] TypeError: Cannot read properties of undefined (reading 'transformCallback')
+    at transformCallback (http://localhost:1420/node_modules/.vite/deps/core-CiOu3334.js?v=93dce5df:90:36)
+    at listen (http://localhost:1420/node_modules/.vite/deps/@tauri-apps_api_event.js?v=4856e3d4:74:12)
+    at onAgentEvent (http://localhost:1420/src/lib/tauri.ts:19:9)
+    at http://localhost:1420/src/composables/useChat.ts?t=1775697208956:17:20
+    at http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:3783:87
+    at callWithErrorHandling (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:1874:17)
+    at callWithAsyncErrorHandling (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:1881:15)
+    at hook.__weh.hook.__weh (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:3772:16)
+    at flushPostFlushCbs (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:2006:25)
+    at flushJobs (http://localhost:1420/node_modules/.vite/deps/vue.runtime.esm-bundler-CmMa1vr7.js?v=93dce5df:2034:3)
