@@ -70,21 +70,18 @@ impl Tool for ReadTool {
     async fn call(&self, input: serde_json::Value) -> ToolResult {
         let file_path = match input.get("file_path").and_then(|v| v.as_str()) {
             Some(p) => p,
-            None => return ToolResult { output: "Missing file_path".into(), is_error: true },
+            None => return ToolResult::Error("Missing file_path".into()),
         };
 
         let path = match self.resolve_path(file_path) {
             Ok(p) => p,
-            Err(e) => return ToolResult { output: e, is_error: true },
+            Err(e) => return ToolResult::Error(e),
         };
 
         let content = match tokio::fs::read_to_string(&path).await {
             Ok(c) => c,
             Err(e) => {
-                return ToolResult {
-                    output: format!("Error reading file: {e}"),
-                    is_error: true,
-                }
+                return ToolResult::Error(format!("Error reading file: {e}"))
             }
         };
 
@@ -110,7 +107,7 @@ impl Tool for ReadTool {
             output.push_str("\n[truncated]");
         }
 
-        ToolResult { output, is_error: false }
+        ToolResult::Text(output)
     }
 }
 
@@ -165,9 +162,10 @@ mod tests {
             .call(serde_json::json!({"file_path": "test.txt"}))
             .await;
 
-        assert!(!result.is_error);
-        assert!(result.output.contains("     1\thello"));
-        assert!(result.output.contains("     2\tworld"));
+        assert!(matches!(result, ToolResult::Text(_)));
+        let output = match &result { ToolResult::Text(s) => s, _ => unreachable!() };
+        assert!(output.contains("     1\thello"));
+        assert!(output.contains("     2\tworld"));
     }
 
     #[tokio::test]
@@ -181,11 +179,12 @@ mod tests {
             .call(serde_json::json!({"file_path": "test.txt", "offset": 2, "limit": 2}))
             .await;
 
-        assert!(!result.is_error);
-        assert!(result.output.contains("     2\tline2"));
-        assert!(result.output.contains("     3\tline3"));
-        assert!(!result.output.contains("line1"));
-        assert!(!result.output.contains("line4"));
+        assert!(matches!(result, ToolResult::Text(_)));
+        let output = match &result { ToolResult::Text(s) => s, _ => unreachable!() };
+        assert!(output.contains("     2\tline2"));
+        assert!(output.contains("     3\tline3"));
+        assert!(!output.contains("line1"));
+        assert!(!output.contains("line4"));
     }
 
     #[tokio::test]
@@ -196,7 +195,7 @@ mod tests {
             .call(serde_json::json!({"file_path": "nonexistent.txt"}))
             .await;
 
-        assert!(result.is_error);
+        assert!(matches!(result, ToolResult::Error(_)));
     }
 
     #[tokio::test]
@@ -214,9 +213,10 @@ mod tests {
             .call(serde_json::json!({"file_path": "large.txt"}))
             .await;
 
-        assert!(!result.is_error);
-        assert!(result.output.ends_with("[truncated]"));
-        assert!(result.output.len() <= FALLBACK_MAX_OUTPUT_BYTES + 20); // 允许少量余量
+        assert!(matches!(result, ToolResult::Text(_)));
+        let output = match &result { ToolResult::Text(s) => s, _ => unreachable!() };
+        assert!(output.ends_with("[truncated]"));
+        assert!(output.len() <= FALLBACK_MAX_OUTPUT_BYTES + 20); // 允许少量余量
     }
 
     #[tokio::test]
@@ -229,6 +229,6 @@ mod tests {
             .call(serde_json::json!({"file_path": "../../etc/passwd"}))
             .await;
 
-        assert!(result.is_error);
+        assert!(matches!(result, ToolResult::Error(_)));
     }
 }

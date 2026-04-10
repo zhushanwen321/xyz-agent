@@ -73,7 +73,7 @@ impl Tool for BashTool {
     async fn call(&self, input: serde_json::Value) -> ToolResult {
         let command = match input.get("command").and_then(|v| v.as_str()) {
             Some(c) => c,
-            None => return ToolResult { output: "Missing command".into(), is_error: true },
+            None => return ToolResult::Error("Missing command".into()),
         };
 
         let timeout = input
@@ -85,7 +85,7 @@ impl Tool for BashTool {
         // Canonicalize base workdir once for comparison (handles symlinks)
         let base_workdir = match self.workdir.canonicalize() {
             Ok(p) => p,
-            Err(e) => return ToolResult { output: format!("Invalid base workdir: {e}"), is_error: true },
+            Err(e) => return ToolResult::Error(format!("Invalid base workdir: {e}")),
         };
 
         let cmd_workdir = if let Some(custom_dir) = input.get("workdir").and_then(|v| v.as_str()) {
@@ -96,10 +96,10 @@ impl Tool for BashTool {
             };
             let canonical = match resolved.canonicalize() {
                 Ok(p) => p,
-                Err(e) => return ToolResult { output: format!("Invalid workdir: {e}"), is_error: true },
+                Err(e) => return ToolResult::Error(format!("Invalid workdir: {e}")),
             };
             if !canonical.starts_with(&base_workdir) {
-                return ToolResult { output: "workdir must be within the project directory".into(), is_error: true };
+                return ToolResult::Error("workdir must be within the project directory".into());
             }
             canonical
         } else {
@@ -117,10 +117,7 @@ impl Tool for BashTool {
         {
             Ok(c) => c,
             Err(e) => {
-                return ToolResult {
-                    output: format!("Failed to spawn command: {e}"),
-                    is_error: true,
-                }
+                return ToolResult::Error(format!("Failed to spawn command: {e}"))
             }
         };
 
@@ -152,19 +149,13 @@ impl Tool for BashTool {
                         };
                         process_output(output, self.max_output_bytes)
                     }
-                    Err(e) => ToolResult {
-                        output: format!("Error waiting for command: {e}"),
-                        is_error: true,
-                    }
+                    Err(e) => ToolResult::Error(format!("Error waiting for command: {e}"))
                 }
             }
             // Timeout branch - kill the child process
             _ = tokio::time::sleep(std::time::Duration::from_secs(timeout)) => {
                 let _ = child.kill().await;
-                ToolResult {
-                    output: format!("Command timed out after {timeout}s"),
-                    is_error: true,
-                }
+                ToolResult::Error(format!("Command timed out after {timeout}s"))
             }
         }
     }
@@ -188,12 +179,11 @@ fn process_output(output: std::process::Output, max_output_bytes: usize) -> Tool
         combined.push_str("\n[truncated]");
     }
 
-    let is_error = exit_code != 0;
-    if is_error {
-        combined = format!("Exit code: {exit_code}\n{combined}");
+    if exit_code != 0 {
+        ToolResult::Error(format!("Exit code: {exit_code}\n{combined}"))
+    } else {
+        ToolResult::Text(combined)
     }
-
-    ToolResult { output: combined, is_error }
 }
 
 #[cfg(test)]
@@ -214,8 +204,9 @@ mod tests {
             .call(serde_json::json!({"command": "echo hello"}))
             .await;
 
-        assert!(!result.is_error);
-        assert!(result.output.contains("hello"));
+        assert!(matches!(result, ToolResult::Text(_)));
+        let output = match &result { ToolResult::Text(s) => s, _ => unreachable!() };
+        assert!(output.contains("hello"));
     }
 
     #[tokio::test]
@@ -227,8 +218,9 @@ mod tests {
             .call(serde_json::json!({"command": "exit 42"}))
             .await;
 
-        assert!(result.is_error);
-        assert!(result.output.contains("Exit code: 42"));
+        assert!(matches!(result, ToolResult::Error(_)));
+        let output = match &result { ToolResult::Error(s) => s, _ => unreachable!() };
+        assert!(output.contains("Exit code: 42"));
     }
 
     #[tokio::test]
@@ -244,8 +236,9 @@ mod tests {
             }))
             .await;
 
-        assert!(result.is_error);
-        assert!(result.output.contains("timed out"));
+        assert!(matches!(result, ToolResult::Error(_)));
+        let output = match &result { ToolResult::Error(s) => s, _ => unreachable!() };
+        assert!(output.contains("timed out"));
     }
 
     #[tokio::test]
@@ -259,13 +252,16 @@ mod tests {
             .await;
 
         // python3 可能不存在，如果是这种情况跳过
-        if result.is_error && result.output.contains("python3") {
-            return;
+        if let ToolResult::Error(output) = &result {
+            if output.contains("python3") {
+                return;
+            }
         }
 
-        assert!(!result.is_error);
-        assert!(result.output.contains("[truncated]"));
-        assert!(result.output.len() <= FALLBACK_MAX_OUTPUT_BYTES + 20);
+        assert!(matches!(result, ToolResult::Text(_)));
+        let output = match &result { ToolResult::Text(s) => s, _ => unreachable!() };
+        assert!(output.contains("[truncated]"));
+        assert!(output.len() <= FALLBACK_MAX_OUTPUT_BYTES + 20);
     }
 
     #[tokio::test]
@@ -282,11 +278,12 @@ mod tests {
             }))
             .await;
 
-        if result.is_error {
-            eprintln!("Error output: {}", result.output);
+        if let ToolResult::Error(output) = &result {
+            eprintln!("Error output: {}", output);
         }
-        assert!(!result.is_error);
-        assert!(result.output.contains("sub"));
+        assert!(matches!(result, ToolResult::Text(_)));
+        let output = match &result { ToolResult::Text(s) => s, _ => unreachable!() };
+        assert!(output.contains("sub"));
     }
 
     #[tokio::test]
@@ -302,7 +299,8 @@ mod tests {
             }))
             .await;
 
-        assert!(result.is_error);
-        assert!(result.output.contains("within the project directory"));
+        assert!(matches!(result, ToolResult::Error(_)));
+        let output = match &result { ToolResult::Error(s) => s, _ => unreachable!() };
+        assert!(output.contains("within the project directory"));
     }
 }

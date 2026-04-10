@@ -227,10 +227,15 @@ async fn execute_single(
     .await;
 
     match result {
-        Ok(ToolResult { output, is_error }) => ToolExecutionResult {
+        Ok(ToolResult::Text(output)) => ToolExecutionResult {
             id,
             output,
-            is_error,
+            is_error: false,
+        },
+        Ok(ToolResult::Error(output)) => ToolExecutionResult {
+            id,
+            output,
+            is_error: true,
         },
         Err(_) => ToolExecutionResult {
             id,
@@ -297,10 +302,7 @@ mod tests {
         }
 
         async fn call(&self, _input: serde_json::Value) -> ToolResult {
-            ToolResult {
-                output: format!("called {}", self.name),
-                is_error: false,
-            }
+            ToolResult::Text(format!("called {}", self.name))
         }
     }
 
@@ -419,10 +421,7 @@ mod tests {
                 tokio::time::sleep(Duration::from_millis(self.sleep_ms)).await;
             }
             self.order_log.lock().unwrap().push(self.name.clone());
-            ToolResult {
-                output: format!("result from {}", self.name),
-                is_error: false,
-            }
+            ToolResult::Text(format!("result from {}", self.name))
         }
     }
 
