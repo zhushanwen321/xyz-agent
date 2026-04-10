@@ -473,13 +473,72 @@ git commit -m "feat(P2-A): extend AgentEvent with dispatch/orchestrate event var
 
 ---
 
-## Task 3: TranscriptEntry 扩展 + ToolExecutionContext
+## Task 3: ToolResult 枚举化 + AppError 扩展
+
+**Files:**
+- Modify: `src-tauri/src/types/tool.rs`
+- Modify: `src-tauri/src/types/error.rs`
+
+- [ ] **Step 1: 重构 ToolResult 为枚举**
+
+当前 `ToolResult` 是 `struct { output: String, is_error: bool }`，改为枚举：
+
+```rust
+// types/tool.rs
+pub enum ToolResult {
+    Text(String),
+    Error(String),
+}
+```
+
+更新所有使用 `ToolResult` 的地方（read/write/bash 工具的 call 返回值）。
+
+- [ ] **Step 2: 扩展 AppError**
+
+```rust
+// types/error.rs
+#[derive(Debug, Error)]
+pub enum AppError {
+    #[error("LLM API error: {0}")]
+    Llm(String),
+    #[error("Storage error: {0}")]
+    Storage(String),
+    #[error("Session not found: {0}")]
+    SessionNotFound(String),
+    #[error("Config error: {0}")]
+    Config(String),
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+}
+```
+
+- [ ] **Step 3: 添加 rand 依赖到 Cargo.toml**
+
+在 `src-tauri/Cargo.toml` 的 `[dependencies]` 中添加 `rand = "0.8"`。
+
+- [ ] **Step 4: 运行 cargo test**
+
+Run: `cd src-tauri && cargo test`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src-tauri/src/types/tool.rs src-tauri/src/types/error.rs src-tauri/Cargo.toml src-tauri/src/engine/tools/
+git commit -m "feat(P2-A): refactor ToolResult to enum, extend AppError with Io, add rand dep"
+```
+
+---
+
+## Task 4: TranscriptEntry 扩展 + ToolExecutionContext
 
 **Files:**
 - Modify: `src-tauri/src/types/transcript.rs`
 - Modify: `src-tauri/src/engine/tools/mod.rs`
 
 - [ ] **Step 1: 添加 TranscriptEntry 变体**
+
+注意：此 Task 在 Task 3（ToolResult 枚举化）之后执行。
 
 在 `TranscriptEntry` enum 中追加：
 
@@ -532,6 +591,7 @@ pub struct ToolExecutionContext {
     pub api_messages: Vec<serde_json::Value>,
     pub current_assistant_content: Vec<crate::types::transcript::AssistantContentBlock>,
     pub tool_registry: Arc<ToolRegistry>,
+    pub background_tasks: Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>>,
 }
 ```
 

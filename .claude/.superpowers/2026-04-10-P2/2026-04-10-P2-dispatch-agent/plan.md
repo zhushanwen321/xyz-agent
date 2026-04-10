@@ -446,7 +446,7 @@ pub struct SpawnConfig {
     pub fork_api_messages: Option<Vec<serde_json::Value>>,
     pub fork_assistant_content: Option<Vec<AssistantContentBlock>>,
     // 运行时依赖
-    pub dynamic_context: crate::engine::context::data::DynamicContext,
+    pub dynamic_context: crate::engine::context::prompt::DynamicContext,
     pub permission_context: crate::engine::tools::PermissionContext,
 }
 

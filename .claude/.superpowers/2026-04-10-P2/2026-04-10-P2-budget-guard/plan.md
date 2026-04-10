@@ -251,11 +251,11 @@ impl ConcurrencyManager {
     }
 
     pub async fn acquire(&self) -> Result<ConcurrencyPermit, String> {
-        let permit = self.semaphore.acquire().await
+        let permit = self.semaphore.clone().acquire_owned().await
             .map_err(|_| "concurrency semaphore closed")?;
         self.active_count.fetch_add(1, Ordering::Relaxed);
         Ok(ConcurrencyPermit {
-            permit: Some(permit),
+            _permit: permit,
             active_count: self.active_count.clone(),
         })
     }
@@ -266,14 +266,13 @@ impl ConcurrencyManager {
 }
 
 pub struct ConcurrencyPermit {
-    permit: Option<tokio::sync::SemaphorePermit<'static>>,
+    _permit: tokio::sync::OwnedSemaphorePermit,
     active_count: Arc<AtomicUsize>,
 }
 
 impl Drop for ConcurrencyPermit {
     fn drop(&mut self) {
         self.active_count.fetch_sub(1, Ordering::Relaxed);
-        // permit 自动释放（Drop）
     }
 }
 ```
