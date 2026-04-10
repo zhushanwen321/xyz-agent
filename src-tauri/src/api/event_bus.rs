@@ -11,6 +11,16 @@ pub fn spawn_bridge(
             // TextDelta/ThinkingDelta 是高频流式事件，不打印日志
             match &event {
                 AgentEvent::TextDelta { .. } | AgentEvent::ThinkingDelta { .. } => {}
+                AgentEvent::ToolCallStart { tool_name, input, .. } => {
+                    log::info!("[event_bus] ToolCallStart: tool={}, input={}", tool_name, input);
+                }
+                AgentEvent::ToolCallEnd { is_error, output, .. } => {
+                    let level = if *is_error { log::Level::Warn } else { log::Level::Info };
+                    log::log!(level, "[event_bus] ToolCallEnd: is_error={}, output={}", is_error, &output[..output.len().min(200)]);
+                }
+                AgentEvent::Error { message, .. } => {
+                    log::warn!("[event_bus] Error: {}", message);
+                }
                 _ => {
                     log::debug!("[event_bus] forwarding event: type={}, session={}", event.variant_name(), event.session_id());
                 }
