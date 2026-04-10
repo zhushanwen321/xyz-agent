@@ -29,16 +29,33 @@ impl Tool for BashTool {
     }
 
     fn description(&self) -> &str {
-        "Execute a shell command"
+        // 参考 Claude Code BashTool.prompt — 使用指南内嵌在 description 中
+        "Execute a shell command and return stdout/stderr.\n\
+         \n\
+         - Working directory persists between calls, but shell state (env vars, aliases) does not.\n\
+         - Use absolute paths to avoid confusion with working directory.\n\
+         - For independent commands, make multiple Bash calls in parallel.\n\
+         - For dependent commands, chain with && in a single call.\n\
+         - Do NOT use this for reading files (use Read), writing files (use Write).\n\
+         - Prefer dedicated tools over Bash for file operations."
     }
 
     fn input_schema(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "command": { "type": "string" },
-                "timeout": { "type": "integer" },
-                "workdir": { "type": "string" }
+                "command": {
+                    "type": "string",
+                    "description": "The shell command to execute. Chain dependent commands with &&. Quote file paths containing spaces with double quotes."
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Timeout in seconds. Default: 120, max: 600."
+                },
+                "workdir": {
+                    "type": "string",
+                    "description": "Override working directory. Default: project root."
+                }
             },
             "required": ["command"]
         })

@@ -22,15 +22,25 @@ impl Tool for WriteTool {
     }
 
     fn description(&self) -> &str {
-        "Write content to a file (creates or overwrites)"
+        "Write content to a file.\n\
+         \n\
+         - Creates the file and parent directories if they don't exist.\n\
+         - Overwrites the entire file if it already exists.\n\
+         - Do NOT use Bash (echo/cat redirect) to write files — always use this tool."
     }
 
     fn input_schema(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "file_path": { "type": "string" },
-                "content": { "type": "string" }
+                "file_path": {
+                    "type": "string",
+                    "description": "Path to the file. Relative to project root, or absolute."
+                },
+                "content": {
+                    "type": "string",
+                    "description": "The complete content to write. Overwrites the entire file."
+                }
             },
             "required": ["file_path", "content"]
         })

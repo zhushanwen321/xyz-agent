@@ -30,16 +30,30 @@ impl Tool for ReadTool {
     }
 
     fn description(&self) -> &str {
-        "Read file contents with line numbers"
+        "Read file contents with line numbers.\n\
+         \n\
+         - Returns up to the configured byte limit, truncated files show a truncation notice.\n\
+         - Use offset/limit to read specific line ranges of large files.\n\
+         - File paths are relative to the project root, or absolute.\n\
+         - Do NOT use Bash (cat/head/tail) to read files — always use this tool."
     }
 
     fn input_schema(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "file_path": { "type": "string" },
-                "offset": { "type": "integer" },
-                "limit": { "type": "integer" }
+                "file_path": {
+                    "type": "string",
+                    "description": "Path to the file. Relative to project root, or absolute."
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Start line number, 1-based. Default: 1."
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max number of lines to return. Default: all remaining lines."
+                }
             },
             "required": ["file_path"]
         })
