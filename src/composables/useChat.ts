@@ -20,6 +20,7 @@ export function useChat(sessionId: Ref<string | null>) {
   const tokenUsage = ref({ inputTokens: 0, outputTokens: 0 })
   const currentTurnSegments = ref<AssistantSegment[]>([])
   let unlisten: (() => void) | null = null
+  let historyLoadPromise: Promise<void> | null = null
 
   function appendTextToCurrentTurn(text: string) {
     const segs = currentTurnSegments.value
@@ -106,6 +107,8 @@ export function useChat(sessionId: Ref<string | null>) {
 
   async function send(content: string) {
     if (!sessionId.value || isStreaming.value) return
+    // 等待进行中的历史加载完成，避免 loadHistory 覆盖即将 push 的用户消息
+    if (historyLoadPromise) await historyLoadPromise
     isStreaming.value = true
     messages.value.push(createMessage('user', content))
     currentTurnSegments.value = []
@@ -184,7 +187,9 @@ export function useChat(sessionId: Ref<string | null>) {
   }
 
   watch(sessionId, (newId) => {
-    if (newId) loadHistory(newId)
+    if (newId) {
+      historyLoadPromise = loadHistory(newId).finally(() => { historyLoadPromise = null })
+    }
   })
 
   return { messages, streamingText, isStreaming, tokenUsage, send, currentTurnSegments }
