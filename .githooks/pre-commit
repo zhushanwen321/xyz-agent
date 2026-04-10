@@ -7,11 +7,13 @@ export PATH="$HOME/.cargo/bin:$HOME/.local/bin:/usr/local/bin:$PATH"
 
 ROOT_DIR="$(git rev-parse --show-toplevel)"
 
+HOOKS_DIR="$(dirname "$0")"
+
 echo "[pre-commit] dependency direction check..."
-cd "$ROOT_DIR" && bash scripts/check_deps.sh
+cd "$ROOT_DIR" && bash "$HOOKS_DIR/check_deps.sh"
 
 echo "[pre-commit] file size check..."
-cd "$ROOT_DIR" && bash scripts/check_file_size.sh
+cd "$ROOT_DIR" && bash "$HOOKS_DIR/check_file_size.sh"
 
 echo "[pre-commit] cargo test..."
 cd "$ROOT_DIR/src-tauri" && cargo test --quiet 2>&1 | tail -3
