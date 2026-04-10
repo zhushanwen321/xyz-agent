@@ -9,7 +9,7 @@ use engine::llm::anthropic::AnthropicProvider;
 use engine::llm::LlmProvider;
 use engine::tools::{PermissionContext, ToolRegistry};
 use std::sync::Arc;
-use tauri::Manager;
+use tauri::{Manager, PhysicalSize};
 
 pub use api::AppState;
 
@@ -47,6 +47,17 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .setup(move |app| {
+            // 动态设置窗口大小为屏幕 75%
+            if let Some(window) = app.get_webview_window("main") {
+                if let Some(monitor) = window.primary_monitor().ok().flatten() {
+                    let size = monitor.size();
+                    let w = (size.width as f64 * 0.75) as u32;
+                    let h = (size.height as f64 * 0.75) as u32;
+                    let _ = window.set_size(tauri::PhysicalSize::new(w, h));
+                    let _ = window.center();
+                }
+            }
+
             app.manage(AppState {
                 data_dir,
                 provider,
