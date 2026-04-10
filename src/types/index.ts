@@ -79,3 +79,26 @@ export interface LoadHistoryResult {
   entries: TranscriptEntry[]
   conversation_summary: string | null
 }
+
+// 与 Rust AgentConfig 对应
+export interface ConfigResponse {
+  anthropic_api_key: string
+  llm_model: string
+  anthropic_base_url: string
+  max_turns: number
+  context_window: number
+  max_output_tokens: number
+  tool_output_max_bytes: number
+  bash_default_timeout_secs: number
+}
+
+export interface UpdateConfigRequest {
+  anthropic_api_key: string
+  llm_model: string
+  anthropic_base_url: string
+  max_turns: number
+  context_window: number
+  max_output_tokens: number
+  tool_output_max_bytes: number
+  bash_default_timeout_secs: number
+}
