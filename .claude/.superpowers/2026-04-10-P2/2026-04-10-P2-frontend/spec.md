@@ -1,6 +1,6 @@
 # P2-前端任务树 设计规格
 
-**版本**: v1 | **日期**: 2026-04-10 | **状态**: 设计中
+**版本**: v2 | **日期**: 2026-04-10 | **状态**: 设计中
 
 ---
 
@@ -138,9 +138,29 @@ Token 显示：缩写格式（K/M），如 `3.5K t`
 - TaskNode 事件节流 ≤ 1 次/2s（防止高频更新）
 - 结果摘要 ≤ 2000 字符（前端展示用）
 - 无暂停/恢复 UI（P2 不实现用户干预）
+- SubAgent 的 TextDelta 不推送到前端（后端通过独立 channel + 桥接过滤）
 
 ## 已知限制
 
-- **无实时流式** — SubAgent 内部的 TextDelta 不推送到前端（只推送 TaskProgress）
+- **无实时流式** — SubAgent 内部的 TextDelta 不推送到前端
 - **无日志 Tab** — 不展示 SubAgent 内部的工具调用日志
 - **无历史任务树** — 切换 session 后任务树从 JSONL 重新加载
+
+## LoadHistoryResult 类型更新
+
+后端 `LoadHistoryResult` 新增 `task_nodes` 字段，前端需同步更新：
+
+```typescript
+interface LoadHistoryResult {
+  entries: TranscriptEntry[]
+  conversation_summary: string | null
+  task_nodes: TaskNode[]              // NEW
+}
+```
+
+`useChat.ts` 的 `loadHistory` 方法需要从返回值中提取 `task_nodes`，填充到 `taskNodes` ref：
+```typescript
+const result = await getHistory(sessionId)
+// 现有逻辑...
+result.task_nodes.forEach(node => taskNodes.value.set(node.task_id, node))
+```

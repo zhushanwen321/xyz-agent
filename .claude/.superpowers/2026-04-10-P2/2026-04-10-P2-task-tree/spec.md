@@ -1,6 +1,6 @@
 # P2-TaskTree 设计规格
 
-**版本**: v1 | **日期**: 2026-04-10 | **状态**: 设计中
+**版本**: v2 | **日期**: 2026-04-10 | **状态**: 设计中
 
 ---
 
@@ -108,13 +108,15 @@ pub struct TaskTree {
 }
 ```
 
-关键方法：
+注意：`AppState` 中使用 `Arc<Mutex<TaskTree>>` 提供内部可变性（dispatch_agent 需要修改 TaskTree）。
+
+关键方法（&mut self）：
 - `create_node(task_id, parent_id, ...)` — 创建并注册
 - `update_status(task_id, status)` — 状态转换
 - `update_usage(task_id, usage)` — 用量更新
-- `get(task_id) → Option<&TaskNode>`
-- `children_of(task_id) → Vec<&TaskNode>`
-- `active_tasks() -> Vec<&TaskNode>` — status=running 的节点
+- `get(&self, task_id) → Option<&TaskNode>`
+- `children_of(&self, task_id) → Vec<&TaskNode>`
+- `active_tasks(&self) -> Vec<&TaskNode>` — status=running 的节点
 
 ---
 
@@ -127,8 +129,26 @@ TaskNode 直接嵌入 TranscriptEntry 枚举，存入现有 JSONL：
 ```rust
 // TranscriptEntry 新增变体
 #[serde(rename = "task_node")]
-TaskNode { /* TaskNode 的全部字段 */ }
+TaskNode {
+    task_id: String,
+    parent_id: Option<String>,
+    session_id: String,
+    description: String,
+    status: TaskStatus,
+    mode: AgentMode,
+    subagent_type: Option<String>,
+    created_at: String,
+    completed_at: Option<String>,
+    transcript_start: Option<String>,
+    transcript_end: Option<String>,
+    output_file: Option<String>,
+    budget: TaskBudget,
+    usage: TaskUsage,
+    children_ids: Vec<String>,
+}
 ```
+
+注意：TaskNode 变体**没有** `uuid` 和 `parent_uuid` 字段。P1 的 `TranscriptEntry::uuid()` 和 `parent_uuid()` 方法需更新 match 分支，TaskNode 变体返回 `""` 和 `None`（同 CustomTitle 的处理方式）。`history_to_api_messages` 和 `build_conversation_chain` 已通过 `_ => None` 跳过非 User/Assistant 变体，无需额外处理。
 
 ### 写入时机
 
@@ -171,9 +191,11 @@ pub struct LoadHistoryResult {
 ## 约束
 
 - TaskTree 不 import tauri
+- AppState 使用 `Arc<Mutex<TaskTree>>` 提供内部可变性
 - append-only 持久化（不修改已有记录）
 - 禁止嵌套保证 max_depth ≤ 2（P2）
 - 同 task_id 取最后一条记录
+- TranscriptEntry 的 `uuid()`/`parent_uuid()` 需更新 match 分支处理 TaskNode
 
 ## 已知限制
 

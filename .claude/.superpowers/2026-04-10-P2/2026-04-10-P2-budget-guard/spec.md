@@ -1,17 +1,16 @@
 # P2-BudgetGuard 设计规格
 
-**版本**: v1 | **日期**: 2026-04-10 | **状态**: 设计中
+**版本**: v2 | **日期**: 2026-04-10 | **状态**: 设计中
 
 ---
 
 ## 目标
 
-控制 SubAgent 的资源消耗：硬预算上限 + 收益递减检测，防止空转浪费。
+控制 SubAgent 资源消耗：硬预算上限 + 收益递减检测。
 
 ## 参考
 
-- Claude Code `src/query/tokenBudget.ts` — DIMINISHING_THRESHOLD=500, 连续 3 轮检测
-- Claude Code 90% 预算警告
+- Claude Code `src/query/tokenBudget.ts` — DIMINISHING_THRESHOLD=500, 连续 3 轮
 
 ---
 
@@ -21,9 +20,10 @@
 pub struct BudgetGuard {
     budget: TaskBudget,
     usage: TaskUsage,
-    diminishing_count: u32,       // 连续低产出轮次
+    turn_count: u32,               // 当前轮次计数
+    diminishing_count: u32,        // 连续低产出轮次
     started_at: std::time::Instant,
-    warned_90: bool,              // 是否已发 90% 警告
+    warned_90: bool,
 }
 ```
 
@@ -34,17 +34,26 @@ impl BudgetGuard {
     const DIMINISHING_THRESHOLD: u32 = 500;  // tokens
     const DIMINISHING_MAX_COUNT: u32 = 3;
 
-    pub fn check(&mut self, turn_output_tokens: u32) -> BudgetDecision {
-        // 硬预算
-        if self.usage.total_tokens >= self.budget.max_tokens {
+    /// 每轮 AgentLoop 迭代后调用
+    /// turn_total_tokens = input_tokens + output_tokens（来自 consume_stream 的 TokenUsage）
+    pub fn check(&mut self, turn_total_tokens: u32) -> BudgetDecision {
+        self.turn_count += 1;
+
+        // 硬预算：token
+        if self.usage.total_tokens + turn_total_tokens > self.budget.max_tokens {
             return BudgetDecision::Stop(StopReason::TokenBudgetExhausted);
         }
+        // 硬预算：轮次
+        if self.turn_count >= self.budget.max_turns {
+            return BudgetDecision::Stop(StopReason::MaxTurnsReached);
+        }
+        // 硬预算：工具调用
         if self.usage.tool_uses >= self.budget.max_tool_calls {
             return BudgetDecision::Stop(StopReason::ToolCallLimit);
         }
 
-        // 收益递减：连续 3 轮 output < 500 tokens
-        if turn_output_tokens < Self::DIMINISHING_THRESHOLD {
+        // 收益递减：连续 3 轮 total < 500 tokens
+        if turn_total_tokens < Self::DIMINISHING_THRESHOLD {
             self.diminishing_count += 1;
         } else {
             self.diminishing_count = 0;
@@ -53,8 +62,19 @@ impl BudgetGuard {
             return BudgetDecision::Stop(StopReason::DiminishingReturns);
         }
 
-        self.usage.total_tokens += turn_output_tokens;
+        // 更新 usage
+        self.usage.total_tokens += turn_total_tokens;
         BudgetDecision::Continue
+    }
+
+    /// 工具调用后调用
+    pub fn record_tool_use(&mut self) {
+        self.usage.tool_uses += 1;
+    }
+
+    /// 更新 duration
+    pub fn update_duration(&mut self) {
+        self.usage.duration_ms = self.started_at.elapsed().as_millis() as u64;
     }
 
     /// 90% 警告（只触发一次）
@@ -78,10 +98,10 @@ pub enum BudgetDecision {
 }
 
 pub enum StopReason {
-    TokenBudgetExhausted,    // token 用完
-    ToolCallLimit,           // 工具调用次数用完
-    DiminishingReturns,      // 连续 3 轮 < 500 tokens
-    MaxTurnsReached,         // 由 AgentLoop.max_turns 控制
+    TokenBudgetExhausted,
+    MaxTurnsReached,
+    ToolCallLimit,
+    DiminishingReturns,
 }
 ```
 
@@ -100,49 +120,47 @@ impl TaskBudget {
     pub fn for_general() -> Self {
         Self { max_tokens: 200_000, max_turns: 50, max_tool_calls: 100 }
     }
+    /// Fork 预算 = min(父剩余预算, 100K)
     pub fn for_fork(parent_remaining: u32) -> Self {
-        Self { max_tokens: parent_remaining, max_turns: 30, max_tool_calls: 50 }
+        Self { max_tokens: parent_remaining.min(100_000), max_turns: 30, max_tool_calls: 50 }
     }
 }
 ```
 
-主 Agent 通过 dispatch_agent 参数显式指定预算。不传则使用模板默认值。Fork 模式预算 = 父剩余预算或 100K 取较小值。
+主 Agent 通过 dispatch_agent 参数显式指定预算。不传则用模板默认值。
 
 ---
 
 ## AgentLoop 集成
 
-BudgetGuard 作为 `Option<BudgetGuard>` 传入 run_turn。主 Agent 运行时为 None，SubAgent 运行时为 Some。
-
 ```rust
-// run_turn 签名新增
+// run_turn 新增参数
 pub async fn run_turn(
     &self,
     ...
-    budget_guard: Option<BudgetGuard>,  // NEW
+    budget_guard: Option<&mut BudgetGuard>,  // 可选
 ) -> Result<Vec<TranscriptEntry>, AppError>
 ```
 
-循环内每轮迭代后：
+主 Agent 运行时为 None，SubAgent 运行时为 Some。循环内：
 
 ```rust
+// 每轮迭代后
 if let Some(guard) = &mut budget_guard {
-    // 90% 警告
+    guard.update_duration();
     if guard.should_warn_90() {
-        event_tx.send(AgentEvent::BudgetWarning {
-            session_id: session_id.clone(),
-            task_id: task_id.clone(),
-            usage_percent: 90,
-        });
+        event_tx.send(AgentEvent::BudgetWarning { ... });
     }
-    // 预算检查
-    match guard.check(output_tokens) {
+    let turn_total = result.usage.input_tokens + result.usage.output_tokens;
+    match guard.check(turn_total) {
         BudgetDecision::Continue => {},
-        BudgetDecision::Stop(reason) => {
-            // 终止循环，设置终止原因
-            break;
-        }
+        BudgetDecision::Stop(reason) => break,
     }
+}
+
+// 工具执行后
+if let Some(guard) = &mut budget_guard {
+    guard.record_tool_use();
 }
 ```
 
@@ -151,12 +169,11 @@ if let Some(guard) = &mut budget_guard {
 ## 约束
 
 - BudgetGuard 不 import tauri
-- 收益递减阈值 500 tokens 来自 Claude Code 经验值
+- 收益递减阈值 500 tokens
 - 90% 警告只触发一次
-- 硬预算不区分 input/output tokens（简化）
+- check 接收 input+output 总和
 
 ## 已知限制
 
-- **不区分 input/output** — 预算按总 token 计算，无法单独限制
-- **粗估 token** — SubAgent 内部没有精确的 API usage，用粗估
-- **无预算协商** — 不支持 SubAgent 请求追加预算（Claude Code 也无此功能）
+- **粗估 token** — 无精确 API usage 时用粗估
+- **无预算协商** — SubAgent 无法请求追加
