@@ -47,7 +47,7 @@ const statusLabel = computed(() => {
 
 <template>
   <div
-    class="rounded-md border border-border-default border-l-[3px] bg-bg-elevated text-sm"
+    class="rounded-md border border-border-default border-l-[3px] bg-bg-elevated text-[13px]"
     :class="colors.border"
   >
     <!-- Header -->
@@ -69,7 +69,7 @@ const statusLabel = computed(() => {
     <!-- 参数摘要 -->
     <pre
       v-if="inputSummary"
-      class="px-2.5 mt-1 whitespace-pre-wrap font-mono text-[10px] text-text-secondary"
+      class="px-2.5 mt-1 whitespace-pre-wrap font-mono text-[11px] text-text-secondary"
     >{{ inputSummary }}</pre>
 
     <!-- 输出区：默认展开 -->
@@ -77,7 +77,7 @@ const statusLabel = computed(() => {
       v-if="toolCall.output !== undefined && toolCall.status !== 'running'"
       class="mx-2.5 mt-1.5 mb-2 max-h-[200px] overflow-y-auto rounded-md border border-border-default bg-bg-inset p-2"
     >
-      <pre class="whitespace-pre-wrap font-mono text-[10px] text-text-secondary">{{ toolCall.output }}</pre>
+      <pre class="whitespace-pre-wrap font-mono text-[11px] text-text-secondary">{{ toolCall.output }}</pre>
     </div>
   </div>
 </template>

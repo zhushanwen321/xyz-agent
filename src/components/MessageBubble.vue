@@ -18,7 +18,6 @@ const md = new MarkdownIt({
 const isUser = computed(() => props.message.role === 'user')
 const isSystem = computed(() => props.message.role === 'system')
 
-// assistant 消息使用 segments 渲染，user 消息使用 content
 const segments = computed<AssistantSegment[]>(() => props.message.segments ?? [])
 
 function renderMarkdown(text: string): string {
@@ -28,13 +27,13 @@ function renderMarkdown(text: string): string {
 </script>
 
 <template>
-  <!-- User 消息 — 右对齐，内联标签 -->
-  <div v-if="isUser" class="flex w-[95%] flex-row-reverse items-start self-end">
-    <div class="flex shrink-0 items-center gap-1.5 px-1">
+  <!-- User 消息 — 左对齐，全宽背景 -->
+  <div v-if="isUser" class="flex items-start gap-1.5 border-l-[3px] border-l-[#a1a1aa] px-2 py-1.5" style="background-color: var(--color-bg-user)">
+    <div class="flex shrink-0 items-center gap-1.5">
       <div class="flex h-4 w-4 items-center justify-center rounded bg-bg-inset text-[10px] font-mono font-bold text-text-secondary">U</div>
       <span class="font-mono text-[10px] text-text-tertiary">User</span>
     </div>
-    <div class="flex-1 rounded-md border border-border-default border-l-[3px] border-l-[#a1a1aa] bg-bg-elevated px-3 py-1.5">
+    <div class="flex-1">
       <div class="prose max-w-none text-text-primary" v-html="renderMarkdown(message.content)" />
     </div>
   </div>
@@ -48,10 +47,10 @@ function renderMarkdown(text: string): string {
     <div class="mt-1 text-[10px] text-accent-red" v-html="renderMarkdown(message.content)" />
   </div>
 
-  <!-- Assistant 消息 — 左对齐，内联标签 -->
-  <div v-else class="flex w-[95%] flex-row items-start self-start">
-    <div class="flex shrink-0 items-center gap-1.5 px-1">
-      <div class="flex h-4 w-4 items-center justify-center rounded bg-[#22c55e22] text-[10px] font-mono font-bold text-accent">&lambda;</div>
+  <!-- Assistant 消息 — 左对齐，全宽背景 -->
+  <div v-else class="flex items-start gap-1.5 border-l-[3px] border-l-accent px-2 py-1.5" style="background-color: var(--color-bg-ai)">
+    <div class="flex shrink-0 items-center gap-1.5">
+      <div class="flex h-4 w-4 items-center justify-center rounded text-[10px] font-mono font-bold text-accent" style="background:#22c55e22">&lambda;</div>
       <span class="font-mono text-[10px] text-accent">Assistant</span>
     </div>
 
@@ -61,7 +60,6 @@ function renderMarkdown(text: string): string {
           <!-- text segment -->
           <div
             v-if="seg.type === 'text' && seg.text"
-            class="rounded-md border border-border-default border-l-[3px] border-l-accent bg-bg-elevated px-3 py-1.5"
             :class="{ 'mb-2': idx < segments.length - 1 }"
           >
             <div class="prose max-w-none text-text-primary" v-html="renderMarkdown(seg.text)" />
@@ -81,10 +79,7 @@ function renderMarkdown(text: string): string {
       </template>
 
       <!-- 无 segments 时用 content 渲染 -->
-      <div
-        v-else-if="message.content"
-        class="rounded-md border border-border-default border-l-[3px] border-l-accent bg-bg-elevated px-3 py-1.5"
-      >
+      <div v-else-if="message.content">
         <div class="prose max-w-none text-text-primary" v-html="renderMarkdown(message.content)" />
       </div>
     </div>
