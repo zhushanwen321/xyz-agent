@@ -4,7 +4,32 @@ use crate::engine::loop_::AgentLoop;
 use crate::store::jsonl::LoadHistoryResult;
 use crate::store::session;
 use crate::types::{AssistantContentBlock, TranscriptEntry, UserContentBlock};
+use serde::Deserialize;
 use tauri::{AppHandle, State};
+
+#[derive(serde::Serialize)]
+pub struct ConfigResponse {
+    pub anthropic_api_key: String,
+    pub llm_model: String,
+    pub anthropic_base_url: String,
+    pub max_turns: u32,
+    pub context_window: u32,
+    pub max_output_tokens: u32,
+    pub tool_output_max_bytes: usize,
+    pub bash_default_timeout_secs: u64,
+}
+
+#[derive(Deserialize)]
+pub struct UpdateConfigRequest {
+    pub anthropic_api_key: String,
+    pub llm_model: String,
+    pub anthropic_base_url: String,
+    pub max_turns: u32,
+    pub context_window: u32,
+    pub max_output_tokens: u32,
+    pub tool_output_max_bytes: usize,
+    pub bash_default_timeout_secs: u64,
+}
 
 #[tauri::command]
 pub async fn new_session(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
@@ -149,4 +174,37 @@ pub async fn send_message(
     );
 
     Ok(())
+}
+
+#[tauri::command]
+pub async fn get_config(state: State<'_, AppState>) -> Result<ConfigResponse, String> {
+    let agent = &state.config;
+    let llm = crate::engine::config::load_llm_config().map_err(|e| e.to_string())?;
+    Ok(ConfigResponse {
+        anthropic_api_key: llm.api_key,
+        llm_model: llm.model,
+        anthropic_base_url: llm.base_url,
+        max_turns: agent.max_turns,
+        context_window: agent.context_window,
+        max_output_tokens: agent.max_output_tokens,
+        tool_output_max_bytes: agent.tool_output_max_bytes,
+        bash_default_timeout_secs: agent.bash_default_timeout_secs,
+    })
+}
+
+#[tauri::command]
+pub async fn update_config(
+    payload: UpdateConfigRequest,
+) -> Result<(), String> {
+    crate::engine::config::save_config(
+        &payload.anthropic_api_key,
+        &payload.llm_model,
+        &payload.anthropic_base_url,
+        payload.max_turns,
+        payload.context_window,
+        payload.max_output_tokens,
+        payload.tool_output_max_bytes,
+        payload.bash_default_timeout_secs,
+    )
+    .map_err(|e| e.to_string())
 }
