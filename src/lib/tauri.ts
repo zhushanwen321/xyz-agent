@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import type { AgentEvent, LoadHistoryResult, SessionInfo } from '../types'
+import type { AgentEvent, ConfigResponse, LoadHistoryResult, SessionInfo, UpdateConfigRequest } from '../types'
 
 export type { LoadHistoryResult }
 
@@ -49,4 +49,12 @@ export async function getCurrentModel(): Promise<string> {
 
 export async function listTools(): Promise<string[]> {
   return invoke<string[]>('list_tools')
+}
+
+export async function getConfig(): Promise<ConfigResponse> {
+  return invoke<ConfigResponse>('get_config')
+}
+
+export async function updateConfig(payload: UpdateConfigRequest): Promise<void> {
+  return invoke<void>('update_config', { payload })
 }
