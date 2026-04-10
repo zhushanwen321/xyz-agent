@@ -98,7 +98,7 @@ function handleEditKeydown(e: KeyboardEvent) {
         <!-- 编辑模式：inline input -->
         <template v-if="editingId === session.id">
           <input
-            ref="editInputRef"
+            :ref="(el: any) => { editInputRef = el }"
             v-model="editingTitle"
             class="flex-1 bg-transparent px-3 py-2 text-sm text-text-primary outline-none"
             @keydown="handleEditKeydown"

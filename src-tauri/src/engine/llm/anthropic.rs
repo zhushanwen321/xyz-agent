@@ -63,9 +63,9 @@ impl LlmProvider for AnthropicProvider {
             "max_tokens": body["max_tokens"],
             "tools": body.get("tools"),
         });
-        log::info!("[llm] request system:\n{}", serde_json::to_string_pretty(&body["system"]).unwrap_or_default());
-        log::info!("[llm] request other params:\n{}", serde_json::to_string_pretty(&other_params).unwrap_or_default());
-        log::info!("[llm] request messages ({}):\n{}", messages.len(), serde_json::to_string_pretty(&messages).unwrap_or_default());
+        log::info!("[llm] request system: {}", serde_json::to_string(&body["system"]).unwrap_or_default());
+        log::info!("[llm] request params: {}", serde_json::to_string(&other_params).unwrap_or_default());
+        log::info!("[llm] request messages ({}): {}", messages.len(), serde_json::to_string(&messages).unwrap_or_default());
 
         let resp = self
             .client
