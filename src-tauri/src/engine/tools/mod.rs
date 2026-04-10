@@ -1,4 +1,5 @@
 pub mod bash;
+pub mod context;
 pub mod read;
 pub mod write;
 
@@ -10,7 +11,7 @@ use futures::future::join_all;
 
 use crate::types::ToolResult;
 
-// ── Tool trait ────────────────────────────────────────────────
+pub use context::ToolExecutionContext;
 
 #[async_trait]
 pub trait Tool: Send + Sync {
@@ -26,10 +27,8 @@ pub trait Tool: Send + Sync {
         30
     }
 
-    async fn call(&self, input: serde_json::Value) -> ToolResult;
+    async fn call(&self, input: serde_json::Value, ctx: Option<&ToolExecutionContext>) -> ToolResult;
 }
-
-// ── ToolRegistry ──────────────────────────────────────────────
 
 pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool>>,
@@ -120,8 +119,6 @@ impl ToolRegistry {
     }
 }
 
-// ── PermissionContext ─────────────────────────────────────────
-
 #[derive(Debug, Clone)]
 pub struct PermissionContext {
     pub global_allowed: Option<HashSet<String>>,
@@ -140,8 +137,6 @@ impl Default for PermissionContext {
         }
     }
 }
-
-// ── ToolExecutor ──────────────────────────────────────────────
 
 /// A tool call extracted from LLM response, awaiting execution.
 #[derive(Clone)]
@@ -163,6 +158,7 @@ pub async fn execute_batch(
     calls: Vec<PendingToolCall>,
     registry: &ToolRegistry,
     perms: &PermissionContext,
+    ctx: Option<&ToolExecutionContext>,
 ) -> Vec<ToolExecutionResult> {
     let (safe, unsafe_calls): (Vec<_>, Vec<_>) = calls.into_iter().partition(|c| {
         registry
@@ -178,14 +174,14 @@ pub async fn execute_batch(
         .map(|c| {
             let registry = registry.clone();
             let perms = perms.clone();
-            async move { execute_single(c, &registry, &perms).await }
+            async move { execute_single(c, &registry, &perms, None).await }
         })
         .collect();
 
     results.extend(join_all(safe_handles).await);
 
     for c in unsafe_calls {
-        results.push(execute_single(c, registry, perms).await);
+        results.push(execute_single(c, registry, perms, ctx).await);
     }
 
     results
@@ -195,6 +191,7 @@ async fn execute_single(
     call: PendingToolCall,
     registry: &ToolRegistry,
     perms: &PermissionContext,
+    ctx: Option<&ToolExecutionContext>,
 ) -> ToolExecutionResult {
     let id = call.id.clone();
     let name = call.name.clone();
@@ -222,7 +219,7 @@ async fn execute_single(
     let timeout = tool.timeout_secs();
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(timeout),
-        tool.call(call.input),
+        tool.call(call.input, ctx),
     )
     .await;
 
@@ -245,8 +242,6 @@ async fn execute_single(
     }
 }
 
-// ── register_builtin_tools ────────────────────────────────────
-
 use std::path::PathBuf;
 use crate::engine::config::AgentConfig;
 
@@ -255,8 +250,6 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry, workdir: PathBuf, con
     registry.register(Arc::new(write::WriteTool::new(workdir.clone())));
     registry.register(Arc::new(bash::BashTool::new(workdir, config.bash_default_timeout_secs, config.tool_output_max_bytes)));
 }
-
-// ── Tests ─────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -301,7 +294,7 @@ mod tests {
             self.safe
         }
 
-        async fn call(&self, _input: serde_json::Value) -> ToolResult {
+        async fn call(&self, _input: serde_json::Value, _ctx: Option<&ToolExecutionContext>) -> ToolResult {
             ToolResult::Text(format!("called {}", self.name))
         }
     }
@@ -416,7 +409,7 @@ mod tests {
             self.timeout_secs
         }
 
-        async fn call(&self, _input: serde_json::Value) -> ToolResult {
+        async fn call(&self, _input: serde_json::Value, _ctx: Option<&ToolExecutionContext>) -> ToolResult {
             if self.sleep_ms > 0 {
                 tokio::time::sleep(Duration::from_millis(self.sleep_ms)).await;
             }
@@ -471,7 +464,7 @@ mod tests {
         ];
 
         let start = Instant::now();
-        let results = execute_batch(calls, &registry, &perms).await;
+        let results = execute_batch(calls, &registry, &perms, None).await;
         let elapsed = start.elapsed();
 
         assert!(elapsed < Duration::from_millis(250), "elapsed: {:?}", elapsed);
@@ -510,7 +503,7 @@ mod tests {
         ];
 
         let start = Instant::now();
-        let results = execute_batch(calls, &registry, &perms).await;
+        let results = execute_batch(calls, &registry, &perms, None).await;
         let elapsed = start.elapsed();
 
         assert!(elapsed >= Duration::from_millis(80), "elapsed: {:?}", elapsed);
@@ -538,7 +531,7 @@ mod tests {
         let calls = vec![build_call("1", "slow_tool")];
 
         let start = Instant::now();
-        let results = execute_batch(calls, &registry, &perms).await;
+        let results = execute_batch(calls, &registry, &perms, None).await;
         let elapsed = start.elapsed();
 
         assert!(
@@ -561,7 +554,7 @@ mod tests {
 
         let calls = vec![build_call("1", "nonexistent_tool")];
 
-        let results = execute_batch(calls, &registry, &perms).await;
+        let results = execute_batch(calls, &registry, &perms, None).await;
         assert_eq!(results.len(), 1);
 
         let r = &results[0];

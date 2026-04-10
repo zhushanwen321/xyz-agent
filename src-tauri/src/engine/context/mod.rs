@@ -58,7 +58,11 @@ impl TokenBudget {
                     .collect::<Vec<_>>()
                     .join(""),
                 TranscriptEntry::System { content, .. } => content.as_str().to_string(),
-                TranscriptEntry::CustomTitle { .. } | TranscriptEntry::Summary { .. } => continue,
+                TranscriptEntry::CustomTitle { .. }
+                | TranscriptEntry::Summary { .. }
+                | TranscriptEntry::TaskNode { .. }
+                | TranscriptEntry::OrchestrateNode { .. }
+                | TranscriptEntry::Feedback { .. } => continue,
             };
             total += self.estimate_text(&text);
         }

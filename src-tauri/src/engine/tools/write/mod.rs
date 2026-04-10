@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use serde_json;
 
-use crate::engine::tools::{Tool, ToolResult};
+use crate::engine::tools::{Tool, ToolResult, ToolExecutionContext};
 
 pub struct WriteTool {
     workdir: PathBuf,
@@ -54,7 +54,7 @@ impl Tool for WriteTool {
         10
     }
 
-    async fn call(&self, input: serde_json::Value) -> ToolResult {
+    async fn call(&self, input: serde_json::Value, _ctx: Option<&ToolExecutionContext>) -> ToolResult {
         let file_path = match input.get("file_path").and_then(|v| v.as_str()) {
             Some(p) => p,
             None => return ToolResult::Error("Missing file_path".into()),
@@ -132,7 +132,7 @@ mod tests {
             .call(serde_json::json!({
                 "file_path": "new_file.txt",
                 "content": "hello world"
-            }))
+            }), None)
             .await;
 
         assert!(matches!(result, ToolResult::Text(_)));
@@ -154,7 +154,7 @@ mod tests {
             .call(serde_json::json!({
                 "file_path": "existing.txt",
                 "content": "new content"
-            }))
+            }), None)
             .await;
 
         assert!(matches!(result, ToolResult::Text(_)));
@@ -174,7 +174,7 @@ mod tests {
             .call(serde_json::json!({
                 "file_path": "nonexistent_dir/file.txt",
                 "content": "test"
-            }))
+            }), None)
             .await;
 
         assert!(matches!(result, ToolResult::Error(_)));
@@ -191,7 +191,7 @@ mod tests {
             .call(serde_json::json!({
                 "file_path": "/etc/test_write.txt",
                 "content": "should not write"
-            }))
+            }), None)
             .await;
 
         assert!(matches!(result, ToolResult::Error(_)));

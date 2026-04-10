@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use serde_json;
 
-use crate::engine::tools::{Tool, ToolResult};
+use crate::engine::tools::{Tool, ToolResult, ToolExecutionContext};
 
 #[cfg(test)]
 const FALLBACK_MAX_OUTPUT_BYTES: usize = 100_000;
@@ -67,7 +67,7 @@ impl Tool for ReadTool {
         10
     }
 
-    async fn call(&self, input: serde_json::Value) -> ToolResult {
+    async fn call(&self, input: serde_json::Value, _ctx: Option<&ToolExecutionContext>) -> ToolResult {
         let file_path = match input.get("file_path").and_then(|v| v.as_str()) {
             Some(p) => p,
             None => return ToolResult::Error("Missing file_path".into()),
@@ -159,7 +159,7 @@ mod tests {
 
         let tool = make_tool(dir.path());
         let result = tool
-            .call(serde_json::json!({"file_path": "test.txt"}))
+            .call(serde_json::json!({"file_path": "test.txt"}), None)
             .await;
 
         assert!(matches!(result, ToolResult::Text(_)));
@@ -176,7 +176,7 @@ mod tests {
 
         let tool = make_tool(dir.path());
         let result = tool
-            .call(serde_json::json!({"file_path": "test.txt", "offset": 2, "limit": 2}))
+            .call(serde_json::json!({"file_path": "test.txt", "offset": 2, "limit": 2}), None)
             .await;
 
         assert!(matches!(result, ToolResult::Text(_)));
@@ -192,7 +192,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let tool = make_tool(dir.path());
         let result = tool
-            .call(serde_json::json!({"file_path": "nonexistent.txt"}))
+            .call(serde_json::json!({"file_path": "nonexistent.txt"}), None)
             .await;
 
         assert!(matches!(result, ToolResult::Error(_)));
@@ -210,7 +210,7 @@ mod tests {
 
         let tool = make_tool(dir.path());
         let result = tool
-            .call(serde_json::json!({"file_path": "large.txt"}))
+            .call(serde_json::json!({"file_path": "large.txt"}), None)
             .await;
 
         assert!(matches!(result, ToolResult::Text(_)));
@@ -226,7 +226,7 @@ mod tests {
 
         // 尝试读取 workdir 之外的文件
         let result = tool
-            .call(serde_json::json!({"file_path": "../../etc/passwd"}))
+            .call(serde_json::json!({"file_path": "../../etc/passwd"}), None)
             .await;
 
         assert!(matches!(result, ToolResult::Error(_)));

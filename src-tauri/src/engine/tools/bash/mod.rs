@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use serde_json;
 
-use crate::engine::tools::{Tool, ToolResult};
+use crate::engine::tools::{Tool, ToolResult, ToolExecutionContext};
 
 #[cfg(test)]
 const FALLBACK_MAX_OUTPUT_BYTES: usize = 100_000;
@@ -70,7 +70,7 @@ impl Tool for BashTool {
         self.default_timeout_secs.saturating_add(60)
     }
 
-    async fn call(&self, input: serde_json::Value) -> ToolResult {
+    async fn call(&self, input: serde_json::Value, _ctx: Option<&ToolExecutionContext>) -> ToolResult {
         let command = match input.get("command").and_then(|v| v.as_str()) {
             Some(c) => c,
             None => return ToolResult::Error("Missing command".into()),
@@ -201,7 +201,7 @@ mod tests {
         let tool = make_tool(dir.path());
 
         let result = tool
-            .call(serde_json::json!({"command": "echo hello"}))
+            .call(serde_json::json!({"command": "echo hello"}), None)
             .await;
 
         assert!(matches!(result, ToolResult::Text(_)));
@@ -215,7 +215,7 @@ mod tests {
         let tool = make_tool(dir.path());
 
         let result = tool
-            .call(serde_json::json!({"command": "exit 42"}))
+            .call(serde_json::json!({"command": "exit 42"}), None)
             .await;
 
         assert!(matches!(result, ToolResult::Error(_)));
@@ -233,7 +233,7 @@ mod tests {
             .call(serde_json::json!({
                 "command": "sleep 10",
                 "timeout": 1
-            }))
+            }), None)
             .await;
 
         assert!(matches!(result, ToolResult::Error(_)));
@@ -248,7 +248,7 @@ mod tests {
 
         // 生成约 200KB 的输出
         let result = tool
-            .call(serde_json::json!({"command": "python3 -c \"print('x'*200000)\""}))
+            .call(serde_json::json!({"command": "python3 -c \"print('x'*200000)\""}), None)
             .await;
 
         // python3 可能不存在，如果是这种情况跳过
@@ -275,7 +275,7 @@ mod tests {
             .call(serde_json::json!({
                 "command": "pwd",
                 "workdir": "sub"
-            }))
+            }), None)
             .await;
 
         if let ToolResult::Error(output) = &result {
@@ -296,7 +296,7 @@ mod tests {
             .call(serde_json::json!({
                 "command": "pwd",
                 "workdir": "../.."
-            }))
+            }), None)
             .await;
 
         assert!(matches!(result, ToolResult::Error(_)));

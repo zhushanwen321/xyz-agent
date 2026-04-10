@@ -1,0 +1,25 @@
+use std::sync::Arc;
+use std::collections::HashMap;
+
+use crate::types::AgentEvent;
+use crate::types::transcript::AssistantContentBlock;
+use crate::engine::task_tree::TaskTree;
+use crate::engine::concurrency::ConcurrencyManager;
+use crate::engine::agent_template::AgentTemplateRegistry;
+
+use super::ToolRegistry;
+
+/// P2 tools (dispatch_agent, feedback, orchestrate) 所需的运行时上下文。
+/// P1 tools 通过 `Option<&ToolExecutionContext>` 忽略此参数。
+pub struct ToolExecutionContext {
+    pub task_tree: Arc<tokio::sync::Mutex<TaskTree>>,
+    pub concurrency_manager: Arc<ConcurrencyManager>,
+    pub agent_templates: Arc<AgentTemplateRegistry>,
+    pub data_dir: std::path::PathBuf,
+    pub session_id: String,
+    pub event_tx: tokio::sync::mpsc::UnboundedSender<AgentEvent>,
+    pub api_messages: Vec<serde_json::Value>,
+    pub current_assistant_content: Vec<AssistantContentBlock>,
+    pub tool_registry: Arc<ToolRegistry>,
+    pub background_tasks: Arc<tokio::sync::Mutex<HashMap<String, tokio::task::JoinHandle<()>>>>,
+}

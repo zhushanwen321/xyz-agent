@@ -166,7 +166,7 @@ impl AgentLoop {
             }
 
             let tool_results =
-                execute_batch(result.tool_calls.clone(), tool_registry, tool_perms)
+                execute_batch(result.tool_calls.clone(), tool_registry, tool_perms, None)
                     .await;
 
             for tr in &tool_results {
