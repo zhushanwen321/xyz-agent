@@ -11,6 +11,7 @@ const emit = defineEmits<{
 
 const inputText = ref('')
 const isFocused = ref(false)
+const isComposing = ref(false)
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 
 function autoResize() {
@@ -21,7 +22,7 @@ function autoResize() {
 }
 
 function handleKeydown(e: KeyboardEvent) {
-  if (e.key === 'Enter' && !e.shiftKey) {
+  if (e.key === 'Enter' && !e.shiftKey && !isComposing.value) {
     e.preventDefault()
     handleSend()
   }
@@ -55,6 +56,8 @@ function handleSend() {
         rows="1"
         @input="autoResize"
         @keydown="handleKeydown"
+        @compositionstart="isComposing = true"
+        @compositionend="isComposing = false"
         @focus="isFocused = true"
         @blur="isFocused = false"
       />
