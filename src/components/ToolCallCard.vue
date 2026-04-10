@@ -51,33 +51,33 @@ const statusLabel = computed(() => {
     :class="colors.border"
   >
     <!-- Header -->
-    <div class="flex items-center justify-between px-3 py-2" :class="colors.bg">
+    <div class="flex items-center justify-between px-2.5 py-1" :class="colors.bg">
       <div class="flex items-center gap-2">
         <span
           v-if="toolCall.status === 'running'"
           class="inline-block h-2.5 w-2.5 animate-spin rounded-full border-2"
           :class="colors.spin"
         />
-        <span v-else class="font-mono text-xs font-bold" :class="colors.text">
+        <span v-else class="font-mono text-[10px] font-bold" :class="colors.text">
           {{ toolCall.status === 'error' ? '\u2717' : '\u2713' }}
         </span>
         <span class="font-mono font-semibold text-text-primary">{{ toolCall.tool_name }}</span>
       </div>
-      <span class="font-mono text-[11px]" :class="colors.text">{{ statusLabel }}</span>
+      <span class="font-mono text-[10px]" :class="colors.text">{{ statusLabel }}</span>
     </div>
 
     <!-- 参数摘要 -->
     <pre
       v-if="inputSummary"
-      class="px-3 mt-1.5 whitespace-pre-wrap font-mono text-xs text-text-secondary"
+      class="px-2.5 mt-1 whitespace-pre-wrap font-mono text-[10px] text-text-secondary"
     >{{ inputSummary }}</pre>
 
     <!-- 输出区：默认展开 -->
     <div
       v-if="toolCall.output !== undefined && toolCall.status !== 'running'"
-      class="mx-3 mt-2 mb-3 max-h-[300px] overflow-y-auto rounded-md border border-border-default bg-bg-inset p-2.5"
+      class="mx-2.5 mt-1.5 mb-2 max-h-[200px] overflow-y-auto rounded-md border border-border-default bg-bg-inset p-2"
     >
-      <pre class="whitespace-pre-wrap font-mono text-xs text-text-secondary">{{ toolCall.output }}</pre>
+      <pre class="whitespace-pre-wrap font-mono text-[10px] text-text-secondary">{{ toolCall.output }}</pre>
     </div>
   </div>
 </template>

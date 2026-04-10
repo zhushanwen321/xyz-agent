@@ -84,7 +84,7 @@ async function handleSend(content: string) {
     <div ref="scrollContainer" class="flex-1 overflow-y-auto px-4 py-6">
       <EmptyState v-if="messages.length === 0" />
 
-      <div v-else class="mx-auto max-w-[720px] space-y-6">
+      <div v-else class="mx-auto max-w-[720px] space-y-2">
         <MessageBubble
           v-for="msg in displayMessages"
           :key="msg.id"
