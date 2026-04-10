@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import { createSession, listSessions, deleteSession as deleteSessionApi, isTauri } from '../lib/tauri'
+import { createSession, listSessions, deleteSession as deleteSessionApi, renameSession as renameSessionApi, isTauri } from '../lib/tauri'
 import type { SessionInfo } from '../types'
 
 const sessions = ref<SessionInfo[]>([])
@@ -19,15 +19,17 @@ export function useSession() {
     currentSessionId.value = id
   }
 
-  async function createNewSession() {
-    if (!isTauri()) return
+  async function createNewSession(): Promise<string | null> {
+    if (!isTauri()) return null
     try {
       const result = await createSession()
       console.log('[useSession] session created:', result.session_id)
       await loadSessions()
       currentSessionId.value = result.session_id
+      return result.session_id
     } catch (err) {
       console.error('[useSession] createNewSession failed:', err)
+      return null
     }
   }
 
@@ -44,5 +46,15 @@ export function useSession() {
     }
   }
 
-  return { sessions, currentSessionId, loadSessions, selectSession, createNewSession, deleteSession }
+  async function renameSession(id: string, newTitle: string) {
+    if (!isTauri()) return
+    try {
+      await renameSessionApi(id, newTitle)
+      await loadSessions()
+    } catch (err) {
+      console.error('[useSession] renameSession failed:', err)
+    }
+  }
+
+  return { sessions, currentSessionId, loadSessions, selectSession, createNewSession, deleteSession, renameSession }
 }

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, computed, onMounted, type Ref } from 'vue'
 import { useChat } from '../composables/useChat'
+import { useSession } from '../composables/useSession'
 import { getCurrentModel, listTools, isTauri } from '../lib/tauri'
 import MessageBubble from './MessageBubble.vue'
 import MessageInput from './MessageInput.vue'
@@ -13,6 +14,7 @@ const props = defineProps<{
 
 const sessionIdRef = computed(() => props.currentSessionId) as Ref<string | null>
 const { messages, isStreaming, tokenUsage, send, currentTurnSegments } = useChat(sessionIdRef)
+const { createNewSession } = useSession()
 
 // 流式时合并 currentTurnSegments 到最后一条 assistant 消息
 const displayMessages = computed(() => {
@@ -66,7 +68,12 @@ watch(
   },
 )
 
-function handleSend(content: string) {
+async function handleSend(content: string) {
+  if (!sessionIdRef.value) {
+    const newId = await createNewSession()
+    if (!newId) return
+    await nextTick()
+  }
   send(content)
 }
 </script>

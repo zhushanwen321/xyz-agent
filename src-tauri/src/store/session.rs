@@ -145,14 +145,37 @@ pub fn delete_session(data: &Path, session_id: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// 重命名 session（写入 CustomTitle 条目）
+pub fn rename_session(data: &Path, session_id: &str, new_title: &str) -> Result<(), AppError> {
+    let path = session_path(data, session_id);
+    if !path.exists() {
+        return Err(AppError::SessionNotFound(session_id.to_string()));
+    }
+    let entry = TranscriptEntry::CustomTitle {
+        session_id: session_id.to_string(),
+        title: new_title.to_string(),
+    };
+    super::jsonl::append_entry(&path, &entry)?;
+    Ok(())
+}
+
 /// 获取 session JSONL 文件路径
 pub fn session_file_path(data: &Path, session_id: &str) -> Option<PathBuf> {
     let path = session_path(data, session_id);
     if path.exists() { Some(path) } else { None }
 }
 
-/// 从 entries 中提取标题（取第一条 user 消息的前 50 字符）
+/// 从 entries 中提取标题
+/// 优先使用 CustomTitle 条目，否则取第一条 user 消息的前 50 字符
 fn extract_title(entries: &[TranscriptEntry]) -> Option<String> {
+    // 优先取最后一个 CustomTitle（支持多次重命名）
+    let custom = entries.iter().rev().find_map(|e| match e {
+        TranscriptEntry::CustomTitle { title, .. } => Some(title.clone()),
+        _ => None,
+    });
+    if custom.is_some() {
+        return custom;
+    }
     entries.iter().find_map(|e| match e {
         TranscriptEntry::User { content, .. } => {
             let text: String = content
