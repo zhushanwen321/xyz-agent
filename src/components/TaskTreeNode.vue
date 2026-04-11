@@ -83,8 +83,8 @@ const roleBadge = computed(() =>
       </button>
     </div>
 
-    <!-- 递归渲染子节点 -->
-    <div v-if="isExpanded && children.length > 0">
+    <!-- 递归渲染子节点，最大深度 20 防止循环引用导致栈溢出 -->
+    <div v-if="isExpanded && children.length > 0 && depth < 20">
       <TaskTreeNode
         v-for="child in children"
         :key="child.node_id"
