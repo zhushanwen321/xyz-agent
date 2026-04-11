@@ -61,25 +61,43 @@ pub fn run() {
                 }
             }
 
+            // 共享 task_tree 和 concurrency_manager，确保
+            // DefaultAgentSpawner 写入的 task result 对 AppState 可见
+            let task_tree = Arc::new(tokio::sync::Mutex::new(
+                engine::task_tree::TaskTree::new(),
+            ));
+            let concurrency_manager = Arc::new(
+                engine::concurrency::ConcurrencyManager::new(3),
+            );
+
+            let agent_spawner = Arc::new(
+                engine::agent_spawner::DefaultAgentSpawner {
+                    provider: provider.clone(),
+                    model: llm_config.model.clone(),
+                    config: agent_config.clone(),
+                    tool_registry: tool_registry.clone(),
+                    task_tree: task_tree.clone(),
+                    concurrency_manager: concurrency_manager.clone(),
+                    data_dir: data_dir.clone(),
+                },
+            );
+
             app.manage(AppState {
-                data_dir,
-                provider,
-                model: llm_config.model,
-                config: agent_config,
-                tool_registry,
+                data_dir: data_dir.clone(),
+                provider: provider.clone(),
+                model: llm_config.model.clone(),
+                config: agent_config.clone(),
+                tool_registry: tool_registry.clone(),
                 global_perms,
-                task_tree: Arc::new(tokio::sync::Mutex::new(
-                    engine::task_tree::TaskTree::new(),
-                )),
-                concurrency_manager: Arc::new(
-                    engine::concurrency::ConcurrencyManager::new(3),
-                ),
+                task_tree,
+                concurrency_manager,
                 background_tasks: Arc::new(tokio::sync::Mutex::new(
                     std::collections::HashMap::new(),
                 )),
                 agent_templates: Arc::new(
                     engine::agent_template::AgentTemplateRegistry::new(),
                 ),
+                agent_spawner,
             });
             Ok(())
         })

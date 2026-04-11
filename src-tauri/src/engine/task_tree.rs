@@ -143,6 +143,10 @@ pub struct TaskNode {
     pub children_ids: Vec<String>,
     pub kill_requested: bool,
     pub pause_requested: bool,
+    /// 子 Agent 执行完成后的结果摘要
+    pub result_summary: Option<String>,
+    /// 结果是否已注入到父 Agent 对话中
+    pub result_injected: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -167,6 +171,8 @@ pub struct OrchestrateNode {
     pub last_active_at: String,
     pub kill_requested: bool,
     pub pause_requested: bool,
+    /// 结果是否已注入到父 Agent 对话中
+    pub result_injected: bool,
 }
 
 pub struct TaskTree {
@@ -212,6 +218,8 @@ impl TaskTree {
             children_ids: Vec::new(),
             kill_requested: false,
             pause_requested: false,
+            result_summary: None,
+            result_injected: false,
         };
         let id = node.task_id.clone();
         self.task_nodes.insert(id.clone(), node);
@@ -331,6 +339,7 @@ impl TaskTree {
             last_active_at: Utc::now().to_rfc3339(),
             kill_requested: false,
             pause_requested: false,
+            result_injected: false,
         };
         let id = node.node_id.clone();
         self.orchestrate_nodes.insert(id.clone(), node);
@@ -389,6 +398,38 @@ impl TaskTree {
 
     pub fn all_orchestrate_nodes(&self) -> Vec<&OrchestrateNode> {
         self.orchestrate_nodes.values().collect()
+    }
+
+    /// 设置 task node 的结果摘要并标记为完成
+    pub fn set_task_result(&mut self, task_id: &str, summary: String) -> bool {
+        if let Some(node) = self.task_nodes.get_mut(task_id) {
+            node.result_summary = Some(summary);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// 查询指定 session 中已完成但未注入结果的任务
+    pub fn completed_not_injected(&self, session_id: &str) -> Vec<&TaskNode> {
+        self.task_nodes
+            .values()
+            .filter(|n| {
+                n.session_id == session_id
+                    && matches!(n.status, TaskStatus::Completed)
+                    && !n.result_injected
+            })
+            .collect()
+    }
+
+    /// 标记 task node 的结果已注入
+    pub fn mark_result_injected(&mut self, task_id: &str) -> bool {
+        if let Some(node) = self.task_nodes.get_mut(task_id) {
+            node.result_injected = true;
+            true
+        } else {
+            false
+        }
     }
 }
 

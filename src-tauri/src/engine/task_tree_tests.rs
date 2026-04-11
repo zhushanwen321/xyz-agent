@@ -27,6 +27,8 @@ fn test_task_node_serialization_roundtrip() {
         children_ids: Vec::new(),
         kill_requested: false,
         pause_requested: false,
+        result_summary: None,
+        result_injected: false,
     };
     let json = serde_json::to_string(&node).unwrap();
     assert!(json.contains("\"type\":\"task_node\""));
@@ -65,6 +67,7 @@ fn test_orchestrate_node_serialization_roundtrip() {
         last_active_at: "2026-04-10T01:00:00Z".to_string(),
         kill_requested: false,
         pause_requested: false,
+        result_injected: false,
     };
     let json = serde_json::to_string(&node).unwrap();
     assert!(json.contains("\"type\":\"orchestrate_node\""));

@@ -342,10 +342,23 @@ mod tests {
         use crate::engine::task_tree::TaskTree;
         use crate::engine::concurrency::ConcurrencyManager;
         use crate::engine::agent_template::AgentTemplateRegistry;
+        use crate::engine::agent_spawner::DefaultAgentSpawner;
+        use crate::engine::llm::test_utils::MockLlmProvider;
+        use crate::engine::config::AgentConfig;
         use std::sync::Arc;
 
         let tree = Arc::new(tokio::sync::Mutex::new(TaskTree::new()));
         let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let spawner = Arc::new(DefaultAgentSpawner {
+            provider: Arc::new(MockLlmProvider::new(vec![])),
+            model: "test".into(),
+            config: Arc::new(AgentConfig::default()),
+            tool_registry: Arc::new(crate::engine::tools::ToolRegistry::new()),
+            task_tree: tree.clone(),
+            concurrency_manager: Arc::new(ConcurrencyManager::new(3)),
+            data_dir: std::path::PathBuf::from("/tmp/test"),
+        });
 
         let ctx = ToolExecutionContext {
             task_tree: tree.clone(),
@@ -358,6 +371,8 @@ mod tests {
             current_assistant_content: vec![],
             tool_registry: Arc::new(crate::engine::tools::ToolRegistry::new()),
             background_tasks: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            agent_spawner: spawner,
+            orchestrate_depth: 0,
         };
 
         // Create a node and set it to idle with a timestamp far in the past

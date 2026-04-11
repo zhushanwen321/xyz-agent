@@ -1,3 +1,4 @@
+use crate::engine::agent_spawner::AgentSpawner;
 use crate::engine::config::AgentConfig;
 use crate::engine::llm::LlmProvider;
 use crate::engine::tools::{PermissionContext, ToolRegistry};
@@ -19,4 +20,5 @@ pub struct AppState {
     pub concurrency_manager: Arc<crate::engine::concurrency::ConcurrencyManager>,
     pub background_tasks: Arc<tokio::sync::Mutex<HashMap<String, tokio::task::JoinHandle<()>>>>,
     pub agent_templates: Arc<crate::engine::agent_template::AgentTemplateRegistry>,
+    pub agent_spawner: Arc<dyn AgentSpawner>,
 }

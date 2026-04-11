@@ -6,6 +6,7 @@ use crate::types::transcript::AssistantContentBlock;
 use crate::engine::task_tree::TaskTree;
 use crate::engine::concurrency::ConcurrencyManager;
 use crate::engine::agent_template::AgentTemplateRegistry;
+use crate::engine::agent_spawner::AgentSpawner;
 
 use super::ToolRegistry;
 
@@ -23,4 +24,6 @@ pub struct ToolExecutionContext {
     pub current_assistant_content: Vec<AssistantContentBlock>,
     pub tool_registry: Arc<ToolRegistry>,
     pub background_tasks: Arc<tokio::sync::Mutex<HashMap<String, tokio::task::JoinHandle<()>>>>,
+    pub agent_spawner: Arc<dyn AgentSpawner>,
+    pub orchestrate_depth: u32,
 }
