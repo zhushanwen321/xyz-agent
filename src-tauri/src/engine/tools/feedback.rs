@@ -46,7 +46,17 @@ impl Tool for FeedbackTool {
     }
 
     async fn call(&self, input: serde_json::Value, ctx: Option<&ToolExecutionContext>) -> ToolResult {
-        let message = input["message"].as_str().unwrap_or("");
+        let message = match input["message"].as_str() {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => {
+                return ToolResult::Error(
+                    "Missing required parameter 'message'. \
+                     Provide a clear description of what happened, e.g. \
+                     {\"message\": \"Found 3 compilation errors in main.rs\"}"
+                        .into(),
+                );
+            }
+        };
         let severity = input["severity"].as_str().unwrap_or("info");
         let task_id = input["task_id"].as_str().unwrap_or("");
 
@@ -54,7 +64,7 @@ impl Tool for FeedbackTool {
             let _ = ctx.event_tx.send(crate::types::AgentEvent::TaskFeedback {
                 session_id: ctx.session_id.clone(),
                 task_id: task_id.to_string(),
-                message: message.to_string(),
+                message: message.clone(),
                 severity: severity.to_string(),
             });
 

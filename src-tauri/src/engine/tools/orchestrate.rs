@@ -89,12 +89,29 @@ impl Tool for OrchestrateTool {
             );
         };
 
-        let task_description = input["task_description"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
+        let task_description = match input["task_description"].as_str() {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => {
+                return ToolResult::Error(
+                    "Missing required parameter 'task_description'. \
+                     Example: {\"task_description\": \"Analyze error logs\", \
+                     \"agent_type\": \"executor\", \"directive\": \"Search for ERROR in logs/*.log\"}"
+                        .into(),
+                );
+            }
+        };
         let requested_type = input["agent_type"].as_str().unwrap_or("executor");
-        let _directive = input["directive"].as_str().unwrap_or("").to_string();
+        let _directive = match input["directive"].as_str() {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => {
+                return ToolResult::Error(
+                    "Missing required parameter 'directive'. \
+                     Provide specific instructions for the agent, e.g. \
+                     \"Search for ERROR lines in logs/*.log and summarize patterns\""
+                        .into(),
+                );
+            }
+        };
         let target_agent_id = input["target_agent_id"].as_str().map(String::from);
         let is_sync = input["sync"].as_bool().unwrap_or(true);
 

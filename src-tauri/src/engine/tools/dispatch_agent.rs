@@ -132,11 +132,28 @@ impl Tool for DispatchAgentTool {
             return ToolResult::Error("dispatch_agent requires ToolExecutionContext".into());
         };
 
-        let description = input["description"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
-        let _prompt = input["prompt"].as_str().unwrap_or("").to_string();
+        let description = match input["description"].as_str() {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => {
+                return ToolResult::Error(
+                    "Missing required parameter 'description'. \
+                     You must provide: {\"description\": \"<3-5 word task summary>\", \"prompt\": \"<full task instruction>\"}"
+                        .into(),
+                );
+            }
+        };
+        // prompt 暂未使用，AgentSpawner 集成后作为子 Agent 的输入
+        #[allow(unused_variables)]
+        let prompt = match input["prompt"].as_str() {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => {
+                return ToolResult::Error(
+                    "Missing required parameter 'prompt'. \
+                     You must provide: {\"description\": \"<summary>\", \"prompt\": \"<full task instruction>\"}"
+                        .into(),
+                );
+            }
+        };
         let subagent_type = input["subagent_type"]
             .as_str()
             .unwrap_or("")
