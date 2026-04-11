@@ -105,12 +105,13 @@ impl ToolRegistry {
         format!("tool '{}' is allowed", name)
     }
 
-    pub fn tool_schemas(&self, _perms: &PermissionContext) -> Vec<serde_json::Value> {
+    pub fn tool_schemas(&self, perms: &PermissionContext) -> Vec<serde_json::Value> {
         let mut names = self.tool_names();
         names.sort();
 
         names
             .into_iter()
+            .filter(|name| self.is_allowed(name, perms))
             .map(|name| {
                 let tool = &self.tools[&name];
                 serde_json::json!({

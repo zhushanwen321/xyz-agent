@@ -123,7 +123,9 @@ pub struct AsyncResult {
 pub struct LoadHistoryResult {
     pub entries: Vec<TranscriptEntry>,
     pub conversation_summary: Option<String>,
+    #[serde(rename = "task_nodes")]
     pub task_node_entries: Vec<TranscriptEntry>,
+    #[serde(rename = "orchestrate_nodes")]
     pub orchestrate_node_entries: Vec<TranscriptEntry>,
     pub pending_async_results: Vec<AsyncResult>,
 }

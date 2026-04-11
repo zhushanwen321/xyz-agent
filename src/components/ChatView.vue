@@ -14,7 +14,7 @@ const props = defineProps<{
 }>()
 
 const sessionIdRef = computed(() => props.currentSessionId) as Ref<string | null>
-const { messages, isStreaming, tokenUsage, send, currentTurnSegments, taskNodes, orchestrateNodes } = useChat(sessionIdRef)
+const { messages, isStreaming, tokenUsage, send, currentTurnSegments, taskNodes, orchestrateNodes, toolUseToTaskId } = useChat(sessionIdRef)
 const { createNewSession } = useSession()
 
 // 有子任务时显示右侧 sidebar
@@ -108,6 +108,7 @@ async function handleSend(content: string) {
             :message="msg"
             :is-streaming="msg.isStreaming"
             :task-nodes="taskNodes"
+            :tool-use-to-task-id="toolUseToTaskId"
           />
         </div>
       </div>

@@ -61,6 +61,7 @@ pub enum AgentEvent {
         mode: String,
         subagent_type: String,
         budget: TaskBudgetSummary,
+        tool_use_id: Option<String>,
     },
     TaskProgress {
         session_id: String,
@@ -309,6 +310,7 @@ mod tests {
             mode: "preset".into(),
             subagent_type: "Explore".into(),
             budget: TaskBudgetSummary { max_tokens: 50000 },
+            tool_use_id: None,
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"type\":\"TaskCreated\""));

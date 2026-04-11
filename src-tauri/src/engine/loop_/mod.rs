@@ -69,26 +69,17 @@ impl AgentLoop {
         for iteration in 1..=max_turns {
             // Kill/pause check (P2 SubAgent user intervention)
             if let (Some(ref tree), Some(ref nid)) = (&task_tree, &node_id) {
-                let tree_guard = tree.lock().await;
+                let mut tree_guard = tree.lock().await;
                 if tree_guard.should_kill(nid) {
                     log::info!("[agent_loop] kill requested for node {}", nid);
                     drop(tree_guard);
                     break;
                 }
                 if tree_guard.should_pause(nid) {
-                    let nid_clone = nid.clone();
+                    let notify = tree_guard.get_or_create_notifier(nid);
                     drop(tree_guard);
-                    // Non-blocking pause loop: check every 1 second
-                    loop {
-                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                        let tg = task_tree.as_ref().unwrap().lock().await;
-                        if !tg.should_pause(&nid_clone) {
-                            break;
-                        }
-                        if tg.should_kill(&nid_clone) {
-                            break;
-                        }
-                    }
+                    // 等待 resume/kill 的即时唤醒，不再轮询
+                    notify.notified().await;
                 }
             }
 

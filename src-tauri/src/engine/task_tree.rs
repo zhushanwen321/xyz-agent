@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -194,6 +195,8 @@ pub struct OrchestrateNode {
 pub struct TaskTree {
     task_nodes: HashMap<String, TaskNode>,
     orchestrate_nodes: HashMap<String, OrchestrateNode>,
+    /// 每个 task node 的 pause 唤醒通知器，resume/kill 时触发
+    pause_notifiers: HashMap<String, Arc<tokio::sync::Notify>>,
 }
 
 impl TaskTree {
@@ -201,6 +204,7 @@ impl TaskTree {
         Self {
             task_nodes: HashMap::new(),
             orchestrate_nodes: HashMap::new(),
+            pause_notifiers: HashMap::new(),
         }
     }
 
@@ -270,6 +274,10 @@ impl TaskTree {
     pub fn request_kill(&mut self, id: &str) -> bool {
         if let Some(node) = self.task_nodes.get_mut(id) {
             node.kill_requested = true;
+            // 唤醒暂停等待，使 agent loop 退出
+            if let Some(notify) = self.pause_notifiers.get(id) {
+                notify.notify_one();
+            }
             true
         } else {
             false
@@ -288,6 +296,10 @@ impl TaskTree {
     pub fn request_resume(&mut self, id: &str) -> bool {
         if let Some(node) = self.task_nodes.get_mut(id) {
             node.pause_requested = false;
+            // 即时唤醒暂停等待中的 agent loop
+            if let Some(notify) = self.pause_notifiers.get(id) {
+                notify.notify_one();
+            }
             true
         } else {
             false
@@ -300,6 +312,14 @@ impl TaskTree {
 
     pub fn should_pause(&self, id: &str) -> bool {
         self.task_nodes.get(id).map_or(false, |n| n.pause_requested)
+    }
+
+    /// 获取或创建节点的 pause Notify，用于 resume/kill 时即时唤醒
+    pub fn get_or_create_notifier(&mut self, id: &str) -> Arc<tokio::sync::Notify> {
+        self.pause_notifiers
+            .entry(id.to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::Notify::new()))
+            .clone()
     }
 
     // -- OrchestrateNode methods -------------------------------------------
@@ -317,6 +337,7 @@ impl TaskTree {
         budget: Option<TaskBudget>,
     ) -> &OrchestrateNode {
         let node_id = generate_task_id("orchestrate");
+        let pid = parent_id.clone();
         let node = OrchestrateNode {
             node_id,
             parent_id,
@@ -340,6 +361,12 @@ impl TaskTree {
         };
         let id = node.node_id.clone();
         self.orchestrate_nodes.insert(id.clone(), node);
+        // 自动维护父节点的 children_ids
+        if let Some(ref pid) = pid {
+            if let Some(parent) = self.orchestrate_nodes.get_mut(pid) {
+                parent.children_ids.push(id.clone());
+            }
+        }
         self.orchestrate_nodes.get(&id).unwrap()
     }
 
@@ -355,9 +382,9 @@ impl TaskTree {
     pub fn request_kill_tree(&mut self, id: &str) -> bool {
         let mut found = false;
         let mut queue = vec![id.to_string()];
+        let mut notified_ids: Vec<String> = Vec::new();
 
         while let Some(current_id) = queue.pop() {
-            // 收集子节点 ID 和设置 kill 标志分两步，避免同时借用
             let children = if let Some(node) = self.orchestrate_nodes.get_mut(&current_id) {
                 found = true;
                 node.kill_requested = true;
@@ -365,11 +392,19 @@ impl TaskTree {
             } else if let Some(node) = self.task_nodes.get_mut(&current_id) {
                 found = true;
                 node.kill_requested = true;
+                notified_ids.push(current_id.clone());
                 node.children_ids.clone()
             } else {
                 Vec::new()
             };
             queue.extend(children);
+        }
+
+        // 唤醒所有被终止的 task node（orchestrate node 由 AgentSpawner 管理）
+        for nid in &notified_ids {
+            if let Some(notify) = self.pause_notifiers.get(nid) {
+                notify.notify_one();
+            }
         }
 
         found
@@ -389,155 +424,5 @@ impl TaskTree {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_defaults() {
-        let b = TaskBudget::default();
-        assert_eq!((b.max_tokens, b.max_turns, b.max_tool_calls), (50_000, 20, 100));
-        let u = TaskUsage::default();
-        assert_eq!((u.total_tokens, u.tool_uses, u.duration_ms), (0, 0, 0));
-    }
-
-    #[test]
-    fn test_task_node_serialization_roundtrip() {
-        let node = TaskNode {
-            task_id: "da_abc12345".to_string(),
-            parent_id: None,
-            session_id: "sess-1".to_string(),
-            description: "test task".to_string(),
-            status: TaskStatus::Running,
-            mode: AgentMode::Preset,
-            subagent_type: Some("code_review".to_string()),
-            created_at: "2026-04-10T00:00:00Z".to_string(),
-            completed_at: None,
-            transcript_path: Some("subagents/da_abc12345.jsonl".to_string()),
-            output_file: None,
-            budget: TaskBudget::default(),
-            usage: TaskUsage::default(),
-            children_ids: Vec::new(),
-            kill_requested: false,
-            pause_requested: false,
-        };
-        let json = serde_json::to_string(&node).unwrap();
-        assert!(json.contains("\"type\":\"task_node\""));
-        assert!(json.contains("\"status\":\"running\""));
-        let de: TaskNode = serde_json::from_str(&json).unwrap();
-        assert_eq!(de.task_id, "da_abc12345");
-        assert_eq!(de.status, TaskStatus::Running);
-        assert_eq!(de.mode, AgentMode::Preset);
-        assert_eq!(de.subagent_type.as_deref(), Some("code_review"));
-    }
-
-    #[test]
-    fn test_orchestrate_node_serialization_roundtrip() {
-        let node = OrchestrateNode {
-            node_id: "or_xyz98765".to_string(),
-            parent_id: Some("or_parent1".to_string()),
-            session_id: "sess-1".to_string(),
-            role: NodeRole::Orchestrator,
-            depth: 1,
-            description: "orchestrator node".to_string(),
-            status: OrchestrateStatus::Idle,
-            directive: "coordinate tasks".to_string(),
-            agent_id: "agent-1".to_string(),
-            conversation_path: PathBuf::from("orchestrate/or_xyz98765.jsonl"),
-            output_file: None,
-            budget: TaskBudget::default(),
-            usage: TaskUsage::default(),
-            children_ids: vec!["or_child1".to_string()],
-            feedback_history: vec![FeedbackMessage {
-                timestamp: "2026-04-10T00:00:00Z".to_string(),
-                direction: FeedbackDirection::ChildToParent,
-                message: "task done".to_string(),
-                severity: FeedbackSeverity::Info,
-            }],
-            reuse_count: 2,
-            last_active_at: "2026-04-10T01:00:00Z".to_string(),
-            kill_requested: false,
-            pause_requested: false,
-        };
-        let json = serde_json::to_string(&node).unwrap();
-        assert!(json.contains("\"type\":\"orchestrate_node\""));
-        assert!(json.contains("\"role\":\"orchestrator\""));
-        let de: OrchestrateNode = serde_json::from_str(&json).unwrap();
-        assert_eq!(de.node_id, "or_xyz98765");
-        assert_eq!(de.feedback_history.len(), 1);
-        assert_eq!(de.reuse_count, 2);
-    }
-
-    #[test]
-    fn test_generate_task_id_prefix_and_uniqueness() {
-        let da = generate_task_id("dispatch_agent");
-        assert!(da.starts_with("da_") && da.len() == 11, "got: {}", da);
-        let or = generate_task_id("orchestrate");
-        assert!(or.starts_with("or_") && or.len() == 11, "got: {}", or);
-        let tk = generate_task_id("unknown");
-        assert!(tk.starts_with("tk_") && tk.len() == 11, "got: {}", tk);
-        // uniqueness spot check
-        assert_ne!(da, generate_task_id("dispatch_agent"));
-    }
-
-    #[test]
-    fn test_task_tree_crud_and_lifecycle() {
-        let mut tree = TaskTree::new();
-        // create + get TaskNode
-        tree.create_task_node(None, "s1", "do something", AgentMode::Preset, None, None);
-        let id = tree.all_task_nodes()[0].task_id.clone();
-        assert!(id.starts_with("da_"));
-        assert_eq!(tree.get_task_node(&id).unwrap().status, TaskStatus::Pending);
-
-        // status transition with auto completed_at
-        tree.update_task_status(&id, TaskStatus::Running);
-        assert!(tree.get_task_node(&id).unwrap().completed_at.is_none());
-        tree.update_task_status(&id, TaskStatus::Completed);
-        assert!(tree.get_task_node(&id).unwrap().completed_at.is_some());
-
-        // create OrchestrateNode
-        tree.create_orchestrate_node(
-            None, "s1", NodeRole::Orchestrator, 0, "orch", "direct", "a1",
-            PathBuf::from("o.jsonl"), None,
-        );
-        let oid = tree.all_orchestrate_nodes()[0].node_id.clone();
-        assert!(oid.starts_with("or_"));
-        assert_eq!(tree.get_orchestrate_node(&oid).unwrap().depth, 0);
-    }
-
-    #[test]
-    fn test_kill_pause_resume() {
-        let mut tree = TaskTree::new();
-        tree.create_task_node(None, "s1", "t", AgentMode::Preset, None, None);
-        let id = tree.all_task_nodes()[0].task_id.clone();
-
-        assert!(!tree.should_kill(&id) && !tree.should_pause(&id));
-        tree.request_kill(&id);
-        tree.request_pause(&id);
-        assert!(tree.should_kill(&id) && tree.should_pause(&id));
-        tree.request_resume(&id);
-        assert!(tree.should_kill(&id) && !tree.should_pause(&id));
-    }
-
-    #[test]
-    fn test_request_kill_tree_cascades_to_children() {
-        let mut tree = TaskTree::new();
-        tree.create_orchestrate_node(
-            None, "s1", NodeRole::Orchestrator, 0, "parent", "d", "a1",
-            PathBuf::from("p.jsonl"), None,
-        );
-        let pid = tree.all_orchestrate_nodes()[0].node_id.clone();
-        tree.create_orchestrate_node(
-            Some(pid.clone()), "s1", NodeRole::Executor, 1, "child", "e", "a2",
-            PathBuf::from("c.jsonl"), None,
-        );
-        let cid = tree.all_orchestrate_nodes()[1].node_id.clone();
-        tree.get_orchestrate_node_mut(&pid).unwrap().children_ids.push(cid.clone());
-
-        tree.request_kill_tree(&pid);
-        assert!(tree.get_orchestrate_node(&pid).unwrap().kill_requested);
-        assert!(tree.get_orchestrate_node(&cid).unwrap().kill_requested);
-
-        // nonexistent returns false
-        assert!(!tree.request_kill_tree("nope"));
-    }
-}
+#[path = "task_tree_tests.rs"]
+mod tests;

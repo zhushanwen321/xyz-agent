@@ -157,6 +157,15 @@ impl Tool for DispatchAgentTool {
         let task_id = generate_task_id("dispatch_agent");
         let start = Instant::now();
 
+        // 从 assistant content 中查找 dispatch_agent 调用对应的 tool_use_id
+        let tool_use_id = ctx.current_assistant_content.iter().rev()
+            .find_map(|block| {
+                if let crate::types::transcript::AssistantContentBlock::ToolUse { id, name, .. } = block {
+                    if name == "dispatch_agent" { return Some(id.clone()) }
+                }
+                None
+            });
+
         // 发送 TaskCreated 事件
         let _ = ctx.event_tx.send(AgentEvent::TaskCreated {
             session_id: ctx.session_id.clone(),
@@ -167,6 +176,7 @@ impl Tool for DispatchAgentTool {
             budget: TaskBudgetSummary {
                 max_tokens: budget.max_tokens,
             },
+            tool_use_id,
         });
 
         if is_sync {

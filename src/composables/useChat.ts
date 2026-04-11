@@ -23,6 +23,8 @@ export function useChat(sessionId: Ref<string | null>) {
   const currentTurnSegments = ref<AssistantSegment[]>([])
   const taskNodes = ref<Map<string, TaskNode>>(new Map())
   const orchestrateNodes = ref<Map<string, OrchestrateNode>>(new Map())
+  // tool_use_id -> task_id 映射，用于 ToolCallCard 关联 SubAgentCard
+  const toolUseToTaskId = ref<Map<string, string>>(new Map())
   let unlisten: (() => void) | null = null
   let historyLoadPromise: Promise<void> | null = null
 
@@ -104,6 +106,10 @@ export function useChat(sessionId: Ref<string | null>) {
           break
         }
         case 'TaskCreated':
+          // 建立 tool_use_id -> task_id 映射
+          if (event.tool_use_id) {
+            toolUseToTaskId.value.set(event.tool_use_id, event.task_id)
+          }
           taskNodes.value.set(event.task_id, {
             type: 'task_node',
             task_id: event.task_id,
@@ -154,6 +160,11 @@ export function useChat(sessionId: Ref<string | null>) {
             reuse_count: 0,
             children_ids: [],
           })
+          // 同步父节点的 children_ids
+          if (event.parent_id) {
+            const parent = orchestrateNodes.value.get(event.parent_id)
+            if (parent) parent.children_ids.push(event.node_id)
+          }
           break
         case 'OrchestrateNodeProgress': {
           const onode = orchestrateNodes.value.get(event.node_id)
@@ -270,5 +281,5 @@ export function useChat(sessionId: Ref<string | null>) {
     }
   })
 
-  return { messages, streamingText, isStreaming, tokenUsage, send, currentTurnSegments, taskNodes, orchestrateNodes }
+  return { messages, streamingText, isStreaming, tokenUsage, send, currentTurnSegments, taskNodes, orchestrateNodes, toolUseToTaskId }
 }

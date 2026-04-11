@@ -8,6 +8,7 @@ const props = defineProps<{
   message: ChatMessage
   isStreaming?: boolean
   taskNodes: Map<string, TaskNode>
+  toolUseToTaskId: Map<string, string>
 }>()
 
 const md = new MarkdownIt({
@@ -68,7 +69,7 @@ function renderMarkdown(text: string): string {
 
           <!-- tool segment -->
           <div v-else-if="seg.type === 'tool'" class="mb-2">
-            <ToolCallCard :tool-call="seg.call" :task-nodes="taskNodes" />
+            <ToolCallCard :tool-call="seg.call" :task-nodes="taskNodes" :tool-use-to-task-id="toolUseToTaskId" />
           </div>
         </template>
 

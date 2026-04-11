@@ -7,15 +7,15 @@ import SubAgentCard from './SubAgentCard.vue'
 const props = defineProps<{
   toolCall: ToolCallDisplay
   taskNodes: Map<string, TaskNode>
+  toolUseToTaskId: Map<string, string>
 }>()
 
 // dispatch_agent 工具调用时显示 SubAgentCard 替代默认渲染
 const isDispatchAgent = computed(() => props.toolCall.tool_name === 'dispatch_agent')
 const dispatchTask = computed(() => {
   if (!isDispatchAgent.value) return null
-  const input = props.toolCall.input as Record<string, unknown> | null
-  if (!input) return null
-  const taskId = input.task_id as string | undefined
+  // 通过 tool_use_id -> task_id 映射查找对应的 TaskNode
+  const taskId = props.toolUseToTaskId.get(props.toolCall.tool_use_id)
   if (taskId) return props.taskNodes.get(taskId) ?? null
   return null
 })
