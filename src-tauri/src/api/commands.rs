@@ -116,6 +116,24 @@ pub async fn send_message(
     let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
     crate::api::event_bus::spawn_bridge(app, event_rx);
 
+    // 创建/获取 session 的 CancellationToken，用 TokenGuard 确保清理
+    let cancel_token = {
+        let mut tokens = state.cancel_tokens.lock().unwrap();
+        tokens.entry(session_id.clone())
+            .or_insert_with(tokio_util::sync::CancellationToken::new)
+            .clone()
+    };
+    struct TokenGuard {
+        tokens: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, tokio_util::sync::CancellationToken>>>,
+        session_id: String,
+    }
+    impl Drop for TokenGuard {
+        fn drop(&mut self) {
+            self.tokens.lock().unwrap().remove(&self.session_id);
+        }
+    }
+    let _token_guard = TokenGuard { tokens: state.cancel_tokens.clone(), session_id: session_id.clone() };
+
     let model = state.model.clone();
     log::info!("[chat] starting agent_loop, model={model}");
     let agent_loop = AgentLoop::new(provider, session_id.clone(), model);
@@ -216,7 +234,7 @@ pub async fn send_message(
             None,
             Some(tool_ctx),
             None,
-            tokio_util::sync::CancellationToken::new(), // placeholder: Task 5 will replace with session token
+            cancel_token,
         )
         .await;
 
@@ -287,6 +305,20 @@ pub async fn update_config(
         payload.bash_default_timeout_secs,
     )
     .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn cancel_message(
+    session_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let found = state.cancel_tokens.lock().unwrap().get(&session_id).map(|t| {
+        t.cancel();
+    }).is_some();
+    if !found {
+        return Err(format!("no active session '{session_id}'"));
+    }
+    Ok(())
 }
 
 #[tauri::command]
