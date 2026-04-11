@@ -98,6 +98,7 @@ pub fn run() {
                     engine::agent_template::AgentTemplateRegistry::new(),
                 ),
                 agent_spawner,
+                cancel_tokens: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             });
             Ok(())
         })

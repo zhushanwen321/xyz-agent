@@ -21,4 +21,5 @@ pub struct AppState {
     pub background_tasks: Arc<tokio::sync::Mutex<HashMap<String, tokio::task::JoinHandle<()>>>>,
     pub agent_templates: Arc<crate::engine::agent_template::AgentTemplateRegistry>,
     pub agent_spawner: Arc<dyn AgentSpawner>,
+    pub cancel_tokens: Arc<std::sync::Mutex<HashMap<String, tokio_util::sync::CancellationToken>>>,
 }
