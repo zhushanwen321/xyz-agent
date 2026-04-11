@@ -43,6 +43,7 @@ pub fn run() {
     engine::tools::register_builtin_tools(&mut tool_registry, workdir, &agent_config);
     tool_registry.register(std::sync::Arc::new(engine::tools::feedback::FeedbackTool));
     tool_registry.register(std::sync::Arc::new(engine::tools::dispatch_agent::DispatchAgentTool));
+    tool_registry.register(std::sync::Arc::new(engine::tools::orchestrate::OrchestrateTool));
     let tool_registry = Arc::new(tool_registry);
     let global_perms = PermissionContext::default();
 
