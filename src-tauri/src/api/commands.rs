@@ -217,6 +217,7 @@ pub async fn send_message(
         background_tasks: state.background_tasks.clone(),
         agent_spawner: state.agent_spawner.clone(),
         orchestrate_depth: 0,
+        parent_cancel_token: Some(cancel_token.clone()),
     };
     let result = agent_loop
         .run_turn(

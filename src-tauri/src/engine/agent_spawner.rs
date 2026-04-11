@@ -36,6 +36,8 @@ pub struct SpawnConfig {
     pub node_id: Option<String>,
     /// 子 Agent 的 orchestrate 嵌套深度，用于递归限制
     pub orchestrate_depth: u32,
+    /// 父级 CancellationToken，用于派生 child token
+    pub parent_cancel_token: Option<tokio_util::sync::CancellationToken>,
 }
 
 // ── Spawn 句柄 ──────────────────────────────────────────────
@@ -186,6 +188,15 @@ async fn run_subagent(
         background_tasks: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         agent_spawner: spawner,
         orchestrate_depth: config.orchestrate_depth,
+        parent_cancel_token: config.parent_cancel_token.clone(),
+    };
+
+    // 从 TaskTree 获取子 Agent 的 CancellationToken
+    let cancel_token = {
+        let tree = task_tree.lock().await;
+        tree.get_cancel_token(&config.task_id)
+            .cloned()
+            .unwrap_or_else(tokio_util::sync::CancellationToken::new)
     };
 
     let entries = agent_loop
@@ -204,8 +215,7 @@ async fn run_subagent(
             node_id,
             Some(tool_ctx),
             api_messages_override,
-            // cancel_token 由 run_subagent 从 TaskTree 获取（Task 6 完善）
-            tokio_util::sync::CancellationToken::new(),
+            cancel_token,
         )
         .await?;
 
@@ -452,6 +462,7 @@ mod tests {
             task_id: "da_test1234".to_string(),
             node_id: None,
             orchestrate_depth: 0,
+            parent_cancel_token: None,
         };
 
         let mut handle = spawner.spawn_agent(config).await.unwrap();
@@ -502,6 +513,7 @@ mod tests {
             task_id: "da_first123".to_string(),
             node_id: None,
             orchestrate_depth: 0,
+            parent_cancel_token: None,
         };
 
         let config2 = SpawnConfig {
@@ -520,6 +532,7 @@ mod tests {
             task_id: "da_second456".to_string(),
             node_id: None,
             orchestrate_depth: 0,
+            parent_cancel_token: None,
         };
 
         let mut handle1 = spawner.spawn_agent(config1).await.unwrap();

@@ -234,6 +234,12 @@ impl Tool for OrchestrateTool {
                 sidechain,
                 Some(budget.clone()),
             );
+            // 用 parent token 派生 child token，实现级联取消
+            let child_token = ctx.parent_cancel_token
+                .as_ref()
+                .map(|p| p.child_token())
+                .unwrap_or_else(tokio_util::sync::CancellationToken::new);
+            tree.set_cancel_token(node_id.clone(), child_token);
         }
 
         let _ = ctx.event_tx.send(AgentEvent::OrchestrateNodeCreated {
@@ -279,6 +285,7 @@ impl Tool for OrchestrateTool {
             task_id: node_id.clone(),
             node_id: Some(node_id.clone()),
             orchestrate_depth: node_depth,
+            parent_cancel_token: ctx.parent_cancel_token.clone(),
         };
 
         let mut spawn_handle = match ctx.agent_spawner.spawn_agent(spawn_config).await {

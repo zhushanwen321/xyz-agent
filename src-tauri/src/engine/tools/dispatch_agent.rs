@@ -226,6 +226,17 @@ impl Tool for DispatchAgentTool {
                 if subagent_type.is_empty() { None } else { Some(subagent_type.clone()) },
                 Some(budget.clone()),
             );
+            // 用 parent token 派生 child token，实现级联取消
+            if let Some(node) = tree.get_task_node(
+                &tree.all_task_nodes().last().map(|n| n.task_id.clone()).unwrap_or_default()
+            ) {
+                let tid = node.task_id.clone();
+                let child_token = ctx.parent_cancel_token
+                    .as_ref()
+                    .map(|p| p.child_token())
+                    .unwrap_or_else(tokio_util::sync::CancellationToken::new);
+                tree.set_cancel_token(tid, child_token);
+            }
         }
 
         let tool_use_id = ctx.current_assistant_content.iter().rev()
@@ -279,6 +290,7 @@ impl Tool for DispatchAgentTool {
             task_id: task_id.clone(),
             node_id: Some(task_id.clone()),
             orchestrate_depth: ctx.orchestrate_depth,
+            parent_cancel_token: ctx.parent_cancel_token.clone(),
         };
 
         let mut spawn_handle = match ctx.agent_spawner.spawn_agent(spawn_config).await {

@@ -325,6 +325,11 @@ impl TaskTree {
         self.cancel_tokens.get(id)
     }
 
+    /// 为节点注入 CancellationToken（用于子 Agent 从父级派生 child token）
+    pub fn set_cancel_token(&mut self, id: String, token: CancellationToken) {
+        self.cancel_tokens.insert(id, token);
+    }
+
     pub fn create_orchestrate_node(
         &mut self,
         node_id: String,

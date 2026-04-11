@@ -122,6 +122,7 @@ mod tests {
             background_tasks: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             agent_spawner: spawner,
             orchestrate_depth: 0,
+            parent_cancel_token: None,
         };
 
         // 创建 idle 节点
