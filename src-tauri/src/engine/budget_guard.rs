@@ -13,6 +13,7 @@ pub struct BudgetGuard {
     warning_sent: bool,
 }
 
+#[allow(dead_code)]
 impl BudgetGuard {
     pub fn new(budget: TaskBudget) -> Self {
         Self {

@@ -158,6 +158,7 @@ impl Tool for OrchestrateTool {
     }
 }
 
+#[allow(dead_code)]
 impl OrchestrateTool {
     /// 标记节点为 idle 并发送事件
     pub async fn mark_idle_and_notify(

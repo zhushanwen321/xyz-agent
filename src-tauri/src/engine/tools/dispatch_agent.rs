@@ -7,6 +7,7 @@ use crate::types::event::*;
 use crate::types::transcript::{AssistantContentBlock, TranscriptEntry, UserContentBlock};
 
 /// 构建 Fork 模式的 API messages（byte-identical system prompt + unified placeholder tool_result）
+#[allow(dead_code)]
 pub fn build_fork_messages(
     api_messages: &[serde_json::Value],
     current_assistant_content: &[AssistantContentBlock],
@@ -43,6 +44,7 @@ pub fn build_fork_messages(
 }
 
 /// 检查是否已在 Fork 子 Agent 中（防递归）
+#[allow(dead_code)]
 pub fn is_in_fork_child(history: &[TranscriptEntry]) -> bool {
     history.iter().any(|entry| {
         let TranscriptEntry::User { content, .. } = entry else {
@@ -244,6 +246,7 @@ impl Tool for DispatchAgentTool {
 }
 
 /// 事件通道桥接：将子 Agent 的事件转发到主 Agent，带节流
+#[allow(dead_code)]
 pub fn bridge_events(
     sub_rx: tokio::sync::mpsc::UnboundedReceiver<AgentEvent>,
     main_tx: tokio::sync::mpsc::UnboundedSender<AgentEvent>,

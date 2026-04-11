@@ -8,6 +8,7 @@ use crate::types::AppError;
 use crate::types::AgentEvent;
 
 /// 子 Agent 启动配置，包含所有运行时依赖
+#[allow(dead_code)]
 pub struct SpawnConfig {
     pub prompt: String,
     pub history: Vec<TranscriptEntry>,
@@ -25,6 +26,7 @@ pub struct SpawnConfig {
 }
 
 /// 子 Agent 启动句柄，持有 tokio JoinHandle 用于结果收集
+#[allow(dead_code)]
 pub struct SpawnHandle {
     pub task_id: String,
     pub join_handle:
@@ -32,6 +34,7 @@ pub struct SpawnHandle {
 }
 
 /// 子 Agent 执行结果
+#[allow(dead_code)]
 pub struct AgentSpawnResult {
     pub entries: Vec<TranscriptEntry>,
     pub usage: TaskUsage,
@@ -40,6 +43,7 @@ pub struct AgentSpawnResult {
 }
 
 /// Agent 启动器 trait：解耦工具层（dispatch_agent）和 AgentLoop
+#[allow(dead_code)]
 #[async_trait]
 pub trait AgentSpawner: Send + Sync {
     fn spawn_agent(&self, config: SpawnConfig) -> Result<SpawnHandle, AppError>;

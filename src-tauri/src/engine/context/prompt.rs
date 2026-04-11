@@ -23,7 +23,8 @@ impl PromptManager {
         }
     }
 
-    /// 使用指定静态提示词构造（Fork 模式需要 byte-identical system prompt 以命中 Prompt Cache）
+    /// Fork 模式需要 byte-identical system prompt 以命中 Prompt Cache
+    #[allow(dead_code)]
     pub fn new_with_prompt(static_prompt: &str) -> Self {
         Self {
             static_prompt: static_prompt.to_string(),
