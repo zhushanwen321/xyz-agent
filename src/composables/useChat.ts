@@ -5,6 +5,8 @@ import type {
   AssistantContentBlock,
   AssistantSegment,
   ChatMessage,
+  OrchestrateNode,
+  TaskNode,
   ToolCallDisplay,
   UserContentBlock,
 } from '../types'
@@ -19,6 +21,8 @@ export function useChat(sessionId: Ref<string | null>) {
   const isStreaming = ref(false)
   const tokenUsage = ref({ inputTokens: 0, outputTokens: 0 })
   const currentTurnSegments = ref<AssistantSegment[]>([])
+  const taskNodes = ref<Map<string, TaskNode>>(new Map())
+  const orchestrateNodes = ref<Map<string, OrchestrateNode>>(new Map())
   let unlisten: (() => void) | null = null
   let historyLoadPromise: Promise<void> | null = null
 
@@ -99,6 +103,78 @@ export function useChat(sessionId: Ref<string | null>) {
           }
           break
         }
+        case 'TaskCreated':
+          taskNodes.value.set(event.task_id, {
+            type: 'task_node',
+            task_id: event.task_id,
+            session_id: event.session_id,
+            description: event.description,
+            status: 'running',
+            mode: event.mode as 'preset' | 'fork',
+            subagent_type: event.subagent_type,
+            budget: { max_tokens: event.budget.max_tokens, max_turns: 0, max_tool_calls: 0 },
+            usage: { total_tokens: 0, tool_uses: 0, duration_ms: 0 },
+            created_at: new Date().toISOString(),
+            completed_at: null,
+            output_file: null,
+          })
+          break
+        case 'TaskProgress': {
+          const node = taskNodes.value.get(event.task_id)
+          if (node) node.usage = event.usage
+          break
+        }
+        case 'TaskCompleted': {
+          const node = taskNodes.value.get(event.task_id)
+          if (node) {
+            node.status = event.status as TaskNode['status']
+            node.usage = event.usage
+            node.completed_at = new Date().toISOString()
+          }
+          break
+        }
+        case 'BudgetWarning':
+          break
+        case 'TaskFeedback':
+          break
+        case 'OrchestrateNodeCreated':
+          orchestrateNodes.value.set(event.node_id, {
+            type: 'orchestrate_node',
+            node_id: event.node_id,
+            parent_id: event.parent_id,
+            session_id: event.session_id,
+            role: event.role as 'orchestrator' | 'executor',
+            depth: event.depth,
+            description: event.description,
+            status: 'running',
+            directive: '',
+            budget: { max_tokens: 0, max_turns: 0, max_tool_calls: 0 },
+            usage: { total_tokens: 0, tool_uses: 0, duration_ms: 0 },
+            feedback_history: [],
+            reuse_count: 0,
+            children_ids: [],
+          })
+          break
+        case 'OrchestrateNodeProgress': {
+          const onode = orchestrateNodes.value.get(event.node_id)
+          if (onode) onode.usage = event.usage
+          break
+        }
+        case 'OrchestrateNodeCompleted': {
+          const onode = orchestrateNodes.value.get(event.node_id)
+          if (onode) {
+            onode.status = event.status as OrchestrateNode['status']
+            onode.usage = event.usage
+          }
+          break
+        }
+        case 'OrchestrateNodeIdle': {
+          const onode = orchestrateNodes.value.get(event.node_id)
+          if (onode) onode.status = 'idle'
+          break
+        }
+        case 'OrchestrateFeedback':
+          break
       }
     })
   })
@@ -184,6 +260,8 @@ export function useChat(sessionId: Ref<string | null>) {
     }
 
     messages.value = msgs
+    result.task_nodes.forEach(n => taskNodes.value.set(n.task_id, n))
+    result.orchestrate_nodes.forEach(n => orchestrateNodes.value.set(n.node_id, n))
   }
 
   watch(sessionId, (newId) => {
@@ -192,5 +270,5 @@ export function useChat(sessionId: Ref<string | null>) {
     }
   })
 
-  return { messages, streamingText, isStreaming, tokenUsage, send, currentTurnSegments }
+  return { messages, streamingText, isStreaming, tokenUsage, send, currentTurnSegments, taskNodes, orchestrateNodes }
 }
