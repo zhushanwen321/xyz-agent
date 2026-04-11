@@ -4,6 +4,62 @@ use std::time::Instant;
 use crate::engine::task_tree::*;
 use crate::engine::tools::{Tool, ToolExecutionContext, ToolResult};
 use crate::types::event::*;
+use crate::types::transcript::{AssistantContentBlock, TranscriptEntry, UserContentBlock};
+
+/// 构建 Fork 模式的 API messages（byte-identical system prompt + unified placeholder tool_result）
+fn build_fork_messages(
+    api_messages: &[serde_json::Value],
+    current_assistant_content: &[AssistantContentBlock],
+    prompt: &str,
+) -> Vec<serde_json::Value> {
+    let mut fork_messages = api_messages.to_vec();
+
+    // 为每个 tool_use block 生成统一的 placeholder tool_result
+    let mut result_blocks: Vec<serde_json::Value> = current_assistant_content
+        .iter()
+        .filter_map(|block| {
+            if let AssistantContentBlock::ToolUse { id, .. } = block {
+                Some(serde_json::json!({
+                    "type": "tool_result",
+                    "tool_use_id": id,
+                    "content": "Fork started — processing in background"
+                }))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // 最后添加 directive
+    result_blocks.push(serde_json::json!({
+        "type": "text",
+        "text": format!("<fork-context>\n{}\n</fork-context>", prompt)
+    }));
+
+    fork_messages.push(serde_json::json!({
+        "role": "user",
+        "content": result_blocks
+    }));
+
+    fork_messages
+}
+
+/// 检查是否已在 Fork 子 Agent 中（防递归）
+fn is_in_fork_child(history: &[TranscriptEntry]) -> bool {
+    history.iter().any(|entry| {
+        if let TranscriptEntry::User { content, .. } = entry {
+            content.iter().any(|block| {
+                if let UserContentBlock::Text { text } = block {
+                    text.contains("<fork-context>")
+                } else {
+                    false
+                }
+            })
+        } else {
+            false
+        }
+    })
+}
 
 pub struct DispatchAgentTool;
 
@@ -172,5 +228,30 @@ mod tests {
     fn timeout_is_600() {
         let tool = DispatchAgentTool;
         assert_eq!(tool.timeout_secs(), 600);
+    }
+
+    #[test]
+    fn fork_detection_works() {
+        let history = vec![TranscriptEntry::User {
+            uuid: "u1".into(),
+            parent_uuid: None,
+            timestamp: "2026-01-01T00:00:00Z".into(),
+            session_id: "s1".into(),
+            content: vec![UserContentBlock::Text {
+                text: "<fork-context>\ndo something\n</fork-context>".into(),
+            }],
+        }];
+        assert!(is_in_fork_child(&history));
+
+        let normal = vec![TranscriptEntry::User {
+            uuid: "u1".into(),
+            parent_uuid: None,
+            timestamp: "2026-01-01T00:00:00Z".into(),
+            session_id: "s1".into(),
+            content: vec![UserContentBlock::Text {
+                text: "normal message".into(),
+            }],
+        }];
+        assert!(!is_in_fork_child(&normal));
     }
 }

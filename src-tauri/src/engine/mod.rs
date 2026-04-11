@@ -1,3 +1,4 @@
+pub mod agent_spawner;
 pub mod agent_template;
 pub mod budget_guard;
 pub mod concurrency;
