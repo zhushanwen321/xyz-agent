@@ -96,7 +96,7 @@ pub async fn send_message(
     let session_path = session::session_file_path(&state.data_dir, &session_id)
         .ok_or_else(|| format!("session {session_id} not found"))?;
 
-    let LoadHistoryResult { entries: mut history, conversation_summary } =
+    let LoadHistoryResult { entries: mut history, conversation_summary, .. } =
         crate::store::jsonl::load_history(&session_path).map_err(|e| e.to_string())?;
     log::debug!("[chat] history entries={}", history.len());
 

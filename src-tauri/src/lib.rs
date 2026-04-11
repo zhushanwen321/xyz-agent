@@ -65,6 +65,18 @@ pub fn run() {
                 config: agent_config,
                 tool_registry,
                 global_perms,
+                task_tree: Arc::new(tokio::sync::Mutex::new(
+                    engine::task_tree::TaskTree::new(),
+                )),
+                concurrency_manager: Arc::new(
+                    engine::concurrency::ConcurrencyManager::new(3),
+                ),
+                background_tasks: Arc::new(tokio::sync::Mutex::new(
+                    std::collections::HashMap::new(),
+                )),
+                agent_templates: Arc::new(
+                    engine::agent_template::AgentTemplateRegistry::new(),
+                ),
             });
             Ok(())
         })

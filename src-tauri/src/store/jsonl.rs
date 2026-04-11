@@ -106,12 +106,26 @@ pub fn sanitize_path(path: &str) -> String {
     sanitized.trim_start_matches('-').to_string()
 }
 
+// ── AsyncResult：异步任务结果摘要 ─────────────────────────────
+
+#[derive(serde::Serialize)]
+pub struct AsyncResult {
+    pub task_id: String,
+    pub description: String,
+    pub status: String,
+    pub result_summary: String,
+    pub output_file: Option<String>,
+}
+
 // ── LoadHistoryResult：摘要感知的历史加载 ───────────────────────
 
 #[derive(serde::Serialize)]
 pub struct LoadHistoryResult {
     pub entries: Vec<TranscriptEntry>,
     pub conversation_summary: Option<String>,
+    pub task_node_entries: Vec<TranscriptEntry>,
+    pub orchestrate_node_entries: Vec<TranscriptEntry>,
+    pub pending_async_results: Vec<AsyncResult>,
 }
 
 /// 加载历史，摘要感知：找到最新的 Summary 条目，
@@ -143,13 +157,47 @@ pub fn load_history(path: &Path) -> Result<LoadHistoryResult, AppError> {
             Ok(LoadHistoryResult {
                 entries: entries_after,
                 conversation_summary: Some(summary_text),
+                task_node_entries: Vec::new(),
+                orchestrate_node_entries: Vec::new(),
+                pending_async_results: Vec::new(),
             })
         }
         None => Ok(LoadHistoryResult {
             entries: all_entries,
             conversation_summary: None,
+            task_node_entries: Vec::new(),
+            orchestrate_node_entries: Vec::new(),
+            pending_async_results: Vec::new(),
         }),
     }
+}
+
+// ── Sidechain JSONL helpers ──────────────────────────────────────
+
+/// 返回 SubAgent 任务的 sidechain JSONL 路径，惰性创建目录
+pub fn sidechain_path(data_dir: &Path, session_id: &str, task_id: &str) -> std::path::PathBuf {
+    let dir = data_dir.join(session_id).join("subagents");
+    std::fs::create_dir_all(&dir).ok();
+    dir.join(format!("{}.jsonl", task_id))
+}
+
+/// 追加一条记录到 sidechain JSONL 文件
+pub fn append_sidechain_entry(path: &Path, entry: &TranscriptEntry) -> Result<(), AppError> {
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(AppError::Io)?;
+    let json = serde_json::to_string(entry).map_err(AppError::Serialization)?;
+    writeln!(file, "{}", json).map_err(AppError::Io)
+}
+
+/// 返回 orchestrate agent 的 JSONL 路径，惰性创建目录
+pub fn orchestrate_path(data_dir: &Path, session_id: &str, node_id: &str) -> std::path::PathBuf {
+    let dir = data_dir.join(session_id).join("orchestrate");
+    std::fs::create_dir_all(&dir).ok();
+    dir.join(format!("{}.jsonl", node_id))
 }
 
 #[cfg(test)]
