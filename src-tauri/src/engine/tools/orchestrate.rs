@@ -1,7 +1,11 @@
+use crate::engine::agent_spawner::SpawnConfig;
+use crate::engine::context::prompt::DynamicContext;
 use crate::engine::task_tree::*;
-use crate::engine::tools::{Tool, ToolExecutionContext, ToolResult};
+use crate::engine::tools::{PermissionContext, Tool, ToolExecutionContext, ToolResult};
 use crate::types::event::*;
+use crate::types::transcript::{AssistantContentBlock, TranscriptEntry};
 use async_trait::async_trait;
+use std::time::Instant;
 
 const MAX_DEPTH: u32 = 5;
 
@@ -13,6 +17,46 @@ pub fn resolve_effective_type(requested: &str, depth: u32) -> &'static str {
         "orchestrator" if depth < MAX_DEPTH => "orchestrator",
         _ => "executor",
     }
+}
+
+fn send_completed_event(
+    ctx: &ToolExecutionContext,
+    node_id: &str,
+    status: &str,
+    summary: &str,
+    tokens: u32,
+    tool_uses: u32,
+    duration_ms: u64,
+) {
+    let _ = ctx.event_tx.send(AgentEvent::OrchestrateNodeCompleted {
+        session_id: ctx.session_id.clone(),
+        node_id: node_id.to_string(),
+        status: status.to_string(),
+        result_summary: summary.to_string(),
+        usage: TaskUsageSummary {
+            total_tokens: tokens,
+            tool_uses,
+            duration_ms,
+        },
+    });
+}
+
+fn extract_text(entries: &[TranscriptEntry]) -> String {
+    entries.iter()
+        .filter_map(|e| match e {
+            TranscriptEntry::Assistant { content, .. } => Some(
+                content.iter()
+                    .filter_map(|b| match b {
+                        AssistantContentBlock::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[async_trait]
@@ -101,7 +145,7 @@ impl Tool for OrchestrateTool {
             }
         };
         let requested_type = input["agent_type"].as_str().unwrap_or("executor");
-        let _directive = match input["directive"].as_str() {
+        let directive = match input["directive"].as_str() {
             Some(s) if !s.is_empty() => s.to_string(),
             _ => {
                 return ToolResult::Error(
@@ -115,8 +159,7 @@ impl Tool for OrchestrateTool {
         let target_agent_id = input["target_agent_id"].as_str().map(String::from);
         let is_sync = input["sync"].as_bool().unwrap_or(true);
 
-        // P2-D stub: 深度从 calling context 获取
-        let current_depth = 0u32;
+        let current_depth = ctx.orchestrate_depth;
         let effective_type = resolve_effective_type(requested_type, current_depth);
         let node_depth = current_depth + 1;
 
@@ -160,8 +203,24 @@ impl Tool for OrchestrateTool {
         let agent_id = target_agent_id
             .unwrap_or_else(|| format!("agent_{}", &node_id[3..11]));
 
-        // TaskTree 注册留到 AgentSpawner 集成
-        let _ = budget;
+        // TaskTree 注册
+        let sidechain = crate::store::jsonl::orchestrate_path(
+            &ctx.data_dir, &ctx.session_id, &node_id,
+        );
+        {
+            let mut tree = ctx.task_tree.lock().await;
+            tree.create_orchestrate_node(
+                None,
+                &ctx.session_id,
+                if effective_type == "orchestrator" { NodeRole::Orchestrator } else { NodeRole::Executor },
+                node_depth,
+                &task_description,
+                &directive,
+                &agent_id,
+                sidechain,
+                Some(budget.clone()),
+            );
+        }
 
         let _ = ctx.event_tx.send(AgentEvent::OrchestrateNodeCreated {
             session_id: ctx.session_id.clone(),
@@ -172,32 +231,91 @@ impl Tool for OrchestrateTool {
             description: task_description.clone(),
         });
 
-        // P2-D stub: 后续传给 AgentSpawner
-        let _tool_filter = match effective_type {
+        let tool_filter: Vec<String> = match effective_type {
             "orchestrator" => vec!["orchestrate", "feedback", "read", "bash"],
             _ => vec!["feedback", "read", "write", "bash"],
+        }.into_iter().map(String::from).collect();
+
+        let start = Instant::now();
+
+        let spawn_config = SpawnConfig {
+            prompt: directive.clone(),
+            history: vec![],
+            system_prompt_override: None,
+            tool_filter: Some(tool_filter),
+            budget: Some(budget),
+            event_tx: ctx.event_tx.clone(),
+            sync: is_sync,
+            fork_api_messages: None,
+            fork_assistant_content: None,
+            dynamic_context: DynamicContext {
+                cwd: std::env::current_dir().unwrap_or_default().to_string_lossy().to_string(),
+                os: std::env::consts::OS.to_string(),
+                model: String::new(),
+                git_branch: None,
+                tool_names: ctx.tool_registry.tool_names(),
+                data_context_summary: None,
+                conversation_summary: None,
+            },
+            permission_context: PermissionContext::default(),
+            session_id: ctx.session_id.clone(),
+            task_id: node_id.clone(),
+            node_id: Some(node_id.clone()),
         };
 
-        // P2-D stub
-        let status_str = if is_sync { "sync stub" } else { "async stub" };
-        let result_summary = format!(
-            "orchestrate {} stub — pending AgentSpawner implementation (node_id: {}, agent_id: {})",
-            status_str, node_id, agent_id
-        );
+        let mut spawn_handle = match ctx.agent_spawner.spawn_agent(spawn_config).await {
+            Ok(h) => h,
+            Err(e) => {
+                let ms = start.elapsed().as_millis() as u64;
+                send_completed_event(ctx, &node_id, "failed", &e.to_string(), 0, 0, ms);
+                return ToolResult::Error(e.to_string());
+            }
+        };
 
-        let _ = ctx.event_tx.send(AgentEvent::OrchestrateNodeCompleted {
-            session_id: ctx.session_id.clone(),
-            node_id: node_id.clone(),
-            status: "completed".into(),
-            result_summary: result_summary.clone(),
-            usage: TaskUsageSummary {
-                total_tokens: 0,
-                tool_uses: 0,
-                duration_ms: 0,
-            },
-        });
+        if is_sync {
+            let join = spawn_handle.join_handle.take().unwrap();
+            let result = match join.await {
+                Ok(Ok(r)) => r,
+                Ok(Err(e)) => {
+                    let ms = start.elapsed().as_millis() as u64;
+                    send_completed_event(ctx, &node_id, "failed", &e.to_string(), 0, 0, ms);
+                    return ToolResult::Error(e.to_string());
+                }
+                Err(e) => {
+                    let ms = start.elapsed().as_millis() as u64;
+                    send_completed_event(ctx, &node_id, "failed", &format!("task panicked: {e}"), 0, 0, ms);
+                    return ToolResult::Error(format!("task panicked: {e}"));
+                }
+            };
 
-        ToolResult::Text(result_summary)
+            let result_text = extract_text(&result.entries);
+            let elapsed = start.elapsed().as_millis() as u64;
+            let summary: String = result_text.chars().take(2000).collect();
+            send_completed_event(
+                ctx, &node_id, "completed",
+                &summary,
+                result.usage.total_tokens, result.usage.tool_uses,
+                elapsed,
+            );
+
+            let mut tree = ctx.task_tree.lock().await;
+            tree.set_task_result(&node_id, result_text.chars().take(100_000).collect());
+
+            ToolResult::Text(result_text)
+        } else {
+            let join = spawn_handle.join_handle.take().unwrap();
+            let bg_tasks = ctx.background_tasks.clone();
+            let handle = tokio::spawn(async move { let _ = join.await; });
+
+            let mut tasks = bg_tasks.lock().await;
+            tasks.retain(|_, h| !h.is_finished());
+            tasks.insert(node_id.clone(), handle);
+
+            ToolResult::Text(format!(
+                "<task_notification><task_id>{}</task_id><status>pending</status><message>Orchestration node started in background</message></task_notification>",
+                node_id
+            ))
+        }
     }
 }
 
