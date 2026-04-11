@@ -210,6 +210,7 @@ impl Tool for OrchestrateTool {
         {
             let mut tree = ctx.task_tree.lock().await;
             tree.create_orchestrate_node(
+                node_id.clone(),
                 None,
                 &ctx.session_id,
                 if effective_type == "orchestrator" { NodeRole::Orchestrator } else { NodeRole::Executor },
@@ -261,6 +262,7 @@ impl Tool for OrchestrateTool {
             session_id: ctx.session_id.clone(),
             task_id: node_id.clone(),
             node_id: Some(node_id.clone()),
+            orchestrate_depth: node_depth,
         };
 
         let mut spawn_handle = match ctx.agent_spawner.spawn_agent(spawn_config).await {
@@ -497,7 +499,7 @@ mod tests {
         {
             let mut t = tree.lock().await;
             t.create_orchestrate_node(
-                None, "test-session", NodeRole::Executor, 0,
+                "or_test_idle1".to_string(), None, "test-session", NodeRole::Executor, 0,
                 "test task", "do something", "agent-1",
                 std::path::PathBuf::from("/tmp/test.jsonl"), None,
             );
@@ -531,7 +533,7 @@ mod tests {
         {
             let mut t = tree.lock().await;
             t.create_orchestrate_node(
-                None, "test-session", NodeRole::Executor, 0,
+                "or_test_running2".to_string(), None, "test-session", NodeRole::Executor, 0,
                 "test task 2", "do something else", "agent-2",
                 std::path::PathBuf::from("/tmp/test2.jsonl"), None,
             );

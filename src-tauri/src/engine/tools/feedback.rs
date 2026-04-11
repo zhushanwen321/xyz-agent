@@ -70,11 +70,7 @@ impl Tool for FeedbackTool {
 
             if severity == "error" && !task_id.is_empty() {
                 let mut tree = ctx.task_tree.lock().await;
-                if tree.get_task_node(task_id).is_some() {
-                    tree.request_pause(task_id);
-                } else if let Some(node) = tree.get_orchestrate_node_mut(task_id) {
-                    node.pause_requested = true;
-                }
+                tree.request_pause(task_id);
             }
         }
 

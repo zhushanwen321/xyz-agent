@@ -108,7 +108,7 @@ fn test_task_tree_crud_and_lifecycle() {
 
     // create OrchestrateNode — verify parent children_ids auto-maintained
     tree.create_orchestrate_node(
-        None, "s1", NodeRole::Orchestrator, 0, "orch", "direct", "a1",
+        "or_test_parent1".to_string(), None, "s1", NodeRole::Orchestrator, 0, "orch", "direct", "a1",
         PathBuf::from("o.jsonl"), None,
     );
     let oid = tree.all_orchestrate_nodes()[0].node_id.clone();
@@ -117,7 +117,7 @@ fn test_task_tree_crud_and_lifecycle() {
 
     // 子节点创建时自动添加到父节点的 children_ids
     tree.create_orchestrate_node(
-        Some(oid.clone()), "s1", NodeRole::Executor, 1, "child", "exec", "a2",
+        "or_test_child2".to_string(), Some(oid.clone()), "s1", NodeRole::Executor, 1, "child", "exec", "a2",
         PathBuf::from("c.jsonl"), None,
     );
     assert_eq!(tree.get_orchestrate_node(&oid).unwrap().children_ids.len(), 1);
@@ -141,12 +141,12 @@ fn test_kill_pause_resume() {
 fn test_request_kill_tree_cascades_to_children() {
     let mut tree = TaskTree::new();
     tree.create_orchestrate_node(
-        None, "s1", NodeRole::Orchestrator, 0, "parent", "d", "a1",
+        "or_test_parent_k1".to_string(), None, "s1", NodeRole::Orchestrator, 0, "parent", "d", "a1",
         PathBuf::from("p.jsonl"), None,
     );
     let pid = tree.all_orchestrate_nodes()[0].node_id.clone();
     tree.create_orchestrate_node(
-        Some(pid.clone()), "s1", NodeRole::Executor, 1, "child", "e", "a2",
+        "or_test_child_k2".to_string(), Some(pid.clone()), "s1", NodeRole::Executor, 1, "child", "e", "a2",
         PathBuf::from("c.jsonl"), None,
     );
     // create_orchestrate_node 已自动维护 children_ids

@@ -34,6 +34,8 @@ pub struct SpawnConfig {
     pub session_id: String,
     pub task_id: String,
     pub node_id: Option<String>,
+    /// 子 Agent 的 orchestrate 嵌套深度，用于递归限制
+    pub orchestrate_depth: u32,
 }
 
 // ── Spawn 句柄 ──────────────────────────────────────────────
@@ -105,6 +107,17 @@ impl AgentSpawner for DefaultAgentSpawner {
         let node_id = config.node_id.clone();
         let data_dir = self.data_dir.clone();
 
+        // 构建 spawner 引用，供子 Agent 的 ToolExecutionContext 使用
+        let spawner: Arc<dyn AgentSpawner> = Arc::new(DefaultAgentSpawner {
+            provider: self.provider.clone(),
+            model: self.model.clone(),
+            config: self.config.clone(),
+            tool_registry: self.tool_registry.clone(),
+            task_tree: self.task_tree.clone(),
+            concurrency_manager: self.concurrency_manager.clone(),
+            data_dir: self.data_dir.clone(),
+        });
+
         let handle = tokio::spawn(async move {
             // 并发 permit 在整个子 Agent 执行期间持有
             let _permit = permit;
@@ -112,12 +125,14 @@ impl AgentSpawner for DefaultAgentSpawner {
             let result = run_subagent(
                 &agent_loop,
                 config,
-                &tool_registry,
+                Arc::new(tool_registry),
                 &prompt_manager,
                 &agent_config,
                 task_tree,
                 node_id,
                 &data_dir,
+                concurrency,
+                spawner,
             )
             .await;
 
@@ -138,12 +153,14 @@ impl AgentSpawner for DefaultAgentSpawner {
 async fn run_subagent(
     agent_loop: &AgentLoop,
     config: SpawnConfig,
-    tool_registry: &ToolRegistry,
+    tool_registry: Arc<ToolRegistry>,
     prompt_manager: &PromptManager,
     agent_config: &AgentConfig,
     task_tree: Arc<tokio::sync::Mutex<TaskTree>>,
     node_id: Option<String>,
-    _data_dir: &std::path::PathBuf,
+    data_dir: &std::path::PathBuf,
+    concurrency_manager: Arc<ConcurrencyManager>,
+    spawner: Arc<dyn AgentSpawner>,
 ) -> Result<AgentSpawnResult, AppError> {
     let start = Instant::now();
     let mut budget_guard = config.budget.map(BudgetGuard::new);
@@ -155,8 +172,21 @@ async fn run_subagent(
         None
     };
 
-    // 子 Agent 不传递 ToolExecutionContext（P1 工具内部忽略 ctx）
-    let tool_ctx: Option<ToolExecutionContext> = None;
+    // 构建 ToolExecutionContext，使子 Agent 的 P2 工具（dispatch_agent/orchestrate/feedback）可用
+    let tool_ctx = ToolExecutionContext {
+        task_tree: task_tree.clone(),
+        concurrency_manager: concurrency_manager.clone(),
+        agent_templates: Arc::new(crate::engine::agent_template::AgentTemplateRegistry::new()),
+        data_dir: data_dir.clone(),
+        session_id: config.session_id.clone(),
+        event_tx: config.event_tx.clone(),
+        api_messages: vec![],
+        current_assistant_content: vec![],
+        tool_registry: tool_registry.clone(),
+        background_tasks: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+        agent_spawner: spawner,
+        orchestrate_depth: config.orchestrate_depth,
+    };
 
     let entries = agent_loop
         .run_turn(
@@ -164,7 +194,7 @@ async fn run_subagent(
             config.history.clone(),
             None,
             config.event_tx.clone(),
-            tool_registry,
+            &tool_registry,
             &config.permission_context,
             prompt_manager,
             &config.dynamic_context,
@@ -172,7 +202,7 @@ async fn run_subagent(
             budget_guard.as_mut(),
             Some(task_tree),
             node_id,
-            tool_ctx,
+            Some(tool_ctx),
             api_messages_override,
         )
         .await?;
@@ -199,7 +229,7 @@ async fn run_subagent(
         })
         .count() as u32;
 
-    // TODO(Task 2): 写入 TaskNode.result_summary
+    // result_summary 由调用方（dispatch_agent/orchestrate）通过 set_task_result 写入
 
     let status = "completed".to_string();
 
@@ -220,10 +250,10 @@ fn filter_tools(
     registry: &ToolRegistry,
     filter: Option<&[String]>,
 ) -> ToolRegistry {
-    // ToolRegistry 当前没有 remove 方法，只做白名单时通过 permission context 控制
-    // tool_filter 会在构建 PermissionContext 时使用
-    let _ = filter;
-    registry.clone()
+    match filter {
+        Some(names) if !names.is_empty() => registry.filtered(names),
+        _ => registry.clone(),
+    }
 }
 
 // Fork 模式尚未启用，以下函数待 mode=fork 路径激活后使用
@@ -324,6 +354,27 @@ mod tests {
     }
 
     #[test]
+    fn filter_tools_respects_whitelist() {
+        use crate::engine::tools::ToolRegistry;
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(crate::engine::tools::bash::BashTool::new(
+            std::path::PathBuf::from("/tmp"), 30, 10000,
+        )));
+        registry.register(Arc::new(crate::engine::tools::read::ReadTool::new(
+            std::path::PathBuf::from("/tmp"), 10000,
+        )));
+        registry.register(Arc::new(crate::engine::tools::write::WriteTool::new(
+            std::path::PathBuf::from("/tmp"),
+        )));
+
+        let filtered = filter_tools(
+            &registry,
+            Some(&["Read".to_string(), "Bash".to_string()]),
+        );
+        assert_eq!(filtered.tool_names(), vec!["Bash", "Read"]);
+    }
+
+    #[test]
     fn build_subagent_history_appends_fork_context() {
         let fork_messages = vec![serde_json::json!({
             "role": "user",
@@ -398,6 +449,7 @@ mod tests {
             session_id: "test-session".to_string(),
             task_id: "da_test1234".to_string(),
             node_id: None,
+            orchestrate_depth: 0,
         };
 
         let mut handle = spawner.spawn_agent(config).await.unwrap();
@@ -447,6 +499,7 @@ mod tests {
             session_id: "s1".to_string(),
             task_id: "da_first123".to_string(),
             node_id: None,
+            orchestrate_depth: 0,
         };
 
         let config2 = SpawnConfig {
@@ -464,6 +517,7 @@ mod tests {
             session_id: "s2".to_string(),
             task_id: "da_second456".to_string(),
             node_id: None,
+            orchestrate_depth: 0,
         };
 
         let mut handle1 = spawner.spawn_agent(config1).await.unwrap();

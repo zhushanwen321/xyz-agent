@@ -265,10 +265,12 @@ impl TaskTree {
     pub fn request_kill(&mut self, id: &str) -> bool {
         if let Some(node) = self.task_nodes.get_mut(id) {
             node.kill_requested = true;
-            // 唤醒暂停等待，使 agent loop 退出
             if let Some(notify) = self.pause_notifiers.get(id) {
                 notify.notify_one();
             }
+            true
+        } else if let Some(node) = self.orchestrate_nodes.get_mut(id) {
+            node.kill_requested = true;
             true
         } else {
             false
@@ -279,6 +281,9 @@ impl TaskTree {
         if let Some(node) = self.task_nodes.get_mut(id) {
             node.pause_requested = true;
             true
+        } else if let Some(node) = self.orchestrate_nodes.get_mut(id) {
+            node.pause_requested = true;
+            true
         } else {
             false
         }
@@ -287,10 +292,12 @@ impl TaskTree {
     pub fn request_resume(&mut self, id: &str) -> bool {
         if let Some(node) = self.task_nodes.get_mut(id) {
             node.pause_requested = false;
-            // 即时唤醒暂停等待中的 agent loop
             if let Some(notify) = self.pause_notifiers.get(id) {
                 notify.notify_one();
             }
+            true
+        } else if let Some(node) = self.orchestrate_nodes.get_mut(id) {
+            node.pause_requested = false;
             true
         } else {
             false
@@ -299,10 +306,12 @@ impl TaskTree {
 
     pub fn should_kill(&self, id: &str) -> bool {
         self.task_nodes.get(id).map_or(false, |n| n.kill_requested)
+            || self.orchestrate_nodes.get(id).map_or(false, |n| n.kill_requested)
     }
 
     pub fn should_pause(&self, id: &str) -> bool {
         self.task_nodes.get(id).map_or(false, |n| n.pause_requested)
+            || self.orchestrate_nodes.get(id).map_or(false, |n| n.pause_requested)
     }
 
     /// 获取或创建节点的 pause Notify，用于 resume/kill 时即时唤醒
@@ -315,6 +324,7 @@ impl TaskTree {
 
     pub fn create_orchestrate_node(
         &mut self,
+        node_id: String,
         parent_id: Option<String>,
         session_id: &str,
         role: NodeRole,
@@ -325,7 +335,6 @@ impl TaskTree {
         conversation_path: PathBuf,
         budget: Option<TaskBudget>,
     ) -> &OrchestrateNode {
-        let node_id = generate_task_id("orchestrate");
         let pid = parent_id.clone();
         let node = OrchestrateNode {
             node_id,

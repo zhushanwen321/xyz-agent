@@ -235,6 +235,16 @@ impl AgentLoop {
                 execute_batch(calls, tool_registry, tool_perms, tool_ctx.as_ref())
                     .await;
 
+            // B5: 按实际工具调用次数递增预算计数器
+            for _tr in &tool_results {
+                if let Some(ref mut bg) = budget_guard {
+                    if !bg.increment_tool_use() {
+                        log::warn!("[agent_loop] budget exhausted (tool_calls)");
+                        break;
+                    }
+                }
+            }
+
             let mut user_blocks = Vec::with_capacity(tool_results.len());
             for tr in &tool_results {
                 // DataContext tracking for Read calls

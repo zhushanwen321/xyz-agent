@@ -107,6 +107,21 @@ impl ToolRegistry {
         format!("tool '{}' is allowed", name)
     }
 
+    /// 按名称白名单过滤，返回只包含指定工具的新 ToolRegistry。
+    /// filter 为 None 时返回完整克隆。
+    pub fn filtered(&self, names: &[String]) -> Self {
+        let mut sub = ToolRegistry::new();
+        let set: HashSet<&str> = names.iter().map(|s| s.as_str()).collect();
+        for name in self.tool_names() {
+            if set.contains(name.as_str()) {
+                if let Some(tool) = self.get(&name) {
+                    sub.register(tool.clone());
+                }
+            }
+        }
+        sub
+    }
+
     pub fn tool_schemas(&self, perms: &PermissionContext) -> Vec<serde_json::Value> {
         self.tool_names()
             .into_iter()

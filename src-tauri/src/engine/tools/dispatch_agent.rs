@@ -192,6 +192,23 @@ impl Tool for DispatchAgentTool {
         let task_id = generate_task_id("dispatch_agent");
         let start = Instant::now();
 
+        // B2: 在 TaskTree 中注册 TaskNode，使后续 set_task_result/completed_not_injected 能找到
+        {
+            let mut tree = ctx.task_tree.lock().await;
+            let mode = match input["mode"].as_str() {
+                Some("fork") => AgentMode::Fork,
+                _ => AgentMode::Preset,
+            };
+            tree.create_task_node(
+                None,
+                &ctx.session_id,
+                &description,
+                mode,
+                if subagent_type.is_empty() { None } else { Some(subagent_type.clone()) },
+                Some(budget.clone()),
+            );
+        }
+
         let tool_use_id = ctx.current_assistant_content.iter().rev()
             .find_map(|block| {
                 if let crate::types::transcript::AssistantContentBlock::ToolUse { id, name, .. } = block {
@@ -240,6 +257,7 @@ impl Tool for DispatchAgentTool {
             session_id: ctx.session_id.clone(),
             task_id: task_id.clone(),
             node_id: Some(task_id.clone()),
+            orchestrate_depth: ctx.orchestrate_depth,
         };
 
         let mut spawn_handle = match ctx.agent_spawner.spawn_agent(spawn_config).await {
@@ -337,10 +355,52 @@ impl Tool for DispatchAgentTool {
             // 异步：保存 join_handle，立即返回
             let join = spawn_handle.join_handle.take().unwrap();
 
-            // 包装为 JoinHandle<()> 以匹配 background_tasks 类型
+            let session_id_bg = ctx.session_id.clone();
+            let task_id_bg = task_id.clone();
+            let event_tx_bg = ctx.event_tx.clone();
+            let task_tree_bg = ctx.task_tree.clone();
             let bg_tasks = ctx.background_tasks.clone();
+
             let handle = tokio::spawn(async move {
-                let _ = join.await;
+                let result = join.await;
+                let (status, summary, tokens, tool_uses) = match &result {
+                    Ok(Ok(r)) => {
+                        let text: String = r.entries.iter()
+                            .filter_map(|e| match e {
+                                TranscriptEntry::Assistant { content, .. } => Some(
+                                    content.iter()
+                                        .filter_map(|b| match b {
+                                            AssistantContentBlock::Text { text } => Some(text.as_str()),
+                                            _ => None,
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join("\n")
+                                ),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        ("completed", text, r.usage.total_tokens, r.usage.tool_uses)
+                    }
+                    Ok(Err(e)) => ("failed", e.to_string(), 0, 0),
+                    Err(e) => ("failed", format!("task panicked: {e}"), 0, 0),
+                };
+
+                let summary_short: String = summary.chars().take(2000).collect();
+                let _ = event_tx_bg.send(AgentEvent::TaskCompleted {
+                    session_id: session_id_bg.clone(),
+                    task_id: task_id_bg.clone(),
+                    status: status.to_string(),
+                    result_summary: summary_short,
+                    usage: TaskUsageSummary {
+                        total_tokens: tokens,
+                        tool_uses,
+                        duration_ms: 0,
+                    },
+                });
+
+                let mut tree = task_tree_bg.lock().await;
+                tree.set_task_result(&task_id_bg, summary.chars().take(100_000).collect());
             });
 
             {
