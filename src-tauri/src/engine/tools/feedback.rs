@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use crate::engine::tools::{Tool, ToolExecutionContext, ToolResult};
 
 /// SubAgent 向父 Agent 发送中间报告的工具。
-/// severity=error 时不在此处触发暂停，由 orchestrate 层处理。
+/// severity=error 时通过 TaskTree 触发非阻塞暂停。
 pub struct FeedbackTool;
 
 #[async_trait]
@@ -28,6 +28,10 @@ impl Tool for FeedbackTool {
                     "enum": ["info", "warning", "error"],
                     "default": "info",
                     "description": "严重程度"
+                },
+                "task_id": {
+                    "type": "string",
+                    "description": "关联的任务 ID（severity=error 时用于触发暂停）"
                 }
             },
             "required": ["message"]
@@ -43,14 +47,30 @@ impl Tool for FeedbackTool {
             .as_str()
             .unwrap_or("info")
             .to_string();
+        let task_id = input["task_id"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
 
         if let Some(ctx) = ctx {
             let _ = ctx.event_tx.send(crate::types::AgentEvent::TaskFeedback {
                 session_id: ctx.session_id.clone(),
-                task_id: String::new(),
+                task_id: task_id.clone(),
                 message,
-                severity,
+                severity: severity.clone(),
             });
+
+            // severity=error 触发非阻塞暂停
+            if severity == "error" && !task_id.is_empty() {
+                let mut tree = ctx.task_tree.lock().await;
+                if tree.get_task_node(&task_id).is_some() {
+                    tree.request_pause(&task_id);
+                } else if tree.get_orchestrate_node(&task_id).is_some() {
+                    if let Some(node) = tree.get_orchestrate_node_mut(&task_id) {
+                        node.pause_requested = true;
+                    }
+                }
+            }
         }
 
         ToolResult::Text("Feedback sent.".into())

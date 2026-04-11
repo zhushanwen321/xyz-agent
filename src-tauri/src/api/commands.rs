@@ -147,6 +147,8 @@ pub async fn send_message(
             &dynamic_context,
             &state.config,
             None,
+            None,
+            None,
         )
         .await;
 

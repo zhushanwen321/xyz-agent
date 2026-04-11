@@ -42,6 +42,8 @@ impl AgentLoop {
         dynamic_context: &DynamicContext,
         agent_config: &AgentConfig,
         mut budget_guard: Option<&mut BudgetGuard>,
+        task_tree: Option<Arc<tokio::sync::Mutex<crate::engine::task_tree::TaskTree>>>,
+        node_id: Option<String>,
     ) -> Result<Vec<TranscriptEntry>, AppError> {
         let session_id = &self.session_id;
         let max_turns: usize = agent_config.max_turns as usize;
@@ -65,6 +67,31 @@ impl AgentLoop {
         let tool_schemas = tool_registry.tool_schemas(tool_perms);
 
         for iteration in 1..=max_turns {
+            // Kill/pause check (P2 SubAgent user intervention)
+            if let (Some(ref tree), Some(ref nid)) = (&task_tree, &node_id) {
+                let tree_guard = tree.lock().await;
+                if tree_guard.should_kill(nid) {
+                    log::info!("[agent_loop] kill requested for node {}", nid);
+                    drop(tree_guard);
+                    break;
+                }
+                if tree_guard.should_pause(nid) {
+                    let nid_clone = nid.clone();
+                    drop(tree_guard);
+                    // Non-blocking pause loop: check every 1 second
+                    loop {
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        let tg = task_tree.as_ref().unwrap().lock().await;
+                        if !tg.should_pause(&nid_clone) {
+                            break;
+                        }
+                        if tg.should_kill(&nid_clone) {
+                            break;
+                        }
+                    }
+                }
+            }
+
             let mut all = history.clone();
             all.extend(entries.iter().cloned());
 
@@ -293,7 +320,7 @@ mod tests {
         let agent_loop = AgentLoop::new(provider, "test-session".into(), "test-model".into());
 
         let entries = agent_loop
-            .run_turn("read test.txt".into(), vec![], None, event_tx, &registry, &perms, &prompt_manager, &dynamic_context, &test_agent_config(), None)
+            .run_turn("read test.txt".into(), vec![], None, event_tx, &registry, &perms, &prompt_manager, &dynamic_context, &test_agent_config(), None, None, None)
             .await
             .unwrap();
 
@@ -319,7 +346,7 @@ mod tests {
         let agent_loop = AgentLoop::new(provider, "test-session".into(), "test-model".into());
 
         let entries = agent_loop
-            .run_turn("hello".into(), vec![], None, event_tx, &registry, &perms, &prompt_manager, &dynamic_context, &test_agent_config(), None)
+            .run_turn("hello".into(), vec![], None, event_tx, &registry, &perms, &prompt_manager, &dynamic_context, &test_agent_config(), None, None, None)
             .await
             .unwrap();
 
