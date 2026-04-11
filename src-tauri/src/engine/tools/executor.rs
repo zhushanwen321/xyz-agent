@@ -1,13 +1,9 @@
-use std::sync::Arc;
-
-use async_trait::async_trait;
 use futures::future::join_all;
 
 use crate::types::ToolResult;
 
-use super::{PermissionContext, Tool, ToolExecutionContext, ToolExecutionResult, ToolRegistry};
+use super::{PermissionContext, ToolExecutionContext, ToolExecutionResult, ToolRegistry};
 
-/// Execute a batch of tool calls, dispatching based on concurrency safety.
 pub async fn execute_batch(
     calls: Vec<super::PendingToolCall>,
     registry: &ToolRegistry,
@@ -102,9 +98,12 @@ async fn execute_single(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Instant;
-    use std::time::Duration;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+    use async_trait::async_trait;
     use tempfile::tempdir;
+
+    use super::super::{Tool, PendingToolCall};
 
     struct TestTool {
         name: String,

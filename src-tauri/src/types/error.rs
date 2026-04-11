@@ -17,14 +17,12 @@ pub enum AppError {
     Serialization(#[from] serde_json::Error),
 }
 
-// 让 Tauri command 能返回 Result<T, String>
 impl From<AppError> for String {
     fn from(err: AppError) -> String {
         err.to_string()
     }
 }
 
-// Serialize 用于 Tauri event payload（只取 message）
 impl Serialize for AppError {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

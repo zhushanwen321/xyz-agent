@@ -27,11 +27,10 @@ const activeColor = computed(() =>
   props.toolCall.status === 'error' ? 'error' : dangerLevel.value
 )
 
-// 颜色映射：border / text / bg（带 08 透明度）
 const colorMap = {
-  safe:   { border: 'border-l-[#22c55e]', text: 'text-[#22c55e]', bg: 'bg-[#22c55e08]', spin: 'border-[#22c55e] border-t-transparent' },
-  caution:{ border: 'border-l-[#eab308]', text: 'text-[#eab308]', bg: 'bg-[#eab30808]', spin: 'border-[#eab308] border-t-transparent' },
-  error:  { border: 'border-l-[#ef4444]', text: 'text-[#ef4444]', bg: 'bg-[#ef444408]', spin: 'border-[#ef4444] border-t-transparent' },
+  safe:   { border: 'border-l-[#22c55e]', text: 'text-[#22c55e]', bg: 'bg-[#22c55e08]', spin: 'border-[#22c55e]' },
+  caution:{ border: 'border-l-[#eab308]', text: 'text-[#eab308]', bg: 'bg-[#eab30808]', spin: 'border-[#eab308]' },
+  error:  { border: 'border-l-[#ef4444]', text: 'text-[#ef4444]', bg: 'bg-[#ef444408]', spin: 'border-[#ef4444]' },
 }
 
 const colors = computed(() => colorMap[activeColor.value])
@@ -73,7 +72,7 @@ const statusLabel = computed(() => {
       <div class="flex items-center gap-2">
         <span
           v-if="toolCall.status === 'running'"
-          class="inline-block h-2.5 w-2.5 animate-spin rounded-full border-2"
+          class="inline-block h-2.5 w-2.5 animate-spin rounded-full border-2 border-t-transparent"
           :class="colors.spin"
         />
         <span v-else class="font-mono text-[10px] font-bold" :class="colors.text">

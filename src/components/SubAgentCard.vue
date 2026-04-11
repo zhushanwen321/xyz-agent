@@ -15,6 +15,15 @@ const statusIcon = computed(() => {
   }
 })
 
+const statusChar = computed(() => {
+  switch (statusIcon.value) {
+    case 'check': return '\u2713'
+    case 'x': return '\u2717'
+    case 'zap': return '\u26A1'
+    default: return '\u23F0'
+  }
+})
+
 const statusColor = computed(() => {
   switch (props.task.status) {
     case 'running': return 'text-blue-400'
@@ -48,13 +57,15 @@ function formatTokens(n: number): string {
 }
 
 const statusLabel = computed(() => {
-  if (props.task.status === 'running') return 'running...'
-  if (props.task.status === 'completed') return 'done'
-  if (props.task.status === 'failed') return 'failed'
-  if (props.task.status === 'killed') return 'killed'
-  if (props.task.status === 'paused') return 'paused'
-  if (props.task.status === 'budget_exhausted') return 'budget exhausted'
-  return props.task.status
+  switch (props.task.status) {
+    case 'running': return 'running...'
+    case 'completed': return 'done'
+    case 'failed': return 'failed'
+    case 'killed': return 'killed'
+    case 'paused': return 'paused'
+    case 'budget_exhausted': return 'budget exhausted'
+    default: return props.task.status
+  }
 })
 
 const emit = defineEmits<{
@@ -80,7 +91,7 @@ const emit = defineEmits<{
           class="inline-block h-2.5 w-2.5 animate-spin rounded-full border-2 border-blue-400 border-t-transparent"
         />
         <span v-else class="font-mono text-[10px] font-bold" :class="statusColor">
-          {{ statusIcon === 'check' ? '\u2713' : statusIcon === 'x' ? '\u2717' : statusIcon === 'zap' ? '\u26A1' : '\u23F0' }}
+          {{ statusChar }}
         </span>
         <span class="text-text-secondary font-mono text-[10px]">λ</span>
         <span class="font-mono font-semibold text-text-primary truncate">

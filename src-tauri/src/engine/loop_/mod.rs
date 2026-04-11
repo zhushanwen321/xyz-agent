@@ -200,11 +200,12 @@ impl AgentLoop {
 
             let call_map: HashMap<String, _> = result
                 .tool_calls
-                .iter()
-                .map(|c| (c.id.clone(), c.clone()))
+                .into_iter()
+                .map(|c| (c.id.clone(), c))
                 .collect();
 
-            for call in &result.tool_calls {
+            let calls: Vec<_> = call_map.values().cloned().collect();
+            for call in &calls {
                 let _ = event_tx.send(AgentEvent::ToolCallStart {
                     session_id: session_id.clone(),
                     tool_name: call.name.clone(),
@@ -214,10 +215,12 @@ impl AgentLoop {
             }
 
             let tool_results =
-                execute_batch(result.tool_calls.clone(), tool_registry, tool_perms, None)
+                execute_batch(calls, tool_registry, tool_perms, None)
                     .await;
 
+            let mut user_blocks = Vec::with_capacity(tool_results.len());
             for tr in &tool_results {
+                // DataContext tracking for Read calls
                 if !tr.is_error {
                     if let Some(call) = call_map.get(&tr.id) {
                         if call.name == "Read" {
@@ -234,10 +237,7 @@ impl AgentLoop {
                         }
                     }
                 }
-            }
 
-            let mut user_blocks = Vec::new();
-            for tr in &tool_results {
                 user_blocks.push(UserContentBlock::ToolResult {
                     tool_use_id: tr.id.clone(),
                     content: tr.output.clone(),

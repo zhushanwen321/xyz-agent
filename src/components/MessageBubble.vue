@@ -25,7 +25,6 @@ const segments = computed<AssistantSegment[]>(() => props.message.segments ?? []
 function renderMarkdown(text: string): string {
   return md.render(text)
 }
-
 </script>
 
 <template>

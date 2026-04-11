@@ -7,14 +7,13 @@ use crate::types::event::*;
 use crate::types::transcript::{AssistantContentBlock, TranscriptEntry, UserContentBlock};
 
 /// 构建 Fork 模式的 API messages（byte-identical system prompt + unified placeholder tool_result）
-fn build_fork_messages(
+pub fn build_fork_messages(
     api_messages: &[serde_json::Value],
     current_assistant_content: &[AssistantContentBlock],
     prompt: &str,
 ) -> Vec<serde_json::Value> {
     let mut fork_messages = api_messages.to_vec();
 
-    // 为每个 tool_use block 生成统一的 placeholder tool_result
     let mut result_blocks: Vec<serde_json::Value> = current_assistant_content
         .iter()
         .filter_map(|block| {
@@ -30,7 +29,6 @@ fn build_fork_messages(
         })
         .collect();
 
-    // 最后添加 directive
     result_blocks.push(serde_json::json!({
         "type": "text",
         "text": format!("<fork-context>\n{}\n</fork-context>", prompt)
@@ -45,19 +43,17 @@ fn build_fork_messages(
 }
 
 /// 检查是否已在 Fork 子 Agent 中（防递归）
-fn is_in_fork_child(history: &[TranscriptEntry]) -> bool {
+pub fn is_in_fork_child(history: &[TranscriptEntry]) -> bool {
     history.iter().any(|entry| {
-        if let TranscriptEntry::User { content, .. } = entry {
-            content.iter().any(|block| {
-                if let UserContentBlock::Text { text } = block {
-                    text.contains("<fork-context>")
-                } else {
-                    false
-                }
-            })
-        } else {
-            false
-        }
+        let TranscriptEntry::User { content, .. } = entry else {
+            return false;
+        };
+        content.iter().any(|block| {
+            let UserContentBlock::Text { text } = block else {
+                return false;
+            };
+            text.contains("<fork-context>")
+        })
     })
 }
 
@@ -218,7 +214,7 @@ impl Tool for DispatchAgentTool {
             let task_id_bg = task_id.clone();
             let handle = tokio::spawn(async move {
                 // P2-B stub: 实际执行推迟到 AgentSpawner
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                tokio::time::sleep(Duration::from_millis(100)).await;
 
                 let _ = event_tx.send(AgentEvent::TaskCompleted {
                     session_id: session_id.clone(),
@@ -235,7 +231,6 @@ impl Tool for DispatchAgentTool {
 
             {
                 let mut tasks = bg_tasks.lock().await;
-                // 清理已完成的后台任务，防止 HashMap 无限增长
                 tasks.retain(|_, h| !h.is_finished());
                 tasks.insert(task_id.clone(), handle);
             }
@@ -262,20 +257,17 @@ pub fn bridge_events(
 
         while let Some(event) = rx.recv().await {
             match &event {
-                // 转发 TaskProgress（throttled）
                 AgentEvent::TaskProgress { .. } => {
                     if last_progress.elapsed() >= throttle {
                         last_progress = Instant::now();
                         let _ = main_tx.send(event);
                     }
                 }
-                // 立即转发重要事件
                 AgentEvent::TaskCompleted { .. }
                 | AgentEvent::BudgetWarning { .. }
                 | AgentEvent::TaskFeedback { .. } => {
                     let _ = main_tx.send(event);
                 }
-                // 丢弃高频事件（TextDelta 等）
                 _ => {}
             }
         }

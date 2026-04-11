@@ -2,8 +2,6 @@ use serde::{Deserialize, Serialize};
 
 use super::transcript::TokenUsage;
 
-// 事件传输用的轻量级摘要类型（不同于 task_tree.rs 中的完整类型）
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskBudgetSummary {
     pub max_tokens: u32,
@@ -52,8 +50,6 @@ pub enum AgentEvent {
     TurnComplete {
         session_id: String,
     },
-
-    // dispatch_agent 事件
     TaskCreated {
         session_id: String,
         task_id: String,
@@ -87,7 +83,6 @@ pub enum AgentEvent {
         severity: String,
     },
 
-    // orchestrate 事件
     OrchestrateNodeCreated {
         session_id: String,
         node_id: String,

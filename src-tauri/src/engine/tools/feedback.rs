@@ -39,36 +39,24 @@ impl Tool for FeedbackTool {
     }
 
     async fn call(&self, input: serde_json::Value, ctx: Option<&ToolExecutionContext>) -> ToolResult {
-        let message = input["message"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
-        let severity = input["severity"]
-            .as_str()
-            .unwrap_or("info")
-            .to_string();
-        let task_id = input["task_id"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
+        let message = input["message"].as_str().unwrap_or("");
+        let severity = input["severity"].as_str().unwrap_or("info");
+        let task_id = input["task_id"].as_str().unwrap_or("");
 
         if let Some(ctx) = ctx {
             let _ = ctx.event_tx.send(crate::types::AgentEvent::TaskFeedback {
                 session_id: ctx.session_id.clone(),
-                task_id: task_id.clone(),
-                message,
-                severity: severity.clone(),
+                task_id: task_id.to_string(),
+                message: message.to_string(),
+                severity: severity.to_string(),
             });
 
-            // severity=error 触发非阻塞暂停
             if severity == "error" && !task_id.is_empty() {
                 let mut tree = ctx.task_tree.lock().await;
-                if tree.get_task_node(&task_id).is_some() {
-                    tree.request_pause(&task_id);
-                } else if tree.get_orchestrate_node(&task_id).is_some() {
-                    if let Some(node) = tree.get_orchestrate_node_mut(&task_id) {
-                        node.pause_requested = true;
-                    }
+                if tree.get_task_node(task_id).is_some() {
+                    tree.request_pause(task_id);
+                } else if let Some(node) = tree.get_orchestrate_node_mut(task_id) {
+                    node.pause_requested = true;
                 }
             }
         }

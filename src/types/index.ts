@@ -45,10 +45,9 @@ export interface ChatMessage {
   id: string
   role: 'user' | 'assistant' | 'system'
   content: string
-  segments?: AssistantSegment[]  // 新增：仅 assistant 消息使用
+  segments?: AssistantSegment[]
   timestamp: string
   isStreaming?: boolean
-  toolCalls?: ToolCallDisplay[]  // 保留，向后兼容但不再使用
 }
 
 /** 用于渲染的工具调用信息 */
@@ -86,13 +85,16 @@ export interface SessionInfo {
   updated_at: string
 }
 
+// 任务/节点共有状态（与 Rust TaskStatus 对应）
+export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'budget_exhausted' | 'killed' | 'paused'
+
 // 与 Rust LoadHistoryResult 对应
 export interface TaskNode {
   type: 'task_node'
   task_id: string
   session_id: string
   description: string
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'budget_exhausted' | 'killed' | 'paused'
+  status: TaskStatus
   mode: 'preset' | 'fork'
   subagent_type: string | null
   budget: { max_tokens: number; max_turns: number; max_tool_calls: number }
@@ -110,7 +112,7 @@ export interface OrchestrateNode {
   role: 'orchestrator' | 'executor'
   depth: number
   description: string
-  status: 'pending' | 'running' | 'idle' | 'completed' | 'failed' | 'budget_exhausted' | 'killed' | 'paused'
+  status: TaskStatus | 'idle'
   directive: string
   budget: { max_tokens: number; max_turns: number; max_tool_calls: number }
   usage: { total_tokens: number; tool_uses: number; duration_ms: number }
@@ -144,13 +146,4 @@ export interface ConfigResponse {
   bash_default_timeout_secs: number
 }
 
-export interface UpdateConfigRequest {
-  anthropic_api_key: string
-  llm_model: string
-  anthropic_base_url: string
-  max_turns: number
-  context_window: number
-  max_output_tokens: number
-  tool_output_max_bytes: number
-  bash_default_timeout_secs: number
-}
+export type UpdateConfigRequest = ConfigResponse

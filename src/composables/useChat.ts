@@ -30,8 +30,9 @@ export function useChat(sessionId: Ref<string | null>) {
 
   function appendTextToCurrentTurn(text: string) {
     const segs = currentTurnSegments.value
-    if (segs.length > 0 && segs[segs.length - 1].type === 'text') {
-      ;(segs[segs.length - 1] as { type: 'text'; text: string }).text += text
+    const last = segs[segs.length - 1]
+    if (last && last.type === 'text') {
+      last.text += text
     } else {
       segs.push({ type: 'text', text })
     }
@@ -235,10 +236,14 @@ export function useChat(sessionId: Ref<string | null>) {
         const blocks = entry.content as UserContentBlock[]
         const hasText = blocks.some((b) => b.type === 'text')
         if (!hasText) continue
+        const textContent = blocks
+          .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
+          .map((b) => b.text)
+          .join('')
         msgs.push({
           id: entry.uuid,
           role: 'user',
-          content: blocks.filter((b) => b.type === 'text').map((b) => (b as { type: 'text'; text: string }).text).join(''),
+          content: textContent,
           timestamp: entry.timestamp,
         })
       } else if (entry.type === 'assistant') {

@@ -6,10 +6,6 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-// ---------------------------------------------------------------------------
-// Shared types
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskBudget {
     pub max_tokens: u32,
@@ -105,19 +101,12 @@ pub struct FeedbackMessage {
     pub severity: FeedbackSeverity,
 }
 
-// ---------------------------------------------------------------------------
-// ID generation
-// ---------------------------------------------------------------------------
-
-/// 根据节点类型生成带前缀的唯一 ID。
-/// dispatch_agent → "da_", orchestrate → "or_", 其他 → "tk_"
 pub fn generate_task_id(node_type: &str) -> String {
     let prefix = match node_type {
         "dispatch_agent" => "da_",
         "orchestrate" => "or_",
         _ => "tk_",
     };
-    // 使用 uuid 的随机字节取前 8 个，转为 base36
     let uuid_str = Uuid::new_v4().to_string().replace("-", "");
     let random_part: String = uuid_str
         .chars()
@@ -134,10 +123,6 @@ pub fn generate_task_id(node_type: &str) -> String {
         .collect();
     format!("{}{}", prefix, random_part)
 }
-
-// ---------------------------------------------------------------------------
-// TaskNode
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename = "task_node")]
@@ -159,10 +144,6 @@ pub struct TaskNode {
     pub kill_requested: bool,
     pub pause_requested: bool,
 }
-
-// ---------------------------------------------------------------------------
-// OrchestrateNode
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename = "orchestrate_node")]
@@ -188,10 +169,6 @@ pub struct OrchestrateNode {
     pub pause_requested: bool,
 }
 
-// ---------------------------------------------------------------------------
-// TaskTree
-// ---------------------------------------------------------------------------
-
 pub struct TaskTree {
     task_nodes: HashMap<String, TaskNode>,
     orchestrate_nodes: HashMap<String, OrchestrateNode>,
@@ -207,8 +184,6 @@ impl TaskTree {
             pause_notifiers: HashMap::new(),
         }
     }
-
-    // -- TaskNode methods --------------------------------------------------
 
     pub fn create_task_node(
         &mut self,
@@ -322,8 +297,6 @@ impl TaskTree {
             .clone()
     }
 
-    // -- OrchestrateNode methods -------------------------------------------
-
     pub fn create_orchestrate_node(
         &mut self,
         parent_id: Option<String>,
@@ -418,10 +391,6 @@ impl TaskTree {
         self.orchestrate_nodes.values().collect()
     }
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 #[path = "task_tree_tests.rs"]

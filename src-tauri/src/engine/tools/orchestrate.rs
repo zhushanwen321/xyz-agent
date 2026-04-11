@@ -7,14 +7,11 @@ const MAX_DEPTH: u32 = 5;
 
 pub struct OrchestrateTool;
 
-/// 根据请求类型和深度确定实际角色（深度超限自动降级为 executor）
+/// 深度超限时 orchestrator 自动降级为 executor
 pub fn resolve_effective_type(requested: &str, depth: u32) -> &'static str {
-    if requested == "orchestrator" && depth >= MAX_DEPTH {
-        "executor"
-    } else if requested == "orchestrator" {
-        "orchestrator"
-    } else {
-        "executor"
+    match requested {
+        "orchestrator" if depth < MAX_DEPTH => "orchestrator",
+        _ => "executor",
     }
 }
 
@@ -75,12 +72,11 @@ impl Tool for OrchestrateTool {
         let target_agent_id = input["target_agent_id"].as_str().map(String::from);
         let is_sync = input["sync"].as_bool().unwrap_or(true);
 
-        // 深度计算（P2-D stub：当前从 0 开始，后续从 calling context 获取）
+        // P2-D stub: 深度从 calling context 获取
         let current_depth = 0u32;
         let effective_type = resolve_effective_type(requested_type, current_depth);
         let node_depth = current_depth + 1;
 
-        // 基于角色的默认预算
         let default_budget = match effective_type {
             "orchestrator" => TaskBudget {
                 max_tokens: 80_000,
@@ -103,7 +99,6 @@ impl Tool for OrchestrateTool {
             max_tool_calls: default_budget.max_tool_calls,
         };
 
-        // 复用检查：如果指定了 target_agent_id，验证状态
         if let Some(ref agent_id) = target_agent_id {
             let tree = ctx.task_tree.lock().await;
             if let Some(node) = tree.get_orchestrate_node(agent_id) {
@@ -118,15 +113,13 @@ impl Tool for OrchestrateTool {
             }
         }
 
-        // 生成 node_id
         let node_id = generate_task_id("orchestrate");
         let agent_id = target_agent_id
             .unwrap_or_else(|| format!("agent_{}", &node_id[3..11]));
 
-        // TaskTree 注册留到 AgentSpawner 集成（避免 ID 不一致）
-        let _ = budget; // 后续传给 AgentSpawner
+        // TaskTree 注册留到 AgentSpawner 集成
+        let _ = budget;
 
-        // 发送 OrchestrateNodeCreated 事件
         let _ = ctx.event_tx.send(AgentEvent::OrchestrateNodeCreated {
             session_id: ctx.session_id.clone(),
             node_id: node_id.clone(),
@@ -136,20 +129,19 @@ impl Tool for OrchestrateTool {
             description: task_description.clone(),
         });
 
-        // 基于角色的工具过滤（P2-D stub：后续传给 AgentSpawner）
+        // P2-D stub: 后续传给 AgentSpawner
         let _tool_filter = match effective_type {
             "orchestrator" => vec!["orchestrate", "feedback", "read", "bash"],
             _ => vec!["feedback", "read", "write", "bash"],
         };
 
-        // P2-D stub：实际执行留到 AgentSpawner 集成
+        // P2-D stub
         let status_str = if is_sync { "sync stub" } else { "async stub" };
         let result_summary = format!(
             "orchestrate {} stub — pending AgentSpawner implementation (node_id: {}, agent_id: {})",
             status_str, node_id, agent_id
         );
 
-        // 发送 OrchestrateNodeCompleted 事件
         let _ = ctx.event_tx.send(AgentEvent::OrchestrateNodeCompleted {
             session_id: ctx.session_id.clone(),
             node_id: node_id.clone(),

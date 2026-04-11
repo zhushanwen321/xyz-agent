@@ -8,10 +8,12 @@ pub mod read;
 pub mod write;
 
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 
+use crate::engine::config::AgentConfig;
 use crate::types::ToolResult;
 
 pub use context::ToolExecutionContext;
@@ -106,10 +108,7 @@ impl ToolRegistry {
     }
 
     pub fn tool_schemas(&self, perms: &PermissionContext) -> Vec<serde_json::Value> {
-        let mut names = self.tool_names();
-        names.sort();
-
-        names
+        self.tool_names()
             .into_iter()
             .filter(|name| self.is_allowed(name, perms))
             .map(|name| {
@@ -157,9 +156,6 @@ pub struct ToolExecutionResult {
     pub output: String,
     pub is_error: bool,
 }
-
-use std::path::PathBuf;
-use crate::engine::config::AgentConfig;
 
 pub fn register_builtin_tools(registry: &mut ToolRegistry, workdir: PathBuf, config: &AgentConfig) {
     registry.register(Arc::new(read::ReadTool::new(workdir.clone(), config.tool_output_max_bytes)));

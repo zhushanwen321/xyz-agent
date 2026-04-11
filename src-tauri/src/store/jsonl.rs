@@ -3,14 +3,10 @@ use std::io::{BufRead, Write};
 use std::path::Path;
 
 use file_lock::{FileLock, FileOptions};
-use serde_json;
-
 use crate::types::AppError;
 use crate::types::TranscriptEntry;
 
-/// 追加一行 JSONL，使用文件锁防止并发冲突
 pub fn append_entry(path: &Path, entry: &TranscriptEntry) -> Result<(), AppError> {
-    // 先确保父目录存在
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| AppError::Storage(format!("create dir failed: {e}")))?;
@@ -33,11 +29,9 @@ pub fn append_entry(path: &Path, entry: &TranscriptEntry) -> Result<(), AppError
     file_lock.file.flush()
         .map_err(|e| AppError::Storage(format!("flush failed: {e}")))?;
 
-    // drop 时自动释放锁
     Ok(())
 }
 
-/// 读取全部 JSONL 条目
 pub fn read_all_entries(path: &Path) -> Result<Vec<TranscriptEntry>, AppError> {
     if !path.exists() {
         return Ok(vec![]);
@@ -64,7 +58,6 @@ pub fn read_all_entries(path: &Path) -> Result<Vec<TranscriptEntry>, AppError> {
     Ok(entries)
 }
 
-/// 通过 parent_uuid 回溯构建对话链（分支切换时使用）
 #[allow(dead_code)]
 pub fn build_conversation_chain(
     entries: &[TranscriptEntry],
@@ -99,14 +92,13 @@ pub fn build_conversation_chain(
     chain
 }
 
-/// 将路径转为安全的目录名（替换 / 为 -）
 #[allow(dead_code)]
 pub fn sanitize_path(path: &str) -> String {
     let sanitized = path.replace('/', "-");
     sanitized.trim_start_matches('-').to_string()
 }
 
-// ── AsyncResult：异步任务结果摘要 ─────────────────────────────
+// ── AsyncResult / LoadHistoryResult ──────────────────────────
 
 #[derive(serde::Serialize)]
 pub struct AsyncResult {
@@ -116,8 +108,6 @@ pub struct AsyncResult {
     pub result_summary: String,
     pub output_file: Option<String>,
 }
-
-// ── LoadHistoryResult：摘要感知的历史加载 ───────────────────────
 
 #[derive(serde::Serialize)]
 pub struct LoadHistoryResult {
@@ -130,8 +120,6 @@ pub struct LoadHistoryResult {
     pub pending_async_results: Vec<AsyncResult>,
 }
 
-/// 加载历史，摘要感知：找到最新的 Summary 条目，
-/// 返回 leaf_uuid 之后的条目 + 摘要文本
 pub fn load_history(path: &Path) -> Result<LoadHistoryResult, AppError> {
     let all_entries = read_all_entries(path)?;
 
@@ -149,7 +137,6 @@ pub fn load_history(path: &Path) -> Result<LoadHistoryResult, AppError> {
 
     match latest_summary {
         Some((summary_text, leaf_uuid)) => {
-            // 返回 leaf_uuid 之后的条目（排除 Summary 条目）
             let entries_after = all_entries
                 .into_iter()
                 .skip_while(|e| e.uuid() != leaf_uuid)
@@ -174,23 +161,25 @@ pub fn load_history(path: &Path) -> Result<LoadHistoryResult, AppError> {
     }
 }
 
-// ── Sidechain JSONL helpers ──────────────────────────────────────
+// ── Sidechain / Orchestrate JSONL helpers ─────────────────────────
 
-/// 返回 SubAgent 任务的 sidechain JSONL 路径，惰性创建目录
-pub fn sidechain_path(data_dir: &Path, session_id: &str, task_id: &str) -> std::path::PathBuf {
-    // 防止路径遍历：替换路径分隔符和 ..
-    let safe_session: String = session_id.chars().map(|c| if c == '/' || c == '\\' || c == '.' { '_' } else { c }).collect();
-    let safe_task: String = task_id.chars().map(|c| if c == '/' || c == '\\' || c == '.' { '_' } else { c }).collect();
-    let dir = data_dir.join(safe_session).join("subagents");
-    if let Err(e) = std::fs::create_dir_all(&dir) {
-        log::warn!("[jsonl] create_dir_all failed for sidechain: {e}");
-    }
-    dir.join(format!("{}.jsonl", safe_task))
+fn sanitize_segment(s: &str) -> String {
+    s.chars().map(|c| if c == '/' || c == '\\' || c == '.' { '_' } else { c }).collect()
 }
 
-/// 追加一条记录到 sidechain JSONL 文件
+fn ensure_jsonl_path(data_dir: &Path, session_id: &str, sub_dir: &str, file_stem: &str) -> std::path::PathBuf {
+    let dir = data_dir.join(sanitize_segment(session_id)).join(sub_dir);
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        log::warn!("[jsonl] create_dir_all failed for {sub_dir}: {e}");
+    }
+    dir.join(format!("{}.jsonl", sanitize_segment(file_stem)))
+}
+
+pub fn sidechain_path(data_dir: &Path, session_id: &str, task_id: &str) -> std::path::PathBuf {
+    ensure_jsonl_path(data_dir, session_id, "subagents", task_id)
+}
+
 pub fn append_sidechain_entry(path: &Path, entry: &TranscriptEntry) -> Result<(), AppError> {
-    use std::io::Write;
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -200,15 +189,8 @@ pub fn append_sidechain_entry(path: &Path, entry: &TranscriptEntry) -> Result<()
     writeln!(file, "{}", json).map_err(AppError::Io)
 }
 
-/// 返回 orchestrate agent 的 JSONL 路径，惰性创建目录
 pub fn orchestrate_path(data_dir: &Path, session_id: &str, node_id: &str) -> std::path::PathBuf {
-    let safe_session: String = session_id.chars().map(|c| if c == '/' || c == '\\' || c == '.' { '_' } else { c }).collect();
-    let safe_node: String = node_id.chars().map(|c| if c == '/' || c == '\\' || c == '.' { '_' } else { c }).collect();
-    let dir = data_dir.join(safe_session).join("orchestrate");
-    if let Err(e) = std::fs::create_dir_all(&dir) {
-        log::warn!("[jsonl] create_dir_all failed for orchestrate: {e}");
-    }
-    dir.join(format!("{}.jsonl", safe_node))
+    ensure_jsonl_path(data_dir, session_id, "orchestrate", node_id)
 }
 
 #[cfg(test)]

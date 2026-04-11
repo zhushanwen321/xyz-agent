@@ -15,7 +15,6 @@ const emit = defineEmits<{
 
 const isExpanded = ref(true)
 
-// 查找子节点，过滤掉可能已移除的节点
 const children = computed(() =>
   props.node.children_ids
     .map(id => props.allNodes.get(id))
@@ -32,7 +31,6 @@ const statusDotColor = computed(() => {
   }
 })
 
-// O = orchestrator, E = executor
 const roleBadge = computed(() =>
   props.node.role === 'orchestrator' ? 'O' : 'E'
 )

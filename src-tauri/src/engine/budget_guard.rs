@@ -66,8 +66,7 @@ impl BudgetGuard {
         if self.warning_sent {
             return false;
         }
-        let percent = self.tokens_used * 100 / self.budget.max_tokens.max(1);
-        if percent >= WARNING_THRESHOLD_PERCENT {
+        if self.usage_percent() >= WARNING_THRESHOLD_PERCENT {
             self.warning_sent = true;
             return true;
         }

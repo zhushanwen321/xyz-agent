@@ -12,9 +12,7 @@ const props = defineProps<{
 const activeTab = ref<'subagents' | 'orchestrate'>('subagents')
 
 const emit = defineEmits<{
-  openTab: [id: string, type: 'task' | 'orchestrate']
   killTask: [taskId: string]
-  pauseTask: [taskId: string]
 }>()
 
 // 按创建时间倒序排列，最新的在上面
@@ -61,7 +59,6 @@ const hasContent = computed(() =>
           v-for="task in sortedTasks"
           :key="task.task_id"
           :task="task"
-          @open-tab="emit('openTab', $event, 'task')"
           @kill="emit('killTask', task.task_id)"
         />
         <div v-if="sortedTasks.length === 0" class="text-center text-text-secondary text-[11px] py-4">
