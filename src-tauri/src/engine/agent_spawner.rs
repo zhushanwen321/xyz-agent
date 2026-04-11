@@ -226,6 +226,8 @@ fn filter_tools(
     registry.clone()
 }
 
+// Fork 模式尚未启用，以下函数待 mode=fork 路径激活后使用
+#[allow(dead_code)]
 /// 构建 Fork 模式的历史消息：将 prompt 作为 user message 追加到 fork messages 后
 fn build_subagent_history(
     fork_messages: &[serde_json::Value],
@@ -262,6 +264,7 @@ fn build_subagent_history(
     messages
 }
 
+#[allow(dead_code)]
 /// 事件通道桥接：将子 Agent 的事件转发到主 Agent，带节流
 pub fn bridge_events(
     sub_rx: tokio::sync::mpsc::UnboundedReceiver<AgentEvent>,
