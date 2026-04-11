@@ -68,7 +68,16 @@ impl Tool for DispatchAgentTool {
     }
 
     fn description(&self) -> &str {
-        "启动子 Agent 处理任务。sync=true 阻塞等待结果，sync=false 后台执行。"
+        "Launch a sub-agent to handle an independent task.\n\
+         \n\
+         The sub-agent runs in isolation with its own context. Use it to:\n\
+         - Delegate independent work that can run in parallel\n\
+         - Isolate long-running tasks from the main conversation\n\
+         \n\
+         The sub-agent has access to the same tools (Bash, Read, Write).\n\
+         Set sync=true to block until completion, sync=false for fire-and-forget.\n\
+         \n\
+         Example: {\"description\": \"list files in src\", \"prompt\": \"Run ls -la in the src/ directory and report the results\", \"sync\": true}"
     }
 
     fn is_concurrent_safe(&self) -> bool {
@@ -85,29 +94,33 @@ impl Tool for DispatchAgentTool {
             "properties": {
                 "description": {
                     "type": "string",
-                    "description": "3-5 词任务摘要"
+                    "description": "Short 3-5 word summary of the task, e.g. 'list files in src'"
                 },
                 "prompt": {
                     "type": "string",
-                    "description": "子 Agent 的任务指令"
+                    "description": "Full task instruction for the sub-agent. Be specific about what to do and where, e.g. 'Run ls -la in the src/ directory and list all files found'"
                 },
                 "mode": {
                     "enum": ["preset", "fork"],
-                    "default": "preset"
+                    "default": "preset",
+                    "description": "Agent launch mode. Use 'preset' (default) for template-based agents, 'fork' to clone current context."
                 },
                 "subagent_type": {
                     "type": "string",
-                    "description": "模板名（preset 必填）"
+                    "description": "Agent template name. Optional — defaults to general-purpose if omitted."
                 },
                 "sync": {
                     "type": "boolean",
-                    "default": true
+                    "default": true,
+                    "description": "If true, wait for the sub-agent to finish and return its result. If false, return immediately and run in background."
                 },
                 "token_budget": {
-                    "type": "integer"
+                    "type": "integer",
+                    "description": "Maximum tokens the sub-agent may consume. Default: 50000"
                 },
                 "max_turns": {
-                    "type": "integer"
+                    "type": "integer",
+                    "description": "Maximum tool-use turns for the sub-agent. Default: 20"
                 }
             },
             "required": ["description", "prompt"]

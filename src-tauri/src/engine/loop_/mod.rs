@@ -7,7 +7,7 @@ use crate::engine::context::data::DataContext;
 use crate::engine::context::prompt::{DynamicContext, PromptManager};
 use crate::engine::context::{ContextConfig, ContextManager, TokenBudget, trim_old_tool_results};
 use crate::engine::llm::LlmProvider;
-use crate::engine::tools::{PermissionContext, ToolRegistry, execute_batch};
+use crate::engine::tools::{PermissionContext, ToolExecutionContext, ToolRegistry, execute_batch};
 use crate::types::{AgentEvent, AppError, TranscriptEntry, UserContentBlock};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -44,6 +44,7 @@ impl AgentLoop {
         mut budget_guard: Option<&mut BudgetGuard>,
         task_tree: Option<Arc<tokio::sync::Mutex<crate::engine::task_tree::TaskTree>>>,
         node_id: Option<String>,
+        mut tool_ctx: Option<ToolExecutionContext>,
     ) -> Result<Vec<TranscriptEntry>, AppError> {
         let session_id = &self.session_id;
         let max_turns: usize = agent_config.max_turns as usize;
@@ -119,6 +120,9 @@ impl AgentLoop {
             ctx.data_context_summary = data_context.generate_summary();
             let system = prompt_manager.build_system_prompt(&ctx);
 
+            // chat_stream 会消费 api_messages，先 clone 供 ctx 使用
+            let api_messages_for_ctx = tool_ctx.as_ref().map(|_| api_messages.clone());
+
             let stream = self
                 .provider
                 .chat_stream(
@@ -166,6 +170,7 @@ impl AgentLoop {
             }
 
             let uuid = uuid::Uuid::new_v4().to_string();
+            let content_blocks_for_ctx = tool_ctx.as_ref().map(|_| result.content_blocks.clone());
             entries.push(TranscriptEntry::Assistant {
                 uuid: uuid.clone(),
                 parent_uuid: current_parent.clone(),
@@ -214,8 +219,16 @@ impl AgentLoop {
                 });
             }
 
+            // 更新 ctx 中的迭代依赖字段，供 P2 工具使用
+            if let (Some(ref mut ctx), Some(blocks), Some(api_msgs)) =
+                (&mut tool_ctx, content_blocks_for_ctx, api_messages_for_ctx)
+            {
+                ctx.api_messages = api_msgs;
+                ctx.current_assistant_content = blocks;
+            }
+
             let tool_results =
-                execute_batch(calls, tool_registry, tool_perms, None)
+                execute_batch(calls, tool_registry, tool_perms, tool_ctx.as_ref())
                     .await;
 
             let mut user_blocks = Vec::with_capacity(tool_results.len());
@@ -311,7 +324,7 @@ mod tests {
         let agent_loop = AgentLoop::new(provider, "test-session".into(), "test-model".into());
 
         let entries = agent_loop
-            .run_turn("read test.txt".into(), vec![], None, event_tx, &registry, &perms, &prompt_manager, &dynamic_context, &test_agent_config(), None, None, None)
+            .run_turn("read test.txt".into(), vec![], None, event_tx, &registry, &perms, &prompt_manager, &dynamic_context, &test_agent_config(), None, None, None, None)
             .await
             .unwrap();
 
@@ -337,7 +350,7 @@ mod tests {
         let agent_loop = AgentLoop::new(provider, "test-session".into(), "test-model".into());
 
         let entries = agent_loop
-            .run_turn("hello".into(), vec![], None, event_tx, &registry, &perms, &prompt_manager, &dynamic_context, &test_agent_config(), None, None, None)
+            .run_turn("hello".into(), vec![], None, event_tx, &registry, &perms, &prompt_manager, &dynamic_context, &test_agent_config(), None, None, None, None)
             .await
             .unwrap();
 

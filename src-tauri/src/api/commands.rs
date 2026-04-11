@@ -1,4 +1,5 @@
 use crate::api::AppState;
+use crate::engine::tools::ToolExecutionContext;
 use crate::engine::context::prompt::{DynamicContext, PromptManager};
 use crate::engine::loop_::AgentLoop;
 use crate::store::jsonl::LoadHistoryResult;
@@ -135,6 +136,18 @@ pub async fn send_message(
     };
 
     let event_tx_for_turn = event_tx.clone();
+    let tool_ctx = ToolExecutionContext {
+        task_tree: state.task_tree.clone(),
+        concurrency_manager: state.concurrency_manager.clone(),
+        agent_templates: state.agent_templates.clone(),
+        data_dir: state.data_dir.clone(),
+        session_id: session_id.clone(),
+        event_tx: event_tx_for_turn.clone(),
+        api_messages: vec![],
+        current_assistant_content: vec![],
+        tool_registry: state.tool_registry.clone(),
+        background_tasks: state.background_tasks.clone(),
+    };
     let result = agent_loop
         .run_turn(
             content,
@@ -149,6 +162,7 @@ pub async fn send_message(
             None,
             None,
             None,
+            Some(tool_ctx),
         )
         .await;
 

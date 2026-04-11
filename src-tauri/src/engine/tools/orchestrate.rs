@@ -22,7 +22,14 @@ impl Tool for OrchestrateTool {
     }
 
     fn description(&self) -> &str {
-        "创建编排节点。Orchestrator 可递归调用本工具，Executor 为叶节点执行者。"
+        "Create an orchestration node for multi-agent coordination.\n\
+         \n\
+         - agent_type='orchestrator': Can recursively call this tool to delegate sub-tasks.\n\
+         - agent_type='executor': Leaf node that performs the actual work.\n\
+         \n\
+         Use orchestrators to break complex tasks into sub-tasks,\n\
+         and executors to carry out individual sub-tasks.\n\
+         Orchestration depth is limited to 5 levels."
     }
 
     fn is_concurrent_safe(&self) -> bool {
@@ -37,16 +44,35 @@ impl Tool for OrchestrateTool {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "task_description": { "type": "string", "description": "任务描述" },
+                "task_description": {
+                    "type": "string",
+                    "description": "What this node should accomplish, e.g. 'Analyze error logs for root cause'"
+                },
                 "agent_type": {
                     "enum": ["orchestrator", "executor"],
-                    "description": "节点角色"
+                    "description": "'orchestrator' can delegate sub-tasks via this tool; 'executor' performs the work directly."
                 },
-                "target_agent_id": { "type": "string", "description": "复用的 Agent ID（可选）" },
-                "directive": { "type": "string", "description": "执行指令" },
-                "sync": { "type": "boolean", "default": true },
-                "token_budget": { "type": "integer" },
-                "max_turns": { "type": "integer" }
+                "target_agent_id": {
+                    "type": "string",
+                    "description": "Reuse an existing idle agent by its ID. Omit to create a new agent."
+                },
+                "directive": {
+                    "type": "string",
+                    "description": "Specific instructions for the agent, e.g. 'Search for ERROR lines in logs/*.log and summarize patterns'"
+                },
+                "sync": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "If true, wait for completion. If false, run in background."
+                },
+                "token_budget": {
+                    "type": "integer",
+                    "description": "Maximum tokens. Default: 80000 (orchestrator) or 50000 (executor)"
+                },
+                "max_turns": {
+                    "type": "integer",
+                    "description": "Maximum tool-use turns. Default: 15 (orchestrator) or 20 (executor)"
+                }
             },
             "required": ["task_description", "agent_type", "directive"]
         })

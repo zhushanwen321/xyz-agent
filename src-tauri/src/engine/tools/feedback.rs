@@ -13,7 +13,14 @@ impl Tool for FeedbackTool {
     }
 
     fn description(&self) -> &str {
-        "向父 Agent 发送中间报告"
+        "Send an intermediate progress report to the parent agent.\n\
+         \n\
+         Use this to report status updates, warnings, or errors during long-running tasks.\n\
+         - severity='info': general progress update\n\
+         - severity='warning': potential issue detected, parent is notified\n\
+         - severity='error': critical problem, automatically pauses this task until parent resumes it\n\
+         \n\
+         Always include a clear, concise message describing what happened."
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -22,16 +29,16 @@ impl Tool for FeedbackTool {
             "properties": {
                 "message": {
                     "type": "string",
-                    "description": "反馈消息内容"
+                    "description": "The feedback message content. Be specific about what happened and any recommended actions."
                 },
                 "severity": {
                     "enum": ["info", "warning", "error"],
                     "default": "info",
-                    "description": "严重程度"
+                    "description": "Severity level. 'error' automatically pauses the current task."
                 },
                 "task_id": {
                     "type": "string",
-                    "description": "关联的任务 ID（severity=error 时用于触发暂停）"
+                    "description": "The task ID to associate with this feedback. Required when severity='error' to trigger pause."
                 }
             },
             "required": ["message"]
