@@ -1,8 +1,10 @@
 use async_trait::async_trait;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
+use crate::engine::agent_spawner::SpawnConfig;
+use crate::engine::context::prompt::DynamicContext;
 use crate::engine::task_tree::*;
-use crate::engine::tools::{Tool, ToolExecutionContext, ToolResult};
+use crate::engine::tools::{PermissionContext, Tool, ToolExecutionContext, ToolResult};
 use crate::types::event::*;
 use crate::types::transcript::{AssistantContentBlock, TranscriptEntry, UserContentBlock};
 
@@ -142,8 +144,6 @@ impl Tool for DispatchAgentTool {
                 );
             }
         };
-        // prompt 暂未使用，AgentSpawner 集成后作为子 Agent 的输入
-        #[allow(unused_variables)]
         let prompt = match input["prompt"].as_str() {
             Some(s) if !s.is_empty() => s.to_string(),
             _ => {
@@ -160,11 +160,10 @@ impl Tool for DispatchAgentTool {
             .to_string();
         let is_sync = input["sync"].as_bool().unwrap_or(true);
 
-        // 查找模板（preset 模式必须指定）
-        let _template = match ctx.agent_templates.get(&subagent_type) {
+        // 查找模板
+        let template = match ctx.agent_templates.get(&subagent_type) {
             Some(t) => Some(t),
             None if subagent_type.is_empty() => {
-                // 未指定模板，尝试 fallback 到 general-purpose
                 ctx.agent_templates.get("general-purpose")
             }
             None => {
@@ -172,20 +171,27 @@ impl Tool for DispatchAgentTool {
             }
         };
 
-        // 构建预算
+        // 构建预算：用户指定优先，否则使用模板默认值
+        let default_budget = template
+            .map(|t| t.default_budget.clone())
+            .unwrap_or(TaskBudget {
+                max_tokens: 50_000,
+                max_turns: 20,
+                max_tool_calls: 100,
+            });
         let budget = TaskBudget {
-            max_tokens: input["token_budget"].as_u64().unwrap_or(50_000) as u32,
-            max_turns: input["max_turns"].as_u64().unwrap_or(20) as u32,
-            max_tool_calls: 100,
+            max_tokens: input["token_budget"]
+                .as_u64()
+                .unwrap_or(default_budget.max_tokens as u64) as u32,
+            max_turns: input["max_turns"]
+                .as_u64()
+                .unwrap_or(default_budget.max_turns as u64) as u32,
+            max_tool_calls: default_budget.max_tool_calls,
         };
 
-        // 生成 task_id 用于事件标识
-        // 注意：不在此处调用 tree.create_task_node()，因为 ID 一致性问题
-        // TaskTree 注册留到 P2-C AgentSpawner 处理
         let task_id = generate_task_id("dispatch_agent");
         let start = Instant::now();
 
-        // 从 assistant content 中查找 dispatch_agent 调用对应的 tool_use_id
         let tool_use_id = ctx.current_assistant_content.iter().rev()
             .find_map(|block| {
                 if let crate::types::transcript::AssistantContentBlock::ToolUse { id, name, .. } = block {
@@ -194,12 +200,11 @@ impl Tool for DispatchAgentTool {
                 None
             });
 
-        // 发送 TaskCreated 事件
         let _ = ctx.event_tx.send(AgentEvent::TaskCreated {
             session_id: ctx.session_id.clone(),
             task_id: task_id.clone(),
             description: description.clone(),
-            mode: "preset".into(),
+            mode: input["mode"].as_str().unwrap_or("preset").into(),
             subagent_type: subagent_type.clone(),
             budget: TaskBudgetSummary {
                 max_tokens: budget.max_tokens,
@@ -207,58 +212,135 @@ impl Tool for DispatchAgentTool {
             tool_use_id,
         });
 
-        if is_sync {
-            // 同步模式：在当前任务中执行（stub — 等待 P2-C AgentSpawner）
-            let result: Result<String, String> = Err(
-                "dispatch_agent sync execution not yet implemented — pending AgentSpawner".into(),
-            );
+        // 构建 SpawnConfig
+        let tool_filter = template.map(|t| t.tools.clone());
+        let spawn_config = SpawnConfig {
+            prompt: prompt.clone(),
+            history: vec![],
+            system_prompt_override: None,
+            tool_filter,
+            budget: Some(budget),
+            event_tx: ctx.event_tx.clone(),
+            sync: is_sync,
+            fork_api_messages: None,
+            fork_assistant_content: None,
+            dynamic_context: DynamicContext {
+                cwd: std::env::current_dir()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string(),
+                os: std::env::consts::OS.to_string(),
+                model: String::new(),
+                git_branch: None,
+                tool_names: ctx.tool_registry.tool_names(),
+                data_context_summary: None,
+                conversation_summary: None,
+            },
+            permission_context: PermissionContext::default(),
+            session_id: ctx.session_id.clone(),
+            task_id: task_id.clone(),
+            node_id: Some(task_id.clone()),
+        };
 
+        let mut spawn_handle = match ctx.agent_spawner.spawn_agent(spawn_config).await {
+            Ok(h) => h,
+            Err(e) => {
+                let _ = ctx.event_tx.send(AgentEvent::TaskCompleted {
+                    session_id: ctx.session_id.clone(),
+                    task_id: task_id.clone(),
+                    status: "failed".into(),
+                    result_summary: e.to_string().chars().take(2000).collect(),
+                    usage: TaskUsageSummary {
+                        total_tokens: 0,
+                        tool_uses: 0,
+                        duration_ms: start.elapsed().as_millis() as u64,
+                    },
+                });
+                return ToolResult::Error(e.to_string());
+            }
+        };
+
+        if is_sync {
+            // 同步：await 子 Agent 执行完成
+            let join = spawn_handle.join_handle.take().unwrap();
+            let result = match join.await {
+                Ok(Ok(r)) => r,
+                Ok(Err(e)) => {
+                    let _ = ctx.event_tx.send(AgentEvent::TaskCompleted {
+                        session_id: ctx.session_id.clone(),
+                        task_id: task_id.clone(),
+                        status: "failed".into(),
+                        result_summary: e.to_string().chars().take(2000).collect(),
+                        usage: TaskUsageSummary {
+                            total_tokens: 0,
+                            tool_uses: 0,
+                            duration_ms: start.elapsed().as_millis() as u64,
+                        },
+                    });
+                    return ToolResult::Error(e.to_string());
+                }
+                Err(e) => {
+                    let _ = ctx.event_tx.send(AgentEvent::TaskCompleted {
+                        session_id: ctx.session_id.clone(),
+                        task_id: task_id.clone(),
+                        status: "failed".into(),
+                        result_summary: format!("task panicked: {e}").chars().take(2000).collect(),
+                        usage: TaskUsageSummary {
+                            total_tokens: 0,
+                            tool_uses: 0,
+                            duration_ms: start.elapsed().as_millis() as u64,
+                        },
+                    });
+                    return ToolResult::Error(format!("task panicked: {e}"));
+                }
+            };
+
+            let result_text: String = result.entries.iter()
+                .filter_map(|e| match e {
+                    TranscriptEntry::Assistant { content, .. } => Some(
+                        content.iter()
+                            .filter_map(|b| match b {
+                                AssistantContentBlock::Text { text } => Some(text.as_str()),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    ),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            let summary: String = result_text.chars().take(2000).collect();
             let elapsed = start.elapsed().as_millis() as u64;
-            let status_str = if result.is_ok() { "completed" } else { "failed" };
 
             let _ = ctx.event_tx.send(AgentEvent::TaskCompleted {
                 session_id: ctx.session_id.clone(),
                 task_id: task_id.clone(),
-                status: status_str.into(),
-                result_summary: result
-                    .as_deref()
-                    .unwrap_or("error")
-                    .chars()
-                    .take(2000)
-                    .collect(),
+                status: "completed".into(),
+                result_summary: summary.clone(),
                 usage: TaskUsageSummary {
-                    total_tokens: 0,
-                    tool_uses: 0,
+                    total_tokens: result.usage.total_tokens,
+                    tool_uses: result.usage.tool_uses,
                     duration_ms: elapsed,
                 },
             });
 
-            match result {
-                Ok(text) => ToolResult::Text(text),
-                Err(e) => ToolResult::Error(e),
+            // 写入 TaskTree
+            {
+                let mut tree = ctx.task_tree.lock().await;
+                tree.set_task_result(&task_id, result_text.chars().take(100_000).collect());
             }
+
+            ToolResult::Text(result_text)
         } else {
-            // 异步模式：后台执行，立即返回
-            let session_id = ctx.session_id.clone();
-            let event_tx = ctx.event_tx.clone();
+            // 异步：保存 join_handle，立即返回
+            let join = spawn_handle.join_handle.take().unwrap();
+
+            // 包装为 JoinHandle<()> 以匹配 background_tasks 类型
             let bg_tasks = ctx.background_tasks.clone();
-
-            let task_id_bg = task_id.clone();
             let handle = tokio::spawn(async move {
-                // P2-B stub: 实际执行推迟到 AgentSpawner
-                tokio::time::sleep(Duration::from_millis(100)).await;
-
-                let _ = event_tx.send(AgentEvent::TaskCompleted {
-                    session_id: session_id.clone(),
-                    task_id: task_id_bg.clone(),
-                    status: "completed".into(),
-                    result_summary: "async stub — pending AgentSpawner implementation".into(),
-                    usage: TaskUsageSummary {
-                        total_tokens: 0,
-                        tool_uses: 0,
-                        duration_ms: 100,
-                    },
-                });
+                let _ = join.await;
             });
 
             {
@@ -326,7 +408,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn async_dispatch_returns_notification() {
+    async fn requires_context() {
         let tool = DispatchAgentTool;
         let input = serde_json::json!({
             "description": "test task",
