@@ -46,6 +46,7 @@ impl AgentLoop {
         node_id: Option<String>,
         mut tool_ctx: Option<ToolExecutionContext>,
         api_messages_override: Option<Vec<serde_json::Value>>,
+        cancel_token: tokio_util::sync::CancellationToken,
     ) -> Result<Vec<TranscriptEntry>, AppError> {
         let session_id = &self.session_id;
         let max_turns: usize = agent_config.max_turns as usize;
@@ -69,6 +70,12 @@ impl AgentLoop {
         let tool_schemas = tool_registry.tool_schemas(tool_perms);
 
         for iteration in 1..=max_turns {
+            // 主对话 cancel 检查
+            if cancel_token.is_cancelled() {
+                log::info!("[agent_loop] cancel requested for session {}", session_id);
+                break;
+            }
+
             // Kill/pause check (P2 SubAgent user intervention)
             if let (Some(ref tree), Some(ref nid)) = (&task_tree, &node_id) {
                 let mut tree_guard = tree.lock().await;
@@ -154,7 +161,7 @@ impl AgentLoop {
                     AppError::Llm(format!("chat_stream failed: {e}"))
                 })?;
 
-            let result = consume_stream(stream, &event_tx, session_id).await?;
+            let result = consume_stream(stream, &event_tx, session_id, &cancel_token).await?;
 
             context_manager.token_budget.last_input_tokens = Some(result.usage.input_tokens);
 
@@ -242,6 +249,12 @@ impl AgentLoop {
             {
                 ctx.api_messages = api_msgs;
                 ctx.current_assistant_content = blocks;
+            }
+
+            // 工具执行前检查 cancel
+            if cancel_token.is_cancelled() {
+                log::info!("[agent_loop] cancel before tool execution");
+                break;
             }
 
             let tool_results =
@@ -351,7 +364,7 @@ mod tests {
         let agent_loop = AgentLoop::new(provider, "test-session".into(), "test-model".into());
 
         let entries = agent_loop
-            .run_turn("read test.txt".into(), vec![], None, event_tx, &registry, &perms, &prompt_manager, &dynamic_context, &test_agent_config(), None, None, None, None, None)
+            .run_turn("read test.txt".into(), vec![], None, event_tx, &registry, &perms, &prompt_manager, &dynamic_context, &test_agent_config(), None, None, None, None, None, tokio_util::sync::CancellationToken::new())
             .await
             .unwrap();
 
@@ -383,7 +396,7 @@ mod tests {
 
         // 模拟子 Agent：空 history + prompt 作为 user_message
         let _ = agent_loop
-            .run_turn("do something".into(), vec![], None, event_tx, &registry, &perms, &prompt_manager, &dynamic_context, &test_agent_config(), None, None, None, None, None)
+            .run_turn("do something".into(), vec![], None, event_tx, &registry, &perms, &prompt_manager, &dynamic_context, &test_agent_config(), None, None, None, None, None, tokio_util::sync::CancellationToken::new())
             .await
             .unwrap();
 
@@ -412,7 +425,7 @@ mod tests {
         let agent_loop = AgentLoop::new(provider, "test-session".into(), "test-model".into());
 
         let entries = agent_loop
-            .run_turn("hello".into(), vec![], None, event_tx, &registry, &perms, &prompt_manager, &dynamic_context, &test_agent_config(), None, None, None, None, None)
+            .run_turn("hello".into(), vec![], None, event_tx, &registry, &perms, &prompt_manager, &dynamic_context, &test_agent_config(), None, None, None, None, None, tokio_util::sync::CancellationToken::new())
             .await
             .unwrap();
 

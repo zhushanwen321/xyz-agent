@@ -15,10 +15,12 @@ pub(super) struct StreamResult {
 }
 
 /// 将 LLM 流式响应聚合为结构化 StreamResult，同时向 event_tx 转发前端事件。
+/// 支持 CancellationToken 中断：cancel 时 flush 已缓冲内容并发送 MessageComplete。
 pub(super) async fn consume_stream(
     stream: Pin<Box<dyn futures::Stream<Item = Result<LlmStreamEvent, AppError>> + Send>>,
     event_tx: &tokio::sync::mpsc::UnboundedSender<AgentEvent>,
     session_id: &str,
+    cancel_token: &tokio_util::sync::CancellationToken,
 ) -> Result<StreamResult, AppError> {
     let mut text_buf = String::new();
     let mut tool_buf: HashMap<String, (String, String)> = HashMap::new();
@@ -29,8 +31,6 @@ pub(super) async fn consume_stream(
     let mut usage = TokenUsage { input_tokens: 0, output_tokens: 0 };
     let mut current_tool_id: Option<String> = None;
     let mut tool_index: usize = 0;
-
-    let mut stream = std::pin::pin!(stream);
 
     let flush_current_tool = |tool_id: &mut Option<String>,
                                   tool_buf: &mut HashMap<String, (String, String)>,
@@ -68,8 +68,38 @@ pub(super) async fn consume_stream(
         }
     };
 
-    while let Some(item) = stream.next().await {
-        match item {
+    let mut stream = std::pin::pin!(stream);
+
+    loop {
+        tokio::select! {
+            biased;
+            _ = cancel_token.cancelled() => {
+                // flush 已缓冲内容，保留已输出文本
+                flush_current_tool(&mut current_tool_id, &mut tool_buf, &mut content_blocks, &mut tool_calls);
+                flush_all_tools(&mut tool_buf, &mut content_blocks, &mut tool_calls);
+                if !text_buf.is_empty() {
+                    content_blocks.push(AssistantContentBlock::Text {
+                        text: std::mem::take(&mut text_buf),
+                    });
+                }
+                // 发送 MessageComplete 让前端清空 streamingText
+                let text: String = content_blocks.iter()
+                    .filter_map(|b| match b {
+                        AssistantContentBlock::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                let _ = event_tx.send(AgentEvent::MessageComplete {
+                    session_id: session_id.to_string(),
+                    role: "assistant".to_string(),
+                    content: text,
+                    usage: TokenUsage { input_tokens: 0, output_tokens: 0 },
+                });
+                break;
+            }
+            item = stream.next() => {
+                let Some(item) = item else { break };
+                match item {
             Ok(LlmStreamEvent::TextDelta { delta }) => {
                 if delta.is_empty() {
                     continue;
@@ -173,6 +203,8 @@ pub(super) async fn consume_stream(
                 return Err(e);
             }
         }
+            }
+        }
     }
 
     if stop_reason.is_empty() {
@@ -207,7 +239,7 @@ mod tests {
             .unwrap();
         let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
 
-        let result = consume_stream(stream, &event_tx, "test-session").await.unwrap();
+        let result = consume_stream(stream, &event_tx, "test-session", &tokio_util::sync::CancellationToken::new()).await.unwrap();
 
         assert_eq!(result.content_blocks.len(), 1);
         assert!(matches!(&result.content_blocks[0], AssistantContentBlock::Text { text } if text == "hello world"));
@@ -238,7 +270,7 @@ mod tests {
             .unwrap();
         let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
 
-        let result = consume_stream(stream, &event_tx, "test-session").await.unwrap();
+        let result = consume_stream(stream, &event_tx, "test-session", &tokio_util::sync::CancellationToken::new()).await.unwrap();
 
         assert_eq!(result.content_blocks.len(), 2);
         assert!(matches!(&result.content_blocks[0], AssistantContentBlock::Text { text } if text == "let me read that"));

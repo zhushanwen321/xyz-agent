@@ -204,6 +204,8 @@ async fn run_subagent(
             node_id,
             Some(tool_ctx),
             api_messages_override,
+            // cancel_token 由 run_subagent 从 TaskTree 获取（Task 6 完善）
+            tokio_util::sync::CancellationToken::new(),
         )
         .await?;
 

@@ -216,6 +216,7 @@ pub async fn send_message(
             None,
             Some(tool_ctx),
             None,
+            tokio_util::sync::CancellationToken::new(), // placeholder: Task 5 will replace with session token
         )
         .await;
 
