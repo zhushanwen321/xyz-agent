@@ -41,6 +41,7 @@ pub fn run() {
     let mut tool_registry = ToolRegistry::new();
     let workdir = std::env::current_dir().unwrap_or_default();
     engine::tools::register_builtin_tools(&mut tool_registry, workdir, &agent_config);
+    tool_registry.register(std::sync::Arc::new(engine::tools::feedback::FeedbackTool));
     let tool_registry = Arc::new(tool_registry);
     let global_perms = PermissionContext::default();
 

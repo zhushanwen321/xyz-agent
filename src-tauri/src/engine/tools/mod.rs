@@ -1,5 +1,6 @@
 pub mod bash;
 pub mod context;
+pub mod feedback;
 pub mod read;
 pub mod write;
 
