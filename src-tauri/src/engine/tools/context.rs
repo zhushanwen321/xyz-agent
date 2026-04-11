@@ -11,6 +11,7 @@ use super::ToolRegistry;
 
 /// P2 tools (dispatch_agent, feedback, orchestrate) 所需的运行时上下文。
 /// P1 tools 通过 `Option<&ToolExecutionContext>` 忽略此参数。
+#[derive(Clone)]
 pub struct ToolExecutionContext {
     pub task_tree: Arc<tokio::sync::Mutex<TaskTree>>,
     pub concurrency_manager: Arc<ConcurrencyManager>,

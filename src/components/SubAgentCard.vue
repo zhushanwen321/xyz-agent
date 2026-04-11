@@ -37,7 +37,9 @@ const borderColor = computed(() => {
 })
 
 const progressPercent = computed(() =>
-  Math.min(100, (props.task.usage.total_tokens / props.task.budget.max_tokens) * 100)
+  props.task.budget.max_tokens > 0
+    ? Math.min(100, (props.task.usage.total_tokens / props.task.budget.max_tokens) * 100)
+    : 0
 )
 
 function formatTokens(n: number): string {

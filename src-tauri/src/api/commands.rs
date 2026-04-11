@@ -224,20 +224,26 @@ pub async fn update_config(
 #[tauri::command]
 pub async fn kill_task(task_id: String, state: State<'_, AppState>) -> Result<(), String> {
     let mut tree = state.task_tree.lock().await;
-    tree.request_kill(&task_id);
+    if !tree.request_kill(&task_id) {
+        return Err(format!("task '{}' not found", task_id));
+    }
     Ok(())
 }
 
 #[tauri::command]
 pub async fn pause_task(task_id: String, state: State<'_, AppState>) -> Result<(), String> {
     let mut tree = state.task_tree.lock().await;
-    tree.request_pause(&task_id);
+    if !tree.request_pause(&task_id) {
+        return Err(format!("task '{}' not found", task_id));
+    }
     Ok(())
 }
 
 #[tauri::command]
 pub async fn resume_task(task_id: String, state: State<'_, AppState>) -> Result<(), String> {
     let mut tree = state.task_tree.lock().await;
-    tree.request_resume(&task_id);
+    if !tree.request_resume(&task_id) {
+        return Err(format!("task '{}' not found", task_id));
+    }
     Ok(())
 }

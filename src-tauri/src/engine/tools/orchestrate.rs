@@ -243,12 +243,17 @@ impl OrchestrateTool {
             })
             .collect();
 
-        for node_id in stale_ids {
-            if let Some(n) = tree.get_orchestrate_node_mut(&node_id) {
+        // 在锁内批量修改状态
+        for node_id in &stale_ids {
+            if let Some(n) = tree.get_orchestrate_node_mut(node_id) {
                 n.status = OrchestrateStatus::Completed;
             }
-            cleaned.push(node_id.clone());
+        }
+        // 释放锁后再发送事件，避免死锁（事件消费者可能需要获取 task_tree 锁）
+        drop(tree);
 
+        for node_id in stale_ids {
+            cleaned.push(node_id.clone());
             let _ = ctx.event_tx.send(AgentEvent::OrchestrateNodeCompleted {
                 session_id: ctx.session_id.clone(),
                 node_id: node_id.clone(),

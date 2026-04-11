@@ -225,6 +225,8 @@ impl Tool for DispatchAgentTool {
 
             {
                 let mut tasks = bg_tasks.lock().await;
+                // 清理已完成的后台任务，防止 HashMap 无限增长
+                tasks.retain(|_, h| !h.is_finished());
                 tasks.insert(task_id.clone(), handle);
             }
 

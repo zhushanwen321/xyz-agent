@@ -176,9 +176,14 @@ pub fn load_history(path: &Path) -> Result<LoadHistoryResult, AppError> {
 
 /// 返回 SubAgent 任务的 sidechain JSONL 路径，惰性创建目录
 pub fn sidechain_path(data_dir: &Path, session_id: &str, task_id: &str) -> std::path::PathBuf {
-    let dir = data_dir.join(session_id).join("subagents");
-    std::fs::create_dir_all(&dir).ok();
-    dir.join(format!("{}.jsonl", task_id))
+    // 防止路径遍历：替换路径分隔符和 ..
+    let safe_session: String = session_id.chars().map(|c| if c == '/' || c == '\\' || c == '.' { '_' } else { c }).collect();
+    let safe_task: String = task_id.chars().map(|c| if c == '/' || c == '\\' || c == '.' { '_' } else { c }).collect();
+    let dir = data_dir.join(safe_session).join("subagents");
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        log::warn!("[jsonl] create_dir_all failed for sidechain: {e}");
+    }
+    dir.join(format!("{}.jsonl", safe_task))
 }
 
 /// 追加一条记录到 sidechain JSONL 文件
@@ -195,9 +200,13 @@ pub fn append_sidechain_entry(path: &Path, entry: &TranscriptEntry) -> Result<()
 
 /// 返回 orchestrate agent 的 JSONL 路径，惰性创建目录
 pub fn orchestrate_path(data_dir: &Path, session_id: &str, node_id: &str) -> std::path::PathBuf {
-    let dir = data_dir.join(session_id).join("orchestrate");
-    std::fs::create_dir_all(&dir).ok();
-    dir.join(format!("{}.jsonl", node_id))
+    let safe_session: String = session_id.chars().map(|c| if c == '/' || c == '\\' || c == '.' { '_' } else { c }).collect();
+    let safe_node: String = node_id.chars().map(|c| if c == '/' || c == '\\' || c == '.' { '_' } else { c }).collect();
+    let dir = data_dir.join(safe_session).join("orchestrate");
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        log::warn!("[jsonl] create_dir_all failed for orchestrate: {e}");
+    }
+    dir.join(format!("{}.jsonl", safe_node))
 }
 
 #[cfg(test)]
