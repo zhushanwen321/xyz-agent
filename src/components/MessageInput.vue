@@ -7,6 +7,7 @@ defineProps<{
 
 const emit = defineEmits<{
   send: [content: string]
+  cancel: []
 }>()
 
 const inputText = ref('')
@@ -62,9 +63,10 @@ function handleSend() {
         @blur="isFocused = false"
       />
 
-      <!-- 发送按钮 -->
+      <!-- 发送按钮 / 停止按钮 -->
       <button
-        :disabled="isStreaming || !inputText.trim()"
+        v-if="!isStreaming"
+        :disabled="!inputText.trim()"
         class="flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1 font-mono text-xs text-text-tertiary transition-colors hover:bg-accent-muted hover:text-accent disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-text-tertiary"
         @click="handleSend"
       >
@@ -82,6 +84,21 @@ function handleSend() {
           <path d="m12 5 7 7-7 7" />
         </svg>
         <span>Enter</span>
+      </button>
+      <button
+        v-else
+        class="flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1 font-mono text-xs text-red-400 transition-colors hover:bg-red-500/10 hover:text-red-300"
+        @click="emit('cancel')"
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          class="h-3.5 w-3.5"
+          viewBox="0 0 24 24"
+          fill="currentColor"
+        >
+          <rect x="6" y="6" width="12" height="12" rx="1" />
+        </svg>
+        <span>Stop</span>
       </button>
     </div>
   </div>

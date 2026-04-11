@@ -67,6 +67,10 @@ export async function killTask(taskId: string): Promise<void> {
   return invoke<void>('kill_task', { taskId })
 }
 
+export async function cancelMessage(sessionId: string): Promise<void> {
+  return invoke<void>('cancel_message', { sessionId })
+}
+
 export async function pauseTask(taskId: string): Promise<void> {
   return invoke<void>('pause_task', { taskId })
 }

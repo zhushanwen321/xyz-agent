@@ -1,5 +1,5 @@
 import { ref, onMounted, onUnmounted, watch, type Ref } from 'vue'
-import { sendMessage, getHistory, onAgentEvent, isTauri } from '../lib/tauri'
+import { sendMessage, cancelMessage, getHistory, onAgentEvent, isTauri } from '../lib/tauri'
 import type {
   AgentEvent,
   AssistantContentBlock,
@@ -209,6 +209,15 @@ export function useChat(sessionId: Ref<string | null>) {
     }
   }
 
+  async function cancel() {
+    if (!sessionId.value || !isStreaming.value) return
+    try {
+      await cancelMessage(sessionId.value)
+    } catch (err) {
+      console.warn('[useChat] cancel failed:', err)
+    }
+  }
+
   async function loadHistory(sid: string) {
     const result = await getHistory(sid)
     const msgs: ChatMessage[] = []
@@ -286,5 +295,5 @@ export function useChat(sessionId: Ref<string | null>) {
     }
   })
 
-  return { messages, streamingText, isStreaming, tokenUsage, send, currentTurnSegments, taskNodes, orchestrateNodes, toolUseToTaskId }
+  return { messages, streamingText, isStreaming, tokenUsage, send, cancel, currentTurnSegments, taskNodes, orchestrateNodes, toolUseToTaskId }
 }

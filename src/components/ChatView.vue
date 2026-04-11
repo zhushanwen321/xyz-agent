@@ -16,7 +16,7 @@ const props = defineProps<{
 }>()
 
 const sessionIdRef = computed(() => props.currentSessionId) as Ref<string | null>
-const { messages, isStreaming, tokenUsage, send, currentTurnSegments, taskNodes, orchestrateNodes, toolUseToTaskId } = useChat(sessionIdRef)
+const { messages, isStreaming, tokenUsage, send, cancel, currentTurnSegments, taskNodes, orchestrateNodes, toolUseToTaskId } = useChat(sessionIdRef)
 const { createNewSession } = useSession()
 const {
   selectMode, selectedIds, selectedCount, copied,
@@ -113,6 +113,10 @@ async function handleSend(content: string) {
     await nextTick()
   }
   send(content)
+}
+
+function handleCancel() {
+  cancel()
 }
 </script>
 
@@ -212,6 +216,7 @@ async function handleSend(content: string) {
       <MessageInput
         :is-streaming="isStreaming"
         @send="handleSend"
+        @cancel="handleCancel"
       />
 
       <StatusBar
