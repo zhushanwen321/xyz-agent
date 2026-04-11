@@ -25,7 +25,6 @@ fn test_task_node_serialization_roundtrip() {
         budget: TaskBudget::default(),
         usage: TaskUsage::default(),
         children_ids: Vec::new(),
-        kill_requested: false,
         pause_requested: false,
         result_summary: None,
         result_injected: false,
@@ -65,7 +64,6 @@ fn test_orchestrate_node_serialization_roundtrip() {
         }],
         reuse_count: 2,
         last_active_at: "2026-04-10T01:00:00Z".to_string(),
-        kill_requested: false,
         pause_requested: false,
         result_injected: false,
         result_summary: None,
@@ -154,8 +152,8 @@ fn test_request_kill_tree_cascades_to_children() {
     let cid = tree.all_orchestrate_nodes()[1].node_id.clone();
 
     tree.request_kill_tree(&pid);
-    assert!(tree.get_orchestrate_node(&pid).unwrap().kill_requested);
-    assert!(tree.get_orchestrate_node(&cid).unwrap().kill_requested);
+    assert!(tree.should_kill(&pid));
+    assert!(tree.should_kill(&cid));
 
     // nonexistent returns false
     assert!(!tree.request_kill_tree("nope"));

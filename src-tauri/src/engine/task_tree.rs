@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -141,7 +142,6 @@ pub struct TaskNode {
     pub budget: TaskBudget,
     pub usage: TaskUsage,
     pub children_ids: Vec<String>,
-    pub kill_requested: bool,
     pub pause_requested: bool,
     /// 子 Agent 执行完成后的结果摘要
     pub result_summary: Option<String>,
@@ -169,7 +169,6 @@ pub struct OrchestrateNode {
     pub feedback_history: Vec<FeedbackMessage>,
     pub reuse_count: u32,
     pub last_active_at: String,
-    pub kill_requested: bool,
     pub pause_requested: bool,
     /// 结果是否已注入到父 Agent 对话中
     pub result_injected: bool,
@@ -188,6 +187,8 @@ pub struct TaskTree {
     orchestrate_nodes: HashMap<String, OrchestrateNode>,
     /// 每个 task node 的 pause 唤醒通知器，resume/kill 时触发
     pause_notifiers: HashMap<String, Arc<tokio::sync::Notify>>,
+    /// 每个节点的 CancellationToken，替代 kill_requested（CancellationToken 不可序列化，不能放在 node struct 上）
+    cancel_tokens: HashMap<String, CancellationToken>,
 }
 
 impl TaskTree {
@@ -196,6 +197,7 @@ impl TaskTree {
             task_nodes: HashMap::new(),
             orchestrate_nodes: HashMap::new(),
             pause_notifiers: HashMap::new(),
+            cancel_tokens: HashMap::new(),
         }
     }
 
@@ -224,13 +226,13 @@ impl TaskTree {
             budget: budget.unwrap_or_default(),
             usage: TaskUsage::default(),
             children_ids: Vec::new(),
-            kill_requested: false,
             pause_requested: false,
             result_summary: None,
             result_injected: false,
         };
         let id = node.task_id.clone();
         self.task_nodes.insert(id.clone(), node);
+        self.cancel_tokens.insert(id.clone(), CancellationToken::new());
         self.task_nodes.get(&id).unwrap()
     }
 
@@ -263,14 +265,11 @@ impl TaskTree {
     }
 
     pub fn request_kill(&mut self, id: &str) -> bool {
-        if let Some(node) = self.task_nodes.get_mut(id) {
-            node.kill_requested = true;
+        if let Some(token) = self.cancel_tokens.get(id) {
+            token.cancel();
             if let Some(notify) = self.pause_notifiers.get(id) {
                 notify.notify_one();
             }
-            true
-        } else if let Some(node) = self.orchestrate_nodes.get_mut(id) {
-            node.kill_requested = true;
             true
         } else {
             false
@@ -305,8 +304,7 @@ impl TaskTree {
     }
 
     pub fn should_kill(&self, id: &str) -> bool {
-        self.task_nodes.get(id).map_or(false, |n| n.kill_requested)
-            || self.orchestrate_nodes.get(id).map_or(false, |n| n.kill_requested)
+        self.cancel_tokens.get(id).map_or(false, |t| t.is_cancelled())
     }
 
     pub fn should_pause(&self, id: &str) -> bool {
@@ -320,6 +318,11 @@ impl TaskTree {
             .entry(id.to_string())
             .or_insert_with(|| Arc::new(tokio::sync::Notify::new()))
             .clone()
+    }
+
+    /// 获取节点的 CancellationToken
+    pub fn get_cancel_token(&self, id: &str) -> Option<&CancellationToken> {
+        self.cancel_tokens.get(id)
     }
 
     pub fn create_orchestrate_node(
@@ -354,13 +357,13 @@ impl TaskTree {
             feedback_history: Vec::new(),
             reuse_count: 0,
             last_active_at: Utc::now().to_rfc3339(),
-            kill_requested: false,
             pause_requested: false,
             result_injected: false,
             result_summary: None,
         };
         let id = node.node_id.clone();
         self.orchestrate_nodes.insert(id.clone(), node);
+        self.cancel_tokens.insert(id.clone(), CancellationToken::new());
         // 自动维护父节点的 children_ids
         if let Some(ref pid) = pid {
             if let Some(parent) = self.orchestrate_nodes.get_mut(pid) {
@@ -378,7 +381,7 @@ impl TaskTree {
         self.orchestrate_nodes.get_mut(id)
     }
 
-    /// 级联终止：设置目标节点及其所有后代的 kill_requested
+    /// 级联终止：cancel 目标节点及其所有后代的 CancellationToken
     pub fn request_kill_tree(&mut self, id: &str) -> bool {
         let mut found = false;
         let mut queue = vec![id.to_string()];
@@ -387,11 +390,15 @@ impl TaskTree {
         while let Some(current_id) = queue.pop() {
             let children = if let Some(node) = self.orchestrate_nodes.get_mut(&current_id) {
                 found = true;
-                node.kill_requested = true;
+                if let Some(token) = self.cancel_tokens.get(&current_id) {
+                    token.cancel();
+                }
                 node.children_ids.clone()
             } else if let Some(node) = self.task_nodes.get_mut(&current_id) {
                 found = true;
-                node.kill_requested = true;
+                if let Some(token) = self.cancel_tokens.get(&current_id) {
+                    token.cancel();
+                }
                 notified_ids.push(current_id.clone());
                 node.children_ids.clone()
             } else {
