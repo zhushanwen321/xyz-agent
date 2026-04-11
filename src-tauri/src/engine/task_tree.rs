@@ -173,6 +173,14 @@ pub struct OrchestrateNode {
     pub pause_requested: bool,
     /// 结果是否已注入到父 Agent 对话中
     pub result_injected: bool,
+    pub result_summary: Option<String>,
+}
+
+/// 异步任务结果，用于注入到下一轮对话
+pub struct AsyncTaskResult {
+    pub task_id: String,
+    pub description: String,
+    pub result_summary: String,
 }
 
 pub struct TaskTree {
@@ -340,6 +348,7 @@ impl TaskTree {
             kill_requested: false,
             pause_requested: false,
             result_injected: false,
+            result_summary: None,
         };
         let id = node.node_id.clone();
         self.orchestrate_nodes.insert(id.clone(), node);
@@ -400,36 +409,67 @@ impl TaskTree {
         self.orchestrate_nodes.values().collect()
     }
 
-    /// 设置 task node 的结果摘要并标记为完成
+    /// 设置节点结果摘要（同时查找 task_nodes 和 orchestrate_nodes）
     pub fn set_task_result(&mut self, task_id: &str, summary: String) -> bool {
         if let Some(node) = self.task_nodes.get_mut(task_id) {
             node.result_summary = Some(summary);
-            true
-        } else {
-            false
+            return true;
         }
+        if let Some(node) = self.orchestrate_nodes.get_mut(task_id) {
+            node.result_summary = Some(summary);
+            return true;
+        }
+        false
     }
 
-    /// 查询指定 session 中已完成但未注入结果的任务
-    pub fn completed_not_injected(&self, session_id: &str) -> Vec<&TaskNode> {
-        self.task_nodes
+    /// 查询指定 session 中已完成但未注入结果的任务（包含 task_nodes 和 orchestrate_nodes）
+    pub fn completed_not_injected(&self, session_id: &str) -> Vec<AsyncTaskResult> {
+        let tasks: Vec<AsyncTaskResult> = self.task_nodes
             .values()
             .filter(|n| {
                 n.session_id == session_id
                     && matches!(n.status, TaskStatus::Completed)
                     && !n.result_injected
+                    && n.result_summary.is_some()
             })
-            .collect()
+            .map(|n| AsyncTaskResult {
+                task_id: n.task_id.clone(),
+                description: n.description.clone(),
+                result_summary: n.result_summary.clone().unwrap_or_default(),
+            })
+            .collect();
+
+        let orch: Vec<AsyncTaskResult> = self.orchestrate_nodes
+            .values()
+            .filter(|n| {
+                n.session_id == session_id
+                    && matches!(n.status, OrchestrateStatus::Completed)
+                    && !n.result_injected
+                    && n.result_summary.is_some()
+            })
+            .map(|n| AsyncTaskResult {
+                task_id: n.node_id.clone(),
+                description: n.description.clone(),
+                result_summary: n.result_summary.clone().unwrap_or_default(),
+            })
+            .collect();
+
+        let mut all = tasks;
+        all.extend(orch);
+        all
     }
 
-    /// 标记 task node 的结果已注入
+    /// 标记结果已注入（同时查找 task_nodes 和 orchestrate_nodes）
     pub fn mark_result_injected(&mut self, task_id: &str) -> bool {
         if let Some(node) = self.task_nodes.get_mut(task_id) {
             node.result_injected = true;
-            true
-        } else {
-            false
+            return true;
         }
+        if let Some(node) = self.orchestrate_nodes.get_mut(task_id) {
+            node.result_injected = true;
+            return true;
+        }
+        false
     }
 }
 

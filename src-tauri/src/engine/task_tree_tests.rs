@@ -68,6 +68,7 @@ fn test_orchestrate_node_serialization_roundtrip() {
         kill_requested: false,
         pause_requested: false,
         result_injected: false,
+        result_summary: None,
     };
     let json = serde_json::to_string(&node).unwrap();
     assert!(json.contains("\"type\":\"orchestrate_node\""));

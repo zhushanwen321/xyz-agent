@@ -135,6 +135,56 @@ pub async fn send_message(
         conversation_summary,
     };
 
+    // 异步结果注入：将已完成的后台任务结果注入到 history 中
+    {
+        let tree = state.task_tree.lock().await;
+        let pending_results = tree.completed_not_injected(&session_id);
+        drop(tree);
+
+        if !pending_results.is_empty() {
+            let mut injected_ids = Vec::new();
+            for result in &pending_results {
+                let text = format!(
+                    "[Background] task completed: {}\n{}",
+                    result.description,
+                    result.result_summary.chars().take(2000).collect::<String>()
+                );
+                let inject_entry = TranscriptEntry::Assistant {
+                    uuid: uuid::Uuid::new_v4().to_string(),
+                    parent_uuid: None,
+                    timestamp: chrono::Utc::now().to_rfc3339(),
+                    session_id: session_id.clone(),
+                    content: vec![AssistantContentBlock::Text { text }],
+                    usage: None,
+                };
+                crate::store::jsonl::append_entry(&session_path, &inject_entry)
+                    .map_err(|e| e.to_string())?;
+                history.push(inject_entry);
+
+                // 再加一条 user 消息确保交替性
+                let sys_entry = TranscriptEntry::User {
+                    uuid: uuid::Uuid::new_v4().to_string(),
+                    parent_uuid: None,
+                    timestamp: chrono::Utc::now().to_rfc3339(),
+                    session_id: session_id.clone(),
+                    content: vec![UserContentBlock::Text {
+                        text: "[System: 以上是异步任务结果，请结合用户消息处理]".into(),
+                    }],
+                };
+                crate::store::jsonl::append_entry(&session_path, &sys_entry)
+                    .map_err(|e| e.to_string())?;
+                history.push(sys_entry);
+
+                injected_ids.push(result.task_id.clone());
+            }
+
+            let mut tree = state.task_tree.lock().await;
+            for id in &injected_ids {
+                tree.mark_result_injected(id);
+            }
+        }
+    }
+
     let event_tx_for_turn = event_tx.clone();
     let tool_ctx = ToolExecutionContext {
         task_tree: state.task_tree.clone(),
