@@ -8,7 +8,7 @@ use crate::engine::context::prompt::{DynamicContext, PromptManager};
 use crate::engine::context::{ContextConfig, ContextManager, TokenBudget, trim_old_tool_results};
 use crate::engine::llm::LlmProvider;
 use crate::engine::tools::{PermissionContext, ToolExecutionContext, ToolRegistry, execute_batch};
-use crate::types::{AgentEvent, AppError, TranscriptEntry, UserContentBlock};
+use crate::types::{AgentEvent, AppError, AssistantContentBlock, TranscriptEntry, UserContentBlock};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -314,6 +314,20 @@ impl AgentLoop {
                 content: user_blocks,
             });
             current_parent = Some(uuid);
+        }
+
+        // cancel 后清理：移除尾部含 ToolUse 但无对应 ToolResult 的 Assistant 条目，
+        // 避免 entries 序列化到 JSONL 后下次加载时因缺少 tool_result 导致 API 报错
+        if cancel_token.is_cancelled() {
+            while let Some(TranscriptEntry::Assistant { content, .. }) = entries.last() {
+                let has_tool_use = content.iter().any(|b| matches!(b, AssistantContentBlock::ToolUse { .. }));
+                if has_tool_use {
+                    log::info!("[agent_loop] removing incomplete Assistant entry with ToolUse after cancel");
+                    entries.pop();
+                } else {
+                    break;
+                }
+            }
         }
 
         Ok(entries)

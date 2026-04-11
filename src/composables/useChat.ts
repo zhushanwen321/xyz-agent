@@ -211,6 +211,18 @@ export function useChat(sessionId: Ref<string | null>) {
 
   async function cancel() {
     if (!sessionId.value || !isStreaming.value) return
+    // 立即更新 UI 状态，不等待后端 TurnComplete 事件
+    if (currentTurnSegments.value.length > 0) {
+      messages.value.push({
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: '',
+        segments: [...currentTurnSegments.value],
+        timestamp: new Date().toISOString(),
+      })
+      currentTurnSegments.value = []
+    }
+    isStreaming.value = false
     try {
       await cancelMessage(sessionId.value)
     } catch (err) {

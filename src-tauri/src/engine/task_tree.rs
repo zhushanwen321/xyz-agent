@@ -188,6 +188,7 @@ pub struct TaskTree {
     /// 每个 task node 的 pause 唤醒通知器，resume/kill 时触发
     pause_notifiers: HashMap<String, Arc<tokio::sync::Notify>>,
     /// 每个节点的 CancellationToken，替代 kill_requested（CancellationToken 不可序列化，不能放在 node struct 上）
+    /// 注意：cancel_tokens 随节点生命周期存在，不做主动清理。session 期间节点数量有限（通常 <100），可接受。
     cancel_tokens: HashMap<String, CancellationToken>,
 }
 

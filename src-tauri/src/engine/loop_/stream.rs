@@ -95,6 +95,8 @@ pub(super) async fn consume_stream(
                     content: text,
                     usage: TokenUsage { input_tokens: 0, output_tokens: 0 },
                 });
+                // 区分用户主动取消和正常结束，避免上层误判为 tool_use 循环
+                stop_reason = "cancelled".to_string();
                 break;
             }
             item = stream.next() => {
@@ -207,6 +209,8 @@ pub(super) async fn consume_stream(
         }
     }
 
+    // 仅在流自然结束（stream.next() 返回 None）且未设置 stop_reason 时回退
+    // "cancelled" 和正常 stop_reason（"end_turn"/"tool_use"）不应被覆盖
     if stop_reason.is_empty() {
         stop_reason = "end_turn".to_string();
     }
@@ -277,5 +281,50 @@ mod tests {
         assert!(matches!(&result.content_blocks[1], AssistantContentBlock::ToolUse { id, name, .. } if id == "toolu_1" && name == "Read"));
         assert_eq!(result.tool_calls.len(), 1);
         assert_eq!(result.stop_reason, "tool_use");
+    }
+
+    /// CancellationToken 中断测试：流挂起时触发 cancel，验证 stop_reason 和缓冲区 flush
+    #[tokio::test]
+    async fn test_consume_stream_cancelled() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        // 构造一个先发 TextDelta 再挂起（直到 cancel）的流
+        let sent_text = Arc::new(AtomicBool::new(false));
+        let stream = futures::stream::unfold(
+            sent_text.clone(),
+            |sent| async move {
+                if !sent.swap(true, Ordering::Relaxed) {
+                    Some((
+                        Ok(LlmStreamEvent::TextDelta { delta: "partial".to_string() }),
+                        sent,
+                    ))
+                } else {
+                    // 挂起直到 cancel 导致 select! 中断
+                    std::future::pending().await
+                }
+            },
+        );
+        let stream: Pin<Box<dyn futures::Stream<Item = Result<LlmStreamEvent, AppError>> + Send>> =
+            Box::pin(stream);
+
+        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let cancel_token = Arc::new(tokio_util::sync::CancellationToken::new());
+        let cancel_clone = cancel_token.clone();
+
+        let handle = tokio::spawn(async move {
+            consume_stream(stream, &event_tx, "test-session", &cancel_clone).await
+        });
+
+        // 等 TextDelta 被处理
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        cancel_token.cancel();
+
+        let result = handle.await.unwrap().unwrap();
+        assert_eq!(result.stop_reason, "cancelled");
+        assert_eq!(result.content_blocks.len(), 1);
+        assert!(matches!(&result.content_blocks[0], AssistantContentBlock::Text { text } if text == "partial"));
+        assert_eq!(result.usage.input_tokens, 0);
+        assert_eq!(result.usage.output_tokens, 0);
     }
 }

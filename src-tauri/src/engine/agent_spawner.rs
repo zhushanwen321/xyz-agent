@@ -192,6 +192,8 @@ async fn run_subagent(
     };
 
     // 从 TaskTree 获取子 Agent 的 CancellationToken
+    // 调用方（dispatch_agent/orchestrate）在 spawn_agent 之前已通过 set_cancel_token 写入，
+    // tokio::spawn 保证此处在 set 之后执行
     let cancel_token = {
         let tree = task_tree.lock().await;
         tree.get_cancel_token(&config.task_id)

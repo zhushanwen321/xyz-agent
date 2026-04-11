@@ -235,6 +235,8 @@ impl Tool for OrchestrateTool {
                 Some(budget.clone()),
             );
             // 用 parent token 派生 child token，实现级联取消
+            // 安全性：set_cancel_token 在 spawn_agent（run_subagent → get_cancel_token）之前执行，
+            // 因为 spawn_agent 的 tokio::spawn 会在当前 .await 点之后才被调度
             let child_token = ctx.parent_cancel_token
                 .as_ref()
                 .map(|p| p.child_token())

@@ -218,7 +218,7 @@ impl Tool for DispatchAgentTool {
                 Some("fork") => AgentMode::Fork,
                 _ => AgentMode::Preset,
             };
-            tree.create_task_node(
+            let node = tree.create_task_node(
                 None,
                 &ctx.session_id,
                 &description,
@@ -226,17 +226,15 @@ impl Tool for DispatchAgentTool {
                 if subagent_type.is_empty() { None } else { Some(subagent_type.clone()) },
                 Some(budget.clone()),
             );
+            let task_node_id = node.task_id.clone();
             // 用 parent token 派生 child token，实现级联取消
-            if let Some(node) = tree.get_task_node(
-                &tree.all_task_nodes().last().map(|n| n.task_id.clone()).unwrap_or_default()
-            ) {
-                let tid = node.task_id.clone();
-                let child_token = ctx.parent_cancel_token
-                    .as_ref()
-                    .map(|p| p.child_token())
-                    .unwrap_or_else(tokio_util::sync::CancellationToken::new);
-                tree.set_cancel_token(tid, child_token);
-            }
+            // 安全性：set_cancel_token 在 spawn_agent（run_subagent → get_cancel_token）之前执行，
+            // 因为 spawn_agent 的 tokio::spawn 会在当前 .await 点之后才被调度
+            let child_token = ctx.parent_cancel_token
+                .as_ref()
+                .map(|p| p.child_token())
+                .unwrap_or_else(tokio_util::sync::CancellationToken::new);
+            tree.set_cancel_token(task_node_id, child_token);
         }
 
         let tool_use_id = ctx.current_assistant_content.iter().rev()

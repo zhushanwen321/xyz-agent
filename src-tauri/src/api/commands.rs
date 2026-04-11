@@ -313,10 +313,10 @@ pub async fn cancel_message(
     session_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let found = state.cancel_tokens.lock().unwrap().get(&session_id).map(|t| {
-        t.cancel();
-    }).is_some();
-    if !found {
+    let token = state.cancel_tokens.lock().unwrap().get(&session_id).cloned();
+    if let Some(token) = token {
+        token.cancel();
+    } else {
         return Err(format!("no active session '{session_id}'"));
     }
     Ok(())
