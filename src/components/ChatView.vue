@@ -2,19 +2,34 @@
 import { ref, watch, nextTick, computed, onMounted, type Ref } from 'vue'
 import { useChat } from '../composables/useChat'
 import { useSession } from '../composables/useSession'
-import { getCurrentModel, listTools, isTauri } from '../lib/tauri'
+import { getCurrentModel, listTools, isTauri, killTask } from '../lib/tauri'
 import MessageBubble from './MessageBubble.vue'
 import MessageInput from './MessageInput.vue'
 import EmptyState from './EmptyState.vue'
 import StatusBar from './StatusBar.vue'
+import SubAgentSidebar from './SubAgentSidebar.vue'
 
 const props = defineProps<{
   currentSessionId: string | null
 }>()
 
 const sessionIdRef = computed(() => props.currentSessionId) as Ref<string | null>
-const { messages, isStreaming, tokenUsage, send, currentTurnSegments } = useChat(sessionIdRef)
+const { messages, isStreaming, tokenUsage, send, currentTurnSegments, taskNodes, orchestrateNodes } = useChat(sessionIdRef)
 const { createNewSession } = useSession()
+
+// 有子任务时显示右侧 sidebar
+const showSidebar = computed(() =>
+  taskNodes.value.size > 0 || orchestrateNodes.value.size > 0
+)
+
+// 活跃（running 状态）的子任务数，传给 StatusBar
+const activeTaskCount = computed(() =>
+  [...taskNodes.value.values()].filter(t => t.status === 'running').length
+)
+
+async function handleKillTask(taskId: string) {
+  try { await killTask(taskId) } catch (e) { console.warn('[ChatView] kill failed:', e) }
+}
 
 // 流式时合并 currentTurnSegments 到最后一条 assistant 消息
 const displayMessages = computed(() => {
@@ -79,32 +94,45 @@ async function handleSend(content: string) {
 </script>
 
 <template>
-  <div class="flex h-full flex-1 flex-col bg-bg-surface">
-    <!-- 消息区域 -->
-    <div ref="scrollContainer" class="flex-1 overflow-y-auto px-2 py-4">
-      <EmptyState v-if="messages.length === 0" />
+  <div class="flex h-full flex-1">
+    <!-- 主聊天区域 -->
+    <div class="flex h-full flex-1 flex-col bg-bg-surface">
+      <!-- 消息区域 -->
+      <div ref="scrollContainer" class="flex-1 overflow-y-auto px-2 py-4">
+        <EmptyState v-if="messages.length === 0" />
 
-      <div v-else class="space-y-2">
-        <MessageBubble
-          v-for="msg in displayMessages"
-          :key="msg.id"
-          :message="msg"
-          :is-streaming="msg.isStreaming"
-        />
+        <div v-else class="space-y-2">
+          <MessageBubble
+            v-for="msg in displayMessages"
+            :key="msg.id"
+            :message="msg"
+            :is-streaming="msg.isStreaming"
+            :task-nodes="taskNodes"
+          />
+        </div>
       </div>
+
+      <MessageInput
+        :is-streaming="isStreaming"
+        @send="handleSend"
+      />
+
+      <StatusBar
+        :is-streaming="isStreaming"
+        :model-name="modelName"
+        :input-tokens="tokenUsage.inputTokens"
+        :output-tokens="tokenUsage.outputTokens"
+        :tool-count="toolCount"
+        :active-task-count="activeTaskCount"
+      />
     </div>
 
-    <MessageInput
-      :is-streaming="isStreaming"
-      @send="handleSend"
-    />
-
-    <StatusBar
-      :is-streaming="isStreaming"
-      :model-name="modelName"
-      :input-tokens="tokenUsage.inputTokens"
-      :output-tokens="tokenUsage.outputTokens"
-      :tool-count="toolCount"
+    <!-- 右侧 SubAgent Sidebar -->
+    <SubAgentSidebar
+      v-if="showSidebar"
+      :task-nodes="taskNodes"
+      :orchestrate-nodes="orchestrateNodes"
+      @kill-task="handleKillTask"
     />
   </div>
 </template>

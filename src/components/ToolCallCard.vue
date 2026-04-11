@@ -1,11 +1,24 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { ToolCallDisplay } from '../types'
+import type { ToolCallDisplay, TaskNode } from '../types'
 import { getToolDangerLevel } from '../types'
+import SubAgentCard from './SubAgentCard.vue'
 
 const props = defineProps<{
   toolCall: ToolCallDisplay
+  taskNodes: Map<string, TaskNode>
 }>()
+
+// dispatch_agent 工具调用时显示 SubAgentCard 替代默认渲染
+const isDispatchAgent = computed(() => props.toolCall.tool_name === 'dispatch_agent')
+const dispatchTask = computed(() => {
+  if (!isDispatchAgent.value) return null
+  const input = props.toolCall.input as Record<string, unknown> | null
+  if (!input) return null
+  const taskId = input.task_id as string | undefined
+  if (taskId) return props.taskNodes.get(taskId) ?? null
+  return null
+})
 
 const dangerLevel = computed(() => getToolDangerLevel(props.toolCall.tool_name))
 
@@ -46,7 +59,12 @@ const statusLabel = computed(() => {
 </script>
 
 <template>
+  <!-- dispatch_agent：用 SubAgentCard 替代默认渲染 -->
+  <SubAgentCard v-if="isDispatchAgent && dispatchTask" :task="dispatchTask" />
+
+  <!-- 其他工具调用：保持原有渲染 -->
   <div
+    v-else
     class="rounded-md border border-border-default border-l-[3px] bg-bg-elevated text-[13px]"
     :class="colors.border"
   >

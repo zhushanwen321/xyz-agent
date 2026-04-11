@@ -8,6 +8,7 @@ const props = defineProps<{
   inputTokens: number
   outputTokens: number
   toolCount: number
+  activeTaskCount: number
 }>()
 
 const version = __APP_VERSION__
@@ -54,6 +55,10 @@ const totalTokens = computed(() => props.inputTokens + props.outputTokens)
     <!-- 右: 工具数 + 版本 -->
     <div class="flex items-center gap-3">
       <span>{{ toolCount }} tools</span>
+      <template v-if="activeTaskCount > 0">
+        <span class="text-border-default">|</span>
+        <span class="text-blue-400">{{ activeTaskCount }} task{{ activeTaskCount > 1 ? 's' : '' }}</span>
+      </template>
       <span class="text-border-default">|</span>
       <span>v{{ version }}</span>
     </div>

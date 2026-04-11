@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import MarkdownIt from 'markdown-it'
-import type { ChatMessage, AssistantSegment } from '../types'
+import type { ChatMessage, AssistantSegment, TaskNode } from '../types'
 import ToolCallCard from './ToolCallCard.vue'
 
 const props = defineProps<{
   message: ChatMessage
   isStreaming?: boolean
+  taskNodes: Map<string, TaskNode>
 }>()
 
 const md = new MarkdownIt({
@@ -67,7 +68,7 @@ function renderMarkdown(text: string): string {
 
           <!-- tool segment -->
           <div v-else-if="seg.type === 'tool'" class="mb-2">
-            <ToolCallCard :tool-call="seg.call" />
+            <ToolCallCard :tool-call="seg.call" :task-nodes="taskNodes" />
           </div>
         </template>
 
