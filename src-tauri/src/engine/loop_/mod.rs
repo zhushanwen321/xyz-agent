@@ -45,6 +45,7 @@ impl AgentLoop {
         task_tree: Option<Arc<tokio::sync::Mutex<crate::engine::task_tree::TaskTree>>>,
         node_id: Option<String>,
         mut tool_ctx: Option<ToolExecutionContext>,
+        api_messages_override: Option<Vec<serde_json::Value>>,
     ) -> Result<Vec<TranscriptEntry>, AppError> {
         let session_id = &self.session_id;
         let max_turns: usize = agent_config.max_turns as usize;
@@ -88,7 +89,10 @@ impl AgentLoop {
             all.extend(entries.iter().cloned());
 
             let estimated = context_manager.token_budget.estimate_entries(&all);
-            let mut api_messages = history::history_to_api_messages(&all);
+            let mut api_messages = match api_messages_override {
+                Some(ref msgs) => msgs.clone(),
+                None => history::history_to_api_messages(&all),
+            };
 
             if context_manager.needs_compact(estimated) {
                 log::info!(
@@ -324,7 +328,7 @@ mod tests {
         let agent_loop = AgentLoop::new(provider, "test-session".into(), "test-model".into());
 
         let entries = agent_loop
-            .run_turn("read test.txt".into(), vec![], None, event_tx, &registry, &perms, &prompt_manager, &dynamic_context, &test_agent_config(), None, None, None, None)
+            .run_turn("read test.txt".into(), vec![], None, event_tx, &registry, &perms, &prompt_manager, &dynamic_context, &test_agent_config(), None, None, None, None, None)
             .await
             .unwrap();
 
@@ -350,7 +354,7 @@ mod tests {
         let agent_loop = AgentLoop::new(provider, "test-session".into(), "test-model".into());
 
         let entries = agent_loop
-            .run_turn("hello".into(), vec![], None, event_tx, &registry, &perms, &prompt_manager, &dynamic_context, &test_agent_config(), None, None, None, None)
+            .run_turn("hello".into(), vec![], None, event_tx, &registry, &perms, &prompt_manager, &dynamic_context, &test_agent_config(), None, None, None, None, None)
             .await
             .unwrap();
 

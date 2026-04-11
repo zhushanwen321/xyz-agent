@@ -275,38 +275,6 @@ impl Tool for DispatchAgentTool {
     }
 }
 
-/// 事件通道桥接：将子 Agent 的事件转发到主 Agent，带节流
-#[allow(dead_code)]
-pub fn bridge_events(
-    sub_rx: tokio::sync::mpsc::UnboundedReceiver<AgentEvent>,
-    main_tx: tokio::sync::mpsc::UnboundedSender<AgentEvent>,
-    _task_id: String,
-    _session_id: String,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        let mut rx = sub_rx;
-        let mut last_progress = Instant::now();
-        let throttle = Duration::from_secs(2);
-
-        while let Some(event) = rx.recv().await {
-            match &event {
-                AgentEvent::TaskProgress { .. } => {
-                    if last_progress.elapsed() >= throttle {
-                        last_progress = Instant::now();
-                        let _ = main_tx.send(event);
-                    }
-                }
-                AgentEvent::TaskCompleted { .. }
-                | AgentEvent::BudgetWarning { .. }
-                | AgentEvent::TaskFeedback { .. } => {
-                    let _ = main_tx.send(event);
-                }
-                _ => {}
-            }
-        }
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

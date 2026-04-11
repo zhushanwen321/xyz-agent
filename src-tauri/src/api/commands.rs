@@ -163,6 +163,7 @@ pub async fn send_message(
             None,
             None,
             Some(tool_ctx),
+            None,
         )
         .await;
 
