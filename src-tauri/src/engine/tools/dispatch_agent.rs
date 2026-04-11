@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::engine::task_tree::*;
 use crate::engine::tools::{Tool, ToolExecutionContext, ToolResult};
@@ -130,7 +130,7 @@ impl Tool for DispatchAgentTool {
             .as_str()
             .unwrap_or("")
             .to_string();
-        let _is_sync = input["sync"].as_bool().unwrap_or(true);
+        let is_sync = input["sync"].as_bool().unwrap_or(true);
 
         // 查找模板（preset 模式必须指定）
         let _template = match ctx.agent_templates.get(&subagent_type) {
@@ -169,40 +169,105 @@ impl Tool for DispatchAgentTool {
             },
         });
 
-        // P2-A: sync stub — 子 Agent 执行留到 P2-C AgentSpawner
-        let result: Result<String, String> = Err(
-            "dispatch_agent sync execution not yet implemented — pending AgentSpawner in P2-C".into(),
-        );
+        if is_sync {
+            // 同步模式：在当前任务中执行（stub — 等待 P2-C AgentSpawner）
+            let result: Result<String, String> = Err(
+                "dispatch_agent sync execution not yet implemented — pending AgentSpawner".into(),
+            );
 
-        let elapsed = start.elapsed().as_millis() as u64;
-        let status_str = match &result {
-            Ok(_) => "completed",
-            Err(_) => "failed",
-        };
+            let elapsed = start.elapsed().as_millis() as u64;
+            let status_str = if result.is_ok() { "completed" } else { "failed" };
 
-        // 发送 TaskCompleted 事件（即使失败也发送）
-        let _ = ctx.event_tx.send(AgentEvent::TaskCompleted {
-            session_id: ctx.session_id.clone(),
-            task_id: task_id.clone(),
-            status: status_str.into(),
-            result_summary: result
-                .as_deref()
-                .unwrap_or("error")
-                .chars()
-                .take(2000)
-                .collect(),
-            usage: TaskUsageSummary {
-                total_tokens: 0,
-                tool_uses: 0,
-                duration_ms: elapsed,
-            },
-        });
+            let _ = ctx.event_tx.send(AgentEvent::TaskCompleted {
+                session_id: ctx.session_id.clone(),
+                task_id: task_id.clone(),
+                status: status_str.into(),
+                result_summary: result
+                    .as_deref()
+                    .unwrap_or("error")
+                    .chars()
+                    .take(2000)
+                    .collect(),
+                usage: TaskUsageSummary {
+                    total_tokens: 0,
+                    tool_uses: 0,
+                    duration_ms: elapsed,
+                },
+            });
 
-        match result {
-            Ok(text) => ToolResult::Text(text),
-            Err(e) => ToolResult::Error(e),
+            match result {
+                Ok(text) => ToolResult::Text(text),
+                Err(e) => ToolResult::Error(e),
+            }
+        } else {
+            // 异步模式：后台执行，立即返回
+            let session_id = ctx.session_id.clone();
+            let event_tx = ctx.event_tx.clone();
+            let bg_tasks = ctx.background_tasks.clone();
+
+            let task_id_bg = task_id.clone();
+            let handle = tokio::spawn(async move {
+                // P2-B stub: 实际执行推迟到 AgentSpawner
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+                let _ = event_tx.send(AgentEvent::TaskCompleted {
+                    session_id: session_id.clone(),
+                    task_id: task_id_bg.clone(),
+                    status: "completed".into(),
+                    result_summary: "async stub — pending AgentSpawner implementation".into(),
+                    usage: TaskUsageSummary {
+                        total_tokens: 0,
+                        tool_uses: 0,
+                        duration_ms: 100,
+                    },
+                });
+            });
+
+            {
+                let mut tasks = bg_tasks.lock().await;
+                tasks.insert(task_id.clone(), handle);
+            }
+
+            ToolResult::Text(format!(
+                "<task_notification><task_id>{}</task_id><status>pending</status><message>Task started in background</message></task_notification>",
+                task_id
+            ))
         }
     }
+}
+
+/// 事件通道桥接：将子 Agent 的事件转发到主 Agent，带节流
+pub fn bridge_events(
+    sub_rx: tokio::sync::mpsc::UnboundedReceiver<AgentEvent>,
+    main_tx: tokio::sync::mpsc::UnboundedSender<AgentEvent>,
+    _task_id: String,
+    _session_id: String,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut rx = sub_rx;
+        let mut last_progress = Instant::now();
+        let throttle = Duration::from_secs(2);
+
+        while let Some(event) = rx.recv().await {
+            match &event {
+                // 转发 TaskProgress（throttled）
+                AgentEvent::TaskProgress { .. } => {
+                    if last_progress.elapsed() >= throttle {
+                        last_progress = Instant::now();
+                        let _ = main_tx.send(event);
+                    }
+                }
+                // 立即转发重要事件
+                AgentEvent::TaskCompleted { .. }
+                | AgentEvent::BudgetWarning { .. }
+                | AgentEvent::TaskFeedback { .. } => {
+                    let _ = main_tx.send(event);
+                }
+                // 丢弃高频事件（TextDelta 等）
+                _ => {}
+            }
+        }
+    })
 }
 
 #[cfg(test)]
@@ -253,5 +318,18 @@ mod tests {
             }],
         }];
         assert!(!is_in_fork_child(&normal));
+    }
+
+    #[tokio::test]
+    async fn async_dispatch_returns_notification() {
+        let tool = DispatchAgentTool;
+        let input = serde_json::json!({
+            "description": "test task",
+            "prompt": "do something",
+            "sync": false
+        });
+
+        let result = tool.call(input, None).await;
+        assert!(matches!(result, ToolResult::Error(ref e) if e.contains("requires ToolExecutionContext")));
     }
 }
