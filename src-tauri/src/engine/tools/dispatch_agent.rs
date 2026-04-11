@@ -70,16 +70,35 @@ impl Tool for DispatchAgentTool {
     }
 
     fn description(&self) -> &str {
-        "Launch a sub-agent to handle an independent task.\n\
+        "Launch a sub-agent to execute an independent task in isolation.\n\
          \n\
-         The sub-agent runs in isolation with its own context. Use it to:\n\
-         - Delegate independent work that can run in parallel\n\
-         - Isolate long-running tasks from the main conversation\n\
+         The sub-agent runs with its own context and has access to Bash, Read, Write tools.\n\
+         Results are returned as text (sync) or tracked via task_id (async).\n\
          \n\
-         The sub-agent has access to the same tools (Bash, Read, Write).\n\
-         Set sync=true to block until completion, sync=false for fire-and-forget.\n\
+         Usage:\n\
+         - sync=true (default): block until the sub-agent finishes, return its output.\n\
+         - sync=false: launch in background, continue immediately. Returns a task_id for tracking.\n\
+         - Multiple dispatch_agent calls can be made in parallel for independent tasks.\n\
          \n\
-         Example: {\"description\": \"list files in src\", \"prompt\": \"Run ls -la in the src/ directory and report the results\", \"sync\": true}"
+         Mode:\n\
+         - 'preset' (default): fresh agent with no conversation history.\n\
+         - 'fork': clones current conversation context into the sub-agent.\n\
+         \n\
+         When to use dispatch_agent vs orchestrate:\n\
+         - dispatch_agent: simple, independent tasks that do NOT need decomposition into sub-tasks.\n\
+         - orchestrate: complex tasks that may need recursive decomposition (task → sub-tasks → sub-sub-tasks).\n\
+         \n\
+         When NOT to use:\n\
+         - If the task can be done with a single Bash/Read/Write call, do it directly.\n\
+         - If the task needs recursive decomposition, use orchestrate instead.\n\
+         - If you just need to read a known file, use Read. If you need to search, use Bash.\n\
+         \n\
+         <example>\n\
+         user: \"Check the test results and also look at the lint output\"\n\
+         assistant: Two independent checks — dispatch in parallel:\n\
+         dispatch_agent({\"description\": \"check test results\", \"prompt\": \"Run cargo test in src-tauri/ and summarize any failures with file and line numbers\", \"sync\": true})\n\
+         dispatch_agent({\"description\": \"check lint warnings\", \"prompt\": \"Run cargo clippy in src-tauri/ and list all warnings\", \"sync\": true})\n\
+         </example>"
     }
 
     fn is_concurrent_safe(&self) -> bool {
@@ -96,33 +115,33 @@ impl Tool for DispatchAgentTool {
             "properties": {
                 "description": {
                     "type": "string",
-                    "description": "Short 3-5 word summary of the task, e.g. 'list files in src'"
+                    "description": "Short 3-5 word summary of what the agent will do. e.g. 'list files in src', 'analyze error patterns', 'check test results'"
                 },
                 "prompt": {
                     "type": "string",
-                    "description": "Full task instruction for the sub-agent. Be specific about what to do and where, e.g. 'Run ls -la in the src/ directory and list all files found'"
-                },
-                "mode": {
-                    "enum": ["preset", "fork"],
-                    "default": "preset",
-                    "description": "Agent launch mode. Use 'preset' (default) for template-based agents, 'fork' to clone current context."
-                },
-                "subagent_type": {
-                    "type": "string",
-                    "description": "Agent template name. Optional — defaults to general-purpose if omitted."
+                    "description": "Full task instructions for the sub-agent. Be specific: what to do, where, and expected output format. e.g. 'Run ls -la in the src/ directory and list all files with their sizes sorted largest first'"
                 },
                 "sync": {
                     "type": "boolean",
                     "default": true,
-                    "description": "If true, wait for the sub-agent to finish and return its result. If false, return immediately and run in background."
+                    "description": "true (default): wait for result. false: run in background and return task_id immediately."
+                },
+                "mode": {
+                    "enum": ["preset", "fork"],
+                    "default": "preset",
+                    "description": "'preset' (default): fresh agent with no history. 'fork': clones current conversation context for tasks that need awareness of prior discussion."
+                },
+                "subagent_type": {
+                    "type": "string",
+                    "description": "Agent template name for specialized behavior. Omit to use the default general-purpose agent. e.g. 'code-reviewer', 'explorer'"
                 },
                 "token_budget": {
                     "type": "integer",
-                    "description": "Maximum tokens the sub-agent may consume. Default: 50000"
+                    "description": "Max tokens the sub-agent may consume. The agent stops when this limit is reached. Default: 50000."
                 },
                 "max_turns": {
                     "type": "integer",
-                    "description": "Maximum tool-use turns for the sub-agent. Default: 20"
+                    "description": "Max tool-use turns for the sub-agent. Each tool call counts as one turn. Default: 20."
                 }
             },
             "required": ["description", "prompt"]
@@ -231,13 +250,15 @@ impl Tool for DispatchAgentTool {
 
         // 构建 SpawnConfig
         let tool_filter = template.map(|t| t.tools.clone());
+        // 子 Agent 使用独立 event channel，避免 TextDelta/ToolCallStart 等事件泄漏到父 Agent 消息流
+        let (sub_event_tx, _sub_event_rx) = tokio::sync::mpsc::unbounded_channel();
         let spawn_config = SpawnConfig {
             prompt: prompt.clone(),
             history: vec![],
             system_prompt_override: None,
             tool_filter,
             budget: Some(budget),
-            event_tx: ctx.event_tx.clone(),
+            event_tx: sub_event_tx,
             sync: is_sync,
             fork_api_messages: None,
             fork_assistant_content: None,

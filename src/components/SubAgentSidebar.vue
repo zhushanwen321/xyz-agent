@@ -10,9 +10,11 @@ const props = defineProps<{
 }>()
 
 const activeTab = ref<'subagents' | 'orchestrate'>('subagents')
+const selectedNodeId = ref<string | null>(null)
 
 const emit = defineEmits<{
   killTask: [taskId: string]
+  selectNode: [nodeId: string]
 }>()
 
 // 按创建时间倒序排列，最新的在上面
@@ -59,7 +61,9 @@ const hasContent = computed(() =>
           v-for="task in sortedTasks"
           :key="task.task_id"
           :task="task"
+          :class="{ 'ring-1 ring-blue-500/50': selectedNodeId === task.task_id }"
           @kill="emit('killTask', task.task_id)"
+          @open-tab="selectedNodeId = task.task_id; emit('selectNode', task.task_id)"
         />
         <div v-if="sortedTasks.length === 0" class="text-center text-text-secondary text-[11px] py-4">
           No sub-agents
@@ -68,7 +72,12 @@ const hasContent = computed(() =>
 
       <!-- Orchestrate Tab -->
       <template v-else>
-        <TaskTreeView :nodes="orchestrateNodes" />
+        <TaskTreeView
+          :nodes="orchestrateNodes"
+          :selected-node-id="selectedNodeId"
+          @select="selectedNodeId = $event; emit('selectNode', $event)"
+          @kill="emit('killTask', $event)"
+        />
         <div v-if="orchestrateNodes.size === 0" class="text-center text-text-secondary text-[11px] py-4">
           No orchestrate nodes
         </div>

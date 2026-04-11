@@ -5,6 +5,7 @@ import TaskTreeNode from './TaskTreeNode.vue'
 
 const props = defineProps<{
   nodes: Map<string, OrchestrateNode>
+  selectedNodeId?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -26,6 +27,7 @@ const rootNodes = computed(() =>
       :node="node"
       :all-nodes="nodes"
       :depth="0"
+      :selected-node-id="selectedNodeId"
       @select="emit('select', $event)"
       @kill="emit('kill', $event)"
     />

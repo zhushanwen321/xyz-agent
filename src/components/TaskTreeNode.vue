@@ -6,6 +6,7 @@ const props = defineProps<{
   node: OrchestrateNode
   allNodes: Map<string, OrchestrateNode>
   depth: number
+  selectedNodeId?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -41,6 +42,7 @@ const roleBadge = computed(() =>
     <!-- 节点行 -->
     <div
       class="flex items-center gap-1.5 py-1 rounded-sm hover:bg-zinc-800/50 cursor-pointer text-[12px]"
+      :class="{ 'bg-blue-500/10 ring-1 ring-inset ring-blue-500/30': selectedNodeId === node.node_id }"
       :style="{ paddingLeft: `${depth * 16 + 4}px` }"
       @click="emit('select', node.node_id)"
     >
@@ -89,6 +91,7 @@ const roleBadge = computed(() =>
         :node="child"
         :all-nodes="allNodes"
         :depth="depth + 1"
+        :selected-node-id="selectedNodeId"
         @select="emit('select', $event)"
         @kill="emit('kill', $event)"
       />

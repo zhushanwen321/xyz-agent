@@ -14,6 +14,8 @@ pub struct MockLlmProvider {
     /// 预设的流式响应序列，每次 chat_stream 调用消费一个
     pub responses: Vec<Vec<LlmStreamEvent>>,
     pub call_count: AtomicUsize,
+    /// 捕获每次 chat_stream 收到的 messages，用于断言消息格式
+    pub captured_messages: std::sync::Mutex<Vec<Vec<serde_json::Value>>>,
 }
 
 impl MockLlmProvider {
@@ -21,6 +23,7 @@ impl MockLlmProvider {
         Self {
             responses,
             call_count: AtomicUsize::new(0),
+            captured_messages: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -71,11 +74,12 @@ impl LlmProvider for MockLlmProvider {
     async fn chat_stream(
         &self,
         _system: Vec<serde_json::Value>,
-        _messages: Vec<serde_json::Value>,
+        messages: Vec<serde_json::Value>,
         _model: &str,
         _tools: Option<Vec<serde_json::Value>>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<LlmStreamEvent, AppError>> + Send>>, AppError>
     {
+        let _ = self.captured_messages.lock().unwrap().push(messages);
         let idx = self.call_count.fetch_add(1, Ordering::SeqCst);
         let response = self.responses.get(idx).cloned().ok_or_else(|| {
             AppError::Llm(format!(

@@ -32,7 +32,7 @@ impl AgentLoop {
     /// 执行一轮用户请求，可能触发多次 LLM 调用（工具调用循环）。
     pub async fn run_turn(
         &self,
-        _user_message: String,
+        user_message: String,
         history: Vec<TranscriptEntry>,
         parent_uuid: Option<String>,
         event_tx: tokio::sync::mpsc::UnboundedSender<AgentEvent>,
@@ -87,6 +87,19 @@ impl AgentLoop {
 
             let mut all = history.clone();
             all.extend(entries.iter().cloned());
+
+            // 子 Agent history 为空时，将 prompt 作为首条 user 消息注入
+            // 必须检查 history 而非 all：后续迭代 entries 非空会导致 all 非空，
+            // 但缺少首条 user message 会使 API messages 以 assistant 开头，违反格式约束
+            if history.is_empty() && !user_message.is_empty() {
+                all.insert(0, TranscriptEntry::User {
+                    uuid: uuid::Uuid::new_v4().to_string(),
+                    parent_uuid: None,
+                    timestamp: chrono::Utc::now().to_rfc3339(),
+                    session_id: session_id.clone(),
+                    content: vec![UserContentBlock::Text { text: user_message.clone() }],
+                });
+            }
 
             let estimated = context_manager.token_budget.estimate_entries(&all);
             let mut api_messages = match api_messages_override {
@@ -347,6 +360,41 @@ mod tests {
         assert!(matches!(&entries[0], TranscriptEntry::Assistant { content, .. } if content.iter().any(|b| matches!(b, AssistantContentBlock::ToolUse { .. }))));
         assert!(matches!(&entries[1], TranscriptEntry::User { content, .. } if content.iter().any(|b| matches!(b, UserContentBlock::ToolResult { .. }))));
         assert!(matches!(&entries[2], TranscriptEntry::Assistant { content, .. } if content.iter().any(|b| matches!(b, AssistantContentBlock::Text { .. }))));
+    }
+
+    /// 子 Agent 多轮调用回归测试：验证每次 LLM 请求的 messages 都以 user 开头
+    /// 修复前：第二次迭代 messages 为 [assistant, user]，违反 API 格式约束
+    #[tokio::test]
+    async fn test_subagent_messages_always_start_with_user() {
+        let provider = Arc::new(MockLlmProvider::new(vec![
+            MockLlmProvider::tool_use_response(
+                "",
+                vec![("toolu_1", "Read", serde_json::json!({"file_path": "test.txt"}))],
+            ),
+            MockLlmProvider::text_response("done"),
+        ]));
+
+        let registry = ToolRegistry::new();
+        let perms = PermissionContext::default();
+        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (prompt_manager, dynamic_context) = test_prompt_ctx();
+
+        let agent_loop = AgentLoop::new(provider.clone(), "test-session".into(), "test-model".into());
+
+        // 模拟子 Agent：空 history + prompt 作为 user_message
+        let _ = agent_loop
+            .run_turn("do something".into(), vec![], None, event_tx, &registry, &perms, &prompt_manager, &dynamic_context, &test_agent_config(), None, None, None, None, None)
+            .await
+            .unwrap();
+
+        let captured = provider.captured_messages.lock().unwrap();
+        assert_eq!(captured.len(), 2, "expect 2 LLM calls (tool_use + text)");
+
+        // 第一次调用：[user]
+        assert_eq!(captured[0][0]["role"], "user", "first call must start with user");
+
+        // 第二次调用：[user, assistant, user] — 不能以 assistant 开头
+        assert_eq!(captured[1][0]["role"], "user", "second call must start with user (regression: was assistant)");
     }
 
     /// 单轮纯文本（不触发工具调用）

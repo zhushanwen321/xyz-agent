@@ -4,6 +4,8 @@ pub mod dispatch_agent;
 pub mod executor;
 pub mod feedback;
 pub mod orchestrate;
+#[path = "orchestrate_idle.rs"]
+pub mod orchestrate_idle;
 pub mod read;
 pub mod write;
 

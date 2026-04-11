@@ -9,7 +9,19 @@ const props = defineProps<{
   isStreaming?: boolean
   taskNodes: Map<string, TaskNode>
   toolUseToTaskId: Map<string, string>
+  selectMode?: boolean
+  selected?: boolean
 }>()
+
+const emit = defineEmits<{
+  'toggle-select': [id: string]
+}>()
+
+function handleClick() {
+  if (props.selectMode) {
+    emit('toggle-select', props.message.id)
+  }
+}
 
 const md = new MarkdownIt({
   html: false,
@@ -28,6 +40,33 @@ function renderMarkdown(text: string): string {
 </script>
 
 <template>
+  <!-- 选择模式包裹层 -->
+  <div
+    class="relative"
+    :class="[
+      selectMode ? 'cursor-pointer' : '',
+      selectMode && selected ? 'rounded-md ring-1 ring-accent/40' : '',
+    ]"
+    @click="handleClick"
+  >
+    <!-- 选择模式 checkbox -->
+    <div
+      v-if="selectMode"
+      class="absolute left-[-6px] top-1/2 z-10 -translate-y-1/2"
+    >
+      <div
+        class="flex h-3.5 w-3.5 items-center justify-center rounded-[3px] border text-[9px] font-bold leading-none"
+        :class="selected
+          ? 'border-accent bg-accent text-white'
+          : 'border-border-default bg-bg-elevated'"
+      >
+        <span v-if="selected">&#10003;</span>
+      </div>
+    </div>
+
+    <!-- 消息内容（选择模式时右移留出 checkbox 空间） -->
+    <div :class="selectMode ? 'ml-3' : ''">
+
   <!-- User 消息 — 左对齐，全宽背景 -->
   <div v-if="isUser" class="flex items-start gap-2 border-l-[3px] border-l-[#a1a1aa] px-2 py-1.5" style="background-color: var(--color-bg-user)">
     <div class="flex w-[76px] shrink-0 items-center gap-1.5">
@@ -83,6 +122,9 @@ function renderMarkdown(text: string): string {
       <div v-else-if="message.content">
         <div class="prose max-w-none text-text-primary" v-html="renderMarkdown(message.content)" />
       </div>
+    </div>
+  </div>
+
     </div>
   </div>
 </template>

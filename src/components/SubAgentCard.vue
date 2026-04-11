@@ -106,6 +106,15 @@ const emit = defineEmits<{
           {{ formatTokens(task.usage.total_tokens) }}tok
         </span>
         <span class="font-mono text-[10px]" :class="statusColor">{{ statusLabel }}</span>
+        <!-- Kill 按钮：仅 running 状态显示 -->
+        <button
+          v-if="task.status === 'running'"
+          class="w-4 h-4 flex items-center justify-center text-text-secondary hover:text-red-400 shrink-0"
+          title="Kill"
+          @click.stop="emit('kill')"
+        >
+          <span class="text-[10px]">\u2715</span>
+        </button>
       </div>
     </div>
 
