@@ -146,6 +146,7 @@ pub async fn send_message(
             &prompt_manager,
             &dynamic_context,
             &state.config,
+            None,
         )
         .await;
 

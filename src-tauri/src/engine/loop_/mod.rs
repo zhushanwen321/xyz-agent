@@ -1,6 +1,7 @@
 pub mod history;
 pub mod stream;
 
+use crate::engine::budget_guard::BudgetGuard;
 use crate::engine::config::AgentConfig;
 use crate::engine::context::data::DataContext;
 use crate::engine::context::prompt::{DynamicContext, PromptManager};
@@ -40,6 +41,7 @@ impl AgentLoop {
         prompt_manager: &PromptManager,
         dynamic_context: &DynamicContext,
         agent_config: &AgentConfig,
+        mut budget_guard: Option<&mut BudgetGuard>,
     ) -> Result<Vec<TranscriptEntry>, AppError> {
         let session_id = &self.session_id;
         let max_turns: usize = agent_config.max_turns as usize;
@@ -116,6 +118,34 @@ impl AgentLoop {
             let result = consume_stream(stream, &event_tx, session_id).await?;
 
             context_manager.token_budget.last_input_tokens = Some(result.usage.input_tokens);
+
+            // SubAgent 预算检查：token/turn 上限、diminishing returns、warning
+            if let Some(ref mut bg) = budget_guard {
+                let tokens = result.usage.output_tokens;
+                if !bg.check_and_deduct_tokens(tokens) {
+                    log::warn!("[agent_loop] budget exhausted (tokens)");
+                    break;
+                }
+                if !bg.increment_turn() {
+                    log::warn!("[agent_loop] budget exhausted (turns)");
+                    break;
+                }
+                if bg.is_exhausted() {
+                    log::warn!("[agent_loop] budget exhausted");
+                    break;
+                }
+                if bg.is_diminishing() {
+                    log::info!("[agent_loop] diminishing returns detected, stopping");
+                    break;
+                }
+                if bg.should_warn() {
+                    let _ = event_tx.send(AgentEvent::BudgetWarning {
+                        session_id: session_id.clone(),
+                        task_id: String::new(),
+                        usage_percent: bg.usage_percent(),
+                    });
+                }
+            }
 
             let uuid = uuid::Uuid::new_v4().to_string();
             entries.push(TranscriptEntry::Assistant {
@@ -263,7 +293,7 @@ mod tests {
         let agent_loop = AgentLoop::new(provider, "test-session".into(), "test-model".into());
 
         let entries = agent_loop
-            .run_turn("read test.txt".into(), vec![], None, event_tx, &registry, &perms, &prompt_manager, &dynamic_context, &test_agent_config())
+            .run_turn("read test.txt".into(), vec![], None, event_tx, &registry, &perms, &prompt_manager, &dynamic_context, &test_agent_config(), None)
             .await
             .unwrap();
 
@@ -289,7 +319,7 @@ mod tests {
         let agent_loop = AgentLoop::new(provider, "test-session".into(), "test-model".into());
 
         let entries = agent_loop
-            .run_turn("hello".into(), vec![], None, event_tx, &registry, &perms, &prompt_manager, &dynamic_context, &test_agent_config())
+            .run_turn("hello".into(), vec![], None, event_tx, &registry, &perms, &prompt_manager, &dynamic_context, &test_agent_config(), None)
             .await
             .unwrap();
 
