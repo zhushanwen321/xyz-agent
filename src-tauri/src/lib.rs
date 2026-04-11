@@ -94,6 +94,9 @@ pub fn run() {
             api::commands::send_message,
             api::commands::get_config,
             api::commands::update_config,
+            api::commands::kill_task,
+            api::commands::pause_task,
+            api::commands::resume_task,
         ])
         .run(tauri::generate_context!())
         .expect("error while running xyz-agent");

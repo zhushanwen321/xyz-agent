@@ -62,3 +62,15 @@ export async function getConfig(): Promise<ConfigResponse> {
 export async function updateConfig(payload: UpdateConfigRequest): Promise<void> {
   return invoke<void>('update_config', { payload })
 }
+
+export async function killTask(taskId: string): Promise<void> {
+  return invoke<void>('kill_task', { taskId })
+}
+
+export async function pauseTask(taskId: string): Promise<void> {
+  return invoke<void>('pause_task', { taskId })
+}
+
+export async function resumeTask(taskId: string): Promise<void> {
+  return invoke<void>('resume_task', { taskId })
+}
