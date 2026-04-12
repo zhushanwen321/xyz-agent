@@ -259,8 +259,43 @@ impl Tool for DispatchAgentTool {
 
         // 构建 SpawnConfig
         let tool_filter = template.map(|t| t.tools.clone());
-        // 子 Agent 使用独立 event channel，避免 TextDelta/ToolCallStart 等事件泄漏到父 Agent 消息流
-        let (sub_event_tx, _sub_event_rx) = tokio::sync::mpsc::unbounded_channel();
+        // 子 Agent 事件通过父 channel 转发，携带 source_task_id 标识
+        let parent_tx = ctx.event_tx.clone();
+        let task_id_for_forward = task_id.clone();
+        let (sub_event_tx, mut sub_event_rx) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            while let Some(event) = sub_event_rx.recv().await {
+                let forwarded = match event {
+                    AgentEvent::TextDelta { session_id, delta, .. } => AgentEvent::TextDelta {
+                        session_id,
+                        delta,
+                        source_task_id: Some(task_id_for_forward.clone()),
+                    },
+                    AgentEvent::ThinkingDelta { session_id, delta, .. } => AgentEvent::ThinkingDelta {
+                        session_id,
+                        delta,
+                        source_task_id: Some(task_id_for_forward.clone()),
+                    },
+                    AgentEvent::ToolCallStart { session_id, tool_name, tool_use_id, input, .. } => AgentEvent::ToolCallStart {
+                        session_id,
+                        tool_name,
+                        tool_use_id,
+                        input,
+                        source_task_id: Some(task_id_for_forward.clone()),
+                    },
+                    AgentEvent::ToolCallEnd { session_id, tool_use_id, is_error, output, .. } => AgentEvent::ToolCallEnd {
+                        session_id,
+                        tool_use_id,
+                        is_error,
+                        output,
+                        source_task_id: Some(task_id_for_forward.clone()),
+                    },
+                    // 全局事件直接转发，不加 source_task_id
+                    other => other,
+                };
+                let _ = parent_tx.send(forwarded);
+            }
+        });
         let spawn_config = SpawnConfig {
             prompt: prompt.clone(),
             history: vec![],
