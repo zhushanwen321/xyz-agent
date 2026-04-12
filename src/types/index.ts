@@ -1,24 +1,24 @@
 // 与 Rust AgentEvent #[serde(tag = "type")] 对应
 export type AgentEvent =
-  | { type: 'TextDelta'; session_id: string; delta: string }
-  | { type: 'ThinkingDelta'; session_id: string; delta: string }
-  | { type: 'MessageComplete'; session_id: string; role: string; content: string; usage: TokenUsage }
-  | { type: 'TurnComplete'; session_id: string }
-  | { type: 'Error'; session_id: string; message: string }
-  | { type: 'ToolCallStart'; session_id: string; tool_name: string; tool_use_id: string; input: unknown }
-  | { type: 'ToolCallEnd'; session_id: string; tool_use_id: string; is_error: boolean; output: string }
+  | { type: 'TextDelta'; session_id: string; delta: string; source_task_id?: string }
+  | { type: 'ThinkingDelta'; session_id: string; delta: string; source_task_id?: string }
+  | { type: 'MessageComplete'; session_id: string; role: string; content: string; usage: TokenUsage; source_task_id?: string }
+  | { type: 'TurnComplete'; session_id: string; source_task_id?: string }
+  | { type: 'Error'; session_id: string; message: string; source_task_id?: string }
+  | { type: 'ToolCallStart'; session_id: string; tool_name: string; tool_use_id: string; input: unknown; source_task_id?: string }
+  | { type: 'ToolCallEnd'; session_id: string; tool_use_id: string; is_error: boolean; output: string; source_task_id?: string }
   // dispatch_agent events
-  | { type: 'TaskCreated'; session_id: string; task_id: string; description: string; mode: string; subagent_type: string; budget: { max_tokens: number }; tool_use_id: string | null }
-  | { type: 'TaskProgress'; session_id: string; task_id: string; usage: { total_tokens: number; tool_uses: number; duration_ms: number } }
-  | { type: 'TaskCompleted'; session_id: string; task_id: string; status: string; result_summary: string; usage: { total_tokens: number; tool_uses: number; duration_ms: number } }
-  | { type: 'BudgetWarning'; session_id: string; task_id: string; usage_percent: number }
-  | { type: 'TaskFeedback'; session_id: string; task_id: string; message: string; severity: string }
+  | { type: 'TaskCreated'; session_id: string; task_id: string; description: string; mode: string; subagent_type: string; budget: { max_tokens: number }; tool_use_id: string | null; source_task_id?: string }
+  | { type: 'TaskProgress'; session_id: string; task_id: string; usage: { total_tokens: number; tool_uses: number; duration_ms: number }; source_task_id?: string }
+  | { type: 'TaskCompleted'; session_id: string; task_id: string; status: string; result_summary: string; usage: { total_tokens: number; tool_uses: number; duration_ms: number }; source_task_id?: string }
+  | { type: 'BudgetWarning'; session_id: string; task_id: string; usage_percent: number; source_task_id?: string }
+  | { type: 'TaskFeedback'; session_id: string; task_id: string; message: string; severity: string; source_task_id?: string }
   // orchestrate events
-  | { type: 'OrchestrateNodeCreated'; session_id: string; node_id: string; parent_id: string | null; role: string; depth: number; description: string }
-  | { type: 'OrchestrateNodeProgress'; session_id: string; node_id: string; usage: { total_tokens: number; tool_uses: number; duration_ms: number } }
-  | { type: 'OrchestrateNodeCompleted'; session_id: string; node_id: string; status: string; result_summary: string; usage: { total_tokens: number; tool_uses: number; duration_ms: number } }
-  | { type: 'OrchestrateNodeIdle'; session_id: string; node_id: string }
-  | { type: 'OrchestrateFeedback'; session_id: string; node_id: string; direction: string; message: string; severity: string }
+  | { type: 'OrchestrateNodeCreated'; session_id: string; node_id: string; parent_id: string | null; role: string; depth: number; description: string; source_task_id?: string }
+  | { type: 'OrchestrateNodeProgress'; session_id: string; node_id: string; usage: { total_tokens: number; tool_uses: number; duration_ms: number }; source_task_id?: string }
+  | { type: 'OrchestrateNodeCompleted'; session_id: string; node_id: string; status: string; result_summary: string; usage: { total_tokens: number; tool_uses: number; duration_ms: number }; source_task_id?: string }
+  | { type: 'OrchestrateNodeIdle'; session_id: string; node_id: string; source_task_id?: string }
+  | { type: 'OrchestrateFeedback'; session_id: string; node_id: string; direction: string; message: string; severity: string; source_task_id?: string }
 
 export interface TokenUsage {
   input_tokens: number
@@ -147,3 +147,17 @@ export interface ConfigResponse {
 }
 
 export type UpdateConfigRequest = ConfigResponse
+
+// Tab 状态
+export type TabStatus = 'completed' | 'thinking' | 'streaming' | 'tool' | 'failed' | 'idle'
+
+// Tab 数据模型
+export interface ChatTab {
+  id: string
+  type: 'main' | 'subagent' | 'orchestrate'
+  title: string
+  session_id: string
+  sidechain_id?: string
+  status: TabStatus
+  closable: boolean
+}

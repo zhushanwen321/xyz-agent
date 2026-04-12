@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import type { AgentEvent, ConfigResponse, LoadHistoryResult, SessionInfo, UpdateConfigRequest } from '../types'
+import type { AgentEvent, ConfigResponse, LoadHistoryResult, SessionInfo, TranscriptEntry, UpdateConfigRequest } from '../types'
 
 export type { LoadHistoryResult }
 
@@ -77,4 +77,12 @@ export async function pauseTask(taskId: string): Promise<void> {
 
 export async function resumeTask(taskId: string): Promise<void> {
   return invoke<void>('resume_task', { taskId })
+}
+
+export async function loadSidechainHistory(
+  sessionId: string,
+  sidechainId: string,
+  sidechainType: string,
+): Promise<TranscriptEntry[]> {
+  return invoke<TranscriptEntry[]>('load_sidechain_history', { sessionId, sidechainId, sidechainType })
 }
