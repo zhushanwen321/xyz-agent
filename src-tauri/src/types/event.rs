@@ -20,10 +20,12 @@ pub enum AgentEvent {
     TextDelta {
         session_id: String,
         delta: String,
+        source_task_id: Option<String>,
     },
     ThinkingDelta {
         session_id: String,
         delta: String,
+        source_task_id: Option<String>,
     },
     MessageComplete {
         session_id: String,
@@ -40,12 +42,14 @@ pub enum AgentEvent {
         tool_name: String,
         tool_use_id: String,
         input: serde_json::Value,
+        source_task_id: Option<String>,
     },
     ToolCallEnd {
         session_id: String,
         tool_use_id: String,
         is_error: bool,
         output: String,
+        source_task_id: Option<String>,
     },
     TurnComplete {
         session_id: String,
@@ -171,6 +175,7 @@ mod tests {
         let event = AgentEvent::TextDelta {
             session_id: "s1".to_string(),
             delta: "Hello".to_string(),
+            source_task_id: None,
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"type\":\"TextDelta\""));
@@ -185,6 +190,7 @@ mod tests {
         let event = AgentEvent::ThinkingDelta {
             session_id: "s1".to_string(),
             delta: "thinking...".to_string(),
+            source_task_id: None,
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"type\":\"ThinkingDelta\""));
@@ -248,6 +254,7 @@ mod tests {
             tool_name: "search_web".to_string(),
             tool_use_id: "tool_123".to_string(),
             input: serde_json::json!({"query": "test"}),
+            source_task_id: None,
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"type\":\"ToolCallStart\""));
@@ -266,6 +273,7 @@ mod tests {
             tool_use_id: "tool_123".to_string(),
             is_error: false,
             output: "result data".to_string(),
+            source_task_id: None,
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"type\":\"ToolCallEnd\""));
@@ -342,5 +350,31 @@ mod tests {
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"usage_percent\":90"));
+    }
+
+    #[test]
+    fn test_text_delta_with_source_task_id() {
+        let event = AgentEvent::TextDelta {
+            session_id: "s1".into(),
+            delta: "Hello".into(),
+            source_task_id: Some("task_abc".into()),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"source_task_id\":\"task_abc\""));
+        let de: AgentEvent = serde_json::from_str(&json).unwrap();
+        if let AgentEvent::TextDelta { source_task_id, .. } = de {
+            assert_eq!(source_task_id, Some("task_abc".into()));
+        } else {
+            panic!("Expected TextDelta");
+        }
+    }
+
+    #[test]
+    fn test_source_task_id_defaults_to_none() {
+        let json = r#"{"type":"TextDelta","session_id":"s1","delta":"x"}"#;
+        let event: AgentEvent = serde_json::from_str(json).unwrap();
+        if let AgentEvent::TextDelta { source_task_id, .. } = event {
+            assert_eq!(source_task_id, None);
+        }
     }
 }

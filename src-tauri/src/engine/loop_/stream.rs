@@ -117,12 +117,14 @@ pub(super) async fn consume_stream(
                 let _ = event_tx.send(AgentEvent::TextDelta {
                     session_id: session_id.to_string(),
                     delta,
+                    source_task_id: None,
                 });
             }
             Ok(LlmStreamEvent::ThinkingDelta { delta }) => {
                 let _ = event_tx.send(AgentEvent::ThinkingDelta {
                     session_id: session_id.to_string(),
                     delta,
+                    source_task_id: None,
                 });
             }
             Ok(LlmStreamEvent::ToolUseStart { id, name }) => {
@@ -253,6 +255,7 @@ mod tests {
         event_tx.send(AgentEvent::TextDelta {
             session_id: "test-session".to_string(),
             delta: "hello world".to_string(),
+            source_task_id: None,
         }).unwrap();
         let event = event_rx.recv().await.unwrap();
         assert!(matches!(event, AgentEvent::TextDelta { .. }));

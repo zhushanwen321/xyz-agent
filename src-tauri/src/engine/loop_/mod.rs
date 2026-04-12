@@ -240,6 +240,7 @@ impl AgentLoop {
                     tool_name: call.name.clone(),
                     tool_use_id: call.id.clone(),
                     input: call.input.clone(),
+                    source_task_id: None,
                 });
             }
 
@@ -302,6 +303,7 @@ impl AgentLoop {
                     tool_use_id: tr.id.clone(),
                     is_error: tr.is_error,
                     output: tr.output.clone(),
+                    source_task_id: None,
                 });
             }
 
