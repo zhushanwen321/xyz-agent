@@ -379,6 +379,16 @@ impl Tool for DispatchAgentTool {
                 }
             };
 
+            // 将子 Agent transcript 写入 sidechain JSONL
+            {
+                let sc_path = crate::store::jsonl::sidechain_path(
+                    &ctx.data_dir, &ctx.session_id, &task_id,
+                );
+                for entry in &result.entries {
+                    let _ = crate::store::jsonl::append_sidechain_entry(&sc_path, entry);
+                }
+            }
+
             let result_text: String = result.entries.iter()
                 .filter_map(|e| match e {
                     TranscriptEntry::Assistant { content, .. } => Some(
@@ -426,6 +436,7 @@ impl Tool for DispatchAgentTool {
             let event_tx_bg = ctx.event_tx.clone();
             let task_tree_bg = ctx.task_tree.clone();
             let bg_tasks = ctx.background_tasks.clone();
+            let data_dir_bg = ctx.data_dir.clone();
 
             let handle = tokio::spawn(async move {
                 let result = join.await;
@@ -451,6 +462,18 @@ impl Tool for DispatchAgentTool {
                     Ok(Err(e)) => ("failed", e.to_string(), 0, 0),
                     Err(e) => ("failed", format!("task panicked: {e}"), 0, 0),
                 };
+
+                // 将子 Agent transcript 写入 sidechain JSONL
+                if status == "completed" {
+                    if let Ok(Ok(r)) = &result {
+                        let sc_path = crate::store::jsonl::sidechain_path(
+                            &data_dir_bg, &session_id_bg, &task_id_bg,
+                        );
+                        for entry in &r.entries {
+                            let _ = crate::store::jsonl::append_sidechain_entry(&sc_path, entry);
+                        }
+                    }
+                }
 
                 let summary_short: String = summary.chars().take(2000).collect();
                 let _ = event_tx_bg.send(AgentEvent::TaskCompleted {

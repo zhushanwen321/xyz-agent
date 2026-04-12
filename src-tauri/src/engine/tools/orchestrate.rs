@@ -349,6 +349,16 @@ impl Tool for OrchestrateTool {
                 }
             };
 
+            // 将子 Agent transcript 写入 sidechain JSONL
+            {
+                let sc_path = crate::store::jsonl::orchestrate_path(
+                    &ctx.data_dir, &ctx.session_id, &node_id,
+                );
+                for entry in &result.entries {
+                    let _ = crate::store::jsonl::append_sidechain_entry(&sc_path, entry);
+                }
+            }
+
             let result_text = extract_text(&result.entries);
             let elapsed = start.elapsed().as_millis() as u64;
             let summary: String = result_text.chars().take(2000).collect();

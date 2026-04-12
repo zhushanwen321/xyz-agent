@@ -162,14 +162,11 @@ pub fn load_history(path: &Path) -> Result<LoadHistoryResult, AppError> {
 }
 
 // ── Sidechain / Orchestrate JSONL helpers ─────────────────────────
-// P2 stub：AgentSpawner 集成后使用
-#[allow(dead_code)]
 
 fn sanitize_segment(s: &str) -> String {
     s.chars().map(|c| if c == '/' || c == '\\' || c == '.' { '_' } else { c }).collect()
 }
 
-#[allow(dead_code)]
 fn ensure_jsonl_path(data_dir: &Path, session_id: &str, sub_dir: &str, file_stem: &str) -> std::path::PathBuf {
     let dir = data_dir.join(sanitize_segment(session_id)).join(sub_dir);
     if let Err(e) = std::fs::create_dir_all(&dir) {
@@ -178,12 +175,10 @@ fn ensure_jsonl_path(data_dir: &Path, session_id: &str, sub_dir: &str, file_stem
     dir.join(format!("{}.jsonl", sanitize_segment(file_stem)))
 }
 
-#[allow(dead_code)]
 pub fn sidechain_path(data_dir: &Path, session_id: &str, task_id: &str) -> std::path::PathBuf {
     ensure_jsonl_path(data_dir, session_id, "subagents", task_id)
 }
 
-#[allow(dead_code)]
 pub fn append_sidechain_entry(path: &Path, entry: &TranscriptEntry) -> Result<(), AppError> {
     let mut file = std::fs::OpenOptions::new()
         .create(true)
@@ -194,7 +189,6 @@ pub fn append_sidechain_entry(path: &Path, entry: &TranscriptEntry) -> Result<()
     writeln!(file, "{}", json).map_err(AppError::Io)
 }
 
-#[allow(dead_code)]
 pub fn orchestrate_path(data_dir: &Path, session_id: &str, node_id: &str) -> std::path::PathBuf {
     ensure_jsonl_path(data_dir, session_id, "orchestrate", node_id)
 }
