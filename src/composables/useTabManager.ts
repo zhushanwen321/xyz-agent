@@ -171,6 +171,98 @@ export function useTabManager(sessionId: Ref<string | null>) {
     return msgs
   }
 
+  function appendTabEvent(tabId: string, event: AgentEvent) {
+    const sid = sessionId.value
+    if (!sid) return
+    const data = getOrCreateSession(sid)
+    let msgs = [...(data.tabMessages.get(tabId) ?? [])]
+
+    switch (event.type) {
+      case 'TextDelta':
+      case 'ThinkingDelta': {
+        const delta = event.delta
+        const last = msgs.length > 0 ? msgs[msgs.length - 1] : null
+        if (last?.role === 'assistant' && last.isStreaming) {
+          const segs = [...(last.segments ?? [])]
+          const lastSeg = segs[segs.length - 1]
+          if (lastSeg?.type === 'text') {
+            segs[segs.length - 1] = { ...lastSeg, text: lastSeg.text + delta }
+          } else {
+            segs.push({ type: 'text', text: delta })
+          }
+          msgs[msgs.length - 1] = { ...last, segments: segs }
+        } else {
+          msgs.push({
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content: '',
+            segments: [{ type: 'text', text: delta }],
+            timestamp: new Date().toISOString(),
+            isStreaming: true,
+          })
+        }
+        break
+      }
+      case 'ToolCallStart': {
+        const last = msgs.length > 0 ? msgs[msgs.length - 1] : null
+        const toolSeg: AssistantSegment = {
+          type: 'tool',
+          call: {
+            tool_use_id: event.tool_use_id,
+            tool_name: event.tool_name,
+            input: event.input,
+            status: 'running',
+          },
+        }
+        if (last?.role === 'assistant' && last.isStreaming) {
+          msgs[msgs.length - 1] = {
+            ...last,
+            segments: [...(last.segments ?? []), toolSeg],
+          }
+        } else {
+          msgs.push({
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content: '',
+            segments: [toolSeg],
+            timestamp: new Date().toISOString(),
+            isStreaming: true,
+          })
+        }
+        break
+      }
+      case 'ToolCallEnd': {
+        const last = msgs.length > 0 ? msgs[msgs.length - 1] : null
+        if (last?.role === 'assistant' && last.isStreaming) {
+          const segs = [...(last.segments ?? [])]
+          const toolSeg = segs.find(
+            (s): s is AssistantSegment & { type: 'tool' } =>
+              s.type === 'tool' && s.call.tool_use_id === event.tool_use_id,
+          )
+          if (toolSeg) {
+            toolSeg.call = {
+              ...toolSeg.call,
+              status: event.is_error ? 'error' : 'completed',
+              output: event.output,
+            }
+            msgs[msgs.length - 1] = { ...last, segments: segs }
+          }
+        }
+        break
+      }
+      case 'TurnComplete':
+      case 'MessageComplete': {
+        const last = msgs.length > 0 ? msgs[msgs.length - 1] : null
+        if (last?.isStreaming) {
+          msgs[msgs.length - 1] = { ...last, isStreaming: false }
+        }
+        break
+      }
+    }
+
+    data.tabMessages.set(tabId, msgs)
+  }
+
   return {
     tabs,
     activeTabId,
@@ -182,5 +274,6 @@ export function useTabManager(sessionId: Ref<string | null>) {
     switchTab,
     updateTabStatus,
     eventToTabStatus,
+    appendTabEvent,
   }
 }

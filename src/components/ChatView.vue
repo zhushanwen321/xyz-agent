@@ -42,6 +42,12 @@ setTabEventHandler((event) => {
     const status = tabManager.eventToTabStatus(event)
     if (status) tabManager.updateTabStatus(tabId, status)
   }
+
+  // 将带 source_task_id 的实时事件积累到子 Agent Tab
+  const sourceId = 'source_task_id' in event && event.source_task_id ? event.source_task_id : null
+  if (sourceId) {
+    tabManager.appendTabEvent(sourceId, event)
+  }
 })
 
 // session 变化时确保主 Tab 存在
