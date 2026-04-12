@@ -83,6 +83,14 @@ function handleSelectNode(nodeId: string) {
   }
 }
 
+function handleOpenSubAgentTab(taskId: string) {
+  if (!sessionIdRef.value) return
+  const type = orchestrateNodes.value.has(taskId) ? 'orchestrate' : 'subagent'
+  const node = orchestrateNodes.value.get(taskId) ?? taskNodes.value.get(taskId)
+  const title = node?.description ?? taskId
+  tabManager.openSubAgentTab(taskId, title, sessionIdRef.value, type)
+}
+
 // 流式时合并 currentTurnSegments 到最后一条 assistant 消息
 const getDisplayMessages = (msgs: ChatMessage[]) => {
   const result = [...msgs]
@@ -171,7 +179,7 @@ function handleCancel() {
       <div ref="scrollContainer" class="flex-1 overflow-y-auto">
         <!-- 浮动工具栏 -->
         <div
-          v-if="messages.length > 0"
+          v-if="currentMessages.length > 0"
           class="sticky top-0 z-10 flex justify-end gap-1 bg-bg-surface/80 px-2 pt-2 pb-1 backdrop-blur-sm"
         >
           <button
@@ -199,6 +207,7 @@ function handleCancel() {
               :tool-use-to-task-id="toolUseToTaskId"
               :select-mode="selectMode"
               :selected="selectedIds.has(msg.id)"
+              :on-open-sub-agent-tab="handleOpenSubAgentTab"
               @toggle-select="toggleMessage"
             />
           </div>
