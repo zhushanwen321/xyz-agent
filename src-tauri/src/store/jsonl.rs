@@ -199,6 +199,33 @@ pub fn orchestrate_path(data_dir: &Path, session_id: &str, node_id: &str) -> std
     ensure_jsonl_path(data_dir, session_id, "orchestrate", node_id)
 }
 
+/// 从 sidechain/orchestrate jsonl 加载条目
+pub fn load_sidechain_entries(
+    data_dir: &Path,
+    session_id: &str,
+    sidechain_id: &str,
+    sidechain_type: &str,
+) -> Result<Vec<TranscriptEntry>, AppError> {
+    let path = match sidechain_type {
+        "subagent" => sidechain_path(data_dir, session_id, sidechain_id),
+        "orchestrate" => orchestrate_path(data_dir, session_id, sidechain_id),
+        _ => return Err(AppError::Config(format!("unknown sidechain_type: {sidechain_type}"))),
+    };
+    if !path.exists() {
+        return Ok(vec![]);
+    }
+    let mut entries = Vec::new();
+    for line in std::io::BufReader::new(std::fs::File::open(&path).map_err(AppError::Io)?)
+        .lines()
+    {
+        let line = line.map_err(AppError::Io)?;
+        if line.trim().is_empty() { continue; }
+        let entry: TranscriptEntry = serde_json::from_str(&line).map_err(AppError::Serialization)?;
+        entries.push(entry);
+    }
+    Ok(entries)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

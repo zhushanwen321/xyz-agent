@@ -348,3 +348,16 @@ pub async fn resume_task(task_id: String, state: State<'_, AppState>) -> Result<
     }
     Ok(())
 }
+
+#[tauri::command]
+pub async fn load_sidechain_history(
+    session_id: String,
+    sidechain_id: String,
+    sidechain_type: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<TranscriptEntry>, String> {
+    crate::store::jsonl::load_sidechain_entries(
+        &state.data_dir, &session_id, &sidechain_id, &sidechain_type,
+    )
+    .map_err(|e| e.to_string())
+}

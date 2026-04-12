@@ -117,6 +117,7 @@ pub fn run() {
             api::commands::kill_task,
             api::commands::pause_task,
             api::commands::resume_task,
+            api::commands::load_sidechain_history,
         ])
         .run(tauri::generate_context!())
         .expect("error while running xyz-agent");
