@@ -1,11 +1,8 @@
 import { ref, computed, watch, type Ref } from 'vue'
-import type {
-  ChatTab, TabStatus, AgentEvent, ChatMessage, AssistantSegment,
-  TranscriptEntry, UserContentBlock, AssistantContentBlock,
-} from '../types'
+import type { ChatTab, TabStatus, AgentEvent, ChatMessage, AssistantSegment } from '../types'
+import { transcriptToMessages } from '../lib/transcript'
 import { loadSidechainHistory, isTauri } from '../lib/tauri'
 
-// 每个 session 维护独立的 Tab 数据（普通对象，不用嵌套 Ref）
 interface SessionTabData {
   tabs: ChatTab[]
   activeTabId: string
@@ -14,6 +11,10 @@ interface SessionTabData {
 
 const sessionStore = new Map<string, SessionTabData>()
 
+function getSession(sid: string): SessionTabData | undefined {
+  return sessionStore.get(sid)
+}
+
 function getOrCreateSession(sid: string): SessionTabData {
   let data = sessionStore.get(sid)
   if (!data) {
@@ -21,6 +22,11 @@ function getOrCreateSession(sid: string): SessionTabData {
     sessionStore.set(sid, data)
   }
   return data
+}
+
+/** 删除 session 时清理对应 Tab 数据，防止内存泄漏 */
+export function clearSessionTabs(sid: string) {
+  sessionStore.delete(sid)
 }
 
 export function useTabManager(sessionId: Ref<string | null>) {
@@ -40,6 +46,11 @@ export function useTabManager(sessionId: Ref<string | null>) {
   const activeTab = computed(() =>
     tabs.value.find(t => t.id === activeTabId.value)
   )
+
+  /** 触发 tabMessages ref 更新（让 Vue 检测到 Map 变化） */
+  function syncTabMessages(data: SessionTabData) {
+    tabMessages.value = new Map(data.tabMessages)
+  }
 
   function ensureMainTab(sid: string) {
     const data = getOrCreateSession(sid)
@@ -80,18 +91,24 @@ export function useTabManager(sessionId: Ref<string | null>) {
 
   async function loadTabHistory(sid: string, tabId: string, tabType: 'subagent' | 'orchestrate') {
     if (!isTauri()) return
-    const data = getOrCreateSession(sid)
-    const entries = await loadSidechainHistory(
-      sid, tabId, tabType === 'subagent' ? 'subagent' : 'orchestrate'
-    )
-    data.tabMessages.set(tabId, entriesToMessages(entries))
+    try {
+      const data = getOrCreateSession(sid)
+      const entries = await loadSidechainHistory(
+        sid, tabId, tabType === 'subagent' ? 'subagent' : 'orchestrate'
+      )
+      data.tabMessages.set(tabId, transcriptToMessages(entries))
+      syncTabMessages(data)
+    } catch (err) {
+      console.warn('[useTabManager] loadTabHistory failed:', err)
+    }
   }
 
   function closeTab(tabId: string) {
     if (tabId === 'main') return
     const sid = sessionId.value
     if (!sid) return
-    const data = getOrCreateSession(sid)
+    const data = getSession(sid)
+    if (!data) return
     const idx = data.tabs.findIndex(t => t.id === tabId)
     if (idx === -1) return
     data.tabs.splice(idx, 1)
@@ -105,7 +122,8 @@ export function useTabManager(sessionId: Ref<string | null>) {
   function switchTab(tabId: string) {
     const sid = sessionId.value
     if (!sid) return
-    const data = getOrCreateSession(sid)
+    const data = getSession(sid)
+    if (!data) return
     if (data.tabs.find(t => t.id === tabId)) {
       data.activeTabId = tabId
       activeTabId.value = tabId
@@ -115,7 +133,8 @@ export function useTabManager(sessionId: Ref<string | null>) {
   function updateTabStatus(tabId: string, status: TabStatus) {
     const sid = sessionId.value
     if (!sid) return
-    const data = getOrCreateSession(sid)
+    const data = getSession(sid)
+    if (!data) return
     const tab = data.tabs.find(t => t.id === tabId)
     if (tab) tab.status = status
   }
@@ -134,53 +153,16 @@ export function useTabManager(sessionId: Ref<string | null>) {
     }
   }
 
-  function entriesToMessages(entries: TranscriptEntry[]): ChatMessage[] {
-    const msgs: ChatMessage[] = []
-    const toolOutputs = new Map<string, { output: string; is_error: boolean }>()
-    for (const entry of entries) {
-      if (entry.type === 'user') {
-        for (const block of entry.content as UserContentBlock[]) {
-          if (block.type === 'tool_result') {
-            toolOutputs.set(block.tool_use_id, { output: block.content, is_error: block.is_error })
-          }
-        }
-      }
-    }
-    for (const entry of entries) {
-      if (entry.type === 'user') {
-        const blocks = entry.content as UserContentBlock[]
-        const hasText = blocks.some(b => b.type === 'text')
-        if (!hasText) continue
-        const text = blocks.filter((b): b is { type: 'text'; text: string } => b.type === 'text')
-          .map(b => b.text).join('')
-        msgs.push({ id: entry.uuid, role: 'user', content: text, timestamp: entry.timestamp })
-      } else if (entry.type === 'assistant') {
-        const blocks = entry.content as AssistantContentBlock[]
-        const segments: AssistantSegment[] = blocks.map(b => {
-          if (b.type === 'text') return { type: 'text' as const, text: b.text }
-          const result = toolOutputs.get(b.id)
-          return {
-            type: 'tool' as const,
-            call: {
-              tool_use_id: b.id,
-              tool_name: b.name,
-              input: b.input,
-              status: result ? (result.is_error ? 'error' as const : 'completed' as const) : 'completed' as const,
-              output: result?.output,
-            },
-          }
-        })
-        msgs.push({ id: entry.uuid, role: 'assistant', content: '', segments, timestamp: entry.timestamp })
-      }
-    }
-    return msgs
-  }
-
+  /** 将带 source_task_id 的实时事件直接追加到 Tab 的 messages 中（就地修改，避免每帧 O(n) 复制） */
   function appendTabEvent(tabId: string, event: AgentEvent) {
     const sid = sessionId.value
     if (!sid) return
     const data = getOrCreateSession(sid)
-    let msgs = [...(data.tabMessages.get(tabId) ?? [])]
+    let msgs = data.tabMessages.get(tabId)
+    if (!msgs) {
+      msgs = []
+      data.tabMessages.set(tabId, msgs)
+    }
 
     switch (event.type) {
       case 'TextDelta':
@@ -188,14 +170,13 @@ export function useTabManager(sessionId: Ref<string | null>) {
         const delta = event.delta
         const last = msgs.length > 0 ? msgs[msgs.length - 1] : null
         if (last?.role === 'assistant' && last.isStreaming) {
-          const segs = [...(last.segments ?? [])]
+          const segs = last.segments ?? []
           const lastSeg = segs[segs.length - 1]
           if (lastSeg?.type === 'text') {
-            segs[segs.length - 1] = { ...lastSeg, text: lastSeg.text + delta }
+            lastSeg.text += delta
           } else {
             segs.push({ type: 'text', text: delta })
           }
-          msgs[msgs.length - 1] = { ...last, segments: segs }
         } else {
           msgs.push({
             id: crypto.randomUUID(),
@@ -220,10 +201,7 @@ export function useTabManager(sessionId: Ref<string | null>) {
           },
         }
         if (last?.role === 'assistant' && last.isStreaming) {
-          msgs[msgs.length - 1] = {
-            ...last,
-            segments: [...(last.segments ?? []), toolSeg],
-          }
+          (last.segments ?? []).push(toolSeg)
         } else {
           msgs.push({
             id: crypto.randomUUID(),
@@ -239,18 +217,14 @@ export function useTabManager(sessionId: Ref<string | null>) {
       case 'ToolCallEnd': {
         const last = msgs.length > 0 ? msgs[msgs.length - 1] : null
         if (last?.role === 'assistant' && last.isStreaming) {
-          const segs = [...(last.segments ?? [])]
+          const segs = last.segments ?? []
           const toolSeg = segs.find(
             (s): s is AssistantSegment & { type: 'tool' } =>
               s.type === 'tool' && s.call.tool_use_id === event.tool_use_id,
           )
           if (toolSeg) {
-            toolSeg.call = {
-              ...toolSeg.call,
-              status: event.is_error ? 'error' : 'completed',
-              output: event.output,
-            }
-            msgs[msgs.length - 1] = { ...last, segments: segs }
+            toolSeg.call.status = event.is_error ? 'error' : 'completed'
+            toolSeg.call.output = event.output
           }
         }
         break
@@ -259,13 +233,14 @@ export function useTabManager(sessionId: Ref<string | null>) {
       case 'MessageComplete': {
         const last = msgs.length > 0 ? msgs[msgs.length - 1] : null
         if (last?.isStreaming) {
-          msgs[msgs.length - 1] = { ...last, isStreaming: false }
+          last.isStreaming = false
         }
         break
       }
     }
 
-    data.tabMessages.set(tabId, msgs)
+    // 批量事件后触发一次 ref 更新（调用方在每个事件后都调用，但 Map replace 很轻量）
+    syncTabMessages(data)
   }
 
   return {

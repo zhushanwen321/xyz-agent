@@ -1,14 +1,13 @@
 import { ref, onMounted, onUnmounted, watch, type Ref } from 'vue'
 import { sendMessage, cancelMessage, getHistory, onAgentEvent, isTauri } from '../lib/tauri'
+import { transcriptToMessages } from '../lib/transcript'
 import type {
   AgentEvent,
-  AssistantContentBlock,
   AssistantSegment,
   ChatMessage,
   OrchestrateNode,
   TaskNode,
   ToolCallDisplay,
-  UserContentBlock,
 } from '../types'
 
 function createMessage(role: ChatMessage['role'], content: string): ChatMessage {
@@ -272,67 +271,11 @@ export function useChat(sessionId: Ref<string | null>) {
     const result = await getHistory(sid)
     const msgs: ChatMessage[] = []
 
-    const toolOutputs = new Map<string, { output: string; is_error: boolean }>()
-    for (const entry of result.entries) {
-      if (entry.type === 'user') {
-        for (const block of entry.content as UserContentBlock[]) {
-          if (block.type === 'tool_result') {
-            toolOutputs.set(block.tool_use_id, {
-              output: block.content,
-              is_error: block.is_error,
-            })
-          }
-        }
-      }
-    }
-
     if (result.conversation_summary) {
       msgs.push(createMessage('system', `[对话摘要] ${result.conversation_summary}`))
     }
 
-    for (const entry of result.entries) {
-      if (entry.type === 'user') {
-        const blocks = entry.content as UserContentBlock[]
-        const hasText = blocks.some((b) => b.type === 'text')
-        if (!hasText) continue
-        const textContent = blocks
-          .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
-          .map((b) => b.text)
-          .join('')
-        msgs.push({
-          id: entry.uuid,
-          role: 'user',
-          content: textContent,
-          timestamp: entry.timestamp,
-        })
-      } else if (entry.type === 'assistant') {
-        const blocks = entry.content as AssistantContentBlock[]
-        const segments: AssistantSegment[] = blocks.map((b) => {
-          if (b.type === 'text') {
-            return { type: 'text' as const, text: b.text }
-          } else {
-            const result = toolOutputs.get(b.id)
-            return {
-              type: 'tool' as const,
-              call: {
-                tool_use_id: b.id,
-                tool_name: b.name,
-                input: b.input,
-                status: result ? (result.is_error ? 'error' as const : 'completed' as const) : 'completed' as const,
-                output: result?.output,
-              },
-            }
-          }
-        })
-        msgs.push({
-          id: entry.uuid,
-          role: 'assistant',
-          content: '',
-          segments,
-          timestamp: entry.timestamp,
-        })
-      }
-    }
+    msgs.push(...transcriptToMessages(result.entries))
 
     messages.value = msgs
     result.task_nodes.forEach(n => taskNodes.value.set(n.task_id, n))

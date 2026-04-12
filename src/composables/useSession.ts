@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { createSession, listSessions, deleteSession as deleteSessionApi, renameSession as renameSessionApi, isTauri } from '../lib/tauri'
+import { clearSessionTabs } from './useTabManager'
 import type { SessionInfo } from '../types'
 
 const sessions = ref<SessionInfo[]>([])
@@ -37,6 +38,7 @@ export function useSession() {
     if (!isTauri()) return
     try {
       await deleteSessionApi(id)
+      clearSessionTabs(id)
       if (currentSessionId.value === id) {
         currentSessionId.value = null
       }
