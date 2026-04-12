@@ -11,6 +11,7 @@ const props = defineProps<{
   toolUseToTaskId: Map<string, string>
   selectMode?: boolean
   selected?: boolean
+  onOpenSubAgentTab?: (taskId: string) => void
 }>()
 
 const emit = defineEmits<{
@@ -107,7 +108,13 @@ function renderMarkdown(text: string): string {
 
           <!-- tool segment -->
           <div v-else-if="seg.type === 'tool'" class="mb-2">
-            <ToolCallCard :tool-call="seg.call" :task-nodes="taskNodes" :tool-use-to-task-id="toolUseToTaskId" />
+            <ToolCallCard
+              :tool-call="seg.call"
+              :task-nodes="taskNodes"
+              :tool-use-to-task-id="toolUseToTaskId"
+              :task-id="toolUseToTaskId.get(seg.call.tool_use_id)"
+              :on-open-tab="onOpenSubAgentTab"
+            />
           </div>
         </template>
 

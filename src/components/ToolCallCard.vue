@@ -8,6 +8,8 @@ const props = defineProps<{
   toolCall: ToolCallDisplay
   taskNodes: Map<string, TaskNode>
   toolUseToTaskId: Map<string, string>
+  taskId?: string
+  onOpenTab?: (taskId: string) => void
 }>()
 
 // dispatch_agent 工具调用时显示 SubAgentCard 替代默认渲染
@@ -96,5 +98,12 @@ const statusLabel = computed(() => {
     >
       <pre class="whitespace-pre-wrap font-mono text-[11px] text-text-secondary">{{ toolCall.output }}</pre>
     </div>
+
+    <!-- 子 Agent Tab 跳转提示 -->
+    <button
+      v-if="taskId && onOpenTab"
+      class="mt-1 text-[10px] text-[#3b82f6] hover:underline cursor-pointer"
+      @click.stop="onOpenTab(taskId)"
+    >Click to view &rarr;</button>
   </div>
 </template>
