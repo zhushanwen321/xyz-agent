@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { computed } from 'vue'
 import type { TaskNode } from '../types'
 
 const props = defineProps<{ task: TaskNode }>()
-const isExpanded = ref(false)
 
 const statusIcon = computed(() => {
   switch (props.task.status) {
@@ -76,14 +75,12 @@ const emit = defineEmits<{
 
 <template>
   <div
-    class="rounded-md border border-border-default border-l-[3px] bg-bg-elevated text-[13px]"
+    class="group rounded-md border border-border-default border-l-[3px] bg-bg-elevated text-[13px] cursor-pointer transition-colors hover:border-[#3b82f6] hover:bg-[#18181b]"
     :class="borderColor"
+    @click="emit('openTab', task.task_id)"
   >
     <!-- 头部：类型 + 描述 + token + 状态 -->
-    <div
-      class="flex items-center justify-between px-2.5 py-1.5 cursor-pointer select-none"
-      @click="isExpanded = !isExpanded"
-    >
+    <div class="flex items-center justify-between px-2.5 py-1.5 select-none">
       <div class="flex items-center gap-2 min-w-0">
         <!-- 运行中显示 spinner，否则显示状态图标 -->
         <span
@@ -93,7 +90,7 @@ const emit = defineEmits<{
         <span v-else class="font-mono text-[10px] font-bold" :class="statusColor">
           {{ statusChar }}
         </span>
-        <span class="text-text-secondary font-mono text-[10px]">λ</span>
+        <span class="text-text-secondary font-mono text-[10px]">&#x03BB;</span>
         <span class="font-mono font-semibold text-text-primary truncate">
           {{ task.subagent_type ?? 'agent' }}
         </span>
@@ -113,7 +110,7 @@ const emit = defineEmits<{
           title="Kill"
           @click.stop="emit('kill')"
         >
-          <span class="text-[10px]">\u2715</span>
+          <span class="text-[10px]">&#x2715;</span>
         </button>
       </div>
     </div>
@@ -123,24 +120,9 @@ const emit = defineEmits<{
       <div class="h-full bg-blue-500 rounded-full transition-all duration-300" :style="{ width: `${progressPercent}%` }" />
     </div>
 
-    <!-- 展开详情 -->
-    <div v-if="isExpanded" class="border-t border-border-default px-2.5 py-2 space-y-1">
-      <div class="flex justify-between text-[11px]">
-        <span class="text-text-secondary">tool calls</span>
-        <span class="text-text-primary font-mono">{{ task.usage.tool_uses }}</span>
-      </div>
-      <div class="flex justify-between text-[11px]">
-        <span class="text-text-secondary">duration</span>
-        <span class="text-text-primary font-mono">{{ (task.usage.duration_ms / 1000).toFixed(1) }}s</span>
-      </div>
-      <div class="flex justify-between text-[11px]">
-        <span class="text-text-secondary">mode</span>
-        <span class="text-text-primary font-mono">{{ task.mode }}</span>
-      </div>
-      <div class="flex justify-between text-[11px]">
-        <span class="text-text-secondary">budget</span>
-        <span class="text-text-primary font-mono">{{ formatTokens(task.budget.max_tokens) }} / {{ task.budget.max_turns }} turns</span>
-      </div>
+    <!-- Hover hint -->
+    <div class="px-2.5 pb-1.5 text-[10px] text-[#3b82f6] opacity-0 group-hover:opacity-100 transition-opacity">
+      Click to open tab &rarr;
     </div>
   </div>
 </template>

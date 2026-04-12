@@ -78,6 +78,17 @@ const anchorSubtreeSize = computed(() => {
   return countSubtree(anchorNode.value) - 1
 })
 
+function formatTokens(n: number): string {
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`
+  if (n > 0) return String(n)
+  return '0'
+}
+
+function formatDuration(ms: number): string {
+  if (ms >= 60000) return `${(ms / 60000).toFixed(1)}m`
+  return `${(ms / 1000).toFixed(1)}s`
+}
+
 function statusClasses(status: string): string {
   switch (status) {
     case 'completed': return 'text-[#22c55e] bg-[rgba(34,197,94,0.1)]'
@@ -142,7 +153,8 @@ function roleColorClass(role: string): string {
             <span class="text-[10px] font-bold" :class="roleColorClass(ancestor.role)">
               {{ roleLabel(ancestor.role) }}
             </span>
-            <span class="text-[11px] text-[#fafafa] font-semibold truncate">{{ ancestor.description }}</span>
+            <span class="text-[11px] text-[#fafafa] font-semibold truncate flex-1">{{ ancestor.description }}</span>
+            <span class="text-[10px] font-mono text-[#71717a] shrink-0">{{ formatTokens(ancestor.usage.total_tokens) }}</span>
           </div>
         </div>
       </template>
@@ -158,9 +170,12 @@ function roleColorClass(role: string): string {
           <span class="text-[10px] px-1.5 py-0.5 rounded-sm" :class="statusClasses(anchorNode.status)">{{ anchorNode.status }}</span>
         </div>
         <div class="text-[10px] text-[#a1a1aa] space-y-0.5">
-          <div class="flex justify-between"><span>depth</span><span>{{ ancestorPath.length }}</span></div>
-          <div class="flex justify-between"><span>children</span><span>{{ anchorChildren.length }}</span></div>
-          <div class="flex justify-between"><span>subtree</span><span>{{ anchorSubtreeSize + 1 }} nodes</span></div>
+          <div class="flex justify-between"><span>tokens</span><span class="font-mono">{{ formatTokens(anchorNode.usage.total_tokens) }} / {{ formatTokens(anchorNode.budget.max_tokens) }}</span></div>
+          <div class="flex justify-between"><span>duration</span><span class="font-mono">{{ formatDuration(anchorNode.usage.duration_ms) }}</span></div>
+          <div class="flex justify-between"><span>tool calls</span><span class="font-mono">{{ anchorNode.usage.tool_uses }}</span></div>
+          <div class="flex justify-between"><span>depth</span><span class="font-mono">{{ ancestorPath.length }}</span></div>
+          <div class="flex justify-between"><span>children</span><span class="font-mono">{{ anchorChildren.length }}</span></div>
+          <div class="flex justify-between"><span>subtree</span><span class="font-mono">{{ anchorSubtreeSize + 1 }} nodes</span></div>
         </div>
       </div>
 
@@ -177,7 +192,10 @@ function roleColorClass(role: string): string {
             {{ roleLabel(child.role) }}
           </span>
           <span class="text-[11px] text-[#fafafa] font-semibold truncate flex-1">{{ child.description }}</span>
-          <span class="text-[10px] px-1.5 py-0.5 rounded-sm" :class="statusClasses(child.status)">{{ child.status }}</span>
+          <span class="text-[10px] font-mono text-[#71717a] shrink-0">{{ formatTokens(child.usage.total_tokens) }}</span>
+          <span class="text-[10px] px-1.5 py-0.5 rounded-sm" :class="statusClasses(child.status)">
+            {{ child.status === 'idle' && child.reuse_count > 0 ? `idle(${child.reuse_count}x)` : child.status }}
+          </span>
         </div>
         <div v-if="child.children_ids.length > 0" class="text-[10px] text-[#3b82f6] mt-0.5 pt-0.5 border-t border-[#27272a]">
           {{ child.children_ids.length }} direct &middot; {{ countSubtree(child) - 1 }} total &rarr;

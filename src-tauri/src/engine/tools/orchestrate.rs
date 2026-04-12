@@ -224,7 +224,7 @@ impl Tool for OrchestrateTool {
             let mut tree = ctx.task_tree.lock().await;
             tree.create_orchestrate_node(
                 node_id.clone(),
-                None,
+                ctx.node_id.clone(),
                 &ctx.session_id,
                 if effective_type == "orchestrator" { NodeRole::Orchestrator } else { NodeRole::Executor },
                 node_depth,
@@ -242,12 +242,16 @@ impl Tool for OrchestrateTool {
                 .map(|p| p.child_token())
                 .unwrap_or_else(tokio_util::sync::CancellationToken::new);
             tree.set_cancel_token(node_id.clone(), child_token);
+            // 持久化初始状态到 session transcript
+            if let Some(onode) = tree.get_orchestrate_node(&node_id) {
+                let _ = crate::store::jsonl::persist_orchestrate_node(&ctx.data_dir, &ctx.session_id, onode);
+            }
         }
 
         let _ = ctx.event_tx.send(AgentEvent::OrchestrateNodeCreated {
             session_id: ctx.session_id.clone(),
             node_id: node_id.clone(),
-            parent_id: None,
+            parent_id: ctx.node_id.clone(),
             role: effective_type.to_string(),
             depth: node_depth,
             description: task_description.clone(),
@@ -346,6 +350,10 @@ impl Tool for OrchestrateTool {
 
             let mut tree = ctx.task_tree.lock().await;
             tree.set_task_result(&node_id, result_text.chars().take(100_000).collect());
+            // 持久化最终状态到 session transcript
+            if let Some(onode) = tree.get_orchestrate_node(&node_id) {
+                let _ = crate::store::jsonl::persist_orchestrate_node(&ctx.data_dir, &ctx.session_id, onode);
+            }
 
             ToolResult::Text(result_text)
         } else {
@@ -387,6 +395,10 @@ impl Tool for OrchestrateTool {
                     });
                     let mut tree = task_tree_bg.lock().await;
                     tree.set_task_result(&node_id_bg, text.chars().take(100_000).collect());
+                    // 持久化最终状态到 session transcript
+                    if let Some(onode) = tree.get_orchestrate_node(&node_id_bg) {
+                        let _ = crate::store::jsonl::persist_orchestrate_node(&data_dir_bg, &session_id_bg, onode);
+                    }
                 }
             });
 

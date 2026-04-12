@@ -26,6 +26,8 @@ pub struct ToolExecutionContext {
     pub background_tasks: Arc<tokio::sync::Mutex<HashMap<String, tokio::task::JoinHandle<()>>>>,
     pub agent_spawner: Arc<dyn AgentSpawner>,
     pub orchestrate_depth: u32,
+    /// 当前 Agent 的 node_id（递归 orchestrate 时用于设置 parent_id）
+    pub node_id: Option<String>,
     /// 父级 CancellationToken，用于派生子 Agent 的 child token（级联取消）
     pub parent_cancel_token: Option<tokio_util::sync::CancellationToken>,
 }

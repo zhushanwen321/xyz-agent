@@ -168,29 +168,29 @@ impl AgentEvent {
         }
     }
 
-    /// 为可路由事件附加 source_task_id，全局事件直接透传
+    /// 为可路由事件附加 source_task_id，保留已有的 source_task_id（嵌套场景）
     pub fn with_source_task_id(self, task_id: &str) -> Self {
         match self {
-            AgentEvent::TextDelta { session_id, delta, .. } => AgentEvent::TextDelta {
-                session_id, delta, source_task_id: Some(task_id.to_string()),
+            AgentEvent::TextDelta { session_id, delta, source_task_id: existing } => AgentEvent::TextDelta {
+                session_id, delta, source_task_id: existing.or_else(|| Some(task_id.to_string())),
             },
-            AgentEvent::ThinkingDelta { session_id, delta, .. } => AgentEvent::ThinkingDelta {
-                session_id, delta, source_task_id: Some(task_id.to_string()),
+            AgentEvent::ThinkingDelta { session_id, delta, source_task_id: existing } => AgentEvent::ThinkingDelta {
+                session_id, delta, source_task_id: existing.or_else(|| Some(task_id.to_string())),
             },
-            AgentEvent::ToolCallStart { session_id, tool_name, tool_use_id, input, .. } => AgentEvent::ToolCallStart {
-                session_id, tool_name, tool_use_id, input, source_task_id: Some(task_id.to_string()),
+            AgentEvent::ToolCallStart { session_id, tool_name, tool_use_id, input, source_task_id: existing } => AgentEvent::ToolCallStart {
+                session_id, tool_name, tool_use_id, input, source_task_id: existing.or_else(|| Some(task_id.to_string())),
             },
-            AgentEvent::ToolCallEnd { session_id, tool_use_id, is_error, output, .. } => AgentEvent::ToolCallEnd {
-                session_id, tool_use_id, is_error, output, source_task_id: Some(task_id.to_string()),
+            AgentEvent::ToolCallEnd { session_id, tool_use_id, is_error, output, source_task_id: existing } => AgentEvent::ToolCallEnd {
+                session_id, tool_use_id, is_error, output, source_task_id: existing.or_else(|| Some(task_id.to_string())),
             },
-            AgentEvent::MessageComplete { session_id, role, content, usage, .. } => AgentEvent::MessageComplete {
-                session_id, role, content, usage, source_task_id: Some(task_id.to_string()),
+            AgentEvent::MessageComplete { session_id, role, content, usage, source_task_id: existing } => AgentEvent::MessageComplete {
+                session_id, role, content, usage, source_task_id: existing.or_else(|| Some(task_id.to_string())),
             },
-            AgentEvent::TurnComplete { session_id, .. } => AgentEvent::TurnComplete {
-                session_id, source_task_id: Some(task_id.to_string()),
+            AgentEvent::TurnComplete { session_id, source_task_id: existing } => AgentEvent::TurnComplete {
+                session_id, source_task_id: existing.or_else(|| Some(task_id.to_string())),
             },
-            AgentEvent::Error { session_id, message, .. } => AgentEvent::Error {
-                session_id, message, source_task_id: Some(task_id.to_string()),
+            AgentEvent::Error { session_id, message, source_task_id: existing } => AgentEvent::Error {
+                session_id, message, source_task_id: existing.or_else(|| Some(task_id.to_string())),
             },
             other => other,
         }

@@ -188,6 +188,7 @@ async fn run_subagent(
         background_tasks: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         agent_spawner: spawner,
         orchestrate_depth: config.orchestrate_depth,
+        node_id: config.node_id.clone(),
         parent_cancel_token: config.parent_cancel_token.clone(),
     };
 

@@ -123,6 +123,23 @@ pub struct LoadHistoryResult {
 pub fn load_history(path: &Path) -> Result<LoadHistoryResult, AppError> {
     let all_entries = read_all_entries(path)?;
 
+    // 提取节点条目：每个 node_id/task_id 保留最后一条（last write wins）
+    let mut task_nodes_map = std::collections::HashMap::<String, TranscriptEntry>::new();
+    let mut orch_nodes_map = std::collections::HashMap::<String, TranscriptEntry>::new();
+    for entry in &all_entries {
+        match entry {
+            TranscriptEntry::TaskNode { task_id, .. } => {
+                task_nodes_map.insert(task_id.clone(), entry.clone());
+            }
+            TranscriptEntry::OrchestrateNode { node_id, .. } => {
+                orch_nodes_map.insert(node_id.clone(), entry.clone());
+            }
+            _ => {}
+        }
+    }
+    let task_node_entries: Vec<TranscriptEntry> = task_nodes_map.into_values().collect();
+    let orchestrate_node_entries: Vec<TranscriptEntry> = orch_nodes_map.into_values().collect();
+
     // 找到最新的 Summary 条目（从后往前搜索）
     let latest_summary = all_entries.iter().rev().find_map(|e| {
         if let TranscriptEntry::Summary {
@@ -146,22 +163,51 @@ pub fn load_history(path: &Path) -> Result<LoadHistoryResult, AppError> {
             Ok(LoadHistoryResult {
                 entries: entries_after,
                 conversation_summary: Some(summary_text),
-                task_node_entries: Vec::new(),
-                orchestrate_node_entries: Vec::new(),
+                task_node_entries,
+                orchestrate_node_entries,
                 pending_async_results: Vec::new(),
             })
         }
         None => Ok(LoadHistoryResult {
             entries: all_entries,
             conversation_summary: None,
-            task_node_entries: Vec::new(),
-            orchestrate_node_entries: Vec::new(),
+            task_node_entries,
+            orchestrate_node_entries,
             pending_async_results: Vec::new(),
         }),
     }
 }
 
 // ── Sidechain / Orchestrate JSONL helpers ─────────────────────────
+
+/// Session transcript 路径
+pub fn session_transcript_path(data_dir: &Path, session_id: &str) -> std::path::PathBuf {
+    data_dir.join("sessions").join(format!("{session_id}.jsonl"))
+}
+
+/// 将 task_tree::TaskNode 持久化到 session transcript
+pub fn persist_task_node(
+    data_dir: &Path,
+    session_id: &str,
+    node: &crate::engine::task_tree::TaskNode,
+) -> Result<(), AppError> {
+    let path = session_transcript_path(data_dir, session_id);
+    let entry = TranscriptEntry::from_task_node(node);
+    append_entry(&path, &entry)
+}
+
+/// 将 task_tree::OrchestrateNode 持久化到 session transcript
+pub fn persist_orchestrate_node(
+    data_dir: &Path,
+    session_id: &str,
+    node: &crate::engine::task_tree::OrchestrateNode,
+) -> Result<(), AppError> {
+    let path = session_transcript_path(data_dir, session_id);
+    let entry = TranscriptEntry::from_orchestrate_node(node);
+    append_entry(&path, &entry)
+}
+
+// ── Sidechain / Orchestrate JSONL helpers (continued) ─────────────────────────
 
 fn sanitize_segment(s: &str) -> String {
     s.chars().map(|c| if c == '/' || c == '\\' || c == '.' { '_' } else { c }).collect()

@@ -122,6 +122,7 @@ mod tests {
             background_tasks: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             agent_spawner: spawner,
             orchestrate_depth: 0,
+            node_id: None,
             parent_cancel_token: None,
         };
 

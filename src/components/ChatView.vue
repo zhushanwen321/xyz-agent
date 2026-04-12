@@ -22,16 +22,10 @@ const { messages, isStreaming, tokenUsage, send, cancel, currentTurnSegments, ta
 const { createNewSession } = useSession()
 const tabManager = useTabManager(sessionIdRef)
 
-// 注入 Tab 事件处理器：自动创建 Tab + 更新状态
+// 注入 Tab 事件处理器：更新状态 + 积累实时事件（不自动打开 Tab）
 setTabEventHandler((event) => {
   if (!sessionIdRef.value) return
-  if (event.type === 'TaskCreated') {
-    tabManager.openSubAgentTab(event.task_id, event.description, sessionIdRef.value, 'subagent')
-  }
-  if (event.type === 'OrchestrateNodeCreated') {
-    tabManager.openSubAgentTab(event.node_id, event.description, sessionIdRef.value, 'orchestrate')
-  }
-  // 根据事件类型确定目标 tabId
+  // 根据事件类型确定目标 tabId（仅更新已存在的 Tab 状态）
   const tabId = event.type === 'TaskCreated' ? event.task_id
     : event.type === 'TaskCompleted' ? event.task_id
     : event.type === 'OrchestrateNodeCreated' ? event.node_id
@@ -122,6 +116,25 @@ const currentMessages = computed(() => {
   return tabManager.tabMessages.value.get(tabManager.activeTabId.value) ?? []
 })
 
+// 子 Agent Tab 的 banner 信息
+const activeSubTab = computed(() => {
+  if (tabManager.activeTabId.value === 'main') return null
+  return tabManager.tabs.value.find(t => t.id === tabManager.activeTabId.value) ?? null
+})
+
+const subTabStatusClass = computed(() => {
+  const s = activeSubTab.value?.status
+  switch (s) {
+    case 'completed': return 'text-[#22c55e] bg-[rgba(34,197,94,0.1)]'
+    case 'streaming': return 'text-[#22c55e] bg-[rgba(34,197,94,0.15)]'
+    case 'thinking': return 'text-[#eab308] bg-[rgba(234,179,8,0.1)]'
+    case 'tool': return 'text-[#f97316] bg-[rgba(249,115,22,0.1)]'
+    case 'failed': return 'text-[#ef4444] bg-[rgba(239,68,68,0.1)]'
+    case 'idle': return 'text-[#3b82f6] bg-[rgba(59,130,246,0.1)]'
+    default: return 'text-[#71717a] bg-[rgba(113,113,122,0.1)]'
+  }
+})
+
 // 运行时配置（从后端获取一次）
 const modelName = ref('loading...')
 const toolCount = ref(0)
@@ -177,6 +190,20 @@ function handleCancel() {
 
       <!-- 消息区域 -->
       <div ref="scrollContainer" class="flex-1 overflow-y-auto">
+        <!-- 子 Agent Tab banner -->
+        <div
+          v-if="activeSubTab"
+          class="flex items-center gap-2 border-b border-border-default bg-bg-elevated px-3 py-1.5 text-[11px] text-text-secondary"
+        >
+          <span class="text-[#3b82f6] cursor-pointer hover:underline" @click="tabManager.switchTab('main')">&#x2190; Main</span>
+          <span class="text-[#3f3f46]">|</span>
+          <span class="text-text-primary font-semibold truncate flex-1">{{ activeSubTab.title }}</span>
+          <span
+            class="text-[10px] px-1.5 py-0.5 rounded-sm"
+            :class="subTabStatusClass"
+          >{{ activeSubTab.status }}</span>
+        </div>
+
         <!-- 浮动工具栏 -->
         <div
           v-if="currentMessages.length > 0"

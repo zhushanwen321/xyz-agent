@@ -222,6 +222,36 @@ impl TranscriptEntry {
             TranscriptEntry::Feedback { parent_uuid, .. } => parent_uuid.as_deref(),
         }
     }
+
+    fn snake_str(v: &impl serde::Serialize) -> String {
+        serde_json::to_string(v).unwrap_or_default().trim_matches('"').to_string()
+    }
+
+    pub fn from_task_node(n: &crate::engine::task_tree::TaskNode) -> Self {
+        Self::TaskNode {
+            uuid: Uuid::new_v4().to_string(), parent_uuid: None,
+            timestamp: Utc::now().to_rfc3339(), session_id: n.session_id.clone(),
+            task_id: n.task_id.clone(), parent_id: n.parent_id.clone(),
+            description: n.description.clone(), status: Self::snake_str(&n.status),
+            mode: Self::snake_str(&n.mode), subagent_type: n.subagent_type.clone(),
+            created_at: n.created_at.clone(), completed_at: n.completed_at.clone(),
+            budget: n.budget.clone(), usage: n.usage.clone(),
+        }
+    }
+
+    pub fn from_orchestrate_node(n: &crate::engine::task_tree::OrchestrateNode) -> Self {
+        Self::OrchestrateNode {
+            uuid: Uuid::new_v4().to_string(), parent_uuid: None,
+            timestamp: Utc::now().to_rfc3339(), session_id: n.session_id.clone(),
+            node_id: n.node_id.clone(), parent_id: n.parent_id.clone(),
+            role: Self::snake_str(&n.role), depth: n.depth,
+            description: n.description.clone(), status: Self::snake_str(&n.status),
+            directive: n.directive.clone(), agent_id: n.agent_id.clone(),
+            budget: n.budget.clone(), usage: n.usage.clone(),
+            children_ids: n.children_ids.clone(), feedback_history: n.feedback_history.clone(),
+            reuse_count: n.reuse_count, last_active_at: n.last_active_at.clone(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -263,40 +293,27 @@ mod tests {
     #[test]
     fn test_assistant_entry_with_usage() {
         let entry = TranscriptEntry::Assistant {
-            uuid: "a1".to_string(),
-            parent_uuid: Some("u1".to_string()),
-            timestamp: "2026-01-01T00:00:00Z".to_string(),
-            session_id: "s1".to_string(),
-            content: vec![AssistantContentBlock::Text {
-                text: "response".to_string(),
-            }],
-            usage: Some(TokenUsage {
-                input_tokens: 100,
-                output_tokens: 50,
-            }),
+            uuid: "a1".into(), parent_uuid: Some("u1".into()),
+            timestamp: "2026-01-01T00:00:00Z".into(), session_id: "s1".into(),
+            content: vec![AssistantContentBlock::Text { text: "response".into() }],
+            usage: Some(TokenUsage { input_tokens: 100, output_tokens: 50 }),
         };
         let json = serde_json::to_string(&entry).unwrap();
         assert!(json.contains("\"type\":\"assistant\""));
         assert!(json.contains("\"input_tokens\":100"));
-
         let de: TranscriptEntry = serde_json::from_str(&json).unwrap();
         if let TranscriptEntry::Assistant { usage, .. } = de {
             assert_eq!(usage.unwrap().input_tokens, 100);
-        } else {
-            panic!("Expected Assistant variant");
-        }
+        } else { panic!("Expected Assistant"); }
     }
 
     #[test]
-    fn test_assistant_entry_old_format_deserialization() {
+    fn test_assistant_entry_old_format() {
         let json = r#"{"type":"assistant","uuid":"a1","parent_uuid":"u1","timestamp":"2026-01-01T00:00:00Z","session_id":"s1","content":"response","usage":null}"#;
         let de: TranscriptEntry = serde_json::from_str(json).unwrap();
         if let TranscriptEntry::Assistant { content, .. } = de {
-            assert_eq!(content.len(), 1);
-            assert!(matches!(content[0], AssistantContentBlock::Text { ref text } if text == "response"));
-        } else {
-            panic!("Expected Assistant variant");
-        }
+            assert!(matches!(content[0], AssistantContentBlock::Text { ref text, .. } if text == "response"));
+        } else { panic!("Expected Assistant"); }
     }
 
     #[test]
@@ -304,25 +321,17 @@ mod tests {
         let json = r#"{"type":"assistant","uuid":"a1","parent_uuid":null,"timestamp":"2026-01-01T00:00:00Z","session_id":"s1","content":[{"type":"tool_use","id":"t1","name":"Read","input":{}}],"usage":null}"#;
         let de: TranscriptEntry = serde_json::from_str(json).unwrap();
         if let TranscriptEntry::Assistant { content, .. } = de {
-            assert_eq!(content.len(), 1);
             assert!(matches!(content[0], AssistantContentBlock::ToolUse { ref id, ref name, .. } if id == "t1" && name == "Read"));
-        } else {
-            panic!("Expected Assistant variant");
-        }
+        } else { panic!("Expected Assistant"); }
     }
 
     #[test]
-    fn test_custom_title_no_uuid_fields() {
-        let entry = TranscriptEntry::CustomTitle {
-            session_id: "s1".to_string(),
-            title: "My Chat".to_string(),
-        };
+    fn test_custom_title() {
+        let entry = TranscriptEntry::CustomTitle { session_id: "s1".into(), title: "My Chat".into() };
         let json = serde_json::to_string(&entry).unwrap();
         assert!(json.contains("\"type\":\"custom_title\""));
         assert!(!json.contains("uuid"));
-
-        let de: TranscriptEntry = serde_json::from_str(&json).unwrap();
-        assert!(matches!(de, TranscriptEntry::CustomTitle { .. }));
+        assert!(matches!(serde_json::from_str::<TranscriptEntry>(&json).unwrap(), TranscriptEntry::CustomTitle { .. }));
     }
 
     #[test]

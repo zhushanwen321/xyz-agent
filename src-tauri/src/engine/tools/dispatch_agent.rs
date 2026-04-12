@@ -256,6 +256,8 @@ impl Tool for DispatchAgentTool {
                 Some(budget.clone()),
             );
             let task_node_id = node.task_id.clone();
+            // 持久化初始状态到 session transcript（重启后可恢复侧边栏）
+            let _ = crate::store::jsonl::persist_task_node(&ctx.data_dir, &ctx.session_id, node);
             // 用 parent token 派生 child token，实现级联取消
             // 安全性：set_cancel_token 在 spawn_agent（run_subagent → get_cancel_token）之前执行，
             // 因为 spawn_agent 的 tokio::spawn 会在当前 .await 点之后才被调度
@@ -399,10 +401,13 @@ impl Tool for DispatchAgentTool {
                 },
             });
 
-            // 写入 TaskTree
+            // 写入 TaskTree + 持久化最终状态
             {
                 let mut tree = ctx.task_tree.lock().await;
                 tree.set_task_result(&task_id, result_text.chars().take(100_000).collect());
+                if let Some(node) = tree.get_task_node(&task_id) {
+                    let _ = crate::store::jsonl::persist_task_node(&ctx.data_dir, &ctx.session_id, node);
+                }
             }
 
             ToolResult::Text(result_text)
@@ -443,6 +448,10 @@ impl Tool for DispatchAgentTool {
 
                 let mut tree = task_tree_bg.lock().await;
                 tree.set_task_result(&task_id_bg, summary.chars().take(100_000).collect());
+                // 持久化最终状态到 session transcript
+                if let Some(node) = tree.get_task_node(&task_id_bg) {
+                    let _ = crate::store::jsonl::persist_task_node(&data_dir_bg, &session_id_bg, node);
+                }
             });
 
             {

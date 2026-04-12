@@ -29,6 +29,10 @@ const activeTaskCount = computed(() =>
   [...props.taskNodes.values()].filter(t => t.status === 'running').length
 )
 
+const completedTaskCount = computed(() =>
+  [...props.taskNodes.values()].filter(t => t.status === 'completed').length
+)
+
 const hasContent = computed(() =>
   props.taskNodes.size > 0 || props.orchestrateNodes.size > 0
 )
@@ -79,7 +83,7 @@ const hasContent = computed(() =>
           :anchor-node-id="anchorNodeId"
           @select="selectedNodeId = $event; emit('selectNode', $event)"
           @kill="emit('killTask', $event)"
-          @anchor="anchorNodeId = $event"
+          @anchor="anchorNodeId = $event; if ($event) emit('selectNode', $event)"
         />
         <div v-if="orchestrateNodes.size === 0" class="text-center text-text-secondary text-[11px] py-4">
           No orchestrate nodes
@@ -88,8 +92,9 @@ const hasContent = computed(() =>
     </div>
 
     <!-- 底部统计 -->
-    <div class="border-t border-border-default px-3 py-1.5 text-[10px] text-text-secondary font-mono">
-      Active: {{ activeTaskCount }}
+    <div class="border-t border-border-default px-3 py-1.5 text-[10px] text-text-secondary font-mono flex justify-between">
+      <span>Active: <span class="text-[#22c55e]">{{ activeTaskCount }}</span></span>
+      <span>Completed: {{ completedTaskCount }}</span>
     </div>
   </aside>
 </template>
