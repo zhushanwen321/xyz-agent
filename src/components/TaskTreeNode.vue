@@ -12,6 +12,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   select: [nodeId: string]
   kill: [nodeId: string]
+  anchor: [nodeId: string]
 }>()
 
 const isExpanded = ref(true)
@@ -44,7 +45,7 @@ const roleBadge = computed(() =>
       class="flex items-center gap-1.5 py-1 rounded-sm hover:bg-zinc-800/50 cursor-pointer text-[12px]"
       :class="{ 'bg-blue-500/10 ring-1 ring-inset ring-blue-500/30': selectedNodeId === node.node_id }"
       :style="{ paddingLeft: `${depth * 16 + 4}px` }"
-      @click="emit('select', node.node_id)"
+      @click="emit('anchor', node.node_id)"
     >
       <!-- 展开/折叠 -->
       <button
@@ -94,6 +95,7 @@ const roleBadge = computed(() =>
         :selected-node-id="selectedNodeId"
         @select="emit('select', $event)"
         @kill="emit('kill', $event)"
+        @anchor="emit('anchor', $event)"
       />
     </div>
   </div>

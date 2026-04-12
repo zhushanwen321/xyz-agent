@@ -11,6 +11,7 @@ const props = defineProps<{
 
 const activeTab = ref<'subagents' | 'orchestrate'>('subagents')
 const selectedNodeId = ref<string | null>(null)
+const anchorNodeId = ref<string | null>(null)
 
 const emit = defineEmits<{
   killTask: [taskId: string]
@@ -75,8 +76,10 @@ const hasContent = computed(() =>
         <TaskTreeView
           :nodes="orchestrateNodes"
           :selected-node-id="selectedNodeId"
+          :anchor-node-id="anchorNodeId"
           @select="selectedNodeId = $event; emit('selectNode', $event)"
           @kill="emit('killTask', $event)"
+          @anchor="anchorNodeId = $event"
         />
         <div v-if="orchestrateNodes.size === 0" class="text-center text-text-secondary text-[11px] py-4">
           No orchestrate nodes
