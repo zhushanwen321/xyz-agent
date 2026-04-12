@@ -510,27 +510,13 @@ mod tests {
 
     #[test]
     fn fork_detection_works() {
-        let history = vec![TranscriptEntry::User {
-            uuid: "u1".into(),
-            parent_uuid: None,
-            timestamp: "2026-01-01T00:00:00Z".into(),
-            session_id: "s1".into(),
-            content: vec![UserContentBlock::Text {
-                text: "<fork-context>\ndo something\n</fork-context>".into(),
-            }],
-        }];
-        assert!(is_in_fork_child(&history));
-
-        let normal = vec![TranscriptEntry::User {
-            uuid: "u1".into(),
-            parent_uuid: None,
-            timestamp: "2026-01-01T00:00:00Z".into(),
-            session_id: "s1".into(),
-            content: vec![UserContentBlock::Text {
-                text: "normal message".into(),
-            }],
-        }];
-        assert!(!is_in_fork_child(&normal));
+        let mk_user = |text: &str| TranscriptEntry::User {
+            uuid: "u1".into(), parent_uuid: None,
+            timestamp: "2026-01-01T00:00:00Z".into(), session_id: "s1".into(),
+            content: vec![UserContentBlock::Text { text: text.into() }],
+        };
+        assert!(is_in_fork_child(&[mk_user("<fork-context>\ndo something\n</fork-context>")]));
+        assert!(!is_in_fork_child(&[mk_user("normal message")]));
     }
 
     #[tokio::test]

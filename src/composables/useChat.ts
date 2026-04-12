@@ -26,6 +26,8 @@ export function useChat(sessionId: Ref<string | null>) {
   // tool_use_id -> task_id 映射，用于 ToolCallCard 关联 SubAgentCard
   const toolUseToTaskId = ref<Map<string, string>>(new Map())
   let unlisten: (() => void) | null = null
+  // Tab 事件回调，由 ChatView 注入，用于自动创建/更新 Tab
+  let tabEventHandler: ((event: AgentEvent) => void) | null = null
   let historyLoadPromise: Promise<void> | null = null
 
   function appendTextToCurrentTurn(text: string) {
@@ -52,12 +54,20 @@ export function useChat(sessionId: Ref<string | null>) {
       if (!sessionId.value || event.session_id !== sessionId.value) return
 
       switch (event.type) {
-        case 'TextDelta':
+        case 'TextDelta': {
+          if ('source_task_id' in event && event.source_task_id) {
+            tabEventHandler?.(event)
+            break
+          }
           streamingText.value += event.delta
           appendTextToCurrentTurn(event.delta)
+          tabEventHandler?.(event)
           break
-        case 'ThinkingDelta':
+        }
+        case 'ThinkingDelta': {
+          tabEventHandler?.(event)
           break
+        }
         case 'MessageComplete': {
           // TextDelta 已逐字追加到 currentTurnSegments，
           // 这里只清空 streamingText 并更新 tokenUsage
@@ -87,6 +97,10 @@ export function useChat(sessionId: Ref<string | null>) {
           isStreaming.value = false
           break
         case 'ToolCallStart': {
+          if ('source_task_id' in event && event.source_task_id) {
+            tabEventHandler?.(event)
+            break
+          }
           currentTurnSegments.value.push({
             type: 'tool',
             call: {
@@ -96,14 +110,20 @@ export function useChat(sessionId: Ref<string | null>) {
               status: 'running',
             },
           })
+          tabEventHandler?.(event)
           break
         }
         case 'ToolCallEnd': {
+          if ('source_task_id' in event && event.source_task_id) {
+            tabEventHandler?.(event)
+            break
+          }
           const tc = findToolSegment(event.tool_use_id)
           if (tc) {
             tc.status = event.is_error ? 'error' : 'completed'
             tc.output = event.output
           }
+          tabEventHandler?.(event)
           break
         }
         case 'TaskCreated':
@@ -125,6 +145,7 @@ export function useChat(sessionId: Ref<string | null>) {
             completed_at: null,
             output_file: null,
           })
+          tabEventHandler?.(event)
           break
         case 'TaskProgress': {
           const node = taskNodes.value.get(event.task_id)
@@ -138,6 +159,7 @@ export function useChat(sessionId: Ref<string | null>) {
             node.usage = event.usage
             node.completed_at = new Date().toISOString()
           }
+          tabEventHandler?.(event)
           break
         }
         case 'BudgetWarning':
@@ -166,6 +188,7 @@ export function useChat(sessionId: Ref<string | null>) {
             const parent = orchestrateNodes.value.get(event.parent_id)
             if (parent) parent.children_ids.push(event.node_id)
           }
+          tabEventHandler?.(event)
           break
         case 'OrchestrateNodeProgress': {
           const onode = orchestrateNodes.value.get(event.node_id)
@@ -178,6 +201,7 @@ export function useChat(sessionId: Ref<string | null>) {
             onode.status = event.status as OrchestrateNode['status']
             onode.usage = event.usage
           }
+          tabEventHandler?.(event)
           break
         }
         case 'OrchestrateNodeIdle': {
@@ -307,5 +331,9 @@ export function useChat(sessionId: Ref<string | null>) {
     }
   })
 
-  return { messages, streamingText, isStreaming, tokenUsage, send, cancel, currentTurnSegments, taskNodes, orchestrateNodes, toolUseToTaskId }
+  function setTabEventHandler(handler: (event: AgentEvent) => void) {
+    tabEventHandler = handler
+  }
+
+  return { messages, streamingText, isStreaming, tokenUsage, send, cancel, currentTurnSegments, taskNodes, orchestrateNodes, toolUseToTaskId, setTabEventHandler }
 }
