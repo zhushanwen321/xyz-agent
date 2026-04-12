@@ -58,7 +58,11 @@ impl TokenBudget {
                     .collect::<Vec<_>>()
                     .join(""),
                 TranscriptEntry::System { content, .. } => content.as_str().to_string(),
-                TranscriptEntry::CustomTitle { .. } | TranscriptEntry::Summary { .. } => continue,
+                TranscriptEntry::CustomTitle { .. }
+                | TranscriptEntry::Summary { .. }
+                | TranscriptEntry::TaskNode { .. }
+                | TranscriptEntry::OrchestrateNode { .. }
+                | TranscriptEntry::Feedback { .. } => continue,
             };
             total += self.estimate_text(&text);
         }
@@ -68,19 +72,14 @@ impl TokenBudget {
 
 // ── Context compression config ──────────────────────────────────
 
+// P2 预留字段暂未在业务逻辑中读取
 #[allow(dead_code)]
 pub struct ContextConfig {
-    /// 低于此 buffer 时触发自动压缩
     pub auto_compact_buffer: u32,
-    /// 低于此 buffer 时发出警告
     pub warning_buffer: u32,
-    /// 硬限制 buffer（不允许超出）
     pub hard_limit_buffer: u32,
-    /// trim 时保留的最近 tool_result 数量
     pub keep_tool_results: usize,
-    /// 压缩 LLM 的最大输出 token
     pub compact_max_output_tokens: u32,
-    /// 连续压缩失败熔断阈值
     pub max_consecutive_failures: u32,
 }
 

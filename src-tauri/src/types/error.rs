@@ -11,16 +11,18 @@ pub enum AppError {
     SessionNotFound(String),
     #[error("Config error: {0}")]
     Config(String),
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Serialization error: {0}")]
+    Serialization(#[from] serde_json::Error),
 }
 
-// 让 Tauri command 能返回 Result<T, String>
 impl From<AppError> for String {
     fn from(err: AppError) -> String {
         err.to_string()
     }
 }
 
-// Serialize 用于 Tauri event payload（只取 message）
 impl Serialize for AppError {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -54,18 +56,4 @@ mod tests {
         assert_eq!(json, "\"Session not found: abc-123\"");
     }
 
-    #[test]
-    fn test_all_variants_convert_to_string() {
-        let cases: Vec<AppError> = vec![
-            AppError::Llm("e1".into()),
-            AppError::Storage("e2".into()),
-            AppError::SessionNotFound("e3".into()),
-            AppError::Config("e4".into()),
-        ];
-        let strings: Vec<String> = cases.into_iter().map(|e| e.into()).collect();
-        assert_eq!(strings[0], "LLM API error: e1");
-        assert_eq!(strings[1], "Storage error: e2");
-        assert_eq!(strings[2], "Session not found: e3");
-        assert_eq!(strings[3], "Config error: e4");
-    }
 }

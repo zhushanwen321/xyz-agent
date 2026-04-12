@@ -43,6 +43,7 @@ mod tests {
         let event = crate::types::AgentEvent::TextDelta {
             session_id: "s1".to_string(),
             delta: "hello".to_string(),
+            source_task_id: None,
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains(r#""type":"TextDelta""#));

@@ -1,11 +1,26 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { ToolCallDisplay } from '../types'
+import type { ToolCallDisplay, TaskNode } from '../types'
 import { getToolDangerLevel } from '../types'
+import SubAgentCard from './SubAgentCard.vue'
 
 const props = defineProps<{
   toolCall: ToolCallDisplay
+  taskNodes: Map<string, TaskNode>
+  toolUseToTaskId: Map<string, string>
+  taskId?: string
+  onOpenTab?: (taskId: string) => void
 }>()
+
+// dispatch_agent 工具调用时显示 SubAgentCard 替代默认渲染
+const isDispatchAgent = computed(() => props.toolCall.tool_name === 'dispatch_agent')
+const dispatchTask = computed(() => {
+  if (!isDispatchAgent.value) return null
+  // 通过 tool_use_id -> task_id 映射查找对应的 TaskNode
+  const taskId = props.toolUseToTaskId.get(props.toolCall.tool_use_id)
+  if (taskId) return props.taskNodes.get(taskId) ?? null
+  return null
+})
 
 const dangerLevel = computed(() => getToolDangerLevel(props.toolCall.tool_name))
 
@@ -14,11 +29,10 @@ const activeColor = computed(() =>
   props.toolCall.status === 'error' ? 'error' : dangerLevel.value
 )
 
-// 颜色映射：border / text / bg（带 08 透明度）
 const colorMap = {
-  safe:   { border: 'border-l-[#22c55e]', text: 'text-[#22c55e]', bg: 'bg-[#22c55e08]', spin: 'border-[#22c55e] border-t-transparent' },
-  caution:{ border: 'border-l-[#eab308]', text: 'text-[#eab308]', bg: 'bg-[#eab30808]', spin: 'border-[#eab308] border-t-transparent' },
-  error:  { border: 'border-l-[#ef4444]', text: 'text-[#ef4444]', bg: 'bg-[#ef444408]', spin: 'border-[#ef4444] border-t-transparent' },
+  safe:   { border: 'border-l-[#22c55e]', text: 'text-[#22c55e]', bg: 'bg-[#22c55e08]', spin: 'border-[#22c55e]' },
+  caution:{ border: 'border-l-[#eab308]', text: 'text-[#eab308]', bg: 'bg-[#eab30808]', spin: 'border-[#eab308]' },
+  error:  { border: 'border-l-[#ef4444]', text: 'text-[#ef4444]', bg: 'bg-[#ef444408]', spin: 'border-[#ef4444]' },
 }
 
 const colors = computed(() => colorMap[activeColor.value])
@@ -46,7 +60,12 @@ const statusLabel = computed(() => {
 </script>
 
 <template>
+  <!-- dispatch_agent：用 SubAgentCard 替代默认渲染 -->
+  <SubAgentCard v-if="isDispatchAgent && dispatchTask" :task="dispatchTask" />
+
+  <!-- 其他工具调用：保持原有渲染 -->
   <div
+    v-else
     class="rounded-md border border-border-default border-l-[3px] bg-bg-elevated text-[13px]"
     :class="colors.border"
   >
@@ -55,7 +74,7 @@ const statusLabel = computed(() => {
       <div class="flex items-center gap-2">
         <span
           v-if="toolCall.status === 'running'"
-          class="inline-block h-2.5 w-2.5 animate-spin rounded-full border-2"
+          class="inline-block h-2.5 w-2.5 animate-spin rounded-full border-2 border-t-transparent"
           :class="colors.spin"
         />
         <span v-else class="font-mono text-[10px] font-bold" :class="colors.text">
@@ -79,5 +98,12 @@ const statusLabel = computed(() => {
     >
       <pre class="whitespace-pre-wrap font-mono text-[11px] text-text-secondary">{{ toolCall.output }}</pre>
     </div>
+
+    <!-- 子 Agent Tab 跳转提示 -->
+    <button
+      v-if="taskId && onOpenTab"
+      class="mt-1 text-[10px] text-[#3b82f6] hover:underline cursor-pointer"
+      @click.stop="onOpenTab(taskId)"
+    >Click to view &rarr;</button>
   </div>
 </template>

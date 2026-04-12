@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use serde_json;
 
-use crate::engine::tools::{Tool, ToolResult};
+use crate::engine::tools::{Tool, ToolResult, ToolExecutionContext};
 
 pub struct WriteTool {
     workdir: PathBuf,
@@ -54,15 +54,15 @@ impl Tool for WriteTool {
         10
     }
 
-    async fn call(&self, input: serde_json::Value) -> ToolResult {
+    async fn call(&self, input: serde_json::Value, _ctx: Option<&ToolExecutionContext>) -> ToolResult {
         let file_path = match input.get("file_path").and_then(|v| v.as_str()) {
             Some(p) => p,
-            None => return ToolResult { output: "Missing file_path".into(), is_error: true },
+            None => return ToolResult::Error("Missing file_path".into()),
         };
 
         let content = match input.get("content").and_then(|v| v.as_str()) {
             Some(c) => c,
-            None => return ToolResult { output: "Missing content".into(), is_error: true },
+            None => return ToolResult::Error("Missing content".into()),
         };
 
         // 对于新文件，父目录可能不存在，需要特殊处理路径解析
@@ -76,20 +76,14 @@ impl Tool for WriteTool {
         // 检查父目录是否存在
         let parent = resolved.parent().unwrap_or_else(|| Path::new("."));
         if !parent.exists() {
-            return ToolResult {
-                output: format!("Parent directory does not exist: {}", parent.display()),
-                is_error: true,
-            };
+            return ToolResult::Error(format!("Parent directory does not exist: {}", parent.display()));
         }
 
         // 对已存在的父目录做 canonicalize 以验证路径安全
         let canonical_parent = match parent.canonicalize() {
             Ok(p) => p,
             Err(e) => {
-                return ToolResult {
-                    output: format!("Invalid parent path: {e}"),
-                    is_error: true,
-                }
+                return ToolResult::Error(format!("Invalid parent path: {e}"))
             }
         };
 
@@ -97,37 +91,25 @@ impl Tool for WriteTool {
         let workdir_canonical = match self.workdir.canonicalize() {
             Ok(p) => p,
             Err(e) => {
-                return ToolResult {
-                    output: format!("Invalid workdir: {e}"),
-                    is_error: true,
-                }
+                return ToolResult::Error(format!("Invalid workdir: {e}"))
             }
         };
 
         if !canonical_parent.starts_with(&workdir_canonical) {
-            return ToolResult {
-                output: "Path outside working directory".into(),
-                is_error: true,
-            };
+            return ToolResult::Error("Path outside working directory".into());
         }
 
         let file_name = match resolved.file_name() {
             Some(name) => name,
             None => {
-                return ToolResult {
-                    output: "Invalid file path: no file name component".into(),
-                    is_error: true,
-                }
+                return ToolResult::Error("Invalid file path: no file name component".into())
             }
         };
         let final_path = canonical_parent.join(file_name);
 
         match tokio::fs::write(&final_path, content).await {
-            Ok(_) => ToolResult { output: "ok".into(), is_error: false },
-            Err(e) => ToolResult {
-                output: format!("Error writing file: {e}"),
-                is_error: true,
-            },
+            Ok(_) => ToolResult::Text("ok".into()),
+            Err(e) => ToolResult::Error(format!("Error writing file: {e}")),
         }
     }
 }
@@ -150,11 +132,12 @@ mod tests {
             .call(serde_json::json!({
                 "file_path": "new_file.txt",
                 "content": "hello world"
-            }))
+            }), None)
             .await;
 
-        assert!(!result.is_error);
-        assert_eq!(result.output, "ok");
+        assert!(matches!(result, ToolResult::Text(_)));
+        let output = match &result { ToolResult::Text(s) => s, _ => unreachable!() };
+        assert_eq!(output, "ok");
 
         let written = std::fs::read_to_string(dir.path().join("new_file.txt")).unwrap();
         assert_eq!(written, "hello world");
@@ -171,11 +154,12 @@ mod tests {
             .call(serde_json::json!({
                 "file_path": "existing.txt",
                 "content": "new content"
-            }))
+            }), None)
             .await;
 
-        assert!(!result.is_error);
-        assert_eq!(result.output, "ok");
+        assert!(matches!(result, ToolResult::Text(_)));
+        let output = match &result { ToolResult::Text(s) => s, _ => unreachable!() };
+        assert_eq!(output, "ok");
 
         let written = std::fs::read_to_string(&file).unwrap();
         assert_eq!(written, "new content");
@@ -190,11 +174,12 @@ mod tests {
             .call(serde_json::json!({
                 "file_path": "nonexistent_dir/file.txt",
                 "content": "test"
-            }))
+            }), None)
             .await;
 
-        assert!(result.is_error);
-        assert!(result.output.contains("Parent directory does not exist"));
+        assert!(matches!(result, ToolResult::Error(_)));
+        let output = match &result { ToolResult::Error(s) => s, _ => unreachable!() };
+        assert!(output.contains("Parent directory does not exist"));
     }
 
     #[tokio::test]
@@ -206,9 +191,9 @@ mod tests {
             .call(serde_json::json!({
                 "file_path": "/etc/test_write.txt",
                 "content": "should not write"
-            }))
+            }), None)
             .await;
 
-        assert!(result.is_error);
+        assert!(matches!(result, ToolResult::Error(_)));
     }
 }

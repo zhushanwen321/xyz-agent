@@ -1,4 +1,5 @@
 use crate::api::AppState;
+use crate::engine::tools::ToolExecutionContext;
 use crate::engine::context::prompt::{DynamicContext, PromptManager};
 use crate::engine::loop_::AgentLoop;
 use crate::store::jsonl::LoadHistoryResult;
@@ -96,7 +97,7 @@ pub async fn send_message(
     let session_path = session::session_file_path(&state.data_dir, &session_id)
         .ok_or_else(|| format!("session {session_id} not found"))?;
 
-    let LoadHistoryResult { entries: mut history, conversation_summary } =
+    let LoadHistoryResult { entries: mut history, conversation_summary, .. } =
         crate::store::jsonl::load_history(&session_path).map_err(|e| e.to_string())?;
     log::debug!("[chat] history entries={}", history.len());
 
@@ -114,6 +115,24 @@ pub async fn send_message(
 
     let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
     crate::api::event_bus::spawn_bridge(app, event_rx);
+
+    // 创建/获取 session 的 CancellationToken，用 TokenGuard 确保清理
+    let cancel_token = {
+        let mut tokens = state.cancel_tokens.lock().unwrap();
+        tokens.entry(session_id.clone())
+            .or_insert_with(tokio_util::sync::CancellationToken::new)
+            .clone()
+    };
+    struct TokenGuard {
+        tokens: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, tokio_util::sync::CancellationToken>>>,
+        session_id: String,
+    }
+    impl Drop for TokenGuard {
+        fn drop(&mut self) {
+            self.tokens.lock().unwrap().remove(&self.session_id);
+        }
+    }
+    let _token_guard = TokenGuard { tokens: state.cancel_tokens.clone(), session_id: session_id.clone() };
 
     let model = state.model.clone();
     log::info!("[chat] starting agent_loop, model={model}");
@@ -134,7 +153,73 @@ pub async fn send_message(
         conversation_summary,
     };
 
+    // 异步结果注入：将已完成的后台任务结果注入到 history 中
+    {
+        let tree = state.task_tree.lock().await;
+        let pending_results = tree.completed_not_injected(&session_id);
+        drop(tree);
+
+        if !pending_results.is_empty() {
+            let mut injected_ids = Vec::new();
+            for result in &pending_results {
+                let text = format!(
+                    "[Background] task completed: {}\n{}",
+                    result.description,
+                    result.result_summary.chars().take(2000).collect::<String>()
+                );
+                let inject_entry = TranscriptEntry::Assistant {
+                    uuid: uuid::Uuid::new_v4().to_string(),
+                    parent_uuid: None,
+                    timestamp: chrono::Utc::now().to_rfc3339(),
+                    session_id: session_id.clone(),
+                    content: vec![AssistantContentBlock::Text { text }],
+                    usage: None,
+                };
+                crate::store::jsonl::append_entry(&session_path, &inject_entry)
+                    .map_err(|e| e.to_string())?;
+                history.push(inject_entry);
+
+                // 再加一条 user 消息确保交替性
+                let sys_entry = TranscriptEntry::User {
+                    uuid: uuid::Uuid::new_v4().to_string(),
+                    parent_uuid: None,
+                    timestamp: chrono::Utc::now().to_rfc3339(),
+                    session_id: session_id.clone(),
+                    content: vec![UserContentBlock::Text {
+                        text: "[System: 以上是异步任务结果，请结合用户消息处理]".into(),
+                    }],
+                };
+                crate::store::jsonl::append_entry(&session_path, &sys_entry)
+                    .map_err(|e| e.to_string())?;
+                history.push(sys_entry);
+
+                injected_ids.push(result.task_id.clone());
+            }
+
+            let mut tree = state.task_tree.lock().await;
+            for id in &injected_ids {
+                tree.mark_result_injected(id);
+            }
+        }
+    }
+
     let event_tx_for_turn = event_tx.clone();
+    let tool_ctx = ToolExecutionContext {
+        task_tree: state.task_tree.clone(),
+        concurrency_manager: state.concurrency_manager.clone(),
+        agent_templates: state.agent_templates.clone(),
+        data_dir: state.data_dir.clone(),
+        session_id: session_id.clone(),
+        event_tx: event_tx_for_turn.clone(),
+        api_messages: vec![],
+        current_assistant_content: vec![],
+        tool_registry: state.tool_registry.clone(),
+        background_tasks: state.background_tasks.clone(),
+        agent_spawner: state.agent_spawner.clone(),
+        orchestrate_depth: 0,
+        node_id: None,
+        parent_cancel_token: Some(cancel_token.clone()),
+    };
     let result = agent_loop
         .run_turn(
             content,
@@ -146,11 +231,18 @@ pub async fn send_message(
             &prompt_manager,
             &dynamic_context,
             &state.config,
+            None,
+            None,
+            None,
+            Some(tool_ctx),
+            None,
+            cancel_token,
         )
         .await;
 
     let _ = event_tx.send(crate::types::AgentEvent::TurnComplete {
         session_id: session_id.clone(),
+        source_task_id: None,
     });
     drop(event_tx);
 
@@ -214,6 +306,60 @@ pub async fn update_config(
         payload.max_output_tokens,
         payload.tool_output_max_bytes,
         payload.bash_default_timeout_secs,
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn cancel_message(
+    session_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let token = state.cancel_tokens.lock().unwrap().get(&session_id).cloned();
+    if let Some(token) = token {
+        token.cancel();
+    } else {
+        return Err(format!("no active session '{session_id}'"));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn kill_task(task_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let mut tree = state.task_tree.lock().await;
+    if !tree.request_kill(&task_id) {
+        return Err(format!("task '{}' not found", task_id));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn pause_task(task_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let mut tree = state.task_tree.lock().await;
+    if !tree.request_pause(&task_id) {
+        return Err(format!("task '{}' not found", task_id));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn resume_task(task_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let mut tree = state.task_tree.lock().await;
+    if !tree.request_resume(&task_id) {
+        return Err(format!("task '{}' not found", task_id));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn load_sidechain_history(
+    session_id: String,
+    sidechain_id: String,
+    sidechain_type: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<TranscriptEntry>, String> {
+    crate::store::jsonl::load_sidechain_entries(
+        &state.data_dir, &session_id, &sidechain_id, &sidechain_type,
     )
     .map_err(|e| e.to_string())
 }

@@ -1,5 +1,4 @@
-/// 工具执行结果
-pub struct ToolResult {
-    pub output: String,
-    pub is_error: bool,
+pub enum ToolResult {
+    Text(String),
+    Error(String),
 }

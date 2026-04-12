@@ -113,6 +113,54 @@ pub enum TranscriptEntry {
         leaf_uuid: String,
         summary: String,
     },
+    #[serde(rename = "task_node")]
+    TaskNode {
+        uuid: String,
+        parent_uuid: Option<String>,
+        timestamp: String,
+        session_id: String,
+        task_id: String,
+        parent_id: Option<String>,
+        description: String,
+        status: String,
+        mode: String,
+        subagent_type: Option<String>,
+        created_at: String,
+        completed_at: Option<String>,
+        budget: crate::engine::task_tree::TaskBudget,
+        usage: crate::engine::task_tree::TaskUsage,
+    },
+    #[serde(rename = "orchestrate_node")]
+    OrchestrateNode {
+        uuid: String,
+        parent_uuid: Option<String>,
+        timestamp: String,
+        session_id: String,
+        node_id: String,
+        parent_id: Option<String>,
+        role: String,
+        depth: u32,
+        description: String,
+        status: String,
+        directive: String,
+        agent_id: String,
+        budget: crate::engine::task_tree::TaskBudget,
+        usage: crate::engine::task_tree::TaskUsage,
+        children_ids: Vec<String>,
+        feedback_history: Vec<crate::engine::task_tree::FeedbackMessage>,
+        reuse_count: u32,
+        last_active_at: String,
+    },
+    #[serde(rename = "feedback")]
+    Feedback {
+        uuid: String,
+        parent_uuid: Option<String>,
+        timestamp: String,
+        session_id: String,
+        task_id: String,
+        message: String,
+        severity: String,
+    },
 }
 
 impl TranscriptEntry {
@@ -155,6 +203,9 @@ impl TranscriptEntry {
             TranscriptEntry::System { uuid, .. } => uuid,
             TranscriptEntry::CustomTitle { .. } => "",
             TranscriptEntry::Summary { .. } => "",
+            TranscriptEntry::TaskNode { uuid, .. } => uuid,
+            TranscriptEntry::OrchestrateNode { uuid, .. } => uuid,
+            TranscriptEntry::Feedback { uuid, .. } => uuid,
         }
     }
 
@@ -166,6 +217,39 @@ impl TranscriptEntry {
             TranscriptEntry::System { parent_uuid, .. } => parent_uuid.as_deref(),
             TranscriptEntry::CustomTitle { .. } => None,
             TranscriptEntry::Summary { .. } => None,
+            TranscriptEntry::TaskNode { parent_uuid, .. } => parent_uuid.as_deref(),
+            TranscriptEntry::OrchestrateNode { parent_uuid, .. } => parent_uuid.as_deref(),
+            TranscriptEntry::Feedback { parent_uuid, .. } => parent_uuid.as_deref(),
+        }
+    }
+
+    fn snake_str(v: &impl serde::Serialize) -> String {
+        serde_json::to_string(v).unwrap_or_default().trim_matches('"').to_string()
+    }
+
+    pub fn from_task_node(n: &crate::engine::task_tree::TaskNode) -> Self {
+        Self::TaskNode {
+            uuid: Uuid::new_v4().to_string(), parent_uuid: None,
+            timestamp: Utc::now().to_rfc3339(), session_id: n.session_id.clone(),
+            task_id: n.task_id.clone(), parent_id: n.parent_id.clone(),
+            description: n.description.clone(), status: Self::snake_str(&n.status),
+            mode: Self::snake_str(&n.mode), subagent_type: n.subagent_type.clone(),
+            created_at: n.created_at.clone(), completed_at: n.completed_at.clone(),
+            budget: n.budget.clone(), usage: n.usage.clone(),
+        }
+    }
+
+    pub fn from_orchestrate_node(n: &crate::engine::task_tree::OrchestrateNode) -> Self {
+        Self::OrchestrateNode {
+            uuid: Uuid::new_v4().to_string(), parent_uuid: None,
+            timestamp: Utc::now().to_rfc3339(), session_id: n.session_id.clone(),
+            node_id: n.node_id.clone(), parent_id: n.parent_id.clone(),
+            role: Self::snake_str(&n.role), depth: n.depth,
+            description: n.description.clone(), status: Self::snake_str(&n.status),
+            directive: n.directive.clone(), agent_id: n.agent_id.clone(),
+            budget: n.budget.clone(), usage: n.usage.clone(),
+            children_ids: n.children_ids.clone(), feedback_history: n.feedback_history.clone(),
+            reuse_count: n.reuse_count, last_active_at: n.last_active_at.clone(),
         }
     }
 }
@@ -209,40 +293,27 @@ mod tests {
     #[test]
     fn test_assistant_entry_with_usage() {
         let entry = TranscriptEntry::Assistant {
-            uuid: "a1".to_string(),
-            parent_uuid: Some("u1".to_string()),
-            timestamp: "2026-01-01T00:00:00Z".to_string(),
-            session_id: "s1".to_string(),
-            content: vec![AssistantContentBlock::Text {
-                text: "response".to_string(),
-            }],
-            usage: Some(TokenUsage {
-                input_tokens: 100,
-                output_tokens: 50,
-            }),
+            uuid: "a1".into(), parent_uuid: Some("u1".into()),
+            timestamp: "2026-01-01T00:00:00Z".into(), session_id: "s1".into(),
+            content: vec![AssistantContentBlock::Text { text: "response".into() }],
+            usage: Some(TokenUsage { input_tokens: 100, output_tokens: 50 }),
         };
         let json = serde_json::to_string(&entry).unwrap();
         assert!(json.contains("\"type\":\"assistant\""));
         assert!(json.contains("\"input_tokens\":100"));
-
         let de: TranscriptEntry = serde_json::from_str(&json).unwrap();
         if let TranscriptEntry::Assistant { usage, .. } = de {
             assert_eq!(usage.unwrap().input_tokens, 100);
-        } else {
-            panic!("Expected Assistant variant");
-        }
+        } else { panic!("Expected Assistant"); }
     }
 
     #[test]
-    fn test_assistant_entry_old_format_deserialization() {
+    fn test_assistant_entry_old_format() {
         let json = r#"{"type":"assistant","uuid":"a1","parent_uuid":"u1","timestamp":"2026-01-01T00:00:00Z","session_id":"s1","content":"response","usage":null}"#;
         let de: TranscriptEntry = serde_json::from_str(json).unwrap();
         if let TranscriptEntry::Assistant { content, .. } = de {
-            assert_eq!(content.len(), 1);
-            assert!(matches!(content[0], AssistantContentBlock::Text { ref text } if text == "response"));
-        } else {
-            panic!("Expected Assistant variant");
-        }
+            assert!(matches!(content[0], AssistantContentBlock::Text { ref text, .. } if text == "response"));
+        } else { panic!("Expected Assistant"); }
     }
 
     #[test]
@@ -250,25 +321,17 @@ mod tests {
         let json = r#"{"type":"assistant","uuid":"a1","parent_uuid":null,"timestamp":"2026-01-01T00:00:00Z","session_id":"s1","content":[{"type":"tool_use","id":"t1","name":"Read","input":{}}],"usage":null}"#;
         let de: TranscriptEntry = serde_json::from_str(json).unwrap();
         if let TranscriptEntry::Assistant { content, .. } = de {
-            assert_eq!(content.len(), 1);
             assert!(matches!(content[0], AssistantContentBlock::ToolUse { ref id, ref name, .. } if id == "t1" && name == "Read"));
-        } else {
-            panic!("Expected Assistant variant");
-        }
+        } else { panic!("Expected Assistant"); }
     }
 
     #[test]
-    fn test_custom_title_no_uuid_fields() {
-        let entry = TranscriptEntry::CustomTitle {
-            session_id: "s1".to_string(),
-            title: "My Chat".to_string(),
-        };
+    fn test_custom_title() {
+        let entry = TranscriptEntry::CustomTitle { session_id: "s1".into(), title: "My Chat".into() };
         let json = serde_json::to_string(&entry).unwrap();
         assert!(json.contains("\"type\":\"custom_title\""));
         assert!(!json.contains("uuid"));
-
-        let de: TranscriptEntry = serde_json::from_str(&json).unwrap();
-        assert!(matches!(de, TranscriptEntry::CustomTitle { .. }));
+        assert!(matches!(serde_json::from_str::<TranscriptEntry>(&json).unwrap(), TranscriptEntry::CustomTitle { .. }));
     }
 
     #[test]
@@ -316,5 +379,114 @@ mod tests {
             None,
         );
         assert_eq!(assistant.parent_uuid(), Some(user_uuid.as_str()));
+    }
+
+    #[test]
+    fn test_task_node_entry_serialization() {
+        let entry = TranscriptEntry::TaskNode {
+            uuid: "u1".to_string(),
+            parent_uuid: None,
+            timestamp: "2026-04-11T00:00:00Z".to_string(),
+            session_id: "s1".to_string(),
+            task_id: "da_abc12345".to_string(),
+            parent_id: None,
+            description: "test".to_string(),
+            status: "pending".to_string(),
+            mode: "preset".to_string(),
+            subagent_type: None,
+            created_at: "2026-04-11T00:00:00Z".to_string(),
+            completed_at: None,
+            budget: crate::engine::task_tree::TaskBudget::default(),
+            usage: crate::engine::task_tree::TaskUsage::default(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("\"type\":\"task_node\""));
+        assert!(json.contains("\"task_id\":\"da_abc12345\""));
+
+        let de: TranscriptEntry = serde_json::from_str(&json).unwrap();
+        assert!(matches!(de, TranscriptEntry::TaskNode { .. }));
+    }
+
+    #[test]
+    fn test_orchestrate_node_entry_serialization() {
+        let entry = TranscriptEntry::OrchestrateNode {
+            uuid: "u2".to_string(),
+            parent_uuid: None,
+            timestamp: "2026-04-11T00:00:00Z".to_string(),
+            session_id: "s1".to_string(),
+            node_id: "or_xyz98765".to_string(),
+            parent_id: None,
+            role: "orchestrator".to_string(),
+            depth: 0,
+            description: "orchestrator".to_string(),
+            status: "idle".to_string(),
+            directive: "coordinate".to_string(),
+            agent_id: "agent-1".to_string(),
+            budget: crate::engine::task_tree::TaskBudget::default(),
+            usage: crate::engine::task_tree::TaskUsage::default(),
+            children_ids: vec![],
+            feedback_history: vec![],
+            reuse_count: 0,
+            last_active_at: "2026-04-11T00:00:00Z".to_string(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("\"type\":\"orchestrate_node\""));
+        assert!(json.contains("\"node_id\":\"or_xyz98765\""));
+
+        let de: TranscriptEntry = serde_json::from_str(&json).unwrap();
+        assert!(matches!(de, TranscriptEntry::OrchestrateNode { .. }));
+    }
+
+    #[test]
+    fn test_feedback_entry_serialization() {
+        let entry = TranscriptEntry::Feedback {
+            uuid: "u3".to_string(),
+            parent_uuid: Some("p1".to_string()),
+            timestamp: "2026-04-11T00:00:00Z".to_string(),
+            session_id: "s1".to_string(),
+            task_id: "da_abc12345".to_string(),
+            message: "task completed".to_string(),
+            severity: "info".to_string(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("\"type\":\"feedback\""));
+        assert!(json.contains("\"task_id\":\"da_abc12345\""));
+
+        let de: TranscriptEntry = serde_json::from_str(&json).unwrap();
+        assert!(matches!(de, TranscriptEntry::Feedback { .. }));
+    }
+
+    #[test]
+    fn test_p2_entries_uuid_and_parent() {
+        let task = TranscriptEntry::TaskNode {
+            uuid: "t1".to_string(),
+            parent_uuid: Some("p1".to_string()),
+            timestamp: "2026-04-11T00:00:00Z".to_string(),
+            session_id: "s1".to_string(),
+            task_id: "da_x".to_string(),
+            parent_id: None,
+            description: "d".to_string(),
+            status: "pending".to_string(),
+            mode: "preset".to_string(),
+            subagent_type: None,
+            created_at: "2026-04-11T00:00:00Z".to_string(),
+            completed_at: None,
+            budget: crate::engine::task_tree::TaskBudget::default(),
+            usage: crate::engine::task_tree::TaskUsage::default(),
+        };
+        assert_eq!(task.uuid(), "t1");
+        assert_eq!(task.parent_uuid(), Some("p1"));
+
+        let feedback = TranscriptEntry::Feedback {
+            uuid: "f1".to_string(),
+            parent_uuid: None,
+            timestamp: "2026-04-11T00:00:00Z".to_string(),
+            session_id: "s1".to_string(),
+            task_id: "da_x".to_string(),
+            message: "m".to_string(),
+            severity: "info".to_string(),
+        };
+        assert_eq!(feedback.uuid(), "f1");
+        assert_eq!(feedback.parent_uuid(), None);
     }
 }

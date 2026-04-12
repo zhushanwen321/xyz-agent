@@ -4199,6 +4199,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]
@@ -5501,6 +5502,7 @@ dependencies = [
  "file-lock",
  "futures",
  "log",
+ "rand 0.8.5",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -5510,6 +5512,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "toml_edit 0.22.27",
  "uuid",
 ]

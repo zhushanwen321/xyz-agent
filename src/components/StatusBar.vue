@@ -8,17 +8,16 @@ const props = defineProps<{
   inputTokens: number
   outputTokens: number
   toolCount: number
+  activeTaskCount: number
 }>()
 
 const version = __APP_VERSION__
 
 /** 上下文窗口 200K，根据 inputTokens 估算占用比例 */
-const contextPercentage = computed(() => {
-  const ctxWindow = 200_000
-  return Math.min((props.inputTokens / ctxWindow) * 100, 100)
-})
+const contextPercentage = computed(() =>
+  Math.min((props.inputTokens / 200_000) * 100, 100)
+)
 
-/** 格式化 token 数 */
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`
@@ -54,6 +53,10 @@ const totalTokens = computed(() => props.inputTokens + props.outputTokens)
     <!-- 右: 工具数 + 版本 -->
     <div class="flex items-center gap-3">
       <span>{{ toolCount }} tools</span>
+      <template v-if="activeTaskCount > 0">
+        <span class="text-border-default">|</span>
+        <span class="text-blue-400">{{ activeTaskCount }} task{{ activeTaskCount > 1 ? 's' : '' }}</span>
+      </template>
       <span class="text-border-default">|</span>
       <span>v{{ version }}</span>
     </div>

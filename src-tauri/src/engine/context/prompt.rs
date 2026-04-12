@@ -23,6 +23,14 @@ impl PromptManager {
         }
     }
 
+    /// Fork 模式需要 byte-identical system prompt 以命中 Prompt Cache
+    #[allow(dead_code)]
+    pub fn new_with_prompt(static_prompt: &str) -> Self {
+        Self {
+            static_prompt: static_prompt.to_string(),
+        }
+    }
+
     /// 构建完整的系统提示词（静态层 + 动态层）
     /// 静态层带 cache_control 以利用 Anthropic Prompt Cache
     pub fn build_system_prompt(&self, ctx: &DynamicContext) -> Vec<Value> {

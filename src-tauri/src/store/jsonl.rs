@@ -3,14 +3,10 @@ use std::io::{BufRead, Write};
 use std::path::Path;
 
 use file_lock::{FileLock, FileOptions};
-use serde_json;
-
 use crate::types::AppError;
 use crate::types::TranscriptEntry;
 
-/// 追加一行 JSONL，使用文件锁防止并发冲突
 pub fn append_entry(path: &Path, entry: &TranscriptEntry) -> Result<(), AppError> {
-    // 先确保父目录存在
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| AppError::Storage(format!("create dir failed: {e}")))?;
@@ -33,11 +29,9 @@ pub fn append_entry(path: &Path, entry: &TranscriptEntry) -> Result<(), AppError
     file_lock.file.flush()
         .map_err(|e| AppError::Storage(format!("flush failed: {e}")))?;
 
-    // drop 时自动释放锁
     Ok(())
 }
 
-/// 读取全部 JSONL 条目
 pub fn read_all_entries(path: &Path) -> Result<Vec<TranscriptEntry>, AppError> {
     if !path.exists() {
         return Ok(vec![]);
@@ -64,7 +58,6 @@ pub fn read_all_entries(path: &Path) -> Result<Vec<TranscriptEntry>, AppError> {
     Ok(entries)
 }
 
-/// 通过 parent_uuid 回溯构建对话链（分支切换时使用）
 #[allow(dead_code)]
 pub fn build_conversation_chain(
     entries: &[TranscriptEntry],
@@ -99,25 +92,53 @@ pub fn build_conversation_chain(
     chain
 }
 
-/// 将路径转为安全的目录名（替换 / 为 -）
 #[allow(dead_code)]
 pub fn sanitize_path(path: &str) -> String {
     let sanitized = path.replace('/', "-");
     sanitized.trim_start_matches('-').to_string()
 }
 
-// ── LoadHistoryResult：摘要感知的历史加载 ───────────────────────
+// ── AsyncResult / LoadHistoryResult ──────────────────────────
+
+#[derive(serde::Serialize)]
+pub struct AsyncResult {
+    pub task_id: String,
+    pub description: String,
+    pub status: String,
+    pub result_summary: String,
+    pub output_file: Option<String>,
+}
 
 #[derive(serde::Serialize)]
 pub struct LoadHistoryResult {
     pub entries: Vec<TranscriptEntry>,
     pub conversation_summary: Option<String>,
+    #[serde(rename = "task_nodes")]
+    pub task_node_entries: Vec<TranscriptEntry>,
+    #[serde(rename = "orchestrate_nodes")]
+    pub orchestrate_node_entries: Vec<TranscriptEntry>,
+    pub pending_async_results: Vec<AsyncResult>,
 }
 
-/// 加载历史，摘要感知：找到最新的 Summary 条目，
-/// 返回 leaf_uuid 之后的条目 + 摘要文本
 pub fn load_history(path: &Path) -> Result<LoadHistoryResult, AppError> {
     let all_entries = read_all_entries(path)?;
+
+    // 提取节点条目：每个 node_id/task_id 保留最后一条（last write wins）
+    let mut task_nodes_map = std::collections::HashMap::<String, TranscriptEntry>::new();
+    let mut orch_nodes_map = std::collections::HashMap::<String, TranscriptEntry>::new();
+    for entry in &all_entries {
+        match entry {
+            TranscriptEntry::TaskNode { task_id, .. } => {
+                task_nodes_map.insert(task_id.clone(), entry.clone());
+            }
+            TranscriptEntry::OrchestrateNode { node_id, .. } => {
+                orch_nodes_map.insert(node_id.clone(), entry.clone());
+            }
+            _ => {}
+        }
+    }
+    let task_node_entries: Vec<TranscriptEntry> = task_nodes_map.into_values().collect();
+    let orchestrate_node_entries: Vec<TranscriptEntry> = orch_nodes_map.into_values().collect();
 
     // 找到最新的 Summary 条目（从后往前搜索）
     let latest_summary = all_entries.iter().rev().find_map(|e| {
@@ -133,7 +154,6 @@ pub fn load_history(path: &Path) -> Result<LoadHistoryResult, AppError> {
 
     match latest_summary {
         Some((summary_text, leaf_uuid)) => {
-            // 返回 leaf_uuid 之后的条目（排除 Summary 条目）
             let entries_after = all_entries
                 .into_iter()
                 .skip_while(|e| e.uuid() != leaf_uuid)
@@ -143,13 +163,107 @@ pub fn load_history(path: &Path) -> Result<LoadHistoryResult, AppError> {
             Ok(LoadHistoryResult {
                 entries: entries_after,
                 conversation_summary: Some(summary_text),
+                task_node_entries,
+                orchestrate_node_entries,
+                pending_async_results: Vec::new(),
             })
         }
         None => Ok(LoadHistoryResult {
             entries: all_entries,
             conversation_summary: None,
+            task_node_entries,
+            orchestrate_node_entries,
+            pending_async_results: Vec::new(),
         }),
     }
+}
+
+// ── Sidechain / Orchestrate JSONL helpers ─────────────────────────
+
+/// Session transcript 路径
+pub fn session_transcript_path(data_dir: &Path, session_id: &str) -> std::path::PathBuf {
+    data_dir.join("sessions").join(format!("{session_id}.jsonl"))
+}
+
+/// 将 task_tree::TaskNode 持久化到 session transcript
+pub fn persist_task_node(
+    data_dir: &Path,
+    session_id: &str,
+    node: &crate::engine::task_tree::TaskNode,
+) -> Result<(), AppError> {
+    let path = session_transcript_path(data_dir, session_id);
+    let entry = TranscriptEntry::from_task_node(node);
+    append_entry(&path, &entry)
+}
+
+/// 将 task_tree::OrchestrateNode 持久化到 session transcript
+pub fn persist_orchestrate_node(
+    data_dir: &Path,
+    session_id: &str,
+    node: &crate::engine::task_tree::OrchestrateNode,
+) -> Result<(), AppError> {
+    let path = session_transcript_path(data_dir, session_id);
+    let entry = TranscriptEntry::from_orchestrate_node(node);
+    append_entry(&path, &entry)
+}
+
+// ── Sidechain / Orchestrate JSONL helpers (continued) ─────────────────────────
+
+fn sanitize_segment(s: &str) -> String {
+    s.chars().map(|c| if c == '/' || c == '\\' || c == '.' { '_' } else { c }).collect()
+}
+
+fn ensure_jsonl_path(data_dir: &Path, session_id: &str, sub_dir: &str, file_stem: &str) -> std::path::PathBuf {
+    let dir = data_dir.join(sanitize_segment(session_id)).join(sub_dir);
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        log::warn!("[jsonl] create_dir_all failed for {sub_dir}: {e}");
+    }
+    dir.join(format!("{}.jsonl", sanitize_segment(file_stem)))
+}
+
+pub fn sidechain_path(data_dir: &Path, session_id: &str, task_id: &str) -> std::path::PathBuf {
+    ensure_jsonl_path(data_dir, session_id, "subagents", task_id)
+}
+
+pub fn append_sidechain_entry(path: &Path, entry: &TranscriptEntry) -> Result<(), AppError> {
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(AppError::Io)?;
+    let json = serde_json::to_string(entry).map_err(AppError::Serialization)?;
+    writeln!(file, "{}", json).map_err(AppError::Io)
+}
+
+pub fn orchestrate_path(data_dir: &Path, session_id: &str, node_id: &str) -> std::path::PathBuf {
+    ensure_jsonl_path(data_dir, session_id, "orchestrate", node_id)
+}
+
+/// 从 sidechain/orchestrate jsonl 加载条目
+pub fn load_sidechain_entries(
+    data_dir: &Path,
+    session_id: &str,
+    sidechain_id: &str,
+    sidechain_type: &str,
+) -> Result<Vec<TranscriptEntry>, AppError> {
+    let path = match sidechain_type {
+        "subagent" => sidechain_path(data_dir, session_id, sidechain_id),
+        "orchestrate" => orchestrate_path(data_dir, session_id, sidechain_id),
+        _ => return Err(AppError::Config(format!("unknown sidechain_type: {sidechain_type}"))),
+    };
+    if !path.exists() {
+        return Ok(vec![]);
+    }
+    let mut entries = Vec::new();
+    for line in std::io::BufReader::new(std::fs::File::open(&path).map_err(AppError::Io)?)
+        .lines()
+    {
+        let line = line.map_err(AppError::Io)?;
+        if line.trim().is_empty() { continue; }
+        let entry: TranscriptEntry = serde_json::from_str(&line).map_err(AppError::Serialization)?;
+        entries.push(entry);
+    }
+    Ok(entries)
 }
 
 #[cfg(test)]
