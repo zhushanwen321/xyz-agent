@@ -9,15 +9,45 @@ import MessageInput from './MessageInput.vue'
 import EmptyState from './EmptyState.vue'
 import StatusBar from './StatusBar.vue'
 import SubAgentSidebar from './SubAgentSidebar.vue'
-import type { OrchestrateNode, TaskNode } from '../types'
+import TabBar from './TabBar.vue'
+import { useTabManager } from '../composables/useTabManager'
+import type { ChatMessage } from '../types'
 
 const props = defineProps<{
   currentSessionId: string | null
 }>()
 
 const sessionIdRef = computed(() => props.currentSessionId) as Ref<string | null>
-const { messages, isStreaming, tokenUsage, send, cancel, currentTurnSegments, taskNodes, orchestrateNodes, toolUseToTaskId } = useChat(sessionIdRef)
+const { messages, isStreaming, tokenUsage, send, cancel, currentTurnSegments, taskNodes, orchestrateNodes, toolUseToTaskId, setTabEventHandler } = useChat(sessionIdRef)
 const { createNewSession } = useSession()
+const tabManager = useTabManager(sessionIdRef)
+
+// 注入 Tab 事件处理器：自动创建 Tab + 更新状态
+setTabEventHandler((event) => {
+  if (!sessionIdRef.value) return
+  if (event.type === 'TaskCreated') {
+    tabManager.openSubAgentTab(event.task_id, event.description, sessionIdRef.value, 'subagent')
+  }
+  if (event.type === 'OrchestrateNodeCreated') {
+    tabManager.openSubAgentTab(event.node_id, event.description, sessionIdRef.value, 'orchestrate')
+  }
+  // 根据事件类型确定目标 tabId
+  const tabId = event.type === 'TaskCreated' ? event.task_id
+    : event.type === 'TaskCompleted' ? event.task_id
+    : event.type === 'OrchestrateNodeCreated' ? event.node_id
+    : event.type === 'OrchestrateNodeCompleted' ? event.node_id
+    : ('source_task_id' in event && event.source_task_id) ? event.source_task_id
+    : null
+  if (tabId) {
+    const status = tabManager.eventToTabStatus(event)
+    if (status) tabManager.updateTabStatus(tabId, status)
+  }
+})
+
+// session 变化时确保主 Tab 存在
+watch(sessionIdRef, (newId) => {
+  if (newId) tabManager.ensureMainTab(newId)
+}, { immediate: true })
 const {
   selectMode, selectedIds, selectedCount, copied,
   toggleSelectMode, toggleMessage, selectAll,
@@ -29,18 +59,6 @@ const showSidebar = computed(() =>
   taskNodes.value.size > 0 || orchestrateNodes.value.size > 0
 )
 
-// 选中的子 agent 节点（用于展示详情面板）
-const selectedNodeId = ref<string | null>(null)
-const selectedNode = computed<(OrchestrateNode & { _source: 'orchestrate' }) | (TaskNode & { _source: 'dispatch' }) | null>(() => {
-  const id = selectedNodeId.value
-  if (!id) return null
-  const orch = orchestrateNodes.value.get(id)
-  if (orch) return { ...orch, _source: 'orchestrate' as const }
-  const task = taskNodes.value.get(id)
-  if (task) return { ...task, _source: 'dispatch' as const }
-  return null
-})
-
 // 活跃（running 状态）的子任务数，传给 StatusBar
 const activeTaskCount = computed(() =>
   [...taskNodes.value.values()].filter(t => t.status === 'running').length
@@ -51,21 +69,26 @@ async function handleKillTask(taskId: string) {
 }
 
 function handleSelectNode(nodeId: string) {
-  selectedNodeId.value = selectedNodeId.value === nodeId ? null : nodeId
+  const node = orchestrateNodes.value.get(nodeId) ?? taskNodes.value.get(nodeId)
+  const type = orchestrateNodes.value.has(nodeId) ? 'orchestrate' : 'subagent'
+  const title = node?.description ?? nodeId
+  if (sessionIdRef.value) {
+    tabManager.openSubAgentTab(nodeId, title, sessionIdRef.value, type)
+  }
 }
 
 // 流式时合并 currentTurnSegments 到最后一条 assistant 消息
-const displayMessages = computed(() => {
-  const msgs = [...messages.value]
+const getDisplayMessages = (msgs: ChatMessage[]) => {
+  const result = [...msgs]
   if (isStreaming.value && currentTurnSegments.value.length > 0) {
-    const last = msgs[msgs.length - 1]
+    const last = result[result.length - 1]
     if (last?.role === 'assistant') {
-      msgs[msgs.length - 1] = {
+      result[result.length - 1] = {
         ...last,
         segments: [...(last.segments ?? []), ...currentTurnSegments.value],
       }
     } else {
-      msgs.push({
+      result.push({
         id: `streaming-${Date.now()}`,
         role: 'assistant',
         content: '',
@@ -75,7 +98,14 @@ const displayMessages = computed(() => {
       })
     }
   }
-  return msgs
+  return result
+}
+
+const currentMessages = computed(() => {
+  if (tabManager.activeTabId.value === 'main') {
+    return getDisplayMessages(messages.value)
+  }
+  return tabManager.tabMessages.value.get(tabManager.activeTabId.value) ?? []
 })
 
 // 运行时配置（从后端获取一次）
@@ -95,9 +125,9 @@ onMounted(async () => {
 
 const scrollContainer = ref<HTMLDivElement | null>(null)
 
-// 监听 displayMessages 变化自动滚动
+// 监听 currentMessages 变化自动滚动
 watch(
-  [() => displayMessages.value.length, currentTurnSegments],
+  [() => currentMessages.value.length, currentTurnSegments],
   async () => {
     await nextTick()
     if (scrollContainer.value) {
@@ -124,6 +154,13 @@ function handleCancel() {
   <div class="flex h-full flex-1">
     <!-- 主聊天区域 -->
     <div class="flex h-full flex-1 flex-col bg-bg-surface">
+      <TabBar
+        :tabs="tabManager.tabs.value"
+        :active-tab-id="tabManager.activeTabId.value"
+        @switch="tabManager.switchTab"
+        @close="tabManager.closeTab"
+      />
+
       <!-- 消息区域 -->
       <div ref="scrollContainer" class="flex-1 overflow-y-auto">
         <!-- 浮动工具栏 -->
@@ -139,50 +176,16 @@ function handleCancel() {
           <button
             v-if="!selectMode"
             class="rounded border border-border-default bg-bg-elevated px-2 py-0.5 font-mono text-[11px] text-text-secondary transition-colors hover:border-accent hover:text-text-primary"
-            @click="copyAll(displayMessages)"
+            @click="copyAll(currentMessages)"
           >{{ copied ? 'Copied!' : 'Copy All' }}</button>
         </div>
 
         <div class="px-2 py-2">
-          <!-- 选中节点信息面板 -->
-          <div v-if="selectedNode" class="mb-2 rounded-md border border-blue-500/30 bg-blue-500/5 p-3 text-[12px]">
-            <div class="flex items-center justify-between mb-2">
-              <div class="flex items-center gap-2">
-                <span class="font-mono font-bold text-blue-400">
-                  {{ selectedNode._source === 'orchestrate'
-                    ? (selectedNode.role === 'orchestrator' ? '[O]' : '[E]')
-                    : 'λ' }}
-                </span>
-                <span class="font-mono text-text-primary font-semibold">{{ selectedNode.description }}</span>
-              </div>
-              <button
-                class="text-text-secondary hover:text-text-primary text-[10px]"
-                @click="selectedNodeId = null"
-              >✕</button>
-            </div>
-            <div v-if="selectedNode._source === 'orchestrate'" class="space-y-1 text-text-secondary font-mono">
-              <div>directive: {{ selectedNode.directive.slice(0, 200) }}{{ selectedNode.directive.length > 200 ? '...' : '' }}</div>
-              <div class="flex gap-4">
-                <span>depth: {{ selectedNode.depth }}</span>
-                <span>status: {{ selectedNode.status }}</span>
-                <span>tokens: {{ selectedNode.usage.total_tokens }}</span>
-                <span>turns: {{ selectedNode.usage.tool_uses }}</span>
-              </div>
-            </div>
-            <div v-else class="space-y-1 text-text-secondary font-mono">
-              <div class="flex gap-4">
-                <span>mode: {{ selectedNode.mode }}</span>
-                <span>status: {{ selectedNode.status }}</span>
-                <span>tokens: {{ selectedNode.usage.total_tokens }}</span>
-              </div>
-            </div>
-          </div>
-
-          <EmptyState v-if="messages.length === 0 && !selectedNode" />
+          <EmptyState v-if="currentMessages.length === 0" />
 
           <div v-else class="space-y-2">
             <MessageBubble
-              v-for="msg in displayMessages"
+              v-for="msg in currentMessages"
               :key="msg.id"
               :message="msg"
               :is-streaming="msg.isStreaming"
@@ -203,12 +206,12 @@ function handleCancel() {
       >
         <button
           class="rounded border border-border-default bg-bg-inset px-2 py-0.5 font-mono text-[11px] text-text-secondary transition-colors hover:text-text-primary"
-          @click="selectAll(displayMessages)"
+          @click="selectAll(currentMessages)"
         >Select All</button>
         <button
           class="rounded bg-accent px-2 py-0.5 font-mono text-[11px] text-white transition-colors hover:opacity-80 disabled:opacity-40"
           :disabled="selectedCount === 0"
-          @click="copySelected(displayMessages)"
+          @click="copySelected(currentMessages)"
         >{{ copied ? 'Copied!' : `Copy ${selectedCount > 0 ? selectedCount : ''} Selected` }}</button>
         <span class="ml-auto font-mono text-[10px] text-text-tertiary">{{ selectedCount }} selected</span>
       </div>
