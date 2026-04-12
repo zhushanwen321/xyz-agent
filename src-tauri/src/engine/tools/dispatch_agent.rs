@@ -61,6 +61,35 @@ pub fn is_in_fork_child(history: &[TranscriptEntry]) -> bool {
     })
 }
 
+/// 从 transcript entries 中提取助手文本
+fn extract_assistant_text(entries: &[TranscriptEntry]) -> String {
+    entries.iter()
+        .filter_map(|e| match e {
+            TranscriptEntry::Assistant { content, .. } => Some(
+                content.iter()
+                    .filter_map(|b| match b {
+                        AssistantContentBlock::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// 将 transcript entries 写入 sidechain JSONL
+fn write_sidechain(data_dir: &std::path::Path, session_id: &str, task_id: &str, entries: &[TranscriptEntry]) {
+    let sc_path = crate::store::jsonl::sidechain_path(data_dir, session_id, task_id);
+    for entry in entries {
+        if let Err(e) = crate::store::jsonl::append_sidechain_entry(&sc_path, entry) {
+            log::warn!("[sidechain] failed to append entry: {e}");
+        }
+    }
+}
+
 pub struct DispatchAgentTool;
 
 #[async_trait]
@@ -379,31 +408,9 @@ impl Tool for DispatchAgentTool {
                 }
             };
 
-            // 将子 Agent transcript 写入 sidechain JSONL
-            {
-                let sc_path = crate::store::jsonl::sidechain_path(
-                    &ctx.data_dir, &ctx.session_id, &task_id,
-                );
-                for entry in &result.entries {
-                    let _ = crate::store::jsonl::append_sidechain_entry(&sc_path, entry);
-                }
-            }
+            write_sidechain(&ctx.data_dir, &ctx.session_id, &task_id, &result.entries);
 
-            let result_text: String = result.entries.iter()
-                .filter_map(|e| match e {
-                    TranscriptEntry::Assistant { content, .. } => Some(
-                        content.iter()
-                            .filter_map(|b| match b {
-                                AssistantContentBlock::Text { text } => Some(text.as_str()),
-                                _ => None,
-                            })
-                            .collect::<Vec<_>>()
-                            .join("\n")
-                    ),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+            let result_text = extract_assistant_text(&result.entries);
 
             let summary: String = result_text.chars().take(2000).collect();
             let elapsed = start.elapsed().as_millis() as u64;
@@ -442,38 +449,12 @@ impl Tool for DispatchAgentTool {
                 let result = join.await;
                 let (status, summary, tokens, tool_uses) = match &result {
                     Ok(Ok(r)) => {
-                        let text: String = r.entries.iter()
-                            .filter_map(|e| match e {
-                                TranscriptEntry::Assistant { content, .. } => Some(
-                                    content.iter()
-                                        .filter_map(|b| match b {
-                                            AssistantContentBlock::Text { text } => Some(text.as_str()),
-                                            _ => None,
-                                        })
-                                        .collect::<Vec<_>>()
-                                        .join("\n")
-                                ),
-                                _ => None,
-                            })
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        ("completed", text, r.usage.total_tokens, r.usage.tool_uses)
+                        write_sidechain(&data_dir_bg, &session_id_bg, &task_id_bg, &r.entries);
+                        ("completed", extract_assistant_text(&r.entries), r.usage.total_tokens, r.usage.tool_uses)
                     }
                     Ok(Err(e)) => ("failed", e.to_string(), 0, 0),
                     Err(e) => ("failed", format!("task panicked: {e}"), 0, 0),
                 };
-
-                // 将子 Agent transcript 写入 sidechain JSONL
-                if status == "completed" {
-                    if let Ok(Ok(r)) = &result {
-                        let sc_path = crate::store::jsonl::sidechain_path(
-                            &data_dir_bg, &session_id_bg, &task_id_bg,
-                        );
-                        for entry in &r.entries {
-                            let _ = crate::store::jsonl::append_sidechain_entry(&sc_path, entry);
-                        }
-                    }
-                }
 
                 let summary_short: String = summary.chars().take(2000).collect();
                 let _ = event_tx_bg.send(AgentEvent::TaskCompleted {

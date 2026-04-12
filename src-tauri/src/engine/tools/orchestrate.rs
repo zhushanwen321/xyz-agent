@@ -349,13 +349,15 @@ impl Tool for OrchestrateTool {
                 }
             };
 
-            // 将子 Agent transcript 写入 sidechain JSONL
+            // 将子 Agent transcript 写入 sidechain JSONL，供前端 Tab 加载历史
             {
                 let sc_path = crate::store::jsonl::orchestrate_path(
                     &ctx.data_dir, &ctx.session_id, &node_id,
                 );
                 for entry in &result.entries {
-                    let _ = crate::store::jsonl::append_sidechain_entry(&sc_path, entry);
+                    if let Err(e) = crate::store::jsonl::append_sidechain_entry(&sc_path, entry) {
+                        log::warn!("[sidechain] failed to append entry: {e}");
+                    }
                 }
             }
 
