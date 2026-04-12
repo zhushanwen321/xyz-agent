@@ -291,28 +291,10 @@ impl Tool for DispatchAgentTool {
         // 子 Agent 事件通过父 channel 转发，携带 source_task_id 标识
         let parent_tx = ctx.event_tx.clone();
         let task_id_for_forward = task_id.clone();
-        let (sub_event_tx, mut sub_event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (sub_event_tx, mut sub_event_rx) = tokio::sync::mpsc::unbounded_channel::<AgentEvent>();
         tokio::spawn(async move {
-            let tid = &task_id_for_forward;
             while let Some(event) = sub_event_rx.recv().await {
-                let forwarded = match event {
-                    AgentEvent::TextDelta { session_id, delta, .. } =>
-                        AgentEvent::TextDelta { session_id, delta, source_task_id: Some(tid.clone()) },
-                    AgentEvent::ThinkingDelta { session_id, delta, .. } =>
-                        AgentEvent::ThinkingDelta { session_id, delta, source_task_id: Some(tid.clone()) },
-                    AgentEvent::ToolCallStart { session_id, tool_name, tool_use_id, input, .. } =>
-                        AgentEvent::ToolCallStart { session_id, tool_name, tool_use_id, input, source_task_id: Some(tid.clone()) },
-                    AgentEvent::ToolCallEnd { session_id, tool_use_id, is_error, output, .. } =>
-                        AgentEvent::ToolCallEnd { session_id, tool_use_id, is_error, output, source_task_id: Some(tid.clone()) },
-                    AgentEvent::MessageComplete { session_id, role, content, usage, .. } =>
-                        AgentEvent::MessageComplete { session_id, role, content, usage, source_task_id: Some(tid.clone()) },
-                    AgentEvent::TurnComplete { session_id, .. } =>
-                        AgentEvent::TurnComplete { session_id, source_task_id: Some(tid.clone()) },
-                    AgentEvent::Error { session_id, message, .. } =>
-                        AgentEvent::Error { session_id, message, source_task_id: Some(tid.clone()) },
-                    other => other,
-                };
-                let _ = parent_tx.send(forwarded);
+                let _ = parent_tx.send(event.with_source_task_id(&task_id_for_forward));
             }
         });
         let spawn_config = SpawnConfig {

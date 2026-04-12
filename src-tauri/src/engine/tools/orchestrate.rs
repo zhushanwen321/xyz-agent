@@ -263,49 +263,10 @@ impl Tool for OrchestrateTool {
         // 子节点事件通过父 channel 转发，携带 source_task_id 标识
         let parent_tx = ctx.event_tx.clone();
         let node_id_for_forward = node_id.clone();
-        let (sub_event_tx, mut sub_event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (sub_event_tx, mut sub_event_rx) = tokio::sync::mpsc::unbounded_channel::<AgentEvent>();
         tokio::spawn(async move {
             while let Some(event) = sub_event_rx.recv().await {
-                let forwarded = match event {
-                    AgentEvent::TextDelta { session_id, delta, .. } => AgentEvent::TextDelta {
-                        session_id,
-                        delta,
-                        source_task_id: Some(node_id_for_forward.clone()),
-                    },
-                    AgentEvent::ThinkingDelta { session_id, delta, .. } => AgentEvent::ThinkingDelta {
-                        session_id,
-                        delta,
-                        source_task_id: Some(node_id_for_forward.clone()),
-                    },
-                    AgentEvent::ToolCallStart { session_id, tool_name, tool_use_id, input, .. } => AgentEvent::ToolCallStart {
-                        session_id,
-                        tool_name,
-                        tool_use_id,
-                        input,
-                        source_task_id: Some(node_id_for_forward.clone()),
-                    },
-                    AgentEvent::ToolCallEnd { session_id, tool_use_id, is_error, output, .. } => AgentEvent::ToolCallEnd {
-                        session_id,
-                        tool_use_id,
-                        is_error,
-                        output,
-                        source_task_id: Some(node_id_for_forward.clone()),
-                    },
-                    AgentEvent::MessageComplete { session_id, role, content, usage, .. } => AgentEvent::MessageComplete {
-                        session_id, role, content, usage,
-                        source_task_id: Some(node_id_for_forward.clone()),
-                    },
-                    AgentEvent::TurnComplete { session_id, .. } => AgentEvent::TurnComplete {
-                        session_id,
-                        source_task_id: Some(node_id_for_forward.clone()),
-                    },
-                    AgentEvent::Error { session_id, message, .. } => AgentEvent::Error {
-                        session_id, message,
-                        source_task_id: Some(node_id_for_forward.clone()),
-                    },
-                    other => other,
-                };
-                let _ = parent_tx.send(forwarded);
+                let _ = parent_tx.send(event.with_source_task_id(&node_id_for_forward));
             }
         });
 
@@ -389,8 +350,45 @@ impl Tool for OrchestrateTool {
             ToolResult::Text(result_text)
         } else {
             let join = spawn_handle.join_handle.take().unwrap();
+
+            let session_id_bg = ctx.session_id.clone();
+            let node_id_bg = node_id.clone();
+            let event_tx_bg = ctx.event_tx.clone();
+            let task_tree_bg = ctx.task_tree.clone();
+            let data_dir_bg = ctx.data_dir.clone();
             let bg_tasks = ctx.background_tasks.clone();
-            let handle = tokio::spawn(async move { let _ = join.await; });
+
+            let handle = tokio::spawn(async move {
+                let result = join.await;
+                if let Ok(Ok(r)) = &result {
+                    // 写入 sidechain JSONL
+                    {
+                        let sc_path = crate::store::jsonl::orchestrate_path(
+                            &data_dir_bg, &session_id_bg, &node_id_bg,
+                        );
+                        for entry in &r.entries {
+                            if let Err(e) = crate::store::jsonl::append_sidechain_entry(&sc_path, entry) {
+                                log::warn!("[sidechain] failed to append entry: {e}");
+                            }
+                        }
+                    }
+                    let text = extract_text(&r.entries);
+                    let summary: String = text.chars().take(2000).collect();
+                    let _ = event_tx_bg.send(AgentEvent::OrchestrateNodeCompleted {
+                        session_id: session_id_bg.clone(),
+                        node_id: node_id_bg.clone(),
+                        status: "completed".into(),
+                        result_summary: summary,
+                        usage: TaskUsageSummary {
+                            total_tokens: r.usage.total_tokens,
+                            tool_uses: r.usage.tool_uses,
+                            duration_ms: 0,
+                        },
+                    });
+                    let mut tree = task_tree_bg.lock().await;
+                    tree.set_task_result(&node_id_bg, text.chars().take(100_000).collect());
+                }
+            });
 
             let mut tasks = bg_tasks.lock().await;
             tasks.retain(|_, h| !h.is_finished());

@@ -52,14 +52,16 @@ export function useTabManager(sessionId: Ref<string | null>) {
         status: 'idle',
         closable: false,
       })
-      data.activeTabId = 'main'
     }
+    data.activeTabId = 'main'
+    activeTabId.value = 'main'
   }
 
   function openSubAgentTab(tabId: string, title: string, sid: string, type: 'subagent' | 'orchestrate') {
     const data = getOrCreateSession(sid)
     if (data.tabs.find(t => t.id === tabId)) {
       data.activeTabId = tabId
+      activeTabId.value = tabId
       return
     }
     data.tabs.push({
@@ -72,6 +74,7 @@ export function useTabManager(sessionId: Ref<string | null>) {
       closable: true,
     })
     data.activeTabId = tabId
+    activeTabId.value = tabId
     loadTabHistory(sid, tabId, type)
   }
 
@@ -95,6 +98,7 @@ export function useTabManager(sessionId: Ref<string | null>) {
     data.tabMessages.delete(tabId)
     if (data.activeTabId === tabId) {
       data.activeTabId = 'main'
+      activeTabId.value = 'main'
     }
   }
 
@@ -104,6 +108,7 @@ export function useTabManager(sessionId: Ref<string | null>) {
     const data = getOrCreateSession(sid)
     if (data.tabs.find(t => t.id === tabId)) {
       data.activeTabId = tabId
+      activeTabId.value = tabId
     }
   }
 
