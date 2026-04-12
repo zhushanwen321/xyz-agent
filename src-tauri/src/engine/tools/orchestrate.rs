@@ -291,6 +291,18 @@ impl Tool for OrchestrateTool {
                         output,
                         source_task_id: Some(node_id_for_forward.clone()),
                     },
+                    AgentEvent::MessageComplete { session_id, role, content, usage, .. } => AgentEvent::MessageComplete {
+                        session_id, role, content, usage,
+                        source_task_id: Some(node_id_for_forward.clone()),
+                    },
+                    AgentEvent::TurnComplete { session_id, .. } => AgentEvent::TurnComplete {
+                        session_id,
+                        source_task_id: Some(node_id_for_forward.clone()),
+                    },
+                    AgentEvent::Error { session_id, message, .. } => AgentEvent::Error {
+                        session_id, message,
+                        source_task_id: Some(node_id_for_forward.clone()),
+                    },
                     other => other,
                 };
                 let _ = parent_tx.send(forwarded);

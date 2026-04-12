@@ -32,10 +32,12 @@ pub enum AgentEvent {
         role: String,
         content: String,
         usage: TokenUsage,
+        source_task_id: Option<String>,
     },
     Error {
         session_id: String,
         message: String,
+        source_task_id: Option<String>,
     },
     ToolCallStart {
         session_id: String,
@@ -53,6 +55,7 @@ pub enum AgentEvent {
     },
     TurnComplete {
         session_id: String,
+        source_task_id: Option<String>,
     },
     TaskCreated {
         session_id: String,
@@ -129,7 +132,7 @@ impl AgentEvent {
             AgentEvent::Error { session_id, .. } => session_id,
             AgentEvent::ToolCallStart { session_id, .. } => session_id,
             AgentEvent::ToolCallEnd { session_id, .. } => session_id,
-            AgentEvent::TurnComplete { session_id } => session_id,
+            AgentEvent::TurnComplete { session_id, .. } => session_id,
             AgentEvent::TaskCreated { session_id, .. } => session_id,
             AgentEvent::TaskProgress { session_id, .. } => session_id,
             AgentEvent::TaskCompleted { session_id, .. } => session_id,
@@ -206,6 +209,7 @@ mod tests {
                 input_tokens: 200,
                 output_tokens: 100,
             },
+            source_task_id: None,
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"type\":\"MessageComplete\""));
@@ -224,6 +228,7 @@ mod tests {
         let event = AgentEvent::Error {
             session_id: "s1".to_string(),
             message: "API key missing".to_string(),
+            source_task_id: None,
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"type\":\"Error\""));
@@ -296,6 +301,7 @@ mod tests {
     fn test_turn_complete_serialization() {
         let event = AgentEvent::TurnComplete {
             session_id: "s1".to_string(),
+            source_task_id: None,
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"type\":\"TurnComplete\""));

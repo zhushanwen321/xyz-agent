@@ -218,6 +218,7 @@ impl AgentLoop {
                 let _ = event_tx.send(AgentEvent::Error {
                     session_id: session_id.clone(),
                     message: format!("已达到最大轮次限制 ({max_turns})"),
+                    source_task_id: None,
                 });
                 break;
             }

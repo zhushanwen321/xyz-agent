@@ -94,6 +94,7 @@ pub(super) async fn consume_stream(
                     role: "assistant".to_string(),
                     content: text,
                     usage: TokenUsage { input_tokens: 0, output_tokens: 0 },
+                    source_task_id: None,
                 });
                 // 区分用户主动取消和正常结束，避免上层误判为 tool_use 循环
                 stop_reason = "cancelled".to_string();
@@ -198,6 +199,7 @@ pub(super) async fn consume_stream(
                         .collect::<Vec<_>>()
                         .join(""),
                     usage: usage.clone(),
+                    source_task_id: None,
                 });
             }
             Ok(LlmStreamEvent::Error { message }) => {

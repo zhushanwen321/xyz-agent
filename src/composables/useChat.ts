@@ -69,16 +69,23 @@ export function useChat(sessionId: Ref<string | null>) {
           break
         }
         case 'MessageComplete': {
-          // TextDelta 已逐字追加到 currentTurnSegments，
-          // 这里只清空 streamingText 并更新 tokenUsage
+          if ('source_task_id' in event && event.source_task_id) {
+            tabEventHandler?.(event)
+            break
+          }
           streamingText.value = ''
           tokenUsage.value = {
             inputTokens: event.usage.input_tokens,
             outputTokens: tokenUsage.value.outputTokens + event.usage.output_tokens,
           }
+          tabEventHandler?.(event)
           break
         }
         case 'TurnComplete': {
+          if ('source_task_id' in event && event.source_task_id) {
+            tabEventHandler?.(event)
+            break
+          }
           if (currentTurnSegments.value.length > 0) {
             messages.value.push({
               id: crypto.randomUUID(),
@@ -90,12 +97,19 @@ export function useChat(sessionId: Ref<string | null>) {
             currentTurnSegments.value = []
           }
           isStreaming.value = false
+          tabEventHandler?.(event)
           break
         }
-        case 'Error':
+        case 'Error': {
+          if ('source_task_id' in event && event.source_task_id) {
+            tabEventHandler?.(event)
+            break
+          }
           messages.value.push(createMessage('system', `Error: ${event.message}`))
           isStreaming.value = false
+          tabEventHandler?.(event)
           break
+        }
         case 'ToolCallStart': {
           if ('source_task_id' in event && event.source_task_id) {
             tabEventHandler?.(event)

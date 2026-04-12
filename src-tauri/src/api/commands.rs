@@ -241,6 +241,7 @@ pub async fn send_message(
 
     let _ = event_tx.send(crate::types::AgentEvent::TurnComplete {
         session_id: session_id.clone(),
+        source_task_id: None,
     });
     drop(event_tx);
 
