@@ -143,7 +143,7 @@ pub async fn send_message(
     let agent_loop = AgentLoop::new(provider, session_id.clone(), model);
     history.push(user_entry.clone());
 
-    let prompt_manager = PromptManager::new();
+    let prompt_manager = PromptManager::new().with_user_prompts(&state.data_dir);
     let dynamic_context = DynamicContext {
         cwd: std::env::current_dir()
             .unwrap_or_default()

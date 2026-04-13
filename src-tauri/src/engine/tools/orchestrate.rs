@@ -278,6 +278,7 @@ impl Tool for OrchestrateTool {
             prompt: directive.clone(),
             history: vec![],
             system_prompt_override: None,
+            prompt_key: None,
             tool_filter: Some(tool_filter),
             budget: Some(budget),
             event_tx: sub_event_tx,

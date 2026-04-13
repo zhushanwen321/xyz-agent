@@ -20,6 +20,8 @@ pub struct SpawnConfig {
     pub prompt: String,
     pub history: Vec<TranscriptEntry>,
     pub system_prompt_override: Option<String>,
+    /// PromptRegistry 中的 key，如 "explore", "plan", "general_purpose"
+    pub prompt_key: Option<String>,
     pub tool_filter: Option<Vec<String>>,
     pub budget: Option<TaskBudget>,
     pub event_tx: tokio::sync::mpsc::UnboundedSender<AgentEvent>,
@@ -102,7 +104,12 @@ impl AgentSpawner for DefaultAgentSpawner {
         let tool_registry = filter_tools(&self.tool_registry, config.tool_filter.as_deref());
         let prompt_manager = match &config.system_prompt_override {
             Some(p) => PromptManager::new_with_prompt(p),
-            None => PromptManager::new(),
+            None => {
+                let key = config.prompt_key.as_deref().unwrap_or("general_purpose");
+                PromptManager::new()
+                    .with_user_prompts(&self.data_dir)
+                    .with_key(key)
+            }
         };
         let agent_config = self.config.clone();
         let task_tree = self.task_tree.clone();
@@ -453,6 +460,7 @@ mod tests {
             prompt: "test prompt".to_string(),
             history: vec![],
             system_prompt_override: None,
+            prompt_key: None,
             tool_filter: None,
             budget: None,
             event_tx,
@@ -504,6 +512,7 @@ mod tests {
             prompt: "first".to_string(),
             history: vec![],
             system_prompt_override: None,
+            prompt_key: None,
             tool_filter: None,
             budget: None,
             event_tx: event_tx1,
@@ -523,6 +532,7 @@ mod tests {
             prompt: "second".to_string(),
             history: vec![],
             system_prompt_override: None,
+            prompt_key: None,
             tool_filter: None,
             budget: None,
             event_tx: event_tx2,

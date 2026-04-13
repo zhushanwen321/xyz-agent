@@ -303,6 +303,7 @@ impl Tool for DispatchAgentTool {
             prompt: prompt.clone(),
             history: vec![],
             system_prompt_override: None,
+            prompt_key: template.map(|t| t.system_prompt_key.clone()),
             tool_filter,
             budget: Some(budget),
             event_tx: sub_event_tx,
