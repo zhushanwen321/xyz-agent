@@ -39,6 +39,11 @@ export type TranscriptEntry =
   | { type: 'user'; uuid: string; parent_uuid: string | null; timestamp: string; session_id: string; content: UserContentBlock[] }
   | { type: 'assistant'; uuid: string; parent_uuid: string | null; timestamp: string; session_id: string; content: AssistantContentBlock[]; usage: TokenUsage | null }
   | { type: 'system'; uuid: string; parent_uuid: string | null; timestamp: string; session_id: string; content: string }
+  | { type: 'custom_title'; title: string; uuid: string; timestamp: string }
+  | { type: 'summary'; content: string; uuid: string; timestamp: string }
+  | { type: 'task_node'; task_id: string; uuid: string; timestamp: string }
+  | { type: 'orchestrate_node'; node_id: string; uuid: string; timestamp: string }
+  | { type: 'feedback'; content: string; uuid: string; timestamp: string }
 
 // 前端内部使用的消息模型
 export interface ChatMessage {

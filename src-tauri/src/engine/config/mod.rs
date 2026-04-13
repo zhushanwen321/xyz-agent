@@ -105,10 +105,10 @@ fn parse_config_value(content: &str) -> AgentConfig {
                 "bash_default_timeout_secs" => config
                     .bash_default_timeout_secs = value.parse().unwrap_or(config.bash_default_timeout_secs),
                 "thinking_enabled" => {
-                    config.thinking_enabled = value.parse().unwrap_or(false);
+                    config.thinking_enabled = value.parse().unwrap_or(config.thinking_enabled);
                 }
                 "thinking_budget_tokens" => {
-                    config.thinking_budget_tokens = value.parse().unwrap_or(10_000);
+                    config.thinking_budget_tokens = value.parse().unwrap_or(config.thinking_budget_tokens);
                 }
                 _ => {} // unknown keys ignored
             }

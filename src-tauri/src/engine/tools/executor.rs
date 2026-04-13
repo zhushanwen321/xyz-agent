@@ -10,34 +10,28 @@ pub async fn execute_batch(
     perms: &PermissionContext,
     ctx: Option<&ToolExecutionContext>,
 ) -> Vec<ToolExecutionResult> {
-    let (safe, unsafe_calls): (Vec<_>, Vec<_>) = calls.into_iter().partition(|c| {
-        registry
-            .get(&c.name)
-            .map(|t| t.is_concurrent_safe())
-            .unwrap_or(true)
+    // 保留原始索引以确保结果顺序与 tool_use 顺序一致
+    let indexed: Vec<(usize, super::PendingToolCall)> = calls.into_iter().enumerate().collect();
+    let (safe, unsafe_calls): (Vec<_>, Vec<_>) = indexed.into_iter().partition(|(_, c)| {
+        registry.get(&c.name).map(|t| t.is_concurrent_safe()).unwrap_or(true)
     });
 
-    let mut results = Vec::with_capacity(safe.len() + unsafe_calls.len());
-
-    // ctx 需要 clone 进入每个 async task，所以提前 clone 一份
     let ctx_clone = ctx.cloned();
-    let safe_handles: Vec<_> = safe
-        .into_iter()
-        .map(|c| {
-            let registry = registry.clone();
-            let perms = perms.clone();
-            let ctx = ctx_clone.as_ref();
-            async move { execute_single(c, &registry, &perms, ctx).await }
-        })
-        .collect();
+    let safe_handles: Vec<_> = safe.into_iter().map(|(idx, c)| {
+        let registry = registry.clone();
+        let perms = perms.clone();
+        let ctx = ctx_clone.as_ref();
+        async move { (idx, execute_single(c, &registry, &perms, ctx).await) }
+    }).collect();
 
-    results.extend(join_all(safe_handles).await);
+    let mut results: Vec<(usize, ToolExecutionResult)> = join_all(safe_handles).await;
 
-    for c in unsafe_calls {
-        results.push(execute_single(c, registry, perms, ctx).await);
+    for (idx, c) in unsafe_calls {
+        results.push((idx, execute_single(c, registry, perms, ctx).await));
     }
 
-    results
+    results.sort_by_key(|(idx, _)| *idx);
+    results.into_iter().map(|(_, r)| r).collect()
 }
 
 async fn execute_single(
