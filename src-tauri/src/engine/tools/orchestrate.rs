@@ -258,8 +258,8 @@ impl Tool for OrchestrateTool {
         });
 
         let tool_filter: Vec<String> = match effective_type {
-            "orchestrator" => vec!["orchestrate", "feedback", "read", "bash"],
-            _ => vec!["feedback", "read", "write", "bash"],
+            "orchestrator" => vec!["orchestrate", "feedback", "Read", "Bash"],
+            _ => vec!["feedback", "Read", "Write", "Bash"],
         }.into_iter().map(String::from).collect();
 
         let start = Instant::now();

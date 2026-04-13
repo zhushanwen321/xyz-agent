@@ -24,7 +24,7 @@ impl Tool for WriteTool {
     fn description(&self) -> &str {
         "Write content to a file.\n\
          \n\
-         - Creates the file and parent directories if they don't exist.\n\
+         - Writes to existing paths only. Does NOT create parent directories.\n\
          - Overwrites the entire file if it already exists.\n\
          - Do NOT use Bash (echo/cat redirect) to write files — always use this tool."
     }

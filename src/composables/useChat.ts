@@ -30,6 +30,10 @@ export function useChat(sessionId: Ref<string | null>) {
   let tabEventHandler: ((event: AgentEvent) => void) | null = null
   let historyLoadPromise: Promise<void> | null = null
 
+  function triggerSegmentsReactivity() {
+    currentTurnSegments.value = [...currentTurnSegments.value]
+  }
+
   function appendTextToCurrentTurn(text: string) {
     const segs = currentTurnSegments.value
     const last = segs[segs.length - 1]
@@ -38,6 +42,7 @@ export function useChat(sessionId: Ref<string | null>) {
     } else {
       segs.push({ type: 'text', text })
     }
+    triggerSegmentsReactivity()
   }
 
   function finalizeThinkingDuration() {
@@ -88,6 +93,7 @@ export function useChat(sessionId: Ref<string | null>) {
           } else {
             segs.push({ type: 'thinking', text: event.delta, duration_ms: 0 })
           }
+          triggerSegmentsReactivity()
           tabEventHandler?.(event)
           break
         }

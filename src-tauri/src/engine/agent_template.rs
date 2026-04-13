@@ -20,7 +20,7 @@ impl AgentTemplateRegistry {
             "Explore".into(),
             AgentTemplate {
                 name: "Explore".into(),
-                tools: vec!["read".into(), "bash".into()],
+                tools: vec!["Read".into(), "Bash".into()],
                 read_only: true,
                 default_budget: TaskBudget {
                     max_tokens: 50_000,
@@ -34,7 +34,7 @@ impl AgentTemplateRegistry {
             "Plan".into(),
             AgentTemplate {
                 name: "Plan".into(),
-                tools: vec!["read".into(), "bash".into()],
+                tools: vec!["Read".into(), "Bash".into()],
                 read_only: true,
                 default_budget: TaskBudget {
                     max_tokens: 80_000,
@@ -49,9 +49,9 @@ impl AgentTemplateRegistry {
             AgentTemplate {
                 name: "general-purpose".into(),
                 tools: vec![
-                    "read".into(),
-                    "write".into(),
-                    "bash".into(),
+                    "Read".into(),
+                    "Write".into(),
+                    "Bash".into(),
                     "feedback".into(),
                 ],
                 read_only: false,
@@ -79,7 +79,7 @@ mod tests {
     fn lookup_builtin_template() {
         let registry = AgentTemplateRegistry::new();
         let explore = registry.get("Explore").unwrap();
-        assert!(explore.tools.contains(&"read".to_string()));
+        assert!(explore.tools.contains(&"Read".to_string()));
         assert!(explore.read_only);
         assert_eq!(explore.default_budget.max_tokens, 50_000);
     }
