@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted, ref, computed } from 'vue'
+import { onMounted, onUnmounted, ref, computed } from 'vue'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useSettings } from '../composables/useSettings'
 import { usePromptManager } from '../composables/usePromptManager'
 import type { PromptInfo, PromptSaveInput, CustomAgentInput } from '../types'
@@ -29,6 +30,8 @@ const previewContent = ref<string | null>(null)
 const showAgentDialog = ref(false)
 const agentForm = ref<CustomAgentInput>({ name: '', content: '', tools: [] })
 const agentToolInput = ref('')
+const restartHint = ref(false)
+let unlistenFn: UnlistenFn | null = null
 
 // 内置 prompt 和自定义 prompt 分组
 const builtinPrompts = computed(() => prompts.value.filter(p => p.mode !== 'custom'))
@@ -117,6 +120,7 @@ async function handleSaveAgent() {
   try {
     await saveAgent(agentForm.value)
     showAgentDialog.value = false
+    restartHint.value = true
   } catch (e) {
     alert(String(e))
   }
@@ -130,10 +134,15 @@ async function handleDeleteAgent(name: string) {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
   loadConfig()
   loadPrompts()
+  unlistenFn = await listen<{ message: string }>('config:thinking-changed', () => {
+    restartHint.value = true
+  })
 })
+
+onUnmounted(() => { unlistenFn?.() })
 </script>
 
 <template>
@@ -250,6 +259,9 @@ onMounted(() => {
               Controls model thinking depth. Higher = deeper thinking, slower responses, more token usage. Restart required.
             </p>
           </div>
+          <p v-if="restartHint" class="mt-2 text-xs text-accent-yellow">
+            Thinking config updated. Restart the app to apply changes.
+          </p>
         </section>
 
         <!-- 保存 -->
@@ -400,6 +412,10 @@ onMounted(() => {
             </div>
           </div>
         </section>
+
+        <p v-if="restartHint" class="mt-4 text-xs text-accent-yellow">
+          Agent config updated. Restart the app for changes to take effect.
+        </p>
 
         <!-- 自定义 Agent 编辑对话框 -->
         <section v-if="showAgentDialog" class="mt-6">

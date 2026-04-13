@@ -172,6 +172,7 @@ export interface PromptInfo {
   content: string
   has_enhance: boolean
   has_override: boolean
+  tools: string[]
 }
 
 // 自定义 Agent 保存请求

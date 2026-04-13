@@ -13,6 +13,7 @@ pub struct PromptInfo {
     pub content: String,
     pub has_enhance: bool,
     pub has_override: bool,
+    pub tools: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -58,6 +59,7 @@ pub async fn prompt_list(state: State<'_, AppState>) -> Result<Vec<PromptInfo>, 
             content,
             has_enhance,
             has_override,
+            tools: vec![],
         });
     }
 
@@ -73,12 +75,16 @@ pub async fn prompt_list(state: State<'_, AppState>) -> Result<Vec<PromptInfo>, 
                         continue;
                     }
                     let content = std::fs::read_to_string(entry.path()).unwrap_or_default();
+                    // 尝试从 .toml 读取 tools 元数据
+                    let toml_path = agents_dir.join(format!("{key}.toml"));
+                    let tools = parse_agent_tools(&toml_path);
                     result.push(PromptInfo {
                         key: key.to_string(),
                         mode: "custom".to_string(),
                         content,
                         has_enhance: false,
                         has_override: false,
+                        tools,
                     });
                 }
             }
@@ -103,7 +109,13 @@ pub async fn prompt_preview(key: String, state: State<'_, AppState>) -> Result<S
     let mut registry = PromptRegistry::new();
     registry.load_user_prompts(&state.data_dir);
 
-    // 拼接 builtin + enhance
+    // override 存在时直接返回，不拼接 enhance（两者互斥）
+    let entries = registry.entries_for(&key);
+    if entries.iter().any(|e| e.mode == PromptMode::Override) {
+        return Ok(registry.resolve(&key).unwrap_or_default().to_string());
+    }
+
+    // 无 override 时拼接 builtin + enhance
     let builtin = registry.resolve(&key).unwrap_or_default().to_string();
     let enhances = registry.resolve_enhances(&key);
     let mut result = builtin;
@@ -189,9 +201,19 @@ pub async fn custom_agent_save(
     std::fs::create_dir_all(&agents_dir)
         .map_err(|e| format!("failed to create agents dir: {e}"))?;
 
+    // 写入 prompt 内容
     let md_path = agents_dir.join(format!("{}.md", payload.name));
     std::fs::write(&md_path, &payload.content)
         .map_err(|e| format!("failed to write agent: {e}"))?;
+
+    // 写入 TOML 元数据
+    let toml_content = format!(
+        "name = \"{}\"\ntools = {:?}\n",
+        payload.name, payload.tools
+    );
+    let toml_path = agents_dir.join(format!("{}.toml", payload.name));
+    std::fs::write(&toml_path, toml_content)
+        .map_err(|e| format!("failed to write agent metadata: {e}"))?;
 
     Ok(())
 }
@@ -200,11 +222,35 @@ pub async fn custom_agent_save(
 pub async fn custom_agent_delete(name: String, state: State<'_, AppState>) -> Result<(), String> {
     let agents_dir = state.data_dir.join("prompts").join("agents");
     let md_path = agents_dir.join(format!("{}.md", name));
-    if md_path.exists() {
-        std::fs::remove_file(&md_path)
-            .map_err(|e| format!("failed to delete agent: {e}"))?;
-        Ok(())
-    } else {
-        Err(format!("custom agent '{}' not found", name))
+    let toml_path = agents_dir.join(format!("{}.toml", name));
+    if !md_path.exists() {
+        return Err(format!("custom agent '{}' not found", name));
     }
+    std::fs::remove_file(&md_path)
+        .map_err(|e| format!("failed to delete agent: {e}"))?;
+    if toml_path.exists() {
+        let _ = std::fs::remove_file(&toml_path);
+    }
+    Ok(())
+}
+
+/// 从 TOML 元数据文件中解析 tools 列表
+fn parse_agent_tools(toml_path: &std::path::Path) -> Vec<String> {
+    let content = std::fs::read_to_string(toml_path).unwrap_or_default();
+    // 简单解析 tools = [...] 行，避免引入 toml crate 依赖
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("tools = ") {
+            let inner = rest.trim().trim_start_matches('[').trim_end_matches(']');
+            if inner.is_empty() {
+                return vec![];
+            }
+            return inner
+                .split(',')
+                .map(|s| s.trim().trim_matches('"').to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+        }
+    }
+    vec![]
 }
