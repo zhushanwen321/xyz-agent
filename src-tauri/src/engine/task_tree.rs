@@ -193,6 +193,9 @@ pub struct TaskTree {
 }
 
 impl TaskTree {
+    /// Maximum allowed depth for orchestrate nodes to prevent infinite recursion
+    const MAX_ORCHESTRATE_DEPTH: u32 = 20;
+
     pub fn new() -> Self {
         Self {
             task_nodes: HashMap::new(),
@@ -344,6 +347,19 @@ impl TaskTree {
         conversation_path: PathBuf,
         budget: Option<TaskBudget>,
     ) -> &OrchestrateNode {
+        // Prevent infinite recursion by enforcing maximum depth
+        assert!(
+            depth <= Self::MAX_ORCHESTRATE_DEPTH,
+            "orchestrate depth {} exceeds maximum allowed depth {}",
+            depth,
+            Self::MAX_ORCHESTRATE_DEPTH
+        );
+
+        // Prevent duplicate node_id entries
+        if self.orchestrate_nodes.contains_key(&node_id) {
+            return self.orchestrate_nodes.get(&node_id).unwrap();
+        }
+
         let pid = parent_id.clone();
         let node = OrchestrateNode {
             node_id,
@@ -392,8 +408,14 @@ impl TaskTree {
         let mut found = false;
         let mut queue = vec![id.to_string()];
         let mut notified_ids: Vec<String> = Vec::new();
+        let mut visited = std::collections::HashSet::new();
 
         while let Some(current_id) = queue.pop() {
+            // Prevent processing the same node twice in case of cycles
+            if !visited.insert(current_id.clone()) {
+                continue;
+            }
+
             let children = if let Some(node) = self.orchestrate_nodes.get_mut(&current_id) {
                 found = true;
                 if let Some(token) = self.cancel_tokens.get(&current_id) {
