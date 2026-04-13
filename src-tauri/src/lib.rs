@@ -119,6 +119,13 @@ pub fn run() {
             api::commands::pause_task,
             api::commands::resume_task,
             api::commands::load_sidechain_history,
+            api::prompt_commands::prompt_list,
+            api::prompt_commands::prompt_get,
+            api::prompt_commands::prompt_preview,
+            api::prompt_commands::prompt_save,
+            api::prompt_commands::prompt_delete,
+            api::prompt_commands::custom_agent_save,
+            api::prompt_commands::custom_agent_delete,
         ])
         .run(tauri::generate_context!())
         .expect("error while running xyz-agent");

@@ -170,6 +170,11 @@ impl PromptRegistry {
             meta: None,
         });
     }
+
+    /// 获取指定 key 的所有条目引用（供 commands 层读取 mode 信息）
+    pub fn entries_for(&self, key: &str) -> &[PromptEntry] {
+        self.entries.get(key).map(|v| v.as_slice()).unwrap_or(&[])
+    }
 }
 
 impl Default for PromptRegistry {

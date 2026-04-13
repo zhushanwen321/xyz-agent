@@ -164,3 +164,26 @@ export interface ChatTab {
   status: TabStatus
   closable: boolean
 }
+
+// 与 Rust PromptInfo 对应
+export interface PromptInfo {
+  key: string
+  mode: 'builtin' | 'enhance' | 'override' | 'custom'
+  content: string
+  has_enhance: boolean
+  has_override: boolean
+}
+
+// 自定义 Agent 保存请求
+export interface CustomAgentInput {
+  name: string
+  content: string
+  tools: string[]
+}
+
+// Prompt 保存请求
+export interface PromptSaveInput {
+  key: string
+  mode: 'enhance' | 'override'
+  content: string
+}
