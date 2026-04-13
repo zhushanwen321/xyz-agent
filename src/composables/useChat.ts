@@ -24,6 +24,7 @@ export function useChat(sessionId: Ref<string | null>) {
   const orchestrateNodes = ref<Map<string, OrchestrateNode>>(new Map())
   // tool_use_id -> task_id 映射，用于 ToolCallCard 关联 SubAgentCard
   const toolUseToTaskId = ref<Map<string, string>>(new Map())
+  let thinkingStartTime: number | null = null
   let unlisten: (() => void) | null = null
   // Tab 事件回调，由 ChatView 注入，用于自动创建/更新 Tab
   let tabEventHandler: ((event: AgentEvent) => void) | null = null
@@ -36,6 +37,16 @@ export function useChat(sessionId: Ref<string | null>) {
       last.text += text
     } else {
       segs.push({ type: 'text', text })
+    }
+  }
+
+  function finalizeThinkingDuration() {
+    if (thinkingStartTime) {
+      const thinkingSeg = currentTurnSegments.value.find(s => s.type === 'thinking')
+      if (thinkingSeg && thinkingSeg.type === 'thinking') {
+        thinkingSeg.duration_ms = Date.now() - thinkingStartTime
+      }
+      thinkingStartTime = null
     }
   }
 
@@ -54,6 +65,7 @@ export function useChat(sessionId: Ref<string | null>) {
 
       switch (event.type) {
         case 'TextDelta': {
+          finalizeThinkingDuration()
           if ('source_task_id' in event && event.source_task_id) {
             tabEventHandler?.(event)
             break
@@ -64,6 +76,18 @@ export function useChat(sessionId: Ref<string | null>) {
           break
         }
         case 'ThinkingDelta': {
+          if ('source_task_id' in event && event.source_task_id) {
+            tabEventHandler?.(event)
+            break
+          }
+          if (!thinkingStartTime) thinkingStartTime = Date.now()
+          const segs = currentTurnSegments.value
+          const last = segs[segs.length - 1]
+          if (last && last.type === 'thinking') {
+            last.text += event.delta
+          } else {
+            segs.push({ type: 'thinking', text: event.delta, duration_ms: 0 })
+          }
           tabEventHandler?.(event)
           break
         }
@@ -85,16 +109,19 @@ export function useChat(sessionId: Ref<string | null>) {
             tabEventHandler?.(event)
             break
           }
-          if (currentTurnSegments.value.length > 0) {
+          finalizeThinkingDuration()
+          const persistableSegments = currentTurnSegments.value.filter(s => s.type !== 'thinking')
+          if (persistableSegments.length > 0) {
             messages.value.push({
               id: crypto.randomUUID(),
               role: 'assistant',
               content: '',
-              segments: [...currentTurnSegments.value],
+              segments: [...persistableSegments],
               timestamp: new Date().toISOString(),
             })
-            currentTurnSegments.value = []
           }
+          currentTurnSegments.value = []
+          thinkingStartTime = null
           isStreaming.value = false
           tabEventHandler?.(event)
           break
@@ -110,6 +137,7 @@ export function useChat(sessionId: Ref<string | null>) {
           break
         }
         case 'ToolCallStart': {
+          finalizeThinkingDuration()
           if ('source_task_id' in event && event.source_task_id) {
             tabEventHandler?.(event)
             break
@@ -237,6 +265,7 @@ export function useChat(sessionId: Ref<string | null>) {
     isStreaming.value = true
     messages.value.push(createMessage('user', content))
     currentTurnSegments.value = []
+    thinkingStartTime = null
     streamingText.value = ''
     try {
       await sendMessage(sessionId.value, content)
@@ -249,16 +278,19 @@ export function useChat(sessionId: Ref<string | null>) {
   async function cancel() {
     if (!sessionId.value || !isStreaming.value) return
     // 立即更新 UI 状态，不等待后端 TurnComplete 事件
-    if (currentTurnSegments.value.length > 0) {
+    finalizeThinkingDuration()
+    const persistableSegments = currentTurnSegments.value.filter(s => s.type !== 'thinking')
+    if (persistableSegments.length > 0) {
       messages.value.push({
         id: crypto.randomUUID(),
         role: 'assistant',
         content: '',
-        segments: [...currentTurnSegments.value],
+        segments: [...persistableSegments],
         timestamp: new Date().toISOString(),
       })
-      currentTurnSegments.value = []
     }
+    currentTurnSegments.value = []
+    thinkingStartTime = null
     isStreaming.value = false
     try {
       await cancelMessage(sessionId.value)

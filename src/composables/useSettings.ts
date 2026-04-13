@@ -37,6 +37,8 @@ export function useSettings() {
         max_output_tokens: config.value.max_output_tokens,
         tool_output_max_bytes: config.value.tool_output_max_bytes,
         bash_default_timeout_secs: config.value.bash_default_timeout_secs,
+        thinking_enabled: config.value.thinking_enabled,
+        thinking_budget_tokens: config.value.thinking_budget_tokens,
       }
       await updateConfig(payload)
       success.value = true

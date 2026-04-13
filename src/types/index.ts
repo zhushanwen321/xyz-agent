@@ -63,6 +63,7 @@ export interface ToolCallDisplay {
 export type AssistantSegment =
   | { type: 'text'; text: string }
   | { type: 'tool'; call: ToolCallDisplay }
+  | { type: 'thinking'; text: string; duration_ms: number }
 
 /** 工具危险等级 */
 export type ToolDangerLevel = 'safe' | 'caution'
@@ -144,6 +145,8 @@ export interface ConfigResponse {
   max_output_tokens: number
   tool_output_max_bytes: number
   bash_default_timeout_secs: number
+  thinking_enabled: boolean
+  thinking_budget_tokens: number
 }
 
 export type UpdateConfigRequest = ConfigResponse
