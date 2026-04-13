@@ -78,3 +78,4 @@ LLM SSE → LlmStreamEvent → mpsc channel → EventBus → Tauri Event → Vue
 
 - superpowers目录：.claude/.superpowers
 - Design System: [docs/design-system.md](docs/design-system.md) — 全局色彩、排版、间距、Markdown 渲染规范
+- 编码标准: [docs/standards.md](docs/standards.md) — 架构模式与编码规范（文件持久化与 Registry 同步等）
