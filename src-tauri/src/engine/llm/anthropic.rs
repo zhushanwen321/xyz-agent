@@ -129,18 +129,24 @@ fn map_sse_event(event: eventsource_stream::Event) -> Result<LlmStreamEvent, App
         "content_block_start" => {
             let data: serde_json::Value = serde_json::from_str(&event.data)
                 .map_err(|e| AppError::Llm(format!("invalid JSON in content_block_start: {e}")))?;
-            if data["content_block"]["type"] == "tool_use" {
-                let id = data["content_block"]["id"]
-                    .as_str()
-                    .unwrap_or("")
-                    .to_string();
-                let name = data["content_block"]["name"]
-                    .as_str()
-                    .unwrap_or("")
-                    .to_string();
-                Ok(LlmStreamEvent::ToolUseStart { id, name })
-            } else {
-                Ok(LlmStreamEvent::TextDelta { delta: String::new() })
+            let block_type = data["content_block"]["type"].as_str().unwrap_or("");
+            match block_type {
+                "tool_use" => {
+                    let id = data["content_block"]["id"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_string();
+                    let name = data["content_block"]["name"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_string();
+                    Ok(LlmStreamEvent::ToolUseStart { id, name })
+                }
+                // thinking block 开始时发出 ThinkingDelta，避免前端产生空 text segment
+                "thinking" => Ok(LlmStreamEvent::ThinkingDelta {
+                    delta: String::new(),
+                }),
+                _ => Ok(LlmStreamEvent::TextDelta { delta: String::new() }),
             }
         }
         "content_block_delta" => {

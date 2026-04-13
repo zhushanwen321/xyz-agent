@@ -56,18 +56,11 @@ impl PromptManager {
     pub fn build_system_prompt(&self, ctx: &DynamicContext) -> Vec<Value> {
         let mut blocks = Vec::new();
 
-        // 静态层（可缓存）— builtin + enhance 拼接在同一 block
-        let mut static_text = self
+        // 静态层（可缓存）— 使用 resolve_full 获取 override 或 builtin+enhance
+        let static_text = self
             .registry
-            .resolve(&self.default_key)
-            .unwrap_or_default()
-            .to_string();
-
-        // enhance 内容拼接到 builtin 末尾
-        for enhance in self.registry.resolve_enhances(&self.default_key) {
-            static_text.push_str("\n\n");
-            static_text.push_str(enhance);
-        }
+            .resolve_full(&self.default_key)
+            .unwrap_or_default();
 
         blocks.push(serde_json::json!({
             "type": "text",

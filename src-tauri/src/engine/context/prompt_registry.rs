@@ -158,6 +158,23 @@ impl PromptRegistry {
         }
     }
 
+    /// 返回完整的 prompt 文本（override 直接返回，否则 builtin + enhance 拼接）
+    pub fn resolve_full(&self, key: &str) -> Option<String> {
+        let entries = self.entries.get(key)?;
+        // override 直接返回
+        if let Some(e) = entries.iter().find(|e| e.mode == PromptMode::Override) {
+            return Some(e.content.clone());
+        }
+        // builtin + enhance 拼接
+        let builtin = entries.iter().find(|e| e.mode == PromptMode::Builtin)?;
+        let mut result = builtin.content.clone();
+        for enhance in entries.iter().filter(|e| e.mode == PromptMode::Enhance) {
+            result.push_str("\n\n");
+            result.push_str(&enhance.content);
+        }
+        Some(result)
+    }
+
     /// 插入 override（供 new_with_prompt 使用）
     pub fn insert_override(&mut self, key: &str, content: &str) {
         let entries = self.entries.entry(key.to_string()).or_default();
@@ -253,5 +270,44 @@ mod tests {
         reg.load_user_prompts(Path::new("/nonexistent/path"));
         // 仍然有 builtin
         assert!(reg.resolve("system").is_some());
+    }
+
+    #[test]
+    fn resolve_full_returns_builtin_when_no_enhance() {
+        let reg = PromptRegistry::new();
+        let full = reg.resolve_full("system").unwrap();
+        assert!(full.contains("xyz-agent"));
+        // 无 enhance 时，resolve_full 与 resolve 返回相同内容
+        assert_eq!(full, reg.resolve("system").unwrap());
+    }
+
+    #[test]
+    fn resolve_full_appends_enhance() {
+        let mut reg = PromptRegistry::new();
+        let dir = tempfile::tempdir().unwrap();
+        let prompts_dir = dir.path().join("prompts");
+        std::fs::create_dir_all(&prompts_dir).unwrap();
+        std::fs::write(prompts_dir.join("enhance_system.md"), "extra rules").unwrap();
+
+        reg.load_user_prompts(dir.path());
+        let full = reg.resolve_full("system").unwrap();
+        assert!(full.contains("xyz-agent"));
+        assert!(full.contains("extra rules"));
+    }
+
+    #[test]
+    fn resolve_full_override_skips_enhance() {
+        let mut reg = PromptRegistry::new();
+        let dir = tempfile::tempdir().unwrap();
+        let prompts_dir = dir.path().join("prompts");
+        std::fs::create_dir_all(&prompts_dir).unwrap();
+        // 同时存在 enhance 和 override
+        std::fs::write(prompts_dir.join("enhance_system.md"), "extra").unwrap();
+        std::fs::write(prompts_dir.join("override_system.md"), "full override").unwrap();
+
+        reg.load_user_prompts(dir.path());
+        let full = reg.resolve_full("system").unwrap();
+        // override 优先，不包含 builtin 也不包含 enhance
+        assert_eq!(full, "full override");
     }
 }

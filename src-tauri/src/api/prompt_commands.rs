@@ -139,22 +139,9 @@ pub async fn prompt_get(key: String, state: State<'_, AppState>) -> Result<Strin
 #[tauri::command]
 pub async fn prompt_preview(key: String, state: State<'_, AppState>) -> Result<String, String> {
     let registry = state.prompt_registry.read().map_err(|e| e.to_string())?;
-
-    // override 存在时直接返回，不拼接 enhance（两者互斥）
-    let entries = registry.entries_for(&key);
-    if entries.iter().any(|e| e.mode == PromptMode::Override) {
-        return Ok(registry.resolve(&key).unwrap_or_default().to_string());
-    }
-
-    // 无 override 时拼接 builtin + enhance
-    let builtin = registry.resolve(&key).unwrap_or_default().to_string();
-    let enhances = registry.resolve_enhances(&key);
-    let mut result = builtin;
-    for enhance in enhances {
-        result.push_str("\n\n");
-        result.push_str(enhance);
-    }
-    Ok(result)
+    registry
+        .resolve_full(&key)
+        .ok_or_else(|| format!("prompt '{}' not found", key))
 }
 
 #[tauri::command]
@@ -239,23 +226,21 @@ pub async fn custom_agent_save(
     std::fs::write(&md_path, &payload.content)
         .map_err(|e| format!("failed to write agent: {e}"))?;
 
-    // 写入 TOML 元数据（使用规范格式，非 Debug 格式化）
-    let tools_str = payload.tools.iter()
-        .map(|t| format!("\"{}\"", t.replace('"', "\\\"")))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let toml_content = format!(
-        "name = \"{}\"\ndescription = \"{}\"\ntools = [{}]\nread_only = {}\nmax_tokens = {}\nmax_turns = {}\nmax_tool_calls = {}\n",
-        payload.name,
-        payload.description.replace('"', "\\\""),
-        tools_str,
-        payload.read_only,
-        payload.max_tokens,
-        payload.max_turns,
-        payload.max_tool_calls,
+    // 写入 TOML 元数据（使用 toml_edit 保证语法安全）
+    let mut doc = toml_edit::DocumentMut::new();
+    doc["name"] = toml_edit::value(&payload.name);
+    doc["description"] = toml_edit::value(&payload.description);
+    let tools_arr = payload.tools.iter().fold(
+        toml_edit::Array::new(),
+        |mut arr, t| { arr.push(t.as_str()); arr },
     );
+    doc["tools"] = toml_edit::Item::Value(toml_edit::Value::Array(tools_arr));
+    doc["read_only"] = toml_edit::value(payload.read_only);
+    doc["max_tokens"] = toml_edit::value(payload.max_tokens as i64);
+    doc["max_turns"] = toml_edit::value(payload.max_turns as i64);
+    doc["max_tool_calls"] = toml_edit::value(payload.max_tool_calls as i64);
     let toml_path = agents_dir.join(format!("{}.toml", payload.name));
-    std::fs::write(&toml_path, toml_content)
+    std::fs::write(&toml_path, doc.to_string())
         .map_err(|e| format!("failed to write agent metadata: {e}"))?;
 
     // 运行时刷新：将新 Agent 注册到 AgentTemplateRegistry + PromptRegistry
