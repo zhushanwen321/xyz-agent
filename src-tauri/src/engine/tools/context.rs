@@ -16,7 +16,7 @@ use super::ToolRegistry;
 pub struct ToolExecutionContext {
     pub task_tree: Arc<tokio::sync::Mutex<TaskTree>>,
     pub concurrency_manager: Arc<ConcurrencyManager>,
-    pub agent_templates: Arc<AgentTemplateRegistry>,
+    pub agent_templates: Arc<std::sync::RwLock<AgentTemplateRegistry>>,
     pub data_dir: std::path::PathBuf,
     pub session_id: String,
     pub event_tx: tokio::sync::mpsc::UnboundedSender<AgentEvent>,

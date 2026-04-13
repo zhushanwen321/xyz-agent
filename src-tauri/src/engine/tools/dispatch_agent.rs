@@ -208,25 +208,31 @@ impl Tool for DispatchAgentTool {
             .to_string();
         let is_sync = input["sync"].as_bool().unwrap_or(true);
 
-        // 查找模板
-        let template = match ctx.agent_templates.get(&subagent_type) {
-            Some(t) => Some(t),
-            None if subagent_type.is_empty() => {
-                ctx.agent_templates.get("general-purpose")
-            }
-            None => {
-                return ToolResult::Error(format!("template '{}' not found", subagent_type));
-            }
+        // 查找模板并提前 clone 所需字段，避免长时间持有 RwLock 读锁
+        let (default_budget, tool_filter, prompt_key) = {
+            let reg = ctx.agent_templates.read().unwrap();
+            let template = match reg.get(&subagent_type) {
+                Some(t) => Some(t),
+                None if subagent_type.is_empty() => {
+                    reg.get("general-purpose")
+                }
+                None => {
+                    return ToolResult::Error(format!("template '{}' not found", subagent_type));
+                }
+            };
+            let budget = template
+                .map(|t| t.default_budget.clone())
+                .unwrap_or(TaskBudget {
+                    max_tokens: 50_000,
+                    max_turns: 20,
+                    max_tool_calls: 100,
+                });
+            let tools = template.map(|t| t.tools.clone());
+            let key = template.map(|t| t.system_prompt_key.clone());
+            (budget, tools, key)
         };
 
         // 构建预算：用户指定优先，否则使用模板默认值
-        let default_budget = template
-            .map(|t| t.default_budget.clone())
-            .unwrap_or(TaskBudget {
-                max_tokens: 50_000,
-                max_turns: 20,
-                max_tool_calls: 100,
-            });
         let budget = TaskBudget {
             max_tokens: input["token_budget"]
                 .as_u64()
@@ -289,7 +295,6 @@ impl Tool for DispatchAgentTool {
         });
 
         // 构建 SpawnConfig
-        let tool_filter = template.map(|t| t.tools.clone());
         // 子 Agent 事件通过父 channel 转发，携带 source_task_id 标识
         let parent_tx = ctx.event_tx.clone();
         let task_id_for_forward = task_id.clone();
@@ -303,7 +308,7 @@ impl Tool for DispatchAgentTool {
             prompt: prompt.clone(),
             history: vec![],
             system_prompt_override: None,
-            prompt_key: template.map(|t| t.system_prompt_key.clone()),
+            prompt_key,
             tool_filter,
             budget: Some(budget),
             event_tx: sub_event_tx,

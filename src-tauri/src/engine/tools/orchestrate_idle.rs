@@ -112,7 +112,7 @@ mod tests {
         let ctx = ToolExecutionContext {
             task_tree: tree.clone(),
             concurrency_manager: Arc::new(ConcurrencyManager::new(3)),
-            agent_templates: Arc::new(AgentTemplateRegistry::new()),
+            agent_templates: Arc::new(std::sync::RwLock::new(AgentTemplateRegistry::new())),
             data_dir: std::path::PathBuf::from("/tmp/test"),
             session_id: "test-session".into(),
             event_tx: event_tx.clone(),

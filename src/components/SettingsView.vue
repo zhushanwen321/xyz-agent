@@ -28,7 +28,11 @@ const previewContent = ref<string | null>(null)
 
 // 自定义 Agent 编辑状态
 const showAgentDialog = ref(false)
-const agentForm = ref<CustomAgentInput>({ name: '', content: '', tools: [] })
+const agentForm = ref<CustomAgentInput>({
+  name: '', content: '', tools: [],
+  description: '', read_only: false,
+  max_tokens: 100_000, max_turns: 30, max_tool_calls: 100,
+})
 const agentToolInput = ref('')
 const restartHint = ref(false)
 let unlistenFn: UnlistenFn | null = null
@@ -99,7 +103,16 @@ async function handlePreview(key: string) {
 }
 
 function openAgentDialog() {
-  agentForm.value = { name: '', content: '', tools: [] }
+  agentForm.value = {
+    name: '',
+    content: '',
+    tools: [],
+    description: '',
+    read_only: false,
+    max_tokens: 100_000,
+    max_turns: 30,
+    max_tool_calls: 100,
+  }
   agentToolInput.value = ''
   showAgentDialog.value = true
 }
@@ -401,7 +414,8 @@ onUnmounted(() => { unlistenFn?.() })
               <div>
                 <span class="font-mono text-sm text-text-primary">{{ agent.key }}</span>
                 <span class="ml-2 text-xs text-accent">[custom]</span>
-                <p class="mt-1 text-xs text-text-tertiary">{{ promptDescription(agent) }}</p>
+                <p v-if="agent.description" class="mt-1 text-xs text-text-tertiary">{{ agent.description }}</p>
+                <p v-else class="mt-1 text-xs text-text-tertiary">{{ promptDescription(agent) }}</p>
               </div>
               <button
                 class="text-xs text-accent-red hover:underline"
@@ -433,6 +447,15 @@ onUnmounted(() => { unlistenFn?.() })
                 type="text"
                 class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-sm text-text-primary"
                 placeholder="e.g. code_reviewer"
+              />
+            </div>
+            <div>
+              <label class="mb-1 block text-xs text-text-tertiary">Description</label>
+              <input
+                v-model="agentForm.description"
+                type="text"
+                class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 text-sm text-text-primary"
+                placeholder="Brief description of the agent"
               />
             </div>
             <div>
@@ -470,6 +493,49 @@ onUnmounted(() => { unlistenFn?.() })
                   {{ tool }}
                   <button class="text-accent-red" @click="removeTool(i)">x</button>
                 </span>
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <input
+                type="checkbox"
+                v-model="agentForm.read_only"
+                class="h-4 w-4 rounded border-border-default bg-bg-inset"
+              />
+              <span class="text-sm text-text-secondary">Read-only (no Write tool)</span>
+            </div>
+            <div>
+              <label class="mb-1 block text-xs text-text-tertiary">Budget</label>
+              <div class="grid grid-cols-3 gap-2">
+                <div>
+                  <label class="text-xs text-text-tertiary">Max Tokens</label>
+                  <input
+                    v-model.number="agentForm.max_tokens"
+                    type="number"
+                    min="1000"
+                    max="500000"
+                    class="w-full rounded-md border border-border-default bg-bg-inset px-2 py-1 font-mono text-xs text-text-primary"
+                  />
+                </div>
+                <div>
+                  <label class="text-xs text-text-tertiary">Max Turns</label>
+                  <input
+                    v-model.number="agentForm.max_turns"
+                    type="number"
+                    min="1"
+                    max="200"
+                    class="w-full rounded-md border border-border-default bg-bg-inset px-2 py-1 font-mono text-xs text-text-primary"
+                  />
+                </div>
+                <div>
+                  <label class="text-xs text-text-tertiary">Max Tool Calls</label>
+                  <input
+                    v-model.number="agentForm.max_tool_calls"
+                    type="number"
+                    min="1"
+                    max="500"
+                    class="w-full rounded-md border border-border-default bg-bg-inset px-2 py-1 font-mono text-xs text-text-primary"
+                  />
+                </div>
               </div>
             </div>
             <div class="flex justify-end">

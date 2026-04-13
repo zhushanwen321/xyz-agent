@@ -95,9 +95,16 @@ pub fn run() {
                 background_tasks: Arc::new(tokio::sync::Mutex::new(
                     std::collections::HashMap::new(),
                 )),
-                agent_templates: Arc::new(
-                    engine::agent_template::AgentTemplateRegistry::new(),
-                ),
+                agent_templates: {
+                    let mut reg = engine::agent_template::AgentTemplateRegistry::new();
+                    reg.load_custom_agents(&data_dir);
+                    Arc::new(std::sync::RwLock::new(reg))
+                },
+                prompt_registry: {
+                    let mut reg = engine::context::prompt_registry::PromptRegistry::new();
+                    reg.load_user_prompts(&data_dir);
+                    Arc::new(std::sync::RwLock::new(reg))
+                },
                 agent_spawner,
                 cancel_tokens: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             });

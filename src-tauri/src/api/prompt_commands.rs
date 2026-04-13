@@ -14,6 +14,16 @@ pub struct PromptInfo {
     pub has_enhance: bool,
     pub has_override: bool,
     pub tools: Vec<String>,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub read_only: bool,
+    #[serde(default)]
+    pub max_tokens: u32,
+    #[serde(default)]
+    pub max_turns: u32,
+    #[serde(default)]
+    pub max_tool_calls: u32,
 }
 
 #[derive(Deserialize)]
@@ -29,14 +39,27 @@ pub struct CustomAgentSaveRequest {
     pub name: String,
     pub content: String,
     pub tools: Vec<String>,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub read_only: bool,
+    #[serde(default = "default_max_tokens")]
+    pub max_tokens: u32,
+    #[serde(default = "default_max_turns")]
+    pub max_turns: u32,
+    #[serde(default = "default_max_tool_calls")]
+    pub max_tool_calls: u32,
 }
+
+fn default_max_tokens() -> u32 { 100_000 }
+fn default_max_turns() -> u32 { 30 }
+fn default_max_tool_calls() -> u32 { 100 }
 
 // ── Prompt 管理 Commands ──────────────────────────────────────
 
 #[tauri::command]
 pub async fn prompt_list(state: State<'_, AppState>) -> Result<Vec<PromptInfo>, String> {
-    let mut registry = PromptRegistry::new();
-    registry.load_user_prompts(&state.data_dir);
+    let registry = state.prompt_registry.read().map_err(|e| e.to_string())?;
 
     let builtin_keys = ["system", "explore", "plan", "general_purpose"];
     let mut result = Vec::new();
@@ -60,6 +83,11 @@ pub async fn prompt_list(state: State<'_, AppState>) -> Result<Vec<PromptInfo>, 
             has_enhance,
             has_override,
             tools: vec![],
+            description: String::new(),
+            read_only: false,
+            max_tokens: 0,
+            max_turns: 0,
+            max_tool_calls: 0,
         });
     }
 
@@ -75,16 +103,21 @@ pub async fn prompt_list(state: State<'_, AppState>) -> Result<Vec<PromptInfo>, 
                         continue;
                     }
                     let content = std::fs::read_to_string(entry.path()).unwrap_or_default();
-                    // 尝试从 .toml 读取 tools 元数据
+                    // 从 .toml 读取完整元数据
                     let toml_path = agents_dir.join(format!("{key}.toml"));
-                    let tools = parse_agent_tools(&toml_path);
+                    let meta = parse_agent_meta(&toml_path);
                     result.push(PromptInfo {
                         key: key.to_string(),
                         mode: "custom".to_string(),
                         content,
                         has_enhance: false,
                         has_override: false,
-                        tools,
+                        tools: meta.tools,
+                        description: meta.description,
+                        read_only: meta.read_only,
+                        max_tokens: meta.max_tokens,
+                        max_turns: meta.max_turns,
+                        max_tool_calls: meta.max_tool_calls,
                     });
                 }
             }
@@ -96,8 +129,7 @@ pub async fn prompt_list(state: State<'_, AppState>) -> Result<Vec<PromptInfo>, 
 
 #[tauri::command]
 pub async fn prompt_get(key: String, state: State<'_, AppState>) -> Result<String, String> {
-    let mut registry = PromptRegistry::new();
-    registry.load_user_prompts(&state.data_dir);
+    let registry = state.prompt_registry.read().map_err(|e| e.to_string())?;
     registry
         .resolve(&key)
         .map(|s| s.to_string())
@@ -106,8 +138,7 @@ pub async fn prompt_get(key: String, state: State<'_, AppState>) -> Result<Strin
 
 #[tauri::command]
 pub async fn prompt_preview(key: String, state: State<'_, AppState>) -> Result<String, String> {
-    let mut registry = PromptRegistry::new();
-    registry.load_user_prompts(&state.data_dir);
+    let registry = state.prompt_registry.read().map_err(|e| e.to_string())?;
 
     // override 存在时直接返回，不拼接 enhance（两者互斥）
     let entries = registry.entries_for(&key);
@@ -158,6 +189,7 @@ pub async fn prompt_save(
         }
         _ => return Err(format!("invalid mode '{}', expected 'enhance' or 'override'", payload.mode)),
     }
+    refresh_prompt_registry(&state);
     Ok(())
 }
 
@@ -178,6 +210,7 @@ pub async fn prompt_delete(key: String, state: State<'_, AppState>) -> Result<()
     if !deleted {
         return Err(format!("no enhance/override file found for key '{}'", key));
     }
+    refresh_prompt_registry(&state);
     Ok(())
 }
 
@@ -206,14 +239,30 @@ pub async fn custom_agent_save(
     std::fs::write(&md_path, &payload.content)
         .map_err(|e| format!("failed to write agent: {e}"))?;
 
-    // 写入 TOML 元数据
+    // 写入 TOML 元数据（使用规范格式，非 Debug 格式化）
+    let tools_str = payload.tools.iter()
+        .map(|t| format!("\"{}\"", t.replace('"', "\\\"")))
+        .collect::<Vec<_>>()
+        .join(", ");
     let toml_content = format!(
-        "name = \"{}\"\ntools = {:?}\n",
-        payload.name, payload.tools
+        "name = \"{}\"\ndescription = \"{}\"\ntools = [{}]\nread_only = {}\nmax_tokens = {}\nmax_turns = {}\nmax_tool_calls = {}\n",
+        payload.name,
+        payload.description.replace('"', "\\\""),
+        tools_str,
+        payload.read_only,
+        payload.max_tokens,
+        payload.max_turns,
+        payload.max_tool_calls,
     );
     let toml_path = agents_dir.join(format!("{}.toml", payload.name));
     std::fs::write(&toml_path, toml_content)
         .map_err(|e| format!("failed to write agent metadata: {e}"))?;
+
+    // 运行时刷新：将新 Agent 注册到 AgentTemplateRegistry + PromptRegistry
+    if let Ok(mut reg) = state.agent_templates.write() {
+        reg.load_custom_agents(&state.data_dir);
+    }
+    refresh_prompt_registry(&state);
 
     Ok(())
 }
@@ -231,26 +280,75 @@ pub async fn custom_agent_delete(name: String, state: State<'_, AppState>) -> Re
     if toml_path.exists() {
         let _ = std::fs::remove_file(&toml_path);
     }
+
+    // 运行时刷新：从 AgentTemplateRegistry + PromptRegistry 移除
+    if let Ok(mut reg) = state.agent_templates.write() {
+        reg.remove_custom_agent(&name);
+    }
+    refresh_prompt_registry(&state);
+
     Ok(())
 }
 
-/// 从 TOML 元数据文件中解析 tools 列表
-fn parse_agent_tools(toml_path: &std::path::Path) -> Vec<String> {
-    let content = std::fs::read_to_string(toml_path).unwrap_or_default();
-    // 简单解析 tools = [...] 行，避免引入 toml crate 依赖
+/// 重建 PromptRegistry 缓存（文件变更后调用）
+fn refresh_prompt_registry(state: &State<'_, AppState>) {
+    if let Ok(mut reg) = state.prompt_registry.write() {
+        *reg = PromptRegistry::new();
+        reg.load_user_prompts(&state.data_dir);
+    }
+}
+
+/// 从 TOML 元数据文件中解析完整 Agent 元信息
+struct AgentTomlMeta {
+    tools: Vec<String>,
+    description: String,
+    read_only: bool,
+    max_tokens: u32,
+    max_turns: u32,
+    max_tool_calls: u32,
+}
+
+impl Default for AgentTomlMeta {
+    fn default() -> Self {
+        Self {
+            tools: vec![],
+            description: String::new(),
+            read_only: false,
+            max_tokens: 100_000,
+            max_turns: 30,
+            max_tool_calls: 100,
+        }
+    }
+}
+
+fn parse_agent_meta(toml_path: &std::path::Path) -> AgentTomlMeta {
+    let content = match std::fs::read_to_string(toml_path) {
+        Ok(c) => c,
+        Err(_) => return AgentTomlMeta::default(),
+    };
+    let mut meta = AgentTomlMeta::default();
     for line in content.lines() {
         let trimmed = line.trim();
         if let Some(rest) = trimmed.strip_prefix("tools = ") {
             let inner = rest.trim().trim_start_matches('[').trim_end_matches(']');
-            if inner.is_empty() {
-                return vec![];
+            if !inner.is_empty() {
+                meta.tools = inner
+                    .split(',')
+                    .map(|s| s.trim().trim_matches('"').to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
             }
-            return inner
-                .split(',')
-                .map(|s| s.trim().trim_matches('"').to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
+        } else if let Some(rest) = trimmed.strip_prefix("description = ") {
+            meta.description = rest.trim().trim_matches('"').to_string();
+        } else if let Some(rest) = trimmed.strip_prefix("read_only = ") {
+            meta.read_only = rest.trim() == "true";
+        } else if let Some(rest) = trimmed.strip_prefix("max_tokens = ") {
+            meta.max_tokens = rest.trim().parse().unwrap_or(100_000);
+        } else if let Some(rest) = trimmed.strip_prefix("max_turns = ") {
+            meta.max_turns = rest.trim().parse().unwrap_or(30);
+        } else if let Some(rest) = trimmed.strip_prefix("max_tool_calls = ") {
+            meta.max_tool_calls = rest.trim().parse().unwrap_or(100);
         }
     }
-    vec![]
+    meta
 }

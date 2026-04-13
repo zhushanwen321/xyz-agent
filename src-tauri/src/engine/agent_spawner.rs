@@ -185,7 +185,7 @@ async fn run_subagent(
     let tool_ctx = ToolExecutionContext {
         task_tree: task_tree.clone(),
         concurrency_manager: concurrency_manager.clone(),
-        agent_templates: Arc::new(crate::engine::agent_template::AgentTemplateRegistry::new()),
+        agent_templates: Arc::new(std::sync::RwLock::new(crate::engine::agent_template::AgentTemplateRegistry::new())),
         data_dir: data_dir.clone(),
         session_id: config.session_id.clone(),
         event_tx: config.event_tx.clone(),

@@ -178,6 +178,11 @@ export interface PromptInfo {
   has_enhance: boolean
   has_override: boolean
   tools: string[]
+  description: string
+  read_only: boolean
+  max_tokens: number
+  max_turns: number
+  max_tool_calls: number
 }
 
 // 自定义 Agent 保存请求
@@ -185,6 +190,11 @@ export interface CustomAgentInput {
   name: string
   content: string
   tools: string[]
+  description: string
+  read_only: boolean
+  max_tokens: number
+  max_turns: number
+  max_tool_calls: number
 }
 
 // Prompt 保存请求
