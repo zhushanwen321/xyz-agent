@@ -18,6 +18,10 @@ pub struct AgentConfig {
     // ToolExecutor
     pub tool_output_max_bytes: usize,
     pub bash_default_timeout_secs: u64,
+
+    // Extended Thinking
+    pub thinking_enabled: bool,
+    pub thinking_budget_tokens: u32,
 }
 
 impl Default for AgentConfig {
@@ -34,6 +38,8 @@ impl Default for AgentConfig {
             max_consecutive_failures: 3,
             tool_output_max_bytes: 100_000,
             bash_default_timeout_secs: 120,
+            thinking_enabled: false,
+            thinking_budget_tokens: 10_000,
         }
     }
 }
@@ -98,6 +104,12 @@ fn parse_config_value(content: &str) -> AgentConfig {
                 }
                 "bash_default_timeout_secs" => config
                     .bash_default_timeout_secs = value.parse().unwrap_or(config.bash_default_timeout_secs),
+                "thinking_enabled" => {
+                    config.thinking_enabled = value.parse().unwrap_or(false);
+                }
+                "thinking_budget_tokens" => {
+                    config.thinking_budget_tokens = value.parse().unwrap_or(10_000);
+                }
                 _ => {} // unknown keys ignored
             }
         }
@@ -167,6 +179,8 @@ pub fn save_config(
     max_output_tokens: u32,
     tool_output_max_bytes: usize,
     bash_default_timeout_secs: u64,
+    thinking_enabled: bool,
+    thinking_budget_tokens: u32,
 ) -> Result<(), AppError> {
     let config_path = dirs::home_dir()
         .ok_or(AppError::Config("no home dir".into()))?
@@ -195,6 +209,8 @@ pub fn save_config(
     doc["anthropic_api_key"] = toml_edit::value(llm_api_key);
     doc["llm_model"] = toml_edit::value(llm_model);
     doc["anthropic_base_url"] = toml_edit::value(llm_base_url);
+    doc["thinking_enabled"] = toml_edit::value(thinking_enabled);
+    doc["thinking_budget_tokens"] = toml_edit::value(thinking_budget_tokens as i64);
 
     std::fs::write(&config_path, doc.to_string())
         .map_err(|e| AppError::Config(format!("failed to write config: {e}")))?;
@@ -220,6 +236,29 @@ mod tests {
         assert_eq!(config.max_consecutive_failures, 3);
         assert_eq!(config.tool_output_max_bytes, 100_000);
         assert_eq!(config.bash_default_timeout_secs, 120);
+    }
+
+    #[test]
+    fn test_thinking_config_defaults() {
+        let config = AgentConfig::default();
+        assert!(!config.thinking_enabled);
+        assert_eq!(config.thinking_budget_tokens, 10_000);
+    }
+
+    #[test]
+    fn test_thinking_config_parsing() {
+        let content = "thinking_enabled = true\nthinking_budget_tokens = 20000\n";
+        let config = parse_config_value(content);
+        assert!(config.thinking_enabled);
+        assert_eq!(config.thinking_budget_tokens, 20_000);
+    }
+
+    #[test]
+    fn test_thinking_config_invalid_uses_defaults() {
+        let content = "thinking_enabled = maybe\nthinking_budget_tokens = not_a_number\n";
+        let config = parse_config_value(content);
+        assert!(!config.thinking_enabled);
+        assert_eq!(config.thinking_budget_tokens, 10_000);
     }
 
     #[test]

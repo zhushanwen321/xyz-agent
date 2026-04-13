@@ -36,6 +36,7 @@ pub fn run() {
             AnthropicProvider::new(llm_config.api_key)
                 .with_base_url(llm_config.base_url)
                 .with_max_tokens(agent_config.max_output_tokens)
+                .with_thinking(agent_config.thinking_enabled, agent_config.thinking_budget_tokens)
         );
 
     let mut tool_registry = ToolRegistry::new();

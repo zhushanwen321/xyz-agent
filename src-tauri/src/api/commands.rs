@@ -6,7 +6,7 @@ use crate::store::jsonl::LoadHistoryResult;
 use crate::store::session;
 use crate::types::{AssistantContentBlock, TranscriptEntry, UserContentBlock};
 use serde::Deserialize;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 
 #[derive(serde::Serialize)]
 pub struct ConfigResponse {
@@ -18,6 +18,8 @@ pub struct ConfigResponse {
     pub max_output_tokens: u32,
     pub tool_output_max_bytes: usize,
     pub bash_default_timeout_secs: u64,
+    pub thinking_enabled: bool,
+    pub thinking_budget_tokens: u32,
 }
 
 #[derive(Deserialize)]
@@ -30,6 +32,8 @@ pub struct UpdateConfigRequest {
     pub max_output_tokens: u32,
     pub tool_output_max_bytes: usize,
     pub bash_default_timeout_secs: u64,
+    pub thinking_enabled: bool,
+    pub thinking_budget_tokens: u32,
 }
 
 #[tauri::command]
@@ -290,12 +294,16 @@ pub async fn get_config(state: State<'_, AppState>) -> Result<ConfigResponse, St
         max_output_tokens: agent.max_output_tokens,
         tool_output_max_bytes: agent.tool_output_max_bytes,
         bash_default_timeout_secs: agent.bash_default_timeout_secs,
+        thinking_enabled: agent.thinking_enabled,
+        thinking_budget_tokens: agent.thinking_budget_tokens,
     })
 }
 
 #[tauri::command]
 pub async fn update_config(
     payload: UpdateConfigRequest,
+    state: State<'_, AppState>,
+    app: AppHandle,
 ) -> Result<(), String> {
     crate::engine::config::save_config(
         &payload.anthropic_api_key,
@@ -306,8 +314,22 @@ pub async fn update_config(
         payload.max_output_tokens,
         payload.tool_output_max_bytes,
         payload.bash_default_timeout_secs,
+        payload.thinking_enabled,
+        payload.thinking_budget_tokens,
     )
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+
+    // thinking 配置变更需要重启应用才能生效（provider 在启动时创建）
+    let current = &state.config;
+    if payload.thinking_enabled != current.thinking_enabled
+        || payload.thinking_budget_tokens != current.thinking_budget_tokens
+    {
+        let _ = app.emit("config:thinking-changed", serde_json::json!({
+            "message": "Extended Thinking 配置已更新，请重启应用以生效"
+        }));
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
