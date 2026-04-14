@@ -12,6 +12,7 @@ pub struct DynamicContext {
     pub tool_names: Vec<String>,
     pub data_context_summary: Option<String>,
     pub conversation_summary: Option<String>,
+    pub disabled_tools: Vec<String>,
 }
 
 pub struct PromptManager {
@@ -108,6 +109,14 @@ impl PromptManager {
             parts.push(format!("## 对话历史摘要\n{summary}"));
         }
 
+        // 禁用工具
+        if !ctx.disabled_tools.is_empty() {
+            parts.push(format!(
+                "## 禁用工具\n以下工具已禁用，请勿调用：{}",
+                ctx.disabled_tools.join(", ")
+            ));
+        }
+
         parts.join("\n\n")
     }
 }
@@ -131,6 +140,7 @@ mod tests {
             tool_names: vec![],
             data_context_summary: None,
             conversation_summary: None,
+            disabled_tools: vec![],
         }
     }
 
@@ -195,6 +205,21 @@ mod tests {
         assert!(!dynamic_text.contains("可用工具"));
         assert!(!dynamic_text.contains("已读取文件"));
         assert!(!dynamic_text.contains("对话历史摘要"));
+        assert!(!dynamic_text.contains("禁用工具"));
+    }
+
+    #[test]
+    fn test_dynamic_renders_disabled_tools() {
+        let pm = PromptManager::new();
+        let ctx = DynamicContext {
+            disabled_tools: vec!["Bash".to_string(), "Write".to_string()],
+            ..default_ctx()
+        };
+        let blocks = pm.build_system_prompt(&ctx);
+        let dynamic_text = blocks[1]["text"].as_str().unwrap();
+        assert!(dynamic_text.contains("禁用工具"));
+        assert!(dynamic_text.contains("Bash"));
+        assert!(dynamic_text.contains("Write"));
     }
 
     #[test]

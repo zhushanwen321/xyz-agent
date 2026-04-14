@@ -337,6 +337,7 @@ impl Tool for DispatchAgentTool {
                 tool_names: ctx.tool_registry.tool_names(),
                 data_context_summary: None,
                 conversation_summary: None,
+                disabled_tools: vec![],
             },
             permission_context: PermissionContext::default(),
             session_id: ctx.session_id.clone(),

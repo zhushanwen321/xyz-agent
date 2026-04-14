@@ -365,6 +365,7 @@ mod tests {
             tool_names: vec![],
             data_context_summary: None,
             conversation_summary: None,
+            disabled_tools: vec![],
         }
     }
 
