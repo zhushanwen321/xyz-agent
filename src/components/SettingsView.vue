@@ -14,7 +14,6 @@ const {
   get: getPromptContent,
   save: savePrompt,
   remove: deletePrompt,
-  preview: previewPrompt,
   saveAgent,
   deleteAgent,
 } = usePromptManager()
@@ -24,7 +23,7 @@ const activeTab = ref<'llm' | 'agent' | 'prompts'>('llm')
 // 提示词编辑状态
 const editMode = ref<'enhance' | 'override'>('enhance')
 const editContent = ref('')
-const previewContent = ref<string | null>(null)
+const builtinContent = ref('')
 
 // Prompts Tab 编辑面板状态
 type EditTarget =
@@ -33,7 +32,6 @@ type EditTarget =
   | { type: 'new-agent' }
   | null
 const editTarget = ref<EditTarget>(null)
-const editPanelTab = ref<'edit' | 'preview'>('edit')
 
 // 自定义 Agent 编辑状态
 const agentForm = ref<CustomAgentInput>({
@@ -68,19 +66,27 @@ function modeColor(mode: string): string {
 
 async function openEdit(prompt: PromptInfo) {
   editMode.value = prompt.has_override ? 'override' : 'enhance'
-  editPanelTab.value = 'edit'
-  previewContent.value = null
+  // 加载 builtin 原始内容，后端失败则用列表数据兜底
   try {
-    editContent.value = await getPromptContent(prompt.key) || ''
+    builtinContent.value = await getPromptContent(prompt.key) || prompt.content
   } catch {
-    editContent.value = ''
+    builtinContent.value = prompt.content
+  }
+  if (editMode.value === 'enhance') {
+    editContent.value = prompt.mode === 'enhance' ? prompt.content : ''
+  } else {
+    editContent.value = builtinContent.value
   }
 }
 
 function closeEdit() {
   editContent.value = ''
-  previewContent.value = null
+  builtinContent.value = ''
   editTarget.value = null
+}
+
+function restoreOverride() {
+  editContent.value = builtinContent.value
 }
 
 async function handleSavePrompt() {
@@ -106,14 +112,6 @@ async function handleDeletePrompt(key: string) {
     }
   } catch (e) {
     alert(String(e))
-  }
-}
-
-async function handlePreview(key: string) {
-  try {
-    previewContent.value = await previewPrompt(key)
-  } catch (e) {
-    previewContent.value = String(e)
   }
 }
 
@@ -185,7 +183,7 @@ onUnmounted(() => { unlistenFn?.() })
 </script>
 
 <template>
-  <div class="flex h-full flex-col px-8 py-6">
+  <div class="flex h-full flex-1 flex-col overflow-y-auto px-8 py-6">
     <h2 class="mb-6 text-lg font-semibold text-text-primary">Settings</h2>
 
     <!-- Tab 切换 -->
@@ -378,12 +376,6 @@ onUnmounted(() => { unlistenFn?.() })
                   <div class="flex items-center gap-2">
                     <button
                       class="text-xs text-accent-blue hover:underline"
-                      @click="editTarget = { type: 'builtin', key: prompt.key }; editPanelTab = 'preview'; handlePreview(prompt.key)"
-                    >
-                      Preview
-                    </button>
-                    <button
-                      class="text-xs text-accent-blue hover:underline"
                       @click="editTarget = { type: 'builtin', key: prompt.key }; openEdit(prompt)"
                     >
                       Edit
@@ -474,50 +466,47 @@ onUnmounted(() => { unlistenFn?.() })
                 :class="editMode === 'enhance'
                   ? 'bg-accent-blue/15 text-accent-blue border border-accent-blue/30'
                   : 'bg-bg-inset text-text-tertiary border border-border-default'"
-                @click="editMode = 'enhance'"
+                @click="editMode = 'enhance'; editContent = ''"
               >Enhance</button>
               <button
                 class="rounded px-3 py-1 text-xs"
                 :class="editMode === 'override'
                   ? 'bg-accent-yellow/15 text-accent-yellow border border-accent-yellow/30'
                   : 'bg-bg-inset text-text-tertiary border border-border-default'"
-                @click="editMode = 'override'"
+                @click="editMode = 'override'; editContent = builtinContent"
               >Override</button>
             </div>
-            <p class="text-xs text-text-tertiary">
-              {{ editMode === 'enhance'
-                ? 'Appended after built-in prompt content.'
-                : 'Completely replaces built-in prompt.' }}
-            </p>
-            <!-- Edit/Preview toggle -->
-            <div class="flex border-b border-border-default">
-              <button
-                class="px-3 pb-1 text-xs"
-                :class="editPanelTab === 'edit'
-                  ? 'border-b-2 border-accent text-text-primary'
-                  : 'text-text-tertiary'"
-                @click="editPanelTab = 'edit'"
-              >Edit</button>
-              <button
-                class="px-3 pb-1 text-xs"
-                :class="editPanelTab === 'preview'
-                  ? 'border-b-2 border-accent text-text-primary'
-                  : 'text-text-tertiary'"
-                @click="editPanelTab = 'preview'; handlePreview(editTarget.key)"
-              >Preview</button>
-            </div>
-            <!-- Content area -->
-            <textarea
-              v-if="editPanelTab === 'edit'"
-              v-model="editContent"
-              rows="10"
-              class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-xs text-text-primary"
-              placeholder="Enter prompt content..."
-            />
-            <pre
-              v-else
-              class="max-h-80 overflow-auto whitespace-pre-wrap rounded-md border border-border-default bg-bg-inset p-3 text-xs text-text-primary"
-            >{{ previewContent ?? 'Loading...' }}</pre>
+            <!-- Enhance 模式：原始 + 追加 -->
+            <template v-if="editMode === 'enhance'">
+              <div>
+                <label class="mb-1 block text-xs text-text-tertiary">Original Prompt</label>
+                <pre class="max-h-40 overflow-auto whitespace-pre-wrap rounded-md border border-border-default bg-bg-inset p-3 text-xs text-text-tertiary">{{ builtinContent }}</pre>
+              </div>
+              <div>
+                <label class="mb-1 block text-xs text-text-tertiary">Append Content</label>
+                <textarea
+                  v-model="editContent"
+                  rows="6"
+                  class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-xs text-text-primary"
+                  placeholder="Content appended after the original prompt..."
+                />
+              </div>
+            </template>
+            <!-- Override 模式：单 textarea + 还原 -->
+            <template v-else>
+              <div class="flex items-center justify-between">
+                <label class="text-xs text-text-tertiary">Override Content</label>
+                <button
+                  class="text-xs text-accent-yellow hover:underline"
+                  @click="restoreOverride"
+                >Restore Original</button>
+              </div>
+              <textarea
+                v-model="editContent"
+                rows="12"
+                class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-xs text-text-primary"
+              />
+            </template>
             <div class="flex justify-end gap-2">
               <button
                 class="rounded-md border border-border-default px-4 py-2 text-xs text-text-secondary"
