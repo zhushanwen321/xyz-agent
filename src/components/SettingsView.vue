@@ -199,10 +199,28 @@ onUnmounted(() => { unlistenFn?.() })
       <div v-else-if="configError" class="text-accent-red">{{ configError }}</div>
 
       <div v-else-if="config" class="space-y-8">
-        <!-- LLM 配置 -->
+        <!-- Connection -->
         <section>
-          <h3 class="mb-3 text-sm font-medium text-text-secondary">LLM Configuration</h3>
+          <h3 class="mb-3 text-sm font-medium text-text-secondary">Connection</h3>
           <div class="space-y-3">
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="mb-1 block text-xs text-text-tertiary">Model</label>
+                <input
+                  v-model="config.llm_model"
+                  type="text"
+                  class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-sm text-text-primary"
+                />
+              </div>
+              <div>
+                <label class="mb-1 block text-xs text-text-tertiary">Base URL</label>
+                <input
+                  v-model="config.anthropic_base_url"
+                  type="text"
+                  class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-sm text-text-primary"
+                />
+              </div>
+            </div>
             <div>
               <label class="mb-1 block text-xs text-text-tertiary">API Key</label>
               <input
@@ -211,27 +229,11 @@ onUnmounted(() => { unlistenFn?.() })
                 class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-sm text-text-primary"
               />
             </div>
-            <div>
-              <label class="mb-1 block text-xs text-text-tertiary">Model</label>
-              <input
-                v-model="config.llm_model"
-                type="text"
-                class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-sm text-text-primary"
-              />
-            </div>
-            <div>
-              <label class="mb-1 block text-xs text-text-tertiary">Base URL</label>
-              <input
-                v-model="config.anthropic_base_url"
-                type="text"
-                class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-sm text-text-primary"
-              />
-            </div>
           </div>
         </section>
 
-        <!-- 思考模式 -->
-        <section>
+        <!-- Thinking Mode -->
+        <section class="rounded-lg border border-border-default bg-bg-inset p-4">
           <h3 class="mb-3 text-sm font-medium text-text-secondary">Thinking Mode</h3>
           <div class="flex items-center gap-2">
             <input
