@@ -3,7 +3,8 @@ import { onMounted, onUnmounted, ref, computed } from 'vue'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useSettings } from '../composables/useSettings'
 import { usePromptManager } from '../composables/usePromptManager'
-import type { PromptInfo, PromptSaveInput, CustomAgentInput } from '../types'
+import { useToolManager } from '../composables/useToolManager'
+import type { PromptInfo, PromptSaveInput, CustomAgentInput, ToolInfo, ToolConfigSaveInput } from '../types'
 
 const { config, loading: configLoading, saving, error: configError, success, load: loadConfig, save: saveConfig } = useSettings()
 const {
@@ -18,7 +19,16 @@ const {
   deleteAgent,
 } = usePromptManager()
 
-const activeTab = ref<'llm' | 'agent' | 'prompts'>('llm')
+const {
+  tools,
+  loading: toolsLoading,
+  error: toolsError,
+  load: loadTools,
+  save: saveToolConfig,
+  reset: resetToolConfig,
+} = useToolManager()
+
+const activeTab = ref<'llm' | 'agent' | 'prompts' | 'tools'>('llm')
 
 // 提示词编辑状态
 const editMode = ref<'enhance' | 'override'>('enhance')
@@ -41,6 +51,9 @@ const agentForm = ref<CustomAgentInput>({
 })
 const agentToolInput = ref('')
 const restartHint = ref(false)
+const selectedTool = ref<ToolInfo | null>(null)
+const toolEditForm = ref<ToolConfigSaveInput>({ name: '' })
+const toolRestartHint = ref(false)
 let unlistenFn: UnlistenFn | null = null
 
 // 内置 prompt 和自定义 prompt 分组
@@ -170,9 +183,46 @@ async function handleDeleteAgent(name: string) {
   }
 }
 
+function selectTool(tool: ToolInfo) {
+  selectedTool.value = tool
+  toolEditForm.value = {
+    name: tool.name,
+    description: tool.description,
+    timeout_secs: tool.timeout_secs,
+    enabled: tool.enabled,
+  }
+}
+
+function deselectTool() {
+  selectedTool.value = null
+  toolEditForm.value = { name: '' }
+}
+
+async function handleSaveTool() {
+  try {
+    await saveToolConfig(toolEditForm.value)
+    toolRestartHint.value = true
+    deselectTool()
+  } catch (e) {
+    alert(String(e))
+  }
+}
+
+async function handleResetTool(name: string) {
+  try {
+    await resetToolConfig(name)
+    if (selectedTool.value?.name === name) {
+      deselectTool()
+    }
+  } catch (e) {
+    alert(String(e))
+  }
+}
+
 onMounted(async () => {
   loadConfig()
   loadPrompts()
+  loadTools()
   unlistenFn = await listen<{ message: string }>('config:thinking-changed', () => {
     restartHint.value = true
   })
@@ -214,6 +264,15 @@ onUnmounted(() => { unlistenFn?.() })
         @click="activeTab = 'prompts'"
       >
         Prompts
+      </button>
+      <button
+        class="px-4 pb-2 text-sm font-medium transition-colors"
+        :class="activeTab === 'tools'
+          ? 'border-b-2 border-accent text-text-primary'
+          : 'text-text-tertiary hover:text-text-secondary'"
+        @click="activeTab = 'tools'"
+      >
+        Tools
       </button>
     </div>
 
@@ -602,6 +661,120 @@ onUnmounted(() => { unlistenFn?.() })
           <div v-else class="flex h-full items-center justify-center p-4">
             <span class="text-sm text-text-tertiary">
               Select a prompt to edit
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab: Tools -->
+    <div v-if="activeTab === 'tools'">
+      <div v-if="toolsLoading" class="text-text-tertiary">Loading...</div>
+      <div v-else-if="toolsError" class="text-accent-red">{{ toolsError }}</div>
+      <div v-else class="flex gap-6">
+        <!-- 左侧列表区 -->
+        <div class="w-1/2 space-y-6">
+          <section>
+            <h3 class="mb-3 text-sm font-medium text-text-secondary">Tools</h3>
+            <div class="space-y-2">
+              <div
+                v-for="tool in tools"
+                :key="tool.name"
+                class="cursor-pointer rounded-md border bg-bg-elevated px-4 py-3 transition-colors"
+                :class="selectedTool?.name === tool.name
+                  ? 'border-accent-blue'
+                  : 'border-border-default'"
+                @click="selectTool(tool)"
+              >
+                <div class="flex items-center gap-2">
+                  <span class="font-mono text-sm text-text-primary">{{ tool.name }}</span>
+                  <span
+                    class="text-xs"
+                    :class="tool.danger_level === 'safe' ? 'text-accent-blue' : 'text-accent-yellow'"
+                  >[{{ tool.danger_level }}]</span>
+                  <span v-if="!tool.enabled" class="text-xs text-text-tertiary">[disabled]</span>
+                </div>
+              </div>
+            </div>
+          </section>
+          <p v-if="toolRestartHint" class="text-xs text-accent-yellow">
+            Tool config updated. Restart the app for changes to take effect.
+          </p>
+        </div>
+
+        <!-- 右侧编辑面板 -->
+        <div class="w-1/2 rounded-md border border-border-default bg-bg-elevated">
+          <div v-if="selectedTool" class="space-y-3 p-4">
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-medium text-text-secondary">
+                {{ selectedTool.name }}
+              </h3>
+              <button
+                v-if="selectedTool.has_override"
+                class="text-xs text-accent-red hover:underline"
+                @click="handleResetTool(selectedTool.name)"
+              >Reset</button>
+            </div>
+            <!-- Enabled toggle -->
+            <div class="flex items-center gap-2">
+              <input
+                type="checkbox"
+                v-model="toolEditForm.enabled"
+                class="h-4 w-4 rounded border-border-default bg-bg-inset"
+              />
+              <span class="text-sm text-text-secondary">Enabled</span>
+            </div>
+            <!-- Description -->
+            <div>
+              <label class="mb-1 block text-xs text-text-tertiary">Description</label>
+              <textarea
+                v-model="toolEditForm.description"
+                rows="4"
+                class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-xs text-text-primary"
+              />
+            </div>
+            <!-- Timeout -->
+            <div>
+              <label class="mb-1 block text-xs text-text-tertiary">Timeout (sec)</label>
+              <input
+                v-model.number="toolEditForm.timeout_secs"
+                type="number"
+                min="1"
+                max="600"
+                class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-sm text-text-primary"
+              />
+            </div>
+            <!-- 只读信息 -->
+            <div class="space-y-2 text-xs text-text-tertiary">
+              <div>
+                <span class="font-medium text-text-secondary">Concurrent Safe:</span>
+                {{ selectedTool.is_concurrent_safe ? 'Yes' : 'No' }}
+              </div>
+              <div>
+                <span class="font-medium text-text-secondary">Danger Level:</span>
+                {{ selectedTool.danger_level }}
+              </div>
+              <div>
+                <span class="font-medium text-text-secondary">Input Schema:</span>
+              </div>
+              <pre class="max-h-40 overflow-auto rounded-md border border-border-default bg-bg-inset p-3 text-xs text-text-tertiary">{{ JSON.stringify(selectedTool.input_schema, null, 2) }}</pre>
+            </div>
+            <!-- Actions -->
+            <div class="flex justify-end gap-2">
+              <button
+                class="rounded-md border border-border-default px-4 py-2 text-xs text-text-secondary"
+                @click="deselectTool"
+              >Cancel</button>
+              <button
+                class="rounded-md bg-accent px-4 py-2 font-mono text-xs text-bg-base"
+                @click="handleSaveTool"
+              >Save</button>
+            </div>
+          </div>
+          <!-- 空状态 -->
+          <div v-else class="flex h-full items-center justify-center p-4">
+            <span class="text-sm text-text-tertiary">
+              Select a tool to view details
             </span>
           </div>
         </div>
