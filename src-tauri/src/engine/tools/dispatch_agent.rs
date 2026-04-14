@@ -122,6 +122,17 @@ impl Tool for DispatchAgentTool {
          - If the task needs recursive decomposition, use orchestrate instead.\n\
          - If you just need to read a known file, use Read. If you need to search, use Bash.\n\
          \n\
+         Writing the prompt:\n\
+         Think of the sub-agent as a smart colleague who just walked into the room — it hasn't seen\n\
+         this conversation and doesn't know what you've tried. Include:\n\
+         - What you're trying to accomplish and why\n\
+         - What you've already learned or ruled out\n\
+         - Enough context to make judgment calls\n\
+         \n\
+         Terse command-style prompts produce shallow, generic work.\n\
+         Never delegate understanding — don't write 'based on your findings, fix the bug'.\n\
+         Write prompts that prove you understood: include file paths, line numbers, what specifically to change.\n\
+         \n\
          <example>\n\
          user: \"Check the test results and also look at the lint output\"\n\
          assistant: Two independent checks — dispatch in parallel:\n\

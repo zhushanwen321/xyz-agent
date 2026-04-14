@@ -30,12 +30,15 @@ impl Tool for ReadTool {
     }
 
     fn description(&self) -> &str {
-        "Read file contents with line numbers.\n\
+        "Read a file from the local filesystem.\n\
          \n\
-         - Returns up to the configured byte limit, truncated files show a truncation notice.\n\
+         Usage:\n\
+         - The file_path parameter must be an absolute path, or relative to the project root.\n\
+         - By default, reads up to 2000 lines from the beginning of the file.\n\
          - Use offset/limit to read specific line ranges of large files.\n\
-         - File paths are relative to the project root, or absolute.\n\
-         - Do NOT use Bash (cat/head/tail) to read files — always use this tool."
+         - Results use line numbers starting at 1.\n\
+         - This tool can only read files, not directories. Use Bash (ls) to list directories.\n\
+         - Do NOT use Bash (cat/head/tail/sed) to read files — always use this tool."
     }
 
     fn input_schema(&self) -> serde_json::Value {

@@ -1,6 +1,8 @@
-# 工具 Description 写法指南
+# 提示词写法指南（Agent + Tool）
 
-基于对 Claude Code 官方工具 prompt 的逆向分析，总结工具 `description` 和 `input_schema` 的写法原则。
+基于对 Claude Code 官方 agent prompt 和 tool description 的逆向分析，总结提示词编写原则。
+
+> Agent 提示词原则见 [agent-prompt-guide.md](agent-prompt-guide.md)
 
 ## 核心原则
 
