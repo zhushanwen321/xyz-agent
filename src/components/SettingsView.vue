@@ -101,6 +101,9 @@ async function handleSavePrompt() {
 async function handleDeletePrompt(key: string) {
   try {
     await deletePrompt(key)
+    if (editTarget.value?.type === 'builtin' && editTarget.value.key === key) {
+      closeEdit()
+    }
   } catch (e) {
     alert(String(e))
   }
@@ -161,6 +164,9 @@ async function handleSaveAgent() {
 async function handleDeleteAgent(name: string) {
   try {
     await deleteAgent(name)
+    if (editTarget.value?.type === 'custom' && editTarget.value.key === name) {
+      editTarget.value = null
+    }
   } catch (e) {
     alert(String(e))
   }
@@ -372,7 +378,7 @@ onUnmounted(() => { unlistenFn?.() })
                   <div class="flex items-center gap-2">
                     <button
                       class="text-xs text-accent-blue hover:underline"
-                      @click="handlePreview(prompt.key)"
+                      @click="editTarget = { type: 'builtin', key: prompt.key }; editPanelTab = 'preview'; handlePreview(prompt.key)"
                     >
                       Preview
                     </button>
@@ -604,7 +610,7 @@ onUnmounted(() => { unlistenFn?.() })
             </div>
           </div>
           <!-- 空状态 -->
-          <div v-else class="flex h-full items-center justify-center">
+          <div v-else class="flex h-full items-center justify-center p-4">
             <span class="text-sm text-text-tertiary">
               Select a prompt to edit
             </span>
