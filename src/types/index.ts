@@ -203,3 +203,23 @@ export interface PromptSaveInput {
   mode: 'enhance' | 'override'
   content: string
 }
+
+// 与 Rust ToolInfo 对应
+export interface ToolInfo {
+  name: string
+  description: string
+  input_schema: unknown
+  is_concurrent_safe: boolean
+  timeout_secs: number
+  danger_level: 'safe' | 'caution'
+  enabled: boolean
+  has_override: boolean
+}
+
+// 工具配置保存请求
+export interface ToolConfigSaveInput {
+  name: string
+  description?: string
+  timeout_secs?: number
+  enabled?: boolean
+}
