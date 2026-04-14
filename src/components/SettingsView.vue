@@ -506,7 +506,7 @@ onUnmounted(() => { unlistenFn?.() })
         </div>
 
         <!-- 右侧编辑区 -->
-        <div class="w-1/2 rounded-md border border-border-default bg-bg-elevated">
+        <div class="w-1/2 rounded-md border border-border-default bg-bg-elevated overflow-y-auto max-h-[calc(100vh-12rem)]">
           <!-- Builtin prompt 编辑面板 -->
           <div v-if="editTarget?.type === 'builtin'" class="space-y-3 p-4">
             <div class="flex items-center justify-between">
@@ -539,7 +539,7 @@ onUnmounted(() => { unlistenFn?.() })
             <template v-if="editMode === 'enhance'">
               <div>
                 <label class="mb-1 block text-xs text-text-tertiary">Original Prompt</label>
-                <pre class="max-h-40 overflow-auto whitespace-pre-wrap rounded-md border border-border-default bg-bg-inset p-3 text-xs text-text-tertiary">{{ builtinContent }}</pre>
+                <pre class="whitespace-pre-wrap rounded-md border border-border-default bg-bg-inset p-3 text-xs text-text-tertiary">{{ builtinContent }}</pre>
               </div>
               <div>
                 <label class="mb-1 block text-xs text-text-tertiary">Append Content</label>
@@ -603,7 +603,7 @@ onUnmounted(() => { unlistenFn?.() })
             <!-- Prompt -->
             <div>
               <label class="mb-1 block text-xs text-text-tertiary">Prompt Content</label>
-              <textarea v-model="agentForm.content" rows="6"
+              <textarea v-model="agentForm.content" rows="10"
                 class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-xs text-text-primary" />
             </div>
             <!-- Tools -->
@@ -703,7 +703,7 @@ onUnmounted(() => { unlistenFn?.() })
         </div>
 
         <!-- 右侧编辑面板 -->
-        <div class="w-1/2 rounded-md border border-border-default bg-bg-elevated">
+        <div class="w-1/2 rounded-md border border-border-default bg-bg-elevated overflow-y-auto max-h-[calc(100vh-12rem)]">
           <div v-if="selectedTool" class="space-y-3 p-4">
             <div class="flex items-center justify-between">
               <h3 class="text-sm font-medium text-text-secondary">
@@ -729,7 +729,7 @@ onUnmounted(() => { unlistenFn?.() })
               <label class="mb-1 block text-xs text-text-tertiary">Description</label>
               <textarea
                 v-model="toolEditForm.description"
-                rows="4"
+                rows="8"
                 class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-xs text-text-primary"
               />
             </div>
@@ -757,7 +757,7 @@ onUnmounted(() => { unlistenFn?.() })
               <div>
                 <span class="font-medium text-text-secondary">Input Schema:</span>
               </div>
-              <pre class="max-h-40 overflow-auto rounded-md border border-border-default bg-bg-inset p-3 text-xs text-text-tertiary">{{ JSON.stringify(selectedTool.input_schema, null, 2) }}</pre>
+              <pre class="whitespace-pre-wrap break-words rounded-md border border-border-default bg-bg-inset p-3 text-xs text-text-tertiary">{{ JSON.stringify(selectedTool.input_schema, null, 2) }}</pre>
             </div>
             <!-- Actions -->
             <div class="flex justify-end gap-2">
