@@ -18,7 +18,7 @@ const {
   deleteAgent,
 } = usePromptManager()
 
-const activeTab = ref<'general' | 'prompts'>('general')
+const activeTab = ref<'llm' | 'agent' | 'prompts'>('llm')
 
 // 提示词编辑状态
 const editingPrompt = ref<PromptInfo | null>(null)
@@ -159,19 +159,28 @@ onUnmounted(() => { unlistenFn?.() })
 </script>
 
 <template>
-  <div class="mx-auto max-w-2xl px-6 py-8">
+  <div class="flex h-full flex-col px-8 py-6">
     <h2 class="mb-6 text-lg font-semibold text-text-primary">Settings</h2>
 
     <!-- Tab 切换 -->
     <div class="mb-6 flex border-b border-border-default">
       <button
         class="px-4 pb-2 text-sm font-medium transition-colors"
-        :class="activeTab === 'general'
+        :class="activeTab === 'llm'
           ? 'border-b-2 border-accent text-text-primary'
           : 'text-text-tertiary hover:text-text-secondary'"
-        @click="activeTab = 'general'"
+        @click="activeTab = 'llm'"
       >
-        General
+        LLM
+      </button>
+      <button
+        class="px-4 pb-2 text-sm font-medium transition-colors"
+        :class="activeTab === 'agent'
+          ? 'border-b-2 border-accent text-text-primary'
+          : 'text-text-tertiary hover:text-text-secondary'"
+        @click="activeTab = 'agent'"
+      >
+        Agent
       </button>
       <button
         class="px-4 pb-2 text-sm font-medium transition-colors"
@@ -184,8 +193,8 @@ onUnmounted(() => { unlistenFn?.() })
       </button>
     </div>
 
-    <!-- Tab: General -->
-    <div v-if="activeTab === 'general'">
+    <!-- Tab: LLM -->
+    <div v-if="activeTab === 'llm'">
       <div v-if="configLoading" class="text-text-tertiary">Loading...</div>
       <div v-else-if="configError" class="text-accent-red">{{ configError }}</div>
 
@@ -215,29 +224,6 @@ onUnmounted(() => { unlistenFn?.() })
               <input
                 v-model="config.anthropic_base_url"
                 type="text"
-                class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-sm text-text-primary"
-              />
-            </div>
-          </div>
-        </section>
-
-        <!-- Agent 配置 -->
-        <section>
-          <h3 class="mb-3 text-sm font-medium text-text-secondary">Agent Configuration</h3>
-          <div class="grid grid-cols-2 gap-3">
-            <div v-for="field of [
-              { key: 'max_turns', label: 'Max Turns', min: 1, max: 200 },
-              { key: 'context_window', label: 'Context Window', min: 1000, max: 1000000 },
-              { key: 'max_output_tokens', label: 'Max Output Tokens', min: 256, max: 100000 },
-              { key: 'tool_output_max_bytes', label: 'Tool Output Max Bytes', min: 1000, max: 1000000 },
-              { key: 'bash_default_timeout_secs', label: 'Bash Timeout (sec)', min: 1, max: 600 },
-            ]" :key="field.key">
-              <label class="mb-1 block text-xs text-text-tertiary">{{ field.label }}</label>
-              <input
-                v-model.number="config[field.key as keyof typeof config]"
-                type="number"
-                :min="field.min"
-                :max="field.max"
                 class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-sm text-text-primary"
               />
             </div>
@@ -275,6 +261,49 @@ onUnmounted(() => { unlistenFn?.() })
           <p v-if="restartHint" class="mt-2 text-xs text-accent-yellow">
             Thinking config updated. Restart the app to apply changes.
           </p>
+        </section>
+
+        <!-- 保存 -->
+        <div class="flex items-center gap-3">
+          <button
+            class="rounded-md bg-accent px-4 py-2 font-mono text-sm text-bg-base transition-colors hover:bg-accent/80"
+            :disabled="saving"
+            @click="saveConfig"
+          >
+            {{ saving ? 'Saving...' : 'Save' }}
+          </button>
+          <span v-if="success" class="text-xs text-accent">Saved. Restart to apply changes.</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab: Agent -->
+    <div v-if="activeTab === 'agent'">
+      <div v-if="configLoading" class="text-text-tertiary">Loading...</div>
+      <div v-else-if="configError" class="text-accent-red">{{ configError }}</div>
+
+      <div v-else-if="config" class="space-y-8">
+        <!-- Agent 配置 -->
+        <section>
+          <h3 class="mb-3 text-sm font-medium text-text-secondary">Agent Configuration</h3>
+          <div class="grid grid-cols-2 gap-3">
+            <div v-for="field of [
+              { key: 'max_turns', label: 'Max Turns', min: 1, max: 200 },
+              { key: 'context_window', label: 'Context Window', min: 1000, max: 1000000 },
+              { key: 'max_output_tokens', label: 'Max Output Tokens', min: 256, max: 100000 },
+              { key: 'tool_output_max_bytes', label: 'Tool Output Max Bytes', min: 1000, max: 1000000 },
+              { key: 'bash_default_timeout_secs', label: 'Bash Timeout (sec)', min: 1, max: 600 },
+            ]" :key="field.key">
+              <label class="mb-1 block text-xs text-text-tertiary">{{ field.label }}</label>
+              <input
+                v-model.number="config[field.key as keyof typeof config]"
+                type="number"
+                :min="field.min"
+                :max="field.max"
+                class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-sm text-text-primary"
+              />
+            </div>
+          </div>
         </section>
 
         <!-- 保存 -->
