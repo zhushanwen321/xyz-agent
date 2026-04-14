@@ -26,6 +26,15 @@ const editMode = ref<'enhance' | 'override'>('enhance')
 const editContent = ref('')
 const previewContent = ref<string | null>(null)
 
+// Prompts Tab 编辑面板状态
+type EditTarget =
+  | { type: 'builtin'; key: string }
+  | { type: 'custom'; key: string }
+  | { type: 'new-agent' }
+  | null
+const editTarget = ref<EditTarget>(null)
+const editPanelTab = ref<'edit' | 'preview'>('edit')
+
 // 自定义 Agent 编辑状态
 const showAgentDialog = ref(false)
 const agentForm = ref<CustomAgentInput>({
@@ -156,6 +165,9 @@ onMounted(async () => {
 })
 
 onUnmounted(() => { unlistenFn?.() })
+
+// 暂存引用，后续 Task 启用右侧编辑面板后清理
+void [editPanelTab, handleSavePrompt, openAgentDialog, addTool, removeTool, handleSaveAgent]
 </script>
 
 <template>
@@ -327,259 +339,113 @@ onUnmounted(() => { unlistenFn?.() })
     <div v-if="activeTab === 'prompts'">
       <div v-if="promptsLoading" class="text-text-tertiary">Loading...</div>
       <div v-else-if="promptsError" class="text-accent-red">{{ promptsError }}</div>
-      <div v-else>
-        <!-- 内置 Prompt 列表 -->
-        <section>
-          <h3 class="mb-3 text-sm font-medium text-text-secondary">Built-in Prompts</h3>
-          <div class="space-y-2">
-            <div
-              v-for="prompt in builtinPrompts"
-              :key="prompt.key"
-              class="rounded-md border border-border-default bg-bg-elevated px-4 py-3"
-            >
-              <div class="flex items-center justify-between">
-                <div class="flex items-center gap-2">
-                  <span class="font-mono text-sm text-text-primary">{{ prompt.key }}</span>
-                  <span class="text-xs" :class="modeColor(prompt.mode)">
-                    [{{ prompt.mode }}]
-                  </span>
+      <div v-else class="flex gap-6">
+        <!-- 左侧列表区 -->
+        <div class="w-1/2 space-y-6">
+          <!-- Built-in Prompts -->
+          <section>
+            <h3 class="mb-3 text-sm font-medium text-text-secondary">Built-in Prompts</h3>
+            <div class="space-y-2">
+              <div
+                v-for="prompt in builtinPrompts"
+                :key="prompt.key"
+                class="rounded-md border bg-bg-elevated px-4 py-3 transition-colors"
+                :class="editTarget?.type === 'builtin' && editTarget.key === prompt.key
+                  ? 'border-accent-blue'
+                  : 'border-border-default'"
+              >
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center gap-2">
+                    <span class="font-mono text-sm text-text-primary">{{ prompt.key }}</span>
+                    <span class="text-xs" :class="modeColor(prompt.mode)">
+                      [{{ prompt.mode }}]
+                    </span>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <button
+                      class="text-xs text-accent-blue hover:underline"
+                      @click="handlePreview(prompt.key)"
+                    >
+                      Preview
+                    </button>
+                    <button
+                      class="text-xs text-accent-blue hover:underline"
+                      @click="editTarget = { type: 'builtin', key: prompt.key }; openEdit(prompt)"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      v-if="prompt.has_enhance || prompt.has_override"
+                      class="text-xs text-accent-red hover:underline"
+                      @click="handleDeletePrompt(prompt.key)"
+                    >
+                      Reset
+                    </button>
+                  </div>
+                </div>
+                <p class="mt-1 text-xs text-text-tertiary">{{ promptDescription(prompt) }}</p>
+              </div>
+            </div>
+          </section>
+
+          <!-- Custom Agents -->
+          <section>
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="text-sm font-medium text-text-secondary">Custom Agents</h3>
+              <button
+                class="text-xs text-accent-blue hover:underline"
+                @click="editTarget = { type: 'new-agent' }"
+              >
+                + New Agent
+              </button>
+            </div>
+            <div v-if="customPrompts.length === 0" class="text-xs text-text-tertiary">
+              No custom agents yet.
+            </div>
+            <div v-else class="space-y-2">
+              <div
+                v-for="agent in customPrompts"
+                :key="agent.key"
+                class="flex items-center justify-between rounded-md border bg-bg-elevated px-4 py-3 transition-colors"
+                :class="editTarget?.type === 'custom' && editTarget.key === agent.key
+                  ? 'border-accent-blue'
+                  : 'border-border-default'"
+              >
+                <div>
+                  <span class="font-mono text-sm text-text-primary">{{ agent.key }}</span>
+                  <span class="ml-2 text-xs text-accent">[custom]</span>
+                  <p v-if="agent.description" class="mt-1 text-xs text-text-tertiary">{{ agent.description }}</p>
+                  <p v-else class="mt-1 text-xs text-text-tertiary">{{ promptDescription(agent) }}</p>
                 </div>
                 <div class="flex items-center gap-2">
                   <button
                     class="text-xs text-accent-blue hover:underline"
-                    @click="handlePreview(prompt.key)"
-                  >
-                    Preview
-                  </button>
-                  <button
-                    class="text-xs text-accent-blue hover:underline"
-                    @click="openEdit(prompt)"
+                    @click="editTarget = { type: 'custom', key: agent.key }"
                   >
                     Edit
                   </button>
                   <button
-                    v-if="prompt.has_enhance || prompt.has_override"
                     class="text-xs text-accent-red hover:underline"
-                    @click="handleDeletePrompt(prompt.key)"
+                    @click="handleDeleteAgent(agent.key)"
                   >
-                    Reset
+                    Delete
                   </button>
                 </div>
               </div>
-              <p class="mt-1 text-xs text-text-tertiary">{{ promptDescription(prompt) }}</p>
             </div>
-          </div>
-        </section>
+          </section>
 
-        <!-- 预览区域 -->
-        <section v-if="previewContent !== null" class="mt-6">
-          <div class="flex items-center justify-between mb-2">
-            <h3 class="text-sm font-medium text-text-secondary">Preview</h3>
-            <button class="text-xs text-text-tertiary hover:text-text-secondary" @click="previewContent = null">
-              Close
-            </button>
-          </div>
-          <pre class="max-h-64 overflow-auto whitespace-pre-wrap rounded-md border border-border-default bg-bg-inset p-3 text-xs text-text-primary">{{ previewContent }}</pre>
-        </section>
-
-        <!-- 编辑对话框 -->
-        <section v-if="editingPrompt" class="mt-6">
-          <div class="flex items-center justify-between mb-2">
-            <h3 class="text-sm font-medium text-text-secondary">
-              Edit: {{ editingPrompt.key }}
-            </h3>
-            <button class="text-xs text-text-tertiary hover:text-text-secondary" @click="closeEdit">
-              Cancel
-            </button>
-          </div>
-          <div class="flex items-center gap-4 mb-2">
-            <label class="flex items-center gap-1 text-xs text-text-tertiary">
-              <input type="radio" v-model="editMode" value="enhance" class="h-3 w-3" />
-              Enhance
-            </label>
-            <label class="flex items-center gap-1 text-xs text-text-tertiary">
-              <input type="radio" v-model="editMode" value="override" class="h-3 w-3" />
-              Override
-            </label>
-          </div>
-          <p class="mb-2 text-xs text-text-tertiary">
-            {{ editMode === 'enhance'
-              ? 'Appended after built-in prompt content.'
-              : 'Completely replaces built-in prompt.' }}
+          <p v-if="restartHint" class="text-xs text-accent-yellow">
+            Agent config updated. Restart the app for changes to take effect.
           </p>
-          <textarea
-            v-model="editContent"
-            rows="8"
-            class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-xs text-text-primary"
-            placeholder="Enter prompt content..."
-          />
-          <div class="mt-2 flex justify-end">
-            <button
-              class="rounded-md bg-accent px-4 py-2 font-mono text-sm text-bg-base transition-colors hover:bg-accent/80"
-              @click="handleSavePrompt"
-            >
-              Save
-            </button>
-          </div>
-        </section>
+        </div>
 
-        <!-- 自定义 Agent -->
-        <section class="mt-8">
-          <div class="flex items-center justify-between mb-3">
-            <h3 class="text-sm font-medium text-text-secondary">Custom Agents</h3>
-            <button
-              class="text-xs text-accent-blue hover:underline"
-              @click="openAgentDialog"
-            >
-              + New Agent
-            </button>
-          </div>
-          <div v-if="customPrompts.length === 0" class="text-xs text-text-tertiary">
-            No custom agents yet.
-          </div>
-          <div v-else class="space-y-2">
-            <div
-              v-for="agent in customPrompts"
-              :key="agent.key"
-              class="flex items-center justify-between rounded-md border border-border-default bg-bg-elevated px-4 py-3"
-            >
-              <div>
-                <span class="font-mono text-sm text-text-primary">{{ agent.key }}</span>
-                <span class="ml-2 text-xs text-accent">[custom]</span>
-                <p v-if="agent.description" class="mt-1 text-xs text-text-tertiary">{{ agent.description }}</p>
-                <p v-else class="mt-1 text-xs text-text-tertiary">{{ promptDescription(agent) }}</p>
-              </div>
-              <button
-                class="text-xs text-accent-red hover:underline"
-                @click="handleDeleteAgent(agent.key)"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </section>
-
-        <p v-if="restartHint" class="mt-4 text-xs text-accent-yellow">
-          Agent config updated. Restart the app for changes to take effect.
-        </p>
-
-        <!-- 自定义 Agent 编辑对话框 -->
-        <section v-if="showAgentDialog" class="mt-6">
-          <div class="flex items-center justify-between mb-2">
-            <h3 class="text-sm font-medium text-text-secondary">New Custom Agent</h3>
-            <button class="text-xs text-text-tertiary hover:text-text-secondary" @click="showAgentDialog = false">
-              Cancel
-            </button>
-          </div>
-          <div class="space-y-3">
-            <div>
-              <label class="mb-1 block text-xs text-text-tertiary">Name</label>
-              <input
-                v-model="agentForm.name"
-                type="text"
-                class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-sm text-text-primary"
-                placeholder="e.g. code_reviewer"
-              />
-            </div>
-            <div>
-              <label class="mb-1 block text-xs text-text-tertiary">Description</label>
-              <input
-                v-model="agentForm.description"
-                type="text"
-                class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 text-sm text-text-primary"
-                placeholder="Brief description of the agent"
-              />
-            </div>
-            <div>
-              <label class="mb-1 block text-xs text-text-tertiary">Prompt Content</label>
-              <textarea
-                v-model="agentForm.content"
-                rows="6"
-                class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-xs text-text-primary"
-                placeholder="Agent system prompt..."
-              />
-            </div>
-            <div>
-              <label class="mb-1 block text-xs text-text-tertiary">Allowed Tools</label>
-              <div class="flex items-center gap-2">
-                <input
-                  v-model="agentToolInput"
-                  type="text"
-                  class="flex-1 rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-xs text-text-primary"
-                  placeholder="Tool name (e.g. Read, Bash)"
-                  @keydown.enter.prevent="addTool"
-                />
-                <button
-                  class="rounded-md border border-border-default px-3 py-2 text-xs text-text-secondary hover:bg-bg-inset"
-                  @click="addTool"
-                >
-                  Add
-                </button>
-              </div>
-              <div v-if="agentForm.tools.length" class="mt-2 flex flex-wrap gap-1">
-                <span
-                  v-for="(tool, i) in agentForm.tools"
-                  :key="i"
-                  class="inline-flex items-center gap-1 rounded bg-bg-inset px-2 py-0.5 text-xs text-text-secondary"
-                >
-                  {{ tool }}
-                  <button class="text-accent-red" @click="removeTool(i)">x</button>
-                </span>
-              </div>
-            </div>
-            <div class="flex items-center gap-2">
-              <input
-                type="checkbox"
-                v-model="agentForm.read_only"
-                class="h-4 w-4 rounded border-border-default bg-bg-inset"
-              />
-              <span class="text-sm text-text-secondary">Read-only (no Write tool)</span>
-            </div>
-            <div>
-              <label class="mb-1 block text-xs text-text-tertiary">Budget</label>
-              <div class="grid grid-cols-3 gap-2">
-                <div>
-                  <label class="text-xs text-text-tertiary">Max Tokens</label>
-                  <input
-                    v-model.number="agentForm.max_tokens"
-                    type="number"
-                    min="1000"
-                    max="500000"
-                    class="w-full rounded-md border border-border-default bg-bg-inset px-2 py-1 font-mono text-xs text-text-primary"
-                  />
-                </div>
-                <div>
-                  <label class="text-xs text-text-tertiary">Max Turns</label>
-                  <input
-                    v-model.number="agentForm.max_turns"
-                    type="number"
-                    min="1"
-                    max="200"
-                    class="w-full rounded-md border border-border-default bg-bg-inset px-2 py-1 font-mono text-xs text-text-primary"
-                  />
-                </div>
-                <div>
-                  <label class="text-xs text-text-tertiary">Max Tool Calls</label>
-                  <input
-                    v-model.number="agentForm.max_tool_calls"
-                    type="number"
-                    min="1"
-                    max="500"
-                    class="w-full rounded-md border border-border-default bg-bg-inset px-2 py-1 font-mono text-xs text-text-primary"
-                  />
-                </div>
-              </div>
-            </div>
-            <div class="flex justify-end">
-              <button
-                class="rounded-md bg-accent px-4 py-2 font-mono text-sm text-bg-base transition-colors hover:bg-accent/80"
-                @click="handleSaveAgent"
-              >
-                Create Agent
-              </button>
-            </div>
-          </div>
-        </section>
+        <!-- 右侧编辑区（空状态占位） -->
+        <div class="w-1/2 flex items-center justify-center rounded-md border border-border-default bg-bg-elevated">
+          <span v-if="editTarget === null" class="text-sm text-text-tertiary">
+            Select a prompt to edit
+          </span>
+        </div>
       </div>
     </div>
   </div>
