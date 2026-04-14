@@ -11,6 +11,7 @@ const {
   loading: promptsLoading,
   error: promptsError,
   load: loadPrompts,
+  get: getPromptContent,
   save: savePrompt,
   remove: deletePrompt,
   preview: previewPrompt,
@@ -21,7 +22,6 @@ const {
 const activeTab = ref<'llm' | 'agent' | 'prompts'>('llm')
 
 // 提示词编辑状态
-const editingPrompt = ref<PromptInfo | null>(null)
 const editMode = ref<'enhance' | 'override'>('enhance')
 const editContent = ref('')
 const previewContent = ref<string | null>(null)
@@ -36,7 +36,6 @@ const editTarget = ref<EditTarget>(null)
 const editPanelTab = ref<'edit' | 'preview'>('edit')
 
 // 自定义 Agent 编辑状态
-const showAgentDialog = ref(false)
 const agentForm = ref<CustomAgentInput>({
   name: '', content: '', tools: [],
   description: '', read_only: false,
@@ -67,23 +66,27 @@ function modeColor(mode: string): string {
   }
 }
 
-function openEdit(prompt: PromptInfo) {
-  editingPrompt.value = prompt
+async function openEdit(prompt: PromptInfo) {
   editMode.value = prompt.has_override ? 'override' : 'enhance'
-  editContent.value = ''
+  editPanelTab.value = 'edit'
   previewContent.value = null
+  try {
+    editContent.value = await getPromptContent(prompt.key) || ''
+  } catch {
+    editContent.value = ''
+  }
 }
 
 function closeEdit() {
-  editingPrompt.value = null
   editContent.value = ''
   previewContent.value = null
+  editTarget.value = null
 }
 
 async function handleSavePrompt() {
-  if (!editingPrompt.value) return
+  if (!editTarget.value || editTarget.value.type !== 'builtin') return
   const input: PromptSaveInput = {
-    key: editingPrompt.value.key,
+    key: editTarget.value.key,
     mode: editMode.value,
     content: editContent.value,
   }
@@ -111,19 +114,26 @@ async function handlePreview(key: string) {
   }
 }
 
-function openAgentDialog() {
+function openEditAgent(agent: PromptInfo) {
+  editTarget.value = { type: 'custom', key: agent.key }
   agentForm.value = {
-    name: '',
-    content: '',
-    tools: [],
-    description: '',
-    read_only: false,
-    max_tokens: 100_000,
-    max_turns: 30,
-    max_tool_calls: 100,
+    name: agent.key,
+    content: agent.content,
+    tools: [...agent.tools],
+    description: agent.description,
+    read_only: agent.read_only,
+    max_tokens: agent.max_tokens,
+    max_turns: agent.max_turns,
+    max_tool_calls: agent.max_tool_calls,
   }
-  agentToolInput.value = ''
-  showAgentDialog.value = true
+}
+
+function resetAgentForm() {
+  agentForm.value = {
+    name: '', content: '', tools: [],
+    description: '', read_only: false,
+    max_tokens: 100_000, max_turns: 30, max_tool_calls: 100,
+  }
 }
 
 function addTool() {
@@ -141,7 +151,7 @@ function removeTool(index: number) {
 async function handleSaveAgent() {
   try {
     await saveAgent(agentForm.value)
-    showAgentDialog.value = false
+    editTarget.value = null
     restartHint.value = true
   } catch (e) {
     alert(String(e))
@@ -166,8 +176,6 @@ onMounted(async () => {
 
 onUnmounted(() => { unlistenFn?.() })
 
-// 暂存引用，后续 Task 启用右侧编辑面板后清理
-void [editPanelTab, handleSavePrompt, openAgentDialog, addTool, removeTool, handleSaveAgent]
 </script>
 
 <template>
@@ -394,7 +402,7 @@ void [editPanelTab, handleSavePrompt, openAgentDialog, addTool, removeTool, hand
               <h3 class="text-sm font-medium text-text-secondary">Custom Agents</h3>
               <button
                 class="text-xs text-accent-blue hover:underline"
-                @click="editTarget = { type: 'new-agent' }"
+                @click="resetAgentForm(); editTarget = { type: 'new-agent' }"
               >
                 + New Agent
               </button>
@@ -420,7 +428,7 @@ void [editPanelTab, handleSavePrompt, openAgentDialog, addTool, removeTool, hand
                 <div class="flex items-center gap-2">
                   <button
                     class="text-xs text-accent-blue hover:underline"
-                    @click="editTarget = { type: 'custom', key: agent.key }"
+                    @click="openEditAgent(agent)"
                   >
                     Edit
                   </button>
@@ -440,11 +448,167 @@ void [editPanelTab, handleSavePrompt, openAgentDialog, addTool, removeTool, hand
           </p>
         </div>
 
-        <!-- 右侧编辑区（空状态占位） -->
-        <div class="w-1/2 flex items-center justify-center rounded-md border border-border-default bg-bg-elevated">
-          <span v-if="editTarget === null" class="text-sm text-text-tertiary">
-            Select a prompt to edit
-          </span>
+        <!-- 右侧编辑区 -->
+        <div class="w-1/2 rounded-md border border-border-default bg-bg-elevated">
+          <!-- Builtin prompt 编辑面板 -->
+          <div v-if="editTarget?.type === 'builtin'" class="space-y-3 p-4">
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-medium text-text-secondary">
+                Edit: {{ editTarget.key }}
+              </h3>
+              <button
+                class="text-xs text-text-tertiary hover:text-text-secondary"
+                @click="closeEdit"
+              >Cancel</button>
+            </div>
+            <!-- Mode pills -->
+            <div class="flex gap-2">
+              <button
+                class="rounded px-3 py-1 text-xs"
+                :class="editMode === 'enhance'
+                  ? 'bg-accent-blue/15 text-accent-blue border border-accent-blue/30'
+                  : 'bg-bg-inset text-text-tertiary border border-border-default'"
+                @click="editMode = 'enhance'"
+              >Enhance</button>
+              <button
+                class="rounded px-3 py-1 text-xs"
+                :class="editMode === 'override'
+                  ? 'bg-accent-yellow/15 text-accent-yellow border border-accent-yellow/30'
+                  : 'bg-bg-inset text-text-tertiary border border-border-default'"
+                @click="editMode = 'override'"
+              >Override</button>
+            </div>
+            <p class="text-xs text-text-tertiary">
+              {{ editMode === 'enhance'
+                ? 'Appended after built-in prompt content.'
+                : 'Completely replaces built-in prompt.' }}
+            </p>
+            <!-- Edit/Preview toggle -->
+            <div class="flex border-b border-border-default">
+              <button
+                class="px-3 pb-1 text-xs"
+                :class="editPanelTab === 'edit'
+                  ? 'border-b-2 border-accent text-text-primary'
+                  : 'text-text-tertiary'"
+                @click="editPanelTab = 'edit'"
+              >Edit</button>
+              <button
+                class="px-3 pb-1 text-xs"
+                :class="editPanelTab === 'preview'
+                  ? 'border-b-2 border-accent text-text-primary'
+                  : 'text-text-tertiary'"
+                @click="editPanelTab = 'preview'; handlePreview(editTarget.key)"
+              >Preview</button>
+            </div>
+            <!-- Content area -->
+            <textarea
+              v-if="editPanelTab === 'edit'"
+              v-model="editContent"
+              rows="10"
+              class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-xs text-text-primary"
+              placeholder="Enter prompt content..."
+            />
+            <pre
+              v-else
+              class="max-h-80 overflow-auto whitespace-pre-wrap rounded-md border border-border-default bg-bg-inset p-3 text-xs text-text-primary"
+            >{{ previewContent ?? 'Loading...' }}</pre>
+            <div class="flex justify-end gap-2">
+              <button
+                class="rounded-md border border-border-default px-4 py-2 text-xs text-text-secondary"
+                @click="closeEdit"
+              >Cancel</button>
+              <button
+                class="rounded-md bg-accent px-4 py-2 font-mono text-xs text-bg-base"
+                @click="handleSavePrompt"
+              >Save</button>
+            </div>
+          </div>
+          <!-- Custom agent 编辑/创建面板 -->
+          <div v-if="editTarget?.type === 'custom' || editTarget?.type === 'new-agent'" class="space-y-3 p-4">
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-medium text-text-secondary">
+                {{ editTarget.type === 'new-agent' ? 'New Custom Agent' : 'Edit: ' + editTarget.key }}
+              </h3>
+              <button class="text-xs text-text-tertiary hover:text-text-secondary"
+                @click="editTarget = null; resetAgentForm()">Cancel</button>
+            </div>
+            <!-- Name -->
+            <div>
+              <label class="mb-1 block text-xs text-text-tertiary">Name</label>
+              <input v-model="agentForm.name" type="text"
+                :disabled="editTarget.type === 'custom'"
+                class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-sm text-text-primary disabled:opacity-50"
+                placeholder="e.g. code_reviewer" />
+            </div>
+            <!-- Description -->
+            <div>
+              <label class="mb-1 block text-xs text-text-tertiary">Description</label>
+              <input v-model="agentForm.description" type="text"
+                class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 text-sm text-text-primary" />
+            </div>
+            <!-- Prompt -->
+            <div>
+              <label class="mb-1 block text-xs text-text-tertiary">Prompt Content</label>
+              <textarea v-model="agentForm.content" rows="6"
+                class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-xs text-text-primary" />
+            </div>
+            <!-- Tools -->
+            <div>
+              <label class="mb-1 block text-xs text-text-tertiary">Allowed Tools</label>
+              <div class="flex items-center gap-2">
+                <input v-model="agentToolInput" type="text"
+                  class="flex-1 rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-xs text-text-primary"
+                  placeholder="Tool name" @keydown.enter.prevent="addTool" />
+                <button class="rounded-md border border-border-default px-3 py-2 text-xs text-text-secondary"
+                  @click="addTool">Add</button>
+              </div>
+              <div v-if="agentForm.tools.length" class="mt-2 flex flex-wrap gap-1">
+                <span v-for="(tool, i) in agentForm.tools" :key="i"
+                  class="inline-flex items-center gap-1 rounded bg-bg-inset px-2 py-0.5 text-xs text-text-secondary">
+                  {{ tool }} <button class="text-accent-red" @click="removeTool(i)">x</button>
+                </span>
+              </div>
+            </div>
+            <!-- Budget -->
+            <div>
+              <label class="mb-1 block text-xs text-text-tertiary">Budget</label>
+              <div class="grid grid-cols-3 gap-2">
+                <div>
+                  <label class="text-xs text-text-tertiary">Max Tokens</label>
+                  <input v-model.number="agentForm.max_tokens" type="number" min="1000" max="500000"
+                    class="w-full rounded-md border border-border-default bg-bg-inset px-2 py-1 font-mono text-xs text-text-primary" />
+                </div>
+                <div>
+                  <label class="text-xs text-text-tertiary">Max Turns</label>
+                  <input v-model.number="agentForm.max_turns" type="number" min="1" max="200"
+                    class="w-full rounded-md border border-border-default bg-bg-inset px-2 py-1 font-mono text-xs text-text-primary" />
+                </div>
+                <div>
+                  <label class="text-xs text-text-tertiary">Max Tool Calls</label>
+                  <input v-model.number="agentForm.max_tool_calls" type="number" min="1" max="500"
+                    class="w-full rounded-md border border-border-default bg-bg-inset px-2 py-1 font-mono text-xs text-text-primary" />
+                </div>
+              </div>
+            </div>
+            <!-- Read-only -->
+            <div class="flex items-center gap-2">
+              <input type="checkbox" v-model="agentForm.read_only" class="h-4 w-4 rounded" />
+              <span class="text-sm text-text-secondary">Read-only</span>
+            </div>
+            <!-- Actions -->
+            <div class="flex justify-end gap-2">
+              <button class="rounded-md border border-border-default px-4 py-2 text-xs text-text-secondary"
+                @click="editTarget = null; resetAgentForm()">Cancel</button>
+              <button class="rounded-md bg-accent px-4 py-2 font-mono text-xs text-bg-base"
+                @click="handleSaveAgent">{{ editTarget.type === 'new-agent' ? 'Create' : 'Save' }}</button>
+            </div>
+          </div>
+          <!-- 空状态 -->
+          <div v-else class="flex h-full items-center justify-center">
+            <span class="text-sm text-text-tertiary">
+              Select a prompt to edit
+            </span>
+          </div>
         </div>
       </div>
     </div>
