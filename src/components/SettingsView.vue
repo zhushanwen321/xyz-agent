@@ -420,10 +420,11 @@ onUnmounted(() => { unlistenFn?.() })
               <div
                 v-for="prompt in builtinPrompts"
                 :key="prompt.key"
-                class="rounded-md border bg-bg-elevated px-4 py-3 transition-colors"
+                class="cursor-pointer rounded-md border bg-bg-elevated px-4 py-3 transition-colors"
                 :class="editTarget?.type === 'builtin' && editTarget.key === prompt.key
                   ? 'border-accent-blue'
                   : 'border-border-default'"
+                @click="editTarget = { type: 'builtin', key: prompt.key }; openEdit(prompt)"
               >
                 <div class="flex items-center justify-between">
                   <div class="flex items-center gap-2">
@@ -432,21 +433,13 @@ onUnmounted(() => { unlistenFn?.() })
                       [{{ prompt.mode }}]
                     </span>
                   </div>
-                  <div class="flex items-center gap-2">
-                    <button
-                      class="text-xs text-accent-blue hover:underline"
-                      @click="editTarget = { type: 'builtin', key: prompt.key }; openEdit(prompt)"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      v-if="prompt.has_enhance || prompt.has_override"
-                      class="text-xs text-accent-red hover:underline"
-                      @click="handleDeletePrompt(prompt.key)"
-                    >
-                      Reset
-                    </button>
-                  </div>
+                  <button
+                    v-if="prompt.has_enhance || prompt.has_override"
+                    class="text-xs text-accent-red hover:underline"
+                    @click.stop="handleDeletePrompt(prompt.key)"
+                  >
+                    Reset
+                  </button>
                 </div>
                 <p class="mt-1 text-xs text-text-tertiary">{{ promptDescription(prompt) }}</p>
               </div>
@@ -471,10 +464,11 @@ onUnmounted(() => { unlistenFn?.() })
               <div
                 v-for="agent in customPrompts"
                 :key="agent.key"
-                class="flex items-center justify-between rounded-md border bg-bg-elevated px-4 py-3 transition-colors"
+                class="flex items-center justify-between cursor-pointer rounded-md border bg-bg-elevated px-4 py-3 transition-colors"
                 :class="editTarget?.type === 'custom' && editTarget.key === agent.key
                   ? 'border-accent-blue'
                   : 'border-border-default'"
+                @click="openEditAgent(agent)"
               >
                 <div>
                   <span class="font-mono text-sm text-text-primary">{{ agent.key }}</span>
@@ -482,20 +476,12 @@ onUnmounted(() => { unlistenFn?.() })
                   <p v-if="agent.description" class="mt-1 text-xs text-text-tertiary">{{ agent.description }}</p>
                   <p v-else class="mt-1 text-xs text-text-tertiary">{{ promptDescription(agent) }}</p>
                 </div>
-                <div class="flex items-center gap-2">
-                  <button
-                    class="text-xs text-accent-blue hover:underline"
-                    @click="openEditAgent(agent)"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    class="text-xs text-accent-red hover:underline"
-                    @click="handleDeleteAgent(agent.key)"
-                  >
-                    Delete
-                  </button>
-                </div>
+                <button
+                  class="text-xs text-accent-red hover:underline"
+                  @click.stop="handleDeleteAgent(agent.key)"
+                >
+                  Delete
+                </button>
               </div>
             </div>
           </section>
