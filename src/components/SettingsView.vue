@@ -285,16 +285,16 @@ onUnmounted(() => { unlistenFn?.() })
       <div v-else-if="configError" class="text-accent-red">{{ configError }}</div>
 
       <div v-else-if="config" class="space-y-8">
-        <!-- Agent 配置 -->
+        <!-- Runtime Parameters -->
         <section>
-          <h3 class="mb-3 text-sm font-medium text-text-secondary">Agent Configuration</h3>
-          <div class="grid grid-cols-2 gap-3">
+          <h3 class="mb-3 text-sm font-medium text-text-secondary">Runtime Parameters</h3>
+          <div class="grid grid-cols-3 gap-3">
             <div v-for="field of [
-              { key: 'max_turns', label: 'Max Turns', min: 1, max: 200 },
-              { key: 'context_window', label: 'Context Window', min: 1000, max: 1000000 },
-              { key: 'max_output_tokens', label: 'Max Output Tokens', min: 256, max: 100000 },
-              { key: 'tool_output_max_bytes', label: 'Tool Output Max Bytes', min: 1000, max: 1000000 },
-              { key: 'bash_default_timeout_secs', label: 'Bash Timeout (sec)', min: 1, max: 600 },
+              { key: 'max_turns', label: 'Max Turns', min: 1, max: 200, hint: '1 - 200' },
+              { key: 'context_window', label: 'Context Window', min: 1000, max: 1000000, hint: '1K - 1M' },
+              { key: 'max_output_tokens', label: 'Max Output Tokens', min: 256, max: 100000, hint: '256 - 100K' },
+              { key: 'tool_output_max_bytes', label: 'Tool Output (bytes)', min: 1000, max: 1000000, hint: '1K - 1M' },
+              { key: 'bash_default_timeout_secs', label: 'Bash Timeout (sec)', min: 1, max: 600, hint: '1 - 600' },
             ]" :key="field.key">
               <label class="mb-1 block text-xs text-text-tertiary">{{ field.label }}</label>
               <input
@@ -304,6 +304,7 @@ onUnmounted(() => { unlistenFn?.() })
                 :max="field.max"
                 class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-sm text-text-primary"
               />
+              <span class="text-[10px] text-text-tertiary">{{ field.hint }}</span>
             </div>
           </div>
         </section>
