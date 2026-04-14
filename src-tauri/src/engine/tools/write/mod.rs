@@ -52,6 +52,10 @@ impl Tool for WriteTool {
         false
     }
 
+    fn danger_level(&self) -> &str {
+        "caution"
+    }
+
     fn timeout_secs(&self) -> u64 {
         10
     }

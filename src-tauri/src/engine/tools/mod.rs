@@ -35,6 +35,10 @@ pub trait Tool: Send + Sync {
         30
     }
 
+    fn danger_level(&self) -> &str {
+        "safe"
+    }
+
     async fn call(&self, input: serde_json::Value, ctx: Option<&ToolExecutionContext>) -> ToolResult;
 }
 
@@ -301,5 +305,16 @@ mod tests {
             let schema = tool.input_schema();
             assert_eq!(schema["type"], "object");
         }
+    }
+
+    #[test]
+    fn test_builtin_danger_levels() {
+        let dir = tempdir().unwrap();
+        let mut registry = ToolRegistry::new();
+        register_builtin_tools(&mut registry, dir.path().to_path_buf(), &AgentConfig::default());
+
+        assert_eq!(registry.get("Read").unwrap().danger_level(), "safe");
+        assert_eq!(registry.get("Write").unwrap().danger_level(), "caution");
+        assert_eq!(registry.get("Bash").unwrap().danger_level(), "caution");
     }
 }

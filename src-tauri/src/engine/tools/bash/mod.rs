@@ -74,6 +74,10 @@ impl Tool for BashTool {
         false
     }
 
+    fn danger_level(&self) -> &str {
+        "caution"
+    }
+
     fn timeout_secs(&self) -> u64 {
         // executor 层超时 = 工具默认超时 + 60s 余量，避免与内部超时冲突
         self.default_timeout_secs.saturating_add(60)
