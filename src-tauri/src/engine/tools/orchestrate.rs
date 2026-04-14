@@ -68,14 +68,16 @@ impl Tool for OrchestrateTool {
     fn description(&self) -> &str {
         "Launch a sub-agent to execute a task, with optional recursive decomposition into sub-tasks.\n\
          \n\
-         Usage:\n\
-         - agent_type='executor': performs the task directly using Bash/Read/Write. Use for well-defined, self-contained work.\n\
-         - agent_type='orchestrator': can recursively call orchestrate to break tasks into smaller sub-tasks. Use for complex, multi-step work.\n\
-         - Orchestration depth is limited to 5 levels. Beyond that, orchestrator auto-downgrades to executor.\n\
+         agent_type determines behavior and available tools:\n\
+         - 'orchestrator': breaks the task into sub-tasks by calling orchestrate recursively.\n\
+           Available tools: orchestrate, feedback, Read, Bash (no Write — orchestrators plan, not execute).\n\
+         - 'executor': performs the task directly using Read, Write, Bash.\n\
+           Available tools: feedback, Read, Write, Bash.\n\
+         - Depth is limited to 5 levels. Beyond that, orchestrator auto-downgrades to executor.\n\
          - sync=true (default): block until completion. sync=false: run in background.\n\
          \n\
          When to use orchestrate vs dispatch_agent:\n\
-         - orchestrate: tasks that may need recursive decomposition (task → sub-tasks → sub-sub-tasks).\n\
+         - orchestrate: tasks that need recursive decomposition (task → sub-tasks → sub-sub-tasks).\n\
          - dispatch_agent: simple, independent tasks that don't need decomposition.\n\
          \n\
          When NOT to use:\n\
@@ -83,9 +85,21 @@ impl Tool for OrchestrateTool {
          - If the task is a simple lookup (read a file, search a pattern), use Read or Bash.\n\
          - If the task is independent and doesn't need decomposition, use dispatch_agent.\n\
          \n\
+         Writing the directive:\n\
+         - For orchestrator: describe the decomposition strategy. Break into 2-5 sub-tasks,\n\
+           each independently executable. Each sub-task's directive must be self-contained.\n\
+         - For executor: include file paths, function names, what you've already learned,\n\
+           and expected output format. The executor hasn't seen this conversation.\n\
+         - Terse directives produce shallow results. Be specific about scope and expectations.\n\
+         \n\
          <example>\n\
          user: \"Refactor the authentication module\"\n\
          assistant: orchestrate({\"task_description\": \"Refactor auth module\", \"agent_type\": \"orchestrator\", \"directive\": \"Break the auth module refactor into sub-tasks: 1) Extract token validation into a separate service, 2) Consolidate auth middleware, 3) Update integration tests. Execute each sub-task using orchestrate with agent_type='executor'.\"})\n\
+         </example>\n\
+         \n\
+         <example>\n\
+         user: \"Fix the failing tests in the login module\"\n\
+         assistant: orchestrate({\"task_description\": \"Fix login tests\", \"agent_type\": \"executor\", \"directive\": \"Run cargo test and identify all failing tests in the login module. For each failure: read the test and source file, identify root cause, apply fix. Report which tests were fixed and any remaining failures.\"})\n\
          </example>"
     }
 
