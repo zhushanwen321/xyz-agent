@@ -260,7 +260,7 @@ impl AgentLoop {
             }
 
             let tool_results =
-                execute_batch(calls, tool_registry, tool_perms, tool_ctx.as_ref())
+                execute_batch(calls, tool_registry, tool_perms, tool_ctx.as_ref(), &dynamic_context.disabled_tools)
                     .await;
 
             // B5: 按实际工具调用次数递增预算计数器

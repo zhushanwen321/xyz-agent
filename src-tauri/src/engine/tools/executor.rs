@@ -9,6 +9,7 @@ pub async fn execute_batch(
     registry: &ToolRegistry,
     perms: &PermissionContext,
     ctx: Option<&ToolExecutionContext>,
+    disabled_tools: &[String],
 ) -> Vec<ToolExecutionResult> {
     // 保留原始索引以确保结果顺序与 tool_use 顺序一致
     let indexed: Vec<(usize, super::PendingToolCall)> = calls.into_iter().enumerate().collect();
@@ -17,17 +18,19 @@ pub async fn execute_batch(
     });
 
     let ctx_clone = ctx.cloned();
+    let disabled = disabled_tools.to_vec();
     let safe_handles: Vec<_> = safe.into_iter().map(|(idx, c)| {
         let registry = registry.clone();
         let perms = perms.clone();
         let ctx = ctx_clone.as_ref();
-        async move { (idx, execute_single(c, &registry, &perms, ctx).await) }
+        let disabled = disabled.clone();
+        async move { (idx, execute_single(c, &registry, &perms, ctx, &disabled).await) }
     }).collect();
 
     let mut results: Vec<(usize, ToolExecutionResult)> = join_all(safe_handles).await;
 
     for (idx, c) in unsafe_calls {
-        results.push((idx, execute_single(c, registry, perms, ctx).await));
+        results.push((idx, execute_single(c, registry, perms, ctx, disabled_tools).await));
     }
 
     results.sort_by_key(|(idx, _)| *idx);
@@ -39,9 +42,19 @@ async fn execute_single(
     registry: &ToolRegistry,
     perms: &PermissionContext,
     ctx: Option<&ToolExecutionContext>,
+    disabled_tools: &[String],
 ) -> ToolExecutionResult {
     let id = call.id.clone();
     let name = call.name.clone();
+
+    // disabled 检查在 permission check 之前
+    if disabled_tools.contains(&call.name) {
+        return ToolExecutionResult {
+            id,
+            output: format!("Tool '{}' is disabled", call.name),
+            is_error: true,
+        };
+    }
 
     let tool = match registry.get(&call.name) {
         Some(t) => t,
@@ -207,7 +220,7 @@ mod tests {
         ];
 
         let start = Instant::now();
-        let results = execute_batch(calls, &registry, &perms, None).await;
+        let results = execute_batch(calls, &registry, &perms, None, &[]).await;
         let elapsed = start.elapsed();
 
         assert!(elapsed < Duration::from_millis(250), "elapsed: {:?}", elapsed);
@@ -246,7 +259,7 @@ mod tests {
         ];
 
         let start = Instant::now();
-        let results = execute_batch(calls, &registry, &perms, None).await;
+        let results = execute_batch(calls, &registry, &perms, None, &[]).await;
         let elapsed = start.elapsed();
 
         assert!(elapsed >= Duration::from_millis(80), "elapsed: {:?}", elapsed);
@@ -274,7 +287,7 @@ mod tests {
         let calls = vec![build_call("1", "slow_tool")];
 
         let start = Instant::now();
-        let results = execute_batch(calls, &registry, &perms, None).await;
+        let results = execute_batch(calls, &registry, &perms, None, &[]).await;
         let elapsed = start.elapsed();
 
         assert!(
@@ -297,12 +310,36 @@ mod tests {
 
         let calls = vec![build_call("1", "nonexistent_tool")];
 
-        let results = execute_batch(calls, &registry, &perms, None).await;
+        let results = execute_batch(calls, &registry, &perms, None, &[]).await;
         assert_eq!(results.len(), 1);
 
         let r = &results[0];
         assert!(r.is_error);
         assert!(r.output.contains("Unknown tool"));
         assert!(r.output.contains("nonexistent_tool"));
+    }
+
+    #[tokio::test]
+    async fn test_disabled_tool_returns_error() {
+        let t: Arc<dyn Tool> = Arc::new(TestTool::new("Read", true));
+        let registry = build_registry(vec![t]);
+        let perms = PermissionContext::default();
+        let calls = vec![build_call("1", "Read")];
+        let disabled = vec!["Read".to_string()];
+        let results = execute_batch(calls, &registry, &perms, None, &disabled).await;
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_error);
+        assert!(results[0].output.contains("disabled"));
+    }
+
+    #[tokio::test]
+    async fn test_disabled_checked_before_permission() {
+        // 工具不在 registry 中但也在 disabled 列表中 — 应返回 disabled 错误而非 unknown tool 错误
+        let registry = build_registry(vec![]);
+        let perms = PermissionContext::default();
+        let calls = vec![build_call("1", "SomeTool")];
+        let disabled = vec!["SomeTool".to_string()];
+        let results = execute_batch(calls, &registry, &perms, None, &disabled).await;
+        assert!(results[0].output.contains("disabled"));
     }
 }
