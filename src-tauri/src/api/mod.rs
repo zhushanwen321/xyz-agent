@@ -10,6 +10,7 @@ use std::sync::Arc;
 pub mod commands;
 pub mod event_bus;
 pub mod prompt_commands;
+pub mod tool_commands;
 
 pub struct AppState {
     pub data_dir: PathBuf,

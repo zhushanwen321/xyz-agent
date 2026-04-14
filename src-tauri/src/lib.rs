@@ -133,6 +133,9 @@ pub fn run() {
             api::prompt_commands::prompt_delete,
             api::prompt_commands::custom_agent_save,
             api::prompt_commands::custom_agent_delete,
+            api::tool_commands::tool_config_list,
+            api::tool_commands::tool_config_save,
+            api::tool_commands::tool_config_delete,
         ])
         .run(tauri::generate_context!())
         .expect("error while running xyz-agent");

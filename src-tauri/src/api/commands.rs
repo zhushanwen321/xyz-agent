@@ -155,7 +155,7 @@ pub async fn send_message(
         tool_names: state.tool_registry.tool_names(),
         data_context_summary: None,
         conversation_summary,
-        disabled_tools: vec![],
+        disabled_tools: crate::api::tool_commands::load_disabled_tools(&state.data_dir),
     };
 
     // 异步结果注入：将已完成的后台任务结果注入到 history 中
