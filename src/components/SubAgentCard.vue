@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import type { TaskNode } from '../types'
 import { formatTokensAlways as formatTokens } from '../lib/format'
+import { getTaskStatusColor, getTaskBorderColor } from '../lib/status'
 
 const props = defineProps<{ task: TaskNode }>()
 
@@ -24,26 +25,8 @@ const statusChar = computed(() => {
   }
 })
 
-const statusColor = computed(() => {
-  switch (props.task.status) {
-    case 'running': return 'text-blue-400'
-    case 'completed': return 'text-green-400'
-    case 'failed': return 'text-red-400'
-    case 'budget_exhausted': return 'text-yellow-400'
-    case 'killed': return 'text-zinc-500'
-    case 'paused': return 'text-yellow-500'
-    default: return 'text-zinc-400'
-  }
-})
-
-const borderColor = computed(() => {
-  switch (props.task.status) {
-    case 'running': return 'border-l-blue-500'
-    case 'completed': return 'border-l-green-500'
-    case 'failed': return 'border-l-red-500'
-    default: return 'border-l-zinc-600'
-  }
-})
+const statusColor = computed(() => getTaskStatusColor(props.task.status))
+const borderColor = computed(() => getTaskBorderColor(props.task.status))
 
 const progressPercent = computed(() =>
   props.task.budget.max_tokens > 0

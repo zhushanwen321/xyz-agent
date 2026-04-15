@@ -11,6 +11,7 @@ import StatusBar from './StatusBar.vue'
 import SubAgentSidebar from './SubAgentSidebar.vue'
 import TabBar from './TabBar.vue'
 import { useTabManager } from '../composables/useTabManager'
+import { getStatusClasses } from '../lib/status'
 import type { ChatMessage } from '../types'
 
 const props = defineProps<{
@@ -122,19 +123,6 @@ const activeSubTab = computed(() => {
   return tabManager.tabs.value.find(t => t.id === tabManager.activeTabId.value) ?? null
 })
 
-const subTabStatusClass = computed(() => {
-  const s = activeSubTab.value?.status
-  switch (s) {
-    case 'completed': return 'text-[#22c55e] bg-[rgba(34,197,94,0.1)]'
-    case 'streaming': return 'text-[#22c55e] bg-[rgba(34,197,94,0.15)]'
-    case 'thinking': return 'text-[#eab308] bg-[rgba(234,179,8,0.1)]'
-    case 'tool': return 'text-[#f97316] bg-[rgba(249,115,22,0.1)]'
-    case 'failed': return 'text-[#ef4444] bg-[rgba(239,68,68,0.1)]'
-    case 'idle': return 'text-[#3b82f6] bg-[rgba(59,130,246,0.1)]'
-    default: return 'text-[#71717a] bg-[rgba(113,113,122,0.1)]'
-  }
-})
-
 // 运行时配置（从后端获取一次）
 const modelName = ref('loading...')
 const toolCount = ref(0)
@@ -200,7 +188,7 @@ function handleCancel() {
           <span class="text-text-primary font-semibold truncate flex-1">{{ activeSubTab.title }}</span>
           <span
             class="text-[10px] px-1.5 py-0.5 rounded-sm"
-            :class="subTabStatusClass"
+            :class="getStatusClasses(activeSubTab?.status ?? '')"
           >{{ activeSubTab.status }}</span>
         </div>
 
