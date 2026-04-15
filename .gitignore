@@ -9,3 +9,5 @@ src-tauri/target/
 brainstorm-*.png
 tauri-*.png
 tracers/
+.batch-reports/
+batch-reports/
