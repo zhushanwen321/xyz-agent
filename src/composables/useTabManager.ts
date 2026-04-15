@@ -100,6 +100,7 @@ export function useTabManager(sessionId: Ref<string | null>) {
       syncTabMessages(data)
     } catch (err) {
       console.warn('[useTabManager] loadTabHistory failed:', err)
+      updateTabStatus(tabId, 'failed')
     }
   }
 

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import ContextIndicator from './ContextIndicator.vue'
+import { formatTokensAlways as formatTokens } from '../lib/format'
 
 const props = defineProps<{
   isStreaming: boolean
@@ -17,12 +18,6 @@ const version = __APP_VERSION__
 const contextPercentage = computed(() =>
   Math.min((props.inputTokens / 200_000) * 100, 100)
 )
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`
-  return String(n)
-}
 
 const totalTokens = computed(() => props.inputTokens + props.outputTokens)
 </script>

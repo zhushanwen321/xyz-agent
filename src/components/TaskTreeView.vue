@@ -2,6 +2,8 @@
 import { computed } from 'vue'
 import type { OrchestrateNode } from '../types'
 import TaskTreeNode from './TaskTreeNode.vue'
+import { formatTokensAlways as formatTokens, formatDuration } from '../lib/format'
+import { getStatusClasses } from '../lib/status'
 
 const props = defineProps<{
   nodes: Map<string, OrchestrateNode>
@@ -78,30 +80,6 @@ const anchorSubtreeSize = computed(() => {
   return countSubtree(anchorNode.value) - 1
 })
 
-function formatTokens(n: number): string {
-  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`
-  if (n > 0) return String(n)
-  return '0'
-}
-
-function formatDuration(ms: number): string {
-  if (ms >= 60000) return `${(ms / 60000).toFixed(1)}m`
-  return `${(ms / 1000).toFixed(1)}s`
-}
-
-function statusClasses(status: string): string {
-  switch (status) {
-    case 'completed': return 'text-[#22c55e] bg-[rgba(34,197,94,0.1)]'
-    case 'streaming': return 'text-[#22c55e] bg-[rgba(34,197,94,0.15)]'
-    case 'running': return 'text-[#22c55e] bg-[rgba(34,197,94,0.1)]'
-    case 'thinking': return 'text-[#eab308] bg-[rgba(234,179,8,0.1)]'
-    case 'tool': return 'text-[#f97316] bg-[rgba(249,115,22,0.1)]'
-    case 'failed': return 'text-[#ef4444] bg-[rgba(239,68,68,0.1)]'
-    case 'idle': return 'text-[#3b82f6] bg-[rgba(59,130,246,0.1)]'
-    default: return 'text-[#71717a] bg-[rgba(113,113,122,0.1)]'
-  }
-}
-
 function roleLabel(role: string): string {
   if (role === 'orchestrator') return '[O]'
   if (role === 'executor') return '[E]'
@@ -167,7 +145,7 @@ function roleColorClass(role: string): string {
             {{ roleLabel(anchorNode.role) }}
           </span>
           <span class="text-[12px] text-[#fafafa] font-bold flex-1 truncate">{{ anchorNode.description }}</span>
-          <span class="text-[10px] px-1.5 py-0.5 rounded-sm" :class="statusClasses(anchorNode.status)">{{ anchorNode.status }}</span>
+          <span class="text-[10px] px-1.5 py-0.5 rounded-sm" :class="getStatusClasses(anchorNode.status)">{{ anchorNode.status }}</span>
         </div>
         <div class="text-[10px] text-[#a1a1aa] space-y-0.5">
           <div class="flex justify-between"><span>tokens</span><span class="font-mono">{{ formatTokens(anchorNode.usage.total_tokens) }} / {{ formatTokens(anchorNode.budget.max_tokens) }}</span></div>
@@ -193,7 +171,7 @@ function roleColorClass(role: string): string {
           </span>
           <span class="text-[11px] text-[#fafafa] font-semibold truncate flex-1">{{ child.description }}</span>
           <span class="text-[10px] font-mono text-[#71717a] shrink-0">{{ formatTokens(child.usage.total_tokens) }}</span>
-          <span class="text-[10px] px-1.5 py-0.5 rounded-sm" :class="statusClasses(child.status)">
+          <span class="text-[10px] px-1.5 py-0.5 rounded-sm" :class="getStatusClasses(child.status)">
             {{ child.status === 'idle' && child.reuse_count > 0 ? `idle(${child.reuse_count}x)` : child.status }}
           </span>
         </div>

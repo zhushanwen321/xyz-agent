@@ -5,14 +5,16 @@ import type { SessionInfo } from '../types'
 
 const sessions = ref<SessionInfo[]>([])
 const currentSessionId = ref<string | null>(null)
+const error = ref<string | null>(null)
 
 export function useSession() {
   async function loadSessions() {
     if (!isTauri()) return
+    error.value = null
     try {
       sessions.value = await listSessions()
     } catch (err) {
-      console.error('[useSession] loadSessions failed:', err)
+      error.value = String(err)
     }
   }
 
@@ -22,20 +24,21 @@ export function useSession() {
 
   async function createNewSession(): Promise<string | null> {
     if (!isTauri()) return null
+    error.value = null
     try {
       const result = await createSession()
-      console.log('[useSession] session created:', result.session_id)
       await loadSessions()
       currentSessionId.value = result.session_id
       return result.session_id
     } catch (err) {
-      console.error('[useSession] createNewSession failed:', err)
+      error.value = String(err)
       return null
     }
   }
 
   async function deleteSession(id: string) {
     if (!isTauri()) return
+    error.value = null
     try {
       await deleteSessionApi(id)
       clearSessionTabs(id)
@@ -44,19 +47,20 @@ export function useSession() {
       }
       await loadSessions()
     } catch (err) {
-      console.error('[useSession] deleteSession failed:', err)
+      error.value = String(err)
     }
   }
 
   async function renameSession(id: string, newTitle: string) {
     if (!isTauri()) return
+    error.value = null
     try {
       await renameSessionApi(id, newTitle)
       await loadSessions()
     } catch (err) {
-      console.error('[useSession] renameSession failed:', err)
+      error.value = String(err)
     }
   }
 
-  return { sessions, currentSessionId, loadSessions, selectSession, createNewSession, deleteSession, renameSession }
+  return { sessions, currentSessionId, error, loadSessions, selectSession, createNewSession, deleteSession, renameSession }
 }

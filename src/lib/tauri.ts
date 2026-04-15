@@ -5,21 +5,15 @@ import type { AgentEvent, ConfigResponse, LoadHistoryResult, SessionInfo, Transc
 export type { LoadHistoryResult }
 
 export function isTauri(): boolean {
-  return !!(window as any).__TAURI_INTERNALS__
+  return '__TAURI_INTERNALS__' in window
 }
 
 export async function createSession(): Promise<{ session_id: string; title: string }> {
-  console.log('[tauri] createSession')
-  const result = await invoke('new_session')
-  console.log('[tauri] createSession result:', result)
-  return result as any
+  return invoke<{ session_id: string; title: string }>('new_session')
 }
 
 export async function listSessions(): Promise<SessionInfo[]> {
-  console.log('[tauri] listSessions')
-  const result = await invoke('list_sessions')
-  console.log('[tauri] listSessions result:', result)
-  return result as any
+  return invoke<SessionInfo[]>('list_sessions')
 }
 
 export async function getHistory(sessionId: string): Promise<LoadHistoryResult> {
@@ -27,12 +21,10 @@ export async function getHistory(sessionId: string): Promise<LoadHistoryResult> 
 }
 
 export async function sendMessage(sessionId: string, content: string): Promise<void> {
-  console.log('[tauri] sendMessage, session=', sessionId, 'content=', content.slice(0, 50))
   return invoke('send_message', { sessionId, content })
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {
-  console.log('[tauri] deleteSession:', sessionId)
   return invoke('delete_session', { sessionId })
 }
 
@@ -42,7 +34,6 @@ export async function renameSession(sessionId: string, newTitle: string): Promis
 
 export function onAgentEvent(handler: (event: AgentEvent) => void): Promise<UnlistenFn> {
   return listen<AgentEvent>('agent-event', (e) => {
-    console.log('[tauri] agent-event:', e.payload.type, e.payload.session_id)
     handler(e.payload)
   })
 }
