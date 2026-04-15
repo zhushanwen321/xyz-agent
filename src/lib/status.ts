@@ -6,8 +6,9 @@ type AnyStatus = TabStatus | TaskStatus | 'idle'
 export function getStatusClasses(status: AnyStatus): string {
   switch (status) {
     case 'completed':
-    case 'streaming':
       return 'text-[#22c55e] bg-[rgba(34,197,94,0.1)]'
+    case 'streaming':
+      return 'text-[#22c55e] bg-[rgba(34,197,94,0.15)]'
     case 'thinking':
       return 'text-[#eab308] bg-[rgba(234,179,8,0.1)]'
     case 'tool':
