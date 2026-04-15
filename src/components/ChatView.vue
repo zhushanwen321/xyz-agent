@@ -194,7 +194,7 @@ function handleCancel() {
           <span class="text-text-primary font-semibold truncate flex-1">{{ activeSubTab.title }}</span>
           <span
             class="text-[10px] px-1.5 py-0.5 rounded-sm"
-            :class="getStatusClasses(activeSubTab?.status ?? '')"
+            :class="getStatusClasses(activeSubTab.status)"
           >{{ activeSubTab.status }}</span>
         </div>
 

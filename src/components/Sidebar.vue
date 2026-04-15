@@ -9,7 +9,7 @@ defineProps<{
 }>()
 
 const appName = __APP_NAME__
-const { sessions, currentSessionId, loadSessions, selectSession, createNewSession, deleteSession, renameSession } = useSession()
+const { sessions, currentSessionId, error: sessionError, loadSessions, selectSession, createNewSession, deleteSession, renameSession } = useSession()
 
 const editingId = ref<string | null>(null)
 const editingTitle = ref('')
@@ -145,6 +145,9 @@ function handleEditKeydown(e: KeyboardEvent) {
     </ScrollArea>
 
     <Separator class="bg-border-default" />
+
+    <!-- 错误提示 -->
+    <div v-if="sessionError" class="px-4 py-2 text-[11px] text-accent-red font-mono">{{ sessionError }}</div>
 
     <!-- 底部区域 -->
     <div class="px-4 py-3">
