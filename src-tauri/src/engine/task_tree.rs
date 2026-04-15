@@ -104,8 +104,8 @@ pub struct FeedbackMessage {
 
 pub fn generate_task_id(node_type: &str) -> String {
     let prefix = match node_type {
-        "dispatch_agent" => "da_",
-        "orchestrate" => "or_",
+        "Subagent" => "da_",
+        "Orchestrate" => "or_",
         _ => "tk_",
     };
     let uuid_str = Uuid::new_v4().to_string().replace("-", "");
@@ -214,7 +214,7 @@ impl TaskTree {
         subagent_type: Option<String>,
         budget: Option<TaskBudget>,
     ) -> &TaskNode {
-        let task_id = generate_task_id("dispatch_agent");
+        let task_id = generate_task_id("Subagent");
         let node = TaskNode {
             task_id,
             parent_id,

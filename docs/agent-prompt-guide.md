@@ -164,4 +164,4 @@ Never delegate understanding. Don't write 'based on your findings, fix the bug'
 |------|--------------|----------------|---------|
 | Bash | 6行 | ~100行 | 工具偏好层次、并行/串行指引、git安全 |
 | Read | 6行 | ~20行 | 绝对路径要求、默认行数说明 |
-| dispatch_agent | 30行 | ~200行 | 提示词写作指引、"When NOT to use" |
+| Subagent | 30行 | ~200行 | 提示词写作指引、"When NOT to use" |

@@ -95,7 +95,7 @@ pub struct DispatchAgentTool;
 #[async_trait]
 impl Tool for DispatchAgentTool {
     fn name(&self) -> &str {
-        "dispatch_agent"
+        "Subagent"
     }
 
     fn description(&self) -> &str {
@@ -107,19 +107,19 @@ impl Tool for DispatchAgentTool {
          Usage:\n\
          - sync=true (default): block until the sub-agent finishes, return its output.\n\
          - sync=false: launch in background, continue immediately. Returns a task_id for tracking.\n\
-         - Multiple dispatch_agent calls can be made in parallel for independent tasks.\n\
+         - Multiple Subagent calls can be made in parallel for independent tasks.\n\
          \n\
          Mode:\n\
          - 'preset' (default): fresh agent with no conversation history.\n\
          - 'fork': clones current conversation context into the sub-agent.\n\
          \n\
-         When to use dispatch_agent vs orchestrate:\n\
-         - dispatch_agent: simple, independent tasks that do NOT need decomposition into sub-tasks.\n\
-         - orchestrate: complex tasks that may need recursive decomposition (task → sub-tasks → sub-sub-tasks).\n\
+         When to use Subagent vs Orchestrate:\n\
+         - Subagent: simple, independent tasks that do NOT need decomposition into sub-tasks.\n\
+         - Orchestrate: complex tasks that may need recursive decomposition (task → sub-tasks → sub-sub-tasks).\n\
          \n\
          When NOT to use:\n\
          - If the task can be done with a single Bash/Read/Write call, do it directly.\n\
-         - If the task needs recursive decomposition, use orchestrate instead.\n\
+         - If the task needs recursive decomposition, use Orchestrate instead.\n\
          - If you just need to read a known file, use Read. If you need to search, use Bash.\n\
          \n\
          Writing the prompt:\n\
@@ -136,8 +136,8 @@ impl Tool for DispatchAgentTool {
          <example>\n\
          user: \"Check the test results and also look at the lint output\"\n\
          assistant: Two independent checks — dispatch in parallel:\n\
-         dispatch_agent({\"description\": \"check test results\", \"prompt\": \"Run cargo test in src-tauri/ and summarize any failures with file and line numbers\", \"sync\": true})\n\
-         dispatch_agent({\"description\": \"check lint warnings\", \"prompt\": \"Run cargo clippy in src-tauri/ and list all warnings\", \"sync\": true})\n\
+         Subagent({\"description\": \"check test results\", \"prompt\": \"Run cargo test in src-tauri/ and summarize any failures with file and line numbers\", \"sync\": true})\n\
+         Subagent({\"description\": \"check lint warnings\", \"prompt\": \"Run cargo clippy in src-tauri/ and list all warnings\", \"sync\": true})\n\
          </example>"
     }
 
@@ -190,7 +190,7 @@ impl Tool for DispatchAgentTool {
 
     async fn call(&self, input: serde_json::Value, ctx: Option<&ToolExecutionContext>) -> ToolResult {
         let Some(ctx) = ctx else {
-            return ToolResult::Error("dispatch_agent requires ToolExecutionContext".into());
+            return ToolResult::Error("Subagent requires ToolExecutionContext".into());
         };
 
         let description = match input["description"].as_str() {
@@ -254,7 +254,7 @@ impl Tool for DispatchAgentTool {
             max_tool_calls: default_budget.max_tool_calls,
         };
 
-        let task_id = generate_task_id("dispatch_agent");
+        let task_id = generate_task_id("Subagent");
         let start = Instant::now();
 
         // B2: 在 TaskTree 中注册 TaskNode，使后续 set_task_result/completed_not_injected 能找到
@@ -288,7 +288,7 @@ impl Tool for DispatchAgentTool {
         let tool_use_id = ctx.current_assistant_content.iter().rev()
             .find_map(|block| {
                 if let crate::types::transcript::AssistantContentBlock::ToolUse { id, name, .. } = block {
-                    if name == "dispatch_agent" { return Some(id.clone()) }
+                    if name == "Subagent" { return Some(id.clone()) }
                 }
                 None
             });

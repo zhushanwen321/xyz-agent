@@ -181,7 +181,7 @@ async fn run_subagent(
         None
     };
 
-    // 构建 ToolExecutionContext，使子 Agent 的 P2 工具（dispatch_agent/orchestrate/feedback）可用
+    // 构建 ToolExecutionContext，使子 Agent 的 P2 工具（Subagent/Orchestrate/Communication）可用
     let tool_ctx = ToolExecutionContext {
         task_tree: task_tree.clone(),
         concurrency_manager: concurrency_manager.clone(),

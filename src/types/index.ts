@@ -7,7 +7,7 @@ export type AgentEvent =
   | { type: 'Error'; session_id: string; message: string; source_task_id?: string }
   | { type: 'ToolCallStart'; session_id: string; tool_name: string; tool_use_id: string; input: unknown; source_task_id?: string }
   | { type: 'ToolCallEnd'; session_id: string; tool_use_id: string; is_error: boolean; output: string; source_task_id?: string }
-  // dispatch_agent events
+  // Subagent events
   | { type: 'TaskCreated'; session_id: string; task_id: string; description: string; mode: string; subagent_type: string; budget: { max_tokens: number }; tool_use_id: string | null; source_task_id?: string }
   | { type: 'TaskProgress'; session_id: string; task_id: string; usage: { total_tokens: number; tool_uses: number; duration_ms: number }; source_task_id?: string }
   | { type: 'TaskCompleted'; session_id: string; task_id: string; status: string; result_summary: string; usage: { total_tokens: number; tool_uses: number; duration_ms: number }; source_task_id?: string }

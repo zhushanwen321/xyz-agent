@@ -10,7 +10,7 @@ use crate::engine::agent_spawner::AgentSpawner;
 
 use super::ToolRegistry;
 
-/// P2 tools (dispatch_agent, feedback, orchestrate) 所需的运行时上下文。
+/// P2 tools (Subagent, Communication, Orchestrate) 所需的运行时上下文。
 /// P1 tools 通过 `Option<&ToolExecutionContext>` 忽略此参数。
 #[derive(Clone)]
 pub struct ToolExecutionContext {

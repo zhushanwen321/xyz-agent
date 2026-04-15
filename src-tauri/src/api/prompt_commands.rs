@@ -210,7 +210,7 @@ pub async fn custom_agent_save(
     if builtin_keys.contains(&payload.name.as_str()) {
         return Err(format!("name '{}' conflicts with built-in prompt", payload.name));
     }
-    let forbidden = ["dispatch_agent", "orchestrate"];
+    let forbidden = ["Subagent", "Orchestrate"];
     for tool in &payload.tools {
         if forbidden.contains(&tool.as_str()) {
             return Err(format!("tool '{}' is not allowed in custom agents", tool));

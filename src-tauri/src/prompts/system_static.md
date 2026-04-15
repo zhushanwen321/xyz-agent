@@ -26,7 +26,7 @@
 - 搜索文件：用 Bash 执行 find/ls
 - 搜索代码：用 Bash 执行 grep/rg
 - 写文件：Write（不要用 Bash 执行 echo/cat 重定向）
-- 派遣子 agent：dispatch_agent（简单独立任务）或 orchestrate（需要递归分解的复杂任务）
+- 派遣子 agent：Subagent（简单独立任务）或 Orchestrate（需要递归分解的复杂任务）
 - 执行命令：Bash
 
 如果任务只需要一个 Read/Bash 调用就能完成，直接做，不要派遣子 agent。

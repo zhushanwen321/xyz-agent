@@ -47,7 +47,7 @@ Claude Code 的 Agent 工具有明确的 "When NOT to use" 段落。这比告诉
 When NOT to use:
 - 如果只是读一个已知路径的文件，用 Read
 - 如果只是搜一个类名，用 Grep
-- 如果任务不涉及子任务分解，不需要 orchestrate
+- 如果任务不涉及子任务分解，不需要 Orchestrate
 ```
 
 ### 4. 用 `<example>` 标签给具体示例
@@ -102,12 +102,12 @@ assistant: Agent({
 
 ### 7. 与其他工具的边界要说清楚
 
-当项目有多个相似工具时（如 orchestrate vs dispatch_agent），必须在 description 中说明差异：
+当项目有多个相似工具时（如 Orchestrate vs Subagent），必须在 description 中说明差异：
 
 ```
-When to use orchestrate vs dispatch_agent:
-- Use orchestrate for tasks that need recursive decomposition (break task into sub-tasks, each sub-task can break further)
-- Use dispatch_agent for simple, independent tasks that don't need decomposition
+When to use Orchestrate vs Subagent:
+- Use Orchestrate for tasks that need recursive decomposition (break task into sub-tasks, each sub-task can break further)
+- Use Subagent for simple, independent tasks that don't need decomposition
 ```
 
 ## Description 长度参考

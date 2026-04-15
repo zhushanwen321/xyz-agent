@@ -53,7 +53,7 @@ impl AgentTemplateRegistry {
                     "Read".into(),
                     "Write".into(),
                     "Bash".into(),
-                    "feedback".into(),
+                    "Communication".into(),
                 ],
                 read_only: false,
                 default_budget: TaskBudget {
@@ -192,8 +192,8 @@ mod tests {
         let registry = AgentTemplateRegistry::new();
         let explore = registry.get("Explore").unwrap();
         // 防递归：Explore 和 Plan 不应包含调度工具
-        assert!(!explore.tools.contains(&"dispatch_agent".to_string()));
-        assert!(!explore.tools.contains(&"orchestrate".to_string()));
+        assert!(!explore.tools.contains(&"Subagent".to_string()));
+        assert!(!explore.tools.contains(&"Orchestrate".to_string()));
     }
 
     #[test]
