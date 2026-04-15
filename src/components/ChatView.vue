@@ -20,7 +20,7 @@ const props = defineProps<{
 
 const sessionIdRef = computed(() => props.currentSessionId) as Ref<string | null>
 const { messages, isStreaming, tokenUsage, send, cancel, currentTurnSegments, taskNodes, orchestrateNodes, toolUseToTaskId, setTabEventHandler } = useChat(sessionIdRef)
-const { createNewSession } = useSession()
+const { createNewSession, error: _sessionError } = useSession()
 const tabManager = useTabManager(sessionIdRef)
 
 // 注入 Tab 事件处理器：更新状态 + 积累实时事件（不自动打开 Tab）
