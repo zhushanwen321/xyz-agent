@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { TaskNode } from '../types'
+import { formatTokensAlways as formatTokens } from '../lib/format'
 
 const props = defineProps<{ task: TaskNode }>()
 
@@ -49,11 +50,6 @@ const progressPercent = computed(() =>
     ? Math.min(100, (props.task.usage.total_tokens / props.task.budget.max_tokens) * 100)
     : 0
 )
-
-function formatTokens(n: number): string {
-  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`
-  return String(n)
-}
 
 const statusLabel = computed(() => {
   switch (props.task.status) {

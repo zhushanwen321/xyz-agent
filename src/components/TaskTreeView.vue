@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import type { OrchestrateNode } from '../types'
 import TaskTreeNode from './TaskTreeNode.vue'
+import { formatTokensAlways as formatTokens, formatDuration } from '../lib/format'
 
 const props = defineProps<{
   nodes: Map<string, OrchestrateNode>
@@ -77,17 +78,6 @@ const anchorSubtreeSize = computed(() => {
   if (!anchorNode.value) return 0
   return countSubtree(anchorNode.value) - 1
 })
-
-function formatTokens(n: number): string {
-  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`
-  if (n > 0) return String(n)
-  return '0'
-}
-
-function formatDuration(ms: number): string {
-  if (ms >= 60000) return `${(ms / 60000).toFixed(1)}m`
-  return `${(ms / 1000).toFixed(1)}s`
-}
 
 function statusClasses(status: string): string {
   switch (status) {

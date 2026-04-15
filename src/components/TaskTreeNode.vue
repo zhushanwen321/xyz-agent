@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import type { OrchestrateNode } from '../types'
+import { formatTokens } from '../lib/format'
 
 const props = defineProps<{
   node: OrchestrateNode
@@ -22,12 +23,6 @@ const children = computed(() =>
     .map(id => props.allNodes.get(id))
     .filter(Boolean) as OrchestrateNode[]
 )
-
-function formatTokens(n: number): string {
-  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`
-  if (n > 0) return String(n)
-  return ''
-}
 
 const statusLabel = computed(() => {
   if (props.node.status === 'idle' && props.node.reuse_count > 0) {
