@@ -135,6 +135,7 @@ onMounted(async () => {
     toolCount.value = tools.length
   } catch (err) {
     console.warn('[ChatView] failed to load runtime config:', err)
+    modelName.value = 'unknown'
   }
 })
 
