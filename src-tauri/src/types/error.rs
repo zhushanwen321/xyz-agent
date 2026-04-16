@@ -17,6 +17,20 @@ pub enum AppError {
     Serialization(#[from] serde_json::Error),
 }
 
+impl PartialEq for AppError {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Llm(a), Self::Llm(b)) => a == b,
+            (Self::Storage(a), Self::Storage(b)) => a == b,
+            (Self::SessionNotFound(a), Self::SessionNotFound(b)) => a == b,
+            (Self::Config(a), Self::Config(b)) => a == b,
+            (Self::Io(a), Self::Io(b)) => a.kind() == b.kind() && a.to_string() == b.to_string(),
+            (Self::Serialization(a), Self::Serialization(b)) => a.to_string() == b.to_string(),
+            _ => false,
+        }
+    }
+}
+
 impl From<AppError> for String {
     fn from(err: AppError) -> String {
         err.to_string()

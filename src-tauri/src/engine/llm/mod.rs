@@ -1,4 +1,6 @@
 pub mod anthropic;
+pub mod types;
+pub mod registry;
 #[cfg(test)]
 pub mod test_utils;
 
@@ -45,6 +47,8 @@ pub trait LlmProvider: Send + Sync {
         tools: Option<Vec<serde_json::Value>>,
     ) -> Result<Pin<Box<dyn futures::Stream<Item = Result<LlmStreamEvent, AppError>> + Send>>, AppError>;
 }
+
+pub use types::{ModelTier, ModelEntry, ProviderConfig, ModelInfo, parse_model_ref};
 
 // ── 带指数退避的重试封装（网络不稳定时启用） ──────────────────
 
