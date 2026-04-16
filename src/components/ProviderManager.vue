@@ -7,7 +7,7 @@ import ProviderEditForm from './ProviderEditForm.vue'
 
 const DEFAULT_BASE_URL = 'https://api.anthropic.com'
 
-const props = defineProps<{
+defineProps<{
   config: ConfigResponse
 }>()
 

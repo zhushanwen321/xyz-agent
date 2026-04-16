@@ -129,7 +129,7 @@ onMounted(async () => {
       <div v-else-if="configError" class="text-semantic-red">{{ configError }}</div>
       <AgentTab
         v-else
-        :config="config"
+        v-model:config="config"
         :saving="saving"
         :success="success"
         @save="handleSave"

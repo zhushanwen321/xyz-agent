@@ -41,6 +41,7 @@ function renderMarkdown(text: string): string {
 </script>
 
 <template>
+  <!-- eslint-disable vue/no-v-html -->
   <!-- 选择模式包裹层 -->
   <div
     class="relative"

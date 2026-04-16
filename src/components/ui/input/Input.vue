@@ -20,6 +20,7 @@ const modelValue = useVModel(props, "modelValue", emits, {
 </script>
 
 <template>
+  <!-- eslint-disable-next-line taste/no-native-form-elements -->
   <input
     v-model="modelValue"
     data-slot="input"

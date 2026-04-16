@@ -4,7 +4,7 @@ import { isTauri, getCurrentModel, setCurrentModel as apiSetCurrentModel } from 
 import { Button } from '@/components/ui/button'
 import ModelSelector from './ModelSelector.vue'
 
-const props = defineProps<{
+defineProps<{
   sidebarCollapsed: boolean
 }>()
 

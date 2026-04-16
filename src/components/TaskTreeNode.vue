@@ -30,8 +30,8 @@ const statusLabel = computed(() => {
     return `idle(${props.node.reuse_count}x)`
   }
   switch (props.node.status) {
-    case 'completed': return '&#x2713;'
-    case 'failed': return '&#x2717;'
+    case 'completed': return '\u2713'
+    case 'failed': return '\u2717'
     case 'idle': return 'idle'
     case 'running': return ''
     default: return props.node.status
@@ -105,7 +105,7 @@ const roleBadge = computed(() =>
       <span v-if="node.status === 'running'" class="shrink-0">
         <span class="inline-block h-2 w-2 animate-spin rounded-full border border-semantic-blue border-t-transparent" />
       </span>
-      <span v-else class="text-[10px] font-mono shrink-0" :class="statusColor" v-html="statusLabel" />
+      <span v-else class="text-[10px] font-mono shrink-0" :class="statusColor">{{ statusLabel }}</span>
 
       <!-- Kill 按钮：仅 running 状态显示 -->
       <Button

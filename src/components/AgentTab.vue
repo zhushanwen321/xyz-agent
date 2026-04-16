@@ -3,8 +3,8 @@ import type { ConfigResponse } from '../types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
-const props = defineProps<{
-  config: ConfigResponse | null
+const config = defineModel<ConfigResponse | null>('config')
+defineProps<{
   saving: boolean
   success: boolean
 }>()
