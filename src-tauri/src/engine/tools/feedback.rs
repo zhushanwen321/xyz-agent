@@ -9,7 +9,7 @@ pub struct FeedbackTool;
 #[async_trait]
 impl Tool for FeedbackTool {
     fn name(&self) -> &str {
-        "feedback"
+        "Communication"
     }
 
     fn description(&self) -> &str {

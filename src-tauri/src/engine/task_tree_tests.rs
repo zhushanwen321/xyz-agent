@@ -79,14 +79,14 @@ fn test_orchestrate_node_serialization_roundtrip() {
 
 #[test]
 fn test_generate_task_id_prefix_and_uniqueness() {
-    let da = generate_task_id("dispatch_agent");
+    let da = generate_task_id("Subagent");
     assert!(da.starts_with("da_") && da.len() == 11, "got: {}", da);
-    let or = generate_task_id("orchestrate");
+    let or = generate_task_id("Orchestrate");
     assert!(or.starts_with("or_") && or.len() == 11, "got: {}", or);
     let tk = generate_task_id("unknown");
     assert!(tk.starts_with("tk_") && tk.len() == 11, "got: {}", tk);
     // uniqueness spot check
-    assert_ne!(da, generate_task_id("dispatch_agent"));
+    assert_ne!(da, generate_task_id("Subagent"));
 }
 
 #[test]

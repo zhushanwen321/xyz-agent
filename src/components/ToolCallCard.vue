@@ -12,8 +12,8 @@ const props = defineProps<{
   onOpenTab?: (taskId: string) => void
 }>()
 
-// dispatch_agent 工具调用时显示 SubAgentCard 替代默认渲染
-const isDispatchAgent = computed(() => props.toolCall.tool_name === 'dispatch_agent')
+// Subagent 工具调用时显示 SubAgentCard 替代默认渲染
+const isDispatchAgent = computed(() => props.toolCall.tool_name === 'Subagent')
 const dispatchTask = computed(() => {
   if (!isDispatchAgent.value) return null
   // 通过 tool_use_id -> task_id 映射查找对应的 TaskNode

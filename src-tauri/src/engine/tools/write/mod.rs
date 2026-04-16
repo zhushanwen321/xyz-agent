@@ -24,8 +24,10 @@ impl Tool for WriteTool {
     fn description(&self) -> &str {
         "Write content to a file.\n\
          \n\
-         - Creates the file and parent directories if they don't exist.\n\
-         - Overwrites the entire file if it already exists.\n\
+         Usage:\n\
+         - This tool will overwrite the existing file if one exists at the provided path.\n\
+         - The file_path parameter must be an absolute path, or relative to the project root.\n\
+         - Does NOT create parent directories. Parent directory must already exist.\n\
          - Do NOT use Bash (echo/cat redirect) to write files — always use this tool."
     }
 
@@ -48,6 +50,10 @@ impl Tool for WriteTool {
 
     fn is_concurrent_safe(&self) -> bool {
         false
+    }
+
+    fn danger_level(&self) -> &str {
+        "caution"
     }
 
     fn timeout_secs(&self) -> u64 {

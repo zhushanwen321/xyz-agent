@@ -116,6 +116,20 @@ function renderMarkdown(text: string): string {
               :on-open-tab="onOpenSubAgentTab"
             />
           </div>
+
+          <!-- thinking segment -->
+          <div v-else-if="seg.type === 'thinking'" class="mb-2">
+            <details open class="thinking-block">
+              <summary class="thinking-summary">
+                <span class="thinking-icon">&#9670;</span>
+                <span>思考过程</span>
+                <span v-if="seg.duration_ms > 0" class="thinking-duration">
+                  {{ (seg.duration_ms / 1000).toFixed(1) }}s
+                </span>
+              </summary>
+              <div class="thinking-content">{{ seg.text }}</div>
+            </details>
+          </div>
         </template>
 
         <!-- 流式闪烁光标 -->
@@ -135,3 +149,33 @@ function renderMarkdown(text: string): string {
     </div>
   </div>
 </template>
+
+<style scoped>
+.thinking-block {
+  background: var(--color-bg-ai, #111);
+  border: 1px solid var(--color-border-default, #27272a);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.thinking-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 11px;
+  color: #8b8bff;
+  background: var(--color-bg-ai, #131517);
+  user-select: none;
+}
+.thinking-icon { font-size: 8px; }
+.thinking-duration { color: #555; font-size: 10px; }
+.thinking-content {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--color-text-secondary, #a1a1aa);
+  line-height: 1.6;
+  border-top: 1px solid var(--color-border-default, #27272a);
+  white-space: pre-wrap;
+}
+</style>

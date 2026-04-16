@@ -1,5 +1,7 @@
 use serde_json::Value;
 
+use super::prompt_registry::PromptRegistry;
+
 /// 动态上下文：注入到系统提示词的环境信息
 #[derive(Clone)]
 pub struct DynamicContext {
@@ -10,36 +12,60 @@ pub struct DynamicContext {
     pub tool_names: Vec<String>,
     pub data_context_summary: Option<String>,
     pub conversation_summary: Option<String>,
+    pub disabled_tools: Vec<String>,
 }
 
 pub struct PromptManager {
-    static_prompt: String,
+    registry: PromptRegistry,
+    default_key: String,
 }
 
 impl PromptManager {
     pub fn new() -> Self {
         Self {
-            static_prompt: include_str!("../../prompts/system_static.md").to_string(),
+            registry: PromptRegistry::new(),
+            default_key: "system".to_string(),
         }
+    }
+
+    /// 加载用户自定义 prompt 文件
+    pub fn with_user_prompts(mut self, data_dir: &std::path::Path) -> Self {
+        self.registry.load_user_prompts(data_dir);
+        self
+    }
+
+    /// 设置默认 prompt key（如 "explore", "plan", "general_purpose"）
+    pub fn with_key(mut self, key: &str) -> Self {
+        self.default_key = key.to_string();
+        self
     }
 
     /// Fork 模式需要 byte-identical system prompt 以命中 Prompt Cache
     #[allow(dead_code)]
     pub fn new_with_prompt(static_prompt: &str) -> Self {
+        let mut registry = PromptRegistry::new();
+        registry.insert_override("system", static_prompt);
         Self {
-            static_prompt: static_prompt.to_string(),
+            registry,
+            default_key: "system".to_string(),
         }
     }
 
     /// 构建完整的系统提示词（静态层 + 动态层）
     /// 静态层带 cache_control 以利用 Anthropic Prompt Cache
+    /// enhance 内容拼接到 builtin 同一 block 内，保持 cache_control 有效性
     pub fn build_system_prompt(&self, ctx: &DynamicContext) -> Vec<Value> {
         let mut blocks = Vec::new();
 
-        // 静态层（可缓存）
+        // 静态层（可缓存）— 使用 resolve_full 获取 override 或 builtin+enhance
+        let static_text = self
+            .registry
+            .resolve_full(&self.default_key)
+            .unwrap_or_default();
+
         blocks.push(serde_json::json!({
             "type": "text",
-            "text": self.static_prompt,
+            "text": static_text,
             "cache_control": { "type": "ephemeral" }
         }));
 
@@ -83,6 +109,14 @@ impl PromptManager {
             parts.push(format!("## 对话历史摘要\n{summary}"));
         }
 
+        // 禁用工具
+        if !ctx.disabled_tools.is_empty() {
+            parts.push(format!(
+                "## 禁用工具\n以下工具已禁用，请勿调用：{}",
+                ctx.disabled_tools.join(", ")
+            ));
+        }
+
         parts.join("\n\n")
     }
 }
@@ -106,6 +140,7 @@ mod tests {
             tool_names: vec![],
             data_context_summary: None,
             conversation_summary: None,
+            disabled_tools: vec![],
         }
     }
 
@@ -170,5 +205,59 @@ mod tests {
         assert!(!dynamic_text.contains("可用工具"));
         assert!(!dynamic_text.contains("已读取文件"));
         assert!(!dynamic_text.contains("对话历史摘要"));
+        assert!(!dynamic_text.contains("禁用工具"));
+    }
+
+    #[test]
+    fn test_dynamic_renders_disabled_tools() {
+        let pm = PromptManager::new();
+        let ctx = DynamicContext {
+            disabled_tools: vec!["Bash".to_string(), "Write".to_string()],
+            ..default_ctx()
+        };
+        let blocks = pm.build_system_prompt(&ctx);
+        let dynamic_text = blocks[1]["text"].as_str().unwrap();
+        assert!(dynamic_text.contains("禁用工具"));
+        assert!(dynamic_text.contains("Bash"));
+        assert!(dynamic_text.contains("Write"));
+    }
+
+    #[test]
+    fn test_with_key_uses_different_prompt() {
+        let pm = PromptManager::new().with_key("explore");
+        let ctx = default_ctx();
+        let blocks = pm.build_system_prompt(&ctx);
+        let text = blocks[0]["text"].as_str().unwrap();
+        assert!(text.contains("代码探索 Agent"));
+        assert!(!text.contains("xyz-agent 编码助手"));
+    }
+
+    #[test]
+    fn test_new_with_prompt_overrides_system() {
+        let pm = PromptManager::new_with_prompt("custom prompt");
+        let ctx = default_ctx();
+        let blocks = pm.build_system_prompt(&ctx);
+        let text = blocks[0]["text"].as_str().unwrap();
+        assert_eq!(text, "custom prompt");
+    }
+
+    #[test]
+    fn test_user_prompts_enhance_appended_to_static_block() {
+        let dir = tempfile::tempdir().unwrap();
+        let prompts_dir = dir.path().join("prompts");
+        std::fs::create_dir_all(&prompts_dir).unwrap();
+        std::fs::write(prompts_dir.join("enhance_system.md"), "extra rules").unwrap();
+
+        let pm = PromptManager::new().with_user_prompts(dir.path());
+        let ctx = default_ctx();
+        let blocks = pm.build_system_prompt(&ctx);
+        let text = blocks[0]["text"].as_str().unwrap();
+        assert!(text.contains("xyz-agent 编码助手"));
+        assert!(text.contains("extra rules"));
+        // enhance 和 builtin 在同一个 block，cache_control 有效
+        assert_eq!(
+            blocks[0]["cache_control"]["type"],
+            "ephemeral"
+        );
     }
 }

@@ -1,5 +1,6 @@
 pub mod data;
 pub mod prompt;
+pub mod prompt_registry;
 
 use crate::types::AppError;
 use crate::types::TranscriptEntry;

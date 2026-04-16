@@ -37,7 +37,8 @@ pub fn run() {
             let p: Arc<dyn LlmProvider> = Arc::new(
                 AnthropicProvider::new(cfg.api_key.clone())
                     .with_base_url(cfg.base_url.clone())
-                    .with_max_tokens(agent_config.max_output_tokens),
+                    .with_max_tokens(agent_config.max_output_tokens)
+                    .with_thinking(agent_config.thinking_enabled, agent_config.thinking_budget_tokens),
             );
             (Some(p), cfg.model.clone())
         },
@@ -110,9 +111,16 @@ pub fn run() {
                 background_tasks: Arc::new(tokio::sync::Mutex::new(
                     std::collections::HashMap::new(),
                 )),
-                agent_templates: Arc::new(
-                    engine::agent_template::AgentTemplateRegistry::new(),
-                ),
+                agent_templates: {
+                    let mut reg = engine::agent_template::AgentTemplateRegistry::new();
+                    reg.load_custom_agents(&data_dir);
+                    Arc::new(std::sync::RwLock::new(reg))
+                },
+                prompt_registry: {
+                    let mut reg = engine::context::prompt_registry::PromptRegistry::new();
+                    reg.load_user_prompts(&data_dir);
+                    Arc::new(std::sync::RwLock::new(reg))
+                },
                 agent_spawner,
                 cancel_tokens: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             });
@@ -136,6 +144,16 @@ pub fn run() {
             api::commands::pause_task,
             api::commands::resume_task,
             api::commands::load_sidechain_history,
+            api::prompt_commands::prompt_list,
+            api::prompt_commands::prompt_get,
+            api::prompt_commands::prompt_preview,
+            api::prompt_commands::prompt_save,
+            api::prompt_commands::prompt_delete,
+            api::prompt_commands::custom_agent_save,
+            api::prompt_commands::custom_agent_delete,
+            api::tool_commands::tool_config_list,
+            api::tool_commands::tool_config_save,
+            api::tool_commands::tool_config_delete,
         ])
         .run(tauri::generate_context!())
         .expect("error while running xyz-agent");

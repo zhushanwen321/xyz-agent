@@ -62,30 +62,44 @@ fn extract_text(entries: &[TranscriptEntry]) -> String {
 #[async_trait]
 impl Tool for OrchestrateTool {
     fn name(&self) -> &str {
-        "orchestrate"
+        "Orchestrate"
     }
 
     fn description(&self) -> &str {
         "Launch a sub-agent to execute a task, with optional recursive decomposition into sub-tasks.\n\
          \n\
-         Usage:\n\
-         - agent_type='executor': performs the task directly using Bash/Read/Write. Use for well-defined, self-contained work.\n\
-         - agent_type='orchestrator': can recursively call orchestrate to break tasks into smaller sub-tasks. Use for complex, multi-step work.\n\
-         - Orchestration depth is limited to 5 levels. Beyond that, orchestrator auto-downgrades to executor.\n\
+         agent_type determines behavior and available tools:\n\
+         - 'orchestrator': breaks the task into sub-tasks by calling Orchestrate recursively.\n\
+           Available tools: Orchestrate, Communication, Read, Bash (no Write — orchestrators plan, not execute).\n\
+         - 'executor': performs the task directly using Read, Write, Bash.\n\
+           Available tools: Communication, Read, Write, Bash.\n\
+         - Depth is limited to 5 levels. Beyond that, orchestrator auto-downgrades to executor.\n\
          - sync=true (default): block until completion. sync=false: run in background.\n\
          \n\
-         When to use orchestrate vs dispatch_agent:\n\
-         - orchestrate: tasks that may need recursive decomposition (task → sub-tasks → sub-sub-tasks).\n\
-         - dispatch_agent: simple, independent tasks that don't need decomposition.\n\
+         When to use Orchestrate vs Subagent:\n\
+         - Orchestrate: tasks that need recursive decomposition (task → sub-tasks → sub-sub-tasks).\n\
+         - Subagent: simple, independent tasks that don't need decomposition.\n\
          \n\
          When NOT to use:\n\
          - If the task can be done with a single Bash/Read/Write call, do it directly.\n\
          - If the task is a simple lookup (read a file, search a pattern), use Read or Bash.\n\
-         - If the task is independent and doesn't need decomposition, use dispatch_agent.\n\
+         - If the task is independent and doesn't need decomposition, use Subagent.\n\
+         \n\
+         Writing the directive:\n\
+         - For orchestrator: describe the decomposition strategy. Break into 2-5 sub-tasks,\n\
+           each independently executable. Each sub-task's directive must be self-contained.\n\
+         - For executor: include file paths, function names, what you've already learned,\n\
+           and expected output format. The executor hasn't seen this conversation.\n\
+         - Terse directives produce shallow results. Be specific about scope and expectations.\n\
          \n\
          <example>\n\
          user: \"Refactor the authentication module\"\n\
-         assistant: orchestrate({\"task_description\": \"Refactor auth module\", \"agent_type\": \"orchestrator\", \"directive\": \"Break the auth module refactor into sub-tasks: 1) Extract token validation into a separate service, 2) Consolidate auth middleware, 3) Update integration tests. Execute each sub-task using orchestrate with agent_type='executor'.\"})\n\
+         assistant: Orchestrate({\"task_description\": \"Refactor auth module\", \"agent_type\": \"orchestrator\", \"directive\": \"Break the auth module refactor into sub-tasks: 1) Extract token validation into a separate service, 2) Consolidate auth middleware, 3) Update integration tests. Execute each sub-task using Orchestrate with agent_type='executor'.\"})\n\
+         </example>\n\
+         \n\
+         <example>\n\
+         user: \"Fix the failing tests in the login module\"\n\
+         assistant: Orchestrate({\"task_description\": \"Fix login tests\", \"agent_type\": \"executor\", \"directive\": \"Run cargo test and identify all failing tests in the login module. For each failure: read the test and source file, identify root cause, apply fix. Report which tests were fixed and any remaining failures.\"})\n\
          </example>"
     }
 
@@ -142,7 +156,7 @@ impl Tool for OrchestrateTool {
     ) -> ToolResult {
         let Some(ctx) = ctx else {
             return ToolResult::Error(
-                "orchestrate requires ToolExecutionContext".into(),
+                "Orchestrate requires ToolExecutionContext".into(),
             );
         };
 
@@ -212,7 +226,7 @@ impl Tool for OrchestrateTool {
             }
         }
 
-        let node_id = generate_task_id("orchestrate");
+        let node_id = generate_task_id("Orchestrate");
         let agent_id = target_agent_id
             .unwrap_or_else(|| format!("agent_{}", &node_id[3..11]));
 
@@ -258,8 +272,8 @@ impl Tool for OrchestrateTool {
         });
 
         let tool_filter: Vec<String> = match effective_type {
-            "orchestrator" => vec!["orchestrate", "feedback", "read", "bash"],
-            _ => vec!["feedback", "read", "write", "bash"],
+            "orchestrator" => vec!["Orchestrate", "Communication", "Read", "Bash"],
+            _ => vec!["Communication", "Read", "Write", "Bash"],
         }.into_iter().map(String::from).collect();
 
         let start = Instant::now();
@@ -278,6 +292,7 @@ impl Tool for OrchestrateTool {
             prompt: directive.clone(),
             history: vec![],
             system_prompt_override: None,
+            prompt_key: None,
             tool_filter: Some(tool_filter),
             budget: Some(budget),
             event_tx: sub_event_tx,
@@ -292,6 +307,7 @@ impl Tool for OrchestrateTool {
                 tool_names: ctx.tool_registry.tool_names(),
                 data_context_summary: None,
                 conversation_summary: None,
+                disabled_tools: vec![],
             },
             permission_context: PermissionContext::default(),
             session_id: ctx.session_id.clone(),

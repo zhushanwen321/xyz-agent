@@ -95,7 +95,7 @@ pub struct DispatchAgentTool;
 #[async_trait]
 impl Tool for DispatchAgentTool {
     fn name(&self) -> &str {
-        "dispatch_agent"
+        "Subagent"
     }
 
     fn description(&self) -> &str {
@@ -107,26 +107,37 @@ impl Tool for DispatchAgentTool {
          Usage:\n\
          - sync=true (default): block until the sub-agent finishes, return its output.\n\
          - sync=false: launch in background, continue immediately. Returns a task_id for tracking.\n\
-         - Multiple dispatch_agent calls can be made in parallel for independent tasks.\n\
+         - Multiple Subagent calls can be made in parallel for independent tasks.\n\
          \n\
          Mode:\n\
          - 'preset' (default): fresh agent with no conversation history.\n\
          - 'fork': clones current conversation context into the sub-agent.\n\
          \n\
-         When to use dispatch_agent vs orchestrate:\n\
-         - dispatch_agent: simple, independent tasks that do NOT need decomposition into sub-tasks.\n\
-         - orchestrate: complex tasks that may need recursive decomposition (task → sub-tasks → sub-sub-tasks).\n\
+         When to use Subagent vs Orchestrate:\n\
+         - Subagent: simple, independent tasks that do NOT need decomposition into sub-tasks.\n\
+         - Orchestrate: complex tasks that may need recursive decomposition (task → sub-tasks → sub-sub-tasks).\n\
          \n\
          When NOT to use:\n\
          - If the task can be done with a single Bash/Read/Write call, do it directly.\n\
-         - If the task needs recursive decomposition, use orchestrate instead.\n\
+         - If the task needs recursive decomposition, use Orchestrate instead.\n\
          - If you just need to read a known file, use Read. If you need to search, use Bash.\n\
+         \n\
+         Writing the prompt:\n\
+         Think of the sub-agent as a smart colleague who just walked into the room — it hasn't seen\n\
+         this conversation and doesn't know what you've tried. Include:\n\
+         - What you're trying to accomplish and why\n\
+         - What you've already learned or ruled out\n\
+         - Enough context to make judgment calls\n\
+         \n\
+         Terse command-style prompts produce shallow, generic work.\n\
+         Never delegate understanding — don't write 'based on your findings, fix the bug'.\n\
+         Write prompts that prove you understood: include file paths, line numbers, what specifically to change.\n\
          \n\
          <example>\n\
          user: \"Check the test results and also look at the lint output\"\n\
          assistant: Two independent checks — dispatch in parallel:\n\
-         dispatch_agent({\"description\": \"check test results\", \"prompt\": \"Run cargo test in src-tauri/ and summarize any failures with file and line numbers\", \"sync\": true})\n\
-         dispatch_agent({\"description\": \"check lint warnings\", \"prompt\": \"Run cargo clippy in src-tauri/ and list all warnings\", \"sync\": true})\n\
+         Subagent({\"description\": \"check test results\", \"prompt\": \"Run cargo test in src-tauri/ and summarize any failures with file and line numbers\", \"sync\": true})\n\
+         Subagent({\"description\": \"check lint warnings\", \"prompt\": \"Run cargo clippy in src-tauri/ and list all warnings\", \"sync\": true})\n\
          </example>"
     }
 
@@ -179,7 +190,7 @@ impl Tool for DispatchAgentTool {
 
     async fn call(&self, input: serde_json::Value, ctx: Option<&ToolExecutionContext>) -> ToolResult {
         let Some(ctx) = ctx else {
-            return ToolResult::Error("dispatch_agent requires ToolExecutionContext".into());
+            return ToolResult::Error("Subagent requires ToolExecutionContext".into());
         };
 
         let description = match input["description"].as_str() {
@@ -208,25 +219,31 @@ impl Tool for DispatchAgentTool {
             .to_string();
         let is_sync = input["sync"].as_bool().unwrap_or(true);
 
-        // 查找模板
-        let template = match ctx.agent_templates.get(&subagent_type) {
-            Some(t) => Some(t),
-            None if subagent_type.is_empty() => {
-                ctx.agent_templates.get("general-purpose")
-            }
-            None => {
-                return ToolResult::Error(format!("template '{}' not found", subagent_type));
-            }
+        // 查找模板并提前 clone 所需字段，避免长时间持有 RwLock 读锁
+        let (default_budget, tool_filter, prompt_key) = {
+            let reg = ctx.agent_templates.read().unwrap();
+            let template = match reg.get(&subagent_type) {
+                Some(t) => Some(t),
+                None if subagent_type.is_empty() => {
+                    reg.get("general-purpose")
+                }
+                None => {
+                    return ToolResult::Error(format!("template '{}' not found", subagent_type));
+                }
+            };
+            let budget = template
+                .map(|t| t.default_budget.clone())
+                .unwrap_or(TaskBudget {
+                    max_tokens: 50_000,
+                    max_turns: 20,
+                    max_tool_calls: 100,
+                });
+            let tools = template.map(|t| t.tools.clone());
+            let key = template.map(|t| t.system_prompt_key.clone());
+            (budget, tools, key)
         };
 
         // 构建预算：用户指定优先，否则使用模板默认值
-        let default_budget = template
-            .map(|t| t.default_budget.clone())
-            .unwrap_or(TaskBudget {
-                max_tokens: 50_000,
-                max_turns: 20,
-                max_tool_calls: 100,
-            });
         let budget = TaskBudget {
             max_tokens: input["token_budget"]
                 .as_u64()
@@ -237,7 +254,7 @@ impl Tool for DispatchAgentTool {
             max_tool_calls: default_budget.max_tool_calls,
         };
 
-        let task_id = generate_task_id("dispatch_agent");
+        let task_id = generate_task_id("Subagent");
         let start = Instant::now();
 
         // B2: 在 TaskTree 中注册 TaskNode，使后续 set_task_result/completed_not_injected 能找到
@@ -271,7 +288,7 @@ impl Tool for DispatchAgentTool {
         let tool_use_id = ctx.current_assistant_content.iter().rev()
             .find_map(|block| {
                 if let crate::types::transcript::AssistantContentBlock::ToolUse { id, name, .. } = block {
-                    if name == "dispatch_agent" { return Some(id.clone()) }
+                    if name == "Subagent" { return Some(id.clone()) }
                 }
                 None
             });
@@ -289,7 +306,6 @@ impl Tool for DispatchAgentTool {
         });
 
         // 构建 SpawnConfig
-        let tool_filter = template.map(|t| t.tools.clone());
         // 子 Agent 事件通过父 channel 转发，携带 source_task_id 标识
         let parent_tx = ctx.event_tx.clone();
         let task_id_for_forward = task_id.clone();
@@ -303,6 +319,7 @@ impl Tool for DispatchAgentTool {
             prompt: prompt.clone(),
             history: vec![],
             system_prompt_override: None,
+            prompt_key,
             tool_filter,
             budget: Some(budget),
             event_tx: sub_event_tx,
@@ -320,6 +337,7 @@ impl Tool for DispatchAgentTool {
                 tool_names: ctx.tool_registry.tool_names(),
                 data_context_summary: None,
                 conversation_summary: None,
+                disabled_tools: vec![],
             },
             permission_context: PermissionContext::default(),
             session_id: ctx.session_id.clone(),

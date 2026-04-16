@@ -14,6 +14,11 @@
 - UI 组件库：shadcn-vue + reka-ui
 - 样式：Tailwind CSS
 
+## 响应性
+
+- `ref<Array>` 内部对象的属性修改（如 `arr[i].text += delta`）不会触发 computed/watch 重算
+- 修改内部属性后必须重新赋值数组引用触发更新：`arr.value = [...arr.value]`
+
 ## Tauri 通信
 
 - `src/lib/tauri.ts` 是唯一的 invoke/listen 封装层

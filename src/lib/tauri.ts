@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import type { AgentEvent, ConfigResponse, LoadHistoryResult, SessionInfo, TranscriptEntry, UpdateConfigRequest } from '../types'
+import type { AgentEvent, ConfigResponse, CustomAgentInput, LoadHistoryResult, PromptInfo, PromptSaveInput, SessionInfo, ToolConfigSaveInput, ToolInfo, TranscriptEntry, UpdateConfigRequest } from '../types'
 
 export type { LoadHistoryResult }
 
@@ -90,4 +90,48 @@ export async function loadSidechainHistory(
   sidechainType: string,
 ): Promise<TranscriptEntry[]> {
   return invoke<TranscriptEntry[]>('load_sidechain_history', { sessionId, sidechainId, sidechainType })
+}
+
+// ── Prompt 管理 API ──────────────────────────────────────
+
+export async function promptList(): Promise<PromptInfo[]> {
+  return invoke<PromptInfo[]>('prompt_list')
+}
+
+export async function promptGet(key: string): Promise<string> {
+  return invoke<string>('prompt_get', { key })
+}
+
+export async function promptPreview(key: string): Promise<string> {
+  return invoke<string>('prompt_preview', { key })
+}
+
+export async function promptSave(payload: PromptSaveInput): Promise<void> {
+  return invoke<void>('prompt_save', { payload })
+}
+
+export async function promptDelete(key: string): Promise<void> {
+  return invoke<void>('prompt_delete', { key })
+}
+
+export async function customAgentSave(payload: CustomAgentInput): Promise<void> {
+  return invoke<void>('custom_agent_save', { payload })
+}
+
+export async function customAgentDelete(name: string): Promise<void> {
+  return invoke<void>('custom_agent_delete', { name })
+}
+
+// ── Tool 配置管理 API ──────────────────────────────────────
+
+export async function toolConfigList(): Promise<ToolInfo[]> {
+  return invoke<ToolInfo[]>('tool_config_list')
+}
+
+export async function toolConfigSave(payload: ToolConfigSaveInput): Promise<void> {
+  return invoke<void>('tool_config_save', { payload })
+}
+
+export async function toolConfigDelete(name: string): Promise<void> {
+  return invoke<void>('tool_config_delete', { name })
 }
