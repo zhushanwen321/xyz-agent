@@ -1,107 +1,56 @@
-@import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
 /* ─── Design Token: Retro-Terminal × Modern IDE ─── */
 
-@theme {
-  /* 字体栈 */
-  --font-sans: 'Inter', 'SF Pro Text', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
+@layer base {
+  :root {
+    /* shadcn-vue CSS 变量 — 被 tailwind.config.js 引用 */
+    --background: #111113;
+    --foreground: #fafafa;
+    --card: #18181b;
+    --card-foreground: #fafafa;
+    --popover: #18181b;
+    --popover-foreground: #fafafa;
+    --primary: #22c55e;
+    --primary-foreground: #0a0a0b;
+    --secondary: #1f1f23;
+    --secondary-foreground: #fafafa;
+    --muted: #1f1f23;
+    --muted-foreground: #a1a1aa;
+    --accent: rgba(34,197,94,0.15);
+    --accent-foreground: #fafafa;
+    --destructive: #ef4444;
+    --destructive-foreground: #fafafa;
+    --input: #27272a;
+    --ring: #22c55e;
+    --radius: 0.375rem;
 
-  /* 基底色 — 三层深度 */
-  --color-bg-base: #0a0a0b;
-  --color-bg-surface: #111113;
-  --color-bg-elevated: #18181b;
-  --color-bg-inset: #1f1f23;
-
-  /* 消息角色背景 */
-  --color-bg-ai: #131517;
-  --color-bg-user: #1c1a14;
-
-  /* 边框 */
-  --color-border-default: #27272a;
-  --color-border-hover: #3f3f46;
-
-  /* 文本 */
-  --color-text-primary: #fafafa;
-  --color-text-secondary: #a1a1aa;
-  --color-text-tertiary: #71717a;
-  --color-text-inverse: #0a0a0b;
-
-  /* 功能色 */
-  --color-accent: #22c55e;
-  --color-accent-hover: #16a34a;
-  --color-accent-muted: rgba(34, 197, 94, 0.15);
-  --color-accent-blue: #3b82f6;
-  --color-accent-yellow: #eab308;
-  --color-accent-red: #ef4444;
-
-  /* shadcn-vue HSL 变量覆盖 */
-  --color-background: var(--color-bg-surface);
-  --color-foreground: var(--color-text-primary);
-
-  --color-card: var(--color-bg-elevated);
-  --color-card-foreground: var(--color-text-primary);
-
-  --color-popover: var(--color-bg-elevated);
-  --color-popover-foreground: var(--color-text-primary);
-
-  --color-primary: var(--color-accent);
-  --color-primary-foreground: var(--color-text-inverse);
-
-  --color-secondary: var(--color-bg-inset);
-  --color-secondary-foreground: var(--color-text-primary);
-
-  --color-muted: var(--color-bg-inset);
-  --color-muted-foreground: var(--color-text-secondary);
-
-  --color-accent-cn: var(--color-accent-muted);
-  --color-accent-foreground: var(--color-text-primary);
-
-  --color-destructive: var(--color-accent-red);
-  --color-destructive-foreground: var(--color-text-primary);
-
-  --color-input: var(--color-border-default);
-  --color-ring: var(--color-accent);
-
-  --radius-sm: 0.25rem;
-  --radius-md: 0.375rem;
-  --radius-lg: 0.5rem;
-
-  /* 排版 — 紧凑模式 */
-  --font-size-message: 0.8125rem;
-  --font-size-code: 0.75rem;
-  --font-size-label: 0.625rem;
-  --line-height-message: 1.5;
+    /* 排版 */
+    --font-size-message: 0.8125rem;
+    --font-size-code: 0.75rem;
+    --font-size-label: 0.625rem;
+    --line-height-message: 1.5;
+  }
 }
 
 /* ─── 全局样式 ─── */
 
 body {
   font-family: var(--font-sans);
-  background-color: var(--color-bg-surface);
-  color: var(--color-text-primary);
+  background-color: bg-surface;
+  color: text-foreground;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
 /* 自定义滚动条 — 终端风格细滚动条 */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: var(--color-border-default);
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-border-hover);
-}
-::-webkit-scrollbar-corner {
-  background: transparent;
-}
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #27272a; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #3f3f46; }
+::-webkit-scrollbar-corner { background: transparent; }
 
 /* ─── 动画 ─── */
 
@@ -133,9 +82,9 @@ body {
 }
 
 .prose pre {
-  background-color: var(--color-bg-inset);
-  border: 1px solid var(--color-border-default);
-  border-radius: var(--radius-md);
+  background-color: #1f1f23;
+  border: 1px solid #27272a;
+  border-radius: 0.375rem;
   padding: 0.5rem 0.75rem;
   overflow-x: auto;
   font-family: var(--font-mono);
@@ -145,9 +94,9 @@ body {
 .prose code {
   font-family: var(--font-mono);
   font-size: var(--font-size-code);
-  background-color: var(--color-bg-inset);
+  background-color: #1f1f23;
   padding: 0.125rem 0.375rem;
-  border-radius: var(--radius-sm);
+  border-radius: 0.25rem;
 }
 
 .prose pre code {
@@ -156,20 +105,20 @@ body {
 }
 
 .prose a {
-  color: var(--color-accent);
+  color: #22c55e;
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 
 .prose a:hover {
-  color: var(--color-accent-hover);
+  color: #16a34a;
 }
 
 .prose blockquote {
-  border-left: 3px solid var(--color-accent);
-  background: var(--color-accent-muted);
+  border-left: 3px solid #22c55e;
+  background: rgba(34,197,94,0.15);
   padding: 0.375rem 0.75rem;
-  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  border-radius: 0 0.375rem 0.375rem 0;
 }
 
 .prose table {
@@ -178,10 +127,10 @@ body {
 
 .prose th,
 .prose td {
-  border: 1px solid var(--color-border-default);
+  border: 1px solid #27272a;
   padding: 0.25rem 0.5rem;
 }
 
 .prose th {
-  background: var(--color-bg-inset);
+  background: #1f1f23;
 }
