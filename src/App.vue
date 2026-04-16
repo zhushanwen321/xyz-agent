@@ -1,14 +1,34 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import Sidebar from './components/Sidebar.vue'
 import Topbar from './components/Topbar.vue'
 import ChatView from './components/ChatView.vue'
 import SettingsView from './components/SettingsView.vue'
 import { useSession } from './composables/useSession'
+import { checkApiKey } from './lib/tauri'
 
 const { currentSessionId } = useSession()
 const sidebarCollapsed = ref(false)
 const currentPage = ref<'chat' | 'settings'>('chat')
+const apiKeyMissing = ref(false)
+
+onMounted(async () => {
+  try {
+    const configured = await checkApiKey()
+    if (!configured) {
+      apiKeyMissing.value = true
+      currentPage.value = 'settings'
+    }
+  } catch {
+    apiKeyMissing.value = true
+    currentPage.value = 'settings'
+  }
+})
+
+function onConfigApplied() {
+  apiKeyMissing.value = false
+  currentPage.value = 'chat'
+}
 </script>
 
 <template>
@@ -22,7 +42,11 @@ const currentPage = ref<'chat' | 'settings'>('chat')
     <div class="flex flex-1 overflow-hidden">
       <Sidebar :collapsed="sidebarCollapsed" />
       <ChatView v-if="currentPage === 'chat'" :current-session-id="currentSessionId" />
-      <SettingsView v-else />
+      <SettingsView
+        v-else
+        :api-key-missing="apiKeyMissing"
+        @config-applied="onConfigApplied"
+      />
     </div>
   </div>
 </template>
