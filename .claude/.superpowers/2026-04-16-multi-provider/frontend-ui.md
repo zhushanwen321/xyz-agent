@@ -36,6 +36,27 @@ Provider 名称
 - 可选 tier（"reasoning"）— 运行时取该 tier 下第一个可用模型
 - 可选"跟随全局"（默认行为）
 
+## ConfigResponse 类型变更
+
+旧 `ConfigResponse`（扁平字段）替换为新结构：
+
+```typescript
+interface ConfigResponse {
+  // 移除旧字段：anthropic_api_key, llm_model, anthropic_base_url
+  providers: ProviderConfig[]
+  defaultModel: string
+  currentModel: string
+  // AgentConfig 字段保留
+  maxTurns: number
+  contextWindow: number
+  maxOutputTokens: number
+  toolOutputMaxBytes: number
+  bashDefaultTimeoutSecs: number
+  thinkingEnabled: boolean
+  thinkingBudgetTokens: number
+}
+```
+
 ## Tauri 通信
 
 ### 新增 composable: useModelManager

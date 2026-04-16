@@ -53,4 +53,4 @@ tier = "balanced"
 | Provider 的 API Key 无效 | 首次使用时校验，UI 提示 |
 | 切换到已删除的模型 | 回退到 default_model |
 | config.toml 损坏 | 保留旧配置，用默认值启动 |
-| provider name 重复 | 后写入的覆盖先写入的 |
+| provider name 重复 | 保存时校验，返回错误拒绝保存（`AppError::Config`），前端提示用户换名 |
