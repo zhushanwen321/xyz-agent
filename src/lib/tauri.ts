@@ -54,6 +54,20 @@ export async function updateConfig(payload: UpdateConfigRequest): Promise<void> 
   return invoke<void>('update_config', { payload })
 }
 
+export async function checkApiKey(): Promise<boolean> {
+  return invoke<boolean>('check_api_key')
+}
+
+export interface ApplyLlmConfigPayload {
+  apiKey: string
+  baseUrl: string
+  model: string
+}
+
+export async function applyLlmConfig(payload: ApplyLlmConfigPayload): Promise<void> {
+  return invoke<void>('apply_llm_config', { payload })
+}
+
 export async function killTask(taskId: string): Promise<void> {
   return invoke<void>('kill_task', { taskId })
 }

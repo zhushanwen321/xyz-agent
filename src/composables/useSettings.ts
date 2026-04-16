@@ -1,5 +1,6 @@
 import { ref } from 'vue'
-import { getConfig, updateConfig, isTauri } from '../lib/tauri'
+import { getConfig, updateConfig, checkApiKey, applyLlmConfig, isTauri } from '../lib/tauri'
+import type { ApplyLlmConfigPayload } from '../lib/tauri'
 import type { ConfigResponse, UpdateConfigRequest } from '../types'
 
 export function useSettings() {
@@ -8,6 +9,7 @@ export function useSettings() {
   const saving = ref(false)
   const error = ref<string | null>(null)
   const success = ref(false)
+  const apiKeyConfigured = ref<boolean | null>(null)
 
   async function load() {
     if (!isTauri()) return
@@ -48,5 +50,29 @@ export function useSettings() {
     }
   }
 
-  return { config, loading, saving, error, success, load, save }
+  async function checkKey(): Promise<boolean> {
+    if (!isTauri()) return false
+    try {
+      const result = await checkApiKey()
+      apiKeyConfigured.value = result
+      return result
+    } catch {
+      apiKeyConfigured.value = false
+      return false
+    }
+  }
+
+  async function applyLlm(payload: ApplyLlmConfigPayload): Promise<boolean> {
+    if (!isTauri()) return false
+    try {
+      await applyLlmConfig(payload)
+      apiKeyConfigured.value = true
+      return true
+    } catch (e) {
+      error.value = String(e)
+      return false
+    }
+  }
+
+  return { config, loading, saving, error, success, apiKeyConfigured, load, save, checkKey, applyLlm }
 }
