@@ -140,11 +140,36 @@ export interface LoadHistoryResult {
   }>
 }
 
-// 与 Rust AgentConfig 对应
+// ── Multi-Provider 模型管理 ──────────────────────────────
+
+export type ModelTier = 'balanced' | 'reasoning' | 'fast'
+
+export interface ModelEntry {
+  id: string
+  alias: string | null
+  tier: ModelTier
+}
+
+export interface ProviderConfig {
+  name: string
+  api_key: string
+  base_url: string
+  models: ModelEntry[]
+}
+
+export interface ModelInfo {
+  provider_name: string
+  model_id: string
+  alias: string | null
+  tier: ModelTier
+  model_ref: string // "provider/modelId"
+}
+
+// 与 Rust ConfigResponse 对应
 export interface ConfigResponse {
-  anthropic_api_key: string
-  llm_model: string
-  anthropic_base_url: string
+  providers: ProviderConfig[]
+  default_model: string
+  current_model: string
   max_turns: number
   context_window: number
   max_output_tokens: number
@@ -154,7 +179,15 @@ export interface ConfigResponse {
   thinking_budget_tokens: number
 }
 
-export type UpdateConfigRequest = ConfigResponse
+export interface UpdateConfigRequest {
+  max_turns: number
+  context_window: number
+  max_output_tokens: number
+  tool_output_max_bytes: number
+  bash_default_timeout_secs: number
+  thinking_enabled: boolean
+  thinking_budget_tokens: number
+}
 
 // Tab 状态
 export type TabStatus = 'completed' | 'thinking' | 'streaming' | 'tool' | 'failed' | 'idle'

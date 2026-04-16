@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import type { AgentEvent, ConfigResponse, CustomAgentInput, LoadHistoryResult, PromptInfo, PromptSaveInput, SessionInfo, ToolConfigSaveInput, ToolInfo, TranscriptEntry, UpdateConfigRequest } from '../types'
+import type { AgentEvent, ConfigResponse, CustomAgentInput, LoadHistoryResult, ModelInfo, PromptInfo, ProviderConfig, PromptSaveInput, SessionInfo, ToolConfigSaveInput, ToolInfo, TranscriptEntry, UpdateConfigRequest } from '../types'
 
 export type { LoadHistoryResult }
 
@@ -58,14 +58,22 @@ export async function checkApiKey(): Promise<boolean> {
   return invoke<boolean>('check_api_key')
 }
 
-export interface ApplyLlmConfigPayload {
-  apiKey: string
-  baseUrl: string
-  model: string
+// ── Multi-Provider API ──────────────────────────────────
+
+export async function listModels(): Promise<ModelInfo[]> {
+  return invoke<ModelInfo[]>('list_models')
 }
 
-export async function applyLlmConfig(payload: ApplyLlmConfigPayload): Promise<void> {
-  return invoke<void>('apply_llm_config', { payload })
+export async function setCurrentModel(modelRef: string): Promise<void> {
+  return invoke<void>('set_current_model', { payload: { modelRef } })
+}
+
+export async function saveProvider(config: ProviderConfig): Promise<void> {
+  return invoke<void>('save_provider', { payload: config })
+}
+
+export async function deleteProvider(name: string): Promise<void> {
+  return invoke<void>('delete_provider', { name })
 }
 
 export async function killTask(taskId: string): Promise<void> {
