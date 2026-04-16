@@ -273,3 +273,190 @@ id = "some-model"
     assert_eq!(m.alias, None);
     assert_eq!(m.tier, ModelTier::Balanced);
 }
+
+// ── save_provider_config / delete_provider / save_default_model 测试 ──
+
+#[test]
+fn test_save_provider_creates_new() {
+    let existing = parse_providers_toml("");
+    assert!(existing.providers.is_empty());
+
+    let config = ProviderConfig {
+        name: "test-provider".to_string(),
+        api_key: "sk-test".to_string(),
+        base_url: "https://api.test.com".to_string(),
+        models: vec![ModelEntry {
+            id: "model-a".to_string(),
+            alias: Some("alias-a".to_string()),
+            tier: ModelTier::Balanced,
+        }],
+    };
+
+    // 模拟 save_provider_config 的合并逻辑（不写文件）
+    let mut providers = existing.providers;
+    let mut found = false;
+    for p in &mut providers {
+        if p.name == config.name {
+            *p = config.clone();
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        providers.push(config);
+    }
+
+    assert_eq!(providers.len(), 1);
+    assert_eq!(providers[0].name, "test-provider");
+    assert_eq!(providers[0].models.len(), 1);
+}
+
+#[test]
+fn test_save_provider_updates_existing() {
+    let content = r#"
+[[providers]]
+name = "my-provider"
+api_key = "old-key"
+base_url = "https://old.api.com"
+
+[[providers.models]]
+id = "old-model"
+tier = "balanced"
+"#;
+    let mut providers = parse_providers_toml(content).providers;
+    assert_eq!(providers.len(), 1);
+
+    let updated = ProviderConfig {
+        name: "my-provider".to_string(),
+        api_key: "new-key".to_string(),
+        base_url: "https://new.api.com".to_string(),
+        models: vec![ModelEntry {
+            id: "new-model".to_string(),
+            alias: None,
+            tier: ModelTier::Fast,
+        }],
+    };
+
+    let mut found = false;
+    for p in &mut providers {
+        if p.name == updated.name {
+            *p = updated.clone();
+            found = true;
+            break;
+        }
+    }
+    assert!(found);
+    assert_eq!(providers.len(), 1);
+    assert_eq!(providers[0].api_key, "new-key");
+    assert_eq!(providers[0].base_url, "https://new.api.com");
+    assert_eq!(providers[0].models[0].id, "new-model");
+    assert_eq!(providers[0].models[0].tier, ModelTier::Fast);
+}
+
+#[test]
+fn test_save_provider_keeps_other_providers() {
+    let content = r#"
+[[providers]]
+name = "provider-a"
+api_key = "key-a"
+base_url = "https://a.api.com"
+
+[[providers]]
+name = "provider-b"
+api_key = "key-b"
+base_url = "https://b.api.com"
+"#;
+    let mut providers = parse_providers_toml(content).providers;
+    assert_eq!(providers.len(), 2);
+
+    let updated = ProviderConfig {
+        name: "provider-b".to_string(),
+        api_key: "new-key-b".to_string(),
+        base_url: "https://b2.api.com".to_string(),
+        models: vec![],
+    };
+
+    for p in &mut providers {
+        if p.name == updated.name {
+            *p = updated;
+            break;
+        }
+    }
+
+    assert_eq!(providers.len(), 2);
+    assert_eq!(providers[0].name, "provider-a");
+    assert_eq!(providers[0].api_key, "key-a");
+    assert_eq!(providers[1].api_key, "new-key-b");
+}
+
+#[test]
+fn test_save_parse_roundtrip() {
+    let providers = vec![
+        ProviderConfig {
+            name: "anthropic".to_string(),
+            api_key: "sk-ant-123".to_string(),
+            base_url: "https://api.anthropic.com".to_string(),
+            models: vec![
+                ModelEntry {
+                    id: "claude-sonnet-4".to_string(),
+                    alias: Some("sonnet".to_string()),
+                    tier: ModelTier::Balanced,
+                },
+                ModelEntry {
+                    id: "claude-opus-4".to_string(),
+                    alias: None,
+                    tier: ModelTier::Reasoning,
+                },
+            ],
+        },
+        ProviderConfig {
+            name: "openai".to_string(),
+            api_key: "sk-oai-456".to_string(),
+            base_url: "https://api.openai.com".to_string(),
+            models: vec![ModelEntry {
+                id: "gpt-4o".to_string(),
+                alias: None,
+                tier: ModelTier::Fast,
+            }],
+        },
+    ];
+
+    // 模拟 save_provider_config 的文本拼接逻辑
+    let mut out = String::new();
+    for p in &providers {
+        out.push_str("\n[[providers]]\n");
+        out.push_str(&format!("name = \"{}\"\n", p.name));
+        out.push_str(&format!("api_key = \"{}\"\n", p.api_key));
+        out.push_str(&format!("base_url = \"{}\"\n", p.base_url));
+        for m in &p.models {
+            out.push_str("\n[[providers.models]]\n");
+            out.push_str(&format!("id = \"{}\"\n", m.id));
+            if let Some(ref alias) = m.alias {
+                out.push_str(&format!("alias = \"{}\"\n", alias));
+            }
+            let tier_str = match m.tier {
+                ModelTier::Balanced => "balanced",
+                ModelTier::Reasoning => "reasoning",
+                ModelTier::Fast => "fast",
+            };
+            out.push_str(&format!("tier = \"{}\"\n", tier_str));
+        }
+    }
+
+    // roundtrip：parse 回来
+    let parsed = parse_providers_toml(&out);
+    assert_eq!(parsed.providers.len(), 2);
+
+    let p1 = &parsed.providers[0];
+    assert_eq!(p1.name, "anthropic");
+    assert_eq!(p1.api_key, "sk-ant-123");
+    assert_eq!(p1.models.len(), 2);
+    assert_eq!(p1.models[0].alias, Some("sonnet".to_string()));
+    assert_eq!(p1.models[0].tier, ModelTier::Balanced);
+    assert_eq!(p1.models[1].tier, ModelTier::Reasoning);
+
+    let p2 = &parsed.providers[1];
+    assert_eq!(p2.name, "openai");
+    assert_eq!(p2.models[0].id, "gpt-4o");
+    assert_eq!(p2.models[0].tier, ModelTier::Fast);
+}

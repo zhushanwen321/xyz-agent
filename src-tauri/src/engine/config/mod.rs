@@ -1,6 +1,17 @@
 use crate::engine::llm::types::{ModelEntry, ModelTier, ProviderConfig};
 use crate::types::AppError;
 
+const CONFIG_DIR: &str = ".xyz-agent";
+const CONFIG_FILE: &str = "config.toml";
+const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
+const DEFAULT_MODEL: &str = "claude-sonnet-4-20250514";
+
+fn config_path() -> Result<std::path::PathBuf, AppError> {
+    dirs::home_dir()
+        .ok_or_else(|| AppError::Config("cannot determine home directory".to_string()))
+        .map(|p| p.join(CONFIG_DIR).join(CONFIG_FILE))
+}
+
 /// Agent 全局配置，从 ~/.xyz-agent/config.toml 读取，缺失字段使用默认值
 pub struct AgentConfig {
     // AgentLoop
@@ -48,10 +59,7 @@ impl Default for AgentConfig {
 /// 从 ~/.xyz-agent/config.toml 加载配置
 /// 文件不存在时返回默认配置；解析失败的字段静默保留默认值
 pub fn load_agent_config() -> Result<AgentConfig, AppError> {
-    let config_path = dirs::home_dir()
-        .ok_or(AppError::Config("no home dir".into()))?
-        .join(".xyz-agent")
-        .join("config.toml");
+    let config_path = config_path()?;
 
     if !config_path.exists() {
         return Ok(AgentConfig::default());
@@ -120,11 +128,11 @@ pub fn load_llm_config() -> Option<LlmConfig> {
 
     let base_url = std::env::var("ANTHROPIC_BASE_URL")
         .or_else(|_| read_config_value("anthropic_base_url"))
-        .unwrap_or_else(|_| "https://api.anthropic.com".to_string());
+        .unwrap_or_else(|_| DEFAULT_BASE_URL.to_string());
 
     let model = std::env::var("LLM_MODEL")
         .or_else(|_| read_config_value("llm_model"))
-        .unwrap_or_else(|_| "claude-sonnet-4-20250514".to_string());
+        .unwrap_or_else(|_| DEFAULT_MODEL.to_string());
 
     Some(LlmConfig {
         api_key,
@@ -135,10 +143,7 @@ pub fn load_llm_config() -> Option<LlmConfig> {
 
 /// 用 toml_edit 读取指定 key 的字符串值，与 save_config 使用同一解析库
 fn read_config_value(key: &str) -> Result<String, ()> {
-    let config_path = dirs::home_dir()
-        .ok_or(())?
-        .join(".xyz-agent")
-        .join("config.toml");
+    let config_path = config_path().map_err(|_| ())?;
     if !config_path.exists() {
         return Err(());
     }
@@ -163,10 +168,7 @@ pub fn save_config(
     thinking_enabled: bool,
     thinking_budget_tokens: u32,
 ) -> Result<(), AppError> {
-    let config_path = dirs::home_dir()
-        .ok_or(AppError::Config("no home dir".into()))?
-        .join(".xyz-agent")
-        .join("config.toml");
+    let config_path = config_path()?;
 
     let mut doc = if config_path.exists() {
         let content = std::fs::read_to_string(&config_path)
@@ -230,7 +232,7 @@ fn parse_providers_toml(content: &str) -> ProvidersConfig {
                 .to_string();
             let base_url = table.get("base_url")
                 .and_then(|v| v.as_str())
-                .unwrap_or("https://api.anthropic.com")
+                .unwrap_or(DEFAULT_BASE_URL)
                 .to_string();
 
             let mut models = Vec::new();
@@ -278,11 +280,11 @@ fn migrate_if_needed(content: &str) -> ProvidersConfig {
     };
     let base_url = doc.get("anthropic_base_url")
         .and_then(|v| v.as_str())
-        .unwrap_or("https://api.anthropic.com")
+        .unwrap_or(DEFAULT_BASE_URL)
         .to_string();
     let model = doc.get("llm_model")
         .and_then(|v| v.as_str())
-        .unwrap_or("claude-sonnet-4-20250514")
+        .unwrap_or(DEFAULT_MODEL)
         .to_string();
 
     let default_model = format!("default/{model}");
@@ -303,10 +305,7 @@ fn migrate_if_needed(content: &str) -> ProvidersConfig {
 
 /// 加载 providers 配置：[[providers]] > 旧格式 > 环境变量
 pub fn load_providers() -> ProvidersConfig {
-    let config_path = dirs::home_dir()
-        .ok_or(())
-        .map(|h| h.join(".xyz-agent").join("config.toml"))
-        .ok();
+    let config_path = config_path().ok();
 
     let content = config_path
         .and_then(|p| if p.exists() { std::fs::read_to_string(p).ok() } else { None });
@@ -329,9 +328,9 @@ pub fn load_providers() -> ProvidersConfig {
             match api_key {
                 Some(key) => {
                     let base_url = std::env::var("ANTHROPIC_BASE_URL")
-                        .unwrap_or_else(|_| "https://api.anthropic.com".to_string());
+                        .unwrap_or_else(|_| DEFAULT_BASE_URL.to_string());
                     let model = std::env::var("LLM_MODEL")
-                        .unwrap_or_else(|_| "claude-sonnet-4-20250514".to_string());
+                        .unwrap_or_else(|_| DEFAULT_MODEL.to_string());
                     ProvidersConfig {
                         providers: vec![ProviderConfig {
                             name: "env".to_string(),
@@ -357,10 +356,7 @@ pub fn load_providers() -> ProvidersConfig {
 /// 策略：解析现有 providers → 内存中合并 → 移除旧 providers 部分 → 文本拼接新 providers
 /// 避免 toml_edit 对嵌套 [[providers.models]] 的 API 限制
 pub fn save_provider_config(new_config: &ProviderConfig, _agent_config: &AgentConfig) -> Result<(), AppError> {
-    let config_path = dirs::home_dir()
-        .ok_or(AppError::Config("no home dir".into()))?
-        .join(".xyz-agent")
-        .join("config.toml");
+    let config_path = config_path()?;
 
     if let Some(parent) = config_path.parent() {
         std::fs::create_dir_all(parent)
@@ -424,10 +420,7 @@ pub fn save_provider_config(new_config: &ProviderConfig, _agent_config: &AgentCo
 
 /// 删除指定 Provider
 pub fn delete_provider(provider_name: &str) -> Result<(), AppError> {
-    let config_path = dirs::home_dir()
-        .ok_or(AppError::Config("no home dir".into()))?
-        .join(".xyz-agent")
-        .join("config.toml");
+    let config_path = config_path()?;
 
     if !config_path.exists() {
         return Err(AppError::Config("config.toml not found".into()));
@@ -459,10 +452,7 @@ pub fn delete_provider(provider_name: &str) -> Result<(), AppError> {
 
 /// 更新 default_model 字段
 pub fn save_default_model(model_ref: &str) -> Result<(), AppError> {
-    let config_path = dirs::home_dir()
-        .ok_or(AppError::Config("no home dir".into()))?
-        .join(".xyz-agent")
-        .join("config.toml");
+    let config_path = config_path()?;
 
     let mut doc = if config_path.exists() {
         let content = std::fs::read_to_string(&config_path)

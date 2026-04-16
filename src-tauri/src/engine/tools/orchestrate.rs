@@ -1,9 +1,9 @@
 use crate::engine::agent_spawner::SpawnConfig;
-use crate::engine::context::prompt::DynamicContext;
 use crate::engine::task_tree::*;
 use crate::engine::tools::{PermissionContext, Tool, ToolExecutionContext, ToolResult};
+use crate::engine::tools::utils::{extract_assistant_text, build_tool_dynamic_context};
 use crate::types::event::*;
-use crate::types::transcript::{AssistantContentBlock, TranscriptEntry};
+use crate::types::transcript::TranscriptEntry;
 use async_trait::async_trait;
 use std::time::Instant;
 
@@ -39,24 +39,6 @@ fn send_completed_event(
             duration_ms,
         },
     });
-}
-
-fn extract_text(entries: &[TranscriptEntry]) -> String {
-    entries.iter()
-        .filter_map(|e| match e {
-            TranscriptEntry::Assistant { content, .. } => Some(
-                content.iter()
-                    .filter_map(|b| match b {
-                        AssistantContentBlock::Text { text } => Some(text.as_str()),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            ),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 #[async_trait]
@@ -299,16 +281,7 @@ impl Tool for OrchestrateTool {
             sync: is_sync,
             fork_api_messages: None,
             fork_assistant_content: None,
-            dynamic_context: DynamicContext {
-                cwd: std::env::current_dir().unwrap_or_default().to_string_lossy().to_string(),
-                os: std::env::consts::OS.to_string(),
-                model: String::new(),
-                git_branch: None,
-                tool_names: ctx.tool_registry.tool_names(),
-                data_context_summary: None,
-                conversation_summary: None,
-                disabled_tools: vec![],
-            },
+            dynamic_context: build_tool_dynamic_context(ctx.tool_registry.tool_names()),
             permission_context: PermissionContext::default(),
             session_id: ctx.session_id.clone(),
             task_id: node_id.clone(),
@@ -355,7 +328,7 @@ impl Tool for OrchestrateTool {
                 }
             }
 
-            let result_text = extract_text(&result.entries);
+            let result_text = extract_assistant_text(&result.entries);
             let elapsed = start.elapsed().as_millis() as u64;
             let summary: String = result_text.chars().take(2000).collect();
             send_completed_event(
@@ -397,7 +370,7 @@ impl Tool for OrchestrateTool {
                             }
                         }
                     }
-                    let text = extract_text(&r.entries);
+                    let text = extract_assistant_text(&r.entries);
                     let summary: String = text.chars().take(2000).collect();
                     let _ = event_tx_bg.send(AgentEvent::OrchestrateNodeCompleted {
                         session_id: session_id_bg.clone(),

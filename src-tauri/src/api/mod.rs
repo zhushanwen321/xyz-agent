@@ -6,6 +6,7 @@ use crate::engine::tools::{PermissionContext, ToolRegistry};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::{RwLockReadGuard, RwLockWriteGuard};
 
 pub mod commands;
 pub mod event_bus;
@@ -33,4 +34,22 @@ pub struct AppState {
     pub agent_templates: Arc<std::sync::RwLock<crate::engine::agent_template::AgentTemplateRegistry>>,
     pub prompt_registry: Arc<std::sync::RwLock<PromptRegistry>>,
     pub agent_spawner: SpawnerRef,
+}
+
+impl AppState {
+    pub fn read_registry(&self) -> Result<RwLockReadGuard<'_, ProviderRegistry>, String> {
+        self.provider_registry.read().map_err(|e| format!("registry lock poisoned: {e}"))
+    }
+
+    pub fn write_registry(&self) -> Result<RwLockWriteGuard<'_, ProviderRegistry>, String> {
+        self.provider_registry.write().map_err(|e| format!("registry lock poisoned: {e}"))
+    }
+
+    pub fn read_model(&self) -> Result<RwLockReadGuard<'_, String>, String> {
+        self.current_model.read().map_err(|e| format!("model lock poisoned: {e}"))
+    }
+
+    pub fn write_model(&self) -> Result<RwLockWriteGuard<'_, String>, String> {
+        self.current_model.write().map_err(|e| format!("model lock poisoned: {e}"))
+    }
 }

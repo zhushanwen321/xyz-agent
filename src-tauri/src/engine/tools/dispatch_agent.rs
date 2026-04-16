@@ -2,9 +2,9 @@ use async_trait::async_trait;
 use std::time::Instant;
 
 use crate::engine::agent_spawner::SpawnConfig;
-use crate::engine::context::prompt::DynamicContext;
 use crate::engine::task_tree::*;
 use crate::engine::tools::{PermissionContext, Tool, ToolExecutionContext, ToolResult};
+use crate::engine::tools::utils::{extract_assistant_text, build_tool_dynamic_context};
 use crate::types::event::*;
 use crate::types::transcript::{AssistantContentBlock, TranscriptEntry, UserContentBlock};
 
@@ -59,25 +59,6 @@ pub fn is_in_fork_child(history: &[TranscriptEntry]) -> bool {
             text.contains("<fork-context>")
         })
     })
-}
-
-/// 从 transcript entries 中提取助手文本
-fn extract_assistant_text(entries: &[TranscriptEntry]) -> String {
-    entries.iter()
-        .filter_map(|e| match e {
-            TranscriptEntry::Assistant { content, .. } => Some(
-                content.iter()
-                    .filter_map(|b| match b {
-                        AssistantContentBlock::Text { text } => Some(text.as_str()),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            ),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 /// 将 transcript entries 写入 sidechain JSONL
@@ -326,19 +307,7 @@ impl Tool for DispatchAgentTool {
             sync: is_sync,
             fork_api_messages: None,
             fork_assistant_content: None,
-            dynamic_context: DynamicContext {
-                cwd: std::env::current_dir()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string(),
-                os: std::env::consts::OS.to_string(),
-                model: String::new(),
-                git_branch: None,
-                tool_names: ctx.tool_registry.tool_names(),
-                data_context_summary: None,
-                conversation_summary: None,
-                disabled_tools: vec![],
-            },
+            dynamic_context: build_tool_dynamic_context(ctx.tool_registry.tool_names()),
             permission_context: PermissionContext::default(),
             session_id: ctx.session_id.clone(),
             task_id: task_id.clone(),

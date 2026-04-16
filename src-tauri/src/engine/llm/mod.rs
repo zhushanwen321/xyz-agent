@@ -50,32 +50,6 @@ pub trait LlmProvider: Send + Sync {
 
 pub use types::{ModelTier, ModelEntry, ProviderConfig, ModelInfo, parse_model_ref};
 
-// ── 带指数退避的重试封装（网络不稳定时启用） ──────────────────
-
-#[allow(dead_code)]
-pub async fn chat_stream_with_retry(
-    provider: &dyn LlmProvider,
-    system: Vec<serde_json::Value>,
-    messages: Vec<serde_json::Value>,
-    model: &str,
-    tools: Option<Vec<serde_json::Value>>,
-    max_retries: usize,
-) -> Result<Pin<Box<dyn futures::Stream<Item = Result<LlmStreamEvent, AppError>> + Send>>, AppError> {
-    let mut attempt = 0;
-    loop {
-        match provider.chat_stream(system.clone(), messages.clone(), model, tools.clone()).await {
-            Ok(stream) => return Ok(stream),
-            Err(e) if attempt < max_retries => {
-                let delay = std::time::Duration::from_secs(1u64 << attempt);
-                tokio::time::sleep(delay).await;
-                attempt += 1;
-                let _ = &e;
-            }
-            Err(e) => return Err(e),
-        }
-    }
-}
-
 // ── 单元测试 ──────────────────────────────────────────────────
 
 #[cfg(test)]

@@ -80,7 +80,7 @@ pub async fn rename_session(
 
 #[tauri::command]
 pub async fn get_current_model(state: State<'_, AppState>) -> Result<String, String> {
-    Ok(state.current_model.read().unwrap().clone())
+    Ok(state.read_model()?.clone())
 }
 
 #[tauri::command]
@@ -100,7 +100,7 @@ pub async fn send_message(
 
     // 1. 获取 provider 和 model
     let provider = acquire_provider_for_model(&state)?;
-    let model = state.current_model.read().unwrap().clone();
+    let model = state.read_model()?.clone();
     let (_, model_id) = parse_model_ref(&model).unwrap_or(("unknown", &model));
     log::info!("[chat] starting agent_loop, model={model}");
     log::info!("[chat] starting agent_loop, model={model}");
@@ -144,7 +144,7 @@ pub async fn send_message(
     let dynamic_context = DynamicContext {
         cwd: std::env::current_dir().unwrap_or_default().to_string_lossy().to_string(),
         os: std::env::consts::OS.to_string(),
-        model: state.current_model.read().unwrap().clone(),
+        model: state.read_model()?.clone(),
         git_branch: None,
         tool_names: state.tool_registry.tool_names(),
         data_context_summary: None,
@@ -186,10 +186,10 @@ pub async fn send_message(
 
 /// 从 current_model ref 解析 provider_name，获取对应的 LlmProvider
 fn acquire_provider_for_model(state: &AppState) -> Result<Arc<dyn LlmProvider>, String> {
-    let model_ref = state.current_model.read().map_err(|e| format!("model lock: {e}"))?.clone();
+    let model_ref = state.read_model()?.clone();
     let (provider_name, _) = parse_model_ref(&model_ref)
         .map_err(|e| e.to_string())?;
-    let registry = state.provider_registry.read().map_err(|e| format!("registry lock: {e}"))?;
+    let registry = state.read_registry()?;
     registry.get_provider(provider_name)
         .ok_or("API Key not configured. Please configure in Settings.".to_string())
 }
@@ -320,16 +320,16 @@ fn persist_entries(
 
 #[tauri::command]
 pub async fn check_api_key(state: State<'_, AppState>) -> Result<bool, String> {
-    let registry = state.provider_registry.read().map_err(|e| format!("registry lock: {e}"))?;
+    let registry = state.read_registry()?;
     Ok(!registry.is_empty())
 }
 
 #[tauri::command]
 pub async fn get_config(state: State<'_, AppState>) -> Result<ConfigResponse, String> {
     let agent = &state.config;
-    let registry = state.provider_registry.read().map_err(|e| format!("registry lock: {e}"))?;
+    let registry = state.read_registry()?;
     let providers_config = crate::engine::config::load_providers();
-    let current_model = state.current_model.read().map_err(|e| format!("model lock: {e}"))?.clone();
+    let current_model = state.read_model()?.clone();
     let default_model = providers_config.default_model
         .or_else(|| registry.default_model_ref())
         .unwrap_or_default();
@@ -388,7 +388,7 @@ pub async fn update_config(
 
 #[tauri::command]
 pub async fn list_models(state: State<'_, AppState>) -> Result<Vec<ModelInfo>, String> {
-    let registry = state.provider_registry.read().map_err(|e| format!("registry lock: {e}"))?;
+    let registry = state.read_registry()?;
     Ok(registry.list_models())
 }
 
@@ -405,12 +405,12 @@ pub async fn set_current_model(
 ) -> Result<(), String> {
     let (provider_name, _) = parse_model_ref(&payload.model_ref).map_err(|e| e.to_string())?;
     {
-        let registry = state.provider_registry.read().map_err(|e| format!("registry lock: {e}"))?;
+        let registry = state.read_registry()?;
         if registry.get_provider(provider_name).is_none() {
             return Err(format!("provider '{}' not found", provider_name));
         }
     }
-    let mut m = state.current_model.write().map_err(|e| format!("model lock: {e}"))?;
+    let mut m = state.write_model()?;
     *m = payload.model_ref;
     Ok(())
 }
@@ -425,7 +425,7 @@ pub async fn save_provider(
         .map_err(|e| e.to_string())?;
 
     // 热更新 registry
-    let mut registry = state.provider_registry.write().map_err(|e| format!("registry lock: {e}"))?;
+    let mut registry = state.write_registry()?;
     registry.update_provider(payload);
     Ok(())
 }
@@ -440,7 +440,7 @@ pub async fn delete_provider(
         .map_err(|e| e.to_string())?;
 
     // 热更新 registry
-    let mut registry = state.provider_registry.write().map_err(|e| format!("registry lock: {e}"))?;
+    let mut registry = state.write_registry()?;
     registry.remove_provider(&name);
     Ok(())
 }
