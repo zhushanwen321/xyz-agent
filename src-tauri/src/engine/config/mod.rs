@@ -105,20 +105,19 @@ fn parse_config_value(content: &str) -> AgentConfig {
     config
 }
 
-/// LLM 配置：从 .env 文件、环境变量、~/.xyz-agent/config.toml 读取
+/// LLM 配置：从环境变量、~/.xyz-agent/config.toml 读取
 pub struct LlmConfig {
     pub api_key: String,
     pub base_url: String,
     pub model: String,
 }
 
-/// 加载 LLM 配置，优先级：环境变量 > .env 文件 > config.toml
-pub fn load_llm_config() -> Result<LlmConfig, AppError> {
-    let _ = dotenvy::dotenv();
-
+/// 加载 LLM 配置，优先级：环境变量 > config.toml
+/// API Key 不存在时返回 None（不报错，允许无 Key 启动）
+pub fn load_llm_config() -> Option<LlmConfig> {
     let api_key = std::env::var("ANTHROPIC_API_KEY")
         .or_else(|_| read_config_value("anthropic_api_key"))
-        .map_err(|_| AppError::Config("ANTHROPIC_API_KEY not found".to_string()))?;
+        .ok()?;
 
     let base_url = std::env::var("ANTHROPIC_BASE_URL")
         .or_else(|_| read_config_value("anthropic_base_url"))
@@ -128,7 +127,7 @@ pub fn load_llm_config() -> Result<LlmConfig, AppError> {
         .or_else(|_| read_config_value("llm_model"))
         .unwrap_or_else(|_| "claude-sonnet-4-20250514".to_string());
 
-    Ok(LlmConfig {
+    Some(LlmConfig {
         api_key,
         base_url,
         model,

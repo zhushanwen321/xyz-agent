@@ -280,11 +280,14 @@ pub async fn send_message(
 #[tauri::command]
 pub async fn get_config(state: State<'_, AppState>) -> Result<ConfigResponse, String> {
     let agent = &state.config;
-    let llm = crate::engine::config::load_llm_config().map_err(|e| e.to_string())?;
+    let llm = crate::engine::config::load_llm_config();
     Ok(ConfigResponse {
-        anthropic_api_key: llm.api_key,
-        llm_model: llm.model,
-        anthropic_base_url: llm.base_url,
+        anthropic_api_key: llm.as_ref()
+            .map(|c| mask_api_key(&c.api_key))
+            .unwrap_or_default(),
+        llm_model: llm.as_ref().map(|c| c.model.clone()).unwrap_or_default(),
+        anthropic_base_url: llm.as_ref().map(|c| c.base_url.clone())
+            .unwrap_or_else(|| "https://api.anthropic.com".to_string()),
         max_turns: agent.max_turns,
         context_window: agent.context_window,
         max_output_tokens: agent.max_output_tokens,
@@ -293,12 +296,29 @@ pub async fn get_config(state: State<'_, AppState>) -> Result<ConfigResponse, St
     })
 }
 
+/// API Key 脱敏：只显示前 6 位和后 4 位
+fn mask_api_key(key: &str) -> String {
+    if key.len() <= 10 {
+        return "*".repeat(key.len());
+    }
+    format!("{}...{}", &key[..6], &key[key.len()-4..])
+}
+
 #[tauri::command]
 pub async fn update_config(
     payload: UpdateConfigRequest,
 ) -> Result<(), String> {
+    // 如果 API Key 是脱敏格式（包含 ...），跳过覆盖
+    let api_key = if payload.anthropic_api_key.contains("...") || payload.anthropic_api_key.is_empty() {
+        crate::engine::config::load_llm_config()
+            .map(|c| c.api_key)
+            .unwrap_or_default()
+    } else {
+        payload.anthropic_api_key
+    };
+
     crate::engine::config::save_config(
-        &payload.anthropic_api_key,
+        &api_key,
         &payload.llm_model,
         &payload.anthropic_base_url,
         payload.max_turns,
