@@ -19,7 +19,12 @@ export function useModelManager() {
     loading.value = true
     error.value = null
     try {
-      models.value = await listModels()
+      // Rust ModelInfo 不序列化 model_ref（它是 impl 方法），前端补充计算
+      const result = await listModels()
+      models.value = result.map(m => ({
+        ...m,
+        model_ref: `${m.provider_name}/${m.model_id}`,
+      }))
     } catch (e) {
       error.value = String(e)
     } finally {
