@@ -5,14 +5,53 @@
   "hooks": {
     "PostToolUse": [
       {
-        "matcher": "Write|Bash",
+        "matcher": "Edit|Write|Bash",
         "hooks": [
           {
             "type": "command",
-            "command": "bash .claude/rules/check-tracers-path.sh"
+            "command": "code-review-graph update --skip-flows",
+            "timeout": 30
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "code-review-graph status",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "mcp__plugin_playwright_playwright__browser_navigate",
+      "mcp__tavily-remote-mcp__tavily_search",
+      "mcp__fetch__fetch_readable",
+      "Bash(mkdir -p .claude/.superpowers/2026-04-08-initial-design)",
+      "Bash(mv \".claude/.superpowers/2026-04-08-\u521d\u6b65\u8bbe\u8ba1/P0-\u9aa8\u67b6\u4e0e\u57fa\u7840\u5bf9\u8bdd.md\" .claude/.superpowers/2026-04-08-initial-design/spec.md)",
+      "Bash(mv \".claude/.superpowers/2026-04-08-\u521d\u6b65\u8bbe\u8ba1/\u9636\u6bb5\u89c4\u5212.md\" .claude/.superpowers/2026-04-08-initial-design/phase-plan.md)",
+      "Bash(rm -rf \".claude/.superpowers/2026-04-08-\u521d\u6b65\u8bbe\u8ba1\")",
+      "Bash(mkdir -p .claude/.superpowers/2026-04-09-directory-structure)",
+      "Bash(mv .claude/.superpowers/specs/2026-04-09-directory-structure-design.md .claude/.superpowers/2026-04-09-directory-structure/spec.md)",
+      "Bash(mkdir -p .claude/.superpowers/2026-04-10-frontend-ui-polish)",
+      "Bash(mv .claude/.superpowers/specs/2026-04-10-frontend-ui-polish-design.md .claude/.superpowers/2026-04-10-frontend-ui-polish/spec.md)",
+      "Bash(mv docs/superpowers/plans/2026-04-10-frontend-ui-polish.md .claude/.superpowers/2026-04-10-frontend-ui-polish/plan.md)",
+      "Bash(mv plans/2026-04-09-P1-plan-a.md plan-a.md)",
+      "Bash(mv plans/2026-04-09-P1-plan-b.md plan-b.md)",
+      "Bash(mv plans/2026-04-09-P1-plan-c.md plan-c.md)",
+      "Bash(mv plans/2026-04-09-P1-plan-d.md plan-d.md)",
+      "Bash(mv plans/2026-04-09-P1-implementation.md implementation.md)",
+      "Bash(rmdir .claude/.superpowers/specs)",
+      "Bash(rm -rf docs/superpowers)",
+      "Bash(rmdir /Users/zhushanwen/Code/xyz-agent/.claude/.superpowers/specs)",
+      "Bash(rmdir /Users/zhushanwen/Code/xyz-agent/docs/superpowers/plans)",
+      "Bash(rmdir /Users/zhushanwen/Code/xyz-agent/docs/superpowers)"
     ]
   }
 }

@@ -1,12 +1,15 @@
+use std::sync::Arc;
 use crate::api::AppState;
-use crate::engine::tools::ToolExecutionContext;
+use crate::engine::agent_spawner::AgentSpawner;
+use crate::engine::llm::LlmProvider;
 use crate::engine::context::prompt::{DynamicContext, PromptManager};
 use crate::engine::loop_::AgentLoop;
+use crate::engine::tools::ToolExecutionContext;
 use crate::store::jsonl::LoadHistoryResult;
 use crate::store::session;
 use crate::types::{AssistantContentBlock, TranscriptEntry, UserContentBlock};
 use serde::Deserialize;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 
 #[derive(serde::Serialize)]
 pub struct ConfigResponse {
@@ -18,6 +21,8 @@ pub struct ConfigResponse {
     pub max_output_tokens: u32,
     pub tool_output_max_bytes: usize,
     pub bash_default_timeout_secs: u64,
+    pub thinking_enabled: bool,
+    pub thinking_budget_tokens: u32,
 }
 
 #[derive(Deserialize)]
@@ -30,6 +35,8 @@ pub struct UpdateConfigRequest {
     pub max_output_tokens: u32,
     pub tool_output_max_bytes: usize,
     pub bash_default_timeout_secs: u64,
+    pub thinking_enabled: bool,
+    pub thinking_budget_tokens: u32,
 }
 
 #[tauri::command]
@@ -75,7 +82,7 @@ pub async fn rename_session(
 
 #[tauri::command]
 pub async fn get_current_model(state: State<'_, AppState>) -> Result<String, String> {
-    Ok(state.model.clone())
+    Ok(state.model.read().unwrap().clone())
 }
 
 #[tauri::command]
@@ -93,7 +100,8 @@ pub async fn send_message(
     let preview: String = content.chars().take(50).collect();
     log::info!("[chat] send_message: session={session_id}, content={preview}");
 
-    let provider = state.provider.clone();
+    let provider = state.provider.read().unwrap().clone()
+        .ok_or("API Key not configured. Please configure in Settings.".to_string())?;
     let session_path = session::session_file_path(&state.data_dir, &session_id)
         .ok_or_else(|| format!("session {session_id} not found"))?;
 
@@ -134,23 +142,24 @@ pub async fn send_message(
     }
     let _token_guard = TokenGuard { tokens: state.cancel_tokens.clone(), session_id: session_id.clone() };
 
-    let model = state.model.clone();
+    let model = state.model.read().unwrap().clone();
     log::info!("[chat] starting agent_loop, model={model}");
     let agent_loop = AgentLoop::new(provider, session_id.clone(), model);
     history.push(user_entry.clone());
 
-    let prompt_manager = PromptManager::new();
+    let prompt_manager = PromptManager::new().with_user_prompts(&state.data_dir);
     let dynamic_context = DynamicContext {
         cwd: std::env::current_dir()
             .unwrap_or_default()
             .to_string_lossy()
             .to_string(),
         os: std::env::consts::OS.to_string(),
-        model: state.model.clone(),
+        model: state.model.read().unwrap().clone(),
         git_branch: None,
         tool_names: state.tool_registry.tool_names(),
         data_context_summary: None,
         conversation_summary,
+        disabled_tools: crate::api::tool_commands::load_disabled_tools(&state.data_dir),
     };
 
     // 异步结果注入：将已完成的后台任务结果注入到 history 中
@@ -215,7 +224,8 @@ pub async fn send_message(
         current_assistant_content: vec![],
         tool_registry: state.tool_registry.clone(),
         background_tasks: state.background_tasks.clone(),
-        agent_spawner: state.agent_spawner.clone(),
+        agent_spawner: state.agent_spawner.read().unwrap().clone()
+            .ok_or("API Key not configured. Please configure in Settings.".to_string())?,
         orchestrate_depth: 0,
         node_id: None,
         parent_cancel_token: Some(cancel_token.clone()),
@@ -278,27 +288,56 @@ pub async fn send_message(
 }
 
 #[tauri::command]
+pub async fn check_api_key() -> Result<bool, String> {
+    Ok(crate::engine::config::load_llm_config().is_some())
+}
+
+#[tauri::command]
 pub async fn get_config(state: State<'_, AppState>) -> Result<ConfigResponse, String> {
     let agent = &state.config;
-    let llm = crate::engine::config::load_llm_config().map_err(|e| e.to_string())?;
+    let llm = crate::engine::config::load_llm_config();
     Ok(ConfigResponse {
-        anthropic_api_key: llm.api_key,
-        llm_model: llm.model,
-        anthropic_base_url: llm.base_url,
+        anthropic_api_key: llm.as_ref()
+            .map(|c| mask_api_key(&c.api_key))
+            .unwrap_or_default(),
+        llm_model: llm.as_ref().map(|c| c.model.clone()).unwrap_or_default(),
+        anthropic_base_url: llm.as_ref().map(|c| c.base_url.clone())
+            .unwrap_or_else(|| "https://api.anthropic.com".to_string()),
         max_turns: agent.max_turns,
         context_window: agent.context_window,
         max_output_tokens: agent.max_output_tokens,
         tool_output_max_bytes: agent.tool_output_max_bytes,
         bash_default_timeout_secs: agent.bash_default_timeout_secs,
+        thinking_enabled: agent.thinking_enabled,
+        thinking_budget_tokens: agent.thinking_budget_tokens,
     })
+}
+
+/// API Key 脱敏：只显示前 6 位和后 4 位
+fn mask_api_key(key: &str) -> String {
+    if key.len() <= 10 {
+        return "*".repeat(key.len());
+    }
+    format!("{}...{}", &key[..6], &key[key.len()-4..])
 }
 
 #[tauri::command]
 pub async fn update_config(
     payload: UpdateConfigRequest,
+    state: State<'_, AppState>,
+    app: AppHandle,
 ) -> Result<(), String> {
+    // 如果 API Key 是脱敏格式（包含 ...），跳过覆盖
+    let api_key = if payload.anthropic_api_key.contains("...") || payload.anthropic_api_key.is_empty() {
+        crate::engine::config::load_llm_config()
+            .map(|c| c.api_key)
+            .unwrap_or_default()
+    } else {
+        payload.anthropic_api_key
+    };
+
     crate::engine::config::save_config(
-        &payload.anthropic_api_key,
+        &api_key,
         &payload.llm_model,
         &payload.anthropic_base_url,
         payload.max_turns,
@@ -306,8 +345,86 @@ pub async fn update_config(
         payload.max_output_tokens,
         payload.tool_output_max_bytes,
         payload.bash_default_timeout_secs,
+        payload.thinking_enabled,
+        payload.thinking_budget_tokens,
     )
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+
+    // thinking 配置变更需要重启应用才能生效（provider 在启动时创建）
+    let current = &state.config;
+    if payload.thinking_enabled != current.thinking_enabled
+        || payload.thinking_budget_tokens != current.thinking_budget_tokens
+    {
+        let _ = app.emit("config:thinking-changed", serde_json::json!({
+            "message": "Extended Thinking 配置已更新，请重启应用以生效"
+        }));
+    }
+
+    Ok(())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyLlmConfigRequest {
+    pub api_key: String,
+    pub base_url: String,
+    pub model: String,
+}
+
+#[tauri::command]
+pub async fn apply_llm_config(
+    payload: ApplyLlmConfigRequest,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    // 1. 持久化到 config.toml
+    crate::engine::config::save_config(
+        &payload.api_key,
+        &payload.model,
+        &payload.base_url,
+        state.config.max_turns,
+        state.config.context_window,
+        state.config.max_output_tokens,
+        state.config.tool_output_max_bytes,
+        state.config.bash_default_timeout_secs,
+        state.config.thinking_enabled,
+        state.config.thinking_budget_tokens,
+    ).map_err(|e| e.to_string())?;
+
+    // 2. 创建新 provider
+    let provider: Arc<dyn LlmProvider> = Arc::new(
+        crate::engine::llm::anthropic::AnthropicProvider::new(payload.api_key)
+            .with_base_url(payload.base_url)
+            .with_max_tokens(state.config.max_output_tokens),
+    );
+
+    // 3. 创建新 agent_spawner
+    let agent_spawner: Arc<dyn AgentSpawner> = Arc::new(
+        crate::engine::agent_spawner::DefaultAgentSpawner {
+            provider: provider.clone(),
+            model: payload.model.clone(),
+            config: state.config.clone(),
+            tool_registry: state.tool_registry.clone(),
+            task_tree: state.task_tree.clone(),
+            concurrency_manager: state.concurrency_manager.clone(),
+            data_dir: state.data_dir.clone(),
+        },
+    );
+
+    // 4. 替换 AppState 中的值
+    {
+        let mut p = state.provider.write().unwrap();
+        *p = Some(provider);
+    }
+    {
+        let mut m = state.model.write().unwrap();
+        *m = payload.model;
+    }
+    {
+        let mut s = state.agent_spawner.write().unwrap();
+        *s = Some(agent_spawner);
+    }
+
+    Ok(())
 }
 
 #[tauri::command]

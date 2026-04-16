@@ -18,6 +18,10 @@ pub struct AgentConfig {
     // ToolExecutor
     pub tool_output_max_bytes: usize,
     pub bash_default_timeout_secs: u64,
+
+    // Extended Thinking
+    pub thinking_enabled: bool,
+    pub thinking_budget_tokens: u32,
 }
 
 impl Default for AgentConfig {
@@ -34,6 +38,8 @@ impl Default for AgentConfig {
             max_consecutive_failures: 3,
             tool_output_max_bytes: 100_000,
             bash_default_timeout_secs: 120,
+            thinking_enabled: false,
+            thinking_budget_tokens: 10_000,
         }
     }
 }
@@ -98,6 +104,12 @@ fn parse_config_value(content: &str) -> AgentConfig {
                 }
                 "bash_default_timeout_secs" => config
                     .bash_default_timeout_secs = value.parse().unwrap_or(config.bash_default_timeout_secs),
+                "thinking_enabled" => {
+                    config.thinking_enabled = value.parse().unwrap_or(config.thinking_enabled);
+                }
+                "thinking_budget_tokens" => {
+                    config.thinking_budget_tokens = value.parse().unwrap_or(config.thinking_budget_tokens);
+                }
                 _ => {} // unknown keys ignored
             }
         }
@@ -105,20 +117,19 @@ fn parse_config_value(content: &str) -> AgentConfig {
     config
 }
 
-/// LLM 配置：从 .env 文件、环境变量、~/.xyz-agent/config.toml 读取
+/// LLM 配置：从环境变量、~/.xyz-agent/config.toml 读取
 pub struct LlmConfig {
     pub api_key: String,
     pub base_url: String,
     pub model: String,
 }
 
-/// 加载 LLM 配置，优先级：环境变量 > .env 文件 > config.toml
-pub fn load_llm_config() -> Result<LlmConfig, AppError> {
-    let _ = dotenvy::dotenv();
-
+/// 加载 LLM 配置，优先级：环境变量 > config.toml
+/// API Key 不存在时返回 None（不报错，允许无 Key 启动）
+pub fn load_llm_config() -> Option<LlmConfig> {
     let api_key = std::env::var("ANTHROPIC_API_KEY")
         .or_else(|_| read_config_value("anthropic_api_key"))
-        .map_err(|_| AppError::Config("ANTHROPIC_API_KEY not found".to_string()))?;
+        .ok()?;
 
     let base_url = std::env::var("ANTHROPIC_BASE_URL")
         .or_else(|_| read_config_value("anthropic_base_url"))
@@ -128,7 +139,7 @@ pub fn load_llm_config() -> Result<LlmConfig, AppError> {
         .or_else(|_| read_config_value("llm_model"))
         .unwrap_or_else(|_| "claude-sonnet-4-20250514".to_string());
 
-    Ok(LlmConfig {
+    Some(LlmConfig {
         api_key,
         base_url,
         model,
@@ -148,7 +159,7 @@ fn read_config_value(key: &str) -> Result<String, ()> {
     for line in content.lines() {
         let trimmed = line.trim();
         if let Some(rest) = trimmed.strip_prefix(key) {
-            let rest = rest.trim_start_matches(['=', ' ']).trim();
+            let rest = rest.trim_start_matches(['=', ' ']).trim().trim_matches('"');
             if !rest.is_empty() {
                 return Ok(rest.to_string());
             }
@@ -167,6 +178,8 @@ pub fn save_config(
     max_output_tokens: u32,
     tool_output_max_bytes: usize,
     bash_default_timeout_secs: u64,
+    thinking_enabled: bool,
+    thinking_budget_tokens: u32,
 ) -> Result<(), AppError> {
     let config_path = dirs::home_dir()
         .ok_or(AppError::Config("no home dir".into()))?
@@ -195,6 +208,8 @@ pub fn save_config(
     doc["anthropic_api_key"] = toml_edit::value(llm_api_key);
     doc["llm_model"] = toml_edit::value(llm_model);
     doc["anthropic_base_url"] = toml_edit::value(llm_base_url);
+    doc["thinking_enabled"] = toml_edit::value(thinking_enabled);
+    doc["thinking_budget_tokens"] = toml_edit::value(thinking_budget_tokens as i64);
 
     std::fs::write(&config_path, doc.to_string())
         .map_err(|e| AppError::Config(format!("failed to write config: {e}")))?;
@@ -220,6 +235,29 @@ mod tests {
         assert_eq!(config.max_consecutive_failures, 3);
         assert_eq!(config.tool_output_max_bytes, 100_000);
         assert_eq!(config.bash_default_timeout_secs, 120);
+    }
+
+    #[test]
+    fn test_thinking_config_defaults() {
+        let config = AgentConfig::default();
+        assert!(!config.thinking_enabled);
+        assert_eq!(config.thinking_budget_tokens, 10_000);
+    }
+
+    #[test]
+    fn test_thinking_config_parsing() {
+        let content = "thinking_enabled = true\nthinking_budget_tokens = 20000\n";
+        let config = parse_config_value(content);
+        assert!(config.thinking_enabled);
+        assert_eq!(config.thinking_budget_tokens, 20_000);
+    }
+
+    #[test]
+    fn test_thinking_config_invalid_uses_defaults() {
+        let content = "thinking_enabled = maybe\nthinking_budget_tokens = not_a_number\n";
+        let config = parse_config_value(content);
+        assert!(!config.thinking_enabled);
+        assert_eq!(config.thinking_budget_tokens, 10_000);
     }
 
     #[test]

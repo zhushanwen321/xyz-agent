@@ -226,13 +226,24 @@ pub fn sidechain_path(data_dir: &Path, session_id: &str, task_id: &str) -> std::
 }
 
 pub fn append_sidechain_entry(path: &Path, entry: &TranscriptEntry) -> Result<(), AppError> {
-    let mut file = std::fs::OpenOptions::new()
+    let options = FileOptions::new()
+        .write(true)
         .create(true)
-        .append(true)
-        .open(path)
-        .map_err(AppError::Io)?;
-    let json = serde_json::to_string(entry).map_err(AppError::Serialization)?;
-    writeln!(file, "{}", json).map_err(AppError::Io)
+        .append(true);
+
+    let mut file_lock = FileLock::lock(path, true, options)
+        .map_err(|e| AppError::Storage(format!("file lock failed: {e}")))?;
+
+    let json_line = serde_json::to_string(entry)
+        .map_err(|e| AppError::Storage(format!("serialize failed: {e}")))?;
+
+    writeln!(file_lock.file, "{json_line}")
+        .map_err(|e| AppError::Storage(format!("write failed: {e}")))?;
+
+    file_lock.file.flush()
+        .map_err(|e| AppError::Storage(format!("flush failed: {e}")))?;
+
+    Ok(())
 }
 
 pub fn orchestrate_path(data_dir: &Path, session_id: &str, node_id: &str) -> std::path::PathBuf {

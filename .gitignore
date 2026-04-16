@@ -11,3 +11,7 @@ tauri-*.png
 tracers/
 .batch-reports/
 batch-reports/
+.claude/.batch-reports/
+.claude/batch-reports/
+# Added by code-review-graph
+.code-review-graph/

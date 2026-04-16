@@ -29,15 +29,24 @@ impl Tool for BashTool {
     }
 
     fn description(&self) -> &str {
-        // 参考 Claude Code BashTool.prompt — 使用指南内嵌在 description 中
         "Execute a shell command and return stdout/stderr.\n\
          \n\
-         - Working directory persists between calls, but shell state (env vars, aliases) does not.\n\
-         - Use absolute paths to avoid confusion with working directory.\n\
-         - For independent commands, make multiple Bash calls in parallel.\n\
-         - For dependent commands, chain with && in a single call.\n\
-         - Do NOT use this for reading files (use Read), writing files (use Write).\n\
-         - Prefer dedicated tools over Bash for file operations."
+         Working directory persists between calls, but shell state (env vars, aliases) does not.\n\
+         \n\
+         IMPORTANT: Avoid using this tool to run cat, head, tail, sed, awk, or echo commands \n\
+         when a dedicated tool can accomplish the task. Instead, use:\n\
+         - File reading: Use Read (NOT cat/head/tail)\n\
+         - File writing: Use Write (NOT echo >/cat <<EOF)\n\
+         \n\
+         When issuing multiple commands:\n\
+         - If commands are independent, make multiple Bash calls in parallel.\n\
+         - If commands depend on each other, chain with && in a single call.\n\
+         - Use ; only when you don't care if earlier commands fail.\n\
+         \n\
+         Additional rules:\n\
+         - Always quote file paths containing spaces with double quotes.\n\
+         - Prefer absolute paths to avoid working directory confusion.\n\
+         - If creating new files/directories, first run ls to verify the parent directory exists."
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -63,6 +72,10 @@ impl Tool for BashTool {
 
     fn is_concurrent_safe(&self) -> bool {
         false
+    }
+
+    fn danger_level(&self) -> &str {
+        "caution"
     }
 
     fn timeout_secs(&self) -> u64 {

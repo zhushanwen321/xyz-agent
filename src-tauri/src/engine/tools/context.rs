@@ -10,13 +10,13 @@ use crate::engine::agent_spawner::AgentSpawner;
 
 use super::ToolRegistry;
 
-/// P2 tools (dispatch_agent, feedback, orchestrate) 所需的运行时上下文。
+/// P2 tools (Subagent, Communication, Orchestrate) 所需的运行时上下文。
 /// P1 tools 通过 `Option<&ToolExecutionContext>` 忽略此参数。
 #[derive(Clone)]
 pub struct ToolExecutionContext {
     pub task_tree: Arc<tokio::sync::Mutex<TaskTree>>,
     pub concurrency_manager: Arc<ConcurrencyManager>,
-    pub agent_templates: Arc<AgentTemplateRegistry>,
+    pub agent_templates: Arc<std::sync::RwLock<AgentTemplateRegistry>>,
     pub data_dir: std::path::PathBuf,
     pub session_id: String,
     pub event_tx: tokio::sync::mpsc::UnboundedSender<AgentEvent>,

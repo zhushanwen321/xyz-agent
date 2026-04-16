@@ -7,7 +7,7 @@ export type AgentEvent =
   | { type: 'Error'; session_id: string; message: string; source_task_id?: string }
   | { type: 'ToolCallStart'; session_id: string; tool_name: string; tool_use_id: string; input: unknown; source_task_id?: string }
   | { type: 'ToolCallEnd'; session_id: string; tool_use_id: string; is_error: boolean; output: string; source_task_id?: string }
-  // dispatch_agent events
+  // Subagent events
   | { type: 'TaskCreated'; session_id: string; task_id: string; description: string; mode: string; subagent_type: string; budget: { max_tokens: number }; tool_use_id: string | null; source_task_id?: string }
   | { type: 'TaskProgress'; session_id: string; task_id: string; usage: { total_tokens: number; tool_uses: number; duration_ms: number }; source_task_id?: string }
   | { type: 'TaskCompleted'; session_id: string; task_id: string; status: string; result_summary: string; usage: { total_tokens: number; tool_uses: number; duration_ms: number }; source_task_id?: string }
@@ -39,6 +39,11 @@ export type TranscriptEntry =
   | { type: 'user'; uuid: string; parent_uuid: string | null; timestamp: string; session_id: string; content: UserContentBlock[] }
   | { type: 'assistant'; uuid: string; parent_uuid: string | null; timestamp: string; session_id: string; content: AssistantContentBlock[]; usage: TokenUsage | null }
   | { type: 'system'; uuid: string; parent_uuid: string | null; timestamp: string; session_id: string; content: string }
+  | { type: 'custom_title'; title: string; uuid: string; timestamp: string }
+  | { type: 'summary'; content: string; uuid: string; timestamp: string }
+  | { type: 'task_node'; task_id: string; uuid: string; timestamp: string }
+  | { type: 'orchestrate_node'; node_id: string; uuid: string; timestamp: string }
+  | { type: 'feedback'; content: string; uuid: string; timestamp: string }
 
 // 前端内部使用的消息模型
 export interface ChatMessage {
@@ -63,6 +68,7 @@ export interface ToolCallDisplay {
 export type AssistantSegment =
   | { type: 'text'; text: string }
   | { type: 'tool'; call: ToolCallDisplay }
+  | { type: 'thinking'; text: string; duration_ms: number }
 
 /** 工具危险等级 */
 export type ToolDangerLevel = 'safe' | 'caution'
@@ -144,6 +150,8 @@ export interface ConfigResponse {
   max_output_tokens: number
   tool_output_max_bytes: number
   bash_default_timeout_secs: number
+  thinking_enabled: boolean
+  thinking_budget_tokens: number
 }
 
 export type UpdateConfigRequest = ConfigResponse
@@ -160,4 +168,58 @@ export interface ChatTab {
   sidechain_id?: string
   status: TabStatus
   closable: boolean
+}
+
+// 与 Rust PromptInfo 对应
+export interface PromptInfo {
+  key: string
+  mode: 'builtin' | 'enhance' | 'override' | 'custom'
+  content: string
+  has_enhance: boolean
+  has_override: boolean
+  tools: string[]
+  description: string
+  read_only: boolean
+  max_tokens: number
+  max_turns: number
+  max_tool_calls: number
+}
+
+// 自定义 Agent 保存请求
+export interface CustomAgentInput {
+  name: string
+  content: string
+  tools: string[]
+  description: string
+  read_only: boolean
+  max_tokens: number
+  max_turns: number
+  max_tool_calls: number
+}
+
+// Prompt 保存请求
+export interface PromptSaveInput {
+  key: string
+  mode: 'enhance' | 'override'
+  content: string
+}
+
+// 与 Rust ToolInfo 对应
+export interface ToolInfo {
+  name: string
+  description: string
+  input_schema: unknown
+  is_concurrent_safe: boolean
+  timeout_secs: number
+  danger_level: 'safe' | 'caution'
+  enabled: boolean
+  has_override: boolean
+}
+
+// 工具配置保存请求
+export interface ToolConfigSaveInput {
+  name: string
+  description?: string
+  timeout_secs?: number
+  enabled?: boolean
 }
