@@ -39,23 +39,35 @@ export ANTHROPIC_API_KEY=sk-ant-...
 ### 测试
 
 ```bash
-cd src-tauri && cargo test     # Rust 单元测试（36 个）
-npm run build                   # 前端类型检查 + 构建
+cd src-tauri && cargo test              # Rust 全量测试（183 个）
+cd src-tauri && cargo test test_name    # 运行单个测试
+cd src-tauri && cargo test -- --list    # 列出所有测试名
+npm run build                           # 前端类型检查 + 构建
 ```
 
 ### 架构概览
 
 ```
 src-tauri/src/
-├── commands/    # Tauri Command 薄适配层
-├── services/    # 业务逻辑（不依赖 tauri crate）
-├── models/      # 纯数据结构
-└── db/          # JSONL 持久化
+├── api/         # Tauri Command 薄适配层 + EventBus
+├── engine/      # 核心业务逻辑（不依赖 tauri crate）
+│   ├── llm/         # LLM Provider trait + Anthropic 实现
+│   ├── loop_/       # AgentLoop — 多轮工具调用循环 + SSE 流解析
+│   ├── tools/       # ToolRegistry + 内置工具（bash/read/write/feedback/dispatch_agent/orchestrate）
+│   ├── context/     # 提示词构建（static prompt + dynamic context）
+│   ├── config/      # TOML 配置加载（API key、model、agent 参数）
+│   ├── task_tree.rs # 任务树（子 agent 生命周期管理）
+│   ├── agent_spawner.rs   # 子 Agent 生成器
+│   ├── agent_template.rs  # Agent 模板注册表
+│   ├── budget_guard.rs    # Token/轮次预算守卫
+│   └── concurrency.rs     # 并发子 Agent 控制
+├── types/       # 纯数据结构（event/transcript/tool/error）
+└── store/       # JSONL 持久化（会话存储）
 
 src/
 ├── components/  # Vue 组件
 ├── composables/ # Composition API 逻辑复用
-├── lib/         # Tauri invoke/listen 封装
+├── lib/         # Tauri invoke/listen 封装（唯一通信层）
 └── types/       # TypeScript 类型定义
 ```
 
@@ -70,7 +82,7 @@ LLM SSE → LlmStreamEvent → mpsc channel → EventBus → Tauri Event → Vue
 
 ## 代码规范
 
-- Rust：services/ 不 import tauri，纯业务逻辑可独立测试
+- Rust：engine/ 不 import tauri，纯业务逻辑可独立测试；api/ 是薄适配层
 - TypeScript：strict 模式，Composition API
 - 提交格式：Conventional Commits（feat/fix/refactor/test/docs/chore）
 
