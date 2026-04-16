@@ -345,6 +345,7 @@ impl Tool for DispatchAgentTool {
             node_id: Some(task_id.clone()),
             orchestrate_depth: ctx.orchestrate_depth,
             parent_cancel_token: ctx.parent_cancel_token.clone(),
+            model_ref: None,
         };
 
         let mut spawn_handle = match ctx.agent_spawner.spawn_agent(spawn_config).await {

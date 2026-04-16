@@ -27,31 +27,24 @@ fn build_app_state(
         engine::concurrency::ConcurrencyManager::new(3),
     );
 
-    // 从 registry 提取默认 provider 和 model_id 构造 spawner
+    // 构造 spawner，持有 registry 引用
     let agent_spawner_inner: Option<Arc<dyn engine::agent_spawner::AgentSpawner>> = {
         let reg = provider_registry.read().expect("registry lock");
         if reg.is_empty() {
             None
         } else {
             let model_ref = current_model.read().expect("model lock").clone();
-            let (provider_name, model_id) = engine::llm::types::parse_model_ref(&model_ref)
-                .unwrap_or(("unknown", "unknown"));
-            let provider = reg.get_provider(provider_name)
-                .or_else(|| reg.get_provider(reg.first_provider_name()?));
-            match provider {
-                Some(p) => Some(Arc::new(
-                    engine::agent_spawner::DefaultAgentSpawner::new(
-                        p,
-                        model_id.to_string(),
-                        config.clone(),
-                        tool_registry.clone(),
-                        task_tree.clone(),
-                        concurrency_manager.clone(),
-                        data_dir.clone(),
-                    ),
-                )),
-                None => None,
-            }
+            Some(Arc::new(
+                engine::agent_spawner::DefaultAgentSpawner::new(
+                    provider_registry.clone(),
+                    model_ref,
+                    config.clone(),
+                    tool_registry.clone(),
+                    task_tree.clone(),
+                    concurrency_manager.clone(),
+                    data_dir.clone(),
+                ),
+            ))
         }
     };
     let agent_spawner: api::SpawnerRef = Arc::new(std::sync::RwLock::new(agent_spawner_inner));

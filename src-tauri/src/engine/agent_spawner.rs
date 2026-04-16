@@ -6,7 +6,8 @@ use crate::engine::budget_guard::BudgetGuard;
 use crate::engine::concurrency::ConcurrencyManager;
 use crate::engine::config::AgentConfig;
 use crate::engine::context::prompt::{DynamicContext, PromptManager};
-use crate::engine::llm::LlmProvider;
+use crate::engine::llm::registry::ProviderRegistry;
+use crate::engine::llm::types::parse_model_ref;
 use crate::engine::loop_::AgentLoop;
 use crate::engine::task_tree::{TaskBudget, TaskTree, TaskUsage};
 use crate::engine::tools::{PermissionContext, ToolExecutionContext, ToolRegistry};
@@ -40,6 +41,8 @@ pub struct SpawnConfig {
     pub orchestrate_depth: u32,
     /// 父级 CancellationToken，用于派生 child token
     pub parent_cancel_token: Option<tokio_util::sync::CancellationToken>,
+    /// 子 Agent 使用的模型（如 "provider/model_id"），为 None 时使用 default_model
+    pub model_ref: Option<String>,
 }
 
 // ── Spawn 句柄 ──────────────────────────────────────────────
@@ -74,8 +77,8 @@ pub trait AgentSpawner: Send + Sync {
 
 /// 默认 AgentSpawner，使用 AgentLoop 执行子 Agent
 pub struct DefaultAgentSpawner {
-    pub provider: Arc<dyn LlmProvider>,
-    pub model: String,
+    pub provider_registry: Arc<std::sync::RwLock<ProviderRegistry>>,
+    pub default_model: String,
     pub config: Arc<AgentConfig>,
     pub tool_registry: Arc<ToolRegistry>,
     pub task_tree: Arc<tokio::sync::Mutex<TaskTree>>,
@@ -85,15 +88,15 @@ pub struct DefaultAgentSpawner {
 
 impl DefaultAgentSpawner {
     pub fn new(
-        provider: Arc<dyn LlmProvider>,
-        model: String,
+        provider_registry: Arc<std::sync::RwLock<ProviderRegistry>>,
+        default_model: String,
         config: Arc<AgentConfig>,
         tool_registry: Arc<ToolRegistry>,
         task_tree: Arc<tokio::sync::Mutex<TaskTree>>,
         concurrency_manager: Arc<ConcurrencyManager>,
         data_dir: std::path::PathBuf,
     ) -> Self {
-        Self { provider, model, config, tool_registry, task_tree, concurrency_manager, data_dir }
+        Self { provider_registry, default_model, config, tool_registry, task_tree, concurrency_manager, data_dir }
     }
 }
 
@@ -109,10 +112,17 @@ impl AgentSpawner for DefaultAgentSpawner {
             .await
             .map_err(|e| AppError::Llm(e))?;
 
+        // 从 registry 动态获取 provider
+        let model_ref = config.model_ref.as_deref().unwrap_or(&self.default_model);
+        let (provider_name, model_id) = parse_model_ref(model_ref)?;
+        let provider = self.provider_registry.read().unwrap()
+            .get_provider(provider_name)
+            .ok_or_else(|| AppError::Config(format!("provider '{}' not found", provider_name)))?;
+
         let agent_loop = AgentLoop::new(
-            self.provider.clone(),
+            provider,
             config.session_id.clone(),
-            self.model.clone(),
+            model_id.to_string(),
         );
 
         let tool_registry = filter_tools(&self.tool_registry, config.tool_filter.as_deref());
@@ -132,8 +142,8 @@ impl AgentSpawner for DefaultAgentSpawner {
 
         // 构建 spawner 引用，供子 Agent 的 ToolExecutionContext 使用
         let spawner: Arc<dyn AgentSpawner> = Arc::new(DefaultAgentSpawner {
-            provider: self.provider.clone(),
-            model: self.model.clone(),
+            provider_registry: self.provider_registry.clone(),
+            default_model: self.default_model.clone(),
             config: self.config.clone(),
             tool_registry: self.tool_registry.clone(),
             task_tree: self.task_tree.clone(),
@@ -365,215 +375,5 @@ pub fn bridge_events(
 // ── 测试 ────────────────────────────────────────────────────
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::engine::llm::test_utils::MockLlmProvider;
-    use crate::types::AssistantContentBlock;
-
-    fn test_dynamic_context() -> DynamicContext {
-        DynamicContext {
-            cwd: "/test".to_string(),
-            os: "test".to_string(),
-            model: "test-model".to_string(),
-            git_branch: None,
-            tool_names: vec![],
-            data_context_summary: None,
-            conversation_summary: None,
-            disabled_tools: vec![],
-        }
-    }
-
-    #[test]
-    fn filter_tools_returns_registry_clone_when_no_filter() {
-        let registry = ToolRegistry::new();
-        let filtered = filter_tools(&registry, None);
-        assert_eq!(filtered.tool_names().len(), 0);
-    }
-
-    #[test]
-    fn filter_tools_respects_whitelist() {
-        use crate::engine::tools::ToolRegistry;
-        let mut registry = ToolRegistry::new();
-        registry.register(Arc::new(crate::engine::tools::bash::BashTool::new(
-            std::path::PathBuf::from("/tmp"), 30, 10000,
-        )));
-        registry.register(Arc::new(crate::engine::tools::read::ReadTool::new(
-            std::path::PathBuf::from("/tmp"), 10000,
-        )));
-        registry.register(Arc::new(crate::engine::tools::write::WriteTool::new(
-            std::path::PathBuf::from("/tmp"),
-        )));
-
-        let filtered = filter_tools(
-            &registry,
-            Some(&["Read".to_string(), "Bash".to_string()]),
-        );
-        assert_eq!(filtered.tool_names(), vec!["Bash", "Read"]);
-    }
-
-    #[test]
-    fn build_subagent_history_appends_fork_context() {
-        let fork_messages = vec![serde_json::json!({
-            "role": "user",
-            "content": "hello"
-        })];
-        let assistant_content = vec![AssistantContentBlock::ToolUse {
-            id: "toolu_1".to_string(),
-            name: "Read".to_string(),
-            input: serde_json::json!({"file_path": "/tmp/test"}),
-        }];
-
-        let result = build_subagent_history(&fork_messages, &assistant_content, "do something");
-
-        assert_eq!(result.len(), 2);
-        let last = &result[1];
-        assert_eq!(last["role"], "user");
-        let content = last["content"].as_array().unwrap();
-        // 应有 tool_result + fork-context text
-        assert_eq!(content.len(), 2);
-        assert_eq!(content[0]["type"], "tool_result");
-        assert_eq!(content[0]["tool_use_id"], "toolu_1");
-        assert!(content[1]["text"].as_str().unwrap().contains("<fork-context>"));
-    }
-
-    #[test]
-    fn build_subagent_history_without_tool_uses() {
-        let fork_messages = vec![serde_json::json!({
-            "role": "assistant",
-            "content": "thinking..."
-        })];
-        let assistant_content: Vec<AssistantContentBlock> = vec![];
-
-        let result = build_subagent_history(&fork_messages, &assistant_content, "task prompt");
-
-        assert_eq!(result.len(), 2);
-        let content = result[1]["content"].as_array().unwrap();
-        // 没有 tool_result，只有 fork-context text
-        assert_eq!(content.len(), 1);
-        assert!(content[0]["text"].as_str().unwrap().contains("task prompt"));
-    }
-
-    #[tokio::test]
-    async fn default_agent_spawner_runs_subagent() {
-        let provider = Arc::new(MockLlmProvider::new(vec![
-            MockLlmProvider::text_response("sub-agent response"),
-        ]));
-
-        let spawner = DefaultAgentSpawner {
-            provider: provider.clone(),
-            model: "test-model".to_string(),
-            config: Arc::new(AgentConfig::default()),
-            tool_registry: Arc::new(ToolRegistry::new()),
-            task_tree: Arc::new(tokio::sync::Mutex::new(TaskTree::new())),
-            concurrency_manager: Arc::new(ConcurrencyManager::new(2)),
-            data_dir: std::path::PathBuf::from("/tmp"),
-        };
-
-        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
-
-        let config = SpawnConfig {
-            prompt: "test prompt".to_string(),
-            history: vec![],
-            system_prompt_override: None,
-            prompt_key: None,
-            tool_filter: None,
-            budget: None,
-            event_tx,
-            sync: true,
-            fork_api_messages: None,
-            fork_assistant_content: None,
-            dynamic_context: test_dynamic_context(),
-            permission_context: PermissionContext::default(),
-            session_id: "test-session".to_string(),
-            task_id: "da_test1234".to_string(),
-            node_id: None,
-            orchestrate_depth: 0,
-            parent_cancel_token: None,
-        };
-
-        let mut handle = spawner.spawn_agent(config).await.unwrap();
-        let join = handle.join_handle.take().unwrap();
-        let result = join.await.unwrap().unwrap();
-
-        assert_eq!(result.status, "completed");
-        assert_eq!(result.entries.len(), 1);
-        assert!(result.usage.total_tokens > 0);
-    }
-
-    #[tokio::test]
-    async fn spawner_respects_concurrency_limit() {
-        // 验证并发槽位被正确获取和释放
-        let provider = Arc::new(MockLlmProvider::new(vec![
-            MockLlmProvider::text_response("first"),
-            MockLlmProvider::text_response("second"),
-        ]));
-
-        let concurrency = Arc::new(ConcurrencyManager::new(2));
-
-        let spawner = DefaultAgentSpawner {
-            provider,
-            model: "test-model".to_string(),
-            config: Arc::new(AgentConfig::default()),
-            tool_registry: Arc::new(ToolRegistry::new()),
-            task_tree: Arc::new(tokio::sync::Mutex::new(TaskTree::new())),
-            concurrency_manager: concurrency.clone(),
-            data_dir: std::path::PathBuf::from("/tmp"),
-        };
-
-        let (event_tx1, _rx1) = tokio::sync::mpsc::unbounded_channel();
-        let (event_tx2, _rx2) = tokio::sync::mpsc::unbounded_channel();
-
-        let config1 = SpawnConfig {
-            prompt: "first".to_string(),
-            history: vec![],
-            system_prompt_override: None,
-            prompt_key: None,
-            tool_filter: None,
-            budget: None,
-            event_tx: event_tx1,
-            sync: true,
-            fork_api_messages: None,
-            fork_assistant_content: None,
-            dynamic_context: test_dynamic_context(),
-            permission_context: PermissionContext::default(),
-            session_id: "s1".to_string(),
-            task_id: "da_first123".to_string(),
-            node_id: None,
-            orchestrate_depth: 0,
-            parent_cancel_token: None,
-        };
-
-        let config2 = SpawnConfig {
-            prompt: "second".to_string(),
-            history: vec![],
-            system_prompt_override: None,
-            prompt_key: None,
-            tool_filter: None,
-            budget: None,
-            event_tx: event_tx2,
-            sync: true,
-            fork_api_messages: None,
-            fork_assistant_content: None,
-            dynamic_context: test_dynamic_context(),
-            permission_context: PermissionContext::default(),
-            session_id: "s2".to_string(),
-            task_id: "da_second456".to_string(),
-            node_id: None,
-            orchestrate_depth: 0,
-            parent_cancel_token: None,
-        };
-
-        let mut handle1 = spawner.spawn_agent(config1).await.unwrap();
-        let join1 = handle1.join_handle.take().unwrap();
-
-        let mut handle2 = spawner.spawn_agent(config2).await.unwrap();
-        let join2 = handle2.join_handle.take().unwrap();
-
-        let r1 = join1.await.unwrap().unwrap();
-        let r2 = join2.await.unwrap().unwrap();
-        assert_eq!(r1.status, "completed");
-        assert_eq!(r2.status, "completed");
-        // permit 在 drop 后释放
-        assert_eq!(concurrency.active_count(), 0);
-    }
-}
+#[path = "agent_spawner_tests.rs"]
+mod tests;

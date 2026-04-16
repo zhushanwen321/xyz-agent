@@ -99,9 +99,13 @@ mod tests {
         let tree = Arc::new(tokio::sync::Mutex::new(TaskTree::new()));
         let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
 
+        let mock_provider = Arc::new(MockLlmProvider::new(vec![]));
+        let registry = crate::engine::llm::registry::ProviderRegistry::from_single(
+            "test", mock_provider, "test",
+        );
         let spawner = Arc::new(DefaultAgentSpawner {
-            provider: Arc::new(MockLlmProvider::new(vec![])),
-            model: "test".into(),
+            provider_registry: Arc::new(std::sync::RwLock::new(registry)),
+            default_model: "test/test".to_string(),
             config: Arc::new(AgentConfig::default()),
             tool_registry: Arc::new(crate::engine::tools::ToolRegistry::new()),
             task_tree: tree.clone(),

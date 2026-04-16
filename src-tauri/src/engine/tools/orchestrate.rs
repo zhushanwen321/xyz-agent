@@ -315,6 +315,7 @@ impl Tool for OrchestrateTool {
             node_id: Some(node_id.clone()),
             orchestrate_depth: node_depth,
             parent_cancel_token: ctx.parent_cancel_token.clone(),
+            model_ref: None,
         };
 
         let mut spawn_handle = match ctx.agent_spawner.spawn_agent(spawn_config).await {

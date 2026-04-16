@@ -97,6 +97,23 @@ impl ProviderRegistry {
 }
 
 #[cfg(test)]
+impl ProviderRegistry {
+    /// 测试辅助：从单个 mock provider 构建最小 registry
+    pub fn from_single(name: &str, provider: Arc<dyn LlmProvider>, model_id: &str) -> Self {
+        let mut providers = HashMap::new();
+        providers.insert(name.to_string(), provider);
+        let mut provider_configs = HashMap::new();
+        provider_configs.insert(name.to_string(), ProviderConfig {
+            name: name.to_string(),
+            api_key: "sk-test".to_string(),
+            base_url: "https://api.anthropic.com".to_string(),
+            models: vec![ModelEntry { id: model_id.to_string(), alias: None, tier: ModelTier::Balanced }],
+        });
+        Self { providers, provider_configs, max_tokens: 4096, thinking_enabled: false, thinking_budget_tokens: 10000 }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
