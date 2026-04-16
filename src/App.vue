@@ -32,7 +32,7 @@ function onConfigApplied() {
 </script>
 
 <template>
-  <div class="flex h-screen flex-col bg-bg-surface text-text-primary">
+  <div class="flex h-screen flex-col bg-surface text-foreground">
     <Topbar
       :sidebar-collapsed="sidebarCollapsed"
       @toggle-sidebar="sidebarCollapsed = !sidebarCollapsed"

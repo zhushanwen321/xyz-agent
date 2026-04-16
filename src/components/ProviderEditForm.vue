@@ -58,41 +58,41 @@ function handleSave() {
 </script>
 
 <template>
-  <section class="rounded-md border border-accent-blue/30 bg-bg-elevated p-4 space-y-4">
+  <section class="rounded-md border border-semantic-blue/30 bg-elevated p-4 space-y-4">
     <div class="flex items-center justify-between">
-      <h3 class="text-sm font-medium text-text-secondary">
+      <h3 class="text-sm font-medium text-muted-foreground">
         {{ editState.mode === 'add' ? 'Add Provider' : `Edit: ${editState.name}` }}
       </h3>
-      <Button variant="ghost" size="sm" class="text-xs text-text-tertiary hover:text-text-secondary" @click="emit('cancel')">
+      <Button variant="ghost" size="sm" class="text-xs text-tertiary hover:text-muted-foreground" @click="emit('cancel')">
         Cancel
       </Button>
     </div>
 
     <!-- Name -->
     <div>
-      <label class="mb-1 block text-xs text-text-tertiary">Name</label>
+      <label class="mb-1 block text-xs text-tertiary">Name</label>
       <input
         v-model="form.name"
         type="text"
         :disabled="editState.mode === 'edit'"
-        class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-sm text-text-primary disabled:opacity-50"
+        class="w-full rounded-md border border-border-default bg-inset px-3 py-2 font-mono text-sm text-foreground disabled:opacity-50"
         placeholder="e.g. anthropic"
       />
     </div>
 
     <!-- API Key -->
     <div>
-      <label class="mb-1 block text-xs text-text-tertiary">API Key</label>
+      <label class="mb-1 block text-xs text-tertiary">API Key</label>
       <div class="flex gap-2">
         <input
           v-model="form.api_key"
           :type="showApiKey ? 'text' : 'password'"
-          class="flex-1 rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-sm text-text-primary"
+          class="flex-1 rounded-md border border-border-default bg-inset px-3 py-2 font-mono text-sm text-foreground"
           placeholder="sk-..."
         />
         <Button
           variant="outline"
-          class="px-3 text-xs text-text-tertiary"
+          class="px-3 text-xs text-tertiary"
           @click="showApiKey = !showApiKey"
         >
           {{ showApiKey ? 'Hide' : 'Show' }}
@@ -102,36 +102,36 @@ function handleSave() {
 
     <!-- Base URL -->
     <div>
-      <label class="mb-1 block text-xs text-text-tertiary">Base URL</label>
+      <label class="mb-1 block text-xs text-tertiary">Base URL</label>
       <input
         v-model="form.base_url"
         type="text"
-        class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-sm text-text-primary"
+        class="w-full rounded-md border border-border-default bg-inset px-3 py-2 font-mono text-sm text-foreground"
         :placeholder="DEFAULT_BASE_URL"
       />
     </div>
 
     <!-- Models 管理 -->
     <div>
-      <label class="mb-2 block text-xs text-text-tertiary">Models</label>
+      <label class="mb-2 block text-xs text-tertiary">Models</label>
       <!-- 已有模型列表 -->
       <div v-if="form.models.length > 0" class="mb-3 space-y-1">
         <div
           v-for="(model, i) in form.models"
           :key="model.id"
-          class="flex items-center justify-between rounded-sm bg-bg-inset px-3 py-1.5"
+          class="flex items-center justify-between rounded-sm bg-inset px-3 py-1.5"
         >
           <div class="flex items-center gap-2">
-            <span class="font-mono text-xs text-text-primary">{{ model.id }}</span>
-            <span v-if="model.alias" class="text-xs text-text-tertiary">({{ model.alias }})</span>
+            <span class="font-mono text-xs text-foreground">{{ model.id }}</span>
+            <span v-if="model.alias" class="text-xs text-tertiary">({{ model.alias }})</span>
             <select
               v-model="form.models[i].tier"
-              class="rounded-sm border border-border-default bg-bg-surface px-1.5 py-0.5 text-[10px] font-mono text-text-tertiary"
+              class="rounded-sm border border-border-default bg-surface px-1.5 py-0.5 text-[10px] font-mono text-tertiary"
             >
               <option v-for="t in tiers" :key="t.value" :value="t.value">{{ t.label }}</option>
             </select>
           </div>
-          <Button variant="link" class="text-xs text-accent-red" @click="removeModel(i)">Remove</Button>
+          <Button variant="link" class="text-xs text-semantic-red" @click="removeModel(i)">Remove</Button>
         </div>
       </div>
       <!-- 添加模型 -->
@@ -140,7 +140,7 @@ function handleSave() {
           <input
             v-model="newModelId"
             type="text"
-            class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-xs text-text-primary"
+            class="w-full rounded-md border border-border-default bg-inset px-3 py-2 font-mono text-xs text-foreground"
             placeholder="Model ID (e.g. claude-sonnet-4-20250514)"
             @keydown.enter.prevent="addModel"
           />
@@ -149,13 +149,13 @@ function handleSave() {
           <input
             v-model="newModelAlias"
             type="text"
-            class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 text-xs text-text-primary"
+            class="w-full rounded-md border border-border-default bg-inset px-3 py-2 text-xs text-foreground"
             placeholder="Alias"
           />
         </div>
         <select
           v-model="newModelTier"
-          class="rounded-md border border-border-default bg-bg-inset px-2 py-2 text-xs text-text-tertiary"
+          class="rounded-md border border-border-default bg-inset px-2 py-2 text-xs text-tertiary"
         >
           <option v-for="t in tiers" :key="t.value" :value="t.value">{{ t.label }}</option>
         </select>
@@ -166,7 +166,7 @@ function handleSave() {
     <!-- 保存/取消 -->
     <div class="flex justify-end gap-2">
       <Button variant="outline" class="px-4 py-2 text-xs" @click="emit('cancel')">Cancel</Button>
-      <Button class="px-4 py-2 text-xs font-mono text-bg-base bg-accent hover:bg-accent/90" @click="handleSave">
+      <Button class="px-4 py-2 text-xs font-mono text-bg-base bg-semantic-green hover:bg-semantic-green/90" @click="handleSave">
         Save Provider
       </Button>
     </div>

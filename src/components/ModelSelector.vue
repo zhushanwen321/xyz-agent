@@ -22,9 +22,9 @@ const tierLabel: Record<ModelTier, string> = {
 }
 
 const tierColor: Record<ModelTier, string> = {
-  balanced: 'text-accent',
-  reasoning: 'text-accent-yellow',
-  fast: 'text-accent-blue',
+  balanced: 'text-semantic-green',
+  reasoning: 'text-semantic-yellow',
+  fast: 'text-semantic-blue',
 }
 
 // 按 provider 分组
@@ -80,8 +80,8 @@ onUnmounted(() => {
   <div class="model-selector relative">
     <Button
       variant="ghost"
-      class="flex items-center gap-1.5 rounded-sm px-2 py-0.5 font-mono text-[11px] transition-colors hover:bg-bg-inset"
-      :class="open ? 'bg-bg-inset text-text-primary' : 'text-text-tertiary'"
+      class="flex items-center gap-1.5 rounded-sm px-2 py-0.5 font-mono text-[11px] transition-colors hover:bg-inset"
+      :class="open ? 'bg-inset text-foreground' : 'text-tertiary'"
       @click="toggle"
     >
       <span>{{ currentInfo.name }}</span>
@@ -103,17 +103,17 @@ onUnmounted(() => {
     <!-- 下拉列表 -->
     <div
       v-if="open"
-      class="absolute right-0 top-full z-50 mt-1 min-w-56 rounded-md border border-border-default bg-bg-elevated py-1 shadow-lg"
+      class="absolute right-0 top-full z-50 mt-1 min-w-56 rounded-md border border-border-default bg-elevated py-1 shadow-lg"
     >
       <template v-for="[provider, providerModels] of groupedByProvider" :key="provider">
-        <div class="px-3 pt-2 pb-1 font-mono text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">
+        <div class="px-3 pt-2 pb-1 font-mono text-[10px] font-semibold uppercase tracking-wider text-tertiary">
           {{ provider }}
         </div>
         <button
           v-for="m in providerModels"
           :key="m.model_ref"
-          class="flex w-full items-center justify-between px-3 py-1 font-mono text-[11px] transition-colors hover:bg-bg-inset"
-          :class="m.model_ref === currentModel ? 'text-accent' : 'text-text-primary'"
+          class="flex w-full items-center justify-between px-3 py-1 font-mono text-[11px] transition-colors hover:bg-inset"
+          :class="m.model_ref === currentModel ? 'text-semantic-green' : 'text-foreground'"
           @click="select(m.model_ref)"
         >
           <span class="truncate">{{ m.alias ?? m.model_id }}</span>

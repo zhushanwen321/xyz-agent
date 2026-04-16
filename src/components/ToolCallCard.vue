@@ -66,7 +66,7 @@ const statusLabel = computed(() => {
   <!-- 其他工具调用：保持原有渲染 -->
   <div
     v-else
-    class="rounded-md border border-border-default border-l-[3px] bg-bg-elevated text-[13px]"
+    class="rounded-md border border-border-default border-l-[3px] bg-elevated text-[13px]"
     :class="colors.border"
   >
     <!-- Header -->
@@ -80,7 +80,7 @@ const statusLabel = computed(() => {
         <span v-else class="font-mono text-[10px] font-bold" :class="colors.text">
           {{ toolCall.status === 'error' ? '\u2717' : '\u2713' }}
         </span>
-        <span class="font-mono font-semibold text-text-primary">{{ toolCall.tool_name }}</span>
+        <span class="font-mono font-semibold text-foreground">{{ toolCall.tool_name }}</span>
       </div>
       <span class="font-mono text-[10px]" :class="colors.text">{{ statusLabel }}</span>
     </div>
@@ -88,15 +88,15 @@ const statusLabel = computed(() => {
     <!-- 参数摘要 -->
     <pre
       v-if="inputSummary"
-      class="px-2.5 mt-1 whitespace-pre-wrap font-mono text-[11px] text-text-secondary"
+      class="px-2.5 mt-1 whitespace-pre-wrap font-mono text-[11px] text-muted-foreground"
     >{{ inputSummary }}</pre>
 
     <!-- 输出区：默认展开 -->
     <div
       v-if="toolCall.output !== undefined && toolCall.status !== 'running'"
-      class="mx-2.5 mt-1.5 mb-2 max-h-[200px] overflow-y-auto rounded-md border border-border-default bg-bg-inset p-2"
+      class="mx-2.5 mt-1.5 mb-2 max-h-[200px] overflow-y-auto rounded-md border border-border-default bg-inset p-2"
     >
-      <pre class="whitespace-pre-wrap font-mono text-[11px] text-text-secondary">{{ toolCall.output }}</pre>
+      <pre class="whitespace-pre-wrap font-mono text-[11px] text-muted-foreground">{{ toolCall.output }}</pre>
     </div>
 
     <!-- 子 Agent Tab 跳转提示 -->

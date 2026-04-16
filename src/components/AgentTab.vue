@@ -15,12 +15,12 @@ const emit = defineEmits<{
 
 <template>
   <div>
-    <div v-if="!config" class="text-text-tertiary">No config loaded.</div>
+    <div v-if="!config" class="text-tertiary">No config loaded.</div>
 
     <div v-else class="space-y-8">
       <!-- Runtime Parameters -->
       <section>
-        <h3 class="mb-3 text-sm font-medium text-text-secondary">Runtime Parameters</h3>
+        <h3 class="mb-3 text-sm font-medium text-muted-foreground">Runtime Parameters</h3>
         <div class="grid grid-cols-3 gap-3">
           <div v-for="field of [
             { key: 'max_turns', label: 'Max Turns', min: 1, max: 200, hint: '1 - 200' },
@@ -29,15 +29,15 @@ const emit = defineEmits<{
             { key: 'tool_output_max_bytes', label: 'Tool Output (bytes)', min: 1000, max: 1000000, hint: '1K - 1M' },
             { key: 'bash_default_timeout_secs', label: 'Bash Timeout (sec)', min: 1, max: 600, hint: '1 - 600' },
           ]" :key="field.key">
-            <label class="mb-1 block text-xs text-text-tertiary">{{ field.label }}</label>
+            <label class="mb-1 block text-xs text-tertiary">{{ field.label }}</label>
             <input
               v-model.number="config[field.key as keyof typeof config]"
               type="number"
               :min="field.min"
               :max="field.max"
-              class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-sm text-text-primary"
+              class="w-full rounded-md border border-border-default bg-inset px-3 py-2 font-mono text-sm text-foreground"
             />
-            <span class="text-[10px] text-text-tertiary">{{ field.hint }}</span>
+            <span class="text-[10px] text-tertiary">{{ field.hint }}</span>
           </div>
         </div>
       </section>
@@ -51,7 +51,7 @@ const emit = defineEmits<{
         >
           {{ saving ? 'Saving...' : 'Save' }}
         </Button>
-        <span v-if="success" class="text-xs text-accent">Saved.</span>
+        <span v-if="success" class="text-xs text-semantic-green">Saved.</span>
       </div>
     </div>
   </div>

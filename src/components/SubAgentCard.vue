@@ -54,7 +54,7 @@ const emit = defineEmits<{
 
 <template>
   <div
-    class="group rounded-md border border-border-default border-l-[3px] bg-bg-elevated text-[13px] cursor-pointer transition-colors hover:border-[#3b82f6] hover:bg-[#18181b]"
+    class="group rounded-md border border-border-default border-l-[3px] bg-elevated text-[13px] cursor-pointer transition-colors hover:border-[#3b82f6] hover:bg-[#18181b]"
     :class="borderColor"
     @click="emit('openTab', task.task_id)"
   >
@@ -69,23 +69,23 @@ const emit = defineEmits<{
         <span v-else class="font-mono text-[10px] font-bold" :class="statusColor">
           {{ statusChar }}
         </span>
-        <span class="text-text-secondary font-mono text-[10px]">&#x03BB;</span>
-        <span class="font-mono font-semibold text-text-primary truncate">
+        <span class="text-muted-foreground font-mono text-[10px]">&#x03BB;</span>
+        <span class="font-mono font-semibold text-foreground truncate">
           {{ task.subagent_type ?? 'agent' }}
         </span>
-        <span class="text-text-secondary truncate text-[11px]">
+        <span class="text-muted-foreground truncate text-[11px]">
           {{ task.description.length > 40 ? task.description.slice(0, 40) + '...' : task.description }}
         </span>
       </div>
       <div class="flex items-center gap-2 shrink-0">
-        <span class="font-mono text-[10px] text-text-secondary">
+        <span class="font-mono text-[10px] text-muted-foreground">
           {{ formatTokens(task.usage.total_tokens) }}tok
         </span>
         <span class="font-mono text-[10px]" :class="statusColor">{{ statusLabel }}</span>
         <!-- Kill 按钮：仅 running 状态显示 -->
         <button
           v-if="task.status === 'running'"
-          class="w-4 h-4 flex items-center justify-center text-text-secondary hover:text-red-400 shrink-0"
+          class="w-4 h-4 flex items-center justify-center text-muted-foreground hover:text-red-400 shrink-0"
           title="Kill"
           @click.stop="emit('kill')"
         >

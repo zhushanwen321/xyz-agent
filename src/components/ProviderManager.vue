@@ -109,20 +109,20 @@ async function handleSetDefault(modelRef: string) {
 <template>
   <div class="space-y-6">
     <!-- 错误提示 -->
-    <div v-if="error" class="rounded-md border border-accent-red/30 bg-accent-red/10 px-4 py-3">
-      <p class="text-sm text-accent-red">{{ error }}</p>
+    <div v-if="error" class="rounded-md border border-semantic-red/30 bg-semantic-red/10 px-4 py-3">
+      <p class="text-sm text-semantic-red">{{ error }}</p>
     </div>
 
     <!-- Provider 列表 -->
     <section>
       <div class="mb-3 flex items-center justify-between">
-        <h3 class="text-sm font-medium text-text-secondary">Providers</h3>
-        <Button variant="link" class="text-xs text-accent-blue" @click="openAdd">
+        <h3 class="text-sm font-medium text-muted-foreground">Providers</h3>
+        <Button variant="link" class="text-xs text-semantic-blue" @click="openAdd">
           + Add Provider
         </Button>
       </div>
 
-      <div v-if="config.providers.length === 0" class="text-xs text-text-tertiary">
+      <div v-if="config.providers.length === 0" class="text-xs text-tertiary">
         No providers configured. Add one to get started.
       </div>
 
@@ -130,33 +130,33 @@ async function handleSetDefault(modelRef: string) {
         <div
           v-for="provider in config.providers"
           :key="provider.name"
-          class="rounded-md border border-border-default bg-bg-elevated p-4"
+          class="rounded-md border border-border-default bg-elevated p-4"
         >
           <div class="flex items-start justify-between">
             <div>
-              <span class="font-mono text-sm font-medium text-text-primary">{{ provider.name }}</span>
+              <span class="font-mono text-sm font-medium text-foreground">{{ provider.name }}</span>
               <div class="mt-1 space-y-0.5">
-                <p class="text-xs text-text-tertiary">
+                <p class="text-xs text-tertiary">
                   Key: <span class="font-mono">{{ maskKey(provider.api_key) }}</span>
                 </p>
-                <p v-if="provider.base_url && provider.base_url !== DEFAULT_BASE_URL" class="text-xs text-text-tertiary">
+                <p v-if="provider.base_url && provider.base_url !== DEFAULT_BASE_URL" class="text-xs text-tertiary">
                   URL: <span class="font-mono">{{ provider.base_url }}</span>
                 </p>
               </div>
             </div>
             <!-- 操作按钮 / 删除确认 -->
             <div v-if="pendingDelete === provider.name" class="flex items-center gap-2">
-              <span class="text-xs text-accent-red">Delete?</span>
-              <Button variant="link" class="text-xs text-accent-red" @click="confirmDeleteProvider(provider.name)">
+              <span class="text-xs text-semantic-red">Delete?</span>
+              <Button variant="link" class="text-xs text-semantic-red" @click="confirmDeleteProvider(provider.name)">
                 Confirm
               </Button>
               <Button variant="ghost" size="sm" class="text-xs" @click="cancelDelete">Cancel</Button>
             </div>
             <div v-else class="flex gap-2">
-              <Button variant="link" class="text-xs text-accent-blue" @click="openEdit(provider)">
+              <Button variant="link" class="text-xs text-semantic-blue" @click="openEdit(provider)">
                 Edit
               </Button>
-              <Button variant="link" class="text-xs text-accent-red" @click="requestDelete(provider.name)">
+              <Button variant="link" class="text-xs text-semantic-red" @click="requestDelete(provider.name)">
                 Delete
               </Button>
             </div>
@@ -164,17 +164,17 @@ async function handleSetDefault(modelRef: string) {
 
           <!-- 模型列表 -->
           <div v-if="provider.models.length > 0" class="mt-3 border-t border-border-default pt-3">
-            <p class="mb-2 text-xs font-medium text-text-tertiary">Models</p>
+            <p class="mb-2 text-xs font-medium text-tertiary">Models</p>
             <div class="space-y-1">
               <div
                 v-for="model in provider.models"
                 :key="model.id"
-                class="flex items-center justify-between rounded-sm bg-bg-inset px-3 py-1.5"
+                class="flex items-center justify-between rounded-sm bg-inset px-3 py-1.5"
               >
                 <div class="flex items-center gap-2">
-                  <span class="font-mono text-xs text-text-primary">{{ model.id }}</span>
-                  <span v-if="model.alias" class="text-xs text-text-tertiary">({{ model.alias }})</span>
-                  <span class="rounded-sm bg-bg-surface px-1.5 py-0.5 text-[10px] font-mono text-text-tertiary">
+                  <span class="font-mono text-xs text-foreground">{{ model.id }}</span>
+                  <span v-if="model.alias" class="text-xs text-tertiary">({{ model.alias }})</span>
+                  <span class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-mono text-tertiary">
                     {{ model.tier }}
                   </span>
                 </div>
@@ -182,12 +182,12 @@ async function handleSetDefault(modelRef: string) {
                   <Button
                     v-if="config.current_model !== `${provider.name}/${model.id}`"
                     variant="link"
-                    class="text-[10px] text-accent-blue"
+                    class="text-[10px] text-semantic-blue"
                     @click="handleSetDefault(`${provider.name}/${model.id}`)"
                   >
                     Set Default
                   </Button>
-                  <span v-else class="text-[10px] font-mono text-accent">default</span>
+                  <span v-else class="text-[10px] font-mono text-semantic-green">default</span>
                 </div>
               </div>
             </div>
@@ -197,10 +197,10 @@ async function handleSetDefault(modelRef: string) {
     </section>
 
     <!-- 当前模型 -->
-    <section v-if="config.current_model" class="rounded-md border border-border-default bg-bg-inset p-3">
+    <section v-if="config.current_model" class="rounded-md border border-border-default bg-inset p-3">
       <div class="flex items-center gap-2">
-        <span class="text-xs text-text-tertiary">Current Model:</span>
-        <span class="font-mono text-sm text-text-primary">{{ config.current_model }}</span>
+        <span class="text-xs text-tertiary">Current Model:</span>
+        <span class="font-mono text-sm text-foreground">{{ config.current_model }}</span>
       </div>
     </section>
 

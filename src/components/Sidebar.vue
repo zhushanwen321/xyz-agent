@@ -53,14 +53,14 @@ function handleEditKeydown(e: KeyboardEvent) {
 
 <template>
   <div
-    class="flex h-full shrink-0 flex-col border-r border-border-default bg-bg-elevated transition-all duration-200"
+    class="flex h-full shrink-0 flex-col border-r border-border-default bg-elevated transition-all duration-200"
     :class="collapsed ? 'w-0 overflow-hidden border-r-0' : 'w-[240px]'"
   >
 
     <!-- 新建按钮 -->
     <div class="px-3 py-2">
       <button
-        class="flex w-full items-center gap-2 rounded-md px-3 py-1.5 font-mono text-xs text-accent transition-colors hover:bg-accent-muted"
+        class="flex w-full items-center gap-2 rounded-md px-3 py-1.5 font-mono text-xs text-semantic-green transition-colors hover:bg-semantic-green/15"
         @click="createNewSession"
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -75,7 +75,7 @@ function handleEditKeydown(e: KeyboardEvent) {
 
     <!-- 会话列表 -->
     <div class="px-3 pt-2 pb-1">
-      <span class="font-mono text-[10px] font-medium uppercase tracking-wider text-text-tertiary">
+      <span class="font-mono text-[10px] font-medium uppercase tracking-wider text-tertiary">
         Sessions ({{ sessions.length }})
       </span>
     </div>
@@ -86,13 +86,13 @@ function handleEditKeydown(e: KeyboardEvent) {
         :key="session.id"
         class="group relative flex items-center rounded-md transition-colors"
         :class="currentSessionId === session.id
-          ? 'bg-bg-inset text-text-primary'
-          : 'text-text-secondary hover:bg-bg-inset/50 hover:text-text-primary'"
+          ? 'bg-inset text-foreground'
+          : 'text-muted-foreground hover:bg-inset/50 hover:text-foreground'"
       >
         <!-- 左边框指示器 -->
         <div
           v-if="currentSessionId === session.id"
-          class="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r bg-accent"
+          class="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r bg-semantic-green"
         />
 
         <!-- 编辑模式：inline input -->
@@ -100,7 +100,7 @@ function handleEditKeydown(e: KeyboardEvent) {
           <input
             :ref="(el) => { editInputRef = el as HTMLInputElement | null }"
             v-model="editingTitle"
-            class="flex-1 bg-transparent px-3 py-2 text-sm text-text-primary outline-none"
+            class="flex-1 bg-transparent px-3 py-2 text-sm text-foreground outline-none"
             @keydown="handleEditKeydown"
             @blur="confirmRename"
           />
@@ -116,7 +116,7 @@ function handleEditKeydown(e: KeyboardEvent) {
           </button>
           <!-- 编辑按钮 -->
           <button
-            class="mr-0.5 shrink-0 rounded p-1 text-text-tertiary opacity-0 transition-all hover:bg-accent-muted hover:text-accent group-hover:opacity-100"
+            class="mr-0.5 shrink-0 rounded p-1 text-tertiary opacity-0 transition-all hover:bg-semantic-green/15 hover:text-semantic-green group-hover:opacity-100"
             title="重命名"
             @click.stop="startRename(session.id, session.title)"
           >
@@ -126,7 +126,7 @@ function handleEditKeydown(e: KeyboardEvent) {
           </button>
           <!-- 删除按钮 -->
           <button
-            class="mr-1 shrink-0 rounded p-1 text-text-tertiary opacity-0 transition-all hover:bg-accent-red/10 hover:text-accent-red group-hover:opacity-100"
+            class="mr-1 shrink-0 rounded p-1 text-tertiary opacity-0 transition-all hover:bg-semantic-red/10 hover:text-semantic-red group-hover:opacity-100"
             title="删除此会话"
             @click.stop="deleteSession(session.id)"
           >
@@ -139,7 +139,7 @@ function handleEditKeydown(e: KeyboardEvent) {
         </template>
       </div>
 
-      <div v-if="sessions.length === 0" class="px-3 py-8 text-center font-mono text-xs text-text-tertiary">
+      <div v-if="sessions.length === 0" class="px-3 py-8 text-center font-mono text-xs text-tertiary">
         No sessions
       </div>
     </ScrollArea>
@@ -147,15 +147,15 @@ function handleEditKeydown(e: KeyboardEvent) {
     <Separator class="bg-border-default" />
 
     <!-- 错误提示 -->
-    <div v-if="sessionError" class="px-4 py-2 text-[11px] text-accent-red font-mono">{{ sessionError }}</div>
+    <div v-if="sessionError" class="px-4 py-2 text-[11px] text-semantic-red font-mono">{{ sessionError }}</div>
 
     <!-- 底部区域 -->
     <div class="px-4 py-3">
-      <div class="font-mono text-[10px] font-medium uppercase tracking-wider text-text-tertiary">
+      <div class="font-mono text-[10px] font-medium uppercase tracking-wider text-tertiary">
         Active Context
       </div>
       <div class="mt-1.5 space-y-0.5 font-mono text-[11px]">
-        <div class="text-text-tertiary">PRJ: <span class="text-accent">{{ appName }}</span></div>
+        <div class="text-tertiary">PRJ: <span class="text-semantic-green">{{ appName }}</span></div>
       </div>
     </div>
   </div>

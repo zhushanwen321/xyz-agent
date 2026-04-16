@@ -174,7 +174,7 @@ function handleCancel() {
 <template>
   <div class="flex h-full flex-1">
     <!-- 主聊天区域 -->
-    <div class="flex h-full flex-1 flex-col bg-bg-surface">
+    <div class="flex h-full flex-1 flex-col bg-surface">
       <TabBar
         :tabs="tabManager.tabs.value"
         :active-tab-id="tabManager.activeTabId.value"
@@ -187,11 +187,11 @@ function handleCancel() {
         <!-- 子 Agent Tab banner -->
         <div
           v-if="activeSubTab"
-          class="flex items-center gap-2 border-b border-border-default bg-bg-elevated px-3 py-1.5 text-[11px] text-text-secondary"
+          class="flex items-center gap-2 border-b border-border-default bg-elevated px-3 py-1.5 text-[11px] text-muted-foreground"
         >
           <span class="text-[#3b82f6] cursor-pointer hover:underline" @click="tabManager.switchTab('main')">&#x2190; Main</span>
           <span class="text-[#3f3f46]">|</span>
-          <span class="text-text-primary font-semibold truncate flex-1">{{ activeSubTab.title }}</span>
+          <span class="text-foreground font-semibold truncate flex-1">{{ activeSubTab.title }}</span>
           <span
             class="text-[10px] px-1.5 py-0.5 rounded-sm"
             :class="getStatusClasses(activeSubTab.status)"
@@ -201,16 +201,16 @@ function handleCancel() {
         <!-- 浮动工具栏 -->
         <div
           v-if="currentMessages.length > 0"
-          class="sticky top-0 z-10 flex justify-end gap-1 bg-bg-surface/80 px-2 pt-2 pb-1 backdrop-blur-sm"
+          class="sticky top-0 z-10 flex justify-end gap-1 bg-surface/80 px-2 pt-2 pb-1 backdrop-blur-sm"
         >
           <button
-            class="rounded border border-border-default bg-bg-elevated px-2 py-0.5 font-mono text-[11px] text-text-secondary transition-colors hover:border-accent hover:text-text-primary"
-            :class="{ 'border-accent text-accent': selectMode }"
+            class="rounded border border-border-default bg-elevated px-2 py-0.5 font-mono text-[11px] text-muted-foreground transition-colors hover:border-semantic-green hover:text-foreground"
+            :class="{ 'border-semantic-green text-semantic-green': selectMode }"
             @click="toggleSelectMode"
           >{{ selectMode ? 'Cancel' : 'Select' }}</button>
           <button
             v-if="!selectMode"
-            class="rounded border border-border-default bg-bg-elevated px-2 py-0.5 font-mono text-[11px] text-text-secondary transition-colors hover:border-accent hover:text-text-primary"
+            class="rounded border border-border-default bg-elevated px-2 py-0.5 font-mono text-[11px] text-muted-foreground transition-colors hover:border-semantic-green hover:text-foreground"
             @click="copyAll(currentMessages)"
           >{{ copied ? 'Copied!' : 'Copy All' }}</button>
         </div>
@@ -238,18 +238,18 @@ function handleCancel() {
       <!-- 选择模式操作栏 -->
       <div
         v-if="selectMode"
-        class="flex items-center gap-2 border-t border-border-default bg-bg-elevated px-3 py-1.5"
+        class="flex items-center gap-2 border-t border-border-default bg-elevated px-3 py-1.5"
       >
         <button
-          class="rounded border border-border-default bg-bg-inset px-2 py-0.5 font-mono text-[11px] text-text-secondary transition-colors hover:text-text-primary"
+          class="rounded border border-border-default bg-inset px-2 py-0.5 font-mono text-[11px] text-muted-foreground transition-colors hover:text-foreground"
           @click="selectAll(currentMessages)"
         >Select All</button>
         <button
-          class="rounded bg-accent px-2 py-0.5 font-mono text-[11px] text-white transition-colors hover:opacity-80 disabled:opacity-40"
+          class="rounded bg-semantic-green px-2 py-0.5 font-mono text-[11px] text-white transition-colors hover:opacity-80 disabled:opacity-40"
           :disabled="selectedCount === 0"
           @click="copySelected(currentMessages)"
         >{{ copied ? 'Copied!' : `Copy ${selectedCount > 0 ? selectedCount : ''} Selected` }}</button>
-        <span class="ml-auto font-mono text-[10px] text-text-tertiary">{{ selectedCount }} selected</span>
+        <span class="ml-auto font-mono text-[10px] text-tertiary">{{ selectedCount }} selected</span>
       </div>
 
       <MessageInput

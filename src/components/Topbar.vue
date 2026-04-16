@@ -39,9 +39,9 @@ function navigate(page: 'chat' | 'settings') {
 </script>
 
 <template>
-  <div class="flex h-10 shrink-0 items-center border-b border-border-default bg-bg-elevated px-4">
+  <div class="flex h-10 shrink-0 items-center border-b border-border-default bg-elevated px-4">
     <!-- 左: logo -->
-    <span class="font-mono text-sm font-semibold text-accent">xyz-agent</span>
+    <span class="font-mono text-sm font-semibold text-semantic-green">xyz-agent</span>
 
     <!-- 中: 导航 -->
     <div class="ml-6 flex gap-1">
@@ -49,8 +49,8 @@ function navigate(page: 'chat' | 'settings') {
         variant="ghost"
         class="rounded px-3 py-1 font-mono text-xs transition-colors"
         :class="currentPage === 'chat'
-          ? 'bg-accent/10 text-accent'
-          : 'text-text-tertiary hover:text-text-primary'"
+          ? 'bg-semantic-green/10 text-semantic-green'
+          : 'text-tertiary hover:text-foreground'"
         @click="navigate('chat')"
       >
         Chat
@@ -59,8 +59,8 @@ function navigate(page: 'chat' | 'settings') {
         variant="ghost"
         class="rounded px-3 py-1 font-mono text-xs transition-colors"
         :class="currentPage === 'settings'
-          ? 'bg-accent/10 text-accent'
-          : 'text-text-tertiary hover:text-text-primary'"
+          ? 'bg-semantic-green/10 text-semantic-green'
+          : 'text-tertiary hover:text-foreground'"
         @click="navigate('settings')"
       >
         Settings
@@ -73,7 +73,7 @@ function navigate(page: 'chat' | 'settings') {
       <Button
         variant="ghost"
         size="icon"
-        class="text-text-tertiary transition-colors hover:text-text-primary"
+        class="text-tertiary transition-colors hover:text-foreground"
         @click="$emit('toggle-sidebar')"
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

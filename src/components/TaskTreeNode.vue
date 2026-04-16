@@ -63,7 +63,7 @@ const roleBadge = computed(() =>
       <!-- 展开/折叠 -->
       <button
         v-if="children.length > 0"
-        class="w-4 h-4 flex items-center justify-center text-text-secondary hover:text-text-primary shrink-0"
+        class="w-4 h-4 flex items-center justify-center text-muted-foreground hover:text-foreground shrink-0"
         @click.stop="isExpanded = !isExpanded"
       >
         <span class="text-[10px] transition-transform" :class="isExpanded ? '' : '-rotate-90'">&#x25BC;</span>
@@ -79,22 +79,22 @@ const roleBadge = computed(() =>
       </span>
 
       <!-- 描述 -->
-      <span class="text-text-primary truncate min-w-0 flex-1">
+      <span class="text-foreground truncate min-w-0 flex-1">
         {{ node.description }}
       </span>
 
       <!-- 元数据：children 数（非叶节点显示） -->
-      <span v-if="children.length > 0" class="text-[10px] text-text-tertiary shrink-0">
+      <span v-if="children.length > 0" class="text-[10px] text-tertiary shrink-0">
         {{ children.length }}ch
       </span>
 
       <!-- depth 标签（仅非根节点显示） -->
-      <span v-if="depth > 0" class="text-[10px] text-text-tertiary shrink-0">
+      <span v-if="depth > 0" class="text-[10px] text-tertiary shrink-0">
         d{{ depth }}
       </span>
 
       <!-- Token 用量 -->
-      <span v-if="formatTokens(node.usage.total_tokens)" class="text-[10px] font-mono text-text-secondary shrink-0">
+      <span v-if="formatTokens(node.usage.total_tokens)" class="text-[10px] font-mono text-muted-foreground shrink-0">
         {{ formatTokens(node.usage.total_tokens) }}
       </span>
 
@@ -107,7 +107,7 @@ const roleBadge = computed(() =>
       <!-- Kill 按钮：仅 running 状态显示 -->
       <button
         v-if="node.status === 'running'"
-        class="w-4 h-4 flex items-center justify-center text-text-secondary hover:text-red-400 shrink-0"
+        class="w-4 h-4 flex items-center justify-center text-muted-foreground hover:text-red-400 shrink-0"
         title="Kill"
         @click.stop="emit('kill', node.node_id)"
       >

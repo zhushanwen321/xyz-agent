@@ -23,13 +23,13 @@ const totalTokens = computed(() => props.inputTokens + props.outputTokens)
 </script>
 
 <template>
-  <div class="flex h-7 items-center justify-between border-t border-border-default bg-bg-base px-4 font-mono text-[11px] text-text-tertiary">
+  <div class="flex h-7 items-center justify-between border-t border-border-default bg-base px-4 font-mono text-[11px] text-tertiary">
     <!-- 左: 状态指示 -->
     <div class="flex items-center gap-3">
       <span class="flex items-center gap-1.5">
         <span
           class="inline-block h-1.5 w-1.5 rounded-full"
-          :class="isStreaming ? 'bg-accent animate-pulse-dot' : 'bg-accent'"
+          :class="isStreaming ? 'bg-semantic-green animate-pulse-dot' : 'bg-semantic-green'"
         />
         <span>{{ isStreaming ? 'generating...' : 'ready' }}</span>
       </span>
