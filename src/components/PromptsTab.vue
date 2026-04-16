@@ -3,9 +3,8 @@ import { ref, computed, onMounted } from 'vue'
 import { usePromptManager } from '../composables/usePromptManager'
 import type { PromptInfo, PromptSaveInput, CustomAgentInput } from '../types'
 import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
+import BuiltinPromptEditor from './prompts/BuiltinPromptEditor.vue'
+import AgentFormEditor from './prompts/AgentFormEditor.vue'
 
 const {
   prompts,
@@ -20,13 +19,9 @@ const {
 } = usePromptManager()
 
 const error = ref<string | null>(null)
-
-// 提示词编辑状态
-const editMode = ref<'enhance' | 'override'>('enhance')
-const editContent = ref('')
 const builtinContent = ref('')
+const restartHint = ref(false)
 
-// 编辑面板状态
 type EditTarget =
   | { type: 'builtin'; key: string }
   | { type: 'custom'; key: string }
@@ -40,8 +35,8 @@ const DEFAULT_AGENT_FORM: CustomAgentInput = {
   max_tokens: 100_000, max_turns: 30, max_tool_calls: 100,
 }
 const agentForm = ref<CustomAgentInput>({ ...DEFAULT_AGENT_FORM })
-const agentToolInput = ref('')
-const restartHint = ref(false)
+
+const builtinEditorRef = ref<InstanceType<typeof BuiltinPromptEditor> | null>(null)
 
 const builtinPrompts = computed(() => prompts.value.filter(p => p.mode !== 'custom'))
 const customPrompts = computed(() => prompts.value.filter(p => p.mode === 'custom'))
@@ -61,37 +56,24 @@ function modeColor(mode: string): string {
   }
 }
 
-async function openEdit(prompt: PromptInfo) {
-  editMode.value = prompt.has_override ? 'override' : 'enhance'
+async function openBuiltinEdit(prompt: PromptInfo) {
+  editTarget.value = { type: 'builtin', key: prompt.key }
   try {
     builtinContent.value = await getPromptContent(prompt.key) || prompt.content
   } catch {
     builtinContent.value = prompt.content
   }
-  if (editMode.value === 'enhance') {
-    editContent.value = prompt.mode === 'enhance' ? prompt.content : ''
-  } else {
-    editContent.value = builtinContent.value
-  }
+  builtinEditorRef.value?.initContent(
+    prompt.has_override, prompt.mode, prompt.content, builtinContent.value,
+  )
 }
 
 function closeEdit() {
-  editContent.value = ''
   builtinContent.value = ''
   editTarget.value = null
 }
 
-function restoreOverride() {
-  editContent.value = builtinContent.value
-}
-
-async function handleSavePrompt() {
-  if (!editTarget.value || editTarget.value.type !== 'builtin') return
-  const input: PromptSaveInput = {
-    key: editTarget.value.key,
-    mode: editMode.value,
-    content: editContent.value,
-  }
+async function handleSavePrompt(input: PromptSaveInput) {
   try {
     await savePrompt(input)
     closeEdit()
@@ -127,18 +109,6 @@ function openEditAgent(agent: PromptInfo) {
 
 function resetAgentForm() {
   agentForm.value = { ...DEFAULT_AGENT_FORM }
-}
-
-function addTool() {
-  const tool = agentToolInput.value.trim()
-  if (tool && !agentForm.value.tools.includes(tool)) {
-    agentForm.value.tools.push(tool)
-    agentToolInput.value = ''
-  }
-}
-
-function removeTool(index: number) {
-  agentForm.value.tools.splice(index, 1)
 }
 
 async function handleSaveAgent() {
@@ -190,7 +160,7 @@ onMounted(() => {
               :class="editTarget?.type === 'builtin' && editTarget.key === prompt.key
                 ? 'border-semantic-blue'
                 : 'border-border-default'"
-              @click="editTarget = { type: 'builtin', key: prompt.key }; openEdit(prompt)"
+              @click="openBuiltinEdit(prompt)"
             >
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2">
@@ -263,188 +233,25 @@ onMounted(() => {
       <!-- 右侧编辑区 -->
       <div class="w-1/2 rounded-md border border-border-default bg-elevated overflow-y-auto max-h-[calc(100vh-12rem)]">
         <!-- Builtin prompt 编辑面板 -->
-        <div v-if="editTarget?.type === 'builtin'" class="space-y-3 p-4">
-          <div class="flex items-center justify-between">
-            <h3 class="text-sm font-medium text-muted-foreground">
-              Edit: {{ editTarget.key }}
-            </h3>
-            <Button
-              variant="ghost"
-              class="text-xs text-tertiary hover:text-muted-foreground"
-              @click="closeEdit"
-            >
-              Cancel
-            </Button>
-          </div>
-          <!-- Mode pills -->
-          <div class="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              class="rounded px-3 py-1 text-xs"
-              :class="editMode === 'enhance'
-                ? 'bg-semantic-blue/15 text-semantic-blue border-semantic-blue/30'
-                : 'text-tertiary'"
-              @click="editMode = 'enhance'; editContent = ''"
-            >
-              Enhance
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              class="rounded px-3 py-1 text-xs"
-              :class="editMode === 'override'
-                ? 'bg-semantic-yellow/15 text-semantic-yellow border-semantic-yellow/30'
-                : 'text-tertiary'"
-              @click="editMode = 'override'; editContent = builtinContent"
-            >
-              Override
-            </Button>
-          </div>
-          <!-- Enhance 模式 -->
-          <template v-if="editMode === 'enhance'">
-            <div>
-              <label class="mb-1 block text-xs text-tertiary">Original Prompt</label>
-              <pre class="whitespace-pre-wrap rounded-md border border-border-default bg-inset p-3 text-xs text-tertiary">{{ builtinContent }}</pre>
-            </div>
-            <div>
-              <label class="mb-1 block text-xs text-tertiary">Append Content</label>
-              <Textarea
-                v-model="editContent"
-                rows="6"
-                class="font-mono text-xs"
-                placeholder="Content appended after the original prompt..."
-              />
-            </div>
-          </template>
-          <!-- Override 模式 -->
-          <template v-else>
-            <div class="flex items-center justify-between">
-              <label class="text-xs text-tertiary">Override Content</label>
-              <Button
-                variant="link"
-                class="text-xs text-semantic-yellow"
-                @click="restoreOverride"
-              >
-                Restore Original
-              </Button>
-            </div>
-            <Textarea
-              v-model="editContent"
-              rows="12"
-              class="font-mono text-xs"
-            />
-          </template>
-          <div class="flex justify-end gap-2">
-            <Button
-              variant="outline"
-              class="text-xs"
-              @click="closeEdit"
-            >
-              Cancel
-            </Button>
-            <Button
-              class="font-mono text-xs"
-              @click="handleSavePrompt"
-            >
-              Save
-            </Button>
-          </div>
-        </div>
+        <BuiltinPromptEditor
+          v-if="editTarget?.type === 'builtin'"
+          ref="builtinEditorRef"
+          :prompt-key="editTarget.key"
+          :builtin-content="builtinContent"
+          @save="handleSavePrompt"
+          @cancel="closeEdit"
+        />
 
         <!-- Custom agent 编辑/创建面板 -->
-        <div v-if="editTarget?.type === 'custom' || editTarget?.type === 'new-agent'" class="space-y-3 p-4">
-          <div class="flex items-center justify-between">
-            <h3 class="text-sm font-medium text-muted-foreground">
-              {{ editTarget.type === 'new-agent' ? 'New Custom Agent' : 'Edit: ' + editTarget.key }}
-            </h3>
-            <Button
-              variant="ghost"
-              class="text-xs text-tertiary hover:text-muted-foreground"
-              @click="editTarget = null; resetAgentForm()"
-            >
-              Cancel
-            </Button>
-          </div>
-          <!-- Name -->
-          <div>
-            <label class="mb-1 block text-xs text-tertiary">Name</label>
-            <Input v-model="agentForm.name" type="text"
-              :disabled="editTarget.type === 'custom'"
-              class="font-mono text-sm"
-              placeholder="e.g. code_reviewer" />
-          </div>
-          <!-- Description -->
-          <div>
-            <label class="mb-1 block text-xs text-tertiary">Description</label>
-            <Input v-model="agentForm.description" type="text"
-              class="text-sm" />
-          </div>
-          <!-- Prompt -->
-          <div>
-            <label class="mb-1 block text-xs text-tertiary">Prompt Content</label>
-            <Textarea v-model="agentForm.content" rows="10"
-              class="font-mono text-xs" />
-          </div>
-          <!-- Tools -->
-          <div>
-            <label class="mb-1 block text-xs text-tertiary">Allowed Tools</label>
-            <div class="flex items-center gap-2">
-              <Input v-model="agentToolInput" type="text"
-                class="flex-1 font-mono text-xs"
-                placeholder="Tool name" @keydown.enter.prevent="addTool" />
-              <Button variant="outline" class="text-xs" @click="addTool">Add</Button>
-            </div>
-            <div v-if="agentForm.tools.length" class="mt-2 flex flex-wrap gap-1">
-              <span v-for="(tool, i) in agentForm.tools" :key="i"
-                class="inline-flex items-center gap-1 rounded bg-inset px-2 py-0.5 text-xs text-muted-foreground">
-                {{ tool }} <Button variant="ghost" size="sm" class="h-auto p-0 text-semantic-red text-xs hover:bg-transparent" @click="removeTool(i)">x</Button>
-              </span>
-            </div>
-          </div>
-          <!-- Budget -->
-          <div>
-            <label class="mb-1 block text-xs text-tertiary">Budget</label>
-            <div class="grid grid-cols-3 gap-2">
-              <div>
-                <label class="text-xs text-tertiary">Max Tokens</label>
-                <Input v-model.number="agentForm.max_tokens" type="number" min="1000" max="500000"
-                  class="font-mono text-xs" />
-              </div>
-              <div>
-                <label class="text-xs text-tertiary">Max Turns</label>
-                <Input v-model.number="agentForm.max_turns" type="number" min="1" max="200"
-                  class="font-mono text-xs" />
-              </div>
-              <div>
-                <label class="text-xs text-tertiary">Max Tool Calls</label>
-                <Input v-model.number="agentForm.max_tool_calls" type="number" min="1" max="500"
-                  class="font-mono text-xs" />
-              </div>
-            </div>
-          </div>
-          <!-- Read-only -->
-          <div class="flex items-center gap-2">
-            <Checkbox v-model:checked="agentForm.read_only" />
-            <span class="text-sm text-muted-foreground">Read-only</span>
-          </div>
-          <!-- Actions -->
-          <div class="flex justify-end gap-2">
-            <Button
-              variant="outline"
-              class="text-xs"
-              @click="editTarget = null; resetAgentForm()"
-            >
-              Cancel
-            </Button>
-            <Button
-              class="font-mono text-xs"
-              @click="handleSaveAgent"
-            >
-              {{ editTarget.type === 'new-agent' ? 'Create' : 'Save' }}
-            </Button>
-          </div>
-        </div>
+        <AgentFormEditor
+          v-else-if="editTarget?.type === 'custom' || editTarget?.type === 'new-agent'"
+          :model-value="agentForm"
+          :is-new="editTarget.type === 'new-agent'"
+          :edit-key="editTarget.type === 'custom' ? editTarget.key : ''"
+          @update:model-value="agentForm = $event"
+          @save="handleSaveAgent"
+          @cancel="editTarget = null; resetAgentForm()"
+        />
 
         <!-- 空状态 -->
         <div v-else class="flex h-full items-center justify-center p-4">
