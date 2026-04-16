@@ -1,4 +1,7 @@
+use std::sync::Arc;
 use crate::api::AppState;
+use crate::engine::agent_spawner::AgentSpawner;
+use crate::engine::llm::LlmProvider;
 use crate::engine::tools::ToolExecutionContext;
 use crate::engine::context::prompt::{DynamicContext, PromptManager};
 use crate::engine::loop_::AgentLoop;
@@ -280,6 +283,11 @@ pub async fn send_message(
 }
 
 #[tauri::command]
+pub async fn check_api_key() -> Result<bool, String> {
+    Ok(crate::engine::config::load_llm_config().is_some())
+}
+
+#[tauri::command]
 pub async fn get_config(state: State<'_, AppState>) -> Result<ConfigResponse, String> {
     let agent = &state.config;
     let llm = crate::engine::config::load_llm_config();
@@ -330,6 +338,67 @@ pub async fn update_config(
         payload.bash_default_timeout_secs,
     )
     .map_err(|e| e.to_string())
+}
+
+#[derive(Deserialize)]
+pub struct ApplyLlmConfigRequest {
+    pub api_key: String,
+    pub base_url: String,
+    pub model: String,
+}
+
+#[tauri::command]
+pub async fn apply_llm_config(
+    payload: ApplyLlmConfigRequest,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    // 1. 持久化到 config.toml
+    crate::engine::config::save_config(
+        &payload.api_key,
+        &payload.model,
+        &payload.base_url,
+        state.config.max_turns,
+        state.config.context_window,
+        state.config.max_output_tokens,
+        state.config.tool_output_max_bytes,
+        state.config.bash_default_timeout_secs,
+    ).map_err(|e| e.to_string())?;
+
+    // 2. 创建新 provider
+    let provider: Arc<dyn LlmProvider> = Arc::new(
+        crate::engine::llm::anthropic::AnthropicProvider::new(payload.api_key)
+            .with_base_url(payload.base_url)
+            .with_max_tokens(state.config.max_output_tokens),
+    );
+
+    // 3. 创建新 agent_spawner
+    let agent_spawner: Arc<dyn AgentSpawner> = Arc::new(
+        crate::engine::agent_spawner::DefaultAgentSpawner {
+            provider: provider.clone(),
+            model: payload.model.clone(),
+            config: state.config.clone(),
+            tool_registry: state.tool_registry.clone(),
+            task_tree: state.task_tree.clone(),
+            concurrency_manager: state.concurrency_manager.clone(),
+            data_dir: state.data_dir.clone(),
+        },
+    );
+
+    // 4. 替换 AppState 中的值
+    {
+        let mut p = state.provider.write().unwrap();
+        *p = Some(provider);
+    }
+    {
+        let mut m = state.model.write().unwrap();
+        *m = payload.model;
+    }
+    {
+        let mut s = state.agent_spawner.write().unwrap();
+        *s = Some(agent_spawner);
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
