@@ -1,0 +1,174 @@
+<script setup lang="ts">
+import { ref } from 'vue'
+import { Button } from '@/components/ui/button'
+import type { ProviderConfig, ModelTier } from '../types'
+
+const DEFAULT_BASE_URL = 'https://api.anthropic.com'
+
+const props = defineProps<{
+  editState: { mode: 'add' } | { mode: 'edit'; name: string }
+  initialData?: ProviderConfig
+}>()
+
+const emit = defineEmits<{
+  (e: 'save', config: ProviderConfig): void
+  (e: 'cancel'): void
+}>()
+
+// 表单状态
+const form = ref<ProviderConfig>(
+  props.initialData
+    ? { ...props.initialData, models: props.initialData.models.map(m => ({ ...m })) }
+    : { name: '', api_key: '', base_url: DEFAULT_BASE_URL, models: [] },
+)
+const showApiKey = ref(false)
+
+// 模型添加输入
+const newModelId = ref('')
+const newModelAlias = ref('')
+const newModelTier = ref<ModelTier>('balanced')
+
+const tiers: { value: ModelTier; label: string }[] = [
+  { value: 'balanced', label: 'Balanced' },
+  { value: 'reasoning', label: 'Reasoning' },
+  { value: 'fast', label: 'Fast' },
+]
+
+function addModel() {
+  const id = newModelId.value.trim()
+  if (!id) return
+  if (form.value.models.some(m => m.id === id)) return
+  form.value.models.push({
+    id,
+    alias: newModelAlias.value.trim() || null,
+    tier: newModelTier.value,
+  })
+  newModelId.value = ''
+  newModelAlias.value = ''
+  newModelTier.value = 'balanced'
+}
+
+function removeModel(index: number) {
+  form.value.models.splice(index, 1)
+}
+
+function handleSave() {
+  emit('save', form.value)
+}
+</script>
+
+<template>
+  <section class="rounded-md border border-accent-blue/30 bg-bg-elevated p-4 space-y-4">
+    <div class="flex items-center justify-between">
+      <h3 class="text-sm font-medium text-text-secondary">
+        {{ editState.mode === 'add' ? 'Add Provider' : `Edit: ${editState.name}` }}
+      </h3>
+      <Button variant="ghost" size="sm" class="text-xs text-text-tertiary hover:text-text-secondary" @click="emit('cancel')">
+        Cancel
+      </Button>
+    </div>
+
+    <!-- Name -->
+    <div>
+      <label class="mb-1 block text-xs text-text-tertiary">Name</label>
+      <input
+        v-model="form.name"
+        type="text"
+        :disabled="editState.mode === 'edit'"
+        class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-sm text-text-primary disabled:opacity-50"
+        placeholder="e.g. anthropic"
+      />
+    </div>
+
+    <!-- API Key -->
+    <div>
+      <label class="mb-1 block text-xs text-text-tertiary">API Key</label>
+      <div class="flex gap-2">
+        <input
+          v-model="form.api_key"
+          :type="showApiKey ? 'text' : 'password'"
+          class="flex-1 rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-sm text-text-primary"
+          placeholder="sk-..."
+        />
+        <Button
+          variant="outline"
+          class="px-3 text-xs text-text-tertiary"
+          @click="showApiKey = !showApiKey"
+        >
+          {{ showApiKey ? 'Hide' : 'Show' }}
+        </Button>
+      </div>
+    </div>
+
+    <!-- Base URL -->
+    <div>
+      <label class="mb-1 block text-xs text-text-tertiary">Base URL</label>
+      <input
+        v-model="form.base_url"
+        type="text"
+        class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-sm text-text-primary"
+        :placeholder="DEFAULT_BASE_URL"
+      />
+    </div>
+
+    <!-- Models 管理 -->
+    <div>
+      <label class="mb-2 block text-xs text-text-tertiary">Models</label>
+      <!-- 已有模型列表 -->
+      <div v-if="form.models.length > 0" class="mb-3 space-y-1">
+        <div
+          v-for="(model, i) in form.models"
+          :key="model.id"
+          class="flex items-center justify-between rounded-sm bg-bg-inset px-3 py-1.5"
+        >
+          <div class="flex items-center gap-2">
+            <span class="font-mono text-xs text-text-primary">{{ model.id }}</span>
+            <span v-if="model.alias" class="text-xs text-text-tertiary">({{ model.alias }})</span>
+            <select
+              v-model="form.models[i].tier"
+              class="rounded-sm border border-border-default bg-bg-surface px-1.5 py-0.5 text-[10px] font-mono text-text-tertiary"
+            >
+              <option v-for="t in tiers" :key="t.value" :value="t.value">{{ t.label }}</option>
+            </select>
+          </div>
+          <Button variant="link" class="text-xs text-accent-red" @click="removeModel(i)">Remove</Button>
+        </div>
+      </div>
+      <!-- 添加模型 -->
+      <div class="flex items-end gap-2">
+        <div class="flex-1">
+          <input
+            v-model="newModelId"
+            type="text"
+            class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-xs text-text-primary"
+            placeholder="Model ID (e.g. claude-sonnet-4-20250514)"
+            @keydown.enter.prevent="addModel"
+          />
+        </div>
+        <div class="w-24">
+          <input
+            v-model="newModelAlias"
+            type="text"
+            class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 text-xs text-text-primary"
+            placeholder="Alias"
+          />
+        </div>
+        <select
+          v-model="newModelTier"
+          class="rounded-md border border-border-default bg-bg-inset px-2 py-2 text-xs text-text-tertiary"
+        >
+          <option v-for="t in tiers" :key="t.value" :value="t.value">{{ t.label }}</option>
+        </select>
+        <Button variant="outline" class="px-3 py-2 text-xs" @click="addModel">Add</Button>
+      </div>
+    </div>
+
+    <!-- 保存/取消 -->
+    <div class="flex justify-end gap-2">
+      <Button variant="outline" class="px-4 py-2 text-xs" @click="emit('cancel')">Cancel</Button>
+      <Button class="px-4 py-2 text-xs font-mono text-bg-base bg-accent hover:bg-accent/90" @click="handleSave">
+        Save Provider
+      </Button>
+    </div>
+  </section>
+</template>
