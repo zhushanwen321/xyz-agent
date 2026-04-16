@@ -14,6 +14,7 @@ export function useModelManager() {
   const loading = ref(false)
   const error = ref<string | null>(null)
 
+  // 载入模式：guard → loading → error → try → finally
   async function load() {
     if (!isTauri()) return
     loading.value = true

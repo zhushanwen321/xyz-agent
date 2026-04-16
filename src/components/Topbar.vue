@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { isTauri, getCurrentModel, setCurrentModel as apiSetCurrentModel } from '../lib/tauri'
+import { Button } from '@/components/ui/button'
 import ModelSelector from './ModelSelector.vue'
 
 const props = defineProps<{
@@ -16,13 +17,18 @@ const currentPage = ref<'chat' | 'settings'>('chat')
 const currentModel = ref('loading...')
 
 if (isTauri()) {
-  getCurrentModel().then((m) => { currentModel.value = m })
+  getCurrentModel().then((m) => { currentModel.value = m }).catch(() => {})
 }
 
 async function onModelSelect(modelRef: string) {
   currentModel.value = modelRef
   if (isTauri()) {
-    await apiSetCurrentModel(modelRef)
+    try {
+      await apiSetCurrentModel(modelRef)
+    } catch {
+      // API 失败时回退
+      currentModel.value = await getCurrentModel()
+    }
   }
 }
 
@@ -39,7 +45,8 @@ function navigate(page: 'chat' | 'settings') {
 
     <!-- 中: 导航 -->
     <div class="ml-6 flex gap-1">
-      <button
+      <Button
+        variant="ghost"
         class="rounded px-3 py-1 font-mono text-xs transition-colors"
         :class="currentPage === 'chat'
           ? 'bg-accent/10 text-accent'
@@ -47,8 +54,9 @@ function navigate(page: 'chat' | 'settings') {
         @click="navigate('chat')"
       >
         Chat
-      </button>
-      <button
+      </Button>
+      <Button
+        variant="ghost"
         class="rounded px-3 py-1 font-mono text-xs transition-colors"
         :class="currentPage === 'settings'
           ? 'bg-accent/10 text-accent'
@@ -56,20 +64,22 @@ function navigate(page: 'chat' | 'settings') {
         @click="navigate('settings')"
       >
         Settings
-      </button>
+      </Button>
     </div>
 
     <!-- 右: 模型名 + 折叠按钮 -->
     <div class="ml-auto flex items-center gap-3">
       <ModelSelector :current-model="currentModel" @select="onModelSelect" />
-      <button
+      <Button
+        variant="ghost"
+        size="icon"
         class="text-text-tertiary transition-colors hover:text-text-primary"
         @click="$emit('toggle-sidebar')"
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M3 12h18" />
         </svg>
-      </button>
+      </Button>
     </div>
   </div>
 </template>

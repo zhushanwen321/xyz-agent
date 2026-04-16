@@ -10,6 +10,7 @@ export function useSettings() {
   const success = ref(false)
   const apiKeyConfigured = ref<boolean | null>(null)
 
+  // 载入模式：guard → loading → error → try → finally
   async function load() {
     if (!isTauri()) return
     loading.value = true

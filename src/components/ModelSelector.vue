@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useModelManager } from '../composables/useModelManager'
+import { Button } from '@/components/ui/button'
 import type { ModelInfo, ModelTier } from '../types'
 
 const props = defineProps<{
@@ -77,7 +78,8 @@ onUnmounted(() => {
 
 <template>
   <div class="model-selector relative">
-    <button
+    <Button
+      variant="ghost"
       class="flex items-center gap-1.5 rounded-sm px-2 py-0.5 font-mono text-[11px] transition-colors hover:bg-bg-inset"
       :class="open ? 'bg-bg-inset text-text-primary' : 'text-text-tertiary'"
       @click="toggle"
@@ -96,7 +98,7 @@ onUnmounted(() => {
       >
         <path d="M3 4.5L6 7.5L9 4.5" />
       </svg>
-    </button>
+    </Button>
 
     <!-- 下拉列表 -->
     <div
