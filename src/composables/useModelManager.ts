@@ -28,18 +28,30 @@ export function useModelManager() {
   }
 
   async function setCurrentModel(modelRef: string) {
-    await apiSetCurrentModel(modelRef)
-    currentModel.value = modelRef
+    try {
+      await apiSetCurrentModel(modelRef)
+      currentModel.value = modelRef
+    } catch (e) {
+      error.value = String(e)
+    }
   }
 
   async function saveProvider(config: ProviderConfig) {
-    await apiSaveProvider(config)
-    await load()
+    try {
+      await apiSaveProvider(config)
+      await load()
+    } catch (e) {
+      error.value = String(e)
+    }
   }
 
   async function deleteProviderConfig(name: string) {
-    await apiDeleteProvider(name)
-    await load()
+    try {
+      await apiDeleteProvider(name)
+      await load()
+    } catch (e) {
+      error.value = String(e)
+    }
   }
 
   return { models, currentModel, loading, error, load, setCurrentModel, saveProvider, deleteProviderConfig }
