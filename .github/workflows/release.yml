@@ -34,7 +34,7 @@ jobs:
           node-version: 24
           cache: npm
 
-      - run: npm ci
+      - run: npm install
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
