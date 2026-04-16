@@ -1,3 +1,9 @@
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -133,4 +139,18 @@ body {
 
 .prose th {
   background: #1f1f23;
+}
+
+@theme inline {
+  --font-heading: var(--font-sans);
+}
+
+@layer base {
+  * {
+    border-color: var(--input);
+    outline-color: rgba(34, 197, 94, 0.5);
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
 }

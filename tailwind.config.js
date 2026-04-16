@@ -16,6 +16,7 @@ module.exports = {
         destructive: { DEFAULT: 'var(--destructive)', foreground: 'var(--destructive-foreground)' },
         input: 'var(--input)',
         ring: 'var(--ring)',
+        border: 'var(--input)',
         // 项目自定义颜色 — rgb 格式支持 /opacity
         base: 'rgb(10 10 11 / <alpha-value>)',
         surface: 'rgb(17 17 19 / <alpha-value>)',
