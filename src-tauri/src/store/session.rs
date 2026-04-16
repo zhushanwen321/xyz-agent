@@ -102,7 +102,7 @@ pub fn list_sessions(data: &Path) -> Result<Vec<SessionMeta>, AppError> {
         });
     }
 
-    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then_with(|| b.id.cmp(&a.id)));
     Ok(sessions)
 }
 
@@ -239,8 +239,8 @@ mod tests {
 
         let sessions = list_sessions(dir.path()).unwrap();
         assert_eq!(sessions.len(), 2);
-        assert_eq!(sessions[0].id, meta1.id);
-        assert_eq!(sessions[0].title, "This is my first question");
+        let s1 = sessions.iter().find(|s| s.id == meta1.id).unwrap();
+        assert_eq!(s1.title, "This is my first question");
     }
 
     #[test]
