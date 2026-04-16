@@ -71,8 +71,8 @@ defineEmits<{
   content: '';
   width: 8px;
   height: 5px;
-  border-left: 2px solid #22c55e;
-  border-bottom: 2px solid #22c55e;
+  border-left: 2px solid var(--semantic-green);
+  border-bottom: 2px solid var(--semantic-green);
   transform: rotate(-45deg) translateY(-1px);
 }
 
@@ -84,7 +84,7 @@ defineEmits<{
   width: 3px;
   height: 3px;
   border-radius: 50%;
-  background: #eab308;
+  background: var(--semantic-yellow);
   animation: thinking-dots 1.4s ease-in-out infinite;
 }
 .s-thinking .dot:nth-child(2) { animation-delay: 0.2s; }
@@ -96,7 +96,7 @@ defineEmits<{
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #22c55e;
+  background: var(--semantic-green);
   animation: s-pulse 1s ease-in-out infinite;
 }
 .s-streaming::after {
@@ -105,7 +105,7 @@ defineEmits<{
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  border: 1.5px solid #22c55e;
+  border: 1.5px solid var(--semantic-green);
   animation: s-ring 1.5s ease-out infinite;
   opacity: 0;
 }
@@ -117,8 +117,8 @@ defineEmits<{
   height: 10px;
   border-radius: 50%;
   border: 2px solid transparent;
-  border-top-color: #f97316;
-  border-right-color: #f97316;
+  border-top-color: var(--semantic-orange);
+  border-right-color: var(--semantic-orange);
   animation: t-spin 0.8s linear infinite;
 }
 
@@ -128,7 +128,7 @@ defineEmits<{
   position: absolute;
   width: 8px;
   height: 2px;
-  background: #ef4444;
+  background: var(--semantic-red);
   border-radius: 1px;
 }
 .s-failed::before { transform: rotate(45deg); }
@@ -140,7 +140,7 @@ defineEmits<{
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #3b82f6;
+  background: var(--semantic-blue);
 }
 
 @keyframes thinking-dots {

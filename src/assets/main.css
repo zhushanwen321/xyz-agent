@@ -32,6 +32,13 @@
     --font-size-code: 0.75rem;
     --font-size-label: 0.625rem;
     --line-height-message: 1.5;
+
+    /* 功能色 CSS 变量 — 供 scoped CSS / 动画使用 */
+    --semantic-green: #22c55e;
+    --semantic-blue: #3b82f6;
+    --semantic-yellow: #eab308;
+    --semantic-red: #ef4444;
+    --semantic-orange: #f97316;
   }
 }
 
