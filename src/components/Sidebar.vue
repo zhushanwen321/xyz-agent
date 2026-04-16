@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, nextTick } from 'vue'
 import { useSession } from '../composables/useSession'
+import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 
@@ -59,8 +60,10 @@ function handleEditKeydown(e: KeyboardEvent) {
 
     <!-- 新建按钮 -->
     <div class="px-3 py-2">
-      <button
-        class="flex w-full items-center gap-2 rounded-md px-3 py-1.5 font-mono text-xs text-semantic-green transition-colors hover:bg-semantic-green/15"
+      <Button
+        variant="ghost"
+        size="sm"
+        class="flex w-full items-center gap-2 font-mono text-xs text-semantic-green hover:bg-semantic-green/15"
         @click="createNewSession"
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -68,7 +71,7 @@ function handleEditKeydown(e: KeyboardEvent) {
           <path d="M5 12h14" />
         </svg>
         NEW SESSION
-      </button>
+      </Button>
     </div>
 
     <Separator class="bg-border-default" />
@@ -108,25 +111,31 @@ function handleEditKeydown(e: KeyboardEvent) {
 
         <!-- 正常显示模式 -->
         <template v-else>
-          <button
-            class="flex-1 truncate px-3 py-2 text-left text-sm"
+          <Button
+            variant="ghost"
+            size="sm"
+            class="flex-1 truncate text-left text-sm"
             @click="selectSession(session.id)"
           >
             {{ session.title }}
-          </button>
+          </Button>
           <!-- 编辑按钮 -->
-          <button
-            class="mr-0.5 shrink-0 rounded p-1 text-tertiary opacity-0 transition-all hover:bg-semantic-green/15 hover:text-semantic-green group-hover:opacity-100"
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            class="mr-0.5 shrink-0 text-tertiary opacity-0 transition-all hover:bg-semantic-green/15 hover:text-semantic-green group-hover:opacity-100"
             title="重命名"
             @click.stop="startRename(session.id, session.title)"
           >
             <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
             </svg>
-          </button>
+          </Button>
           <!-- 删除按钮 -->
-          <button
-            class="mr-1 shrink-0 rounded p-1 text-tertiary opacity-0 transition-all hover:bg-semantic-red/10 hover:text-semantic-red group-hover:opacity-100"
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            class="mr-1 shrink-0 text-tertiary opacity-0 transition-all hover:bg-semantic-red/10 hover:text-semantic-red group-hover:opacity-100"
             title="删除此会话"
             @click.stop="deleteSession(session.id)"
           >
@@ -135,7 +144,7 @@ function handleEditKeydown(e: KeyboardEvent) {
               <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
               <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
             </svg>
-          </button>
+          </Button>
         </template>
       </div>
 

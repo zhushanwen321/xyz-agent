@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import type { TaskNode } from '../types'
 import { formatTokensAlways as formatTokens } from '../lib/format'
 import { getTaskStatusColor, getTaskBorderColor } from '../lib/status'
+import { Button } from '@/components/ui/button'
 
 const props = defineProps<{ task: TaskNode }>()
 
@@ -83,14 +84,16 @@ const emit = defineEmits<{
         </span>
         <span class="font-mono text-[10px]" :class="statusColor">{{ statusLabel }}</span>
         <!-- Kill 按钮：仅 running 状态显示 -->
-        <button
+        <Button
           v-if="task.status === 'running'"
-          class="w-4 h-4 flex items-center justify-center text-muted-foreground hover:text-red-400 shrink-0"
+          variant="ghost"
+          size="icon-sm"
+          class="shrink-0 text-muted-foreground hover:text-red-400"
           title="Kill"
           @click.stop="emit('kill')"
         >
           <span class="text-[10px]">&#x2715;</span>
-        </button>
+        </Button>
       </div>
     </div>
 

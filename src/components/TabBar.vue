@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { ChatTab } from '../types'
+import { Button } from '@/components/ui/button'
 
 defineProps<{
   tabs: ChatTab[]
@@ -14,10 +15,12 @@ defineEmits<{
 
 <template>
   <div class="flex items-stretch bg-[#0a0a0b] border-b border-[#27272a] h-8 min-h-[32px] overflow-x-auto scrollbar-none">
-    <button
+    <Button
       v-for="tab in tabs"
       :key="tab.id"
-      class="flex items-center gap-1.5 px-3 text-[11px] font-mono whitespace-nowrap relative transition-colors border-r border-[#27272a]"
+      variant="ghost"
+      size="sm"
+      class="flex items-center gap-1.5 px-3 text-[11px] font-mono whitespace-nowrap relative border-r border-[#27272a]"
       :class="tab.id === activeTabId
         ? 'text-[#fafafa] bg-[#111113]'
         : 'text-[#a1a1aa] bg-transparent hover:text-[#fafafa] hover:bg-[#18181b]'"
@@ -45,7 +48,7 @@ defineEmits<{
         class="inline-flex items-center justify-center w-3.5 h-3.5 text-[10px] rounded-sm text-[#71717a] ml-1 transition-colors hover:bg-[#1f1f23] hover:text-[#fafafa]"
         @click.stop="$emit('close', tab.id)"
       >✕</span>
-    </button>
+    </Button>
   </div>
 </template>
 

@@ -109,10 +109,12 @@ onUnmounted(() => {
         <div class="px-3 pt-2 pb-1 font-mono text-[10px] font-semibold uppercase tracking-wider text-tertiary">
           {{ provider }}
         </div>
-        <button
+        <Button
           v-for="m in providerModels"
           :key="m.model_ref"
-          class="flex w-full items-center justify-between px-3 py-1 font-mono text-[11px] transition-colors hover:bg-inset"
+          variant="ghost"
+          size="sm"
+          class="flex w-full items-center justify-between px-3 py-1 font-mono text-[11px] hover:bg-inset"
           :class="m.model_ref === currentModel ? 'text-semantic-green' : 'text-foreground'"
           @click="select(m.model_ref)"
         >
@@ -120,7 +122,7 @@ onUnmounted(() => {
           <span :class="tierColor[m.tier]" class="ml-2 shrink-0 text-[10px]">
             [{{ tierLabel[m.tier] }}]
           </span>
-        </button>
+        </Button>
       </template>
     </div>
   </div>

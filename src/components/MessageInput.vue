@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, nextTick } from 'vue'
+import { Button } from '@/components/ui/button'
 
 defineProps<{
   isStreaming: boolean
@@ -64,10 +65,12 @@ function handleSend() {
       />
 
       <!-- 发送按钮 / 停止按钮 -->
-      <button
+      <Button
         v-if="!isStreaming"
+        variant="ghost"
+        size="sm"
         :disabled="!inputText.trim()"
-        class="flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1 font-mono text-xs text-tertiary transition-colors hover:bg-semantic-green/15 hover:text-semantic-green disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-tertiary"
+        class="shrink-0 font-mono text-xs text-tertiary hover:bg-semantic-green/15 hover:text-semantic-green disabled:opacity-30"
         @click="handleSend"
       >
         <svg
@@ -84,10 +87,12 @@ function handleSend() {
           <path d="m12 5 7 7-7 7" />
         </svg>
         <span>Enter</span>
-      </button>
-      <button
+      </Button>
+      <Button
         v-else
-        class="flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1 font-mono text-xs text-red-400 transition-colors hover:bg-red-500/10 hover:text-red-300"
+        variant="ghost"
+        size="sm"
+        class="shrink-0 font-mono text-xs text-red-400 hover:bg-red-500/10 hover:text-red-300"
         @click="emit('cancel')"
       >
         <svg
@@ -99,7 +104,7 @@ function handleSend() {
           <rect x="6" y="6" width="12" height="12" rx="1" />
         </svg>
         <span>Stop</span>
-      </button>
+      </Button>
     </div>
   </div>
 </template>

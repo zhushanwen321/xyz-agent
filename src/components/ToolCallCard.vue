@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import type { ToolCallDisplay, TaskNode } from '../types'
 import { getToolDangerLevel } from '../types'
+import { Button } from '@/components/ui/button'
 import SubAgentCard from './SubAgentCard.vue'
 
 const props = defineProps<{
@@ -100,10 +101,12 @@ const statusLabel = computed(() => {
     </div>
 
     <!-- 子 Agent Tab 跳转提示 -->
-    <button
+    <Button
       v-if="taskId && onOpenTab"
-      class="mt-1 text-[10px] text-[#3b82f6] hover:underline cursor-pointer"
+      variant="link"
+      size="sm"
+      class="mt-1 text-[10px] text-[#3b82f6]"
       @click.stop="onOpenTab(taskId)"
-    >Click to view &rarr;</button>
+    >Click to view &rarr;</Button>
   </div>
 </template>

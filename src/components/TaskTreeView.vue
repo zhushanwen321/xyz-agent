@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { OrchestrateNode } from '../types'
+import { Button } from '@/components/ui/button'
 import TaskTreeNode from './TaskTreeNode.vue'
 import { formatTokensAlways as formatTokens, formatDuration } from '../lib/format'
 import { getStatusClasses } from '../lib/status'
@@ -114,7 +115,7 @@ function roleColorClass(role: string): string {
     <div v-else class="flex flex-col gap-1.5">
       <!-- Exit anchor -->
       <div class="text-right">
-        <button class="text-[10px] text-[#71717a] hover:text-[#fafafa] cursor-pointer" @click="emit('anchor', null)">&times; exit focus</button>
+        <Button variant="link" size="sm" class="text-[10px] text-tertiary hover:text-foreground" @click="emit('anchor', null)">&times; exit focus</Button>
       </div>
 
       <!-- PARENTS -->

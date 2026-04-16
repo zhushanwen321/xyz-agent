@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue'
 import type { OrchestrateNode } from '../types'
 import { formatTokens } from '../lib/format'
+import { Button } from '@/components/ui/button'
 
 const props = defineProps<{
   node: OrchestrateNode
@@ -61,13 +62,15 @@ const roleBadge = computed(() =>
       @click="emit('anchor', node.node_id)"
     >
       <!-- 展开/折叠 -->
-      <button
+      <Button
         v-if="children.length > 0"
-        class="w-4 h-4 flex items-center justify-center text-muted-foreground hover:text-foreground shrink-0"
+        variant="ghost"
+        size="icon-sm"
+        class="shrink-0 text-muted-foreground hover:text-foreground"
         @click.stop="isExpanded = !isExpanded"
       >
         <span class="text-[10px] transition-transform" :class="isExpanded ? '' : '-rotate-90'">&#x25BC;</span>
-      </button>
+      </Button>
       <span v-else class="w-4 shrink-0" />
 
       <!-- Role badge -->
@@ -105,14 +108,16 @@ const roleBadge = computed(() =>
       <span v-else class="text-[10px] font-mono shrink-0" :class="statusColor" v-html="statusLabel" />
 
       <!-- Kill 按钮：仅 running 状态显示 -->
-      <button
+      <Button
         v-if="node.status === 'running'"
-        class="w-4 h-4 flex items-center justify-center text-muted-foreground hover:text-red-400 shrink-0"
+        variant="ghost"
+        size="icon-sm"
+        class="shrink-0 text-muted-foreground hover:text-red-400"
         title="Kill"
         @click.stop="emit('kill', node.node_id)"
       >
         <span class="text-[10px]">&#x2715;</span>
-      </button>
+      </Button>
     </div>
 
     <!-- 递归渲染子节点，最大深度 20 防止循环引用导致栈溢出 -->

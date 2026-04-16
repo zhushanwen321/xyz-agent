@@ -4,6 +4,7 @@ import { useChat } from '../composables/useChat'
 import { useConversationCopy } from '../composables/useConversationCopy'
 import { useSession } from '../composables/useSession'
 import { getCurrentModel, listTools, isTauri, killTask } from '../lib/tauri'
+import { Button } from '@/components/ui/button'
 import MessageBubble from './MessageBubble.vue'
 import MessageInput from './MessageInput.vue'
 import EmptyState from './EmptyState.vue'
@@ -203,16 +204,20 @@ function handleCancel() {
           v-if="currentMessages.length > 0"
           class="sticky top-0 z-10 flex justify-end gap-1 bg-surface/80 px-2 pt-2 pb-1 backdrop-blur-sm"
         >
-          <button
-            class="rounded border border-border-default bg-elevated px-2 py-0.5 font-mono text-[11px] text-muted-foreground transition-colors hover:border-semantic-green hover:text-foreground"
-            :class="{ 'border-semantic-green text-semantic-green': selectMode }"
+          <Button
+            variant="outline"
+            size="sm"
+            class="font-mono text-[11px]"
+            :class="selectMode ? 'border-semantic-green text-semantic-green' : ''"
             @click="toggleSelectMode"
-          >{{ selectMode ? 'Cancel' : 'Select' }}</button>
-          <button
+          >{{ selectMode ? 'Cancel' : 'Select' }}</Button>
+          <Button
             v-if="!selectMode"
-            class="rounded border border-border-default bg-elevated px-2 py-0.5 font-mono text-[11px] text-muted-foreground transition-colors hover:border-semantic-green hover:text-foreground"
+            variant="outline"
+            size="sm"
+            class="font-mono text-[11px]"
             @click="copyAll(currentMessages)"
-          >{{ copied ? 'Copied!' : 'Copy All' }}</button>
+          >{{ copied ? 'Copied!' : 'Copy All' }}</Button>
         </div>
 
         <div class="px-2 py-2">
@@ -240,15 +245,18 @@ function handleCancel() {
         v-if="selectMode"
         class="flex items-center gap-2 border-t border-border-default bg-elevated px-3 py-1.5"
       >
-        <button
-          class="rounded border border-border-default bg-inset px-2 py-0.5 font-mono text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+        <Button
+          variant="outline"
+          size="sm"
+          class="font-mono text-[11px]"
           @click="selectAll(currentMessages)"
-        >Select All</button>
-        <button
-          class="rounded bg-semantic-green px-2 py-0.5 font-mono text-[11px] text-white transition-colors hover:opacity-80 disabled:opacity-40"
+        >Select All</Button>
+        <Button
+          size="sm"
+          class="font-mono text-[11px]"
           :disabled="selectedCount === 0"
           @click="copySelected(currentMessages)"
-        >{{ copied ? 'Copied!' : `Copy ${selectedCount > 0 ? selectedCount : ''} Selected` }}</button>
+        >{{ copied ? 'Copied!' : `Copy ${selectedCount > 0 ? selectedCount : ''} Selected` }}</Button>
         <span class="ml-auto font-mono text-[10px] text-tertiary">{{ selectedCount }} selected</span>
       </div>
 

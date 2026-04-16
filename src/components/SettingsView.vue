@@ -42,42 +42,50 @@ onMounted(async () => {
 
     <!-- Tab 切换 -->
     <div class="mb-6 flex border-b border-border-default">
-      <button
-        class="px-4 pb-2 text-sm font-medium transition-colors"
+      <Button
+        variant="ghost"
+        size="sm"
+        class="px-4 pb-2 text-sm font-medium"
         :class="activeTab === 'llm'
           ? 'border-b-2 border-semantic-green text-foreground'
           : 'text-tertiary hover:text-muted-foreground'"
         @click="activeTab = 'llm'"
       >
         LLM
-      </button>
-      <button
-        class="px-4 pb-2 text-sm font-medium transition-colors"
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        class="px-4 pb-2 text-sm font-medium"
         :class="activeTab === 'agent'
           ? 'border-b-2 border-semantic-green text-foreground'
           : 'text-tertiary hover:text-muted-foreground'"
         @click="activeTab = 'agent'"
       >
         Agent
-      </button>
-      <button
-        class="px-4 pb-2 text-sm font-medium transition-colors"
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        class="px-4 pb-2 text-sm font-medium"
         :class="activeTab === 'prompts'
           ? 'border-b-2 border-semantic-green text-foreground'
           : 'text-tertiary hover:text-muted-foreground'"
         @click="activeTab = 'prompts'"
       >
         Prompts
-      </button>
-      <button
-        class="px-4 pb-2 text-sm font-medium transition-colors"
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        class="px-4 pb-2 text-sm font-medium"
         :class="activeTab === 'tools'
           ? 'border-b-2 border-semantic-green text-foreground'
           : 'text-tertiary hover:text-muted-foreground'"
         @click="activeTab = 'tools'"
       >
         Tools
-      </button>
+      </Button>
     </div>
 
     <!-- Tab: LLM -->
