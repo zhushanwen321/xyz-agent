@@ -5,8 +5,7 @@ mod store;
 mod types;
 
 use engine::config;
-use engine::llm::anthropic::AnthropicProvider;
-use engine::llm::LlmProvider;
+use engine::llm::registry::ProviderRegistry;
 use engine::tools::{PermissionContext, ToolRegistry};
 use std::sync::Arc;
 use tauri::Manager;
@@ -16,11 +15,10 @@ pub use api::AppState;
 /// 构建 AppState，集中 setup 闭包中的状态初始化逻辑
 fn build_app_state(
     data_dir: std::path::PathBuf,
-    provider: api::ProviderRef,
-    model: Arc<std::sync::RwLock<String>>,
+    provider_registry: Arc<std::sync::RwLock<ProviderRegistry>>,
+    current_model: Arc<std::sync::RwLock<String>>,
     config: Arc<engine::config::AgentConfig>,
     tool_registry: Arc<ToolRegistry>,
-    llm_config: &Option<engine::config::LlmConfig>,
 ) -> AppState {
     let task_tree = Arc::new(tokio::sync::Mutex::new(
         engine::task_tree::TaskTree::new(),
@@ -29,26 +27,39 @@ fn build_app_state(
         engine::concurrency::ConcurrencyManager::new(3),
     );
 
-    let agent_spawner_inner: Option<Arc<dyn engine::agent_spawner::AgentSpawner>> = match llm_config {
-        Some(cfg) => Some(Arc::new(
-            engine::agent_spawner::DefaultAgentSpawner::new(
-                provider.read().expect("provider lock").clone().expect("provider must exist during setup"),
-                cfg.model.clone(),
-                config.clone(),
-                tool_registry.clone(),
-                task_tree.clone(),
-                concurrency_manager.clone(),
-                data_dir.clone(),
-            ),
-        )),
-        None => None,
+    // 从 registry 提取默认 provider 和 model_id 构造 spawner
+    let agent_spawner_inner: Option<Arc<dyn engine::agent_spawner::AgentSpawner>> = {
+        let reg = provider_registry.read().expect("registry lock");
+        if reg.is_empty() {
+            None
+        } else {
+            let model_ref = current_model.read().expect("model lock").clone();
+            let (provider_name, model_id) = engine::llm::types::parse_model_ref(&model_ref)
+                .unwrap_or(("unknown", "unknown"));
+            let provider = reg.get_provider(provider_name)
+                .or_else(|| reg.get_provider(reg.first_provider_name()?));
+            match provider {
+                Some(p) => Some(Arc::new(
+                    engine::agent_spawner::DefaultAgentSpawner::new(
+                        p,
+                        model_id.to_string(),
+                        config.clone(),
+                        tool_registry.clone(),
+                        task_tree.clone(),
+                        concurrency_manager.clone(),
+                        data_dir.clone(),
+                    ),
+                )),
+                None => None,
+            }
+        }
     };
     let agent_spawner: api::SpawnerRef = Arc::new(std::sync::RwLock::new(agent_spawner_inner));
 
     AppState {
         data_dir: data_dir.clone(),
-        provider,
-        model,
+        provider_registry,
+        current_model,
         config,
         tool_registry,
         global_perms: PermissionContext::default(),
@@ -82,35 +93,32 @@ pub fn run() {
 
     log::info!("data_dir={}", data_dir.display());
 
-    const DEFAULT_MODEL: &str = "claude-sonnet-4-20250514";
-
-    let llm_config = config::load_llm_config();
-    let default_model = DEFAULT_MODEL.to_string();
-
     let agent_config = Arc::new(
         config::load_agent_config().unwrap_or_default(),
     );
 
-    // 根据 LLM 配置构建 provider 和 model
-    let (inner_provider, model_str) = match &llm_config {
-        Some(cfg) => {
-            log::info!("model={}, base_url={}", cfg.model, cfg.base_url);
-            let p: Arc<dyn LlmProvider> = Arc::new(
-                AnthropicProvider::new(cfg.api_key.clone())
-                    .with_base_url(cfg.base_url.clone())
-                    .with_max_tokens(agent_config.max_output_tokens)
-                    .with_thinking(agent_config.thinking_enabled, agent_config.thinking_budget_tokens),
-            );
-            (Some(p), cfg.model.clone())
-        },
-        None => {
-            log::warn!("No API Key found. Please configure in Settings.");
-            (None, default_model)
-        },
-    };
+    // 加载 providers 配置并构建 ProviderRegistry
+    let providers_config = config::load_providers();
+    let registry = ProviderRegistry::from_config(
+        &providers_config.providers,
+        agent_config.max_output_tokens,
+        agent_config.thinking_enabled,
+        agent_config.thinking_budget_tokens,
+    );
 
-    let provider: api::ProviderRef = Arc::new(std::sync::RwLock::new(inner_provider));
-    let model = Arc::new(std::sync::RwLock::new(model_str));
+    // 确定 default_model
+    let default_model = providers_config.default_model
+        .or_else(|| registry.default_model_ref())
+        .unwrap_or_else(|| "default/claude-sonnet-4-20250514".to_string());
+
+    if registry.is_empty() {
+        log::warn!("No API Key found. Please configure in Settings.");
+    } else {
+        log::info!("default_model={}", default_model);
+    }
+
+    let provider_registry = Arc::new(std::sync::RwLock::new(registry));
+    let current_model = Arc::new(std::sync::RwLock::new(default_model));
 
     let mut tool_registry = ToolRegistry::new();
     let workdir = std::env::current_dir().unwrap_or_default();
@@ -135,11 +143,10 @@ pub fn run() {
 
             let state = build_app_state(
                 data_dir,
-                provider.clone(),
-                model.clone(),
+                provider_registry.clone(),
+                current_model.clone(),
                 agent_config.clone(),
                 tool_registry.clone(),
-                &llm_config,
             );
             app.manage(state);
             Ok(())

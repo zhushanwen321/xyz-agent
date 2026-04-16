@@ -78,6 +78,11 @@ impl ProviderRegistry {
         })
     }
 
+    /// 获取第一个 provider 的名称（用于 fallback）
+    pub fn first_provider_name(&self) -> Option<&str> {
+        self.provider_configs.keys().next().map(|s| s.as_str())
+    }
+
     fn build_provider(
         cfg: &ProviderConfig,
         max_tokens: u32,
