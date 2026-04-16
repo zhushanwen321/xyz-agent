@@ -1,0 +1,15 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <!-- 背景 -->
+  <rect width="1024" height="1024" rx="200" fill="#161b22"/>
+  <rect x="8" y="8" width="1008" height="1008" rx="196" fill="none" stroke="#30363d" stroke-width="4"/>
+  <!-- XYZ 文字 -->
+  <text x="512" y="480" text-anchor="middle" font-family="SF Mono, Menlo, Monaco, Consolas, monospace" font-size="240" font-weight="bold" fill="#58a6ff" letter-spacing="-8">XYZ</text>
+  <!-- agent 文字 -->
+  <text x="512" y="600" text-anchor="middle" font-family="SF Mono, Menlo, Monaco, Consolas, monospace" font-size="80" fill="#8b949e" letter-spacing="12">agent</text>
+  <!-- 光标线 -->
+  <rect x="370" y="680" width="284" height="8" rx="4" fill="#58a6ff" opacity="0.5"/>
+  <!-- 装饰点 -->
+  <circle cx="180" cy="840" r="6" fill="#30363d"/>
+  <circle cx="210" cy="840" r="6" fill="#30363d"/>
+  <circle cx="240" cy="840" r="6" fill="#30363d"/>
+</svg>
