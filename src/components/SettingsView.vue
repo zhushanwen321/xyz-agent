@@ -6,6 +6,7 @@ import PromptsTab from './PromptsTab.vue'
 import AgentTab from './AgentTab.vue'
 import ToolsTab from './ToolsTab.vue'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 
 const props = defineProps<{
   apiKeyMissing?: boolean
@@ -110,11 +111,7 @@ onMounted(async () => {
         <section class="rounded-lg border border-border-default bg-inset p-4">
           <h3 class="mb-3 text-sm font-medium text-muted-foreground">Thinking Mode</h3>
           <div class="flex items-center gap-2">
-            <input
-              type="checkbox"
-              v-model="config.thinking_enabled"
-              class="h-4 w-4 rounded border-border-default bg-inset"
-            />
+            <Checkbox v-model:checked="config.thinking_enabled" />
             <span class="text-sm text-muted-foreground">Extended Thinking</span>
           </div>
           <div v-if="config.thinking_enabled" class="mt-3">

@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import type { ProviderConfig, ModelTier } from '../types'
 
 const DEFAULT_BASE_URL = 'https://api.anthropic.com'
@@ -125,12 +126,14 @@ function handleSave() {
           <div class="flex items-center gap-2">
             <span class="font-mono text-xs text-foreground">{{ model.id }}</span>
             <span v-if="model.alias" class="text-xs text-tertiary">({{ model.alias }})</span>
-            <select
-              v-model="form.models[i].tier"
-              class="rounded-sm border border-border-default bg-surface px-1.5 py-0.5 text-[10px] font-mono text-tertiary"
-            >
-              <option v-for="t in tiers" :key="t.value" :value="t.value">{{ t.label }}</option>
-            </select>
+            <Select v-model="form.models[i].tier">
+              <SelectTrigger class="h-6 border-border-default bg-surface px-1.5 text-[10px] font-mono text-tertiary">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="t in tiers" :key="t.value" :value="t.value" class="text-xs">{{ t.label }}</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <Button variant="link" class="text-xs text-semantic-red" @click="removeModel(i)">Remove</Button>
         </div>
@@ -154,12 +157,14 @@ function handleSave() {
             placeholder="Alias"
           />
         </div>
-        <select
-          v-model="newModelTier"
-          class="rounded-md border border-border-default bg-inset px-2 py-2 text-xs text-tertiary"
-        >
-          <option v-for="t in tiers" :key="t.value" :value="t.value">{{ t.label }}</option>
-        </select>
+        <Select v-model="newModelTier">
+          <SelectTrigger class="h-9 border-border-default bg-inset px-2 text-xs text-tertiary">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem v-for="t in tiers" :key="t.value" :value="t.value" class="text-xs">{{ t.label }}</SelectItem>
+          </SelectContent>
+        </Select>
         <Button variant="outline" class="px-3 py-2 text-xs" @click="addModel">Add</Button>
       </div>
     </div>

@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useToolManager } from '../composables/useToolManager'
 import type { ToolInfo, ToolConfigSaveInput } from '../types'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 
@@ -119,11 +120,7 @@ onMounted(() => {
           </div>
           <!-- Enabled toggle -->
           <div class="flex items-center gap-2">
-            <input
-              type="checkbox"
-              v-model="toolEditForm.enabled"
-              class="h-4 w-4 rounded border-border-default bg-inset"
-            />
+            <Checkbox v-model:checked="toolEditForm.enabled" />
             <span class="text-sm text-muted-foreground">Enabled</span>
           </div>
           <!-- Description -->

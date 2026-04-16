@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { usePromptManager } from '../composables/usePromptManager'
 import type { PromptInfo, PromptSaveInput, CustomAgentInput } from '../types'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 
@@ -424,7 +425,7 @@ onMounted(() => {
           </div>
           <!-- Read-only -->
           <div class="flex items-center gap-2">
-            <input type="checkbox" v-model="agentForm.read_only" class="h-4 w-4 rounded" />
+            <Checkbox v-model:checked="agentForm.read_only" />
             <span class="text-sm text-muted-foreground">Read-only</span>
           </div>
           <!-- Actions -->
