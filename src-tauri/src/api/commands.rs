@@ -341,6 +341,7 @@ pub async fn update_config(
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ApplyLlmConfigRequest {
     pub api_key: String,
     pub base_url: String,
