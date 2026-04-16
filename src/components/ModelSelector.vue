@@ -114,7 +114,7 @@ onUnmounted(() => {
           :key="m.model_ref"
           variant="ghost"
           size="sm"
-          class="flex w-full items-center justify-between px-3 py-1 font-mono text-[11px] hover:bg-inset"
+          class="w-full justify-between px-3 py-1 font-mono text-[11px] hover:bg-inset"
           :class="m.model_ref === currentModel ? 'text-semantic-green' : 'text-foreground'"
           @click="select(m.model_ref)"
         >

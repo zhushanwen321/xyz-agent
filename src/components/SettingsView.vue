@@ -45,7 +45,7 @@ onMounted(async () => {
       <Button
         variant="ghost"
         size="sm"
-        class="px-4 pb-2 text-sm font-medium"
+        class="px-4 pb-2 text-sm font-medium hover:bg-transparent"
         :class="activeTab === 'llm'
           ? 'border-b-2 border-semantic-green text-foreground'
           : 'text-tertiary hover:text-muted-foreground'"
@@ -56,7 +56,7 @@ onMounted(async () => {
       <Button
         variant="ghost"
         size="sm"
-        class="px-4 pb-2 text-sm font-medium"
+        class="px-4 pb-2 text-sm font-medium hover:bg-transparent"
         :class="activeTab === 'agent'
           ? 'border-b-2 border-semantic-green text-foreground'
           : 'text-tertiary hover:text-muted-foreground'"
@@ -67,7 +67,7 @@ onMounted(async () => {
       <Button
         variant="ghost"
         size="sm"
-        class="px-4 pb-2 text-sm font-medium"
+        class="px-4 pb-2 text-sm font-medium hover:bg-transparent"
         :class="activeTab === 'prompts'
           ? 'border-b-2 border-semantic-green text-foreground'
           : 'text-tertiary hover:text-muted-foreground'"
@@ -78,7 +78,7 @@ onMounted(async () => {
       <Button
         variant="ghost"
         size="sm"
-        class="px-4 pb-2 text-sm font-medium"
+        class="px-4 pb-2 text-sm font-medium hover:bg-transparent"
         :class="activeTab === 'tools'
           ? 'border-b-2 border-semantic-green text-foreground'
           : 'text-tertiary hover:text-muted-foreground'"

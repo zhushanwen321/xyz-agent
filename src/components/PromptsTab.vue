@@ -396,7 +396,7 @@ onMounted(() => {
             <div v-if="agentForm.tools.length" class="mt-2 flex flex-wrap gap-1">
               <span v-for="(tool, i) in agentForm.tools" :key="i"
                 class="inline-flex items-center gap-1 rounded bg-inset px-2 py-0.5 text-xs text-muted-foreground">
-                {{ tool }} <Button variant="link" size="sm" class="h-auto p-0 text-semantic-red text-xs" @click="removeTool(i)">x</Button>
+                {{ tool }} <Button variant="ghost" size="sm" class="h-auto p-0 text-semantic-red text-xs hover:bg-transparent" @click="removeTool(i)">x</Button>
               </span>
             </div>
           </div>

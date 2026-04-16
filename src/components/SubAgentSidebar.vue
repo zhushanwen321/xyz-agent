@@ -46,7 +46,7 @@ const hasContent = computed(() =>
       <Button
         variant="ghost"
         size="sm"
-        class="flex-1 text-[12px] font-mono"
+        class="flex-1 text-[12px] font-mono hover:bg-transparent"
         :class="activeTab === 'subagents' ? 'text-foreground border-b-2 border-b-blue-500' : 'text-muted-foreground hover:text-foreground'"
         @click="activeTab = 'subagents'"
       >
@@ -55,7 +55,7 @@ const hasContent = computed(() =>
       <Button
         variant="ghost"
         size="sm"
-        class="flex-1 text-[12px] font-mono"
+        class="flex-1 text-[12px] font-mono hover:bg-transparent"
         :class="activeTab === 'orchestrate' ? 'text-foreground border-b-2 border-b-blue-500' : 'text-muted-foreground hover:text-foreground'"
         @click="activeTab = 'orchestrate'"
       >
