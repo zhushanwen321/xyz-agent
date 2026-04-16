@@ -147,7 +147,7 @@ fn read_config_value(key: &str) -> Result<String, ()> {
     for line in content.lines() {
         let trimmed = line.trim();
         if let Some(rest) = trimmed.strip_prefix(key) {
-            let rest = rest.trim_start_matches(['=', ' ']).trim();
+            let rest = rest.trim_start_matches(['=', ' ']).trim().trim_matches('"');
             if !rest.is_empty() {
                 return Ok(rest.to_string());
             }
