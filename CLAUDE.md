@@ -61,6 +61,7 @@ src-tauri/src/
 │   ├── agent_template.rs  # Agent 模板注册表
 │   ├── budget_guard.rs    # Token/轮次预算守卫
 │   └── concurrency.rs     # 并发子 Agent 控制
+├── prompts/     # Agent 系统提示词（system_static / general_purpose / plan / explore）
 ├── types/       # 纯数据结构（event/transcript/tool/error）
 └── store/       # JSONL 持久化（会话存储）
 
