@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::sync::Arc;
 use crate::api::AppState;
-use crate::engine::agent_spawner::AgentSpawner;
+use crate::engine::llm::types::{ProviderConfig, ModelInfo, parse_model_ref};
 use crate::engine::llm::LlmProvider;
 use crate::engine::context::prompt::{DynamicContext, PromptManager};
 use crate::engine::loop_::AgentLoop;
@@ -14,9 +14,9 @@ use tauri::{AppHandle, State};
 
 #[derive(serde::Serialize)]
 pub struct ConfigResponse {
-    pub anthropic_api_key: String,
-    pub llm_model: String,
-    pub anthropic_base_url: String,
+    pub providers: Vec<ProviderConfig>,
+    pub default_model: String,
+    pub current_model: String,
     pub max_turns: u32,
     pub context_window: u32,
     pub max_output_tokens: u32,
@@ -28,9 +28,6 @@ pub struct ConfigResponse {
 
 #[derive(Deserialize)]
 pub struct UpdateConfigRequest {
-    pub anthropic_api_key: String,
-    pub llm_model: String,
-    pub anthropic_base_url: String,
     pub max_turns: u32,
     pub context_window: u32,
     pub max_output_tokens: u32,
@@ -83,7 +80,7 @@ pub async fn rename_session(
 
 #[tauri::command]
 pub async fn get_current_model(state: State<'_, AppState>) -> Result<String, String> {
-    Ok(state.model.read().unwrap().clone())
+    Ok(state.current_model.read().unwrap().clone())
 }
 
 #[tauri::command]
@@ -102,8 +99,10 @@ pub async fn send_message(
     log::info!("[chat] send_message: session={session_id}, content={preview}");
 
     // 1. 获取 provider 和 model
-    let provider = acquire_provider(&state)?;
-    let model = state.model.read().unwrap().clone();
+    let provider = acquire_provider_for_model(&state)?;
+    let model = state.current_model.read().unwrap().clone();
+    let (_, model_id) = parse_model_ref(&model).unwrap_or(("unknown", &model));
+    log::info!("[chat] starting agent_loop, model={model}");
     log::info!("[chat] starting agent_loop, model={model}");
 
     // 2. 加载历史 + 创建 user entry
@@ -140,12 +139,12 @@ pub async fn send_message(
     let _token_guard = TokenGuard { tokens: state.cancel_tokens.clone(), session_id: session_id.clone() };
 
     // 5. 构建 prompt 和 context
-    let agent_loop = AgentLoop::new(provider, session_id.clone(), model);
+    let agent_loop = AgentLoop::new(provider, session_id.clone(), model_id.to_string());
     let prompt_manager = PromptManager::new().with_user_prompts(&state.data_dir);
     let dynamic_context = DynamicContext {
         cwd: std::env::current_dir().unwrap_or_default().to_string_lossy().to_string(),
         os: std::env::consts::OS.to_string(),
-        model: state.model.read().unwrap().clone(),
+        model: state.current_model.read().unwrap().clone(),
         git_branch: None,
         tool_names: state.tool_registry.tool_names(),
         data_context_summary: None,
@@ -185,9 +184,13 @@ pub async fn send_message(
 
 // --- send_message helpers ---
 
-/// 从 AppState 读取 provider，未配置时返回错误
-fn acquire_provider(state: &AppState) -> Result<Arc<dyn LlmProvider>, String> {
-    state.provider.read().unwrap().clone()
+/// 从 current_model ref 解析 provider_name，获取对应的 LlmProvider
+fn acquire_provider_for_model(state: &AppState) -> Result<Arc<dyn LlmProvider>, String> {
+    let model_ref = state.current_model.read().map_err(|e| format!("model lock: {e}"))?.clone();
+    let (provider_name, _) = parse_model_ref(&model_ref)
+        .map_err(|e| e.to_string())?;
+    let registry = state.provider_registry.read().map_err(|e| format!("registry lock: {e}"))?;
+    registry.get_provider(provider_name)
         .ok_or("API Key not configured. Please configure in Settings.".to_string())
 }
 
@@ -291,37 +294,6 @@ fn build_tool_context(
     })
 }
 
-/// 构建 provider + agent_spawner 并写入 AppState 的 RwLock
-fn rebuild_runtime(
-    state: &AppState,
-    api_key: String,
-    base_url: String,
-    model: String,
-    thinking_enabled: bool,
-    thinking_budget_tokens: u32,
-) -> Result<(), String> {
-    let provider: Arc<dyn LlmProvider> = Arc::new(
-        crate::engine::llm::anthropic::AnthropicProvider::new(api_key)
-            .with_base_url(base_url)
-            .with_max_tokens(state.config.max_output_tokens)
-            .with_thinking(thinking_enabled, thinking_budget_tokens),
-    );
-    let spawner: Arc<dyn AgentSpawner> = Arc::new(
-        crate::engine::agent_spawner::DefaultAgentSpawner::new(
-            provider.clone(),
-            model,
-            state.config.clone(),
-            state.tool_registry.clone(),
-            state.task_tree.clone(),
-            state.concurrency_manager.clone(),
-            state.data_dir.clone(),
-        ),
-    );
-    *state.provider.write().map_err(|e| format!("provider lock: {e}"))? = Some(provider);
-    *state.agent_spawner.write().map_err(|e| format!("spawner lock: {e}"))? = Some(spawner);
-    Ok(())
-}
-
 /// 持久化新 entries 到 JSONL 并返回总文本长度
 fn persist_entries(
     session_path: &Path,
@@ -347,21 +319,31 @@ fn persist_entries(
 }
 
 #[tauri::command]
-pub async fn check_api_key() -> Result<bool, String> {
-    Ok(crate::engine::config::load_llm_config().is_some())
+pub async fn check_api_key(state: State<'_, AppState>) -> Result<bool, String> {
+    let registry = state.provider_registry.read().map_err(|e| format!("registry lock: {e}"))?;
+    Ok(!registry.is_empty())
 }
 
 #[tauri::command]
 pub async fn get_config(state: State<'_, AppState>) -> Result<ConfigResponse, String> {
     let agent = &state.config;
-    let llm = crate::engine::config::load_llm_config();
+    let registry = state.provider_registry.read().map_err(|e| format!("registry lock: {e}"))?;
+    let providers_config = crate::engine::config::load_providers();
+    let current_model = state.current_model.read().map_err(|e| format!("model lock: {e}"))?.clone();
+    let default_model = providers_config.default_model
+        .or_else(|| registry.default_model_ref())
+        .unwrap_or_default();
+
+    // 脱敏 API keys
+    let providers = providers_config.providers.into_iter().map(|mut p| {
+        p.api_key = mask_api_key(&p.api_key);
+        p
+    }).collect();
+
     Ok(ConfigResponse {
-        anthropic_api_key: llm.as_ref()
-            .map(|c| mask_api_key(&c.api_key))
-            .unwrap_or_default(),
-        llm_model: llm.as_ref().map(|c| c.model.clone()).unwrap_or_default(),
-        anthropic_base_url: llm.as_ref().map(|c| c.base_url.clone())
-            .unwrap_or_else(|| "https://api.anthropic.com".to_string()),
+        providers,
+        default_model,
+        current_model,
         max_turns: agent.max_turns,
         context_window: agent.context_window,
         max_output_tokens: agent.max_output_tokens,
@@ -385,19 +367,10 @@ pub async fn update_config(
     payload: UpdateConfigRequest,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    // 如果 API Key 是脱敏格式（包含 ...），跳过覆盖
-    let api_key = if payload.anthropic_api_key.contains("...") || payload.anthropic_api_key.is_empty() {
-        crate::engine::config::load_llm_config()
-            .map(|c| c.api_key)
-            .unwrap_or_default()
-    } else {
-        payload.anthropic_api_key
-    };
-
     crate::engine::config::save_config(
-        &api_key,
-        &payload.llm_model,
-        &payload.anthropic_base_url,
+        "", // API key 不再通过此路径保存
+        "",
+        "",
         payload.max_turns,
         payload.context_window,
         payload.max_output_tokens,
@@ -408,60 +381,67 @@ pub async fn update_config(
     )
     .map_err(|e| e.to_string())?;
 
-    // thinking 配置变更时热更新 provider 和 agent_spawner
-    let current = &state.config;
-    if payload.thinking_enabled != current.thinking_enabled
-        || payload.thinking_budget_tokens != current.thinking_budget_tokens
-    {
-        let model = state.model.read().map_err(|e| format!("model lock: {e}"))?.clone();
-        rebuild_runtime(
-            &state, api_key, payload.anthropic_base_url, model,
-            payload.thinking_enabled, payload.thinking_budget_tokens,
-        )?;
-    }
-
     Ok(())
+}
+
+// ── Multi-Provider Commands ──────────────────────────────────
+
+#[tauri::command]
+pub async fn list_models(state: State<'_, AppState>) -> Result<Vec<ModelInfo>, String> {
+    let registry = state.provider_registry.read().map_err(|e| format!("registry lock: {e}"))?;
+    Ok(registry.list_models())
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ApplyLlmConfigRequest {
-    pub api_key: String,
-    pub base_url: String,
-    pub model: String,
+pub struct SetCurrentModelRequest {
+    pub model_ref: String,
 }
 
 #[tauri::command]
-pub async fn apply_llm_config(
-    payload: ApplyLlmConfigRequest,
+pub async fn set_current_model(
+    payload: SetCurrentModelRequest,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    // 1. 持久化到 config.toml
-    crate::engine::config::save_config(
-        &payload.api_key,
-        &payload.model,
-        &payload.base_url,
-        state.config.max_turns,
-        state.config.context_window,
-        state.config.max_output_tokens,
-        state.config.tool_output_max_bytes,
-        state.config.bash_default_timeout_secs,
-        state.config.thinking_enabled,
-        state.config.thinking_budget_tokens,
-    ).map_err(|e| e.to_string())?;
-
-    // 2. 重建 provider + spawner
-    rebuild_runtime(
-        &state, payload.api_key, payload.base_url.clone(), payload.model.clone(),
-        state.config.thinking_enabled, state.config.thinking_budget_tokens,
-    )?;
-
-    // 3. 更新 model
+    let (provider_name, _) = parse_model_ref(&payload.model_ref).map_err(|e| e.to_string())?;
     {
-        let mut m = state.model.write().map_err(|e| format!("model lock: {e}"))?;
-        *m = payload.model;
+        let registry = state.provider_registry.read().map_err(|e| format!("registry lock: {e}"))?;
+        if registry.get_provider(provider_name).is_none() {
+            return Err(format!("provider '{}' not found", provider_name));
+        }
     }
+    let mut m = state.current_model.write().map_err(|e| format!("model lock: {e}"))?;
+    *m = payload.model_ref;
+    Ok(())
+}
 
+#[tauri::command]
+pub async fn save_provider(
+    payload: ProviderConfig,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    // 持久化到 config.toml
+    crate::engine::config::save_provider_config(&payload, &state.config)
+        .map_err(|e| e.to_string())?;
+
+    // 热更新 registry
+    let mut registry = state.provider_registry.write().map_err(|e| format!("registry lock: {e}"))?;
+    registry.update_provider(payload);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_provider(
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    // 持久化
+    crate::engine::config::delete_provider(&name)
+        .map_err(|e| e.to_string())?;
+
+    // 热更新 registry
+    let mut registry = state.provider_registry.write().map_err(|e| format!("registry lock: {e}"))?;
+    registry.remove_provider(&name);
     Ok(())
 }
 
