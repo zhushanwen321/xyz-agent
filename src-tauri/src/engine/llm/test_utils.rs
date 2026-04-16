@@ -50,13 +50,14 @@ impl MockLlmProvider {
         if !text.is_empty() {
             events.push(LlmStreamEvent::TextDelta { delta: text.to_string() });
         }
-        for (id, name, input) in tool_calls {
+        for (idx, (id, name, input)) in tool_calls.into_iter().enumerate() {
             events.push(LlmStreamEvent::ToolUseStart {
                 id: id.to_string(),
                 name: name.to_string(),
+                index: idx as u64,
             });
             events.push(LlmStreamEvent::ToolUseInputDelta {
-                id: id.to_string(),
+                id: idx.to_string(),
                 partial_input: serde_json::to_string(&input).unwrap(),
             });
             events.push(LlmStreamEvent::ToolUseEnd { id: id.to_string() });
@@ -129,7 +130,7 @@ mod tests {
         let events: Vec<_> = stream.by_ref().collect().await;
 
         assert_eq!(events.len(), 4); // start + input_delta + end + message_stop
-        assert!(matches!(&events[0], Ok(LlmStreamEvent::ToolUseStart { id, name }) if id == "toolu_1" && name == "read_file"));
+        assert!(matches!(&events[0], Ok(LlmStreamEvent::ToolUseStart { id, name, .. }) if id == "toolu_1" && name == "read_file"));
         assert!(matches!(&events[1], Ok(LlmStreamEvent::ToolUseInputDelta { .. })));
         assert!(matches!(&events[2], Ok(LlmStreamEvent::ToolUseEnd { id }) if id == "toolu_1"));
         assert!(matches!(&events[3], Ok(LlmStreamEvent::MessageStop { stop_reason, .. }) if stop_reason.as_deref() == Some("tool_use")));

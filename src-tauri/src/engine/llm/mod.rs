@@ -26,7 +26,7 @@ pub enum LlmStreamEvent {
     Error { message: String },
     // tool_use 生命周期事件，用于 agent loop 驱动工具调用
     #[serde(rename = "tool_use_start")]
-    ToolUseStart { id: String, name: String },
+    ToolUseStart { id: String, name: String, index: u64 },
     #[serde(rename = "tool_use_input_delta")]
     ToolUseInputDelta { id: String, partial_input: String },
     #[serde(rename = "tool_use_end")]
@@ -140,6 +140,7 @@ mod tests {
         let event = LlmStreamEvent::ToolUseStart {
             id: "toolu_123".to_string(),
             name: "read_file".to_string(),
+            index: 0,
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"type\":\"tool_use_start\""));
@@ -147,7 +148,7 @@ mod tests {
         assert!(json.contains("\"name\":\"read_file\""));
 
         let de: LlmStreamEvent = serde_json::from_str(&json).unwrap();
-        if let LlmStreamEvent::ToolUseStart { id, name } = de {
+        if let LlmStreamEvent::ToolUseStart { id, name, .. } = de {
             assert_eq!(id, "toolu_123");
             assert_eq!(name, "read_file");
         } else {

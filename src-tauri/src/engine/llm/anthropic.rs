@@ -140,7 +140,8 @@ fn map_sse_event(event: eventsource_stream::Event) -> Result<LlmStreamEvent, App
                         .as_str()
                         .unwrap_or("")
                         .to_string();
-                    Ok(LlmStreamEvent::ToolUseStart { id, name })
+                    let index = data["index"].as_u64().unwrap_or(0);
+                    Ok(LlmStreamEvent::ToolUseStart { id, name, index })
                 }
                 // thinking block 开始时发出 ThinkingDelta，避免前端产生空 text segment
                 "thinking" => Ok(LlmStreamEvent::ThinkingDelta {

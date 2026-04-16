@@ -116,7 +116,7 @@ export function useChat(sessionId: Ref<string | null>) {
             break
           }
           finalizeThinkingDuration()
-          const persistableSegments = currentTurnSegments.value.filter(s => s.type !== 'thinking')
+          const persistableSegments = currentTurnSegments.value
           if (persistableSegments.length > 0) {
             messages.value.push({
               id: crypto.randomUUID(),
@@ -285,7 +285,7 @@ export function useChat(sessionId: Ref<string | null>) {
     if (!sessionId.value || !isStreaming.value) return
     // 立即更新 UI 状态，不等待后端 TurnComplete 事件
     finalizeThinkingDuration()
-    const persistableSegments = currentTurnSegments.value.filter(s => s.type !== 'thinking')
+    const persistableSegments = currentTurnSegments.value
     if (persistableSegments.length > 0) {
       messages.value.push({
         id: crypto.randomUUID(),

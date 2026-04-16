@@ -24,13 +24,13 @@ pub(super) async fn consume_stream(
 ) -> Result<StreamResult, AppError> {
     let mut text_buf = String::new();
     let mut tool_buf: HashMap<String, (String, String)> = HashMap::new();
-    let mut index_to_tool_id: HashMap<String, String> = HashMap::new();
+    // 同时用内容块 index 和 tool id 作为 key，兼容 API 数字 index 和测试中的 id
+    let mut id_lookup: HashMap<String, String> = HashMap::new();
     let mut content_blocks: Vec<AssistantContentBlock> = Vec::new();
     let mut tool_calls: Vec<PendingToolCall> = Vec::new();
     let mut stop_reason = String::new();
     let mut usage = TokenUsage { input_tokens: 0, output_tokens: 0 };
     let mut current_tool_id: Option<String> = None;
-    let mut tool_index: usize = 0;
 
     let flush_current_tool = |tool_id: &mut Option<String>,
                                   tool_buf: &mut HashMap<String, (String, String)>,
@@ -128,7 +128,7 @@ pub(super) async fn consume_stream(
                     source_task_id: None,
                 });
             }
-            Ok(LlmStreamEvent::ToolUseStart { id, name }) => {
+            Ok(LlmStreamEvent::ToolUseStart { id, name, index }) => {
                 flush_current_tool(
                     &mut current_tool_id,
                     &mut tool_buf,
@@ -140,13 +140,13 @@ pub(super) async fn consume_stream(
                         text: std::mem::take(&mut text_buf),
                     });
                 }
-                index_to_tool_id.insert(tool_index.to_string(), id.clone());
-                tool_index += 1;
+                id_lookup.insert(index.to_string(), id.clone());
+                id_lookup.insert(id.clone(), id.clone());
                 tool_buf.insert(id.clone(), (name, String::new()));
                 current_tool_id = Some(id);
             }
             Ok(LlmStreamEvent::ToolUseInputDelta { id, partial_input }) => {
-                let real_id = index_to_tool_id.get(&id).cloned().unwrap_or(id);
+                let real_id = id_lookup.get(&id).cloned().unwrap_or_else(|| id.clone());
                 if let Some(entry) = tool_buf.get_mut(&real_id) {
                     entry.1.push_str(&partial_input);
                 }

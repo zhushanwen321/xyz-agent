@@ -10,7 +10,7 @@ use crate::store::jsonl::LoadHistoryResult;
 use crate::store::session;
 use crate::types::{AgentEvent, AssistantContentBlock, TranscriptEntry, UserContentBlock};
 use serde::Deserialize;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, State};
 
 #[derive(serde::Serialize)]
 pub struct ConfigResponse {
@@ -353,7 +353,6 @@ fn mask_api_key(key: &str) -> String {
 pub async fn update_config(
     payload: UpdateConfigRequest,
     state: State<'_, AppState>,
-    app: AppHandle,
 ) -> Result<(), String> {
     // 如果 API Key 是脱敏格式（包含 ...），跳过覆盖
     let api_key = if payload.anthropic_api_key.contains("...") || payload.anthropic_api_key.is_empty() {
@@ -378,14 +377,37 @@ pub async fn update_config(
     )
     .map_err(|e| e.to_string())?;
 
-    // thinking 配置变更需要重启应用才能生效（provider 在启动时创建）
+    // thinking 配置变更时热更新 provider 和 agent_spawner
     let current = &state.config;
     if payload.thinking_enabled != current.thinking_enabled
         || payload.thinking_budget_tokens != current.thinking_budget_tokens
     {
-        let _ = app.emit("config:thinking-changed", serde_json::json!({
-            "message": "Extended Thinking 配置已更新，请重启应用以生效"
-        }));
+        let new_provider: Arc<dyn LlmProvider> = Arc::new(
+            crate::engine::llm::anthropic::AnthropicProvider::new(api_key)
+                .with_base_url(payload.anthropic_base_url.clone())
+                .with_max_tokens(payload.max_output_tokens)
+                .with_thinking(payload.thinking_enabled, payload.thinking_budget_tokens),
+        );
+        let model_clone = state.model.read().unwrap().clone();
+        let new_spawner: Arc<dyn AgentSpawner> = Arc::new(
+            crate::engine::agent_spawner::DefaultAgentSpawner::new(
+                new_provider.clone(),
+                model_clone,
+                state.config.clone(),
+                state.tool_registry.clone(),
+                state.task_tree.clone(),
+                state.concurrency_manager.clone(),
+                state.data_dir.clone(),
+            ),
+        );
+        {
+            let mut p = state.provider.write().unwrap();
+            *p = Some(new_provider);
+        }
+        {
+            let mut s = state.agent_spawner.write().unwrap();
+            *s = Some(new_spawner);
+        }
     }
 
     Ok(())
