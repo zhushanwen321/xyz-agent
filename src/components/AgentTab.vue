@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { ConfigResponse } from '../types'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
 const props = defineProps<{
   config: ConfigResponse | null
@@ -30,12 +31,12 @@ const emit = defineEmits<{
             { key: 'bash_default_timeout_secs', label: 'Bash Timeout (sec)', min: 1, max: 600, hint: '1 - 600' },
           ]" :key="field.key">
             <label class="mb-1 block text-xs text-tertiary">{{ field.label }}</label>
-            <input
-              v-model.number="config[field.key as keyof typeof config]"
+            <Input
+              v-model.number="config[field.key as 'max_turns']"
               type="number"
               :min="field.min"
               :max="field.max"
-              class="w-full rounded-md border border-border-default bg-inset px-3 py-2 font-mono text-sm text-foreground"
+              class="font-mono text-sm"
             />
             <span class="text-[10px] text-tertiary">{{ field.hint }}</span>
           </div>

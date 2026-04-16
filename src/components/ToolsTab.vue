@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useToolManager } from '../composables/useToolManager'
 import type { ToolInfo, ToolConfigSaveInput } from '../types'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 
 const {
@@ -137,12 +138,12 @@ onMounted(() => {
           <!-- Timeout -->
           <div>
             <label class="mb-1 block text-xs text-tertiary">Timeout (sec)</label>
-            <input
+            <Input
               v-model.number="toolEditForm.timeout_secs"
               type="number"
               min="1"
               max="600"
-              class="w-full rounded-md border border-border-default bg-inset px-3 py-2 font-mono text-sm text-foreground"
+              class="font-mono text-sm"
             />
           </div>
           <!-- 只读信息 -->

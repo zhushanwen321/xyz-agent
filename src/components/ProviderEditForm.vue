@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import type { ProviderConfig, ModelTier } from '../types'
 
 const DEFAULT_BASE_URL = 'https://api.anthropic.com'
@@ -71,11 +72,11 @@ function handleSave() {
     <!-- Name -->
     <div>
       <label class="mb-1 block text-xs text-tertiary">Name</label>
-      <input
+      <Input
         v-model="form.name"
         type="text"
         :disabled="editState.mode === 'edit'"
-        class="w-full rounded-md border border-border-default bg-inset px-3 py-2 font-mono text-sm text-foreground disabled:opacity-50"
+        class="font-mono text-sm"
         placeholder="e.g. anthropic"
       />
     </div>
@@ -84,10 +85,10 @@ function handleSave() {
     <div>
       <label class="mb-1 block text-xs text-tertiary">API Key</label>
       <div class="flex gap-2">
-        <input
+        <Input
           v-model="form.api_key"
           :type="showApiKey ? 'text' : 'password'"
-          class="flex-1 rounded-md border border-border-default bg-inset px-3 py-2 font-mono text-sm text-foreground"
+          class="flex-1 font-mono text-sm"
           placeholder="sk-..."
         />
         <Button
@@ -103,10 +104,10 @@ function handleSave() {
     <!-- Base URL -->
     <div>
       <label class="mb-1 block text-xs text-tertiary">Base URL</label>
-      <input
+      <Input
         v-model="form.base_url"
         type="text"
-        class="w-full rounded-md border border-border-default bg-inset px-3 py-2 font-mono text-sm text-foreground"
+        class="font-mono text-sm"
         :placeholder="DEFAULT_BASE_URL"
       />
     </div>
@@ -137,19 +138,19 @@ function handleSave() {
       <!-- 添加模型 -->
       <div class="flex items-end gap-2">
         <div class="flex-1">
-          <input
+          <Input
             v-model="newModelId"
             type="text"
-            class="w-full rounded-md border border-border-default bg-inset px-3 py-2 font-mono text-xs text-foreground"
+            class="font-mono text-xs"
             placeholder="Model ID (e.g. claude-sonnet-4-20250514)"
             @keydown.enter.prevent="addModel"
           />
         </div>
         <div class="w-24">
-          <input
+          <Input
             v-model="newModelAlias"
             type="text"
-            class="w-full rounded-md border border-border-default bg-inset px-3 py-2 text-xs text-foreground"
+            class="text-xs"
             placeholder="Alias"
           />
         </div>

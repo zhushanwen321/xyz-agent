@@ -2,6 +2,7 @@
 import { ref, onMounted, nextTick } from 'vue'
 import { useSession } from '../composables/useSession'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 
@@ -100,10 +101,10 @@ function handleEditKeydown(e: KeyboardEvent) {
 
         <!-- 编辑模式：inline input -->
         <template v-if="editingId === session.id">
-          <input
+          <Input
             :ref="(el) => { editInputRef = el as HTMLInputElement | null }"
             v-model="editingTitle"
-            class="flex-1 bg-transparent px-3 py-2 text-sm text-foreground outline-none"
+            class="flex-1 border-0 bg-transparent text-sm shadow-none focus-visible:ring-0"
             @keydown="handleEditKeydown"
             @blur="confirmRename"
           />

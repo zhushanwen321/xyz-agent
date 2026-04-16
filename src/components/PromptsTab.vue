@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { usePromptManager } from '../composables/usePromptManager'
 import type { PromptInfo, PromptSaveInput, CustomAgentInput } from '../types'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 
 const {
@@ -367,16 +368,16 @@ onMounted(() => {
           <!-- Name -->
           <div>
             <label class="mb-1 block text-xs text-tertiary">Name</label>
-            <input v-model="agentForm.name" type="text"
+            <Input v-model="agentForm.name" type="text"
               :disabled="editTarget.type === 'custom'"
-              class="w-full rounded-md border border-border-default bg-inset px-3 py-2 font-mono text-sm text-foreground disabled:opacity-50"
+              class="font-mono text-sm"
               placeholder="e.g. code_reviewer" />
           </div>
           <!-- Description -->
           <div>
             <label class="mb-1 block text-xs text-tertiary">Description</label>
-            <input v-model="agentForm.description" type="text"
-              class="w-full rounded-md border border-border-default bg-inset px-3 py-2 text-sm text-foreground" />
+            <Input v-model="agentForm.description" type="text"
+              class="text-sm" />
           </div>
           <!-- Prompt -->
           <div>
@@ -388,8 +389,8 @@ onMounted(() => {
           <div>
             <label class="mb-1 block text-xs text-tertiary">Allowed Tools</label>
             <div class="flex items-center gap-2">
-              <input v-model="agentToolInput" type="text"
-                class="flex-1 rounded-md border border-border-default bg-inset px-3 py-2 font-mono text-xs text-foreground"
+              <Input v-model="agentToolInput" type="text"
+                class="flex-1 font-mono text-xs"
                 placeholder="Tool name" @keydown.enter.prevent="addTool" />
               <Button variant="outline" class="text-xs" @click="addTool">Add</Button>
             </div>
@@ -406,18 +407,18 @@ onMounted(() => {
             <div class="grid grid-cols-3 gap-2">
               <div>
                 <label class="text-xs text-tertiary">Max Tokens</label>
-                <input v-model.number="agentForm.max_tokens" type="number" min="1000" max="500000"
-                  class="w-full rounded-md border border-border-default bg-inset px-2 py-1 font-mono text-xs text-foreground" />
+                <Input v-model.number="agentForm.max_tokens" type="number" min="1000" max="500000"
+                  class="font-mono text-xs" />
               </div>
               <div>
                 <label class="text-xs text-tertiary">Max Turns</label>
-                <input v-model.number="agentForm.max_turns" type="number" min="1" max="200"
-                  class="w-full rounded-md border border-border-default bg-inset px-2 py-1 font-mono text-xs text-foreground" />
+                <Input v-model.number="agentForm.max_turns" type="number" min="1" max="200"
+                  class="font-mono text-xs" />
               </div>
               <div>
                 <label class="text-xs text-tertiary">Max Tool Calls</label>
-                <input v-model.number="agentForm.max_tool_calls" type="number" min="1" max="500"
-                  class="w-full rounded-md border border-border-default bg-inset px-2 py-1 font-mono text-xs text-foreground" />
+                <Input v-model.number="agentForm.max_tool_calls" type="number" min="1" max="500"
+                  class="font-mono text-xs" />
               </div>
             </div>
           </div>
