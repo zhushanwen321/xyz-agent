@@ -14,16 +14,16 @@ defineEmits<{
 </script>
 
 <template>
-  <div class="flex items-stretch bg-[#0a0a0b] border-b border-[#27272a] h-8 min-h-[32px] overflow-x-auto scrollbar-none">
+  <div class="flex items-stretch bg-base border-b border-border-default h-8 min-h-[32px] overflow-x-auto scrollbar-none">
     <Button
       v-for="tab in tabs"
       :key="tab.id"
       variant="ghost"
       size="sm"
-      class="flex items-center gap-1.5 px-3 text-[11px] font-mono whitespace-nowrap relative border-r border-[#27272a]"
+      class="flex items-center gap-1.5 px-3 text-[11px] font-mono whitespace-nowrap relative border-r border-border-default"
       :class="tab.id === activeTabId
-        ? 'text-[#fafafa] bg-[#111113]'
-        : 'text-[#a1a1aa] bg-transparent hover:text-[#fafafa] hover:bg-[#18181b]'"
+        ? 'text-foreground bg-surface'
+        : 'text-muted-foreground bg-transparent hover:text-foreground hover:bg-card'"
       @click="$emit('switch', tab.id)"
     >
       <!-- Status icon -->
@@ -39,13 +39,13 @@ defineEmits<{
       <!-- Active indicator -->
       <span
         v-if="tab.id === activeTabId"
-        class="absolute bottom-0 left-0 right-0 h-0.5 bg-[#22c55e]"
+        class="absolute bottom-0 left-0 right-0 h-0.5 bg-semantic-green"
       />
 
       <!-- Close button -->
       <span
         v-if="tab.closable"
-        class="inline-flex items-center justify-center w-3.5 h-3.5 text-[10px] rounded-sm text-[#71717a] ml-1 transition-colors hover:bg-[#1f1f23] hover:text-[#fafafa]"
+        class="inline-flex items-center justify-center w-3.5 h-3.5 text-[10px] rounded-sm text-tertiary ml-1 transition-colors hover:bg-inset hover:text-foreground"
         @click.stop="$emit('close', tab.id)"
       >✕</span>
     </Button>

@@ -190,8 +190,8 @@ function handleCancel() {
           v-if="activeSubTab"
           class="flex items-center gap-2 border-b border-border-default bg-elevated px-3 py-1.5 text-[11px] text-muted-foreground"
         >
-          <span class="text-[#3b82f6] cursor-pointer hover:underline" @click="tabManager.switchTab('main')">&#x2190; Main</span>
-          <span class="text-[#3f3f46]">|</span>
+          <span class="text-semantic-blue cursor-pointer hover:underline" @click="tabManager.switchTab('main')">&#x2190; Main</span>
+          <span class="text-border-hover">|</span>
           <span class="text-foreground font-semibold truncate flex-1">{{ activeSubTab.title }}</span>
           <span
             class="text-[10px] px-1.5 py-0.5 rounded-sm"

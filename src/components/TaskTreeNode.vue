@@ -103,7 +103,7 @@ const roleBadge = computed(() =>
 
       <!-- 状态标识 -->
       <span v-if="node.status === 'running'" class="shrink-0">
-        <span class="inline-block h-2 w-2 animate-spin rounded-full border border-blue-400 border-t-transparent" />
+        <span class="inline-block h-2 w-2 animate-spin rounded-full border border-semantic-blue border-t-transparent" />
       </span>
       <span v-else class="text-[10px] font-mono shrink-0" :class="statusColor" v-html="statusLabel" />
 

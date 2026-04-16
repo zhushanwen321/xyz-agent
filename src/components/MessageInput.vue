@@ -92,7 +92,7 @@ function handleSend() {
         v-else
         variant="ghost"
         size="sm"
-        class="shrink-0 font-mono text-xs text-red-400 hover:bg-red-500/10 hover:text-red-300"
+        class="shrink-0 font-mono text-xs text-semantic-red hover:bg-semantic-red/10 hover:text-semantic-red"
         @click="emit('cancel')"
       >
         <svg

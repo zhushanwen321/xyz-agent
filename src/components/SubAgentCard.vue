@@ -65,7 +65,7 @@ const emit = defineEmits<{
         <!-- 运行中显示 spinner，否则显示状态图标 -->
         <span
           v-if="statusIcon === 'spinner'"
-          class="inline-block h-2.5 w-2.5 animate-spin rounded-full border-2 border-blue-400 border-t-transparent"
+          class="inline-block h-2.5 w-2.5 animate-spin rounded-full border-2 border-semantic-blue border-t-transparent"
         />
         <span v-else class="font-mono text-[10px] font-bold" :class="statusColor">
           {{ statusChar }}
@@ -98,12 +98,12 @@ const emit = defineEmits<{
     </div>
 
     <!-- 进度条 -->
-    <div v-if="task.status === 'running'" class="mx-2.5 mb-1.5 h-1 bg-zinc-700 rounded-full overflow-hidden">
-      <div class="h-full bg-blue-500 rounded-full transition-all duration-300" :style="{ width: `${progressPercent}%` }" />
+    <div v-if="task.status === 'running'" class="mx-2.5 mb-1.5 h-1 bg-elevated rounded-full overflow-hidden">
+      <div class="h-full bg-semantic-blue rounded-full transition-all duration-300" :style="{ width: `${progressPercent}%` }" />
     </div>
 
     <!-- Hover hint -->
-    <div class="px-2.5 pb-1.5 text-[10px] text-[#3b82f6] opacity-0 group-hover:opacity-100 transition-opacity">
+    <div class="px-2.5 pb-1.5 text-[10px] text-semantic-blue opacity-0 group-hover:opacity-100 transition-opacity">
       Click to open tab &rarr;
     </div>
   </div>

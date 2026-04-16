@@ -98,7 +98,7 @@ const hasContent = computed(() =>
 
     <!-- 底部统计 -->
     <div class="border-t border-border-default px-3 py-1.5 text-[10px] text-muted-foreground font-mono flex justify-between">
-      <span>Active: <span class="text-[#22c55e]">{{ activeTaskCount }}</span></span>
+      <span>Active: <span class="text-semantic-green">{{ activeTaskCount }}</span></span>
       <span>Completed: {{ completedTaskCount }}</span>
     </div>
   </aside>

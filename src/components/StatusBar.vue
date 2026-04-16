@@ -50,7 +50,7 @@ const totalTokens = computed(() => props.inputTokens + props.outputTokens)
       <span>{{ toolCount }} tools</span>
       <template v-if="activeTaskCount > 0">
         <span class="text-border-default">|</span>
-        <span class="text-blue-400">{{ activeTaskCount }} task{{ activeTaskCount > 1 ? 's' : '' }}</span>
+        <span class="text-semantic-blue">{{ activeTaskCount }} task{{ activeTaskCount > 1 ? 's' : '' }}</span>
       </template>
       <span class="text-border-default">|</span>
       <span>v{{ version }}</span>

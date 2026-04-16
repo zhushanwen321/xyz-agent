@@ -105,7 +105,7 @@ const statusLabel = computed(() => {
       v-if="taskId && onOpenTab"
       variant="link"
       size="sm"
-      class="mt-1 text-[10px] text-[#3b82f6]"
+      class="mt-1 text-[10px] text-semantic-blue"
       @click.stop="onOpenTab(taskId)"
     >Click to view &rarr;</Button>
   </div>
