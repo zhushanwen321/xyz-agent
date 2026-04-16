@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { isTauri } from '../lib/tauri'
+import { isTauri, getCurrentModel, setCurrentModel as apiSetCurrentModel } from '../lib/tauri'
+import ModelSelector from './ModelSelector.vue'
 
 const props = defineProps<{
   sidebarCollapsed: boolean
@@ -12,13 +13,17 @@ const emit = defineEmits<{
 }>()
 
 const currentPage = ref<'chat' | 'settings'>('chat')
-const modelName = ref('loading...')
+const currentModel = ref('loading...')
 
-// 在 Tauri 环境中异步获取当前模型名称
 if (isTauri()) {
-  import('../lib/tauri').then(({ getCurrentModel }) => {
-    getCurrentModel().then((m) => { modelName.value = m })
-  })
+  getCurrentModel().then((m) => { currentModel.value = m })
+}
+
+async function onModelSelect(modelRef: string) {
+  currentModel.value = modelRef
+  if (isTauri()) {
+    await apiSetCurrentModel(modelRef)
+  }
 }
 
 function navigate(page: 'chat' | 'settings') {
@@ -56,7 +61,7 @@ function navigate(page: 'chat' | 'settings') {
 
     <!-- 右: 模型名 + 折叠按钮 -->
     <div class="ml-auto flex items-center gap-3">
-      <span class="font-mono text-[11px] text-text-tertiary">{{ modelName }}</span>
+      <ModelSelector :current-model="currentModel" @select="onModelSelect" />
       <button
         class="text-text-tertiary transition-colors hover:text-text-primary"
         @click="$emit('toggle-sidebar')"
