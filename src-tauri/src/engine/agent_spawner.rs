@@ -83,6 +83,20 @@ pub struct DefaultAgentSpawner {
     pub data_dir: std::path::PathBuf,
 }
 
+impl DefaultAgentSpawner {
+    pub fn new(
+        provider: Arc<dyn LlmProvider>,
+        model: String,
+        config: Arc<AgentConfig>,
+        tool_registry: Arc<ToolRegistry>,
+        task_tree: Arc<tokio::sync::Mutex<TaskTree>>,
+        concurrency_manager: Arc<ConcurrencyManager>,
+        data_dir: std::path::PathBuf,
+    ) -> Self {
+        Self { provider, model, config, tool_registry, task_tree, concurrency_manager, data_dir }
+    }
+}
+
 #[async_trait]
 impl AgentSpawner for DefaultAgentSpawner {
     async fn spawn_agent(&self, config: SpawnConfig) -> Result<SpawnHandle, AppError> {

@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use futures::future::join_all;
 
 use crate::types::ToolResult;
@@ -18,7 +19,7 @@ pub async fn execute_batch(
     });
 
     let ctx_clone = ctx.cloned();
-    let disabled = disabled_tools.to_vec();
+    let disabled: Arc<[String]> = disabled_tools.to_vec().into();
     let safe_handles: Vec<_> = safe.into_iter().map(|(idx, c)| {
         let registry = registry.clone();
         let perms = perms.clone();
@@ -30,7 +31,7 @@ pub async fn execute_batch(
     let mut results: Vec<(usize, ToolExecutionResult)> = join_all(safe_handles).await;
 
     for (idx, c) in unsafe_calls {
-        results.push((idx, execute_single(c, registry, perms, ctx, disabled_tools).await));
+        results.push((idx, execute_single(c, registry, perms, ctx, &disabled).await));
     }
 
     results.sort_by_key(|(idx, _)| *idx);

@@ -13,6 +13,65 @@ use tauri::Manager;
 
 pub use api::AppState;
 
+/// 构建 AppState，集中 setup 闭包中的状态初始化逻辑
+fn build_app_state(
+    data_dir: std::path::PathBuf,
+    provider: api::ProviderRef,
+    model: Arc<std::sync::RwLock<String>>,
+    config: Arc<engine::config::AgentConfig>,
+    tool_registry: Arc<ToolRegistry>,
+    llm_config: &Option<engine::config::LlmConfig>,
+) -> AppState {
+    let task_tree = Arc::new(tokio::sync::Mutex::new(
+        engine::task_tree::TaskTree::new(),
+    ));
+    let concurrency_manager = Arc::new(
+        engine::concurrency::ConcurrencyManager::new(3),
+    );
+
+    let agent_spawner_inner: Option<Arc<dyn engine::agent_spawner::AgentSpawner>> = match llm_config {
+        Some(cfg) => Some(Arc::new(
+            engine::agent_spawner::DefaultAgentSpawner::new(
+                provider.read().expect("provider lock").clone().expect("provider must exist during setup"),
+                cfg.model.clone(),
+                config.clone(),
+                tool_registry.clone(),
+                task_tree.clone(),
+                concurrency_manager.clone(),
+                data_dir.clone(),
+            ),
+        )),
+        None => None,
+    };
+    let agent_spawner: api::SpawnerRef = Arc::new(std::sync::RwLock::new(agent_spawner_inner));
+
+    AppState {
+        data_dir: data_dir.clone(),
+        provider,
+        model,
+        config,
+        tool_registry,
+        global_perms: PermissionContext::default(),
+        task_tree,
+        concurrency_manager,
+        background_tasks: Arc::new(tokio::sync::Mutex::new(
+            std::collections::HashMap::new(),
+        )),
+        agent_templates: {
+            let mut reg = engine::agent_template::AgentTemplateRegistry::new();
+            reg.load_custom_agents(&data_dir);
+            Arc::new(std::sync::RwLock::new(reg))
+        },
+        prompt_registry: {
+            let mut reg = engine::context::prompt_registry::PromptRegistry::new();
+            reg.load_user_prompts(&data_dir);
+            Arc::new(std::sync::RwLock::new(reg))
+        },
+        agent_spawner,
+        cancel_tokens: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+    }
+}
+
 pub fn run() {
     let data_dir = store::session::data_dir()
         .expect("cannot determine data directory");
@@ -23,8 +82,10 @@ pub fn run() {
 
     log::info!("data_dir={}", data_dir.display());
 
+    const DEFAULT_MODEL: &str = "claude-sonnet-4-20250514";
+
     let llm_config = config::load_llm_config();
-    let default_model = "claude-sonnet-4-20250514".to_string();
+    let default_model = DEFAULT_MODEL.to_string();
 
     let agent_config = Arc::new(
         config::load_agent_config().unwrap_or_default(),
@@ -48,7 +109,7 @@ pub fn run() {
         },
     };
 
-    let provider = Arc::new(std::sync::RwLock::new(inner_provider));
+    let provider: api::ProviderRef = Arc::new(std::sync::RwLock::new(inner_provider));
     let model = Arc::new(std::sync::RwLock::new(model_str));
 
     let mut tool_registry = ToolRegistry::new();
@@ -58,12 +119,10 @@ pub fn run() {
     tool_registry.register(std::sync::Arc::new(engine::tools::dispatch_agent::DispatchAgentTool));
     tool_registry.register(std::sync::Arc::new(engine::tools::orchestrate::OrchestrateTool));
     let tool_registry = Arc::new(tool_registry);
-    let global_perms = PermissionContext::default();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .setup(move |app| {
-            // 动态设置窗口大小为屏幕 75%
             if let Some(window) = app.get_webview_window("main") {
                 if let Some(monitor) = window.primary_monitor().ok().flatten() {
                     let size = monitor.size();
@@ -74,56 +133,15 @@ pub fn run() {
                 }
             }
 
-            // 共享 task_tree 和 concurrency_manager，确保
-            // DefaultAgentSpawner 写入的 task result 对 AppState 可见
-            let task_tree = Arc::new(tokio::sync::Mutex::new(
-                engine::task_tree::TaskTree::new(),
-            ));
-            let concurrency_manager = Arc::new(
-                engine::concurrency::ConcurrencyManager::new(3),
+            let state = build_app_state(
+                data_dir,
+                provider.clone(),
+                model.clone(),
+                agent_config.clone(),
+                tool_registry.clone(),
+                &llm_config,
             );
-
-            let agent_spawner_inner: Option<Arc<dyn engine::agent_spawner::AgentSpawner>> = match &llm_config {
-                Some(cfg) => Some(Arc::new(
-                    engine::agent_spawner::DefaultAgentSpawner {
-                        provider: provider.read().unwrap().clone().unwrap(),
-                        model: cfg.model.clone(),
-                        config: agent_config.clone(),
-                        tool_registry: tool_registry.clone(),
-                        task_tree: task_tree.clone(),
-                        concurrency_manager: concurrency_manager.clone(),
-                        data_dir: data_dir.clone(),
-                    },
-                )),
-                None => None,
-            };
-            let agent_spawner = Arc::new(std::sync::RwLock::new(agent_spawner_inner));
-
-            app.manage(AppState {
-                data_dir: data_dir.clone(),
-                provider: provider.clone(),
-                model: model.clone(),
-                config: agent_config.clone(),
-                tool_registry: tool_registry.clone(),
-                global_perms,
-                task_tree,
-                concurrency_manager,
-                background_tasks: Arc::new(tokio::sync::Mutex::new(
-                    std::collections::HashMap::new(),
-                )),
-                agent_templates: {
-                    let mut reg = engine::agent_template::AgentTemplateRegistry::new();
-                    reg.load_custom_agents(&data_dir);
-                    Arc::new(std::sync::RwLock::new(reg))
-                },
-                prompt_registry: {
-                    let mut reg = engine::context::prompt_registry::PromptRegistry::new();
-                    reg.load_user_prompts(&data_dir);
-                    Arc::new(std::sync::RwLock::new(reg))
-                },
-                agent_spawner,
-                cancel_tokens: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-            });
+            app.manage(state);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

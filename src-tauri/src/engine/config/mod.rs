@@ -59,61 +59,47 @@ pub fn load_agent_config() -> Result<AgentConfig, AppError> {
     let content = std::fs::read_to_string(&config_path)
         .map_err(|e| AppError::Config(format!("failed to read config.toml: {e}")))?;
 
-    Ok(parse_config_value(&content))
+    Ok(parse_config_toml(&content))
 }
 
-/// 逐行解析 flat TOML key=value，未识别的 key 被忽略
-fn parse_config_value(content: &str) -> AgentConfig {
+/// 用 toml_edit 解析配置文件，与 save_config 使用同一解析库
+/// 缺失或无效字段静默保留默认值
+fn parse_config_toml(content: &str) -> AgentConfig {
     let mut config = AgentConfig::default();
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        if let Some((key, value)) = trimmed.split_once('=') {
-            let key = key.trim();
-            let value = value.trim();
-            // 跳过引号包裹的字符串值（如 api_key = "sk-..."）
-            let value = value.trim_matches('"');
-            match key {
-                "max_turns" => config.max_turns = value.parse().unwrap_or(config.max_turns),
-                "context_window" => {
-                    config.context_window = value.parse().unwrap_or(config.context_window)
-                }
-                "max_output_tokens" => {
-                    config.max_output_tokens = value.parse().unwrap_or(config.max_output_tokens)
-                }
-                "auto_compact_buffer" => {
-                    config.auto_compact_buffer = value.parse().unwrap_or(config.auto_compact_buffer)
-                }
-                "warning_buffer" => {
-                    config.warning_buffer = value.parse().unwrap_or(config.warning_buffer)
-                }
-                "hard_limit_buffer" => {
-                    config.hard_limit_buffer = value.parse().unwrap_or(config.hard_limit_buffer)
-                }
-                "keep_tool_results" => {
-                    config.keep_tool_results = value.parse().unwrap_or(config.keep_tool_results)
-                }
-                "compact_max_output_tokens" => config
-                    .compact_max_output_tokens = value.parse().unwrap_or(config.compact_max_output_tokens),
-                "max_consecutive_failures" => config
-                    .max_consecutive_failures = value.parse().unwrap_or(config.max_consecutive_failures),
-                "tool_output_max_bytes" => {
-                    config.tool_output_max_bytes = value.parse().unwrap_or(config.tool_output_max_bytes)
-                }
-                "bash_default_timeout_secs" => config
-                    .bash_default_timeout_secs = value.parse().unwrap_or(config.bash_default_timeout_secs),
-                "thinking_enabled" => {
-                    config.thinking_enabled = value.parse().unwrap_or(config.thinking_enabled);
-                }
-                "thinking_budget_tokens" => {
-                    config.thinking_budget_tokens = value.parse().unwrap_or(config.thinking_budget_tokens);
-                }
-                _ => {} // unknown keys ignored
+    let doc = match content.parse::<toml_edit::DocumentMut>() {
+        Ok(d) => d,
+        Err(_) => return config,
+    };
+
+    macro_rules! read_int {
+        ($key:expr, $field:ident) => {
+            if let Some(v) = doc.get($key).and_then(|v| v.as_integer()) {
+                config.$field = v as _;
             }
-        }
+        };
     }
+    macro_rules! read_bool {
+        ($key:expr, $field:ident) => {
+            if let Some(v) = doc.get($key).and_then(|v| v.as_bool()) {
+                config.$field = v;
+            }
+        };
+    }
+
+    read_int!("max_turns", max_turns);
+    read_int!("context_window", context_window);
+    read_int!("max_output_tokens", max_output_tokens);
+    read_int!("auto_compact_buffer", auto_compact_buffer);
+    read_int!("warning_buffer", warning_buffer);
+    read_int!("hard_limit_buffer", hard_limit_buffer);
+    read_int!("keep_tool_results", keep_tool_results);
+    read_int!("compact_max_output_tokens", compact_max_output_tokens);
+    read_int!("max_consecutive_failures", max_consecutive_failures);
+    read_int!("tool_output_max_bytes", tool_output_max_bytes);
+    read_int!("bash_default_timeout_secs", bash_default_timeout_secs);
+    read_bool!("thinking_enabled", thinking_enabled);
+    read_int!("thinking_budget_tokens", thinking_budget_tokens);
+
     config
 }
 
@@ -146,7 +132,7 @@ pub fn load_llm_config() -> Option<LlmConfig> {
     })
 }
 
-/// 通用辅助函数：从 ~/.xyz-agent/config.toml 中逐行读取指定 key 的值
+/// 用 toml_edit 读取指定 key 的字符串值，与 save_config 使用同一解析库
 fn read_config_value(key: &str) -> Result<String, ()> {
     let config_path = dirs::home_dir()
         .ok_or(())?
@@ -156,16 +142,11 @@ fn read_config_value(key: &str) -> Result<String, ()> {
         return Err(());
     }
     let content = std::fs::read_to_string(&config_path).map_err(|_| ())?;
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix(key) {
-            let rest = rest.trim_start_matches(['=', ' ']).trim().trim_matches('"');
-            if !rest.is_empty() {
-                return Ok(rest.to_string());
-            }
-        }
-    }
-    Err(())
+    let doc = content.parse::<toml_edit::DocumentMut>().map_err(|_| ())?;
+    doc.get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or(())
 }
 
 /// 将配置写入 ~/.xyz-agent/config.toml（文件不存在时自动创建）
@@ -247,7 +228,7 @@ mod tests {
     #[test]
     fn test_thinking_config_parsing() {
         let content = "thinking_enabled = true\nthinking_budget_tokens = 20000\n";
-        let config = parse_config_value(content);
+        let config = parse_config_toml(content);
         assert!(config.thinking_enabled);
         assert_eq!(config.thinking_budget_tokens, 20_000);
     }
@@ -255,7 +236,7 @@ mod tests {
     #[test]
     fn test_thinking_config_invalid_uses_defaults() {
         let content = "thinking_enabled = maybe\nthinking_budget_tokens = not_a_number\n";
-        let config = parse_config_value(content);
+        let config = parse_config_toml(content);
         assert!(!config.thinking_enabled);
         assert_eq!(config.thinking_budget_tokens, 10_000);
     }
@@ -263,7 +244,7 @@ mod tests {
     #[test]
     fn test_partial_config_uses_defaults() {
         let content = "max_turns = 100\ncontext_window = 500000\n";
-        let config = parse_config_value(content);
+        let config = parse_config_toml(content);
         assert_eq!(config.max_turns, 100);
         assert_eq!(config.context_window, 500_000);
         // 其余字段应保持默认值
@@ -274,7 +255,7 @@ mod tests {
     #[test]
     fn test_invalid_values_ignored() {
         let content = "max_turns = not_a_number\ntool_output_max_bytes = abc\nbash_default_timeout_secs = 120\n";
-        let config = parse_config_value(content);
+        let config = parse_config_toml(content);
         // 无效值保留默认
         assert_eq!(config.max_turns, 50);
         assert_eq!(config.tool_output_max_bytes, 100_000);
@@ -338,8 +319,8 @@ mod tests {
         assert_eq!(parsed["anthropic_base_url"].as_str(), Some("https://test.api.com"));
         assert_eq!(parsed["tool_output_max_bytes"].as_integer(), Some(50_000));
 
-        // 验证 parse_config_value 也能正确解析
-        let agent_config = parse_config_value(&content);
+        // 验证 parse_config_toml 也能正确解析
+        let agent_config = parse_config_toml(&content);
         assert_eq!(agent_config.max_turns, 99);
         assert_eq!(agent_config.context_window, 300_000);
         assert_eq!(agent_config.max_output_tokens, 4096);
@@ -348,41 +329,20 @@ mod tests {
     }
 
     #[test]
-    fn test_read_config_value() {
+    fn test_read_config_value_toml_edit() {
         let dir = tempfile::tempdir().unwrap();
         let config_path = dir.path().join("config.toml");
-        std::fs::write(
-            &config_path,
-            "llm_model = \"test-model\"\nanthropic_base_url = \"https://custom.com\"\n",
-        )
-        .unwrap();
 
+        // 用 toml_edit 写入，与 save_config 路径一致
+        let mut doc = toml_edit::DocumentMut::new();
+        doc["llm_model"] = toml_edit::value("test-model");
+        doc["anthropic_base_url"] = toml_edit::value("https://custom.com");
+        std::fs::write(&config_path, doc.to_string()).unwrap();
+
+        // 用 toml_edit 读回验证
         let content = std::fs::read_to_string(&config_path).unwrap();
-        // 模拟 read_config_value 的解析逻辑
-        let found_model = content.lines().find_map(|line| {
-            let trimmed = line.trim();
-            trimmed.strip_prefix("llm_model").and_then(|rest| {
-                let rest = rest.trim_start_matches(['=', ' ']).trim();
-                if !rest.is_empty() {
-                    Some(rest.to_string())
-                } else {
-                    None
-                }
-            })
-        });
-        assert_eq!(found_model, Some("\"test-model\"".to_string()));
-
-        let found_url = content.lines().find_map(|line| {
-            let trimmed = line.trim();
-            trimmed.strip_prefix("anthropic_base_url").and_then(|rest| {
-                let rest = rest.trim_start_matches(['=', ' ']).trim();
-                if !rest.is_empty() {
-                    Some(rest.to_string())
-                } else {
-                    None
-                }
-            })
-        });
-        assert_eq!(found_url, Some("\"https://custom.com\"".to_string()));
+        let parsed = content.parse::<toml_edit::DocumentMut>().unwrap();
+        assert_eq!(parsed["llm_model"].as_str(), Some("test-model"));
+        assert_eq!(parsed["anthropic_base_url"].as_str(), Some("https://custom.com"));
     }
 }
