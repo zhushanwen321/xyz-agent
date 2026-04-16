@@ -17,11 +17,13 @@ const isFocused = ref(false)
 const isComposing = ref(false)
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 
+const MAX_TEXTAREA_HEIGHT = 200
+
 function autoResize() {
   const el = textareaRef.value
   if (!el) return
   el.style.height = 'auto'
-  el.style.height = Math.min(el.scrollHeight, 200) + 'px'
+  el.style.height = Math.min(el.scrollHeight, MAX_TEXTAREA_HEIGHT) + 'px'
 }
 
 function handleKeydown(e: KeyboardEvent) {

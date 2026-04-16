@@ -96,7 +96,7 @@ async function handleSavePrompt() {
     await savePrompt(input)
     closeEdit()
   } catch (e) {
-    error.value = String(e)
+    error.value = e instanceof Error ? e.message : String(e)
   }
 }
 
@@ -107,7 +107,7 @@ async function handleDeletePrompt(key: string) {
       closeEdit()
     }
   } catch (e) {
-    error.value = String(e)
+    error.value = e instanceof Error ? e.message : String(e)
   }
 }
 
@@ -147,7 +147,7 @@ async function handleSaveAgent() {
     editTarget.value = null
     restartHint.value = true
   } catch (e) {
-    error.value = String(e)
+    error.value = e instanceof Error ? e.message : String(e)
   }
 }
 
@@ -158,7 +158,7 @@ async function handleDeleteAgent(name: string) {
       editTarget.value = null
     }
   } catch (e) {
-    error.value = String(e)
+    error.value = e instanceof Error ? e.message : String(e)
   }
 }
 

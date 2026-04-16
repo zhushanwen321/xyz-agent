@@ -20,6 +20,13 @@ const { config, loading: configLoading, saving, error: configError, success, loa
 
 const activeTab = ref<'llm' | 'agent' | 'prompts' | 'tools'>('llm')
 
+const tabs = [
+  { key: 'llm' as const, label: 'LLM' },
+  { key: 'agent' as const, label: 'Agent' },
+  { key: 'prompts' as const, label: 'Prompts' },
+  { key: 'tools' as const, label: 'Tools' },
+]
+
 async function handleSave() {
   await saveConfig()
   emit('config-applied')
@@ -44,48 +51,17 @@ onMounted(async () => {
     <!-- Tab 切换 -->
     <div class="mb-6 flex border-b border-border-default">
       <Button
+        v-for="tab in tabs"
+        :key="tab.key"
         variant="ghost"
         size="sm"
         class="px-4 pb-2 text-sm font-medium hover:bg-transparent"
-        :class="activeTab === 'llm'
+        :class="activeTab === tab.key
           ? 'border-b-2 border-semantic-green text-foreground'
           : 'text-tertiary hover:text-muted-foreground'"
-        @click="activeTab = 'llm'"
+        @click="activeTab = tab.key"
       >
-        LLM
-      </Button>
-      <Button
-        variant="ghost"
-        size="sm"
-        class="px-4 pb-2 text-sm font-medium hover:bg-transparent"
-        :class="activeTab === 'agent'
-          ? 'border-b-2 border-semantic-green text-foreground'
-          : 'text-tertiary hover:text-muted-foreground'"
-        @click="activeTab = 'agent'"
-      >
-        Agent
-      </Button>
-      <Button
-        variant="ghost"
-        size="sm"
-        class="px-4 pb-2 text-sm font-medium hover:bg-transparent"
-        :class="activeTab === 'prompts'
-          ? 'border-b-2 border-semantic-green text-foreground'
-          : 'text-tertiary hover:text-muted-foreground'"
-        @click="activeTab = 'prompts'"
-      >
-        Prompts
-      </Button>
-      <Button
-        variant="ghost"
-        size="sm"
-        class="px-4 pb-2 text-sm font-medium hover:bg-transparent"
-        :class="activeTab === 'tools'
-          ? 'border-b-2 border-semantic-green text-foreground'
-          : 'text-tertiary hover:text-muted-foreground'"
-        @click="activeTab = 'tools'"
-      >
-        Tools
+        {{ tab.label }}
       </Button>
     </div>
 
