@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, nextTick } from 'vue'
 import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
 
 defineProps<{
   isStreaming: boolean
@@ -49,7 +50,7 @@ function handleSend() {
       <span class="shrink-0 font-mono text-sm text-semantic-green">&gt;</span>
 
       <!-- 输入框 -->
-      <textarea
+      <Textarea
         ref="textareaRef"
         v-model="inputText"
         :disabled="isStreaming"

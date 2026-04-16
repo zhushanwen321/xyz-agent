@@ -15,6 +15,17 @@ cd "$ROOT_DIR" && bash "$HOOKS_DIR/check_deps.sh"
 echo "[pre-commit] file size check..."
 cd "$ROOT_DIR" && bash "$HOOKS_DIR/check_file_size.sh"
 
+echo "[pre-commit] eslint check..."
+STAGED_FRONTEND=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(vue|ts|js)$' | grep -v node_modules | grep -v src-tauri)
+if [ -n "$STAGED_FRONTEND" ]; then
+  cd "$ROOT_DIR" && npx eslint $STAGED_FRONTEND --max-warnings=0 2>&1 | tail -5
+  if [ $? -ne 0 ]; then
+    echo "[pre-commit] ESLint check failed. Fix errors before committing."
+    echo "Skip with: SKIP_ESLINT=1 git commit -m '...'"
+    exit 1
+  fi
+fi
+
 echo "[pre-commit] cargo test..."
 cd "$ROOT_DIR/src-tauri" && cargo test --quiet 2>&1 | tail -3
 

@@ -1,5 +1,5 @@
 const NATIVE_ELEMENTS = new Set(['button', 'input', 'select', 'textarea']);
-const ALLOWED_TYPES = new Set(['file', 'hidden', 'image']);
+const ALLOWED_TYPES = new Set(['file', 'hidden', 'image', 'range']);
 
 function checkElement(context, node) {
   const tag = node.rawName;
