@@ -4,6 +4,7 @@ import { useSettings } from '../composables/useSettings'
 import { usePromptManager } from '../composables/usePromptManager'
 import { useToolManager } from '../composables/useToolManager'
 import type { PromptInfo, PromptSaveInput, CustomAgentInput, ToolInfo, ToolConfigSaveInput } from '../types'
+import ProviderManager from './ProviderManager.vue'
 
 const props = defineProps<{
   apiKeyMissing?: boolean
@@ -13,7 +14,7 @@ const emit = defineEmits<{
   (e: 'config-applied'): void
 }>()
 
-const { config, loading: configLoading, saving, error: configError, success, load: loadConfig, save: saveConfig, applyLlm } = useSettings()
+const { config, loading: configLoading, saving, error: configError, success, load: loadConfig, save: saveConfig } = useSettings()
 const {
   prompts,
   loading: promptsLoading,
@@ -36,7 +37,6 @@ const {
 } = useToolManager()
 
 const activeTab = ref<'llm' | 'agent' | 'prompts' | 'tools'>('llm')
-const showKey = ref(false)
 
 // 提示词编辑状态
 const editMode = ref<'enhance' | 'override'>('enhance')
@@ -226,23 +226,13 @@ async function handleResetTool(name: string) {
   }
 }
 
-// LLM/Agent Tab 的统一保存：先 saveConfig，再 applyLlm
 async function handleSave() {
-  if (!config.value) return
   await saveConfig()
+  emit('config-applied')
+}
 
-  // 如果有新输入的 API Key（非脱敏），应用 LLM 配置
-  const key = config.value.anthropic_api_key
-  if (key && !key.includes('...')) {
-    const ok = await applyLlm({
-      apiKey: key,
-      baseUrl: config.value.anthropic_base_url,
-      model: config.value.llm_model,
-    })
-    if (ok) {
-      emit('config-applied')
-    }
-  }
+async function reloadConfig() {
+  await loadConfig()
 }
 
 onMounted(async () => {
@@ -307,53 +297,15 @@ onMounted(async () => {
       <div v-else-if="config" class="space-y-8">
         <!-- API Key 缺失提示 -->
         <div
-          v-if="apiKeyMissing && !config.anthropic_api_key"
+          v-if="apiKeyMissing && config.providers.length === 0"
           class="rounded-md border border-accent-red/30 bg-accent-red/10 px-4 py-3"
         >
           <p class="text-sm font-medium text-accent-red">需要配置 API Key 才能开始使用</p>
-          <p class="mt-1 text-xs text-accent-red/70">请在下方输入你的 Anthropic API Key</p>
+          <p class="mt-1 text-xs text-accent-red/70">请在下方添加一个 Provider 并配置 API Key</p>
         </div>
 
-        <!-- Connection -->
-        <section>
-          <h3 class="mb-3 text-sm font-medium text-text-secondary">Connection</h3>
-          <div class="space-y-3">
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <label class="mb-1 block text-xs text-text-tertiary">Model</label>
-                <input
-                  v-model="config.llm_model"
-                  type="text"
-                  class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-sm text-text-primary"
-                />
-              </div>
-              <div>
-                <label class="mb-1 block text-xs text-text-tertiary">Base URL</label>
-                <input
-                  v-model="config.anthropic_base_url"
-                  type="text"
-                  class="w-full rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-sm text-text-primary"
-                />
-              </div>
-            </div>
-            <div>
-              <label class="mb-1 block text-xs text-text-tertiary">API Key</label>
-              <div class="flex gap-2">
-                <input
-                  v-model="config.anthropic_api_key"
-                  :type="showKey ? 'text' : 'password'"
-                  class="flex-1 rounded-md border border-border-default bg-bg-inset px-3 py-2 font-mono text-sm text-text-primary"
-                />
-                <button
-                  class="rounded-md border border-border-default px-3 text-text-tertiary transition-colors hover:text-text-primary"
-                  @click="showKey = !showKey"
-                >
-                  {{ showKey ? 'Hide' : 'Show' }}
-                </button>
-              </div>
-            </div>
-          </div>
-        </section>
+        <!-- Provider 管理 -->
+        <ProviderManager :config="config" @config-reloaded="reloadConfig" />
 
         <!-- Thinking Mode -->
         <section class="rounded-lg border border-border-default bg-bg-inset p-4">
@@ -385,7 +337,7 @@ onMounted(async () => {
           </div>
         </section>
 
-        <!-- 保存 -->
+        <!-- 保存 AgentConfig -->
         <div class="flex items-center gap-3">
           <button
             class="rounded-md bg-accent px-4 py-2 font-mono text-sm text-bg-base transition-colors hover:bg-accent/80"
