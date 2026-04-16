@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, computed } from 'vue'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { onMounted, ref, computed } from 'vue'
 import { useSettings } from '../composables/useSettings'
 import { usePromptManager } from '../composables/usePromptManager'
 import { useToolManager } from '../composables/useToolManager'
@@ -63,7 +62,6 @@ const restartHint = ref(false)
 const selectedTool = ref<ToolInfo | null>(null)
 const toolEditForm = ref<ToolConfigSaveInput>({ name: '' })
 const toolRestartHint = ref(false)
-let unlistenFn: UnlistenFn | null = null
 
 // 内置 prompt 和自定义 prompt 分组
 const builtinPrompts = computed(() => prompts.value.filter(p => p.mode !== 'custom'))
@@ -254,12 +252,7 @@ onMounted(async () => {
   if (props.apiKeyMissing) {
     activeTab.value = 'llm'
   }
-  unlistenFn = await listen<{ message: string }>('config:thinking-changed', () => {
-    restartHint.value = true
-  })
 })
-
-onUnmounted(() => { unlistenFn?.() })
 </script>
 
 <template>
@@ -387,12 +380,9 @@ onUnmounted(() => { unlistenFn?.() })
               {{ config.thinking_budget_tokens?.toLocaleString() }} tokens
             </span>
             <p class="mt-1 text-xs text-text-tertiary">
-              Controls model thinking depth. Higher = deeper thinking, slower responses, more token usage. Restart required.
+              Controls model thinking depth. Higher = deeper thinking, slower responses, more token usage.
             </p>
           </div>
-          <p v-if="restartHint" class="mt-2 text-xs text-accent-yellow">
-            Thinking config updated. Restart the app to apply changes.
-          </p>
         </section>
 
         <!-- 保存 -->

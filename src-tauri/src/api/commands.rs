@@ -10,7 +10,7 @@ use crate::store::jsonl::LoadHistoryResult;
 use crate::store::session;
 use crate::types::{AgentEvent, AssistantContentBlock, TranscriptEntry, UserContentBlock};
 use serde::Deserialize;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, State};
 
 #[derive(serde::Serialize)]
 pub struct ConfigResponse {
@@ -291,6 +291,37 @@ fn build_tool_context(
     })
 }
 
+/// 构建 provider + agent_spawner 并写入 AppState 的 RwLock
+fn rebuild_runtime(
+    state: &AppState,
+    api_key: String,
+    base_url: String,
+    model: String,
+    thinking_enabled: bool,
+    thinking_budget_tokens: u32,
+) -> Result<(), String> {
+    let provider: Arc<dyn LlmProvider> = Arc::new(
+        crate::engine::llm::anthropic::AnthropicProvider::new(api_key)
+            .with_base_url(base_url)
+            .with_max_tokens(state.config.max_output_tokens)
+            .with_thinking(thinking_enabled, thinking_budget_tokens),
+    );
+    let spawner: Arc<dyn AgentSpawner> = Arc::new(
+        crate::engine::agent_spawner::DefaultAgentSpawner::new(
+            provider.clone(),
+            model,
+            state.config.clone(),
+            state.tool_registry.clone(),
+            state.task_tree.clone(),
+            state.concurrency_manager.clone(),
+            state.data_dir.clone(),
+        ),
+    );
+    *state.provider.write().map_err(|e| format!("provider lock: {e}"))? = Some(provider);
+    *state.agent_spawner.write().map_err(|e| format!("spawner lock: {e}"))? = Some(spawner);
+    Ok(())
+}
+
 /// 持久化新 entries 到 JSONL 并返回总文本长度
 fn persist_entries(
     session_path: &Path,
@@ -353,7 +384,6 @@ fn mask_api_key(key: &str) -> String {
 pub async fn update_config(
     payload: UpdateConfigRequest,
     state: State<'_, AppState>,
-    app: AppHandle,
 ) -> Result<(), String> {
     // 如果 API Key 是脱敏格式（包含 ...），跳过覆盖
     let api_key = if payload.anthropic_api_key.contains("...") || payload.anthropic_api_key.is_empty() {
@@ -378,14 +408,16 @@ pub async fn update_config(
     )
     .map_err(|e| e.to_string())?;
 
-    // thinking 配置变更需要重启应用才能生效（provider 在启动时创建）
+    // thinking 配置变更时热更新 provider 和 agent_spawner
     let current = &state.config;
     if payload.thinking_enabled != current.thinking_enabled
         || payload.thinking_budget_tokens != current.thinking_budget_tokens
     {
-        let _ = app.emit("config:thinking-changed", serde_json::json!({
-            "message": "Extended Thinking 配置已更新，请重启应用以生效"
-        }));
+        let model = state.model.read().map_err(|e| format!("model lock: {e}"))?.clone();
+        rebuild_runtime(
+            &state, api_key, payload.anthropic_base_url, model,
+            payload.thinking_enabled, payload.thinking_budget_tokens,
+        )?;
     }
 
     Ok(())
@@ -418,39 +450,16 @@ pub async fn apply_llm_config(
         state.config.thinking_budget_tokens,
     ).map_err(|e| e.to_string())?;
 
-    // 2. 创建新 provider
-    let provider: Arc<dyn LlmProvider> = Arc::new(
-        crate::engine::llm::anthropic::AnthropicProvider::new(payload.api_key)
-            .with_base_url(payload.base_url)
-            .with_max_tokens(state.config.max_output_tokens)
-            .with_thinking(state.config.thinking_enabled, state.config.thinking_budget_tokens),
-    );
+    // 2. 重建 provider + spawner
+    rebuild_runtime(
+        &state, payload.api_key, payload.base_url.clone(), payload.model.clone(),
+        state.config.thinking_enabled, state.config.thinking_budget_tokens,
+    )?;
 
-    // 3. 创建新 agent_spawner
-    let agent_spawner: Arc<dyn AgentSpawner> = Arc::new(
-        crate::engine::agent_spawner::DefaultAgentSpawner::new(
-            provider.clone(),
-            payload.model.clone(),
-            state.config.clone(),
-            state.tool_registry.clone(),
-            state.task_tree.clone(),
-            state.concurrency_manager.clone(),
-            state.data_dir.clone(),
-        ),
-    );
-
-    // 4. 替换 AppState 中的值
+    // 3. 更新 model
     {
-        let mut p = state.provider.write().unwrap();
-        *p = Some(provider);
-    }
-    {
-        let mut m = state.model.write().unwrap();
+        let mut m = state.model.write().map_err(|e| format!("model lock: {e}"))?;
         *m = payload.model;
-    }
-    {
-        let mut s = state.agent_spawner.write().unwrap();
-        *s = Some(agent_spawner);
     }
 
     Ok(())
