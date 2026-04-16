@@ -75,7 +75,7 @@ pub async fn rename_session(
 
 #[tauri::command]
 pub async fn get_current_model(state: State<'_, AppState>) -> Result<String, String> {
-    Ok(state.model.clone())
+    Ok(state.model.read().unwrap().clone())
 }
 
 #[tauri::command]
@@ -93,7 +93,8 @@ pub async fn send_message(
     let preview: String = content.chars().take(50).collect();
     log::info!("[chat] send_message: session={session_id}, content={preview}");
 
-    let provider = state.provider.clone();
+    let provider = state.provider.read().unwrap().clone()
+        .ok_or("API Key not configured. Please configure in Settings.".to_string())?;
     let session_path = session::session_file_path(&state.data_dir, &session_id)
         .ok_or_else(|| format!("session {session_id} not found"))?;
 
@@ -134,7 +135,7 @@ pub async fn send_message(
     }
     let _token_guard = TokenGuard { tokens: state.cancel_tokens.clone(), session_id: session_id.clone() };
 
-    let model = state.model.clone();
+    let model = state.model.read().unwrap().clone();
     log::info!("[chat] starting agent_loop, model={model}");
     let agent_loop = AgentLoop::new(provider, session_id.clone(), model);
     history.push(user_entry.clone());
@@ -146,7 +147,7 @@ pub async fn send_message(
             .to_string_lossy()
             .to_string(),
         os: std::env::consts::OS.to_string(),
-        model: state.model.clone(),
+        model: state.model.read().unwrap().clone(),
         git_branch: None,
         tool_names: state.tool_registry.tool_names(),
         data_context_summary: None,
@@ -215,7 +216,8 @@ pub async fn send_message(
         current_assistant_content: vec![],
         tool_registry: state.tool_registry.clone(),
         background_tasks: state.background_tasks.clone(),
-        agent_spawner: state.agent_spawner.clone(),
+        agent_spawner: state.agent_spawner.read().unwrap().clone()
+            .ok_or("API Key not configured. Please configure in Settings.".to_string())?,
         orchestrate_depth: 0,
         node_id: None,
         parent_cancel_token: Some(cancel_token.clone()),

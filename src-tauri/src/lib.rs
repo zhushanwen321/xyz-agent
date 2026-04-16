@@ -23,20 +23,32 @@ pub fn run() {
 
     log::info!("data_dir={}", data_dir.display());
 
-    let llm_config = config::load_llm_config()
-        .expect("Failed to load LLM config");
-    log::info!("model={}, base_url={}", llm_config.model, llm_config.base_url);
+    let llm_config = config::load_llm_config();
+    let default_model = "claude-sonnet-4-20250514".to_string();
 
     let agent_config = Arc::new(
         config::load_agent_config().unwrap_or_default(),
     );
 
-    let provider: Arc<dyn LlmProvider> =
-        Arc::new(
-            AnthropicProvider::new(llm_config.api_key)
-                .with_base_url(llm_config.base_url)
-                .with_max_tokens(agent_config.max_output_tokens)
-        );
+    // 根据 LLM 配置构建 provider 和 model
+    let (inner_provider, model_str) = match &llm_config {
+        Some(cfg) => {
+            log::info!("model={}, base_url={}", cfg.model, cfg.base_url);
+            let p: Arc<dyn LlmProvider> = Arc::new(
+                AnthropicProvider::new(cfg.api_key.clone())
+                    .with_base_url(cfg.base_url.clone())
+                    .with_max_tokens(agent_config.max_output_tokens),
+            );
+            (Some(p), cfg.model.clone())
+        },
+        None => {
+            log::warn!("No API Key found. Please configure in Settings.");
+            (None, default_model)
+        },
+    };
+
+    let provider = Arc::new(std::sync::RwLock::new(inner_provider));
+    let model = Arc::new(std::sync::RwLock::new(model_str));
 
     let mut tool_registry = ToolRegistry::new();
     let workdir = std::env::current_dir().unwrap_or_default();
@@ -70,22 +82,26 @@ pub fn run() {
                 engine::concurrency::ConcurrencyManager::new(3),
             );
 
-            let agent_spawner = Arc::new(
-                engine::agent_spawner::DefaultAgentSpawner {
-                    provider: provider.clone(),
-                    model: llm_config.model.clone(),
-                    config: agent_config.clone(),
-                    tool_registry: tool_registry.clone(),
-                    task_tree: task_tree.clone(),
-                    concurrency_manager: concurrency_manager.clone(),
-                    data_dir: data_dir.clone(),
-                },
-            );
+            let agent_spawner_inner: Option<Arc<dyn engine::agent_spawner::AgentSpawner>> = match &llm_config {
+                Some(cfg) => Some(Arc::new(
+                    engine::agent_spawner::DefaultAgentSpawner {
+                        provider: provider.read().unwrap().clone().unwrap(),
+                        model: cfg.model.clone(),
+                        config: agent_config.clone(),
+                        tool_registry: tool_registry.clone(),
+                        task_tree: task_tree.clone(),
+                        concurrency_manager: concurrency_manager.clone(),
+                        data_dir: data_dir.clone(),
+                    },
+                )),
+                None => None,
+            };
+            let agent_spawner = Arc::new(std::sync::RwLock::new(agent_spawner_inner));
 
             app.manage(AppState {
                 data_dir: data_dir.clone(),
                 provider: provider.clone(),
-                model: llm_config.model.clone(),
+                model: model.clone(),
                 config: agent_config.clone(),
                 tool_registry: tool_registry.clone(),
                 global_perms,
