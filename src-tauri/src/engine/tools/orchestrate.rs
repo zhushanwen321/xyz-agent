@@ -3,7 +3,6 @@ use crate::engine::task_tree::*;
 use crate::engine::tools::{PermissionContext, Tool, ToolExecutionContext, ToolResult};
 use crate::engine::tools::utils::{extract_assistant_text, build_tool_dynamic_context};
 use crate::types::event::*;
-use crate::types::transcript::TranscriptEntry;
 use async_trait::async_trait;
 use std::time::Instant;
 

@@ -365,7 +365,7 @@ fn mask_api_key(key: &str) -> String {
 #[tauri::command]
 pub async fn update_config(
     payload: UpdateConfigRequest,
-    state: State<'_, AppState>,
+    _state: State<'_, AppState>,
 ) -> Result<(), String> {
     crate::engine::config::save_config(
         "", // API key 不再通过此路径保存

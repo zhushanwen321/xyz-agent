@@ -48,7 +48,6 @@ pub trait LlmProvider: Send + Sync {
     ) -> Result<Pin<Box<dyn futures::Stream<Item = Result<LlmStreamEvent, AppError>> + Send>>, AppError>;
 }
 
-pub use types::{ModelTier, ModelEntry, ProviderConfig, ModelInfo, parse_model_ref};
 
 // ── 单元测试 ──────────────────────────────────────────────────
 

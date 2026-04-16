@@ -113,6 +113,7 @@ fn parse_config_toml(content: &str) -> AgentConfig {
 }
 
 /// LLM 配置：从环境变量、~/.xyz-agent/config.toml 读取
+#[cfg(test)]
 pub struct LlmConfig {
     pub api_key: String,
     pub base_url: String,
@@ -121,6 +122,7 @@ pub struct LlmConfig {
 
 /// 加载 LLM 配置，优先级：环境变量 > config.toml
 /// API Key 不存在时返回 None（不报错，允许无 Key 启动）
+#[cfg(test)]
 pub fn load_llm_config() -> Option<LlmConfig> {
     let api_key = std::env::var("ANTHROPIC_API_KEY")
         .or_else(|_| read_config_value("anthropic_api_key"))
@@ -142,6 +144,7 @@ pub fn load_llm_config() -> Option<LlmConfig> {
 }
 
 /// 用 toml_edit 读取指定 key 的字符串值，与 save_config 使用同一解析库
+#[cfg(test)]
 fn read_config_value(key: &str) -> Result<String, ()> {
     let config_path = config_path().map_err(|_| ())?;
     if !config_path.exists() {
@@ -443,27 +446,6 @@ pub fn delete_provider(provider_name: &str) -> Result<(), AppError> {
             arr.remove(idx);
         }
     }
-
-    std::fs::write(&config_path, doc.to_string())
-        .map_err(|e| AppError::Config(format!("failed to write config: {e}")))?;
-
-    Ok(())
-}
-
-/// 更新 default_model 字段
-pub fn save_default_model(model_ref: &str) -> Result<(), AppError> {
-    let config_path = config_path()?;
-
-    let mut doc = if config_path.exists() {
-        let content = std::fs::read_to_string(&config_path)
-            .map_err(|e| AppError::Config(format!("failed to read: {e}")))?;
-        content.parse::<toml_edit::DocumentMut>()
-            .map_err(|e| AppError::Config(format!("failed to parse: {e}")))?
-    } else {
-        toml_edit::DocumentMut::new()
-    };
-
-    doc["default_model"] = toml_edit::value(model_ref);
 
     std::fs::write(&config_path, doc.to_string())
         .map_err(|e| AppError::Config(format!("failed to write config: {e}")))?;
