@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { ref, nextTick } from 'vue'
+import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
 
 defineProps<{
   isStreaming: boolean
@@ -15,11 +17,13 @@ const isFocused = ref(false)
 const isComposing = ref(false)
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 
+const MAX_TEXTAREA_HEIGHT = 200
+
 function autoResize() {
   const el = textareaRef.value
   if (!el) return
   el.style.height = 'auto'
-  el.style.height = Math.min(el.scrollHeight, 200) + 'px'
+  el.style.height = Math.min(el.scrollHeight, MAX_TEXTAREA_HEIGHT) + 'px'
 }
 
 function handleKeydown(e: KeyboardEvent) {
@@ -39,21 +43,21 @@ function handleSend() {
 </script>
 
 <template>
-  <div class="border-t border-border-default bg-bg-base px-4 py-3">
+  <div class="border-t border-border-default bg-base px-4 py-3">
     <div
       class="flex items-center gap-3"
-      :class="isFocused ? 'border-b-2 border-accent pb-[1px]' : 'border-b-2 border-transparent pb-[1px]'"
+      :class="isFocused ? 'border-b-2 border-semantic-green pb-[1px]' : 'border-b-2 border-transparent pb-[1px]'"
     >
       <!-- 终端前缀 -->
-      <span class="shrink-0 font-mono text-sm text-accent">&gt;</span>
+      <span class="shrink-0 font-mono text-sm text-semantic-green">&gt;</span>
 
       <!-- 输入框 -->
-      <textarea
+      <Textarea
         ref="textareaRef"
         v-model="inputText"
         :disabled="isStreaming"
         placeholder="输入消息..."
-        class="min-h-[1.75rem] max-h-[200px] flex-1 resize-none bg-transparent font-mono text-sm leading-[1.75rem] text-text-primary placeholder:text-text-tertiary focus:outline-none"
+        class="min-h-[1.75rem] max-h-[200px] flex-1 resize-none bg-transparent font-mono text-sm leading-[1.75rem] text-foreground placeholder:text-tertiary focus:outline-none"
         rows="1"
         @input="autoResize"
         @keydown="handleKeydown"
@@ -64,10 +68,12 @@ function handleSend() {
       />
 
       <!-- 发送按钮 / 停止按钮 -->
-      <button
+      <Button
         v-if="!isStreaming"
+        variant="ghost"
+        size="sm"
         :disabled="!inputText.trim()"
-        class="flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1 font-mono text-xs text-text-tertiary transition-colors hover:bg-accent-muted hover:text-accent disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-text-tertiary"
+        class="shrink-0 font-mono text-xs text-tertiary hover:bg-semantic-green/15 hover:text-semantic-green disabled:opacity-30"
         @click="handleSend"
       >
         <svg
@@ -84,10 +90,12 @@ function handleSend() {
           <path d="m12 5 7 7-7 7" />
         </svg>
         <span>Enter</span>
-      </button>
-      <button
+      </Button>
+      <Button
         v-else
-        class="flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1 font-mono text-xs text-red-400 transition-colors hover:bg-red-500/10 hover:text-red-300"
+        variant="ghost"
+        size="sm"
+        class="shrink-0 font-mono text-xs text-semantic-red hover:bg-semantic-red/10 hover:text-semantic-red"
         @click="emit('cancel')"
       >
         <svg
@@ -99,7 +107,7 @@ function handleSend() {
           <rect x="6" y="6" width="12" height="12" rx="1" />
         </svg>
         <span>Stop</span>
-      </button>
+      </Button>
     </div>
   </div>
 </template>

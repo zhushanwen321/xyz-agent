@@ -7,6 +7,7 @@ pub mod orchestrate;
 #[path = "orchestrate_idle.rs"]
 pub mod orchestrate_idle;
 pub mod read;
+pub mod utils;
 pub mod write;
 
 use std::collections::{HashMap, HashSet};

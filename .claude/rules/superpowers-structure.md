@@ -5,7 +5,7 @@
 ## 目录结构
 
 ```
-.claude/.superpowers/
+.superpowers/
 ├── yyyy-MM-dd-{short-title}/    # 主任务目录
 │   ├── spec.md                              # 设计规格
 │   ├── plan.md                              # 实施计划
@@ -24,8 +24,8 @@
 ## 禁止的结构
 
 - ❌ `docs/superpowers/` — 错误根目录
-- ❌ `.claude/.superpowers/specs/` — 禁止集中存放 spec
-- ❌ `.claude/.superpowers/plans/` — 禁止集中存放 plan
+- ❌ `.superpowers/specs/` — 禁止集中存放 spec
+- ❌ `.superpowers/plans/` — 禁止集中存放 plan
 
 ## 原因
 

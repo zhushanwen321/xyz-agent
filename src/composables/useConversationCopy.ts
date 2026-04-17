@@ -48,7 +48,11 @@ export function useConversationCopy() {
 
   function toggleMessage(id: string) {
     const next = new Set(selectedIds.value)
-    next.has(id) ? next.delete(id) : next.add(id)
+    if (next.has(id)) {
+      next.delete(id)
+    } else {
+      next.add(id)
+    }
     selectedIds.value = next
   }
 

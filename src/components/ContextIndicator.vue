@@ -6,9 +6,9 @@ const props = defineProps<{
 }>()
 
 const barColor = computed(() => {
-  if (props.percentage >= 90) return 'bg-accent-red'
-  if (props.percentage >= 70) return 'bg-accent-yellow'
-  return 'bg-accent'
+  if (props.percentage >= 90) return 'bg-semantic-red'
+  if (props.percentage >= 70) return 'bg-semantic-yellow'
+  return 'bg-semantic-green'
 })
 </script>
 
@@ -21,6 +21,6 @@ const barColor = computed(() => {
         :style="{ width: `${Math.min(percentage, 100)}%` }"
       />
     </div>
-    <span class="font-mono text-[10px] text-text-tertiary">{{ percentage.toFixed(0) }}%</span>
+    <span class="font-mono text-[10px] text-tertiary">{{ percentage.toFixed(0) }}%</span>
   </div>
 </template>

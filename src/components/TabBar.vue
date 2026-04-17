@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { ChatTab } from '../types'
+import { Button } from '@/components/ui/button'
 
 defineProps<{
   tabs: ChatTab[]
@@ -13,14 +14,16 @@ defineEmits<{
 </script>
 
 <template>
-  <div class="flex items-stretch bg-[#0a0a0b] border-b border-[#27272a] h-8 min-h-[32px] overflow-x-auto scrollbar-none">
-    <button
+  <div class="flex items-stretch bg-base border-b border-border-default h-8 min-h-[32px] overflow-x-auto scrollbar-none">
+    <Button
       v-for="tab in tabs"
       :key="tab.id"
-      class="flex items-center gap-1.5 px-3 text-[11px] font-mono whitespace-nowrap relative transition-colors border-r border-[#27272a]"
+      variant="ghost"
+      size="sm"
+      class="flex items-center gap-1.5 px-3 text-[11px] font-mono whitespace-nowrap relative border-r border-border-default rounded-t-[length:var(--radius)]"
       :class="tab.id === activeTabId
-        ? 'text-[#fafafa] bg-[#111113]'
-        : 'text-[#a1a1aa] bg-transparent hover:text-[#fafafa] hover:bg-[#18181b]'"
+        ? 'text-foreground bg-surface'
+        : 'text-muted-foreground bg-transparent hover:text-foreground hover:bg-card'"
       @click="$emit('switch', tab.id)"
     >
       <!-- Status icon -->
@@ -36,16 +39,16 @@ defineEmits<{
       <!-- Active indicator -->
       <span
         v-if="tab.id === activeTabId"
-        class="absolute bottom-0 left-0 right-0 h-0.5 bg-[#22c55e]"
+        class="absolute bottom-0 left-0 right-0 h-0.5 bg-semantic-green"
       />
 
       <!-- Close button -->
       <span
         v-if="tab.closable"
-        class="inline-flex items-center justify-center w-3.5 h-3.5 text-[10px] rounded-sm text-[#71717a] ml-1 transition-colors hover:bg-[#1f1f23] hover:text-[#fafafa]"
+        class="inline-flex items-center justify-center w-3.5 h-3.5 text-[10px] rounded-sm text-tertiary ml-1 transition-colors hover:bg-inset hover:text-foreground"
         @click.stop="$emit('close', tab.id)"
       >✕</span>
-    </button>
+    </Button>
   </div>
 </template>
 
@@ -68,8 +71,8 @@ defineEmits<{
   content: '';
   width: 8px;
   height: 5px;
-  border-left: 2px solid #22c55e;
-  border-bottom: 2px solid #22c55e;
+  border-left: 2px solid var(--semantic-green);
+  border-bottom: 2px solid var(--semantic-green);
   transform: rotate(-45deg) translateY(-1px);
 }
 
@@ -81,7 +84,7 @@ defineEmits<{
   width: 3px;
   height: 3px;
   border-radius: 50%;
-  background: #eab308;
+  background: var(--semantic-yellow);
   animation: thinking-dots 1.4s ease-in-out infinite;
 }
 .s-thinking .dot:nth-child(2) { animation-delay: 0.2s; }
@@ -93,7 +96,7 @@ defineEmits<{
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #22c55e;
+  background: var(--semantic-green);
   animation: s-pulse 1s ease-in-out infinite;
 }
 .s-streaming::after {
@@ -102,7 +105,7 @@ defineEmits<{
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  border: 1.5px solid #22c55e;
+  border: 1.5px solid var(--semantic-green);
   animation: s-ring 1.5s ease-out infinite;
   opacity: 0;
 }
@@ -114,8 +117,8 @@ defineEmits<{
   height: 10px;
   border-radius: 50%;
   border: 2px solid transparent;
-  border-top-color: #f97316;
-  border-right-color: #f97316;
+  border-top-color: var(--semantic-orange);
+  border-right-color: var(--semantic-orange);
   animation: t-spin 0.8s linear infinite;
 }
 
@@ -125,7 +128,7 @@ defineEmits<{
   position: absolute;
   width: 8px;
   height: 2px;
-  background: #ef4444;
+  background: var(--semantic-red);
   border-radius: 1px;
 }
 .s-failed::before { transform: rotate(45deg); }
@@ -137,7 +140,7 @@ defineEmits<{
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #3b82f6;
+  background: var(--semantic-blue);
 }
 
 @keyframes thinking-dots {

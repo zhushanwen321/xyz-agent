@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { isTauri } from '../lib/tauri'
+import { isTauri, getCurrentModel, setCurrentModel as apiSetCurrentModel } from '../lib/tauri'
+import { Button } from '@/components/ui/button'
+import ModelSelector from './ModelSelector.vue'
 
-const props = defineProps<{
+defineProps<{
   sidebarCollapsed: boolean
 }>()
 
@@ -12,13 +14,22 @@ const emit = defineEmits<{
 }>()
 
 const currentPage = ref<'chat' | 'settings'>('chat')
-const modelName = ref('loading...')
+const currentModel = ref('loading...')
 
-// 在 Tauri 环境中异步获取当前模型名称
 if (isTauri()) {
-  import('../lib/tauri').then(({ getCurrentModel }) => {
-    getCurrentModel().then((m) => { modelName.value = m })
-  })
+  getCurrentModel().then((m) => { currentModel.value = m }).catch(() => {})
+}
+
+async function onModelSelect(modelRef: string) {
+  currentModel.value = modelRef
+  if (isTauri()) {
+    try {
+      await apiSetCurrentModel(modelRef)
+    } catch {
+      // API 失败时回退
+      currentModel.value = await getCurrentModel()
+    }
+  }
 }
 
 function navigate(page: 'chat' | 'settings') {
@@ -28,43 +39,47 @@ function navigate(page: 'chat' | 'settings') {
 </script>
 
 <template>
-  <div class="flex h-10 shrink-0 items-center border-b border-border-default bg-bg-elevated px-4">
+  <div class="flex h-10 shrink-0 items-center border-b border-border-default bg-elevated px-4">
     <!-- 左: logo -->
-    <span class="font-mono text-sm font-semibold text-accent">xyz-agent</span>
+    <span class="font-mono text-sm font-semibold text-semantic-green">xyz-agent</span>
 
     <!-- 中: 导航 -->
     <div class="ml-6 flex gap-1">
-      <button
+      <Button
+        variant="ghost"
         class="rounded px-3 py-1 font-mono text-xs transition-colors"
         :class="currentPage === 'chat'
-          ? 'bg-accent/10 text-accent'
-          : 'text-text-tertiary hover:text-text-primary'"
+          ? 'bg-semantic-green/10 text-semantic-green'
+          : 'text-tertiary hover:text-foreground'"
         @click="navigate('chat')"
       >
         Chat
-      </button>
-      <button
+      </Button>
+      <Button
+        variant="ghost"
         class="rounded px-3 py-1 font-mono text-xs transition-colors"
         :class="currentPage === 'settings'
-          ? 'bg-accent/10 text-accent'
-          : 'text-text-tertiary hover:text-text-primary'"
+          ? 'bg-semantic-green/10 text-semantic-green'
+          : 'text-tertiary hover:text-foreground'"
         @click="navigate('settings')"
       >
         Settings
-      </button>
+      </Button>
     </div>
 
     <!-- 右: 模型名 + 折叠按钮 -->
     <div class="ml-auto flex items-center gap-3">
-      <span class="font-mono text-[11px] text-text-tertiary">{{ modelName }}</span>
-      <button
-        class="text-text-tertiary transition-colors hover:text-text-primary"
+      <ModelSelector :current-model="currentModel" @select="onModelSelect" />
+      <Button
+        variant="ghost"
+        size="icon"
+        class="text-tertiary transition-colors hover:text-foreground"
         @click="$emit('toggle-sidebar')"
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M3 12h18" />
         </svg>
-      </button>
+      </Button>
     </div>
   </div>
 </template>

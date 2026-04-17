@@ -87,10 +87,18 @@ LLM SSE → LlmStreamEvent → mpsc channel → EventBus → Tauri Event → Vue
 - TypeScript：strict 模式，Composition API
 - 提交格式：Conventional Commits（feat/fix/refactor/test/docs/chore）
 
+### 前端 Design System 合规
+
+- 所有 UI 组件使用 shadcn-vue，禁止原生 `<button>/<input>/<select>/<textarea>`
+- 颜色使用 design token（`bg-base`、`text-foreground`、`text-semantic-red` 等），禁止 `[#hex]` 硬编码
+- 间距使用 Tailwind spacing scale（`p-4`、`gap-2`），禁止 `p-[17px]` 等任意值
+- ESLint 规则自动检查：`npx eslint src/ --max-warnings=0`
+- Pre-commit hook 自动运行 ESLint（`SKIP_ESLINT=1` 跳过）
+
 ### 其他
 
-- superpowers目录：.claude/.superpowers
-- Design System: [docs/design-system.md](docs/design-system.md) — 全局色彩、排版、间距、Markdown 渲染规范
+- superpowers目录：.superpowers
+- Design System: [docs/design-system.md](docs/design-system.md) — 全局色彩、排版、组件规范
 - 编码标准: [docs/standards.md](docs/standards.md) — 架构模式与编码规范（文件持久化与 Registry 同步等）
 
 <!-- code-review-graph MCP tools -->

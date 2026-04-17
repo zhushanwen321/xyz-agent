@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import type { TaskNode, OrchestrateNode } from '../types'
+import { Button } from '@/components/ui/button'
 import SubAgentCard from './SubAgentCard.vue'
 import TaskTreeView from './TaskTreeView.vue'
 
@@ -39,23 +40,27 @@ const hasContent = computed(() =>
 </script>
 
 <template>
-  <aside v-if="hasContent" class="w-72 flex flex-col border-l border-border-default bg-bg-elevated">
+  <aside v-if="hasContent" class="w-72 shrink-0 flex flex-col border-l border-border-default bg-elevated">
     <!-- Tab 切换 -->
     <div class="flex border-b border-border-default">
-      <button
-        class="flex-1 px-3 py-2 text-[12px] font-mono transition-colors"
-        :class="activeTab === 'subagents' ? 'text-text-primary border-b-2 border-b-blue-500' : 'text-text-secondary hover:text-text-primary'"
+      <Button
+        variant="ghost"
+        size="sm"
+        class="flex-1 text-[12px] font-mono hover:bg-transparent rounded-none"
+        :class="activeTab === 'subagents' ? 'text-foreground border-b-2 border-b-semantic-green' : 'text-muted-foreground hover:text-foreground'"
         @click="activeTab = 'subagents'"
       >
         SubAgents ({{ taskNodes.size }})
-      </button>
-      <button
-        class="flex-1 px-3 py-2 text-[12px] font-mono transition-colors"
-        :class="activeTab === 'orchestrate' ? 'text-text-primary border-b-2 border-b-blue-500' : 'text-text-secondary hover:text-text-primary'"
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        class="flex-1 text-[12px] font-mono hover:bg-transparent rounded-none"
+        :class="activeTab === 'orchestrate' ? 'text-foreground border-b-2 border-b-semantic-green' : 'text-muted-foreground hover:text-foreground'"
         @click="activeTab = 'orchestrate'"
       >
         Orchestrate ({{ orchestrateNodes.size }})
-      </button>
+      </Button>
     </div>
 
     <!-- 内容区 -->
@@ -70,7 +75,7 @@ const hasContent = computed(() =>
           @kill="emit('killTask', task.task_id)"
           @open-tab="selectedNodeId = task.task_id; emit('selectNode', task.task_id)"
         />
-        <div v-if="sortedTasks.length === 0" class="text-center text-text-secondary text-[11px] py-4">
+        <div v-if="sortedTasks.length === 0" class="text-center text-muted-foreground text-[11px] py-4">
           No sub-agents
         </div>
       </template>
@@ -85,15 +90,15 @@ const hasContent = computed(() =>
           @kill="emit('killTask', $event)"
           @anchor="anchorNodeId = $event; if ($event) emit('selectNode', $event)"
         />
-        <div v-if="orchestrateNodes.size === 0" class="text-center text-text-secondary text-[11px] py-4">
+        <div v-if="orchestrateNodes.size === 0" class="text-center text-muted-foreground text-[11px] py-4">
           No orchestrate nodes
         </div>
       </template>
     </div>
 
     <!-- 底部统计 -->
-    <div class="border-t border-border-default px-3 py-1.5 text-[10px] text-text-secondary font-mono flex justify-between">
-      <span>Active: <span class="text-[#22c55e]">{{ activeTaskCount }}</span></span>
+    <div class="border-t border-border-default px-3 py-1.5 text-[10px] text-muted-foreground font-mono flex justify-between">
+      <span>Active: <span class="text-semantic-green">{{ activeTaskCount }}</span></span>
       <span>Completed: {{ completedTaskCount }}</span>
     </div>
   </aside>

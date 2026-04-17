@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue'
 import type { OrchestrateNode } from '../types'
 import { formatTokens } from '../lib/format'
+import { Button } from '@/components/ui/button'
 
 const props = defineProps<{
   node: OrchestrateNode
@@ -29,8 +30,8 @@ const statusLabel = computed(() => {
     return `idle(${props.node.reuse_count}x)`
   }
   switch (props.node.status) {
-    case 'completed': return '&#x2713;'
-    case 'failed': return '&#x2717;'
+    case 'completed': return '\u2713'
+    case 'failed': return '\u2717'
     case 'idle': return 'idle'
     case 'running': return ''
     default: return props.node.status
@@ -61,13 +62,13 @@ const roleBadge = computed(() =>
       @click="emit('anchor', node.node_id)"
     >
       <!-- 展开/折叠 -->
-      <button
+      <span
         v-if="children.length > 0"
-        class="w-4 h-4 flex items-center justify-center text-text-secondary hover:text-text-primary shrink-0"
+        class="shrink-0 w-4 h-4 flex items-center justify-center cursor-pointer text-muted-foreground hover:text-foreground"
         @click.stop="isExpanded = !isExpanded"
       >
         <span class="text-[10px] transition-transform" :class="isExpanded ? '' : '-rotate-90'">&#x25BC;</span>
-      </button>
+      </span>
       <span v-else class="w-4 shrink-0" />
 
       <!-- Role badge -->
@@ -79,40 +80,42 @@ const roleBadge = computed(() =>
       </span>
 
       <!-- 描述 -->
-      <span class="text-text-primary truncate min-w-0 flex-1">
+      <span class="text-foreground truncate min-w-0 flex-1">
         {{ node.description }}
       </span>
 
       <!-- 元数据：children 数（非叶节点显示） -->
-      <span v-if="children.length > 0" class="text-[10px] text-text-tertiary shrink-0">
+      <span v-if="children.length > 0" class="text-[10px] text-tertiary shrink-0">
         {{ children.length }}ch
       </span>
 
       <!-- depth 标签（仅非根节点显示） -->
-      <span v-if="depth > 0" class="text-[10px] text-text-tertiary shrink-0">
+      <span v-if="depth > 0" class="text-[10px] text-tertiary shrink-0">
         d{{ depth }}
       </span>
 
       <!-- Token 用量 -->
-      <span v-if="formatTokens(node.usage.total_tokens)" class="text-[10px] font-mono text-text-secondary shrink-0">
+      <span v-if="formatTokens(node.usage.total_tokens)" class="text-[10px] font-mono text-muted-foreground shrink-0">
         {{ formatTokens(node.usage.total_tokens) }}
       </span>
 
       <!-- 状态标识 -->
       <span v-if="node.status === 'running'" class="shrink-0">
-        <span class="inline-block h-2 w-2 animate-spin rounded-full border border-blue-400 border-t-transparent" />
+        <span class="inline-block h-2 w-2 animate-spin rounded-full border border-semantic-blue border-t-transparent" />
       </span>
-      <span v-else class="text-[10px] font-mono shrink-0" :class="statusColor" v-html="statusLabel" />
+      <span v-else class="text-[10px] font-mono shrink-0" :class="statusColor">{{ statusLabel }}</span>
 
       <!-- Kill 按钮：仅 running 状态显示 -->
-      <button
+      <Button
         v-if="node.status === 'running'"
-        class="w-4 h-4 flex items-center justify-center text-text-secondary hover:text-red-400 shrink-0"
+        variant="ghost"
+        size="icon-sm"
+        class="shrink-0 text-muted-foreground hover:text-red-400"
         title="Kill"
         @click.stop="emit('kill', node.node_id)"
       >
         <span class="text-[10px]">&#x2715;</span>
-      </button>
+      </Button>
     </div>
 
     <!-- 递归渲染子节点，最大深度 20 防止循环引用导致栈溢出 -->
@@ -155,7 +158,7 @@ const roleBadge = computed(() =>
   top: 0;
   bottom: 0;
   width: 1px;
-  background: #3f3f46;
+  background: var(--border-hover, #3f3f46);
 }
 
 /* 水平连接线 — 从垂直线延伸到节点内容 */
@@ -166,7 +169,7 @@ const roleBadge = computed(() =>
   top: 50%;
   width: 9px;
   height: 1px;
-  background: #3f3f46;
+  background: var(--border-hover, #3f3f46);
 }
 
 /* 需要让 row 支持 before 伪元素定位 */

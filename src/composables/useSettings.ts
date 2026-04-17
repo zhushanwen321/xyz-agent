@@ -1,6 +1,5 @@
 import { ref } from 'vue'
-import { getConfig, updateConfig, checkApiKey, applyLlmConfig, isTauri } from '../lib/tauri'
-import type { ApplyLlmConfigPayload } from '../lib/tauri'
+import { getConfig, updateConfig, checkApiKey, isTauri } from '../lib/tauri'
 import type { ConfigResponse, UpdateConfigRequest } from '../types'
 
 export function useSettings() {
@@ -11,6 +10,7 @@ export function useSettings() {
   const success = ref(false)
   const apiKeyConfigured = ref<boolean | null>(null)
 
+  // 载入模式：guard → loading → error → try → finally
   async function load() {
     if (!isTauri()) return
     loading.value = true
@@ -31,9 +31,6 @@ export function useSettings() {
     success.value = false
     try {
       const payload: UpdateConfigRequest = {
-        anthropic_api_key: config.value.anthropic_api_key,
-        llm_model: config.value.llm_model,
-        anthropic_base_url: config.value.anthropic_base_url,
         max_turns: config.value.max_turns,
         context_window: config.value.context_window,
         max_output_tokens: config.value.max_output_tokens,
@@ -43,6 +40,8 @@ export function useSettings() {
         thinking_budget_tokens: config.value.thinking_budget_tokens,
       }
       await updateConfig(payload)
+      // 重新加载配置，确保 UI 反映持久化的实际值
+      config.value = await getConfig()
       success.value = true
       setTimeout(() => { success.value = false }, 3000)
     } catch (e) {
@@ -64,17 +63,5 @@ export function useSettings() {
     }
   }
 
-  async function applyLlm(payload: ApplyLlmConfigPayload): Promise<boolean> {
-    if (!isTauri()) return false
-    try {
-      await applyLlmConfig(payload)
-      apiKeyConfigured.value = true
-      return true
-    } catch (e) {
-      error.value = String(e)
-      return false
-    }
-  }
-
-  return { config, loading, saving, error, success, apiKeyConfigured, load, save, checkKey, applyLlm }
+  return { config, loading, saving, error, success, apiKeyConfigured, load, save, checkKey }
 }
