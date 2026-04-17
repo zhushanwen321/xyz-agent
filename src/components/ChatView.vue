@@ -173,9 +173,9 @@ function handleCancel() {
 </script>
 
 <template>
-  <div class="flex h-full flex-1">
+  <div class="flex h-full min-w-0 flex-1">
     <!-- 主聊天区域 -->
-    <div class="flex h-full flex-1 flex-col bg-surface">
+    <div class="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-surface">
       <TabBar
         :tabs="tabManager.tabs.value"
         :active-tab-id="tabManager.activeTabId.value"

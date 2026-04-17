@@ -20,7 +20,7 @@ defineEmits<{
       :key="tab.id"
       variant="ghost"
       size="sm"
-      class="flex items-center gap-1.5 px-3 text-[11px] font-mono whitespace-nowrap relative border-r border-border-default"
+      class="flex items-center gap-1.5 px-3 text-[11px] font-mono whitespace-nowrap relative border-r border-border-default rounded-t-[length:var(--radius)]"
       :class="tab.id === activeTabId
         ? 'text-foreground bg-surface'
         : 'text-muted-foreground bg-transparent hover:text-foreground hover:bg-card'"

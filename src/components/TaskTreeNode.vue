@@ -62,15 +62,13 @@ const roleBadge = computed(() =>
       @click="emit('anchor', node.node_id)"
     >
       <!-- 展开/折叠 -->
-      <Button
+      <span
         v-if="children.length > 0"
-        variant="ghost"
-        size="icon-sm"
-        class="shrink-0 text-muted-foreground hover:text-foreground"
+        class="shrink-0 w-4 h-4 flex items-center justify-center cursor-pointer text-muted-foreground hover:text-foreground"
         @click.stop="isExpanded = !isExpanded"
       >
         <span class="text-[10px] transition-transform" :class="isExpanded ? '' : '-rotate-90'">&#x25BC;</span>
-      </Button>
+      </span>
       <span v-else class="w-4 shrink-0" />
 
       <!-- Role badge -->
@@ -160,7 +158,7 @@ const roleBadge = computed(() =>
   top: 0;
   bottom: 0;
   width: 1px;
-  background: #3f3f46;
+  background: var(--border-hover, #3f3f46);
 }
 
 /* 水平连接线 — 从垂直线延伸到节点内容 */
@@ -171,7 +169,7 @@ const roleBadge = computed(() =>
   top: 50%;
   width: 9px;
   height: 1px;
-  background: #3f3f46;
+  background: var(--border-hover, #3f3f46);
 }
 
 /* 需要让 row 支持 before 伪元素定位 */

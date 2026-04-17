@@ -55,7 +55,7 @@ onMounted(async () => {
         :key="tab.key"
         variant="ghost"
         size="sm"
-        class="px-4 pb-2 text-sm font-medium hover:bg-transparent"
+        class="px-4 pb-2 text-sm font-medium hover:bg-transparent rounded-none"
         :class="activeTab === tab.key
           ? 'border-b-2 border-semantic-green text-foreground'
           : 'text-tertiary hover:text-muted-foreground'"

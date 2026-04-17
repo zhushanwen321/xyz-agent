@@ -40,14 +40,14 @@ const hasContent = computed(() =>
 </script>
 
 <template>
-  <aside v-if="hasContent" class="w-72 flex flex-col border-l border-border-default bg-elevated">
+  <aside v-if="hasContent" class="w-72 shrink-0 flex flex-col border-l border-border-default bg-elevated">
     <!-- Tab 切换 -->
     <div class="flex border-b border-border-default">
       <Button
         variant="ghost"
         size="sm"
-        class="flex-1 text-[12px] font-mono hover:bg-transparent"
-        :class="activeTab === 'subagents' ? 'text-foreground border-b-2 border-b-blue-500' : 'text-muted-foreground hover:text-foreground'"
+        class="flex-1 text-[12px] font-mono hover:bg-transparent rounded-none"
+        :class="activeTab === 'subagents' ? 'text-foreground border-b-2 border-b-semantic-green' : 'text-muted-foreground hover:text-foreground'"
         @click="activeTab = 'subagents'"
       >
         SubAgents ({{ taskNodes.size }})
@@ -55,8 +55,8 @@ const hasContent = computed(() =>
       <Button
         variant="ghost"
         size="sm"
-        class="flex-1 text-[12px] font-mono hover:bg-transparent"
-        :class="activeTab === 'orchestrate' ? 'text-foreground border-b-2 border-b-blue-500' : 'text-muted-foreground hover:text-foreground'"
+        class="flex-1 text-[12px] font-mono hover:bg-transparent rounded-none"
+        :class="activeTab === 'orchestrate' ? 'text-foreground border-b-2 border-b-semantic-green' : 'text-muted-foreground hover:text-foreground'"
         @click="activeTab = 'orchestrate'"
       >
         Orchestrate ({{ orchestrateNodes.size }})

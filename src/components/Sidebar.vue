@@ -115,7 +115,7 @@ function handleEditKeydown(e: KeyboardEvent) {
           <Button
             variant="ghost"
             size="sm"
-            class="flex-1 truncate text-left text-sm"
+            class="flex-1 truncate justify-start text-left text-sm"
             @click="selectSession(session.id)"
           >
             {{ session.title }}
