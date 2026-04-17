@@ -1,35 +1,36 @@
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{BufRead, Write};
 use std::path::Path;
 
-use file_lock::{FileLock, FileOptions};
 use crate::types::AppError;
 use crate::types::TranscriptEntry;
 
-pub fn append_entry(path: &Path, entry: &TranscriptEntry) -> Result<(), AppError> {
+fn append_jsonl(path: &Path, entry: &TranscriptEntry) -> Result<(), AppError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| AppError::Storage(format!("create dir failed: {e}")))?;
     }
 
-    let options = FileOptions::new()
-        .write(true)
+    let mut file = OpenOptions::new()
         .create(true)
-        .append(true);
-
-    let mut file_lock = FileLock::lock(path, true, options)
-        .map_err(|e| AppError::Storage(format!("file lock failed: {e}")))?;
+        .append(true)
+        .open(path)
+        .map_err(|e| AppError::Storage(format!("open failed: {e}")))?;
 
     let json_line = serde_json::to_string(entry)
         .map_err(|e| AppError::Storage(format!("serialize failed: {e}")))?;
 
-    writeln!(file_lock.file, "{json_line}")
+    writeln!(file, "{json_line}")
         .map_err(|e| AppError::Storage(format!("write failed: {e}")))?;
 
-    file_lock.file.flush()
+    file.flush()
         .map_err(|e| AppError::Storage(format!("flush failed: {e}")))?;
 
     Ok(())
+}
+
+pub fn append_entry(path: &Path, entry: &TranscriptEntry) -> Result<(), AppError> {
+    append_jsonl(path, entry)
 }
 
 pub fn read_all_entries(path: &Path) -> Result<Vec<TranscriptEntry>, AppError> {
@@ -226,24 +227,7 @@ pub fn sidechain_path(data_dir: &Path, session_id: &str, task_id: &str) -> std::
 }
 
 pub fn append_sidechain_entry(path: &Path, entry: &TranscriptEntry) -> Result<(), AppError> {
-    let options = FileOptions::new()
-        .write(true)
-        .create(true)
-        .append(true);
-
-    let mut file_lock = FileLock::lock(path, true, options)
-        .map_err(|e| AppError::Storage(format!("file lock failed: {e}")))?;
-
-    let json_line = serde_json::to_string(entry)
-        .map_err(|e| AppError::Storage(format!("serialize failed: {e}")))?;
-
-    writeln!(file_lock.file, "{json_line}")
-        .map_err(|e| AppError::Storage(format!("write failed: {e}")))?;
-
-    file_lock.file.flush()
-        .map_err(|e| AppError::Storage(format!("flush failed: {e}")))?;
-
-    Ok(())
+    append_jsonl(path, entry)
 }
 
 pub fn orchestrate_path(data_dir: &Path, session_id: &str, node_id: &str) -> std::path::PathBuf {
