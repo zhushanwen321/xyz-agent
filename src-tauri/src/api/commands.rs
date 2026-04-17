@@ -326,7 +326,8 @@ pub async fn check_api_key(state: State<'_, AppState>) -> Result<bool, String> {
 
 #[tauri::command]
 pub async fn get_config(state: State<'_, AppState>) -> Result<ConfigResponse, String> {
-    let agent = &state.config;
+    // 从 TOML 重新读取，确保拿到最新持久化值（update_config 只写文件不更新内存）
+    let agent = crate::engine::config::load_agent_config().map_err(|e| e.to_string())?;
     let registry = state.read_registry()?;
     let providers_config = crate::engine::config::load_providers();
     let current_model = state.read_model()?.clone();

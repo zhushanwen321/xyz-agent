@@ -29,7 +29,10 @@ const tabs = [
 
 async function handleSave() {
   await saveConfig()
-  emit('config-applied')
+  // 只在首次配置 API Key 时跳转到 Chat
+  if (props.apiKeyMissing) {
+    emit('config-applied')
+  }
 }
 
 async function reloadConfig() {
@@ -87,7 +90,7 @@ onMounted(async () => {
         <section class="rounded-lg border border-border-default bg-inset p-4">
           <h3 class="mb-3 text-sm font-medium text-muted-foreground">Thinking Mode</h3>
           <div class="flex items-center gap-2">
-            <Checkbox v-model:checked="config.thinking_enabled" />
+            <Checkbox v-model="config.thinking_enabled" />
             <span class="text-sm text-muted-foreground">Extended Thinking</span>
           </div>
           <div v-if="config.thinking_enabled" class="mt-3">

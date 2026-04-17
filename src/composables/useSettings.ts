@@ -40,6 +40,8 @@ export function useSettings() {
         thinking_budget_tokens: config.value.thinking_budget_tokens,
       }
       await updateConfig(payload)
+      // 重新加载配置，确保 UI 反映持久化的实际值
+      config.value = await getConfig()
       success.value = true
       setTimeout(() => { success.value = false }, 3000)
     } catch (e) {
