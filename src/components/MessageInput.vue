@@ -46,7 +46,7 @@ function handleSend() {
   <div class="border-t border-border-default bg-base px-4 py-3">
     <div
       class="flex items-center gap-3"
-      :class="isFocused ? 'border-b-2 border-semantic-green pb-[1px]' : 'border-b-2 border-transparent pb-[1px]'"
+      :class="isFocused ? 'border-b-2 border-semantic-green pb-px' : 'border-b-2 border-transparent pb-px'"
     >
       <!-- 终端前缀 -->
       <span class="shrink-0 font-mono text-sm text-semantic-green">&gt;</span>

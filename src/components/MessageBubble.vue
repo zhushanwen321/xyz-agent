@@ -70,7 +70,7 @@ function renderMarkdown(text: string): string {
     <div :class="selectMode ? 'ml-3' : ''">
 
   <!-- User 消息 — 左对齐，全宽背景 -->
-  <div v-if="isUser" class="flex items-start gap-2 border-l-[3px] border-l-[#a1a1aa] px-2 py-1.5" style="background-color: var(--color-bg-user)">
+  <div v-if="isUser" class="flex items-start gap-2 border-l-[3px] border-l-muted-foreground/50 bg-user px-2 py-1.5">
     <div class="flex w-[76px] shrink-0 items-center gap-1.5">
       <div class="flex h-4 w-4 items-center justify-center rounded bg-inset text-[10px] font-mono font-bold text-muted-foreground">U</div>
       <span class="font-mono text-[10px] text-tertiary">User</span>
@@ -90,9 +90,9 @@ function renderMarkdown(text: string): string {
   </div>
 
   <!-- Assistant 消息 — 左对齐，全宽背景 -->
-  <div v-else class="flex items-start gap-2 border-l-[3px] border-l-semantic-green px-2 py-1.5" style="background-color: var(--color-bg-ai)">
+  <div v-else class="flex items-start gap-2 border-l-[3px] border-l-semantic-green bg-ai px-2 py-1.5">
     <div class="flex w-[76px] shrink-0 items-center gap-1.5">
-      <div class="flex h-4 w-4 items-center justify-center rounded text-[10px] font-mono font-bold text-semantic-green" style="background:#22c55e22">&lambda;</div>
+      <div class="flex h-4 w-4 items-center justify-center rounded bg-semantic-green/10 text-[10px] font-mono font-bold text-semantic-green">&lambda;</div>
       <span class="font-mono text-[10px] text-semantic-green">Assistant</span>
     </div>
 
@@ -153,8 +153,7 @@ function renderMarkdown(text: string): string {
 
 <style scoped>
 .thinking-block {
-  background: var(--color-bg-ai, #111);
-  border: 1px solid var(--color-border-default, #27272a);
+  @apply bg-ai border border-border-default;
   border-radius: 8px;
   overflow: hidden;
 }
@@ -165,18 +164,17 @@ function renderMarkdown(text: string): string {
   padding: 6px 12px;
   cursor: pointer;
   font-size: 11px;
-  color: #8b8bff;
-  background: var(--color-bg-ai, #131517);
+  @apply text-semantic-blue bg-ai;
   user-select: none;
 }
 .thinking-icon { font-size: 8px; }
-.thinking-duration { color: #555; font-size: 10px; }
+.thinking-duration { @apply text-tertiary; font-size: 10px; }
 .thinking-content {
   padding: 8px 12px;
   font-size: 12px;
-  color: var(--color-text-secondary, #a1a1aa);
+  @apply text-muted-foreground;
   line-height: 1.6;
-  border-top: 1px solid var(--color-border-default, #27272a);
+  @apply border-t border-border-default;
   white-space: pre-wrap;
 }
 </style>

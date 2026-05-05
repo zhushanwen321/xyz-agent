@@ -71,7 +71,7 @@ const hasContent = computed(() =>
           v-for="task in sortedTasks"
           :key="task.task_id"
           :task="task"
-          :class="{ 'ring-1 ring-blue-500/50': selectedNodeId === task.task_id }"
+          :class="{ 'ring-1 ring-semantic-blue/50': selectedNodeId === task.task_id }"
           @kill="emit('killTask', task.task_id)"
           @open-tab="selectedNodeId = task.task_id; emit('selectNode', task.task_id)"
         />

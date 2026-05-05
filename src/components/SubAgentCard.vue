@@ -55,7 +55,7 @@ const emit = defineEmits<{
 
 <template>
   <div
-    class="group rounded-md border border-border-default border-l-[3px] bg-elevated text-[13px] cursor-pointer transition-colors hover:border-[#3b82f6] hover:bg-[#18181b]"
+    class="group rounded-md border border-border-default border-l-[3px] bg-elevated text-[13px] cursor-pointer transition-colors hover:border-semantic-blue hover:bg-elevated"
     :class="borderColor"
     @click="emit('openTab', task.task_id)"
   >
@@ -88,7 +88,7 @@ const emit = defineEmits<{
           v-if="task.status === 'running'"
           variant="ghost"
           size="icon-sm"
-          class="shrink-0 text-muted-foreground hover:text-red-400"
+          class="shrink-0 text-muted-foreground hover:text-semantic-red"
           title="Kill"
           @click.stop="emit('kill')"
         >

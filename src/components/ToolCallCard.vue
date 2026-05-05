@@ -31,9 +31,9 @@ const activeColor = computed(() =>
 )
 
 const colorMap = {
-  safe:   { border: 'border-l-[#22c55e]', text: 'text-[#22c55e]', bg: 'bg-[#22c55e08]', spin: 'border-[#22c55e]' },
-  caution:{ border: 'border-l-[#eab308]', text: 'text-[#eab308]', bg: 'bg-[#eab30808]', spin: 'border-[#eab308]' },
-  error:  { border: 'border-l-[#ef4444]', text: 'text-[#ef4444]', bg: 'bg-[#ef444408]', spin: 'border-[#ef4444]' },
+  safe:   { border: 'border-l-semantic-green', text: 'text-semantic-green', bg: 'bg-semantic-green/5', spin: 'border-semantic-green' },
+  caution:{ border: 'border-l-semantic-yellow', text: 'text-semantic-yellow', bg: 'bg-semantic-yellow/5', spin: 'border-semantic-yellow' },
+  error:  { border: 'border-l-semantic-red', text: 'text-semantic-red', bg: 'bg-semantic-red/5', spin: 'border-semantic-red' },
 }
 
 const colors = computed(() => colorMap[activeColor.value])

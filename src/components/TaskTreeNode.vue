@@ -40,11 +40,11 @@ const statusLabel = computed(() => {
 
 const statusColor = computed(() => {
   switch (props.node.status) {
-    case 'running': return 'text-blue-400'
-    case 'completed': return 'text-green-400'
-    case 'idle': return 'text-yellow-400'
-    case 'failed': return 'text-red-400'
-    default: return 'text-zinc-400'
+    case 'running': return 'text-semantic-blue'
+    case 'completed': return 'text-semantic-green'
+    case 'idle': return 'text-semantic-yellow'
+    case 'failed': return 'text-semantic-red'
+    default: return 'text-tertiary'
   }
 })
 
@@ -57,8 +57,8 @@ const roleBadge = computed(() =>
   <div class="tree-node" :class="{ 'is-root': depth === 0 }">
     <!-- 节点行 -->
     <div
-      class="tree-node-row flex items-center gap-1.5 py-1 rounded-sm hover:bg-zinc-800/50 cursor-pointer text-[12px]"
-      :class="{ 'bg-blue-500/10 ring-1 ring-inset ring-blue-500/30': selectedNodeId === node.node_id }"
+      class="tree-node-row flex items-center gap-1.5 py-1 rounded-sm hover:bg-inset/50 cursor-pointer text-[12px]"
+      :class="{ 'bg-semantic-blue/10 ring-1 ring-inset ring-semantic-blue/30': selectedNodeId === node.node_id }"
       @click="emit('anchor', node.node_id)"
     >
       <!-- 展开/折叠 -->
@@ -74,7 +74,7 @@ const roleBadge = computed(() =>
       <!-- Role badge -->
       <span
         class="w-4 h-4 rounded-sm flex items-center justify-center text-[9px] font-bold font-mono shrink-0"
-        :class="node.role === 'orchestrator' ? 'bg-blue-500/20 text-blue-400' : 'bg-zinc-600/40 text-zinc-400'"
+        :class="node.role === 'orchestrator' ? 'bg-semantic-blue/20 text-semantic-blue' : 'bg-tertiary/40 text-tertiary'"
       >
         {{ roleBadge }}
       </span>
@@ -110,7 +110,7 @@ const roleBadge = computed(() =>
         v-if="node.status === 'running'"
         variant="ghost"
         size="icon-sm"
-        class="shrink-0 text-muted-foreground hover:text-red-400"
+        class="shrink-0 text-muted-foreground hover:text-semantic-red"
         title="Kill"
         @click.stop="emit('kill', node.node_id)"
       >
@@ -158,7 +158,7 @@ const roleBadge = computed(() =>
   top: 0;
   bottom: 0;
   width: 1px;
-  background: var(--border-hover, #3f3f46);
+  background: var(--border-hover);
 }
 
 /* 水平连接线 — 从垂直线延伸到节点内容 */
@@ -169,7 +169,7 @@ const roleBadge = computed(() =>
   top: 50%;
   width: 9px;
   height: 1px;
-  background: var(--border-hover, #3f3f46);
+  background: var(--border-hover);
 }
 
 /* 需要让 row 支持 before 伪元素定位 */

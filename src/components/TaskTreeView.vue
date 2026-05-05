@@ -88,9 +88,9 @@ function roleLabel(role: string): string {
 }
 
 function roleColorClass(role: string): string {
-  if (role === 'orchestrator') return 'text-[#eab308]'
-  if (role === 'executor') return 'text-[#3b82f6]'
-  return 'text-[#22c55e]'
+  if (role === 'orchestrator') return 'text-semantic-yellow'
+  if (role === 'executor') return 'text-semantic-blue'
+  return 'text-semantic-green'
 }
 </script>
 
@@ -125,7 +125,7 @@ function roleColorClass(role: string): string {
           v-for="(ancestor, idx) in ancestorPath"
           :key="ancestor.node_id"
           class="py-1 px-2 rounded-sm bg-inset border border-border-default cursor-pointer hover:border-semantic-blue transition-colors opacity-70"
-          :style="{ marginLeft: `${idx * 12}px` }"
+          :style="{ marginLeft: `${idx * 0.75}rem` }"
           @click="emit('anchor', ancestor.node_id)"
         >
           <div class="flex items-center gap-1.5">
