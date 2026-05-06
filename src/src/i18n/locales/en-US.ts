@@ -42,6 +42,8 @@ export default {
     system: 'System',
     compacting: 'Compacting context…',
     compactDone: 'Context compacted',
+    emptyTitle: 'Hello, xyz-agent',
+    emptySubtitle: 'Start a conversation with AI...',
   },
   settings: {
     title: 'Settings',

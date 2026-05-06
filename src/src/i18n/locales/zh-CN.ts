@@ -42,6 +42,8 @@ export default {
     system: '系统',
     compacting: '压缩上下文中…',
     compactDone: '上下文已压缩',
+    emptyTitle: 'Hello, xyz-agent',
+    emptySubtitle: '开始与 AI 对话…',
   },
   settings: {
     title: '设置',
