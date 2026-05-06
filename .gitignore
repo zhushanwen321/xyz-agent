@@ -14,3 +14,7 @@ src/node_modules/
 src/dist/
 sidecar/node_modules/
 sidecar/dist/
+src-tauri/gen/
+src-tauri/target/
+.superpowers/2026-04-*
+.superpowers/brainstorm/
