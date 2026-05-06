@@ -71,5 +71,6 @@ export default {
     reconnecting: '重连中…',
     tokens: 'tokens',
     loading: '加载中',
+    shortcuts: '⌘K 命令面板',
   },
 } as const

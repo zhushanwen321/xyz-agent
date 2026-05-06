@@ -71,5 +71,6 @@ export default {
     reconnecting: 'Reconnecting…',
     tokens: 'tokens',
     loading: 'Loading',
+    shortcuts: '⌘K Command Palette',
   },
 } as const
