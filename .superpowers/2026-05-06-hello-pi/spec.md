@@ -129,8 +129,19 @@ xyz-agent/
 │   ├── package.json
 │   └── tsconfig.json
 │
-├── .husky/
-│   └── pre-commit                # lint + type-check + 自定义检查
+├── .githooks/
+│   ├── install-hooks.sh           # npm prepare 自动调用，生成 .git/hooks/pre-commit
+│   └── vue_rules_checker.py       # Python 规范检查（行数/Emoji/CSS/Tab）
+├── taste-lint/
+│   ├── base.mjs                   # ESLint 基础配置 + 8 条品味规则
+│   ├── vue.mjs                    # Vue 特有规则
+│   └── rules/
+│       ├── no-hardcoded-colors.mjs
+│       ├── no-magic-spacing.mjs
+│       ├── no-native-form-elements.mjs
+│       ├── no-silent-catch.mjs
+│       ├── no-unsafe-object-entries.mjs
+│       └── prefer-allsettled.mjs
 ├── eslint.config.mjs
 ├── package.json
 ├── tsconfig.json
@@ -218,13 +229,13 @@ xyz-agent/
 
 ### 3.4 Git Hooks + 代码规范
 
-**Pre-commit 检查链**（husky + lint-staged）：
+**Pre-commit 检查链**（`.githooks/` + `npm prepare` 自动安装，零依赖）：
 
 ```
-.eslint → vue-tsc --noEmit → 自定义检查脚本
+ESLint (--fix + --max-warnings=0) → vue-tsc --noEmit → vue_rules_checker.py
 ```
 
-**自定义 ESLint 规则**：
+**自定义 ESLint 规则**（`taste-lint/` 插件，8 条）：
 
 | 规则 | 级别 | 说明 |
 |------|------|------|
@@ -232,11 +243,40 @@ xyz-agent/
 | `no-native-form-elements` | error | 禁止使用原生 `<button>/<input>/<select>/<textarea>`，必须用 design-system 组件 |
 | `no-magic-spacing` | warn | 禁止 Tailwind 任意值如 `p-[17px]`、`gap-[3px]` |
 | `no-hardcoded-strings` | warn | 提醒未走 i18n 的用户可见文案（允许 `/** */` 注释、`console.log`、`aria-*` 属性豁免） |
+| `no-silent-catch` | warn | catch 块不能为空或仅 console，必须有实质错误处理 |
+| `no-unsafe-object-entries` | warn | `Object.entries()` 动态构建前必须白名单过滤 |
+| `prefer-allsettled` | warn | 独立数据源用 `Promise.allSettled` 而非 `Promise.all` |
+| `no-magic-numbers` | warn | 魔法数字警告（豁免 0/1/-1） |
+
+**Base ESLint 规则**（`taste-lint/base.mjs`）：
+
+| 规则 | 级别 | 说明 |
+|------|------|------|
+| `@typescript-eslint/no-explicit-any` | error | 禁止 any 类型 |
+| `max-lines` | warn | 单文件上限 500 行（不含注释和空行） |
+| `max-lines-per-function` | warn | 单函数上限 300 行 |
+| `no-eval` / `no-implied-eval` | error | 禁止 eval |
+| `no-empty` | error | 空 block 必须有注释说明 |
+
+**vue_rules_checker.py**（Python 脚本，ESLint 无法覆盖的结构性检查）：
+
+| 检查 | 说明 |
+|------|------|
+| 禁止 Emoji | 必须用 `lucide-vue-next` 图标 |
+| 禁止自定义 CSS | `<style scoped>` 内只允许 `@apply`，禁止手写选择器（`@keyframes`/`animation`/`transition` 例外） |
+| `<template>` 上限 400 行 | 超限提示提取子组件 |
+| `<script setup>` 上限 300 行 | 超限提示提取 composable 或子组件 |
+| 禁止 Tab 缩进 | 仅允许 Space（2 空格） |
+
+**Git hooks 安装方式**：
+- 使用 `.githooks/` 目录 + `install-hooks.sh` 脚本
+- `package.json` 中 `"prepare": "cd .githooks && ./install-hooks.sh"` 自动安装
+- 零依赖（不需要 husky、lint-staged）
 
 **其他规范**：
 - `vue-tsc --noEmit` 类型检查必须通过
-- `SKIP_LINT=1` 环境变量可跳过（紧急情况）
 - Conventional Commits 提交格式
+- 跳过检查：`SKIP_ALL_CHECKS=1`（全部）/ `SKIP_LINT=1`（ESLint）/ `SKIP_TYPE_CHECK=1`（tsc）/ `SKIP_CODE_RULES_CHECK=1`（Python 脚本）
 
 ---
 
@@ -330,6 +370,7 @@ xyz-agent/
 | 思考过程 | 默认折叠块 "思考中…"，点击展开 | `ThinkingBlock.vue` |
 
 **P1 Markdown 渲染策略**：
+- 渲染引擎：`markdown-it` + `dompurify`（防止工具输出中的恶意 HTML/XSS）
 - 支持：**加粗**、*斜体*、`行内代码`、[链接](url)、有序/无序列表、引用块
 - 暂不支持：代码块语法高亮（P3）、LaTeX 公式（P3）、图片（P3）
 - 代码块使用 `<pre>` + 等宽字体，黑白底色
@@ -552,7 +593,9 @@ Session 存储：
 |-------|------|-------------|
 | `useChatStore` | 当前对话的消息列表、生成中标志、流式缓冲 | `addMessage()`, `appendDelta()`, `clearStream()` |
 | `useSessionStore` | 所有 Session 列表、当前活跃 Session ID | `loadSessions()`, `createSession()`, `deleteSession()`, `switchSession()` |
-| `useSettingsStore` | 语言、主题、默认模型 | `setTheme()`, `setLocale()`, `setDefaultModel()` |
+| `useSettingsStore` | 语言、主题、默认模型（持久化到 localStorage） | `setTheme()`, `setLocale()`, `setDefaultModel()` |
+
+状态持久化通过 `pinia-plugin-persistedstate` 实现，`useSettingsStore` 自动持久化到 localStorage，无需手动管理。
 
 ### 7.2 数据流
 
@@ -576,9 +619,10 @@ WS 事件 → ws-client.ts → event-bus.ts → composable → store → Vue 响
 |----|------|------|
 | 桌面壳 | Tauri v2 | latest |
 | 前端框架 | Vue 3 | 3.5+ |
-| 状态管理 | Pinia | latest |
+| 状态管理 | Pinia + pinia-plugin-persistedstate | latest |
 | UI 基础 | Radix Vue + Tailwind CSS v4 | latest |
-| Markdown | markdown-it（P1 基础渲染） | latest |
+| Markdown | markdown-it + dompurify（XSS 防护） | latest |
+| Toast | vue-sonner | latest |
 | i18n | vue-i18n | v10+ |
 | 类型检查 | vue-tsc | latest |
 | Lint | ESLint flat config + 自定义规则 | v9+ |
@@ -619,3 +663,4 @@ WS 事件 → ws-client.ts → event-bus.ts → composable → store → Vue 响
 | WS 连接不稳定 | 前端自动重连 + 消息队列缓冲 + Statusbar 状态提示 |
 | Design System 组件不够用 | P1 只做需要的 12 个，后续按需扩展 |
 | 虚拟滚动性能 | 使用 `@tanstack/vue-virtual` 或 `vueuc` |
+| Markdown XSS | markdown-it 渲染必须通过 dompurify 消毒，防止工具输出中的恶意 HTML |
