@@ -1,4 +1,4 @@
-import { startServer } from './server.js'
+import { SidecarServer } from './server.js'
 
 function parseArgs(): { port: number } {
   const args = process.argv.slice(2)
@@ -11,6 +11,32 @@ function parseArgs(): { port: number } {
   return { port }
 }
 
-const { port } = parseArgs()
-console.log(`[sidecar] starting on port ${port}`)
-startServer(port)
+async function main(): Promise<void> {
+  const { port } = parseArgs()
+  const server = new SidecarServer(port)
+
+  // Graceful shutdown on signals
+  let shuttingDown = false
+  const shutdown = async (signal: string) => {
+    if (shuttingDown) return
+    shuttingDown = true
+    console.log(`\n[sidecar] received ${signal}, shutting down...`)
+    try {
+      await server.stop()
+    } catch (e) {
+      console.error('[sidecar] error during shutdown:', e)
+    }
+    process.exit(0)
+  }
+
+  process.on('SIGINT', () => shutdown('SIGINT'))
+  process.on('SIGTERM', () => shutdown('SIGTERM'))
+
+  await server.start()
+  console.log('[sidecar] ready')
+}
+
+main().catch((e) => {
+  console.error('[sidecar] fatal:', e)
+  process.exit(1)
+})
