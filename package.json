@@ -20,6 +20,7 @@
     "prepare": "cd .githooks && ./install-hooks.sh"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.11.1",
     "typescript": "^5.8"
   }
 }
