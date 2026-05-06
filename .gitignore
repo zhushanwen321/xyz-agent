@@ -1,5 +1,6 @@
 node_modules/
 dist/
+src/dist/
 target/
 .DS_Store
 *.local
@@ -9,3 +10,5 @@ target/
 !.env.example
 src-tauri/binaries/
 superpowers/20*/
+src/node_modules/
+src/dist/
