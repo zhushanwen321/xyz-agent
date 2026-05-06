@@ -1,3 +1,4 @@
+// @ts-expect-error markdown-it has no types
 import MarkdownIt from 'markdown-it'
 import DOMPurify from 'dompurify'
 

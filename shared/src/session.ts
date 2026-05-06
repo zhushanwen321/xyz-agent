@@ -1,9 +1,13 @@
+export type SessionStatus = 'active' | 'idle'
+
 export interface SessionSummary {
   id: string
   label: string
   cwd: string
-  lastActiveAt: number  // Unix timestamp (Date.now()), NOT ISO string
-  status: 'active' | 'idle'
+  status: SessionStatus
+  lastActiveAt: number
+  modelId: string
+  tokenCount: number
 }
 
 export interface SessionGroup {

@@ -58,7 +58,7 @@ export function useSlashCommands() {
   }
 
   return {
-    commands: readonly(commands),
+    commands,
     filteredCommands,
     visible,
     filter,

@@ -1,4 +1,4 @@
-import { type Component, defineAsyncComponent } from 'vue'
+import { type Component } from 'vue'
 
 const registry = new Map<string, Component>()
 

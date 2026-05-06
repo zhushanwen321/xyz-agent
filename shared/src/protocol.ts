@@ -1,142 +1,30 @@
-import type { SessionSummary } from './session.js'
-
-// ─── Client → Sidecar messages ───
+// Client → Sidecar message types
+export type ClientMessageType =
+  | 'session.create' | 'session.delete' | 'session.list' | 'session.switch' | 'session.history'
+  | 'message.send' | 'message.abort'
+  | 'config.getProviders' | 'config.setProvider' | 'config.deleteProvider'
+  | 'model.list' | 'model.switch'
+  | 'tool.approve' | 'tool.deny' | 'tool.always_allow'
+  | 'ping'
 
 export interface ClientMessage {
-  type: string
+  type: ClientMessageType
   id?: string
-  payload?: unknown
+  payload: Record<string, unknown>
 }
 
-// Session
-export interface SessionCreatePayload {
-  cwd?: string
-}
-
-export interface SessionDeletePayload {
-  sessionId: string
-}
-
-export interface SessionSwitchPayload {
-  sessionId: string
-}
-
-export interface SessionHistoryPayload {
-  sessionId: string
-}
-
-// Message
-export interface MessageSendPayload {
-  sessionId: string
-  content: string
-}
-
-export interface MessageAbortPayload {
-  sessionId: string
-}
-
-// Config
-export interface SetProviderPayload {
-  providerId: string
-  apiKey?: string
-  baseUrl?: string
-}
-
-export interface DeleteProviderPayload {
-  providerId: string
-}
-
-// Model
-export interface ModelSwitchPayload {
-  sessionId: string
-  modelId: string
-}
-
-// ─── Sidecar → Client messages ───
+// Sidecar → Client message types
+export type ServerMessageType =
+  | 'session.created' | 'session.deleted' | 'session.list' | 'session.history'
+  | 'message.text_delta' | 'message.thinking_delta'
+  | 'message.tool_call_start' | 'message.tool_call_end'
+  | 'message.complete' | 'message.error'
+  | 'config.providers' | 'config.providerUpdated'
+  | 'model.list' | 'model.switched'
+  | 'pong' | 'error'
 
 export interface ServerMessage {
-  type: string
+  type: ServerMessageType
   id?: string
-  payload?: unknown
-}
-
-// Session events
-export interface SessionCreatedPayload {
-  sessionId: string
-  label: string
-  cwd: string
-}
-
-export interface SessionDeletedPayload {
-  sessionId: string
-}
-
-export interface SessionListPayload {
-  groups: Array<{
-    cwd: string
-    sessions: SessionSummary[]
-  }>
-}
-
-// Message events
-export interface TextDeltaPayload {
-  sessionId: string
-  delta: string
-}
-
-export interface ThinkingDeltaPayload {
-  sessionId: string
-  delta: string
-}
-
-export interface ToolCallStartPayload {
-  sessionId: string
-  toolCallId: string
-  toolName: string
-  input: string
-}
-
-export interface ToolCallEndPayload {
-  sessionId: string
-  toolCallId: string
-  output: string
-}
-
-export interface MessageCompletePayload {
-  sessionId: string
-  stopReason: string
-  usage?: Usage
-}
-
-export interface MessageErrorPayload {
-  sessionId: string
-  error: string
-}
-
-// Config events
-export interface ProvidersPayload {
-  providers: import('./provider').ProviderInfo[]
-}
-
-// Model events
-export interface ModelListPayload {
-  models: import('./provider').ModelInfo[]
-}
-
-export interface ModelSwitchedPayload {
-  sessionId: string
-  modelId: string
-}
-
-// Error
-export interface ErrorPayload {
-  message: string
-  code?: string
-}
-
-// Usage
-export interface Usage {
-  promptTokens: number
-  completionTokens: number
-  totalTokens: number
+  payload: Record<string, unknown>
 }
