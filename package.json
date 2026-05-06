@@ -10,17 +10,21 @@
   ],
   "scripts": {
     "dev": "tauri dev",
-    "dev:vite": "vite",
-    "build": "vue-tsc --noEmit && vite build && tauri build",
-    "build:vite": "vue-tsc --noEmit && vite build",
-    "preview": "vite preview",
+    "dev:vite": "npm -w @xyz-agent/frontend run dev",
+    "build": "npm -w @xyz-agent/frontend run build && tauri build",
+    "build:vite": "npm -w @xyz-agent/frontend run build",
+    "preview": "npm -w @xyz-agent/frontend run preview",
     "tauri": "tauri",
     "lint": "eslint .",
-    "typecheck": "vue-tsc --noEmit",
-    "prepare": "cd .githooks && ./install-hooks.sh"
+    "typecheck": "npm -w @xyz-agent/frontend run typecheck",
+    "prepare": "echo 'no githooks yet'"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@tauri-apps/cli": "^2.11.1",
-    "typescript": "^5.8"
+    "eslint": "^10.3.0",
+    "eslint-plugin-vue": "^10.9.1",
+    "typescript": "^5.8",
+    "typescript-eslint": "^8.59.2"
   }
 }
