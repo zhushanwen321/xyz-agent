@@ -12,3 +12,5 @@ src-tauri/binaries/
 superpowers/20*/
 src/node_modules/
 src/dist/
+sidecar/node_modules/
+sidecar/dist/
