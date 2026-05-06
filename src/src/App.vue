@@ -13,14 +13,17 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, onUnmounted } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import { useSettingsStore } from './stores/settings'
+import { useConnection } from './composables/useConnection'
 import AppHeader from './components/layout/AppHeader.vue'
 import AppStatusbar from './components/layout/AppStatusbar.vue'
 import AppSidebar from './components/layout/AppSidebar.vue'
 import ChatView from './components/chat/ChatView.vue'
 import SettingsView from './components/layout/SettingsView.vue'
+
+const { init: initConnection, teardown: teardownConnection } = useConnection()
 
 const settingsStore = useSettingsStore()
 
@@ -30,6 +33,9 @@ function createSession() {
 }
 
 onMounted(async () => {
+  // Initialise WebSocket connection to sidecar
+  initConnection()
+
   try {
     await listen<string>('shortcut', (event) => {
       switch (event.payload) {
@@ -50,6 +56,10 @@ onMounted(async () => {
   } catch {
     // Not running in Tauri
   }
+})
+
+onUnmounted(() => {
+  teardownConnection()
 })
 </script>
 

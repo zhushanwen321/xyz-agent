@@ -46,7 +46,6 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useChatStore } from '../../stores/chat'
-import { useSessionStore } from '../../stores/session'
 import { useChat } from '../../composables/useChat'
 import { send } from '../../lib/ws-client'
 import { on, off } from '../../lib/event-bus'
@@ -58,14 +57,9 @@ import ApprovalCard from './ApprovalCard.vue'
 
 const { t } = useI18n()
 const chatStore = useChatStore()
-const sessionStore = useSessionStore()
 const { sendMessage, abort } = useChat()
 
 const pendingApproval = ref<PendingToolCall | null>(null)
-
-function getSessionId(): string {
-  return sessionStore.currentSessionId ?? 'default'
-}
 
 function handleSend(content: string) {
   chatStore.addMessage({
@@ -75,11 +69,11 @@ function handleSend(content: string) {
     status: 'complete',
     timestamp: Date.now(),
   })
-  sendMessage(getSessionId(), content)
+  sendMessage(content)
 }
 
 function handleCancel() {
-  abort(getSessionId())
+  abort()
 }
 
 function handleSelectModel(modelId: string) {
