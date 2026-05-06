@@ -1,7 +1,24 @@
 <template>
   <div :class="['msg', `msg--${message.role}`]">
     <div class="msg__role">{{ roleLabel }}</div>
-    <div class="msg__body" v-html="renderedContent"></div>
+
+    <!-- Thinking blocks -->
+    <ThinkingBlock
+      v-for="block in message.thinking"
+      :key="block.id"
+      :text="block.content"
+      :streaming="message.status === 'streaming'"
+    />
+
+    <!-- Tool call cards -->
+    <ToolCallCard
+      v-for="tc in message.toolCalls"
+      :key="tc.id"
+      :tool-call="tc"
+    />
+
+    <!-- Markdown content -->
+    <div v-if="message.content" class="msg__body" v-html="renderedContent"></div>
   </div>
 </template>
 
@@ -10,6 +27,8 @@ import { computed } from 'vue'
 import type { Message } from '@xyz-agent/shared'
 import { renderMarkdown } from '../../lib/markdown'
 import { useI18n } from 'vue-i18n'
+import ThinkingBlock from './ThinkingBlock.vue'
+import ToolCallCard from './ToolCallCard.vue'
 
 const props = defineProps<{ message: Message }>()
 const { t } = useI18n()
