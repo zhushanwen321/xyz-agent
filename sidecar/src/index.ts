@@ -1,3 +1,5 @@
+import { startServer } from './server.js'
+
 function parseArgs(): { port: number } {
   const args = process.argv.slice(2)
   let port = 3210
@@ -11,4 +13,4 @@ function parseArgs(): { port: number } {
 
 const { port } = parseArgs()
 console.log(`[sidecar] starting on port ${port}`)
-// TODO: Start WS server (Task D.3)
+startServer(port)

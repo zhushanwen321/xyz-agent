@@ -1,56 +1,53 @@
-import type { WebSocket } from "ws"
-import type { ClientMessage, ServerMessage } from "@xyz-agent/shared"
+import { WebSocketServer, type WebSocket } from 'ws'
+import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
 
-export function createSessionRouter() {
-  function send(ws: WebSocket, msg: ServerMessage) {
-    if (ws.readyState === ws.OPEN) {
-      ws.send(JSON.stringify(msg))
+let client: WebSocket | null = null
+
+export function startServer(port: number): void {
+  const wss = new WebSocketServer({ port })
+
+  wss.on('connection', (ws) => {
+    if (client) {
+      ws.close(4000, 'Only one client allowed')
+      return
     }
-  }
+    client = ws
+    console.log('[sidecar] client connected')
 
-  return {
-    handleConnection(ws: WebSocket) {
-      ws.on("message", (raw) => {
-        const msg: ClientMessage = JSON.parse(raw.toString())
-        console.log("[sidecar] received:", msg.type)
+    ws.on('message', (data) => {
+      try {
+        const msg: ClientMessage = JSON.parse(data.toString())
+        handleMessage(msg, ws)
+      } catch (e) {
+        sendError(ws, 'parse_error', 'Invalid JSON')
+      }
+    })
 
-        switch (msg.type) {
-          case "ping":
-            send(ws, { type: "pong", id: msg.id })
-            break
-          case "session.list":
-            // TODO (Plan 04): implement session pool
-            send(ws, {
-              type: "session.list",
-              id: msg.id,
-              payload: { groups: [] },
-            })
-            break
-          case "model.list":
-            // TODO (Plan 04): query pi subprocess
-            send(ws, {
-              type: "model.list",
-              id: msg.id,
-              payload: { models: [] },
-            })
-            break
-          case "config.getProviders":
-            // TODO (Plan 04): read provider store
-            send(ws, {
-              type: "config.providers",
-              id: msg.id,
-              payload: { providers: [] },
-            })
-            break
-          default:
-            console.log("[sidecar] unhandled message type:", msg.type)
-            send(ws, {
-              type: "error",
-              id: msg.id,
-              payload: { message: `Unknown type: ${msg.type}` },
-            })
-        }
-      })
-    },
+    ws.on('close', () => {
+      client = null
+      console.log('[sidecar] client disconnected')
+    })
+
+    ws.on('error', (err) => {
+      console.error('[sidecar] ws error:', err)
+    })
+  })
+
+  console.log(`[sidecar] WS server listening on port ${port}`)
+}
+
+function handleMessage(msg: ClientMessage, ws: WebSocket): void {
+  switch (msg.type) {
+    case 'ping':
+      ws.send(JSON.stringify({ type: 'pong', payload: {} }))
+      break
+    default:
+      // TODO: route to appropriate handler in Task E.2/E.4
+      break
   }
+}
+
+function sendError(ws: WebSocket, code: string, message: string): void {
+  const resp: ServerMessage = { type: 'error', payload: { code, message } }
+  ws.send(JSON.stringify(resp))
 }
