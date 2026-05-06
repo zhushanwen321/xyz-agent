@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.xyz-agent.app",
   "build": {
-    "frontendDist": "../dist",
+    "frontendDist": "../src/dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "npm run dev:vite",
     "beforeBuildCommand": "npm run build:vite"

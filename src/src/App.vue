@@ -13,6 +13,8 @@
 </template>
 
 <script setup lang="ts">
+import { onMounted } from 'vue'
+import { listen } from '@tauri-apps/api/event'
 import { useSettingsStore } from './stores/settings'
 import AppHeader from './components/layout/AppHeader.vue'
 import AppStatusbar from './components/layout/AppStatusbar.vue'
@@ -26,6 +28,29 @@ function createSession() {
   // TODO: implement via useSession composable
   console.log('create session')
 }
+
+onMounted(async () => {
+  try {
+    await listen<string>('shortcut', (event) => {
+      switch (event.payload) {
+        case 'standard':
+          settingsStore.focusMode = false
+          settingsStore.currentView = 'chat'
+          break
+        case 'focus':
+          settingsStore.toggleFocus()
+          break
+        case 'settings':
+          settingsStore.setView(
+            settingsStore.currentView === 'settings' ? 'chat' : 'settings'
+          )
+          break
+      }
+    })
+  } catch {
+    // Not running in Tauri
+  }
+})
 </script>
 
 <style>
