@@ -1,20 +1,29 @@
 use tauri::Manager;
 
+mod commands;
 mod sidecar;
 mod shortcuts;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let sidecar = sidecar::SidecarManager::new();
+    let sidecar_mgr = sidecar::SidecarManager::new();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .manage(sidecar)
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
+        .manage(sidecar_mgr)
+        .invoke_handler(tauri::generate_handler![commands::dialog::pick_folder])
         .setup(|app| {
             shortcuts::register_shortcuts(app.handle())?;
-            // Start sidecar on port 3210
+
+            // Start sidecar with automatic port discovery
             let sidecar = app.state::<sidecar::SidecarManager>();
-            sidecar.start(3210).ok();
+            match sidecar.start(app.handle()) {
+                Ok(port) => log::info!("Sidecar started on port {}", port),
+                Err(e) => log::error!("Failed to start sidecar: {}", e),
+            }
+
             Ok(())
         })
         .on_window_event(|window, event| {
