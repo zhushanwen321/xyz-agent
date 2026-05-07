@@ -22,7 +22,7 @@ export default {
     toggleTheme: 'Toggle Theme',
   },
   sidebar: {
-    sessions: 'Sessions',
+    sessions: 'Projects',
     newSession: 'New Session',
     searchPlaceholder: 'Search sessions…',
     searchSessions: 'Search sessions',

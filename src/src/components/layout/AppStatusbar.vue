@@ -7,7 +7,9 @@
     <span>{{ sessionStore.currentSession?.modelId || '' }}</span>
     <span class="statusbar__token-usage">{{ tokenDisplay }}</span>
     <span class="statusbar-spacer"></span>
-    <span class="statusbar-hints">{{ t('status.shortcuts') }}</span>
+    <span class="statusbar-hints">
+      <kbd>Cmd+J</kbd> 总览 · <kbd>Cmd+1</kbd> 标准 · <kbd>Cmd+2</kbd> 分屏 · <kbd>Cmd+3</kbd> 专注
+    </span>
   </footer>
 </template>
 
@@ -54,4 +56,13 @@ const statusText = computed(() => {
 .status-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
 .statusbar-spacer { flex: 1; }
 .statusbar-hints { opacity: 0.5; }
+.statusbar-hints kbd {
+  display: inline-flex;
+  padding: 1px 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
 </style>

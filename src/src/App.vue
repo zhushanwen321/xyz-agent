@@ -4,11 +4,14 @@
     <div class="app-body">
       <AppSidebar v-if="!settingsStore.focusMode" @create="createSession" />
       <main class="main-area">
-        <ChatView v-if="settingsStore.currentView === 'chat'" />
-        <!-- Split mode -->
-        <template v-if="settingsStore.splitMode && settingsStore.currentView === 'chat'">
-          <SplitDivider @resize="handleSplitResize" />
+        <SettingsView v-if="settingsStore.currentView === 'settings'" @close="settingsStore.setView('chat')" />
+        <template v-else>
           <ChatView />
+          <!-- Split mode -->
+          <template v-if="settingsStore.splitMode">
+            <SplitDivider @resize="handleSplitResize" />
+            <ChatView />
+          </template>
         </template>
         <!-- Drawers -->
         <DrawerOverlay :visible="settingsStore.drawerOpen" @close="settingsStore.closeDrawer()" />
@@ -56,6 +59,7 @@ import AppHeader from './components/layout/AppHeader.vue'
 import AppStatusbar from './components/layout/AppStatusbar.vue'
 import AppSidebar from './components/layout/AppSidebar.vue'
 import ChatView from './components/chat/ChatView.vue'
+import SettingsView from './components/layout/SettingsView.vue'
 import SplitDivider from './components/panel/SplitDivider.vue'
 import DrawerOverlay from './components/panel/DrawerOverlay.vue'
 import DrawerRight from './components/drawer/DrawerRight.vue'
@@ -114,13 +118,7 @@ onMounted(async () => {
           settingsStore.toggleOverview()
           break
         case 'settings':
-          // Open settings in a new window instead of inline
-          import('@tauri-apps/api/core').then(({ invoke }) => {
-            invoke('open_settings_window')
-          }).catch(() => {
-            // Fallback: switch view inline if not in Tauri
-            settingsStore.setView(settingsStore.currentView === 'settings' ? 'chat' : 'settings')
-          })
+          settingsStore.setView(settingsStore.currentView === 'settings' ? 'chat' : 'settings')
           break
       }
     })

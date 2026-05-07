@@ -20,7 +20,7 @@
       ></textarea>
       <div class="chat-input-toolbar">
         <button class="tb-btn tb-btn--plus" title="Upload file">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12L11.5 6.5a2 2 0 0 0-2.83-2.83L3.17 9.17a3 3 0 0 0 4.24 4.24L13 7.83"/></svg>
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v10M3 8h10"/></svg>
         </button>
         <ModelPicker :current-model="currentModel" @select="(id) => emit('select-model', id)" />
         <ContextBar :percentage="contextPercent" />

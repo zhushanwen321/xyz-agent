@@ -22,7 +22,7 @@ export default {
     toggleTheme: '切换主题',
   },
   sidebar: {
-    sessions: '会话',
+    sessions: '项目列表',
     newSession: '新建会话',
     searchPlaceholder: '搜索会话…',
     searchSessions: '搜索会话',

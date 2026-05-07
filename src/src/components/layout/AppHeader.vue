@@ -5,30 +5,48 @@
     <div class="notif-group">
       <button class="notif-btn notif-btn--done" :title="t('header.done')">
         <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><polyline points="2 6 5 9 10 3"/></svg>
-        Done
+        已完成
         <span class="notif-dot notif-dot--done">3</span>
       </button>
       <button class="notif-btn notif-btn--alert" :title="t('header.alert')">
         <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" style="width:14px;height:14px"><circle cx="6" cy="6" r="4.5"/><path d="M6 4v2.5M6 8v.5"/></svg>
-        Alert
+        请求回应
         <span class="notif-dot notif-dot--alert">1</span>
       </button>
     </div>
     <span class="h-divider"></span>
     <div class="header-actions">
-      <button
-        :class="['view-btn', { active: !settingsStore.focusMode }]"
-        @click="settingsStore.setView('chat')"
-        :title="t('header.viewStandard')"
-      ><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="2" y1="4" x2="14" y2="4"/><line x1="2" y1="8" x2="14" y2="8"/><line x1="2" y1="12" x2="14" y2="12"/></svg></button>
-      <button
-        :class="['view-btn', { active: settingsStore.focusMode }]"
-        @click="settingsStore.toggleFocus()"
-        :title="t('header.viewFocus')"
-      ><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h3M10 3h3M13 3v3M13 10v3M10 13H13M3 13h3M3 10V13M3 3v3"/></svg></button>
-      <span class="header-divider"></span>
-      <button class="header-btn" @click="openSettings" :title="t('header.settings')"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.5"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8h1.5M13 8h1.5M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1"/></svg></button>
-      <button class="header-btn" @click="toggleTheme" :title="t('header.toggleTheme')"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 1 0-11z"/><path d="M8 1.5v11" fill="currentColor"/></svg></button>
+      <button class="h-btn" @click="settingsStore.toggleOverview()" title="窗口总览 (Cmd+J)">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:16px;height:16px">
+          <rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/>
+        </svg>
+      </button>
+      <button :class="['h-btn', { active: !settingsStore.focusMode && !settingsStore.splitMode }]" @click="setView('standard')" title="标准 (Cmd+1)">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:16px;height:16px">
+          <rect x="1" y="1" width="4" height="14" rx="1"/><rect x="6" y="1" width="9" height="14" rx="1"/>
+        </svg>
+      </button>
+      <button :class="['h-btn', { active: settingsStore.splitMode }]" @click="setView('split')" title="分屏 (Cmd+2)">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:16px;height:16px">
+          <rect x="1" y="1" width="6" height="14" rx="1"/><rect x="9" y="1" width="6" height="14" rx="1"/>
+        </svg>
+      </button>
+      <button :class="['h-btn', { active: settingsStore.focusMode }]" @click="setView('focus')" title="专注 (Cmd+3)">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:16px;height:16px">
+          <rect x="1" y="1" width="14" height="14" rx="1"/>
+        </svg>
+      </button>
+      <span class="h-divider"></span>
+      <button :class="['h-btn', { active: settingsStore.currentView === 'settings' }]" @click="openSettings" title="设置 (Cmd+,)">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" style="width:16px;height:16px">
+          <circle cx="8" cy="8" r="2.5"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.77 1.77M11.18 11.18l1.77 1.77M3.05 12.95l1.77-1.77M11.18 4.82l1.77-1.77"/>
+        </svg>
+      </button>
+      <button class="h-btn" @click="toggleTheme" title="切换主题">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:16px;height:16px">
+          <path d="M14 9.5A6.5 6.5 0 016.5 2 6.5 6.5 0 108 14.5a6.47 6.47 0 006-5z"/>
+        </svg>
+      </button>
     </div>
   </header>
 </template>
@@ -38,19 +56,34 @@ import { useSettingsStore } from '../../stores/settings'
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 const settingsStore = useSettingsStore()
+function setView(mode: string) {
+  switch (mode) {
+    case 'standard':
+      settingsStore.focusMode = false
+      settingsStore.splitMode = false
+      settingsStore.currentView = 'chat'
+      break
+    case 'split':
+      settingsStore.focusMode = false
+      settingsStore.splitMode = !settingsStore.splitMode
+      settingsStore.currentView = 'chat'
+      break
+    case 'focus':
+      settingsStore.splitMode = false
+      settingsStore.focusMode = !settingsStore.focusMode
+      settingsStore.currentView = 'chat'
+      break
+  }
+}
+
+function openSettings() {
+  settingsStore.setView(settingsStore.currentView === 'settings' ? 'chat' : 'settings')
+}
+
 function toggleTheme() {
   const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'
   document.documentElement.setAttribute('data-theme', next)
   localStorage.setItem('xyz-agent-theme', next)
-}
-
-async function openSettings() {
-  try {
-    const { invoke } = await import('@tauri-apps/api/core')
-    await invoke('open_settings_window')
-  } catch {
-    settingsStore.setView('settings')
-  }
 }
 </script>
 
@@ -65,15 +98,14 @@ async function openSettings() {
 .header-logo-accent { color: var(--accent); }
 .header-spacer { flex: 1; }
 .header-actions { display: flex; gap: 4px; align-items: center; }
-.view-btn, .header-btn {
+.h-btn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 34px; height: 34px; border-radius: var(--radius-sm);
-  border: 1px solid transparent; background: transparent;
+  border: 1px solid var(--border); background: transparent;
   color: var(--muted); cursor: pointer; transition: all 0.2s;
 }
-.view-btn:hover, .header-btn:hover { background: var(--accent-light); color: var(--accent); }
-.view-btn.active { background: var(--accent-light); color: var(--accent); border-color: var(--accent); }
-.header-divider { width: 1px; height: 24px; background: var(--border); margin: 0 4px; }
+.h-btn:hover { background: var(--accent-light); color: var(--accent); border-color: var(--accent); }
+.h-btn.active { background: var(--accent-light); color: var(--accent); border-color: var(--accent); }
 .h-divider { width: 1px; height: 24px; background: var(--border); margin: 0 4px; }
 .notif-group { display: flex; gap: 6px; align-items: center; }
 .notif-btn { position: relative; display: inline-flex; align-items: center; gap: 5px; padding: 5px 12px; border: 1px solid var(--border); border-radius: 100px; background: transparent; color: var(--muted); font-size: 12px; font-family: var(--font-body); cursor: pointer; transition: all 0.2s; white-space: nowrap; }

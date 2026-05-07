@@ -3,7 +3,7 @@ import { ref, computed } from 'vue'
 import { useVirtualizer } from '@tanstack/vue-virtual'
 import { useSessionStore } from '../../stores/session'
 import { Input, Button, Dialog } from '../../design-system'
-import { SessionSearch, SessionItem } from '../sidebar'
+import { SessionItem } from '../sidebar'
 import { useI18n } from 'vue-i18n'
 import type { SessionGroup, SessionSummary } from '@xyz-agent/shared'
 
@@ -137,7 +137,8 @@ function cancelRename() {
     </div>
 
     <template v-if="!collapsed">
-      <SessionSearch v-model="searchQuery" />
+      <!-- TODO: search disabled per design -->
+      <!-- <SessionSearch v-model="searchQuery" /> -->
 
       <div ref="scrollRef" class="sidebar-list">
         <template v-if="sessionStore.sessions.length > 0">

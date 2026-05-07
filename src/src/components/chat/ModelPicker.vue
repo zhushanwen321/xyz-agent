@@ -53,9 +53,23 @@ function onClickOutside(e: MouseEvent) {
   }
 }
 
+/**
+ * Format model label as "shortName @ provider".
+ * e.g. "claude-sonnet" from anthropic → "sonnet @ anthropic"
+ */
 const currentLabel = computed(() => {
-  const found = models.value.find(m => m.id === props.currentModel)
-  return found ? found.name : props.currentModel
+  const found = models.value.find(m => m.id === props.currentModel || m.id === props.currentModel.split('/').pop())
+  if (!found) {
+    // Fallback: parse "provider/model-name" from raw id
+    const parts = props.currentModel.split('/')
+    const rawName = parts.pop() ?? parts[0]
+    const rawProvider = parts[0]
+    const short = rawName.replace(/^(claude-|gpt-|gemini-)/, '')
+    return rawProvider ? `${short} @ ${rawProvider}` : short
+  }
+  // Strip known prefix (claude-, gpt-, gemini-) from model name
+  const shortName = found.name.replace(/^(claude-|gpt-|gemini-)/, '')
+  return `${shortName} @ ${found.providerName}`
 })
 
 interface ModelGroup {

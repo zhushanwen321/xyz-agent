@@ -6,6 +6,7 @@ import { useProvider } from '../../composables/useProvider'
 import { useModel } from '../../composables/useModel'
 import { ProviderList, ProviderForm, SkillsTab, AgentsTab } from '../settings'
 
+const emit = defineEmits<{ close: [] }>()
 const { t } = useI18n()
 const settingsStore = useSettingsStore()
 const { providers, loadProviders, setProvider, deleteProvider } = useProvider()
@@ -46,6 +47,7 @@ const providerModels = computed(() =>
 
 function close() {
   settingsStore.setView('chat')
+  emit('close')
 }
 
 function handleEdit(providerId: string) {
