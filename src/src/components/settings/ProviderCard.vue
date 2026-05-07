@@ -85,7 +85,6 @@ const statusDotClass = computed(() => {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   margin-bottom: 12px;
-  overflow: hidden;
   transition: border-color 0.2s var(--ease);
 }
 .provider-card:hover { border-color: oklch(80% 0.01 70); }

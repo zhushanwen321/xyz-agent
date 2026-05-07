@@ -8,6 +8,7 @@ import ProviderModal from './ProviderModal.vue'
 // ─── State ──────────────────────────────────────────────────────
 
 const providers = ref<MockProvider[]>([...mockProviders])
+const models = ref<MockModel[]>(mockModels.map(m => ({ ...m })))
 const expandedId = ref<string | null>(null)
 const showModal = ref(false)
 const editingProvider = ref<MockProvider | null>(null)
@@ -20,13 +21,13 @@ const modalTitle = computed(() =>
 
 const editingModels = computed<MockModel[]>(() => {
   if (!editingProvider.value) return []
-  return mockModels.filter(m => m.providerId === editingProvider.value!.id)
+  return models.value.filter(m => m.providerId === editingProvider.value!.id)
 })
 
 // ─── Helpers ────────────────────────────────────────────────────
 
 function getModelsFor(providerId: string): MockModel[] {
-  return mockModels.filter(m => m.providerId === providerId)
+  return models.value.filter(m => m.providerId === providerId)
 }
 
 // ─── Actions ────────────────────────────────────────────────────
@@ -59,7 +60,7 @@ function toggleProvider(id: string) {
 }
 
 function toggleModel(providerId: string, modelId: string) {
-  const m = mockModels.find(m => m.id === modelId && m.providerId === providerId)
+  const m = models.value.find(m => m.id === modelId && m.providerId === providerId)
   if (m) m.enabled = !m.enabled
 }
 
