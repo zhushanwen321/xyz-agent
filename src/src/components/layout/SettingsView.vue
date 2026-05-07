@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '../../stores/settings'
 import { useProvider } from '../../composables/useProvider'
 import { useModel } from '../../composables/useModel'
-import { ProviderList, ProviderForm } from '../settings'
+import { ProviderList, ProviderForm, SkillsTab, AgentsTab } from '../settings'
 
 const { t } = useI18n()
 const settingsStore = useSettingsStore()
@@ -15,6 +15,16 @@ const activeTab = ref('providers')
 const editingProviderId = ref<string | null>(null)
 const showForm = ref(false)
 const loading = ref(false)
+
+// TODO: wire to real skill/agent data from store
+const skills = ref<Array<{ name: string; description: string; enabled: boolean }>>([])
+const agents = ref<Array<{ name: string; model: string; active: boolean }>>([])
+const agentConfig = ref<Array<{ label: string; value: string }>>([])
+
+function handleSkillToggle(name: string) {
+  const skill = skills.value.find(s => s.name === name)
+  if (skill) skill.enabled = !skill.enabled
+}
 
 const tabs = computed(() => [
   { label: t('settings.tabProviders'), value: 'providers' },
@@ -148,15 +158,19 @@ onUnmounted(() => {
           />
         </template>
 
-        <!-- Skills placeholder -->
-        <div v-else-if="activeTab === 'skills'" class="settings-view__placeholder">
-          <p>{{ t('settings.skillsPlaceholder') }}</p>
-        </div>
+        <!-- Skills tab -->
+        <SkillsTab
+          v-else-if="activeTab === 'skills'"
+          :skills="skills"
+          @toggle="handleSkillToggle"
+        />
 
-        <!-- Agents placeholder -->
-        <div v-else-if="activeTab === 'agents'" class="settings-view__placeholder">
-          <p>{{ t('settings.agentsPlaceholder') }}</p>
-        </div>
+        <!-- Agents tab -->
+        <AgentsTab
+          v-else-if="activeTab === 'agents'"
+          :agents="agents"
+          :config-rows="agentConfig"
+        />
       </div>
     </div>
   </div>

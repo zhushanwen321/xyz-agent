@@ -1,65 +1,58 @@
 <template>
-  <div class="chat-view">
-    <!-- Message area: scrollable -->
-    <div class="chat-messages">
-      <!-- Empty state -->
-      <div v-if="chatStore.completedMessages.length === 0 && !chatStore.streamingMessage" class="chat-empty">
-        <h2 class="chat-empty__title">{{ t('chat.emptyTitle') }}</h2>
-        <p class="chat-empty__subtitle">{{ t('chat.emptySubtitle') }}</p>
-      </div>
-
-      <template v-else>
-        <!-- Zone 1: Completed messages (static) -->
-        <MessageList :messages="chatStore.completedMessages" />
-
-        <!-- Zone 2: Streaming message (reactive) -->
-        <div v-if="chatStore.streamingMessage" class="chat-streaming">
-          <StreamingMessage
-            :message="chatStore.streamingMessage"
-            :is-streaming="chatStore.isGenerating"
-          />
-        </div>
-
-        <!-- Approval card (if pending) -->
-        <div v-if="pendingApproval" class="chat-approval">
-          <ApprovalCard
-            :pending="pendingApproval"
-            @approve="handleApprove"
-            @deny="handleDeny"
-            @always-allow="handleAlwaysAllow"
-          />
-        </div>
-      </template>
-    </div>
-
-    <!-- Input area: fixed at bottom -->
-    <ChatInput
-      :is-streaming="chatStore.isGenerating"
-      @send="handleSend"
-      @cancel="handleCancel"
-      @select-model="handleSelectModel"
-    />
-  </div>
+  <ChatPanel
+    :agent-options="agentOptions"
+    :active-agent-id="chatStore.activeAgentId"
+    :agent-views="agentViews"
+    :messages="chatStore.completedMessages"
+    :streaming-message="chatStore.streamingMessage"
+    :is-streaming="chatStore.isGenerating"
+    :pending-approval="pendingApproval"
+    :done-count="0"
+    :alert-count="0"
+    :show-close="settingsStore.splitMode"
+    @send="handleSend"
+    @cancel="handleCancel"
+    @select-model="handleSelectModel"
+    @approve="handleApprove"
+    @deny="handleDeny"
+    @always-allow="handleAlwaysAllow"
+    @open-drawer="openDrawer"
+    @close-split="settingsStore.toggleSplit()"
+    @switch-agent="chatStore.switchAgent($event)"
+  />
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
-import { useI18n } from 'vue-i18n'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useChatStore } from '../../stores/chat'
+import { useSettingsStore } from '../../stores/settings'
 import { useChat } from '../../composables/useChat'
 import { send } from '../../lib/ws-client'
 import { on, off } from '../../lib/event-bus'
 import type { PendingToolCall } from './ApprovalCard.vue'
-import MessageList from './MessageList.vue'
-import StreamingMessage from './StreamingMessage.vue'
-import ChatInput from './ChatInput.vue'
-import ApprovalCard from './ApprovalCard.vue'
+import ChatPanel from '../panel/ChatPanel.vue'
+import type { AgentOption, AgentView } from '../panel/ChatPanel.vue'
 
-const { t } = useI18n()
 const chatStore = useChatStore()
+const settingsStore = useSettingsStore()
 const { sendMessage, abort } = useChat()
 
 const pendingApproval = ref<PendingToolCall | null>(null)
+
+const agentOptions = computed<AgentOption[]>(() => chatStore.allAgentOptions)
+
+const agentViews = computed<AgentView[]>(() => {
+  const views: AgentView[] = [
+    {
+      agentId: 'main',
+      messages: chatStore.completedMessages,
+    },
+  ]
+  for (const [id, msgs] of Object.entries(chatStore.agentViews)) {
+    views.push({ agentId: id, messages: msgs })
+  }
+  return views
+})
 
 function handleSend(content: string) {
   chatStore.addMessage({
@@ -95,6 +88,10 @@ function handleAlwaysAllow(toolName: string) {
   pendingApproval.value = null
 }
 
+function openDrawer(_tab: string) { // eslint-disable-line @typescript-eslint/no-unused-vars
+  settingsStore.openDrawer('right')
+}
+
 function handleToolApprovalRequest(msg: { payload: PendingToolCall }) {
   pendingApproval.value = msg.payload
 }
@@ -107,52 +104,3 @@ onUnmounted(() => {
   off('tool.approval_request', handleToolApprovalRequest)
 })
 </script>
-
-<style scoped>
-.chat-view {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.chat-messages {
-  flex: 1 1 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-}
-
-.chat-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  gap: 8px;
-  color: var(--muted);
-}
-
-.chat-empty__title {
-  margin: 0;
-  font-family: var(--font-body);
-  font-size: 22px;
-  font-weight: 600;
-  color: var(--fg);
-}
-
-.chat-empty__subtitle {
-  margin: 0;
-  font-family: var(--font-body);
-  font-size: 14px;
-  color: var(--muted);
-}
-
-.chat-streaming {
-  padding: 0 20px 12px;
-}
-
-.chat-approval {
-  padding: 0 20px 12px;
-}
-</style>

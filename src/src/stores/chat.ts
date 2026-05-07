@@ -22,6 +22,9 @@ export const useChatStore = defineStore('chat', () => {
   const pendingApprovals = ref<PendingApproval[]>([])
   const isLoading = ref(false)
   const error = ref<string | null>(null)
+  const activeAgentId = ref('main')
+  const agentViews = ref<Record<string, Message[]>>({})
+  const tokenUsage = ref(0)
 
   const contextUsagePercent = computed(() =>
     contextLimit.value > 0 ? Math.round((contextTokens.value / contextLimit.value) * PERCENT_MULTIPLIER) : 0
@@ -35,6 +38,11 @@ export const useChatStore = defineStore('chat', () => {
     if (streamingMessage.value) msgs.push(streamingMessage.value)
     return msgs
   })
+
+  const allAgentOptions = computed(() => [
+    { id: 'main', label: '主线对话', color: 'var(--success)' },
+    ...Object.keys(agentViews.value).map(id => ({ id, label: id, color: 'var(--accent)' })),
+  ])
 
   function addMessage(msg: Message) {
     completedMessages.value = [...completedMessages.value, msg]
@@ -106,10 +114,14 @@ export const useChatStore = defineStore('chat', () => {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- placeholder for future implementation
   function updateContextInfo(_usagePercent: number, _inputTokens: number, _contextLimit: number) { /* update context refs */ }
   function setError(err: string | null) { error.value = err }
+  function switchAgent(agentId: string) { activeAgentId.value = agentId }
+  function setTokenUsage(usage: number) { tokenUsage.value = usage }
 
   return {
     completedMessages, streamingMessage, isGenerating,
     contextTokens, contextLimit, contextUsagePercent,
+    activeAgentId, agentViews, tokenUsage,
+    allAgentOptions,
     pendingApprovals, isLoading, error,
     messageCount, lastMessage, hasError, allMessages,
     addMessage, setStreaming, appendToStreaming,
@@ -117,5 +129,6 @@ export const useChatStore = defineStore('chat', () => {
     replaceMessages, appendThinkingDelta, addStreamingToolCall,
     updateStreamingToolCall, addPendingApproval, removePendingApproval,
     startLoading, stopLoading, updateUsage, updateContextInfo, setError,
+    switchAgent, setTokenUsage,
   }
 })

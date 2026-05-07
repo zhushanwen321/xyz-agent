@@ -5,31 +5,91 @@
       <AppSidebar v-if="!settingsStore.focusMode" @create="createSession" />
       <main class="main-area">
         <ChatView v-if="settingsStore.currentView === 'chat'" />
+        <!-- Split mode -->
+        <template v-if="settingsStore.splitMode && settingsStore.currentView === 'chat'">
+          <SplitDivider @resize="handleSplitResize" />
+          <ChatView />
+        </template>
+        <!-- Drawers -->
+        <DrawerOverlay :visible="settingsStore.drawerOpen" @close="settingsStore.closeDrawer()" />
+        <DrawerRight
+          v-if="settingsStore.drawerSide === 'right'"
+          :open="settingsStore.drawerOpen"
+          :tree-nodes="mockTreeNodes"
+          :done-items="[]"
+          :alert-items="[]"
+          active-node-id=""
+          @close="settingsStore.closeDrawer()"
+        />
+        <DrawerLeft
+          v-if="settingsStore.splitMode && settingsStore.drawerSide === 'left'"
+          :open="settingsStore.drawerOpen"
+          :tree-nodes="[]"
+          :done-items="[]"
+          :alert-items="[]"
+          active-node-id=""
+          @close="settingsStore.closeDrawer()"
+        />
       </main>
     </div>
     <AppStatusbar />
-    <Toaster position="top-left" />
+    <!-- Overview -->
+    <Overview
+      :visible="settingsStore.overviewVisible"
+      :cards="[]"
+      @enter="handleOverviewEnter"
+      @enter-split="handleOverviewEnterSplit"
+      @close="settingsStore.overviewVisible = false"
+    />
+    <!-- Custom Toast -->
+    <ToastContainer :toasts="toasts" @dismiss="dismissToast" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue'
-import { Toaster } from 'vue-sonner'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import { useSettingsStore } from './stores/settings'
 import { useConnection } from './composables/useConnection'
+import type { ToastItem } from './components/toast/ToastContainer.vue'
 import AppHeader from './components/layout/AppHeader.vue'
 import AppStatusbar from './components/layout/AppStatusbar.vue'
 import AppSidebar from './components/layout/AppSidebar.vue'
 import ChatView from './components/chat/ChatView.vue'
+import SplitDivider from './components/panel/SplitDivider.vue'
+import DrawerOverlay from './components/panel/DrawerOverlay.vue'
+import DrawerRight from './components/drawer/DrawerRight.vue'
+import DrawerLeft from './components/drawer/DrawerLeft.vue'
+import Overview from './components/overview/Overview.vue'
+import ToastContainer from './components/toast/ToastContainer.vue'
 
 const { init: initConnection, teardown: teardownConnection } = useConnection()
 
 const settingsStore = useSettingsStore()
 
+const toasts = ref<ToastItem[]>([])
+const mockTreeNodes: never[] = []
+
 function createSession() {
   // TODO: implement via useSession composable
   console.log('create session')
+}
+
+function dismissToast(id: string) {
+  toasts.value = toasts.value.filter(t => t.id !== id)
+}
+
+function handleOverviewEnter(_id: string) { // eslint-disable-line @typescript-eslint/no-unused-vars
+  settingsStore.overviewVisible = false
+}
+
+function handleOverviewEnterSplit(_id: string) { // eslint-disable-line @typescript-eslint/no-unused-vars
+  settingsStore.splitMode = true
+  settingsStore.overviewVisible = false
+}
+
+function handleSplitResize(_delta: number) { // eslint-disable-line @typescript-eslint/no-unused-vars
+  // TODO: resize split panels
 }
 
 onMounted(async () => {
@@ -41,10 +101,17 @@ onMounted(async () => {
       switch (event.payload) {
         case 'standard':
           settingsStore.focusMode = false
+          settingsStore.splitMode = false
           settingsStore.currentView = 'chat'
+          break
+        case 'split':
+          settingsStore.splitMode = !settingsStore.splitMode
           break
         case 'focus':
           settingsStore.toggleFocus()
+          break
+        case 'overview':
+          settingsStore.toggleOverview()
           break
         case 'settings':
           // Open settings in a new window instead of inline
