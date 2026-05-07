@@ -64,9 +64,11 @@ const contentClasses = computed(() =>
           border: '1px solid var(--color-border)',
         }"
         :aria-describedby="undefined"
+        :aria-labelledby="title ? 'dialog-title' : undefined"
       >
         <DialogTitle
           v-if="title"
+          id="dialog-title"
           class="text-lg font-semibold leading-none"
           style="color: var(--color-text-primary)"
         >

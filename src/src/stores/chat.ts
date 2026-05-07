@@ -1,23 +1,43 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { Message } from '@xyz-agent/shared'
+import type { Message, ToolCall } from '@xyz-agent/shared'
+
+interface PendingApproval {
+  toolCallId: string
+  toolName: string
+  input: Record<string, unknown>
+  dangerLevel: 'safe' | 'caution' | 'danger'
+  createdAt: number
+}
 
 const DEFAULT_CONTEXT_TOKEN_LIMIT = 100000
 const PERCENT_MULTIPLIER = 100
 
 export const useChatStore = defineStore('chat', () => {
-  const messages = ref<Message[]>([])
+  const completedMessages = ref<Message[]>([])
   const streamingMessage = ref<Message | null>(null)
   const isGenerating = ref(false)
   const contextTokens = ref(0)
   const contextLimit = ref(DEFAULT_CONTEXT_TOKEN_LIMIT)
+  const pendingApprovals = ref<PendingApproval[]>([])
+  const isLoading = ref(false)
+  const error = ref<string | null>(null)
 
   const contextUsagePercent = computed(() =>
     contextLimit.value > 0 ? Math.round((contextTokens.value / contextLimit.value) * PERCENT_MULTIPLIER) : 0
   )
 
+  const messageCount = computed(() => completedMessages.value.length)
+  const lastMessage = computed(() => completedMessages.value[completedMessages.value.length - 1])
+  const hasError = computed(() => error.value !== null)
+  const allMessages = computed(() => {
+    const msgs = [...completedMessages.value]
+    if (streamingMessage.value) msgs.push(streamingMessage.value)
+    return msgs
+  })
+
   function addMessage(msg: Message) {
-    messages.value = [...messages.value, msg]
+    completedMessages.value = [...completedMessages.value, msg]
   }
 
   function setStreaming(msg: Message | null) {
@@ -35,7 +55,7 @@ export const useChatStore = defineStore('chat', () => {
 
   function completeStreaming() {
     if (streamingMessage.value) {
-      messages.value = [...messages.value, { ...streamingMessage.value, status: 'complete' }]
+      completedMessages.value = [...completedMessages.value, { ...streamingMessage.value, status: 'complete' }]
       streamingMessage.value = null
     }
     isGenerating.value = false
@@ -43,12 +63,59 @@ export const useChatStore = defineStore('chat', () => {
 
   function setGenerating(v: boolean) { isGenerating.value = v }
   function setContextTokens(t: number) { contextTokens.value = t }
-  function clearMessages() { messages.value = []; streamingMessage.value = null }
+  function clearMessages() { completedMessages.value = []; streamingMessage.value = null }
+
+  function replaceMessages(msgs: Message[]) { completedMessages.value = msgs }
+
+  function appendThinkingDelta(delta: string) {
+    if (streamingMessage.value) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const current = (streamingMessage.value as any).thinkingContent ?? ''
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const updated = { ...streamingMessage.value } as any
+      updated.thinkingContent = current + delta
+      streamingMessage.value = updated
+    }
+  }
+
+  function addStreamingToolCall(tc: ToolCall) {
+    if (streamingMessage.value) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const calls = [...((streamingMessage.value as any).toolCalls ?? []), tc]
+      streamingMessage.value = { ...streamingMessage.value, toolCalls: calls }
+    }
+  }
+
+  function updateStreamingToolCall(id: string, output: string) {
+    if (streamingMessage.value) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const calls = ((streamingMessage.value as any).toolCalls ?? []).map(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (tc: any) => tc.id === id ? { ...tc, output, status: 'completed' as const } : tc
+      )
+      streamingMessage.value = { ...streamingMessage.value, toolCalls: calls }
+    }
+  }
+
+  function addPendingApproval(pending: PendingApproval) { pendingApprovals.value = [...pendingApprovals.value, pending] }
+  function removePendingApproval(toolCallId: string) { pendingApprovals.value = pendingApprovals.value.filter(p => p.toolCallId !== toolCallId) }
+  function startLoading() { isLoading.value = true }
+  function stopLoading() { isLoading.value = false }
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- placeholder for future implementation
+  function updateUsage(_usage: { inputTokens: number; outputTokens: number; totalTokens: number }) { /* update relevant refs */ }
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- placeholder for future implementation
+  function updateContextInfo(_usagePercent: number, _inputTokens: number, _contextLimit: number) { /* update context refs */ }
+  function setError(err: string | null) { error.value = err }
 
   return {
-    messages, streamingMessage, isGenerating,
+    completedMessages, streamingMessage, isGenerating,
     contextTokens, contextLimit, contextUsagePercent,
+    pendingApprovals, isLoading, error,
+    messageCount, lastMessage, hasError, allMessages,
     addMessage, setStreaming, appendToStreaming,
     completeStreaming, setGenerating, setContextTokens, clearMessages,
+    replaceMessages, appendThinkingDelta, addStreamingToolCall,
+    updateStreamingToolCall, addPendingApproval, removePendingApproval,
+    startLoading, stopLoading, updateUsage, updateContextInfo, setError,
   }
 })

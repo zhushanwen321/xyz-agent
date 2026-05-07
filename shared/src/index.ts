@@ -12,3 +12,6 @@ export type {
 export type {
   ProviderStatus, ProviderInfo, ModelInfo,
 } from './provider'
+export type {
+  AppErrorCode, AppError,
+} from './errors'

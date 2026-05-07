@@ -9,11 +9,13 @@
       </main>
     </div>
     <AppStatusbar />
+    <Toaster position="top-right" :theme="settingsStore.theme" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { onMounted, onUnmounted } from 'vue'
+import { Toaster } from 'vue-sonner'
 import { listen } from '@tauri-apps/api/event'
 import { useSettingsStore } from './stores/settings'
 import { useConnection } from './composables/useConnection'

@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed } from 'vue'
 import type { SessionSummary } from '@xyz-agent/shared'
 import { useI18n } from 'vue-i18n'
+import { Dropdown } from '../../design-system'
 
 const props = defineProps<{
   session: SessionSummary
@@ -16,8 +17,8 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 
-const contextMenuVisible = ref(false)
-const contextMenuPos = ref({ x: 0, y: 0 })
+const dropdownOpen = ref(false)
+const dropdownPos = ref({ x: 0, y: 0 })
 
 const statusColor = computed(() =>
   props.session.status === 'active' ? 'var(--color-success)' : 'var(--color-border)'
@@ -35,36 +36,26 @@ const relativeTime = computed(() => {
   return t('sidebar.daysAgo', { n: days })
 })
 
+const menuItems = computed(() => [
+  { label: t('common.rename'), value: 'rename' },
+  { label: t('common.delete'), value: 'delete' },
+])
+
 function onContextMenu(e: MouseEvent) {
   e.preventDefault()
-  contextMenuPos.value = { x: e.clientX, y: e.clientY }
-  contextMenuVisible.value = true
+  dropdownPos.value = { x: e.clientX, y: e.clientY }
+  dropdownOpen.value = true
 }
 
-function closeMenu() {
-  contextMenuVisible.value = false
+function handleMenuSelect(action: string) {
+  dropdownOpen.value = false
+  if (action === 'rename') emit('rename', props.session.id)
+  if (action === 'delete') emit('delete', props.session.id)
 }
 
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Enter') emit('click')
 }
-
-function handleRename() {
-  closeMenu()
-  emit('rename', props.session.id)
-}
-
-function handleDelete() {
-  closeMenu()
-  emit('delete', props.session.id)
-}
-
-function onDocClick() {
-  if (contextMenuVisible.value) closeMenu()
-}
-
-onMounted(() => document.addEventListener('click', onDocClick))
-onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
 
 const MS_PER_SECOND = 1000
 const SECONDS_PER_MINUTE = 60
@@ -88,21 +79,13 @@ const HOURS_PER_DAY = 24
     </div>
   </div>
 
-  <Teleport to="body">
-    <div
-      v-if="contextMenuVisible"
-      class="context-menu"
-      :style="{ left: contextMenuPos.x + 'px', top: contextMenuPos.y + 'px' }"
-      @click.stop
-    >
-      <button class="context-menu-item" @click="handleRename">
-        {{ t('common.rename') }}
-      </button>
-      <button class="context-menu-item danger" @click="handleDelete">
-        {{ t('common.delete') }}
-      </button>
-    </div>
-  </Teleport>
+  <Dropdown
+    :open="dropdownOpen"
+    :position="dropdownPos"
+    :items="menuItems"
+    @update:open="dropdownOpen = $event"
+    @select="handleMenuSelect"
+  />
 </template>
 
 <style scoped>
@@ -128,23 +111,4 @@ const HOURS_PER_DAY = 24
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .session-time { font-size: 11px; color: var(--color-text-muted); }
-</style>
-
-<style>
-.context-menu {
-  position: fixed; z-index: 9999;
-  min-width: 140px; padding: 4px 0;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-}
-.context-menu-item {
-  display: block; width: 100%; padding: 7px 14px;
-  font-size: 13px; text-align: left;
-  background: none; border: none; cursor: pointer;
-  color: var(--color-text-primary);
-}
-.context-menu-item:hover { background: var(--color-accent-light); }
-.context-menu-item.danger { color: var(--color-danger); }
 </style>

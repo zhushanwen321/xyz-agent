@@ -3,14 +3,14 @@
     <!-- Message area: scrollable -->
     <div class="chat-messages">
       <!-- Empty state -->
-      <div v-if="chatStore.messages.length === 0 && !chatStore.streamingMessage" class="chat-empty">
+      <div v-if="chatStore.completedMessages.length === 0 && !chatStore.streamingMessage" class="chat-empty">
         <h2 class="chat-empty__title">{{ t('chat.emptyTitle') }}</h2>
         <p class="chat-empty__subtitle">{{ t('chat.emptySubtitle') }}</p>
       </div>
 
       <template v-else>
         <!-- Zone 1: Completed messages (static) -->
-        <MessageList :messages="chatStore.messages" />
+        <MessageList :messages="chatStore.completedMessages" />
 
         <!-- Zone 2: Streaming message (reactive) -->
         <div v-if="chatStore.streamingMessage" class="chat-streaming">

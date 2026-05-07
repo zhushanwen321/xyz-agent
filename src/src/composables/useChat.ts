@@ -142,5 +142,5 @@ export function useChat() {
     }
   })
 
-  return { sendMessage, abort, messages: store.messages }
+  return { sendMessage, abort, messages: store.completedMessages }
 }

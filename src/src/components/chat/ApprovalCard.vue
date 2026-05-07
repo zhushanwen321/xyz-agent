@@ -6,15 +6,16 @@
     </div>
     <pre class="approval-input">{{ formattedInput }}</pre>
     <div class="approval-actions">
-      <button class="approval-btn approval-btn--always" @click="$emit('alwaysAllow', pending.toolName)">Always Allow</button>
-      <button class="approval-btn approval-btn--deny" @click="$emit('deny', pending.toolCallId)">Deny</button>
-      <button class="approval-btn approval-btn--approve" @click="$emit('approve', pending.toolCallId)">Approve</button>
+      <button class="approval-btn approval-btn--always" @click="handleAlwaysAllow">Always Allow</button>
+      <button class="approval-btn approval-btn--deny" @click="handleDeny">Deny</button>
+      <button class="approval-btn approval-btn--approve" @click="handleApprove">Approve</button>
+      <span class="approval-countdown">⏱ {{ remainingSeconds }}s</span>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, onUnmounted } from 'vue'
 
 export interface PendingToolCall {
   toolCallId: string
@@ -25,13 +26,50 @@ export interface PendingToolCall {
 
 const props = defineProps<{ pending: PendingToolCall }>()
 
-defineEmits<{
+const emit = defineEmits<{
   approve: [toolCallId: string]
-  deny: [toolCallId: string]
+  deny: [toolCallId: string, reason?: string]
   alwaysAllow: [toolName: string]
 }>()
 
+const APPROVAL_TIMEOUT_SECONDS = 60
 const FORMAT_INDENT = 2
+const remainingSeconds = ref(APPROVAL_TIMEOUT_SECONDS)
+let timerId: ReturnType<typeof setInterval> | null = null
+
+function cleanup() {
+  if (timerId !== null) {
+    clearInterval(timerId)
+    timerId = null
+  }
+}
+
+function handleApprove() {
+  cleanup()
+  emit('approve', props.pending.toolCallId)
+}
+
+function handleDeny() {
+  cleanup()
+  emit('deny', props.pending.toolCallId)
+}
+
+function handleAlwaysAllow() {
+  cleanup()
+  emit('alwaysAllow', props.pending.toolName)
+}
+
+onUnmounted(() => cleanup())
+
+const TIMER_INTERVAL_MS = 1000
+
+timerId = setInterval(() => {
+  remainingSeconds.value--
+  if (remainingSeconds.value <= 0) {
+    cleanup()
+    emit('deny', props.pending.toolCallId, 'timeout')
+  }
+}, TIMER_INTERVAL_MS)
 
 const formattedInput = computed(() => {
   try {
@@ -149,6 +187,16 @@ const formattedInput = computed(() => {
 .approval-btn--deny:hover {
   border-color: var(--color-danger);
   color: var(--color-danger);
+}
+
+/* Countdown */
+.approval-countdown {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  line-height: 28px;
 }
 
 /* Approve: filled accent */

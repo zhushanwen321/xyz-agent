@@ -18,15 +18,29 @@ interface DropdownItem {
 interface Props {
   items: DropdownItem[]
   trigger?: 'click' | 'hover'
+  /** Controlled open state. When provided, the dropdown won't open on trigger click. */
+  open?: boolean
+  /** Position to render the dropdown at (for context-menu usage). */
+  position?: { x: number; y: number }
 }
 
-withDefaults(defineProps<Props>(), {
+const props = withDefaults(defineProps<Props>(), {
   trigger: 'click',
+  open: undefined,
+  position: undefined,
 })
 
 const emit = defineEmits<{
   select: [value: string]
+  'update:open': [value: boolean]
 }>()
+
+const controlled = computed(() => props.open !== undefined)
+const menuStyle = computed(() =>
+  props.position
+    ? { position: 'fixed' as const, left: `${props.position.x}px`, top: `${props.position.y}px` }
+    : undefined,
+)
 
 const contentClasses = computed(() =>
   cn(
@@ -47,20 +61,26 @@ const itemClasses = computed(() =>
 </script>
 
 <template>
-  <DropdownMenuRoot>
-    <DropdownMenuTrigger as-child>
+  <DropdownMenuRoot
+    :open="controlled ? open : undefined"
+    @update:open="controlled ? emit('update:open', $event) : undefined"
+  >
+    <DropdownMenuTrigger v-if="!controlled" as-child>
       <slot />
     </DropdownMenuTrigger>
 
     <DropdownMenuPortal>
       <DropdownMenuContent
         :class="contentClasses"
-        :side-offset="4"
-        align="start"
-        :style="{
-          background: 'var(--color-surface)',
-          border: '1px solid var(--color-border)',
-        }"
+        :side-offset="controlled ? 0 : 4"
+        :align="controlled ? 'start' : 'start'"
+        :style="[
+          {
+            background: 'var(--color-surface)',
+            border: '1px solid var(--color-border)',
+          },
+          menuStyle,
+        ]"
         role="menu"
       >
         <DropdownMenuItem

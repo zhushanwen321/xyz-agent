@@ -78,6 +78,7 @@ const itemClasses = computed(() =>
         :side-offset="4"
         class="z-50 overflow-hidden rounded-md shadow-md"
         :style="{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }"
+        role="listbox"
       >
         <SelectViewport class="p-1">
           <SelectItem
@@ -86,6 +87,8 @@ const itemClasses = computed(() =>
             :value="option.value"
             :class="itemClasses"
             style="color: var(--color-text-primary)"
+            role="option"
+            :aria-selected="modelValue === option.value"
           >
             <SelectItemIndicator class="absolute left-2 inline-flex items-center">
               ✓

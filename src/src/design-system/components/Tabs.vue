@@ -64,6 +64,9 @@ const contentClasses = computed(() =>
           color: 'var(--color-text-muted)',
         }"
         role="tab"
+        :id="`tab-${item.value}`"
+        :aria-selected="activeKey === item.value"
+        :aria-controls="`panel-${item.value}`"
         :data-state="activeKey === item.value ? 'active' : 'inactive'"
       >
         {{ item.label }}
@@ -76,6 +79,8 @@ const contentClasses = computed(() =>
       :value="item.value"
       :class="contentClasses"
       role="tabpanel"
+      :id="`panel-${item.value}`"
+      :aria-labelledby="`tab-${item.value}`"
     >
       <slot :name="item.value" />
     </TabsContent>

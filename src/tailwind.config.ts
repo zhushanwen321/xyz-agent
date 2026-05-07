@@ -2,6 +2,7 @@ import type { Config } from 'tailwindcss'
 
 export default {
   content: ['./src/**/*.{vue,ts,tsx}'],
+  darkMode: 'class',
   theme: {
     extend: {
       colors: {
@@ -15,6 +16,24 @@ export default {
         success: 'var(--color-success)',
         warning: 'var(--color-warning)',
         danger: 'var(--color-danger)',
+        // shadcn-vue / Radix Vue standard aliases
+        primary: {
+          DEFAULT: 'var(--color-accent)',
+          foreground: 'var(--color-primary-foreground)',
+        },
+        destructive: {
+          DEFAULT: 'var(--color-danger)',
+          foreground: 'var(--color-destructive-foreground)',
+        },
+        muted: {
+          DEFAULT: 'var(--color-muted)',
+          foreground: 'var(--color-muted-foreground)',
+        },
+        background: 'var(--color-bg-base)',
+        foreground: 'var(--color-text-primary)',
+        ring: 'var(--color-accent)',
+        input: 'var(--color-border)',
+        // Note: 'border' is already defined above, but Tailwind needs it as a color too
       },
       fontFamily: {
         display: ['Tiempos Headline', 'Newsreader', 'Georgia', 'serif'],

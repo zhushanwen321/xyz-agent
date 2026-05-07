@@ -41,6 +41,7 @@ const thumbClasses = computed(() =>
     :disabled="disabled"
     :class="rootClasses"
     :aria-checked="checked"
+    role="switch"
     @update:checked="emit('update:checked', $event)"
   >
     <SwitchThumb
