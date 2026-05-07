@@ -18,9 +18,10 @@ const emit = defineEmits<{
 const { t } = useI18n()
 
 const sorted = computed(() => {
-  const order: Record<string, number> = { connected: 0, error: 1, not_configured: 2 }
+  const STATUS_ORDER: Record<string, number> = { connected: 0, error: 1, not_configured: 2 }
+  const UNKNOWN_STATUS_ORDER = STATUS_ORDER.not_configured + 1
   return [...props.providers].sort(
-    (a, b) => (order[a.status] ?? 3) - (order[b.status] ?? 3),
+    (a, b) => (STATUS_ORDER[a.status] ?? UNKNOWN_STATUS_ORDER) - (STATUS_ORDER[b.status] ?? UNKNOWN_STATUS_ORDER),
   )
 })
 

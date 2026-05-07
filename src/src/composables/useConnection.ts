@@ -36,7 +36,7 @@ export function useConnection() {
     if (initialised) return
     initialised = true
 
-    let port = DEFAULT_PORT
+    const port = DEFAULT_PORT
 
     try {
       const unlisten = await listen<number>('sidecar-port', (event) => {
@@ -54,8 +54,10 @@ export function useConnection() {
       // started listening.  We optimistically connect with the default;
       // if the sidecar is still starting, ws-client's reconnect loop will
       // eventually succeed.
+    // eslint-disable-next-line taste/no-silent-catch -- expected outside Tauri runtime, fallback to default port
     } catch {
       // Not running inside Tauri (e.g. `vite dev` in browser)
+      console.warn('[useConnection] Tauri event listener unavailable, using default port')
     }
 
     connect(`ws://localhost:${port}`)

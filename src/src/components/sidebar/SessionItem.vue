@@ -25,13 +25,13 @@ const statusColor = computed(() =>
 
 const relativeTime = computed(() => {
   const diff = Date.now() - props.session.lastActiveAt
-  const seconds = Math.floor(diff / 1000)
-  if (seconds < 60) return t('sidebar.justNow')
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return t('sidebar.minutesAgo', { n: minutes })
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return t('sidebar.hoursAgo', { n: hours })
-  const days = Math.floor(hours / 24)
+  const seconds = Math.floor(diff / MS_PER_SECOND)
+  if (seconds < SECONDS_PER_MINUTE) return t('sidebar.justNow')
+  const minutes = Math.floor(seconds / SECONDS_PER_MINUTE)
+  if (minutes < MINUTES_PER_HOUR) return t('sidebar.minutesAgo', { n: minutes })
+  const hours = Math.floor(minutes / MINUTES_PER_HOUR)
+  if (hours < HOURS_PER_DAY) return t('sidebar.hoursAgo', { n: hours })
+  const days = Math.floor(hours / HOURS_PER_DAY)
   return t('sidebar.daysAgo', { n: days })
 })
 
@@ -59,12 +59,17 @@ function handleDelete() {
   emit('delete', props.session.id)
 }
 
-function onDocClick(_e: MouseEvent) {
+function onDocClick() {
   if (contextMenuVisible.value) closeMenu()
 }
 
 onMounted(() => document.addEventListener('click', onDocClick))
 onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
+
+const MS_PER_SECOND = 1000
+const SECONDS_PER_MINUTE = 60
+const MINUTES_PER_HOUR = 60
+const HOURS_PER_DAY = 24
 </script>
 
 <template>

@@ -39,13 +39,15 @@ const isError = computed(() => props.toolCall.status === 'error')
 const statusClass = computed(() => isRunning.value ? 'running' : isError.value ? 'error' : 'done')
 const statusLabel = computed(() => isRunning.value ? 'running...' : isError.value ? 'failed' : 'done')
 
+const PATH_HINT_MAX = 50
+
 const filePathHint = computed(() => {
   const input = props.toolCall.input
   if (!input) return ''
   try {
     const obj = typeof input === 'string' ? JSON.parse(input) : input
     return String((obj as Record<string, unknown>).path ?? (obj as Record<string, unknown>).file_path ?? (obj as Record<string, unknown>).command ?? '')
-  } catch { return String(input).slice(0, 50) }
+  } catch { return String(input).slice(0, PATH_HINT_MAX) }
 })
 
 function truncate(str: string, max: number): string {

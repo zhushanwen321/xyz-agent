@@ -4,6 +4,10 @@ import type { ClientMessage, ServerMessage, ModelInfo } from '@xyz-agent/shared'
 import { SessionPool } from './session-pool.js'
 import * as providerStore from './provider-store.js'
 
+const HTTP_OK = 200
+const HTTP_NOT_FOUND = 404
+const MAX_WS_CLOSE_CODE = 4000
+
 const WS_OPEN = WebSocket.OPEN
 
 /**
@@ -20,10 +24,10 @@ export class SidecarServer {
   constructor(private port: number) {
     this.httpServer = createServer((req, res) => {
       if (req.url === '/health') {
-        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.writeHead(HTTP_OK, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ status: 'ok', uptime: process.uptime() }))
       } else {
-        res.writeHead(404)
+        res.writeHead(HTTP_NOT_FOUND)
         res.end()
       }
     })
@@ -45,7 +49,7 @@ export class SidecarServer {
 
   private handleConnection(ws: WsType): void {
     if (this.client) {
-      ws.close(4000, 'Only one client allowed')
+      ws.close(MAX_WS_CLOSE_CODE, 'Only one client allowed')
       return
     }
 

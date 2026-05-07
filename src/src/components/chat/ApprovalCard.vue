@@ -31,9 +31,11 @@ defineEmits<{
   alwaysAllow: [toolName: string]
 }>()
 
+const FORMAT_INDENT = 2
+
 const formattedInput = computed(() => {
   try {
-    return JSON.stringify(props.pending.input, null, 2)
+    return JSON.stringify(props.pending.input, null, FORMAT_INDENT)
   } catch {
     return String(props.pending.input)
   }

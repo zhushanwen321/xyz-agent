@@ -10,6 +10,9 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null
 let messageQueue: ClientMessage[] = []
 let reconnectAttempts = 0
+const RECONNECT_BASE_DELAY_MS = 1000
+const RECONNECT_BACKOFF_EXPONENT = 2
+const HEARTBEAT_INTERVAL_MS = 30000
 const MAX_RECONNECT_DELAY = 30000
 
 export function connect(url: string): void {
@@ -33,6 +36,7 @@ export function connect(url: string): void {
     try {
       const msg: ServerMessage = JSON.parse(event.data)
       emit(msg.type, msg)
+    // eslint-disable-next-line taste/no-silent-catch -- parse failure on non-JSON message, skip
     } catch (e) {
       console.error('[ws] parse error:', e)
     }
@@ -50,7 +54,7 @@ export function connect(url: string): void {
 }
 
 function scheduleReconnect(url: string): void {
-  const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), MAX_RECONNECT_DELAY)
+  const delay = Math.min(RECONNECT_BASE_DELAY_MS * Math.pow(RECONNECT_BACKOFF_EXPONENT, reconnectAttempts), MAX_RECONNECT_DELAY)
   reconnectAttempts++
   state.value = 'reconnecting'
   reconnectTimer = setTimeout(() => connect(url), delay)
@@ -61,7 +65,7 @@ function startHeartbeat(): void {
     if (ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'ping', payload: {} }))
     }
-  }, 30000)
+  }, HEARTBEAT_INTERVAL_MS)
 }
 
 function stopHeartbeat(): void {

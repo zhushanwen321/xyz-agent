@@ -53,8 +53,9 @@ onMounted(async () => {
           break
       }
     })
+    // eslint-disable-next-line taste/no-silent-catch -- expected in browser dev mode, no Tauri runtime
   } catch {
-    // Not running in Tauri
+    console.warn('[App] Non-Tauri environment, shortcuts unavailable')
   }
 })
 

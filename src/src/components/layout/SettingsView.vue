@@ -76,12 +76,14 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 
+const DEBOUNCE_MS = 500
+
 onMounted(() => {
   loading.value = true
   loadProviders()
   loadModels()
   // Brief loading state — real loading would be driven by WS response
-  setTimeout(() => { loading.value = false }, 500)
+  setTimeout(() => { loading.value = false }, DEBOUNCE_MS)
   document.addEventListener('keydown', onKeydown)
 })
 

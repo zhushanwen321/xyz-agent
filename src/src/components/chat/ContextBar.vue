@@ -13,13 +13,17 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
+const BAR_FULL = 100
+const THRESHOLD_HIGH = 85
+const THRESHOLD_MEDIUM = 60
+
 const props = defineProps<{ percentage: number }>()
 
-const clamped = computed(() => Math.min(100, Math.max(0, Math.round(props.percentage))))
+const clamped = computed(() => Math.min(BAR_FULL, Math.max(0, Math.round(props.percentage))))
 
 const barColor = computed(() => {
-  if (clamped.value > 85) return 'var(--color-danger)'
-  if (clamped.value >= 60) return 'var(--color-warning)'
+  if (clamped.value > THRESHOLD_HIGH) return 'var(--color-danger)'
+  if (clamped.value >= THRESHOLD_MEDIUM) return 'var(--color-warning)'
   return 'var(--color-success)'
 })
 </script>

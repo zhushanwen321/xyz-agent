@@ -128,11 +128,13 @@ function onInput() {
   nextTick(resizeTextarea)
 }
 
+const MAX_HEIGHT = 140
+
 function resizeTextarea() {
   const el = textareaRef.value
   if (!el) return
   el.style.height = 'auto'
-  el.style.height = Math.min(el.scrollHeight, 140) + 'px'
+  el.style.height = Math.min(el.scrollHeight, MAX_HEIGHT) + 'px'
 }
 
 // Reset height when text is cleared

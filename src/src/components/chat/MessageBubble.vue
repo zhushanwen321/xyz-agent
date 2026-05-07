@@ -18,6 +18,7 @@
     />
 
     <!-- Markdown content -->
+    <!-- eslint-disable-next-line vue/no-v-html -->
     <div v-if="message.content" class="msg__body" v-html="renderedContent"></div>
   </div>
 </template>

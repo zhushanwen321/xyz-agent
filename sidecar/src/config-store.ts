@@ -21,11 +21,13 @@ export interface AppConfig {
   providers: Record<string, ProviderConfig>
 }
 
+const DEFAULT_TEMPERATURE = 0.7
+
 const DEFAULTS: Readonly<AppConfig> = {
   defaults: {
     model: 'anthropic/claude-sonnet',
     thinkingMode: 'high',
-    temperature: 0.7,
+    temperature: DEFAULT_TEMPERATURE,
   },
   providers: {},
 }
@@ -42,14 +44,18 @@ export function loadConfig(): AppConfig {
     }
   } catch (e) {
     console.error('[config] load error:', e)
+    return { defaults: { ...DEFAULTS.defaults }, providers: { ...DEFAULTS.providers } }
   }
-  return { defaults: { ...DEFAULTS.defaults }, providers: {} }
+  return { defaults: { ...DEFAULTS.defaults }, providers: { ...DEFAULTS.providers } }
 }
+
+const JSON_INDENT = 2
 
 export function saveConfig(config: AppConfig): void {
   try {
     if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true })
-    writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2))
+    writeFileSync(CONFIG_PATH, JSON.stringify(config, null, JSON_INDENT))
+  // eslint-disable-next-line taste/no-silent-catch -- save failure is best-effort, config persists on next successful save
   } catch (e) {
     console.error('[config] save error:', e)
   }

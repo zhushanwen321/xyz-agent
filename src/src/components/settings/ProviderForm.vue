@@ -26,6 +26,8 @@ const providerName = ref(props.provider?.name ?? '')
 const apiKey = ref('')
 const baseUrl = ref(props.provider?.baseUrl ?? '')
 
+const DEFAULT_TEMPERATURE = 0.7
+
 const modelOptions = computed(() => {
   const base = [{ label: t('settings.noDefaultModel'), value: '' }]
   const opts = props.models.map(m => ({ label: m.name, value: m.id }))
@@ -41,7 +43,7 @@ const thinkingOptions = computed(() => [
 
 const defaultModel = ref('')
 const thinkingMode = ref('none')
-const temperature = ref(0.7)
+const temperature = ref(DEFAULT_TEMPERATURE)
 
 const canSave = computed(() => {
   if (props.isEdit) return true // editing existing, apiKey change optional

@@ -8,7 +8,6 @@ import type {
 } from '@xyz-agent/shared'
 import { ProcessManager } from './process-manager.js'
 import { EventAdapter } from './event-adapter.js'
-import { RpcClient } from './rpc-client.js'
 import { getDefaultModel } from './config-store.js'
 
 interface ManagedSession {

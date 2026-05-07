@@ -1,6 +1,7 @@
 import { SidecarServer } from './server.js'
 
 function parseArgs(): { port: number } {
+  // eslint-disable-next-line no-magic-numbers -- argv[0] is node, argv[1] is script
   const args = process.argv.slice(2)
   let port = 3210
   for (let i = 0; i < args.length; i++) {
@@ -23,6 +24,7 @@ async function main(): Promise<void> {
     console.log(`\n[sidecar] received ${signal}, shutting down...`)
     try {
       await server.stop()
+    // eslint-disable-next-line taste/no-silent-catch -- shutdown: best-effort stop, process exits regardless
     } catch (e) {
       console.error('[sidecar] error during shutdown:', e)
     }

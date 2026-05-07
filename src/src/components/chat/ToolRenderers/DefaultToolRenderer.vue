@@ -9,9 +9,10 @@
 
 <script setup lang="ts">
 import type { ToolCall } from '@xyz-agent/shared'
+const FORMAT_INDENT = 2
 defineProps<{ toolCall: ToolCall }>()
 function formatInput(tc: ToolCall): string {
-  try { return JSON.stringify(typeof tc.input === 'string' ? JSON.parse(tc.input) : tc.input, null, 2) }
+  try { return JSON.stringify(typeof tc.input === 'string' ? JSON.parse(tc.input) : tc.input, null, FORMAT_INDENT) }
   catch { return String(tc.input) }
 }
 </script>

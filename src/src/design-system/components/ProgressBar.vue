@@ -20,7 +20,10 @@ const variantColorMap: Record<ProgressVariant, string> = {
   danger: 'var(--color-danger)',
 }
 
-const clampedValue = computed(() => Math.min(100, Math.max(0, props.value)))
+const PERCENT_MAX = 100
+const PERCENT_MIN = 0
+
+const clampedValue = computed(() => Math.min(PERCENT_MAX, Math.max(PERCENT_MIN, props.value)))
 
 const trackClasses = computed(() =>
   cn(

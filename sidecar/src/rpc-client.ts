@@ -76,6 +76,7 @@ export class RpcClient {
       try {
         const msg: PiMessage = JSON.parse(line)
         this.handleMessage(msg)
+      // eslint-disable-next-line taste/no-silent-catch -- malformed line from pi process, skip and continue
       } catch (e) {
         console.error('[rpc] stdout parse error:', line, e)
       }

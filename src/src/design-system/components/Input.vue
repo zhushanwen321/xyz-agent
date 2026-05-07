@@ -26,6 +26,7 @@ const emit = defineEmits<{
   'update:modelValue': [value: string]
 }>()
 
+// eslint-disable-next-line no-magic-numbers -- random ID generation: radix 36, slice positions
 const inputId = computed(() => props.id ?? `input-${Math.random().toString(36).slice(2, 9)}`)
 
 const inputClasses = computed(() =>

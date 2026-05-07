@@ -2,15 +2,18 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Message } from '@xyz-agent/shared'
 
+const DEFAULT_CONTEXT_TOKEN_LIMIT = 100000
+const PERCENT_MULTIPLIER = 100
+
 export const useChatStore = defineStore('chat', () => {
   const messages = ref<Message[]>([])
   const streamingMessage = ref<Message | null>(null)
   const isGenerating = ref(false)
   const contextTokens = ref(0)
-  const contextLimit = ref(100000)
+  const contextLimit = ref(DEFAULT_CONTEXT_TOKEN_LIMIT)
 
   const contextUsagePercent = computed(() =>
-    contextLimit.value > 0 ? Math.round((contextTokens.value / contextLimit.value) * 100) : 0
+    contextLimit.value > 0 ? Math.round((contextTokens.value / contextLimit.value) * PERCENT_MULTIPLIER) : 0
   )
 
   function addMessage(msg: Message) {

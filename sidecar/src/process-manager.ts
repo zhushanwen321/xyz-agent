@@ -1,5 +1,4 @@
 import { RpcClient, type RpcClientOptions } from './rpc-client.js'
-import { buildProviderEnv } from './config-store.js'
 
 interface ManagedProcess {
   client: RpcClient
@@ -57,7 +56,7 @@ export class ProcessManager {
    */
   async destroyAll(): Promise<void> {
     const ids = Array.from(this.processes.keys())
-    await Promise.all(ids.map(id => this.destroySession(id)))
+    await Promise.allSettled(ids.map(id => this.destroySession(id)))
   }
 
   /**
