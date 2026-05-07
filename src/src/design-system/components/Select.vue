@@ -69,7 +69,7 @@ const itemClasses = computed(() =>
       :aria-label="placeholder"
     >
       <SelectValue :placeholder="placeholder" />
-      <span class="ml-2 text-xs" style="color: var(--color-text-muted)">▾</span>
+      <svg class="ml-2" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--color-text-muted)"><path d="M4 6l4 4 4-4"/></svg>
     </SelectTrigger>
 
     <SelectPortal>
@@ -91,7 +91,7 @@ const itemClasses = computed(() =>
             :aria-selected="modelValue === option.value"
           >
             <SelectItemIndicator class="absolute left-2 inline-flex items-center">
-              ✓
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.5 3.5 6.5-7"/></svg>
             </SelectItemIndicator>
             <SelectItemText>{{ option.label }}</SelectItemText>
           </SelectItem>

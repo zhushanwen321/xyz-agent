@@ -46,9 +46,9 @@ export default {
         sm: '4px',
       },
       spacing: {
-        sidebar: '260px',
-        header: '48px',
-        statusbar: '32px',
+        sidebar: '180px',
+        header: '40px',
+        statusbar: '28px',
       },
     },
   },

@@ -5,7 +5,6 @@
       <AppSidebar v-if="!settingsStore.focusMode" @create="createSession" />
       <main class="main-area">
         <ChatView v-if="settingsStore.currentView === 'chat'" />
-        <SettingsView v-else-if="settingsStore.currentView === 'settings'" />
       </main>
     </div>
     <AppStatusbar />
@@ -23,7 +22,6 @@ import AppHeader from './components/layout/AppHeader.vue'
 import AppStatusbar from './components/layout/AppStatusbar.vue'
 import AppSidebar from './components/layout/AppSidebar.vue'
 import ChatView from './components/chat/ChatView.vue'
-import SettingsView from './components/layout/SettingsView.vue'
 
 const { init: initConnection, teardown: teardownConnection } = useConnection()
 
@@ -49,9 +47,13 @@ onMounted(async () => {
           settingsStore.toggleFocus()
           break
         case 'settings':
-          settingsStore.setView(
-            settingsStore.currentView === 'settings' ? 'chat' : 'settings'
-          )
+          // Open settings in a new window instead of inline
+          import('@tauri-apps/api/core').then(({ invoke }) => {
+            invoke('open_settings_window')
+          }).catch(() => {
+            // Fallback: switch view inline if not in Tauri
+            settingsStore.setView(settingsStore.currentView === 'settings' ? 'chat' : 'settings')
+          })
           break
       }
     })

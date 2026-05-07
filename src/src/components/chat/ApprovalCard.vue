@@ -9,7 +9,7 @@
       <button class="approval-btn approval-btn--always" @click="handleAlwaysAllow">Always Allow</button>
       <button class="approval-btn approval-btn--deny" @click="handleDeny">Deny</button>
       <button class="approval-btn approval-btn--approve" @click="handleApprove">Approve</button>
-      <span class="approval-countdown">⏱ {{ remainingSeconds }}s</span>
+      <span class="approval-countdown">{{ remainingSeconds }}s</span>
     </div>
   </div>
 </template>

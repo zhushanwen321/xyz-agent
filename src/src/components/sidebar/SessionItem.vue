@@ -91,13 +91,13 @@ const HOURS_PER_DAY = 24
 <style scoped>
 .session-item {
   display: flex; align-items: center; gap: 8px;
-  padding: 8px 14px; cursor: pointer;
+  padding: 5px 7px; cursor: pointer;
   border-left: 3px solid transparent;
   transition: background 0.15s;
 }
 .session-item:hover { background: var(--color-accent-light); }
 .session-item.active {
-  background: var(--color-accent-light);
+  background: var(--color-bg-inset);
   border-left-color: var(--color-accent);
 }
 .session-item:focus-visible {

@@ -18,7 +18,7 @@
         @click="emit('cancel')"
         :title="t('chat.stop')"
       >
-        <span class="chat-input__btn-icon">■</span>
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><rect x="2" y="2" width="12" height="12" rx="2"/></svg>
       </button>
       <button
         v-else
@@ -27,11 +27,11 @@
         @click="handleSend"
         :title="t('chat.send')"
       >
-        <span class="chat-input__btn-icon">↑</span>
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V3M4 7l4-4 4 4"/></svg>
       </button>
     </div>
     <div class="chat-input__toolbar">
-      <button class="chat-input__tool-btn" :title="'Upload file'">📎</button>
+      <button class="chat-input__tool-btn" :title="'Upload file'"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12L11.5 6.5a2 2 0 0 0-2.83-2.83L3.17 9.17a3 3 0 0 0 4.24 4.24L13 7.83"/></svg></button>
       <div class="chat-input__spacer"></div>
       <ContextBar :percentage="contextPercent" />
       <ModelPicker :current-model="currentModel" @select="(id) => emit('select-model', id)" />
@@ -143,7 +143,7 @@ watch(text, () => nextTick(resizeTextarea))
 
 <style scoped>
 .chat-input {
-  padding: 10px 20px 14px;
+  padding: 12px;
   border-top: 1px solid var(--color-border);
   background: var(--color-surface);
 }
@@ -163,10 +163,10 @@ watch(text, () => nextTick(resizeTextarea))
   padding-right: 40px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  background: var(--color-bg-base);
+  background: var(--color-bg-inset);
   color: var(--color-text-primary);
   font-family: var(--font-body);
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.5;
   resize: none;
   outline: none;

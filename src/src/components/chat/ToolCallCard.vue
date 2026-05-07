@@ -9,6 +9,8 @@
       </div>
       <div class="tool-header-right">
         <span :class="['tool-status', `tool-status--${statusClass}`]">{{ statusLabel }}</span>
+        <span v-if="statusClass === 'done'" class="tool-badge tool-badge--safe">safe</span>
+        <span v-else-if="statusClass === 'error'" class="tool-badge tool-badge--error">error</span>
         <svg class="tool-chevron" :class="{ rotated: expanded }" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
       </div>
     </button>
@@ -56,7 +58,7 @@ function truncate(str: string, max: number): string {
 </script>
 
 <style scoped>
-.tool-card { overflow: hidden; border-radius: var(--radius-md); border: 1px solid var(--color-border); border-left: 3px solid var(--color-border); background: var(--color-surface); }
+.tool-card { overflow: hidden; border-radius: var(--radius-md); border: 1px solid var(--color-border); border-left: 3px solid var(--color-border); background: color-mix(in srgb, var(--color-surface) 92%, transparent); }
 .tool-card--running { border-left-color: var(--color-warning, #f59e0b); }
 .tool-card--done { border-left-color: var(--color-success, #10b981); }
 .tool-card--error { border-left-color: var(--color-danger, #ef4444); }
@@ -68,7 +70,7 @@ function truncate(str: string, max: number): string {
 .tool-status-icon { font-size: 12px; font-family: var(--font-mono); }
 .tool-status-icon.done { color: var(--color-success, #10b981); }
 .tool-status-icon.error { color: var(--color-danger, #ef4444); }
-.tool-name { font-family: var(--font-mono); font-weight: 600; font-size: 13px; color: var(--color-text-primary); }
+.tool-name { font-family: var(--font-mono); font-weight: 600; font-size: 12px; color: var(--color-text-primary); }
 .tool-hint { font-family: var(--font-mono); font-size: 11px; color: var(--color-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tool-status { font-family: var(--font-mono); font-size: 11px; }
 .tool-status--running { color: var(--color-warning, #f59e0b); }
@@ -77,5 +79,10 @@ function truncate(str: string, max: number): string {
 .tool-chevron { color: var(--color-text-muted); transition: transform 0.2s; }
 .tool-chevron.rotated { transform: rotate(180deg); }
 .tool-body { border-top: 1px solid var(--color-border); }
+.tool-badge { font-family: var(--font-mono); font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 5px; border-radius: var(--radius-sm); }
+.tool-badge--safe { color: var(--color-success, #10b981); background: oklch(95% 0.06 145); }
+.tool-badge--error { color: var(--color-danger, #ef4444); background: oklch(95% 0.06 25); }
+[data-theme="dark"] .tool-badge--safe { background: oklch(30% 0.06 145); }
+[data-theme="dark"] .tool-badge--error { background: oklch(30% 0.06 25); }
 @keyframes spin { to { transform: rotate(360deg); } }
 </style>

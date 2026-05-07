@@ -13,7 +13,10 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(sidecar_mgr)
-        .invoke_handler(tauri::generate_handler![commands::dialog::pick_folder])
+        .invoke_handler(tauri::generate_handler![
+        commands::dialog::pick_folder,
+        commands::settings_window::open_settings_window,
+    ])
         .setup(|app| {
             shortcuts::register_shortcuts(app.handle())?;
 

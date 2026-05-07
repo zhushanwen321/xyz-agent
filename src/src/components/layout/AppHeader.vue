@@ -7,15 +7,15 @@
         :class="['view-btn', { active: !settingsStore.focusMode }]"
         @click="settingsStore.setView('chat')"
         :title="t('header.viewStandard')"
-      >☰</button>
+      ><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="2" y1="4" x2="14" y2="4"/><line x1="2" y1="8" x2="14" y2="8"/><line x1="2" y1="12" x2="14" y2="12"/></svg></button>
       <button
         :class="['view-btn', { active: settingsStore.focusMode }]"
         @click="settingsStore.toggleFocus()"
         :title="t('header.viewFocus')"
-      >◻</button>
+      ><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h3M10 3h3M13 3v3M13 10v3M10 13H13M3 13h3M3 10V13M3 3v3"/></svg></button>
       <span class="header-divider"></span>
-      <button class="header-btn" @click="settingsStore.setView('settings')" :title="t('header.settings')">⚙</button>
-      <button class="header-btn" @click="toggleTheme" :title="t('header.toggleTheme')">🌙</button>
+      <button class="header-btn" @click="openSettings" :title="t('header.settings')"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.5"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8h1.5M13 8h1.5M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1"/></svg></button>
+      <button class="header-btn" @click="toggleTheme" :title="t('header.toggleTheme')"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 1 0-11z"/><path d="M8 1.5v11" fill="currentColor"/></svg></button>
     </div>
   </header>
 </template>
@@ -29,6 +29,15 @@ function toggleTheme() {
   const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'
   document.documentElement.setAttribute('data-theme', next)
   localStorage.setItem('xyz-agent-theme', next)
+}
+
+async function openSettings() {
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    await invoke('open_settings_window')
+  } catch {
+    settingsStore.setView('settings')
+  }
 }
 </script>
 

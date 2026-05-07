@@ -232,7 +232,7 @@ function cancelRename() {
   width: 22px; height: 22px; border-radius: var(--radius-sm);
   border: 1px solid var(--color-border); background: transparent;
   cursor: pointer; display: flex; align-items: center; justify-content: center;
-  color: var(--color-text-muted); font-size: 14px;
+  color: var(--color-text-muted); font-size: 11px;
 }
 .sidebar-add:hover { background: var(--color-accent-light); color: var(--color-accent); }
 .sidebar-toggle {
