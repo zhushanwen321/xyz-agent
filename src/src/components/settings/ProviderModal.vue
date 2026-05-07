@@ -217,7 +217,7 @@ watch(() => props.visible, (v) => {
                   :key="tag"
                   :variant="tag"
                   :active="model.tags.includes(tag)"
-                  @click="toggleModelTag(model, tag)"
+                  @toggle="toggleModelTag(model, tag)"
                 >
                   {{ tag === 'power' ? '强力' : tag === 'efficient' ? '高效' : '快速' }}
                 </TagPill>

@@ -256,23 +256,24 @@ export const mockProviders: MockProvider[] = [
 export interface MockModel extends ModelInfo {
   tags: string[]
   ctx: string
+  enabled: boolean
 }
 
 export const mockModels: MockModel[] = [
   // Anthropic
-  { id: 'claude-sonnet-4', name: 'claude-sonnet-4', providerId: 'anthropic', providerName: 'Anthropic', tags: ['power', 'efficient'], ctx: '128K' },
-  { id: 'claude-haiku-4', name: 'claude-haiku-4', providerId: 'anthropic', providerName: 'Anthropic', tags: ['fast'], ctx: '128K' },
-  { id: 'claude-opus-4', name: 'claude-opus-4', providerId: 'anthropic', providerName: 'Anthropic', tags: ['power'], ctx: '200K' },
+  { id: 'claude-sonnet-4', name: 'claude-sonnet-4', providerId: 'anthropic', providerName: 'Anthropic', tags: ['power', 'efficient'], ctx: '128K', enabled: true },
+  { id: 'claude-haiku-4', name: 'claude-haiku-4', providerId: 'anthropic', providerName: 'Anthropic', tags: ['fast'], ctx: '128K', enabled: true },
+  { id: 'claude-opus-4', name: 'claude-opus-4', providerId: 'anthropic', providerName: 'Anthropic', tags: ['power'], ctx: '200K', enabled: true },
   // OpenAI
-  { id: 'gpt-4o', name: 'gpt-4o', providerId: 'openai', providerName: 'OpenAI', tags: ['power', 'efficient'], ctx: '128K' },
-  { id: 'gpt-4o-mini', name: 'gpt-4o-mini', providerId: 'openai', providerName: 'OpenAI', tags: ['fast'], ctx: '128K' },
-  { id: 'o3', name: 'o3', providerId: 'openai', providerName: 'OpenAI', tags: ['power'], ctx: '200K' },
-  { id: 'o4-mini', name: 'o4-mini', providerId: 'openai', providerName: 'OpenAI', tags: ['efficient', 'fast'], ctx: '200K' },
+  { id: 'gpt-4o', name: 'gpt-4o', providerId: 'openai', providerName: 'OpenAI', tags: ['power', 'efficient'], ctx: '128K', enabled: true },
+  { id: 'gpt-4o-mini', name: 'gpt-4o-mini', providerId: 'openai', providerName: 'OpenAI', tags: ['fast'], ctx: '128K', enabled: true },
+  { id: 'o3', name: 'o3', providerId: 'openai', providerName: 'OpenAI', tags: ['power'], ctx: '200K', enabled: true },
+  { id: 'o4-mini', name: 'o4-mini', providerId: 'openai', providerName: 'OpenAI', tags: ['efficient', 'fast'], ctx: '200K', enabled: true },
   // DeepSeek
-  { id: 'deepseek-v4', name: 'deepseek-v4', providerId: 'deepseek', providerName: 'DeepSeek', tags: ['power', 'efficient'], ctx: '128K' },
-  { id: 'deepseek-v4-flash', name: 'deepseek-v4-flash', providerId: 'deepseek', providerName: 'DeepSeek', tags: ['fast'], ctx: '128K' },
+  { id: 'deepseek-v4', name: 'deepseek-v4', providerId: 'deepseek', providerName: 'DeepSeek', tags: ['power', 'efficient'], ctx: '128K', enabled: true },
+  { id: 'deepseek-v4-flash', name: 'deepseek-v4-flash', providerId: 'deepseek', providerName: 'DeepSeek', tags: ['fast'], ctx: '128K', enabled: true },
   // Ollama
-  { id: 'qwen3-32b', name: 'qwen3:32b', providerId: 'ollama', providerName: '本地 Ollama', tags: ['efficient'], ctx: '32K' },
+  { id: 'qwen3-32b', name: 'qwen3:32b', providerId: 'ollama', providerName: '本地 Ollama', tags: ['efficient'], ctx: '32K', enabled: true },
 ]
 
 /** Map model id → MockModel for quick lookup. */

@@ -18,6 +18,7 @@ defineEmits<{
   delete: [id: string]
   test: [id: string]
   'toggle-enabled': [id: string]
+  'toggle-model': [providerId: string, modelId: string]
 }>()
 
 const statusDotClass = computed(() => {
@@ -70,6 +71,8 @@ const statusDotClass = computed(() => {
           :name="model.name"
           :ctx="model.ctx + ' ctx'"
           :tags="model.tags"
+          :enabled="model.enabled"
+          @toggle-enabled="$emit('toggle-model', provider.id, model.id)"
         />
       </div>
     </div>

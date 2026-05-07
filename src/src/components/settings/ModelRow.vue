@@ -1,19 +1,29 @@
 <script setup lang="ts">
-import { TagPill } from './shared'
+import { ToggleSwitch, TagPill } from './shared'
 
 interface Props {
   name: string
   ctx: string
   tags: string[]
+  enabled: boolean
 }
 
 defineProps<Props>()
+
+defineEmits<{
+  'toggle-enabled': []
+}>()
 
 const allTags = ['power', 'efficient', 'fast'] as const
 </script>
 
 <template>
-  <div class="model-row">
+  <div :class="['model-row', { disabled: !enabled }]">
+    <ToggleSwitch
+      :model-value="enabled"
+      @update:model-value="$emit('toggle-enabled')"
+      @click.stop
+    />
     <span class="model-row__name">{{ name }}</span>
     <span class="model-row__ctx">{{ ctx }}</span>
     <div class="tag-group">
@@ -24,7 +34,7 @@ const allTags = ['power', 'efficient', 'fast'] as const
         :active="tags.includes(tag)"
         @toggle="() => {}"
       >
-        {{ tag === 'power' ? '强力' : tag === 'efficient' ? '高效' : '快速' }}
+        {{ tag === 'power' ? '\u5f3a\u529b' : tag === 'efficient' ? '\u9ad8\u6548' : '\u5feb\u901f' }}
       </TagPill>
     </div>
   </div>
@@ -40,10 +50,8 @@ const allTags = ['power', 'efficient', 'fast'] as const
   margin-bottom: 4px;
   transition: background 0.1s var(--ease);
 }
-
-.model-row:hover {
-  background: var(--bg);
-}
+.model-row:hover { background: var(--bg); }
+.model-row.disabled { opacity: 0.5; }
 
 .model-row__name {
   font-family: var(--font-mono);
@@ -55,7 +63,6 @@ const allTags = ['power', 'efficient', 'fast'] as const
   overflow: hidden;
   text-overflow: ellipsis;
 }
-
 .model-row__ctx {
   font-size: 11px;
   color: var(--muted);
@@ -64,10 +71,5 @@ const allTags = ['power', 'efficient', 'fast'] as const
   min-width: 60px;
   text-align: right;
 }
-
-.tag-group {
-  display: flex;
-  gap: 4px;
-  flex-shrink: 0;
-}
+.tag-group { display: flex; gap: 4px; flex-shrink: 0; }
 </style>

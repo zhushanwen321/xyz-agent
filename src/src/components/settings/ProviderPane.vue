@@ -51,6 +51,18 @@ function handleTest(_id: string) {
   void _id // P1: no-op
 }
 
+function toggleProvider(id: string) {
+  const p = providers.value.find(p => p.id === id)
+  if (p) {
+    p.status = p.status === 'connected' ? 'not_configured' : 'connected'
+  }
+}
+
+function toggleModel(providerId: string, modelId: string) {
+  const m = mockModels.find(m => m.id === modelId && m.providerId === providerId)
+  if (m) m.enabled = !m.enabled
+}
+
 function handleModalTest(_data: { url: string; key: string }) {
   void _data // P1: no-op
 }
@@ -112,6 +124,8 @@ function handleSave(_data: {
         @edit="openEdit"
         @delete="handleDelete"
         @test="handleTest"
+        @toggle-enabled="toggleProvider"
+        @toggle-model="toggleModel"
       />
     </template>
 
