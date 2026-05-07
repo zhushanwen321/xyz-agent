@@ -1,4 +1,5 @@
 /* eslint-disable no-magic-numbers */
+/* eslint-disable max-lines */
 /**
  * Static mock data covering ALL design scenarios.
  *
@@ -195,20 +196,29 @@ export const mockMessages: Message[] = [
 // 3. Providers (5)
 // ═══════════════════════════════════════════════════════════════════
 
-export const mockProviders: ProviderInfo[] = [
+export interface MockProvider extends ProviderInfo {
+  baseUrl: string
+  icon: string // Single letter for avatar
+}
+
+export const mockProviders: MockProvider[] = [
   {
     id: 'anthropic',
     name: 'Anthropic',
     status: 'connected',
-    models: ['claude-sonnet', 'claude-opus', 'claude-haiku'],
+    models: ['claude-sonnet-4', 'claude-opus-4', 'claude-haiku-4'],
     apiKeySet: true,
+    baseUrl: 'https://api.anthropic.com',
+    icon: 'A',
   },
   {
     id: 'openai',
     name: 'OpenAI',
     status: 'connected',
-    models: ['gpt-4o', 'gpt-4o-mini', 'o1-pro'],
+    models: ['gpt-4o', 'gpt-4o-mini', 'o3', 'o4-mini'],
     apiKeySet: true,
+    baseUrl: 'https://api.openai.com',
+    icon: 'O',
   },
   {
     id: 'google',
@@ -216,21 +226,26 @@ export const mockProviders: ProviderInfo[] = [
     status: 'connected',
     models: ['gemini-2.5-pro', 'gemini-2.5-flash'],
     apiKeySet: true,
+    baseUrl: 'https://generativelanguage.googleapis.com',
+    icon: 'G',
   },
   {
     id: 'deepseek',
     name: 'DeepSeek',
     status: 'connected',
-    models: ['deepseek-v4', 'deepseek-r1'],
+    models: ['deepseek-v4', 'deepseek-v4-flash'],
     apiKeySet: true,
+    baseUrl: 'https://api.deepseek.com',
+    icon: 'D',
   },
   {
     id: 'ollama',
-    name: 'Ollama (本地)',
+    name: '本地 Ollama',
     status: 'not_configured',
-    models: ['llama3', 'codellama', 'mistral'],
+    models: ['qwen3-32b'],
     apiKeySet: false,
     baseUrl: 'http://localhost:11434',
+    icon: 'L',
   },
 ]
 
@@ -238,24 +253,29 @@ export const mockProviders: ProviderInfo[] = [
 // 4. Models (10)
 // ═══════════════════════════════════════════════════════════════════
 
-export const mockModels: ModelInfo[] = [
+export interface MockModel extends ModelInfo {
+  tags: string[]
+  ctx: string
+}
+
+export const mockModels: MockModel[] = [
   // Anthropic
-  { id: 'claude-sonnet', name: 'claude-sonnet', providerId: 'anthropic', providerName: 'anthropic' },
-  { id: 'claude-opus',   name: 'claude-opus',   providerId: 'anthropic', providerName: 'anthropic' },
-  { id: 'claude-haiku',  name: 'claude-haiku',  providerId: 'anthropic', providerName: 'anthropic' },
+  { id: 'claude-sonnet-4', name: 'claude-sonnet-4', providerId: 'anthropic', providerName: 'Anthropic', tags: ['power', 'efficient'], ctx: '128K' },
+  { id: 'claude-haiku-4', name: 'claude-haiku-4', providerId: 'anthropic', providerName: 'Anthropic', tags: ['fast'], ctx: '128K' },
+  { id: 'claude-opus-4', name: 'claude-opus-4', providerId: 'anthropic', providerName: 'Anthropic', tags: ['power'], ctx: '200K' },
   // OpenAI
-  { id: 'gpt-4o',      name: 'gpt-4o',      providerId: 'openai', providerName: 'openai' },
-  { id: 'gpt-4o-mini', name: 'gpt-4o-mini', providerId: 'openai', providerName: 'openai' },
-  { id: 'o1-pro',      name: 'o1-pro',      providerId: 'openai', providerName: 'openai' },
-  // Google
-  { id: 'gemini-2.5-pro',  name: 'gemini-2.5-pro',  providerId: 'google', providerName: 'google' },
-  { id: 'gemini-2.5-flash', name: 'gemini-2.5-flash', providerId: 'google', providerName: 'google' },
+  { id: 'gpt-4o', name: 'gpt-4o', providerId: 'openai', providerName: 'OpenAI', tags: ['power', 'efficient'], ctx: '128K' },
+  { id: 'gpt-4o-mini', name: 'gpt-4o-mini', providerId: 'openai', providerName: 'OpenAI', tags: ['fast'], ctx: '128K' },
+  { id: 'o3', name: 'o3', providerId: 'openai', providerName: 'OpenAI', tags: ['power'], ctx: '200K' },
+  { id: 'o4-mini', name: 'o4-mini', providerId: 'openai', providerName: 'OpenAI', tags: ['efficient', 'fast'], ctx: '200K' },
   // DeepSeek
-  { id: 'deepseek-v4', name: 'deepseek-v4', providerId: 'deepseek', providerName: 'deepseek' },
-  { id: 'deepseek-r1', name: 'deepseek-r1', providerId: 'deepseek', providerName: 'deepseek' },
+  { id: 'deepseek-v4', name: 'deepseek-v4', providerId: 'deepseek', providerName: 'DeepSeek', tags: ['power', 'efficient'], ctx: '128K' },
+  { id: 'deepseek-v4-flash', name: 'deepseek-v4-flash', providerId: 'deepseek', providerName: 'DeepSeek', tags: ['fast'], ctx: '128K' },
+  // Ollama
+  { id: 'qwen3-32b', name: 'qwen3:32b', providerId: 'ollama', providerName: '本地 Ollama', tags: ['efficient'], ctx: '32K' },
 ]
 
-/** Map model id → ModelInfo for quick lookup. */
+/** Map model id → MockModel for quick lookup. */
 export const mockModelMap = new Map(mockModels.map(m => [m.id, m]))
 
 // ═══════════════════════════════════════════════════════════════════
@@ -263,19 +283,98 @@ export const mockModelMap = new Map(mockModels.map(m => [m.id, m]))
 // ═══════════════════════════════════════════════════════════════════
 
 export interface MockSkill {
-  id: string
   name: string
   description: string
   enabled: boolean
+  source: string         // 'pi' | 'claude' | 'agents'
+  sourceIcon: string     // 'P' | 'C' | 'A'
+  sourcePath: string     // '~/.pi/agent/skills/code-trace/SKILL.md'
+  triggers: string[]     // ['分析链路', 'trace code', ...]
+  fileSize: string       // '4.2 KB'
+  tools: string[]        // ['read', 'bash', 'grep']
+  content: string        // full SKILL.md content
+  tag: string            // 'pi' | 'claude' | 'agents'
 }
 
 export const mockSkills: MockSkill[] = [
-  { id: 'code-trace',       name: 'code-trace',       description: '分析代码文件的完整调用链路和数据流',                                   enabled: true  },
-  { id: 'issue-trace',      name: 'issue-trace',      description: '验证用户报告的问题，构建调用链路确认问题真实性',                           enabled: true  },
-  { id: 'batch-tracer',     name: 'batch-tracer',     description: '对指定目录下的所有源代码文件执行完整三阶段分析',                              enabled: true  },
-  { id: 'python-refactor',  name: 'python-refactor',  description: '使用 rope 库编写 Python 代码重构脚本',                                  enabled: false },
-  { id: 'rust-taste-check', name: 'rust-taste-check', description: '参照代码品味指导文件审查并重构 Rust 代码',                                 enabled: false },
-  { id: 'tavily-web-search', name: 'tavily-web-search', description: 'Web search, content extraction via Tavily API',                     enabled: true  },
+  {
+    name: 'code-trace',
+    description: '分析代码文件的完整调用链路和数据流，找出上下游调用关系和数据生产源头，审查链路正确性并评分。',
+    enabled: true,
+    source: 'pi',
+    sourceIcon: 'P',
+    sourcePath: '~/.pi/agent/skills/code-trace/SKILL.md',
+    triggers: ['分析链路', 'trace code', 'code-trace', '链路分析'],
+    fileSize: '4.2 KB',
+    tools: ['read', 'bash', 'grep'],
+    tag: 'pi',
+    content: `---\nname: code-trace\ndescription: 分析代码文件的完整调用链路和数据流\ntriggers: ["分析链路", "trace code", "code-trace", "链路分析"]\ntools: [read, bash, grep]\n---\n\n# Code Trace\n\n分析代码文件的完整调用链路和数据流。`,
+  },
+  {
+    name: 'issue-trace',
+    description: '分析用户发现的问题，通过构建调用链路和数据链路来验证问题是否真实存在，并对问题严重程度进行评分。',
+    enabled: true,
+    source: 'pi',
+    sourceIcon: 'P',
+    sourcePath: '~/.pi/agent/skills/issue-trace/SKILL.md',
+    triggers: ['分析问题', 'issue-trace', '问题链路', '审查问题'],
+    fileSize: '3.8 KB',
+    tools: ['read', 'bash', 'grep'],
+    tag: 'pi',
+    content: `---\nname: issue-trace\ndescription: 分析用户发现的问题，验证问题真实性\ntriggers: ["分析问题", "issue-trace", "问题链路", "审查问题"]\ntools: [read, bash, grep]\n---\n\n# Issue Trace\n\n分析用户发现的问题，通过构建调用链路和数据链路来验证问题是否真实存在。`,
+  },
+  {
+    name: 'review-tracer',
+    description: '审查代码审查工具的输出质量，对审查结果进行评分和评估。',
+    enabled: true,
+    source: 'pi',
+    sourceIcon: 'P',
+    sourcePath: '~/.pi/agent/skills/review-tracer/SKILL.md',
+    triggers: ['审查审查者', 'review-tracer', '评估审查质量'],
+    fileSize: '2.9 KB',
+    tools: ['read', 'bash'],
+    tag: 'pi',
+    content: `---\nname: review-tracer\ndescription: 审查代码审查工具的输出质量\ntriggers: ["审查审查者", "review-tracer", "评估审查质量"]\ntools: [read, bash]\n---\n\n# Review Tracer\n\n审查代码审查工具的输出质量，对审查结果进行评分和评估。`,
+  },
+  {
+    name: 'batch-tracer',
+    description: '批量代码分析调度器。对指定目录下的所有源代码文件执行完整的三阶段分析链路。',
+    enabled: true,
+    source: 'pi',
+    sourceIcon: 'P',
+    sourcePath: '~/.pi/agent/skills/batch-tracer/SKILL.md',
+    triggers: ['批量分析', 'batch-tracer', '全量分析'],
+    fileSize: '5.1 KB',
+    tools: ['read', 'bash', 'grep'],
+    tag: 'pi',
+    content: `---\nname: batch-tracer\ndescription: 批量代码分析调度器\ntriggers: ["批量分析", "batch-tracer", "全量分析"]\ntools: [read, bash, grep]\n---\n\n# Batch Tracer\n\n批量代码分析调度器。对指定目录下的所有源代码文件执行完整的三阶段分析链路。`,
+  },
+  {
+    name: 'ts-taste-check',
+    description: '参照代码品味指导文件，审查并重构 TypeScript / Vue 代码。',
+    enabled: false,
+    source: 'pi',
+    sourceIcon: 'P',
+    sourcePath: '~/.pi/agent/skills/ts-taste-check/SKILL.md',
+    triggers: ['品味检查', 'ts-taste-check', '审查ts代码质量'],
+    fileSize: '6.3 KB',
+    tools: ['read', 'bash', 'edit'],
+    tag: 'pi',
+    content: `---\nname: ts-taste-check\ndescription: 参照代码品味指导文件审查TS代码\ntriggers: ["品味检查", "ts-taste-check", "审查ts代码质量"]\ntools: [read, bash, edit]\n---\n\n# TS Taste Check\n\n参照代码品味指导文件，审查并重构 TypeScript / Vue 代码。`,
+  },
+  {
+    name: 'zcommit',
+    description: '执行 git commit 操作，智能分析变更并创建规范的提交信息。',
+    enabled: true,
+    source: 'pi',
+    sourceIcon: 'P',
+    sourcePath: '~/.pi/agent/skills/zcommit/SKILL.md',
+    triggers: ['zcommit', '提交', 'commit', '提交代码'],
+    fileSize: '1.8 KB',
+    tools: ['bash', 'read', 'edit'],
+    tag: 'pi',
+    content: `---\nname: zcommit\ndescription: 执行git commit操作\ntriggers: ["zcommit", "提交", "commit", "提交代码"]\ntools: [bash, read, edit]\n---\n\n# ZCommit\n\n执行 git commit 操作，智能分析变更并创建规范的提交信息。`,
+  },
 ]
 
 // ═══════════════════════════════════════════════════════════════════
@@ -283,18 +382,87 @@ export const mockSkills: MockSkill[] = [
 // ═══════════════════════════════════════════════════════════════════
 
 export interface MockAgent {
-  id: string
   name: string
-  modelId: string
-  providerId: string
+  description: string
   active: boolean
+  source: string       // '内置 Agent' | 'pi · ~/.pi/agent/agents/...'
+  sourceType: string   // 'builtin' | 'pi' | 'agents'
+  icon: string         // 'D' | 'R' | 'O' | 'A'
+  iconBg: string       // 'accent' | 'success' | 'warning' | 'danger'
+  type: string         // 'builtin' | 'custom'
+  tools: string[]      // ['read', 'bash', 'edit', 'write', 'grep']
+  modelStrategy: 'auto' | 'tag' | 'bind'  // model selection strategy
+  modelBind?: string   // bound model id (when strategy='bind')
+  modelTags?: { power: string; efficient: string; fast: string }  // model ids per tag
+  overrideParams: boolean  // whether to override global SubAgent params
+  params: { depth: number; width: number; tokens: number; rounds: number }
+  content: string      // agent.md content
 }
 
 export const mockAgents: MockAgent[] = [
-  { id: 'a1', name: '默认编程助手', modelId: 'claude-sonnet',  providerId: 'anthropic', active: true  },
-  { id: 'a2', name: '代码审查员',   modelId: 'claude-opus',    providerId: 'anthropic', active: false },
-  { id: 'a3', name: '金融分析师',   modelId: 'deepseek-r1',   providerId: 'deepseek',  active: false },
-  { id: 'a4', name: '快速执行器',   modelId: 'gpt-4o-mini',   providerId: 'openai',    active: false },
+  {
+    name: '默认编程助手',
+    description: '默认的通用编程助手，处理各种编码任务。',
+    active: true,
+    source: '内置 Agent',
+    sourceType: 'builtin',
+    icon: 'D',
+    iconBg: 'accent',
+    type: 'builtin',
+    tools: ['read', 'bash', 'edit', 'write', 'grep'],
+    modelStrategy: 'auto',
+    overrideParams: false,
+    params: { depth: 20, width: 10, tokens: 100_000, rounds: 50 },
+    content: `---\nname: 默认编程助手\ntype: builtin\nstrategy: auto\n---\n\n# 默认编程助手\n\n默认的通用编程助手，处理各种编码任务。`,
+  },
+  {
+    name: '代码审查员',
+    description: '专注于代码审查和质量评估的 Agent。',
+    active: true,
+    source: 'pi · ~/.pi/agent/agents/reviewer/',
+    sourceType: 'pi',
+    icon: 'R',
+    iconBg: 'success',
+    type: 'custom',
+    tools: ['read', 'bash', 'grep'],
+    modelStrategy: 'tag',
+    modelTags: { power: 'claude-sonnet-4', efficient: 'claude-sonnet-4', fast: 'claude-haiku-4' },
+    overrideParams: true,
+    params: { depth: 5, width: 3, tokens: 50_000, rounds: 20 },
+    content: `---\nname: 代码审查员\ntype: custom\nstrategy: tag\nmodelTags:\n  power: claude-sonnet-4\n  efficient: claude-sonnet-4\n  fast: claude-haiku-4\n---\n\n# 代码审查员\n\n专注于代码审查和质量评估的 Agent。`,
+  },
+  {
+    name: '任务编排器',
+    description: '负责复杂任务的分解和子任务编排调度。',
+    active: true,
+    source: 'pi · ~/.pi/agent/agents/orchestrator/',
+    sourceType: 'pi',
+    icon: 'O',
+    iconBg: 'warning',
+    type: 'custom',
+    tools: ['read', 'bash', 'grep', 'feedback'],
+    modelStrategy: 'bind',
+    modelBind: 'claude-sonnet-4',
+    overrideParams: true,
+    params: { depth: 20, width: 10, tokens: 200_000, rounds: 100 },
+    content: `---\nname: 任务编排器\ntype: custom\nstrategy: bind\nmodelBind: claude-sonnet-4\n---\n\n# 任务编排器\n\n负责复杂任务的分解和子任务编排调度。`,
+  },
+  {
+    name: '数据分析员',
+    description: '专注于数据分析和市场数据处理的 Agent。',
+    active: false,
+    source: 'agents · ~/.agents/agents/analyst/',
+    sourceType: 'agents',
+    icon: 'A',
+    iconBg: 'danger',
+    type: 'custom',
+    tools: ['bash', 'read', 'write', 'market-api', 'indicators'],
+    modelStrategy: 'tag',
+    modelTags: { power: 'o3', efficient: 'deepseek-v4', fast: 'deepseek-v4-flash' },
+    overrideParams: false,
+    params: { depth: 20, width: 10, tokens: 100_000, rounds: 50 },
+    content: `---\nname: 数据分析员\ntype: custom\nstrategy: tag\nmodelTags:\n  power: o3\n  efficient: deepseek-v4\n  fast: deepseek-v4-flash\n---\n\n# 数据分析员\n\n专注于数据分析和市场数据处理的 Agent。`,
+  },
 ]
 
 // ═══════════════════════════════════════════════════════════════════
@@ -306,10 +474,17 @@ export interface ConfigRow {
   value: string
 }
 
+export const mockGlobalParams = {
+  depth: 20,
+  width: 10,
+  tokens: 100_000,
+  rounds: 50,
+}
+
 export const mockAgentConfig: ConfigRow[] = [
   { label: '最大 SubAgent 深度', value: '20'      },
   { label: '最大并行宽度',       value: '10'      },
-  { label: 'Token 预算',        value: '200,000' },
+  { label: 'Token 预算',        value: '100,000' },
   { label: '最大轮次',          value: '50'      },
 ]
 

@@ -1,69 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
-import { useProvider } from '../../composables/useProvider'
-import { useModel } from '../../composables/useModel'
-import { ProviderList, ProviderForm, SkillsTab, AgentsTab } from '../settings'
-import { mockSkills, mockAgents, mockAgentConfig } from '../../mock/data'
+import { ProviderPane, SkillsPane, AgentsPane } from '../settings'
 
 const settingsStore = useSettingsStore()
-const { providers, loadProviders, setProvider, deleteProvider } = useProvider()
-const { models, loadModels } = useModel()
-
 const activeTab = ref('providers')
-const editingProviderId = ref<string | null>(null)
-const showForm = ref(false)
-const loading = ref(false)
-
-// TODO: wire to real skill/agent data from store
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- mock data shape differs from component prop types
-const skills = ref(mockSkills as any)
-const agents = ref(mockAgents.map(a => ({ name: a.name, model: a.modelId, active: a.active })))
-const agentConfig = ref(mockAgentConfig as Array<{ label: string; value: string }>)
-
-function handleSkillToggle(name: string) {
-  const skill = skills.value.find((s: { name: string; enabled: boolean }) => s.name === name)
-  if (skill) skill.enabled = !skill.enabled
-}
-
-const editingProvider = computed(() =>
-  editingProviderId.value
-    ? providers.value.find(p => p.id === editingProviderId.value) ?? null
-    : null,
-)
-
-const providerModels = computed(() =>
-  models.value.filter(m =>
-    editingProviderId.value ? m.providerId === editingProviderId.value : true,
-  ),
-)
-
-function handleEdit(providerId: string) {
-  editingProviderId.value = providerId
-  showForm.value = true
-}
-
-function handleAdd() {
-  editingProviderId.value = null
-  showForm.value = true
-}
-
-function handleDelete(providerId: string) {
-  deleteProvider(providerId)
-  showForm.value = false
-  editingProviderId.value = null
-}
-
-function handleSave(payload: { providerId: string; apiKey: string; baseUrl?: string }) {
-  setProvider(payload.providerId, payload.apiKey, payload.baseUrl)
-  showForm.value = false
-  editingProviderId.value = null
-}
-
-function handleCancel() {
-  showForm.value = false
-  editingProviderId.value = null
-}
 
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
@@ -76,14 +17,7 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 
-const DEBOUNCE_MS = 500
-
 onMounted(() => {
-  loading.value = true
-  loadProviders()
-  loadModels()
-  // Brief loading state — real loading would be driven by WS response
-  setTimeout(() => { loading.value = false }, DEBOUNCE_MS)
   document.addEventListener('keydown', onKeydown)
 })
 
@@ -127,46 +61,19 @@ onUnmounted(() => {
 
     <!-- Content -->
     <div class="settings-content">
-      <!-- Providers pane -->
       <div class="settings-content__pane" :class="{ active: activeTab === 'providers' }">
-        <ProviderForm
-          v-if="showForm"
-          :provider="editingProvider"
-          :models="providerModels"
-          :is-edit="!!editingProviderId"
-          @save="handleSave"
-          @cancel="handleCancel"
-          @delete="handleDelete"
-        />
-        <ProviderList
-          v-else
-          :providers="providers"
-          :loading="loading"
-          @edit="handleEdit"
-          @delete="handleDelete"
-          @add="handleAdd"
-        />
+        <ProviderPane />
       </div>
-
-      <!-- Skills pane -->
       <div class="settings-content__pane" :class="{ active: activeTab === 'skills' }">
-        <SkillsTab
-          :skills="skills"
-          @toggle="handleSkillToggle"
-        />
+        <SkillsPane />
       </div>
-
-      <!-- Agents pane -->
       <div class="settings-content__pane" :class="{ active: activeTab === 'agents' }">
-        <AgentsTab
-          :agents="agents"
-          :config-rows="agentConfig"
-        />
+        <AgentsPane />
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-/* All styles come from the global design system — no scoped overrides needed */
+/* All styles come from the global design system */
 </style>

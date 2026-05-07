@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>供应商配置 — xyz-agent</title>
+<style>
+:root{--bg:oklch(97% 0.018 70);--surface:oklch(99% 0.008 70);--fg:oklch(22% 0.02 50);--muted:oklch(50% 0.018 50);--border:oklch(90% 0.014 70);--accent:oklch(64% 0.13 28);--accent-light:oklch(92% 0.04 28);--success:oklch(70% 0.18 145);--success-light:oklch(95% 0.06 145);--warning:oklch(78% 0.15 85);--warning-light:oklch(95% 0.06 85);--danger:oklch(62% 0.2 25);--danger-light:oklch(93% 0.06 25);--font-display:'Tiempos Headline','Newsreader','Iowan Old Style',Georgia,serif;--font-body:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;--font-mono:'JetBrains Mono','IBM Plex Mono',ui-monospace,Menlo,monospace;--radius:12px;--radius-sm:8px;--radius-xs:4px;--ease:cubic-bezier(0.4,0,0.2,1)}
+[data-theme="dark"]{--bg:oklch(20% 0.015 50);--surface:oklch(25% 0.015 50);--fg:oklch(92% 0.008 70);--muted:oklch(65% 0.015 50);--border:oklch(35% 0.015 50);--accent:oklch(68% 0.13 28);--accent-light:oklch(30% 0.06 28);--success:oklch(70% 0.18 145);--success-light:oklch(28% 0.06 145);--warning:oklch(78% 0.15 85);--warning-light:oklch(30% 0.06 85);--danger:oklch(62% 0.2 25);--danger-light:oklch(28% 0.06 25)}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-font-smoothing:antialiased}
+body{font-family:var(--font-body);font-size:14px;line-height:1.6;background:var(--bg);color:var(--fg);transition:background 0.25s var(--ease),color 0.25s var(--ease)}
+::selection{background:var(--accent);color:white}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+.page{max-width:860px;margin:0 auto;padding:32px 40px}
+.page__hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:28px}
+.page__title{font-family:var(--font-display);font-size:22px;font-weight:700;letter-spacing:-0.01em}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 18px;border-radius:var(--radius-sm);border:1px solid var(--border);background:transparent;color:var(--muted);font-size:13px;font-family:var(--font-body);cursor:pointer;transition:all 0.2s var(--ease);white-space:nowrap}
+.btn:hover{background:var(--accent-light);color:var(--accent);border-color:var(--accent)}
+.btn--primary{background:var(--accent);color:white;border-color:var(--accent)}
+.btn--primary:hover{opacity:0.88}
+.btn--sm{padding:5px 12px;font-size:12px;border-radius:var(--radius-xs)}
+.btn--danger:hover{background:var(--danger-light);color:var(--danger);border-color:var(--danger)}
+.btn--ghost{border:none;color:var(--muted);padding:5px 8px}
+.btn--ghost:hover{color:var(--accent);background:var(--accent-light)}
+.empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:80px 40px;text-align:center}
+.empty-state__icon{font-size:40px;color:var(--border);margin-bottom:16px;width:64px;height:64px;border-radius:50%;background:var(--surface);border:2px dashed var(--border);display:flex;align-items:center;justify-content:center}
+.empty-state__icon svg{width:28px;height:28px;stroke:var(--muted)}
+.empty-state__title{font-size:16px;font-weight:600;margin-bottom:6px}
+.empty-state__desc{font-size:13px;color:var(--muted);max-width:360px;margin-bottom:24px}
+.provider-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:16px;overflow:hidden;transition:border-color 0.2s var(--ease)}
+.provider-card:hover{border-color:oklch(80% 0.01 70)}
+.provider-card__hd{display:flex;align-items:center;gap:12px;padding:16px 20px;cursor:pointer;user-select:none}
+.provider-card__icon{width:36px;height:36px;border-radius:var(--radius-sm);background:var(--accent-light);display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:700;font-size:14px;color:var(--accent);flex-shrink:0}
+.provider-card__info{flex:1;min-width:0}
+.provider-card__name{font-size:15px;font-weight:600;display:flex;align-items:center;gap:8px}
+.provider-card__meta{font-size:12px;color:var(--muted);margin-top:2px;font-family:var(--font-mono)}
+.provider-card__actions{display:flex;gap:4px}
+.status-dot{width:7px;height:7px;border-radius:50%;display:inline-block;vertical-align:middle}
+.status-dot--ok{background:var(--success)}
+.status-dot--err{background:var(--danger)}
+.status-dot--unknown{background:var(--border)}
+.provider-card__bd{padding:0 20px 16px;display:none}
+.provider-card.expanded .provider-card__bd{display:block}
+.provider-card__models{margin-top:4px}
+.model-row{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:var(--radius-sm);margin-bottom:4px;transition:background 0.1s var(--ease)}
+.model-row:hover{background:var(--bg)}
+.model-row__name{font-family:var(--font-mono);font-size:13px;font-weight:600;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.model-row__ctx{font-size:11px;color:var(--muted);font-family:var(--font-mono);white-space:nowrap;min-width:60px;text-align:right}
+.tag-group{display:flex;gap:4px;flex-shrink:0}
+.tag{padding:2px 8px;border-radius:100px;font-size:10px;font-weight:600;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--muted);transition:all 0.15s var(--ease);user-select:none}
+.tag:hover{border-color:var(--muted)}
+.tag--power.active{background:oklch(65% 0.18 25);color:white;border-color:oklch(65% 0.18 25)}
+.tag--efficient.active{background:oklch(60% 0.15 260);color:white;border-color:oklch(60% 0.15 260)}
+.tag--fast.active{background:oklch(68% 0.16 145);color:white;border-color:oklch(68% 0.16 145)}
+.provider-card__ft{display:flex;gap:8px;padding:12px 20px;border-top:1px solid var(--border);background:var(--bg)}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.3);z-index:100;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity 0.2s var(--ease)}
+.modal-overlay.visible{opacity:1;pointer-events:auto}
+.modal{width:600px;max-height:85vh;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,0.12)}
+.modal__hd{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border)}
+.modal__title{font-family:var(--font-display);font-size:16px;font-weight:600}
+.modal__close{width:28px;height:28px;border:none;background:transparent;color:var(--muted);font-size:16px;cursor:pointer;border-radius:var(--radius-xs);display:flex;align-items:center;justify-content:center;transition:all 0.15s var(--ease)}
+.modal__close:hover{background:var(--accent-light);color:var(--accent)}
+.modal__bd{padding:20px;overflow-y:auto;flex:1}
+.form-group{margin-bottom:16px}
+.form-group__label{font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.04em}
+.form-input{width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--fg);font-family:var(--font-body);font-size:14px;outline:none;transition:border-color 0.15s var(--ease)}
+.form-input:focus{border-color:var(--accent)}
+.form-input::placeholder{color:var(--muted)}
+.form-select{appearance:none;width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--fg);font-family:var(--font-body);font-size:14px;outline:none;cursor:pointer;transition:border-color 0.15s var(--ease);background-image:url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23999' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center}
+.form-select:focus{border-color:var(--accent)}
+.form-row{display:flex;gap:12px}
+.form-row .form-group{flex:1}
+.form-hint{font-size:11px;color:var(--muted);margin-top:4px}
+.model-config{border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;margin-top:8px}
+.model-config__hd{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--bg);border-bottom:1px solid var(--border)}
+.model-config__title{font-size:12px;font-weight:600}
+.model-config__actions{display:flex;gap:6px}
+.model-config__list{max-height:240px;overflow-y:auto}
+.model-config-item{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border)}
+.model-config-item:last-child{border-bottom:none}
+.model-config-item__name{font-family:var(--font-mono);font-size:12px;font-weight:600;min-width:180px}
+.model-config-item__ctx{font-size:11px;color:var(--muted);font-family:var(--font-mono);min-width:60px}
+.model-config-item__tags{display:flex;gap:4px;flex:1}
+.add-model-row{display:flex;gap:8px;padding:10px 14px;background:var(--bg);border-top:1px solid var(--border)}
+.add-model-row__input{flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);background:var(--surface);color:var(--fg);font-family:var(--font-mono);font-size:12px;outline:none}
+.add-model-row__input:focus{border-color:var(--accent)}
+.add-model-row__input::placeholder{color:var(--muted)}
+.test-result{padding:8px 12px;border-radius:var(--radius-sm);font-size:12px;margin-top:8px;display:none}
+.test-result.visible{display:flex;align-items:center;gap:8px}
+.test-result--ok{background:var(--success-light);color:var(--success)}
+.test-result--err{background:var(--danger-light);color:var(--danger)}
+.modal__ft{display:flex;justify-content:flex-end;gap:8px;padding:14px 20px;border-top:1px solid var(--border)}
+.section-divider{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);margin:20px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--border)}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="page__hd">
+    <div class="page__title">供应商配置</div>
+    <button class="btn btn--primary" onclick="openModal()">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 1v12M1 7h12"/></svg>
+      添加供应商
+    </button>
+  </div>
+
+  <!-- Empty State -->
+  <div class="empty-state" id="emptyState">
+    <div class="empty-state__icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+    </div>
+    <div class="empty-state__title">尚未配置任何供应商</div>
+    <div class="empty-state__desc">添加供应商后，可以配置模型并分配给 Agent 使用。支持 Anthropic、OpenAI、Google、DeepSeek、Ollama 等。</div>
+    <button class="btn btn--primary" onclick="openModal()">添加第一个供应商</button>
+  </div>
+
+  <!-- Provider List -->
+  <div id="providerList" class="hidden">
+    <div class="provider-card expanded" id="provider-anthropic">
+      <div class="provider-card__hd" onclick="toggleCard(this)">
+        <div class="provider-card__icon">A</div>
+        <div class="provider-card__info">
+          <div class="provider-card__name"><span class="status-dot status-dot--ok"></span> Anthropic</div>
+          <div class="provider-card__meta">https://api.anthropic.com · 3 个模型</div>
+        </div>
+        <div class="provider-card__actions">
+          <button class="btn btn--ghost btn--sm" onclick="event.stopPropagation();testConnection('anthropic')">测试连接</button>
+          <button class="btn btn--ghost btn--sm" onclick="event.stopPropagation();openModal('anthropic')">编辑</button>
+          <button class="btn btn--ghost btn--sm btn--danger" onclick="event.stopPropagation();deleteProvider('anthropic')">删除</button>
+        </div>
+      </div>
+      <div class="provider-card__bd">
+        <div class="section-divider">模型配置</div>
+        <div class="provider-card__models">
+          <div class="model-row">
+            <span class="model-row__name">claude-sonnet-4</span>
+            <span class="model-row__ctx">128K ctx</span>
+            <div class="tag-group">
+              <span class="tag tag--power active" onclick="toggleTag(this)">强力</span>
+              <span class="tag tag--efficient active" onclick="toggleTag(this)">高效</span>
+              <span class="tag tag--fast" onclick="toggleTag(this)">快速</span>
+            </div>
+          </div>
+          <div class="model-row">
+            <span class="model-row__name">claude-haiku-4</span>
+            <span class="model-row__ctx">128K ctx</span>
+            <div class="tag-group">
+              <span class="tag tag--power" onclick="toggleTag(this)">强力</span>
+              <span class="tag tag--efficient" onclick="toggleTag(this)">高效</span>
+              <span class="tag tag--fast active" onclick="toggleTag(this)">快速</span>
+            </div>
+          </div>
+          <div class="model-row">
+            <span class="model-row__name">claude-opus-4</span>
+            <span class="model-row__ctx">200K ctx</span>
+            <div class="tag-group">
+              <span class="tag tag--power active" onclick="toggleTag(this)">强力</span>
+              <span class="tag tag--efficient" onclick="toggleTag(this)">高效</span>
+              <span class="tag tag--fast" onclick="toggleTag(this)">快速</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="provider-card" id="provider-openai">
+      <div class="provider-card__hd" onclick="toggleCard(this)">
+        <div class="provider-card__icon">O</div>
+        <div class="provider-card__info">
+          <div class="provider-card__name"><span class="status-dot status-dot--ok"></span> OpenAI</div>
+          <div class="provider-card__meta">https://api.openai.com · 4 个模型</div>
+        </div>
+        <div class="provider-card__actions">
+          <button class="btn btn--ghost btn--sm" onclick="event.stopPropagation()">测试连接</button>
+          <button class="btn btn--ghost btn--sm" onclick="event.stopPropagation();openModal('openai')">编辑</button>
+          <button class="btn btn--ghost btn--sm btn--danger" onclick="event.stopPropagation()">删除</button>
+        </div>
+      </div>
+      <div class="provider-card__bd">
+        <div class="section-divider">模型配置</div>
+        <div class="provider-card__models">
+          <div class="model-row">
+            <span class="model-row__name">gpt-4o</span>
+            <span class="model-row__ctx">128K ctx</span>
+            <div class="tag-group">
+              <span class="tag tag--power active" onclick="toggleTag(this)">强力</span>
+              <span class="tag tag--efficient active" onclick="toggleTag(this)">高效</span>
+              <span class="tag tag--fast" onclick="toggleTag(this)">快速</span>
+            </div>
+          </div>
+          <div class="model-row">
+            <span class="model-row__name">gpt-4o-mini</span>
+            <span class="model-row__ctx">128K ctx</span>
+            <div class="tag-group">
+              <span class="tag tag--power" onclick="toggleTag(this)">强力</span>
+              <span class="tag tag--efficient" onclick="toggleTag(this)">高效</span>
+              <span class="tag tag--fast active" onclick="toggleTag(this)">快速</span>
+            </div>
+          </div>
+          <div class="model-row">
+            <span class="model-row__name">o3</span>
+            <span class="model-row__ctx">200K ctx</span>
+            <div class="tag-group">
+              <span class="tag tag--power active" onclick="toggleTag(this)">强力</span>
+              <span class="tag tag--efficient" onclick="toggleTag(this)">高效</span>
+              <span class="tag tag--fast" onclick="toggleTag(this)">快速</span>
+            </div>
+          </div>
+          <div class="model-row">
+            <span class="model-row__name">o4-mini</span>
+            <span class="model-row__ctx">200K ctx</span>
+            <div class="tag-group">
+              <span class="tag tag--power" onclick="toggleTag(this)">强力</span>
+              <span class="tag tag--efficient active" onclick="toggleTag(this)">高效</span>
+              <span class="tag tag--fast active" onclick="toggleTag(this)">快速</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="provider-card" id="provider-deepseek">
+      <div class="provider-card__hd" onclick="toggleCard(this)">
+        <div class="provider-card__icon">D</div>
+        <div class="provider-card__info">
+          <div class="provider-card__name"><span class="status-dot status-dot--ok"></span> DeepSeek</div>
+          <div class="provider-card__meta">https://api.deepseek.com · 2 个模型</div>
+        </div>
+        <div class="provider-card__actions">
+          <button class="btn btn--ghost btn--sm" onclick="event.stopPropagation()">测试连接</button>
+          <button class="btn btn--ghost btn--sm" onclick="event.stopPropagation();openModal('deepseek')">编辑</button>
+          <button class="btn btn--ghost btn--sm btn--danger" onclick="event.stopPropagation()">删除</button>
+        </div>
+      </div>
+      <div class="provider-card__bd">
+        <div class="section-divider">模型配置</div>
+        <div class="provider-card__models">
+          <div class="model-row">
+            <span class="model-row__name">deepseek-v4</span>
+            <span class="model-row__ctx">128K ctx</span>
+            <div class="tag-group">
+              <span class="tag tag--power active" onclick="toggleTag(this)">强力</span>
+              <span class="tag tag--efficient active" onclick="toggleTag(this)">高效</span>
+              <span class="tag tag--fast" onclick="toggleTag(this)">快速</span>
+            </div>
+          </div>
+          <div class="model-row">
+            <span class="model-row__name">deepseek-v4-flash</span>
+            <span class="model-row__ctx">128K ctx</span>
+            <div class="tag-group">
+              <span class="tag tag--power" onclick="toggleTag(this)">强力</span>
+              <span class="tag tag--efficient" onclick="toggleTag(this)">高效</span>
+              <span class="tag tag--fast active" onclick="toggleTag(this)">快速</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="provider-card" id="provider-ollama">
+      <div class="provider-card__hd" onclick="toggleCard(this)">
+        <div class="provider-card__icon" style="background:var(--warning-light);color:var(--warning)">L</div>
+        <div class="provider-card__info">
+          <div class="provider-card__name"><span class="status-dot status-dot--unknown"></span> 本地 Ollama</div>
+          <div class="provider-card__meta">http://localhost:11434 · 连接未测试</div>
+        </div>
+        <div class="provider-card__actions">
+          <button class="btn btn--ghost btn--sm" onclick="event.stopPropagation()">测试连接</button>
+          <button class="btn btn--ghost btn--sm" onclick="event.stopPropagation();openModal('ollama')">编辑</button>
+          <button class="btn btn--ghost btn--sm btn--danger" onclick="event.stopPropagation()">删除</button>
+        </div>
+      </div>
+      <div class="provider-card__bd">
+        <div class="section-divider">模型配置</div>
+        <div class="provider-card__models">
+          <div class="model-row">
+            <span class="model-row__name">qwen3:32b</span>
+            <span class="model-row__ctx">32K ctx</span>
+            <div class="tag-group">
+              <span class="tag tag--power" onclick="toggleTag(this)">强力</span>
+              <span class="tag tag--efficient active" onclick="toggleTag(this)">高效</span>
+              <span class="tag tag--fast" onclick="toggleTag(this)">快速</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: New/Edit Provider -->
+<div class="modal-overlay" id="modalOverlay" onclick="closeModal()">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal__hd">
+      <div class="modal__title" id="modalTitle">添加供应商</div>
+      <button class="modal__close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal__bd">
+      <div class="form-group">
+        <div class="form-group__label">名称</div>
+        <input class="form-input" id="fName" placeholder="例如：Anthropic、OpenAI、本地 Ollama">
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <div class="form-group__label">类型</div>
+          <select class="form-select" id="fType" onchange="onTypeChange()">
+            <option value="anthropic">Anthropic</option>
+            <option value="openai">OpenAI</option>
+            <option value="openai-compatible">OpenAI 兼容</option>
+            <option value="google">Google AI</option>
+            <option value="deepseek">DeepSeek</option>
+            <option value="ollama">Ollama (本地)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <div class="form-group__label">连接状态</div>
+          <div style="padding:8px 0;font-size:13px;color:var(--muted)">未测试</div>
+        </div>
+      </div>
+      <div class="form-group">
+        <div class="form-group__label">Base URL</div>
+        <input class="form-input" id="fUrl" placeholder="https://api.anthropic.com">
+        <div class="form-hint">供应商的 API 端点地址。Ollama 默认为 http://localhost:11434</div>
+      </div>
+      <div class="form-group">
+        <div class="form-group__label">API Key</div>
+        <input class="form-input" id="fKey" type="password" placeholder="sk-ant-...">
+        <div class="form-hint">本地模型（如 Ollama）无需 API Key</div>
+      </div>
+      <div class="test-result" id="testResult"></div>
+
+      <div class="section-divider">模型配置</div>
+      <div class="model-config">
+        <div class="model-config__hd">
+          <span class="model-config__title">已配置模型</span>
+          <div class="model-config__actions">
+            <button class="btn btn--sm" onclick="autoDiscover()">自动发现</button>
+          </div>
+        </div>
+        <div class="model-config__list" id="modalModelList">
+          <div class="model-config-item">
+            <span class="model-config-item__name">claude-sonnet-4</span>
+            <span class="model-config-item__ctx">128K</span>
+            <div class="model-config-item__tags">
+              <span class="tag tag--power active" onclick="toggleTag(this)">强力</span>
+              <span class="tag tag--efficient active" onclick="toggleTag(this)">高效</span>
+              <span class="tag tag--fast" onclick="toggleTag(this)">快速</span>
+            </div>
+            <button class="btn btn--ghost btn--sm btn--danger" onclick="this.closest('.model-config-item').remove()">×</button>
+          </div>
+          <div class="model-config-item">
+            <span class="model-config-item__name">claude-haiku-4</span>
+            <span class="model-config-item__ctx">128K</span>
+            <div class="model-config-item__tags">
+              <span class="tag tag--power" onclick="toggleTag(this)">强力</span>
+              <span class="tag tag--efficient" onclick="toggleTag(this)">高效</span>
+              <span class="tag tag--fast active" onclick="toggleTag(this)">快速</span>
+            </div>
+            <button class="btn btn--ghost btn--sm btn--danger" onclick="this.closest('.model-config-item').remove()">×</button>
+          </div>
+        </div>
+        <div class="add-model-row">
+          <input class="add-model-row__input" id="addModelInput" placeholder="手动输入模型名称，如 my-model-v1">
+          <input class="add-model-row__input" id="addModelCtx" placeholder="上下文窗口，如 128K" style="max-width:100px">
+          <button class="btn btn--sm" onclick="addModel()">添加</button>
+        </div>
+      </div>
+    </div>
+    <div class="modal__ft">
+      <button class="btn" onclick="testInModal()">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="4.5"/><path d="M6 4v2.5M6 8v.5"/></svg>
+        测试连接
+      </button>
+      <button class="btn" onclick="closeModal()">取消</button>
+      <button class="btn btn--primary" onclick="saveProvider()">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var hasProviders = true;
+  var el = document.getElementById('emptyState');
+  var list = document.getElementById('providerList');
+  if(hasProviders){ el.classList.add('hidden'); list.classList.remove('hidden'); }
+  else { el.classList.remove('hidden'); list.classList.add('hidden'); }
+
+  window.toggleCard = function(hd){ hd.closest('.provider-card').classList.toggle('expanded'); };
+  window.toggleTag = function(tag){ tag.classList.toggle('active'); };
+  window.openModal = function(id){
+    var m = document.getElementById('modalOverlay');
+    m.classList.add('visible');
+    document.getElementById('modalTitle').textContent = id ? '编辑供应商' : '添加供应商';
+    if(id==='anthropic'){
+      document.getElementById('fName').value='Anthropic';
+      document.getElementById('fType').value='anthropic';
+      document.getElementById('fUrl').value='https://api.anthropic.com';
+      document.getElementById('fKey').value='sk-ant-****';
+    } else if(id==='openai'){
+      document.getElementById('fName').value='OpenAI';
+      document.getElementById('fType').value='openai';
+      document.getElementById('fUrl').value='https://api.openai.com';
+      document.getElementById('fKey').value='sk-****';
+    } else if(id==='deepseek'){
+      document.getElementById('fName').value='DeepSeek';
+      document.getElementById('fType').value='deepseek';
+      document.getElementById('fUrl').value='https://api.deepseek.com';
+      document.getElementById('fKey').value='sk-****';
+    } else if(id==='ollama'){
+      document.getElementById('fName').value='本地 Ollama';
+      document.getElementById('fType').value='ollama';
+      document.getElementById('fUrl').value='http://localhost:11434';
+      document.getElementById('fKey').value='';
+    } else {
+      document.getElementById('fName').value='';
+      document.getElementById('fUrl').value='';
+      document.getElementById('fKey').value='';
+    }
+    onTypeChange();
+  };
+  window.closeModal = function(){ document.getElementById('modalOverlay').classList.remove('visible'); };
+  window.onTypeChange = function(){
+    var t=document.getElementById('fType').value;
+    var url=document.getElementById('fUrl');
+    if(t==='anthropic'&&!url.value) url.value='https://api.anthropic.com';
+    else if(t==='openai'&&!url.value) url.value='https://api.openai.com';
+    else if(t==='deepseek'&&!url.value) url.value='https://api.deepseek.com';
+    else if(t==='google'&&!url.value) url.value='https://generativelanguage.googleapis.com';
+    else if(t==='ollama'&&!url.value) url.value='http://localhost:11434';
+  };
+  window.testConnection = function(id){
+    var dot=document.querySelector('#provider-'+id+' .status-dot');
+    dot.className='status-dot status-dot--ok';
+  };
+  window.testInModal = function(){
+    var r=document.getElementById('testResult');
+    r.className='test-result visible test-result--ok';
+    r.innerHTML='<span class="status-dot status-dot--ok"></span> 连接成功，发现 3 个可用模型';
+  };
+  window.autoDiscover = function(){
+    var list=document.getElementById('modalModelList');
+    list.innerHTML='';
+    var models=[
+      {name:'claude-sonnet-4',ctx:'128K',tags:['power','efficient']},
+      {name:'claude-haiku-4',ctx:'128K',tags:['fast']},
+      {name:'claude-opus-4',ctx:'200K',tags:['power']},
+    ];
+    models.forEach(function(m){
+      var div=document.createElement('div');
+      div.className='model-config-item';
+      div.innerHTML='<span class="model-config-item__name">'+m.name+'</span><span class="model-config-item__ctx">'+m.ctx+'</span><div class="model-config-item__tags"><span class="tag tag--power'+(m.tags.indexOf('power')>=0?' active':'')+'" onclick="toggleTag(this)">强力</span><span class="tag tag--efficient'+(m.tags.indexOf('efficient')>=0?' active':'')+'" onclick="toggleTag(this)">高效</span><span class="tag tag--fast'+(m.tags.indexOf('fast')>=0?' active':'')+'" onclick="toggleTag(this)">快速</span></div><button class="btn btn--ghost btn--sm btn--danger" onclick="this.closest(\'.model-config-item\').remove()">×</button>';
+      list.appendChild(div);
+    });
+  };
+  window.addModel = function(){
+    var name=document.getElementById('addModelInput').value.trim();
+    var ctx=document.getElementById('addModelCtx').value.trim()||'—';
+    if(!name)return;
+    var list=document.getElementById('modalModelList');
+    var div=document.createElement('div');
+    div.className='model-config-item';
+    div.innerHTML='<span class="model-config-item__name">'+name+'</span><span class="model-config-item__ctx">'+ctx+'</span><div class="model-config-item__tags"><span class="tag tag--power" onclick="toggleTag(this)">强力</span><span class="tag tag--efficient" onclick="toggleTag(this)">高效</span><span class="tag tag--fast" onclick="toggleTag(this)">快速</span></div><button class="btn btn--ghost btn--sm btn--danger" onclick="this.closest(\'.model-config-item\').remove()">×</button>';
+    list.appendChild(div);
+    document.getElementById('addModelInput').value='';
+    document.getElementById('addModelCtx').value='';
+  };
+  window.saveProvider = function(){ closeModal(); };
+  window.deleteProvider = function(id){
+    if(confirm('确定删除此供应商？正在使用该供应商模型的 Agent 将无法运行。')){ document.getElementById('provider-'+id).remove(); }
+  };
+  document.addEventListener('keydown',function(e){ if(e.key==='Escape') closeModal(); });
+})();
+</script>
+</body>
+</html>
