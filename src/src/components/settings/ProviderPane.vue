@@ -8,7 +8,7 @@ import ProviderModal from './ProviderModal.vue'
 // ─── State ──────────────────────────────────────────────────────
 
 const providers = ref<MockProvider[]>([...mockProviders])
-const expandedId = ref<string | null>('anthropic')
+const expandedId = ref<string | null>(null)
 const showModal = ref(false)
 const editingProvider = ref<MockProvider | null>(null)
 
