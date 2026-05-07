@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useI18n } from 'vue-i18n'
 import type { ProviderInfo } from '@xyz-agent/shared'
-import { Button, Badge } from '../../design-system'
 
 const props = defineProps<{
   providers: ProviderInfo[]
@@ -15,8 +13,6 @@ const emit = defineEmits<{
   add: []
 }>()
 
-const { t } = useI18n()
-
 const sorted = computed(() => {
   const STATUS_ORDER: Record<string, number> = { connected: 0, error: 1, not_configured: 2 }
   const UNKNOWN_STATUS_ORDER = STATUS_ORDER.not_configured + 1
@@ -25,68 +21,72 @@ const sorted = computed(() => {
   )
 })
 
-function badgeVariant(status: ProviderInfo['status']) {
+function statusClass(status: ProviderInfo['status']) {
   switch (status) {
-    case 'connected': return 'success'
-    case 'error': return 'danger'
-    default: return 'idle'
+    case 'connected': return 'provider-card__status--on'
+    case 'error': return 'provider-card__status--error'
+    default: return 'provider-card__status--off'
   }
 }
 
 function statusLabel(status: ProviderInfo['status']) {
   switch (status) {
-    case 'connected': return t('settings.connected')
-    case 'error': return t('settings.error')
-    default: return t('settings.notConfigured')
+    case 'connected': return '已连接'
+    case 'error': return '错误'
+    default: return '未配置'
   }
+}
+
+function formatModels(models: string[]) {
+  return models.join(', ')
 }
 </script>
 
 <template>
   <div class="provider-list">
-    <div class="provider-list__header">
-      <h3 class="provider-list__title">{{ t('settings.providers') }}</h3>
-      <Button variant="primary" size="sm" @click="emit('add')">
-        {{ t('settings.addProvider') }}
-      </Button>
-    </div>
+    <!-- Section: 已配置的供应商 -->
+    <div class="settings-section">
+      <div class="settings-section__title">已配置的供应商</div>
 
-    <!-- Loading -->
-    <div v-if="loading" class="provider-list__empty">
-      <span class="provider-list__loading">{{ t('common.loading') }}</span>
-    </div>
+      <!-- Loading -->
+      <div v-if="loading" class="provider-list__loading">加载中…</div>
 
-    <!-- Empty -->
-    <div v-else-if="providers.length === 0" class="provider-list__empty">
-      <span class="provider-list__empty-text">{{ t('settings.addProvider') }}</span>
-    </div>
+      <!-- Empty -->
+      <div v-else-if="providers.length === 0" class="provider-list__empty">暂无已配置的供应商</div>
 
-    <!-- List -->
-    <ul v-else class="provider-list__items">
-      <li
-        v-for="provider in sorted"
-        :key="provider.id"
-        class="provider-list__item"
-      >
-        <div class="provider-list__info">
-          <span class="provider-list__name">{{ provider.name }}</span>
-          <Badge :variant="badgeVariant(provider.status)" dot>
+      <!-- Provider cards -->
+      <template v-else>
+        <div
+          v-for="provider in sorted"
+          :key="provider.id"
+          class="provider-card"
+          @click="emit('edit', provider.id)"
+        >
+          <span class="provider-card__name">{{ provider.name }}</span>
+          <span v-if="provider.models.length" class="provider-card__models">{{ formatModels(provider.models) }}</span>
+          <span class="provider-card__status" :class="statusClass(provider.status)">
             {{ statusLabel(provider.status) }}
-          </Badge>
-          <span v-if="provider.models.length" class="provider-list__models">
-            {{ provider.models.join(', ') }}
           </span>
         </div>
-        <div class="provider-list__actions">
-          <Button variant="ghost" size="sm" @click="emit('edit', provider.id)">
-            {{ t('common.edit') }}
-          </Button>
-          <Button variant="danger" size="sm" @click="emit('delete', provider.id)">
-            {{ t('common.delete') }}
-          </Button>
-        </div>
-      </li>
-    </ul>
+      </template>
+    </div>
+
+    <!-- Section: 默认供应商配置 -->
+    <div class="settings-section">
+      <div class="settings-section__title">默认供应商配置</div>
+      <div class="info-row">
+        <span class="info-row__label">默认模型</span>
+        <span class="info-row__value">claude-sonnet @ anthropic</span>
+      </div>
+      <div class="info-row">
+        <span class="info-row__label">思考模式</span>
+        <span class="info-row__value">high</span>
+      </div>
+      <div class="info-row">
+        <span class="info-row__label">温度</span>
+        <span class="info-row__value">0.7</span>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -94,81 +94,101 @@ function statusLabel(status: ProviderInfo['status']) {
 .provider-list {
   display: flex;
   flex-direction: column;
-  gap: var(--radius-md, 8px);
 }
 
-.provider-list__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.provider-list__title {
-  font-size: var(--font-lg, 1.125rem);
-  font-weight: 600;
-  color: var(--fg);
-  margin: 0;
-}
-
+/* Loading & empty states */
+.provider-list__loading,
 .provider-list__empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 120px;
+  padding: 24px 0;
+  text-align: center;
+  font-size: 13px;
   color: var(--muted);
 }
 
-.provider-list__loading,
-.provider-list__empty-text {
-  font-size: var(--font-sm, 0.875rem);
+/* Reuse design system classes for settings-section, provider-card, info-row */
+.settings-section {
+  margin-bottom: 28px;
 }
 
-.provider-list__items {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--radius-sm, 4px);
+.settings-section__title {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-bottom: 12px;
 }
 
-.provider-list__item {
+.provider-card {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: var(--radius-md, 8px) var(--radius-lg, 12px);
-  border-radius: var(--radius-md, 8px);
+  gap: 12px;
+  padding: 12px 14px;
   background: var(--surface);
   border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 8px;
+  transition: border-color 0.15s;
+  cursor: pointer;
 }
 
-.provider-list__info {
-  display: flex;
-  align-items: center;
-  gap: var(--radius-md, 8px);
-  min-width: 0;
+.provider-card:hover {
+  border-color: var(--accent);
+}
+
+.provider-card__name {
+  font-weight: 600;
+  font-size: 14px;
   flex: 1;
 }
 
-.provider-list__name {
-  font-size: var(--font-sm, 0.875rem);
-  font-weight: 500;
-  color: var(--fg);
-  white-space: nowrap;
-}
-
-.provider-list__models {
-  font-size: var(--font-xs, 0.75rem);
+.provider-card__models {
+  font-size: 11px;
   color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-family: var(--font-mono);
 }
 
-.provider-list__actions {
+.provider-card__status {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 100px;
+  font-weight: 600;
+}
+
+.provider-card__status--on {
+  background: var(--success-light);
+  color: var(--success);
+}
+
+.provider-card__status--error {
+  background: var(--danger-light);
+  color: var(--danger);
+}
+
+.provider-card__status--off {
+  background: var(--border);
+  color: var(--muted);
+}
+
+.info-row {
   display: flex;
+  justify-content: space-between;
   align-items: center;
-  gap: var(--radius-xs, 4px);
-  flex-shrink: 0;
+  padding: 6px 0;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+
+.info-row:last-child {
+  border-bottom: none;
+}
+
+.info-row__label {
+  color: var(--muted);
+}
+
+.info-row__value {
+  font-family: var(--font-mono);
+  font-size: 12px;
 }
 </style>

@@ -4,7 +4,7 @@
     <div class="app-body">
       <AppSidebar v-if="!settingsStore.focusMode" @create="createSession" />
       <main class="main-area">
-        <SettingsView v-if="settingsStore.currentView === 'settings'" @close="settingsStore.setView('chat')" />
+        <SettingsView v-if="settingsStore.currentView === 'settings'" />
         <template v-else>
           <ChatView />
           <!-- Split mode -->
