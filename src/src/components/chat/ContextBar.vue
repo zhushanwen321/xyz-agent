@@ -22,9 +22,9 @@ const props = defineProps<{ percentage: number }>()
 const clamped = computed(() => Math.min(BAR_FULL, Math.max(0, Math.round(props.percentage))))
 
 const barColor = computed(() => {
-  if (clamped.value > THRESHOLD_HIGH) return 'var(--color-danger)'
-  if (clamped.value >= THRESHOLD_MEDIUM) return 'var(--color-warning)'
-  return 'var(--color-success)'
+  if (clamped.value > THRESHOLD_HIGH) return 'var(--danger)'
+  if (clamped.value >= THRESHOLD_MEDIUM) return 'var(--warning)'
+  return 'var(--success)'
 })
 </script>
 
@@ -38,7 +38,7 @@ const barColor = computed(() => {
 .context-bar__track {
   flex: 1;
   height: 4px;
-  background: var(--color-border);
+  background: var(--border);
   border-radius: 2px;
   overflow: hidden;
 }
@@ -52,7 +52,7 @@ const barColor = computed(() => {
 .context-bar__label {
   font-size: 11px;
   font-family: var(--font-mono);
-  color: var(--color-text-muted);
+  color: var(--muted);
   white-space: nowrap;
   min-width: 30px;
   text-align: right;

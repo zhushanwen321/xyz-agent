@@ -83,16 +83,16 @@ const formattedInput = computed(() => {
 <style scoped>
 .approval-card {
   border-radius: var(--radius-md);
-  border: 1px solid var(--color-border);
-  border-left: 3px solid var(--color-border);
-  background: var(--color-surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  background: var(--surface);
   overflow: hidden;
 }
 
 /* Danger-level left border */
-.approval-card--safe { border-left-color: var(--color-success); }
-.approval-card--caution { border-left-color: var(--color-warning); }
-.approval-card--danger { border-left-color: var(--color-danger); }
+.approval-card--safe { border-left-color: var(--success); }
+.approval-card--caution { border-left-color: var(--warning); }
+.approval-card--danger { border-left-color: var(--danger); }
 
 .approval-header {
   display: flex;
@@ -106,7 +106,7 @@ const formattedInput = computed(() => {
   font-family: var(--font-mono);
   font-weight: 600;
   font-size: 13px;
-  color: var(--color-text-primary);
+  color: var(--fg);
 }
 
 .approval-level {
@@ -120,15 +120,15 @@ const formattedInput = computed(() => {
 }
 
 .approval-level--safe {
-  color: var(--color-success);
+  color: var(--success);
   background: oklch(95% 0.06 145);
 }
 .approval-level--caution {
-  color: var(--color-warning);
+  color: var(--warning);
   background: oklch(95% 0.06 85);
 }
 .approval-level--danger {
-  color: var(--color-danger);
+  color: var(--danger);
   background: oklch(95% 0.06 25);
 }
 
@@ -144,8 +144,8 @@ const formattedInput = computed(() => {
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.5;
-  color: var(--color-text-muted);
-  border-top: 1px solid var(--color-border);
+  color: var(--muted);
+  border-top: 1px solid var(--border);
   white-space: pre-wrap;
   word-break: break-all;
 }
@@ -154,7 +154,7 @@ const formattedInput = computed(() => {
   display: flex;
   gap: 8px;
   padding: 8px 10px;
-  border-top: 1px solid var(--color-border);
+  border-top: 1px solid var(--border);
 }
 
 .approval-btn {
@@ -171,22 +171,22 @@ const formattedInput = computed(() => {
 .approval-btn--always {
   background: none;
   border: 1px solid transparent;
-  color: var(--color-text-muted);
+  color: var(--muted);
 }
 .approval-btn--always:hover {
-  background: var(--color-bg-base);
-  color: var(--color-text-primary);
+  background: var(--bg);
+  color: var(--fg);
 }
 
 /* Deny: bordered */
 .approval-btn--deny {
   background: none;
-  border: 1px solid var(--color-border);
-  color: var(--color-text-primary);
+  border: 1px solid var(--border);
+  color: var(--fg);
 }
 .approval-btn--deny:hover {
-  border-color: var(--color-danger);
-  color: var(--color-danger);
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 /* Countdown */
@@ -194,15 +194,15 @@ const formattedInput = computed(() => {
   margin-left: auto;
   font-family: var(--font-mono);
   font-size: 12px;
-  color: var(--color-text-muted);
+  color: var(--muted);
   white-space: nowrap;
   line-height: 28px;
 }
 
 /* Approve: filled accent */
 .approval-btn--approve {
-  background: var(--color-accent);
-  border: 1px solid var(--color-accent);
+  background: var(--accent);
+  border: 1px solid var(--accent);
   color: #fff;
 }
 .approval-btn--approve:hover {

@@ -22,9 +22,9 @@ const newText = computed(() => String((parsed.value as Record<string, unknown>).
 <style scoped>
 .edit-renderer { padding: 0; }
 .edit-section { padding: 6px 10px; }
-.edit-label { font-family: var(--font-mono); font-size: 11px; color: var(--color-text-muted); margin-bottom: 4px; }
-.edit-path { font-family: var(--font-mono); font-size: 12px; color: var(--color-accent); }
-.edit-old, .edit-new { white-space: pre-wrap; font-family: var(--font-mono); font-size: 12px; background: var(--color-bg-base); border-radius: var(--radius-md); padding: 8px; margin: 0; max-height: 130px; overflow-y: auto; }
-.edit-old { color: var(--color-danger, #ef4444); }
-.edit-new { color: var(--color-success, #10b981); }
+.edit-label { font-family: var(--font-mono); font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+.edit-path { font-family: var(--font-mono); font-size: 12px; color: var(--accent); }
+.edit-old, .edit-new { white-space: pre-wrap; font-family: var(--font-mono); font-size: 12px; background: var(--bg); border-radius: var(--radius-md); padding: 8px; margin: 0; max-height: 130px; overflow-y: auto; }
+.edit-old { color: var(--danger); }
+.edit-new { color: var(--success); }
 </style>

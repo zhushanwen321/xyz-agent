@@ -21,8 +21,8 @@ const filePath = computed(() => {
 <style scoped>
 .read-renderer { padding: 0; }
 .read-section { padding: 6px 10px; }
-.read-label { font-family: var(--font-mono); font-size: 11px; color: var(--color-text-muted); margin-bottom: 4px; }
-.read-path { font-family: var(--font-mono); font-size: 12px; color: var(--color-accent); }
-.read-content { max-height: 250px; overflow-y: auto; border-radius: var(--radius-md); border: 1px solid var(--color-border); background: var(--color-bg-base); padding: 8px; }
-.read-content pre { white-space: pre-wrap; font-family: var(--font-mono); font-size: 12px; color: var(--color-text-muted); margin: 0; }
+.read-label { font-family: var(--font-mono); font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+.read-path { font-family: var(--font-mono); font-size: 12px; color: var(--accent); }
+.read-content { max-height: 250px; overflow-y: auto; border-radius: var(--radius-md); border: 1px solid var(--border); background: var(--bg); padding: 8px; }
+.read-content pre { white-space: pre-wrap; font-family: var(--font-mono); font-size: 12px; color: var(--muted); margin: 0; }
 </style>

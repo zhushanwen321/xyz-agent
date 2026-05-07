@@ -35,8 +35,8 @@ const listClasses = computed(() =>
 const triggerClasses = computed(() =>
   cn(
     'inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium transition-all',
-    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]',
-    'focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]',
+    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
+    'focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--surface)]',
   ),
 )
 
@@ -52,7 +52,7 @@ const contentClasses = computed(() =>
   >
     <TabsList
       :class="listClasses"
-      :style="{ background: 'var(--color-bg-base)' }"
+      :style="{ background: 'var(--bg)' }"
       role="tablist"
     >
       <TabsTrigger
@@ -61,7 +61,7 @@ const contentClasses = computed(() =>
         :value="item.value"
         :class="triggerClasses"
         :style="{
-          color: 'var(--color-text-muted)',
+          color: 'var(--muted)',
         }"
         role="tab"
         :id="`tab-${item.value}`"

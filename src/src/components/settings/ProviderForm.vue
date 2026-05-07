@@ -145,7 +145,7 @@ function handleSave() {
 .provider-form__title {
   font-size: var(--font-lg, 1.125rem);
   font-weight: 600;
-  color: var(--color-text-primary);
+  color: var(--fg);
   margin: 0;
 }
 
@@ -157,7 +157,7 @@ function handleSave() {
 
 .provider-form__hint {
   font-size: var(--font-xs, 0.75rem);
-  color: var(--color-text-muted);
+  color: var(--muted);
   margin-top: calc(-1 * var(--radius-xs, 4px));
 }
 
@@ -170,12 +170,12 @@ function handleSave() {
 .provider-form__label {
   font-size: var(--font-sm, 0.875rem);
   font-weight: 500;
-  color: var(--color-text-primary);
+  color: var(--fg);
 }
 
 .provider-form__range {
   width: 100%;
-  accent-color: var(--color-accent);
+  accent-color: var(--accent);
 }
 
 .provider-form__actions {
@@ -184,6 +184,6 @@ function handleSave() {
   gap: var(--radius-sm, 4px);
   justify-content: flex-end;
   padding-top: var(--radius-md, 8px);
-  border-top: 1px solid var(--color-border);
+  border-top: 1px solid var(--border);
 }
 </style>

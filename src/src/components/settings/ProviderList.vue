@@ -106,7 +106,7 @@ function statusLabel(status: ProviderInfo['status']) {
 .provider-list__title {
   font-size: var(--font-lg, 1.125rem);
   font-weight: 600;
-  color: var(--color-text-primary);
+  color: var(--fg);
   margin: 0;
 }
 
@@ -115,7 +115,7 @@ function statusLabel(status: ProviderInfo['status']) {
   align-items: center;
   justify-content: center;
   min-height: 120px;
-  color: var(--color-text-muted);
+  color: var(--muted);
 }
 
 .provider-list__loading,
@@ -138,8 +138,8 @@ function statusLabel(status: ProviderInfo['status']) {
   justify-content: space-between;
   padding: var(--radius-md, 8px) var(--radius-lg, 12px);
   border-radius: var(--radius-md, 8px);
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
+  background: var(--surface);
+  border: 1px solid var(--border);
 }
 
 .provider-list__info {
@@ -153,13 +153,13 @@ function statusLabel(status: ProviderInfo['status']) {
 .provider-list__name {
   font-size: var(--font-sm, 0.875rem);
   font-weight: 500;
-  color: var(--color-text-primary);
+  color: var(--fg);
   white-space: nowrap;
 }
 
 .provider-list__models {
   font-size: var(--font-xs, 0.75rem);
-  color: var(--color-text-muted);
+  color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

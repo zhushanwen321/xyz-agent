@@ -15,10 +15,10 @@ const props = withDefaults(defineProps<Props>(), {
 })
 
 const variantColorMap: Record<BadgeVariant, string> = {
-  success: 'var(--color-success)',
-  warning: 'var(--color-warning)',
-  danger: 'var(--color-danger)',
-  idle: 'var(--color-text-muted)',
+  success: 'var(--success)',
+  warning: 'var(--warning)',
+  danger: 'var(--danger)',
+  idle: 'var(--muted)',
 }
 
 const badgeClasses = computed(() =>

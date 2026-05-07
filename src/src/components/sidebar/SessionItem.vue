@@ -21,7 +21,7 @@ const dropdownOpen = ref(false)
 const dropdownPos = ref({ x: 0, y: 0 })
 
 const statusColor = computed(() =>
-  props.session.status === 'active' ? 'var(--color-success)' : 'var(--color-border)'
+  props.session.status === 'active' ? 'var(--accent)' : 'var(--border)'
 )
 
 const relativeTime = computed(() => {
@@ -72,7 +72,7 @@ const HOURS_PER_DAY = 24
     @keydown="onKeydown"
     @contextmenu="onContextMenu"
   >
-    <span class="status-dot" :style="{ background: statusColor }" />
+    <span :class="['status-dot', { 'status-dot--running': session.status === 'active' }]" :style="{ background: statusColor }" />
     <div class="session-info">
       <span class="session-label">{{ session.label }}</span>
       <span class="session-time">{{ relativeTime }}</span>
@@ -91,24 +91,26 @@ const HOURS_PER_DAY = 24
 <style scoped>
 .session-item {
   display: flex; align-items: center; gap: 8px;
-  padding: 5px 7px; cursor: pointer;
+  padding: 7px 14px 7px 24px; cursor: pointer;
   border-left: 3px solid transparent;
   transition: background 0.15s;
 }
-.session-item:hover { background: var(--color-accent-light); }
+.session-item:hover { background: var(--accent-light); }
 .session-item.active {
-  background: var(--color-bg-inset);
-  border-left-color: var(--color-accent);
+  background: var(--accent-light);
+  border-left-color: var(--accent);
 }
 .session-item:focus-visible {
-  outline: 2px solid var(--color-accent);
+  outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
 .status-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.status-dot--running { animation: dot-pulse 2s infinite; }
 .session-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .session-label {
-  font-size: 13px; color: var(--color-text-primary);
+  font-size: 13px; color: var(--fg);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.session-time { font-size: 11px; color: var(--color-text-muted); }
+.session-time { font-size: 11px; color: var(--muted); }
+@keyframes dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 </style>

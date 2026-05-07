@@ -2,6 +2,19 @@
   <header class="app-header">
     <div class="header-logo">xyz<span class="header-logo-accent">-agent</span></div>
     <div class="header-spacer"></div>
+    <div class="notif-group">
+      <button class="notif-btn notif-btn--done" :title="t('header.done')">
+        <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><polyline points="2 6 5 9 10 3"/></svg>
+        Done
+        <span class="notif-dot notif-dot--done">3</span>
+      </button>
+      <button class="notif-btn notif-btn--alert" :title="t('header.alert')">
+        <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" style="width:14px;height:14px"><circle cx="6" cy="6" r="4.5"/><path d="M6 4v2.5M6 8v.5"/></svg>
+        Alert
+        <span class="notif-dot notif-dot--alert">1</span>
+      </button>
+    </div>
+    <span class="h-divider"></span>
     <div class="header-actions">
       <button
         :class="['view-btn', { active: !settingsStore.focusMode }]"
@@ -43,22 +56,33 @@ async function openSettings() {
 
 <style scoped>
 .app-header {
-  display: flex; align-items: center; height: var(--header-height);
-  padding: 0 16px; background: var(--color-surface);
-  border-bottom: 1px solid var(--color-border);
-  gap: 8px; flex-shrink: 0;
+  display: flex; align-items: center; height: var(--header-h);
+  padding: 0 16px; background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  gap: 8px; flex-shrink: 0; z-index: 20;
 }
 .header-logo { font-weight: 700; font-size: 16px; font-family: var(--font-display); }
-.header-logo-accent { color: var(--color-accent); }
+.header-logo-accent { color: var(--accent); }
 .header-spacer { flex: 1; }
 .header-actions { display: flex; gap: 4px; align-items: center; }
 .view-btn, .header-btn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 34px; height: 34px; border-radius: var(--radius-sm);
   border: 1px solid transparent; background: transparent;
-  color: var(--color-text-muted); cursor: pointer; transition: all 0.2s;
+  color: var(--muted); cursor: pointer; transition: all 0.2s;
 }
-.view-btn:hover, .header-btn:hover { background: var(--color-accent-light); color: var(--color-accent); }
-.view-btn.active { background: var(--color-accent-light); color: var(--color-accent); border-color: var(--color-accent); }
-.header-divider { width: 1px; height: 24px; background: var(--color-border); margin: 0 4px; }
+.view-btn:hover, .header-btn:hover { background: var(--accent-light); color: var(--accent); }
+.view-btn.active { background: var(--accent-light); color: var(--accent); border-color: var(--accent); }
+.header-divider { width: 1px; height: 24px; background: var(--border); margin: 0 4px; }
+.h-divider { width: 1px; height: 24px; background: var(--border); margin: 0 4px; }
+.notif-group { display: flex; gap: 6px; align-items: center; }
+.notif-btn { position: relative; display: inline-flex; align-items: center; gap: 5px; padding: 5px 12px; border: 1px solid var(--border); border-radius: 100px; background: transparent; color: var(--muted); font-size: 12px; font-family: var(--font-body); cursor: pointer; transition: all 0.2s; white-space: nowrap; }
+.notif-btn:hover { background: var(--bg); color: var(--fg); border-color: var(--muted); }
+.notif-btn--done:hover { background: var(--success-light); color: var(--success); border-color: var(--success); }
+.notif-btn--alert:hover { background: var(--danger-light); color: var(--danger); border-color: var(--danger); }
+.notif-dot { position: absolute; top: -4px; right: -4px; width: 18px; height: 18px; border-radius: 50%; font-size: 10px; font-weight: 700; color: white; display: flex; align-items: center; justify-content: center; border: 2px solid var(--surface); }
+.notif-dot--done { background: var(--success); }
+.notif-dot--alert { background: var(--danger); animation: pulse-dot 2s infinite; }
+@keyframes pulse-dot { 0%,100% { transform: scale(1); } 50% { transform: scale(1.15); } }
+.notif-btn svg { width: 14px; height: 14px; }
 </style>

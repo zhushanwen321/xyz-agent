@@ -14,6 +14,6 @@ defineProps<{ message: Message | null; isStreaming: boolean }>()
 
 <style scoped>
 .streaming-msg { display: flex; align-items: flex-start; gap: 4px; padding: 0 24px 12px; }
-.streaming-cursor { animation: blink 1s step-end infinite; color: var(--color-accent); font-size: 14px; }
+.streaming-cursor { animation: blink 1s step-end infinite; color: var(--accent); font-size: 14px; }
 @keyframes blink { 50% { opacity: 0; } }
 </style>

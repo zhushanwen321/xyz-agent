@@ -76,8 +76,8 @@ const itemClasses = computed(() =>
         :align="controlled ? 'start' : 'start'"
         :style="[
           {
-            background: 'var(--color-surface)',
-            border: '1px solid var(--color-border)',
+            background: 'var(--surface)',
+            border: '1px solid var(--border)',
           },
           menuStyle,
         ]"
@@ -87,7 +87,7 @@ const itemClasses = computed(() =>
           v-for="item in items"
           :key="item.value"
           :class="itemClasses"
-          style="color: var(--color-text-primary)"
+          style="color: var(--fg)"
           role="menuitem"
           @select="emit('select', item.value)"
         >

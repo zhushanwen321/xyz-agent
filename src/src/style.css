@@ -2,70 +2,72 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================================
+   xyz-agent Design System — Warm & Soft
+   AI Agent Workbench · Desktop GUI Prototype
+   ============================================================ */
+
 :root {
-  /* Light theme (keep generic oklch for now) */
-  --color-bg-base: oklch(99% 0.005 270);
-  --color-surface: oklch(98% 0.003 270);
-  --color-bg-elevated: oklch(96% 0.003 270);
-  --color-bg-inset: oklch(94% 0.003 270);
-  --color-bg-ai: oklch(95% 0.006 250);
-  --color-bg-user: oklch(95% 0.006 60);
-  --color-text-primary: oklch(15% 0.01 270);
-  --color-text-secondary: oklch(40% 0.01 270);
-  --color-text-tertiary: oklch(55% 0.01 270);
-  --color-text-muted: oklch(55% 0.01 270);
-  --color-border: oklch(88% 0.005 270);
-  --color-border-hover: oklch(78% 0.005 270);
-  --color-accent: oklch(55% 0.17 145);
-  --color-accent-light: oklch(92% 0.06 145);
-  --color-success: oklch(55% 0.17 145);
-  --color-warning: oklch(70% 0.16 85);
-  --color-danger: oklch(55% 0.22 25);
-  --font-display: 'Inter', 'SF Pro Text', system-ui, sans-serif;
-  --font-body: 'Inter', 'SF Pro Text', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
-  --radius-lg: 8px;
-  --radius-md: 4px;
-  --radius-sm: 3px;
-  --sidebar-width: 180px;
-  --header-height: 40px;
-  --statusbar-height: 28px;
-  --color-bar-width: 3px;
-  --font-size-body: 13px;
-  --font-size-label: 10px;
-  --font-size-small: 11px;
-  --font-size-code: 12px;
+  --bg: oklch(97% 0.018 70);
+  --surface: oklch(99% 0.008 70);
+  --fg: oklch(22% 0.02 50);
+  --muted: oklch(50% 0.018 50);
+  --border: oklch(90% 0.014 70);
+  --accent: oklch(64% 0.13 28);
+  --accent-light: oklch(92% 0.04 28);
+  --success: oklch(70% 0.18 145);
+  --success-light: oklch(95% 0.06 145);
+  --warning: oklch(78% 0.15 85);
+  --warning-light: oklch(95% 0.06 85);
+  --danger: oklch(62% 0.2 25);
+  --danger-light: oklch(93% 0.06 25);
+  --font-display: 'Tiempos Headline', 'Newsreader', 'Iowan Old Style', Georgia, serif;
+  --font-body: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+  --radius: 12px;
+  --radius-sm: 8px;
+  --radius-xs: 4px;
+  /* Aliases for backwards compat */
+  --radius-lg: 12px;
+  --radius-md: 8px;
+  --sidebar-w: 240px;
+  --drawer-w: 380px;
+  --header-h: 48px;
+  --statusbar-h: 32px;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 [data-theme="dark"] {
-  /* Dark theme — exact match to design mockup HTML files */
-  --color-bg-base: #0a0a0b;
-  --color-surface: #111113;
-  --color-bg-elevated: #18181b;
-  --color-bg-inset: #1f1f23;
-  --color-bg-ai: #131517;
-  --color-bg-user: #1c1a14;
-  --color-text-primary: #fafafa;
-  --color-text-secondary: #a1a1aa;
-  --color-text-tertiary: #71717a;
-  --color-text-muted: #71717a;
-  --color-border: #27272a;
-  --color-border-hover: #3f3f46;
-  --color-accent: #22c55e;
-  --color-accent-light: #22c55e22;
-  --color-success: #22c55e;
-  --color-warning: #eab308;
-  --color-danger: #ef4444;
+  --bg: oklch(20% 0.015 50);
+  --surface: oklch(25% 0.015 50);
+  --fg: oklch(92% 0.008 70);
+  --muted: oklch(65% 0.015 50);
+  --border: oklch(35% 0.015 50);
+  --accent: oklch(68% 0.13 28);
+  --accent-light: oklch(30% 0.06 28);
+  --success: oklch(70% 0.18 145);
+  --success-light: oklch(28% 0.06 145);
+  --warning: oklch(78% 0.15 85);
+  --warning-light: oklch(30% 0.06 85);
+  --danger: oklch(62% 0.2 25);
+  --danger-light: oklch(28% 0.06 25);
 }
 
-/* Base styles */
+/* ── Base styles ── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { height: 100%; overflow: hidden; }
+html { -webkit-font-smoothing: antialiased; }
 body {
   font-family: var(--font-body);
-  font-size: var(--font-size-body);
-  line-height: 1.5;
-  color: var(--color-text-primary);
-  background: var(--color-bg-base);
-  -webkit-font-smoothing: antialiased;
+  font-size: 14px;
+  line-height: 1.6;
+  background: var(--bg);
+  color: var(--fg);
+  transition: background 0.25s var(--ease), color 0.25s var(--ease);
 }
+a { color: var(--accent); text-decoration: none; }
+code { font-family: var(--font-mono); font-size: 0.9em; }
+::selection { background: var(--accent); color: white; }
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }

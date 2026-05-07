@@ -4,7 +4,7 @@ import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '../utils'
 
 const buttonVariants = cva(
-  'inline-flex items-center justify-center rounded-md font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] disabled:pointer-events-none disabled:opacity-50',
+  'inline-flex items-center justify-center rounded-md font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:pointer-events-none disabled:opacity-50',
   {
     variants: {
       variant: {
@@ -48,11 +48,11 @@ const props = withDefaults(defineProps<Props>(), {
 const variantStyles = computed(() => {
   switch (props.variant) {
     case 'primary':
-      return 'background: var(--color-accent)'
+      return 'background: var(--accent)'
     case 'ghost':
-      return 'background: transparent; border-color: var(--color-border); color: var(--color-text-primary)'
+      return 'background: transparent; border-color: var(--border); color: var(--fg)'
     case 'danger':
-      return 'background: var(--color-danger)'
+      return 'background: var(--danger)'
     default:
       return ''
   }

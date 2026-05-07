@@ -90,10 +90,10 @@ function dirname(cwd: string): string {
   display: flex; align-items: center; gap: 6px;
   width: 100%; padding: 6px 14px;
   background: none; border: none; cursor: pointer;
-  color: var(--color-text-muted); font-size: 11px; font-weight: 600;
+  color: var(--muted); font-size: 11px; font-weight: 600;
   text-align: left;
 }
-.group-header:hover { color: var(--color-text-primary); }
+.group-header:hover { color: var(--fg); }
 .chevron {
   width: 12px; height: 12px; flex-shrink: 0;
   transition: transform 0.15s;
@@ -106,12 +106,12 @@ function dirname(cwd: string): string {
 }
 .group-count {
   font-size: 10px; font-weight: 500;
-  background: var(--color-border); color: var(--color-text-muted);
+  background: var(--border); color: var(--muted);
   border-radius: var(--radius-sm); padding: 1px 5px;
 }
 .group-sessions { /* no extra styles needed */ }
 .empty-state {
   padding: 24px 14px; text-align: center;
-  color: var(--color-text-muted); font-size: 12px;
+  color: var(--muted); font-size: 12px;
 }
 </style>

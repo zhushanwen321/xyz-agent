@@ -96,7 +96,7 @@ onUnmounted(() => {
   <div class="settings-view">
     <!-- Header -->
     <div class="settings-view__header">
-      <h2 class="settings-view__title">{{ t('settings.title') }}</h2>
+      <h2 class="settings-view__title">设置</h2>
       <button
         class="settings-view__close"
         :aria-label="t('common.close')"
@@ -118,7 +118,10 @@ onUnmounted(() => {
           :aria-selected="activeTab === tab.value"
           @click="activeTab = tab.value"
         >
-          {{ tab.label }}
+          <svg v-if="tab.value === 'providers'" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:14px;height:14px"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M5 6h6M5 8h4M5 10h5"/></svg>
+            <svg v-else-if="tab.value === 'skills'" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:14px;height:14px"><path d="M8 2l2 4h4l-3 3 1 4-4-2-4 2 1-4-3-3h4z"/></svg>
+            <svg v-else-if="tab.value === 'agents'" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:14px;height:14px"><circle cx="8" cy="5" r="3"/><path d="M2 14c0-3.3 2.7-6 6-6s6 2.7 6 6"/></svg>
+            {{ tab.label }}
         </button>
       </nav>
 
@@ -164,7 +167,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: var(--color-bg-base);
+  background: var(--bg);
 }
 
 .settings-view__header {
@@ -172,14 +175,15 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   padding: var(--radius-lg, 12px) var(--radius-xl, 16px);
-  border-bottom: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 
 .settings-view__title {
-  font-size: var(--font-lg, 1.125rem);
+  font-family: var(--font-display);
+  font-size: 15px;
   font-weight: 600;
-  color: var(--color-text-primary);
+  color: var(--fg);
   margin: 0;
 }
 
@@ -192,15 +196,15 @@ onUnmounted(() => {
   border: none;
   border-radius: var(--radius-md, 8px);
   background: transparent;
-  color: var(--color-text-muted);
+  color: var(--muted);
   font-size: var(--font-md, 1rem);
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
 }
 
 .settings-view__close:hover {
-  background: var(--color-surface);
-  color: var(--color-text-primary);
+  background: var(--surface);
+  color: var(--fg);
 }
 
 .settings-view__body {
@@ -215,40 +219,43 @@ onUnmounted(() => {
   flex-direction: column;
   gap: var(--radius-xs, 4px);
   padding: var(--radius-lg, 12px);
-  border-right: 1px solid var(--color-border);
-  min-width: 140px;
+  border-right: 1px solid var(--border);
+  width: 200px;
   flex-shrink: 0;
 }
 
 .settings-view__tab {
   display: flex;
   align-items: center;
+  gap: 8px;
   padding: var(--radius-sm, 4px) var(--radius-md, 8px);
   border: none;
+  border-left: 3px solid transparent;
   border-radius: var(--radius-sm, 4px);
   background: transparent;
-  color: var(--color-text-muted);
+  color: var(--muted);
   font-size: var(--font-sm, 0.875rem);
   cursor: pointer;
   text-align: left;
-  transition: background 0.15s, color 0.15s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 
 .settings-view__tab:hover {
-  background: var(--color-surface);
-  color: var(--color-text-primary);
+  background: var(--accent-light);
+  color: var(--fg);
 }
 
 .settings-view__tab--active {
-  background: var(--color-surface);
-  color: var(--color-text-primary);
-  font-weight: 500;
+  border-left-color: var(--accent);
+  background: var(--accent-light);
+  color: var(--accent);
+  font-weight: 600;
 }
 
 /* Content area */
 .settings-view__content {
   flex: 1;
-  padding: var(--radius-xl, 16px);
+  padding: 24px 32px;
   overflow-y: auto;
 }
 
@@ -257,7 +264,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: var(--color-text-muted);
+  color: var(--muted);
   font-size: var(--font-sm, 0.875rem);
 }
 </style>

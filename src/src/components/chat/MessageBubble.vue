@@ -1,8 +1,8 @@
 <template>
   <div :class="['msg', `msg--${message.role}`]">
     <div :class="['msg__role', `msg__role--${message.role}`]">
-      <template v-if="message.role === 'assistant'"><span class="msg__lambda">λ</span> assistant</template>
-      <template v-else>User</template>
+      <template v-if="message.role === 'assistant'">助手</template>
+      <template v-else>用户</template>
     </div>
 
     <!-- Thinking blocks -->
@@ -39,13 +39,12 @@ const renderedContent = computed(() => renderMarkdown(props.message.content))
 </script>
 
 <style scoped>
-.msg { padding: 10px 14px; border-radius: var(--radius-lg); line-height: 1.6; font-size: var(--font-size-body); }
-.msg--user { align-self: flex-end; background: var(--color-bg-elevated); border-left: var(--color-bar-width, 3px) solid var(--color-text-tertiary); max-width: 75%; border-radius: 0 8px 8px 0; }
-.msg--assistant { align-self: flex-start; background: var(--color-bg-ai); border-left: var(--color-bar-width, 3px) solid var(--color-accent); max-width: 85%; border-radius: 0 8px 8px 0; }
-.msg__role { font-size: var(--font-size-label); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-text-muted); margin-bottom: 3px; font-family: var(--font-mono); }
+.msg { max-width: 80%; padding: 10px 14px; border-radius: var(--radius); line-height: 1.6; font-size: 14px; }
+.msg--user { align-self: flex-end; background: var(--accent-light); border-bottom-right-radius: var(--radius-xs); }
+.msg--assistant { align-self: flex-start; background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: var(--radius-xs); }
+.msg__role { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 3px; }
 .msg__role--user { text-align: right; }
-.msg__lambda { opacity: 0.6; }
 .msg__body p { margin-bottom: 6px; }
 .msg__body p:last-child { margin-bottom: 0; }
-.msg__body code { background: var(--color-bg-base); padding: 1px 4px; border-radius: var(--radius-sm); font-size: 0.88em; font-family: var(--font-mono); }
+.msg__body code { background: var(--bg); padding: 1px 4px; border-radius: var(--radius-xs); font-size: 0.88em; font-family: var(--font-mono); }
 </style>

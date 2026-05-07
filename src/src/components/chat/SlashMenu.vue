@@ -101,8 +101,8 @@ onBeforeUnmount(() => {
 .slash-menu {
   width: 360px;
   max-height: 260px;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
   z-index: 200;
@@ -123,7 +123,7 @@ onBeforeUnmount(() => {
   padding: 8px 14px;
   border: none;
   background: none;
-  color: var(--color-text-primary);
+  color: var(--fg);
   font-family: var(--font-body);
   text-align: left;
   cursor: pointer;
@@ -131,7 +131,7 @@ onBeforeUnmount(() => {
 
 .slash-menu__item:hover,
 .slash-menu__item--active {
-  background: var(--color-accent-light);
+  background: var(--accent-light);
 }
 
 .slash-menu__name {
@@ -139,12 +139,12 @@ onBeforeUnmount(() => {
   font-weight: 600;
   font-family: var(--font-mono);
   white-space: nowrap;
-  color: var(--color-accent);
+  color: var(--accent);
 }
 
 .slash-menu__desc {
   font-size: 12px;
-  color: var(--color-text-muted);
+  color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

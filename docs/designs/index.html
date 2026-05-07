@@ -1,0 +1,927 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>xyz-agent · AI 智能工作台 v4</title>
+<style>
+:root{--bg:oklch(97% 0.018 70);--surface:oklch(99% 0.008 70);--fg:oklch(22% 0.02 50);--muted:oklch(50% 0.018 50);--border:oklch(90% 0.014 70);--accent:oklch(64% 0.13 28);--accent-light:oklch(92% 0.04 28);--success:oklch(70% 0.18 145);--success-light:oklch(95% 0.06 145);--warning:oklch(78% 0.15 85);--warning-light:oklch(95% 0.06 85);--danger:oklch(62% 0.2 25);--danger-light:oklch(93% 0.06 25);--font-display:'Tiempos Headline','Newsreader','Iowan Old Style',Georgia,serif;--font-body:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;--font-mono:'JetBrains Mono','IBM Plex Mono',ui-monospace,Menlo,monospace;--radius:12px;--radius-sm:8px;--radius-xs:4px;--sidebar-w:240px;--drawer-w:380px;--header-h:48px;--statusbar-h:32px;--ease:cubic-bezier(0.4,0,0.2,1)}
+[data-theme="dark"]{--bg:oklch(20% 0.015 50);--surface:oklch(25% 0.015 50);--fg:oklch(92% 0.008 70);--muted:oklch(65% 0.015 50);--border:oklch(35% 0.015 50);--accent:oklch(68% 0.13 28);--accent-light:oklch(30% 0.06 28);--success:oklch(70% 0.18 145);--success-light:oklch(28% 0.06 145);--warning:oklch(78% 0.15 85);--warning-light:oklch(30% 0.06 85);--danger:oklch(62% 0.2 25);--danger-light:oklch(28% 0.06 25)}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-font-smoothing:antialiased}
+body{font-family:var(--font-body);font-size:14px;line-height:1.6;background:var(--bg);color:var(--fg);transition:background 0.25s var(--ease),color 0.25s var(--ease)}
+a{color:var(--accent);text-decoration:none}
+code{font-family:var(--font-mono);font-size:0.9em}
+::selection{background:var(--accent);color:white}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--muted)}
+
+/* ── App shell ── */
+.app{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+.header{display:flex;align-items:center;height:var(--header-h);padding:0 16px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;gap:8px;z-index:20}
+.header__logo{font-family:var(--font-display);font-size:16px;font-weight:700;letter-spacing:-0.01em}
+.header__logo span{color:var(--accent)}
+.header__spacer{flex:1}
+
+/* ── Header notification buttons ── */
+.notif-group{display:flex;gap:6px;align-items:center}
+.notif-btn{position:relative;display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border:1px solid var(--border);border-radius:100px;background:transparent;color:var(--muted);font-size:12px;font-family:var(--font-body);cursor:pointer;transition:all 0.2s var(--ease);white-space:nowrap}
+.notif-btn:hover{background:var(--bg);color:var(--fg);border-color:var(--muted)}
+.notif-btn--done:hover{background:var(--success-light);color:var(--success);border-color:var(--success)}
+.notif-btn--alert:hover{background:var(--danger-light);color:var(--danger);border-color:var(--danger)}
+.notif-dot{position:absolute;top:-4px;right:-4px;width:18px;height:18px;border-radius:50%;font-size:10px;font-weight:700;color:white;display:flex;align-items:center;justify-content:center;border:2px solid var(--surface)}
+.notif-dot--done{background:var(--success)}
+.notif-dot--alert{background:var(--danger);animation:pulse-dot 2s infinite}
+@keyframes pulse-dot{0%,100%{transform:scale(1)}50%{transform:scale(1.15)}}
+.notif-btn svg{width:14px;height:14px}
+
+/* ── Header buttons ── */
+.h-btn{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:var(--radius-sm);border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;transition:all 0.2s var(--ease)}
+.h-btn:hover{background:var(--accent-light);color:var(--accent);border-color:var(--accent)}
+.h-btn.active{background:var(--accent-light);color:var(--accent);border-color:var(--accent)}
+.h-btn svg{width:16px;height:16px}
+.h-divider{width:1px;height:24px;background:var(--border);margin:0 4px}
+
+/* ── App body ── */
+.app-body{display:flex;flex:1;overflow:hidden;position:relative}
+
+/* ── Sidebar ── */
+.sidebar{width:var(--sidebar-w);display:flex;flex-direction:column;background:var(--surface);border-right:1px solid var(--border);overflow:hidden;flex-shrink:0;transition:width 0.25s var(--ease)}
+.sidebar.collapsed{width:0;border-right:none}
+.sidebar__hd{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border)}
+.sidebar__hd-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted)}
+.sidebar__hd-btn{width:22px;height:22px;border-radius:var(--radius-xs);border:1px solid var(--border);background:transparent;color:var(--muted);font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.2s var(--ease)}
+.sidebar__hd-btn:hover{background:var(--accent-light);color:var(--accent);border-color:var(--accent)}
+.sidebar__body{flex:1;overflow-y:auto;padding:6px 0}
+.s-group__hd{display:flex;align-items:center;gap:5px;padding:6px 14px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--muted);cursor:pointer;user-select:none}
+.s-group__hd:hover{color:var(--fg)}
+.s-group__toggle{font-size:8px;transition:transform 0.2s var(--ease);display:inline-block;width:10px;text-align:center}
+.s-group.collapsed .s-group__toggle{transform:rotate(-90deg)}
+.s-group.collapsed .s-group__items{display:none}
+.s-item{display:flex;align-items:center;gap:8px;padding:7px 14px 7px 24px;cursor:pointer;border-left:3px solid transparent;transition:background 0.15s var(--ease),border-color 0.15s var(--ease);user-select:none}
+.s-item:hover{background:var(--accent-light)}
+.s-item.active{background:var(--accent-light);border-left-color:var(--accent)}
+.s-item__title{flex:1;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.s-item__meta{font-size:11px;color:var(--muted);white-space:nowrap;display:flex;align-items:center;gap:4px}
+
+/* ── Status dots ── */
+.dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;background:var(--border)}
+.dot--run{background:var(--success);animation:dot-pulse 2s infinite}
+.dot--pause{background:var(--warning)}
+.dot--idle{background:var(--border)}
+@keyframes dot-pulse{0%,100%{opacity:1}50%{opacity:0.35}}
+
+/* ── Main area ── */
+.main-area{flex:1;display:flex;min-width:0;overflow:hidden;position:relative}
+
+/* ── Chat panel ── */
+.chat-panel{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.chat-panel+.chat-panel{border-left:1px solid var(--border)}
+
+/* ── Panel top bar: anchor + inline notifications ── */
+.panel-bar{display:flex;align-items:center;gap:8px;padding:0 16px;height:36px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;font-size:12px}
+.anchor{display:flex;align-items:center;gap:6px;padding:3px 10px;border-radius:var(--radius-sm);cursor:pointer;color:var(--fg);font-weight:600;font-size:12px;transition:background 0.15s var(--ease);position:relative;user-select:none}
+.anchor:hover{background:var(--accent-light)}
+.anchor__dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.anchor__chevron{font-size:9px;color:var(--muted);margin-left:2px;transition:transform 0.15s var(--ease)}
+.anchor.open .anchor__chevron{transform:rotate(180deg)}
+
+/* ── Anchor dropdown ── */
+.anchor-dropdown{position:absolute;top:100%;left:0;margin-top:4px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:0 4px 16px rgba(0,0,0,0.08);min-width:220px;z-index:30;display:none;overflow:hidden}
+.anchor.open .anchor-dropdown{display:block}
+.anchor-opt{display:flex;align-items:center;gap:8px;padding:7px 12px;font-size:12px;cursor:pointer;transition:background 0.1s var(--ease);color:var(--fg);font-weight:400}
+.anchor-opt:hover{background:var(--accent-light)}
+.anchor-opt.current{font-weight:600;color:var(--accent)}
+.anchor-opt__dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+
+/* ── Panel inline notifications ── */
+.panel-notifs{display:flex;align-items:center;gap:5px;margin-left:auto}
+.pn-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:100px;cursor:pointer;font-size:11px;font-weight:600;transition:all 0.15s var(--ease);border:1px solid transparent}
+.pn-chip--done{background:var(--success-light);color:var(--success)}
+.pn-chip--done:hover{border-color:var(--success)}
+.pn-chip--alert{background:var(--danger-light);color:var(--danger)}
+.pn-chip--alert:hover{border-color:var(--danger)}
+.pn-chip__num{display:inline-flex;align-items:center;justify-content:center;min-width:14px;height:14px;border-radius:7px;font-size:9px;font-weight:700;color:white}
+.pn-chip--done .pn-chip__num{background:var(--success)}
+.pn-chip--alert .pn-chip__num{background:var(--danger);animation:pulse-dot 2s infinite}
+.pn-close{font-size:11px;color:var(--muted);cursor:pointer;padding:2px 6px;border-radius:var(--radius-xs);border:1px solid var(--border);transition:all 0.15s var(--ease);font-family:var(--font-body)}
+.pn-close:hover{background:var(--accent-light);color:var(--accent);border-color:var(--accent)}
+
+/* ── Chat messages ── */
+.chat-msgs{flex:1;overflow-y:auto;padding:20px 24px;display:flex;flex-direction:column;gap:14px}
+.agent-view{display:none}
+.agent-view.active{display:flex;flex-direction:column;gap:14px}
+.msg{max-width:80%;padding:10px 14px;border-radius:var(--radius);line-height:1.6;font-size:14px}
+.msg--user{align-self:flex-end;background:var(--accent-light);border-bottom-right-radius:var(--radius-xs)}
+.msg--bot{align-self:flex-start;background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:var(--radius-xs)}
+.msg__role{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--muted);margin-bottom:3px}
+.msg__body p{margin-bottom:6px}.msg__body p:last-child{margin-bottom:0}
+.msg__body code{background:var(--bg);padding:1px 4px;border-radius:var(--radius-xs);font-size:0.88em}
+.msg--system{align-self:stretch;max-width:100%;border:1px solid var(--border);border-left:3px solid var(--success);background:var(--surface);border-radius:var(--radius-sm);padding:10px 14px;font-size:13px;display:flex;align-items:flex-start;gap:10px}
+.msg--system--alert{border-left-color:var(--danger)}
+.msg--system__dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:4px}
+.msg--system__dot--done{background:var(--success)}
+.msg--system__dot--alert{background:var(--danger)}
+.msg--system__content{flex:1}
+.msg--system__title{font-weight:600;font-size:13px;margin-bottom:2px}
+.msg--system__desc{color:var(--muted);font-size:12px}
+.msg--system__action{font-size:12px;color:var(--accent);font-weight:600;cursor:pointer;margin-top:4px;display:inline-flex;align-items:center;gap:3px}
+.msg--system__action:hover{text-decoration:underline}
+
+/* ── Tool call ── */
+.tool{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);margin:6px 0;overflow:hidden}
+.tool__hd{display:flex;align-items:center;gap:6px;padding:6px 10px;cursor:pointer;font-size:11px;font-family:var(--font-mono);color:var(--muted);user-select:none;transition:background 0.15s var(--ease)}
+.tool__hd:hover{background:var(--accent-light)}
+.tool__chevron{transition:transform 0.15s var(--ease);font-size:9px}
+.tool.collapsed .tool__chevron{transform:rotate(-90deg)}
+.tool__name{font-weight:600;color:var(--accent)}
+.tool__path{color:var(--muted)}
+.tool__status{margin-left:auto;font-size:10px}
+.tool__status--ok{color:var(--success)}
+.tool__bd{padding:6px 10px 10px;font-size:11px;line-height:1.5;max-height:160px;overflow-y:auto;border-top:1px solid var(--border);font-family:var(--font-mono);color:var(--muted)}
+.tool.collapsed .tool__bd{display:none}
+.progress{height:3px;background:var(--border);border-radius:2px;overflow:hidden;margin:6px 0}
+.progress__fill{height:100%;background:var(--accent);border-radius:2px;transition:width 0.4s ease}
+
+/* ── Chat input ── */
+.chat-input{display:flex;align-items:flex-end;gap:8px;padding:10px 20px 14px;border-top:1px solid var(--border);background:var(--surface)}
+.chat-input__field{flex:1;min-height:38px;max-height:140px;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--fg);font-family:var(--font-body);font-size:14px;line-height:1.45;resize:none;outline:none;transition:border-color 0.15s var(--ease)}
+.chat-input__field::placeholder{color:var(--muted)}
+.chat-input__field:focus{border-color:var(--accent)}
+.chat-input__btn{width:38px;height:38px;display:flex;align-items:center;justify-content:center;border:none;border-radius:var(--radius-sm);cursor:pointer;flex-shrink:0;transition:opacity 0.15s var(--ease),transform 0.1s var(--ease)}
+.chat-input__btn--send{background:var(--accent);color:white}
+.chat-input__btn--send:hover{opacity:0.88}
+.chat-input__btn--ghost{background:transparent;border:1px solid var(--border);color:var(--muted)}
+.chat-input__btn--ghost:hover{background:var(--accent-light);color:var(--accent);border-color:var(--accent)}
+
+/* ── Drawers (right + left) ── */
+.drawer-overlay{position:absolute;top:0;bottom:0;left:0;right:0;background:rgba(0,0,0,0.15);z-index:40;opacity:0;pointer-events:none;transition:opacity 0.25s var(--ease)}
+.drawer-overlay.visible{opacity:1;pointer-events:auto}
+.drawer{position:absolute;top:0;bottom:0;width:var(--drawer-w);background:var(--surface);z-index:50;display:flex;flex-direction:column;transition:transform 0.3s var(--ease)}
+.drawer--right{right:0;border-left:1px solid var(--border);transform:translateX(100%)}
+.drawer--left{left:0;border-right:1px solid var(--border);transform:translateX(-100%)}
+.drawer.open{transform:translateX(0)}
+.drawer__hd{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border)}
+.drawer__title{font-family:var(--font-display);font-size:15px;font-weight:600}
+.drawer__close{width:28px;height:28px;border-radius:var(--radius-xs);border:none;background:transparent;color:var(--muted);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.15s var(--ease)}
+.drawer__close:hover{background:var(--accent-light);color:var(--accent)}
+
+/* ── Drawer tabs ── */
+.drawer-tabs{display:flex;border-bottom:1px solid var(--border)}
+.drawer-tab{flex:1;padding:9px 8px;font-size:11px;font-weight:600;text-align:center;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;transition:color 0.15s var(--ease),border-color 0.15s var(--ease);user-select:none}
+.drawer-tab:hover{color:var(--fg)}
+.drawer-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.drawer-tab__count{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;border-radius:8px;font-size:10px;font-weight:700;margin-left:3px;padding:0 4px}
+.drawer-tab__count--done{background:var(--success-light);color:var(--success)}
+.drawer-tab__count--alert{background:var(--danger-light);color:var(--danger)}
+.drawer__body{flex:1;overflow-y:auto}
+.drawer-pane{display:none;padding:12px}
+.drawer-pane.active{display:block}
+
+/* ── Task tree ── */
+.tree-root{padding:4px 0}
+.tree-node{display:flex;align-items:center;gap:8px;padding:6px 8px;font-size:12px;border-radius:var(--radius-xs);cursor:pointer;transition:background 0.1s var(--ease);user-select:none;position:relative}
+.tree-node:hover{background:var(--accent-light)}
+.tree-node.active{background:var(--accent-light);color:var(--accent);font-weight:600}
+.tree-node__dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.tree-node__label{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tree-node__meta{font-size:10px;color:var(--muted);font-family:var(--font-mono);white-space:nowrap}
+.tree-node__kill{display:none;padding:3px 8px;border:1px solid var(--border);border-radius:var(--radius-xs);background:var(--surface);color:var(--muted);font-size:10px;cursor:pointer;font-family:var(--font-body);transition:all 0.1s var(--ease);white-space:nowrap;flex-shrink:0}
+.tree-node:hover .tree-node__kill{display:inline-flex}
+.tree-node__kill:hover{background:var(--danger-light);color:var(--danger);border-color:var(--danger)}
+.tree-node__toggle{width:14px;height:14px;display:flex;align-items:center;justify-content:center;font-size:8px;color:var(--muted);cursor:pointer;flex-shrink:0;transition:transform 0.15s var(--ease)}
+.tree-node__toggle.collapsed{transform:rotate(-90deg)}
+.tree-children{padding-left:16px;border-left:1px solid var(--border);margin-left:11px}
+.tree-children.collapsed{display:none}
+
+/* ── Alert / done items ── */
+.alert-item{border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:10px;overflow:hidden;border-left:3px solid var(--danger)}
+.alert-item--simple{border-left-color:var(--warning)}
+.alert-item__hd{padding:10px 12px;display:flex;align-items:center;gap:8px}
+.alert-item__dot{width:7px;height:7px;border-radius:50%;background:var(--danger);flex-shrink:0}
+.alert-item--simple .alert-item__dot{background:var(--warning)}
+.alert-item__info{flex:1;min-width:0}
+.alert-item__name{font-size:13px;font-weight:600}
+.alert-item__session{font-size:11px;color:var(--muted)}
+.alert-item__time{font-size:10px;color:var(--muted);white-space:nowrap}
+.alert-item__bd{padding:0 12px 10px}
+.alert-item__question{font-size:13px;line-height:1.5;margin-bottom:8px}
+.inline-reply{display:flex;gap:6px;align-items:flex-end}
+.inline-reply__field{flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--fg);font-family:var(--font-body);font-size:12px;resize:none;outline:none;min-height:32px;max-height:80px;transition:border-color 0.15s var(--ease)}
+.inline-reply__field:focus{border-color:var(--accent)}
+.inline-reply__btn{padding:6px 12px;border:none;border-radius:var(--radius-sm);background:var(--accent);color:white;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;font-family:var(--font-body);transition:opacity 0.15s var(--ease)}
+.inline-reply__btn:hover{opacity:0.88}
+.inline-reply__link{font-size:12px;color:var(--accent);font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:3px}
+.inline-reply__link:hover{text-decoration:underline}
+.done-item{border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:8px;overflow:hidden;border-left:3px solid var(--success)}
+.done-item__hd{padding:10px 12px;display:flex;align-items:center;gap:8px}
+.done-item__dot{width:7px;height:7px;border-radius:50%;background:var(--success);flex-shrink:0}
+.done-item__info{flex:1;min-width:0}
+.done-item__name{font-size:13px;font-weight:600}
+.done-item__summary{font-size:12px;color:var(--muted);margin-top:2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.done-item__meta{font-size:10px;color:var(--muted);white-space:nowrap;text-align:right}
+.done-item__action{padding:0 12px 10px}
+.done-item__link{font-size:12px;color:var(--accent);font-weight:600;cursor:pointer}
+.done-item__link:hover{text-decoration:underline}
+
+/* ── Overview ── */
+.overview{position:fixed;inset:0;z-index:100;background:oklch(15% 0.02 50/0.65);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);display:flex;flex-direction:column;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity 0.25s var(--ease)}
+.overview.visible{opacity:1;pointer-events:auto}
+.overview__title{font-family:var(--font-display);font-size:18px;font-weight:600;color:oklch(95% 0 0);margin-bottom:28px;letter-spacing:-0.01em}
+.overview__grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;max-width:960px;padding:0 32px;width:100%}
+.overview__card{background:var(--surface);border:2px solid transparent;border-radius:var(--radius);overflow:hidden;cursor:pointer;transition:all 0.2s var(--ease);opacity:0;transform:translateY(20px) scale(0.95)}
+.overview.visible .overview__card{opacity:1;transform:translateY(0) scale(1)}
+.overview.visible .overview__card:nth-child(1){transition-delay:0.03s}
+.overview.visible .overview__card:nth-child(2){transition-delay:0.06s}
+.overview.visible .overview__card:nth-child(3){transition-delay:0.09s}
+.overview.visible .overview__card:nth-child(4){transition-delay:0.12s}
+.overview.visible .overview__card:nth-child(5){transition-delay:0.15s}
+.overview.visible .overview__card:nth-child(6){transition-delay:0.18s}
+.overview__card:hover{border-color:var(--accent);transform:translateY(-2px) scale(1.02);box-shadow:0 8px 30px rgba(0,0,0,0.15)}
+.overview__card.highlighted{border-color:var(--accent);box-shadow:0 0 0 3px oklch(64% 0.13 28/0.4)}
+.card__preview{height:110px;background:var(--bg);padding:10px 12px;font-size:10px;line-height:1.6;color:var(--muted);overflow:hidden;border-bottom:1px solid var(--border);font-family:var(--font-mono)}
+.card__preview__line{margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card__preview__line--user{color:var(--accent);font-weight:600}
+.card__preview__line--bot{color:var(--fg);opacity:0.7}
+.card__footer{padding:10px 12px}
+.card__title{font-size:13px;font-weight:600;margin-bottom:2px;display:flex;align-items:center;gap:6px}
+.card__project{font-size:11px;color:var(--muted);margin-bottom:6px}
+.card__meta{display:flex;gap:10px;font-size:10px;color:var(--muted);flex-wrap:wrap}
+.card__meta-item{display:inline-flex;align-items:center;gap:3px}
+.card__badge{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:600;padding:2px 7px;border-radius:8px}
+.card__badge--run{background:var(--success-light);color:var(--success)}
+.card__badge--pause{background:var(--warning-light);color:var(--warning)}
+.card__badge--idle{background:var(--border);color:var(--muted)}
+.card__badge__dot{width:5px;height:5px;border-radius:50%;background:currentColor}
+.overview__hint{margin-top:28px;font-size:12px;color:oklch(70% 0 0/0.7);display:flex;gap:20px}
+.overview__hint kbd{display:inline-flex;align-items:center;padding:2px 6px;background:oklch(30% 0 0/0.5);border-radius:4px;font-family:var(--font-mono);font-size:11px;color:oklch(85% 0 0);margin:0 3px}
+.split-divider{width:4px;background:transparent;cursor:col-resize;flex-shrink:0;position:relative;z-index:5;transition:background 0.15s var(--ease)}
+.split-divider:hover,.split-divider.dragging{background:var(--accent)}
+.split-divider::after{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:2px;height:32px;border-radius:1px;background:var(--border)}
+.split-divider:hover::after,.split-divider.dragging::after{background:var(--accent)}
+
+/* ── Toasts ── */
+.toast-container{position:fixed;top:60px;left:20px;z-index:60;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+.toast{width:340px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;box-shadow:0 4px 20px rgba(0,0,0,0.1);pointer-events:auto;display:flex;gap:10px;transform:translateX(-120%);opacity:0;animation:toast-in 0.35s var(--ease) forwards}
+.toast.removing{animation:toast-out 0.25s var(--ease) forwards}
+@keyframes toast-in{to{transform:translateX(0);opacity:1}}
+@keyframes toast-out{to{transform:translateX(-120%);opacity:0}}
+.toast__dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:4px}
+.toast__body{flex:1;min-width:0}
+.toast__title{font-size:13px;font-weight:600;margin-bottom:2px}
+.toast__desc{font-size:12px;color:var(--muted);line-height:1.4}
+.toast__actions{display:flex;gap:6px;margin-top:8px}
+.toast__btn{padding:4px 10px;border-radius:var(--radius-xs);font-size:11px;font-family:var(--font-body);cursor:pointer;transition:all 0.15s var(--ease);border:1px solid var(--border);background:transparent;color:var(--muted)}
+.toast__btn:hover{border-color:var(--accent);color:var(--accent)}
+.toast__btn--primary{background:var(--accent);color:white;border-color:var(--accent)}
+.toast__btn--primary:hover{opacity:0.88}
+
+/* ── Statusbar ── */
+.statusbar{display:flex;align-items:center;height:var(--statusbar-h);padding:0 16px;background:var(--surface);border-top:1px solid var(--border);font-size:11px;color:var(--muted);flex-shrink:0;gap:14px}
+.statusbar__dot{width:5px;height:5px;border-radius:50%;background:var(--success)}
+
+/* ── Chat input v3 (stacked: textarea + toolbar) ── */
+.chat-input-wrap{position:relative;margin:0 16px 12px;flex-shrink:0}
+.chat-input-container{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 1px 6px rgba(0,0,0,0.04);transition:border-color 0.15s var(--ease),box-shadow 0.15s var(--ease);overflow:visible;position:relative;z-index:10}
+.chat-input-container:focus-within{border-color:var(--accent);box-shadow:0 2px 12px rgba(0,0,0,0.08)}
+.chat-input-textarea{display:block;width:100%;min-height:calc(1.45em * 2 + 16px);max-height:calc(1.45em * 10 + 16px);padding:10px 14px 8px;border:none;background:transparent;color:var(--fg);font-family:var(--font-body);font-size:14px;line-height:1.45;resize:none;outline:none}
+.chat-input-textarea::placeholder{color:var(--muted)}
+.chat-input-toolbar{display:flex;align-items:center;gap:4px;padding:4px 8px 6px}
+.tb-btn{display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 8px;border:none;border-radius:var(--radius-xs);background:transparent;color:var(--muted);font-size:12px;font-family:var(--font-body);cursor:pointer;transition:all 0.15s var(--ease);gap:4px;white-space:nowrap;flex-shrink:0}
+.tb-btn:hover{background:var(--accent-light);color:var(--accent)}
+.tb-btn svg{width:14px;height:14px}
+.tb-btn--plus{width:28px;padding:0}
+.tb-model{position:relative;display:inline-flex;align-items:center;gap:4px;padding:0 8px;height:28px;border-radius:var(--radius-xs);font-size:11px;font-family:var(--font-mono);color:var(--fg);cursor:pointer;transition:all 0.15s var(--ease);white-space:nowrap}
+.tb-model:hover{background:var(--accent-light);color:var(--accent)}
+.tb-model__provider{color:var(--muted);font-weight:400}
+.tb-model__sep{color:var(--border);margin:0 1px}
+/* ── Model selector dropdown ── */
+.model-dropdown{position:absolute;bottom:100%;left:0;margin-bottom:6px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:0 4px 20px rgba(0,0,0,0.12);min-width:260px;z-index:200;display:none;overflow:hidden}
+.model-dropdown.visible{display:block}
+.model-dd-section{padding:6px 0}
+.model-dd-section+ .model-dd-section{border-top:1px solid var(--border)}
+.model-dd-title{padding:6px 12px;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted)}
+.model-dd-item{display:flex;align-items:center;gap:8px;padding:7px 12px;font-size:12px;cursor:pointer;transition:background 0.1s var(--ease)}
+.model-dd-item:hover{background:var(--accent-light)}
+.model-dd-item.selected{color:var(--accent);font-weight:600}
+.model-dd-item__dot{width:5px;height:5px;border-radius:50%;background:var(--border);flex-shrink:0}
+.model-dd-item.selected .model-dd-item__dot{background:var(--accent)}
+.model-dd-item__name{flex:1;font-family:var(--font-mono)}
+.model-dd-item__provider{font-size:10px;color:var(--muted)}
+.tb-context{font-size:11px;color:var(--muted);font-family:var(--font-mono);display:inline-flex;align-items:center;gap:4px;padding:0 6px;height:28px;flex-shrink:0}
+.tb-context__bar{width:40px;height:4px;background:var(--border);border-radius:2px;overflow:hidden}
+.tb-context__fill{height:100%;border-radius:2px;transition:width 0.3s ease}
+.tb-spacer{flex:1}
+.tb-btn--send{background:var(--accent);color:white;width:28px;height:28px;border-radius:var(--radius-xs)}
+.tb-btn--send:hover{opacity:0.88}
+.tb-btn--stop{font-weight:700;font-size:11px;width:28px;height:28px}
+.chat-input-btn{width:32px;height:32px;display:flex;align-items:center;justify-content:center;border:none;border-radius:var(--radius-xs);cursor:pointer;transition:all 0.15s var(--ease);background:transparent;color:var(--muted)}
+.chat-input-btn:hover{background:var(--accent-light);color:var(--accent)}
+
+/* ── Slash command menu ── */
+.slash-menu{position:absolute;bottom:100%;left:0;right:0;margin-bottom:6px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:0 4px 20px rgba(0,0,0,0.1);overflow:hidden;display:none;z-index:20}
+.slash-menu.visible{display:block}
+.slash-item{display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;transition:background 0.1s var(--ease)}
+.slash-item:hover,.slash-item.active{background:var(--accent-light)}
+.slash-item__cmd{font-family:var(--font-mono);font-size:13px;font-weight:600;color:var(--accent);min-width:140px}
+.slash-item__desc{font-size:12px;color:var(--muted)}
+
+/* ── Settings view ── */
+.settings-view{display:none;flex:1;overflow:hidden;background:var(--bg)}
+.settings-view.active{display:flex}
+.settings-sidebar{width:200px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
+.settings-sidebar__hd{padding:14px 16px;font-family:var(--font-display);font-size:15px;font-weight:600;border-bottom:1px solid var(--border)}
+.settings-sidebar__list{flex:1;overflow-y:auto;padding:6px 0}
+.settings-tab{display:flex;align-items:center;gap:8px;padding:9px 16px;font-size:13px;color:var(--muted);cursor:pointer;transition:all 0.15s var(--ease);border-left:3px solid transparent;user-select:none}
+.settings-tab:hover{background:var(--accent-light);color:var(--fg)}
+.settings-tab.active{color:var(--accent);border-left-color:var(--accent);font-weight:600;background:var(--accent-light)}
+.settings-tab svg{width:14px;height:14px}
+.settings-content{flex:1;overflow-y:auto;padding:24px 32px}
+.settings-content__pane{display:none}
+.settings-content__pane.active{display:block}
+.settings-section{margin-bottom:28px}
+.settings-section__title{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--muted);margin-bottom:12px}
+.provider-card{display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:8px;transition:border-color 0.15s var(--ease)}
+.provider-card:hover{border-color:var(--accent)}
+.provider-card__name{font-weight:600;font-size:14px;flex:1}
+.provider-card__status{font-size:11px;padding:2px 8px;border-radius:100px;font-weight:600}
+.provider-card__status--on{background:var(--success-light);color:var(--success)}
+.provider-card__status--off{background:var(--border);color:var(--muted)}
+.provider-card__models{font-size:11px;color:var(--muted);font-family:var(--font-mono)}
+.skill-row{display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:6px}
+.skill-row__name{font-weight:600;font-size:13px;flex:1}
+.skill-row__desc{font-size:12px;color:var(--muted);flex:2}
+.skill-row__toggle{width:36px;height:20px;border-radius:10px;background:var(--border);position:relative;cursor:pointer;transition:background 0.2s var(--ease);flex-shrink:0}
+.skill-row__toggle.on{background:var(--accent)}
+.skill-row__toggle::after{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:white;transition:transform 0.2s var(--ease)}
+.skill-row__toggle.on::after{transform:translateX(16px)}
+.agent-card{display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:8px}
+.agent-card__name{font-weight:600;font-size:14px;flex:1}
+.agent-card__model{font-size:11px;color:var(--muted);font-family:var(--font-mono)}
+.agent-card__status{font-size:11px;padding:2px 8px;border-radius:100px;font-weight:600}
+.info-row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:13px;border-bottom:1px solid var(--border)}
+.info-row:last-child{border-bottom:none}
+.info-row__label{color:var(--muted)}
+.info-row__value{font-family:var(--font-mono);font-size:12px}
+
+/* ── View modes ── */
+.app.focus-mode .sidebar{width:0;border-right:none;overflow:hidden}
+.app.focus-mode .statusbar{display:none}
+.app.focus-mode .chat-msgs{max-width:720px;margin:0 auto;width:100%}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <header class="header">
+    <div class="header__logo">xyz<span>-agent</span></div>
+    <div class="header__spacer"></div>
+    <div class="notif-group" id="globalNotifs">
+      <button class="notif-btn notif-btn--done" onclick="openDrawerFor('global','done')"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 8 6.5 11.5 13 4.5"/></svg>已完成<span class="notif-dot notif-dot--done">3</span></button>
+      <button class="notif-btn notif-btn--alert" onclick="openDrawerFor('global','alert')"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="8" cy="8" r="6.5"/><path d="M8 5v3.5M8 10.5v.5"/></svg>请求回应<span class="notif-dot notif-dot--alert">2</span></button>
+    </div>
+    <span class="h-divider"></span>
+    <button class="h-btn" onclick="openOverview()" title="窗口总览 (Cmd+J)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg></button>
+    <button class="h-btn active" id="vStd" onclick="setView('standard')" title="标准 (Cmd+1)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="4" height="14" rx="1"/><rect x="6" y="1" width="9" height="14" rx="1"/></svg></button>
+    <button class="h-btn" id="vSplit" onclick="setView('split')" title="分屏 (Cmd+2)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="14" rx="1"/><rect x="9" y="1" width="6" height="14" rx="1"/></svg></button>
+    <button class="h-btn" id="vFocus" onclick="setView('focus')" title="专注 (Cmd+3)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="14" height="14" rx="1"/></svg></button>
+    <span class="h-divider"></span>
+    <button class="h-btn" id="vSettings" onclick="setView('settings')" title="设置 (Cmd+,)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="8" cy="8" r="2.5"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.77 1.77M11.18 11.18l1.77 1.77M3.05 12.95l1.77-1.77M11.18 4.82l1.77-1.77"/></svg></button>
+    <button class="h-btn" onclick="toggleTheme()" title="切换主题"><svg id="iconMoon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 9.5A6.5 6.5 0 016.5 2 6.5 6.5 0 108 14.5a6.47 6.47 0 006-5z"/></svg><svg id="iconSun" class="hidden" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41"/></svg></button>
+  </header>
+
+  <div class="app-body">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar__hd"><span class="sidebar__hd-title">会话</span><button class="sidebar__hd-btn" title="新建会话">+</button></div>
+      <div class="sidebar__body">
+        <div class="s-group"><div class="s-group__hd" onclick="this.parentElement.classList.toggle('collapsed')"><span class="s-group__toggle">▾</span> xyz-agent</div><div class="s-group__items"><div class="s-item active" data-session="s1" onclick="pickSession(this)"><span class="dot dot--run"></span><span class="s-item__title">重构 auth 模块</span><span class="s-item__meta">2h</span></div><div class="s-item" data-session="s2" onclick="pickSession(this)"><span class="dot dot--idle"></span><span class="s-item__title">Tauri GUI 设计</span><span class="s-item__meta">1d</span></div></div></div>
+        <div class="s-group"><div class="s-group__hd" onclick="this.parentElement.classList.toggle('collapsed')"><span class="s-group__toggle">▾</span> work-project</div><div class="s-group__items"><div class="s-item" data-session="s3" onclick="pickSession(this)"><span class="dot dot--run"></span><span class="s-item__title">API 性能优化</span><span class="s-item__meta">5d</span></div><div class="s-item" data-session="s4" onclick="pickSession(this)"><span class="dot dot--idle"></span><span class="s-item__title">数据库迁移</span><span class="s-item__meta">6d</span></div></div></div>
+        <div class="s-group"><div class="s-group__hd" onclick="this.parentElement.classList.toggle('collapsed')"><span class="s-group__toggle">▾</span> diy-pc</div><div class="s-group__items"><div class="s-item" data-session="s5" onclick="pickSession(this)"><span class="dot dot--pause"></span><span class="s-item__title">价格预测分析</span><span class="s-item__meta">7d</span></div><div class="s-item" data-session="s6" onclick="pickSession(this)"><span class="dot dot--run"></span><span class="s-item__title">4090 比价</span><span class="s-item__meta">1h</span></div></div></div>
+      </div>
+    </aside>
+
+    <div class="main-area" id="mainArea">
+
+      <!-- ── Settings view (hidden by default) ── -->
+      <div class="settings-view" id="settingsView">
+        <div class="settings-sidebar">
+          <div class="settings-sidebar__hd">设置</div>
+          <div class="settings-sidebar__list">
+            <div class="settings-tab active" data-stab="providers" onclick="pickSettingsTab(this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M5 6h6M5 8h4M5 10h5"/></svg>供应商</div>
+            <div class="settings-tab" data-stab="skills" onclick="pickSettingsTab(this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2l2 4h4l-3 3 1 4-4-2-4 2 1-4-3-3h4z"/></svg>SKILL</div>
+            <div class="settings-tab" data-stab="agents" onclick="pickSettingsTab(this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="5" r="3"/><path d="M2 14c0-3.3 2.7-6 6-6s6 2.7 6 6"/></svg>AGENT</div>
+          </div>
+        </div>
+        <div class="settings-content">
+          <!-- Providers pane -->
+          <div class="settings-content__pane active" id="stab-providers">
+            <div class="settings-section">
+              <div class="settings-section__title">已配置的供应商</div>
+              <div class="provider-card"><span class="provider-card__name">Anthropic</span><span class="provider-card__models">claude-sonnet, claude-opus, claude-haiku</span><span class="provider-card__status provider-card__status--on">已连接</span></div>
+              <div class="provider-card"><span class="provider-card__name">OpenAI</span><span class="provider-card__models">gpt-4o, gpt-4o-mini, o1-pro</span><span class="provider-card__status provider-card__status--on">已连接</span></div>
+              <div class="provider-card"><span class="provider-card__name">Google</span><span class="provider-card__models">gemini-2.5-pro, gemini-2.5-flash</span><span class="provider-card__status provider-card__status--on">已连接</span></div>
+              <div class="provider-card"><span class="provider-card__name">DeepSeek</span><span class="provider-card__models">deepseek-v4, deepseek-r1</span><span class="provider-card__status provider-card__status--on">已连接</span></div>
+              <div class="provider-card"><span class="provider-card__name">Ollama (本地)</span><span class="provider-card__models">llama3, codellama, mistral</span><span class="provider-card__status provider-card__status--off">未连接</span></div>
+            </div>
+            <div class="settings-section">
+              <div class="settings-section__title">默认供应商配置</div>
+              <div class="info-row"><span class="info-row__label">默认模型</span><span class="info-row__value">claude-sonnet @ anthropic</span></div>
+              <div class="info-row"><span class="info-row__label">思考模式</span><span class="info-row__value">high</span></div>
+              <div class="info-row"><span class="info-row__label">温度</span><span class="info-row__value">0.7</span></div>
+            </div>
+          </div>
+          <!-- Skills pane -->
+          <div class="settings-content__pane" id="stab-skills">
+            <div class="settings-section">
+              <div class="settings-section__title">已加载的 SKILL</div>
+              <div class="skill-row"><span class="skill-row__name">code-trace</span><span class="skill-row__desc">分析代码文件的完整调用链路和数据流</span><div class="skill-row__toggle on" onclick="this.classList.toggle('on')"></div></div>
+              <div class="skill-row"><span class="skill-row__name">issue-trace</span><span class="skill-row__desc">验证用户报告的问题，构建调用链路确认问题真实性</span><div class="skill-row__toggle on" onclick="this.classList.toggle('on')"></div></div>
+              <div class="skill-row"><span class="skill-row__name">batch-tracer</span><span class="skill-row__desc">对指定目录下的所有源代码文件执行完整三阶段分析</span><div class="skill-row__toggle on" onclick="this.classList.toggle('on')"></div></div>
+              <div class="skill-row"><span class="skill-row__name">python-refactor</span><span class="skill-row__desc">使用 rope 库编写 Python 代码重构脚本</span><div class="skill-row__toggle" onclick="this.classList.toggle('on')"></div></div>
+              <div class="skill-row"><span class="skill-row__name">rust-taste-check</span><span class="skill-row__desc">参照代码品味指导文件审查并重构 Rust 代码</span><div class="skill-row__toggle" onclick="this.classList.toggle('on')"></div></div>
+              <div class="skill-row"><span class="skill-row__name">tavily-web-search</span><span class="skill-row__desc">Web search, content extraction via Tavily API</span><div class="skill-row__toggle on" onclick="this.classList.toggle('on')"></div></div>
+            </div>
+          </div>
+          <!-- Agents pane -->
+          <div class="settings-content__pane" id="stab-agents">
+            <div class="settings-section">
+              <div class="settings-section__title">已配置的 Agent</div>
+              <div class="agent-card"><span class="agent-card__name">默认编程助手</span><span class="agent-card__model">claude-sonnet @ anthropic</span><span class="provider-card__status provider-card__status--on">活跃</span></div>
+              <div class="agent-card"><span class="agent-card__name">代码审查员</span><span class="agent-card__model">claude-opus @ anthropic</span><span class="provider-card__status provider-card__status--off">闲置</span></div>
+              <div class="agent-card"><span class="agent-card__name">金融分析师</span><span class="agent-card__model">deepseek-r1 @ deepseek</span><span class="provider-card__status provider-card__status--off">闲置</span></div>
+              <div class="agent-card"><span class="agent-card__name">快速执行器</span><span class="agent-card__model">gpt-4o-mini @ openai</span><span class="provider-card__status provider-card__status--off">闲置</span></div>
+            </div>
+            <div class="settings-section">
+              <div class="settings-section__title">Agent 默认配置</div>
+              <div class="info-row"><span class="info-row__label">最大 SubAgent 深度</span><span class="info-row__value">20</span></div>
+              <div class="info-row"><span class="info-row__label">最大并行宽度</span><span class="info-row__value">10</span></div>
+              <div class="info-row"><span class="info-row__label">Token 预算</span><span class="info-row__value">200,000</span></div>
+              <div class="info-row"><span class="info-row__label">最大轮次</span><span class="info-row__value">50</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Panel A (left / main) ── -->
+      <div class="chat-panel" id="panelA">
+        <div class="panel-bar">
+          <div class="anchor" id="anchorA" onclick="toggleAnchor(this,event)">
+            <span class="anchor__dot" style="background:var(--success)"></span>
+            <span id="anchorALabel">主线对话</span>
+            <span class="anchor__chevron">▾</span>
+            <div class="anchor-dropdown">
+              <div class="anchor-opt current" data-agent="main" onclick="pickAgent(this,'panelA',event)"><span class="anchor-opt__dot" style="background:var(--success)"></span>主线对话</div>
+              <div class="anchor-opt" data-agent="sub1" onclick="pickAgent(this,'panelA',event)"><span class="anchor-opt__dot" style="background:var(--success)"></span>分析代码结构</div>
+              <div class="anchor-opt" data-agent="sub2" onclick="pickAgent(this,'panelA',event)"><span class="anchor-opt__dot" style="background:var(--accent)"></span>重构模块A</div>
+              <div class="anchor-opt" data-agent="sub3" onclick="pickAgent(this,'panelA',event)"><span class="anchor-opt__dot" style="background:var(--warning)"></span>重构子模块A1</div>
+              <div class="anchor-opt" data-agent="sub4" onclick="pickAgent(this,'panelA',event)"><span class="anchor-opt__dot" style="background:var(--border)"></span>编写测试</div>
+            </div>
+          </div>
+          <div class="panel-notifs" id="panelANotifs" style="display:none">
+            <span class="pn-chip pn-chip--done" onclick="openDrawerFor('a','done')"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" style="width:10px;height:10px"><polyline points="2 6 5 9 10 3"/></svg><span class="pn-chip__num">2</span></span>
+            <span class="pn-chip pn-chip--alert" onclick="openDrawerFor('a','alert')"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" style="width:10px;height:10px"><circle cx="6" cy="6" r="4.5"/><path d="M6 4v2.5M6 8v.5"/></svg><span class="pn-chip__num">1</span></span>
+            <span class="pn-close" onclick="closeSplit()">关闭</span>
+          </div>
+        </div>
+        <div class="chat-msgs">
+          <div class="agent-view active" data-agent="main">
+            <div class="msg msg--user"><div class="msg__role">用户</div><div class="msg__body"><p>帮我重构整个 auth 模块，包括接口定义、错误处理和单元测试。</p></div></div>
+            <div class="msg msg--bot"><div class="msg__role">助手</div><div class="msg__body"><p>好的，这个任务比较复杂，我分解成几个子任务并行执行：</p><p>1. <strong>分析 auth 模块结构</strong> → SubAgent-1（已完成）<br>2. <strong>重构核心接口</strong> → SubAgent-2（运行中）<br>3. <strong>重构子模块 A1</strong> → SubAgent-3（等待确认）<br>4. <strong>编写单元测试</strong> → SubAgent-4（等待中）</p></div></div>
+            <div class="msg msg--system"><span class="msg--system__dot msg--system__dot--done"></span><div class="msg--system__content"><div class="msg--system__title">SubAgent「分析代码结构」已完成</div><div class="msg--system__desc">耗时 2m 34s · 消耗 1.2k tokens · 发现 3 个主要问题</div><span class="msg--system__action" onclick="openDrawerFor('global','done')">查看结果 ▾</span></div></div>
+            <div class="msg msg--system msg--system--alert"><span class="msg--system__dot msg--system__dot--alert"></span><div class="msg--system__content"><div class="msg--system__title">SubAgent「重构子模块A1」需要确认</div><div class="msg--system__desc">检测到 3 处循环依赖，需要决定处理策略</div><span class="msg--system__action" onclick="openDrawerFor('global','alert')">立即回复 ▾</span></div></div>
+            <div class="msg msg--bot"><div class="msg__role">助手 · 汇聚</div><div class="msg__body"><p>SubAgent-2 正在重构核心接口，进度 67%：</p><div class="progress"><div class="progress__fill" style="width:67%"></div></div><div class="tool collapsed" onclick="this.classList.toggle('collapsed')"><div class="tool__hd"><span class="tool__chevron">▾</span><span class="tool__name">edit</span><span class="tool__path">src/auth/interfaces.ts</span><span class="tool__status tool__status--ok">完成</span></div><div class="tool__bd">统一了 IAuthResponse、ITokenPayload、ISession 接口定义，新增 IAuthModule 聚合接口。</div></div></div></div>
+          </div>
+          <div class="agent-view" data-agent="sub1"><div class="msg msg--bot"><div class="msg__role">SubAgent · 分析代码结构</div><div class="msg__body"><p>开始分析 auth 模块…</p></div></div><div class="tool collapsed" onclick="this.classList.toggle('collapsed')"><div class="tool__hd"><span class="tool__chevron">▾</span><span class="tool__name">bash</span><span class="tool__path">tree src/auth</span><span class="tool__status tool__status--ok">完成</span></div><div class="tool__bd">src/auth/<br>├── interfaces.ts<br>├── session.ts<br>├── errors.ts<br>├── middleware.ts<br>└── index.ts</div></div><div class="msg msg--bot"><div class="msg__role">SubAgent · 分析代码结构</div><div class="msg__body"><p>分析完成。主要发现：</p><ul style="padding-left:18px;margin:4px 0;"><li>接口定义散落在 3 个文件中</li><li>错误处理使用了 5 种不同的错误类</li><li>Session 管理逻辑与认证逻辑耦合</li></ul></div></div></div>
+          <div class="agent-view" data-agent="sub2"><div class="msg msg--bot"><div class="msg__role">SubAgent · 重构模块A</div><div class="msg__body"><p>基于分析结果重构核心接口…</p></div></div><div class="tool collapsed" onclick="this.classList.toggle('collapsed')"><div class="tool__hd"><span class="tool__chevron">▾</span><span class="tool__name">edit</span><span class="tool__path">src/auth/interfaces.ts</span><span class="tool__status tool__status--ok">完成</span></div><div class="tool__bd">统一了 IAuthResponse、ITokenPayload、ISession 接口定义。</div></div><div class="msg msg--bot"><div class="msg__role">SubAgent · 重构模块A</div><div class="msg__body"><p>接口重构完成，正在处理子模块 A1…</p><div class="progress"><div class="progress__fill" style="width:67%"></div></div></div></div></div>
+          <div class="agent-view" data-agent="sub3"><div class="msg msg--bot"><div class="msg__role">SubAgent · 重构子模块A1 · 等待确认</div><div class="msg__body"><p>检测到 3 处循环依赖：</p><ol style="padding-left:18px;margin:4px 0;"><li><code>AuthService → SessionManager → AuthService</code></li><li><code>TokenValidator → CryptoUtil → TokenValidator</code></li><li><code>Middleware → Router → Middleware</code></li></ol><p>请确认处理策略：</p><ul style="padding-left:18px;margin:4px 0;"><li><strong>A.</strong> 引入事件总线解耦（推荐）</li><li><strong>B.</strong> 使用依赖注入反转控制</li><li><strong>C.</strong> 合并为单一模块</li></ul></div></div></div>
+          <div class="agent-view" data-agent="sub4"><div class="msg msg--bot"><div class="msg__role">SubAgent · 编写测试</div><div class="msg__body"><p>等待 SubAgent-2 和 SubAgent-3 完成后开始编写测试。</p></div></div></div>
+        </div>
+        <div class="chat-input-wrap" id="inputA">
+          <div class="slash-menu" id="slashA">
+            <div class="slash-item active" data-cmd="/compact" onclick="pickSlash(this,'A')"><span class="slash-item__cmd">/compact</span><span class="slash-item__desc">压缩上下文，减少 token 消耗</span></div>
+            <div class="slash-item" data-cmd="/brainstorming" onclick="pickSlash(this,'A')"><span class="slash-item__cmd">/brainstorming</span><span class="slash-item__desc">进入头脑风暴模式，探索更多方案</span></div>
+          </div>
+          <div class="chat-input-container">
+            <textarea class="chat-input-textarea" id="fieldA" placeholder="输入消息… (Enter 发送, Shift+Enter 换行, / 命令)"></textarea>
+            <div class="chat-input-toolbar">
+              <button class="tb-btn tb-btn--plus" title="上传文件"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3v10M3 8h10"/></svg></button>
+              <div class="tb-model" id="modelPickerA" onclick="toggleModelPicker(this,event)">
+                <span>sonnet</span><span class="tb-model__sep">@</span><span class="tb-model__provider">anthropic</span>
+                <div class="model-dropdown" id="modelDropA">
+                  <div class="model-dd-section">
+                    <div class="model-dd-title">常用</div>
+                    <div class="model-dd-item selected" onclick="selectModel(this,'sonnet','anthropic',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">claude-sonnet</span><span class="model-dd-item__provider">anthropic</span></div>
+                    <div class="model-dd-item" onclick="selectModel(this,'gpt-4o','openai',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">gpt-4o</span><span class="model-dd-item__provider">openai</span></div>
+                    <div class="model-dd-item" onclick="selectModel(this,'gemini-2.5-pro','google',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">gemini-2.5-pro</span><span class="model-dd-item__provider">google</span></div>
+                    <div class="model-dd-item" onclick="selectModel(this,'deepseek-v4','deepseek',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">deepseek-v4</span><span class="model-dd-item__provider">deepseek</span></div>
+                  </div>
+                  <div class="model-dd-section">
+                    <div class="model-dd-title">Anthropic</div>
+                    <div class="model-dd-item" onclick="selectModel(this,'opus','anthropic',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">claude-opus</span><span class="model-dd-item__provider">anthropic</span></div>
+                    <div class="model-dd-item" onclick="selectModel(this,'haiku','anthropic',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">claude-haiku</span><span class="model-dd-item__provider">anthropic</span></div>
+                  </div>
+                  <div class="model-dd-section">
+                    <div class="model-dd-title">OpenAI</div>
+                    <div class="model-dd-item" onclick="selectModel(this,'gpt-4o-mini','openai',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">gpt-4o-mini</span><span class="model-dd-item__provider">openai</span></div>
+                    <div class="model-dd-item" onclick="selectModel(this,'o1-pro','openai',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">o1-pro</span><span class="model-dd-item__provider">openai</span></div>
+                  </div>
+                  <div class="model-dd-section">
+                    <div class="model-dd-title">DeepSeek</div>
+                    <div class="model-dd-item" onclick="selectModel(this,'deepseek-r1','deepseek',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">deepseek-r1</span><span class="model-dd-item__provider">deepseek</span></div>
+                  </div>
+                </div>
+              </div>
+              <div class="tb-context">上下文 <div class="tb-context__bar"><div class="tb-context__fill" style="width:34%;background:var(--accent)"></div></div> 34%</div>
+              <div class="tb-spacer"></div>
+              <button class="tb-btn tb-btn--send" title="发送 (Enter)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M8 2v12M4 6l4-4 4 4"/></svg></button>
+              <button class="tb-btn tb-btn--stop" title="中断">■</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="split-divider hidden" id="splitDivider"></div>
+
+      <!-- ── Panel B (right / secondary) ── -->
+      <div class="chat-panel hidden" id="panelB">
+        <div class="panel-bar">
+          <div class="anchor" id="anchorB" onclick="toggleAnchor(this,event)">
+            <span class="anchor__dot" style="background:var(--success)"></span>
+            <span id="anchorBLabel">主对话</span>
+            <span class="anchor__chevron">▾</span>
+            <div class="anchor-dropdown">
+              <div class="anchor-opt current" data-agent="main" onclick="pickAgent(this,'panelB',event)"><span class="anchor-opt__dot" style="background:var(--success)"></span>主对话</div>
+              <div class="anchor-opt" data-agent="sub1b" onclick="pickAgent(this,'panelB',event)"><span class="anchor-opt__dot" style="background:var(--accent)"></span>N+1 查询修复</div>
+              <div class="anchor-opt" data-agent="sub2b" onclick="pickAgent(this,'panelB',event)"><span class="anchor-opt__dot" style="background:var(--border)"></span>缓存策略</div>
+            </div>
+          </div>
+          <div class="panel-notifs">
+            <span class="pn-chip pn-chip--done" onclick="openDrawerFor('b','done')"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" style="width:10px;height:10px"><polyline points="2 6 5 9 10 3"/></svg><span class="pn-chip__num">1</span></span>
+            <span class="pn-chip pn-chip--alert" onclick="openDrawerFor('b','alert')"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" style="width:10px;height:10px"><circle cx="6" cy="6" r="4.5"/><path d="M6 4v2.5M6 8v.5"/></svg><span class="pn-chip__num">1</span></span>
+            <span class="pn-close" onclick="closeSplit()">关闭</span>
+          </div>
+        </div>
+        <div class="chat-msgs">
+          <div class="agent-view active" data-agent="main"><div class="msg msg--user"><div class="msg__role">用户</div><div class="msg__body"><p>帮我优化 API 性能，当前平均响应时间 1.2s。</p></div></div><div class="msg msg--bot"><div class="msg__role">助手</div><div class="msg__body"><p>分析完成，主要问题：N+1 查询和缺少缓存。分解为：</p><p>1. <strong>N+1 查询修复</strong> → SubAgent-1（运行中）<br>2. <strong>缓存策略设计</strong> → SubAgent-2（等待中）</p></div></div><div class="msg msg--system msg--system--alert"><span class="msg--system__dot msg--system__dot--alert"></span><div class="msg--system__content"><div class="msg--system__title">SubAgent「N+1 查询修复」需要确认</div><div class="msg--system__desc">修复方案影响 3 个端点，是否同时优化缓存？</div><span class="msg--system__action" onclick="openDrawerFor('b','alert')">立即回复 ▾</span></div></div></div>
+          <div class="agent-view" data-agent="sub1b"><div class="msg msg--bot"><div class="msg__role">SubAgent · N+1 查询修复</div><div class="msg__body"><p>分析完成，发现 4 处 N+1 查询：</p><ol style="padding-left:18px;margin:4px 0;"><li><code>GET /api/users</code> → 逐个查 profile</li><li><code>GET /api/orders</code> → 逐个查 product</li><li><code>GET /api/comments</code> → 逐个查 user</li><li><code>GET /api/projects</code> → 逐个查 members</li></ol><p>修复方案：使用 DataLoader 批量加载。</p></div></div></div>
+          <div class="agent-view" data-agent="sub2b"><div class="msg msg--bot"><div class="msg__role">SubAgent · 缓存策略</div><div class="msg__body"><p>等待 N+1 修复完成后开始。</p></div></div></div>
+        </div>
+        <div class="chat-input-wrap" id="inputB">
+          <div class="slash-menu" id="slashB">
+            <div class="slash-item active" data-cmd="/compact" onclick="pickSlash(this,'B')"><span class="slash-item__cmd">/compact</span><span class="slash-item__desc">压缩上下文，减少 token 消耗</span></div>
+            <div class="slash-item" data-cmd="/brainstorming" onclick="pickSlash(this,'B')"><span class="slash-item__cmd">/brainstorming</span><span class="slash-item__desc">进入头脑风暴模式，探索更多方案</span></div>
+          </div>
+          <div class="chat-input-container">
+            <textarea class="chat-input-textarea" id="fieldB" placeholder="输入消息…"></textarea>
+            <div class="chat-input-toolbar">
+              <button class="tb-btn tb-btn--plus" title="上传文件"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3v10M3 8h10"/></svg></button>
+              <div class="tb-model" id="modelPickerB" onclick="toggleModelPicker(this,event)">
+                <span>sonnet</span><span class="tb-model__sep">@</span><span class="tb-model__provider">anthropic</span>
+                <div class="model-dropdown" id="modelDropB">
+                  <div class="model-dd-section">
+                    <div class="model-dd-title">常用</div>
+                    <div class="model-dd-item selected" onclick="selectModel(this,'sonnet','anthropic',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">claude-sonnet</span><span class="model-dd-item__provider">anthropic</span></div>
+                    <div class="model-dd-item" onclick="selectModel(this,'gpt-4o','openai',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">gpt-4o</span><span class="model-dd-item__provider">openai</span></div>
+                    <div class="model-dd-item" onclick="selectModel(this,'gemini-2.5-pro','google',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">gemini-2.5-pro</span><span class="model-dd-item__provider">google</span></div>
+                    <div class="model-dd-item" onclick="selectModel(this,'deepseek-v4','deepseek',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">deepseek-v4</span><span class="model-dd-item__provider">deepseek</span></div>
+                  </div>
+                  <div class="model-dd-section">
+                    <div class="model-dd-title">Anthropic</div>
+                    <div class="model-dd-item" onclick="selectModel(this,'opus','anthropic',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">claude-opus</span><span class="model-dd-item__provider">anthropic</span></div>
+                    <div class="model-dd-item" onclick="selectModel(this,'haiku','anthropic',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">claude-haiku</span><span class="model-dd-item__provider">anthropic</span></div>
+                  </div>
+                  <div class="model-dd-section">
+                    <div class="model-dd-title">OpenAI</div>
+                    <div class="model-dd-item" onclick="selectModel(this,'gpt-4o-mini','openai',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">gpt-4o-mini</span><span class="model-dd-item__provider">openai</span></div>
+                    <div class="model-dd-item" onclick="selectModel(this,'o1-pro','openai',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">o1-pro</span><span class="model-dd-item__provider">openai</span></div>
+                  </div>
+                </div>
+              </div>
+              <div class="tb-context">上下文 <div class="tb-context__bar"><div class="tb-context__fill" style="width:52%;background:var(--warning)"></div></div> 52%</div>
+              <div class="tb-spacer"></div>
+              <button class="tb-btn tb-btn--send" title="发送"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M8 2v12M4 6l4-4 4 4"/></svg></button>
+              <button class="tb-btn tb-btn--stop" title="中断">■</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Drawer overlay (inside main-area) ── -->
+    <div class="drawer-overlay" id="drawerOverlay" onclick="closeDrawer()"></div>
+
+    <!-- ── Drawer right (Panel A's) ── -->
+    <aside class="drawer drawer--right" id="drawerRight">
+      <div class="drawer__hd"><div class="drawer__title">SubAgent 监控</div><button class="drawer__close" onclick="closeDrawer()">×</button></div>
+      <div class="drawer-tabs">
+        <div class="drawer-tab" data-pane="paneTree" onclick="pickDrawerTab(this)">任务树</div>
+        <div class="drawer-tab active" data-pane="paneDone" onclick="pickDrawerTab(this)">已完成 <span class="drawer-tab__count drawer-tab__count--done">3</span></div>
+        <div class="drawer-tab" data-pane="paneAlert" onclick="pickDrawerTab(this)">请求回应 <span class="drawer-tab__count drawer-tab__count--alert">2</span></div>
+      </div>
+      <div class="drawer__body">
+        <div class="drawer-pane" id="paneTree">
+          <div class="tree-root">
+            <div class="tree-node" data-agent="main" onclick="treeNav(this,'panelA')"><span class="tree-node__toggle">▾</span><span class="tree-node__dot" style="background:var(--success)"></span><span class="tree-node__label"><strong>主线对话</strong></span><span class="tree-node__meta">coordinator</span></div>
+            <div class="tree-children">
+              <div class="tree-node" data-agent="sub1" onclick="treeNav(this,'panelA')"><span style="width:14px"></span><span class="tree-node__dot" style="background:var(--success)"></span><span class="tree-node__label">分析代码结构</span><span class="tree-node__meta">1.2k tok</span><span class="tree-node__kill">终止</span></div>
+              <div class="tree-node" data-agent="sub2" onclick="treeNav(this,'panelA')"><span class="tree-node__toggle">▾</span><span class="tree-node__dot" style="background:var(--accent)"></span><span class="tree-node__label">重构模块A</span><span class="tree-node__meta">2.3k tok</span><span class="tree-node__kill">终止</span></div>
+              <div class="tree-children">
+                <div class="tree-node" data-agent="sub3" onclick="treeNav(this,'panelA')"><span style="width:14px"></span><span class="tree-node__dot" style="background:var(--warning)"></span><span class="tree-node__label">重构子模块A1</span><span class="tree-node__meta">等待确认</span><span class="tree-node__kill">终止</span></div>
+              </div>
+              <div class="tree-node" data-agent="sub4" onclick="treeNav(this,'panelA')"><span style="width:14px"></span><span class="tree-node__dot" style="background:var(--border)"></span><span class="tree-node__label">编写测试</span><span class="tree-node__meta">pending</span><span class="tree-node__kill">终止</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="drawer-pane active" id="paneDone">
+          <div class="done-item"><div class="done-item__hd"><span class="done-item__dot"></span><div class="done-item__info"><div class="done-item__name">分析代码结构</div><div class="done-item__summary">发现 3 个主要问题：接口散落、错误类不统一、Session 耦合</div></div><div class="done-item__meta">2m 34s<br>1.2k tok</div></div><div class="done-item__action"><span class="done-item__link" onclick="jumpToAgent('sub1')">查看完整结果 →</span></div></div>
+          <div class="done-item"><div class="done-item__hd"><span class="done-item__dot"></span><div class="done-item__info"><div class="done-item__name">读取配置文件</div><div class="done-item__summary">已读取 tsconfig.json、.eslintrc.json、package.json</div></div><div class="done-item__meta">18s<br>320 tok</div></div><div class="done-item__action"><span class="done-item__link">查看详情 →</span></div></div>
+          <div class="done-item"><div class="done-item__hd"><span class="done-item__dot"></span><div class="done-item__info"><div class="done-item__name">依赖分析</div><div class="done-item__summary">共 47 个导出函数，依赖深度最深 4 层</div></div><div class="done-item__meta">45s<br>890 tok</div></div><div class="done-item__action"><span class="done-item__link">查看详情 →</span></div></div>
+        </div>
+        <div class="drawer-pane" id="paneAlert">
+          <div class="alert-item"><div class="alert-item__hd"><span class="alert-item__dot"></span><div class="alert-item__info"><div class="alert-item__name">重构子模块A1</div><div class="alert-item__session">xyz-agent / 重构 auth 模块</div></div><div class="alert-item__time">3 分钟前</div></div><div class="alert-item__bd"><div class="alert-item__question">检测到 3 处循环依赖，需要选择处理策略。</div><span class="inline-reply__link" onclick="jumpToAgent('sub3')">查看详情并回复 →</span></div></div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ── Drawer left (Panel B's, split mode only) ── -->
+    <aside class="drawer drawer--left" id="drawerLeft">
+      <div class="drawer__hd"><div class="drawer__title">SubAgent 监控</div><button class="drawer__close" onclick="closeDrawer()">×</button></div>
+      <div class="drawer-tabs">
+        <div class="drawer-tab" data-pane="paneTreeL" onclick="pickDrawerTabLeft(this)">任务树</div>
+        <div class="drawer-tab active" data-pane="paneDoneL" onclick="pickDrawerTabLeft(this)">已完成 <span class="drawer-tab__count drawer-tab__count--done">1</span></div>
+        <div class="drawer-tab" data-pane="paneAlertL" onclick="pickDrawerTabLeft(this)">请求回应 <span class="drawer-tab__count drawer-tab__count--alert">1</span></div>
+      </div>
+      <div class="drawer__body">
+        <div class="drawer-pane" id="paneTreeL">
+          <div class="tree-root">
+            <div class="tree-node active" data-agent="main" onclick="treeNav(this,'panelB')"><span class="tree-node__toggle">▾</span><span class="tree-node__dot" style="background:var(--success)"></span><span class="tree-node__label"><strong>主对话</strong></span><span class="tree-node__meta">coordinator</span></div>
+            <div class="tree-children">
+              <div class="tree-node" data-agent="sub1b" onclick="treeNav(this,'panelB')"><span style="width:14px"></span><span class="tree-node__dot" style="background:var(--accent)"></span><span class="tree-node__label">N+1 查询修复</span><span class="tree-node__meta">1.8k tok</span><span class="tree-node__kill">终止</span></div>
+              <div class="tree-node" data-agent="sub2b" onclick="treeNav(this,'panelB')"><span style="width:14px"></span><span class="tree-node__dot" style="background:var(--border)"></span><span class="tree-node__label">缓存策略</span><span class="tree-node__meta">pending</span><span class="tree-node__kill">终止</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="drawer-pane active" id="paneDoneL"><div class="done-item"><div class="done-item__hd"><span class="done-item__dot"></span><div class="done-item__info"><div class="done-item__name">查询分析</div><div class="done-item__summary">定位了 4 处 N+1 查询，分布在 users/orders/comments/projects 端点</div></div><div class="done-item__meta">1m 12s<br>1.8k tok</div></div><div class="done-item__action"><span class="done-item__link" onclick="jumpToAgent('sub1b')">查看详情 →</span></div></div></div>
+        <div class="drawer-pane" id="paneAlertL"><div class="alert-item alert-item--simple"><div class="alert-item__hd"><span class="alert-item__dot"></span><div class="alert-item__info"><div class="alert-item__name">N+1 查询修复</div><div class="alert-item__session">work-project / API 性能优化</div></div><div class="alert-item__time">8 分钟前</div></div><div class="alert-item__bd"><div class="alert-item__question">修复方案影响 3 个端点，是否同时优化缓存策略？</div><div class="inline-reply"><textarea class="inline-reply__field" placeholder="直接回复…" rows="1"></textarea><button class="inline-reply__btn">回复</button></div></div></div></div>
+      </div>
+    </aside>
+  </div>
+
+  <footer class="statusbar">
+    <span style="display:inline-flex;align-items:center;gap:4px;"><span class="statusbar__dot"></span> 已连接</span>
+    <span>~/Code/xyz-agent</span>
+    <span>feat/tree-engine</span>
+    <span>sonnet:high</span>
+    <span>12.3k tokens</span>
+    <span style="flex:1"></span>
+    <span style="opacity:0.5">Cmd+J 总览 · Cmd+1 标准 · Cmd+2 分屏 · Cmd+3 专注</span>
+  </footer>
+
+  <!-- ── Overview ── -->
+  <div class="overview" id="overview">
+    <div class="overview__title">窗口总览</div>
+    <div class="overview__grid" id="overviewGrid">
+      <div class="overview__card" data-session="s1" onclick="overviewEnter(this,false)" oncontextmenu="event.preventDefault();overviewEnter(this,true)"><div class="card__preview"><div class="card__preview__line card__preview__line--user">用户: 帮我重构整个 auth 模块</div><div class="card__preview__line card__preview__line--bot">助手: 分解成 4 个子任务并行执行…</div><div class="card__preview__line" style="color:var(--success)">SubAgent「分析代码结构」已完成</div><div class="card__preview__line" style="color:var(--danger)">SubAgent「重构子模块A1」需要确认</div></div><div class="card__footer"><div class="card__title"><span class="card__badge card__badge--run"><span class="card__badge__dot"></span>运行中</span> 重构 auth 模块</div><div class="card__project">xyz-agent · feat/tree-engine</div><div class="card__meta"><span class="card__meta-item">sonnet:high</span><span class="card__meta-item">12.3k tok</span><span class="card__meta-item">完成 2 · 回应 1</span></div></div></div>
+      <div class="overview__card" data-session="s2" onclick="overviewEnter(this,false)"><div class="card__preview"><div class="card__preview__line card__preview__line--user">用户: 讨论 Tauri GUI 的三栏布局</div><div class="card__preview__line card__preview__line--bot">助手: 建议左侧 240px 会话列表…</div><div class="card__preview__line card__preview__line--user">用户: 右侧面板太占空间了</div><div class="card__preview__line card__preview__line--bot">助手: 改为右侧抽屉，按需展开…</div></div><div class="card__footer"><div class="card__title"><span class="card__badge card__badge--idle"><span class="card__badge__dot"></span>闲置</span> Tauri GUI 设计</div><div class="card__project">xyz-agent · main</div><div class="card__meta"><span class="card__meta-item">sonnet:high</span><span class="card__meta-item">3.1k tok</span></div></div></div>
+      <div class="overview__card" data-session="s3" onclick="overviewEnter(this,false)" oncontextmenu="event.preventDefault();overviewEnter(this,true)"><div class="card__preview"><div class="card__preview__line card__preview__line--user">用户: 优化 API 性能，当前 1.2s</div><div class="card__preview__line card__preview__line--bot">助手: 发现 N+1 查询和缺少缓存…</div><div class="card__preview__line" style="color:var(--danger)">SubAgent「N+1 查询修复」需要确认</div></div><div class="card__footer"><div class="card__title"><span class="card__badge card__badge--run"><span class="card__badge__dot"></span>运行中</span> API 性能优化</div><div class="card__project">work-project · main</div><div class="card__meta"><span class="card__meta-item">sonnet:high</span><span class="card__meta-item">8.7k tok</span><span class="card__meta-item">完成 1 · 回应 1</span></div></div></div>
+      <div class="overview__card" data-session="s4" onclick="overviewEnter(this,false)"><div class="card__preview"><div class="card__preview__line card__preview__line--user">用户: 把数据库从 MySQL 迁到 PG</div><div class="card__preview__line card__preview__line--bot">助手: 分析了 47 张表的迁移方案…</div><div class="card__preview__line card__preview__line--user">用户: 先迁移核心的 12 张表</div></div><div class="card__footer"><div class="card__title"><span class="card__badge card__badge--idle"><span class="card__badge__dot"></span>闲置</span> 数据库迁移</div><div class="card__project">work-project · feat/migrate</div><div class="card__meta"><span class="card__meta-item">sonnet</span><span class="card__meta-item">1.2k tok</span></div></div></div>
+      <div class="overview__card" data-session="s5" onclick="overviewEnter(this,false)"><div class="card__preview"><div class="card__preview__line card__preview__line--user">用户: 预测 4090 下半年价格走势</div><div class="card__preview__line card__preview__line--bot">助手: 基于历史数据构建了预测模型…</div><div class="card__preview__line card__preview__line--bot">模型准确率: 87.3%</div></div><div class="card__footer"><div class="card__title"><span class="card__badge card__badge--pause"><span class="card__badge__dot"></span>暂停</span> 价格预测分析</div><div class="card__project">diy-pc · main</div><div class="card__meta"><span class="card__meta-item">deepseek-r1</span><span class="card__meta-item">5.4k tok</span></div></div></div>
+      <div class="overview__card" data-session="s6" onclick="overviewEnter(this,false)"><div class="card__preview"><div class="card__preview__line card__preview__line--user">用户: 对比 4090 各平台价格</div><div class="card__preview__line card__preview__line--bot">助手: 已抓取京东、淘宝、拼多多价格…</div><div class="card__preview__line card__preview__line--bot">当前最低价: 12,499 (拼多多)</div></div><div class="card__footer"><div class="card__title"><span class="card__badge card__badge--run"><span class="card__badge__dot"></span>运行中</span> 4090 比价</div><div class="card__project">diy-pc · feat/price</div><div class="card__meta"><span class="card__meta-item">sonnet</span><span class="card__meta-item">2.1k tok</span></div></div></div>
+    </div>
+    <div class="overview__hint"><span><kbd>Enter</kbd> 进入</span><span><kbd>Shift</kbd>+<kbd>Enter</kbd> 分屏进入</span><span><kbd>←</kbd><kbd>→</kbd> 选择</span><span><kbd>Esc</kbd> 返回</span></div>
+  </div>
+
+  <div class="toast-container" id="toastContainer"></div>
+</div>
+
+<script>
+(function(){'use strict';
+var theme=ls('xyz-t','light'),isSplit=false,overviewIdx=0,overviewVisible=false,cards=[];
+function ls(k,f){try{var v=localStorage.getItem(k);return v||f}catch(_){return f}}
+function ss(k,v){try{localStorage.setItem(k,String(v))}catch(_){}}
+function $(s){return document.querySelector(s)}
+function $$(s){return document.querySelectorAll(s)}
+
+function applyTheme(t){theme=t;document.documentElement.setAttribute('data-theme',t);$('#iconMoon').classList.toggle('hidden',t==='dark');$('#iconSun').classList.toggle('hidden',t==='light')}
+window.toggleTheme=function(){var n=theme==='dark'?'light':'dark';applyTheme(n);ss('xyz-t',n)};
+
+window.setView=function(v){
+  var app=$('#app');app.classList.remove('focus-mode');
+  closeSplit();closeDrawer();
+  $$('.h-btn').forEach(function(b){b.classList.remove('active')});
+  var sv=$('#settingsView');
+  var panels=$$('#mainArea .chat-panel, #mainArea .split-divider');
+  sv.classList.remove('active');panels.forEach(function(p){p.classList.remove('hidden');p.style.display=''});
+  if(v==='standard'){$('#vStd').classList.add('active');$('#sidebar').classList.remove('collapsed')}
+  else if(v==='split'){$('#vSplit').classList.add('active');$('#sidebar').classList.remove('collapsed');enterSplit()}
+  else if(v==='focus'){app.classList.add('focus-mode');$('#vFocus').classList.add('active');$('#sidebar').classList.add('collapsed')}
+  else if(v==='settings'){$('#vSettings').classList.add('active');$('#sidebar').classList.remove('collapsed');sv.classList.add('active');panels.forEach(function(p){p.style.display='none'});$('#panelB').classList.add('hidden');$('#splitDivider').classList.add('hidden')}
+};
+
+window.pickSession=function(item){$$('.s-item').forEach(function(s){s.classList.remove('active')});item.classList.add('active')};
+
+/* ── Anchor dropdown ── */
+window.toggleAnchor=function(anchor,e){
+  e.stopPropagation();
+  var wasOpen=anchor.classList.contains('open');
+  $$('.anchor').forEach(function(a){a.classList.remove('open')});
+  if(!wasOpen)anchor.classList.add('open');
+};
+window.pickAgent=function(opt,panelId,e){
+  e.stopPropagation();
+  var agent=opt.dataset.agent;
+  var panel=$('#'+panelId);
+  panel.querySelectorAll('.agent-view').forEach(function(v){v.classList.remove('active')});
+  var target=panel.querySelector('.agent-view[data-agent="'+agent+'"]');
+  if(target)target.classList.add('active');
+  var anchor=opt.closest('.anchor');
+  anchor.querySelectorAll('.anchor-opt').forEach(function(o){o.classList.remove('current')});
+  opt.classList.add('current');
+  var label=opt.textContent.trim();
+  if(panelId==='panelA')$('#anchorALabel').textContent=label;
+  else $('#anchorBLabel').textContent=label;
+  var dot=opt.querySelector('.anchor-opt__dot');
+  if(dot)anchor.querySelector('.anchor__dot').style.background=dot.style.background;
+  anchor.classList.remove('open');
+};
+document.addEventListener('click',function(){$$('.anchor').forEach(function(a){a.classList.remove('open')})});
+
+/* ── Drawer ── */
+window.openDrawerFor=function(source,tab){
+  if(source==='b'&&isSplit){
+    /* Left drawer for right panel */
+    var d=$('#drawerLeft');d.classList.add('open');$('#drawerOverlay').classList.add('visible');
+    if(tab==='done')pickDrawerTabLeft($('[data-pane="paneDoneL"]'));
+    else if(tab==='alert')pickDrawerTabLeft($('[data-pane="paneAlertL"]'));
+    else if(tab==='tree')pickDrawerTabLeft($('[data-pane="paneTreeL"]'));
+  }else{
+    /* Right drawer for left/global panel */
+    var d=$('#drawerRight');d.classList.add('open');$('#drawerOverlay').classList.add('visible');
+    if(tab==='done')pickDrawerTab($('[data-pane="paneDone"]'));
+    else if(tab==='alert')pickDrawerTab($('[data-pane="paneAlert"]'));
+    else if(tab==='tree')pickDrawerTab($('[data-pane="paneTree"]'));
+  }
+};
+window.openDrawer=function(tab){openDrawerFor('global',tab)};
+window.closeDrawer=function(){$('#drawerRight').classList.remove('open');$('#drawerLeft').classList.remove('open');$('#drawerOverlay').classList.remove('visible')};
+
+window.pickDrawerTab=function(tab){
+  $$('#drawerRight .drawer-tab').forEach(function(t){t.classList.remove('active')});tab.classList.add('active');
+  $$('#drawerRight .drawer-pane').forEach(function(p){p.classList.remove('active')});
+  var pane=$('#'+tab.dataset.pane);if(pane)pane.classList.add('active');
+};
+window.pickDrawerTabLeft=function(tab){
+  $$('#drawerLeft .drawer-tab').forEach(function(t){t.classList.remove('active')});tab.classList.add('active');
+  $$('#drawerLeft .drawer-pane').forEach(function(p){p.classList.remove('active')});
+  var pane=$('#'+tab.dataset.pane);if(pane)pane.classList.add('active');
+};
+
+/* ── Tree navigation ── */
+window.treeNav=function(node,panelId){
+  var agent=node.dataset.agent;
+  closeDrawer();
+  var panel=$('#'+panelId);
+  panel.querySelectorAll('.agent-view').forEach(function(v){v.classList.remove('active')});
+  var target=panel.querySelector('.agent-view[data-agent="'+agent+'"]');
+  if(target)target.classList.add('active');
+  /* Update anchor */
+  var label=node.querySelector('.tree-node__label').textContent.trim();
+  var dot=node.querySelector('.tree-node__dot');
+  if(panelId==='panelA'){$('#anchorALabel').textContent=label;$('#anchorA .anchor__dot').style.background=dot?dot.style.background:'var(--border)';$$('#anchorA .anchor-opt').forEach(function(o){o.classList.toggle('current',o.dataset.agent===agent)})}
+  else{$('#anchorBLabel').textContent=label;$('#anchorB .anchor__dot').style.background=dot?dot.style.background:'var(--border)';$$('#anchorB .anchor-opt').forEach(function(o){o.classList.toggle('current',o.dataset.agent===agent)})}
+};
+
+window.jumpToAgent=function(agent){
+  closeDrawer();
+  var opt=$('.anchor-opt[data-agent="'+agent+'"]');
+  if(opt)pickAgent(opt,'panelA',{stopPropagation:function(){}});
+  setView('standard');
+};
+
+/* ── Split ── */
+function enterSplit(){isSplit=true;$('#panelB').classList.remove('hidden');$('#splitDivider').classList.remove('hidden');$('#panelANotifs').style.display='flex';$('#globalNotifs').classList.add('hidden')}
+window.closeSplit=function(){isSplit=false;$('#panelB').classList.add('hidden');$('#splitDivider').classList.add('hidden');$('#panelANotifs').style.display='none';$('#globalNotifs').classList.remove('hidden');closeDrawer()};
+
+/* ── Overview ── */
+function getCards(){cards=$$('.overview__card')}
+window.openOverview=function(){getCards();overviewVisible=true;overviewIdx=0;highlightCard();$('#overview').classList.add('visible')};
+window.closeOverview=function(){overviewVisible=false;$('#overview').classList.remove('visible');$$('.overview__card').forEach(function(c){c.classList.remove('highlighted')})};
+function highlightCard(){$$('.overview__card').forEach(function(c){c.classList.remove('highlighted')});if(cards[overviewIdx])cards[overviewIdx].classList.add('highlighted')}
+window.overviewEnter=function(card,asSplit){
+  var sid=card.dataset.session;closeOverview();
+  $$('.s-item').forEach(function(s){s.classList.toggle('active',s.dataset.session===sid)});
+  if(asSplit){enterSplit()}else{if(isSplit)closeSplit();setView('standard')}
+};
+
+/* ── Toasts ── */
+function showToast(opts){
+  var c=$('#toastContainer'),el=document.createElement('div');el.className='toast';
+  el.innerHTML='<span class="toast__dot" style="background:'+(opts.color||'var(--warning)')+'"></span><div class="toast__body"><div class="toast__title">'+opts.title+'</div><div class="toast__desc">'+opts.desc+'</div><div class="toast__actions"><button class="toast__btn toast__btn--primary" onclick="toastAction(this,\'reply\')">回复</button><button class="toast__btn" onclick="toastAction(this,\'later\')">稍后</button><button class="toast__btn" onclick="toastAction(this,\'dismiss\')">忽略</button></div></div>';
+  c.appendChild(el);el._timer=setTimeout(function(){removeToast(el)},8000);
+}
+window.toastAction=function(btn,action){var t=btn.closest('.toast');clearTimeout(t._timer);if(action==='reply')openDrawer('alert');removeToast(t)};
+function removeToast(el){el.classList.add('removing');setTimeout(function(){if(el.parentNode)el.parentNode.removeChild(el)},300)}
+
+/* ── Tree toggle ── */
+document.addEventListener('click',function(e){
+  var toggle=e.target.closest('.tree-node__toggle');
+  if(toggle){
+    e.stopPropagation();
+    toggle.classList.toggle('collapsed');
+    var node=toggle.closest('.tree-node');
+    var children=node.nextElementSibling;
+    if(children&&children.classList.contains('tree-children'))children.classList.toggle('collapsed');
+  }
+});
+
+/* ── Keyboard ── */
+document.addEventListener('keydown',function(e){
+  var m=e.metaKey||e.ctrlKey;
+  if(overviewVisible){
+    if(e.key==='Escape'){e.preventDefault();closeOverview()}
+    else if(e.key==='ArrowRight'||e.key==='ArrowDown'){e.preventDefault();overviewIdx=Math.min(overviewIdx+1,cards.length-1);highlightCard()}
+    else if(e.key==='ArrowLeft'||e.key==='ArrowUp'){e.preventDefault();overviewIdx=Math.max(overviewIdx-1,0);highlightCard()}
+    else if(e.key==='Enter'){e.preventDefault();if(cards[overviewIdx])overviewEnter(cards[overviewIdx],e.shiftKey)}
+    return;
+  }
+  if(m&&e.key.toLowerCase()==='j'){e.preventDefault();openOverview()}
+  if(m&&e.key==='1'){e.preventDefault();setView('standard')}
+  if(m&&e.key==='2'){e.preventDefault();setView('split')}
+  if(m&&e.key==='3'){e.preventDefault();setView('focus')}
+  if(e.key==='Escape'){if($('#drawerRight').classList.contains('open')||$('#drawerLeft').classList.contains('open'))closeDrawer();else if(isSplit)closeSplit();else setView('standard')}
+  if(m&&e.key.toLowerCase()==='w'&&isSplit){e.preventDefault();closeSplit()}
+});
+
+/* ── Settings tabs ── */
+window.pickSettingsTab=function(tab){
+  $$('.settings-tab').forEach(function(t){t.classList.remove('active')});tab.classList.add('active');
+  $$('.settings-content__pane').forEach(function(p){p.classList.remove('active')});
+  var pane=$('#stab-'+tab.dataset.stab);if(pane)pane.classList.add('active');
+};
+
+/* ── Slash commands ── */
+var slashIdx=0;
+function setupSlash(fieldId,menuId){
+  var field=document.getElementById(fieldId),menu=document.getElementById(menuId);
+  if(!field||!menu)return;
+  var items=menu.querySelectorAll('.slash-item');
+  slashIdx=0;
+  field.addEventListener('input',function(){
+    var val=field.value;
+    if(val.charAt(0)==='/'&&val.indexOf('\n')===-1&&val.length<=30){
+      menu.classList.add('visible');slashIdx=0;highlightSlash(items);
+    }else{menu.classList.remove('visible')}
+  });
+  field.addEventListener('keydown',function(e){
+    if(!menu.classList.contains('visible'))return;
+    if(e.key==='ArrowDown'){e.preventDefault();slashIdx=Math.min(slashIdx+1,items.length-1);highlightSlash(items)}
+    else if(e.key==='ArrowUp'){e.preventDefault();slashIdx=Math.max(slashIdx-1,0);highlightSlash(items)}
+    else if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();items[slashIdx].click()}
+    else if(e.key==='Escape'){menu.classList.remove('visible')}
+  });
+}
+function highlightSlash(items){items.forEach(function(it,i){it.classList.toggle('active',i===slashIdx)})}
+window.pickSlash=function(item,panel){
+  var cmd=item.dataset.cmd;
+  var field=document.getElementById('field'+panel);
+  var menu=document.getElementById('slash'+panel);
+  if(field){field.value=cmd+' ';field.focus();autoResize(field)}
+  if(menu)menu.classList.remove('visible');
+};
+
+/* ── Model picker ── */
+window.toggleModelPicker=function(el,e){
+  e.stopPropagation();
+  var dd=el.querySelector('.model-dropdown');
+  var wasVisible=dd.classList.contains('visible');
+  $$('.model-dropdown').forEach(function(d){d.classList.remove('visible')});
+  if(!wasVisible)dd.classList.add('visible');
+};
+window.selectModel=function(item,model,provider,e){
+  e.stopPropagation();
+  var dd=item.closest('.model-dropdown');
+  var picker=item.closest('.tb-model');
+  dd.querySelectorAll('.model-dd-item').forEach(function(i){i.classList.remove('selected')});
+  item.classList.add('selected');
+  picker.querySelector('span:first-child').textContent=model;
+  picker.querySelector('.tb-model__provider').textContent=provider;
+  dd.classList.remove('visible');
+};
+document.addEventListener('click',function(){$$('.model-dropdown').forEach(function(d){d.classList.remove('visible')})});
+
+/* ── Textarea auto-expand ── */
+function autoResize(el){el.style.height='auto';el.style.height=Math.min(el.scrollHeight,parseFloat(getComputedStyle(el).maxHeight))+'px'}
+function setupAutoResize(id){var el=document.getElementById(id);if(el)el.addEventListener('input',function(){autoResize(this)})}
+
+setupAutoResize('fieldA');setupAutoResize('fieldB');
+setupSlash('fieldA','slashA');setupSlash('fieldB','slashB');
+
+applyTheme(theme);setView('standard');
+setTimeout(function(){showToast({color:'var(--danger)',title:'SubAgent「重构子模块A1」需要确认',desc:'检测到 3 处循环依赖，需要决定处理策略'})},3500);
+setTimeout(function(){showToast({color:'var(--warning)',title:'work-project · N+1 查询修复',desc:'修复方案影响 3 个端点，是否同时优化缓存？'})},9000);
+})();
+</script>
+</body>
+</html>

@@ -29,8 +29,8 @@ const textareaRef = ref<HTMLTextAreaElement | null>(null)
 const textareaClasses = computed(() =>
   cn(
     'flex w-full rounded-md px-3 py-2 text-sm transition-colors',
-    'placeholder:text-[var(--color-text-muted)]',
-    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]',
+    'placeholder:text-[var(--muted)]',
+    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
     'disabled:cursor-not-allowed disabled:opacity-50',
     'resize-none',
   ),
@@ -72,7 +72,7 @@ watch(
     :disabled="disabled"
     :rows="rows"
     :class="textareaClasses"
-    :style="{ ...maxHeightStyle, background: 'var(--color-surface)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)' }"
+    :style="{ ...maxHeightStyle, background: 'var(--surface)', color: 'var(--fg)', border: '1px solid var(--border)' }"
     :aria-label="placeholder || undefined"
     @input="onInput"
   />

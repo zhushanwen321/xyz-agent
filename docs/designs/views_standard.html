@@ -1,0 +1,136 @@
+<!-- Panel A (left / main chat panel) -->
+<div class="chat-panel" id="panelA">
+  <div class="panel-bar">
+    <div class="anchor" id="anchorA" onclick="toggleAnchor(this,event)">
+      <span class="anchor__dot" style="background:var(--success)"></span>
+      <span id="anchorALabel">主线对话</span>
+      <span class="anchor__chevron">▾</span>
+      <div class="anchor-dropdown">
+        <div class="anchor-opt current" data-agent="main" onclick="pickAgent(this,'panelA',event)"><span class="anchor-opt__dot" style="background:var(--success)"></span>主线对话</div>
+        <div class="anchor-opt" data-agent="sub1" onclick="pickAgent(this,'panelA',event)"><span class="anchor-opt__dot" style="background:var(--success)"></span>分析代码结构</div>
+        <div class="anchor-opt" data-agent="sub2" onclick="pickAgent(this,'panelA',event)"><span class="anchor-opt__dot" style="background:var(--accent)"></span>重构模块A</div>
+        <div class="anchor-opt" data-agent="sub3" onclick="pickAgent(this,'panelA',event)"><span class="anchor-opt__dot" style="background:var(--warning)"></span>重构子模块A1</div>
+        <div class="anchor-opt" data-agent="sub4" onclick="pickAgent(this,'panelA',event)"><span class="anchor-opt__dot" style="background:var(--border)"></span>编写测试</div>
+      </div>
+    </div>
+    <div class="panel-notifs" id="panelANotifs" style="display:none">
+      <span class="pn-chip pn-chip--done" onclick="openDrawerFor('a','done')"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" style="width:10px;height:10px"><polyline points="2 6 5 9 10 3"/></svg><span class="pn-chip__num">2</span></span>
+      <span class="pn-chip pn-chip--alert" onclick="openDrawerFor('a','alert')"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" style="width:10px;height:10px"><circle cx="6" cy="6" r="4.5"/><path d="M6 4v2.5M6 8v.5"/></svg><span class="pn-chip__num">1</span></span>
+      <span class="pn-close" onclick="closeSplit()">关闭</span>
+    </div>
+  </div>
+  <div class="chat-msgs">
+    <div class="agent-view active" data-agent="main">
+      <div class="msg msg--user"><div class="msg__role">用户</div><div class="msg__body"><p>帮我重构整个 auth 模块，包括接口定义、错误处理和单元测试。</p></div></div>
+      <div class="msg msg--bot"><div class="msg__role">助手</div><div class="msg__body"><p>好的，这个任务比较复杂，我分解成几个子任务并行执行：</p><p>1. <strong>分析 auth 模块结构</strong> → SubAgent-1（已完成）<br>2. <strong>重构核心接口</strong> → SubAgent-2（运行中）<br>3. <strong>重构子模块 A1</strong> → SubAgent-3（等待确认）<br>4. <strong>编写单元测试</strong> → SubAgent-4（等待中）</p></div></div>
+      <div class="msg msg--system"><span class="msg--system__dot msg--system__dot--done"></span><div class="msg--system__content"><div class="msg--system__title">SubAgent「分析代码结构」已完成</div><div class="msg--system__desc">耗时 2m 34s · 消耗 1.2k tokens · 发现 3 个主要问题</div><span class="msg--system__action" onclick="openDrawerFor('global','done')">查看结果 ▾</span></div></div>
+      <div class="msg msg--system msg--system--alert"><span class="msg--system__dot msg--system__dot--alert"></span><div class="msg--system__content"><div class="msg--system__title">SubAgent「重构子模块A1」需要确认</div><div class="msg--system__desc">检测到 3 处循环依赖，需要决定处理策略</div><span class="msg--system__action" onclick="openDrawerFor('global','alert')">立即回复 ▾</span></div></div>
+      <div class="msg msg--bot"><div class="msg__role">助手 · 汇聚</div><div class="msg__body"><p>SubAgent-2 正在重构核心接口，进度 67%：</p><div class="progress"><div class="progress__fill" style="width:67%"></div></div><div class="tool collapsed" onclick="this.classList.toggle('collapsed')"><div class="tool__hd"><span class="tool__chevron">▾</span><span class="tool__name">edit</span><span class="tool__path">src/auth/interfaces.ts</span><span class="tool__status tool__status--ok">完成</span></div><div class="tool__bd">统一了 IAuthResponse、ITokenPayload、ISession 接口定义，新增 IAuthModule 聚合接口。</div></div></div></div>
+    </div>
+    <div class="agent-view" data-agent="sub1"><div class="msg msg--bot"><div class="msg__role">SubAgent · 分析代码结构</div><div class="msg__body"><p>开始分析 auth 模块…</p></div></div><div class="tool collapsed" onclick="this.classList.toggle('collapsed')"><div class="tool__hd"><span class="tool__chevron">▾</span><span class="tool__name">bash</span><span class="tool__path">tree src/auth</span><span class="tool__status tool__status--ok">完成</span></div><div class="tool__bd">src/auth/<br>├── interfaces.ts<br>├── session.ts<br>├── errors.ts<br>├── middleware.ts<br>└── index.ts</div></div><div class="msg msg--bot"><div class="msg__role">SubAgent · 分析代码结构</div><div class="msg__body"><p>分析完成。主要发现：</p><ul style="padding-left:18px;margin:4px 0;"><li>接口定义散落在 3 个文件中</li><li>错误处理使用了 5 种不同的错误类</li><li>Session 管理逻辑与认证逻辑耦合</li></ul></div></div></div>
+    <div class="agent-view" data-agent="sub2"><div class="msg msg--bot"><div class="msg__role">SubAgent · 重构模块A</div><div class="msg__body"><p>基于分析结果重构核心接口…</p></div></div><div class="tool collapsed" onclick="this.classList.toggle('collapsed')"><div class="tool__hd"><span class="tool__chevron">▾</span><span class="tool__name">edit</span><span class="tool__path">src/auth/interfaces.ts</span><span class="tool__status tool__status--ok">完成</span></div><div class="tool__bd">统一了 IAuthResponse、ITokenPayload、ISession 接口定义。</div></div><div class="msg msg--bot"><div class="msg__role">SubAgent · 重构模块A</div><div class="msg__body"><p>接口重构完成，正在处理子模块 A1…</p><div class="progress"><div class="progress__fill" style="width:67%"></div></div></div></div></div>
+    <div class="agent-view" data-agent="sub3"><div class="msg msg--bot"><div class="msg__role">SubAgent · 重构子模块A1 · 等待确认</div><div class="msg__body"><p>检测到 3 处循环依赖：</p><ol style="padding-left:18px;margin:4px 0;"><li><code>AuthService → SessionManager → AuthService</code></li><li><code>TokenValidator → CryptoUtil → TokenValidator</code></li><li><code>Middleware → Router → Middleware</code></li></ol><p>请确认处理策略：</p><ul style="padding-left:18px;margin:4px 0;"><li><strong>A.</strong> 引入事件总线解耦（推荐）</li><li><strong>B.</strong> 使用依赖注入反转控制</li><li><strong>C.</strong> 合并为单一模块</li></ul></div></div></div>
+    <div class="agent-view" data-agent="sub4"><div class="msg msg--bot"><div class="msg__role">SubAgent · 编写测试</div><div class="msg__body"><p>等待 SubAgent-2 和 SubAgent-3 完成后开始编写测试。</p></div></div></div>
+  </div>
+  <div class="chat-input-wrap" id="inputA">
+    <div class="slash-menu" id="slashA">
+      <div class="slash-item active" data-cmd="/compact" onclick="pickSlash(this,'A')"><span class="slash-item__cmd">/compact</span><span class="slash-item__desc">压缩上下文，减少 token 消耗</span></div>
+      <div class="slash-item" data-cmd="/brainstorming" onclick="pickSlash(this,'A')"><span class="slash-item__cmd">/brainstorming</span><span class="slash-item__desc">进入头脑风暴模式，探索更多方案</span></div>
+    </div>
+    <div class="chat-input-container">
+      <textarea class="chat-input-textarea" id="fieldA" placeholder="输入消息… (Enter 发送, Shift+Enter 换行, / 命令)"></textarea>
+      <div class="chat-input-toolbar">
+        <button class="tb-btn tb-btn--plus" title="上传文件"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3v10M3 8h10"/></svg></button>
+        <div class="tb-model" id="modelPickerA" onclick="toggleModelPicker(this,event)">
+          <span>sonnet</span><span class="tb-model__sep">@</span><span class="tb-model__provider">anthropic</span>
+          <div class="model-dropdown" id="modelDropA">
+            <div class="model-dd-section"><div class="model-dd-title">常用</div>
+              <div class="model-dd-item selected" onclick="selectModel(this,'sonnet','anthropic',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">claude-sonnet</span><span class="model-dd-item__provider">anthropic</span></div>
+              <div class="model-dd-item" onclick="selectModel(this,'gpt-4o','openai',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">gpt-4o</span><span class="model-dd-item__provider">openai</span></div>
+              <div class="model-dd-item" onclick="selectModel(this,'gemini-2.5-pro','google',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">gemini-2.5-pro</span><span class="model-dd-item__provider">google</span></div>
+              <div class="model-dd-item" onclick="selectModel(this,'deepseek-v4','deepseek',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">deepseek-v4</span><span class="model-dd-item__provider">deepseek</span></div>
+            </div>
+            <div class="model-dd-section"><div class="model-dd-title">Anthropic</div>
+              <div class="model-dd-item" onclick="selectModel(this,'opus','anthropic',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">claude-opus</span><span class="model-dd-item__provider">anthropic</span></div>
+              <div class="model-dd-item" onclick="selectModel(this,'haiku','anthropic',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">claude-haiku</span><span class="model-dd-item__provider">anthropic</span></div>
+            </div>
+            <div class="model-dd-section"><div class="model-dd-title">OpenAI</div>
+              <div class="model-dd-item" onclick="selectModel(this,'gpt-4o-mini','openai',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">gpt-4o-mini</span><span class="model-dd-item__provider">openai</span></div>
+              <div class="model-dd-item" onclick="selectModel(this,'o1-pro','openai',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">o1-pro</span><span class="model-dd-item__provider">openai</span></div>
+            </div>
+            <div class="model-dd-section"><div class="model-dd-title">DeepSeek</div>
+              <div class="model-dd-item" onclick="selectModel(this,'deepseek-r1','deepseek',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">deepseek-r1</span><span class="model-dd-item__provider">deepseek</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="tb-context">上下文 <div class="tb-context__bar"><div class="tb-context__fill" style="width:34%;background:var(--accent)"></div></div> 34%</div>
+        <div class="tb-spacer"></div>
+        <button class="tb-btn tb-btn--send" title="发送 (Enter)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M8 2v12M4 6l4-4 4 4"/></svg></button>
+        <button class="tb-btn tb-btn--stop" title="中断">■</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="split-divider hidden" id="splitDivider"></div>
+
+<!-- Panel B (right / secondary chat panel) -->
+<div class="chat-panel hidden" id="panelB">
+  <div class="panel-bar">
+    <div class="anchor" id="anchorB" onclick="toggleAnchor(this,event)">
+      <span class="anchor__dot" style="background:var(--success)"></span>
+      <span id="anchorBLabel">主对话</span>
+      <span class="anchor__chevron">▾</span>
+      <div class="anchor-dropdown">
+        <div class="anchor-opt current" data-agent="main" onclick="pickAgent(this,'panelB',event)"><span class="anchor-opt__dot" style="background:var(--success)"></span>主对话</div>
+        <div class="anchor-opt" data-agent="sub1b" onclick="pickAgent(this,'panelB',event)"><span class="anchor-opt__dot" style="background:var(--accent)"></span>N+1 查询修复</div>
+        <div class="anchor-opt" data-agent="sub2b" onclick="pickAgent(this,'panelB',event)"><span class="anchor-opt__dot" style="background:var(--border)"></span>缓存策略</div>
+      </div>
+    </div>
+    <div class="panel-notifs">
+      <span class="pn-chip pn-chip--done" onclick="openDrawerFor('b','done')"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" style="width:10px;height:10px"><polyline points="2 6 5 9 10 3"/></svg><span class="pn-chip__num">1</span></span>
+      <span class="pn-chip pn-chip--alert" onclick="openDrawerFor('b','alert')"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" style="width:10px;height:10px"><circle cx="6" cy="6" r="4.5"/><path d="M6 4v2.5M6 8v.5"/></svg><span class="pn-chip__num">1</span></span>
+      <span class="pn-close" onclick="closeSplit()">关闭</span>
+    </div>
+  </div>
+  <div class="chat-msgs">
+    <div class="agent-view active" data-agent="main"><div class="msg msg--user"><div class="msg__role">用户</div><div class="msg__body"><p>帮我优化 API 性能，当前平均响应时间 1.2s。</p></div></div><div class="msg msg--bot"><div class="msg__role">助手</div><div class="msg__body"><p>分析完成，主要问题：N+1 查询和缺少缓存。分解为：</p><p>1. <strong>N+1 查询修复</strong> → SubAgent-1（运行中）<br>2. <strong>缓存策略设计</strong> → SubAgent-2（等待中）</p></div></div><div class="msg msg--system msg--system--alert"><span class="msg--system__dot msg--system__dot--alert"></span><div class="msg--system__content"><div class="msg--system__title">SubAgent「N+1 查询修复」需要确认</div><div class="msg--system__desc">修复方案影响 3 个端点，是否同时优化缓存？</div><span class="msg--system__action" onclick="openDrawerFor('b','alert')">立即回复 ▾</span></div></div></div>
+    <div class="agent-view" data-agent="sub1b"><div class="msg msg--bot"><div class="msg__role">SubAgent · N+1 查询修复</div><div class="msg__body"><p>分析完成，发现 4 处 N+1 查询：</p><ol style="padding-left:18px;margin:4px 0;"><li><code>GET /api/users</code> → 逐个查 profile</li><li><code>GET /api/orders</code> → 逐个查 product</li><li><code>GET /api/comments</code> → 逐个查 user</li><li><code>GET /api/projects</code> → 逐个查 members</li></ol><p>修复方案：使用 DataLoader 批量加载。</p></div></div></div>
+    <div class="agent-view" data-agent="sub2b"><div class="msg msg--bot"><div class="msg__role">SubAgent · 缓存策略</div><div class="msg__body"><p>等待 N+1 修复完成后开始。</p></div></div></div>
+  </div>
+  <div class="chat-input-wrap" id="inputB">
+    <div class="slash-menu" id="slashB">
+      <div class="slash-item active" data-cmd="/compact" onclick="pickSlash(this,'B')"><span class="slash-item__cmd">/compact</span><span class="slash-item__desc">压缩上下文，减少 token 消耗</span></div>
+      <div class="slash-item" data-cmd="/brainstorming" onclick="pickSlash(this,'B')"><span class="slash-item__cmd">/brainstorming</span><span class="slash-item__desc">进入头脑风暴模式，探索更多方案</span></div>
+    </div>
+    <div class="chat-input-container">
+      <textarea class="chat-input-textarea" id="fieldB" placeholder="输入消息…"></textarea>
+      <div class="chat-input-toolbar">
+        <button class="tb-btn tb-btn--plus" title="上传文件"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3v10M3 8h10"/></svg></button>
+        <div class="tb-model" id="modelPickerB" onclick="toggleModelPicker(this,event)">
+          <span>sonnet</span><span class="tb-model__sep">@</span><span class="tb-model__provider">anthropic</span>
+          <div class="model-dropdown" id="modelDropB">
+            <div class="model-dd-section"><div class="model-dd-title">常用</div>
+              <div class="model-dd-item selected" onclick="selectModel(this,'sonnet','anthropic',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">claude-sonnet</span><span class="model-dd-item__provider">anthropic</span></div>
+              <div class="model-dd-item" onclick="selectModel(this,'gpt-4o','openai',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">gpt-4o</span><span class="model-dd-item__provider">openai</span></div>
+              <div class="model-dd-item" onclick="selectModel(this,'gemini-2.5-pro','google',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">gemini-2.5-pro</span><span class="model-dd-item__provider">google</span></div>
+              <div class="model-dd-item" onclick="selectModel(this,'deepseek-v4','deepseek',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">deepseek-v4</span><span class="model-dd-item__provider">deepseek</span></div>
+            </div>
+            <div class="model-dd-section"><div class="model-dd-title">Anthropic</div>
+              <div class="model-dd-item" onclick="selectModel(this,'opus','anthropic',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">claude-opus</span><span class="model-dd-item__provider">anthropic</span></div>
+              <div class="model-dd-item" onclick="selectModel(this,'haiku','anthropic',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">claude-haiku</span><span class="model-dd-item__provider">anthropic</span></div>
+            </div>
+            <div class="model-dd-section"><div class="model-dd-title">OpenAI</div>
+              <div class="model-dd-item" onclick="selectModel(this,'gpt-4o-mini','openai',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">gpt-4o-mini</span><span class="model-dd-item__provider">openai</span></div>
+              <div class="model-dd-item" onclick="selectModel(this,'o1-pro','openai',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">o1-pro</span><span class="model-dd-item__provider">openai</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="tb-context">上下文 <div class="tb-context__bar"><div class="tb-context__fill" style="width:52%;background:var(--warning)"></div></div> 52%</div>
+        <div class="tb-spacer"></div>
+        <button class="tb-btn tb-btn--send" title="发送"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M8 2v12M4 6l4-4 4 4"/></svg></button>
+        <button class="tb-btn tb-btn--stop" title="中断">■</button>
+      </div>
+    </div>
+  </div>
+</div>

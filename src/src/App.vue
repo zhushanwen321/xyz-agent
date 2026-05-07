@@ -8,7 +8,7 @@
       </main>
     </div>
     <AppStatusbar />
-    <Toaster position="top-right" :theme="settingsStore.theme" />
+    <Toaster position="top-left" />
   </div>
 </template>
 
@@ -70,7 +70,9 @@ onUnmounted(() => {
 
 <style>
 .app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
-.app.focus-mode .sidebar { display: none; }
-.app-body { display: flex; flex: 1; overflow: hidden; }
-.main-area { flex: 1; display: flex; min-width: 0; overflow: hidden; }
+.app.focus-mode .sidebar { width: 0; border-right: none; overflow: hidden; }
+.app.focus-mode .statusbar { display: none; }
+.app.focus-mode .chat-msgs { max-width: 720px; margin: 0 auto; width: 100%; }
+.app-body { display: flex; flex: 1; overflow: hidden; position: relative; }
+.main-area { flex: 1; display: flex; min-width: 0; overflow: hidden; position: relative; }
 </style>

@@ -15,9 +15,9 @@ const props = withDefaults(defineProps<Props>(), {
 })
 
 const variantColorMap: Record<ProgressVariant, string> = {
-  accent: 'var(--color-accent)',
-  warning: 'var(--color-warning)',
-  danger: 'var(--color-danger)',
+  accent: 'var(--accent)',
+  warning: 'var(--warning)',
+  danger: 'var(--danger)',
 }
 
 const PERCENT_MAX = 100
@@ -41,7 +41,7 @@ const barColor = computed(() => variantColorMap[props.variant])
 <template>
   <div
     :class="trackClasses"
-    :style="{ background: 'var(--color-border)' }"
+    :style="{ background: 'var(--border)' }"
     role="progressbar"
     :aria-valuenow="clampedValue"
     aria-valuemin="0"

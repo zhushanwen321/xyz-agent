@@ -130,7 +130,7 @@ onUnmounted(() => {
   justify-content: center;
   height: 100%;
   gap: 8px;
-  color: var(--color-text-muted);
+  color: var(--muted);
 }
 
 .chat-empty__title {
@@ -138,14 +138,14 @@ onUnmounted(() => {
   font-family: var(--font-body);
   font-size: 22px;
   font-weight: 600;
-  color: var(--color-text-primary);
+  color: var(--fg);
 }
 
 .chat-empty__subtitle {
   margin: 0;
   font-family: var(--font-body);
   font-size: 14px;
-  color: var(--color-text-muted);
+  color: var(--muted);
 }
 
 .chat-streaming {

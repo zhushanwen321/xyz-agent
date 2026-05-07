@@ -1,0 +1,58 @@
+<!-- Drawers: right (Panel A's) + left (Panel B's) + overlay -->
+<div class="drawer-overlay" id="drawerOverlay" onclick="closeDrawer()"></div>
+
+<!-- Drawer right (Panel A's SubAgent monitor) -->
+<aside class="drawer drawer--right" id="drawerRight">
+  <div class="drawer__hd"><div class="drawer__title">SubAgent 监控</div><button class="drawer__close" onclick="closeDrawer()">×</button></div>
+  <div class="drawer-tabs">
+    <div class="drawer-tab" data-pane="paneTree" onclick="pickDrawerTab(this)">任务树</div>
+    <div class="drawer-tab active" data-pane="paneDone" onclick="pickDrawerTab(this)">已完成 <span class="drawer-tab__count drawer-tab__count--done">3</span></div>
+    <div class="drawer-tab" data-pane="paneAlert" onclick="pickDrawerTab(this)">请求回应 <span class="drawer-tab__count drawer-tab__count--alert">2</span></div>
+  </div>
+  <div class="drawer__body">
+    <div class="drawer-pane" id="paneTree">
+      <div class="tree-root">
+        <div class="tree-node" data-agent="main" onclick="treeNav(this,'panelA')"><span class="tree-node__toggle">▾</span><span class="tree-node__dot" style="background:var(--success)"></span><span class="tree-node__label"><strong>主线对话</strong></span><span class="tree-node__meta">coordinator</span></div>
+        <div class="tree-children">
+          <div class="tree-node" data-agent="sub1" onclick="treeNav(this,'panelA')"><span style="width:14px"></span><span class="tree-node__dot" style="background:var(--success)"></span><span class="tree-node__label">分析代码结构</span><span class="tree-node__meta">1.2k tok</span><span class="tree-node__kill">终止</span></div>
+          <div class="tree-node" data-agent="sub2" onclick="treeNav(this,'panelA')"><span class="tree-node__toggle">▾</span><span class="tree-node__dot" style="background:var(--accent)"></span><span class="tree-node__label">重构模块A</span><span class="tree-node__meta">2.3k tok</span><span class="tree-node__kill">终止</span></div>
+          <div class="tree-children">
+            <div class="tree-node" data-agent="sub3" onclick="treeNav(this,'panelA')"><span style="width:14px"></span><span class="tree-node__dot" style="background:var(--warning)"></span><span class="tree-node__label">重构子模块A1</span><span class="tree-node__meta">等待确认</span><span class="tree-node__kill">终止</span></div>
+          </div>
+          <div class="tree-node" data-agent="sub4" onclick="treeNav(this,'panelA')"><span style="width:14px"></span><span class="tree-node__dot" style="background:var(--border)"></span><span class="tree-node__label">编写测试</span><span class="tree-node__meta">pending</span><span class="tree-node__kill">终止</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="drawer-pane active" id="paneDone">
+      <div class="done-item"><div class="done-item__hd"><span class="done-item__dot"></span><div class="done-item__info"><div class="done-item__name">分析代码结构</div><div class="done-item__summary">发现 3 个主要问题：接口散落、错误类不统一、Session 耦合</div></div><div class="done-item__meta">2m 34s<br>1.2k tok</div></div><div class="done-item__action"><span class="done-item__link" onclick="jumpToAgent('sub1')">查看完整结果 →</span></div></div>
+      <div class="done-item"><div class="done-item__hd"><span class="done-item__dot"></span><div class="done-item__info"><div class="done-item__name">读取配置文件</div><div class="done-item__summary">已读取 tsconfig.json、.eslintrc.json、package.json</div></div><div class="done-item__meta">18s<br>320 tok</div></div><div class="done-item__action"><span class="done-item__link">查看详情 →</span></div></div>
+      <div class="done-item"><div class="done-item__hd"><span class="done-item__dot"></span><div class="done-item__info"><div class="done-item__name">依赖分析</div><div class="done-item__summary">共 47 个导出函数，依赖深度最深 4 层</div></div><div class="done-item__meta">45s<br>890 tok</div></div><div class="done-item__action"><span class="done-item__link">查看详情 →</span></div></div>
+    </div>
+    <div class="drawer-pane" id="paneAlert">
+      <div class="alert-item"><div class="alert-item__hd"><span class="alert-item__dot"></span><div class="alert-item__info"><div class="alert-item__name">重构子模块A1</div><div class="alert-item__session">xyz-agent / 重构 auth 模块</div></div><div class="alert-item__time">3 分钟前</div></div><div class="alert-item__bd"><div class="alert-item__question">检测到 3 处循环依赖，需要选择处理策略。</div><span class="inline-reply__link" onclick="jumpToAgent('sub3')">查看详情并回复 →</span></div></div>
+    </div>
+  </div>
+</aside>
+
+<!-- Drawer left (Panel B's SubAgent monitor, split mode only) -->
+<aside class="drawer drawer--left" id="drawerLeft">
+  <div class="drawer__hd"><div class="drawer__title">SubAgent 监控</div><button class="drawer__close" onclick="closeDrawer()">×</button></div>
+  <div class="drawer-tabs">
+    <div class="drawer-tab" data-pane="paneTreeL" onclick="pickDrawerTabLeft(this)">任务树</div>
+    <div class="drawer-tab active" data-pane="paneDoneL" onclick="pickDrawerTabLeft(this)">已完成 <span class="drawer-tab__count drawer-tab__count--done">1</span></div>
+    <div class="drawer-tab" data-pane="paneAlertL" onclick="pickDrawerTabLeft(this)">请求回应 <span class="drawer-tab__count drawer-tab__count--alert">1</span></div>
+  </div>
+  <div class="drawer__body">
+    <div class="drawer-pane" id="paneTreeL">
+      <div class="tree-root">
+        <div class="tree-node active" data-agent="main" onclick="treeNav(this,'panelB')"><span class="tree-node__toggle">▾</span><span class="tree-node__dot" style="background:var(--success)"></span><span class="tree-node__label"><strong>主对话</strong></span><span class="tree-node__meta">coordinator</span></div>
+        <div class="tree-children">
+          <div class="tree-node" data-agent="sub1b" onclick="treeNav(this,'panelB')"><span style="width:14px"></span><span class="tree-node__dot" style="background:var(--accent)"></span><span class="tree-node__label">N+1 查询修复</span><span class="tree-node__meta">1.8k tok</span><span class="tree-node__kill">终止</span></div>
+          <div class="tree-node" data-agent="sub2b" onclick="treeNav(this,'panelB')"><span style="width:14px"></span><span class="tree-node__dot" style="background:var(--border)"></span><span class="tree-node__label">缓存策略</span><span class="tree-node__meta">pending</span><span class="tree-node__kill">终止</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="drawer-pane active" id="paneDoneL"><div class="done-item"><div class="done-item__hd"><span class="done-item__dot"></span><div class="done-item__info"><div class="done-item__name">查询分析</div><div class="done-item__summary">定位了 4 处 N+1 查询，分布在 users/orders/comments/projects 端点</div></div><div class="done-item__meta">1m 12s<br>1.8k tok</div></div><div class="done-item__action"><span class="done-item__link" onclick="jumpToAgent('sub1b')">查看详情 →</span></div></div></div>
+    <div class="drawer-pane" id="paneAlertL"><div class="alert-item alert-item--simple"><div class="alert-item__hd"><span class="alert-item__dot"></span><div class="alert-item__info"><div class="alert-item__name">N+1 查询修复</div><div class="alert-item__session">work-project / API 性能优化</div></div><div class="alert-item__time">8 分钟前</div></div><div class="alert-item__bd"><div class="alert-item__question">修复方案影响 3 个端点，是否同时优化缓存策略？</div><div class="inline-reply"><textarea class="inline-reply__field" placeholder="直接回复…" rows="1"></textarea><button class="inline-reply__btn">回复</button></div></div></div></div>
+  </div>
+</aside>

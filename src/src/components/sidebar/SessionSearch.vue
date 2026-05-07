@@ -53,7 +53,7 @@ function clear() {
 .search-input-wrap { position: relative; display: flex; align-items: center; }
 .search-icon {
   position: absolute; left: 10px; width: 14px; height: 14px;
-  color: var(--color-text-muted); pointer-events: none; z-index: 1;
+  color: var(--muted); pointer-events: none; z-index: 1;
 }
 .search-input { flex: 1; }
 .search-input :deep(input) { padding-left: 30px; }
@@ -61,9 +61,9 @@ function clear() {
   position: absolute; right: 6px; width: 20px; height: 20px;
   display: flex; align-items: center; justify-content: center;
   background: none; border: none; cursor: pointer;
-  color: var(--color-text-muted); border-radius: var(--radius-sm);
+  color: var(--muted); border-radius: var(--radius-sm);
   padding: 0;
 }
-.clear-btn:hover { color: var(--color-text-primary); background: var(--color-accent-light); }
+.clear-btn:hover { color: var(--fg); background: var(--accent-light); }
 .clear-btn svg { width: 12px; height: 12px; }
 </style>

@@ -40,9 +40,9 @@ const triggerClasses = computed(() =>
   cn(
     'inline-flex h-10 w-full items-center justify-between rounded-md px-3 py-2 text-sm',
     'transition-colors',
-    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]',
+    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
     'disabled:cursor-not-allowed disabled:opacity-50',
-    'data-[placeholder]:text-[var(--color-text-muted)]',
+    'data-[placeholder]:text-[var(--muted)]',
   ),
 )
 
@@ -65,11 +65,11 @@ const itemClasses = computed(() =>
   >
     <SelectTrigger
       :class="triggerClasses"
-      :style="{ background: 'var(--color-surface)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)' }"
+      :style="{ background: 'var(--surface)', color: 'var(--fg)', border: '1px solid var(--border)' }"
       :aria-label="placeholder"
     >
       <SelectValue :placeholder="placeholder" />
-      <svg class="ml-2" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--color-text-muted)"><path d="M4 6l4 4 4-4"/></svg>
+      <svg class="ml-2" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--muted)"><path d="M4 6l4 4 4-4"/></svg>
     </SelectTrigger>
 
     <SelectPortal>
@@ -77,7 +77,7 @@ const itemClasses = computed(() =>
         position="popper"
         :side-offset="4"
         class="z-50 overflow-hidden rounded-md shadow-md"
-        :style="{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }"
+        :style="{ background: 'var(--surface)', border: '1px solid var(--border)' }"
         role="listbox"
       >
         <SelectViewport class="p-1">
@@ -86,7 +86,7 @@ const itemClasses = computed(() =>
             :key="option.value"
             :value="option.value"
             :class="itemClasses"
-            style="color: var(--color-text-primary)"
+            style="color: var(--fg)"
             role="option"
             :aria-selected="modelValue === option.value"
           >

@@ -60,8 +60,8 @@ const contentClasses = computed(() =>
       <DialogContent
         :class="contentClasses"
         :style="{
-          background: 'var(--color-surface)',
-          border: '1px solid var(--color-border)',
+          background: 'var(--surface)',
+          border: '1px solid var(--border)',
         }"
         :aria-describedby="undefined"
         :aria-labelledby="title ? 'dialog-title' : undefined"
@@ -70,7 +70,7 @@ const contentClasses = computed(() =>
           v-if="title"
           id="dialog-title"
           class="text-lg font-semibold leading-none"
-          style="color: var(--color-text-primary)"
+          style="color: var(--fg)"
         >
           {{ title }}
         </DialogTitle>
@@ -80,8 +80,8 @@ const contentClasses = computed(() =>
         </div>
 
         <DialogClose
-          class="absolute right-4 top-4 inline-flex h-6 w-6 items-center justify-center rounded-sm opacity-70 transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]"
-          style="color: var(--color-text-muted)"
+          class="absolute right-4 top-4 inline-flex h-6 w-6 items-center justify-center rounded-sm opacity-70 transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+          style="color: var(--muted)"
           aria-label="Close"
         >
           ✕

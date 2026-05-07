@@ -20,10 +20,10 @@ const emit = defineEmits<{
 const rootClasses = computed(() =>
   cn(
     'peer inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full transition-colors',
-    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]',
+    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--surface)]',
     'disabled:cursor-not-allowed disabled:opacity-50',
-    'data-[state=checked]:bg-[var(--color-accent)]',
-    'data-[state=unchecked]:bg-[var(--color-border)]',
+    'data-[state=checked]:bg-[var(--accent)]',
+    'data-[state=unchecked]:bg-[var(--border)]',
   ),
 )
 
@@ -46,7 +46,7 @@ const thumbClasses = computed(() =>
   >
     <SwitchThumb
       :class="thumbClasses"
-      :style="{ background: 'var(--color-surface)' }"
+      :style="{ background: 'var(--surface)' }"
     />
   </SwitchRoot>
 </template>

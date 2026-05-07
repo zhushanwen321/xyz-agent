@@ -36,7 +36,7 @@ const rootClasses = computed(() => cn('overflow-hidden', props.class))
     >
       <ScrollAreaThumb
         class="relative flex-1 rounded-full"
-        :style="{ background: 'var(--color-text-muted)', opacity: 0.3 }"
+        :style="{ background: 'var(--muted)', opacity: 0.3 }"
       />
     </ScrollAreaScrollbar>
 
@@ -47,7 +47,7 @@ const rootClasses = computed(() => cn('overflow-hidden', props.class))
     >
       <ScrollAreaThumb
         class="relative flex-1 rounded-full"
-        :style="{ background: 'var(--color-text-muted)', opacity: 0.3 }"
+        :style="{ background: 'var(--muted)', opacity: 0.3 }"
       />
     </ScrollAreaScrollbar>
 

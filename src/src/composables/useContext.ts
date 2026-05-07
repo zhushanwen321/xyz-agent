@@ -9,9 +9,9 @@ export function useContext() {
 
   const barColor = computed(() => {
     const pct = store.contextUsagePercent
-    if (pct > CONTEXT_WARN_THRESHOLD) return 'var(--color-danger)'
-    if (pct > CONTEXT_DANGER_THRESHOLD) return 'var(--color-warning)'
-    return 'var(--color-accent)'
+    if (pct > CONTEXT_WARN_THRESHOLD) return 'var(--danger)'
+    if (pct > CONTEXT_DANGER_THRESHOLD) return 'var(--warning)'
+    return 'var(--accent)'
   })
 
   return { percent: store.contextUsagePercent, barColor }

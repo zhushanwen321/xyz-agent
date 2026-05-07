@@ -1,47 +1,47 @@
 <template>
-  <div class="chat-input">
-    <div class="chat-input__field">
-      <textarea
-        ref="textareaRef"
-        v-model="text"
-        :placeholder="t('chat.inputPlaceholder')"
-        class="chat-input__textarea"
-        rows="1"
-        @input="onInput"
-        @keydown="onKeyDown"
-        @compositionstart="isComposing = true"
-        @compositionend="onCompositionEnd"
-      ></textarea>
-      <button
-        v-if="isStreaming"
-        class="chat-input__btn chat-input__btn--stop"
-        @click="emit('cancel')"
-        :title="t('chat.stop')"
-      >
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><rect x="2" y="2" width="12" height="12" rx="2"/></svg>
-      </button>
-      <button
-        v-else
-        class="chat-input__btn chat-input__btn--send"
-        :disabled="!canSend"
-        @click="handleSend"
-        :title="t('chat.send')"
-      >
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V3M4 7l4-4 4 4"/></svg>
-      </button>
-    </div>
-    <div class="chat-input__toolbar">
-      <button class="chat-input__tool-btn" :title="'Upload file'"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12L11.5 6.5a2 2 0 0 0-2.83-2.83L3.17 9.17a3 3 0 0 0 4.24 4.24L13 7.83"/></svg></button>
-      <div class="chat-input__spacer"></div>
-      <ContextBar :percentage="contextPercent" />
-      <ModelPicker :current-model="currentModel" @select="(id) => emit('select-model', id)" />
-    </div>
+  <div class="chat-input-wrap">
     <SlashMenu
       :visible="slashVisible"
       :filter="slashFilter"
       @close="closeSlashMenu"
       @select="handleSlashSelect"
     />
+    <div class="chat-input-container">
+      <textarea
+        ref="textareaRef"
+        v-model="text"
+        :placeholder="t('chat.inputPlaceholder')"
+        class="chat-input-textarea"
+        rows="1"
+        @input="onInput"
+        @keydown="onKeyDown"
+        @compositionstart="isComposing = true"
+        @compositionend="onCompositionEnd"
+      ></textarea>
+      <div class="chat-input-toolbar">
+        <button class="tb-btn tb-btn--plus" title="Upload file">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12L11.5 6.5a2 2 0 0 0-2.83-2.83L3.17 9.17a3 3 0 0 0 4.24 4.24L13 7.83"/></svg>
+        </button>
+        <ModelPicker :current-model="currentModel" @select="(id) => emit('select-model', id)" />
+        <ContextBar :percentage="contextPercent" />
+        <div class="tb-spacer"></div>
+        <button
+          v-if="isStreaming"
+          class="tb-btn tb-btn--stop"
+          @click="emit('cancel')"
+          :title="t('chat.stop')"
+        >■</button>
+        <button
+          v-else
+          class="tb-btn tb-btn--send"
+          :disabled="!canSend"
+          @click="handleSend"
+          :title="t('chat.send')"
+        >
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V3M4 7l4-4 4 4"/></svg>
+        </button>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -142,106 +142,128 @@ watch(text, () => nextTick(resizeTextarea))
 </script>
 
 <style scoped>
-.chat-input {
-  padding: 12px;
-  border-top: 1px solid var(--color-border);
-  background: var(--color-surface);
-}
-
-.chat-input__field {
+/* Wrap: positions the entire input block */
+.chat-input-wrap {
   position: relative;
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
+  margin: 0 16px 12px;
+  flex-shrink: 0;
 }
 
-.chat-input__textarea {
-  flex: 1;
-  min-height: 38px;
-  max-height: 140px;
-  padding: 8px 12px;
-  padding-right: 40px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-bg-inset);
-  color: var(--color-text-primary);
+/* Container: single rounded card for textarea + toolbar */
+.chat-input-container {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.04);
+  transition: border-color 0.15s var(--ease), box-shadow 0.15s var(--ease);
+  overflow: visible;
+  position: relative;
+  z-index: 10;
+}
+
+.chat-input-container:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+}
+
+/* Textarea: no border, transparent bg, fits inside container */
+.chat-input-textarea {
+  display: block;
+  width: 100%;
+  min-height: calc(1.45em * 2 + 16px);
+  max-height: calc(1.45em * 10 + 16px);
+  padding: 10px 14px 8px;
+  border: none;
+  background: transparent;
+  color: var(--fg);
   font-family: var(--font-body);
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: 14px;
+  line-height: 1.45;
   resize: none;
   outline: none;
 }
 
-.chat-input__textarea:focus {
-  border-color: var(--color-accent);
+.chat-input-textarea::placeholder {
+  color: var(--muted);
 }
 
-.chat-input__btn {
-  position: absolute;
-  right: 6px;
-  bottom: 6px;
-  width: 30px;
-  height: 30px;
-  border: none;
-  border-radius: var(--radius-sm);
+/* Toolbar: bottom row inside container */
+.chat-input-toolbar {
   display: flex;
   align-items: center;
+  gap: 4px;
+  padding: 4px 8px 6px;
+}
+
+/* Toolbar button base */
+.tb-btn {
+  display: inline-flex;
+  align-items: center;
   justify-content: center;
+  height: 28px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-family: var(--font-body);
   cursor: pointer;
-  font-size: 14px;
+  transition: all 0.15s var(--ease);
+  gap: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
-.chat-input__btn--send {
-  background: var(--color-accent);
+.tb-btn:hover {
+  background: var(--accent-light);
+  color: var(--accent);
+}
+
+.tb-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Plus button */
+.tb-btn--plus {
+  width: 28px;
+  padding: 0;
+}
+
+/* Send button */
+.tb-btn--send {
+  background: var(--accent);
   color: white;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-xs);
 }
 
-.chat-input__btn--send:disabled {
+.tb-btn--send:disabled {
   opacity: 0.4;
   cursor: default;
 }
 
-.chat-input__btn--send:not(:disabled):hover {
+.tb-btn--send:not(:disabled):hover {
   opacity: 0.88;
 }
 
-.chat-input__btn--stop {
-  background: var(--color-danger);
-  color: white;
+/* Stop button */
+.tb-btn--stop {
+  font-weight: 700;
+  font-size: 11px;
+  width: 28px;
+  height: 28px;
 }
 
-.chat-input__btn--stop:hover {
-  opacity: 0.88;
+.tb-btn--stop:hover {
+  background: var(--danger-light);
+  color: var(--danger);
 }
 
-.chat-input__btn-icon {
-  font-size: 14px;
-  line-height: 1;
-}
-
-.chat-input__toolbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding-top: 6px;
-}
-
-.chat-input__tool-btn {
-  padding: 2px 4px;
-  border: none;
-  background: none;
-  font-size: 14px;
-  cursor: pointer;
-  opacity: 0.5;
-  border-radius: var(--radius-sm);
-}
-
-.chat-input__tool-btn:hover {
-  opacity: 0.8;
-  background: var(--color-bg-base);
-}
-
-.chat-input__spacer {
+/* Spacer */
+.tb-spacer {
   flex: 1;
 }
 </style>

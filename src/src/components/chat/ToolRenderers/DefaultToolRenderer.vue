@@ -19,7 +19,7 @@ function formatInput(tc: ToolCall): string {
 
 <style scoped>
 .default-renderer { padding: 0; }
-.renderer-input { white-space: pre-wrap; padding: 8px 10px; font-family: var(--font-mono); font-size: 12px; color: var(--color-text-muted); margin: 0; }
-.renderer-output { margin: 0 10px 8px; max-height: 200px; overflow-y: auto; border-radius: var(--radius-md); border: 1px solid var(--color-border); background: var(--color-bg-base); padding: 8px; }
-.renderer-output pre { white-space: pre-wrap; font-family: var(--font-mono); font-size: 12px; color: var(--color-text-muted); margin: 0; }
+.renderer-input { white-space: pre-wrap; padding: 8px 10px; font-family: var(--font-mono); font-size: 12px; color: var(--muted); margin: 0; }
+.renderer-output { margin: 0 10px 8px; max-height: 200px; overflow-y: auto; border-radius: var(--radius-md); border: 1px solid var(--border); background: var(--bg); padding: 8px; }
+.renderer-output pre { white-space: pre-wrap; font-family: var(--font-mono); font-size: 12px; color: var(--muted); margin: 0; }
 </style>

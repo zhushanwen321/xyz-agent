@@ -6,49 +6,52 @@ export default {
   theme: {
     extend: {
       colors: {
-        bg: 'var(--color-bg-base)',
-        surface: 'var(--color-surface)',
-        'text-primary': 'var(--color-text-primary)',
-        'text-muted': 'var(--color-text-muted)',
-        border: 'var(--color-border)',
-        accent: 'var(--color-accent)',
-        'accent-light': 'var(--color-accent-light)',
-        success: 'var(--color-success)',
-        warning: 'var(--color-warning)',
-        danger: 'var(--color-danger)',
-        // shadcn-vue / Radix Vue standard aliases
-        primary: {
-          DEFAULT: 'var(--color-accent)',
-          foreground: 'var(--color-primary-foreground)',
+        bg: 'var(--bg)',
+        surface: 'var(--surface)',
+        fg: 'var(--fg)',
+        muted: 'var(--muted)',
+        border: 'var(--border)',
+        accent: {
+          DEFAULT: 'var(--accent)',
+          light: 'var(--accent-light)',
         },
-        destructive: {
-          DEFAULT: 'var(--color-danger)',
-          foreground: 'var(--color-destructive-foreground)',
+        success: {
+          DEFAULT: 'var(--success)',
+          light: 'var(--success-light)',
         },
-        muted: {
-          DEFAULT: 'var(--color-muted)',
-          foreground: 'var(--color-muted-foreground)',
+        warning: {
+          DEFAULT: 'var(--warning)',
+          light: 'var(--warning-light)',
         },
-        background: 'var(--color-bg-base)',
-        foreground: 'var(--color-text-primary)',
-        ring: 'var(--color-accent)',
-        input: 'var(--color-border)',
-        // Note: 'border' is already defined above, but Tailwind needs it as a color too
+        danger: {
+          DEFAULT: 'var(--danger)',
+          light: 'var(--danger-light)',
+        },
+        // Keep shadcn aliases but update variable refs
+        primary: { DEFAULT: 'var(--accent)', foreground: '#fff' },
+        destructive: { DEFAULT: 'var(--danger)', foreground: '#fff' },
+        background: 'var(--bg)',
+        foreground: 'var(--fg)',
+        ring: 'var(--accent)',
+        input: 'var(--border)',
       },
       fontFamily: {
-        display: ['Tiempos Headline', 'Newsreader', 'Georgia', 'serif'],
-        body: ['system-ui', 'sans-serif'],
-        mono: ['JetBrains Mono', 'IBM Plex Mono', 'Menlo', 'monospace'],
+        display: ['Tiempos Headline', 'Newsreader', 'Iowan Old Style', 'Georgia', 'serif'],
+        body: ['-apple-system', 'BlinkMacSystemFont', 'system-ui', 'sans-serif'],
+        mono: ['JetBrains Mono', 'IBM Plex Mono', 'ui-monospace', 'Menlo', 'monospace'],
       },
       borderRadius: {
+        DEFAULT: '12px',
+        sm: '8px',
+        xs: '4px',
         lg: '12px',
         md: '8px',
-        sm: '4px',
       },
       spacing: {
-        sidebar: '180px',
-        header: '40px',
-        statusbar: '28px',
+        sidebar: '240px',
+        header: '48px',
+        statusbar: '32px',
+        drawer: '380px',
       },
     },
   },

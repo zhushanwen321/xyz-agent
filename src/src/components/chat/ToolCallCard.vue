@@ -1,20 +1,14 @@
 <template>
-  <div :class="['tool-card', `tool-card--${statusClass}`]">
-    <button class="tool-header" @click="expanded = !expanded">
-      <div class="tool-header-left">
-        <span v-if="isRunning" class="tool-spinner"></span>
-        <span v-else :class="['tool-status-icon', statusClass]">{{ isError ? '✗' : '✓' }}</span>
-        <span class="tool-name">{{ toolCall.toolName }}</span>
-        <span v-if="filePathHint" class="tool-hint">{{ truncate(filePathHint, 50) }}</span>
-      </div>
-      <div class="tool-header-right">
-        <span :class="['tool-status', `tool-status--${statusClass}`]">{{ statusLabel }}</span>
-        <span v-if="statusClass === 'done'" class="tool-badge tool-badge--safe">safe</span>
-        <span v-else-if="statusClass === 'error'" class="tool-badge tool-badge--error">error</span>
-        <svg class="tool-chevron" :class="{ rotated: expanded }" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
-      </div>
+  <div :class="['tool', { collapsed: !expanded }]">
+    <button class="tool__hd" @click="expanded = !expanded">
+      <span v-if="isRunning" class="tool-spinner"></span>
+      <span v-else :class="['tool__status-icon', statusClass]">{{ isError ? '✗' : '✓' }}</span>
+      <span class="tool__name">{{ toolCall.toolName }}</span>
+      <span v-if="filePathHint" class="tool__path">{{ truncate(filePathHint, 50) }}</span>
+      <span :class="['tool__status', `tool__status--${statusClass}`]">{{ statusLabel }}</span>
+      <svg class="tool__chevron" xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
     </button>
-    <div v-if="expanded" class="tool-body">
+    <div v-if="expanded" class="tool__bd">
       <component v-if="rendererComp" :is="rendererComp" :tool-call="toolCall" />
       <DefaultToolRenderer v-else :tool-call="toolCall" />
     </div>
@@ -58,31 +52,21 @@ function truncate(str: string, max: number): string {
 </script>
 
 <style scoped>
-.tool-card { overflow: hidden; border-radius: var(--radius-md); border: 1px solid var(--color-border); border-left: 3px solid var(--color-border); background: color-mix(in srgb, var(--color-surface) 92%, transparent); }
-.tool-card--running { border-left-color: var(--color-warning, #f59e0b); }
-.tool-card--done { border-left-color: var(--color-success, #10b981); }
-.tool-card--error { border-left-color: var(--color-danger, #ef4444); }
-.tool-header { display: flex; width: 100%; align-items: center; justify-content: space-between; padding: 6px 10px; text-align: left; cursor: pointer; transition: background 0.15s; background: none; border: none; color: inherit; font: inherit; }
-.tool-header:hover { background: var(--color-bg-base); }
-.tool-header-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.tool-header-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.tool-spinner { display: inline-block; width: 10px; height: 10px; border: 2px solid var(--color-warning, #f59e0b); border-top-color: transparent; border-radius: 50%; animation: spin 0.6s linear infinite; }
-.tool-status-icon { font-size: 12px; font-family: var(--font-mono); }
-.tool-status-icon.done { color: var(--color-success, #10b981); }
-.tool-status-icon.error { color: var(--color-danger, #ef4444); }
-.tool-name { font-family: var(--font-mono); font-weight: 600; font-size: 12px; color: var(--color-text-primary); }
-.tool-hint { font-family: var(--font-mono); font-size: 11px; color: var(--color-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tool-status { font-family: var(--font-mono); font-size: 11px; }
-.tool-status--running { color: var(--color-warning, #f59e0b); }
-.tool-status--done { color: var(--color-success, #10b981); }
-.tool-status--error { color: var(--color-danger, #ef4444); }
-.tool-chevron { color: var(--color-text-muted); transition: transform 0.2s; }
-.tool-chevron.rotated { transform: rotate(180deg); }
-.tool-body { border-top: 1px solid var(--color-border); }
-.tool-badge { font-family: var(--font-mono); font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 5px; border-radius: var(--radius-sm); }
-.tool-badge--safe { color: var(--color-success, #10b981); background: oklch(95% 0.06 145); }
-.tool-badge--error { color: var(--color-danger, #ef4444); background: oklch(95% 0.06 25); }
-[data-theme="dark"] .tool-badge--safe { background: oklch(30% 0.06 145); }
-[data-theme="dark"] .tool-badge--error { background: oklch(30% 0.06 25); }
+.tool { border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); margin: 6px 0; overflow: hidden; }
+.tool__hd { display: flex; align-items: center; gap: 6px; padding: 6px 10px; cursor: pointer; font-size: 11px; font-family: var(--font-mono); color: var(--muted); user-select: none; transition: background 0.15s var(--ease); width: 100%; text-align: left; background: none; border: none; color: inherit; font: inherit; }
+.tool__hd:hover { background: var(--accent-light); }
+.tool__chevron { transition: transform 0.15s var(--ease); font-size: 9px; flex-shrink: 0; }
+.tool__name { font-weight: 600; color: var(--accent); }
+.tool__path { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.tool__status { margin-left: auto; font-size: 10px; flex-shrink: 0; }
+.tool__status--running { color: var(--warning); }
+.tool__status--done { color: var(--success); }
+.tool__status--error { color: var(--danger); }
+.tool__bd { padding: 6px 10px 10px; font-size: 11px; line-height: 1.5; max-height: 160px; overflow-y: auto; border-top: 1px solid var(--border); font-family: var(--font-mono); color: var(--muted); }
+.tool__status-icon { font-size: 12px; flex-shrink: 0; }
+.tool__status-icon.done { color: var(--success); }
+.tool__status-icon.error { color: var(--danger); }
+.tool__status-icon.running { color: var(--warning); }
+.tool-spinner { display: inline-block; width: 10px; height: 10px; border: 2px solid var(--warning); border-top-color: transparent; border-radius: 50%; animation: spin 0.6s linear infinite; flex-shrink: 0; }
 @keyframes spin { to { transform: rotate(360deg); } }
 </style>

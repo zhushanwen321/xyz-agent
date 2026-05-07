@@ -24,8 +24,8 @@ const command = computed(() => {
 <style scoped>
 .bash-renderer { padding: 0; }
 .bash-section { padding: 8px 10px; }
-.bash-label { font-family: var(--font-mono); font-size: 11px; color: var(--color-text-muted); margin-bottom: 4px; }
-.bash-cmd { white-space: pre-wrap; font-family: var(--font-mono); font-size: 12px; color: var(--color-text-primary); background: var(--color-bg-base); border-radius: var(--radius-md); padding: 8px; margin: 0; }
-.bash-output { max-height: 200px; overflow-y: auto; border-radius: var(--radius-md); border: 1px solid var(--color-border); background: var(--color-surface); padding: 8px; }
-.bash-output pre { white-space: pre-wrap; font-family: var(--font-mono); font-size: 12px; color: var(--color-text-muted); margin: 0; }
+.bash-label { font-family: var(--font-mono); font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+.bash-cmd { white-space: pre-wrap; font-family: var(--font-mono); font-size: 12px; color: var(--fg); background: var(--bg); border-radius: var(--radius-md); padding: 8px; margin: 0; }
+.bash-output { max-height: 200px; overflow-y: auto; border-radius: var(--radius-md); border: 1px solid var(--border); background: var(--surface); padding: 8px; }
+.bash-output pre { white-space: pre-wrap; font-family: var(--font-mono); font-size: 12px; color: var(--muted); margin: 0; }
 </style>

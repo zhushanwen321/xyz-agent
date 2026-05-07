@@ -24,5 +24,5 @@ watch(() => props.messages.length, () => {
 
 <style scoped>
 .msg-list { flex: 1; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 14px; }
-.msg-wrapper { max-width: 80%; }
+.msg-wrapper { /* no max-width, .msg handles it */ }
 </style>

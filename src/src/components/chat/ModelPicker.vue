@@ -89,10 +89,10 @@ function handleSelect(modelId: string) {
   align-items: center;
   gap: 4px;
   padding: 4px 8px;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--color-bg-base);
-  color: var(--color-text-primary);
+  background: var(--bg);
+  color: var(--fg);
   font-size: 12px;
   font-family: var(--font-body);
   cursor: pointer;
@@ -100,7 +100,7 @@ function handleSelect(modelId: string) {
 }
 
 .model-picker__trigger:hover {
-  border-color: var(--color-accent);
+  border-color: var(--accent);
 }
 
 .model-picker__label {
@@ -110,7 +110,7 @@ function handleSelect(modelId: string) {
 }
 
 .model-picker__chevron {
-  color: var(--color-text-muted);
+  color: var(--muted);
   transition: transform 0.2s;
 }
 .model-picker__chevron--open {
@@ -124,8 +124,8 @@ function handleSelect(modelId: string) {
   min-width: 220px;
   max-height: 280px;
   overflow-y: auto;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
   z-index: 100;
@@ -133,7 +133,7 @@ function handleSelect(modelId: string) {
 }
 
 .model-picker__group + .model-picker__group {
-  border-top: 1px solid var(--color-border);
+  border-top: 1px solid var(--border);
   margin-top: 4px;
   padding-top: 4px;
 }
@@ -144,7 +144,7 @@ function handleSelect(modelId: string) {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--color-text-muted);
+  color: var(--muted);
 }
 
 .model-picker__item {
@@ -153,7 +153,7 @@ function handleSelect(modelId: string) {
   padding: 6px 12px;
   border: none;
   background: none;
-  color: var(--color-text-primary);
+  color: var(--fg);
   font-size: 13px;
   font-family: var(--font-body);
   text-align: left;
@@ -161,18 +161,18 @@ function handleSelect(modelId: string) {
 }
 
 .model-picker__item:hover {
-  background: var(--color-accent-light);
+  background: var(--accent-light);
 }
 
 .model-picker__item--active {
   font-weight: 600;
-  color: var(--color-accent);
+  color: var(--accent);
 }
 
 .model-picker__empty {
   padding: 12px;
   font-size: 12px;
-  color: var(--color-text-muted);
+  color: var(--muted);
   text-align: center;
 }
 </style>

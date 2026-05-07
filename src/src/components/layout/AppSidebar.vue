@@ -211,47 +211,48 @@ function cancelRename() {
 
 <style scoped>
 .sidebar {
-  width: var(--sidebar-width);
+  width: var(--sidebar-w);
+  z-index: 55;
   display: flex; flex-direction: column;
-  background: var(--color-surface);
-  border-right: 1px solid var(--color-border);
+  background: var(--surface);
+  border-right: 1px solid var(--border);
   flex-shrink: 0;
   transition: width 0.2s ease;
 }
 .sidebar.collapsed { width: 48px; }
 .sidebar-hd {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 12px; border-bottom: 1px solid var(--color-border);
+  padding: 10px 14px; border-bottom: 1px solid var(--border);
 }
 .sidebar.collapsed .sidebar-hd { justify-content: center; gap: 0; }
 .sidebar-title {
   font-size: 11px; font-weight: 600;
-  text-transform: uppercase; color: var(--color-text-muted);
+  text-transform: uppercase; color: var(--muted);
 }
 .sidebar-add {
   width: 22px; height: 22px; border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border); background: transparent;
+  border: 1px solid var(--border); background: transparent;
   cursor: pointer; display: flex; align-items: center; justify-content: center;
-  color: var(--color-text-muted); font-size: 11px;
+  color: var(--muted); font-size: 11px;
 }
-.sidebar-add:hover { background: var(--color-accent-light); color: var(--color-accent); }
+.sidebar-add:hover { background: var(--accent-light); color: var(--accent); }
 .sidebar-toggle {
   width: 22px; height: 22px; border-radius: var(--radius-sm);
   border: none; background: transparent; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
-  color: var(--color-text-muted);
+  color: var(--muted);
 }
-.sidebar-toggle:hover { background: var(--color-accent-light); color: var(--color-accent); }
+.sidebar-toggle:hover { background: var(--accent-light); color: var(--accent); }
 .sidebar-toggle svg { width: 14px; height: 14px; }
 .sidebar-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
 .group-header {
   display: flex; align-items: center; gap: 6px;
   width: 100%; padding: 6px 14px;
   background: none; border: none; cursor: pointer;
-  color: var(--color-text-muted); font-size: 11px; font-weight: 600;
+  color: var(--muted); font-size: 11px; font-weight: 600;
   text-align: left;
 }
-.group-header:hover { color: var(--color-text-primary); }
+.group-header:hover { color: var(--fg); }
 .chevron {
   width: 12px; height: 12px; flex-shrink: 0;
   transition: transform 0.15s;
@@ -264,18 +265,19 @@ function cancelRename() {
 }
 .group-count {
   font-size: 10px; font-weight: 500;
-  background: var(--color-border); color: var(--color-text-muted);
+  background: var(--border); color: var(--muted);
   border-radius: var(--radius-sm); padding: 1px 5px;
 }
 .no-sessions {
   padding: 20px 14px; text-align: center;
-  color: var(--color-text-muted); font-size: 12px;
+  color: var(--muted); font-size: 12px;
 }
 .dialog-text {
-  font-size: 14px; color: var(--color-text-primary);
+  font-size: 14px; color: var(--fg);
   margin-bottom: 16px; line-height: 1.5;
 }
 .dialog-actions {
   display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px;
 }
+@keyframes dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 </style>

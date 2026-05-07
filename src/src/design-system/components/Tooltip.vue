@@ -49,15 +49,15 @@ const contentClasses = computed(() =>
           :side-offset="6"
           :class="contentClasses"
           :style="{
-            background: 'var(--color-surface)',
-            color: 'var(--color-text-primary)',
-            border: '1px solid var(--color-border)',
+            background: 'var(--surface)',
+            color: 'var(--fg)',
+            border: '1px solid var(--border)',
           }"
           role="tooltip"
         >
           {{ content }}
           <TooltipArrow
-            :style="{ fill: 'var(--color-surface)' }"
+            :style="{ fill: 'var(--surface)' }"
             :width="8"
             :height="4"
           />
