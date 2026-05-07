@@ -1,13 +1,9 @@
 <script setup lang="ts">
- 
-
 import { ref, computed } from 'vue'
 import type { MockAgent } from '../../mock/data'
-import ToggleSwitch from './shared/ToggleSwitch.vue'
-import MetaGrid from './shared/MetaGrid.vue'
+import { ToggleSwitch, MetaGrid, MarkdownEditor } from './shared'
 import ModelStrategyConfig from './ModelStrategyConfig.vue'
 import OverrideParams from './OverrideParams.vue'
-import MarkdownEditor from './shared/MarkdownEditor.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -21,29 +17,31 @@ const props = withDefaults(
 defineEmits<{
   toggle: []
   'toggle-enabled': []
+  edit: [name: string]
+  delete: [name: string]
 }>()
 
 const content = ref(props.agent.content)
 const showEditor = ref(false)
 
 const strategyLabel = computed(() => {
-  if (props.agent.modelStrategy === 'auto') return '自动 \u2014 由主 Agent 根据任务判断'
+  if (props.agent.modelStrategy === 'auto') return '\u81ea\u52a8 \u2014 \u7531\u4e3b Agent \u6839\u636e\u4efb\u52a1\u5224\u65ad'
   if (props.agent.modelStrategy === 'tag') {
     const tags = props.agent.modelTags
     const parts: string[] = []
-    if (tags?.power) parts.push(`强力: ${tags.power}`)
-    if (tags?.fast) parts.push(`快速: ${tags.fast}`)
-    return `标签 \u2014 ${parts.join(' / ')}`
+    if (tags?.power) parts.push(`\u5f3a\u529b: ${tags.power}`)
+    if (tags?.fast) parts.push(`\u5feb\u901f: ${tags.fast}`)
+    return `\u6807\u7b7e \u2014 ${parts.join(' / ')}`
   }
-  if (props.agent.modelStrategy === 'bind') return `绑定 \u2014 ${props.agent.modelBind ?? ''}`
+  if (props.agent.modelStrategy === 'bind') return `\u7ed1\u5b9a \u2014 ${props.agent.modelBind ?? ''}`
   return ''
 })
 
 const metaItems = computed(() => [
-  { key: '名称', value: props.agent.name },
-  { key: '类型', value: props.agent.type === 'builtin' ? '内置 (builtin)' : props.agent.sourceType },
-  { key: '模型策略', value: strategyLabel.value },
-  { key: '工具', value: props.agent.tools.join(', ') },
+  { key: '\u540d\u79f0', value: props.agent.name },
+  { key: '\u7c7b\u578b', value: props.agent.type === 'builtin' ? '\u5185\u7f6e (builtin)' : props.agent.sourceType },
+  { key: '\u6a21\u578b\u7b56\u7565', value: strategyLabel.value },
+  { key: '\u5de5\u5177', value: props.agent.tools.join(', ') },
 ])
 
 function handleSave() {
@@ -59,17 +57,19 @@ function handleSave() {
         @update:model-value="$emit('toggle-enabled')"
         @click.stop
       />
-      <div :class="['agent-card__icon', `agent-card__icon--${agent.iconBg}`]">
-        {{ agent.icon }}
-      </div>
       <div class="agent-card__info">
         <div class="agent-card__name">{{ agent.name }}</div>
         <div class="agent-card__desc">{{ agent.description }}</div>
         <div class="agent-card__source">{{ agent.source }}</div>
       </div>
       <div class="agent-card__actions" @click.stop>
-        <button class="btn btn--ghost btn--sm" @click="showEditor = !showEditor">
-          {{ showEditor ? '收起' : '编辑' }}
+        <!-- Edit -->
+        <button class="icon-btn" title="编辑" @click="showEditor = !showEditor">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        </button>
+        <!-- Delete -->
+        <button class="icon-btn icon-btn--danger" title="删除" @click="$emit('delete', agent.name)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
         </button>
       </div>
     </div>
@@ -104,14 +104,8 @@ function handleSave() {
   overflow: hidden;
   transition: border-color 0.2s var(--ease);
 }
-
-.agent-card:hover {
-  border-color: oklch(80% 0.01 70);
-}
-
-.agent-card.disabled {
-  opacity: 0.6;
-}
+.agent-card:hover { border-color: oklch(80% 0.01 70); }
+.agent-card.disabled { opacity: 0.6; }
 
 .agent-card__hd {
   display: flex;
@@ -120,49 +114,8 @@ function handleSave() {
   padding: 14px 18px;
   cursor: pointer;
 }
-
-.agent-card__icon {
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius-sm);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-  font-weight: 700;
-  flex-shrink: 0;
-}
-
-.agent-card__icon--accent {
-  background: var(--accent-light);
-  color: var(--accent);
-}
-
-.agent-card__icon--success {
-  background: var(--success-light);
-  color: var(--success);
-}
-
-.agent-card__icon--warning {
-  background: var(--warning-light);
-  color: var(--warning);
-}
-
-.agent-card__icon--danger {
-  background: var(--danger-light);
-  color: var(--danger);
-}
-
-.agent-card__info {
-  flex: 1;
-  min-width: 0;
-}
-
-.agent-card__name {
-  font-size: 14px;
-  font-weight: 600;
-}
-
+.agent-card__info { flex: 1; min-width: 0; }
+.agent-card__name { font-size: 14px; font-weight: 600; }
 .agent-card__desc {
   font-size: 12px;
   color: var(--muted);
@@ -172,60 +125,24 @@ function handleSave() {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-
 .agent-card__source {
   font-size: 11px;
   color: var(--muted);
   font-family: var(--font-mono);
   margin-top: 2px;
 }
+.agent-card__actions { display: flex; gap: 2px; flex-shrink: 0; }
+.agent-card__bd { padding: 0 18px 16px; display: none; }
+.agent-card.expanded .agent-card__bd { display: block; }
 
-.agent-card__actions {
-  display: flex;
-  gap: 4px;
-  flex-shrink: 0;
+/* Icon buttons */
+.icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: var(--radius-xs);
+  border: none; background: transparent; color: var(--muted);
+  cursor: pointer; transition: all 0.15s var(--ease);
 }
-
-.agent-card__bd {
-  padding: 0 18px 16px;
-  display: none;
-}
-
-.agent-card.expanded .agent-card__bd {
-  display: block;
-}
-
-/* Buttons */
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 18px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--muted);
-  font-size: 13px;
-  font-family: var(--font-body);
-  cursor: pointer;
-  transition: all 0.2s var(--ease);
-  white-space: nowrap;
-}
-
-.btn--sm {
-  padding: 5px 12px;
-  font-size: 12px;
-  border-radius: var(--radius-xs);
-}
-
-.btn--ghost {
-  border: none;
-  color: var(--muted);
-  padding: 5px 8px;
-}
-
-.btn--ghost:hover {
-  color: var(--accent);
-  background: var(--accent-light);
-}
+.icon-btn svg { width: 15px; height: 15px; }
+.icon-btn:hover { background: var(--accent-light); color: var(--accent); }
+.icon-btn--danger:hover { background: var(--danger-light); color: var(--danger); }
 </style>

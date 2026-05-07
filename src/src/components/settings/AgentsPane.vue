@@ -1,18 +1,13 @@
 <script setup lang="ts">
- 
-
 import { ref, computed } from 'vue'
 import { mockAgents, mockModels, mockGlobalParams } from '../../mock/data'
 import GlobalParams from './GlobalParams.vue'
 import AgentCard from './AgentCard.vue'
 
-// ─── State ──────────────────────────────────────────────────────
-
 const agents = ref([...mockAgents])
 const globalParams = ref({ ...mockGlobalParams })
 const expandedId = ref<string | null>(null)
-
-// ─── Computed ───────────────────────────────────────────────────
+const scanPath = ref('')
 
 const allModels = computed(() =>
   mockModels.map(m => ({ id: m.id, name: m.name, providerName: m.providerName })),
@@ -23,12 +18,31 @@ const allModels = computed(() =>
   <div class="agents-pane">
     <div class="page__hd">
       <div class="page__title">Agent 配置</div>
-      <button class="btn btn--primary">
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M7 1v12M1 7h12" />
-        </svg>
-        导入 Agent
-      </button>
+    </div>
+
+    <!-- Scan section (like SkillImportSection) -->
+    <div class="scan-section">
+      <div class="scan-section__title">扫描 Agent</div>
+      <div class="scan-paths">
+        <div class="scan-path active">
+          <span class="scan-path__icon scan-path__icon--pi">P</span>
+          <span>
+            <span class="scan-path__label">Pi Agents</span><br>
+            <span class="scan-path__path">~/.pi/agent/agents/</span>
+          </span>
+        </div>
+        <div class="scan-path">
+          <span class="scan-path__icon scan-path__icon--agents">A</span>
+          <span>
+            <span class="scan-path__label">Agents</span><br>
+            <span class="scan-path__path">~/.agents/agents/</span>
+          </span>
+        </div>
+      </div>
+      <div class="scan-custom">
+        <input class="scan-custom__input" v-model="scanPath" placeholder="自定义路径，如 ~/my-project/.agents/">
+        <button class="btn btn--sm">扫描</button>
+      </div>
     </div>
 
     <GlobalParams v-model="globalParams" />
@@ -67,6 +81,86 @@ const allModels = computed(() =>
   letter-spacing: -0.01em;
 }
 
+/* Scan section */
+.scan-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin-bottom: 24px;
+}
+.scan-section__title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+.scan-paths {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.scan-path {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s var(--ease);
+  font-size: 13px;
+  user-select: none;
+}
+.scan-path:hover {
+  border-color: var(--accent);
+  background: var(--accent-light);
+}
+.scan-path.active {
+  border-color: var(--accent);
+  background: var(--accent-light);
+  color: var(--accent);
+}
+.scan-path__icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: white;
+  flex-shrink: 0;
+}
+.scan-path__icon--pi { background: var(--accent); }
+.scan-path__icon--agents { background: var(--success); }
+.scan-path__label { font-weight: 500; }
+.scan-path__path {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+.scan-custom {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.scan-custom__input {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s var(--ease);
+}
+.scan-custom__input:focus { border-color: var(--accent); }
+.scan-custom__input::placeholder { color: var(--muted); }
+
 .section-divider {
   font-size: 11px;
   font-weight: 600;
@@ -93,20 +187,14 @@ const allModels = computed(() =>
   transition: all 0.2s var(--ease);
   white-space: nowrap;
 }
-
 .btn:hover {
   background: var(--accent-light);
   color: var(--accent);
   border-color: var(--accent);
 }
-
-.btn--primary {
-  background: var(--accent);
-  color: white;
-  border-color: var(--accent);
-}
-
-.btn--primary:hover {
-  opacity: 0.88;
+.btn--sm {
+  padding: 5px 12px;
+  font-size: 12px;
+  border-radius: var(--radius-xs);
 }
 </style>
