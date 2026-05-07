@@ -87,19 +87,20 @@ function dirname(cwd: string): string {
 .session-groups { flex: 1; }
 .group { margin-bottom: 2px; }
 .group-header {
-  display: flex; align-items: center; gap: 6px;
+  display: flex; align-items: center; gap: 5px;
   width: 100%; padding: 6px 14px;
   background: none; border: none; cursor: pointer;
   color: var(--muted); font-size: 11px; font-weight: 600;
-  text-align: left;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  text-align: left; user-select: none;
 }
 .group-header:hover { color: var(--fg); }
 .chevron {
   width: 12px; height: 12px; flex-shrink: 0;
   transition: transform 0.15s;
 }
-.chevron.collapsed { transform: rotate(0deg); }
-.chevron:not(.collapsed) { transform: rotate(90deg); }
+.chevron.collapsed { transform: rotate(-90deg); }
+.chevron:not(.collapsed) { transform: rotate(0deg); }
 .folder-icon { width: 13px; height: 13px; flex-shrink: 0; opacity: 0.6; }
 .group-name {
   flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

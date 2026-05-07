@@ -99,22 +99,26 @@ function handleSelect(modelId: string) {
 }
 
 .model-picker__trigger {
-  display: flex;
+  position: relative;
+  display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 4px 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
+  padding: 0 8px;
+  height: 28px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
   color: var(--fg);
-  font-size: 12px;
-  font-family: var(--font-body);
+  font-size: 11px;
+  font-family: var(--font-mono);
   cursor: pointer;
   white-space: nowrap;
+  transition: all 0.15s var(--ease);
 }
 
 .model-picker__trigger:hover {
-  border-color: var(--accent);
+  background: var(--accent-light);
+  color: var(--accent);
 }
 
 .model-picker__label {
@@ -134,26 +138,29 @@ function handleSelect(modelId: string) {
 .model-picker__dropdown {
   position: absolute;
   bottom: calc(100% + 6px);
-  right: 0;
-  min-width: 220px;
+  left: 0;
+  min-width: 260px;
   max-height: 280px;
   overflow-y: auto;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
-  z-index: 100;
-  padding: 4px 0;
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+  z-index: 200;
+  display: none;
+  overflow: hidden;
+}
+
+.model-picker__dropdown.visible {
+  display: block;
 }
 
 .model-picker__group + .model-picker__group {
   border-top: 1px solid var(--border);
-  margin-top: 4px;
-  padding-top: 4px;
 }
 
 .model-picker__group-title {
-  padding: 4px 12px;
+  padding: 6px 12px;
   font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
@@ -162,16 +169,19 @@ function handleSelect(modelId: string) {
 }
 
 .model-picker__item {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
-  padding: 6px 12px;
+  padding: 7px 12px;
   border: none;
   background: none;
   color: var(--fg);
-  font-size: 13px;
-  font-family: var(--font-body);
+  font-size: 12px;
+  font-family: var(--font-mono);
   text-align: left;
   cursor: pointer;
+  transition: background 0.1s var(--ease);
 }
 
 .model-picker__item:hover {
@@ -179,8 +189,8 @@ function handleSelect(modelId: string) {
 }
 
 .model-picker__item--active {
-  font-weight: 600;
   color: var(--accent);
+  font-weight: 600;
 }
 
 .model-picker__empty {
@@ -188,5 +198,6 @@ function handleSelect(modelId: string) {
   font-size: 12px;
   color: var(--muted);
   text-align: center;
+  display: none;
 }
 </style>

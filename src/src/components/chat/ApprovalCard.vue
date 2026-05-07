@@ -82,7 +82,7 @@ const formattedInput = computed(() => {
 
 <style scoped>
 .approval-card {
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   border-left: 3px solid var(--border);
   background: var(--surface);

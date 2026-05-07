@@ -30,13 +30,19 @@ const barColor = computed(() => {
 
 <style scoped>
 .context-bar {
-  display: flex;
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
+  padding: 0 6px;
+  height: 28px;
+  flex-shrink: 0;
 }
 
 .context-bar__track {
-  flex: 1;
+  width: 40px;
   height: 4px;
   background: var(--border);
   border-radius: 2px;

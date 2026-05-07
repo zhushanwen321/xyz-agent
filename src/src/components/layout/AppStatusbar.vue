@@ -53,7 +53,7 @@ const statusText = computed(() => {
   border-top: 1px solid var(--border);
   font-size: 11px; color: var(--muted); gap: 14px;
 }
-.status-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+.status-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; background: var(--success); }
 .statusbar-spacer { flex: 1; }
 .statusbar-hints { opacity: 0.5; }
 .statusbar-hints kbd {

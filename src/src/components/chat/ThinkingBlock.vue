@@ -19,7 +19,7 @@ const expanded = ref(false)
 </script>
 
 <style scoped>
-.thinking-block { overflow: hidden; border-radius: var(--radius-md); border: 1px solid var(--border); background: var(--surface); margin-bottom: 8px; }
+.thinking-block { overflow: hidden; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); margin-bottom: 8px; }
 .thinking-header { display: flex; width: 100%; align-items: center; gap: 6px; padding: 6px 12px; text-align: left; cursor: pointer; transition: background 0.15s; background: none; border: none; color: inherit; font: inherit; }
 .thinking-header:hover { background: var(--bg); }
 .thinking-label { font-size: 11px; font-family: var(--font-mono); color: var(--muted); }

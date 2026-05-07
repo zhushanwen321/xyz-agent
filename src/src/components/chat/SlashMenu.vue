@@ -103,10 +103,10 @@ onBeforeUnmount(() => {
   max-height: 260px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
-  z-index: 200;
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
   overflow: hidden;
+  z-index: 200;
 }
 
 .slash-menu__list {
@@ -117,16 +117,17 @@ onBeforeUnmount(() => {
 
 .slash-menu__item {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 8px 14px;
+  padding: 10px 14px;
   border: none;
   background: none;
   color: var(--fg);
   font-family: var(--font-body);
   text-align: left;
   cursor: pointer;
+  transition: background 0.1s var(--ease);
 }
 
 .slash-menu__item:hover,
@@ -140,6 +141,7 @@ onBeforeUnmount(() => {
   font-family: var(--font-mono);
   white-space: nowrap;
   color: var(--accent);
+  min-width: 140px;
 }
 
 .slash-menu__desc {

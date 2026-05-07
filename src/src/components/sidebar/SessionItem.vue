@@ -93,7 +93,8 @@ const HOURS_PER_DAY = 24
   display: flex; align-items: center; gap: 8px;
   padding: 7px 14px 7px 24px; cursor: pointer;
   border-left: 3px solid transparent;
-  transition: background 0.15s;
+  transition: background 0.15s var(--ease), border-color 0.15s var(--ease);
+  user-select: none;
 }
 .session-item:hover { background: var(--accent-light); }
 .session-item.active {

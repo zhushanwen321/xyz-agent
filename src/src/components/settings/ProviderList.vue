@@ -128,7 +128,8 @@ function formatModels(models: string[]) {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   margin-bottom: 8px;
-  transition: border-color 0.15s;
+  transition: border-color 0.15s var(--ease);
+  transition: border-color 0.15s var(--ease);
   cursor: pointer;
 }
 

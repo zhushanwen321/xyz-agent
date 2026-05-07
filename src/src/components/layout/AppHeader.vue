@@ -94,7 +94,7 @@ function toggleTheme() {
   border-bottom: 1px solid var(--border);
   gap: 8px; flex-shrink: 0; z-index: 20;
 }
-.header-logo { font-weight: 700; font-size: 16px; font-family: var(--font-display); }
+.header-logo { font-family: var(--font-display); font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
 .header-logo-accent { color: var(--accent); }
 .header-spacer { flex: 1; }
 .header-actions { display: flex; gap: 4px; align-items: center; }
