@@ -64,10 +64,43 @@ impl SidecarManager {
 
         log::info!("Starting sidecar on port {}", port);
 
+        // Resolve project root: sidecar.rs is in src-tauri/src/, so go up 3 levels
+        // In dev mode: cwd is usually src-tauri/, so parent is project root
+        // Use CARGO_MANIFEST_DIR which always points to src-tauri/
+        let manifest_dir = env::var("CARGO_MANIFEST_DIR")
+            .map_err(|e| format!("CARGO_MANIFEST_DIR not set: {}", e))?;
+        let project_root_buf = PathBuf::from(&manifest_dir);
+        let project_root = project_root_buf
+            .parent()
+            .ok_or("Cannot resolve project root".to_string())?;
+
+        let tsx_path = project_root.join("node_modules/.bin/tsx");
+        let sidecar_entry = project_root.join("sidecar/src/index.ts");
+
+        if !tsx_path.exists() {
+            return Err(format!(
+                "tsx not found at {}. Run: npm install",
+                tsx_path.display()
+            ));
+        }
+        if !sidecar_entry.exists() {
+            return Err(format!(
+                "Sidecar entry not found at {}",
+                sidecar_entry.display()
+            ));
+        }
+
+        log::info!(
+            "Sidecar: node {} {} --port={}",
+            tsx_path.display(),
+            sidecar_entry.display(),
+            port
+        );
+
         let child = Command::new("node")
             .args([
-                "node_modules/.bin/tsx",
-                "sidecar/src/index.ts",
+                tsx_path.to_str().ok_or("Invalid tsx path".to_string())?,
+                sidecar_entry.to_str().ok_or("Invalid sidecar path".to_string())?,
                 &format!("--port={}", port),
             ])
             .spawn()
