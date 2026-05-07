@@ -42,8 +42,9 @@ const statusDotClass = computed(() => {
         <div class="provider-card__name">
           <span :class="['status-dot', statusDotClass]"></span>
           {{ provider.name }}
+          <span class="provider-card__count">{{ provider.models.length }} 个模型</span>
         </div>
-        <div class="provider-card__meta">{{ provider.baseUrl }} · {{ provider.models.length }} 个模型</div>
+        <div class="provider-card__meta">{{ provider.baseUrl }}</div>
       </div>
       <div class="provider-card__actions" @click.stop>
         <!-- Test connection -->
@@ -89,6 +90,7 @@ const statusDotClass = computed(() => {
 .provider-card__hd {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
   padding: 14px 18px;
   cursor: pointer;
@@ -101,6 +103,11 @@ const statusDotClass = computed(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.provider-card__count {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
 }
 .provider-card__meta {
   font-size: 12px;
