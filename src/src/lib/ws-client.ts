@@ -1,6 +1,7 @@
 import { ref, readonly } from 'vue'
 import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
 import { emit } from './event-bus'
+import { mockConnect, mockSend, mockDisconnect } from '../mock/mock-ws'
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting'
 
@@ -15,7 +16,14 @@ const RECONNECT_BACKOFF_EXPONENT = 2
 const HEARTBEAT_INTERVAL_MS = 30000
 const MAX_RECONNECT_DELAY = 30000
 
+const isMock = import.meta.env.VITE_MOCK === 'true'
+
 export function connect(url: string): void {
+  if (isMock) {
+    mockConnect((s) => { state.value = s })
+    return
+  }
+
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return
 
   state.value = 'connecting'
@@ -74,6 +82,11 @@ function stopHeartbeat(): void {
 }
 
 export function disconnect(): void {
+  if (isMock) {
+    mockDisconnect()
+    state.value = 'disconnected'
+    return
+  }
   if (reconnectTimer) clearTimeout(reconnectTimer)
   reconnectTimer = null
   stopHeartbeat()
@@ -83,6 +96,10 @@ export function disconnect(): void {
 }
 
 export function send(msg: ClientMessage): void {
+  if (isMock) {
+    mockSend(msg)
+    return
+  }
   if (ws?.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(msg))
   } else {

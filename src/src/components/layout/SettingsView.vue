@@ -4,6 +4,7 @@ import { useSettingsStore } from '../../stores/settings'
 import { useProvider } from '../../composables/useProvider'
 import { useModel } from '../../composables/useModel'
 import { ProviderList, ProviderForm, SkillsTab, AgentsTab } from '../settings'
+import { mockSkills, mockAgents, mockAgentConfig } from '../../mock/data'
 
 const settingsStore = useSettingsStore()
 const { providers, loadProviders, setProvider, deleteProvider } = useProvider()
@@ -15,12 +16,13 @@ const showForm = ref(false)
 const loading = ref(false)
 
 // TODO: wire to real skill/agent data from store
-const skills = ref<Array<{ name: string; description: string; enabled: boolean }>>([])
-const agents = ref<Array<{ name: string; model: string; active: boolean }>>([])
-const agentConfig = ref<Array<{ label: string; value: string }>>([])
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- mock data shape differs from component prop types
+const skills = ref(mockSkills as any)
+const agents = ref(mockAgents.map(a => ({ name: a.name, model: a.modelId, active: a.active })))
+const agentConfig = ref(mockAgentConfig as Array<{ label: string; value: string }>)
 
 function handleSkillToggle(name: string) {
-  const skill = skills.value.find(s => s.name === name)
+  const skill = skills.value.find((s: { name: string; enabled: boolean }) => s.name === name)
   if (skill) skill.enabled = !skill.enabled
 }
 

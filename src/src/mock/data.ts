@@ -1,0 +1,513 @@
+/* eslint-disable no-magic-numbers */
+/**
+ * Static mock data covering ALL design scenarios.
+ *
+ * Data source: docs/designs/index.html + task spec MOCK-1.
+ * Types:      @xyz-agent/shared (SessionGroup, Message, ProviderInfo, ModelInfo …)
+ */
+
+import type {
+  SessionGroup,
+  SessionSummary,
+  Message,
+  ProviderInfo,
+  ModelInfo,
+} from '@xyz-agent/shared'
+
+// ─── Helpers ───────────────────────────────────────────────────────
+
+/** Shorthand epoch (ms) for relative timestamps. */
+const now = Date.now()
+const hour = 3_600_000
+const day  = 86_400_000
+
+// ═══════════════════════════════════════════════════════════════════
+// 1. Session Groups (3 groups, 6 sessions total)
+// ═══════════════════════════════════════════════════════════════════
+
+export const DEFAULT_SESSION_ID = 's1' // "重构 auth 模块"
+
+export const mockSessionGroups: SessionGroup[] = [
+  {
+    cwd: '/Users/zhushanwen/Code/xyz-agent',
+    sessions: [
+      {
+        id: 's1',
+        label: '重构 auth 模块',
+        cwd: '/Users/zhushanwen/Code/xyz-agent',
+        status: 'active',
+        lastActiveAt: now - 2 * hour,
+        modelId: 'claude-sonnet',
+        tokenCount: 12_300,
+      },
+      {
+        id: 's2',
+        label: 'Tauri GUI 设计',
+        cwd: '/Users/zhushanwen/Code/xyz-agent',
+        status: 'idle',
+        lastActiveAt: now - 1 * day,
+        modelId: 'claude-sonnet',
+        tokenCount: 3_100,
+      },
+    ],
+  },
+  {
+    cwd: '/Users/zhushanwen/Code/work-project',
+    sessions: [
+      {
+        id: 's3',
+        label: 'API 性能优化',
+        cwd: '/Users/zhushanwen/Code/work-project',
+        status: 'active',
+        lastActiveAt: now - 5 * day,
+        modelId: 'claude-sonnet',
+        tokenCount: 8_700,
+      },
+      {
+        id: 's4',
+        label: '数据库迁移',
+        cwd: '/Users/zhushanwen/Code/work-project',
+        status: 'idle',
+        lastActiveAt: now - 6 * day,
+        modelId: 'claude-sonnet',
+        tokenCount: 1_200,
+      },
+    ],
+  },
+  {
+    cwd: '/Users/zhushanwen/Code/diy-pc',
+    sessions: [
+      {
+        id: 's5',
+        label: '价格预测分析',
+        cwd: '/Users/zhushanwen/Code/diy-pc',
+        status: 'idle',
+        lastActiveAt: now - 7 * day,
+        modelId: 'deepseek-r1',
+        tokenCount: 5_400,
+      },
+      {
+        id: 's6',
+        label: '4090 比价',
+        cwd: '/Users/zhushanwen/Code/diy-pc',
+        status: 'active',
+        lastActiveAt: now - 1 * hour,
+        modelId: 'claude-sonnet',
+        tokenCount: 2_100,
+      },
+    ],
+  },
+]
+
+/** Flat lookup for convenience. */
+export const mockSessionMap = new Map<string, SessionSummary>(
+  mockSessionGroups.flatMap(g => g.sessions.map(s => [s.id, s])),
+)
+
+// ═══════════════════════════════════════════════════════════════════
+// 2. Main Session Messages (s1 — 重构 auth 模块)
+// ═══════════════════════════════════════════════════════════════════
+// Matches the design HTML's agent-view[data-agent="main"] exactly.
+
+export const mockMessages: Message[] = [
+  // ── User message ──
+  {
+    id: 'm1',
+    role: 'user',
+    content: '帮我重构整个 auth 模块，包括接口定义、错误处理和单元测试。',
+    status: 'complete',
+    timestamp: now - 10 * 60_000,
+  },
+
+  // ── Bot message (plan) ──
+  {
+    id: 'm2',
+    role: 'assistant',
+    content:
+      '好的，这个任务比较复杂，我分解成几个子任务并行执行：\n\n' +
+      '1. **分析 auth 模块结构** → SubAgent-1（已完成）\n' +
+      '2. **重构核心接口** → SubAgent-2（运行中）\n' +
+      '3. **重构子模块 A1** → SubAgent-3（等待确认）\n' +
+      '4. **编写单元测试** → SubAgent-4（等待中）',
+    status: 'complete',
+    timestamp: now - 9.5 * 60_000,
+  },
+
+  // ── System message: done ──
+  {
+    id: 'm3',
+    role: 'assistant',
+    content:
+      'SubAgent「分析代码结构」已完成\n' +
+      '耗时 2m 34s · 消耗 1.2k tokens · 发现 3 个主要问题',
+    status: 'complete',
+    timestamp: now - 7 * 60_000,
+    thinking: [
+      {
+        id: 'th1',
+        content: '__system_done__',
+        collapsed: true,
+      },
+    ],
+  },
+
+  // ── System message: alert ──
+  {
+    id: 'm4',
+    role: 'assistant',
+    content:
+      'SubAgent「重构子模块A1」需要确认\n' +
+      '检测到 3 处循环依赖，需要决定处理策略',
+    status: 'complete',
+    timestamp: now - 5 * 60_000,
+    thinking: [
+      {
+        id: 'th2',
+        content: '__system_alert__',
+        collapsed: true,
+      },
+    ],
+  },
+
+  // ── Bot message: progress + tool call ──
+  {
+    id: 'm5',
+    role: 'assistant',
+    content: 'SubAgent-2 正在重构核心接口，进度 67%：',
+    status: 'streaming',
+    timestamp: now - 3 * 60_000,
+    toolCalls: [
+      {
+        id: 'tc1',
+        toolName: 'edit',
+        input: { file: 'src/auth/interfaces.ts' },
+        output:
+          '统一了 IAuthResponse、ITokenPayload、ISession 接口定义，新增 IAuthModule 聚合接口。',
+        status: 'completed',
+        startTime: now - 3 * 60_000,
+        endTime: now - 2.5 * 60_000,
+      },
+    ],
+  },
+]
+
+// ═══════════════════════════════════════════════════════════════════
+// 3. Providers (5)
+// ═══════════════════════════════════════════════════════════════════
+
+export const mockProviders: ProviderInfo[] = [
+  {
+    id: 'anthropic',
+    name: 'Anthropic',
+    status: 'connected',
+    models: ['claude-sonnet', 'claude-opus', 'claude-haiku'],
+    apiKeySet: true,
+  },
+  {
+    id: 'openai',
+    name: 'OpenAI',
+    status: 'connected',
+    models: ['gpt-4o', 'gpt-4o-mini', 'o1-pro'],
+    apiKeySet: true,
+  },
+  {
+    id: 'google',
+    name: 'Google',
+    status: 'connected',
+    models: ['gemini-2.5-pro', 'gemini-2.5-flash'],
+    apiKeySet: true,
+  },
+  {
+    id: 'deepseek',
+    name: 'DeepSeek',
+    status: 'connected',
+    models: ['deepseek-v4', 'deepseek-r1'],
+    apiKeySet: true,
+  },
+  {
+    id: 'ollama',
+    name: 'Ollama (本地)',
+    status: 'not_configured',
+    models: ['llama3', 'codellama', 'mistral'],
+    apiKeySet: false,
+    baseUrl: 'http://localhost:11434',
+  },
+]
+
+// ═══════════════════════════════════════════════════════════════════
+// 4. Models (10)
+// ═══════════════════════════════════════════════════════════════════
+
+export const mockModels: ModelInfo[] = [
+  // Anthropic
+  { id: 'claude-sonnet', name: 'claude-sonnet', providerId: 'anthropic', providerName: 'anthropic' },
+  { id: 'claude-opus',   name: 'claude-opus',   providerId: 'anthropic', providerName: 'anthropic' },
+  { id: 'claude-haiku',  name: 'claude-haiku',  providerId: 'anthropic', providerName: 'anthropic' },
+  // OpenAI
+  { id: 'gpt-4o',      name: 'gpt-4o',      providerId: 'openai', providerName: 'openai' },
+  { id: 'gpt-4o-mini', name: 'gpt-4o-mini', providerId: 'openai', providerName: 'openai' },
+  { id: 'o1-pro',      name: 'o1-pro',      providerId: 'openai', providerName: 'openai' },
+  // Google
+  { id: 'gemini-2.5-pro',  name: 'gemini-2.5-pro',  providerId: 'google', providerName: 'google' },
+  { id: 'gemini-2.5-flash', name: 'gemini-2.5-flash', providerId: 'google', providerName: 'google' },
+  // DeepSeek
+  { id: 'deepseek-v4', name: 'deepseek-v4', providerId: 'deepseek', providerName: 'deepseek' },
+  { id: 'deepseek-r1', name: 'deepseek-r1', providerId: 'deepseek', providerName: 'deepseek' },
+]
+
+/** Map model id → ModelInfo for quick lookup. */
+export const mockModelMap = new Map(mockModels.map(m => [m.id, m]))
+
+// ═══════════════════════════════════════════════════════════════════
+// 5. Skills (6)
+// ═══════════════════════════════════════════════════════════════════
+
+export interface MockSkill {
+  id: string
+  name: string
+  description: string
+  enabled: boolean
+}
+
+export const mockSkills: MockSkill[] = [
+  { id: 'code-trace',       name: 'code-trace',       description: '分析代码文件的完整调用链路和数据流',                                   enabled: true  },
+  { id: 'issue-trace',      name: 'issue-trace',      description: '验证用户报告的问题，构建调用链路确认问题真实性',                           enabled: true  },
+  { id: 'batch-tracer',     name: 'batch-tracer',     description: '对指定目录下的所有源代码文件执行完整三阶段分析',                              enabled: true  },
+  { id: 'python-refactor',  name: 'python-refactor',  description: '使用 rope 库编写 Python 代码重构脚本',                                  enabled: false },
+  { id: 'rust-taste-check', name: 'rust-taste-check', description: '参照代码品味指导文件审查并重构 Rust 代码',                                 enabled: false },
+  { id: 'tavily-web-search', name: 'tavily-web-search', description: 'Web search, content extraction via Tavily API',                     enabled: true  },
+]
+
+// ═══════════════════════════════════════════════════════════════════
+// 6. Agents (4)
+// ═══════════════════════════════════════════════════════════════════
+
+export interface MockAgent {
+  id: string
+  name: string
+  modelId: string
+  providerId: string
+  active: boolean
+}
+
+export const mockAgents: MockAgent[] = [
+  { id: 'a1', name: '默认编程助手', modelId: 'claude-sonnet',  providerId: 'anthropic', active: true  },
+  { id: 'a2', name: '代码审查员',   modelId: 'claude-opus',    providerId: 'anthropic', active: false },
+  { id: 'a3', name: '金融分析师',   modelId: 'deepseek-r1',   providerId: 'deepseek',  active: false },
+  { id: 'a4', name: '快速执行器',   modelId: 'gpt-4o-mini',   providerId: 'openai',    active: false },
+]
+
+// ═══════════════════════════════════════════════════════════════════
+// 7. Agent Config Rows
+// ═══════════════════════════════════════════════════════════════════
+
+export interface ConfigRow {
+  label: string
+  value: string
+}
+
+export const mockAgentConfig: ConfigRow[] = [
+  { label: '最大 SubAgent 深度', value: '20'      },
+  { label: '最大并行宽度',       value: '10'      },
+  { label: 'Token 预算',        value: '200,000' },
+  { label: '最大轮次',          value: '50'      },
+]
+
+// ═══════════════════════════════════════════════════════════════════
+// 8. Default Provider Config Rows
+// ═══════════════════════════════════════════════════════════════════
+
+export const mockProviderConfig: ConfigRow[] = [
+  { label: '默认模型', value: 'claude-sonnet @ anthropic' },
+  { label: '思考模式', value: 'high'                      },
+  { label: '温度',    value: '0.7'                        },
+]
+
+// ═══════════════════════════════════════════════════════════════════
+// 9. SubAgent Tree Nodes (drawer)
+// ═══════════════════════════════════════════════════════════════════
+
+export type TreeNodeStatus = 'run' | 'pause' | 'idle'
+
+export interface SubAgentTreeNode {
+  id: string
+  label: string
+  status: TreeNodeStatus
+  meta: string
+  children?: SubAgentTreeNode[]
+}
+
+export const mockSubAgentTree: SubAgentTreeNode = {
+  id: 'main',
+  label: '重构 auth 模块',
+  status: 'run',
+  meta: 'coordinator',
+  children: [
+    { id: 'sub1', label: '分析代码结构',   status: 'idle',  meta: '1.2k tok' },
+    {
+      id: 'sub2',
+      label: '重构核心接口',
+      status: 'run',
+      meta: '2.3k tok',
+      children: [
+        { id: 'sub3', label: '重构子模块 A1', status: 'pause', meta: '等待确认' },
+      ],
+    },
+    { id: 'sub4', label: '编写测试', status: 'idle', meta: 'pending' },
+  ],
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 10. Done Items (drawer "已完成" tab)
+// ═══════════════════════════════════════════════════════════════════
+
+export interface DoneItem {
+  id: string
+  name: string
+  summary: string
+  meta: string       // HTML-safe, e.g. "2m 34s<br>1.2k tok"
+}
+
+export const mockDoneItems: DoneItem[] = [
+  {
+    id: 'd1',
+    name: '分析代码结构',
+    summary: '发现 3 个主要问题：接口散落、错误类重复、Session 耦合',
+    meta: '2m 34s<br>1.2k tok',
+  },
+  {
+    id: 'd2',
+    name: '数据模型分析',
+    summary: '完成 auth 模块数据流图',
+    meta: '45s<br>0.8k tok',
+  },
+]
+
+// ═══════════════════════════════════════════════════════════════════
+// 11. Alert Items (drawer "请求回应" tab)
+// ═══════════════════════════════════════════════════════════════════
+
+export interface AlertItem {
+  id: string
+  name: string
+  question: string
+  session: string       // "xyz-agent / 重构 auth 模块"
+  time: string          // "2m 前"
+  simple: boolean       // simple → inline-reply; not simple → link-only
+}
+
+export const mockAlertItems: AlertItem[] = [
+  {
+    id: 'al1',
+    name: '重构子模块A1',
+    question: '检测到 3 处循环依赖，需要决定处理策略',
+    session: '重构 auth 模块',
+    time: '2m 前',
+    simple: false,
+  },
+  {
+    id: 'al2',
+    name: '数据库备份',
+    question: '是否在迁移前创建自动备份？',
+    session: '数据库迁移',
+    time: '5m 前',
+    simple: true,
+  },
+]
+
+// ═══════════════════════════════════════════════════════════════════
+// 12. Overview Cards (6 — one per session)
+// ═══════════════════════════════════════════════════════════════════
+
+export type OverviewBadge = 'run' | 'pause' | 'idle'
+
+export interface PreviewLine {
+  text: string
+  type: 'user' | 'bot' | 'system_done' | 'system_alert'
+}
+
+export interface OverviewCard {
+  sessionId: string
+  badge: OverviewBadge
+  title: string
+  project: string        // "xyz-agent · feat/tree-engine"
+  previewLines: PreviewLine[]
+  meta: string[]         // ["sonnet:high", "12.3k tok", "完成 2 · 回应 1"]
+}
+
+export const mockOverviewCards: OverviewCard[] = [
+  {
+    sessionId: 's1',
+    badge: 'run',
+    title: '重构 auth 模块',
+    project: 'xyz-agent · feat/tree-engine',
+    previewLines: [
+      { text: '用户: 帮我重构整个 auth 模块', type: 'user' },
+      { text: '助手: 分解成 4 个子任务并行执行…', type: 'bot' },
+      { text: 'SubAgent「分析代码结构」已完成', type: 'system_done' },
+      { text: 'SubAgent「重构子模块A1」需要确认', type: 'system_alert' },
+    ],
+    meta: ['sonnet:high', '12.3k tok', '完成 2 · 回应 1'],
+  },
+  {
+    sessionId: 's2',
+    badge: 'idle',
+    title: 'Tauri GUI 设计',
+    project: 'xyz-agent · main',
+    previewLines: [
+      { text: '用户: 讨论 Tauri GUI 的三栏布局', type: 'user' },
+      { text: '助手: 建议左侧 240px 会话列表…', type: 'bot' },
+      { text: '用户: 右侧面板太占空间了', type: 'user' },
+      { text: '助手: 改为右侧抽屉，按需展开…', type: 'bot' },
+    ],
+    meta: ['sonnet:high', '3.1k tok'],
+  },
+  {
+    sessionId: 's3',
+    badge: 'run',
+    title: 'API 性能优化',
+    project: 'work-project · main',
+    previewLines: [
+      { text: '用户: 优化 API 性能，当前 1.2s', type: 'user' },
+      { text: '助手: 发现 N+1 查询和缺少缓存…', type: 'bot' },
+      { text: 'SubAgent「N+1 查询修复」需要确认', type: 'system_alert' },
+    ],
+    meta: ['sonnet:high', '8.7k tok', '完成 1 · 回应 1'],
+  },
+  {
+    sessionId: 's4',
+    badge: 'idle',
+    title: '数据库迁移',
+    project: 'work-project · feat/migrate',
+    previewLines: [
+      { text: '用户: 把数据库从 MySQL 迁到 PG', type: 'user' },
+      { text: '助手: 分析了 47 张表的迁移方案…', type: 'bot' },
+      { text: '用户: 先迁移核心的 12 张表', type: 'user' },
+    ],
+    meta: ['sonnet', '1.2k tok'],
+  },
+  {
+    sessionId: 's5',
+    badge: 'pause',
+    title: '价格预测分析',
+    project: 'diy-pc · main',
+    previewLines: [
+      { text: '用户: 预测 4090 下半年价格走势', type: 'user' },
+      { text: '助手: 基于历史数据构建了预测模型…', type: 'bot' },
+      { text: '模型准确率: 87.3%', type: 'bot' },
+    ],
+    meta: ['deepseek-r1', '5.4k tok'],
+  },
+  {
+    sessionId: 's6',
+    badge: 'run',
+    title: '4090 比价',
+    project: 'diy-pc · feat/price',
+    previewLines: [
+      { text: '用户: 对比 4090 各平台价格', type: 'user' },
+      { text: '助手: 已抓取京东、淘宝、拼多多价格…', type: 'bot' },
+      { text: '当前最低价: 12,499 (拼多多)', type: 'bot' },
+    ],
+    meta: ['sonnet', '2.1k tok'],
+  },
+]

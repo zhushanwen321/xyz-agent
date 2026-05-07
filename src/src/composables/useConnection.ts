@@ -36,6 +36,12 @@ export function useConnection() {
     if (initialised) return
     initialised = true
 
+    // Mock mode — skip Tauri sidecar entirely
+    if (import.meta.env.VITE_MOCK === 'true') {
+      connect('mock://localhost')
+      return
+    }
+
     const port = DEFAULT_PORT
 
     try {

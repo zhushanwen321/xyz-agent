@@ -19,8 +19,8 @@
           v-if="settingsStore.drawerSide === 'right'"
           :open="settingsStore.drawerOpen"
           :tree-nodes="mockTreeNodes"
-          :done-items="[]"
-          :alert-items="[]"
+          :done-items="mockDoneItems"
+          :alert-items="mockAlertItems"
           active-node-id=""
           @close="settingsStore.closeDrawer()"
         />
@@ -39,7 +39,7 @@
     <!-- Overview -->
     <Overview
       :visible="settingsStore.overviewVisible"
-      :cards="[]"
+      :cards="mockOverviewCards as any"
       @enter="handleOverviewEnter"
       @enter-split="handleOverviewEnterSplit"
       @close="settingsStore.overviewVisible = false"
@@ -66,13 +66,15 @@ import DrawerRight from './components/drawer/DrawerRight.vue'
 import DrawerLeft from './components/drawer/DrawerLeft.vue'
 import Overview from './components/overview/Overview.vue'
 import ToastContainer from './components/toast/ToastContainer.vue'
+import { mockSubAgentTree, mockDoneItems, mockAlertItems, mockOverviewCards } from './mock/data'
 
 const { init: initConnection, teardown: teardownConnection } = useConnection()
 
 const settingsStore = useSettingsStore()
 
 const toasts = ref<ToastItem[]>([])
-const mockTreeNodes: never[] = []
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- mock data shape may not match component prop types
+const mockTreeNodes: any[] = mockSubAgentTree ? [mockSubAgentTree as any] : []
 
 function createSession() {
   // TODO: implement via useSession composable

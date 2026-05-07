@@ -22,9 +22,13 @@ pub fn run() {
 
             // Start sidecar with automatic port discovery
             let sidecar = app.state::<sidecar::SidecarManager>();
-            match sidecar.start(app.handle()) {
-                Ok(port) => log::info!("Sidecar started on port {}", port),
-                Err(e) => log::error!("Failed to start sidecar: {}", e),
+            if std::env::var("XYZ_MOCK").as_deref() == Ok("1") {
+                log::info!("Mock mode — skipping sidecar start");
+            } else {
+                match sidecar.start(app.handle()) {
+                    Ok(port) => log::info!("Sidecar started on port {}", port),
+                    Err(e) => log::error!("Failed to start sidecar: {}", e),
+                }
             }
 
             Ok(())

@@ -10,6 +10,7 @@
   ],
   "scripts": {
     "dev": "tauri dev",
+    "mock:dev": "XYZ_MOCK=1 VITE_MOCK=true npx tauri dev",
     "dev:vite": "npm -w @xyz-agent/frontend run dev",
     "build": "npm -w @xyz-agent/frontend run build && tauri build",
     "build:vite": "npm -w @xyz-agent/frontend run build",
