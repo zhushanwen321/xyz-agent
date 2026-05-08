@@ -1,5 +1,5 @@
 <script setup lang="ts">
- 
+import { Input } from '../../design-system'
 
 const props = defineProps<{
   modelValue: { depth: number; width: number; tokens: number; rounds: number }
@@ -9,9 +9,9 @@ const emit = defineEmits<{
   'update:modelValue': [value: { depth: number; width: number; tokens: number; rounds: number }]
 }>()
 
-function update(key: string, e: Event) {
-  const val = Number((e.target as HTMLInputElement).value)
-  emit('update:modelValue', { ...props.modelValue, [key]: val })
+function update(key: string, val: string) {
+  const num = Number(val)
+  emit('update:modelValue', { ...props.modelValue, [key]: num })
 }
 </script>
 
@@ -27,19 +27,35 @@ function update(key: string, e: Event) {
     <div class="params-grid">
       <div class="param-item">
         <div class="param-item__label">最大深度</div>
-        <input class="param-item__input" type="number" :value="modelValue.depth" @input="update('depth', $event)">
+        <Input
+          class="param-item__input"
+          :model-value="String(modelValue.depth)"
+          @update:model-value="update('depth', $event)"
+        />
       </div>
       <div class="param-item">
         <div class="param-item__label">最大宽度</div>
-        <input class="param-item__input" type="number" :value="modelValue.width" @input="update('width', $event)">
+        <Input
+          class="param-item__input"
+          :model-value="String(modelValue.width)"
+          @update:model-value="update('width', $event)"
+        />
       </div>
       <div class="param-item">
         <div class="param-item__label">Token 上限</div>
-        <input class="param-item__input" type="number" :value="modelValue.tokens" @input="update('tokens', $event)">
+        <Input
+          class="param-item__input"
+          :model-value="String(modelValue.tokens)"
+          @update:model-value="update('tokens', $event)"
+        />
       </div>
       <div class="param-item">
         <div class="param-item__label">最大轮次</div>
-        <input class="param-item__input" type="number" :value="modelValue.rounds" @input="update('rounds', $event)">
+        <Input
+          class="param-item__input"
+          :model-value="String(modelValue.rounds)"
+          @update:model-value="update('rounds', $event)"
+        />
       </div>
     </div>
   </div>

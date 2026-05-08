@@ -29,7 +29,7 @@ export default {
     const filename = context.filename || ''
     if (!filename.endsWith('.vue')) return {}
     // xyz-ui 内部实现允许使用原生元素
-    if (filename.includes('components/ui/')) return {}
+    if (filename.includes('components/ui/') || filename.includes('design-system/components/')) return {}
 
     const sourceCode = context.sourceCode || context.getSourceCode()
     const text = sourceCode.getText()

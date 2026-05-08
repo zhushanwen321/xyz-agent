@@ -1,7 +1,6 @@
 <script setup lang="ts">
- 
-
 import { computed } from 'vue'
+import { Select } from '../../design-system'
 
 const props = defineProps<{
   strategy: 'auto' | 'tag' | 'bind'
@@ -16,27 +15,37 @@ const emit = defineEmits<{
   'update:modelBind': [value: string]
 }>()
 
-const modelGroups = computed(() => {
+const strategyOptions = computed(() => [
+  { label: '自动（主 Agent 判断）', value: 'auto' },
+  { label: '按标签选择', value: 'tag' },
+  { label: '绑定具体模型', value: 'bind' },
+])
+
+const allModelOptions = computed(() =>
+  props.allModels.map(m => ({ label: m.name, value: m.id })),
+)
+
+const bindModelOptions = computed(() => {
   const groups: Record<string, Array<{ id: string; name: string }>> = {}
   for (const m of props.allModels) {
     if (!groups[m.providerName]) groups[m.providerName] = []
     groups[m.providerName].push({ id: m.id, name: m.name })
   }
-  // eslint-disable-next-line taste/no-unsafe-object-entries
-  return Object.entries(groups).map(([name, models]) => ({ name, models }))
+  return Object.entries(groups).flatMap(([, models]) =>
+    models.map(m => ({ label: m.name, value: m.id })),
+  )
 })
 
-function onStrategyChange(e: Event) {
-  emit('update:strategy', (e.target as HTMLSelectElement).value as 'auto' | 'tag' | 'bind')
+function onStrategyChange(val: string) {
+  emit('update:strategy', val as 'auto' | 'tag' | 'bind')
 }
 
-function onTagChange(tag: 'power' | 'efficient' | 'fast', e: Event) {
-  const val = (e.target as HTMLSelectElement).value
+function onTagChange(tag: 'power' | 'efficient' | 'fast', val: string) {
   emit('update:modelTags', { ...props.modelTags!, [tag]: val })
 }
 
-function onBindChange(e: Event) {
-  emit('update:modelBind', (e.target as HTMLSelectElement).value)
+function onBindChange(val: string) {
+  emit('update:modelBind', val)
 }
 </script>
 
@@ -45,60 +54,50 @@ function onBindChange(e: Event) {
   <div class="model-config">
     <div class="model-config__row">
       <span class="model-config__row-label">策略</span>
-      <select
+      <Select
         class="model-config__select"
-        :value="strategy"
-        @change="onStrategyChange"
-        style="max-width:200px"
-      >
-        <option value="auto">自动（主 Agent 判断）</option>
-        <option value="tag">按标签选择</option>
-        <option value="bind">绑定具体模型</option>
-      </select>
+        :model-value="strategy"
+        :options="strategyOptions"
+        @update:model-value="onStrategyChange"
+      />
     </div>
     <!-- Tag rows -->
     <div v-if="strategy === 'tag'" class="model-config__row">
       <span class="model-config__row-label">强力模型</span>
-      <select
+      <Select
         class="model-config__select"
-        :value="modelTags?.power"
-        @change="onTagChange('power', $event)"
-      >
-        <option v-for="m in allModels" :key="m.id" :value="m.id">{{ m.name }}</option>
-      </select>
+        :model-value="modelTags?.power ?? ''"
+        :options="allModelOptions"
+        @update:model-value="onTagChange('power', $event)"
+      />
     </div>
     <div v-if="strategy === 'tag'" class="model-config__row">
       <span class="model-config__row-label">高效模型</span>
-      <select
+      <Select
         class="model-config__select"
-        :value="modelTags?.efficient"
-        @change="onTagChange('efficient', $event)"
-      >
-        <option v-for="m in allModels" :key="m.id" :value="m.id">{{ m.name }}</option>
-      </select>
+        :model-value="modelTags?.efficient ?? ''"
+        :options="allModelOptions"
+        @update:model-value="onTagChange('efficient', $event)"
+      />
     </div>
     <div v-if="strategy === 'tag'" class="model-config__row">
       <span class="model-config__row-label">快速模型</span>
-      <select
+      <Select
         class="model-config__select"
-        :value="modelTags?.fast"
-        @change="onTagChange('fast', $event)"
-      >
-        <option v-for="m in allModels" :key="m.id" :value="m.id">{{ m.name }}</option>
-      </select>
+        :model-value="modelTags?.fast ?? ''"
+        :options="allModelOptions"
+        @update:model-value="onTagChange('fast', $event)"
+      />
     </div>
     <!-- Bind row -->
     <div v-if="strategy === 'bind'" class="model-config__row">
       <span class="model-config__row-label">绑定模型</span>
-      <select
+      <Select
         class="model-config__select"
-        :value="modelBind"
-        @change="onBindChange"
-      >
-        <optgroup v-for="group in modelGroups" :key="group.name" :label="group.name">
-          <option v-for="m in group.models" :key="m.id" :value="m.id">{{ m.name }}</option>
-        </optgroup>
-      </select>
+        :model-value="modelBind ?? ''"
+        :options="bindModelOptions"
+        @update:model-value="onBindChange"
+      />
     </div>
   </div>
 </template>
@@ -140,23 +139,5 @@ function onBindChange(e: Event) {
 
 .model-config__select {
   flex: 1;
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xs);
-  background: var(--surface);
-  color: var(--fg);
-  font-family: var(--font-body);
-  font-size: 12px;
-  outline: none;
-  cursor: pointer;
-  transition: border-color 0.15s var(--ease);
-  appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23999' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 10px center;
-}
-
-.model-config__select:focus {
-  border-color: var(--accent);
 }
 </style>

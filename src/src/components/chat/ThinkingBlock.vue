@@ -1,10 +1,10 @@
 <template>
   <div class="thinking-block">
-    <button class="thinking-header" @click="expanded = !expanded">
+    <Button variant="ghost" class="thinking-header" @click="expanded = !expanded">
       <span class="thinking-label">Thinking<span v-if="!expanded">...</span></span>
       <span v-if="streaming" class="thinking-pulse"></span>
       <svg class="thinking-chevron" :class="{ 'rotated': expanded }" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
-    </button>
+    </Button>
     <div v-if="expanded" class="thinking-body">
       <pre class="thinking-text">{{ text }}</pre>
     </div>
@@ -13,6 +13,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import { Button } from '../../design-system'
 
 defineProps<{ text: string; streaming?: boolean }>()
 const expanded = ref(false)

@@ -1,5 +1,5 @@
 <script setup lang="ts">
- 
+import { Input } from '../../design-system'
 
 const props = defineProps<{
   active: boolean
@@ -11,9 +11,9 @@ const emit = defineEmits<{
   'update:params': [value: { depth: number; width: number; tokens: number; rounds: number }]
 }>()
 
-function update(key: string, e: Event) {
-  const val = Number((e.target as HTMLInputElement).value)
-  emit('update:params', { ...props.params, [key]: val })
+function update(key: string, val: string) {
+  const num = Number(val)
+  emit('update:params', { ...props.params, [key]: num })
 }
 </script>
 
@@ -29,19 +29,35 @@ function update(key: string, e: Event) {
     <div :class="['override-params', { disabled: !active }]">
       <div>
         <div class="override-params__label">深度</div>
-        <input class="override-params__input" type="number" :value="params.depth" @input="update('depth', $event)">
+        <Input
+          class="override-params__input"
+          :model-value="String(params.depth)"
+          @update:model-value="update('depth', $event)"
+        />
       </div>
       <div>
         <div class="override-params__label">宽度</div>
-        <input class="override-params__input" type="number" :value="params.width" @input="update('width', $event)">
+        <Input
+          class="override-params__input"
+          :model-value="String(params.width)"
+          @update:model-value="update('width', $event)"
+        />
       </div>
       <div>
         <div class="override-params__label">Token</div>
-        <input class="override-params__input" type="number" :value="params.tokens" @input="update('tokens', $event)">
+        <Input
+          class="override-params__input"
+          :model-value="String(params.tokens)"
+          @update:model-value="update('tokens', $event)"
+        />
       </div>
       <div>
         <div class="override-params__label">轮次</div>
-        <input class="override-params__input" type="number" :value="params.rounds" @input="update('rounds', $event)">
+        <Input
+          class="override-params__input"
+          :model-value="String(params.rounds)"
+          @update:model-value="update('rounds', $event)"
+        />
       </div>
     </div>
   </div>

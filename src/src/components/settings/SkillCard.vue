@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { SkillInfo } from '@xyz-agent/shared'
+import { Button } from '../../design-system'
 import { ToggleSwitch, MetaGrid, MarkdownEditor } from './shared'
 
 const props = withDefaults(
@@ -52,13 +53,13 @@ function handleSave() {
       </div>
       <div class="skill-card__actions" @click.stop>
         <!-- Edit -->
-        <button class="icon-btn" title="编辑" @click="showEditor = !showEditor">
+        <Button variant="ghost" class="icon-btn" title="编辑" @click="showEditor = !showEditor">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-        </button>
+        </Button>
         <!-- Delete -->
-        <button class="icon-btn icon-btn--danger" title="删除" @click="$emit('delete', skill.name)">
+        <Button variant="ghost" class="icon-btn icon-btn--danger" title="删除" @click="$emit('delete', skill.name)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
-        </button>
+        </Button>
       </div>
     </div>
     <div class="skill-card__bd">

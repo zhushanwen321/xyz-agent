@@ -6,9 +6,9 @@
     </div>
     <pre class="approval-input">{{ formattedInput }}</pre>
     <div class="approval-actions">
-      <button class="approval-btn approval-btn--always" @click="handleAlwaysAllow">Always Allow</button>
-      <button class="approval-btn approval-btn--deny" @click="handleDeny">Deny</button>
-      <button class="approval-btn approval-btn--approve" @click="handleApprove">Approve</button>
+      <Button variant="ghost" class="approval-btn approval-btn--always" @click="handleAlwaysAllow">Always Allow</Button>
+      <Button variant="ghost" class="approval-btn approval-btn--deny" @click="handleDeny">Deny</Button>
+      <Button variant="primary" class="approval-btn approval-btn--approve" @click="handleApprove">Approve</Button>
       <span class="approval-countdown">{{ remainingSeconds }}s</span>
     </div>
   </div>
@@ -16,6 +16,7 @@
 
 <script setup lang="ts">
 import { computed, ref, onUnmounted } from 'vue'
+import { Button } from '../../design-system'
 
 export interface PendingToolCall {
   toolCallId: string

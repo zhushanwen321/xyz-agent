@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import type { SessionGroup } from '@xyz-agent/shared'
-import { ScrollArea } from '../../design-system'
+import { ScrollArea, Button } from '../../design-system'
 import SessionItem from './SessionItem.vue'
 import { useI18n } from 'vue-i18n'
 
@@ -51,7 +51,7 @@ function dirname(cwd: string): string {
   <ScrollArea class="session-groups">
     <template v-if="hasResults">
       <div v-for="group in filteredGroups" :key="group.cwd" class="group">
-        <button class="group-header" @click="toggleGroup(group.cwd)">
+        <Button variant="ghost" class="group-header" @click="toggleGroup(group.cwd)">
           <svg
             :class="['chevron', { collapsed: collapsed.has(group.cwd) }]"
             viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"
@@ -63,7 +63,7 @@ function dirname(cwd: string): string {
           </svg>
           <span class="group-name">{{ dirname(group.cwd) }}</span>
           <span class="group-count">{{ group.sessions.length }}</span>
-        </button>
+        </Button>
         <div v-show="!collapsed.has(group.cwd)" class="group-sessions">
           <SessionItem
             v-for="s in group.sessions"

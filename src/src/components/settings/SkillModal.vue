@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
+import { Button, Input } from '../../design-system'
 import type { SkillInfo } from '@xyz-agent/shared'
 
 interface Props {
@@ -65,38 +66,38 @@ watch(() => props.visible, (v) => {
     <div class="modal">
       <div class="modal__hd">
         <div class="modal__title">{{ skill ? '编辑 Skill' : '添加 Skill' }}</div>
-        <button class="modal__close" @click="$emit('close')">
+        <Button variant="ghost" class="modal__close" @click="$emit('close')">
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M1 1l12 12M13 1L1 13" />
           </svg>
-        </button>
+        </Button>
       </div>
 
       <div class="modal__bd">
         <div class="form-group">
           <div class="form-group__label">Skill 名称</div>
-          <input v-model="formName" class="form-input" placeholder="例如：code-review">
+          <Input v-model="formName" class="form-input" placeholder="例如：code-review" />
         </div>
 
         <div class="form-group">
           <div class="form-group__label">描述</div>
-          <input v-model="formDescription" class="form-input" placeholder="简要描述此 Skill 的功能">
+          <Input v-model="formDescription" class="form-input" placeholder="简要描述此 Skill 的功能" />
         </div>
 
         <div class="form-group">
           <div class="form-group__label">触发词 (逗号分隔)</div>
-          <input v-model="formTriggers" class="form-input" placeholder="例如：review, 代码审查, 检查代码">
+          <Input v-model="formTriggers" class="form-input" placeholder="例如：review, 代码审查, 检查代码" />
         </div>
 
         <div class="form-group">
           <div class="form-group__label">来源路径</div>
-          <input v-model="formSourcePath" class="form-input" placeholder="例如：~/.pi/agent/skills/code-review/">
+          <Input v-model="formSourcePath" class="form-input" placeholder="例如：~/.pi/agent/skills/code-review/" />
         </div>
       </div>
 
       <div class="modal__ft">
-        <button class="btn" @click="$emit('close')">取消</button>
-        <button class="btn btn--primary" @click="handleSave">{{ skill ? '保存' : '添加 Skill' }}</button>
+        <Button variant="ghost" @click="$emit('close')">取消</Button>
+        <Button variant="primary" @click="handleSave">{{ skill ? '保存' : '添加 Skill' }}</Button>
       </div>
     </div>
   </div>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { Button, Input } from '../../design-system'
 import { useProviderStore } from '../../stores/provider'
 import type { AgentInfo } from '@xyz-agent/shared'
 import GlobalParams from './GlobalParams.vue'
@@ -35,12 +36,12 @@ function handleAgentSave(data: { name: string; description: string; modelStrateg
   <div class="agents-pane">
     <div class="page__hd">
       <div class="page__title">Agent 配置</div>
-      <button class="btn btn--primary" @click="showModal = true">
+      <Button variant="primary" @click="showModal = true">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M7 1v12M1 7h12" />
         </svg>
         添加 Agent
-      </button>
+      </Button>
     </div>
 
     <!-- Scan section (like SkillImportSection) -->
@@ -63,8 +64,8 @@ function handleAgentSave(data: { name: string; description: string; modelStrateg
         </div>
       </div>
       <div class="scan-custom">
-        <input class="scan-custom__input" v-model="scanPath" placeholder="自定义路径，如 ~/my-project/.agents/">
-        <button class="btn btn--sm">扫描</button>
+        <Input class="scan-custom__input" v-model="scanPath" placeholder="自定义路径，如 ~/my-project/.agents/" />
+        <Button variant="ghost" size="sm">扫描</Button>
       </div>
     </div>
 

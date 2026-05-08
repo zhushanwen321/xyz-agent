@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { Button } from '../../design-system'
 import type { ProviderInfo, ModelInfo } from '@xyz-agent/shared'
 import { useProviderStore } from '../../stores/provider'
 import { send } from '../../lib/ws-client'
@@ -90,15 +91,15 @@ function handleSave(_data: {
   <div class="provider-pane">
     <div class="page__hd">
       <div class="page__title">供应商配置</div>
-      <button
-        class="btn btn--primary"
+      <Button
+        variant="primary"
         @click="editingProvider = null; showModal = true"
       >
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M7 1v12M1 7h12" />
         </svg>
         添加供应商
-      </button>
+      </Button>
     </div>
 
     <!-- Empty state -->
@@ -110,12 +111,12 @@ function handleSave(_data: {
       </div>
       <div class="empty-state__title">尚未配置任何供应商</div>
       <div class="empty-state__desc">添加供应商后，可以配置模型并分配给 Agent 使用。支持 Anthropic、OpenAI、Google、DeepSeek、Ollama 等。</div>
-      <button
-        class="btn btn--primary"
+      <Button
+        variant="primary"
         @click="editingProvider = null; showModal = true"
       >
         添加第一个供应商
-      </button>
+      </Button>
     </div>
 
     <!-- Provider list -->

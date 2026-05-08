@@ -12,14 +12,15 @@
           <div class="toast__title">{{ toast.title }}</div>
           <div v-if="toast.description" class="toast__desc">{{ toast.description }}</div>
           <div v-if="toast.actions?.length" class="toast__actions">
-            <button
+            <Button
+              variant="ghost"
               v-for="action in toast.actions"
               :key="action.label"
               :class="['toast__btn', { 'toast__btn--primary': action.primary }]"
               @click="action.handler"
             >
               {{ action.label }}
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -42,6 +43,8 @@ export interface ToastItem {
   actions?: ToastAction[]
   removing?: boolean
 }
+
+import { Button } from '../../design-system'
 
 defineProps<{ toasts: ToastItem[] }>()
 defineEmits<{ dismiss: [id: string] }>()

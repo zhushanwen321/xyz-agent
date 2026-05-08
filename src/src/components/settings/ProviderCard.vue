@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { ProviderInfo, ModelInfo } from '@xyz-agent/shared'
+import { Button } from '../../design-system'
 import { ToggleSwitch } from './shared'
 import ModelRow from './ModelRow.vue'
 
@@ -49,17 +50,17 @@ const statusDotClass = computed(() => {
       </div>
       <div class="provider-card__actions" @click.stop>
         <!-- Test connection -->
-        <button class="icon-btn" title="测试连接" @click="$emit('test', provider.id)">
+        <Button variant="ghost" class="icon-btn" title="测试连接" @click="$emit('test', provider.id)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-        </button>
+        </Button>
         <!-- Edit -->
-        <button class="icon-btn" title="编辑" @click="$emit('edit', provider.id)">
+        <Button variant="ghost" class="icon-btn" title="编辑" @click="$emit('edit', provider.id)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-        </button>
+        </Button>
         <!-- Delete -->
-        <button class="icon-btn icon-btn--danger" title="删除" @click="$emit('delete', provider.id)">
+        <Button variant="ghost" class="icon-btn icon-btn--danger" title="删除" @click="$emit('delete', provider.id)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
-        </button>
+        </Button>
       </div>
     </div>
     <div class="provider-card__bd">

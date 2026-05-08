@@ -1,9 +1,9 @@
 <template>
   <div class="model-picker" ref="pickerRef">
-    <button class="model-picker__trigger" @click="open = !open">
+    <Button variant="ghost" class="model-picker__trigger" @click="open = !open">
       <span class="model-picker__label">{{ currentLabel }}</span>
       <svg class="model-picker__chevron" :class="{ 'model-picker__chevron--open': open }" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
-    </button>
+    </Button>
     <div v-if="open" class="model-picker__dropdown">
       <div
         v-for="group in groupedModels"
@@ -11,14 +11,15 @@
         class="model-picker__group"
       >
         <div class="model-picker__group-title">{{ group.provider }}</div>
-        <button
+        <Button
           v-for="m in group.models"
           :key="m.id"
+          variant="ghost"
           :class="['model-picker__item', { 'model-picker__item--active': m.id === currentModel }]"
           @click="handleSelect(m.id)"
         >
           {{ m.name }}
-        </button>
+        </Button>
       </div>
       <div v-if="groupedModels.length === 0" class="model-picker__empty">
         No models available
@@ -30,6 +31,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useModel } from '../../composables/useModel'
+import { Button } from '../../design-system'
 
 const props = defineProps<{ currentModel: string }>()
 const emit = defineEmits<{ select: [modelId: string] }>()

@@ -2,17 +2,18 @@
   <Teleport to="body">
     <div v-if="visible && commands.length > 0" class="slash-menu" ref="menuRef" :style="menuStyle">
       <div class="slash-menu__list" ref="listRef">
-        <button
+        <Button
           v-for="(cmd, idx) in commands"
           :key="cmd.name"
-          :ref="(el) => { if (idx === activeIndex) activeEl = el as HTMLElement }"
+          :ref="(el) => { if (idx === activeIndex) activeEl = (el as any)?.$el ?? el }"
+          variant="ghost"
           :class="['slash-menu__item', { 'slash-menu__item--active': idx === activeIndex }]"
           @click="handleSelect(cmd.name)"
           @mouseenter="activeIndex = idx"
         >
           <span class="slash-menu__name">/{{ cmd.name }}</span>
           <span class="slash-menu__desc">{{ cmd.description }}</span>
-        </button>
+        </Button>
       </div>
     </div>
   </Teleport>
@@ -21,6 +22,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
 import { useSlashCommands } from '../../composables/useSlashCommands'
+import { Button } from '../../design-system'
 
 const props = defineProps<{
   visible: boolean

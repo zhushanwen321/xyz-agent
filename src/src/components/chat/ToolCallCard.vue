@@ -1,13 +1,16 @@
 <template>
   <div :class="['tool', { collapsed: !expanded }]">
-    <button class="tool__hd" @click="expanded = !expanded">
+    <Button variant="ghost" class="tool__hd" @click="expanded = !expanded">
       <span v-if="isRunning" class="tool-spinner"></span>
-      <span v-else :class="['tool__status-icon', statusClass]">{{ isError ? '✗' : '✓' }}</span>
+      <span v-else :class="['tool__status-icon', statusClass]">
+        <svg v-if="isError" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      </span>
       <span class="tool__name">{{ toolCall.toolName }}</span>
       <span v-if="filePathHint" class="tool__path">{{ truncate(filePathHint, 50) }}</span>
       <span :class="['tool__status', `tool__status--${statusClass}`]">{{ statusLabel }}</span>
       <svg class="tool__chevron" xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
-    </button>
+    </Button>
     <div v-if="expanded" class="tool__bd">
       <component v-if="rendererComp" :is="rendererComp" :tool-call="toolCall" />
       <DefaultToolRenderer v-else :tool-call="toolCall" />
@@ -19,6 +22,7 @@
 import { ref, computed, onMounted, type Component } from 'vue'
 import type { ToolCall } from '@xyz-agent/shared'
 import { getToolRenderer } from '../../lib/tool-renderer-registry'
+import { Button } from '../../design-system'
 import DefaultToolRenderer from './ToolRenderers/DefaultToolRenderer.vue'
 
 const props = defineProps<{ toolCall: ToolCall }>()

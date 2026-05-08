@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { Button } from '../../design-system'
 
 interface AnchorOption {
   id: string
@@ -46,11 +47,11 @@ onBeforeUnmount(() => document.removeEventListener('click', onClickOutside))
 
 <template>
   <div class="anchor" :class="{ open }" ref="anchorRef">
-    <button class="anchor__trigger" @click.stop="toggle">
+    <Button variant="ghost" class="anchor__trigger" @click.stop="toggle">
       <span class="anchor__dot" :style="{ background: currentColor }"></span>
       <span class="anchor__label">{{ currentLabel }}</span>
       <span class="anchor__chevron">&#9662;</span>
-    </button>
+    </Button>
     <div v-if="open" class="anchor-dropdown">
       <div
         v-for="opt in options"

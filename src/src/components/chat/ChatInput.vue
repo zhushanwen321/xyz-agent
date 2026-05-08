@@ -7,39 +7,40 @@
       @select="handleSlashSelect"
     />
     <div class="chat-input-container">
-      <textarea
-        ref="textareaRef"
+      <Textarea
         v-model="text"
         :placeholder="t('chat.inputPlaceholder')"
         class="chat-input-textarea"
-        rows="1"
-        @input="onInput"
+        :rows="1"
+        :style="{ border: 'none', background: 'transparent' }"
         @keydown="onKeyDown"
         @compositionstart="isComposing = true"
         @compositionend="onCompositionEnd"
-      ></textarea>
+      />
       <div class="chat-input-toolbar">
-        <button class="tb-btn tb-btn--plus" title="Upload file">
+        <Button variant="ghost" class="tb-btn tb-btn--plus" title="Upload file">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v10M3 8h10"/></svg>
-        </button>
+        </Button>
         <ModelPicker :current-model="currentModel" @select="(id) => emit('select-model', id)" />
         <ContextBar :percentage="contextPercent" />
         <div class="tb-spacer"></div>
-        <button
+        <Button
           v-if="isStreaming"
+          variant="ghost"
           class="tb-btn tb-btn--stop"
           @click="emit('cancel')"
           :title="t('chat.stop')"
-        >■</button>
-        <button
+        >■</Button>
+        <Button
           v-else
+          variant="primary"
           class="tb-btn tb-btn--send"
           :disabled="!canSend"
           @click="handleSend"
           :title="t('chat.send')"
         >
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V3M4 7l4-4 4 4"/></svg>
-        </button>
+        </Button>
       </div>
     </div>
   </div>
@@ -50,6 +51,7 @@ import { ref, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useChatStore } from '../../stores/chat'
 import { useSettingsStore } from '../../stores/settings'
+import { Textarea, Button } from '../../design-system'
 import ContextBar from './ContextBar.vue'
 import ModelPicker from './ModelPicker.vue'
 import SlashMenu from './SlashMenu.vue'
@@ -122,10 +124,6 @@ function onKeyDown(e: KeyboardEvent) {
 
 function onCompositionEnd() {
   isComposing.value = false
-}
-
-function onInput() {
-  nextTick(resizeTextarea)
 }
 
 const MAX_HEIGHT = 140

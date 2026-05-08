@@ -110,6 +110,7 @@ function handleSave() {
         <label class="provider-form__label">
           {{ t('settings.temperature') }}: {{ temperature.toFixed(1) }}
         </label>
+        <!-- eslint-disable-next-line taste/no-native-html-elements -- range slider has no design-system replacement -->
         <input
           v-model.number="temperature"
           type="range"

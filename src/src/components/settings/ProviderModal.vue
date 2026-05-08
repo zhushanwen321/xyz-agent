@@ -1,6 +1,7 @@
 <script setup lang="ts">
 /* eslint-disable max-lines */
 import { ref, watch } from 'vue'
+import { Button, Input, Select } from '../../design-system'
 import type { ProviderInfo, ModelInfo } from '@xyz-agent/shared'
 import { TagPill } from './shared'
 
@@ -49,6 +50,15 @@ const addModelName = ref('')
 const addModelCtx = ref('')
 
 const allTags = ['power', 'efficient', 'fast'] as const
+
+const typeOptions = [
+  { label: 'Anthropic', value: 'anthropic' },
+  { label: 'OpenAI', value: 'openai' },
+  { label: 'OpenAI 兼容', value: 'openai-compatible' },
+  { label: 'Google AI', value: 'google' },
+  { label: 'DeepSeek', value: 'deepseek' },
+  { label: 'Ollama (本地)', value: 'ollama' },
+]
 
 // ─── Watch provider changes ─────────────────────────────────────
 
@@ -154,30 +164,23 @@ watch(() => props.visible, (v) => {
     <div class="modal">
       <div class="modal__hd">
         <div class="modal__title">{{ title }}</div>
-        <button class="modal__close" @click="$emit('close')">
+        <Button variant="ghost" class="modal__close" @click="$emit('close')">
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M1 1l12 12M13 1L1 13" />
           </svg>
-        </button>
+        </Button>
       </div>
 
       <div class="modal__bd">
         <div class="form-group">
           <div class="form-group__label">名称</div>
-          <input v-model="formName" class="form-input" placeholder="例如：Anthropic、OpenAI、本地 Ollama">
+          <Input v-model="formName" class="form-input" placeholder="例如：Anthropic、OpenAI、本地 Ollama" />
         </div>
 
         <div class="form-row">
           <div class="form-group">
             <div class="form-group__label">类型</div>
-            <select v-model="formType" class="form-select">
-              <option value="anthropic">Anthropic</option>
-              <option value="openai">OpenAI</option>
-              <option value="openai-compatible">OpenAI 兼容</option>
-              <option value="google">Google AI</option>
-              <option value="deepseek">DeepSeek</option>
-              <option value="ollama">Ollama (本地)</option>
-            </select>
+            <Select v-model="formType" class="form-select" :options="typeOptions" />
           </div>
           <div class="form-group">
             <div class="form-group__label">连接状态</div>
@@ -187,13 +190,13 @@ watch(() => props.visible, (v) => {
 
         <div class="form-group">
           <div class="form-group__label">Base URL</div>
-          <input v-model="formUrl" class="form-input" placeholder="https://api.anthropic.com">
+          <Input v-model="formUrl" class="form-input" placeholder="https://api.anthropic.com" />
           <div class="form-hint">供应商的 API 端点地址。Ollama 默认为 http://localhost:11434</div>
         </div>
 
         <div class="form-group">
           <div class="form-group__label">API Key</div>
-          <input v-model="formKey" class="form-input" type="password" placeholder="sk-ant-...">
+          <Input v-model="formKey" class="form-input" type="password" placeholder="sk-ant-..." />
           <div class="form-hint">本地模型（如 Ollama）无需 API Key</div>
         </div>
 
@@ -208,7 +211,7 @@ watch(() => props.visible, (v) => {
           <div class="model-config__hd">
             <span class="model-config__title">已配置模型</span>
             <div class="model-config__actions">
-              <button class="btn btn--sm">自动发现</button>
+              <Button variant="ghost" size="sm">自动发现</Button>
             </div>
           </div>
           <div class="model-config__list">
@@ -226,42 +229,42 @@ watch(() => props.visible, (v) => {
                   {{ tag === 'power' ? '强力' : tag === 'efficient' ? '高效' : '快速' }}
                 </TagPill>
               </div>
-              <button class="btn btn--ghost btn--sm btn--danger" @click="removeModel(idx)">
+              <Button variant="ghost" size="sm" class="btn--danger" @click="removeModel(idx)">
                 <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M1 1l8 8M9 1L1 9" />
                 </svg>
-              </button>
+              </Button>
             </div>
           </div>
           <div class="add-model-row">
-            <input
+            <Input
               v-model="addModelName"
               class="add-model-row__input"
               placeholder="手动输入模型名称，如 my-model-v1"
               @keydown.enter="addModel"
-            >
-            <input
+            />
+            <Input
               v-model="addModelCtx"
               class="add-model-row__input"
               placeholder="上下文窗口，如 128K"
               style="max-width: 100px"
               @keydown.enter="addModel"
-            >
-            <button class="btn btn--sm" @click="addModel">添加</button>
+            />
+            <Button variant="ghost" size="sm" @click="addModel">添加</Button>
           </div>
         </div>
       </div>
 
       <div class="modal__ft">
-        <button class="btn" @click="handleTest">
+        <Button variant="ghost" @click="handleTest">
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="6" cy="6" r="4.5" />
             <path d="M6 4v2.5M6 8v.5" />
           </svg>
           测试连接
-        </button>
-        <button class="btn" @click="$emit('close')">取消</button>
-        <button class="btn btn--primary" @click="handleSave">保存</button>
+        </Button>
+        <Button variant="ghost" @click="$emit('close')">取消</Button>
+        <Button variant="primary" @click="handleSave">保存</Button>
       </div>
     </div>
   </div>

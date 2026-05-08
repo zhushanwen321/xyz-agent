@@ -2,7 +2,7 @@
   <aside class="drawer drawer--left" :class="{ open }">
     <div class="drawer__hd">
       <div class="drawer__title">SubAgent 监控</div>
-      <button class="drawer__close" @click="$emit('close')">&times;</button>
+      <Button variant="ghost" class="drawer__close" @click="$emit('close')">&times;</Button>
     </div>
     <DrawerTabs
       :active-tab="activeTab"
@@ -42,6 +42,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import { Button } from '../../design-system'
 import DrawerTabs from './DrawerTabs.vue'
 import TaskTree from './TaskTree.vue'
 import DoneItem from './DoneItem.vue'

@@ -10,12 +10,13 @@
       <span class="tree-node__dot" :class="`dot--${node.status || 'idle'}`"></span>
       <span class="tree-node__label">{{ node.label }}</span>
       <span v-if="node.meta" class="tree-node__meta">{{ node.meta }}</span>
-      <button class="tree-node__kill" @click.stop="$emit('kill', node.id)">终止</button>
+      <Button variant="ghost" class="tree-node__kill" @click.stop="$emit('kill', node.id)">终止</Button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { Button } from '../../design-system'
 interface TreeNode {
   id: string
   label: string

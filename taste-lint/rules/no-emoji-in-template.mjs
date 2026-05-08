@@ -29,6 +29,8 @@ export default {
   create(context) {
     const filename = context.filename || ''
     if (!filename.endsWith('.vue')) return {}
+    // design-system 和 xyz-ui 内部实现豁免
+    if (filename.includes('components/ui/') || filename.includes('design-system/components/')) return {}
 
     const sourceCode = context.sourceCode || context.getSourceCode()
     const text = sourceCode.getText()

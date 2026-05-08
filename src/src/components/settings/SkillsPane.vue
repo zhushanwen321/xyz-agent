@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useProviderStore } from '../../stores/provider'
+import { Button } from '../../design-system'
 import type { SkillInfo } from '@xyz-agent/shared'
 import SkillImportSection from './SkillImportSection.vue'
 import SkillCard from './SkillCard.vue'
@@ -30,12 +31,12 @@ function handleSkillSave(data: { name: string; description: string; triggers: st
   <div class="skills-pane">
     <div class="page__hd">
       <div class="page__title">Skill 配置</div>
-      <button class="btn btn--primary" @click="showModal = true">
+      <Button variant="primary" size="sm" @click="showModal = true">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M7 1v12M1 7h12" />
         </svg>
         添加 Skill
-      </button>
+      </Button>
     </div>
 
     <SkillImportSection />
@@ -86,35 +87,5 @@ function handleSkillSave(data: { name: string; description: string; triggers: st
   border-bottom: 1px solid var(--border);
 }
 
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 18px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--muted);
-  font-size: 13px;
-  font-family: var(--font-body);
-  cursor: pointer;
-  transition: all 0.2s var(--ease);
-  white-space: nowrap;
-}
 
-.btn:hover {
-  background: var(--accent-light);
-  color: var(--accent);
-  border-color: var(--accent);
-}
-
-.btn--primary {
-  background: var(--accent);
-  color: white;
-  border-color: var(--accent);
-}
-
-.btn--primary:hover {
-  opacity: 0.88;
-}
 </style>

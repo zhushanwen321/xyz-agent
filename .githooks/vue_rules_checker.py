@@ -35,18 +35,10 @@ SHADCN_COMPONENTS_MAP = {
 }
 
 # 未迁移到 xyz-ui 组件的文件（渐进式迁移）
-LEGACY_WHITELIST: list[str] = [
-    'ProviderModal.vue',
-    'SkillModal.vue',
-    'AgentModal.vue',
-    'ProviderForm.vue',
-    'ModelStrategyConfig.vue',
-    'MarkdownEditor.vue',
-    'SkillImportSection.vue',
-    'ToolPermissions.vue',
-    'SessionSearch.vue',
-    'SessionGroup.vue',
-]
+# All files have been migrated to design-system components.
+# This whitelist is now empty — native HTML checks apply to all files.
+# CSS selector checks still use STYLE_SCOPED_WHITELIST for gradual migration.
+LEGACY_WHITELIST: list[str] = []
 
 # 允许保留原生 HTML 元素的文件（子串匹配）
 NATIVE_ELEM_WHITELIST: list[str] = []

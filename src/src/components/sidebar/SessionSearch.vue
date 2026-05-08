@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Input } from '../../design-system'
+import { Input, Button } from '../../design-system'
 import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{
@@ -33,8 +33,9 @@ function clear() {
         class="search-input"
         @update:model-value="emit('update:modelValue', $event)"
       />
-      <button
+      <Button
         v-if="hasValue"
+        variant="ghost"
         class="clear-btn"
         :aria-label="t('sidebar.clearSearch')"
         @click="clear"
@@ -43,7 +44,7 @@ function clear() {
           <line x1="4" y1="4" x2="12" y2="12" />
           <line x1="12" y1="4" x2="4" y2="12" />
         </svg>
-      </button>
+      </Button>
     </div>
   </div>
 </template>

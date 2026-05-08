@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { Button, Input } from '../../design-system'
 
 const sources = ref([
   { id: 'pi', icon: 'P', label: 'Pi Skills', path: '~/.pi/agent/skills/', active: true },
@@ -26,8 +27,8 @@ const sources = ref([
       </div>
     </div>
     <div class="custom-path">
-      <input class="custom-path__input" placeholder="自定义路径，如 ~/my-project/.skills/">
-      <button class="btn btn--sm">扫描</button>
+      <Input class="custom-path__input" placeholder="自定义路径，如 ~/my-project/.skills/" />
+      <Button variant="ghost" size="sm">扫描</Button>
     </div>
   </div>
 </template>

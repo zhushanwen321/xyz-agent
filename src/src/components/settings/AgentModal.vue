@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue'
+import { Button, Input, Select } from '../../design-system'
 import type { AgentInfo } from '@xyz-agent/shared'
 
 interface ModelOption {
@@ -29,6 +30,19 @@ const formStrategy = ref('auto')
 const formModelBind = ref('')
 
 const showModelBind = computed(() => formStrategy.value === 'bind')
+
+const strategyOptions = [
+  { label: '自动', value: 'auto' },
+  { label: '标签', value: 'tag' },
+  { label: '绑定', value: 'bind' },
+]
+
+const modelOptions = computed(() =>
+  props.models.map(m => ({
+    label: `${m.name} (${m.providerName})`,
+    value: m.id,
+  })),
+)
 
 watch(() => props.visible, (v) => {
   if (v) {
@@ -77,47 +91,38 @@ watch(() => props.visible, (v) => {
     <div class="modal">
       <div class="modal__hd">
         <div class="modal__title">{{ agent ? '编辑 Agent' : '添加 Agent' }}</div>
-        <button class="modal__close" @click="$emit('close')">
+        <Button variant="ghost" class="modal__close" @click="$emit('close')">
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M1 1l12 12M13 1L1 13" />
           </svg>
-        </button>
+        </Button>
       </div>
 
       <div class="modal__bd">
         <div class="form-group">
           <div class="form-group__label">Agent 名称</div>
-          <input v-model="formName" class="form-input" placeholder="例如：code-reviewer">
+          <Input v-model="formName" class="form-input" placeholder="例如：code-reviewer" />
         </div>
 
         <div class="form-group">
           <div class="form-group__label">描述</div>
-          <input v-model="formDescription" class="form-input" placeholder="简要描述此 Agent 的职责">
+          <Input v-model="formDescription" class="form-input" placeholder="简要描述此 Agent 的职责" />
         </div>
 
         <div class="form-group">
           <div class="form-group__label">模型策略</div>
-          <select v-model="formStrategy" class="form-select">
-            <option value="auto">自动</option>
-            <option value="tag">标签</option>
-            <option value="bind">绑定</option>
-          </select>
+          <Select v-model="formStrategy" class="form-select" :options="strategyOptions" />
         </div>
 
         <div v-if="showModelBind" class="form-group">
           <div class="form-group__label">绑定模型</div>
-          <select v-model="formModelBind" class="form-select">
-            <option value="" disabled>选择模型</option>
-            <option v-for="model in models" :key="model.id" :value="model.id">
-              {{ model.name }} ({{ model.providerName }})
-            </option>
-          </select>
+          <Select v-model="formModelBind" class="form-select" :options="modelOptions" placeholder="选择模型" />
         </div>
       </div>
 
       <div class="modal__ft">
-        <button class="btn" @click="$emit('close')">取消</button>
-        <button class="btn btn--primary" @click="handleSave">{{ agent ? '保存' : '添加 Agent' }}</button>
+        <Button variant="ghost" @click="$emit('close')">取消</Button>
+        <Button variant="primary" @click="handleSave">{{ agent ? '保存' : '添加 Agent' }}</Button>
       </div>
     </div>
   </div>

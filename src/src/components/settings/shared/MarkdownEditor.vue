@@ -1,5 +1,5 @@
 <script setup lang="ts">
- 
+import { Button, Textarea } from '../../../design-system'
 
 const props = withDefaults(
   defineProps<{
@@ -19,13 +19,14 @@ defineEmits<{
   <div class="md-editor">
     <div class="md-editor__bar">
       <span>{{ props.filename }}</span>
-      <button class="btn btn--sm" @click="$emit('save')">保存</button>
+      <Button variant="ghost" size="sm" @click="$emit('save')">保存</Button>
     </div>
-    <textarea
+    <Textarea
       class="md-editor__textarea"
-      :value="modelValue"
-      spellcheck="false"
-      @input="$emit('update:modelValue', ($event.target as HTMLTextAreaElement).value)"
+      :model-value="modelValue"
+      :auto-resize="false"
+      :rows="10"
+      @update:model-value="$emit('update:modelValue', $event)"
     />
   </div>
 </template>
@@ -49,21 +50,12 @@ defineEmits<{
 }
 
 .md-editor__textarea {
-  width: 100%;
   min-height: 200px;
   max-height: 400px;
-  padding: 12px;
   border: none;
-  background: var(--surface);
-  color: var(--fg);
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.6;
   resize: vertical;
-  outline: none;
-}
-
-.md-editor__textarea::placeholder {
-  color: var(--muted);
 }
 </style>

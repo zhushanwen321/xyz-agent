@@ -127,13 +127,13 @@ function cancelRename() {
   <aside :class="['sidebar', { collapsed }]">
     <div class="sidebar-hd">
       <span v-if="!collapsed" class="sidebar-title">{{ t('sidebar.sessions') }}</span>
-      <button class="sidebar-add" @click="$emit('create')">+</button>
-      <button class="sidebar-toggle" @click="toggleCollapse" :aria-label="collapsed ? t('sidebar.expand') : t('sidebar.collapse')">
+      <Button variant="ghost" class="sidebar-add" @click="$emit('create')">+</Button>
+      <Button variant="ghost" class="sidebar-toggle" @click="toggleCollapse" :aria-label="collapsed ? t('sidebar.expand') : t('sidebar.collapse')">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
           <polyline v-if="collapsed" points="10,3 5,8 10,13" />
           <polyline v-else points="6,3 11,8 6,13" />
         </svg>
-      </button>
+      </Button>
     </div>
 
     <template v-if="!collapsed">
@@ -154,7 +154,8 @@ function cancelRename() {
               }"
             >
               <!-- Group header -->
-              <button
+              <Button
+                variant="ghost"
                 v-if="getVirtualRow(virtualItem.index).type === 'group'"
                 class="group-header"
                 @click="toggleGroup(asGroup(getVirtualRow(virtualItem.index)).cwd)"
@@ -170,7 +171,7 @@ function cancelRename() {
                 </svg>
                 <span class="group-name">{{ dirname(asGroup(getVirtualRow(virtualItem.index)).cwd) }}</span>
                 <span class="group-count">{{ asGroup(getVirtualRow(virtualItem.index)).sessionCount }}</span>
-              </button>
+              </Button>
               <!-- Session item -->
               <SessionItem
                 v-else
