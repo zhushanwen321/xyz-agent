@@ -1,5 +1,5 @@
 <template>
-  <div class="overview" :class="{ visible }" @keydown="onKeyDown" tabindex="0">
+  <div ref="overviewRef" class="overview" :class="{ visible }" @keydown="onKeyDown" tabindex="0">
     <div class="overview__title">窗口总览</div>
     <div class="overview__grid">
       <div
@@ -49,7 +49,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, nextTick } from 'vue'
 
 interface PreviewLine {
   text: string
@@ -88,6 +88,18 @@ const statusLabels: Record<string, string> = {
 }
 
 const highlightedIdx = ref(0)
+const overviewRef = ref<HTMLElement | null>(null)
+
+// Auto-focus when visible for keyboard events
+watch(
+  () => props.visible,
+  async (v) => {
+    if (v) {
+      await nextTick()
+      overviewRef.value?.focus()
+    }
+  },
+)
 
 // Clamp highlighted index when cards array changes
 watch(
