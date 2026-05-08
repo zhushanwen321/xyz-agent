@@ -20,11 +20,42 @@ impl SidecarManager {
         }
     }
 
+    /// Kill any process listening on the given port by reading the port file
+    /// and using `lsof` + `kill`. This handles stale sidecar processes from
+    /// previous runs that weren't cleaned up properly.
+    fn kill_stale_process_on_port(port: u16) {
+        // Try lsof to find PID listening on this port
+        let output = Command::new("lsof")
+            .args(["-ti", &format!(":{}", port), "-sTCP:LISTEN"])
+            .output();
+
+        if let Ok(out) = output {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            for line in stdout.lines() {
+                if let Ok(pid) = line.trim().parse::<u32>() {
+                    log::info!("Killing stale process {} on port {}", pid, port);
+                    // SIGTERM first
+                    let _ = Command::new("kill").arg(pid.to_string()).output();
+                    thread::sleep(Duration::from_millis(200));
+                    // SIGKILL if still alive
+                    let _ = Command::new("kill").arg("-9").arg(pid.to_string()).output();
+                }
+            }
+        }
+    }
+
     /// Find an available port in the range [3210, 3220].
+    /// If a port is occupied, attempt to kill the stale process first.
     fn find_available_port() -> Result<u16, String> {
         for port in 3210..=3220 {
             if TcpStream::connect(format!("127.0.0.1:{}", port)).is_err() {
-                // Connection refused means port is free
+                return Ok(port);
+            }
+            // Port is in use — try killing stale process
+            Self::kill_stale_process_on_port(port);
+            // Brief wait for port to be released
+            thread::sleep(Duration::from_millis(300));
+            if TcpStream::connect(format!("127.0.0.1:{}", port)).is_err() {
                 return Ok(port);
             }
         }
@@ -57,16 +88,13 @@ impl SidecarManager {
     /// Start the sidecar process on an available port, perform health check,
     /// write port file, and emit the `sidecar-port` event.
     pub fn start(&self, app: &tauri::AppHandle) -> Result<u16, String> {
-        // Stop any existing process first
+        // Stop any existing tracked process first
         self.stop()?;
 
         let port = Self::find_available_port()?;
 
         log::info!("Starting sidecar on port {}", port);
 
-        // Resolve project root: sidecar.rs is in src-tauri/src/, so go up 3 levels
-        // In dev mode: cwd is usually src-tauri/, so parent is project root
-        // Use CARGO_MANIFEST_DIR which always points to src-tauri/
         let manifest_dir = env::var("CARGO_MANIFEST_DIR")
             .map_err(|e| format!("CARGO_MANIFEST_DIR not set: {}", e))?;
         let project_root_buf = PathBuf::from(&manifest_dir);
@@ -114,7 +142,7 @@ impl SidecarManager {
         // Wait for sidecar to be ready
         Self::health_check(port)?;
 
-        // Write port file
+        // Write port file for cold-start discovery
         Self::write_port_file(port)?;
 
         // Notify frontend
@@ -125,7 +153,7 @@ impl SidecarManager {
         Ok(port)
     }
 
-    /// Stop the sidecar process. Uses child.kill() for cross-platform support.
+    /// Stop the tracked sidecar process.
     pub fn stop(&self) -> Result<(), String> {
         let mut proc = self.process.lock().map_err(|e| e.to_string())?;
         if let Some(mut child) = proc.take() {
@@ -136,7 +164,6 @@ impl SidecarManager {
     }
 }
 
-/// Get the user's home directory using std::env (no external deps).
 fn home_dir() -> Result<PathBuf, String> {
     env::var("HOME")
         .or_else(|_| env::var("USERPROFILE").map(|p| p))

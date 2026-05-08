@@ -36,8 +36,15 @@ export class SidecarServer {
   }
 
   start(): Promise<void> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       this.wss.on('connection', (ws) => this.handleConnection(ws))
+      this.httpServer.on('error', (err: NodeJS.ErrnoException) => {
+        if (err.code === 'EADDRINUSE') {
+          console.error(`[sidecar] port ${this.port} already in use, exiting`)
+          process.exit(1)
+        }
+        reject(err)
+      })
       this.httpServer.listen(this.port, () => {
         console.log(`[sidecar] listening on port ${this.port}`)
         resolve()
