@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { mockSkills } from '../../mock/data'
+import { ref, computed } from 'vue'
+import { useProviderStore } from '../../stores/provider'
 import SkillImportSection from './SkillImportSection.vue'
 import SkillCard from './SkillCard.vue'
 
-const skills = ref([...mockSkills])
+const providerStore = useProviderStore()
+const skills = computed(() => providerStore.skills)
 const expandedId = ref<string | null>(null)
 </script>
 
@@ -24,7 +25,7 @@ const expandedId = ref<string | null>(null)
       :skill="skill"
       :expanded="expandedId === skill.name"
       @toggle="expandedId = expandedId === skill.name ? null : skill.name"
-      @toggle-enabled="skill.enabled = !skill.enabled"
+      @toggle-enabled="providerStore.setSkills(skills.map(s => s.id === skill.id ? { ...s, enabled: !s.enabled } : s))"
     />
   </div>
 </template>

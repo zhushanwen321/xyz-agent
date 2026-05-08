@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import type { MockSkill } from '../../mock/data'
+import type { SkillInfo } from '@xyz-agent/shared'
 import { ToggleSwitch, MetaGrid, MarkdownEditor } from './shared'
 
 const props = withDefaults(
   defineProps<{
-    skill: MockSkill
+    skill: SkillInfo
     expanded?: boolean
   }>(),
   { expanded: false },
@@ -19,14 +19,14 @@ defineEmits<{
 }>()
 
 const showEditor = ref(false)
-const content = ref(props.skill.content)
+const content = ref(props.skill.content ?? '')
 
 const metaItems = computed(() => [
   { key: '名称', value: props.skill.name },
   { key: '触发词', value: props.skill.triggers.join('\u3001') },
-  { key: '来源', value: `${props.skill.source} \u00b7 ${props.skill.sourcePath}` },
-  { key: '文件大小', value: props.skill.fileSize },
-  { key: '依赖工具', value: props.skill.tools.join(', ') },
+  { key: '来源', value: props.skill.sourcePath ? `${props.skill.source} \u00b7 ${props.skill.sourcePath}` : props.skill.source },
+  { key: '文件大小', value: props.skill.fileSize ?? '-' },
+  { key: '依赖工具', value: props.skill.tools?.join(', ') ?? '-' },
 ])
 
 function handleSave() {
@@ -45,10 +45,10 @@ function handleSave() {
       <div class="skill-card__info">
         <div class="skill-card__name">
           {{ skill.name }}
-          <span class="skill-card__name-tag">{{ skill.tag }}</span>
+          <span v-if="skill.tag" class="skill-card__name-tag">{{ skill.tag }}</span>
         </div>
         <div class="skill-card__desc">{{ skill.description }}</div>
-        <div class="skill-card__source">{{ skill.sourcePath }}</div>
+        <div class="skill-card__source">{{ skill.sourcePath ?? skill.source }}</div>
       </div>
       <div class="skill-card__actions" @click.stop>
         <!-- Edit -->

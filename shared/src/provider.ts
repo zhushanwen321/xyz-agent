@@ -26,6 +26,13 @@ export interface SkillInfo {
   enabled: boolean
   source: string
   triggers: string[]
+  // UI 扩展字段（由后端下发或前端补充）
+  sourcePath?: string
+  sourceIcon?: string
+  fileSize?: string
+  tools?: string[]
+  content?: string
+  tag?: string
 }
 
 export interface AgentInfo {
@@ -35,4 +42,15 @@ export interface AgentInfo {
   enabled: boolean
   modelStrategy: string
   icon?: string
+  // UI 扩展字段（由后端下发或前端补充）
+  source?: string
+  sourceType?: string
+  iconBg?: string
+  type?: string
+  tools?: string[]
+  modelBind?: string
+  modelTags?: { power?: string; efficient?: string; fast?: string }
+  overrideParams?: boolean
+  params?: { depth: number; width: number; tokens: number; rounds: number }
+  content?: string
 }

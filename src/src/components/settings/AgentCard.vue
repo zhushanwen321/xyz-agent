@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import type { MockAgent } from '../../mock/data'
+import type { AgentInfo } from '@xyz-agent/shared'
 import { ToggleSwitch, MetaGrid, MarkdownEditor } from './shared'
 import ModelStrategyConfig from './ModelStrategyConfig.vue'
 import OverrideParams from './OverrideParams.vue'
 
 const props = withDefaults(
   defineProps<{
-    agent: MockAgent
+    agent: AgentInfo
     allModels: Array<{ id: string; name: string; providerName: string }>
     expanded?: boolean
   }>(),
@@ -21,7 +21,7 @@ defineEmits<{
   delete: [name: string]
 }>()
 
-const content = ref(props.agent.content)
+const content = ref(props.agent.content ?? '')
 const showEditor = ref(false)
 
 const strategyLabel = computed(() => {
@@ -39,9 +39,9 @@ const strategyLabel = computed(() => {
 
 const metaItems = computed(() => [
   { key: '\u540d\u79f0', value: props.agent.name },
-  { key: '\u7c7b\u578b', value: props.agent.type === 'builtin' ? '\u5185\u7f6e (builtin)' : props.agent.sourceType },
+  { key: '\u7c7b\u578b', value: props.agent.type === 'builtin' ? '\u5185\u7f6e (builtin)' : (props.agent.sourceType ?? props.agent.type ?? '-') },
   { key: '\u6a21\u578b\u7b56\u7565', value: strategyLabel.value },
-  { key: '\u5de5\u5177', value: props.agent.tools.join(', ') },
+  { key: '\u5de5\u5177', value: props.agent.tools?.join(', ') ?? '-' },
 ])
 
 function handleSave() {
@@ -50,17 +50,17 @@ function handleSave() {
 </script>
 
 <template>
-  <div :class="['agent-card', { expanded, disabled: !agent.active }]">
+  <div :class="['agent-card', { expanded, disabled: !agent.enabled }]">
     <div class="agent-card__hd" @click="$emit('toggle')">
       <ToggleSwitch
-        :model-value="agent.active"
+        :model-value="agent.enabled"
         @update:model-value="$emit('toggle-enabled')"
         @click.stop
       />
       <div class="agent-card__info">
         <div class="agent-card__name">{{ agent.name }}</div>
         <div class="agent-card__desc">{{ agent.description }}</div>
-        <div class="agent-card__source">{{ agent.source }}</div>
+        <div class="agent-card__source">{{ agent.source ?? agent.id }}</div>>
       </div>
       <div class="agent-card__actions" @click.stop>
         <!-- Edit -->
@@ -76,14 +76,14 @@ function handleSave() {
     <div class="agent-card__bd">
       <MetaGrid :items="metaItems" />
       <ModelStrategyConfig
-        :strategy="agent.modelStrategy"
+        :strategy="(agent.modelStrategy as 'auto' | 'tag' | 'bind')"
         :all-models="allModels"
-        :model-tags="agent.modelTags"
+        :model-tags="agent.modelTags as { power: string; efficient: string; fast: string } | undefined"
         :model-bind="agent.modelBind"
       />
       <OverrideParams
-        :active="agent.overrideParams"
-        :params="agent.params"
+        :active="agent.overrideParams ?? false"
+        :params="agent.params ?? { depth: 20, width: 10, tokens: 100000, rounds: 50 }"
       />
       <MarkdownEditor
         v-if="showEditor"

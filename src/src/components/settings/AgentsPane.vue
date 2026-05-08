@@ -1,16 +1,17 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { mockAgents, mockModels, mockGlobalParams } from '../../mock/data'
+import { useProviderStore } from '../../stores/provider'
 import GlobalParams from './GlobalParams.vue'
 import AgentCard from './AgentCard.vue'
 
-const agents = ref([...mockAgents])
-const globalParams = ref({ ...mockGlobalParams })
+const providerStore = useProviderStore()
+const agents = computed(() => providerStore.agents)
+const globalParams = ref({ depth: 20, width: 10, tokens: 100_000, rounds: 50 })
 const expandedId = ref<string | null>(null)
 const scanPath = ref('')
 
 const allModels = computed(() =>
-  mockModels.map(m => ({ id: m.id, name: m.name, providerName: m.providerName })),
+  providerStore.enabledModels.map(m => ({ id: m.id, name: m.name, providerName: m.providerName })),
 )
 </script>
 
@@ -56,7 +57,7 @@ const allModels = computed(() =>
       :all-models="allModels"
       :expanded="expandedId === agent.name"
       @toggle="expandedId = expandedId === agent.name ? null : agent.name"
-      @toggle-enabled="agent.active = !agent.active"
+      @toggle-enabled="providerStore.setAgents(agents.map(a => a.id === agent.id ? { ...a, enabled: !a.enabled } : a))"
     />
   </div>
 </template>
