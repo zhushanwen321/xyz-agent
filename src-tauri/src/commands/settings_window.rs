@@ -12,7 +12,7 @@ pub fn open_settings_window(app: tauri::AppHandle) -> Result<(), String> {
     let label = "settings".to_string();
     let _window = tauri::WebviewWindowBuilder::new(&app, &label, url)
         .title("xyz-agent - Settings")
-        .fullscreen(true)
+        .maximized(true)
         .decorations(true)
         .build()
         .map_err(|e| e.to_string())?;

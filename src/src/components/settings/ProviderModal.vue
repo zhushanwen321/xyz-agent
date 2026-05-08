@@ -135,7 +135,11 @@ function handleSave() {
 }
 
 function handleKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') emit('close')
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    e.stopPropagation()
+    emit('close')
+  }
 }
 
 // Watch for Escape key when modal is visible
