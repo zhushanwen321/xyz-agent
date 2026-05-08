@@ -13,6 +13,9 @@ import noSilentCatch from './rules/no-silent-catch.mjs';
 import noUnsafeObjectEntries from './rules/no-unsafe-object-entries.mjs';
 import noHardcodedColors from './rules/no-hardcoded-colors.mjs';
 import noMagicSpacing from './rules/no-magic-spacing.mjs';
+import noNativeHtmlElements from './rules/no-native-html-elements.mjs';
+import noEmojiInTemplate from './rules/no-emoji-in-template.mjs';
+import preferVModel from './rules/prefer-v-model.mjs';
 
 export const tastePlugin = {
   meta: { name: 'eslint-plugin-taste' },
@@ -22,6 +25,9 @@ export const tastePlugin = {
     'no-unsafe-object-entries': noUnsafeObjectEntries,
     'no-hardcoded-colors': noHardcodedColors,
     'no-magic-spacing': noMagicSpacing,
+    'no-native-html-elements': noNativeHtmlElements,
+    'no-emoji-in-template': noEmojiInTemplate,
+    'prefer-v-model': preferVModel,
   },
 };
 
@@ -54,6 +60,9 @@ export const tasteRules = {
   'taste/prefer-allsettled': 'warn',
   'taste/no-silent-catch': 'warn',
   'taste/no-unsafe-object-entries': 'warn',
+  'taste/no-native-html-elements': 'warn',
+  'taste/no-emoji-in-template': 'warn',
+  'taste/prefer-v-model': 'warn',
 };
 
 export default [

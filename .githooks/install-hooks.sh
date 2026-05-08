@@ -17,16 +17,20 @@ NC='\033[0m'
 # 获取项目根目录
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-GIT_HOOKS_DIR="$PROJECT_ROOT/.git/hooks"
 
 echo -e "${BLUE}======================================${NC}"
 echo -e "${BLUE}Git Hooks 安装脚本${NC}"
 echo -e "${BLUE}======================================${NC}"
 echo ""
 
-# 检查是否在 git 仓库中
-if [ ! -d "$PROJECT_ROOT/.git" ]; then
-    echo -e "${RED}[ERROR] 未找到 .git 目录${NC}"
+# Handle both regular repo (.git dir) and worktree (.git file)
+if [ -f "$PROJECT_ROOT/.git" ]; then
+    GIT_DIR=$(git -C "$PROJECT_ROOT" rev-parse --git-dir)
+    GIT_HOOKS_DIR="$GIT_DIR/hooks"
+elif [ -d "$PROJECT_ROOT/.git" ]; then
+    GIT_HOOKS_DIR="$PROJECT_ROOT/.git/hooks"
+else
+    echo -e "${RED}[ERROR] 未在 Git 仓库中${NC}"
     exit 1
 fi
 
@@ -76,7 +80,7 @@ fi
 
 # 获取变更文件
 STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR)
-FRONTEND_FILES=$(echo "$STAGED_FILES" | grep "^frontend/" || true)
+FRONTEND_FILES=$(echo "$STAGED_FILES" | grep "^src/src/" || true)
 
 # ============================================================================
 # 1. 前端 ESLint 检查
@@ -107,7 +111,7 @@ if [ -n "$FRONTEND_FILES" ]; then
             fi
 
             # 自动添加修复后的文件
-            FIXED_FILES=$(git diff --name-only --diff-filter=M | grep "^frontend/" || true)
+            FIXED_FILES=$(git diff --name-only --diff-filter=M | grep "^src/src/" || true)
             if [ -n "$FIXED_FILES" ]; then
                 echo -e "${BLUE}[INFO] ESLint 自动修复了以下文件:${NC}"
                 echo "$FIXED_FILES" | sed 's/^/  - /'
@@ -126,32 +130,33 @@ fi
 # ============================================================================
 # 2. 前端 vue-tsc 类型检查（与 CI 等价）
 # ============================================================================
-
-if [ -n "$FRONTEND_FILES" ]; then
-    print_section "[前端 vue-tsc 类型检查]"
-
-    if [ "$SKIP_TYPE_CHECK" != "1" ]; then
-        CHANGED_VUE_TS=$(echo "$FRONTEND_FILES" | grep -E "\.(vue|ts)$" || true)
-
-        if [ -n "$CHANGED_VUE_TS" ]; then
-            echo -e "${BLUE}[INFO] 清除增量缓存，执行全量类型检查...${NC}"
-
-            rm -rf frontend/node_modules/.tmp/tsconfig.app.tsbuildinfo 2>/dev/null || true
-
-            if ! (cd frontend && npx vue-tsc -b 2>&1); then
-                echo ""
-                echo -e "${RED}[ERROR] vue-tsc 类型检查失败${NC}"
-                exit 1
-            fi
-
-            echo -e "${GREEN}[OK] vue-tsc 类型检查通过${NC}"
-        else
-            echo -e "${GREEN}[OK] 无 .vue/.ts 文件变更${NC}"
-        fi
-    else
-        echo -e "${YELLOW}[SKIP] vue-tsc 类型检查已跳过${NC}"
-    fi
-fi
+# TODO: xyz-agent 前端在 workspace 中，暂未配置 vue-tsc，待启用后取消注释
+#
+# if [ -n "$FRONTEND_FILES" ]; then
+#     print_section "[前端 vue-tsc 类型检查]"
+#
+#     if [ "$SKIP_TYPE_CHECK" != "1" ]; then
+#         CHANGED_VUE_TS=$(echo "$FRONTEND_FILES" | grep -E "\.(vue|ts)$" || true)
+#
+#         if [ -n "$CHANGED_VUE_TS" ]; then
+#             echo -e "${BLUE}[INFO] 清除增量缓存，执行全量类型检查...${NC}"
+#
+#             rm -rf src/node_modules/.tmp/tsconfig.app.tsbuildinfo 2>/dev/null || true
+#
+#             if ! (cd src && npx vue-tsc -b 2>&1); then
+#                 echo ""
+#                 echo -e "${RED}[ERROR] vue-tsc 类型检查失败${NC}"
+#                 exit 1
+#             fi
+#
+#             echo -e "${GREEN}[OK] vue-tsc 类型检查通过${NC}"
+#         else
+#             echo -e "${GREEN}[OK] 无 .vue/.ts 文件变更${NC}"
+#         fi
+#     else
+#         echo -e "${YELLOW}[SKIP] vue-tsc 类型检查已跳过${NC}"
+#     fi
+# fi
 
 # ============================================================================
 # 3. 自定义代码规范检查（原生 HTML 元素、Emoji、自定义 CSS）
@@ -162,7 +167,7 @@ print_section "[代码规范检查]"
 RULES_CHECKER=".githooks/vue_rules_checker.py"
 
 if [ "$SKIP_CODE_RULES_CHECK" != "1" ]; then
-    STAGED_FRONTEND_FILES=$(echo "$STAGED_FILES" | grep -E "^frontend/src/.*\.(vue|ts)$" || true)
+    STAGED_FRONTEND_FILES=$(echo "$STAGED_FILES" | grep -E "^src/src/.*\.(vue|ts)$" || true)
 
     if [ -n "$STAGED_FRONTEND_FILES" ]; then
         echo -e "${BLUE}[INFO] 运行代码规范检查...${NC}"

@@ -7,6 +7,7 @@
 3. 禁止编写自定义 CSS（应使用 Tailwind 工具类）
 4. <template> 行数上限 400 行，<script setup> 行数上限 300 行
 5. 禁止使用 Tab 缩进（仅允许 Space）
+6. 组件上优先使用 v-model 而非 :value + @input
 
 用法：
   单文件: python3 vue_rules_checker.py <absolute_path> <relative_path>
@@ -29,7 +30,23 @@ SHADCN_COMPONENTS_MAP = {
     'badge': 'Badge',
     'card': 'Card',
     'alert': 'AlertDialog',
+    'textarea': 'Textarea',
+    'checkbox': 'Checkbox',
 }
+
+# 未迁移到 xyz-ui 组件的文件（渐进式迁移）
+LEGACY_WHITELIST: list[str] = [
+    'ProviderModal.vue',
+    'SkillModal.vue',
+    'AgentModal.vue',
+    'ProviderForm.vue',
+    'ModelStrategyConfig.vue',
+    'MarkdownEditor.vue',
+    'SkillImportSection.vue',
+    'ToolPermissions.vue',
+    'SessionSearch.vue',
+    'SessionGroup.vue',
+]
 
 # 允许保留原生 HTML 元素的文件（子串匹配）
 NATIVE_ELEM_WHITELIST: list[str] = []
@@ -130,6 +147,10 @@ def check_vue_component_usage(content: str, relative_path: str) -> tuple[int, li
     if any(w in relative_path for w in NATIVE_ELEM_WHITELIST):
         return 0, []
 
+    # 渐进式迁移白名单
+    if any(w in relative_path for w in LEGACY_WHITELIST):
+        return 0, []
+
     lines = content.split('\n')
     in_template = False
 
@@ -171,6 +192,7 @@ def check_vue_file(content: str, relative_path: str) -> tuple[int, list[str]]:
     exit_code = 0
 
     lines = content.split('\n')
+    is_legacy = any(w in relative_path for w in LEGACY_WHITELIST)
 
     # 检查 1: 禁止 Emoji
     for i, line in enumerate(lines, 1):
@@ -212,6 +234,9 @@ def check_vue_file(content: str, relative_path: str) -> tuple[int, list[str]]:
         if is_style_whitelisted:
             continue
 
+        if is_legacy:
+            continue
+
         stripped = line.strip()
         if not stripped:
             continue
@@ -237,7 +262,28 @@ def check_vue_file(content: str, relative_path: str) -> tuple[int, list[str]]:
             'transition' in stripped):
             continue
 
-    # 检查 4: <template> / <script setup> 行数上限
+    # 检查 5: 优先使用 v-model 而非 :value + @input
+    if not is_legacy:
+        in_template = False
+        for i, line in enumerate(lines, 1):
+            if '<template' in line:
+                in_template = True
+                continue
+            if '</template>' in line:
+                in_template = False
+                continue
+            if not in_template:
+                continue
+            stripped = line.strip()
+            if not stripped or stripped.startswith('<!--'):
+                continue
+            if ':value=' in stripped and 'v-model' not in stripped:
+                if re.search(r'<[A-Z]\w+', stripped):
+                    issues.append(f"  [第{i}行] 组件上使用 :value 绑定 — 请优先使用 v-model")
+                    issues.append('    示例: <Input v-model="value" /> 而非 <Input :value="value" @input="handler" />')
+                    exit_code = 2
+
+    # 检查 6: <template> / <script setup> 行数上限
     template_lines = 0
     script_lines = 0
     in_template = False
@@ -279,7 +325,7 @@ def check_vue_file(content: str, relative_path: str) -> tuple[int, list[str]]:
         issues.append("    请提取 composable 或子组件拆分逻辑")
         exit_code = 2
 
-    # 检查 5: 组件使用规范
+    # 检查 7: 组件使用规范
     comp_exit, comp_issues = check_vue_component_usage(content, relative_path)
     if comp_exit > exit_code:
         exit_code = comp_exit
@@ -333,7 +379,7 @@ def run_all_checks(file_paths: list[str]) -> tuple[int, list[str]]:
 
         if rel_path.endswith('.vue'):
             file_exit, file_issues = check_vue_file(content, rel_path)
-        elif rel_path.endswith('.ts') and 'frontend/' in rel_path:
+        elif rel_path.endswith('.ts') and 'src/src/' in rel_path:
             file_exit, file_issues = check_ts_file(content, rel_path)
 
         if file_exit > exit_code:
@@ -367,7 +413,7 @@ def main():
 
     if relative_path.endswith('.vue'):
         exit_code, issues = check_vue_file(content, relative_path)
-    elif relative_path.endswith('.ts') and 'frontend/' in relative_path:
+    elif relative_path.endswith('.ts') and 'src/src/' in relative_path:
         exit_code, issues = check_ts_file(content, relative_path)
 
     if issues:
