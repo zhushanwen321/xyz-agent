@@ -40,7 +40,7 @@ const clamped = computed(() => Math.min(BAR_FULL, Math.max(0, Math.round(props.p
 const barColor = computed(() => {
   if (clamped.value > THRESHOLD_HIGH) return 'var(--danger)'
   if (clamped.value >= THRESHOLD_MEDIUM) return 'var(--warning)'
-  return 'var(--success)'
+  return 'var(--accent)'
 })
 </script>
 

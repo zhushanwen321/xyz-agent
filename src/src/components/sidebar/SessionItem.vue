@@ -20,9 +20,13 @@ const { t } = useI18n()
 const dropdownOpen = ref(false)
 const dropdownPos = ref({ x: 0, y: 0 })
 
-const statusColor = computed(() =>
-  props.session.status === 'active' ? 'var(--accent)' : 'var(--border)'
-)
+const statusColor = computed(() => {
+  switch (props.session.status) {
+    case 'active': return 'var(--success)'
+    case 'pause': return 'var(--warning)'
+    default: return 'var(--border)'
+  }
+})
 
 const relativeTime = computed(() => {
   const diff = Date.now() - props.session.lastActiveAt
