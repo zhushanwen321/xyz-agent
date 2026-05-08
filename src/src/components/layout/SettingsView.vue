@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
-import { ProviderPane, SkillsPane, AgentsPane, ToolPermissions } from '../settings'
+import { ProviderPane, SkillsPane, AgentsPane } from '../settings'
 
 const settingsStore = useSettingsStore()
 const activeTab = ref('providers')
@@ -58,14 +58,7 @@ onUnmounted(() => {
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="5" r="3"/><path d="M2 14c0-3.3 2.7-6 6-6s6 2.7 6 6"/></svg>
           AGENT
         </div>
-        <div
-          class="settings-tab"
-          :class="{ active: activeTab === 'tools' }"
-          @click="activeTab = 'tools'"
-        >
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 2l3 3-4 4-3-3z"/><path d="M8 5l3 3M11 8l3-3M11 11l3 3"/></svg>
-          工具权限
-        </div>
+
       </div>
     </div>
 
@@ -80,9 +73,7 @@ onUnmounted(() => {
       <div class="settings-content__pane" :class="{ active: activeTab === 'agents' }">
         <AgentsPane />
       </div>
-      <div class="settings-content__pane" :class="{ active: activeTab === 'tools' }">
-        <ToolPermissions />
-      </div>
+
     </div>
   </div>
 </template>

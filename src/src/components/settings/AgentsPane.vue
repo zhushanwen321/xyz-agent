@@ -1,24 +1,46 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useProviderStore } from '../../stores/provider'
+import type { AgentInfo } from '@xyz-agent/shared'
 import GlobalParams from './GlobalParams.vue'
 import AgentCard from './AgentCard.vue'
+import AgentModal from './AgentModal.vue'
 
 const providerStore = useProviderStore()
 const agents = computed(() => providerStore.agents)
 const globalParams = ref({ depth: 20, width: 10, tokens: 100_000, rounds: 50 })
 const expandedId = ref<string | null>(null)
 const scanPath = ref('')
+const showModal = ref(false)
 
 const allModels = computed(() =>
   providerStore.enabledModels.map(m => ({ id: m.id, name: m.name, providerName: m.providerName })),
 )
+
+function handleAgentSave(data: { name: string; description: string; modelStrategy: string; modelBind?: string }) {
+  const newAgent: AgentInfo = {
+    id: `agent-${Date.now()}`,
+    name: data.name,
+    description: data.description,
+    enabled: true,
+    modelStrategy: data.modelStrategy,
+    modelBind: data.modelBind,
+  }
+  providerStore.setAgents([...providerStore.agents, newAgent])
+  showModal.value = false
+}
 </script>
 
 <template>
   <div class="agents-pane">
     <div class="page__hd">
       <div class="page__title">Agent 配置</div>
+      <button class="btn btn--primary" @click="showModal = true">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M7 1v12M1 7h12" />
+        </svg>
+        添加 Agent
+      </button>
     </div>
 
     <!-- Scan section (like SkillImportSection) -->
@@ -59,6 +81,8 @@ const allModels = computed(() =>
       @toggle="expandedId = expandedId === agent.name ? null : agent.name"
       @toggle-enabled="providerStore.setAgents(agents.map(a => a.id === agent.id ? { ...a, enabled: !a.enabled } : a))"
     />
+
+    <AgentModal :visible="showModal" :models="allModels" @close="showModal = false" @save="handleAgentSave" />
   </div>
 </template>
 
@@ -197,5 +221,13 @@ const allModels = computed(() =>
   padding: 5px 12px;
   font-size: 12px;
   border-radius: var(--radius-xs);
+}
+.btn--primary {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+.btn--primary:hover {
+  opacity: 0.88;
 }
 </style>
