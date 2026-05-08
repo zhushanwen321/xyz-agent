@@ -18,9 +18,9 @@
         <DrawerRight
           v-if="settingsStore.drawerSide === 'right'"
           :open="settingsStore.drawerOpen"
-          :tree-nodes="mockTreeNodes"
-          :done-items="mockDoneItems"
-          :alert-items="mockAlertItems"
+          :tree-nodes="[]"
+          :done-items="[]"
+          :alert-items="[]"
           active-node-id=""
           @close="settingsStore.closeDrawer()"
         />
@@ -39,7 +39,7 @@
     <!-- Overview -->
     <Overview
       :visible="settingsStore.overviewVisible"
-      :cards="mockOverviewCards as any"
+      :cards="[]"
       @enter="handleOverviewEnter"
       @enter-split="handleOverviewEnterSplit"
       @close="settingsStore.overviewVisible = false"
@@ -54,6 +54,7 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import { useSettingsStore } from './stores/settings'
 import { useConnection } from './composables/useConnection'
+import { useProvider } from './composables/useProvider'
 import type { ToastItem } from './components/toast/ToastContainer.vue'
 import AppHeader from './components/layout/AppHeader.vue'
 import AppStatusbar from './components/layout/AppStatusbar.vue'
@@ -66,15 +67,15 @@ import DrawerRight from './components/drawer/DrawerRight.vue'
 import DrawerLeft from './components/drawer/DrawerLeft.vue'
 import Overview from './components/overview/Overview.vue'
 import ToastContainer from './components/toast/ToastContainer.vue'
-import { mockSubAgentTree, mockDoneItems, mockAlertItems, mockOverviewCards } from './mock/data'
+// Data comes from WS events via composables/stores — no mock imports
 
 const { init: initConnection, teardown: teardownConnection } = useConnection()
+// useProvider listens for WS config.provider* / model.* events
+useProvider()
 
 const settingsStore = useSettingsStore()
 
 const toasts = ref<ToastItem[]>([])
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- mock data shape may not match component prop types
-const mockTreeNodes: any[] = mockSubAgentTree ? [mockSubAgentTree as any] : []
 
 function createSession() {
   // TODO: implement via useSession composable
