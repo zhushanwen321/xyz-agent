@@ -1,9 +1,32 @@
-import { ref } from 'vue'
+import { onMounted, onUnmounted } from 'vue'
+import { useProviderStore } from '../stores/provider'
+import { on, off } from '../lib/event-bus'
 import { send } from '../lib/ws-client'
-import type { ProviderInfo } from '@xyz-agent/shared'
+import type { ServerMessage, ProviderInfo, ModelInfo } from '@xyz-agent/shared'
 
 export function useProvider() {
-  const providers = ref<ProviderInfo[]>([])
+  const store = useProviderStore()
+
+  function onProviders(msg: ServerMessage) {
+    store.setProviders((msg.payload as { providers: ProviderInfo[] }).providers)
+  }
+
+  function onModels(msg: ServerMessage) {
+    store.setModels((msg.payload as { models: ModelInfo[] }).models ?? [])
+  }
+
+  const handlers: Record<string, (msg: ServerMessage) => void> = {
+    'config.providers': onProviders,
+    'config.providerUpdated': onProviders,
+    'model.list': onModels,
+  }
+
+  onMounted(() => {
+    for (const [evt, fn] of Object.entries(handlers)) on(evt, fn)
+  })
+  onUnmounted(() => {
+    for (const [evt, fn] of Object.entries(handlers)) off(evt, fn)
+  })
 
   function loadProviders() {
     send({ type: 'config.getProviders', payload: {} })
@@ -17,5 +40,5 @@ export function useProvider() {
     send({ type: 'config.deleteProvider', payload: { providerId } })
   }
 
-  return { providers, loadProviders, setProvider, deleteProvider }
+  return { store, loadProviders, setProvider, deleteProvider }
 }
