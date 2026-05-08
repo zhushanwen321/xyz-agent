@@ -11,7 +11,9 @@ export type {
 } from './session'
 export type {
   ProviderStatus, ProviderInfo, ModelInfo,
+  SkillInfo, AgentInfo,
 } from './provider'
 export type {
   AppErrorCode, AppError,
 } from './errors'
+export type { ToolPermission, ThemeMode } from './settings'
