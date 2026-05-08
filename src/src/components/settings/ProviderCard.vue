@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { MockProvider, MockModel } from '../../mock/data'
+import type { ProviderInfo, ModelInfo } from '@xyz-agent/shared'
 import { ToggleSwitch } from './shared'
 import ModelRow from './ModelRow.vue'
 
 interface Props {
-  provider: MockProvider
-  models: MockModel[]
+  provider: ProviderInfo
+  models: ModelInfo[]
   expanded?: boolean
 }
 
@@ -69,9 +69,9 @@ const statusDotClass = computed(() => {
           v-for="model in models"
           :key="model.id"
           :name="model.name"
-          :ctx="model.ctx + ' ctx'"
-          :tags="model.tags"
-          :enabled="model.enabled"
+          :ctx="model.contextWindow ? `${model.contextWindow} ctx` : '--'"
+          :tags="model.tags ?? []"
+          :enabled="model.enabled !== false"
           @toggle-enabled="$emit('toggle-model', provider.id, model.id)"
         />
       </div>

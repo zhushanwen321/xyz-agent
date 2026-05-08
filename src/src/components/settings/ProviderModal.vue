@@ -1,14 +1,14 @@
 <script setup lang="ts">
 /* eslint-disable max-lines */
 import { ref, watch } from 'vue'
-import type { MockProvider, MockModel } from '../../mock/data'
+import type { ProviderInfo, ModelInfo } from '@xyz-agent/shared'
 import { TagPill } from './shared'
 
 interface Props {
   visible: boolean
   title: string
-  provider?: MockProvider | null
-  models: MockModel[]
+  provider?: ProviderInfo | null
+  models: ModelInfo[]
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -57,7 +57,7 @@ watch(() => props.visible, (v) => {
     if (props.provider) {
       formName.value = props.provider.name
       formType.value = props.provider.id === 'ollama' ? 'ollama' : props.provider.id
-      formUrl.value = props.provider.baseUrl
+      formUrl.value = props.provider.baseUrl ?? ''
       formKey.value = props.provider.apiKeySet ? '••••••••' : ''
     } else {
       formName.value = ''
@@ -68,8 +68,8 @@ watch(() => props.visible, (v) => {
     modalModels.value = props.models.map(m => ({
       id: m.id,
       name: m.name,
-      ctx: m.ctx,
-      tags: [...m.tags],
+      ctx: m.contextWindow ? `${m.contextWindow}` : '--',
+      tags: [...(m.tags ?? [])],
     }))
     testResult.value = 'none'
     testMessage.value = ''

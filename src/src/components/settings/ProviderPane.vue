@@ -1,17 +1,22 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import type { MockProvider, MockModel } from '../../mock/data'
-import { mockProviders, mockModels } from '../../mock/data'
+import type { ProviderInfo, ModelInfo } from '@xyz-agent/shared'
+import { useProviderStore } from '../../stores/provider'
+import { send } from '../../lib/ws-client'
 import ProviderCard from './ProviderCard.vue'
 import ProviderModal from './ProviderModal.vue'
 
+// ─── Store ──────────────────────────────────────────────────────
+
+const providerStore = useProviderStore()
+
 // ─── State ──────────────────────────────────────────────────────
 
-const providers = ref<MockProvider[]>([...mockProviders])
-const models = ref<MockModel[]>(mockModels.map(m => ({ ...m })))
+const providers = computed(() => providerStore.providers)
+const models = computed(() => providerStore.models)
 const expandedId = ref<string | null>(null)
 const showModal = ref(false)
-const editingProvider = ref<MockProvider | null>(null)
+const editingProvider = ref<ProviderInfo | null>(null)
 
 // ─── Computed ───────────────────────────────────────────────────
 
@@ -19,14 +24,14 @@ const modalTitle = computed(() =>
   editingProvider.value ? '编辑供应商' : '添加供应商',
 )
 
-const editingModels = computed<MockModel[]>(() => {
+const editingModels = computed<ModelInfo[]>(() => {
   if (!editingProvider.value) return []
   return models.value.filter(m => m.providerId === editingProvider.value!.id)
 })
 
 // ─── Helpers ────────────────────────────────────────────────────
 
-function getModelsFor(providerId: string): MockModel[] {
+function getModelsFor(providerId: string): ModelInfo[] {
   return models.value.filter(m => m.providerId === providerId)
 }
 
@@ -41,11 +46,8 @@ function openEdit(id: string) {
 }
 
 function handleDelete(id: string) {
-  const idx = providers.value.findIndex(p => p.id === id)
-  if (idx >= 0) {
-    providers.value.splice(idx, 1)
-    if (expandedId.value === id) expandedId.value = null
-  }
+  send({ type: 'config.deleteProvider', payload: { providerId: id } })
+  if (expandedId.value === id) expandedId.value = null
 }
 
 function handleTest(_id: string) {
@@ -55,13 +57,16 @@ function handleTest(_id: string) {
 function toggleProvider(id: string) {
   const p = providers.value.find(p => p.id === id)
   if (p) {
-    p.status = p.status === 'connected' ? 'not_configured' : 'connected'
+    const newStatus = p.status === 'connected' ? 'not_configured' : 'connected'
+    send({ type: 'config.setProvider', payload: { providerId: id, status: newStatus } })
   }
 }
 
 function toggleModel(providerId: string, modelId: string) {
   const m = models.value.find(m => m.id === modelId && m.providerId === providerId)
-  if (m) m.enabled = !m.enabled
+  if (m) {
+    send({ type: 'model.switch', payload: { modelId, enabled: !m.enabled } })
+  }
 }
 
 function handleModalTest(_data: { url: string; key: string }) {
@@ -75,7 +80,7 @@ function handleSave(_data: {
   key: string
   models: { id: string; name: string; ctx: string; tags: string[] }[]
 }) {
-  void _data // P1: no-op — just close modal
+  send({ type: 'config.setProvider', payload: { ..._data } })
   showModal.value = false
   editingProvider.value = null
 }
