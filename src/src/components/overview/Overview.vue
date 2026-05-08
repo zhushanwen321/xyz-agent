@@ -1,5 +1,5 @@
 <template>
-  <div ref="overviewRef" class="overview" :class="{ visible }" @keydown="onKeyDown" tabindex="0">
+  <div ref="overviewRef" class="overview" :class="{ visible }" tabindex="0">
     <div class="overview__title">窗口总览</div>
     <div class="overview__grid">
       <div
@@ -49,7 +49,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick } from 'vue'
+import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 
 interface PreviewLine {
   text: string
@@ -101,6 +101,47 @@ watch(
   },
 )
 
+// Use capture phase to intercept keys before other document listeners
+function onDocumentKeydown(e: KeyboardEvent) {
+  if (!props.visible) return
+  // Always intercept keys when overview is showing
+  const len = props.cards.length
+  switch (e.key) {
+    case 'ArrowLeft':
+      e.preventDefault()
+      e.stopPropagation()
+      if (len > 0) highlightedIdx.value = (highlightedIdx.value - 1 + len) % len
+      break
+    case 'ArrowRight':
+      e.preventDefault()
+      e.stopPropagation()
+      if (len > 0) highlightedIdx.value = (highlightedIdx.value + 1) % len
+      break
+    case 'Enter': {
+      e.preventDefault()
+      e.stopPropagation()
+      const card = props.cards[highlightedIdx.value]
+      if (card) {
+        if (e.shiftKey) emit('enter-split', card.id)
+        else emit('enter', card.id)
+      }
+      break
+    }
+    case 'Escape':
+      e.preventDefault()
+      e.stopPropagation()
+      emit('close')
+      break
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('keydown', onDocumentKeydown, true) // capture phase
+})
+onUnmounted(() => {
+  document.removeEventListener('keydown', onDocumentKeydown, true)
+})
+
 // Clamp highlighted index when cards array changes
 watch(
   () => props.cards.length,
@@ -111,37 +152,6 @@ watch(
     }
   }
 )
-
-function onKeyDown(e: KeyboardEvent) {
-  const len = props.cards.length
-  if (len === 0) return
-
-  switch (e.key) {
-    case 'ArrowLeft':
-      e.preventDefault()
-      highlightedIdx.value = (highlightedIdx.value - 1 + len) % len
-      break
-    case 'ArrowRight':
-      e.preventDefault()
-      highlightedIdx.value = (highlightedIdx.value + 1) % len
-      break
-    case 'Enter': {
-      e.preventDefault()
-      const card = props.cards[highlightedIdx.value]
-      if (!card) break
-      if (e.shiftKey) {
-        emit('enter-split', card.id)
-      } else {
-        emit('enter', card.id)
-      }
-      break
-    }
-    case 'Escape':
-      e.preventDefault()
-      emit('close')
-      break
-  }
-}
 </script>
 
 <style scoped>
