@@ -11,13 +11,29 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
+import { send } from '../../lib/ws-client'
+import { useSessionStore } from '../../stores/session'
+import { useChatStore } from '../../stores/chat'
 
 const BAR_FULL = 100
 const THRESHOLD_HIGH = 85
 const THRESHOLD_MEDIUM = 60
 
 const props = defineProps<{ percentage: number }>()
+
+const chatStore = useChatStore()
+const sessionStore = useSessionStore()
+
+// Auto-compact when server-reported context exceeds 85% during generation
+watch(() => chatStore.contextUsagePercent, (pct) => {
+  if (pct > THRESHOLD_HIGH && chatStore.isGenerating) {
+    const sid = sessionStore.currentSessionId
+    if (sid) {
+      send({ type: 'session.compact', payload: { sessionId: sid } })
+    }
+  }
+})
 
 const clamped = computed(() => Math.min(BAR_FULL, Math.max(0, Math.round(props.percentage))))
 

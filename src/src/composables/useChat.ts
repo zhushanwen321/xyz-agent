@@ -94,6 +94,19 @@ export function useChat() {
     store.setGenerating(false)
   }
 
+  function onContextUpdate(msg: ServerMessage) {
+    if (!isForCurrentSession(msg)) return
+    store.updateContextInfo(
+      (msg.payload as any).usagePercent as number,
+      (msg.payload as any).inputTokens as number,
+      (msg.payload as any).contextLimit as number,
+    )
+  }
+
+  function onStatus(msg: ServerMessage) {
+    console.log('[chat] status:', (msg.payload as any).status)
+  }
+
   // --- Session-aware helpers -----------------------------------------------
 
   /** Check if a server message belongs to the currently active session. */
@@ -128,6 +141,8 @@ export function useChat() {
     'message.tool_call_end': onToolCallEnd,
     'message.complete': onComplete,
     'message.error': onError,
+    'context.update': onContextUpdate,
+    'message.status': onStatus,
   }
 
   onMounted(() => {

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, readonly } from 'vue'
 import type { Message, ToolCall } from '@xyz-agent/shared'
 
 interface PendingApproval {
@@ -19,6 +19,7 @@ export const useChatStore = defineStore('chat', () => {
   const isGenerating = ref(false)
   const contextTokens = ref(0)
   const contextLimit = ref(DEFAULT_CONTEXT_TOKEN_LIMIT)
+  const contextInputTokens = ref(0)
   const pendingApprovals = ref<PendingApproval[]>([])
   const isLoading = ref(false)
   const error = ref<string | null>(null)
@@ -26,9 +27,8 @@ export const useChatStore = defineStore('chat', () => {
   const agentViews = ref<Record<string, Message[]>>({})
   const tokenUsage = ref(0)
 
-  const contextUsagePercent = computed(() =>
-    contextLimit.value > 0 ? Math.round((contextTokens.value / contextLimit.value) * PERCENT_MULTIPLIER) : 0
-  )
+  // Server-authoritative usage percentage; set via updateContextInfo
+  const contextUsagePercent = ref(0)
 
   const messageCount = computed(() => completedMessages.value.length)
   const lastMessage = computed(() => completedMessages.value[completedMessages.value.length - 1])
@@ -111,15 +111,18 @@ export const useChatStore = defineStore('chat', () => {
   function stopLoading() { isLoading.value = false }
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- placeholder for future implementation
   function updateUsage(_usage: { inputTokens: number; outputTokens: number; totalTokens: number }) { /* update relevant refs */ }
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- placeholder for future implementation
-  function updateContextInfo(_usagePercent: number, _inputTokens: number, _contextLimit: number) { /* update context refs */ }
+  function updateContextInfo(usagePercent: number, inputTokens: number, ctxLimit: number) {
+    contextUsagePercent.value = usagePercent
+    contextInputTokens.value = inputTokens
+    contextLimit.value = ctxLimit
+  }
   function setError(err: string | null) { error.value = err }
   function switchAgent(agentId: string) { activeAgentId.value = agentId }
   function setTokenUsage(usage: number) { tokenUsage.value = usage }
 
   return {
     completedMessages, streamingMessage, isGenerating,
-    contextTokens, contextLimit, contextUsagePercent,
+    contextTokens, contextLimit, contextInputTokens, contextUsagePercent,
     activeAgentId, agentViews, tokenUsage,
     allAgentOptions,
     pendingApprovals, isLoading, error,
