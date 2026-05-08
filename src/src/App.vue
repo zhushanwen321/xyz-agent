@@ -55,6 +55,7 @@ import { listen } from '@tauri-apps/api/event'
 import { useSettingsStore } from './stores/settings'
 import { useConnection } from './composables/useConnection'
 import { useProvider } from './composables/useProvider'
+import { useSession } from './composables/useSession'
 import type { ToastItem } from './components/toast/ToastContainer.vue'
 import AppHeader from './components/layout/AppHeader.vue'
 import AppStatusbar from './components/layout/AppStatusbar.vue'
@@ -72,6 +73,7 @@ import ToastContainer from './components/toast/ToastContainer.vue'
 const { init: initConnection, teardown: teardownConnection } = useConnection()
 // useProvider listens for WS config.provider* / model.* events
 useProvider()
+const { loadSessions } = useSession()
 
 const settingsStore = useSettingsStore()
 
@@ -102,6 +104,9 @@ function handleSplitResize(_delta: number) { // eslint-disable-line @typescript-
 onMounted(async () => {
   // Initialise WebSocket connection to sidecar
   initConnection()
+
+  // Load sessions after connection
+  loadSessions()
 
   try {
     await listen<string>('shortcut', (event) => {

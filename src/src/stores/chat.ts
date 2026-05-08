@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed, readonly } from 'vue'
+import { ref, computed } from 'vue'
 import type { Message, ToolCall } from '@xyz-agent/shared'
 
 interface PendingApproval {
@@ -11,7 +11,6 @@ interface PendingApproval {
 }
 
 const DEFAULT_CONTEXT_TOKEN_LIMIT = 100000
-const PERCENT_MULTIPLIER = 100
 
 export const useChatStore = defineStore('chat', () => {
   const completedMessages = ref<Message[]>([])

@@ -23,6 +23,7 @@ defineEmits<{
 
 const content = ref(props.agent.content ?? '')
 const showEditor = ref(false)
+const modelTags = computed(() => props.agent.modelTags)
 
 const strategyLabel = computed(() => {
   if (props.agent.modelStrategy === 'auto') return '\u81ea\u52a8 \u2014 \u7531\u4e3b Agent \u6839\u636e\u4efb\u52a1\u5224\u65ad'
@@ -78,7 +79,7 @@ function handleSave() {
       <ModelStrategyConfig
         :strategy="(agent.modelStrategy as 'auto' | 'tag' | 'bind')"
         :all-models="allModels"
-        :model-tags="agent.modelTags as { power: string; efficient: string; fast: string } | undefined"
+        :model-tags="modelTags"
         :model-bind="agent.modelBind"
       />
       <OverrideParams

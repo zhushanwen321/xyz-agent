@@ -96,15 +96,13 @@ export function useChat() {
 
   function onContextUpdate(msg: ServerMessage) {
     if (!isForCurrentSession(msg)) return
-    store.updateContextInfo(
-      (msg.payload as any).usagePercent as number,
-      (msg.payload as any).inputTokens as number,
-      (msg.payload as any).contextLimit as number,
-    )
+    const p = msg.payload as { usagePercent: number; inputTokens: number; contextLimit: number }
+    store.updateContextInfo(p.usagePercent, p.inputTokens, p.contextLimit)
   }
 
   function onStatus(msg: ServerMessage) {
-    console.log('[chat] status:', (msg.payload as any).status)
+    const p = msg.payload as { status: string }
+    console.log('[chat] status:', p.status)
   }
 
   // --- Session-aware helpers -----------------------------------------------

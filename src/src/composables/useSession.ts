@@ -3,7 +3,7 @@ import { useSessionStore } from '../stores/session'
 import { useChatStore } from '../stores/chat'
 import { send } from '../lib/ws-client'
 import { on, off } from '../lib/event-bus'
-import type { ServerMessage, SessionSummary } from '@xyz-agent/shared'
+import type { ServerMessage, SessionSummary, Message } from '@xyz-agent/shared'
 
 export function useSession() {
   const sessionStore = useSessionStore()
@@ -41,13 +41,15 @@ export function useSession() {
   // --- Event handlers ---
 
   function onSessionList(msg: ServerMessage) {
-    const groups = (msg.payload as any).groups as Array<{ cwd: string; sessions: SessionSummary[] }>
+    const payload = msg.payload as { groups: Array<{ cwd: string; sessions: SessionSummary[] }> }
+    const groups = payload.groups
     const all = groups.flatMap(g => g.sessions)
     sessionStore.setSessions(all)
   }
 
   function onSessionCreated(msg: ServerMessage) {
-    const session = (msg.payload as any).session
+    const payload = msg.payload as { session: { id: string; label?: string; cwd: string } }
+    const session = payload.session
     if (!session) return
     sessionStore.addSession({
       id: session.id,
@@ -62,11 +64,11 @@ export function useSession() {
   }
 
   function onSessionDeleted(msg: ServerMessage) {
-    sessionStore.removeSession((msg.payload as any).sessionId as string)
+    sessionStore.removeSession((msg.payload as { sessionId: string }).sessionId)
   }
 
   function onSessionHistory(msg: ServerMessage) {
-    const messages = (msg.payload as any).messages ?? []
+    const messages = (msg.payload as { messages?: Message[] }).messages ?? []
     chatStore.replaceMessages(messages)
   }
 
