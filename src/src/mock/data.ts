@@ -611,6 +611,27 @@ export interface OverviewCard {
   meta: string[]         // ["sonnet:high", "12.3k tok", "完成 2 · 回应 1"]
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// 13. Conversion Helpers
+// ═══════════════════════════════════════════════════════════════════
+
+export function toModelInfos(models: MockModel[]): import('@xyz-agent/shared').ModelInfo[] {
+  return models.map(m => ({
+    id: m.id,
+    name: m.name,
+    providerId: m.providerId,
+    providerName: m.providerName,
+    tags: m.tags,
+    contextWindow: parseCtxToNumber(m.ctx),
+    enabled: m.enabled,
+  }))
+}
+
+function parseCtxToNumber(ctx: string): number {
+  const match = ctx.match(/(\d+)/)
+  return match ? parseInt(match[1], 10) * 1000 : 128000
+}
+
 export const mockOverviewCards: OverviewCard[] = [
   {
     sessionId: 's1',
