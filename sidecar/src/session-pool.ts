@@ -13,7 +13,7 @@ import { ProcessManager } from './process-manager.js'
 
 /** Raw message format returned by pi's get_messages command */
 interface PiHistoryMessage {
-  role: string
+  role: 'user' | 'assistant' | 'toolResult'
   content: Array<{
     type: 'text' | 'thinking' | 'toolCall' | 'tool_use'
     text?: string
@@ -24,6 +24,9 @@ interface PiHistoryMessage {
   }>
   timestamp?: number
   stopReason?: string
+  toolCallId?: string
+  toolName?: string
+  isError?: boolean
 }
 import { EventAdapter } from './event-adapter.js'
 import { getDefaultModel } from './config-store.js'
@@ -237,45 +240,69 @@ export class SessionPool {
     // pi returns messages in data.messages, not payload.messages
     const data = (result as unknown as Record<string, unknown>).data as { messages?: PiHistoryMessage[] } | undefined
     const raw = data?.messages ?? (result.payload?.messages as PiHistoryMessage[] | undefined) ?? []
-    return raw.map(m => this.convertPiMessage(m))
+    return this.convertPiHistory(raw)
   }
 
-  /** Convert a pi-format message to xyz-agent Message */
-  private convertPiMessage(m: PiHistoryMessage): Message {
-    const parts = Array.isArray(m.content) ? m.content : [{ type: 'text' as const, text: String(m.content) }]
-    let textContent = ''
-    const thinking: ThinkingBlock[] = []
-    const toolCalls: ToolCall[] = []
+  /** Convert pi message list, merging toolResults into their parent assistant message */
+  private convertPiHistory(raw: PiHistoryMessage[]): Message[] {
+    const result: Message[] = []
 
-    for (const part of parts) {
-      if (part.type === 'text') {
-        textContent += part.text ?? ''
-      } else if (part.type === 'thinking') {
-        thinking.push({
-          id: crypto.randomUUID(),
-          content: part.thinking ?? '',
-          collapsed: true,
-        })
-      } else if (part.type === 'toolCall') {
-        toolCalls.push({
-          id: part.id ?? crypto.randomUUID(),
-          toolName: part.name ?? '',
-          input: part.arguments ?? {},
-          status: 'completed',
-          startTime: m.timestamp ?? Date.now(),
-        })
+    for (const m of raw) {
+      if (m.role === 'toolResult') {
+        // Merge tool result into the last assistant message's matching toolCall
+        const lastAssistant = [...result].reverse().find(r => r.role === 'assistant' && r.toolCalls?.length)
+        if (lastAssistant?.toolCalls) {
+          const tc = lastAssistant.toolCalls.find(t => t.id === m.toolCallId)
+          if (tc) {
+            const textParts = (Array.isArray(m.content) ? m.content : [])
+              .filter((p: { type: string }) => p.type === 'text')
+              .map((p: { text?: string }) => p.text ?? '')
+              .join('\n')
+            tc.output = textParts
+            if (m.isError) tc.status = 'error'
+          }
+        }
+        continue
       }
+
+      // user or assistant
+      const parts = Array.isArray(m.content) ? m.content : [{ type: 'text' as const, text: String(m.content) }]
+      let textContent = ''
+      const thinking: ThinkingBlock[] = []
+      const toolCalls: ToolCall[] = []
+
+      for (const part of parts) {
+        if (part.type === 'text') {
+          textContent += part.text ?? ''
+        } else if (part.type === 'thinking') {
+          thinking.push({
+            id: crypto.randomUUID(),
+            content: part.thinking ?? '',
+            collapsed: true,
+          })
+        } else if (part.type === 'toolCall') {
+          toolCalls.push({
+            id: part.id ?? crypto.randomUUID(),
+            toolName: part.name ?? '',
+            input: part.arguments ?? {},
+            status: 'completed',
+            startTime: m.timestamp ?? Date.now(),
+          })
+        }
+      }
+
+      result.push({
+        id: crypto.randomUUID(),
+        role: m.role === 'user' ? 'user' : 'assistant',
+        content: textContent,
+        status: 'complete',
+        ...(thinking.length > 0 && { thinking }),
+        ...(toolCalls.length > 0 && { toolCalls }),
+        timestamp: m.timestamp ?? Date.now(),
+      })
     }
 
-    return {
-      id: crypto.randomUUID(),
-      role: m.role === 'user' ? 'user' : 'assistant',
-      content: textContent,
-      status: 'complete',
-      ...(thinking.length > 0 && { thinking }),
-      ...(toolCalls.length > 0 && { toolCalls }),
-      timestamp: m.timestamp ?? Date.now(),
-    }
+    return result
   }
 
   // ── Listing ────────────────────────────────────────────────────
