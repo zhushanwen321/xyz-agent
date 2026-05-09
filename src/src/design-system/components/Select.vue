@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import type { HTMLAttributes } from 'vue'
 import {
   SelectRoot,
   SelectTrigger,
@@ -23,9 +24,10 @@ interface Props {
   options?: SelectOption[]
   placeholder?: string
   disabled?: boolean
+  class?: HTMLAttributes['class']
 }
 
-withDefaults(defineProps<Props>(), {
+const props = withDefaults(defineProps<Props>(), {
   modelValue: '',
   options: () => [],
   placeholder: 'Select...',
@@ -38,20 +40,23 @@ const emit = defineEmits<{
 
 const triggerClasses = computed(() =>
   cn(
-    'inline-flex h-10 w-full items-center justify-between rounded-md px-3 py-2 text-sm',
+    'flex h-10 w-full items-center justify-between rounded-md border border-solid border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--fg)]',
     'transition-colors',
     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
     'disabled:cursor-not-allowed disabled:opacity-50',
     'data-[placeholder]:text-[var(--muted)]',
+    props.class,
   ),
 )
 
+const contentClasses = 'z-50 overflow-hidden rounded-md border border-solid border-[var(--border)] bg-[var(--surface)] shadow-md'
+
 const itemClasses = computed(() =>
   cn(
-    'relative flex w-full cursor-pointer select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm',
+    'relative flex w-full cursor-pointer select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm text-[var(--fg)]',
     'outline-none transition-colors',
-    'hover:opacity-90',
-    'data-[highlighted]:opacity-90',
+    'hover:bg-[var(--accent-light)]',
+    'data-[highlighted]:bg-[var(--accent-light)]',
     'data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
   ),
 )
@@ -65,19 +70,17 @@ const itemClasses = computed(() =>
   >
     <SelectTrigger
       :class="triggerClasses"
-      :style="{ background: 'var(--surface)', color: 'var(--fg)', border: '1px solid var(--border)' }"
       :aria-label="placeholder"
     >
       <SelectValue :placeholder="placeholder" />
-      <svg class="ml-2" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--muted)"><path d="M4 6l4 4 4-4"/></svg>
+      <svg class="ml-2 shrink-0" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--muted)"><path d="M4 6l4 4 4-4"/></svg>
     </SelectTrigger>
 
     <SelectPortal>
       <SelectContent
         position="popper"
         :side-offset="4"
-        class="z-50 overflow-hidden rounded-md shadow-md"
-        :style="{ background: 'var(--surface)', border: '1px solid var(--border)' }"
+        :class="contentClasses"
         role="listbox"
       >
         <SelectViewport class="p-1">
@@ -86,7 +89,6 @@ const itemClasses = computed(() =>
             :key="option.value"
             :value="option.value"
             :class="itemClasses"
-            style="color: var(--fg)"
             role="option"
             :aria-selected="modelValue === option.value"
           >

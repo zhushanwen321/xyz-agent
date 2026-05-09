@@ -1,7 +1,7 @@
 <template>
-  <header class="app-header">
-    <div class="header-logo">xyz<span class="header-logo-accent">-agent</span></div>
-    <div class="header-spacer"></div>
+  <header class="header">
+    <div class="header__logo">xyz<span>-agent</span></div>
+    <div class="header__spacer"></div>
     <div class="notif-group">
       <Button variant="ghost" class="notif-btn notif-btn--done" :title="t('header.done')">
         <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><polyline points="2 6 5 9 10 3"/></svg>
@@ -15,7 +15,7 @@
       </Button>
     </div>
     <span class="h-divider"></span>
-    <div class="header-actions">
+    <div class="header__actions">
       <Button variant="ghost" size="icon" class="h-btn" @click="settingsStore.toggleOverview()" title="窗口总览 (Cmd+J)">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:16px;height:16px">
           <rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/>
@@ -95,32 +95,7 @@ function toggleTheme() {
 </script>
 
 <style scoped>
-.app-header {
-  display: flex; align-items: center; height: var(--header-h);
-  padding: 0 16px; background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  gap: 8px; flex-shrink: 0; z-index: 20;
-}
-.header-logo { font-family: var(--font-display); font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
-.header-logo-accent { color: var(--accent); }
-.header-spacer { flex: 1; }
-.header-actions { display: flex; gap: 4px; align-items: center; }
-.h-btn {
-  border-radius: var(--radius-sm) !important;
-  color: var(--muted) !important;
-  cursor: pointer; transition: all 0.2s;
-}
-.h-btn:hover { background: var(--accent-light); color: var(--accent); border-color: var(--accent); }
-.h-btn.active { background: var(--accent-light); color: var(--accent); border-color: var(--accent); }
-.h-divider { width: 1px; height: 24px; background: var(--border); margin: 0 4px; }
-.notif-group { display: flex; gap: 6px; align-items: center; }
-.notif-btn { position: relative; display: inline-flex; align-items: center; gap: 5px; padding: 5px 12px; border: 1px solid var(--border); border-radius: 100px; background: transparent; color: var(--muted); font-size: 12px; font-family: var(--font-body); cursor: pointer; transition: all 0.2s; white-space: nowrap; }
-.notif-btn:hover { background: var(--bg); color: var(--fg); border-color: var(--muted); }
-.notif-btn--done:hover { background: var(--success-light); color: var(--success); border-color: var(--success); }
-.notif-btn--alert:hover { background: var(--danger-light); color: var(--danger); border-color: var(--danger); }
-.notif-dot { position: absolute; top: -4px; right: -4px; width: 18px; height: 18px; border-radius: 50%; font-size: 10px; font-weight: 700; color: white; display: flex; align-items: center; justify-content: center; border: 2px solid var(--surface); }
-.notif-dot--done { background: var(--success); }
-.notif-dot--alert { background: var(--danger); animation: pulse-dot 2s infinite; }
-@keyframes pulse-dot { 0%,100% { transform: scale(1); } 50% { transform: scale(1.15); } }
-.notif-btn svg { width: 14px; height: 14px; }
+/* Only overrides not covered by global CSS */
+.header__actions { display: flex; gap: 4px; align-items: center; }
+.h-btn { border-radius: var(--radius-sm) !important; color: var(--muted) !important; }
 </style>

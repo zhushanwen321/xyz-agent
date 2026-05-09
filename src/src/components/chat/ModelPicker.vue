@@ -4,7 +4,7 @@
       <span class="model-picker__label">{{ currentLabel }}</span>
       <svg class="model-picker__chevron" :class="{ 'model-picker__chevron--open': open }" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
     </Button>
-    <div v-if="open" class="model-picker__dropdown">
+    <div v-if="open" class="model-picker__dropdown visible">
       <div
         v-for="group in groupedModels"
         :key="group.provider"
@@ -143,18 +143,13 @@ function handleSelect(modelId: string) {
   left: 0;
   min-width: 260px;
   max-height: 280px;
-  overflow-y: auto;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
   z-index: 200;
-  display: none;
-  overflow: hidden;
-}
-
-.model-picker__dropdown.visible {
-  display: block;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .model-picker__group + .model-picker__group {
@@ -200,6 +195,5 @@ function handleSelect(modelId: string) {
   font-size: 12px;
   color: var(--muted);
   text-align: center;
-  display: none;
 }
 </style>

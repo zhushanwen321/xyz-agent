@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>xyz-agent · AI 智能工作台 v4</title>
 <style>
-:root{--bg:oklch(97% 0.018 70);--surface:oklch(99% 0.008 70);--fg:oklch(22% 0.02 50);--muted:oklch(50% 0.018 50);--border:oklch(90% 0.014 70);--accent:oklch(64% 0.13 28);--accent-light:oklch(92% 0.04 28);--success:oklch(70% 0.18 145);--success-light:oklch(95% 0.06 145);--warning:oklch(78% 0.15 85);--warning-light:oklch(95% 0.06 85);--danger:oklch(62% 0.2 25);--danger-light:oklch(93% 0.06 25);--font-display:'Tiempos Headline','Newsreader','Iowan Old Style',Georgia,serif;--font-body:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;--font-mono:'JetBrains Mono','IBM Plex Mono',ui-monospace,Menlo,monospace;--radius:12px;--radius-sm:8px;--radius-xs:4px;--sidebar-w:240px;--drawer-w:380px;--header-h:48px;--statusbar-h:32px;--ease:cubic-bezier(0.4,0,0.2,1)}
-[data-theme="dark"]{--bg:oklch(20% 0.015 50);--surface:oklch(25% 0.015 50);--fg:oklch(92% 0.008 70);--muted:oklch(65% 0.015 50);--border:oklch(35% 0.015 50);--accent:oklch(68% 0.13 28);--accent-light:oklch(30% 0.06 28);--success:oklch(70% 0.18 145);--success-light:oklch(28% 0.06 145);--warning:oklch(78% 0.15 85);--warning-light:oklch(30% 0.06 85);--danger:oklch(62% 0.2 25);--danger-light:oklch(28% 0.06 25)}
+:root{--bg:oklch(97% 0.018 70);--surface:oklch(99% 0.008 70);--fg:oklch(22% 0.02 50);--muted:oklch(50% 0.018 50);--border:oklch(90% 0.014 70);--accent:oklch(64% 0.13 28);--accent-light:oklch(92% 0.04 28);--success:oklch(62% 0.10 145);--success-light:oklch(95% 0.04 145);--warning:oklch(75% 0.10 85);--warning-light:oklch(95% 0.04 85);--danger:oklch(55% 0.12 25);--danger-light:oklch(93% 0.04 25);--font-display:'Tiempos Headline','Newsreader','Iowan Old Style',Georgia,serif;--font-body:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;--font-mono:'JetBrains Mono','IBM Plex Mono',ui-monospace,Menlo,monospace;--radius:12px;--radius-sm:8px;--radius-xs:4px;--sidebar-w:240px;--drawer-w:380px;--header-h:48px;--statusbar-h:32px;--ease:cubic-bezier(0.4,0,0.2,1)}
+[data-theme="dark"]{--bg:oklch(20% 0.015 50);--surface:oklch(25% 0.015 50);--fg:oklch(92% 0.008 70);--muted:oklch(65% 0.015 50);--border:oklch(35% 0.015 50);--accent:oklch(68% 0.13 28);--accent-light:oklch(30% 0.06 28);--success:oklch(65% 0.10 145);--success-light:oklch(28% 0.04 145);--warning:oklch(78% 0.10 85);--warning-light:oklch(30% 0.04 85);--danger:oklch(58% 0.12 25);--danger-light:oklch(28% 0.04 25)}
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html{-webkit-font-smoothing:antialiased}
 body{font-family:var(--font-body);font-size:14px;line-height:1.6;background:var(--bg);color:var(--fg);transition:background 0.25s var(--ease),color 0.25s var(--ease)}
@@ -65,6 +65,10 @@ code{font-family:var(--font-mono);font-size:0.9em}
 .s-item.active{background:var(--accent-light);border-left-color:var(--accent)}
 .s-item__title{flex:1;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .s-item__meta{font-size:11px;color:var(--muted);white-space:nowrap;display:flex;align-items:center;gap:4px}
+.s-item__notif{display:inline-flex;align-items:center;justify-content:center;min-width:14px;height:14px;border-radius:7px;font-size:9px;font-weight:700;color:white;margin-left:4px;flex-shrink:0}
+.s-item__notif--done{background:var(--success)}
+.s-item__notif--alert{background:var(--danger)}
+.s-item.has-notif .s-item__title{font-weight:600}
 
 /* ── Status dots ── */
 .dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;background:var(--border)}
@@ -110,21 +114,21 @@ code{font-family:var(--font-mono);font-size:0.9em}
 .pn-close:hover{background:var(--accent-light);color:var(--accent);border-color:var(--accent)}
 
 /* ── Chat messages ── */
-.chat-msgs{flex:1;overflow-y:auto;padding:20px 24px;display:flex;flex-direction:column;gap:14px}
-.agent-view{display:none}
-.agent-view.active{display:flex;flex-direction:column;gap:14px}
-.msg{max-width:80%;padding:10px 14px;border-radius:var(--radius);line-height:1.6;font-size:14px}
-.msg--user{align-self:flex-end;background:var(--accent-light);border-bottom-right-radius:var(--radius-xs)}
+.chat-msgs{flex:1;overflow-y:auto;padding:20px 24px;display:flex;flex-direction:column;gap:14px;position:relative;max-width:960px;margin:0 auto;width:100%}
+.agent-view{position:absolute;inset:20px 24px;visibility:hidden;opacity:0;transition:opacity .2s var(--ease);overflow-y:auto;display:flex;flex-direction:column;gap:14px}
+.agent-view.active{visibility:visible;opacity:1;z-index:1}
+.msg{max-width:min(80%,70ch);padding:10px 14px;border-radius:var(--radius);line-height:1.6;font-size:14px}
+.msg--user{align-self:flex-end;max-width:min(70%,50ch);background:var(--accent-light);border-bottom-right-radius:var(--radius-xs)}
 .msg--bot{align-self:flex-start;background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:var(--radius-xs)}
 .msg__role{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--muted);margin-bottom:3px}
 .msg__body p{margin-bottom:6px}.msg__body p:last-child{margin-bottom:0}
 .msg__body code{background:var(--bg);padding:1px 4px;border-radius:var(--radius-xs);font-size:0.88em}
-.msg--system{align-self:stretch;max-width:100%;border:1px solid var(--border);border-left:3px solid var(--success);background:var(--surface);border-radius:var(--radius-sm);padding:10px 14px;font-size:13px;display:flex;align-items:flex-start;gap:10px}
-.msg--system--alert{border-left-color:var(--danger)}
+.msg--system{align-self:stretch;width:100%;max-width:none;margin:8px 0;border:1px solid oklch(80% 0.02 145);background:oklch(97% 0.02 145);border-radius:var(--radius-sm);padding:10px 14px;font-size:13px;display:flex;align-items:flex-start;gap:10px;box-sizing:border-box}
+.msg--system__content{flex:1}
+.msg--system--alert{border-color:oklch(80% 0.02 25);background:oklch(97% 0.015 25)}
 .msg--system__dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:4px}
 .msg--system__dot--done{background:var(--success)}
 .msg--system__dot--alert{background:var(--danger)}
-.msg--system__content{flex:1}
 .msg--system__title{font-weight:600;font-size:13px;margin-bottom:2px}
 .msg--system__desc{color:var(--muted);font-size:12px}
 .msg--system__action{font-size:12px;color:var(--accent);font-weight:600;cursor:pointer;margin-top:4px;display:inline-flex;align-items:center;gap:3px}
@@ -197,7 +201,7 @@ code{font-family:var(--font-mono);font-size:0.9em}
 .tree-children.collapsed{display:none}
 
 /* ── Alert / done items ── */
-.alert-item{border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:10px;overflow:hidden;border-left:3px solid var(--danger)}
+.alert-item{border:1px solid oklch(80% 0.02 25);border-radius:var(--radius-sm);margin-bottom:10px;overflow:hidden;background:oklch(97% 0.015 25)}
 .alert-item--simple{border-left-color:var(--warning)}
 .alert-item__hd{padding:10px 12px;display:flex;align-items:center;gap:8px}
 .alert-item__dot{width:7px;height:7px;border-radius:50%;background:var(--danger);flex-shrink:0}
@@ -215,7 +219,7 @@ code{font-family:var(--font-mono);font-size:0.9em}
 .inline-reply__btn:hover{opacity:0.88}
 .inline-reply__link{font-size:12px;color:var(--accent);font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:3px}
 .inline-reply__link:hover{text-decoration:underline}
-.done-item{border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:8px;overflow:hidden;border-left:3px solid var(--success)}
+.done-item{border:1px solid oklch(80% 0.02 145);border-radius:var(--radius-sm);margin-bottom:8px;overflow:hidden;background:oklch(97% 0.015 145)}
 .done-item__hd{padding:10px 12px;display:flex;align-items:center;gap:8px}
 .done-item__dot{width:7px;height:7px;border-radius:50%;background:var(--success);flex-shrink:0}
 .done-item__info{flex:1;min-width:0}
@@ -257,10 +261,10 @@ code{font-family:var(--font-mono);font-size:0.9em}
 .card__badge__dot{width:5px;height:5px;border-radius:50%;background:currentColor}
 .overview__hint{margin-top:28px;font-size:12px;color:oklch(70% 0 0/0.7);display:flex;gap:20px}
 .overview__hint kbd{display:inline-flex;align-items:center;padding:2px 6px;background:oklch(30% 0 0/0.5);border-radius:4px;font-family:var(--font-mono);font-size:11px;color:oklch(85% 0 0);margin:0 3px}
-.split-divider{width:4px;background:transparent;cursor:col-resize;flex-shrink:0;position:relative;z-index:5;transition:background 0.15s var(--ease)}
-.split-divider:hover,.split-divider.dragging{background:var(--accent)}
-.split-divider::after{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:2px;height:32px;border-radius:1px;background:var(--border)}
-.split-divider:hover::after,.split-divider.dragging::after{background:var(--accent)}
+.split-divider{width:4px;background:var(--border);cursor:col-resize;flex-shrink:0;position:relative;z-index:5;transition:background 0.15s var(--ease),opacity 0.15s var(--ease);opacity:.3}
+.split-divider:hover,.split-divider.dragging{background:var(--accent);opacity:1}
+.split-divider::after{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:2px;height:32px;border-radius:1px;background:transparent}
+.split-divider:hover::after,.split-divider.dragging::after{background:transparent}
 
 /* ── Toasts ── */
 .toast-container{position:fixed;top:60px;left:20px;z-index:60;display:flex;flex-direction:column;gap:8px;pointer-events:none}
@@ -321,7 +325,7 @@ code{font-family:var(--font-mono);font-size:0.9em}
 .chat-input-btn:hover{background:var(--accent-light);color:var(--accent)}
 
 /* ── Slash command menu ── */
-.slash-menu{position:absolute;bottom:100%;left:0;right:0;margin-bottom:6px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:0 4px 20px rgba(0,0,0,0.1);overflow:hidden;display:none;z-index:20}
+.slash-menu{position:absolute;bottom:100%;left:0;right:0;margin-bottom:6px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:0 4px 20px rgba(0,0,0,0.1);display:none;z-index:20;max-height:280px;overflow-y:auto}
 .slash-menu.visible{display:block}
 .slash-item{display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;transition:background 0.1s var(--ease)}
 .slash-item:hover,.slash-item.active{background:var(--accent-light)}
@@ -388,16 +392,16 @@ code{font-family:var(--font-mono);font-size:0.9em}
     <button class="h-btn" id="vSplit" onclick="setView('split')" title="分屏 (Cmd+2)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="14" rx="1"/><rect x="9" y="1" width="6" height="14" rx="1"/></svg></button>
     <button class="h-btn" id="vFocus" onclick="setView('focus')" title="专注 (Cmd+3)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="14" height="14" rx="1"/></svg></button>
     <span class="h-divider"></span>
-    <button class="h-btn" id="vSettings" onclick="setView('settings')" title="设置 (Cmd+,)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="8" cy="8" r="2.5"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.77 1.77M11.18 11.18l1.77 1.77M3.05 12.95l1.77-1.77M11.18 4.82l1.77-1.77"/></svg></button>
-    <button class="h-btn" onclick="toggleTheme()" title="切换主题"><svg id="iconMoon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 9.5A6.5 6.5 0 016.5 2 6.5 6.5 0 108 14.5a6.47 6.47 0 006-5z"/></svg><svg id="iconSun" class="hidden" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41"/></svg></button>
+    <button class="h-btn" id="vSettings" onclick="setView('settings')" title="设置 (Cmd+,)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:16px;height:16px"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 008.58 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 8.58a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg></button>
+    <button class="h-btn" onclick="toggleTheme()" title="切换主题"><svg id="iconMoon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg><svg id="iconSun" class="hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg></button>
   </header>
 
   <div class="app-body">
     <aside class="sidebar" id="sidebar">
       <div class="sidebar__hd"><span class="sidebar__hd-title">会话</span><button class="sidebar__hd-btn" title="新建会话">+</button></div>
       <div class="sidebar__body">
-        <div class="s-group"><div class="s-group__hd" onclick="this.parentElement.classList.toggle('collapsed')"><span class="s-group__toggle">▾</span> xyz-agent</div><div class="s-group__items"><div class="s-item active" data-session="s1" onclick="pickSession(this)"><span class="dot dot--run"></span><span class="s-item__title">重构 auth 模块</span><span class="s-item__meta">2h</span></div><div class="s-item" data-session="s2" onclick="pickSession(this)"><span class="dot dot--idle"></span><span class="s-item__title">Tauri GUI 设计</span><span class="s-item__meta">1d</span></div></div></div>
-        <div class="s-group"><div class="s-group__hd" onclick="this.parentElement.classList.toggle('collapsed')"><span class="s-group__toggle">▾</span> work-project</div><div class="s-group__items"><div class="s-item" data-session="s3" onclick="pickSession(this)"><span class="dot dot--run"></span><span class="s-item__title">API 性能优化</span><span class="s-item__meta">5d</span></div><div class="s-item" data-session="s4" onclick="pickSession(this)"><span class="dot dot--idle"></span><span class="s-item__title">数据库迁移</span><span class="s-item__meta">6d</span></div></div></div>
+        <div class="s-group"><div class="s-group__hd" onclick="this.parentElement.classList.toggle('collapsed')"><span class="s-group__toggle">▾</span> xyz-agent</div><div class="s-group__items"><div class="s-item active has-notif" data-session="s1" onclick="pickSession(this)"><span class="dot dot--run"></span><span class="s-item__title">重构 auth 模块</span><span class="s-item__notif s-item__notif--done">3</span><span class="s-item__meta">2h</span></div><div class="s-item" data-session="s2" onclick="pickSession(this)"><span class="dot dot--idle"></span><span class="s-item__title">Tauri GUI 设计</span><span class="s-item__meta">1d</span></div></div></div>
+        <div class="s-group"><div class="s-group__hd" onclick="this.parentElement.classList.toggle('collapsed')"><span class="s-group__toggle">▾</span> work-project</div><div class="s-group__items"><div class="s-item has-notif" data-session="s3" onclick="pickSession(this)"><span class="dot dot--run"></span><span class="s-item__title">API 性能优化</span><span class="s-item__notif s-item__notif--alert">1</span><span class="s-item__meta">5d</span></div><div class="s-item" data-session="s4" onclick="pickSession(this)"><span class="dot dot--idle"></span><span class="s-item__title">数据库迁移</span><span class="s-item__meta">6d</span></div></div></div>
         <div class="s-group"><div class="s-group__hd" onclick="this.parentElement.classList.toggle('collapsed')"><span class="s-group__toggle">▾</span> diy-pc</div><div class="s-group__items"><div class="s-item" data-session="s5" onclick="pickSession(this)"><span class="dot dot--pause"></span><span class="s-item__title">价格预测分析</span><span class="s-item__meta">7d</span></div><div class="s-item" data-session="s6" onclick="pickSession(this)"><span class="dot dot--run"></span><span class="s-item__title">4090 比价</span><span class="s-item__meta">1h</span></div></div></div>
       </div>
     </aside>
@@ -712,12 +716,24 @@ window.setView=function(v){
   closeSplit();closeDrawer();
   $$('.h-btn').forEach(function(b){b.classList.remove('active')});
   var sv=$('#settingsView');
-  var panels=$$('#mainArea .chat-panel, #mainArea .split-divider');
-  sv.classList.remove('active');panels.forEach(function(p){p.classList.remove('hidden');p.style.display=''});
-  if(v==='standard'){$('#vStd').classList.add('active');$('#sidebar').classList.remove('collapsed')}
+  sv.classList.remove('active');
+  if(v==='standard'){
+    $('#vStd').classList.add('active');
+    $('#sidebar').classList.remove('collapsed');
+    $('#panelA').classList.remove('hidden');$('#panelA').style.display='';
+    $('#panelB').classList.add('hidden');$('#panelB').style.display='';
+    $('#splitDivider').classList.add('hidden');
+  }
   else if(v==='split'){$('#vSplit').classList.add('active');$('#sidebar').classList.remove('collapsed');enterSplit()}
-  else if(v==='focus'){app.classList.add('focus-mode');$('#vFocus').classList.add('active');$('#sidebar').classList.add('collapsed')}
-  else if(v==='settings'){$('#vSettings').classList.add('active');$('#sidebar').classList.remove('collapsed');sv.classList.add('active');panels.forEach(function(p){p.style.display='none'});$('#panelB').classList.add('hidden');$('#splitDivider').classList.add('hidden')}
+  else if(v==='focus'){app.classList.add('focus-mode');$('#vFocus').classList.add('active');$('#sidebar').classList.add('collapsed');$('#panelA').classList.remove('hidden');$('#panelB').classList.add('hidden');$('#splitDivider').classList.add('hidden')}
+  else if(v==='settings'){
+    $('#vSettings').classList.add('active');
+    $('#sidebar').classList.remove('collapsed');
+    sv.classList.add('active');
+    $$('#mainArea .chat-panel, #mainArea .split-divider').forEach(function(p){p.style.display='none'});
+    $('#panelB').classList.add('hidden');
+    $('#splitDivider').classList.add('hidden');
+  }
 };
 
 window.pickSession=function(item){$$('.s-item').forEach(function(s){s.classList.remove('active')});item.classList.add('active')};

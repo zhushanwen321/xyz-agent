@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue'
+import { ref, watch, computed, onUnmounted } from 'vue'
 import { Button, Input, Select } from '../../design-system'
 import type { AgentInfo } from '@xyz-agent/shared'
 
@@ -84,213 +84,48 @@ watch(() => props.visible, (v) => {
   if (v) document.addEventListener('keydown', handleKeydown)
   else document.removeEventListener('keydown', handleKeydown)
 })
+
+onUnmounted(() => document.removeEventListener('keydown', handleKeydown))
 </script>
 
 <template>
-  <div :class="['modal-overlay', { visible }]" @click.self="$emit('close')">
-    <div class="modal">
-      <div class="modal__hd">
-        <div class="modal__title">{{ agent ? '编辑 Agent' : '添加 Agent' }}</div>
-        <Button variant="ghost" class="modal__close" @click="$emit('close')">
+  <div :class="['s-modal-overlay', { visible }]" @click.self="$emit('close')">
+    <div class="s-modal">
+      <div class="s-modal__hd">
+        <div class="s-modal__title">{{ agent ? '编辑 Agent' : '添加 Agent' }}</div>
+        <Button variant="ghost" class="s-modal__close" @click="$emit('close')">
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M1 1l12 12M13 1L1 13" />
           </svg>
         </Button>
       </div>
 
-      <div class="modal__bd">
-        <div class="form-group">
-          <div class="form-group__label">Agent 名称</div>
-          <Input v-model="formName" class="form-input" placeholder="例如：code-reviewer" />
+      <div class="s-modal__bd">
+        <div class="s-form-group">
+          <div class="s-form-label">Agent 名称</div>
+          <Input v-model="formName" placeholder="例如：code-reviewer" />
         </div>
 
-        <div class="form-group">
-          <div class="form-group__label">描述</div>
-          <Input v-model="formDescription" class="form-input" placeholder="简要描述此 Agent 的职责" />
+        <div class="s-form-group">
+          <div class="s-form-label">描述</div>
+          <Input v-model="formDescription" placeholder="简要描述此 Agent 的职责" />
         </div>
 
-        <div class="form-group">
-          <div class="form-group__label">模型策略</div>
-          <Select v-model="formStrategy" class="form-select" :options="strategyOptions" />
+        <div class="s-form-group">
+          <div class="s-form-label">模型策略</div>
+          <Select v-model="formStrategy" :options="strategyOptions" />
         </div>
 
-        <div v-if="showModelBind" class="form-group">
-          <div class="form-group__label">绑定模型</div>
-          <Select v-model="formModelBind" class="form-select" :options="modelOptions" placeholder="选择模型" />
+        <div v-if="showModelBind" class="s-form-group">
+          <div class="s-form-label">绑定模型</div>
+          <Select v-model="formModelBind" :options="modelOptions" placeholder="选择模型" />
         </div>
       </div>
 
-      <div class="modal__ft">
+      <div class="s-modal__ft">
         <Button variant="ghost" @click="$emit('close')">取消</Button>
         <Button variant="primary" @click="handleSave">{{ agent ? '保存' : '添加 Agent' }}</Button>
       </div>
     </div>
   </div>
 </template>
-
-<style scoped>
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.3);
-  z-index: 100;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.2s var(--ease);
-}
-
-.modal-overlay.visible {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.modal {
-  width: 480px;
-  max-height: 85vh;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.12);
-}
-
-.modal__hd {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border);
-}
-
-.modal__title {
-  font-family: var(--font-display);
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.modal__close {
-  width: 28px;
-  height: 28px;
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  border-radius: var(--radius-xs);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.15s var(--ease);
-}
-
-.modal__close:hover {
-  background: var(--accent-light);
-  color: var(--accent);
-}
-
-.modal__bd {
-  padding: 20px;
-  overflow-y: auto;
-  flex: 1;
-}
-
-.modal__ft {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 14px 20px;
-  border-top: 1px solid var(--border);
-}
-
-.form-group {
-  margin-bottom: 16px;
-}
-
-.form-group__label {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--muted);
-  margin-bottom: 6px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.form-input {
-  width: 100%;
-  padding: 8px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
-  color: var(--fg);
-  font-family: var(--font-body);
-  font-size: 14px;
-  outline: none;
-  transition: border-color 0.15s var(--ease);
-}
-
-.form-input:focus {
-  border-color: var(--accent);
-}
-
-.form-input::placeholder {
-  color: var(--muted);
-}
-
-.form-select {
-  appearance: none;
-  width: 100%;
-  padding: 8px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
-  color: var(--fg);
-  font-family: var(--font-body);
-  font-size: 14px;
-  outline: none;
-  cursor: pointer;
-  transition: border-color 0.15s var(--ease);
-  background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23999' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 12px center;
-}
-
-.form-select:focus {
-  border-color: var(--accent);
-}
-
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 18px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--muted);
-  font-size: 13px;
-  font-family: var(--font-body);
-  cursor: pointer;
-  transition: all 0.2s var(--ease);
-  white-space: nowrap;
-}
-
-.btn:hover {
-  background: var(--accent-light);
-  color: var(--accent);
-  border-color: var(--accent);
-}
-
-.btn--primary {
-  background: var(--accent);
-  color: white;
-  border-color: var(--accent);
-}
-
-.btn--primary:hover {
-  opacity: 0.88;
-}
-</style>

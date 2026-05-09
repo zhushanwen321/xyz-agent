@@ -50,50 +50,50 @@ function onBindChange(val: string) {
 </script>
 
 <template>
-  <div class="model-config__title">模型适配</div>
-  <div class="model-config">
-    <div class="model-config__row">
-      <span class="model-config__row-label">策略</span>
+  <div class="s-agent-model-config__title">模型适配</div>
+  <div class="s-agent-model-config">
+    <div class="s-agent-model-config__row">
+      <span class="s-agent-model-config__row-label">策略</span>
       <Select
-        class="model-config__select"
+        class="!h-8 !px-2.5 !py-1.5 !text-xs !rounded"
         :model-value="strategy"
         :options="strategyOptions"
         @update:model-value="onStrategyChange"
       />
     </div>
     <!-- Tag rows -->
-    <div v-if="strategy === 'tag'" class="model-config__row">
-      <span class="model-config__row-label">强力模型</span>
+    <div v-if="strategy === 'tag'" class="s-agent-model-config__row">
+      <span class="s-agent-model-config__row-label">强力模型</span>
       <Select
-        class="model-config__select"
+        class="!h-8 !px-2.5 !py-1.5 !text-xs !rounded"
         :model-value="modelTags?.power ?? ''"
         :options="allModelOptions"
         @update:model-value="onTagChange('power', $event)"
       />
     </div>
-    <div v-if="strategy === 'tag'" class="model-config__row">
-      <span class="model-config__row-label">高效模型</span>
+    <div v-if="strategy === 'tag'" class="s-agent-model-config__row">
+      <span class="s-agent-model-config__row-label">高效模型</span>
       <Select
-        class="model-config__select"
+        class="!h-8 !px-2.5 !py-1.5 !text-xs !rounded"
         :model-value="modelTags?.efficient ?? ''"
         :options="allModelOptions"
         @update:model-value="onTagChange('efficient', $event)"
       />
     </div>
-    <div v-if="strategy === 'tag'" class="model-config__row">
-      <span class="model-config__row-label">快速模型</span>
+    <div v-if="strategy === 'tag'" class="s-agent-model-config__row">
+      <span class="s-agent-model-config__row-label">快速模型</span>
       <Select
-        class="model-config__select"
+        class="!h-8 !px-2.5 !py-1.5 !text-xs !rounded"
         :model-value="modelTags?.fast ?? ''"
         :options="allModelOptions"
         @update:model-value="onTagChange('fast', $event)"
       />
     </div>
     <!-- Bind row -->
-    <div v-if="strategy === 'bind'" class="model-config__row">
-      <span class="model-config__row-label">绑定模型</span>
+    <div v-if="strategy === 'bind'" class="s-agent-model-config__row">
+      <span class="s-agent-model-config__row-label">绑定模型</span>
       <Select
-        class="model-config__select"
+        class="!h-8 !px-2.5 !py-1.5 !text-xs !rounded"
         :model-value="modelBind ?? ''"
         :options="bindModelOptions"
         @update:model-value="onBindChange"
@@ -102,42 +102,4 @@ function onBindChange(val: string) {
   </div>
 </template>
 
-<style scoped>
-.model-config__title {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--muted);
-  margin-bottom: 8px;
-}
 
-.model-config {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-  margin-bottom: 12px;
-}
-
-.model-config__row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border);
-}
-
-.model-config__row:last-child {
-  border-bottom: none;
-}
-
-.model-config__row-label {
-  font-size: 12px;
-  min-width: 60px;
-  font-weight: 500;
-}
-
-.model-config__select {
-  flex: 1;
-}
-</style>

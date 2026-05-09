@@ -88,9 +88,9 @@ function handleSave(_data: {
 </script>
 
 <template>
-  <div class="provider-pane">
-    <div class="page__hd">
-      <div class="page__title">供应商配置</div>
+  <div class="s-page">
+    <div class="s-page__hd">
+      <div class="s-page__title">供应商配置</div>
       <Button
         variant="primary"
         @click="editingProvider = null; showModal = true"
@@ -103,14 +103,14 @@ function handleSave(_data: {
     </div>
 
     <!-- Empty state -->
-    <div v-if="providers.length === 0" class="empty-state">
-      <div class="empty-state__icon">
+    <div v-if="providers.length === 0" class="s-empty">
+      <div class="s-empty__icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
           <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
         </svg>
       </div>
-      <div class="empty-state__title">尚未配置任何供应商</div>
-      <div class="empty-state__desc">添加供应商后，可以配置模型并分配给 Agent 使用。支持 Anthropic、OpenAI、Google、DeepSeek、Ollama 等。</div>
+      <div class="s-empty__title">尚未配置任何供应商</div>
+      <div class="s-empty__desc">添加供应商后，可以配置模型并分配给 Agent 使用。支持 Anthropic、OpenAI、Google、DeepSeek、Ollama 等。</div>
       <Button
         variant="primary"
         @click="editingProvider = null; showModal = true"
@@ -147,100 +147,3 @@ function handleSave(_data: {
     />
   </div>
 </template>
-
-<style scoped>
-.provider-pane {
-  max-width: 860px;
-  padding: 32px 40px;
-}
-
-.page__hd {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 28px;
-}
-
-.page__title {
-  font-family: var(--font-display);
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-}
-
-/* Empty state */
-.empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 80px 40px;
-  text-align: center;
-}
-
-.empty-state__icon {
-  font-size: 40px;
-  color: var(--border);
-  margin-bottom: 16px;
-  width: 64px;
-  height: 64px;
-  border-radius: 50%;
-  background: var(--surface);
-  border: 2px dashed var(--border);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.empty-state__icon svg {
-  width: 28px;
-  height: 28px;
-  stroke: var(--muted);
-}
-
-.empty-state__title {
-  font-size: 16px;
-  font-weight: 600;
-  margin-bottom: 6px;
-}
-
-.empty-state__desc {
-  font-size: 13px;
-  color: var(--muted);
-  max-width: 360px;
-  margin-bottom: 24px;
-}
-
-/* Buttons */
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 18px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--muted);
-  font-size: 13px;
-  font-family: var(--font-body);
-  cursor: pointer;
-  transition: all 0.2s var(--ease);
-  white-space: nowrap;
-}
-
-.btn:hover {
-  background: var(--accent-light);
-  color: var(--accent);
-  border-color: var(--accent);
-}
-
-.btn--primary {
-  background: var(--accent);
-  color: white;
-  border-color: var(--accent);
-}
-
-.btn--primary:hover {
-  opacity: 0.88;
-}
-</style>

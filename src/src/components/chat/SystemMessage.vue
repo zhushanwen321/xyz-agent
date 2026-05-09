@@ -27,16 +27,17 @@ defineEmits<{
 <style scoped>
 .msg--system {
   align-self: stretch;
-  max-width: 100%;
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--success);
-  background: var(--surface);
+  width: 100%;
+  max-width: none;
+  border: 1px solid oklch(80% 0.02 145);
+  background: oklch(97% 0.02 145);
   border-radius: var(--radius-sm);
   padding: 10px 14px;
   font-size: 13px;
   display: flex;
   align-items: flex-start;
   gap: 10px;
+  box-sizing: border-box;
 }
 .msg--system--alert { border-left-color: var(--danger); }
 .msg--system__dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 4px; }

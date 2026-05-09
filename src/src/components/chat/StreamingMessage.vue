@@ -13,7 +13,7 @@ defineProps<{ message: Message | null; isStreaming: boolean }>()
 </script>
 
 <style scoped>
-.streaming-msg { display: flex; align-items: flex-start; gap: 4px; padding: 0 24px 12px; }
+.streaming-msg { display: flex; align-items: flex-start; gap: 4px; }
 .streaming-cursor { animation: blink 1s step-end infinite; color: var(--accent); font-size: 14px; }
 @keyframes blink { 50% { opacity: 0; } }
 </style>

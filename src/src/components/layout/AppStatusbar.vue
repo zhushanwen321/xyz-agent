@@ -1,6 +1,6 @@
 <template>
   <footer class="statusbar">
-    <span class="status-dot" :style="{ background: dotColor }"></span>
+    <span class="statusbar__dot" :style="{ background: dotColor }"></span>
     <span>{{ statusText }}</span>
     <span>{{ sessionStore.currentSession?.cwd || '' }}</span>
     <span>{{ gitBranch || 'main' }}</span>
@@ -47,13 +47,7 @@ const statusText = computed(() => {
 </script>
 
 <style scoped>
-.statusbar {
-  display: flex; align-items: center; height: var(--statusbar-h);
-  padding: 0 16px; background: var(--surface);
-  border-top: 1px solid var(--border);
-  font-size: 11px; color: var(--muted); gap: 14px;
-}
-.status-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; background: var(--success); }
+.statusbar { flex-shrink: 0; }
 .statusbar-spacer { flex: 1; }
 .statusbar-hints { opacity: 0.5; }
 .statusbar-hints kbd {

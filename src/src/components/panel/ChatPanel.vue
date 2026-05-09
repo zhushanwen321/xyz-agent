@@ -172,14 +172,27 @@ function switchAgent(id: string) {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  position: relative;
 }
 .agent-view {
-  display: none;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 0.2s var(--ease);
+  overflow-y: auto;
+  display: flex;
   flex-direction: column;
   gap: 14px;
+  padding: 20px 24px;
 }
 .agent-view.active {
-  display: flex;
+  visibility: visible;
+  opacity: 1;
+  z-index: 1;
 }
 .chat-empty {
   display: flex;

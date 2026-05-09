@@ -10,26 +10,29 @@
     </div>
     <div class="alert-item__bd">
       <div class="alert-item__question">{{ question }}</div>
-      <div class="inline-reply">
-        <Textarea
-          v-model="replyText"
-          class="inline-reply__field"
-          placeholder="输入回复…"
-          :rows="1"
-          :style="{ border: 'none', background: 'transparent' }"
-          @keydown.enter.prevent="sendReply"
-        />
-        <Button variant="primary" class="inline-reply__btn" @click="sendReply">发送</Button>
-      </div>
+      <template v-if="simple">
+        <div class="inline-reply">
+          <textarea
+            v-model="replyText"
+            class="inline-reply__field"
+            placeholder="直接回复…"
+            rows="1"
+            @keydown.enter.prevent="sendReply"
+          ></textarea>
+          <button class="inline-reply__btn" @click="sendReply">回复</button>
+        </div>
+      </template>
+      <template v-else>
+        <span class="inline-reply__link" @click="$emit('view')">查看详情并回复 →</span>
+      </template>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Textarea, Button } from '../../design-system'
 
-defineProps<{
+const props = defineProps<{
   id: string
   name: string
   session?: string
@@ -48,7 +51,7 @@ const replyText = ref('')
 function sendReply() {
   const msg = replyText.value.trim()
   if (!msg) return
-  emit('reply', { id: '', message: msg })
+  emit('reply', { id: props.id, message: msg })
   replyText.value = ''
 }
 </script>

@@ -1,27 +1,26 @@
 <template>
   <div class="tree-root">
-    <div
-      v-for="node in nodes"
-      :key="node.id"
-      class="tree-node"
-      :class="{ active: node.id === activeNodeId }"
-      @click="$emit('navigate', node.id)"
-    >
-      <span class="tree-node__dot" :class="`dot--${node.status || 'idle'}`"></span>
-      <span class="tree-node__label">{{ node.label }}</span>
-      <span v-if="node.meta" class="tree-node__meta">{{ node.meta }}</span>
-      <Button variant="ghost" class="tree-node__kill" @click.stop="$emit('kill', node.id)">终止</Button>
-    </div>
+    <template v-for="node in nodes" :key="node.id">
+      <TreeNodeItem
+        :node="node"
+        :active-node-id="activeNodeId"
+        :depth="0"
+        @navigate="$emit('navigate', $event)"
+        @kill="$emit('kill', $event)"
+      />
+    </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { Button } from '../../design-system'
+import TreeNodeItem from './TreeNodeItem.vue'
+
 interface TreeNode {
   id: string
   label: string
   status?: string
   meta?: string
+  bold?: boolean
   children?: TreeNode[]
 }
 

@@ -9,7 +9,7 @@
       <div v-if="duration" class="done-item__meta">{{ duration }}</div>
     </div>
     <div class="done-item__action">
-      <a class="done-item__link" @click.prevent="$emit('view')">查看结果 →</a>
+      <span class="done-item__link" @click="$emit('view')">查看详情 →</span>
     </div>
   </div>
 </template>

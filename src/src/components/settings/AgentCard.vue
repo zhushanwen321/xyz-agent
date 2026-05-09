@@ -52,30 +52,25 @@ function handleSave() {
 </script>
 
 <template>
-  <div :class="['agent-card', { expanded, disabled: !agent.enabled }]">
-    <div class="agent-card__hd" @click="$emit('toggle')">
+  <div :class="['s-agent-card', { expanded, disabled: !agent.enabled }]">
+    <div class="s-agent-card__hd" @click="$emit('toggle')">
       <ToggleSwitch
         :model-value="agent.enabled"
         @update:model-value="$emit('toggle-enabled')"
         @click.stop
       />
-      <div class="agent-card__info">
-        <div class="agent-card__name">{{ agent.name }}</div>
-        <div class="agent-card__desc">{{ agent.description }}</div>
-        <div class="agent-card__source">{{ agent.source ?? agent.id }}</div>>
+      <div class="s-agent-card__info">
+        <div class="s-agent-card__name">{{ agent.name }}</div>
+        <div class="s-agent-card__desc">{{ agent.description }}</div>
+        <div class="s-agent-card__source">{{ agent.source ?? agent.id }}</div>
       </div>
-      <div class="agent-card__actions" @click.stop>
-        <!-- Edit -->
-        <Button variant="ghost" class="icon-btn" title="编辑" @click="showEditor = !showEditor">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-        </Button>
-        <!-- Delete -->
-        <Button variant="ghost" class="icon-btn icon-btn--danger" title="删除" @click="$emit('delete', agent.name)">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
-        </Button>
+      <div class="s-agent-card__actions" @click.stop>
+        <Button variant="ghost" size="sm" @click="showEditor = !showEditor">编辑</Button>
+        <Button variant="ghost" size="sm" class="hover:!text-[var(--danger)] hover:!border-[var(--danger)] hover:!bg-[var(--danger-light)]" @click="$emit('delete', agent.name)">删除</Button>
       </div>
+      <span class="s-agent-card__chevron">▾</span>
     </div>
-    <div class="agent-card__bd">
+    <div class="s-agent-card__bd">
       <MetaGrid :items="metaItems" />
       <ModelStrategyConfig
         :strategy="(agent.modelStrategy as 'auto' | 'tag' | 'bind')"
@@ -97,54 +92,3 @@ function handleSave() {
   </div>
 </template>
 
-<style scoped>
-.agent-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  margin-bottom: 12px;
-  overflow: hidden;
-  transition: border-color 0.2s var(--ease);
-}
-.agent-card:hover { border-color: oklch(80% 0.01 70); }
-.agent-card.disabled { opacity: 0.6; }
-
-.agent-card__hd {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 18px;
-  cursor: pointer;
-}
-.agent-card__info { flex: 1; min-width: 0; }
-.agent-card__name { font-size: 14px; font-weight: 600; }
-.agent-card__desc {
-  font-size: 12px;
-  color: var(--muted);
-  margin-top: 2px;
-  display: -webkit-box;
-  -webkit-line-clamp: 1;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-.agent-card__source {
-  font-size: 11px;
-  color: var(--muted);
-  font-family: var(--font-mono);
-  margin-top: 2px;
-}
-.agent-card__actions { display: flex; gap: 2px; flex-shrink: 0; }
-.agent-card__bd { padding: 0 18px 16px; display: none; }
-.agent-card.expanded .agent-card__bd { display: block; }
-
-/* Icon buttons */
-.icon-btn {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 28px; height: 28px; border-radius: var(--radius-xs);
-  border: none; background: transparent; color: var(--muted);
-  cursor: pointer; transition: all 0.15s var(--ease);
-}
-.icon-btn svg { width: 15px; height: 15px; }
-.icon-btn:hover { background: var(--accent-light); color: var(--accent); }
-.icon-btn--danger:hover { background: var(--danger-light); color: var(--danger); }
-</style>

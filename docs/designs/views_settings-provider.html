@@ -32,6 +32,17 @@ body{font-family:var(--font-body);font-size:14px;line-height:1.6;background:var(
 .empty-state__desc{font-size:13px;color:var(--muted);max-width:360px;margin-bottom:24px}
 .provider-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:16px;overflow:hidden;transition:border-color 0.2s var(--ease)}
 .provider-card:hover{border-color:oklch(80% 0.01 70)}
+.provider-card__toggle{width:36px;height:20px;border-radius:10px;background:var(--success);position:relative;cursor:pointer;transition:background 0.2s var(--ease);flex-shrink:0}
+.provider-card__toggle::after{content:'';position:absolute;top:2px;left:18px;width:16px;height:16px;border-radius:50%;background:white;transition:left 0.2s var(--ease)}
+.provider-card__toggle.off{background:var(--border)}
+.provider-card__toggle.off::after{left:2px}
+.model-row__toggle{width:28px;height:16px;border-radius:8px;background:var(--success);position:relative;cursor:pointer;transition:background 0.2s var(--ease);flex-shrink:0}
+.model-row__toggle::after{content:'';position:absolute;top:2px;left:14px;width:12px;height:12px;border-radius:50%;background:white;transition:left 0.2s var(--ease)}
+.model-row__toggle.off{background:var(--border)}
+.model-row__toggle.off::after{left:2px}
+.provider-card__chevron{font-size:10px;color:var(--muted);transition:transform 0.2s var(--ease);margin-left:4px}
+.provider-card.expanded .provider-card__chevron{transform:rotate(180deg)}
+.btn--danger:hover{background:var(--danger-light);color:var(--danger);border-color:var(--danger)}
 .provider-card__hd{display:flex;align-items:center;gap:12px;padding:16px 20px;cursor:pointer;user-select:none}
 .provider-card__icon{width:36px;height:36px;border-radius:var(--radius-sm);background:var(--accent-light);display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:700;font-size:14px;color:var(--accent);flex-shrink:0}
 .provider-card__info{flex:1;min-width:0}
@@ -121,6 +132,7 @@ body{font-family:var(--font-body);font-size:14px;line-height:1.6;background:var(
   <div id="providerList" class="hidden">
     <div class="provider-card expanded" id="provider-anthropic">
       <div class="provider-card__hd" onclick="toggleCard(this)">
+        <div class="provider-card__toggle" onclick="event.stopPropagation();toggleProvider(this)"></div>
         <div class="provider-card__icon">A</div>
         <div class="provider-card__info">
           <div class="provider-card__name"><span class="status-dot status-dot--ok"></span> Anthropic</div>
@@ -131,6 +143,7 @@ body{font-family:var(--font-body);font-size:14px;line-height:1.6;background:var(
           <button class="btn btn--ghost btn--sm" onclick="event.stopPropagation();openModal('anthropic')">编辑</button>
           <button class="btn btn--ghost btn--sm btn--danger" onclick="event.stopPropagation();deleteProvider('anthropic')">删除</button>
         </div>
+        <span class="provider-card__chevron">▾</span>
       </div>
       <div class="provider-card__bd">
         <div class="section-divider">模型配置</div>
@@ -166,8 +179,9 @@ body{font-family:var(--font-body);font-size:14px;line-height:1.6;background:var(
       </div>
     </div>
 
-    <div class="provider-card" id="provider-openai">
+      <div class="provider-card" id="provider-openai">
       <div class="provider-card__hd" onclick="toggleCard(this)">
+        <div class="provider-card__toggle" onclick="event.stopPropagation();toggleProvider(this)"></div>
         <div class="provider-card__icon">O</div>
         <div class="provider-card__info">
           <div class="provider-card__name"><span class="status-dot status-dot--ok"></span> OpenAI</div>

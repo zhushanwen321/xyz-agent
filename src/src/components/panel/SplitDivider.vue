@@ -48,16 +48,18 @@ onUnmounted(() => {
 <style scoped>
 .split-divider {
   width: 4px;
-  background: transparent;
+  background: var(--border);
   cursor: col-resize;
   flex-shrink: 0;
   position: relative;
   z-index: 5;
-  transition: background 0.15s var(--ease, ease);
+  transition: background 0.15s var(--ease, ease), opacity 0.15s var(--ease, ease);
+  opacity: 0.3;
 }
 .split-divider:hover,
 .split-divider.dragging {
   background: var(--accent);
+  opacity: 1;
 }
 .split-divider::after {
   content: '';
@@ -68,10 +70,10 @@ onUnmounted(() => {
   width: 2px;
   height: 32px;
   border-radius: 1px;
-  background: var(--border);
+  background: transparent;
 }
 .split-divider:hover::after,
 .split-divider.dragging::after {
-  background: var(--accent);
+  background: transparent;
 }
 </style>

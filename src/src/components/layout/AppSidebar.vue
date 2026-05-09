@@ -125,10 +125,10 @@ function cancelRename() {
 
 <template>
   <aside :class="['sidebar', { collapsed }]">
-    <div class="sidebar-hd">
-      <span v-if="!collapsed" class="sidebar-title">{{ t('sidebar.sessions') }}</span>
-      <Button variant="ghost" class="sidebar-add" @click="$emit('create')">+</Button>
-      <Button variant="ghost" class="sidebar-toggle" @click="toggleCollapse" :aria-label="collapsed ? t('sidebar.expand') : t('sidebar.collapse')">
+    <div class="sidebar__hd">
+      <span v-if="!collapsed" class="sidebar__hd-title">{{ t('sidebar.sessions') }}</span>
+      <Button variant="ghost" class="sidebar__hd-btn" @click="$emit('create')">+</Button>
+      <Button variant="ghost" class="sidebar__hd-btn" @click="toggleCollapse" :aria-label="collapsed ? t('sidebar.expand') : t('sidebar.collapse')">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
           <polyline v-if="collapsed" points="10,3 5,8 10,13" />
           <polyline v-else points="6,3 11,8 6,13" />
@@ -221,33 +221,10 @@ function cancelRename() {
   flex-shrink: 0;
   transition: width 0.25s var(--ease);
 }
-.sidebar.collapsed { width: 48px; }
-.sidebar-hd {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 14px; border-bottom: 1px solid var(--border);
-}
-.sidebar.collapsed .sidebar-hd { justify-content: center; gap: 0; }
-.sidebar-title {
-  font-size: 11px; font-weight: 600;
-  text-transform: uppercase; letter-spacing: 0.06em;
-  color: var(--muted);
-}
-.sidebar-add {
-  width: 22px; height: 22px; border-radius: var(--radius-xs);
-  border: 1px solid var(--border); background: transparent;
-  cursor: pointer; display: flex; align-items: center; justify-content: center;
-  color: var(--muted); font-size: 13px;
-  transition: all 0.2s var(--ease);
-}
-.sidebar-add:hover { background: var(--accent-light); color: var(--accent); border-color: var(--accent); }
-.sidebar-toggle {
-  width: 22px; height: 22px; border-radius: var(--radius-xs);
-  border: 1px solid var(--border); background: transparent; cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  color: var(--muted); transition: all 0.2s var(--ease);
-}
-.sidebar-toggle:hover { background: var(--accent-light); color: var(--accent); border-color: var(--accent); }
-.sidebar-toggle svg { width: 14px; height: 14px; }
+.sidebar.collapsed { width: 0; border-right: none; overflow: hidden; }
+.sidebar.collapsed .sidebar__hd { opacity: 0; }
+/* sidebar__hd, sidebar__hd-title, sidebar__hd-btn are defined in global CSS */
+.sidebar__hd-btn svg { width: 14px; height: 14px; }
 .sidebar-list { flex: 1; overflow-y: auto; padding: 6px 0; }
 .group-header {
   display: flex; align-items: center; gap: 5px;
@@ -284,5 +261,4 @@ function cancelRename() {
 .dialog-actions {
   display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px;
 }
-@keyframes dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 </style>
