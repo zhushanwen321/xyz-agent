@@ -83,12 +83,14 @@ const toasts = ref<ToastItem[]>([])
 async function createSession() {
   try {
     const result = await invoke<{ path: string | null; cancelled: boolean }>('pick_folder')
-    console.log('[createSession] pick_folder result:', result)
-    if (result.cancelled || !result.path) return
+    if (result.cancelled || !result.path) {
+      console.log('[createSession] cancelled or no path')
+      return
+    }
     console.log('[createSession] creating session with cwd:', result.path)
     doCreateSession(result.path)
   } catch (e) {
-    console.error('[createSession] Failed to pick folder:', e)
+    console.error('[createSession] Failed:', e)
   }
 }
 

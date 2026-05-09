@@ -149,7 +149,9 @@ export class SidecarServer {
         // ── Session management ──────────────────────────────────
         case 'session.create': {
           const cwd = msg.payload.cwd as string | undefined
+          console.log('[server] session.create cwd:', cwd)
           const session = await this.pool.create(cwd)
+          console.log('[server] session.created:', session.id)
           this.send(ws, { type: 'session.created', id: msg.id, payload: { session } })
           this.broadcastSessionList()
           break

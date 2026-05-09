@@ -50,6 +50,7 @@ export function useSession() {
   function onSessionCreated(msg: ServerMessage) {
     const payload = msg.payload as { session: { id: string; label?: string; cwd: string } }
     const session = payload.session
+    console.log('[useSession] onSessionCreated:', session?.id, session?.cwd)
     if (!session) return
     sessionStore.addSession({
       id: session.id,
