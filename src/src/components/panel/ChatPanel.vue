@@ -64,12 +64,6 @@
           @deny="$emit('deny', $event)"
           @always-allow="$emit('always-allow', $event)"
         />
-
-        <!-- Error banner -->
-        <div v-if="error" class="chat-error">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="7"/><line x1="8" y1="5" x2="8" y2="8"/><line x1="8" y1="11" x2="8.01" y2="11"/></svg>
-          <span class="chat-error__text">{{ error }}</span>
-        </div>
       </template>
     </div>
 
@@ -127,7 +121,6 @@ const props = withDefaults(
     streamingMessage: Message | null
     isStreaming: boolean
     pendingApproval: PendingToolCall | null
-    error: string | null
     doneCount: number
     alertCount: number
     showClose: boolean
@@ -136,7 +129,6 @@ const props = withDefaults(
     agentOptions: () => [],
     agentViews: () => [],
     messages: () => [],
-    error: null,
     doneCount: 0,
     alertCount: 0,
     showClose: false,
@@ -275,26 +267,5 @@ function switchAgent(id: string) {
 }
 @media (prefers-reduced-motion: reduce) {
   .thinking-indicator__dot { animation: none; opacity: 0.6; }
-}
-
-/* Error banner */
-.chat-error {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 10px 14px;
-  background: var(--danger-light, #fef2f2);
-  border: 1px solid var(--danger, #ef4444);
-  border-radius: var(--radius);
-  color: var(--danger, #ef4444);
-  font-size: 13px;
-  line-height: 1.5;
-}
-.chat-error svg {
-  flex-shrink: 0;
-  margin-top: 2px;
-}
-.chat-error__text {
-  flex: 1;
 }
 </style>

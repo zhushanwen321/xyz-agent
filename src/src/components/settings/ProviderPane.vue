@@ -87,7 +87,9 @@ function handleSave(_data: {
   // 编辑时使用原始 providerId，新增时从名称生成
   const { providerId: _pid, ...rest } = _data
   const providerId = _pid || _data.name.toLowerCase().replace(/\s+/g, '-')
-  send({ type: 'config.setProvider', payload: { providerId, ...rest } })
+  // Map form fields to config-store field names
+  const { url, key, ...configData } = rest
+  send({ type: 'config.setProvider', payload: { providerId, baseUrl: url, apiKey: key, ...configData } })
   showModal.value = false
   editingProvider.value = null
 }

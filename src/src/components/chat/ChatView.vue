@@ -7,7 +7,6 @@
     :streaming-message="chatStore.streamingMessage"
     :is-streaming="chatStore.isGenerating"
     :pending-approval="pendingApproval"
-    :error="chatStore.error"
     :done-count="chatStore.doneCount"
     :alert-count="chatStore.alertCount"
     :show-close="settingsStore.splitMode"
@@ -123,22 +122,32 @@ function handleToolApprovalRequest(msg: { payload: PendingToolCall }) {
 }
 
 function handleErrorMessage(msg: ServerMessage) {
-  const payload = msg.payload as { message?: string; code?: string }
+  const payload = msg.payload as { message?: string; code?: string; sessionId?: string }
   console.error('[ChatView] Error from server:', payload)
-  if (payload.message) {
-    chatStore.setError(payload.message)
-  }
+  const errMsg = payload.message ?? 'Unknown error'
+
+  // Reset generating state
+  chatStore.setGenerating(false)
+  chatStore.setStreaming(null)
+  chatStore.setError(null)
+
+  // Insert error as an assistant message in the chat flow
+  chatStore.addMessage({
+    id: crypto.randomUUID(),
+    role: 'assistant',
+    content: `**Error:** ${errMsg}`,
+    status: 'error',
+    timestamp: Date.now(),
+  })
 }
 
 onMounted(() => {
   on('tool.approval_request', handleToolApprovalRequest)
   on('error', handleErrorMessage)
-  on('message.error', handleErrorMessage)
 })
 
 onUnmounted(() => {
   off('tool.approval_request', handleToolApprovalRequest)
   off('error', handleErrorMessage)
-  off('message.error', handleErrorMessage)
 })
 </script>

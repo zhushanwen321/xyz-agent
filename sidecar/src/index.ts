@@ -7,6 +7,8 @@ function parseArgs(): { port: number } {
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--port' && i + 1 < args.length) {
       port = parseInt(args[i + 1], 10)
+    } else if (args[i].startsWith('--port=')) {
+      port = parseInt(args[i].split('=')[1], 10)
     }
   }
   return { port }

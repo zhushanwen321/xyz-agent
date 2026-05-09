@@ -162,10 +162,14 @@ export class SessionPool {
       await client.prompt(content)
       console.log(`[session-pool] prompt acknowledged: sessionId=${sessionId}`)
     } catch (e) {
-      // prompt 失败（进程崩溃等），重置生成状态
+      const errMsg = e instanceof Error ? e.message : String(e)
+      console.error(`[session-pool] prompt failed: sessionId=${sessionId}`, errMsg)
       session.isGenerating = false
-      console.error(`[session-pool] prompt failed: sessionId=${sessionId}`, e)
-      throw e
+      // Push error as message.error with sessionId so frontend can match it
+      this.send({
+        type: 'message.error',
+        payload: { sessionId, message: errMsg },
+      })
     }
   }
 

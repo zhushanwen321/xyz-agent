@@ -101,8 +101,10 @@ export function send(msg: ClientMessage): void {
     return
   }
   if (ws?.readyState === WebSocket.OPEN) {
+    console.debug('[ws] send:', msg.type, msg.payload)
     ws.send(JSON.stringify(msg))
   } else {
+    console.warn('[ws] queuing message (ws not open):', msg.type)
     messageQueue.push(msg)
   }
 }

@@ -14,8 +14,13 @@ export function useChat() {
 
   function sendMessage(content: string) {
     const sid = sessionStore.currentSessionId
-    if (!sid) return
+    if (!sid) {
+      console.warn('[useChat] sendMessage skipped: no currentSessionId')
+      return
+    }
+    console.log('[useChat] sendMessage:', { sessionId: sid, contentLength: content.length })
     store.setGenerating(true)
+    store.setError(null)
     send({ type: 'message.send', payload: { sessionId: sid, content } })
   }
 
@@ -86,12 +91,24 @@ export function useChat() {
 
   function onComplete(msg: ServerMessage) {
     if (!isForCurrentSession(msg)) return
+    console.log('[useChat] message.complete:', msg.payload)
     store.completeStreaming()
   }
 
   function onError(msg: ServerMessage) {
     if (!isForCurrentSession(msg)) return
+    const errMsg = (msg.payload as { message?: string }).message ?? 'Unknown error'
+    console.error('[useChat] message.error:', errMsg)
     store.setGenerating(false)
+    store.setStreaming(null)
+    store.setError(null)
+    store.addMessage({
+      id: crypto.randomUUID(),
+      role: 'assistant',
+      content: `**Error:** ${errMsg}`,
+      status: 'error' as const,
+      timestamp: Date.now(),
+    })
   }
 
   function onContextUpdate(msg: ServerMessage) {

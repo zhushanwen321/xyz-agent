@@ -29,7 +29,7 @@ const DEFAULT_TEMPERATURE = 0.7
 
 const DEFAULTS: Readonly<AppConfig> = {
   defaults: {
-    model: 'anthropic/claude-sonnet',
+    model: '',  // Will be resolved from pi config at runtime
     thinkingMode: 'high',
     temperature: DEFAULT_TEMPERATURE,
   },
@@ -140,6 +140,38 @@ export function buildProviderEnv(providerId: string): Record<string, string> {
   return env
 }
 
+/**
+ * Read available models from pi's models.json and return the first one
+ * in "provider/modelId" format. Falls back to config defaults.
+ */
+function readPiDefaultModel(): string | null {
+  try {
+    const piModelsPath = join(homedir(), '.pi', 'agent', 'models.json')
+    if (!existsSync(piModelsPath)) return null
+    const raw = readFileSync(piModelsPath, 'utf-8')
+    const parsed = JSON.parse(raw)
+    const providers = parsed?.providers
+    if (!providers || typeof providers !== 'object') return null
+    // Take the first provider with models
+    for (const [providerId, prov] of Object.entries(providers)) {
+      const p = prov as { models?: Array<{ id: string }> }
+      if (Array.isArray(p.models) && p.models.length > 0) {
+        return `${providerId}/${p.models[0].id}`
+      }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
 export function getDefaultModel(): string {
-  return loadConfig().defaults.model
+  const configDefault = loadConfig().defaults.model
+  // Only use config default if it's a non-empty, non-anthropically-hardcoded value
+  if (configDefault && configDefault !== 'anthropic/claude-sonnet') return configDefault
+  // Fallback: read from pi's models.json
+  const piModel = readPiDefaultModel()
+  if (piModel) return piModel
+  // Last resort
+  return configDefault || 'anthropic/claude-sonnet'
 }
