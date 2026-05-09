@@ -13,7 +13,6 @@ const sessionStore = useSessionStore()
 defineEmits<{ create: [] }>()
 
 const searchQuery = ref('')
-const collapsed = ref(false)
 const deleteTarget = ref<string | null>(null)
 const renameTarget = ref<string | null>(null)
 const renameValue = ref('')
@@ -88,10 +87,6 @@ function asSession(item: VirtualItem) {
   return item as { type: 'session'; session: SessionSummary }
 }
 
-function toggleCollapse() {
-  collapsed.value = !collapsed.value
-}
-
 function confirmDelete() {
   if (deleteTarget.value) {
     sessionStore.removeSession(deleteTarget.value)
@@ -124,19 +119,13 @@ function cancelRename() {
 </script>
 
 <template>
-  <aside :class="['sidebar', { collapsed }]">
+  <aside class="sidebar">
     <div class="sidebar__hd">
-      <span v-if="!collapsed" class="sidebar__hd-title">{{ t('sidebar.sessions') }}</span>
-      <Button variant="ghost" class="sidebar__hd-btn" @click="$emit('create')">+</Button>
-      <Button variant="ghost" class="sidebar__hd-btn" @click="toggleCollapse" :aria-label="collapsed ? t('sidebar.expand') : t('sidebar.collapse')">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-          <polyline v-if="collapsed" points="10,3 5,8 10,13" />
-          <polyline v-else points="6,3 11,8 6,13" />
-        </svg>
-      </Button>
+      <span class="sidebar__hd-title">{{ t('sidebar.sessions') }}</span>
+      <button class="sidebar__hd-btn" @click="$emit('create')">+</button>
     </div>
 
-    <template v-if="!collapsed">
+    <template>
       <!-- TODO: search disabled per design -->
       <!-- <SessionSearch v-model="searchQuery" /> -->
 
@@ -209,13 +198,9 @@ function cancelRename() {
   background: var(--surface);
   border-right: 1px solid var(--border);
   flex-shrink: 0;
-  transition: width 0.25s var(--ease);
 }
-.sidebar.collapsed { width: 0; border-right: none; overflow: hidden; }
-.sidebar.collapsed .sidebar__hd { opacity: 0; }
 /* sidebar__hd, sidebar__hd-title, sidebar__hd-btn are defined in global CSS */
 .sidebar__hd-btn svg { width: 14px; height: 14px; }
-.sidebar__body { flex: 1; overflow-y: auto; padding: 6px 0; }
 /* 分组头部与 css_design-system.css 的 .s-group__hd 对齐 */
 .s-group__hd {
   display: flex; align-items: center; gap: 5px;

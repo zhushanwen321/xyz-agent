@@ -53,6 +53,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import { useSettingsStore } from './stores/settings'
+import { useSessionStore } from './stores/session'
 import { useConnection } from './composables/useConnection'
 import { useProvider } from './composables/useProvider'
 import { useSession } from './composables/useSession'
@@ -73,15 +74,16 @@ import ToastContainer from './components/toast/ToastContainer.vue'
 const { init: initConnection, teardown: teardownConnection } = useConnection()
 // useProvider listens for WS config.provider* / model.* events
 useProvider()
-const { loadSessions } = useSession()
+const { loadSessions, createSession: doCreateSession } = useSession()
 
 const settingsStore = useSettingsStore()
+const sessionStore = useSessionStore()
 
 const toasts = ref<ToastItem[]>([])
 
 function createSession() {
-  // TODO: implement via useSession composable
-  console.log('create session')
+  const cwd = sessionStore.currentSession?.cwd ?? '/tmp'
+  doCreateSession(cwd)
 }
 
 function dismissToast(id: string) {
