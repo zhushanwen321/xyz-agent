@@ -80,11 +80,16 @@ const settingsStore = useSettingsStore()
 
 const toasts = ref<ToastItem[]>([])
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function createSession() {
   try {
-    const result = await invoke<{ path: string | null; cancelled: boolean }>('pick_folder')
-    if (result.cancelled || !result.path) return
-    doCreateSession(result.path)
+    const result = await invoke<any>('plugin:dialog|open', {
+      options: { directory: true, title: 'Select Working Directory', multiple: false },
+    })
+    // plugin:dialog|open returns { files?: string[], file?: string, folders?: string[], folder?: string }
+    const path = result?.folder ?? result?.path ?? null
+    if (!path) return
+    doCreateSession(path)
   } catch (e) {
     console.error('[createSession] Failed:', e)
   }
