@@ -364,15 +364,17 @@ export class SidecarServer {
             providerName: p.name,
           } as ModelInfo
         }
-        if (entry && typeof entry === 'object' && 'id' in entry && 'name' in entry) {
-          const meta = entry as { id: string; name: string; ctx?: string; tags?: string[] }
+        if (entry && typeof entry === 'object' && 'id' in entry) {
+          const meta = entry as { id: unknown; name: unknown; ctx?: unknown; tags?: unknown }
           return {
-            id: meta.id,
-            name: meta.name,
+            id: typeof meta.id === 'string' ? meta.id : String(meta.id),
+            name: typeof meta.name === 'string' ? meta.name : String(meta.name ?? meta.id),
             providerId: p.id,
             providerName: p.name,
-            tags: meta.tags ?? [],
-            contextWindow: this.parseCtxToNumber(meta.ctx),
+            tags: Array.isArray(meta.tags) ? meta.tags.filter(t => typeof t === 'string') : [],
+            contextWindow: this.parseCtxToNumber(
+              typeof meta.ctx === 'string' ? meta.ctx : undefined,
+            ),
           } as ModelInfo
         }
         // fallback：转为字符串
@@ -388,8 +390,11 @@ export class SidecarServer {
 
   private parseCtxToNumber(ctx?: string): number | undefined {
     if (!ctx || ctx === '--') return undefined
-    const match = ctx.match(/(\d+)/)
-    return match ? parseInt(match[1], 10) * 1000 : undefined
+    // 支持 "128K" → 128000, "200k" → 200000, "128000" → 128000, "--" → undefined
+    const match = ctx.match(/^(\d+(?:\.\d+)?)\s*([kK])?$/)
+    if (!match) return undefined
+    const num = parseFloat(match[1])
+    return match[2]?.toLowerCase() === 'k' ? Math.round(num * 1000) : Math.round(num)
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────
