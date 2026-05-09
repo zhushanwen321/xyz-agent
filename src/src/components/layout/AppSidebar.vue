@@ -122,7 +122,9 @@ function cancelRename() {
   <aside class="sidebar">
     <div class="sidebar__hd">
       <span class="sidebar__hd-title">{{ t('sidebar.sessions') }}</span>
-      <button class="sidebar__hd-btn" @click="$emit('create')">+</button>
+      <button class="sidebar__hd-btn" @click="$emit('create')" title="新建会话">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" style="width:14px;height:14px"><path d="M8 3v10M3 8h10"/></svg>
+      </button>
     </div>
 
     <template>

@@ -53,7 +53,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import { useSettingsStore } from './stores/settings'
-import { useSessionStore } from './stores/session'
+import { invoke } from '@tauri-apps/api/core'
 import { useConnection } from './composables/useConnection'
 import { useProvider } from './composables/useProvider'
 import { useSession } from './composables/useSession'
@@ -77,13 +77,17 @@ useProvider()
 const { loadSessions, createSession: doCreateSession } = useSession()
 
 const settingsStore = useSettingsStore()
-const sessionStore = useSessionStore()
 
 const toasts = ref<ToastItem[]>([])
 
-function createSession() {
-  const cwd = sessionStore.currentSession?.cwd ?? '/tmp'
-  doCreateSession(cwd)
+async function createSession() {
+  try {
+    const result = await invoke<{ path: string | null; cancelled: boolean }>('pick_folder')
+    if (result.cancelled || !result.path) return
+    doCreateSession(result.path)
+  } catch (e) {
+    console.error('Failed to pick folder:', e)
+  }
 }
 
 function dismissToast(id: string) {
