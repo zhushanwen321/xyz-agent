@@ -68,11 +68,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown))
     <div class="s-modal">
       <div class="s-modal__hd">
         <div class="s-modal__title">{{ skill ? '编辑 Skill' : '添加 Skill' }}</div>
-        <Button variant="ghost" class="s-modal__close" @click="$emit('close')">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M1 1l12 12M13 1L1 13" />
-          </svg>
-        </Button>
+        <Button variant="ghost" class="s-modal__close !h-7 !w-7 !border-0 !p-0" @click="$emit('close')">×</Button>
       </div>
 
       <div class="s-modal__bd">
