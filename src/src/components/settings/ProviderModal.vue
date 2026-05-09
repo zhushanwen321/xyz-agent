@@ -37,6 +37,7 @@ interface ModalFormData {
   url: string
   key: string
   models: ModalModel[]
+  providerId?: string
 }
 
 const formName = ref('')
@@ -46,6 +47,11 @@ const formKey = ref('')
 const testResult = ref<'none' | 'ok' | 'err'>('none')
 const testMessage = ref('')
 const modalModels = ref<ModalModel[]>([])
+
+// ─── Auto-discover state ────────────────────────────────────────
+
+const discoverStatus = ref<'idle' | 'loading' | 'error' | 'empty' | 'success'>('idle')
+const discoverMessage = ref('')
 const addModelName = ref('')
 const addModelCtx = ref('')
 
@@ -66,7 +72,7 @@ watch(() => props.visible, (v) => {
   if (v) {
     if (props.provider) {
       formName.value = props.provider.name
-      formType.value = props.provider.id === 'ollama' ? 'ollama' : props.provider.id
+      formType.value = props.provider.type ?? (props.provider.id === 'ollama' ? 'ollama' : props.provider.id)
       formUrl.value = props.provider.baseUrl ?? ''
       formKey.value = props.provider.apiKeySet ? '••••••••' : ''
     } else {
@@ -85,6 +91,8 @@ watch(() => props.visible, (v) => {
     testMessage.value = ''
     addModelName.value = ''
     addModelCtx.value = ''
+    discoverStatus.value = 'idle'
+    discoverMessage.value = ''
   }
 })
 
@@ -133,6 +141,100 @@ function handleTest() {
   emit('test', { url: formUrl.value, key: formKey.value })
 }
 
+// ─── Auto-discover ─────────────────────────────────────────────
+
+const DISCOVERY_DELAY_MS = 1500
+
+interface DiscoveredModel {
+  id: string
+  name: string
+  ctx: string
+}
+
+const typeModelMap: Record<string, DiscoveredModel[]> = {
+  anthropic: [
+    { id: 'claude-sonnet-4', name: 'claude-sonnet-4', ctx: '128K' },
+    { id: 'claude-opus-4', name: 'claude-opus-4', ctx: '200K' },
+    { id: 'claude-haiku-4', name: 'claude-haiku-4', ctx: '128K' },
+  ],
+  openai: [
+    { id: 'gpt-4o', name: 'gpt-4o', ctx: '128K' },
+    { id: 'gpt-4o-mini', name: 'gpt-4o-mini', ctx: '128K' },
+    { id: 'o3', name: 'o3', ctx: '200K' },
+  ],
+  deepseek: [
+    { id: 'deepseek-v4', name: 'deepseek-v4', ctx: '128K' },
+    { id: 'deepseek-v4-flash', name: 'deepseek-v4-flash', ctx: '128K' },
+  ],
+  google: [
+    { id: 'gemini-2.5-pro', name: 'gemini-2.5-pro', ctx: '1M' },
+    { id: 'gemini-2.5-flash', name: 'gemini-2.5-flash', ctx: '1M' },
+  ],
+  ollama: [
+    { id: 'qwen3-32b', name: 'qwen3:32b', ctx: '32K' },
+    { id: 'llama3-70b', name: 'llama3:70b', ctx: '32K' },
+  ],
+}
+
+function handleDiscover() {
+  discoverStatus.value = 'loading'
+  discoverMessage.value = ''
+
+  const type = formType.value
+  const baseUrl = formUrl.value.trim()
+
+  // 没有填写 URL
+  if (!baseUrl && type !== 'openai-compatible') {
+    const typeHint: Record<string, string> = {
+      anthropic: 'https://api.anthropic.com',
+      openai: 'https://api.openai.com',
+      deepseek: 'https://api.deepseek.com',
+      google: 'https://generativelanguage.googleapis.com',
+      ollama: 'http://localhost:11434',
+    }
+    setTimeout(() => {
+      discoverStatus.value = 'error'
+      discoverMessage.value = typeHint[type] ? `请先填写 Base URL（如 ${typeHint[type]}）` : '请先填写 Base URL'
+    }, DISCOVERY_DELAY_MS)
+    return
+  }
+
+  // API Key 为空且非本地模型
+  const key = formKey.value.trim()
+  if (!key || key === '••••••••') {
+    if (type !== 'ollama' && type !== 'openai-compatible') {
+      setTimeout(() => {
+        discoverStatus.value = 'error'
+        discoverMessage.value = '请先填写 API Key'
+      }, DISCOVERY_DELAY_MS)
+      return
+    }
+  }
+
+  // 模拟网络请求延迟
+  setTimeout(() => {
+    const models = typeModelMap[type]
+    if (models) {
+      // 成功发现模型
+      modalModels.value = models.map(m => ({
+        id: m.id,
+        name: m.name,
+        ctx: m.ctx,
+        tags: [],
+      }))
+      discoverStatus.value = 'success'
+      discoverMessage.value = `发现 ${models.length} 个可用模型`
+    } else if (type === 'openai-compatible') {
+      // OpenAI 兼容类型：模拟发现失败（返回空）
+      discoverStatus.value = 'empty'
+      discoverMessage.value = '未发现可用模型，请确保 Base URL 正确或手动添加'
+    } else {
+      discoverStatus.value = 'empty'
+      discoverMessage.value = '未发现可用模型'
+    }
+  }, DISCOVERY_DELAY_MS)
+}
+
 function handleSave() {
   emit('save', {
     name: formName.value,
@@ -140,6 +242,7 @@ function handleSave() {
     url: formUrl.value,
     key: formKey.value,
     models: [...modalModels.value],
+    providerId: props.provider?.id,
   })
 }
 
@@ -207,7 +310,18 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown))
           <div class="s-model-config__hd">
             <span class="s-model-config__title">已配置模型</span>
             <div class="s-model-config__actions">
-              <Button variant="outline" size="sm">自动发现</Button>
+              <span v-if="discoverStatus !== 'idle'" :class="['s-discover-msg', `s-discover-msg--${discoverStatus}`]">
+                <template v-if="discoverStatus === 'loading'">正在发现…</template>
+                <template v-else>{{ discoverMessage }}</template>
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                :disabled="discoverStatus === 'loading'"
+                @click="handleDiscover"
+              >
+                {{ discoverStatus === 'loading' ? '发现中…' : '自动发现' }}
+              </Button>
             </div>
           </div>
           <div class="s-model-config__list">

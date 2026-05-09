@@ -59,6 +59,8 @@ function toggleProvider(id: string) {
   const p = providers.value.find(p => p.id === id)
   if (p) {
     const newStatus = p.status === 'connected' ? 'not_configured' : 'connected'
+    // 乐观更新：先更新本地状态，实现即时 UI 反馈
+    providerStore.updateProvider(id, { status: newStatus })
     send({ type: 'config.setProvider', payload: { providerId: id, status: newStatus } })
   }
 }
@@ -80,8 +82,12 @@ function handleSave(_data: {
   url: string
   key: string
   models: { id: string; name: string; ctx: string; tags: string[] }[]
+  providerId?: string
 }) {
-  send({ type: 'config.setProvider', payload: { ..._data } })
+  // 编辑时使用原始 providerId，新增时从名称生成
+  const { providerId: _pid, ...rest } = _data
+  const providerId = _pid || _data.name.toLowerCase().replace(/\s+/g, '-')
+  send({ type: 'config.setProvider', payload: { providerId, ...rest } })
   showModal.value = false
   editingProvider.value = null
 }

@@ -37,6 +37,7 @@ function ensureCache(): ProviderInfo[] {
     providers.push({
       id,
       name: prov.name ?? id,
+      type: prov.type,
       status: getProviderStatus(id, !!prov.apiKey),
       models: prov.models ?? [],
       apiKeySet: !!prov.apiKey,
@@ -63,6 +64,7 @@ export function setProvider(
   providerId: string,
   data: {
     name?: string
+    type?: string
     apiKey?: string
     baseUrl?: string
     models?: string[]

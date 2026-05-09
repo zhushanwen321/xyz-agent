@@ -710,6 +710,19 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
   .s-test-result--ok { background: var(--success-light); color: var(--success); }
   .s-test-result--err { background: var(--danger-light); color: var(--danger); }
 
+  /* --- Discover Result --- */
+  .s-discover-msg {
+    font-size: 11px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+  }
+  .s-discover-msg--loading { color: var(--muted); }
+  .s-discover-msg--success { color: var(--success); }
+  .s-discover-msg--error   { color: var(--danger); }
+  .s-discover-msg--empty   { color: var(--warning); }
+
   /* --- Import Section (Skills) --- */
   .s-import-section { margin-bottom: 24px; }
   .s-import-section__title {

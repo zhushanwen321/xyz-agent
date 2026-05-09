@@ -205,6 +205,7 @@ export const mockProviders: MockProvider[] = [
   {
     id: 'anthropic',
     name: 'Anthropic',
+    type: 'anthropic',
     status: 'connected',
     models: ['claude-sonnet-4', 'claude-opus-4', 'claude-haiku-4'],
     apiKeySet: true,
@@ -214,6 +215,7 @@ export const mockProviders: MockProvider[] = [
   {
     id: 'openai',
     name: 'OpenAI',
+    type: 'openai',
     status: 'connected',
     models: ['gpt-4o', 'gpt-4o-mini', 'o3', 'o4-mini'],
     apiKeySet: true,
@@ -223,6 +225,7 @@ export const mockProviders: MockProvider[] = [
   {
     id: 'google',
     name: 'Google',
+    type: 'google',
     status: 'connected',
     models: ['gemini-2.5-pro', 'gemini-2.5-flash'],
     apiKeySet: true,
@@ -232,6 +235,7 @@ export const mockProviders: MockProvider[] = [
   {
     id: 'deepseek',
     name: 'DeepSeek',
+    type: 'deepseek',
     status: 'connected',
     models: ['deepseek-v4', 'deepseek-v4-flash'],
     apiKeySet: true,
@@ -241,6 +245,7 @@ export const mockProviders: MockProvider[] = [
   {
     id: 'ollama',
     name: '本地 Ollama',
+    type: 'ollama',
     status: 'not_configured',
     models: ['qwen3-32b'],
     apiKeySet: false,

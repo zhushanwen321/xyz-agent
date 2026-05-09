@@ -8,6 +8,8 @@ const activeTab = ref('providers')
 
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
+    // 如果有 modal 打开，让 modal 自己处理 Escape，不关闭设置页面
+    if (document.querySelector('.s-modal-overlay.visible')) return
     e.preventDefault()
     e.stopPropagation()
     settingsStore.setView('chat')

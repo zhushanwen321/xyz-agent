@@ -86,12 +86,65 @@ export function mockSend(msg: ClientMessage): void {
         id: p.id, name: p.name, status: p.status, models: p.models, apiKeySet: p.apiKeySet, baseUrl: p.baseUrl
       })) })
       break
-    case 'config.setProvider':
-      respond('config.providerUpdated', { providerId: msg.payload.providerId })
+    case 'config.setProvider': {
+      const pId = msg.payload.providerId as string | undefined
+      const pName = msg.payload.name as string | undefined
+      const pBaseUrl = msg.payload.url as string | undefined
+      const pKey = msg.payload.key as string | undefined
+      const pModelsRaw = msg.payload.models as unknown
+      const pType = msg.payload.type as string | undefined
+      const pStatus = msg.payload.status as string | undefined
+
+      // 将 model 对象数组转为 name 字符串数组
+      const toModelNames = (raw: unknown): string[] => {
+        if (!Array.isArray(raw)) return []
+        return raw.map(m => (typeof m === 'string' ? m : (m as { name: string }).name))
+      }
+      const pModels = toModelNames(pModelsRaw)
+
+      if (pId && pName) {
+        let existing = mockProviders.find(p => p.id === pId)
+        if (existing) {
+          existing.name = pName
+          if (pType) existing.type = pType
+          if (pBaseUrl !== undefined) existing.baseUrl = pBaseUrl
+          if (pKey && pKey !== '••••••••') existing.apiKeySet = true
+          if (pModels.length) existing.models = pModels
+        } else {
+          mockProviders.push({
+            id: pId,
+            name: pName,
+            type: pType ?? 'openai-compatible',
+            status: 'not_configured',
+            models: pModels,
+            apiKeySet: !!pKey && pKey !== '••••••••',
+            baseUrl: pBaseUrl ?? '',
+            icon: pName.charAt(0).toUpperCase(),
+          })
+        }
+      } else if (pId && pStatus) {
+        const target = mockProviders.find(p => p.id === pId)
+        if (target) target.status = pStatus as typeof target.status
+      }
+
+      respond('config.providerUpdated', { providerId: pId })
+      respond('config.providers', { providers: mockProviders.map(p => ({
+        id: p.id, name: p.name, type: p.type, status: p.status, models: p.models, apiKeySet: p.apiKeySet, baseUrl: p.baseUrl
+      })) })
       break
-    case 'config.deleteProvider':
-      respond('config.providerUpdated', { providerId: msg.payload.providerId })
+    }
+    case 'config.deleteProvider': {
+      const delId = msg.payload.providerId as string | undefined
+      if (delId) {
+        const idx = mockProviders.findIndex(p => p.id === delId)
+        if (idx >= 0) mockProviders.splice(idx, 1)
+      }
+      respond('config.providerUpdated', { providerId: delId })
+      respond('config.providers', { providers: mockProviders.map(p => ({
+        id: p.id, name: p.name, type: p.type, status: p.status, models: p.models, apiKeySet: p.apiKeySet, baseUrl: p.baseUrl
+      })) })
       break
+    }
     case 'config.setToolPermissions':
       // No-op in mock, would persist to config store
       break
@@ -123,7 +176,7 @@ function fireInitialData(): void {
   respond('session.list', { groups: mockSessionGroups })
   respond('session.history', { sessionId: DEFAULT_SESSION_ID, messages: mockMessages })
   respond('config.providers', { providers: mockProviders.map(p => ({
-    id: p.id, name: p.name, status: p.status, models: p.models, apiKeySet: p.apiKeySet, baseUrl: p.baseUrl
+    id: p.id, name: p.name, type: p.type, status: p.status, models: p.models, apiKeySet: p.apiKeySet, baseUrl: p.baseUrl
   })) })
   respond('model.list', { models: toModelInfos(mockModels) })
 

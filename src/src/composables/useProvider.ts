@@ -8,7 +8,10 @@ export function useProvider() {
   const store = useProviderStore()
 
   function onProviders(msg: ServerMessage) {
-    store.setProviders((msg.payload as { providers: ProviderInfo[] }).providers)
+    const payload = msg.payload as { providers?: ProviderInfo[] }
+    if (payload.providers) {
+      store.setProviders(payload.providers)
+    }
   }
 
   function onModels(msg: ServerMessage) {

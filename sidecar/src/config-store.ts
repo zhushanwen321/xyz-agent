@@ -8,6 +8,7 @@ const CONFIG_PATH = join(CONFIG_DIR, 'config.json')
 export interface ProviderConfig {
   name: string
   apiKey: string
+  type?: string
   baseUrl?: string
   models?: string[]
   enabled?: boolean
