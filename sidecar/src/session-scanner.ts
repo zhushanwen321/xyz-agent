@@ -3,7 +3,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { trash } from './trash.js'
 
-const SESSIONS_DIR = join(homedir(), '.pi', 'agent', 'sessions')
+const SESSIONS_DIR = join(homedir(), '.xyz-agent', 'sessions')
 
 export interface ScannedSession {
   /** Session UUID */
@@ -23,45 +23,38 @@ export interface ScannedSession {
 }
 
 /**
- * Scan ~/.pi/agent/sessions/ for all session files.
- * Each session file's first line is parsed for header metadata.
- * Optionally scans for session_info entries to get display names.
+ * Scan ~/.xyz-agent/sessions/ for all session files.
+ * Sessions are stored as flat .jsonl files (no subdirectory grouping).
+ * Each file's first line is parsed for header metadata.
  */
 export function scanSessions(): ScannedSession[] {
   if (!existsSync(SESSIONS_DIR)) return []
 
   const results: ScannedSession[] = []
 
-  // Top-level dirs are encoded cwd paths like --Users-xxx-Code-project--
-  const cwdDirs = readdirSync(SESSIONS_DIR, { withFileTypes: true })
-    .filter(d => d.isDirectory() && d.name.startsWith('--'))
+  const files = readdirSync(SESSIONS_DIR)
+    .filter(f => f.endsWith('.jsonl'))
 
-  for (const cwdDir of cwdDirs) {
-    const dirPath = join(SESSIONS_DIR, cwdDir.name)
-    const files = readdirSync(dirPath)
-      .filter(f => f.endsWith('.jsonl'))
+  for (const file of files) {
+    const filePath = join(SESSIONS_DIR, file)
+    try {
+      const stat = statSync(filePath)
+      const header = parseSessionHeader(filePath)
+      if (!header) continue
 
-    for (const file of files) {
-      const filePath = join(dirPath, file)
-      try {
-        const stat = statSync(filePath)
-        const header = parseSessionHeader(filePath)
-        if (!header) continue
+      const name = parseSessionName(filePath)
 
-        const name = parseSessionName(filePath)
-
-        results.push({
-          id: header.id,
-          filePath,
-          cwd: header.cwd,
-          timestamp: header.timestamp,
-          name,
-          lastModified: stat.mtimeMs,
-          size: stat.size,
-        })
-      } catch {
-        // Skip malformed files
-      }
+      results.push({
+        id: header.id,
+        filePath,
+        cwd: header.cwd,
+        timestamp: header.timestamp,
+        name,
+        lastModified: stat.mtimeMs,
+        size: stat.size,
+      })
+    } catch {
+      // Skip malformed files
     }
   }
 

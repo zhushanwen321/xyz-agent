@@ -1,4 +1,5 @@
 import { basename } from 'node:path'
+import { readFileSync } from 'node:fs'
 import type { WebSocket } from 'ws'
 import type {
   SessionSummary,
@@ -235,12 +236,38 @@ export class SessionPool {
 
   async getHistory(sessionId: string): Promise<Message[]> {
     const client = this.pm.getClient(sessionId)
-    if (!client) throw new Error(`Session ${sessionId} not found`)
-    const result = await client.getHistory()
-    // pi returns messages in data.messages, not payload.messages
-    const data = (result as unknown as Record<string, unknown>).data as { messages?: PiHistoryMessage[] } | undefined
-    const raw = data?.messages ?? (result.payload?.messages as PiHistoryMessage[] | undefined) ?? []
-    return this.convertPiHistory(raw)
+    if (client) {
+      // Active session: get messages from running pi process
+      const result = await client.getHistory()
+      const data = (result as unknown as Record<string, unknown>).data as { messages?: PiHistoryMessage[] } | undefined
+      const raw = data?.messages ?? (result.payload?.messages as PiHistoryMessage[] | undefined) ?? []
+      return this.convertPiHistory(raw)
+    }
+
+    // Inactive session: parse messages from session file
+    return this.getHistoryFromFile(sessionId)
+  }
+
+  /** Parse messages from a persisted session file for an inactive session */
+  private getHistoryFromFile(sessionId: string): Message[] {
+    const scanned = scanSessions()
+    const target = scanned.find(s => s.id === sessionId)
+    if (!target) return []
+
+    const content = readFileSync(target.filePath, 'utf-8')
+    const lines = content.split('\n').filter(l => l.trim())
+    const piMessages: PiHistoryMessage[] = []
+
+    for (const line of lines) {
+      try {
+        const entry = JSON.parse(line)
+        if (entry.type === 'message' && entry.message) {
+          piMessages.push(entry.message as PiHistoryMessage)
+        }
+      } catch { /* skip malformed lines */ }
+    }
+
+    return this.convertPiHistory(piMessages)
   }
 
   /** Convert pi message list, merging toolResults into their parent assistant message */
