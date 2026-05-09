@@ -81,18 +81,8 @@ const settingsStore = useSettingsStore()
 const toasts = ref<ToastItem[]>([])
 
 async function createSession() {
-  try {
-    // eslint-disable-next-line no-alert
-    alert('[DEBUG] pick_folder about to be called')
-    const result = await invoke<{ path: string | null; cancelled: boolean }>('pick_folder')
-    // eslint-disable-next-line no-alert
-    alert(`[DEBUG] result: ${JSON.stringify(result)}`)
-    if (result.cancelled || !result.path) return
-    doCreateSession(result.path)
-  } catch (e) {
-    // eslint-disable-next-line no-alert
-    alert(`[DEBUG] error: ${e}`)
-  }
+  // TEST: bypass pick_folder, directly create session
+  doCreateSession('/Users/zhushanwen/Code/xyz-agent')
 }
 
 function dismissToast(id: string) {
