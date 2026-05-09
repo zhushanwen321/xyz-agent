@@ -11,6 +11,7 @@ import type {
   ToolCall,
 } from '@xyz-agent/shared'
 import { ProcessManager } from './process-manager.js'
+import type { RpcClient } from './rpc-client.js'
 
 /** Raw message format returned by pi's get_messages command */
 interface PiHistoryMessage {
@@ -173,11 +174,35 @@ export class SessionPool {
   // ── Messaging ──────────────────────────────────────────────────
 
   async sendMessage(sessionId: string, content: string): Promise<void> {
-    const client = this.pm.getClient(sessionId)
-    if (!client) throw new Error(`Session ${sessionId} not found`)
-    const session = this.sessions.get(sessionId)!
-    session.lastActiveAt = Date.now()
-    session.isGenerating = true
+    let client = this.pm.getClient(sessionId)
+
+    // If session is not active, restore it from persisted file
+    if (!client) {
+      console.log(`[session-pool] sendMessage: session ${sessionId} not active, restoring...`)
+      try {
+        const summary = await this.restoreSession(sessionId)
+        // restoreSession creates a new internal session; use its id
+        client = this.pm.getClient(summary.id)
+        if (!client) throw new Error('Restore succeeded but client not available')
+        // Notify frontend of the new session id so subsequent sends work
+        this.send({
+          type: 'session.restored',
+          payload: { oldSessionId: sessionId, newSessionId: summary.id, summary },
+        })
+      } catch (e) {
+        const errMsg = `Failed to restore session: ${e instanceof Error ? e.message : String(e)}`
+        console.error(`[session-pool] ${errMsg}`)
+        this.send({ type: 'message.error', payload: { sessionId, message: errMsg } })
+        return
+      }
+    }
+
+    // Find the managed session (may have a different id after restore)
+    const activeSession = this.findSessionByClient(client)
+    if (activeSession) {
+      activeSession.lastActiveAt = Date.now()
+      activeSession.isGenerating = true
+    }
     console.log(`[session-pool] sendMessage: sessionId=${sessionId}, contentLength=${content.length}`)
     try {
       await client.prompt(content)
@@ -185,13 +210,16 @@ export class SessionPool {
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : String(e)
       console.error(`[session-pool] prompt failed: sessionId=${sessionId}`, errMsg)
-      session.isGenerating = false
-      // Push error as message.error with sessionId so frontend can match it
-      this.send({
-        type: 'message.error',
-        payload: { sessionId, message: errMsg },
-      })
+      if (activeSession) activeSession.isGenerating = false
+      this.send({ type: 'message.error', payload: { sessionId, message: errMsg } })
     }
+  }
+
+  private findSessionByClient(client: RpcClient): ManagedSession | undefined {
+    for (const session of this.sessions.values()) {
+      if (this.pm.getClient(session.id) === client) return session
+    }
+    return undefined
   }
 
   async abort(sessionId: string): Promise<void> {

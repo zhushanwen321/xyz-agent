@@ -2,7 +2,6 @@
 import { ref } from 'vue'
 import { useSessionStore } from '../../stores/session'
 import { useSession } from '../../composables/useSession'
-import { Input, Button, Dialog } from '../../design-system'
 import { SessionItem } from '../sidebar'
 import { useI18n } from 'vue-i18n'
 
@@ -10,10 +9,9 @@ const { t } = useI18n()
 const sessionStore = useSessionStore()
 const { switchSession, deleteSession } = useSession()
 
-defineEmits<{ create: [] }>()
+const renamingSessionId = ref<string | null>(null)
 
-const renameTarget = ref<string | null>(null)
-const renameValue = ref('')
+defineEmits<{ create: [] }>()
 
 function dirname(cwd: string): string {
   const parts = cwd.replace(/\/$/, '').split('/')
@@ -24,27 +22,20 @@ function onDelete(sessionId: string) {
   deleteSession(sessionId)
 }
 
-function startRename(id: string) {
-  const session = sessionStore.sessions.find(s => s.id === id)
-  if (!session) return
-  renameTarget.value = id
-  renameValue.value = session.label
+function onStartRename(sessionId: string) {
+  renamingSessionId.value = sessionId
 }
 
-function confirmRename() {
-  if (renameTarget.value && renameValue.value.trim()) {
-    const session = sessionStore.sessions.find(s => s.id === renameTarget.value)
-    if (session) {
-      session.label = renameValue.value.trim()
-    }
-    renameTarget.value = null
-    renameValue.value = ''
+function onConfirmRename(sessionId: string, newName: string) {
+  const session = sessionStore.sessions.find(s => s.id === sessionId)
+  if (session) {
+    session.label = newName
   }
+  renamingSessionId.value = null
 }
 
-function cancelRename() {
-  renameTarget.value = null
-  renameValue.value = ''
+function onCancelRename() {
+  renamingSessionId.value = null
 }
 </script>
 
@@ -52,7 +43,7 @@ function cancelRename() {
   <aside class="sidebar">
     <div class="sidebar__hd">
       <span class="sidebar__hd-title">{{ t('sidebar.sessions') }}</span>
-      <button class="sidebar__hd-btn" @click="$emit('create')" title="新建会话">
+      <button class="sidebar__hd-btn" @click="$emit('create')" :title="t('sidebar.newSession')">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" style="width:14px;height:14px"><path d="M8 3v10M3 8h10"/></svg>
       </button>
     </div>
@@ -70,8 +61,11 @@ function cancelRename() {
               :key="session.id"
               :session="session"
               :is-active="session.id === sessionStore.currentSessionId"
+              :renaming="renamingSessionId === session.id"
               @click="switchSession(session.id)"
-              @rename="startRename($event)"
+              @rename="onStartRename($event)"
+              @confirm-rename="(newName: string) => onConfirmRename(session.id, newName)"
+              @cancel-rename="onCancelRename"
               @delete="onDelete($event)"
             />
           </div>
@@ -82,15 +76,6 @@ function cancelRename() {
       </div>
     </div>
   </aside>
-
-  <!-- Rename prompt (P1 simplified: inline dialog) -->
-  <Dialog :open="!!renameTarget" :title="t('sidebar.renameSession')" @update:open="cancelRename">
-    <Input v-model="renameValue" :placeholder="t('sidebar.renamePrompt')" @keydown.enter="confirmRename" />
-    <div class="dialog-actions">
-      <Button variant="ghost" size="sm" @click="cancelRename">{{ t('common.cancel') }}</Button>
-      <Button variant="primary" size="sm" @click="confirmRename">{{ t('common.save') }}</Button>
-    </div>
-  </Dialog>
 </template>
 
 
@@ -119,8 +104,5 @@ function cancelRename() {
 .no-sessions {
   padding: 20px 14px; text-align: center;
   color: var(--muted); font-size: 12px;
-}
-.dialog-actions {
-  display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px;
 }
 </style>

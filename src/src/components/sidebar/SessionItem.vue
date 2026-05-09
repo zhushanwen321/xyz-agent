@@ -1,27 +1,29 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, nextTick } from 'vue'
 import type { SessionSummary } from '@xyz-agent/shared'
 import { useI18n } from 'vue-i18n'
-import { Dropdown } from '../../design-system'
+import { Input } from '../../design-system'
 
 const props = defineProps<{
   session: SessionSummary & { doneCount?: number; alertCount?: number }
   isActive: boolean
+  renaming?: boolean
 }>()
 
 const emit = defineEmits<{
   click: []
   rename: [sessionId: string]
+  'confirm-rename': [sessionId: string, newName: string]
+  'cancel-rename': []
   delete: [sessionId: string]
 }>()
 
 const { t } = useI18n()
 
-const dropdownOpen = ref(false)
-const dropdownPos = ref({ x: 0, y: 0 })
+const renameInput = ref<HTMLInputElement | null>(null)
+const renameValue = ref('')
 const confirmDelete = ref(false)
 
-// 映射到 HTML 原型的 dot--run / dot--idle / dot--pause 三种状态
 const dotClass = computed(() => {
   switch (props.session.status) {
     case 'active': return 'dot dot--run'
@@ -45,21 +47,27 @@ const relativeTime = computed(() => {
   return t('sidebar.daysAgo', { n: days })
 })
 
-const menuItems = computed(() => [
-  { label: t('common.rename'), value: 'rename' },
-  { label: t('common.delete'), value: 'delete' },
-])
-
-function onContextMenu(e: MouseEvent) {
-  e.preventDefault()
-  dropdownPos.value = { x: e.clientX, y: e.clientY }
-  dropdownOpen.value = true
+function startRename(e: MouseEvent) {
+  e.stopPropagation()
+  renameValue.value = props.session.label
+  emit('rename', props.session.id)
+  nextTick(() => {
+    const el = renameInput.value as HTMLElement | undefined
+    el?.focus()
+  })
 }
 
-function handleMenuSelect(action: string) {
-  dropdownOpen.value = false
-  if (action === 'rename') emit('rename', props.session.id)
-  if (action === 'delete') emit('delete', props.session.id)
+function confirmRename() {
+  const name = renameValue.value.trim()
+  if (name && name !== props.session.label) {
+    emit('confirm-rename', props.session.id, name)
+  } else {
+    emit('cancel-rename')
+  }
+}
+
+function cancelRename() {
+  emit('cancel-rename')
 }
 
 function onKeydown(e: KeyboardEvent) {
@@ -89,42 +97,52 @@ const HOURS_PER_DAY = 24
 
 <template>
   <div
-    :class="['s-item', { active: isActive, 'has-notif': hasNotif }]"
+    :class="['s-item', { active: isActive, 'has-notif': hasNotif, 's-item--renaming': renaming }]"
     role="button"
     tabindex="0"
-    @click="emit('click')"
+    @click="!renaming && emit('click')"
     @keydown="onKeydown"
-    @contextmenu="onContextMenu"
   >
     <span :class="dotClass" />
-    <span class="s-item__title">{{ session.label }}</span>
-    <span v-if="(session.doneCount ?? 0) > 0" class="s-item__notif s-item__notif--done">{{ session.doneCount }}</span>
-    <span v-if="(session.alertCount ?? 0) > 0" class="s-item__notif s-item__notif--alert">{{ session.alertCount }}</span>
-    <span class="s-item__meta">{{ relativeTime }}</span>
-    <!-- 删除按钮：默认隐藏，hover 显示；点击进入确认态 -->
-    <span
-      v-if="!confirmDelete"
-      class="s-item__del"
-      title="删除"
-      @click="startDelete"
-    >
-      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h12M5.33 4V2.67a1.33 1.33 0 011.34-1.34h2.66a1.33 1.33 0 011.34 1.34V4m2 0v9.33a1.33 1.33 0 01-1.34 1.34H4.67a1.33 1.33 0 01-1.34-1.34V4h9.34z"/></svg>
-    </span>
-    <span
-      v-else
-      class="s-item__del s-item__del--confirm"
-      @click="confirmDeleteAction"
-      @mouseleave="cancelDelete"
-    >确认</span>
+    <!-- Renaming mode: inline input -->
+    <template v-if="renaming">
+      <Input
+        ref="renameInput"
+        v-model="renameValue"
+        class="s-item__rename-input"
+        @keydown.enter="confirmRename"
+        @keydown.escape="cancelRename"
+        @blur="confirmRename"
+        @click.stop
+      />
+    </template>
+    <!-- Normal mode: label + actions -->
+    <template v-else>
+      <span class="s-item__title">{{ session.label }}</span>
+      <span v-if="(session.doneCount ?? 0) > 0" class="s-item__notif s-item__notif--done">{{ session.doneCount }}</span>
+      <span v-if="(session.alertCount ?? 0) > 0" class="s-item__notif s-item__notif--alert">{{ session.alertCount }}</span>
+      <span class="s-item__meta">{{ relativeTime }}</span>
+      <!-- Rename button -->
+      <span class="s-item__action" title="Rename" @click="startRename">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 1.5a2.121 2.121 0 013 3L5 14l-4 1 1-4z"/></svg>
+      </span>
+      <!-- Delete button -->
+      <span
+        v-if="!confirmDelete"
+        class="s-item__action"
+        title="Delete"
+        @click="startDelete"
+      >
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h12M5.33 4V2.67a1.33 1.33 0 011.34-1.34h2.66a1.33 1.33 0 011.34 1.34V4m2 0v9.33a1.33 1.33 0 01-1.34 1.34H4.67a1.33 1.33 0 01-1.34-1.34V4h9.34z"/></svg>
+      </span>
+      <span
+        v-else
+        class="s-item__del-confirm"
+        @click="confirmDeleteAction"
+        @mouseleave="cancelDelete"
+      >confirm</span>
+    </template>
   </div>
-
-  <Dropdown
-    :open="dropdownOpen"
-    :position="dropdownPos"
-    :items="menuItems"
-    @update:open="dropdownOpen = $event"
-    @select="handleMenuSelect"
-  />
 </template>
 
 <style scoped>
@@ -163,8 +181,19 @@ const HOURS_PER_DAY = 24
 .s-item__notif--alert { background: var(--danger); }
 .s-item.has-notif .s-item__title { font-weight: 600; }
 
-/* 删除按钮 */
-.s-item__del {
+/* Inline rename input */
+.s-item--renaming { padding-right: 14px; }
+.s-item__rename-input {
+  flex: 1; font-size: 13px;
+  background: var(--bg); border: 1px solid var(--accent);
+  border-radius: var(--radius-xs);
+  padding: 2px 6px;
+  outline: none;
+  color: var(--fg);
+}
+
+/* Action buttons (rename + delete): hidden by default, show on hover */
+.s-item__action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -177,23 +206,23 @@ const HOURS_PER_DAY = 24
   opacity: 0;
   transition: opacity 0.15s var(--ease), background 0.15s var(--ease), color 0.15s var(--ease);
 }
-.s-item:hover .s-item__del { opacity: 1; }
-.s-item__del:hover { background: var(--danger-light); color: var(--danger); }
+.s-item:hover .s-item__action { opacity: 1; }
+.s-item__action:hover { background: var(--accent-light); color: var(--accent); }
 
-/* 确认态 */
-.s-item__del--confirm {
-  opacity: 1;
-  width: auto;
+/* Delete confirm button */
+.s-item__del-confirm {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 0 8px;
+  height: 22px;
+  border-radius: var(--radius-xs);
   font-size: 11px;
   font-weight: 600;
   background: var(--danger);
   color: white;
-  border-radius: var(--radius-xs);
+  cursor: pointer;
+  flex-shrink: 0;
 }
-.s-item__del--confirm:hover {
-  opacity: 0.88;
-  background: var(--danger);
-  color: white;
-}
+.s-item__del-confirm:hover { opacity: 0.88; }
 </style>

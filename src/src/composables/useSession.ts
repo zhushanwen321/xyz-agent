@@ -67,6 +67,18 @@ export function useSession() {
     sessionStore.removeSession((msg.payload as { sessionId: string }).sessionId)
   }
 
+  function onSessionRestored(msg: ServerMessage) {
+    const { oldSessionId, newSessionId, summary } = msg.payload as {
+      oldSessionId: string
+      newSessionId: string
+      summary: SessionSummary
+    }
+    // Remove old session, add new one, switch to it
+    sessionStore.removeSession(oldSessionId)
+    sessionStore.addSession(summary)
+    sessionStore.switchSession(newSessionId)
+  }
+
   function onSessionHistory(msg: ServerMessage) {
     const messages = (msg.payload as { messages?: Message[] }).messages ?? []
     chatStore.replaceMessages(messages)
@@ -76,6 +88,7 @@ export function useSession() {
     'session.list': onSessionList,
     'session.created': onSessionCreated,
     'session.deleted': onSessionDeleted,
+    'session.restored': onSessionRestored,
     'session.history': onSessionHistory,
   }
 
