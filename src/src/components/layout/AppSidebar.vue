@@ -4,14 +4,12 @@ import { useSessionStore } from '../../stores/session'
 import { Input, Button, Dialog } from '../../design-system'
 import { SessionItem } from '../sidebar'
 import { useI18n } from 'vue-i18n'
-import type { SessionSummary } from '@xyz-agent/shared'
 
 const { t } = useI18n()
 const sessionStore = useSessionStore()
 
 defineEmits<{ create: [] }>()
 
-const deleteTarget = ref<string | null>(null)
 const renameTarget = ref<string | null>(null)
 const renameValue = ref('')
 
@@ -20,11 +18,8 @@ function dirname(cwd: string): string {
   return parts[parts.length - 1] || cwd
 }
 
-function confirmDelete() {
-  if (deleteTarget.value) {
-    sessionStore.removeSession(deleteTarget.value)
-    deleteTarget.value = null
-  }
+function onDelete(sessionId: string) {
+  sessionStore.removeSession(sessionId)
 }
 
 function startRename(id: string) {
@@ -75,7 +70,7 @@ function cancelRename() {
               :is-active="session.id === sessionStore.currentSessionId"
               @click="sessionStore.switchSession(session.id)"
               @rename="startRename($event)"
-              @delete="deleteTarget = $event"
+              @delete="onDelete($event)"
             />
           </div>
         </div>
@@ -85,15 +80,6 @@ function cancelRename() {
       </div>
     </div>
   </aside>
-
-  <!-- Delete confirmation -->
-  <Dialog :open="!!deleteTarget" :title="t('sidebar.deleteConfirmTitle')" @update:open="deleteTarget = null">
-    <p class="dialog-text">{{ t('sidebar.deleteConfirmMessage') }}</p>
-    <div class="dialog-actions">
-      <Button variant="ghost" size="sm" @click="deleteTarget = null">{{ t('common.cancel') }}</Button>
-      <Button variant="danger" size="sm" @click="confirmDelete">{{ t('common.delete') }}</Button>
-    </div>
-  </Dialog>
 
   <!-- Rename prompt (P1 simplified: inline dialog) -->
   <Dialog :open="!!renameTarget" :title="t('sidebar.renameSession')" @update:open="cancelRename">
@@ -131,10 +117,6 @@ function cancelRename() {
 .no-sessions {
   padding: 20px 14px; text-align: center;
   color: var(--muted); font-size: 12px;
-}
-.dialog-text {
-  font-size: 14px; color: var(--fg);
-  margin-bottom: 16px; line-height: 1.5;
 }
 .dialog-actions {
   display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px;
