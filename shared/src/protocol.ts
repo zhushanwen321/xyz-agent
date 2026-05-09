@@ -1,7 +1,7 @@
 // Client → Sidecar message types
 export type ClientMessageType =
   | 'session.create' | 'session.delete' | 'session.list' | 'session.switch' | 'session.history'
-  | 'session.compact' | 'session.clear' | 'session.restore'
+  | 'session.compact' | 'session.clear' | 'session.restore' | 'session.rename'
   | 'message.send' | 'message.abort'
   | 'config.getProviders' | 'config.setProvider' | 'config.deleteProvider' | 'config.setToolPermissions'
   | 'model.list' | 'model.switch'
@@ -17,8 +17,8 @@ export interface ClientMessage {
 // Sidecar → Client message types
 export type ServerMessageType =
   | 'session.created' | 'session.deleted' | 'session.list' | 'session.history'
-  | 'session.compacting' | 'session.restored'
-  | 'message.text_delta' | 'message.thinking_delta'
+  | 'session.compacting' | 'session.restored' | 'session.renamed'
+  | 'message.message_start' | 'message.text_delta' | 'message.thinking_delta'
   | 'message.thinking_start' | 'message.thinking_end'
   | 'message.tool_call_start' | 'message.tool_call_end' | 'message.tool_call_pending'
   | 'message.complete' | 'message.error' | 'message.status'

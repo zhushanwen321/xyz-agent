@@ -217,6 +217,14 @@ export class SidecarServer {
           break
         }
 
+        case 'session.rename': {
+          const { sessionId: renameId, name } = msg.payload as { sessionId: string; name: string }
+          await this.pool.renameSession(renameId, name)
+          this.send(ws, { type: 'session.renamed', id: msg.id, payload: { sessionId: renameId, name } })
+          this.broadcastSessionList()
+          break
+        }
+
         // ── Messages ────────────────────────────────────────────
         case 'message.send': {
           const { sessionId, content } = msg.payload as { sessionId: string; content: string }

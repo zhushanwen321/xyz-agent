@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { useSessionStore } from '../../stores/session'
 import { useSession } from '../../composables/useSession'
+import { send } from '../../lib/ws-client'
 import { SessionItem } from '../sidebar'
 import { useI18n } from 'vue-i18n'
 
@@ -32,6 +33,7 @@ function onConfirmRename(sessionId: string, newName: string) {
     session.label = newName
   }
   renamingSessionId.value = null
+  send({ type: 'session.rename', payload: { sessionId, name: newName } })
 }
 
 function onCancelRename() {

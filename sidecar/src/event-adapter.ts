@@ -214,11 +214,17 @@ export class EventAdapter {
           },
         }
 
+      // ── Lifecycle events ────────────────────────────────────────
+      case 'message_start':
+        return {
+          type: 'message.message_start',
+          payload: { sessionId: sid },
+        }
+
       // ── Lifecycle events not forwarded to frontend ─────────────
       case 'agent_start':
       case 'turn_start':
       case 'turn_end':
-      case 'message_start':
       case 'message_end':
       case 'extension_ui_response':
       case 'extension_config':

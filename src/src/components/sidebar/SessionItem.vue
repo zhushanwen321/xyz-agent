@@ -184,10 +184,11 @@ const HOURS_PER_DAY = 24
 /* Inline rename input */
 .s-item--renaming { padding-right: 14px; }
 .s-item__rename-input {
-  flex: 1; font-size: 13px;
+  flex: 1; font-size: 13px; line-height: 1;
   background: var(--bg); border: 1px solid var(--accent);
   border-radius: var(--radius-xs);
-  padding: 2px 6px;
+ padding: 3px 6px !important;
+  height: auto !important;
   outline: none;
   color: var(--fg);
 }

@@ -64,12 +64,14 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  function completeStreaming() {
+  function completeStreaming(opts?: { keepGenerating?: boolean }) {
     if (streamingMessage.value) {
       completedMessages.value = [...completedMessages.value, { ...streamingMessage.value, status: 'complete' }]
       streamingMessage.value = null
     }
-    isGenerating.value = false
+    if (!opts?.keepGenerating) {
+      isGenerating.value = false
+    }
   }
 
   function setGenerating(v: boolean) { isGenerating.value = v }

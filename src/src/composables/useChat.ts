@@ -92,6 +92,14 @@ export function useChat() {
     }
   }
 
+  function onMessageStart(msg: ServerMessage) {
+    if (!isForCurrentSession(msg)) return
+    // Finalize the current streaming bubble as its own message
+    if (store.streamingMessage) {
+      store.completeStreaming({ keepGenerating: true })
+    }
+  }
+
   function onComplete(msg: ServerMessage) {
     if (!isForCurrentSession(msg)) return
     console.log('[useChat] message.complete:', msg.payload)
@@ -153,6 +161,7 @@ export function useChat() {
   // --- Lifecycle -----------------------------------------------------------
 
   const eventMap: Record<string, (msg: ServerMessage) => void> = {
+    'message.message_start': onMessageStart,
     'message.text_delta': onTextDelta,
     'message.thinking_delta': onThinkingDelta,
     'message.tool_call_start': onToolCallStart,

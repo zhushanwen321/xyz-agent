@@ -1,5 +1,5 @@
 import { basename } from 'node:path'
-import { readFileSync } from 'node:fs'
+import { readFileSync, appendFileSync } from 'node:fs'
 import type { WebSocket } from 'ws'
 import type {
   SessionSummary,
@@ -148,6 +148,19 @@ export class SessionPool {
     }
 
     return this.toSummary(session)
+  }
+
+  async renameSession(sessionId: string, newName: string): Promise<void> {
+    const session = this.sessions.get(sessionId)
+    if (session) {
+      session.label = newName
+    }
+
+    // 在持久化文件中追加 session_info 条目（parseSessionName 取最后一个匹配）
+    const filePath = session?.sessionFilePath ?? this.findFilePathForSession(sessionId)
+    if (filePath) {
+      appendFileSync(filePath, JSON.stringify({ type: 'session_info', name: newName }) + '\n')
+    }
   }
 
   async delete(sessionId: string): Promise<void> {
@@ -489,6 +502,10 @@ export class SessionPool {
       modelId: s.modelId,
       tokenCount: s.tokenCount,
     }
+  }
+
+  private findFilePathForSession(sessionId: string): string | undefined {
+    return scanSessions().find(s => s.id === sessionId)?.filePath
   }
 
   private scannedToSummary(s: ScannedSession): SessionSummary {
