@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useSessionStore } from '../../stores/session'
+import { send } from '../../lib/ws-client'
 import { Input, Button, Dialog } from '../../design-system'
 import { SessionItem } from '../sidebar'
 import { useI18n } from 'vue-i18n'
@@ -20,6 +21,7 @@ function dirname(cwd: string): string {
 
 function onDelete(sessionId: string) {
   sessionStore.removeSession(sessionId)
+  send({ type: 'session.delete', payload: { sessionId } })
 }
 
 function startRename(id: string) {

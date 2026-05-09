@@ -64,9 +64,17 @@ export function mockSend(msg: ClientMessage): void {
         }
       })
       break
-    case 'session.delete':
-      respond('session.deleted', { sessionId: msg.payload.id })
+    case 'session.delete': {
+      const delId = msg.payload.sessionId as string
+      // 从 mock 数据中真正移除
+      for (const group of mockSessionGroups) {
+        const idx = group.sessions.findIndex(s => s.id === delId)
+        if (idx >= 0) { group.sessions.splice(idx, 1); break }
+      }
+      respond('session.deleted', { sessionId: delId })
+      respond('session.list', { groups: mockSessionGroups })
       break
+    }
     case 'session.compact':
       respond('session.compacting', { sessionId: msg.payload.sessionId, status: 'compacting' })
       setTimeout(() => {
