@@ -3,6 +3,7 @@ import { WebSocketServer, WebSocket, type WebSocket as WsType } from 'ws'
 import type { ClientMessage, ServerMessage, ModelInfo } from '@xyz-agent/shared'
 import { SessionPool } from './session-pool.js'
 import * as providerStore from './provider-store.js'
+import { updateToolPermissions } from './config-store.js'
 
 const HTTP_OK = 200
 const HTTP_NOT_FOUND = 404
@@ -20,6 +21,29 @@ export class SidecarServer {
   private wss: WebSocketServer
   private pool = new SessionPool()
   private client: WsType | null = null
+  private pushId = 0
+  private heartbeatTimer: ReturnType<typeof setTimeout> | null = null
+
+  private static HEARTBEAT_TIMEOUT = 30_000
+
+  private nextPushId(): string {
+    return `push_${++this.pushId}`
+  }
+
+  private resetHeartbeat(ws: WsType): void {
+    if (this.heartbeatTimer) clearTimeout(this.heartbeatTimer)
+    this.heartbeatTimer = setTimeout(() => {
+      console.warn('[sidecar] heartbeat timeout, closing connection')
+      ws.close(MAX_WS_CLOSE_CODE, 'Heartbeat timeout')
+    }, SidecarServer.HEARTBEAT_TIMEOUT)
+  }
+
+  private clearHeartbeat(): void {
+    if (this.heartbeatTimer) {
+      clearTimeout(this.heartbeatTimer)
+      this.heartbeatTimer = null
+    }
+  }
 
   constructor(private port: number) {
     this.httpServer = createServer((req, res) => {
@@ -55,9 +79,10 @@ export class SidecarServer {
   // ── Connection handling ────────────────────────────────────────
 
   private handleConnection(ws: WsType): void {
-    if (this.client) {
-      ws.close(MAX_WS_CLOSE_CODE, 'Only one client allowed')
-      return
+    // 新连接踢掉旧连接（前端重连场景）
+    if (this.client && this.client.readyState === WS_OPEN) {
+      console.log('[sidecar] replacing existing client connection')
+      this.client.close(MAX_WS_CLOSE_CODE, 'Replaced by new connection')
     }
 
     this.client = ws
@@ -65,10 +90,13 @@ export class SidecarServer {
     console.log('[sidecar] client connected')
 
     this.sendInitialState(ws)
+    this.resetHeartbeat(ws)
 
     ws.on('message', (data) => {
       try {
         const msg: ClientMessage = JSON.parse(data.toString())
+        // 收到任何消息都重置心跳
+        if (msg.type === 'ping') this.resetHeartbeat(ws)
         this.handleMessage(msg, ws)
       } catch {
         this.sendError(ws, 'parse_error', 'Invalid JSON')
@@ -76,28 +104,36 @@ export class SidecarServer {
     })
 
     ws.on('close', () => {
-      this.client = null
-      this.pool.unbindWebSocket()
+      if (this.client === ws) {
+        this.client = null
+        this.pool.unbindWebSocket()
+      }
+      this.clearHeartbeat()
       console.log('[sidecar] client disconnected')
     })
 
     ws.on('error', (err) => {
       console.error('[sidecar] ws error:', err)
+      // ws error 后通常会触发 close，但如果没触发就主动清理
+      if (this.client === ws) {
+        this.client = null
+        this.pool.unbindWebSocket()
+      }
     })
   }
 
   private sendInitialState(ws: WsType): void {
-    // Session list
-    const sessions = this.pool.listAll()
-    this.send(ws, { type: 'session.list', payload: { sessions } })
+    // Session list — 使用 grouped 格式，与 broadcastSessionList 一致
+    const groups = this.pool.listGrouped()
+    this.send(ws, { type: 'session.list', id: this.nextPushId(), payload: { groups } })
 
     // Provider list
     const providers = providerStore.listProviders()
-    this.send(ws, { type: 'config.providers', payload: { providers } })
+    this.send(ws, { type: 'config.providers', id: this.nextPushId(), payload: { providers } })
 
     // Aggregated model list
     const models = this.aggregateModels(providers)
-    this.send(ws, { type: 'model.list', payload: { models } })
+    this.send(ws, { type: 'model.list', id: this.nextPushId(), payload: { models } })
   }
 
   // ── Message routing ────────────────────────────────────────────
@@ -137,7 +173,15 @@ export class SidecarServer {
           const sid = msg.payload.sessionId as string
           const summary = this.pool.getSummary(sid)
           if (summary) {
+            // 推送 session 信息
             this.send(ws, { type: 'session.history', id: msg.id, payload: { session: summary } })
+            // 推送历史消息
+            try {
+              const messages = await this.pool.getHistory(sid)
+              this.send(ws, { type: 'session.history', payload: { sessionId: sid, messages } })
+            } catch (e) {
+              console.error('[sidecar] failed to load history for switch:', e)
+            }
           } else {
             this.sendError(ws, 'not_found', `Session ${sid} not found`, msg.id)
           }
@@ -151,10 +195,25 @@ export class SidecarServer {
           break
         }
 
+        case 'session.compact': {
+          const compactId = msg.payload.sessionId as string
+          await this.pool.compact(compactId)
+          this.send(ws, { type: 'session.compacting', id: msg.id, payload: { sessionId: compactId, status: 'compacting' } })
+          break
+        }
+
+        case 'session.clear': {
+          const clearId = msg.payload.sessionId as string
+          await this.pool.clear(clearId)
+          this.send(ws, { type: 'session.deleted', id: msg.id, payload: { sessionId: clearId } })
+          break
+        }
+
         // ── Messages ────────────────────────────────────────────
         case 'message.send': {
           const { sessionId, content } = msg.payload as { sessionId: string; content: string }
           await this.pool.sendMessage(sessionId, content)
+          this.send(ws, { type: 'message.status', id: msg.id, payload: { sessionId, status: 'sent' } })
           break
         }
 
@@ -195,6 +254,13 @@ export class SidecarServer {
             payload: { providerId: delId, deleted: true },
           })
           this.broadcastProviderList()
+          break
+        }
+
+        case 'config.setToolPermissions': {
+          const permissions = msg.payload.permissions as Record<string, string>
+          updateToolPermissions(permissions)
+          this.send(ws, { type: 'config.providerUpdated', id: msg.id, payload: { saved: true } })
           break
         }
 
@@ -273,15 +339,15 @@ export class SidecarServer {
   private broadcastSessionList(): void {
     if (!this.client) return
     const groups = this.pool.listGrouped()
-    this.send(this.client, { type: 'session.list', payload: { groups } })
+    this.send(this.client, { type: 'session.list', id: this.nextPushId(), payload: { groups } })
   }
 
   private broadcastProviderList(): void {
     if (!this.client) return
     const providers = providerStore.listProviders()
-    this.send(this.client, { type: 'config.providers', payload: { providers } })
+    this.send(this.client, { type: 'config.providers', id: this.nextPushId(), payload: { providers } })
     const models = this.aggregateModels(providers)
-    this.send(this.client, { type: 'model.list', payload: { models } })
+    this.send(this.client, { type: 'model.list', id: this.nextPushId(), payload: { models } })
   }
 
   private aggregateModels(providers: ReturnType<typeof providerStore.listProviders>): ModelInfo[] {

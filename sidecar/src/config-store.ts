@@ -10,6 +10,7 @@ export interface ProviderConfig {
   apiKey: string
   baseUrl?: string
   models?: string[]
+  enabled?: boolean
 }
 
 export interface AppConfig {
@@ -19,7 +20,9 @@ export interface AppConfig {
     temperature: number
   }
   providers: Record<string, ProviderConfig>
+  toolPermissions?: Record<string, string>
 }
+
 
 const DEFAULT_TEMPERATURE = 0.7
 
@@ -32,6 +35,22 @@ const DEFAULTS: Readonly<AppConfig> = {
   providers: {},
 }
 
+function loadPiConfig(): Record<string, ProviderConfig> | null {
+  try {
+    const piJsonPath = join(homedir(), '.pi', 'config.json')
+    if (existsSync(piJsonPath)) {
+      const raw = readFileSync(piJsonPath, 'utf-8')
+      const parsed = JSON.parse(raw)
+      if (parsed.providers && typeof parsed.providers === 'object') {
+        return parsed.providers as Record<string, ProviderConfig>
+      }
+    }
+  } catch {
+    // pi config not available, that's fine
+  }
+  return null
+}
+
 export function loadConfig(): AppConfig {
   try {
     if (existsSync(CONFIG_PATH)) {
@@ -40,12 +59,20 @@ export function loadConfig(): AppConfig {
       return {
         defaults: { ...DEFAULTS.defaults, ...parsed.defaults },
         providers: { ...DEFAULTS.providers, ...parsed.providers },
+        ...(parsed.toolPermissions && { toolPermissions: parsed.toolPermissions }),
       }
     }
   } catch (e) {
     console.error('[config] load error:', e)
-    return { defaults: { ...DEFAULTS.defaults }, providers: { ...DEFAULTS.providers } }
   }
+
+  // Fallback: try pi config
+  const piProviders = loadPiConfig()
+  if (piProviders) {
+    console.log('[config] using pi config as fallback')
+    return { defaults: { ...DEFAULTS.defaults }, providers: piProviders }
+  }
+
   return { defaults: { ...DEFAULTS.defaults }, providers: { ...DEFAULTS.providers } }
 }
 
@@ -74,6 +101,20 @@ export function removeProvider(providerId: string): boolean {
   delete config.providers[providerId]
   saveConfig(config)
   return true
+}
+
+export function updateToolPermissions(permissions: Record<string, string>): void {
+  const config = loadConfig()
+  config.toolPermissions = permissions
+  saveConfig(config)
+}
+
+export function getToolPermissions(): Record<string, string> {
+  return loadConfig().toolPermissions ?? {}
+}
+
+export function getProvider(providerId: string): ProviderConfig | undefined {
+  return loadConfig().providers[providerId]
 }
 
 export function updateDefaults(defaults: Partial<AppConfig['defaults']>): void {

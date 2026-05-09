@@ -5,10 +5,31 @@ import {
   removeProvider as configRemoveProvider,
 } from './config-store.js'
 
-/**
- * List all configured providers with their status.
- */
-export function listProviders(): ProviderInfo[] {
+// 内存缓存，避免每次调用都穿透到 config-store 读磁盘
+let cachedProviders: ProviderInfo[] | null = null
+
+// 验证结果缓存，用于区分 connected 和 error 状态
+const validationCache = new Map<string, { valid: boolean; checkedAt: number }>()
+const VALIDATION_TTL = 5 * 60 * 1000 // 5 分钟
+
+function invalidateCache(): void {
+  cachedProviders = null
+}
+
+function getProviderStatus(id: string, hasApiKey: boolean): ProviderStatus {
+  if (!hasApiKey) return 'not_configured' as ProviderStatus
+
+  const cached = validationCache.get(id)
+  if (cached && Date.now() - cached.checkedAt < VALIDATION_TTL && !cached.valid) {
+    return 'error' as ProviderStatus
+  }
+
+  return 'connected' as ProviderStatus
+}
+
+function ensureCache(): ProviderInfo[] {
+  if (cachedProviders) return cachedProviders
+
   const config = loadConfig()
   const providers: ProviderInfo[] = []
 
@@ -16,16 +37,23 @@ export function listProviders(): ProviderInfo[] {
     providers.push({
       id,
       name: prov.name ?? id,
-      status: prov.apiKey
-        ? ('connected' as ProviderStatus)
-        : ('not_configured' as ProviderStatus),
+      status: getProviderStatus(id, !!prov.apiKey),
       models: prov.models ?? [],
       apiKeySet: !!prov.apiKey,
       baseUrl: prov.baseUrl,
+      enabled: prov.enabled !== false,
     })
   }
 
+  cachedProviders = providers
   return providers
+}
+
+/**
+ * List all configured providers with their status.
+ */
+export function listProviders(): ProviderInfo[] {
+  return ensureCache()
 }
 
 /**
@@ -38,14 +66,34 @@ export function setProvider(
     apiKey?: string
     baseUrl?: string
     models?: string[]
+    enabled?: boolean
   },
 ): void {
   configUpdateProvider(providerId, data)
+  invalidateCache()
 }
 
 /**
  * Remove a provider configuration.
  */
 export function deleteProvider(providerId: string): boolean {
-  return configRemoveProvider(providerId)
+  const result = configRemoveProvider(providerId)
+  invalidateCache()
+  return result
+}
+
+/** Update validation result cache. Called after validateProvider. */
+export function setValidationResult(providerId: string, valid: boolean): void {
+  validationCache.set(providerId, { valid, checkedAt: Date.now() })
+  invalidateCache()
+}
+
+/** Force reload from disk on next access. */
+export function reload(): void {
+  invalidateCache()
+}
+
+/** Alias for reload — invalidate provider cache, forcing reload on next access. */
+export function refreshProviders(): void {
+  invalidateCache()
 }

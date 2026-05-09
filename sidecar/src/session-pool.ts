@@ -18,6 +18,7 @@ interface ManagedSession {
   createdAt: number
   lastActiveAt: number
   tokenCount: number
+  isGenerating: boolean
   adapter: EventAdapter
 }
 
@@ -32,6 +33,24 @@ export class SessionPool {
   private sessions = new Map<string, ManagedSession>()
   private pm = new ProcessManager()
   private ws: WebSocket | null = null
+
+  constructor() {
+    // 进程崩溃时清理对应 session
+    this.pm.onSessionExit((sessionId, code) => {
+      const session = this.sessions.get(sessionId)
+      if (session) {
+        session.adapter.detach()
+        this.sessions.delete(sessionId)
+        if (this.ws && this.ws.readyState === WS_OPEN) {
+          this.send({ type: 'session.list', payload: { groups: this.listGrouped() } })
+          this.send({
+            type: 'message.error',
+            payload: { sessionId, message: `Session process exited unexpectedly (code: ${code})` },
+          })
+        }
+      }
+    })
+  }
 
   // ── WebSocket binding ──────────────────────────────────────────
 
@@ -60,14 +79,30 @@ export class SessionPool {
     const adapter = new EventAdapter(id, (msg) => this.send(msg))
     adapter.attach(client)
 
+    // 从 agent_end 事件中提取 token 使用量
+    client.onEvent((event) => {
+      if (event.type === 'agent_end') {
+        const s = this.sessions.get(id)
+        if (s) {
+          s.isGenerating = false
+          const usage = event.payload?.usage as
+            { outputTokens?: number; inputTokens?: number; totalTokens?: number } | undefined
+          if (usage) {
+            s.tokenCount = (usage.totalTokens ?? usage.outputTokens ?? 0) as number
+          }
+        }
+      }
+    })
+
     const session: ManagedSession = {
       id,
       cwd: sessionCwd,
-      label: `Session ${this.sessions.size + 1}`,
+      label: sessionCwd.split('/').pop() ?? sessionCwd,
       modelId,
       createdAt: Date.now(),
       lastActiveAt: Date.now(),
       tokenCount: 0,
+      isGenerating: false,
       adapter,
     }
     this.sessions.set(id, session)
@@ -90,6 +125,7 @@ export class SessionPool {
     if (!client) throw new Error(`Session ${sessionId} not found`)
     const session = this.sessions.get(sessionId)!
     session.lastActiveAt = Date.now()
+    session.isGenerating = true
     await client.prompt(content)
   }
 
@@ -107,6 +143,27 @@ export class SessionPool {
     const session = this.sessions.get(sessionId)!
     session.modelId = `${provider}/${modelId}`
     await client.setModel(provider, modelId)
+  }
+
+  // ── Compact & Clear ────────────────────────────────────────────
+
+  async compact(sessionId: string): Promise<void> {
+    const client = this.pm.getClient(sessionId)
+    if (!client) throw new Error(`Session ${sessionId} not found`)
+    // 通知前端正在压缩
+    this.send({
+      type: 'session.compacting',
+      payload: { sessionId, status: 'compacting' },
+    })
+    await client.compact()
+  }
+
+  async clear(sessionId: string): Promise<void> {
+    const client = this.pm.getClient(sessionId)
+    if (!client) throw new Error(`Session ${sessionId} not found`)
+    const session = this.sessions.get(sessionId)!
+    await client.clear()
+    session.lastActiveAt = Date.now()
   }
 
   // ── History ────────────────────────────────────────────────────
@@ -179,7 +236,7 @@ export class SessionPool {
       id: s.id,
       label: s.label,
       cwd: s.cwd,
-      status: 'active' as SessionStatus,
+      status: s.isGenerating ? ('active' as SessionStatus) : ('idle' as SessionStatus),
       lastActiveAt: s.lastActiveAt,
       modelId: s.modelId,
       tokenCount: s.tokenCount,

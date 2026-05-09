@@ -5,10 +5,15 @@ export type WsSender = (msg: ServerMessage) => void
 
 const STOP_REASON_MAP: Record<string, string> = {
   stop: 'end_turn',
+  end_turn: 'end_turn',
   length: 'max_tokens',
+  max_tokens: 'max_tokens',
   toolUse: 'tool_use',
+  tool_use: 'tool_use',
   error: 'error',
   aborted: 'aborted',
+  cancelled: 'aborted',
+  content_filter: 'content_filter',
 }
 
 /**
@@ -92,6 +97,39 @@ export class EventAdapter {
         }
       }
 
+      case 'tool_call_pending':
+        return {
+          type: 'message.tool_call_pending',
+          payload: {
+            sessionId: sid,
+            toolCallId: p.toolCallId ?? '',
+            toolName: p.toolName ?? '',
+            input: p.input,
+          },
+        }
+
+      case 'thinking_start':
+        return {
+          type: 'message.thinking_start',
+          payload: { sessionId: sid },
+        }
+
+      case 'thinking_end':
+        return {
+          type: 'message.thinking_end',
+          payload: { sessionId: sid },
+        }
+
+      case 'status':
+        return {
+          type: 'message.status',
+          payload: {
+            sessionId: sid,
+            status: p.status ?? '',
+            detail: p.detail,
+          },
+        }
+
       case 'error':
         return {
           type: 'message.error',
@@ -99,7 +137,7 @@ export class EventAdapter {
         }
 
       default:
-        // Ignore unknown event types
+        console.debug('[EventAdapter] Unhandled pi event type:', event.type, event.payload)
         return null
     }
   }

@@ -31,6 +31,8 @@ export class RpcClient {
   private listeners = new Set<PiEventListener>()
   private msgCounter = 0
   private _exited = false
+  private _killing = false
+  private exitCallback: ((code: number | null) => void) | null = null
 
   constructor(private options: RpcClientOptions = {}) {}
 
@@ -67,6 +69,9 @@ export class RpcClient {
       this._exited = true
       console.log(`[rpc] process exited with code ${code}`)
       this.rejectAll(new Error(`pi process exited with code ${code}`))
+      if (this.exitCallback && !this._killing) {
+        this.exitCallback(code)
+      }
     })
 
     // Parse stdout JSONL
@@ -172,6 +177,11 @@ export class RpcClient {
    * Register an event listener for non-response messages from pi.
    * Returns an unsubscribe function.
    */
+  /** Register a callback for when the pi process exits unexpectedly. */
+  onExit(callback: (code: number | null) => void): void {
+    this.exitCallback = callback
+  }
+
   onEvent(listener: PiEventListener): () => void {
     this.listeners.add(listener)
     return () => { this.listeners.delete(listener) }
@@ -183,6 +193,11 @@ export class RpcClient {
 
   // ── High-level API ────────────────────────────────────────────────
 
+  /**
+   * Send a user message to pi. The returned promise resolves when
+   * pi acknowledges receipt (not when generation completes).
+   * Actual content arrives via onEvent() listeners as text_delta etc.
+   */
   prompt(content: string): Promise<PiMessage> {
     return this.sendCommand('prompt', { content })
   }
@@ -199,8 +214,24 @@ export class RpcClient {
     return this.sendCommand('listModels')
   }
 
+  /**
+   * List models available for the current provider.
+   * Alias for getAvailableModels().
+   */
+  getModels(): Promise<PiMessage> {
+    return this.getAvailableModels()
+  }
+
   getHistory(): Promise<PiMessage> {
     return this.sendCommand('getHistory')
+  }
+
+  compact(): Promise<PiMessage> {
+    return this.sendCommand('compact')
+  }
+
+  clear(): Promise<PiMessage> {
+    return this.sendCommand('clear')
   }
 
   approveTool(toolCallId: string): Promise<PiMessage> {
@@ -219,6 +250,8 @@ export class RpcClient {
 
   async kill(): Promise<void> {
     if (!this.proc || this._exited) return
+
+    this._killing = true
 
     return new Promise<void>((resolve) => {
       const proc = this.proc!

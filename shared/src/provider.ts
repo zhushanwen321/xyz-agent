@@ -7,6 +7,7 @@ export interface ProviderInfo {
   models: string[]
   apiKeySet: boolean
   baseUrl?: string
+  enabled?: boolean
 }
 
 export interface ModelInfo {
