@@ -1,7 +1,6 @@
 <template>
   <footer class="statusbar">
-    <span class="statusbar__dot" :style="{ background: dotColor }"></span>
-    <span>{{ statusText }}</span>
+    <span style="display:inline-flex;align-items:center;gap:4px;"><span class="statusbar__dot" :style="{ background: dotColor }"></span> {{ statusText }}</span>
     <span>{{ sessionStore.currentSession?.cwd || '' }}</span>
     <span>{{ gitBranch || 'main' }}</span>
     <span>{{ sessionStore.currentSession?.modelId || '' }}</span>
@@ -26,7 +25,7 @@ const connState = getState()
 const gitBranch = ref('')
 
 const TOKEN_THRESHOLD = 1000
-function formatTokens(n: number) { return n >= TOKEN_THRESHOLD ? (n / TOKEN_THRESHOLD).toFixed(1) + 'k tok' : n + ' tok' }
+function formatTokens(n: number) { return n >= TOKEN_THRESHOLD ? (n / TOKEN_THRESHOLD).toFixed(1) + 'k tokens' : n + ' tokens' }
 const tokenDisplay = computed(() => chatStore.contextUsagePercent ? formatTokens(chatStore.contextUsagePercent) : '')
 
 const dotColor = computed(() => {

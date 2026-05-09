@@ -1,10 +1,11 @@
 <template>
   <div class="model-picker" ref="pickerRef">
     <Button variant="ghost" class="model-picker__trigger" @click="open = !open">
-      <span class="model-picker__label">{{ currentLabel }}</span>
-      <svg class="model-picker__chevron" :class="{ 'model-picker__chevron--open': open }" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
+      <span class="model-picker__name">{{ shortName }}</span>
+      <span class="model-picker__sep">@</span>
+      <span class="model-picker__provider">{{ providerName }}</span>
     </Button>
-    <div v-if="open" class="model-picker__dropdown visible">
+    <div v-if="open" class="model-picker__dropdown">
       <div
         v-for="group in groupedModels"
         :key="group.provider"
@@ -18,7 +19,9 @@
           :class="['model-picker__item', { 'model-picker__item--active': m.id === currentModel }]"
           @click="handleSelect(m.id)"
         >
-          {{ m.name }}
+          <span class="model-picker__item-dot"></span>
+          <span class="model-picker__item-name">{{ m.name }}</span>
+          <span class="model-picker__item-provider">{{ group.provider }}</span>
         </Button>
       </div>
       <div v-if="groupedModels.length === 0" class="model-picker__empty">
@@ -55,23 +58,23 @@ function onClickOutside(e: MouseEvent) {
   }
 }
 
-/**
- * Format model label as "shortName @ provider".
- * e.g. "claude-sonnet" from anthropic → "sonnet @ anthropic"
- */
-const currentLabel = computed(() => {
+/** Format model name: strip known prefix */
+const shortName = computed(() => {
   const found = models.value.find(m => m.id === props.currentModel || m.id === props.currentModel.split('/').pop())
   if (!found) {
-    // Fallback: parse "provider/model-name" from raw id
-    const parts = props.currentModel.split('/')
-    const rawName = parts.pop() ?? parts[0]
-    const rawProvider = parts[0]
-    const short = rawName.replace(/^(claude-|gpt-|gemini-)/, '')
-    return rawProvider ? `${short} @ ${rawProvider}` : short
+    const rawName = props.currentModel.split('/').pop() ?? props.currentModel
+    return rawName.replace(/^(claude-|gpt-|gemini-)/, '')
   }
-  // Strip known prefix (claude-, gpt-, gemini-) from model name
-  const shortName = found.name.replace(/^(claude-|gpt-|gemini-)/, '')
-  return `${shortName} @ ${found.providerName}`
+  return found.name.replace(/^(claude-|gpt-|gemini-)/, '')
+})
+
+const providerName = computed(() => {
+  const found = models.value.find(m => m.id === props.currentModel || m.id === props.currentModel.split('/').pop())
+  if (!found) {
+    const parts = props.currentModel.split('/')
+    return parts.length > 1 ? parts[0] : ''
+  }
+  return found.providerName || found.providerId
 })
 
 interface ModelGroup {
@@ -123,18 +126,18 @@ function handleSelect(modelId: string) {
   color: var(--accent);
 }
 
-.model-picker__label {
-  max-width: 140px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.model-picker__name {
+  color: var(--fg);
 }
 
-.model-picker__chevron {
-  color: var(--muted);
-  transition: transform 0.2s;
+.model-picker__sep {
+  color: var(--border);
+  margin: 0 1px;
 }
-.model-picker__chevron--open {
-  transform: rotate(180deg);
+
+.model-picker__provider {
+  color: var(--muted);
+  font-weight: 400;
 }
 
 .model-picker__dropdown {
@@ -175,7 +178,6 @@ function handleSelect(modelId: string) {
   background: none;
   color: var(--fg);
   font-size: 12px;
-  font-family: var(--font-mono);
   text-align: left;
   cursor: pointer;
   transition: background 0.1s var(--ease);
@@ -188,6 +190,28 @@ function handleSelect(modelId: string) {
 .model-picker__item--active {
   color: var(--accent);
   font-weight: 600;
+}
+
+.model-picker__item--active .model-picker__item-dot {
+  background: var(--accent);
+}
+
+.model-picker__item-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.model-picker__item-name {
+  flex: 1;
+  font-family: var(--font-mono);
+}
+
+.model-picker__item-provider {
+  font-size: 10px;
+  color: var(--muted);
 }
 
 .model-picker__empty {

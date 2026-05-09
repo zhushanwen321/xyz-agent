@@ -173,13 +173,13 @@ function switchAgent(id: string) {
   flex-direction: column;
   gap: 14px;
   position: relative;
+  max-width: 960px;
+  margin: 0 auto;
+  width: 100%;
 }
 .agent-view {
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  inset: 20px 24px;
   visibility: hidden;
   opacity: 0;
   transition: opacity 0.2s var(--ease);
@@ -187,7 +187,6 @@ function switchAgent(id: string) {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  padding: 20px 24px;
 }
 .agent-view.active {
   visibility: visible;

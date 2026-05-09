@@ -29,6 +29,7 @@ defineEmits<{
   align-self: stretch;
   width: 100%;
   max-width: none;
+  margin: 8px 0;
   border: 1px solid oklch(80% 0.02 145);
   background: oklch(97% 0.02 145);
   border-radius: var(--radius-sm);
@@ -39,7 +40,10 @@ defineEmits<{
   gap: 10px;
   box-sizing: border-box;
 }
-.msg--system--alert { border-left-color: var(--danger); }
+.msg--system--alert {
+  border-color: oklch(80% 0.02 25);
+  background: oklch(97% 0.015 25);
+}
 .msg--system__dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 4px; }
 .msg--system__dot--done { background: var(--success); }
 .msg--system__dot--alert { background: var(--danger); }

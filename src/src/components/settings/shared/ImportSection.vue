@@ -41,7 +41,7 @@ const localSources = ref(props.sources.map(s => ({ ...s })))
     </div>
     <div class="s-custom-path">
       <Input class="s-custom-path__input" :placeholder="customPlaceholder" />
-      <Button variant="ghost" size="sm">扫描</Button>
+      <Button size="sm">扫描</Button>
     </div>
   </div>
 </template>

@@ -13,9 +13,9 @@
           <div v-if="toast.description" class="toast__desc">{{ toast.description }}</div>
           <div v-if="toast.actions?.length" class="toast__actions">
             <Button
-              variant="ghost"
               v-for="action in toast.actions"
               :key="action.label"
+              size="sm"
               :class="['toast__btn', { 'toast__btn--primary': action.primary }]"
               @click="action.handler"
             >
@@ -119,7 +119,7 @@ function dotColor(type: string) {
   margin-top: 8px;
 }
 
-.toast__btn {
+:deep(.toast__btn) {
   padding: 4px 10px;
   border-radius: var(--radius-xs);
   font-size: 11px;
@@ -131,18 +131,18 @@ function dotColor(type: string) {
   color: var(--muted);
 }
 
-.toast__btn:hover {
+:deep(.toast__btn:hover) {
   border-color: var(--accent);
   color: var(--accent);
 }
 
-.toast__btn--primary {
+:deep(.toast__btn--primary) {
   background: var(--accent);
   color: white;
   border-color: var(--accent);
 }
 
-.toast__btn--primary:hover {
+:deep(.toast__btn--primary:hover) {
   opacity: 0.88;
 }
 

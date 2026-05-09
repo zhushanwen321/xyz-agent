@@ -140,7 +140,7 @@ function cancelRename() {
       <!-- TODO: search disabled per design -->
       <!-- <SessionSearch v-model="searchQuery" /> -->
 
-      <div ref="scrollRef" class="sidebar-list">
+      <div ref="scrollRef" class="sidebar__body">
         <template v-if="sessionStore.sessions.length > 0">
           <div :style="{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }">
             <div
@@ -154,24 +154,14 @@ function cancelRename() {
               }"
             >
               <!-- Group header -->
-              <Button
-                variant="ghost"
+              <div
                 v-if="getVirtualRow(virtualItem.index).type === 'group'"
-                class="group-header"
+                :class="['s-group__hd', { collapsed: groupCollapsed.has(asGroup(getVirtualRow(virtualItem.index)).cwd) }]"
                 @click="toggleGroup(asGroup(getVirtualRow(virtualItem.index)).cwd)"
               >
-                <svg
-                  :class="['chevron', { collapsed: groupCollapsed.has(asGroup(getVirtualRow(virtualItem.index)).cwd) }]"
-                  viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"
-                >
-                  <polyline points="6,4 10,8 6,12" />
-                </svg>
-                <svg class="folder-icon" viewBox="0 0 16 16" fill="currentColor">
-                  <path d="M1.5 2A1.5 1.5 0 0 0 0 3.5v9A1.5 1.5 0 0 0 1.5 14h13a1.5 1.5 0 0 0 1.5-1.5V5.5A1.5 1.5 0 0 0 14.5 4H7.707L6.44 2.73A1.5 1.5 0 0 0 5.378 2.3H1.5z" />
-                </svg>
-                <span class="group-name">{{ dirname(asGroup(getVirtualRow(virtualItem.index)).cwd) }}</span>
-                <span class="group-count">{{ asGroup(getVirtualRow(virtualItem.index)).sessionCount }}</span>
-              </Button>
+                <span class="s-group__toggle">&#9662;</span>
+                {{ dirname(asGroup(getVirtualRow(virtualItem.index)).cwd) }}
+              </div>
               <!-- Session item -->
               <SessionItem
                 v-else
@@ -225,31 +215,20 @@ function cancelRename() {
 .sidebar.collapsed .sidebar__hd { opacity: 0; }
 /* sidebar__hd, sidebar__hd-title, sidebar__hd-btn are defined in global CSS */
 .sidebar__hd-btn svg { width: 14px; height: 14px; }
-.sidebar-list { flex: 1; overflow-y: auto; padding: 6px 0; }
-.group-header {
+.sidebar__body { flex: 1; overflow-y: auto; padding: 6px 0; }
+/* 分组头部与 css_design-system.css 的 .s-group__hd 对齐 */
+.s-group__hd {
   display: flex; align-items: center; gap: 5px;
-  width: 100%; padding: 6px 14px;
-  background: none; border: none; cursor: pointer;
-  color: var(--muted); font-size: 11px; font-weight: 600;
+  padding: 6px 14px; font-size: 11px; font-weight: 600;
   text-transform: uppercase; letter-spacing: 0.04em;
-  text-align: left; user-select: none;
+  color: var(--muted); cursor: pointer; user-select: none;
 }
-.group-header:hover { color: var(--fg); }
-.chevron {
-  width: 12px; height: 12px; flex-shrink: 0;
-  transition: transform 0.15s;
+.s-group__hd:hover { color: var(--fg); }
+.s-group__toggle {
+  font-size: 8px; transition: transform 0.2s var(--ease);
+  display: inline-block; width: 10px; text-align: center;
 }
-.chevron.collapsed { transform: rotate(-90deg); }
-.chevron:not(.collapsed) { transform: rotate(0deg); }
-.folder-icon { width: 13px; height: 13px; flex-shrink: 0; opacity: 0.6; }
-.group-name {
-  flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.group-count {
-  font-size: 10px; font-weight: 500;
-  background: var(--border); color: var(--muted);
-  border-radius: var(--radius-sm); padding: 1px 5px;
-}
+.s-group__hd.collapsed .s-group__toggle { transform: rotate(-90deg); }
 .no-sessions {
   padding: 20px 14px; text-align: center;
   color: var(--muted); font-size: 12px;

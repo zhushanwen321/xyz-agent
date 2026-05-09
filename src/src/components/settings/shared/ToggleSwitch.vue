@@ -12,7 +12,7 @@ defineEmits<{
 
 <template>
   <div
-    class="s-agent-card__toggle"
+    class="s-toggle"
     :class="{ off: !modelValue }"
     @click="$emit('update:modelValue', !modelValue)"
   />

@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { Dropdown } from '../../design-system'
 
 const props = defineProps<{
-  session: SessionSummary
+  session: SessionSummary & { doneCount?: number; alertCount?: number }
   isActive: boolean
 }>()
 
@@ -20,13 +20,17 @@ const { t } = useI18n()
 const dropdownOpen = ref(false)
 const dropdownPos = ref({ x: 0, y: 0 })
 
-const statusColor = computed(() => {
+// 映射到 HTML 原型的 dot--run / dot--idle / dot--pause 三种状态
+const dotClass = computed(() => {
   switch (props.session.status) {
-    case 'active': return 'var(--success)'
-    case 'pause': return 'var(--warning)'
-    default: return 'var(--border)'
+    case 'active': return 'dot dot--run'
+    default: return 'dot dot--idle'
   }
 })
+
+const hasNotif = computed(() =>
+  (props.session.doneCount ?? 0) > 0 || (props.session.alertCount ?? 0) > 0
+)
 
 const relativeTime = computed(() => {
   const diff = Date.now() - props.session.lastActiveAt
@@ -69,18 +73,18 @@ const HOURS_PER_DAY = 24
 
 <template>
   <div
-    :class="['session-item', { active: isActive }]"
+    :class="['s-item', { active: isActive, 'has-notif': hasNotif }]"
     role="button"
     tabindex="0"
     @click="emit('click')"
     @keydown="onKeydown"
     @contextmenu="onContextMenu"
   >
-    <span :class="['status-dot', { 'status-dot--running': session.status === 'active' }]" :style="{ background: statusColor }" />
-    <div class="session-info">
-      <span class="session-label">{{ session.label }}</span>
-      <span class="session-time">{{ relativeTime }}</span>
-    </div>
+    <span :class="dotClass" />
+    <span class="s-item__title">{{ session.label }}</span>
+    <span v-if="(session.doneCount ?? 0) > 0" class="s-item__notif s-item__notif--done">{{ session.doneCount }}</span>
+    <span v-if="(session.alertCount ?? 0) > 0" class="s-item__notif s-item__notif--alert">{{ session.alertCount }}</span>
+    <span class="s-item__meta">{{ relativeTime }}</span>
   </div>
 
   <Dropdown
@@ -93,29 +97,38 @@ const HOURS_PER_DAY = 24
 </template>
 
 <style scoped>
-.session-item {
+/* 与 css_design-system.css 中的 .s-item 样式对齐，但 scoped 需要重新声明关键规则 */
+.s-item {
   display: flex; align-items: center; gap: 8px;
   padding: 7px 14px 7px 24px; cursor: pointer;
   border-left: 3px solid transparent;
   transition: background 0.15s var(--ease), border-color 0.15s var(--ease);
   user-select: none;
 }
-.session-item:hover { background: var(--accent-light); }
-.session-item.active {
+.s-item:hover { background: var(--accent-light); }
+.s-item.active {
   background: var(--accent-light);
   border-left-color: var(--accent);
 }
-.session-item:focus-visible {
+.s-item:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
-.status-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-.status-dot--running { animation: dot-pulse 2s infinite; }
-.session-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.session-label {
-  font-size: 13px; color: var(--fg);
+.s-item__title {
+  flex: 1; font-size: 13px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.session-time { font-size: 11px; color: var(--muted); }
-@keyframes dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.s-item__meta {
+  font-size: 11px; color: var(--muted); white-space: nowrap;
+  display: flex; align-items: center; gap: 4px;
+}
+.s-item__notif {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 14px; height: 14px; border-radius: 7px;
+  font-size: 9px; font-weight: 700; color: white;
+  margin-left: 4px; flex-shrink: 0;
+}
+.s-item__notif--done { background: var(--success); }
+.s-item__notif--alert { background: var(--danger); }
+.s-item.has-notif .s-item__title { font-weight: 600; }
 </style>

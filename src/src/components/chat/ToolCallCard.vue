@@ -2,14 +2,10 @@
   <div :class="['tool', { collapsed: !expanded }]">
     <Button variant="ghost" class="tool__hd" @click="expanded = !expanded">
       <span v-if="isRunning" class="tool-spinner"></span>
-      <span v-else :class="['tool__status-icon', statusClass]">
-        <svg v-if="isError" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
-        <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
-      </span>
+      <svg v-else class="tool__chevron" xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
       <span class="tool__name">{{ toolCall.toolName }}</span>
       <span v-if="filePathHint" class="tool__path">{{ truncate(filePathHint, 50) }}</span>
       <span :class="['tool__status', `tool__status--${statusClass}`]">{{ statusLabel }}</span>
-      <svg class="tool__chevron" xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
     </Button>
     <div v-if="expanded" class="tool__bd">
       <component v-if="rendererComp" :is="rendererComp" :tool-call="toolCall" />
@@ -60,6 +56,7 @@ function truncate(str: string, max: number): string {
 .tool__hd { display: flex; align-items: center; gap: 6px; padding: 6px 10px; cursor: pointer; font-size: 11px; font-family: var(--font-mono); color: var(--muted); user-select: none; transition: background 0.15s var(--ease); width: 100%; text-align: left; background: none; border: none; color: inherit; font: inherit; }
 .tool__hd:hover { background: var(--accent-light); }
 .tool__chevron { transition: transform 0.15s var(--ease); font-size: 9px; flex-shrink: 0; }
+.tool.collapsed .tool__chevron { transform: rotate(-90deg); }
 .tool__name { font-weight: 600; color: var(--accent); }
 .tool__path { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .tool__status { margin-left: auto; font-size: 10px; flex-shrink: 0; }
@@ -67,10 +64,6 @@ function truncate(str: string, max: number): string {
 .tool__status--done { color: var(--success); }
 .tool__status--error { color: var(--danger); }
 .tool__bd { padding: 6px 10px 10px; font-size: 11px; line-height: 1.5; max-height: 160px; overflow-y: auto; border-top: 1px solid var(--border); font-family: var(--font-mono); color: var(--muted); }
-.tool__status-icon { font-size: 12px; flex-shrink: 0; }
-.tool__status-icon.done { color: var(--success); }
-.tool__status-icon.error { color: var(--danger); }
-.tool__status-icon.running { color: var(--warning); }
 .tool-spinner { display: inline-block; width: 10px; height: 10px; border: 2px solid var(--warning); border-top-color: transparent; border-radius: 50%; animation: spin 0.6s linear infinite; flex-shrink: 0; }
 @keyframes spin { to { transform: rotate(360deg); } }
 </style>

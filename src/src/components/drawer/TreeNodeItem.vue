@@ -10,14 +10,14 @@
       :class="{ collapsed: collapsed }"
       @click.stop="collapsed = !collapsed"
     >▾</span>
-    <span v-else style="width:14px"></span>
+    <span v-else style="width:14px;display:inline-block"></span>
     <span class="tree-node__dot" :style="dotStyle"></span>
     <span class="tree-node__label">
       <strong v-if="node.bold">{{ node.label }}</strong>
       <template v-else>{{ node.label }}</template>
     </span>
     <span v-if="node.meta" class="tree-node__meta">{{ node.meta }}</span>
-    <span class="tree-node__kill" @click.stop="$emit('kill', node.id)">终止</span>
+    <span v-if="depth > 0" class="tree-node__kill" @click.stop="$emit('kill', node.id)">终止</span>
   </div>
   <div v-if="hasChildren" class="tree-children" :class="{ collapsed }">
     <template v-for="child in node.children" :key="child.id">

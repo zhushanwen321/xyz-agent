@@ -39,12 +39,21 @@ const strategyLabel = computed(() => {
   return ''
 })
 
-const metaItems = computed(() => [
-  { key: '\u540d\u79f0', value: props.agent.name },
-  { key: '\u7c7b\u578b', value: props.agent.type === 'builtin' ? '\u5185\u7f6e (builtin)' : (props.agent.sourceType ?? props.agent.type ?? '-') },
-  { key: '\u6a21\u578b\u7b56\u7565', value: strategyLabel.value },
-  { key: '\u5de5\u5177', value: props.agent.tools?.join(', ') ?? '-' },
-])
+const metaItems = computed(() => {
+  const items: Array<{ key: string; value: string }> = [
+    { key: '\u540d\u79f0', value: props.agent.name },
+  ]
+  if (props.agent.type === 'builtin') {
+    items.push({ key: '\u7c7b\u578b', value: '\u5185\u7f6e (builtin)' })
+  } else {
+    items.push({ key: '\u6765\u6e90', value: props.agent.sourceType ? `${props.agent.sourceType} \u00b7 ${props.agent.source ?? ''}` : (props.agent.source ?? '-') })
+  }
+  items.push(
+    { key: '\u6a21\u578b\u7b56\u7565', value: strategyLabel.value },
+    { key: '\u5de5\u5177', value: props.agent.tools?.join(', ') ?? '-' },
+  )
+  return items
+})
 
 function handleSave() {
   showEditor.value = false
@@ -59,6 +68,10 @@ function handleSave() {
         @update:model-value="$emit('toggle-enabled')"
         @click.stop
       />
+      <div
+        class="s-agent-card__icon"
+        :style="agent.iconBg ? { background: agent.iconBg } : {}"
+      >{{ agent.icon || agent.name.charAt(0) }}</div>
       <div class="s-agent-card__info">
         <div class="s-agent-card__name">{{ agent.name }}</div>
         <div class="s-agent-card__desc">{{ agent.description }}</div>
@@ -82,12 +95,13 @@ function handleSave() {
         :active="agent.overrideParams ?? false"
         :params="agent.params ?? { depth: 20, width: 10, tokens: 100000, rounds: 50 }"
       />
-      <MarkdownEditor
-        v-if="showEditor"
-        v-model="content"
-        filename="agent.md"
-        @save="handleSave"
-      />
+      <div v-if="showEditor" style="margin-top: 12px">
+        <MarkdownEditor
+          v-model="content"
+          filename="agent.md"
+          @save="handleSave"
+        />
+      </div>
     </div>
   </div>
 </template>

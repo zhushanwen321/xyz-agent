@@ -1,22 +1,20 @@
 <template>
-  <Teleport to="body">
-    <div v-if="visible && commands.length > 0" class="slash-menu" ref="menuRef" :style="menuStyle">
-      <div class="slash-menu__list" ref="listRef">
-        <Button
-          v-for="(cmd, idx) in commands"
-          :key="cmd.name"
-          :ref="(el) => { if (idx === activeIndex) activeEl = (el as any)?.$el ?? el }"
-          variant="ghost"
-          :class="['slash-menu__item', { 'slash-menu__item--active': idx === activeIndex }]"
-          @click="handleSelect(cmd.name)"
-          @mouseenter="activeIndex = idx"
-        >
-          <span class="slash-menu__name">/{{ cmd.name }}</span>
-          <span class="slash-menu__desc">{{ cmd.description }}</span>
-        </Button>
-      </div>
+  <div v-if="visible && commands.length > 0" class="slash-menu" ref="menuRef">
+    <div class="slash-menu__list" ref="listRef">
+      <Button
+        v-for="(cmd, idx) in commands"
+        :key="cmd.name"
+        :ref="(el) => { if (idx === activeIndex) activeEl = (el as any)?.$el ?? el }"
+        variant="ghost"
+        :class="['slash-menu__item', { 'slash-menu__item--active': idx === activeIndex }]"
+        @click="handleSelect(cmd.name)"
+        @mouseenter="activeIndex = idx"
+      >
+        <span class="slash-menu__name">/{{ cmd.name }}</span>
+        <span class="slash-menu__desc">{{ cmd.description }}</span>
+      </Button>
     </div>
-  </Teleport>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -41,13 +39,6 @@ const menuRef = ref<HTMLElement | null>(null)
 const listRef = ref<HTMLElement | null>(null)
 
 const commands = computed(() => filteredCommands.value)
-
-const menuStyle = computed(() => ({
-  position: 'fixed' as const,
-  bottom: '120px',
-  left: '50%',
-  transform: 'translateX(-50%)',
-}))
 
 watch(() => props.filter, (val) => {
   setFilter(val)
@@ -101,14 +92,18 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .slash-menu {
-  width: 360px;
-  max-height: 260px;
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  margin-bottom: 6px;
+  max-height: 280px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
   overflow: hidden;
-  z-index: 200;
+  z-index: 20;
 }
 
 .slash-menu__list {

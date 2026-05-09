@@ -55,9 +55,10 @@ function onBindChange(val: string) {
     <div class="s-agent-model-config__row">
       <span class="s-agent-model-config__row-label">策略</span>
       <Select
-        class="!h-8 !px-2.5 !py-1.5 !text-xs !rounded"
+        class="s-agent-model-config__select !h-8 !px-2.5 !py-1.5 !text-xs !rounded"
         :model-value="strategy"
         :options="strategyOptions"
+        style="max-width: 200px"
         @update:model-value="onStrategyChange"
       />
     </div>

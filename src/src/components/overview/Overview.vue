@@ -16,24 +16,28 @@
             :key="li"
             :class="[
               'card__preview__line',
-              { 'card__preview__line--user': line.isUser, 'card__preview__line--bot': !line.isUser }
+              {
+                'card__preview__line--user': line.role === 'user',
+                'card__preview__line--bot': line.role === 'bot'
+              }
             ]"
+            :style="line.color ? { color: line.color } : undefined"
           >
             {{ line.text }}
           </div>
         </div>
         <div class="card__footer">
           <div class="card__title">
-            {{ card.title }}
             <span :class="['card__badge', `card__badge--${card.status}`]">
               <span class="card__badge__dot"></span>
               {{ statusLabels[card.status] || card.status }}
             </span>
+            {{ card.title }}
           </div>
           <div class="card__project">{{ card.project }}</div>
           <div class="card__meta">
-            <span v-for="m in card.meta" :key="m.label" class="card__meta-item">
-              {{ m.label }}: {{ m.value }}
+            <span v-for="(m, mi) in card.meta" :key="mi" class="card__meta-item">
+              {{ m }}
             </span>
           </div>
         </div>
@@ -42,7 +46,7 @@
     <div class="overview__hint">
       <span><kbd>Enter</kbd> 进入</span>
       <span><kbd>Shift</kbd>+<kbd>Enter</kbd> 分屏进入</span>
-      <span><kbd>&larr;</kbd> <kbd>&rarr;</kbd> 选择</span>
+      <span><kbd>&larr;</kbd><kbd>&rarr;</kbd> 选择</span>
       <span><kbd>Esc</kbd> 返回</span>
     </div>
   </div>
@@ -53,12 +57,8 @@ import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 
 interface PreviewLine {
   text: string
-  isUser: boolean
-}
-
-interface MetaItem {
-  label: string
-  value: string
+  role: 'user' | 'bot' | 'system'
+  color?: string
 }
 
 export interface OverviewCard {
@@ -67,7 +67,7 @@ export interface OverviewCard {
   project: string
   status: 'run' | 'pause' | 'idle'
   previewLines: PreviewLine[]
-  meta: MetaItem[]
+  meta: string[]
 }
 
 const props = defineProps<{

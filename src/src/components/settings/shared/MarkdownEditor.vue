@@ -19,7 +19,7 @@ defineEmits<{
   <div class="s-editor">
     <div class="s-editor__bar">
       <span>{{ props.filename }}</span>
-      <Button variant="ghost" size="sm" @click="$emit('save')">保存</Button>
+      <Button size="sm" @click="$emit('save')">保存</Button>
     </div>
     <Textarea
       class="s-editor__textarea"

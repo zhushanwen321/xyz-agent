@@ -45,7 +45,7 @@ function handleAgentSave(data: { name: string; description: string; modelStrateg
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M7 1v12M1 7h12" />
         </svg>
-        添加 Agent
+        导入 Agent
       </Button>
     </div>
 
