@@ -124,7 +124,7 @@ export class SidecarServer {
 
   private sendInitialState(ws: WsType): void {
     // Session list — 使用 grouped 格式，与 broadcastSessionList 一致
-    const groups = this.pool.listGrouped()
+    const groups = this.pool.listPersistedSessions()
     this.send(ws, { type: 'session.list', id: this.nextPushId(), payload: { groups } })
 
     // Provider list
@@ -164,7 +164,7 @@ export class SidecarServer {
         }
 
         case 'session.list': {
-          const groups = this.pool.listGrouped()
+          const groups = this.pool.listPersistedSessions()
           this.send(ws, { type: 'session.list', id: msg.id, payload: { groups } })
           break
         }
@@ -209,9 +209,18 @@ export class SidecarServer {
           break
         }
 
+        case 'session.restore': {
+          const restoreId = msg.payload.sessionId as string
+          const session = await this.pool.restoreSession(restoreId)
+          this.send(ws, { type: 'session.restored', id: msg.id, payload: { session } })
+          this.broadcastSessionList()
+          break
+        }
+
         // ── Messages ────────────────────────────────────────────
         case 'message.send': {
           const { sessionId, content } = msg.payload as { sessionId: string; content: string }
+          console.log(`[sidecar] message.send: sessionId=${sessionId}, contentLength=${content?.length ?? 0}`)
           await this.pool.sendMessage(sessionId, content)
           this.send(ws, { type: 'message.status', id: msg.id, payload: { sessionId, status: 'sent' } })
           break
@@ -278,6 +287,7 @@ export class SidecarServer {
             provider: string
             modelId: string
           }
+          console.log(`[sidecar] model.switch: sessionId=${sessionId}, provider=${provider}, modelId=${modelId}`)
           await this.pool.switchModel(sessionId, provider, modelId)
           this.send(ws, {
             type: 'model.switched',
@@ -338,7 +348,7 @@ export class SidecarServer {
 
   private broadcastSessionList(): void {
     if (!this.client) return
-    const groups = this.pool.listGrouped()
+    const groups = this.pool.listPersistedSessions()
     this.send(this.client, { type: 'session.list', id: this.nextPushId(), payload: { groups } })
   }
 
