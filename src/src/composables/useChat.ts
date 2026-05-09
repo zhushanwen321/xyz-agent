@@ -3,8 +3,11 @@ import { useSessionStore } from '../stores/session'
 import { send } from '../lib/ws-client'
 import { on, off } from '../lib/event-bus'
 import { onMounted, onUnmounted } from 'vue'
-import type { ServerMessage } from '@xyz-agent/shared'
-import type { ToolCall } from '@xyz-agent/shared'
+import type { ServerMessage, ToolCall } from '@xyz-agent/shared'
+
+// Module-level guard: prevent duplicate event listeners when multiple
+// ChatView instances mount (e.g. split mode)
+let listenerRefCount = 0
 
 export function useChat() {
   const store = useChatStore()
@@ -161,14 +164,20 @@ export function useChat() {
   }
 
   onMounted(() => {
-    for (const [evt, handler] of Object.entries(eventMap)) {
-      on(evt, handler)
+    if (listenerRefCount === 0) {
+      for (const [evt, handler] of Object.entries(eventMap)) {
+        on(evt, handler)
+      }
     }
+    listenerRefCount++
   })
 
   onUnmounted(() => {
-    for (const [evt, handler] of Object.entries(eventMap)) {
-      off(evt, handler)
+    listenerRefCount--
+    if (listenerRefCount === 0) {
+      for (const [evt, handler] of Object.entries(eventMap)) {
+        off(evt, handler)
+      }
     }
   })
 

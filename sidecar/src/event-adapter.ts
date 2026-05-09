@@ -99,31 +99,12 @@ export class EventAdapter {
               payload: { sessionId: sid },
             }
 
-          // toolcall sub-types from message_update
+          // toolcall sub-types carry incremental info but tool_execution_start/end
+          // provide the complete, canonical data — skip these to avoid duplicates
           case 'toolcall_start':
-            return {
-              type: 'message.tool_call_start',
-              payload: {
-                sessionId: sid,
-                toolCallId: '',  // Will be in toolcall_end or tool_execution_start
-                toolName: '',
-                input: null,
-              },
-            }
-
-          case 'toolcall_end': {
-            // toolcall_end carries the complete toolCall object
-            const tc = event.toolCall as { id?: string; name?: string; arguments?: Record<string, unknown> } | undefined
-            return {
-              type: 'message.tool_call_start',
-              payload: {
-                sessionId: sid,
-                toolCallId: tc?.id ?? '',
-                toolName: tc?.name ?? '',
-                input: tc?.arguments ?? null,
-              },
-            }
-          }
+          case 'toolcall_delta':
+          case 'toolcall_end':
+            return null
 
           // text_start and text_end carry no incremental content needed by frontend
           case 'text_start':
@@ -148,16 +129,32 @@ export class EventAdapter {
           },
         }
 
-      case 'tool_execution_end':
+      case 'tool_execution_end': {
+        // pi result is { content: [{ type: 'text', text: '...' }] } or a string
+        let output: string
+        const raw = event.result ?? event.output
+        if (typeof raw === 'string') {
+          output = raw
+        } else if (raw && typeof raw === 'object' && Array.isArray(raw.content)) {
+          output = raw.content
+            .filter((c: { type: string }) => c.type === 'text')
+            .map((c: { text?: string }) => c.text ?? '')
+            .join('\n')
+        } else if (raw != null) {
+          output = JSON.stringify(raw)
+        } else {
+          output = ''
+        }
         return {
           type: 'message.tool_call_end',
           payload: {
             sessionId: sid,
             toolCallId: event.toolCallId ?? '',
-            output: event.result ?? event.output ?? '',
-            error: event.isError ? String(event.result ?? '') : event.error,
+            output,
+            error: event.isError ? output : event.error,
           },
         }
+      }
 
       // ── Agent lifecycle ────────────────────────────────────────
       case 'agent_end': {
