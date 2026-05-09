@@ -3,7 +3,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { trash } from './trash.js'
 
-const SESSIONS_DIR = join(homedir(), '.pi', 'agent', 'sessions')
+const SESSIONS_DIR = join(homedir(), '.xyz-agent', 'sessions')
 
 export interface ScannedSession {
   /** Session UUID */

@@ -1,5 +1,8 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createInterface } from 'node:readline'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { mkdirSync } from 'node:fs'
 import { buildProviderEnv, getDefaultModel } from './config-store.js'
 
 export interface PiMessage {
@@ -51,6 +54,11 @@ export class RpcClient {
 
     const args = ['--mode', 'rpc']
     if (model) args.push('--model', model)
+
+    // 使用独立的 session 目录，避免和 pi 本身的数据混合
+    const sessionDir = join(homedir(), '.xyz-agent', 'sessions')
+    mkdirSync(sessionDir, { recursive: true })
+    args.push('--session-dir', sessionDir)
 
     this.proc = spawn('pi', args, {
       cwd: this.options.cwd ?? process.cwd(),
@@ -124,8 +132,12 @@ export class RpcClient {
       const entry = this.pending.get(msg.id)!
       clearTimeout(entry.timer)
       this.pending.delete(msg.id)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const m = msg as any
+      console.log('[rpc] resolved pending:', msg.id, msg.type, m.success === false ? '(FAILED)' : '(ok)')
       entry.resolve(msg)
     } else {
+      console.log('[rpc] event:', msg.type, '(listeners:', this.listeners.size, ')')
       for (const listener of this.listeners) {
         listener(msg)
       }
@@ -146,6 +158,7 @@ export class RpcClient {
 
   /**
    * Send a raw command and wait for a response with matching id.
+   * If the response indicates failure (success: false), the promise is rejected.
    */
   sendCommand(type: string, params: Record<string, unknown> = {}): Promise<PiMessage> {
     return new Promise((resolve, reject) => {
@@ -161,7 +174,20 @@ export class RpcClient {
         reject(new Error(`RPC command "${type}" timed out after ${CMD_TIMEOUT_MS}ms`))
       }, CMD_TIMEOUT_MS)
 
-      this.pending.set(id, { resolve, reject, timer })
+      this.pending.set(id, {
+        resolve: (msg) => {
+          // Check if the response indicates failure
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi response has dynamic shape
+          const resp = msg as any
+          if (resp.success === false) {
+            reject(new Error(resp.error ?? `RPC command "${type}" failed`))
+          } else {
+            resolve(msg)
+          }
+        },
+        reject,
+        timer,
+      })
 
       try {
         this.proc.stdin!.write(msg)
@@ -197,9 +223,11 @@ export class RpcClient {
    * Send a user message to pi. The returned promise resolves when
    * pi acknowledges receipt (not when generation completes).
    * Actual content arrives via onEvent() listeners as text_delta etc.
+   *
+   * Note: pi RPC protocol uses "message" field, not "content".
    */
   prompt(content: string): Promise<PiMessage> {
-    return this.sendCommand('prompt', { content })
+    return this.sendCommand('prompt', { message: content })
   }
 
   abort(): Promise<PiMessage> {
@@ -207,11 +235,11 @@ export class RpcClient {
   }
 
   setModel(provider: string, modelId: string): Promise<PiMessage> {
-    return this.sendCommand('setModel', { provider, modelId })
+    return this.sendCommand('set_model', { provider, modelId })
   }
 
   getAvailableModels(): Promise<PiMessage> {
-    return this.sendCommand('listModels')
+    return this.sendCommand('get_available_models')
   }
 
   /**
@@ -223,27 +251,49 @@ export class RpcClient {
   }
 
   getHistory(): Promise<PiMessage> {
-    return this.sendCommand('getHistory')
+    return this.sendCommand('get_messages')
   }
 
   compact(): Promise<PiMessage> {
     return this.sendCommand('compact')
   }
 
+  /**
+   * Clear is not directly supported by pi RPC. Use new_session instead.
+   * Kept for API compatibility — creates a new session.
+   */
   clear(): Promise<PiMessage> {
-    return this.sendCommand('clear')
+    return this.sendCommand('new_session')
   }
 
-  approveTool(toolCallId: string): Promise<PiMessage> {
-    return this.sendCommand('toolApprove', { toolCallId })
+  /**
+   * Tool approval commands. pi RPC mode handles tool approvals
+   * internally via extension_ui_request/extension_ui_response protocol.
+   * These are kept as no-ops for API compatibility.
+   */
+  approveTool(_toolCallId: string): Promise<PiMessage> {
+    // pi handles tool approvals via extension UI protocol, not direct commands
+    return Promise.resolve({
+      type: 'response',
+      command: 'toolApprove',
+      success: true,
+    })
   }
 
-  denyTool(toolCallId: string): Promise<PiMessage> {
-    return this.sendCommand('toolDeny', { toolCallId })
+  denyTool(_toolCallId: string): Promise<PiMessage> {
+    return Promise.resolve({
+      type: 'response',
+      command: 'toolDeny',
+      success: true,
+    })
   }
 
-  alwaysAllowTool(toolName: string): Promise<PiMessage> {
-    return this.sendCommand('toolAlwaysAllow', { toolName })
+  alwaysAllowTool(_toolName: string): Promise<PiMessage> {
+    return Promise.resolve({
+      type: 'response',
+      command: 'toolAlwaysAllow',
+      success: true,
+    })
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────
