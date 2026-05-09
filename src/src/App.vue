@@ -81,8 +81,13 @@ const settingsStore = useSettingsStore()
 const toasts = ref<ToastItem[]>([])
 
 async function createSession() {
-  // TEST: bypass pick_folder, directly create session
-  doCreateSession('/Users/zhushanwen/Code/xyz-agent')
+  try {
+    const result = await invoke<{ path: string | null; cancelled: boolean }>('pick_folder')
+    if (result.cancelled || !result.path) return
+    doCreateSession(result.path)
+  } catch (e) {
+    console.error('[createSession] Failed:', e)
+  }
 }
 
 function dismissToast(id: string) {

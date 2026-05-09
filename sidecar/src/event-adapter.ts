@@ -136,6 +136,12 @@ export class EventAdapter {
           payload: { sessionId: sid, message: p.message ?? 'Unknown error' },
         }
 
+      // Known pi events that don't need forwarding to the frontend
+      case 'extension_ui_request':
+      case 'extension_ui_response':
+      case 'extension_config':
+        return null
+
       default:
         console.debug('[EventAdapter] Unhandled pi event type:', event.type, event.payload)
         return null
