@@ -49,7 +49,7 @@ const triggerClasses = computed(() =>
   ),
 )
 
-const contentClasses = 'z-50 overflow-hidden rounded-md border border-solid border-[var(--border)] bg-[var(--surface)] shadow-md'
+const contentClasses = 'z-[200] overflow-hidden rounded-md border border-solid border-[var(--border)] bg-[var(--surface)] shadow-md'
 
 const itemClasses = computed(() =>
   cn(

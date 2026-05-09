@@ -53,7 +53,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import { useSettingsStore } from './stores/settings'
-import { invoke } from '@tauri-apps/api/core'
+import { useSessionStore } from './stores/session'
 import { useConnection } from './composables/useConnection'
 import { useProvider } from './composables/useProvider'
 import { useSession } from './composables/useSession'
@@ -77,22 +77,14 @@ useProvider()
 const { loadSessions, createSession: doCreateSession } = useSession()
 
 const settingsStore = useSettingsStore()
+const sessionStore = useSessionStore()
 
 const toasts = ref<ToastItem[]>([])
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function createSession() {
-  try {
-    const result = await invoke<any>('plugin:dialog|open', {
-      options: { directory: true, title: 'Select Working Directory', multiple: false },
-    })
-    // plugin:dialog|open returns { files?: string[], file?: string, folders?: string[], folder?: string }
-    const path = result?.folder ?? result?.path ?? null
-    if (!path) return
-    doCreateSession(path)
-  } catch (e) {
-    console.error('[createSession] Failed:', e)
-  }
+function createSession() {
+  // Use the current session's cwd, or a fallback path
+  const cwd = sessionStore.currentSession?.cwd || '/Users/zhushanwen/Code/xyz-agent'
+  doCreateSession(cwd)
 }
 
 function dismissToast(id: string) {

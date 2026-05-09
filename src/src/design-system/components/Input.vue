@@ -26,6 +26,10 @@ function onInput(event: Event) {
     :value="modelValue"
     :placeholder="placeholder"
     :disabled="disabled"
+    autocomplete="off"
+    autocapitalize="off"
+    autocorrect="off"
+    spellcheck="false"
     :class="cn(
       'flex h-10 w-full rounded-md border border-solid border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--fg)] transition-colors',
       'placeholder:text-[var(--muted)]',
