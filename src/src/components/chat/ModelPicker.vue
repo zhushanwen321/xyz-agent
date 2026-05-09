@@ -16,7 +16,7 @@
           v-for="m in group.models"
           :key="m.id"
           variant="ghost"
-          :class="['model-picker__item', { 'model-picker__item--active': m.id === currentModel }]"
+          :class="['model-picker__item', { 'model-picker__item--active': m.id === (resolvedModel?.id ?? currentModel) }]"
           @click="handleSelect(m.id)"
         >
           <span class="model-picker__item-dot"></span>
@@ -33,18 +33,19 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { useModel } from '../../composables/useModel'
+import { useProviderStore } from '../../stores/provider'
+import { send } from '../../lib/ws-client'
 import { Button } from '../../design-system'
 
 const props = defineProps<{ currentModel: string }>()
 const emit = defineEmits<{ select: [modelId: string] }>()
 
-const { models, loadModels } = useModel()
+const providerStore = useProviderStore()
 const open = ref(false)
 const pickerRef = ref<HTMLElement | null>(null)
 
 onMounted(() => {
-  loadModels()
+  send({ type: 'model.list', payload: {} })
   document.addEventListener('click', onClickOutside)
 })
 
@@ -59,8 +60,15 @@ function onClickOutside(e: MouseEvent) {
 }
 
 /** Format model name: strip known prefix */
+const models = computed(() => providerStore.models)
+
+const resolvedModel = computed(() => {
+  if (!props.currentModel) return models.value[0]
+  return models.value.find(m => m.id === props.currentModel || m.id === props.currentModel.split('/').pop()) ?? models.value[0]
+})
+
 const shortName = computed(() => {
-  const found = models.value.find(m => m.id === props.currentModel || m.id === props.currentModel.split('/').pop())
+  const found = resolvedModel.value
   if (!found) {
     const rawName = props.currentModel.split('/').pop() ?? props.currentModel
     return rawName.replace(/^(claude-|gpt-|gemini-)/, '')
@@ -69,7 +77,7 @@ const shortName = computed(() => {
 })
 
 const providerName = computed(() => {
-  const found = models.value.find(m => m.id === props.currentModel || m.id === props.currentModel.split('/').pop())
+  const found = resolvedModel.value
   if (!found) {
     const parts = props.currentModel.split('/')
     return parts.length > 1 ? parts[0] : ''

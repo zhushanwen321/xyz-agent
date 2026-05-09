@@ -2,9 +2,10 @@
 import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
 import { emit } from '../lib/event-bus'
 import { useProviderStore } from '../stores/provider'
+import { useChatStore } from '../stores/chat'
 import {
   mockSessionGroups, mockMessages, mockProviders, mockModels,
-  mockSkills, mockAgents,
+  mockSkills, mockAgents, mockDoneItems, mockAlertItems,
   DEFAULT_SESSION_ID, toModelInfos,
 } from './data'
 
@@ -182,6 +183,9 @@ function fireInitialData(): void {
 
   // Push skills and agents into the provider store directly
   const providerStore = useProviderStore()
+  const chatStore = useChatStore()
+  chatStore.setDoneCount(mockDoneItems.length)
+  chatStore.setAlertCount(mockAlertItems.length)
   providerStore.setSkills(mockSkills.map(s => ({
     id: s.name,
     name: s.name,

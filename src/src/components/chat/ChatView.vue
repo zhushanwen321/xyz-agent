@@ -7,8 +7,9 @@
     :streaming-message="chatStore.streamingMessage"
     :is-streaming="chatStore.isGenerating"
     :pending-approval="pendingApproval"
-    :done-count="0"
-    :alert-count="0"
+    :error="chatStore.error"
+    :done-count="chatStore.doneCount"
+    :alert-count="chatStore.alertCount"
     :show-close="settingsStore.splitMode"
     @send="handleSend"
     @cancel="handleCancel"
@@ -26,15 +27,18 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useChatStore } from '../../stores/chat'
 import { useSettingsStore } from '../../stores/settings'
+import { useSessionStore } from '../../stores/session'
 import { useChat } from '../../composables/useChat'
 import { send } from '../../lib/ws-client'
 import { on, off } from '../../lib/event-bus'
+import type { ServerMessage } from '@xyz-agent/shared'
 import type { PendingToolCall } from './ApprovalCard.vue'
 import ChatPanel from '../panel/ChatPanel.vue'
 import type { AgentOption, AgentView } from '../panel/ChatPanel.vue'
 
 const chatStore = useChatStore()
 const settingsStore = useSettingsStore()
+const sessionStore = useSessionStore()
 const { sendMessage, abort } = useChat()
 
 const pendingApproval = ref<PendingToolCall | null>(null)
@@ -55,6 +59,13 @@ const agentViews = computed<AgentView[]>(() => {
 })
 
 function handleSend(content: string) {
+  const sid = sessionStore.currentSessionId
+  if (!sid) {
+    console.error('[ChatView] Cannot send: no active session')
+    chatStore.setError('No active session. Please create a session first.')
+    return
+  }
+  chatStore.setError(null)
   chatStore.addMessage({
     id: crypto.randomUUID(),
     role: 'user',
@@ -62,6 +73,7 @@ function handleSend(content: string) {
     status: 'complete',
     timestamp: Date.now(),
   })
+  console.log('[ChatView] Sending message to session:', sid)
   sendMessage(content)
 }
 
@@ -70,21 +82,35 @@ function handleCancel() {
 }
 
 function handleSelectModel(modelId: string) {
-  send({ type: 'model.switch', payload: { modelId } })
+  const sid = sessionStore.currentSessionId
+  settingsStore.defaultModel = modelId
+  if (!sid) {
+    console.warn('[ChatView] Model selected but no active session, will apply on next session')
+    return
+  }
+  // modelId may be "provider/model" format, parse provider from it
+  const parts = modelId.split('/')
+  const provider = parts.length > 1 ? parts[0] : ''
+  const model = parts.length > 1 ? parts.slice(1).join('/') : modelId
+  console.log('[ChatView] Switching model:', { provider, model, sessionId: sid })
+  send({ type: 'model.switch', payload: { sessionId: sid, provider, modelId: model } })
 }
 
 function handleApprove(toolCallId: string) {
-  send({ type: 'tool.approve', payload: { toolCallId } })
+  const sid = sessionStore.currentSessionId
+  send({ type: 'tool.approve', payload: { sessionId: sid, toolCallId } })
   pendingApproval.value = null
 }
 
 function handleDeny(toolCallId: string) {
-  send({ type: 'tool.deny', payload: { toolCallId } })
+  const sid = sessionStore.currentSessionId
+  send({ type: 'tool.deny', payload: { sessionId: sid, toolCallId } })
   pendingApproval.value = null
 }
 
 function handleAlwaysAllow(toolName: string) {
-  send({ type: 'tool.always_allow', payload: { toolName } })
+  const sid = sessionStore.currentSessionId
+  send({ type: 'tool.always_allow', payload: { sessionId: sid, toolName } })
   pendingApproval.value = null
 }
 
@@ -96,11 +122,23 @@ function handleToolApprovalRequest(msg: { payload: PendingToolCall }) {
   pendingApproval.value = msg.payload
 }
 
+function handleErrorMessage(msg: ServerMessage) {
+  const payload = msg.payload as { message?: string; code?: string }
+  console.error('[ChatView] Error from server:', payload)
+  if (payload.message) {
+    chatStore.setError(payload.message)
+  }
+}
+
 onMounted(() => {
   on('tool.approval_request', handleToolApprovalRequest)
+  on('error', handleErrorMessage)
+  on('message.error', handleErrorMessage)
 })
 
 onUnmounted(() => {
   off('tool.approval_request', handleToolApprovalRequest)
+  off('error', handleErrorMessage)
+  off('message.error', handleErrorMessage)
 })
 </script>

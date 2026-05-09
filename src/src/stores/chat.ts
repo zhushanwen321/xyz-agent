@@ -29,6 +29,10 @@ export const useChatStore = defineStore('chat', () => {
   // Server-authoritative usage percentage; set via updateContextInfo
   const contextUsagePercent = ref(0)
 
+  // SubAgent 完成数和请求回应数（跨 session 聚合，后端下发）
+  const doneCount = ref(0)
+  const alertCount = ref(0)
+
   const messageCount = computed(() => completedMessages.value.length)
   const lastMessage = computed(() => completedMessages.value[completedMessages.value.length - 1])
   const hasError = computed(() => error.value !== null)
@@ -125,6 +129,7 @@ export const useChatStore = defineStore('chat', () => {
     activeAgentId, agentViews, tokenUsage,
     allAgentOptions,
     pendingApprovals, isLoading, error,
+    doneCount, alertCount,
     messageCount, lastMessage, hasError, allMessages,
     addMessage, setStreaming, appendToStreaming,
     completeStreaming, setGenerating, setContextTokens, clearMessages,
@@ -132,5 +137,7 @@ export const useChatStore = defineStore('chat', () => {
     updateStreamingToolCall, addPendingApproval, removePendingApproval,
     startLoading, stopLoading, updateUsage, updateContextInfo, setError,
     switchAgent, setTokenUsage,
+    setDoneCount(n: number) { doneCount.value = n },
+    setAlertCount(n: number) { alertCount.value = n },
   }
 })

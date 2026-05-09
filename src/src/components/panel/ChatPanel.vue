@@ -38,6 +38,15 @@
             <!-- User / Assistant messages -->
             <MessageBubble v-else :message="msg" />
           </template>
+
+          <!-- Thinking indicator: waiting for first token -->
+          <div v-if="view.agentId === localActiveAgentId && isStreaming && !streamingMessage" class="thinking-indicator">
+            <div class="thinking-indicator__role">助手</div>
+            <div class="thinking-indicator__bar">
+              <span class="thinking-indicator__dot"></span>
+              <span class="thinking-indicator__text">思考中...</span>
+            </div>
+          </div>
         </div>
 
         <!-- Streaming message -->
@@ -55,6 +64,12 @@
           @deny="$emit('deny', $event)"
           @always-allow="$emit('always-allow', $event)"
         />
+
+        <!-- Error banner -->
+        <div v-if="error" class="chat-error">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="7"/><line x1="8" y1="5" x2="8" y2="8"/><line x1="8" y1="11" x2="8.01" y2="11"/></svg>
+          <span class="chat-error__text">{{ error }}</span>
+        </div>
       </template>
     </div>
 
@@ -112,6 +127,7 @@ const props = withDefaults(
     streamingMessage: Message | null
     isStreaming: boolean
     pendingApproval: PendingToolCall | null
+    error: string | null
     doneCount: number
     alertCount: number
     showClose: boolean
@@ -120,6 +136,7 @@ const props = withDefaults(
     agentOptions: () => [],
     agentViews: () => [],
     messages: () => [],
+    error: null,
     doneCount: 0,
     alertCount: 0,
     showClose: false,
@@ -212,5 +229,72 @@ function switchAgent(id: string) {
   margin: 0;
   font-size: 14px;
   color: var(--muted);
+}
+
+/* Thinking indicator: shown while waiting for first token */
+.thinking-indicator {
+  align-self: flex-start;
+  max-width: min(80%, 70ch);
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  border-bottom-left-radius: var(--radius-xs);
+  line-height: 1.6;
+  font-size: 14px;
+}
+.thinking-indicator__role {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-bottom: 3px;
+}
+.thinking-indicator__bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.thinking-indicator__dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: thinking-pulse 1.4s ease-in-out infinite;
+}
+.thinking-indicator__text {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+@keyframes thinking-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.3; transform: scale(0.85); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .thinking-indicator__dot { animation: none; opacity: 0.6; }
+}
+
+/* Error banner */
+.chat-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--danger-light, #fef2f2);
+  border: 1px solid var(--danger, #ef4444);
+  border-radius: var(--radius);
+  color: var(--danger, #ef4444);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.chat-error svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.chat-error__text {
+  flex: 1;
 }
 </style>

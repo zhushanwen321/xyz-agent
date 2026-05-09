@@ -12,7 +12,7 @@
         :placeholder="t('chat.inputPlaceholder')"
         class="chat-input-textarea"
         :rows="1"
-        :style="{ border: 'none', background: 'transparent' }"
+        no-style
         @keydown="onKeyDown"
         @compositionstart="isComposing = true"
         @compositionend="onCompositionEnd"

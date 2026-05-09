@@ -9,6 +9,8 @@ interface Props {
   maxHeight?: string
   autoResize?: boolean
   rows?: number
+  /** 完全跳过组件自带样式（边框、ring、背景等），由父组件通过 CSS 完全控制外观 */
+  noStyle?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -18,6 +20,7 @@ const props = withDefaults(defineProps<Props>(), {
   maxHeight: '140px',
   autoResize: true,
   rows: 3,
+  noStyle: false,
 })
 
 const emit = defineEmits<{
@@ -26,15 +29,18 @@ const emit = defineEmits<{
 
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 
-const textareaClasses = computed(() =>
-  cn(
+const textareaClasses = computed(() => {
+  if (props.noStyle) {
+    return 'flex w-full resize-none text-sm'
+  }
+  return cn(
     'flex w-full rounded-md px-3 py-2 text-sm transition-colors',
     'placeholder:text-[var(--muted)]',
     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
     'disabled:cursor-not-allowed disabled:opacity-50',
     'resize-none',
-  ),
-)
+  )
+})
 
 const maxHeightStyle = computed(() => ({
   'max-height': props.maxHeight,
@@ -72,7 +78,7 @@ watch(
     :disabled="disabled"
     :rows="rows"
     :class="textareaClasses"
-    :style="{ ...maxHeightStyle, background: 'var(--surface)', color: 'var(--fg)', border: '1px solid var(--border)' }"
+    :style="props.noStyle ? { ...maxHeightStyle } : { ...maxHeightStyle, background: 'var(--surface)', color: 'var(--fg)', border: '1px solid var(--border)' }"
     :aria-label="placeholder || undefined"
     @input="onInput"
   />

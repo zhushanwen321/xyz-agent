@@ -6,12 +6,12 @@
       <Button variant="ghost" class="notif-btn notif-btn--done" :title="t('header.done')">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 8 6.5 11.5 13 4.5"/></svg>
         已完成
-        <span class="notif-dot notif-dot--done">3</span>
+        <span v-if="chatStore.doneCount > 0" class="notif-dot notif-dot--done">{{ chatStore.doneCount }}</span>
       </Button>
       <Button variant="ghost" class="notif-btn notif-btn--alert" :title="t('header.alert')">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="8" cy="8" r="6.5"/><path d="M8 5v3.5M8 10.5v.5"/></svg>
         请求回应
-        <span class="notif-dot notif-dot--alert">1</span>
+        <span v-if="chatStore.alertCount > 0" class="notif-dot notif-dot--alert">{{ chatStore.alertCount }}</span>
       </Button>
     </div>
     <span class="h-divider"></span>
@@ -56,9 +56,11 @@
 import { ref } from 'vue'
 import { Button } from '../../design-system'
 import { useSettingsStore } from '../../stores/settings'
+import { useChatStore } from '../../stores/chat'
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 const settingsStore = useSettingsStore()
+const chatStore = useChatStore()
 const isDark = ref(document.documentElement.getAttribute('data-theme') === 'dark')
 function setView(mode: string) {
   switch (mode) {

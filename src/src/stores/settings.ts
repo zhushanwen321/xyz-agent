@@ -5,7 +5,7 @@ import type { ToolPermission, ThemeMode } from '@xyz-agent/shared'
 export const useSettingsStore = defineStore('settings', () => {
   const theme = ref<ThemeMode>('light')
   const locale = ref<string>('zh-CN')
-  const defaultModel = ref('anthropic/claude-sonnet')
+  const defaultModel = ref('')
   const currentView = ref<'chat' | 'settings'>('chat')
   const focusMode = ref(false)
   const splitMode = ref(false)
