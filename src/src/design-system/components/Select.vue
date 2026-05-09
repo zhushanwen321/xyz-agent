@@ -80,6 +80,11 @@ const itemClasses = computed(() =>
       <SelectContent
         position="popper"
         :side-offset="4"
+        :collision-padding="8"
+        :avoid-collisions="true"
+        side="bottom"
+        align="start"
+        :sticky="'always'"
         :class="contentClasses"
         role="listbox"
       >
