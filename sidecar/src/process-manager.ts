@@ -1,40 +1,65 @@
 import { existsSync, readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter as pathDelimiter, join } from 'node:path'
 import { execSync } from 'node:child_process'
 import { RpcClient, type RpcClientOptions } from './rpc-client.js'
 
-// Find pi executable path. Search order:
-// 1. PATH (which pi)
-// 2. ~/.nvm/versions/node/*/bin/pi
-// 3. /usr/local/bin/pi
-// 4. ~/bin/pi
+// Find pi executable path (cross-platform). Search order:
+// 1. PATH (which/where pi)
+// 2. nvm managed node installations
+// 3. Common locations
 function findPiExecutable(): string {
+  const isWindows = process.platform === 'win32'
+
   // 1. Try PATH
   try {
-    const which = execSync('which pi', { encoding: 'utf-8' }).trim()
-    if (which && existsSync(which)) return which
+    const whichCmd = isWindows ? 'where pi' : 'which pi'
+    const which = execSync(whichCmd, { encoding: 'utf-8' }).trim()
+    // Windows 'where' may return multiple lines, take first
+    const firstMatch = which.split('\n')[0].trim()
+    if (firstMatch && existsSync(firstMatch)) return firstMatch
   } catch {
     // not in PATH
   }
 
   // 2. Try nvm managed node installations
-  const nvmDir = join(homedir(), '.nvm', 'versions', 'node')
-  try {
-    const versions = readdirSync(nvmDir)
-    for (const ver of versions) {
-      const piPath = join(nvmDir, ver, 'bin', 'pi')
-      if (existsSync(piPath)) return piPath
+  if (isWindows) {
+    // nvm-windows stores versions in %APPDATA%\nvm
+    const nvmDir = join(process.env.APPDATA ?? '', 'nvm')
+    try {
+      const versions = readdirSync(nvmDir)
+      for (const ver of versions) {
+        const piPath = join(nvmDir, ver, 'pi.cmd')
+        if (existsSync(piPath)) return piPath
+        const piExe = join(nvmDir, ver, 'pi.exe')
+        if (existsSync(piExe)) return piExe
+      }
+    } catch {
+      // nvm dir not found
     }
-  } catch {
-    // nvm dir not found
+  } else {
+    const nvmDir = join(homedir(), '.nvm', 'versions', 'node')
+    try {
+      const versions = readdirSync(nvmDir)
+      for (const ver of versions) {
+        const piPath = join(nvmDir, ver, 'bin', 'pi')
+        if (existsSync(piPath)) return piPath
+      }
+    } catch {
+      // nvm dir not found
+    }
   }
 
   // 3. Common locations
-  const commonPaths = [
-    '/usr/local/bin/pi',
-    join(homedir(), 'bin', 'pi'),
-  ]
+  const commonPaths = isWindows
+    ? [
+        join(process.env.APPDATA ?? '', 'npm', 'pi.cmd'),
+        join(process.env.APPDATA ?? '', 'npm', 'pi.exe'),
+      ]
+ : [
+        '/usr/local/bin/pi',
+        join(homedir(), 'bin', 'pi'),
+      ]
   for (const p of commonPaths) {
     if (existsSync(p)) return p
   }
@@ -80,7 +105,7 @@ export class ProcessManager {
     const piDir = this.piPath !== 'pi' ? join(this.piPath, '..') : undefined
     const pathEnv: Record<string, string> = {}
     if (piDir) {
-      pathEnv.PATH = `${piDir}:${process.env.PATH ?? ''}`
+      pathEnv.PATH = `${piDir}${pathDelimiter}${process.env.PATH ?? ''}`
     }
 
     const client = new RpcClient({ cwd, ...options, env: { ...pathEnv, ...options?.env } })

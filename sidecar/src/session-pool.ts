@@ -1,3 +1,4 @@
+import { basename } from 'node:path'
 import type { WebSocket } from 'ws'
 import type {
   SessionSummary,
@@ -20,6 +21,7 @@ interface ManagedSession {
   tokenCount: number
   isGenerating: boolean
   adapter: EventAdapter
+  unsubUsageListener: (() => void) | null
 }
 
 const WS_OPEN = 1
@@ -80,7 +82,7 @@ export class SessionPool {
     adapter.attach(client)
 
     // 从 agent_end 事件中提取 token 使用量
-    client.onEvent((event) => {
+    const unsubUsage = client.onEvent((event) => {
       if (event.type === 'agent_end') {
         const s = this.sessions.get(id)
         if (s) {
@@ -97,13 +99,14 @@ export class SessionPool {
     const session: ManagedSession = {
       id,
       cwd: sessionCwd,
-      label: sessionCwd.split('/').pop() ?? sessionCwd,
+      label: basename(sessionCwd),
       modelId,
       createdAt: Date.now(),
       lastActiveAt: Date.now(),
       tokenCount: 0,
       isGenerating: false,
       adapter,
+      unsubUsageListener: unsubUsage,
     }
     this.sessions.set(id, session)
 
@@ -114,6 +117,7 @@ export class SessionPool {
     const session = this.sessions.get(sessionId)
     if (!session) throw new Error(`Session ${sessionId} not found`)
     session.adapter.detach()
+    if (session.unsubUsageListener) session.unsubUsageListener()
     await this.pm.destroySession(sessionId)
     this.sessions.delete(sessionId)
   }
@@ -126,7 +130,13 @@ export class SessionPool {
     const session = this.sessions.get(sessionId)!
     session.lastActiveAt = Date.now()
     session.isGenerating = true
-    await client.prompt(content)
+    try {
+      await client.prompt(content)
+    } catch (e) {
+      // prompt 失败（进程崩溃等），重置生成状态
+      session.isGenerating = false
+      throw e
+    }
   }
 
   async abort(sessionId: string): Promise<void> {
@@ -161,7 +171,8 @@ export class SessionPool {
   async clear(sessionId: string): Promise<void> {
     const client = this.pm.getClient(sessionId)
     if (!client) throw new Error(`Session ${sessionId} not found`)
-    const session = this.sessions.get(sessionId)!
+    const session = this.sessions.get(sessionId)
+    if (!session) throw new Error(`Session ${sessionId} not found`)
     await client.clear()
     session.lastActiveAt = Date.now()
   }
@@ -224,6 +235,7 @@ export class SessionPool {
   async destroyAll(): Promise<void> {
     for (const session of this.sessions.values()) {
       session.adapter.detach()
+      if (session.unsubUsageListener) session.unsubUsageListener()
     }
     await this.pm.destroyAll()
     this.sessions.clear()

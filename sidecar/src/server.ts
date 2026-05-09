@@ -96,7 +96,7 @@ export class SidecarServer {
       try {
         const msg: ClientMessage = JSON.parse(data.toString())
         // 收到任何消息都重置心跳
-        if (msg.type === 'ping') this.resetHeartbeat(ws)
+        this.resetHeartbeat(ws)
         this.handleMessage(msg, ws)
       } catch {
         this.sendError(ws, 'parse_error', 'Invalid JSON')
