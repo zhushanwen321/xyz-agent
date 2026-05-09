@@ -99,6 +99,32 @@ export class EventAdapter {
               payload: { sessionId: sid },
             }
 
+          // toolcall sub-types from message_update
+          case 'toolcall_start':
+            return {
+              type: 'message.tool_call_start',
+              payload: {
+                sessionId: sid,
+                toolCallId: '',  // Will be in toolcall_end or tool_execution_start
+                toolName: '',
+                input: null,
+              },
+            }
+
+          case 'toolcall_end': {
+            // toolcall_end carries the complete toolCall object
+            const tc = event.toolCall as { id?: string; name?: string; arguments?: Record<string, unknown> } | undefined
+            return {
+              type: 'message.tool_call_start',
+              payload: {
+                sessionId: sid,
+                toolCallId: tc?.id ?? '',
+                toolName: tc?.name ?? '',
+                input: tc?.arguments ?? null,
+              },
+            }
+          }
+
           // text_start and text_end carry no incremental content needed by frontend
           case 'text_start':
           case 'text_end':
@@ -110,7 +136,7 @@ export class EventAdapter {
         }
       }
 
-      // ── Tool execution (if pi emits these directly) ────────────
+      // ── Tool execution ────────────────────────────────────────
       case 'tool_execution_start':
         return {
           type: 'message.tool_call_start',
@@ -118,7 +144,7 @@ export class EventAdapter {
             sessionId: sid,
             toolCallId: event.toolCallId ?? '',
             toolName: event.toolName ?? '',
-            input: event.input,
+            input: event.args ?? event.input,
           },
         }
 
@@ -128,8 +154,8 @@ export class EventAdapter {
           payload: {
             sessionId: sid,
             toolCallId: event.toolCallId ?? '',
-            output: event.output ?? '',
-            error: event.error,
+            output: event.result ?? event.output ?? '',
+            error: event.isError ? String(event.result ?? '') : event.error,
           },
         }
 

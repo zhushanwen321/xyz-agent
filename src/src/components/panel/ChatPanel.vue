@@ -11,7 +11,7 @@
       @close-split="$emit('close-split')"
     />
 
-    <div class="chat-msgs">
+    <div ref="chatMsgsRef" class="chat-msgs">
       <!-- Empty state -->
       <div v-if="messages.length === 0" class="chat-empty">
         <h2 class="chat-empty__title">开始新对话</h2>
@@ -19,33 +19,31 @@
       </div>
 
       <template v-else>
-        <!-- Agent views: only show the active one -->
-        <div
-          v-for="view in agentViews"
-          :key="view.agentId"
-          :class="['agent-view', { active: view.agentId === localActiveAgentId }]"
-        >
-          <template v-for="msg in view.messages" :key="msg.id">
-            <!-- System messages -->
-            <SystemMessage
-              v-if="msg.role === 'system'"
-              :type="msg.systemType || 'done'"
-              :title="msg.systemTitle || ''"
-              :description="msg.systemDescription"
-              :action-label="msg.systemAction"
-              @action="$emit('system-action', msg)"
-            />
-            <!-- User / Assistant messages -->
-            <MessageBubble v-else :message="msg" />
+        <!-- Only render the active agent's messages -->
+        <template v-for="view in agentViews" :key="view.agentId">
+          <template v-if="view.agentId === localActiveAgentId">
+            <template v-for="msg in view.messages" :key="msg.id">
+              <!-- System messages -->
+              <SystemMessage
+                v-if="msg.role === 'system'"
+                :type="msg.systemType || 'done'"
+                :title="msg.systemTitle || ''"
+                :description="msg.systemDescription"
+                :action-label="msg.systemAction"
+                @action="$emit('system-action', msg)"
+              />
+              <!-- User / Assistant messages -->
+              <MessageBubble v-else :message="msg" />
+            </template>
           </template>
+        </template>
 
-          <!-- Thinking indicator: waiting for first token -->
-          <div v-if="view.agentId === localActiveAgentId && isStreaming && !streamingMessage" class="thinking-indicator">
-            <div class="thinking-indicator__role">助手</div>
-            <div class="thinking-indicator__bar">
-              <span class="thinking-indicator__dot"></span>
-              <span class="thinking-indicator__text">思考中...</span>
-            </div>
+        <!-- Thinking indicator: waiting for first token -->
+        <div v-if="isStreaming && !streamingMessage" class="thinking-indicator">
+          <div class="thinking-indicator__role">助手</div>
+          <div class="thinking-indicator__bar">
+            <span class="thinking-indicator__dot"></span>
+            <span class="thinking-indicator__text">思考中...</span>
           </div>
         </div>
 
@@ -77,7 +75,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, nextTick } from 'vue'
 import type { Message } from '@xyz-agent/shared'
 import type { PendingToolCall } from '../chat/ApprovalCard.vue'
 
@@ -150,11 +148,24 @@ const emit = defineEmits<{
 
 // Local mirror of activeAgentId so PanelBar can react instantly
 const localActiveAgentId = ref(props.activeAgentId)
+const chatMsgsRef = ref<HTMLElement | null>(null)
+
 watch(
   () => props.activeAgentId,
   (v) => {
     localActiveAgentId.value = v
   }
+)
+
+// Auto-scroll to bottom when new messages arrive or streaming updates
+watch(
+  () => [props.messages.length, props.streamingMessage?.content],
+  () => {
+    nextTick(() => {
+      const el = chatMsgsRef.value
+      if (el) el.scrollTop = el.scrollHeight
+    })
+  },
 )
 
 function switchAgent(id: string) {
@@ -185,22 +196,6 @@ function switchAgent(id: string) {
   max-width: 960px;
   margin: 0 auto;
   width: 100%;
-}
-.agent-view {
-  position: absolute;
-  inset: 20px 24px;
-  visibility: hidden;
-  opacity: 0;
-  transition: opacity 0.2s var(--ease);
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-.agent-view.active {
-  visibility: visible;
-  opacity: 1;
-  z-index: 1;
 }
 .chat-empty {
   display: flex;
