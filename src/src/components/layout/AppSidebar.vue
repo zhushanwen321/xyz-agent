@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useSessionStore } from '../../stores/session'
-import { send } from '../../lib/ws-client'
+import { useSession } from '../../composables/useSession'
 import { Input, Button, Dialog } from '../../design-system'
 import { SessionItem } from '../sidebar'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 const sessionStore = useSessionStore()
+const { switchSession, deleteSession } = useSession()
 
 defineEmits<{ create: [] }>()
 
@@ -20,8 +21,7 @@ function dirname(cwd: string): string {
 }
 
 function onDelete(sessionId: string) {
-  sessionStore.removeSession(sessionId)
-  send({ type: 'session.delete', payload: { sessionId } })
+  deleteSession(sessionId)
 }
 
 function startRename(id: string) {
@@ -70,7 +70,7 @@ function cancelRename() {
               :key="session.id"
               :session="session"
               :is-active="session.id === sessionStore.currentSessionId"
-              @click="sessionStore.switchSession(session.id)"
+              @click="switchSession(session.id)"
               @rename="startRename($event)"
               @delete="onDelete($event)"
             />

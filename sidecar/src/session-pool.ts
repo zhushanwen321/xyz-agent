@@ -6,8 +6,25 @@ import type {
   SessionStatus,
   Message,
   ServerMessage,
+  ThinkingBlock,
+  ToolCall,
 } from '@xyz-agent/shared'
 import { ProcessManager } from './process-manager.js'
+
+/** Raw message format returned by pi's get_messages command */
+interface PiHistoryMessage {
+  role: string
+  content: Array<{
+    type: 'text' | 'thinking' | 'toolCall' | 'tool_use'
+    text?: string
+    thinking?: string
+    id?: string
+    name?: string
+    arguments?: Record<string, unknown>
+  }>
+  timestamp?: number
+  stopReason?: string
+}
 import { EventAdapter } from './event-adapter.js'
 import { getDefaultModel } from './config-store.js'
 import { scanSessions, deleteSessionFile, type ScannedSession } from './session-scanner.js'
@@ -217,7 +234,48 @@ export class SessionPool {
     const client = this.pm.getClient(sessionId)
     if (!client) throw new Error(`Session ${sessionId} not found`)
     const result = await client.getHistory()
-    return (result.payload?.messages ?? []) as Message[]
+    // pi returns messages in data.messages, not payload.messages
+    const data = (result as unknown as Record<string, unknown>).data as { messages?: PiHistoryMessage[] } | undefined
+    const raw = data?.messages ?? (result.payload?.messages as PiHistoryMessage[] | undefined) ?? []
+    return raw.map(m => this.convertPiMessage(m))
+  }
+
+  /** Convert a pi-format message to xyz-agent Message */
+  private convertPiMessage(m: PiHistoryMessage): Message {
+    const parts = Array.isArray(m.content) ? m.content : [{ type: 'text' as const, text: String(m.content) }]
+    let textContent = ''
+    const thinking: ThinkingBlock[] = []
+    const toolCalls: ToolCall[] = []
+
+    for (const part of parts) {
+      if (part.type === 'text') {
+        textContent += part.text ?? ''
+      } else if (part.type === 'thinking') {
+        thinking.push({
+          id: crypto.randomUUID(),
+          content: part.thinking ?? '',
+          collapsed: true,
+        })
+      } else if (part.type === 'toolCall') {
+        toolCalls.push({
+          id: part.id ?? crypto.randomUUID(),
+          toolName: part.name ?? '',
+          input: part.arguments ?? {},
+          status: 'completed',
+          startTime: m.timestamp ?? Date.now(),
+        })
+      }
+    }
+
+    return {
+      id: crypto.randomUUID(),
+      role: m.role === 'user' ? 'user' : 'assistant',
+      content: textContent,
+      status: 'complete',
+      ...(thinking.length > 0 && { thinking }),
+      ...(toolCalls.length > 0 && { toolCalls }),
+      timestamp: m.timestamp ?? Date.now(),
+    }
   }
 
   // ── Listing ────────────────────────────────────────────────────
