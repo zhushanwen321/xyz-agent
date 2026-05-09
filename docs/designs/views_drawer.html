@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Drawer — xyz-agent</title>
+<link rel="stylesheet" href="css_design-system.css">
+<style>
+body { display:flex; height:100vh; margin:0; background:var(--bg); }
+.main-area { flex:1; display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:13px; }
+.drawer{position:absolute;top:0;bottom:0;width:var(--drawer-w);background:var(--surface);z-index:50;display:flex;flex-direction:column;transition:transform 0.3s var(--ease)}
+
+.drawer--right{right:0;border-left:1px solid var(--border);transform:translateX(100%)}
+.drawer--left{left:0;border-right:1px solid var(--border);transform:translateX(-100%)}
+
+.drawer-tab{flex:1;padding:9px 8px;font-size:11px;font-weight:600;text-align:center;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;transition:color 0.15s var(--ease),border-color 0.15s var(--ease);user-select:none}
+.drawer-tab:hover{color:var(--fg)}
+
+.drawer-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.drawer-tab__count{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;border-radius:8px;font-size:10px;font-weight:700;margin-left:3px;padding:0 4px}
+
+.drawer-tab__count--done{background:var(--success-light);color:var(--success)}
+.drawer-tab__count--alert{background:var(--danger-light);color:var(--danger)}
+
+.drawer-pane.active{display:block}
+.tree-root{padding:4px 0}
+
+.tree-node{display:flex;align-items:center;gap:8px;padding:6px 8px;font-size:12px;border-radius:var(--radius-xs);cursor:pointer;transition:background 0.1s var(--ease);user-select:none;position:relative}
+.tree-node:hover{background:var(--accent-light)}
+
+.tree-node.active{background:var(--accent-light);color:var(--accent);font-weight:600}
+.tree-node__dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+
+.tree-node__label{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tree-node__meta{font-size:10px;color:var(--muted);font-family:var(--font-mono);white-space:nowrap}
+
+.tree-node__kill{display:none;padding:3px 8px;border:1px solid var(--border);border-radius:var(--radius-xs);background:var(--surface);color:var(--muted);font-size:10px;cursor:pointer;font-family:var(--font-body);transition:all 0.1s var(--ease);white-space:nowrap;flex-shrink:0}
+.tree-node:hover .tree-node__kill{display:inline-flex}
+
+.tree-node__kill:hover{background:var(--danger-light);color:var(--danger);border-color:var(--danger)}
+.tree-node__toggle{width:14px;height:14px;display:flex;align-items:center;justify-content:center;font-size:8px;color:var(--muted);cursor:pointer;flex-shrink:0;transition:transform 0.15s var(--ease)}
+
+.tree-node__toggle.collapsed{transform:rotate(-90deg)}
+.tree-children{padding-left:16px;border-left:1px solid var(--border);margin-left:11px}
+
+.tree-children.collapsed{display:none}
+.alert-item{border:1px solid oklch(80% 0.02 25);border-radius:var(--radius-sm);margin-bottom:10px;overflow:hidden;background:oklch(97% 0.015 25)}
+
+.alert-item--simple{border-left-color:var(--warning)}
+.alert-item__hd{padding:10px 12px;display:flex;align-items:center;gap:8px}
+
+.alert-item__dot{width:7px;height:7px;border-radius:50%;background:var(--danger);flex-shrink:0}
+.alert-item--simple .alert-item__dot{background:var(--warning)}
+
+.alert-item__info{flex:1;min-width:0}
+.alert-item__name{font-size:13px;font-weight:600}
+
+.alert-item__session{font-size:11px;color:var(--muted)}
+.alert-item__time{font-size:10px;color:var(--muted);white-space:nowrap}
+
+.alert-item__bd{padding:0 12px 10px}
+.alert-item__question{font-size:13px;line-height:1.5;margin-bottom:8px}
+
+.inline-reply{display:flex;gap:6px;align-items:flex-end}
+.inline-reply__field{flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--fg);font-family:var(--font-body);font-size:12px;resize:none;outline:none;min-height:32px;max-height:80px;transition:border-color 0.15s var(--ease)}
+
+.inline-reply__field:focus{border-color:var(--accent)}
+.inline-reply__btn{padding:6px 12px;border:none;border-radius:var(--radius-sm);background:var(--accent);color:white;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;font-family:var(--font-body);transition:opacity 0.15s var(--ease)}
+
+.inline-reply__btn:hover{opacity:0.88}
+.inline-reply__link{font-size:12px;color:var(--accent);font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:3px}
+
+.inline-reply__link:hover{text-decoration:underline}
+.done-item{border:1px solid oklch(80% 0.02 145);border-radius:var(--radius-sm);margin-bottom:8px;overflow:hidden;background:oklch(97% 0.015 145)}
+
+.done-item__hd{padding:10px 12px;display:flex;align-items:center;gap:8px}
+.done-item__dot{width:7px;height:7px;border-radius:50%;background:var(--success);flex-shrink:0}
+
+.done-item__info{flex:1;min-width:0}
+.done-item__name{font-size:13px;font-weight:600}
+
+.done-item__summary{font-size:12px;color:var(--muted);margin-top:2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.done-item__meta{font-size:10px;color:var(--muted);white-space:nowrap;text-align:right}
+
+.done-item__action{padding:0 12px 10px}
+.done-item__link{font-size:12px;color:var(--accent);font-weight:600;cursor:pointer}
+
+.done-item__link:hover{text-decoration:underline}
+.overview{position:relative;inset:0;z-index:100;background:oklch(15% 0.02 50/0.65);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);display:flex;flex-direction:column;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity 0.25s var(--ease)}
+
+</style>
+</head>
+<body>
+<div class="main-area">主内容区域</div>
+    <!-- ── Drawer right (Panel A's) ── -->
+    <aside class="drawer drawer--right" id="drawerRight">
+      <div class="drawer__hd"><div class="drawer__title">SubAgent 监控</div><button class="drawer__close" onclick="closeDrawer()">×</button></div>
+      <div class="drawer-tabs">
+        <div class="drawer-tab" data-pane="paneTree" onclick="pickDrawerTab(this)">任务树</div>
+        <div class="drawer-tab active" data-pane="paneDone" onclick="pickDrawerTab(this)">已完成 <span class="drawer-tab__count drawer-tab__count--done">3</span></div>
+        <div class="drawer-tab" data-pane="paneAlert" onclick="pickDrawerTab(this)">请求回应 <span class="drawer-tab__count drawer-tab__count--alert">2</span></div>
+      </div>
+      <div class="drawer__body">
+        <div class="drawer-pane" id="paneTree">
+          <div class="tree-root">
+            <div class="tree-node" data-agent="main" onclick="treeNav(this,'panelA')"><span class="tree-node__toggle">▾</span><span class="tree-node__dot" style="background:var(--success)"></span><span class="tree-node__label"><strong>主线对话</strong></span><span class="tree-node__meta">coordinator</span></div>
+            <div class="tree-children">
+              <div class="tree-node" data-agent="sub1" onclick="treeNav(this,'panelA')"><span style="width:14px"></span><span class="tree-node__dot" style="background:var(--success)"></span><span class="tree-node__label">分析代码结构</span><span class="tree-node__meta">1.2k tok</span><span class="tree-node__kill">终止</span></div>
+              <div class="tree-node" data-agent="sub2" onclick="treeNav(this,'panelA')"><span class="tree-node__toggle">▾</span><span class="tree-node__dot" style="background:var(--accent)"></span><span class="tree-node__label">重构模块A</span><span class="tree-node__meta">2.3k tok</span><span class="tree-node__kill">终止</span></div>
+              <div class="tree-children">
+                <div class="tree-node" data-agent="sub3" onclick="treeNav(this,'panelA')"><span style="width:14px"></span><span class="tree-node__dot" style="background:var(--warning)"></span><span class="tree-node__label">重构子模块A1</span><span class="tree-node__meta">等待确认</span><span class="tree-node__kill">终止</span></div>
+              </div>
+              <div class="tree-node" data-agent="sub4" onclick="treeNav(this,'panelA')"><span style="width:14px"></span><span class="tree-node__dot" style="background:var(--border)"></span><span class="tree-node__label">编写测试</span><span class="tree-node__meta">pending</span><span class="tree-node__kill">终止</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="drawer-pane active" id="paneDone">
+          <div class="done-item"><div class="done-item__hd"><span class="done-item__dot"></span><div class="done-item__info"><div class="done-item__name">分析代码结构</div><div class="done-item__summary">发现 3 个主要问题：接口散落、错误类不统一、Session 耦合</div></div><div class="done-item__meta">2m 34s<br>1.2k tok</div></div><div class="done-item__action"><span class="done-item__link" onclick="jumpToAgent('sub1')">查看完整结果 →</span></div></div>
+          <div class="done-item"><div class="done-item__hd"><span class="done-item__dot"></span><div class="done-item__info"><div class="done-item__name">读取配置文件</div><div class="done-item__summary">已读取 tsconfig.json、.eslintrc.json、package.json</div></div><div class="done-item__meta">18s<br>320 tok</div></div><div class="done-item__action"><span class="done-item__link">查看详情 →</span></div></div>
+          <div class="done-item"><div class="done-item__hd"><span class="done-item__dot"></span><div class="done-item__info"><div class="done-item__name">依赖分析</div><div class="done-item__summary">共 47 个导出函数，依赖深度最深 4 层</div></div><div class="done-item__meta">45s<br>890 tok</div></div><div class="done-item__action"><span class="done-item__link">查看详情 →</span></div></div>
+        </div>
+        <div class="drawer-pane" id="paneAlert">
+          <div class="alert-item"><div class="alert-item__hd"><span class="alert-item__dot"></span><div class="alert-item__info"><div class="alert-item__name">重构子模块A1</div><div class="alert-item__session">xyz-agent / 重构 auth 模块</div></div><div class="alert-item__time">3 分钟前</div></div><div class="alert-item__bd"><div class="alert-item__question">检测到 3 处循环依赖，需要选择处理策略。</div><span class="inline-reply__link" onclick="jumpToAgent('sub3')">查看详情并回复 →</span></div></div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ── Drawer left (Panel B's, split mode only) ── -->
+    <aside class="drawer drawer--left" id="drawerLeft">
+      <div class="drawer__hd"><div class="drawer__title">SubAgent 监控</div><button class="drawer__close" onclick="closeDrawer()">×</button></div>
+      <div class="drawer-tabs">
+        <div class="drawer-tab" data-pane="paneTreeL" onclick="pickDrawerTabLeft(this)">任务树</div>
+        <div class="drawer-tab active" data-pane="paneDoneL" onclick="pickDrawerTabLeft(this)">已完成 <span class="drawer-tab__count drawer-tab__count--done">1</span></div>
+        <div class="drawer-tab" data-pane="paneAlertL" onclick="pickDrawerTabLeft(this)">请求回应 <span class="drawer-tab__count drawer-tab__count--alert">1</span></div>
+      </div>
+      <div class="drawer__body">
+        <div class="drawer-pane" id="paneTreeL">
+          <div class="tree-root">
+            <div class="tree-node active" data-agent="main" onclick="treeNav(this,'panelB')"><span class="tree-node__toggle">▾</span><span class="tree-node__dot" style="background:var(--success)"></span><span class="tree-node__label"><strong>主对话</strong></span><span class="tree-node__meta">coordinator</span></div>
+            <div class="tree-children">
+              <div class="tree-node" data-agent="sub1b" onclick="treeNav(this,'panelB')"><span style="width:14px"></span><span class="tree-node__dot" style="background:var(--accent)"></span><span class="tree-node__label">N+1 查询修复</span><span class="tree-node__meta">1.8k tok</span><span class="tree-node__kill">终止</span></div>
+              <div class="tree-node" data-agent="sub2b" onclick="treeNav(this,'panelB')"><span style="width:14px"></span><span class="tree-node__dot" style="background:var(--border)"></span><span class="tree-node__label">缓存策略</span><span class="tree-node__meta">pending</span><span class="tree-node__kill">终止</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="drawer-pane active" id="paneDoneL"><div class="done-item"><div class="done-item__hd"><span class="done-item__dot"></span><div class="done-item__info"><div class="done-item__name">查询分析</div><div class="done-item__summary">定位了 4 处 N+1 查询，分布在 users/orders/comments/projects 端点</div></div><div class="done-item__meta">1m 12s<br>1.8k tok</div></div><div class="done-item__action"><span class="done-item__link" onclick="jumpToAgent('sub1b')">查看详情 →</span></div></div></div>
+        <div class="drawer-pane" id="paneAlertL"><div class="alert-item alert-item--simple"><div class="alert-item__hd"><span class="alert-item__dot"></span><div class="alert-item__info"><div class="alert-item__name">N+1 查询修复</div><div class="alert-item__session">work-project / API 性能优化</div></div><div class="alert-item__time">8 分钟前</div></div><div class="alert-item__bd"><div class="alert-item__question">修复方案影响 3 个端点，是否同时优化缓存策略？</div><div class="inline-reply"><textarea class="inline-reply__field" placeholder="直接回复…" rows="1"></textarea><button class="inline-reply__btn">回复</button></div></div></div></div>
+      </div>
+
+</body>
+</html>

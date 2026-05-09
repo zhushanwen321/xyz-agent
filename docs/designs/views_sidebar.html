@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sidebar — xyz-agent</title>
+<link rel="stylesheet" href="css_design-system.css">
+<style>
+body { display:flex; height:100vh; margin:0; background:var(--bg); }
+.sidebar { width:240px; border-right:1px solid var(--border); display:flex; flex-direction:column; height:100%; flex-shrink:0; }
+.main-area { flex:1; display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:13px; }
+.s-group__hd:hover{color:var(--fg)}
+.s-group__toggle{font-size:8px;transition:transform 0.2s var(--ease);display:inline-block;width:10px;text-align:center}
+
+.s-group.collapsed .s-group__toggle{transform:rotate(-90deg)}
+.s-group.collapsed .s-group__items{display:none}
+
+.s-item{display:flex;align-items:center;gap:8px;padding:7px 14px 7px 24px;cursor:pointer;border-left:3px solid transparent;transition:background 0.15s var(--ease),border-color 0.15s var(--ease);user-select:none}
+.s-item:hover{background:var(--accent-light)}
+
+.s-item.active{background:var(--accent-light);border-left-color:var(--accent)}
+.s-item__title{flex:1;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.s-item__meta{font-size:11px;color:var(--muted);white-space:nowrap;display:flex;align-items:center;gap:4px}
+.s-item__notif{display:inline-flex;align-items:center;justify-content:center;min-width:14px;height:14px;border-radius:7px;font-size:9px;font-weight:700;color:white;margin-left:4px;flex-shrink:0}
+
+.s-item__notif--done{background:var(--success)}
+.s-item__notif--alert{background:var(--danger)}
+
+.s-item.has-notif .s-item__title{font-weight:600}
+.dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;background:var(--border)}
+
+.dot--run{background:var(--success);animation:dot-pulse 2s infinite}
+.dot--pause{background:var(--warning)}
+
+.dot--idle{background:var(--border)}
+@keyframes dot-pulse{0%,100%{opacity:1}50%{opacity:0.35}}
+
+</style>
+</head>
+<body>
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar__hd"><span class="sidebar__hd-title">会话</span><button class="sidebar__hd-btn" title="新建会话">+</button></div>
+      <div class="sidebar__body">
+        <div class="s-group"><div class="s-group__hd" onclick="this.parentElement.classList.toggle('collapsed')"><span class="s-group__toggle">▾</span> xyz-agent</div><div class="s-group__items"><div class="s-item active has-notif" data-session="s1" onclick="pickSession(this)"><span class="dot dot--run"></span><span class="s-item__title">重构 auth 模块</span><span class="s-item__notif s-item__notif--done">3</span><span class="s-item__meta">2h</span></div><div class="s-item" data-session="s2" onclick="pickSession(this)"><span class="dot dot--idle"></span><span class="s-item__title">Tauri GUI 设计</span><span class="s-item__meta">1d</span></div></div></div>
+        <div class="s-group"><div class="s-group__hd" onclick="this.parentElement.classList.toggle('collapsed')"><span class="s-group__toggle">▾</span> work-project</div><div class="s-group__items"><div class="s-item has-notif" data-session="s3" onclick="pickSession(this)"><span class="dot dot--run"></span><span class="s-item__title">API 性能优化</span><span class="s-item__notif s-item__notif--alert">1</span><span class="s-item__meta">5d</span></div><div class="s-item" data-session="s4" onclick="pickSession(this)"><span class="dot dot--idle"></span><span class="s-item__title">数据库迁移</span><span class="s-item__meta">6d</span></div></div></div>
+        <div class="s-group"><div class="s-group__hd" onclick="this.parentElement.classList.toggle('collapsed')"><span class="s-group__toggle">▾</span> diy-pc</div><div class="s-group__items"><div class="s-item" data-session="s5" onclick="pickSession(this)"><span class="dot dot--pause"></span><span class="s-item__title">价格预测分析</span><span class="s-item__meta">7d</span></div><div class="s-item" data-session="s6" onclick="pickSession(this)"><span class="dot dot--run"></span><span class="s-item__title">4090 比价</span><span class="s-item__meta">1h</span></div></div></div>
+      </div>
+    </aside>
+
+    <div class="main-area" id="mainArea">
+
+
+<div class="main-area">主内容区域</div>
+<script>
+// Group collapse toggle
+document.querySelectorAll('.s-group__hd').forEach(hd => {
+  hd.addEventListener('click', () => hd.parentElement.classList.toggle('collapsed'));
+});
+// Session item active toggle
+document.querySelectorAll('.s-item').forEach(item => {
+  item.addEventListener('click', () => {
+    document.querySelectorAll('.s-item').forEach(i => i.classList.remove('active'));
+    item.classList.add('active');
+  });
+});
+</script>
+</body>
+</html>
