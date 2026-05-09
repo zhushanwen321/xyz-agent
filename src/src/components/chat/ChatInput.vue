@@ -143,8 +143,11 @@ watch(text, () => nextTick(resizeTextarea))
 /* Wrap: positions the entire input block */
 .chat-input-wrap {
   position: relative;
-  margin: 0 16px 12px;
+  margin: 0 auto 12px;
   flex-shrink: 0;
+  max-width: 960px;
+  width: 100%;
+  padding: 0 24px;
 }
 
 /* Container: single rounded card for textarea + toolbar */

@@ -221,7 +221,7 @@ function switchAgent(id: string) {
 /* Thinking indicator: shown while waiting for first token */
 .thinking-indicator {
   align-self: flex-start;
-  width: 80%;
+  width: 70%;
   padding: 10px 14px;
   background: var(--surface);
   border: 1px solid var(--border);
