@@ -6,210 +6,125 @@
 <title>Chat — xyz-agent</title>
 <link rel="stylesheet" href="css_design-system.css">
 <style>
-body { display:flex; height:100vh; margin:0; background:var(--bg); }
-.chat-panel { flex:1; display:flex; flex-direction:column; height:100%; }
-/* ── Chat panel ── */
-.chat-panel{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden}
-.chat-panel+.chat-panel{border-left:1px solid var(--border)}
-/* ── Panel top bar: anchor + inline notifications ── */
-.panel-bar{display:flex;align-items:center;gap:8px;padding:0 16px;height:36px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;font-size:12px}
-.anchor{display:flex;align-items:center;gap:6px;padding:3px 10px;border-radius:var(--radius-sm);cursor:pointer;color:var(--fg);font-weight:600;font-size:12px;transition:background 0.15s var(--ease);position:relative;user-select:none}
-.anchor:hover{background:var(--accent-light)}
-.anchor__dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
-.anchor__chevron{font-size:9px;color:var(--muted);margin-left:2px;transition:transform 0.15s var(--ease)}
-.anchor.open .anchor__chevron{transform:rotate(180deg)}
-/* ── Anchor dropdown ── */
-.anchor-dropdown{position:absolute;top:100%;left:0;margin-top:4px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:0 4px 16px rgba(0,0,0,0.08);min-width:220px;z-index:30;display:none;overflow:hidden}
-.anchor.open .anchor-dropdown{display:block}
-.anchor-opt{display:flex;align-items:center;gap:8px;padding:7px 12px;font-size:12px;cursor:pointer;transition:background 0.1s var(--ease);color:var(--fg);font-weight:400}
-.anchor-opt:hover{background:var(--accent-light)}
-.anchor-opt.current{font-weight:600;color:var(--accent)}
-.anchor-opt__dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
-.pn-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:100px;cursor:pointer;font-size:11px;font-weight:600;transition:all 0.15s var(--ease);border:1px solid transparent}
-.pn-chip--done{background:var(--success-light);color:var(--success)}
-.pn-chip--done:hover{border-color:var(--success)}
-.pn-chip--alert{background:var(--danger-light);color:var(--danger)}
-.pn-chip--alert:hover{border-color:var(--danger)}
-.pn-chip__num{display:inline-flex;align-items:center;justify-content:center;min-width:14px;height:14px;border-radius:7px;font-size:9px;font-weight:700;color:white}
-.pn-chip--done .pn-chip__num{background:var(--success)}
-.pn-chip--alert .pn-chip__num{background:var(--danger);animation:pulse-dot 2s infinite}
-.pn-close{font-size:11px;color:var(--muted);cursor:pointer;padding:2px 6px;border-radius:var(--radius-xs);border:1px solid var(--border);transition:all 0.15s var(--ease);font-family:var(--font-body)}
-.pn-close:hover{background:var(--accent-light);color:var(--accent);border-color:var(--accent)}
-/* ── Chat messages ── */
-.chat-msgs{flex:1;overflow-y:auto;padding:20px 24px;display:flex;flex-direction:column;gap:14px;position:relative;max-width:960px;margin:0 auto;width:100%}
-.agent-view{position:absolute;inset:20px 24px;visibility:hidden;opacity:0;transition:opacity .2s var(--ease);overflow-y:auto;display:flex;flex-direction:column;gap:14px}
-.agent-view.active{visibility:visible;opacity:1;z-index:1}
-.msg{max-width:min(80%,70ch);padding:10px 14px;border-radius:var(--radius);line-height:1.6;font-size:14px}
-.msg--user{align-self:flex-end;max-width:min(70%,50ch);background:var(--accent-light);border-bottom-right-radius:var(--radius-xs)}
-.msg--bot{align-self:flex-start;background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:var(--radius-xs)}
-.msg__role{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--muted);margin-bottom:3px}
-.msg__body p{margin-bottom:6px}
-.msg__body p:last-child{margin-bottom:0}
-.msg__body code{background:var(--bg);padding:1px 4px;border-radius:var(--radius-xs);font-size:0.88em}
-.msg--system{align-self:stretch;width:100%;max-width:none;margin:8px 0;border:1px solid oklch(80% 0.02 145);background:oklch(97% 0.02 145);border-radius:var(--radius-sm);padding:10px 14px;font-size:13px;display:flex;align-items:flex-start;gap:10px;box-sizing:border-box}
-.msg--system__content{flex:1}
-.msg--system--alert{border-color:oklch(80% 0.02 25);background:oklch(97% 0.015 25)}
-.msg--system__dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:4px}
-.msg--system__dot--done{background:var(--success)}
-.msg--system__dot--alert{background:var(--danger)}
-.msg--system__title{font-weight:600;font-size:13px;margin-bottom:2px}
-.msg--system__desc{color:var(--muted);font-size:12px}
-.msg--system__action{font-size:12px;color:var(--accent);font-weight:600;cursor:pointer;margin-top:4px;display:inline-flex;align-items:center;gap:3px}
-.msg--system__action:hover{text-decoration:underline}
-/* ── Tool call ── */
-.tool{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);margin:6px 0;overflow:hidden}
-.tool__hd{display:flex;align-items:center;gap:6px;padding:6px 10px;cursor:pointer;font-size:11px;font-family:var(--font-mono);color:var(--muted);user-select:none;transition:background 0.15s var(--ease)}
-.tool__hd:hover{background:var(--accent-light)}
-.tool__chevron{transition:transform 0.15s var(--ease);font-size:9px}
-.tool.collapsed .tool__chevron{transform:rotate(-90deg)}
-.tool__name{font-weight:600;color:var(--accent)}
-.tool__path{color:var(--muted)}
-.tool__status{margin-left:auto;font-size:10px}
-.tool__status--ok{color:var(--success)}
-.tool__bd{padding:6px 10px 10px;font-size:11px;line-height:1.5;max-height:160px;overflow-y:auto;border-top:1px solid var(--border);font-family:var(--font-mono);color:var(--muted)}
-.tool.collapsed .tool__bd{display:none}
-.progress{height:3px;background:var(--border);border-radius:2px;overflow:hidden;margin:6px 0}
-.progress__fill{height:100%;background:var(--accent);border-radius:2px;transition:width 0.4s ease}
-/* ── Chat input ── */
-.chat-input{display:flex;align-items:flex-end;gap:8px;padding:10px 20px 14px;border-top:1px solid var(--border);background:var(--surface)}
-.chat-input__field{flex:1;min-height:38px;max-height:140px;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--fg);font-family:var(--font-body);font-size:14px;line-height:1.45;resize:none;outline:none;transition:border-color 0.15s var(--ease)}
-.chat-input__field::placeholder{color:var(--muted)}
-.chat-input__field:focus{border-color:var(--accent)}
-.chat-input__btn{width:38px;height:38px;display:flex;align-items:center;justify-content:center;border:none;border-radius:var(--radius-sm);cursor:pointer;flex-shrink:0;transition:opacity 0.15s var(--ease),transform 0.1s var(--ease)}
-.chat-input__btn--send{background:var(--accent);color:white}
-.chat-input__btn--send:hover{opacity:0.88}
-.chat-input__btn--ghost{background:transparent;border:1px solid var(--border);color:var(--muted)}
-.chat-input__btn--ghost:hover{background:var(--accent-light);color:var(--accent);border-color:var(--accent)}
-.split-divider{width:4px;background:var(--border);cursor:col-resize;flex-shrink:0;position:relative;z-index:5;transition:background 0.15s var(--ease),opacity 0.15s var(--ease);opacity:.3}
-.split-divider:hover,.split-divider.dragging{background:var(--accent);opacity:1}
-.split-divider::after{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:2px;height:32px;border-radius:1px;background:transparent}
-.split-divider:hover::after,.split-divider.dragging::after{background:transparent}
-/* ── Chat input v3 (stacked: textarea + toolbar) ── */
-.chat-input-wrap{position:relative;margin:0 16px 12px;flex-shrink:0}
-.chat-input-container{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 1px 6px rgba(0,0,0,0.04);transition:border-color 0.15s var(--ease),box-shadow 0.15s var(--ease);overflow:visible;position:relative;z-index:10}
-.chat-input-container:focus-within{border-color:var(--accent);box-shadow:0 2px 12px rgba(0,0,0,0.08)}
-.chat-input-textarea{display:block;width:100%;min-height:calc(1.45em * 2 + 16px);max-height:calc(1.45em * 10 + 16px);padding:10px 14px 8px;border:none;background:transparent;color:var(--fg);font-family:var(--font-body);font-size:14px;line-height:1.45;resize:none;outline:none}
-.chat-input-textarea::placeholder{color:var(--muted)}
-.chat-input-toolbar{display:flex;align-items:center;gap:4px;padding:4px 8px 6px}
-.tb-btn{display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 8px;border:none;border-radius:var(--radius-xs);background:transparent;color:var(--muted);font-size:12px;font-family:var(--font-body);cursor:pointer;transition:all 0.15s var(--ease);gap:4px;white-space:nowrap;flex-shrink:0}
-.tb-btn:hover{background:var(--accent-light);color:var(--accent)}
-.tb-btn svg{width:14px;height:14px}
-.tb-btn--plus{width:28px;padding:0}
-.tb-model{position:relative;display:inline-flex;align-items:center;gap:4px;padding:0 8px;height:28px;border-radius:var(--radius-xs);font-size:11px;font-family:var(--font-mono);color:var(--fg);cursor:pointer;transition:all 0.15s var(--ease);white-space:nowrap}
-.tb-model:hover{background:var(--accent-light);color:var(--accent)}
-.tb-model__provider{color:var(--muted);font-weight:400}
-.tb-model__sep{color:var(--border);margin:0 1px}
-/* ── Model selector dropdown ── */
-.model-dropdown{position:absolute;bottom:100%;left:0;margin-bottom:6px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:0 4px 20px rgba(0,0,0,0.12);min-width:260px;z-index:200;display:none;overflow:hidden}
-.model-dropdown.visible{display:block}
-.model-dd-section{padding:6px 0}
-.model-dd-section+ .model-dd-section{border-top:1px solid var(--border)}
-.model-dd-title{padding:6px 12px;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted)}
-.model-dd-item{display:flex;align-items:center;gap:8px;padding:7px 12px;font-size:12px;cursor:pointer;transition:background 0.1s var(--ease)}
-.model-dd-item:hover{background:var(--accent-light)}
-.model-dd-item.selected{color:var(--accent);font-weight:600}
-.model-dd-item__dot{width:5px;height:5px;border-radius:50%;background:var(--border);flex-shrink:0}
-.model-dd-item.selected .model-dd-item__dot{background:var(--accent)}
-.model-dd-item__name{flex:1;font-family:var(--font-mono)}
-.model-dd-item__provider{font-size:10px;color:var(--muted)}
-.tb-context{font-size:11px;color:var(--muted);font-family:var(--font-mono);display:inline-flex;align-items:center;gap:4px;padding:0 6px;height:28px;flex-shrink:0}
-.tb-context__bar{width:40px;height:4px;background:var(--border);border-radius:2px;overflow:hidden}
-.tb-context__fill{height:100%;border-radius:2px;transition:width 0.3s ease}
-.tb-spacer{flex:1}
-.tb-btn--send{background:var(--accent);color:white;width:28px;height:28px;border-radius:var(--radius-xs)}
-.tb-btn--send:hover{opacity:0.88}
-.tb-btn--stop{font-weight:700;font-size:11px;width:28px;height:28px}
-.chat-input-btn{width:32px;height:32px;display:flex;align-items:center;justify-content:center;border:none;border-radius:var(--radius-xs);cursor:pointer;transition:all 0.15s var(--ease);background:transparent;color:var(--muted)}
-.chat-input-btn:hover{background:var(--accent-light);color:var(--accent)}
-/* ── Slash command menu ── */
-.slash-menu{position:absolute;bottom:100%;left:0;right:0;margin-bottom:6px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:0 4px 20px rgba(0,0,0,0.1);display:none;z-index:20;max-height:280px;overflow-y:auto}
-.slash-menu.visible{display:block}
-.slash-item{display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;transition:background 0.1s var(--ease)}
-.slash-item:hover,.slash-item.active{background:var(--accent-light)}
-.slash-item__cmd{font-family:var(--font-mono);font-size:13px;font-weight:600;color:var(--accent);min-width:140px}
-.slash-item__desc{font-size:12px;color:var(--muted)}
-/* ── View modes ── */
-.app.focus-mode .sidebar{width:0;border-right:none;overflow:hidden}
-.app.focus-mode .statusbar{display:none}
-.app.focus-mode .chat-msgs{max-width:720px;margin:0 auto;width:100%}
-.hidden{display:none!important}
+  /* layout-only overrides for standalone preview */
+  body { display:flex; height:100vh; margin:0; background:var(--bg); }
 </style>
 </head>
 <body>
-      <!-- ── Panel A (left / main) ── -->
-      <div class="chat-panel" id="panelA">
-        <div class="panel-bar">
-          <div class="anchor" id="anchorA" onclick="toggleAnchor(this,event)">
-            <span class="anchor__dot" style="background:var(--success)"></span>
-            <span id="anchorALabel">主线对话</span>
-            <span class="anchor__chevron">▾</span>
-            <div class="anchor-dropdown">
-              <div class="anchor-opt current" data-agent="main" onclick="pickAgent(this,'panelA',event)"><span class="anchor-opt__dot" style="background:var(--success)"></span>主线对话</div>
-            </div>
-          </div>
-          </div>
-        <div class="chat-msgs">
-          <div class="agent-view active" data-agent="main">
-            <div class="msg msg--user"><div class="msg__role">用户</div><div class="msg__body"><p>帮我重构整个 auth 模块，包括接口定义、错误处理和单元测试。</p></div></div>
-            <div class="msg msg--bot"><div class="msg__role">助手</div><div class="msg__body"><p>好的，这个任务比较复杂，我分解成几个子任务并行执行：</p><p>1. <strong>分析 auth 模块结构</strong> → SubAgent-1（已完成）<br>2. <strong>重构核心接口</strong> → SubAgent-2（运行中）<br>3. <strong>重构子模块 A1</strong> → SubAgent-3（等待确认）<br>4. <strong>编写单元测试</strong> → SubAgent-4（等待中）</p></div></div>
-            <div class="msg msg--system"><span class="msg--system__dot msg--system__dot--done"></span><div class="msg--system__content"><div class="msg--system__title">SubAgent「分析代码结构」已完成</div><div class="msg--system__desc">耗时 2m 34s · 消耗 1.2k tokens · 发现 3 个主要问题</div><span class="msg--system__action" onclick="openDrawerFor('global','done')">查看结果 ▾</span></div></div>
-            <div class="msg msg--system msg--system--alert"><span class="msg--system__dot msg--system__dot--alert"></span><div class="msg--system__content"><div class="msg--system__title">SubAgent「重构子模块A1」需要确认</div><div class="msg--system__desc">检测到 3 处循环依赖，需要决定处理策略</div><span class="msg--system__action" onclick="openDrawerFor('global','alert')">立即回复 ▾</span></div></div>
-            <div class="msg msg--bot"><div class="msg__role">助手 · 汇聚</div><div class="msg__body"><p>SubAgent-2 正在重构核心接口，进度 67%：</p><div class="progress"><div class="progress__fill" style="width:67%"></div></div><div class="tool collapsed" onclick="this.classList.toggle('collapsed')"><div class="tool__hd"><span class="tool__chevron">▾</span><span class="tool__name">edit</span><span class="tool__path">src/auth/interfaces.ts</span><span class="tool__status tool__status--ok">完成</span></div><div class="tool__bd">统一了 IAuthResponse、ITokenPayload、ISession 接口定义，新增 IAuthModule 聚合接口。</div></div></div></div>
-          </div>
-<div class="msg__body"><p>开始分析 auth 模块…</p></div></div><div class="tool collapsed" onclick="this.classList.toggle('collapsed')"><div class="tool__hd"><span class="tool__chevron">▾</span><span class="tool__name">bash</span><span class="tool__path">tree src/auth</span><span class="tool__status tool__status--ok">完成</span></div><div class="tool__bd">src/auth/<br>├── interfaces.ts<br>├── session.ts<br>├── errors.ts<br>├── middleware.ts<br>└── index.ts</div></div><div class="msg msg--bot"><div class="msg__role">SubAgent · 分析代码结构</div><div class="msg__body"><p>分析完成。主要发现：</p><ul style="padding-left:18px;margin:4px 0;"><li>接口定义散落在 3 个文件中</li><li>错误处理使用了 5 种不同的错误类</li><li>Session 管理逻辑与认证逻辑耦合</li></ul></div></div></div>
-<div class="msg__body"><p>基于分析结果重构核心接口…</p></div></div><div class="tool collapsed" onclick="this.classList.toggle('collapsed')"><div class="tool__hd"><span class="tool__chevron">▾</span><span class="tool__name">edit</span><span class="tool__path">src/auth/interfaces.ts</span><span class="tool__status tool__status--ok">完成</span></div><div class="tool__bd">统一了 IAuthResponse、ITokenPayload、ISession 接口定义。</div></div><div class="msg msg--bot"><div class="msg__role">SubAgent · 重构模块A</div><div class="msg__body"><p>接口重构完成，正在处理子模块 A1…</p><div class="progress"><div class="progress__fill" style="width:67%"></div></div></div></div></div>
-<div class="msg__body"><p>检测到 3 处循环依赖：</p><ol style="padding-left:18px;margin:4px 0;"><li><code>AuthService → SessionManager → AuthService</code></li><li><code>TokenValidator → CryptoUtil → TokenValidator</code></li><li><code>Middleware → Router → Middleware</code></li></ol><p>请确认处理策略：</p><ul style="padding-left:18px;margin:4px 0;"><li><strong>A.</strong> 引入事件总线解耦（推荐）</li><li><strong>B.</strong> 使用依赖注入反转控制</li><li><strong>C.</strong> 合并为单一模块</li></ul></div></div></div>
-<div class="msg__body"><p>等待 SubAgent-2 和 SubAgent-3 完成后开始编写测试。</p></div></div></div>
+  <div class="chat-panel" id="panelA">
+    <div class="panel-bar">
+      <div class="anchor" id="anchorA" onclick="this.classList.toggle('open')">
+        <span class="anchor__dot" style="background:var(--success)"></span>
+        <span>主线对话</span>
+        <span class="anchor__chevron">▾</span>
+        <div class="anchor-dropdown">
+          <div class="anchor-opt current"><span class="anchor-opt__dot" style="background:var(--success)"></span>主线对话</div>
         </div>
-        <div class="chat-input-wrap" id="inputA">
-          <div class="slash-menu" id="slashA">
-            <div class="slash-item active" data-cmd="/compact" onclick="pickSlash(this,'A')"><span class="slash-item__cmd">/compact</span><span class="slash-item__desc">压缩上下文，减少 token 消耗</span></div>
-            <div class="slash-item" data-cmd="/brainstorming" onclick="pickSlash(this,'A')"><span class="slash-item__cmd">/brainstorming</span><span class="slash-item__desc">进入头脑风暴模式，探索更多方案</span></div>
+      </div>
+    </div>
+
+    <div class="chat-msgs">
+      <div class="agent-view active" data-agent="main">
+        <div class="msg msg--user">
+          <div class="msg__role">用户</div>
+          <div class="msg__body"><p>帮我重构整个 auth 模块，包括接口定义、错误处理和单元测试。</p></div>
+        </div>
+        <div class="msg msg--bot">
+          <div class="msg__role">助手</div>
+          <div class="msg__body">
+            <p>好的，我来分步进行：</p>
+            <p>1. <strong>分析现有 auth 模块结构</strong>，梳理接口定义和依赖关系<br>2. <strong>统一接口定义</strong>，消除重复和冗余<br>3. <strong>重构错误处理</strong>，建立统一的错误类型体系<br>4. <strong>编写单元测试</strong>，覆盖核心路径</p>
           </div>
-          <div class="chat-input-container">
-            <textarea class="chat-input-textarea" id="fieldA" placeholder="输入消息… (Enter 发送, Shift+Enter 换行, / 命令)"></textarea>
-            <div class="chat-input-toolbar">
-              <button class="tb-btn tb-btn--plus" title="上传文件"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3v10M3 8h10"/></svg></button>
-              <div class="tb-model" id="modelPickerA" onclick="toggleModelPicker(this,event)">
-                <span>sonnet</span><span class="tb-model__sep">@</span><span class="tb-model__provider">anthropic</span>
-                <div class="model-dropdown" id="modelDropA">
-                  <div class="model-dd-section">
-                    <div class="model-dd-title">常用</div>
-                    <div class="model-dd-item selected" onclick="selectModel(this,'sonnet','anthropic',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">claude-sonnet</span><span class="model-dd-item__provider">anthropic</span></div>
-                    <div class="model-dd-item" onclick="selectModel(this,'gpt-4o','openai',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">gpt-4o</span><span class="model-dd-item__provider">openai</span></div>
-                    <div class="model-dd-item" onclick="selectModel(this,'gemini-2.5-pro','google',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">gemini-2.5-pro</span><span class="model-dd-item__provider">google</span></div>
-                    <div class="model-dd-item" onclick="selectModel(this,'deepseek-v4','deepseek',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">deepseek-v4</span><span class="model-dd-item__provider">deepseek</span></div>
-                  </div>
-                  <div class="model-dd-section">
-                    <div class="model-dd-title">Anthropic</div>
-                    <div class="model-dd-item" onclick="selectModel(this,'opus','anthropic',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">claude-opus</span><span class="model-dd-item__provider">anthropic</span></div>
-                    <div class="model-dd-item" onclick="selectModel(this,'haiku','anthropic',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">claude-haiku</span><span class="model-dd-item__provider">anthropic</span></div>
-                  </div>
-                  <div class="model-dd-section">
-                    <div class="model-dd-title">OpenAI</div>
-                    <div class="model-dd-item" onclick="selectModel(this,'gpt-4o-mini','openai',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">gpt-4o-mini</span><span class="model-dd-item__provider">openai</span></div>
-                    <div class="model-dd-item" onclick="selectModel(this,'o1-pro','openai',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">o1-pro</span><span class="model-dd-item__provider">openai</span></div>
-                  </div>
-                  <div class="model-dd-section">
-                    <div class="model-dd-title">DeepSeek</div>
-                    <div class="model-dd-item" onclick="selectModel(this,'deepseek-r1','deepseek',event)"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">deepseek-r1</span><span class="model-dd-item__provider">deepseek</span></div>
-                  </div>
-                </div>
+        </div>
+        <div class="msg msg--bot">
+          <div class="msg__role">助手</div>
+          <div class="msg__body">
+            <p>首先分析一下现有的文件结构：</p>
+            <div class="tool collapsed" onclick="this.classList.toggle('collapsed')">
+              <div class="tool__hd">
+                <span class="tool__chevron">▾</span>
+                <span class="tool__name">bash</span>
+                <span class="tool__path">tree src/auth</span>
+                <span class="tool__status tool__status--ok">完成</span>
               </div>
-              <div class="tb-context">上下文 <div class="tb-context__bar"><div class="tb-context__fill" style="width:34%;background:var(--accent)"></div></div> 34%</div>
-              <div class="tb-spacer"></div>
-              <button class="tb-btn tb-btn--send" title="发送 (Enter)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M8 2v12M4 6l4-4 4 4"/></svg></button>
-              <button class="tb-btn tb-btn--stop" title="中断">■</button>
+              <div class="tool__bd">src/auth/<br>├── interfaces.ts<br>├── session.ts<br>├── errors.ts<br>├── middleware.ts<br>└── index.ts</div>
+            </div>
+            <p>发现了 3 个主要问题：</p>
+            <ul style="padding-left:18px;margin:4px 0;">
+              <li>接口定义散落在 3 个文件中</li>
+              <li>错误处理使用了 5 种不同的错误类</li>
+              <li>Session 管理逻辑与认证逻辑耦合</li>
+            </ul>
+          </div>
+        </div>
+        <div class="msg msg--system">
+          <span class="msg--system__dot msg--system__dot--done"></span>
+          <div class="msg--system__content">
+            <div class="msg--system__title">分析代码结构已完成</div>
+            <div class="msg--system__desc">耗时 2m 34s · 消耗 1.2k tokens · 发现 3 个主要问题</div>
+            <span class="msg--system__action">查看结果 ▾</span>
+          </div>
+        </div>
+        <div class="msg msg--bot">
+          <div class="msg__role">助手 · 重构中</div>
+          <div class="msg__body">
+            <p>正在重构核心接口，进度 67%：</p>
+            <div class="progress"><div class="progress__fill" style="width:67%"></div></div>
+            <div class="tool collapsed" onclick="this.classList.toggle('collapsed')">
+              <div class="tool__hd">
+                <span class="tool__chevron">▾</span>
+                <span class="tool__name">edit</span>
+                <span class="tool__path">src/auth/interfaces.ts</span>
+                <span class="tool__status tool__status--ok">完成</span>
+              </div>
+              <div class="tool__bd">统一了 IAuthResponse、ITokenPayload、ISession 接口定义，新增 IAuthModule 聚合接口。</div>
             </div>
           </div>
         </div>
       </div>
+    </div>
 
+    <div class="chat-input-wrap" id="inputA">
+      <div class="slash-menu" id="slashA">
+        <div class="slash-item active"><span class="slash-item__cmd">/compact</span><span class="slash-item__desc">压缩上下文，减少 token 消耗</span></div>
+        <div class="slash-item"><span class="slash-item__cmd">/brainstorming</span><span class="slash-item__desc">进入头脑风暴模式，探索更多方案</span></div>
+      </div>
+      <div class="chat-input-container">
+        <textarea class="chat-input-textarea" id="fieldA" placeholder="输入消息… (Enter 发送, Shift+Enter 换行, / 命令)"></textarea>
+        <div class="chat-input-toolbar">
+          <button class="tb-btn tb-btn--plus" title="上传文件"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3v10M3 8h10"/></svg></button>
+          <div class="tb-model" id="modelPickerA" onclick="event.stopPropagation();this.querySelector('.model-dropdown').classList.toggle('visible')">
+            <span>sonnet</span><span class="tb-model__sep">@</span><span class="tb-model__provider">anthropic</span>
+            <div class="model-dropdown" id="modelDropA">
+              <div class="model-dd-section">
+                <div class="model-dd-title">常用</div>
+                <div class="model-dd-item selected"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">claude-sonnet</span><span class="model-dd-item__provider">anthropic</span></div>
+                <div class="model-dd-item"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">gpt-4o</span><span class="model-dd-item__provider">openai</span></div>
+                <div class="model-dd-item"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">gemini-2.5-pro</span><span class="model-dd-item__provider">google</span></div>
+                <div class="model-dd-item"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">deepseek-v4</span><span class="model-dd-item__provider">deepseek</span></div>
+              </div>
+              <div class="model-dd-section">
+                <div class="model-dd-title">Anthropic</div>
+                <div class="model-dd-item"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">claude-opus</span><span class="model-dd-item__provider">anthropic</span></div>
+                <div class="model-dd-item"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">claude-haiku</span><span class="model-dd-item__provider">anthropic</span></div>
+              </div>
+              <div class="model-dd-section">
+                <div class="model-dd-title">OpenAI</div>
+                <div class="model-dd-item"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">gpt-4o-mini</span><span class="model-dd-item__provider">openai</span></div>
+                <div class="model-dd-item"><span class="model-dd-item__dot"></span><span class="model-dd-item__name">o1-pro</span><span class="model-dd-item__provider">openai</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="tb-context">上下文 <div class="tb-context__bar"><div class="tb-context__fill" style="width:34%;background:var(--accent)"></div></div> 34%</div>
+          <div class="tb-spacer"></div>
+          <button class="tb-btn tb-btn--send" title="发送 (Enter)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M8 2v12M4 6l4-4 4 4"/></svg></button>
+          <button class="tb-btn tb-btn--stop" title="中断">■</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
 <script>
-document.querySelectorAll('.tool').forEach(el => el.addEventListener('click', () => el.classList.toggle('collapsed')));
-document.querySelector('.anchor')?.addEventListener('click', function(e) { this.classList.toggle('open'); });
-document.querySelector('.tb-model')?.addEventListener('click', function(e) { e.stopPropagation(); this.querySelector('.model-dropdown').classList.toggle('visible'); });
 document.querySelector('.chat-input-textarea')?.addEventListener('input', function() {
   document.querySelector('.slash-menu')?.classList.toggle('visible', this.value.startsWith('/'));
 });
