@@ -66,7 +66,7 @@ function onCancelRename() {
               :renaming="renamingSessionId === session.id"
               @click="switchSession(session.id)"
               @rename="onStartRename($event)"
-              @confirm-rename="(newName: string) => onConfirmRename(session.id, newName)"
+              @confirm-rename="(_id: string, newName: string) => onConfirmRename(session.id, newName)"
               @cancel-rename="onCancelRename"
               @delete="onDelete($event)"
             />
