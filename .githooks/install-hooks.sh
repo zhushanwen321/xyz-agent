@@ -199,6 +199,34 @@ else
 fi
 
 # ============================================================================
+# 4. 多平台同步检查（Tauri ↔ Electron）
+# ============================================================================
+
+if [ "$SKIP_PLATFORM_SYNC" != "1" ]; then
+    SYNC_SCRIPT="tools/check-platform-sync.sh"
+
+    # 只有当 sidecar/src/、src/src/、shared/src/ 有变更时才检查
+    HAS_SIDECAE_CHANGES=$(echo "$STAGED_FILES" | grep -E "^sidecar/src/" || true)
+    HAS_SRC_CHANGES=$(echo "$STAGED_FILES" | grep -E "^src/src/" || true)
+    HAS_SHARED_CHANGES=$(echo "$STAGED_FILES" | grep -E "^shared/src/" || true)
+
+    if [ -n "$HAS_SIDECAE_CHANGES" ] || [ -n "$HAS_SRC_CHANGES" ] || [ -n "$HAS_SHARED_CHANGES" ]; then
+        print_section "[多平台同步检查]"
+
+        if [ -f "$SYNC_SCRIPT" ]; then
+            if ! bash "$SYNC_SCRIPT"; then
+                echo -e "${RED}[ERROR] Tauri/Electron 文件不同步，请同步 src-electron/ 对应文件${NC}"
+                echo -e "${YELLOW}[INFO] 设置 SKIP_PLATFORM_SYNC=1 跳过检查${NC}"
+                exit 1
+            fi
+            echo -e "${GREEN}[OK] 多平台同步检查通过${NC}"
+        else
+            echo -e "${YELLOW}[WARN] 找不到 $SYNC_SCRIPT${NC}"
+        fi
+    fi
+fi
+
+# ============================================================================
 # 全部通过
 # ============================================================================
 
@@ -211,6 +239,7 @@ echo -e "  ${YELLOW}SKIP_ALL_CHECKS=1${NC}          - 跳过所有"
 echo -e "  ${YELLOW}SKIP_FRONTEND_LINT=1${NC}      - 跳过 ESLint"
 echo -e "  ${YELLOW}SKIP_TYPE_CHECK=1${NC}          - 跳过 vue-tsc"
 echo -e "  ${YELLOW}SKIP_CODE_RULES_CHECK=1${NC}   - 跳过代码规范"
+echo -e "  ${YELLOW}SKIP_PLATFORM_SYNC=1${NC}      - 跳过平台同步检查"
 echo ""
 
 exit 0

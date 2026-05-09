@@ -7,6 +7,28 @@ xyz-agent 是基于 Tauri v2 + Vue 3 + Node.js Sidecar 的 AI Agent 桌面工作
 - **Sidecar** (`sidecar/src/`): Node.js WebSocket 服务，通过子进程 RPC 与 pi 通信
 - **Tauri** (`src-tauri/src/`): Rust 后端，管理 sidecar 进程和原生窗口
 
+**完整编码规范**: [docs/STANDARDS.md](docs/STANDARDS.md)
+
+## 关键规则（违反必出 bug）
+
+### 1. emit 只传单个 payload 对象
+禁止 `emit('event', arg1, arg2)` — handler 极易混淆参数顺序。必须 `emit('event', { arg1, arg2 })`。
+
+### 2. Event bus listener 防重复注册
+组件可能多实例（split mode），listener 必须用模块级 refCount 保护，否则事件处理翻倍。
+
+### 3. 错误必须重置 isGenerating + streamingMessage
+任何错误路径都必须重置状态，否则 UI 卡死在「思考中」。错误作为 assistant 消息插入聊天流，不用顶部 banner。
+
+### 4. 外部系统对接先验证再编码
+对接 pi RPC 等外部系统时，先写独立验证脚本（`tools/verify-*.cjs`），确认字段名和格式后再写业务代码。
+
+### 5. 多平台同步
+修改 `sidecar/src/`、`src/src/`、`shared/src/` 时，必须同步 `src-electron/` 对应文件。
+
+### 6. pi 适配层不信任外部格式
+EventAdapter 和 session-pool 是 pi 协议的唯一适配点。业务代码不直接处理 pi 格式。`sendCommand` 必须检查 `success` 字段。
+
 ## 常用命令
 
 ```bash
