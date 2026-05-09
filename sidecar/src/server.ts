@@ -352,13 +352,44 @@ export class SidecarServer {
 
   private aggregateModels(providers: ReturnType<typeof providerStore.listProviders>): ModelInfo[] {
     return providers.flatMap(p =>
-      p.models.map(m => ({
-        id: m,
-        name: m,
-        providerId: p.id,
-        providerName: p.name,
-      })),
+      p.models.map(m => {
+        // models 可能是字符串（model ID）或对象 { id, name, ctx, tags }
+        // （来自 ProviderModal 保存的 ModalModel）
+        const entry: unknown = m
+        if (typeof entry === 'string') {
+          return {
+            id: entry,
+            name: entry,
+            providerId: p.id,
+            providerName: p.name,
+          } as ModelInfo
+        }
+        if (entry && typeof entry === 'object' && 'id' in entry && 'name' in entry) {
+          const meta = entry as { id: string; name: string; ctx?: string; tags?: string[] }
+          return {
+            id: meta.id,
+            name: meta.name,
+            providerId: p.id,
+            providerName: p.name,
+            tags: meta.tags ?? [],
+            contextWindow: this.parseCtxToNumber(meta.ctx),
+          } as ModelInfo
+        }
+        // fallback：转为字符串
+        return {
+          id: String(m),
+          name: String(m),
+          providerId: p.id,
+          providerName: p.name,
+        } as ModelInfo
+      }),
     )
+  }
+
+  private parseCtxToNumber(ctx?: string): number | undefined {
+    if (!ctx || ctx === '--') return undefined
+    const match = ctx.match(/(\d+)/)
+    return match ? parseInt(match[1], 10) * 1000 : undefined
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────

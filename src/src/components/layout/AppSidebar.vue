@@ -62,21 +62,23 @@ function cancelRename() {
 
     <div class="sidebar__body">
       <template v-if="sessionStore.groupedSessions.length > 0">
-        <template v-for="group in sessionStore.groupedSessions" :key="group.cwd">
+        <div v-for="group in sessionStore.groupedSessions" :key="group.cwd" class="s-group">
           <div class="s-group__hd" @click="($event.currentTarget as HTMLElement).parentElement?.classList.toggle('collapsed')">
             <span class="s-group__toggle">&#9662;</span>
             {{ dirname(group.cwd) }}
           </div>
-          <SessionItem
-            v-for="session in group.sessions"
-            :key="session.id"
-            :session="session"
-            :is-active="session.id === sessionStore.currentSessionId"
-            @click="sessionStore.switchSession(session.id)"
-            @rename="startRename($event)"
-            @delete="deleteTarget = $event"
-          />
-        </template>
+          <div class="s-group__items">
+            <SessionItem
+              v-for="session in group.sessions"
+              :key="session.id"
+              :session="session"
+              :is-active="session.id === sessionStore.currentSessionId"
+              @click="sessionStore.switchSession(session.id)"
+              @rename="startRename($event)"
+              @delete="deleteTarget = $event"
+            />
+          </div>
+        </div>
       </template>
       <div v-else class="no-sessions">
         {{ t('sidebar.noSessions') }}
