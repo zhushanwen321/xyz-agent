@@ -5,19 +5,20 @@ import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '../utils'
 
 const buttonVariants = cva(
-  'inline-flex items-center justify-center rounded-md font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0',
+  'inline-flex items-center justify-center rounded-[var(--radius-sm)] font-normal font-[var(--font-body)] text-[13px] cursor-pointer whitespace-nowrap transition-all duration-200 ease-[var(--ease)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0',
   {
     variants: {
       variant: {
-        primary: 'bg-[var(--accent)] text-white hover:opacity-90 active:opacity-80',
-        ghost: 'border border-solid border-[var(--border)] bg-transparent text-[var(--fg)] hover:bg-[var(--accent-light)] hover:text-[var(--accent)] hover:border-[var(--accent)]',
-        danger: 'bg-[var(--danger)] text-white hover:opacity-90 active:opacity-80',
+        primary: 'bg-[var(--accent)] text-white border border-[var(--accent)] hover:opacity-[0.88] active:opacity-80',
+        outline: 'border border-solid border-[var(--border)] bg-transparent text-[var(--muted)] hover:bg-[var(--accent-light)] hover:text-[var(--accent)] hover:border-[var(--accent)]',
+        ghost: 'border-none bg-transparent text-[var(--muted)] hover:bg-[var(--accent-light)] hover:text-[var(--accent)]',
+        danger: 'bg-[var(--danger)] text-white border border-[var(--danger)] hover:opacity-[0.88] active:opacity-80',
       },
       size: {
-        sm: 'h-8 px-3 text-xs gap-1.5',
-        md: 'h-10 px-4 text-sm gap-2',
-        lg: 'h-12 px-6 text-base gap-2.5',
-        icon: 'h-9 w-9 p-0',
+        sm: 'py-[5px] px-3 text-xs gap-[6px] rounded-[var(--radius-xs)]',
+        md: 'py-2 px-[18px] gap-1.5',
+        lg: 'py-3 px-6 text-base gap-2.5',
+        icon: 'h-7 w-7 p-0 rounded-[var(--radius-xs)]',
       },
     },
     defaultVariants: {

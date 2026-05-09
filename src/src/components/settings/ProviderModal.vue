@@ -164,7 +164,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown))
     <div class="s-modal">
       <div class="s-modal__hd">
         <div class="s-modal__title">{{ title }}</div>
-        <Button variant="ghost" class="s-modal__close !h-7 !w-7 !border-0 !p-0" @click="$emit('close')">×</Button>
+        <Button variant="ghost" class="s-modal__close !h-7 !w-7 !p-0" @click="$emit('close')">×</Button>
       </div>
 
       <div class="s-modal__bd">
@@ -207,7 +207,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown))
           <div class="s-model-config__hd">
             <span class="s-model-config__title">已配置模型</span>
             <div class="s-model-config__actions">
-              <Button variant="ghost" size="sm">自动发现</Button>
+              <Button variant="outline" size="sm">自动发现</Button>
             </div>
           </div>
           <div class="s-model-config__list">
@@ -225,7 +225,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown))
                   {{ tag === 'power' ? '强力' : tag === 'efficient' ? '高效' : '快速' }}
                 </TagPill>
               </div>
-              <Button variant="ghost" size="sm" class="hover:!text-[var(--danger)] hover:!border-[var(--danger)] hover:!bg-[var(--danger-light)]" @click="removeModel(idx)">
+              <Button variant="ghost" size="sm" class="hover:!text-[var(--danger)] hover:!bg-[var(--danger-light)]" @click="removeModel(idx)">
                 <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M1 1l8 8M9 1L1 9" />
                 </svg>
@@ -245,20 +245,20 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown))
               class="!max-w-[100px]"
               @keydown.enter="addModel"
             />
-            <Button variant="ghost" size="sm" @click="addModel">添加</Button>
+            <Button variant="outline" size="sm" @click="addModel">添加</Button>
           </div>
         </div>
       </div>
 
       <div class="s-modal__ft">
-        <Button variant="ghost" @click="handleTest">
+        <Button variant="outline" @click="handleTest">
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="6" cy="6" r="4.5" />
             <path d="M6 4v2.5M6 8v.5" />
           </svg>
           测试连接
         </Button>
-        <Button variant="ghost" @click="$emit('close')">取消</Button>
+        <Button variant="outline" @click="$emit('close')">取消</Button>
         <Button variant="primary" @click="handleSave">保存</Button>
       </div>
     </div>

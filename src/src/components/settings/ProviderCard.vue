@@ -53,7 +53,7 @@ const statusDotClass = computed(() => {
       <div class="s-provider-card__actions" @click.stop>
         <Button variant="ghost" size="sm" @click="$emit('test', provider.id)">测试连接</Button>
         <Button variant="ghost" size="sm" @click="$emit('edit', provider.id)">编辑</Button>
-        <Button variant="ghost" size="sm" class="hover:!text-[var(--danger)] hover:!border-[var(--danger)] hover:!bg-[var(--danger-light)]" @click="$emit('delete', provider.id)">删除</Button>
+        <Button variant="ghost" size="sm" class="hover:!text-[var(--danger)] hover:!bg-[var(--danger-light)]" @click="$emit('delete', provider.id)">删除</Button>
       </div>
       <span class="s-provider-card__chevron">▾</span>
     </div>

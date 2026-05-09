@@ -123,7 +123,7 @@ function handleSave() {
     </div>
 
     <div class="provider-form__actions">
-      <Button variant="ghost" size="md" @click="emit('cancel')">
+      <Button variant="outline" size="md" @click="emit('cancel')">
         {{ t('common.cancel') }}
       </Button>
       <Button v-if="isEdit" variant="danger" size="md" @click="provider && emit('delete', provider.id)">

@@ -68,7 +68,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown))
     <div class="s-modal">
       <div class="s-modal__hd">
         <div class="s-modal__title">{{ skill ? '编辑 Skill' : '添加 Skill' }}</div>
-        <Button variant="ghost" class="s-modal__close !h-7 !w-7 !border-0 !p-0" @click="$emit('close')">×</Button>
+        <Button variant="ghost" class="s-modal__close !h-7 !w-7 !p-0" @click="$emit('close')">×</Button>
       </div>
 
       <div class="s-modal__bd">
@@ -94,7 +94,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown))
       </div>
 
       <div class="s-modal__ft">
-        <Button variant="ghost" @click="$emit('close')">取消</Button>
+        <Button variant="outline" @click="$emit('close')">取消</Button>
         <Button variant="primary" @click="handleSave">{{ skill ? '保存' : '添加 Skill' }}</Button>
       </div>
     </div>

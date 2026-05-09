@@ -66,7 +66,7 @@ function handleSave() {
       </div>
       <div class="s-agent-card__actions" @click.stop>
         <Button variant="ghost" size="sm" @click="showEditor = !showEditor">编辑</Button>
-        <Button variant="ghost" size="sm" class="hover:!text-[var(--danger)] hover:!border-[var(--danger)] hover:!bg-[var(--danger-light)]" @click="$emit('delete', agent.name)">删除</Button>
+        <Button variant="ghost" size="sm" class="hover:!text-[var(--danger)] hover:!bg-[var(--danger-light)]" @click="$emit('delete', agent.name)">删除</Button>
       </div>
       <span class="s-agent-card__chevron">▾</span>
     </div>
