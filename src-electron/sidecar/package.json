@@ -1,0 +1,20 @@
+{
+  "name": "@xyz-agent/sidecar",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "ws": "^8"
+  },
+  "devDependencies": {
+    "tsx": "^4",
+    "typescript": "^5.8",
+    "@types/ws": "^8",
+    "@types/node": "^22"
+  }
+}
