@@ -123,22 +123,28 @@ const HOURS_PER_DAY = 24
       <span v-if="(session.alertCount ?? 0) > 0" class="s-item__notif s-item__notif--alert">{{ session.alertCount }}</span>
       <span class="s-item__meta">{{ relativeTime }}</span>
       <!-- Rename button -->
-      <span class="s-item__action" title="Rename" @click="startRename">
+      <span class="s-item__action" role="button" tabindex="0" title="Rename" @click="startRename" @keydown.enter="startRename">
         <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 1.5a2.121 2.121 0 013 3L5 14l-4 1 1-4z"/></svg>
       </span>
       <!-- Delete button -->
       <span
         v-if="!confirmDelete"
         class="s-item__action"
+        role="button"
+        tabindex="0"
         title="Delete"
         @click="startDelete"
+        @keydown.enter="startDelete"
       >
         <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h12M5.33 4V2.67a1.33 1.33 0 011.34-1.34h2.66a1.33 1.33 0 011.34 1.34V4m2 0v9.33a1.33 1.33 0 01-1.34 1.34H4.67a1.33 1.33 0 01-1.34-1.34V4h9.34z"/></svg>
       </span>
       <span
         v-else
         class="s-item__del-confirm"
+        role="button"
+        tabindex="0"
         @click="confirmDeleteAction"
+        @keydown.enter="confirmDeleteAction"
         @mouseleave="cancelDelete"
       >confirm</span>
     </template>
@@ -209,6 +215,7 @@ const HOURS_PER_DAY = 24
 }
 .s-item:hover .s-item__action { opacity: 1; }
 .s-item__action:hover { background: var(--accent-light); color: var(--accent); }
+.s-item__action:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 /* Delete confirm button */
 .s-item__del-confirm {
@@ -226,4 +233,5 @@ const HOURS_PER_DAY = 24
   flex-shrink: 0;
 }
 .s-item__del-confirm:hover { opacity: 0.88; }
+.s-item__del-confirm:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 </style>

@@ -95,7 +95,8 @@ function toggleTheme() {
 </script>
 
 <style scoped>
-/* Only overrides not covered by global CSS */
+/* Scoped overrides that must also include hover to avoid overriding global hover */
 .h-btn { border-radius: var(--radius-sm); color: var(--muted); }
+.h-btn:hover { color: var(--accent); }
 .notif-btn { padding: 5px 12px !important; }
 </style>

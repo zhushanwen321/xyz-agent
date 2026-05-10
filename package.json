@@ -4,25 +4,18 @@
   "private": true,
   "type": "module",
   "workspaces": [
-    "src",
-    "sidecar",
-    "shared"
+    "src-electron/renderer",
+    "src-electron/sidecar",
+    "src-electron/shared"
   ],
   "scripts": {
-    "dev": "tauri dev",
-    "mock:dev": "XYZ_MOCK=1 VITE_MOCK=true npx tauri dev",
-    "dev:vite": "npm -w @xyz-agent/frontend run dev",
-    "build": "npm -w @xyz-agent/frontend run build && tauri build",
-    "build:vite": "npm -w @xyz-agent/frontend run build",
-    "preview": "npm -w @xyz-agent/frontend run preview",
-    "tauri": "tauri",
+    "dev": "cd src-electron && npm run dev",
+    "build": "cd src-electron && npm run build",
     "lint": "eslint .",
-    "typecheck": "npm -w @xyz-agent/frontend run typecheck",
     "prepare": "bash .githooks/install-hooks.sh"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@tauri-apps/cli": "^2.11.1",
     "eslint": "^10.3.0",
     "eslint-plugin-vue": "^10.9.1",
     "typescript": "^5.8",

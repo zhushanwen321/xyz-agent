@@ -16,6 +16,7 @@ import noMagicSpacing from './rules/no-magic-spacing.mjs';
 import noNativeHtmlElements from './rules/no-native-html-elements.mjs';
 import noEmojiInTemplate from './rules/no-emoji-in-template.mjs';
 import preferVModel from './rules/prefer-v-model.mjs';
+import noMultiArgEmit from './rules/no-multi-arg-emit.mjs';
 
 export const tastePlugin = {
   meta: { name: 'eslint-plugin-taste' },
@@ -28,6 +29,7 @@ export const tastePlugin = {
     'no-native-html-elements': noNativeHtmlElements,
     'no-emoji-in-template': noEmojiInTemplate,
     'prefer-v-model': preferVModel,
+    'no-multi-arg-emit': noMultiArgEmit,
   },
 };
 
@@ -63,6 +65,7 @@ export const tasteRules = {
   'taste/no-native-html-elements': 'warn',
   'taste/no-emoji-in-template': 'warn',
   'taste/prefer-v-model': 'warn',
+  'taste/no-multi-arg-emit': 'warn',
 };
 
 export default [

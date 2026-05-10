@@ -53,7 +53,7 @@ function onCancelRename() {
     <div class="sidebar__body">
       <template v-if="sessionStore.groupedSessions.length > 0">
         <div v-for="group in sessionStore.groupedSessions" :key="group.cwd" class="s-group">
-          <div class="s-group__hd" @click="($event.currentTarget as HTMLElement).parentElement?.classList.toggle('collapsed')">
+          <div class="s-group__hd" tabindex="0" @click="($event.currentTarget as HTMLElement).parentElement?.classList.toggle('collapsed')" @keydown.enter="($event.currentTarget as HTMLElement).parentElement?.classList.toggle('collapsed')">
             <span class="s-group__toggle">&#9662;</span>
             {{ dirname(group.cwd) }}
           </div>
@@ -90,6 +90,7 @@ function onCancelRename() {
   border-right: 1px solid var(--border);
   flex-shrink: 0;
 }
+.sidebar__hd-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .sidebar__hd-btn svg { width: 14px; height: 14px; }
 .s-group__hd {
   display: flex; align-items: center; gap: 5px;
@@ -98,6 +99,7 @@ function onCancelRename() {
   color: var(--muted); cursor: pointer; user-select: none;
 }
 .s-group__hd:hover { color: var(--fg); }
+.s-group__hd:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .s-group__toggle {
   font-size: 8px; transition: transform 0.2s var(--ease);
   display: inline-block; width: 10px; text-align: center;

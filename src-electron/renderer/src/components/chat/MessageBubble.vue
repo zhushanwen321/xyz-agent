@@ -39,10 +39,10 @@ const renderedContent = computed(() => renderMarkdown(props.message.content))
 </script>
 
 <style scoped>
-.msg { width: 70%; padding: 10px 14px; border-radius: var(--radius); line-height: 1.6; font-size: 14px; }
-.msg--user { align-self: flex-end; background: var(--accent-light); border-bottom-right-radius: var(--radius-xs); }
-.msg--bot { align-self: flex-start; background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: var(--radius-xs); }
-.msg__role { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 3px; }
+.msg { padding: 12px 16px; line-height: 1.6; font-size: 14px; }
+.msg--user { align-self: flex-end; max-width: 75%; background: var(--accent-light); border-radius: var(--radius); border-bottom-right-radius: var(--radius-xs); }
+.msg--bot { align-self: flex-start; width: 100%; background: transparent; }
+.msg__role { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; line-height: 1.4; color: var(--muted); margin-bottom: 3px; }
 .msg__role--user { text-align: right; }
 .msg__body p { margin-bottom: 6px; }
 .msg__body p:last-child { margin-bottom: 0; }

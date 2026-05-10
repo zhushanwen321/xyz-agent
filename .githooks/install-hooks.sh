@@ -80,7 +80,7 @@ fi
 
 # 获取变更文件
 STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR)
-FRONTEND_FILES=$(echo "$STAGED_FILES" | grep "^src/src/" || true)
+FRONTEND_FILES=$(echo "$STAGED_FILES" | grep "^src-electron/renderer/src/" || true)
 
 # ============================================================================
 # 1. 前端 ESLint 检查
@@ -111,7 +111,7 @@ if [ -n "$FRONTEND_FILES" ]; then
             fi
 
             # 自动添加修复后的文件
-            FIXED_FILES=$(git diff --name-only --diff-filter=M | grep "^src/src/" || true)
+            FIXED_FILES=$(git diff --name-only --diff-filter=M | grep "^src-electron/renderer/src/" || true)
             if [ -n "$FIXED_FILES" ]; then
                 echo -e "${BLUE}[INFO] ESLint 自动修复了以下文件:${NC}"
                 echo "$FIXED_FILES" | sed 's/^/  - /'
@@ -167,7 +167,7 @@ print_section "[代码规范检查]"
 RULES_CHECKER=".githooks/vue_rules_checker.py"
 
 if [ "$SKIP_CODE_RULES_CHECK" != "1" ]; then
-    STAGED_FRONTEND_FILES=$(echo "$STAGED_FILES" | grep -E "^src/src/.*\.(vue|ts)$" || true)
+    STAGED_FRONTEND_FILES=$(echo "$STAGED_FILES" | grep -E "^src-electron/renderer/src/.*\.(vue|ts)$" || true)
 
     if [ -n "$STAGED_FRONTEND_FILES" ]; then
         echo -e "${BLUE}[INFO] 运行代码规范检查...${NC}"
@@ -199,34 +199,6 @@ else
 fi
 
 # ============================================================================
-# 4. 多平台同步检查（Tauri ↔ Electron）
-# ============================================================================
-
-if [ "$SKIP_PLATFORM_SYNC" != "1" ]; then
-    SYNC_SCRIPT="tools/check-platform-sync.sh"
-
-    # 只有当 sidecar/src/、src/src/、shared/src/ 有变更时才检查
-    HAS_SIDECAE_CHANGES=$(echo "$STAGED_FILES" | grep -E "^sidecar/src/" || true)
-    HAS_SRC_CHANGES=$(echo "$STAGED_FILES" | grep -E "^src/src/" || true)
-    HAS_SHARED_CHANGES=$(echo "$STAGED_FILES" | grep -E "^shared/src/" || true)
-
-    if [ -n "$HAS_SIDECAE_CHANGES" ] || [ -n "$HAS_SRC_CHANGES" ] || [ -n "$HAS_SHARED_CHANGES" ]; then
-        print_section "[多平台同步检查]"
-
-        if [ -f "$SYNC_SCRIPT" ]; then
-            if ! bash "$SYNC_SCRIPT"; then
-                echo -e "${RED}[ERROR] Tauri/Electron 文件不同步，请同步 src-electron/ 对应文件${NC}"
-                echo -e "${YELLOW}[INFO] 设置 SKIP_PLATFORM_SYNC=1 跳过检查${NC}"
-                exit 1
-            fi
-            echo -e "${GREEN}[OK] 多平台同步检查通过${NC}"
-        else
-            echo -e "${YELLOW}[WARN] 找不到 $SYNC_SCRIPT${NC}"
-        fi
-    fi
-fi
-
-# ============================================================================
 # 全部通过
 # ============================================================================
 
@@ -239,7 +211,6 @@ echo -e "  ${YELLOW}SKIP_ALL_CHECKS=1${NC}          - 跳过所有"
 echo -e "  ${YELLOW}SKIP_FRONTEND_LINT=1${NC}      - 跳过 ESLint"
 echo -e "  ${YELLOW}SKIP_TYPE_CHECK=1${NC}          - 跳过 vue-tsc"
 echo -e "  ${YELLOW}SKIP_CODE_RULES_CHECK=1${NC}   - 跳过代码规范"
-echo -e "  ${YELLOW}SKIP_PLATFORM_SYNC=1${NC}      - 跳过平台同步检查"
 echo ""
 
 exit 0

@@ -21,13 +21,18 @@ const expanded = ref(false)
 
 <style scoped>
 .thinking-block { overflow: hidden; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); margin-bottom: 8px; }
-.thinking-header { display: flex; width: 100%; align-items: center; gap: 6px; padding: 6px 12px; text-align: left; cursor: pointer; transition: background 0.15s; background: none; border: none; color: inherit; font: inherit; }
+.thinking-header { display: flex; width: 100%; align-items: center; gap: 6px; padding: 6px 12px; text-align: left; cursor: pointer; transition: background 0.15s var(--ease); background: none; border: none; color: inherit; font: inherit; border-radius: 0 !important; }
 .thinking-header:hover { background: var(--bg); }
-.thinking-label { font-size: 11px; font-family: var(--font-mono); color: var(--muted); }
+.thinking-label { font-size: 11px; font-family: var(--font-mono); line-height: 1.4; color: var(--muted); }
 .thinking-pulse { display: inline-block; width: 5px; height: 10px; background: var(--accent); animation: pulse 1s ease-in-out infinite; }
-.thinking-chevron { margin-left: auto; color: var(--muted); transition: transform 0.2s; }
+.thinking-chevron { margin-left: auto; color: var(--muted); transition: transform 0.2s var(--ease); }
 .thinking-chevron.rotated { transform: rotate(180deg); }
 .thinking-body { border-top: 1px solid var(--border); padding: 8px 12px; }
 .thinking-text { white-space: pre-wrap; font-family: var(--font-mono); font-size: 11px; line-height: 1.5; color: var(--muted); margin: 0; }
+.thinking-header:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+@media (prefers-reduced-motion: reduce) {
+  .thinking-pulse { animation: none; opacity: 0.6; }
+  .thinking-chevron { transition: none; }
+}
 </style>

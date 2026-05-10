@@ -32,15 +32,15 @@ defineEmits<{
       @select="$emit('switch-agent', $event)"
     />
     <div v-if="(doneCount ?? 0) > 0 || (alertCount ?? 0) > 0 || showClose" class="panel-notifs">
-      <span v-if="(doneCount ?? 0) > 0" class="pn-chip pn-chip--done" @click="$emit('open-drawer', 'done')">
+      <span v-if="(doneCount ?? 0) > 0" class="pn-chip pn-chip--done" role="button" tabindex="0" @click="$emit('open-drawer', 'done')" @keydown.enter="$emit('open-drawer', 'done')">
         <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" style="width:10px;height:10px"><polyline points="2 6 5 9 10 3"/></svg>
         <span class="pn-chip__num">{{ doneCount }}</span>
       </span>
-      <span v-if="(alertCount ?? 0) > 0" class="pn-chip pn-chip--alert" @click="$emit('open-drawer', 'alert')">
+      <span v-if="(alertCount ?? 0) > 0" class="pn-chip pn-chip--alert" role="button" tabindex="0" @click="$emit('open-drawer', 'alert')" @keydown.enter="$emit('open-drawer', 'alert')">
         <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" style="width:10px;height:10px"><circle cx="6" cy="6" r="4.5"/><path d="M6 4v2.5M6 8v.5"/></svg>
         <span class="pn-chip__num">{{ alertCount }}</span>
       </span>
-      <span v-if="showClose" class="pn-close" @click="$emit('close-split')">{{ closeLabel || '关闭' }}</span>
+      <span v-if="showClose" class="pn-close" role="button" tabindex="0" @click="$emit('close-split')" @keydown.enter="$emit('close-split')">{{ closeLabel || '关闭' }}</span>
     </div>
   </div>
 </template>
@@ -80,6 +80,10 @@ defineEmits<{
 .pn-chip--done {
   background: var(--success-light);
   color: var(--success);
+}
+.pn-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 .pn-chip--done:hover {
   border-color: var(--success);
@@ -122,6 +126,10 @@ defineEmits<{
   border: 1px solid var(--border);
   transition: all 0.15s var(--ease);
   font-family: var(--font-body);
+}
+.pn-close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 .pn-close:hover {
   background: var(--accent-light);

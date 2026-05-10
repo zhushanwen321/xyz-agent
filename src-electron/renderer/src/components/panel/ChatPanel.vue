@@ -14,8 +14,13 @@
     <div ref="chatMsgsRef" class="chat-msgs">
       <!-- Empty state -->
       <div v-if="messages.length === 0" class="chat-empty">
+        <svg class="chat-empty__icon" width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M8 10C8 8.89543 8.89543 8 10 8H38C39.1046 8 40 8.89543 40 10V30C40 31.1046 39.1046 32 38 32H22L14 40V32H10C8.89543 32 8 31.1046 8 30V10Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+          <path d="M16 18H32" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <path d="M16 24H26" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
         <h2 class="chat-empty__title">开始新对话</h2>
-        <p class="chat-empty__subtitle">输入消息以开始</p>
+        <p class="chat-empty__subtitle">向 AI 助手发送消息，开始一段新的对话</p>
       </div>
 
       <template v-else>
@@ -203,30 +208,38 @@ function switchAgent(id: string) {
   align-items: center;
   justify-content: center;
   height: 100%;
-  gap: 8px;
+  padding: 80px 40px;
+  gap: 12px;
   color: var(--muted);
+}
+.chat-empty__icon {
+  color: var(--muted);
+  margin-bottom: 8px;
+  opacity: 0.5;
 }
 .chat-empty__title {
   margin: 0;
-  font-size: 22px;
+  font-size: 18px;
   font-weight: 600;
+  line-height: 1.3;
   color: var(--fg);
 }
 .chat-empty__subtitle {
   margin: 0;
   font-size: 14px;
+  line-height: 1.6;
   color: var(--muted);
+  text-align: center;
 }
 
 /* Thinking indicator: shown while waiting for first token */
 .thinking-indicator {
   align-self: flex-start;
-  width: 70%;
-  padding: 10px 14px;
+  width: 100%;
+  padding: 12px 16px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  border-bottom-left-radius: var(--radius-xs);
+  border-radius: 8px;
   line-height: 1.6;
   font-size: 14px;
 }
@@ -235,8 +248,9 @@ function switchAgent(id: string) {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  line-height: 1.4;
   color: var(--muted);
-  margin-bottom: 3px;
+  margin-bottom: 6px;
 }
 .thinking-indicator__bar {
   display: flex;
@@ -245,15 +259,17 @@ function switchAgent(id: string) {
 }
 .thinking-indicator__dot {
   display: inline-block;
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: var(--accent);
+  flex-shrink: 0;
   animation: thinking-pulse 1.4s ease-in-out infinite;
 }
 .thinking-indicator__text {
   font-family: var(--font-mono);
   font-size: 11px;
+  line-height: 1.4;
   color: var(--muted);
 }
 @keyframes thinking-pulse {

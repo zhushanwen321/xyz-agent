@@ -2,12 +2,24 @@
 
 ## 项目概述
 
-xyz-agent 是基于 Tauri v2 + Vue 3 + Node.js Sidecar 的 AI Agent 桌面工作台。三层架构：
-- **前端** (`src/src/`): Vue 3 + TypeScript + Pinia + Tailwind CSS v3 + xyz-ui 组件库
-- **Sidecar** (`sidecar/src/`): Node.js WebSocket 服务，通过子进程 RPC 与 pi 通信
-- **Tauri** (`src-tauri/src/`): Rust 后端，管理 sidecar 进程和原生窗口
+xyz-agent 是基于 Electron + Vue 3 + Node.js Sidecar 的 AI Agent 桌面工作台。架构：
 
-**完整编码规范**: [docs/STANDARDS.md](docs/STANDARDS.md)
+- **Electron 主进程** (`src-electron/main/`): 窗口管理、sidecar 进程生命周期、快捷键
+- **Preload** (`src-electron/preload/`): 安全桥接，暴露 `electronAPI` 给渲染进程
+- **前端渲染进程** (`src-electron/renderer/src/`): Vue 3 + TypeScript + Pinia + Tailwind CSS v3 + xyz-ui 组件库
+- **Sidecar** (`src-electron/sidecar/src/`): Node.js WebSocket 服务，通过子进程 RPC 与 pi 通信
+- **共享类型** (`src-electron/shared/src/`): 前端与 sidecar 之间的 TypeScript 类型定义
+
+**完整编码规范**: [docs/standards.md](docs/standards.md)
+
+## 常用命令
+
+```bash
+npm run dev          # 开发模式 (Electron + Vite HMR)
+npm run build        # 生产构建 (electron-builder)
+npm run lint         # ESLint 检查
+npm run prepare      # 安装 git hooks
+```
 
 ## 关键规则（违反必出 bug）
 
@@ -23,22 +35,8 @@ xyz-agent 是基于 Tauri v2 + Vue 3 + Node.js Sidecar 的 AI Agent 桌面工作
 ### 4. 外部系统对接先验证再编码
 对接 pi RPC 等外部系统时，先写独立验证脚本（`tools/verify-*.cjs`），确认字段名和格式后再写业务代码。
 
-### 5. 多平台同步
-修改 `sidecar/src/`、`src/src/`、`shared/src/` 时，必须同步 `src-electron/` 对应文件。
-
-### 6. pi 适配层不信任外部格式
+### 5. pi 适配层不信任外部格式
 EventAdapter 和 session-pool 是 pi 协议的唯一适配点。业务代码不直接处理 pi 格式。`sendCommand` 必须检查 `success` 字段。
-
-## 常用命令
-
-```bash
-npm run dev          # 开发模式 (Tauri dev)
-npm run mock:dev     # Mock 模式 (XYZ_MOCK=1 VITE_MOCK=true)
-npm run build        # 生产构建
-npm run build:vite   # 仅构建前端
-npm run lint         # ESLint 检查
-npm run prepare      # 安装 git hooks
-```
 
 ## 前端编码规范
 
@@ -60,20 +58,17 @@ npm run prepare      # 安装 git hooks
 
 | 检查工具 | 覆盖范围 | 触发时机 |
 |---------|---------|---------|
-| taste-lint (ESLint) | no-native-html / no-emoji / prefer-v-model / no-hardcoded-colors / no-magic-spacing / no-silent-catch / prefer-allsettled | `npm run lint` + pre-commit |
+| taste-lint (ESLint) | no-native-html / no-emoji / prefer-v-model / no-hardcoded-colors / no-magic-spacing / no-silent-catch / prefer-allsettled / no-multi-arg-emit | `npm run lint` + pre-commit |
 | vue_rules_checker.py | 行数上限 / CSS 选择器 / Tab 缩进 / 原生元素 / Emoji / v-model | pre-commit |
-| pre-commit hook | ESLint + vue_rules_checker | git commit |
-
-### 渐进式迁移
-
-部分旧文件尚未迁移到 xyz-ui 组件，记录在 `.githooks/vue_rules_checker.py` 的 `LEGACY_WHITELIST` 中。新文件必须遵循规范，旧文件在重构时逐步迁移。
+| check-platform-sync.sh | 不再需要（已移除 Tauri） | — |
 
 ## 架构约定
 
 - **视图切换**: 状态驱动（settingsStore.currentView），不用 vue-router
 - **Mock 模式**: `VITE_MOCK=true` 环境变量控制，在 ws-client 层拦截
-- **共享类型**: `shared/src/` 通过 npm workspace 在前端和 sidecar 间共享
+- **共享类型**: `src-electron/shared/src/` 通过 npm workspace 在前端和 sidecar 间共享
 - **Sidecar 通信**: WebSocket，前端通过 `ws-client.ts` + `event-bus.ts` 消息分发
+- **Electron IPC**: 主进程通过 preload 暴露 `window.electronAPI`，渲染进程不直接使用 `ipcRenderer`
 
 ## 跳过检查
 

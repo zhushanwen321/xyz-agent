@@ -52,9 +52,10 @@ function truncate(str: string, max: number): string {
 </script>
 
 <style scoped>
-.tool { border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); margin: 6px 0; overflow: hidden; }
-.tool__hd { display: flex; align-items: center; gap: 6px; padding: 6px 10px; cursor: pointer; font-size: 11px; font-family: var(--font-mono); color: var(--muted); user-select: none; transition: background 0.15s var(--ease); width: 100%; text-align: left; background: none; border: none; color: inherit; font: inherit; }
+.tool { border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); margin: 8px 0; overflow: hidden; }
+.tool__hd { display: flex; align-items: center; gap: 6px; padding: 6px 10px; cursor: pointer; font-size: 11px; line-height: 1.4; font-family: var(--font-mono); color: var(--muted); user-select: none; transition: background 0.15s var(--ease); width: 100%; text-align: left; background: none; border: none; color: inherit; font: inherit; border-radius: 0 !important; }
 .tool__hd:hover { background: var(--accent-light); }
+.tool__hd:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .tool__chevron { transition: transform 0.15s var(--ease); font-size: 9px; flex-shrink: 0; }
 .tool.collapsed .tool__chevron { transform: rotate(-90deg); }
 .tool__name { font-weight: 600; color: var(--accent); }
@@ -63,7 +64,7 @@ function truncate(str: string, max: number): string {
 .tool__status--running { color: var(--warning); }
 .tool__status--done { color: var(--success); }
 .tool__status--error { color: var(--danger); }
-.tool__bd { padding: 6px 10px 10px; font-size: 11px; line-height: 1.5; max-height: 160px; overflow-y: auto; border-top: 1px solid var(--border); font-family: var(--font-mono); color: var(--muted); }
+.tool__bd { padding: 8px 10px; font-size: 11px; line-height: 1.5; max-height: 160px; overflow-y: auto; border-top: 1px solid var(--border); font-family: var(--font-mono); color: var(--muted); }
 .tool-spinner { display: inline-block; width: 10px; height: 10px; border: 2px solid var(--warning); border-top-color: transparent; border-radius: 50%; animation: spin 0.6s linear infinite; flex-shrink: 0; }
 @keyframes spin { to { transform: rotate(360deg); } }
 </style>
