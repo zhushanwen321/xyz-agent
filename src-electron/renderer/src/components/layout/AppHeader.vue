@@ -2,36 +2,29 @@
   <header class="header">
     <div class="header__logo">xyz<span>-agent</span></div>
     <div class="header__spacer"></div>
-    <div class="notif-group">
-      <Button variant="ghost" class="notif-btn notif-btn--done" :title="t('header.done')">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 8 6.5 11.5 13 4.5"/></svg>
-        {{ t('header.done') }}
-        <span v-if="chatStore.doneCount > 0" class="notif-dot notif-dot--done">{{ chatStore.doneCount }}</span>
-      </Button>
-      <Button variant="ghost" class="notif-btn notif-btn--alert" :title="t('header.alert')">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="8" cy="8" r="6.5"/><path d="M8 5v3.5M8 10.5v.5"/></svg>
-        {{ t('header.alert') }}
-        <span v-if="chatStore.alertCount > 0" class="notif-dot notif-dot--alert">{{ chatStore.alertCount }}</span>
-      </Button>
-    </div>
+    <Button variant="ghost" size="icon" class="h-btn notif-btn-single" @click="openDrawer" :title="t('header.notifications')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px">
+        <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+        <path d="M13.73 21a2 2 0 01-3.46 0"/>
+      </svg>
+      <span v-if="chatStore.doneCount > 0 || chatStore.alertCount > 0" class="notif-dot notif-dot--merged">
+        {{ chatStore.doneCount + chatStore.alertCount }}
+      </span>
+    </Button>
     <span class="h-divider"></span>
     <Button variant="ghost" size="icon" class="h-btn" @click="settingsStore.toggleOverview()" :title="t('header.overview') + ' (Cmd+J)'">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:16px;height:16px">
         <rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/>
       </svg>
     </Button>
-    <Button variant="ghost" size="icon" :class="['h-btn', { active: !settingsStore.focusMode && !settingsStore.splitMode }]" @click="setView('standard')" :title="t('header.viewStandard') + ' (Cmd+1)'">
-      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:16px;height:16px">
+    <Button variant="ghost" size="icon" class="h-btn" @click="cycleViewMode" :title="viewModeTitle">
+      <svg v-if="!settingsStore.focusMode && !settingsStore.splitMode" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:16px;height:16px">
         <rect x="1" y="1" width="4" height="14" rx="1"/><rect x="6" y="1" width="9" height="14" rx="1"/>
       </svg>
-    </Button>
-    <Button variant="ghost" size="icon" :class="['h-btn', { active: settingsStore.splitMode }]" @click="setView('split')" :title="t('header.split') + ' (Cmd+2)'">
-      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:16px;height:16px">
+      <svg v-else-if="settingsStore.splitMode" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:16px;height:16px">
         <rect x="1" y="1" width="6" height="14" rx="1"/><rect x="9" y="1" width="6" height="14" rx="1"/>
       </svg>
-    </Button>
-    <Button variant="ghost" size="icon" :class="['h-btn', { active: settingsStore.focusMode }]" @click="setView('focus')" :title="t('header.viewFocus') + ' (Cmd+3)'">
-      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:16px;height:16px">
+      <svg v-else viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:16px;height:16px">
         <rect x="1" y="1" width="14" height="14" rx="1"/>
       </svg>
     </Button>
@@ -53,7 +46,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { Button } from '../../design-system'
 import { useSettingsStore } from '../../stores/settings'
 import { useChatStore } from '../../stores/chat'
@@ -62,24 +55,30 @@ const { t } = useI18n()
 const settingsStore = useSettingsStore()
 const chatStore = useChatStore()
 const isDark = ref(document.documentElement.getAttribute('data-theme') === 'dark')
-function setView(mode: string) {
-  switch (mode) {
-    case 'standard':
-      settingsStore.focusMode = false
-      settingsStore.splitMode = false
-      settingsStore.currentView = 'chat'
-      break
-    case 'split':
-      settingsStore.focusMode = false
-      settingsStore.splitMode = !settingsStore.splitMode
-      settingsStore.currentView = 'chat'
-      break
-    case 'focus':
-      settingsStore.splitMode = false
-      settingsStore.focusMode = !settingsStore.focusMode
-      settingsStore.currentView = 'chat'
-      break
+function cycleViewMode() {
+  if (!settingsStore.focusMode && !settingsStore.splitMode) {
+    settingsStore.focusMode = false
+    settingsStore.splitMode = true
+    settingsStore.currentView = 'chat'
+  } else if (settingsStore.splitMode) {
+    settingsStore.splitMode = false
+    settingsStore.focusMode = true
+    settingsStore.currentView = 'chat'
+  } else {
+    settingsStore.focusMode = false
+    settingsStore.splitMode = false
+    settingsStore.currentView = 'chat'
   }
+}
+
+const viewModeTitle = computed(() => {
+  if (settingsStore.focusMode) return t('header.viewStandard')
+  if (settingsStore.splitMode) return t('header.viewFocus')
+  return t('header.split')
+})
+
+function openDrawer() {
+  settingsStore.openDrawer('right')
 }
 
 function openSettings() {
@@ -98,5 +97,24 @@ function toggleTheme() {
 /* Scoped overrides that must also include hover to avoid overriding global hover */
 .h-btn { border-radius: var(--radius-sm); color: var(--muted); }
 .h-btn:hover { color: var(--accent); }
-.notif-btn { padding: 5px 12px !important; }
+
+.notif-btn-single {
+  position: relative;
+}
+.notif-dot--merged {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  font-size: 9px;
+  font-weight: 700;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--danger);
+  border: 2px solid var(--surface);
+}
 </style>

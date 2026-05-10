@@ -40,11 +40,12 @@ const renderedContent = computed(() => renderMarkdown(props.message.content))
 
 <style scoped>
 .msg { padding: 12px 16px; line-height: 1.6; font-size: 14px; }
-.msg--user { align-self: flex-end; max-width: 75%; background: var(--accent-light); border-radius: var(--radius); border-bottom-right-radius: var(--radius-xs); }
+.msg--user { align-self: flex-end; max-width: 75%; background: var(--accent); color: white; border-radius: var(--radius); border-bottom-right-radius: var(--radius-xs); }
 .msg--bot { align-self: flex-start; width: 100%; background: transparent; }
 .msg__role { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; line-height: 1.4; color: var(--muted); margin-bottom: 3px; }
-.msg__role--user { text-align: right; }
+.msg__role--user { text-align: right; color: rgba(255, 255, 255, 0.7); }
 .msg__body p { margin-bottom: 6px; }
 .msg__body p:last-child { margin-bottom: 0; }
 .msg__body code { background: var(--bg); padding: 1px 4px; border-radius: var(--radius-xs); font-size: 0.88em; font-family: var(--font-mono); }
+.msg--user .msg__body code { background: rgba(255, 255, 255, 0.2); color: white; }
 </style>

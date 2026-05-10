@@ -162,8 +162,8 @@ const HOURS_PER_DAY = 24
 }
 .s-item:hover { background: var(--accent-light); }
 .s-item.active {
-  background: var(--accent-light);
-  border-left-color: var(--accent);
+  border-left: none;
+  background: oklch(50% 0.02 50 / 0.12);
 }
 .s-item:focus-visible {
   outline: 2px solid var(--accent);

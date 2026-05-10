@@ -18,11 +18,7 @@
         @compositionend="onCompositionEnd"
       />
       <div class="chat-input-toolbar">
-        <Button variant="ghost" class="tb-btn tb-btn--plus" title="Upload file">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v10M3 8h10"/></svg>
-        </Button>
         <ModelPicker :current-model="currentModel" @select="(id) => emit('select-model', id)" />
-        <ContextBar :percentage="contextPercent" />
         <div class="tb-spacer"></div>
         <Button
           v-if="isStreaming"
@@ -49,10 +45,8 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useChatStore } from '../../stores/chat'
 import { useSettingsStore } from '../../stores/settings'
 import { Textarea, Button } from '../../design-system'
-import ContextBar from './ContextBar.vue'
 import ModelPicker from './ModelPicker.vue'
 import SlashMenu from './SlashMenu.vue'
 
@@ -64,14 +58,12 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-const chatStore = useChatStore()
 const settingsStore = useSettingsStore()
 
 const text = ref('')
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 const isComposing = ref(false)
 
-const contextPercent = computed(() => chatStore.contextUsagePercent)
 const currentModel = computed(() => settingsStore.defaultModel)
 
 const canSend = computed(() => text.value.trim().length > 0 && !props.isStreaming)
@@ -224,12 +216,6 @@ watch(text, () => nextTick(resizeTextarea))
 .tb-btn svg {
   width: 14px;
   height: 14px;
-}
-
-/* Plus button */
-.tb-btn--plus {
-  width: 28px;
-  padding: 0;
 }
 
 /* Send button */

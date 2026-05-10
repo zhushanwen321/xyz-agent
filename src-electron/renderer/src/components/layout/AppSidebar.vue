@@ -94,8 +94,8 @@ function onCancelRename() {
 .sidebar__hd-btn svg { width: 14px; height: 14px; }
 .s-group__hd {
   display: flex; align-items: center; gap: 5px;
-  padding: 6px 14px; font-size: 11px; font-weight: 600;
-  text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 6px 14px; font-size: 12px; font-weight: 500;
+  text-transform: none; letter-spacing: normal;
   color: var(--muted); cursor: pointer; user-select: none;
 }
 .s-group__hd:hover { color: var(--fg); }

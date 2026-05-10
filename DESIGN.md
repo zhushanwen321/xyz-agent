@@ -241,3 +241,8 @@ This system is flat by default. Depth is conveyed through tonal layering (backgr
 - **Don't** use bounce, elastic, or spring animations. Ease-out with exponential curves only.
 - **Don't** animate CSS layout properties (width, height, top, left). Use transform and opacity.
 - **Don't** use em dashes in copy. Use commas, colons, semicolons, periods, or parentheses.
+
+## 7. 设计参考文档
+
+- [竞品 UI 分析](docs/templates/competitor-ui-analysis.md) — Claude Code / Codex 逐图拆解对比，提炼 7 条设计原则
+- [UI/UX 设计原则与参考](docs/templates/ui-design-principles-and-references.md) — 认知负荷/格式塔/渐进披露等设计方法论 + 7 个竞品案例 + 20 条行动清单
