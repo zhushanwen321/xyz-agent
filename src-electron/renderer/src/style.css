@@ -8,13 +8,13 @@
    ============================================================ */
 
 :root {
-  --bg: oklch(97% 0.018 70);
-  --surface: oklch(99% 0.008 70);
-  --fg: oklch(22% 0.02 50);
-  --muted: oklch(50% 0.018 50);
-  --border: oklch(90% 0.014 70);
-  --accent: oklch(64% 0.13 28);
-  --accent-light: oklch(92% 0.04 28);
+  --bg: oklch(97% 0.010 75);
+  --surface: oklch(99% 0.006 75);
+  --fg: oklch(22% 0.012 75);
+  --muted: oklch(50% 0.010 75);
+  --border: oklch(90% 0.008 75);
+  --accent: oklch(55% 0.08 195);
+  --accent-light: oklch(93% 0.03 195);
   --success: oklch(62% 0.10 145);
   --success-light: oklch(95% 0.04 145);
   --warning: oklch(75% 0.10 85);
@@ -38,6 +38,75 @@
 }
 
 [data-theme="dark"] {
+  --bg: oklch(13% 0.008 75);
+  --surface: oklch(16% 0.008 75);
+  --fg: oklch(92% 0.005 75);
+  --muted: oklch(55% 0.010 75);
+  --border: oklch(24% 0.010 75);
+  --accent: oklch(55% 0.08 195);
+  --accent-light: oklch(22% 0.04 195);
+  --success: oklch(65% 0.10 145);
+  --success-light: oklch(22% 0.04 145);
+  --warning: oklch(75% 0.10 85);
+  --warning-light: oklch(25% 0.04 85);
+  --danger: oklch(55% 0.12 25);
+  --danger-light: oklch(25% 0.04 25);
+}
+
+/* ── Palette overrides (dark) ────────────────────────────────── */
+
+[data-theme="dark"][data-palette="warm-teal"] {
+  /* Same as default dark, but explicit for when non-default palette is set */
+  --bg: oklch(13% 0.008 75);
+  --surface: oklch(16% 0.008 75);
+  --fg: oklch(92% 0.005 75);
+  --muted: oklch(55% 0.010 75);
+  --border: oklch(24% 0.010 75);
+  --accent: oklch(55% 0.08 195);
+  --accent-light: oklch(22% 0.04 195);
+}
+
+[data-theme="dark"][data-palette="cold-teal"] {
+  --bg: oklch(13% 0.005 260);
+  --surface: oklch(16% 0.005 260);
+  --fg: oklch(95% 0.005 260);
+  --muted: oklch(55% 0.010 260);
+  --border: oklch(23% 0.008 260);
+  --accent: oklch(72% 0.10 190);
+  --accent-light: oklch(25% 0.04 190);
+}
+
+[data-theme="dark"][data-palette="neutral"] {
+  --bg: oklch(12% 0 0);
+  --surface: oklch(16% 0 0);
+  --fg: oklch(95% 0 0);
+  --muted: oklch(55% 0 0);
+  --border: oklch(24% 0 0);
+  --accent: oklch(88% 0 0);
+  --accent-light: oklch(28% 0 0);
+}
+
+[data-theme="dark"][data-palette="sharp"] {
+  --bg: oklch(10% 0 0);
+  --surface: oklch(14% 0 0);
+  --fg: oklch(97% 0 0);
+  --muted: oklch(50% 0 0);
+  --border: oklch(20% 0 0);
+  --accent: oklch(100% 0 0);
+  --accent-light: oklch(30% 0 0);
+}
+
+[data-theme="dark"][data-palette="warm-neutral"] {
+  --bg: oklch(15% 0.010 75);
+  --surface: oklch(19% 0.010 75);
+  --fg: oklch(90% 0.008 75);
+  --muted: oklch(56% 0.012 75);
+  --border: oklch(27% 0.012 75);
+  --accent: oklch(70% 0.04 80);
+  --accent-light: oklch(28% 0.015 80);
+}
+
+[data-theme="dark"][data-palette="terracotta"] {
   --bg: oklch(15% 0.015 50);
   --surface: oklch(22% 0.015 50);
   --fg: oklch(93% 0.008 70);
@@ -45,45 +114,148 @@
   --border: oklch(30% 0.012 50);
   --accent: oklch(68% 0.13 28);
   --accent-light: oklch(28% 0.06 28);
-  --success: oklch(65% 0.10 145);
-  --success-light: oklch(25% 0.04 145);
-  --warning: oklch(75% 0.10 85);
-  --warning-light: oklch(27% 0.04 85);
-  --danger: oklch(55% 0.12 25);
-  --danger-light: oklch(25% 0.04 25);
 }
 
-/* ── Claude palette overrides ────────────────────────────────── */
-[data-palette="claude"] {
-  --bg: #FAFAFA;
-  --surface: #F5F5F5;
-  --fg: #1A1A1A;
-  --muted: #737373;
-  --border: #E5E5E5;
-  --accent: #C96442;
-  --accent-light: #FEF3EE;
-  --success: #16A34A;
-  --success-light: #F0FDF4;
-  --warning: #CA8A04;
-  --warning-light: #FEFCE8;
-  --danger: #DC2626;
-  --danger-light: #FEF2F2;
+[data-theme="dark"][data-palette="rose"] {
+  --bg: oklch(15% 0.012 300);
+  --surface: oklch(22% 0.012 300);
+  --fg: oklch(93% 0.006 60);
+  --muted: oklch(62% 0.012 300);
+  --border: oklch(30% 0.010 300);
+  --accent: oklch(70% 0.14 350);
+  --accent-light: oklch(28% 0.06 350);
 }
 
-[data-theme="dark"][data-palette="claude"] {
-  --bg: #141414;
-  --surface: #1E1E1E;
-  --fg: #F5F5F5;
-  --muted: #8A8A8A;
-  --border: #2A2A2A;
-  --accent: #D97757;
-  --accent-light: #241A15;
-  --success: #22C55E;
-  --success-light: #162316;
-  --warning: #EAB308;
-  --warning-light: #22221A;
-  --danger: #EF4444;
-  --danger-light: #231616;
+[data-theme="dark"][data-palette="amber"] {
+  --bg: oklch(15% 0.012 75);
+  --surface: oklch(22% 0.012 75);
+  --fg: oklch(93% 0.006 65);
+  --muted: oklch(62% 0.012 75);
+  --border: oklch(30% 0.010 75);
+  --accent: oklch(72% 0.15 65);
+  --accent-light: oklch(28% 0.06 65);
+}
+
+[data-theme="dark"][data-palette="blue"] {
+  --bg: oklch(15% 0.012 260);
+  --surface: oklch(22% 0.012 260);
+  --fg: oklch(93% 0.006 240);
+  --muted: oklch(62% 0.012 260);
+  --border: oklch(30% 0.010 260);
+  --accent: oklch(68% 0.15 250);
+  --accent-light: oklch(28% 0.06 250);
+}
+
+[data-theme="dark"][data-palette="violet"] {
+  --bg: oklch(15% 0.012 290);
+  --surface: oklch(22% 0.012 290);
+  --fg: oklch(93% 0.006 280);
+  --muted: oklch(62% 0.012 290);
+  --border: oklch(30% 0.010 290);
+  --accent: oklch(68% 0.15 280);
+  --accent-light: oklch(28% 0.06 280);
+}
+
+/* ── Palette overrides (light) ────────────────────────────────── */
+
+[data-theme="light"][data-palette="warm-teal"] {
+  --bg: oklch(97% 0.010 75);
+  --surface: oklch(99% 0.006 75);
+  --fg: oklch(22% 0.012 75);
+  --muted: oklch(50% 0.010 75);
+  --border: oklch(90% 0.008 75);
+  --accent: oklch(55% 0.08 195);
+  --accent-light: oklch(93% 0.03 195);
+}
+
+[data-theme="light"][data-palette="cold-teal"] {
+  --bg: oklch(97% 0.008 240);
+  --surface: oklch(99% 0.004 240);
+  --fg: oklch(20% 0.010 240);
+  --muted: oklch(48% 0.008 240);
+  --border: oklch(90% 0.006 240);
+  --accent: oklch(62% 0.10 190);
+  --accent-light: oklch(93% 0.04 190);
+}
+
+[data-theme="light"][data-palette="neutral"] {
+  --bg: oklch(97% 0 0);
+  --surface: oklch(99% 0 0);
+  --fg: oklch(20% 0 0);
+  --muted: oklch(48% 0 0);
+  --border: oklch(90% 0 0);
+  --accent: oklch(40% 0 0);
+  --accent-light: oklch(92% 0 0);
+}
+
+[data-theme="light"][data-palette="sharp"] {
+  --bg: oklch(98% 0 0);
+  --surface: oklch(100% 0 0);
+  --fg: oklch(15% 0 0);
+  --muted: oklch(45% 0 0);
+  --border: oklch(88% 0 0);
+  --accent: oklch(10% 0 0);
+  --accent-light: oklch(93% 0 0);
+}
+
+[data-theme="light"][data-palette="warm-neutral"] {
+  --bg: oklch(97% 0.010 75);
+  --surface: oklch(99% 0.006 75);
+  --fg: oklch(22% 0.012 75);
+  --muted: oklch(50% 0.010 75);
+  --border: oklch(90% 0.008 75);
+  --accent: oklch(45% 0.04 80);
+  --accent-light: oklch(93% 0.015 80);
+}
+
+[data-theme="light"][data-palette="terracotta"] {
+  --bg: oklch(97% 0.018 70);
+  --surface: oklch(99% 0.008 70);
+  --fg: oklch(22% 0.02 50);
+  --muted: oklch(50% 0.018 50);
+  --border: oklch(90% 0.014 70);
+  --accent: oklch(64% 0.13 28);
+  --accent-light: oklch(92% 0.04 28);
+}
+
+[data-theme="light"][data-palette="rose"] {
+  --bg: oklch(97% 0.012 300);
+  --surface: oklch(99% 0.006 300);
+  --fg: oklch(22% 0.015 300);
+  --muted: oklch(50% 0.012 300);
+  --border: oklch(90% 0.010 300);
+  --accent: oklch(65% 0.14 350);
+  --accent-light: oklch(92% 0.04 350);
+}
+
+[data-theme="light"][data-palette="amber"] {
+  --bg: oklch(97% 0.012 75);
+  --surface: oklch(99% 0.006 75);
+  --fg: oklch(22% 0.015 75);
+  --muted: oklch(50% 0.012 75);
+  --border: oklch(90% 0.010 75);
+  --accent: oklch(67% 0.15 65);
+  --accent-light: oklch(92% 0.04 65);
+}
+
+[data-theme="light"][data-palette="blue"] {
+  --bg: oklch(97% 0.012 240);
+  --surface: oklch(99% 0.006 240);
+  --fg: oklch(22% 0.015 240);
+  --muted: oklch(50% 0.012 240);
+  --border: oklch(90% 0.010 240);
+  --accent: oklch(62% 0.15 250);
+  --accent-light: oklch(92% 0.04 250);
+}
+
+[data-theme="light"][data-palette="violet"] {
+  --bg: oklch(97% 0.012 290);
+  --surface: oklch(99% 0.006 290);
+  --fg: oklch(22% 0.015 280);
+  --muted: oklch(50% 0.012 290);
+  --border: oklch(90% 0.010 290);
+  --accent: oklch(62% 0.15 280);
+  --accent-light: oklch(92% 0.04 280);
 }
 
 /* ── Base styles ── */

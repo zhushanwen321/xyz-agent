@@ -107,6 +107,9 @@ onMounted(async () => {
   initConnection()
   loadSessions()
 
+  // 恢复主题和 palette 到 DOM
+  settingsStore.applyTheme()
+
   // Electron IPC: 监听快捷键事件
   if (window.electronAPI) {
     window.electronAPI.onShortcut((type) => {

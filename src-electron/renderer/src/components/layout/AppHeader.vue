@@ -86,10 +86,9 @@ function openSettings() {
 }
 
 function toggleTheme() {
-  const next = isDark.value ? 'light' : 'dark'
-  document.documentElement.setAttribute('data-theme', next)
-  localStorage.setItem('xyz-agent-theme', next)
-  isDark.value = next === 'dark'
+  settingsStore.toggleTheme()
+  isDark.value = settingsStore.theme === 'dark' ||
+    (settingsStore.theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
 }
 </script>
 

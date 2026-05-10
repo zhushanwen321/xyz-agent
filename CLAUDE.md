@@ -16,7 +16,8 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Sidecar 的 AI Agent 桌面工作
 - [竞品 UI 分析](docs/templates/competitor-ui-analysis.md) — Claude Code / Codex 逐图拆解，7 条设计原则
 - [UI/UX 设计原则与参考](docs/templates/ui-design-principles-and-references.md) — 设计方法论 + 竞品案例 + 行动清单
 - [设计方向](docs/templates/design-direction.md) — 产品定位、主题策略、窗口架构、实施优先级
-- [暗色主题选项 demo](docs/templates/dark-theme-options.html) — 5 种 accent 色方案对比
+- [暗色主题选项 demo](docs/templates/dark-theme-options.html) — 5 种彩色 accent 方案对比
+- [朴素锐利主题 demo](docs/templates/muted-sharp-themes.html) — 5 种低饱和/无彩色方案对比
 
 ## 常用命令
 

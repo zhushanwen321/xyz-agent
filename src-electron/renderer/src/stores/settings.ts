@@ -4,7 +4,7 @@ import type { ToolPermission, ThemeMode, ThemePreset } from '@xyz-agent/shared'
 
 export const useSettingsStore = defineStore('settings', () => {
   const theme = ref<ThemeMode>('light')
-  const themePreset = ref<ThemePreset>('warm')
+  const themePreset = ref<ThemePreset>('warm-teal')
   const locale = ref<string>('zh-CN')
   const defaultModel = ref('')
   const currentView = ref<'chat' | 'settings'>('chat')
@@ -19,14 +19,23 @@ export const useSettingsStore = defineStore('settings', () => {
     bash: 'ask', edit: 'ask', write: 'ask',
   })
 
+  // 旧值迁移: 'warm' → 'warm-teal', 'claude' → 'terracotta'
+  function migratePalette(p: string): ThemePreset {
+    if (p === 'warm') return 'warm-teal'
+    if (p === 'claude') return 'terracotta'
+    return p as ThemePreset
+  }
+
   function applyTheme() {
+    const migrated = migratePalette(themePreset.value)
+    if (migrated !== themePreset.value) themePreset.value = migrated
     const el = document.documentElement
     el.setAttribute('data-theme', theme.value === 'system'
       ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
       : theme.value)
-    el.setAttribute('data-palette', themePreset.value)
+    el.setAttribute('data-palette', migrated)
     localStorage.setItem('xyz-agent-theme', theme.value)
-    localStorage.setItem('xyz-agent-palette', themePreset.value)
+    localStorage.setItem('xyz-agent-palette', migrated)
   }
 
   function toggleTheme() {
@@ -35,7 +44,8 @@ export const useSettingsStore = defineStore('settings', () => {
   }
   function setThemePreset(preset: ThemePreset) {
     themePreset.value = preset
-    applyTheme()
+    document.documentElement.setAttribute('data-palette', preset)
+    localStorage.setItem('xyz-agent-palette', preset)
   }
   function setToolPermission(tool: string, perm: ToolPermission) {
     toolPermissions.value[tool] = perm

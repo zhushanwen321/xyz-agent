@@ -1,5 +1,6 @@
 import { computed } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
+import type { ThemePreset } from '@xyz-agent/shared'
 
 export function useTheme() {
   const settings = useSettingsStore()
@@ -11,7 +12,7 @@ export function useTheme() {
     settings.toggleTheme()
   }
 
-  function setPalette(palette: 'warm' | 'claude') {
+  function setPalette(palette: ThemePreset) {
     settings.setThemePreset(palette)
   }
 
