@@ -14,6 +14,6 @@ defineEmits<{
   <div
     class="s-toggle"
     :class="{ off: !modelValue }"
-    @click="$emit('update:modelValue', !modelValue)"
+    @click.stop="$emit('update:modelValue', !modelValue)"
   />
 </template>

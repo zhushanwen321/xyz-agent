@@ -17,3 +17,6 @@ export type {
   AppErrorCode, AppError,
 } from './errors'
 export type { ToolPermission, ThemeMode, ThemePreset } from './settings'
+export type {
+  PaneLeaf, SplitNode, PaneTree, WindowState,
+} from './pane'

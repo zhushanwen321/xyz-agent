@@ -55,8 +55,8 @@ export function mockSend(msg: ClientMessage): void {
       respond('session.created', {
         session: {
           id: 'mock-new-' + Date.now(),
-          label: '新会话',
-          cwd: '/Users/mock/project',
+          label: (msg.payload.label as string) || '新会话',
+          cwd: (msg.payload.cwd as string) || '/Users/mock/project',
           status: 'idle',
           lastActiveAt: Date.now(),
           modelId: 'claude-sonnet',

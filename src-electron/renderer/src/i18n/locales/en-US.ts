@@ -24,6 +24,7 @@ export default {
     viewFocus: 'Focus',
     settings: 'Settings',
     toggleTheme: 'Toggle Theme',
+    notifications: 'Notifications',
   },
   sidebar: {
     sessions: 'Projects',

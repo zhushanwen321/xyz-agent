@@ -59,7 +59,7 @@ const WS_OPEN = 1
 export class SessionPool {
   private sessions = new Map<string, ManagedSession>()
   private pm = new ProcessManager()
-  private ws: WebSocket | null = null
+  private clients = new Set<WebSocket>()
 
   constructor() {
     // 进程崩溃时清理对应 session
@@ -69,36 +69,36 @@ export class SessionPool {
         session.adapter.detach()
         if (session.unsubUsageListener) session.unsubUsageListener()
         this.sessions.delete(sessionId)
-        if (this.ws && this.ws.readyState === WS_OPEN) {
-          this.send({ type: 'session.list', payload: { groups: this.listPersistedSessions() } })
-          this.send({
-            type: 'message.error',
-            payload: { sessionId, message: `Session process exited unexpectedly (code: ${code})` },
-          })
-        }
+        this.send({ type: 'session.list', payload: { groups: this.listPersistedSessions() } })
+        this.send({
+          type: 'message.error',
+          payload: { sessionId, message: `Session process exited unexpectedly (code: ${code})` },
+        })
       }
     })
   }
 
   // ── WebSocket binding ──────────────────────────────────────────
 
-  bindWebSocket(ws: WebSocket): void {
-    this.ws = ws
+  addClient(ws: WebSocket): void {
+    this.clients.add(ws)
   }
 
-  unbindWebSocket(): void {
-    this.ws = null
+  removeClient(ws: WebSocket): void {
+    this.clients.delete(ws)
   }
 
   private send(msg: ServerMessage): void {
-    if (this.ws?.readyState === WS_OPEN) {
-      this.ws.send(JSON.stringify(msg))
+    for (const ws of this.clients) {
+      if (ws.readyState === WS_OPEN) {
+        ws.send(JSON.stringify(msg))
+      }
     }
   }
 
   // ── Session CRUD ───────────────────────────────────────────────
 
-  async create(cwd?: string): Promise<SessionSummary> {
+  async create(cwd?: string, label?: string): Promise<SessionSummary> {
     const id = crypto.randomUUID()
     const sessionCwd = cwd ?? process.cwd()
     const modelId = getDefaultModel()
@@ -125,7 +125,7 @@ export class SessionPool {
     const session: ManagedSession = {
       id,
       cwd: sessionCwd,
-      label: basename(sessionCwd),
+      label: label ?? basename(sessionCwd),
       modelId,
       createdAt: Date.now(),
       lastActiveAt: Date.now(),
@@ -142,6 +142,10 @@ export class SessionPool {
       const sessionFile = stateResp.payload?.sessionFile as string | undefined
       if (sessionFile) {
         session.sessionFilePath = sessionFile
+        // Persist label to file so scanSessions can read it after restart
+        if (session.label && session.label !== basename(sessionCwd)) {
+          appendFileSync(sessionFile, JSON.stringify({ type: 'session_info', name: session.label }) + '\n')
+        }
       }
     } catch (e) {
       console.warn('[session-pool] get_state failed (non-critical):', e instanceof Error ? e.message : e)

@@ -8,8 +8,6 @@ export const useSettingsStore = defineStore('settings', () => {
   const locale = ref<string>('zh-CN')
   const defaultModel = ref('')
   const currentView = ref<'chat' | 'settings'>('chat')
-  const focusMode = ref(false)
-  const splitMode = ref(false)
   const overviewVisible = ref(false)
   const drawerOpen = ref(false)
   const drawerSide = ref<'left' | 'right'>('right')
@@ -57,17 +55,15 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
   function setView(v: 'chat' | 'settings') { currentView.value = v }
-  function toggleFocus() { focusMode.value = !focusMode.value }
-  function toggleSplit() { splitMode.value = !splitMode.value }
   function toggleOverview() { overviewVisible.value = !overviewVisible.value }
   function openDrawer(side: 'left' | 'right') { drawerOpen.value = true; drawerSide.value = side }
   function closeDrawer() { drawerOpen.value = false }
 
   return {
-    theme, themePreset, locale, defaultModel, currentView, focusMode,
-    splitMode, overviewVisible, drawerOpen, drawerSide,
+    theme, themePreset, locale, defaultModel, currentView,
+    overviewVisible, drawerOpen, drawerSide,
     toolPermissions, setToolPermission, resetToolPermissions,
-    toggleTheme, applyTheme, setThemePreset, setView, toggleFocus,
-    toggleSplit, toggleOverview, openDrawer, closeDrawer,
+    toggleTheme, applyTheme, setThemePreset, setView,
+    toggleOverview, openDrawer, closeDrawer,
   }
 }, { persist: { key: 'xyz-settings', pick: ['theme', 'themePreset', 'locale', 'defaultModel', 'toolPermissions'] } })

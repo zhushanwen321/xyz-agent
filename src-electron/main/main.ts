@@ -1,6 +1,7 @@
 import path from 'node:path'
 import { app, BrowserWindow } from 'electron'
 import { SidecarManager } from './sidecar-manager.js'
+import { WindowManager, initialWindowState } from './window-manager.js'
 import { registerShortcuts, unregisterShortcuts } from './shortcuts.js'
 import { registerIpcHandlers } from './ipc-handlers.js'
 
@@ -17,18 +18,12 @@ function getProductionIndexPath(): string {
 let mainWindow: BrowserWindow | null = null
 let settingsWindow: BrowserWindow | null = null
 const sidecarManager = new SidecarManager()
+const windowManager = new WindowManager()
 
-// ── 注册 IPC ─────────────────────────────────────────────────────
-registerIpcHandlers({
-  getMainWindow: () => mainWindow,
-  getSettingsWindow: () => settingsWindow,
-  setSettingsWindow: (win) => { settingsWindow = win },
-  sidecarManager,
-  isDev,
-})
+// ── 窗口工厂 ─────────────────────────────────────────────────────
+function createWindow(options?: { windowId?: string; sessionId?: string }): BrowserWindow {
+  const windowId = options?.windowId ?? windowManager.generateId()
 
-// ── 窗口创建 ─────────────────────────────────────────────────────
-function createMainWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -44,26 +39,38 @@ function createMainWindow(): BrowserWindow {
   })
 
   win.once('ready-to-show', () => {
-    win.maximize()
     win.show()
   })
 
   if (isDev) {
-    win.loadURL(VITE_DEV_URL)
+    const params = new URLSearchParams({ windowId })
+    if (options?.sessionId) params.set('sessionId', options.sessionId)
+    win.loadURL(`${VITE_DEV_URL}?${params.toString()}`)
   } else {
-    win.loadFile(getProductionIndexPath())
+    const query: Record<string, string> = { windowId }
+    if (options?.sessionId) query.sessionId = options.sessionId
+    win.loadFile(getProductionIndexPath(), { query })
   }
-
-  win.on('closed', () => {
-    mainWindow = null
-  })
 
   return win
 }
 
+// ── 注册 IPC ─────────────────────────────────────────────────────
+registerIpcHandlers({
+  getMainWindow: () => mainWindow,
+  getSettingsWindow: () => settingsWindow,
+  setSettingsWindow: (win) => { settingsWindow = win },
+  sidecarManager,
+  isDev,
+  createWindow,
+  windowManager,
+})
+
 // ── App 生命周期 ─────────────────────────────────────────────────
 app.whenReady().then(async () => {
-  mainWindow = createMainWindow()
+  mainWindow = createWindow({ windowId: 'win-1' })
+  mainWindow.on('closed', () => { mainWindow = null })
+  windowManager.register('win-1', mainWindow, initialWindowState('win-1'))
 
   // 1. 注册全局快捷键
   registerShortcuts(mainWindow)
@@ -95,7 +102,9 @@ app.on('window-all-closed', () => {
 // macOS: 点击 dock 图标时重建窗口
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
-    mainWindow = createMainWindow()
+    mainWindow = createWindow({ windowId: 'win-1' })
+    mainWindow.on('closed', () => { mainWindow = null })
+    windowManager.register('win-1', mainWindow, initialWindowState('win-1'))
     registerShortcuts(mainWindow)
   }
 })

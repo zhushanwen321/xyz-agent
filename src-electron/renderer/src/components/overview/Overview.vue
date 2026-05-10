@@ -1,51 +1,27 @@
 <template>
-  <div ref="overviewRef" class="overview" :class="{ visible }" tabindex="0">
+  <div ref="overviewRef" class="overview" :class="{ visible }" tabindex="0" @click.self="emit('close')">
     <div class="overview__title">窗口总览</div>
     <div class="overview__grid">
-      <div
-        v-for="(card, idx) in cards"
-        :key="card.id"
-        :class="['overview__card', { highlighted: highlightedIdx === idx }]"
+      <WindowCard
+        v-for="(win, idx) in windowCards"
+        :key="win.windowId"
+        :window-state="win"
+        :highlighted="highlightedIdx === idx"
         :style="{ transitionDelay: visible ? `${idx * 0.03}s` : '0s' }"
-        @click="$emit('enter', card.id)"
-        @dblclick="$emit('enter-split', card.id)"
-      >
-        <div class="card__preview">
-          <div
-            v-for="(line, li) in card.previewLines"
-            :key="li"
-            :class="[
-              'card__preview__line',
-              {
-                'card__preview__line--user': line.role === 'user',
-                'card__preview__line--bot': line.role === 'bot'
-              }
-            ]"
-            :style="line.color ? { color: line.color } : undefined"
-          >
-            {{ line.text }}
-          </div>
-        </div>
-        <div class="card__footer">
-          <div class="card__title">
-            <span :class="['card__badge', `card__badge--${card.status}`]">
-              <span class="card__badge__dot"></span>
-              {{ statusLabels[card.status] || card.status }}
-            </span>
-            {{ card.title }}
-          </div>
-          <div class="card__project">{{ card.project }}</div>
-          <div class="card__meta">
-            <span v-for="(m, mi) in card.meta" :key="mi" class="card__meta-item">
-              {{ m }}
-            </span>
-          </div>
-        </div>
-      </div>
+        @select="handleSelect(idx)"
+      />
+    </div>
+    <div class="overview__actions">
+      <button class="overview__new-btn" @click="handleNewWindow">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="5" x2="12" y2="19" />
+          <line x1="5" y1="12" x2="19" y2="12" />
+        </svg>
+        New Window
+      </button>
     </div>
     <div class="overview__hint">
-      <span><kbd>Enter</kbd> 进入</span>
-      <span><kbd>Shift</kbd>+<kbd>Enter</kbd> 分屏进入</span>
+      <span><kbd>Enter</kbd> 聚焦窗口</span>
       <span><kbd>&larr;</kbd><kbd>&rarr;</kbd> 选择</span>
       <span><kbd>Esc</kbd> 返回</span>
     </div>
@@ -53,39 +29,21 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
-
-interface PreviewLine {
-  text: string
-  role: 'user' | 'bot' | 'system'
-  color?: string
-}
-
-export interface OverviewCard {
-  id: string
-  title: string
-  project: string
-  status: 'run' | 'pause' | 'idle'
-  previewLines: PreviewLine[]
-  meta: string[]
-}
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { useWindowStore } from '../../stores/window'
+import WindowCard from './WindowCard.vue'
 
 const props = defineProps<{
   visible: boolean
-  cards: OverviewCard[]
 }>()
 
 const emit = defineEmits<{
-  enter: [id: string]
-  'enter-split': [id: string]
   close: []
 }>()
 
-const statusLabels: Record<string, string> = {
-  run: '运行中',
-  pause: '暂停',
-  idle: '闲置',
-}
+const windowStore = useWindowStore()
+
+const windowCards = computed(() => windowStore.windows)
 
 const highlightedIdx = ref(0)
 const overviewRef = ref<HTMLElement | null>(null)
@@ -95,6 +53,8 @@ watch(
   () => props.visible,
   async (v) => {
     if (v) {
+      highlightedIdx.value = 0
+      windowStore.refreshFromIPC()
       await nextTick()
       overviewRef.value?.focus()
     }
@@ -104,8 +64,7 @@ watch(
 // Use capture phase to intercept keys before other document listeners
 function onDocumentKeydown(e: KeyboardEvent) {
   if (!props.visible) return
-  // Always intercept keys when overview is showing
-  const len = props.cards.length
+  const len = windowCards.value.length
   switch (e.key) {
     case 'ArrowLeft':
       e.preventDefault()
@@ -120,11 +79,7 @@ function onDocumentKeydown(e: KeyboardEvent) {
     case 'Enter': {
       e.preventDefault()
       e.stopPropagation()
-      const card = props.cards[highlightedIdx.value]
-      if (card) {
-        if (e.shiftKey) emit('enter-split', card.id)
-        else emit('enter', card.id)
-      }
+      handleSelect(highlightedIdx.value)
       break
     }
     case 'Escape':
@@ -135,8 +90,21 @@ function onDocumentKeydown(e: KeyboardEvent) {
   }
 }
 
+function handleSelect(idx: number) {
+  const card = windowCards.value[idx]
+  if (!card) return
+  windowStore.focusWindow(card.windowId)
+  emit('close')
+}
+
+async function handleNewWindow() {
+  await windowStore.createWindow()
+  emit('close')
+}
+
 onMounted(() => {
-  document.addEventListener('keydown', onDocumentKeydown, true) // capture phase
+  document.addEventListener('keydown', onDocumentKeydown, true)
+  windowStore.refreshFromIPC()
 })
 onUnmounted(() => {
   document.removeEventListener('keydown', onDocumentKeydown, true)
@@ -144,13 +112,13 @@ onUnmounted(() => {
 
 // Clamp highlighted index when cards array changes
 watch(
-  () => props.cards.length,
+  () => windowCards.value.length,
   (len) => {
     if (len === 0) return
     if (highlightedIdx.value >= len) {
       highlightedIdx.value = len - 1
     }
-  }
+  },
 )
 </script>
 

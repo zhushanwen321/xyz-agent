@@ -3,12 +3,13 @@
     <PanelBar
       :agent-options="agentOptions"
       :active-agent-id="localActiveAgentId"
+      :pane-id="paneId"
+      :session-id="sessionId"
       :done-count="doneCount"
       :alert-count="alertCount"
-      :show-close="showClose"
       @switch-agent="switchAgent"
       @open-drawer="$emit('open-drawer', $event)"
-      @close-split="$emit('close-split')"
+      @close-pane="$emit('close-pane')"
     />
 
     <div ref="chatMsgsRef" class="chat-msgs">
@@ -119,6 +120,8 @@ const props = withDefaults(
   defineProps<{
     agentOptions: AgentOption[]
     activeAgentId: string
+    paneId?: string
+    sessionId?: string | null
     agentViews: AgentView[]
     messages: ChatMessage[]
     streamingMessage: Message | null
@@ -126,15 +129,15 @@ const props = withDefaults(
     pendingApproval: PendingToolCall | null
     doneCount: number
     alertCount: number
-    showClose: boolean
   }>(),
   {
     agentOptions: () => [],
     agentViews: () => [],
     messages: () => [],
+    paneId: '',
+    sessionId: null,
     doneCount: 0,
     alertCount: 0,
-    showClose: false,
   }
 )
 
@@ -146,7 +149,7 @@ const emit = defineEmits<{
   deny: [toolCallId: string]
   'always-allow': [toolName: string]
   'open-drawer': [tab: string]
-  'close-split': []
+  'close-pane': []
   'system-action': [msg: ChatMessage]
   'switch-agent': [agentId: string]
 }>()
@@ -193,6 +196,7 @@ function switchAgent(id: string) {
 .chat-msgs {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 20px 24px;
   display: flex;
   flex-direction: column;

@@ -20,6 +20,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
 import { useSlashCommands } from '../../composables/useSlashCommands'
+import { useProviderStore } from '../../stores/provider'
 import { Button } from '../../design-system'
 
 const props = defineProps<{
@@ -32,13 +33,24 @@ const emit = defineEmits<{
   select: [name: string]
 }>()
 
-const { filteredCommands, setFilter } = useSlashCommands()
+const { filteredCommands, setFilter, initDefaultCommands } = useSlashCommands()
+const providerStore = useProviderStore()
+
+// 初始化内置命令（幂等）
+initDefaultCommands()
+
 const activeIndex = ref(0)
 const activeEl = ref<HTMLElement | null>(null)
 const menuRef = ref<HTMLElement | null>(null)
 const listRef = ref<HTMLElement | null>(null)
 
-const commands = computed(() => filteredCommands.value)
+// 将 enabled 的 skills 和 slash commands 合并展示
+const commands = computed(() => {
+  const skills = providerStore.skills
+    .filter(s => s.enabled)
+    .map(s => ({ name: s.name, description: s.description }))
+  return [...filteredCommands.value, ...skills]
+})
 
 watch(() => props.filter, (val) => {
   setFilter(val)

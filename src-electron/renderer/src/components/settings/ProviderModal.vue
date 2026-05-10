@@ -263,8 +263,8 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown))
 </script>
 
 <template>
-  <div :class="['s-modal-overlay', { visible }]">
-    <div class="s-modal">
+  <div :class="['s-modal-overlay', { visible }]" @click.self="$emit('close')">
+    <div class="s-modal" @click.stop>
       <div class="s-modal__hd">
         <div class="s-modal__title">{{ title }}</div>
         <Button variant="ghost" class="s-modal__close !h-7 !w-7 !p-0" @click="$emit('close')">×</Button>

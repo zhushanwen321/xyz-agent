@@ -20,17 +20,19 @@ const BAR_FULL = 100
 const THRESHOLD_HIGH = 85
 const THRESHOLD_MEDIUM = 60
 
-const props = defineProps<{ percentage: number }>()
+const props = defineProps<{
+  percentage: number
+  sessionId?: string
+}>()
 
 const chatStore = useChatStore()
-const sessionStore = useSessionStore()
 
 // Auto-compact when server-reported context exceeds 85% during generation
-watch(() => chatStore.contextUsagePercent, (pct) => {
-  if (pct > THRESHOLD_HIGH && chatStore.isGenerating) {
-    const sid = sessionStore.currentSessionId
-    if (sid) {
-      send({ type: 'session.compact', payload: { sessionId: sid } })
+watch(() => props.percentage, (pct) => {
+  if (pct > THRESHOLD_HIGH && props.sessionId) {
+    const s = chatStore.getSessionState(props.sessionId)
+    if (s.isGenerating) {
+      send({ type: 'session.compact', payload: { sessionId: props.sessionId } })
     }
   }
 })

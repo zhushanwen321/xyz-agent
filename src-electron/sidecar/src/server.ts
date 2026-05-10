@@ -20,9 +20,9 @@ export class SidecarServer {
   private httpServer: HttpServer
   private wss: WebSocketServer
   private pool = new SessionPool()
-  private client: WsType | null = null
+  private clients = new Set<WsType>()
   private pushId = 0
-  private heartbeatTimer: ReturnType<typeof setTimeout> | null = null
+  private heartbeatTimers = new Map<WsType, ReturnType<typeof setTimeout>>()
 
   private static HEARTBEAT_TIMEOUT = 30_000
 
@@ -31,17 +31,19 @@ export class SidecarServer {
   }
 
   private resetHeartbeat(ws: WsType): void {
-    if (this.heartbeatTimer) clearTimeout(this.heartbeatTimer)
-    this.heartbeatTimer = setTimeout(() => {
+    const existing = this.heartbeatTimers.get(ws)
+    if (existing) clearTimeout(existing)
+    this.heartbeatTimers.set(ws, setTimeout(() => {
       console.warn('[sidecar] heartbeat timeout, closing connection')
       ws.close(MAX_WS_CLOSE_CODE, 'Heartbeat timeout')
-    }, SidecarServer.HEARTBEAT_TIMEOUT)
+    }, SidecarServer.HEARTBEAT_TIMEOUT))
   }
 
-  private clearHeartbeat(): void {
-    if (this.heartbeatTimer) {
-      clearTimeout(this.heartbeatTimer)
-      this.heartbeatTimer = null
+  private clearHeartbeat(ws: WsType): void {
+    const timer = this.heartbeatTimers.get(ws)
+    if (timer) {
+      clearTimeout(timer)
+      this.heartbeatTimers.delete(ws)
     }
   }
 
@@ -79,15 +81,9 @@ export class SidecarServer {
   // ── Connection handling ────────────────────────────────────────
 
   private handleConnection(ws: WsType): void {
-    // 新连接踢掉旧连接（前端重连场景）
-    if (this.client && this.client.readyState === WS_OPEN) {
-      console.log('[sidecar] replacing existing client connection')
-      this.client.close(MAX_WS_CLOSE_CODE, 'Replaced by new connection')
-    }
-
-    this.client = ws
-    this.pool.bindWebSocket(ws)
-    console.log('[sidecar] client connected')
+    this.clients.add(ws)
+    this.pool.addClient(ws)
+    console.log(`[sidecar] client connected (total: ${this.clients.size})`)
 
     this.sendInitialState(ws)
     this.resetHeartbeat(ws)
@@ -95,7 +91,7 @@ export class SidecarServer {
     ws.on('message', (data) => {
       try {
         const msg: ClientMessage = JSON.parse(data.toString())
-        // 收到任何消息都重置心跳
+        // 收到任何消息都重置该连接的心跳
         this.resetHeartbeat(ws)
         this.handleMessage(msg, ws)
       } catch {
@@ -104,21 +100,18 @@ export class SidecarServer {
     })
 
     ws.on('close', () => {
-      if (this.client === ws) {
-        this.client = null
-        this.pool.unbindWebSocket()
-      }
-      this.clearHeartbeat()
-      console.log('[sidecar] client disconnected')
+      this.clients.delete(ws)
+      this.pool.removeClient(ws)
+      this.clearHeartbeat(ws)
+      console.log(`[sidecar] client disconnected (total: ${this.clients.size})`)
     })
 
     ws.on('error', (err) => {
       console.error('[sidecar] ws error:', err)
       // ws error 后通常会触发 close，但如果没触发就主动清理
-      if (this.client === ws) {
-        this.client = null
-        this.pool.unbindWebSocket()
-      }
+      this.clients.delete(ws)
+      this.pool.removeClient(ws)
+      this.clearHeartbeat(ws)
     })
   }
 
@@ -149,7 +142,8 @@ export class SidecarServer {
         // ── Session management ──────────────────────────────────
         case 'session.create': {
           const cwd = msg.payload.cwd as string | undefined
-          const session = await this.pool.create(cwd)
+          const label = msg.payload.label as string | undefined
+          const session = await this.pool.create(cwd, label)
           this.send(ws, { type: 'session.created', id: msg.id, payload: { session } })
           this.broadcastSessionList()
           break
@@ -350,22 +344,27 @@ export class SidecarServer {
     }
   }
 
+  /** Broadcast a message to all connected clients */
+  private broadcast(msg: ServerMessage): void {
+    for (const ws of this.clients) {
+      this.send(ws, msg)
+    }
+  }
+
   private sendError(ws: WsType, code: string, message: string, id?: string): void {
     this.send(ws, { type: 'error', id, payload: { code, message } })
   }
 
   private broadcastSessionList(): void {
-    if (!this.client) return
     const groups = this.pool.listPersistedSessions()
-    this.send(this.client, { type: 'session.list', id: this.nextPushId(), payload: { groups } })
+    this.broadcast({ type: 'session.list', id: this.nextPushId(), payload: { groups } })
   }
 
   private broadcastProviderList(): void {
-    if (!this.client) return
     const providers = providerStore.listProviders()
-    this.send(this.client, { type: 'config.providers', id: this.nextPushId(), payload: { providers } })
+    this.broadcast({ type: 'config.providers', id: this.nextPushId(), payload: { providers } })
     const models = this.aggregateModels(providers)
-    this.send(this.client, { type: 'model.list', id: this.nextPushId(), payload: { models } })
+    this.broadcast({ type: 'model.list', id: this.nextPushId(), payload: { models } })
   }
 
   private aggregateModels(providers: ReturnType<typeof providerStore.listProviders>): ModelInfo[] {

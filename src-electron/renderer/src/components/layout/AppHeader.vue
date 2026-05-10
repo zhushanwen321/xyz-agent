@@ -1,5 +1,10 @@
 <template>
   <header class="header">
+    <Button variant="ghost" size="icon" class="h-btn" @click="$emit('toggle-sidebar')" title="Sidebar (Cmd+B)">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="width:16px;height:16px">
+        <path d="M2 4h12M2 8h12M2 12h12"/>
+      </svg>
+    </Button>
     <div class="header__logo">xyz<span>-agent</span></div>
     <div class="header__spacer"></div>
     <Button variant="ghost" size="icon" class="h-btn notif-btn-single" @click="openDrawer" :title="t('header.notifications')">
@@ -7,8 +12,8 @@
         <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/>
         <path d="M13.73 21a2 2 0 01-3.46 0"/>
       </svg>
-      <span v-if="chatStore.doneCount > 0 || chatStore.alertCount > 0" class="notif-dot notif-dot--merged">
-        {{ chatStore.doneCount + chatStore.alertCount }}
+      <span v-if="focusedNotifs.done > 0 || focusedNotifs.alert > 0" class="notif-dot notif-dot--merged">
+        {{ focusedNotifs.done + focusedNotifs.alert }}
       </span>
     </Button>
     <span class="h-divider"></span>
@@ -18,14 +23,11 @@
       </svg>
     </Button>
     <Button variant="ghost" size="icon" class="h-btn" @click="cycleViewMode" :title="viewModeTitle">
-      <svg v-if="!settingsStore.focusMode && !settingsStore.splitMode" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:16px;height:16px">
+      <svg v-if="paneStore.paneCount <= 1" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:16px;height:16px">
         <rect x="1" y="1" width="4" height="14" rx="1"/><rect x="6" y="1" width="9" height="14" rx="1"/>
       </svg>
-      <svg v-else-if="settingsStore.splitMode" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:16px;height:16px">
-        <rect x="1" y="1" width="6" height="14" rx="1"/><rect x="9" y="1" width="6" height="14" rx="1"/>
-      </svg>
       <svg v-else viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:16px;height:16px">
-        <rect x="1" y="1" width="14" height="14" rx="1"/>
+        <rect x="1" y="1" width="6" height="14" rx="1"/><rect x="9" y="1" width="6" height="14" rx="1"/>
       </svg>
     </Button>
     <span class="h-divider"></span>
@@ -49,31 +51,33 @@
 import { ref, computed } from 'vue'
 import { Button } from '../../design-system'
 import { useSettingsStore } from '../../stores/settings'
+import { usePaneStore } from '../../stores/pane'
 import { useChatStore } from '../../stores/chat'
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 const settingsStore = useSettingsStore()
+const paneStore = usePaneStore()
 const chatStore = useChatStore()
 const isDark = ref(document.documentElement.getAttribute('data-theme') === 'dark')
+defineEmits<{ 'toggle-sidebar': [] }>()
+
+// 从 focused pane 的 session 分区读取通知计数
+const focusedNotifs = computed(() => {
+  const sid = paneStore.focusedPane?.sessionId
+  if (!sid) return { done: 0, alert: 0 }
+  const s = chatStore.getSessionState(sid)
+  return { done: s.doneCount, alert: s.alertCount }
+})
 function cycleViewMode() {
-  if (!settingsStore.focusMode && !settingsStore.splitMode) {
-    settingsStore.focusMode = false
-    settingsStore.splitMode = true
-    settingsStore.currentView = 'chat'
-  } else if (settingsStore.splitMode) {
-    settingsStore.splitMode = false
-    settingsStore.focusMode = true
-    settingsStore.currentView = 'chat'
+  if (paneStore.paneCount <= 1) {
+    paneStore.splitPane(paneStore.focusedPaneId, 'horizontal')
   } else {
-    settingsStore.focusMode = false
-    settingsStore.splitMode = false
-    settingsStore.currentView = 'chat'
+    paneStore.mergeToSingle()
   }
 }
 
 const viewModeTitle = computed(() => {
-  if (settingsStore.focusMode) return t('header.viewStandard')
-  if (settingsStore.splitMode) return t('header.viewFocus')
+  if (paneStore.paneCount > 1) return t('header.viewStandard')
   return t('header.split')
 })
 

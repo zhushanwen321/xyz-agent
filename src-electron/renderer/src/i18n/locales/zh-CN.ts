@@ -24,6 +24,7 @@ export default {
     viewFocus: '专注',
     settings: '设置',
     toggleTheme: '切换主题',
+    notifications: '通知',
   },
   sidebar: {
     sessions: '项目列表',

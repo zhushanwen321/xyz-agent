@@ -13,8 +13,8 @@ export function useSession() {
     send({ type: 'session.list', payload: {} })
   }
 
-  function createSession(cwd: string) {
-    send({ type: 'session.create', payload: { cwd } })
+  function createSession(cwd: string, label?: string) {
+    send({ type: 'session.create', payload: { cwd, label } })
   }
 
   function deleteSession(sessionId: string) {
@@ -23,6 +23,7 @@ export function useSession() {
 
   function switchSession(sessionId: string) {
     sessionStore.switchSession(sessionId)
+    chatStore.ensureSession(sessionId)
     send({ type: 'session.history', payload: { sessionId } })
   }
 
@@ -80,8 +81,10 @@ export function useSession() {
   }
 
   function onSessionHistory(msg: ServerMessage) {
-    const messages = (msg.payload as { messages?: Message[] }).messages ?? []
-    chatStore.replaceMessages(messages)
+    const payload = msg.payload as { sessionId?: string; messages?: Message[] }
+    const sessionId = payload.sessionId ?? sessionStore.currentSessionId ?? '__default__'
+    const messages = payload.messages ?? []
+    chatStore.replaceMessages(messages, sessionId)
   }
 
   const handlers: Record<string, (msg: ServerMessage) => void> = {

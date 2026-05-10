@@ -10,11 +10,14 @@ export interface SlashCommand {
 const commands = ref<SlashCommand[]>([])
 const visible = ref(false)
 const filter = ref('')
+let defaultsInitialized = false
 
 export function useSlashCommands() {
   const { t } = useI18n()
 
   function registerCommand(cmd: SlashCommand) {
+    // 防止重复注册同名命令
+    if (commands.value.some(c => c.name === cmd.name)) return
     commands.value = [...commands.value, cmd]
   }
 
@@ -30,8 +33,10 @@ export function useSlashCommands() {
   function toggle() { visible.value = !visible.value }
   function setFilter(f: string) { filter.value = f }
 
-  // Register built-in commands
+  // Register built-in commands (idempotent)
   function initDefaultCommands() {
+    if (defaultsInitialized) return
+    defaultsInitialized = true
     registerCommand({
       name: 'compact',
       description: t('chat.compacting'),

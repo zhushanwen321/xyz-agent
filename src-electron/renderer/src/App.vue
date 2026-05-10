@@ -1,18 +1,14 @@
 <template>
-  <div :class="['app', { 'focus-mode': settingsStore.focusMode }]">
-    <AppHeader />
+  <div class="app">
+    <AppHeader @toggle-sidebar="toggleSidebar" />
     <div class="app-body">
-      <AppSidebar v-if="!settingsStore.focusMode" @create="createSession" />
+      <AppSidebar :visible="sidebarVisible" @create="createSession" @close="sidebarVisible = false" />
       <main class="main-area">
         <SettingsView v-if="settingsStore.currentView === 'settings'" />
-        <template v-else>
-          <ChatView />
-          <!-- Split mode -->
-          <template v-if="settingsStore.splitMode">
-            <SplitDivider @resize="handleSplitResize" />
-            <ChatView />
-          </template>
-        </template>
+        <PaneTreeRenderer v-else
+          :node="paneStore.tree"
+          :focused-pane-id="paneStore.focusedPaneId"
+        />
         <!-- Drawers -->
         <DrawerOverlay :visible="settingsStore.drawerOpen" @close="settingsStore.closeDrawer()" />
         <DrawerRight
@@ -25,7 +21,7 @@
           @close="settingsStore.closeDrawer()"
         />
         <DrawerLeft
-          v-if="settingsStore.splitMode && settingsStore.drawerSide === 'left'"
+          v-if="paneStore.paneCount > 1 && settingsStore.drawerSide === 'left'"
           :open="settingsStore.drawerOpen"
           :tree-nodes="[]"
           :done-items="[]"
@@ -39,30 +35,31 @@
     <!-- Overview -->
     <Overview
       :visible="settingsStore.overviewVisible"
-      :cards="[]"
-      @enter="handleOverviewEnter"
-      @enter-split="handleOverviewEnterSplit"
       @close="settingsStore.overviewVisible = false"
     />
+    <!-- Sidebar backdrop -->
+    <div v-if="sidebarVisible" class="sidebar-backdrop" @click="sidebarVisible = false" />
     <!-- Custom Toast -->
     <ToastContainer :toasts="toasts" @dismiss="dismissToast" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { useSettingsStore } from './stores/settings'
+import { usePaneStore } from './stores/pane'
 import { useSessionStore } from './stores/session'
+import { useWindowStore } from './stores/window'
 import { useConnection } from './composables/useConnection'
+import { getState as getWsState } from './lib/ws-client'
 import { useProvider } from './composables/useProvider'
 import { useSession } from './composables/useSession'
 import type { ToastItem } from './components/toast/ToastContainer.vue'
 import AppHeader from './components/layout/AppHeader.vue'
 import AppStatusbar from './components/layout/AppStatusbar.vue'
 import AppSidebar from './components/layout/AppSidebar.vue'
-import ChatView from './components/chat/ChatView.vue'
 import SettingsView from './components/layout/SettingsView.vue'
-import SplitDivider from './components/panel/SplitDivider.vue'
+import PaneTreeRenderer from './components/panel/PaneTreeRenderer.vue'
 import DrawerOverlay from './components/panel/DrawerOverlay.vue'
 import DrawerRight from './components/drawer/DrawerRight.vue'
 import DrawerLeft from './components/drawer/DrawerLeft.vue'
@@ -76,54 +73,129 @@ useProvider()
 const { loadSessions, createSession: doCreateSession } = useSession()
 
 const settingsStore = useSettingsStore()
+const paneStore = usePaneStore()
 const sessionStore = useSessionStore()
+const windowStore = useWindowStore()
 
 const toasts = ref<ToastItem[]>([])
+const TOAST_DURATION_MS = 4_000
+const sidebarVisible = ref(false)
 
-function createSession() {
-  // Use the current session's cwd, or a fallback path
-  const cwd = sessionStore.currentSession?.cwd || '/Users/zhushanwen/Code/xyz-agent'
-  doCreateSession(cwd)
+function toggleSidebar() {
+  sidebarVisible.value = !sidebarVisible.value
+  // 与通知 Drawer 互斥：sidebar 打开时关闭通知 drawer
+  if (sidebarVisible.value) {
+    settingsStore.closeDrawer()
+  }
+}
+
+// Global keyboard shortcut handler (Vue-level, for keys not registered in Electron)
+function handleKeydown(e: KeyboardEvent) {
+  const mod = e.metaKey || e.ctrlKey
+  if (!mod) return
+  switch (e.key) {
+    case 'w':
+      e.preventDefault()
+      paneStore.unbindSession(paneStore.focusedPaneId)
+      break
+    case 'b':
+      e.preventDefault()
+      toggleSidebar()
+      break
+    case 'd':
+      e.preventDefault()
+      const dir = e.shiftKey ? 'vertical' : 'horizontal'
+      if (!paneStore.splitPane(paneStore.focusedPaneId, dir)) {
+        const id = crypto.randomUUID()
+        toasts.value.push({
+          id,
+          type: 'warning',
+          title: '已达面板数量上限',
+          description: '最多支持 4 个面板，请先关闭空闲面板后再拆分。',
+        })
+        setTimeout(() => dismissToast(id), TOAST_DURATION_MS)
+      }
+      break
+  }
+}
+
+async function createSession() {
+  // Open directory picker dialog
+  if (!window.electronAPI?.pickDirectory) {
+    console.warn('[createSession] pickDirectory API not available — rebuild preload with: cd src-electron && npm run build:preload')
+    return
+  }
+  const result = await window.electronAPI.pickDirectory({ title: '选择项目目录' })
+  if (result.canceled || !result.path) return
+
+  const label = sessionStore.generateSessionLabel(result.path)
+  doCreateSession(result.path, label)
 }
 
 function dismissToast(id: string) {
   toasts.value = toasts.value.filter(t => t.id !== id)
 }
 
-function handleOverviewEnter(_id: string) { // eslint-disable-line @typescript-eslint/no-unused-vars
-  settingsStore.overviewVisible = false
-}
-
-function handleOverviewEnterSplit(_id: string) { // eslint-disable-line @typescript-eslint/no-unused-vars
-  settingsStore.splitMode = true
-  settingsStore.overviewVisible = false
-}
-
-function handleSplitResize(_delta: number) { // eslint-disable-line @typescript-eslint/no-unused-vars
-  // TODO: resize split panels
-}
 
 onMounted(async () => {
-  initConnection()
-  loadSessions()
+  await initConnection()
+
+  // Wait for WebSocket connection before loading sessions
+  const wsState = getWsState()
+  if (wsState.value === 'connected') {
+    loadSessions()
+  } else {
+    const stopWatch = watch(wsState, (val) => {
+      if (val === 'connected') {
+        stopWatch()
+        loadSessions()
+      }
+    })
+  }
 
   // 恢复主题和 palette 到 DOM
   settingsStore.applyTheme()
 
-  // Electron IPC: 监听快捷键事件
+  // ── 多窗口初始化 ────────────────────────────────────────────────
+  // 从 URL query 读取 windowId 和 sessionId（由 main.ts createWindow 传入）
+  const params = new URLSearchParams(window.location.search)
+  const queryWindowId = params.get('windowId')
+  const querySessionId = params.get('sessionId')
+
+  if (queryWindowId) {
+    windowStore.currentWindowId = queryWindowId
+  }
+  if (querySessionId) {
+    paneStore.bindSession(paneStore.focusedPaneId, querySessionId)
+  }
+
+  // ── Sync pane state to main process on changes ──
+  watch(
+    () => [paneStore.tree, paneStore.focusedPaneId] as const,
+    ([tree, focusedPaneId]) => {
+      windowStore.syncPaneState(tree, focusedPaneId)
+    },
+    { deep: true },
+  )
+
+  // ── Listen for window list changes to keep overview fresh ──
+  if (window.electronAPI?.onWindowListUpdated) {
+    window.electronAPI.onWindowListUpdated(() => {
+      windowStore.refreshFromIPC()
+    })
+  }
+
+  // ── Electron IPC: 监听快捷键事件
   if (window.electronAPI) {
     window.electronAPI.onShortcut((type) => {
       switch (type) {
         case 'standard':
-          settingsStore.focusMode = false
-          settingsStore.splitMode = false
+        case 'focus':
+          paneStore.mergeToSingle()
           settingsStore.currentView = 'chat'
           break
         case 'split':
-          settingsStore.splitMode = !settingsStore.splitMode
-          break
-        case 'focus':
-          settingsStore.toggleFocus()
+          paneStore.splitPane(paneStore.focusedPaneId, 'horizontal')
           break
         case 'overview':
           settingsStore.toggleOverview()
@@ -134,18 +206,25 @@ onMounted(async () => {
       }
     })
   }
+
+  // Global keyboard listener for keys not registered in Electron
+  document.addEventListener('keydown', handleKeydown)
 })
 
 onUnmounted(() => {
+  document.removeEventListener('keydown', handleKeydown)
   teardownConnection()
 })
 </script>
 
 <style>
 .app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
-.app.focus-mode .sidebar { width: 0; border-right: none; overflow: hidden; }
-.app.focus-mode .statusbar { display: none; }
-.app.focus-mode .chat-msgs { max-width: 720px; margin: 0 auto; width: 100%; }
 .app-body { display: flex; flex: 1; overflow: hidden; position: relative; }
 .main-area { flex: 1; display: flex; min-width: 0; overflow: hidden; position: relative; }
+.sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  background: rgba(0, 0, 0, 0.3);
+}
 </style>
