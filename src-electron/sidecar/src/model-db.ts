@@ -101,15 +101,25 @@ function loadPiProviders(): void {
     const providers = raw?.providers
     if (!providers || typeof providers !== 'object') return
 
+    // 先收集所有 provider 的 model 映射，再按优先级选取
+    // 优先级：非 dev provider > dev provider
+    const allMappings = new Map<string, Array<{ providerId: string; isDev: boolean }>>()
+
     for (const [providerId, prov] of Object.entries(providers)) {
       const p = prov as { models?: Array<{ id: string }> }
       if (!Array.isArray(p.models)) continue
+      const isDev = providerId === 'dev'
       for (const m of p.models) {
-        // 同一个 modelId 可能存在于多个 provider，优先保留第一个（llm-simple-router 优先于 dev）
-        if (!piProviderIndex.has(m.id)) {
-          piProviderIndex.set(m.id, providerId)
-        }
+        const list = allMappings.get(m.id) ?? []
+        list.push({ providerId, isDev })
+        allMappings.set(m.id, list)
       }
+    }
+
+    for (const [modelId, candidates] of allMappings) {
+      // 优先选非 dev provider
+      const preferred = candidates.find(c => !c.isDev) ?? candidates[0]
+      piProviderIndex.set(modelId, preferred.providerId)
     }
     console.log(`[model-db] loaded ${piProviderIndex.size} pi provider mappings`)
   } catch {

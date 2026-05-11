@@ -44,6 +44,8 @@ const props = defineProps<{
 
 const chatStore = useChatStore()
 const paneStore = usePaneStore()
+const providerStore = useProviderStore()
+const settingsStore = useSettingsStore()
 
 const sessionIdRef = toRef(props, 'sessionId')
 const { sendMessage, abort } = useChat(sessionIdRef)
@@ -92,8 +94,6 @@ function handleCancel() {
 }
 
 function handleSelectModel(modelId: string) {
-  const providerStore = useProviderStore()
-  const settingsStore = useSettingsStore()
   const model = providerStore.models.find(m => m.id === modelId)
   if (!model) return
   const provider = providerStore.providers.find(p => p.id === model.providerId)
