@@ -33,6 +33,7 @@ interface PiHistoryMessage {
 import { EventAdapter } from './event-adapter.js'
 import { getDefaultModel } from './config-store.js'
 import { scanSessions, deleteSessionFile, type ScannedSession } from './session-scanner.js'
+import { lookupPiProvider } from './model-db.js'
 
 interface ManagedSession {
   id: string
@@ -247,12 +248,22 @@ export class SessionPool {
 
   // ── Model switching ────────────────────────────────────────────
 
-  async switchModel(sessionId: string, provider: string, modelId: string): Promise<void> {
-    const client = this.pm.getClient(sessionId)
-    if (!client) throw new Error(`Session ${sessionId} not found`)
-    const session = this.sessions.get(sessionId)!
+  async switchModel(sessionId: string, provider: string, modelId: string): Promise<string> {
+    const session = this.sessions.get(sessionId)
+
+    // 非活跃 session：不恢复进程，静默成功
+    // 模型偏好会在下次 session 恢复时通过 sendMessage 的 restore 流程生效
+    if (!session) return sessionId
+
     session.modelId = `${provider}/${modelId}`
-    await client.setModel(provider, modelId)
+    const client = this.pm.getClient(sessionId)
+    if (client) {
+      // xyz-agent 的 provider ID（如 "router"）不是 pi 认识的 provider，需要映射
+      const piProvider = lookupPiProvider(modelId) ?? provider
+      await client.setModel(piProvider, modelId)
+    }
+
+    return sessionId
   }
 
   // ── Compact & Clear ────────────────────────────────────────────

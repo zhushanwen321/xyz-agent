@@ -3,7 +3,8 @@ import { WebSocketServer, WebSocket, type WebSocket as WsType } from 'ws'
 import type { ClientMessage, ServerMessage, ModelInfo } from '@xyz-agent/shared'
 import { SessionPool } from './session-pool.js'
 import * as providerStore from './provider-store.js'
-import { updateToolPermissions } from './config-store.js'
+import { lookupModel, formatContext } from './model-db.js'
+import { updateToolPermissions, getProvider } from './config-store.js'
 
 const HTTP_OK = 200
 const HTTP_NOT_FOUND = 404
@@ -167,14 +168,13 @@ export class SidecarServer {
           const sid = msg.payload.sessionId as string
           const summary = this.pool.getSummary(sid)
           if (summary) {
-            // 推送 session 信息
-            this.send(ws, { type: 'session.history', id: msg.id, payload: { session: summary } })
-            // 推送历史消息
+            // 只发一次 session.history，带完整的 session 信息和消息
             try {
               const messages = await this.pool.getHistory(sid)
-              this.send(ws, { type: 'session.history', payload: { sessionId: sid, messages } })
+              this.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: sid, session: summary, messages } })
             } catch (e) {
               console.error('[sidecar] failed to load history for switch:', e)
+              this.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: sid, session: summary, messages: [] } })
             }
           } else {
             this.sendError(ws, 'not_found', `Session ${sid} not found`, msg.id)
@@ -185,7 +185,7 @@ export class SidecarServer {
         case 'session.history': {
           const histId = msg.payload.sessionId as string
           const messages = await this.pool.getHistory(histId)
-          this.send(ws, { type: 'session.history', id: msg.id, payload: { messages } })
+          this.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: histId, messages } })
           break
         }
 
@@ -272,6 +272,43 @@ export class SidecarServer {
           const permissions = msg.payload.permissions as Record<string, string>
           updateToolPermissions(permissions)
           this.send(ws, { type: 'config.providerUpdated', id: msg.id, payload: { saved: true } })
+          break
+        }
+
+        case 'config.discoverModels': {
+          const { baseUrl, apiKey, providerType, providerId } = msg.payload as {
+            baseUrl: string
+            apiKey?: string
+            providerType?: string
+            providerId?: string
+          }
+          // 如果没传 apiKey，尝试从 config-store 读取已保存的 key
+          let resolvedApiKey = apiKey
+          if (!resolvedApiKey && providerId) {
+            const providerConfig = getProvider(providerId)
+            resolvedApiKey = providerConfig?.apiKey
+          }
+          try {
+            const models = await this.discoverModelsFromApi(baseUrl, resolvedApiKey, providerType)
+            this.send(ws, {
+              type: 'config.discoveredModels',
+              id: msg.id,
+              payload: { models, success: true },
+            })
+          } catch (e) {
+            const raw = e instanceof Error ? e.message : String(e)
+            // 将底层错误翻译为用户可读提示
+            const message = raw.includes('ByteString')
+              ? '请求失败：Base URL 或 API Key 包含 HTTP 不支持的字符'
+              : raw.includes('fetch failed')
+                ? `连接失败：无法访问 ${baseUrl}/v1/models`
+                : raw
+            this.send(ws, {
+              type: 'config.discoveredModels',
+              id: msg.id,
+              payload: { models: [], success: false, error: message },
+            })
+          }
           break
         }
 
@@ -374,11 +411,13 @@ export class SidecarServer {
         // （来自 ProviderModal 保存的 ModalModel）
         const entry: unknown = m
         if (typeof entry === 'string') {
+          const dbRecord = lookupModel(entry)
           return {
             id: entry,
-            name: entry,
+            name: dbRecord?.name ?? entry,
             providerId: p.id,
             providerName: p.name,
+            contextWindow: dbRecord?.context,
           } as ModelInfo
         }
         if (entry && typeof entry === 'object' && 'id' in entry) {
@@ -389,9 +428,11 @@ export class SidecarServer {
             providerId: p.id,
             providerName: p.name,
             tags: Array.isArray(meta.tags) ? meta.tags.filter(t => typeof t === 'string') : [],
-            contextWindow: this.parseCtxToNumber(
-              typeof meta.ctx === 'string' ? meta.ctx : undefined,
-            ),
+            contextWindow: typeof meta.ctx === 'number'
+              ? meta.ctx
+              : this.parseCtxToNumber(
+                  typeof meta.ctx === 'string' ? meta.ctx : undefined,
+                ),
           } as ModelInfo
         }
         // fallback：转为字符串
@@ -412,6 +453,61 @@ export class SidecarServer {
     if (!match) return undefined
     const num = parseFloat(match[1])
     return match[2]?.toLowerCase() === 'k' ? Math.round(num * 1000) : Math.round(num)
+  }
+
+  /**
+   * 调用供应商的 /v1/models API 发现可用模型。
+   * 支持 OpenAI 兼容端点和 Anthropic 端点。
+   */
+  private async discoverModelsFromApi(
+    baseUrl: string,
+    apiKey?: string,
+    providerType?: string,
+  ): Promise<Array<{ id: string; name: string; ctx?: number }>> {
+    const base = baseUrl.replace(/\/+$/, '')
+    let url: string
+    const headers: Record<string, string> = {}
+
+    if (providerType === 'anthropic') {
+      url = `${base}/v1/models`
+      if (apiKey) {
+        headers['x-api-key'] = apiKey
+        headers['anthropic-version'] = '2023-06-01'
+      }
+    } else {
+      url = base.endsWith('/v1') ? `${base}/models` : `${base}/v1/models`
+      if (apiKey) {
+        headers['Authorization'] = `Bearer ${apiKey}`
+      }
+    }
+
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(10000) })
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      throw new Error(`API 返回 ${res.status}: ${body || res.statusText}`)
+    }
+
+    const data = await res.json() as Record<string, unknown>
+
+    // OpenAI 格式: { data: [{ id: "model-name", ... }] }
+    // Anthropic 格式: { data: [{ id: "model-name", ... }] }
+    const modelList = Array.isArray(data.data)
+      ? data.data as Array<Record<string, unknown>>
+      : Array.isArray(data.models)
+        ? data.models as Array<Record<string, unknown>>
+        : []
+
+    return modelList
+      .filter(m => typeof m.id === 'string')
+      .map(m => {
+        const id = m.id as string
+        const dbRecord = lookupModel(id)
+        return {
+          id,
+          name: (m.name ?? id) as string,
+          ctx: dbRecord?.context ?? undefined,
+        }
+      })
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────

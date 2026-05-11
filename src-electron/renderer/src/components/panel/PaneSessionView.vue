@@ -27,6 +27,8 @@
 import { ref, computed, toRef, onMounted, onUnmounted } from 'vue'
 import { useChatStore } from '../../stores/chat'
 import { usePaneStore } from '../../stores/pane'
+import { useProviderStore } from '../../stores/provider'
+import { useSettingsStore } from '../../stores/settings'
 import { useChat } from '../../composables/useChat'
 import { send } from '../../lib/ws-client'
 import { on, off } from '../../lib/event-bus'
@@ -90,10 +92,15 @@ function handleCancel() {
 }
 
 function handleSelectModel(modelId: string) {
-  const parts = modelId.split('/')
-  const provider = parts.length > 1 ? parts[0] : ''
-  const model = parts.length > 1 ? parts.slice(1).join('/') : modelId
-  send({ type: 'model.switch', payload: { sessionId: props.sessionId, provider, modelId: model } })
+  const providerStore = useProviderStore()
+  const settingsStore = useSettingsStore()
+  const model = providerStore.models.find(m => m.id === modelId)
+  if (!model) return
+  const provider = providerStore.providers.find(p => p.id === model.providerId)
+  if (provider && provider.enabled === false) return
+  // 乐观更新 UI，后端可能在非活跃 session 上静默成功
+  settingsStore.defaultModel = `${model.providerId}/${model.id}`
+  send({ type: 'model.switch', payload: { sessionId: props.sessionId, provider: model.providerId, modelId: model.id } })
 }
 
 function handleApprove(toolCallId: string) {
