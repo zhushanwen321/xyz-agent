@@ -11,5 +11,5 @@
     "resolveJsonModule": true,
     "declaration": false
   },
-  "include": ["main/**/*.ts", "preload/**/*.ts"]
+  "include": ["main/**/*.ts"]
 }

@@ -4,6 +4,7 @@ export type ClientMessageType =
   | 'session.compact' | 'session.clear' | 'session.restore' | 'session.rename'
   | 'message.send' | 'message.abort'
   | 'config.getProviders' | 'config.setProvider' | 'config.deleteProvider' | 'config.setToolPermissions'
+  | 'config.discoverModels'
   | 'model.list' | 'model.switch'
   | 'tool.approve' | 'tool.deny' | 'tool.always_allow'
   | 'ping'
@@ -23,7 +24,7 @@ export type ServerMessageType =
   | 'message.tool_call_start' | 'message.tool_call_end' | 'message.tool_call_pending'
   | 'message.complete' | 'message.error' | 'message.status'
   | 'context.update'
-  | 'config.providers' | 'config.providerUpdated'
+  | 'config.providers' | 'config.providerUpdated' | 'config.discoveredModels'
   | 'model.list' | 'model.switched'
   | 'pong' | 'error'
 

@@ -22,7 +22,7 @@ export interface ModelRecord {
 const DB_PATH = join(homedir(), '.xyz-agent', 'model-db.json')
 
 /** model-id → ModelRecord 的快速查找表 */
-let index = new Map<string, ModelRecord>()
+const index = new Map<string, ModelRecord>()
 let loaded = false
 
 function load(): void {
@@ -87,7 +87,7 @@ export function lookupModel(modelId: string): ModelRecord | undefined {
 const PI_MODELS_PATH = join(homedir(), '.pi', 'agent', 'models.json')
 
 /** modelId → pi provider name 的查找表 */
-let piProviderIndex = new Map<string, string>()
+const piProviderIndex = new Map<string, string>()
 let piProviderLoaded = false
 
 function loadPiProviders(): void {

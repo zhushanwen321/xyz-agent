@@ -3,7 +3,7 @@ import { WebSocketServer, WebSocket, type WebSocket as WsType } from 'ws'
 import type { ClientMessage, ServerMessage, ModelInfo } from '@xyz-agent/shared'
 import { SessionPool } from './session-pool.js'
 import * as providerStore from './provider-store.js'
-import { lookupModel, formatContext } from './model-db.js'
+import { lookupModel } from './model-db.js'
 import { updateToolPermissions, getProvider } from './config-store.js'
 
 const HTTP_OK = 200
@@ -431,8 +431,8 @@ export class SidecarServer {
             contextWindow: typeof meta.ctx === 'number'
               ? meta.ctx
               : this.parseCtxToNumber(
-                  typeof meta.ctx === 'string' ? meta.ctx : undefined,
-                ),
+                typeof meta.ctx === 'string' ? meta.ctx : undefined,
+              ),
           } as ModelInfo
         }
         // fallback：转为字符串
