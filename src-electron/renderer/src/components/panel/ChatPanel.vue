@@ -12,7 +12,7 @@
       @close-pane="$emit('close-pane')"
     />
 
-    <div ref="chatMsgsRef" class="chat-msgs">
+    <div ref="chatMsgsRef" class="chat-msgs" @scroll="onChatScroll">
       <!-- Empty state -->
       <div v-if="messages.length === 0" class="chat-empty">
         <svg class="chat-empty__icon" width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -165,11 +165,24 @@ watch(
   }
 )
 
-// Auto-scroll to bottom when new messages arrive or streaming updates
+// 智能自动滚动：底部时跟随新内容，用户上滚后不强制拉回
+function isNearBottom(el: HTMLElement): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 80
+}
+
+// 记录用户是否在底部
+const userAtBottom = ref(true)
+
+function onChatScroll() {
+  const el = chatMsgsRef.value
+  if (el) userAtBottom.value = isNearBottom(el)
+}
+
 watch(
   () => [props.messages.length, props.streamingMessage?.content],
   () => {
     nextTick(() => {
+      if (!userAtBottom.value) return
       const el = chatMsgsRef.value
       if (el) el.scrollTop = el.scrollHeight
     })

@@ -24,8 +24,9 @@ function createGlobalHandlers() {
   function ensureStreamingMessage(sid: string) {
     const session = store.getSessionState(sid)
     if (!session.streamingMessage) {
+
       store.setStreaming({
-        id: 'streaming',
+        id: `stream-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
         role: 'assistant',
         content: '',
         status: 'streaming',
@@ -39,6 +40,25 @@ function createGlobalHandlers() {
     if (!sid) return
     ensureStreamingMessage(sid)
     store.appendToStreaming(msg.payload.delta as string, sid)
+  }
+
+  function onThinkingStart(msg: ServerMessage) {
+    const sid = getSid(msg)
+    if (!sid) return
+    ensureStreamingMessage(sid)
+    // 初始化一个空的 thinking block，后续 thinking_delta 会追加内容
+    const streaming = store.getSessionState(sid).streamingMessage
+    if (streaming) {
+      const existing = streaming.thinking ?? []
+      // 只在没有活跃的（未折叠的）thinking block 时才创建新的
+      const last = existing[existing.length - 1]
+      if (!last || last.collapsed) {
+        store.setStreaming({
+          ...streaming,
+          thinking: [...existing, { id: `thk-${Date.now()}`, content: '', collapsed: false }],
+        }, sid)
+      }
+    }
   }
 
   function onThinkingDelta(msg: ServerMessage) {
@@ -58,6 +78,18 @@ function createGlobalHandlers() {
           thinking: [...existing, { id: `thk-${Date.now()}`, content: msg.payload.delta as string, collapsed: false }],
         }, sid)
       }
+    }
+  }
+
+  function onThinkingEnd(msg: ServerMessage) {
+    const sid = getSid(msg)
+    if (!sid) return
+    const streaming = store.getSessionState(sid).streamingMessage
+    if (streaming?.thinking?.length) {
+      const updated = streaming.thinking.map((block, i) =>
+        i === streaming.thinking!.length - 1 ? { ...block, collapsed: true } : block,
+      )
+      store.setStreaming({ ...streaming, thinking: updated }, sid)
     }
   }
 
@@ -93,6 +125,10 @@ function createGlobalHandlers() {
     }
   }
 
+  /**
+   * pi 在每个 message 边界发出 message_start。
+   * 如果当前有 streamingMessage（上一轮的），先完成它再开始新一轮。
+   */
   function onMessageStart(msg: ServerMessage) {
     const sid = getSid(msg)
     if (!sid) return
@@ -116,8 +152,8 @@ function createGlobalHandlers() {
     store.setError(null, sid)
     store.addMessage({
       id: crypto.randomUUID(),
-      role: 'assistant',
-      content: `**Error:** ${errMsg}`,
+      role: 'system',
+      content: errMsg,
       status: 'error' as const,
       timestamp: Date.now(),
     }, sid)
@@ -130,15 +166,15 @@ function createGlobalHandlers() {
     store.updateContextInfo(p.usagePercent, p.inputTokens, p.contextLimit, sid)
   }
 
-  function onStatus(msg: ServerMessage) {
-    const p = msg.payload as { status: string }
-    console.log('[chat] status:', p.status)
+  function onStatus(_msg: ServerMessage) {
   }
 
   return {
     'message.message_start': onMessageStart,
     'message.text_delta': onTextDelta,
+    'message.thinking_start': onThinkingStart,
     'message.thinking_delta': onThinkingDelta,
+    'message.thinking_end': onThinkingEnd,
     'message.tool_call_start': onToolCallStart,
     'message.tool_call_end': onToolCallEnd,
     'message.complete': onComplete,
@@ -203,6 +239,16 @@ export function useChat(sessionId?: Ref<string>) {
     const sid = resolveSessionId()
     if (!sid) return
     send({ type: 'message.abort', payload: { sessionId: sid } })
+    // 立即完成当前流，不等后端确认
+    store.completeStreaming(undefined, sid)
+    // 插入系统消息提示用户操作已终止
+    store.addMessage({
+      id: crypto.randomUUID(),
+      role: 'system',
+      content: '操作已被用户终止',
+      status: 'complete',
+      timestamp: Date.now(),
+    }, sid)
   }
 
   // 全局事件 listener 生命周期：第一个组件 mounted 时注册，最后一个 unmounted 时注销

@@ -5,6 +5,14 @@ import { WindowManager, initialWindowState } from './window-manager.js'
 import { registerShortcuts, unregisterShortcuts } from './shortcuts.js'
 import { registerIpcHandlers } from './ipc-handlers.js'
 
+// EPIPE 兜底：concurrently / 终端关闭后 pipe 断开，console 写入会触发 uncaught exception
+process.stdout.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EPIPE') process.stdout.destroy()
+})
+process.stderr.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EPIPE') process.stderr.destroy()
+})
+
 // ── 路径 & 模式 ──────────────────────────────────────────────────
 const isDev = !app.isPackaged
 
@@ -46,6 +54,7 @@ function createWindow(options?: { windowId?: string; sessionId?: string }): Brow
     const params = new URLSearchParams({ windowId })
     if (options?.sessionId) params.set('sessionId', options.sessionId)
     win.loadURL(`${VITE_DEV_URL}?${params.toString()}`)
+    win.webContents.openDevTools()
   } else {
     const query: Record<string, string> = { windowId }
     if (options?.sessionId) query.sessionId = options.sessionId

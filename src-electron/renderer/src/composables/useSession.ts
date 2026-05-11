@@ -1,6 +1,7 @@
 import { onMounted, onUnmounted } from 'vue'
 import { useSessionStore } from '../stores/session'
 import { useChatStore } from '../stores/chat'
+import { usePaneStore } from '../stores/pane'
 import { send } from '../lib/ws-client'
 import { on, off } from '../lib/event-bus'
 import type { ServerMessage, SessionSummary, Message } from '@xyz-agent/shared'
@@ -78,6 +79,34 @@ export function useSession() {
     sessionStore.removeSession(oldSessionId)
     sessionStore.addSession(summary)
     sessionStore.switchSession(newSessionId)
+    // 关键：更新 paneStore 中所有引用旧 sessionId 的 pane 绑定
+    // 否则 PaneSessionView 仍用旧 id，而事件用的是新 id，导致内容不渲染
+    const paneStore = usePaneStore()
+    const panes = paneStore.panes
+    for (const pane of panes) {
+      if (pane.sessionId === oldSessionId) {
+        paneStore.bindSession(pane.id, newSessionId)
+      }
+    }
+    // 同步 chatStore 数据：把旧 id 分区的数据迁移到新 id
+    const oldState = chatStore.getSessionState(oldSessionId)
+    if (oldState) {
+      chatStore.ensureSession(newSessionId)
+      const newState = chatStore.getSessionState(newSessionId)
+      // 迁移 streamingMessage 和 isGenerating
+      if (oldState.streamingMessage) {
+        chatStore.setStreaming(oldState.streamingMessage, newSessionId)
+      }
+      if (oldState.isGenerating) {
+        chatStore.setGenerating(true, newSessionId)
+      }
+      // 迁移 completedMessages
+      if (oldState.completedMessages.length > 0) {
+        chatStore.replaceMessages([...oldState.completedMessages], newSessionId)
+      }
+      // 清理旧分区
+      chatStore.removeSession(oldSessionId)
+    }
   }
 
   function onSessionHistory(msg: ServerMessage) {

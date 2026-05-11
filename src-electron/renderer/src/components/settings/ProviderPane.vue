@@ -57,12 +57,11 @@ function handleTest(_id: string) {
 
 function toggleProvider(id: string) {
   const p = providers.value.find(p => p.id === id)
-  if (p) {
-    const newStatus = p.status === 'connected' ? 'not_configured' : 'connected'
-    // 乐观更新：先更新本地状态，实现即时 UI 反馈
-    providerStore.updateProvider(id, { status: newStatus })
-    send({ type: 'config.setProvider', payload: { providerId: id, status: newStatus } })
-  }
+  if (!p) return
+  const newEnabled = p.enabled !== false
+  // toggle 控制 enabled（启用/禁用），status（连接状态）由服务端管理
+  providerStore.updateProvider(id, { enabled: !newEnabled })
+  send({ type: 'config.setProvider', payload: { providerId: id, enabled: !newEnabled } })
 }
 
 function toggleModel(providerId: string, modelId: string) {
@@ -89,7 +88,9 @@ function handleSave(_data: {
   const providerId = _pid || _data.name.toLowerCase().replace(/\s+/g, '-')
   // Map form fields to config-store field names
   const { url, key, ...configData } = rest
-  send({ type: 'config.setProvider', payload: { providerId, baseUrl: url, apiKey: key, ...configData } })
+  // 编辑时如果 key 是掩码，不发送 apiKey（保留原值）
+  const apiKey = key && key !== '••••••••' ? key : undefined
+  send({ type: 'config.setProvider', payload: { providerId, baseUrl: url, ...(apiKey !== undefined && { apiKey: apiKey }), ...configData } })
   showModal.value = false
   editingProvider.value = null
 }

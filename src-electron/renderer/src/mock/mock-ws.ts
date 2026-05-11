@@ -13,6 +13,33 @@ type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecti
 
 let stateCallback: ((state: ConnectionState) => void) | null = null
 
+const DISCOVERY_DELAY_MS = 1500
+
+const typeModelMap: Record<string, Array<{ id: string; name: string; ctx?: number }>> = {
+  anthropic: [
+    { id: 'claude-sonnet-4', name: 'claude-sonnet-4', ctx: 200000 },
+    { id: 'claude-opus-4', name: 'claude-opus-4', ctx: 200000 },
+    { id: 'claude-haiku-4', name: 'claude-haiku-4', ctx: 200000 },
+  ],
+  openai: [
+    { id: 'gpt-4o', name: 'gpt-4o', ctx: 128000 },
+    { id: 'gpt-4o-mini', name: 'gpt-4o-mini', ctx: 128000 },
+    { id: 'o3', name: 'o3', ctx: 200000 },
+  ],
+  deepseek: [
+    { id: 'deepseek-v4', name: 'deepseek-v4', ctx: 1000000 },
+    { id: 'deepseek-v4-flash', name: 'deepseek-v4-flash', ctx: 1000000 },
+  ],
+  google: [
+    { id: 'gemini-2.5-pro', name: 'gemini-2.5-pro', ctx: 1000000 },
+    { id: 'gemini-2.5-flash', name: 'gemini-2.5-flash', ctx: 1000000 },
+  ],
+  ollama: [
+    { id: 'qwen3-32b', name: 'qwen3:32b', ctx: 32000 },
+    { id: 'llama3-70b', name: 'llama3:70b', ctx: 32000 },
+  ],
+}
+
 export function mockConnect(
   onStateChange: (state: ConnectionState) => void
 ): void {
@@ -92,14 +119,14 @@ export function mockSend(msg: ClientMessage): void {
       break
     case 'config.getProviders':
       respond('config.providers', { providers: mockProviders.map(p => ({
-        id: p.id, name: p.name, status: p.status, models: p.models, apiKeySet: p.apiKeySet, baseUrl: p.baseUrl
+        id: p.id, name: p.name, type: p.type, status: p.status, models: p.models, apiKeySet: p.apiKeySet, baseUrl: p.baseUrl, enabled: p.enabled
       })) })
       break
     case 'config.setProvider': {
       const pId = msg.payload.providerId as string | undefined
       const pName = msg.payload.name as string | undefined
-      const pBaseUrl = msg.payload.url as string | undefined
-      const pKey = msg.payload.key as string | undefined
+      const pBaseUrl = (msg.payload.baseUrl ?? msg.payload.url) as string | undefined
+      const pKey = (msg.payload.apiKey ?? msg.payload.key) as string | undefined
       const pModelsRaw = msg.payload.models as unknown
       const pType = msg.payload.type as string | undefined
       const pStatus = msg.payload.status as string | undefined
@@ -152,6 +179,18 @@ export function mockSend(msg: ClientMessage): void {
       respond('config.providers', { providers: mockProviders.map(p => ({
         id: p.id, name: p.name, type: p.type, status: p.status, models: p.models, apiKeySet: p.apiKeySet, baseUrl: p.baseUrl
       })) })
+      break
+    }
+    case 'config.discoverModels': {
+      // Mock: 使用硬编码数据模拟发现结果
+      setTimeout(() => {
+        const discType = msg.payload.providerType as string | undefined
+        const discModels = typeModelMap[discType ?? ''] ?? []
+        respond('config.discoveredModels', {
+          models: discModels,
+          success: true,
+        })
+      }, DISCOVERY_DELAY_MS)
       break
     }
     case 'config.setToolPermissions':

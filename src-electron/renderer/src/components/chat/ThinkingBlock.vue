@@ -12,11 +12,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { Button } from '../../design-system'
 
-defineProps<{ text: string; streaming?: boolean }>()
-const expanded = ref(false)
+const props = defineProps<{ text: string; streaming?: boolean; collapsed?: boolean }>()
+const expanded = ref(!props.collapsed)
+
+// streaming 进行中时自动展开，完成时折叠
+watch(() => props.collapsed, (v) => {
+  expanded.value = !v
+})
 </script>
 
 <style scoped>

@@ -38,9 +38,8 @@ const statusDotClass = computed(() => {
   <div :class="['s-provider-card', { expanded }]">
     <div class="s-provider-card__hd" @click="$emit('toggle')">
       <ToggleSwitch
-        :model-value="provider.status === 'connected'"
+        :model-value="provider.enabled !== false"
         @update:model-value="$emit('toggle-enabled', provider.id)"
-        @click.stop
       />
       <div class="s-provider-card__icon">{{ initial }}</div>
       <div class="s-provider-card__info">

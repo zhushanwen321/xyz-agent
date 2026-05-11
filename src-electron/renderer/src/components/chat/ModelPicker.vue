@@ -91,8 +91,15 @@ interface ModelGroup {
 }
 
 const groupedModels = computed<ModelGroup[]>(() => {
+  const enabledProviderIds = new Set(
+    providerStore.providers
+      .filter(p => p.enabled !== false)
+      .map(p => p.id)
+  )
   const map = new Map<string, { id: string; name: string }[]>()
   for (const m of models.value) {
+    // 只显示已启用 provider 的模型
+    if (!enabledProviderIds.has(m.providerId)) continue
     const key = m.providerName || m.providerId
     if (!map.has(key)) map.set(key, [])
     map.get(key)!.push({ id: m.id, name: m.name })

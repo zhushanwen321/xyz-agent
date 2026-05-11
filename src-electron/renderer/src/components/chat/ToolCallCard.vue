@@ -15,7 +15,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, type Component } from 'vue'
+import { ref, shallowRef, computed, onMounted, type Component } from 'vue'
 import type { ToolCall } from '@xyz-agent/shared'
 import { getToolRenderer } from '../../lib/tool-renderer-registry'
 import { Button } from '../../design-system'
@@ -23,7 +23,8 @@ import DefaultToolRenderer from './ToolRenderers/DefaultToolRenderer.vue'
 
 const props = defineProps<{ toolCall: ToolCall }>()
 const expanded = ref(false)
-const rendererComp = ref<Component | null>(null)
+// Vue 组件定义不能被 reactive 包裹，用 shallowRef 避免性能开销
+const rendererComp = shallowRef<Component | null>(null)
 
 onMounted(() => {
   const r = getToolRenderer(props.toolCall.toolName)
