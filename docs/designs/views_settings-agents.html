@@ -1,0 +1,507 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent 配置 — xyz-agent</title>
+<style>
+:root{--bg:oklch(97% 0.018 70);--surface:oklch(99% 0.008 70);--fg:oklch(22% 0.02 50);--muted:oklch(50% 0.018 50);--border:oklch(90% 0.014 70);--accent:oklch(64% 0.13 28);--accent-light:oklch(92% 0.04 28);--success:oklch(70% 0.18 145);--success-light:oklch(95% 0.06 145);--warning:oklch(78% 0.15 85);--warning-light:oklch(95% 0.06 85);--danger:oklch(62% 0.2 25);--danger-light:oklch(93% 0.06 25);--font-display:'Tiempos Headline','Newsreader','Iowan Old Style',Georgia,serif;--font-body:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;--font-mono:'JetBrains Mono','IBM Plex Mono',ui-monospace,Menlo,monospace;--radius:12px;--radius-sm:8px;--radius-xs:4px;--ease:cubic-bezier(0.4,0,0.2,1)}
+[data-theme="dark"]{--bg:oklch(20% 0.015 50);--surface:oklch(25% 0.015 50);--fg:oklch(92% 0.008 70);--muted:oklch(65% 0.015 50);--border:oklch(35% 0.015 50);--accent:oklch(68% 0.13 28);--accent-light:oklch(30% 0.06 28);--success:oklch(70% 0.18 145);--success-light:oklch(28% 0.06 145);--warning:oklch(78% 0.15 85);--warning-light:oklch(30% 0.06 85);--danger:oklch(62% 0.2 25);--danger-light:oklch(28% 0.06 25)}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-font-smoothing:antialiased}
+body{font-family:var(--font-body);font-size:14px;line-height:1.6;background:var(--bg);color:var(--fg);transition:background 0.25s var(--ease),color 0.25s var(--ease)}
+::selection{background:var(--accent);color:white}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+.page{max-width:860px;margin:0 auto;padding:32px 40px}
+.page__hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:28px}
+.page__title{font-family:var(--font-display);font-size:22px;font-weight:700;letter-spacing:-0.01em}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 18px;border-radius:var(--radius-sm);border:1px solid var(--border);background:transparent;color:var(--muted);font-size:13px;font-family:var(--font-body);cursor:pointer;transition:all 0.2s var(--ease);white-space:nowrap}
+.btn:hover{background:var(--accent-light);color:var(--accent);border-color:var(--accent)}
+.btn--primary{background:var(--accent);color:white;border-color:var(--accent)}
+.btn--primary:hover{opacity:0.88}
+.btn--sm{padding:5px 12px;font-size:12px;border-radius:var(--radius-xs)}
+.btn--danger:hover{background:var(--danger-light);color:var(--danger);border-color:var(--danger)}
+.btn--ghost{border:none;color:var(--muted);padding:5px 8px}
+.btn--ghost:hover{color:var(--accent);background:var(--accent-light)}
+.section-divider{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);margin:20px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--border)}
+.global-params{padding:16px 0;margin-bottom:24px}
+.global-params__title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);margin-bottom:14px;padding-bottom:6px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:6px}
+.global-params__title svg{width:14px;height:14px;color:var(--muted)}
+.params-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.param-item{}
+.param-item__label{font-size:11px;color:var(--muted);margin-bottom:4px;font-weight:500}
+.param-item__input{width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);background:var(--bg);color:var(--fg);font-family:var(--font-mono);font-size:13px;outline:none;transition:border-color 0.15s var(--ease)}
+.param-item__input:focus{border-color:var(--accent)}
+.agent-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:12px;overflow:hidden;transition:border-color 0.2s var(--ease)}
+.agent-card:hover{border-color:oklch(80% 0.01 70)}
+.agent-card.disabled{opacity:0.6}
+.agent-card__hd{display:flex;align-items:center;gap:12px;padding:14px 18px;cursor:pointer}
+.agent-card__toggle{position:relative;width:36px;height:20px;border-radius:10px;background:var(--success);cursor:pointer;flex-shrink:0;transition:background 0.2s var(--ease)}
+.agent-card__toggle::after{content:'';position:absolute;top:2px;left:18px;width:16px;height:16px;border-radius:50%;background:white;transition:left 0.2s var(--ease);box-shadow:0 1px 3px rgba(0,0,0,0.15)}
+.agent-card__toggle.off{background:var(--border)}
+.agent-card__toggle.off::after{left:2px}
+.agent-card__icon{width:32px;height:32px;border-radius:var(--radius-sm);background:var(--accent-light);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:var(--accent);flex-shrink:0}
+.agent-card__info{flex:1;min-width:0}
+.agent-card__name{font-size:14px;font-weight:600}
+.agent-card__desc{font-size:12px;color:var(--muted);margin-top:2px;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
+.agent-card__source{font-size:11px;color:var(--muted);font-family:var(--font-mono);margin-top:2px}
+.agent-card__actions{display:flex;gap:4px;flex-shrink:0}
+.agent-card__bd{padding:0 18px 16px;display:none}
+.agent-card.expanded .agent-card__bd{display:block}
+.meta-grid{display:grid;grid-template-columns:100px 1fr;gap:4px 12px;font-size:12px;margin-bottom:16px}
+.meta-grid__key{color:var(--muted);font-weight:500}
+.meta-grid__val{font-family:var(--font-mono);font-size:11px;color:var(--fg);word-break:break-all}
+.model-config{overflow:hidden;margin-bottom:12px}
+.model-config__title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--muted);margin-bottom:8px}
+.model-config__hd{display:flex;align-items:center;gap:12px;padding:8px 0;background:transparent;border-bottom:1px solid var(--border)}
+.model-config__label{font-size:12px;font-weight:600;min-width:80px}
+.model-config__select{flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);background:var(--surface);color:var(--fg);font-family:var(--font-body);font-size:12px;outline:none;cursor:pointer;transition:border-color 0.15s var(--ease);appearance:none;background-image:url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23999' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center}
+.model-config__select:focus{border-color:var(--accent)}
+.model-config__row{display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid oklch(92% 0.01 70)}
+.model-config__row:last-child{border-bottom:none}
+.model-config__row-label{font-size:12px;min-width:60px;font-weight:500}
+.tag-group{display:flex;gap:4px;flex:1}
+.tag{padding:2px 8px;border-radius:100px;font-size:10px;font-weight:600;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--muted);transition:all 0.15s var(--ease);user-select:none}
+.tag:hover{border-color:var(--muted)}
+.tag--power.active{background:oklch(65% 0.18 25);color:white;border-color:oklch(65% 0.18 25)}
+.tag--efficient.active{background:oklch(60% 0.15 260);color:white;border-color:oklch(60% 0.15 260)}
+.tag--fast.active{background:oklch(68% 0.16 145);color:white;border-color:oklch(68% 0.16 145)}
+.override-section{margin-top:12px;padding-top:12px;border-top:1px solid var(--border)}
+.override-toggle{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);cursor:pointer;user-select:none}
+.override-toggle__check{width:16px;height:16px;border:1px solid var(--border);border-radius:var(--radius-xs);display:flex;align-items:center;justify-content:center;transition:all 0.15s var(--ease)}
+.override-toggle.active .override-toggle__check{background:var(--accent);border-color:var(--accent);color:white;font-size:10px}
+.override-params{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:8px}
+.override-params.disabled{opacity:0.4;pointer-events:none}
+.override-params__input{width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius-xs);background:var(--bg);color:var(--fg);font-family:var(--font-mono);font-size:12px;outline:none;transition:border-color 0.15s var(--ease)}
+.override-params__input:focus{border-color:var(--accent)}
+.editor{border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;margin-top:8px}
+.editor__bar{display:flex;align-items:center;justify-content:space-between;padding:6px 12px;background:var(--bg);border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)}
+.editor__textarea{width:100%;min-height:200px;max-height:400px;padding:12px;border:none;background:var(--surface);color:var(--fg);font-family:var(--font-mono);font-size:12px;line-height:1.6;resize:vertical;outline:none}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="page__hd">
+    <div class="page__title">Agent 配置</div>
+    <button class="btn btn--primary" onclick="alert('导入 Agent：选择路径扫描 .md 文件')">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 1v12M1 7h12"/></svg>
+      导入 Agent
+    </button>
+  </div>
+
+  <div class="global-params">
+    <div class="global-params__title">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v3.5M8 10.5v.5"/></svg>
+      SubAgent 默认参数
+    </div>
+    <div class="params-grid">
+      <div class="param-item">
+        <div class="param-item__label">最大深度</div>
+        <input class="param-item__input" type="number" value="20">
+      </div>
+      <div class="param-item">
+        <div class="param-item__label">最大宽度</div>
+        <input class="param-item__input" type="number" value="10">
+      </div>
+      <div class="param-item">
+        <div class="param-item__label">Token 上限</div>
+        <input class="param-item__input" type="number" value="100000">
+      </div>
+      <div class="param-item">
+        <div class="param-item__label">最大轮次</div>
+        <input class="param-item__input" type="number" value="50">
+      </div>
+    </div>
+  </div>
+
+  <div class="section-divider">已导入 · 4 个 Agent</div>
+
+  <!-- Agent 1: Default -->
+  <div class="agent-card expanded" id="agent-default">
+    <div class="agent-card__hd" onclick="toggleCard(this)">
+      <div class="agent-card__toggle" onclick="event.stopPropagation();toggleAgent(this)"></div>
+      <div class="agent-card__icon">D</div>
+      <div class="agent-card__info">
+        <div class="agent-card__name">默认编程助手</div>
+        <div class="agent-card__desc">通用编程 Agent，支持代码编写、调试、重构等日常开发任务</div>
+        <div class="agent-card__source">内置 Agent</div>
+      </div>
+      <div class="agent-card__actions">
+        <button class="btn btn--ghost btn--sm" onclick="event.stopPropagation();toggleEdit(this)">编辑</button>
+      </div>
+    </div>
+    <div class="agent-card__bd">
+      <div class="meta-grid">
+        <span class="meta-grid__key">名称</span><span class="meta-grid__val">默认编程助手</span>
+        <span class="meta-grid__key">类型</span><span class="meta-grid__val">内置 (builtin)</span>
+        <span class="meta-grid__key">模型策略</span><span class="meta-grid__val">自动 — 由主 Agent 根据任务判断</span>
+        <span class="meta-grid__key">工具</span><span class="meta-grid__val">read, bash, edit, write, grep</span>
+      </div>
+
+      <div class="model-config__title">模型适配</div>
+      <div class="model-config">
+        <div class="model-config__row">
+          <span class="model-config__row-label">策略</span>
+          <select class="model-config__select" onchange="onStrategyChange(this)" style="max-width:200px">
+            <option value="auto" selected>自动（主 Agent 判断）</option>
+            <option value="tag">按标签选择</option>
+            <option value="bind">绑定具体模型</option>
+          </select>
+        </div>
+        <div class="model-config__row model-tag-row" style="display:none">
+          <span class="model-config__row-label">强力模型</span>
+          <select class="model-config__select"><option>claude-sonnet-4</option><option>claude-opus-4</option><option>o3</option><option>gpt-4o</option></select>
+        </div>
+        <div class="model-config__row model-tag-row" style="display:none">
+          <span class="model-config__row-label">高效模型</span>
+          <select class="model-config__select"><option>claude-sonnet-4</option><option>gpt-4o</option><option>deepseek-v4</option></select>
+        </div>
+        <div class="model-config__row model-tag-row" style="display:none">
+          <span class="model-config__row-label">快速模型</span>
+          <select class="model-config__select"><option>claude-haiku-4</option><option>gpt-4o-mini</option><option>deepseek-v4-flash</option></select>
+        </div>
+        <div class="model-config__row model-bind-row" style="display:none">
+          <span class="model-config__row-label">绑定模型</span>
+          <select class="model-config__select">
+            <optgroup label="Anthropic">
+              <option>claude-sonnet-4</option>
+              <option>claude-haiku-4</option>
+              <option>claude-opus-4</option>
+            </optgroup>
+            <optgroup label="OpenAI">
+              <option>gpt-4o</option>
+              <option>gpt-4o-mini</option>
+              <option>o3</option>
+              <option>o4-mini</option>
+            </optgroup>
+            <optgroup label="DeepSeek">
+              <option>deepseek-v4</option>
+              <option>deepseek-v4-flash</option>
+            </optgroup>
+          </select>
+        </div>
+      </div>
+
+      <div class="override-section">
+        <div class="override-toggle" onclick="toggleOverride(this)">
+          <span class="override-toggle__check"></span>
+          覆盖全局 SubAgent 参数
+        </div>
+        <div class="override-params disabled">
+          <div><div style="font-size:10px;color:var(--muted);margin-bottom:3px">深度</div><input class="override-params__input" type="number" value="20"></div>
+          <div><div style="font-size:10px;color:var(--muted);margin-bottom:3px">宽度</div><input class="override-params__input" type="number" value="10"></div>
+          <div><div style="font-size:10px;color:var(--muted);margin-bottom:3px">Token</div><input class="override-params__input" type="number" value="100000"></div>
+          <div><div style="font-size:10px;color:var(--muted);margin-bottom:3px">轮次</div><input class="override-params__input" type="number" value="50"></div>
+        </div>
+      </div>
+
+      <div class="editor" id="editor-default" style="display:none;margin-top:12px">
+        <div class="editor__bar"><span>agent.md</span><button class="btn btn--sm" onclick="saveEdit(this)">保存</button></div>
+        <textarea class="editor__textarea" spellcheck="false">---
+name: 默认编程助手
+type: builtin
+description: 通用编程 Agent，支持代码编写、调试、重构等日常开发任务
+tools: [read, bash, edit, write, grep]
+---
+
+# 默认编程助手
+
+你是一个专业的编程助手，帮助用户完成日常开发任务。
+
+## 能力
+
+- 代码编写与调试
+- 代码重构与优化
+- Bug 定位与修复
+- 项目结构分析</textarea>
+      </div>
+    </div>
+  </div>
+
+  <!-- Agent 2: Code Reviewer -->
+  <div class="agent-card" id="agent-reviewer">
+    <div class="agent-card__hd" onclick="toggleCard(this)">
+      <div class="agent-card__toggle" onclick="event.stopPropagation();toggleAgent(this)"></div>
+      <div class="agent-card__icon" style="background:var(--success-light);color:var(--success)">R</div>
+      <div class="agent-card__info">
+        <div class="agent-card__name">代码审查员</div>
+        <div class="agent-card__desc">专注于代码质量审查，发现潜在 bug、安全问题和性能瓶颈</div>
+        <div class="agent-card__source">~/.pi/agent/agents/reviewer/agent.md</div>
+      </div>
+      <div class="agent-card__actions">
+        <button class="btn btn--ghost btn--sm" onclick="event.stopPropagation();toggleEdit(this)">编辑</button>
+      </div>
+    </div>
+    <div class="agent-card__bd">
+      <div class="meta-grid">
+        <span class="meta-grid__key">名称</span><span class="meta-grid__val">代码审查员</span>
+        <span class="meta-grid__key">来源</span><span class="meta-grid__val">pi · ~/.pi/agent/agents/reviewer/</span>
+        <span class="meta-grid__key">模型策略</span><span class="meta-grid__val">标签 — 强力: claude-sonnet-4</span>
+        <span class="meta-grid__key">工具</span><span class="meta-grid__val">read, bash, grep</span>
+      </div>
+
+      <div class="model-config__title">模型适配</div>
+      <div class="model-config">
+        <div class="model-config__row">
+          <span class="model-config__row-label">策略</span>
+          <select class="model-config__select" onchange="onStrategyChange(this)" style="max-width:200px">
+            <option value="auto">自动（主 Agent 判断）</option>
+            <option value="tag" selected>按标签选择</option>
+            <option value="bind">绑定具体模型</option>
+          </select>
+        </div>
+        <div class="model-config__row model-tag-row">
+          <span class="model-config__row-label">强力模型</span>
+          <select class="model-config__select"><option selected>claude-sonnet-4</option><option>claude-opus-4</option><option>o3</option><option>gpt-4o</option></select>
+        </div>
+        <div class="model-config__row model-tag-row">
+          <span class="model-config__row-label">高效模型</span>
+          <select class="model-config__select"><option selected>claude-sonnet-4</option><option>gpt-4o</option><option>deepseek-v4</option></select>
+        </div>
+        <div class="model-config__row model-tag-row">
+          <span class="model-config__row-label">快速模型</span>
+          <select class="model-config__select"><option selected>claude-haiku-4</option><option>gpt-4o-mini</option><option>deepseek-v4-flash</option></select>
+        </div>
+        <div class="model-config__row model-bind-row" style="display:none">
+          <span class="model-config__row-label">绑定模型</span>
+          <select class="model-config__select">
+            <optgroup label="Anthropic"><option>claude-sonnet-4</option><option>claude-haiku-4</option><option>claude-opus-4</option></optgroup>
+            <optgroup label="OpenAI"><option>gpt-4o</option><option>gpt-4o-mini</option><option>o3</option><option>o4-mini</option></optgroup>
+            <optgroup label="DeepSeek"><option>deepseek-v4</option><option>deepseek-v4-flash</option></optgroup>
+          </select>
+        </div>
+      </div>
+
+      <div class="override-section">
+        <div class="override-toggle active" onclick="toggleOverride(this)">
+          <span class="override-toggle__check">✓</span>
+          覆盖全局 SubAgent 参数
+        </div>
+        <div class="override-params">
+          <div><div style="font-size:10px;color:var(--muted);margin-bottom:3px">深度</div><input class="override-params__input" type="number" value="5"></div>
+          <div><div style="font-size:10px;color:var(--muted);margin-bottom:3px">宽度</div><input class="override-params__input" type="number" value="3"></div>
+          <div><div style="font-size:10px;color:var(--muted);margin-bottom:3px">Token</div><input class="override-params__input" type="number" value="50000"></div>
+          <div><div style="font-size:10px;color:var(--muted);margin-bottom:3px">轮次</div><input class="override-params__input" type="number" value="20"></div>
+        </div>
+      </div>
+
+      <div class="editor" style="display:none;margin-top:12px">
+        <div class="editor__bar"><span>agent.md</span><button class="btn btn--sm" onclick="saveEdit(this)">保存</button></div>
+        <textarea class="editor__textarea" spellcheck="false">---
+name: 代码审查员
+description: 专注于代码质量审查，发现潜在 bug、安全问题和性能瓶颈
+tools: [read, bash, grep]
+model_strategy: tag
+---
+
+# 代码审查员</textarea>
+      </div>
+    </div>
+  </div>
+
+  <!-- Agent 3: Tree Orchestrator -->
+  <div class="agent-card" id="agent-orchestrator">
+    <div class="agent-card__hd" onclick="toggleCard(this)">
+      <div class="agent-card__toggle" onclick="event.stopPropagation();toggleAgent(this)"></div>
+      <div class="agent-card__icon" style="background:var(--warning-light);color:var(--warning)">O</div>
+      <div class="agent-card__info">
+        <div class="agent-card__name">任务编排器</div>
+        <div class="agent-card__desc">复杂任务的树形分解与调度，自动判断任务复杂度并分派子 Agent</div>
+        <div class="agent-card__source">~/.pi/agent/agents/orchestrator/agent.md</div>
+      </div>
+      <div class="agent-card__actions">
+        <button class="btn btn--ghost btn--sm" onclick="event.stopPropagation();toggleEdit(this)">编辑</button>
+      </div>
+    </div>
+    <div class="agent-card__bd">
+      <div class="meta-grid">
+        <span class="meta-grid__key">名称</span><span class="meta-grid__val">任务编排器</span>
+        <span class="meta-grid__key">来源</span><span class="meta-grid__val">pi · ~/.pi/agent/agents/orchestrator/</span>
+        <span class="meta-grid__key">模型策略</span><span class="meta-grid__val">绑定 — claude-sonnet-4</span>
+        <span class="meta-grid__key">工具</span><span class="meta-grid__val">read, bash, grep, feedback</span>
+      </div>
+
+      <div class="model-config__title">模型适配</div>
+      <div class="model-config">
+        <div class="model-config__row">
+          <span class="model-config__row-label">策略</span>
+          <select class="model-config__select" onchange="onStrategyChange(this)" style="max-width:200px">
+            <option value="auto">自动（主 Agent 判断）</option>
+            <option value="tag">按标签选择</option>
+            <option value="bind" selected>绑定具体模型</option>
+          </select>
+        </div>
+        <div class="model-config__row model-tag-row" style="display:none">
+          <span class="model-config__row-label">强力模型</span>
+          <select class="model-config__select"><option>claude-sonnet-4</option><option>claude-opus-4</option><option>o3</option></select>
+        </div>
+        <div class="model-config__row model-tag-row" style="display:none">
+          <span class="model-config__row-label">高效模型</span>
+          <select class="model-config__select"><option>claude-sonnet-4</option><option>gpt-4o</option></select>
+        </div>
+        <div class="model-config__row model-tag-row" style="display:none">
+          <span class="model-config__row-label">快速模型</span>
+          <select class="model-config__select"><option>claude-haiku-4</option><option>gpt-4o-mini</option></select>
+        </div>
+        <div class="model-config__row model-bind-row">
+          <span class="model-config__row-label">绑定模型</span>
+          <select class="model-config__select">
+            <optgroup label="Anthropic"><option selected>claude-sonnet-4</option><option>claude-haiku-4</option><option>claude-opus-4</option></optgroup>
+            <optgroup label="OpenAI"><option>gpt-4o</option><option>gpt-4o-mini</option><option>o3</option></optgroup>
+            <optgroup label="DeepSeek"><option>deepseek-v4</option><option>deepseek-v4-flash</option></optgroup>
+          </select>
+        </div>
+      </div>
+
+      <div class="override-section">
+        <div class="override-toggle active" onclick="toggleOverride(this)">
+          <span class="override-toggle__check">✓</span>
+          覆盖全局 SubAgent 参数
+        </div>
+        <div class="override-params">
+          <div><div style="font-size:10px;color:var(--muted);margin-bottom:3px">深度</div><input class="override-params__input" type="number" value="20"></div>
+          <div><div style="font-size:10px;color:var(--muted);margin-bottom:3px">宽度</div><input class="override-params__input" type="number" value="10"></div>
+          <div><div style="font-size:10px;color:var(--muted);margin-bottom:3px">Token</div><input class="override-params__input" type="number" value="200000"></div>
+          <div><div style="font-size:10px;color:var(--muted);margin-bottom:3px">轮次</div><input class="override-params__input" type="number" value="100"></div>
+        </div>
+      </div>
+
+      <div class="editor" style="display:none;margin-top:12px">
+        <div class="editor__bar"><span>agent.md</span><button class="btn btn--sm" onclick="saveEdit(this)">保存</button></div>
+        <textarea class="editor__textarea" spellcheck="false">---
+name: 任务编排器
+description: 复杂任务的树形分解与调度
+tools: [read, bash, grep, feedback]
+model_strategy: bind
+model_bind: claude-sonnet-4
+---
+
+# 任务编排器</textarea>
+      </div>
+    </div>
+  </div>
+
+  <!-- Agent 4: Data Analyst (disabled) -->
+  <div class="agent-card disabled" id="agent-analyst">
+    <div class="agent-card__hd" onclick="toggleCard(this)">
+      <div class="agent-card__toggle off" onclick="event.stopPropagation();toggleAgent(this)"></div>
+      <div class="agent-card__icon" style="background:var(--danger-light);color:var(--danger)">A</div>
+      <div class="agent-card__info">
+        <div class="agent-card__name">数据分析员</div>
+        <div class="agent-card__desc">金融数据分析、价格预测、报告生成，支持行情 API 和技术指标计算</div>
+        <div class="agent-card__source">~/.agents/agents/analyst/agent.md</div>
+      </div>
+      <div class="agent-card__actions">
+        <button class="btn btn--ghost btn--sm" onclick="event.stopPropagation();toggleEdit(this)">编辑</button>
+      </div>
+    </div>
+    <div class="agent-card__bd">
+      <div class="meta-grid">
+        <span class="meta-grid__key">名称</span><span class="meta-grid__val">数据分析员</span>
+        <span class="meta-grid__key">来源</span><span class="meta-grid__val">agents · ~/.agents/agents/analyst/</span>
+        <span class="meta-grid__key">模型策略</span><span class="meta-grid__val">标签 — 强力: o3 / 快速: deepseek-v4-flash</span>
+        <span class="meta-grid__key">工具</span><span class="meta-grid__val">bash, read, write, market-api, indicators</span>
+      </div>
+
+      <div class="model-config__title">模型适配</div>
+      <div class="model-config">
+        <div class="model-config__row">
+          <span class="model-config__row-label">策略</span>
+          <select class="model-config__select" onchange="onStrategyChange(this)" style="max-width:200px">
+            <option value="auto">自动</option>
+            <option value="tag" selected>按标签选择</option>
+            <option value="bind">绑定具体模型</option>
+          </select>
+        </div>
+        <div class="model-config__row model-tag-row">
+          <span class="model-config__row-label">强力模型</span>
+          <select class="model-config__select"><option>claude-sonnet-4</option><option>claude-opus-4</option><option selected>o3</option><option>gpt-4o</option></select>
+        </div>
+        <div class="model-config__row model-tag-row">
+          <span class="model-config__row-label">高效模型</span>
+          <select class="model-config__select"><option>claude-sonnet-4</option><option>gpt-4o</option><option>deepseek-v4</option></select>
+        </div>
+        <div class="model-config__row model-tag-row">
+          <span class="model-config__row-label">快速模型</span>
+          <select class="model-config__select"><option>claude-haiku-4</option><option>gpt-4o-mini</option><option selected>deepseek-v4-flash</option></select>
+        </div>
+        <div class="model-config__row model-bind-row" style="display:none">
+          <span class="model-config__row-label">绑定模型</span>
+          <select class="model-config__select">
+            <optgroup label="Anthropic"><option>claude-sonnet-4</option><option>claude-haiku-4</option><option>claude-opus-4</option></optgroup>
+            <optgroup label="OpenAI"><option>gpt-4o</option><option>gpt-4o-mini</option><option>o3</option><option>o4-mini</option></optgroup>
+            <optgroup label="DeepSeek"><option>deepseek-v4</option><option>deepseek-v4-flash</option></optgroup>
+          </select>
+        </div>
+      </div>
+
+      <div class="override-section">
+        <div class="override-toggle" onclick="toggleOverride(this)">
+          <span class="override-toggle__check"></span>
+          覆盖全局 SubAgent 参数
+        </div>
+        <div class="override-params disabled">
+          <div><div style="font-size:10px;color:var(--muted);margin-bottom:3px">深度</div><input class="override-params__input" type="number" value="20"></div>
+          <div><div style="font-size:10px;color:var(--muted);margin-bottom:3px">宽度</div><input class="override-params__input" type="number" value="10"></div>
+          <div><div style="font-size:10px;color:var(--muted);margin-bottom:3px">Token</div><input class="override-params__input" type="number" value="100000"></div>
+          <div><div style="font-size:10px;color:var(--muted);margin-bottom:3px">轮次</div><input class="override-params__input" type="number" value="50"></div>
+        </div>
+      </div>
+
+      <div class="editor" style="display:none;margin-top:12px">
+        <div class="editor__bar"><span>agent.md</span><button class="btn btn--sm" onclick="saveEdit(this)">保存</button></div>
+        <textarea class="editor__textarea" spellcheck="false">---
+name: 数据分析员
+description: 金融数据分析、价格预测、报告生成
+tools: [bash, read, write, market-api, indicators]
+model_strategy: tag
+---
+
+# 数据分析员</textarea>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  window.toggleCard=function(hd){ hd.closest('.agent-card').classList.toggle('expanded'); };
+  window.toggleAgent=function(toggle){
+    toggle.classList.toggle('off');
+    var card=toggle.closest('.agent-card');
+    card.classList.toggle('disabled');
+  };
+  window.toggleEdit=function(btn){
+    var card=btn.closest('.agent-card');
+    var editor=card.querySelector('.editor');
+    var showing=editor.style.display!=='none';
+    editor.style.display=showing?'none':'block';
+    btn.textContent=showing?'编辑':'收起';
+  };
+  window.saveEdit=function(btn){
+    var editor=btn.closest('.editor');
+    editor.style.display='none';
+    var cardBtn=editor.closest('.agent-card').querySelector('.agent-card__actions .btn');
+    if(cardBtn) cardBtn.textContent='编辑';
+  };
+  window.onStrategyChange=function(sel){
+    var config=sel.closest('.model-config');
+    var v=sel.value;
+    config.querySelectorAll('.model-tag-row').forEach(function(r){ r.style.display=v==='tag'?'flex':'none'; });
+    config.querySelectorAll('.model-bind-row').forEach(function(r){ r.style.display=v==='bind'?'flex':'none'; });
+  };
+  window.toggleOverride=function(el){
+    el.classList.toggle('active');
+    var params=el.nextElementSibling;
+    params.classList.toggle('disabled');
+    var check=el.querySelector('.override-toggle__check');
+    if(el.classList.contains('active')) check.textContent='✓';
+    else check.textContent='';
+  };
+})();
+</script>
+</body>
+</html>

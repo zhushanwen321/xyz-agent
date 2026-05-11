@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>App Shell — xyz-agent</title>
+<link rel="stylesheet" href="css_design-system.css">
+<style>
+  body { display:flex; flex-direction:column; height:100vh; margin:0; }
+  .app-body { display:flex; flex:1; overflow:hidden; }
+</style>
+</head>
+<body>
+  <header class="header">
+    <div class="header__logo">xyz<span>-agent</span></div>
+    <div class="header__spacer"></div>
+    <div class="notif-group" id="globalNotifs">
+      <button class="notif-btn notif-btn--done"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 8 6.5 11.5 13 4.5"/></svg>已完成<span class="notif-dot notif-dot--done">3</span></button>
+      <button class="notif-btn notif-btn--alert"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="8" cy="8" r="6.5"/><path d="M8 5v3.5M8 10.5v.5"/></svg>请求回应<span class="notif-dot notif-dot--alert">2</span></button>
+    </div>
+    <span class="h-divider"></span>
+    <button class="h-btn" title="窗口总览 (Cmd+J)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg></button>
+    <button class="h-btn active" title="标准 (Cmd+1)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="4" height="14" rx="1"/><rect x="6" y="1" width="9" height="14" rx="1"/></svg></button>
+    <button class="h-btn" title="分屏 (Cmd+2)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="14" rx="1"/><rect x="9" y="1" width="6" height="14" rx="1"/></svg></button>
+    <button class="h-btn" title="专注 (Cmd+3)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="14" height="14" rx="1"/></svg></button>
+    <span class="h-divider"></span>
+    <button class="h-btn" title="设置 (Cmd+,)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:16px;height:16px"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 008.58 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 8.58a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg></button>
+    <button class="h-btn" onclick="toggleTheme()" title="切换主题"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg></button>
+  </header>
+
+  <div class="app-body">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar__hd"><span class="sidebar__hd-title">会话</span><button class="sidebar__hd-btn" title="新建会话">+</button></div>
+      <div class="sidebar__body">
+        <div class="s-group"><div class="s-group__hd" onclick="this.parentElement.classList.toggle('collapsed')"><span class="s-group__toggle">▾</span> xyz-agent</div><div class="s-group__items"><div class="s-item active has-notif"><span class="dot dot--run"></span><span class="s-item__title">重构 auth 模块</span><span class="s-item__notif s-item__notif--done">3</span><span class="s-item__meta">2h</span></div><div class="s-item"><span class="dot dot--idle"></span><span class="s-item__title">Tauri GUI 设计</span><span class="s-item__meta">1d</span></div></div></div>
+        <div class="s-group"><div class="s-group__hd" onclick="this.parentElement.classList.toggle('collapsed')"><span class="s-group__toggle">▾</span> work-project</div><div class="s-group__items"><div class="s-item has-notif"><span class="dot dot--run"></span><span class="s-item__title">API 性能优化</span><span class="s-item__notif s-item__notif--alert">1</span><span class="s-item__meta">5d</span></div><div class="s-item"><span class="dot dot--idle"></span><span class="s-item__title">数据库迁移</span><span class="s-item__meta">6d</span></div></div></div>
+        <div class="s-group"><div class="s-group__hd" onclick="this.parentElement.classList.toggle('collapsed')"><span class="s-group__toggle">▾</span> diy-pc</div><div class="s-group__items"><div class="s-item"><span class="dot dot--pause"></span><span class="s-item__title">价格预测分析</span><span class="s-item__meta">7d</span></div><div class="s-item"><span class="dot dot--run"></span><span class="s-item__title">4090 比价</span><span class="s-item__meta">1h</span></div></div></div>
+      </div>
+    </aside>
+    <div class="main-area" style="flex:1;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px;">
+      主内容区域（Chat / Settings）
+    </div>
+  </div>
+
+  <footer class="statusbar">
+    <span style="display:inline-flex;align-items:center;gap:4px;"><span class="statusbar__dot"></span> 已连接</span>
+    <span>~/Code/xyz-agent</span>
+    <span>feat/tree-engine</span>
+    <span>sonnet:high</span>
+    <span>12.3k tokens</span>
+    <span style="flex:1"></span>
+    <span style="opacity:0.5">Cmd+J 总览 · Cmd+1 标准 · Cmd+2 分屏 · Cmd+3 专注</span>
+  </footer>
+
+<script>
+function toggleTheme(){document.documentElement.setAttribute('data-theme',document.documentElement.getAttribute('data-theme')==='dark'?'':'dark')}
+</script>
+</body>
+</html>

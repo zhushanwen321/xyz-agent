@@ -1,141 +1,86 @@
-# xyz-agent
+# xyz-agent CLAUDE.md
 
-Tauri v2 + Vue 3 + Rust 单进程 AI Agent 引擎。
+## 项目概述
 
-## Quickstart
+xyz-agent 是基于 Electron + Vue 3 + Node.js Sidecar 的 AI Agent 桌面工作台。架构：
 
-### 环境准备
+- **Electron 主进程** (`src-electron/main/`): 窗口管理、sidecar 进程生命周期、快捷键
+- **Preload** (`src-electron/preload/`): 安全桥接，暴露 `electronAPI` 给渲染进程
+- **前端渲染进程** (`src-electron/renderer/src/`): Vue 3 + TypeScript + Pinia + Tailwind CSS v3 + xyz-ui 组件库
+- **Sidecar** (`src-electron/sidecar/src/`): Node.js WebSocket 服务，通过子进程 RPC 与 pi 通信
+- **共享类型** (`src-electron/shared/src/`): 前端与 sidecar 之间的 TypeScript 类型定义
 
-```bash
-# 前置依赖：Rust, Node.js >= 18
-cd xyz-agent
-npm install
-```
+**完整编码规范**: [docs/standards.md](docs/standards.md)
 
-### 调试构建与启动
+**设计参考文档**:
+- [竞品 UI 分析](docs/templates/competitor-ui-analysis.md) — Claude Code / Codex 逐图拆解，7 条设计原则
+- [UI/UX 设计原则与参考](docs/templates/ui-design-principles-and-references.md) — 设计方法论 + 竞品案例 + 行动清单
+- [设计方向](docs/templates/design-direction.md) — 产品定位、主题策略、窗口架构、实施优先级
+- [暗色主题选项 demo](docs/templates/dark-theme-options.html) — 5 种彩色 accent 方案对比
+- [朴素锐利主题 demo](docs/templates/muted-sharp-themes.html) — 5 种低饱和/无彩色方案对比
 
-```bash
-# 方式一：Tauri dev（推荐）— 前后端热重载
-npm run tauri dev
-
-# 方式二：分离启动
-npm run dev          # 前端 dev server → localhost:1420
-cd src-tauri && cargo run   # 后端 debug 构建
-
-# 仅构建检查（不启动）
-cd src-tauri && cargo check
-npm run build        # vue-tsc 类型检查 + vite 构建
-```
-
-### 环境变量
+## 常用命令
 
 ```bash
-# Anthropic API Key（必需）
-export ANTHROPIC_API_KEY=sk-ant-...
-# 或写入 ~/.xyz-agent/config.toml:
-#   anthropic_api_key = sk-ant-...
+npm run dev          # 开发模式 (Electron + Vite HMR)
+npm run build        # 生产构建 (electron-builder)
+npm run lint         # ESLint 检查
+npm run prepare      # 安装 git hooks
 ```
 
-### 测试
+## 关键规则（违反必出 bug）
+
+### 1. emit 只传单个 payload 对象
+禁止 `emit('event', arg1, arg2)` — handler 极易混淆参数顺序。必须 `emit('event', { arg1, arg2 })`。
+
+### 2. Event bus listener 防重复注册
+组件可能多实例（split mode），listener 必须用模块级 refCount 保护，否则事件处理翻倍。
+
+### 3. 错误必须重置 isGenerating + streamingMessage
+任何错误路径都必须重置状态，否则 UI 卡死在「思考中」。错误作为 assistant 消息插入聊天流，不用顶部 banner。
+
+### 4. 外部系统对接先验证再编码
+对接 pi RPC 等外部系统时，先写独立验证脚本（`tools/verify-*.cjs`），确认字段名和格式后再写业务代码。
+
+### 5. pi 适配层不信任外部格式
+EventAdapter 和 session-pool 是 pi 协议的唯一适配点。业务代码不直接处理 pi 格式。`sendCommand` 必须检查 `success` 字段。
+
+## 前端编码规范
+
+**权威标准文档**: `~/Code/xyz-ui/CONVENTIONS.md`
+
+### 核心规则
+
+1. **禁止原生 HTML 表单元素** — 必须使用 xyz-ui 组件（Button/Input/Select/Dialog 等）
+2. **禁止 Emoji** — 使用 inline `<svg>` 或 lucide-vue-next 图标
+3. **禁止手写 CSS 选择器** — `<style scoped>` 内只允许 `@apply`
+4. **行数上限** — `<template>` ≤ 400 行, `<script setup>` ≤ 300 行
+5. **禁止 `any`** — 用 `unknown` 或具体类型
+6. **v-model 绑定** — 禁止 `:value` + `@input`，用 `v-model`
+7. **Promise.allSettled** — 独立数据源用 `allSettled`，不用 `all`
+8. **禁止硬编码颜色** — 用 CSS 变量（`var(--accent)`）或语义 Tailwind 类
+9. **禁止魔数间距** — 用标准 Tailwind scale，不用 `p-[17px]`
+
+### 自动化检查
+
+| 检查工具 | 覆盖范围 | 触发时机 |
+|---------|---------|---------|
+| taste-lint (ESLint) | no-native-html / no-emoji / prefer-v-model / no-hardcoded-colors / no-magic-spacing / no-silent-catch / prefer-allsettled / no-multi-arg-emit | `npm run lint` + pre-commit |
+| vue_rules_checker.py | 行数上限 / CSS 选择器 / Tab 缩进 / 原生元素 / Emoji / v-model | pre-commit |
+
+
+## 架构约定
+
+- **视图切换**: 状态驱动（settingsStore.currentView），不用 vue-router
+- **Mock 模式**: `VITE_MOCK=true` 环境变量控制，在 ws-client 层拦截
+- **共享类型**: `src-electron/shared/src/` 通过 npm workspace 在前端和 sidecar 间共享
+- **Sidecar 通信**: WebSocket，前端通过 `ws-client.ts` + `event-bus.ts` 消息分发
+- **Electron IPC**: 主进程通过 preload 暴露 `window.electronAPI`，渲染进程不直接使用 `ipcRenderer`
+
+## 跳过检查
 
 ```bash
-cd src-tauri && cargo test              # Rust 全量测试（183 个）
-cd src-tauri && cargo test test_name    # 运行单个测试
-cd src-tauri && cargo test -- --list    # 列出所有测试名
-npm run build                           # 前端类型检查 + 构建
+SKIP_ALL_CHECKS=1 git commit       # 跳过所有（仅紧急情况）
+SKIP_FRONTEND_LINT=1 git commit    # 跳过 ESLint
+SKIP_CODE_RULES_CHECK=1 git commit # 跳过 vue_rules_checker
 ```
-
-### 架构概览
-
-```
-src-tauri/src/
-├── api/         # Tauri Command 薄适配层 + EventBus
-├── engine/      # 核心业务逻辑（不依赖 tauri crate）
-│   ├── llm/         # LLM Provider trait + Anthropic 实现
-│   ├── loop_/       # AgentLoop — 多轮工具调用循环 + SSE 流解析
-│   ├── tools/       # ToolRegistry + 内置工具（bash/read/write/feedback/dispatch_agent/orchestrate）
-│   ├── context/     # 提示词构建（static prompt + dynamic context）
-│   ├── config/      # TOML 配置加载（API key、model、agent 参数）
-│   ├── task_tree.rs # 任务树（子 agent 生命周期管理）
-│   ├── agent_spawner.rs   # 子 Agent 生成器
-│   ├── agent_template.rs  # Agent 模板注册表
-│   ├── budget_guard.rs    # Token/轮次预算守卫
-│   └── concurrency.rs     # 并发子 Agent 控制
-├── prompts/     # Agent 系统提示词（system_static / general_purpose / plan / explore）
-├── types/       # 纯数据结构（event/transcript/tool/error）
-└── store/       # JSONL 持久化（会话存储）
-
-src/
-├── components/  # Vue 组件
-├── composables/ # Composition API 逻辑复用
-├── lib/         # Tauri invoke/listen 封装（唯一通信层）
-└── types/       # TypeScript 类型定义
-```
-
-核心数据流：
-LLM SSE → LlmStreamEvent → mpsc channel → EventBus → Tauri Event → Vue reactive state
-
-## 提示词工程准则
-
-**最高准则：在语义准确的情况下，尽量精简文字数量。**
-
-工具定义（description + input_schema）和 system prompt 的每个字段都必须为模型提供足够上下文以正确生成调用参数，但不写冗余描述。
-
-## 代码规范
-
-- Rust：engine/ 不 import tauri，纯业务逻辑可独立测试；api/ 是薄适配层
-- TypeScript：strict 模式，Composition API
-- 提交格式：Conventional Commits（feat/fix/refactor/test/docs/chore）
-
-### 前端 Design System 合规
-
-- 所有 UI 组件使用 shadcn-vue，禁止原生 `<button>/<input>/<select>/<textarea>`
-- 颜色使用 design token（`bg-base`、`text-foreground`、`text-semantic-red` 等），禁止 `[#hex]` 硬编码
-- 间距使用 Tailwind spacing scale（`p-4`、`gap-2`），禁止 `p-[17px]` 等任意值
-- ESLint 规则自动检查：`npx eslint src/ --max-warnings=0`
-- Pre-commit hook 自动运行 ESLint（`SKIP_ESLINT=1` 跳过）
-
-### 其他
-
-- superpowers目录：.superpowers
-- Design System: [docs/design-system.md](docs/design-system.md) — 全局色彩、排版、组件规范
-- 编码标准: [docs/standards.md](docs/standards.md) — 架构模式与编码规范（文件持久化与 Registry 同步等）
-
-<!-- code-review-graph MCP tools -->
-## MCP Tools: code-review-graph
-
-**IMPORTANT: This project has a knowledge graph. ALWAYS use the
-code-review-graph MCP tools BEFORE using Grep/Glob/Read to explore
-the codebase.** The graph is faster, cheaper (fewer tokens), and gives
-you structural context (callers, dependents, test coverage) that file
-scanning cannot.
-
-### When to use graph tools FIRST
-
-- **Exploring code**: `semantic_search_nodes` or `query_graph` instead of Grep
-- **Understanding impact**: `get_impact_radius` instead of manually tracing imports
-- **Code review**: `detect_changes` + `get_review_context` instead of reading entire files
-- **Finding relationships**: `query_graph` with callers_of/callees_of/imports_of/tests_for
-- **Architecture questions**: `get_architecture_overview` + `list_communities`
-
-Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
-
-### Key Tools
-
-| Tool | Use when |
-|------|----------|
-| `detect_changes` | Reviewing code changes — gives risk-scored analysis |
-| `get_review_context` | Need source snippets for review — token-efficient |
-| `get_impact_radius` | Understanding blast radius of a change |
-| `get_affected_flows` | Finding which execution paths are impacted |
-| `query_graph` | Tracing callers, callees, imports, tests, dependencies |
-| `semantic_search_nodes` | Finding functions/classes by name or keyword |
-| `get_architecture_overview` | Understanding high-level codebase structure |
-| `refactor_tool` | Planning renames, finding dead code |
-
-### Workflow
-
-1. The graph auto-updates on file changes (via hooks).
-2. Use `detect_changes` for code review.
-3. Use `get_affected_flows` to understand impact.
-4. Use `query_graph` pattern="tests_for" to check coverage.

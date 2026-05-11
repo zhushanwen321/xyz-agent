@@ -1,53 +1,24 @@
 {
   "name": "xyz-agent",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "src-electron/renderer",
+    "src-electron/sidecar",
+    "src-electron/shared"
+  ],
   "scripts": {
-    "dev": "vite",
-    "build": "vue-tsc --noEmit && vite build",
-    "preview": "vite preview",
-    "tauri": "tauri"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/zhushanwen321/xyz-agent.git"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
-  "bugs": {
-    "url": "https://github.com/zhushanwen321/xyz-agent/issues"
-  },
-  "homepage": "https://github.com/zhushanwen321/xyz-agent#readme",
-  "dependencies": {
-    "@tauri-apps/api": "^2.10.1",
-    "@vueuse/core": "^14.2.1",
-    "class-variance-authority": "^0.7.1",
-    "clsx": "^2.1.1",
-    "lucide-vue-next": "^1.0.0",
-    "markdown-it": "^14.1.1",
-    "radix-vue": "^1.9.17",
-    "reka-ui": "^2.9.6",
-    "tailwind-merge": "^3.5.0",
-    "tw-animate-css": "^1.4.0",
-    "vue": "^3.5.32"
+    "dev": "cd src-electron && npm run dev",
+    "build": "cd src-electron && npm run build",
+    "lint": "eslint .",
+    "prepare": "bash .githooks/install-hooks.sh"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@tauri-apps/cli": "^2.10.1",
-    "@types/markdown-it": "^14.1.2",
-    "@types/node": "^25.5.2",
-    "@vitejs/plugin-vue": "^6.0.5",
-    "autoprefixer": "^10.5.0",
-    "eslint": "^10.2.0",
-    "eslint-plugin-vue": "^10.8.0",
-    "postcss": "^8.5.10",
-    "tailwindcss": "^3.4.19",
-    "typescript": "^6.0.2",
-    "typescript-eslint": "^8.58.2",
-    "vite": "^8.0.7",
-    "vue-tsc": "^3.2.6"
+    "eslint": "^10.3.0",
+    "eslint-plugin-vue": "^10.9.1",
+    "typescript": "^5.8",
+    "typescript-eslint": "^8.59.2"
   }
 }

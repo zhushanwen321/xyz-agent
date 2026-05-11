@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Toast — xyz-agent</title>
+<link rel="stylesheet" href="css_design-system.css">
+</head>
+<body style="height:100vh;margin:0;padding:60px 20px;background:var(--bg)">
+
+  <div class="toast-container" style="position:static;pointer-events:auto">
+    <!-- Success toast -->
+    <div class="toast" style="transform:none;opacity:1;animation:none">
+      <span class="toast__dot" style="background:var(--success)"></span>
+      <div class="toast__body">
+        <div class="toast__title">连接成功</div>
+        <div class="toast__desc">Anthropic API 连接正常，发现 3 个可用模型</div>
+        <div class="toast__actions">
+          <button class="toast__btn" onclick="this.closest('.toast').remove()">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Warning toast -->
+    <div class="toast" style="transform:none;opacity:1;animation:none">
+      <span class="toast__dot" style="background:var(--warning)"></span>
+      <div class="toast__body">
+        <div class="toast__title">Token 用量较高</div>
+        <div class="toast__desc">当前会话已使用 45k tokens，建议总结后开启新会话</div>
+        <div class="toast__actions">
+          <button class="toast__btn">总结会话</button>
+          <button class="toast__btn" onclick="this.closest('.toast').remove()">忽略</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Error toast -->
+    <div class="toast" style="transform:none;opacity:1;animation:none">
+      <span class="toast__dot" style="background:var(--danger)"></span>
+      <div class="toast__body">
+        <div class="toast__title">API 请求失败</div>
+        <div class="toast__desc">OpenAI: 429 Too Many Requests — 请稍后重试</div>
+        <div class="toast__actions">
+          <button class="toast__btn toast__btn--primary">重试</button>
+          <button class="toast__btn" onclick="this.closest('.toast').remove()">关闭</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Drawer — xyz-agent</title>
+<link rel="stylesheet" href="css_design-system.css">
+<style>
+  body { display:flex; height:100vh; margin:0; background:var(--bg); }
+  /* Override drawer positioning for standalone preview: show inline instead of fixed+hidden */
+  .drawer {
+    position: relative !important;
+    transform: none !important;
+    border-left: 1px solid var(--border);
+    width: 340px;
+    flex-shrink: 0;
+  }
+  .drawer--left { border-right: 1px solid var(--border); border-left: none; }
+</style>
+</head>
+<body>
+  <div style="flex:1;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px;">
+    主内容区域
+  </div>
+
+  <!-- ── Drawer right ── -->
+  <aside class="drawer drawer--right" id="drawerRight">
+    <div class="drawer__hd">
+      <div class="drawer__title">SubAgent 监控</div>
+      <button class="drawer__close">×</button>
+    </div>
+    <div class="drawer-tabs">
+      <div class="drawer-tab" onclick="pickTab(this)">任务树</div>
+      <div class="drawer-tab active" onclick="pickTab(this)">已完成 <span class="drawer-tab__count drawer-tab__count--done">3</span></div>
+      <div class="drawer-tab" onclick="pickTab(this)">请求回应 <span class="drawer-tab__count drawer-tab__count--alert">2</span></div>
+    </div>
+    <div class="drawer__body">
+      <div class="drawer-pane" id="paneTree">
+        <div class="tree-root">
+          <div class="tree-node">
+            <span class="tree-node__toggle">▾</span>
+            <span class="tree-node__dot" style="background:var(--success)"></span>
+            <span class="tree-node__label"><strong>主线对话</strong></span>
+            <span class="tree-node__meta">coordinator</span>
+          </div>
+          <div class="tree-children">
+            <div class="tree-node">
+              <span style="width:14px;display:inline-block"></span>
+              <span class="tree-node__dot" style="background:var(--success)"></span>
+              <span class="tree-node__label">分析代码结构</span>
+              <span class="tree-node__meta">1.2k tok</span>
+              <span class="tree-node__kill">终止</span>
+            </div>
+            <div class="tree-node">
+              <span class="tree-node__toggle">▾</span>
+              <span class="tree-node__dot" style="background:var(--accent)"></span>
+              <span class="tree-node__label">重构模块A</span>
+              <span class="tree-node__meta">2.3k tok</span>
+              <span class="tree-node__kill">终止</span>
+            </div>
+            <div class="tree-children">
+              <div class="tree-node">
+                <span style="width:14px;display:inline-block"></span>
+                <span class="tree-node__dot" style="background:var(--warning)"></span>
+                <span class="tree-node__label">重构子模块A1</span>
+                <span class="tree-node__meta">等待确认</span>
+                <span class="tree-node__kill">终止</span>
+              </div>
+            </div>
+            <div class="tree-node">
+              <span style="width:14px;display:inline-block"></span>
+              <span class="tree-node__dot" style="background:var(--border)"></span>
+              <span class="tree-node__label">编写测试</span>
+              <span class="tree-node__meta">pending</span>
+              <span class="tree-node__kill">终止</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="drawer-pane active" id="paneDone">
+        <div class="done-item">
+          <div class="done-item__hd">
+            <span class="done-item__dot"></span>
+            <div class="done-item__info">
+              <div class="done-item__name">分析代码结构</div>
+              <div class="done-item__summary">发现 3 个主要问题：接口散落、错误类不统一、Session 耦合</div>
+            </div>
+            <div class="done-item__meta">2m 34s<br>1.2k tok</div>
+          </div>
+          <div class="done-item__action"><span class="done-item__link">查看完整结果 →</span></div>
+        </div>
+        <div class="done-item">
+          <div class="done-item__hd">
+            <span class="done-item__dot"></span>
+            <div class="done-item__info">
+              <div class="done-item__name">读取配置文件</div>
+              <div class="done-item__summary">已读取 tsconfig.json、.eslintrc.json、package.json</div>
+            </div>
+            <div class="done-item__meta">18s<br>320 tok</div>
+          </div>
+          <div class="done-item__action"><span class="done-item__link">查看详情 →</span></div>
+        </div>
+        <div class="done-item">
+          <div class="done-item__hd">
+            <span class="done-item__dot"></span>
+            <div class="done-item__info">
+              <div class="done-item__name">依赖分析</div>
+              <div class="done-item__summary">共 47 个导出函数，依赖深度最深 4 层</div>
+            </div>
+            <div class="done-item__meta">45s<br>890 tok</div>
+          </div>
+          <div class="done-item__action"><span class="done-item__link">查看详情 →</span></div>
+        </div>
+      </div>
+      <div class="drawer-pane" id="paneAlert">
+        <div class="alert-item">
+          <div class="alert-item__hd">
+            <span class="alert-item__dot"></span>
+            <div class="alert-item__info">
+              <div class="alert-item__name">重构子模块A1</div>
+              <div class="alert-item__session">xyz-agent / 重构 auth 模块</div>
+            </div>
+            <div class="alert-item__time">3 分钟前</div>
+          </div>
+          <div class="alert-item__bd">
+            <div class="alert-item__question">检测到 3 处循环依赖，需要选择处理策略。</div>
+            <span class="inline-reply__link">查看详情并回复 →</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+<script>
+function pickTab(el) {
+  el.closest('.drawer-tabs').querySelectorAll('.drawer-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  const panes = el.closest('.drawer__body').querySelectorAll('.drawer-pane');
+  panes.forEach(p => p.classList.remove('active'));
+  const idx = Array.from(el.parentElement.children).indexOf(el);
+  if (panes[idx]) panes[idx].classList.add('active');
+}
+</script>
+</body>
+</html>

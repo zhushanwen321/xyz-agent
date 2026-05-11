@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sidebar — xyz-agent</title>
+<link rel="stylesheet" href="css_design-system.css">
+<style>
+  body { display:flex; height:100vh; margin:0; background:var(--bg); }
+</style>
+</head>
+<body>
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar__hd">
+      <span class="sidebar__hd-title">会话</span>
+      <button class="sidebar__hd-btn" title="新建会话">+</button>
+    </div>
+    <div class="sidebar__body">
+      <div class="s-group">
+        <div class="s-group__hd" onclick="this.parentElement.classList.toggle('collapsed')">
+          <span class="s-group__toggle">▾</span> xyz-agent
+        </div>
+        <div class="s-group__items">
+          <div class="s-item active has-notif">
+            <span class="dot dot--run"></span>
+            <span class="s-item__title">重构 auth 模块</span>
+            <span class="s-item__notif s-item__notif--done">3</span>
+            <span class="s-item__meta">2h</span>
+          </div>
+          <div class="s-item">
+            <span class="dot dot--idle"></span>
+            <span class="s-item__title">Tauri GUI 设计</span>
+            <span class="s-item__meta">1d</span>
+          </div>
+        </div>
+      </div>
+      <div class="s-group">
+        <div class="s-group__hd" onclick="this.parentElement.classList.toggle('collapsed')">
+          <span class="s-group__toggle">▾</span> work-project
+        </div>
+        <div class="s-group__items">
+          <div class="s-item has-notif">
+            <span class="dot dot--run"></span>
+            <span class="s-item__title">API 性能优化</span>
+            <span class="s-item__notif s-item__notif--alert">1</span>
+            <span class="s-item__meta">5d</span>
+          </div>
+          <div class="s-item">
+            <span class="dot dot--idle"></span>
+            <span class="s-item__title">数据库迁移</span>
+            <span class="s-item__meta">6d</span>
+          </div>
+        </div>
+      </div>
+      <div class="s-group">
+        <div class="s-group__hd" onclick="this.parentElement.classList.toggle('collapsed')">
+          <span class="s-group__toggle">▾</span> diy-pc
+        </div>
+        <div class="s-group__items">
+          <div class="s-item">
+            <span class="dot dot--pause"></span>
+            <span class="s-item__title">价格预测分析</span>
+            <span class="s-item__meta">7d</span>
+          </div>
+          <div class="s-item">
+            <span class="dot dot--run"></span>
+            <span class="s-item__title">4090 比价</span>
+            <span class="s-item__meta">1h</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </aside>
+  <div style="flex:1;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px;">
+    主内容区域
+  </div>
+
+<script>
+document.querySelectorAll('.s-item').forEach(item => {
+  item.addEventListener('click', () => {
+    document.querySelectorAll('.s-item').forEach(i => i.classList.remove('active'));
+    item.classList.add('active');
+  });
+});
+</script>
+</body>
+</html>

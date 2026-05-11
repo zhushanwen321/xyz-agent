@@ -1,51 +1,67 @@
-const COLOR_PATTERN = /^(bg|text|border|ring|outline|shadow|from|to|via|fill|stroke|divide|placeholder|decoration|caret)-(\[#[0-9a-fA-F]+\]|\[rgb|\[hsl|\[oklch|(?:red|orange|yellow|green|blue|indigo|violet|purple|pink|rose|slate|gray|zinc|neutral|stone|amber|lime|emerald|teal|cyan|sky|fuchsia)-\d)/;
+/**
+ * 品味规则：禁止 Vue 模板中的硬编码颜色
+ *
+ * Tailwind 色系（red/blue/gray/slate 等）应替换为语义 token。
+ * 允许的语义色：shadcn-vue 基础色 + 自定义 token（success/warning/danger/info）。
+ */
+const ALLOWED_PREFIXES = [
+  'background', 'foreground', 'primary', 'secondary', 'destructive',
+  'muted', 'accent', 'card', 'popover', 'border', 'input', 'ring',
+  'success', 'warning', 'danger', 'info', 'page', 'sidebar', 'chart',
+  'inherit', 'transparent', 'current', 'black', 'white',
+  'none', 'auto', 'full',
+]
 
-const ALLOWED_TOKENS = new Set([
-  // project tokens
-  'base', 'surface', 'elevated', 'inset', 'ai', 'user',
-  'tertiary', 'inverse',
-  'border-default', 'border-hover',
-  'semantic-green', 'semantic-green-hover', 'semantic-green-muted',
-  'semantic-blue', 'semantic-yellow', 'semantic-red',
-  // shadcn-vue
-  'background', 'foreground',
-  'card', 'card-foreground',
-  'popover', 'popover-foreground',
-  'primary', 'primary-foreground',
-  'secondary', 'secondary-foreground',
-  'muted', 'muted-foreground',
-  'accent', 'accent-foreground',
-  'destructive', 'destructive-foreground',
-  'input', 'ring',
-]);
+const COLOR_UTILS = ['bg', 'text', 'border', 'ring', 'outline', 'shadow',
+  'fill', 'stroke', 'divide', 'from', 'via', 'to', 'decoration', 'placeholder', 'caret']
 
-function checkClassAttr(context, node) {
-  if (node.key.name !== 'class' || !node.value) return;
-  const classStr = node.value.value;
-  if (!classStr) return;
-  for (const token of classStr.split(/\s+/)) {
-    const colorPart = token
-      .replace(/^(?:bg|text|border|ring|outline|shadow|from|to|via|fill|stroke|divide|placeholder|decoration|caret)-/, '')
-      .replace(/\/\d+$/, '');
-    if (COLOR_PATTERN.test(token) && !ALLOWED_TOKENS.has(colorPart)) {
-      context.report({ node, messageId: 'hardcoded', data: { value: token } });
-    }
-  }
+/**
+ * 从单个 class 名中提取颜色部分。
+ * 处理 hover: dark: 等变体前缀 + opacity 修饰符。
+ * 返回 null 表示不是颜色相关的 class。
+ */
+function extractColorName(cls) {
+  // 去掉变体前缀 (hover:, dark:, md:, focus-within: 等)
+  const cleaned = cls.replace(/^(?:[a-z-]+:)+/, '')
+  // 匹配 utility-colorName 或 utility-colorName/opacity
+  const match = cleaned.match(new RegExp(
+    `^(${COLOR_UTILS.join('|')})-(.+?)(?:\\/\\d+)?$`
+  ))
+  if (!match) return null
+  return match[2] // 纯颜色名部分
+}
+
+function isAllowedColor(cls) {
+  const colorName = extractColorName(cls)
+  if (colorName === null) return true // 不是颜色 class
+  return ALLOWED_PREFIXES.some(p => colorName === p || colorName.startsWith(p + '-'))
 }
 
 export default {
   meta: {
     type: 'problem',
-    docs: { description: 'Disallow hardcoded colors in Vue template class attributes' },
-    messages: { hardcoded: 'Use design token instead of hardcoded color: `{{value}}`' },
+    docs: { description: 'Disallow hardcoded Tailwind colors in Vue templates' },
+    messages: {
+      noHardcodedColor: '禁止硬编码颜色 "{{color}}"，请使用语义 token（如 bg-success、text-foreground）。',
+    },
+    fixable: null,
   },
   create(context) {
-    const ps = context.sourceCode?.parserServices;
-    if (ps?.defineTemplateBodyVisitor) {
-      return ps.defineTemplateBodyVisitor({
-        VAttribute(node) { checkClassAttr(context, node); },
-      });
+    return {
+      VAttribute(node) {
+        if (node.key?.name !== 'class') return
+        if (!node.value?.value) return
+        const classes = node.value.value.split(/\s+/)
+        for (const cls of classes) {
+          if (!isAllowedColor(cls)) {
+            context.report({
+              node,
+              messageId: 'noHardcodedColor',
+              data: { color: cls },
+            })
+          }
+        }
+      },
     }
-    return {};
   },
-};
+}

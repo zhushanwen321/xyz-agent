@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Overview — xyz-agent</title>
+<link rel="stylesheet" href="css_design-system.css">
+<style>
+  body { display:flex; align-items:center; justify-content:center; height:100vh; margin:0; background:oklch(15% 0.02 50/0.65); backdrop-filter:blur(20px); }
+  .overview { opacity:1; pointer-events:auto; }
+</style>
+</head>
+<body>
+  <div class="overview visible">
+    <div class="overview__title">窗口总览</div>
+    <div class="overview__grid">
+      <div class="overview__card"><div class="card__preview"><div class="card__preview__line card__preview__line--user">用户: 帮我重构整个 auth 模块</div><div class="card__preview__line card__preview__line--bot">助手: 分解成 4 个子任务并行执行…</div><div class="card__preview__line" style="color:var(--success)">SubAgent「分析代码结构」已完成</div><div class="card__preview__line" style="color:var(--danger)">SubAgent「重构子模块A1」需要确认</div></div><div class="card__footer"><div class="card__title"><span class="card__badge card__badge--run"><span class="card__badge__dot"></span>运行中</span> 重构 auth 模块</div><div class="card__project">xyz-agent · feat/tree-engine</div><div class="card__meta"><span class="card__meta-item">sonnet:high</span><span class="card__meta-item">12.3k tok</span><span class="card__meta-item">完成 2 · 回应 1</span></div></div></div>
+      <div class="overview__card"><div class="card__preview"><div class="card__preview__line card__preview__line--user">用户: 讨论 Tauri GUI 的三栏布局</div><div class="card__preview__line card__preview__line--bot">助手: 建议左侧 240px 会话列表…</div><div class="card__preview__line card__preview__line--user">用户: 右侧面板太占空间了</div><div class="card__preview__line card__preview__line--bot">助手: 改为右侧抽屉，按需展开…</div></div><div class="card__footer"><div class="card__title"><span class="card__badge card__badge--idle"><span class="card__badge__dot"></span>闲置</span> Tauri GUI 设计</div><div class="card__project">xyz-agent · main</div><div class="card__meta"><span class="card__meta-item">sonnet:high</span><span class="card__meta-item">3.1k tok</span></div></div></div>
+      <div class="overview__card"><div class="card__preview"><div class="card__preview__line card__preview__line--user">用户: 优化 API 性能，当前 1.2s</div><div class="card__preview__line card__preview__line--bot">助手: 发现 N+1 查询和缺少缓存…</div><div class="card__preview__line" style="color:var(--danger)">SubAgent「N+1 查询修复」需要确认</div></div><div class="card__footer"><div class="card__title"><span class="card__badge card__badge--run"><span class="card__badge__dot"></span>运行中</span> API 性能优化</div><div class="card__project">work-project · main</div><div class="card__meta"><span class="card__meta-item">sonnet:high</span><span class="card__meta-item">8.7k tok</span><span class="card__meta-item">完成 1 · 回应 1</span></div></div></div>
+      <div class="overview__card"><div class="card__preview"><div class="card__preview__line card__preview__line--user">用户: 把数据库从 MySQL 迁到 PG</div><div class="card__preview__line card__preview__line--bot">助手: 分析了 47 张表的迁移方案…</div><div class="card__preview__line card__preview__line--user">用户: 先迁移核心的 12 张表</div></div><div class="card__footer"><div class="card__title"><span class="card__badge card__badge--idle"><span class="card__badge__dot"></span>闲置</span> 数据库迁移</div><div class="card__project">work-project · feat/migrate</div><div class="card__meta"><span class="card__meta-item">sonnet</span><span class="card__meta-item">1.2k tok</span></div></div></div>
+      <div class="overview__card"><div class="card__preview"><div class="card__preview__line card__preview__line--user">用户: 预测 4090 下半年价格走势</div><div class="card__preview__line card__preview__line--bot">助手: 基于历史数据构建了预测模型…</div><div class="card__preview__line card__preview__line--bot">模型准确率: 87.3%</div></div><div class="card__footer"><div class="card__title"><span class="card__badge card__badge--pause"><span class="card__badge__dot"></span>暂停</span> 价格预测分析</div><div class="card__project">diy-pc · main</div><div class="card__meta"><span class="card__meta-item">deepseek-r1</span><span class="card__meta-item">5.4k tok</span></div></div></div>
+      <div class="overview__card"><div class="card__preview"><div class="card__preview__line card__preview__line--user">用户: 对比 4090 各平台价格</div><div class="card__preview__line card__preview__line--bot">助手: 已抓取京东、淘宝、拼多多价格…</div><div class="card__preview__line card__preview__line--bot">当前最低价: 12,499 (拼多多)</div></div><div class="card__footer"><div class="card__title"><span class="card__badge card__badge--run"><span class="card__badge__dot"></span>运行中</span> 4090 比价</div><div class="card__project">diy-pc · feat/price</div><div class="card__meta"><span class="card__meta-item">sonnet</span><span class="card__meta-item">2.1k tok</span></div></div></div>
+    </div>
+    <div class="overview__hint"><span><kbd>Enter</kbd> 进入</span><span><kbd>Shift</kbd>+<kbd>Enter</kbd> 分屏进入</span><span><kbd>←</kbd><kbd>→</kbd> 选择</span><span><kbd>Esc</kbd> 返回</span></div>
+  </div>
+</body>
+</html>

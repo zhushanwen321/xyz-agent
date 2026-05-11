@@ -1,0 +1,796 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>xyz-agent · Aesthetic Fix Demo</title>
+<style>
+/* ============================================================
+   设计系统 tokens — 完整实现
+   ============================================================ */
+:root {
+  --bg: oklch(97% 0.018 70);
+  --surface: oklch(99% 0.008 70);
+  --fg: oklch(22% 0.02 50);
+  --muted: oklch(50% 0.018 50);
+  --border: oklch(90% 0.014 70);
+  --accent: oklch(64% 0.13 28);
+  --accent-light: oklch(92% 0.04 28);
+  --success: oklch(62% 0.10 145);
+  --success-light: oklch(95% 0.04 145);
+  --warning: oklch(75% 0.10 85);
+  --warning-light: oklch(95% 0.04 85);
+  --danger: oklch(55% 0.12 25);
+  --danger-light: oklch(93% 0.04 25);
+  --font-display: 'Tiempos Headline', 'Newsreader', 'Iowan Old Style', Georgia, serif;
+  --font-body: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+  --radius: 12px;
+  --radius-sm: 8px;
+  --radius-xs: 4px;
+  --sidebar-w: 240px;
+  --header-h: 48px;
+  --statusbar-h: 32px;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+[data-theme="dark"] {
+  --bg: oklch(20% 0.015 50);
+  --surface: oklch(25% 0.015 50);
+  --fg: oklch(92% 0.008 70);
+  --muted: oklch(65% 0.015 50);
+  --border: oklch(35% 0.015 50);
+  --accent: oklch(68% 0.13 28);
+  --accent-light: oklch(30% 0.06 28);
+  --success: oklch(65% 0.10 145);
+  --success-light: oklch(28% 0.04 145);
+  --warning: oklch(78% 0.10 85);
+  --warning-light: oklch(30% 0.04 85);
+  --danger: oklch(58% 0.12 25);
+  --danger-light: oklch(28% 0.04 25);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+body {
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.6;
+  background: var(--bg);
+  color: var(--fg);
+  transition: background 0.25s var(--ease), color 0.25s var(--ease);
+}
+::selection { background: var(--accent); color: white; }
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+a { color: var(--accent); text-decoration: none; }
+code { font-family: var(--font-mono); font-size: 0.9em; }
+
+/* ============================================================
+   App Shell
+   ============================================================ */
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── Header ── */
+.header {
+  display: flex;
+  align-items: center;
+  height: var(--header-h);
+  padding: 0 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  gap: 8px;
+  z-index: 20;
+}
+.header__logo {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.header__logo span { color: var(--accent); }
+.header__spacer { flex: 1; }
+
+/* Notification pills */
+.notif-group { display: flex; gap: 6px; align-items: center; }
+.notif-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-family: var(--font-body);
+  cursor: pointer;
+  transition: all 0.2s var(--ease);
+  white-space: nowrap;
+}
+.notif-btn:hover { background: var(--bg); color: var(--fg); border-color: var(--muted); }
+.notif-btn--done:hover { background: var(--success-light); color: var(--success); border-color: var(--success); }
+.notif-btn--alert:hover { background: var(--danger-light); color: var(--danger); border-color: var(--danger); }
+.notif-dot {
+  position: absolute; top: -4px; right: -4px;
+  width: 18px; height: 18px; border-radius: 50%;
+  font-size: 10px; font-weight: 700; color: white;
+  display: flex; align-items: center; justify-content: center;
+  border: 2px solid var(--surface);
+}
+.notif-dot--done { background: var(--success); }
+.notif-dot--alert { background: var(--danger); }
+.notif-btn svg { width: 14px; height: 14px; }
+
+/* Icon buttons */
+.h-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: transparent;
+  color: var(--muted); cursor: pointer;
+  transition: all 0.2s var(--ease);
+}
+.h-btn:hover { background: var(--accent-light); color: var(--accent); border-color: var(--accent); }
+.h-btn.active { background: var(--accent-light); color: var(--accent); border-color: var(--accent); }
+.h-btn svg { width: 16px; height: 16px; }
+.h-divider { width: 1px; height: 24px; background: var(--border); margin: 0 4px; }
+
+/* ============================================================
+   App Body
+   ============================================================ */
+.app-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+/* ============================================================
+   Sidebar — 解决：布局比例、间距节奏、色温统一
+   ============================================================ */
+.sidebar {
+  width: var(--sidebar-w);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.sidebar__hd {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.sidebar__hd-title {
+  font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.sidebar__hd-btn {
+  width: 22px; height: 22px; border-radius: var(--radius-xs);
+  border: 1px solid var(--border); background: transparent;
+  color: var(--muted); font-size: 13px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.2s var(--ease);
+}
+.sidebar__hd-btn:hover { background: var(--accent-light); color: var(--accent); border-color: var(--accent); }
+.sidebar__body { flex: 1; overflow-y: auto; padding: 6px 0; }
+
+/* Sidebar groups */
+.s-group__hd {
+  display: flex; align-items: center; gap: 5px;
+  padding: 6px 14px;
+  font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--muted); cursor: pointer; user-select: none;
+}
+.s-group__hd:hover { color: var(--fg); }
+.s-group__toggle {
+  font-size: 8px; transition: transform 0.2s var(--ease);
+  display: inline-block; width: 10px; text-align: center;
+}
+.s-group.collapsed .s-group__toggle { transform: rotate(-90deg); }
+.s-group.collapsed .s-group__items { display: none; }
+
+/* Sidebar items */
+.s-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 14px 7px 24px;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  transition: background 0.15s var(--ease), border-color 0.15s var(--ease);
+  user-select: none;
+}
+.s-item:hover { background: var(--accent-light); }
+.s-item.active { background: var(--accent-light); border-left-color: var(--accent); }
+.s-item__title { flex: 1; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.s-item__meta { font-size: 11px; color: var(--muted); white-space: nowrap; display: flex; align-items: center; gap: 4px; }
+
+/* Status dots */
+.dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--border); }
+.dot--run { background: var(--success); animation: dot-pulse 2s infinite; }
+.dot--pause { background: var(--warning); }
+.dot--idle { background: var(--border); }
+@keyframes dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+/* ============================================================
+   Chat Panel — 解决：排版层级、组件质感、交互提示
+   ============================================================ */
+.chat-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Panel bar */
+.panel-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 16px; height: 36px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  font-size: 12px;
+}
+.anchor {
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 10px; border-radius: var(--radius-sm);
+  cursor: pointer; color: var(--fg); font-weight: 600; font-size: 12px;
+  transition: background 0.15s var(--ease);
+  position: relative; user-select: none;
+}
+.anchor:hover { background: var(--accent-light); }
+.anchor__dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.anchor__chevron { font-size: 9px; color: var(--muted); margin-left: 2px; transition: transform 0.15s var(--ease); }
+
+/* Inline notifications in panel bar */
+.panel-notifs { display: flex; align-items: center; gap: 5px; margin-left: auto; }
+.pn-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border-radius: 100px;
+  cursor: pointer; font-size: 11px; font-weight: 600;
+  transition: all 0.15s var(--ease);
+  border: 1px solid transparent;
+}
+.pn-chip--done { background: var(--success-light); color: var(--success); }
+.pn-chip--done:hover { border-color: var(--success); }
+.pn-chip--alert { background: var(--danger-light); color: var(--danger); }
+.pn-chip--alert:hover { border-color: var(--danger); }
+.pn-chip__num {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 14px; height: 14px; border-radius: 7px;
+  font-size: 9px; font-weight: 700; color: white;
+}
+.pn-chip--done .pn-chip__num { background: var(--success); }
+.pn-chip--alert .pn-chip__num { background: var(--danger); animation: dot-pulse 2s infinite; }
+
+/* ============================================================
+   Messages — 解决：字号层级、间距节奏、气泡区分度
+   ============================================================ */
+.chat-msgs {
+  flex: 1; overflow-y: auto;
+  padding: 20px 24px;
+  display: flex; flex-direction: column;
+  gap: 14px;
+}
+.msg {
+  padding: 12px 16px;
+  line-height: 1.6;
+  font-size: 14px;
+}
+.msg--user {
+  align-self: flex-end;
+  max-width: 75%;
+  background: var(--accent-light);
+  border-radius: var(--radius);
+  border-bottom-right-radius: var(--radius-xs);
+}
+.msg--bot {
+  align-self: flex-start;
+  width: 100%;
+  background: transparent;
+}
+.msg__role {
+  font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-bottom: 3px;
+}
+.msg__body p { margin-bottom: 6px; }
+.msg__body p:last-child { margin-bottom: 0; }
+.msg__body code {
+  background: var(--surface);
+  padding: 1px 4px; border-radius: var(--radius-xs);
+  font-size: 0.88em;
+}
+
+/* System message */
+.msg--system {
+  align-self: stretch; width: 100%; max-width: none;
+  border: 1px solid var(--success);
+  background: var(--success-light);
+  border-radius: 0;
+  padding: 10px 14px;
+  font-size: 13px;
+  display: flex; align-items: flex-start; gap: 10px;
+  box-sizing: border-box;
+}
+.msg--system--alert { border-color: var(--danger); background: var(--danger-light); }
+.msg--system__dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 4px; }
+.msg--system__dot--done { background: var(--success); }
+.msg--system__dot--alert { background: var(--danger); }
+.msg--system__content { flex: 1; }
+.msg--system__title { font-weight: 600; font-size: 13px; margin-bottom: 2px; }
+.msg--system__desc { color: var(--muted); font-size: 12px; }
+.msg--system__action { font-size: 12px; color: var(--accent); font-weight: 600; cursor: pointer; margin-top: 4px; display: inline-flex; align-items: center; gap: 3px; }
+.msg--system__action:hover { text-decoration: underline; }
+
+/* ============================================================
+   Tool calls — 解决：代码块质感、信息层级
+   ============================================================ */
+.tool {
+  border: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--surface);
+  margin: 6px 0;
+  overflow: hidden;
+}
+.tool__hd {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 10px;
+  cursor: pointer; font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--muted);
+  user-select: none;
+  transition: background 0.15s var(--ease);
+}
+.tool__hd:hover { background: var(--accent-light); }
+.tool__chevron { transition: transform 0.15s var(--ease); font-size: 9px; }
+.tool.collapsed .tool__chevron { transform: rotate(-90deg); }
+.tool__name { font-weight: 600; color: var(--accent); }
+.tool__path { color: var(--muted); }
+.tool__status { margin-left: auto; font-size: 10px; }
+.tool__status--ok { color: var(--success); }
+.tool__status--running { color: var(--warning); animation: dot-pulse 2s infinite; }
+.tool__bd {
+  padding: 6px 10px 10px;
+  font-size: 11px; line-height: 1.5;
+  max-height: 160px; overflow-y: auto;
+  border-top: 1px solid var(--border);
+  font-family: var(--font-mono);
+  color: var(--muted);
+}
+.tool.collapsed .tool__bd { display: none; }
+
+/* Progress bar */
+.progress { height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; margin: 6px 0; }
+.progress__fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.4s ease; }
+
+/* ============================================================
+   Input area — 解决：输入框质感、focus 状态
+   ============================================================ */
+.chat-input-wrap { position: relative; margin: 0 16px 12px; flex-shrink: 0; }
+.chat-input-container {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 1px 6px rgba(0,0,0,0.04);
+  transition: border-color 0.15s var(--ease), box-shadow 0.15s var(--ease);
+  overflow: visible;
+  position: relative;
+  z-index: 10;
+}
+.chat-input-container:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+}
+.chat-input-textarea {
+  display: block; width: 100%;
+  min-height: calc(1.45em * 2 + 16px);
+  max-height: calc(1.45em * 10 + 16px);
+  padding: 10px 14px 8px;
+  border: none; background: transparent;
+  color: var(--fg); font-family: var(--font-body);
+  font-size: 14px; line-height: 1.45;
+  resize: none; outline: none;
+}
+.chat-input-textarea::placeholder { color: var(--muted); }
+
+/* Toolbar */
+.chat-input-toolbar { display: flex; align-items: center; gap: 4px; padding: 4px 8px 6px; }
+.tb-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 28px; padding: 0 8px;
+  border: none; border-radius: var(--radius-xs);
+  background: transparent; color: var(--muted);
+  font-size: 12px; font-family: var(--font-body);
+  cursor: pointer; transition: all 0.15s var(--ease);
+  gap: 4px; white-space: nowrap; flex-shrink: 0;
+}
+.tb-btn:hover { background: var(--accent-light); color: var(--accent); }
+.tb-btn svg { width: 14px; height: 14px; }
+.tb-model {
+  position: relative;
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 0 8px; height: 28px;
+  border-radius: var(--radius-xs);
+  font-size: 11px; font-family: var(--font-mono);
+  color: var(--fg); cursor: pointer;
+  transition: all 0.15s var(--ease); white-space: nowrap;
+}
+.tb-model:hover { background: var(--accent-light); color: var(--accent); }
+.tb-model__provider { color: var(--muted); font-weight: 400; }
+.tb-spacer { flex: 1; }
+.tb-btn--send {
+  background: var(--accent); color: white;
+  width: 28px; height: 28px; border-radius: var(--radius-xs);
+}
+.tb-btn--send:hover { opacity: 0.88; }
+
+/* ============================================================
+   Statusbar
+   ============================================================ */
+.statusbar {
+  display: flex; align-items: center;
+  height: var(--statusbar-h);
+  padding: 0 16px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  font-size: 11px; color: var(--muted);
+  flex-shrink: 0; gap: 14px;
+}
+.statusbar__dot { width: 5px; height: 5px; border-radius: 50%; background: var(--success); }
+
+/* ============================================================
+   Demo helpers — 对比展示面板
+   ============================================================ */
+.demo-note {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: 10px 16px;
+  font-size: 12px; color: var(--muted);
+  display: flex; align-items: center; gap: 12px;
+  z-index: 100;
+}
+.demo-note__badge {
+  padding: 2px 8px; border-radius: 100px;
+  background: var(--accent-light); color: var(--accent);
+  font-weight: 600; font-size: 11px;
+}
+
+/* Theme toggle in statusbar */
+.theme-toggle {
+  margin-left: auto;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-family: var(--font-body);
+  cursor: pointer;
+  transition: all 0.2s var(--ease);
+}
+.theme-toggle:hover { background: var(--accent-light); color: var(--accent); border-color: var(--accent); }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- ═══════════ Header ═══════════ -->
+  <div class="header">
+    <div class="header__logo">xyz<span>-agent</span></div>
+    <div class="header__spacer"></div>
+
+    <!-- Notification pills -->
+    <div class="notif-group">
+      <button class="notif-btn notif-btn--done">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 8.5l3.5 3.5 8.5-8.5"/></svg>
+        已完成
+        <span class="notif-dot notif-dot--done">2</span>
+      </button>
+      <button class="notif-btn notif-btn--alert">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="6.5"/><path d="M8 5v3.5"/><circle cx="8" cy="11" r="0.5" fill="currentColor"/></svg>
+        请求回应
+        <span class="notif-dot notif-dot--alert">1</span>
+      </button>
+    </div>
+
+    <div class="h-divider"></div>
+
+    <!-- View toggles -->
+    <button class="h-btn" title="分屏模式">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="1.5" y="2.5" width="13" height="11" rx="1"/><path d="M8 2.5v11"/></svg>
+    </button>
+    <button class="h-btn" title="Mission Control">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="1.5" y="1.5" width="5" height="5" rx="1"/><rect x="9.5" y="1.5" width="5" height="5" rx="1"/><rect x="1.5" y="9.5" width="5" height="5" rx="1"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/></svg>
+    </button>
+    <button class="h-btn" title="设置">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="2.5"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/></svg>
+    </button>
+  </div>
+
+  <!-- ═══════════ App Body ═══════════ -->
+  <div class="app-body">
+
+    <!-- ──── Sidebar ──── -->
+    <div class="sidebar">
+      <div class="sidebar__hd">
+        <span class="sidebar__hd-title">Session 列表</span>
+        <button class="sidebar__hd-btn" title="新建会话">+</button>
+      </div>
+      <div class="sidebar__body">
+        <!-- Running group -->
+        <div class="s-group">
+          <div class="s-group__hd">
+            <span class="s-group__toggle">▾</span>
+            运行中
+          </div>
+          <div class="s-group__items">
+            <div class="s-item active">
+              <span class="dot dot--run"></span>
+              <span class="s-item__title">重构 auth 模块</span>
+              <span class="s-item__meta">2m 34s</span>
+            </div>
+            <div class="s-item">
+              <span class="dot dot--run"></span>
+              <span class="s-item__title">数据库迁移脚本</span>
+              <span class="s-item__meta">1m 12s</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Paused group -->
+        <div class="s-group">
+          <div class="s-group__hd">
+            <span class="s-group__toggle">▾</span>
+            已暂停
+          </div>
+          <div class="s-group__items">
+            <div class="s-item">
+              <span class="dot dot--pause"></span>
+              <span class="s-item__title">API 文档生成</span>
+              <span class="s-item__meta">等待确认</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Idle group -->
+        <div class="s-group">
+          <div class="s-group__hd">
+            <span class="s-group__toggle">▾</span>
+            更早
+          </div>
+          <div class="s-group__items">
+            <div class="s-item">
+              <span class="dot dot--idle"></span>
+              <span class="s-item__title">性能优化分析</span>
+              <span class="s-item__meta">3h 前</span>
+            </div>
+            <div class="s-item">
+              <span class="dot dot--idle"></span>
+              <span class="s-item__title">日志系统重构</span>
+              <span class="s-item__meta">昨天</span>
+            </div>
+            <div class="s-item">
+              <span class="dot dot--idle"></span>
+              <span class="s-item__title">E2E 测试编写</span>
+              <span class="s-item__meta">2天前</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ──── Chat Panel ──── -->
+    <div class="chat-panel">
+      <!-- Panel bar -->
+      <div class="panel-bar">
+        <div class="anchor">
+          <span class="anchor__dot" style="background:var(--success)"></span>
+          <span>主线对话</span>
+          <span class="anchor__chevron">▾</span>
+        </div>
+        <div class="panel-notifs">
+          <span class="pn-chip pn-chip--done">
+            <span class="pn-chip__num">2</span>
+            已完成
+          </span>
+          <span class="pn-chip pn-chip--alert">
+            <span class="pn-chip__num">1</span>
+            待回应
+          </span>
+        </div>
+      </div>
+
+      <!-- Messages -->
+      <div class="chat-msgs">
+        <!-- User message -->
+        <div class="msg msg--user">
+          <div class="msg__role">用户</div>
+          <div class="msg__body">
+            <p>帮我重构整个 auth 模块，包括接口定义、错误处理和单元测试。</p>
+          </div>
+        </div>
+
+        <!-- Bot message -->
+        <div class="msg msg--bot">
+          <div class="msg__role">助手</div>
+          <div class="msg__body">
+            <p>好的，我来分步进行：</p>
+            <p>
+              1. <strong>分析现有 auth 模块结构</strong>，梳理接口定义和依赖关系<br>
+              2. <strong>统一接口定义</strong>，消除重复和冗余<br>
+              3. <strong>重构错误处理</strong>，建立统一的错误类型体系<br>
+              4. <strong>编写单元测试</strong>，覆盖核心路径
+            </p>
+          </div>
+        </div>
+
+        <!-- Bot message with tool call -->
+        <div class="msg msg--bot">
+          <div class="msg__role">助手</div>
+          <div class="msg__body">
+            <p>首先分析一下现有的文件结构：</p>
+            <div class="tool collapsed" onclick="this.classList.toggle('collapsed')">
+              <div class="tool__hd">
+                <span class="tool__chevron">▾</span>
+                <span class="tool__name">bash</span>
+                <span class="tool__path">tree src/auth</span>
+                <span class="tool__status tool__status--ok">完成</span>
+              </div>
+              <div class="tool__bd">src/auth/<br>├── interfaces.ts<br>├── session.ts<br>├── errors.ts<br>├── middleware.ts<br>└── index.ts</div>
+            </div>
+            <p>发现了 3 个主要问题：</p>
+            <ul style="padding-left:18px;margin:4px 0;">
+              <li>接口定义散落在 3 个文件中</li>
+              <li>错误处理使用了 5 种不同的错误类</li>
+              <li>Session 管理逻辑与认证逻辑耦合</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- System message (done) -->
+        <div class="msg msg--system">
+          <span class="msg--system__dot msg--system__dot--done"></span>
+          <div class="msg--system__content">
+            <div class="msg--system__title">分析代码结构已完成</div>
+            <div class="msg--system__desc">耗时 2m 34s · 消耗 1.2k tokens · 发现 3 个主要问题</div>
+            <span class="msg--system__action">查看结果 ▾</span>
+          </div>
+        </div>
+
+        <!-- Bot message with progress -->
+        <div class="msg msg--bot">
+          <div class="msg__role">助手 · 重构中</div>
+          <div class="msg__body">
+            <p>正在重构核心接口，进度 67%：</p>
+            <div class="progress"><div class="progress__fill" style="width:67%"></div></div>
+
+            <!-- Expanded tool call -->
+            <div class="tool" onclick="this.classList.toggle('collapsed')">
+              <div class="tool__hd">
+                <span class="tool__chevron">▾</span>
+                <span class="tool__name">edit</span>
+                <span class="tool__path">src/auth/interfaces.ts</span>
+                <span class="tool__status tool__status--ok">完成</span>
+              </div>
+              <div class="tool__bd">统一了 IAuthResponse、ITokenPayload、ISession 接口定义，新增 IAuthModule 聚合接口。<br><br>删除了 auth.types.ts 和 auth.d.ts 中的重复定义，统一到 interfaces.ts 中。</div>
+            </div>
+
+            <!-- Running tool call -->
+            <div class="tool collapsed" onclick="this.classList.toggle('collapsed')">
+              <div class="tool__hd">
+                <span class="tool__chevron">▾</span>
+                <span class="tool__name">edit</span>
+                <span class="tool__path">src/auth/errors.ts</span>
+                <span class="tool__status tool__status--running">运行中</span>
+              </div>
+              <div class="tool__bd">合并 5 个错误类为统一的 AuthError 基类...</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- System message (alert) -->
+        <div class="msg msg--system msg--system--alert">
+          <span class="msg--system__dot msg--system__dot--alert"></span>
+          <div class="msg--system__content">
+            <div class="msg--system__title">SubAgent 请求确认</div>
+            <div class="msg--system__desc">重构 middleware.ts 需要删除 2 个废弃的中间件函数，是否继续?</div>
+            <span class="msg--system__action">回应请求 ▾</span>
+          </div>
+        </div>
+
+        <!-- Another user message -->
+        <div class="msg msg--user">
+          <div class="msg__role">用户</div>
+          <div class="msg__body">
+            <p>继续，废弃的直接删掉就行。</p>
+          </div>
+        </div>
+
+        <!-- Bot reply -->
+        <div class="msg msg--bot">
+          <div class="msg__role">助手</div>
+          <div class="msg__body">
+            <p>收到，继续删除废弃中间件并完成剩余重构。预计还需 3 分钟。</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Input area -->
+      <div class="chat-input-wrap">
+        <div class="chat-input-container">
+          <textarea class="chat-input-textarea" placeholder="输入消息… (Enter 发送, Shift+Enter 换行, / 命令)" rows="2"></textarea>
+          <div class="chat-input-toolbar">
+            <button class="tb-btn" title="附加文件">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4.5 11.5l7-7a2.12 2.12 0 113 3l-7 7a4.24 4.24 0 01-6-6l7-7"/></svg>
+            </button>
+            <div class="tb-model">
+              deepseek-v3 <span class="tb-model__provider">@ deepseek</span>
+            </div>
+            <div class="tb-spacer"></div>
+            <button class="tb-btn tb-btn--send" title="发送">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2.5 8h11M9 3.5L13.5 8 9 12.5"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════ Statusbar ═══════════ -->
+  <div class="statusbar">
+    <span class="statusbar__dot"></span>
+    <span>已连接</span>
+    <span>·</span>
+    <span>2 个 SubAgent 运行中</span>
+    <span>·</span>
+    <span style="font-family:var(--font-mono)">token: 12.4k / 128k</span>
+    <button class="theme-toggle" onclick="toggleTheme()">切换深色/浅色</button>
+  </div>
+</div>
+
+<!-- Demo note -->
+<div class="demo-note">
+  <span class="demo-note__badge">Demo</span>
+  基于设计系统 DESIGN.md 的完整实现。点击工具调用卡片可展开/收起，点击右下角可切换深色模式。
+</div>
+
+<script>
+function toggleTheme() {
+  const html = document.documentElement;
+  const current = html.getAttribute('data-theme');
+  html.setAttribute('data-theme', current === 'dark' ? 'light' : 'dark');
+}
+
+// Toggle sidebar groups
+document.querySelectorAll('.s-group__hd').forEach(hd => {
+  hd.addEventListener('click', () => {
+    hd.parentElement.classList.toggle('collapsed');
+  });
+});
+
+// Simulate typing in textarea (focus effect demo)
+const textarea = document.querySelector('.chat-input-textarea');
+if (textarea) {
+  textarea.addEventListener('focus', () => {
+    // Focus state is handled by CSS :focus-within on parent
+  });
+}
+</script>
+
+</body>
+</html>

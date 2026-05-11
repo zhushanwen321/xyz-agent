@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Skill 配置 — xyz-agent</title>
+<style>
+:root{--bg:oklch(97% 0.018 70);--surface:oklch(99% 0.008 70);--fg:oklch(22% 0.02 50);--muted:oklch(50% 0.018 50);--border:oklch(90% 0.014 70);--accent:oklch(64% 0.13 28);--accent-light:oklch(92% 0.04 28);--success:oklch(70% 0.18 145);--success-light:oklch(95% 0.06 145);--warning:oklch(78% 0.15 85);--warning-light:oklch(95% 0.06 85);--danger:oklch(62% 0.2 25);--danger-light:oklch(93% 0.06 25);--font-display:'Tiempos Headline','Newsreader','Iowan Old Style',Georgia,serif;--font-body:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;--font-mono:'JetBrains Mono','IBM Plex Mono',ui-monospace,Menlo,monospace;--radius:12px;--radius-sm:8px;--radius-xs:4px;--ease:cubic-bezier(0.4,0,0.2,1)}
+[data-theme="dark"]{--bg:oklch(20% 0.015 50);--surface:oklch(25% 0.015 50);--fg:oklch(92% 0.008 70);--muted:oklch(65% 0.015 50);--border:oklch(35% 0.015 50);--accent:oklch(68% 0.13 28);--accent-light:oklch(30% 0.06 28);--success:oklch(70% 0.18 145);--success-light:oklch(28% 0.06 145);--warning:oklch(78% 0.15 85);--warning-light:oklch(30% 0.06 85);--danger:oklch(62% 0.2 25);--danger-light:oklch(28% 0.06 25)}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-font-smoothing:antialiased}
+body{font-family:var(--font-body);font-size:14px;line-height:1.6;background:var(--bg);color:var(--fg);transition:background 0.25s var(--ease),color 0.25s var(--ease)}
+::selection{background:var(--accent);color:white}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+.page{max-width:860px;margin:0 auto;padding:32px 40px}
+.page__hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:28px}
+.page__title{font-family:var(--font-display);font-size:22px;font-weight:700;letter-spacing:-0.01em}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 18px;border-radius:var(--radius-sm);border:1px solid var(--border);background:transparent;color:var(--muted);font-size:13px;font-family:var(--font-body);cursor:pointer;transition:all 0.2s var(--ease);white-space:nowrap}
+.btn:hover{background:var(--accent-light);color:var(--accent);border-color:var(--accent)}
+.btn--primary{background:var(--accent);color:white;border-color:var(--accent)}
+.btn--primary:hover{opacity:0.88}
+.btn--sm{padding:5px 12px;font-size:12px;border-radius:var(--radius-xs)}
+.btn--danger:hover{background:var(--danger-light);color:var(--danger);border-color:var(--danger)}
+.btn--ghost{border:none;color:var(--muted);padding:5px 8px}
+.btn--ghost:hover{color:var(--accent);background:var(--accent-light)}
+.section-divider{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);margin:20px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--border)}
+.import-section{margin-bottom:24px}
+.import-section__title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);margin-bottom:12px;padding-bottom:6px;border-bottom:1px solid var(--border)}
+.import-paths{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.import-path{display:flex;align-items:center;gap:8px;padding:8px 14px;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;transition:all 0.15s var(--ease);font-size:13px;user-select:none}
+.import-path:hover{border-color:var(--accent);background:var(--accent-light)}
+.import-path.active{border-color:var(--accent);background:var(--accent-light);color:var(--accent)}
+.import-path__icon{width:20px;height:20px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:white;flex-shrink:0}
+.import-path__icon--pi{background:var(--accent)}
+.import-path__icon--claude{background:oklch(60% 0.15 280)}
+.import-path__icon--agents{background:var(--success)}
+.import-path__label{font-weight:500}
+.import-path__path{font-family:var(--font-mono);font-size:11px;color:var(--muted)}
+.custom-path{display:flex;gap:8px;align-items:center}
+.custom-path__input{flex:1;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--fg);font-family:var(--font-mono);font-size:13px;outline:none;transition:border-color 0.15s var(--ease)}
+.custom-path__input:focus{border-color:var(--accent)}
+.custom-path__input::placeholder{color:var(--muted)}
+.skill-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:12px;overflow:hidden;transition:border-color 0.2s var(--ease)}
+.skill-card:hover{border-color:oklch(80% 0.01 70)}
+.skill-card.disabled{opacity:0.6}
+.skill-card__hd{display:flex;align-items:center;gap:12px;padding:14px 18px;cursor:pointer}
+.skill-card__toggle{position:relative;width:36px;height:20px;border-radius:10px;background:var(--success);cursor:pointer;flex-shrink:0;transition:background 0.2s var(--ease)}
+.skill-card__toggle::after{content:'';position:absolute;top:2px;left:18px;width:16px;height:16px;border-radius:50%;background:white;transition:left 0.2s var(--ease);box-shadow:0 1px 3px rgba(0,0,0,0.15)}
+.skill-card__toggle.off{background:var(--border)}
+.skill-card__toggle.off::after{left:2px}
+.skill-card__info{flex:1;min-width:0}
+.skill-card__name{font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px}
+.skill-card__name-tag{font-size:10px;font-weight:600;padding:1px 6px;border-radius:4px;background:var(--accent-light);color:var(--accent)}
+.skill-card__desc{font-size:12px;color:var(--muted);margin-top:2px;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
+.skill-card__source{font-size:11px;color:var(--muted);font-family:var(--font-mono);margin-top:2px}
+.skill-card__actions{display:flex;gap:4px;flex-shrink:0}
+.skill-card__chevron{font-size:10px;color:var(--muted);transition:transform 0.2s var(--ease);margin-left:4px}
+.skill-card.expanded .skill-card__chevron{transform:rotate(180deg)}
+.skill-card__bd{padding:0 18px 16px;display:none}
+.skill-card.expanded .skill-card__bd{display:block}
+.meta-grid{display:grid;grid-template-columns:100px 1fr;gap:4px 12px;font-size:12px;margin-bottom:12px}
+.meta-grid__key{color:var(--muted);font-weight:500}
+.meta-grid__val{font-family:var(--font-mono);font-size:11px;color:var(--fg);word-break:break-all}
+.editor{border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden}
+.editor__bar{display:flex;align-items:center;justify-content:space-between;padding:6px 12px;background:var(--bg);border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)}
+.editor__textarea{width:100%;min-height:200px;max-height:400px;padding:12px;border:none;background:var(--surface);color:var(--fg);font-family:var(--font-mono);font-size:12px;line-height:1.6;resize:vertical;outline:none}
+.editor__textarea::placeholder{color:var(--muted)}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="page__hd">
+    <div class="page__title">Skill 配置</div>
+  </div>
+
+  <div class="import-section">
+    <div class="import-section__title">导入 Skill</div>
+    <div class="import-paths">
+      <div class="import-path active" onclick="selectSource(this)">
+        <span class="import-path__icon import-path__icon--pi">P</span>
+        <span>
+          <span class="import-path__label">Pi Skills</span><br>
+          <span class="import-path__path">~/.pi/agent/skills/</span>
+        </span>
+      </div>
+      <div class="import-path" onclick="selectSource(this)">
+        <span class="import-path__icon import-path__icon--claude">C</span>
+        <span>
+          <span class="import-path__label">Claude Code</span><br>
+          <span class="import-path__path">~/.claude/skills/</span>
+        </span>
+      </div>
+      <div class="import-path" onclick="selectSource(this)">
+        <span class="import-path__icon import-path__icon--agents">A</span>
+        <span>
+          <span class="import-path__label">Agents</span><br>
+          <span class="import-path__path">~/.agents/skills/</span>
+        </span>
+      </div>
+    </div>
+    <div class="custom-path">
+      <input class="custom-path__input" placeholder="自定义路径，如 ~/my-project/.skills/">
+      <button class="btn btn--sm">扫描</button>
+    </div>
+  </div>
+
+  <div class="section-divider">已导入 · 6 个 Skill</div>
+
+  <div class="skill-card" id="skill-code-trace">
+    <div class="skill-card__hd" onclick="toggleCard(this)">
+      <div class="skill-card__toggle" onclick="event.stopPropagation();toggleSkill(this)"></div>
+      <div class="skill-card__info">
+        <div class="skill-card__name">code-trace <span class="skill-card__name-tag">pi</span></div>
+        <div class="skill-card__desc">分析代码文件的完整调用链路和数据流，找出上下游调用关系和数据生产源头</div>
+        <div class="skill-card__source">~/.pi/agent/skills/code-trace/SKILL.md</div>
+      </div>
+      <div class="skill-card__actions">
+        <button class="btn btn--ghost btn--sm" onclick="event.stopPropagation();toggleEdit(this)">编辑</button>
+        <button class="btn btn--ghost btn--sm btn--danger" onclick="event.stopPropagation()">删除</button>
+      <span class="skill-card__chevron">▾</span>
+    </div>
+    <div class="skill-card__bd">
+      <div class="meta-grid">
+        <span class="meta-grid__key">名称</span><span class="meta-grid__val">code-trace</span>
+        <span class="meta-grid__key">触发词</span><span class="meta-grid__val">分析链路、trace code、code-trace、链路分析</span>
+        <span class="meta-grid__key">来源</span><span class="meta-grid__val">pi · ~/.pi/agent/skills/</span>
+        <span class="meta-grid__key">文件大小</span><span class="meta-grid__val">4.2 KB</span>
+        <span class="meta-grid__key">依赖工具</span><span class="meta-grid__val">read, bash, grep</span>
+      </div>
+      <div class="editor" id="editor-code-trace" style="display:none">
+        <div class="editor__bar"><span>SKILL.md</span><button class="btn btn--sm" onclick="saveEdit(this)">保存</button></div>
+        <textarea class="editor__textarea" spellcheck="false">---
+name: code-trace
+description: 分析代码文件的完整调用链路和数据流，找出上下游调用关系和数据生产源头，审查链路正确性并评分。
+triggers: ["分析链路", "trace code", "code-trace", "链路分析"]
+tools: [read, bash, grep]
+---
+
+# Code Trace
+
+分析代码文件的完整调用链路和数据流。
+
+## 工作流程
+
+1. 读取目标文件，识别导出函数/类
+2. 逐个追踪调用链路（入 → 函数 → 出）
+3. 标记数据流方向和关键节点
+4. 输出调用链路图 + 正确性评分</textarea>
+      </div>
+    </div>
+  </div>
+
+  <div class="skill-card" id="skill-issue-trace">
+    <div class="skill-card__hd" onclick="toggleCard(this)">
+      <div class="skill-card__toggle" onclick="event.stopPropagation();toggleSkill(this)"></div>
+      <div class="skill-card__info">
+        <div class="skill-card__name">issue-trace <span class="skill-card__name-tag">pi</span></div>
+        <div class="skill-card__desc">分析用户发现的问题，通过构建调用链路和数据链路来验证问题是否真实存在</div>
+        <div class="skill-card__source">~/.pi/agent/skills/issue-trace/SKILL.md</div>
+      </div>
+      <div class="skill-card__actions">
+        <button class="btn btn--ghost btn--sm" onclick="event.stopPropagation();toggleEdit(this)">编辑</button>
+        <button class="btn btn--ghost btn--sm btn--danger" onclick="event.stopPropagation()">删除</button>
+      <span class="skill-card__chevron">▾</span>
+    </div>
+    <div class="skill-card__bd">
+      <div class="meta-grid">
+        <span class="meta-grid__key">名称</span><span class="meta-grid__val">issue-trace</span>
+        <span class="meta-grid__key">触发词</span><span class="meta-grid__val">分析问题、issue-trace、问题链路、审查问题</span>
+        <span class="meta-grid__key">来源</span><span class="meta-grid__val">pi · ~/.pi/agent/skills/</span>
+        <span class="meta-grid__key">文件大小</span><span class="meta-grid__val">3.8 KB</span>
+        <span class="meta-grid__key">依赖工具</span><span class="meta-grid__val">read, bash, grep</span>
+      </div>
+      <div class="editor" style="display:none">
+        <div class="editor__bar"><span>SKILL.md</span><button class="btn btn--sm" onclick="saveEdit(this)">保存</button></div>
+        <textarea class="editor__textarea" spellcheck="false">---
+name: issue-trace
+description: 分析用户发现的问题，通过构建调用链路和数据链路来验证问题是否真实存在
+triggers: ["分析问题", "issue-trace", "问题链路"]
+tools: [read, bash, grep]
+---
+
+# Issue Trace</textarea>
+      </div>
+    </div>
+  </div>
+
+  <div class="skill-card" id="skill-review-tracer">
+    <div class="skill-card__hd" onclick="toggleCard(this)">
+      <div class="skill-card__toggle" onclick="event.stopPropagation();toggleSkill(this)"></div>
+      <div class="skill-card__info">
+        <div class="skill-card__name">review-tracer <span class="skill-card__name-tag">pi</span></div>
+        <div class="skill-card__desc">审查代码审查工具的输出质量，对审查结果进行评分和评估</div>
+        <div class="skill-card__source">~/.pi/agent/skills/review-tracer/SKILL.md</div>
+      </div>
+      <div class="skill-card__actions">
+        <button class="btn btn--ghost btn--sm" onclick="event.stopPropagation();toggleEdit(this)">编辑</button>
+        <button class="btn btn--ghost btn--sm btn--danger" onclick="event.stopPropagation()">删除</button>
+      <span class="skill-card__chevron">▾</span>
+    </div>
+    <div class="skill-card__bd">
+      <div class="meta-grid">
+        <span class="meta-grid__key">名称</span><span class="meta-grid__val">review-tracer</span>
+        <span class="meta-grid__key">触发词</span><span class="meta-grid__val">审查审查者、review-tracer、评估审查质量</span>
+        <span class="meta-grid__key">来源</span><span class="meta-grid__val">pi · ~/.pi/agent/skills/</span>
+        <span class="meta-grid__key">文件大小</span><span class="meta-grid__val">2.9 KB</span>
+        <span class="meta-grid__key">依赖工具</span><span class="meta-grid__val">read, bash</span>
+      </div>
+      <div class="editor" style="display:none">
+        <div class="editor__bar"><span>SKILL.md</span><button class="btn btn--sm" onclick="saveEdit(this)">保存</button></div>
+        <textarea class="editor__textarea" spellcheck="false">---
+name: review-tracer
+description: 审查代码审查工具的输出质量
+---
+
+# Review Tracer</textarea>
+      </div>
+    </div>
+  </div>
+
+  <div class="skill-card" id="skill-batch-tracer">
+    <div class="skill-card__hd" onclick="toggleCard(this)">
+      <div class="skill-card__toggle" onclick="event.stopPropagation();toggleSkill(this)"></div>
+      <div class="skill-card__info">
+        <div class="skill-card__name">batch-tracer <span class="skill-card__name-tag">pi</span></div>
+        <div class="skill-card__desc">批量代码分析调度器，对指定目录下的所有源代码文件执行完整的三阶段分析链路</div>
+        <div class="skill-card__source">~/.pi/agent/skills/batch-tracer/SKILL.md</div>
+      </div>
+      <div class="skill-card__actions">
+        <button class="btn btn--ghost btn--sm" onclick="event.stopPropagation();toggleEdit(this)">编辑</button>
+        <button class="btn btn--ghost btn--sm btn--danger" onclick="event.stopPropagation()">删除</button>
+      <span class="skill-card__chevron">▾</span>
+    </div>
+    <div class="skill-card__bd">
+      <div class="meta-grid">
+        <span class="meta-grid__key">名称</span><span class="meta-grid__val">batch-tracer</span>
+        <span class="meta-grid__key">触发词</span><span class="meta-grid__val">批量分析、batch-tracer、全量分析</span>
+        <span class="meta-grid__key">来源</span><span class="meta-grid__val">pi · ~/.pi/agent/skills/</span>
+        <span class="meta-grid__key">文件大小</span><span class="meta-grid__val">5.1 KB</span>
+        <span class="meta-grid__key">依赖工具</span><span class="meta-grid__val">read, bash, grep</span>
+      </div>
+      <div class="editor" style="display:none">
+        <div class="editor__bar"><span>SKILL.md</span><button class="btn btn--sm" onclick="saveEdit(this)">保存</button></div>
+        <textarea class="editor__textarea" spellcheck="false">---
+name: batch-tracer
+description: 批量代码分析调度器
+---
+
+# Batch Tracer</textarea>
+      </div>
+    </div>
+  </div>
+
+  <div class="skill-card disabled" id="skill-ts-taste">
+    <div class="skill-card__hd" onclick="toggleCard(this)">
+      <div class="skill-card__toggle off" onclick="event.stopPropagation();toggleSkill(this)"></div>
+      <div class="skill-card__info">
+        <div class="skill-card__name">ts-taste-check <span class="skill-card__name-tag">pi</span></div>
+        <div class="skill-card__desc">参照代码品味指导文件，审查并重构 TypeScript / Vue 代码</div>
+        <div class="skill-card__source">~/.pi/agent/skills/ts-taste-check/SKILL.md</div>
+      </div>
+      <div class="skill-card__actions">
+        <button class="btn btn--ghost btn--sm" onclick="event.stopPropagation();toggleEdit(this)">编辑</button>
+        <button class="btn btn--ghost btn--sm btn--danger" onclick="event.stopPropagation()">删除</button>
+      <span class="skill-card__chevron">▾</span>
+    </div>
+    <div class="skill-card__bd">
+      <div class="meta-grid">
+        <span class="meta-grid__key">名称</span><span class="meta-grid__val">ts-taste-check</span>
+        <span class="meta-grid__key">触发词</span><span class="meta-grid__val">品味检查、ts-taste-check、审查 ts 代码质量</span>
+        <span class="meta-grid__key">来源</span><span class="meta-grid__val">pi · ~/.pi/agent/skills/</span>
+        <span class="meta-grid__key">文件大小</span><span class="meta-grid__val">6.3 KB</span>
+        <span class="meta-grid__key">依赖工具</span><span class="meta-grid__val">read, bash, edit</span>
+      </div>
+      <div class="editor" style="display:none">
+        <div class="editor__bar"><span>SKILL.md</span><button class="btn btn--sm" onclick="saveEdit(this)">保存</button></div>
+        <textarea class="editor__textarea" spellcheck="false">---
+name: ts-taste-check
+description: 参照代码品味指导文件，审查并重构 TypeScript / Vue 代码
+---
+
+# TS Taste Check</textarea>
+      </div>
+    </div>
+  </div>
+
+  <div class="skill-card" id="skill-zcommit">
+    <div class="skill-card__hd" onclick="toggleCard(this)">
+      <div class="skill-card__toggle" onclick="event.stopPropagation();toggleSkill(this)"></div>
+      <div class="skill-card__info">
+        <div class="skill-card__name">zcommit <span class="skill-card__name-tag">pi</span></div>
+        <div class="skill-card__desc">执行 git commit 操作，智能分析变更并创建规范的提交信息</div>
+        <div class="skill-card__source">~/.pi/agent/skills/zcommit/SKILL.md</div>
+      </div>
+      <div class="skill-card__actions">
+        <button class="btn btn--ghost btn--sm" onclick="event.stopPropagation();toggleEdit(this)">编辑</button>
+        <button class="btn btn--ghost btn--sm btn--danger" onclick="event.stopPropagation()">删除</button>
+      <span class="skill-card__chevron">▾</span>
+    </div>
+    <div class="skill-card__bd">
+      <div class="meta-grid">
+        <span class="meta-grid__key">名称</span><span class="meta-grid__val">zcommit</span>
+        <span class="meta-grid__key">触发词</span><span class="meta-grid__val">zcommit、提交、commit、提交代码</span>
+        <span class="meta-grid__key">来源</span><span class="meta-grid__val">pi · ~/.pi/agent/skills/</span>
+        <span class="meta-grid__key">文件大小</span><span class="meta-grid__val">1.8 KB</span>
+        <span class="meta-grid__key">依赖工具</span><span class="meta-grid__val">bash, read, edit</span>
+      </div>
+      <div class="editor" style="display:none">
+        <div class="editor__bar"><span>SKILL.md</span><button class="btn btn--sm" onclick="saveEdit(this)">保存</button></div>
+        <textarea class="editor__textarea" spellcheck="false">---
+name: zcommit
+description: 执行 git commit 操作，智能分析变更并创建规范的提交信息
+---
+
+# ZCommit</textarea>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  window.toggleCard=function(hd){ hd.closest('.skill-card').classList.toggle('expanded'); };
+  window.toggleSkill=function(toggle){
+    toggle.classList.toggle('off');
+    var card=toggle.closest('.skill-card');
+    card.classList.toggle('disabled');
+  };
+  window.toggleEdit=function(btn){
+    var card=btn.closest('.skill-card');
+    var editor=card.querySelector('.editor');
+    var showing=editor.style.display!=='none';
+    editor.style.display=showing?'none':'block';
+    btn.textContent=showing?'编辑':'收起';
+  };
+  window.saveEdit=function(btn){
+    var editor=btn.closest('.editor');
+    editor.style.display='none';
+    var cardBtn=editor.closest('.skill-card').querySelector('.skill-card__actions .btn');
+    if(cardBtn) cardBtn.textContent='编辑';
+  };
+  window.selectSource=function(el){
+    el.classList.toggle('active');
+  };
+})();
+</script>
+</body>
+</html>

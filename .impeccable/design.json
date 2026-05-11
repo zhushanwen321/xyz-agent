@@ -1,0 +1,161 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-05-08T00:00:00Z",
+  "title": "Design System: xyz-agent",
+  "extensions": {
+    "colorMeta": {
+      "bg": { "role": "neutral", "displayName": "Warm Cream", "canonical": "oklch(97% 0.018 70)", "tonalRamp": ["oklch(20% 0.015 50)", "oklch(35% 0.015 50)", "oklch(50% 0.018 50)", "oklch(65% 0.018 50)", "oklch(80% 0.016 70)", "oklch(90% 0.014 70)", "oklch(97% 0.018 70)", "oklch(99% 0.008 70)"] },
+      "surface": { "role": "neutral", "displayName": "Warm Surface", "canonical": "oklch(99% 0.008 70)", "tonalRamp": ["oklch(20% 0.015 50)", "oklch(25% 0.015 50)", "oklch(35% 0.015 50)", "oklch(50% 0.018 50)", "oklch(65% 0.018 50)", "oklch(80% 0.016 70)", "oklch(90% 0.014 70)", "oklch(99% 0.008 70)"] },
+      "fg": { "role": "neutral", "displayName": "Deep Warm Brown", "canonical": "oklch(22% 0.02 50)", "tonalRamp": ["oklch(15% 0.02 50)", "oklch(22% 0.02 50)", "oklch(30% 0.02 50)", "oklch(40% 0.02 50)", "oklch(50% 0.018 50)", "oklch(65% 0.018 50)", "oklch(80% 0.016 70)", "oklch(92% 0.008 70)"] },
+      "muted": { "role": "neutral", "displayName": "Warm Gray", "canonical": "oklch(50% 0.018 50)", "tonalRamp": ["oklch(20% 0.015 50)", "oklch(30% 0.015 50)", "oklch(40% 0.018 50)", "oklch(50% 0.018 50)", "oklch(60% 0.018 50)", "oklch(70% 0.016 50)", "oklch(80% 0.014 50)", "oklch(90% 0.012 50)"] },
+      "border": { "role": "neutral", "displayName": "Warm Border", "canonical": "oklch(90% 0.014 70)", "tonalRamp": ["oklch(20% 0.015 50)", "oklch(30% 0.015 50)", "oklch(40% 0.015 50)", "oklch(50% 0.015 50)", "oklch(60% 0.014 50)", "oklch(70% 0.014 50)", "oklch(80% 0.014 50)", "oklch(90% 0.014 70)"] },
+      "accent": { "role": "primary", "displayName": "Terracotta", "canonical": "oklch(64% 0.13 28)", "tonalRamp": ["oklch(30% 0.06 28)", "oklch(40% 0.10 28)", "oklch(50% 0.12 28)", "oklch(64% 0.13 28)", "oklch(70% 0.12 28)", "oklch(80% 0.08 28)", "oklch(92% 0.04 28)", "oklch(97% 0.02 28)"] },
+      "success": { "role": "semantic", "displayName": "Success Green", "canonical": "oklch(70% 0.18 145)", "tonalRamp": ["oklch(28% 0.06 145)", "oklch(40% 0.12 145)", "oklch(55% 0.16 145)", "oklch(70% 0.18 145)", "oklch(80% 0.14 145)", "oklch(90% 0.10 145)", "oklch(95% 0.06 145)", "oklch(98% 0.02 145)"] },
+      "warning": { "role": "semantic", "displayName": "Warning Amber", "canonical": "oklch(78% 0.15 85)", "tonalRamp": ["oklch(30% 0.06 85)", "oklch(45% 0.10 85)", "oklch(60% 0.13 85)", "oklch(78% 0.15 85)", "oklch(85% 0.12 85)", "oklch(90% 0.08 85)", "oklch(95% 0.06 85)", "oklch(98% 0.02 85)"] },
+      "danger": { "role": "semantic", "displayName": "Danger Red", "canonical": "oklch(62% 0.2 25)", "tonalRamp": ["oklch(28% 0.06 25)", "oklch(40% 0.14 25)", "oklch(52% 0.18 25)", "oklch(62% 0.2 25)", "oklch(72% 0.16 25)", "oklch(82% 0.10 25)", "oklch(93% 0.06 25)", "oklch(98% 0.02 25)"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Logo, drawer titles, Overview heading. Serif, rare." },
+      "body": { "displayName": "Body", "purpose": "All UI text, messages, descriptions. System sans-serif." },
+      "mono": { "displayName": "Mono", "purpose": "Code, paths, model names, metadata. Never body paragraphs." },
+      "overline": { "displayName": "Overline", "purpose": "Group headers, section labels. Uppercase + letter-spacing." }
+    },
+    "shadows": [
+      { "name": "micro", "value": "0 1px 6px rgba(0,0,0,0.04)", "purpose": "Input container at rest." },
+      { "name": "lift", "value": "0 2px 12px rgba(0,0,0,0.08)", "purpose": "Input container on focus." },
+      { "name": "menu", "value": "0 4px 16px rgba(0,0,0,0.08)", "purpose": "Anchor dropdowns, model selector." },
+      { "name": "toast", "value": "0 4px 20px rgba(0,0,0,0.1)", "purpose": "Toast notifications." },
+      { "name": "card-hover", "value": "0 8px 30px rgba(0,0,0,0.15)", "purpose": "Overview cards on hover only." }
+    ],
+    "motion": [
+      { "name": "ease-standard", "value": "cubic-bezier(0.4, 0, 0.2, 1)", "purpose": "Default easing for all state transitions." },
+      { "name": "duration-micro", "value": "0.1s", "purpose": "Hover background, toggle state." },
+      { "name": "duration-fast", "value": "0.15s", "purpose": "Border color, opacity transitions." },
+      { "name": "duration-normal", "value": "0.2s", "purpose": "Hover background color changes." },
+      { "name": "duration-medium", "value": "0.25s", "purpose": "Sidebar expand/collapse, overview toggle, toast." },
+      { "name": "duration-slow", "value": "0.3s", "purpose": "Drawer slide in/out." },
+      { "name": "duration-progress", "value": "0.4s", "purpose": "Progress bar width changes." },
+      { "name": "duration-pulse", "value": "2s", "purpose": "Status dot pulse cycle." }
+    ],
+    "breakpoints": [
+      { "name": "sidebar", "value": "240px" },
+      { "name": "drawer", "value": "380px" },
+      { "name": "header", "value": "48px" },
+      { "name": "statusbar", "value": "32px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Send action, primary CTA. Accent background, white text, square radius.",
+      "html": "<button class=\"ds-btn-primary\">发送</button>",
+      "css": ".ds-btn-primary { background: oklch(64% 0.13 28); color: #fff; padding: 6px 12px; font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; font-size: 12px; font-weight: 600; border: none; border-radius: 4px; cursor: pointer; transition: opacity 0.15s cubic-bezier(0.4,0,0.2,1); } .ds-btn-primary:hover { opacity: 0.88; } .ds-btn-primary:focus-visible { outline: 2px solid oklch(64% 0.13 28); outline-offset: 2px; }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Default button style. Transparent with border, muted text. Hover reveals accent.",
+      "html": "<button class=\"ds-btn-ghost\">取消</button>",
+      "css": ".ds-btn-ghost { background: transparent; color: oklch(50% 0.018 50); padding: 5px 12px; font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; font-size: 12px; font-weight: 400; border: 1px solid oklch(90% 0.014 70); border-radius: 8px; cursor: pointer; transition: all 0.2s cubic-bezier(0.4,0,0.2,1); } .ds-btn-ghost:hover { background: oklch(92% 0.04 28); color: oklch(64% 0.13 28); border-color: oklch(64% 0.13 28); } .ds-btn-ghost:focus-visible { outline: 2px solid oklch(64% 0.13 28); outline-offset: 2px; }"
+    },
+    {
+      "name": "Icon Button",
+      "kind": "button",
+      "refersTo": "button-icon",
+      "description": "34x34px square icon button for header toolbar. Active state with accent tint.",
+      "html": "<button class=\"ds-btn-icon\" aria-label=\"设置\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><path d=\"M12 15a3 3 0 100-6 3 3 0 000 6z\"/><path d=\"M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 008.58 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 8.58a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z\"/></svg></button>",
+      "css": ".ds-btn-icon { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 8px; border: 1px solid oklch(90% 0.014 70); background: transparent; color: oklch(50% 0.018 50); cursor: pointer; transition: all 0.2s cubic-bezier(0.4,0,0.2,1); } .ds-btn-icon:hover { background: oklch(92% 0.04 28); color: oklch(64% 0.13 28); border-color: oklch(64% 0.13 28); } .ds-btn-icon.active { background: oklch(92% 0.04 28); color: oklch(64% 0.13 28); border-color: oklch(64% 0.13 28); } .ds-btn-icon:focus-visible { outline: 2px solid oklch(64% 0.13 28); outline-offset: 2px; } .ds-btn-icon svg { width: 16px; height: 16px; }"
+    },
+    {
+      "name": "Notification Pill",
+      "kind": "chip",
+      "refersTo": "chip-notification",
+      "description": "Pill-shaped notification button in header. Done and alert variants with dot badge.",
+      "html": "<button class=\"ds-notif-btn ds-notif-btn--alert\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 12 12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><circle cx=\"6\" cy=\"6\" r=\"4.5\"/><path d=\"M6 4v2.5M6 8v.5\"/></svg> 请求回应 <span class=\"ds-notif-dot ds-notif-dot--alert\">1</span></button>",
+      "css": ".ds-notif-btn { position: relative; display: inline-flex; align-items: center; gap: 5px; padding: 5px 12px; border: 1px solid oklch(90% 0.014 70); border-radius: 100px; background: transparent; color: oklch(50% 0.018 50); font-size: 12px; font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; cursor: pointer; transition: all 0.2s cubic-bezier(0.4,0,0.2,1); white-space: nowrap; } .ds-notif-btn:hover { background: oklch(97% 0.018 70); color: oklch(22% 0.02 50); border-color: oklch(50% 0.018 50); } .ds-notif-btn--done:hover { background: oklch(95% 0.06 145); color: oklch(70% 0.18 145); border-color: oklch(70% 0.18 145); } .ds-notif-btn--alert:hover { background: oklch(93% 0.06 25); color: oklch(62% 0.2 25); border-color: oklch(62% 0.2 25); } .ds-notif-dot { position: absolute; top: -4px; right: -4px; width: 18px; height: 18px; border-radius: 50%; font-size: 10px; font-weight: 700; color: white; display: flex; align-items: center; justify-content: center; border: 2px solid oklch(99% 0.008 70); } .ds-notif-dot--done { background: oklch(70% 0.18 145); } .ds-notif-dot--alert { background: oklch(62% 0.2 25); animation: pulse-dot 2s infinite; } @keyframes pulse-dot { 0%,100% { transform: scale(1); } 50% { transform: scale(1.15); } }"
+    },
+    {
+      "name": "Message Bubble (User)",
+      "kind": "card",
+      "refersTo": "message-user",
+      "description": "User message. Right-aligned, accent-light background, asymmetric radius.",
+      "html": "<div class=\"ds-msg ds-msg--user\"><div class=\"ds-msg__role\">用户</div><div class=\"ds-msg__body\"><p>帮我重构 auth 模块</p></div></div>",
+      "css": ".ds-msg { max-width: 80%; padding: 10px 14px; border-radius: 12px; line-height: 1.6; font-size: 14px; font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; } .ds-msg--user { align-self: flex-end; background: oklch(92% 0.04 28); border-bottom-right-radius: 4px; } .ds-msg__role { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: oklch(50% 0.018 50); margin-bottom: 3px; text-align: right; } .ds-msg__role--user { text-align: right; } .ds-msg__body p { margin-bottom: 6px; } .ds-msg__body p:last-child { margin-bottom: 0; } .ds-msg__body code { background: oklch(97% 0.018 70); padding: 1px 4px; border-radius: 4px; font-size: 0.88em; font-family: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace; }"
+    },
+    {
+      "name": "Message Bubble (Assistant)",
+      "kind": "card",
+      "refersTo": "message-bot",
+      "description": "Assistant message. Left-aligned, surface background with border.",
+      "html": "<div class=\"ds-msg ds-msg--bot\"><div class=\"ds-msg__role\">助手</div><div class=\"ds-msg__body\"><p>好的，这个任务比较复杂，我分解成几个子任务并行执行。</p></div></div>",
+      "css": ".ds-msg--bot { align-self: flex-start; background: oklch(99% 0.008 70); border: 1px solid oklch(90% 0.014 70); border-bottom-left-radius: 4px; } .ds-msg__role--bot { text-align: left; }"
+    },
+    {
+      "name": "Chat Input",
+      "kind": "input",
+      "refersTo": "chat-input",
+      "description": "Stacked textarea + toolbar inside a rounded container. Focus lifts shadow and shifts border to accent.",
+      "html": "<div class=\"ds-chat-input\"><textarea class=\"ds-chat-input__field\" placeholder=\"输入消息...\"></textarea><div class=\"ds-chat-input__toolbar\"><button class=\"ds-tb-btn ds-tb-btn--plus\">+</button><span class=\"ds-tb-model\">sonnet @ anthropic</span><div class=\"ds-tb-context\">上下文 <div class=\"ds-tb-context__bar\"><div class=\"ds-tb-context__fill\" style=\"width:34%\"></div></div> 34%</div><div class=\"ds-tb-spacer\"></div><button class=\"ds-tb-btn ds-tb-btn--send\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M8 2v12M4 6l4-4 4 4\"/></svg></button></div></div>",
+      "css": ".ds-chat-input { background: oklch(99% 0.008 70); border: 1px solid oklch(90% 0.014 70); border-radius: 12px; box-shadow: 0 1px 6px rgba(0,0,0,0.04); transition: border-color 0.15s cubic-bezier(0.4,0,0.2,1), box-shadow 0.15s cubic-bezier(0.4,0,0.2,1); overflow: visible; } .ds-chat-input:focus-within { border-color: oklch(64% 0.13 28); box-shadow: 0 2px 12px rgba(0,0,0,0.08); } .ds-chat-input__field { display: block; width: 100%; min-height: calc(1.45em * 2 + 16px); max-height: calc(1.45em * 10 + 16px); padding: 10px 14px 8px; border: none; background: transparent; color: oklch(22% 0.02 50); font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; font-size: 14px; line-height: 1.45; resize: none; outline: none; } .ds-chat-input__field::placeholder { color: oklch(50% 0.018 50); } .ds-chat-input__toolbar { display: flex; align-items: center; gap: 4px; padding: 4px 8px 6px; } .ds-tb-btn { display: inline-flex; align-items: center; justify-content: center; height: 28px; padding: 0 8px; border: none; border-radius: 4px; background: transparent; color: oklch(50% 0.018 50); font-size: 12px; font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; cursor: pointer; transition: all 0.15s cubic-bezier(0.4,0,0.2,1); gap: 4px; white-space: nowrap; flex-shrink: 0; } .ds-tb-btn:hover { background: oklch(92% 0.04 28); color: oklch(64% 0.13 28); } .ds-tb-btn--plus { width: 28px; padding: 0; } .ds-tb-btn--send { background: oklch(64% 0.13 28); color: white; width: 28px; height: 28px; border-radius: 4px; } .ds-tb-btn--send:hover { opacity: 0.88; } .ds-tb-model { position: relative; display: inline-flex; align-items: center; gap: 4px; padding: 0 8px; height: 28px; border-radius: 4px; font-size: 11px; font-family: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace; color: oklch(22% 0.02 50); cursor: pointer; transition: all 0.15s cubic-bezier(0.4,0,0.2,1); white-space: nowrap; } .ds-tb-model:hover { background: oklch(92% 0.04 28); color: oklch(64% 0.13 28); } .ds-tb-context { font-size: 11px; color: oklch(50% 0.018 50); font-family: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace; display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; height: 28px; flex-shrink: 0; } .ds-tb-context__bar { width: 40px; height: 4px; background: oklch(90% 0.014 70); border-radius: 2px; overflow: hidden; } .ds-tb-context__fill { height: 100%; border-radius: 2px; background: oklch(64% 0.13 28); transition: width 0.3s ease; } .ds-tb-spacer { flex: 1; }"
+    },
+    {
+      "name": "Session List Item",
+      "kind": "nav",
+      "refersTo": "session-item",
+      "description": "Sidebar session item with left border activation indicator and status dot.",
+      "html": "<div class=\"ds-session-item active\"><span class=\"ds-session-dot ds-session-dot--run\"></span><span class=\"ds-session-title\">auth 模块重构</span><span class=\"ds-session-meta\">2m</span></div>",
+      "css": ".ds-session-item { display: flex; align-items: center; gap: 8px; padding: 7px 14px 7px 24px; cursor: pointer; border-left: 3px solid transparent; transition: background 0.15s cubic-bezier(0.4,0,0.2,1), border-color 0.15s cubic-bezier(0.4,0,0.2,1); user-select: none; font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; } .ds-session-item:hover { background: oklch(92% 0.04 28); } .ds-session-item.active { background: oklch(92% 0.04 28); border-left-color: oklch(64% 0.13 28); } .ds-session-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: oklch(90% 0.014 70); } .ds-session-dot--run { background: oklch(70% 0.18 145); animation: dot-pulse 2s infinite; } @keyframes dot-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } } .ds-session-title { flex: 1; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: oklch(22% 0.02 50); } .ds-session-item.active .ds-session-title { color: oklch(64% 0.13 28); font-weight: 600; } .ds-session-meta { font-size: 11px; color: oklch(50% 0.018 50); white-space: nowrap; }"
+    },
+    {
+      "name": "Overview Card",
+      "kind": "card",
+      "refersTo": "overview-card",
+      "description": "Mission Control session preview card with mono preview, status badge, and staggered entrance animation.",
+      "html": "<div class=\"ds-overview-card\"><div class=\"ds-overview-card__preview\"><div class=\"ds-preview-line ds-preview-line--user\">用户: 重构 auth 模块</div><div class=\"ds-preview-line\">助手: 好的，分解为4个子任务</div><div class=\"ds-preview-line\">SubAgent-1: 分析代码结构...</div></div><div class=\"ds-overview-card__footer\"><div class=\"ds-overview-card__title\">auth 模块重构 <span class=\"ds-card-badge ds-card-badge--run\"><span class=\"ds-card-badge__dot\"></span>运行中</span></div><div class=\"ds-overview-card__project\">~/projects/myapp</div><div class=\"ds-overview-card__meta\"><span>claude-sonnet</span><span>3.4k tok</span></div></div></div>",
+      "css": ".ds-overview-card { background: oklch(99% 0.008 70); border: 2px solid transparent; border-radius: 12px; overflow: hidden; cursor: pointer; transition: all 0.2s cubic-bezier(0.4,0,0.2,1); opacity: 0; transform: translateY(20px) scale(0.95); animation: card-enter 0.3s cubic-bezier(0.4,0,0.2,1) forwards; } @keyframes card-enter { to { opacity: 1; transform: translateY(0) scale(1); } } .ds-overview-card:hover { border-color: oklch(64% 0.13 28); transform: translateY(-2px) scale(1.02); box-shadow: 0 8px 30px rgba(0,0,0,0.15); } .ds-overview-card.highlighted { border-color: oklch(64% 0.13 28); box-shadow: 0 0 0 3px oklch(64% 0.13 28 / 0.4); } .ds-overview-card__preview { height: 110px; background: oklch(97% 0.018 70); padding: 10px 12px; font-size: 10px; line-height: 1.6; color: oklch(50% 0.018 50); overflow: hidden; border-bottom: 1px solid oklch(90% 0.014 70); font-family: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace; } .ds-preview-line { margin-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .ds-preview-line--user { color: oklch(64% 0.13 28); font-weight: 600; } .ds-overview-card__footer { padding: 10px 12px; } .ds-overview-card__title { font-size: 13px; font-weight: 600; margin-bottom: 2px; display: flex; align-items: center; gap: 6px; color: oklch(22% 0.02 50); } .ds-overview-card__project { font-size: 11px; color: oklch(50% 0.018 50); margin-bottom: 6px; } .ds-overview-card__meta { display: flex; gap: 10px; font-size: 10px; color: oklch(50% 0.018 50); flex-wrap: wrap; font-family: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace; } .ds-card-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 8px; } .ds-card-badge--run { background: oklch(95% 0.06 145); color: oklch(70% 0.18 145); } .ds-card-badge--pause { background: oklch(95% 0.06 85); color: oklch(78% 0.15 85); } .ds-card-badge--idle { background: oklch(90% 0.014 70); color: oklch(50% 0.018 50); } .ds-card-badge__dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Warm Workbench",
+    "overview": "A desk you sit at for six hours. Not a dashboard you glance at for thirty seconds. Every decision serves stamina: low contrast, warm neutrals, generous whitespace, and transitions so gentle you barely notice them. The visual system is restrained to the point of austerity, except for one warm terracotta accent that appears only where action is required. The interface rejects the cold precision of traditional developer tools and the sterile minimalism of chat-first AI products. It borrows warmth from editorial print design, structure from desktop publishing software, and feedback clarity from observability dashboards, without becoming any of those things.",
+    "keyCharacteristics": [
+      "One accent color (terracotta), used on less than 10% of any screen",
+      "OKLch color space for perceptually uniform warmth across light and dark themes",
+      "Serif display font for brand identity only; everything else is system sans-serif",
+      "No gradients, no glassmorphism, no decorative shadows",
+      "All surfaces tinted toward the brand hue; never pure black or white"
+    ],
+    "rules": [
+      { "name": "The One Voice Rule", "body": "The primary accent is used on less than 10% of any given screen. Its rarity is the point. If a screen has more than 2 accent-colored elements, something is wrong.", "section": "colors" },
+      { "name": "The Tinted Neutral Rule", "body": "Never use #000 or #fff. Every neutral carries a trace of the brand hue (chroma 0.005–0.01 is enough). This is what makes the interface feel warm rather than clinical.", "section": "colors" },
+      { "name": "The Display Rarity Rule", "body": "The serif display font appears no more than 3 times per screen. It is a brand flourish, not a workhorse.", "section": "typography" },
+      { "name": "The Mono Containment Rule", "body": "Monospace is never used for body paragraphs. It is exclusively for code, file paths, model names, token counts, and IDs.", "section": "typography" },
+      { "name": "The Flat-By-Default Rule", "body": "Surfaces are flat at rest. Shadows appear only as a response to state: hover elevation, focus lift, menu popup, toast arrival. If a card has a shadow while at rest, it is wrong.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do use OKLch for all colors. The perceptual uniformity matters for warmth.",
+      "Do keep the accent terracotta to less than 10% of any screen surface.",
+      "Do use the display serif font for the logo, drawer titles, and Overview heading only.",
+      "Do animate with cubic-bezier(0.4, 0, 0.2, 1) (Material standard easing) for all transitions.",
+      "Do use 8px base grid for spacing. Vary padding for rhythm.",
+      "Do cap body text line length at 65–75ch.",
+      "Do use tonal layering (bg → surface) to convey depth instead of default shadows.",
+      "Do respect prefers-reduced-motion by disabling pulse animations and simplifying transitions."
+    ],
+    "donts": [
+      "Don't use #000 or #fff. Tint every neutral toward the brand hue.",
+      "Don't use gradient text (background-clip: text with gradients). Use a single solid color.",
+      "Don't use side-stripe borders (border-left > 1px as a colored accent on cards or alerts).",
+      "Don't use glassmorphism as a default. Blurs are rare and purposeful, or nothing.",
+      "Don't use the hero-metric template (big number + small label + gradient accent).",
+      "Don't use identical card grids (same icon + heading + text repeated endlessly).",
+      "Don't use modals as a first choice for new information. Exhaust inline and progressive alternatives first.",
+      "Don't use bounce, elastic, or spring animations. Ease-out with exponential curves only.",
+      "Don't animate CSS layout properties (width, height, top, left). Use transform and opacity.",
+      "Don't use em dashes in copy. Use commas, colons, semicolons, periods, or parentheses."
+    ]
+  }
+}
