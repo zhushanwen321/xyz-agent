@@ -13,7 +13,6 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
 import { send } from '../../lib/ws-client'
-import { useSessionStore } from '../../stores/session'
 import { useChatStore } from '../../stores/chat'
 
 const BAR_FULL = 100

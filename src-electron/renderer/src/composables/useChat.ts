@@ -167,6 +167,7 @@ function createGlobalHandlers() {
   }
 
   function onStatus(_msg: ServerMessage) {
+    void _msg
   }
 
   return {

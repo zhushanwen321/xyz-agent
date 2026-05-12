@@ -160,12 +160,6 @@ function handleTest() {
 
 // ─── Auto-discover ─────────────────────────────────────────────
 
-interface DiscoveredModel {
-  id: string
-  name: string
-  ctx: string
-}
-
 // 监听自动发现结果的回调引用，用于卸载时清理
 let discoverHandler: ((msg: unknown) => void) | null = null
 

@@ -139,7 +139,7 @@ export function mockSend(msg: ClientMessage): void {
       const pModels = toModelNames(pModelsRaw)
 
       if (pId && pName) {
-        let existing = mockProviders.find(p => p.id === pId)
+        const existing = mockProviders.find(p => p.id === pId)
         if (existing) {
           existing.name = pName
           if (pType) existing.type = pType

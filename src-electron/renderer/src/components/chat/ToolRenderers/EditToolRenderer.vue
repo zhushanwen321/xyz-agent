@@ -58,6 +58,4 @@ const diffSize = computed(() => {
   if (total < 1024 * 1024) return `${(total / 1024).toFixed(1)}KB changed`
   return `${(total / (1024 * 1024)).toFixed(1)}MB changed`
 })
-
-const hasDiff = computed(() => oldText.value.length > 0 || newText.value.length > 0)
 </script>

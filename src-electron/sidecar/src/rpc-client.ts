@@ -275,6 +275,7 @@ export class RpcClient {
    */
   approveTool(_toolCallId: string): Promise<PiMessage> {
     // pi handles tool approvals via extension UI protocol, not direct commands
+    void _toolCallId
     return Promise.resolve({
       type: 'response',
       command: 'toolApprove',
@@ -283,6 +284,7 @@ export class RpcClient {
   }
 
   denyTool(_toolCallId: string): Promise<PiMessage> {
+    void _toolCallId
     return Promise.resolve({
       type: 'response',
       command: 'toolDeny',
@@ -291,6 +293,7 @@ export class RpcClient {
   }
 
   alwaysAllowTool(_toolName: string): Promise<PiMessage> {
+    void _toolName
     return Promise.resolve({
       type: 'response',
       command: 'toolAlwaysAllow',
