@@ -1,5 +1,5 @@
 <template>
-  <div class="tree-root">
+  <div class="py-1">
     <template v-for="node in nodes" :key="node.id">
       <TreeNodeItem
         :node="node"

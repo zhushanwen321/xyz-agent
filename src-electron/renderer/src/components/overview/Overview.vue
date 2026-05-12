@@ -1,7 +1,7 @@
 <template>
-  <div ref="overviewRef" class="overview" :class="{ visible }" tabindex="0" @click.self="emit('close')">
-    <div class="overview__title">窗口总览</div>
-    <div class="overview__grid">
+  <div ref="overviewRef" class="fixed inset-0 z-[100] bg-[oklch(15%_0.02_50_/_0.65)] backdrop-blur-[20px] flex flex-col items-center justify-center opacity-0 pointer-events-none transition-opacity duration-[250ms] ease-ease" :class="{ 'opacity-100 pointer-events-auto': visible }" tabindex="0" @click.self="emit('close')">
+    <div class="font-display text-lg font-semibold text-[oklch(95%_0_0)] mb-7 tracking-[-0.01em]">窗口总览</div>
+    <div class="grid grid-cols-3 gap-5 max-w-[960px] px-8 w-full">
       <WindowCard
         v-for="(win, idx) in windowCards"
         :key="win.windowId"
@@ -11,8 +11,8 @@
         @select="handleSelect(idx)"
       />
     </div>
-    <div class="overview__actions">
-      <button class="overview__new-btn" @click="handleNewWindow">
+    <div class="mt-6 flex justify-center">
+      <button class="inline-flex items-center gap-1.5 py-2 px-5 border border-[oklch(60%_0_0_/_0.3)] rounded-sm bg-transparent text-[oklch(80%_0_0_/_0.8)] text-[13px] font-medium font-body cursor-pointer transition-all duration-200 ease-ease hover:bg-[oklch(30%_0_0_/_0.4)] hover:text-[oklch(95%_0_0)] hover:border-[oklch(80%_0_0_/_0.5)]" @click="handleNewWindow">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <line x1="12" y1="5" x2="12" y2="19" />
           <line x1="5" y1="12" x2="19" y2="12" />
@@ -20,10 +20,10 @@
         New Window
       </button>
     </div>
-    <div class="overview__hint">
-      <span><kbd>Enter</kbd> 聚焦窗口</span>
-      <span><kbd>&larr;</kbd><kbd>&rarr;</kbd> 选择</span>
-      <span><kbd>Esc</kbd> 返回</span>
+    <div class="mt-7 text-xs text-[oklch(70%_0_0_/_0.7)] flex gap-5">
+      <span><kbd class="inline-flex items-center py-[2px] px-1.5 bg-[oklch(30%_0_0_/_0.5)] rounded font-mono text-[11px] text-[oklch(85%_0_0)] mx-[3px]">Enter</kbd> 聚焦窗口</span>
+      <span><kbd class="inline-flex items-center py-[2px] px-1.5 bg-[oklch(30%_0_0_/_0.5)] rounded font-mono text-[11px] text-[oklch(85%_0_0)] mx-[3px]">&larr;</kbd><kbd class="inline-flex items-center py-[2px] px-1.5 bg-[oklch(30%_0_0_/_0.5)] rounded font-mono text-[11px] text-[oklch(85%_0_0)] mx-[3px]">&rarr;</kbd> 选择</span>
+      <span><kbd class="inline-flex items-center py-[2px] px-1.5 bg-[oklch(30%_0_0_/_0.5)] rounded font-mono text-[11px] text-[oklch(85%_0_0)] mx-[3px]">Esc</kbd> 返回</span>
     </div>
   </div>
 </template>
@@ -121,4 +121,3 @@ watch(
   },
 )
 </script>
-

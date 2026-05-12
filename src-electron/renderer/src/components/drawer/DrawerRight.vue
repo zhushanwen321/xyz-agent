@@ -1,8 +1,8 @@
 <template>
-  <aside class="drawer drawer--right" :class="{ open }">
-    <div class="drawer__hd">
-      <div class="drawer__title">SubAgent 监控</div>
-      <Button variant="ghost" class="drawer__close" @click="$emit('close')">&times;</Button>
+  <aside class="absolute top-0 bottom-0 w-[var(--drawer-w)] bg-surface z-50 flex flex-col transition-transform duration-300 ease-ease right-0 border-l border-border" :class="open ? 'translate-x-0' : 'translate-x-full'">
+    <div class="flex items-center justify-between px-[18px] py-[14px] border-b border-border">
+      <div class="font-display text-[15px] font-semibold">SubAgent 监控</div>
+      <Button variant="ghost" class="w-7 h-7 text-base" @click="$emit('close')">&times;</Button>
     </div>
     <DrawerTabs
       :active-tab="activeTab"
@@ -10,8 +10,8 @@
       :alert-count="alertItems.length"
       @update:active-tab="activeTab = $event"
     />
-    <div class="drawer__body">
-      <div :class="['drawer-pane', { active: activeTab === 'tree' }]">
+    <div class="flex-1 overflow-y-auto">
+      <div :class="[activeTab === 'tree' ? 'block' : 'hidden', 'p-3']">
         <TaskTree
           :nodes="treeNodes"
           :active-node-id="activeNodeId"
@@ -19,7 +19,7 @@
           @kill="$emit('kill', $event)"
         />
       </div>
-      <div :class="['drawer-pane', { active: activeTab === 'done' }]">
+      <div :class="[activeTab === 'done' ? 'block' : 'hidden', 'p-3']">
         <DoneItem
           v-for="item in doneItems"
           :key="item.id"
@@ -27,7 +27,7 @@
           @view="$emit('view-done', item.id)"
         />
       </div>
-      <div :class="['drawer-pane', { active: activeTab === 'alert' }]">
+      <div :class="[activeTab === 'alert' ? 'block' : 'hidden', 'p-3']">
         <AlertItem
           v-for="item in alertItems"
           :key="item.id"

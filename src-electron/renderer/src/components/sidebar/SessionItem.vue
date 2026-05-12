@@ -26,8 +26,8 @@ const confirmDelete = ref(false)
 
 const dotClass = computed(() => {
   switch (props.session.status) {
-    case 'active': return 'dot dot--run'
-    default: return 'dot dot--idle'
+    case 'active': return 'w-[7px] h-[7px] rounded-full shrink-0 bg-success'
+    default: return 'w-[7px] h-[7px] rounded-full shrink-0 bg-border'
   }
 })
 
