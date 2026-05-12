@@ -28,7 +28,7 @@ function update(key: string, val: string) {
     </div>
     <div :class="['s-override-params', { disabled: !active }]">
       <div>
-        <div class="override-params__label">深度</div>
+        <div class="text-[10px] text-muted mb-[3px]">深度</div>
         <Input
           class="s-override-params__input"
           :model-value="String(params.depth)"
@@ -36,7 +36,7 @@ function update(key: string, val: string) {
         />
       </div>
       <div>
-        <div class="override-params__label">宽度</div>
+        <div class="text-[10px] text-muted mb-[3px]">宽度</div>
         <Input
           class="s-override-params__input"
           :model-value="String(params.width)"
@@ -44,7 +44,7 @@ function update(key: string, val: string) {
         />
       </div>
       <div>
-        <div class="override-params__label">Token</div>
+        <div class="text-[10px] text-muted mb-[3px]">Token</div>
         <Input
           class="s-override-params__input"
           :model-value="String(params.tokens)"
@@ -52,7 +52,7 @@ function update(key: string, val: string) {
         />
       </div>
       <div>
-        <div class="override-params__label">轮次</div>
+        <div class="text-[10px] text-muted mb-[3px]">轮次</div>
         <Input
           class="s-override-params__input"
           :model-value="String(params.rounds)"
@@ -63,11 +63,3 @@ function update(key: string, val: string) {
   </div>
 </template>
 
-<style scoped>
-/* Component-specific label style, not in design system */
-.override-params__label {
-  font-size: 10px;
-  color: var(--muted);
-  margin-bottom: 3px;
-}
-</style>

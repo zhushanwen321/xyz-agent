@@ -77,6 +77,3 @@ onUnmounted(() => {
   </div>
 </template>
 
-<style scoped>
-/* All styles come from the global design system */
-</style>

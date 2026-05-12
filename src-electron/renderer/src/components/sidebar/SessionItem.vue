@@ -97,7 +97,10 @@ const HOURS_PER_DAY = 24
 
 <template>
   <div
-    :class="['s-item', { active: isActive, 'has-notif': hasNotif, 's-item--renaming': renaming }]"
+    :class="[
+      'group flex items-center gap-2 py-[7px] pl-6 pr-3.5 cursor-pointer border-l-[3px] border-transparent select-none transition-colors duration-150 ease-ease hover:bg-accent-light focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2',
+      { 'border-l-0 bg-accent-light': isActive, 'font-semibold': hasNotif, 'pr-3.5': renaming }
+    ]"
     role="button"
     tabindex="0"
     @click="!renaming && emit('click')"
@@ -109,7 +112,7 @@ const HOURS_PER_DAY = 24
       <Input
         ref="renameInput"
         v-model="renameValue"
-        class="s-item__rename-input"
+        class="flex-1 text-[13px] leading-none bg-bg border border-accent rounded-xs py-[3px] px-[6px] h-auto outline-none text-fg"
         @keydown.enter="confirmRename"
         @keydown.escape="cancelRename"
         @blur="confirmRename"
@@ -118,18 +121,18 @@ const HOURS_PER_DAY = 24
     </template>
     <!-- Normal mode: label + actions -->
     <template v-else>
-      <span class="s-item__title">{{ session.label }}</span>
-      <span v-if="(session.doneCount ?? 0) > 0" class="s-item__notif s-item__notif--done">{{ session.doneCount }}</span>
-      <span v-if="(session.alertCount ?? 0) > 0" class="s-item__notif s-item__notif--alert">{{ session.alertCount }}</span>
-      <span class="s-item__meta">{{ relativeTime }}</span>
+      <span class="flex-1 text-[13px] whitespace-nowrap overflow-hidden text-ellipsis">{{ session.label }}</span>
+      <span v-if="(session.doneCount ?? 0) > 0" class="inline-flex items-center justify-center min-w-[14px] h-[14px] rounded-full text-[9px] font-bold text-white ml-1 shrink-0 bg-success">{{ session.doneCount }}</span>
+      <span v-if="(session.alertCount ?? 0) > 0" class="inline-flex items-center justify-center min-w-[14px] h-[14px] rounded-full text-[9px] font-bold text-white ml-1 shrink-0 bg-danger">{{ session.alertCount }}</span>
+      <span class="text-[11px] text-muted whitespace-nowrap flex items-center gap-1">{{ relativeTime }}</span>
       <!-- Rename button -->
-      <span class="s-item__action" role="button" tabindex="0" title="Rename" @click="startRename" @keydown.enter="startRename">
+      <span class="inline-flex items-center justify-center w-[22px] h-[22px] rounded-xs text-muted cursor-pointer shrink-0 opacity-0 transition-all duration-150 ease-ease group-hover:opacity-100 hover:bg-accent-light hover:text-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2" role="button" tabindex="0" title="Rename" @click="startRename" @keydown.enter="startRename">
         <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 1.5a2.121 2.121 0 013 3L5 14l-4 1 1-4z"/></svg>
       </span>
       <!-- Delete button -->
       <span
         v-if="!confirmDelete"
-        class="s-item__action"
+        class="inline-flex items-center justify-center w-[22px] h-[22px] rounded-xs text-muted cursor-pointer shrink-0 opacity-0 transition-all duration-150 ease-ease group-hover:opacity-100 hover:bg-accent-light hover:text-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2"
         role="button"
         tabindex="0"
         title="Delete"
@@ -140,7 +143,7 @@ const HOURS_PER_DAY = 24
       </span>
       <span
         v-else
-        class="s-item__del-confirm"
+        class="inline-flex items-center justify-center px-2 h-[22px] rounded-xs text-[11px] font-semibold bg-danger text-white cursor-pointer shrink-0 hover:opacity-[0.88] focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2"
         role="button"
         tabindex="0"
         @click="confirmDeleteAction"
@@ -151,87 +154,3 @@ const HOURS_PER_DAY = 24
   </div>
 </template>
 
-<style scoped>
-/* 与 css_design-system.css 中的 .s-item 样式对齐，但 scoped 需要重新声明关键规则 */
-.s-item {
-  display: flex; align-items: center; gap: 8px;
-  padding: 7px 14px 7px 24px; cursor: pointer;
-  border-left: 3px solid transparent;
-  transition: background 0.15s var(--ease), border-color 0.15s var(--ease);
-  user-select: none;
-}
-.s-item:hover { background: var(--accent-light); }
-.s-item.active {
-  border-left: none;
-  background: oklch(50% 0.02 50 / 0.12);
-}
-.s-item:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-.s-item__title {
-  flex: 1; font-size: 13px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.s-item__meta {
-  font-size: 11px; color: var(--muted); white-space: nowrap;
-  display: flex; align-items: center; gap: 4px;
-}
-.s-item__notif {
-  display: inline-flex; align-items: center; justify-content: center;
-  min-width: 14px; height: 14px; border-radius: 7px;
-  font-size: 9px; font-weight: 700; color: white;
-  margin-left: 4px; flex-shrink: 0;
-}
-.s-item__notif--done { background: var(--success); }
-.s-item__notif--alert { background: var(--danger); }
-.s-item.has-notif .s-item__title { font-weight: 600; }
-
-/* Inline rename input */
-.s-item--renaming { padding-right: 14px; }
-.s-item__rename-input {
-  flex: 1; font-size: 13px; line-height: 1;
-  background: var(--bg); border: 1px solid var(--accent);
-  border-radius: var(--radius-xs);
- padding: 3px 6px !important;
-  height: auto !important;
-  outline: none;
-  color: var(--fg);
-}
-
-/* Action buttons (rename + delete): hidden by default, show on hover */
-.s-item__action {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: var(--radius-xs);
-  color: var(--muted);
-  cursor: pointer;
-  flex-shrink: 0;
-  opacity: 0;
-  transition: opacity 0.15s var(--ease), background 0.15s var(--ease), color 0.15s var(--ease);
-}
-.s-item:hover .s-item__action { opacity: 1; }
-.s-item__action:hover { background: var(--accent-light); color: var(--accent); }
-.s-item__action:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-
-/* Delete confirm button */
-.s-item__del-confirm {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 8px;
-  height: 22px;
-  border-radius: var(--radius-xs);
-  font-size: 11px;
-  font-weight: 600;
-  background: var(--danger);
-  color: white;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-.s-item__del-confirm:hover { opacity: 0.88; }
-.s-item__del-confirm:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-</style>

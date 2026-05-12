@@ -1,12 +1,12 @@
 <template>
-  <div class="thinking-block">
-    <Button variant="ghost" class="thinking-header" @click="expanded = !expanded">
-      <span class="thinking-label">Thinking<span v-if="!expanded">...</span></span>
-      <span v-if="streaming" class="thinking-pulse"></span>
-      <svg class="thinking-chevron" :class="{ 'rotated': expanded }" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+  <div class="overflow-hidden rounded-sm border border-border bg-surface mb-2">
+    <Button variant="ghost" class="flex w-full items-center gap-1.5 px-3 py-1.5 text-left cursor-pointer transition-colors duration-150 ease-ease justify-start !rounded-none hover:bg-bg focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2" @click="expanded = !expanded">
+      <span class="text-[11px] font-mono leading-snug text-muted">Thinking<span v-if="!expanded">...</span></span>
+      <span v-if="streaming" class="inline-block w-[5px] h-2.5 bg-accent animate-pulse-bar motion-reduce:opacity-60 motion-reduce:animate-none"></span>
+      <svg :class="['ml-auto text-muted transition-transform duration-200 ease-ease motion-reduce:transition-none', { 'rotate-180': expanded }]" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
     </Button>
-    <div v-if="expanded" class="thinking-body">
-      <pre class="thinking-text">{{ text }}</pre>
+    <div v-if="expanded" class="border-t border-border px-3 py-2">
+      <pre class="whitespace-pre-wrap font-mono text-[11px] leading-normal text-muted m-0">{{ text }}</pre>
     </div>
   </div>
 </template>
@@ -24,20 +24,4 @@ watch(() => props.collapsed, (v) => {
 })
 </script>
 
-<style scoped>
-.thinking-block { overflow: hidden; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); margin-bottom: 8px; }
-.thinking-header { display: flex; width: 100%; align-items: center; gap: 6px; padding: 6px 12px; text-align: left; cursor: pointer; transition: background 0.15s var(--ease); background: none; border: none; color: inherit; font: inherit; border-radius: 0 !important; }
-.thinking-header:hover { background: var(--bg); }
-.thinking-label { font-size: 11px; font-family: var(--font-mono); line-height: 1.4; color: var(--muted); }
-.thinking-pulse { display: inline-block; width: 5px; height: 10px; background: var(--accent); animation: pulse 1s ease-in-out infinite; }
-.thinking-chevron { margin-left: auto; color: var(--muted); transition: transform 0.2s var(--ease); }
-.thinking-chevron.rotated { transform: rotate(180deg); }
-.thinking-body { border-top: 1px solid var(--border); padding: 8px 12px; }
-.thinking-text { white-space: pre-wrap; font-family: var(--font-mono); font-size: 11px; line-height: 1.5; color: var(--muted); margin: 0; }
-.thinking-header:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
-@media (prefers-reduced-motion: reduce) {
-  .thinking-pulse { animation: none; opacity: 0.6; }
-  .thinking-chevron { transition: none; }
-}
-</style>
+

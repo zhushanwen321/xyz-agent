@@ -46,110 +46,23 @@ onBeforeUnmount(() => document.removeEventListener('click', onClickOutside))
 </script>
 
 <template>
-  <div class="anchor" :class="{ open }" ref="anchorRef">
-    <Button variant="ghost" class="anchor__trigger" @click.stop="toggle">
-      <span class="anchor__dot" :style="{ background: currentColor }"></span>
-      <span class="anchor__label">{{ currentLabel }}</span>
-      <span class="anchor__chevron">&#9662;</span>
+  <div :class="['flex items-center gap-1.5 px-2.5 py-[3px] rounded-sm cursor-pointer text-fg font-semibold text-xs transition-colors duration-150 ease-ease relative select-none hover:bg-accent-light', { 'bg-accent-light': open }]" ref="anchorRef">
+    <Button variant="ghost" class="flex items-center gap-1.5 bg-transparent border-none p-0 [font:inherit] [color:inherit] cursor-[inherit] hover:bg-transparent hover:text-inherit !rounded-none" @click.stop="toggle">
+      <span class="w-1.5 h-1.5 rounded-full shrink-0" :style="{ background: currentColor }"></span>
+      <span class="leading-none">{{ currentLabel }}</span>
+      <span :class="['text-[9px] text-muted ml-0.5 transition-transform duration-150 ease-ease', { 'rotate-180': open }]">&#9662;</span>
     </Button>
-    <div v-if="open" class="anchor-dropdown">
+    <div v-if="open" class="absolute top-full left-0 mt-1 bg-surface border border-border rounded-sm shadow-md min-w-[220px] z-30 overflow-hidden">
       <div
         v-for="opt in options"
         :key="opt.id"
-        :class="['anchor-opt', { current: opt.id === currentId }]"
+        :class="['flex items-center gap-2 px-3 py-[7px] text-xs cursor-pointer transition-colors duration-100 ease-ease text-fg font-normal hover:bg-accent-light', { 'font-semibold text-accent': opt.id === currentId }]"
         @click="pick(opt.id)"
       >
-        <span class="anchor-opt__dot" :style="{ background: opt.color || 'var(--success)' }"></span>
+        <span class="w-1.5 h-1.5 rounded-full shrink-0" :style="{ background: opt.color || 'var(--success)' }"></span>
         {{ opt.label }}
       </div>
     </div>
   </div>
 </template>
 
-<style scoped>
-.anchor {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 10px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  color: var(--fg);
-  font-weight: 600;
-  font-size: 12px;
-  transition: background 0.15s var(--ease);
-  position: relative;
-  user-select: none;
-}
-.anchor:hover {
-  background: var(--accent-light);
-}
-.anchor__trigger {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: none;
-  border: none;
-  padding: 0;
-  font: inherit;
-  color: inherit;
-  cursor: inherit;
-}
-.anchor__dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-.anchor__label {
-  line-height: 1;
-}
-.anchor__chevron {
-  font-size: 9px;
-  color: var(--muted);
-  margin-left: 2px;
-  transition: transform 0.15s var(--ease);
-}
-.anchor.open .anchor__chevron {
-  transform: rotate(180deg);
-}
-
-/* Dropdown */
-.anchor-dropdown {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  margin-top: 4px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
-  min-width: 220px;
-  z-index: 30;
-  overflow: hidden;
-}
-.anchor-opt {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 12px;
-  font-size: 12px;
-  cursor: pointer;
-  transition: background 0.1s var(--ease);
-  color: var(--fg);
-  font-weight: 400;
-}
-.anchor-opt:hover {
-  background: var(--accent-light);
-}
-.anchor-opt.current {
-  font-weight: 600;
-  color: var(--accent);
-}
-.anchor-opt__dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-</style>

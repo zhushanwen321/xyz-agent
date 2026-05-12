@@ -48,14 +48,14 @@ function dirname(cwd: string): string {
 </script>
 
 <template>
-  <ScrollArea class="session-groups">
+  <ScrollArea class="flex-1">
     <template v-if="hasResults">
-      <div v-for="group in filteredGroups" :key="group.cwd" class="group">
-        <div class="s-group__hd" @click="toggleGroup(group.cwd)">
-          <span class="s-group__toggle">&#9662;</span>
+      <div v-for="group in filteredGroups" :key="group.cwd" class="mb-[2px]">
+        <div class="flex items-center gap-[5px] py-[6px] px-[14px] text-[11px] font-semibold uppercase tracking-[0.04em] text-muted cursor-pointer select-none hover:text-fg" @click="toggleGroup(group.cwd)">
+          <span class="text-[8px] inline-block w-[10px] text-center transition-transform duration-200 ease-ease">&#9662;</span>
           {{ dirname(group.cwd) }}
         </div>
-        <div v-show="!collapsed.has(group.cwd)" class="group-sessions">
+        <div v-show="!collapsed.has(group.cwd)">
           <SessionItem
             v-for="s in group.sessions"
             :key="s.id"
@@ -68,30 +68,9 @@ function dirname(cwd: string): string {
         </div>
       </div>
     </template>
-    <div v-else class="empty-state">
+    <div v-else class="py-6 px-[14px] text-center text-muted text-xs">
       {{ t('sidebar.noSearchResults') }}
     </div>
   </ScrollArea>
 </template>
 
-<style scoped>
-.session-groups { flex: 1; }
-.group { margin-bottom: 2px; }
-/* 与 css_design-system.css 的 .s-group__hd 对齐 */
-.s-group__hd {
-  display: flex; align-items: center; gap: 5px;
-  padding: 6px 14px; font-size: 11px; font-weight: 600;
-  text-transform: uppercase; letter-spacing: 0.04em;
-  color: var(--muted); cursor: pointer; user-select: none;
-}
-.s-group__hd:hover { color: var(--fg); }
-.s-group__toggle {
-  font-size: 8px; transition: transform 0.2s var(--ease);
-  display: inline-block; width: 10px; text-align: center;
-}
-.group-sessions { /* no extra styles needed */ }
-.empty-state {
-  padding: 24px 14px; text-align: center;
-  color: var(--muted); font-size: 12px;
-}
-</style>

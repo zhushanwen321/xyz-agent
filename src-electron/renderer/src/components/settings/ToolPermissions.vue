@@ -22,40 +22,18 @@ function resetDefaults() {
 </script>
 
 <template>
-  <div class="tool-permissions">
+  <div class="p-4">
     <h3>Tool Permissions</h3>
-    <div v-for="(perm, tool) in settingsStore.toolPermissions" :key="tool" class="perm-row">
-      <span class="tool-name">{{ tool }}</span>
+    <div v-for="(perm, tool) in settingsStore.toolPermissions" :key="tool" class="flex items-center justify-between py-2 border-b border-border">
+      <span class="font-mono text-[13px]">{{ tool }}</span>
       <Select
         :model-value="perm"
         :options="permissionOptions"
-        class="perm-select"
+        class="min-w-[100px]"
         @update:model-value="settingsStore.setToolPermission(tool, $event as ToolPermission)"
       />
     </div>
-    <Button variant="ghost" size="sm" class="reset-btn" @click="resetDefaults">Reset to Defaults</Button>
+    <Button variant="ghost" size="sm" class="mt-4" @click="resetDefaults">Reset to Defaults</Button>
   </div>
 </template>
 
-<style scoped>
-.tool-permissions {
-  padding: 16px;
-}
-.perm-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--color-border);
-}
-.tool-name {
-  font-family: var(--font-mono, monospace);
-  font-size: 13px;
-}
-.perm-select {
-  min-width: 100px;
-}
-.reset-btn {
-  margin-top: 16px;
-}
-</style>

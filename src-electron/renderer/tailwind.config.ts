@@ -71,9 +71,27 @@ export default {
           '0%, 100%': { transform: 'scale(1)' },
           '50%': { transform: 'scale(1.15)' },
         },
+        blink: {
+          '50%': { opacity: '0' },
+        },
+        spin: {
+          to: { transform: 'rotate(360deg)' },
+        },
+        'thinking-pulse': {
+          '0%, 100%': { opacity: '1', transform: 'scale(1)' },
+          '50%': { opacity: '0.3', transform: 'scale(0.85)' },
+        },
+        'pulse-bar': {
+          '0%, 100%': { opacity: '1' },
+          '50%': { opacity: '0.3' },
+        },
       },
       animation: {
         'pulse-dot': 'pulse-dot 2s infinite',
+        blink: 'blink 1s step-end infinite',
+        spin: 'spin 0.6s linear infinite',
+        'thinking-pulse': 'thinking-pulse 1.4s ease-in-out infinite',
+        'pulse-bar': 'pulse-bar 1s ease-in-out infinite',
       },
     },
   },

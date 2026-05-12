@@ -21,14 +21,6 @@ const sorted = computed(() => {
   )
 })
 
-function statusClass(status: ProviderInfo['status']) {
-  switch (status) {
-    case 'connected': return 'provider-card__status--on'
-    case 'error': return 'provider-card__status--error'
-    default: return 'provider-card__status--off'
-  }
-}
-
 function statusLabel(status: ProviderInfo['status']) {
   switch (status) {
     case 'connected': return '已连接'
@@ -43,28 +35,35 @@ function formatModels(models: string[]) {
 </script>
 
 <template>
-  <div class="provider-list">
+  <div class="flex flex-col">
     <!-- Section: 已配置的供应商 -->
-    <div class="settings-section">
-      <div class="settings-section__title">已配置的供应商</div>
+    <div class="mb-7">
+      <div class="text-[13px] font-semibold uppercase tracking-[0.04em] text-muted mb-3">已配置的供应商</div>
 
       <!-- Loading -->
-      <div v-if="loading" class="provider-list__loading">加载中…</div>
+      <div v-if="loading" class="py-6 text-center text-[13px] text-muted">加载中…</div>
 
       <!-- Empty -->
-      <div v-else-if="providers.length === 0" class="provider-list__empty">暂无已配置的供应商</div>
+      <div v-else-if="providers.length === 0" class="py-6 text-center text-[13px] text-muted">暂无已配置的供应商</div>
 
       <!-- Provider cards -->
       <template v-else>
         <div
           v-for="provider in sorted"
           :key="provider.id"
-          class="provider-card"
+          class="flex items-center gap-3 py-3 px-[14px] bg-surface border border-border rounded-sm mb-2 cursor-pointer transition-colors duration-150 ease-ease hover:border-accent"
           @click="emit('edit', provider.id)"
         >
-          <span class="provider-card__name">{{ provider.name }}</span>
-          <span v-if="provider.models.length" class="provider-card__models">{{ formatModels(provider.models) }}</span>
-          <span class="provider-card__status" :class="statusClass(provider.status)">
+          <span class="font-semibold text-sm flex-1">{{ provider.name }}</span>
+          <span v-if="provider.models.length" class="text-[11px] text-muted font-mono">{{ formatModels(provider.models) }}</span>
+          <span
+            class="text-[11px] py-[2px] px-2 rounded-full font-semibold"
+            :class="{
+              'bg-success-light text-success': provider.status === 'connected',
+              'bg-danger-light text-danger': provider.status === 'error',
+              'bg-border text-muted': provider.status === 'not_configured'
+            }"
+          >
             {{ statusLabel(provider.status) }}
           </span>
         </div>
@@ -72,124 +71,21 @@ function formatModels(models: string[]) {
     </div>
 
     <!-- Section: 默认供应商配置 -->
-    <div class="settings-section">
-      <div class="settings-section__title">默认供应商配置</div>
-      <div class="info-row">
-        <span class="info-row__label">默认模型</span>
-        <span class="info-row__value">claude-sonnet @ anthropic</span>
+    <div class="mb-7">
+      <div class="text-[13px] font-semibold uppercase tracking-[0.04em] text-muted mb-3">默认供应商配置</div>
+      <div class="flex justify-between items-center py-[6px] text-[13px] border-b border-border">
+        <span class="text-muted">默认模型</span>
+        <span class="font-mono text-xs">claude-sonnet @ anthropic</span>
       </div>
-      <div class="info-row">
-        <span class="info-row__label">思考模式</span>
-        <span class="info-row__value">high</span>
+      <div class="flex justify-between items-center py-[6px] text-[13px] border-b border-border">
+        <span class="text-muted">思考模式</span>
+        <span class="font-mono text-xs">high</span>
       </div>
-      <div class="info-row">
-        <span class="info-row__label">温度</span>
-        <span class="info-row__value">0.7</span>
+      <div class="flex justify-between items-center py-[6px] text-[13px] border-b-0">
+        <span class="text-muted">温度</span>
+        <span class="font-mono text-xs">0.7</span>
       </div>
     </div>
   </div>
 </template>
 
-<style scoped>
-.provider-list {
-  display: flex;
-  flex-direction: column;
-}
-
-/* Loading & empty states */
-.provider-list__loading,
-.provider-list__empty {
-  padding: 24px 0;
-  text-align: center;
-  font-size: 13px;
-  color: var(--muted);
-}
-
-/* Reuse design system classes for settings-section, provider-card, info-row */
-.settings-section {
-  margin-bottom: 28px;
-}
-
-.settings-section__title {
-  font-size: 13px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--muted);
-  margin-bottom: 12px;
-}
-
-.provider-card {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  margin-bottom: 8px;
-  transition: border-color 0.15s var(--ease);
-  transition: border-color 0.15s var(--ease);
-  cursor: pointer;
-}
-
-.provider-card:hover {
-  border-color: var(--accent);
-}
-
-.provider-card__name {
-  font-weight: 600;
-  font-size: 14px;
-  flex: 1;
-}
-
-.provider-card__models {
-  font-size: 11px;
-  color: var(--muted);
-  font-family: var(--font-mono);
-}
-
-.provider-card__status {
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 100px;
-  font-weight: 600;
-}
-
-.provider-card__status--on {
-  background: var(--success-light);
-  color: var(--success);
-}
-
-.provider-card__status--error {
-  background: var(--danger-light);
-  color: var(--danger);
-}
-
-.provider-card__status--off {
-  background: var(--border);
-  color: var(--muted);
-}
-
-.info-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 6px 0;
-  font-size: 13px;
-  border-bottom: 1px solid var(--border);
-}
-
-.info-row:last-child {
-  border-bottom: none;
-}
-
-.info-row__label {
-  color: var(--muted);
-}
-
-.info-row__value {
-  font-family: var(--font-mono);
-  font-size: 12px;
-}
-</style>

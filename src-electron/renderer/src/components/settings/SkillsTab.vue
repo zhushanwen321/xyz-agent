@@ -22,15 +22,7 @@ defineEmits<{
       <span class="skill-row__desc">{{ skill.description }}</span>
       <div :class="['skill-row__toggle', { on: skill.enabled }]" @click="$emit('toggle', skill.name)"></div>
     </div>
-    <div v-if="skills.length === 0" class="settings-section__empty">暂无已加载的 SKILL</div>
+    <div v-if="skills.length === 0" class="py-6 text-center text-muted text-sm">暂无已加载的 SKILL</div>
   </div>
 </template>
 
-<style scoped>
-.settings-section__empty {
-  padding: 24px 0;
-  text-align: center;
-  color: var(--muted);
-  font-size: var(--font-sm, 0.875rem);
-}
-</style>

@@ -1,13 +1,13 @@
 <template>
-  <div :class="['tool', { collapsed: !expanded }]">
-    <Button variant="ghost" class="tool__hd" @click="expanded = !expanded">
-      <span v-if="isRunning" class="tool-spinner"></span>
-      <svg v-else class="tool__chevron" xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
-      <span class="tool__name">{{ toolCall.toolName }}</span>
-      <span v-if="filePathHint" class="tool__path">{{ truncate(filePathHint, 50) }}</span>
-      <span :class="['tool__status', `tool__status--${statusClass}`]">{{ statusLabel }}</span>
+  <div class="border border-border rounded-sm bg-surface my-2 overflow-hidden">
+    <Button variant="ghost" class="flex items-center gap-1.5 px-2.5 py-1.5 cursor-pointer text-[11px] leading-snug font-mono select-none transition-colors duration-150 ease-ease w-full text-left justify-start !rounded-none hover:bg-accent-light focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2" @click="expanded = !expanded">
+      <span v-if="isRunning" class="inline-block w-2.5 h-2.5 border-2 border-warning border-t-transparent rounded-full animate-spin shrink-0"></span>
+      <svg v-else :class="['transition-transform duration-150 ease-ease shrink-0', { '-rotate-90': !expanded }]" xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+      <span class="font-semibold text-accent">{{ toolCall.toolName }}</span>
+      <span v-if="filePathHint" class="text-muted truncate min-w-0">{{ truncate(filePathHint, 50) }}</span>
+      <span :class="['ml-auto text-[10px] shrink-0', { 'text-warning': statusClass === 'running', 'text-success': statusClass === 'done', 'text-danger': statusClass === 'error' }]">{{ statusLabel }}</span>
     </Button>
-    <div v-if="expanded" class="tool__bd">
+    <div v-if="expanded" class="px-2.5 py-2 text-[11px] leading-normal max-h-40 overflow-y-auto border-t border-border font-mono text-muted">
       <component v-if="rendererComp" :is="rendererComp" :tool-call="toolCall" />
       <DefaultToolRenderer v-else :tool-call="toolCall" />
     </div>
@@ -52,20 +52,4 @@ function truncate(str: string, max: number): string {
 }
 </script>
 
-<style scoped>
-.tool { border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); margin: 8px 0; overflow: hidden; }
-.tool__hd { display: flex; align-items: center; gap: 6px; padding: 6px 10px; cursor: pointer; font-size: 11px; line-height: 1.4; font-family: var(--font-mono); color: var(--muted); user-select: none; transition: background 0.15s var(--ease); width: 100%; text-align: left; background: none; border: none; color: inherit; font: inherit; border-radius: 0 !important; }
-.tool__hd:hover { background: var(--accent-light); }
-.tool__hd:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.tool__chevron { transition: transform 0.15s var(--ease); font-size: 9px; flex-shrink: 0; }
-.tool.collapsed .tool__chevron { transform: rotate(-90deg); }
-.tool__name { font-weight: 600; color: var(--accent); }
-.tool__path { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.tool__status { margin-left: auto; font-size: 10px; flex-shrink: 0; }
-.tool__status--running { color: var(--warning); }
-.tool__status--done { color: var(--success); }
-.tool__status--error { color: var(--danger); }
-.tool__bd { padding: 8px 10px; font-size: 11px; line-height: 1.5; max-height: 160px; overflow-y: auto; border-top: 1px solid var(--border); font-family: var(--font-mono); color: var(--muted); }
-.tool-spinner { display: inline-block; width: 10px; height: 10px; border: 2px solid var(--warning); border-top-color: transparent; border-radius: 50%; animation: spin 0.6s linear infinite; flex-shrink: 0; }
-@keyframes spin { to { transform: rotate(360deg); } }
-</style>
+

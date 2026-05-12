@@ -1,12 +1,12 @@
 <template>
-  <div class="context-bar">
-    <div class="context-bar__track">
+  <div class="text-[11px] text-muted font-mono inline-flex items-center gap-1 px-1.5 h-7 shrink-0">
+    <div class="w-10 h-1 bg-border rounded-sm overflow-hidden">
       <div
-        class="context-bar__fill"
+        class="h-full rounded-sm transition-all duration-300 ease-ease"
         :style="{ width: clamped + '%', background: barColor }"
       ></div>
     </div>
-    <span class="context-bar__label">{{ clamped }}%</span>
+    <span class="text-[11px] font-mono text-muted whitespace-nowrap min-w-[30px] text-right">{{ clamped }}%</span>
   </div>
 </template>
 
@@ -46,39 +46,4 @@ const barColor = computed(() => {
 })
 </script>
 
-<style scoped>
-.context-bar {
-  font-size: 11px;
-  color: var(--muted);
-  font-family: var(--font-mono);
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0 6px;
-  height: 28px;
-  flex-shrink: 0;
-}
 
-.context-bar__track {
-  width: 40px;
-  height: 4px;
-  background: var(--border);
-  border-radius: 2px;
-  overflow: hidden;
-}
-
-.context-bar__fill {
-  height: 100%;
-  border-radius: 2px;
-  transition: width 0.3s ease, background 0.3s ease;
-}
-
-.context-bar__label {
-  font-size: 11px;
-  font-family: var(--font-mono);
-  color: var(--muted);
-  white-space: nowrap;
-  min-width: 30px;
-  text-align: right;
-}
-</style>

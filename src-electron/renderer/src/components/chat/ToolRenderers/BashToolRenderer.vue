@@ -1,12 +1,12 @@
 <template>
-  <div class="bash-renderer">
-    <div class="bash-section">
-      <div class="bash-label">Command:</div>
-      <pre class="bash-cmd">{{ command }}</pre>
+  <div class="p-0">
+    <div class="px-2.5 py-2">
+      <div class="font-mono text-[11px] text-muted mb-1">Command:</div>
+      <pre class="whitespace-pre-wrap font-mono text-xs text-fg bg-bg rounded-md p-2 m-0">{{ command }}</pre>
     </div>
-    <div v-if="toolCall.output !== undefined && toolCall.status !== 'running'" class="bash-section">
-      <div class="bash-label">Output:</div>
-      <div class="bash-output"><pre>{{ toolCall.output }}</pre></div>
+    <div v-if="toolCall.output !== undefined && toolCall.status !== 'running'" class="px-2.5 py-2">
+      <div class="font-mono text-[11px] text-muted mb-1">Output:</div>
+      <div class="max-h-[200px] overflow-y-auto rounded-md border border-border bg-surface p-2"><pre class="whitespace-pre-wrap font-mono text-xs text-muted m-0">{{ toolCall.output }}</pre></div>
     </div>
   </div>
 </template>
@@ -21,11 +21,3 @@ const command = computed(() => {
 })
 </script>
 
-<style scoped>
-.bash-renderer { padding: 0; }
-.bash-section { padding: 8px 10px; }
-.bash-label { font-family: var(--font-mono); font-size: 11px; color: var(--muted); margin-bottom: 4px; }
-.bash-cmd { white-space: pre-wrap; font-family: var(--font-mono); font-size: 12px; color: var(--fg); background: var(--bg); border-radius: var(--radius-md); padding: 8px; margin: 0; }
-.bash-output { max-height: 200px; overflow-y: auto; border-radius: var(--radius-md); border: 1px solid var(--border); background: var(--surface); padding: 8px; }
-.bash-output pre { white-space: pre-wrap; font-family: var(--font-mono); font-size: 12px; color: var(--muted); margin: 0; }
-</style>

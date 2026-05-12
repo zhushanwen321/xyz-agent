@@ -1,8 +1,8 @@
 <template>
-  <div class="edit-renderer">
-    <div class="edit-section"><div class="edit-label">File:</div><code class="edit-path">{{ filePath }}</code></div>
-    <div v-if="oldText" class="edit-section"><div class="edit-label">Old:</div><pre class="edit-old">{{ oldText }}</pre></div>
-    <div v-if="newText" class="edit-section"><div class="edit-label">New:</div><pre class="edit-new">{{ newText }}</pre></div>
+  <div class="p-0">
+    <div class="px-2.5 py-1.5"><div class="font-mono text-[11px] text-muted mb-1">File:</div><code class="font-mono text-xs text-accent">{{ filePath }}</code></div>
+    <div v-if="oldText" class="px-2.5 py-1.5"><div class="font-mono text-[11px] text-muted mb-1">Old:</div><pre class="whitespace-pre-wrap font-mono text-xs bg-bg rounded-md p-2 m-0 max-h-[130px] overflow-y-auto text-danger">{{ oldText }}</pre></div>
+    <div v-if="newText" class="px-2.5 py-1.5"><div class="font-mono text-[11px] text-muted mb-1">New:</div><pre class="whitespace-pre-wrap font-mono text-xs bg-bg rounded-md p-2 m-0 max-h-[130px] overflow-y-auto text-success">{{ newText }}</pre></div>
   </div>
 </template>
 
@@ -19,12 +19,3 @@ const oldText = computed(() => String((parsed.value as Record<string, unknown>).
 const newText = computed(() => String((parsed.value as Record<string, unknown>).new_text ?? ''))
 </script>
 
-<style scoped>
-.edit-renderer { padding: 0; }
-.edit-section { padding: 6px 10px; }
-.edit-label { font-family: var(--font-mono); font-size: 11px; color: var(--muted); margin-bottom: 4px; }
-.edit-path { font-family: var(--font-mono); font-size: 12px; color: var(--accent); }
-.edit-old, .edit-new { white-space: pre-wrap; font-family: var(--font-mono); font-size: 12px; background: var(--bg); border-radius: var(--radius-md); padding: 8px; margin: 0; max-height: 130px; overflow-y: auto; }
-.edit-old { color: var(--danger); }
-.edit-new { color: var(--success); }
-</style>

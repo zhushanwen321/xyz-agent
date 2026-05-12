@@ -1,6 +1,6 @@
 <template>
-  <div class="msg-list" ref="containerRef" @scroll="onScroll">
-    <div v-for="msg in messages" :key="msg.id" class="msg-wrapper">
+  <div class="flex-1 overflow-y-auto p-5 px-6 flex flex-col gap-3.5" ref="containerRef" @scroll="onScroll">
+    <div v-for="msg in messages" :key="msg.id">
       <MessageBubble :message="msg" />
     </div>
   </div>
@@ -30,7 +30,4 @@ watch(() => props.messages.length, () => {
 })
 </script>
 
-<style scoped>
-.msg-list { flex: 1; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 14px; }
-.msg-wrapper { /* no max-width, .msg handles it */ }
-</style>
+

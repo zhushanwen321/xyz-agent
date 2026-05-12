@@ -122,6 +122,3 @@ watch(
 )
 </script>
 
-<style scoped>
-/* All styles defined in global CSS (style.css) */
-</style>

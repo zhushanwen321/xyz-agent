@@ -1,9 +1,9 @@
 <template>
-  <div class="read-renderer">
-    <div class="read-section"><div class="read-label">File:</div><code class="read-path">{{ filePath }}</code></div>
-    <div v-if="toolCall.output !== undefined && toolCall.status !== 'running'" class="read-section">
-      <div class="read-label">Content:</div>
-      <div class="read-content"><pre>{{ toolCall.output }}</pre></div>
+  <div class="p-0">
+    <div class="px-2.5 py-1.5"><div class="font-mono text-[11px] text-muted mb-1">File:</div><code class="font-mono text-xs text-accent">{{ filePath }}</code></div>
+    <div v-if="toolCall.output !== undefined && toolCall.status !== 'running'" class="px-2.5 py-1.5">
+      <div class="font-mono text-[11px] text-muted mb-1">Content:</div>
+      <div class="max-h-[250px] overflow-y-auto rounded-md border border-border bg-bg p-2"><pre class="whitespace-pre-wrap font-mono text-xs text-muted m-0">{{ toolCall.output }}</pre></div>
     </div>
   </div>
 </template>
@@ -18,11 +18,3 @@ const filePath = computed(() => {
 })
 </script>
 
-<style scoped>
-.read-renderer { padding: 0; }
-.read-section { padding: 6px 10px; }
-.read-label { font-family: var(--font-mono); font-size: 11px; color: var(--muted); margin-bottom: 4px; }
-.read-path { font-family: var(--font-mono); font-size: 12px; color: var(--accent); }
-.read-content { max-height: 250px; overflow-y: auto; border-radius: var(--radius-md); border: 1px solid var(--border); background: var(--bg); padding: 8px; }
-.read-content pre { white-space: pre-wrap; font-family: var(--font-mono); font-size: 12px; color: var(--muted); margin: 0; }
-</style>
