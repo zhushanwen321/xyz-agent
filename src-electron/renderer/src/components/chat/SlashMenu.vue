@@ -2,23 +2,31 @@
   <div
     v-if="visible && commands.length > 0"
     ref="menuRef"
-    class="slash-popup"
+    class="absolute bottom-full left-[24px] right-[24px] mb-1 bg-surface border border-border rounded-sm shadow-md max-h-[calc(28px*5)] overflow-y-auto z-20"
   >
-    <div class="slash-popup__list">
+    <div>
       <Button
         v-for="(cmd, idx) in commands"
         :key="cmd.name"
         :ref="(el) => { if (idx === activeIndex) activeEl = (el as any)?.$el ?? el }"
         variant="ghost"
-        :class="['slash-popup__item', { 'slash-popup__item--active': idx === activeIndex }]"
+        :class="[
+          'flex items-center gap-1.5 w-full py-1 px-2.5 border-none bg-transparent text-fg font-body text-xs leading-[1.4] text-left cursor-pointer transition-colors duration-100 ease-ease',
+          idx === activeIndex && 'bg-accent-light',
+        ]"
         @click="handleSelect(cmd)"
         @mouseenter="activeIndex = idx"
       >
         <span
-          :class="['slash-popup__tag', cmd.source === 'builtin' ? 'slash-popup__tag--cmd' : 'slash-popup__tag--sk']"
+          :class="[
+            'inline-flex items-center justify-center text-[9px] font-medium tracking-[0.02em] rounded-[3px] shrink-0 w-[52px] h-4',
+            cmd.source === 'builtin'
+              ? 'bg-border text-muted'
+              : 'bg-accent-light text-accent',
+          ]"
         >{{ cmd.source === 'builtin' ? 'command' : 'skill' }}</span>
-        <span class="slash-popup__name">/{{ cmd.name }}</span>
-        <span class="slash-popup__desc">{{ cmd.description }}</span>
+        <span class="text-xs font-semibold font-mono whitespace-nowrap text-accent w-[100px] shrink-0 overflow-hidden text-ellipsis">/{{ cmd.name }}</span>
+        <span class="text-[11px] text-muted flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap pl-2 border-l border-border">{{ cmd.description }}</span>
       </Button>
     </div>
   </div>
@@ -108,92 +116,3 @@ onBeforeUnmount(() => {
 })
 </script>
 
-<style scoped>
-/* 定位在输入框卡片正上方，与设计稿 views_chat.html 一致 */
-.slash-popup {
-  position: absolute;
-  bottom: 100%;
-  left: 24px;
-  right: 24px;
-  margin-bottom: 4px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
-  max-height: calc(28px * 5);
-  overflow-y: auto;
-  z-index: 20;
-}
-
-.slash-popup__item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  padding: 4px 10px;
-  border: none;
-  background: none;
-  color: var(--fg);
-  font-family: var(--font-body);
-  font-size: 12px;
-  line-height: 1.4;
-  text-align: left;
-  cursor: pointer;
-  transition: background 0.1s var(--ease);
-}
-
-.slash-popup__item:hover,
-.slash-popup__item--active {
-  background: var(--accent-light);
-}
-
-/* tag: 元数据层，最弱视觉，小写居中 pill */
-.slash-popup__tag {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 9px;
-  font-weight: 500;
-  letter-spacing: 0.02em;
-  border-radius: 3px;
-  flex-shrink: 0;
-  width: 52px;
-  height: 16px;
-}
-
-.slash-popup__tag--cmd {
-  background: var(--border);
-  color: var(--muted);
-}
-
-.slash-popup__tag--sk {
-  background: var(--accent-light);
-  color: var(--accent);
-}
-
-/* name: 主信息层，mono + accent */
-.slash-popup__name {
-  font-size: 12px;
-  font-weight: 600;
-  font-family: var(--font-mono);
-  white-space: nowrap;
-  color: var(--accent);
-  width: 100px;
-  flex-shrink: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* desc: 次要信息层，muted + 缩短竖线分隔 */
-.slash-popup__desc {
-  font-size: 11px;
-  color: var(--muted);
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  padding-left: 8px;
-  border-left: 1px solid var(--border);
-}
-</style>

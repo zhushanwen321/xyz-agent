@@ -1,15 +1,40 @@
 <template>
   <!-- system 消息：全宽横幅 -->
-  <div v-if="message.role === 'system'" :class="['msg msg--system', message.status === 'error' && 'msg--system--alert']">
-    <span :class="['msg--system__dot', message.status === 'error' ? 'msg--system__dot--alert' : 'msg--system__dot--done']"></span>
-    <div class="msg--system__content">
-      <div class="msg--system__title">{{ message.content }}</div>
+  <div
+    v-if="message.role === 'system'"
+    :class="[
+      'self-stretch w-full max-w-none my-2 border border-border bg-surface rounded-sm px-3.5 py-2.5 text-[13px] flex items-start gap-2.5 box-border',
+      message.status === 'error' && 'border-danger bg-danger-light',
+    ]"
+  >
+    <span
+      :class="[
+        'w-2 h-2 rounded-full shrink-0 mt-1',
+        message.status === 'error' ? 'bg-danger' : 'bg-success',
+      ]"
+    ></span>
+    <div class="flex-1">
+      <div class="font-semibold text-[13px]">{{ message.content }}</div>
     </div>
   </div>
 
   <!-- assistant / user 消息 -->
-  <div v-else :class="['msg', message.role === 'assistant' ? 'msg--bot' : `msg--${message.role}`]">
-    <div :class="['msg__role', `msg__role--${message.role}`]">
+  <div
+    v-else
+    :data-role="message.role"
+    :class="[
+      'py-3 px-4 leading-[1.6] text-sm',
+      message.role === 'user'
+        ? 'self-end max-w-[75%] bg-accent text-white rounded rounded-br-xs'
+        : 'self-start w-full bg-transparent',
+    ]"
+  >
+    <div
+      :class="[
+        'text-[10px] font-semibold uppercase tracking-[0.04em] leading-[1.4] mb-[3px]',
+        message.role === 'user' ? 'text-right text-[var(--white-70)]' : 'text-muted',
+      ]"
+    >
       <template v-if="message.role === 'assistant'">助手</template>
       <template v-else>用户</template>
     </div>
@@ -31,9 +56,11 @@
     />
 
     <!-- Markdown content -->
-    <!-- eslint-disable-next-line vue/no-v-html -->
     <div v-if="message.content" class="msg__body">
-      <span v-if="message.role === 'user' && message.skillName" class="skill-badge">
+      <span
+        v-if="message.role === 'user' && message.skillName"
+        class="inline-flex items-center gap-0.5 text-[11px] font-medium py-[1px] px-1.5 rounded-full bg-[var(--white-25)] text-white mr-1 align-middle leading-[1.4]"
+      >
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="10" height="10"><path d="M2 8l4 4 8-8"/></svg>
         {{ message.skillName }}
       </span>
@@ -55,63 +82,20 @@ const props = defineProps<{ message: Message }>()
 const renderedContent = computed(() => renderMarkdown(props.message.content))
 </script>
 
+<!-- msg__body 内的 p/code 由 v-html 渲染，无法用 Tailwind 类作用于动态内容 -->
 <style scoped>
-.msg { padding: 12px 16px; line-height: 1.6; font-size: 14px; }
-.msg--user { align-self: flex-end; max-width: 75%; background: var(--accent); color: white; border-radius: var(--radius); border-bottom-right-radius: var(--radius-xs); }
-.msg--bot { align-self: flex-start; width: 100%; background: transparent; }
-
-/* system 消息：全宽横幅 */
-.msg--system {
-  align-self: stretch;
-  width: 100%;
-  max-width: none;
-  margin: 8px 0;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  border-radius: var(--radius-sm);
-  padding: 10px 14px;
-  font-size: 13px;
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  box-sizing: border-box;
-}
-.msg--system--alert {
-  border-color: var(--danger);
-  background: var(--danger-light, oklch(97% 0.015 25));
-}
-.msg--system__dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  margin-top: 4px;
-}
-.msg--system__dot--done { background: var(--success); }
-.msg--system__dot--alert { background: var(--danger); }
-.msg--system__content { flex: 1; }
-.msg--system__title { font-weight: 600; font-size: 13px; }
-
-.msg__role { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; line-height: 1.4; color: var(--muted); margin-bottom: 3px; }
-.msg__role--user { text-align: right; color: rgba(255, 255, 255, 0.7); }
 .msg__body p { margin-bottom: 6px; }
 .msg__body p:last-child { margin-bottom: 0; }
-.msg__body code { background: var(--bg); padding: 1px 4px; border-radius: var(--radius-xs); font-size: 0.88em; font-family: var(--font-mono); }
-.msg--user .msg__body code { background: rgba(255, 255, 255, 0.2); color: white; }
-
-/* Skill badge: 用户消息中正文前的小标签 */
-.skill-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  font-size: 11px;
-  font-weight: 500;
-  padding: 1px 6px;
-  border-radius: 100px;
-  background: rgba(255, 255, 255, 0.25);
+.msg__body code {
+  background: var(--bg);
+  padding: 1px 4px;
+  border-radius: var(--radius-xs);
+  font-size: 0.88em;
+  font-family: var(--font-mono);
+}
+/* 用户消息气泡内的 code 需要白底 */
+[data-role="user"] .msg__body code {
+  background: rgba(255, 255, 255, 0.2);
   color: white;
-  margin-right: 4px;
-  vertical-align: middle;
-  line-height: 1.4;
 }
 </style>

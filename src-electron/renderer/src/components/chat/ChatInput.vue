@@ -1,51 +1,59 @@
 <template>
-  <div class="chat-input-wrap">
+  <div class="relative mx-auto mb-3 shrink-0 max-w-[960px] w-full px-6">
     <SlashMenu
       :visible="slashVisible"
       :commands="filteredCommands"
       @close="closeSlashMenu"
       @select="handleSlashSelect"
     />
-    <div class="chat-input-container">
+    <div
+      ref="containerRef"
+      :class="[
+        'bg-surface border border-border rounded shadow-xs transition-colors duration-150 ease-ease overflow-visible relative z-10 focus-within:border-accent focus-within:shadow-sm',
+        activeCommand ? 'border-accent' : '',
+      ]"
+    >
       <!-- Command/Skill 标签栏 -->
-      <div v-if="activeCommand" class="skill-tag-bar">
+      <div v-if="activeCommand" class="flex pt-2 px-3.5">
         <div
           :class="[
-            'skill-tag',
-            activeCommand.source === 'builtin' ? 'skill-tag--cmd' : 'skill-tag--sk'
+            'inline-flex items-center gap-1 py-[2px] px-2 rounded-full text-xs font-medium',
+            activeCommand.source === 'builtin'
+              ? 'bg-border text-muted'
+              : 'bg-accent-light text-accent',
           ]"
         >
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
             <path d="M3 8.5L6.5 12L13 4" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
-          <span class="skill-tag__name">/{{ activeCommand.name }}</span>
-          <span class="skill-tag__close" @click="clearCommand">&times;</span>
+          <span class="leading-[1.4]">/{{ activeCommand.name }}</span>
+          <span class="cursor-pointer ml-0.5 opacity-60 text-sm leading-none hover:opacity-100" @click="clearCommand">&times;</span>
         </div>
       </div>
       <Textarea
         v-model="text"
         :placeholder="t('chat.inputPlaceholder')"
-        class="chat-input-textarea"
+        class="block w-full min-h-[calc(1.45em*2+16px)] max-h-[calc(1.45em*10+16px)] pt-[10px] pb-2 px-3.5 border-none bg-transparent text-fg font-body text-sm leading-[1.45] resize-none outline-none placeholder:text-muted"
         :rows="1"
         no-style
         @keydown="onKeyDown"
         @compositionstart="isComposing = true"
         @compositionend="onCompositionEnd"
       />
-      <div class="chat-input-toolbar">
+      <div class="flex items-center gap-1 px-2 pb-1.5">
         <ModelPicker :current-model="currentModel" @select="(id) => emit('select-model', id)" />
-        <div class="tb-spacer"></div>
+        <div class="flex-1"></div>
         <Button
           v-if="isStreaming"
           variant="ghost"
-          class="tb-btn tb-btn--stop"
+          class="inline-flex items-center justify-center h-7 px-2 border-none rounded-xs bg-transparent text-muted text-xs font-body cursor-pointer transition-all duration-150 ease-ease gap-1 shrink-0 font-bold text-[11px] w-7 h-7 hover:bg-danger-light hover:text-danger"
           @click="emit('cancel')"
           :title="t('chat.stop')"
         >■</Button>
         <Button
           v-else
           variant="primary"
-          class="tb-btn tb-btn--send"
+          class="bg-accent text-white w-7 h-7 rounded-xs disabled:opacity-40 disabled:cursor-default hover:opacity-88"
           :disabled="!canSend"
           @click="handleSend"
           :title="t('chat.send')"
@@ -98,6 +106,8 @@ initDefaultCommands()
 const text = ref('')
 const isComposing = ref(false)
 const activeCommand = ref<SlashCommand | null>(null)
+
+const containerRef = ref<HTMLElement | null>(null)
 
 const currentModel = computed(() => settingsStore.defaultModel)
 
@@ -205,7 +215,7 @@ function onCompositionEnd() {
 }
 
 function resizeTextarea() {
-  const el = document.querySelector<HTMLTextAreaElement>('.chat-input-textarea textarea')
+  const el = containerRef.value?.querySelector<HTMLTextAreaElement>('textarea')
   if (!el) return
   el.style.height = 'auto'
   el.style.height = Math.min(el.scrollHeight, 140) + 'px'
@@ -213,165 +223,3 @@ function resizeTextarea() {
 
 watch(text, () => nextTick(resizeTextarea))
 </script>
-
-<style scoped>
-.chat-input-wrap {
-  position: relative;
-  margin: 0 auto 12px;
-  flex-shrink: 0;
-  max-width: 960px;
-  width: 100%;
-  padding: 0 24px;
-}
-
-.chat-input-container {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.04);
-  transition: border-color 0.15s var(--ease), box-shadow 0.15s var(--ease);
-  overflow: visible;
-  position: relative;
-  z-index: 10;
-}
-
-.chat-input-container:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
-}
-
-/* skill 标签激活时边框 accent */
-.chat-input-container:has(.skill-tag-bar) {
-  border-color: var(--accent);
-}
-
-.chat-input-textarea {
-  display: block;
-  width: 100%;
-  min-height: calc(1.45em * 2 + 16px);
-  max-height: calc(1.45em * 10 + 16px);
-  padding: 10px 14px 8px;
-  border: none;
-  background: transparent;
-  color: var(--fg);
-  font-family: var(--font-body);
-  font-size: 14px;
-  line-height: 1.45;
-  resize: none;
-  outline: none;
-}
-
-.chat-input-textarea::placeholder {
-  color: var(--muted);
-}
-
-.chat-input-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px 6px;
-}
-
-/* Skill 标签栏 */
-.skill-tag-bar {
-  display: flex;
-  padding: 8px 14px 0;
-}
-
-.skill-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  border-radius: 100px;
-  background: var(--accent-light);
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 500;
-}
-
-.skill-tag__name {
-  line-height: 1.4;
-}
-
-.skill-tag__close {
-  cursor: pointer;
-  margin-left: 2px;
-  opacity: 0.6;
-  font-size: 14px;
-  line-height: 1;
-}
-
-.skill-tag__close:hover {
-  opacity: 1;
-}
-
-/* CMD tag: 用 border/muted 中性配色，和 popup 里的 command tag 一致 */
-.skill-tag--cmd {
-  background: var(--border);
-  color: var(--muted);
-}
-
-/* Toolbar buttons */
-.tb-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 28px;
-  padding: 0 8px;
-  border: none;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--muted);
-  font-size: 12px;
-  font-family: var(--font-body);
-  cursor: pointer;
-  transition: all 0.15s var(--ease);
-  gap: 4px;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.tb-btn:hover {
-  background: var(--accent-light);
-  color: var(--accent);
-}
-
-.tb-btn svg {
-  width: 14px;
-  height: 14px;
-}
-
-.tb-btn--send {
-  background: var(--accent);
-  color: white;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-xs);
-}
-
-.tb-btn--send:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.tb-btn--send:not(:disabled):hover {
-  opacity: 0.88;
-}
-
-.tb-btn--stop {
-  font-weight: 700;
-  font-size: 11px;
-  width: 28px;
-  height: 28px;
-}
-
-.tb-btn--stop:hover {
-  background: var(--danger-light);
-  color: var(--danger);
-}
-
-.tb-spacer {
-  flex: 1;
-}
-</style>
