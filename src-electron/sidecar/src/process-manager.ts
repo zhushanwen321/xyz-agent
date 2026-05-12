@@ -161,6 +161,10 @@ export class ProcessManager {
     return this.processes.get(sessionId)?.client
   }
 
+  hasClient(sessionId: string): boolean {
+    return this.processes.has(sessionId)
+  }
+
   /**
    * Kill all managed subprocesses.
    */

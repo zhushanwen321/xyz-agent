@@ -1,22 +1,22 @@
 <template>
-  <div class="toast-container">
+  <div class="fixed top-[60px] left-5 z-60 flex flex-col gap-2 pointer-events-none">
     <TransitionGroup name="toast-list">
       <div
         v-for="toast in toasts"
         :key="toast.id"
-        class="toast"
-        :class="{ removing: toast.removing }"
+        class="w-[340px] bg-surface border border-border rounded py-3 px-[14px] shadow-lg pointer-events-auto flex gap-[10px]"
+        :class="{ 'opacity-0 -translate-x-[120%]': toast.removing }"
       >
-        <span class="toast__dot" :style="{ background: dotColor(toast.type) }"></span>
-        <div class="toast__body">
-          <div class="toast__title">{{ toast.title }}</div>
-          <div v-if="toast.description" class="toast__desc">{{ toast.description }}</div>
-          <div v-if="toast.actions?.length" class="toast__actions">
+        <span class="w-2 h-2 rounded-full shrink-0 mt-1" :style="{ background: dotColor(toast.type) }"></span>
+        <div class="flex-1 min-w-0">
+          <div class="text-[13px] font-semibold mb-[2px]">{{ toast.title }}</div>
+          <div v-if="toast.description" class="text-xs text-muted leading-snug">{{ toast.description }}</div>
+          <div v-if="toast.actions?.length" class="flex gap-[6px] mt-2">
             <Button
               v-for="action in toast.actions"
               :key="action.label"
               size="sm"
-              :class="['toast__btn', { 'toast__btn--primary': action.primary }]"
+              :class="['py-1 px-[10px] rounded-xs text-[11px] font-body cursor-pointer transition-all duration-150 ease-ease border border-border bg-transparent text-muted hover:border-accent hover:text-accent', { 'bg-accent text-white border-accent hover:opacity-[0.88]': action.primary }]"
               @click="action.handler"
             >
               {{ action.label }}
@@ -60,107 +60,18 @@ function dotColor(type: string) {
 </script>
 
 <style scoped>
-.toast-container {
-  position: fixed;
-  top: 60px;
-  left: 20px;
-  z-index: 60;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  pointer-events: none;
-}
-
-.toast {
-  width: 340px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 12px 14px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-  pointer-events: auto;
-  display: flex;
-  gap: 10px;
-}
-
-.toast.removing {
-  opacity: 0;
-  transform: translateX(-120%);
-}
-
-.toast__dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  margin-top: 4px;
-}
-
-.toast__body {
-  flex: 1;
-  min-width: 0;
-}
-
-.toast__title {
-  font-size: 13px;
-  font-weight: 600;
-  margin-bottom: 2px;
-}
-
-.toast__desc {
-  font-size: 12px;
-  color: var(--muted);
-  line-height: 1.4;
-}
-
-.toast__actions {
-  display: flex;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-:deep(.toast__btn) {
-  padding: 4px 10px;
-  border-radius: var(--radius-xs);
-  font-size: 11px;
-  font-family: var(--font-body);
-  cursor: pointer;
-  transition: all 0.15s var(--ease);
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--muted);
-}
-
-:deep(.toast__btn:hover) {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-:deep(.toast__btn--primary) {
-  background: var(--accent);
-  color: white;
-  border-color: var(--accent);
-}
-
-:deep(.toast__btn--primary:hover) {
-  opacity: 0.88;
-}
-
-/* Transition */
+/* Vue TransitionGroup animation classes — cannot be expressed as Tailwind template utilities */
 .toast-list-enter-from {
   transform: translateX(-120%);
   opacity: 0;
 }
-
 .toast-list-enter-active {
   transition: all 0.35s var(--ease);
 }
-
 .toast-list-leave-to {
   transform: translateX(-120%);
   opacity: 0;
 }
-
 .toast-list-leave-active {
   transition: all 0.25s var(--ease);
 }

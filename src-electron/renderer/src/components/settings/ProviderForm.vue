@@ -60,12 +60,12 @@ function handleSave() {
 </script>
 
 <template>
-  <div class="provider-form">
-    <h3 class="provider-form__title">
+  <div class="flex flex-col gap-3">
+    <h3 class="text-lg font-semibold text-fg m-0">
       {{ isEdit ? t('settings.editProvider') : t('settings.addProvider') }}
     </h3>
 
-    <div class="provider-form__fields">
+    <div class="flex flex-col gap-2">
       <Input
         v-model="providerName"
         :label="t('settings.providerName')"
@@ -79,17 +79,17 @@ function handleSave() {
         :label="t('settings.apiKey')"
         :placeholder="isEdit ? t('settings.apiKeyPlaceholderEdit') : t('settings.apiKeyPlaceholder')"
       />
-      <span class="provider-form__hint">{{ t('settings.apiKeyHint') }}</span>
+      <span class="text-xs text-muted -mt-1">{{ t('settings.apiKeyHint') }}</span>
 
       <Input
         v-model="baseUrl"
         :label="t('settings.baseUrl')"
         :placeholder="t('settings.baseUrlPlaceholder')"
       />
-      <span class="provider-form__hint">{{ t('settings.baseUrlHint') }}</span>
+      <span class="text-xs text-muted -mt-1">{{ t('settings.baseUrlHint') }}</span>
 
-      <div class="provider-form__field">
-        <label class="provider-form__label">{{ t('settings.defaultModel') }}</label>
+      <div class="flex flex-col gap-1">
+        <label class="text-sm font-medium text-fg">{{ t('settings.defaultModel') }}</label>
         <Select
           v-model="defaultModel"
           :options="modelOptions"
@@ -97,8 +97,8 @@ function handleSave() {
         />
       </div>
 
-      <div class="provider-form__field">
-        <label class="provider-form__label">{{ t('settings.thinkingMode') }}</label>
+      <div class="flex flex-col gap-1">
+        <label class="text-sm font-medium text-fg">{{ t('settings.thinkingMode') }}</label>
         <Select
           v-model="thinkingMode"
           :options="thinkingOptions"
@@ -106,8 +106,8 @@ function handleSave() {
         />
       </div>
 
-      <div class="provider-form__field">
-        <label class="provider-form__label">
+      <div class="flex flex-col gap-1">
+        <label class="text-sm font-medium text-fg">
           {{ t('settings.temperature') }}: {{ temperature.toFixed(1) }}
         </label>
         <!-- eslint-disable-next-line taste/no-native-html-elements -- range slider has no design-system replacement -->
@@ -117,12 +117,12 @@ function handleSave() {
           min="0"
           max="2"
           step="0.1"
-          class="provider-form__range"
+          class="w-full accent-accent"
         />
       </div>
     </div>
 
-    <div class="provider-form__actions">
+    <div class="flex items-center gap-1 justify-end pt-2 border-t border-border">
       <Button variant="outline" size="md" @click="emit('cancel')">
         {{ t('common.cancel') }}
       </Button>
@@ -136,55 +136,3 @@ function handleSave() {
   </div>
 </template>
 
-<style scoped>
-.provider-form {
-  display: flex;
-  flex-direction: column;
-  gap: var(--radius-lg, 12px);
-}
-
-.provider-form__title {
-  font-size: var(--font-lg, 1.125rem);
-  font-weight: 600;
-  color: var(--fg);
-  margin: 0;
-}
-
-.provider-form__fields {
-  display: flex;
-  flex-direction: column;
-  gap: var(--radius-md, 8px);
-}
-
-.provider-form__hint {
-  font-size: var(--font-xs, 0.75rem);
-  color: var(--muted);
-  margin-top: calc(-1 * var(--radius-xs, 4px));
-}
-
-.provider-form__field {
-  display: flex;
-  flex-direction: column;
-  gap: var(--radius-xs, 4px);
-}
-
-.provider-form__label {
-  font-size: var(--font-sm, 0.875rem);
-  font-weight: 500;
-  color: var(--fg);
-}
-
-.provider-form__range {
-  width: 100%;
-  accent-color: var(--accent);
-}
-
-.provider-form__actions {
-  display: flex;
-  align-items: center;
-  gap: var(--radius-sm, 4px);
-  justify-content: flex-end;
-  padding-top: var(--radius-md, 8px);
-  border-top: 1px solid var(--border);
-}
-</style>

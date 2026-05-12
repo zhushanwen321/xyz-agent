@@ -5,10 +5,10 @@ defineProps<{
 </script>
 
 <template>
-  <div class="s-meta-grid">
+  <div class="grid grid-cols-[100px_1fr] gap-x-3 gap-y-1 text-xs mb-3">
     <template v-for="item in items" :key="item.key">
-      <span class="s-meta-grid__key">{{ item.key }}</span>
-      <span class="s-meta-grid__val">{{ item.value }}</span>
+      <span class="text-muted font-medium">{{ item.key }}</span>
+      <span class="font-mono text-[11px] text-fg break-all">{{ item.value }}</span>
     </template>
   </div>
 </template>

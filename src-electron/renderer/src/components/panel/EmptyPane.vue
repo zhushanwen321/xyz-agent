@@ -1,7 +1,7 @@
 <template>
-  <div class="empty-pane">
-    <div class="empty-pane__inner">
-      <svg class="empty-pane__icon" width="56" height="56" viewBox="0 0 56 56" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <div class="flex-1 flex items-center justify-center min-w-0 min-h-0 p-10 px-6">
+    <div class="flex flex-col items-center max-w-[360px] w-full">
+      <svg class="text-muted opacity-50 mb-5" width="56" height="56" viewBox="0 0 56 56" fill="none" xmlns="http://www.w3.org/2000/svg">
         <rect x="4" y="4" width="48" height="48" rx="12" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
         <path d="M20 8v8a4 4 0 0 0 4 4h8a4 4 0 0 0 4-4V8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
         <line x1="16" y1="28" x2="40" y2="28" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
@@ -9,26 +9,26 @@
         <line x1="16" y1="40" x2="30" y2="40" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
       </svg>
 
-      <h2 class="empty-pane__title">选择一个对话</h2>
+      <h2 class="m-0 mb-6 text-base font-semibold text-fg text-center">选择一个对话</h2>
 
-      <div v-if="recentSessions.length > 0" class="empty-pane__sessions">
-        <div class="empty-pane__sessions-label">最近对话</div>
+      <div v-if="recentSessions.length > 0" class="w-full mb-5">
+        <div class="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted mb-2">最近对话</div>
         <button
           v-for="session in recentSessions"
           :key="session.id"
-          class="empty-pane__session-item"
+          class="flex items-center gap-2 w-full px-3 py-2 border border-border rounded-sm bg-surface cursor-pointer font-body text-[13px] text-fg transition-all duration-150 ease-ease mb-1 leading-snug hover:border-accent hover:bg-accent-light"
           @click="handleSelectSession(session.id)"
         >
-          <svg class="empty-pane__session-icon" width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <svg class="text-muted shrink-0" width="14" height="14" viewBox="0 0 14 14" fill="none">
             <path d="M2 3.5C2 2.67 2.67 2 3.5 2h7c.83 0 1.5.67 1.5 1.5v7c0 .83-.67 1.5-1.5 1.5h-7c-.83 0-1.5-.67-1.5-1.5v-7z" stroke="currentColor" stroke-width="1.2"/>
             <path d="M5 6.5h4M5 9h2.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
           </svg>
-          <span class="empty-pane__session-name">{{ session.label || '未命名对话' }}</span>
-          <span class="empty-pane__session-cwd">{{ session.cwd }}</span>
+          <span class="flex-1 min-w-0 whitespace-nowrap overflow-hidden text-ellipsis">{{ session.label || '未命名对话' }}</span>
+          <span class="font-mono text-[11px] text-muted whitespace-nowrap overflow-hidden text-ellipsis max-w-[120px] shrink-0">{{ session.cwd }}</span>
         </button>
       </div>
 
-      <button class="empty-pane__create-btn" @click="handleCreateSession">
+      <button class="inline-flex items-center gap-1.5 px-5 py-2 border border-border rounded-sm bg-surface text-fg font-body text-[13px] font-medium cursor-pointer transition-all duration-150 ease-ease hover:border-accent hover:bg-accent-light hover:text-accent" @click="handleCreateSession">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
           <line x1="8" y1="3" x2="8" y2="13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
           <line x1="3" y1="8" x2="13" y2="8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
@@ -104,113 +104,3 @@ watch(() => sessionStore.sessions.length, (newLen) => {
 })
 </script>
 
-<style scoped>
-.empty-pane {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 0;
-  min-height: 0;
-  padding: 40px 24px;
-}
-.empty-pane__inner {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  max-width: 360px;
-  width: 100%;
-}
-.empty-pane__icon {
-  color: var(--muted);
-  opacity: 0.5;
-  margin-bottom: 20px;
-}
-.empty-pane__title {
-  margin: 0 0 24px;
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--fg);
-  text-align: center;
-}
-.empty-pane__sessions {
-  width: 100%;
-  margin-bottom: 20px;
-}
-.empty-pane__sessions-label {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--muted);
-  margin-bottom: 8px;
-}
-.empty-pane__session-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 8px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  cursor: pointer;
-  font-family: var(--font-body);
-  font-size: 13px;
-  color: var(--fg);
-  transition: all 0.15s var(--ease, ease);
-  margin-bottom: 4px;
-  line-height: 1.4;
-}
-.empty-pane__session-item:last-child {
-  margin-bottom: 0;
-}
-.empty-pane__session-item:hover {
-  border-color: var(--accent);
-  background: var(--accent-light);
-}
-.empty-pane__session-icon {
-  color: var(--muted);
-  flex-shrink: 0;
-}
-.empty-pane__session-name {
-  flex: 1;
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.empty-pane__session-cwd {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 120px;
-  flex-shrink: 0;
-}
-.empty-pane__create-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 20px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--fg);
-  font-family: var(--font-body);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.15s var(--ease, ease);
-}
-.empty-pane__create-btn:hover {
-  border-color: var(--accent);
-  background: var(--accent-light);
-  color: var(--accent);
-}
-.empty-pane__create-btn svg {
-  flex-shrink: 0;
-}
-</style>

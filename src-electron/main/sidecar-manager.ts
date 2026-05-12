@@ -126,10 +126,12 @@ export class SidecarManager {
     console.log(`[sidecar] node ${tsxPath} ${sidecarEntry} --port=${port}`)
 
     this.child = spawn('node', [tsxPath, sidecarEntry, `--port=${port}`], {
-      stdio: 'pipe',
+      stdio: ['pipe', 'pipe', 'pipe'],
       cwd: projectRoot,
     })
 
+    // sidecar 日志转发：只用 console（dev 模式方便调试）。
+    // 安装全局 EPIPE 兜底防止 pipe 断开时崩溃
     this.child.stdout?.on('data', (data: Buffer) => {
       console.log(`[sidecar:out] ${data.toString().trimEnd()}`)
     })

@@ -18,7 +18,7 @@ const tabs = [
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
     // 如果有 modal 打开，让 modal 自己处理 Escape，不关闭设置页面
-    if (document.querySelector('.s-modal-overlay.visible')) return
+    if (document.querySelector('[data-modal-visible]')) return
     e.preventDefault()
     e.stopPropagation()
     settingsStore.setView('chat')
@@ -40,16 +40,18 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="settings-view active">
+  <div class="flex flex-1 overflow-hidden bg-bg">
     <!-- Sidebar -->
-    <div class="settings-sidebar">
-      <div class="settings-sidebar__hd">{{ t('settings.title') }}</div>
-      <div class="settings-sidebar__list">
+    <div class="w-[200px] bg-surface border-r border-border flex flex-col shrink-0">
+      <div class="py-3.5 px-4 font-display text-[15px] font-semibold border-b border-border">{{ t('settings.title') }}</div>
+      <div class="flex-1 overflow-y-auto py-1.5">
         <div
           v-for="tab in tabs"
           :key="tab.key"
-          class="settings-tab"
-          :class="{ active: activeTab === tab.key }"
+          :class="[
+            'flex items-center gap-2 py-[9px] px-4 text-[13px] text-muted cursor-pointer transition-all duration-150 border-l-[3px] select-none [&_svg]:w-3.5 [&_svg]:h-3.5 hover:bg-accent-light hover:text-fg',
+            activeTab === tab.key ? 'text-accent border-l-accent font-semibold bg-accent-light' : 'border-l-transparent'
+          ]"
           @click="activeTab = tab.key"
         >
           <!-- eslint-disable-next-line vue/no-v-html -->
@@ -60,23 +62,20 @@ onUnmounted(() => {
     </div>
 
     <!-- Content -->
-    <div class="settings-content">
-      <div class="settings-content__pane" :class="{ active: activeTab === 'providers' }">
+    <div class="flex-1 overflow-y-auto py-6 px-8">
+      <div v-show="activeTab === 'providers'">
         <ProviderPane />
       </div>
-      <div class="settings-content__pane" :class="{ active: activeTab === 'skills' }">
+      <div v-show="activeTab === 'skills'">
         <SkillsPane />
       </div>
-      <div class="settings-content__pane" :class="{ active: activeTab === 'agents' }">
+      <div v-show="activeTab === 'agents'">
         <AgentsPane />
       </div>
-      <div class="settings-content__pane" :class="{ active: activeTab === 'system' }">
+      <div v-show="activeTab === 'system'">
         <SystemPane />
       </div>
     </div>
   </div>
 </template>
 
-<style scoped>
-/* All styles come from the global design system */
-</style>

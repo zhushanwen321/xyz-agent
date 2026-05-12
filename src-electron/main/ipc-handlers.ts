@@ -30,7 +30,6 @@ export function registerIpcHandlers(deps: {
       return { type: 'focused-existing' }
     }
 
-    const mainWindow = deps.getMainWindow()
     const settingsWin = new BrowserWindow({
       width: 1200,
       height: 800,

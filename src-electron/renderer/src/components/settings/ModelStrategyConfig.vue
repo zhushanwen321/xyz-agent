@@ -50,12 +50,12 @@ function onBindChange(val: string) {
 </script>
 
 <template>
-  <div class="s-agent-model-config__title">模型适配</div>
-  <div class="s-agent-model-config">
-    <div class="s-agent-model-config__row">
-      <span class="s-agent-model-config__row-label">策略</span>
+  <div class="text-[11px] font-semibold uppercase tracking-[0.04em] text-muted mb-2">模型适配</div>
+  <div class="overflow-hidden mb-3">
+    <div class="flex items-center gap-3 py-2 border-b border-[oklch(92%_0.01_70)] last:border-b-0">
+      <span class="text-xs min-w-[60px] font-medium">策略</span>
       <Select
-        class="s-agent-model-config__select !h-8 !px-2.5 !py-1.5 !text-xs !rounded"
+        class="!h-8 !px-2.5 !py-1.5 !text-xs !rounded"
         :model-value="strategy"
         :options="strategyOptions"
         style="max-width: 200px"
@@ -63,8 +63,8 @@ function onBindChange(val: string) {
       />
     </div>
     <!-- Tag rows -->
-    <div v-if="strategy === 'tag'" class="s-agent-model-config__row">
-      <span class="s-agent-model-config__row-label">强力模型</span>
+    <div v-if="strategy === 'tag'" class="flex items-center gap-3 py-2 border-b border-[oklch(92%_0.01_70)] last:border-b-0">
+      <span class="text-xs min-w-[60px] font-medium">强力模型</span>
       <Select
         class="!h-8 !px-2.5 !py-1.5 !text-xs !rounded"
         :model-value="modelTags?.power ?? ''"
@@ -72,8 +72,8 @@ function onBindChange(val: string) {
         @update:model-value="onTagChange('power', $event)"
       />
     </div>
-    <div v-if="strategy === 'tag'" class="s-agent-model-config__row">
-      <span class="s-agent-model-config__row-label">高效模型</span>
+    <div v-if="strategy === 'tag'" class="flex items-center gap-3 py-2 border-b border-[oklch(92%_0.01_70)] last:border-b-0">
+      <span class="text-xs min-w-[60px] font-medium">高效模型</span>
       <Select
         class="!h-8 !px-2.5 !py-1.5 !text-xs !rounded"
         :model-value="modelTags?.efficient ?? ''"
@@ -81,8 +81,8 @@ function onBindChange(val: string) {
         @update:model-value="onTagChange('efficient', $event)"
       />
     </div>
-    <div v-if="strategy === 'tag'" class="s-agent-model-config__row">
-      <span class="s-agent-model-config__row-label">快速模型</span>
+    <div v-if="strategy === 'tag'" class="flex items-center gap-3 py-2 border-b border-[oklch(92%_0.01_70)] last:border-b-0">
+      <span class="text-xs min-w-[60px] font-medium">快速模型</span>
       <Select
         class="!h-8 !px-2.5 !py-1.5 !text-xs !rounded"
         :model-value="modelTags?.fast ?? ''"
@@ -91,8 +91,8 @@ function onBindChange(val: string) {
       />
     </div>
     <!-- Bind row -->
-    <div v-if="strategy === 'bind'" class="s-agent-model-config__row">
-      <span class="s-agent-model-config__row-label">绑定模型</span>
+    <div v-if="strategy === 'bind'" class="flex items-center gap-3 py-2 border-b border-[oklch(92%_0.01_70)] last:border-b-0">
+      <span class="text-xs min-w-[60px] font-medium">绑定模型</span>
       <Select
         class="!h-8 !px-2.5 !py-1.5 !text-xs !rounded"
         :model-value="modelBind ?? ''"

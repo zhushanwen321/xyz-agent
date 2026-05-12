@@ -2,8 +2,7 @@
   <!-- Pane leaf node -->
   <div
     v-if="node.type === 'pane'"
-    class="ptr-pane"
-    :class="{ 'ptr-pane--focused': node.id === focusedPaneId }"
+    :class="['flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden border-t-2', node.id === focusedPaneId ? 'border-t-accent' : 'border-t-border']"
     @mousedown="paneStore.navigateToPane(node.id)"
   >
     <PaneSessionView
@@ -21,11 +20,10 @@
   <div
     v-else
     ref="splitContainerRef"
-    class="ptr-split"
-    :class="`ptr-split--${node.direction}`"
+    :class="['flex flex-1 min-w-0 min-h-0 overflow-hidden', node.direction === 'horizontal' ? 'flex-row' : 'flex-col']"
   >
     <div
-      class="ptr-split__child"
+      class="flex min-w-0 min-h-0"
       :style="firstChildStyle"
     >
       <PaneTreeRenderer
@@ -38,7 +36,7 @@
       @resize="handleResize"
     />
     <div
-      class="ptr-split__child"
+      class="flex min-w-0 min-h-0"
       :style="secondChildStyle"
     >
       <PaneTreeRenderer
@@ -98,39 +96,3 @@ function handleResize(delta: number) {
 }
 </script>
 
-<style scoped>
-.ptr-pane {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-  border-top: 2px solid var(--border);
-}
-.ptr-pane--focused {
-  border-top-color: var(--accent);
-}
-
-.ptr-split {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-}
-.ptr-split--horizontal {
-  flex-direction: row;
-}
-.ptr-split--vertical {
-  flex-direction: column;
-}
-
-.ptr-split__child {
-  flex: 0 1 auto;
-  display: flex;
-  min-width: 0;
-  min-height: 0;
-  /* Prevent child from shrinking below zero */
-}
-</style>

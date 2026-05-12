@@ -199,6 +199,66 @@ else
 fi
 
 # ============================================================================
+# Sidecar session 隔离检查
+# ============================================================================
+
+SIDECAR_CHECKER=".githooks/check_sidecar_session.py"
+SIDECAR_SERVER="src-electron/sidecar/src/server.ts"
+
+if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_SIDECAR_SESSION_CHECK" != "1" ]; then
+    if [ -f "$SIDECAR_SERVER" ]; then
+        echo -e "${BLUE}[INFO] 运行 Sidecar session 隔离检查...${NC}"
+
+        if [ ! -f "$SIDECAR_CHECKER" ]; then
+            echo -e "${YELLOW}[WARN] 找不到检查脚本 $SIDECAR_CHECKER${NC}"
+        else
+            python3 "$SIDECAR_CHECKER" "$SIDECAR_SERVER"
+            EXIT_CODE=$?
+
+            if [ $EXIT_CODE -eq 2 ]; then
+                echo ""
+                echo -e "${RED}[ERROR] Sidecar session 隔离检查失败${NC}"
+                echo -e "${YELLOW}[INFO] 设置 SKIP_SIDECAR_SESSION_CHECK=1 跳过检查${NC}"
+                exit 1
+            fi
+        fi
+    else
+        echo -e "${GREEN}[OK] 无 sidecar server.ts，跳过 session 隔离检查${NC}"
+    fi
+else
+    echo -e "${YELLOW}[SKIP] Sidecar session 隔离检查已跳过${NC}"
+fi
+
+# ============================================================================
+# CSS tokens 检查（style.css 不含组件级样式）
+# ============================================================================
+
+CSS_CHECKER=".githooks/check_css_tokens.py"
+CSS_FILE="src-electron/renderer/src/style.css"
+
+if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_CSS_TOKENS_CHECK" != "1" ]; then
+    if [ -f "$CSS_FILE" ]; then
+        echo -e "${BLUE}[INFO] 运行 CSS tokens 检查...${NC}"
+
+        if [ ! -f "$CSS_CHECKER" ]; then
+            echo -e "${YELLOW}[WARN] 找不到检查脚本 $CSS_CHECKER${NC}"
+        else
+            python3 "$CSS_CHECKER" "$CSS_FILE"
+            EXIT_CODE=$?
+
+            if [ $EXIT_CODE -eq 2 ]; then
+                echo ""
+                echo -e "${RED}[ERROR] CSS tokens 检查失败${NC}"
+                echo -e "${YELLOW}[INFO] 设置 SKIP_CSS_TOKENS_CHECK=1 跳过检查${NC}"
+                exit 1
+            fi
+        fi
+    fi
+else
+    echo -e "${YELLOW}[SKIP] CSS tokens 检查已跳过${NC}"
+fi
+
+# ============================================================================
 # 全部通过
 # ============================================================================
 
@@ -211,6 +271,8 @@ echo -e "  ${YELLOW}SKIP_ALL_CHECKS=1${NC}          - 跳过所有"
 echo -e "  ${YELLOW}SKIP_FRONTEND_LINT=1${NC}      - 跳过 ESLint"
 echo -e "  ${YELLOW}SKIP_TYPE_CHECK=1${NC}          - 跳过 vue-tsc"
 echo -e "  ${YELLOW}SKIP_CODE_RULES_CHECK=1${NC}   - 跳过代码规范"
+echo -e "  ${YELLOW}SKIP_SIDECAR_SESSION_CHECK=1${NC} - 跳过 session 隔离"
+echo -e "  ${YELLOW}SKIP_CSS_TOKENS_CHECK=1${NC}      - 跳过 CSS tokens"
 echo ""
 
 exit 0

@@ -25,7 +25,7 @@ export class SidecarServer {
   private pushId = 0
   private heartbeatTimers = new Map<WsType, ReturnType<typeof setTimeout>>()
 
-  private static HEARTBEAT_TIMEOUT = 30_000
+  private static HEARTBEAT_TIMEOUT = 45_000
 
   private nextPushId(): string {
     return `push_${++this.pushId}`
@@ -177,7 +177,7 @@ export class SidecarServer {
               this.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: sid, session: summary, messages: [] } })
             }
           } else {
-            this.sendError(ws, 'not_found', `Session ${sid} not found`, msg.id)
+            this.sendError(ws, 'not_found', `Session ${sid} not found`, msg.id, sid)
           }
           break
         }
@@ -190,9 +190,32 @@ export class SidecarServer {
         }
 
         case 'session.compact': {
-          const compactId = msg.payload.sessionId as string
-          await this.pool.compact(compactId)
-          this.send(ws, { type: 'session.compacting', id: msg.id, payload: { sessionId: compactId, status: 'compacting' } })
+          const startTime = Date.now()
+          let compactId = msg.payload.sessionId as string
+          console.log('[server] session.compact: sessionId=' + compactId)
+          // 如果 session 未激活（没有 pi 进程），自动 restore
+          if (!this.pool.hasActiveSession(compactId)) {
+            const restored = await this.pool.restoreSession(compactId)
+            compactId = restored.id
+            console.log('[server] session.compact: auto-restored, oldId=' + (msg.payload.sessionId as string) + ', newId=' + compactId)
+            // 广播 session.restored 到所有客户端，确保前端更新 pane 绑定
+            this.broadcast({
+              type: 'session.restored', id: msg.id, payload: {
+                oldSessionId: msg.payload.sessionId as string,
+                newSessionId: restored.id,
+                summary: restored,
+              },
+            })
+            this.broadcastSessionList()
+          }
+          try {
+            await this.pool.compact(compactId)
+          } catch (e) {
+            // pool.compact 已发送 session.compacted（含 error），此处不再 throw
+            // 否则外层 catch 会再发一条 handler_error，前端收到两条重复错误
+            console.error('[server] session.compact: failed, sessionId=' + compactId + ', error=' + (e instanceof Error ? e.message : String(e)))
+          }
+          console.log('[server] session.compact: completed, sessionId=' + compactId + ', elapsed=' + (Date.now() - startTime) + 'ms')
           break
         }
 
@@ -365,11 +388,13 @@ export class SidecarServer {
         }
 
         default:
-          this.sendError(ws, 'unknown_type', `Unknown message type: ${(msg as { type: string }).type}`, msg.id)
+          const unknownSid = (msg as { payload?: { sessionId?: string } }).payload?.sessionId
+          this.sendError(ws, 'unknown_type', `Unknown message type: ${(msg as { type: string }).type}`, msg.id, unknownSid)
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e)
-      this.sendError(ws, 'handler_error', message, msg.id)
+      const sessionId = (msg as { payload?: { sessionId?: string } }).payload?.sessionId
+      this.sendError(ws, 'handler_error', message, msg.id, sessionId)
     }
   }
 
@@ -388,8 +413,10 @@ export class SidecarServer {
     }
   }
 
-  private sendError(ws: WsType, code: string, message: string, id?: string): void {
-    this.send(ws, { type: 'error', id, payload: { code, message } })
+  private sendError(ws: WsType, code: string, message: string, id?: string, sessionId?: string): void {
+    const payload: Record<string, unknown> = { code, message }
+    if (sessionId) payload.sessionId = sessionId
+    this.send(ws, { type: 'error', id, payload })
   }
 
   private broadcastSessionList(): void {

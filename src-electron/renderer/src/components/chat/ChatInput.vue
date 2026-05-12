@@ -1,36 +1,59 @@
 <template>
-  <div class="chat-input-wrap">
+  <div class="relative mx-auto mb-3 shrink-0 max-w-[960px] w-full px-6" data-chat-input>
     <SlashMenu
       :visible="slashVisible"
-      :filter="slashFilter"
+      :commands="filteredCommands"
       @close="closeSlashMenu"
       @select="handleSlashSelect"
     />
-    <div class="chat-input-container">
+    <div
+      ref="containerRef"
+      :class="[
+        'bg-surface border border-border rounded shadow-xs transition-colors duration-150 ease-ease overflow-visible relative z-10 focus-within:border-accent focus-within:shadow-sm',
+        activeCommand ? 'border-accent' : '',
+      ]"
+    >
+      <!-- Command/Skill 标签栏 -->
+      <div v-if="activeCommand" class="flex pt-2 px-3.5">
+        <div
+          :class="[
+            'inline-flex items-center gap-1 py-[2px] px-2 rounded-full text-xs font-medium',
+            activeCommand.source === 'builtin'
+              ? 'bg-border text-muted'
+              : 'bg-accent-light text-accent',
+          ]"
+        >
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+            <path d="M3 8.5L6.5 12L13 4" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="leading-[1.4]">/{{ activeCommand.name }}</span>
+          <span class="cursor-pointer ml-0.5 opacity-60 text-sm leading-none hover:opacity-100" @click="clearCommand">&times;</span>
+        </div>
+      </div>
       <Textarea
         v-model="text"
         :placeholder="t('chat.inputPlaceholder')"
-        class="chat-input-textarea"
+        class="block w-full min-h-[calc(1.45em*2+16px)] max-h-[calc(1.45em*10+16px)] pt-[10px] pb-2 px-3.5 border-none bg-transparent text-fg font-body text-sm leading-[1.45] resize-none outline-none placeholder:text-muted"
         :rows="1"
         no-style
         @keydown="onKeyDown"
         @compositionstart="isComposing = true"
         @compositionend="onCompositionEnd"
       />
-      <div class="chat-input-toolbar">
+      <div class="flex items-center gap-1 px-2 pb-1.5">
         <ModelPicker :current-model="currentModel" @select="(id) => emit('select-model', id)" />
-        <div class="tb-spacer"></div>
+        <div class="flex-1"></div>
         <Button
           v-if="isStreaming"
           variant="ghost"
-          class="tb-btn tb-btn--stop"
+          class="inline-flex items-center justify-center h-7 px-2 border-none rounded-xs bg-transparent text-muted text-xs font-body cursor-pointer transition-all duration-150 ease-ease gap-1 shrink-0 font-bold text-[11px] w-7 h-7 hover:bg-danger-light hover:text-danger"
           @click="emit('cancel')"
           :title="t('chat.stop')"
         >■</Button>
         <Button
           v-else
           variant="primary"
-          class="tb-btn tb-btn--send"
+          class="bg-accent text-white w-7 h-7 rounded-xs disabled:opacity-40 disabled:cursor-default hover:opacity-88"
           :disabled="!canSend"
           @click="handleSend"
           :title="t('chat.send')"
@@ -46,31 +69,66 @@
 import { ref, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '../../stores/settings'
+import { useProviderStore } from '../../stores/provider'
 import { Textarea, Button } from '../../design-system'
 import ModelPicker from './ModelPicker.vue'
 import SlashMenu from './SlashMenu.vue'
+import {
+  useSlashCommands,
+  type SlashCommand,
+  type CommandContext,
+} from '../../composables/useSlashCommands'
 
-const props = defineProps<{ isStreaming: boolean }>()
+const props = defineProps<{
+  isStreaming: boolean
+  isCompacting?: boolean
+  sessionId: string
+}>()
+
 const emit = defineEmits<{
-  send: [content: string]
+  send: [payload: { content: string; skillName?: string }]
   cancel: []
   'select-model': [modelId: string]
+  'send-command': [payload: { type: string; payload: Record<string, unknown> }]
+  'local-action': [payload: { action: string; data?: unknown }]
 }>()
 
 const { t } = useI18n()
 const settingsStore = useSettingsStore()
+const providerStore = useProviderStore()
+const {
+  mergeSkillCommands,
+  filterCommands,
+  initDefaultCommands,
+} = useSlashCommands()
+
+initDefaultCommands()
 
 const text = ref('')
-const textareaRef = ref<HTMLTextAreaElement | null>(null)
 const isComposing = ref(false)
+const activeCommand = ref<SlashCommand | null>(null)
+
+const containerRef = ref<HTMLElement | null>(null)
 
 const currentModel = computed(() => settingsStore.defaultModel)
 
-const canSend = computed(() => text.value.trim().length > 0 && !props.isStreaming)
+// 合并内置命令 + skill 命令
+const allCommands = computed(() =>
+  mergeSkillCommands(providerStore.skills)
+)
 
-// Slash command state
+const canSend = computed(() => {
+  const trimmed = text.value.trim()
+  return (trimmed.length > 0 || activeCommand.value !== null) && !props.isStreaming && !props.isCompacting
+})
+
+// Slash command 状态
 const slashVisible = ref(false)
 const slashFilter = ref('')
+
+const filteredCommands = computed(() =>
+  filterCommands(allCommands.value, slashFilter.value)
+)
 
 watch(text, (val) => {
   if (val.startsWith('/')) {
@@ -86,30 +144,80 @@ function closeSlashMenu() {
   slashVisible.value = false
 }
 
-function handleSlashSelect(name: string) {
+function clearCommand() {
+  activeCommand.value = null
+}
+
+// 构建 CommandContext，供 local 类型命令使用
+function buildCommandContext(): CommandContext {
+  return {
+    sessionId: props.sessionId,
+    getAllCommands: () => allCommands.value,
+    onLocalAction: (action, data) => emit('local-action', { action, data }),
+  }
+}
+
+function handleSlashSelect(cmd: SlashCommand) {
   text.value = ''
   slashVisible.value = false
-  // Execute command via emit — parent can handle, or we emit the full /command
-  emit('send', `/${name}`)
+  // protocol 和 local 类型命令直接执行，不需要标签确认步骤
+  // skill 类型需要参数输入，保留标签
+  if (cmd.action.type === 'protocol' || cmd.action.type === 'local') {
+    activeCommand.value = cmd
+    handleSend()
+    // 执行后聚焦 textarea，确保后续输入正常
+    nextTick(() => {
+      const ta = containerRef.value?.querySelector<HTMLTextAreaElement>('textarea')
+      ta?.focus()
+    })
+  } else {
+    activeCommand.value = cmd
+  }
 }
 
 function handleSend() {
   if (!canSend.value) return
-  emit('send', text.value.trim())
+
+  const trimmed = text.value.trim()
+
+  if (activeCommand.value) {
+    const cmd = activeCommand.value
+    switch (cmd.action.type) {
+      case 'local':
+        cmd.action.handler(buildCommandContext())
+        break
+      case 'protocol':
+        emit('send-command', {
+          type: cmd.action.messageType,
+          payload: { sessionId: props.sessionId },
+        })
+        break
+      case 'skill': {
+        const prefix = `/skill:${cmd.name}`
+        const content = trimmed ? `${prefix} ${trimmed}` : prefix
+        emit('send', { content, skillName: cmd.name })
+        break
+      }
+    }
+    clearCommand()
+  } else {
+    emit('send', { content: trimmed })
+  }
+
   text.value = ''
   slashVisible.value = false
   nextTick(resizeTextarea)
 }
 
 function onKeyDown(e: KeyboardEvent) {
-  // If slash menu is open, let it handle navigation keys
+  // Slash menu 打开时，让 SlashMenu 处理导航键
   if (slashVisible.value && ['ArrowUp', 'ArrowDown', 'Escape'].includes(e.key)) {
-    return // SlashMenu handles these via document-level listener
+    return
   }
 
   if (e.key === 'Enter' && !e.shiftKey && !isComposing.value) {
     e.preventDefault()
-    if (slashVisible.value) return // let SlashMenu handle Enter
+    if (slashVisible.value) return // SlashMenu 处理 Enter
     handleSend()
   }
 }
@@ -118,139 +226,12 @@ function onCompositionEnd() {
   isComposing.value = false
 }
 
-const MAX_HEIGHT = 140
-
 function resizeTextarea() {
-  const el = textareaRef.value
+  const el = containerRef.value?.querySelector<HTMLTextAreaElement>('textarea')
   if (!el) return
   el.style.height = 'auto'
-  el.style.height = Math.min(el.scrollHeight, MAX_HEIGHT) + 'px'
+  el.style.height = Math.min(el.scrollHeight, 140) + 'px'
 }
 
-// Reset height when text is cleared
 watch(text, () => nextTick(resizeTextarea))
 </script>
-
-<style scoped>
-/* Wrap: positions the entire input block */
-.chat-input-wrap {
-  position: relative;
-  margin: 0 auto 12px;
-  flex-shrink: 0;
-  max-width: 960px;
-  width: 100%;
-  padding: 0 24px;
-}
-
-/* Container: single rounded card for textarea + toolbar */
-.chat-input-container {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.04);
-  transition: border-color 0.15s var(--ease), box-shadow 0.15s var(--ease);
-  overflow: visible;
-  position: relative;
-  z-index: 10;
-}
-
-.chat-input-container:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
-}
-
-/* Textarea: no border, transparent bg, fits inside container */
-.chat-input-textarea {
-  display: block;
-  width: 100%;
-  min-height: calc(1.45em * 2 + 16px);
-  max-height: calc(1.45em * 10 + 16px);
-  padding: 10px 14px 8px;
-  border: none;
-  background: transparent;
-  color: var(--fg);
-  font-family: var(--font-body);
-  font-size: 14px;
-  line-height: 1.45;
-  resize: none;
-  outline: none;
-}
-
-.chat-input-textarea::placeholder {
-  color: var(--muted);
-}
-
-/* Toolbar: bottom row inside container */
-.chat-input-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px 6px;
-}
-
-/* Toolbar button base */
-.tb-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 28px;
-  padding: 0 8px;
-  border: none;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--muted);
-  font-size: 12px;
-  font-family: var(--font-body);
-  cursor: pointer;
-  transition: all 0.15s var(--ease);
-  gap: 4px;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.tb-btn:hover {
-  background: var(--accent-light);
-  color: var(--accent);
-}
-
-.tb-btn svg {
-  width: 14px;
-  height: 14px;
-}
-
-/* Send button */
-.tb-btn--send {
-  background: var(--accent);
-  color: white;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-xs);
-}
-
-.tb-btn--send:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.tb-btn--send:not(:disabled):hover {
-  opacity: 0.88;
-}
-
-/* Stop button */
-.tb-btn--stop {
-  font-weight: 700;
-  font-size: 11px;
-  width: 28px;
-  height: 28px;
-}
-
-.tb-btn--stop:hover {
-  background: var(--danger-light);
-  color: var(--danger);
-}
-
-/* Spacer */
-.tb-spacer {
-  flex: 1;
-}
-</style>

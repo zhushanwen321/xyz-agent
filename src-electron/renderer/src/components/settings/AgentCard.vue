@@ -61,29 +61,29 @@ function handleSave() {
 </script>
 
 <template>
-  <div :class="['s-agent-card', { expanded, disabled: !agent.enabled }]">
-    <div class="s-agent-card__hd" @click="$emit('toggle')">
+  <div :class="['bg-surface border border-border rounded mb-3 overflow-hidden transition-colors duration-200 hover:border-[oklch(80%_0.01_70)]', { 'opacity-60': !agent.enabled }]">
+    <div class="flex items-center gap-3 py-3.5 px-[18px] cursor-pointer" @click="$emit('toggle')">
       <ToggleSwitch
         :model-value="agent.enabled"
         @update:model-value="$emit('toggle-enabled')"
         @click.stop
       />
       <div
-        class="s-agent-card__icon"
+        class="w-8 h-8 rounded-sm bg-accent-light flex items-center justify-center text-sm font-bold text-accent shrink-0"
         :style="agent.iconBg ? { background: agent.iconBg } : {}"
       >{{ agent.icon || agent.name.charAt(0) }}</div>
-      <div class="s-agent-card__info">
-        <div class="s-agent-card__name">{{ agent.name }}</div>
-        <div class="s-agent-card__desc">{{ agent.description }}</div>
-        <div class="s-agent-card__source">{{ agent.source ?? agent.id }}</div>
+      <div class="flex-1 min-w-0">
+        <div class="text-sm font-semibold">{{ agent.name }}</div>
+        <div class="text-xs text-muted mt-0.5 line-clamp-1">{{ agent.description }}</div>
+        <div class="text-[11px] text-muted font-mono mt-0.5">{{ agent.source ?? agent.id }}</div>
       </div>
-      <div class="s-agent-card__actions" @click.stop>
+      <div class="flex gap-1 shrink-0" @click.stop>
         <Button variant="ghost" size="sm" @click="showEditor = !showEditor">编辑</Button>
         <Button variant="ghost" size="sm" class="hover:!text-[var(--danger)] hover:!bg-[var(--danger-light)]" @click="$emit('delete', agent.name)">删除</Button>
       </div>
-      <span class="s-agent-card__chevron">▾</span>
+      <span :class="['text-[10px] text-muted transition-transform duration-200 ml-1', { 'rotate-180': expanded }]">▾</span>
     </div>
-    <div class="s-agent-card__bd">
+    <div v-show="expanded" class="px-[18px] pb-4">
       <MetaGrid :items="metaItems" />
       <ModelStrategyConfig
         :strategy="(agent.modelStrategy as 'auto' | 'tag' | 'bind')"

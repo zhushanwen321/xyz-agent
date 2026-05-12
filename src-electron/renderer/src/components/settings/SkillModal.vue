@@ -64,36 +64,44 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown))
 </script>
 
 <template>
-  <div :class="['s-modal-overlay', { visible }]" @click.self="$emit('close')">
-    <div class="s-modal">
-      <div class="s-modal__hd">
-        <div class="s-modal__title">{{ skill ? '编辑 Skill' : '添加 Skill' }}</div>
-        <Button variant="ghost" class="s-modal__close !h-7 !w-7 !p-0" @click="$emit('close')">×</Button>
+  <div
+    data-modal-overlay
+    :data-modal-visible="visible || undefined"
+    :class="[
+      'fixed inset-0 bg-black/30 z-[100] flex items-center justify-center transition-opacity duration-200',
+      visible ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+    ]"
+    @click.self="$emit('close')"
+  >
+    <div class="w-[600px] max-h-[85vh] bg-surface border border-border rounded overflow-hidden flex flex-col shadow-[0_8px_40px_rgba(0,0,0,0.12)]">
+      <div class="flex items-center justify-between py-4 px-5 border-b border-border">
+        <div class="font-display text-base font-semibold">{{ skill ? '编辑 Skill' : '添加 Skill' }}</div>
+        <Button variant="ghost" class="!h-7 !w-7 !p-0 !rounded-xs !text-muted hover:!bg-accent-light hover:!text-accent" @click="$emit('close')">×</Button>
       </div>
 
-      <div class="s-modal__bd">
-        <div class="s-form-group">
-          <div class="s-form-label">Skill 名称</div>
+      <div class="p-5 overflow-y-auto flex-1">
+        <div class="mb-4">
+          <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">Skill 名称</div>
           <Input v-model="formName" placeholder="例如：code-review" />
         </div>
 
-        <div class="s-form-group">
-          <div class="s-form-label">描述</div>
+        <div class="mb-4">
+          <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">描述</div>
           <Input v-model="formDescription" placeholder="简要描述此 Skill 的功能" />
         </div>
 
-        <div class="s-form-group">
-          <div class="s-form-label">触发词 (逗号分隔)</div>
+        <div class="mb-4">
+          <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">触发词 (逗号分隔)</div>
           <Input v-model="formTriggers" placeholder="例如：review, 代码审查, 检查代码" />
         </div>
 
-        <div class="s-form-group">
-          <div class="s-form-label">来源路径</div>
+        <div class="mb-4">
+          <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">来源路径</div>
           <Input v-model="formSourcePath" placeholder="例如：~/.pi/agent/skills/code-review/" />
         </div>
       </div>
 
-      <div class="s-modal__ft">
+      <div class="flex justify-end gap-2 py-3.5 px-5 border-t border-border">
         <Button variant="outline" @click="$emit('close')">取消</Button>
         <Button variant="primary" @click="handleSave">{{ skill ? '保存' : '添加 Skill' }}</Button>
       </div>

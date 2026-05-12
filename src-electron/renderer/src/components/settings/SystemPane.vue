@@ -68,58 +68,56 @@ function selectPalette(id: ThemePreset) {
 </script>
 
 <template>
-  <div class="system-pane">
-    <div class="system-pane__row">
-      <div class="system-pane__label">{{ t('settings.language') }}</div>
-      <div class="system-pane__control">
+  <div class="max-w-[520px] flex flex-col gap-4">
+    <div class="flex items-center gap-4">
+      <div class="text-[13px] text-muted shrink-0">{{ t('settings.language') }}</div>
+      <div class="flex-1 max-w-[200px]">
         <Select
           v-model="currentLocale"
           :options="languageOptions"
-          class="system-pane__select"
         />
       </div>
     </div>
-    <div class="system-pane__row">
-      <div class="system-pane__label">外观模式</div>
-      <div class="system-pane__control">
+    <div class="flex items-center gap-4">
+      <div class="text-[13px] text-muted shrink-0">外观模式</div>
+      <div class="flex-1 max-w-[200px]">
         <Select
           v-model="currentThemeMode"
           :options="themeModeOptions"
-          class="system-pane__select"
         />
       </div>
     </div>
-    <div class="palette-section">
-      <div class="palette-section__label">配色主题</div>
-      <div class="palette-group">
-        <div class="palette-group__title">Muted</div>
-        <div class="palette-group__list">
+    <div class="flex flex-col gap-3">
+      <div class="text-[13px] text-muted">配色主题</div>
+      <div class="flex flex-col gap-2">
+        <div class="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted">Muted</div>
+        <div class="flex flex-wrap gap-2">
           <Button
             v-for="p in mutedPalettes"
             :key="p.id"
             variant="ghost"
-            class="palette-swatch"
-            :class="{ active: currentPalette === p.id }"
+            class="flex items-center gap-2 py-[6px] px-3 rounded-sm border border-border bg-surface cursor-pointer transition-all duration-150 ease-ease font-body text-fg hover:border-muted hover:bg-accent-light"
+            :class="{ 'border-accent bg-accent-light ring-1 ring-accent': currentPalette === p.id }"
             @click="selectPalette(p.id)"
           >
-            <span class="palette-swatch__dot" :style="{ background: p.swatch }" />
-            <span class="palette-swatch__name">{{ p.label }}</span>
+            <span class="shrink-0 rounded-full w-4 h-4" :style="{ background: p.swatch }" />
+            <span class="text-xs whitespace-nowrap">{{ p.label }}</span>
           </Button>
         </div>
       </div>
-      <div class="palette-group">
-        <div class="palette-group__title">Colorful</div>
-        <div class="palette-group__list">
+      <div class="flex flex-col gap-2">
+        <div class="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted">Colorful</div>
+        <div class="flex flex-wrap gap-2">
           <Button
             v-for="p in colorfulPalettes"
             :key="p.id"
             variant="ghost"
-            class="palette-swatch"
-            :class="{ active: currentPalette === p.id }"
+            class="flex items-center gap-2 py-[6px] px-3 rounded-sm border border-border bg-surface cursor-pointer transition-all duration-150 ease-ease font-body text-fg hover:border-muted hover:bg-accent-light"
+            :class="{ 'border-accent bg-accent-light ring-1 ring-accent': currentPalette === p.id }"
             @click="selectPalette(p.id)"
           >
-            <span class="palette-swatch__dot" :style="{ background: p.swatch }" />
-            <span class="palette-swatch__name">{{ p.label }}</span>
+            <span class="shrink-0 rounded-full w-4 h-4" :style="{ background: p.swatch }" />
+            <span class="text-xs whitespace-nowrap">{{ p.label }}</span>
           </Button>
         </div>
       </div>
@@ -127,95 +125,3 @@ function selectPalette(id: ThemePreset) {
   </div>
 </template>
 
-<style scoped>
-.system-pane {
-  max-width: 520px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.system-pane__row {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.system-pane__label {
-  font-size: 13px;
-  color: var(--muted);
-  flex-shrink: 0;
-}
-
-.system-pane__control {
-  flex: 1;
-  max-width: 200px;
-}
-
-.palette-section {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.palette-section__label {
-  font-size: 13px;
-  color: var(--muted);
-}
-
-.palette-group {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.palette-group__title {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--muted);
-}
-
-.palette-group__list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.palette-swatch {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--surface);
-  cursor: pointer;
-  transition: all 0.15s var(--ease);
-  font-family: var(--font-body);
-  color: var(--fg);
-}
-
-.palette-swatch:hover {
-  border-color: var(--muted);
-  background: var(--accent-light);
-}
-
-.palette-swatch.active {
-  border-color: var(--accent);
-  background: var(--accent-light);
-  box-shadow: 0 0 0 1px var(--accent);
-}
-
-.palette-swatch__dot {
-  @apply flex-shrink-0 rounded-full;
-  width: 16px;
-  height: 16px;
-}
-
-.palette-swatch__name {
-  font-size: 12px;
-  white-space: nowrap;
-}
-</style>

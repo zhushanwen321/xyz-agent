@@ -1,15 +1,29 @@
 <template>
-  <div :class="['approval-card', `approval-card--${pending.dangerLevel}`]">
-    <div class="approval-header">
-      <span class="approval-tool">{{ pending.toolName }}</span>
-      <span :class="['approval-level', `approval-level--${pending.dangerLevel}`]">{{ pending.dangerLevel }}</span>
+  <div
+    :class="[
+      'rounded-sm border border-border border-l-[3px] bg-surface overflow-hidden',
+      pending.dangerLevel === 'safe' && 'border-l-success',
+      pending.dangerLevel === 'caution' && 'border-l-warning',
+      pending.dangerLevel === 'danger' && 'border-l-danger',
+    ]"
+  >
+    <div class="flex items-center justify-between px-2.5 py-2 gap-2">
+      <span class="font-mono font-semibold text-[13px] text-fg">{{ pending.toolName }}</span>
+      <span
+        :class="[
+          'font-mono text-[11px] font-medium uppercase tracking-[0.04em] py-px px-1.5 rounded-sm',
+          pending.dangerLevel === 'safe' && 'text-success bg-level-safe',
+          pending.dangerLevel === 'caution' && 'text-warning bg-level-caution',
+          pending.dangerLevel === 'danger' && 'text-danger bg-level-danger',
+        ]"
+      >{{ pending.dangerLevel }}</span>
     </div>
-    <pre class="approval-input">{{ formattedInput }}</pre>
-    <div class="approval-actions">
-      <Button variant="ghost" class="approval-btn approval-btn--always" @click="handleAlwaysAllow">Always Allow</Button>
-      <Button variant="ghost" class="approval-btn approval-btn--deny" @click="handleDeny">Deny</Button>
-      <Button variant="primary" class="approval-btn approval-btn--approve" @click="handleApprove">Approve</Button>
-      <span class="approval-countdown">{{ remainingSeconds }}s</span>
+    <pre class="m-0 px-2.5 py-1.5 max-h-40 overflow-auto font-mono text-xs leading-normal text-muted border-t border-border whitespace-pre-wrap break-all">{{ formattedInput }}</pre>
+    <div class="flex gap-2 px-2.5 py-2 border-t border-border">
+      <Button variant="ghost" class="py-1 px-3 rounded-sm font-body text-[13px] font-medium cursor-pointer transition-colors duration-150 bg-transparent border border-transparent text-muted hover:bg-bg hover:text-fg" @click="handleAlwaysAllow">Always Allow</Button>
+      <Button variant="ghost" class="py-1 px-3 rounded-sm font-body text-[13px] font-medium cursor-pointer transition-colors duration-150 bg-transparent border border-border text-fg hover:border-danger hover:text-danger" @click="handleDeny">Deny</Button>
+      <Button variant="primary" class="py-1 px-3 rounded-sm font-body text-[13px] font-medium cursor-pointer transition-colors duration-150 bg-accent border border-accent text-white hover:opacity-88" @click="handleApprove">Approve</Button>
+      <span class="ml-auto font-mono text-xs text-muted whitespace-nowrap leading-7">{{ remainingSeconds }}s</span>
     </div>
   </div>
 </template>
@@ -81,132 +95,3 @@ const formattedInput = computed(() => {
 })
 </script>
 
-<style scoped>
-.approval-card {
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--border);
-  background: var(--surface);
-  overflow: hidden;
-}
-
-/* Danger-level left border */
-.approval-card--safe { border-left-color: var(--success); }
-.approval-card--caution { border-left-color: var(--warning); }
-.approval-card--danger { border-left-color: var(--danger); }
-
-.approval-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 10px;
-  gap: 8px;
-}
-
-.approval-tool {
-  font-family: var(--font-mono);
-  font-weight: 600;
-  font-size: 13px;
-  color: var(--fg);
-}
-
-.approval-level {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  padding: 1px 6px;
-  border-radius: var(--radius-sm);
-}
-
-.approval-level--safe {
-  color: var(--success);
-  background: oklch(95% 0.06 145);
-}
-.approval-level--caution {
-  color: var(--warning);
-  background: oklch(95% 0.06 85);
-}
-.approval-level--danger {
-  color: var(--danger);
-  background: oklch(95% 0.06 25);
-}
-
-[data-theme="dark"] .approval-level--safe { background: oklch(30% 0.06 145); }
-[data-theme="dark"] .approval-level--caution { background: oklch(30% 0.06 85); }
-[data-theme="dark"] .approval-level--danger { background: oklch(30% 0.06 25); }
-
-.approval-input {
-  margin: 0;
-  padding: 6px 10px;
-  max-height: 160px;
-  overflow: auto;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--muted);
-  border-top: 1px solid var(--border);
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-
-.approval-actions {
-  display: flex;
-  gap: 8px;
-  padding: 8px 10px;
-  border-top: 1px solid var(--border);
-}
-
-.approval-btn {
-  padding: 4px 12px;
-  border-radius: var(--radius-sm);
-  font-family: var(--font-body);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
-}
-
-/* Always Allow: ghost */
-.approval-btn--always {
-  background: none;
-  border: 1px solid transparent;
-  color: var(--muted);
-}
-.approval-btn--always:hover {
-  background: var(--bg);
-  color: var(--fg);
-}
-
-/* Deny: bordered */
-.approval-btn--deny {
-  background: none;
-  border: 1px solid var(--border);
-  color: var(--fg);
-}
-.approval-btn--deny:hover {
-  border-color: var(--danger);
-  color: var(--danger);
-}
-
-/* Countdown */
-.approval-countdown {
-  margin-left: auto;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--muted);
-  white-space: nowrap;
-  line-height: 28px;
-}
-
-/* Approve: filled accent */
-.approval-btn--approve {
-  background: var(--accent);
-  border: 1px solid var(--accent);
-  color: #fff;
-}
-.approval-btn--approve:hover {
-  opacity: 0.88;
-}
-</style>

@@ -1,14 +1,14 @@
 <template>
-  <footer class="statusbar">
-    <div class="statusbar__left">
-      <span class="statusbar__conn">
-        <span class="statusbar__dot" :style="{ background: dotColor }"></span>
+  <footer class="flex items-center justify-between h-statusbar px-4 bg-surface border-t border-border text-[11px] text-muted shrink-0">
+    <div class="inline-flex items-center gap-2 min-w-0">
+      <span class="inline-flex items-center gap-1">
+        <span class="w-[5px] h-[5px] rounded-full" :style="{ background: dotColor }"></span>
         {{ statusText }}
       </span>
     </div>
-    <div class="statusbar__right">
-      <span v-if="activeSession?.modelId" class="statusbar__model">{{ activeSession.modelId }}</span>
-      <span v-if="tokenDisplay" class="statusbar__tokens">{{ tokenDisplay }}</span>
+    <div class="inline-flex items-center gap-2 min-w-0">
+      <span v-if="activeSession?.modelId" class="font-mono text-[10px]">{{ activeSession.modelId }}</span>
+      <span v-if="tokenDisplay" class="font-mono text-[10px]">{{ tokenDisplay }}</span>
     </div>
   </footer>
 </template>
@@ -64,43 +64,3 @@ const statusText = computed(() => {
 })
 </script>
 
-<style scoped>
-.statusbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: var(--statusbar-h);
-  padding: 0 16px;
-  background: var(--surface);
-  border-top: 1px solid var(--border);
-  font-size: 11px;
-  color: var(--muted);
-  flex-shrink: 0;
-}
-.statusbar__left,
-.statusbar__right {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.statusbar__conn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.statusbar__dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--success);
-}
-.statusbar__model {
-  font-family: var(--font-mono);
-  font-size: 10px;
-}
-.statusbar__tokens {
-  font-family: var(--font-mono);
-  font-size: 10px;
-}
-</style>

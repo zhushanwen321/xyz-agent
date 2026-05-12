@@ -26,40 +26,39 @@ const initial = computed(() => props.provider.name.charAt(0).toUpperCase())
 
 const statusDotClass = computed(() => {
   const statusMap: Record<string, string> = {
-    connected: 's-status-dot--ok',
-    error: 's-status-dot--err',
-    not_configured: 's-status-dot--unknown',
+    connected: 'bg-success',
+    error: 'bg-danger',
+    not_configured: 'bg-border',
   }
-  return statusMap[props.provider.status] ?? 's-status-dot--unknown'
+  return statusMap[props.provider.status] ?? 'bg-border'
 })
 </script>
 
 <template>
-  <div :class="['s-provider-card', { expanded }]">
-    <div class="s-provider-card__hd" @click="$emit('toggle')">
+  <div class="bg-surface border border-border rounded mb-4 overflow-hidden transition-colors duration-200 hover:border-[oklch(80%_0.01_70)]">
+    <div class="flex items-center gap-3 py-4 px-5 cursor-pointer select-none" @click="$emit('toggle')">
       <ToggleSwitch
-        :model-value="provider.status === 'connected'"
+        :model-value="provider.enabled !== false"
         @update:model-value="$emit('toggle-enabled', provider.id)"
-        @click.stop
       />
-      <div class="s-provider-card__icon">{{ initial }}</div>
-      <div class="s-provider-card__info">
-        <div class="s-provider-card__name">
-          <span :class="['s-status-dot', statusDotClass]"></span>
+      <div class="w-9 h-9 rounded-sm bg-accent-light flex items-center justify-center font-display font-bold text-sm text-accent shrink-0">{{ initial }}</div>
+      <div class="flex-1 min-w-0">
+        <div class="text-[15px] font-semibold flex items-center gap-2">
+          <span :class="['w-[7px] h-[7px] rounded-full inline-block align-middle', statusDotClass]"></span>
           {{ provider.name }}
         </div>
-        <div class="s-provider-card__meta">{{ provider.baseUrl }} · {{ provider.models.length }} 个模型</div>
+        <div class="text-xs text-muted mt-0.5 font-mono">{{ provider.baseUrl }} · {{ provider.models.length }} 个模型</div>
       </div>
-      <div class="s-provider-card__actions" @click.stop>
+      <div class="flex gap-1 shrink-0" @click.stop>
         <Button variant="ghost" size="sm" @click="$emit('test', provider.id)">测试连接</Button>
         <Button variant="ghost" size="sm" @click="$emit('edit', provider.id)">编辑</Button>
         <Button variant="ghost" size="sm" class="hover:!text-[var(--danger)] hover:!bg-[var(--danger-light)]" @click="$emit('delete', provider.id)">删除</Button>
       </div>
-      <span class="s-provider-card__chevron">▾</span>
+      <span :class="['text-[10px] text-muted transition-transform duration-200 ml-1', { 'rotate-180': expanded }]">▾</span>
     </div>
-    <div class="s-provider-card__bd">
-      <div class="s-divider" style="margin-top: 0">模型配置</div>
-      <div class="s-provider-card__models">
+    <div v-show="expanded" class="px-5 pb-4">
+      <div class="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted my-5 pb-1.5 border-b border-border" style="margin-top: 0">模型配置</div>
+      <div class="mt-1">
         <ModelRow
           v-for="model in models"
           :key="model.id"

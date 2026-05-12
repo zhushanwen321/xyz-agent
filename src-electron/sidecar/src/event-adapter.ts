@@ -230,6 +230,13 @@ export class EventAdapter {
       case 'extension_config':
       case 'extension_error':
       case 'response':
+      // compact 生命周期事件由 session-pool 手动转发，此处丢弃避免重复
+      case 'compaction_start':
+      case 'compaction_end':
+        console.debug('[EventAdapter] discarding compaction event:', event.type)
+      // auto-retry 事件暂不转发
+      case 'auto_retry_start':
+      case 'auto_retry_end':
         return null
 
       default:

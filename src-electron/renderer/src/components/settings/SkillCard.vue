@@ -36,28 +36,28 @@ function handleSave() {
 </script>
 
 <template>
-  <div :class="['s-skill-card', { expanded, disabled: !skill.enabled }]">
-    <div class="s-skill-card__hd" @click="$emit('toggle')">
+  <div :class="['bg-surface border border-border rounded mb-3 overflow-hidden transition-[border-color] duration-200 ease-ease hover:border-[oklch(80%_0.01_70)]', { 'opacity-60': !skill.enabled }]">
+    <div class="flex items-center gap-3 py-3.5 px-[18px] cursor-pointer" @click="$emit('toggle')">
       <ToggleSwitch
         :model-value="skill.enabled"
         @update:model-value="$emit('toggle-enabled')"
         @click.stop
       />
-      <div class="s-skill-card__info">
-        <div class="s-skill-card__name">
+      <div class="flex-1 min-w-0">
+        <div class="text-sm font-semibold flex items-center gap-2">
           {{ skill.name }}
-          <span v-if="skill.tag" class="s-skill-card__name-tag">{{ skill.tag }}</span>
+          <span v-if="skill.tag" class="text-[10px] font-semibold py-[1px] px-1.5 rounded bg-accent-light text-accent">{{ skill.tag }}</span>
         </div>
-        <div class="s-skill-card__desc">{{ skill.description }}</div>
-        <div class="s-skill-card__source">{{ skill.sourcePath ?? skill.source }}</div>
+        <div class="text-xs text-muted mt-0.5 line-clamp-1">{{ skill.description }}</div>
+        <div class="text-[11px] text-muted font-mono mt-0.5">{{ skill.sourcePath ?? skill.source }}</div>
       </div>
-      <div class="s-skill-card__actions" @click.stop>
+      <div class="flex gap-1 shrink-0" @click.stop>
         <Button variant="ghost" size="sm" @click="showEditor = !showEditor">编辑</Button>
         <Button variant="ghost" size="sm" class="hover:!text-[var(--danger)] hover:!bg-[var(--danger-light)]" @click="$emit('delete', skill.name)">删除</Button>
-        <span class="s-skill-card__chevron">▾</span>
+        <span :class="['text-[10px] text-muted transition-transform duration-200 ml-1', { 'rotate-180': expanded }]">▾</span>
       </div>
     </div>
-    <div class="s-skill-card__bd">
+    <div v-if="expanded" class="px-[18px] pb-4">
       <MetaGrid :items="metaItems" />
       <MarkdownEditor
         v-if="showEditor"

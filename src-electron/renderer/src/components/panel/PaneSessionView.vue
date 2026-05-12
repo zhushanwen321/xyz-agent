@@ -11,6 +11,7 @@
     :pending-approval="pendingApproval"
     :done-count="sessionState.doneCount"
     :alert-count="sessionState.alertCount"
+    :is-compacting="sessionState.isCompacting"
     @send="handleSend"
     @cancel="handleCancel"
     @select-model="handleSelectModel"
@@ -20,6 +21,8 @@
     @open-drawer="handleOpenDrawer"
     @close-pane="handleClosePane"
     @switch-agent="handleSwitchAgent"
+    @send-command="handleSendCommand"
+    @local-action="handleLocalAction"
   />
 </template>
 
@@ -32,7 +35,7 @@ import { useSettingsStore } from '../../stores/settings'
 import { useChat } from '../../composables/useChat'
 import { send } from '../../lib/ws-client'
 import { on, off } from '../../lib/event-bus'
-import type { ServerMessage } from '@xyz-agent/shared'
+import type { ServerMessage, ClientMessageType } from '@xyz-agent/shared'
 import type { PendingToolCall } from '../chat/ApprovalCard.vue'
 import type { AgentOption, AgentView } from './ChatPanel.vue'
 import ChatPanel from './ChatPanel.vue'
@@ -75,18 +78,47 @@ const agentViews = computed<AgentView[]>(() => {
 
 // --- Event handlers ---
 
-function handleSend(content: string) {
+function handleSend(payload: { content: string; skillName?: string }) {
   const sid = props.sessionId
   if (!sid) return
   chatStore.setError(null, sid)
   chatStore.addMessage({
     id: crypto.randomUUID(),
     role: 'user',
-    content,
+    content: payload.content,
     status: 'complete',
     timestamp: Date.now(),
+    ...(payload.skillName ? { skillName: payload.skillName } : {}),
   }, sid)
-  sendMessage(content)
+  sendMessage(payload.content)
+}
+
+function handleSendCommand(payload: { type: string; payload: Record<string, unknown> }) {
+  const sid = props.sessionId
+  if (!sid) return
+  send({ type: payload.type as ClientMessageType, payload: { ...payload.payload, sessionId: sid } })
+}
+
+function handleLocalAction(payload: { action: string; data?: unknown }) {
+  const sid = props.sessionId
+  if (!sid) return
+
+  if (payload.action === 'clear') {
+    chatStore.clearMessages(sid)
+  } else if (payload.action === 'help') {
+    const commands = payload.data as Array<{ name: string; description: string; source: string }> ?? []
+    const lines = commands.map(c => `  /${c.name} — ${c.description} [${c.source === 'builtin' ? 'CMD' : 'SK'}]`)
+    chatStore.addMessage({
+      id: crypto.randomUUID(),
+      role: 'system',
+      content: '',
+      status: 'complete',
+      timestamp: Date.now(),
+      systemType: 'done' as const,
+      systemTitle: '可用命令',
+      systemDescription: lines.join('\n'),
+    }, sid)
+  }
 }
 
 function handleCancel() {
@@ -140,28 +172,90 @@ function handleToolApprovalRequest(msg: { payload: PendingToolCall }) {
 
 function handleErrorMessage(msg: ServerMessage) {
   const payload = msg.payload as { message?: string; code?: string; sessionId?: string }
-  if (payload.sessionId && payload.sessionId !== props.sessionId) return
+  // 没有 sessionId 的错误不属于任何特定 session，跳过
+  if (!payload.sessionId) return
+  // 使用 Pinia store 中的 sessionId（同步更新），而非 props.sessionId（异步更新）
+  const currentSid = paneStore.panes.find(p => p.id === props.paneId)?.sessionId
+  if (!currentSid || payload.sessionId !== currentSid) return
   const errMsg = payload.message ?? 'Unknown error'
-  chatStore.setGenerating(false, props.sessionId)
-  chatStore.setStreaming(null, props.sessionId)
-  chatStore.setError(null, props.sessionId)
+  chatStore.setGenerating(false, currentSid)
+  chatStore.setStreaming(null, currentSid)
+  chatStore.setError(null, currentSid)
   chatStore.addMessage({
     id: crypto.randomUUID(),
-    role: 'assistant',
-    content: `**Error:** ${errMsg}`,
+    role: 'system',
+    content: errMsg,
     status: 'error',
     timestamp: Date.now(),
-  }, props.sessionId)
+  }, currentSid)
 }
+
+function handleCompactionState(msg: ServerMessage, value: boolean) {
+  const sid = (msg.payload as { sessionId?: string }).sessionId
+  if (!sid) return
+  // 使用 Pinia store 中的 sessionId（同步更新），而非 props.sessionId（异步更新）
+  // 解决 session.restore → session.compacting 时序问题
+  const currentSid = paneStore.panes.find(p => p.id === props.paneId)?.sessionId
+  if (!currentSid || sid !== currentSid) return
+  chatStore.setCompacting(value, sid)
+  if (value) {
+    chatStore.addMessage({
+      id: crypto.randomUUID(),
+      role: 'system',
+      content: '',
+      status: 'complete',
+      timestamp: Date.now(),
+      systemType: 'done' as const,
+      systemTitle: '正在压缩上下文…',
+      systemDescription: '压缩完成后会自动通知',
+    }, sid)
+  }
+}
+
+function handleCompacted(msg: ServerMessage) {
+  const payload = msg.payload as { sessionId?: string; error?: string; status?: string }
+  const sid = payload.sessionId
+  if (!sid) return
+  const currentSid = paneStore.panes.find(p => p.id === props.paneId)?.sessionId
+  if (!currentSid || sid !== currentSid) return
+  chatStore.setCompacting(false, sid)
+  if (payload.error) {
+    chatStore.addMessage({
+      id: crypto.randomUUID(),
+      role: 'system',
+      content: payload.error,
+      status: 'error',
+      timestamp: Date.now(),
+    }, sid)
+  } else {
+    chatStore.addMessage({
+      id: crypto.randomUUID(),
+      role: 'system',
+      content: '',
+      status: 'complete',
+      timestamp: Date.now(),
+      systemType: 'done' as const,
+      systemTitle: '上下文压缩完成',
+      systemDescription: '已压缩上下文以减少 token 消耗',
+    }, sid)
+  }
+}
+
+const onCompacting = (msg: ServerMessage) => handleCompactionState(msg, true)
+const onCompacted = (msg: ServerMessage) => handleCompacted(msg)
 
 onMounted(() => {
   chatStore.ensureSession(props.sessionId)
   on('tool.approval_request', handleToolApprovalRequest)
   on('error', handleErrorMessage)
+  on('session.compacting', onCompacting)
+  on('session.compacted', onCompacted)
 })
 
 onUnmounted(() => {
   off('tool.approval_request', handleToolApprovalRequest)
   off('error', handleErrorMessage)
+  off('session.compacting', onCompacting)
+  off('session.compacted', onCompacted)
 })
 </script>

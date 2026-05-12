@@ -57,12 +57,11 @@ function handleTest(_id: string) {
 
 function toggleProvider(id: string) {
   const p = providers.value.find(p => p.id === id)
-  if (p) {
-    const newStatus = p.status === 'connected' ? 'not_configured' : 'connected'
-    // 乐观更新：先更新本地状态，实现即时 UI 反馈
-    providerStore.updateProvider(id, { status: newStatus })
-    send({ type: 'config.setProvider', payload: { providerId: id, status: newStatus } })
-  }
+  if (!p) return
+  const newEnabled = p.enabled !== false
+  // toggle 控制 enabled（启用/禁用），status（连接状态）由服务端管理
+  providerStore.updateProvider(id, { enabled: !newEnabled })
+  send({ type: 'config.setProvider', payload: { providerId: id, enabled: !newEnabled } })
 }
 
 function toggleModel(providerId: string, modelId: string) {
@@ -89,16 +88,18 @@ function handleSave(_data: {
   const providerId = _pid || _data.name.toLowerCase().replace(/\s+/g, '-')
   // Map form fields to config-store field names
   const { url, key, ...configData } = rest
-  send({ type: 'config.setProvider', payload: { providerId, baseUrl: url, apiKey: key, ...configData } })
+  // 编辑时如果 key 是掩码，不发送 apiKey（保留原值）
+  const apiKey = key && key !== '••••••••' ? key : undefined
+  send({ type: 'config.setProvider', payload: { providerId, baseUrl: url, ...(apiKey !== undefined && { apiKey: apiKey }), ...configData } })
   showModal.value = false
   editingProvider.value = null
 }
 </script>
 
 <template>
-  <div class="s-page">
-    <div class="s-page__hd">
-      <div class="s-page__title">供应商配置</div>
+  <div class="max-w-[860px] mx-auto py-8 px-10">
+    <div class="flex items-center justify-between mb-7">
+      <div class="font-display text-[22px] font-bold tracking-tight">供应商配置</div>
       <Button
         variant="primary"
         @click="editingProvider = null; showModal = true"
@@ -111,14 +112,14 @@ function handleSave(_data: {
     </div>
 
     <!-- Empty state -->
-    <div v-if="providers.length === 0" class="s-empty">
-      <div class="s-empty__icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+    <div v-if="providers.length === 0" class="flex flex-col items-center justify-center py-20 px-10 text-center">
+      <div class="mb-4 w-16 h-16 rounded-full bg-surface border-2 border-dashed border-border flex items-center justify-center">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="w-7 h-7 text-muted">
           <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
         </svg>
       </div>
-      <div class="s-empty__title">尚未配置任何供应商</div>
-      <div class="s-empty__desc">添加供应商后，可以配置模型并分配给 Agent 使用。支持 Anthropic、OpenAI、Google、DeepSeek、Ollama 等。</div>
+      <div class="text-base font-semibold mb-1.5">尚未配置任何供应商</div>
+      <div class="text-[13px] text-muted max-w-[360px] mb-6">添加供应商后，可以配置模型并分配给 Agent 使用。支持 Anthropic、OpenAI、Google、DeepSeek、Ollama 等。</div>
       <Button
         variant="primary"
         @click="editingProvider = null; showModal = true"

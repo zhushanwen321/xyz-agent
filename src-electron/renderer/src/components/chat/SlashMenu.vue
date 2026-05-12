@@ -1,59 +1,57 @@
 <template>
-  <div v-if="visible && commands.length > 0" class="slash-menu" ref="menuRef">
-    <div class="slash-menu__list" ref="listRef">
+  <div
+    v-if="visible && commands.length > 0"
+    ref="menuRef"
+    class="absolute bottom-full left-[24px] right-[24px] mb-1 bg-surface border border-border rounded-sm shadow-md max-h-[calc(28px*5)] overflow-y-auto z-20"
+  >
+    <div>
       <Button
         v-for="(cmd, idx) in commands"
         :key="cmd.name"
         :ref="(el) => { if (idx === activeIndex) activeEl = (el as any)?.$el ?? el }"
         variant="ghost"
-        :class="['slash-menu__item', { 'slash-menu__item--active': idx === activeIndex }]"
-        @click="handleSelect(cmd.name)"
+        :class="[
+          'flex items-center gap-1.5 w-full py-1 px-2.5 border-none bg-transparent text-fg font-body text-xs leading-[1.4] text-left cursor-pointer transition-colors duration-100 ease-ease',
+          idx === activeIndex && 'bg-accent-light',
+        ]"
+        @click="handleSelect(cmd)"
         @mouseenter="activeIndex = idx"
       >
-        <span class="slash-menu__name">/{{ cmd.name }}</span>
-        <span class="slash-menu__desc">{{ cmd.description }}</span>
+        <span
+          :class="[
+            'inline-flex items-center justify-center text-[9px] font-medium tracking-[0.02em] rounded-[3px] shrink-0 w-[52px] h-4',
+            cmd.source === 'builtin'
+              ? 'bg-border text-muted'
+              : 'bg-accent-light text-accent',
+          ]"
+        >{{ cmd.source === 'builtin' ? 'command' : 'skill' }}</span>
+        <span class="text-xs font-semibold font-mono whitespace-nowrap text-accent w-[100px] shrink-0 overflow-hidden text-ellipsis">/{{ cmd.name }}</span>
+        <span class="text-[11px] text-muted flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap pl-2 border-l border-border">{{ cmd.description }}</span>
       </Button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
-import { useSlashCommands } from '../../composables/useSlashCommands'
-import { useProviderStore } from '../../stores/provider'
+import { ref, watch, nextTick, onBeforeUnmount, onMounted } from 'vue'
 import { Button } from '../../design-system'
+import type { SlashCommand } from '../../composables/useSlashCommands'
 
 const props = defineProps<{
   visible: boolean
-  filter: string
+  commands: SlashCommand[]
 }>()
 
 const emit = defineEmits<{
   close: []
-  select: [name: string]
+  select: [cmd: SlashCommand]
 }>()
-
-const { filteredCommands, setFilter, initDefaultCommands } = useSlashCommands()
-const providerStore = useProviderStore()
-
-// 初始化内置命令（幂等）
-initDefaultCommands()
 
 const activeIndex = ref(0)
 const activeEl = ref<HTMLElement | null>(null)
 const menuRef = ref<HTMLElement | null>(null)
-const listRef = ref<HTMLElement | null>(null)
 
-// 将 enabled 的 skills 和 slash commands 合并展示
-const commands = computed(() => {
-  const skills = providerStore.skills
-    .filter(s => s.enabled)
-    .map(s => ({ name: s.name, description: s.description }))
-  return [...filteredCommands.value, ...skills]
-})
-
-watch(() => props.filter, (val) => {
-  setFilter(val)
+watch(() => props.commands, () => {
   activeIndex.value = 0
 })
 
@@ -67,20 +65,20 @@ watch(() => props.visible, (val) => {
 })
 
 function onKeyDown(e: KeyboardEvent) {
-  if (!props.visible || commands.value.length === 0) return
+  if (!props.visible || props.commands.length === 0) return
 
   if (e.key === 'ArrowDown') {
     e.preventDefault()
-    activeIndex.value = (activeIndex.value + 1) % commands.value.length
+    activeIndex.value = (activeIndex.value + 1) % props.commands.length
     scrollActiveIntoView()
   } else if (e.key === 'ArrowUp') {
     e.preventDefault()
-    activeIndex.value = (activeIndex.value - 1 + commands.value.length) % commands.value.length
+    activeIndex.value = (activeIndex.value - 1 + props.commands.length) % props.commands.length
     scrollActiveIntoView()
-  } else if (e.key === 'Enter') {
+  } else if (e.key === 'Enter' || e.key === 'Tab') {
     e.preventDefault()
-    const cmd = commands.value[activeIndex.value]
-    if (cmd) handleSelect(cmd.name)
+    const cmd = props.commands[activeIndex.value]
+    if (cmd) handleSelect(cmd)
   } else if (e.key === 'Escape') {
     e.preventDefault()
     emit('close')
@@ -93,71 +91,30 @@ function scrollActiveIntoView() {
   })
 }
 
-function handleSelect(name: string) {
-  emit('select', name)
+function handleSelect(cmd: SlashCommand) {
+  emit('select', cmd)
 }
+
+// 点击外部关闭
+function onOutsideClick(e: MouseEvent) {
+  if (!props.visible) return
+  const target = e.target as HTMLElement
+  if (menuRef.value?.contains(target)) return
+  // 通过检查是否在 chat input 区域内判断点击外部
+  // ChatInput 的根 div 使用 data-chat-input 标记
+  const inputWrap = target.closest('[data-chat-input]')
+  if (!inputWrap) {
+    emit('close')
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('mousedown', onOutsideClick)
+})
 
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', onKeyDown)
+  document.removeEventListener('mousedown', onOutsideClick)
 })
 </script>
 
-<style scoped>
-.slash-menu {
-  position: absolute;
-  bottom: 100%;
-  left: 0;
-  right: 0;
-  margin-bottom: 6px;
-  max-height: 280px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-  overflow: hidden;
-  z-index: 20;
-}
-
-.slash-menu__list {
-  max-height: 260px;
-  overflow-y: auto;
-  padding: 4px 0;
-}
-
-.slash-menu__item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 10px 14px;
-  border: none;
-  background: none;
-  color: var(--fg);
-  font-family: var(--font-body);
-  text-align: left;
-  cursor: pointer;
-  transition: background 0.1s var(--ease);
-}
-
-.slash-menu__item:hover,
-.slash-menu__item--active {
-  background: var(--accent-light);
-}
-
-.slash-menu__name {
-  font-size: 13px;
-  font-weight: 600;
-  font-family: var(--font-mono);
-  white-space: nowrap;
-  color: var(--accent);
-  min-width: 140px;
-}
-
-.slash-menu__desc {
-  font-size: 12px;
-  color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-</style>

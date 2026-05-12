@@ -20,7 +20,7 @@ interface SelectOption {
 }
 
 interface Props {
-  modelValue?: string
+  modelValue?: string | number
   options?: SelectOption[]
   placeholder?: string
   disabled?: boolean
@@ -35,7 +35,7 @@ const props = withDefaults(defineProps<Props>(), {
 })
 
 const emit = defineEmits<{
-  'update:modelValue': [value: string]
+  'update:modelValue': [value: string | number]
 }>()
 
 const triggerClasses = computed(() =>

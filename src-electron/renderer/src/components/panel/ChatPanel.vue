@@ -1,5 +1,5 @@
 <template>
-  <div class="chat-panel">
+  <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
     <PanelBar
       :agent-options="agentOptions"
       :active-agent-id="localActiveAgentId"
@@ -12,16 +12,16 @@
       @close-pane="$emit('close-pane')"
     />
 
-    <div ref="chatMsgsRef" class="chat-msgs">
+    <div ref="chatMsgsRef" class="flex-1 overflow-y-auto overflow-x-hidden p-5 px-6 flex flex-col gap-[14px] relative max-w-[960px] mx-auto w-full" @scroll="onChatScroll">
       <!-- Empty state -->
-      <div v-if="messages.length === 0" class="chat-empty">
-        <svg class="chat-empty__icon" width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <div v-if="messages.length === 0" class="flex flex-col items-center justify-center h-full p-20 px-10 gap-3 text-muted">
+        <svg class="text-muted mb-2 opacity-50" width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
           <path d="M8 10C8 8.89543 8.89543 8 10 8H38C39.1046 8 40 8.89543 40 10V30C40 31.1046 39.1046 32 38 32H22L14 40V32H10C8.89543 32 8 31.1046 8 30V10Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
           <path d="M16 18H32" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
           <path d="M16 24H26" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
         </svg>
-        <h2 class="chat-empty__title">开始新对话</h2>
-        <p class="chat-empty__subtitle">向 AI 助手发送消息，开始一段新的对话</p>
+        <h2 class="m-0 text-lg font-semibold leading-tight text-fg">开始新对话</h2>
+        <p class="m-0 text-sm leading-relaxed text-muted text-center">向 AI 助手发送消息，开始一段新的对话</p>
       </div>
 
       <template v-else>
@@ -32,8 +32,9 @@
               <!-- System messages -->
               <SystemMessage
                 v-if="msg.role === 'system'"
-                :type="msg.systemType || 'done'"
+                :type="msg.systemType || (msg.status === 'error' ? 'alert' : 'done')"
                 :title="msg.systemTitle || ''"
+                :content="msg.content"
                 :description="msg.systemDescription"
                 :action-label="msg.systemAction"
                 @action="$emit('system-action', msg)"
@@ -45,11 +46,11 @@
         </template>
 
         <!-- Thinking indicator: waiting for first token -->
-        <div v-if="isStreaming && !streamingMessage" class="thinking-indicator">
-          <div class="thinking-indicator__role">助手</div>
-          <div class="thinking-indicator__bar">
-            <span class="thinking-indicator__dot"></span>
-            <span class="thinking-indicator__text">思考中...</span>
+        <div v-if="isStreaming && !streamingMessage" class="self-start w-full p-3 px-4 bg-surface border border-border rounded-lg leading-relaxed text-sm">
+          <div class="text-[10px] font-semibold uppercase tracking-[0.04em] leading-snug text-muted mb-1.5">助手</div>
+          <div class="flex items-center gap-2">
+            <span class="inline-block w-1.5 h-1.5 rounded-full bg-accent shrink-0 animate-thinking-pulse motion-reduce:opacity-60 motion-reduce:animate-none"></span>
+            <span class="font-mono text-[11px] leading-snug text-muted">思考中...</span>
           </div>
         </div>
 
@@ -73,9 +74,13 @@
 
     <ChatInput
       :is-streaming="isStreaming"
+      :is-compacting="isCompacting"
+      :session-id="sessionId ?? ''"
       @send="$emit('send', $event)"
       @cancel="$emit('cancel')"
       @select-model="$emit('select-model', $event)"
+      @send-command="$emit('send-command', $event)"
+      @local-action="$emit('local-action', $event)"
     />
   </div>
 </template>
@@ -129,6 +134,7 @@ const props = withDefaults(
     pendingApproval: PendingToolCall | null
     doneCount: number
     alertCount: number
+    isCompacting?: boolean
   }>(),
   {
     agentOptions: () => [],
@@ -138,11 +144,12 @@ const props = withDefaults(
     sessionId: null,
     doneCount: 0,
     alertCount: 0,
+    isCompacting: false,
   }
 )
 
 const emit = defineEmits<{
-  send: [content: string]
+  send: [payload: { content: string; skillName?: string }]
   cancel: []
   'select-model': [modelId: string]
   approve: [toolCallId: string]
@@ -152,6 +159,8 @@ const emit = defineEmits<{
   'close-pane': []
   'system-action': [msg: ChatMessage]
   'switch-agent': [agentId: string]
+  'send-command': [payload: { type: string; payload: Record<string, unknown> }]
+  'local-action': [payload: { action: string; data?: unknown }]
 }>()
 
 // Local mirror of activeAgentId so PanelBar can react instantly
@@ -165,11 +174,24 @@ watch(
   }
 )
 
-// Auto-scroll to bottom when new messages arrive or streaming updates
+// 智能自动滚动：底部时跟随新内容，用户上滚后不强制拉回
+function isNearBottom(el: HTMLElement): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 80
+}
+
+// 记录用户是否在底部
+const userAtBottom = ref(true)
+
+function onChatScroll() {
+  const el = chatMsgsRef.value
+  if (el) userAtBottom.value = isNearBottom(el)
+}
+
 watch(
   () => [props.messages.length, props.streamingMessage?.content],
   () => {
     nextTick(() => {
+      if (!userAtBottom.value) return
       const el = chatMsgsRef.value
       if (el) el.scrollTop = el.scrollHeight
     })
@@ -182,105 +204,3 @@ function switchAgent(id: string) {
 }
 </script>
 
-<style scoped>
-.chat-panel {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  overflow: hidden;
-}
-.chat-panel + .chat-panel {
-  border-left: 1px solid var(--border);
-}
-.chat-msgs {
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 20px 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  position: relative;
-  max-width: 960px;
-  margin: 0 auto;
-  width: 100%;
-}
-.chat-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  padding: 80px 40px;
-  gap: 12px;
-  color: var(--muted);
-}
-.chat-empty__icon {
-  color: var(--muted);
-  margin-bottom: 8px;
-  opacity: 0.5;
-}
-.chat-empty__title {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-  line-height: 1.3;
-  color: var(--fg);
-}
-.chat-empty__subtitle {
-  margin: 0;
-  font-size: 14px;
-  line-height: 1.6;
-  color: var(--muted);
-  text-align: center;
-}
-
-/* Thinking indicator: shown while waiting for first token */
-.thinking-indicator {
-  align-self: flex-start;
-  width: 100%;
-  padding: 12px 16px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  line-height: 1.6;
-  font-size: 14px;
-}
-.thinking-indicator__role {
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  line-height: 1.4;
-  color: var(--muted);
-  margin-bottom: 6px;
-}
-.thinking-indicator__bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.thinking-indicator__dot {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-  flex-shrink: 0;
-  animation: thinking-pulse 1.4s ease-in-out infinite;
-}
-.thinking-indicator__text {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  line-height: 1.4;
-  color: var(--muted);
-}
-@keyframes thinking-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.3; transform: scale(0.85); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .thinking-indicator__dot { animation: none; opacity: 0.6; }
-}
-</style>

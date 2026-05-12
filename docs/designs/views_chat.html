@@ -8,9 +8,111 @@
 <style>
   /* layout-only overrides for standalone preview */
   body { display:flex; height:100vh; margin:0; background:var(--bg); }
+
+  /* ── Slash command matching popup ── */
+  .slash-popup {
+    position: absolute;
+    bottom: 100%;
+    left: 0; right: 0;
+    margin-bottom: 4px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.12);
+    max-height: calc(40px * 5); /* 5 items max */
+    overflow-y: auto;
+    display: none;
+    z-index: 20;
+  }
+  .slash-popup.visible { display: block; }
+
+  .slash-popup__item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    cursor: pointer;
+    transition: background 0.1s var(--ease);
+  }
+  .slash-popup__item:hover,
+  .slash-popup__item.active { background: var(--accent-light); }
+
+  .slash-popup__tag {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    padding: 1px 5px;
+    border-radius: 3px;
+    flex-shrink: 0;
+    min-width: 26px;
+    text-align: center;
+  }
+  .slash-popup__tag--cmd {
+    background: var(--muted);
+    color: var(--bg);
+    opacity: 0.7;
+  }
+  .slash-popup__tag--sk {
+    background: var(--accent);
+    color: #fff;
+  }
+  .slash-popup__name {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+    white-space: nowrap;
+    min-width: 100px;
+  }
+  .slash-popup__desc {
+    font-size: 12px;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* ── Skill tag (above textarea, after selecting a skill) ── */
+  .skill-tag-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px 0;
+  }
+  .skill-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 100px;
+    background: var(--accent-light);
+    color: var(--accent);
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .skill-tag__icon {
+    width: 12px; height: 12px;
+  }
+  .skill-tag__close {
+    cursor: pointer;
+    opacity: 0.6;
+    margin-left: 2px;
+    font-size: 14px;
+    line-height: 1;
+  }
+  .skill-tag__close:hover { opacity: 1; }
+
+  /* ── State: skill selected + user typed ── */
+  .chat-input-wrap.state-skill .chat-input-container {
+    border-color: var(--accent);
+  }
 </style>
 </head>
 <body>
+
+  <!-- ════════════════════════════════════════════════════════════════
+       State 1: Normal input (no slash)
+       ════════════════════════════════════════════════════════════════ -->
   <div class="chat-panel" id="panelA">
     <div class="panel-bar">
       <div class="anchor" id="anchorA" onclick="this.classList.toggle('open')">
@@ -85,9 +187,32 @@
     </div>
 
     <div class="chat-input-wrap" id="inputA">
-      <div class="slash-menu" id="slashA">
-        <div class="slash-item active"><span class="slash-item__cmd">/compact</span><span class="slash-item__desc">压缩上下文，减少 token 消耗</span></div>
-        <div class="slash-item"><span class="slash-item__cmd">/brainstorming</span><span class="slash-item__desc">进入头脑风暴模式，探索更多方案</span></div>
+      <div class="slash-popup" id="slashA">
+        <div class="slash-popup__item active">
+          <span class="slash-popup__tag slash-popup__tag--cmd">CMD</span>
+          <span class="slash-popup__name">/clear</span>
+          <span class="slash-popup__desc">清空当前对话</span>
+        </div>
+        <div class="slash-popup__item">
+          <span class="slash-popup__tag slash-popup__tag--cmd">CMD</span>
+          <span class="slash-popup__name">/compact</span>
+          <span class="slash-popup__desc">压缩上下文，减少 token 消耗</span>
+        </div>
+        <div class="slash-popup__item">
+          <span class="slash-popup__tag slash-popup__tag--cmd">CMD</span>
+          <span class="slash-popup__name">/help</span>
+          <span class="slash-popup__desc">显示可用命令列表</span>
+        </div>
+        <div class="slash-popup__item">
+          <span class="slash-popup__tag slash-popup__tag--sk">SK</span>
+          <span class="slash-popup__name">/code-trace</span>
+          <span class="slash-popup__desc">追踪代码调用链，分析上下游关系</span>
+        </div>
+        <div class="slash-popup__item">
+          <span class="slash-popup__tag slash-popup__tag--sk">SK</span>
+          <span class="slash-popup__name">/zcommit</span>
+          <span class="slash-popup__desc">智能分析变更并提交代码</span>
+        </div>
       </div>
       <div class="chat-input-container">
         <textarea class="chat-input-textarea" id="fieldA" placeholder="输入消息… (Enter 发送, Shift+Enter 换行, / 命令)"></textarea>
@@ -124,10 +249,169 @@
     </div>
   </div>
 
+  <!-- ════════════════════════════════════════════════════════════════
+       State 2: Skill selected (tag above input)
+       ════════════════════════════════════════════════════════════════ -->
+  <div class="chat-panel" id="panelB" style="display:none">
+    <div class="panel-bar">
+      <div class="anchor">
+        <span class="anchor__dot" style="background:var(--success)"></span>
+        <span>主线对话</span>
+        <span class="anchor__chevron">▾</span>
+      </div>
+    </div>
+
+    <div class="chat-msgs">
+      <div class="agent-view active" data-agent="main">
+        <div class="msg msg--bot">
+          <div class="msg__role">助手</div>
+          <div class="msg__body"><p>好的，请告诉我需要追踪哪个文件或函数？</p></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="chat-input-wrap state-skill">
+      <!-- Skill tag: appears after selecting a skill from slash menu -->
+      <div class="skill-tag-bar">
+        <div class="skill-tag">
+          <svg class="skill-tag__icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 8l4 4 8-8"/></svg>
+          code-trace
+          <span class="skill-tag__close" title="取消">&times;</span>
+        </div>
+      </div>
+      <div class="chat-input-container">
+        <textarea class="chat-input-textarea" placeholder="描述要追踪的文件或函数…"></textarea>
+        <div class="chat-input-toolbar">
+          <button class="tb-btn tb-btn--plus" title="上传文件"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3v10M3 8h10"/></svg></button>
+          <div class="tb-model">
+            <span>sonnet</span><span class="tb-model__sep">@</span><span class="tb-model__provider">anthropic</span>
+          </div>
+          <div class="tb-context">上下文 <div class="tb-context__bar"><div class="tb-context__fill" style="width:34%;background:var(--accent)"></div></div> 34%</div>
+          <div class="tb-spacer"></div>
+          <button class="tb-btn tb-btn--send" title="发送 /skill:code-trace <消息>"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M8 2v12M4 6l4-4 4 4"/></svg></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════════════
+       State 3: Skill sent (tag gone, message in chat with skill badge)
+       ════════════════════════════════════════════════════════════════ -->
+  <div class="chat-panel" id="panelC" style="display:none">
+    <div class="panel-bar">
+      <div class="anchor">
+        <span class="anchor__dot" style="background:var(--success)"></span>
+        <span>主线对话</span>
+        <span class="anchor__chevron">▾</span>
+      </div>
+    </div>
+
+    <div class="chat-msgs">
+      <div class="agent-view active" data-agent="main">
+        <!-- User message shows the skill prefix as a small badge -->
+        <div class="msg msg--user">
+          <div class="msg__role">用户</div>
+          <div class="msg__body">
+            <p>
+              <span class="skill-tag" style="font-size:11px;margin-right:4px;vertical-align:middle">
+                <svg class="skill-tag__icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="width:10px;height:10px"><path d="M2 8l4 4 8-8"/></svg>
+                code-trace
+              </span>
+              追踪 src/auth/interfaces.ts 的完整调用链
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="chat-input-wrap">
+      <div class="chat-input-container">
+        <textarea class="chat-input-textarea" placeholder="输入消息… (Enter 发送, Shift+Enter 换行, / 命令)"></textarea>
+        <div class="chat-input-toolbar">
+          <button class="tb-btn tb-btn--plus" title="上传文件"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3v10M3 8h10"/></svg></button>
+          <div class="tb-model">
+            <span>sonnet</span><span class="tb-model__sep">@</span><span class="tb-model__provider">anthropic</span>
+          </div>
+          <div class="tb-context">上下文 <div class="tb-context__bar"><div class="tb-context__fill" style="width:35%;background:var(--accent)"></div></div> 35%</div>
+          <div class="tb-spacer"></div>
+          <button class="tb-btn tb-btn--send" title="发送 (Enter)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M8 2v12M4 6l4-4 4 4"/></svg></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
 <script>
-document.querySelector('.chat-input-textarea')?.addEventListener('input', function() {
-  document.querySelector('.slash-menu')?.classList.toggle('visible', this.value.startsWith('/'));
+// State toggle for demo
+let currentPanel = 'A';
+document.addEventListener('keydown', function(e) {
+  if (e.key === '1') { currentPanel = 'A'; }
+  else if (e.key === '2') { currentPanel = 'B'; }
+  else if (e.key === '3') { currentPanel = 'C'; }
+  else return;
+  document.querySelectorAll('.chat-panel').forEach(p => p.style.display = 'none');
+  document.getElementById('panel' + currentPanel).style.display = '';
+});
+
+// Slash popup toggle
+document.querySelector('#fieldA')?.addEventListener('input', function() {
+  document.querySelector('#slashA')?.classList.toggle('visible', this.value.startsWith('/'));
+});
+
+// Slash popup item click
+document.querySelectorAll('.slash-popup__item').forEach(item => {
+  item.addEventListener('click', function() {
+    document.querySelector('#slashA').classList.remove('visible');
+  });
 });
 </script>
+
+<!--
+  ═══════════════════════════════════════════════════════════════════
+  Slash Command Interaction Spec
+  ═══════════════════════════════════════════════════════════════════
+
+  按 1/2/3 切换三种状态。
+
+  ## 命令分类
+
+  | 类型   | 例子          | 前端行为                     | 发给 pi 的内容              |
+  |--------|---------------|------------------------------|-----------------------------|
+  | local  | /clear, /help | 前端直接执行，不发送         | 无                          |
+  | protocol| /compact     | 发 ws session.compact        | 无（独立协议通道）          |
+  | skill  | /code-trace   | 输入框上方显示 skill 标签    | /skill:<name>[ <用户消息>]  |
+
+  ## 交互流程
+
+  1. 用户输入 "/" → 向上弹出匹配框
+  2. 继续输入 → 子串过滤（不区分大小写）
+  3. 最多显示 5 项，超出滚动
+  4. ↑↓ 导航，Tab 立即确认，Enter 确认，Escape 关闭
+  5. 选中后：
+     - CMD: 立即执行，清空输入框
+     - SK:  输入框上方出现 skill 标签（State 2），等待用户输入
+  6. 用户在 skill 标签存在时按 Enter → 发送 /skill:<name> <消息>
+  7. 发送后标签消失（单次模式），恢复 State 1
+  8. 用户也可不输入消息直接 Enter → 发送纯 /skill:<name>
+
+  ## 发送格式
+
+  - 有用户消息: "/skill:code-trace 追踪 src/auth 的调用链"
+  - 无用户消息: "/skill:code-trace"
+  - 通过 pi prompt 传递，pi 内部识别 /skill: 前缀
+
+  ## 数据源
+
+  - 内置命令（3 个）: /clear (local), /compact (protocol), /help (local)
+  - Skill 命令（动态）: providerStore.skills.filter(s => s.enabled)
+  - 合并后按 name 字母排序，不分组
+  - 每项用 CMD/SK tag 标识类型
+
+  ## 涉及文件
+
+  - useSlashCommands.ts: 重写命令注册（类型化 action）
+  - ChatInput.vue: activeSkill ref + skill 标签 + handleSlashSelect 分发
+  - SlashMenu.vue: 限制 5 项 + CMD/SK tag
+  - PaneSessionView.vue: 拼接 /skill: 前缀
+-->
 </body>
 </html>

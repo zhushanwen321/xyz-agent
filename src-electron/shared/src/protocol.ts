@@ -18,7 +18,7 @@ export interface ClientMessage {
 // Sidecar → Client message types
 export type ServerMessageType =
   | 'session.created' | 'session.deleted' | 'session.list' | 'session.history'
-  | 'session.compacting' | 'session.restored' | 'session.renamed'
+  | 'session.compacting' | 'session.compacted' | 'session.restored' | 'session.renamed'
   | 'message.message_start' | 'message.text_delta' | 'message.thinking_delta'
   | 'message.thinking_start' | 'message.thinking_end'
   | 'message.tool_call_start' | 'message.tool_call_end' | 'message.tool_call_pending'

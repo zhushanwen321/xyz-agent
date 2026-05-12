@@ -10,7 +10,7 @@ export interface ProviderConfig {
   apiKey: string
   type?: string
   baseUrl?: string
-  models?: string[]
+  models?: Array<string | { id: string; name?: string; ctx?: number; tags?: string[] }>
   enabled?: boolean
 }
 

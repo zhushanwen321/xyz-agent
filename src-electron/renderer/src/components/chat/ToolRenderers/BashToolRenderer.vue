@@ -1,12 +1,29 @@
 <template>
-  <div class="bash-renderer">
-    <div class="bash-section">
-      <div class="bash-label">Command:</div>
-      <pre class="bash-cmd">{{ command }}</pre>
+  <div class="p-0">
+    <!-- Running state -->
+    <div v-if="toolCall.status === 'running'" class="px-3 py-2.5">
+      <div class="flex items-center gap-2 text-[11px] text-muted">
+        <span class="inline-block w-2 h-2 border-[1.5px] border-accent border-t-transparent rounded-full animate-spin shrink-0"></span>
+        <span class="font-mono">Executing...</span>
+      </div>
+      <pre class="whitespace-pre-wrap font-mono text-xs text-fg bg-bg rounded-md p-2 m-0 mt-2">{{ command }}</pre>
     </div>
-    <div v-if="toolCall.output !== undefined && toolCall.status !== 'running'" class="bash-section">
-      <div class="bash-label">Output:</div>
-      <div class="bash-output"><pre>{{ toolCall.output }}</pre></div>
+
+    <!-- Completed state -->
+    <div v-else>
+      <!-- Command -->
+      <div class="px-3 pt-2.5 pb-1">
+        <div class="font-mono text-[10px] text-muted font-semibold mb-1">Command</div>
+        <pre class="whitespace-pre-wrap font-mono text-xs text-fg bg-bg rounded-md p-2.5 m-0">{{ command }}</pre>
+      </div>
+
+      <!-- Output -->
+      <div v-if="toolCall.output !== undefined" class="px-3 pb-2.5 pt-1">
+        <div class="font-mono text-[10px] text-muted font-semibold mb-1">Output</div>
+        <div class="max-h-[200px] overflow-y-auto rounded-md border border-border bg-surface p-2.5">
+          <pre class="whitespace-pre-wrap font-mono text-xs text-muted leading-relaxed m-0">{{ toolCall.output }}</pre>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -20,12 +37,3 @@ const command = computed(() => {
   catch { return String(props.toolCall.input) }
 })
 </script>
-
-<style scoped>
-.bash-renderer { padding: 0; }
-.bash-section { padding: 8px 10px; }
-.bash-label { font-family: var(--font-mono); font-size: 11px; color: var(--muted); margin-bottom: 4px; }
-.bash-cmd { white-space: pre-wrap; font-family: var(--font-mono); font-size: 12px; color: var(--fg); background: var(--bg); border-radius: var(--radius-md); padding: 8px; margin: 0; }
-.bash-output { max-height: 200px; overflow-y: auto; border-radius: var(--radius-md); border: 1px solid var(--border); background: var(--surface); padding: 8px; }
-.bash-output pre { white-space: pre-wrap; font-family: var(--font-mono); font-size: 12px; color: var(--muted); margin: 0; }
-</style>

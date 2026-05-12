@@ -67,7 +67,7 @@ export function setProvider(
     type?: string
     apiKey?: string
     baseUrl?: string
-    models?: string[]
+    models?: Array<string | { id: string; name?: string; ctx?: number; tags?: string[] }>
     enabled?: boolean
   },
 ): void {

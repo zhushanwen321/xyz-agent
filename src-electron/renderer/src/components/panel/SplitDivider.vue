@@ -1,7 +1,6 @@
 <template>
   <div
-    class="split-divider"
-    :class="[`split-divider--${direction}`, { dragging }]"
+    :class="['bg-border shrink-0 relative z-5 transition-colors duration-150 opacity-30', direction === 'horizontal' ? 'w-1 cursor-col-resize' : 'h-1 cursor-row-resize', { 'bg-accent opacity-100': dragging }, { 'hover:bg-accent hover:opacity-100': !dragging }]"
     @mousedown="startDrag"
   ></div>
 </template>
@@ -58,47 +57,3 @@ onUnmounted(() => {
 })
 </script>
 
-<style scoped>
-.split-divider {
-  background: var(--border);
-  flex-shrink: 0;
-  position: relative;
-  z-index: 5;
-  transition: background 0.15s var(--ease, ease), opacity 0.15s var(--ease, ease);
-  opacity: 0.3;
-}
-.split-divider--horizontal {
-  width: 4px;
-  cursor: col-resize;
-}
-.split-divider--vertical {
-  height: 4px;
-  cursor: row-resize;
-}
-.split-divider:hover,
-.split-divider.dragging {
-  background: var(--accent);
-  opacity: 1;
-}
-.split-divider::after {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  border-radius: 1px;
-  background: transparent;
-}
-.split-divider--horizontal::after {
-  width: 2px;
-  height: 32px;
-}
-.split-divider--vertical::after {
-  width: 32px;
-  height: 2px;
-}
-.split-divider:hover::after,
-.split-divider.dragging::after {
-  background: transparent;
-}
-</style>

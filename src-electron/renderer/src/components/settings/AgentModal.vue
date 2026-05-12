@@ -89,36 +89,44 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown))
 </script>
 
 <template>
-  <div :class="['s-modal-overlay', { visible }]" @click.self="$emit('close')">
-    <div class="s-modal">
-      <div class="s-modal__hd">
-        <div class="s-modal__title">{{ agent ? '编辑 Agent' : '添加 Agent' }}</div>
-        <Button variant="ghost" class="s-modal__close !h-7 !w-7 !p-0" @click="$emit('close')">×</Button>
+  <div
+    data-modal-overlay
+    :data-modal-visible="visible || undefined"
+    :class="[
+      'fixed inset-0 bg-black/30 z-[100] flex items-center justify-center transition-opacity duration-200',
+      visible ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+    ]"
+    @click.self="$emit('close')"
+  >
+    <div class="w-[600px] max-h-[85vh] bg-surface border border-border rounded overflow-hidden flex flex-col shadow-[0_8px_40px_rgba(0,0,0,0.12)]">
+      <div class="flex items-center justify-between py-4 px-5 border-b border-border">
+        <div class="font-display text-base font-semibold">{{ agent ? '编辑 Agent' : '添加 Agent' }}</div>
+        <Button variant="ghost" class="!h-7 !w-7 !p-0 !rounded-xs !text-muted hover:!bg-accent-light hover:!text-accent" @click="$emit('close')">×</Button>
       </div>
 
-      <div class="s-modal__bd">
-        <div class="s-form-group">
-          <div class="s-form-label">Agent 名称</div>
+      <div class="p-5 overflow-y-auto flex-1">
+        <div class="mb-4">
+          <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">Agent 名称</div>
           <Input v-model="formName" placeholder="例如：code-reviewer" />
         </div>
 
-        <div class="s-form-group">
-          <div class="s-form-label">描述</div>
+        <div class="mb-4">
+          <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">描述</div>
           <Input v-model="formDescription" placeholder="简要描述此 Agent 的职责" />
         </div>
 
-        <div class="s-form-group">
-          <div class="s-form-label">模型策略</div>
+        <div class="mb-4">
+          <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">模型策略</div>
           <Select v-model="formStrategy" :options="strategyOptions" />
         </div>
 
-        <div v-if="showModelBind" class="s-form-group">
-          <div class="s-form-label">绑定模型</div>
+        <div v-if="showModelBind" class="mb-4">
+          <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">绑定模型</div>
           <Select v-model="formModelBind" :options="modelOptions" placeholder="选择模型" />
         </div>
       </div>
 
-      <div class="s-modal__ft">
+      <div class="flex justify-end gap-2 py-3.5 px-5 border-t border-border">
         <Button variant="outline" @click="$emit('close')">取消</Button>
         <Button variant="primary" @click="handleSave">{{ agent ? '保存' : '添加 Agent' }}</Button>
       </div>

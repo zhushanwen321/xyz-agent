@@ -4,6 +4,8 @@ import { ref, watch, onUnmounted } from 'vue'
 import { Button, Input, Select } from '../../design-system'
 import type { ProviderInfo, ModelInfo } from '@xyz-agent/shared'
 import { TagPill } from './shared'
+import { send } from '../../lib/ws-client'
+import { on as onEvent, off as offEvent } from '../../lib/event-bus'
 
 interface Props {
   visible: boolean
@@ -27,7 +29,7 @@ const emit = defineEmits<{
 interface ModalModel {
   id: string
   name: string
-  ctx: string
+  ctx: string | number | undefined
   tags: string[]
 }
 
@@ -53,7 +55,22 @@ const modalModels = ref<ModalModel[]>([])
 const discoverStatus = ref<'idle' | 'loading' | 'error' | 'empty' | 'success'>('idle')
 const discoverMessage = ref('')
 const addModelName = ref('')
-const addModelCtx = ref('')
+const addModelCtx = ref('200K')
+
+const ctxOptions = [
+  { label: '128K', value: '128000' },
+  { label: '200K', value: '200000' },
+  { label: '256K', value: '256000' },
+  { label: '1M', value: '1000000' },
+]
+
+function formatCtx(v: string | number | undefined): string {
+  if (v == null || v === '--') return '--'
+  const n = typeof v === 'string' ? parseInt(v, 10) : v
+  if (Number.isNaN(n) || n <= 0) return '--'
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M`
+  return `${Math.round(n / 1000)}K`
+}
 
 const allTags = ['power', 'efficient', 'fast'] as const
 
@@ -84,13 +101,13 @@ watch(() => props.visible, (v) => {
     modalModels.value = props.models.map(m => ({
       id: m.id,
       name: m.name,
-      ctx: m.contextWindow ? `${m.contextWindow}` : '--',
+      ctx: m.contextWindow ?? '--',
       tags: [...(m.tags ?? [])],
     }))
     testResult.value = 'none'
     testMessage.value = ''
     addModelName.value = ''
-    addModelCtx.value = ''
+    addModelCtx.value = '200000'
     discoverStatus.value = 'idle'
     discoverMessage.value = ''
   }
@@ -127,11 +144,11 @@ function addModel() {
   modalModels.value.push({
     id: `new-${Date.now()}`,
     name,
-    ctx: addModelCtx.value.trim() || '--',
+    ctx: addModelCtx.value || '--',
     tags: [],
   })
   addModelName.value = ''
-  addModelCtx.value = ''
+  addModelCtx.value = '200000'
 }
 
 function handleTest() {
@@ -143,37 +160,21 @@ function handleTest() {
 
 // ─── Auto-discover ─────────────────────────────────────────────
 
-const DISCOVERY_DELAY_MS = 1500
+// 监听自动发现结果的回调引用，用于卸载时清理
+let discoverHandler: ((msg: unknown) => void) | null = null
 
-interface DiscoveredModel {
-  id: string
-  name: string
-  ctx: string
-}
+const DISCOVER_TIMEOUT_MS = 15_000
+let discoverTimer: ReturnType<typeof setTimeout> | null = null
 
-const typeModelMap: Record<string, DiscoveredModel[]> = {
-  anthropic: [
-    { id: 'claude-sonnet-4', name: 'claude-sonnet-4', ctx: '128K' },
-    { id: 'claude-opus-4', name: 'claude-opus-4', ctx: '200K' },
-    { id: 'claude-haiku-4', name: 'claude-haiku-4', ctx: '128K' },
-  ],
-  openai: [
-    { id: 'gpt-4o', name: 'gpt-4o', ctx: '128K' },
-    { id: 'gpt-4o-mini', name: 'gpt-4o-mini', ctx: '128K' },
-    { id: 'o3', name: 'o3', ctx: '200K' },
-  ],
-  deepseek: [
-    { id: 'deepseek-v4', name: 'deepseek-v4', ctx: '128K' },
-    { id: 'deepseek-v4-flash', name: 'deepseek-v4-flash', ctx: '128K' },
-  ],
-  google: [
-    { id: 'gemini-2.5-pro', name: 'gemini-2.5-pro', ctx: '1M' },
-    { id: 'gemini-2.5-flash', name: 'gemini-2.5-flash', ctx: '1M' },
-  ],
-  ollama: [
-    { id: 'qwen3-32b', name: 'qwen3:32b', ctx: '32K' },
-    { id: 'llama3-70b', name: 'llama3:70b', ctx: '32K' },
-  ],
+function cleanupDiscover() {
+  if (discoverHandler) {
+    offEvent('config.discoveredModels', discoverHandler)
+    discoverHandler = null
+  }
+  if (discoverTimer) {
+    clearTimeout(discoverTimer)
+    discoverTimer = null
+  }
 }
 
 function handleDiscover() {
@@ -183,39 +184,43 @@ function handleDiscover() {
   const type = formType.value
   const baseUrl = formUrl.value.trim()
 
-  // 没有填写 URL
-  if (!baseUrl && type !== 'openai-compatible') {
-    const typeHint: Record<string, string> = {
-      anthropic: 'https://api.anthropic.com',
-      openai: 'https://api.openai.com',
-      deepseek: 'https://api.deepseek.com',
-      google: 'https://generativelanguage.googleapis.com',
-      ollama: 'http://localhost:11434',
-    }
-    setTimeout(() => {
-      discoverStatus.value = 'error'
-      discoverMessage.value = typeHint[type] ? `请先填写 Base URL（如 ${typeHint[type]}）` : '请先填写 Base URL'
-    }, DISCOVERY_DELAY_MS)
+  // 前置校验：Base URL
+  if (!baseUrl) {
+    discoverStatus.value = 'error'
+    discoverMessage.value = '请先填写 Base URL'
     return
   }
 
-  // API Key 为空且非本地模型
+  // 前置校验：API Key（本地模型除外，编辑模式下掩码视为已有 key）
   const key = formKey.value.trim()
-  if (!key || key === '••••••••') {
-    if (type !== 'ollama' && type !== 'openai-compatible') {
-      setTimeout(() => {
-        discoverStatus.value = 'error'
-        discoverMessage.value = '请先填写 API Key'
-      }, DISCOVERY_DELAY_MS)
-      return
-    }
+  const isNewProvider = !props.provider
+  const keyIsMask = key === '••••••••'
+  if (isNewProvider && !key && type !== 'ollama') {
+    discoverStatus.value = 'error'
+    discoverMessage.value = '请先填写 API Key'
+    return
   }
 
-  // 模拟网络请求延迟
-  setTimeout(() => {
-    const models = typeModelMap[type]
-    if (models) {
-      // 成功发现模型
+  // 清理旧监听和超时
+  cleanupDiscover()
+
+  // 超时保护：sidecar 未响应或版本过旧时防止永久 loading
+  discoverTimer = setTimeout(() => {
+    cleanupDiscover()
+    discoverStatus.value = 'error'
+    discoverMessage.value = '发现超时，请确认后端服务已启动且版本最新'
+  }, DISCOVER_TIMEOUT_MS)
+
+  // 注册一次性监听
+  discoverHandler = (msg: unknown) => {
+    cleanupDiscover()
+
+    const payload = (msg as { payload: Record<string, unknown> }).payload
+    const models = payload.models as Array<{ id: string; name: string; ctx?: number }>
+    const success = payload.success as boolean
+    const error = payload.error as string | undefined
+
+    if (success && models.length > 0) {
       modalModels.value = models.map(m => ({
         id: m.id,
         name: m.name,
@@ -224,15 +229,27 @@ function handleDiscover() {
       }))
       discoverStatus.value = 'success'
       discoverMessage.value = `发现 ${models.length} 个可用模型`
-    } else if (type === 'openai-compatible') {
-      // OpenAI 兼容类型：模拟发现失败（返回空）
+    } else if (success && models.length === 0) {
       discoverStatus.value = 'empty'
       discoverMessage.value = '未发现可用模型，请确保 Base URL 正确或手动添加'
     } else {
-      discoverStatus.value = 'empty'
-      discoverMessage.value = '未发现可用模型'
+      discoverStatus.value = 'error'
+      discoverMessage.value = error || '发现失败，请检查网络或 API Key'
     }
-  }, DISCOVERY_DELAY_MS)
+  }
+  onEvent('config.discoveredModels', discoverHandler)
+
+  // 通过 sidecar 发起 HTTP 请求
+  // 掩码 key 不发送，sidecar 会通过 providerId 从 config-store 读取已保存的 key
+  send({
+    type: 'config.discoverModels',
+    payload: {
+      baseUrl,
+      apiKey: keyIsMask ? undefined : key || undefined,
+      providerType: type,
+      providerId: props.provider?.id || undefined,
+    },
+  })
 }
 
 function handleSave() {
@@ -256,61 +273,81 @@ function handleKeydown(e: KeyboardEvent) {
 
 watch(() => props.visible, (v) => {
   if (v) document.addEventListener('keydown', handleKeydown)
-  else document.removeEventListener('keydown', handleKeydown)
+  else {
+    document.removeEventListener('keydown', handleKeydown)
+    // modal 关闭时清理 discover 监听
+    cleanupDiscover()
+  }
 })
 
-onUnmounted(() => document.removeEventListener('keydown', handleKeydown))
+onUnmounted(() => {
+  document.removeEventListener('keydown', handleKeydown)
+  cleanupDiscover()
+})
 </script>
 
 <template>
-  <div :class="['s-modal-overlay', { visible }]" @click.self="$emit('close')">
-    <div class="s-modal" @click.stop>
-      <div class="s-modal__hd">
-        <div class="s-modal__title">{{ title }}</div>
-        <Button variant="ghost" class="s-modal__close !h-7 !w-7 !p-0" @click="$emit('close')">×</Button>
+  <div
+    data-modal-overlay
+    :data-modal-visible="visible || undefined"
+    :class="[
+      'fixed inset-0 bg-black/30 z-[100] flex items-center justify-center transition-opacity duration-200',
+      visible ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+    ]"
+    @click.self="$emit('close')"
+  >
+    <div class="w-[600px] max-h-[85vh] bg-surface border border-border rounded overflow-hidden flex flex-col shadow-[0_8px_40px_rgba(0,0,0,0.12)]" @click.stop>
+      <div class="flex items-center justify-between py-4 px-5 border-b border-border">
+        <div class="font-display text-base font-semibold">{{ title }}</div>
+        <Button variant="ghost" class="!h-7 !w-7 !p-0 !rounded-xs !text-muted hover:!bg-accent-light hover:!text-accent" @click="$emit('close')">×</Button>
       </div>
 
-      <div class="s-modal__bd">
-        <div class="s-form-group">
-          <div class="s-form-label">名称</div>
+      <div class="p-5 overflow-y-auto flex-1">
+        <div class="mb-4">
+          <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">名称</div>
           <Input v-model="formName" placeholder="例如：Anthropic、OpenAI、本地 Ollama" />
         </div>
 
-        <div class="s-form-row">
-          <div class="s-form-group">
-            <div class="s-form-label">类型</div>
+        <div class="flex gap-3">
+          <div class="mb-4 flex-1">
+            <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">类型</div>
             <Select v-model="formType" :options="typeOptions" />
           </div>
-          <div class="s-form-group">
-            <div class="s-form-label">连接状态</div>
-            <div class="s-form-status">未测试</div>
+          <div class="mb-4 flex-1">
+            <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">连接状态</div>
+            <div class="py-2 text-[13px] text-muted">未测试</div>
           </div>
         </div>
 
-        <div class="s-form-group">
-          <div class="s-form-label">Base URL</div>
+        <div class="mb-4">
+          <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">Base URL</div>
           <Input v-model="formUrl" placeholder="https://api.anthropic.com" />
-          <div class="s-form-hint">供应商的 API 端点地址。Ollama 默认为 http://localhost:11434</div>
+          <div class="text-[11px] text-muted mt-1">供应商的 API 端点地址。Ollama 默认为 http://localhost:11434</div>
         </div>
 
-        <div class="s-form-group">
-          <div class="s-form-label">API Key</div>
+        <div class="mb-4">
+          <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">API Key</div>
           <Input v-model="formKey" type="password" placeholder="sk-ant-..." />
-          <div class="s-form-hint">本地模型（如 Ollama）无需 API Key</div>
+          <div class="text-[11px] text-muted mt-1">本地模型（如 Ollama）无需 API Key</div>
         </div>
 
-        <div v-if="testResult !== 'none'" :class="['s-test-result', `s-test-result--${testResult}`]">
-          <span :class="['s-status-dot', `s-status-dot--${testResult}`]"></span>
+        <div v-if="testResult !== 'none'" :class="['py-2 px-3 rounded-sm text-xs mt-2 flex items-center gap-2', testResult === 'ok' ? 'bg-success-light text-success' : 'bg-danger-light text-danger']">
+          <span :class="['w-[7px] h-[7px] rounded-full inline-block align-middle', testResult === 'ok' ? 'bg-success' : 'bg-danger']"></span>
           {{ testMessage }}
         </div>
 
-        <div class="s-divider">模型配置</div>
+        <div class="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted my-5 pb-1.5 border-b border-border">模型配置</div>
 
-        <div class="s-model-config">
-          <div class="s-model-config__hd">
-            <span class="s-model-config__title">已配置模型</span>
-            <div class="s-model-config__actions">
-              <span v-if="discoverStatus !== 'idle'" :class="['s-discover-msg', `s-discover-msg--${discoverStatus}`]">
+        <div class="border border-border rounded-sm overflow-hidden mt-2">
+          <div class="flex items-center justify-between py-2.5 px-3.5 bg-bg border-b border-border">
+            <span class="text-xs font-semibold">已配置模型</span>
+            <div class="flex gap-1.5">
+              <span v-if="discoverStatus !== 'idle'" :class="['text-[11px] inline-flex items-center gap-1 whitespace-nowrap', {
+                'text-muted': discoverStatus === 'loading',
+                'text-success': discoverStatus === 'success',
+                'text-danger': discoverStatus === 'error',
+                'text-warning': discoverStatus === 'empty',
+              }]">
                 <template v-if="discoverStatus === 'loading'">正在发现…</template>
                 <template v-else>{{ discoverMessage }}</template>
               </span>
@@ -324,11 +361,11 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown))
               </Button>
             </div>
           </div>
-          <div class="s-model-config__list">
-            <div v-for="(model, idx) in modalModels" :key="model.id" class="s-model-config-item">
-              <span class="s-model-config-item__name">{{ model.name }}</span>
-              <span class="s-model-config-item__ctx">{{ model.ctx }}</span>
-              <div class="s-model-config-item__tags">
+          <div class="max-h-60 overflow-y-auto">
+            <div v-for="(model, idx) in modalModels" :key="model.id" class="flex items-center gap-2.5 py-2.5 px-3.5 border-b border-border last:border-b-0">
+              <span class="font-mono text-xs font-semibold min-w-[180px]">{{ model.name }}</span>
+              <span class="text-[11px] text-muted font-mono min-w-[60px]">{{ formatCtx(model.ctx) }}</span>
+              <div class="flex gap-1 flex-1">
                 <TagPill
                   v-for="tag in allTags"
                   :key="tag"
@@ -346,25 +383,24 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown))
               </Button>
             </div>
           </div>
-          <div class="s-add-model-row">
+          <div class="flex gap-2 py-2.5 px-3.5 bg-bg border-t border-border">
             <Input
               v-model="addModelName"
               placeholder="手动输入模型名称，如 my-model-v1"
               class="flex-1"
               @keydown.enter="addModel"
             />
-            <Input
+            <Select
               v-model="addModelCtx"
-              placeholder="上下文窗口，如 128K"
-              class="!max-w-[100px]"
-              @keydown.enter="addModel"
+              :options="ctxOptions"
+              class="!max-w-[120px]"
             />
             <Button variant="outline" size="sm" @click="addModel">添加</Button>
           </div>
         </div>
       </div>
 
-      <div class="s-modal__ft">
+      <div class="flex justify-end gap-2 py-3.5 px-5 border-t border-border">
         <Button variant="outline" @click="handleTest">
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="6" cy="6" r="4.5" />

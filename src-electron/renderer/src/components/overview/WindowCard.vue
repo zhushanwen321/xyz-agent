@@ -1,20 +1,20 @@
 <template>
   <div
-    class="window-card"
-    :class="['overview__card', { highlighted }]"
+    class="bg-surface border-2 border-border rounded overflow-hidden cursor-pointer transition-all duration-200 ease-ease flex flex-col hover:border-accent hover:-translate-y-[2px] hover:scale-[1.02] hover:shadow-lg"
+    :class="{ 'border-accent ring-3 ring-[oklch(64%_0.13_28_/_0.4)]': highlighted }"
     @click="$emit('select')"
   >
-    <div class="window-card__header">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <div class="flex items-center gap-[6px] py-2 px-3 text-xs font-semibold text-fg border-b border-border bg-bg">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-muted shrink-0">
         <rect x="2" y="3" width="20" height="18" rx="2" ry="2" />
         <line x1="2" y1="9" x2="22" y2="9" />
       </svg>
       {{ windowLabel }}
     </div>
-    <div class="window-card__preview">
+    <div class="flex-1 h-[100px] overflow-hidden p-1">
       <PaneTreeMini :node="windowState.paneTree" />
     </div>
-    <div class="window-card__footer">
+    <div class="py-[6px] px-3 text-[11px] text-muted border-t border-border">
       {{ paneCount }} 面板
     </div>
   </div>
@@ -50,57 +50,3 @@ const windowLabel = computed(() => {
 })
 </script>
 
-<style scoped>
-.window-card {
-  background: var(--surface);
-  border: 2px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-  cursor: pointer;
-  transition: all 0.2s var(--ease);
-  display: flex;
-  flex-direction: column;
-}
-
-.window-card:hover {
-  border-color: var(--accent);
-  transform: translateY(-2px) scale(1.02);
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.15);
-}
-
-.window-card.highlighted {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px oklch(64% 0.13 28 / 0.4);
-}
-
-.window-card__header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--fg);
-  border-bottom: 1px solid var(--border);
-  background: var(--bg);
-}
-
-.window-card__header svg {
-  color: var(--muted);
-  flex-shrink: 0;
-}
-
-.window-card__preview {
-  flex: 1;
-  height: 100px;
-  overflow: hidden;
-  padding: 4px;
-}
-
-.window-card__footer {
-  padding: 6px 12px;
-  font-size: 11px;
-  color: var(--muted);
-  border-top: 1px solid var(--border);
-}
-</style>
