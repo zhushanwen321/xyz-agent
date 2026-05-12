@@ -32,7 +32,14 @@
 
     <!-- Markdown content -->
     <!-- eslint-disable-next-line vue/no-v-html -->
-    <div v-if="message.content" class="msg__body" v-html="renderedContent"></div>
+    <div v-if="message.content" class="msg__body">
+      <span v-if="message.role === 'user' && message.skillName" class="skill-badge">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="10" height="10"><path d="M2 8l4 4 8-8"/></svg>
+        {{ message.skillName }}
+      </span>
+      <!-- eslint-disable-next-line vue/no-v-html -->
+      <span v-html="renderedContent"></span>
+    </div>
   </div>
 </template>
 
@@ -53,7 +60,7 @@ const renderedContent = computed(() => renderMarkdown(props.message.content))
 .msg--user { align-self: flex-end; max-width: 75%; background: var(--accent); color: white; border-radius: var(--radius); border-bottom-right-radius: var(--radius-xs); }
 .msg--bot { align-self: flex-start; width: 100%; background: transparent; }
 
-/* system 消息：全宽横幅，与设计文档 views_chat.html 对齐 */
+/* system 消息：全宽横幅 */
 .msg--system {
   align-self: stretch;
   width: 100%;
@@ -91,4 +98,20 @@ const renderedContent = computed(() => renderMarkdown(props.message.content))
 .msg__body p:last-child { margin-bottom: 0; }
 .msg__body code { background: var(--bg); padding: 1px 4px; border-radius: var(--radius-xs); font-size: 0.88em; font-family: var(--font-mono); }
 .msg--user .msg__body code { background: rgba(255, 255, 255, 0.2); color: white; }
+
+/* Skill badge: 用户消息中正文前的小标签 */
+.skill-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 100px;
+  background: rgba(255, 255, 255, 0.25);
+  color: white;
+  margin-right: 4px;
+  vertical-align: middle;
+  line-height: 1.4;
+}
 </style>

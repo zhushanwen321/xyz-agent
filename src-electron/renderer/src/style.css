@@ -585,13 +585,7 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .tb-btn--send:hover{opacity:0.88}
 .tb-btn--stop{font-weight:700;font-size:11px;width:28px;height:28px}
 
-/* ── Slash command menu ── */
-.slash-menu{position:absolute;bottom:100%;left:0;right:0;margin-bottom:6px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:0 4px 20px rgba(0,0,0,0.1);overflow:hidden;display:none;z-index:20}
-.slash-menu.visible{display:block}
-.slash-item{display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;transition:background 0.1s var(--ease)}
-.slash-item:hover,.slash-item.active{background:var(--accent-light)}
-.slash-item__cmd{font-family:var(--font-mono);font-size:13px;font-weight:600;color:var(--accent);min-width:140px}
-.slash-item__desc{font-size:12px;color:var(--muted)}
+
 
 /* ── Settings view ── */
 .settings-view{display:none;flex:1;overflow:hidden;background:var(--bg)}

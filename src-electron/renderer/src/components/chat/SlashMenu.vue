@@ -1,111 +1,76 @@
 <template>
-  <Teleport to="body">
-    <div
-      v-if="visible && commands.length > 0"
-      ref="menuRef"
-      class="slash-menu"
-      :style="menuStyle"
-    >
-      <div class="slash-menu__list" ref="listRef">
-        <Button
-          v-for="(cmd, idx) in commands"
-          :key="cmd.name"
-          :ref="(el) => { if (idx === activeIndex) activeEl = (el as any)?.$el ?? el }"
-          variant="ghost"
-          :class="['slash-menu__item', { 'slash-menu__item--active': idx === activeIndex }]"
-          @click="handleSelect(cmd.name)"
-          @mouseenter="activeIndex = idx"
-        >
-          <span class="slash-menu__name">/{{ cmd.name }}</span>
-          <span class="slash-menu__desc">{{ cmd.description }}</span>
-        </Button>
-      </div>
+  <div
+    v-if="visible && commands.length > 0"
+    ref="menuRef"
+    class="slash-popup"
+  >
+    <div class="slash-popup__list">
+      <Button
+        v-for="(cmd, idx) in commands"
+        :key="cmd.name"
+        :ref="(el) => { if (idx === activeIndex) activeEl = (el as any)?.$el ?? el }"
+        variant="ghost"
+        :class="['slash-popup__item', { 'slash-popup__item--active': idx === activeIndex }]"
+        @click="handleSelect(cmd)"
+        @mouseenter="activeIndex = idx"
+      >
+        <span
+          :class="['slash-popup__tag', cmd.source === 'builtin' ? 'slash-popup__tag--cmd' : 'slash-popup__tag--sk']"
+        >{{ cmd.source === 'builtin' ? 'command' : 'skill' }}</span>
+        <span class="slash-popup__name">/{{ cmd.name }}</span>
+        <span class="slash-popup__desc">{{ cmd.description }}</span>
+      </Button>
     </div>
-  </Teleport>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onBeforeUnmount, onMounted } from 'vue'
-import { useSlashCommands } from '../../composables/useSlashCommands'
-import { useProviderStore } from '../../stores/provider'
+import { ref, watch, nextTick, onBeforeUnmount, onMounted } from 'vue'
 import { Button } from '../../design-system'
+import type { SlashCommand } from '../../composables/useSlashCommands'
 
 const props = defineProps<{
   visible: boolean
-  filter: string
+  commands: SlashCommand[]
 }>()
 
 const emit = defineEmits<{
   close: []
-  select: [name: string]
+  select: [cmd: SlashCommand]
 }>()
-
-const { filteredCommands, setFilter, initDefaultCommands } = useSlashCommands()
-const providerStore = useProviderStore()
-
-initDefaultCommands()
 
 const activeIndex = ref(0)
 const activeEl = ref<HTMLElement | null>(null)
 const menuRef = ref<HTMLElement | null>(null)
-const listRef = ref<HTMLElement | null>(null)
 
-// 动态定位：基于 anchor 元素（chat-input-wrap）的位置计算
-const menuStyle = ref<Record<string, string>>({})
-
-const commands = computed(() => {
-  const skills = providerStore.skills
-    .filter(s => s.enabled)
-    .map(s => ({ name: s.name, description: s.description }))
-  return [...filteredCommands.value, ...skills]
-})
-
-function updatePosition() {
-  // 查找 chat-input-wrap 作为定位锚点
-  const anchor = document.querySelector('.chat-input-wrap')
-  if (!anchor) return
-  const rect = anchor.getBoundingClientRect()
-  menuStyle.value = {
-    position: 'fixed',
-    left: `${rect.left}px`,
-    bottom: `${window.innerHeight - rect.top + 6}px`,
-    width: `${rect.width}px`,
-    zIndex: '9999',
-  }
-}
-
-watch(() => props.filter, (val) => {
-  setFilter(val)
+watch(() => props.commands, () => {
   activeIndex.value = 0
 })
 
 watch(() => props.visible, (val) => {
   if (val) {
     activeIndex.value = 0
-    nextTick(updatePosition)
     document.addEventListener('keydown', onKeyDown)
-    window.addEventListener('resize', updatePosition)
   } else {
     document.removeEventListener('keydown', onKeyDown)
-    window.removeEventListener('resize', updatePosition)
   }
 })
 
 function onKeyDown(e: KeyboardEvent) {
-  if (!props.visible || commands.value.length === 0) return
+  if (!props.visible || props.commands.length === 0) return
 
   if (e.key === 'ArrowDown') {
     e.preventDefault()
-    activeIndex.value = (activeIndex.value + 1) % commands.value.length
+    activeIndex.value = (activeIndex.value + 1) % props.commands.length
     scrollActiveIntoView()
   } else if (e.key === 'ArrowUp') {
     e.preventDefault()
-    activeIndex.value = (activeIndex.value - 1 + commands.value.length) % commands.value.length
+    activeIndex.value = (activeIndex.value - 1 + props.commands.length) % props.commands.length
     scrollActiveIntoView()
-  } else if (e.key === 'Enter') {
+  } else if (e.key === 'Enter' || e.key === 'Tab') {
     e.preventDefault()
-    const cmd = commands.value[activeIndex.value]
-    if (cmd) handleSelect(cmd.name)
+    const cmd = props.commands[activeIndex.value]
+    if (cmd) handleSelect(cmd)
   } else if (e.key === 'Escape') {
     e.preventDefault()
     emit('close')
@@ -118,8 +83,8 @@ function scrollActiveIntoView() {
   })
 }
 
-function handleSelect(name: string) {
-  emit('select', name)
+function handleSelect(cmd: SlashCommand) {
+  emit('select', cmd)
 }
 
 // 点击外部关闭
@@ -127,7 +92,6 @@ function onOutsideClick(e: MouseEvent) {
   if (!props.visible) return
   const target = e.target as HTMLElement
   if (menuRef.value?.contains(target)) return
-  // 不在菜单内，也不在输入框内时关闭
   const inputWrap = target.closest('.chat-input-wrap')
   if (!inputWrap) {
     emit('close')
@@ -141,60 +105,95 @@ onMounted(() => {
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', onKeyDown)
   document.removeEventListener('mousedown', onOutsideClick)
-  window.removeEventListener('resize', updatePosition)
 })
 </script>
 
 <style scoped>
-.slash-menu {
-  max-height: 280px;
+/* 定位在输入框卡片正上方，与设计稿 views_chat.html 一致 */
+.slash-popup {
+  position: absolute;
+  bottom: 100%;
+  left: 24px;
+  right: 24px;
+  margin-bottom: 4px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-  overflow: hidden;
-}
-
-.slash-menu__list {
-  max-height: 260px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  max-height: calc(28px * 5);
   overflow-y: auto;
-  padding: 4px 0;
+  z-index: 20;
 }
 
-.slash-menu__item {
+.slash-popup__item {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   width: 100%;
-  padding: 10px 14px;
+  padding: 4px 10px;
   border: none;
   background: none;
   color: var(--fg);
   font-family: var(--font-body);
+  font-size: 12px;
+  line-height: 1.4;
   text-align: left;
   cursor: pointer;
   transition: background 0.1s var(--ease);
 }
 
-.slash-menu__item:hover,
-.slash-menu__item--active {
+.slash-popup__item:hover,
+.slash-popup__item--active {
   background: var(--accent-light);
 }
 
-.slash-menu__name {
-  font-size: 13px;
+/* tag: 元数据层，最弱视觉，小写居中 pill */
+.slash-popup__tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  border-radius: 3px;
+  flex-shrink: 0;
+  width: 52px;
+  height: 16px;
+}
+
+.slash-popup__tag--cmd {
+  background: var(--border);
+  color: var(--muted);
+}
+
+.slash-popup__tag--sk {
+  background: var(--accent-light);
+  color: var(--accent);
+}
+
+/* name: 主信息层，mono + accent */
+.slash-popup__name {
+  font-size: 12px;
   font-weight: 600;
   font-family: var(--font-mono);
   white-space: nowrap;
   color: var(--accent);
-  min-width: 140px;
+  width: 100px;
+  flex-shrink: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.slash-menu__desc {
-  font-size: 12px;
+/* desc: 次要信息层，muted + 缩短竖线分隔 */
+.slash-popup__desc {
+  font-size: 11px;
   color: var(--muted);
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
 }
 </style>

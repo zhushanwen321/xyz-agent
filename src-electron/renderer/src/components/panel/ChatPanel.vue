@@ -73,9 +73,12 @@
 
     <ChatInput
       :is-streaming="isStreaming"
+      :session-id="sessionId ?? ''"
       @send="$emit('send', $event)"
       @cancel="$emit('cancel')"
       @select-model="$emit('select-model', $event)"
+      @send-command="$emit('send-command', $event)"
+      @local-action="$emit('local-action', $event)"
     />
   </div>
 </template>
@@ -142,7 +145,7 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
-  send: [content: string]
+  send: [payload: { content: string; skillName?: string }]
   cancel: []
   'select-model': [modelId: string]
   approve: [toolCallId: string]
@@ -152,6 +155,8 @@ const emit = defineEmits<{
   'close-pane': []
   'system-action': [msg: ChatMessage]
   'switch-agent': [agentId: string]
+  'send-command': [payload: { type: string; payload: Record<string, unknown> }]
+  'local-action': [payload: { action: string; data?: unknown }]
 }>()
 
 // Local mirror of activeAgentId so PanelBar can react instantly
