@@ -198,10 +198,22 @@ function handleCompactionState(msg: ServerMessage, value: boolean) {
   const currentSid = paneStore.panes.find(p => p.id === props.paneId)?.sessionId
   if (!currentSid || sid !== currentSid) return
   chatStore.setCompacting(value, sid)
+  if (value) {
+    chatStore.addMessage({
+      id: crypto.randomUUID(),
+      role: 'system',
+      content: '',
+      status: 'complete',
+      timestamp: Date.now(),
+      systemType: 'done' as const,
+      systemTitle: '正在压缩上下文…',
+      systemDescription: '压缩完成后会自动通知',
+    }, sid)
+  }
 }
 
 function handleCompacted(msg: ServerMessage) {
-  const payload = msg.payload as { sessionId?: string; error?: string }
+  const payload = msg.payload as { sessionId?: string; error?: string; status?: string }
   const sid = payload.sessionId
   if (!sid) return
   const currentSid = paneStore.panes.find(p => p.id === props.paneId)?.sessionId
@@ -214,6 +226,17 @@ function handleCompacted(msg: ServerMessage) {
       content: payload.error,
       status: 'error',
       timestamp: Date.now(),
+    }, sid)
+  } else {
+    chatStore.addMessage({
+      id: crypto.randomUUID(),
+      role: 'system',
+      content: '',
+      status: 'complete',
+      timestamp: Date.now(),
+      systemType: 'done' as const,
+      systemTitle: '上下文压缩完成',
+      systemDescription: '已压缩上下文以减少 token 消耗',
     }, sid)
   }
 }

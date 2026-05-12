@@ -1,10 +1,5 @@
 <template>
   <div class="relative mx-auto mb-3 shrink-0 max-w-[960px] w-full px-6" data-chat-input>
-    <!-- Compacting status bar -->
-    <div v-if="isCompacting" class="flex items-center gap-2 mb-2 px-3 py-1.5 rounded bg-success-light border border-success text-[12px] text-success">
-      <span class="inline-block w-1.5 h-1.5 rounded-full bg-success shrink-0 animate-thinking-pulse motion-reduce:opacity-60 motion-reduce:animate-none"></span>
-      <span>{{ t('chat.compacting') }}</span>
-    </div>
     <SlashMenu
       :visible="slashVisible"
       :commands="filteredCommands"
