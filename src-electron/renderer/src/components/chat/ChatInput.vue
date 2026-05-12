@@ -1,5 +1,5 @@
 <template>
-  <div class="relative mx-auto mb-3 shrink-0 max-w-[960px] w-full px-6">
+  <div class="relative mx-auto mb-3 shrink-0 max-w-[960px] w-full px-6" data-chat-input>
     <SlashMenu
       :visible="slashVisible"
       :commands="filteredCommands"

@@ -100,7 +100,9 @@ function onOutsideClick(e: MouseEvent) {
   if (!props.visible) return
   const target = e.target as HTMLElement
   if (menuRef.value?.contains(target)) return
-  const inputWrap = target.closest('.chat-input-wrap')
+  // 通过检查是否在 chat input 区域内判断点击外部
+  // ChatInput 的根 div 使用 data-chat-input 标记
+  const inputWrap = target.closest('[data-chat-input]')
   if (!inputWrap) {
     emit('close')
   }

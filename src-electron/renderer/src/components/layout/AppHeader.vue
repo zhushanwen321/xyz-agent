@@ -1,12 +1,12 @@
 <template>
-  <header class="header">
+  <header class="flex items-center h-header px-4 bg-surface border-b border-border shrink-0 gap-2 z-20">
     <Button variant="ghost" size="icon" class="rounded-sm text-muted hover:text-accent" @click="$emit('toggle-sidebar')" title="Sidebar (Cmd+B)">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="width:16px;height:16px">
         <path d="M2 4h12M2 8h12M2 12h12"/>
       </svg>
     </Button>
-    <div class="header__logo">xyz<span>-agent</span></div>
-    <div class="header__spacer"></div>
+    <div class="font-display text-base font-bold leading-tight -tracking-[0.01em]">xyz<span class="text-accent">-agent</span></div>
+    <div class="flex-1"></div>
     <Button variant="ghost" size="icon" class="relative rounded-sm text-muted hover:text-accent" @click="openDrawer" :title="t('header.notifications')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px">
         <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/>
@@ -16,7 +16,7 @@
         {{ focusedNotifs.done + focusedNotifs.alert }}
       </span>
     </Button>
-    <span class="h-divider"></span>
+    <span class="w-px h-6 bg-border mx-1"></span>
     <Button variant="ghost" size="icon" class="rounded-sm text-muted hover:text-accent" @click="settingsStore.toggleOverview()" :title="t('header.overview') + ' (Cmd+J)'">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:16px;height:16px">
         <rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/>
@@ -30,7 +30,7 @@
         <rect x="1" y="1" width="6" height="14" rx="1"/><rect x="9" y="1" width="6" height="14" rx="1"/>
       </svg>
     </Button>
-    <span class="h-divider"></span>
+    <span class="w-px h-6 bg-border mx-1"></span>
     <Button variant="ghost" size="icon" :class="['rounded-sm text-muted hover:text-accent', { 'text-accent': settingsStore.currentView === 'settings' }]" @click="openSettings" :title="t('header.settings') + ' (Cmd+)'">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:16px;height:16px">
         <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 008.58 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 8.58a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>

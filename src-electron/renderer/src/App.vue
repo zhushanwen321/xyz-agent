@@ -1,9 +1,9 @@
 <template>
-  <div class="app">
+  <div class="flex flex-col h-screen overflow-hidden">
     <AppHeader @toggle-sidebar="toggleSidebar" />
-    <div class="app-body">
+    <div class="flex flex-1 overflow-hidden relative">
       <AppSidebar :visible="sidebarVisible" @create="createSession" @close="sidebarVisible = false" />
-      <main class="main-area">
+      <main class="flex-1 flex min-w-0 overflow-hidden relative">
         <SettingsView v-if="settingsStore.currentView === 'settings'" />
         <PaneTreeRenderer v-else
           :node="paneStore.tree"
@@ -218,9 +218,6 @@ onUnmounted(() => {
 </script>
 
 <style>
-.app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
-.app-body { display: flex; flex: 1; overflow: hidden; position: relative; }
-.main-area { flex: 1; display: flex; min-width: 0; overflow: hidden; position: relative; }
 .sidebar-backdrop {
   position: fixed;
   inset: 0;

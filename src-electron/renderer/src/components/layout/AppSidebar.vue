@@ -101,4 +101,5 @@ function handleSessionClick(sessionId: string) {
 <style scoped>
 /* Parent-child selector required: collapsed toggle rotation via DOM class toggle */
 .s-group.collapsed .s-group__toggle { transform: rotate(-90deg); }
+.s-group.collapsed .s-group__items { display: none; }
 </style>

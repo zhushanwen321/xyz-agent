@@ -56,7 +56,7 @@
     />
 
     <!-- Markdown content -->
-    <div v-if="message.content" class="msg__body">
+    <div v-if="message.content" class="msg__body select-text">
       <span
         v-if="message.role === 'user' && message.skillName"
         class="inline-flex items-center gap-0.5 text-[11px] font-medium py-[1px] px-1.5 rounded-full bg-[var(--white-25)] text-white mr-1 align-middle leading-[1.4]"
