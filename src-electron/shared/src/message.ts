@@ -33,4 +33,6 @@ export interface Message {
   thinking?: ThinkingBlock[]
   usage?: Usage
   timestamp: number
+  /** 当消息通过 skill 命令触发时设置 */
+  skillName?: string
 }

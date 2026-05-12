@@ -271,12 +271,15 @@ export class SessionPool {
   async compact(sessionId: string): Promise<void> {
     const client = this.pm.getClient(sessionId)
     if (!client) throw new Error(`Session ${sessionId} not found`)
-    // 通知前端正在压缩
     this.send({
       type: 'session.compacting',
       payload: { sessionId, status: 'compacting' },
     })
     await client.compact()
+    this.send({
+      type: 'session.compacted',
+      payload: { sessionId, status: 'compacted' },
+    })
   }
 
   async clear(sessionId: string): Promise<void> {

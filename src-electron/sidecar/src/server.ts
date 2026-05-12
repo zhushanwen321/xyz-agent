@@ -177,7 +177,7 @@ export class SidecarServer {
               this.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: sid, session: summary, messages: [] } })
             }
           } else {
-            this.sendError(ws, 'not_found', `Session ${sid} not found`, msg.id)
+            this.sendError(ws, 'not_found', `Session ${sid} not found`, msg.id, sid)
           }
           break
         }
@@ -192,7 +192,6 @@ export class SidecarServer {
         case 'session.compact': {
           const compactId = msg.payload.sessionId as string
           await this.pool.compact(compactId)
-          this.send(ws, { type: 'session.compacting', id: msg.id, payload: { sessionId: compactId, status: 'compacting' } })
           break
         }
 
@@ -365,11 +364,13 @@ export class SidecarServer {
         }
 
         default:
-          this.sendError(ws, 'unknown_type', `Unknown message type: ${(msg as { type: string }).type}`, msg.id)
+          const unknownSid = (msg as { payload?: { sessionId?: string } }).payload?.sessionId
+          this.sendError(ws, 'unknown_type', `Unknown message type: ${(msg as { type: string }).type}`, msg.id, unknownSid)
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e)
-      this.sendError(ws, 'handler_error', message, msg.id)
+      const sessionId = (msg as { payload?: { sessionId?: string } }).payload?.sessionId
+      this.sendError(ws, 'handler_error', message, msg.id, sessionId)
     }
   }
 
@@ -388,8 +389,10 @@ export class SidecarServer {
     }
   }
 
-  private sendError(ws: WsType, code: string, message: string, id?: string): void {
-    this.send(ws, { type: 'error', id, payload: { code, message } })
+  private sendError(ws: WsType, code: string, message: string, id?: string, sessionId?: string): void {
+    const payload: Record<string, unknown> = { code, message }
+    if (sessionId) payload.sessionId = sessionId
+    this.send(ws, { type: 'error', id, payload })
   }
 
   private broadcastSessionList(): void {
