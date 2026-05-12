@@ -35,6 +35,23 @@
   --header-h: 48px;
   --statusbar-h: 32px;
   --ease: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Shadows */
+  --shadow-xs: 0 1px 6px rgba(0, 0, 0, 0.04);
+  --shadow-sm: 0 2px 12px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.12);
+  --shadow-lg: 0 4px 20px rgba(0, 0, 0, 0.1);
+  --shadow-xl: 0 8px 30px rgba(0, 0, 0, 0.15);
+
+  /* Approval level backgrounds */
+  --level-safe-bg: oklch(95% 0.06 145);
+  --level-caution-bg: oklch(95% 0.06 85);
+  --level-danger-bg: oklch(95% 0.06 25);
+
+  /* White overlay (for text/code inside accent-colored elements) */
+  --white-70: rgba(255, 255, 255, 0.7);
+  --white-25: rgba(255, 255, 255, 0.25);
+  --white-20: rgba(255, 255, 255, 0.2);
 }
 
 [data-theme="dark"] {
@@ -51,6 +68,16 @@
   --warning-light: oklch(25% 0.04 85);
   --danger: oklch(55% 0.12 25);
   --danger-light: oklch(25% 0.04 25);
+
+  --shadow-xs: 0 1px 6px rgba(0, 0, 0, 0.2);
+  --shadow-sm: 0 2px 12px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 4px 20px rgba(0, 0, 0, 0.35);
+  --shadow-xl: 0 8px 30px rgba(0, 0, 0, 0.5);
+
+  --level-safe-bg: oklch(30% 0.06 145);
+  --level-caution-bg: oklch(30% 0.06 85);
+  --level-danger-bg: oklch(30% 0.06 25);
 }
 
 /* ── Palette overrides (dark) ────────────────────────────────── */

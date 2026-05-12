@@ -34,6 +34,9 @@ export default {
         foreground: 'var(--fg)',
         ring: 'var(--accent)',
         input: 'var(--border)',
+        'level-safe': 'var(--level-safe-bg)',
+        'level-caution': 'var(--level-caution-bg)',
+        'level-danger': 'var(--level-danger-bg)',
       },
       fontFamily: {
         display: ['Tiempos Headline', 'Newsreader', 'Iowan Old Style', 'Georgia', 'serif'],
@@ -47,11 +50,30 @@ export default {
         lg: '12px',
         md: '8px',
       },
+      boxShadow: {
+        xs: 'var(--shadow-xs)',
+        sm: 'var(--shadow-sm)',
+        md: 'var(--shadow-md)',
+        lg: 'var(--shadow-lg)',
+        xl: 'var(--shadow-xl)',
+      },
       spacing: {
         sidebar: '240px',
         header: '48px',
         statusbar: '32px',
         drawer: '380px',
+      },
+      transitionTimingFunction: {
+        ease: 'var(--ease)',
+      },
+      keyframes: {
+        'pulse-dot': {
+          '0%, 100%': { transform: 'scale(1)' },
+          '50%': { transform: 'scale(1.15)' },
+        },
+      },
+      animation: {
+        'pulse-dot': 'pulse-dot 2s infinite',
       },
     },
   },
