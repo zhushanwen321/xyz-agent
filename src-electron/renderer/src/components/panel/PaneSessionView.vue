@@ -11,6 +11,7 @@
     :pending-approval="pendingApproval"
     :done-count="sessionState.doneCount"
     :alert-count="sessionState.alertCount"
+    :is-compacting="sessionState.isCompacting"
     @send="handleSend"
     @cancel="handleCancel"
     @select-model="handleSelectModel"
@@ -96,20 +97,6 @@ function handleSendCommand(payload: { type: string; payload: Record<string, unkn
   const sid = props.sessionId
   if (!sid) return
   send({ type: payload.type as ClientMessageType, payload: { ...payload.payload, sessionId: sid } })
-
-  // 命令发送后给即时反馈
-  if (payload.type === 'session.compact') {
-    chatStore.addMessage({
-      id: crypto.randomUUID(),
-      role: 'system',
-      content: '',
-      status: 'complete',
-      timestamp: Date.now(),
-      systemType: 'done',
-      systemTitle: '正在压缩上下文...',
-      systemDescription: '压缩完成后会自动通知',
-    }, sid)
-  }
 }
 
 function handleLocalAction(payload: { action: string; data?: unknown }) {
@@ -187,45 +174,65 @@ function handleErrorMessage(msg: ServerMessage) {
   const payload = msg.payload as { message?: string; code?: string; sessionId?: string }
   // 没有 sessionId 的错误不属于任何特定 session，跳过
   if (!payload.sessionId) return
-  if (payload.sessionId !== props.sessionId) return
+  // 使用 Pinia store 中的 sessionId（同步更新），而非 props.sessionId（异步更新）
+  const currentSid = paneStore.panes.find(p => p.id === props.paneId)?.sessionId
+  if (!currentSid || payload.sessionId !== currentSid) return
   const errMsg = payload.message ?? 'Unknown error'
-  chatStore.setGenerating(false, props.sessionId)
-  chatStore.setStreaming(null, props.sessionId)
-  chatStore.setError(null, props.sessionId)
+  chatStore.setGenerating(false, currentSid)
+  chatStore.setStreaming(null, currentSid)
+  chatStore.setError(null, currentSid)
   chatStore.addMessage({
     id: crypto.randomUUID(),
     role: 'system',
     content: errMsg,
     status: 'error',
     timestamp: Date.now(),
-  }, props.sessionId)
+  }, currentSid)
+}
+
+function handleCompactionState(msg: ServerMessage, value: boolean) {
+  const sid = (msg.payload as { sessionId?: string }).sessionId
+  if (!sid) return
+  // 使用 Pinia store 中的 sessionId（同步更新），而非 props.sessionId（异步更新）
+  // 解决 session.restore → session.compacting 时序问题
+  const currentSid = paneStore.panes.find(p => p.id === props.paneId)?.sessionId
+  if (!currentSid || sid !== currentSid) return
+  chatStore.setCompacting(value, sid)
 }
 
 function handleCompacted(msg: ServerMessage) {
-  const sid = (msg.payload as { sessionId?: string }).sessionId
-  if (!sid || sid !== props.sessionId) return
-  chatStore.addMessage({
-    id: crypto.randomUUID(),
-    role: 'system',
-    content: '',
-    status: 'complete',
-    timestamp: Date.now(),
-    systemType: 'done',
-    systemTitle: '上下文压缩完成',
-    systemDescription: '已压缩上下文以减少 token 消耗',
-  }, sid)
+  const payload = msg.payload as { sessionId?: string; error?: string }
+  const sid = payload.sessionId
+  if (!sid) return
+  const currentSid = paneStore.panes.find(p => p.id === props.paneId)?.sessionId
+  if (!currentSid || sid !== currentSid) return
+  chatStore.setCompacting(false, sid)
+  if (payload.error) {
+    chatStore.addMessage({
+      id: crypto.randomUUID(),
+      role: 'system',
+      content: payload.error,
+      status: 'error',
+      timestamp: Date.now(),
+    }, sid)
+  }
 }
+
+const onCompacting = (msg: ServerMessage) => handleCompactionState(msg, true)
+const onCompacted = (msg: ServerMessage) => handleCompacted(msg)
 
 onMounted(() => {
   chatStore.ensureSession(props.sessionId)
   on('tool.approval_request', handleToolApprovalRequest)
   on('error', handleErrorMessage)
-  on('session.compacted', handleCompacted)
+  on('session.compacting', onCompacting)
+  on('session.compacted', onCompacted)
 })
 
 onUnmounted(() => {
   off('tool.approval_request', handleToolApprovalRequest)
   off('error', handleErrorMessage)
-  off('session.compacted', handleCompacted)
+  off('session.compacting', onCompacting)
+  off('session.compacted', onCompacted)
 })
 </script>

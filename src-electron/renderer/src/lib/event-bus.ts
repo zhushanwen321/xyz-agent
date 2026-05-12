@@ -15,7 +15,13 @@ export function off(event: string, handler: EventHandler): void {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- generic event bus, emit args vary by event
 export function emit(event: string, ...args: any[]): void {
-  listeners.get(event)?.forEach(h => h(...args))
+  listeners.get(event)?.forEach(h => {
+    try {
+      h(...args)
+    } catch (e) {
+      console.error(`[event-bus] handler error for event "${event}":`, e)
+    }
+  })
 }
 
 export function clear(): void {

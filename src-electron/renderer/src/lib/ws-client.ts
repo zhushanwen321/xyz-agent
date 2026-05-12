@@ -11,9 +11,10 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null
 let messageQueue: ClientMessage[] = []
 let reconnectAttempts = 0
+let wsGeneration = 0
 const RECONNECT_BASE_DELAY_MS = 1000
 const RECONNECT_BACKOFF_EXPONENT = 2
-const HEARTBEAT_INTERVAL_MS = 30000
+const HEARTBEAT_INTERVAL_MS = 15000
 const MAX_RECONNECT_DELAY = 30000
 
 const isMock = import.meta.env.VITE_MOCK === 'true'
@@ -27,12 +28,15 @@ export function connect(url: string): void {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return
 
   state.value = 'connecting'
+  const gen = ++wsGeneration
   ws = new WebSocket(url)
+  console.log('[ws] connecting to', url)
 
   ws.onopen = () => {
+    if (gen !== wsGeneration) return  // 旧 WS 的残余回调，忽略
     state.value = 'connected'
     reconnectAttempts = 0
-    // Flush queued messages
+    console.log('[ws] connected, flushing ' + messageQueue.length + ' queued messages')
     for (const msg of messageQueue) {
       ws?.send(JSON.stringify(msg))
     }
@@ -51,12 +55,15 @@ export function connect(url: string): void {
   }
 
   ws.onclose = () => {
+    if (gen !== wsGeneration) return  // 旧 WS 的残余回调，不干扰新 WS 的心跳/重连
+    console.log('[ws] disconnected')
     state.value = 'disconnected'
     stopHeartbeat()
     scheduleReconnect(url)
   }
 
-  ws.onerror = () => {
+  ws.onerror = (err) => {
+    console.error('[ws] error:', err)
     ws?.close()
   }
 }
@@ -65,6 +72,7 @@ function scheduleReconnect(url: string): void {
   const delay = Math.min(RECONNECT_BASE_DELAY_MS * Math.pow(RECONNECT_BACKOFF_EXPONENT, reconnectAttempts), MAX_RECONNECT_DELAY)
   reconnectAttempts++
   state.value = 'reconnecting'
+  console.log('[ws] reconnecting in', delay, 'ms (attempt', reconnectAttempts + ')')
   reconnectTimer = setTimeout(() => connect(url), delay)
 }
 
@@ -87,6 +95,9 @@ export function disconnect(): void {
     state.value = 'disconnected'
     return
   }
+  console.log('[ws] disconnecting')
+  // 递增 generation 使旧 WS 的回调失效
+  wsGeneration++
   if (reconnectTimer) clearTimeout(reconnectTimer)
   reconnectTimer = null
   stopHeartbeat()
@@ -102,9 +113,17 @@ export function send(msg: ClientMessage): void {
   }
   if (ws?.readyState === WebSocket.OPEN) {
     console.debug('[ws] send:', msg.type, msg.payload)
-    ws.send(JSON.stringify(msg))
+    try {
+      ws.send(JSON.stringify(msg))
+    } catch(e) {
+      console.error('[ws] send error:', e)
+    }
   } else {
-    console.warn('[ws] queuing message (ws not open):', msg.type)
+    console.warn('[ws] queuing message (ws not open):', msg.type, 'readyState=' + ws?.readyState + ', queueSize=' + messageQueue.length)
+    if (messageQueue.length >= 100) {
+      const dropped = messageQueue.shift()
+      console.warn('[ws] queue full, dropping oldest message:', dropped?.type)
+    }
     messageQueue.push(msg)
   }
 }

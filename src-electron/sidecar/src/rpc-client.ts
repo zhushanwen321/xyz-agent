@@ -190,6 +190,7 @@ export class RpcClient {
       })
 
       try {
+        console.log('[rpc] send: type=' + type + ', id=' + id)
         this.proc.stdin!.write(msg)
       } catch (e) {
         clearTimeout(timer)

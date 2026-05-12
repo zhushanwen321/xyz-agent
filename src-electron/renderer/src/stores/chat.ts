@@ -27,6 +27,7 @@ export interface ChatSessionState {
   tokenUsage: number
   doneCount: number
   alertCount: number
+  isCompacting: boolean
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -46,6 +47,7 @@ function createSessionState(): ChatSessionState {
     tokenUsage: 0,
     doneCount: 0,
     alertCount: 0,
+    isCompacting: false,
   }
 }
 
@@ -192,6 +194,10 @@ export const useChatStore = defineStore('chat', () => {
     getSessionState(sessionId).alertCount = n
   }
 
+  function setCompacting(v: boolean, sessionId: string) {
+    getSessionState(sessionId).isCompacting = v
+  }
+
   return {
     // State
     chatSessions,
@@ -210,6 +216,6 @@ export const useChatStore = defineStore('chat', () => {
 
     // 状态
     updateContextInfo, setError, switchAgent,
-    setTokenUsage, setDoneCount, setAlertCount,
+    setTokenUsage, setDoneCount, setAlertCount, setCompacting,
   }
 })

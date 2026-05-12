@@ -32,8 +32,9 @@
               <!-- System messages -->
               <SystemMessage
                 v-if="msg.role === 'system'"
-                :type="msg.systemType || 'done'"
+                :type="msg.systemType || (msg.status === 'error' ? 'alert' : 'done')"
                 :title="msg.systemTitle || ''"
+                :content="msg.content"
                 :description="msg.systemDescription"
                 :action-label="msg.systemAction"
                 @action="$emit('system-action', msg)"
@@ -73,6 +74,7 @@
 
     <ChatInput
       :is-streaming="isStreaming"
+      :is-compacting="isCompacting"
       :session-id="sessionId ?? ''"
       @send="$emit('send', $event)"
       @cancel="$emit('cancel')"
@@ -132,6 +134,7 @@ const props = withDefaults(
     pendingApproval: PendingToolCall | null
     doneCount: number
     alertCount: number
+    isCompacting?: boolean
   }>(),
   {
     agentOptions: () => [],
@@ -141,6 +144,7 @@ const props = withDefaults(
     sessionId: null,
     doneCount: 0,
     alertCount: 0,
+    isCompacting: false,
   }
 )
 

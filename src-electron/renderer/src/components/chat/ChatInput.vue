@@ -1,5 +1,10 @@
 <template>
   <div class="relative mx-auto mb-3 shrink-0 max-w-[960px] w-full px-6" data-chat-input>
+    <!-- Compacting status bar -->
+    <div v-if="isCompacting" class="flex items-center gap-2 mb-2 px-3 py-1.5 rounded bg-success-light border border-success text-[12px] text-success">
+      <span class="inline-block w-1.5 h-1.5 rounded-full bg-success shrink-0 animate-thinking-pulse motion-reduce:opacity-60 motion-reduce:animate-none"></span>
+      <span>{{ t('chat.compacting') }}</span>
+    </div>
     <SlashMenu
       :visible="slashVisible"
       :commands="filteredCommands"
@@ -81,6 +86,7 @@ import {
 
 const props = defineProps<{
   isStreaming: boolean
+  isCompacting?: boolean
   sessionId: string
 }>()
 
@@ -118,7 +124,7 @@ const allCommands = computed(() =>
 
 const canSend = computed(() => {
   const trimmed = text.value.trim()
-  return (trimmed.length > 0 || activeCommand.value !== null) && !props.isStreaming
+  return (trimmed.length > 0 || activeCommand.value !== null) && !props.isStreaming && !props.isCompacting
 })
 
 // Slash command 状态
@@ -159,8 +165,19 @@ function buildCommandContext(): CommandContext {
 function handleSlashSelect(cmd: SlashCommand) {
   text.value = ''
   slashVisible.value = false
-  // 统一设为 tag，等用户发送时再执行
-  activeCommand.value = cmd
+  // protocol 和 local 类型命令直接执行，不需要标签确认步骤
+  // skill 类型需要参数输入，保留标签
+  if (cmd.action.type === 'protocol' || cmd.action.type === 'local') {
+    activeCommand.value = cmd
+    handleSend()
+    // 执行后聚焦 textarea，确保后续输入正常
+    nextTick(() => {
+      const ta = containerRef.value?.querySelector<HTMLTextAreaElement>('textarea')
+      ta?.focus()
+    })
+  } else {
+    activeCommand.value = cmd
+  }
 }
 
 function handleSend() {

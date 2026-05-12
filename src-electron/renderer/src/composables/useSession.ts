@@ -1,4 +1,4 @@
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted, getCurrentInstance } from 'vue'
 import { useSessionStore } from '../stores/session'
 import { useChatStore } from '../stores/chat'
 import { usePaneStore } from '../stores/pane'
@@ -6,41 +6,17 @@ import { send } from '../lib/ws-client'
 import { on, off } from '../lib/event-bus'
 import type { ServerMessage, SessionSummary, Message } from '@xyz-agent/shared'
 
-export function useSession() {
+// ── 全局事件处理器（ref-counted，解决多组件重复注册问题）───
+// useSession 被 App.vue + AppSidebar.vue + EmptyPane.vue 分别调用，
+// 每调用一次就注册一套监听器。多个 onSessionRestored 会重复处理 session.restored，
+// 导致 addSession 添加多条相同 session → duplicate key 错误。
+
+let globalListenerRefCount = 0
+let globalEventMap: Record<string, (msg: ServerMessage) => void> | null = null
+
+function createGlobalHandlers() {
   const sessionStore = useSessionStore()
   const chatStore = useChatStore()
-
-  function loadSessions() {
-    send({ type: 'session.list', payload: {} })
-  }
-
-  function createSession(cwd: string, label?: string) {
-    send({ type: 'session.create', payload: { cwd, label } })
-  }
-
-  function deleteSession(sessionId: string) {
-    send({ type: 'session.delete', payload: { sessionId } })
-  }
-
-  function switchSession(sessionId: string) {
-    sessionStore.switchSession(sessionId)
-    chatStore.ensureSession(sessionId)
-    send({ type: 'session.history', payload: { sessionId } })
-  }
-
-  function compactSession() {
-    const sid = sessionStore.currentSessionId
-    if (!sid) return
-    send({ type: 'session.compact', payload: { sessionId: sid } })
-  }
-
-  function clearSession() {
-    const sid = sessionStore.currentSessionId
-    if (!sid) return
-    send({ type: 'session.clear', payload: { sessionId: sid } })
-  }
-
-  // --- Event handlers ---
 
   function onSessionList(msg: ServerMessage) {
     const payload = msg.payload as { groups: Array<{ cwd: string; sessions: SessionSummary[] }> }
@@ -92,7 +68,6 @@ export function useSession() {
     const oldState = chatStore.getSessionState(oldSessionId)
     if (oldState) {
       chatStore.ensureSession(newSessionId)
-      const newState = chatStore.getSessionState(newSessionId)
       // 迁移 streamingMessage 和 isGenerating
       if (oldState.streamingMessage) {
         chatStore.setStreaming(oldState.streamingMessage, newSessionId)
@@ -116,20 +91,81 @@ export function useSession() {
     chatStore.replaceMessages(messages, sessionId)
   }
 
-  const handlers: Record<string, (msg: ServerMessage) => void> = {
+  return {
     'session.list': onSessionList,
     'session.created': onSessionCreated,
     'session.deleted': onSessionDeleted,
     'session.restored': onSessionRestored,
     'session.history': onSessionHistory,
+  } as Record<string, (msg: ServerMessage) => void>
+}
+
+function registerGlobalListeners() {
+  if (globalEventMap) return
+  globalEventMap = createGlobalHandlers()
+  for (const [evt, handler] of Object.entries(globalEventMap)) {
+    on(evt, handler)
+  }
+}
+
+function unregisterGlobalListeners() {
+  if (!globalEventMap) return
+  for (const [evt, handler] of Object.entries(globalEventMap)) {
+    off(evt, handler)
+  }
+  globalEventMap = null
+}
+
+export function useSession() {
+  const sessionStore = useSessionStore()
+  const chatStore = useChatStore()
+
+  function loadSessions() {
+    send({ type: 'session.list', payload: {} })
   }
 
-  onMounted(() => {
-    for (const [evt, fn] of Object.entries(handlers)) on(evt, fn)
-  })
-  onUnmounted(() => {
-    for (const [evt, fn] of Object.entries(handlers)) off(evt, fn)
-  })
+  function createSession(cwd: string, label?: string) {
+    send({ type: 'session.create', payload: { cwd, label } })
+  }
+
+  function deleteSession(sessionId: string) {
+    send({ type: 'session.delete', payload: { sessionId } })
+  }
+
+  function switchSession(sessionId: string) {
+    sessionStore.switchSession(sessionId)
+    chatStore.ensureSession(sessionId)
+    send({ type: 'session.history', payload: { sessionId } })
+  }
+
+  function compactSession() {
+    const sid = sessionStore.currentSessionId
+    if (!sid) return
+    send({ type: 'session.compact', payload: { sessionId: sid } })
+  }
+
+  function clearSession() {
+    const sid = sessionStore.currentSessionId
+    if (!sid) return
+    send({ type: 'session.clear', payload: { sessionId: sid } })
+  }
+
+  // 全局事件 listener 生命周期：第一个组件 mounted 时注册，最后一个 unmounted 时注销
+  if (getCurrentInstance()) {
+    onMounted(() => {
+      if (globalListenerRefCount === 0) {
+        registerGlobalListeners()
+      }
+      globalListenerRefCount++
+    })
+
+    onUnmounted(() => {
+      globalListenerRefCount--
+      if (globalListenerRefCount === 0) {
+        unregisterGlobalListeners()
+      }
+    })
+  }
 
   return { loadSessions, createSession, deleteSession, switchSession, compactSession, clearSession }
 }

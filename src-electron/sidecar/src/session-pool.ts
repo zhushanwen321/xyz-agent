@@ -92,7 +92,13 @@ export class SessionPool {
   private send(msg: ServerMessage): void {
     for (const ws of this.clients) {
       if (ws.readyState === WS_OPEN) {
-        ws.send(JSON.stringify(msg))
+        try {
+          ws.send(JSON.stringify(msg))
+        } catch (e) {
+          console.error('[session-pool] send error, removing client:', e)
+          ws.close()
+          this.clients.delete(ws)
+        }
       }
     }
   }
@@ -266,16 +272,40 @@ export class SessionPool {
     return sessionId
   }
 
+  hasActiveSession(sessionId: string): boolean {
+    return this.pm.hasClient(sessionId)
+  }
+
   // ── Compact & Clear ────────────────────────────────────────────
 
   async compact(sessionId: string): Promise<void> {
+    const startTime = Date.now()
     const client = this.pm.getClient(sessionId)
-    if (!client) throw new Error(`Session ${sessionId} not found`)
+    if (!client) {
+      console.error('[session-pool] compact: session not found, sessionId=' + sessionId)
+      throw new Error(`Session ${sessionId} not found`)
+    }
+
+    console.log('[session-pool] compact: start, sessionId=' + sessionId)
     this.send({
       type: 'session.compacting',
       payload: { sessionId, status: 'compacting' },
     })
-    await client.compact()
+    // pi compact 内部会 _disconnectFromAgent + abort，不会产生 agent 事件
+    // EventAdapter 不转发 compaction_start/compaction_end，无需 detach
+    try {
+      await client.compact()
+      console.log('[session-pool] compact: complete, sessionId=' + sessionId + ', elapsed=' + (Date.now() - startTime) + 'ms')
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : String(e)
+      console.error('[session-pool] compact: failed, sessionId=' + sessionId + ', error=' + errMsg + ', elapsed=' + (Date.now() - startTime) + 'ms')
+      // 无论成功与否都必须通知前端结束 compacting，否则 UI 永久禁用
+      this.send({
+        type: 'session.compacted',
+        payload: { sessionId, status: 'compacted', error: errMsg },
+      })
+      throw e
+    }
     this.send({
       type: 'session.compacted',
       payload: { sessionId, status: 'compacted' },
