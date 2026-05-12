@@ -21,6 +21,7 @@ export interface RpcClientOptions {
 }
 
 const CMD_TIMEOUT_MS = 60_000
+const COMPACT_TIMEOUT_MS = 5 * 60_000
 const KILL_TIMEOUT_MS = 2_000
 const STARTUP_DELAY_MS = 100
 
@@ -160,7 +161,7 @@ export class RpcClient {
    * Send a raw command and wait for a response with matching id.
    * If the response indicates failure (success: false), the promise is rejected.
    */
-  sendCommand(type: string, params: Record<string, unknown> = {}): Promise<PiMessage> {
+  sendCommand(type: string, params: Record<string, unknown> = {}, timeout = CMD_TIMEOUT_MS): Promise<PiMessage> {
     return new Promise((resolve, reject) => {
       if (!this.proc || this._exited) {
         return reject(new Error('pi process is not running'))
@@ -171,8 +172,8 @@ export class RpcClient {
 
       const timer = setTimeout(() => {
         this.pending.delete(id)
-        reject(new Error(`RPC command "${type}" timed out after ${CMD_TIMEOUT_MS}ms`))
-      }, CMD_TIMEOUT_MS)
+        reject(new Error(`RPC command "${type}" timed out after ${timeout}ms`))
+      }, timeout)
 
       this.pending.set(id, {
         resolve: (msg) => {
@@ -256,7 +257,7 @@ export class RpcClient {
   }
 
   compact(): Promise<PiMessage> {
-    return this.sendCommand('compact')
+    return this.sendCommand('compact', {}, COMPACT_TIMEOUT_MS)
   }
 
   /**

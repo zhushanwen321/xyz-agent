@@ -211,9 +211,9 @@ export class SidecarServer {
           try {
             await this.pool.compact(compactId)
           } catch (e) {
-            // pool.compact 已发送 session.compacted，这里只记录日志
+            // pool.compact 已发送 session.compacted（含 error），此处不再 throw
+            // 否则外层 catch 会再发一条 handler_error，前端收到两条重复错误
             console.error('[server] session.compact: failed, sessionId=' + compactId + ', error=' + (e instanceof Error ? e.message : String(e)))
-            throw e
           }
           console.log('[server] session.compact: completed, sessionId=' + compactId + ', elapsed=' + (Date.now() - startTime) + 'ms')
           break
