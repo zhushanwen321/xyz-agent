@@ -77,7 +77,11 @@ lsof -i :1420 -P | grep node
 
 1. **禁止原生 HTML 表单元素** — 必须使用 xyz-ui 组件（Button/Input/Select/Dialog 等）
 2. **禁止 Emoji** — 使用 inline `<svg>` 或 lucide-vue-next 图标
-3. **样式统一 Tailwind 类** — 禁止 `<style scoped>` 手写 CSS 选择器，禁止 `@apply`。设计 token 通过 CSS 变量定义，`tailwind.config` 映射为语义类名。`@keyframes` 在 tailwind.config 中定义
+3. **样式统一 Tailwind 类（三层结构）**
+   - **Design tokens**（`style.css`）：只放 `:root` / `[data-theme]` 的 CSS 变量和 base reset，不放组件样式
+   - **Template class**（组件模板）：组件样式统一使用 Tailwind 工具类（`class="flex items-center gap-2 ..."`），不在 `style.css` 或 `<style scoped>` 中写组件样式
+   - **Escape hatch**（`<style scoped>`）：只用于 Tailwind 无法表达的场景：伪元素（`::placeholder`）、后代选择器（`.msg__body p`）、Vue Transition 类（`.xxx-enter-from`）
+   - 禁止 `@apply`，禁止在 `style.css` 中新增组件级样式规则
 4. **行数上限** — `<template>` ≤ 400 行, `<script setup>` ≤ 300 行
 5. **禁止 `any`** — 用 `unknown` 或具体类型
 6. **v-model 绑定** — 禁止 `:value` + `@input`，用 `v-model`
