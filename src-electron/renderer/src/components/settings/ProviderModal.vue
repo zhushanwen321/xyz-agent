@@ -293,54 +293,67 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div :class="['s-modal-overlay', { visible }]" @click.self="$emit('close')">
-    <div class="s-modal" @click.stop>
-      <div class="s-modal__hd">
-        <div class="s-modal__title">{{ title }}</div>
-        <Button variant="ghost" class="s-modal__close !h-7 !w-7 !p-0" @click="$emit('close')">×</Button>
+  <div
+    data-modal-overlay
+    :data-modal-visible="visible || undefined"
+    :class="[
+      'fixed inset-0 bg-black/30 z-[100] flex items-center justify-center transition-opacity duration-200',
+      visible ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+    ]"
+    @click.self="$emit('close')"
+  >
+    <div class="w-[600px] max-h-[85vh] bg-surface border border-border rounded overflow-hidden flex flex-col shadow-[0_8px_40px_rgba(0,0,0,0.12)]" @click.stop>
+      <div class="flex items-center justify-between py-4 px-5 border-b border-border">
+        <div class="font-display text-base font-semibold">{{ title }}</div>
+        <Button variant="ghost" class="!h-7 !w-7 !p-0 !rounded-xs !text-muted hover:!bg-accent-light hover:!text-accent" @click="$emit('close')">×</Button>
       </div>
 
-      <div class="s-modal__bd">
-        <div class="s-form-group">
-          <div class="s-form-label">名称</div>
+      <div class="p-5 overflow-y-auto flex-1">
+        <div class="mb-4">
+          <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">名称</div>
           <Input v-model="formName" placeholder="例如：Anthropic、OpenAI、本地 Ollama" />
         </div>
 
-        <div class="s-form-row">
-          <div class="s-form-group">
-            <div class="s-form-label">类型</div>
+        <div class="flex gap-3">
+          <div class="mb-4 flex-1">
+            <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">类型</div>
             <Select v-model="formType" :options="typeOptions" />
           </div>
-          <div class="s-form-group">
-            <div class="s-form-label">连接状态</div>
-            <div class="s-form-status">未测试</div>
+          <div class="mb-4 flex-1">
+            <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">连接状态</div>
+            <div class="py-2 text-[13px] text-muted">未测试</div>
           </div>
         </div>
 
-        <div class="s-form-group">
-          <div class="s-form-label">Base URL</div>
+        <div class="mb-4">
+          <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">Base URL</div>
           <Input v-model="formUrl" placeholder="https://api.anthropic.com" />
-          <div class="s-form-hint">供应商的 API 端点地址。Ollama 默认为 http://localhost:11434</div>
+          <div class="text-[11px] text-muted mt-1">供应商的 API 端点地址。Ollama 默认为 http://localhost:11434</div>
         </div>
 
-        <div class="s-form-group">
-          <div class="s-form-label">API Key</div>
+        <div class="mb-4">
+          <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">API Key</div>
           <Input v-model="formKey" type="password" placeholder="sk-ant-..." />
-          <div class="s-form-hint">本地模型（如 Ollama）无需 API Key</div>
+          <div class="text-[11px] text-muted mt-1">本地模型（如 Ollama）无需 API Key</div>
         </div>
 
-        <div v-if="testResult !== 'none'" :class="['s-test-result', `s-test-result--${testResult}`]">
-          <span :class="['s-status-dot', `s-status-dot--${testResult}`]"></span>
+        <div v-if="testResult !== 'none'" :class="['py-2 px-3 rounded-sm text-xs mt-2 flex items-center gap-2', testResult === 'ok' ? 'bg-success-light text-success' : 'bg-danger-light text-danger']">
+          <span :class="['w-[7px] h-[7px] rounded-full inline-block align-middle', testResult === 'ok' ? 'bg-success' : 'bg-danger']"></span>
           {{ testMessage }}
         </div>
 
-        <div class="s-divider">模型配置</div>
+        <div class="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted my-5 pb-1.5 border-b border-border">模型配置</div>
 
-        <div class="s-model-config">
-          <div class="s-model-config__hd">
-            <span class="s-model-config__title">已配置模型</span>
-            <div class="s-model-config__actions">
-              <span v-if="discoverStatus !== 'idle'" :class="['s-discover-msg', `s-discover-msg--${discoverStatus}`]">
+        <div class="border border-border rounded-sm overflow-hidden mt-2">
+          <div class="flex items-center justify-between py-2.5 px-3.5 bg-bg border-b border-border">
+            <span class="text-xs font-semibold">已配置模型</span>
+            <div class="flex gap-1.5">
+              <span v-if="discoverStatus !== 'idle'" :class="['text-[11px] inline-flex items-center gap-1 whitespace-nowrap', {
+                'text-muted': discoverStatus === 'loading',
+                'text-success': discoverStatus === 'success',
+                'text-danger': discoverStatus === 'error',
+                'text-warning': discoverStatus === 'empty',
+              }]">
                 <template v-if="discoverStatus === 'loading'">正在发现…</template>
                 <template v-else>{{ discoverMessage }}</template>
               </span>
@@ -354,11 +367,11 @@ onUnmounted(() => {
               </Button>
             </div>
           </div>
-          <div class="s-model-config__list">
-            <div v-for="(model, idx) in modalModels" :key="model.id" class="s-model-config-item">
-              <span class="s-model-config-item__name">{{ model.name }}</span>
-              <span class="s-model-config-item__ctx">{{ formatCtx(model.ctx) }}</span>
-              <div class="s-model-config-item__tags">
+          <div class="max-h-60 overflow-y-auto">
+            <div v-for="(model, idx) in modalModels" :key="model.id" class="flex items-center gap-2.5 py-2.5 px-3.5 border-b border-border last:border-b-0">
+              <span class="font-mono text-xs font-semibold min-w-[180px]">{{ model.name }}</span>
+              <span class="text-[11px] text-muted font-mono min-w-[60px]">{{ formatCtx(model.ctx) }}</span>
+              <div class="flex gap-1 flex-1">
                 <TagPill
                   v-for="tag in allTags"
                   :key="tag"
@@ -376,7 +389,7 @@ onUnmounted(() => {
               </Button>
             </div>
           </div>
-          <div class="s-add-model-row">
+          <div class="flex gap-2 py-2.5 px-3.5 bg-bg border-t border-border">
             <Input
               v-model="addModelName"
               placeholder="手动输入模型名称，如 my-model-v1"
@@ -393,7 +406,7 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <div class="s-modal__ft">
+      <div class="flex justify-end gap-2 py-3.5 px-5 border-t border-border">
         <Button variant="outline" @click="handleTest">
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="6" cy="6" r="4.5" />

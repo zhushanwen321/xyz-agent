@@ -18,19 +18,19 @@ const allTags = ['power', 'efficient', 'fast'] as const
 </script>
 
 <template>
-  <div :class="['s-model-row', { 'opacity-50': !enabled }]" @click.stop>
-    <div class="s-model-row__switch" @click="emit('toggle-enabled')">
+  <div :class="['flex items-center gap-2.5 py-2 px-3 rounded-sm mb-1 transition-colors duration-100 hover:bg-bg', { 'opacity-50': !enabled }]" @click.stop>
+    <div class="cursor-pointer flex items-center" @click="emit('toggle-enabled')">
       <ToggleSwitch :model-value="enabled" />
     </div>
-    <span class="s-model-row__name">{{ name }}</span>
-    <span class="s-model-row__ctx">{{ ctx }}</span>
-    <div class="s-tag-group">
+    <span class="font-mono text-[13px] font-semibold flex-1 min-w-0 truncate">{{ name }}</span>
+    <span class="text-[11px] text-muted font-mono whitespace-nowrap min-w-[60px] text-right">{{ ctx }}</span>
+    <div class="flex gap-1 shrink-0">
       <TagPill
         v-for="tag in allTags"
         :key="tag"
         :variant="tag"
         :active="tags.includes(tag)"
-        class="s-tag-pill--readonly"
+        readonly
       >
         {{ tag === 'power' ? '\u5f3a\u529b' : tag === 'efficient' ? '\u9ad8\u6548' : '\u5feb\u901f' }}
       </TagPill>

@@ -38,9 +38,9 @@ function handleAgentSave(data: { name: string; description: string; modelStrateg
 </script>
 
 <template>
-  <div class="s-page">
-    <div class="s-page__hd">
-      <div class="s-page__title">Agent 配置</div>
+  <div class="max-w-[860px] mx-auto py-8 px-10">
+    <div class="flex items-center justify-between mb-7">
+      <div class="font-display text-[22px] font-bold tracking-tight">Agent 配置</div>
       <Button variant="primary" @click="showModal = true">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M7 1v12M1 7h12" />
@@ -57,7 +57,7 @@ function handleAgentSave(data: { name: string; description: string; modelStrateg
 
     <GlobalParams v-model="globalParams" />
 
-    <div class="s-divider">已导入 · {{ agents.length }} 个 Agent</div>
+    <div class="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted my-5 pb-1.5 border-b border-border">已导入 · {{ agents.length }} 个 Agent</div>
 
     <AgentCard
       v-for="agent in agents"
