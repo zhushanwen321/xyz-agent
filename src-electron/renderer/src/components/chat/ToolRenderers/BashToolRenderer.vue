@@ -1,12 +1,29 @@
 <template>
   <div class="p-0">
-    <div class="px-2.5 py-2">
-      <div class="font-mono text-[11px] text-muted mb-1">Command:</div>
-      <pre class="whitespace-pre-wrap font-mono text-xs text-fg bg-bg rounded-md p-2 m-0">{{ command }}</pre>
+    <!-- Running state -->
+    <div v-if="toolCall.status === 'running'" class="px-3 py-2.5">
+      <div class="flex items-center gap-2 text-[11px] text-muted">
+        <span class="inline-block w-2 h-2 border-[1.5px] border-accent border-t-transparent rounded-full animate-spin shrink-0"></span>
+        <span class="font-mono">Executing...</span>
+      </div>
+      <pre class="whitespace-pre-wrap font-mono text-xs text-fg bg-bg rounded-md p-2 m-0 mt-2">{{ command }}</pre>
     </div>
-    <div v-if="toolCall.output !== undefined && toolCall.status !== 'running'" class="px-2.5 py-2">
-      <div class="font-mono text-[11px] text-muted mb-1">Output:</div>
-      <div class="max-h-[200px] overflow-y-auto rounded-md border border-border bg-surface p-2"><pre class="whitespace-pre-wrap font-mono text-xs text-muted m-0">{{ toolCall.output }}</pre></div>
+
+    <!-- Completed state -->
+    <div v-else>
+      <!-- Command -->
+      <div class="px-3 pt-2.5 pb-1">
+        <div class="font-mono text-[10px] text-muted font-semibold mb-1">Command</div>
+        <pre class="whitespace-pre-wrap font-mono text-xs text-fg bg-bg rounded-md p-2.5 m-0">{{ command }}</pre>
+      </div>
+
+      <!-- Output -->
+      <div v-if="toolCall.output !== undefined" class="px-3 pb-2.5 pt-1">
+        <div class="font-mono text-[10px] text-muted font-semibold mb-1">Output</div>
+        <div class="max-h-[200px] overflow-y-auto rounded-md border border-border bg-surface p-2.5">
+          <pre class="whitespace-pre-wrap font-mono text-xs text-muted leading-relaxed m-0">{{ toolCall.output }}</pre>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -20,4 +37,3 @@ const command = computed(() => {
   catch { return String(props.toolCall.input) }
 })
 </script>
-

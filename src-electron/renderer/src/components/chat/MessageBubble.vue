@@ -53,6 +53,7 @@
       v-for="tc in message.toolCalls"
       :key="tc.id"
       :tool-call="tc"
+      :batch-info="batchInfoMap.get(tc.id)"
     />
 
     <!-- Markdown content -->
@@ -73,6 +74,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Message } from '@xyz-agent/shared'
+import type { BatchInfo } from './ToolCallCard.vue'
 import { renderMarkdown } from '../../lib/markdown'
 import ThinkingBlock from './ThinkingBlock.vue'
 import ToolCallCard from './ToolCallCard.vue'
@@ -80,6 +82,56 @@ import ToolCallCard from './ToolCallCard.vue'
 const props = defineProps<{ message: Message }>()
 
 const renderedContent = computed(() => renderMarkdown(props.message.content))
+
+// ── Batch detection: consecutive same-type file operations ──
+function extractContentSize(input: unknown): number {
+  if (!input) return 0
+  try {
+    const obj = (typeof input === 'string' ? JSON.parse(input) : input) as Record<string, unknown>
+    const text = obj.content ?? obj.new_text ?? ''
+    return String(text).length
+  } catch { return 0 }
+}
+
+function formatBatchSize(bytes: number): string {
+  if (bytes <= 0) return ''
+  if (bytes < 1024) return `${bytes}B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
+}
+
+const batchInfoMap = computed(() => {
+  const result = new Map<string, BatchInfo>()
+  const toolCalls = props.message.toolCalls
+  if (!toolCalls || toolCalls.length < 2) return result
+
+  let batchStart = 0
+  for (let i = 1; i <= toolCalls.length; i++) {
+    const isEnd = i === toolCalls.length || toolCalls[i].toolName !== toolCalls[batchStart].toolName
+    if (isEnd) {
+      const size = i - batchStart
+      // Only group file operation batches (write, edit)
+      const name = toolCalls[batchStart].toolName
+      if (size >= 2 && (name === 'write' || name === 'edit')) {
+        let totalBytes = 0
+        for (let j = batchStart; j < i; j++) {
+          totalBytes += extractContentSize(toolCalls[j].input)
+        }
+        const totalSize = formatBatchSize(totalBytes)
+        for (let j = batchStart; j < i; j++) {
+          result.set(toolCalls[j].id, {
+            index: j - batchStart,
+            total: size,
+            isLast: j === i - 1,
+            totalSize,
+          })
+        }
+      }
+      batchStart = i
+    }
+  }
+  return result
+})
 </script>
 
 <!-- msg__body 内的 p/code 由 v-html 渲染，无法用 Tailwind 类作用于动态内容 -->
