@@ -105,7 +105,7 @@ export function mockSend(msg: ClientMessage): void {
     case 'session.compact':
       respond('session.compacting', { sessionId: msg.payload.sessionId, status: 'compacting' })
       setTimeout(() => {
-        respond('message.status', { sessionId: msg.payload.sessionId as string, status: 'compacted' })
+        respond('session.compacted', { sessionId: msg.payload.sessionId as string, status: 'compacted' })
       }, 500)
       break
     case 'session.clear':
