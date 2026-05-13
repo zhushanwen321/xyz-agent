@@ -207,6 +207,13 @@ export default {
     // --- Shared ---
     models: '模型',
   },
+  panel: {
+    selectConversation: '选择一个对话',
+    recentConversations: '最近对话',
+    unnamedConversation: '未命名对话',
+    newConversation: '新建对话',
+    selectProjectDir: '选择项目目录',
+  },
   status: {
     connected: '已连接',
     disconnected: '未连接',

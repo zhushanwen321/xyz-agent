@@ -207,6 +207,13 @@ export default {
     // --- Shared ---
     models: 'Models',
   },
+  panel: {
+    selectConversation: 'Select a conversation',
+    recentConversations: 'Recent',
+    unnamedConversation: 'Unnamed',
+    newConversation: 'New Conversation',
+    selectProjectDir: 'Select Project Directory',
+  },
   status: {
     connected: 'Connected',
     disconnected: 'Disconnected',

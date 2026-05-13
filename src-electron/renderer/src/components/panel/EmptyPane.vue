@@ -9,10 +9,10 @@
         <line x1="16" y1="40" x2="30" y2="40" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
       </svg>
 
-      <h2 class="m-0 mb-6 text-base font-semibold text-fg text-center">选择一个对话</h2>
+      <h2 class="m-0 mb-6 text-base font-semibold text-fg text-center">{{ t('panel.selectConversation') }}</h2>
 
       <div v-if="recentSessions.length > 0" class="w-full mb-5">
-        <div class="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted mb-2">最近对话</div>
+        <div class="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted mb-2">{{ t('panel.recentConversations') }}</div>
         <button
           v-for="session in recentSessions"
           :key="session.id"
@@ -23,7 +23,7 @@
             <path d="M2 3.5C2 2.67 2.67 2 3.5 2h7c.83 0 1.5.67 1.5 1.5v7c0 .83-.67 1.5-1.5 1.5h-7c-.83 0-1.5-.67-1.5-1.5v-7z" stroke="currentColor" stroke-width="1.2"/>
             <path d="M5 6.5h4M5 9h2.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
           </svg>
-          <span class="flex-1 min-w-0 whitespace-nowrap overflow-hidden text-ellipsis">{{ session.label || '未命名对话' }}</span>
+          <span class="flex-1 min-w-0 whitespace-nowrap overflow-hidden text-ellipsis">{{ session.label || t('panel.unnamedConversation') }}</span>
           <span class="font-mono text-[11px] text-muted whitespace-nowrap overflow-hidden text-ellipsis max-w-[120px] shrink-0">{{ session.cwd }}</span>
         </button>
       </div>
@@ -33,7 +33,7 @@
           <line x1="8" y1="3" x2="8" y2="13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
           <line x1="3" y1="8" x2="13" y2="8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
         </svg>
-        新建对话
+        {{ t('panel.newConversation') }}
       </button>
     </div>
   </div>
@@ -41,11 +41,14 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useSessionStore } from '../../stores/session'
 import { usePaneStore } from '../../stores/pane'
 import { useChatStore } from '../../stores/chat'
 import { useSession } from '../../composables/useSession'
 import { send } from '../../lib/ws-client'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   paneId: string
@@ -76,7 +79,7 @@ function handleCreateSession() {
   prevSessionCount.value = sessionStore.sessions.length
   // Use Electron directory picker
   if (window.electronAPI?.pickDirectory) {
-    window.electronAPI.pickDirectory({ title: '选择项目目录' }).then((result) => {
+    window.electronAPI.pickDirectory({ title: t('panel.selectProjectDir') }).then((result) => {
       if (result.canceled || !result.path) {
         isCreating.value = false
         return
