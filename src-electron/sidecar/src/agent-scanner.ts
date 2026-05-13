@@ -16,10 +16,10 @@ function inferSourceType(path: string): ScanSourceType {
 
 function parseAgentMd(content: string): { description: string; tools: string[] } {
   const lines = content.split('\n')
-  let description = ''
   const tools: string[] = []
 
-  // 跳过 YAML frontmatter
+  // 提取 YAML frontmatter 内容
+  const frontmatterLines: string[] = []
   let inFrontmatter = false
   let frontmatterEnd = 0
   for (let i = 0; i < lines.length; i++) {
@@ -32,14 +32,47 @@ function parseAgentMd(content: string): { description: string; tools: string[] }
         break
       }
     }
+    if (inFrontmatter) frontmatterLines.push(lines[i])
   }
 
-  for (let i = frontmatterEnd; i < lines.length; i++) {
-    const line = lines[i].trim()
-    if (!line) continue
-    if (line.startsWith('#')) continue
-    description = line.slice(0, 200)
-    break
+  const fmText = frontmatterLines.join('\n')
+
+  // 从 frontmatter 提取 description（支持多行 > 或 |）
+  let description = ''
+  const fmDescMatch = fmText.match(/^description:\s*[>\|]?\s*$/m)
+  if (fmDescMatch) {
+    // 多行 description（> 或 | 格式）：取后续缩进行
+    const startIdx = fmText.indexOf(fmDescMatch[0]) + fmDescMatch[0].length
+    const remaining = fmText.slice(startIdx)
+    const multilineParts: string[] = []
+    for (const line of remaining.split('\n')) {
+      if (line && !line.startsWith(' ') && !line.startsWith('\t')) break
+      multilineParts.push(line.trim())
+    }
+    description = multilineParts.join(' ').trim().slice(0, 200)
+  } else {
+    const singleLine = fmText.match(/^description:\s*["']?(.+?)["']?\s*$/m)?.[1]?.trim()
+    if (singleLine) description = singleLine.slice(0, 200)
+  }
+
+  // 正文 fallback
+  if (!description) {
+    for (let i = frontmatterEnd; i < lines.length; i++) {
+      const line = lines[i].trim()
+      if (!line) continue
+      if (line.startsWith('#')) continue
+      description = line.slice(0, 200)
+      break
+    }
+  }
+
+  // 从 frontmatter 提取 tools
+  const toolsMatch = fmText.match(/^tools:\s*(.+)$/m)?.[1]
+  if (toolsMatch) {
+    for (const t of toolsMatch.split(',')) {
+      const trimmed = t.trim()
+      if (trimmed) tools.push(trimmed)
+    }
   }
 
   return { description, tools }
