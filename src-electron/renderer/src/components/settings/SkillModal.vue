@@ -69,7 +69,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown))
     ]"
     @click.self="$emit('close')"
   >
-    <div class="w-[640px] max-h-[85vh] bg-surface border border-border rounded overflow-hidden flex flex-col shadow-[0_8px_40px_rgba(0,0,0,0.12)]">
+    <div class="w-[780px] max-h-[85vh] bg-surface border border-border rounded overflow-hidden flex flex-col shadow-[0_8px_40px_rgba(0,0,0,0.12)]">
       <div class="flex items-center justify-between py-4 px-5 border-b border-border">
         <div class="font-display text-base font-semibold">{{ skill ? '编辑 Skill' : '添加 Skill' }}</div>
         <Button variant="ghost" class="!h-7 !w-7 !p-0 !rounded-xs !text-muted hover:!bg-accent-light hover:!text-accent" @click="$emit('close')">×</Button>
