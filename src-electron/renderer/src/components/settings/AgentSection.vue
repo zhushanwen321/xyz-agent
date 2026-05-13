@@ -3,7 +3,9 @@ import { ref, computed } from 'vue'
 import type { AgentInfo } from '@xyz-agent/shared'
 import { Button } from '../../design-system'
 import { ToggleSwitch } from './shared'
+import { useI18n } from 'vue-i18n'
 
+const { t } = useI18n()
 const props = defineProps<{
   agent: AgentInfo
 }>()
@@ -57,8 +59,8 @@ function cancelDelete() {
         <div class="text-[11px] text-muted mt-px line-clamp-1">{{ agent.description }}</div>
       </div>
       <div class="flex items-center gap-1 shrink-0" @click.stop>
-        <Button variant="ghost" size="sm" @click="$emit('edit')">编辑</Button>
-        <Button variant="ghost" size="sm" class="hover:!text-[var(--danger)] hover:!bg-[var(--danger-light)]" @click="handleDeleteClick">删除</Button>
+        <Button variant="ghost" size="sm" @click="$emit('edit')">{{ t('common.edit') }}</Button>
+        <Button variant="ghost" size="sm" class="hover:!text-[var(--danger)] hover:!bg-[var(--danger-light)]" @click="handleDeleteClick">{{ t('common.delete') }}</Button>
       </div>
     </div>
 
@@ -67,9 +69,9 @@ function cancelDelete() {
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">
         <circle cx="7" cy="7" r="5.5" /><path d="M7 4.5v3M7 9v.5" />
       </svg>
-      确认删除 {{ agent.name }}？此操作不可撤销。
-      <Button variant="ghost" size="sm" class="!bg-[var(--danger)] !text-white hover:!opacity-80 !py-[3px] !px-2 !text-[11px] !rounded-[3px] !border-none" @click="confirmDelete">确认删除</Button>
-      <Button variant="ghost" size="sm" class="!text-[var(--danger)] !py-[3px] !px-2 !text-[11px]" @click="cancelDelete">取消</Button>
+      {{ t('settings.confirmDeleteAgent', { name: agent.name }) }}
+      <Button variant="ghost" size="sm" class="!bg-[var(--danger)] !text-white hover:!opacity-80 !py-[3px] !px-2 !text-[11px] !rounded-[3px] !border-none" @click="confirmDelete">{{ t('settings.confirmDelete') }}</Button>
+      <Button variant="ghost" size="sm" class="!text-[var(--danger)] !py-[3px] !px-2 !text-[11px]" @click="cancelDelete">{{ t('common.cancel') }}</Button>
     </div>
   </div>
 </template>

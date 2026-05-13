@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Button } from '../../design-system'
 import type { ProviderInfo, ModelInfo } from '@xyz-agent/shared'
 import { useProviderStore } from '../../stores/provider'
 import { send } from '../../lib/ws-client'
 import ProviderSection from './ProviderSection.vue'
 import ProviderModal from './ProviderModal.vue'
+
+const { t } = useI18n()
 
 const providerStore = useProviderStore()
 
@@ -15,7 +18,7 @@ const showModal = ref(false)
 const editingProvider = ref<ProviderInfo | null>(null)
 
 const modalTitle = computed(() =>
-  editingProvider.value ? '编辑供应商' : '添加供应商',
+  editingProvider.value ? t('settings.editProvider') : t('settings.addProvider'),
 )
 
 const editingModels = computed<ModelInfo[]>(() => {
@@ -78,8 +81,8 @@ function handleSave(_data: {
   <div class="max-w-[860px] mx-auto py-8 px-10">
     <div class="flex items-center justify-between mb-7">
       <div>
-        <div class="font-display text-[22px] font-bold tracking-tight">Provider 配置</div>
-        <div class="text-[12px] text-muted mt-1">管理 AI 模型供应商、API 密钥和模型列表</div>
+        <div class="font-display text-[22px] font-bold tracking-tight">{{ t('settings.providers') }}</div>
+        <div class="text-[12px] text-muted mt-1">{{ t('settings.providerDesc') }}</div>
       </div>
       <Button
         variant="primary"
@@ -88,7 +91,7 @@ function handleSave(_data: {
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M7 1v12M1 7h12" />
         </svg>
-        添加 Provider
+        {{ t('common.create') }}
       </Button>
     </div>
 
@@ -99,13 +102,13 @@ function handleSave(_data: {
           <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
         </svg>
       </div>
-      <div class="text-base font-semibold mb-1.5">尚未配置任何供应商</div>
-      <div class="text-[13px] text-muted max-w-[360px] mb-6">添加供应商后，可以配置模型并分配给 Agent 使用。支持 Anthropic、OpenAI、Google、DeepSeek、Ollama 等。</div>
+      <div class="text-base font-semibold mb-1.5">{{ t('settings.noProviders') }}</div>
+      <div class="text-[13px] text-muted max-w-[360px] mb-6">{{ t('settings.noProvidersHint') }}</div>
       <Button
         variant="primary"
         @click="editingProvider = null; showModal = true"
       >
-        添加第一个供应商
+        {{ t('settings.addFirstProvider') }}
       </Button>
     </div>
 

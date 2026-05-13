@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { SkillInfo } from '@xyz-agent/shared'
 import { Button } from '../../design-system'
 import { ToggleSwitch, MetaGrid } from './shared'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   skill: SkillInfo
@@ -24,11 +27,11 @@ const sourceLabel = computed(() => {
 })
 
 const metaItems = computed(() => [
-  { key: '名称', value: props.skill.name },
-  { key: '触发词', value: props.skill.triggers.join('\u3001') || '-' },
-  { key: '来源', value: props.skill.sourcePath ? `${props.skill.source} \u00b7 ${props.skill.sourcePath}` : props.skill.source },
-  { key: '文件大小', value: props.skill.fileSize ?? '-' },
-  { key: '依赖工具', value: props.skill.tools?.join(', ') ?? '-' },
+  { key: t('settings.metaName'), value: props.skill.name },
+  { key: t('settings.metaTriggers'), value: props.skill.triggers.join('\u3001') || '-' },
+  { key: t('settings.metaSource'), value: props.skill.sourcePath ? `${props.skill.source} \u00b7 ${props.skill.sourcePath}` : props.skill.source },
+  { key: t('settings.metaFileSize'), value: props.skill.fileSize ?? '-' },
+  { key: t('settings.metaTools'), value: props.skill.tools?.join(', ') ?? '-' },
 ])
 </script>
 
@@ -58,8 +61,8 @@ const metaItems = computed(() => [
         <div class="text-[11px] text-muted mt-px line-clamp-1">{{ skill.description }}</div>
       </div>
       <div class="flex items-center gap-1 shrink-0" @click.stop>
-        <Button variant="ghost" size="sm" @click="$emit('edit')">编辑</Button>
-        <Button variant="ghost" size="sm" class="hover:!text-[var(--danger)] hover:!bg-[var(--danger-light)]" @click="showConfirm = true">删除</Button>
+        <Button variant="ghost" size="sm" @click="$emit('edit')">{{ t('common.edit') }}</Button>
+        <Button variant="ghost" size="sm" class="hover:!text-[var(--danger)] hover:!bg-[var(--danger-light)]" @click="showConfirm = true">{{ t('common.delete') }}</Button>
         <svg
           class="shrink-0 text-muted transition-transform duration-150"
           :class="{ 'rotate-180': expanded }"
@@ -75,9 +78,9 @@ const metaItems = computed(() => [
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">
         <circle cx="7" cy="7" r="5.5" /><path d="M7 4.5v3M7 9v.5" />
       </svg>
-      确认删除 {{ skill.name }}？此操作不可撤销。
-      <Button variant="ghost" size="sm" class="!bg-[var(--danger)] !text-white hover:!opacity-80 !py-[3px] !px-2 !text-[11px] !rounded-[3px] !border-none" @click="$emit('delete', skill.id); showConfirm = false">确认删除</Button>
-      <Button variant="ghost" size="sm" class="!text-[var(--danger)] !py-[3px] !px-2 !text-[11px]" @click="showConfirm = false">取消</Button>
+      {{ t('settings.confirmDelete') }} {{ skill.name }}？{{ t('settings.confirmDeleteHint') }}
+      <Button variant="ghost" size="sm" class="!bg-[var(--danger)] !text-white hover:!opacity-80 !py-[3px] !px-2 !text-[11px] !rounded-[3px] !border-none" @click="$emit('delete', skill.id); showConfirm = false">{{ t('settings.confirmDelete') }}</Button>
+      <Button variant="ghost" size="sm" class="!text-[var(--danger)] !py-[3px] !px-2 !text-[11px]" @click="showConfirm = false">{{ t('common.cancel') }}</Button>
     </div>
 
     <!-- Detail -->

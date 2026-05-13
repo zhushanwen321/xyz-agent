@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, onUnmounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Button, Input, Textarea } from '../../design-system'
 import type { SkillInfo } from '@xyz-agent/shared'
 
@@ -11,6 +12,8 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   skill: null,
 })
+
+const { t } = useI18n()
 
 const emit = defineEmits<{
   close: []
@@ -71,36 +74,36 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown))
   >
     <div class="w-[780px] max-h-[85vh] bg-surface border border-border rounded overflow-hidden flex flex-col shadow-[0_8px_40px_rgba(0,0,0,0.12)]">
       <div class="flex items-center justify-between py-4 px-5 border-b border-border">
-        <div class="font-display text-base font-semibold">{{ skill ? '编辑 Skill' : '添加 Skill' }}</div>
+        <div class="font-display text-base font-semibold">{{ skill ? t('settings.editSkill') : t('settings.addSkill') }}</div>
         <Button variant="ghost" class="!h-7 !w-7 !p-0 !rounded-xs !text-muted hover:!bg-accent-light hover:!text-accent" @click="$emit('close')">×</Button>
       </div>
 
       <div class="p-5 overflow-y-auto flex-1">
         <div class="mb-4">
-          <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">Skill 名称</div>
-          <Input v-model="formName" placeholder="例如：code-review" />
+          <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">{{ t('settings.skillName') }}</div>
+          <Input v-model="formName" :placeholder="t('settings.skillNamePlaceholder')" />
         </div>
 
         <div class="mb-4">
-          <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">描述</div>
-          <Input v-model="formDescription" placeholder="简要描述此 Skill 的功能" />
+          <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">{{ t('settings.skillDescription') }}</div>
+          <Input v-model="formDescription" :placeholder="t('settings.skillDescriptionPlaceholder')" />
         </div>
 
         <div class="mb-1">
-          <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">SKILL.md 内容</div>
+          <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">{{ t('settings.skillContent') }}</div>
           <Textarea
             v-model="formContent"
             :auto-resize="false"
             :rows="32"
             class="!font-mono !text-[13px] !leading-relaxed !resize-y"
-            placeholder="---&#10;name: my-skill&#10;description: 描述&#10;---&#10;&#10;# My Skill&#10;&#10;Skill 内容..."
+            :placeholder="t('settings.skillContentPlaceholder')"
           />
         </div>
       </div>
 
       <div class="flex justify-end gap-2 py-3.5 px-5 border-t border-border">
-        <Button variant="outline" @click="$emit('close')">取消</Button>
-        <Button variant="primary" @click="handleSave">{{ skill ? '保存' : '添加 Skill' }}</Button>
+        <Button variant="outline" @click="$emit('close')">{{ t('common.cancel') }}</Button>
+        <Button variant="primary" @click="handleSave">{{ skill ? t('common.save') : t('settings.addSkill') }}</Button>
       </div>
     </div>
   </div>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { ProviderInfo, ModelInfo } from '@xyz-agent/shared'
 import { Button } from '../../design-system'
 import { ToggleSwitch } from './shared'
@@ -16,6 +17,8 @@ defineEmits<{
   edit: [providerId: string]
   delete: [providerId: string]
 }>()
+
+const { t } = useI18n()
 
 const initial = computed(() => props.provider.name.charAt(0).toUpperCase())
 
@@ -56,9 +59,9 @@ const modelCount = computed(() => props.models.length)
           @update:model-value="$emit('toggle-enabled', provider.id)"
           @click.stop
         />
-        <span class="text-[10px] text-muted font-medium bg-[var(--hover-bg)] py-[2px] px-[6px] rounded-full">{{ modelCount }} models</span>
-        <Button variant="ghost" size="sm" @click="$emit('edit', provider.id)">编辑</Button>
-        <Button variant="ghost" size="sm" class="hover:!text-[var(--danger)] hover:!bg-[var(--danger-light)]" @click="$emit('delete', provider.id)">删除</Button>
+        <span class="text-[10px] text-muted font-medium bg-[var(--hover-bg)] py-[2px] px-[6px] rounded-full">{{ modelCount }} {{ t('settings.models') }}</span>
+        <Button variant="ghost" size="sm" @click="$emit('edit', provider.id)">{{ t('common.edit') }}</Button>
+        <Button variant="ghost" size="sm" class="hover:!text-[var(--danger)] hover:!bg-[var(--danger-light)]" @click="$emit('delete', provider.id)">{{ t('common.delete') }}</Button>
       </div>
     </div>
 

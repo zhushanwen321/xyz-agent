@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useProviderStore } from '../../stores/provider'
 import { Button } from '../../design-system'
 import type { ScannedSkillInfo, SkillInfo } from '@xyz-agent/shared'
 import ScanImportSection from './ScanImportSection.vue'
 import SkillSection from './SkillSection.vue'
 import SkillModal from './SkillModal.vue'
+
+const { t } = useI18n()
 
 const providerStore = useProviderStore()
 const skills = computed(() => providerStore.skills)
@@ -69,14 +72,14 @@ function closeModal() {
   <div class="max-w-[860px] mx-auto py-8 px-10">
     <div class="flex items-center justify-between mb-7">
       <div>
-        <div class="font-display text-[22px] font-bold tracking-tight">Skill 配置</div>
-        <div class="text-[12px] text-muted mt-1">扫描、导入和管理 AI 技能模块</div>
+        <div class="font-display text-[22px] font-bold tracking-tight">{{ t('settings.skillConfig') }}</div>
+        <div class="text-[12px] text-muted mt-1">{{ t('settings.skillConfigDesc') }}</div>
       </div>
       <Button variant="primary" @click="openAddModal">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M7 1v12M1 7h12" />
         </svg>
-        手动添加
+        {{ t('settings.manualAdd') }}
       </Button>
     </div>
 
@@ -94,7 +97,7 @@ function closeModal() {
     <!-- Imported list -->
     <div v-if="skills.length > 0" class="border border-border rounded-lg overflow-hidden mb-3">
       <div class="flex items-center justify-between py-[10px] px-4 bg-[var(--section-bg)] border-b border-border min-h-[42px]">
-        <span class="text-[13px] font-semibold">已导入</span>
+        <span class="text-[13px] font-semibold">{{ t('settings.imported') }}</span>
         <span class="text-[10px] text-muted font-medium bg-[var(--hover-bg)] py-[2px] px-[6px] rounded-sm">{{ skills.length }}</span>
       </div>
       <div>

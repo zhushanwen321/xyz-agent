@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Button, Input } from '../../design-system'
 import type { ScannedSkillInfo, ScannedAgentInfo } from '@xyz-agent/shared'
 
@@ -103,18 +104,20 @@ function handleImport() {
   selectedItems.value.clear()
 }
 
-const sourceTypeLabels: Record<string, string> = {
+const { t } = useI18n()
+
+const sourceTypeLabels = computed<Record<string, string>>(() => ({
   pi: 'Pi',
   claude: 'Claude',
-  agents: 'Agents',
-  custom: 'Custom',
-}
+  agents: t('settings.sourceTypeAgents'),
+  custom: t('settings.sourceTypeCustom'),
+}))
 </script>
 
 <template>
   <div class="border border-border rounded-lg overflow-hidden mb-3">
     <div class="flex items-center py-[10px] px-4 bg-[var(--section-bg)] border-b border-border min-h-[42px]">
-      <span class="text-[13px] font-semibold">扫描并导入</span>
+      <span class="text-[13px] font-semibold">{{ t('settings.scanAndImport') }}</span>
     </div>
 
     <!-- Source chips -->
@@ -175,7 +178,7 @@ const sourceTypeLabels: Record<string, string> = {
     <div class="flex gap-1.5 px-4 py-1.5 items-center">
       <Input
         v-model="customPathInput"
-        placeholder="自定义路径，如 ~/project/.skills/"
+        :placeholder="t('settings.customPathPlaceholder')"
         class="flex-1 font-mono text-[11px]"
         @keydown.enter="addCustomPath"
       />
@@ -183,7 +186,7 @@ const sourceTypeLabels: Record<string, string> = {
         <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M6 1v10M1 6h10" />
         </svg>
-        添加
+        {{ t('common.create') }}
       </Button>
     </div>
 
@@ -192,16 +195,16 @@ const sourceTypeLabels: Record<string, string> = {
       <div class="text-[11px] text-muted flex items-center gap-1.5">
         <template v-if="isScanning">
           <span class="w-3.5 h-3.5 border-2 border-border border-t-[var(--accent)] rounded-full animate-spin shrink-0" />
-          扫描中…
+          {{ t('settings.scanning') }}
         </template>
-        <template v-else>已选 {{ activeCount }} 个来源</template>
+        <template v-else>{{ t('settings.selectedSources', { n: activeCount }) }}</template>
       </div>
       <Button variant="outline" size="sm" :disabled="isScanning || activeCount === 0" @click="handleScan">
         <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">
           <circle cx="7" cy="7" r="3.5" />
           <path d="M7 5v4.5M7 10.5v.5" />
         </svg>
-        扫描
+        {{ t('settings.scan') }}
       </Button>
     </div>
 
@@ -244,14 +247,14 @@ const sourceTypeLabels: Record<string, string> = {
         </div>
 
         <!-- Imported badge -->
-        <span v-if="item.alreadyImported" class="text-[9px] py-[1px] px-[5px] rounded-[3px] bg-[var(--success-light)] text-[var(--success)] font-semibold shrink-0">已导入</span>
+        <span v-if="item.alreadyImported" class="text-[9px] py-[1px] px-[5px] rounded-[3px] bg-[var(--success-light)] text-[var(--success)] font-semibold shrink-0">{{ t('settings.imported') }}</span>
       </div>
 
       <!-- Import action bar -->
       <div v-if="importableItems.length > 0" class="flex items-center justify-end py-2 px-4 gap-2.5 border-t border-border bg-[var(--section-bg)]">
-        <span class="text-[11px] text-muted">已选 {{ selectedImportCount }} 个</span>
+        <span class="text-[11px] text-muted">{{ t('settings.selectedCount', { n: selectedImportCount }) }}</span>
         <Button variant="primary" size="sm" :disabled="selectedImportCount === 0" @click="handleImport">
-          导入选中
+          {{ t('settings.importSelected') }}
           <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M1 6h10M7 2l4 4-4 4" />
           </svg>

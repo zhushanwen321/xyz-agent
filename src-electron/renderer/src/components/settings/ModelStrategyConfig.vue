@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Select } from '../../design-system'
 
 const props = defineProps<{
@@ -15,10 +16,12 @@ const emit = defineEmits<{
   'update:modelBind': [value: string]
 }>()
 
+const { t } = useI18n()
+
 const strategyOptions = computed(() => [
-  { label: '自动（主 Agent 判断）', value: 'auto' },
-  { label: '按标签选择', value: 'tag' },
-  { label: '绑定具体模型', value: 'bind' },
+  { label: t('settings.strategyAuto'), value: 'auto' },
+  { label: t('settings.strategyByTag'), value: 'tag' },
+  { label: t('settings.strategyFixed'), value: 'bind' },
 ])
 
 const allModelOptions = computed(() =>
@@ -50,10 +53,10 @@ function onBindChange(val: string) {
 </script>
 
 <template>
-  <div class="text-[11px] font-semibold uppercase tracking-[0.04em] text-muted mb-2">模型适配</div>
+  <div class="text-[11px] font-semibold uppercase tracking-[0.04em] text-muted mb-2">{{ t('settings.modelAdapter') }}</div>
   <div class="overflow-hidden mb-3">
     <div class="flex items-center gap-3 py-2 border-b border-[oklch(92%_0.01_70)] last:border-b-0">
-      <span class="text-xs min-w-[60px] font-medium">策略</span>
+      <span class="text-xs min-w-[60px] font-medium">{{ t('settings.modelStrategy') }}</span>
       <Select
         class="!h-8 !px-2.5 !py-1.5 !text-xs !rounded"
         :model-value="strategy"
@@ -64,7 +67,7 @@ function onBindChange(val: string) {
     </div>
     <!-- Tag rows -->
     <div v-if="strategy === 'tag'" class="flex items-center gap-3 py-2 border-b border-[oklch(92%_0.01_70)] last:border-b-0">
-      <span class="text-xs min-w-[60px] font-medium">强力模型</span>
+      <span class="text-xs min-w-[60px] font-medium">{{ t('settings.tagPower') }}</span>
       <Select
         class="!h-8 !px-2.5 !py-1.5 !text-xs !rounded"
         :model-value="modelTags?.power ?? ''"
@@ -73,7 +76,7 @@ function onBindChange(val: string) {
       />
     </div>
     <div v-if="strategy === 'tag'" class="flex items-center gap-3 py-2 border-b border-[oklch(92%_0.01_70)] last:border-b-0">
-      <span class="text-xs min-w-[60px] font-medium">高效模型</span>
+      <span class="text-xs min-w-[60px] font-medium">{{ t('settings.tagEfficient') }}</span>
       <Select
         class="!h-8 !px-2.5 !py-1.5 !text-xs !rounded"
         :model-value="modelTags?.efficient ?? ''"
@@ -82,7 +85,7 @@ function onBindChange(val: string) {
       />
     </div>
     <div v-if="strategy === 'tag'" class="flex items-center gap-3 py-2 border-b border-[oklch(92%_0.01_70)] last:border-b-0">
-      <span class="text-xs min-w-[60px] font-medium">快速模型</span>
+      <span class="text-xs min-w-[60px] font-medium">{{ t('settings.tagFast') }}</span>
       <Select
         class="!h-8 !px-2.5 !py-1.5 !text-xs !rounded"
         :model-value="modelTags?.fast ?? ''"
@@ -92,7 +95,7 @@ function onBindChange(val: string) {
     </div>
     <!-- Bind row -->
     <div v-if="strategy === 'bind'" class="flex items-center gap-3 py-2 border-b border-[oklch(92%_0.01_70)] last:border-b-0">
-      <span class="text-xs min-w-[60px] font-medium">绑定模型</span>
+      <span class="text-xs min-w-[60px] font-medium">{{ t('settings.bindModel') }}</span>
       <Select
         class="!h-8 !px-2.5 !py-1.5 !text-xs !rounded"
         :model-value="modelBind ?? ''"

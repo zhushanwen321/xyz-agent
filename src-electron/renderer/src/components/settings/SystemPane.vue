@@ -23,11 +23,11 @@ const currentLocale = computed({
   },
 })
 
-const themeModeOptions = [
-  { label: '浅色', value: 'light' },
-  { label: '深色', value: 'dark' },
-  { label: '跟随系统', value: 'system' },
-]
+const themeModeOptions = computed(() => [
+  { label: t('settings.themeLight'), value: 'light' },
+  { label: t('settings.themeDark'), value: 'dark' },
+  { label: t('settings.themeSystem'), value: 'system' },
+])
 
 const currentThemeMode = computed({
   get: () => settingsStore.theme,
@@ -72,7 +72,7 @@ function selectPalette(id: ThemePreset) {
     <!-- Section: 语言与外观 -->
     <div class="border border-border rounded-lg overflow-hidden mb-3">
       <div class="flex items-center py-[9px] px-4 bg-[var(--section-bg)] min-h-[42px]">
-        <span class="text-[13px] font-semibold">语言与外观</span>
+        <span class="text-[13px] font-semibold">{{ t('settings.languageAndAppearance') }}</span>
       </div>
       <div>
         <div class="flex items-center gap-4 py-2.5 px-4 border-b border-[var(--divider)]">
@@ -82,7 +82,7 @@ function selectPalette(id: ThemePreset) {
           </div>
         </div>
         <div class="flex items-center gap-4 py-2.5 px-4">
-          <span class="text-xs font-medium min-w-[76px]">外观模式</span>
+          <span class="text-xs font-medium min-w-[76px]">{{ t('settings.appearanceMode') }}</span>
           <div class="flex-1 max-w-[200px]">
             <Select v-model="currentThemeMode" :options="themeModeOptions" />
           </div>
@@ -93,7 +93,7 @@ function selectPalette(id: ThemePreset) {
     <!-- Section: 配色主题 -->
     <div class="border border-border rounded-lg overflow-hidden mb-3">
       <div class="flex items-center py-[9px] px-4 bg-[var(--section-bg)] min-h-[42px]">
-        <span class="text-[13px] font-semibold">配色主题</span>
+        <span class="text-[13px] font-semibold">{{ t('settings.colorTheme') }}</span>
       </div>
       <div class="py-3 px-4">
         <div class="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted mb-2">Muted</div>

@@ -6,7 +6,9 @@ import type { ScannedAgentInfo, AgentInfo } from '@xyz-agent/shared'
 import ScanImportSection from './ScanImportSection.vue'
 import AgentSection from './AgentSection.vue'
 import AgentModal from './AgentModal.vue'
+import { useI18n } from 'vue-i18n'
 
+const { t } = useI18n()
 const providerStore = useProviderStore()
 const agents = computed(() => providerStore.agents)
 const showModal = ref(false)
@@ -68,14 +70,14 @@ function closeModal() {
   <div class="max-w-[860px] mx-auto py-8 px-10">
     <div class="flex items-center justify-between mb-7">
       <div>
-        <div class="font-display text-[22px] font-bold tracking-tight">Agent 配置</div>
-        <div class="text-[12px] text-muted mt-1">扫描、导入和管理 AI Agent 模块</div>
+        <div class="font-display text-[22px] font-bold tracking-tight">{{ t('settings.agentConfig') }}</div>
+        <div class="text-[12px] text-muted mt-1">{{ t('settings.agentConfigDesc') }}</div>
       </div>
       <Button variant="primary" @click="openAddModal">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M7 1v12M1 7h12" />
         </svg>
-        手动添加
+        {{ t('settings.manualAdd') }}
       </Button>
     </div>
 
@@ -93,7 +95,7 @@ function closeModal() {
     <!-- Agent sections -->
     <div v-if="agents.length > 0" class="border border-border rounded-lg overflow-hidden mb-3">
       <div class="flex items-center justify-between py-[10px] px-4 bg-[var(--section-bg)] border-b border-border min-h-[42px]">
-        <span class="text-[13px] font-semibold">已导入</span>
+        <span class="text-[13px] font-semibold">{{ t('settings.imported') }}</span>
         <span class="text-[10px] text-muted font-medium bg-[var(--hover-bg)] py-[2px] px-[6px] rounded-sm">{{ agents.length }}</span>
       </div>
       <div>
