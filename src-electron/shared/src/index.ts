@@ -12,6 +12,7 @@ export type {
 export type {
   ProviderStatus, ProviderInfo, ModelInfo,
   SkillInfo, AgentInfo,
+  ScanSourceType, ScannedSkillInfo, ScannedAgentInfo,
 } from './provider'
 export type {
   AppErrorCode, AppError,

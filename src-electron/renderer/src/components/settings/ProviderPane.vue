@@ -4,22 +4,15 @@ import { Button } from '../../design-system'
 import type { ProviderInfo, ModelInfo } from '@xyz-agent/shared'
 import { useProviderStore } from '../../stores/provider'
 import { send } from '../../lib/ws-client'
-import ProviderCard from './ProviderCard.vue'
+import ProviderSection from './ProviderSection.vue'
 import ProviderModal from './ProviderModal.vue'
-
-// ─── Store ──────────────────────────────────────────────────────
 
 const providerStore = useProviderStore()
 
-// ─── State ──────────────────────────────────────────────────────
-
 const providers = computed(() => providerStore.providers)
 const models = computed(() => providerStore.models)
-const expandedId = ref<string | null>(null)
 const showModal = ref(false)
 const editingProvider = ref<ProviderInfo | null>(null)
-
-// ─── Computed ───────────────────────────────────────────────────
 
 const modalTitle = computed(() =>
   editingProvider.value ? '编辑供应商' : '添加供应商',
@@ -30,13 +23,9 @@ const editingModels = computed<ModelInfo[]>(() => {
   return models.value.filter(m => m.providerId === editingProvider.value!.id)
 })
 
-// ─── Helpers ────────────────────────────────────────────────────
-
 function getModelsFor(providerId: string): ModelInfo[] {
   return models.value.filter(m => m.providerId === providerId)
 }
-
-// ─── Actions ────────────────────────────────────────────────────
 
 function openEdit(id: string) {
   const p = providers.value.find(p => p.id === id)
@@ -48,18 +37,12 @@ function openEdit(id: string) {
 
 function handleDelete(id: string) {
   send({ type: 'config.deleteProvider', payload: { providerId: id } })
-  if (expandedId.value === id) expandedId.value = null
-}
-
-function handleTest(_id: string) {
-  void _id // P1: no-op
 }
 
 function toggleProvider(id: string) {
   const p = providers.value.find(p => p.id === id)
   if (!p) return
   const newEnabled = p.enabled !== false
-  // toggle 控制 enabled（启用/禁用），status（连接状态）由服务端管理
   providerStore.updateProvider(id, { enabled: !newEnabled })
   send({ type: 'config.setProvider', payload: { providerId: id, enabled: !newEnabled } })
 }
@@ -71,10 +54,6 @@ function toggleModel(providerId: string, modelId: string) {
   }
 }
 
-function handleModalTest(_data: { url: string; key: string }) {
-  void _data // P1: no-op
-}
-
 function handleSave(_data: {
   name: string
   type: string
@@ -83,12 +62,9 @@ function handleSave(_data: {
   models: { id: string; name: string; ctx: string; tags: string[] }[]
   providerId?: string
 }) {
-  // 编辑时使用原始 providerId，新增时从名称生成
   const { providerId: _pid, ...rest } = _data
   const providerId = _pid || _data.name.toLowerCase().replace(/\s+/g, '-')
-  // Map form fields to config-store field names
   const { url, key, ...configData } = rest
-  // 编辑时如果 key 是掩码，不发送 apiKey（保留原值）
   const apiKey = key && key !== '••••••••' ? key : undefined
   send({ type: 'config.setProvider', payload: { providerId, baseUrl: url, ...(apiKey !== undefined && { apiKey: apiKey }), ...configData } })
   showModal.value = false
@@ -99,7 +75,10 @@ function handleSave(_data: {
 <template>
   <div class="max-w-[860px] mx-auto py-8 px-10">
     <div class="flex items-center justify-between mb-7">
-      <div class="font-display text-[22px] font-bold tracking-tight">供应商配置</div>
+      <div>
+        <div class="font-display text-[22px] font-bold tracking-tight">Provider 配置</div>
+        <div class="text-[12px] text-muted mt-1">管理 AI 模型供应商、API 密钥和模型列表</div>
+      </div>
       <Button
         variant="primary"
         @click="editingProvider = null; showModal = true"
@@ -107,7 +86,7 @@ function handleSave(_data: {
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M7 1v12M1 7h12" />
         </svg>
-        添加供应商
+        添加 Provider
       </Button>
     </div>
 
@@ -128,20 +107,17 @@ function handleSave(_data: {
       </Button>
     </div>
 
-    <!-- Provider list -->
+    <!-- Provider sections -->
     <template v-else>
-      <ProviderCard
+      <ProviderSection
         v-for="provider in providers"
         :key="provider.id"
         :provider="provider"
         :models="getModelsFor(provider.id)"
-        :expanded="expandedId === provider.id"
-        @toggle="expandedId = expandedId === provider.id ? null : provider.id"
-        @edit="openEdit"
-        @delete="handleDelete"
-        @test="handleTest"
         @toggle-enabled="toggleProvider"
         @toggle-model="toggleModel"
+        @edit="openEdit"
+        @delete="handleDelete"
       />
     </template>
 
@@ -152,7 +128,7 @@ function handleSave(_data: {
       :models="editingModels"
       @close="showModal = false"
       @save="handleSave"
-      @test="handleModalTest"
+      @test="() => {}"
     />
   </div>
 </template>

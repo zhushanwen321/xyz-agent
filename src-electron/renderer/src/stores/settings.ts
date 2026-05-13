@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { ToolPermission, ThemeMode, ThemePreset } from '@xyz-agent/shared'
+import type { ThemeMode, ThemePreset } from '@xyz-agent/shared'
 
 export const useSettingsStore = defineStore('settings', () => {
   const theme = ref<ThemeMode>('light')
@@ -11,11 +11,6 @@ export const useSettingsStore = defineStore('settings', () => {
   const overviewVisible = ref(false)
   const drawerOpen = ref(false)
   const drawerSide = ref<'left' | 'right'>('right')
-
-  const toolPermissions = ref<Record<string, ToolPermission>>({
-    read: 'allow', grep: 'allow', find: 'allow', ls: 'allow',
-    bash: 'ask', edit: 'ask', write: 'ask',
-  })
 
   // 旧值迁移: 'warm' → 'warm-teal', 'claude' → 'terracotta'
   function migratePalette(p: string): ThemePreset {
@@ -45,15 +40,6 @@ export const useSettingsStore = defineStore('settings', () => {
     document.documentElement.setAttribute('data-palette', preset)
     localStorage.setItem('xyz-agent-palette', preset)
   }
-  function setToolPermission(tool: string, perm: ToolPermission) {
-    toolPermissions.value[tool] = perm
-  }
-  function resetToolPermissions() {
-    toolPermissions.value = {
-      read: 'allow', grep: 'allow', find: 'allow', ls: 'allow',
-      bash: 'ask', edit: 'ask', write: 'ask',
-    }
-  }
   function setView(v: 'chat' | 'settings') { currentView.value = v }
   function toggleOverview() { overviewVisible.value = !overviewVisible.value }
   function openDrawer(side: 'left' | 'right') { drawerOpen.value = true; drawerSide.value = side }
@@ -62,8 +48,7 @@ export const useSettingsStore = defineStore('settings', () => {
   return {
     theme, themePreset, locale, defaultModel, currentView,
     overviewVisible, drawerOpen, drawerSide,
-    toolPermissions, setToolPermission, resetToolPermissions,
     toggleTheme, applyTheme, setThemePreset, setView,
     toggleOverview, openDrawer, closeDrawer,
   }
-}, { persist: { key: 'xyz-settings', pick: ['theme', 'themePreset', 'locale', 'defaultModel', 'toolPermissions'] } })
+}, { persist: { key: 'xyz-settings', pick: ['theme', 'themePreset', 'locale', 'defaultModel'] } })

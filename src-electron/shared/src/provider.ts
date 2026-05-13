@@ -37,6 +37,33 @@ export interface SkillInfo {
   tag?: string
 }
 
+export type ScanSourceType = 'pi' | 'claude' | 'agents' | 'custom'
+
+export interface ScannedSkillInfo {
+  id: string
+  name: string
+  description: string
+  sourceType: ScanSourceType
+  sourcePath: string
+  triggers: string[]
+  content: string
+  fileSize?: string
+  tools?: string[]
+  alreadyImported: boolean
+}
+
+export interface ScannedAgentInfo {
+  id: string
+  name: string
+  description: string
+  sourceType: ScanSourceType
+  sourcePath: string
+  content: string
+  icon?: string
+  tools?: string[]
+  alreadyImported: boolean
+}
+
 export interface AgentInfo {
   id: string
   name: string

@@ -2,26 +2,39 @@
 import { ref, computed } from 'vue'
 import { Button } from '../../design-system'
 import { useProviderStore } from '../../stores/provider'
-import type { AgentInfo } from '@xyz-agent/shared'
-import GlobalParams from './GlobalParams.vue'
-import ImportSection, { type ImportSource } from './shared/ImportSection.vue'
-import AgentCard from './AgentCard.vue'
+import type { ScannedAgentInfo, AgentInfo } from '@xyz-agent/shared'
+import ScanImportSection from './ScanImportSection.vue'
+import AgentSection from './AgentSection.vue'
 import AgentModal from './AgentModal.vue'
 
 const providerStore = useProviderStore()
 const agents = computed(() => providerStore.agents)
-const globalParams = ref({ depth: 20, width: 10, tokens: 100_000, rounds: 50 })
-const expandedId = ref<string | null>(null)
 const showModal = ref(false)
 
-const scanSources: ImportSource[] = [
-  { id: 'pi', icon: 'P', label: 'Pi Agents', path: '~/.pi/agent/agents/', active: true },
-  { id: 'agents', icon: 'A', label: 'Agents', path: '~/.agents/agents/', active: false },
+const scanSources = [
+  { id: 'pi', icon: 'P', label: 'Pi Agents', path: '~/.pi/agent/agents/', defaultActive: true },
+  { id: 'claude', icon: 'C', label: 'Claude Code', path: '~/.claude/agents/', defaultActive: false },
+  { id: 'agents', icon: 'A', label: 'Agents', path: '~/.agents/agents/', defaultActive: false },
 ]
 
 const allModels = computed(() =>
   providerStore.enabledModels.map(m => ({ id: m.id, name: m.name, providerName: m.providerName })),
 )
+
+function handleScan(sources: string[]) {
+  providerStore.scanAgentsAction(sources)
+}
+
+function handleImport(items: ScannedAgentInfo[]) {
+  providerStore.importAgents(items)
+}
+
+function handleUpdateStrategy(payload: { agentId: string; strategy: string }) {
+  const agent = agents.value.find(a => a.id === payload.agentId)
+  if (agent) {
+    providerStore.setAgent({ ...agent, modelStrategy: payload.strategy })
+  }
+}
 
 function handleAgentSave(data: { name: string; description: string; modelStrategy: string; modelBind?: string }) {
   const newAgent: AgentInfo = {
@@ -32,7 +45,7 @@ function handleAgentSave(data: { name: string; description: string; modelStrateg
     modelStrategy: data.modelStrategy,
     modelBind: data.modelBind,
   }
-  providerStore.setAgents([...providerStore.agents, newAgent])
+  providerStore.setAgent(newAgent)
   showModal.value = false
 }
 </script>
@@ -40,37 +53,40 @@ function handleAgentSave(data: { name: string; description: string; modelStrateg
 <template>
   <div class="max-w-[860px] mx-auto py-8 px-10">
     <div class="flex items-center justify-between mb-7">
-      <div class="font-display text-[22px] font-bold tracking-tight">Agent 配置</div>
+      <div>
+        <div class="font-display text-[22px] font-bold tracking-tight">Agent 配置</div>
+        <div class="text-[12px] text-muted mt-1">扫描、导入和管理 AI Agent 模块</div>
+      </div>
       <Button variant="primary" @click="showModal = true">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M7 1v12M1 7h12" />
         </svg>
-        导入 Agent
+        手动添加
       </Button>
     </div>
 
-    <ImportSection
-      title="扫描 Agent"
+    <ScanImportSection
       :sources="scanSources"
-      custom-placeholder="自定义路径，如 ~/my-project/.agents/"
+      scan-event-type="config.scanAgents"
+      scanned-event-type="config.scannedAgents"
+      :existing-items="agents.map(a => ({ id: a.id, name: a.name }))"
+      :is-scanning="providerStore.isScanningAgents"
+      :scanned-results="providerStore.scannedAgents"
+      @scan="handleScan"
+      @import="handleImport"
     />
 
-    <GlobalParams v-model="globalParams" />
-
-    <div class="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted my-5 pb-1.5 border-b border-border">已导入 · {{ agents.length }} 个 Agent</div>
-
-    <AgentCard
+    <!-- Agent sections -->
+    <AgentSection
       v-for="agent in agents"
-      :key="agent.name"
+      :key="agent.id"
       :agent="agent"
       :all-models="allModels"
-      :expanded="expandedId === agent.name"
-      @toggle="expandedId = expandedId === agent.name ? null : agent.name"
-      @toggle-enabled="providerStore.setAgents(agents.map(a => a.id === agent.id ? { ...a, enabled: !a.enabled } : a))"
+      @toggle-enabled="providerStore.toggleAgent(agent.id)"
+      @update-strategy="handleUpdateStrategy"
+      @delete="providerStore.deleteAgentAction(agent.id)"
     />
 
     <AgentModal :visible="showModal" :models="allModels" @close="showModal = false" @save="handleAgentSave" />
   </div>
 </template>
-
-

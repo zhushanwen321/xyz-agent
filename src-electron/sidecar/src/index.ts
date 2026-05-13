@@ -1,22 +1,27 @@
 import { SidecarServer } from './server.js'
 
-function parseArgs(): { port: number } {
+function parseArgs(): { port: number; projectRoot?: string } {
   // eslint-disable-next-line no-magic-numbers -- argv[0] is node, argv[1] is script
   const args = process.argv.slice(2)
   let port = 3210
+  let projectRoot: string | undefined
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--port' && i + 1 < args.length) {
       port = parseInt(args[i + 1], 10)
     } else if (args[i].startsWith('--port=')) {
       port = parseInt(args[i].split('=')[1], 10)
+    } else if (args[i] === '--project-root' && i + 1 < args.length) {
+      projectRoot = args[i + 1]
+    } else if (args[i].startsWith('--project-root=')) {
+      projectRoot = args[i].split('=')[1]
     }
   }
-  return { port }
+  return { port, projectRoot }
 }
 
 async function main(): Promise<void> {
-  const { port } = parseArgs()
-  const server = new SidecarServer(port)
+  const { port, projectRoot } = parseArgs()
+  const server = new SidecarServer(port, projectRoot)
 
   // Graceful shutdown on signals
   let shuttingDown = false

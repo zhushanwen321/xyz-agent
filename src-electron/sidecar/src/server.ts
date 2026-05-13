@@ -4,7 +4,10 @@ import type { ClientMessage, ServerMessage, ModelInfo } from '@xyz-agent/shared'
 import { SessionPool } from './session-pool.js'
 import * as providerStore from './provider-store.js'
 import { lookupModel } from './model-db.js'
-import { updateToolPermissions, getProvider } from './config-store.js'
+import { updateToolPermissions, getProvider, loadSkills, saveSkills, loadAgents, saveAgents } from './config-store.js'
+import { scanSkills } from './skill-scanner.js'
+import { scanAgents } from './agent-scanner.js'
+import type { SkillInfo, AgentInfo } from '@xyz-agent/shared'
 
 const HTTP_OK = 200
 const HTTP_NOT_FOUND = 404
@@ -24,6 +27,7 @@ export class SidecarServer {
   private clients = new Set<WsType>()
   private pushId = 0
   private heartbeatTimers = new Map<WsType, ReturnType<typeof setTimeout>>()
+  private projectRoot: string
 
   private static HEARTBEAT_TIMEOUT = 45_000
 
@@ -48,7 +52,8 @@ export class SidecarServer {
     }
   }
 
-  constructor(private port: number) {
+  constructor(private port: number, projectRoot?: string) {
+    this.projectRoot = projectRoot ?? process.cwd()
     this.httpServer = createServer((req, res) => {
       if (req.url === '/health') {
         res.writeHead(HTTP_OK, { 'Content-Type': 'application/json' })
@@ -128,6 +133,14 @@ export class SidecarServer {
     // Aggregated model list
     const models = this.aggregateModels(providers)
     this.send(ws, { type: 'model.list', id: this.nextPushId(), payload: { models } })
+
+    // Skills list
+    const skills = loadSkills(this.projectRoot)
+    this.send(ws, { type: 'config.skills', id: this.nextPushId(), payload: { skills } })
+
+    // Agents list
+    const agents = loadAgents(this.projectRoot)
+    this.send(ws, { type: 'config.agents', id: this.nextPushId(), payload: { agents } })
   }
 
   // ── Message routing ────────────────────────────────────────────
@@ -298,6 +311,76 @@ export class SidecarServer {
           break
         }
 
+        // ── Skills CRUD ──────────────────────────────────────────
+        case 'config.scanSkills': {
+          const sources = msg.payload.sources as string[]
+          const existing = loadSkills(this.projectRoot)
+          const existingIds = new Set(existing.map(s => s.id))
+          const skills = scanSkills(sources, existingIds)
+          this.send(ws, { type: 'config.scannedSkills', id: msg.id, payload: { skills, success: true } })
+          break
+        }
+
+        case 'config.setSkill': {
+          const skill = msg.payload.skill as SkillInfo
+          const currentSkills = loadSkills(this.projectRoot)
+          const idx = currentSkills.findIndex(s => s.id === skill.id)
+          if (idx >= 0) {
+            currentSkills[idx] = skill
+          } else {
+            currentSkills.push(skill)
+          }
+          saveSkills(this.projectRoot, currentSkills)
+          this.send(ws, { type: 'config.skillUpdated', id: msg.id, payload: { skill, success: true } })
+          this.broadcastSkillList()
+          break
+        }
+
+        case 'config.deleteSkill': {
+          const skillId = msg.payload.skillId as string
+          const currentSkills = loadSkills(this.projectRoot)
+          const filtered = currentSkills.filter(s => s.id !== skillId)
+          saveSkills(this.projectRoot, filtered)
+          this.send(ws, { type: 'config.skillDeleted', id: msg.id, payload: { skillId, success: true } })
+          this.broadcastSkillList()
+          break
+        }
+
+        // ── Agents CRUD ─────────────────────────────────────────
+        case 'config.scanAgents': {
+          const sources = msg.payload.sources as string[]
+          const existing = loadAgents(this.projectRoot)
+          const existingIds = new Set(existing.map(a => a.id))
+          const agents = scanAgents(sources, existingIds)
+          this.send(ws, { type: 'config.scannedAgents', id: msg.id, payload: { agents, success: true } })
+          break
+        }
+
+        case 'config.setAgent': {
+          const agent = msg.payload.agent as AgentInfo
+          const currentAgents = loadAgents(this.projectRoot)
+          const aIdx = currentAgents.findIndex(a => a.id === agent.id)
+          if (aIdx >= 0) {
+            currentAgents[aIdx] = agent
+          } else {
+            currentAgents.push(agent)
+          }
+          saveAgents(this.projectRoot, currentAgents)
+          this.send(ws, { type: 'config.agentUpdated', id: msg.id, payload: { agent, success: true } })
+          this.broadcastAgentList()
+          break
+        }
+
+        case 'config.deleteAgent': {
+          const agentId = msg.payload.agentId as string
+          const currentAgents = loadAgents(this.projectRoot)
+          const filteredAgents = currentAgents.filter(a => a.id !== agentId)
+          saveAgents(this.projectRoot, filteredAgents)
+          this.send(ws, { type: 'config.agentDeleted', id: msg.id, payload: { agentId, success: true } })
+          this.broadcastAgentList()
+          break
+        }
+
         case 'config.discoverModels': {
           const { baseUrl, apiKey, providerType, providerId } = msg.payload as {
             baseUrl: string
@@ -429,6 +512,16 @@ export class SidecarServer {
     this.broadcast({ type: 'config.providers', id: this.nextPushId(), payload: { providers } })
     const models = this.aggregateModels(providers)
     this.broadcast({ type: 'model.list', id: this.nextPushId(), payload: { models } })
+  }
+
+  private broadcastSkillList(): void {
+    const skills = loadSkills(this.projectRoot)
+    this.broadcast({ type: 'config.skills', id: this.nextPushId(), payload: { skills } })
+  }
+
+  private broadcastAgentList(): void {
+    const agents = loadAgents(this.projectRoot)
+    this.broadcast({ type: 'config.agents', id: this.nextPushId(), payload: { agents } })
   }
 
   private aggregateModels(providers: ReturnType<typeof providerStore.listProviders>): ModelInfo[] {

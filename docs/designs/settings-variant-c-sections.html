@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Settings Demo C - Section Groups</title>
+<style>
+  :root {
+    --bg: oklch(97% 0.018 70);
+    --surface: oklch(99% 0.008 70);
+    --fg: oklch(22% 0.02 50);
+    --muted: oklch(50% 0.018 50);
+    --border: oklch(90% 0.014 70);
+    --accent: oklch(64% 0.13 28);
+    --accent-light: oklch(92% 0.04 28);
+    --success: oklch(70% 0.18 145);
+    --success-light: oklch(95% 0.06 145);
+    --warning: oklch(78% 0.15 85);
+    --danger: oklch(62% 0.2 25);
+    --danger-light: oklch(93% 0.06 25);
+    --font-display: 'Georgia', 'Iowan Old Style', serif;
+    --font-body: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+    /* Section surface — slightly deeper than main bg */
+    --section-bg: oklch(95% 0.014 70);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: var(--font-body); font-size: 13px; line-height: 1.5;
+    color: var(--fg); background: var(--bg); -webkit-font-smoothing: antialiased;
+  }
+
+  .shell { display: flex; height: 100vh; overflow: hidden; }
+
+  /* ═══ Sidebar ═══ */
+  .sidebar {
+    width: 200px; background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; flex-shrink: 0;
+  }
+  .sidebar-title {
+    padding: 14px 20px; font-family: var(--font-display);
+    font-size: 15px; font-weight: 700; border-bottom: 1px solid var(--border);
+  }
+  .sidebar-nav { flex: 1; padding: 6px 0; }
+  .sidebar-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 20px; font-size: 13px; color: var(--muted);
+    cursor: pointer; transition: all 120ms ease; user-select: none;
+  }
+  .sidebar-item:hover { background: oklch(96% 0.012 70); color: var(--fg); }
+  .sidebar-item.active { color: var(--accent); font-weight: 600; background: var(--accent-light); }
+  .sidebar-item svg { width: 14px; height: 14px; flex-shrink: 0; }
+
+  .content { flex: 1; overflow-y: auto; padding: 32px 40px; }
+  .pane { max-width: 760px; }
+  .pane.hidden { display: none; }
+
+  .pane-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+  .pane-title { font-family: var(--font-display); font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 14px; border: 1px solid transparent; border-radius: 4px;
+    font-family: var(--font-body); font-size: 13px; font-weight: 500;
+    cursor: pointer; transition: all 120ms ease; white-space: nowrap;
+  }
+  .btn svg { width: 13px; height: 13px; }
+  .btn-primary { background: var(--accent); color: white; }
+  .btn-primary:hover { opacity: 0.88; }
+  .btn-ghost { background: transparent; color: var(--muted); }
+  .btn-ghost:hover { color: var(--accent); background: var(--accent-light); }
+  .btn-sm { padding: 4px 10px; font-size: 12px; }
+  .btn-sm svg { width: 11px; height: 11px; }
+
+  /* ═══════════════════════════════════════════════
+     SECTION GROUP — the core of Variant C
+     
+     Each logical group is a bordered section with a header.
+     Sections have visual weight; they are NOT flat lists.
+     Think: Linear's settings sections or macOS System Preferences.
+     ═══════════════════════════════════════════════ */
+  .section {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 16px;
+  }
+  .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    background: var(--section-bg);
+    border-bottom: 1px solid var(--border);
+  }
+  .section-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--fg);
+  }
+  .section-badge {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 100px;
+    background: var(--accent-light);
+    color: var(--accent);
+  }
+
+  .section-body { /* no padding, rows carry their own */ }
+
+  /* ═══ Item Row inside a section ═══ */
+  .item-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    border-bottom: 1px solid oklch(94% 0.008 70);
+    transition: background 120ms ease;
+  }
+  .item-row:last-child { border-bottom: none; }
+  .item-row:hover { background: oklch(96% 0.01 70); }
+  .item-row.disabled { opacity: 0.4; }
+
+  .item-avatar {
+    width: 32px; height: 32px; border-radius: 6px;
+    background: var(--accent-light); display: flex;
+    align-items: center; justify-content: center;
+    font-family: var(--font-display); font-weight: 700; font-size: 13px;
+    color: var(--accent); flex-shrink: 0;
+  }
+  .item-info { flex: 1; min-width: 0; }
+  .item-name {
+    font-size: 13px; font-weight: 600;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .item-meta {
+    font-size: 11px; color: var(--muted); font-family: var(--font-mono);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .item-actions {
+    display: flex; gap: 4px; flex-shrink: 0;
+  }
+
+  .dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+  .dot-ok { background: var(--success); }
+  .dot-err { background: var(--danger); }
+  .dot-idle { background: var(--border); }
+
+  .toggle {
+    position: relative; width: 34px; height: 19px; border-radius: 100px;
+    background: var(--border); cursor: pointer; flex-shrink: 0;
+    transition: background 200ms ease;
+  }
+  .toggle.on { background: var(--success); }
+  .toggle-knob {
+    position: absolute; top: 2px; width: 15px; height: 15px; border-radius: 50%;
+    background: white; box-shadow: 0 1px 2px rgba(0,0,0,0.12);
+    transition: left 200ms ease;
+  }
+  .toggle.on .toggle-knob { left: 17px; }
+  .toggle:not(.on) .toggle-knob { left: 2px; }
+
+  /* ═══ Expanded Detail (indent into section body) ═══ */
+  .item-detail {
+    max-height: 0; overflow: hidden;
+    transition: max-height 200ms ease-out;
+    background: oklch(96% 0.008 70);
+    border-bottom: 1px solid oklch(94% 0.008 70);
+  }
+  .item-detail.open { max-height: 500px; }
+  .item-detail-inner { padding: 10px 16px 12px 60px; }
+
+  .detail-grid {
+    display: grid; grid-template-columns: 76px 1fr;
+    gap: 3px 10px; font-size: 11px;
+  }
+  .detail-key { color: var(--muted); font-weight: 500; }
+  .detail-val { font-family: var(--font-mono); font-size: 11px; }
+
+  /* Model sub-rows */
+  .model-subrow {
+    display: flex; align-items: center; gap: 8px;
+    padding: 4px 0; font-size: 11px;
+  }
+  .model-name { font-family: var(--font-mono); font-weight: 600; min-width: 200px; }
+  .model-ctx { color: var(--muted); font-family: var(--font-mono); min-width: 40px; }
+  .tag-pill {
+    display: inline-flex; padding: 0px 5px; border-radius: 100px;
+    font-size: 9px; font-weight: 600;
+  }
+  .tag-power { background: oklch(92% 0.04 25); color: oklch(55% 0.12 25); }
+  .tag-efficient { background: oklch(92% 0.04 145); color: oklch(55% 0.12 145); }
+  .tag-fast { background: oklch(92% 0.04 250); color: oklch(55% 0.12 250); }
+
+  /* ═══ Import ═══ */
+  .import-row {
+    display: flex; gap: 8px; flex-wrap: wrap; padding: 10px 16px;
+  }
+  .import-chip {
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 10px; border: 1px solid var(--border); border-radius: 6px;
+    font-size: 12px; cursor: pointer; transition: all 120ms ease; background: var(--surface);
+  }
+  .import-chip:hover { border-color: var(--accent); background: var(--accent-light); }
+  .import-chip.active { border-color: var(--accent); background: var(--accent-light); font-weight: 500; }
+  .import-icon {
+    width: 20px; height: 20px; border-radius: 4px; font-size: 9px; font-weight: 700;
+    background: var(--accent-light); color: var(--accent);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .import-path { font-family: var(--font-mono); font-size: 10px; color: var(--muted); }
+
+  /* ═══ Params ═══ */
+  .params-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+    padding: 12px 16px;
+  }
+  .param-item { display: flex; flex-direction: column; gap: 4px; }
+  .param-label { font-size: 11px; font-weight: 500; color: var(--muted); }
+  .param-input {
+    padding: 6px 8px; border: 1px solid var(--border); border-radius: 4px;
+    background: var(--surface); font-family: var(--font-mono); font-size: 11px;
+    color: var(--fg); outline: none; width: 100%;
+  }
+  .param-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px oklch(92% 0.04 28); }
+
+  /* ═══ System ═══ */
+  .sys-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px;
+    border-bottom: 1px solid oklch(94% 0.008 70);
+  }
+  .sys-row:last-child { border-bottom: none; }
+  .sys-label { font-size: 12px; color: var(--muted); min-width: 80px; }
+  .sys-select {
+    padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px;
+    background: var(--surface); font-size: 12px; color: var(--fg); outline: none;
+  }
+  .palette-strip { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 16px; }
+  .palette-btn {
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 10px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--surface); font-size: 11px; color: var(--fg);
+    cursor: pointer; transition: all 120ms ease;
+  }
+  .palette-btn:hover { border-color: var(--muted); }
+  .palette-btn.active { border-color: var(--accent); background: var(--accent-light); }
+  .palette-dot { width: 12px; height: 12px; border-radius: 50%; }
+
+  .section-group-label {
+    font-size: 10px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.05em; color: var(--muted); padding: 6px 16px 0;
+  }
+
+  /* ═══ Delete Confirm ═══ */
+  .confirm-bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 16px; background: var(--danger-light); font-size: 12px; color: var(--danger);
+  }
+  .confirm-bar .btn-danger {
+    background: var(--danger); color: white; border: none;
+    padding: 4px 10px; border-radius: 4px; font-size: 11px; cursor: pointer;
+    margin-left: auto;
+  }
+
+  /* ═══ Variant Badge ═══ */
+  .variant-badge {
+    position: fixed; top: 12px; right: 16px;
+    background: var(--accent); color: white;
+    padding: 6px 14px; border-radius: 4px;
+    font-size: 12px; font-weight: 600; z-index: 999;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  }
+  .variant-badge a { color: white; text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<div class="variant-badge">
+  Demo C: Section Groups &nbsp;|&nbsp;
+  <a href="settings-variant-a-refined.html">A: Refined Cards</a> &nbsp;|&nbsp;
+  <a href="settings-variant-b-compact.html">B: Compact List</a>
+</div>
+
+<div class="shell">
+  <div class="sidebar">
+    <div class="sidebar-title">Settings</div>
+    <div class="sidebar-nav">
+      <div class="sidebar-item active" onclick="switchTab('providers')" data-tab="providers">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M5 6h6M5 8h4M5 10h5"/></svg>
+        Providers
+      </div>
+      <div class="sidebar-item" onclick="switchTab('skills')" data-tab="skills">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2l2 4h4l-3 3 1 4-4-2-4 2 1-4-3-3h4z"/></svg>
+        Skills
+      </div>
+      <div class="sidebar-item" onclick="switchTab('agents')" data-tab="agents">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="5" r="3"/><path d="M2 14c0-3.3 2.7-6 6-6s6 2.7 6 6"/></svg>
+        Agents
+      </div>
+      <div class="sidebar-item" onclick="switchTab('system')" data-tab="system">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="2"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2"/></svg>
+        System
+      </div>
+    </div>
+  </div>
+
+  <div class="content">
+
+    <!-- ══════════════ Providers ══════════════ -->
+    <div class="pane" id="pane-providers">
+      <div class="pane-header">
+        <div class="pane-title">Provider 配置</div>
+        <button class="btn btn-primary">
+          <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 1v12M1 7h12"/></svg>
+          添加 Provider
+        </button>
+      </div>
+
+      <!-- Anthropic Section -->
+      <div class="section">
+        <div class="section-header">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div class="item-avatar">A</div>
+            <div>
+              <div class="section-title" style="display:flex;align-items:center;gap:6px">
+                Anthropic <span class="dot dot-ok"></span>
+              </div>
+              <div style="font-size:11px;color:var(--muted);font-family:var(--font-mono)">api.anthropic.com</div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span class="section-badge">4 models</span>
+            <div class="toggle on" onclick="this.classList.toggle('on')"><div class="toggle-knob"></div></div>
+            <button class="btn btn-ghost btn-sm">编辑</button>
+            <button class="btn btn-ghost btn-sm" style="color:var(--danger)">删除</button>
+          </div>
+        </div>
+        <div class="section-body">
+          <div class="item-row">
+            <div class="toggle on" onclick="this.classList.toggle('on')" style="transform:scale(0.85)"><div class="toggle-knob"></div></div>
+            <span class="model-name">claude-sonnet-4-20250514</span>
+            <span class="model-ctx">200K</span>
+            <span class="tag-pill tag-power">强力</span>
+            <span class="tag-pill tag-fast">快速</span>
+          </div>
+          <div class="item-row">
+            <div class="toggle on" onclick="this.classList.toggle('on')" style="transform:scale(0.85)"><div class="toggle-knob"></div></div>
+            <span class="model-name">claude-opus-4-20250514</span>
+            <span class="model-ctx">200K</span>
+            <span class="tag-pill tag-power">强力</span>
+          </div>
+          <div class="item-row">
+            <div class="toggle on" onclick="this.classList.toggle('on')" style="transform:scale(0.85)"><div class="toggle-knob"></div></div>
+            <span class="model-name">claude-haiku-3-5-20241022</span>
+            <span class="model-ctx">200K</span>
+            <span class="tag-pill tag-efficient">高效</span>
+            <span class="tag-pill tag-fast">快速</span>
+          </div>
+          <div class="item-row" style="opacity:0.4">
+            <div class="toggle" onclick="this.classList.toggle('on')" style="transform:scale(0.85)"><div class="toggle-knob"></div></div>
+            <span class="model-name">claude-3-5-sonnet-20241022</span>
+            <span class="model-ctx">200K</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- DeepSeek Section -->
+      <div class="section">
+        <div class="section-header">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div class="item-avatar" style="color:oklch(55% 0.12 250);background:oklch(92% 0.04 250)">D</div>
+            <div>
+              <div class="section-title" style="display:flex;align-items:center;gap:6px">
+                DeepSeek <span class="dot dot-ok"></span>
+              </div>
+              <div style="font-size:11px;color:var(--muted);font-family:var(--font-mono)">api.deepseek.com</div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span class="section-badge">2 models</span>
+            <div class="toggle on" onclick="this.classList.toggle('on')"><div class="toggle-knob"></div></div>
+            <button class="btn btn-ghost btn-sm">编辑</button>
+            <button class="btn btn-ghost btn-sm" style="color:var(--danger)">删除</button>
+          </div>
+        </div>
+        <div class="section-body">
+          <div class="item-row">
+            <div class="toggle on" onclick="this.classList.toggle('on')" style="transform:scale(0.85)"><div class="toggle-knob"></div></div>
+            <span class="model-name">deepseek-v4-pro</span>
+            <span class="model-ctx">128K</span>
+            <span class="tag-pill tag-power">强力</span>
+          </div>
+          <div class="item-row">
+            <div class="toggle on" onclick="this.classList.toggle('on')" style="transform:scale(0.85)"><div class="toggle-knob"></div></div>
+            <span class="model-name">deepseek-v4-flash</span>
+            <span class="model-ctx">128K</span>
+            <span class="tag-pill tag-efficient">高效</span>
+            <span class="tag-pill tag-fast">快速</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Ollama Section (collapsed + error) -->
+      <div class="section" style="opacity:0.5">
+        <div class="section-header">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div class="item-avatar" style="color:oklch(55% 0.1 145);background:oklch(92% 0.04 145)">O</div>
+            <div>
+              <div class="section-title" style="display:flex;align-items:center;gap:6px">
+                Ollama <span class="dot dot-err"></span>
+              </div>
+              <div style="font-size:11px;color:var(--muted);font-family:var(--font-mono)">localhost:11434 · 连接失败</div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <div class="toggle" onclick="this.classList.toggle('on')"><div class="toggle-knob"></div></div>
+            <button class="btn btn-ghost btn-sm">测试</button>
+            <button class="btn btn-ghost btn-sm">编辑</button>
+            <button class="btn btn-ghost btn-sm" style="color:var(--danger)">删除</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════ Skills ══════════════ -->
+    <div class="pane hidden" id="pane-skills">
+      <div class="pane-header">
+        <div class="pane-title">Skill 配置</div>
+        <button class="btn btn-primary">
+          <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 1v12M1 7h12"/></svg>
+          添加 Skill
+        </button>
+      </div>
+
+      <!-- Import -->
+      <div class="section">
+        <div class="section-header">
+          <span class="section-title">扫描并导入</span>
+        </div>
+        <div class="import-row">
+          <div class="import-chip active">
+            <div class="import-icon">P</div>
+            <div><div style="font-weight:500">Pi Skills</div><div class="import-path">~/.pi/agent/skills/</div></div>
+          </div>
+          <div class="import-chip">
+            <div class="import-icon">C</div>
+            <div><div style="font-weight:500">Claude Code</div><div class="import-path">~/.claude/skills/</div></div>
+          </div>
+          <div class="import-chip">
+            <div class="import-icon">A</div>
+            <div><div style="font-weight:500">Agents</div><div class="import-path">~/.agents/skills/</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Skills List -->
+      <div class="section">
+        <div class="section-header">
+          <span class="section-title">已导入</span>
+          <span class="section-badge">3</span>
+        </div>
+        <div class="section-body">
+          <!-- Expanded -->
+          <div>
+            <div class="item-row" onclick="this.nextElementSibling.classList.toggle('open')" style="cursor:pointer">
+              <div class="toggle on" onclick="event.stopPropagation(); this.classList.toggle('on')"><div class="toggle-knob"></div></div>
+              <div class="item-info">
+                <div class="item-name">code-trace</div>
+                <div class="item-meta">~/.pi/agent/skills/code-trace/</div>
+              </div>
+              <div class="item-actions" onclick="event.stopPropagation()">
+                <button class="btn btn-ghost btn-sm">编辑</button>
+                <button class="btn btn-ghost btn-sm" style="color:var(--danger)">删除</button>
+              </div>
+            </div>
+            <div class="item-detail open">
+              <div class="item-detail-inner">
+                <div class="detail-grid">
+                  <span class="detail-key">触发词</span><span class="detail-val">分析链路、trace code</span>
+                  <span class="detail-key">来源</span><span class="detail-val">Pi · code-trace/</span>
+                  <span class="detail-key">工具</span><span class="detail-val">read, bash, grep</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- Collapsed -->
+          <div class="item-row">
+            <div class="toggle on" onclick="this.classList.toggle('on')"><div class="toggle-knob"></div></div>
+            <div class="item-info">
+              <div class="item-name">bug-fix-recorder</div>
+              <div class="item-meta">~/.pi/agent/skills/bug-fix-recorder/</div>
+            </div>
+            <div class="item-actions">
+              <button class="btn btn-ghost btn-sm">编辑</button>
+              <button class="btn btn-ghost btn-sm" style="color:var(--danger)">删除</button>
+            </div>
+          </div>
+          <!-- Disabled -->
+          <div class="item-row disabled">
+            <div class="toggle" onclick="this.classList.toggle('on')"><div class="toggle-knob"></div></div>
+            <div class="item-info">
+              <div class="item-name">tavily-web-search</div>
+              <div class="item-meta">~/.agents/skills/tavily-web-search/</div>
+            </div>
+            <div class="item-actions">
+              <button class="btn btn-ghost btn-sm">编辑</button>
+              <button class="btn btn-ghost btn-sm" style="color:var(--danger)">删除</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════ Agents ══════════════ -->
+    <div class="pane hidden" id="pane-agents">
+      <div class="pane-header">
+        <div class="pane-title">Agent 配置</div>
+        <button class="btn btn-primary">
+          <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 1v12M1 7h12"/></svg>
+          添加 Agent
+        </button>
+      </div>
+
+      <!-- Global Params Section -->
+      <div class="section">
+        <div class="section-header">
+          <span class="section-title">SubAgent 默认参数</span>
+        </div>
+        <div class="params-grid">
+          <div class="param-item">
+            <label class="param-label">最大深度</label>
+            <input class="param-input" type="number" value="20">
+          </div>
+          <div class="param-item">
+            <label class="param-label">最大宽度</label>
+            <input class="param-input" type="number" value="10">
+          </div>
+          <div class="param-item">
+            <label class="param-label">Token 上限</label>
+            <input class="param-input" type="number" value="100000">
+          </div>
+          <div class="param-item">
+            <label class="param-label">最大轮次</label>
+            <input class="param-input" type="number" value="50">
+          </div>
+        </div>
+      </div>
+
+      <!-- Agent Sections -->
+      <div class="section">
+        <div class="section-header">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div class="item-avatar">H</div>
+            <div>
+              <div class="section-title">harness-executor</div>
+              <div style="font-size:11px;color:var(--muted)">auto · ~/.pi/agent/agents/harness-executor/</div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <div class="toggle on" onclick="this.classList.toggle('on')"><div class="toggle-knob"></div></div>
+            <button class="btn btn-ghost btn-sm">编辑</button>
+            <button class="btn btn-ghost btn-sm" style="color:var(--danger)">删除</button>
+          </div>
+        </div>
+        <div class="section-body">
+          <div class="item-row">
+            <span class="detail-key" style="min-width:76px">模型策略</span>
+            <select style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;background:var(--surface);color:var(--fg);outline:none;flex:1">
+              <option selected>auto — 自动匹配</option><option>tag — 按标签</option><option>bind — 绑定</option>
+            </select>
+          </div>
+          <div class="item-row">
+            <span class="detail-key" style="min-width:76px">工具</span>
+            <span style="font-family:var(--font-mono);font-size:11px">read, edit, write, bash</span>
+          </div>
+          <div class="item-row">
+            <span class="detail-key" style="min-width:76px">参数覆盖</span>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);cursor:pointer">
+              <input type="checkbox"> 使用自定义参数
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Collapsed Agent with delete confirm -->
+      <div class="section">
+        <div class="section-header">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div class="item-avatar" style="color:oklch(55% 0.12 250);background:oklch(92% 0.04 250)">C</div>
+            <div>
+              <div class="section-title">code-reviewer</div>
+              <div style="font-size:11px;color:var(--muted)">tag · ~/.pi/agent/agents/code-reviewer/</div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <div class="toggle on" onclick="this.classList.toggle('on')"><div class="toggle-knob"></div></div>
+            <button class="btn btn-ghost btn-sm">编辑</button>
+            <button class="btn btn-ghost btn-sm" style="color:var(--danger)">删除</button>
+          </div>
+        </div>
+        <!-- Delete confirm -->
+        <div class="confirm-bar">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="5.5"/><path d="M7 4.5v3M7 9v.5"/></svg>
+          确认删除 code-reviewer？此操作不可撤销。
+          <button class="confirm-bar btn-danger">确认删除</button>
+          <button class="btn btn-ghost btn-sm" style="color:var(--danger)">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════ System ══════════════ -->
+    <div class="pane hidden" id="pane-system">
+      <div class="pane-header">
+        <div class="pane-title">系统设置</div>
+      </div>
+
+      <div class="section">
+        <div class="section-header">
+          <span class="section-title">语言与外观</span>
+        </div>
+        <div class="section-body">
+          <div class="sys-row">
+            <span class="sys-label">语言</span>
+            <select class="sys-select"><option selected>简体中文</option><option>English</option></select>
+          </div>
+          <div class="sys-row">
+            <span class="sys-label">外观模式</span>
+            <select class="sys-select"><option selected>浅色</option><option>深色</option><option>跟随系统</option></select>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-header">
+          <span class="section-title">配色主题</span>
+        </div>
+        <div class="section-group-label">Muted</div>
+        <div class="palette-strip">
+          <div class="palette-btn active"><span class="palette-dot" style="background:oklch(55% 0.08 195)"></span>Warm Teal</div>
+          <div class="palette-btn"><span class="palette-dot" style="background:oklch(62% 0.10 190)"></span>Cold Teal</div>
+          <div class="palette-btn"><span class="palette-dot" style="background:oklch(40% 0 0)"></span>Neutral</div>
+          <div class="palette-btn"><span class="palette-dot" style="background:oklch(10% 0 0)"></span>Sharp</div>
+          <div class="palette-btn"><span class="palette-dot" style="background:oklch(45% 0.04 80)"></span>Warm Neutral</div>
+        </div>
+        <div class="section-group-label">Colorful</div>
+        <div class="palette-strip">
+          <div class="palette-btn"><span class="palette-dot" style="background:oklch(64% 0.13 28)"></span>Terracotta</div>
+          <div class="palette-btn"><span class="palette-dot" style="background:oklch(65% 0.14 350)"></span>Rose</div>
+          <div class="palette-btn"><span class="palette-dot" style="background:oklch(67% 0.15 65)"></span>Amber</div>
+          <div class="palette-btn"><span class="palette-dot" style="background:oklch(62% 0.15 250)"></span>Blue</div>
+          <div class="palette-btn"><span class="palette-dot" style="background:oklch(62% 0.15 280)"></span>Violet</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+function switchTab(tab) {
+  document.querySelectorAll('.sidebar-item').forEach(el => el.classList.toggle('active', el.dataset.tab === tab));
+  document.querySelectorAll('.pane').forEach(el => el.classList.toggle('hidden', el.id !== 'pane-' + tab));
+}
+</script>
+</body>
+</html>
