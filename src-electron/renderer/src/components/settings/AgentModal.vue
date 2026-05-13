@@ -23,12 +23,38 @@ const formName = ref('')
 const formDescription = ref('')
 const formContent = ref('')
 
+function parseDescriptionFromContent(content: string): string {
+  const lines = content.split('\n')
+  const fmLines: string[] = []
+  let inFm = false
+  for (const line of lines) {
+    if (line.trim() === '---') {
+      if (!inFm) { inFm = true; continue }
+      break
+    }
+    if (inFm) fmLines.push(line)
+  }
+  const fmText = fmLines.join('\n')
+  // 多行格式: description: >
+  const multiMatch = fmText.match(/^description:\s*[>\|]?\s*$/m)
+  if (multiMatch) {
+    const startIdx = fmText.indexOf(multiMatch[0]) + multiMatch[0].length
+    const parts: string[] = []
+    for (const l of fmText.slice(startIdx).split('\n')) {
+      if (l && !l.startsWith(' ') && !l.startsWith('\t')) break
+      parts.push(l.trim())
+    }
+    return parts.join(' ').trim()
+  }
+  return fmText.match(/^description:\s*["']?(.+?)["']?\s*$/m)?.[1]?.trim() ?? ''
+}
+
 watch(() => props.visible, (v) => {
   if (v) {
     if (props.agent) {
       formName.value = props.agent.name
-      formDescription.value = props.agent.description
       formContent.value = props.agent.content ?? ''
+      formDescription.value = parseDescriptionFromContent(formContent.value) || props.agent.description
     } else {
       formName.value = ''
       formDescription.value = ''

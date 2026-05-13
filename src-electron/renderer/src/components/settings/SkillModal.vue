@@ -24,12 +24,26 @@ const formName = ref('')
 const formDescription = ref('')
 const formContent = ref('')
 
+function parseDescriptionFromContent(content: string): string {
+  const lines = content.split('\n')
+  const fmLines: string[] = []
+  let inFm = false
+  for (const line of lines) {
+    if (line.trim() === '---') {
+      if (!inFm) { inFm = true; continue }
+      break
+    }
+    if (inFm) fmLines.push(line)
+  }
+  return fmLines.join('\n').match(/^description:\s*["']?(.+?)["']?\s*$/m)?.[1]?.trim() ?? ''
+}
+
 watch(() => props.visible, (v) => {
   if (v) {
     if (props.skill) {
       formName.value = props.skill.name
-      formDescription.value = props.skill.description
       formContent.value = props.skill.content ?? ''
+      formDescription.value = parseDescriptionFromContent(formContent.value) || props.skill.description
     } else {
       formName.value = ''
       formDescription.value = ''
