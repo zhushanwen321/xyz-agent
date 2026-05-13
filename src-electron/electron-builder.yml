@@ -1,0 +1,8 @@
+files:
+  - dist/**/*
+  - package.json
+  - node_modules/**/*
+directories:
+  output: dist/builder-output
+mac:
+  target: dir
