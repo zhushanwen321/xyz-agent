@@ -2,22 +2,20 @@
 import { ref, computed } from 'vue'
 import type { SkillInfo } from '@xyz-agent/shared'
 import { Button } from '../../design-system'
-import { ToggleSwitch, MetaGrid, MarkdownEditor } from './shared'
+import { ToggleSwitch, MetaGrid } from './shared'
 
 const props = defineProps<{
   skill: SkillInfo
 }>()
 
-const emit = defineEmits<{
+defineEmits<{
   'toggle-enabled': []
+  edit: []
   delete: [skillId: string]
-  save: [payload: { skillId: string; content: string }]
 }>()
 
 const expanded = ref(false)
-const showEditor = ref(false)
 const showConfirm = ref(false)
-const content = ref(props.skill.content ?? '')
 
 const metaItems = computed(() => [
   { key: '名称', value: props.skill.name },
@@ -26,11 +24,6 @@ const metaItems = computed(() => [
   { key: '文件大小', value: props.skill.fileSize ?? '-' },
   { key: '依赖工具', value: props.skill.tools?.join(', ') ?? '-' },
 ])
-
-function handleSave() {
-  emit('save', { skillId: props.skill.id, content: content.value })
-  showEditor.value = false
-}
 </script>
 
 <template>
@@ -58,7 +51,7 @@ function handleSave() {
         <div class="text-[11px] text-muted mt-px line-clamp-1">{{ skill.description }}</div>
       </div>
       <div class="flex items-center gap-1 shrink-0" @click.stop>
-        <Button variant="ghost" size="sm" @click="expanded = true; showEditor = true">编辑</Button>
+        <Button variant="ghost" size="sm" @click="$emit('edit')">编辑</Button>
         <Button variant="ghost" size="sm" class="hover:!text-[var(--danger)] hover:!bg-[var(--danger-light)]" @click="showConfirm = true">删除</Button>
         <svg
           class="shrink-0 text-muted transition-transform duration-150"
@@ -83,12 +76,6 @@ function handleSave() {
     <!-- Detail -->
     <div v-if="expanded && !showConfirm" class="px-4 py-3 border-t border-[var(--divider)] bg-[var(--section-bg)]">
       <MetaGrid :items="metaItems" />
-      <MarkdownEditor
-        v-if="showEditor"
-        v-model="content"
-        filename="SKILL.md"
-        @save="handleSave"
-      />
     </div>
   </div>
 </template>

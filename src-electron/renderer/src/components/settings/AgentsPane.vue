@@ -18,10 +18,6 @@ const scanSources = [
   { id: 'agents', icon: 'A', label: 'Agents', path: '~/.agents/agents/', defaultActive: false },
 ]
 
-const allModels = computed(() =>
-  providerStore.enabledModels.map(m => ({ id: m.id, name: m.name, providerName: m.providerName })),
-)
-
 function handleScan(sources: string[]) {
   providerStore.scanAgentsAction(sources)
 }
@@ -30,21 +26,12 @@ function handleImport(items: ScannedAgentInfo[]) {
   providerStore.importAgents(items)
 }
 
-function handleUpdateStrategy(payload: { agentId: string; strategy: string }) {
-  const agent = agents.value.find(a => a.id === payload.agentId)
-  if (agent) {
-    providerStore.setAgent({ ...agent, modelStrategy: payload.strategy })
-  }
-}
-
-function handleAgentSave(data: { name: string; description: string; modelStrategy: string; modelBind?: string }) {
+function handleAgentSave(data: { name: string; description: string }) {
   if (editingAgent.value) {
     providerStore.setAgent({
       ...editingAgent.value,
       name: data.name,
       description: data.description,
-      modelStrategy: data.modelStrategy,
-      modelBind: data.modelBind,
     })
   } else {
     const newAgent: AgentInfo = {
@@ -52,8 +39,6 @@ function handleAgentSave(data: { name: string; description: string; modelStrateg
       name: data.name,
       description: data.description,
       enabled: true,
-      modelStrategy: data.modelStrategy,
-      modelBind: data.modelBind,
     }
     providerStore.setAgent(newAgent)
   }
@@ -114,15 +99,13 @@ function closeModal() {
           v-for="agent in agents"
           :key="agent.id"
           :agent="agent"
-          :all-models="allModels"
           @toggle-enabled="providerStore.toggleAgent(agent.id)"
           @edit="openEditModal(agent)"
-          @update-strategy="handleUpdateStrategy"
           @delete="providerStore.deleteAgentAction(agent.id)"
         />
       </div>
     </div>
 
-    <AgentModal :visible="showModal" :agent="editingAgent" :models="allModels" @close="closeModal" @save="handleAgentSave" />
+    <AgentModal :visible="showModal" :agent="editingAgent" @close="closeModal" @save="handleAgentSave" />
   </div>
 </template>

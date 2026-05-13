@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, onUnmounted } from 'vue'
-import { Button, Input } from '../../design-system'
+import { Button, Input, Textarea } from '../../design-system'
 import type { SkillInfo } from '@xyz-agent/shared'
 
 interface Props {
@@ -14,26 +14,23 @@ const props = withDefaults(defineProps<Props>(), {
 
 const emit = defineEmits<{
   close: []
-  save: [data: { name: string; description: string; triggers: string[]; sourcePath: string }]
+  save: [data: { name: string; description: string; content: string }]
 }>()
 
 const formName = ref('')
 const formDescription = ref('')
-const formTriggers = ref('')
-const formSourcePath = ref('')
+const formContent = ref('')
 
 watch(() => props.visible, (v) => {
   if (v) {
     if (props.skill) {
       formName.value = props.skill.name
       formDescription.value = props.skill.description
-      formTriggers.value = props.skill.triggers.join(', ')
-      formSourcePath.value = props.skill.sourcePath ?? ''
+      formContent.value = props.skill.content ?? ''
     } else {
       formName.value = ''
       formDescription.value = ''
-      formTriggers.value = ''
-      formSourcePath.value = ''
+      formContent.value = ''
     }
   }
 })
@@ -42,8 +39,7 @@ function handleSave() {
   emit('save', {
     name: formName.value.trim(),
     description: formDescription.value.trim(),
-    triggers: formTriggers.value.split(',').map(s => s.trim()).filter(Boolean),
-    sourcePath: formSourcePath.value.trim(),
+    content: formContent.value,
   })
 }
 
@@ -73,7 +69,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown))
     ]"
     @click.self="$emit('close')"
   >
-    <div class="w-[600px] max-h-[85vh] bg-surface border border-border rounded overflow-hidden flex flex-col shadow-[0_8px_40px_rgba(0,0,0,0.12)]">
+    <div class="w-[640px] max-h-[85vh] bg-surface border border-border rounded overflow-hidden flex flex-col shadow-[0_8px_40px_rgba(0,0,0,0.12)]">
       <div class="flex items-center justify-between py-4 px-5 border-b border-border">
         <div class="font-display text-base font-semibold">{{ skill ? '编辑 Skill' : '添加 Skill' }}</div>
         <Button variant="ghost" class="!h-7 !w-7 !p-0 !rounded-xs !text-muted hover:!bg-accent-light hover:!text-accent" @click="$emit('close')">×</Button>
@@ -90,14 +86,15 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown))
           <Input v-model="formDescription" placeholder="简要描述此 Skill 的功能" />
         </div>
 
-        <div class="mb-4">
-          <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">触发词 (逗号分隔)</div>
-          <Input v-model="formTriggers" placeholder="例如：review, 代码审查, 检查代码" />
-        </div>
-
-        <div class="mb-4">
-          <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">来源路径</div>
-          <Input v-model="formSourcePath" placeholder="例如：~/.pi/agent/skills/code-review/" />
+        <div class="mb-1">
+          <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">SKILL.md 内容</div>
+          <Textarea
+            v-model="formContent"
+            :auto-resize="false"
+            :rows="16"
+            class="!font-mono !text-[13px] !leading-relaxed !resize-y"
+            placeholder="---&#10;name: my-skill&#10;description: 描述&#10;---&#10;&#10;# My Skill&#10;&#10;Skill 内容..."
+          />
         </div>
       </div>
 

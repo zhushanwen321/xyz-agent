@@ -1,18 +1,16 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import type { AgentInfo } from '@xyz-agent/shared'
-import { Button, Select } from '../../design-system'
+import { Button } from '../../design-system'
 import { ToggleSwitch } from './shared'
 
 const props = defineProps<{
   agent: AgentInfo
-  allModels: Array<{ id: string; name: string; providerName: string }>
 }>()
 
 const emit = defineEmits<{
   'toggle-enabled': []
   edit: []
-  'update-strategy': [payload: { agentId: string; strategy: string }]
   delete: [agentId: string]
 }>()
 
@@ -20,27 +18,7 @@ const showConfirm = ref(false)
 
 const initial = computed(() => (props.agent.icon ?? props.agent.name.charAt(0)).toUpperCase())
 
-const strategyLabel = computed(() => {
-  if (props.agent.modelStrategy === 'auto') return 'auto'
-  if (props.agent.modelStrategy === 'tag') return 'tag'
-  if (props.agent.modelStrategy === 'bind') return 'bind'
-  return 'auto'
-})
-
-const strategyOptions = [
-  { label: 'auto — 自动匹配', value: 'auto' },
-  { label: 'tag — 按标签', value: 'tag' },
-  { label: 'bind — 绑定', value: 'bind' },
-]
-
-const sourceSubtitle = computed(() => {
-  const path = props.agent.source ?? props.agent.id
-  return `${strategyLabel.value} · ${path}`
-})
-
-function onStrategyChange(val: string) {
-  emit('update-strategy', { agentId: props.agent.id, strategy: val })
-}
+const sourceSubtitle = computed(() => props.agent.source ?? props.agent.id)
 
 function handleDeleteClick() {
   showConfirm.value = true
@@ -91,23 +69,6 @@ function cancelDelete() {
       确认删除 {{ agent.name }}？此操作不可撤销。
       <Button variant="ghost" size="sm" class="!bg-[var(--danger)] !text-white hover:!opacity-80 !py-[3px] !px-2 !text-[11px] !rounded-[3px] !border-none" @click="confirmDelete">确认删除</Button>
       <Button variant="ghost" size="sm" class="!text-[var(--danger)] !py-[3px] !px-2 !text-[11px]" @click="cancelDelete">取消</Button>
-    </div>
-
-    <!-- Body -->
-    <div>
-      <div class="flex items-center gap-3 py-2 px-4 border-b border-[var(--divider)]">
-        <span class="text-xs font-medium min-w-[76px]">模型策略</span>
-        <Select
-          :model-value="strategyLabel"
-          :options="strategyOptions"
-          class="flex-1 !h-7 !px-2.5 !py-1 !text-xs !rounded"
-          @update:model-value="onStrategyChange"
-        />
-      </div>
-      <div v-if="agent.tools && agent.tools.length > 0" class="flex items-center gap-3 py-2 px-4">
-        <span class="text-xs font-medium min-w-[76px]">工具</span>
-        <span class="font-mono text-[11px]">{{ agent.tools.join(', ') }}</span>
-      </div>
     </div>
   </div>
 </template>
