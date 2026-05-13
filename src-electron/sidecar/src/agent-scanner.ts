@@ -14,6 +14,8 @@ function inferSourceType(path: string): ScanSourceType {
   return 'custom'
 }
 
+// 手写的 YAML frontmatter 解析，仅支持简单的 key: value 和多行 > 格式
+// 不支持嵌套对象、引号内冒号、多行数组等复杂 YAML 场景
 function parseAgentMd(content: string): { description: string; tools: string[] } {
   const lines = content.split('\n')
   const tools: string[] = []
