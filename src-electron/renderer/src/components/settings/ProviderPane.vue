@@ -50,16 +50,9 @@ function toggleProvider(id: string) {
   send({ type: 'config.setProvider', payload: { providerId: id, enabled: !newEnabled } })
 }
 
-function handleSave(_data: {
-  name: string
-  type: string
-  url: string
-  key: string
-  models: { id: string; name: string; ctx: string; tags: string[] }[]
-  providerId?: string
-}) {
-  const { providerId: _pid, ...rest } = _data
-  const providerId = _pid || _data.name.toLowerCase().replace(/\s+/g, '-')
+function handleSave(data: { name: string; type: string; url: string; key: string; models: { id: string; name: string; ctx: string | number | undefined; tags: string[]; enabled?: boolean }[]; providerId?: string }) {
+  const { providerId: _pid, ...rest } = data
+  const providerId = _pid || data.name.toLowerCase().replace(/\s+/g, '-')
   const { url, key, ...configData } = rest
   const apiKey = key && key !== '••••••••' ? key : undefined
   send({ type: 'config.setProvider', payload: { providerId, baseUrl: url, ...(apiKey !== undefined && { apiKey: apiKey }), ...configData } })

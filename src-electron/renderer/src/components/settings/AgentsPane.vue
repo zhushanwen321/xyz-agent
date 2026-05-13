@@ -42,6 +42,7 @@ function handleAgentSave(data: { name: string; description: string; content: str
       name: data.name,
       description: data.description,
       enabled: true,
+      modelStrategy: 'auto',
       content: data.content,
     }
     providerStore.setAgent(newAgent)

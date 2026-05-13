@@ -31,6 +31,7 @@ interface ModalModel {
   name: string
   ctx: string | number | undefined
   tags: string[]
+  enabled?: boolean
 }
 
 interface ModalFormData {

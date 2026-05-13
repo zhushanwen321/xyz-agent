@@ -25,8 +25,8 @@ function handleScan(sources: string[]) {
   providerStore.scanSkillsAction(sources)
 }
 
-function handleImport(items: ScannedSkillInfo[]) {
-  providerStore.importSkills(items)
+function handleImport(items: ScannedSkillInfo[] | import('@xyz-agent/shared').ScannedAgentInfo[]) {
+  providerStore.importSkills(items as ScannedSkillInfo[])
 }
 
 function handleSkillSave(data: { name: string; description: string; content: string }) {
