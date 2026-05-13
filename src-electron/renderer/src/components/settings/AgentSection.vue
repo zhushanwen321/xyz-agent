@@ -8,15 +8,13 @@ const props = defineProps<{
   agent: AgentInfo
 }>()
 
-const emit = defineEmits<{
+defineEmits<{
   'toggle-enabled': []
   edit: []
   delete: [agentId: string]
 }>()
 
 const showConfirm = ref(false)
-
-const initial = computed(() => (props.agent.icon ?? props.agent.name.charAt(0)).toUpperCase())
 
 const sourceSubtitle = computed(() => props.agent.source ?? props.agent.id)
 
@@ -47,13 +45,9 @@ function cancelDelete() {
         @update:model-value="$emit('toggle-enabled')"
         @click.stop
       />
-      <div
-        class="w-[30px] h-[30px] rounded-[5px] flex items-center justify-center font-bold text-sm shrink-0"
-        :style="agent.iconBg ? { background: agent.iconBg, color: 'var(--accent)' } : { background: 'var(--accent-light)', color: 'var(--accent)' }"
-      >{{ initial }}</div>
       <div class="flex-1 min-w-0">
         <div class="text-[13px] font-semibold">{{ agent.name }}</div>
-        <div class="text-[11px] text-muted font-mono mt-px truncate">{{ sourceSubtitle }}</div>
+        <div class="text-[11px] text-muted mt-px truncate">{{ sourceSubtitle }}</div>
       </div>
       <div class="flex items-center gap-1 shrink-0" @click.stop>
         <Button variant="ghost" size="sm" @click="$emit('edit')">编辑</Button>
