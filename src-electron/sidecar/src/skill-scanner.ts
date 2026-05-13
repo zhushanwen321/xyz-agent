@@ -19,7 +19,8 @@ function parseSkillMd(content: string): { description: string; triggers: string[
   let description = ''
   const triggers: string[] = []
 
-  // 跳过 YAML frontmatter (--- ... ---)
+  // 提取 YAML frontmatter 内容
+  const frontmatterLines: string[] = []
   let inFrontmatter = false
   let frontmatterEnd = 0
   for (let i = 0; i < lines.length; i++) {
@@ -32,9 +33,15 @@ function parseSkillMd(content: string): { description: string; triggers: string[
         break
       }
     }
+    if (inFrontmatter) frontmatterLines.push(lines[i])
   }
 
-  // 从 frontmatter 后的第一个非标题、非空行开始取 description
+  // 从 frontmatter 中提取 description 字段（可能跨行）
+  const fmDesc = frontmatterLines
+    .join('\n')
+    .match(/^description:\s*["']?(.+?)["']?\s*$/m)?.[1]?.trim()
+
+  // 正文 description：frontmatter 后第一个非标题、非空行
   for (let i = frontmatterEnd; i < lines.length; i++) {
     const line = lines[i].trim()
     if (!line) continue
@@ -43,8 +50,15 @@ function parseSkillMd(content: string): { description: string; triggers: string[
     break
   }
 
-  // triggers: 尝试从 frontmatter 或 description 字段附近找
-  // 宽容处理，找不到就留空
+  // 优先用 frontmatter description 提取 triggers（含触发词模式）
+  const triggerSource = fmDesc ?? description
+  const triggerPattern = /["\u201c]([^"\u201d\u2018\u2019]+?)["\u201d]/g
+  let match: RegExpExecArray | null
+  while ((match = triggerPattern.exec(triggerSource)) !== null) {
+    const t = match[1].trim()
+    if (t.length >= 2 && t.length <= 40) triggers.push(t)
+  }
+
   return { description, triggers }
 }
 
