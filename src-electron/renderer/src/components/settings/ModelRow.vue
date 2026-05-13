@@ -21,7 +21,7 @@ const allTags = ['power', 'efficient', 'fast'] as const
         :variant="tag"
         :active="tags.includes(tag)"
         readonly
-      />
+      >{{ tag }}</TagPill>
     </div>
   </div>
 </template>
