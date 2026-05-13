@@ -16,7 +16,11 @@ defineEmits<{
 
 const showConfirm = ref(false)
 
-const sourceSubtitle = computed(() => props.agent.source ?? props.agent.id)
+const sourceLabel = computed(() => {
+  const s = props.agent.source
+  if (!s || s === props.agent.id) return ''
+  return s
+})
 
 function handleDeleteClick() {
   showConfirm.value = true
@@ -46,8 +50,11 @@ function cancelDelete() {
         @click.stop
       />
       <div class="flex-1 min-w-0">
-        <div class="text-[13px] font-semibold">{{ agent.name }}</div>
-        <div class="text-[11px] text-muted mt-px truncate">{{ sourceSubtitle }}</div>
+        <div class="text-[13px] font-semibold flex items-center gap-2">
+          {{ agent.name }}
+          <span v-if="sourceLabel" class="text-[10px] font-semibold py-[1px] px-1.5 rounded bg-[var(--accent-light)] text-[var(--accent)]">{{ sourceLabel }}</span>
+        </div>
+        <div class="text-[11px] text-muted mt-px line-clamp-1">{{ agent.description }}</div>
       </div>
       <div class="flex items-center gap-1 shrink-0" @click.stop>
         <Button variant="ghost" size="sm" @click="$emit('edit')">编辑</Button>

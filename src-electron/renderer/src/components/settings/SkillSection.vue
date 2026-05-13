@@ -17,6 +17,12 @@ defineEmits<{
 const expanded = ref(false)
 const showConfirm = ref(false)
 
+const sourceLabel = computed(() => {
+  const s = props.skill.source
+  if (!s) return ''
+  return s
+})
+
 const metaItems = computed(() => [
   { key: '名称', value: props.skill.name },
   { key: '触发词', value: props.skill.triggers.join('\u3001') || '-' },
@@ -46,6 +52,7 @@ const metaItems = computed(() => [
       <div class="flex-1 min-w-0">
         <div class="text-[13px] font-semibold flex items-center gap-2">
           {{ skill.name }}
+          <span v-if="sourceLabel" class="text-[10px] font-semibold py-[1px] px-1.5 rounded bg-[var(--accent-light)] text-[var(--accent)]">{{ sourceLabel }}</span>
           <span v-if="skill.tag" class="text-[10px] font-semibold py-[1px] px-1.5 rounded bg-[var(--accent-light)] text-[var(--accent)]">{{ skill.tag }}</span>
         </div>
         <div class="text-[11px] text-muted mt-px line-clamp-1">{{ skill.description }}</div>
