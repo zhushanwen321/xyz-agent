@@ -26,12 +26,13 @@ function handleImport(items: ScannedAgentInfo[]) {
   providerStore.importAgents(items)
 }
 
-function handleAgentSave(data: { name: string; description: string }) {
+function handleAgentSave(data: { name: string; description: string; content: string }) {
   if (editingAgent.value) {
     providerStore.setAgent({
       ...editingAgent.value,
       name: data.name,
       description: data.description,
+      content: data.content,
     })
   } else {
     const newAgent: AgentInfo = {
@@ -39,6 +40,7 @@ function handleAgentSave(data: { name: string; description: string }) {
       name: data.name,
       description: data.description,
       enabled: true,
+      content: data.content,
     }
     providerStore.setAgent(newAgent)
   }

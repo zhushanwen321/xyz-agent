@@ -91,7 +91,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown))
           <Textarea
             v-model="formContent"
             :auto-resize="false"
-            :rows="16"
+            :rows="32"
             class="!font-mono !text-[13px] !leading-relaxed !resize-y"
             placeholder="---&#10;name: my-skill&#10;description: 描述&#10;---&#10;&#10;# My Skill&#10;&#10;Skill 内容..."
           />

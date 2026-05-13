@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, onUnmounted } from 'vue'
-import { Button, Input } from '../../design-system'
+import { Button, Input, Textarea } from '../../design-system'
 import type { AgentInfo } from '@xyz-agent/shared'
 
 interface Props {
@@ -14,20 +14,23 @@ const props = withDefaults(defineProps<Props>(), {
 
 const emit = defineEmits<{
   close: []
-  save: [data: { name: string; description: string }]
+  save: [data: { name: string; description: string; content: string }]
 }>()
 
 const formName = ref('')
 const formDescription = ref('')
+const formContent = ref('')
 
 watch(() => props.visible, (v) => {
   if (v) {
     if (props.agent) {
       formName.value = props.agent.name
       formDescription.value = props.agent.description
+      formContent.value = props.agent.content ?? ''
     } else {
       formName.value = ''
       formDescription.value = ''
+      formContent.value = ''
     }
   }
 })
@@ -36,6 +39,7 @@ function handleSave() {
   emit('save', {
     name: formName.value.trim(),
     description: formDescription.value.trim(),
+    content: formContent.value,
   })
 }
 
@@ -80,6 +84,17 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown))
         <div class="mb-4">
           <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">描述</div>
           <Input v-model="formDescription" placeholder="简要描述此 Agent 的职责" />
+        </div>
+
+        <div class="mb-1">
+          <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">Agent 内容</div>
+          <Textarea
+            v-model="formContent"
+            :auto-resize="false"
+            :rows="32"
+            class="!font-mono !text-[13px] !leading-relaxed !resize-y"
+            placeholder="---&#10;name: my-agent&#10;description: 描述&#10;---&#10;&#10;# My Agent&#10;&#10;Agent 系统提示词..."
+          />
         </div>
       </div>
 
