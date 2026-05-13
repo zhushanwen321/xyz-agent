@@ -112,8 +112,8 @@ const sourceTypeLabels: Record<string, string> = {
 </script>
 
 <template>
-  <div class="section mb-3">
-    <div class="section-header">
+  <div class="border border-border rounded-lg overflow-hidden mb-3">
+    <div class="flex items-center py-[10px] px-4 bg-[var(--section-bg)] border-b border-border min-h-[42px]">
       <span class="text-[13px] font-semibold">扫描并导入</span>
     </div>
 

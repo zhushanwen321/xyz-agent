@@ -39,12 +39,7 @@ const modelCount = computed(() => props.models.length)
     ]"
   >
     <!-- Header -->
-    <div class="flex items-center gap-3 py-[9px] px-4 bg-[var(--section-bg)] min-h-[42px]">
-      <ToggleSwitch
-        :model-value="provider.enabled !== false"
-        @update:model-value="$emit('toggle-enabled', provider.id)"
-        @click.stop
-      />
+    <div class="flex items-center gap-3 py-[9px] px-4 bg-[var(--section-bg)] min-h-[42px] border-b border-border">
       <div
         class="w-[30px] h-[30px] rounded-[5px] bg-[var(--accent-light)] flex items-center justify-center font-display font-bold text-sm text-[var(--accent)] shrink-0"
       >{{ initial }}</div>
@@ -56,7 +51,12 @@ const modelCount = computed(() => props.models.length)
         <div class="text-[11px] text-muted font-mono mt-px truncate">{{ provider.baseUrl }}</div>
       </div>
       <div class="flex items-center gap-1.5 shrink-0" @click.stop>
-        <span class="text-[10px] text-muted font-medium bg-[var(--hover-bg)] py-[2px] px-[6px] rounded-sm">{{ modelCount }} models</span>
+        <ToggleSwitch
+          :model-value="provider.enabled !== false"
+          @update:model-value="$emit('toggle-enabled', provider.id)"
+          @click.stop
+        />
+        <span class="text-[10px] text-muted font-medium bg-[var(--hover-bg)] py-[2px] px-[6px] rounded-full">{{ modelCount }} models</span>
         <Button variant="ghost" size="sm" @click="$emit('edit', provider.id)">编辑</Button>
         <Button variant="ghost" size="sm" class="hover:!text-[var(--danger)] hover:!bg-[var(--danger-light)]" @click="$emit('delete', provider.id)">删除</Button>
       </div>

@@ -61,8 +61,13 @@ export function scanAgents(sources: string[], existingAgentIds: Set<string>): Sc
     }
 
     for (const entry of entries) {
-      if (!entry.isDirectory()) continue
       const dirPath = join(source, entry.name)
+      // statSync 跟随符号链接，正确处理 symlinked agent 目录
+      try {
+        if (!statSync(dirPath).isDirectory()) continue
+      } catch {
+        continue
+      }
 
       // 查找主配置文件：优先 agent.md，备选目录名.md 或 SKILL.md
       const candidates = ['agent.md', `${entry.name}.md`, 'SKILL.md']

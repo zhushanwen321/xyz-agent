@@ -1,5 +1,4 @@
 <script setup lang="ts">
-/* eslint-disable max-lines */
 import { ref, watch, onUnmounted } from 'vue'
 import { Button, Input, Select } from '../../design-system'
 import type { ProviderInfo, ModelInfo } from '@xyz-agent/shared'
@@ -31,6 +30,7 @@ interface ModalModel {
   name: string
   ctx: string | number | undefined
   tags: string[]
+  enabled?: boolean
 }
 
 interface ModalFormData {
@@ -103,6 +103,7 @@ watch(() => props.visible, (v) => {
       name: m.name,
       ctx: m.contextWindow ?? '--',
       tags: [...(m.tags ?? [])],
+      enabled: m.enabled !== false,
     }))
     testResult.value = 'none'
     testMessage.value = ''
@@ -221,12 +222,16 @@ function handleDiscover() {
     const error = payload.error as string | undefined
 
     if (success && models.length > 0) {
-      modalModels.value = models.map(m => ({
-        id: m.id,
-        name: m.name,
-        ctx: m.ctx,
-        tags: [],
-      }))
+      modalModels.value = models.map(m => {
+        const existing = modalModels.value.find(em => em.id === m.id)
+        return {
+          id: m.id,
+          name: m.name,
+          ctx: m.ctx,
+          tags: [],
+          enabled: existing?.enabled ?? true,
+        }
+      })
       discoverStatus.value = 'success'
       discoverMessage.value = `发现 ${models.length} 个可用模型`
     } else if (success && models.length === 0) {

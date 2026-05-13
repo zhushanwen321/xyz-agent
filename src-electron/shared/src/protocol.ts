@@ -7,7 +7,7 @@ export type ClientMessageType =
   | 'config.discoverModels'
   | 'config.scanSkills' | 'config.setSkill' | 'config.deleteSkill'
   | 'config.scanAgents' | 'config.setAgent' | 'config.deleteAgent'
-  | 'model.list' | 'model.switch'
+  | 'model.list' | 'model.switch' | 'model.toggle'
   | 'tool.approve' | 'tool.deny' | 'tool.always_allow'
   | 'ping'
 
@@ -30,7 +30,7 @@ export type ServerMessageType =
   | 'config.scannedSkills' | 'config.skillUpdated' | 'config.skillDeleted'
   | 'config.scannedAgents' | 'config.agentUpdated' | 'config.agentDeleted'
   | 'config.skills' | 'config.agents'
-  | 'model.list' | 'model.switched'
+  | 'model.list' | 'model.switched' | 'model.toggled'
   | 'pong' | 'error'
 
 export interface ServerMessage {

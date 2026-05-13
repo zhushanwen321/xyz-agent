@@ -20,6 +20,12 @@ export const useProviderStore = defineStore('provider', () => {
     providers.value = providers.value.map(p => p.id === id ? { ...p, ...data } : p)
   }
 
+  function updateModel(providerId: string, modelId: string, data: Partial<ModelInfo>) {
+    models.value = models.value.map(m =>
+      m.id === modelId && m.providerId === providerId ? { ...m, ...data } : m
+    )
+  }
+
   const enabledModels = computed(() => models.value.filter(m => m.enabled !== false))
 
   const scannedSkills = ref<ScannedSkillInfo[]>([])
@@ -108,7 +114,7 @@ export const useProviderStore = defineStore('provider', () => {
     isScanningSkills, isScanningAgents,
     setProviders, setModels, setSkills, setAgents,
     setScannedSkills, setScannedAgents,
-    addProvider, removeProvider, updateProvider,
+    addProvider, removeProvider, updateProvider, updateModel,
     enabledModels,
     scanSkillsAction, scanAgentsAction,
     setSkill, deleteSkillAction, toggleSkill, importSkills,

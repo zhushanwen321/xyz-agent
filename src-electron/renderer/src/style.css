@@ -21,6 +21,9 @@
   --warning-light: oklch(95% 0.04 85);
   --danger: oklch(55% 0.12 25);
   --danger-light: oklch(93% 0.04 25);
+  --section-bg: oklch(95% 0.014 70);
+  --hover-bg: oklch(96% 0.01 70);
+  --divider: oklch(94% 0.008 70);
   --font-display: 'Tiempos Headline', 'Newsreader', 'Iowan Old Style', Georgia, serif;
   --font-body: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
@@ -68,6 +71,9 @@
   --warning-light: oklch(25% 0.04 85);
   --danger: oklch(55% 0.12 25);
   --danger-light: oklch(25% 0.04 25);
+  --section-bg: oklch(20% 0.010 75);
+  --hover-bg: oklch(19% 0.010 75);
+  --divider: oklch(22% 0.010 75);
 
   --shadow-xs: 0 1px 6px rgba(0, 0, 0, 0.2);
   --shadow-sm: 0 2px 12px rgba(0, 0, 0, 0.3);

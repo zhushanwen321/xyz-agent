@@ -18,7 +18,7 @@ const allTags = ['power', 'efficient', 'fast'] as const
 </script>
 
 <template>
-  <div :class="['flex items-center gap-2.5 py-2 px-3 rounded-sm mb-1 transition-colors duration-100 hover:bg-bg', { 'opacity-50': !enabled }]" @click.stop>
+  <div :class="['flex items-center gap-2.5 py-[9px] px-4 rounded-sm mb-1 transition-colors duration-100 hover:bg-bg', { 'opacity-50': !enabled }]" @click.stop>
     <div class="cursor-pointer flex items-center" @click="emit('toggle-enabled')">
       <ToggleSwitch :model-value="enabled" />
     </div>

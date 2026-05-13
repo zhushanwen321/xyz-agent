@@ -50,7 +50,9 @@ function toggleProvider(id: string) {
 function toggleModel(providerId: string, modelId: string) {
   const m = models.value.find(m => m.id === modelId && m.providerId === providerId)
   if (m) {
-    send({ type: 'model.switch', payload: { modelId, enabled: !m.enabled } })
+    const newEnabled = !m.enabled
+    providerStore.updateModel(providerId, modelId, { enabled: newEnabled })
+    send({ type: 'model.toggle', payload: { providerId, modelId, enabled: newEnabled } })
   }
 }
 

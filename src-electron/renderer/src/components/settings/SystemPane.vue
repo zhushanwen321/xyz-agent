@@ -68,7 +68,7 @@ function selectPalette(id: ThemePreset) {
 </script>
 
 <template>
-  <div class="max-w-[520px]">
+  <div class="max-w-[860px]">
     <!-- Section: 语言与外观 -->
     <div class="border border-border rounded-lg overflow-hidden mb-3">
       <div class="flex items-center py-[9px] px-4 bg-[var(--section-bg)] min-h-[42px]">

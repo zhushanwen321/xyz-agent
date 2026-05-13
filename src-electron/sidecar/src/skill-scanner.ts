@@ -1,15 +1,7 @@
 import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs'
-import { join, basename } from 'node:path'
+import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type { ScannedSkillInfo, ScanSourceType } from '@xyz-agent/shared'
-
-function resolveSource(sources: string[], existingSkillIds: Set<string>) {
-  function resolve(path: string) {
-    const s = sources.indexOf(path)
-    if (s >= 0) sources[s] = expandHome(path)
-  }
-  return sources.map(resolve)
-}
 
 function expandHome(p: string): string {
   return p.startsWith('~') ? join(homedir(), p.slice(1)) : p
@@ -70,16 +62,21 @@ export function scanSkills(sources: string[], existingSkillIds: Set<string>): Sc
     const sourceType = inferSourceType(rawSource)
 
     if (!existsSync(source)) continue
-    let entries
+    let names
     try {
-      entries = readdirSync(source, { withFileTypes: true })
+      names = readdirSync(source)
     } catch {
       continue
     }
 
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue
-      const dirPath = join(source, entry.name)
+    for (const name of names) {
+      const dirPath = join(source, name)
+      // statSync 跟随符号链接，正确处理 symlinked skill 目录
+      try {
+        if (!statSync(dirPath).isDirectory()) continue
+      } catch {
+        continue
+      }
       const skillMdPath = join(dirPath, 'SKILL.md')
 
       if (!existsSync(skillMdPath)) continue
@@ -88,12 +85,12 @@ export function scanSkills(sources: string[], existingSkillIds: Set<string>): Sc
         const content = readFileSync(skillMdPath, 'utf-8')
         const { description, triggers } = parseSkillMd(content)
         const stat = statSync(skillMdPath)
-        const id = `${sourceType}-${entry.name}`
+        const id = `${sourceType}-${name}`
         const alreadyImported = existingSkillIds.has(id)
 
         results.push({
           id,
-          name: entry.name,
+          name: name,
           description,
           sourceType,
           sourcePath: skillMdPath,

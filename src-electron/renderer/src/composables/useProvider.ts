@@ -40,18 +40,26 @@ export function useProvider() {
     if (payload.agents) store.setScannedAgents(payload.agents)
   }
 
-  function onSkillUpdated(_msg: ServerMessage) {
+  function onSkillUpdated() {
     // server broadcasts updated skill list via config.skills
   }
 
-  function onAgentUpdated(_msg: ServerMessage) {
+  function onAgentUpdated() {
     // server broadcasts updated agent list via config.agents
+  }
+
+  function onModelToggled(msg: ServerMessage) {
+    const payload = msg.payload as { providerId: string; modelId: string; enabled: boolean }
+    if (payload.providerId && payload.modelId) {
+      store.updateModel(payload.providerId, payload.modelId, { enabled: payload.enabled })
+    }
   }
 
   const handlers: Record<string, (msg: ServerMessage) => void> = {
     'config.providers': onProviders,
     'config.providerUpdated': onProviders,
     'model.list': onModels,
+    'model.toggled': onModelToggled,
     'config.skills': onSkills,
     'config.agents': onAgents,
     'config.scannedSkills': onScannedSkills,

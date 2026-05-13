@@ -6,9 +6,9 @@ const props = defineProps<{
 }>()
 
 const variantClasses: Record<string, string> = {
-  power: 'bg-[oklch(65%_0.18_25)] text-white border-[oklch(65%_0.18_25)]',
-  efficient: 'bg-[oklch(60%_0.15_260)] text-white border-[oklch(60%_0.15_260)]',
-  fast: 'bg-[oklch(68%_0.16_145)] text-white border-[oklch(68%_0.16_145)]',
+  power: 'bg-[oklch(92%_0.04_25)] text-[oklch(55%_0.12_25)] border-[oklch(92%_0.04_25)]',
+  efficient: 'bg-[oklch(92%_0.04_145)] text-[oklch(55%_0.12_145)] border-[oklch(92%_0.04_145)]',
+  fast: 'bg-[oklch(92%_0.04_250)] text-[oklch(55%_0.12_250)] border-[oklch(92%_0.04_250)]',
 }
 
 defineEmits<{

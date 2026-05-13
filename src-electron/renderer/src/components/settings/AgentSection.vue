@@ -33,9 +33,8 @@ const strategyOptions = [
 ]
 
 const sourceSubtitle = computed(() => {
-  const source = props.agent.source ?? props.agent.sourceType ?? ''
   const path = props.agent.source ?? props.agent.id
-  return `${strategyLabel.value} · ${source || path}`
+  return `${strategyLabel.value} · ${path}`
 })
 
 function onStrategyChange(val: string) {
@@ -94,7 +93,7 @@ function cancelDelete() {
     </div>
 
     <!-- Body -->
-    <div v-if="!showConfirm">
+    <div>
       <div class="flex items-center gap-3 py-2 px-4 border-b border-[var(--divider)]">
         <span class="text-xs font-medium min-w-[76px]">模型策略</span>
         <Select
