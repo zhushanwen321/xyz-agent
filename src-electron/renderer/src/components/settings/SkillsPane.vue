@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { useProviderStore } from '../../stores/provider'
 import { Button } from '../../design-system'
-import type { ScannedSkillInfo, SkillInfo } from '@xyz-agent/shared'
+import type { ScannedSkillInfo } from '@xyz-agent/shared'
 import ScanImportSection from './ScanImportSection.vue'
 import SkillSection from './SkillSection.vue'
 import SkillModal from './SkillModal.vue'
@@ -10,7 +10,6 @@ import SkillModal from './SkillModal.vue'
 const providerStore = useProviderStore()
 const skills = computed(() => providerStore.skills)
 const showModal = ref(false)
-const editingSkill = ref<SkillInfo | null>(null)
 
 const scanSources = [
   { id: 'pi', icon: 'P', label: 'Pi Skills', path: '~/.pi/agent/skills/', defaultActive: true },
@@ -27,42 +26,20 @@ function handleImport(items: ScannedSkillInfo[]) {
 }
 
 function handleSkillSave(data: { name: string; description: string; triggers: string[]; sourcePath: string }) {
-  if (editingSkill.value) {
-    providerStore.setSkill({
-      ...editingSkill.value,
-      name: data.name,
-      description: data.description,
-      triggers: data.triggers,
-      sourcePath: data.sourcePath || undefined,
-    })
-  } else {
-    providerStore.setSkill({
-      id: `skill-${Date.now()}`,
-      name: data.name,
-      description: data.description,
-      enabled: true,
-      source: 'manual',
-      triggers: data.triggers,
-      sourcePath: data.sourcePath || undefined,
-    })
-  }
+  providerStore.setSkill({
+    id: `skill-${Date.now()}`,
+    name: data.name,
+    description: data.description,
+    enabled: true,
+    source: 'manual',
+    triggers: data.triggers,
+    sourcePath: data.sourcePath || undefined,
+  })
   showModal.value = false
-  editingSkill.value = null
-}
-
-function openEditModal(skill: SkillInfo) {
-  editingSkill.value = skill
-  showModal.value = true
-}
-
-function openAddModal() {
-  editingSkill.value = null
-  showModal.value = true
 }
 
 function closeModal() {
   showModal.value = false
-  editingSkill.value = null
 }
 </script>
 
@@ -73,7 +50,7 @@ function closeModal() {
         <div class="font-display text-[22px] font-bold tracking-tight">Skill 配置</div>
         <div class="text-[12px] text-muted mt-1">扫描、导入和管理 AI 技能模块</div>
       </div>
-      <Button variant="primary" @click="openAddModal">
+      <Button variant="primary" @click="showModal = true">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M7 1v12M1 7h12" />
         </svg>
@@ -104,12 +81,11 @@ function closeModal() {
           :key="skill.id"
           :skill="skill"
           @toggle-enabled="providerStore.toggleSkill(skill.id)"
-          @edit="openEditModal(skill)"
           @delete="providerStore.deleteSkillAction(skill.id)"
         />
       </div>
     </div>
 
-    <SkillModal :visible="showModal" :skill="editingSkill" @close="closeModal" @save="handleSkillSave" />
+    <SkillModal :visible="showModal" @close="closeModal" @save="handleSkillSave" />
   </div>
 </template>

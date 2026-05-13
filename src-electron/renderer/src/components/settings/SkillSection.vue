@@ -10,7 +10,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'toggle-enabled': []
-  edit: []
   delete: [skillId: string]
   save: [payload: { skillId: string; content: string }]
 }>()
@@ -59,7 +58,7 @@ function handleSave() {
         <div class="text-[11px] text-muted mt-px line-clamp-1">{{ skill.description }}</div>
       </div>
       <div class="flex items-center gap-1 shrink-0" @click.stop>
-        <Button variant="ghost" size="sm" @click="$emit('edit')">编辑</Button>
+        <Button variant="ghost" size="sm" @click="expanded = true; showEditor = true">编辑</Button>
         <Button variant="ghost" size="sm" class="hover:!text-[var(--danger)] hover:!bg-[var(--danger-light)]" @click="showConfirm = true">删除</Button>
         <svg
           class="shrink-0 text-muted transition-transform duration-150"
