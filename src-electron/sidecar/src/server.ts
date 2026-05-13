@@ -4,7 +4,7 @@ import type { ClientMessage, ServerMessage, ModelInfo } from '@xyz-agent/shared'
 import { SessionPool } from './session-pool.js'
 import * as providerStore from './provider-store.js'
 import { lookupModel } from './model-db.js'
-import { updateToolPermissions, getProvider, loadSkills, saveSkills, loadAgents, saveAgents, toggleModelEnabled } from './config-store.js'
+import { updateToolPermissions, getProvider, loadSkills, saveSkills, loadAgents, saveAgents } from './config-store.js'
 import { scanSkills } from './skill-scanner.js'
 import { scanAgents } from './agent-scanner.js'
 import type { SkillInfo, AgentInfo } from '@xyz-agent/shared'
@@ -180,33 +180,6 @@ export class SidecarServer {
     }
   }
 
-  private handleModelToggle(
-    msg: ClientMessage,
-    ws: WsType,
-  ): void {
-    const { providerId, modelId, enabled } = msg.payload as {
-      providerId: string
-      modelId: string
-      enabled: boolean
-    }
-    const ok = toggleModelEnabled(providerId, modelId, enabled)
-    providerStore.reload()
-    if (ok) {
-      this.send(ws, {
-        type: 'model.toggled',
-        id: msg.id,
-        payload: { providerId, modelId, enabled, success: true },
-      })
-    } else {
-      this.send(ws, {
-        type: 'model.toggled',
-        id: msg.id,
-        payload: { providerId, modelId, enabled, success: false, error: 'Model not found' },
-      })
-    }
-    this.broadcastProviderList()
-  }
-
   private async handleSettingsMessage(msg: ClientMessage, ws: WsType): Promise<boolean> {
     switch (msg.type) {
       case 'config.getProviders': {
@@ -293,9 +266,6 @@ export class SidecarServer {
         this.send(ws, { type: 'model.switched', id: msg.id, payload: { sessionId, provider, modelId } })
         return true
       }
-      case 'model.toggle':
-        this.handleModelToggle(msg, ws)
-        return true
       case 'tool.approve':
         await this.pool.approveTool((msg.payload as { sessionId: string; toolCallId: string }).sessionId, (msg.payload as { sessionId: string; toolCallId: string }).toolCallId)
         return true

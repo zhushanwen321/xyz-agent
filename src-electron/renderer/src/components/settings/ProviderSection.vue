@@ -13,7 +13,6 @@ const props = defineProps<{
 
 defineEmits<{
   'toggle-enabled': [providerId: string]
-  'toggle-model': [providerId: string, modelId: string]
   edit: [providerId: string]
   delete: [providerId: string]
 }>()
@@ -73,8 +72,6 @@ const modelCount = computed(() => props.models.length)
         :name="model.name"
         :ctx="model.contextWindow ? `${Math.round(model.contextWindow / 1000)}K` : '--'"
         :tags="model.tags ?? []"
-        :enabled="model.enabled !== false"
-        @toggle-enabled="$emit('toggle-model', provider.id, model.id)"
       />
     </div>
   </div>

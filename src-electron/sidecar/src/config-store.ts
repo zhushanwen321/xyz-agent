@@ -116,37 +116,6 @@ export function getToolPermissions(): Record<string, string> {
   return loadConfig().toolPermissions ?? {}
 }
 
-/**
- * 切换指定 provider 下某个 model 的 enabled 状态。
- * 如果 model 是纯字符串，先升级为对象格式再设置 enabled。
- * 返回 true 表示成功，false 表示未找到。
- */
-export function toggleModelEnabled(providerId: string, modelId: string, enabled: boolean): boolean {
-  const config = loadConfig()
-  const prov = config.providers[providerId]
-  if (!prov || !Array.isArray(prov.models)) return false
-
-  let found = false
-  prov.models = prov.models.map(m => {
-    if (typeof m === 'string') {
-      if (m === modelId) {
-        found = true
-        return { id: m, enabled }
-      }
-      return m
-    }
-    if (m.id === modelId) {
-      found = true
-      return { ...m, enabled }
-    }
-    return m
-  })
-
-  if (!found) return false
-  saveConfig(config)
-  return true
-}
-
 export function getProvider(providerId: string): ProviderConfig | undefined {
   return loadConfig().providers[providerId]
 }

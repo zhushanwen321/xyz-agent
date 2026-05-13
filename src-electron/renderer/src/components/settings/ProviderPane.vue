@@ -50,15 +50,6 @@ function toggleProvider(id: string) {
   send({ type: 'config.setProvider', payload: { providerId: id, enabled: !newEnabled } })
 }
 
-function toggleModel(providerId: string, modelId: string) {
-  const m = models.value.find(m => m.id === modelId && m.providerId === providerId)
-  if (m) {
-    const newEnabled = !m.enabled
-    providerStore.updateModel(providerId, modelId, { enabled: newEnabled })
-    send({ type: 'model.toggle', payload: { providerId, modelId, enabled: newEnabled } })
-  }
-}
-
 function handleSave(_data: {
   name: string
   type: string
@@ -120,7 +111,6 @@ function handleSave(_data: {
         :provider="provider"
         :models="getModelsFor(provider.id)"
         @toggle-enabled="toggleProvider"
-        @toggle-model="toggleModel"
         @edit="openEdit"
         @delete="handleDelete"
       />

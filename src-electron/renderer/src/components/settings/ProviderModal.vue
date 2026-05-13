@@ -31,7 +31,6 @@ interface ModalModel {
   name: string
   ctx: string | number | undefined
   tags: string[]
-  enabled?: boolean
 }
 
 interface ModalFormData {
@@ -106,7 +105,6 @@ watch(() => props.visible, (v) => {
       name: m.name,
       ctx: m.contextWindow ?? '--',
       tags: [...(m.tags ?? [])],
-      enabled: m.enabled !== false,
     }))
     testResult.value = 'none'
     testMessage.value = ''

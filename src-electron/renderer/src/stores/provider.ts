@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import type { ProviderInfo, ModelInfo, SkillInfo, AgentInfo, ScannedSkillInfo, ScannedAgentInfo } from '@xyz-agent/shared'
 import { send } from '../lib/ws-client'
 
@@ -19,14 +19,6 @@ export const useProviderStore = defineStore('provider', () => {
   function updateProvider(id: string, data: Partial<ProviderInfo>) {
     providers.value = providers.value.map(p => p.id === id ? { ...p, ...data } : p)
   }
-
-  function updateModel(providerId: string, modelId: string, data: Partial<ModelInfo>) {
-    models.value = models.value.map(m =>
-      m.id === modelId && m.providerId === providerId ? { ...m, ...data } : m
-    )
-  }
-
-  const enabledModels = computed(() => models.value.filter(m => m.enabled !== false))
 
   const scannedSkills = ref<ScannedSkillInfo[]>([])
   const scannedAgents = ref<ScannedAgentInfo[]>([])
@@ -114,8 +106,7 @@ export const useProviderStore = defineStore('provider', () => {
     isScanningSkills, isScanningAgents,
     setProviders, setModels, setSkills, setAgents,
     setScannedSkills, setScannedAgents,
-    addProvider, removeProvider, updateProvider, updateModel,
-    enabledModels,
+    addProvider, removeProvider, updateProvider,
     scanSkillsAction, scanAgentsAction,
     setSkill, deleteSkillAction, toggleSkill, importSkills,
     setAgent, deleteAgentAction, toggleAgent, importAgents,

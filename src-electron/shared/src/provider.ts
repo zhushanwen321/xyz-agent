@@ -5,7 +5,7 @@ export interface ProviderInfo {
   name: string
   type?: string
   status: ProviderStatus
-  models: Array<string | { id: string; name?: string; ctx?: number; tags?: string[]; enabled?: boolean }>
+  models: Array<string | { id: string; name?: string; ctx?: number; tags?: string[] }>
   apiKeySet: boolean
   baseUrl?: string
   enabled?: boolean
@@ -18,7 +18,6 @@ export interface ModelInfo {
   providerName: string
   tags?: string[]
   contextWindow?: number
-  enabled?: boolean
 }
 
 export interface SkillInfo {
