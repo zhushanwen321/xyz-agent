@@ -57,12 +57,12 @@ function cancelDelete() {
 <template>
   <div
     :class="[
-      'border border-border rounded-lg overflow-hidden mb-3 transition-all duration-150 hover:border-[oklch(86%_0.012_70)]',
+      'border-b border-[var(--divider)] last:border-b-0 transition-colors duration-120',
       { 'opacity-60': !agent.enabled },
     ]"
   >
     <!-- Header -->
-    <div class="flex items-center gap-3 py-[9px] px-4 bg-[var(--section-bg)] min-h-[42px]">
+    <div class="flex items-center gap-3 py-[9px] px-4 min-h-[42px] hover:bg-[var(--hover-bg)]">
       <ToggleSwitch
         :model-value="agent.enabled"
         @update:model-value="$emit('toggle-enabled')"

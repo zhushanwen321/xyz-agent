@@ -36,13 +36,13 @@ function handleSave() {
 <template>
   <div
     :class="[
-      'border border-border rounded-lg overflow-hidden mb-3 transition-all duration-150 hover:border-[oklch(86%_0.012_70)]',
+      'border-b border-[var(--divider)] last:border-b-0 transition-colors duration-120',
       { 'opacity-40': !skill.enabled },
     ]"
   >
     <!-- Header -->
     <div
-      class="flex items-center gap-3 py-[9px] px-4 bg-[var(--section-bg)] min-h-[42px] cursor-pointer"
+      class="flex items-center gap-3 py-[9px] px-4 min-h-[42px] cursor-pointer hover:bg-[var(--hover-bg)]"
       @click="expanded = !expanded"
     >
       <ToggleSwitch
@@ -81,7 +81,7 @@ function handleSave() {
     </div>
 
     <!-- Detail -->
-    <div v-if="expanded && !showConfirm" class="px-4 py-3">
+    <div v-if="expanded && !showConfirm" class="px-4 py-3 border-t border-[var(--divider)] bg-[var(--section-bg)]">
       <MetaGrid :items="metaItems" />
       <MarkdownEditor
         v-if="showEditor"

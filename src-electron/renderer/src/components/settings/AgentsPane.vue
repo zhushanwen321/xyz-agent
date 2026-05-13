@@ -77,15 +77,23 @@ function handleAgentSave(data: { name: string; description: string; modelStrateg
     />
 
     <!-- Agent sections -->
-    <AgentSection
-      v-for="agent in agents"
-      :key="agent.id"
-      :agent="agent"
-      :all-models="allModels"
-      @toggle-enabled="providerStore.toggleAgent(agent.id)"
-      @update-strategy="handleUpdateStrategy"
-      @delete="providerStore.deleteAgentAction(agent.id)"
-    />
+    <div v-if="agents.length > 0" class="border border-border rounded-lg overflow-hidden mb-3">
+      <div class="flex items-center justify-between py-[10px] px-4 bg-[var(--section-bg)] border-b border-border min-h-[42px]">
+        <span class="text-[13px] font-semibold">已导入</span>
+        <span class="text-[10px] text-muted font-medium bg-[var(--hover-bg)] py-[2px] px-[6px] rounded-sm">{{ agents.length }}</span>
+      </div>
+      <div>
+        <AgentSection
+          v-for="agent in agents"
+          :key="agent.id"
+          :agent="agent"
+          :all-models="allModels"
+          @toggle-enabled="providerStore.toggleAgent(agent.id)"
+          @update-strategy="handleUpdateStrategy"
+          @delete="providerStore.deleteAgentAction(agent.id)"
+        />
+      </div>
+    </div>
 
     <AgentModal :visible="showModal" :models="allModels" @close="showModal = false" @save="handleAgentSave" />
   </div>
