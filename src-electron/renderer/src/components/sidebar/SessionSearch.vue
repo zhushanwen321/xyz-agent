@@ -31,7 +31,7 @@ function clear() {
         :model-value="modelValue"
         :placeholder="t('sidebar.searchSessions')"
         class="flex-1"
-        @update:model-value="emit('update:modelValue', $event)"
+        @update:model-value="emit('update:modelValue', String($event))"
       />
       <Button
         v-if="hasValue"

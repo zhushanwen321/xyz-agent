@@ -2,75 +2,115 @@
 import { ref, computed } from 'vue'
 import { Button } from '../../design-system'
 import { useProviderStore } from '../../stores/provider'
-import type { AgentInfo } from '@xyz-agent/shared'
-import GlobalParams from './GlobalParams.vue'
-import ImportSection, { type ImportSource } from './shared/ImportSection.vue'
-import AgentCard from './AgentCard.vue'
+import type { ScannedAgentInfo, AgentInfo } from '@xyz-agent/shared'
+import ScanImportSection from './ScanImportSection.vue'
+import AgentSection from './AgentSection.vue'
 import AgentModal from './AgentModal.vue'
+import { useI18n } from 'vue-i18n'
 
+const { t } = useI18n()
 const providerStore = useProviderStore()
 const agents = computed(() => providerStore.agents)
-const globalParams = ref({ depth: 20, width: 10, tokens: 100_000, rounds: 50 })
-const expandedId = ref<string | null>(null)
 const showModal = ref(false)
+const editingAgent = ref<AgentInfo | null>(null)
 
-const scanSources: ImportSource[] = [
-  { id: 'pi', icon: 'P', label: 'Pi Agents', path: '~/.pi/agent/agents/', active: true },
-  { id: 'agents', icon: 'A', label: 'Agents', path: '~/.agents/agents/', active: false },
+const scanSources = [
+  { id: 'pi', icon: 'P', label: 'Pi Agents', path: '~/.pi/agent/agents/', defaultActive: true },
+  { id: 'claude', icon: 'C', label: 'Claude Code', path: '~/.claude/agents/', defaultActive: false },
+  { id: 'agents', icon: 'A', label: 'Agents', path: '~/.agents/agents/', defaultActive: false },
 ]
 
-const allModels = computed(() =>
-  providerStore.enabledModels.map(m => ({ id: m.id, name: m.name, providerName: m.providerName })),
-)
+function handleScan(sources: string[]) {
+  providerStore.scanAgentsAction(sources)
+}
 
-function handleAgentSave(data: { name: string; description: string; modelStrategy: string; modelBind?: string }) {
-  const newAgent: AgentInfo = {
-    id: `agent-${Date.now()}`,
-    name: data.name,
-    description: data.description,
-    enabled: true,
-    modelStrategy: data.modelStrategy,
-    modelBind: data.modelBind,
+function handleImport(items: ScannedAgentInfo[]) {
+  providerStore.importAgents(items)
+}
+
+function handleAgentSave(data: { name: string; description: string; content: string }) {
+  if (editingAgent.value) {
+    providerStore.setAgent({
+      ...editingAgent.value,
+      name: data.name,
+      description: data.description,
+      content: data.content,
+    })
+  } else {
+    const newAgent: AgentInfo = {
+      id: `agent-${Date.now()}`,
+      name: data.name,
+      description: data.description,
+      enabled: true,
+      modelStrategy: 'auto',
+      content: data.content,
+    }
+    providerStore.setAgent(newAgent)
   }
-  providerStore.setAgents([...providerStore.agents, newAgent])
   showModal.value = false
+  editingAgent.value = null
+}
+
+function openEditModal(agent: AgentInfo) {
+  editingAgent.value = agent
+  showModal.value = true
+}
+
+function openAddModal() {
+  editingAgent.value = null
+  showModal.value = true
+}
+
+function closeModal() {
+  showModal.value = false
+  editingAgent.value = null
 }
 </script>
 
 <template>
   <div class="max-w-[860px] mx-auto py-8 px-10">
     <div class="flex items-center justify-between mb-7">
-      <div class="font-display text-[22px] font-bold tracking-tight">Agent 配置</div>
-      <Button variant="primary" @click="showModal = true">
+      <div>
+        <div class="font-display text-[22px] font-bold tracking-tight">{{ t('settings.agentConfig') }}</div>
+        <div class="text-[12px] text-muted mt-1">{{ t('settings.agentConfigDesc') }}</div>
+      </div>
+      <Button variant="primary" @click="openAddModal">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M7 1v12M1 7h12" />
         </svg>
-        导入 Agent
+        {{ t('settings.manualAdd') }}
       </Button>
     </div>
 
-    <ImportSection
-      title="扫描 Agent"
+    <ScanImportSection
       :sources="scanSources"
-      custom-placeholder="自定义路径，如 ~/my-project/.agents/"
+      scan-event-type="config.scanAgents"
+      scanned-event-type="config.scannedAgents"
+      :existing-items="agents.map(a => ({ id: a.id, name: a.name }))"
+      :is-scanning="providerStore.isScanningAgents"
+      :scanned-results="providerStore.scannedAgents"
+      @scan="handleScan"
+      @import="handleImport"
     />
 
-    <GlobalParams v-model="globalParams" />
+    <!-- Agent sections -->
+    <div v-if="agents.length > 0" class="border border-border rounded-lg overflow-hidden mb-3">
+      <div class="flex items-center justify-between py-[10px] px-4 bg-[var(--section-bg)] border-b border-border min-h-[42px]">
+        <span class="text-[13px] font-semibold">{{ t('settings.imported') }}</span>
+        <span class="text-[10px] text-muted font-medium bg-[var(--hover-bg)] py-[2px] px-[6px] rounded-sm">{{ agents.length }}</span>
+      </div>
+      <div>
+        <AgentSection
+          v-for="agent in agents"
+          :key="agent.id"
+          :agent="agent"
+          @toggle-enabled="providerStore.toggleAgent(agent.id)"
+          @edit="openEditModal(agent)"
+          @delete="providerStore.deleteAgentAction(agent.id)"
+        />
+      </div>
+    </div>
 
-    <div class="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted my-5 pb-1.5 border-b border-border">已导入 · {{ agents.length }} 个 Agent</div>
-
-    <AgentCard
-      v-for="agent in agents"
-      :key="agent.name"
-      :agent="agent"
-      :all-models="allModels"
-      :expanded="expandedId === agent.name"
-      @toggle="expandedId = expandedId === agent.name ? null : agent.name"
-      @toggle-enabled="providerStore.setAgents(agents.map(a => a.id === agent.id ? { ...a, enabled: !a.enabled } : a))"
-    />
-
-    <AgentModal :visible="showModal" :models="allModels" @close="showModal = false" @save="handleAgentSave" />
+    <AgentModal :visible="showModal" :agent="editingAgent" @close="closeModal" @save="handleAgentSave" />
   </div>
 </template>
-
-

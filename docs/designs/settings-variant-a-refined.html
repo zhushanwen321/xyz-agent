@@ -1,0 +1,1101 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Settings Demo A - Refined Cards</title>
+<style>
+  /* ═══════════════════════════════════════════
+     DESIGN.md tokens — Warm Teal palette
+     ═══════════════════════════════════════════ */
+  :root {
+    --bg: oklch(97% 0.018 70);
+    --surface: oklch(99% 0.008 70);
+    --fg: oklch(22% 0.02 50);
+    --muted: oklch(50% 0.018 50);
+    --border: oklch(90% 0.014 70);
+    --accent: oklch(64% 0.13 28);
+    --accent-light: oklch(92% 0.04 28);
+    --success: oklch(70% 0.18 145);
+    --success-light: oklch(95% 0.06 145);
+    --warning: oklch(78% 0.15 85);
+    --warning-light: oklch(95% 0.06 85);
+    --danger: oklch(62% 0.2 25);
+    --danger-light: oklch(93% 0.06 25);
+    --font-display: 'Georgia', 'Iowan Old Style', serif;
+    --font-body: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: var(--font-body);
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--fg);
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ═══════════════════════════════════════════
+     Layout Shell
+     ═══════════════════════════════════════════ */
+  .shell {
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ═══════════════════════════════════════════
+     Sidebar Navigation
+     ═══════════════════════════════════════════ */
+  .sidebar {
+    width: 200px;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+  .sidebar-title {
+    padding: 14px 20px;
+    font-family: var(--font-display);
+    font-size: 15px;
+    font-weight: 700;
+    border-bottom: 1px solid var(--border);
+  }
+  .sidebar-nav { flex: 1; padding: 6px 0; }
+  .sidebar-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 20px;
+    font-size: 13px;
+    color: var(--muted);
+    cursor: pointer;
+    border-left: 2px solid transparent;
+    transition: all 150ms ease;
+    user-select: none;
+  }
+  .sidebar-item:hover {
+    background: var(--accent-light);
+    color: var(--fg);
+  }
+  .sidebar-item.active {
+    color: var(--accent);
+    border-left-color: var(--accent);
+    background: var(--accent-light);
+    font-weight: 600;
+  }
+  .sidebar-item svg { width: 14px; height: 14px; flex-shrink: 0; }
+
+  /* ═══════════════════════════════════════════
+     Content Area
+     ═══════════════════════════════════════════ */
+  .content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 32px 40px;
+  }
+  .pane { max-width: 720px; }
+  .pane.hidden { display: none; }
+
+  /* ═══════════════════════════════════════════
+     Pane Header
+     ═══════════════════════════════════════════ */
+  .pane-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 28px;
+  }
+  .pane-title {
+    font-family: var(--font-display);
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+
+  /* ═══════════════════════════════════════════
+     Buttons
+     ═══════════════════════════════════════════ */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    font-family: var(--font-body);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 150ms ease;
+    white-space: nowrap;
+  }
+  .btn svg { width: 13px; height: 13px; }
+  .btn-primary {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+  }
+  .btn-primary:hover { opacity: 0.88; }
+  .btn-ghost {
+    background: transparent;
+    color: var(--muted);
+    border-color: var(--border);
+  }
+  .btn-ghost:hover {
+    background: var(--accent-light);
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .btn-sm { padding: 4px 10px; font-size: 12px; }
+  .btn-sm svg { width: 11px; height: 11px; }
+  .btn-danger:hover {
+    color: var(--danger) !important;
+    background: var(--danger-light) !important;
+    border-color: var(--danger) !important;
+  }
+
+  /* ═══════════════════════════════════════════
+     Overline / Section Dividers
+     ═══════════════════════════════════════════ */
+  .overline {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    margin-top: 32px;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .overline:first-child { margin-top: 0; }
+
+  /* ═══════════════════════════════════════════
+     Cards — Provider
+     ═══════════════════════════════════════════ */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 10px;
+    overflow: hidden;
+    transition: border-color 200ms ease, box-shadow 200ms ease;
+  }
+  .card:hover { border-color: oklch(82% 0.012 70); }
+  .card.disabled { opacity: 0.5; }
+
+  .card-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .card-avatar {
+    width: 34px;
+    height: 34px;
+    border-radius: 6px;
+    background: var(--accent-light);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+  .card-info { flex: 1; min-width: 0; }
+  .card-name {
+    font-size: 14px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .card-meta {
+    font-size: 12px;
+    color: var(--muted);
+    font-family: var(--font-mono);
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .card-actions {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+  .card-chevron {
+    font-size: 10px;
+    color: var(--muted);
+    margin-left: 4px;
+    transition: transform 200ms ease;
+  }
+  .card-chevron.open { transform: rotate(180deg); }
+
+  /* Status dot */
+  .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    display: inline-block;
+    vertical-align: middle;
+  }
+  .dot-ok { background: var(--success); }
+  .dot-err { background: var(--danger); }
+  .dot-idle { background: var(--border); }
+
+  /* Toggle switch */
+  .toggle {
+    position: relative;
+    width: 36px;
+    height: 20px;
+    border-radius: 100px;
+    background: var(--border);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 200ms ease;
+  }
+  .toggle.on { background: var(--success); }
+  .toggle-knob {
+    position: absolute;
+    top: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: white;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+    transition: left 200ms ease;
+  }
+  .toggle.on .toggle-knob { left: 18px; }
+  .toggle:not(.on) .toggle-knob { left: 2px; }
+
+  /* ═══════════════════════════════════════════
+     Expanded Content
+     ═══════════════════════════════════════════ */
+  .card-body {
+    padding: 0 16px 16px;
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 250ms ease-out, padding 250ms ease-out;
+  }
+  .card-body.open {
+    max-height: 500px;
+    padding-bottom: 16px;
+  }
+  .card-body .overline {
+    margin-top: 4px;
+    margin-bottom: 8px;
+  }
+
+  /* ═══════════════════════════════════════════
+     Model Row
+     ═══════════════════════════════════════════ */
+  .model-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 0;
+  }
+  .model-name {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    min-width: 200px;
+  }
+  .model-ctx {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted);
+    min-width: 50px;
+  }
+  .tag-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 7px;
+    border-radius: 100px;
+    font-size: 10px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 150ms ease;
+    border: 1px solid transparent;
+  }
+  .tag-power { background: oklch(92% 0.04 25); color: oklch(55% 0.12 25); }
+  .tag-efficient { background: oklch(92% 0.04 145); color: oklch(55% 0.12 145); }
+  .tag-fast { background: oklch(92% 0.04 250); color: oklch(55% 0.12 250); }
+  .tag-pill:hover { border-color: currentColor; }
+  .tag-pill.off { background: var(--surface); color: var(--border); border-color: var(--border); }
+
+  /* ═══════════════════════════════════════════
+     Meta Grid
+     ═══════════════════════════════════════════ */
+  .meta-grid {
+    display: grid;
+    grid-template-columns: 80px 1fr;
+    gap: 4px 12px;
+    font-size: 12px;
+    margin-bottom: 8px;
+  }
+  .meta-key { color: var(--muted); font-weight: 500; }
+  .meta-val { font-family: var(--font-mono); font-size: 11px; word-break: break-all; }
+
+  /* ═══════════════════════════════════════════
+     Skill / Agent Card
+     ═══════════════════════════════════════════ */
+  .skill-desc {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .skill-source {
+    font-size: 11px;
+    color: var(--muted);
+    font-family: var(--font-mono);
+    margin-top: 2px;
+  }
+  .tag-badge {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 100px;
+    background: var(--accent-light);
+    color: var(--accent);
+  }
+
+  /* ═══════════════════════════════════════════
+     Import Section
+     ═══════════════════════════════════════════ */
+  .import-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-bottom: 4px;
+  }
+  .import-box-title {
+    font-size: 12px;
+    font-weight: 600;
+    margin-bottom: 10px;
+    color: var(--fg);
+  }
+  .import-sources {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .import-source {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 150ms ease;
+  }
+  .import-source:hover { border-color: var(--muted); background: var(--accent-light); }
+  .import-source.active { border-color: var(--accent); background: var(--accent-light); }
+  .import-source-icon {
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 700;
+    background: var(--accent-light);
+    color: var(--accent);
+  }
+  .import-source-path {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--muted);
+  }
+
+  /* ═══════════════════════════════════════════
+     Global Params
+     ═══════════════════════════════════════════ */
+  .params-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+  }
+  .param-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .param-label {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--muted);
+  }
+  .param-input {
+    padding: 7px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--fg);
+    outline: none;
+    transition: border-color 150ms ease, box-shadow 150ms ease;
+    width: 100%;
+  }
+  .param-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px oklch(92% 0.04 28);
+  }
+
+  /* ═══════════════════════════════════════════
+     Inline Toast
+     ═══════════════════════════════════════════ */
+  .toast {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    animation: toast-in 200ms ease-out, toast-out 200ms ease-in 1.8s forwards;
+  }
+  .toast-success { background: var(--success-light); color: var(--success); }
+  .toast-error { background: var(--danger-light); color: var(--danger); }
+  @keyframes toast-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes toast-out { from { opacity: 1; } to { opacity: 0; } }
+
+  /* ═══════════════════════════════════════════
+     Delete Confirmation
+     ═══════════════════════════════════════════ */
+  .delete-confirm {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background: var(--danger-light);
+    font-size: 12px;
+    color: var(--danger);
+  }
+
+  /* ═══════════════════════════════════════════
+     Strategy Selector (Agent)
+     ═══════════════════════════════════════════ */
+  .strategy-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0;
+    border-bottom: 1px solid oklch(94% 0.01 70);
+  }
+  .strategy-row:last-child { border-bottom: none; }
+  .strategy-label {
+    font-size: 12px;
+    font-weight: 500;
+    min-width: 80px;
+  }
+  .strategy-select {
+    padding: 5px 8px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 12px;
+    background: var(--surface);
+    color: var(--fg);
+    outline: none;
+    cursor: pointer;
+  }
+  .strategy-select:focus { border-color: var(--accent); }
+
+  /* ═══════════════════════════════════════════
+     System Pane
+     ═══════════════════════════════════════════ */
+  .sys-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 12px 0;
+    border-bottom: 1px solid oklch(94% 0.01 70);
+  }
+  .sys-label {
+    font-size: 13px;
+    color: var(--muted);
+    min-width: 80px;
+  }
+  .sys-select {
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    font-size: 13px;
+    color: var(--fg);
+    outline: none;
+    cursor: pointer;
+  }
+  .sys-select:focus { border-color: var(--accent); }
+  .palette-group { margin-top: 12px; }
+  .palette-group-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .palette-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .palette-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    font-size: 12px;
+    color: var(--fg);
+    cursor: pointer;
+    transition: all 150ms ease;
+  }
+  .palette-btn:hover { border-color: var(--muted); background: var(--accent-light); }
+  .palette-btn.active { border-color: var(--accent); background: var(--accent-light); box-shadow: 0 0 0 1px var(--accent); }
+  .palette-swatch {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  /* ═══════════════════════════════════════════
+     Empty State
+     ═══════════════════════════════════════════ */
+  .empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 60px 20px;
+    text-align: center;
+  }
+  .empty-icon {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: var(--surface);
+    border: 2px dashed var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 16px;
+  }
+  .empty-icon svg { width: 24px; height: 24px; color: var(--muted); }
+  .empty-title { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
+  .empty-desc {
+    font-size: 13px;
+    color: var(--muted);
+    max-width: 340px;
+    margin-bottom: 20px;
+    line-height: 1.5;
+  }
+
+  /* ═══════════════════════════════════════════
+     Variant Badge
+     ═══════════════════════════════════════════ */
+  .variant-badge {
+    position: fixed;
+    top: 12px;
+    right: 16px;
+    background: var(--accent);
+    color: white;
+    padding: 6px 14px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    z-index: 999;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  }
+  .variant-badge a { color: white; text-decoration: underline; }
+  .variant-badge a:hover { opacity: 0.85; }
+</style>
+</head>
+<body>
+
+<div class="variant-badge">
+  Demo A: Refined Cards &nbsp;|&nbsp;
+  <a href="settings-variant-b-compact.html">B: Compact List</a> &nbsp;|&nbsp;
+  <a href="settings-variant-c-sections.html">C: Section Groups</a>
+</div>
+
+<div class="shell">
+  <!-- ═══════════════════ Sidebar ═══════════════════ -->
+  <div class="sidebar">
+    <div class="sidebar-title">Settings</div>
+    <div class="sidebar-nav">
+      <div class="sidebar-item active" onclick="switchTab('providers')" data-tab="providers">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M5 6h6M5 8h4M5 10h5"/></svg>
+        Providers
+      </div>
+      <div class="sidebar-item" onclick="switchTab('skills')" data-tab="skills">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2l2 4h4l-3 3 1 4-4-2-4 2 1-4-3-3h4z"/></svg>
+        Skills
+      </div>
+      <div class="sidebar-item" onclick="switchTab('agents')" data-tab="agents">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="5" r="3"/><path d="M2 14c0-3.3 2.7-6 6-6s6 2.7 6 6"/></svg>
+        Agents
+      </div>
+      <div class="sidebar-item" onclick="switchTab('system')" data-tab="system">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="2"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41"/></svg>
+        System
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════ Content ═══════════════════ -->
+  <div class="content">
+
+    <!-- ══════════════ Providers ══════════════ -->
+    <div class="pane" id="pane-providers">
+      <div class="pane-header">
+        <div class="pane-title">Provider 配置</div>
+        <button class="btn btn-primary" onclick="alert('open modal')">
+          <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 1v12M1 7h12"/></svg>
+          添加 Provider
+        </button>
+      </div>
+
+      <!-- Provider: Anthropic (expanded) -->
+      <div class="card">
+        <div class="card-header" onclick="this.querySelector('.card-chevron').classList.toggle('open'); this.nextElementSibling.classList.toggle('open')">
+          <div class="toggle on" onclick="event.stopPropagation(); this.classList.toggle('on')"><div class="toggle-knob"></div></div>
+          <div class="card-avatar">A</div>
+          <div class="card-info">
+            <div class="card-name"><span class="dot dot-ok"></span> Anthropic</div>
+            <div class="card-meta">https://api.anthropic.com · 4 个模型</div>
+          </div>
+          <div class="card-actions" onclick="event.stopPropagation()">
+            <button class="btn btn-ghost btn-sm">测试</button>
+            <button class="btn btn-ghost btn-sm">编辑</button>
+            <button class="btn btn-ghost btn-sm btn-danger">删除</button>
+          </div>
+          <span class="card-chevron open">▾</span>
+        </div>
+        <div class="card-body open">
+          <div class="overline">模型</div>
+          <div class="model-row">
+            <div class="toggle on" onclick="this.classList.toggle('on')" style="transform: scale(0.8)"><div class="toggle-knob"></div></div>
+            <span class="model-name">claude-sonnet-4-20250514</span>
+            <span class="model-ctx">200K</span>
+            <span class="tag-pill tag-power">强力</span>
+            <span class="tag-pill tag-fast">快速</span>
+          </div>
+          <div class="model-row">
+            <div class="toggle on" onclick="this.classList.toggle('on')" style="transform: scale(0.8)"><div class="toggle-knob"></div></div>
+            <span class="model-name">claude-opus-4-20250514</span>
+            <span class="model-ctx">200K</span>
+            <span class="tag-pill tag-power">强力</span>
+          </div>
+          <div class="model-row">
+            <div class="toggle on" onclick="this.classList.toggle('on')" style="transform: scale(0.8)"><div class="toggle-knob"></div></div>
+            <span class="model-name">claude-haiku-3-5-20241022</span>
+            <span class="model-ctx">200K</span>
+            <span class="tag-pill tag-efficient">高效</span>
+            <span class="tag-pill tag-fast">快速</span>
+          </div>
+          <div class="model-row" style="opacity: 0.45">
+            <div class="toggle" onclick="this.classList.toggle('on')" style="transform: scale(0.8)"><div class="toggle-knob"></div></div>
+            <span class="model-name">claude-3-5-sonnet-20241022</span>
+            <span class="model-ctx">200K</span>
+            <span class="tag-pill tag-off off">强力</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Provider: DeepSeek (collapsed) -->
+      <div class="card">
+        <div class="card-header" onclick="this.querySelector('.card-chevron').classList.toggle('open'); this.nextElementSibling.classList.toggle('open')">
+          <div class="toggle on" onclick="event.stopPropagation(); this.classList.toggle('on')"><div class="toggle-knob"></div></div>
+          <div class="card-avatar" style="color: oklch(55% 0.12 250); background: oklch(92% 0.04 250)">D</div>
+          <div class="card-info">
+            <div class="card-name"><span class="dot dot-ok"></span> DeepSeek</div>
+            <div class="card-meta">https://api.deepseek.com · 2 个模型</div>
+          </div>
+          <div class="card-actions" onclick="event.stopPropagation()">
+            <button class="btn btn-ghost btn-sm">测试</button>
+            <button class="btn btn-ghost btn-sm">编辑</button>
+            <button class="btn btn-ghost btn-sm btn-danger">删除</button>
+          </div>
+          <span class="card-chevron">▾</span>
+        </div>
+        <div class="card-body">
+          <div class="overline">模型</div>
+          <div class="model-row">
+            <div class="toggle on" onclick="this.classList.toggle('on')" style="transform: scale(0.8)"><div class="toggle-knob"></div></div>
+            <span class="model-name">deepseek-v4-pro</span>
+            <span class="model-ctx">128K</span>
+            <span class="tag-pill tag-power">强力</span>
+          </div>
+          <div class="model-row">
+            <div class="toggle on" onclick="this.classList.toggle('on')" style="transform: scale(0.8)"><div class="toggle-knob"></div></div>
+            <span class="model-name">deepseek-v4-flash</span>
+            <span class="model-ctx">128K</span>
+            <span class="tag-pill tag-efficient">高效</span>
+            <span class="tag-pill tag-fast">快速</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Provider: Ollama (error state) -->
+      <div class="card">
+        <div class="card-header" onclick="this.querySelector('.card-chevron').classList.toggle('open'); this.nextElementSibling.classList.toggle('open')">
+          <div class="toggle" onclick="event.stopPropagation(); this.classList.toggle('on')"><div class="toggle-knob"></div></div>
+          <div class="card-avatar" style="color: oklch(55% 0.1 145); background: oklch(92% 0.04 145)">O</div>
+          <div class="card-info">
+            <div class="card-name"><span class="dot dot-err"></span> Ollama (本地)</div>
+            <div class="card-meta">http://localhost:11434 · 连接失败</div>
+          </div>
+          <div class="card-actions" onclick="event.stopPropagation()">
+            <button class="btn btn-ghost btn-sm">测试</button>
+            <button class="btn btn-ghost btn-sm">编辑</button>
+            <button class="btn btn-ghost btn-sm btn-danger">删除</button>
+          </div>
+          <span class="card-chevron">▾</span>
+        </div>
+        <div class="card-body"></div>
+      </div>
+
+      <!-- Inline toast example -->
+      <div style="margin-top: 16px;">
+        <span class="toast toast-success"><span class="dot dot-ok" style="width:5px;height:5px"></span> 已保存</span>
+      </div>
+    </div>
+
+    <!-- ══════════════ Skills ══════════════ -->
+    <div class="pane hidden" id="pane-skills">
+      <div class="pane-header">
+        <div class="pane-title">Skill 配置</div>
+        <button class="btn btn-primary" onclick="alert('open modal')">
+          <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 1v12M1 7h12"/></svg>
+          添加 Skill
+        </button>
+      </div>
+
+      <!-- Import section -->
+      <div class="import-box">
+        <div class="import-box-title">扫描并导入 Skill</div>
+        <div class="import-sources">
+          <div class="import-source active">
+            <div class="import-source-icon">P</div>
+            <div>
+              <div style="font-size:12px;font-weight:500">Pi Skills</div>
+              <div class="import-source-path">~/.pi/agent/skills/</div>
+            </div>
+          </div>
+          <div class="import-source">
+            <div class="import-source-icon">C</div>
+            <div>
+              <div style="font-size:12px;font-weight:500">Claude Code</div>
+              <div class="import-source-path">~/.claude/skills/</div>
+            </div>
+          </div>
+          <div class="import-source">
+            <div class="import-source-icon">A</div>
+            <div>
+              <div style="font-size:12px;font-weight:500">Agents</div>
+              <div class="import-source-path">~/.agents/skills/</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="overline">已导入 · 3 个 Skill</div>
+
+      <!-- Skill: code-trace (expanded) -->
+      <div class="card">
+        <div class="card-header" onclick="this.querySelector('.card-chevron').classList.toggle('open'); this.nextElementSibling.classList.toggle('open')">
+          <div class="toggle on" onclick="event.stopPropagation(); this.classList.toggle('on')"><div class="toggle-knob"></div></div>
+          <div class="card-info">
+            <div class="card-name">
+              code-trace
+              <span class="tag-badge">分析</span>
+            </div>
+            <div class="skill-desc">分析代码文件的完整调用链路和数据流</div>
+            <div class="skill-source">~/.pi/agent/skills/code-trace/SKILL.md</div>
+          </div>
+          <div class="card-actions" onclick="event.stopPropagation()">
+            <button class="btn btn-ghost btn-sm">编辑</button>
+            <button class="btn btn-ghost btn-sm btn-danger">删除</button>
+          </div>
+          <span class="card-chevron open">▾</span>
+        </div>
+        <div class="card-body open">
+          <div class="meta-grid">
+            <span class="meta-key">名称</span><span class="meta-val">code-trace</span>
+            <span class="meta-key">触发词</span><span class="meta-val">分析链路、trace code、code-trace</span>
+            <span class="meta-key">来源</span><span class="meta-val">Pi · ~/.pi/agent/skills/code-trace/</span>
+            <span class="meta-key">依赖工具</span><span class="meta-val">read, bash, grep</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Skill: bug-fix-recorder (collapsed) -->
+      <div class="card">
+        <div class="card-header" onclick="this.querySelector('.card-chevron').classList.toggle('open'); this.nextElementSibling.classList.toggle('open')">
+          <div class="toggle on" onclick="event.stopPropagation(); this.classList.toggle('on')"><div class="toggle-knob"></div></div>
+          <div class="card-info">
+            <div class="card-name">bug-fix-recorder</div>
+            <div class="skill-desc">记录 bug 修复到知识库</div>
+            <div class="skill-source">~/.pi/agent/skills/bug-fix-recorder/SKILL.md</div>
+          </div>
+          <div class="card-actions" onclick="event.stopPropagation()">
+            <button class="btn btn-ghost btn-sm">编辑</button>
+            <button class="btn btn-ghost btn-sm btn-danger">删除</button>
+          </div>
+          <span class="card-chevron">▾</span>
+        </div>
+        <div class="card-body">
+          <div class="meta-grid">
+            <span class="meta-key">名称</span><span class="meta-val">bug-fix-recorder</span>
+            <span class="meta-key">触发词</span><span class="meta-val">记录这个 bug、保存修复</span>
+            <span class="meta-key">来源</span><span class="meta-val">Pi · ~/.pi/agent/skills/bug-fix-recorder/</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Skill: tavily (disabled) -->
+      <div class="card disabled">
+        <div class="card-header" onclick="this.querySelector('.card-chevron').classList.toggle('open'); this.nextElementSibling.classList.toggle('open')">
+          <div class="toggle" onclick="event.stopPropagation(); this.classList.toggle('on')"><div class="toggle-knob"></div></div>
+          <div class="card-info">
+            <div class="card-name">tavily-web-search</div>
+            <div class="skill-desc">Web search, content extraction via Tavily API</div>
+            <div class="skill-source">~/.agents/skills/tavily-web-search/SKILL.md</div>
+          </div>
+          <div class="card-actions" onclick="event.stopPropagation()">
+            <button class="btn btn-ghost btn-sm">编辑</button>
+            <button class="btn btn-ghost btn-sm btn-danger">删除</button>
+          </div>
+          <span class="card-chevron">▾</span>
+        </div>
+        <div class="card-body"></div>
+      </div>
+    </div>
+
+    <!-- ══════════════ Agents ══════════════ -->
+    <div class="pane hidden" id="pane-agents">
+      <div class="pane-header">
+        <div class="pane-title">Agent 配置</div>
+        <button class="btn btn-primary" onclick="alert('open modal')">
+          <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 1v12M1 7h12"/></svg>
+          添加 Agent
+        </button>
+      </div>
+
+      <!-- Import section -->
+      <div class="import-box">
+        <div class="import-box-title">扫描并导入 Agent</div>
+        <div class="import-sources">
+          <div class="import-source active">
+            <div class="import-source-icon">P</div>
+            <div>
+              <div style="font-size:12px;font-weight:500">Pi Agents</div>
+              <div class="import-source-path">~/.pi/agent/agents/</div>
+            </div>
+          </div>
+          <div class="import-source">
+            <div class="import-source-icon">A</div>
+            <div>
+              <div style="font-size:12px;font-weight:500">Agents</div>
+              <div class="import-source-path">~/.agents/agents/</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Global params -->
+      <div class="overline">SubAgent 默认参数</div>
+      <div class="params-grid">
+        <div class="param-item">
+          <label class="param-label">最大深度</label>
+          <input class="param-input" type="number" value="20">
+        </div>
+        <div class="param-item">
+          <label class="param-label">最大宽度</label>
+          <input class="param-input" type="number" value="10">
+        </div>
+        <div class="param-item">
+          <label class="param-label">Token 上限</label>
+          <input class="param-input" type="number" value="100000">
+        </div>
+        <div class="param-item">
+          <label class="param-label">最大轮次</label>
+          <input class="param-input" type="number" value="50">
+        </div>
+      </div>
+
+      <div class="overline">已导入 · 2 个 Agent</div>
+
+      <!-- Agent: harness-executor (expanded) -->
+      <div class="card">
+        <div class="card-header" onclick="this.querySelector('.card-chevron').classList.toggle('open'); this.nextElementSibling.classList.toggle('open')">
+          <div class="toggle on" onclick="event.stopPropagation(); this.classList.toggle('on')"><div class="toggle-knob"></div></div>
+          <div class="card-avatar">H</div>
+          <div class="card-info">
+            <div class="card-name">harness-executor</div>
+            <div class="skill-desc">执行 dev-flow 中的编码任务</div>
+            <div class="skill-source">~/.pi/agent/agents/harness-executor/</div>
+          </div>
+          <div class="card-actions" onclick="event.stopPropagation()">
+            <button class="btn btn-ghost btn-sm">编辑</button>
+            <button class="btn btn-ghost btn-sm btn-danger">删除</button>
+          </div>
+          <span class="card-chevron open">▾</span>
+        </div>
+        <div class="card-body open">
+          <div class="meta-grid">
+            <span class="meta-key">名称</span><span class="meta-val">harness-executor</span>
+            <span class="meta-key">来源</span><span class="meta-val">builtin</span>
+            <span class="meta-key">模型策略</span><span class="meta-val">自动 — 由主 Agent 根据任务判断</span>
+            <span class="meta-key">工具</span><span class="meta-val">read, edit, write, bash</span>
+          </div>
+          <div class="overline">模型策略</div>
+          <div class="strategy-row">
+            <span class="strategy-label">策略</span>
+            <select class="strategy-select">
+              <option selected>auto — 自动匹配</option>
+              <option>tag — 按标签选择</option>
+              <option>bind — 绑定模型</option>
+            </select>
+          </div>
+          <div class="overline" style="margin-top: 12px">参数覆盖</div>
+          <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);cursor:pointer;margin-bottom:8px">
+            <input type="checkbox"> 覆盖全局参数
+          </label>
+        </div>
+      </div>
+
+      <!-- Agent: code-reviewer (collapsed) -->
+      <div class="card">
+        <div class="card-header" onclick="this.querySelector('.card-chevron').classList.toggle('open'); this.nextElementSibling.classList.toggle('open')">
+          <div class="toggle on" onclick="event.stopPropagation(); this.classList.toggle('on')"><div class="toggle-knob"></div></div>
+          <div class="card-avatar" style="color: oklch(55% 0.12 250); background: oklch(92% 0.04 250)">C</div>
+          <div class="card-info">
+            <div class="card-name">code-reviewer</div>
+            <div class="skill-desc">代码审查，发现问题并建议修复方案</div>
+            <div class="skill-source">~/.pi/agent/agents/code-reviewer/</div>
+          </div>
+          <div class="card-actions" onclick="event.stopPropagation()">
+            <button class="btn btn-ghost btn-sm">编辑</button>
+            <button class="btn btn-ghost btn-sm btn-danger">删除</button>
+          </div>
+          <span class="card-chevron">▾</span>
+        </div>
+        <div class="card-body"></div>
+      </div>
+
+      <!-- Delete confirmation example -->
+      <div class="card" style="margin-top: 12px; border-color: var(--danger);">
+        <div class="delete-confirm">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="5.5"/><path d="M7 4.5v3M7 9v.5"/></svg>
+          确认删除 code-reviewer？
+          <button class="btn btn-sm" style="background:var(--danger);color:white;border-color:var(--danger);margin-left:auto">确认删除</button>
+          <button class="btn btn-ghost btn-sm">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════ System ══════════════ -->
+    <div class="pane hidden" id="pane-system" style="max-width: 520px;">
+      <div class="pane-header">
+        <div class="pane-title">系统设置</div>
+      </div>
+
+      <div class="sys-row">
+        <span class="sys-label">语言</span>
+        <select class="sys-select">
+          <option selected>简体中文</option>
+          <option>English (US)</option>
+        </select>
+      </div>
+
+      <div class="sys-row">
+        <span class="sys-label">外观模式</span>
+        <select class="sys-select">
+          <option selected>浅色</option>
+          <option>深色</option>
+          <option>跟随系统</option>
+        </select>
+      </div>
+
+      <div style="margin-top: 16px">
+        <div class="sys-label" style="margin-bottom: 12px">配色主题</div>
+        <div class="palette-group">
+          <div class="palette-group-title">Muted</div>
+          <div class="palette-list">
+            <div class="palette-btn active">
+              <span class="palette-swatch" style="background: oklch(55% 0.08 195)"></span> Warm Teal
+            </div>
+            <div class="palette-btn">
+              <span class="palette-swatch" style="background: oklch(62% 0.10 190)"></span> Cold Teal
+            </div>
+            <div class="palette-btn">
+              <span class="palette-swatch" style="background: oklch(40% 0 0)"></span> Neutral
+            </div>
+            <div class="palette-btn">
+              <span class="palette-swatch" style="background: oklch(10% 0 0)"></span> Sharp
+            </div>
+            <div class="palette-btn">
+              <span class="palette-swatch" style="background: oklch(45% 0.04 80)"></span> Warm Neutral
+            </div>
+          </div>
+        </div>
+        <div class="palette-group" style="margin-top: 12px">
+          <div class="palette-group-title">Colorful</div>
+          <div class="palette-list">
+            <div class="palette-btn">
+              <span class="palette-swatch" style="background: oklch(64% 0.13 28)"></span> Terracotta
+            </div>
+            <div class="palette-btn">
+              <span class="palette-swatch" style="background: oklch(65% 0.14 350)"></span> Rose
+            </div>
+            <div class="palette-btn">
+              <span class="palette-swatch" style="background: oklch(67% 0.15 65)"></span> Amber
+            </div>
+            <div class="palette-btn">
+              <span class="palette-swatch" style="background: oklch(62% 0.15 250)"></span> Blue
+            </div>
+            <div class="palette-btn">
+              <span class="palette-swatch" style="background: oklch(62% 0.15 280)"></span> Violet
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+function switchTab(tab) {
+  document.querySelectorAll('.sidebar-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.tab === tab);
+  });
+  document.querySelectorAll('.pane').forEach(el => {
+    el.classList.toggle('hidden', el.id !== 'pane-' + tab);
+  });
+}
+</script>
+</body>
+</html>

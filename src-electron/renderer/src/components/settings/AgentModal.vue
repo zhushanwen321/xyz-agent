@@ -1,75 +1,74 @@
 <script setup lang="ts">
-import { ref, watch, computed, onUnmounted } from 'vue'
-import { Button, Input, Select } from '../../design-system'
+import { ref, watch, onUnmounted } from 'vue'
+import { Button, Input, Textarea } from '../../design-system'
 import type { AgentInfo } from '@xyz-agent/shared'
-
-interface ModelOption {
-  id: string
-  name: string
-  providerName: string
-}
+import { useI18n } from 'vue-i18n'
 
 interface Props {
   visible: boolean
   agent?: AgentInfo | null
-  models: ModelOption[]
 }
 
+const { t } = useI18n()
 const props = withDefaults(defineProps<Props>(), {
   agent: null,
 })
 
 const emit = defineEmits<{
   close: []
-  save: [data: { name: string; description: string; modelStrategy: string; modelBind?: string }]
+  save: [data: { name: string; description: string; content: string }]
 }>()
 
 const formName = ref('')
 const formDescription = ref('')
-const formStrategy = ref('auto')
-const formModelBind = ref('')
+const formContent = ref('')
 
-const showModelBind = computed(() => formStrategy.value === 'bind')
-
-const strategyOptions = [
-  { label: '自动', value: 'auto' },
-  { label: '标签', value: 'tag' },
-  { label: '绑定', value: 'bind' },
-]
-
-const modelOptions = computed(() =>
-  props.models.map(m => ({
-    label: `${m.name} (${m.providerName})`,
-    value: m.id,
-  })),
-)
+function parseDescriptionFromContent(content: string): string {
+  const lines = content.split('\n')
+  const fmLines: string[] = []
+  let inFm = false
+  for (const line of lines) {
+    if (line.trim() === '---') {
+      if (!inFm) { inFm = true; continue }
+      break
+    }
+    if (inFm) fmLines.push(line)
+  }
+  const fmText = fmLines.join('\n')
+  // 多行格式: description: >
+  const multiMatch = fmText.match(/^description:\s*[>\|]?\s*$/m)
+  if (multiMatch) {
+    const startIdx = fmText.indexOf(multiMatch[0]) + multiMatch[0].length
+    const parts: string[] = []
+    for (const l of fmText.slice(startIdx).split('\n')) {
+      if (l && !l.startsWith(' ') && !l.startsWith('\t')) break
+      parts.push(l.trim())
+    }
+    return parts.join(' ').trim()
+  }
+  return fmText.match(/^description:\s*["']?(.+?)["']?\s*$/m)?.[1]?.trim() ?? ''
+}
 
 watch(() => props.visible, (v) => {
   if (v) {
     if (props.agent) {
       formName.value = props.agent.name
-      formDescription.value = props.agent.description
-      formStrategy.value = props.agent.modelStrategy || 'auto'
-      formModelBind.value = props.agent.modelBind ?? ''
+      formContent.value = props.agent.content ?? ''
+      formDescription.value = parseDescriptionFromContent(formContent.value) || props.agent.description
     } else {
       formName.value = ''
       formDescription.value = ''
-      formStrategy.value = 'auto'
-      formModelBind.value = ''
+      formContent.value = ''
     }
   }
 })
 
 function handleSave() {
-  const data: { name: string; description: string; modelStrategy: string; modelBind?: string } = {
+  emit('save', {
     name: formName.value.trim(),
     description: formDescription.value.trim(),
-    modelStrategy: formStrategy.value,
-  }
-  if (formStrategy.value === 'bind' && formModelBind.value) {
-    data.modelBind = formModelBind.value
-  }
-  emit('save', data)
+    content: formContent.value,
+  })
 }
 
 function handleKeydown(e: KeyboardEvent) {
@@ -98,37 +97,38 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown))
     ]"
     @click.self="$emit('close')"
   >
-    <div class="w-[600px] max-h-[85vh] bg-surface border border-border rounded overflow-hidden flex flex-col shadow-[0_8px_40px_rgba(0,0,0,0.12)]">
+    <div class="w-[780px] max-h-[85vh] bg-surface border border-border rounded overflow-hidden flex flex-col shadow-[0_8px_40px_rgba(0,0,0,0.12)]">
       <div class="flex items-center justify-between py-4 px-5 border-b border-border">
-        <div class="font-display text-base font-semibold">{{ agent ? '编辑 Agent' : '添加 Agent' }}</div>
+        <div class="font-display text-base font-semibold">{{ agent ? t('settings.editAgent') : t('settings.addAgent') }}</div>
         <Button variant="ghost" class="!h-7 !w-7 !p-0 !rounded-xs !text-muted hover:!bg-accent-light hover:!text-accent" @click="$emit('close')">×</Button>
       </div>
 
       <div class="p-5 overflow-y-auto flex-1">
         <div class="mb-4">
-          <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">Agent 名称</div>
-          <Input v-model="formName" placeholder="例如：code-reviewer" />
+          <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">{{ t('settings.agentName') }}</div>
+          <Input v-model="formName" :placeholder="t('settings.agentNamePlaceholder')" />
         </div>
 
         <div class="mb-4">
-          <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">描述</div>
-          <Input v-model="formDescription" placeholder="简要描述此 Agent 的职责" />
+          <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">{{ t('settings.agentDescription') }}</div>
+          <Input v-model="formDescription" :placeholder="t('settings.agentDescriptionPlaceholder')" />
         </div>
 
-        <div class="mb-4">
-          <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">模型策略</div>
-          <Select v-model="formStrategy" :options="strategyOptions" />
-        </div>
-
-        <div v-if="showModelBind" class="mb-4">
-          <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">绑定模型</div>
-          <Select v-model="formModelBind" :options="modelOptions" placeholder="选择模型" />
+        <div class="mb-1">
+          <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">{{ t('settings.agentContent') }}</div>
+          <Textarea
+            v-model="formContent"
+            :auto-resize="false"
+            :rows="32"
+            class="!font-mono !text-[13px] !leading-relaxed !resize-y"
+            :placeholder="t('settings.agentContentPlaceholder')"
+          />
         </div>
       </div>
 
       <div class="flex justify-end gap-2 py-3.5 px-5 border-t border-border">
-        <Button variant="outline" @click="$emit('close')">取消</Button>
-        <Button variant="primary" @click="handleSave">{{ agent ? '保存' : '添加 Agent' }}</Button>
+        <Button variant="outline" @click="$emit('close')">{{ t('common.cancel') }}</Button>
+        <Button variant="primary" @click="handleSave">{{ agent ? t('common.save') : t('settings.addAgent') }}</Button>
       </div>
     </div>
   </div>

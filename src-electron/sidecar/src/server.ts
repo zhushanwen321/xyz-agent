@@ -4,7 +4,10 @@ import type { ClientMessage, ServerMessage, ModelInfo } from '@xyz-agent/shared'
 import { SessionPool } from './session-pool.js'
 import * as providerStore from './provider-store.js'
 import { lookupModel } from './model-db.js'
-import { updateToolPermissions, getProvider } from './config-store.js'
+import { updateToolPermissions, getProvider, loadSkills, saveSkills, loadAgents, saveAgents } from './config-store.js'
+import { scanSkills } from './skill-scanner.js'
+import { scanAgents } from './agent-scanner.js'
+import type { SkillInfo, AgentInfo } from '@xyz-agent/shared'
 
 const HTTP_OK = 200
 const HTTP_NOT_FOUND = 404
@@ -24,6 +27,7 @@ export class SidecarServer {
   private clients = new Set<WsType>()
   private pushId = 0
   private heartbeatTimers = new Map<WsType, ReturnType<typeof setTimeout>>()
+  private projectRoot: string
 
   private static HEARTBEAT_TIMEOUT = 45_000
 
@@ -48,7 +52,8 @@ export class SidecarServer {
     }
   }
 
-  constructor(private port: number) {
+  constructor(private port: number, projectRoot?: string) {
+    this.projectRoot = projectRoot ?? process.cwd()
     this.httpServer = createServer((req, res) => {
       if (req.url === '/health') {
         res.writeHead(HTTP_OK, { 'Content-Type': 'application/json' })
@@ -128,9 +133,152 @@ export class SidecarServer {
     // Aggregated model list
     const models = this.aggregateModels(providers)
     this.send(ws, { type: 'model.list', id: this.nextPushId(), payload: { models } })
+
+    // Skills list
+    const skills = loadSkills(this.projectRoot)
+    this.send(ws, { type: 'config.skills', id: this.nextPushId(), payload: { skills } })
+
+    // Agents list
+    const agents = loadAgents(this.projectRoot)
+    this.send(ws, { type: 'config.agents', id: this.nextPushId(), payload: { agents } })
   }
 
   // ── Message routing ────────────────────────────────────────────
+
+  private handleDiscoverModels(msg: ClientMessage, ws: WsType): void {
+    const { baseUrl, apiKey, providerType, providerId } = msg.payload as { baseUrl: string; apiKey?: string; providerType?: string; providerId?: string }
+    let resolvedApiKey = apiKey
+    if (!resolvedApiKey && providerId) resolvedApiKey = getProvider(providerId)?.apiKey
+    this.discoverModelsFromApi(baseUrl, resolvedApiKey, providerType)
+      .then((models) => { this.send(ws, { type: 'config.discoveredModels', id: msg.id, payload: { models, success: true } }) })
+      .catch((e: unknown) => {
+        const raw = e instanceof Error ? e.message : String(e)
+        const message = raw.includes('ByteString') ? '请求失败：Base URL 或 API Key 包含 HTTP 不支持的字符'
+          : raw.includes('fetch failed') ? `连接失败：无法访问 ${baseUrl}/v1/models` : raw
+        this.send(ws, { type: 'config.discoveredModels', id: msg.id, payload: { models: [], success: false, error: message } })
+      })
+  }
+
+  private handleSessionCompact(msg: ClientMessage): void {
+    const startTime = Date.now()
+    let compactId = msg.payload.sessionId as string
+    console.log('[server] session.compact: sessionId=' + compactId)
+    const runCompact = async () => {
+      try { await this.pool.compact(compactId) } catch (e) { console.error('[server] session.compact: failed, sessionId=' + compactId + ', error=' + (e instanceof Error ? e.message : String(e))) }
+      console.log('[server] session.compact: completed, sessionId=' + compactId + ', elapsed=' + (Date.now() - startTime) + 'ms')
+    }
+    if (!this.pool.hasActiveSession(compactId)) {
+      this.pool.restoreSession(compactId).then((restored) => {
+        compactId = restored.id
+        console.log('[server] session.compact: auto-restored, newId=' + compactId)
+        this.broadcast({ type: 'session.restored', id: msg.id, payload: { oldSessionId: msg.payload.sessionId as string, newSessionId: restored.id, summary: restored } })
+        this.broadcastSessionList()
+        runCompact()
+      }).catch(() => { /* restoreSession error already handled by pool */ })
+    } else {
+      runCompact()
+    }
+  }
+
+  private async handleSettingsMessage(msg: ClientMessage, ws: WsType): Promise<boolean> {
+    switch (msg.type) {
+      case 'config.getProviders': {
+        const providers = providerStore.listProviders()
+        this.send(ws, { type: 'config.providers', id: msg.id, payload: { providers } })
+        return true
+      }
+      case 'config.setProvider': {
+        const { providerId, ...data } = msg.payload as Record<string, unknown>
+        providerStore.setProvider(providerId as string, data as Parameters<typeof providerStore.setProvider>[1])
+        this.send(ws, { type: 'config.providerUpdated', id: msg.id, payload: { providerId } })
+        this.broadcastProviderList()
+        return true
+      }
+      case 'config.deleteProvider': {
+        const delId = msg.payload.providerId as string
+        providerStore.deleteProvider(delId)
+        this.send(ws, { type: 'config.providerUpdated', id: msg.id, payload: { providerId: delId, deleted: true } })
+        this.broadcastProviderList()
+        return true
+      }
+      case 'config.setToolPermissions': {
+        updateToolPermissions(msg.payload.permissions as Record<string, string>)
+        this.send(ws, { type: 'config.providerUpdated', id: msg.id, payload: { saved: true } })
+        return true
+      }
+      case 'config.scanSkills': {
+        const sources = msg.payload.sources as string[]
+        const existingIds = new Set(loadSkills(this.projectRoot).map(s => s.id))
+        this.send(ws, { type: 'config.scannedSkills', id: msg.id, payload: { skills: scanSkills(sources, existingIds), success: true } })
+        return true
+      }
+      case 'config.setSkill': {
+        const skill = msg.payload.skill as SkillInfo
+        const skills = loadSkills(this.projectRoot)
+        const idx = skills.findIndex(s => s.id === skill.id)
+        if (idx >= 0) skills[idx] = skill; else skills.push(skill)
+        saveSkills(this.projectRoot, skills)
+        this.send(ws, { type: 'config.skillUpdated', id: msg.id, payload: { skill, success: true } })
+        this.broadcastSkillList()
+        return true
+      }
+      case 'config.deleteSkill': {
+        const skillId = msg.payload.skillId as string
+        saveSkills(this.projectRoot, loadSkills(this.projectRoot).filter(s => s.id !== skillId))
+        this.send(ws, { type: 'config.skillDeleted', id: msg.id, payload: { skillId, success: true } })
+        this.broadcastSkillList()
+        return true
+      }
+      case 'config.scanAgents': {
+        const sources = msg.payload.sources as string[]
+        const existingIds = new Set(loadAgents(this.projectRoot).map(a => a.id))
+        this.send(ws, { type: 'config.scannedAgents', id: msg.id, payload: { agents: scanAgents(sources, existingIds), success: true } })
+        return true
+      }
+      case 'config.setAgent': {
+        const agent = msg.payload.agent as AgentInfo
+        const agents = loadAgents(this.projectRoot)
+        const aIdx = agents.findIndex(a => a.id === agent.id)
+        if (aIdx >= 0) agents[aIdx] = agent; else agents.push(agent)
+        saveAgents(this.projectRoot, agents)
+        this.send(ws, { type: 'config.agentUpdated', id: msg.id, payload: { agent, success: true } })
+        this.broadcastAgentList()
+        return true
+      }
+      case 'config.deleteAgent': {
+        const agentId = msg.payload.agentId as string
+        saveAgents(this.projectRoot, loadAgents(this.projectRoot).filter(a => a.id !== agentId))
+        this.send(ws, { type: 'config.agentDeleted', id: msg.id, payload: { agentId, success: true } })
+        this.broadcastAgentList()
+        return true
+      }
+      case 'config.discoverModels':
+        this.handleDiscoverModels(msg, ws)
+        return true
+      case 'model.list': {
+        this.send(ws, { type: 'model.list', id: msg.id, payload: { models: this.aggregateModels(providerStore.listProviders()) } })
+        return true
+      }
+      case 'model.switch': {
+        const { sessionId, provider, modelId } = msg.payload as { sessionId: string; provider: string; modelId: string }
+        console.log(`[sidecar] model.switch: sessionId=${sessionId}, provider=${provider}, modelId=${modelId}`)
+        await this.pool.switchModel(sessionId, provider, modelId)
+        this.send(ws, { type: 'model.switched', id: msg.id, payload: { sessionId, provider, modelId } })
+        return true
+      }
+      case 'tool.approve':
+        await this.pool.approveTool((msg.payload as { sessionId: string; toolCallId: string }).sessionId, (msg.payload as { sessionId: string; toolCallId: string }).toolCallId)
+        return true
+      case 'tool.deny':
+        await this.pool.denyTool((msg.payload as { sessionId: string; toolCallId: string }).sessionId, (msg.payload as { sessionId: string; toolCallId: string }).toolCallId)
+        return true
+      case 'tool.always_allow':
+        await this.pool.alwaysAllowTool((msg.payload as { sessionId: string; toolName: string }).sessionId, (msg.payload as { sessionId: string; toolName: string }).toolName)
+        return true
+      default:
+        return false
+    }
+  }
 
   private async handleMessage(msg: ClientMessage, ws: WsType): Promise<void> {
     try {
@@ -189,35 +337,9 @@ export class SidecarServer {
           break
         }
 
-        case 'session.compact': {
-          const startTime = Date.now()
-          let compactId = msg.payload.sessionId as string
-          console.log('[server] session.compact: sessionId=' + compactId)
-          // 如果 session 未激活（没有 pi 进程），自动 restore
-          if (!this.pool.hasActiveSession(compactId)) {
-            const restored = await this.pool.restoreSession(compactId)
-            compactId = restored.id
-            console.log('[server] session.compact: auto-restored, oldId=' + (msg.payload.sessionId as string) + ', newId=' + compactId)
-            // 广播 session.restored 到所有客户端，确保前端更新 pane 绑定
-            this.broadcast({
-              type: 'session.restored', id: msg.id, payload: {
-                oldSessionId: msg.payload.sessionId as string,
-                newSessionId: restored.id,
-                summary: restored,
-              },
-            })
-            this.broadcastSessionList()
-          }
-          try {
-            await this.pool.compact(compactId)
-          } catch (e) {
-            // pool.compact 已发送 session.compacted（含 error），此处不再 throw
-            // 否则外层 catch 会再发一条 handler_error，前端收到两条重复错误
-            console.error('[server] session.compact: failed, sessionId=' + compactId + ', error=' + (e instanceof Error ? e.message : String(e)))
-          }
-          console.log('[server] session.compact: completed, sessionId=' + compactId + ', elapsed=' + (Date.now() - startTime) + 'ms')
+        case 'session.compact':
+          this.handleSessionCompact(msg)
           break
-        }
 
         case 'session.clear': {
           const clearId = msg.payload.sessionId as string
@@ -257,139 +379,12 @@ export class SidecarServer {
           break
         }
 
-        // ── Config ──────────────────────────────────────────────
-        case 'config.getProviders': {
-          const providers = providerStore.listProviders()
-          this.send(ws, { type: 'config.providers', id: msg.id, payload: { providers } })
-          break
-        }
-
-        case 'config.setProvider': {
-          const { providerId, ...data } = msg.payload as Record<string, unknown>
-          providerStore.setProvider(
-            providerId as string,
-            data as Parameters<typeof providerStore.setProvider>[1],
-          )
-          this.send(ws, {
-            type: 'config.providerUpdated',
-            id: msg.id,
-            payload: { providerId },
-          })
-          this.broadcastProviderList()
-          break
-        }
-
-        case 'config.deleteProvider': {
-          const delId = msg.payload.providerId as string
-          providerStore.deleteProvider(delId)
-          this.send(ws, {
-            type: 'config.providerUpdated',
-            id: msg.id,
-            payload: { providerId: delId, deleted: true },
-          })
-          this.broadcastProviderList()
-          break
-        }
-
-        case 'config.setToolPermissions': {
-          const permissions = msg.payload.permissions as Record<string, string>
-          updateToolPermissions(permissions)
-          this.send(ws, { type: 'config.providerUpdated', id: msg.id, payload: { saved: true } })
-          break
-        }
-
-        case 'config.discoverModels': {
-          const { baseUrl, apiKey, providerType, providerId } = msg.payload as {
-            baseUrl: string
-            apiKey?: string
-            providerType?: string
-            providerId?: string
-          }
-          // 如果没传 apiKey，尝试从 config-store 读取已保存的 key
-          let resolvedApiKey = apiKey
-          if (!resolvedApiKey && providerId) {
-            const providerConfig = getProvider(providerId)
-            resolvedApiKey = providerConfig?.apiKey
-          }
-          try {
-            const models = await this.discoverModelsFromApi(baseUrl, resolvedApiKey, providerType)
-            this.send(ws, {
-              type: 'config.discoveredModels',
-              id: msg.id,
-              payload: { models, success: true },
-            })
-          } catch (e) {
-            const raw = e instanceof Error ? e.message : String(e)
-            // 将底层错误翻译为用户可读提示
-            const message = raw.includes('ByteString')
-              ? '请求失败：Base URL 或 API Key 包含 HTTP 不支持的字符'
-              : raw.includes('fetch failed')
-                ? `连接失败：无法访问 ${baseUrl}/v1/models`
-                : raw
-            this.send(ws, {
-              type: 'config.discoveredModels',
-              id: msg.id,
-              payload: { models: [], success: false, error: message },
-            })
-          }
-          break
-        }
-
-        // ── Models ──────────────────────────────────────────────
-        case 'model.list': {
-          const providers = providerStore.listProviders()
-          const models = this.aggregateModels(providers)
-          this.send(ws, { type: 'model.list', id: msg.id, payload: { models } })
-          break
-        }
-
-        case 'model.switch': {
-          const { sessionId, provider, modelId } = msg.payload as {
-            sessionId: string
-            provider: string
-            modelId: string
-          }
-          console.log(`[sidecar] model.switch: sessionId=${sessionId}, provider=${provider}, modelId=${modelId}`)
-          await this.pool.switchModel(sessionId, provider, modelId)
-          this.send(ws, {
-            type: 'model.switched',
-            id: msg.id,
-            payload: { sessionId, provider, modelId },
-          })
-          break
-        }
-
-        // ── Tool approval ───────────────────────────────────────
-        case 'tool.approve': {
-          const { sessionId: taSid, toolCallId } = msg.payload as {
-            sessionId: string
-            toolCallId: string
-          }
-          await this.pool.approveTool(taSid, toolCallId)
-          break
-        }
-
-        case 'tool.deny': {
-          const { sessionId: tdSid, toolCallId: tdTid } = msg.payload as {
-            sessionId: string
-            toolCallId: string
-          }
-          await this.pool.denyTool(tdSid, tdTid)
-          break
-        }
-
-        case 'tool.always_allow': {
-          const { sessionId: alwSid, toolName } = msg.payload as {
-            sessionId: string
-            toolName: string
-          }
-          await this.pool.alwaysAllowTool(alwSid, toolName)
-          break
-        }
-
+        // ── Settings / Config / Model / Tool messages ──────────
         default:
-          const unknownSid = (msg as { payload?: { sessionId?: string } }).payload?.sessionId
-          this.sendError(ws, 'unknown_type', `Unknown message type: ${(msg as { type: string }).type}`, msg.id, unknownSid)
+          if (!this.handleSettingsMessage(msg, ws)) {
+            const unknownSid = (msg as { payload?: { sessionId?: string } }).payload?.sessionId
+            this.sendError(ws, 'unknown_type', `Unknown message type: ${(msg as { type: string }).type}`, msg.id, unknownSid)
+          }
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e)
@@ -431,6 +426,16 @@ export class SidecarServer {
     this.broadcast({ type: 'model.list', id: this.nextPushId(), payload: { models } })
   }
 
+  private broadcastSkillList(): void {
+    const skills = loadSkills(this.projectRoot)
+    this.broadcast({ type: 'config.skills', id: this.nextPushId(), payload: { skills } })
+  }
+
+  private broadcastAgentList(): void {
+    const agents = loadAgents(this.projectRoot)
+    this.broadcast({ type: 'config.agents', id: this.nextPushId(), payload: { agents } })
+  }
+
   private aggregateModels(providers: ReturnType<typeof providerStore.listProviders>): ModelInfo[] {
     return providers.flatMap(p =>
       p.models.map(m => {
@@ -445,10 +450,11 @@ export class SidecarServer {
             providerId: p.id,
             providerName: p.name,
             contextWindow: dbRecord?.context,
+            enabled: true,
           } as ModelInfo
         }
         if (entry && typeof entry === 'object' && 'id' in entry) {
-          const meta = entry as { id: unknown; name: unknown; ctx?: unknown; tags?: unknown }
+          const meta = entry as { id: unknown; name: unknown; ctx?: unknown; tags?: unknown; enabled?: unknown }
           return {
             id: typeof meta.id === 'string' ? meta.id : String(meta.id),
             name: typeof meta.name === 'string' ? meta.name : String(meta.name ?? meta.id),
@@ -460,6 +466,7 @@ export class SidecarServer {
               : this.parseCtxToNumber(
                 typeof meta.ctx === 'string' ? meta.ctx : undefined,
               ),
+            enabled: meta.enabled !== false,
           } as ModelInfo
         }
         // fallback：转为字符串
@@ -468,6 +475,7 @@ export class SidecarServer {
           name: String(m),
           providerId: p.id,
           providerName: p.name,
+          enabled: true,
         } as ModelInfo
       }),
     )

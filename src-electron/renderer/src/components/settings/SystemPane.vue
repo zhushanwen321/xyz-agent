@@ -23,11 +23,11 @@ const currentLocale = computed({
   },
 })
 
-const themeModeOptions = [
-  { label: '浅色', value: 'light' },
-  { label: '深色', value: 'dark' },
-  { label: '跟随系统', value: 'system' },
-]
+const themeModeOptions = computed(() => [
+  { label: t('settings.themeLight'), value: 'light' },
+  { label: t('settings.themeDark'), value: 'dark' },
+  { label: t('settings.themeSystem'), value: 'system' },
+])
 
 const currentThemeMode = computed({
   get: () => settingsStore.theme,
@@ -68,52 +68,57 @@ function selectPalette(id: ThemePreset) {
 </script>
 
 <template>
-  <div class="max-w-[520px] flex flex-col gap-4">
-    <div class="flex items-center gap-4">
-      <div class="text-[13px] text-muted shrink-0">{{ t('settings.language') }}</div>
-      <div class="flex-1 max-w-[200px]">
-        <Select
-          v-model="currentLocale"
-          :options="languageOptions"
-        />
+  <div class="max-w-[860px]">
+    <!-- Section: 语言与外观 -->
+    <div class="border border-border rounded-lg overflow-hidden mb-3">
+      <div class="flex items-center py-[9px] px-4 bg-[var(--section-bg)] min-h-[42px]">
+        <span class="text-[13px] font-semibold">{{ t('settings.languageAndAppearance') }}</span>
+      </div>
+      <div>
+        <div class="flex items-center gap-4 py-2.5 px-4 border-b border-[var(--divider)]">
+          <span class="text-xs font-medium min-w-[76px]">{{ t('settings.language') }}</span>
+          <div class="flex-1 max-w-[200px]">
+            <Select v-model="currentLocale" :options="languageOptions" />
+          </div>
+        </div>
+        <div class="flex items-center gap-4 py-2.5 px-4">
+          <span class="text-xs font-medium min-w-[76px]">{{ t('settings.appearanceMode') }}</span>
+          <div class="flex-1 max-w-[200px]">
+            <Select v-model="currentThemeMode" :options="themeModeOptions" />
+          </div>
+        </div>
       </div>
     </div>
-    <div class="flex items-center gap-4">
-      <div class="text-[13px] text-muted shrink-0">外观模式</div>
-      <div class="flex-1 max-w-[200px]">
-        <Select
-          v-model="currentThemeMode"
-          :options="themeModeOptions"
-        />
+
+    <!-- Section: 配色主题 -->
+    <div class="border border-border rounded-lg overflow-hidden mb-3">
+      <div class="flex items-center py-[9px] px-4 bg-[var(--section-bg)] min-h-[42px]">
+        <span class="text-[13px] font-semibold">{{ t('settings.colorTheme') }}</span>
       </div>
-    </div>
-    <div class="flex flex-col gap-3">
-      <div class="text-[13px] text-muted">配色主题</div>
-      <div class="flex flex-col gap-2">
-        <div class="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted">Muted</div>
-        <div class="flex flex-wrap gap-2">
+      <div class="py-3 px-4">
+        <div class="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted mb-2">Muted</div>
+        <div class="flex flex-wrap gap-2 mb-3">
           <Button
             v-for="p in mutedPalettes"
             :key="p.id"
             variant="ghost"
-            class="flex items-center gap-2 py-[6px] px-3 rounded-sm border border-border bg-surface cursor-pointer transition-all duration-150 ease-ease font-body text-fg hover:border-muted hover:bg-accent-light"
-            :class="{ 'border-accent bg-accent-light ring-1 ring-accent': currentPalette === p.id }"
+            class="flex items-center gap-2 py-[6px] px-3 rounded-sm border cursor-pointer transition-all duration-150 font-body text-fg"
+            :class="currentPalette === p.id ? 'border-[var(--accent)] bg-[var(--accent-light)] ring-1 ring-[var(--accent)]' : 'border-border bg-surface hover:border-muted hover:bg-[var(--accent-light)]'"
             @click="selectPalette(p.id)"
           >
             <span class="shrink-0 rounded-full w-4 h-4" :style="{ background: p.swatch }" />
             <span class="text-xs whitespace-nowrap">{{ p.label }}</span>
           </Button>
         </div>
-      </div>
-      <div class="flex flex-col gap-2">
-        <div class="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted">Colorful</div>
+
+        <div class="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted mb-2">Colorful</div>
         <div class="flex flex-wrap gap-2">
           <Button
             v-for="p in colorfulPalettes"
             :key="p.id"
             variant="ghost"
-            class="flex items-center gap-2 py-[6px] px-3 rounded-sm border border-border bg-surface cursor-pointer transition-all duration-150 ease-ease font-body text-fg hover:border-muted hover:bg-accent-light"
-            :class="{ 'border-accent bg-accent-light ring-1 ring-accent': currentPalette === p.id }"
+            class="flex items-center gap-2 py-[6px] px-3 rounded-sm border cursor-pointer transition-all duration-150 font-body text-fg"
+            :class="currentPalette === p.id ? 'border-[var(--accent)] bg-[var(--accent-light)] ring-1 ring-[var(--accent)]' : 'border-border bg-surface hover:border-muted hover:bg-[var(--accent-light)]'"
             @click="selectPalette(p.id)"
           >
             <span class="shrink-0 rounded-full w-4 h-4" :style="{ background: p.swatch }" />
@@ -124,4 +129,3 @@ function selectPalette(id: ThemePreset) {
     </div>
   </div>
 </template>
-

@@ -5,6 +5,8 @@ export type ClientMessageType =
   | 'message.send' | 'message.abort'
   | 'config.getProviders' | 'config.setProvider' | 'config.deleteProvider' | 'config.setToolPermissions'
   | 'config.discoverModels'
+  | 'config.scanSkills' | 'config.setSkill' | 'config.deleteSkill'
+  | 'config.scanAgents' | 'config.setAgent' | 'config.deleteAgent'
   | 'model.list' | 'model.switch'
   | 'tool.approve' | 'tool.deny' | 'tool.always_allow'
   | 'ping'
@@ -25,6 +27,9 @@ export type ServerMessageType =
   | 'message.complete' | 'message.error' | 'message.status'
   | 'context.update'
   | 'config.providers' | 'config.providerUpdated' | 'config.discoveredModels'
+  | 'config.scannedSkills' | 'config.skillUpdated' | 'config.skillDeleted'
+  | 'config.scannedAgents' | 'config.agentUpdated' | 'config.agentDeleted'
+  | 'config.skills' | 'config.agents'
   | 'model.list' | 'model.switched'
   | 'pong' | 'error'
 

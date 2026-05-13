@@ -2,7 +2,7 @@ import { onMounted, onUnmounted } from 'vue'
 import { useProviderStore } from '../stores/provider'
 import { on, off } from '../lib/event-bus'
 import { send } from '../lib/ws-client'
-import type { ServerMessage, ProviderInfo, ModelInfo } from '@xyz-agent/shared'
+import type { ServerMessage, ProviderInfo, ModelInfo, SkillInfo, AgentInfo, ScannedSkillInfo, ScannedAgentInfo } from '@xyz-agent/shared'
 
 export function useProvider() {
   const store = useProviderStore()
@@ -18,10 +18,48 @@ export function useProvider() {
     store.setModels((msg.payload as { models: ModelInfo[] }).models ?? [])
   }
 
+  function onSkills(msg: ServerMessage) {
+    const payload = msg.payload as { skills?: SkillInfo[] }
+    if (payload.skills) store.setSkills(payload.skills)
+  }
+
+  function onAgents(msg: ServerMessage) {
+    const payload = msg.payload as { agents?: AgentInfo[] }
+    if (payload.agents) store.setAgents(payload.agents)
+  }
+
+  function onScannedSkills(msg: ServerMessage) {
+    store.isScanningSkills = false
+    const payload = msg.payload as { skills?: ScannedSkillInfo[]; success?: boolean }
+    if (payload.skills) store.setScannedSkills(payload.skills)
+  }
+
+  function onScannedAgents(msg: ServerMessage) {
+    store.isScanningAgents = false
+    const payload = msg.payload as { agents?: ScannedAgentInfo[]; success?: boolean }
+    if (payload.agents) store.setScannedAgents(payload.agents)
+  }
+
+  function onSkillUpdated() {
+    // server broadcasts updated skill list via config.skills
+  }
+
+  function onAgentUpdated() {
+    // server broadcasts updated agent list via config.agents
+  }
+
   const handlers: Record<string, (msg: ServerMessage) => void> = {
     'config.providers': onProviders,
     'config.providerUpdated': onProviders,
     'model.list': onModels,
+    'config.skills': onSkills,
+    'config.agents': onAgents,
+    'config.scannedSkills': onScannedSkills,
+    'config.scannedAgents': onScannedAgents,
+    'config.skillUpdated': onSkillUpdated,
+    'config.skillDeleted': onSkills,
+    'config.agentUpdated': onAgentUpdated,
+    'config.agentDeleted': onAgents,
   }
 
   onMounted(() => {

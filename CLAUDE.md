@@ -12,12 +12,20 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Sidecar 的 AI Agent 桌面工作
 
 **完整编码规范**: [docs/standards.md](docs/standards.md)
 
-**设计参考文档**:
+**规范与设计文档**:
+- [完整编码规范](docs/standards.md) — 组件使用、样式规则、TypeScript 约束
+- [设计系统](docs/design-system.md) — CSS 变量、颜色体系、排版规则
+- [设计系统详细参考](docs/designs/docs_DESIGN-SYSTEM.md) — 完整的设计 token、组件规范
 - [竞品 UI 分析](docs/templates/competitor-ui-analysis.md) — Claude Code / Codex 逐图拆解，7 条设计原则
 - [UI/UX 设计原则与参考](docs/templates/ui-design-principles-and-references.md) — 设计方法论 + 竞品案例 + 行动清单
 - [设计方向](docs/templates/design-direction.md) — 产品定位、主题策略、窗口架构、实施优先级
 - [暗色主题选项 demo](docs/templates/dark-theme-options.html) — 5 种彩色 accent 方案对比
 - [朴素锐利主题 demo](docs/templates/muted-sharp-themes.html) — 5 种低饱和/无彩色方案对比
+
+**Settings 模块设计文档**:
+- [Settings 视觉 demo](docs/designs/settings-final.html) — Section Groups 风格的最终 HTML demo
+- [Settings spec](.xyz-harness/2026-05-12-settings-redesign/spec.md) — 需求规格（WS 协议、数据流、组件结构）
+- [Settings plan](.xyz-harness/2026-05-12-settings-redesign/plan.md) — 实现计划（12 个 Task）
 
 ## 常用命令
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-/* eslint-disable max-lines */
 import { ref, watch, onUnmounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Button, Input, Select } from '../../design-system'
 import type { ProviderInfo, ModelInfo } from '@xyz-agent/shared'
 import { TagPill } from './shared'
@@ -31,6 +31,7 @@ interface ModalModel {
   name: string
   ctx: string | number | undefined
   tags: string[]
+  enabled?: boolean
 }
 
 interface ModalFormData {
@@ -41,6 +42,8 @@ interface ModalFormData {
   models: ModalModel[]
   providerId?: string
 }
+
+const { t } = useI18n()
 
 const formName = ref('')
 const formType = ref('anthropic')
@@ -77,10 +80,10 @@ const allTags = ['power', 'efficient', 'fast'] as const
 const typeOptions = [
   { label: 'Anthropic', value: 'anthropic' },
   { label: 'OpenAI', value: 'openai' },
-  { label: 'OpenAI 兼容', value: 'openai-compatible' },
+  { label: t('settings.providerTypeCompatible'), value: 'openai-compatible' },
   { label: 'Google AI', value: 'google' },
   { label: 'DeepSeek', value: 'deepseek' },
-  { label: 'Ollama (本地)', value: 'ollama' },
+  { label: t('settings.providerTypeLocal'), value: 'ollama' },
 ]
 
 // ─── Watch provider changes ─────────────────────────────────────
@@ -154,7 +157,7 @@ function addModel() {
 function handleTest() {
   testResult.value = 'ok'
   const FALLBACK_MODEL_COUNT = 3
-  testMessage.value = `连接成功，发现 ${modalModels.value.length || FALLBACK_MODEL_COUNT} 个可用模型`
+  testMessage.value = t('settings.foundModels', { n: modalModels.value.length || FALLBACK_MODEL_COUNT })
   emit('test', { url: formUrl.value, key: formKey.value })
 }
 
@@ -187,7 +190,7 @@ function handleDiscover() {
   // 前置校验：Base URL
   if (!baseUrl) {
     discoverStatus.value = 'error'
-    discoverMessage.value = '请先填写 Base URL'
+    discoverMessage.value = t('settings.baseUrlHint')
     return
   }
 
@@ -197,7 +200,7 @@ function handleDiscover() {
   const keyIsMask = key === '••••••••'
   if (isNewProvider && !key && type !== 'ollama') {
     discoverStatus.value = 'error'
-    discoverMessage.value = '请先填写 API Key'
+    discoverMessage.value = t('settings.apiKeyHint')
     return
   }
 
@@ -208,7 +211,7 @@ function handleDiscover() {
   discoverTimer = setTimeout(() => {
     cleanupDiscover()
     discoverStatus.value = 'error'
-    discoverMessage.value = '发现超时，请确认后端服务已启动且版本最新'
+    discoverMessage.value = t('settings.discoveryTimeoutHint')
   }, DISCOVER_TIMEOUT_MS)
 
   // 注册一次性监听
@@ -221,20 +224,24 @@ function handleDiscover() {
     const error = payload.error as string | undefined
 
     if (success && models.length > 0) {
-      modalModels.value = models.map(m => ({
-        id: m.id,
-        name: m.name,
-        ctx: m.ctx,
-        tags: [],
-      }))
+      modalModels.value = models.map(m => {
+        const existing = modalModels.value.find(em => em.id === m.id)
+        return {
+          id: m.id,
+          name: m.name,
+          ctx: m.ctx,
+          tags: [],
+          enabled: existing?.enabled ?? true,
+        }
+      })
       discoverStatus.value = 'success'
-      discoverMessage.value = `发现 ${models.length} 个可用模型`
+      discoverMessage.value = t('settings.foundModels', { n: models.length })
     } else if (success && models.length === 0) {
       discoverStatus.value = 'empty'
-      discoverMessage.value = '未发现可用模型，请确保 Base URL 正确或手动添加'
+      discoverMessage.value = t('settings.noModelsFoundHint')
     } else {
       discoverStatus.value = 'error'
-      discoverMessage.value = error || '发现失败，请检查网络或 API Key'
+      discoverMessage.value = error || t('settings.discoveryFailedHint')
     }
   }
   onEvent('config.discoveredModels', discoverHandler)
@@ -304,31 +311,31 @@ onUnmounted(() => {
 
       <div class="p-5 overflow-y-auto flex-1">
         <div class="mb-4">
-          <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">名称</div>
-          <Input v-model="formName" placeholder="例如：Anthropic、OpenAI、本地 Ollama" />
+          <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">{{ t('settings.providerName') }}</div>
+          <Input v-model="formName" :placeholder="t('settings.providerNamePlaceholder')" />
         </div>
 
         <div class="flex gap-3">
           <div class="mb-4 flex-1">
-            <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">类型</div>
+            <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">{{ t('settings.providerType') }}</div>
             <Select v-model="formType" :options="typeOptions" />
           </div>
           <div class="mb-4 flex-1">
-            <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">连接状态</div>
-            <div class="py-2 text-[13px] text-muted">未测试</div>
+            <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">{{ t('settings.connectionStatus') }}</div>
+            <div class="py-2 text-[13px] text-muted">{{ t('settings.connectionNotTested') }}</div>
           </div>
         </div>
 
         <div class="mb-4">
           <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">Base URL</div>
           <Input v-model="formUrl" placeholder="https://api.anthropic.com" />
-          <div class="text-[11px] text-muted mt-1">供应商的 API 端点地址。Ollama 默认为 http://localhost:11434</div>
+          <div class="text-[11px] text-muted mt-1">{{ t('settings.endpointDefaultHint') }}</div>
         </div>
 
         <div class="mb-4">
           <div class="text-xs font-semibold text-muted mb-1.5 uppercase tracking-[0.04em]">API Key</div>
           <Input v-model="formKey" type="password" placeholder="sk-ant-..." />
-          <div class="text-[11px] text-muted mt-1">本地模型（如 Ollama）无需 API Key</div>
+          <div class="text-[11px] text-muted mt-1">{{ t('settings.localModelNoUrlNeeded') }}</div>
         </div>
 
         <div v-if="testResult !== 'none'" :class="['py-2 px-3 rounded-sm text-xs mt-2 flex items-center gap-2', testResult === 'ok' ? 'bg-success-light text-success' : 'bg-danger-light text-danger']">
@@ -336,11 +343,11 @@ onUnmounted(() => {
           {{ testMessage }}
         </div>
 
-        <div class="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted my-5 pb-1.5 border-b border-border">模型配置</div>
+        <div class="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted my-5 pb-1.5 border-b border-border">{{ t('settings.modelConfig') }}</div>
 
         <div class="border border-border rounded-sm overflow-hidden mt-2">
           <div class="flex items-center justify-between py-2.5 px-3.5 bg-bg border-b border-border">
-            <span class="text-xs font-semibold">已配置模型</span>
+            <span class="text-xs font-semibold">{{ t('settings.configuredModels') }}</span>
             <div class="flex gap-1.5">
               <span v-if="discoverStatus !== 'idle'" :class="['text-[11px] inline-flex items-center gap-1 whitespace-nowrap', {
                 'text-muted': discoverStatus === 'loading',
@@ -348,7 +355,7 @@ onUnmounted(() => {
                 'text-danger': discoverStatus === 'error',
                 'text-warning': discoverStatus === 'empty',
               }]">
-                <template v-if="discoverStatus === 'loading'">正在发现…</template>
+                <template v-if="discoverStatus === 'loading'">{{ t('settings.discovering') }}…</template>
                 <template v-else>{{ discoverMessage }}</template>
               </span>
               <Button
@@ -357,7 +364,7 @@ onUnmounted(() => {
                 :disabled="discoverStatus === 'loading'"
                 @click="handleDiscover"
               >
-                {{ discoverStatus === 'loading' ? '发现中…' : '自动发现' }}
+                {{ discoverStatus === 'loading' ? t('settings.discoveringModels') : t('settings.autoDiscover') }}
               </Button>
             </div>
           </div>
@@ -373,7 +380,7 @@ onUnmounted(() => {
                   :active="model.tags.includes(tag)"
                   @toggle="toggleModelTag(model, tag)"
                 >
-                  {{ tag === 'power' ? '强力' : tag === 'efficient' ? '高效' : '快速' }}
+                  {{ tag === 'power' ? t('settings.tagPower') : tag === 'efficient' ? t('settings.tagEfficient') : t('settings.tagFast') }}
                 </TagPill>
               </div>
               <Button variant="ghost" size="sm" class="hover:!text-[var(--danger)] hover:!bg-[var(--danger-light)]" @click="removeModel(idx)">
@@ -386,7 +393,7 @@ onUnmounted(() => {
           <div class="flex gap-2 py-2.5 px-3.5 bg-bg border-t border-border">
             <Input
               v-model="addModelName"
-              placeholder="手动输入模型名称，如 my-model-v1"
+              :placeholder="t('settings.manualInputModel')"
               class="flex-1"
               @keydown.enter="addModel"
             />
@@ -395,7 +402,7 @@ onUnmounted(() => {
               :options="ctxOptions"
               class="!max-w-[120px]"
             />
-            <Button variant="outline" size="sm" @click="addModel">添加</Button>
+            <Button variant="outline" size="sm" @click="addModel">{{ t('common.create') }}</Button>
           </div>
         </div>
       </div>
@@ -406,10 +413,10 @@ onUnmounted(() => {
             <circle cx="6" cy="6" r="4.5" />
             <path d="M6 4v2.5M6 8v.5" />
           </svg>
-          测试连接
+          {{ t('settings.testConnection') }}
         </Button>
-        <Button variant="outline" @click="$emit('close')">取消</Button>
-        <Button variant="primary" @click="handleSave">保存</Button>
+        <Button variant="outline" @click="$emit('close')">{{ t('common.cancel') }}</Button>
+        <Button variant="primary" @click="handleSave">{{ t('common.save') }}</Button>
       </div>
     </div>
   </div>
