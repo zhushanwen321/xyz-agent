@@ -130,33 +130,30 @@ fi
 # ============================================================================
 # 2. 前端 vue-tsc 类型检查（与 CI 等价）
 # ============================================================================
-# TODO: xyz-agent 前端在 workspace 中，暂未配置 vue-tsc，待启用后取消注释
-#
-# if [ -n "$FRONTEND_FILES" ]; then
-#     print_section "[前端 vue-tsc 类型检查]"
-#
-#     if [ "$SKIP_TYPE_CHECK" != "1" ]; then
-#         CHANGED_VUE_TS=$(echo "$FRONTEND_FILES" | grep -E "\.(vue|ts)$" || true)
-#
-#         if [ -n "$CHANGED_VUE_TS" ]; then
-#             echo -e "${BLUE}[INFO] 清除增量缓存，执行全量类型检查...${NC}"
-#
-#             rm -rf src/node_modules/.tmp/tsconfig.app.tsbuildinfo 2>/dev/null || true
-#
-#             if ! (cd src && npx vue-tsc -b 2>&1); then
-#                 echo ""
-#                 echo -e "${RED}[ERROR] vue-tsc 类型检查失败${NC}"
-#                 exit 1
-#             fi
-#
-#             echo -e "${GREEN}[OK] vue-tsc 类型检查通过${NC}"
-#         else
-#             echo -e "${GREEN}[OK] 无 .vue/.ts 文件变更${NC}"
-#         fi
-#     else
-#         echo -e "${YELLOW}[SKIP] vue-tsc 类型检查已跳过${NC}"
-#     fi
-# fi
+
+if [ -n "$FRONTEND_FILES" ]; then
+    print_section "[前端 vue-tsc 类型检查]"
+
+    if [ "$SKIP_TYPE_CHECK" != "1" ]; then
+        CHANGED_VUE_TS=$(echo "$FRONTEND_FILES" | grep -E "\.(vue|ts)$" || true)
+
+        if [ -n "$CHANGED_VUE_TS" ]; then
+            echo -e "${BLUE}[INFO] 执行全量类型检查...${NC}"
+
+            if ! (cd src-electron/renderer && npx vue-tsc --noEmit 2>&1); then
+                echo ""
+                echo -e "${RED}[ERROR] vue-tsc 类型检查失败${NC}"
+                exit 1
+            fi
+
+            echo -e "${GREEN}[OK] vue-tsc 类型检查通过${NC}"
+        else
+            echo -e "${GREEN}[OK] 无 .vue/.ts 文件变更${NC}"
+        fi
+    else
+        echo -e "${YELLOW}[SKIP] vue-tsc 类型检查已跳过${NC}"
+    fi
+fi
 
 # ============================================================================
 # 3. 自定义代码规范检查（原生 HTML 元素、Emoji、自定义 CSS）
