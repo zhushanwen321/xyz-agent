@@ -64,7 +64,7 @@ const itemClasses = computed(() =>
 
 <template>
   <SelectRoot
-    :model-value="modelValue || undefined"
+    :model-value="String(modelValue ?? '')"
     :disabled="disabled"
     @update:model-value="emit('update:modelValue', $event ?? '')"
   >

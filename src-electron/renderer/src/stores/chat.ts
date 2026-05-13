@@ -2,6 +2,21 @@ import { defineStore } from 'pinia'
 import { reactive, computed } from 'vue'
 import type { Message, ToolCall } from '@xyz-agent/shared'
 
+// SystemChatMessage: local system notification (not from API)
+export interface SystemChatMessage {
+  id: string
+  role: 'system'
+  status?: string
+  content?: string
+  systemType?: 'done' | 'alert'
+  systemTitle?: string
+  systemDescription?: string
+  systemAction?: string
+  timestamp: number
+}
+
+export type ChatMessage = Message | SystemChatMessage
+
 // ── Types ──────────────────────────────────────────────────────────
 
 export interface PendingApproval {
@@ -14,7 +29,7 @@ export interface PendingApproval {
 
 /** Per-session chat state partition */
 export interface ChatSessionState {
-  completedMessages: Message[]
+  completedMessages: ChatMessage[]
   streamingMessage: Message | null
   isGenerating: boolean
   error: string | null
@@ -82,7 +97,7 @@ export const useChatStore = defineStore('chat', () => {
 
   // ── 消息操作（全部要求显式 sessionId）──────────────────────
 
-  function addMessage(msg: Message, sessionId: string) {
+  function addMessage(msg: ChatMessage, sessionId: string) {
     const s = getSessionState(sessionId)
     s.completedMessages = [...s.completedMessages, msg]
   }
@@ -122,14 +137,14 @@ export const useChatStore = defineStore('chat', () => {
     s.streamingMessage = null
   }
 
-  function replaceMessages(msgs: Message[], sessionId: string) {
+  function replaceMessages(msgs: ChatMessage[], sessionId: string) {
     getSessionState(sessionId).completedMessages = msgs
   }
 
   function appendThinkingDelta(delta: string, sessionId: string) {
     const s = getSessionState(sessionId)
     if (s.streamingMessage) {
-      const current = (s.streamingMessage as Record<string, unknown>).thinkingContent ?? ''
+      const current = (s.streamingMessage as unknown as Record<string, unknown>).thinkingContent ?? ''
       s.streamingMessage = {
         ...s.streamingMessage,
         thinkingContent: current + delta,
@@ -140,7 +155,7 @@ export const useChatStore = defineStore('chat', () => {
   function addStreamingToolCall(tc: ToolCall, sessionId: string) {
     const s = getSessionState(sessionId)
     if (s.streamingMessage) {
-      const calls = [...((s.streamingMessage as Record<string, unknown>).toolCalls as ToolCall[] ?? []), tc]
+      const calls = [...((s.streamingMessage as unknown as Record<string, unknown>).toolCalls as ToolCall[] ?? []), tc]
       s.streamingMessage = { ...s.streamingMessage, toolCalls: calls } as Message
     }
   }
@@ -148,7 +163,7 @@ export const useChatStore = defineStore('chat', () => {
   function updateStreamingToolCall(id: string, output: string, sessionId: string) {
     const s = getSessionState(sessionId)
     if (s.streamingMessage) {
-      const calls = ((s.streamingMessage as Record<string, unknown>).toolCalls as ToolCall[] ?? []).map(
+      const calls = ((s.streamingMessage as unknown as Record<string, unknown>).toolCalls as ToolCall[] ?? []).map(
         (tc) => tc.id === id ? { ...tc, output, status: 'completed' as const } : tc,
       )
       s.streamingMessage = { ...s.streamingMessage, toolCalls: calls } as Message

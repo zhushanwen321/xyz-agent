@@ -32,11 +32,11 @@
               <!-- System messages -->
               <SystemMessage
                 v-if="msg.role === 'system'"
-                :type="msg.systemType || (msg.status === 'error' ? 'alert' : 'done')"
-                :title="msg.systemTitle || ''"
-                :content="msg.content"
-                :description="msg.systemDescription"
-                :action-label="msg.systemAction"
+                :type="(msg as any).systemType || ((msg as any).status === 'error' ? 'alert' : 'done')"
+                :title="(msg as any).systemTitle || ''"
+                :content="(msg as any).content"
+                :description="(msg as any).systemDescription"
+                :action-label="(msg as any).systemAction"
                 @action="$emit('system-action', msg)"
               />
               <!-- User / Assistant messages -->
@@ -89,19 +89,7 @@
 import { ref, watch, nextTick } from 'vue'
 import type { Message } from '@xyz-agent/shared'
 import type { PendingToolCall } from '../chat/ApprovalCard.vue'
-
-export interface SystemChatMessage {
-  id: string
-  role: 'system'
-  systemType?: 'done' | 'alert'
-  systemTitle?: string
-  systemDescription?: string
-  systemAction?: string
-  timestamp: number
-}
-
-/** Chat panel message: either a real Message or a local system notification */
-export type ChatMessage = Message | SystemChatMessage
+import type { ChatMessage } from '../../stores/chat'
 
 import PanelBar from './PanelBar.vue'
 import SystemMessage from '../chat/SystemMessage.vue'

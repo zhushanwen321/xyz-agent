@@ -1,4 +1,4 @@
-export type MessageRole = 'user' | 'assistant'
+export type MessageRole = 'user' | 'assistant' | 'system'
 export type MessageStatus = 'streaming' | 'complete' | 'error'
 export type ToolCallStatus = 'running' | 'completed' | 'error'
 export type ApprovalStatus = 'pending' | 'approved' | 'denied'
