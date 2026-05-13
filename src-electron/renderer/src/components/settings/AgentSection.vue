@@ -11,6 +11,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'toggle-enabled': []
+  edit: []
   'update-strategy': [payload: { agentId: string; strategy: string }]
   delete: [agentId: string]
 }>()
@@ -77,7 +78,7 @@ function cancelDelete() {
         <div class="text-[11px] text-muted font-mono mt-px truncate">{{ sourceSubtitle }}</div>
       </div>
       <div class="flex items-center gap-1 shrink-0" @click.stop>
-        <Button variant="ghost" size="sm">编辑</Button>
+        <Button variant="ghost" size="sm" @click="$emit('edit')">编辑</Button>
         <Button variant="ghost" size="sm" class="hover:!text-[var(--danger)] hover:!bg-[var(--danger-light)]" @click="handleDeleteClick">删除</Button>
       </div>
     </div>

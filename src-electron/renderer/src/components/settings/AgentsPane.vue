@@ -10,6 +10,7 @@ import AgentModal from './AgentModal.vue'
 const providerStore = useProviderStore()
 const agents = computed(() => providerStore.agents)
 const showModal = ref(false)
+const editingAgent = ref<AgentInfo | null>(null)
 
 const scanSources = [
   { id: 'pi', icon: 'P', label: 'Pi Agents', path: '~/.pi/agent/agents/', defaultActive: true },
@@ -37,16 +38,42 @@ function handleUpdateStrategy(payload: { agentId: string; strategy: string }) {
 }
 
 function handleAgentSave(data: { name: string; description: string; modelStrategy: string; modelBind?: string }) {
-  const newAgent: AgentInfo = {
-    id: `agent-${Date.now()}`,
-    name: data.name,
-    description: data.description,
-    enabled: true,
-    modelStrategy: data.modelStrategy,
-    modelBind: data.modelBind,
+  if (editingAgent.value) {
+    providerStore.setAgent({
+      ...editingAgent.value,
+      name: data.name,
+      description: data.description,
+      modelStrategy: data.modelStrategy,
+      modelBind: data.modelBind,
+    })
+  } else {
+    const newAgent: AgentInfo = {
+      id: `agent-${Date.now()}`,
+      name: data.name,
+      description: data.description,
+      enabled: true,
+      modelStrategy: data.modelStrategy,
+      modelBind: data.modelBind,
+    }
+    providerStore.setAgent(newAgent)
   }
-  providerStore.setAgent(newAgent)
   showModal.value = false
+  editingAgent.value = null
+}
+
+function openEditModal(agent: AgentInfo) {
+  editingAgent.value = agent
+  showModal.value = true
+}
+
+function openAddModal() {
+  editingAgent.value = null
+  showModal.value = true
+}
+
+function closeModal() {
+  showModal.value = false
+  editingAgent.value = null
 }
 </script>
 
@@ -57,7 +84,7 @@ function handleAgentSave(data: { name: string; description: string; modelStrateg
         <div class="font-display text-[22px] font-bold tracking-tight">Agent 配置</div>
         <div class="text-[12px] text-muted mt-1">扫描、导入和管理 AI Agent 模块</div>
       </div>
-      <Button variant="primary" @click="showModal = true">
+      <Button variant="primary" @click="openAddModal">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M7 1v12M1 7h12" />
         </svg>
@@ -89,12 +116,13 @@ function handleAgentSave(data: { name: string; description: string; modelStrateg
           :agent="agent"
           :all-models="allModels"
           @toggle-enabled="providerStore.toggleAgent(agent.id)"
+          @edit="openEditModal(agent)"
           @update-strategy="handleUpdateStrategy"
           @delete="providerStore.deleteAgentAction(agent.id)"
         />
       </div>
     </div>
 
-    <AgentModal :visible="showModal" :models="allModels" @close="showModal = false" @save="handleAgentSave" />
+    <AgentModal :visible="showModal" :agent="editingAgent" :models="allModels" @close="closeModal" @save="handleAgentSave" />
   </div>
 </template>
