@@ -10,7 +10,7 @@ const props = defineProps<{
   agent: AgentInfo
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   'toggle-enabled': []
   edit: []
   delete: [agentId: string]
@@ -30,6 +30,7 @@ function handleDeleteClick() {
 
 function confirmDelete() {
   emit('delete', props.agent.id)
+  showConfirm.value = false
 }
 
 function cancelDelete() {
