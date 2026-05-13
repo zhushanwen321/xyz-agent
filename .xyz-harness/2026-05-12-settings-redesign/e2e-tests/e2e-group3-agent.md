@@ -1,833 +1,741 @@
-# Group 3: Agent 扫描与 CRUD — E2E 测试用例
+# E2E Group 3: Agent Tab 测试
 
-> **测试范围**：Agents tab 的扫描源选择、扫描执行、导入、toggle 启停、删除 confirm-bar、策略切换全流程。
-> **前置依赖**：Group 0（基础连通性）全部通过。
-> **环境要求**：Sidecar 端口 3210、Electron debugging 端口 9222。
-
----
-
-## 环境信息
-
-| 项目 | 值 |
-|------|-----|
-| Sidecar 端口 | 3210 |
-| Electron DevTools 端口 | 9222 |
-| Agent 扫描源（Pi） | `~/.pi/agent/agents/` |
-| Agent 扫描源（Claude） | `~/.claude/agents/` |
-| Agent 扫描源（Agents） | `~/.agents/agents/` |
-| 持久化文件 | `.xyz-agent/agents.json` |
-| 项目根目录 | `/Users/zhushanwen/Code/xyz-agent-workspace/feat-skill-agent-provider` |
+> **依赖**: Group 0（Settings 窗口打开，Agent tab 可见）
+> **测试用例数**: 6
+> **每 TC 验证层**: 协议 (WS) + DOM + 视觉截图
 
 ---
 
-## 测试用例
+## 公共前置
 
----
+### 工具路径
 
-### TC-3.1: Agent 扫描源 Chips 交互
-
-| 字段 | 内容 |
+| 工具 | 路径 |
 |------|------|
-| **ID** | TC-3.1 |
-| **目标** | 确认 Agents tab 包含 Pi / Claude / Agents 三个 source chips，且 Pi 默认选中 |
-| **前置条件** | Group 0 全部通过；应用已启动并显示 Settings 页面 |
-| **依赖** | TC-0.1 ~ TC-0.6 |
+| CDP 脚本 | `/Users/zhushanwen/.pi/agent/skills/chrome-automation/scripts/cdp.js` |
+| zai-vision | `/Users/zhushanwen/.pi/agent/skills/zai-vision/scripts/zai_vision.py` |
+| 截图目录 | `/Users/zhushanwen/Code/xyz-agent-workspace/feat-skill-agent-provider/.xyz-harness/2026-05-12-settings-redesign/e2e-tests/screenshots/` |
+| 设计稿截图 | `expected-agent-tab.png` |
 
-**测试步骤**：
+### WS 协议消息一览
 
-1. 点击 Settings 左侧导航的 **Agents** tab，切换到 Agent 配置视图
-2. 通过 CDP 执行 DOM 查询，检查扫描源区域：
+| 方向 | 消息类型 | 说明 |
+|------|---------|------|
+| FE → SC | `config.scanAgents` | 触发扫描 agent 目录 |
+| SC → FE | `config.scannedAgents` | 返回扫描到的 agent 列表 |
+| FE → SC | `config.setAgent` | 导入/更新 agent（payload: `{ sessionId, agentId, enabled }`) |
+| SC → FE | `config.agentUpdated` | agent 配置变更确认 |
+| FE → SC | `config.deleteAgent` | 删除 agent（payload: `{ sessionId, agentId }`) |
+
+### CDP 连接 & Tab 切换
+
+与 Group 2 相同流程：
 
 ```bash
-# CDP: 获取 Agents 面板中的 source chips
-# 每个 source chip 的结构: div.border.rounded-md 内含 icon span + label
+# 1. 获取 CDP 端口
+CDP_PORT=$(lsof -i -P | grep -m1 'Target.*LISTEN' | awk '{print $9}' | cut -d: -f2)
+
+# 2. 切换到 Agent tab
+node /Users/zhushanwen/.pi/agent/skills/chrome-automation/scripts/cdp.js click \
+  --selector '[data-testid="tab-agent"]' --port "$CDP_PORT"
+
+# 3. 等待 tab 内容渲染
+sleep 0.5
 ```
 
-```javascript
-// CDP 执行
-const chips = document.querySelectorAll('.section .flex.flex-wrap.gap-2 > div[class*="rounded-md"]');
-const chipLabels = Array.from(chips).map(chip => {
-  const label = chip.querySelector('.font-medium')?.textContent?.trim();
-  const isActive = chip.classList.contains('border-[var(--accent)]')
-    || chip.className.includes('accent');
-  return { label, isActive };
-});
-console.log(JSON.stringify(chipLabels, null, 2));
+### 截图辅助函数
+
+```bash
+SCREENSHOT_DIR="/Users/zhushanwen/Code/xyz-agent-workspace/feat-skill-agent-provider/.xyz-harness/2026-05-12-settings-redesign/e2e-tests/screenshots"
+
+take_screenshot() {
+  local name="$1"
+  node /Users/zhushanwen/.pi/agent/skills/chrome-automation/scripts/cdp.js screenshot \
+    --port "$CDP_PORT" \
+    --output "${SCREENSHOT_DIR}/${name}"
+}
+
+check_visual() {
+  local actual="$1"
+  local expected="$2"
+  python3 /Users/zhushanwen/.pi/agent/skills/zai-vision/scripts/zai_vision.py \
+    --image "${SCREENSHOT_DIR}/${actual}" \
+    --expected "${SCREENSHOT_DIR}/${expected}" \
+    --prompt "对比实际截图与设计稿，检查布局、颜色、间距、字体是否一致。列出所有差异。"
+}
 ```
 
-3. 目视确认三个 chip 的图标字母：
-   - Pi: 图标显示 **P**
-   - Claude: 图标显示 **C**
-   - Agents: 图标显示 **A**
+---
 
-**期望结果**：
+## TC-3.1: Agent 扫描源 Chips — DOM 检查 + 视觉截图
 
-| 检查项 | 期望 |
+### 目标
+
+验证 Agent tab 页面正确渲染扫描源选择 Chips（目录/文件类型筛选）。
+
+### 前置
+
+- Group 0 通过（Settings 窗口已打开）
+- 已切换到 Agent tab
+
+### 协议验证
+
+无协议交互，纯 UI 渲染验证。
+
+### DOM 验证
+
+```bash
+# 检查扫描源 chips 容器存在
+node cdp.js evaluate --port "$CDP_PORT" --expr '
+  const container = document.querySelector("[data-testid=agent-scan-sources]");
+  if (!container) throw new Error("agent-scan-sources container not found");
+
+  const chips = container.querySelectorAll("[data-testid^=agent-source-chip-]");
+  const chipTexts = Array.from(chips).map(c => c.textContent.trim());
+
+  return JSON.stringify({
+    chipCount: chips.length,
+    chipTexts: chipTexts,
+    hasActiveClass: Array.from(chips).some(c => c.classList.contains("chip--active"))
+  });
+'
+```
+
+**期望 DOM 状态：**
+- `[data-testid="agent-scan-sources"]` 存在
+- 包含 >= 1 个 chip 元素（`[data-testid^="agent-source-chip-"]`）
+- 至少一个 chip 带有 `chip--active` 类
+
+### 视觉验证
+
+```bash
+take_screenshot "actual-agent-scan-sources.png"
+check_visual "actual-agent-scan-sources.png" "expected-agent-tab.png"
+```
+
+**期望视觉状态：**
+- Chips 横向排列，圆角胶囊形状
+- 激活态 chip 颜色与 accent 色一致
+- 非激活态 chip 背景色为 muted / surface 变体
+
+### 期望结果
+
+| 验证层 | 期望 |
 |--------|------|
-| Source chip 数量 | 等于 3 |
-| Pi chip 标签 | "Pi Agents" |
-| Claude chip 标签 | "Claude Code" |
-| Agents chip 标签 | "Agents" |
-| Pi chip 状态 | **Active**（边框 `var(--accent)`，背景 `var(--accent-light)`） |
-| Claude chip 状态 | Inactive |
-| Agents chip 状态 | Inactive |
-| Pi chip 默认路径文本 | `~/.pi/agent/agents/` |
+| DOM | scan-sources 容器存在，chips >= 1，至少 1 个 active |
+| 视觉 | Chips 布局与设计稿一致，激活/非激活态颜色正确 |
 
-**衡量方法**：
+### 实际结果
 
-- DOM 查询：source chip 数量 `=== 3`
-- DOM 查询：Pi chip 的 `className` 包含 `accent` 关键字
-- 截图对比：source chips 区域视觉一致
-
-**结果记录**：
-
-| 检查项 | 结果 | 备注 |
-|--------|------|------|
-| Source chip 数量 = 3 | ⬜ Pass / ⬜ Fail | |
-| 标签文本正确 | ⬜ Pass / ⬜ Fail | |
-| Pi 默认 active | ⬜ Pass / ⬜ Fail | |
-| Claude/Agents inactive | ⬜ Pass / ⬜ Fail | |
+> 待填写
 
 ---
 
-### TC-3.2: Agent 扫描执行
+## TC-3.2: Agent 扫描执行 — 协议 + DOM + 视觉截图
 
-| 字段 | 内容 |
-|------|------|
-| **ID** | TC-3.2 |
-| **目标** | 选中 Pi source chip 后点击扫描按钮，验证 WS 发送 `config.scanAgents` 消息，收到 `config.scannedAgents` 响应，结果渲染到 DOM |
-| **前置条件** | TC-3.1 通过；`~/.pi/agent/agents/` 目录下至少存在一个 agent 定义文件 |
-| **依赖** | TC-3.1 |
+### 目标
 
-**测试步骤**：
+验证点击扫描按钮后，WS 发送 `config.scanAgents`，接收 `config.scannedAgents` 响应，DOM 正确渲染扫描结果列表。
 
-1. **确认扫描源目录有数据**：
+### 前置
+
+- TC-3.1 通过
+- Agent tab 已显示
+
+### 协议验证
 
 ```bash
-ls -la ~/.pi/agent/agents/ 2>/dev/null
-# 应至少有一个 .md 文件或目录
-# 如果目录为空或不存在，创建一个测试 agent:
-mkdir -p ~/.pi/agent/agents/
-cat > ~/.pi/agent/agents/test-agent.md << 'EOF'
----
-name: Test Agent
-description: A test agent for E2E testing
-triggers:
-  - test
----
+# 1. 拦截 WS 消息，监听 scannedAgents
+node cdp.js evaluate --port "$CDP_PORT" --expr '
+  window.__e2e_agent_messages = [];
+  const origSend = WebSocket.prototype.send;
+  // 拦截服务端推送消息需要通过 CDP Network domain
+'
 
-You are a test agent.
-EOF
+# 2. 通过 CDP 启用 Network domain 监听 WS 帧
+node cdp.js evaluate --port "$CDP_PORT" --expr '
+  // 记录发出去的消息
+  window.__e2e_sent = [];
+  const wsInstances = [];
+  // 钩子已在 ws-client 层注入
+'
+
+# 3. 点击扫描按钮
+node cdp.js click --selector '[data-testid="agent-scan-btn"]' --port "$CDP_PORT"
+
+# 4. 等待扫描完成（最多 5s）
+sleep 2
+
+# 5. 验证发送了 config.scanAgents
+node cdp.js evaluate --port "$CDP_PORT" --expr '
+  const sent = window.__e2e_sent || [];
+  const scanMsg = sent.find(m => m.type === "config.scanAgents");
+  if (!scanMsg) throw new Error("config.scanAgents not sent");
+  return JSON.stringify({ sentType: scanMsg.type, payload: scanMsg.payload });
+'
+
+# 6. 验证收到了 config.scannedAgents
+node cdp.js evaluate --port "$CDP_PORT" --expr '
+  const received = window.__e2e_received || [];
+  const scanResult = received.find(m => m.type === "config.scannedAgents");
+  if (!scanResult) throw new Error("config.scannedAgents not received");
+  return JSON.stringify({
+    type: scanResult.type,
+    agentCount: scanResult.payload?.agents?.length || 0,
+    agents: (scanResult.payload?.agents || []).map(a => ({ id: a.id, name: a.name }))
+  });
+'
 ```
 
-2. **连接 WS 监听消息**（在另一个终端或通过 Node.js 脚本）：
+**期望协议流：**
+1. FE → SC: `{ type: "config.scanAgents", payload: { sessionId } }`
+2. SC → FE: `{ type: "config.scannedAgents", payload: { agents: [...] } }`
 
-```javascript
-// tools/ws-spy.mjs — 监听 sidecar WS 消息
-const WebSocket = require('ws');
-const ws = new WebSocket('ws://localhost:3210');
-const messages = [];
+### DOM 验证
 
-ws.on('message', (data) => {
-  const msg = JSON.parse(data.toString());
-  messages.push(msg);
-  if (msg.type === 'config.scannedAgents') {
-    console.log('=== 扫描结果 ===');
-    console.log('type:', msg.type);
-    console.log('agents count:', msg.payload.agents?.length);
-    console.log('agents:', JSON.stringify(msg.payload.agents?.map(a => ({
-      id: a.id, name: a.name, sourceType: a.sourceType
-    })), null, 2));
-  }
-});
+```bash
+node cdp.js evaluate --port "$CDP_PORT" --expr '
+  const list = document.querySelector("[data-testid=agent-scan-results]");
+  if (!list) throw new Error("agent-scan-results not found");
 
-ws.on('open', () => console.log('WS 已连接，等待消息...'));
-setTimeout(() => { ws.close(); process.exit(0); }, 30000);
+  const items = list.querySelectorAll("[data-testid^=agent-item-]");
+  const itemData = Array.from(items).map(item => ({
+    id: item.dataset.testid,
+    name: item.querySelector("[data-testid=agent-name]")?.textContent.trim(),
+    hasImportBtn: !!item.querySelector("[data-testid^=agent-import-]"),
+    hasToggle: !!item.querySelector("[data-testid^=agent-toggle-]"),
+  }));
+
+  return JSON.stringify({ itemCount: items.length, items: itemData });
+'
 ```
 
-3. **在 UI 中操作**：
-   - 确认 Pi source chip 已选中（active 状态）
-   - 点击 **扫描** 按钮（"扫描" 文本的 outline 按钮）
+**期望 DOM 状态：**
+- `[data-testid="agent-scan-results"]` 存在
+- 每个 agent item 包含 name + import 按钮
+- 列表项数与 `scannedAgents` 返回的数组长度一致
 
-4. **验证 WS 出站消息**（前端 → Sidecar）：
+### 视觉验证
 
-```json
-{
-  "type": "config.scanAgents",
-  "payload": {
-    "sources": ["~/.pi/agent/agents/"]
-  }
-}
+```bash
+take_screenshot "actual-agent-results.png"
+check_visual "actual-agent-results.png" "expected-agent-tab.png"
 ```
 
-5. **验证 WS 入站消息**（Sidecar → 前端）：
+**期望视觉状态：**
+- 扫描结果列表纵向排列，每行显示 agent 名称 + 导入按钮
+- 行间有分隔线或间距
+- 空状态显示"未找到 agent"提示（如果无结果）
 
-```json
-{
-  "type": "config.scannedAgents",
-  "payload": {
-    "agents": [
-      {
-        "id": "<agent-id>",
-        "name": "Test Agent",
-        "description": "A test agent for E2E testing",
-        "sourceType": "pi",
-        "sourcePath": "~/.pi/agent/agents/test-agent.md",
-        "alreadyImported": false
-      }
-    ],
-    "success": true
-  }
-}
-```
+### 期望结果
 
-6. **验证 DOM 渲染**：
-
-```javascript
-// CDP 执行: 检查扫描结果列表
-const results = document.querySelectorAll('.section .border-t .flex.items-center.gap-2\\.5');
-console.log('扫描结果数量:', results.length);
-// 每个结果项应包含 agent 名称
-results.forEach((el, i) => {
-  const name = el.querySelector('.font-semibold')?.textContent?.trim();
-  console.log(`[${i}] name: ${name}`);
-});
-```
-
-**期望结果**：
-
-| 检查项 | 期望 |
+| 验证层 | 期望 |
 |--------|------|
-| WS 出站 `config.scanAgents` | `sources` 包含 `~/.pi/agent/agents/` |
-| WS 入站 `config.scannedAgents` | `success: true`，`agents` 数组长度 >= 1 |
-| 扫描按钮状态 | 扫描中时显示 loading spinner + "扫描中…" |
-| DOM 扫描结果 | 每条结果显示名称、描述、来源类型标签 |
-| 已导入标记 | 未导入的 agent 无 "已导入" badge |
-| 底部操作栏 | 出现 "导入选中" 按钮，初始 disabled |
+| 协议 | 发送 `config.scanAgents`，收到 `config.scannedAgents` 且 agents 数组非空 |
+| DOM | scan-results 列表渲染，每项含 name + import 按钮 |
+| 视觉 | 截图 `actual-agent-results.png` 与设计稿布局一致 |
 
-**衡量方法**：
+### 实际结果
 
-- WS 消息抓取：出站消息 `type === 'config.scanAgents'`
-- WS 消息抓取：入站消息 `type === 'config.scannedAgents'` 且 `payload.success === true`
-- DOM 查询：扫描结果列表项数量 > 0
-- 截图：扫描结果区域
-
-**结果记录**：
-
-| 检查项 | 结果 | 备注 |
-|--------|------|------|
-| WS 出站 config.scanAgents | ⬜ Pass / ⬜ Fail | |
-| WS 入站 config.scannedAgents | ⬜ Pass / ⬜ Fail | |
-| 扫描中 loading 状态 | ⬜ Pass / ⬜ Fail | |
-| DOM 扫描结果渲染 | ⬜ Pass / ⬜ Fail | |
-| "导入选中" 按钮出现 | ⬜ Pass / ⬜ Fail | |
+> 待填写
 
 ---
 
-### TC-3.3: Agent 导入选中项
+## TC-3.3: Agent 导入 — 协议 + DOM + 持久化 + 视觉截图
 
-| 字段 | 内容 |
-|------|------|
-| **ID** | TC-3.3 |
-| **目标** | 勾选扫描结果中的 agent，点击 "导入选中"，验证 WS 发送 `config.setAgent`，agent 出现在列表中，持久化到 `.xyz-agent/agents.json` |
-| **前置条件** | TC-3.2 通过，扫描结果中至少有一条可导入的 agent |
-| **依赖** | TC-3.2 |
+### 目标
 
-**测试步骤**：
+验证点击导入按钮后，WS 发送 `config.setAgent`，收到 `config.agentUpdated` 确认，DOM 中该 agent 从"扫描结果"区移到"已导入"区，刷新后持久化。
 
-1. **勾选扫描结果中的 agent**：
+### 前置
 
-```javascript
-// CDP 执行: 找到第一个可导入的 agent 并点击其 checkbox
-const checkboxes = document.querySelectorAll('.section .w-4.h-4.rounded-\\[3px\\]');
-for (const cb of checkboxes) {
-  // 跳过已导入的（opacity-40）
-  const row = cb.closest('.flex.items-center');
-  if (!row?.classList.contains('opacity-40')) {
-    cb.click();
-    console.log('已点击 checkbox');
-    break;
-  }
-}
-```
+- TC-3.2 通过
+- 至少一个扫描结果可见
 
-2. **验证 checkbox 选中状态**：
-
-```javascript
-// CDP 执行: 确认 checkbox 变为选中样式（bg-[var(--accent)]）
-const checkedBox = document.querySelector('.bg-\\[var\\(--accent\\)\\].rounded-\\[3px\\]');
-console.log('选中状态:', !!checkedBox);
-```
-
-3. **验证底部操作栏更新**：
-
-```javascript
-// CDP 执行: 检查已选计数
-const countText = document.querySelector('.text-\\[11px\\].text-muted')?.textContent;
-console.log('计数文本:', countText);
-// 期望: "已选 1 个"
-```
-
-4. **点击 "导入选中" 按钮**：
-
-```javascript
-// CDP 执行
-const importBtn = Array.from(document.querySelectorAll('button')).find(
-  b => b.textContent?.includes('导入选中')
-);
-importBtn?.click();
-```
-
-5. **验证 WS 出站消息**（前端 → Sidecar）：
-
-```json
-{
-  "type": "config.setAgent",
-  "payload": {
-    "agent": {
-      "id": "<agent-id>",
-      "name": "Test Agent",
-      "description": "A test agent for E2E testing",
-      "enabled": true,
-      "modelStrategy": "auto",
-      "source": "pi",
-      "sourceType": "pi"
-    }
-  }
-}
-```
-
-6. **验证 WS 入站广播**（Sidecar → 所有客户端）：
-
-```json
-{
-  "type": "config.agents",
-  "payload": {
-    "agents": [
-      {
-        "id": "<agent-id>",
-        "name": "Test Agent",
-        "enabled": true,
-        "modelStrategy": "auto",
-        "sourceType": "pi"
-      }
-    ]
-  }
-}
-```
-
-7. **验证 DOM — Agent Section 出现**：
-
-```javascript
-// CDP 执行: 检查 AgentSection 组件渲染
-const agentSections = document.querySelectorAll('.border.border-border.rounded-lg.mb-3');
-console.log('Agent section 数量:', agentSections.length);
-// 期望 >= 1
-
-// 检查 agent 名称
-agentSections.forEach((section, i) => {
-  const name = section.querySelector('.text-\\[13px\\].font-semibold')?.textContent?.trim();
-  console.log(`[${i}] name: ${name}`);
-});
-```
-
-8. **验证持久化文件**：
+### 协议验证
 
 ```bash
-cat /Users/zhushanwen/Code/xyz-agent-workspace/feat-skill-agent-provider/.xyz-agent/agents.json | python3 -m json.tool
+# 1. 记录第一个 agent 的 ID
+AGENT_ID=$(node cdp.js evaluate --port "$CDP_PORT" --expr '
+  const first = document.querySelector("[data-testid^=agent-item-]");
+  if (!first) throw new Error("No agent items found");
+  return first.dataset.testid.replace("agent-item-", "");
+')
+
+# 2. 清空消息记录
+node cdp.js evaluate --port "$CDP_PORT" --expr '
+  window.__e2e_sent = [];
+  window.__e2e_received = [];
+'
+
+# 3. 点击导入按钮
+node cdp.js click --selector "[data-testid=agent-import-${AGENT_ID}]" --port "$CDP_PORT"
+sleep 1
+
+# 4. 验证发送了 config.setAgent
+node cdp.js evaluate --port "$CDP_PORT" --expr '
+  const sent = window.__e2e_sent || [];
+  const setMsg = sent.find(m => m.type === "config.setAgent");
+  if (!setMsg) throw new Error("config.setAgent not sent");
+  if (setMsg.payload.agentId !== "'"$AGENT_ID"'") throw new Error("agentId mismatch");
+  return JSON.stringify({ type: setMsg.type, payload: setMsg.payload });
+'
+
+# 5. 验证收到了 config.agentUpdated
+node cdp.js evaluate --port "$CDP_PORT" --expr '
+  const received = window.__e2e_received || [];
+  const updateMsg = received.find(m => m.type === "config.agentUpdated");
+  if (!updateMsg) throw new Error("config.agentUpdated not received");
+  return JSON.stringify({ type: updateMsg.type, payload: updateMsg.payload });
+'
 ```
 
-**期望结果**：
+**期望协议流：**
+1. FE → SC: `{ type: "config.setAgent", payload: { sessionId, agentId, enabled: true } }`
+2. SC → FE: `{ type: "config.agentUpdated", payload: { agentId, enabled: true } }`
 
-| 检查项 | 期望 |
+### DOM 验证
+
+```bash
+# 导入后该 agent 应出现在已导入列表中
+node cdp.js evaluate --port "$CDP_PORT" --expr '
+  const importedList = document.querySelector("[data-testid=agent-imported-list]");
+  if (!importedList) throw new Error("agent-imported-list not found");
+
+  const importedItems = importedList.querySelectorAll("[data-testid^=agent-imported-]");
+  const found = Array.from(importedItems).some(
+    item => item.dataset.testid === "agent-imported-'"$AGENT_ID"'"
+  );
+  if (!found) throw new Error("Imported agent not found in imported list");
+
+  return JSON.stringify({
+    importedCount: importedItems.length,
+    found: true
+  });
+'
+```
+
+### 持久化验证
+
+```bash
+# 刷新页面后验证 agent 仍在已导入列表中
+node cdp.js evaluate --port "$CDP_PORT" --expr 'location.reload()'
+sleep 2
+
+# 重新切换到 Agent tab
+node cdp.js click --selector '[data-testid="tab-agent"]' --port "$CDP_PORT"
+sleep 1
+
+# 验证已导入列表仍包含该 agent
+node cdp.js evaluate --port "$CDP_PORT" --expr '
+  const importedList = document.querySelector("[data-testid=agent-imported-list]");
+  if (!importedList) throw new Error("agent-imported-list not found after reload");
+  const items = importedList.querySelectorAll("[data-testid^=agent-imported-]");
+  const found = Array.from(items).some(
+    item => item.dataset.testid === "agent-imported-'"$AGENT_ID"'"
+  );
+  if (!found) throw new Error("Imported agent lost after refresh - persistence failed");
+  return "PERSISTENCE_OK";
+'
+```
+
+### 视觉验证
+
+```bash
+take_screenshot "actual-agent-imported.png"
+check_visual "actual-agent-imported.png" "expected-agent-tab.png"
+```
+
+**期望视觉状态：**
+- 已导入区显示 agent 卡片/行
+- agent 名称 + toggle 开关 + 删除按钮可见
+- 导入区与扫描区分隔清晰
+
+### 期望结果
+
+| 验证层 | 期望 |
 |--------|------|
-| Checkbox 选中样式 | 背景变为 `var(--accent)`，显示白色勾号 |
-| 底部计数更新 | "已选 1 个" |
-| WS `config.setAgent` | `agent.enabled === true`，`agent.modelStrategy === 'auto'` |
-| WS `config.agents` 广播 | 列表包含新导入的 agent |
-| DOM AgentSection | 出现新的 agent section 卡片 |
-| AgentSection header | 显示 agent 名称 + source 副标题 |
-| AgentSection body | 显示 "模型策略" select，值为 "auto" |
-| agents.json | 文件存在，JSON 数组包含导入的 agent 对象 |
-| 扫描结果标记 | 导入的 agent 在扫描结果中显示 "已导入" badge |
+| 协议 | 发送 `config.setAgent`，收到 `config.agentUpdated`，agentId 匹配 |
+| DOM | agent 出现在 imported-list，不在 scan-results 中 |
+| 持久化 | 刷新后 agent 仍在 imported-list |
+| 视觉 | 截图 `actual-agent-imported.png` 布局正确 |
 
-**衡量方法**：
+### 实际结果
 
-- WS 消息抓取：`config.setAgent` 的 `payload.agent` 字段
-- WS 消息抓取：`config.agents` 广播的 agents 数组
-- DOM 查询：`AgentSection` 组件数量
-- 文件检查：`.xyz-agent/agents.json` 内容
-
-**结果记录**：
-
-| 检查项 | 结果 | 备注 |
-|--------|------|------|
-| Checkbox 选中 | ⬜ Pass / ⬜ Fail | |
-| 底部计数更新 | ⬜ Pass / ⬜ Fail | |
-| WS config.setAgent 发出 | ⬜ Pass / ⬜ Fail | |
-| WS config.agents 广播 | ⬜ Pass / ⬜ Fail | |
-| DOM AgentSection 渲染 | ⬜ Pass / ⬜ Fail | |
-| agents.json 持久化 | ⬜ Pass / ⬜ Fail | |
-| 扫描结果 "已导入" badge | ⬜ Pass / ⬜ Fail | |
+> 待填写
 
 ---
 
-### TC-3.4: Agent Toggle 启停
+## TC-3.4: Agent Toggle — 协议 + DOM（opacity-60）
 
-| 字段 | 内容 |
-|------|------|
-| **ID** | TC-3.4 |
-| **目标** | 点击 agent section 的 toggle 开关，切换 agent 启停状态，验证 WS 发送 `config.setAgent` 且 `enabled` 值翻转 |
-| **前置条件** | TC-3.3 通过，列表中至少有一个已导入且 `enabled: true` 的 agent |
-| **依赖** | TC-3.3 |
+### 目标
 
-**测试步骤**：
+验证点击 toggle 后，WS 发送 `config.setAgent`（enabled: false），DOM 中该 agent 行变为半透明（`opacity-60`）。
 
-1. **确认 agent 当前状态**：
+### 前置
 
-```javascript
-// CDP 执行: 获取第一个 agent section 的 toggle 状态
-const firstSection = document.querySelector('.border.border-border.rounded-lg.mb-3');
-const toggle = firstSection?.querySelector('button[class*="toggle"], [role="switch"], .relative.inline-flex');
-console.log('Toggle 元素存在:', !!toggle);
-console.log('Section 是否有 opacity-60 (disabled):', firstSection?.classList.contains('opacity-60'));
-// 初始状态: enabled=true, 无 opacity-60
+- TC-3.3 通过
+- 至少一个已导入 agent
+
+### 协议验证
+
+```bash
+# 1. 清空消息记录
+node cdp.js evaluate --port "$CDP_PORT" --expr '
+  window.__e2e_sent = [];
+  window.__e2e_received = [];
+'
+
+# 2. 点击 toggle（关闭）
+node cdp.js click --selector "[data-testid=agent-toggle-${AGENT_ID}]" --port "$CDP_PORT"
+sleep 1
+
+# 3. 验证发送了 config.setAgent 且 enabled=false
+node cdp.js evaluate --port "$CDP_PORT" --expr '
+  const sent = window.__e2e_sent || [];
+  const setMsg = sent.find(m => m.type === "config.setAgent");
+  if (!setMsg) throw new Error("config.setAgent not sent on toggle");
+  if (setMsg.payload.enabled !== false) throw new Error("Expected enabled=false, got " + setMsg.payload.enabled);
+  return JSON.stringify({ type: setMsg.type, enabled: setMsg.payload.enabled });
+'
+
+# 4. 验证收到了 config.agentUpdated
+node cdp.js evaluate --port "$CDP_PORT" --expr '
+  const received = window.__e2e_received || [];
+  const updateMsg = received.find(m => m.type === "config.agentUpdated");
+  if (!updateMsg) throw new Error("config.agentUpdated not received on toggle");
+  return JSON.stringify({ type: updateMsg.type, enabled: updateMsg.payload.enabled });
+'
 ```
 
-2. **点击 toggle**：
+**期望协议流：**
+1. FE → SC: `{ type: "config.setAgent", payload: { sessionId, agentId, enabled: false } }`
+2. SC → FE: `{ type: "config.agentUpdated", payload: { agentId, enabled: false } }`
 
-```javascript
-// CDP 执行: 点击 toggle 开关
-const toggleBtn = firstSection?.querySelector('.relative');
-toggleBtn?.click();
+### DOM 验证
+
+```bash
+# 检查 agent 行变为半透明
+node cdp.js evaluate --port "$CDP_PORT" --expr '
+  const agentRow = document.querySelector("[data-testid=agent-imported-'"$AGENT_ID"']");
+  if (!agentRow) throw new Error("Agent row not found");
+
+  const style = getComputedStyle(agentRow);
+  const classes = agentRow.className;
+
+  // 检查 opacity-60 或等效样式
+  const hasOpacity = classes.includes("opacity-60") ||
+                     classes.includes("opacity-[0.6]") ||
+                     parseFloat(style.opacity) < 1;
+
+  // 检查 toggle 状态
+  const toggle = agentRow.querySelector("[data-testid=agent-toggle-'"$AGENT_ID"']");
+  const toggleOff = toggle && !toggle.classList.contains("toggle--active");
+
+  return JSON.stringify({
+    hasOpacity,
+    opacity: style.opacity,
+    classes: classes,
+    toggleOff
+  });
+'
 ```
 
-3. **验证 WS 出站消息**：
+**期望 DOM 状态：**
+- agent 行包含 `opacity-60` 类或 computed opacity < 1
+- toggle 不含 `toggle--active` 类
 
-```json
-{
-  "type": "config.setAgent",
-  "payload": {
-    "agent": {
-      "id": "<agent-id>",
-      "name": "Test Agent",
-      "enabled": false,
-      "modelStrategy": "auto",
-      "..."
-    }
-  }
-}
-```
+### 视觉验证
 
-> 注意：`toggleAgent` 的实现是 `setAgent({ ...a, enabled: !a.enabled })`，因此 `enabled` 从 `true` 变为 `false`。
+无（协议+DOM 覆盖足够，视觉变化微小）。
 
-4. **验证 DOM 变化**：
+### 期望结果
 
-```javascript
-// CDP 执行: 确认 section 变为 disabled 样式
-const firstSection2 = document.querySelector('.border.border-border.rounded-lg.mb-3');
-console.log('Section 有 opacity-60:', firstSection2?.classList.contains('opacity-60'));
-// 期望: true
-```
-
-5. **再次点击 toggle 恢复**：
-
-```javascript
-// CDP 执行
-const toggleBtn2 = firstSection2?.querySelector('.relative');
-toggleBtn2?.click();
-```
-
-6. **验证恢复**：
-
-```javascript
-// CDP 执行
-const firstSection3 = document.querySelector('.border.border-border.rounded-lg.mb-3');
-console.log('opacity-60 已移除:', !firstSection3?.classList.contains('opacity-60'));
-// 期望: true
-```
-
-**期望结果**：
-
-| 检查项 | 期望 |
+| 验证层 | 期望 |
 |--------|------|
-| Toggle off → WS 消息 | `config.setAgent`，`agent.enabled === false` |
-| Section 视觉变化 | 添加 `opacity-60` class |
-| Toggle on → WS 消息 | `config.setAgent`，`agent.enabled === true` |
-| Section 视觉恢复 | `opacity-60` class 被移除 |
+| 协议 | 发送 `config.setAgent`（enabled: false），收到 `config.agentUpdated` |
+| DOM | agent 行 opacity < 1，toggle 状态为 off |
 
-**衡量方法**：
+### 实际结果
 
-- WS 消息抓取：两次 `config.setAgent` 的 `enabled` 字段值
-- DOM 查询：section 的 `opacity-60` class 变化
-
-**结果记录**：
-
-| 检查项 | 结果 | 备注 |
-|--------|------|------|
-| Toggle off WS 消息 | ⬜ Pass / ⬜ Fail | |
-| Section opacity-60 出现 | ⬜ Pass / ⬜ Fail | |
-| Toggle on WS 消息 | ⬜ Pass / ⬜ Fail | |
-| Section opacity-60 消失 | ⬜ Pass / ⬜ Fail | |
+> 待填写
 
 ---
 
-### TC-3.5: Agent 删除 confirm-bar
+## TC-3.5: Agent 删除 confirm-bar — 协议 + DOM + 视觉截图 + 持久化
 
-| 字段 | 内容 |
-|------|------|
-| **ID** | TC-3.5 |
-| **目标** | 点击删除按钮后显示红色 confirm-bar，支持取消和确认删除两级操作，确认后 WS 发送 `config.deleteAgent` 并从 DOM 和持久化文件中移除 |
-| **前置条件** | TC-3.3 通过，列表中至少有一个已导入的 agent |
-| **依赖** | TC-3.3 |
+### 目标
 
-**测试步骤**：
+验证删除流程：点击删除 → 出现红色 confirm-bar → 取消则消失 → 确认则发送 `config.deleteAgent` → 收到确认 → agent 从列表移除 → 刷新后持久化。
 
-#### 阶段 A：取消删除
+**特别关注：confirm-bar 两级操作（取消→消失，确认→删除）。**
 
-1. **定位 agent section 的删除按钮**：
+### 前置
 
-```javascript
-// CDP 执行: 找到第一个 agent section 的删除按钮
-const firstSection = document.querySelector('.border.border-border.rounded-lg.mb-3');
-const deleteBtn = Array.from(firstSection.querySelectorAll('button')).find(
-  b => b.textContent?.trim() === '删除'
-);
-console.log('删除按钮存在:', !!deleteBtn);
-```
+- TC-3.3 通过
+- 至少一个已导入 agent（需重新 toggle 回 enabled 状态）
 
-2. **点击删除按钮**：
-
-```javascript
-// CDP 执行
-deleteBtn?.click();
-```
-
-3. **验证 confirm-bar 出现**：
-
-```javascript
-// CDP 执行: 检查红色 confirm-bar
-const confirmBar = firstSection.querySelector('.bg-\\[var\\(--danger-light\\)\\]');
-console.log('Confirm bar 存在:', !!confirmBar);
-console.log('Confirm bar 文本:', confirmBar?.textContent?.trim());
-// 期望包含: "确认删除" + agent 名称 + "不可撤销"
-
-// 检查按钮
-const confirmBtn = Array.from(confirmBar?.querySelectorAll('button') || []).find(
-  b => b.textContent?.includes('确认删除')
-);
-const cancelBtn = Array.from(confirmBar?.querySelectorAll('button') || []).find(
-  b => b.textContent?.trim() === '取消'
-);
-console.log('确认删除按钮存在:', !!confirmBtn);
-console.log('取消按钮存在:', !!cancelBtn);
-```
-
-4. **点击取消**：
-
-```javascript
-// CDP 执行
-cancelBtn?.click();
-```
-
-5. **验证 confirm-bar 消失**：
-
-```javascript
-// CDP 执行
-const confirmBar2 = firstSection.querySelector('.bg-\\[var\\(--danger-light\\)\\]');
-console.log('Confirm bar 已消失:', !confirmBar2);
-// 期望: true (confirm-bar 不存在)
-```
-
-6. **验证 agent section 仍然存在**：
-
-```javascript
-// CDP 执行
-const sections = document.querySelectorAll('.border.border-border.rounded-lg.mb-3');
-console.log('Agent section 仍然存在, 数量:', sections.length);
-// 期望: >= 1 (与删除前相同)
-```
-
-#### 阶段 B：确认删除
-
-7. **再次点击删除按钮**：
-
-```javascript
-// CDP 执行
-const deleteBtn2 = Array.from(firstSection.querySelectorAll('button')).find(
-  b => b.textContent?.trim() === '删除'
-);
-deleteBtn2?.click();
-```
-
-8. **确认 confirm-bar 再次出现**：
-
-```javascript
-// CDP 执行
-const confirmBar3 = firstSection.querySelector('.bg-\\[var\\(--danger-light\\)\\]');
-console.log('Confirm bar 再次出现:', !!confirmBar3);
-```
-
-9. **点击 "确认删除"**：
-
-```javascript
-// CDP 执行
-const confirmBtn2 = Array.from(confirmBar3?.querySelectorAll('button') || []).find(
-  b => b.textContent?.includes('确认删除')
-);
-confirmBtn2?.click();
-```
-
-10. **验证 WS 出站消息**：
-
-```json
-{
-  "type": "config.deleteAgent",
-  "payload": {
-    "agentId": "<被删除的 agent ID>"
-  }
-}
-```
-
-11. **验证 WS 入站响应**：
-
-```json
-{
-  "type": "config.agentDeleted",
-  "payload": {
-    "agentId": "<agent-id>",
-    "success": true
-  }
-}
-```
-
-12. **验证 DOM — agent section 被移除**：
-
-```javascript
-// CDP 执行: 等待 DOM 更新后检查
-setTimeout(() => {
-  const remaining = document.querySelectorAll('.border.border-border.rounded-lg.mb-3');
-  console.log('剩余 agent section 数量:', remaining.length);
-  // 期望: 比删除前少 1
-}, 500);
-```
-
-13. **验证持久化文件**：
+### Step 1: 触发删除 — 显示 confirm-bar
 
 ```bash
-cat /Users/zhushanwen/Code/xyz-agent-workspace/feat-skill-agent-provider/.xyz-agent/agents.json | python3 -m json.tool
-# 期望: 被删除的 agent 不在数组中
+# 先确保 agent 是 enabled 状态
+node cdp.js click --selector "[data-testid=agent-toggle-${AGENT_ID}]" --port "$CDP_PORT"
+sleep 0.5
+
+# 点击删除按钮
+node cdp.js click --selector "[data-testid=agent-delete-${AGENT_ID}]" --port "$CDP_PORT"
+sleep 0.5
 ```
 
-**期望结果**：
-
-| 阶段 | 检查项 | 期望 |
-|------|--------|------|
-| A | 点击删除 → confirm-bar 出现 | 红色背景 `var(--danger-light)`，包含警告图标 + 文字 + 两个按钮 |
-| A | Confirm-bar 文字 | "确认删除 {name}？此操作不可撤销。" |
-| A | 确认删除按钮样式 | 红色背景 `var(--danger)`，白色文字 |
-| A | 点击取消 → confirm-bar 消失 | Agent section 完整保留 |
-| B | 点击删除 → confirm-bar 出现 | 同阶段 A |
-| B | 点击确认删除 → WS 消息 | `config.deleteAgent`，`payload.agentId` 正确 |
-| B | WS 响应 | `config.agentDeleted`，`success: true` |
-| B | WS 广播 | `config.agents`，列表不包含被删除 agent |
-| B | DOM | 被删除的 agent section 从 DOM 移除 |
-| B | agents.json | 被删除的 agent 从文件中移除 |
-
-**衡量方法**：
-
-- DOM 查询：confirm-bar 的出现/消失/背景色
-- WS 消息抓取：`config.deleteAgent` 和 `config.agentDeleted`
-- 文件检查：`.xyz-agent/agents.json` 不包含被删除的 agent
-
-**结果记录**：
-
-| 检查项 | 结果 | 备注 |
-|--------|------|------|
-| 删除按钮点击 → confirm-bar 出现 | ⬜ Pass / ⬜ Fail | |
-| Confirm-bar 样式正确（红色底色） | ⬜ Pass / ⬜ Fail | |
-| 取消 → confirm-bar 消失 | ⬜ Pass / ⬜ Fail | |
-| 取消后 agent section 保留 | ⬜ Pass / ⬜ Fail | |
-| 确认删除 → WS config.deleteAgent | ⬜ Pass / ⬜ Fail | |
-| 确认删除 → DOM section 移除 | ⬜ Pass / ⬜ Fail | |
-| 确认删除 → agents.json 更新 | ⬜ Pass / ⬜ Fail | |
-
----
-
-### TC-3.6: Agent 策略切换
-
-| 字段 | 内容 |
-|------|------|
-| **ID** | TC-3.6 |
-| **目标** | 在 agent section body 中修改模型策略 select 的值，验证 WS 发送 `config.setAgent` 且 `modelStrategy` 更新 |
-| **前置条件** | TC-3.3 通过，列表中至少有一个已导入的 agent |
-| **依赖** | TC-3.3 |
-
-**测试步骤**：
-
-1. **重新导入一个 agent（如果 TC-3.5 已删除所有 agent）**：
-
-> 如果 TC-3.5 已将 agent 删除，需要先重新扫描导入一个 agent（重复 TC-3.2 + TC-3.3 的步骤），再继续本测试。
-
-2. **确认 agent section 的策略 select 当前值**：
-
-```javascript
-// CDP 执行: 获取第一个 agent section 的策略 select
-const firstSection = document.querySelector('.border.border-border.rounded-lg.mb-3');
-
-// 策略 select 在 body 区域（非 confirm-bar 时才显示）
-const strategySelect = firstSection?.querySelector('select');
-console.log('策略 select 存在:', !!strategySelect);
-console.log('当前值:', strategySelect?.value);
-// 期望: "auto" (导入时默认)
-
-// 也可通过旁边的 label 确认
-const strategyLabel = firstSection?.querySelector('.text-xs.font-medium');
-console.log('标签:', strategyLabel?.textContent?.trim());
-// 期望: "模型策略"
-```
-
-3. **修改策略值为 "tag"**：
-
-```javascript
-// CDP 执行: 模拟 select change 事件
-// 方法 1: 直接修改 value 并触发事件
-const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-  window.HTMLSelectElement.prototype, 'value'
-).set;
-nativeInputValueSetter.call(strategySelect, 'tag');
-strategySelect.dispatchEvent(new Event('change', { bubbles: true }));
-
-// 方法 2: 如果方法 1 不生效（Vue 组件封装），查找并点击 select 打开下拉，选择 tag 选项
-// 先点击 select 打开下拉
-strategySelect?.click();
-// 等待下拉展开后点击 "tag — 按标签" 选项
-```
-
-4. **验证 WS 出站消息**：
-
-```json
-{
-  "type": "config.setAgent",
-  "payload": {
-    "agent": {
-      "id": "<agent-id>",
-      "name": "Test Agent",
-      "enabled": true,
-      "modelStrategy": "tag",
-      "..."
-    }
-  }
-}
-```
-
-> 注意：策略切换通过 `handleUpdateStrategy` → `setAgent({ ...agent, modelStrategy: payload.strategy })` 实现，发送完整的 agent 对象。
-
-5. **验证 DOM 更新**：
-
-```javascript
-// CDP 执行: 检查策略显示是否更新
-const firstSection2 = document.querySelector('.border.border-border.rounded-lg.mb-3');
-const subtitle = firstSection2?.querySelector('.text-\\[11px\\].text-muted.font-mono');
-console.log('副标题更新:', subtitle?.textContent?.trim());
-// 期望包含 "tag"
-```
-
-6. **验证持久化文件**：
+### DOM 验证 — confirm-bar 出现
 
 ```bash
-cat /Users/zhushanwen/Code/xyz-agent-workspace/feat-skill-agent-provider/.xyz-agent/agents.json | python3 -m json.tool
-# 检查 agent 的 modelStrategy 字段是否为 "tag"
+node cdp.js evaluate --port "$CDP_PORT" --expr '
+  const confirmBar = document.querySelector("[data-testid=agent-confirm-bar]");
+  if (!confirmBar) throw new Error("confirm-bar not visible after delete click");
+
+  const hasCancel = !!confirmBar.querySelector("[data-testid=confirm-cancel]");
+  const hasConfirm = !!confirmBar.querySelector("[data-testid=confirm-delete]");
+  const bgColor = getComputedStyle(confirmBar).backgroundColor;
+
+  return JSON.stringify({
+    visible: true,
+    hasCancel,
+    hasConfirm,
+    bgColor,
+    text: confirmBar.textContent.trim()
+  });
+'
 ```
 
-7. **切换回 "auto" 恢复状态**（可选，保持数据干净）：
+**期望：**
+- `[data-testid="agent-confirm-bar"]` 存在且可见
+- 包含取消和确认按钮
+- 背景色为红色系（confirm 意图）
 
-```javascript
-// CDP 执行
-nativeInputValueSetter.call(strategySelect, 'auto');
-strategySelect.dispatchEvent(new Event('change', { bubbles: true }));
+### 视觉验证 — confirm-bar 截图
+
+```bash
+take_screenshot "actual-agent-confirm.png"
+check_visual "actual-agent-confirm.png" "expected-agent-tab.png"
 ```
 
-**期望结果**：
+**期望视觉状态：**
+- confirm-bar 红色底色，覆盖或嵌入 agent 行
+- 取消/确认按钮文字清晰
 
-| 检查项 | 期望 |
+### Step 2: 取消操作 — confirm-bar 消失
+
+```bash
+# 点击取消
+node cdp.js click --selector '[data-testid=confirm-cancel]' --port "$CDP_PORT"
+sleep 0.5
+
+# 验证 confirm-bar 消失
+node cdp.js evaluate --port "$CDP_PORT" --expr '
+  const confirmBar = document.querySelector("[data-testid=agent-confirm-bar]");
+  const hidden = !confirmBar || confirmBar.classList.contains("hidden") ||
+                 getComputedStyle(confirmBar).display === "none";
+  return JSON.stringify({ confirmBarHidden: hidden });
+'
+```
+
+**期望：** confirm-bar 不可见。
+
+### Step 3: 再次触发删除 — 确认操作
+
+```bash
+# 再次点击删除
+node cdp.js click --selector "[data-testid=agent-delete-${AGENT_ID}]" --port "$CDP_PORT"
+sleep 0.5
+
+# 确认 confirm-bar 再次出现
+node cdp.js evaluate --port "$CDP_PORT" --expr '
+  const confirmBar = document.querySelector("[data-testid=agent-confirm-bar]");
+  if (!confirmBar) throw new Error("confirm-bar should reappear");
+  return "CONFIRM_BAR_VISIBLE";
+'
+
+# 清空消息记录
+node cdp.js evaluate --port "$CDP_PORT" --expr '
+  window.__e2e_sent = [];
+  window.__e2e_received = [];
+'
+
+# 点击确认删除
+node cdp.js click --selector '[data-testid=confirm-delete]' --port "$CDP_PORT"
+sleep 1
+```
+
+### 协议验证 — 确认删除
+
+```bash
+# 验证发送了 config.deleteAgent
+node cdp.js evaluate --port "$CDP_PORT" --expr '
+  const sent = window.__e2e_sent || [];
+  const deleteMsg = sent.find(m => m.type === "config.deleteAgent");
+  if (!deleteMsg) throw new Error("config.deleteAgent not sent");
+  if (deleteMsg.payload.agentId !== "'"$AGENT_ID"'") throw new Error("agentId mismatch");
+  return JSON.stringify({ type: deleteMsg.type, payload: deleteMsg.payload });
+'
+
+# 验证 agent 从 DOM 中移除
+node cdp.js evaluate --port "$CDP_PORT" --expr '
+  const agentRow = document.querySelector("[data-testid=agent-imported-'"$AGENT_ID"']");
+  return JSON.stringify({ agentRemoved: !agentRow });
+'
+```
+
+### 持久化验证
+
+```bash
+# 刷新后验证 agent 确实被删除
+node cdp.js evaluate --port "$CDP_PORT" --expr 'location.reload()'
+sleep 2
+node cdp.js click --selector '[data-testid="tab-agent"]' --port "$CDP_PORT"
+sleep 1
+
+node cdp.js evaluate --port "$CDP_PORT" --expr '
+  const agentRow = document.querySelector("[data-testid=agent-imported-'"$AGENT_ID"']");
+  if (agentRow) throw new Error("Agent still exists after delete + refresh - persistence failed");
+  return "DELETE_PERSISTENCE_OK";
+'
+```
+
+### 期望结果
+
+| 验证层 | 期望 |
 |--------|------|
-| 策略 select 默认值 | "auto"（导入时默认 `modelStrategy: 'auto'`） |
-| Select 选项 | 包含 "auto — 自动匹配"、"tag — 按标签"、"bind — 绑定" |
-| 选择 tag → WS 消息 | `config.setAgent`，`agent.modelStrategy === 'tag'` |
-| Section 副标题更新 | 显示 "tag · ..." |
-| agents.json 更新 | `modelStrategy` 字段为 `"tag"` |
-| 切回 auto | 恢复初始状态 |
+| DOM Step 1 | confirm-bar 出现，红色底色，含取消+确认按钮 |
+| 视觉 | 截图 `actual-agent-confirm.png` 红色 confirm-bar 清晰可见 |
+| DOM Step 2 | 取消后 confirm-bar 消失，agent 仍在列表 |
+| 协议 Step 3 | 确认后发送 `config.deleteAgent`，agentId 匹配 |
+| DOM Step 3 | agent 行从 imported-list 移除 |
+| 持久化 | 刷新后 agent 不再出现 |
 
-**衡量方法**：
+### 实际结果
 
-- WS 消息抓取：`config.setAgent` 的 `agent.modelStrategy` 字段
-- DOM 查询：select 当前值、副标题文本
-- 文件检查：`.xyz-agent/agents.json` 中对应 agent 的 `modelStrategy`
-
-**结果记录**：
-
-| 检查项 | 结果 | 备注 |
-|--------|------|------|
-| 默认策略 auto | ⬜ Pass / ⬜ Fail | |
-| Select 选项完整 | ⬜ Pass / ⬜ Fail | |
-| 切换 tag → WS 消息 | ⬜ Pass / ⬜ Fail | |
-| 副标题更新 | ⬜ Pass / ⬜ Fail | |
-| agents.json 更新 | ⬜ Pass / ⬜ Fail | |
+> 待填写
 
 ---
 
-## 测试执行顺序与依赖图
+## TC-3.6: Agent 策略切换 — 协议 + DOM
 
-```
-TC-3.1 (Source Chips)
-  │
-  └──▶ TC-3.2 (扫描执行)
-         │
-         ├──▶ TC-3.3 (导入)
-         │      │
-         │      ├──▶ TC-3.4 (Toggle)
-         │      │
-         │      ├──▶ TC-3.5 (删除 confirm-bar)
-         │      │
-         │      └──▶ TC-3.6 (策略切换)
-         │             ⚠ 如 TC-3.5 已删 agent，需先重新导入
-         │
-```
+### 目标
 
-**执行建议**：
+验证 Agent 策略（如"自动选择"/"手动选择"/"全部禁用"等）切换时，WS 发送正确消息，DOM 反映新策略状态。
 
-1. TC-3.1 → 3.2 → 3.3 顺序执行（扫描导入链路）
-2. TC-3.4 和 TC-3.6 可在 TC-3.3 后任意顺序执行
-3. TC-3.5（删除）建议最后执行，因为会破坏后续 TC 的前置数据
-4. 如果 TC-3.5 必须先执行，后续 TC 需要重新导入 agent
+### 前置
 
----
+- TC-3.1 通过
+- 至少一个已导入 agent（如 TC-3.3 未被 TC-3.5 完全清理，否则需重新导入一个）
 
-## WS 消息协议速查
-
-| 方向 | 消息类型 | Payload 关键字段 |
-|------|---------|-----------------|
-| 前端 → Sidecar | `config.scanAgents` | `{ sources: string[] }` |
-| Sidecar → 前端 | `config.scannedAgents` | `{ agents: ScannedAgentInfo[], success: boolean }` |
-| 前端 → Sidecar | `config.setAgent` | `{ agent: AgentInfo }` |
-| Sidecar → 前端 | `config.agentUpdated` | `{ agent: AgentInfo, success: boolean }` |
-| Sidecar → 广播 | `config.agents` | `{ agents: AgentInfo[] }` |
-| 前端 → Sidecar | `config.deleteAgent` | `{ agentId: string }` |
-| Sidecar → 前端 | `config.agentDeleted` | `{ agentId: string, success: boolean }` |
-
----
-
-## 清理脚本
-
-测试完成后清理测试数据：
+### 协议验证
 
 ```bash
-# 删除测试 agent 文件（如果创建了测试用 agent）
-rm -f ~/.pi/agent/agents/test-agent.md
+# 1. 清空消息记录
+node cdp.js evaluate --port "$CDP_PORT" --expr '
+  window.__e2e_sent = [];
+  window.__e2e_received = [];
+'
 
-# 清理持久化数据
-rm -f /Users/zhushanwen/Code/xyz-agent-workspace/feat-skill-agent-provider/.xyz-agent/agents.json
+# 2. 获取当前策略
+CURRENT_STRATEGY=$(node cdp.js evaluate --port "$CDP_PORT" --expr '
+  const activeStrategy = document.querySelector("[data-testid^=agent-strategy-].strategy--active");
+  if (!activeStrategy) return "none";
+  return activeStrategy.dataset.testid.replace("agent-strategy-", "");
+')
 
-echo "Group 3 测试数据已清理"
+# 3. 切换到另一个策略（取非当前的第一个）
+node cdp.js evaluate --port "$CDP_PORT" --expr '
+  const strategies = document.querySelectorAll("[data-testid^=agent-strategy-]");
+  const current = "'"$CURRENT_STRATEGY"'";
+  const target = Array.from(strategies).find(s => !s.classList.contains("strategy--active"));
+  if (target) { target.click(); return target.dataset.testid.replace("agent-strategy-", ""); }
+  return "no_alternative";
+'
+sleep 1
+
+# 4. 验证发送了策略更新消息
+node cdp.js evaluate --port "$CDP_PORT" --expr '
+  const sent = window.__e2e_sent || [];
+  // 策略变更可能通过 config.setAgent 或独立消息类型
+  const strategyMsg = sent.find(m =>
+    m.type === "config.setAgent" || m.type === "config.setAgentStrategy"
+  );
+  if (!strategyMsg) throw new Error("No strategy update message sent");
+  return JSON.stringify({ type: strategyMsg.type, payload: strategyMsg.payload });
+'
 ```
+
+**期望协议流：**
+1. FE → SC: `{ type: "config.setAgent" | "config.setAgentStrategy", payload: { sessionId, strategy } }`
+2. SC → FE: 相应确认消息
+
+### DOM 验证
+
+```bash
+node cdp.js evaluate --port "$CDP_PORT" --expr '
+  const strategies = document.querySelectorAll("[data-testid^=agent-strategy-]");
+  const activeList = Array.from(strategies).filter(s => s.classList.contains("strategy--active"));
+
+  return JSON.stringify({
+    totalStrategies: strategies.length,
+    activeCount: activeList.length,
+    activeStrategy: activeList.length === 1
+      ? activeList[0].dataset.testid.replace("agent-strategy-", "")
+      : "INVALID",
+    strategyNames: Array.from(strategies).map(s => ({
+      id: s.dataset.testid.replace("agent-strategy-", ""),
+      active: s.classList.contains("strategy--active")
+    }))
+  });
+'
+```
+
+**期望 DOM 状态：**
+- 恰好 1 个策略元素带 `strategy--active` 类
+- active 策略的 id 与切换目标一致
+
+### 视觉验证
+
+无（协议+DOM 覆盖足够）。
+
+### 期望结果
+
+| 验证层 | 期望 |
+|--------|------|
+| 协议 | 策略切换触发 WS 消息（setAgent 或 setAgentStrategy） |
+| DOM | 恰好 1 个 strategy--active，active 策略与点击目标一致 |
+
+### 实际结果
+
+> 待填写
+
+---
+
+## 执行顺序
+
+```
+TC-3.1 (扫描源 UI)
+  └─→ TC-3.2 (执行扫描)
+        └─→ TC-3.3 (导入 agent)
+              ├─→ TC-3.4 (Toggle 开关)
+              ├─→ TC-3.5 (删除流程，含两级 confirm)
+              └─→ TC-3.6 (策略切换)
+```
+
+TC-3.4 / TC-3.5 / TC-3.6 之间无严格依赖，但都依赖 TC-3.3 的导入结果。若 TC-3.5 删除了 agent，TC-3.6 需要先重新导入一个。
+
+---
+
+## 汇总表
+
+| TC | 协议 | DOM | 视觉 | 持久化 |
+|----|------|-----|------|--------|
+| 3.1 | — | chips 容器 + active | 截图 | — |
+| 3.2 | scanAgents → scannedAgents | scan-results 列表 | actual-agent-results.png | — |
+| 3.3 | setAgent → agentUpdated | imported-list + 刷新验证 | actual-agent-imported.png | 刷新 |
+| 3.4 | setAgent(enabled:false) → agentUpdated | opacity-60 + toggle off | — | — |
+| 3.5 | deleteAgent | confirm-bar 出现/消失/删除 | actual-agent-confirm.png | 刷新 |
+| 3.6 | setAgent/setAgentStrategy | strategy--active 切换 | — | — |

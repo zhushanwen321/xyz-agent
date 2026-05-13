@@ -1,536 +1,309 @@
 # E2E Group 0: 基础连通性测试
 
-> **优先级**: P0 — 阻塞所有后续测试组
-> **前置依赖**: 无
-> **通过条件**: 全部 6 个 TC 通过
+> 全部后续测试依赖本组。任何 TC 失败应阻塞后续 Group 执行。
 
-## 目录
+## 环境信息
 
-| TC | 名称 | 验证目标 |
-|----|------|----------|
-| TC-0.1 | Sidecar 健康检查 | HTTP 健康端点可用 |
-| TC-0.2 | WS 连接建立 | 前端到 sidecar 的 WebSocket 连通 |
-| TC-0.3 | 初始广播 providers | 连接后推送 providers 配置 |
-| TC-0.4 | 初始广播 skills | 连接后推送 skills 配置 |
-| TC-0.5 | 初始广播 agents | 连接后推送 agents 配置 |
-| TC-0.6 | Settings 页面渲染 | Electron 窗口 + Settings 页面正常 |
+| 项目 | 值 |
+|------|-----|
+| Sidecar 端口 | 3210 |
+| Vite 端口 | 1420 |
+| CDP 端口 | 9222 |
+| 截图目录 | `.xyz-harness/2026-05-12-settings-redesign/e2e-tests/screenshots/` |
+| CDP 脚本 | `/Users/zhushanwen/.pi/agent/skills/chrome-automation/scripts/cdp.js` |
+| 视觉脚本 | `/Users/zhushanwen/.pi/agent/skills/zai-vision/scripts/zai_vision.py` |
 
-## 环境准备
+### 公共变量
 
 ```bash
-# 项目目录
-cd /Users/zhushanwen/Code/xyz-agent-workspace/feat-skill-agent-provider
-
-# 1. 启动 sidecar（终端 1）
-npx tsx src-electron/sidecar/src/index.ts --port 3210 --project-root "$(pwd)"
-
-# 2. 启动前端（终端 2）
-npm run dev
-
-# 3. 等待 Vite 就绪（端口 1420）和 Electron 窗口出现
-# Electron remote debugging 端口: 9222
+CDP="/Users/zhushanwen/.pi/agent/skills/chrome-automation/scripts/cdp.js"
+VISION="/Users/zhushanwen/.pi/agent/skills/zai-vision/scripts/zai_vision.py"
+SS_DIR="/Users/zhushanwen/Code/xyz-agent-workspace/feat-skill-agent-provider/.xyz-harness/2026-05-12-settings-redesign/e2e-tests/screenshots"
+WS_URL=$(curl -s http://localhost:9222/json/list | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['webSocketDebuggerUrl'])")
+mkdir -p "$SS_DIR"
 ```
 
 ---
 
 ## TC-0.1: Sidecar 健康检查
 
-| 字段 | 内容 |
-|------|------|
-| **ID** | TC-0.1 |
-| **目标** | 确认 sidecar 进程启动且 HTTP 健康检查端点可用 |
-| **前置条件** | sidecar 进程已启动（环境准备步骤 1） |
+### 目标
+
+验证 sidecar 进程已启动且 HTTP 服务可用。
+
+### 前置条件
+
+- `npm run dev` 已执行，Electron 窗口已打开
 
 ### 测试步骤
+
+#### 协议验证
 
 ```bash
 curl -s http://localhost:3210/health
 ```
 
-### 期望结果
+#### DOM 验证
 
-- HTTP 状态码 `200`
-- 响应体为 JSON，包含 `status` 字段值为 `"ok"`
-- 响应体包含 `uptime` 字段（数字，单位秒）
+> 不适用。本 TC 仅验证 HTTP 层。
 
-```json
-{"status":"ok","uptime":12}
-```
+#### 视觉验证
 
-### 衡量方法
-
-```bash
-# 自动化验证脚本
-response=$(curl -s -w "\n%{http_code}" http://localhost:3210/health)
-http_code=$(echo "$response" | tail -1)
-body=$(echo "$response" | sed '$d')
-
-[ "$http_code" = "200" ] && \
-echo "$body" | jq -e '.status == "ok"' > /dev/null && \
-echo "$body" | jq -e '.uptime | type == "number"' > /dev/null && \
-echo "PASS" || echo "FAIL"
-```
-
-### 结果记录
-
-| 项目 | 值 |
-|------|----|
-| 执行时间 | |
-| HTTP 状态码 | |
-| 响应体 | |
-| 结果 | PASS / FAIL |
-| 备注 | |
-
----
-
-## TC-0.2: WS 连接建立
-
-| 字段 | 内容 |
-|------|------|
-| **ID** | TC-0.2 |
-| **目标** | 确认前端能通过 WebSocket 连接到 sidecar |
-| **前置条件** | TC-0.1 通过 |
-
-### 测试步骤
-
-创建临时测试脚本：
-
-```javascript
-// /tmp/tc-0.2-ws-connect.mjs
-import { WebSocket } from 'ws'
-
-const ws = new WebSocket('ws://localhost:3210')
-let result = 'FAIL'
-
-ws.on('open', () => {
-  console.log('状态:', ws.readyState, '(1 = OPEN)')
-  result = 'PASS'
-  ws.close()
-})
-
-ws.on('error', (err) => {
-  console.error('连接错误:', err.message)
-  result = 'FAIL'
-})
-
-ws.on('close', () => {
-  console.log('结果:', result)
-  process.exit(result === 'PASS' ? 0 : 1)
-})
-
-// 5 秒超时
-setTimeout(() => {
-  console.error('超时：5 秒内未连接')
-  ws.close()
-  process.exit(1)
-}, 5000)
-```
-
-```bash
-node /tmp/tc-0.2-ws-connect.mjs
-```
+> 不适用。
 
 ### 期望结果
 
-- 连接成功建立，无报错
-- `ws.readyState` 为 `1`（OPEN）
-- 脚本退出码为 `0`
+| 维度 | 期望 |
+|------|------|
+| 协议 | HTTP 200，body 为 `{"status":"ok"}` |
+| DOM | N/A |
+| 视觉 | N/A |
 
-### 衡量方法
+### 实际结果
 
-- 控制台输出 `状态: 1 (1 = OPEN)`
-- 控制台输出 `结果: PASS`
-- 进程退出码 `0`
-
-### 结果记录
-
-| 项目 | 值 |
-|------|----|
-| 执行时间 | |
-| 连接状态 | |
-| 错误信息（如有） | |
-| 结果 | PASS / FAIL |
-| 备注 | |
+| 维度 | 结果 | 证据 |
+|------|------|------|
+| 协议 | ⬜ PASS/FAIL | curl 输出: |
+| DOM | — | N/A |
+| 视觉 | — | N/A |
 
 ---
 
-## TC-0.3: 初始广播 providers
+## TC-0.2: WS 连接 + 初始广播
 
-| 字段 | 内容 |
-|------|------|
-| **ID** | TC-0.3 |
-| **目标** | WS 连接后 sidecar 主动推送 `config.providers` 消息 |
-| **前置条件** | TC-0.2 通过 |
+### 目标
 
-### 测试步骤
+验证前端 WebSocket 连接 sidecar 后，能收到全部 4 种初始广播消息（config.providers、config.skills、config.agents、model.list）。
 
-```javascript
-// /tmp/tc-0.3-providers.mjs
-import { WebSocket } from 'ws'
+### 前置条件
 
-const ws = new WebSocket('ws://localhost:3210')
-const messages = []
-
-ws.on('message', (raw) => {
-  try {
-    const msg = JSON.parse(raw.toString())
-    messages.push(msg)
-  } catch {}
-})
-
-ws.on('open', () => {
-  // 等待 sidecar 推送初始消息
-  setTimeout(() => {
-    ws.close()
-  }, 3000)
-})
-
-ws.on('close', () => {
-  const providersMsg = messages.find(m => m.type === 'config.providers')
-
-  if (!providersMsg) {
-    console.log('FAIL: 未收到 config.providers 消息')
-    console.log('收到的消息类型:', messages.map(m => m.type))
-    process.exit(1)
-  }
-
-  const { payload } = providersMsg
-  const isArray = Array.isArray(payload?.providers)
-
-  console.log('消息类型:', providersMsg.type)
-  console.log('payload.providers 类型:', isArray ? 'Array' : typeof payload?.providers)
-  console.log('providers 数量:', isArray ? payload.providers.length : 'N/A')
-
-  if (isArray) {
-    console.log('PASS')
-    process.exit(0)
-  } else {
-    console.log('FAIL: payload.providers 不是数组')
-    process.exit(1)
-  }
-})
-
-setTimeout(() => { process.exit(1) }, 10000)
-```
-
-```bash
-node /tmp/tc-0.3-providers.mjs
-```
-
-### 期望结果
-
-- 收到 `type === 'config.providers'` 消息
-- `payload.providers` 是数组
-- 数组内容为当前配置的 providers 列表（可为空数组）
-
-### 衡量方法
-
-- 控制台输出 `PASS`
-- 打印了 providers 数量
-- 进程退出码 `0`
-
-### 结果记录
-
-| 项目 | 值 |
-|------|----|
-| 执行时间 | |
-| providers 数量 | |
-| 消息原始内容 | |
-| 结果 | PASS / FAIL |
-| 备注 | |
-
----
-
-## TC-0.4: 初始广播 skills
-
-| 字段 | 内容 |
-|------|------|
-| **ID** | TC-0.4 |
-| **目标** | WS 连接后 sidecar 主动推送 `config.skills` 消息 |
-| **前置条件** | TC-0.2 通过 |
+- TC-0.1 通过（sidecar HTTP 健康）
 
 ### 测试步骤
 
-```javascript
-// /tmp/tc-0.4-skills.mjs
-import { WebSocket } from 'ws'
-
-const ws = new WebSocket('ws://localhost:3210')
-const messages = []
-
-ws.on('message', (raw) => {
-  try {
-    const msg = JSON.parse(raw.toString())
-    messages.push(msg)
-  } catch {}
-})
-
-ws.on('open', () => {
-  setTimeout(() => { ws.close() }, 3000)
-})
-
-ws.on('close', () => {
-  const skillsMsg = messages.find(m => m.type === 'config.skills')
-
-  if (!skillsMsg) {
-    console.log('FAIL: 未收到 config.skills 消息')
-    console.log('收到的消息类型:', messages.map(m => m.type))
-    process.exit(1)
-  }
-
-  const { payload } = skillsMsg
-  const isArray = Array.isArray(payload?.skills)
-
-  console.log('消息类型:', skillsMsg.type)
-  console.log('payload.skills 类型:', isArray ? 'Array' : typeof payload?.skills)
-  console.log('skills 数量:', isArray ? payload.skills.length : 'N/A')
-
-  if (isArray) {
-    console.log('PASS')
-    process.exit(0)
-  } else {
-    console.log('FAIL: payload.skills 不是数组')
-    process.exit(1)
-  }
-})
-
-setTimeout(() => { process.exit(1) }, 10000)
-```
+#### 协议验证
 
 ```bash
-node /tmp/tc-0.4-skills.mjs
-```
-
-### 期望结果
-
-- 收到 `type === 'config.skills'` 消息
-- `payload.skills` 是数组（初始可为空数组）
-
-### 衡量方法
-
-- 控制台输出 `PASS`
-- 进程退出码 `0`
-
-### 结果记录
-
-| 项目 | 值 |
-|------|----|
-| 执行时间 | |
-| skills 数量 | |
-| 消息原始内容 | |
-| 结果 | PASS / FAIL |
-| 备注 | |
-
----
-
-## TC-0.5: 初始广播 agents
-
-| 字段 | 内容 |
-|------|------|
-| **ID** | TC-0.5 |
-| **目标** | WS 连接后 sidecar 主动推送 `config.agents` 消息 |
-| **前置条件** | TC-0.2 通过 |
-
-### 测试步骤
-
-```javascript
-// /tmp/tc-0.5-agents.mjs
-import { WebSocket } from 'ws'
-
-const ws = new WebSocket('ws://localhost:3210')
-const messages = []
-
-ws.on('message', (raw) => {
-  try {
-    const msg = JSON.parse(raw.toString())
-    messages.push(msg)
-  } catch {}
-})
-
-ws.on('open', () => {
-  setTimeout(() => { ws.close() }, 3000)
-})
-
-ws.on('close', () => {
-  const agentsMsg = messages.find(m => m.type === 'config.agents')
-
-  if (!agentsMsg) {
-    console.log('FAIL: 未收到 config.agents 消息')
-    console.log('收到的消息类型:', messages.map(m => m.type))
-    process.exit(1)
-  }
-
-  console.log('消息类型:', agentsMsg.type)
-  console.log('payload:', JSON.stringify(agentsMsg.payload, null, 2))
-
-  console.log('PASS')
-  process.exit(0)
-})
-
-setTimeout(() => { process.exit(1) }, 10000)
-```
-
-```bash
-node /tmp/tc-0.5-agents.mjs
-```
-
-### 期望结果
-
-- 收到 `type === 'config.agents'` 消息
-- 消息包含 `payload` 字段
-
-### 衡量方法
-
-- 控制台输出 `PASS`
-- 进程退出码 `0`
-
-### 结果记录
-
-| 项目 | 值 |
-|------|----|
-| 执行时间 | |
-| payload 内容 | |
-| 结果 | PASS / FAIL |
-| 备注 | |
-
----
-
-## TC-0.6: Settings 页面渲染
-
-| 字段 | 内容 |
-|------|------|
-| **ID** | TC-0.6 |
-| **目标** | 确认 Electron 窗口打开后，Settings 页面可以正常渲染 |
-| **前置条件** | TC-0.1 ~ TC-0.5 全部通过，`npm run dev` 已启动 |
-
-### 测试步骤
-
-#### 步骤 1: 确认 Electron remote debugging 可用
-
-```bash
-curl -s http://localhost:9222/json/version | jq '.Browser'
-```
-
-期望返回 Electron 版本信息。
-
-#### 步骤 2: 检查 DOM 中 sidebar 存在
-
-```bash
-# 获取第一个页面的 webSocketDebuggerUrl
-WS_URL=$(curl -s http://localhost:9222/json | jq -r '.[0].webSocketDebuggerUrl')
-
-# 通过 CDP 执行 JS，检查 sidebar-item 元素
 node -e "
-const { WebSocket } = require('ws');
-const ws = new WebSocket('${WS_URL}');
-let id = 1;
+const WebSocket = require('ws');
+const ws = new WebSocket('ws://localhost:3210');
+const expected = new Set([
+  'config.providers',
+  'config.skills',
+  'config.agents',
+  'model.list'
+]);
+const received = new Set();
 
-function send(method, params = {}) {
-  return new Promise(resolve => {
-    const msgId = id++;
-    ws.send(JSON.stringify({ id: msgId, method, params }));
-    ws.on('message', function handler(raw) {
-      const msg = JSON.parse(raw);
-      if (msg.id === msgId) {
-        ws.removeListener('message', handler);
-        resolve(msg);
-      }
-    });
-  });
-}
-
-ws.on('open', async () => {
-  // 检查 sidebar-item 元素
-  const sidebarResult = await send('Runtime.evaluate', {
-    expression: 'document.querySelectorAll(\"[data-testid=\\\"sidebar\\\"]\").length'
-  });
-  console.log('Sidebar 元素数量:', sidebarResult.result?.result?.value);
-
-  // 点击 settings 导航项（如果有）
-  await send('Runtime.evaluate', {
-    expression: 'document.querySelector(\"[data-testid=\\\"sidebar-settings\\\"]\")?.click()'
-  });
-
-  // 等待渲染
-  await new Promise(r => setTimeout(r, 1000));
-
-  // 检查 settings 内容区域
-  const settingsResult = await send('Runtime.evaluate', {
-    expression: 'document.querySelector(\"[data-testid=\\\"settings-page\\\"]\") !== null'
-  });
-  console.log('Settings 页面存在:', settingsResult.result?.result?.value);
-
-  ws.close();
-});
-" 2>&1
-```
-
-> **注意**: 如果项目未使用 `data-testid` 属性，替换选择器为实际使用的 CSS 选择器或组件类名。可通过以下命令先行探测：
-
-```bash
-# 探测实际 DOM 结构
-node -e "
-const { WebSocket } = require('ws');
-const WS_URL = '$(curl -s http://localhost:9222/json | jq -r '.[0].webSocketDebuggerUrl')';
-const ws = new WebSocket(WS_URL);
-let id = 1;
-ws.on('open', () => {
-  const msgId = id++;
-  ws.send(JSON.stringify({
-    id: msgId,
-    method: 'Runtime.evaluate',
-    params: { expression: 'document.body.innerHTML.substring(0, 2000)' }
-  }));
-  ws.on('message', (raw) => {
-    const msg = JSON.parse(raw);
-    if (msg.id === msgId) {
-      console.log(msg.result?.result?.value);
-      ws.close();
+ws.on('message', (raw) => {
+  try {
+    const msg = JSON.parse(raw.toString());
+    if (msg.type && expected.has(msg.type)) {
+      received.add(msg.type);
+      console.log('[RECV]', msg.type, '| payload keys:', msg.payload ? Object.keys(msg.payload).slice(0,5).join(',') : 'none');
     }
-  });
+  } catch(e) {}
 });
+
+ws.on('open', () => console.log('[OPEN] Connected'));
+
+setTimeout(() => {
+  ws.close();
+  console.log('---');
+  console.log('Expected:', [...expected].join(', '));
+  console.log('Received:', [...received].join(', '));
+  const missing = [...expected].filter(t => !received.has(t));
+  if (missing.length === 0) {
+    console.log('RESULT: PASS — all 4 broadcasts received');
+  } else {
+    console.log('RESULT: FAIL — missing:', missing.join(', '));
+  }
+  process.exit(missing.length === 0 ? 0 : 1);
+}, 5000);
 "
 ```
 
+#### DOM 验证
+
+> 不适用。本 TC 仅验证 WS 协议层。
+
+#### 视觉验证
+
+> 不适用。
+
 ### 期望结果
 
-- Electron DevTools 可连接（端口 9222）
-- DOM 中存在 sidebar 相关元素
-- 点击 settings 导航后，settings 页面内容区域出现
+| 维度 | 期望 |
+|------|------|
+| 协议 | 5 秒内收到 4 种广播，每种至少 1 条 |
+| DOM | N/A |
+| 视觉 | N/A |
 
-### 衡量方法
+### 实际结果
 
-| 检查项 | 期望值 |
-|--------|--------|
-| DevTools 版本接口 | 返回 JSON，含 Browser 字段 |
-| Sidebar 元素 | 数量 > 0 |
-| Settings 页面 | `true` |
-
-### 结果记录
-
-| 项目 | 值 |
-|------|----|
-| 执行时间 | |
-| Electron 版本 | |
-| Sidebar 元素数量 | |
-| Settings 页面存在 | |
-| DOM 片段（调试用） | |
-| 结果 | PASS / FAIL |
-| 备注 | |
+| 维度 | 结果 | 证据 |
+|------|------|------|
+| 协议 | ⬜ PASS/FAIL | node 输出: |
+| DOM | — | N/A |
+| 视觉 | — | N/A |
 
 ---
 
-## 汇总
+## TC-0.3: CDP 连通 + 页面渲染
 
-| TC | 名称 | 结果 | 耗时 | 备注 |
-|----|------|------|------|------|
-| TC-0.1 | Sidecar 健康检查 | | | |
-| TC-0.2 | WS 连接建立 | | | |
-| TC-0.3 | 初始广播 providers | | | |
-| TC-0.4 | 初始广播 skills | | | |
-| TC-0.5 | 初始广播 agents | | | |
-| TC-0.6 | Settings 页面渲染 | | | |
+### 目标
 
-**通过条件**: 6/6 PASS
+验证 Chrome DevTools Protocol 可连接，Electron 渲染进程已加载页面，且页面包含基本的 sidebar 和 content 区域。
 
-**如果 TC-0.6 的选择器不匹配**: 先用探测脚本获取实际 DOM 结构，更新选择器后重新执行。
+### 前置条件
+
+- TC-0.1 通过
+- Chrome/Electron 已启用 `--remote-debugging-port=9222`
+
+### 测试步骤
+
+#### 协议验证
+
+> 不适用。本 TC 验证 CDP + DOM + 视觉层。
+
+#### DOM 验证
+
+```bash
+# 1. 获取 CDP 连接地址
+WS_URL=$(curl -s http://localhost:9222/json/list | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['webSocketDebuggerUrl'])")
+echo "CDP WS_URL: $WS_URL"
+
+# 2. 检查 document.title
+node "$CDP" "$WS_URL" Runtime.evaluate '{"expression":"document.title"}'
+# 期望: title 包含 "xyz-agent" 或项目名
+
+# 3. 检查 sidebar-item 元素存在（设置页面应有 4 个 tab）
+node "$CDP" "$WS_URL" Runtime.evaluate '{"expression":"document.querySelectorAll(\".sidebar-item\").length"}'
+# 期望: result.value >= 4
+
+# 4. 如果当前不在设置页面，通过 CDP 模拟 Cmd+, 打开设置
+# 先检查当前视图状态
+node "$CDP" "$WS_URL" Runtime.evaluate '{"expression":"document.querySelector(\"[data-view=settings]\") ? \"on-settings\" : \"not-on-settings\""}'
+# 如果返回 not-on-settings，执行导航：
+node "$CDP" "$WS_URL" Runtime.evaluate '{"expression":"document.querySelector(\".settings-trigger, .settings-btn, [aria-label=Settings]\")?.click()"}'
+# 等待 500ms 让页面渲染
+sleep 0.5
+```
+
+#### 视觉验证
+
+```bash
+# 1. 截图整个页面
+node "$CDP" "$WS_URL" Page.captureScreenshot '{"format":"png","captureBeyondViewport":true}' | python3 -c "import sys,json,base64; r=json.load(sys.stdin); data=r.get('result',{}).get('value',''); open('$SS_DIR/actual-settings-page.png','wb').write(base64.b64decode(data)) if data else print('fail')"
+
+# 2. 用 zai-vision analyze-image 分析截图，确认包含 sidebar + content 区域
+python3 "$VISION" analyze-image "$SS_DIR/actual-settings-page.png" \
+  "这张截图是否包含左侧 sidebar 和右侧 content 主内容区域？请确认：1) 左侧是否有导航栏/sidebar，2) 右侧是否有内容区域，3) 页面整体布局是否为典型的设置页面。用 JSON 格式回答: {\"has_sidebar\": bool, \"has_content\": bool, \"layout\": \"settings/other\", \"confidence\": 0-1}"
+```
+
+### 期望结果
+
+| 维度 | 期望 |
+|------|------|
+| 协议 | N/A |
+| DOM | `document.title` 非空；`.sidebar-item` 数量 >= 4 |
+| 视觉 | zai-vision 确认 has_sidebar=true, has_content=true |
+
+### 实际结果
+
+| 维度 | 结果 | 证据 |
+|------|------|------|
+| 协议 | — | N/A |
+| DOM | ⬜ PASS/FAIL | title=, sidebar-item count= |
+| 视觉 | ⬜ PASS/FAIL | 截图: `screenshots/actual-settings-page.png`, zai-vision 输出: |
+
+---
+
+## TC-0.4: 设置页面 Sidebar 渲染
+
+### 目标
+
+验证设置页面 sidebar 正确渲染 4 个 tab（Providers / Skills / Agents / System）。
+
+### 前置条件
+
+- TC-0.3 通过（CDP 连通 + 页面已渲染）
+
+### 测试步骤
+
+#### 协议验证
+
+> 不适用。本 TC 验证 DOM + 视觉层。
+
+#### DOM 验证
+
+```bash
+# 1. 获取 sidebar-item 的文本内容
+node "$CDP" "$WS_URL" Runtime.evaluate '{"expression":"JSON.stringify([...document.querySelectorAll(\".sidebar-item\")].map(el => el.textContent.trim()))"}'
+# 期望: 包含 "Providers", "Skills", "Agents", "System" 四个文本
+
+# 2. 检查每个 sidebar-item 是否可点击（有 click handler 或 role="tab"）
+node "$CDP" "$WS_URL" Runtime.evaluate '{"expression":"JSON.stringify([...document.querySelectorAll(\".sidebar-item\")].map(el => ({text: el.textContent.trim(), role: el.getAttribute(\"role\"), tabindex: el.getAttribute(\"tabindex\"), clickable: el.onclick !== null || el.getAttribute(\"role\") === \"tab\"})))"}'
+# 期望: 每个元素 role="tab" 或 tabindex 可聚焦
+
+# 3. 点击第一个 tab (Providers) 验证交互
+node "$CDP" "$WS_URL" Runtime.evaluate '{"expression":"document.querySelectorAll(\".sidebar-item\")[0]?.click(); \"clicked\""}'
+sleep 0.3
+
+# 4. 检查点击后 content 区域是否有对应内容加载
+node "$CDP" "$WS_URL" Runtime.evaluate '{"expression":"document.querySelector(\".settings-content, .content-area, [data-content]\") ? \"content-exists\" : \"no-content\""}'
+```
+
+#### 视觉验证
+
+```bash
+# 1. 截图设置页面 sidebar 特写 — 先获取 sidebar 元素的 bounding box，再裁剪
+# 先截完整页面
+node "$CDP" "$WS_URL" Page.captureScreenshot '{"format":"png","captureBeyondViewport":true}' | python3 -c "import sys,json,base64; r=json.load(sys.stdin); data=r.get('result',{}).get('value',''); open('$SS_DIR/actual-settings-sidebar.png','wb').write(base64.b64decode(data)) if data else print('fail')"
+
+# 2. 获取 sidebar 的布局信息用于定位
+node "$CDP" "$WS_URL" Runtime.evaluate '{"expression":"JSON.stringify([...document.querySelectorAll(\".sidebar-item\")].map(el => {const r = el.getBoundingClientRect(); return {text: el.textContent.trim(), x: r.x, y: r.y, w: r.width, h: r.height}}))"}'
+# 记录各 tab 的坐标用于后续裁剪或分析
+
+# 3. 用 zai-vision 分析 sidebar 截图
+python3 "$VISION" analyze-image "$SS_DIR/actual-settings-sidebar.png" \
+  "这张截图是否显示了一个设置页面的左侧 sidebar？请确认：1) 能看到 Providers/Skills/Agents/System 四个导航项，2) 第一个 tab (Providers) 是否处于选中/高亮状态，3) sidebar 的视觉样式是否正常（无空白、无错位）。用 JSON 格式回答: {\"sidebar_visible\": bool, \"tabs\": [\"Providers\",\"Skills\",\"Agents\",\"System\"], \"active_tab\": string, \"visual_ok\": bool, \"confidence\": 0-1}"
+```
+
+### 期望结果
+
+| 维度 | 期望 |
+|------|------|
+| 协议 | N/A |
+| DOM | 4 个 `.sidebar-item`，文本分别为 Providers/Skills/Agents/System；点击后 content 区域有内容加载 |
+| 视觉 | zai-vision 确认 sidebar_visible=true, tabs 包含全部 4 项, visual_ok=true |
+
+### 实际结果
+
+| 维度 | 结果 | 证据 |
+|------|------|------|
+| 协议 | — | N/A |
+| DOM | ⬜ PASS/FAIL | sidebar-items=, content 状态= |
+| 视觉 | ⬜ PASS/FAIL | 截图: `screenshots/actual-settings-sidebar.png`, zai-vision 输出: |
+
+---
+
+## Group 0 汇总
+
+| TC | 协议 | DOM | 视觉 | 状态 |
+|----|------|-----|------|------|
+| TC-0.1 Sidecar 健康检查 | ⬜ | — | — | ⬜ PASS/FAIL |
+| TC-0.2 WS 连接 + 初始广播 | ⬜ | — | — | ⬜ PASS/FAIL |
+| TC-0.3 CDP 连通 + 页面渲染 | — | ⬜ | ⬜ | ⬜ PASS/FAIL |
+| TC-0.4 设置页面 Sidebar 渲染 | — | ⬜ | ⬜ | ⬜ PASS/FAIL |
+
+**通过条件**: 全部 4 个 TC 均为 PASS，否则阻塞后续 Group 执行。
+
+### 失败排查指引
+
+| 失败 TC | 可能原因 | 排查方向 |
+|---------|---------|---------|
+| TC-0.1 | sidecar 未启动 / 端口被占用 | `lsof -i :3210`，检查 `npm run dev` 输出 |
+| TC-0.2 | WS 连接失败 / sidecar 未发送初始广播 | 检查 sidecar `server.ts` 的 `connection` handler |
+| TC-0.3 | CDP 端口未启用 / 页面未加载 | 检查 Electron 启动参数 `--remote-debugging-port=9222`；`lsof -i :1420` 确认 Vite |
+| TC-0.4 | 设置路由未正确渲染 / sidebar 组件问题 | 检查 `settingsStore.currentView` 和 sidebar 组件渲染逻辑 |
