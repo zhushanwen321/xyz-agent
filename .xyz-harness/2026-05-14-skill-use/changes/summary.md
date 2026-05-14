@@ -34,3 +34,14 @@
   - `src-electron/renderer/src/components/chat/ChatInput.vue`
 - 摘要：选中 skill 后预填 argumentHint 或动态切换 placeholder；取消标签恢复默认
 - 时间：2026-05-14
+
+## 阶段 5 - 测试编写 (Task 5: sidecar skillPaths 链路测试)
+
+- 状态：done
+- 变更文件：
+  - `src-electron/sidecar/test/skill-paths.test.ts` (新建)
+  - `src-electron/sidecar/vitest.config.ts` (新建)
+  - `src-electron/sidecar/package.json` (添加 vitest 依赖和 test 脚本)
+  - `src-electron/sidecar/tsconfig.json` (include test 目录)
+- 摘要：7 个测试用例覆盖 skillPaths 从 RpcClient 到 SessionPool 的完整传递链路，包括 create 和 restoreSession
+- 时间：2026-05-14

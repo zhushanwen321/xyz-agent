@@ -9,5 +9,5 @@
       "@xyz-agent/shared": ["../shared/src"]
     }
   },
-  "include": ["src"]
+  "include": ["src", "test"]
 }
