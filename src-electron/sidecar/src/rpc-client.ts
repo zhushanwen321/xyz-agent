@@ -18,6 +18,7 @@ export interface RpcClientOptions {
   provider?: string
   model?: string
   env?: Record<string, string>
+  skillPaths?: string[]
 }
 
 const CMD_TIMEOUT_MS = 60_000
@@ -55,6 +56,11 @@ export class RpcClient {
 
     const args = ['--mode', 'rpc']
     if (model) args.push('--model', model)
+    if (this.options.skillPaths?.length) {
+      for (const skillPath of this.options.skillPaths) {
+        args.push('--skill', skillPath)
+      }
+    }
 
     // 使用独立的 session 目录，避免和 pi 本身的数据混合
     const sessionDir = join(homedir(), '.xyz-agent', 'sessions')

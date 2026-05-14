@@ -1,5 +1,5 @@
-import { basename } from 'node:path'
-import { readFileSync, appendFileSync } from 'node:fs'
+import { basename, dirname } from 'node:path'
+import { readFileSync, appendFileSync, existsSync } from 'node:fs'
 import type { WebSocket } from 'ws'
 import type {
   SessionSummary,
@@ -31,7 +31,7 @@ interface PiHistoryMessage {
   isError?: boolean
 }
 import { EventAdapter } from './event-adapter.js'
-import { getDefaultModel } from './config-store.js'
+import { getDefaultModel, loadSkills } from './config-store.js'
 import { scanSessions, deleteSessionFile, type ScannedSession } from './session-scanner.js'
 import { lookupPiProvider } from './model-db.js'
 
@@ -110,7 +110,7 @@ export class SessionPool {
     const sessionCwd = cwd ?? process.cwd()
     const modelId = getDefaultModel()
 
-    const client = await this.pm.createSession(id, sessionCwd)
+    const client = await this.pm.createSession(id, sessionCwd, { skillPaths: this.getSkillPaths(sessionCwd) })
     const adapter = new EventAdapter(id, (msg) => this.send(msg))
     adapter.attach(client)
 
@@ -463,7 +463,7 @@ export class SessionPool {
     if (!target) throw new Error(`Persisted session ${sessionId} not found`)
 
     const id = crypto.randomUUID()
-    const client = await this.pm.createSession(id, target.cwd)
+    const client = await this.pm.createSession(id, target.cwd, { skillPaths: this.getSkillPaths(target.cwd) })
     const adapter = new EventAdapter(id, (msg) => this.send(msg))
     adapter.attach(client)
 
@@ -539,6 +539,17 @@ export class SessionPool {
   }
 
   // ── Internal ───────────────────────────────────────────────────
+
+  /** Collect enabled skill directory paths for passing to pi as --skill args */
+  /** 收集当前 enabled skill 的目录路径，传给 pi --skill 参数。
+   *  cwd 用于定位 .xyz-agent/skills.json（项目级配置），
+   *  restore 时用原始 session 的 cwd，确保读取原始项目的 skill 配置。 */
+  private getSkillPaths(cwd: string): string[] {
+    return loadSkills(cwd ?? process.cwd())
+      .filter(s => s.enabled && s.sourcePath)
+      .map(s => dirname(s.sourcePath!))
+      .filter(p => existsSync(p))
+  }
 
   private toSummary(s: ManagedSession): SessionSummary {
     return {

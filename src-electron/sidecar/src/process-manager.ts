@@ -53,13 +53,13 @@ function findPiExecutable(): string {
   // 3. Common locations
   const commonPaths = isWindows
     ? [
-        join(process.env.APPDATA ?? '', 'npm', 'pi.cmd'),
-        join(process.env.APPDATA ?? '', 'npm', 'pi.exe'),
-      ]
- : [
-        '/usr/local/bin/pi',
-        join(homedir(), 'bin', 'pi'),
-      ]
+      join(process.env.APPDATA ?? '', 'npm', 'pi.cmd'),
+      join(process.env.APPDATA ?? '', 'npm', 'pi.exe'),
+    ]
+    : [
+      '/usr/local/bin/pi',
+      join(homedir(), 'bin', 'pi'),
+    ]
   for (const p of commonPaths) {
     if (existsSync(p)) return p
   }

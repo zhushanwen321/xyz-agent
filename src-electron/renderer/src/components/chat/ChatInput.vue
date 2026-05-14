@@ -112,11 +112,11 @@ const activeCommand = ref<SlashCommand | null>(null)
 const placeholder = computed(() => {
   if (activeCommand.value?.action.type === 'skill') {
     return activeCommand.value.argumentHint
-    ? '编辑参数后发送…'
-    : '输入附加文本…'
+      ? '编辑参数后发送…'
+      : '输入附加文本…'
   }
   return t('chat.inputPlaceholder')
-  })
+})
 
 const containerRef = ref<HTMLElement | null>(null)
 
@@ -182,11 +182,11 @@ function handleSlashSelect(cmd: SlashCommand) {
       ta?.focus()
     })
   } else {
-  activeCommand.value = cmd
-  // skill 有 argumentHint 时预填文本，用户可直接编辑
-  if (cmd.action.type === 'skill' && cmd.argumentHint) {
-    text.value = cmd.argumentHint
-  }
+    activeCommand.value = cmd
+    // skill 有 argumentHint 时预填文本，用户可直接编辑
+    if (cmd.action.type === 'skill' && cmd.argumentHint) {
+      text.value = cmd.argumentHint
+    }
   }
 }
 
