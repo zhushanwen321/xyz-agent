@@ -45,3 +45,21 @@
   - `src-electron/sidecar/tsconfig.json` (include test 目录)
 - 摘要：7 个测试用例覆盖 skillPaths 从 RpcClient 到 SessionPool 的完整传递链路，包括 create 和 restoreSession
 - 时间：2026-05-14
+
+## 阶段 11 - 单元测试 (Change-driven Testing)
+
+- 状态：done
+- 变更文件：
+  - `src-electron/sidecar/test/skill-scanner.test.ts` (新建)
+  - `src-electron/sidecar/src/skill-scanner.ts` (导出 parseSkillMd)
+- 摘要：10 个测试用例覆盖 parseSkillMd() 的 argumentHint 提取（7 例）和 description/triggers 提取（3 例）。全部 17 个 sidecar 测试通过。
+- 备注：useSlashCommands.mergeSkillCommands() 为 Vue composable（依赖 ref 响应式系统），需 renderer 测试基础设施才能测试，记录为缺口。
+- 时间：2026-05-14
+
+## 阶段 6 - E2E 测试计划 (Task 6)
+
+- 状态：done
+- 变更文件：
+  - `.xyz-harness/2026-05-14-skill-use/e2e-test-plan.md` (新建)
+- 摘要：编写 13 个手动 E2E 测试用例，覆盖 Group A (skill 路径传递 4 例) + Group B (SlashMenu 交互 3 例) + Group C (输入框预填 3 例) + Group D (端到端发送 3 例)，含边界场景和测试结果记录模板
+- 时间：2026-05-14
