@@ -60,6 +60,7 @@ export const useProviderStore = defineStore('provider', () => {
         enabled: true,
         source: item.sourceType,
         triggers: item.triggers,
+        argumentHint: item.argumentHint,
         sourcePath: item.sourcePath,
         content: item.content,
         fileSize: item.fileSize,

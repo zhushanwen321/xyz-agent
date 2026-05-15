@@ -22,6 +22,18 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Sidecar 的 AI Agent 桌面工作
 - [暗色主题选项 demo](docs/templates/dark-theme-options.html) — 5 种彩色 accent 方案对比
 - [朴素锐利主题 demo](docs/templates/muted-sharp-themes.html) — 5 种低饱和/无彩色方案对比
 
+**UI Demo 目录**: `docs/designs/` — 所有 UI 设计 demo（HTML 文件），按 `views_<模块>.html` 命名
+  - 聊天界面: [views_chat.html](docs/designs/views_chat.html) — 含 SlashMenu、skill 标签、消息气泡三种状态
+  - Settings Skills: [views_settings-skills.html](docs/designs/views_settings-skills.html)
+
+**外部项目源码**:
+- pi 源码: `~/GitApp/pi-mono/` — AI coding agent 引擎，xyz-agent 的 sidecar 通过 RPC 调用 pi
+  - Skill 加载: `packages/coding-agent/src/core/skills.ts` — skill 发现、加载、格式化
+  - Skill 展开: `packages/coding-agent/src/core/agent-session.ts` — `_expandSkillCommand()` 将 `/skill:name` 展开为 `<skill>` XML 块
+  - Slash 命令: `packages/coding-agent/src/core/slash-commands.ts` — 内置命令定义
+  - RPC 协议: `packages/coding-agent/src/modes/rpc/rpc-mode.ts` — RPC 模式命令处理
+  - TUI 交互: `packages/coding-agent/src/modes/interactive/interactive-mode.ts` — TUI 模式完整交互
+
 **Settings 模块设计文档**:
 - [Settings 视觉 demo](docs/designs/settings-final.html) — Section Groups 风格的最终 HTML demo
 - [Settings spec](.xyz-harness/2026-05-12-settings-redesign/spec.md) — 需求规格（WS 协议、数据流、组件结构）

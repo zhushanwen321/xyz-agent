@@ -27,6 +27,7 @@ export interface SkillInfo {
   enabled: boolean
   source: string
   triggers: string[]
+  argumentHint?: string
   // UI 扩展字段（由后端下发或前端补充）
   sourcePath?: string
   sourceIcon?: string
@@ -45,6 +46,7 @@ export interface ScannedSkillInfo {
   sourceType: ScanSourceType
   sourcePath: string
   triggers: string[]
+  argumentHint?: string
   content: string
   fileSize?: string
   tools?: string[]

@@ -32,7 +32,7 @@
       </div>
       <Textarea
         v-model="text"
-        :placeholder="t('chat.inputPlaceholder')"
+    :placeholder="placeholder"
         class="block w-full min-h-[calc(1.45em*2+16px)] max-h-[calc(1.45em*10+16px)] pt-[10px] pb-2 px-3.5 border-none bg-transparent text-fg font-body text-sm leading-[1.45] resize-none outline-none placeholder:text-muted"
         :rows="1"
         no-style
@@ -108,6 +108,16 @@ const text = ref('')
 const isComposing = ref(false)
 const activeCommand = ref<SlashCommand | null>(null)
 
+// activeCommand 存在时动态展示 skill 专属提示，否则用默认 placeholder
+const placeholder = computed(() => {
+  if (activeCommand.value?.action.type === 'skill') {
+    return activeCommand.value.argumentHint
+      ? '编辑参数后发送…'
+      : '输入附加文本…'
+  }
+  return t('chat.inputPlaceholder')
+})
+
 const containerRef = ref<HTMLElement | null>(null)
 
 const currentModel = computed(() => settingsStore.defaultModel)
@@ -146,6 +156,7 @@ function closeSlashMenu() {
 
 function clearCommand() {
   activeCommand.value = null
+  text.value = ''
 }
 
 // 构建 CommandContext，供 local 类型命令使用
@@ -172,6 +183,10 @@ function handleSlashSelect(cmd: SlashCommand) {
     })
   } else {
     activeCommand.value = cmd
+    // skill 有 argumentHint 时预填文本，用户可直接编辑
+    if (cmd.action.type === 'skill' && cmd.argumentHint) {
+      text.value = cmd.argumentHint
+    }
   }
 }
 

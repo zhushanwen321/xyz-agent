@@ -15,6 +15,7 @@ export interface SlashCommand {
   description: string
   source: SlashCommandSource
   action: SlashCommandAction
+  argumentHint?: string
 }
 
 export interface CommandContext {
@@ -47,6 +48,7 @@ export function useSlashCommands() {
         description: s.description,
         source: 'skill' as const,
         action: { type: 'skill' as const, skillId: s.id },
+        argumentHint: s.argumentHint,
       }))
 
     const all = [...builtinCommands.value, ...skillCmds]
