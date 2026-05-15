@@ -374,7 +374,7 @@ export class SidecarServer {
             // Sanitize special characters to prevent XML injection
             const safeAgent = subagent.agent.replace(/[<>"&]/g, '')
             const safeTask = subagent.task.replace(/[<>"&]/g, '')
-            const agentPrompt = `<tool_call tool="subagent">\n{"agent":"${safeAgent}","task":"${safeTask}"}\n</tool_call`
+            const agentPrompt = `<tool_call tool="subagent">\n{"agent":"${safeAgent}","task":"${safeTask}"}\n</tool_call />`
             console.log('[sidecar] subagent prompt:', agentPrompt)
             await this.pool.sendMessage(sessionId, agentPrompt)
           } else {

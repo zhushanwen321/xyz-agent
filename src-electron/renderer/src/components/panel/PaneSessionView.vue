@@ -83,12 +83,12 @@ function handleSend(payload: { content: string; skillName?: string; subagent?: {
   if (!sid) return
   chatStore.setError(null, sid)
   chatStore.addMessage({
-  id: crypto.randomUUID(),
-  role: 'user',
-  content: payload.content,
-  status: 'complete',
-  timestamp: Date.now(),
-  ...(payload.skillName ? { skillName: payload.skillName } : {}),
+    id: crypto.randomUUID(),
+    role: 'user',
+    content: payload.content,
+    status: 'complete',
+    timestamp: Date.now(),
+    ...(payload.skillName ? { skillName: payload.skillName } : {}),
   }, sid)
   sendMessage(payload.content, payload.subagent)
 }

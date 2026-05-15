@@ -20,13 +20,13 @@
         <span
           :class="[
             'inline-flex items-center justify-center text-[9px] font-medium tracking-[0.02em] rounded-[3px] shrink-0 w-[52px] h-4',
-      cmd.source === 'builtin'
-        ? 'bg-border text-muted'
-        : cmd.source === 'skill'
-        ? 'bg-accent-light text-accent'
-        : 'bg-blue-500/10 text-blue-500',
-      ]"
-    >{{ cmd.source === 'builtin' ? 'command' : cmd.source === 'skill' ? 'skill' : 'agent' }}</span>
+            cmd.source === 'builtin'
+              ? 'bg-border text-muted'
+              : cmd.source === 'skill'
+              ? 'bg-accent-light text-accent'
+              : 'bg-blue-500/10 text-blue-500',
+          ]"
+        >{{ cmd.source === 'builtin' ? 'command' : cmd.source === 'skill' ? 'skill' : 'agent' }}</span>
     <span class="text-xs font-semibold font-mono whitespace-nowrap text-accent w-[100px] shrink-0 overflow-hidden text-ellipsis">/{{ cmd.name }}</span>
     <span class="text-[11px] text-muted flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap pl-2 border-l border-border">{{ cmd.description }}</span>
     <span

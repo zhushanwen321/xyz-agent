@@ -184,16 +184,16 @@ function handleSlashSelect(cmd: SlashCommand) {
       ta?.focus()
     })
   } else {
-  activeCommand.value = cmd
-  if (cmd.action.type === 'agent') {
-    text.value = `/${cmd.name} `
-    nextTick(() => {
-    const ta = containerRef.value?.querySelector<HTMLTextAreaElement>('textarea')
-    ta?.focus()
-    })
-  } else if (cmd.action.type === 'skill' && cmd.argumentHint) {
-    text.value = cmd.argumentHint
-  }
+    activeCommand.value = cmd
+    if (cmd.action.type === 'agent') {
+      text.value = `/${cmd.name} `
+      nextTick(() => {
+        const ta = containerRef.value?.querySelector<HTMLTextAreaElement>('textarea')
+        ta?.focus()
+      })
+    } else if (cmd.action.type === 'skill' && cmd.argumentHint) {
+      text.value = cmd.argumentHint
+    }
   }
 }
 
@@ -214,18 +214,18 @@ function handleSend() {
           payload: { sessionId: props.sessionId },
         })
         break
-    case 'skill': {
-    const prefix = `/skill:${cmd.name}`
-    const content = trimmed ? `${prefix} ${trimmed}` : prefix
-    emit('send', { content, skillName: cmd.name })
-    break
-    }
-    case 'agent': {
-    const agentName = cmd.action.agentName
-    const content = trimmed || ''
-    emit('send', { content, subagent: { agent: agentName, task: content } })
-    break
-    }
+      case 'skill': {
+        const prefix = `/skill:${cmd.name}`
+        const content = trimmed ? `${prefix} ${trimmed}` : prefix
+        emit('send', { content, skillName: cmd.name })
+        break
+      }
+      case 'agent': {
+        const agentName = cmd.action.agentName
+        const content = trimmed || ''
+        emit('send', { content, subagent: { agent: agentName, task: content } })
+        break
+      }
     }
     clearCommand()
   } else {
