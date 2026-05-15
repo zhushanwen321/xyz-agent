@@ -65,11 +65,26 @@
     min-width: 100px;
   }
   .slash-popup__desc {
-    font-size: 12px;
-    color: var(--muted);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
+  }
+  .slash-popup__arg {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--accent);
+  opacity: 0.7;
+  white-space: nowrap;
+  flex-shrink: 0;
+  padding: 1px 5px;
+  background: var(--accent-light);
+  border-radius: 3px;
   }
 
   /* ── Skill tag (above textarea, after selecting a skill) ── */
@@ -203,16 +218,23 @@
           <span class="slash-popup__name">/help</span>
           <span class="slash-popup__desc">显示可用命令列表</span>
         </div>
-        <div class="slash-popup__item">
-          <span class="slash-popup__tag slash-popup__tag--sk">SK</span>
-          <span class="slash-popup__name">/code-trace</span>
-          <span class="slash-popup__desc">追踪代码调用链，分析上下游关系</span>
-        </div>
-        <div class="slash-popup__item">
-          <span class="slash-popup__tag slash-popup__tag--sk">SK</span>
-          <span class="slash-popup__name">/zcommit</span>
-          <span class="slash-popup__desc">智能分析变更并提交代码</span>
-        </div>
+    <div class="slash-popup__item">
+      <span class="slash-popup__tag slash-popup__tag--sk">SK</span>
+      <span class="slash-popup__name">/code-trace</span>
+      <span class="slash-popup__desc">追踪代码调用链，分析上下游关系</span>
+      <span class="slash-popup__arg">&lt;文件路径&gt;</span>
+    </div>
+    <div class="slash-popup__item">
+      <span class="slash-popup__tag slash-popup__tag--sk">SK</span>
+      <span class="slash-popup__name">/zcommit</span>
+      <span class="slash-popup__desc">智能分析变更并提交代码</span>
+    </div>
+    <div class="slash-popup__item">
+      <span class="slash-popup__tag slash-popup__tag--sk">SK</span>
+      <span class="slash-popup__name">/batch-tracer</span>
+      <span class="slash-popup__desc">批量代码分析调度器</span>
+      <span class="slash-popup__arg">&lt;目录&gt; [--parallel N]</span>
+    </div>
       </div>
       <div class="chat-input-container">
         <textarea class="chat-input-textarea" id="fieldA" placeholder="输入消息… (Enter 发送, Shift+Enter 换行, / 命令)"></textarea>
@@ -280,7 +302,7 @@
         </div>
       </div>
       <div class="chat-input-container">
-        <textarea class="chat-input-textarea" placeholder="描述要追踪的文件或函数…"></textarea>
+    <textarea class="chat-input-textarea" placeholder="描述要追踪的文件或函数…">src/auth/interfaces.ts 的调用链</textarea>
         <div class="chat-input-toolbar">
           <button class="tb-btn tb-btn--plus" title="上传文件"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3v10M3 8h10"/></svg></button>
           <div class="tb-model">
@@ -295,8 +317,53 @@
   </div>
 
   <!-- ════════════════════════════════════════════════════════════════
-       State 3: Skill sent (tag gone, message in chat with skill badge)
-       ════════════════════════════════════════════════════════════════ -->
+     State 2b: Skill selected (no argumentHint, only placeholder)
+     ════════════════════════════════════════════════════════════════ -->
+  <div class="chat-panel" id="panelB2" style="display:none">
+  <div class="panel-bar">
+    <div class="anchor">
+    <span class="anchor__dot" style="background:var(--success)"></span>
+    <span>主线对话</span>
+    <span class="anchor__chevron">▾</span>
+    </div>
+  </div>
+
+  <div class="chat-msgs">
+    <div class="agent-view active" data-agent="main">
+    <div class="msg msg--bot">
+      <div class="msg__role">助手</div>
+      <div class="msg__body"><p>好的，请告诉我需要提交什么？</p></div>
+    </div>
+    </div>
+  </div>
+
+  <div class="chat-input-wrap state-skill">
+    <!-- Skill tag without argumentHint — no pre-filled text -->
+    <div class="skill-tag-bar">
+    <div class="skill-tag">
+      <svg class="skill-tag__icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 8l4 4 8-8"/></svg>
+      zcommit
+      <span class="skill-tag__close" title="取消">&times;</span>
+    </div>
+    </div>
+    <div class="chat-input-container">
+    <textarea class="chat-input-textarea" placeholder="输入提交描述或附加指令…"></textarea>
+    <div class="chat-input-toolbar">
+      <button class="tb-btn tb-btn--plus" title="上传文件"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3v10M3 8h10"/></svg></button>
+      <div class="tb-model">
+      <span>sonnet</span><span class="tb-model__sep">@</span><span class="tb-model__provider">anthropic</span>
+      </div>
+      <div class="tb-context">上下文 <div class="tb-context__bar"><div class="tb-context__fill" style="width:34%;background:var(--accent)"></div></div> 34%</div>
+      <div class="tb-spacer"></div>
+      <button class="tb-btn tb-btn--send" title="发送 /skill:zcommit <消息>"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M8 2v12M4 6l4-4 4 4"/></svg></button>
+    </div>
+    </div>
+  </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════════════
+     State 3: Skill sent (tag gone, message in chat with skill badge)
+     ════════════════════════════════════════════════════════════════ -->
   <div class="chat-panel" id="panelC" style="display:none">
     <div class="panel-bar">
       <div class="anchor">
@@ -346,7 +413,8 @@ let currentPanel = 'A';
 document.addEventListener('keydown', function(e) {
   if (e.key === '1') { currentPanel = 'A'; }
   else if (e.key === '2') { currentPanel = 'B'; }
-  else if (e.key === '3') { currentPanel = 'C'; }
+  else if (e.key === '3') { currentPanel = 'B2'; }
+  else if (e.key === '4') { currentPanel = 'C'; }
   else return;
   document.querySelectorAll('.chat-panel').forEach(p => p.style.display = 'none');
   document.getElementById('panel' + currentPanel).style.display = '';
@@ -370,7 +438,16 @@ document.querySelectorAll('.slash-popup__item').forEach(item => {
   Slash Command Interaction Spec
   ═══════════════════════════════════════════════════════════════════
 
-  按 1/2/3 切换三种状态。
+  按 1/2/3/4 切换四种状态。
+
+  ## 状态说明
+
+  | Key | State          | 说明                                      |
+  |-----|----------------|-------------------------------------------|
+  | 1   | Normal input   | 正常输入，/ 弹出 SlashMenu                |
+  | 2   | Skill selected | 选中有 argumentHint 的 skill，预填参数    |
+  | 3   | Skill no hint  | 选中无 argumentHint 的 skill，无预填      |
+  | 4   | Skill sent     | 已发送，消息带 skill 标签                 |
 
   ## 命令分类
 
@@ -380,24 +457,40 @@ document.querySelectorAll('.slash-popup__item').forEach(item => {
   | protocol| /compact     | 发 ws session.compact        | 无（独立协议通道）          |
   | skill  | /code-trace   | 输入框上方显示 skill 标签    | /skill:<name>[ <用户消息>]  |
 
-  ## 交互流程
+  ## SlashMenu 参数提示
 
-  1. 用户输入 "/" → 向上弹出匹配框
-  2. 继续输入 → 子串过滤（不区分大小写）
-  3. 最多显示 5 项，超出滚动
-  4. ↑↓ 导航，Tab 立即确认，Enter 确认，Escape 关闭
-  5. 选中后：
-     - CMD: 立即执行，清空输入框
-     - SK:  输入框上方出现 skill 标签（State 2），等待用户输入
-  6. 用户在 skill 标签存在时按 Enter → 发送 /skill:<name> <消息>
-  7. 发送后标签消失（单次模式），恢复 State 1
-  8. 用户也可不输入消息直接 Enter → 发送纯 /skill:<name>
+  每个skill项显示：
+  - [SK] 标签（背景 accent）
+  - /skill-name（等宽字体，accent 色）
+  - 描述（muted 色，带左侧分隔线）
+  - argumentHint（可选，等宽小字，accent 背景）
+
+  argumentHint 展示 skill 期望的参数格式。例如：
+  - code-trace → <文件路径>
+  - batch-tracer → <目录> [--parallel N]
+  - zcommit → （无提示，用户自由输入）
+
+  ## 选中 skill 后的输入框行为
+
+  1. 有 argumentHint 的 skill：
+   - textarea 预填 argumentHint 文本（如 “src/auth/interfaces.ts 的调用链”）
+   - 光标定位到末尾，用户可直接修改
+   - 如果 skill 没有具体的参数建议，预填空字符串
+
+  2. 无 argumentHint 的 skill：
+   - textarea 不预填，仅改变 placeholder 为通用提示
+   - placeholder: "输入提交描述或附加指令…"
+
+  3. 所有 skill：
+   - 输入框上方显示 skill 标签（可点 x 取消）
+   - 输入框边框变为 accent 色
+   - 发送按钮 tooltip 变为 "发送 /skill:<name> <消息>"
 
   ## 发送格式
 
-  - 有用户消息: "/skill:code-trace 追踪 src/auth 的调用链"
+  - 有用户消息: "/skill:code-trace src/auth/interfaces.ts 的调用链"
   - 无用户消息: "/skill:code-trace"
-  - 通过 pi prompt 传递，pi 内部识别 /skill: 前缀
+  - 通过 pi prompt 传递，pi 内部识别 /skill: 前缀并展开 SKILL.md
 
   ## 数据源
 
@@ -408,9 +501,9 @@ document.querySelectorAll('.slash-popup__item').forEach(item => {
 
   ## 涉及文件
 
-  - useSlashCommands.ts: 重写命令注册（类型化 action）
-  - ChatInput.vue: activeSkill ref + skill 标签 + handleSlashSelect 分发
-  - SlashMenu.vue: 限制 5 项 + CMD/SK tag
+  - useSlashCommands.ts: SlashCommand 增加 argumentHint 字段
+  - ChatInput.vue: 选中 skill 后预填参数 + 动态 placeholder
+  - SlashMenu.vue: 展示 argumentHint
   - PaneSessionView.vue: 拼接 /skill: 前缀
 -->
 </body>
