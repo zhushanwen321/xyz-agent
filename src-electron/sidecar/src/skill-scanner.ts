@@ -38,10 +38,11 @@ export function parseSkillMd(content: string): { description: string; triggers: 
     if (inFrontmatter) frontmatterLines.push(lines[i])
   }
 
-  // 从 frontmatter 中提取 description 字段（可能跨行）
-  const fmDesc = frontmatterLines
-    .join('\n')
-    .match(/^description:\s*["']?(.+?)["']?\s*$/m)?.[1]?.trim()
+  // 从 frontmatter 中提取 description 字段（支持 "..." / '...' / 裸值）
+  const fmDescMatch = frontmatterLines
+  .join('\n')
+  .match(/^description:\s*(?:"([^"]+)"|'([^']+)'|(.+?))\s*$/m)
+  const fmDesc = fmDescMatch?.[1] ?? fmDescMatch?.[2] ?? fmDescMatch?.[3]?.trim()
 
   // 正文 description：frontmatter 后第一个非标题、非空行
   for (let i = frontmatterEnd; i < lines.length; i++) {
@@ -52,10 +53,10 @@ export function parseSkillMd(content: string): { description: string; triggers: 
     break
   }
 
-  // 从 frontmatter 中提取 argument-hint 字段
-  const argumentHint = frontmatterLines
-  .join('\n')
-  .match(/^argument-hint:\s*["']?(.+?)['"]?\s*$/m)?.[1]
+  // 从 frontmatter 中提取 argument-hint 字段（支持 "..." / '...' / 裸值）
+  const hintRaw = frontmatterLines.join('\n')
+  .match(/^argument-hint:\s*(?:"([^"]+)"|'([^']+)'|(.+?))\s*$/m)
+  const argumentHint = hintRaw?.[1] ?? hintRaw?.[2] ?? hintRaw?.[3]?.trim()
 
   // 优先用 frontmatter description 提取 triggers（含触发词模式）
   const triggerSource = fmDesc ?? description
@@ -109,19 +110,19 @@ export function scanSkills(sources: string[], existingSkillIds: Set<string>): Sc
         const id = `${sourceType}-${name}`
         const alreadyImported = existingSkillIds.has(id)
 
-      results.push({
-      id,
-      name: name,
-      description,
-      sourceType,
-      sourcePath: skillMdPath,
-      triggers,
-      argumentHint,
-      content,
-      fileSize: formatFileSize(stat.size),
-      tools: [],
-      alreadyImported,
-    })
+        results.push({
+          id,
+          name: name,
+          description,
+          sourceType,
+          sourcePath: skillMdPath,
+          triggers,
+          argumentHint,
+          content,
+          fileSize: formatFileSize(stat.size),
+          tools: [],
+          alreadyImported,
+        })
       } catch {
         // skip unreadable files
       }

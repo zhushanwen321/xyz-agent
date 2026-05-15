@@ -52,20 +52,20 @@ export const useProviderStore = defineStore('provider', () => {
   }
 
   function importSkills(items: ScannedSkillInfo[]) {
-  for (const item of items) {
-    const skill: SkillInfo = {
-    id: item.id,
-    name: item.name,
-    description: item.description,
-    enabled: true,
-    source: item.sourceType,
-    triggers: item.triggers,
-    argumentHint: item.argumentHint,
-    sourcePath: item.sourcePath,
-    content: item.content,
-    fileSize: item.fileSize,
-    tools: item.tools,
-    }
+    for (const item of items) {
+      const skill: SkillInfo = {
+        id: item.id,
+        name: item.name,
+        description: item.description,
+        enabled: true,
+        source: item.sourceType,
+        triggers: item.triggers,
+        argumentHint: item.argumentHint,
+        sourcePath: item.sourcePath,
+        content: item.content,
+        fileSize: item.fileSize,
+        tools: item.tools,
+      }
       send({ type: 'config.setSkill', payload: { skill } })
     }
   }

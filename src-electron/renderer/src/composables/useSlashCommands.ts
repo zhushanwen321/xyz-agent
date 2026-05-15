@@ -48,7 +48,7 @@ export function useSlashCommands() {
         description: s.description,
         source: 'skill' as const,
         action: { type: 'skill' as const, skillId: s.id },
-    argumentHint: s.argumentHint,
+        argumentHint: s.argumentHint,
       }))
 
     const all = [...builtinCommands.value, ...skillCmds]
