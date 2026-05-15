@@ -223,11 +223,11 @@
     {
       "number": 15,
       "name": "推送+CI+部署",
-      "status": "active",
+      "status": "fail",
       "startedAt": "2026-05-15T15:17:58.510Z",
       "completedAt": null,
-      "gateResult": null,
-      "gateOutput": null,
+      "gateResult": "fail",
+      "gateOutput": "=== L1 Gate Check: Gate 14 ===\nProject: /Users/zhushanwen/Code/xyz-agent-workspace/feat-agent-use\n[INFO] auto-detected branch: feat-agent-use\n[FAIL] working directory not clean:\n   M .xyz-harness/workflow-state.json",
       "tasks": []
     }
   ],
