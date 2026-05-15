@@ -156,11 +156,14 @@ describe('skillPaths passing chain', () => {
     { id: 'd', name: 'D', description: '', enabled: true, source: 'pi', triggers: [], sourcePath: '/nonexistent/skill-d/SKILL.md' },
   )
 
-  // Only skillDirA and skillDirB exist on filesystem
+  // Only skillDirA and skillDirB exist on filesystem (dir + SKILL.md)
   existingPaths.add(skillDirA)
+  existingPaths.add(skillFileA)
   existingPaths.add(skillDirB)
+  existingPaths.add(skillFileB)
   // skillDirC exists but skill is disabled — should be filtered by enabled check
   existingPaths.add(skillDirC)
+  existingPaths.add(skillFileC)
   // /nonexistent doesn't exist — should be filtered by existsSync
 
   const pool = new SessionPool()
@@ -225,6 +228,7 @@ describe('skillPaths passing chain', () => {
   { id: 'a', name: 'A', description: '', enabled: true, source: 'pi', triggers: [], sourcePath: skillFileA },
   )
   existingPaths.add(skillDirA)
+  existingPaths.add(skillFileA)
 
   // Set up a scanned session for restoreSession to find
   mockScannedSessions.push({
