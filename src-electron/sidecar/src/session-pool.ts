@@ -545,10 +545,10 @@ export class SessionPool {
    *  cwd 用于定位 .xyz-agent/skills.json（项目级配置），
    *  restore 时用原始 session 的 cwd，确保读取原始项目的 skill 配置。 */
   private getSkillPaths(cwd: string): string[] {
-  return loadSkills(cwd ?? process.cwd())
-    .filter(s => s.enabled && s.sourcePath)
-    .map(s => dirname(s.sourcePath!))
-    .filter(p => existsSync(p) && existsSync(join(p, 'SKILL.md')))
+    return loadSkills(cwd ?? process.cwd())
+      .filter(s => s.enabled && s.sourcePath)
+      .map(s => dirname(s.sourcePath!))
+      .filter(p => existsSync(p) && existsSync(join(p, 'SKILL.md')))
   }
 
   private toSummary(s: ManagedSession): SessionSummary {

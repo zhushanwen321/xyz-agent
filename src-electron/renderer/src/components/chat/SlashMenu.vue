@@ -25,12 +25,12 @@
               : 'bg-accent-light text-accent',
           ]"
         >{{ cmd.source === 'builtin' ? 'command' : 'skill' }}</span>
-        <span class="text-xs font-semibold font-mono whitespace-nowrap text-accent w-[100px] shrink-0 overflow-hidden text-ellipsis">/{{ cmd.name }}</span>
-        <span class="text-[11px] text-muted flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap pl-2 border-l border-border">{{ cmd.description }}</span>
-  <span
-    v-if="cmd.argumentHint"
-    class="text-[11px] font-mono text-accent/70 whitespace-nowrap shrink max-w-[40%] overflow-hidden text-ellipsis py-[1px] px-[5px] bg-accent-light rounded-[3px]"
-  >{{ cmd.argumentHint }}</span>
+    <span class="text-xs font-semibold font-mono whitespace-nowrap text-accent w-[100px] shrink-0 overflow-hidden text-ellipsis">/{{ cmd.name }}</span>
+    <span class="text-[11px] text-muted flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap pl-2 border-l border-border">{{ cmd.description }}</span>
+    <span
+      v-if="cmd.argumentHint"
+      class="text-[11px] font-mono text-accent/70 whitespace-nowrap shrink max-w-[40%] overflow-hidden text-ellipsis py-[1px] px-[5px] bg-accent-light rounded-[3px]"
+    >{{ cmd.argumentHint }}</span>
       </Button>
     </div>
   </div>
