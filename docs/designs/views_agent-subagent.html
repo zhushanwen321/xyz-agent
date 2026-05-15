@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Subagent — xyz-agent</title>
+<link rel="stylesheet" href="css_design-system.css">
+<style>
+  body { display:flex; height:100vh; margin:0; background:var(--bg); }
+
+  /* ── SlashMenu agent tag ── */
+  .slash-popup__tag--agent {
+  background: oklch(0.65 0.15 250);
+  color: #fff;
+  }
+
+  /* ── Tool Call Card (通用) ── */
+  .tool-call-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin: 6px 0;
+  overflow: hidden;
+  font-size: 13px;
+  }
+  .tool-call-card__hd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+  }
+  .tool-call-card__hd:hover { background: var(--accent-light); }
+  .tool-call-card__chevron {
+  font-size: 10px;
+  color: var(--muted);
+  transition: transform 0.15s;
+  }
+  .tool-call-card.collapsed .tool-call-card__chevron { transform: rotate(-90deg); }
+  .tool-call-card__name {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--fg);
+  }
+  .tool-call-card__status {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  }
+  .tool-call-card__status--running { color: var(--accent); }
+  .tool-call-card__status--ok { color: var(--success); }
+  .tool-call-card__status--err { color: var(--error); }
+  .tool-call-card__elapsed {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  }
+  .tool-call-card__bd {
+  padding: 0;
+  transition: max-height 0.2s ease;
+  overflow: hidden;
+  }
+  .tool-call-card.collapsed .tool-call-card__bd {
+  max-height: 0 !important;
+  padding: 0;
+  }
+
+  /* ── SubagentRenderer (body) ── */
+  .subagent-body {}
+  .subagent-body__agent-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  }
+  .subagent-body__agent-icon {
+  width: 14px; height: 14px;
+  border-radius: 3px;
+  background: oklch(0.65 0.15 250);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  flex-shrink: 0;
+  }
+  .subagent-body__agent-name {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: oklch(0.55 0.15 250);
+  }
+  .subagent-body__mode {
+  font-size: 10px;
+  color: var(--muted);
+  padding: 1px 5px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  }
+  .subagent-body__task {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  }
+  .subagent-body__task-label {
+  font-weight: 500;
+  color: var(--fg);
+  margin-right: 4px;
+  }
+  .subagent-body__output {
+  margin: 6px 10px 8px;
+  max-height: 180px;
+  overflow-y: auto;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  padding: 8px;
+  }
+  .subagent-body__output pre {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+  }
+
+  /* ── Spinner ── */
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spinner {
+  width: 12px; height: 12px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+  }
+
+  /* ── Error border ── */
+  .tool-call-card--error {
+  border-color: oklch(0.6 0.18 25);
+  }
+  .tool-call-card--error .tool-call-card__hd {
+  background: oklch(0.97 0.02 25);
+  }
+
+  /* ── Chat panel reuse from views_chat.html ── */
+  .chat-panel { display:flex; flex-direction:column; width:100%; max-width:720px; margin:0 auto; height:100vh; }
+  .panel-bar { padding:10px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; }
+  .anchor { position:relative; cursor:pointer; display:flex; align-items:center; gap:6px; font-size:13px; font-weight:500; }
+  .anchor__dot { width:8px; height:8px; border-radius:50%; }
+  .anchor__chevron { font-size:10px; color:var(--muted); }
+  .chat-msgs { flex:1; overflow-y:auto; padding:12px 16px; }
+  .msg { margin-bottom:14px; }
+  .msg__role { font-size:11px; font-weight:600; color:var(--muted); margin-bottom:3px; text-transform:uppercase; letter-spacing:0.04em; }
+  .msg__body p { margin:4px 0; font-size:13.5px; line-height:1.6; color:var(--fg); }
+  .msg__body ul { margin:4px 0; padding-left:18px; }
+  .msg__body li { font-size:13.5px; line-height:1.6; color:var(--fg); }
+
+  /* ── State switcher bar ── */
+  .state-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 0;
+  z-index: 100;
+  font-size: 12px;
+  }
+  .state-bar__btn {
+  flex: 1;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  transition: all 0.15s;
+  border-right: 1px solid var(--border);
+  }
+  .state-bar__btn:last-child { border-right: none; }
+  .state-bar__btn:hover { background: var(--accent-light); color: var(--accent); }
+  .state-bar__btn.active { background: var(--accent); color: #fff; }
+
+  /* ── SlashMenu popup ── */
+  .slash-popup {
+  position: absolute;
+  bottom: 100%;
+  left: 0; right: 0;
+  margin-bottom: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.12);
+  max-height: calc(40px * 7);
+  overflow-y: auto;
+  z-index: 20;
+  }
+  .slash-popup__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+  transition: background 0.1s;
+  }
+  .slash-popup__item:hover,
+  .slash-popup__item.active { background: var(--accent-light); }
+  .slash-popup__tag {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  min-width: 26px;
+  text-align: center;
+  }
+  .slash-popup__tag--cmd { background: var(--muted); color: var(--bg); opacity: 0.7; }
+  .slash-popup__tag--sk { background: var(--accent); color: #fff; }
+  .slash-popup__name {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  min-width: 120px;
+  }
+  .slash-popup__desc {
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
+  }
+
+  /* ── Chat input ── */
+  .chat-input-wrap { padding: 0 16px 42px; }
+  .chat-input-container {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  position: relative;
+  }
+  .chat-input-textarea {
+  width: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  background: transparent;
+  color: var(--fg);
+  min-height: 40px;
+  max-height: 120px;
+  }
+
+  /* ── Agent tag in user message ── */
+  .agent-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 100px;
+  background: oklch(0.93 0.06 250);
+  color: oklch(0.45 0.15 250);
+  font-size: 11px;
+  font-weight: 500;
+  vertical-align: middle;
+  margin-right: 4px;
+  }
+  .agent-badge__icon {
+  width: 10px; height: 10px;
+  border-radius: 2px;
+  background: oklch(0.65 0.15 250);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 7px;
+  font-weight: 700;
+  }
+</style>
+</head>
+<body>
+
+  <!-- ════════════════════════════════════════════════════════════════
+     Panel 1: SlashMenu with agent entries
+     ════════════════════════════════════════════════════════════════ -->
+  <div class="chat-panel" id="panelSlash">
+  <div class="panel-bar">
+    <div class="anchor">
+    <span class="anchor__dot" style="background:var(--success)"></span>
+    <span>主线对话</span>
+    <span class="anchor__chevron">▾</span>
+    </div>
+  </div>
+
+  <div class="chat-msgs">
+    <div class="msg msg--user">
+    <div class="msg__role">用户</div>
+    <div class="msg__body"><p>帮我分析 server.ts 的代码质量和调用链路</p></div>
+    </div>
+    <div class="msg msg--bot">
+    <div class="msg__role">助手</div>
+    <div class="msg__body"><p>我来委派一个专门的 agent 来处理这个任务。</p></div>
+    </div>
+  </div>
+
+  <div class="chat-input-wrap">
+    <div class="chat-input-container">
+    <div class="slash-popup" style="display:block">
+      <!-- builtin -->
+      <div class="slash-popup__item">
+      <span class="slash-popup__tag slash-popup__tag--cmd">CMD</span>
+      <span class="slash-popup__name">/clear</span>
+      <span class="slash-popup__desc">清空当前对话</span>
+      </div>
+      <div class="slash-popup__item">
+      <span class="slash-popup__tag slash-popup__tag--cmd">CMD</span>
+      <span class="slash-popup__name">/compact</span>
+      <span class="slash-popup__desc">压缩上下文，减少 token 消耗</span>
+      </div>
+      <!-- skill -->
+      <div class="slash-popup__item">
+      <span class="slash-popup__tag slash-popup__tag--sk">SK</span>
+      <span class="slash-popup__name">/code-trace</span>
+      <span class="slash-popup__desc">追踪代码调用链，分析上下游关系</span>
+      </div>
+      <div class="slash-popup__item">
+      <span class="slash-popup__tag slash-popup__tag--sk">SK</span>
+      <span class="slash-popup__name">/zcommit</span>
+      <span class="slash-popup__desc">智能分析变更并提交代码</span>
+      </div>
+      <!-- agent -->
+      <div class="slash-popup__item active">
+      <span class="slash-popup__tag slash-popup__tag--agent">AG</span>
+      <span class="slash-popup__name">/agent:code-review</span>
+      <span class="slash-popup__desc">代码审查专家，发现潜在问题和改进点</span>
+      </div>
+      <div class="slash-popup__item">
+      <span class="slash-popup__tag slash-popup__tag--agent">AG</span>
+      <span class="slash-popup__name">/agent:refactor-ts</span>
+      <span class="slash-popup__desc">TypeScript 重构专家，优化代码结构</span>
+      </div>
+      <div class="slash-popup__item">
+      <span class="slash-popup__tag slash-popup__tag--agent">AG</span>
+      <span class="slash-popup__name">/agent:test-gen</span>
+      <span class="slash-popup__desc">自动生成单元测试和集成测试</span>
+      </div>
+    </div>
+    <textarea class="chat-input-textarea" placeholder="输入消息…" readonly>/agent:code-review </textarea>
+    </div>
+  </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════════════
+     Panel 2: Manual trigger — running state
+     ════════════════════════════════════════════════════════════════ -->
+  <div class="chat-panel" id="panelRunning" style="display:none">
+  <div class="panel-bar">
+    <div class="anchor">
+    <span class="anchor__dot" style="background:var(--success)"></span>
+    <span>主线对话</span>
+    <span class="anchor__chevron">▾</span>
+    </div>
+  </div>
+
+  <div class="chat-msgs">
+    <div class="msg msg--user">
+    <div class="msg__role">用户</div>
+    <div class="msg__body">
+      <p>
+      <span class="agent-badge">
+        <span class="agent-badge__icon">A</span>
+        code-review
+      </span>
+      审查 server.ts 的代码质量，重点关注错误处理和类型安全
+      </p>
+    </div>
+    </div>
+    <div class="msg msg--bot">
+    <div class="msg__role">助手</div>
+    <div class="msg__body">
+      <p>正在委派 code-review agent 执行审查：</p>
+
+      <!-- RUNNING state -->
+      <div class="tool-call-card">
+      <div class="tool-call-card__hd">
+        <span class="tool-call-card__chevron">▾</span>
+        <span class="tool-call-card__name">subagent</span>
+        <div class="spinner" style="margin-left:4px"></div>
+        <span class="tool-call-card__status tool-call-card__status--running">执行中</span>
+        <span class="tool-call-card__elapsed">12.4s</span>
+      </div>
+      <div class="tool-call-card__bd">
+        <div class="subagent-body">
+        <div class="subagent-body__agent-line">
+          <div class="subagent-body__agent-icon">A</div>
+          <span class="subagent-body__agent-name">code-review</span>
+          <span class="subagent-body__mode">single</span>
+        </div>
+        <div class="subagent-body__task">
+          <span class="subagent-body__task-label">Task:</span>
+          审查 server.ts 的代码质量，重点关注错误处理和类型安全
+        </div>
+        </div>
+      </div>
+      </div>
+    </div>
+    </div>
+  </div>
+
+  <div class="chat-input-wrap">
+    <div class="chat-input-container">
+    <textarea class="chat-input-textarea" placeholder="等待 agent 执行完成…" readonly></textarea>
+    </div>
+  </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════════════
+     Panel 3: Manual trigger — completed state
+     ════════════════════════════════════════════════════════════════ -->
+  <div class="chat-panel" id="panelCompleted" style="display:none">
+  <div class="panel-bar">
+    <div class="anchor">
+    <span class="anchor__dot" style="background:var(--success)"></span>
+    <span>主线对话</span>
+    <span class="anchor__chevron">▾</span>
+    </div>
+  </div>
+
+  <div class="chat-msgs">
+    <div class="msg msg--user">
+    <div class="msg__role">用户</div>
+    <div class="msg__body">
+      <p>
+      <span class="agent-badge">
+        <span class="agent-badge__icon">A</span>
+        code-review
+      </span>
+      审查 server.ts 的代码质量，重点关注错误处理和类型安全
+      </p>
+    </div>
+    </div>
+    <div class="msg msg--bot">
+    <div class="msg__role">助手</div>
+    <div class="msg__body">
+      <p>code-review agent 完成了审查：</p>
+
+      <!-- COMPLETED state -->
+      <div class="tool-call-card">
+      <div class="tool-call-card__hd">
+        <span class="tool-call-card__chevron">▾</span>
+        <span class="tool-call-card__name">subagent</span>
+        <span class="tool-call-card__status tool-call-card__status--ok">✓ 完成</span>
+        <span class="tool-call-card__elapsed">34.7s</span>
+      </div>
+      <div class="tool-call-card__bd">
+        <div class="subagent-body">
+        <div class="subagent-body__agent-line">
+          <div class="subagent-body__agent-icon">A</div>
+          <span class="subagent-body__agent-name">code-review</span>
+          <span class="subagent-body__mode">single</span>
+        </div>
+        <div class="subagent-body__task">
+          <span class="subagent-body__task-label">Task:</span>
+          审查 server.ts 的代码质量，重点关注错误处理和类型安全
+        </div>
+        <div class="subagent-body__output">
+          <pre>## Code Review: server.ts
+
+### Summary
+整体代码结构清晰，WebSocket 消息路由设计合理。
+发现以下需要关注的问题：
+
+### Issues Found (4)
+
+**1. [HIGH] Unhandled promise rejection in handleMessage**
+L283: `handleMessage` is async but the `ws.on('message')` callback
+doesn't catch rejected promises. If `this.pool.sendMessage()` throws,
+the error is silently swallowed.
+
+**2. [MEDIUM] Type-unsafe payload casting**
+L368-370: Three consecutive `as string` casts without validation.
+Malformed WS messages will cause runtime errors.
+
+**3. [MEDIUM] Missing session cleanup on disconnect**
+`ws.on('close')` removes the session from the map but doesn't
+abort in-flight pi RPC calls.
+
+**4. [LOW] console.log in production code**
+L370: Debug logging should use a proper logger with levels.
+
+### Suggestions
+- Add try/catch around handleMessage or use .catch()
+- Validate payload shape before casting with zod
+- Implement request cancellation on WS disconnect</pre>
+        </div>
+        </div>
+      </div>
+      </div>
+
+      <p>审查发现了 4 个问题，其中 1 个高优先级。建议优先修复 handleMessage 的未捕获异常。</p>
+    </div>
+    </div>
+  </div>
+
+  <div class="chat-input-wrap">
+    <div class="chat-input-container">
+    <textarea class="chat-input-textarea" placeholder="输入消息… (Enter 发送, Shift+Enter 换行, / 命令)"></textarea>
+    </div>
+  </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════════════
+     Panel 4: Error state
+     ════════════════════════════════════════════════════════════════ -->
+  <div class="chat-panel" id="panelError" style="display:none">
+  <div class="panel-bar">
+    <div class="anchor">
+    <span class="anchor__dot" style="background:var(--success)"></span>
+    <span>主线对话</span>
+    <span class="anchor__chevron">▾</span>
+    </div>
+  </div>
+
+  <div class="chat-msgs">
+    <div class="msg msg--user">
+    <div class="msg__role">用户</div>
+    <div class="msg__body">
+      <p>
+      <span class="agent-badge">
+        <span class="agent-badge__icon">A</span>
+        deploy-checker
+      </span>
+      检查 staging 环境部署状态
+      </p>
+    </div>
+    </div>
+    <div class="msg msg--bot">
+    <div class="msg__role">助手</div>
+    <div class="msg__body">
+      <p>deploy-checker agent 执行失败：</p>
+
+      <!-- ERROR state -->
+      <div class="tool-call-card tool-call-card--error">
+      <div class="tool-call-card__hd">
+        <span class="tool-call-card__chevron">▾</span>
+        <span class="tool-call-card__name">subagent</span>
+        <span class="tool-call-card__status tool-call-card__status--err">✗ 失败</span>
+        <span class="tool-call-card__elapsed">8.2s</span>
+      </div>
+      <div class="tool-call-card__bd">
+        <div class="subagent-body">
+        <div class="subagent-body__agent-line">
+          <div class="subagent-body__agent-icon">A</div>
+          <span class="subagent-body__agent-name">deploy-checker</span>
+          <span class="subagent-body__mode">single</span>
+        </div>
+        <div class="subagent-body__task">
+          <span class="subagent-body__task-label">Task:</span>
+          检查 staging 环境部署状态
+        </div>
+        <div class="subagent-body__output">
+          <pre style="color: oklch(0.55 0.18 25)">Error: Agent "deploy-checker" not found
+
+Available agents:
+  - code-review
+  - refactor-ts
+  - test-gen
+
+Please check the agent name and try again.
+Possible cause: the agent file was not found in ~/.pi/agent/agents/</pre>
+        </div>
+        </div>
+      </div>
+      </div>
+
+      <p>指定的 agent 不存在。可能是 agent 名称拼写错误，或者该 agent 尚未安装。请检查 <code style="background:var(--surface);padding:1px 4px;border-radius:3px;font-size:12px">~/.pi/agent/agents/</code> 目录下的可用 agent 列表。</p>
+    </div>
+    </div>
+  </div>
+
+  <div class="chat-input-wrap">
+    <div class="chat-input-container">
+    <textarea class="chat-input-textarea" placeholder="输入消息… (Enter 发送, Shift+Enter 换行, / 命令)"></textarea>
+    </div>
+  </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════════════
+     Panel 5: LLM auto-call (no user trigger)
+     ════════════════════════════════════════════════════════════════ -->
+  <div class="chat-panel" id="panelAuto" style="display:none">
+  <div class="panel-bar">
+    <div class="anchor">
+    <span class="anchor__dot" style="background:var(--success)"></span>
+    <span>主线对话</span>
+    <span class="anchor__chevron">▾</span>
+    </div>
+  </div>
+
+  <div class="chat-msgs">
+    <div class="msg msg--user">
+    <div class="msg__role">用户</div>
+    <div class="msg__body"><p>这个项目的测试覆盖怎么样？帮我看看有没有明显缺失</p></div>
+    </div>
+    <div class="msg msg--bot">
+    <div class="msg__role">助手</div>
+    <div class="msg__body">
+      <p>我来让测试生成专家分析一下测试覆盖情况：</p>
+
+      <!-- LLM auto-call: completed -->
+      <div class="tool-call-card">
+      <div class="tool-call-card__hd">
+        <span class="tool-call-card__chevron">▾</span>
+        <span class="tool-call-card__name">subagent</span>
+        <span class="tool-call-card__status tool-call-card__status--ok">✓ 完成</span>
+        <span class="tool-call-card__elapsed">1m 12s</span>
+      </div>
+      <div class="tool-call-card__bd">
+        <div class="subagent-body">
+        <div class="subagent-body__agent-line">
+          <div class="subagent-body__agent-icon">A</div>
+          <span class="subagent-body__agent-name">test-gen</span>
+          <span class="subagent-body__mode">single</span>
+        </div>
+        <div class="subagent-body__task">
+          <span class="subagent-body__task-label">Task:</span>
+          分析项目测试覆盖率，找出缺失的测试场景
+        </div>
+        <div class="subagent-body__output">
+          <pre>## Test Coverage Analysis
+
+### Overall: 42% coverage (target: 80%)
+
+### Uncovered Areas
+
+**Critical (0% coverage):**
+- src-electron/sidecar/src/session-pool.ts — 0/12 functions
+- src-electron/sidecar/src/event-adapter.ts — 0/8 functions
+
+**Partial (20-50% coverage):**
+- src-electron/renderer/src/composables/useChat.ts — 45%
+  Missing: error path tests, streaming interruption
+- src-electron/renderer/src/stores/chat.ts — 38%
+  Missing: multi-session isolation, concurrent mutations
+
+**Well-covered (>80%):**
+- src-electron/shared/src/protocol.ts — 92%
+- src-electron/renderer/src/lib/ws-client.ts — 87%
+
+### Recommended Priority
+1. session-pool.ts — core session lifecycle
+2. event-adapter.ts — all tool event routing
+3. useChat.ts error paths — prevents UI freeze bugs</pre>
+        </div>
+        </div>
+      </div>
+      </div>
+
+      <p>测试覆盖率只有 42%，主要集中在 sidecar 层。建议先补 session-pool 和 event-adapter 的测试，这两个是核心链路。需要我帮你生成测试吗？</p>
+    </div>
+    </div>
+  </div>
+
+  <div class="chat-input-wrap">
+    <div class="chat-input-container">
+    <textarea class="chat-input-textarea" placeholder="输入消息… (Enter 发送, Shift+Enter 换行, / 命令)"></textarea>
+    </div>
+  </div>
+  </div>
+
+  <!-- ── State switcher ── -->
+  <div class="state-bar">
+  <button class="state-bar__btn active" onclick="show('Slash',this)">1 SlashMenu</button>
+  <button class="state-bar__btn" onclick="show('Running',this)">2 Running</button>
+  <button class="state-bar__btn" onclick="show('Completed',this)">3 Completed</button>
+  <button class="state-bar__btn" onclick="show('Error',this)">4 Error</button>
+  <button class="state-bar__btn" onclick="show('Auto',this)">5 LLM Auto</button>
+  </div>
+
+<script>
+function show(id, btn) {
+  document.querySelectorAll('.chat-panel').forEach(p => p.style.display = 'none');
+  document.getElementById('panel' + id).style.display = '';
+  document.querySelectorAll('.state-bar__btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+// Toggle card collapse
+document.querySelectorAll('.tool-call-card__hd').forEach(hd => {
+  hd.addEventListener('click', () => hd.parentElement.classList.toggle('collapsed'));
+});
+</script>
+
+<!--
+  ═══════════════════════════════════════════════════════════════════
+  Agent Subagent UI Spec
+  ═══════════════════════════════════════════════════════════════════
+
+  底部按钮切换 5 种状态。
+
+  | Button | State      | 说明                                              |
+  |--------|------------|---------------------------------------------------|
+  | 1      | SlashMenu  | 输入 / 后弹出菜单，新增 AG 类型（蓝色标签）        |
+  | 2      | Running    | agent 执行中，spinner + 耗时计数                   |
+  | 3      | Completed  | agent 执行完成，✓ + 输出内容                       |
+  | 4      | Error      | agent 执行失败，✗ + 红色边框 + 错误信息            |
+  | 5      | LLM Auto   | LLM 自动调用 subagent（用户未手动触发）             |
+
+  ## SlashMenu 三分类
+
+  | 类型    | 标签 | 颜色                    | 来源                              |
+  |---------|------|------------------------|-----------------------------------|
+  | builtin | CMD  | 灰色 bg-border         | 硬编码 /clear /compact /help      |
+  | skill   | SK   | accent 色               | providerStore.skills (enabled)    |
+  | agent   | AG   | 蓝色 oklch(0.65 0.15 250) | providerStore.agents (enabled) |
+
+  ## ToolCallCard 结构
+
+  Header（通用，所有 tool 共享）:
+  - chevron (▾/▸) + toolName ("subagent") + status + elapsed
+  - status: spinner/✓ 完成/✗ 失败
+
+  Body（SubagentRenderer 自定义）:
+  - Agent 行: icon + agent name + mode tag
+  - Task 行: 描述文本
+  - Output 区: pre 块，max-height + 滚动
+
+  ## 用户消息中的 Agent Badge
+
+  手动触发时，用户消息头部显示 agent badge（蓝色药丸），
+  类似 skill tag 但用不同颜色区分。
+
+  ## LLM 自动调用 vs 手动触发
+
+  两者使用相同的 SubagentRenderer 渲染。
+  区别：
+  - 手动触发：用户消息带 agent badge
+  - LLM 自动调用：用户消息无 badge，LLM 自行决定调用
+-->
+</body>
+</html>
