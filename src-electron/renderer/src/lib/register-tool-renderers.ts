@@ -5,6 +5,7 @@ import EditToolRenderer from '../components/chat/ToolRenderers/EditToolRenderer.
 import ReadToolRenderer from '../components/chat/ToolRenderers/ReadToolRenderer.vue'
 import DefaultToolRenderer from '../components/chat/ToolRenderers/DefaultToolRenderer.vue'
 import WriteToolRenderer from '../components/chat/ToolRenderers/WriteToolRenderer.vue'
+import SubagentRenderer from '../components/chat/ToolRenderers/SubagentRenderer.vue'
 
 export function registerBuiltinToolRenderers(): void {
   registerToolRenderer('bash', BashToolRenderer as unknown as Component)
@@ -12,4 +13,5 @@ export function registerBuiltinToolRenderers(): void {
   registerToolRenderer('read', ReadToolRenderer as unknown as Component)
   registerToolRenderer('write', WriteToolRenderer as unknown as Component)
   registerToolRenderer('__default__', DefaultToolRenderer as unknown as Component)
+  registerToolRenderer('subagent', SubagentRenderer as unknown as Component)
 }
