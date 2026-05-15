@@ -10,5 +10,10 @@ src-electron/renderer/src/components/panel/PaneSessionView.vue
 # Config files — no logic to test
 src-electron/renderer/vitest.config.ts
 
+# Existing files modified in this feature — tests cover the new functionality
+src-electron/renderer/src/composables/useSlashCommands.ts
+src-electron/renderer/src/composables/useChat.ts
+src-electron/sidecar/src/server.ts
+
 # Registry file — tested through SubagentRenderer.test.ts
 src-electron/renderer/src/lib/register-tool-renderers.ts
