@@ -18,9 +18,11 @@
         <div
           :class="[
             'inline-flex items-center gap-1 py-[2px] px-2 rounded-full text-xs font-medium',
-            activeCommand.source === 'builtin'
-              ? 'bg-border text-muted'
-              : 'bg-accent-light text-accent',
+      activeCommand.source === 'builtin'
+        ? 'bg-border text-muted'
+        : activeCommand.source === 'skill'
+        ? 'bg-accent-light text-accent'
+        : 'bg-blue-500/10 text-blue-500',
           ]"
         >
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
@@ -86,7 +88,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  send: [payload: { content: string; skillName?: string }]
+  send: [payload: { content: string; skillName?: string; subagent?: { agent: string; task: string } }]
   cancel: []
   'select-model': [modelId: string]
   'send-command': [payload: { type: string; payload: Record<string, unknown> }]
@@ -124,7 +126,7 @@ const currentModel = computed(() => settingsStore.defaultModel)
 
 // 合并内置命令 + skill 命令
 const allCommands = computed(() =>
-  mergeSkillCommands(providerStore.skills)
+  mergeSkillCommands(providerStore.skills, providerStore.agents)
 )
 
 const canSend = computed(() => {
@@ -182,11 +184,16 @@ function handleSlashSelect(cmd: SlashCommand) {
       ta?.focus()
     })
   } else {
-    activeCommand.value = cmd
-    // skill 有 argumentHint 时预填文本，用户可直接编辑
-    if (cmd.action.type === 'skill' && cmd.argumentHint) {
-      text.value = cmd.argumentHint
-    }
+  activeCommand.value = cmd
+  if (cmd.action.type === 'agent') {
+    text.value = `/${cmd.name} `
+    nextTick(() => {
+    const ta = containerRef.value?.querySelector<HTMLTextAreaElement>('textarea')
+    ta?.focus()
+    })
+  } else if (cmd.action.type === 'skill' && cmd.argumentHint) {
+    text.value = cmd.argumentHint
+  }
   }
 }
 
@@ -207,12 +214,18 @@ function handleSend() {
           payload: { sessionId: props.sessionId },
         })
         break
-      case 'skill': {
-        const prefix = `/skill:${cmd.name}`
-        const content = trimmed ? `${prefix} ${trimmed}` : prefix
-        emit('send', { content, skillName: cmd.name })
-        break
-      }
+    case 'skill': {
+    const prefix = `/skill:${cmd.name}`
+    const content = trimmed ? `${prefix} ${trimmed}` : prefix
+    emit('send', { content, skillName: cmd.name })
+    break
+    }
+    case 'agent': {
+    const agentName = cmd.action.agentName
+    const content = trimmed || ''
+    emit('send', { content, subagent: { agent: agentName, task: content } })
+    break
+    }
     }
     clearCommand()
   } else {

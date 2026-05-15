@@ -365,26 +365,26 @@ export class SidecarServer {
         }
 
         // ── Messages ────────────────────────────────────────────
-    case 'message.send': {
-      const sessionId = msg.payload.sessionId as string
-      const content = msg.payload.content as string
-      const subagent = msg.payload.subagent as { agent: string; task: string } | undefined
+        case 'message.send': {
+          const sessionId = msg.payload.sessionId as string
+          const content = msg.payload.content as string
+          const subagent = msg.payload.subagent as { agent: string; task: string } | undefined
 
-      if (subagent) {
-      // Sanitize special characters to prevent XML injection
-      const safeAgent = subagent.agent.replace(/[<>"&]/g, '')
-      const safeTask = subagent.task.replace(/[<>"&]/g, '')
-      const agentPrompt = `<tool_call tool="subagent">\n{"agent":"${safeAgent}","task":"${safeTask}"}\n</tool_call>`
-      console.log('[sidecar] subagent prompt:', agentPrompt)
-      await this.pool.sendMessage(sessionId, agentPrompt)
-      } else {
-      console.log(`[sidecar] message.send: sessionId=${sessionId}, contentLength=${content?.length ?? 0}`)
-      await this.pool.sendMessage(sessionId, content)
-      }
+          if (subagent) {
+            // Sanitize special characters to prevent XML injection
+            const safeAgent = subagent.agent.replace(/[<>"&]/g, '')
+            const safeTask = subagent.task.replace(/[<>"&]/g, '')
+            const agentPrompt = `<tool_call tool="subagent">\n{"agent":"${safeAgent}","task":"${safeTask}"}\n</tool_call`
+            console.log('[sidecar] subagent prompt:', agentPrompt)
+            await this.pool.sendMessage(sessionId, agentPrompt)
+          } else {
+            console.log(`[sidecar] message.send: sessionId=${sessionId}, contentLength=${content?.length ?? 0}`)
+            await this.pool.sendMessage(sessionId, content)
+          }
 
-      this.send(ws, { type: 'message.status', id: msg.id, payload: { sessionId, status: 'sent' } })
-      break
-    }
+          this.send(ws, { type: 'message.status', id: msg.id, payload: { sessionId, status: 'sent' } })
+          break
+        }
 
         case 'message.abort': {
           const abortId = msg.payload.sessionId as string
