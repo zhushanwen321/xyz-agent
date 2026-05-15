@@ -225,15 +225,19 @@ export function useChat(sessionId?: Ref<string>) {
     return sessionStore.currentSessionId
   }
 
-  function sendMessage(content: string) {
-    const sid = resolveSessionId()
-    if (!sid) {
-      console.warn('[useChat] sendMessage skipped: no sessionId')
-      return
-    }
-    store.setGenerating(true, sid)
-    store.setError(null, sid)
-    send({ type: 'message.send', payload: { sessionId: sid, content } })
+  function sendMessage(content: string, subagent?: { agent: string; task: string }) {
+  const sid = resolveSessionId()
+  if (!sid) {
+    console.warn('[useChat] sendMessage skipped: no sessionId')
+    return
+  }
+  store.setGenerating(true, sid)
+  store.setError(null, sid)
+  const payload: Record<string, unknown> = { sessionId: sid, content }
+  if (subagent) {
+    payload.subagent = subagent
+  }
+  send({ type: 'message.send', payload })
   }
 
   function abort() {
