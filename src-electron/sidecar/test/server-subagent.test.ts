@@ -151,44 +151,49 @@ describe('SidecarServer message.send with subagent field', () => {
     },
   })
 
-  // Should have called sendMessage with XML structured prompt
+  // Should have called sendMessage with hidden marker prompt
   expect(sendMessageMock).toHaveBeenCalledTimes(1)
   const sentContent = sendMessageMock.mock.calls[0][1] as string
 
-  // The content should be XML-formatted, not the raw "original content"
-  expect(sentContent).toContain('<tool_call tool="subagent">')
-  expect(sentContent).toContain('"agent":"harness-executor"')
-  expect(sentContent).toContain('"task":"Implement the feature"')
-  expect(sentContent).toContain('</tool_call')
+  // The content should use hidden marker format, not the raw "original content"
+  expect(sentContent).toContain('xyz-agent-force-subagent')
+  expect(sentContent).not.toContain('<tool_call')
+  // Parse the JSON from the marker and verify values
+  const markerMatch = sentContent.match(/<!-- xyz-agent-force-subagent: (.+?) -->/)
+  expect(markerMatch).not.toBeNull()
+  const parsed = JSON.parse(markerMatch![1])
+  expect(parsed.agent).toBe('harness-executor')
+  expect(parsed.task).toBe('Implement the feature')
+  // Marker should be followed by newline and prompt text
+  expect(sentContent).toContain('<!-- xyz-agent-force-subagent')
   expect(sentContent).not.toBe('original content')
   })
 
-  it('should sanitize special characters in agent name and task', async () => {
+  it('should preserve special characters in agent name and task via JSON escaping', async () => {
   const client = await connectClient()
 
   await sendAndCollect(client, {
-    type: 'message.send',
-    id: 'test-2',
-    payload: {
-    sessionId: 'sess-456',
-    content: 'unused',
-    subagent: {
-      agent: 'agent<with>"special&chars',
-      task: 'do <something> "important" & more',
-    },
-    },
+  type: 'message.send',
+  id: 'test-2',
+  payload: {
+  sessionId: 'sess-456',
+  content: 'unused',
+  subagent: {
+    agent: 'agent<with>"special&chars',
+    task: 'do <something> "important" & more',
+  },
+  },
   })
 
   expect(sendMessageMock).toHaveBeenCalledTimes(1)
   const sentContent = sendMessageMock.mock.calls[0][1] as string
 
-  // Special characters <>"& should be stripped
-  expect(sentContent).not.toContain('<with>')
-  expect(sentContent).not.toContain('"special"')
-  expect(sentContent).not.toContain('&')
-  // The sanitized values should be present
-  expect(sentContent).toContain('"agent":"agentwithspecialchars"')
-  expect(sentContent).toContain('"task":"do something important  more"')
+  // JSON.stringify handles escaping — original characters preserved in parsed JSON
+  const markerMatch = sentContent.match(/<!-- xyz-agent-force-subagent: (.+?) -->/)
+  expect(markerMatch).not.toBeNull()
+  const parsed = JSON.parse(markerMatch![1])
+  expect(parsed.agent).toBe('agent<with>"special&chars')
+  expect(parsed.task).toBe('do <something> "important" & more')
   })
 
   it('should send raw content when subagent field is absent', async () => {
@@ -230,11 +235,14 @@ describe('SidecarServer message.send with subagent field', () => {
   expect(sendMessageMock).toHaveBeenCalledTimes(1)
   const sentContent = sendMessageMock.mock.calls[0][1] as string
 
-  // Even with empty task, should construct the XML prompt
-  expect(sentContent).toContain('<tool_call tool="subagent">')
-  expect(sentContent).toContain('"agent":"test-agent"')
-  expect(sentContent).toContain('"task":""')
-  expect(sentContent).toContain('</tool_call')
+  // Even with empty task, should construct the hidden marker prompt
+  expect(sentContent).toContain('xyz-agent-force-subagent')
+  expect(sentContent).not.toContain('<tool_call')
+  const markerMatch = sentContent.match(/<!-- xyz-agent-force-subagent: (.+?) -->/)
+  expect(markerMatch).not.toBeNull()
+  const parsed = JSON.parse(markerMatch![1])
+  expect(parsed.agent).toBe('test-agent')
+  expect(parsed.task).toBe('')
   })
 
   it('should log the constructed XML prompt for subagent messages', async () => {
@@ -259,7 +267,7 @@ describe('SidecarServer message.send with subagent field', () => {
     (call) => typeof call[0] === 'string' && call[0].includes('[sidecar] subagent prompt:'),
   )
   expect(subagentLogCall).toBeDefined()
-  expect(subagentLogCall![1]).toContain('<tool_call tool="subagent">')
+  expect(subagentLogCall![1]).toContain('xyz-agent-force-subagent')
   expect(subagentLogCall![1]).toContain('"agent":"reviewer"')
 
   logSpy.mockRestore()

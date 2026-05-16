@@ -122,47 +122,51 @@ describe('SidecarServer message.send subagent — boundary & error paths', () =>
 
   // ── Boundary: XML-dangerous chars in agent name ────────────────
 
-  it('should strip < > " & from agent name to prevent XML injection', async () => {
+  it('should preserve special characters in agent name via JSON escaping', async () => {
   const client = await connectClient()
 
   await sendAndCollect(client, {
-    type: 'message.send',
-    id: 'test-xml-agent',
-    payload: {
-    sessionId: 'sess-xml-agent',
-    content: 'unused',
-    subagent: { agent: 'a<b>c"d&e', task: 'normal task' },
-    },
+  type: 'message.send',
+  id: 'test-xml-agent',
+  payload: {
+  sessionId: 'sess-xml-agent',
+  content: 'unused',
+  subagent: { agent: 'a<b>c"d&e', task: 'normal task' },
+  },
   })
 
   expect(sendMessageMock).toHaveBeenCalledTimes(1)
   const sent = sendMessageMock.mock.calls[0][1] as string
-  // All <>"& should be removed from agent name
-  expect(sent).not.toContain('<b>')
-  expect(sent).toContain('"agent":"abcde"')
+  // JSON.stringify escapes special chars — original values preserved when parsed
+  const markerMatch = sent.match(/<!-- xyz-agent-force-subagent: (.+?) -->/)
+  expect(markerMatch).not.toBeNull()
+  const parsed = JSON.parse(markerMatch![1])
+  expect(parsed.agent).toBe('a<b>c"d&e')
+  expect(parsed.task).toBe('normal task')
   })
 
   // ── Boundary: XML-dangerous chars in task ──────────────────────
 
-  it('should strip < > " & from task text to prevent XML injection', async () => {
+  it('should preserve special characters in task via JSON escaping', async () => {
   const client = await connectClient()
 
   await sendAndCollect(client, {
-    type: 'message.send',
-    id: 'test-xml-task',
-    payload: {
-    sessionId: 'sess-xml-task',
-    content: 'unused',
-    subagent: { agent: 'clean-agent', task: '<script>alert("xss")</script>&done' },
-    },
+  type: 'message.send',
+  id: 'test-xml-task',
+  payload: {
+  sessionId: 'sess-xml-task',
+  content: 'unused',
+  subagent: { agent: 'clean-agent', task: '<script>alert("xss")</script>&done' },
+  },
   })
 
   expect(sendMessageMock).toHaveBeenCalledTimes(1)
   const sent = sendMessageMock.mock.calls[0][1] as string
-  // All <>"& should be removed from task
-  expect(sent).not.toContain('<script>')
-  expect(sent).not.toContain('</script>')
-  expect(sent).toContain('"task":"scriptalert(xss)/scriptdone"')
+  // JSON.stringify escapes special chars — original values preserved when parsed
+  const markerMatch = sent.match(/<!-- xyz-agent-force-subagent: (.+?) -->/)
+  expect(markerMatch).not.toBeNull()
+  const parsed = JSON.parse(markerMatch![1])
+  expect(parsed.task).toBe('<script>alert("xss")</script>&done')
   })
 
   // ── Boundary: newlines in task ─────────────────────────────────
@@ -184,8 +188,11 @@ describe('SidecarServer message.send subagent — boundary & error paths', () =>
 
   expect(sendMessageMock).toHaveBeenCalledTimes(1)
   const sent = sendMessageMock.mock.calls[0][1] as string
-  // Newlines should be preserved (not stripped by the sanitize regex)
-  expect(sent).toContain('step 1: read code\nstep 2: find bugs\nstep 3: report')
+  // Newlines are JSON-escaped in the marker, but preserved when parsed
+  const markerMatch = sent.match(/<!-- xyz-agent-force-subagent: (.+?) -->/)
+  expect(markerMatch).not.toBeNull()
+  const parsed = JSON.parse(markerMatch![1])
+  expect(parsed.task).toBe(multilineTask)
   })
 
   // ── Error: empty agent name ────────────────────────────────────
@@ -205,11 +212,14 @@ describe('SidecarServer message.send subagent — boundary & error paths', () =>
 
   expect(sendMessageMock).toHaveBeenCalledTimes(1)
   const sent = sendMessageMock.mock.calls[0][1] as string
-  // Should still produce valid XML structure with empty agent
-  expect(sent).toContain('<tool_call tool="subagent">')
-  expect(sent).toContain('"agent":""')
-  expect(sent).toContain('"task":"do something"')
-  expect(sent).toContain('</tool_call')
+  // Should still produce valid marker structure with empty agent
+  expect(sent).toContain('xyz-agent-force-subagent')
+  expect(sent).not.toContain('<tool_call')
+  const markerMatch = sent.match(/<!-- xyz-agent-force-subagent: (.+?) -->/)
+  expect(markerMatch).not.toBeNull()
+  const parsed = JSON.parse(markerMatch![1])
+  expect(parsed.agent).toBe('')
+  expect(parsed.task).toBe('do something')
   })
 
   // ── Error: empty task ──────────────────────────────────────────
@@ -229,10 +239,13 @@ describe('SidecarServer message.send subagent — boundary & error paths', () =>
 
   expect(sendMessageMock).toHaveBeenCalledTimes(1)
   const sent = sendMessageMock.mock.calls[0][1] as string
-  expect(sent).toContain('<tool_call tool="subagent">')
-  expect(sent).toContain('"agent":"agent-name"')
-  expect(sent).toContain('"task":""')
-  expect(sent).toContain('</tool_call')
+  expect(sent).toContain('xyz-agent-force-subagent')
+  expect(sent).not.toContain('<tool_call')
+  const markerMatch = sent.match(/<!-- xyz-agent-force-subagent: (.+?) -->/)
+  expect(markerMatch).not.toBeNull()
+  const parsed = JSON.parse(markerMatch![1])
+  expect(parsed.agent).toBe('agent-name')
+  expect(parsed.task).toBe('')
   })
 
   // ── Boundary: very long agent name + task ──────────────────────
@@ -255,13 +268,13 @@ describe('SidecarServer message.send subagent — boundary & error paths', () =>
   expect(sendMessageMock).toHaveBeenCalledTimes(1)
   const sent = sendMessageMock.mock.calls[0][1] as string
 
-  // Verify structural integrity
-  expect(sent).toContain('<tool_call tool="subagent">')
-  expect(sent).toContain('</tool_call />')
-  // Verify the JSON inside is parseable
-  const jsonMatch = sent.match(/\{[^}]+\}/)
-  expect(jsonMatch).not.toBeNull()
-  const parsed = JSON.parse(jsonMatch![0])
+  // Verify structural integrity — hidden marker format
+  expect(sent).toContain('xyz-agent-force-subagent')
+  expect(sent).not.toContain('<tool_call')
+  // Verify the JSON inside the marker is parseable
+  const markerMatch = sent.match(/<!-- xyz-agent-force-subagent: (.+?) -->/)
+  expect(markerMatch).not.toBeNull()
+  const parsed = JSON.parse(markerMatch![1])
   expect(parsed.agent).toBe(longAgent)
   expect(parsed.task).toBe(longTask)
   })

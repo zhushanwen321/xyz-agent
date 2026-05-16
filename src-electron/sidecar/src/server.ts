@@ -370,13 +370,17 @@ export class SidecarServer {
           const content = msg.payload.content as string
           const subagent = msg.payload.subagent as { agent: string; task: string } | undefined
 
-          if (subagent) {
-            // Sanitize special characters to prevent XML injection
-            const safeAgent = subagent.agent.replace(/[<>"&]/g, '')
-            const safeTask = subagent.task.replace(/[<>"&]/g, '')
-            const agentPrompt = `<tool_call tool="subagent">\n{"agent":"${safeAgent}","task":"${safeTask}"}\n</tool_call />`
-            console.log('[sidecar] subagent prompt:', agentPrompt)
-            await this.pool.sendMessage(sessionId, agentPrompt)
+      if (subagent) {
+      // Use hidden marker to signal xyz-agent-bridge extension
+      // which will force tool_choice on the LLM provider request
+      const marker = `<!-- xyz-agent-force-subagent: ${JSON.stringify({
+        agent: subagent.agent,
+        task: subagent.task,
+      })} -->`
+      const promptText = content || `请使用 subagent agent '${subagent.agent}' 执行任务: ${subagent.task}`
+      const agentPrompt = `${marker}\n${promptText}`
+      console.log('[sidecar] subagent prompt:', agentPrompt)
+      await this.pool.sendMessage(sessionId, agentPrompt)
           } else {
             console.log(`[sidecar] message.send: sessionId=${sessionId}, contentLength=${content?.length ?? 0}`)
             await this.pool.sendMessage(sessionId, content)
