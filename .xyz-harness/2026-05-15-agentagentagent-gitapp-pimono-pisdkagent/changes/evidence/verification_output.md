@@ -4,9 +4,9 @@
 
 | Item | Status | Detail |
 |------|--------|--------|
-| Branch | feat-agent-use | 18 commits ahead of main |
+| Branch | feat-agent-use | 30 commits ahead of main |
 | Push to origin (bare repo) | PASS | Everything up-to-date |
-| Push to GitHub | PASS | Created remote branch feat-agent-use |
+| Push to GitHub | PASS | Updated remote branch feat-agent-use |
 | GitHub PR URL | Available | https://github.com/zhushanwen321/xyz-agent/pull/new/feat-agent-use |
 | Working tree clean | PASS | No uncommitted changes |
 
@@ -15,7 +15,7 @@
 | Item | Status | Detail |
 |------|--------|--------|
 | GitHub Actions | N/A | No `.github/workflows/` configured |
-| Local test suite | PASS | 109/109 tests passing (renderer: 73, sidecar: 36) |
+| Local test suite | PASS | 116/116 tests passing (renderer: 73, sidecar: 43) |
 | Lint | N/A | No CI pipeline to trigger |
 
 ## Pre-deploy Checks
