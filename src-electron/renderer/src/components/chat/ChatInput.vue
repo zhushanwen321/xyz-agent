@@ -143,8 +143,9 @@ const filteredCommands = computed(() =>
 )
 
 watch(text, (val) => {
+  if (activeCommand.value) return  // Don't reopen slash menu when a command is active
   if (val.startsWith('/')) {
-    slashVisible.value = true
+  slashVisible.value = true
     slashFilter.value = val.slice(1)
   } else {
     slashVisible.value = false
@@ -184,16 +185,19 @@ function handleSlashSelect(cmd: SlashCommand) {
       ta?.focus()
     })
   } else {
-    activeCommand.value = cmd
-    if (cmd.action.type === 'agent') {
-      text.value = `/${cmd.name} `
-      nextTick(() => {
-        const ta = containerRef.value?.querySelector<HTMLTextAreaElement>('textarea')
-        ta?.focus()
-      })
-    } else if (cmd.action.type === 'skill' && cmd.argumentHint) {
-      text.value = cmd.argumentHint
-    }
+  activeCommand.value = cmd
+  if (cmd.action.type === 'agent') {
+    text.value = `/${cmd.name} `
+    // slashVisible already false (set above), but watch(text) will set it true
+    // Reset it after the watcher fires
+    nextTick(() => {
+    slashVisible.value = false
+    const ta = containerRef.value?.querySelector<HTMLTextAreaElement>('textarea')
+    ta?.focus()
+    })
+  } else if (cmd.action.type === 'skill' && cmd.argumentHint) {
+    text.value = cmd.argumentHint
+  }
   }
 }
 

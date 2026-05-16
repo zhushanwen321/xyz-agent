@@ -75,12 +75,14 @@ function createGlobalHandlers() {
       if (oldState.isGenerating) {
         chatStore.setGenerating(true, newSessionId)
       }
-      // 迁移 completedMessages
-      if (oldState.completedMessages.length > 0) {
-        chatStore.replaceMessages([...oldState.completedMessages], newSessionId)
-      }
-      // 清理旧分区
-      chatStore.removeSession(oldSessionId)
+    // 迁移 completedMessages
+    if (oldState.completedMessages.length > 0) {
+    chatStore.replaceMessages([...oldState.completedMessages], newSessionId)
+    }
+    // 清理旧分区（仅在 old !== new 时，restoreSession 复用原始 sessionId）
+    if (oldSessionId !== newSessionId) {
+    chatStore.removeSession(oldSessionId)
+    }
     }
   }
 
