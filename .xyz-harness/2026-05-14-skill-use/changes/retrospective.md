@@ -45,7 +45,7 @@
 | 环节 | 评估 |
 |------|------|
 | Spec → Plan → E2E 计划 三文档产出 | 结构清晰，评审发现问题有效 |
-| argumentHint 数据链路验证 | 在 Phase 1 就通过代码验证确认了 5 个关键节点 |
+| argumentHint 数据链路验证 | 在 Phase 1 就经审查确认了 5 个关键节点 |
 | 单元测试覆盖 | skill-paths.test.ts + skill-scanner.test.ts 覆盖了核心逻辑 |
 | 编码评审 | 发现了 commit 中的 `s.description` bug，防止了线上问题 |
 
