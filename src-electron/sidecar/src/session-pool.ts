@@ -462,9 +462,10 @@ export class SessionPool {
     const target = scanned.find(s => s.id === sessionId)
     if (!target) throw new Error(`Persisted session ${sessionId} not found`)
 
-    const id = crypto.randomUUID()
-    const client = await this.pm.createSession(id, target.cwd, { skillPaths: this.getSkillPaths(target.cwd) })
-    const adapter = new EventAdapter(id, (msg) => this.send(msg))
+  // Reuse original sessionId to avoid frontend-sidecar ID mismatch
+  const id = sessionId
+  const client = await this.pm.createSession(id, target.cwd, { skillPaths: this.getSkillPaths(target.cwd) })
+  const adapter = new EventAdapter(id, (msg) => this.send(msg))
     adapter.attach(client)
 
     // 加载已有 session 文件
