@@ -138,45 +138,52 @@
       "number": 10,
       "name": "编码实现",
       "status": "pass",
-      "startedAt": "2026-05-15T14:22:01.192Z",
-      "completedAt": "2026-05-15T14:23:20.299Z",
+      "startedAt": "2026-05-16T00:57:57.165Z",
+      "completedAt": "2026-05-16T01:13:48.807Z",
       "gateResult": "pass",
       "gateOutput": null,
       "tasks": [
         {
           "id": "t0",
-          "name": "T0",
+          "name": "T0: symlink",
           "status": "pass",
-          "completedAt": "2026-05-15T14:22:24.946Z",
+          "completedAt": "2026-05-16T01:13:13.976Z",
           "summary": "T0 done"
         },
         {
           "id": "t1",
-          "name": "T1",
+          "name": "T1: SlashMenu agent commands",
           "status": "pass",
-          "completedAt": "2026-05-15T14:22:37.473Z",
+          "completedAt": "2026-05-16T01:13:19.184Z",
           "summary": "T1 done"
         },
         {
           "id": "t2",
-          "name": "T2",
+          "name": "T2: frontend-sidecar data flow",
           "status": "pass",
-          "completedAt": "2026-05-15T14:22:42.359Z",
+          "completedAt": "2026-05-16T01:13:22.024Z",
           "summary": "T2 done"
         },
         {
           "id": "t3",
-          "name": "T3",
+          "name": "T3: sidecar subagent handler",
           "status": "pass",
-          "completedAt": "2026-05-15T14:22:55.336Z",
+          "completedAt": "2026-05-16T01:13:26.621Z",
           "summary": "T3 done"
         },
         {
           "id": "t4",
-          "name": "T4",
+          "name": "T4: SubagentRenderer",
           "status": "pass",
-          "completedAt": "2026-05-15T14:23:05.378Z",
+          "completedAt": "2026-05-16T01:13:31.472Z",
           "summary": "T4 done"
+        },
+        {
+          "id": "tfix",
+          "name": "Fix: session routing bug (restoreSession UUID)",
+          "status": "pass",
+          "completedAt": "2026-05-16T01:13:37.232Z",
+          "summary": "修复 restoreSession() 复用原始 sessionId，解决 session 路由不一致 bug。109/109 tests GREEN。"
         }
       ]
     },
@@ -184,8 +191,8 @@
       "number": 11,
       "name": "编码评审",
       "status": "pass",
-      "startedAt": "2026-05-15T14:23:20.299Z",
-      "completedAt": "2026-05-15T14:56:47.899Z",
+      "startedAt": "2026-05-16T01:13:48.807Z",
+      "completedAt": "2026-05-16T01:19:57.082Z",
       "gateResult": "pass",
       "gateOutput": null,
       "tasks": []
@@ -194,8 +201,8 @@
       "number": 12,
       "name": "单元测试",
       "status": "pass",
-      "startedAt": "2026-05-15T14:56:47.899Z",
-      "completedAt": "2026-05-15T15:06:11.367Z",
+      "startedAt": "2026-05-16T01:19:57.083Z",
+      "completedAt": "2026-05-16T01:23:27.521Z",
       "gateResult": "pass",
       "gateOutput": null,
       "tasks": []
@@ -204,8 +211,8 @@
       "number": 13,
       "name": "E2E 测试",
       "status": "pass",
-      "startedAt": "2026-05-15T15:06:11.367Z",
-      "completedAt": "2026-05-15T15:09:52.579Z",
+      "startedAt": "2026-05-16T01:57:21.086Z",
+      "completedAt": "2026-05-16T01:57:45.793Z",
       "gateResult": "pass",
       "gateOutput": null,
       "tasks": []
@@ -214,8 +221,8 @@
       "number": 14,
       "name": "测试评审",
       "status": "pass",
-      "startedAt": "2026-05-15T15:09:52.579Z",
-      "completedAt": "2026-05-15T15:17:58.510Z",
+      "startedAt": "2026-05-16T01:57:45.793Z",
+      "completedAt": "2026-05-16T02:02:19.698Z",
       "gateResult": "pass",
       "gateOutput": null,
       "tasks": []
@@ -223,11 +230,11 @@
     {
       "number": 15,
       "name": "推送+CI+部署",
-      "status": "fail",
-      "startedAt": "2026-05-15T15:17:58.510Z",
+      "status": "active",
+      "startedAt": "2026-05-16T02:02:19.698Z",
       "completedAt": null,
-      "gateResult": "fail",
-      "gateOutput": "=== L1 Gate Check: Gate 14 ===\nProject: /Users/zhushanwen/Code/xyz-agent-workspace/feat-agent-use\n[INFO] auto-detected branch: feat-agent-use\n[FAIL] working directory not clean:\n   M .xyz-harness/workflow-state.json",
+      "gateResult": null,
+      "gateOutput": null,
       "tasks": []
     }
   ],
@@ -297,6 +304,24 @@
       "to": 10,
       "reason": "清除 gate 10 缓存的失败状态，skip patterns 和 test symlinks 已更新。",
       "timestamp": "2026-05-15T14:22:01.192Z"
+    },
+    {
+      "from": 15,
+      "to": 13,
+      "reason": "E2E测试TC-3-03 FAIL：sidecar XML prompt注入方式与pi原生tool-calling架构不匹配，需回退修复sidecar的subagent调用方式。",
+      "timestamp": "2026-05-15T17:09:31.800Z"
+    },
+    {
+      "from": 13,
+      "to": 10,
+      "reason": "E2E TC-3-03 FAIL: session ID路由不一致导致前端chat store收不到pi响应。需回退修复。",
+      "timestamp": "2026-05-16T00:57:57.165Z"
+    },
+    {
+      "from": 13,
+      "to": 13,
+      "reason": "L2 gate误判：把spec/plan/review文件当作E2E证据检查。回退清除缓存重试。",
+      "timestamp": "2026-05-16T01:57:21.086Z"
     }
   ]
 }
