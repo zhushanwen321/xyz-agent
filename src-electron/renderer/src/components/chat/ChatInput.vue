@@ -15,7 +15,7 @@
     >
       <!-- Command/Skill 标签栏 -->
       <div v-if="activeCommand" class="flex pt-2 px-3.5">
-        <div
+    <div
       :class="[
       'inline-flex items-center gap-1 py-[2px] px-2 rounded-full text-xs font-medium',
       activeCommand.source === 'builtin'
@@ -24,7 +24,7 @@
         ? 'bg-accent-light text-accent'
         : 'bg-blue-500/10 text-blue-500',
       ]"
-        >
+    >
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
             <path d="M3 8.5L6.5 12L13 4" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
@@ -220,13 +220,13 @@ function handleSend() {
         emit('send', { content, skillName: cmd.name })
         break
       }
-    case 'agent': {
-    const agentName = cmd.action.agentName
-    // Strip /agent:<name> prefix from task content
-    const taskContent = (trimmed || '').replace(/^\/agent:\S+\s*/, '').trim()
-    emit('send', { content: trimmed || '', subagent: { agent: agentName, task: taskContent } })
-    break
-    }
+      case 'agent': {
+        const agentName = cmd.action.agentName
+        // Strip /agent:<name> prefix from task content
+        const taskContent = (trimmed || '').replace(/^\/agent:\S+\s*/, '').trim()
+        emit('send', { content: trimmed || '', subagent: { agent: agentName, task: taskContent } })
+        break
+      }
     }
     clearCommand()
   } else {

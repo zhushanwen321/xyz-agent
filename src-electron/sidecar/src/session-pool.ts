@@ -463,10 +463,16 @@ export class SessionPool {
     if (!target) throw new Error(`Persisted session ${sessionId} not found`)
 
   // Reuse original sessionId to avoid frontend-sidecar ID mismatch
+  // Also detach existing adapter if present (race: rapid sends to cold session)
+  const existing = this.sessions.get(sessionId)
+  if (existing) {
+    existing.adapter.detach()
+    existing.unsubUsageListener()
+  }
   const id = sessionId
   const client = await this.pm.createSession(id, target.cwd, { skillPaths: this.getSkillPaths(target.cwd) })
   const adapter = new EventAdapter(id, (msg) => this.send(msg))
-    adapter.attach(client)
+  adapter.attach(client)
 
     // 加载已有 session 文件
     await client.sendCommand('switch_session', { sessionPath: target.filePath })
