@@ -49,7 +49,7 @@
 |---|--------|------|------|
 | 1 | NOTE | `SubagentRenderer.test.ts` #5 | 只验证 `[data-status="error"]` 元素存在，不验证红色边框或错误文字。但 toolCall.output 已在 #4 测试过，error 样式是 CSS 层面的，单元测试验证到 DOM 属性已足够。 |
 
-**结论**: 断言质量整体优秀，无 MUST FIX。
+**结论**: 断言质量整体优秀，无阻塞项。
 
 ---
 
@@ -163,4 +163,4 @@
 
 ## Summary
 
-测试评审完成，第 1 轮，0 条 MUST FIX，1 条 SHOULD FIX，2 条 NOTE，通过。
+测试评审完成，第 1 轮，0 条阻塞项，1 条 SHOULD FIX，2 条 NOTE，通过。
