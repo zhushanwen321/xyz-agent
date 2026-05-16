@@ -230,11 +230,11 @@
     {
       "number": 15,
       "name": "推送+CI+部署",
-      "status": "active",
+      "status": "fail",
       "startedAt": "2026-05-16T02:02:19.698Z",
       "completedAt": null,
-      "gateResult": null,
-      "gateOutput": null,
+      "gateResult": "fail",
+      "gateOutput": "[FAIL] working directory not clean:\n  M .xyz-harness/workflow-state.json\n[PASS] local HEAD matches origin/feat-agent-use\n[WARN] no quality gate commands found in CLAUDE.md — skipping compile/test/lint check\n[PASS] deploy_result.md: success\n\n===========================================\n  GATE FAIL: gate 14\n  1 项检查失败\n  ───────────────────────────────────────\n  修复指引：工作区不干净：运行 git add + git commit 提交所有变更。\n===========================================",
       "tasks": []
     }
   ],
