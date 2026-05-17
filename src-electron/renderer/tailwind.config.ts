@@ -27,6 +27,10 @@ export default {
           DEFAULT: 'var(--danger)',
           light: 'var(--danger-light)',
         },
+        agent: {
+          DEFAULT: 'var(--agent)',
+          light: 'var(--agent-light)',
+        },
         // Keep shadcn aliases but update variable refs
         primary: { DEFAULT: 'var(--accent)', foreground: '#fff' },
         destructive: { DEFAULT: 'var(--danger)', foreground: '#fff' },
