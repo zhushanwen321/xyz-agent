@@ -205,6 +205,14 @@ export class ProcessManager {
     return !!proc && !proc.client.exited
   }
 
+  /** Rekey a process entry after learning the real session ID. */
+  rekey(oldId: string, newId: string): void {
+    const entry = this.processes.get(oldId)
+    if (!entry) return
+    this.processes.delete(oldId)
+    this.processes.set(newId, entry)
+  }
+
   /** Register a callback for when a session's process exits unexpectedly. */
   onSessionExit(callback: (sessionId: string, code: number | null) => void): void {
     this.exitCallback = callback

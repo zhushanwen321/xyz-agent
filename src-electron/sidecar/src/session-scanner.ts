@@ -26,8 +26,28 @@ export interface ScannedSession {
  * Scan ~/.xyz-agent/sessions/ for all session files.
  * Sessions are stored as flat .jsonl files (no subdirectory grouping).
  * Each file's first line is parsed for header metadata.
+ *
+ * Results are cached for SCAN_TTL_MS to avoid repeated disk I/O.
+ * Call invalidateScanCache() after create/delete/rename.
  */
+
+const SCAN_TTL_MS = 5_000
+let cachedScan: { timestamp: number; result: ScannedSession[] } | null = null
+
 export function scanSessions(): ScannedSession[] {
+  if (cachedScan && Date.now() - cachedScan.timestamp < SCAN_TTL_MS) {
+    return cachedScan.result
+  }
+  const result = scanSessionsUncached()
+  cachedScan = { timestamp: Date.now(), result }
+  return result
+}
+
+export function invalidateScanCache(): void {
+  cachedScan = null
+}
+
+function scanSessionsUncached(): ScannedSession[] {
   if (!existsSync(SESSIONS_DIR)) return []
 
   const results: ScannedSession[] = []
