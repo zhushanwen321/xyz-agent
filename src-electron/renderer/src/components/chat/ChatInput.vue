@@ -25,7 +25,10 @@
               : 'bg-agent-light text-agent',
           ]"
         >
-          <span class="text-[11px] font-bold leading-none w-[14px] text-center shrink-0">{{ cmdIcon }}</span>
+          <span v-if="cmdIcon" class="text-[11px] font-bold leading-none w-[14px] text-center shrink-0">{{ cmdIcon }}</span>
+          <svg v-else width="12" height="12" viewBox="0 0 16 16" fill="none" class="shrink-0">
+            <path d="M3 8.5L6.5 12L13 4" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
           <span class="leading-[1.4]">/{{ tagDisplayName }}</span>
           <span class="cursor-pointer ml-0.5 opacity-60 text-sm leading-none hover:opacity-100" @click="clearCommand">&times;</span>
         </div>
@@ -123,7 +126,7 @@ const cmdIcon = computed(() => {
   switch (activeCommand.value.source) {
     case 'agent': return 'A'
     case 'skill': return 'S'
-    default: return '✓'
+    default: return ''
   }
 })
 
