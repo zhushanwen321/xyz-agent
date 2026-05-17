@@ -161,18 +161,15 @@ export class SidecarServer {
 
   private handleSessionCompact(msg: ClientMessage): void {
     const startTime = Date.now()
-    let compactId = msg.payload.sessionId as string
+    const compactId = msg.payload.sessionId as string
     console.log('[server] session.compact: sessionId=' + compactId)
     const runCompact = async () => {
       try { await this.pool.compact(compactId) } catch (e) { console.error('[server] session.compact: failed, sessionId=' + compactId + ', error=' + (e instanceof Error ? e.message : String(e))) }
       console.log('[server] session.compact: completed, sessionId=' + compactId + ', elapsed=' + (Date.now() - startTime) + 'ms')
     }
     if (!this.pool.hasActiveSession(compactId)) {
-      this.pool.restoreSession(compactId).then((restored) => {
-        compactId = restored.id
-        console.log('[server] session.compact: auto-restored, newId=' + compactId)
-        this.broadcast({ type: 'session.restored', id: msg.id, payload: { oldSessionId: msg.payload.sessionId as string, newSessionId: restored.id, summary: restored } })
-        this.broadcastSessionList()
+      this.pool.restoreSession(compactId).then(() => {
+        console.log('[server] session.compact: auto-restored, sessionId=' + compactId)
         runCompact()
       }).catch(() => { /* restoreSession error already handled by pool */ })
     } else {
@@ -377,10 +374,8 @@ export class SidecarServer {
             const marker = `<!-- xyz-agent-force-subagent:${encoded} -->`
             const promptText = content || `Execute task using agent '${subagent.agent}'`
             const agentPrompt = `${marker}\n${promptText}`
-            console.log('[sidecar] subagent prompt:', agentPrompt)
             await this.pool.sendMessage(sessionId, agentPrompt)
           } else {
-            console.log(`[sidecar] message.send: sessionId=${sessionId}, contentLength=${content?.length ?? 0}`)
             await this.pool.sendMessage(sessionId, content)
           }
 

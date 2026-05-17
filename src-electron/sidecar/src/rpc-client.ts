@@ -143,12 +143,8 @@ export class RpcClient {
       const entry = this.pending.get(msg.id)!
       clearTimeout(entry.timer)
       this.pending.delete(msg.id)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const m = msg as any
-      console.log('[rpc] resolved pending:', msg.id, msg.type, m.success === false ? '(FAILED)' : '(ok)')
       entry.resolve(msg)
     } else {
-      console.log('[rpc] event:', msg.type, '(listeners:', this.listeners.size, ')')
       for (const listener of this.listeners) {
         listener(msg)
       }
@@ -201,7 +197,7 @@ export class RpcClient {
       })
 
       try {
-        console.log('[rpc] send: type=' + type + ', id=' + id)
+        console.log('[rpc] send: type=' + type)
         this.proc.stdin!.write(msg)
       } catch (e) {
         clearTimeout(timer)

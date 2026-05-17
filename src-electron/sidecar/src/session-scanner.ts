@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs'
+import { readdirSync, readFileSync, openSync, readSync, closeSync, statSync, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { trash } from './trash.js'
@@ -134,26 +134,40 @@ function parseSessionHeader(filePath: string): SessionHeader | null {
 }
 
 /**
- * Scan the file for the last session_info entry to get the display name.
- * Only scans lines that contain "session_info" as a quick filter.
+ * Scan the tail of the file for the last session_info entry.
+ * Reads up to TAIL_SCAN_BYTES from the end for efficiency.
  */
+const TAIL_SCAN_BYTES = 4096
 function parseSessionName(filePath: string): string | null {
   try {
-    const content = readFileSync(filePath, 'utf-8')
-    const lines = content.split('\n')
-    let lastName: string | null = null
-    for (const line of lines) {
-      if (!line.includes('session_info')) continue
+    const stat = statSync(filePath)
+    const readLen = Math.min(stat.size, TAIL_SCAN_BYTES)
+    if (readLen === 0) return null
+
+    const buf = Buffer.alloc(readLen)
+    const fd = openSync(filePath, 'r')
+    try {
+      readSync(fd, buf, 0, readLen, stat.size - readLen)
+    } finally {
+      closeSync(fd)
+    }
+
+    const tail = buf.toString('utf-8')
+    // 从后往前找最后一个 session_info
+    let pos = tail.length
+    while (pos > 0) {
+      const idx = tail.lastIndexOf('session_info', pos - 1)
+      if (idx === -1) break
+      const lineStart = tail.lastIndexOf('\n', idx)
+      const lineEnd = tail.indexOf('\n', idx)
+      const line = tail.slice(lineStart + 1, lineEnd === -1 ? tail.length : lineEnd).trim()
       try {
         const entry = JSON.parse(line)
-        if (entry.type === 'session_info' && entry.name) {
-          lastName = entry.name
-        }
-      } catch {
-        // skip malformed lines
-      }
+        if (entry.type === 'session_info' && entry.name) return entry.name
+      } catch { /* skip malformed */ }
+      pos = idx
     }
-    return lastName
+    return null
   } catch {
     return null
   }

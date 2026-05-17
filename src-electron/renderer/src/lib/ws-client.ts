@@ -112,7 +112,6 @@ export function send(msg: ClientMessage): void {
     return
   }
   if (ws?.readyState === WebSocket.OPEN) {
-    console.debug('[ws] send:', msg.type, msg.payload)
     try {
       ws.send(JSON.stringify(msg))
     } catch(e) {

@@ -1,5 +1,6 @@
 import { basename, dirname, join } from 'node:path'
-import { readFileSync, appendFileSync, existsSync } from 'node:fs'
+import { appendFileSync, existsSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import type { WebSocket } from 'ws'
 import type {
   SessionSummary,
@@ -210,15 +211,9 @@ export class SessionPool {
     if (!client) {
       console.log(`[session-pool] sendMessage: session ${sessionId} not active, restoring...`)
       try {
-        const summary = await this.restoreSession(sessionId)
-        // restoreSession creates a new internal session; use its id
-        client = this.pm.getClient(summary.id)
+        await this.restoreSession(sessionId)
+        client = this.pm.getClient(sessionId)
         if (!client) throw new Error('Restore succeeded but client not available')
-        // Notify frontend of the new session id so subsequent sends work
-        this.send({
-          type: 'session.restored',
-          payload: { oldSessionId: sessionId, newSessionId: summary.id, summary },
-        })
       } catch (e) {
         const errMsg = `Failed to restore session: ${e instanceof Error ? e.message : String(e)}`
         console.error(`[session-pool] ${errMsg}`)
@@ -233,7 +228,7 @@ export class SessionPool {
       activeSession.lastActiveAt = Date.now()
       activeSession.isGenerating = true
     }
-    console.log(`[session-pool] sendMessage: sessionId=${sessionId}, contentLength=${content.length}`)
+    console.log(`[session-pool] sendMessage: sessionId=${sessionId}`)
     try {
       await client.prompt(content)
       console.log(`[session-pool] prompt acknowledged: sessionId=${sessionId}`)
@@ -246,10 +241,8 @@ export class SessionPool {
   }
 
   private findSessionByClient(client: RpcClient): ManagedSession | undefined {
-    for (const session of this.sessions.values()) {
-      if (this.pm.getClient(session.id) === client) return session
-    }
-    return undefined
+    const id = this.pm.getSessionIdByClient(client)
+    return id ? this.sessions.get(id) : undefined
   }
 
   async abort(sessionId: string): Promise<void> {
@@ -340,15 +333,15 @@ export class SessionPool {
     }
 
     // Inactive session: parse messages from session file
-    return this.getHistoryFromFile(sessionId)
+    return await this.getHistoryFromFile(sessionId)
   }
 
   /** Parse messages from a persisted session file for an inactive session */
-  private getHistoryFromFile(sessionId: string): Message[] {
+  private async getHistoryFromFile(sessionId: string): Promise<Message[]> {
     const target = this.findScannedSession(sessionId)
     if (!target) return []
 
-    const content = readFileSync(target.filePath, 'utf-8')
+    const content = await readFile(target.filePath, 'utf-8')
     const lines = content.split('\n').filter(l => l.trim())
     const piMessages: PiHistoryMessage[] = []
 

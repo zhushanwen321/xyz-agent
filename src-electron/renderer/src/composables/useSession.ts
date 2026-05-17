@@ -51,38 +51,28 @@ function createGlobalHandlers() {
       newSessionId: string
       summary: SessionSummary
     }
-    // Remove old session, add new one, switch to it
+    // ID 统一后 old === new 是常态，直接更新即可
+    if (oldSessionId === newSessionId) {
+      sessionStore.addSession(summary)
+      return
+    }
+    // ID 不一致时的完整迁移（理论上不再发生，但防御保留）
     sessionStore.removeSession(oldSessionId)
     sessionStore.addSession(summary)
     sessionStore.switchSession(newSessionId)
-    // 关键：更新 paneStore 中所有引用旧 sessionId 的 pane 绑定
-    // 否则 PaneSessionView 仍用旧 id，而事件用的是新 id，导致内容不渲染
     const paneStore = usePaneStore()
-    const panes = paneStore.panes
-    for (const pane of panes) {
+    for (const pane of paneStore.panes) {
       if (pane.sessionId === oldSessionId) {
         paneStore.bindSession(pane.id, newSessionId)
       }
     }
-    // 同步 chatStore 数据：把旧 id 分区的数据迁移到新 id
     const oldState = chatStore.getSessionState(oldSessionId)
     if (oldState) {
       chatStore.ensureSession(newSessionId)
-      // 迁移 streamingMessage 和 isGenerating
-      if (oldState.streamingMessage) {
-        chatStore.setStreaming(oldState.streamingMessage, newSessionId)
-      }
-      if (oldState.isGenerating) {
-        chatStore.setGenerating(true, newSessionId)
-      }
-      // 迁移 completedMessages
-      if (oldState.completedMessages.length > 0) {
-        chatStore.replaceMessages([...oldState.completedMessages], newSessionId)
-      }
-      // 清理旧分区（仅在 old !== new 时，restoreSession 复用原始 sessionId）
-      if (oldSessionId !== newSessionId) {
-        chatStore.removeSession(oldSessionId)
-      }
+      if (oldState.streamingMessage) chatStore.setStreaming(oldState.streamingMessage, newSessionId)
+      if (oldState.isGenerating) chatStore.setGenerating(true, newSessionId)
+      if (oldState.completedMessages.length > 0) chatStore.replaceMessages([...oldState.completedMessages], newSessionId)
+      chatStore.removeSession(oldSessionId)
     }
   }
 
