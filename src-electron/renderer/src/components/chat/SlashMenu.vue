@@ -27,8 +27,8 @@
               : 'bg-agent-light text-agent',
           ]"
         >{{ cmd.source === 'builtin' ? 'command' : cmd.source === 'skill' ? 'skill' : 'agent' }}</span>
-    <span class="text-xs font-semibold font-mono whitespace-nowrap text-accent w-[100px] shrink-0 overflow-hidden text-ellipsis">/{{ cmd.name }}</span>
-    <span class="text-[11px] text-muted flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap pl-2 border-l border-border">{{ cmd.description }}</span>
+    <span class="text-xs font-semibold font-mono whitespace-nowrap text-accent w-[200px] shrink-0 overflow-hidden text-ellipsis">/{{ displayName(cmd) }}</span>
+    <span class="text-[11px] text-muted flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap pl-2 border-l border-border" :title="cmd.description">{{ cmd.description }}</span>
     <span
       v-if="cmd.argumentHint"
       class="text-[11px] font-mono text-accent/70 whitespace-nowrap shrink max-w-[40%] overflow-hidden text-ellipsis py-[1px] px-[5px] bg-accent-light rounded-[3px]"
@@ -112,6 +112,11 @@ function onOutsideClick(e: MouseEvent) {
   if (!inputWrap) {
     emit('close')
   }
+}
+
+function displayName(cmd: SlashCommand): string {
+  // Agent 命令名有 `agent:` 前缀，但左侧已有 agent tag，显示时去掉
+  return cmd.source === 'agent' ? cmd.name.replace(/^agent:/, '') : cmd.name
 }
 
 onMounted(() => {
