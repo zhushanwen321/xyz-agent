@@ -74,7 +74,8 @@ function scanSessionsUncached(): ScannedSession[] {
         size: stat.size,
       })
     } catch {
-      // Skip malformed files
+      // expected: malformed session file, skip
+      void 0
     }
   }
 
@@ -164,7 +165,10 @@ function parseSessionName(filePath: string): string | null {
       try {
         const entry = JSON.parse(line)
         if (entry.type === 'session_info' && entry.name) return entry.name
-      } catch { /* skip malformed */ }
+      } catch {
+        // expected: malformed line, skip
+        void 0
+      }
       pos = idx
     }
     return null

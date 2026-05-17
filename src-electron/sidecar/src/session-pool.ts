@@ -357,7 +357,10 @@ export class SessionPool {
         if (entry.type === 'message' && entry.message) {
           piMessages.push(entry.message as PiHistoryMessage)
         }
-      } catch { /* skip malformed lines */ }
+      } catch {
+        // expected: malformed line, skip
+        void 0
+      }
     }
 
     return this.convertPiHistory(piMessages)

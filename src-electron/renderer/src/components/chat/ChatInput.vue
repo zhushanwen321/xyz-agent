@@ -277,11 +277,13 @@ function onCompositionEnd() {
   isComposing.value = false
 }
 
+const TEXTAREA_MAX_HEIGHT = 140
+
 function resizeTextarea() {
   const el = containerRef.value?.querySelector<HTMLTextAreaElement>('textarea')
   if (!el) return
   el.style.height = 'auto'
-  el.style.height = Math.min(el.scrollHeight, 140) + 'px'
+  el.style.height = Math.min(el.scrollHeight, TEXTAREA_MAX_HEIGHT) + 'px'
 }
 
 watch(text, () => nextTick(resizeTextarea))

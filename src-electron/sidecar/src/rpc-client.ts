@@ -26,7 +26,7 @@ export interface RpcClientOptions {
 }
 
 const CMD_TIMEOUT_MS = 60_000
-const COMPACT_TIMEOUT_MS = 5 * 60_000
+const COMPACT_TIMEOUT_MS = 300_000
 const KILL_TIMEOUT_MS = 2_000
 const STARTUP_DELAY_MS = 100
 

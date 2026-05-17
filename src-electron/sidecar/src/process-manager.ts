@@ -19,7 +19,8 @@ function findPiExecutable(): string {
     const firstMatch = which.split('\n')[0].trim()
     if (firstMatch && existsSync(firstMatch)) return firstMatch
   } catch {
-    // not in PATH
+    // expected: pi not in PATH
+    void 0
   }
 
   // 2. Try nvm managed node installations
@@ -35,7 +36,8 @@ function findPiExecutable(): string {
         if (existsSync(piExe)) return piExe
       }
     } catch {
-      // nvm dir not found
+      // expected: directory not found, skip
+      void 0
     }
   } else {
     const nvmDir = join(homedir(), '.nvm', 'versions', 'node')
@@ -46,7 +48,8 @@ function findPiExecutable(): string {
         if (existsSync(piPath)) return piPath
       }
     } catch {
-      // nvm dir not found
+      // expected: directory not found, skip
+      void 0
     }
   }
 

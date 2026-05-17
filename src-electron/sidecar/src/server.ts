@@ -14,6 +14,9 @@ const HTTP_NOT_FOUND = 404
 const MAX_WS_CLOSE_CODE = 4000
 
 const WS_OPEN = WebSocket.OPEN
+const HEARTBEAT_TIMEOUT_MS = 45_000
+const API_FETCH_TIMEOUT_MS = 10_000
+const KILOBYTE = 1000
 
 /**
  * WebSocket server that routes ClientMessages to the appropriate
@@ -29,8 +32,6 @@ export class SidecarServer {
   private heartbeatTimers = new Map<WsType, ReturnType<typeof setTimeout>>()
   private projectRoot: string
 
-  private static HEARTBEAT_TIMEOUT = 45_000
-
   private nextPushId(): string {
     return `push_${++this.pushId}`
   }
@@ -41,7 +42,7 @@ export class SidecarServer {
     this.heartbeatTimers.set(ws, setTimeout(() => {
       console.warn('[sidecar] heartbeat timeout, closing connection')
       ws.close(MAX_WS_CLOSE_CODE, 'Heartbeat timeout')
-    }, SidecarServer.HEARTBEAT_TIMEOUT))
+    }, HEARTBEAT_TIMEOUT_MS))
   }
 
   private clearHeartbeat(ws: WsType): void {
@@ -164,7 +165,13 @@ export class SidecarServer {
     const compactId = msg.payload.sessionId as string
     console.log('[server] session.compact: sessionId=' + compactId)
     const runCompact = async () => {
-      try { await this.pool.compact(compactId) } catch (e) { console.error('[server] session.compact: failed, sessionId=' + compactId + ', error=' + (e instanceof Error ? e.message : String(e))) }
+      // pool.compact() 已在内部向客户端发送错误消息，此处只做本地日志
+      try {
+        await this.pool.compact(compactId)
+      } catch (e) {
+        console.error('[server] session.compact: failed, sessionId=' + compactId + ', error=' + (e instanceof Error ? e.message : String(e)))
+        void 0
+      }
       console.log('[server] session.compact: completed, sessionId=' + compactId + ', elapsed=' + (Date.now() - startTime) + 'ms')
     }
     if (!this.pool.hasActiveSession(compactId)) {
@@ -497,7 +504,7 @@ export class SidecarServer {
     const match = ctx.match(/^(\d+(?:\.\d+)?)\s*([kK])?$/)
     if (!match) return undefined
     const num = parseFloat(match[1])
-    return match[2]?.toLowerCase() === 'k' ? Math.round(num * 1000) : Math.round(num)
+    return match[2]?.toLowerCase() === 'k' ? Math.round(num * KILOBYTE) : Math.round(num)
   }
 
   /**
@@ -526,7 +533,7 @@ export class SidecarServer {
       }
     }
 
-    const res = await fetch(url, { headers, signal: AbortSignal.timeout(10000) })
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(API_FETCH_TIMEOUT_MS) })
     if (!res.ok) {
       const body = await res.text().catch(() => '')
       throw new Error(`API 返回 ${res.status}: ${body || res.statusText}`)
