@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.xyz-harness/**'
+      - 'LICENSE'
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.xyz-harness/**'
+      - 'LICENSE'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: ESLint
+        run: npm run lint
+
+  typecheck:
+    name: TypeCheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: TypeCheck - renderer
+        run: npm -w @xyz-agent/frontend run typecheck
+
+      - name: TypeCheck - sidecar
+        run: npm -w @xyz-agent/sidecar run typecheck
+
+      - name: TypeCheck - shared
+        run: npm -w @xyz-agent/shared run typecheck
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Test - sidecar
+        run: npm -w @xyz-agent/sidecar run test -- --reporter=junit --outputFile=test-results.xml
+
+      - name: Test - renderer
+        run: npm -w @xyz-agent/frontend run test -- --reporter=junit --outputFile=test-results.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            src-electron/sidecar/test-results.xml
+            src-electron/renderer/test-results.xml
+          retention-days: 7
+
+  # Build 需要完整的 Electron 环境（macOS 签名、electron-builder 依赖）
+  # 建议在 release workflow 中单独配置，CI 阶段以 lint + typecheck + test 为核心
