@@ -48,6 +48,8 @@ interface ManagedSession {
   unsubUsageListener: (() => void) | null
   /** pi 分配的持久化 session 文件路径 */
   sessionFilePath?: string
+  /** pi 分配的 session ID（与 xyz-agent 的 id 不同） */
+  piSessionId?: string
 }
 
 const WS_OPEN = 1
@@ -59,6 +61,10 @@ const WS_OPEN = 1
  */
 export class SessionPool {
   private sessions = new Map<string, ManagedSession>()
+  /** xyz-agent sessionId → pi 的 session 文件路径（进程退出后保留，用于 restore） */
+  private sessionFileIndex = new Map<string, string>()
+  /** xyz-agent sessionId → pi 的 session ID（进程退出后保留，用于 restore） */
+  private piSessionIdIndex = new Map<string, string>()
   private pm = new ProcessManager()
   private clients = new Set<WebSocket>()
 
@@ -145,14 +151,23 @@ export class SessionPool {
 
     // 获取 pi 分配的 session 文件路径，用于后续持久化追踪
     try {
-      const stateResp = await client.sendCommand('get_state')
-      const sessionFile = stateResp.payload?.sessionFile as string | undefined
+      const stateResp = await client.sendCommand('get_state') as unknown as Record<string, unknown>
+      const stateData = (stateResp.data ?? stateResp.payload) as Record<string, unknown> | undefined
+      const sessionFile = stateData?.sessionFile as string | undefined
+      const piSessionId = stateData?.sessionId as string | undefined
       if (sessionFile) {
         session.sessionFilePath = sessionFile
         // Persist label to file so scanSessions can read it after restart
         if (session.label && session.label !== basename(sessionCwd)) {
           appendFileSync(sessionFile, JSON.stringify({ type: 'session_info', name: session.label }) + '\n')
         }
+      }
+      if (piSessionId) {
+        session.piSessionId = piSessionId
+        this.piSessionIdIndex.set(id, piSessionId)
+      }
+      if (sessionFile) {
+        this.sessionFileIndex.set(id, sessionFile)
       }
     } catch (e) {
       console.warn('[session-pool] get_state failed (non-critical):', e instanceof Error ? e.message : e)
@@ -188,11 +203,13 @@ export class SessionPool {
       }
     } else {
       // 非活跃 session：直接删除持久化文件
-      const scanned = scanSessions()
-      const target = scanned.find(s => s.id === sessionId)
-      if (!target) throw new Error(`Session ${sessionId} not found`)
-      await deleteSessionFile(target.filePath)
+      const filePath = this.findFilePathForSession(sessionId)
+      if (!filePath) throw new Error(`Session ${sessionId} not found`)
+      await deleteSessionFile(filePath)
     }
+    // 清理索引
+    this.sessionFileIndex.delete(sessionId)
+    this.piSessionIdIndex.delete(sessionId)
   }
 
   // ── Messaging ──────────────────────────────────────────────────
@@ -340,7 +357,13 @@ export class SessionPool {
   /** Parse messages from a persisted session file for an inactive session */
   private getHistoryFromFile(sessionId: string): Message[] {
     const scanned = scanSessions()
-    const target = scanned.find(s => s.id === sessionId)
+    const piSid = this.piSessionIdIndex.get(sessionId)
+    let target = piSid ? scanned.find(s => s.id === piSid) : undefined
+    if (!target) target = scanned.find(s => s.id === sessionId)
+    if (!target) {
+      const cachedPath = this.sessionFileIndex.get(sessionId)
+      if (cachedPath) target = scanned.find(s => s.filePath === cachedPath)
+    }
     if (!target) return []
 
     const content = readFileSync(target.filePath, 'utf-8')
@@ -459,20 +482,29 @@ export class SessionPool {
   /** 从持久化文件恢复 session：启动 pi 进程并加载已有文件 */
   async restoreSession(sessionId: string): Promise<SessionSummary> {
     const scanned = scanSessions()
-    const target = scanned.find(s => s.id === sessionId)
+    // 优先用 pi 的 session ID 查找（xyz-agent ID 和 pi ID 不同）
+    const piSid = this.piSessionIdIndex.get(sessionId)
+    let target = piSid ? scanned.find(s => s.id === piSid) : undefined
+    // fallback: 用 xyz-agent ID 直接查（restoreSession 内部复用原始 sessionId 时可能匹配）
+    if (!target) target = scanned.find(s => s.id === sessionId)
+    // fallback: 用缓存的 sessionFilePath 查找
+    if (!target) {
+      const cachedPath = this.sessionFileIndex.get(sessionId)
+      if (cachedPath) target = scanned.find(s => s.filePath === cachedPath)
+    }
     if (!target) throw new Error(`Persisted session ${sessionId} not found`)
 
-  // Reuse original sessionId to avoid frontend-sidecar ID mismatch
-  // Also detach existing adapter if present (race: rapid sends to cold session)
-  const existing = this.sessions.get(sessionId)
-  if (existing) {
-    existing.adapter.detach()
-    existing.unsubUsageListener()
-  }
-  const id = sessionId
-  const client = await this.pm.createSession(id, target.cwd, { skillPaths: this.getSkillPaths(target.cwd) })
-  const adapter = new EventAdapter(id, (msg) => this.send(msg))
-  adapter.attach(client)
+    // Reuse original sessionId to avoid frontend-sidecar ID mismatch
+    // Also detach existing adapter if present (race: rapid sends to cold session)
+    const existing = this.sessions.get(sessionId)
+    if (existing) {
+      existing.adapter.detach()
+      existing.unsubUsageListener?.()
+    }
+    const id = sessionId
+    const client = await this.pm.createSession(id, target.cwd, { skillPaths: this.getSkillPaths(target.cwd) })
+    const adapter = new EventAdapter(id, (msg) => this.send(msg))
+    adapter.attach(client)
 
     // 加载已有 session 文件
     await client.sendCommand('switch_session', { sessionPath: target.filePath })
@@ -571,7 +603,18 @@ export class SessionPool {
   }
 
   private findFilePathForSession(sessionId: string): string | undefined {
-    return scanSessions().find(s => s.id === sessionId)?.filePath
+    // 优先用 pi 的 session ID 查找
+    const piSid = this.piSessionIdIndex.get(sessionId)
+    const scanned = scanSessions()
+    if (piSid) {
+      const found = scanned.find(s => s.id === piSid)
+      if (found) return found.filePath
+    }
+    // fallback: 用缓存的 sessionFilePath
+    const cachedPath = this.sessionFileIndex.get(sessionId)
+    if (cachedPath && existsSync(cachedPath)) return cachedPath
+    // fallback: 用 xyz-agent ID 直接查
+    return scanned.find(s => s.id === sessionId)?.filePath
   }
 
   private scannedToSummary(s: ScannedSession): SessionSummary {

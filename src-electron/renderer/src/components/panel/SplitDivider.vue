@@ -1,6 +1,6 @@
 <template>
   <div
-    :class="['bg-border shrink-0 relative z-5 transition-colors duration-150 opacity-30', direction === 'horizontal' ? 'w-1 cursor-col-resize' : 'h-1 cursor-row-resize', { 'bg-accent opacity-100': dragging }, { 'hover:bg-accent hover:opacity-100': !dragging }]"
+    :class="['bg-border shrink-0 relative z-[5] transition-colors duration-150 opacity-30', direction === 'horizontal' ? 'w-1 cursor-col-resize' : 'h-1 cursor-row-resize', { 'bg-accent opacity-100': dragging }, { 'hover:bg-accent hover:opacity-100': !dragging }]"
     @mousedown="startDrag"
   ></div>
 </template>

@@ -1,5 +1,5 @@
 <template>
-  <div class="fixed top-[60px] left-5 z-60 flex flex-col gap-2 pointer-events-none">
+  <div class="fixed top-[60px] left-5 z-[60] flex flex-col gap-2 pointer-events-none">
     <TransitionGroup name="toast-list">
       <div
         v-for="toast in toasts"
