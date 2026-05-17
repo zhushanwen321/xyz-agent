@@ -9,6 +9,10 @@ export interface PiMessage {
   id?: string
   type: string
   payload?: Record<string, unknown>
+  /** pi RPC 响应的 data 字段（如 get_state 返回 sessionFile/sessionId） */
+  data?: Record<string, unknown>
+  success?: boolean
+  error?: string
 }
 
 export type PiEventListener = (event: PiMessage) => void
@@ -22,7 +26,7 @@ export interface RpcClientOptions {
 }
 
 const CMD_TIMEOUT_MS = 60_000
-const COMPACT_TIMEOUT_MS = 5 * 60_000
+const COMPACT_TIMEOUT_MS = 300_000
 const KILL_TIMEOUT_MS = 2_000
 const STARTUP_DELAY_MS = 100
 
@@ -139,12 +143,8 @@ export class RpcClient {
       const entry = this.pending.get(msg.id)!
       clearTimeout(entry.timer)
       this.pending.delete(msg.id)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const m = msg as any
-      console.log('[rpc] resolved pending:', msg.id, msg.type, m.success === false ? '(FAILED)' : '(ok)')
       entry.resolve(msg)
     } else {
-      console.log('[rpc] event:', msg.type, '(listeners:', this.listeners.size, ')')
       for (const listener of this.listeners) {
         listener(msg)
       }
@@ -197,7 +197,7 @@ export class RpcClient {
       })
 
       try {
-        console.log('[rpc] send: type=' + type + ', id=' + id)
+        console.log('[rpc] send: type=' + type)
         this.proc.stdin!.write(msg)
       } catch (e) {
         clearTimeout(timer)

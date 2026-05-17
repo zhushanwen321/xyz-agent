@@ -14,6 +14,9 @@ const HTTP_NOT_FOUND = 404
 const MAX_WS_CLOSE_CODE = 4000
 
 const WS_OPEN = WebSocket.OPEN
+const HEARTBEAT_TIMEOUT_MS = 45_000
+const API_FETCH_TIMEOUT_MS = 10_000
+const KILOBYTE = 1000
 
 /**
  * WebSocket server that routes ClientMessages to the appropriate
@@ -29,8 +32,6 @@ export class SidecarServer {
   private heartbeatTimers = new Map<WsType, ReturnType<typeof setTimeout>>()
   private projectRoot: string
 
-  private static HEARTBEAT_TIMEOUT = 45_000
-
   private nextPushId(): string {
     return `push_${++this.pushId}`
   }
@@ -41,7 +42,7 @@ export class SidecarServer {
     this.heartbeatTimers.set(ws, setTimeout(() => {
       console.warn('[sidecar] heartbeat timeout, closing connection')
       ws.close(MAX_WS_CLOSE_CODE, 'Heartbeat timeout')
-    }, SidecarServer.HEARTBEAT_TIMEOUT))
+    }, HEARTBEAT_TIMEOUT_MS))
   }
 
   private clearHeartbeat(ws: WsType): void {
@@ -161,18 +162,21 @@ export class SidecarServer {
 
   private handleSessionCompact(msg: ClientMessage): void {
     const startTime = Date.now()
-    let compactId = msg.payload.sessionId as string
+    const compactId = msg.payload.sessionId as string
     console.log('[server] session.compact: sessionId=' + compactId)
     const runCompact = async () => {
-      try { await this.pool.compact(compactId) } catch (e) { console.error('[server] session.compact: failed, sessionId=' + compactId + ', error=' + (e instanceof Error ? e.message : String(e))) }
+      // pool.compact() 已在内部向客户端发送错误消息，此处只做本地日志
+      try {
+        await this.pool.compact(compactId)
+      } catch (e) {
+        console.error('[server] session.compact: failed, sessionId=' + compactId + ', error=' + (e instanceof Error ? e.message : String(e)))
+        void 0
+      }
       console.log('[server] session.compact: completed, sessionId=' + compactId + ', elapsed=' + (Date.now() - startTime) + 'ms')
     }
     if (!this.pool.hasActiveSession(compactId)) {
-      this.pool.restoreSession(compactId).then((restored) => {
-        compactId = restored.id
-        console.log('[server] session.compact: auto-restored, newId=' + compactId)
-        this.broadcast({ type: 'session.restored', id: msg.id, payload: { oldSessionId: msg.payload.sessionId as string, newSessionId: restored.id, summary: restored } })
-        this.broadcastSessionList()
+      this.pool.restoreSession(compactId).then(() => {
+        console.log('[server] session.compact: auto-restored, sessionId=' + compactId)
         runCompact()
       }).catch(() => { /* restoreSession error already handled by pool */ })
     } else {
@@ -366,9 +370,22 @@ export class SidecarServer {
 
         // ── Messages ────────────────────────────────────────────
         case 'message.send': {
-          const { sessionId, content } = msg.payload as { sessionId: string; content: string }
-          console.log(`[sidecar] message.send: sessionId=${sessionId}, contentLength=${content?.length ?? 0}`)
-          await this.pool.sendMessage(sessionId, content)
+          const sessionId = msg.payload.sessionId as string
+          const content = msg.payload.content as string
+          const subagent = msg.payload.subagent as { agent: string; task: string } | undefined
+
+          if (subagent) {
+            // Use base64-encoded marker to avoid JSON brace collision with task content
+            const payload = JSON.stringify({ agent: subagent.agent, task: subagent.task })
+            const encoded = Buffer.from(payload, 'utf-8').toString('base64')
+            const marker = `<!-- xyz-agent-force-subagent:${encoded} -->`
+            const promptText = content || `Execute task using agent '${subagent.agent}'`
+            const agentPrompt = `${marker}\n${promptText}`
+            await this.pool.sendMessage(sessionId, agentPrompt)
+          } else {
+            await this.pool.sendMessage(sessionId, content)
+          }
+
           this.send(ws, { type: 'message.status', id: msg.id, payload: { sessionId, status: 'sent' } })
           break
         }
@@ -487,7 +504,7 @@ export class SidecarServer {
     const match = ctx.match(/^(\d+(?:\.\d+)?)\s*([kK])?$/)
     if (!match) return undefined
     const num = parseFloat(match[1])
-    return match[2]?.toLowerCase() === 'k' ? Math.round(num * 1000) : Math.round(num)
+    return match[2]?.toLowerCase() === 'k' ? Math.round(num * KILOBYTE) : Math.round(num)
   }
 
   /**
@@ -516,7 +533,7 @@ export class SidecarServer {
       }
     }
 
-    const res = await fetch(url, { headers, signal: AbortSignal.timeout(10000) })
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(API_FETCH_TIMEOUT_MS) })
     if (!res.ok) {
       const body = await res.text().catch(() => '')
       throw new Error(`API 返回 ${res.status}: ${body || res.statusText}`)

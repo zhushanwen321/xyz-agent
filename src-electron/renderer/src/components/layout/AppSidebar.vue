@@ -54,7 +54,7 @@ function handleSessionClick(sessionId: string) {
 </script>
 
 <template>
-  <aside :class="['fixed top-0 left-0 bottom-0 w-[280px] z-60 bg-surface border-r border-border -translate-x-full transition-transform duration-200 ease-out flex flex-col', { 'translate-x-0': props.visible }]">
+  <aside :class="['fixed top-0 left-0 bottom-0 w-[280px] z-[60] bg-surface border-r border-border -translate-x-full transition-transform duration-200 ease-out flex flex-col', { 'translate-x-0': props.visible }]">
     <div class="flex items-center justify-between px-[14px] py-[10px] border-b border-solid border-border">
       <span class="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">{{ t('sidebar.sessions') }}</span>
       <div class="flex items-center gap-1">

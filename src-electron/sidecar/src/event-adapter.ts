@@ -59,7 +59,6 @@ export class EventAdapter {
   private handleEvent(event: PiEvent): void {
     const msg = this.translate(event)
     if (msg) {
-      console.debug('[EventAdapter] → WS:', msg.type)
       this.send(msg)
     }
   }
@@ -112,7 +111,7 @@ export class EventAdapter {
             return null
 
           default:
-            console.debug('[EventAdapter] Unhandled message_update sub-type:', sub.type)
+            console.warn('[EventAdapter] Unhandled message_update sub-type:', sub.type)
             return null
         }
       }
@@ -233,14 +232,13 @@ export class EventAdapter {
       // compact 生命周期事件由 session-pool 手动转发，此处丢弃避免重复
       case 'compaction_start':
       case 'compaction_end':
-        console.debug('[EventAdapter] discarding compaction event:', event.type)
       // auto-retry 事件暂不转发
       case 'auto_retry_start':
       case 'auto_retry_end':
         return null
 
       default:
-        console.debug('[EventAdapter] Unhandled pi event type:', event.type)
+        console.warn('[EventAdapter] Unhandled pi event type:', event.type)
         return null
     }
   }

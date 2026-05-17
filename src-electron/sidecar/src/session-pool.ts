@@ -1,5 +1,6 @@
 import { basename, dirname, join } from 'node:path'
-import { readFileSync, appendFileSync, existsSync } from 'node:fs'
+import { appendFileSync, existsSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import type { WebSocket } from 'ws'
 import type {
   SessionSummary,
@@ -32,7 +33,7 @@ interface PiHistoryMessage {
 }
 import { EventAdapter } from './event-adapter.js'
 import { getDefaultModel, loadSkills } from './config-store.js'
-import { scanSessions, deleteSessionFile, type ScannedSession } from './session-scanner.js'
+import { scanSessions, deleteSessionFile, invalidateScanCache, type ScannedSession } from './session-scanner.js'
 import { lookupPiProvider } from './model-db.js'
 
 interface ManagedSession {
@@ -52,11 +53,6 @@ interface ManagedSession {
 
 const WS_OPEN = 1
 
-/**
- * Manages a pool of pi subprocess sessions, each with its own
- * RpcClient and EventAdapter. Binds to a single WebSocket for
- * pushing events to the TUI client.
- */
 export class SessionPool {
   private sessions = new Map<string, ManagedSession>()
   private pm = new ProcessManager()
@@ -106,11 +102,36 @@ export class SessionPool {
   // ── Session CRUD ───────────────────────────────────────────────
 
   async create(cwd?: string, label?: string): Promise<SessionSummary> {
-    const id = crypto.randomUUID()
+    const tempId = crypto.randomUUID()
     const sessionCwd = cwd ?? process.cwd()
     const modelId = getDefaultModel()
 
-    const client = await this.pm.createSession(id, sessionCwd, { skillPaths: this.getSkillPaths(sessionCwd) })
+    const client = await this.pm.createSession(tempId, sessionCwd, { skillPaths: this.getSkillPaths(sessionCwd) })
+
+    // 从 pi 获取真实 session ID（pi 在启动时创建 session 并分配 ID）
+    let piSessionId: string
+    let sessionFilePath: string | undefined
+    try {
+      const stateResp = await client.sendCommand('get_state')
+      const stateData = stateResp.data ?? stateResp.payload
+      piSessionId = (stateData?.sessionId as string) ?? ''
+      sessionFilePath = stateData?.sessionFile as string | undefined
+    } catch (e) {
+      await this.pm.destroySession(tempId)
+      throw new Error(`Failed to get session state from pi: ${e instanceof Error ? e.message : e}`)
+    }
+
+    if (!piSessionId) {
+      await this.pm.destroySession(tempId)
+      throw new Error('pi did not return a session ID')
+    }
+
+    // 用 pi 的真实 ID 替换临时 ID
+    const id = piSessionId
+    if (id !== tempId) {
+      this.pm.rekey(tempId, id)
+    }
+
     const adapter = new EventAdapter(id, (msg) => this.send(msg))
     adapter.attach(client)
 
@@ -140,23 +161,15 @@ export class SessionPool {
       isGenerating: false,
       adapter,
       unsubUsageListener: unsubUsage,
+      sessionFilePath,
     }
     this.sessions.set(id, session)
 
-    // 获取 pi 分配的 session 文件路径，用于后续持久化追踪
-    try {
-      const stateResp = await client.sendCommand('get_state')
-      const sessionFile = stateResp.payload?.sessionFile as string | undefined
-      if (sessionFile) {
-        session.sessionFilePath = sessionFile
-        // Persist label to file so scanSessions can read it after restart
-        if (session.label && session.label !== basename(sessionCwd)) {
-          appendFileSync(sessionFile, JSON.stringify({ type: 'session_info', name: session.label }) + '\n')
-        }
-      }
-    } catch (e) {
-      console.warn('[session-pool] get_state failed (non-critical):', e instanceof Error ? e.message : e)
+    // Persist label to file so scanSessions can read it after restart
+    if (sessionFilePath && session.label && session.label !== basename(sessionCwd)) {
+      appendFileSync(sessionFilePath, JSON.stringify({ type: 'session_info', name: session.label }) + '\n')
     }
+    invalidateScanCache()
 
     return this.toSummary(session)
   }
@@ -168,31 +181,31 @@ export class SessionPool {
     }
 
     // 在持久化文件中追加 session_info 条目（parseSessionName 取最后一个匹配）
-    const filePath = session?.sessionFilePath ?? this.findFilePathForSession(sessionId)
+    const filePath = session?.sessionFilePath ?? this.findScannedSession(sessionId)?.filePath
     if (filePath) {
       appendFileSync(filePath, JSON.stringify({ type: 'session_info', name: newName }) + '\n')
     }
+    invalidateScanCache()
   }
 
   async delete(sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId)
     if (session) {
       // 活跃 session：关闭进程 + 删除持久化文件
-      const filePath = session.sessionFilePath
       session.adapter.detach()
       if (session.unsubUsageListener) session.unsubUsageListener()
       await this.pm.destroySession(sessionId)
       this.sessions.delete(sessionId)
-      if (filePath) {
-        await deleteSessionFile(filePath)
+      if (session.sessionFilePath) {
+        await deleteSessionFile(session.sessionFilePath)
       }
     } else {
       // 非活跃 session：直接删除持久化文件
-      const scanned = scanSessions()
-      const target = scanned.find(s => s.id === sessionId)
+      const target = this.findScannedSession(sessionId)
       if (!target) throw new Error(`Session ${sessionId} not found`)
       await deleteSessionFile(target.filePath)
     }
+    invalidateScanCache()
   }
 
   // ── Messaging ──────────────────────────────────────────────────
@@ -204,15 +217,9 @@ export class SessionPool {
     if (!client) {
       console.log(`[session-pool] sendMessage: session ${sessionId} not active, restoring...`)
       try {
-        const summary = await this.restoreSession(sessionId)
-        // restoreSession creates a new internal session; use its id
-        client = this.pm.getClient(summary.id)
+        await this.restoreSession(sessionId)
+        client = this.pm.getClient(sessionId)
         if (!client) throw new Error('Restore succeeded but client not available')
-        // Notify frontend of the new session id so subsequent sends work
-        this.send({
-          type: 'session.restored',
-          payload: { oldSessionId: sessionId, newSessionId: summary.id, summary },
-        })
       } catch (e) {
         const errMsg = `Failed to restore session: ${e instanceof Error ? e.message : String(e)}`
         console.error(`[session-pool] ${errMsg}`)
@@ -227,7 +234,7 @@ export class SessionPool {
       activeSession.lastActiveAt = Date.now()
       activeSession.isGenerating = true
     }
-    console.log(`[session-pool] sendMessage: sessionId=${sessionId}, contentLength=${content.length}`)
+    console.log(`[session-pool] sendMessage: sessionId=${sessionId}`)
     try {
       await client.prompt(content)
       console.log(`[session-pool] prompt acknowledged: sessionId=${sessionId}`)
@@ -240,10 +247,8 @@ export class SessionPool {
   }
 
   private findSessionByClient(client: RpcClient): ManagedSession | undefined {
-    for (const session of this.sessions.values()) {
-      if (this.pm.getClient(session.id) === client) return session
-    }
-    return undefined
+    const id = this.pm.getSessionIdByClient(client)
+    return id ? this.sessions.get(id) : undefined
   }
 
   async abort(sessionId: string): Promise<void> {
@@ -328,22 +333,21 @@ export class SessionPool {
     if (client) {
       // Active session: get messages from running pi process
       const result = await client.getHistory()
-      const data = (result as unknown as Record<string, unknown>).data as { messages?: PiHistoryMessage[] } | undefined
+      const data = result.data as { messages?: PiHistoryMessage[] } | undefined
       const raw = data?.messages ?? (result.payload?.messages as PiHistoryMessage[] | undefined) ?? []
       return this.convertPiHistory(raw)
     }
 
     // Inactive session: parse messages from session file
-    return this.getHistoryFromFile(sessionId)
+    return await this.getHistoryFromFile(sessionId)
   }
 
   /** Parse messages from a persisted session file for an inactive session */
-  private getHistoryFromFile(sessionId: string): Message[] {
-    const scanned = scanSessions()
-    const target = scanned.find(s => s.id === sessionId)
+  private async getHistoryFromFile(sessionId: string): Promise<Message[]> {
+    const target = this.findScannedSession(sessionId)
     if (!target) return []
 
-    const content = readFileSync(target.filePath, 'utf-8')
+    const content = await readFile(target.filePath, 'utf-8')
     const lines = content.split('\n').filter(l => l.trim())
     const piMessages: PiHistoryMessage[] = []
 
@@ -353,7 +357,10 @@ export class SessionPool {
         if (entry.type === 'message' && entry.message) {
           piMessages.push(entry.message as PiHistoryMessage)
         }
-      } catch { /* skip malformed lines */ }
+      } catch {
+        // expected: malformed line, skip
+        void 0
+      }
     }
 
     return this.convertPiHistory(piMessages)
@@ -362,20 +369,23 @@ export class SessionPool {
   /** Convert pi message list, merging toolResults into their parent assistant message */
   private convertPiHistory(raw: PiHistoryMessage[]): Message[] {
     const result: Message[] = []
+    let lastAssistantWithToolCalls = -1
 
     for (const m of raw) {
       if (m.role === 'toolResult') {
         // Merge tool result into the last assistant message's matching toolCall
-        const lastAssistant = [...result].reverse().find(r => r.role === 'assistant' && r.toolCalls?.length)
-        if (lastAssistant?.toolCalls) {
-          const tc = lastAssistant.toolCalls.find(t => t.id === m.toolCallId)
-          if (tc) {
-            const textParts = (Array.isArray(m.content) ? m.content : [])
-              .filter((p: { type: string }) => p.type === 'text')
-              .map((p: { text?: string }) => p.text ?? '')
-              .join('\n')
-            tc.output = textParts
-            if (m.isError) tc.status = 'error'
+        if (lastAssistantWithToolCalls >= 0) {
+          const lastAssistant = result[lastAssistantWithToolCalls]
+          if (lastAssistant?.toolCalls) {
+            const tc = lastAssistant.toolCalls.find(t => t.id === m.toolCallId)
+            if (tc) {
+              const textParts = (Array.isArray(m.content) ? m.content : [])
+                .filter((p: { type: string }) => p.type === 'text')
+                .map((p: { text?: string }) => p.text ?? '')
+                .join('\n')
+              tc.output = textParts
+              if (m.isError) tc.status = 'error'
+            }
           }
         }
         continue
@@ -407,7 +417,7 @@ export class SessionPool {
         }
       }
 
-      result.push({
+      const msg: Message = {
         id: crypto.randomUUID(),
         role: m.role === 'user' ? 'user' : 'assistant',
         content: textContent,
@@ -415,7 +425,11 @@ export class SessionPool {
         ...(thinking.length > 0 && { thinking }),
         ...(toolCalls.length > 0 && { toolCalls }),
         timestamp: m.timestamp ?? Date.now(),
-      })
+      }
+      result.push(msg)
+      if (toolCalls.length > 0) {
+        lastAssistantWithToolCalls = result.length - 1
+      }
     }
 
     return result
@@ -458,11 +472,16 @@ export class SessionPool {
 
   /** 从持久化文件恢复 session：启动 pi 进程并加载已有文件 */
   async restoreSession(sessionId: string): Promise<SessionSummary> {
-    const scanned = scanSessions()
-    const target = scanned.find(s => s.id === sessionId)
+    const target = this.findScannedSession(sessionId)
     if (!target) throw new Error(`Persisted session ${sessionId} not found`)
 
-    const id = crypto.randomUUID()
+    // Detach existing adapter if present (race: rapid sends to cold session)
+    const existing = this.sessions.get(sessionId)
+    if (existing) {
+      existing.adapter.detach()
+      existing.unsubUsageListener?.()
+    }
+    const id = sessionId
     const client = await this.pm.createSession(id, target.cwd, { skillPaths: this.getSkillPaths(target.cwd) })
     const adapter = new EventAdapter(id, (msg) => this.send(msg))
     adapter.attach(client)
@@ -563,8 +582,8 @@ export class SessionPool {
     }
   }
 
-  private findFilePathForSession(sessionId: string): string | undefined {
-    return scanSessions().find(s => s.id === sessionId)?.filePath
+  private findScannedSession(sessionId: string): ScannedSession | undefined {
+    return scanSessions().find(s => s.id === sessionId)
   }
 
   private scannedToSummary(s: ScannedSession): SessionSummary {

@@ -20,13 +20,16 @@
             'inline-flex items-center gap-1 py-[2px] px-2 rounded-full text-xs font-medium',
             activeCommand.source === 'builtin'
               ? 'bg-border text-muted'
-              : 'bg-accent-light text-accent',
+              : activeCommand.source === 'skill'
+              ? 'bg-accent-light text-accent'
+              : 'bg-agent-light text-agent',
           ]"
         >
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+          <span v-if="cmdIcon" class="text-[11px] font-bold leading-none w-[14px] text-center shrink-0">{{ cmdIcon }}</span>
+          <svg v-else width="12" height="12" viewBox="0 0 16 16" fill="none" class="shrink-0">
             <path d="M3 8.5L6.5 12L13 4" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
-          <span class="leading-[1.4]">/{{ activeCommand.name }}</span>
+          <span class="leading-[1.4]">/{{ tagDisplayName }}</span>
           <span class="cursor-pointer ml-0.5 opacity-60 text-sm leading-none hover:opacity-100" @click="clearCommand">&times;</span>
         </div>
       </div>
@@ -86,7 +89,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  send: [payload: { content: string; skillName?: string }]
+  send: [payload: { content: string; skillName?: string; subagent?: { agent: string; task: string } }]
   cancel: []
   'select-model': [modelId: string]
   'send-command': [payload: { type: string; payload: Record<string, unknown> }]
@@ -118,13 +121,30 @@ const placeholder = computed(() => {
   return t('chat.inputPlaceholder')
 })
 
+const cmdIcon = computed(() => {
+  if (!activeCommand.value) return ''
+  switch (activeCommand.value.source) {
+    case 'agent': return 'A'
+    case 'skill': return 'S'
+    default: return ''
+  }
+})
+
+const tagDisplayName = computed(() => {
+  if (!activeCommand.value) return ''
+  const name = activeCommand.value.source === 'agent'
+    ? activeCommand.value.name.replace(/^agent:/, '')
+    : activeCommand.value.name
+  return name
+})
+
 const containerRef = ref<HTMLElement | null>(null)
 
 const currentModel = computed(() => settingsStore.defaultModel)
 
 // 合并内置命令 + skill 命令
 const allCommands = computed(() =>
-  mergeSkillCommands(providerStore.skills)
+  mergeSkillCommands(providerStore.skills, providerStore.agents)
 )
 
 const canSend = computed(() => {
@@ -141,6 +161,7 @@ const filteredCommands = computed(() =>
 )
 
 watch(text, (val) => {
+  if (activeCommand.value) return  // Don't reopen slash menu when a command is active
   if (val.startsWith('/')) {
     slashVisible.value = true
     slashFilter.value = val.slice(1)
@@ -183,8 +204,14 @@ function handleSlashSelect(cmd: SlashCommand) {
     })
   } else {
     activeCommand.value = cmd
-    // skill 有 argumentHint 时预填文本，用户可直接编辑
-    if (cmd.action.type === 'skill' && cmd.argumentHint) {
+    if (cmd.action.type === 'agent') {
+      text.value = ''
+      nextTick(() => {
+        slashVisible.value = false
+        const ta = containerRef.value?.querySelector<HTMLTextAreaElement>('textarea')
+        ta?.focus()
+      })
+    } else if (cmd.action.type === 'skill' && cmd.argumentHint) {
       text.value = cmd.argumentHint
     }
   }
@@ -211,6 +238,15 @@ function handleSend() {
         const prefix = `/skill:${cmd.name}`
         const content = trimmed ? `${prefix} ${trimmed}` : prefix
         emit('send', { content, skillName: cmd.name })
+        break
+      }
+      case 'agent': {
+        const agentName = cmd.action.agentName
+        // Strip /agent:<name> prefix only from the start of the string
+        const taskContent = trimmed.startsWith(`/agent:${agentName}`)
+          ? trimmed.slice(`/agent:${agentName}`.length).trim()
+          : trimmed
+        emit('send', { content: trimmed || '', subagent: { agent: agentName, task: taskContent } })
         break
       }
     }
@@ -241,11 +277,13 @@ function onCompositionEnd() {
   isComposing.value = false
 }
 
+const TEXTAREA_MAX_HEIGHT = 140
+
 function resizeTextarea() {
   const el = containerRef.value?.querySelector<HTMLTextAreaElement>('textarea')
   if (!el) return
   el.style.height = 'auto'
-  el.style.height = Math.min(el.scrollHeight, 140) + 'px'
+  el.style.height = Math.min(el.scrollHeight, TEXTAREA_MAX_HEIGHT) + 'px'
 }
 
 watch(text, () => nextTick(resizeTextarea))

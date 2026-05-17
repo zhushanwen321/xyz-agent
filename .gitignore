@@ -18,3 +18,4 @@ src/dist/
 src/node_modules/
 superpowers/20*/
 target/
+.xyz-harness/workflow-state.json

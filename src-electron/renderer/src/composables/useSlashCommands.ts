@@ -1,14 +1,15 @@
 import { ref } from 'vue'
-import type { SkillInfo } from '@xyz-agent/shared'
+import type { SkillInfo, AgentInfo } from '@xyz-agent/shared'
 
 // ── 类型定义 ────────────────────────────────────────────────────
 
-export type SlashCommandSource = 'builtin' | 'skill'
+export type SlashCommandSource = 'builtin' | 'skill' | 'agent'
 
 export type SlashCommandAction =
   | { type: 'local'; handler: (ctx: CommandContext) => void }
   | { type: 'protocol'; messageType: string }
   | { type: 'skill'; skillId: string }
+  | { type: 'agent'; agentName: string }
 
 export interface SlashCommand {
   name: string
@@ -40,7 +41,7 @@ export function useSlashCommands() {
   }
 
   /** 将 enabled skills 映射为 SlashCommand，与内置命令合并后按 name 排序 */
-  function mergeSkillCommands(skills: SkillInfo[]): SlashCommand[] {
+  function mergeSkillCommands(skills: SkillInfo[], agents?: AgentInfo[]): SlashCommand[] {
     const skillCmds: SlashCommand[] = skills
       .filter(s => s.enabled)
       .map(s => ({
@@ -51,7 +52,16 @@ export function useSlashCommands() {
         argumentHint: s.argumentHint,
       }))
 
-    const all = [...builtinCommands.value, ...skillCmds]
+    const agentCmds: SlashCommand[] = (agents ?? [])
+      .filter(a => a.enabled)
+      .map(a => ({
+        name: `agent:${a.name}`,
+        description: a.description,
+        source: 'agent' as const,
+        action: { type: 'agent' as const, agentName: a.name },
+      }))
+
+    const all = [...builtinCommands.value, ...skillCmds, ...agentCmds]
     // 去重（skill 可能与 builtin 同名）
     const seen = new Set<string>()
     return all

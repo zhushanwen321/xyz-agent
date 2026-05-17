@@ -16,6 +16,7 @@ const RECONNECT_BASE_DELAY_MS = 1000
 const RECONNECT_BACKOFF_EXPONENT = 2
 const HEARTBEAT_INTERVAL_MS = 15000
 const MAX_RECONNECT_DELAY = 30000
+const MAX_QUEUE_SIZE = 100
 
 const isMock = import.meta.env.VITE_MOCK === 'true'
 
@@ -112,20 +113,28 @@ export function send(msg: ClientMessage): void {
     return
   }
   if (ws?.readyState === WebSocket.OPEN) {
-    console.debug('[ws] send:', msg.type, msg.payload)
+    if (import.meta.env.DEV) {
+      console.debug('[ws] send:', msg.type, msg.payload)
+    }
     try {
       ws.send(JSON.stringify(msg))
     } catch(e) {
       console.error('[ws] send error:', e)
+      // 发送失败，入列等待重连后重发
+      enqueueMessage(msg)
     }
   } else {
     console.warn('[ws] queuing message (ws not open):', msg.type, 'readyState=' + ws?.readyState + ', queueSize=' + messageQueue.length)
-    if (messageQueue.length >= 100) {
-      const dropped = messageQueue.shift()
-      console.warn('[ws] queue full, dropping oldest message:', dropped?.type)
-    }
-    messageQueue.push(msg)
+    enqueueMessage(msg)
   }
+}
+
+function enqueueMessage(msg: ClientMessage): void {
+  if (messageQueue.length >= MAX_QUEUE_SIZE) {
+    const dropped = messageQueue.shift()
+    console.warn('[ws] queue full, dropping oldest message:', dropped?.type)
+  }
+  messageQueue.push(msg)
 }
 
 export function getState() {

@@ -78,7 +78,7 @@ const agentViews = computed<AgentView[]>(() => {
 
 // --- Event handlers ---
 
-function handleSend(payload: { content: string; skillName?: string }) {
+function handleSend(payload: { content: string; skillName?: string; subagent?: { agent: string; task: string } }) {
   const sid = props.sessionId
   if (!sid) return
   chatStore.setError(null, sid)
@@ -90,7 +90,7 @@ function handleSend(payload: { content: string; skillName?: string }) {
     timestamp: Date.now(),
     ...(payload.skillName ? { skillName: payload.skillName } : {}),
   }, sid)
-  sendMessage(payload.content)
+  sendMessage(payload.content, payload.subagent)
 }
 
 function handleSendCommand(payload: { type: string; payload: Record<string, unknown> }) {

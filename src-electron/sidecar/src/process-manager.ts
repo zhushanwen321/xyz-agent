@@ -19,7 +19,8 @@ function findPiExecutable(): string {
     const firstMatch = which.split('\n')[0].trim()
     if (firstMatch && existsSync(firstMatch)) return firstMatch
   } catch {
-    // not in PATH
+    // expected: pi not in PATH
+    void 0
   }
 
   // 2. Try nvm managed node installations
@@ -35,7 +36,8 @@ function findPiExecutable(): string {
         if (existsSync(piExe)) return piExe
       }
     } catch {
-      // nvm dir not found
+      // expected: directory not found, skip
+      void 0
     }
   } else {
     const nvmDir = join(homedir(), '.nvm', 'versions', 'node')
@@ -46,7 +48,8 @@ function findPiExecutable(): string {
         if (existsSync(piPath)) return piPath
       }
     } catch {
-      // nvm dir not found
+      // expected: directory not found, skip
+      void 0
     }
   }
 
@@ -80,6 +83,7 @@ interface ManagedProcess {
  */
 export class ProcessManager {
   private processes = new Map<string, ManagedProcess>()
+  private clientToId = new Map<RpcClient, string>()
   private exitCallback: ((sessionId: string, code: number | null) => void) | null = null
   private piPath: string
 
@@ -129,6 +133,7 @@ export class ProcessManager {
       if (!this.processes.has(sessionId)) return
       console.warn(`[process-manager] session ${sessionId} process exited unexpectedly (code: ${code})`)
       this.processes.delete(sessionId)
+      this.clientToId.delete(client)
       if (this.exitCallback) {
         this.exitCallback(sessionId, code)
       }
@@ -139,6 +144,7 @@ export class ProcessManager {
       cwd,
       createdAt: Date.now(),
     })
+    this.clientToId.set(client, sessionId)
 
     return client
   }
@@ -149,8 +155,8 @@ export class ProcessManager {
   async destroySession(sessionId: string): Promise<void> {
     const proc = this.processes.get(sessionId)
     if (!proc) return
-    // 先删除 entry，防止 onExit 回调中 processes.has() 误触发 exitCallback
     this.processes.delete(sessionId)
+    this.clientToId.delete(proc.client)
     await proc.client.kill()
   }
 
@@ -159,6 +165,11 @@ export class ProcessManager {
    */
   getClient(sessionId: string): RpcClient | undefined {
     return this.processes.get(sessionId)?.client
+  }
+
+  /** Get session ID by client instance (O(1) reverse lookup). */
+  getSessionIdByClient(client: RpcClient): string | undefined {
+    return this.clientToId.get(client)
   }
 
   hasClient(sessionId: string): boolean {
@@ -203,6 +214,15 @@ export class ProcessManager {
   isAlive(sessionId: string): boolean {
     const proc = this.processes.get(sessionId)
     return !!proc && !proc.client.exited
+  }
+
+  /** Rekey a process entry after learning the real session ID. */
+  rekey(oldId: string, newId: string): void {
+    const entry = this.processes.get(oldId)
+    if (!entry) return
+    this.processes.delete(oldId)
+    this.processes.set(newId, entry)
+    this.clientToId.set(entry.client, newId)
   }
 
   /** Register a callback for when a session's process exits unexpectedly. */
