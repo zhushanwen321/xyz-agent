@@ -21,6 +21,8 @@
   --warning-light: oklch(95% 0.04 85);
   --danger: oklch(55% 0.12 25);
   --danger-light: oklch(93% 0.04 25);
+  --agent: oklch(55% 0.15 250);
+  --agent-light: oklch(93% 0.04 250);
   --section-bg: oklch(95% 0.014 70);
   --hover-bg: oklch(96% 0.01 70);
   --divider: oklch(94% 0.008 70);
@@ -71,6 +73,8 @@
   --warning-light: oklch(25% 0.04 85);
   --danger: oklch(55% 0.12 25);
   --danger-light: oklch(25% 0.04 25);
+  --agent: oklch(65% 0.15 250);
+  --agent-light: oklch(22% 0.04 250);
   --section-bg: oklch(20% 0.010 75);
   --hover-bg: oklch(19% 0.010 75);
   --divider: oklch(22% 0.010 75);

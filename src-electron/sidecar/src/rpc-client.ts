@@ -9,6 +9,10 @@ export interface PiMessage {
   id?: string
   type: string
   payload?: Record<string, unknown>
+  /** pi RPC 响应的 data 字段（如 get_state 返回 sessionFile/sessionId） */
+  data?: Record<string, unknown>
+  success?: boolean
+  error?: string
 }
 
 export type PiEventListener = (event: PiMessage) => void

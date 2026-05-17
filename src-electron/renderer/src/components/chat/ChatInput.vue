@@ -15,16 +15,16 @@
     >
       <!-- Command/Skill 标签栏 -->
       <div v-if="activeCommand" class="flex pt-2 px-3.5">
-    <div
-      :class="[
-      'inline-flex items-center gap-1 py-[2px] px-2 rounded-full text-xs font-medium',
-      activeCommand.source === 'builtin'
-        ? 'bg-border text-muted'
-        : activeCommand.source === 'skill'
-        ? 'bg-accent-light text-accent'
-        : 'bg-blue-500/10 text-blue-500',
-      ]"
-    >
+        <div
+          :class="[
+            'inline-flex items-center gap-1 py-[2px] px-2 rounded-full text-xs font-medium',
+            activeCommand.source === 'builtin'
+              ? 'bg-border text-muted'
+              : activeCommand.source === 'skill'
+              ? 'bg-accent-light text-accent'
+              : 'bg-agent-light text-agent',
+          ]"
+        >
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
             <path d="M3 8.5L6.5 12L13 4" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
@@ -145,7 +145,7 @@ const filteredCommands = computed(() =>
 watch(text, (val) => {
   if (activeCommand.value) return  // Don't reopen slash menu when a command is active
   if (val.startsWith('/')) {
-  slashVisible.value = true
+    slashVisible.value = true
     slashFilter.value = val.slice(1)
   } else {
     slashVisible.value = false
@@ -185,19 +185,19 @@ function handleSlashSelect(cmd: SlashCommand) {
       ta?.focus()
     })
   } else {
-  activeCommand.value = cmd
-  if (cmd.action.type === 'agent') {
-    text.value = `/${cmd.name} `
-    // slashVisible already false (set above), but watch(text) will set it true
-    // Reset it after the watcher fires
-    nextTick(() => {
-    slashVisible.value = false
-    const ta = containerRef.value?.querySelector<HTMLTextAreaElement>('textarea')
-    ta?.focus()
-    })
-  } else if (cmd.action.type === 'skill' && cmd.argumentHint) {
-    text.value = cmd.argumentHint
-  }
+    activeCommand.value = cmd
+    if (cmd.action.type === 'agent') {
+      text.value = `/${cmd.name} `
+      // slashVisible already false (set above), but watch(text) will set it true
+      // Reset it after the watcher fires
+      nextTick(() => {
+        slashVisible.value = false
+        const ta = containerRef.value?.querySelector<HTMLTextAreaElement>('textarea')
+        ta?.focus()
+      })
+    } else if (cmd.action.type === 'skill' && cmd.argumentHint) {
+      text.value = cmd.argumentHint
+    }
   }
 }
 
@@ -226,8 +226,10 @@ function handleSend() {
       }
       case 'agent': {
         const agentName = cmd.action.agentName
-        // Strip /agent:<name> prefix from task content
-        const taskContent = (trimmed || '').replace(/^\/agent:\S+\s*/, '').trim()
+        // Strip /agent:<name> prefix only from the start of the string
+        const taskContent = trimmed.startsWith(`/agent:${agentName}`)
+          ? trimmed.slice(`/agent:${agentName}`.length).trim()
+          : trimmed
         emit('send', { content: trimmed || '', subagent: { agent: agentName, task: taskContent } })
         break
       }

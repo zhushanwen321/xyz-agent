@@ -24,7 +24,7 @@
               ? 'bg-border text-muted'
               : cmd.source === 'skill'
               ? 'bg-accent-light text-accent'
-              : 'bg-blue-500/10 text-blue-500',
+              : 'bg-agent-light text-agent',
           ]"
         >{{ cmd.source === 'builtin' ? 'command' : cmd.source === 'skill' ? 'skill' : 'agent' }}</span>
     <span class="text-xs font-semibold font-mono whitespace-nowrap text-accent w-[100px] shrink-0 overflow-hidden text-ellipsis">/{{ cmd.name }}</span>

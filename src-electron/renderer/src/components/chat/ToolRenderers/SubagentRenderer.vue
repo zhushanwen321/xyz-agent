@@ -2,8 +2,8 @@
   <div class="p-0" :data-status="toolCall.status">
   <!-- Agent line: icon + name + mode tag -->
   <div class="flex items-center gap-1.5 px-2.5 py-1.5 border-b border-border bg-surface">
-    <div class="w-3.5 h-3.5 rounded-sm bg-[oklch(0.65_0.15_250)] flex items-center justify-center text-white text-[9px] font-bold shrink-0">A</div>
-    <span class="font-mono text-xs font-semibold text-[oklch(0.55_0.15_250)]">{{ agentName }}</span>
+    <div class="w-3.5 h-3.5 rounded-sm bg-agent flex items-center justify-center text-white text-[9px] font-bold shrink-0">A</div>
+    <span class="font-mono text-xs font-semibold text-agent">{{ agentName }}</span>
     <span class="text-[10px] text-muted px-1.5 py-px bg-surface border border-border rounded-sm">{{ mode }}</span>
   </div>
 
@@ -29,9 +29,9 @@ const parsedInput = computed(() => {
   const raw = props.toolCall.input
   if (!raw) return null
   try {
-  return typeof raw === 'string' ? JSON.parse(raw) : raw
+    return typeof raw === 'string' ? JSON.parse(raw) : raw
   } catch {
-  return null
+    return null
   }
 })
 
@@ -40,7 +40,6 @@ const agentName = computed(() => parsedInput.value?.agent ?? 'unknown')
 const taskDesc = computed(() => parsedInput.value?.task ?? '')
 
 const mode = computed(() => {
-  if (parsedInput.value?.mode) return parsedInput.value.mode
   if (parsedInput.value?.tasks) return 'parallel'
   if (parsedInput.value?.chain) return 'chain'
   return 'single'
