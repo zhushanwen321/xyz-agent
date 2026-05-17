@@ -109,15 +109,21 @@ export class SessionPool {
     const client = await this.pm.createSession(tempId, sessionCwd, { skillPaths: this.getSkillPaths(sessionCwd) })
 
     // 从 pi 获取真实 session ID（pi 在启动时创建 session 并分配 ID）
-    let piSessionId: string = tempId
+    let piSessionId: string
     let sessionFilePath: string | undefined
     try {
       const stateResp = await client.sendCommand('get_state')
       const stateData = stateResp.data ?? stateResp.payload
-      piSessionId = (stateData?.sessionId as string) ?? tempId
+      piSessionId = (stateData?.sessionId as string) ?? ''
       sessionFilePath = stateData?.sessionFile as string | undefined
     } catch (e) {
-      console.warn('[session-pool] get_state failed, using temp ID:', e instanceof Error ? e.message : e)
+      await this.pm.destroySession(tempId)
+      throw new Error(`Failed to get session state from pi: ${e instanceof Error ? e.message : e}`)
+    }
+
+    if (!piSessionId) {
+      await this.pm.destroySession(tempId)
+      throw new Error('pi did not return a session ID')
     }
 
     // 用 pi 的真实 ID 替换临时 ID
