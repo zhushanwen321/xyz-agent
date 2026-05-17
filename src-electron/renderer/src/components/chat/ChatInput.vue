@@ -25,10 +25,8 @@
               : 'bg-agent-light text-agent',
           ]"
         >
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
-            <path d="M3 8.5L6.5 12L13 4" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          <span class="leading-[1.4]">/{{ activeCommand.name }}</span>
+          <span class="text-[11px] font-bold leading-none w-[14px] text-center shrink-0">{{ cmdIcon }}</span>
+          <span class="leading-[1.4]">/{{ tagDisplayName }}</span>
           <span class="cursor-pointer ml-0.5 opacity-60 text-sm leading-none hover:opacity-100" @click="clearCommand">&times;</span>
         </div>
       </div>
@@ -120,6 +118,23 @@ const placeholder = computed(() => {
   return t('chat.inputPlaceholder')
 })
 
+const cmdIcon = computed(() => {
+  if (!activeCommand.value) return ''
+  switch (activeCommand.value.source) {
+    case 'agent': return 'A'
+    case 'skill': return 'S'
+    default: return '✓'
+  }
+})
+
+const tagDisplayName = computed(() => {
+  if (!activeCommand.value) return ''
+  const name = activeCommand.value.source === 'agent'
+    ? activeCommand.value.name.replace(/^agent:/, '')
+    : activeCommand.value.name
+  return name
+})
+
 const containerRef = ref<HTMLElement | null>(null)
 
 const currentModel = computed(() => settingsStore.defaultModel)
@@ -187,9 +202,7 @@ function handleSlashSelect(cmd: SlashCommand) {
   } else {
     activeCommand.value = cmd
     if (cmd.action.type === 'agent') {
-      text.value = `/${cmd.name} `
-      // slashVisible already false (set above), but watch(text) will set it true
-      // Reset it after the watcher fires
+      text.value = ''
       nextTick(() => {
         slashVisible.value = false
         const ta = containerRef.value?.querySelector<HTMLTextAreaElement>('textarea')
