@@ -18,8 +18,8 @@ vi.mock('node:child_process', () => ({
   // Immediately emit 'exit' with code 0 on next tick to satisfy start() startup check
   process.nextTick(() => {
     const exitHandler = fakeProc.on.mock.calls
-    .filter(([event]: [string]) => event === 'exit')
-    .map(([, handler]: [string, Function]) => handler)[0]
+    .filter((call: unknown[]) => call[0] === 'exit')
+    .map((call: unknown[]) => call[1] as (...args: unknown[]) => void)[0]
     if (exitHandler) exitHandler(0)
   })
   return fakeProc
