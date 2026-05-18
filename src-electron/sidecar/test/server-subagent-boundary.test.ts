@@ -138,9 +138,10 @@ describe('SidecarServer message.send subagent — boundary & error paths', () =>
   expect(sendMessageMock).toHaveBeenCalledTimes(1)
   const sent = sendMessageMock.mock.calls[0][1] as string
   // JSON.stringify escapes special chars — original values preserved when parsed
-  const markerMatch = sent.match(/<!-- xyz-agent-force-subagent: (.+?) -->/)
+  const markerMatch = sent.match(/<!-- xyz-agent-force-subagent:(.+?) -->/)
   expect(markerMatch).not.toBeNull()
-  const parsed = JSON.parse(markerMatch![1])
+  const decoded = Buffer.from(markerMatch![1], 'base64').toString('utf-8')
+  const parsed = JSON.parse(decoded)
   expect(parsed.agent).toBe('a<b>c"d&e')
   expect(parsed.task).toBe('normal task')
   })
@@ -163,9 +164,10 @@ describe('SidecarServer message.send subagent — boundary & error paths', () =>
   expect(sendMessageMock).toHaveBeenCalledTimes(1)
   const sent = sendMessageMock.mock.calls[0][1] as string
   // JSON.stringify escapes special chars — original values preserved when parsed
-  const markerMatch = sent.match(/<!-- xyz-agent-force-subagent: (.+?) -->/)
+  const markerMatch = sent.match(/<!-- xyz-agent-force-subagent:(.+?) -->/)
   expect(markerMatch).not.toBeNull()
-  const parsed = JSON.parse(markerMatch![1])
+  const decoded = Buffer.from(markerMatch![1], 'base64').toString('utf-8')
+  const parsed = JSON.parse(decoded)
   expect(parsed.task).toBe('<script>alert("xss")</script>&done')
   })
 
@@ -189,9 +191,10 @@ describe('SidecarServer message.send subagent — boundary & error paths', () =>
   expect(sendMessageMock).toHaveBeenCalledTimes(1)
   const sent = sendMessageMock.mock.calls[0][1] as string
   // Newlines are JSON-escaped in the marker, but preserved when parsed
-  const markerMatch = sent.match(/<!-- xyz-agent-force-subagent: (.+?) -->/)
+  const markerMatch = sent.match(/<!-- xyz-agent-force-subagent:(.+?) -->/)
   expect(markerMatch).not.toBeNull()
-  const parsed = JSON.parse(markerMatch![1])
+  const decoded = Buffer.from(markerMatch![1], 'base64').toString('utf-8')
+  const parsed = JSON.parse(decoded)
   expect(parsed.task).toBe(multilineTask)
   })
 
@@ -215,9 +218,10 @@ describe('SidecarServer message.send subagent — boundary & error paths', () =>
   // Should still produce valid marker structure with empty agent
   expect(sent).toContain('xyz-agent-force-subagent')
   expect(sent).not.toContain('<tool_call')
-  const markerMatch = sent.match(/<!-- xyz-agent-force-subagent: (.+?) -->/)
+  const markerMatch = sent.match(/<!-- xyz-agent-force-subagent:(.+?) -->/)
   expect(markerMatch).not.toBeNull()
-  const parsed = JSON.parse(markerMatch![1])
+  const decoded = Buffer.from(markerMatch![1], 'base64').toString('utf-8')
+  const parsed = JSON.parse(decoded)
   expect(parsed.agent).toBe('')
   expect(parsed.task).toBe('do something')
   })
@@ -241,9 +245,10 @@ describe('SidecarServer message.send subagent — boundary & error paths', () =>
   const sent = sendMessageMock.mock.calls[0][1] as string
   expect(sent).toContain('xyz-agent-force-subagent')
   expect(sent).not.toContain('<tool_call')
-  const markerMatch = sent.match(/<!-- xyz-agent-force-subagent: (.+?) -->/)
+  const markerMatch = sent.match(/<!-- xyz-agent-force-subagent:(.+?) -->/)
   expect(markerMatch).not.toBeNull()
-  const parsed = JSON.parse(markerMatch![1])
+  const decoded = Buffer.from(markerMatch![1], 'base64').toString('utf-8')
+  const parsed = JSON.parse(decoded)
   expect(parsed.agent).toBe('agent-name')
   expect(parsed.task).toBe('')
   })
@@ -272,9 +277,10 @@ describe('SidecarServer message.send subagent — boundary & error paths', () =>
   expect(sent).toContain('xyz-agent-force-subagent')
   expect(sent).not.toContain('<tool_call')
   // Verify the JSON inside the marker is parseable
-  const markerMatch = sent.match(/<!-- xyz-agent-force-subagent: (.+?) -->/)
+  const markerMatch = sent.match(/<!-- xyz-agent-force-subagent:(.+?) -->/)
   expect(markerMatch).not.toBeNull()
-  const parsed = JSON.parse(markerMatch![1])
+  const decoded = Buffer.from(markerMatch![1], 'base64').toString('utf-8')
+  const parsed = JSON.parse(decoded)
   expect(parsed.agent).toBe(longAgent)
   expect(parsed.task).toBe(longTask)
   })
@@ -296,8 +302,12 @@ describe('SidecarServer message.send subagent — boundary & error paths', () =>
 
   expect(sendMessageMock).toHaveBeenCalledTimes(1)
   const sent = sendMessageMock.mock.calls[0][1] as string
-  // Single quotes are NOT in the /[<>"&]/ regex, so they pass through
-  expect(sent).toContain("agent's-name")
-  expect(sent).toContain("it's O'Reilly's book")
+  // Single quotes are preserved through base64 encode/decode round-trip
+  const markerMatch = sent.match(/<!-- xyz-agent-force-subagent:(.+?) -->/)
+  expect(markerMatch).not.toBeNull()
+  const decoded = Buffer.from(markerMatch![1], 'base64').toString('utf-8')
+  const parsed = JSON.parse(decoded)
+  expect(parsed.agent).toBe("agent's-name")
+  expect(parsed.task).toBe("it's O'Reilly's book")
   })
 })

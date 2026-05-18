@@ -1,8 +1,59 @@
+appId: com.xyz-agent.app
+productName: xyz-agent
+directories:
+  output: dist/builder-output
+publish:
+  provider: generic
+  url: https://github.com/zhushanwen321/xyz-agent/releases
+asar: true
 files:
   - dist/**/*
   - package.json
   - node_modules/**/*
-directories:
-  output: dist/builder-output
+  - "!node_modules/**/test/**"
+  - "!node_modules/**/tests/**"
+  - "!node_modules/**/*.md"
+
+# sidecar 预编译产物必须排除在 asar 之外，
+# 因为 Node.js 子进程无法直接读取 asar 内的文件。
+asarUnpack:
+  - "dist/sidecar/**/*"
+
+# NOTE: macos-latest 是 arm64 runner，无法交叉编译 x64。
+# 如需 Intel Mac 支持，追加 macos-13 (Intel) 或配置 universal。
 mac:
-  target: dir
+  target:
+    - target: dmg
+      arch:
+        - arm64
+    - target: zip
+      arch:
+        - arm64
+  category: public.app-category.developer-tools
+  minimumSystemVersion: 12.0.0
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: zip
+      arch:
+        - x64
+  artifactName: ${name}-${version}-setup-${arch}.${ext}
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  artifactName: ${name}-${version}-setup-${arch}.${ext}
+
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+  category: Development
+  artifactName: ${name}-${version}-${os}-${arch}.${ext}
