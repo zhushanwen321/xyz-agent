@@ -96,7 +96,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: xyz-agent-${{ matrix.platform }}
-          path: src-electron/dist/builder-output/
+          path: |
+            src-electron/dist/builder-output/*.dmg
+            src-electron/dist/builder-output/*.zip
+            src-electron/dist/builder-output/*.exe
+            src-electron/dist/builder-output/*.AppImage
+            src-electron/dist/builder-output/*.deb
           retention-days: 7
           if-no-files-found: error
 
