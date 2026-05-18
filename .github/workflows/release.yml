@@ -26,13 +26,10 @@ jobs:
         include:
           - os: macos-latest
             platform: mac
-            artifacts: 'src-electron/dist/builder-output/*.dmg src-electron/dist/builder-output/*.zip'
           - os: windows-latest
             platform: win
-            artifacts: 'src-electron/dist/builder-output/*.exe'
           - os: ubuntu-latest
             platform: linux
-            artifacts: 'src-electron/dist/builder-output/*.AppImage src-electron/dist/builder-output/*.deb'
 
     name: Build ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
@@ -90,11 +87,15 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: false
         run: npm run build
 
+      - name: List build output
+        working-directory: src-electron
+        run: find dist/builder-output -type f 2>/dev/null || echo 'No output directory'
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: xyz-agent-${{ matrix.platform }}
-          path: ${{ matrix.artifacts }}
+          path: src-electron/dist/builder-output/
           retention-days: 7
           if-no-files-found: error
 
