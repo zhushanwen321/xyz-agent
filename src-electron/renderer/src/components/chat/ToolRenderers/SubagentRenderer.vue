@@ -42,6 +42,7 @@ const taskDesc = computed(() => parsedInput.value?.task ?? '')
 const mode = computed(() => {
   if (parsedInput.value?.tasks) return 'parallel'
   if (parsedInput.value?.chain) return 'chain'
+  if (parsedInput.value?.mode === 'parallel' || parsedInput.value?.mode === 'chain') return parsedInput.value.mode
   return 'single'
 })
 

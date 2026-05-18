@@ -159,9 +159,10 @@ describe('SidecarServer message.send with subagent field', () => {
   expect(sentContent).toContain('xyz-agent-force-subagent')
   expect(sentContent).not.toContain('<tool_call')
   // Parse the JSON from the marker and verify values
-  const markerMatch = sentContent.match(/<!-- xyz-agent-force-subagent: (.+?) -->/)
+  const markerMatch = sentContent.match(/<!-- xyz-agent-force-subagent:(.+?) -->/)
   expect(markerMatch).not.toBeNull()
-  const parsed = JSON.parse(markerMatch![1])
+  const decoded = Buffer.from(markerMatch![1], 'base64').toString('utf-8')
+  const parsed = JSON.parse(decoded)
   expect(parsed.agent).toBe('harness-executor')
   expect(parsed.task).toBe('Implement the feature')
   // Marker should be followed by newline and prompt text
@@ -189,9 +190,10 @@ describe('SidecarServer message.send with subagent field', () => {
   const sentContent = sendMessageMock.mock.calls[0][1] as string
 
   // JSON.stringify handles escaping — original characters preserved in parsed JSON
-  const markerMatch = sentContent.match(/<!-- xyz-agent-force-subagent: (.+?) -->/)
+  const markerMatch = sentContent.match(/<!-- xyz-agent-force-subagent:(.+?) -->/)
   expect(markerMatch).not.toBeNull()
-  const parsed = JSON.parse(markerMatch![1])
+  const decoded = Buffer.from(markerMatch![1], 'base64').toString('utf-8')
+  const parsed = JSON.parse(decoded)
   expect(parsed.agent).toBe('agent<with>"special&chars')
   expect(parsed.task).toBe('do <something> "important" & more')
   })
@@ -238,16 +240,16 @@ describe('SidecarServer message.send with subagent field', () => {
   // Even with empty task, should construct the hidden marker prompt
   expect(sentContent).toContain('xyz-agent-force-subagent')
   expect(sentContent).not.toContain('<tool_call')
-  const markerMatch = sentContent.match(/<!-- xyz-agent-force-subagent: (.+?) -->/)
+  const markerMatch = sentContent.match(/<!-- xyz-agent-force-subagent:(.+?) -->/)
   expect(markerMatch).not.toBeNull()
-  const parsed = JSON.parse(markerMatch![1])
+  const decoded = Buffer.from(markerMatch![1], 'base64').toString('utf-8')
+  const parsed = JSON.parse(decoded)
   expect(parsed.agent).toBe('test-agent')
   expect(parsed.task).toBe('')
   })
 
-  it('should log the constructed XML prompt for subagent messages', async () => {
+  it('should produce valid base64-encoded marker for subagent messages', async () => {
   const client = await connectClient()
-  const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
 
   await sendAndCollect(client, {
     type: 'message.send',
@@ -262,15 +264,16 @@ describe('SidecarServer message.send with subagent field', () => {
     },
   })
 
-  // Should log the subagent prompt
-  const subagentLogCall = logSpy.mock.calls.find(
-    (call) => typeof call[0] === 'string' && call[0].includes('[sidecar] subagent prompt:'),
-  )
-  expect(subagentLogCall).toBeDefined()
-  expect(subagentLogCall![1]).toContain('xyz-agent-force-subagent')
-  expect(subagentLogCall![1]).toContain('"agent":"reviewer"')
+  expect(sendMessageMock).toHaveBeenCalledTimes(1)
+  const sentContent = sendMessageMock.mock.calls[0][1] as string
 
-  logSpy.mockRestore()
+  // Marker should contain base64-encoded JSON, not raw JSON
+  const markerMatch = sentContent.match(/<!-- xyz-agent-force-subagent:(.+?) -->/)
+  expect(markerMatch).not.toBeNull()
+  const decoded = Buffer.from(markerMatch![1], 'base64').toString('utf-8')
+  const parsed = JSON.parse(decoded)
+  expect(parsed.agent).toBe('reviewer')
+  expect(parsed.task).toBe('Review the code')
   })
 
   it('should not modify behavior for normal messages without subagent', async () => {
