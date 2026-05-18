@@ -29,7 +29,7 @@ jobs:
             artifacts: 'src-electron/dist/builder-output/*.dmg src-electron/dist/builder-output/*.zip'
           - os: windows-latest
             platform: win
-            artifacts: 'src-electron/dist/builder-output/*.exe src-electron/dist/builder-output/*.zip'
+            artifacts: 'src-electron/dist/builder-output/*.exe'
           - os: ubuntu-latest
             platform: linux
             artifacts: 'src-electron/dist/builder-output/*.AppImage src-electron/dist/builder-output/*.deb'

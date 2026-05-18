@@ -117,8 +117,15 @@ export class SidecarManager {
     let args: string[]
 
     if (app.isPackaged) {
-      // 生产环境：直接运行预编译的 JS
-      const sidecarDist = path.join(projectRoot, 'dist', 'sidecar', 'index.js')
+      // 生产环境：运行 asar unpack 后的预编译 JS
+      // asarUnpack 将 dist/sidecar 解压到 app.asar.unpacked/
+      const sidecarDist = path.join(
+        process.resourcesPath,
+        'app.asar.unpacked',
+        'dist',
+        'sidecar',
+        'index.js',
+      )
       if (!existsSync(sidecarDist)) {
         throw new Error(`Sidecar bundle not found at ${sidecarDist}`)
       }

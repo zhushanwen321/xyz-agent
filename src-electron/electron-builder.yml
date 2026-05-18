@@ -11,6 +11,11 @@ files:
   - "!node_modules/**/tests/**"
   - "!node_modules/**/*.md"
 
+# sidecar 预编译产物必须排除在 asar 之外，
+# 因为 Node.js 子进程无法直接读取 asar 内的文件。
+asarUnpack:
+  - "dist/sidecar/**/*"
+
 # NOTE: macos-latest 是 arm64 runner，无法交叉编译 x64。
 # 如需 Intel Mac 支持，追加 macos-13 (Intel) 或配置 universal。
 mac:
