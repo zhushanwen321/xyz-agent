@@ -1,8 +1,49 @@
+appId: com.xyz-agent.app
+productName: xyz-agent
+directories:
+  output: dist/builder-output
+asar: true
 files:
   - dist/**/*
   - package.json
   - node_modules/**/*
-directories:
-  output: dist/builder-output
+  - "!node_modules/**/test/**"
+  - "!node_modules/**/tests/**"
+  - "!node_modules/**/*.md"
+
 mac:
-  target: dir
+  target:
+    - target: dmg
+      arch:
+        - arm64
+    - target: zip
+      arch:
+        - arm64
+  category: public.app-category.developer-tools
+  minimumSystemVersion: 12.0.0
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: zip
+      arch:
+        - x64
+  artifactName: ${name}-${version}-setup-${arch}.${ext}
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  artifactName: ${name}-${version}-setup-${arch}.${ext}
+
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+  category: Development
+  artifactName: ${name}-${version}-${os}-${arch}.${ext}

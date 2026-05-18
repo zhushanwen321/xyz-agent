@@ -111,21 +111,38 @@ export class SidecarManager {
     const port = await this.findAvailablePort()
     console.log(`[sidecar] Starting on port ${port}`)
 
-    // 定位项目根目录（src-electron/）
+    // 根据打包状态选择 sidecar 启动方式
     const projectRoot = app.getAppPath()
-    const tsxPath = path.join(projectRoot, 'node_modules', '.bin', 'tsx')
-    const sidecarEntry = path.join(projectRoot, 'sidecar', 'src', 'index.ts')
+    let cmd: string
+    let args: string[]
 
-    if (!existsSync(tsxPath)) {
-      throw new Error(`tsx not found at ${tsxPath}. Run: npm install`)
+    if (app.isPackaged) {
+      // 生产环境：直接运行预编译的 JS
+      const sidecarDist = path.join(projectRoot, 'dist', 'sidecar', 'index.js')
+      if (!existsSync(sidecarDist)) {
+        throw new Error(`Sidecar bundle not found at ${sidecarDist}`)
+      }
+      cmd = 'node'
+      args = [sidecarDist, `--port=${port}`]
+      console.log(`[sidecar] node ${sidecarDist} --port=${port}`)
+    } else {
+      // 开发环境：tsx 运行 TS 源码
+      const tsxPath = path.join(projectRoot, 'node_modules', '.bin', 'tsx')
+      const sidecarEntry = path.join(projectRoot, 'sidecar', 'src', 'index.ts')
+
+      if (!existsSync(tsxPath)) {
+        throw new Error(`tsx not found at ${tsxPath}. Run: npm install`)
+      }
+      if (!existsSync(sidecarEntry)) {
+        throw new Error(`Sidecar entry not found at ${sidecarEntry}`)
+      }
+
+      cmd = 'node'
+      args = [tsxPath, sidecarEntry, `--port=${port}`]
+      console.log(`[sidecar] node ${tsxPath} ${sidecarEntry} --port=${port}`)
     }
-    if (!existsSync(sidecarEntry)) {
-      throw new Error(`Sidecar entry not found at ${sidecarEntry}`)
-    }
 
-    console.log(`[sidecar] node ${tsxPath} ${sidecarEntry} --port=${port}`)
-
-    this.child = spawn('node', [tsxPath, sidecarEntry, `--port=${port}`], {
+    this.child = spawn(cmd, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       cwd: projectRoot,
     })
