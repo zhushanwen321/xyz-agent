@@ -2,6 +2,9 @@ appId: com.xyz-agent.app
 productName: xyz-agent
 directories:
   output: dist/builder-output
+publish:
+  provider: generic
+  url: https://github.com/zhushanwen321/xyz-agent/releases
 asar: true
 files:
   - dist/**/*
