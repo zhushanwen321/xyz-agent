@@ -88,6 +88,7 @@ jobs:
         run: npm run build
 
       - name: List build output
+        shell: bash
         working-directory: src-electron
         run: find dist/builder-output -type f 2>/dev/null || echo 'No output directory'
 
