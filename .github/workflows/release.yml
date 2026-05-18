@@ -128,13 +128,19 @@ jobs:
             CHANGES=$(git log -20 --pretty=format:"- %s (%h)" --no-merges)
           fi
 
+          if [ -z "$CHANGES" ]; then
+            CHANGES="- Initial release"
+          fi
+
           {
             echo "body<<EOF"
             echo "## What's Changed"
             echo ""
             echo "$CHANGES"
             echo ""
-            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${LAST_TAG}...v${VERSION}"
+            if [ -n "$LAST_TAG" ]; then
+              echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${LAST_TAG}...v${VERSION}"
+            fi
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 

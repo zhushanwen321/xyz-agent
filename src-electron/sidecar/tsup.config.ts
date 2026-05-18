@@ -18,7 +18,6 @@ export default defineConfig({
     'node:readline',
     'node:net',
     'node:url',
-    'node:stream',
   ],
   splitting: false,
   sourcemap: false,
