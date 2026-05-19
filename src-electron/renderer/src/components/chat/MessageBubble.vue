@@ -102,18 +102,27 @@ const renderedContent = computed(() => {
   return fullRenderCache.value || lightweightContent.value
 })
 
+// 版本号防止竞态：快速 content 变化时只接受最新版本的渲染结果
+let renderVersion = 0
+
 // 监听 content/status/theme 变化，触发完整渲染
 watch(
   () => [props.message.content, props.message.status, settings.theme] as const,
   async ([content, status, theme]) => {
     if (status !== 'streaming' && content) {
+      const version = ++renderVersion
       const isDark = theme === 'dark' ||
         (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
       try {
-        fullRenderCache.value = await renderFull(content, isDark ? 'dark' : 'light')
+        const result = await renderFull(content, isDark ? 'dark' : 'light')
+        if (version === renderVersion) {
+          fullRenderCache.value = result
+        }
       } catch {
-        // fallback 到轻量渲染
-        fullRenderCache.value = renderLightweight(content)
+        if (version === renderVersion) {
+          // fallback 到轻量渲染
+          fullRenderCache.value = renderLightweight(content)
+        }
       }
       await nextTick()
       renderMermaidBlocks()
@@ -125,6 +134,7 @@ watch(
 // ── Mermaid 懒加载渲染 ──
 let mermaidModule: typeof import('mermaid').default | null = null
 let mermaidInitialized = false
+let mermaidRenderCounter = 0
 
 async function renderMermaidBlocks() {
   const el = document.querySelector(`[data-message-id="${props.message.id}"] .mermaid-source[data-mermaid]`)
@@ -147,7 +157,9 @@ async function renderMermaidBlocks() {
     const sources = document.querySelectorAll(`[data-message-id="${props.message.id}"] .mermaid-source[data-mermaid]`)
     for (const source of sources) {
       const content = source.textContent ?? ''
-      const { svg } = await mermaidModule.render(`mermaid-${Date.now()}-${Math.random().toString(36).slice(2)}`, content)
+      // 用递增计数器保证 ID 全局唯一，避免同一 tick 内 Date.now() 重复
+      const mermaidId = `mermaid-${mermaidRenderCounter++}`
+      const { svg } = await mermaidModule.render(mermaidId, content)
       source.innerHTML = svg
       source.removeAttribute('data-mermaid')
       source.classList.remove('mermaid-source')
