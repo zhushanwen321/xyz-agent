@@ -18,9 +18,9 @@ const PURIFY_CONFIG = {
   ADD_TAGS: ['input'],
 }
 
-// ── 占位符：预处理 fenced code block 时使用，避免 HTML 解析 ──
-const PH_PREFIX = '\x00CODEBLOCK_'
-const PH_SUFFIX = '\x00'
+// ── 占位符：双花括号形式，markdown-it 不做任何转义，原文保留 ──
+const PH_PREFIX = '{{CODEBLOCK_'
+const PH_SUFFIX = '}}'
 
 interface CodeBlockInfo {
   lang: string
