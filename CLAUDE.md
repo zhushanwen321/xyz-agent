@@ -12,6 +12,11 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Sidecar 的 AI Agent 桌面工作
 
 **完整编码规范**: [docs/standards.md](docs/standards.md)
 
+**功能开发地图**: [docs/feature-map/](docs/feature-map/) — 长期功能规划、现状盘点、待开发阶段、关键决策点、完整资料链接
+  - 每次启动新 Phase 前更新地图，确认当前阶段和优先级
+  - 构建能力地图和架构图时，从该目录获取全貌
+  - 最新版本: [2026-05-19.md](docs/feature-map/2026-05-19.md)
+
 **规范与设计文档**:
 - [完整编码规范](docs/standards.md) — 组件使用、样式规则、TypeScript 约束
 - [设计系统](docs/design-system.md) — CSS 变量、颜色体系、排版规则
