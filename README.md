@@ -79,8 +79,28 @@ npm run lint
 - **Split View** — 并排两个聊天面板，独立 session
 - **Focus Mode** — 隐藏侧栏和状态栏，聊天区居中窄化，沉浸式对话
 - **Overview** — 快速概览所有 session 的卡片视图
-- **Drawer 面板** — 右侧/左侧抽屉展示工具调用树、完成项、告警
+- **Drawer 面板** — 右侧/左侧抽屉展示任务树、已完成项、请求回应
+- **SubAgent 支持** — SlashMenu 触发 / LLM 自动调用 subagent，聊天流内结构化渲染
+- **Settings** — Provider / Skill / Agent / System 四标签完整管理
 - **快捷键** — Standard / Split / Focus / Overview / Settings 全局切换
+
+## 功能开发地图
+
+项目长期规划按 7 个 Phase 推进，详见 [docs/feature-map/](docs/feature-map/)。
+
+```
+Phase 0  生产可用化        →  Sidecar 编译 · electron-builder · Markdown 渲染优化
+Phase 1  基础修复          →  tool_execution_update · 手动触发修复 · 布局切换 · Tag 分组
+Phase 2  聊天核心增强      →  @-mention · Command Palette · 文件变更 Diff · Session Tree · 系统通知
+Phase 3  SubAgent 数据流   →  TaskTree 真实数据 · Drawer 三 Tab · 终止 subagent · PanelBar 联动
+Phase 4  高级模式          →  Parallel/Chain 渲染 · Background agent · Overview 状态聚合
+Phase 5  树形引擎          →  RPC 桥接 · ask_user · 递归分解 · Preset/Fork · 预算控制
+Phase 6  树形 GUI          →  SubAgent Tab 栏 · 子 Agent 对话面板 · 用户介入 · 全局任务树
+```
+
+各层完成度：Layer 1（GUI 壳）~90% · Layer 2（聊天核心）~85% · Layer 3（SubAgent 基础）~40% · Layer 4（树形引擎）0%
+
+关键决策点和完整资料链接见 [docs/feature-map/2026-05-19.md](docs/feature-map/2026-05-19.md)。
 
 ## 技术栈
 
@@ -125,7 +145,11 @@ xyz-agent/
 │           ├── session.ts     # Session 类型
 │           └── settings.ts    # 设置类型
 ├── docs/
-│   └── standards.md           # 编码规范与架构标准
+│   ├── feature-map/          # 功能开发地图（长期规划、现状、决策、资料链接）
+│   ├── designs/              # UI 设计 demo（HTML 文件）
+│   ├── project/              # 功能清单（已完成 / 规划 / 最高优先级）
+│   ├── templates/            # 竞品分析、设计原则、设计方向
+│   └── standards.md          # 编码规范与架构标准
 ├── tools/                     # 验证脚本 (verify-*.cjs)
 └── package.json               # 根 package（workspaces 配置）
 ```
