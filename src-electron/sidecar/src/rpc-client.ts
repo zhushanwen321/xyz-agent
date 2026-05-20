@@ -23,6 +23,8 @@ export interface RpcClientOptions {
   model?: string
   env?: Record<string, string>
   skillPaths?: string[]
+  /** pi 可执行文件路径（默认 'pi'，从 PATH 查找） */
+  piCommand?: string
 }
 
 const CMD_TIMEOUT_MS = 60_000
@@ -71,7 +73,7 @@ export class RpcClient {
     mkdirSync(sessionDir, { recursive: true })
     args.push('--session-dir', sessionDir)
 
-    this.proc = spawn('pi', args, {
+    this.proc = spawn(this.options.piCommand ?? 'pi', args, {
       cwd: this.options.cwd ?? process.cwd(),
       env,
       stdio: ['pipe', 'pipe', 'pipe'],

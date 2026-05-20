@@ -327,16 +327,17 @@ const batchInfoMap = computed(() => {
   border-radius: var(--radius-sm);
   overflow: hidden;
   border: 1px solid var(--border);
+  background: var(--section-bg);
 }
 .msg__body .code-block-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: var(--section-bg);
-  padding: 6px 12px;
+  padding: 8px 12px;
   font-size: 12px;
   color: var(--muted);
   font-family: var(--font-mono);
+  border-bottom: 1px solid var(--border);
 }
 .msg__body .code-block-lang { font-weight: 500; }
 .msg__body .code-block-filename { opacity: 0.7; }
@@ -359,10 +360,12 @@ const batchInfoMap = computed(() => {
 }
 .msg__body .code-block pre {
   margin: 0 !important;
-  padding: 12px;
+  padding: 12px 16px;
   background: transparent !important;
   flex: 1;
   overflow-x: auto;
+  /* 覆盖 Shiki 内联样式 */
+  background-color: transparent !important;
 }
 .msg__body .code-block pre code {
   background: none !important;
@@ -371,6 +374,7 @@ const batchInfoMap = computed(() => {
   font-size: 13px;
   line-height: 1.5;
   font-family: var(--font-mono);
+  white-space: pre;
 }
 .msg__body .code-copy-btn {
   background: none;
