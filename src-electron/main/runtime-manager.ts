@@ -221,25 +221,25 @@ export class RuntimeManager {
         return
       }
       const child = this.child
-      const onExit = () => {
-        child.removeListener('exit', onExit)
+      let resolved = false
+      const done = () => {
+        if (resolved) return
+        resolved = true
         this.child = null
         this._port = null
         resolve()
       }
-      child.once('exit', onExit)
+      child.once('exit', done)
       child.kill('SIGTERM')
       // 超时后强制 SIGKILL
       setTimeout(() => {
-        child.removeListener('exit', onExit)
+        child.removeListener('exit', done)
         if (!child.killed) {
           try { child.kill('SIGKILL') }
           // eslint-disable-next-line taste/no-silent-catch -- 进程可能已退出
           catch { /* ignore */ }
         }
-        this.child = null
-        this._port = null
-        resolve()
+        done()
       }, timeoutMs)
     })
   }

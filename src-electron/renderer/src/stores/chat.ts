@@ -17,6 +17,11 @@ export interface SystemNotification {
 
 export type ChatMessage = Message | SystemNotification
 
+/** 类型守卫：判断 ChatMessage 是否为 SystemNotification */
+export function isSystemNotification(msg: ChatMessage): msg is SystemNotification {
+  return 'notificationType' in msg || 'notificationTitle' in msg
+}
+
 // ── Types ──────────────────────────────────────────────────────────
 
 export interface PendingApproval {

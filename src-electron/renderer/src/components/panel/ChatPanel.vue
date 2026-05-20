@@ -39,11 +39,11 @@
               <!-- System messages -->
               <SystemNotification
                 v-if="msg.role === 'system'"
-                :type="(msg as any).notificationType || ((msg as any).status === 'error' ? 'alert' : 'done')"
-                :title="(msg as any).notificationTitle || ''"
-                :content="(msg as any).content"
-                :description="(msg as any).notificationDescription"
-                :action-label="(msg as any).notificationAction"
+                :type="isSystemNotification(msg) ? (msg.notificationType || (msg.status === 'error' ? 'alert' : 'done')) : 'done'"
+                :title="isSystemNotification(msg) ? (msg.notificationTitle || '') : ''"
+                :content="msg.content ?? ''"
+                :description="isSystemNotification(msg) ? msg.notificationDescription : undefined"
+                :action-label="isSystemNotification(msg) ? msg.notificationAction : undefined"
                 @action="$emit('notification-action', msg)"
               />
               <!-- User / Assistant messages -->
@@ -97,6 +97,7 @@ import { ref, watch, nextTick, onMounted } from 'vue'
 import type { Message } from '@xyz-agent/shared'
 import type { PendingToolCall } from '../chat/ApprovalCard.vue'
 import type { ChatMessage } from '../../stores/chat'
+import { isSystemNotification } from '../../stores/chat'
 
 import PanelBar from './PanelBar.vue'
 import SystemNotification from '../chat/SystemNotification.vue'

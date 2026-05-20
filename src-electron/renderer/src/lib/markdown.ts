@@ -27,8 +27,8 @@ const TOKEN_END = 8
 const PURIFY_CONFIG = {
   ADD_ATTR: ['class', 'style', 'aria-*', 'data-action', 'data-mermaid', 'data-lines', 'data-collapsed', 'data-lang'],
   ADD_TAGS: ['input'],
-  // 允许 local-file:// 协议（用于本地图片加载），默认 DOMPurify 只允许 http/https/mailto
-  ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|local-file|mailto|tel):|[^a-z]|[a-z+.-]+(?:[^a-z]|$))/i,
+  // 只允许明确列出的 scheme，拒绝 javascript: 等危险协议
+  ALLOWED_URI_REGEXP: /^(?:(?:https?|local-file|mailto|tel):|[^a-z])/i,
 }
 
 // ── 占位符：双花括号形式，markdown-it 不做任何转义，原文保留 ──
