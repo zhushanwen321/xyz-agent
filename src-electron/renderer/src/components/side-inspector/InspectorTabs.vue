@@ -17,21 +17,21 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
-export type DrawerTabId = 'tree' | 'done' | 'alert'
+export type InspectorTabId = 'tree' | 'done' | 'alert'
 
 const props = defineProps<{
-  activeTab: DrawerTabId
+  activeTab: InspectorTabId
   doneCount: number
   alertCount: number
 }>()
 
 defineEmits<{
-  'update:active-tab': [value: DrawerTabId]
+  'update:active-tab': [value: InspectorTabId]
 }>()
 
 const tabs = computed(() => [
-  { id: 'tree' as DrawerTabId, label: '任务树', count: 0, type: '' },
-  { id: 'done' as DrawerTabId, label: '已完成', count: props.doneCount, type: 'done' },
-  { id: 'alert' as DrawerTabId, label: '请求回应', count: props.alertCount, type: 'alert' },
+  { id: 'tree' as InspectorTabId, label: '任务树', count: 0, type: '' },
+  { id: 'done' as InspectorTabId, label: '已完成', count: props.doneCount, type: 'done' },
+  { id: 'alert' as InspectorTabId, label: '请求回应', count: props.alertCount, type: 'alert' },
 ])
 </script>

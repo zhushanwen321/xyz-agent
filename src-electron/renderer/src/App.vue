@@ -10,24 +10,24 @@
           :focused-panel-id="panelStore.focusedPanelId"
         />
         <!-- Drawers -->
-        <DrawerOverlay :visible="settingsStore.drawerOpen" @close="settingsStore.closeDrawer()" />
-        <DrawerRight
-          v-if="settingsStore.drawerSide === 'right'"
-          :open="settingsStore.drawerOpen"
+        <DrawerOverlay :visible="settingsStore.inspectorOpen" @close="settingsStore.closeInspector()" />
+        <InspectorRight
+          v-if="settingsStore.inspectorSide === 'right'"
+          :open="settingsStore.inspectorOpen"
           :tree-nodes="[]"
           :done-items="[]"
           :alert-items="[]"
           active-node-id=""
-          @close="settingsStore.closeDrawer()"
+          @close="settingsStore.closeInspector()"
         />
-        <DrawerLeft
-          v-if="panelStore.panelCount > 1 && settingsStore.drawerSide === 'left'"
-          :open="settingsStore.drawerOpen"
+        <InspectorLeft
+          v-if="panelStore.panelCount > 1 && settingsStore.inspectorSide === 'left'"
+          :open="settingsStore.inspectorOpen"
           :tree-nodes="[]"
           :done-items="[]"
           :alert-items="[]"
           active-node-id=""
-          @close="settingsStore.closeDrawer()"
+          @close="settingsStore.closeInspector()"
         />
       </main>
     </div>
@@ -61,8 +61,8 @@ import AppSidebar from './components/layout/AppSidebar.vue'
 import SettingsView from './components/layout/SettingsView.vue'
 import PanelTreeRenderer from './components/panel/PanelTreeRenderer.vue'
 import DrawerOverlay from './components/panel/DrawerOverlay.vue'
-import DrawerRight from './components/drawer/DrawerRight.vue'
-import DrawerLeft from './components/drawer/DrawerLeft.vue'
+import InspectorRight from './components/side-inspector/InspectorRight.vue'
+import InspectorLeft from './components/side-inspector/InspectorLeft.vue'
 import Overview from './components/overview/Overview.vue'
 import ToastContainer from './components/toast/ToastContainer.vue'
 // Data comes from WS events via composables/stores — no mock imports
@@ -85,7 +85,7 @@ function toggleSidebar() {
   sidebarVisible.value = !sidebarVisible.value
   // 与通知 Drawer 互斥：sidebar 打开时关闭通知 drawer
   if (sidebarVisible.value) {
-    settingsStore.closeDrawer()
+    settingsStore.closeInspector()
   }
 }
 

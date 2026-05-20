@@ -7,7 +7,7 @@
     </Button>
     <div class="font-display text-base font-bold leading-tight -tracking-[0.01em]">xyz<span class="text-accent">-agent</span></div>
     <div class="flex-1"></div>
-    <Button variant="ghost" size="icon" class="relative rounded-sm text-muted hover:text-accent" @click="openDrawer" :title="t('header.notifications')">
+    <Button variant="ghost" size="icon" class="relative rounded-sm text-muted hover:text-accent" @click="openInspector" :title="t('header.notifications')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px">
         <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/>
         <path d="M13.73 21a2 2 0 01-3.46 0"/>
@@ -81,8 +81,8 @@ const viewModeTitle = computed(() => {
   return t('header.split')
 })
 
-function openDrawer() {
-  settingsStore.openDrawer('right')
+function openInspector() {
+  settingsStore.openInspector('right')
 }
 
 function openSettings() {

@@ -18,7 +18,7 @@
     @approve="handleApprove"
     @deny="handleDeny"
     @always-allow="handleAlwaysAllow"
-    @open-drawer="handleOpenDrawer"
+    @open-inspector="handleOpenDrawer"
     @close-pane="handleClosePane"
     @switch-agent="handleSwitchAgent"
     @send-command="handleSendCommand"

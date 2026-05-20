@@ -19,7 +19,7 @@ for (const port of ['9222', '1420', '3210']) {
       process.kill(pid, SIGTERM)
       console.log(`[dev-cleanup] SIGTERM ${pid} on :${port}`)
     } catch (e) {
-      console.error(`[dev-cleanup] SIGTERM ${pid} failed: ${(e as Error).message}`)
+      console.error(`[dev-cleanup] SIGTERM ${pid} failed: ${e.message}`)
       continue
     }
 
@@ -40,7 +40,7 @@ for (const port of ['9222', '1420', '3210']) {
         process.kill(pid, SIGKILL)
         console.log(`[dev-cleanup] SIGKILL ${pid} on :${port}`)
       } catch (e) {
-        console.error(`[dev-cleanup] SIGKILL ${pid} failed: ${(e as Error).message}`)
+        console.error(`[dev-cleanup] SIGKILL ${pid} failed: ${e.message}`)
       }
     }
   }

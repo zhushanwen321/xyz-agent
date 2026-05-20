@@ -8,7 +8,7 @@
       :done-count="doneCount"
       :alert-count="alertCount"
       @switch-agent="switchAgent"
-      @open-drawer="$emit('open-drawer', $event)"
+      @open-inspector="$emit('open-inspector', $event)"
       @close-pane="$emit('close-pane')"
     />
 
@@ -143,7 +143,7 @@ const emit = defineEmits<{
   approve: [toolCallId: string]
   deny: [toolCallId: string]
   'always-allow': [toolName: string]
-  'open-drawer': [tab: string]
+  'open-inspector': [tab: string]
   'close-pane': []
   'notification-action': [msg: ChatMessage]
   'switch-agent': [agentId: string]

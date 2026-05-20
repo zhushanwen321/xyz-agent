@@ -28,7 +28,7 @@ const props = withDefaults(
 
 defineEmits<{
   'switch-agent': [id: string]
-  'open-drawer': [type: string]
+  'open-inspector': [type: string]
   'close-pane': []
 }>()
 
@@ -102,11 +102,11 @@ function splitPanel(direction: 'horizontal' | 'vertical') {
     <span v-else class="inline-flex items-center gap-1 text-[11px] text-muted overflow-hidden whitespace-nowrap min-w-0 italic opacity-50">空面板</span>
 
     <div v-if="(doneCount ?? 0) > 0 || (alertCount ?? 0) > 0" class="flex items-center gap-[5px]">
-      <span v-if="(doneCount ?? 0) > 0" class="inline-flex items-center gap-1 px-2 py-[2px] rounded-full cursor-pointer text-[11px] font-semibold transition-all duration-150 ease-ease border border-transparent bg-success-light text-success hover:border-success focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2" role="button" tabindex="0" @click="$emit('open-drawer', 'done')" @keydown.enter="$emit('open-drawer', 'done')">
+      <span v-if="(doneCount ?? 0) > 0" class="inline-flex items-center gap-1 px-2 py-[2px] rounded-full cursor-pointer text-[11px] font-semibold transition-all duration-150 ease-ease border border-transparent bg-success-light text-success hover:border-success focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2" role="button" tabindex="0" @click="$emit('open-inspector', 'done')" @keydown.enter="$emit('open-inspector', 'done')">
         <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" style="width:10px;height:10px"><polyline points="2 6 5 9 10 3"/></svg>
         <span class="inline-flex items-center justify-center min-w-[14px] h-[14px] rounded-full text-[9px] font-bold text-white bg-success">{{ doneCount }}</span>
       </span>
-      <span v-if="(alertCount ?? 0) > 0" class="inline-flex items-center gap-1 px-2 py-[2px] rounded-full cursor-pointer text-[11px] font-semibold transition-all duration-150 ease-ease border border-transparent bg-danger-light text-danger hover:border-danger focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2" role="button" tabindex="0" @click="$emit('open-drawer', 'alert')" @keydown.enter="$emit('open-drawer', 'alert')">
+      <span v-if="(alertCount ?? 0) > 0" class="inline-flex items-center gap-1 px-2 py-[2px] rounded-full cursor-pointer text-[11px] font-semibold transition-all duration-150 ease-ease border border-transparent bg-danger-light text-danger hover:border-danger focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2" role="button" tabindex="0" @click="$emit('open-inspector', 'alert')" @keydown.enter="$emit('open-inspector', 'alert')">
         <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" style="width:10px;height:10px"><circle cx="6" cy="6" r="4.5"/><path d="M6 4v2.5M6 8v.5"/></svg>
         <span class="inline-flex items-center justify-center min-w-[14px] h-[14px] rounded-full text-[9px] font-bold text-white bg-danger animate-pulse-dot">{{ alertCount }}</span>
       </span>
