@@ -61,13 +61,20 @@ const expanded = ref(false)
 // Vue 组件定义不能被 reactive 包裹，用 shallowRef 避免性能开销
 const rendererComp = shallowRef<Component | null>(null)
 
+const TIMER_UPDATE_INTERVAL_MS = 100
+const AUTO_EXPAND_DELAY_MS = 80
+const MS_PER_SECOND = 1000
+const DECISECOND_MS = 100
+const SECONDS_PER_MINUTE = 60
+const BYTES_PER_KB = 1024
+
 // ── Elapsed time reactive counter ──
 const now = ref(Date.now())
 let timerInterval: ReturnType<typeof setInterval> | undefined
 
 function startTimer() {
   now.value = Date.now()
-  timerInterval = setInterval(() => { now.value = Date.now() }, 100)
+  timerInterval = setInterval(() => { now.value = Date.now() }, TIMER_UPDATE_INTERVAL_MS)
 }
 
 function stopTimer() {
@@ -97,7 +104,7 @@ watch(() => props.toolCall.status, (status) => {
     stopTimer()
     now.value = props.toolCall.endTime ?? Date.now()
     // Auto-expand with slight delay for completion animation
-    setTimeout(() => { expanded.value = true }, 80)
+    setTimeout(() => { expanded.value = true }, AUTO_EXPAND_DELAY_MS)
   }
 })
 
@@ -119,11 +126,11 @@ const elapsedMs = computed(() => {
 
 const elapsedDisplay = computed(() => {
   const ms = elapsedMs.value
-  const s = ms / 1000
-  if (s < 1) return `${(ms / 100).toFixed(1)}s`
-  if (s >= 60) {
-    const m = Math.floor(s / 60)
-    const sec = Math.floor(s % 60)
+  const s = ms / MS_PER_SECOND
+  if (s < 1) return `${(ms / DECISECOND_MS).toFixed(1)}s`
+  if (s >= SECONDS_PER_MINUTE) {
+    const m = Math.floor(s / SECONDS_PER_MINUTE)
+    const sec = Math.floor(s % SECONDS_PER_MINUTE)
     return `${m}m${sec}s`
   }
   return `${s.toFixed(1)}s`
@@ -163,9 +170,9 @@ const fileSizeRaw = computed(() => {
   const text = obj.content ?? obj.newText ?? obj.new_text ?? ''
   const len = String(text).length
   if (len === 0) return null
-  if (len < 1024) return `${len}B`
-  if (len < 1024 * 1024) return `${(len / 1024).toFixed(1)}KB`
-  return `${(len / (1024 * 1024)).toFixed(1)}MB`
+  if (len < BYTES_PER_KB) return `${len}B`
+  if (len < BYTES_PER_KB * BYTES_PER_KB) return `${(len / BYTES_PER_KB).toFixed(1)}KB`
+  return `${(len / (BYTES_PER_KB * BYTES_PER_KB)).toFixed(1)}MB`
 })
 
 // ── Batch summary ──

@@ -3,6 +3,12 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type { ScannedSkillInfo, ScanSourceType } from '@xyz-agent/shared'
 
+const DESCRIPTION_MAX_LENGTH = 200
+const TRIGGER_MIN_LENGTH = 2
+const TRIGGER_MAX_LENGTH = 40
+const BYTES_1KB = 1024
+const BYTES_1MB = BYTES_1KB * BYTES_1KB
+
 function expandHome(p: string): string {
   return p.startsWith('~') ? join(homedir(), p.slice(1)) : p
 }
@@ -49,7 +55,7 @@ export function parseSkillMd(content: string): { description: string; triggers: 
     const line = lines[i].trim()
     if (!line) continue
     if (line.startsWith('#')) continue
-    description = line.slice(0, 200)
+    description = line.slice(0, DESCRIPTION_MAX_LENGTH)
     break
   }
 
@@ -64,16 +70,16 @@ export function parseSkillMd(content: string): { description: string; triggers: 
   let match: RegExpExecArray | null
   while ((match = triggerPattern.exec(triggerSource)) !== null) {
     const t = match[1].trim()
-    if (t.length >= 2 && t.length <= 40) triggers.push(t)
+    if (t.length >= TRIGGER_MIN_LENGTH && t.length <= TRIGGER_MAX_LENGTH) triggers.push(t)
   }
 
   return { description, triggers, argumentHint }
 }
 
 function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  if (bytes < BYTES_1KB) return `${bytes} B`
+  if (bytes < BYTES_1MB) return `${(bytes / BYTES_1KB).toFixed(1)} KB`
+  return `${(bytes / BYTES_1MB).toFixed(1)} MB`
 }
 
 export function scanSkills(sources: string[], existingSkillIds: Set<string>): ScannedSkillInfo[] {
@@ -123,8 +129,9 @@ export function scanSkills(sources: string[], existingSkillIds: Set<string>): Sc
           tools: [],
           alreadyImported,
         })
-      } catch {
-        // skip unreadable files
+      // eslint-disable-next-line taste/no-silent-catch -- intentional: skip unreadable skills, continue scanning
+      } catch (e) {
+        console.error(`[skill-scanner] error reading ${dirPath}:`, e)
       }
     }
   }

@@ -3,6 +3,8 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type { ScannedAgentInfo, ScanSourceType } from '@xyz-agent/shared'
 
+const DESCRIPTION_MAX_LENGTH = 200
+
 function expandHome(p: string): string {
   return p.startsWith('~') ? join(homedir(), p.slice(1)) : p
 }
@@ -51,10 +53,10 @@ function parseAgentMd(content: string): { description: string; tools: string[] }
       if (line && !line.startsWith(' ') && !line.startsWith('\t')) break
       multilineParts.push(line.trim())
     }
-    description = multilineParts.join(' ').trim().slice(0, 200)
+    description = multilineParts.join(' ').trim().slice(0, DESCRIPTION_MAX_LENGTH)
   } else {
     const singleLine = fmText.match(/^description:\s*["']?(.+?)["']?\s*$/m)?.[1]?.trim()
-    if (singleLine) description = singleLine.slice(0, 200)
+    if (singleLine) description = singleLine.slice(0, DESCRIPTION_MAX_LENGTH)
   }
 
   // 正文 fallback
@@ -63,7 +65,7 @@ function parseAgentMd(content: string): { description: string; tools: string[] }
       const line = lines[i].trim()
       if (!line) continue
       if (line.startsWith('#')) continue
-      description = line.slice(0, 200)
+      description = line.slice(0, DESCRIPTION_MAX_LENGTH)
       break
     }
   }
@@ -136,8 +138,9 @@ export function scanAgents(sources: string[], existingAgentIds: Set<string>): Sc
           tools,
           alreadyImported,
         })
-      } catch {
-        // skip unreadable
+      // eslint-disable-next-line taste/no-silent-catch -- intentional: skip unreadable agents, continue scanning
+      } catch (e) {
+        console.error(`[agent-scanner] error reading ${dirPath}:`, e)
       }
     }
   }

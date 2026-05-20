@@ -57,7 +57,12 @@
     />
 
     <!-- Markdown content -->
-    <div v-if="message.content" class="msg__body select-text">
+    <div
+      v-if="message.content"
+      class="msg__body select-text"
+      :data-message-id="message.id"
+      @click="handleBodyClick"
+    >
       <span
         v-if="message.role === 'user' && message.skillName"
         class="inline-flex items-center gap-0.5 text-[11px] font-medium py-[1px] px-1.5 rounded-full bg-[var(--white-25)] text-white mr-1 align-middle leading-[1.4]"
@@ -72,16 +77,152 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import type { Message } from '@xyz-agent/shared'
 import type { BatchInfo } from './ToolCallCard.vue'
-import { renderMarkdown } from '../../lib/markdown'
+import { renderLightweight, renderFull } from '../../lib/markdown'
+import { useSettingsStore } from '../../stores/settings'
 import ThinkingBlock from './ThinkingBlock.vue'
 import ToolCallCard from './ToolCallCard.vue'
 
 const props = defineProps<{ message: Message }>()
+const settings = useSettingsStore()
 
-const renderedContent = computed(() => renderMarkdown(props.message.content))
+const COPY_FEEDBACK_MS = 1500
+const BYTES_PER_KB = 1024
+const MIN_TOOL_CALLS = 2
+const BATCH_MIN_SIZE = 2
+
+// 完整渲染缓存（renderFull 是异步的）
+const fullRenderCache = ref('')
+
+// 流式阶段直接用轻量渲染
+const lightweightContent = computed(() => renderLightweight(props.message.content))
+
+// 最终输出：流式用轻量，完成用缓存
+const renderedContent = computed(() => {
+  if (props.message.status === 'streaming') {
+    return lightweightContent.value
+  }
+  return fullRenderCache.value || lightweightContent.value
+})
+
+// 版本号防止竞态：组件级闭包，避免多实例共享
+let renderVersion = 0
+
+// Mermaid 模块级单例（动态导入，延迟初始化）
+let mermaidModule: typeof import('mermaid').default | null = null
+// 记录上次初始化时的主题，切换后需重新初始化
+let mermaidInitTheme: string | null = null
+let mermaidRenderCounter = 0
+
+// 监听 content/status/theme 变化，触发完整渲染
+watch(
+  () => [props.message.content, props.message.status, settings.theme] as const,
+  async ([content, status]) => {
+    if (status !== 'streaming' && content) {
+      const version = ++renderVersion
+      const effectiveTheme = getEffectiveTheme()
+      try {
+        const result = await renderFull(content, effectiveTheme)
+        if (version === renderVersion) {
+          fullRenderCache.value = result
+        }
+      } catch {
+        if (version === renderVersion) {
+          // fallback 到轻量渲染
+          fullRenderCache.value = renderLightweight(content)
+        }
+      }
+      await nextTick()
+      renderMermaidBlocks()
+    }
+  },
+  { immediate: true },
+)
+
+// ── Mermaid 懒加载渲染 ──
+
+/** 获取当前实际主题（解析 system 为 light/dark） */
+function getEffectiveTheme(): 'light' | 'dark' {
+  if (settings.theme === 'dark') return 'dark'
+  if (settings.theme === 'light') return 'light'
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
+
+async function renderMermaidBlocks() {
+  const el = document.querySelector(`[data-message-id="${props.message.id}"] .mermaid-source[data-mermaid]`)
+  if (!el) return
+
+  try {
+    if (!mermaidModule) {
+      mermaidModule = (await import('mermaid')).default
+    }
+    const effectiveTheme = getEffectiveTheme()
+    // 首次初始化或主题切换后需重新初始化
+    if (mermaidInitTheme !== effectiveTheme) {
+      mermaidModule.initialize({
+        startOnLoad: false,
+        securityLevel: 'sandbox',
+        theme: effectiveTheme === 'dark' ? 'dark' : 'default',
+      })
+      mermaidInitTheme = effectiveTheme
+    }
+    const sources = document.querySelectorAll(`[data-message-id="${props.message.id}"] .mermaid-source[data-mermaid]`)
+    for (const source of sources) {
+      const content = source.textContent ?? ''
+      // 用递增计数器保证 ID 全局唯一，避免同一 tick 内 Date.now() 重复
+      const mermaidId = `mermaid-${mermaidRenderCounter++}`
+      const { svg } = await mermaidModule.render(mermaidId, content)
+      source.innerHTML = svg
+      source.removeAttribute('data-mermaid')
+      source.classList.remove('mermaid-source')
+      source.classList.add('mermaid-rendered')
+    }
+  } catch {
+    // Mermaid 渲染失败，fallback 显示原文 + 错误提示
+    const sources = document.querySelectorAll(`[data-message-id="${props.message.id}"] .mermaid-source[data-mermaid]`)
+    sources.forEach(source => {
+      source.classList.add('mermaid-error')
+      const errorEl = document.createElement('div')
+      errorEl.className = 'mermaid-error-msg'
+      errorEl.textContent = '图表渲染失败'
+      source.parentElement?.insertBefore(errorEl, source)
+    })
+  }
+}
+
+// ── 事件委托：复制 + 折叠 ──
+async function handleBodyClick(e: MouseEvent) {
+  const target = e.target as HTMLElement
+
+  // 复制按钮
+  if (target.matches('.code-copy-btn')) {
+    e.preventDefault()
+    const codeBlock = target.closest('.code-block')
+    const codeEl = codeBlock?.querySelector('pre code') ?? codeBlock?.querySelector('code')
+    const code = codeEl?.textContent ?? ''
+    try {
+      await navigator.clipboard.writeText(code)
+      target.textContent = '已复制'
+      setTimeout(() => { target.textContent = '复制' }, COPY_FEEDBACK_MS)
+    } catch {
+      target.textContent = '复制失败'
+      setTimeout(() => { target.textContent = '复制' }, COPY_FEEDBACK_MS)
+    }
+    return
+  }
+
+  // 折叠/展开按钮
+  if (target.matches('.code-expand-btn')) {
+    e.preventDefault()
+    const codeBlock = target.closest('.code-block')
+    if (!codeBlock) return
+    const isCollapsed = codeBlock.getAttribute('data-collapsed') === 'true'
+    codeBlock.setAttribute('data-collapsed', isCollapsed ? 'false' : 'true')
+    target.textContent = isCollapsed ? '收起' : '展开'
+  }
+}
 
 // ── Batch detection: consecutive same-type file operations ──
 function extractContentSize(input: unknown): number {
@@ -95,15 +236,15 @@ function extractContentSize(input: unknown): number {
 
 function formatBatchSize(bytes: number): string {
   if (bytes <= 0) return ''
-  if (bytes < 1024) return `${bytes}B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
+  if (bytes < BYTES_PER_KB) return `${bytes}B`
+  if (bytes < BYTES_PER_KB * BYTES_PER_KB) return `${(bytes / BYTES_PER_KB).toFixed(1)}KB`
+  return `${(bytes / (BYTES_PER_KB * BYTES_PER_KB)).toFixed(1)}MB`
 }
 
 const batchInfoMap = computed(() => {
   const result = new Map<string, BatchInfo>()
   const toolCalls = props.message.toolCalls
-  if (!toolCalls || toolCalls.length < 2) return result
+  if (!toolCalls || toolCalls.length < MIN_TOOL_CALLS) return result
 
   let batchStart = 0
   for (let i = 1; i <= toolCalls.length; i++) {
@@ -112,7 +253,7 @@ const batchInfoMap = computed(() => {
       const size = i - batchStart
       // Only group file operation batches (write, edit)
       const name = toolCalls[batchStart].toolName
-      if (size >= 2 && (name === 'write' || name === 'edit')) {
+      if (size >= BATCH_MIN_SIZE && (name === 'write' || name === 'edit')) {
         let totalBytes = 0
         for (let j = batchStart; j < i; j++) {
           totalBytes += extractContentSize(toolCalls[j].input)
@@ -134,20 +275,8 @@ const batchInfoMap = computed(() => {
 })
 </script>
 
-<!-- msg__body 内的 p/code 由 v-html 渲染，无法用 Tailwind 类作用于动态内容 -->
+<!-- msg__body 内的元素由 v-html 渲染，这些样式已移至 style.css -->
 <style scoped>
-.msg__body p { margin-bottom: 6px; }
-.msg__body p:last-child { margin-bottom: 0; }
-.msg__body code {
-  background: var(--bg);
-  padding: 1px 4px;
-  border-radius: var(--radius-xs);
-  font-size: 0.88em;
-  font-family: var(--font-mono);
-}
-/* 用户消息气泡内的 code 需要白底 */
-[data-role="user"] .msg__body code {
-  background: rgba(255, 255, 255, 0.2);
-  color: white;
-}
+/* msg__body 内的元素由 v-html 渲染，无法用 Tailwind 类作用于动态内容 */
+/* 所有样式已移至 style.css，如在此处添加样式请确保 style.css 同步更新 */
 </style>

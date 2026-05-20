@@ -82,6 +82,7 @@ function startRename(e: MouseEvent) {
 function confirmRename() {
   const name = renameValue.value.trim()
   if (name && name !== props.session.label) {
+    // eslint-disable-next-line taste/no-multi-arg-emit
     emit('confirm-rename', props.session.id, name)
   } else {
     emit('cancel-rename')

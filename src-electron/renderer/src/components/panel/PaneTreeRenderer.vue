@@ -55,6 +55,8 @@ import PaneSessionView from './PaneSessionView.vue'
 import EmptyPane from './EmptyPane.vue'
 import SplitDivider from './SplitDivider.vue'
 
+const PERCENT_SCALE = 100
+
 const props = withDefaults(
   defineProps<{
     node: PaneTree
@@ -69,13 +71,13 @@ const splitContainerRef = ref<HTMLElement | null>(null)
 // Flex-basis styles for split children based on ratio
 const firstChildStyle = computed(() => {
   if (props.node.type !== 'split') return {}
-  const basis = `${(props.node.ratio * 100).toFixed(1)}%`
+  const basis = `${(props.node.ratio * PERCENT_SCALE).toFixed(1)}%`
   return { flexBasis: basis }
 })
 
 const secondChildStyle = computed(() => {
   if (props.node.type !== 'split') return {}
-  const basis = `${((1 - props.node.ratio) * 100).toFixed(1)}%`
+  const basis = `${((1 - props.node.ratio) * PERCENT_SCALE).toFixed(1)}%`
   return { flexBasis: basis }
 })
 

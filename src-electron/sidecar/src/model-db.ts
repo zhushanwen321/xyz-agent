@@ -2,6 +2,9 @@ import { readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 
+const CTX_1M = 1_000_000
+const CTX_1K = 1000
+
 export interface ModelRecord {
   id: string
   name: string
@@ -55,6 +58,7 @@ function load(): void {
       }
     }
     console.log(`[model-db] loaded ${index.size} models from ${DB_PATH}`)
+  // eslint-disable-next-line taste/no-silent-catch -- intentional: model db is optional, fall back gracefully
   } catch (e) {
     console.error('[model-db] failed to load:', e)
   }
@@ -122,8 +126,9 @@ function loadPiProviders(): void {
       piProviderIndex.set(modelId, preferred.providerId)
     }
     console.log(`[model-db] loaded ${piProviderIndex.size} pi provider mappings`)
-  } catch {
-    // pi models.json 不可用，不影响主流程
+  // eslint-disable-next-line taste/no-silent-catch -- intentional: pi provider mapping is optional
+  } catch (e) {
+    console.error('[model-db] pi models.json not available:', e)
   }
 }
 
@@ -139,7 +144,7 @@ export function lookupPiProvider(modelId: string): string | undefined {
 /** 格式化 context 数字为人类可读字符串，如 200000 → "200K"，1000000 → "1M" */
 export function formatContext(ctx?: number): string {
   if (!ctx) return '--'
-  if (ctx >= 1_000_000) return `${(ctx / 1_000_000).toFixed(ctx % 1_000_000 === 0 ? 0 : 1)}M`
-  if (ctx >= 1000) return `${Math.round(ctx / 1000)}K`
+  if (ctx >= CTX_1M) return `${(ctx / CTX_1M).toFixed(ctx % CTX_1M === 0 ? 0 : 1)}M`
+  if (ctx >= CTX_1K) return `${Math.round(ctx / CTX_1K)}K`
   return String(ctx)
 }

@@ -10,7 +10,10 @@ let cachedProviders: ProviderInfo[] | null = null
 
 // 验证结果缓存，用于区分 connected 和 error 状态
 const validationCache = new Map<string, { valid: boolean; checkedAt: number }>()
-const VALIDATION_TTL = 5 * 60 * 1000 // 5 分钟
+const VALIDATION_TTL_MINUTES = 5
+const SECONDS_PER_MINUTE = 60
+const MS_PER_SECOND = 1000
+const VALIDATION_TTL = VALIDATION_TTL_MINUTES * SECONDS_PER_MINUTE * MS_PER_SECOND // 5 分钟
 
 function invalidateCache(): void {
   cachedProviders = null

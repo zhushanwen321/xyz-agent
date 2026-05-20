@@ -12,7 +12,7 @@
     <!-- Completed state: old / new diff -->
     <div v-else>
       <!-- Summary header -->
-      <div class="flex items-center gap-1.5 px-3 pt-2.5 pb-1 text-[11px] font-mono text-success">
+      <div class="flex items-center gap-1.5 px-3 pt-2.5 pb-1 text-[10px] font-mono text-success">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="10" height="10" class="shrink-0"><path d="M4 8l3 3 5-6"/></svg>
         <span class="font-medium">Edited</span>
         <span v-if="diffSize" class="opacity-70 text-muted">· {{ diffSize }}</span>
@@ -36,6 +36,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { ToolCall } from '@xyz-agent/shared'
+
+const BYTES_PER_KB = 1024
+
 const props = defineProps<{ toolCall: ToolCall }>()
 
 const parsedInput = computed(() => {
@@ -54,8 +57,8 @@ const diffSize = computed(() => {
   if (oldLen === 0 && newLen === 0) return ''
   // Show diff as total change size
   const total = oldLen + newLen
-  if (total < 1024) return `${total}B changed`
-  if (total < 1024 * 1024) return `${(total / 1024).toFixed(1)}KB changed`
-  return `${(total / (1024 * 1024)).toFixed(1)}MB changed`
+  if (total < BYTES_PER_KB) return `${total}B changed`
+  if (total < BYTES_PER_KB * BYTES_PER_KB) return `${(total / BYTES_PER_KB).toFixed(1)}KB changed`
+  return `${(total / (BYTES_PER_KB * BYTES_PER_KB)).toFixed(1)}MB changed`
 })
 </script>

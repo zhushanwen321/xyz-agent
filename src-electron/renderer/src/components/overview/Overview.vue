@@ -12,6 +12,7 @@
       />
     </div>
     <div class="mt-6 flex justify-center">
+      <!-- eslint-disable-next-line taste/no-native-html-elements -->
       <button class="inline-flex items-center gap-1.5 py-2 px-5 border border-[oklch(60%_0_0_/_0.3)] rounded-sm bg-transparent text-[oklch(80%_0_0_/_0.8)] text-[13px] font-medium font-body cursor-pointer transition-all duration-200 ease-ease hover:bg-[oklch(30%_0_0_/_0.4)] hover:text-[oklch(95%_0_0)] hover:border-[oklch(80%_0_0_/_0.5)]" @click="handleNewWindow">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <line x1="12" y1="5" x2="12" y2="19" />

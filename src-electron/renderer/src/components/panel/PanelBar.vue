@@ -69,8 +69,9 @@ async function moveToNewWindow() {
   try {
     await windowStore.createWindow(props.sessionId)
     paneStore.unbindSession(props.paneId)
-  } catch {
-    // 窗口创建失败时不做额外处理
+  // eslint-disable-next-line taste/no-silent-catch -- intentional: window creation failure should not break the UI
+  } catch (e) {
+    console.error('Failed to move pane to new window:', e)
   }
 }
 

@@ -26,16 +26,18 @@ export const useSessionStore = defineStore('session', () => {
   function removeSession(id: string) { sessions.value = sessions.value.filter(s => s.id !== id) }
   function switchSession(id: string) { currentSessionId.value = id }
 
+  const PAD_LENGTH = 2
+
   /** Generate a unique label like "new-session-01" for a given cwd */
   function generateSessionLabel(cwd: string): string {
     const existing = sessions.value
       .filter(s => s.cwd === cwd)
       .map(s => s.label)
     let n = 1
-    while (existing.includes(`new-session-${String(n).padStart(2, '0')}`)) {
+    while (existing.includes(`new-session-${String(n).padStart(PAD_LENGTH, '0')}`)) {
       n++
     }
-    return `new-session-${String(n).padStart(2, '0')}`
+    return `new-session-${String(n).padStart(PAD_LENGTH, '0')}`
   }
 
   return {

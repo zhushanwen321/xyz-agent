@@ -50,12 +50,14 @@ export function useConnection() {
             connect(`ws://localhost:${knownPort}`)
             return
           }
-        } catch {
-          // 主进程尚未准备好
+        // eslint-disable-next-line taste/no-silent-catch -- intentional: sidecar may not be ready yet, fall through to default port
+        } catch (e) {
+          console.error('[useConnection] sidecar port not ready:', e)
         }
       }
-    } catch {
-      console.warn('[useConnection] Electron API unavailable, using default port')
+    // eslint-disable-next-line taste/no-silent-catch -- intentional: fall back to default port when Electron API is unavailable
+    } catch (e) {
+      console.error('[useConnection] Electron API unavailable, using default port:', e)
     }
 
     connect(`ws://localhost:${port}`)

@@ -10,6 +10,20 @@ export class SidecarManager {
   private child: ChildProcess | null = null
   private _port: number | null = null
 
+  // 端口/重试常量
+  // eslint-disable-next-line no-magic-numbers
+  private static readonly PORT_START = 3210
+  // eslint-disable-next-line no-magic-numbers
+  private static readonly PORT_END = 3220
+  // eslint-disable-next-line no-magic-numbers
+  private static readonly KILL_WAIT_MS = 200
+  // eslint-disable-next-line no-magic-numbers
+  private static readonly PORT_RETRY_MS = 300
+  // eslint-disable-next-line no-magic-numbers
+  private static readonly HEALTH_RETRY_COUNT = 30
+  // eslint-disable-next-line no-magic-numbers
+  private static readonly HEALTH_INTERVAL_MS = 200
+
   get port(): number | null {
     return this._port
   }
@@ -30,21 +44,24 @@ export class SidecarManager {
           console.log(`[sidecar] Killing stale process ${pid} on port ${port}`)
           try {
             process.kill(pid, 'SIGTERM')
+          // eslint-disable-next-line taste/no-silent-catch
           } catch {
-            // 进程可能已退出
+            // 进程可能已退出，非关键错误
           }
-          // 等待 200ms 后补 SIGKILL
+          // 等待后补 SIGKILL
           setTimeout(() => {
             try {
               process.kill(pid, 'SIGKILL')
+            // eslint-disable-next-line taste/no-silent-catch
             } catch {
-              // 已经死了
+              // 已经死了，非关键错误
             }
-          }, 200)
+          }, SidecarManager.KILL_WAIT_MS)
         }
       }
+    // eslint-disable-next-line taste/no-silent-catch
     } catch {
-      // lsof 没找到进程，正常情况
+      // lsof 没找到进程，正常情况，无需处理
     }
   }
 
@@ -53,13 +70,13 @@ export class SidecarManager {
    * 如果被占用则尝试 kill stale process，等 300ms 后重试。
    */
   private async findAvailablePort(): Promise<number> {
-    for (let port = 3210; port <= 3220; port++) {
+    for (let port = SidecarManager.PORT_START; port <= SidecarManager.PORT_END; port++) {
       const inUse = await this.isPortInUse(port)
       if (!inUse) return port
 
       // 端口被占用，尝试 kill stale
       this.killStaleProcessOnPort(port)
-      await this.sleep(300)
+      await this.sleep(SidecarManager.PORT_RETRY_MS)
 
       const stillInUse = await this.isPortInUse(port)
       if (!stillInUse) return port
@@ -89,9 +106,9 @@ export class SidecarManager {
    * 总等待时间约 6s。
    */
   private async healthCheck(port: number): Promise<void> {
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < SidecarManager.HEALTH_RETRY_COUNT; i++) {
       if (!await this.isPortInUse(port)) {
-        await this.sleep(200)
+        await this.sleep(SidecarManager.HEALTH_INTERVAL_MS)
         continue
       }
       // 能连上说明 sidecar 已经在监听

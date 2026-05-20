@@ -13,6 +13,7 @@
 
       <div v-if="recentSessions.length > 0" class="w-full mb-5">
         <div class="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted mb-2">{{ t('panel.recentConversations') }}</div>
+        <!-- eslint-disable-next-line taste/no-native-html-elements -->
         <button
           v-for="session in recentSessions"
           :key="session.id"
@@ -28,6 +29,7 @@
         </button>
       </div>
 
+      <!-- eslint-disable-next-line taste/no-native-html-elements -->
       <button class="inline-flex items-center gap-1.5 px-5 py-2 border border-border rounded-sm bg-surface text-fg font-body text-[13px] font-medium cursor-pointer transition-all duration-150 ease-ease hover:border-accent hover:bg-accent-light hover:text-accent" @click="handleCreateSession">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
           <line x1="8" y1="3" x2="8" y2="13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
@@ -63,8 +65,10 @@ const { createSession: doCreateSession } = useSession()
 const isCreating = ref(false)
 const prevSessionCount = ref(0)
 
+const RECENT_SESSION_LIMIT = 5
+
 const recentSessions = computed(() => {
-  return sessionStore.sessions.slice(0, 5)
+  return sessionStore.sessions.slice(0, RECENT_SESSION_LIMIT)
 })
 
 function handleSelectSession(sessionId: string) {

@@ -18,6 +18,7 @@ export function emit(event: string, ...args: any[]): void {
   listeners.get(event)?.forEach(h => {
     try {
       h(...args)
+    // eslint-disable-next-line taste/no-silent-catch -- intentional: one handler must not break all others
     } catch (e) {
       console.error(`[event-bus] handler error for event "${event}":`, e)
     }

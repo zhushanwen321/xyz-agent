@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Markdown 排版风格对比</title>
+
+<!-- KaTeX CSS -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<!-- Mermaid -->
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<!-- Highlight.js for code coloring -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github.min.css" id="hljs-light">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github-dark.min.css" id="hljs-dark" disabled>
+
+<style>
+  :root {
+    --bg-page: #f5f5f5;
+    --bg-card: #ffffff;
+    --text-primary: #1a1a1a;
+    --text-secondary: #666;
+    --border-color: #e0e0e0;
+    --accent: #7c3aed;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg-page);
+    color: var(--text-primary);
+    padding: 24px;
+  }
+
+  .page-header {
+    text-align: center;
+    margin-bottom: 32px;
+  }
+  .page-header h1 { font-size: 24px; font-weight: 700; margin-bottom: 8px; }
+  .page-header p { color: var(--text-secondary); font-size: 14px; }
+
+  .theme-toggle {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .theme-toggle button {
+    padding: 8px 20px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-card);
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s;
+  }
+  .theme-toggle button.active {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+    max-width: 1600px;
+    margin: 0 auto;
+  }
+
+  .style-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .style-card-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-color);
+    font-weight: 600;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .style-card-header .badge {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 500;
+  }
+  .badge-a { background: #dbeafe; color: #1d4ed8; }
+  .badge-b { background: #fce7f3; color: #be185d; }
+  .badge-c { background: #d1fae5; color: #065f46; }
+
+  .style-card-body {
+    padding: 24px;
+    overflow-y: auto;
+    max-height: 80vh;
+  }
+
+  /* ============================================
+     Style A: GitHub Flavored
+     ============================================ */
+  .github-style {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    color: #1f2328;
+  }
+
+  .github-style h1 { font-size: 2em; font-weight: 700; border-bottom: 1px solid #d1d9e0; padding-bottom: 0.3em; margin: 24px 0 16px; }
+  .github-style h2 { font-size: 1.5em; font-weight: 600; border-bottom: 1px solid #d1d9e0; padding-bottom: 0.3em; margin: 24px 0 16px; }
+  .github-style h3 { font-size: 1.25em; font-weight: 600; margin: 24px 0 16px; }
+  .github-style h4 { font-size: 1em; font-weight: 600; margin: 24px 0 16px; }
+  .github-style p { margin-bottom: 16px; }
+  .github-style ul, .github-style ol { padding-left: 2em; margin-bottom: 16px; }
+  .github-style li { margin-bottom: 4px; }
+  .github-style li + li { margin-top: 4px; }
+  .github-style blockquote {
+    padding: 0 1em;
+    margin: 0 0 16px;
+    border-left: 0.25em solid #d1d9e0;
+    color: #656d76;
+  }
+  .github-style blockquote p { color: inherit; }
+  .github-style code {
+    background: #eff1f3;
+    padding: 0.2em 0.4em;
+    border-radius: 6px;
+    font-size: 85%;
+    font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+  }
+  .github-style pre {
+    background: #f6f8fa;
+    border-radius: 8px;
+    padding: 16px;
+    overflow-x: auto;
+    margin-bottom: 16px;
+    position: relative;
+  }
+  .github-style pre code {
+    background: none;
+    padding: 0;
+    border-radius: 0;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .github-style table {
+    border-collapse: collapse;
+    width: 100%;
+    margin-bottom: 16px;
+    overflow-x: auto;
+    display: block;
+  }
+  .github-style th, .github-style td {
+    border: 1px solid #d1d9e0;
+    padding: 6px 13px;
+  }
+  .github-style th { font-weight: 600; background: #f6f8fa; }
+  .github-style tr:nth-child(2n) { background: #f6f8fa; }
+  .github-style a { color: #0969da; text-decoration: none; }
+  .github-style a:hover { text-decoration: underline; }
+  .github-style hr { border: none; border-top: 2px solid #d1d9e0; margin: 24px 0; }
+  .github-style img { max-width: 100%; border-radius: 8px; }
+  .github-style .task-list-item { list-style: none; margin-left: -1.5em; }
+  .github-style .task-list-item input[type="checkbox"] { margin-right: 6px; }
+  .github-style del { color: #656d76; }
+  .github-style .code-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: #eff1f3;
+    padding: 8px 16px;
+    border-radius: 8px 8px 0 0;
+    font-size: 12px;
+    color: #656d76;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .github-style .code-header + pre {
+    margin-top: 0;
+    border-radius: 0 0 8px 8px;
+  }
+  .github-style .copy-btn {
+    background: none;
+    border: 1px solid #d1d9e0;
+    border-radius: 4px;
+    padding: 2px 8px;
+    cursor: pointer;
+    font-size: 11px;
+    color: #656d76;
+  }
+  .github-style .line-numbers {
+    color: #adbac7;
+    text-align: right;
+    user-select: none;
+    padding-right: 12px;
+    border-right: 1px solid #d1d9e0;
+    margin-right: 12px;
+  }
+  .github-style .math-block { margin: 16px 0; text-align: center; overflow-x: auto; }
+  .github-style .math-inline { }
+  .github-style .mermaid-container {
+    margin: 16px 0;
+    padding: 16px;
+    background: #f6f8fa;
+    border-radius: 8px;
+    text-align: center;
+  }
+
+  /* ============================================
+     Style B: Notion-inspired
+     ============================================ */
+  .notion-style {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 15px;
+    line-height: 1.7;
+    color: #37352f;
+  }
+
+  .notion-style h1 { font-size: 1.875em; font-weight: 700; margin: 32px 0 4px; color: #37352f; }
+  .notion-style h2 { font-size: 1.5em; font-weight: 600; margin: 28px 0 4px; }
+  .notion-style h3 { font-size: 1.25em; font-weight: 600; margin: 24px 0 4px; }
+  .notion-style h4 { font-size: 1em; font-weight: 600; margin: 20px 0 4px; }
+  .notion-style p { margin-bottom: 8px; }
+  .notion-style ul { padding-left: 1.5em; margin-bottom: 8px; }
+  .notion-style ol { padding-left: 1.5em; margin-bottom: 8px; }
+  .notion-style li { margin-bottom: 2px; }
+  .notion-style li::marker { color: #9b9a97; }
+  .notion-style blockquote {
+    padding: 4px 12px;
+    margin: 8px 0;
+    border-left: 3px solid currentColor;
+    background: rgba(55, 53, 47, 0.03);
+    border-radius: 0 4px 4px 0;
+  }
+  .notion-style blockquote p { color: inherit; }
+  .notion-style code {
+    background: rgba(135, 131, 120, 0.15);
+    padding: 2px 5px;
+    border-radius: 4px;
+    font-size: 85%;
+    color: #eb5757;
+    font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+  }
+  .notion-style pre {
+    background: #f7f6f3;
+    border: 1px solid rgba(0, 0, 0, 0.04);
+    border-radius: 4px;
+    padding: 16px;
+    overflow-x: auto;
+    margin-bottom: 8px;
+  }
+  .notion-style pre code {
+    background: none;
+    padding: 0;
+    color: inherit;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .notion-style table {
+    border-collapse: collapse;
+    width: 100%;
+    margin-bottom: 8px;
+  }
+  .notion-style th, .notion-style td {
+    border: 1px solid rgba(55, 53, 47, 0.12);
+    padding: 8px 12px;
+    text-align: left;
+  }
+  .notion-style th { background: rgba(55, 53, 47, 0.04); font-weight: 600; }
+  .notion-style a { color: #37352f; text-decoration: underline; text-decoration-color: rgba(55, 53, 47, 0.4); }
+  .notion-style a:hover { text-decoration-color: inherit; }
+  .notion-style hr { border: none; border-top: 1px solid rgba(55, 53, 47, 0.09); margin: 16px 0; }
+  .notion-style .task-list-item { list-style: none; margin-left: -1.5em; }
+  .notion-style .task-list-item input[type="checkbox"] { margin-right: 8px; accent-color: #37352f; }
+  .notion-style del { color: #9b9a97; }
+  .notion-style .code-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 16px;
+    font-size: 12px;
+    color: #9b9a97;
+    font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+    background: #f7f6f3;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+  }
+  .notion-style .copy-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 11px;
+    color: #9b9a97;
+  }
+  .notion-style .math-block { margin: 16px 0; text-align: center; overflow-x: auto; }
+  .notion-style .mermaid-container {
+    margin: 8px 0;
+    padding: 16px;
+    background: #f7f6f3;
+    border-radius: 4px;
+    text-align: center;
+  }
+
+  /* ============================================
+     Style C: Tailwind Typography (@tailwindcss/typography)
+     ============================================ */
+  .prose-style {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 14px;
+    line-height: 1.75;
+    color: #1a202c;
+    max-width: 65ch;
+  }
+
+  .prose-style h1 { font-size: 2.25em; font-weight: 800; margin-top: 0; margin-bottom: 0.8888889em; line-height: 1.1111111; letter-spacing: -0.025em; color: #111827; }
+  .prose-style h2 { font-size: 1.5em; font-weight: 700; margin-top: 2em; margin-bottom: 1em; line-height: 1.3333333; letter-spacing: -0.025em; color: #1f2937; }
+  .prose-style h3 { font-size: 1.25em; font-weight: 600; margin-top: 1.6em; margin-bottom: 0.6em; line-height: 1.6; color: #374151; }
+  .prose-style h4 { font-size: 1.125em; font-weight: 600; margin-top: 1.5em; margin-bottom: 0.5em; line-height: 1.5555556; }
+  .prose-style p { margin-bottom: 1.25em; }
+  .prose-style ul { list-style-type: disc; padding-left: 1.625em; margin-bottom: 1.25em; }
+  .prose-style ol { list-style-type: decimal; padding-left: 1.625em; margin-bottom: 1.25em; }
+  .prose-style li { margin-bottom: 0.5em; margin-top: 0.5em; }
+  .prose-style li::marker { color: #9ca3af; }
+  .prose-style blockquote {
+    font-style: italic;
+    font-weight: 500;
+    border-left: 4px solid #e5e7eb;
+    padding-left: 1em;
+    margin: 1.6em 0;
+    color: #4b5563;
+    quotes: "\201C""\201D""\2018""\2019";
+  }
+  .prose-style blockquote p { color: inherit; font-style: inherit; }
+  .prose-style code {
+    color: #111827;
+    font-weight: 600;
+    background: #f3f4f6;
+    padding: 0.2em 0.4em;
+    border-radius: 0.25rem;
+    font-size: 0.875em;
+    font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+  }
+  .prose-style pre {
+    background: #1e293b;
+    border-radius: 0.5rem;
+    padding: 1.2em 1.6em;
+    overflow-x: auto;
+    margin-bottom: 1.5em;
+    margin-top: 1.5em;
+    box-shadow: 0 4px 6px -1px rgba(0,0,0,.1), 0 2px 4px -2px rgba(0,0,0,.1);
+  }
+  .prose-style pre code {
+    background: none;
+    padding: 0;
+    font-weight: 400;
+    color: #e2e8f0;
+    font-size: 0.875em;
+    line-height: 1.7;
+  }
+  .prose-style table {
+    width: 100%;
+    table-layout: fixed;
+    text-align: left;
+    margin-bottom: 2em;
+    font-size: 0.875em;
+    line-height: 1.5;
+  }
+  .prose-style thead { border-bottom-width: 2px; border-bottom-color: #d1d5db; }
+  .prose-style thead th { font-weight: 600; color: #111827; vertical-align: bottom; padding-right: 1em; padding-bottom: 0.5em; }
+  .prose-style tbody tr { border-bottom: 1px solid #e5e7eb; }
+  .prose-style tbody td { padding: 0.5em 1em 0.5em 0; vertical-align: top; }
+  .prose-style a { color: #7c3aed; text-decoration: underline; font-weight: 500; text-underline-offset: 2px; }
+  .prose-style a:hover { color: #6d28d9; }
+  .prose-style hr { border: none; border-top: 1px solid #e5e7eb; margin: 3em 0; }
+  .prose-style strong { font-weight: 700; color: #111827; }
+  .prose-style .task-list-item { list-style: none; margin-left: -1.625em; }
+  .prose-style .task-list-item input[type="checkbox"] { margin-right: 8px; accent-color: #7c3aed; }
+  .prose-style del { text-decoration: line-through; color: #9ca3af; }
+  .prose-style .code-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: #334155;
+    padding: 8px 16px;
+    border-radius: 0.5rem 0.5rem 0 0;
+    font-size: 12px;
+    color: #94a3b8;
+    font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+  }
+  .prose-style .code-header + pre {
+    margin-top: 0;
+    border-radius: 0 0 0.5rem 0.5rem;
+    box-shadow: none;
+  }
+  .prose-style .copy-btn {
+    background: rgba(255,255,255,0.1);
+    border: none;
+    border-radius: 4px;
+    padding: 2px 8px;
+    cursor: pointer;
+    font-size: 11px;
+    color: #94a3b8;
+  }
+  .prose-style .math-block { margin: 16px 0; text-align: center; overflow-x: auto; }
+  .prose-style .mermaid-container {
+    margin: 1.5em 0;
+    padding: 16px;
+    background: #f8fafc;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.5rem;
+    text-align: center;
+  }
+
+  /* Dark mode */
+  body.dark {
+    --bg-page: #0f0f0f;
+    --bg-card: #1a1a1a;
+    --text-primary: #e0e0e0;
+    --text-secondary: #999;
+    --border-color: #333;
+  }
+
+  body.dark .github-style { color: #e6edf3; }
+  body.dark .github-style h1, body.dark .github-style h2 { border-bottom-color: #30363d; }
+  body.dark .github-style blockquote { border-left-color: #30363d; color: #8b949e; }
+  body.dark .github-style code { background: rgba(110,118,129,0.2); }
+  body.dark .github-style pre { background: #161b22; }
+  body.dark .github-style th { background: #161b22; }
+  body.dark .github-style th, body.dark .github-style td { border-color: #30363d; }
+  body.dark .github-style tr:nth-child(2n) { background: #161b22; }
+  body.dark .github-style .code-header { background: #21262d; color: #8b949e; }
+  body.dark .github-style a { color: #58a6ff; }
+  body.dark .github-style .copy-btn { border-color: #30363d; color: #8b949e; }
+  body.dark .github-style hr { border-top-color: #30363d; }
+
+  body.dark .notion-style { color: rgba(255,255,255,0.81); }
+  body.dark .notion-style h1 { color: rgba(255,255,255,0.9); }
+  body.dark .notion-style blockquote { background: rgba(255,255,255,0.03); border-left-color: rgba(255,255,255,0.13); }
+  body.dark .notion-style code { background: rgba(135,131,120,0.15); color: #f97583; }
+  body.dark .notion-style pre { background: #2f2f2f; border-color: rgba(255,255,255,0.05); }
+  body.dark .notion-style th { background: rgba(255,255,255,0.03); }
+  body.dark .notion-style th, body.dark .notion-style td { border-color: rgba(255,255,255,0.08); }
+  body.dark .notion-style .code-header { background: #2f2f2f; }
+  body.dark .notion-style a { color: rgba(255,255,255,0.81); }
+  body.dark .notion-style hr { border-top-color: rgba(255,255,255,0.06); }
+  body.dark .notion-style li::marker { color: rgba(255,255,255,0.4); }
+
+  body.dark .prose-style { color: #d1d5db; }
+  body.dark .prose-style h1 { color: #f9fafb; }
+  body.dark .prose-style h2 { color: #f3f4f6; }
+  body.dark .prose-style h3 { color: #e5e7eb; }
+  body.dark .prose-style strong { color: #f9fafb; }
+  body.dark .prose-style blockquote { border-left-color: #374151; color: #9ca3af; }
+  body.dark .prose-style code { background: #1f2937; color: #e5e7eb; }
+  body.dark .prose-style pre { background: #0f172a; }
+  body.dark .prose-style pre code { color: #e2e8f0; }
+  body.dark .prose-style thead { border-bottom-color: #374151; }
+  body.dark .prose-style thead th { color: #f9fafb; }
+  body.dark .prose-style tbody tr { border-bottom-color: #1f2937; }
+  body.dark .prose-style a { color: #a78bfa; }
+  body.dark .prose-style .code-header { background: #1e293b; }
+  body.dark .prose-style hr { border-top-color: #1f2937; }
+  body.dark .prose-style .mermaid-container { background: #1e293b; border-color: #334155; }
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>Markdown 排版风格对比</h1>
+  <p>同一段 AI 回复内容，三种排版风格渲染效果</p>
+</div>
+
+<div class="theme-toggle">
+  <button class="active" onclick="setTheme('light')">亮色</button>
+  <button onclick="setTheme('dark')">暗色</button>
+</div>
+
+<div class="grid">
+  <!-- GitHub Style -->
+  <div class="style-card">
+    <div class="style-card-header">
+      A: GitHub 风格 <span class="badge badge-a">GFM</span>
+    </div>
+    <div class="style-card-body">
+      <div class="github-style" id="github-content"></div>
+    </div>
+  </div>
+
+  <!-- Notion Style -->
+  <div class="style-card">
+    <div class="style-card-header">
+      B: Notion 风格 <span class="badge badge-b">Soft</span>
+    </div>
+    <div class="style-card-body">
+      <div class="notion-style" id="notion-content"></div>
+    </div>
+  </div>
+
+  <!-- Tailwind Prose Style -->
+  <div class="style-card">
+    <div class="style-card-header">
+      C: Tailwind Prose <span class="badge badge-c">Typography</span>
+    </div>
+    <div class="style-card-body">
+      <div class="prose-style" id="prose-content"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Sample AI response content
+const aiContent = `
+<h2>快速排序算法实现</h2>
+<p>快速排序（QuickSort）是一种高效的排序算法，平均时间复杂度为 <strong>O(n log n)</strong>。它的核心思想是<em>分治法</em>：</p>
+<ol>
+<li>选择一个基准元素（pivot）</li>
+<li>将小于基准的放左边，大于基准的放右边</li>
+<li>递归地对左右两部分排序</li>
+</ol>
+
+<div class="code-header"><span>python</span><button class="copy-btn" onclick="copyCode(this)">复制</button></div>
+<pre><code>def quicksort(arr: list[int]) -> list[int]:
+    if len(arr) <= 1:
+        return arr
+
+    pivot = arr[len(arr) // 2]
+    left = [x for x in arr if x < pivot]
+    middle = [x for x in arr if x == pivot]
+    right = [x for x in arr if x > pivot]
+
+    return quicksort(left) + middle + quicksort(right)</code></pre>
+
+<h3>性能对比</h3>
+<table>
+<thead>
+<tr><th>算法</th><th>平均</th><th>最坏</th><th>空间</th><th>稳定</th></tr>
+</thead>
+<tbody>
+<tr><td>QuickSort</td><td>O(n log n)</td><td>O(n²)</td><td>O(log n)</td><td>否</td></tr>
+<tr><td>MergeSort</td><td>O(n log n)</td><td>O(n log n)</td><td>O(n)</td><td>是</td></tr>
+<tr><td>HeapSort</td><td>O(n log n)</td><td>O(n log n)</td><td>O(1)</td><td>否</td></tr>
+</tbody>
+</table>
+
+<blockquote>
+<p>提示：在实际生产环境中，大多数语言的标准库使用的是<strong>TimSort</strong>——一种 MergeSort + InsertionSort 的混合算法。Python 的 <code>sorted()</code> 和 JS 的 <code>Array.sort()</code> 都使用它。</p>
+</blockquote>
+
+<h3>实现检查清单</h3>
+<ul>
+<li class="task-list-item"><input type="checkbox" checked> 选择 pivot 策略</li>
+<li class="task-list-item"><input type="checkbox" checked> 分区函数实现</li>
+<li class="task-list-item"><input type="checkbox" checked> 递归终止条件</li>
+<li class="task-list-item"><input type="checkbox"> 边界用例测试</li>
+<li class="task-list-item"><input type="checkbox"> 性能基准测试</li>
+</ul>
+
+<p>下面是算法流程的 Mermaid 图示：</p>
+
+<div class="mermaid-container">
+<pre class="mermaid">
+graph TD
+    A[输入数组] --> B{长度 ≤ 1?}
+    B -- 是 --> C[返回数组]
+    B -- 否 --> D[选择 Pivot]
+    D --> E[分区: 小 / 等 / 大]
+    E --> F[递归排序左侧]
+    E --> G[递归排序右侧]
+    F --> H[合并结果]
+    G --> H
+    H --> I[返回排序数组]
+</pre>
+</div>
+
+<h3>数学公式</h3>
+<p>平均比较次数的递推关系：</p>
+<div class="math-block">$$T(n) = 2T\\left(\\frac{n}{2}\\right) + O(n)$$</div>
+
+<p>由主定理可得 <em>T(n) = O(n log n)</em>。行内公式如 $E = mc^2$ 和 $\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}$ 也能正常渲染。</p>
+
+<hr>
+
+<p>更多细节参考 <a href="#">算法导论</a> 第 7 章。~~旧版代码已废弃~~，请使用上述新版本。</p>
+`;
+
+function renderContent() {
+  document.getElementById('github-content').innerHTML = aiContent;
+  document.getElementById('notion-content').innerHTML = aiContent;
+  document.getElementById('prose-content').innerHTML = aiContent;
+
+  // Render KaTeX
+  document.querySelectorAll('.math-block').forEach(el => {
+    const tex = el.textContent.replace(/^\$\$/, '').replace(/\$\$$/, '').trim();
+    try {
+      katex.render(tex, el, { displayMode: true, throwOnError: false });
+    } catch(e) { el.textContent = tex; }
+  });
+
+  // Render inline math
+  document.querySelectorAll('.math-inline').forEach(el => {
+    const tex = el.textContent.replace(/^\$/, '').replace(/\$$/, '').trim();
+    try {
+      katex.render(tex, el, { displayMode: false, throwOnError: false });
+    } catch(e) {}
+  });
+
+  // Render Mermaid
+  if (typeof mermaid !== 'undefined') {
+    mermaid.initialize({ startOnLoad: true, securityLevel: 'sandbox', theme: document.body.classList.contains('dark') ? 'dark' : 'default' });
+  }
+}
+
+function copyCode(btn) {
+  const code = btn.closest('.code-header').nextElementSibling.querySelector('code').textContent;
+  navigator.clipboard.writeText(code);
+  btn.textContent = '已复制!';
+  setTimeout(() => btn.textContent = '复制', 1500);
+}
+
+function setTheme(theme) {
+  document.body.classList.toggle('dark', theme === 'dark');
+  document.querySelectorAll('.theme-toggle button').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+
+  const lightSheet = document.getElementById('hljs-light');
+  const darkSheet = document.getElementById('hljs-dark');
+  if (theme === 'dark') {
+    lightSheet.disabled = true;
+    darkSheet.disabled = false;
+  } else {
+    lightSheet.disabled = false;
+    darkSheet.disabled = true;
+  }
+}
+
+window.addEventListener('DOMContentLoaded', renderContent);
+</script>
+
+</body>
+</html>

@@ -14,11 +14,13 @@ import MessageBubble from './MessageBubble.vue'
 const props = defineProps<{ messages: Message[] }>()
 const containerRef = ref<HTMLElement | null>(null)
 
+const SCROLL_THRESHOLD_PX = 80
+
 const userAtBottom = ref(true)
 
 function onScroll() {
   const el = containerRef.value
-  if (el) userAtBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+  if (el) userAtBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_THRESHOLD_PX
 }
 
 watch(() => props.messages.length, () => {

@@ -13,7 +13,7 @@
     <!-- Completed state: summary + content -->
     <div v-else>
       <!-- Summary header -->
-      <div class="flex items-center gap-1.5 px-3 pt-2.5 pb-1 text-[11px] font-mono text-success">
+      <div class="flex items-center gap-1.5 px-3 pt-2.5 pb-1 text-[10px] font-mono text-success">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="10" height="10" class="shrink-0"><path d="M4 8l3 3 5-6"/></svg>
         <span class="font-medium">Written</span>
         <span v-if="fileSizeStr" class="opacity-70 text-muted">· {{ fileSizeStr }}</span>
@@ -33,6 +33,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { ToolCall } from '@xyz-agent/shared'
+
+const BYTES_PER_KB = 1024
+
 const props = defineProps<{ toolCall: ToolCall }>()
 
 const parsedInput = computed(() => {
@@ -47,9 +50,9 @@ const fileContent = computed(() => String(parsedInput.value.content ?? ''))
 const fileSizeStr = computed(() => {
   const len = fileContent.value.length
   if (len === 0) return ''
-  if (len < 1024) return `${len}B`
-  if (len < 1024 * 1024) return `${(len / 1024).toFixed(1)}KB`
-  return `${(len / (1024 * 1024)).toFixed(1)}MB`
+  if (len < BYTES_PER_KB) return `${len}B`
+  if (len < BYTES_PER_KB * BYTES_PER_KB) return `${(len / BYTES_PER_KB).toFixed(1)}KB`
+  return `${(len / (BYTES_PER_KB * BYTES_PER_KB)).toFixed(1)}MB`
 })
 
 const lineCount = computed(() => {

@@ -112,7 +112,7 @@ export class ProcessManager {
       pathEnv.PATH = `${piDir}${pathDelimiter}${process.env.PATH ?? ''}`
     }
 
-    const client = new RpcClient({ cwd, ...options, env: { ...pathEnv, ...options?.env } })
+    const client = new RpcClient({ cwd, ...options, env: { ...pathEnv, ...options?.env }, piCommand: this.piPath !== 'pi' ? this.piPath : undefined })
     try {
       await client.start()
     } catch (e) {

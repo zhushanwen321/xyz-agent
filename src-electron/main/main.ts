@@ -93,7 +93,8 @@ app.whenReady().then(async () => {
       // 3. 通知渲染进程 sidecar 端口
       mainWindow.webContents.send('sidecar-port', port)
     } catch (err) {
-      console.error('[main] Failed to start sidecar:', err)
+      console.error('[main] Failed to start sidecar, notifying renderer:', err)
+      mainWindow.webContents.send('sidecar-error', { message: (err as Error).message })
     }
   }
 })

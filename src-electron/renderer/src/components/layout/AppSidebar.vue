@@ -58,9 +58,11 @@ function handleSessionClick(sessionId: string) {
     <div class="flex items-center justify-between px-[14px] py-[10px] border-b border-solid border-border">
       <span class="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">{{ t('sidebar.sessions') }}</span>
       <div class="flex items-center gap-1">
+        <!-- eslint-disable-next-line taste/no-native-html-elements -->
         <button class="w-[22px] h-[22px] rounded-xs border border-solid border-border bg-transparent text-muted text-[13px] cursor-pointer flex items-center justify-center transition-all duration-200 ease-ease hover:bg-accent-light hover:text-accent hover:border-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2" @click="$emit('create')" :title="t('sidebar.newSession')">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" style="width:14px;height:14px"><path d="M8 3v10M3 8h10"/></svg>
         </button>
+        <!-- eslint-disable-next-line taste/no-native-html-elements -->
         <button class="w-[22px] h-[22px] rounded-xs border border-solid border-border bg-transparent text-muted text-[13px] cursor-pointer flex items-center justify-center transition-all duration-200 ease-ease hover:bg-accent-light hover:text-accent hover:border-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2" @click="$emit('close')" title="Close">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:14px;height:14px"><path d="M4 4l8 8M12 4l-8 8"/></svg>
         </button>
