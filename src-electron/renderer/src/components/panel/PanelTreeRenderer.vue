@@ -93,7 +93,7 @@ function handleResize(delta: number) {
       : container.offsetHeight
   if (size <= 0) return
 
-  const newRatio = node.ratio + delta / size
+  const newRatio = Math.max(0.05, Math.min(0.95, node.ratio + delta / size))
   panelStore.updateRatio(node.id, newRatio)
 }
 </script>

@@ -128,7 +128,7 @@ export class RuntimeManager {
     const port = await this.findAvailablePort()
     console.log(`[runtime] Starting on port ${port}`)
 
-    // 根据打包状态选择 sidecar 启动方式
+    // 根据打包状态选择 runtime 启动方式
     const projectRoot = app.getAppPath()
     let cmd: string
     let args: string[]

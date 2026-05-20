@@ -87,6 +87,7 @@ export class WindowManager {
 // 递归遍历 pane 树，找到 sessionId 对应的 pane leaf id
 function findPaneBySessionId(node: PanelTree, sessionId: string): string | null {
   if (node.type === 'pane') return node.sessionId === sessionId ? node.id : null
+  if (!node.children || node.children.length < 2) return null
   return findPaneBySessionId(node.children[0], sessionId) ?? findPaneBySessionId(node.children[1], sessionId)
 }
 
