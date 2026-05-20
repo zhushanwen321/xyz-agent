@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -33,6 +33,8 @@ export function loadLabels(): LabelStore {
 
 function saveStore(store: LabelStore): void {
   cache = store
+  const dir = join(homedir(), '.xyz-agent')
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
   writeFileSync(STORE_PATH, JSON.stringify(store, null, JSON_INDENT) + '\n')
 }
 
@@ -55,6 +57,8 @@ export function getLabel(sessionId: string): string | undefined {
 
 /** 标记迁移已完成，后续启动不再扫描 */
 function markMigrated(): void {
+  const dir = join(homedir(), '.xyz-agent')
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
   writeFileSync(MIGRATION_MARKER, new Date().toISOString())
 }
 
