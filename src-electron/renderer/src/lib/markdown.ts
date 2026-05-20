@@ -1,4 +1,3 @@
-// @ts-expect-error markdown-it has no types
 import MarkdownIt from 'markdown-it'
 // @ts-expect-error markdown-it-texmath has no types
 import texmath from 'markdown-it-texmath'

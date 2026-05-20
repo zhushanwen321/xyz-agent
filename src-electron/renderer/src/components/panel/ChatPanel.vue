@@ -151,7 +151,7 @@ const emit = defineEmits<{
   cancel: []
   'select-model': [modelId: string]
   approve: [toolCallId: string]
-  deny: [toolCallId: string]
+  deny: [payload: { toolCallId: string; reason?: string }]
   'always-allow': [toolName: string]
   'open-inspector': [tab: string]
   'close-pane': []

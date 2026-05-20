@@ -141,8 +141,8 @@ function handleApprove(toolCallId: string) {
   pendingApproval.value = null
 }
 
-function handleDeny(toolCallId: string) {
-  send({ type: 'tool.deny', payload: { sessionId: props.sessionId, toolCallId } })
+function handleDeny(payload: { toolCallId: string; reason?: string }) {
+  send({ type: 'tool.deny', payload: { sessionId: props.sessionId, ...payload } })
   pendingApproval.value = null
 }
 
