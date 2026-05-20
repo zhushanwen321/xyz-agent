@@ -75,12 +75,12 @@ export class WindowManager {
 export function initialWindowState(windowId: string): WindowState {
   return {
     windowId,
-    paneTree: {
+    panelTree: {
       type: 'pane',
       id: `pane-${windowId}`,
       sessionId: null,
     },
-    focusedPaneId: `pane-${windowId}`,
+    focusedPanelId: `pane-${windowId}`,
     sessionIds: [],
   }
 }

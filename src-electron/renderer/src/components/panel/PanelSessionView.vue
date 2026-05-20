@@ -2,7 +2,7 @@
   <ChatPanel
     :agent-options="agentOptions"
     :active-agent-id="sessionState.activeAgentId"
-    :pane-id="paneId"
+    :pane-id="panelId"
     :session-id="sessionId"
     :agent-views="agentViews"
     :messages="sessionState.completedMessages"
@@ -29,7 +29,7 @@
 <script setup lang="ts">
 import { ref, computed, toRef, onMounted, onUnmounted } from 'vue'
 import { useChatStore } from '../../stores/chat'
-import { usePaneStore } from '../../stores/pane'
+import { usePanelStore } from '../../stores/panel'
 import { useProviderStore } from '../../stores/provider'
 import { useSettingsStore } from '../../stores/settings'
 import { useChat } from '../../composables/useChat'
@@ -41,12 +41,12 @@ import type { AgentOption, AgentView } from './ChatPanel.vue'
 import ChatPanel from './ChatPanel.vue'
 
 const props = defineProps<{
-  paneId: string
+  panelId: string
   sessionId: string
 }>()
 
 const chatStore = useChatStore()
-const paneStore = usePaneStore()
+const panelStore = usePanelStore()
 const providerStore = useProviderStore()
 const settingsStore = useSettingsStore()
 
@@ -156,7 +156,7 @@ function handleOpenDrawer(_tab: string) {
 }
 
 function handleClosePane() {
-  paneStore.closeEmptyPane(props.paneId)
+  panelStore.closeEmptyPanel(props.panelId)
 }
 
 function handleSwitchAgent(agentId: string) {
@@ -175,7 +175,7 @@ function handleErrorMessage(msg: ServerMessage) {
   // 没有 sessionId 的错误不属于任何特定 session，跳过
   if (!payload.sessionId) return
   // 使用 Pinia store 中的 sessionId（同步更新），而非 props.sessionId（异步更新）
-  const currentSid = paneStore.panes.find(p => p.id === props.paneId)?.sessionId
+  const currentSid = panelStore.panels.find(p => p.id === props.panelId)?.sessionId
   if (!currentSid || payload.sessionId !== currentSid) return
   const errMsg = payload.message ?? 'Unknown error'
   chatStore.setGenerating(false, currentSid)
@@ -195,7 +195,7 @@ function handleCompactionState(msg: ServerMessage, value: boolean) {
   if (!sid) return
   // 使用 Pinia store 中的 sessionId（同步更新），而非 props.sessionId（异步更新）
   // 解决 session.restore → session.compacting 时序问题
-  const currentSid = paneStore.panes.find(p => p.id === props.paneId)?.sessionId
+  const currentSid = panelStore.panels.find(p => p.id === props.panelId)?.sessionId
   if (!currentSid || sid !== currentSid) return
   chatStore.setCompacting(value, sid)
   if (value) {
@@ -216,7 +216,7 @@ function handleCompacted(msg: ServerMessage) {
   const payload = msg.payload as { sessionId?: string; error?: string; status?: string }
   const sid = payload.sessionId
   if (!sid) return
-  const currentSid = paneStore.panes.find(p => p.id === props.paneId)?.sessionId
+  const currentSid = panelStore.panels.find(p => p.id === props.panelId)?.sessionId
   if (!currentSid || sid !== currentSid) return
   chatStore.setCompacting(false, sid)
   if (payload.error) {

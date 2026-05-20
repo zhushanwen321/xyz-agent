@@ -2,6 +2,7 @@
 import MarkdownIt from 'markdown-it'
 // @ts-expect-error markdown-it-texmath has no types
 import texmath from 'markdown-it-texmath'
+import footnote from 'markdown-it-footnote'
 import katex from 'katex'
 import DOMPurify from 'dompurify'
 import { codeToHtml } from 'shiki'
@@ -67,19 +68,19 @@ function parseFenceInfo(info: string): { lang: string; filename: string } {
 // ══════════════════════════════════════════════════════════════
 
 const mdLight = new MarkdownIt({
-  html: false,
+  html: true,
   linkify: true,
   typographer: true,
-}).enable(['strikethrough', 'table'])
+}).enable(['strikethrough', 'table']).use(footnote)
 
 // ══════════════════════════════════════════════════════════════
 // 阶段二：完整渲染（异步，用于完成阶段）
 
 const mdFull = new MarkdownIt({
-  html: false,
+  html: true,
   linkify: true,
   typographer: true,
-}).enable(['strikethrough', 'table'])
+}).enable(['strikethrough', 'table']).use(footnote)
 
 mdFull.use(texmath, {
   engine: katex,
@@ -90,7 +91,9 @@ mdFull.use(texmath, {
 export function renderLightweight(text: string): string {
   if (!text) return ''
   let html = mdLight.render(text)
+  html = postprocessTaskLists(html)
   html = postprocessTables(html)
+  html = postprocessImages(html)
   return DOMPurify.sanitize(html, PURIFY_CONFIG)
 }
 
@@ -186,6 +189,19 @@ function postprocessTables(html: string): string {
   )
 }
 
+/**
+ * 图片后处理：将本地绝对路径的图片 src 转换为 local-file:// 协议
+ * 浏览器中 /Users/... 会被拼接为 http://localhost:1420/Users/... 导致 404
+ */
+function postprocessImages(html: string): string {
+  return html.replace(
+    /(<img\s[^>]*src=")(\/(?:Users|home|tmp|var|etc)\/[^"]*?)(")/g,
+    (_match, prefix: string, src: string, suffix: string) => {
+      return `${prefix}local-file://${src}${suffix}`
+    },
+  )
+}
+
 export async function renderFull(text: string, theme: 'light' | 'dark'): Promise<string> {
   if (!text) return ''
 
@@ -199,8 +215,9 @@ export async function renderFull(text: string, theme: 'light' | 'dark'): Promise
   const shikiTheme = SHIKI_THEMES[theme] ?? SHIKI_THEMES['dark']
   html = await postprocessCodeBlocks(html, blocks, shikiTheme)
 
-  // 阶段 3：给 <table> 包裹滚动容器
+  // 阶段 3：给 <table> 包裹滚动容器 + 图片路径修正
   html = postprocessTables(html)
+  html = postprocessImages(html)
 
   return DOMPurify.sanitize(html, PURIFY_CONFIG)
 }

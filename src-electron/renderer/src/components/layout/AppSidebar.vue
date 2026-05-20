@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useSessionStore } from '../../stores/session'
-import { usePaneStore } from '../../stores/pane'
+import { usePanelStore } from '../../stores/panel'
 import { useSession } from '../../composables/useSession'
 import { send } from '../../lib/ws-client'
 import { SessionItem } from '../sidebar'
@@ -9,7 +9,7 @@ import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 const sessionStore = useSessionStore()
-const paneStore = usePaneStore()
+const panelStore = usePanelStore()
 const { switchSession, deleteSession } = useSession()
 
 const props = defineProps<{ visible: boolean }>()
@@ -48,7 +48,7 @@ function onCancelRename() {
 
 function handleSessionClick(sessionId: string) {
   switchSession(sessionId)
-  paneStore.openSessionSmart(sessionId)
+  panelStore.openSessionSmart(sessionId)
   emit('close')
 }
 </script>

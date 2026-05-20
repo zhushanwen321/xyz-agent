@@ -19,5 +19,5 @@ export type {
 } from './errors'
 export type { ToolPermission, ThemeMode, ThemePreset } from './settings'
 export type {
-  PaneLeaf, SplitNode, PaneTree, WindowState,
-} from './pane'
+  PanelLeaf, SplitNode, PanelTree, WindowState,
+} from './panel'

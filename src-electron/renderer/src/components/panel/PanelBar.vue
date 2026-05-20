@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { Button } from '../../design-system'
-import { usePaneStore } from '../../stores/pane'
+import { usePanelStore } from '../../stores/panel'
 import { useSessionStore } from '../../stores/session'
 import { useWindowStore } from '../../stores/window'
 import AnchorDropdown from './AnchorDropdown.vue'
@@ -16,13 +16,13 @@ const props = withDefaults(
   defineProps<{
     agentOptions: AgentOption[]
     activeAgentId: string
-    paneId?: string
+    panelId?: string
     sessionId?: string | null
     doneCount?: number
     alertCount?: number
   }>(),
   {
-    paneId: '',
+    panelId: '',
   }
 )
 
@@ -32,7 +32,7 @@ defineEmits<{
   'close-pane': []
 }>()
 
-const paneStore = usePaneStore()
+const panelStore = usePanelStore()
 const windowStore = useWindowStore()
 const sessionStore = useSessionStore()
 
@@ -47,7 +47,7 @@ const dirName = computed(() => {
   return cwd.split('/').pop() ?? cwd
 })
 
-const showCloseButton = computed(() => paneStore.paneCount > 1)
+const showCloseButton = computed(() => panelStore.panelCount > 1)
 
 // ── 右键上下文菜单 ────────────────────────────────────────────────
 const contextMenuVisible = ref(false)
@@ -65,20 +65,20 @@ function closeContextMenu() {
 
 async function moveToNewWindow() {
   closeContextMenu()
-  if (!props.sessionId || !props.paneId) return
+  if (!props.sessionId || !props.panelId) return
   try {
     await windowStore.createWindow(props.sessionId)
-    paneStore.unbindSession(props.paneId)
+    panelStore.unbindSession(props.panelId)
   // eslint-disable-next-line taste/no-silent-catch -- intentional: window creation failure should not break the UI
   } catch (e) {
     console.error('Failed to move pane to new window:', e)
   }
 }
 
-function splitPane(direction: 'horizontal' | 'vertical') {
+function splitPanel(direction: 'horizontal' | 'vertical') {
   closeContextMenu()
-  if (!props.paneId) return
-  paneStore.splitPane(props.paneId, direction)
+  if (!props.panelId) return
+  panelStore.splitPanel(props.panelId, direction)
 }
 </script>
 
@@ -156,14 +156,14 @@ function splitPane(direction: 'horizontal' | 'vertical') {
           <span>关闭面板</span>
         </div>
         <div class="my-1 mx-2 border-t border-border" />
-        <div class="flex items-center gap-2 px-2.5 py-1.5 rounded-xs cursor-pointer whitespace-nowrap transition-colors duration-100 ease-ease text-fg hover:bg-accent-light hover:text-accent" @click="splitPane('horizontal')">
+        <div class="flex items-center gap-2 px-2.5 py-1.5 rounded-xs cursor-pointer whitespace-nowrap transition-colors duration-100 ease-ease text-fg hover:bg-accent-light hover:text-accent" @click="splitPanel('horizontal')">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
             <rect x="1.5" y="1.5" width="13" height="13" rx="1.5" />
             <line x1="8" y1="1.5" x2="8" y2="14.5" />
           </svg>
           <span>左右分栏</span>
         </div>
-        <div class="flex items-center gap-2 px-2.5 py-1.5 rounded-xs cursor-pointer whitespace-nowrap transition-colors duration-100 ease-ease text-fg hover:bg-accent-light hover:text-accent" @click="splitPane('vertical')">
+        <div class="flex items-center gap-2 px-2.5 py-1.5 rounded-xs cursor-pointer whitespace-nowrap transition-colors duration-100 ease-ease text-fg hover:bg-accent-light hover:text-accent" @click="splitPanel('vertical')">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
             <rect x="1.5" y="1.5" width="13" height="13" rx="1.5" />
             <line x1="1.5" y1="8" x2="14.5" y2="8" />

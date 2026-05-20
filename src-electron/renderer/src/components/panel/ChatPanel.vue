@@ -3,7 +3,7 @@
     <PanelBar
       :agent-options="agentOptions"
       :active-agent-id="localActiveAgentId"
-      :pane-id="paneId"
+      :pane-id="panelId"
       :session-id="sessionId"
       :done-count="doneCount"
       :alert-count="alertCount"
@@ -113,7 +113,7 @@ const props = withDefaults(
   defineProps<{
     agentOptions: AgentOption[]
     activeAgentId: string
-    paneId?: string
+    panelId?: string
     sessionId?: string | null
     agentViews: AgentView[]
     messages: ChatMessage[]
@@ -128,7 +128,7 @@ const props = withDefaults(
     agentOptions: () => [],
     agentViews: () => [],
     messages: () => [],
-    paneId: '',
+    panelId: '',
     sessionId: null,
     doneCount: 0,
     alertCount: 0,

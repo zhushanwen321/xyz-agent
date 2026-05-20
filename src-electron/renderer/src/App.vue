@@ -5,9 +5,9 @@
       <AppSidebar :visible="sidebarVisible" @create="createSession" @close="sidebarVisible = false" />
       <main class="flex-1 flex min-w-0 overflow-hidden relative">
         <SettingsView v-if="settingsStore.currentView === 'settings'" />
-        <PaneTreeRenderer v-else
-          :node="paneStore.tree"
-          :focused-pane-id="paneStore.focusedPaneId"
+        <PanelTreeRenderer v-else
+          :node="panelStore.tree"
+          :focused-panel-id="panelStore.focusedPanelId"
         />
         <!-- Drawers -->
         <DrawerOverlay :visible="settingsStore.drawerOpen" @close="settingsStore.closeDrawer()" />
@@ -21,7 +21,7 @@
           @close="settingsStore.closeDrawer()"
         />
         <DrawerLeft
-          v-if="paneStore.paneCount > 1 && settingsStore.drawerSide === 'left'"
+          v-if="panelStore.panelCount > 1 && settingsStore.drawerSide === 'left'"
           :open="settingsStore.drawerOpen"
           :tree-nodes="[]"
           :done-items="[]"
@@ -47,7 +47,7 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { useSettingsStore } from './stores/settings'
-import { usePaneStore } from './stores/pane'
+import { usePanelStore } from './stores/panel'
 import { useSessionStore } from './stores/session'
 import { useWindowStore } from './stores/window'
 import { useConnection } from './composables/useConnection'
@@ -59,7 +59,7 @@ import AppHeader from './components/layout/AppHeader.vue'
 import AppStatusbar from './components/layout/AppStatusbar.vue'
 import AppSidebar from './components/layout/AppSidebar.vue'
 import SettingsView from './components/layout/SettingsView.vue'
-import PaneTreeRenderer from './components/panel/PaneTreeRenderer.vue'
+import PanelTreeRenderer from './components/panel/PanelTreeRenderer.vue'
 import DrawerOverlay from './components/panel/DrawerOverlay.vue'
 import DrawerRight from './components/drawer/DrawerRight.vue'
 import DrawerLeft from './components/drawer/DrawerLeft.vue'
@@ -73,7 +73,7 @@ useProvider()
 const { loadSessions, createSession: doCreateSession } = useSession()
 
 const settingsStore = useSettingsStore()
-const paneStore = usePaneStore()
+const panelStore = usePanelStore()
 const sessionStore = useSessionStore()
 const windowStore = useWindowStore()
 
@@ -96,7 +96,7 @@ function handleKeydown(e: KeyboardEvent) {
   switch (e.key) {
     case 'w':
       e.preventDefault()
-      paneStore.unbindSession(paneStore.focusedPaneId)
+      panelStore.unbindSession(panelStore.focusedPanelId)
       break
     case 'b':
       e.preventDefault()
@@ -105,7 +105,7 @@ function handleKeydown(e: KeyboardEvent) {
     case 'd':
       e.preventDefault()
       const dir = e.shiftKey ? 'vertical' : 'horizontal'
-      if (!paneStore.splitPane(paneStore.focusedPaneId, dir)) {
+      if (!panelStore.splitPanel(panelStore.focusedPanelId, dir)) {
         const id = crypto.randomUUID()
         toasts.value.push({
           id,
@@ -166,14 +166,14 @@ onMounted(async () => {
     windowStore.currentWindowId = queryWindowId
   }
   if (querySessionId) {
-    paneStore.bindSession(paneStore.focusedPaneId, querySessionId)
+    panelStore.bindSession(panelStore.focusedPanelId, querySessionId)
   }
 
   // ── Sync pane state to main process on changes ──
   watch(
-    () => [paneStore.tree, paneStore.focusedPaneId] as const,
-    ([tree, focusedPaneId]) => {
-      windowStore.syncPaneState(tree, focusedPaneId)
+    () => [panelStore.tree, panelStore.focusedPanelId] as const,
+    ([tree, focusedPanelId]) => {
+      windowStore.syncPaneState(tree, focusedPanelId)
     },
     { deep: true },
   )
@@ -191,11 +191,11 @@ onMounted(async () => {
       switch (type) {
         case 'standard':
         case 'focus':
-          paneStore.mergeToSingle()
+          panelStore.mergeToSingle()
           settingsStore.currentView = 'chat'
           break
         case 'split':
-          paneStore.splitPane(paneStore.focusedPaneId, 'horizontal')
+          panelStore.splitPanel(panelStore.focusedPanelId, 'horizontal')
           break
         case 'overview':
           settingsStore.toggleOverview()

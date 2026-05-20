@@ -14,7 +14,7 @@
       class="min-w-0 min-h-0 overflow-hidden"
       :style="{ flex: ratioToFlex(node.ratio, 0) }"
     >
-      <PaneTreeMini :node="node.children[0]" />
+      <PanelTreeMini :node="node.children[0]" />
     </div>
     <div
       class="shrink-0 bg-border opacity-50"
@@ -24,16 +24,16 @@
       class="min-w-0 min-h-0 overflow-hidden"
       :style="{ flex: ratioToFlex(node.ratio, 1) }"
     >
-      <PaneTreeMini :node="node.children[1]" />
+      <PanelTreeMini :node="node.children[1]" />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import type { PaneTree } from '@xyz-agent/shared'
+import type { PanelTree } from '@xyz-agent/shared'
 
 defineProps<{
-  node: PaneTree
+  node: PanelTree
 }>()
 
 function ratioToFlex(ratio: number, index: 0 | 1): string {

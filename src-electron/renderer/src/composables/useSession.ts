@@ -1,13 +1,13 @@
 import { onMounted, onUnmounted, getCurrentInstance } from 'vue'
 import { useSessionStore } from '../stores/session'
 import { useChatStore } from '../stores/chat'
-import { usePaneStore } from '../stores/pane'
+import { usePanelStore } from '../stores/panel'
 import { send } from '../lib/ws-client'
 import { on, off } from '../lib/event-bus'
 import type { ServerMessage, SessionSummary, Message } from '@xyz-agent/shared'
 
 // ── 全局事件处理器（ref-counted，解决多组件重复注册问题）───
-// useSession 被 App.vue + AppSidebar.vue + EmptyPane.vue 分别调用，
+// useSession 被 App.vue + AppSidebar.vue + EmptyPanel.vue 分别调用，
 // 每调用一次就注册一套监听器。多个 onSessionRestored 会重复处理 session.restored，
 // 导致 addSession 添加多条相同 session → duplicate key 错误。
 
@@ -60,10 +60,10 @@ function createGlobalHandlers() {
     sessionStore.removeSession(oldSessionId)
     sessionStore.addSession(summary)
     sessionStore.switchSession(newSessionId)
-    const paneStore = usePaneStore()
-    for (const pane of paneStore.panes) {
+    const panelStore = usePanelStore()
+    for (const pane of panelStore.panels) {
       if (pane.sessionId === oldSessionId) {
-        paneStore.bindSession(pane.id, newSessionId)
+        panelStore.bindSession(pane.id, newSessionId)
       }
     }
     const oldState = chatStore.getSessionState(oldSessionId)

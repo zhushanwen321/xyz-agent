@@ -23,7 +23,7 @@
       </svg>
     </Button>
     <Button variant="ghost" size="icon" class="rounded-sm text-muted hover:text-accent" @click="cycleViewMode" :title="viewModeTitle">
-      <svg v-if="paneStore.paneCount <= 1" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:16px;height:16px">
+      <svg v-if="panelStore.panelCount <= 1" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:16px;height:16px">
         <rect x="1" y="1" width="4" height="14" rx="1"/><rect x="6" y="1" width="9" height="14" rx="1"/>
       </svg>
       <svg v-else viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:16px;height:16px">
@@ -51,33 +51,33 @@
 import { ref, computed } from 'vue'
 import { Button } from '../../design-system'
 import { useSettingsStore } from '../../stores/settings'
-import { usePaneStore } from '../../stores/pane'
+import { usePanelStore } from '../../stores/panel'
 import { useChatStore } from '../../stores/chat'
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 const settingsStore = useSettingsStore()
-const paneStore = usePaneStore()
+const panelStore = usePanelStore()
 const chatStore = useChatStore()
 const isDark = ref(document.documentElement.getAttribute('data-theme') === 'dark')
 defineEmits<{ 'toggle-sidebar': [] }>()
 
 // 从 focused pane 的 session 分区读取通知计数
 const focusedNotifs = computed(() => {
-  const sid = paneStore.focusedPane?.sessionId
+  const sid = panelStore.focusedPanel?.sessionId
   if (!sid) return { done: 0, alert: 0 }
   const s = chatStore.getSessionState(sid)
   return { done: s.doneCount, alert: s.alertCount }
 })
 function cycleViewMode() {
-  if (paneStore.paneCount <= 1) {
-    paneStore.splitPane(paneStore.focusedPaneId, 'horizontal')
+  if (panelStore.panelCount <= 1) {
+    panelStore.splitPanel(panelStore.focusedPanelId, 'horizontal')
   } else {
-    paneStore.mergeToSingle()
+    panelStore.mergeToSingle()
   }
 }
 
 const viewModeTitle = computed(() => {
-  if (paneStore.paneCount > 1) return t('header.viewStandard')
+  if (panelStore.panelCount > 1) return t('header.viewStandard')
   return t('header.split')
 })
 
