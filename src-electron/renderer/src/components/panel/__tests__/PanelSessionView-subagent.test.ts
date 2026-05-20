@@ -58,7 +58,7 @@ vi.mock('../../../stores/chat', () => ({
   }),
 }))
 
-vi.mock('../../../stores/pane', () => ({
+vi.mock('../../../stores/panel', () => ({
   usePanelStore: () => ({
   panes: [],
   closeEmptyPanel: vi.fn(),
