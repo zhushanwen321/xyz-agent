@@ -114,9 +114,9 @@ function handleLocalAction(payload: { action: string; data?: unknown }) {
       content: '',
       status: 'complete',
       timestamp: Date.now(),
-      systemType: 'done' as const,
-      systemTitle: '可用命令',
-      systemDescription: lines.join('\n'),
+      notificationType: 'done' as const,
+      notificationTitle: '可用命令',
+      notificationDescription: lines.join('\n'),
     }, sid)
   }
 }
@@ -205,9 +205,9 @@ function handleCompactionState(msg: ServerMessage, value: boolean) {
       content: '',
       status: 'complete',
       timestamp: Date.now(),
-      systemType: 'done' as const,
-      systemTitle: '正在压缩上下文…',
-      systemDescription: '压缩完成后会自动通知',
+      notificationType: 'done' as const,
+      notificationTitle: '正在压缩上下文…',
+      notificationDescription: '压缩完成后会自动通知',
     }, sid)
   }
 }
@@ -234,9 +234,9 @@ function handleCompacted(msg: ServerMessage) {
       content: '',
       status: 'complete',
       timestamp: Date.now(),
-      systemType: 'done' as const,
-      systemTitle: '上下文压缩完成',
-      systemDescription: '已压缩上下文以减少 token 消耗',
+      notificationType: 'done' as const,
+      notificationTitle: '上下文压缩完成',
+      notificationDescription: '已压缩上下文以减少 token 消耗',
     }, sid)
   }
 }

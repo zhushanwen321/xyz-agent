@@ -30,14 +30,14 @@
           <template v-if="view.agentId === localActiveAgentId">
             <template v-for="msg in view.messages" :key="msg.id">
               <!-- System messages -->
-              <SystemMessage
+              <SystemNotification
                 v-if="msg.role === 'system'"
-                :type="(msg as any).systemType || ((msg as any).status === 'error' ? 'alert' : 'done')"
-                :title="(msg as any).systemTitle || ''"
+                :type="(msg as any).notificationType || ((msg as any).status === 'error' ? 'alert' : 'done')"
+                :title="(msg as any).notificationTitle || ''"
                 :content="(msg as any).content"
-                :description="(msg as any).systemDescription"
-                :action-label="(msg as any).systemAction"
-                @action="$emit('system-action', msg)"
+                :description="(msg as any).notificationDescription"
+                :action-label="(msg as any).notificationAction"
+                @action="$emit('notification-action', msg)"
               />
               <!-- User / Assistant messages -->
               <MessageBubble v-else :message="msg" />
@@ -92,7 +92,7 @@ import type { PendingToolCall } from '../chat/ApprovalCard.vue'
 import type { ChatMessage } from '../../stores/chat'
 
 import PanelBar from './PanelBar.vue'
-import SystemMessage from '../chat/SystemMessage.vue'
+import SystemNotification from '../chat/SystemNotification.vue'
 import MessageBubble from '../chat/MessageBubble.vue'
 import StreamingMessage from '../chat/StreamingMessage.vue'
 import ApprovalCard from '../chat/ApprovalCard.vue'
@@ -145,7 +145,7 @@ const emit = defineEmits<{
   'always-allow': [toolName: string]
   'open-drawer': [tab: string]
   'close-pane': []
-  'system-action': [msg: ChatMessage]
+  'notification-action': [msg: ChatMessage]
   'switch-agent': [agentId: string]
   'send-command': [payload: { type: string; payload: Record<string, unknown> }]
   'local-action': [payload: { action: string; data?: unknown }]

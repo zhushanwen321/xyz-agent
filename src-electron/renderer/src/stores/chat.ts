@@ -2,20 +2,20 @@ import { defineStore } from 'pinia'
 import { reactive, computed } from 'vue'
 import type { Message, ToolCall } from '@xyz-agent/shared'
 
-// SystemChatMessage: local system notification (not from API)
-export interface SystemChatMessage {
+// SystemNotification: local system notification (not from API)
+export interface SystemNotification {
   id: string
   role: 'system'
   status?: string
   content?: string
-  systemType?: 'done' | 'alert'
-  systemTitle?: string
-  systemDescription?: string
-  systemAction?: string
+  notificationType?: 'done' | 'alert'
+  notificationTitle?: string
+  notificationDescription?: string
+  notificationAction?: string
   timestamp: number
 }
 
-export type ChatMessage = Message | SystemChatMessage
+export type ChatMessage = Message | SystemNotification
 
 // ── Types ──────────────────────────────────────────────────────────
 
