@@ -12,6 +12,9 @@ const SHIKI_THEMES: Record<string, string> = {
   dark: 'one-dark-pro',
 }
 
+/** 代码块超过此行数时自动折叠 */
+const COLLAPSE_THRESHOLD = 20
+
 // ── DOMPurify 共享配置：允许代码块/KaTeX/task list 所需的属性和标签 ──
 const PURIFY_CONFIG = {
   ADD_ATTR: ['class', 'style', 'aria-*', 'data-action', 'data-mermaid', 'data-lines', 'data-collapsed', 'data-lang'],
@@ -19,7 +22,8 @@ const PURIFY_CONFIG = {
 }
 
 // ── 占位符：双花括号形式，markdown-it 不做任何转义，原文保留 ──
-const PH_PREFIX = '{{CODEBLOCK_'
+const PH_TOKEN = Math.random().toString(36).slice(2, 8)
+const PH_PREFIX = `{{CODEBLOCK_${PH_TOKEN}_`
 const PH_SUFFIX = '}}'
 
 interface CodeBlockInfo {
@@ -59,6 +63,21 @@ const mdLight = new MarkdownIt({
   typographer: true,
 }).enable(['strikethrough', 'table'])
 
+// ══════════════════════════════════════════════════════════════
+// 阶段二：完整渲染（异步，用于完成阶段）
+
+const mdFull = new MarkdownIt({
+  html: false,
+  linkify: true,
+  typographer: true,
+}).enable(['strikethrough', 'table'])
+
+mdFull.use(texmath, {
+  engine: katex,
+  delimiters: 'dollars',
+  katexOptions: { throwOnError: false },
+})
+
 export function renderLightweight(text: string): string {
   if (!text) return ''
   let html = mdLight.render(text)
@@ -68,10 +87,6 @@ export function renderLightweight(text: string): string {
 
 /** 向后兼容 */
 export const renderMarkdown = renderLightweight
-
-// ══════════════════════════════════════════════════════════════
-// 阶段二：完整渲染（异步，用于完成阶段）
-// ══════════════════════════════════════════════════════════════
 
 /**
  * 预处理：提取所有 fenced code block，替换为占位符。
@@ -83,6 +98,8 @@ function preprocessCodeBlocks(src: string): {
 } {
   const blocks: CodeBlockInfo[] = []
 
+  // 注意：此正则不匹配缩进的 fence（列表/引用内的代码块）。
+  // 缩进的代码块会走 markdown-it 默认渲染（无 Shiki 高亮），属于可接受的降级。
   // 匹配 ```lang:filename ... ```
   const fenceRe = /^```([^\n`]*)\n([\s\S]*?)^```$/gm
   const processed = src.replace(fenceRe, (_match, info: string, code: string) => {
@@ -136,6 +153,9 @@ function escapeRegex(str: string): string {
 /**
  * Task list 后处理：将 markdown-it 渲染的 checkbox 模式转换为带 input 的 li
  * markdown-it 会把 `- [x] text` 渲染为 `<li>[x] text</li>`
+ *
+ * 注意：依赖 vanilla markdown-it 不解析 task list 的行为。
+ * 如果将来引入 markdown-it-task-lists 插件，需移除此后处理。
  */
 function postprocessTaskLists(html: string): string {
   return html.replace(
@@ -163,20 +183,7 @@ export async function renderFull(text: string, theme: 'light' | 'dark'): Promise
   // 阶段 1：预处理提取代码块 → markdown-it 渲染 → task list 后处理
   const { processed, blocks } = preprocessCodeBlocks(text)
 
-  const md = new MarkdownIt({
-    html: false,
-    linkify: true,
-    typographer: true,
-  }).enable(['strikethrough', 'table'])
-
-  // KaTeX 数学公式
-  md.use(texmath, {
-    engine: katex,
-    delimiters: 'dollars',
-    katexOptions: { throwOnError: false },
-  })
-
-  let html = md.render(processed)
+  let html = mdFull.render(processed)
   html = postprocessTaskLists(html)
 
   // 阶段 2：Shiki 高亮替换占位符
@@ -213,7 +220,7 @@ async function renderCodeBlock(block: CodeBlockInfo, theme: string): Promise<str
   }
 
   const lineNumbers = trimmedLines.map((_, i) => i + 1).join('\n')
-  const isCollapsed = lineCount > 20
+  const isCollapsed = lineCount > COLLAPSE_THRESHOLD
   const collapseAttr = isCollapsed ? ' data-collapsed="true"' : ''
   const collapseBtn = isCollapsed
     ? '\n  <button class="code-expand-btn" data-action="expand">展开</button>'
