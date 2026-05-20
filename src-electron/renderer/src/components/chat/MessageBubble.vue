@@ -331,7 +331,7 @@ const batchInfoMap = computed(() => {
 
 /* ── 任务列表 ── */
 .msg__body .task-list-item { list-style: none; margin-left: -1.5em; }
-.msg__body .task-list-item input[type="checkbox"] { margin-right: 6px; }
+.msg__body .task-list-item input[type="checkbox"] { margin-right: 6px; accent-color: var(--accent); }
 
 /* ── 代码块 ── */
 .msg__body .code-block {
@@ -425,7 +425,7 @@ const batchInfoMap = computed(() => {
   left: 0;
   right: 0;
   height: 40px;
-  background: linear-gradient(transparent, var(--bg));
+  background: linear-gradient(transparent, var(--section-bg));
   pointer-events: none;
 }
 .msg__body .code-block[data-collapsed="false"] .code-block-body {
@@ -456,6 +456,10 @@ const batchInfoMap = computed(() => {
   color: var(--danger);
   font-size: 12px;
   margin-bottom: 8px;
+}
+.msg__body .mermaid-error {
+  border: 1px solid var(--danger);
+  background: var(--danger-light);
 }
 
 /* ── 用户消息气泡内的代码覆盖 ── */

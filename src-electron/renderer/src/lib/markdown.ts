@@ -89,7 +89,9 @@ function preprocessCodeBlocks(src: string): {
     const trimmedInfo = (info as string).trim()
 
     if (trimmedInfo === 'mermaid') {
-      return `<div class="mermaid-source" data-mermaid">${escapeHtml(code)}</div>`
+      const index = blocks.length
+      blocks.push({ lang: 'mermaid', filename: '', code })
+      return `${PH_PREFIX}${index}${PH_SUFFIX}`
     }
 
     const { lang, filename } = parseFenceInfo(trimmedInfo)
@@ -114,7 +116,12 @@ async function postprocessCodeBlocks(
   for (let i = 0; i < blocks.length; i++) {
     const block = blocks[i]
     const placeholder = `${PH_PREFIX}${i}${PH_SUFFIX}`
-    const rendered = await renderCodeBlock(block, theme)
+    let rendered: string
+    if (block.lang === 'mermaid') {
+      rendered = `<div class="mermaid-source" data-mermaid>${escapeHtml(block.code)}</div>`
+    } else {
+      rendered = await renderCodeBlock(block, theme)
+    }
     // 占位符可能被 markdown-it 包裹在 <p> 中，也处理这种情况
     result = result.replace(new RegExp(`(?:<p>)?${escapeRegex(placeholder)}(?:</p>)?`, 'g'), rendered)
   }
