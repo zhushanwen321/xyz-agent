@@ -2,7 +2,7 @@
   <ChatPanel
     :agent-options="agentOptions"
     :active-agent-id="sessionState.activeAgentId"
-    :pane-id="panelId"
+    :panel-id="panelId"
     :session-id="sessionId"
     :agent-views="agentViews"
     :messages="sessionState.completedMessages"

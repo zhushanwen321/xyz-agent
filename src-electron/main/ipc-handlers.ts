@@ -16,12 +16,12 @@ export function registerIpcHandlers(deps: {
   getMainWindow: () => BrowserWindow | null
   getSettingsWindow: () => BrowserWindow | null
   setSettingsWindow: (win: BrowserWindow | null) => void
-  sidecarManager: RuntimeManager
+  runtimeManager: RuntimeManager
   isDev: boolean
   createWindow: (options?: { windowId?: string; sessionId?: string }) => BrowserWindow
   windowManager: WindowManager
 }): void {
-  const { getSettingsWindow, setSettingsWindow, sidecarManager, isDev, createWindow, windowManager } = deps
+  const { getSettingsWindow, setSettingsWindow, runtimeManager, isDev, createWindow, windowManager } = deps
 
   ipcMain.handle('open-settings-window', (): OpenSettingsWindowResult => {
     const existing = getSettingsWindow()
@@ -58,7 +58,7 @@ export function registerIpcHandlers(deps: {
   })
 
   ipcMain.handle('get-runtime-port', (): number | null => {
-    return sidecarManager.port
+    return runtimeManager.port
   })
 
   // ── 窗口管理 ─────────────────────────────────────────────────────

@@ -7,12 +7,12 @@
   >
     <PanelSessionView
       v-if="node.sessionId"
-      :pane-id="node.id"
+      :panel-id="node.id"
       :session-id="node.sessionId"
     />
     <EmptyPanel
       v-else
-      :pane-id="node.id"
+      :panel-id="node.id"
     />
   </div>
 
@@ -51,8 +51,8 @@
 import { ref, computed } from 'vue'
 import type { PanelTree } from '@xyz-agent/shared'
 import { usePanelStore } from '../../stores/panel'
-import PanelSessionView from './PaneSessionView.vue'
-import EmptyPanel from './EmptyPane.vue'
+import PanelSessionView from './PanelSessionView.vue'
+import EmptyPanel from './EmptyPanel.vue'
 import SplitDivider from './SplitDivider.vue'
 
 const PERCENT_SCALE = 100

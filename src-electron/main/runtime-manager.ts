@@ -140,7 +140,7 @@ export class RuntimeManager {
         process.resourcesPath,
         'app.asar.unpacked',
         'dist',
-        'sidecar',
+        'runtime',
         'index.js',
       )
       if (!existsSync(runtimeDist)) {
@@ -152,7 +152,7 @@ export class RuntimeManager {
     } else {
       // 开发环境：tsx 运行 TS 源码
       const tsxPath = path.join(projectRoot, 'node_modules', '.bin', 'tsx')
-      const runtimeEntry = path.join(projectRoot, 'sidecar', 'src', 'index.ts')
+      const runtimeEntry = path.join(projectRoot, 'runtime', 'src', 'index.ts')
 
       if (!existsSync(tsxPath)) {
         throw new Error(`tsx not found at ${tsxPath}. Run: npm install`)

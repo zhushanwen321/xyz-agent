@@ -3,7 +3,7 @@
     <PanelBar
       :agent-options="agentOptions"
       :active-agent-id="localActiveAgentId"
-      :pane-id="panelId"
+      :panel-id="panelId"
       :session-id="sessionId"
       :done-count="doneCount"
       :alert-count="alertCount"
