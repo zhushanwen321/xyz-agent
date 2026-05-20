@@ -17,6 +17,8 @@ export interface ElectronAPI {
   getWindows(): Promise<Array<{ windowId: string; focusedPaneId: string; sessionIds: string[] }>>
   /** 聚焦指定窗口 */
   focusWindow(windowId: string): Promise<void>
+  /** 查找指定 session 所在的窗口，返回 { windowId, paneId } 或 null */
+  findSessionWindow(sessionId: string): Promise<{ windowId: string; paneId: string } | null>
   /** 更新指定窗口状态 */
   updateWindowState(windowId: string, state: Record<string, unknown>): Promise<void>
   /** 监听窗口创建事件，返回取消监听函数 */
@@ -27,6 +29,8 @@ export interface ElectronAPI {
   onWindowListUpdated(callback: () => void): () => void
   /** 打开目录选择对话框 */
   pickDirectory(options?: { title?: string }): Promise<{ canceled: boolean; path: string | null }>
+  /** 在默认浏览器中打开外部链接 */
+  openExternal(url: string): Promise<void>
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -47,6 +51,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   createWindow: (sessionId?: string) => ipcRenderer.invoke('create-window', { sessionId }),
   getWindows: () => ipcRenderer.invoke('get-windows'),
   focusWindow: (windowId: string) => ipcRenderer.invoke('focus-window', windowId),
+  findSessionWindow: (sessionId: string) => ipcRenderer.invoke('find-session-window', sessionId),
   updateWindowState: (windowId: string, state: Record<string, unknown>) => ipcRenderer.invoke('update-window-state', windowId, state),
   onWindowCreated: (callback: (windowId: string) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, windowId: string) => callback(windowId)
@@ -64,4 +69,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('window-list-updated', handler)
   },
   pickDirectory: (options?: { title?: string }) => ipcRenderer.invoke('pick-directory', options),
+  openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
 } satisfies ElectronAPI)

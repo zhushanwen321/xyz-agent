@@ -434,6 +434,11 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .msg__body a { color: var(--accent); text-decoration: none; }
 .msg__body a:hover { text-decoration: underline; }
 
+/* ── 脚注 ── */
+.msg__body .footnotes { font-size: 0.9em; color: var(--muted); border-top: 1px solid var(--border); margin-top: 24px; padding-top: 12px; }
+.msg__body .footnotes p { margin-bottom: 8px; }
+.msg__body sup > a { color: var(--accent); text-decoration: none; font-weight: 600; }
+
 /* ── 分隔线 ── */
 .msg__body hr { border: none; border-top: 2px solid var(--border); margin: 24px 0; }
 

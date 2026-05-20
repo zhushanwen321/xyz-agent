@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { HTMLAttributes } from 'vue'
+import { ref } from 'vue'
 import { cn } from '../utils'
 
 const props = defineProps<{
@@ -15,13 +16,22 @@ const emit = defineEmits<{
   'update:modelValue': [payload: string | number]
 }>()
 
+const inputRef = ref<HTMLInputElement | null>(null)
+
 function onInput(event: Event) {
   emit('update:modelValue', (event.target as HTMLInputElement).value)
 }
+
+function focus() {
+  inputRef.value?.focus()
+}
+
+defineExpose({ focus })
 </script>
 
 <template>
   <input
+    ref="inputRef"
     :type="type ?? 'text'"
     :value="modelValue"
     :placeholder="placeholder"

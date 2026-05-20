@@ -32,6 +32,7 @@ export interface ChatSessionState {
   completedMessages: ChatMessage[]
   streamingMessage: Message | null
   isGenerating: boolean
+  isLoadingHistory: boolean
   error: string | null
   agentViews: Record<string, Message[]>
   activeAgentId: string
@@ -52,6 +53,7 @@ function createSessionState(): ChatSessionState {
     completedMessages: [],
     streamingMessage: null,
     isGenerating: false,
+    isLoadingHistory: false,
     error: null,
     agentViews: {},
     activeAgentId: 'main',
@@ -138,7 +140,13 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function replaceMessages(msgs: ChatMessage[], sessionId: string) {
-    getSessionState(sessionId).completedMessages = msgs
+    const s = getSessionState(sessionId)
+    s.completedMessages = msgs
+    s.isLoadingHistory = false
+  }
+
+  function setLoadingHistory(v: boolean, sessionId: string) {
+    getSessionState(sessionId).isLoadingHistory = v
   }
 
   function appendThinkingDelta(delta: string, sessionId: string) {
@@ -232,5 +240,6 @@ export const useChatStore = defineStore('chat', () => {
     // 状态
     updateContextInfo, setError, switchAgent,
     setTokenUsage, setDoneCount, setAlertCount, setCompacting,
+    setLoadingHistory,
   }
 })

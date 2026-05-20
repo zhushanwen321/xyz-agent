@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, protocol, net } from 'electron'
 import { RuntimeManager } from './runtime-manager.js'
 import { WindowManager, initialWindowState } from './window-manager.js'
 import { registerShortcuts, unregisterShortcuts } from './shortcuts.js'
@@ -77,6 +77,12 @@ registerIpcHandlers({
 
 // ── App 生命周期 ─────────────────────────────────────────────────
 app.whenReady().then(async () => {
+  // 注册 local-file:// 协议，用于渲染进程加载本地文件（如图片）
+  protocol.handle('local-file', (request) => {
+    const filePath = decodeURIComponent(new URL(request.url).pathname)
+    return net.fetch(`file://${filePath}`)
+  })
+
   mainWindow = createWindow({ windowId: 'win-1' })
   mainWindow.on('closed', () => { mainWindow = null })
   windowManager.register('win-1', mainWindow, initialWindowState('win-1'))
@@ -84,7 +90,7 @@ app.whenReady().then(async () => {
   // 1. 注册全局快捷键
   registerShortcuts(mainWindow)
 
-  // 2. 启动 Agent Runtime（mock 模式跳过）
+  // 2. 启动 runtime（mock 模式跳过）
   if (process.env.XYZ_MOCK === '1') {
     console.log('[main] Mock mode — skipping runtime start')
   } else {

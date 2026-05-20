@@ -127,6 +127,7 @@ export function useSession() {
   function switchSession(sessionId: string) {
     sessionStore.switchSession(sessionId)
     chatStore.ensureSession(sessionId)
+    chatStore.setLoadingHistory(true, sessionId)
     send({ type: 'session.history', payload: { sessionId } })
   }
 

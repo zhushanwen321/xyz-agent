@@ -27,7 +27,9 @@
     "build:vite": "npm -w @xyz-agent/frontend run build"
   },
   "dependencies": {
-    "electron-store": "^10"
+    "@types/markdown-it-footnote": "^3.0.4",
+    "electron-store": "^10",
+    "markdown-it-footnote": "^4.0.0"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",

@@ -27,6 +27,12 @@ export const useWindowStore = defineStore('window', () => {
     window.electronAPI?.focusWindow?.(windowId)
   }
 
+  /** 检查指定 session 是否已在其他窗口打开 */
+  async function findSessionWindow(sessionId: string): Promise<{ windowId: string; paneId: string } | null> {
+    if (!window.electronAPI?.findSessionWindow) return null
+    return window.electronAPI.findSessionWindow(sessionId)
+  }
+
   function updateWindowState(state: Partial<WindowState>) {
     if (!currentWindowId.value) return
     window.electronAPI?.updateWindowState?.(currentWindowId.value, state)
@@ -45,6 +51,7 @@ export const useWindowStore = defineStore('window', () => {
     refreshFromIPC,
     createWindow,
     focusWindow,
+    findSessionWindow,
     updateWindowState,
     syncPaneState,
   }

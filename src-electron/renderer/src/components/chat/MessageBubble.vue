@@ -196,6 +196,17 @@ async function renderMermaidBlocks() {
 async function handleBodyClick(e: MouseEvent) {
   const target = e.target as HTMLElement
 
+  // 外部链接：在默认浏览器打开
+  const anchor = target.closest('a')
+  if (anchor instanceof HTMLAnchorElement) {
+    const href = anchor.href
+    if (href && /^https?:\/\//i.test(href)) {
+      e.preventDefault()
+      window.electronAPI?.openExternal(href)
+    }
+    return
+  }
+
   // 复制按钮
   if (target.matches('.code-copy-btn')) {
     e.preventDefault()

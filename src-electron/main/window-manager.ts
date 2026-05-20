@@ -1,5 +1,5 @@
 import { BrowserWindow } from 'electron'
-import type { WindowState } from '@xyz-agent/shared'
+import type { WindowState, PaneTree } from '@xyz-agent/shared'
 
 interface ManagedWindow {
   windowId: string
@@ -70,6 +70,24 @@ export class WindowManager {
   get windowCount(): number {
     return this.windows.size
   }
+
+  /**
+   * 在所有窗口的 pane 树中查找已绑定指定 sessionId 的窗口。
+   * 返回 { windowId, paneId } 或 null。
+   */
+  findSessionBySessionId(sessionId: string): { windowId: string; paneId: string } | null {
+    for (const { windowId, state } of this.windows.values()) {
+      const paneId = findPaneBySessionId(state.paneTree, sessionId)
+      if (paneId) return { windowId, paneId }
+    }
+    return null
+  }
+}
+
+// 递归遍历 pane 树，找到 sessionId 对应的 pane leaf id
+function findPaneBySessionId(node: PaneTree, sessionId: string): string | null {
+  if (node.type === 'pane') return node.sessionId === sessionId ? node.id : null
+  return findPaneBySessionId(node.children[0], sessionId) ?? findPaneBySessionId(node.children[1], sessionId)
 }
 
 export function initialWindowState(windowId: string): WindowState {

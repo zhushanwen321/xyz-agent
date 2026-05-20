@@ -20,7 +20,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 
-const renameInput = ref<HTMLInputElement | null>(null)
+const renameInput = ref<{ focus: () => void } | null>(null)
 const renameValue = ref('')
 const confirmDelete = ref(false)
 
@@ -74,8 +74,7 @@ function startRename(e: MouseEvent) {
   renameValue.value = props.session.label
   emit('rename', props.session.id)
   nextTick(() => {
-    const el = renameInput.value as HTMLElement | undefined
-    el?.focus()
+    renameInput.value?.focus()
   })
 }
 

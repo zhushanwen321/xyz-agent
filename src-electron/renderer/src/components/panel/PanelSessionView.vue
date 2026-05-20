@@ -12,6 +12,7 @@
     :done-count="sessionState.doneCount"
     :alert-count="sessionState.alertCount"
     :is-compacting="sessionState.isCompacting"
+    :is-loading-history="sessionState.isLoadingHistory"
     @send="handleSend"
     @cancel="handleCancel"
     @select-model="handleSelectModel"

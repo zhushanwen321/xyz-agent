@@ -70,7 +70,7 @@ import ToastContainer from './components/toast/ToastContainer.vue'
 const { init: initConnection, teardown: teardownConnection } = useConnection()
 // useProvider listens for WS config.provider* / model.* events
 useProvider()
-const { loadSessions, createSession: doCreateSession } = useSession()
+const { loadSessions, createSession: doCreateSession, switchSession } = useSession()
 
 const settingsStore = useSettingsStore()
 const panelStore = usePanelStore()
@@ -80,6 +80,10 @@ const windowStore = useWindowStore()
 const toasts = ref<ToastItem[]>([])
 const TOAST_DURATION_MS = 4_000
 const sidebarVisible = ref(false)
+
+// 创建 session 后自动跳转：监听 session 数量变化
+let isCreatingFromSidebar = false
+let prevSessionCount = 0
 
 function toggleSidebar() {
   sidebarVisible.value = !sidebarVisible.value
@@ -129,6 +133,8 @@ async function createSession() {
   if (result.canceled || !result.path) return
 
   const label = sessionStore.generateSessionLabel(result.path)
+  isCreatingFromSidebar = true
+  prevSessionCount = sessionStore.sessions.length
   doCreateSession(result.path, label)
 }
 
@@ -155,6 +161,21 @@ onMounted(async () => {
 
   // 恢复主题和 palette 到 DOM
   settingsStore.applyTheme()
+
+  // ── 创建 session 后自动跳转到新 session ──
+  watch(
+    () => sessionStore.sessions.length,
+    (newLen) => {
+      if (isCreatingFromSidebar && newLen > prevSessionCount && sessionStore.sessions.length > 0) {
+        isCreatingFromSidebar = false
+        const newest = sessionStore.sessions[0]
+        if (newest) {
+          switchSession(newest.id)
+          panelStore.openSessionSmart(newest.id)
+        }
+      }
+    },
+  )
 
   // ── 多窗口初始化 ────────────────────────────────────────────────
   // 从 URL query 读取 windowId 和 sessionId（由 main.ts createWindow 传入）

@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { ipcMain, BrowserWindow, app, dialog } from 'electron'
+import { ipcMain, BrowserWindow, app, dialog, shell } from 'electron'
 import { RuntimeManager } from './runtime-manager.js'
 import { WindowManager, initialWindowState } from './window-manager.js'
 import type { WindowState } from '@xyz-agent/shared'
@@ -81,6 +81,17 @@ export function registerIpcHandlers(deps: {
 
   ipcMain.handle('update-window-state', (_event, windowId: string, state: Partial<WindowState>) => {
     windowManager.updateState(windowId, state)
+  })
+
+  ipcMain.handle('find-session-window', (_event, sessionId: string) => {
+    return windowManager.findSessionBySessionId(sessionId)
+  })
+
+  // ── 外部链接 ──────────────────────────────────────────────────
+  ipcMain.handle('open-external', async (_event, url: string) => {
+    // 安全检查：只允许 http/https 协议
+    if (!/^https?:\/\//i.test(url)) return
+    await shell.openExternal(url)
   })
 
   // ── 目录选择器 ──────────────────────────────────────────────────
