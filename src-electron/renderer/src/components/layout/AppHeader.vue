@@ -17,7 +17,7 @@
       </span>
     </Button>
     <span class="w-px h-6 bg-border mx-1"></span>
-    <Button variant="ghost" size="icon" class="rounded-sm text-muted hover:text-accent" @click="settingsStore.toggleOverview()" :title="t('header.overview') + ' (Cmd+J)'">
+    <Button variant="ghost" size="icon" class="rounded-sm text-muted hover:text-accent" @click="settingsStore.togglePanelGrid()" :title="t('header.overview') + ' (Cmd+J)'">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:16px;height:16px">
         <rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/>
       </svg>

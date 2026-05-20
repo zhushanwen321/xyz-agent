@@ -597,19 +597,19 @@ export const mockAlertItems: AlertItem[] = [
 ]
 
 // ═══════════════════════════════════════════════════════════════════
-// 12. Overview Cards (6 — one per session)
+// 12. PanelGrid Cards (6 — one per session)
 // ═══════════════════════════════════════════════════════════════════
 
-export type OverviewBadge = 'run' | 'pause' | 'idle'
+export type PanelGridBadge = 'run' | 'pause' | 'idle'
 
 export interface PreviewLine {
   text: string
   type: 'user' | 'bot' | 'system_done' | 'system_alert'
 }
 
-export interface OverviewCard {
+export interface PanelGridCard {
   sessionId: string
-  badge: OverviewBadge
+  badge: PanelGridBadge
   title: string
   project: string        // "xyz-agent · feat/tree-engine"
   previewLines: PreviewLine[]
@@ -637,7 +637,7 @@ function parseCtxToNumber(ctx: string): number {
   return match ? parseInt(match[1], 10) * 1000 : 128000
 }
 
-export const mockOverviewCards: OverviewCard[] = [
+export const mockPanelGridCards: PanelGridCard[] = [
   {
     sessionId: 's1',
     badge: 'run',

@@ -32,10 +32,10 @@
       </main>
     </div>
     <AppStatusbar />
-    <!-- Overview -->
-    <Overview
-      :visible="settingsStore.overviewVisible"
-      @close="settingsStore.overviewVisible = false"
+    <!-- PanelGrid -->
+    <PanelGrid
+      :visible="settingsStore.panelGridVisible"
+      @close="settingsStore.panelGridVisible = false"
     />
     <!-- Sidebar backdrop -->
     <div v-if="sidebarVisible" class="sidebar-backdrop" @click="sidebarVisible = false" />
@@ -63,7 +63,7 @@ import PanelTreeRenderer from './components/panel/PanelTreeRenderer.vue'
 import DrawerOverlay from './components/panel/DrawerOverlay.vue'
 import InspectorRight from './components/side-inspector/InspectorRight.vue'
 import InspectorLeft from './components/side-inspector/InspectorLeft.vue'
-import Overview from './components/overview/Overview.vue'
+import PanelGrid from './components/panel-grid/PanelGrid.vue'
 import ToastContainer from './components/toast/ToastContainer.vue'
 // Data comes from WS events via composables/stores — no mock imports
 
@@ -198,7 +198,7 @@ onMounted(async () => {
           panelStore.splitPanel(panelStore.focusedPanelId, 'horizontal')
           break
         case 'overview':
-          settingsStore.toggleOverview()
+          settingsStore.togglePanelGrid()
           break
         case 'settings':
           settingsStore.setView(settingsStore.currentView === 'settings' ? 'chat' : 'settings')

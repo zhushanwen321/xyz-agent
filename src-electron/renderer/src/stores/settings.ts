@@ -8,7 +8,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const locale = ref<string>('zh-CN')
   const defaultModel = ref('')
   const currentView = ref<'chat' | 'settings'>('chat')
-  const overviewVisible = ref(false)
+  const panelGridVisible = ref(false)
   const inspectorOpen = ref(false)
   const inspectorSide = ref<'left' | 'right'>('right')
 
@@ -41,14 +41,14 @@ export const useSettingsStore = defineStore('settings', () => {
     localStorage.setItem('xyz-agent-palette', preset)
   }
   function setView(v: 'chat' | 'settings') { currentView.value = v }
-  function toggleOverview() { overviewVisible.value = !overviewVisible.value }
+  function togglePanelGrid() { panelGridVisible.value = !panelGridVisible.value }
   function openInspector(side: 'left' | 'right') { inspectorOpen.value = true; inspectorSide.value = side }
   function closeInspector() { inspectorOpen.value = false }
 
   return {
     theme, themePreset, locale, defaultModel, currentView,
-    overviewVisible, inspectorOpen, inspectorSide,
+    panelGridVisible, inspectorOpen, inspectorSide,
     toggleTheme, applyTheme, setThemePreset, setView,
-    toggleOverview, openInspector, closeInspector,
+    togglePanelGrid, openInspector, closeInspector,
   }
 }, { persist: { key: 'xyz-settings', pick: ['theme', 'themePreset', 'locale', 'defaultModel'] } })
