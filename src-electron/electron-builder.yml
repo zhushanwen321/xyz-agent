@@ -54,3 +54,10 @@ linux:
         - x64
   category: Development
   artifactName: ${name}-${version}-${os}-${arch}.${ext}
+
+# 本地构建时 electron-builder 需要至少一个 publish provider
+# 否则 updateInfoBuilder 会因 channel === null 崩溃
+# CI release workflow 会覆盖此配置
+publish:
+  provider: generic
+  url: https://localhost/local-only
