@@ -5,37 +5,37 @@
       <AppSidebar :visible="sidebarVisible" @create="createSession" @close="sidebarVisible = false" />
       <main class="flex-1 flex min-w-0 overflow-hidden relative">
         <SettingsView v-if="settingsStore.currentView === 'settings'" />
-        <PaneTreeRenderer v-else
-          :node="paneStore.tree"
-          :focused-pane-id="paneStore.focusedPaneId"
+        <PanelTreeRenderer v-else
+          :node="panelStore.tree"
+          :focused-panel-id="panelStore.focusedPanelId"
         />
         <!-- Drawers -->
-        <DrawerOverlay :visible="settingsStore.drawerOpen" @close="settingsStore.closeDrawer()" />
-        <DrawerRight
-          v-if="settingsStore.drawerSide === 'right'"
-          :open="settingsStore.drawerOpen"
+        <DrawerOverlay :visible="settingsStore.inspectorOpen" @close="settingsStore.closeInspector()" />
+        <InspectorRight
+          v-if="settingsStore.inspectorSide === 'right'"
+          :open="settingsStore.inspectorOpen"
           :tree-nodes="[]"
           :done-items="[]"
           :alert-items="[]"
           active-node-id=""
-          @close="settingsStore.closeDrawer()"
+          @close="settingsStore.closeInspector()"
         />
-        <DrawerLeft
-          v-if="paneStore.paneCount > 1 && settingsStore.drawerSide === 'left'"
-          :open="settingsStore.drawerOpen"
+        <InspectorLeft
+          v-if="panelStore.panelCount > 1 && settingsStore.inspectorSide === 'left'"
+          :open="settingsStore.inspectorOpen"
           :tree-nodes="[]"
           :done-items="[]"
           :alert-items="[]"
           active-node-id=""
-          @close="settingsStore.closeDrawer()"
+          @close="settingsStore.closeInspector()"
         />
       </main>
     </div>
     <AppStatusbar />
-    <!-- Overview -->
-    <Overview
-      :visible="settingsStore.overviewVisible"
-      @close="settingsStore.overviewVisible = false"
+    <!-- PanelGrid -->
+    <PanelGrid
+      :visible="settingsStore.panelGridVisible"
+      @close="settingsStore.panelGridVisible = false"
     />
     <!-- Sidebar backdrop -->
     <div v-if="sidebarVisible" class="sidebar-backdrop" @click="sidebarVisible = false" />
@@ -47,7 +47,7 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { useSettingsStore } from './stores/settings'
-import { usePaneStore } from './stores/pane'
+import { usePanelStore } from './stores/panel'
 import { useSessionStore } from './stores/session'
 import { useWindowStore } from './stores/window'
 import { useConnection } from './composables/useConnection'
@@ -59,21 +59,21 @@ import AppHeader from './components/layout/AppHeader.vue'
 import AppStatusbar from './components/layout/AppStatusbar.vue'
 import AppSidebar from './components/layout/AppSidebar.vue'
 import SettingsView from './components/layout/SettingsView.vue'
-import PaneTreeRenderer from './components/panel/PaneTreeRenderer.vue'
+import PanelTreeRenderer from './components/panel/PanelTreeRenderer.vue'
 import DrawerOverlay from './components/panel/DrawerOverlay.vue'
-import DrawerRight from './components/drawer/DrawerRight.vue'
-import DrawerLeft from './components/drawer/DrawerLeft.vue'
-import Overview from './components/overview/Overview.vue'
+import InspectorRight from './components/side-inspector/InspectorRight.vue'
+import InspectorLeft from './components/side-inspector/InspectorLeft.vue'
+import PanelGrid from './components/panel-grid/PanelGrid.vue'
 import ToastContainer from './components/toast/ToastContainer.vue'
 // Data comes from WS events via composables/stores — no mock imports
 
 const { init: initConnection, teardown: teardownConnection } = useConnection()
 // useProvider listens for WS config.provider* / model.* events
 useProvider()
-const { loadSessions, createSession: doCreateSession } = useSession()
+const { loadSessions, createSession: doCreateSession, switchSession } = useSession()
 
 const settingsStore = useSettingsStore()
-const paneStore = usePaneStore()
+const panelStore = usePanelStore()
 const sessionStore = useSessionStore()
 const windowStore = useWindowStore()
 
@@ -81,11 +81,15 @@ const toasts = ref<ToastItem[]>([])
 const TOAST_DURATION_MS = 4_000
 const sidebarVisible = ref(false)
 
+// 创建 session 后自动跳转：监听 session 数量变化
+let isCreatingFromSidebar = false
+let prevSessionCount = 0
+
 function toggleSidebar() {
   sidebarVisible.value = !sidebarVisible.value
   // 与通知 Drawer 互斥：sidebar 打开时关闭通知 drawer
   if (sidebarVisible.value) {
-    settingsStore.closeDrawer()
+    settingsStore.closeInspector()
   }
 }
 
@@ -96,7 +100,7 @@ function handleKeydown(e: KeyboardEvent) {
   switch (e.key) {
     case 'w':
       e.preventDefault()
-      paneStore.unbindSession(paneStore.focusedPaneId)
+      panelStore.unbindSession(panelStore.focusedPanelId)
       break
     case 'b':
       e.preventDefault()
@@ -105,7 +109,7 @@ function handleKeydown(e: KeyboardEvent) {
     case 'd':
       e.preventDefault()
       const dir = e.shiftKey ? 'vertical' : 'horizontal'
-      if (!paneStore.splitPane(paneStore.focusedPaneId, dir)) {
+      if (!panelStore.splitPanel(panelStore.focusedPanelId, dir)) {
         const id = crypto.randomUUID()
         toasts.value.push({
           id,
@@ -129,6 +133,8 @@ async function createSession() {
   if (result.canceled || !result.path) return
 
   const label = sessionStore.generateSessionLabel(result.path)
+  isCreatingFromSidebar = true
+  prevSessionCount = sessionStore.sessions.length
   doCreateSession(result.path, label)
 }
 
@@ -156,6 +162,21 @@ onMounted(async () => {
   // 恢复主题和 palette 到 DOM
   settingsStore.applyTheme()
 
+  // ── 创建 session 后自动跳转到新 session ──
+  watch(
+    () => sessionStore.sessions.length,
+    (newLen) => {
+      if (isCreatingFromSidebar && newLen > prevSessionCount && sessionStore.sessions.length > 0) {
+        isCreatingFromSidebar = false
+        const newest = sessionStore.sessions[0]
+        if (newest) {
+          switchSession(newest.id)
+          panelStore.openSessionSmart(newest.id)
+        }
+      }
+    },
+  )
+
   // ── 多窗口初始化 ────────────────────────────────────────────────
   // 从 URL query 读取 windowId 和 sessionId（由 main.ts createWindow 传入）
   const params = new URLSearchParams(window.location.search)
@@ -166,14 +187,14 @@ onMounted(async () => {
     windowStore.currentWindowId = queryWindowId
   }
   if (querySessionId) {
-    paneStore.bindSession(paneStore.focusedPaneId, querySessionId)
+    panelStore.bindSession(panelStore.focusedPanelId, querySessionId)
   }
 
   // ── Sync pane state to main process on changes ──
   watch(
-    () => [paneStore.tree, paneStore.focusedPaneId] as const,
-    ([tree, focusedPaneId]) => {
-      windowStore.syncPaneState(tree, focusedPaneId)
+    () => [panelStore.tree, panelStore.focusedPanelId] as const,
+    ([tree, focusedPanelId]) => {
+      windowStore.syncPaneState(tree, focusedPanelId)
     },
     { deep: true },
   )
@@ -191,14 +212,14 @@ onMounted(async () => {
       switch (type) {
         case 'standard':
         case 'focus':
-          paneStore.mergeToSingle()
+          panelStore.mergeToSingle()
           settingsStore.currentView = 'chat'
           break
         case 'split':
-          paneStore.splitPane(paneStore.focusedPaneId, 'horizontal')
+          panelStore.splitPanel(panelStore.focusedPanelId, 'horizontal')
           break
         case 'overview':
-          settingsStore.toggleOverview()
+          settingsStore.togglePanelGrid()
           break
         case 'settings':
           settingsStore.setView(settingsStore.currentView === 'settings' ? 'chat' : 'settings')

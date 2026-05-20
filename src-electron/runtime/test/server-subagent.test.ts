@@ -6,7 +6,7 @@ import type { Server as HttpServer } from 'node:http'
  * Tests for T3: Sidecar manual trigger handling (subagent field in message.send).
  *
  * These tests verify that when `msg.payload.subagent` is present with
- * `{ agent: string; task: string }`, the sidecar constructs an XML structured
+ * `{ agent: string; task: string }`, the runtime constructs an XML structured
  * prompt instead of sending raw content to `pool.sendMessage`.
  *
  * ALL TESTS SHOULD FAIL until the implementation in server.ts handles

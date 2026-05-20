@@ -1,7 +1,7 @@
-// @ts-expect-error markdown-it has no types
 import MarkdownIt from 'markdown-it'
 // @ts-expect-error markdown-it-texmath has no types
 import texmath from 'markdown-it-texmath'
+import footnote from 'markdown-it-footnote'
 import katex from 'katex'
 import DOMPurify from 'dompurify'
 import { codeToHtml } from 'shiki'
@@ -26,6 +26,8 @@ const TOKEN_END = 8
 const PURIFY_CONFIG = {
   ADD_ATTR: ['class', 'style', 'aria-*', 'data-action', 'data-mermaid', 'data-lines', 'data-collapsed', 'data-lang'],
   ADD_TAGS: ['input'],
+  // 只允许明确列出的 scheme，拒绝 javascript: 等危险协议
+  ALLOWED_URI_REGEXP: /^(?:(?:https?|local-file|mailto|tel):|[^a-z])/i,
 }
 
 // ── 占位符：双花括号形式，markdown-it 不做任何转义，原文保留 ──
@@ -65,19 +67,19 @@ function parseFenceInfo(info: string): { lang: string; filename: string } {
 // ══════════════════════════════════════════════════════════════
 
 const mdLight = new MarkdownIt({
-  html: false,
+  html: true,
   linkify: true,
   typographer: true,
-}).enable(['strikethrough', 'table'])
+}).enable(['strikethrough', 'table']).use(footnote)
 
 // ══════════════════════════════════════════════════════════════
 // 阶段二：完整渲染（异步，用于完成阶段）
 
 const mdFull = new MarkdownIt({
-  html: false,
+  html: true,
   linkify: true,
   typographer: true,
-}).enable(['strikethrough', 'table'])
+}).enable(['strikethrough', 'table']).use(footnote)
 
 mdFull.use(texmath, {
   engine: katex,
@@ -88,7 +90,9 @@ mdFull.use(texmath, {
 export function renderLightweight(text: string): string {
   if (!text) return ''
   let html = mdLight.render(text)
+  html = postprocessTaskLists(html)
   html = postprocessTables(html)
+  html = postprocessImages(html)
   return DOMPurify.sanitize(html, PURIFY_CONFIG)
 }
 
@@ -184,6 +188,19 @@ function postprocessTables(html: string): string {
   )
 }
 
+/**
+ * 图片后处理：将本地绝对路径的图片 src 转换为 local-file:// 协议
+ * 浏览器中 /Users/... 会被拼接为 http://localhost:1420/Users/... 导致 404
+ */
+function postprocessImages(html: string): string {
+  return html.replace(
+    /(<img\s[^>]*src=")(\/(?:Users|home|tmp|var|etc)\/[^"]*?)(")/g,
+    (_match, prefix: string, src: string, suffix: string) => {
+      return `${prefix}local-file://${src}${suffix}`
+    },
+  )
+}
+
 export async function renderFull(text: string, theme: 'light' | 'dark'): Promise<string> {
   if (!text) return ''
 
@@ -197,8 +214,9 @@ export async function renderFull(text: string, theme: 'light' | 'dark'): Promise
   const shikiTheme = SHIKI_THEMES[theme] ?? SHIKI_THEMES['dark']
   html = await postprocessCodeBlocks(html, blocks, shikiTheme)
 
-  // 阶段 3：给 <table> 包裹滚动容器
+  // 阶段 3：给 <table> 包裹滚动容器 + 图片路径修正
   html = postprocessTables(html)
+  html = postprocessImages(html)
 
   return DOMPurify.sanitize(html, PURIFY_CONFIG)
 }

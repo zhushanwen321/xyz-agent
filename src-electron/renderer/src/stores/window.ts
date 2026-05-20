@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { WindowState, PaneTree } from '@xyz-agent/shared'
+import type { WindowState, PanelTree } from '@xyz-agent/shared'
 
 export const useWindowStore = defineStore('window', () => {
   const windows = ref<WindowState[]>([])
@@ -27,16 +27,22 @@ export const useWindowStore = defineStore('window', () => {
     window.electronAPI?.focusWindow?.(windowId)
   }
 
+  /** 检查指定 session 是否已在其他窗口打开 */
+  async function findSessionWindow(sessionId: string): Promise<{ windowId: string; paneId: string } | null> {
+    if (!window.electronAPI?.findSessionWindow) return null
+    return window.electronAPI.findSessionWindow(sessionId)
+  }
+
   function updateWindowState(state: Partial<WindowState>) {
     if (!currentWindowId.value) return
     window.electronAPI?.updateWindowState?.(currentWindowId.value, state)
   }
 
   /** Sync local pane tree to main process */
-  function syncPaneState(paneTree: PaneTree, focusedPaneId: string) {
+  function syncPaneState(panelTree: PanelTree, focusedPanelId: string) {
     // Strip Vue reactivity proxy before IPC serialization
-    const plain = JSON.parse(JSON.stringify(paneTree))
-    updateWindowState({ paneTree: plain, focusedPaneId })
+    const plain = JSON.parse(JSON.stringify(panelTree))
+    updateWindowState({ panelTree: plain, focusedPanelId })
   }
 
   return {
@@ -45,6 +51,7 @@ export const useWindowStore = defineStore('window', () => {
     refreshFromIPC,
     createWindow,
     focusWindow,
+    findSessionWindow,
     updateWindowState,
     syncPaneState,
   }

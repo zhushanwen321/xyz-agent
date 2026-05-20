@@ -12,18 +12,18 @@
       {{ windowLabel }}
     </div>
     <div class="flex-1 h-[100px] overflow-hidden p-1">
-      <PaneTreeMini :node="windowState.paneTree" />
+      <PanelTreeMini :node="windowState.panelTree" />
     </div>
     <div class="py-[6px] px-3 text-[11px] text-muted border-t border-border">
-      {{ paneCount }} 面板
+      {{ panelCount }} 面板
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { WindowState, PaneTree } from '@xyz-agent/shared'
-import PaneTreeMini from './PaneTreeMini.vue'
+import type { WindowState, PanelTree } from '@xyz-agent/shared'
+import PanelTreeMini from './PanelTreeMini.vue'
 
 const props = defineProps<{
   windowState: WindowState
@@ -34,12 +34,12 @@ defineEmits<{
   select: []
 }>()
 
-function countPanes(node: PaneTree): number {
+function countPanels(node: PanelTree): number {
   if (node.type === 'pane') return 1
-  return countPanes(node.children[0]) + countPanes(node.children[1])
+  return countPanels(node.children[0]) + countPanels(node.children[1])
 }
 
-const paneCount = computed(() => countPanes(props.windowState.paneTree))
+const panelCount = computed(() => countPanels(props.windowState.panelTree))
 
 const windowLabel = computed(() => {
   const id = props.windowState.windowId

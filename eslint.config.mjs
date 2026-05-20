@@ -6,7 +6,7 @@ export default [
     ignores: [
       'src/dist/**',
       'src-tauri/**',
-      'sidecar/dist/**',
+      'runtime/dist/**',
       'taste-lint/**',
       'src-electron/dist/**',
       'src-electron/**/dist/**',

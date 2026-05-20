@@ -1,6 +1,6 @@
 import path from 'node:path'
-import { ipcMain, BrowserWindow, app, dialog } from 'electron'
-import { SidecarManager } from './sidecar-manager.js'
+import { ipcMain, BrowserWindow, app, dialog, shell } from 'electron'
+import { RuntimeManager } from './runtime-manager.js'
 import { WindowManager, initialWindowState } from './window-manager.js'
 import type { WindowState } from '@xyz-agent/shared'
 
@@ -16,12 +16,12 @@ export function registerIpcHandlers(deps: {
   getMainWindow: () => BrowserWindow | null
   getSettingsWindow: () => BrowserWindow | null
   setSettingsWindow: (win: BrowserWindow | null) => void
-  sidecarManager: SidecarManager
+  runtimeManager: RuntimeManager
   isDev: boolean
   createWindow: (options?: { windowId?: string; sessionId?: string }) => BrowserWindow
   windowManager: WindowManager
 }): void {
-  const { getSettingsWindow, setSettingsWindow, sidecarManager, isDev, createWindow, windowManager } = deps
+  const { getSettingsWindow, setSettingsWindow, runtimeManager, isDev, createWindow, windowManager } = deps
 
   ipcMain.handle('open-settings-window', (): OpenSettingsWindowResult => {
     const existing = getSettingsWindow()
@@ -57,8 +57,8 @@ export function registerIpcHandlers(deps: {
     return { type: 'created-new' }
   })
 
-  ipcMain.handle('get-sidecar-port', (): number | null => {
-    return sidecarManager.port
+  ipcMain.handle('get-runtime-port', (): number | null => {
+    return runtimeManager.port
   })
 
   // ── 窗口管理 ─────────────────────────────────────────────────────
@@ -81,6 +81,23 @@ export function registerIpcHandlers(deps: {
 
   ipcMain.handle('update-window-state', (_event, windowId: string, state: Partial<WindowState>) => {
     windowManager.updateState(windowId, state)
+  })
+
+  ipcMain.handle('find-session-window', (_event, sessionId: string) => {
+    return windowManager.findSessionBySessionId(sessionId)
+  })
+
+  // ── 外部链接 ──────────────────────────────────────────────────
+  ipcMain.handle('open-external', async (_event, url: string): Promise<boolean> => {
+    // 安全检查：只允许 http/https 协议
+    if (!/^https?:\/\//i.test(url)) return false
+    try {
+      await shell.openExternal(url)
+      return true
+    } catch (err) {
+      console.error('[ipc] open-external failed:', err)
+      return false
+    }
   })
 
   // ── 目录选择器 ──────────────────────────────────────────────────

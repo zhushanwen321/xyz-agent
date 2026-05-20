@@ -1,10 +1,10 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('electronAPI', {
-  onSidecarPort: (callback) => {
+  onRuntimePort: (callback) => {
     const handler = (_event, port) => callback(port)
-    ipcRenderer.on('sidecar-port', handler)
-    return () => ipcRenderer.removeListener('sidecar-port', handler)
+    ipcRenderer.on('runtime-port', handler)
+    return () => ipcRenderer.removeListener('runtime-port', handler)
   },
   onShortcut: (callback) => {
     const handler = (_event, type) => callback(type)
@@ -12,5 +12,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('shortcut', handler)
   },
   openSettingsWindow: () => ipcRenderer.send('open-settings-window'),
-  getSidecarPort: () => ipcRenderer.invoke('get-sidecar-port'),
+  getRuntimePort: () => ipcRenderer.invoke('get-runtime-port'),
 })

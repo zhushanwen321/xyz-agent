@@ -16,18 +16,18 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useSessionStore } from '../../stores/session'
-import { usePaneStore } from '../../stores/pane'
+import { usePanelStore } from '../../stores/panel'
 import { useChatStore } from '../../stores/chat'
 import { getState } from '../../lib/ws-client'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 const sessionStore = useSessionStore()
-const paneStore = usePaneStore()
+const panelStore = usePanelStore()
 const chatStore = useChatStore()
 const connState = getState()
 
-const activeSessionId = computed(() => paneStore.focusedPane?.sessionId ?? null)
+const activeSessionId = computed(() => panelStore.focusedPanel?.sessionId ?? null)
 const activeSession = computed(() => {
   if (!activeSessionId.value) return sessionStore.currentSession
   return sessionStore.sessions.find(s => s.id === activeSessionId.value) ?? sessionStore.currentSession

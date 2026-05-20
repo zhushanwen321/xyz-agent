@@ -18,7 +18,7 @@ export default {
     logo: 'xyz-agent',
     done: 'Done',
     alert: 'Action Needed',
-    overview: 'Overview',
+    overview: 'Panel Grid',
     viewStandard: 'Standard',
     split: 'Split',
     viewFocus: 'Focus',

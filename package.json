@@ -5,7 +5,7 @@
   "type": "module",
   "workspaces": [
     "src-electron/renderer",
-    "src-electron/sidecar",
+    "src-electron/runtime",
     "src-electron/shared"
   ],
   "scripts": {

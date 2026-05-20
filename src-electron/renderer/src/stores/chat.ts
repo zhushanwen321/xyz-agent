@@ -2,20 +2,25 @@ import { defineStore } from 'pinia'
 import { reactive, computed } from 'vue'
 import type { Message, ToolCall } from '@xyz-agent/shared'
 
-// SystemChatMessage: local system notification (not from API)
-export interface SystemChatMessage {
+// SystemNotification: local system notification (not from API)
+export interface SystemNotification {
   id: string
   role: 'system'
   status?: string
   content?: string
-  systemType?: 'done' | 'alert'
-  systemTitle?: string
-  systemDescription?: string
-  systemAction?: string
+  notificationType?: 'done' | 'alert'
+  notificationTitle?: string
+  notificationDescription?: string
+  notificationAction?: string
   timestamp: number
 }
 
-export type ChatMessage = Message | SystemChatMessage
+export type ChatMessage = Message | SystemNotification
+
+/** 类型守卫：判断 ChatMessage 是否为 SystemNotification */
+export function isSystemNotification(msg: ChatMessage): msg is SystemNotification {
+  return 'notificationType' in msg || 'notificationTitle' in msg
+}
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -32,6 +37,7 @@ export interface ChatSessionState {
   completedMessages: ChatMessage[]
   streamingMessage: Message | null
   isGenerating: boolean
+  isLoadingHistory: boolean
   error: string | null
   agentViews: Record<string, Message[]>
   activeAgentId: string
@@ -52,6 +58,7 @@ function createSessionState(): ChatSessionState {
     completedMessages: [],
     streamingMessage: null,
     isGenerating: false,
+    isLoadingHistory: false,
     error: null,
     agentViews: {},
     activeAgentId: 'main',
@@ -138,7 +145,13 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function replaceMessages(msgs: ChatMessage[], sessionId: string) {
-    getSessionState(sessionId).completedMessages = msgs
+    const s = getSessionState(sessionId)
+    s.completedMessages = msgs
+    s.isLoadingHistory = false
+  }
+
+  function setLoadingHistory(v: boolean, sessionId: string) {
+    getSessionState(sessionId).isLoadingHistory = v
   }
 
   function appendThinkingDelta(delta: string, sessionId: string) {
@@ -232,5 +245,6 @@ export const useChatStore = defineStore('chat', () => {
     // 状态
     updateContextInfo, setError, switchAgent,
     setTokenUsage, setDoneCount, setAlertCount, setCompacting,
+    setLoadingHistory,
   }
 })

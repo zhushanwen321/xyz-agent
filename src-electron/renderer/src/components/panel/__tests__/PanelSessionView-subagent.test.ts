@@ -4,10 +4,10 @@ import { ref, nextTick } from 'vue'
 import type { AgentInfo, Message } from '@xyz-agent/shared'
 
 /**
- * Integration-style tests for PaneSessionView.vue — subagent passthrough
+ * Integration-style tests for PanelSessionView.vue — subagent passthrough
  *
  * Verifies that when ChatPanel emits 'send' with a subagent payload,
- * PaneSessionView correctly passes it to sendMessage.
+ * PanelSessionView correctly passes it to sendMessage.
  *
  * Testing strategy: mock the composables and stores, then trigger
  * the handleSend path by having ChatPanel emit 'send'.
@@ -58,10 +58,10 @@ vi.mock('../../../stores/chat', () => ({
   }),
 }))
 
-vi.mock('../../../stores/pane', () => ({
-  usePaneStore: () => ({
+vi.mock('../../../stores/panel', () => ({
+  usePanelStore: () => ({
   panes: [],
-  closeEmptyPane: vi.fn(),
+  closeEmptyPanel: vi.fn(),
   }),
 }))
 
@@ -108,10 +108,10 @@ const ChatPanelStub = {
   },
 }
 
-import PaneSessionView from '../PaneSessionView.vue'
+import PanelSessionView from '../PanelSessionView.vue'
 
-function mountPane(overrides: { sessionId?: string; paneId?: string } = {}) {
-  return mount(PaneSessionView, {
+function mountPanel(overrides: { sessionId?: string; paneId?: string } = {}) {
+  return mount(PanelSessionView, {
   props: {
     paneId: overrides.paneId ?? 'pane-1',
     sessionId: overrides.sessionId ?? 'session-1',
@@ -124,14 +124,14 @@ function mountPane(overrides: { sessionId?: string; paneId?: string } = {}) {
   })
 }
 
-describe('PaneSessionView — handleSend subagent passthrough', () => {
+describe('PanelSessionView — handleSend subagent passthrough', () => {
   beforeEach(() => {
   sendMessageMock.mockClear()
   addedMessages.length = 0
   })
 
   it('should pass subagent payload to sendMessage when send event includes subagent', async () => {
-  const wrapper = mountPane({ sessionId: 'session-sa-1' })
+  const wrapper = mountPanel({ sessionId: 'session-sa-1' })
 
   const panel = wrapper.findComponent({ name: 'ChatPanel' })
   await panel.vm.$emit('send', {
@@ -148,7 +148,7 @@ describe('PaneSessionView — handleSend subagent passthrough', () => {
   })
 
   it('should call sendMessage with content only when send event has no subagent', async () => {
-  const wrapper = mountPane({ sessionId: 'session-plain' })
+  const wrapper = mountPanel({ sessionId: 'session-plain' })
 
   const panel = wrapper.findComponent({ name: 'ChatPanel' })
   await panel.vm.$emit('send', { content: 'hello world' })
@@ -159,7 +159,7 @@ describe('PaneSessionView — handleSend subagent passthrough', () => {
   })
 
   it('should still pass through empty subagent object without crashing', async () => {
-  const wrapper = mountPane({ sessionId: 'session-empty-sa' })
+  const wrapper = mountPanel({ sessionId: 'session-empty-sa' })
 
   const panel = wrapper.findComponent({ name: 'ChatPanel' })
   await panel.vm.$emit('send', {
@@ -176,7 +176,7 @@ describe('PaneSessionView — handleSend subagent passthrough', () => {
   })
 
   it('should handle subagent with undefined agent/task fields', async () => {
-  const wrapper = mountPane({ sessionId: 'session-undef-sa' })
+  const wrapper = mountPanel({ sessionId: 'session-undef-sa' })
 
   const panel = wrapper.findComponent({ name: 'ChatPanel' })
   // Simulate subagent with missing fields — the component doesn't validate
@@ -195,7 +195,7 @@ describe('PaneSessionView — handleSend subagent passthrough', () => {
   })
 
   it('should add user message to chatStore with correct content when subagent is present', async () => {
-  const wrapper = mountPane({ sessionId: 'session-msg' })
+  const wrapper = mountPanel({ sessionId: 'session-msg' })
 
   const panel = wrapper.findComponent({ name: 'ChatPanel' })
   await panel.vm.$emit('send', {
@@ -211,7 +211,7 @@ describe('PaneSessionView — handleSend subagent passthrough', () => {
   })
 
   it('should add user message without skillName when subagent is present but no skillName', async () => {
-  const wrapper = mountPane({ sessionId: 'session-no-skill' })
+  const wrapper = mountPanel({ sessionId: 'session-no-skill' })
 
   const panel = wrapper.findComponent({ name: 'ChatPanel' })
   await panel.vm.$emit('send', {
@@ -225,7 +225,7 @@ describe('PaneSessionView — handleSend subagent passthrough', () => {
   })
 
   it('should not call sendMessage when sessionId is empty', async () => {
-  const wrapper = mountPane({ sessionId: '' })
+  const wrapper = mountPanel({ sessionId: '' })
 
   const panel = wrapper.findComponent({ name: 'ChatPanel' })
   await panel.vm.$emit('send', {

@@ -1,7 +1,8 @@
-import { readdirSync, readFileSync, openSync, readSync, closeSync, statSync, existsSync } from 'node:fs'
+import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { trash } from './trash.js'
+import { loadLabels } from './session-label-store.js'
 
 const SESSIONS_DIR = join(homedir(), '.xyz-agent', 'sessions')
 
@@ -14,7 +15,7 @@ export interface ScannedSession {
   cwd: string
   /** ISO timestamp string from session header */
   timestamp: string
-  /** Display name (from session_info entry), or null */
+  /** Display name (from independent label store), or null */
   name: string | null
   /** File last modified time (ms) */
   lastModified: number
@@ -26,6 +27,7 @@ export interface ScannedSession {
  * Scan ~/.xyz-agent/sessions/ for all session files.
  * Sessions are stored as flat .jsonl files (no subdirectory grouping).
  * Each file's first line is parsed for header metadata.
+ * Labels are read from the independent label store, not from pi's .jsonl.
  *
  * Results are cached for SCAN_TTL_MS to avoid repeated disk I/O.
  * Call invalidateScanCache() after create/delete/rename.
@@ -50,6 +52,7 @@ export function invalidateScanCache(): void {
 function scanSessionsUncached(): ScannedSession[] {
   if (!existsSync(SESSIONS_DIR)) return []
 
+  const labels = loadLabels()
   const results: ScannedSession[] = []
 
   const files = readdirSync(SESSIONS_DIR)
@@ -62,14 +65,12 @@ function scanSessionsUncached(): ScannedSession[] {
       const header = parseSessionHeader(filePath)
       if (!header) continue
 
-      const name = parseSessionName(filePath)
-
       results.push({
         id: header.id,
         filePath,
         cwd: header.cwd,
         timestamp: header.timestamp,
-        name,
+        name: labels[header.id] ?? null,
         lastModified: stat.mtimeMs,
         size: stat.size,
       })
@@ -113,10 +114,7 @@ interface SessionHeader {
   timestamp: string
 }
 
-/**
- * Parse the first line of a session file for header metadata.
- * Returns null if the file doesn't start with a valid session header.
- */
+/** Parse the first line of a session file for header metadata. */
 function parseSessionHeader(filePath: string): SessionHeader | null {
   try {
     const fd = readFileSync(filePath, 'utf-8')
@@ -129,49 +127,6 @@ function parseSessionHeader(filePath: string): SessionHeader | null {
       cwd: entry.cwd,
       timestamp: entry.timestamp,
     }
-  } catch {
-    return null
-  }
-}
-
-/**
- * Scan the tail of the file for the last session_info entry.
- * Reads up to TAIL_SCAN_BYTES from the end for efficiency.
- */
-const TAIL_SCAN_BYTES = 4096
-function parseSessionName(filePath: string): string | null {
-  try {
-    const stat = statSync(filePath)
-    const readLen = Math.min(stat.size, TAIL_SCAN_BYTES)
-    if (readLen === 0) return null
-
-    const buf = Buffer.alloc(readLen)
-    const fd = openSync(filePath, 'r')
-    try {
-      readSync(fd, buf, 0, readLen, stat.size - readLen)
-    } finally {
-      closeSync(fd)
-    }
-
-    const tail = buf.toString('utf-8')
-    // 从后往前找最后一个 session_info
-    let pos = tail.length
-    while (pos > 0) {
-      const idx = tail.lastIndexOf('session_info', pos - 1)
-      if (idx === -1) break
-      const lineStart = tail.lastIndexOf('\n', idx)
-      const lineEnd = tail.indexOf('\n', idx)
-      const line = tail.slice(lineStart + 1, lineEnd === -1 ? tail.length : lineEnd).trim()
-      try {
-        const entry = JSON.parse(line)
-        if (entry.type === 'session_info' && entry.name) return entry.name
-      } catch {
-        // expected: malformed line, skip
-        void 0
-      }
-      pos = idx
-    }
-    return null
   } catch {
     return null
   }

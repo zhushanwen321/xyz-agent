@@ -1,4 +1,4 @@
-export interface PaneLeaf {
+export interface PanelLeaf {
   type: 'pane'
   id: string
   sessionId: string | null
@@ -8,15 +8,15 @@ export interface SplitNode {
   type: 'split'
   id: string
   direction: 'horizontal' | 'vertical'
-  children: [PaneTree, PaneTree]
+  children: [PanelTree, PanelTree]
   ratio: number // 0.0~1.0，拖拽可调
 }
 
-export type PaneTree = PaneLeaf | SplitNode
+export type PanelTree = PanelLeaf | SplitNode
 
 export interface WindowState {
   windowId: string
-  paneTree: PaneTree
-  focusedPaneId: string
+  panelTree: PanelTree
+  focusedPanelId: string
   sessionIds: string[]
 }

@@ -45,7 +45,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useSessionStore } from '../../stores/session'
-import { usePaneStore } from '../../stores/pane'
+import { usePanelStore } from '../../stores/panel'
 import { useChatStore } from '../../stores/chat'
 import { useSession } from '../../composables/useSession'
 import { send } from '../../lib/ws-client'
@@ -53,11 +53,11 @@ import { send } from '../../lib/ws-client'
 const { t } = useI18n()
 
 const props = defineProps<{
-  paneId: string
+  panelId: string
 }>()
 
 const sessionStore = useSessionStore()
-const paneStore = usePaneStore()
+const panelStore = usePanelStore()
 const chatStore = useChatStore()
 const { createSession: doCreateSession } = useSession()
 
@@ -72,7 +72,7 @@ const recentSessions = computed(() => {
 })
 
 function handleSelectSession(sessionId: string) {
-  paneStore.bindSession(props.paneId, sessionId)
+  panelStore.bindSession(props.panelId, sessionId)
   // Load history for the selected session
   chatStore.ensureSession(sessionId)
   send({ type: 'session.history', payload: { sessionId } })
@@ -104,7 +104,7 @@ watch(() => sessionStore.sessions.length, (newLen) => {
   if (isCreating.value && newLen > prevSessionCount.value && sessionStore.sessions.length > 0) {
     const newest = sessionStore.sessions[0]
     if (newest) {
-      paneStore.bindSession(props.paneId, newest.id)
+      panelStore.bindSession(props.panelId, newest.id)
     }
     isCreating.value = false
   }

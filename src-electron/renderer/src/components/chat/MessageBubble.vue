@@ -114,7 +114,6 @@ let renderVersion = 0
 let mermaidModule: typeof import('mermaid').default | null = null
 // 记录上次初始化时的主题，切换后需重新初始化
 let mermaidInitTheme: string | null = null
-let mermaidRenderCounter = 0
 
 // 监听 content/status/theme 变化，触发完整渲染
 watch(
@@ -169,10 +168,11 @@ async function renderMermaidBlocks() {
       mermaidInitTheme = effectiveTheme
     }
     const sources = document.querySelectorAll(`[data-message-id="${props.message.id}"] .mermaid-source[data-mermaid]`)
-    for (const source of sources) {
+    for (let i = 0; i < sources.length; i++) {
+      const source = sources[i]
       const content = source.textContent ?? ''
-      // 用递增计数器保证 ID 全局唯一，避免同一 tick 内 Date.now() 重复
-      const mermaidId = `mermaid-${mermaidRenderCounter++}`
+      // 消息级唯一 ID：messageId + 索引 + 时间戳，避免跨实例/跨 tick 冲突
+      const mermaidId = `mermaid-${props.message.id}-${i}-${Date.now()}`
       const { svg } = await mermaidModule.render(mermaidId, content)
       source.innerHTML = svg
       source.removeAttribute('data-mermaid')
@@ -195,6 +195,17 @@ async function renderMermaidBlocks() {
 // ── 事件委托：复制 + 折叠 ──
 async function handleBodyClick(e: MouseEvent) {
   const target = e.target as HTMLElement
+
+  // 外部链接：在默认浏览器打开
+  const anchor = target.closest('a')
+  if (anchor instanceof HTMLAnchorElement) {
+    const href = anchor.href
+    if (href && /^https?:\/\//i.test(href)) {
+      e.preventDefault()
+      window.electronAPI?.openExternal(href)
+    }
+    return
+  }
 
   // 复制按钮
   if (target.matches('.code-copy-btn')) {

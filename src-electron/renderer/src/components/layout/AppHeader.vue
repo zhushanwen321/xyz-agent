@@ -7,7 +7,7 @@
     </Button>
     <div class="font-display text-base font-bold leading-tight -tracking-[0.01em]">xyz<span class="text-accent">-agent</span></div>
     <div class="flex-1"></div>
-    <Button variant="ghost" size="icon" class="relative rounded-sm text-muted hover:text-accent" @click="openDrawer" :title="t('header.notifications')">
+    <Button variant="ghost" size="icon" class="relative rounded-sm text-muted hover:text-accent" @click="openInspector" :title="t('header.notifications')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px">
         <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/>
         <path d="M13.73 21a2 2 0 01-3.46 0"/>
@@ -17,13 +17,13 @@
       </span>
     </Button>
     <span class="w-px h-6 bg-border mx-1"></span>
-    <Button variant="ghost" size="icon" class="rounded-sm text-muted hover:text-accent" @click="settingsStore.toggleOverview()" :title="t('header.overview') + ' (Cmd+J)'">
+    <Button variant="ghost" size="icon" class="rounded-sm text-muted hover:text-accent" @click="settingsStore.togglePanelGrid()" :title="t('header.overview') + ' (Cmd+J)'">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:16px;height:16px">
         <rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/>
       </svg>
     </Button>
     <Button variant="ghost" size="icon" class="rounded-sm text-muted hover:text-accent" @click="cycleViewMode" :title="viewModeTitle">
-      <svg v-if="paneStore.paneCount <= 1" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:16px;height:16px">
+      <svg v-if="panelStore.panelCount <= 1" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:16px;height:16px">
         <rect x="1" y="1" width="4" height="14" rx="1"/><rect x="6" y="1" width="9" height="14" rx="1"/>
       </svg>
       <svg v-else viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:16px;height:16px">
@@ -51,38 +51,38 @@
 import { ref, computed } from 'vue'
 import { Button } from '../../design-system'
 import { useSettingsStore } from '../../stores/settings'
-import { usePaneStore } from '../../stores/pane'
+import { usePanelStore } from '../../stores/panel'
 import { useChatStore } from '../../stores/chat'
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 const settingsStore = useSettingsStore()
-const paneStore = usePaneStore()
+const panelStore = usePanelStore()
 const chatStore = useChatStore()
 const isDark = ref(document.documentElement.getAttribute('data-theme') === 'dark')
 defineEmits<{ 'toggle-sidebar': [] }>()
 
 // 从 focused pane 的 session 分区读取通知计数
 const focusedNotifs = computed(() => {
-  const sid = paneStore.focusedPane?.sessionId
+  const sid = panelStore.focusedPanel?.sessionId
   if (!sid) return { done: 0, alert: 0 }
   const s = chatStore.getSessionState(sid)
   return { done: s.doneCount, alert: s.alertCount }
 })
 function cycleViewMode() {
-  if (paneStore.paneCount <= 1) {
-    paneStore.splitPane(paneStore.focusedPaneId, 'horizontal')
+  if (panelStore.panelCount <= 1) {
+    panelStore.splitPanel(panelStore.focusedPanelId, 'horizontal')
   } else {
-    paneStore.mergeToSingle()
+    panelStore.mergeToSingle()
   }
 }
 
 const viewModeTitle = computed(() => {
-  if (paneStore.paneCount > 1) return t('header.viewStandard')
+  if (panelStore.panelCount > 1) return t('header.viewStandard')
   return t('header.split')
 })
 
-function openDrawer() {
-  settingsStore.openDrawer('right')
+function openInspector() {
+  settingsStore.openInspector('right')
 }
 
 function openSettings() {

@@ -2,7 +2,7 @@ import { defineConfig } from 'tsup'
 
 export default defineConfig({
   entry: ['src/index.ts'],
-  outDir: '../dist/sidecar',
+  outDir: '../dist/runtime',
   format: ['esm'],
   target: 'node22',
   bundle: true,

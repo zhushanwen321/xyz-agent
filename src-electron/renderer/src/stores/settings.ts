@@ -8,9 +8,9 @@ export const useSettingsStore = defineStore('settings', () => {
   const locale = ref<string>('zh-CN')
   const defaultModel = ref('')
   const currentView = ref<'chat' | 'settings'>('chat')
-  const overviewVisible = ref(false)
-  const drawerOpen = ref(false)
-  const drawerSide = ref<'left' | 'right'>('right')
+  const panelGridVisible = ref(false)
+  const inspectorOpen = ref(false)
+  const inspectorSide = ref<'left' | 'right'>('right')
 
   // 旧值迁移: 'warm' → 'warm-teal', 'claude' → 'terracotta'
   function migratePalette(p: string): ThemePreset {
@@ -41,14 +41,14 @@ export const useSettingsStore = defineStore('settings', () => {
     localStorage.setItem('xyz-agent-palette', preset)
   }
   function setView(v: 'chat' | 'settings') { currentView.value = v }
-  function toggleOverview() { overviewVisible.value = !overviewVisible.value }
-  function openDrawer(side: 'left' | 'right') { drawerOpen.value = true; drawerSide.value = side }
-  function closeDrawer() { drawerOpen.value = false }
+  function togglePanelGrid() { panelGridVisible.value = !panelGridVisible.value }
+  function openInspector(side: 'left' | 'right') { inspectorOpen.value = true; inspectorSide.value = side }
+  function closeInspector() { inspectorOpen.value = false }
 
   return {
     theme, themePreset, locale, defaultModel, currentView,
-    overviewVisible, drawerOpen, drawerSide,
+    panelGridVisible, inspectorOpen, inspectorSide,
     toggleTheme, applyTheme, setThemePreset, setView,
-    toggleOverview, openDrawer, closeDrawer,
+    togglePanelGrid, openInspector, closeInspector,
   }
 }, { persist: { key: 'xyz-settings', pick: ['theme', 'themePreset', 'locale', 'defaultModel'] } })

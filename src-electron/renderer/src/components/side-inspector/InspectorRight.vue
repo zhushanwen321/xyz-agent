@@ -1,10 +1,10 @@
 <template>
-  <aside class="absolute top-0 bottom-0 w-[var(--drawer-w)] bg-surface z-50 flex flex-col transition-transform duration-300 ease-ease left-0 border-r border-border" :class="open ? 'translate-x-0' : '-translate-x-full'">
+  <aside class="absolute top-0 bottom-0 w-[var(--inspector-w)] bg-surface z-50 flex flex-col transition-transform duration-300 ease-ease right-0 border-l border-border" :class="open ? 'translate-x-0' : 'translate-x-full'">
     <div class="flex items-center justify-between px-[18px] py-[14px] border-b border-border">
       <div class="font-display text-[15px] font-semibold">SubAgent 监控</div>
       <Button variant="ghost" class="w-7 h-7 text-base" @click="$emit('close')">&times;</Button>
     </div>
-    <DrawerTabs
+    <InspectorTabs
       :active-tab="activeTab"
       :done-count="doneItems.length"
       :alert-count="alertItems.length"
@@ -43,7 +43,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { Button } from '../../design-system'
-import DrawerTabs from './DrawerTabs.vue'
+import InspectorTabs from './InspectorTabs.vue'
 import TaskTree from './TaskTree.vue'
 import DoneItem from './DoneItem.vue'
 import AlertItem from './AlertItem.vue'

@@ -2,7 +2,7 @@
   <ChatPanel
     :agent-options="agentOptions"
     :active-agent-id="sessionState.activeAgentId"
-    :pane-id="paneId"
+    :panel-id="panelId"
     :session-id="sessionId"
     :agent-views="agentViews"
     :messages="sessionState.completedMessages"
@@ -12,13 +12,14 @@
     :done-count="sessionState.doneCount"
     :alert-count="sessionState.alertCount"
     :is-compacting="sessionState.isCompacting"
+    :is-loading-history="sessionState.isLoadingHistory"
     @send="handleSend"
     @cancel="handleCancel"
     @select-model="handleSelectModel"
     @approve="handleApprove"
     @deny="handleDeny"
     @always-allow="handleAlwaysAllow"
-    @open-drawer="handleOpenDrawer"
+    @open-inspector="handleOpenDrawer"
     @close-pane="handleClosePane"
     @switch-agent="handleSwitchAgent"
     @send-command="handleSendCommand"
@@ -29,7 +30,7 @@
 <script setup lang="ts">
 import { ref, computed, toRef, onMounted, onUnmounted } from 'vue'
 import { useChatStore } from '../../stores/chat'
-import { usePaneStore } from '../../stores/pane'
+import { usePanelStore } from '../../stores/panel'
 import { useProviderStore } from '../../stores/provider'
 import { useSettingsStore } from '../../stores/settings'
 import { useChat } from '../../composables/useChat'
@@ -41,12 +42,12 @@ import type { AgentOption, AgentView } from './ChatPanel.vue'
 import ChatPanel from './ChatPanel.vue'
 
 const props = defineProps<{
-  paneId: string
+  panelId: string
   sessionId: string
 }>()
 
 const chatStore = useChatStore()
-const paneStore = usePaneStore()
+const panelStore = usePanelStore()
 const providerStore = useProviderStore()
 const settingsStore = useSettingsStore()
 
@@ -114,9 +115,9 @@ function handleLocalAction(payload: { action: string; data?: unknown }) {
       content: '',
       status: 'complete',
       timestamp: Date.now(),
-      systemType: 'done' as const,
-      systemTitle: '可用命令',
-      systemDescription: lines.join('\n'),
+      notificationType: 'done' as const,
+      notificationTitle: '可用命令',
+      notificationDescription: lines.join('\n'),
     }, sid)
   }
 }
@@ -140,8 +141,8 @@ function handleApprove(toolCallId: string) {
   pendingApproval.value = null
 }
 
-function handleDeny(toolCallId: string) {
-  send({ type: 'tool.deny', payload: { sessionId: props.sessionId, toolCallId } })
+function handleDeny(payload: { toolCallId: string; reason?: string }) {
+  send({ type: 'tool.deny', payload: { sessionId: props.sessionId, ...payload } })
   pendingApproval.value = null
 }
 
@@ -156,7 +157,7 @@ function handleOpenDrawer(_tab: string) {
 }
 
 function handleClosePane() {
-  paneStore.closeEmptyPane(props.paneId)
+  panelStore.closeEmptyPanel(props.panelId)
 }
 
 function handleSwitchAgent(agentId: string) {
@@ -175,7 +176,7 @@ function handleErrorMessage(msg: ServerMessage) {
   // 没有 sessionId 的错误不属于任何特定 session，跳过
   if (!payload.sessionId) return
   // 使用 Pinia store 中的 sessionId（同步更新），而非 props.sessionId（异步更新）
-  const currentSid = paneStore.panes.find(p => p.id === props.paneId)?.sessionId
+  const currentSid = panelStore.panels.find(p => p.id === props.panelId)?.sessionId
   if (!currentSid || payload.sessionId !== currentSid) return
   const errMsg = payload.message ?? 'Unknown error'
   chatStore.setGenerating(false, currentSid)
@@ -195,7 +196,7 @@ function handleCompactionState(msg: ServerMessage, value: boolean) {
   if (!sid) return
   // 使用 Pinia store 中的 sessionId（同步更新），而非 props.sessionId（异步更新）
   // 解决 session.restore → session.compacting 时序问题
-  const currentSid = paneStore.panes.find(p => p.id === props.paneId)?.sessionId
+  const currentSid = panelStore.panels.find(p => p.id === props.panelId)?.sessionId
   if (!currentSid || sid !== currentSid) return
   chatStore.setCompacting(value, sid)
   if (value) {
@@ -205,9 +206,9 @@ function handleCompactionState(msg: ServerMessage, value: boolean) {
       content: '',
       status: 'complete',
       timestamp: Date.now(),
-      systemType: 'done' as const,
-      systemTitle: '正在压缩上下文…',
-      systemDescription: '压缩完成后会自动通知',
+      notificationType: 'done' as const,
+      notificationTitle: '正在压缩上下文…',
+      notificationDescription: '压缩完成后会自动通知',
     }, sid)
   }
 }
@@ -216,7 +217,7 @@ function handleCompacted(msg: ServerMessage) {
   const payload = msg.payload as { sessionId?: string; error?: string; status?: string }
   const sid = payload.sessionId
   if (!sid) return
-  const currentSid = paneStore.panes.find(p => p.id === props.paneId)?.sessionId
+  const currentSid = panelStore.panels.find(p => p.id === props.panelId)?.sessionId
   if (!currentSid || sid !== currentSid) return
   chatStore.setCompacting(false, sid)
   if (payload.error) {
@@ -234,9 +235,9 @@ function handleCompacted(msg: ServerMessage) {
       content: '',
       status: 'complete',
       timestamp: Date.now(),
-      systemType: 'done' as const,
-      systemTitle: '上下文压缩完成',
-      systemDescription: '已压缩上下文以减少 token 消耗',
+      notificationType: 'done' as const,
+      notificationTitle: '上下文压缩完成',
+      notificationDescription: '已压缩上下文以减少 token 消耗',
     }, sid)
   }
 }

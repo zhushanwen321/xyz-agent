@@ -210,7 +210,7 @@ function handleDiscover() {
   // 清理旧监听和超时
   cleanupDiscover()
 
-  // 超时保护：sidecar 未响应或版本过旧时防止永久 loading
+  // 超时保护：runtime 未响应或版本过旧时防止永久 loading
   discoverTimer = setTimeout(() => {
     cleanupDiscover()
     discoverStatus.value = 'error'
@@ -249,8 +249,8 @@ function handleDiscover() {
   }
   onEvent('config.discoveredModels', discoverHandler)
 
-  // 通过 sidecar 发起 HTTP 请求
-  // 掩码 key 不发送，sidecar 会通过 providerId 从 config-store 读取已保存的 key
+  // 通过 runtime 发起 HTTP 请求
+  // 掩码 key 不发送，runtime 会通过 providerId 从 config-store 读取已保存的 key
   send({
     type: 'config.discoverModels',
     payload: {

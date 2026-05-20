@@ -60,8 +60,8 @@ jobs:
       - name: TypeCheck - renderer
         run: npm -w @xyz-agent/frontend run typecheck
 
-      - name: TypeCheck - sidecar
-        run: npm -w @xyz-agent/sidecar run typecheck
+      - name: TypeCheck - runtime
+        run: npm -w @xyz-agent/runtime run typecheck
 
       - name: TypeCheck - shared
         run: npm -w @xyz-agent/shared run typecheck
@@ -81,8 +81,8 @@ jobs:
 
       - run: npm ci
 
-      - name: Test - sidecar
-        run: npm -w @xyz-agent/sidecar run test -- --reporter=junit --outputFile=test-results.xml
+      - name: Test - runtime
+        run: npm -w @xyz-agent/runtime run test -- --reporter=junit --outputFile=test-results.xml
 
       - name: Test - renderer
         run: npm -w @xyz-agent/frontend run test -- --reporter=junit --outputFile=test-results.xml
@@ -93,7 +93,7 @@ jobs:
         with:
           name: test-results
           path: |
-            src-electron/sidecar/test-results.xml
+            src-electron/runtime/test-results.xml
             src-electron/renderer/test-results.xml
           retention-days: 7
 

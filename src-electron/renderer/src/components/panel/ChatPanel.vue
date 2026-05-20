@@ -3,18 +3,25 @@
     <PanelBar
       :agent-options="agentOptions"
       :active-agent-id="localActiveAgentId"
-      :pane-id="paneId"
+      :panel-id="panelId"
       :session-id="sessionId"
       :done-count="doneCount"
       :alert-count="alertCount"
       @switch-agent="switchAgent"
-      @open-drawer="$emit('open-drawer', $event)"
+      @open-inspector="$emit('open-inspector', $event)"
       @close-pane="$emit('close-pane')"
     />
 
     <div ref="chatMsgsRef" class="flex-1 overflow-y-auto overflow-x-hidden p-5 px-6 flex flex-col gap-[14px] relative max-w-[960px] mx-auto w-full" @scroll="onChatScroll">
-      <!-- Empty state -->
-      <div v-if="messages.length === 0" class="flex flex-col items-center justify-center h-full p-20 px-10 gap-3 text-muted">
+      <!-- Loading history state -->
+      <div v-if="isLoadingHistory" class="flex flex-col items-center justify-center h-full p-20 px-10 gap-3 text-muted">
+        <div class="flex items-center gap-2">
+          <span class="inline-block w-1.5 h-1.5 rounded-full bg-accent shrink-0 animate-thinking-pulse motion-reduce:opacity-60 motion-reduce:animate-none"></span>
+          <span class="font-mono text-[11px] leading-snug text-muted">加载对话历史...</span>
+        </div>
+      </div>
+      <!-- Empty state (only when not loading) -->
+      <div v-else-if="messages.length === 0" class="flex flex-col items-center justify-center h-full p-20 px-10 gap-3 text-muted">
         <svg class="text-muted mb-2 opacity-50" width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
           <path d="M8 10C8 8.89543 8.89543 8 10 8H38C39.1046 8 40 8.89543 40 10V30C40 31.1046 39.1046 32 38 32H22L14 40V32H10C8.89543 32 8 31.1046 8 30V10Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
           <path d="M16 18H32" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
@@ -30,14 +37,14 @@
           <template v-if="view.agentId === localActiveAgentId">
             <template v-for="msg in view.messages" :key="msg.id">
               <!-- System messages -->
-              <SystemMessage
+              <SystemNotification
                 v-if="msg.role === 'system'"
-                :type="(msg as any).systemType || ((msg as any).status === 'error' ? 'alert' : 'done')"
-                :title="(msg as any).systemTitle || ''"
-                :content="(msg as any).content"
-                :description="(msg as any).systemDescription"
-                :action-label="(msg as any).systemAction"
-                @action="$emit('system-action', msg)"
+                :type="isSystemNotification(msg) ? (msg.notificationType || (msg.status === 'error' ? 'alert' : 'done')) : 'done'"
+                :title="isSystemNotification(msg) ? (msg.notificationTitle || '') : ''"
+                :content="msg.content ?? ''"
+                :description="isSystemNotification(msg) ? msg.notificationDescription : undefined"
+                :action-label="isSystemNotification(msg) ? msg.notificationAction : undefined"
+                @action="$emit('notification-action', msg)"
               />
               <!-- User / Assistant messages -->
               <MessageBubble v-else :message="msg" />
@@ -86,13 +93,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick } from 'vue'
+import { ref, watch, nextTick, onMounted } from 'vue'
 import type { Message } from '@xyz-agent/shared'
 import type { PendingToolCall } from '../chat/ApprovalCard.vue'
 import type { ChatMessage } from '../../stores/chat'
+import { isSystemNotification } from '../../stores/chat'
 
 import PanelBar from './PanelBar.vue'
-import SystemMessage from '../chat/SystemMessage.vue'
+import SystemNotification from '../chat/SystemNotification.vue'
 import MessageBubble from '../chat/MessageBubble.vue'
 import StreamingMessage from '../chat/StreamingMessage.vue'
 import ApprovalCard from '../chat/ApprovalCard.vue'
@@ -113,7 +121,7 @@ const props = withDefaults(
   defineProps<{
     agentOptions: AgentOption[]
     activeAgentId: string
-    paneId?: string
+    panelId?: string
     sessionId?: string | null
     agentViews: AgentView[]
     messages: ChatMessage[]
@@ -123,16 +131,18 @@ const props = withDefaults(
     doneCount: number
     alertCount: number
     isCompacting?: boolean
+    isLoadingHistory?: boolean
   }>(),
   {
     agentOptions: () => [],
     agentViews: () => [],
     messages: () => [],
-    paneId: '',
+    panelId: '',
     sessionId: null,
     doneCount: 0,
     alertCount: 0,
     isCompacting: false,
+    isLoadingHistory: false,
   }
 )
 
@@ -141,11 +151,11 @@ const emit = defineEmits<{
   cancel: []
   'select-model': [modelId: string]
   approve: [toolCallId: string]
-  deny: [toolCallId: string]
+  deny: [payload: { toolCallId: string; reason?: string }]
   'always-allow': [toolName: string]
-  'open-drawer': [tab: string]
+  'open-inspector': [tab: string]
   'close-pane': []
-  'system-action': [msg: ChatMessage]
+  'notification-action': [msg: ChatMessage]
   'switch-agent': [agentId: string]
   'send-command': [payload: { type: string; payload: Record<string, unknown> }]
   'local-action': [payload: { action: string; data?: unknown }]
@@ -170,6 +180,17 @@ function isNearBottom(el: HTMLElement): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_NEAR_BOTTOM_THRESHOLD
 }
 
+// 强制滚到底部（用于 session 切换、首次加载等场景）
+function forceScrollToBottom() {
+  nextTick(() => {
+    const el = chatMsgsRef.value
+    if (el) {
+      el.scrollTop = el.scrollHeight
+      userAtBottom.value = true
+    }
+  })
+}
+
 // 记录用户是否在底部
 const userAtBottom = ref(true)
 
@@ -178,6 +199,7 @@ function onChatScroll() {
   if (el) userAtBottom.value = isNearBottom(el)
 }
 
+// 新消息 / streaming 更新时智能滚动
 watch(
   () => [props.messages.length, props.streamingMessage?.content],
   () => {
@@ -188,6 +210,23 @@ watch(
     })
   },
 )
+
+// session 切换或 history 加载完成时，强制滚到底部
+watch(
+  () => [props.sessionId, props.isLoadingHistory],
+  ([sid, loading]) => {
+    if (sid && !loading) {
+      forceScrollToBottom()
+    }
+  },
+)
+
+// 组件首次挂载，如果已有消息也滚到底
+onMounted(() => {
+  if (props.messages.length > 0) {
+    forceScrollToBottom()
+  }
+})
 
 function switchAgent(id: string) {
   localActiveAgentId.value = id

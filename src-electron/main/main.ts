@@ -1,6 +1,6 @@
 import path from 'node:path'
-import { app, BrowserWindow } from 'electron'
-import { SidecarManager } from './sidecar-manager.js'
+import { app, BrowserWindow, protocol, net } from 'electron'
+import { RuntimeManager } from './runtime-manager.js'
 import { WindowManager, initialWindowState } from './window-manager.js'
 import { registerShortcuts, unregisterShortcuts } from './shortcuts.js'
 import { registerIpcHandlers } from './ipc-handlers.js'
@@ -25,7 +25,7 @@ function getProductionIndexPath(): string {
 // ── 全局状态 ─────────────────────────────────────────────────────
 let mainWindow: BrowserWindow | null = null
 let settingsWindow: BrowserWindow | null = null
-const sidecarManager = new SidecarManager()
+const runtimeManager = new RuntimeManager()
 const windowManager = new WindowManager()
 
 // ── 窗口工厂 ─────────────────────────────────────────────────────
@@ -69,7 +69,7 @@ registerIpcHandlers({
   getMainWindow: () => mainWindow,
   getSettingsWindow: () => settingsWindow,
   setSettingsWindow: (win) => { settingsWindow = win },
-  sidecarManager,
+  runtimeManager,
   isDev,
   createWindow,
   windowManager,
@@ -77,6 +77,12 @@ registerIpcHandlers({
 
 // ── App 生命周期 ─────────────────────────────────────────────────
 app.whenReady().then(async () => {
+  // 注册 local-file:// 协议，用于渲染进程加载本地文件（如图片）
+  protocol.handle('local-file', (request) => {
+    const filePath = decodeURIComponent(new URL(request.url).pathname)
+    return net.fetch(`file://${filePath}`)
+  })
+
   mainWindow = createWindow({ windowId: 'win-1' })
   mainWindow.on('closed', () => { mainWindow = null })
   windowManager.register('win-1', mainWindow, initialWindowState('win-1'))
@@ -84,24 +90,24 @@ app.whenReady().then(async () => {
   // 1. 注册全局快捷键
   registerShortcuts(mainWindow)
 
-  // 2. 启动 sidecar（mock 模式跳过）
+  // 2. 启动 runtime（mock 模式跳过）
   if (process.env.XYZ_MOCK === '1') {
-    console.log('[main] Mock mode — skipping sidecar start')
+    console.log('[main] Mock mode — skipping runtime start')
   } else {
     try {
-      const port = await sidecarManager.start()
-      // 3. 通知渲染进程 sidecar 端口
-      mainWindow.webContents.send('sidecar-port', port)
+      const port = await runtimeManager.start()
+      // 3. 通知渲染进程 runtime 端口
+      mainWindow.webContents.send('runtime-port', port)
     } catch (err) {
-      console.error('[main] Failed to start sidecar, notifying renderer:', err)
-      mainWindow.webContents.send('sidecar-error', { message: (err as Error).message })
+      console.error('[main] Failed to start runtime, notifying renderer:', err)
+      mainWindow.webContents.send('runtime-error', { message: (err as Error).message })
     }
   }
 })
 
-// 主窗口关闭时停止 sidecar 并注销快捷键
+// 主窗口关闭时停止 runtime 并注销快捷键
 app.on('window-all-closed', () => {
-  sidecarManager.stop()
+  runtimeManager.stop()
   unregisterShortcuts()
 
   if (process.platform !== 'darwin') {
@@ -121,6 +127,6 @@ app.on('activate', () => {
 
 // 应用退出前清理
 app.on('before-quit', () => {
-  sidecarManager.stop()
+  runtimeManager.stop()
   unregisterShortcuts()
 })

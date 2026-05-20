@@ -1,5 +1,5 @@
 import { basename, dirname, join } from 'node:path'
-import { appendFileSync, existsSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import type { WebSocket } from 'ws'
 import type {
@@ -34,6 +34,7 @@ interface PiHistoryMessage {
 import { EventAdapter } from './event-adapter.js'
 import { getDefaultModel, loadSkills } from './config-store.js'
 import { scanSessions, deleteSessionFile, invalidateScanCache, type ScannedSession } from './session-scanner.js'
+import { saveLabel, removeLabel, migrateLabelsIfNeeded } from './session-label-store.js'
 import { lookupPiProvider } from './model-db.js'
 
 interface ManagedSession {
@@ -59,6 +60,7 @@ export class SessionPool {
   private clients = new Set<WebSocket>()
 
   constructor() {
+    migrateLabelsIfNeeded()
     // 进程崩溃时清理对应 session
     this.pm.onSessionExit((sessionId, code) => {
       const session = this.sessions.get(sessionId)
@@ -165,9 +167,9 @@ export class SessionPool {
     }
     this.sessions.set(id, session)
 
-    // Persist label to file so scanSessions can read it after restart
-    if (sessionFilePath && session.label && session.label !== basename(sessionCwd)) {
-      appendFileSync(sessionFilePath, JSON.stringify({ type: 'session_info', name: session.label }) + '\n')
+    // Persist label to independent store (not pi's .jsonl)
+    if (session.label) {
+      saveLabel(id, session.label)
     }
     invalidateScanCache()
 
@@ -180,11 +182,7 @@ export class SessionPool {
       session.label = newName
     }
 
-    // 在持久化文件中追加 session_info 条目（parseSessionName 取最后一个匹配）
-    const filePath = session?.sessionFilePath ?? this.findScannedSession(sessionId)?.filePath
-    if (filePath) {
-      appendFileSync(filePath, JSON.stringify({ type: 'session_info', name: newName }) + '\n')
-    }
+    saveLabel(sessionId, newName)
     invalidateScanCache()
   }
 
@@ -199,11 +197,13 @@ export class SessionPool {
       if (session.sessionFilePath) {
         await deleteSessionFile(session.sessionFilePath)
       }
+      removeLabel(sessionId)
     } else {
       // 非活跃 session：直接删除持久化文件
       const target = this.findScannedSession(sessionId)
       if (!target) throw new Error(`Session ${sessionId} not found`)
       await deleteSessionFile(target.filePath)
+      removeLabel(sessionId)
     }
     invalidateScanCache()
   }

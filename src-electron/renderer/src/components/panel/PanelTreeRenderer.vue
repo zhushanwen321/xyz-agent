@@ -2,17 +2,17 @@
   <!-- Pane leaf node -->
   <div
     v-if="node.type === 'pane'"
-    :class="['flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden border-t-2', node.id === focusedPaneId ? 'border-t-accent' : 'border-t-border']"
-    @mousedown="paneStore.navigateToPane(node.id)"
+    :class="['flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden border-t-2', node.id === focusedPanelId ? 'border-t-accent' : 'border-t-border']"
+    @mousedown="panelStore.navigateToPanel(node.id)"
   >
-    <PaneSessionView
+    <PanelSessionView
       v-if="node.sessionId"
-      :pane-id="node.id"
+      :panel-id="node.id"
       :session-id="node.sessionId"
     />
-    <EmptyPane
+    <EmptyPanel
       v-else
-      :pane-id="node.id"
+      :panel-id="node.id"
     />
   </div>
 
@@ -26,9 +26,9 @@
       class="flex min-w-0 min-h-0"
       :style="firstChildStyle"
     >
-      <PaneTreeRenderer
+      <PanelTreeRenderer
         :node="node.children[0]"
-        :focused-pane-id="focusedPaneId"
+        :focused-panel-id="focusedPanelId"
       />
     </div>
     <SplitDivider
@@ -39,9 +39,9 @@
       class="flex min-w-0 min-h-0"
       :style="secondChildStyle"
     >
-      <PaneTreeRenderer
+      <PanelTreeRenderer
         :node="node.children[1]"
-        :focused-pane-id="focusedPaneId"
+        :focused-panel-id="focusedPanelId"
       />
     </div>
   </div>
@@ -49,23 +49,25 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import type { PaneTree } from '@xyz-agent/shared'
-import { usePaneStore } from '../../stores/pane'
-import PaneSessionView from './PaneSessionView.vue'
-import EmptyPane from './EmptyPane.vue'
+import type { PanelTree } from '@xyz-agent/shared'
+import { usePanelStore } from '../../stores/panel'
+import PanelSessionView from './PanelSessionView.vue'
+import EmptyPanel from './EmptyPanel.vue'
 import SplitDivider from './SplitDivider.vue'
 
 const PERCENT_SCALE = 100
+const MIN_RATIO = 0.05
+const MAX_RATIO = 0.95
 
 const props = withDefaults(
   defineProps<{
-    node: PaneTree
-    focusedPaneId: string
+    node: PanelTree
+    focusedPanelId: string
   }>(),
   {}
 )
 
-const paneStore = usePaneStore()
+const panelStore = usePanelStore()
 const splitContainerRef = ref<HTMLElement | null>(null)
 
 // Flex-basis styles for split children based on ratio
@@ -93,8 +95,8 @@ function handleResize(delta: number) {
       : container.offsetHeight
   if (size <= 0) return
 
-  const newRatio = node.ratio + delta / size
-  paneStore.updateRatio(node.id, newRatio)
+  const newRatio = Math.max(MIN_RATIO, Math.min(MAX_RATIO, node.ratio + delta / size))
+  panelStore.updateRatio(node.id, newRatio)
 }
 </script>
 
