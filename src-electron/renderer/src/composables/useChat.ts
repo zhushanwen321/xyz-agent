@@ -5,6 +5,10 @@ import { on, off } from '../lib/event-bus'
 import { onMounted, onUnmounted, type Ref, unref, getCurrentInstance } from 'vue'
 import type { ServerMessage, ToolCall } from '@xyz-agent/shared'
 
+const RADIX_36 = 36
+const SUBSTRING_START = 2
+const SUBSTRING_END = 6
+
 /**
  * 全局事件处理器注册状态。
  * 事件处理器从消息 payload 中提取 sessionId，路由到正确的 ChatStore 分区。
@@ -26,7 +30,7 @@ function createGlobalHandlers() {
     if (!session.streamingMessage) {
 
       store.setStreaming({
-        id: `stream-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        id: `stream-${Date.now()}-${Math.random().toString(RADIX_36).substring(SUBSTRING_START, SUBSTRING_END)}`,
         role: 'assistant',
         content: '',
         status: 'streaming',

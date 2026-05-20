@@ -162,9 +162,12 @@ watch(
   }
 )
 
+/** 距离底部多少 px 以内视为「在底部」 */
+const SCROLL_NEAR_BOTTOM_THRESHOLD = 80
+
 // 智能自动滚动：底部时跟随新内容，用户上滚后不强制拉回
 function isNearBottom(el: HTMLElement): boolean {
-  return el.scrollHeight - el.scrollTop - el.clientHeight < 80
+  return el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_NEAR_BOTTOM_THRESHOLD
 }
 
 // 记录用户是否在底部

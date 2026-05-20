@@ -12,6 +12,7 @@
       <div class="text-[13px] leading-relaxed mb-2">{{ question }}</div>
       <template v-if="simple">
         <div class="flex gap-1.5 items-end">
+          <!-- eslint-disable-next-line taste/no-native-html-elements -->
           <textarea
             v-model="replyText"
             class="flex-1 py-1.5 px-[10px] border border-border rounded-sm bg-bg text-fg font-body text-xs resize-none outline-none min-h-8 max-h-20 transition-colors duration-150 ease-ease focus:border-accent"
@@ -19,6 +20,7 @@
             rows="1"
             @keydown.enter.prevent="sendReply"
           ></textarea>
+          <!-- eslint-disable-next-line taste/no-native-html-elements -->
           <button class="py-1.5 px-3 border-none rounded-sm bg-accent text-white text-[11px] font-semibold cursor-pointer whitespace-nowrap font-body transition-opacity duration-150 ease-ease hover:opacity-[0.88]" @click="sendReply">回复</button>
         </div>
       </template>

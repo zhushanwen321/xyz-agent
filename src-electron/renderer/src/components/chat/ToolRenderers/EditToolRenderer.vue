@@ -36,6 +36,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { ToolCall } from '@xyz-agent/shared'
+
+const BYTES_PER_KB = 1024
+
 const props = defineProps<{ toolCall: ToolCall }>()
 
 const parsedInput = computed(() => {
@@ -54,8 +57,8 @@ const diffSize = computed(() => {
   if (oldLen === 0 && newLen === 0) return ''
   // Show diff as total change size
   const total = oldLen + newLen
-  if (total < 1024) return `${total}B changed`
-  if (total < 1024 * 1024) return `${(total / 1024).toFixed(1)}KB changed`
-  return `${(total / (1024 * 1024)).toFixed(1)}MB changed`
+  if (total < BYTES_PER_KB) return `${total}B changed`
+  if (total < BYTES_PER_KB * BYTES_PER_KB) return `${(total / BYTES_PER_KB).toFixed(1)}KB changed`
+  return `${(total / (BYTES_PER_KB * BYTES_PER_KB)).toFixed(1)}MB changed`
 })
 </script>

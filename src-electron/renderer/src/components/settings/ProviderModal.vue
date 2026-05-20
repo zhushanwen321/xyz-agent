@@ -45,6 +45,9 @@ interface ModalFormData {
 
 const { t } = useI18n()
 
+const CTX_1M = 1_000_000
+const CTX_1K = 1000
+
 const formName = ref('')
 const formType = ref('anthropic')
 const formUrl = ref('')
@@ -71,8 +74,8 @@ function formatCtx(v: string | number | undefined): string {
   if (v == null || v === '--') return '--'
   const n = typeof v === 'string' ? parseInt(v, 10) : v
   if (Number.isNaN(n) || n <= 0) return '--'
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M`
-  return `${Math.round(n / 1000)}K`
+  if (n >= CTX_1M) return `${(n / CTX_1M).toFixed(n % CTX_1M === 0 ? 0 : 1)}M`
+  return `${Math.round(n / CTX_1K)}K`
 }
 
 const allTags = ['power', 'efficient', 'fast'] as const

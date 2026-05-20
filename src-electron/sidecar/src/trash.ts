@@ -15,8 +15,9 @@ export async function trash(filePath: string): Promise<void> {
         timeout: 5000,
       })
       return
-    } catch {
-      // Fallback to permanent delete
+    // eslint-disable-next-line taste/no-silent-catch -- intentional: fall back to permanent delete
+    } catch (e) {
+      console.error('[trash] trash command failed, falling back to permanent delete:', e)
     }
   }
   unlinkSync(filePath)

@@ -33,6 +33,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { ToolCall } from '@xyz-agent/shared'
+
+const BYTES_PER_KB = 1024
+
 const props = defineProps<{ toolCall: ToolCall }>()
 
 const parsedInput = computed(() => {
@@ -47,9 +50,9 @@ const fileContent = computed(() => String(parsedInput.value.content ?? ''))
 const fileSizeStr = computed(() => {
   const len = fileContent.value.length
   if (len === 0) return ''
-  if (len < 1024) return `${len}B`
-  if (len < 1024 * 1024) return `${(len / 1024).toFixed(1)}KB`
-  return `${(len / (1024 * 1024)).toFixed(1)}MB`
+  if (len < BYTES_PER_KB) return `${len}B`
+  if (len < BYTES_PER_KB * BYTES_PER_KB) return `${(len / BYTES_PER_KB).toFixed(1)}KB`
+  return `${(len / (BYTES_PER_KB * BYTES_PER_KB)).toFixed(1)}MB`
 })
 
 const lineCount = computed(() => {

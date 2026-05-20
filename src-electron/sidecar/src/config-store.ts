@@ -46,8 +46,9 @@ function loadPiConfig(): Record<string, ProviderConfig> | null {
         return parsed.providers as Record<string, ProviderConfig>
       }
     }
-  } catch {
-    // pi config not available, that's fine
+  // eslint-disable-next-line taste/no-silent-catch -- intentional: pi config not available is acceptable
+  } catch (e) {
+    console.error('[config] pi config not available:', e)
   }
   return null
 }
@@ -63,6 +64,7 @@ export function loadConfig(): AppConfig {
         ...(parsed.toolPermissions && { toolPermissions: parsed.toolPermissions }),
       }
     }
+  // eslint-disable-next-line taste/no-silent-catch -- intentional: config file missing/corrupt is handled by fallback
   } catch (e) {
     console.error('[config] load error:', e)
   }
@@ -85,7 +87,7 @@ export function saveConfig(config: AppConfig): void {
   try {
     if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true })
     writeFileSync(CONFIG_PATH, JSON.stringify(config, null, JSON_INDENT))
-  // eslint-disable-next-line taste/no-silent-catch -- save failure is best-effort, config persists on next successful save
+  // eslint-disable-next-line taste/no-silent-catch -- intentional: save failure is best-effort
   } catch (e) {
     console.error('[config] save error:', e)
   }
@@ -162,7 +164,8 @@ function readPiDefaultModel(): string | null {
       }
     }
     return null
-  } catch {
+  } catch (e) {
+    console.error('[config] pi model read error:', e)
     return null
   }
 }
@@ -175,6 +178,7 @@ export function loadSkills(projectRoot: string): SkillInfo[] {
       const raw = readFileSync(path, 'utf-8')
       return JSON.parse(raw) as SkillInfo[]
     }
+  // eslint-disable-next-line taste/no-silent-catch -- intentional: missing skills file returns empty list
   } catch (e) {
     console.error('[config] load skills error:', e)
   }
@@ -186,6 +190,7 @@ export function saveSkills(projectRoot: string, skills: SkillInfo[]): void {
     const dir = join(projectRoot, '.xyz-agent')
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
     writeFileSync(join(dir, 'skills.json'), JSON.stringify(skills, null, JSON_INDENT))
+  // eslint-disable-next-line taste/no-silent-catch -- intentional: save failure is best-effort
   } catch (e) {
     console.error('[config] save skills error:', e)
   }
@@ -199,6 +204,7 @@ export function loadAgents(projectRoot: string): AgentInfo[] {
       const raw = readFileSync(path, 'utf-8')
       return JSON.parse(raw) as AgentInfo[]
     }
+  // eslint-disable-next-line taste/no-silent-catch -- intentional: missing agents file returns empty list
   } catch (e) {
     console.error('[config] load agents error:', e)
   }
@@ -210,6 +216,7 @@ export function saveAgents(projectRoot: string, agents: AgentInfo[]): void {
     const dir = join(projectRoot, '.xyz-agent')
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
     writeFileSync(join(dir, 'agents.json'), JSON.stringify(agents, null, JSON_INDENT))
+  // eslint-disable-next-line taste/no-silent-catch -- intentional: save failure is best-effort
   } catch (e) {
     console.error('[config] save agents error:', e)
   }

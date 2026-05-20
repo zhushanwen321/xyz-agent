@@ -43,7 +43,7 @@ const props = defineProps<{ pending: PendingToolCall }>()
 
 const emit = defineEmits<{
   approve: [toolCallId: string]
-  deny: [toolCallId: string, reason?: string]
+  deny: [payload: { toolCallId: string; reason?: string }]
   alwaysAllow: [toolName: string]
 }>()
 
@@ -66,7 +66,7 @@ function handleApprove() {
 
 function handleDeny() {
   cleanup()
-  emit('deny', props.pending.toolCallId)
+  emit('deny', { toolCallId: props.pending.toolCallId })
 }
 
 function handleAlwaysAllow() {
@@ -82,7 +82,7 @@ timerId = setInterval(() => {
   remainingSeconds.value--
   if (remainingSeconds.value <= 0) {
     cleanup()
-    emit('deny', props.pending.toolCallId, 'timeout')
+    emit('deny', { toolCallId: props.pending.toolCallId, reason: 'timeout' })
   }
 }, TIMER_INTERVAL_MS)
 

@@ -88,6 +88,11 @@ import ToolCallCard from './ToolCallCard.vue'
 const props = defineProps<{ message: Message }>()
 const settings = useSettingsStore()
 
+const COPY_FEEDBACK_MS = 1500
+const BYTES_PER_KB = 1024
+const MIN_TOOL_CALLS = 2
+const BATCH_MIN_SIZE = 2
+
 // 完整渲染缓存（renderFull 是异步的）
 const fullRenderCache = ref('')
 
@@ -200,10 +205,10 @@ async function handleBodyClick(e: MouseEvent) {
     try {
       await navigator.clipboard.writeText(code)
       target.textContent = '已复制'
-      setTimeout(() => { target.textContent = '复制' }, 1500)
+      setTimeout(() => { target.textContent = '复制' }, COPY_FEEDBACK_MS)
     } catch {
       target.textContent = '复制失败'
-      setTimeout(() => { target.textContent = '复制' }, 1500)
+      setTimeout(() => { target.textContent = '复制' }, COPY_FEEDBACK_MS)
     }
     return
   }
@@ -231,15 +236,15 @@ function extractContentSize(input: unknown): number {
 
 function formatBatchSize(bytes: number): string {
   if (bytes <= 0) return ''
-  if (bytes < 1024) return `${bytes}B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
+  if (bytes < BYTES_PER_KB) return `${bytes}B`
+  if (bytes < BYTES_PER_KB * BYTES_PER_KB) return `${(bytes / BYTES_PER_KB).toFixed(1)}KB`
+  return `${(bytes / (BYTES_PER_KB * BYTES_PER_KB)).toFixed(1)}MB`
 }
 
 const batchInfoMap = computed(() => {
   const result = new Map<string, BatchInfo>()
   const toolCalls = props.message.toolCalls
-  if (!toolCalls || toolCalls.length < 2) return result
+  if (!toolCalls || toolCalls.length < MIN_TOOL_CALLS) return result
 
   let batchStart = 0
   for (let i = 1; i <= toolCalls.length; i++) {
@@ -248,7 +253,7 @@ const batchInfoMap = computed(() => {
       const size = i - batchStart
       // Only group file operation batches (write, edit)
       const name = toolCalls[batchStart].toolName
-      if (size >= 2 && (name === 'write' || name === 'edit')) {
+      if (size >= BATCH_MIN_SIZE && (name === 'write' || name === 'edit')) {
         let totalBytes = 0
         for (let j = batchStart; j < i; j++) {
           totalBytes += extractContentSize(toolCalls[j].input)

@@ -192,7 +192,8 @@ export const usePaneStore = defineStore('pane', () => {
     }
 
     // 已有 2-3 个面板 → 创建新窗口进行分流
-    if (paneCount.value >= 2 && paneCount.value < 4) {
+    const MIN_PANES_FOR_NEW_WINDOW = 2
+    if (paneCount.value >= MIN_PANES_FOR_NEW_WINDOW && paneCount.value < MAX_PANES) {
       const { useWindowStore } = await import('./window')
       const windowStore = useWindowStore()
       void windowStore.createWindow(sessionId)

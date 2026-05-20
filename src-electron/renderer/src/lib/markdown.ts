@@ -15,6 +15,13 @@ const SHIKI_THEMES: Record<string, string> = {
 /** 代码块超过此行数时自动折叠 */
 const COLLAPSE_THRESHOLD = 20
 
+/** 随机 token 生成基数（0-9a-z） */
+const TOKEN_BASE = 36
+/** 跳过 Math.random().toString() 的 "0." 前缀 */
+const TOKEN_SKIP_PREFIX = 2
+/** 随机 token 长度（取到第 N 个字符） */
+const TOKEN_END = 8
+
 // ── DOMPurify 共享配置：允许代码块/KaTeX/task list 所需的属性和标签 ──
 const PURIFY_CONFIG = {
   ADD_ATTR: ['class', 'style', 'aria-*', 'data-action', 'data-mermaid', 'data-lines', 'data-collapsed', 'data-lang'],
@@ -22,7 +29,7 @@ const PURIFY_CONFIG = {
 }
 
 // ── 占位符：双花括号形式，markdown-it 不做任何转义，原文保留 ──
-const PH_TOKEN = Math.random().toString(36).slice(2, 8)
+const PH_TOKEN = Math.random().toString(TOKEN_BASE).slice(TOKEN_SKIP_PREFIX, TOKEN_END)
 const PH_PREFIX = `{{CODEBLOCK_${PH_TOKEN}_`
 const PH_SUFFIX = '}}'
 
