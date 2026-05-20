@@ -23,6 +23,10 @@ export class RuntimeManager {
   private static readonly HEALTH_RETRY_COUNT = 30
   // eslint-disable-next-line no-magic-numbers
   private static readonly HEALTH_INTERVAL_MS = 200
+  // eslint-disable-next-line no-magic-numbers
+  private static readonly CONNECT_TIMEOUT_MS = 500
+  // eslint-disable-next-line no-magic-numbers
+  private static readonly STOP_TIMEOUT_MS = 2000
 
   get port(): number | null {
     return this._port
@@ -34,8 +38,10 @@ export class RuntimeManager {
    */
   private killStaleProcessOnPort(port: number): void {
     try {
-      const output = execSync(`lsof -ti :${port} -sTCP:LISTEN`, {
+      // 注意：-sTCP:LISTEN 在 Linux 上不可用，用兼容方案
+      const output = execSync(`lsof -n -P -i :${port} 2>/dev/null | grep LISTEN | awk '{print $2}' || true`, {
         encoding: 'utf-8',
+        shell: '/bin/bash',
         stdio: ['pipe', 'pipe', 'pipe'],
       })
       for (const line of output.trim().split('\n')) {
@@ -84,21 +90,30 @@ export class RuntimeManager {
     throw new Error('No available port in range 3210-3220')
   }
 
-  private isPortInUse(port: number): Promise<boolean> {
+  private isPortInUse(port: number, timeoutMs = RuntimeManager.CONNECT_TIMEOUT_MS): Promise<boolean> {
     return new Promise((resolve) => {
       const socket = createConnection({ port, host: '127.0.0.1' }, () => {
         socket.destroy()
         resolve(true)
       })
       socket.on('error', () => resolve(false))
+      socket.setTimeout(timeoutMs, () => {
+        socket.destroy()
+        resolve(false)
+      })
     })
   }
 
   /** 将端口写入 ~/.xyz-agent/runtime.port，供 cold-start 场景发现 */
   private writePortFile(port: number): void {
-    const dir = path.join(homedir(), '.xyz-agent')
-    mkdirSync(dir, { recursive: true })
-    writeFileSync(path.join(dir, 'runtime.port'), String(port))
+    try {
+      const dir = path.join(homedir(), '.xyz-agent')
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(path.join(dir, 'runtime.port'), String(port))
+    // eslint-disable-next-line taste/no-silent-catch -- 端口文件非关键，失败不阻塞主流程
+    } catch (err) {
+      console.error('[runtime] Failed to write port file:', err)
+    }
   }
 
   /**
@@ -122,8 +137,8 @@ export class RuntimeManager {
    * 返回实际使用的端口号。
    */
   async start(): Promise<number> {
-    // 先停掉已有的
-    this.stop()
+    // 先停掉已有的，等待其真正退出
+    await this.stop()
 
     const port = await this.findAvailablePort()
     console.log(`[runtime] Starting on port ${port}`)
@@ -171,6 +186,10 @@ export class RuntimeManager {
       cwd: projectRoot,
     })
 
+    this.child.on('error', (err) => {
+      console.error(`[runtime] Spawn error: ${err.message}`)
+    })
+
     // runtime 日志转发：只用 console（dev 模式方便调试）。
     // 安装全局 EPIPE 兜底防止 pipe 断开时崩溃
     this.child.stdout?.on('data', (data: Buffer) => {
@@ -192,13 +211,37 @@ export class RuntimeManager {
     return port
   }
 
-  /** 停止 runtime 子进程 */
-  stop(): void {
-    if (this.child && !this.child.killed) {
-      this.child.kill('SIGTERM')
-      this.child = null
-    }
-    this._port = null
+  /** 停止 runtime 子进程，等待退出或超时 */
+  stop(timeoutMs = RuntimeManager.STOP_TIMEOUT_MS): Promise<void> {
+    return new Promise((resolve) => {
+      if (!this.child || this.child.killed) {
+        this.child = null
+        this._port = null
+        resolve()
+        return
+      }
+      const child = this.child
+      const onExit = () => {
+        child.removeListener('exit', onExit)
+        this.child = null
+        this._port = null
+        resolve()
+      }
+      child.once('exit', onExit)
+      child.kill('SIGTERM')
+      // 超时后强制 SIGKILL
+      setTimeout(() => {
+        child.removeListener('exit', onExit)
+        if (!child.killed) {
+          try { child.kill('SIGKILL') }
+          // eslint-disable-next-line taste/no-silent-catch -- 进程可能已退出
+          catch { /* ignore */ }
+        }
+        this.child = null
+        this._port = null
+        resolve()
+      }, timeoutMs)
+    })
   }
 
   private sleep(ms: number): Promise<void> {

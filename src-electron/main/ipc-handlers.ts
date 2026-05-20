@@ -88,10 +88,16 @@ export function registerIpcHandlers(deps: {
   })
 
   // ── 外部链接 ──────────────────────────────────────────────────
-  ipcMain.handle('open-external', async (_event, url: string) => {
+  ipcMain.handle('open-external', async (_event, url: string): Promise<boolean> => {
     // 安全检查：只允许 http/https 协议
-    if (!/^https?:\/\//i.test(url)) return
-    await shell.openExternal(url)
+    if (!/^https?:\/\//i.test(url)) return false
+    try {
+      await shell.openExternal(url)
+      return true
+    } catch (err) {
+      console.error('[ipc] open-external failed:', err)
+      return false
+    }
   })
 
   // ── 目录选择器 ──────────────────────────────────────────────────

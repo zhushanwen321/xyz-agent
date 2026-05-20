@@ -56,6 +56,8 @@ import EmptyPanel from './EmptyPanel.vue'
 import SplitDivider from './SplitDivider.vue'
 
 const PERCENT_SCALE = 100
+const MIN_RATIO = 0.05
+const MAX_RATIO = 0.95
 
 const props = withDefaults(
   defineProps<{
@@ -93,7 +95,7 @@ function handleResize(delta: number) {
       : container.offsetHeight
   if (size <= 0) return
 
-  const newRatio = Math.max(0.05, Math.min(0.95, node.ratio + delta / size))
+  const newRatio = Math.max(MIN_RATIO, Math.min(MAX_RATIO, node.ratio + delta / size))
   panelStore.updateRatio(node.id, newRatio)
 }
 </script>
