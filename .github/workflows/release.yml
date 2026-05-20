@@ -63,7 +63,7 @@ jobs:
         run: |
           npm version ${{ inputs.version }} --no-git-tag-version --workspace=src-electron
           npm version ${{ inputs.version }} --no-git-tag-version --workspace=src-electron/renderer
-          npm version ${{ inputs.version }} --no-git-tag-version --workspace=src-electron/sidecar
+          npm version ${{ inputs.version }} --no-git-tag-version --workspace=src-electron/runtime
           npm version ${{ inputs.version }} --no-git-tag-version --workspace=src-electron/shared
 
       - name: Lint
@@ -72,12 +72,12 @@ jobs:
       - name: TypeCheck
         run: |
           npm -w @xyz-agent/frontend run typecheck
-          npm -w @xyz-agent/sidecar run typecheck
+          npm -w @xyz-agent/runtime run typecheck
           npm -w @xyz-agent/shared run typecheck
 
       - name: Test
         run: |
-          npm -w @xyz-agent/sidecar run test
+          npm -w @xyz-agent/runtime run test
           npm -w @xyz-agent/frontend run test
 
       - name: Build
