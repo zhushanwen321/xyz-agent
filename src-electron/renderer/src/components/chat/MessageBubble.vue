@@ -257,7 +257,7 @@ const batchInfoMap = computed(() => {
 </script>
 
 <!-- msg__body 内的元素由 v-html 渲染，无法用 Tailwind 类作用于动态内容 -->
-<style scoped>
+<style>
 /* ── 标题 ── */
 .msg__body h1 { font-size: 1.5em; font-weight: 700; border-bottom: 1px solid var(--border); padding-bottom: 0.3em; margin: 24px 0 16px; }
 .msg__body h2 { font-size: 1.25em; font-weight: 600; border-bottom: 1px solid var(--border); padding-bottom: 0.3em; margin: 24px 0 16px; }
@@ -288,7 +288,7 @@ const batchInfoMap = computed(() => {
   background: var(--section-bg);
   padding: 0.2em 0.4em;
   border-radius: var(--radius-xs);
-  font-size: 85%;
+  font-size: 12px;
   font-family: var(--font-mono);
 }
 
@@ -366,7 +366,7 @@ const batchInfoMap = computed(() => {
   opacity: 0.6;
   border-right: 1px solid var(--border);
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.5;
   white-space: pre;
 }
@@ -383,7 +383,7 @@ const batchInfoMap = computed(() => {
   background: none !important;
   padding: 0 !important;
   border-radius: 0 !important;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.5;
   font-family: var(--font-mono);
   white-space: pre;
@@ -412,9 +412,9 @@ const batchInfoMap = computed(() => {
 }
 .msg__body .code-expand-btn:hover { opacity: 0.8; }
 
-/* 折叠状态：限制 body 高度为约 10 行 */
+/* 折叠状态：限制 body 高度为约 12 行 */
 .msg__body .code-block[data-collapsed="true"] .code-block-body {
-  max-height: calc(13px * 1.5 * 10 + 24px);
+  max-height: calc(12px * 1.5 * 12 + 24px);
   overflow: hidden;
   position: relative;
 }
@@ -441,7 +441,7 @@ const batchInfoMap = computed(() => {
   border-radius: var(--radius-sm);
   text-align: center;
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: 12px;
   white-space: pre;
   overflow-x: auto;
 }
@@ -454,7 +454,7 @@ const batchInfoMap = computed(() => {
 .msg__body .mermaid-rendered svg { max-width: 100%; }
 .msg__body .mermaid-error-msg {
   color: var(--danger);
-  font-size: 13px;
+  font-size: 12px;
   margin-bottom: 8px;
 }
 

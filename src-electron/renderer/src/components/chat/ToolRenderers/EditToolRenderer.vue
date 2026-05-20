@@ -12,7 +12,7 @@
     <!-- Completed state: old / new diff -->
     <div v-else>
       <!-- Summary header -->
-      <div class="flex items-center gap-1.5 px-3 pt-2.5 pb-1 text-[11px] font-mono text-success">
+      <div class="flex items-center gap-1.5 px-3 pt-2.5 pb-1 text-[10px] font-mono text-success">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="10" height="10" class="shrink-0"><path d="M4 8l3 3 5-6"/></svg>
         <span class="font-medium">Edited</span>
         <span v-if="diffSize" class="opacity-70 text-muted">· {{ diffSize }}</span>

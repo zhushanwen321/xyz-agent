@@ -8,7 +8,7 @@
   </div>
 
   <!-- Task description -->
-  <div v-if="taskDesc" class="px-2.5 py-1.5 text-xs text-muted border-b border-border">
+  <div v-if="taskDesc" class="px-2.5 py-1.5 text-xs text-muted border-b border-border font-body">
     <span class="font-medium text-fg mr-1">Task:</span>{{ taskDesc }}
   </div>
 
