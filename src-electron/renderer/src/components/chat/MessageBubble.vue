@@ -76,13 +76,6 @@
   </div>
 </template>
 
-<script lang="ts">
-// 模块级状态：跨组件实例共享
-let _mermaidModule: typeof import('mermaid').default | null = null
-let _mermaidInitialized = false
-let _mermaidRenderCounter = 0
-</script>
-
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
 import type { Message } from '@xyz-agent/shared'
@@ -109,19 +102,24 @@ const renderedContent = computed(() => {
   return fullRenderCache.value || lightweightContent.value
 })
 
-// 版本号防止竞态：快速 content 变化时只接受最新版本的渲染结果
+// 版本号防止竞态：组件级闭包，避免多实例共享
 let renderVersion = 0
+
+// Mermaid 模块级单例（动态导入，延迟初始化）
+let mermaidModule: typeof import('mermaid').default | null = null
+// 记录上次初始化时的主题，切换后需重新初始化
+let mermaidInitTheme: string | null = null
+let mermaidRenderCounter = 0
 
 // 监听 content/status/theme 变化，触发完整渲染
 watch(
   () => [props.message.content, props.message.status, settings.theme] as const,
-  async ([content, status, theme]) => {
+  async ([content, status]) => {
     if (status !== 'streaming' && content) {
       const version = ++renderVersion
-      const isDark = theme === 'dark' ||
-        (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+      const effectiveTheme = getEffectiveTheme()
       try {
-        const result = await renderFull(content, isDark ? 'dark' : 'light')
+        const result = await renderFull(content, effectiveTheme)
         if (version === renderVersion) {
           fullRenderCache.value = result
         }
@@ -140,30 +138,37 @@ watch(
 
 // ── Mermaid 懒加载渲染 ──
 
+/** 获取当前实际主题（解析 system 为 light/dark） */
+function getEffectiveTheme(): 'light' | 'dark' {
+  if (settings.theme === 'dark') return 'dark'
+  if (settings.theme === 'light') return 'light'
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
+
 async function renderMermaidBlocks() {
   const el = document.querySelector(`[data-message-id="${props.message.id}"] .mermaid-source[data-mermaid]`)
   if (!el) return
 
   try {
-    if (!_mermaidModule) {
-      _mermaidModule = (await import('mermaid')).default
+    if (!mermaidModule) {
+      mermaidModule = (await import('mermaid')).default
     }
-    if (!_mermaidInitialized) {
-      const isDark = settings.theme === 'dark' ||
-        (settings.theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
-      _mermaidModule.initialize({
+    const effectiveTheme = getEffectiveTheme()
+    // 首次初始化或主题切换后需重新初始化
+    if (mermaidInitTheme !== effectiveTheme) {
+      mermaidModule.initialize({
         startOnLoad: false,
         securityLevel: 'sandbox',
-        theme: isDark ? 'dark' : 'default',
+        theme: effectiveTheme === 'dark' ? 'dark' : 'default',
       })
-      _mermaidInitialized = true
+      mermaidInitTheme = effectiveTheme
     }
     const sources = document.querySelectorAll(`[data-message-id="${props.message.id}"] .mermaid-source[data-mermaid]`)
     for (const source of sources) {
       const content = source.textContent ?? ''
       // 用递增计数器保证 ID 全局唯一，避免同一 tick 内 Date.now() 重复
-      const mermaidId = `mermaid-${_mermaidRenderCounter++}`
-      const { svg } = await _mermaidModule.render(mermaidId, content)
+      const mermaidId = `mermaid-${mermaidRenderCounter++}`
+      const { svg } = await mermaidModule.render(mermaidId, content)
       source.innerHTML = svg
       source.removeAttribute('data-mermaid')
       source.classList.remove('mermaid-source')

@@ -113,9 +113,9 @@
   --border: oklch(23% 0.008 260);
   --accent: oklch(72% 0.10 190);
   --accent-light: oklch(25% 0.04 190);
-  --section-bg: oklch(20% 0.006 260);
-  --hover-bg: oklch(19% 0.006 260);
-  --divider: oklch(22% 0.008 260);
+  --section-bg: oklch(23% 0.006 260);
+  --hover-bg: oklch(21% 0.006 260);
+  --divider: oklch(25% 0.008 260);
 }
 
 [data-theme="dark"][data-palette="neutral"] {
