@@ -1,5 +1,5 @@
 import { BrowserWindow } from 'electron'
-import type { WindowState, PaneTree } from '@xyz-agent/shared'
+import type { WindowState, PanelTree } from '@xyz-agent/shared'
 
 interface ManagedWindow {
   windowId: string
@@ -77,7 +77,7 @@ export class WindowManager {
    */
   findSessionBySessionId(sessionId: string): { windowId: string; paneId: string } | null {
     for (const { windowId, state } of this.windows.values()) {
-      const paneId = findPaneBySessionId(state.paneTree, sessionId)
+      const paneId = findPaneBySessionId(state.panelTree, sessionId)
       if (paneId) return { windowId, paneId }
     }
     return null
@@ -85,7 +85,7 @@ export class WindowManager {
 }
 
 // 递归遍历 pane 树，找到 sessionId 对应的 pane leaf id
-function findPaneBySessionId(node: PaneTree, sessionId: string): string | null {
+function findPaneBySessionId(node: PanelTree, sessionId: string): string | null {
   if (node.type === 'pane') return node.sessionId === sessionId ? node.id : null
   return findPaneBySessionId(node.children[0], sessionId) ?? findPaneBySessionId(node.children[1], sessionId)
 }
