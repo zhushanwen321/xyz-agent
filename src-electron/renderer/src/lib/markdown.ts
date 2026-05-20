@@ -61,7 +61,8 @@ const mdLight = new MarkdownIt({
 
 export function renderLightweight(text: string): string {
   if (!text) return ''
-  const html = mdLight.render(text)
+  let html = mdLight.render(text)
+  html = postprocessTables(html)
   return DOMPurify.sanitize(html, PURIFY_CONFIG)
 }
 
@@ -130,13 +131,22 @@ function escapeRegex(str: string): string {
  * markdown-it 会把 `- [x] text` 渲染为 `<li>[x] text</li>`
  */
 function postprocessTaskLists(html: string): string {
-  // 匹配 <li>[x] 或 <li>[ ] 开头的内容
   return html.replace(
     /<li>\[(x| )\] (.+?)<\/li>/g,
     (_match, checked: string, text: string) => {
       const isChecked = checked === 'x'
       return `<li class="task-list-item"><input type="checkbox"${isChecked ? ' checked' : ''} disabled>${text}</li>`
     },
+  )
+}
+
+/**
+ * 表格后处理：给 <table> 包裹滚动容器，让宽表格可以水平滚动，窄表格占满宽度
+ */
+function postprocessTables(html: string): string {
+  return html.replace(
+    /(<table[\s>][\s\S]*?<\/table>)/g,
+    '<div class="table-wrapper">$1</div>',
   )
 }
 
@@ -165,6 +175,9 @@ export async function renderFull(text: string, theme: 'light' | 'dark'): Promise
   // 阶段 2：Shiki 高亮替换占位符
   const shikiTheme = SHIKI_THEMES[theme] ?? SHIKI_THEMES['dark']
   html = await postprocessCodeBlocks(html, blocks, shikiTheme)
+
+  // 阶段 3：给 <table> 包裹滚动容器
+  html = postprocessTables(html)
 
   return DOMPurify.sanitize(html, PURIFY_CONFIG)
 }

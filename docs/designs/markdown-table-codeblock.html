@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Markdown Table + Code Block Demo</title>
+<style>
+/* ── CSS 变量 (模拟 app 主题) ── */
+:root {
+  --bg: #ffffff;
+  --fg: #1f2328;
+  --muted: #656d76;
+  --border: #d1d9e0;
+  --section-bg: #f6f8fa;
+  --accent: #0969da;
+  --radius-sm: 6px;
+  --radius-xs: 4px;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+}
+
+[data-theme="dark"] {
+  --bg: #0d1117;
+  --fg: #e6edf3;
+  --muted: #8b949e;
+  --border: #30363d;
+  --section-bg: #161b22;
+  --accent: #58a6ff;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--fg);
+  background: var(--bg);
+  padding: 32px;
+}
+
+h1 { font-size: 20px; margin-bottom: 24px; font-weight: 600; }
+h2 { font-size: 16px; margin: 32px 0 12px; font-weight: 600; color: var(--muted); }
+h2:not(:first-of-type) { border-top: 1px solid var(--border); padding-top: 24px; }
+
+.toggle-bar {
+  position: fixed; top: 12px; right: 12px;
+  display: flex; gap: 8px; align-items: center;
+  font-size: 13px; color: var(--muted);
+}
+.toggle-bar button {
+  padding: 4px 12px; border-radius: var(--radius-xs);
+  border: 1px solid var(--border); background: var(--section-bg);
+  color: var(--fg); cursor: pointer; font-size: 13px;
+}
+.toggle-bar button.active { background: var(--accent); color: white; border-color: var(--accent); }
+
+/* ── 消息体容器 (模拟 .msg__body) ── */
+.msg__body { max-width: 780px; }
+.msg__body p { margin-bottom: 16px; }
+
+/* ════════════════════════════════════════════════════════
+   表格样式 — GitHub 风格
+   ════════════════════════════════════════════════════════ */
+
+/* 外层滚动容器：占满宽度，溢出时水平滚动 */
+.msg__body .table-wrapper {
+  width: 100%;
+  margin-bottom: 16px;
+  overflow-x: auto;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+
+.msg__body table {
+  border-collapse: collapse;
+  width: 100%;
+  /* table 正常布局，宽度撑满容器 */
+}
+
+.msg__body th,
+.msg__body td {
+  border: 1px solid var(--border);
+  padding: 6px 13px;
+}
+
+.msg__body th {
+  font-weight: 600;
+  background: var(--section-bg);
+  border-bottom: 2px solid var(--border);
+}
+
+.msg__body tr:nth-child(2n) {
+  background: var(--section-bg);
+}
+
+/* 四角圆角（配合外层 border-radius） */
+.msg__body table tr:first-child th:first-child { border-top-left-radius: var(--radius-sm); }
+.msg__body table tr:first-child th:last-child  { border-top-right-radius: var(--radius-sm); }
+.msg__body table tr:last-child td:first-child   { border-bottom-left-radius: var(--radius-sm); }
+.msg__body table tr:last-child td:last-child     { border-bottom-right-radius: var(--radius-sm); }
+
+/* ════════════════════════════════════════════════════════
+   代码块样式 — GitHub/Claude Code 风格
+   ════════════════════════════════════════════════════════ */
+.msg__body .code-block {
+  margin-bottom: 16px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--section-bg);
+}
+
+.msg__body .code-block-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  border-bottom: 1px solid var(--border);
+  background: var(--section-bg);
+}
+
+.msg__body .code-block-lang {
+  font-weight: 600;
+  text-transform: lowercase;
+  letter-spacing: 0.5px;
+}
+
+.msg__body .code-block-filename {
+  opacity: 0.7;
+  margin-left: 8px;
+}
+
+.msg__body .code-block-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.msg__body .code-copy-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  color: var(--muted);
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  transition: all 0.15s;
+}
+.msg__body .code-copy-btn:hover {
+  background: var(--border);
+  color: var(--fg);
+}
+
+.msg__body .code-block-body {
+  display: flex;
+  overflow-x: auto;
+}
+
+.msg__body .line-numbers {
+  flex-shrink: 0;
+  padding: 12px 8px 12px 12px;
+  text-align: right;
+  user-select: none;
+  color: var(--muted);
+  opacity: 0.5;
+  border-right: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre;
+}
+
+.msg__body .code-block pre {
+  margin: 0 !important;
+  padding: 12px 16px;
+  background: transparent !important;
+  flex: 1;
+  overflow-x: auto;
+}
+
+.msg__body .code-block pre code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre;
+  tab-size: 2;
+}
+
+/* 模拟 Shiki 高亮 */
+.token-keyword { color: #cf222e; font-weight: 500; }
+[data-theme="dark"] .token-keyword { color: #ff7b72; }
+.token-string { color: #0a3069; }
+[data-theme="dark"] .token-string { color: #a5d6ff; }
+.token-function { color: #8250df; }
+[data-theme="dark"] .token-function { color: #d2a8ff; }
+.token-comment { color: var(--muted); font-style: italic; }
+.token-number { color: #0550ae; }
+[data-theme="dark"] .token-number { color: #79c0ff; }
+.token-type { color: #953800; }
+[data-theme="dark"] .token-type { color: #ffa657; }
+
+/* 折叠态 */
+.msg__body .code-block[data-collapsed="true"] .code-block-body {
+  max-height: 320px;
+  overflow: hidden;
+  position: relative;
+}
+.msg__body .code-block[data-collapsed="true"] .code-block-body::after {
+  content: '';
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 60px;
+  background: linear-gradient(transparent, var(--section-bg));
+}
+.msg__body .code-expand-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  color: var(--muted);
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  transition: all 0.15s;
+}
+.msg__body .code-expand-btn:hover {
+  background: var(--border);
+  color: var(--fg);
+}
+
+/* ── 行内代码 ── */
+.msg__body code:not(pre code) {
+  padding: 0.2em 0.4em;
+  background: var(--section-bg);
+  border-radius: var(--radius-xs);
+  font-size: 85%;
+  font-family: var(--font-mono);
+  border: 1px solid var(--border);
+}
+</style>
+</head>
+<body data-theme="light">
+
+<div class="toggle-bar">
+  <span>Theme:</span>
+  <button class="active" onclick="setTheme('light')">Light</button>
+  <button onclick="setTheme('dark')">Dark</button>
+</div>
+
+<h1>Markdown Table + Code Block Demo</h1>
+
+<div class="msg__body">
+
+  <!-- ═══ 表格 ═══ -->
+  <h2>Table — Basic</h2>
+  <div class="table-wrapper"><table>
+    <thead>
+      <tr><th>Name</th><th>Type</th><th>Default</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>theme</code></td><td><code>string</code></td><td><code>'system'</code></td><td>Color theme: light / dark / system</td></tr>
+      <tr><td><code>fontSize</code></td><td><code>number</code></td><td><code>14</code></td><td>Base font size in pixels</td></tr>
+      <tr><td><code>lineHeight</code></td><td><code>number</code></td><td><code>1.6</code></td><td>Line height multiplier</td></tr>
+      <tr><td><code>tabSize</code></td><td><code>number</code></td><td><code>2</code></td><td>Tab width in spaces</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>Table — Wide (horizontal scroll)</h2>
+  <div class="table-wrapper"><table>
+    <thead>
+      <tr><th>Property</th><th>Type</th><th>Default</th><th>Required</th><th>Description</th><th>Since</th><th>Deprecated</th><th>Alternative</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>editor.fontSize</code></td><td><code>number</code></td><td><code>14</code></td><td>Yes</td><td>Controls the font size in pixels for the editor area</td><td>v1.0.0</td><td>No</td><td>-</td></tr>
+      <tr><td><code>editor.lineHeight</code></td><td><code>number</code></td><td><code>1.6</code></td><td>No</td><td>Controls the line height multiplier; 0 computes automatically from fontSize</td><td>v1.0.0</td><td>No</td><td>-</td></tr>
+      <tr><td><code>editor.renderWhitespace</code></td><td><code>'none' | 'boundary' | 'all'</code></td><td><code>'none'</code></td><td>No</td><td>Controls rendering of whitespace characters in the editor</td><td>v1.2.0</td><td>No</td><td>-</td></tr>
+      <tr><td><code>workbench.colorTheme</code></td><td><code>string</code></td><td><code>'Default Dark+'</code></td><td>Yes</td><td>Specifies the color theme used in the workbench</td><td>v1.0.0</td><td>Yes (v3.0)</td><td><code>workbench.preferredColorScheme</code></td></tr>
+    </tbody>
+  </table></div>
+
+  <!-- ═══ 代码块 ═══ -->
+  <h2>Code Block — TypeScript</h2>
+  <div class="code-block" data-lines="8">
+    <div class="code-block-header">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="code-block-lang">typescript</span>
+      </div>
+      <button class="code-copy-btn">Copy</button>
+    </div>
+    <div class="code-block-body">
+      <span class="line-numbers">1
+2
+3
+4
+5
+6
+7
+8</span>
+      <pre><code><span class="token-keyword">import</span> { defineConfig } <span class="token-keyword">from</span> <span class="token-string">'vite'</span>
+<span class="token-keyword">import</span> vue <span class="token-keyword">from</span> <span class="token-string">'@vitejs/plugin-vue'</span>
+
+<span class="token-keyword">export default</span> <span class="token-function">defineConfig</span>({
+  plugins: [<span class="token-function">vue</span>()],
+  server: {
+    port: <span class="token-number">1420</span>,
+    strictPort: <span class="token-keyword">true</span>,
+  },
+})</code></pre>
+    </div>
+  </div>
+
+  <h2>Code Block — with filename</h2>
+  <div class="code-block" data-lines="5">
+    <div class="code-block-header">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="code-block-lang">python</span>
+        <span class="code-block-filename">main.py</span>
+      </div>
+      <button class="code-copy-btn">Copy</button>
+    </div>
+    <div class="code-block-body">
+      <span class="line-numbers">1
+2
+3
+4
+5</span>
+      <pre><code><span class="token-keyword">def</span> <span class="token-function">fibonacci</span>(n: <span class="token-type">int</span>) -> <span class="token-type">list</span>[<span class="token-type">int</span>]:
+    <span class="token-string">"""Generate fibonacci sequence up to n."""</span>
+    result = [<span class="token-number">0</span>, <span class="token-number">1</span>]
+    <span class="token-keyword">while</span> result[-<span class="token-number">1</span>] + result[-<span class="token-number">2</span>] < n:
+        result.append(result[-<span class="token-number">1</span>] + result[-<span class="token-number">2</span>])
+    <span class="token-keyword">return</span> result</code></pre>
+    </div>
+  </div>
+
+  <h2>Code Block — Collapsed (>20 lines)</h2>
+  <div class="code-block" data-lines="25" data-collapsed="true">
+    <div class="code-block-header">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="code-block-lang">rust</span>
+        <span class="code-block-filename">src/main.rs</span>
+      </div>
+      <div class="code-block-actions">
+        <button class="code-expand-btn">Show more</button>
+        <button class="code-copy-btn">Copy</button>
+      </div>
+    </div>
+    <div class="code-block-body">
+      <span class="line-numbers">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25</span>
+      <pre><code><span class="token-keyword">use</span> std::collections::<span class="token-type">HashMap</span>;
+
+<span class="token-comment">// A simple key-value store</span>
+<span class="token-keyword">pub struct</span> <span class="token-type">Store</span> {
+    data: <span class="token-type">HashMap</span>&lt;<span class="token-type">String</span>, <span class="token-type">Vec</span>&lt;<span class="token-type">u8</span>&gt;&gt;,
+    capacity: <span class="token-type">usize</span>,
+}
+
+<span class="token-keyword">impl</span> <span class="token-type">Store</span> {
+    <span class="token-keyword">pub fn</span> <span class="token-function">new</span>(capacity: <span class="token-type">usize</span>) -> <span class="token-keyword">Self</span> {
+        <span class="token-type">Store</span> {
+            data: <span class="token-type">HashMap</span>::<span class="token-function">new</span>(),
+            capacity,
+        }
+    }
+
+    <span class="token-keyword">pub fn</span> <span class="token-function">get</span>(&<span class="token-keyword">self</span>, key: &<span class="token-type">str</span>) -> <span class="token-type">Option</span>&lt;&[<span class="token-type">u8</span>]&gt; {
+        <span class="token-keyword">self</span>.data.<span class="token-function">get</span>(key).<span class="token-function">map</span>(|v| v.<span class="token-function">as_slice</span>())
+    }
+
+    <span class="token-keyword">pub fn</span> <span class="token-function">set</span>(&<span class="token-keyword">mut self</span>, key: &<span class="token-type">str</span>, value: <span class="token-type">Vec</span>&lt;<span class="token-type">u8</span>&gt;) -> <span class="token-type">bool</span> {
+        <span class="token-keyword">if</span> <span class="token-keyword">self</span>.data.<span class="token-function">len</span>() >= <span class="token-keyword">self</span>.capacity {
+            <span class="token-keyword">return false</span>;
+        }
+        <span class="token-keyword">self</span>.data.<span class="token-function">insert</span>(key.<span class="token-function">to_string</span>(), value);
+        <span class="token-keyword">true</span>
+    }
+
+    <span class="token-keyword">pub fn</span> <span class="token-function">len</span>(&<span class="token-keyword">self</span>) -> <span class="token-type">usize</span> {
+        <span class="token-keyword">self</span>.data.<span class="token-function">len</span>()
+    }
+
+    <span class="token-keyword">pub fn</span> <span class="token-function">clear</span>(&<span class="token-keyword">mut self</span>) {
+        <span class="token-keyword">self</span>.data.<span class="token-function">clear</span>();
+    }
+}</code></pre>
+    </div>
+  </div>
+
+  <h2>Code Block — Short (no collapse)</h2>
+  <div class="code-block" data-lines="3">
+    <div class="code-block-header">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="code-block-lang">bash</span>
+      </div>
+      <button class="code-copy-btn">Copy</button>
+    </div>
+    <div class="code-block-body">
+      <span class="line-numbers">1
+2
+3</span>
+      <pre><code><span class="token-comment"># Install dependencies</span>
+npm install
+npm run dev</code></pre>
+    </div>
+  </div>
+
+</div><!-- /msg__body -->
+
+<script>
+function setTheme(t) {
+  document.body.setAttribute('data-theme', t)
+  document.querySelectorAll('.toggle-bar button').forEach(b => {
+    b.classList.toggle('active', b.textContent.toLowerCase() === t)
+  })
+}
+</script>
+</body>
+</html>

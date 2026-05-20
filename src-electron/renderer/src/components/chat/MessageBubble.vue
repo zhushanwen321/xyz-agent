@@ -293,19 +293,31 @@ const batchInfoMap = computed(() => {
 }
 
 /* ── 表格 ── */
-.msg__body table {
-  border-collapse: collapse;
+.msg__body .table-wrapper {
   width: 100%;
   margin-bottom: 16px;
   overflow-x: auto;
-  display: block;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+.msg__body table {
+  border-collapse: collapse;
+  width: 100%;
 }
 .msg__body th, .msg__body td {
   border: 1px solid var(--border);
   padding: 6px 13px;
 }
-.msg__body th { font-weight: 600; background: var(--section-bg); }
+.msg__body th {
+  font-weight: 600;
+  background: var(--section-bg);
+  border-bottom: 2px solid var(--border);
+}
 .msg__body tr:nth-child(2n) { background: var(--section-bg); }
+.msg__body table tr:first-child th:first-child { border-top-left-radius: var(--radius-sm); }
+.msg__body table tr:first-child th:last-child { border-top-right-radius: var(--radius-sm); }
+.msg__body table tr:last-child td:first-child { border-bottom-left-radius: var(--radius-sm); }
+.msg__body table tr:last-child td:last-child { border-bottom-right-radius: var(--radius-sm); }
 
 /* ── 链接 ── */
 .msg__body a { color: var(--accent); text-decoration: none; }
