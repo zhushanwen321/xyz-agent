@@ -28,12 +28,12 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string) => {
     if (shuttingDown) return
     shuttingDown = true
-    console.log(`\n[sidecar] received ${signal}, shutting down...`)
+    console.log(`\n[runtime] received ${signal}, shutting down...`)
     try {
       await server.stop()
     // eslint-disable-next-line taste/no-silent-catch -- shutdown: best-effort stop, process exits regardless
     } catch (e) {
-      console.error('[sidecar] error during shutdown:', e)
+      console.error('[runtime] error during shutdown:', e)
     }
     process.exit(0)
   }
@@ -42,10 +42,10 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => shutdown('SIGTERM'))
 
   await server.start()
-  console.log('[sidecar] ready')
+  console.log('[runtime] ready')
 }
 
 main().catch((e) => {
-  console.error('[sidecar] fatal:', e)
+  console.error('[runtime] fatal:', e)
   process.exit(1)
 })

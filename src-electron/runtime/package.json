@@ -1,5 +1,5 @@
 {
-  "name": "@xyz-agent/sidecar",
+  "name": "@xyz-agent/runtime",
   "version": "0.1.0",
   "private": true,
   "type": "module",

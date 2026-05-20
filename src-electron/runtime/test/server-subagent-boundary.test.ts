@@ -5,7 +5,7 @@ import { WebSocket } from 'ws'
  * Boundary & error path tests for SidecarServer message.send with subagent.
  *
  * Supplements server-subagent.test.ts which covers normal paths.
- * These tests verify edge-case behavior at the sidecar/server layer:
+ * These tests verify edge-case behavior at the runtime/server layer:
  * XML injection, sanitization, empty fields, structural integrity.
  */
 

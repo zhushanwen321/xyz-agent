@@ -1,6 +1,6 @@
 import path from 'node:path'
 import { ipcMain, BrowserWindow, app, dialog } from 'electron'
-import { SidecarManager } from './sidecar-manager.js'
+import { RuntimeManager } from './runtime-manager.js'
 import { WindowManager, initialWindowState } from './window-manager.js'
 import type { WindowState } from '@xyz-agent/shared'
 
@@ -16,7 +16,7 @@ export function registerIpcHandlers(deps: {
   getMainWindow: () => BrowserWindow | null
   getSettingsWindow: () => BrowserWindow | null
   setSettingsWindow: (win: BrowserWindow | null) => void
-  sidecarManager: SidecarManager
+  sidecarManager: RuntimeManager
   isDev: boolean
   createWindow: (options?: { windowId?: string; sessionId?: string }) => BrowserWindow
   windowManager: WindowManager
@@ -57,7 +57,7 @@ export function registerIpcHandlers(deps: {
     return { type: 'created-new' }
   })
 
-  ipcMain.handle('get-sidecar-port', (): number | null => {
+  ipcMain.handle('get-runtime-port', (): number | null => {
     return sidecarManager.port
   })
 

@@ -13,7 +13,7 @@ const STATUS_TEXT: Record<ConnectionStatus, string> = {
 }
 
 let initialised = false
-let removeSidecarPortListener: (() => void) | null = null
+let removeRuntimePortListener: (() => void) | null = null
 
 export function useConnection() {
   const state = getState()
@@ -34,9 +34,9 @@ export function useConnection() {
     const port = DEFAULT_PORT
 
     try {
-      // Electron IPC: 监听 sidecar 端口事件
+      // Electron IPC: 监听 runtime 端口事件
       if (window.electronAPI) {
-        removeSidecarPortListener = window.electronAPI.onSidecarPort((newPort) => {
+        removeRuntimePortListener = window.electronAPI.onRuntimePort((newPort) => {
           if (newPort && state.value !== 'disconnected') {
             disconnect()
             connect(`ws://localhost:${newPort}`)
@@ -45,14 +45,14 @@ export function useConnection() {
 
         // 尝试从主进程获取已知端口
         try {
-          const knownPort = await window.electronAPI.getSidecarPort()
+          const knownPort = await window.electronAPI.getRuntimePort()
           if (knownPort) {
             connect(`ws://localhost:${knownPort}`)
             return
           }
-        // eslint-disable-next-line taste/no-silent-catch -- intentional: sidecar may not be ready yet, fall through to default port
+        // eslint-disable-next-line taste/no-silent-catch -- intentional: runtime may not be ready yet, fall through to default port
         } catch (e) {
-          console.error('[useConnection] sidecar port not ready:', e)
+          console.error('[useConnection] runtime port not ready:', e)
         }
       }
     // eslint-disable-next-line taste/no-silent-catch -- intentional: fall back to default port when Electron API is unavailable
@@ -64,9 +64,9 @@ export function useConnection() {
   }
 
   function teardown(): void {
-    if (removeSidecarPortListener) {
-      removeSidecarPortListener()
-      removeSidecarPortListener = null
+    if (removeRuntimePortListener) {
+      removeRuntimePortListener()
+      removeRuntimePortListener = null
     }
     disconnect()
     initialised = false

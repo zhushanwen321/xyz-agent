@@ -40,7 +40,7 @@ export class SidecarServer {
     const existing = this.heartbeatTimers.get(ws)
     if (existing) clearTimeout(existing)
     this.heartbeatTimers.set(ws, setTimeout(() => {
-      console.warn('[sidecar] heartbeat timeout, closing connection')
+      console.warn('[runtime] heartbeat timeout, closing connection')
       ws.close(MAX_WS_CLOSE_CODE, 'Heartbeat timeout')
     }, HEARTBEAT_TIMEOUT_MS))
   }
@@ -73,13 +73,13 @@ export class SidecarServer {
       this.wss.on('connection', (ws) => this.handleConnection(ws))
       this.httpServer.on('error', (err: NodeJS.ErrnoException) => {
         if (err.code === 'EADDRINUSE') {
-          console.error(`[sidecar] port ${this.port} already in use, exiting`)
+          console.error(`[runtime] port ${this.port} already in use, exiting`)
           process.exit(1)
         }
         reject(err)
       })
       this.httpServer.listen(this.port, () => {
-        console.log(`[sidecar] listening on port ${this.port}`)
+        console.log(`[runtime] listening on port ${this.port}`)
         resolve()
       })
     })
@@ -90,7 +90,7 @@ export class SidecarServer {
   private handleConnection(ws: WsType): void {
     this.clients.add(ws)
     this.pool.addClient(ws)
-    console.log(`[sidecar] client connected (total: ${this.clients.size})`)
+    console.log(`[runtime] client connected (total: ${this.clients.size})`)
 
     this.sendInitialState(ws)
     this.resetHeartbeat(ws)
@@ -110,11 +110,11 @@ export class SidecarServer {
       this.clients.delete(ws)
       this.pool.removeClient(ws)
       this.clearHeartbeat(ws)
-      console.log(`[sidecar] client disconnected (total: ${this.clients.size})`)
+      console.log(`[runtime] client disconnected (total: ${this.clients.size})`)
     })
 
     ws.on('error', (err) => {
-      console.error('[sidecar] ws error:', err)
+      console.error('[runtime] ws error:', err)
       // ws error 后通常会触发 close，但如果没触发就主动清理
       this.clients.delete(ws)
       this.pool.removeClient(ws)
@@ -265,7 +265,7 @@ export class SidecarServer {
       }
       case 'model.switch': {
         const { sessionId, provider, modelId } = msg.payload as { sessionId: string; provider: string; modelId: string }
-        console.log(`[sidecar] model.switch: sessionId=${sessionId}, provider=${provider}, modelId=${modelId}`)
+        console.log(`[runtime] model.switch: sessionId=${sessionId}, provider=${provider}, modelId=${modelId}`)
         await this.pool.switchModel(sessionId, provider, modelId)
         this.send(ws, { type: 'model.switched', id: msg.id, payload: { sessionId, provider, modelId } })
         return true
@@ -325,7 +325,7 @@ export class SidecarServer {
               const messages = await this.pool.getHistory(sid)
               this.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: sid, session: summary, messages } })
             } catch (e) {
-              console.error('[sidecar] failed to load history for switch:', e)
+              console.error('[runtime] failed to load history for switch:', e)
               this.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: sid, session: summary, messages: [] } })
             }
           } else {

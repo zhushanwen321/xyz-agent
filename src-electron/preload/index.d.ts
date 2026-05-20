@@ -1,8 +1,8 @@
 export interface ElectronAPI {
-  onSidecarPort(callback: (port: number) => void): () => void
+  onRuntimePort(callback: (port: number) => void): () => void
   onShortcut(callback: (type: string) => void): () => void
   openSettingsWindow(): void
-  getSidecarPort(): Promise<number>
+  getRuntimePort(): Promise<number>
   // ── 窗口管理 ──────────────────────────────────────────────────
   createWindow(sessionId?: string): Promise<{ windowId: string }>
   getWindows(): Promise<import('@xyz-agent/shared').WindowState[]>

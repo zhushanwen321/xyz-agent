@@ -2,14 +2,14 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 export interface ElectronAPI {
-  /** 监听 sidecar 端口事件（替代 @tauri-apps/api/event 的 listen('sidecar-port')） */
-  onSidecarPort(callback: (port: number) => void): () => void
+  /** 监听 runtime 端口事件 */
+  onRuntimePort(callback: (port: number) => void): () => void
   /** 监听快捷键事件（替代 @tauri-apps/api/event 的 listen('shortcut')） */
   onShortcut(callback: (type: string) => void): () => void
   /** 打开设置窗口 */
   openSettingsWindow(): void
-  /** 获取 sidecar 端口 */
-  getSidecarPort(): Promise<number>
+  /** 获取 runtime 端口 */
+  getRuntimePort(): Promise<number>
   // ── 窗口管理 ──────────────────────────────────────────────────
   /** 创建新窗口，可选携带 sessionId 迁移 */
   createWindow(sessionId?: string): Promise<{ windowId: string }>
@@ -30,10 +30,10 @@ export interface ElectronAPI {
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
-  onSidecarPort: (callback: (port: number) => void) => {
+  onRuntimePort: (callback: (port: number) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, port: number) => callback(port)
-    ipcRenderer.on('sidecar-port', handler)
-    return () => ipcRenderer.removeListener('sidecar-port', handler)
+    ipcRenderer.on('runtime-port', handler)
+    return () => ipcRenderer.removeListener('runtime-port', handler)
   },
   onShortcut: (callback: (type: string) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, type: string) => callback(type)
@@ -41,7 +41,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('shortcut', handler)
   },
   openSettingsWindow: () => ipcRenderer.send('open-settings-window'),
-  getSidecarPort: () => ipcRenderer.invoke('get-sidecar-port'),
+  getRuntimePort: () => ipcRenderer.invoke('get-runtime-port'),
 
   // ── 窗口管理 ──────────────────────────────────────────────────
   createWindow: (sessionId?: string) => ipcRenderer.invoke('create-window', { sessionId }),
