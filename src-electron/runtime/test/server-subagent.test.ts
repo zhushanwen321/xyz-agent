@@ -1,28 +1,22 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { WebSocket } from 'ws'
-import type { Server as HttpServer } from 'node:http'
 
 /**
  * Tests for T3: Sidecar manual trigger handling (subagent field in message.send).
  *
  * These tests verify that when `msg.payload.subagent` is present with
  * `{ agent: string; task: string }`, the runtime constructs an XML structured
- * prompt instead of sending raw content to `pool.sendMessage`.
- *
- * ALL TESTS SHOULD FAIL until the implementation in server.ts handles
- * the `subagent` field in the `message.send` case.
+ * prompt instead of sending raw content to `sessionService.sendMessage`.
  */
 
-// ── Mock SessionPool to capture sendMessage calls ────────────────
+// ── Mock SessionService to capture sendMessage calls ────────────
 
 const sendMessageMock = vi.fn().mockResolvedValue(undefined)
 
-vi.mock('../src/session-pool.js', () => {
+vi.mock('../src/services/session-service.js', () => {
   return {
-  SessionPool: class MockSessionPool {
+  SessionService: class MockSessionService {
     sendMessage = sendMessageMock
-    addClient = vi.fn()
-    removeClient = vi.fn()
     listPersistedSessions = vi.fn().mockReturnValue([])
     getSummary = vi.fn().mockReturnValue(undefined)
     getHistory = vi.fn().mockResolvedValue([])
@@ -36,37 +30,74 @@ vi.mock('../src/session-pool.js', () => {
     compact = vi.fn().mockResolvedValue(undefined)
     abort = vi.fn().mockResolvedValue(undefined)
     switchModel = vi.fn().mockResolvedValue(undefined)
-    approveTool = vi.fn().mockResolvedValue(undefined)
-    denyTool = vi.fn().mockResolvedValue(undefined)
-    alwaysAllowTool = vi.fn().mockResolvedValue(undefined)
   },
   }
 })
 
-// Mock config-store to avoid file system access
+// Mock config-service
+vi.mock('../src/services/config-service.js', () => ({
+  ConfigService: class MockConfigService {
+    listProviders = vi.fn().mockReturnValue([])
+    setProvider = vi.fn()
+    deleteProvider = vi.fn().mockReturnValue(true)
+    getProvider = vi.fn().mockReturnValue(undefined)
+    updateToolPermissions = vi.fn()
+    loadSkills = vi.fn().mockReturnValue([])
+    saveSkills = vi.fn()
+    loadAgents = vi.fn().mockReturnValue([])
+    saveAgents = vi.fn()
+    scanSkills = vi.fn().mockReturnValue([])
+    scanAgents = vi.fn().mockReturnValue([])
+  },
+}))
+
+// Mock model-service
+vi.mock('../src/services/model-service.js', () => ({
+  ModelService: class MockModelService {
+    aggregateModels = vi.fn().mockReturnValue([])
+    discoverModelsFromApi = vi.fn().mockResolvedValue([])
+  },
+}))
+
+// Mock process-manager (transitive dep of SessionService)
+vi.mock('../src/process-manager.js', () => ({
+  ProcessManager: class MockProcessManager {
+    createSession = vi.fn()
+    destroySession = vi.fn().mockResolvedValue(undefined)
+    getClient = vi.fn()
+    hasClient = vi.fn().mockReturnValue(false)
+    destroyAll = vi.fn().mockResolvedValue(undefined)
+    onSessionExit = vi.fn()
+    rekey = vi.fn()
+    getSessionIdByClient = vi.fn()
+  },
+}))
+
+// Mock event-adapter
+vi.mock('../src/event-adapter.js', () => ({
+  EventAdapter: class MockEventAdapter {
+    attach = vi.fn()
+    detach = vi.fn()
+  },
+}))
+
 vi.mock('../src/config-store.js', () => ({
   updateToolPermissions: vi.fn(),
   getProvider: vi.fn().mockReturnValue(undefined),
-  loadSkills: vi.fn().mockReturnValue([]),
-  saveSkills: vi.fn(),
-  loadAgents: vi.fn().mockReturnValue([]),
-  saveAgents: vi.fn(),
-  getDefaultModel: vi.fn().mockReturnValue(undefined),
+  getDefaultModel: vi.fn().mockReturnValue('test/model'),
+  buildProviderEnv: vi.fn().mockReturnValue({}),
 }))
 
-// Mock provider-store to avoid file system access
 vi.mock('../src/provider-store.js', () => ({
   listProviders: vi.fn().mockReturnValue([]),
   setProvider: vi.fn(),
   deleteProvider: vi.fn(),
 }))
 
-// Mock model-db
 vi.mock('../src/model-db.js', () => ({
   lookupModel: vi.fn().mockReturnValue(undefined),
 }))
 
-// Mock skill-scanner and agent-scanner
 vi.mock('../src/skill-scanner.js', () => ({
   scanSkills: vi.fn().mockReturnValue([]),
 }))
@@ -75,7 +106,32 @@ vi.mock('../src/agent-scanner.js', () => ({
   scanAgents: vi.fn().mockReturnValue([]),
 }))
 
+vi.mock('../src/session-scanner.js', () => ({
+  scanSessions: vi.fn().mockReturnValue([]),
+  deleteSessionFile: vi.fn(),
+  invalidateScanCache: vi.fn(),
+}))
+
+vi.mock('../src/session-label-store.js', () => ({
+  saveLabel: vi.fn(),
+  removeLabel: vi.fn(),
+  migrateLabelsIfNeeded: vi.fn(),
+}))
+
+vi.mock('../src/skill-store.js', () => ({
+  loadSkills: vi.fn().mockReturnValue([]),
+  saveSkills: vi.fn(),
+}))
+
+vi.mock('../src/agent-store.js', () => ({
+  loadAgents: vi.fn().mockReturnValue([]),
+  saveAgents: vi.fn(),
+}))
+
 import { SidecarServer } from '../src/server.js'
+import { SessionService } from '../src/services/session-service.js'
+import { ConfigService } from '../src/services/config-service.js'
+import { ModelService } from '../src/services/model-service.js'
 
 /** Find a free port */
 function getFreePort(): Promise<number> {
@@ -102,6 +158,11 @@ describe('SidecarServer message.send with subagent field', () => {
   sendMessageMock.mockClear()
   port = await getFreePort()
   server = new SidecarServer(port, '/tmp/test-project')
+  server.setServices(
+    new SessionService({} as never, {} as never, {} as never, '/tmp'),
+    new ConfigService('/tmp'),
+    new ModelService(),
+  )
   await server.start()
   })
 
@@ -174,16 +235,16 @@ describe('SidecarServer message.send with subagent field', () => {
   const client = await connectClient()
 
   await sendAndCollect(client, {
-  type: 'message.send',
-  id: 'test-2',
-  payload: {
-  sessionId: 'sess-456',
-  content: 'unused',
-  subagent: {
-    agent: 'agent<with>"special&chars',
-    task: 'do <something> "important" & more',
-  },
-  },
+    type: 'message.send',
+    id: 'test-2',
+    payload: {
+    sessionId: 'sess-456',
+    content: 'unused',
+    subagent: {
+      agent: 'agent<with>"special&chars',
+      task: 'do <something> "important" & more',
+    },
+    },
   })
 
   expect(sendMessageMock).toHaveBeenCalledTimes(1)

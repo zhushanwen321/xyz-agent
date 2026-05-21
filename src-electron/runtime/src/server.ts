@@ -1,58 +1,34 @@
+/**
+ * SidecarServer — pure Transport layer.
+ * Routes ClientMessages to Service instances and pushes
+ * ServerMessages back to TUI clients via WebSocket.
+ */
 import { createServer, type Server as HttpServer } from 'node:http'
 import { WebSocketServer, WebSocket, type WebSocket as WsType } from 'ws'
-import type { ClientMessage, ServerMessage, ModelInfo } from '@xyz-agent/shared'
-import { SessionPool } from './session-pool.js'
-import * as providerStore from './provider-store.js'
-import { lookupModel } from './model-db.js'
-import { updateToolPermissions, getProvider } from './config-store.js'
-import { loadSkills, saveSkills } from './skill-store.js'
-import { loadAgents, saveAgents } from './agent-store.js'
-import { scanSkills } from './skill-scanner.js'
-import { scanAgents } from './agent-scanner.js'
-import type { SkillInfo, AgentInfo } from '@xyz-agent/shared'
+import type { ClientMessage, ServerMessage, SkillInfo, AgentInfo } from '@xyz-agent/shared'
+import type { ISessionService, IConfigService, IModelService, IMessageBroker } from './interfaces.js'
 
 const HTTP_OK = 200
 const HTTP_NOT_FOUND = 404
 const MAX_WS_CLOSE_CODE = 4000
-
 const WS_OPEN = WebSocket.OPEN
 const HEARTBEAT_TIMEOUT_MS = 45_000
-const API_FETCH_TIMEOUT_MS = 10_000
-const KILOBYTE = 1000
 
-/**
- * WebSocket server that routes ClientMessages to the appropriate
- * session-pool / provider-store handlers and pushes ServerMessages
- * back to the TUI client.
- */
-export class SidecarServer {
+export class SidecarServer implements IMessageBroker {
   private httpServer: HttpServer
   private wss: WebSocketServer
-  private pool = new SessionPool((msg) => this.broadcast(msg))
   private clients = new Set<WsType>()
   private pushId = 0
   private heartbeatTimers = new Map<WsType, ReturnType<typeof setTimeout>>()
   private projectRoot: string
+  private sessionService!: ISessionService
+  private configService!: IConfigService
+  private modelService!: IModelService
 
-  private nextPushId(): string {
-    return `push_${++this.pushId}`
-  }
-
-  private resetHeartbeat(ws: WsType): void {
-    const existing = this.heartbeatTimers.get(ws)
-    if (existing) clearTimeout(existing)
-    this.heartbeatTimers.set(ws, setTimeout(() => {
-      console.warn('[runtime] heartbeat timeout, closing connection')
-      ws.close(MAX_WS_CLOSE_CODE, 'Heartbeat timeout')
-    }, HEARTBEAT_TIMEOUT_MS))
-  }
-
-  private clearHeartbeat(ws: WsType): void {
-    const timer = this.heartbeatTimers.get(ws)
-    if (timer) {
-      clearTimeout(timer)
-      this.heartbeatTimers.delete(ws)
-    }
+  setServices(session: ISessionService, config: IConfigService, model: IModelService): void {
+    this.sessionService = session
+    this.configService = config
+    this.modelService = model
   }
 
   constructor(private port: number, projectRoot?: string) {
@@ -66,8 +42,23 @@ export class SidecarServer {
         res.end()
       }
     })
-
     this.wss = new WebSocketServer({ server: this.httpServer })
+  }
+
+  private nextPushId(): string { return `push_${++this.pushId}` }
+
+  private resetHeartbeat(ws: WsType): void {
+    const existing = this.heartbeatTimers.get(ws)
+    if (existing) clearTimeout(existing)
+    this.heartbeatTimers.set(ws, setTimeout(() => {
+      console.warn('[runtime] heartbeat timeout, closing connection')
+      ws.close(MAX_WS_CLOSE_CODE, 'Heartbeat timeout')
+    }, HEARTBEAT_TIMEOUT_MS))
+  }
+
+  private clearHeartbeat(ws: WsType): void {
+    const timer = this.heartbeatTimers.get(ws)
+    if (timer) { clearTimeout(timer); this.heartbeatTimers.delete(ws) }
   }
 
   start(): Promise<void> {
@@ -87,311 +78,121 @@ export class SidecarServer {
     })
   }
 
-  // ── Connection handling ────────────────────────────────────────
+  // ── Connection ────────────────────────────────────────────────
 
   private handleConnection(ws: WsType): void {
     this.clients.add(ws)
     console.log(`[runtime] client connected (total: ${this.clients.size})`)
-
     this.sendInitialState(ws)
     this.resetHeartbeat(ws)
-
     ws.on('message', (data) => {
       try {
         const msg: ClientMessage = JSON.parse(data.toString())
-        // 收到任何消息都重置该连接的心跳
         this.resetHeartbeat(ws)
         this.handleMessage(msg, ws)
-      } catch {
-        this.sendError(ws, 'parse_error', 'Invalid JSON')
-      }
+      } catch { this.sendError(ws, 'parse_error', 'Invalid JSON') }
     })
-
     ws.on('close', () => {
       this.clients.delete(ws)
       this.clearHeartbeat(ws)
       console.log(`[runtime] client disconnected (total: ${this.clients.size})`)
     })
-
     ws.on('error', (err) => {
       console.error('[runtime] ws error:', err)
-      // ws error 後通常会触发 close，但如果没触发就主动清理
       this.clients.delete(ws)
       this.clearHeartbeat(ws)
     })
   }
 
   private sendInitialState(ws: WsType): void {
-    // Session list — 使用 grouped 格式，与 broadcastSessionList 一致
-    const groups = this.pool.listPersistedSessions()
+    const groups = this.sessionService.listPersistedSessions()
     this.send(ws, { type: 'session.list', id: this.nextPushId(), payload: { groups } })
-
-    // Provider list
-    const providers = providerStore.listProviders()
+    const providers = this.configService.listProviders()
     this.send(ws, { type: 'config.providers', id: this.nextPushId(), payload: { providers } })
-
-    // Aggregated model list
-    const models = this.aggregateModels(providers)
+    const models = this.modelService.aggregateModels(providers)
     this.send(ws, { type: 'model.list', id: this.nextPushId(), payload: { models } })
-
-    // Skills list
-    const skills = loadSkills(this.projectRoot)
+    const skills = this.configService.loadSkills(this.projectRoot)
     this.send(ws, { type: 'config.skills', id: this.nextPushId(), payload: { skills } })
-
-    // Agents list
-    const agents = loadAgents(this.projectRoot)
+    const agents = this.configService.loadAgents(this.projectRoot)
     this.send(ws, { type: 'config.agents', id: this.nextPushId(), payload: { agents } })
   }
 
-  // ── Message routing ────────────────────────────────────────────
-
-  private handleDiscoverModels(msg: ClientMessage, ws: WsType): void {
-    const { baseUrl, apiKey, providerType, providerId } = msg.payload as { baseUrl: string; apiKey?: string; providerType?: string; providerId?: string }
-    let resolvedApiKey = apiKey
-    if (!resolvedApiKey && providerId) resolvedApiKey = getProvider(providerId)?.apiKey
-    this.discoverModelsFromApi(baseUrl, resolvedApiKey, providerType)
-      .then((models) => { this.send(ws, { type: 'config.discoveredModels', id: msg.id, payload: { models, success: true } }) })
-      .catch((e: unknown) => {
-        const raw = e instanceof Error ? e.message : String(e)
-        const message = raw.includes('ByteString') ? '请求失败：Base URL 或 API Key 包含 HTTP 不支持的字符'
-          : raw.includes('fetch failed') ? `连接失败：无法访问 ${baseUrl}/v1/models` : raw
-        this.send(ws, { type: 'config.discoveredModels', id: msg.id, payload: { models: [], success: false, error: message } })
-      })
-  }
-
-  private handleSessionCompact(msg: ClientMessage): void {
-    const startTime = Date.now()
-    const compactId = msg.payload.sessionId as string
-    console.log('[server] session.compact: sessionId=' + compactId)
-    const runCompact = async () => {
-      // pool.compact() 已在内部向客户端发送错误消息，此处只做本地日志
-      try {
-        await this.pool.compact(compactId)
-      } catch (e) {
-        console.error('[server] session.compact: failed, sessionId=' + compactId + ', error=' + (e instanceof Error ? e.message : String(e)))
-        void 0
-      }
-      console.log('[server] session.compact: completed, sessionId=' + compactId + ', elapsed=' + (Date.now() - startTime) + 'ms')
-    }
-    if (!this.pool.hasActiveSession(compactId)) {
-      this.pool.restoreSession(compactId).then(() => {
-        console.log('[server] session.compact: auto-restored, sessionId=' + compactId)
-        runCompact()
-      }).catch(() => { /* restoreSession error already handled by pool */ })
-    } else {
-      runCompact()
-    }
-  }
-
-  private async handleSettingsMessage(msg: ClientMessage, ws: WsType): Promise<boolean> {
-    switch (msg.type) {
-      case 'config.getProviders': {
-        const providers = providerStore.listProviders()
-        this.send(ws, { type: 'config.providers', id: msg.id, payload: { providers } })
-        return true
-      }
-      case 'config.setProvider': {
-        const { providerId, ...data } = msg.payload as Record<string, unknown>
-        providerStore.setProvider(providerId as string, data as Parameters<typeof providerStore.setProvider>[1])
-        this.send(ws, { type: 'config.providerUpdated', id: msg.id, payload: { providerId } })
-        this.broadcastProviderList()
-        return true
-      }
-      case 'config.deleteProvider': {
-        const delId = msg.payload.providerId as string
-        providerStore.deleteProvider(delId)
-        this.send(ws, { type: 'config.providerUpdated', id: msg.id, payload: { providerId: delId, deleted: true } })
-        this.broadcastProviderList()
-        return true
-      }
-      case 'config.setToolPermissions': {
-        updateToolPermissions(msg.payload.permissions as Record<string, string>)
-        this.send(ws, { type: 'config.providerUpdated', id: msg.id, payload: { saved: true } })
-        return true
-      }
-      case 'config.scanSkills': {
-        const sources = msg.payload.sources as string[]
-        const existingIds = new Set(loadSkills(this.projectRoot).map(s => s.id))
-        this.send(ws, { type: 'config.scannedSkills', id: msg.id, payload: { skills: scanSkills(sources, existingIds), success: true } })
-        return true
-      }
-      case 'config.setSkill': {
-        const skill = msg.payload.skill as SkillInfo
-        const skills = loadSkills(this.projectRoot)
-        const idx = skills.findIndex(s => s.id === skill.id)
-        if (idx >= 0) skills[idx] = skill; else skills.push(skill)
-        saveSkills(this.projectRoot, skills)
-        this.send(ws, { type: 'config.skillUpdated', id: msg.id, payload: { skill, success: true } })
-        this.broadcastSkillList()
-        return true
-      }
-      case 'config.deleteSkill': {
-        const skillId = msg.payload.skillId as string
-        saveSkills(this.projectRoot, loadSkills(this.projectRoot).filter(s => s.id !== skillId))
-        this.send(ws, { type: 'config.skillDeleted', id: msg.id, payload: { skillId, success: true } })
-        this.broadcastSkillList()
-        return true
-      }
-      case 'config.scanAgents': {
-        const sources = msg.payload.sources as string[]
-        const existingIds = new Set(loadAgents(this.projectRoot).map(a => a.id))
-        this.send(ws, { type: 'config.scannedAgents', id: msg.id, payload: { agents: scanAgents(sources, existingIds), success: true } })
-        return true
-      }
-      case 'config.setAgent': {
-        const agent = msg.payload.agent as AgentInfo
-        const agents = loadAgents(this.projectRoot)
-        const aIdx = agents.findIndex(a => a.id === agent.id)
-        if (aIdx >= 0) agents[aIdx] = agent; else agents.push(agent)
-        saveAgents(this.projectRoot, agents)
-        this.send(ws, { type: 'config.agentUpdated', id: msg.id, payload: { agent, success: true } })
-        this.broadcastAgentList()
-        return true
-      }
-      case 'config.deleteAgent': {
-        const agentId = msg.payload.agentId as string
-        saveAgents(this.projectRoot, loadAgents(this.projectRoot).filter(a => a.id !== agentId))
-        this.send(ws, { type: 'config.agentDeleted', id: msg.id, payload: { agentId, success: true } })
-        this.broadcastAgentList()
-        return true
-      }
-      case 'config.discoverModels':
-        this.handleDiscoverModels(msg, ws)
-        return true
-      case 'model.list': {
-        this.send(ws, { type: 'model.list', id: msg.id, payload: { models: this.aggregateModels(providerStore.listProviders()) } })
-        return true
-      }
-      case 'model.switch': {
-        const { sessionId, provider, modelId } = msg.payload as { sessionId: string; provider: string; modelId: string }
-        console.log(`[runtime] model.switch: sessionId=${sessionId}, provider=${provider}, modelId=${modelId}`)
-        await this.pool.switchModel(sessionId, provider, modelId)
-        this.send(ws, { type: 'model.switched', id: msg.id, payload: { sessionId, provider, modelId } })
-        return true
-      }
-      case 'tool.approve':
-      case 'tool.deny':
-      case 'tool.always_allow':
-        // Tool approval handled via extension_ui_request/response protocol
-        return true
-      default:
-        return false
-    }
-  }
+  // ── Message routing ───────────────────────────────────────────
 
   private async handleMessage(msg: ClientMessage, ws: WsType): Promise<void> {
     try {
       switch (msg.type) {
-        // ── Ping ────────────────────────────────────────────────
         case 'ping':
-          this.send(ws, { type: 'pong', id: msg.id, payload: {} })
-          break
-
-        // ── Session management ──────────────────────────────────
+          return this.send(ws, { type: 'pong', id: msg.id, payload: {} })
         case 'session.create': {
           const cwd = msg.payload.cwd as string | undefined
           const label = msg.payload.label as string | undefined
-          const session = await this.pool.create(cwd, label)
+          const session = await this.sessionService.create(cwd, label)
           this.send(ws, { type: 'session.created', id: msg.id, payload: { session } })
-          this.broadcastSessionList()
-          break
+          return this.broadcastSessionList()
         }
-
         case 'session.delete': {
-          const sessionId = msg.payload.sessionId as string
-          await this.pool.delete(sessionId)
-          this.send(ws, { type: 'session.deleted', id: msg.id, payload: { sessionId } })
-          this.broadcastSessionList()
-          break
-        }
-
-        case 'session.list': {
-          const groups = this.pool.listPersistedSessions()
-          this.send(ws, { type: 'session.list', id: msg.id, payload: { groups } })
-          break
-        }
-
-        case 'session.switch': {
           const sid = msg.payload.sessionId as string
-          const summary = this.pool.getSummary(sid)
+          await this.sessionService.delete(sid)
+          this.send(ws, { type: 'session.deleted', id: msg.id, payload: { sessionId: sid } })
+          return this.broadcastSessionList()
+        }
+        case 'session.list':
+          return this.send(ws, { type: 'session.list', id: msg.id, payload: { groups: this.sessionService.listPersistedSessions() } })
+        case 'session.switch': {
+          const switchId = msg.payload.sessionId as string
+          const summary = this.sessionService.getSummary(switchId)
           if (summary) {
-            // 只发一次 session.history，带完整的 session 信息和消息
             try {
-              const messages = await this.pool.getHistory(sid)
-              this.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: sid, session: summary, messages } })
+              const messages = await this.sessionService.getHistory(switchId)
+              this.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: switchId, session: summary, messages } })
             } catch (e) {
               console.error('[runtime] failed to load history for switch:', e)
-              this.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: sid, session: summary, messages: [] } })
+              this.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: switchId, session: summary, messages: [] } })
             }
-          } else {
-            this.sendError(ws, 'not_found', `Session ${sid} not found`, msg.id, sid)
-          }
-          break
+          } else { this.sendError(ws, 'not_found', `Session ${switchId} not found`, msg.id, switchId) }
+          return
         }
-
         case 'session.history': {
           const histId = msg.payload.sessionId as string
-          const messages = await this.pool.getHistory(histId)
-          this.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: histId, messages } })
-          break
+          const messages = await this.sessionService.getHistory(histId)
+          return this.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: histId, messages } })
         }
-
-        case 'session.compact':
-          this.handleSessionCompact(msg)
-          break
-
+        case 'session.compact': return this.handleSessionCompact(msg)
         case 'session.clear': {
           const clearId = msg.payload.sessionId as string
-          await this.pool.clear(clearId)
-          this.send(ws, { type: 'session.deleted', id: msg.id, payload: { sessionId: clearId } })
-          break
+          await this.sessionService.clear(clearId)
+          return this.send(ws, { type: 'session.deleted', id: msg.id, payload: { sessionId: clearId } })
         }
-
         case 'session.restore': {
           const restoreId = msg.payload.sessionId as string
-          const session = await this.pool.restoreSession(restoreId)
+          const session = await this.sessionService.restoreSession(restoreId)
           this.send(ws, { type: 'session.restored', id: msg.id, payload: { session } })
-          this.broadcastSessionList()
-          break
+          return this.broadcastSessionList()
         }
-
         case 'session.rename': {
           const { sessionId: renameId, name } = msg.payload as { sessionId: string; name: string }
-          await this.pool.renameSession(renameId, name)
+          await this.sessionService.renameSession(renameId, name)
           this.send(ws, { type: 'session.renamed', id: msg.id, payload: { sessionId: renameId, name } })
-          this.broadcastSessionList()
-          break
+          return this.broadcastSessionList()
         }
-
-        // ── Messages ────────────────────────────────────────────
         case 'message.send': {
           const sessionId = msg.payload.sessionId as string
           const content = msg.payload.content as string
           const subagent = msg.payload.subagent as { agent: string; task: string } | undefined
-
           if (subagent) {
-            // Use base64-encoded marker to avoid JSON brace collision with task content
             const payload = JSON.stringify({ agent: subagent.agent, task: subagent.task })
             const encoded = Buffer.from(payload, 'utf-8').toString('base64')
             const marker = `<!-- xyz-agent-force-subagent:${encoded} -->`
             const promptText = content || `Execute task using agent '${subagent.agent}'`
-            const agentPrompt = `${marker}\n${promptText}`
-            await this.pool.sendMessage(sessionId, agentPrompt)
+            await this.sessionService.sendMessage(sessionId, `${marker}\n${promptText}`)
           } else {
-            await this.pool.sendMessage(sessionId, content)
+            await this.sessionService.sendMessage(sessionId, content)
           }
-
-          this.send(ws, { type: 'message.status', id: msg.id, payload: { sessionId, status: 'sent' } })
-          break
+          return this.send(ws, { type: 'message.status', id: msg.id, payload: { sessionId, status: 'sent' } })
         }
-
-        case 'message.abort': {
-          const abortId = msg.payload.sessionId as string
-          await this.pool.abort(abortId)
-          break
-        }
-
-        // ── Settings / Config / Model / Tool messages ──────────
+        case 'message.abort':
+          return await this.sessionService.abort(msg.payload.sessionId as string)
         default:
           if (!this.handleSettingsMessage(msg, ws)) {
             const unknownSid = (msg as { payload?: { sessionId?: string } }).payload?.sessionId
@@ -405,165 +206,160 @@ export class SidecarServer {
     }
   }
 
-  // ── Helpers ────────────────────────────────────────────────────
+  private handleSessionCompact(msg: ClientMessage): void {
+    const compactId = msg.payload.sessionId as string
+    const startTime = Date.now()
+    console.log('[server] session.compact: sessionId=' + compactId)
+    const runCompact = async () => {
+      try { await this.sessionService.compact(compactId) } catch (e) {
+        console.error('[server] session.compact: failed, sessionId=' + compactId + ', error=' + (e instanceof Error ? e.message : String(e)))
+      }
+      console.log('[server] session.compact: completed, sessionId=' + compactId + ', elapsed=' + (Date.now() - startTime) + 'ms')
+    }
+    if (!this.sessionService.hasActiveSession(compactId)) {
+      this.sessionService.restoreSession(compactId).then(() => {
+        console.log('[server] session.compact: auto-restored, sessionId=' + compactId)
+        runCompact()
+      }).catch(() => { /* restoreSession error already handled by service */ })
+    } else { runCompact() }
+  }
 
-  private send(ws: WsType, msg: ServerMessage): void {
-    if (ws.readyState === WS_OPEN) {
-      ws.send(JSON.stringify(msg))
+  private async handleSettingsMessage(msg: ClientMessage, ws: WsType): Promise<boolean> {
+    switch (msg.type) {
+      case 'config.getProviders':
+        this.send(ws, { type: 'config.providers', id: msg.id, payload: { providers: this.configService.listProviders() } })
+        return true
+      case 'config.setProvider': {
+        const { providerId, ...data } = msg.payload as Record<string, unknown>
+        this.configService.setProvider(providerId as string, data as Parameters<IConfigService['setProvider']>[1])
+        this.send(ws, { type: 'config.providerUpdated', id: msg.id, payload: { providerId } })
+        this.broadcastProviderList()
+        return true
+      }
+      case 'config.deleteProvider': {
+        const delId = msg.payload.providerId as string
+        this.configService.deleteProvider(delId)
+        this.send(ws, { type: 'config.providerUpdated', id: msg.id, payload: { providerId: delId, deleted: true } })
+        this.broadcastProviderList()
+        return true
+      }
+      case 'config.setToolPermissions':
+        this.configService.updateToolPermissions(msg.payload.permissions as Record<string, string>)
+        this.send(ws, { type: 'config.providerUpdated', id: msg.id, payload: { saved: true } })
+        return true
+      case 'config.scanSkills': {
+        const sources = msg.payload.sources as string[]
+        const existingIds = new Set(this.configService.loadSkills(this.projectRoot).map(s => s.id))
+        this.send(ws, { type: 'config.scannedSkills', id: msg.id, payload: { skills: this.configService.scanSkills(sources, existingIds), success: true } })
+        return true
+      }
+      case 'config.setSkill': {
+        const skill = msg.payload.skill as SkillInfo
+        this.configService.upsertSkill(skill)
+        this.send(ws, { type: 'config.skillUpdated', id: msg.id, payload: { skill, success: true } })
+        this.broadcastSkillList()
+        return true
+      }
+      case 'config.deleteSkill': {
+        const skillId = msg.payload.skillId as string
+        this.configService.deleteSkill(skillId)
+        this.send(ws, { type: 'config.skillDeleted', id: msg.id, payload: { skillId, success: true } })
+        this.broadcastSkillList()
+        return true
+      }
+      case 'config.scanAgents': {
+        const sources = msg.payload.sources as string[]
+        const existingIds = new Set(this.configService.loadAgents(this.projectRoot).map(a => a.id))
+        this.send(ws, { type: 'config.scannedAgents', id: msg.id, payload: { agents: this.configService.scanAgents(sources, existingIds), success: true } })
+        return true
+      }
+      case 'config.setAgent': {
+        const agent = msg.payload.agent as AgentInfo
+        this.configService.upsertAgent(agent)
+        this.send(ws, { type: 'config.agentUpdated', id: msg.id, payload: { agent, success: true } })
+        this.broadcastAgentList()
+        return true
+      }
+      case 'config.deleteAgent': {
+        const agentId = msg.payload.agentId as string
+        this.configService.deleteAgent(agentId)
+        this.send(ws, { type: 'config.agentDeleted', id: msg.id, payload: { agentId, success: true } })
+        this.broadcastAgentList()
+        return true
+      }
+      case 'config.discoverModels': return this.handleDiscoverModels(msg, ws)
+      case 'model.list':
+        this.send(ws, { type: 'model.list', id: msg.id, payload: { models: this.modelService.aggregateModels(this.configService.listProviders()) } })
+        return true
+      case 'model.switch': {
+        const { sessionId, provider, modelId } = msg.payload as { sessionId: string; provider: string; modelId: string }
+        console.log(`[runtime] model.switch: sessionId=${sessionId}, provider=${provider}, modelId=${modelId}`)
+        await this.sessionService.switchModel(sessionId, provider, modelId)
+        this.send(ws, { type: 'model.switched', id: msg.id, payload: { sessionId, provider, modelId } })
+        return true
+      }
+      case 'tool.approve':
+      case 'tool.deny':
+      case 'tool.always_allow':
+        return true
+      default: return false
     }
   }
 
-  /** Broadcast a message to all connected clients */
-  private broadcast(msg: ServerMessage): void {
-    for (const ws of this.clients) {
-      this.send(ws, msg)
-    }
+  private handleDiscoverModels(msg: ClientMessage, ws: WsType): boolean {
+    const { baseUrl, apiKey, providerType, providerId } = msg.payload as { baseUrl: string; apiKey?: string; providerType?: string; providerId?: string }
+    let resolvedApiKey = apiKey
+    if (!resolvedApiKey && providerId) resolvedApiKey = this.configService.getProvider(providerId)?.apiKey
+    this.modelService.discoverModelsFromApi(baseUrl, resolvedApiKey, providerType)
+      .then((models) => { this.send(ws, { type: 'config.discoveredModels', id: msg.id, payload: { models, success: true } }) })
+      .catch((e: unknown) => {
+        const raw = e instanceof Error ? e.message : String(e)
+        const message = raw.includes('ByteString') ? '请求失败：Base URL 或 API Key 包含 HTTP 不支持的字符'
+          : raw.includes('fetch failed') ? `连接失败：无法访问 ${baseUrl}/v1/models` : raw
+        this.send(ws, { type: 'config.discoveredModels', id: msg.id, payload: { models: [], success: false, error: message } })
+      })
+    return true
   }
 
-  private sendError(ws: WsType, code: string, message: string, id?: string, sessionId?: string): void {
+  // ── IMessageBroker ──────────────────────────────────────────────
+
+  send(ws: unknown, msg: ServerMessage): void {
+    const typed = ws as WsType
+    if (typed.readyState === WS_OPEN) typed.send(JSON.stringify(msg))
+  }
+
+  broadcast(msg: ServerMessage): void {
+    for (const ws of this.clients) this.send(ws, msg)
+  }
+
+  sendError(ws: unknown, code: string, message: string, id?: string, sessionId?: string): void {
     const payload: Record<string, unknown> = { code, message }
     if (sessionId) payload.sessionId = sessionId
     this.send(ws, { type: 'error', id, payload })
   }
 
+  // ── Broadcast helpers ──────────────────────────────────────────
+
   private broadcastSessionList(): void {
-    const groups = this.pool.listPersistedSessions()
-    this.broadcast({ type: 'session.list', id: this.nextPushId(), payload: { groups } })
+    this.broadcast({ type: 'session.list', id: this.nextPushId(), payload: { groups: this.sessionService.listPersistedSessions() } })
   }
-
   private broadcastProviderList(): void {
-    const providers = providerStore.listProviders()
+    const providers = this.configService.listProviders()
     this.broadcast({ type: 'config.providers', id: this.nextPushId(), payload: { providers } })
-    const models = this.aggregateModels(providers)
-    this.broadcast({ type: 'model.list', id: this.nextPushId(), payload: { models } })
+    this.broadcast({ type: 'model.list', id: this.nextPushId(), payload: { models: this.modelService.aggregateModels(providers) } })
   }
-
   private broadcastSkillList(): void {
-    const skills = loadSkills(this.projectRoot)
-    this.broadcast({ type: 'config.skills', id: this.nextPushId(), payload: { skills } })
+    this.broadcast({ type: 'config.skills', id: this.nextPushId(), payload: { skills: this.configService.loadSkills(this.projectRoot) } })
   }
-
   private broadcastAgentList(): void {
-    const agents = loadAgents(this.projectRoot)
-    this.broadcast({ type: 'config.agents', id: this.nextPushId(), payload: { agents } })
-  }
-
-  private aggregateModels(providers: ReturnType<typeof providerStore.listProviders>): ModelInfo[] {
-    return providers.flatMap(p =>
-      p.models.map(m => {
-        // models 可能是字符串（model ID）或对象 { id, name, ctx, tags }
-        // （来自 ProviderModal 保存的 ModalModel）
-        const entry: unknown = m
-        if (typeof entry === 'string') {
-          const dbRecord = lookupModel(entry)
-          return {
-            id: entry,
-            name: dbRecord?.name ?? entry,
-            providerId: p.id,
-            providerName: p.name,
-            contextWindow: dbRecord?.context,
-            enabled: true,
-          } as ModelInfo
-        }
-        if (entry && typeof entry === 'object' && 'id' in entry) {
-          const meta = entry as { id: unknown; name: unknown; ctx?: unknown; tags?: unknown; enabled?: unknown }
-          return {
-            id: typeof meta.id === 'string' ? meta.id : String(meta.id),
-            name: typeof meta.name === 'string' ? meta.name : String(meta.name ?? meta.id),
-            providerId: p.id,
-            providerName: p.name,
-            tags: Array.isArray(meta.tags) ? meta.tags.filter(t => typeof t === 'string') : [],
-            contextWindow: typeof meta.ctx === 'number'
-              ? meta.ctx
-              : this.parseCtxToNumber(
-                typeof meta.ctx === 'string' ? meta.ctx : undefined,
-              ),
-            enabled: meta.enabled !== false,
-          } as ModelInfo
-        }
-        // fallback：转为字符串
-        return {
-          id: String(m),
-          name: String(m),
-          providerId: p.id,
-          providerName: p.name,
-          enabled: true,
-        } as ModelInfo
-      }),
-    )
-  }
-
-  private parseCtxToNumber(ctx?: string): number | undefined {
-    if (!ctx || ctx === '--') return undefined
-    // 支持 "128K" → 128000, "200k" → 200000, "128000" → 128000, "--" → undefined
-    const match = ctx.match(/^(\d+(?:\.\d+)?)\s*([kK])?$/)
-    if (!match) return undefined
-    const num = parseFloat(match[1])
-    return match[2]?.toLowerCase() === 'k' ? Math.round(num * KILOBYTE) : Math.round(num)
-  }
-
-  /**
-   * 调用供应商的 /v1/models API 发现可用模型。
-   * 支持 OpenAI 兼容端点和 Anthropic 端点。
-   */
-  private async discoverModelsFromApi(
-    baseUrl: string,
-    apiKey?: string,
-    providerType?: string,
-  ): Promise<Array<{ id: string; name: string; ctx?: number }>> {
-    const base = baseUrl.replace(/\/+$/, '')
-    let url: string
-    const headers: Record<string, string> = {}
-
-    if (providerType === 'anthropic') {
-      url = `${base}/v1/models`
-      if (apiKey) {
-        headers['x-api-key'] = apiKey
-        headers['anthropic-version'] = '2023-06-01'
-      }
-    } else {
-      url = base.endsWith('/v1') ? `${base}/models` : `${base}/v1/models`
-      if (apiKey) {
-        headers['Authorization'] = `Bearer ${apiKey}`
-      }
-    }
-
-    const res = await fetch(url, { headers, signal: AbortSignal.timeout(API_FETCH_TIMEOUT_MS) })
-    if (!res.ok) {
-      const body = await res.text().catch(() => '')
-      throw new Error(`API 返回 ${res.status}: ${body || res.statusText}`)
-    }
-
-    const data = await res.json() as Record<string, unknown>
-
-    // OpenAI 格式: { data: [{ id: "model-name", ... }] }
-    // Anthropic 格式: { data: [{ id: "model-name", ... }] }
-    const modelList = Array.isArray(data.data)
-      ? data.data as Array<Record<string, unknown>>
-      : Array.isArray(data.models)
-        ? data.models as Array<Record<string, unknown>>
-        : []
-
-    return modelList
-      .filter(m => typeof m.id === 'string')
-      .map(m => {
-        const id = m.id as string
-        const dbRecord = lookupModel(id)
-        return {
-          id,
-          name: (m.name ?? id) as string,
-          ctx: dbRecord?.context ?? undefined,
-        }
-      })
+    this.broadcast({ type: 'config.agents', id: this.nextPushId(), payload: { agents: this.configService.loadAgents(this.projectRoot) } })
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────
 
   async stop(): Promise<void> {
-    await this.pool.destroyAll()
+    await this.sessionService.destroyAll()
     this.wss.close()
-    return new Promise((resolve) => {
-      this.httpServer.close(() => resolve())
-    })
+    return new Promise((resolve) => { this.httpServer.close(() => resolve()) })
   }
 }

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { WebSocket } from 'ws'
 
 /**
- * Interface-level tests for SessionPool.restoreSession fix.
+ * Interface-level tests for SessionService.restoreSession fix.
  *
  * The fix changed two things:
  * 1. Reuse original sessionId instead of crypto.randomUUID()
@@ -76,12 +76,30 @@ vi.mock('../src/process-manager.js', () => ({
   destroySession = vi.fn().mockResolvedValue(undefined)
   destroyAll = vi.fn().mockResolvedValue(undefined)
   onSessionExit = onSessionExitMock
+  rekey = vi.fn()
+  getSessionIdByClient = vi.fn()
   },
+}))
+
+// ── Mock session-label-store ─────────────────────────────────────
+
+vi.mock('../src/session-label-store.js', () => ({
+  saveLabel: vi.fn(),
+  removeLabel: vi.fn(),
+  migrateLabelsIfNeeded: vi.fn(),
+}))
+
+// ── Mock skill-store ─────────────────────────────────────────────
+
+vi.mock('../src/skill-store.js', () => ({
+  loadSkills: vi.fn().mockReturnValue([]),
+  saveSkills: vi.fn(),
 }))
 
 // ── Import after mocks ──────────────────────────────────────────
 
-import { SessionPool } from '../src/session-pool.js'
+import { SessionService } from '../src/services/session-service.js'
+import type { IMessageBroker, IEventAdapter } from '../src/interfaces.js'
 
 /** Minimal scanned session fixture */
 function addScannedSession(id: string, cwd = '/tmp/test-project') {
@@ -100,15 +118,45 @@ function makeMockClient() {
   }
 }
 
-describe('SessionPool.restoreSession', () => {
-  let pool: SessionPool
+/** Create a SessionService with a mocked pm and no-op broker */
+function createService(): SessionService {
+  const noopBroker: IMessageBroker = {
+    send: vi.fn(),
+    broadcast: vi.fn(),
+    sendError: vi.fn(),
+  }
+  const adapterFactory = (_sessionId: string): IEventAdapter => {
+    return {
+      attach: attachMock,
+      detach: detachMock,
+    }
+  }
+  // Use a minimal mock pm that satisfies the constructor
+  const mockPm = {
+    createSession: createSessionMock,
+    getClient: vi.fn(),
+    hasClient: vi.fn().mockReturnValue(false),
+    destroySession: vi.fn().mockResolvedValue(undefined),
+    destroyAll: vi.fn().mockResolvedValue(undefined),
+    onSessionExit: onSessionExitMock,
+    rekey: vi.fn(),
+    getSessionIdByClient: vi.fn(),
+  }
+  return new SessionService(
+    mockPm as never,
+    noopBroker,
+    adapterFactory,
+    '/tmp',
+  )
+}
+
+describe('SessionService.restoreSession', () => {
+  let service: SessionService
 
   beforeEach(() => {
   vi.clearAllMocks()
   mockScannedSessions.length = 0
-  pool = new SessionPool()
-  // Fire the onSessionExit callback registration (constructor calls it)
-  // but we don't need to test that here
+  service = createService()
   })
 
   // ── Normal path ──────────────────────────────────────────────
@@ -118,7 +166,7 @@ describe('SessionPool.restoreSession', () => {
   addScannedSession(originalId)
   createSessionMock.mockResolvedValue(makeMockClient())
 
-  const summary = await pool.restoreSession(originalId)
+  const summary = await service.restoreSession(originalId)
 
   // Returned summary has the same id
   expect(summary.id).toBe(originalId)
@@ -136,10 +184,9 @@ describe('SessionPool.restoreSession', () => {
   addScannedSession(originalId)
   createSessionMock.mockResolvedValue(makeMockClient())
 
-  await pool.restoreSession(originalId)
+  await service.restoreSession(originalId)
 
-  // EventAdapter constructor is called via mock — verify the first arg (sessionId)
-  // Since we mocked EventAdapter, we check that attachMock was called (meaning adapter was created + attached)
+  // attachMock called means adapter was created + attached
   expect(attachMock).toHaveBeenCalledTimes(1)
   expect(createSessionMock).toHaveBeenCalledWith(originalId, expect.any(String), expect.any(Object))
   })
@@ -150,7 +197,7 @@ describe('SessionPool.restoreSession', () => {
   const mockClient = makeMockClient()
   createSessionMock.mockResolvedValue(mockClient)
 
-  await pool.restoreSession(id)
+  await service.restoreSession(id)
 
   expect(mockClient.sendCommand).toHaveBeenCalledWith(
     'switch_session',
@@ -166,12 +213,12 @@ describe('SessionPool.restoreSession', () => {
   createSessionMock.mockResolvedValue(makeMockClient())
 
   // First restore
-  await pool.restoreSession(id)
+  await service.restoreSession(id)
   expect(detachMock).not.toHaveBeenCalled()
 
   // Second restore with same id — should detach the first adapter
   createSessionMock.mockResolvedValue(makeMockClient())
-  await pool.restoreSession(id)
+  await service.restoreSession(id)
 
   // detach should have been called once for the first session's adapter
   expect(detachMock).toHaveBeenCalledTimes(1)
@@ -179,7 +226,7 @@ describe('SessionPool.restoreSession', () => {
 
   it('should throw error when session file is not found in scan results', async () => {
   // No scanned sessions added — scanSessions returns []
-  await expect(pool.restoreSession('nonexistent-id')).rejects.toThrow(
+  await expect(service.restoreSession('nonexistent-id')).rejects.toThrow(
     'Persisted session nonexistent-id not found',
   )
   })
@@ -191,7 +238,7 @@ describe('SessionPool.restoreSession', () => {
   addScannedSession(id)
   createSessionMock.mockRejectedValue(new Error('spawn pi failed'))
 
-  await expect(pool.restoreSession(id)).rejects.toThrow('spawn pi failed')
+  await expect(service.restoreSession(id)).rejects.toThrow('spawn pi failed')
   })
 
   it('should keep session in map even if client.sendCommand(switch_session) fails', async () => {
@@ -202,6 +249,6 @@ describe('SessionPool.restoreSession', () => {
   createSessionMock.mockResolvedValue(mockClient)
 
   // restoreSession does NOT catch switch_session errors — they propagate
-  await expect(pool.restoreSession(id)).rejects.toThrow('switch failed')
+  await expect(service.restoreSession(id)).rejects.toThrow('switch failed')
   })
 })

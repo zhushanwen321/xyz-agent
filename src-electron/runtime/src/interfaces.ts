@@ -119,8 +119,12 @@ export interface IConfigService {
   updateToolPermissions(permissions: Record<string, string>): void
   loadSkills(projectRoot: string): SkillInfo[]
   saveSkills(projectRoot: string, skills: SkillInfo[]): void
+  upsertSkill(skill: SkillInfo): void
+  deleteSkill(skillId: string): void
   loadAgents(projectRoot: string): AgentInfo[]
   saveAgents(projectRoot: string, agents: AgentInfo[]): void
+  upsertAgent(agent: AgentInfo): void
+  deleteAgent(agentId: string): void
   scanSkills(sources: string[], existingIds: Set<string>): ScannedSkillInfo[]
   scanAgents(sources: string[], existingIds: Set<string>): ScannedAgentInfo[]
 }
