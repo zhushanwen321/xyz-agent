@@ -5,6 +5,7 @@ directories:
 asar: true
 files:
   - dist/**/*
+  - renderer/dist/**/*
   - package.json
   - node_modules/**/*
   - "!node_modules/**/test/**"

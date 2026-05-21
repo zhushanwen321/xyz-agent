@@ -5,6 +5,9 @@ import path from 'node:path'
 import { app } from 'electron'
 import { homedir } from 'node:os'
 
+/** tsup (CJS format) 输出的 runtime 入口文件名，必须与 runtime/tsup.config.ts 的 format 保持一致 */
+const RUNTIME_ENTRY_FILE = 'index.cjs'
+
 /** 管理 Agent Runtime 子进程的启停、端口发现、健康检查。 */
 export class RuntimeManager {
   private child: ChildProcess | null = null
@@ -156,7 +159,7 @@ export class RuntimeManager {
         'app.asar.unpacked',
         'dist',
         'runtime',
-        'index.js',
+        RUNTIME_ENTRY_FILE,
       )
       if (!existsSync(runtimeDist)) {
         throw new Error(`Runtime bundle not found at ${runtimeDist}`)
@@ -181,9 +184,11 @@ export class RuntimeManager {
       console.log(`[runtime] node ${tsxPath} ${runtimeEntry} --port=${port}`)
     }
 
+    // 打包后 app.getAppPath() 返回 app.asar（文件），不能作为 cwd
+    const cwd = app.isPackaged ? process.resourcesPath : projectRoot
     this.child = spawn(cmd, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      cwd: projectRoot,
+      cwd,
     })
 
     this.child.on('error', (err) => {
