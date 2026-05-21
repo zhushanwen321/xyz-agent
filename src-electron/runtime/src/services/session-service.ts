@@ -12,11 +12,10 @@ import type {
   SessionGroup,
   SessionStatus,
   Message,
-  ServerMessage,
 } from '@xyz-agent/shared'
 import type { ISessionService, IProcessManager, IMessageBroker, IEventAdapter } from '../interfaces.js'
 import type { IRpcClient } from '../interfaces.js'
-import type { PiMessage, PiEventListener } from '../rpc-client.js'
+import type { PiMessage } from '../rpc-client.js'
 import { convertPiHistory } from '../message-converter.js'
 import type { PiHistoryMessage } from '../types.js'
 import { getDefaultModel } from '../config-store.js'
@@ -308,7 +307,6 @@ export class SessionService implements ISessionService {
         if (entry.type === 'message' && entry.message) {
           piMessages.push(entry.message as PiHistoryMessage)
         }
-      // eslint-disable-next-line taste/no-silent-catch -- malformed line, skip
       } catch {
         void 0
       }

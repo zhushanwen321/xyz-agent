@@ -3,7 +3,6 @@ import type { PiEventListener } from './rpc-client.js'
 // Canonical pi event union from types.ts.
 // translate() accepts Record<string, unknown> because pi sends event types
 // beyond the defined union (compaction_*, auto_retry_*, extension_* etc.).
-import type { PiEvent } from './types.js'
 
 export type WsSender = (msg: ServerMessage) => void
 
