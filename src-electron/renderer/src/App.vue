@@ -152,7 +152,7 @@ function handleGlobalError(msg: ServerMessage) {
       id,
       type: 'danger',
       title: '操作失败',
-      description: msg.payload.message ?? '未知错误',
+      description: (msg.payload.message as string) ?? '未知错误',
     })
     setTimeout(() => dismissToast(id), TOAST_LONG_DURATION_MS)
   }
