@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { SkillInfo } from '@xyz-agent/shared'
+import path from 'node:path'
 
 // ── Mocks ──────────────────────────────────────────────────────────
 
@@ -37,7 +38,7 @@ vi.mock('../src/config-store.js', () => ({
 // Mock fs.existsSync to control path validation
 const existingPaths = new Set<string>()
 vi.mock('node:fs', () => ({
-  existsSync: (p: string) => existingPaths.has(p),
+  existsSync: (p: string) => existingPaths.has(path.normalize(p)),
   mkdirSync: vi.fn(),
   readFileSync: vi.fn(),
   writeFileSync: vi.fn(),
@@ -157,13 +158,13 @@ describe('skillPaths passing chain', () => {
   )
 
   // Only skillDirA and skillDirB exist on filesystem (dir + SKILL.md)
-  existingPaths.add(skillDirA)
-  existingPaths.add(skillFileA)
-  existingPaths.add(skillDirB)
-  existingPaths.add(skillFileB)
+  existingPaths.add(path.normalize(skillDirA))
+  existingPaths.add(path.normalize(skillFileA))
+  existingPaths.add(path.normalize(skillDirB))
+  existingPaths.add(path.normalize(skillFileB))
   // skillDirC exists but skill is disabled — should be filtered by enabled check
-  existingPaths.add(skillDirC)
-  existingPaths.add(skillFileC)
+  existingPaths.add(path.normalize(skillDirC))
+  existingPaths.add(path.normalize(skillFileC))
   // /nonexistent doesn't exist — should be filtered by existsSync
 
   const pool = new SessionPool()
@@ -227,8 +228,8 @@ describe('skillPaths passing chain', () => {
   mockSkills.push(
   { id: 'a', name: 'A', description: '', enabled: true, source: 'pi', triggers: [], sourcePath: skillFileA },
   )
-  existingPaths.add(skillDirA)
-  existingPaths.add(skillFileA)
+  existingPaths.add(path.normalize(skillDirA))
+  existingPaths.add(path.normalize(skillFileA))
 
   // Set up a scanned session for restoreSession to find
   mockScannedSessions.push({
