@@ -1,24 +1,13 @@
 import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { homedir } from 'node:os'
-import type { ScannedSkillInfo, ScanSourceType } from '@xyz-agent/shared'
+import type { ScannedSkillInfo } from '@xyz-agent/shared'
+import { expandHome, inferSourceType } from './scanner-base.js'
 
 const DESCRIPTION_MAX_LENGTH = 200
 const TRIGGER_MIN_LENGTH = 2
 const TRIGGER_MAX_LENGTH = 40
 const BYTES_1KB = 1024
 const BYTES_1MB = BYTES_1KB * BYTES_1KB
-
-function expandHome(p: string): string {
-  return p.startsWith('~') ? join(homedir(), p.slice(1)) : p
-}
-
-function inferSourceType(path: string): ScanSourceType {
-  if (path.includes('.pi/')) return 'pi'
-  if (path.includes('.claude/')) return 'claude'
-  if (path.includes('.agents/')) return 'agents'
-  return 'custom'
-}
 
 // 手写的 YAML frontmatter 解析，仅支持简单的 key: value 格式
 // 不支持嵌套对象、引号内冒号、多行数组等复杂 YAML 场景
