@@ -79,8 +79,6 @@ export function loadConfig(): AppConfig {
   return { defaults: { ...DEFAULTS.defaults }, providers: { ...DEFAULTS.providers } }
 }
 
-import type { SkillInfo, AgentInfo } from '@xyz-agent/shared'
-
 const JSON_INDENT = 2
 
 export function saveConfig(config: AppConfig): void {
@@ -167,58 +165,6 @@ function readPiDefaultModel(): string | null {
   } catch (e) {
     console.error('[config] pi model read error:', e)
     return null
-  }
-}
-
-export function loadSkills(projectRoot: string): SkillInfo[] {
-  const dir = join(projectRoot, '.xyz-agent')
-  const path = join(dir, 'skills.json')
-  try {
-    if (existsSync(path)) {
-      const raw = readFileSync(path, 'utf-8')
-      return JSON.parse(raw) as SkillInfo[]
-    }
-  // eslint-disable-next-line taste/no-silent-catch -- intentional: missing skills file returns empty list
-  } catch (e) {
-    console.error('[config] load skills error:', e)
-  }
-  return []
-}
-
-export function saveSkills(projectRoot: string, skills: SkillInfo[]): void {
-  try {
-    const dir = join(projectRoot, '.xyz-agent')
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-    writeFileSync(join(dir, 'skills.json'), JSON.stringify(skills, null, JSON_INDENT))
-  // eslint-disable-next-line taste/no-silent-catch -- intentional: save failure is best-effort
-  } catch (e) {
-    console.error('[config] save skills error:', e)
-  }
-}
-
-export function loadAgents(projectRoot: string): AgentInfo[] {
-  const dir = join(projectRoot, '.xyz-agent')
-  const path = join(dir, 'agents.json')
-  try {
-    if (existsSync(path)) {
-      const raw = readFileSync(path, 'utf-8')
-      return JSON.parse(raw) as AgentInfo[]
-    }
-  // eslint-disable-next-line taste/no-silent-catch -- intentional: missing agents file returns empty list
-  } catch (e) {
-    console.error('[config] load agents error:', e)
-  }
-  return []
-}
-
-export function saveAgents(projectRoot: string, agents: AgentInfo[]): void {
-  try {
-    const dir = join(projectRoot, '.xyz-agent')
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-    writeFileSync(join(dir, 'agents.json'), JSON.stringify(agents, null, JSON_INDENT))
-  // eslint-disable-next-line taste/no-silent-catch -- intentional: save failure is best-effort
-  } catch (e) {
-    console.error('[config] save agents error:', e)
   }
 }
 

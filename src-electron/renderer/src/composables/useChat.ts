@@ -4,6 +4,7 @@ import { send } from '../lib/ws-client'
 import { on, off } from '../lib/event-bus'
 import { onMounted, onUnmounted, type Ref, unref, getCurrentInstance } from 'vue'
 import type { ServerMessage, ToolCall } from '@xyz-agent/shared'
+import { createSystemNotification } from '../lib/system-notification'
 
 const RADIX_36 = 36
 const SUBSTRING_START = 2
@@ -155,11 +156,9 @@ function createGlobalHandlers() {
     store.setStreaming(null, sid)
     store.setError(null, sid)
     store.addMessage({
-      id: crypto.randomUUID(),
-      role: 'system',
+      ...createSystemNotification('alert', errMsg),
       content: errMsg,
       status: 'error' as const,
-      timestamp: Date.now(),
     }, sid)
   }
 
@@ -252,11 +251,9 @@ export function useChat(sessionId?: Ref<string>) {
     store.completeStreaming(undefined, sid)
     // 插入系统消息提示用户操作已终止
     store.addMessage({
-      id: crypto.randomUUID(),
-      role: 'system',
+      ...createSystemNotification('info', '操作已被用户终止'),
       content: '操作已被用户终止',
       status: 'complete',
-      timestamp: Date.now(),
     }, sid)
   }
 

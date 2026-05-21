@@ -40,6 +40,7 @@ import type { ServerMessage, ClientMessageType } from '@xyz-agent/shared'
 import type { PendingToolCall } from '../chat/ApprovalCard.vue'
 import type { AgentOption, AgentView } from './ChatPanel.vue'
 import ChatPanel from './ChatPanel.vue'
+import { createSystemNotification } from '../../lib/system-notification'
 
 const props = defineProps<{
   panelId: string
@@ -110,14 +111,9 @@ function handleLocalAction(payload: { action: string; data?: unknown }) {
     const commands = payload.data as Array<{ name: string; description: string; source: string }> ?? []
     const lines = commands.map(c => `  /${c.name} — ${c.description} [${c.source === 'builtin' ? 'CMD' : 'SK'}]`)
     chatStore.addMessage({
-      id: crypto.randomUUID(),
-      role: 'system',
+      ...createSystemNotification('done', '可用命令', lines.join('\n')),
       content: '',
       status: 'complete',
-      timestamp: Date.now(),
-      notificationType: 'done' as const,
-      notificationTitle: '可用命令',
-      notificationDescription: lines.join('\n'),
     }, sid)
   }
 }
@@ -183,11 +179,9 @@ function handleErrorMessage(msg: ServerMessage) {
   chatStore.setStreaming(null, currentSid)
   chatStore.setError(null, currentSid)
   chatStore.addMessage({
-    id: crypto.randomUUID(),
-    role: 'system',
+    ...createSystemNotification('alert', errMsg),
     content: errMsg,
     status: 'error',
-    timestamp: Date.now(),
   }, currentSid)
 }
 
@@ -201,14 +195,9 @@ function handleCompactionState(msg: ServerMessage, value: boolean) {
   chatStore.setCompacting(value, sid)
   if (value) {
     chatStore.addMessage({
-      id: crypto.randomUUID(),
-      role: 'system',
+      ...createSystemNotification('done', '正在压缩上下文…', '压缩完成后会自动通知'),
       content: '',
       status: 'complete',
-      timestamp: Date.now(),
-      notificationType: 'done' as const,
-      notificationTitle: '正在压缩上下文…',
-      notificationDescription: '压缩完成后会自动通知',
     }, sid)
   }
 }
@@ -222,22 +211,15 @@ function handleCompacted(msg: ServerMessage) {
   chatStore.setCompacting(false, sid)
   if (payload.error) {
     chatStore.addMessage({
-      id: crypto.randomUUID(),
-      role: 'system',
+      ...createSystemNotification('alert', payload.error),
       content: payload.error,
       status: 'error',
-      timestamp: Date.now(),
     }, sid)
   } else {
     chatStore.addMessage({
-      id: crypto.randomUUID(),
-      role: 'system',
+      ...createSystemNotification('done', '上下文压缩完成', '已压缩上下文以减少 token 消耗'),
       content: '',
       status: 'complete',
-      timestamp: Date.now(),
-      notificationType: 'done' as const,
-      notificationTitle: '上下文压缩完成',
-      notificationDescription: '已压缩上下文以减少 token 消耗',
     }, sid)
   }
 }
