@@ -52,6 +52,7 @@ import { useSessionStore } from './stores/session'
 import { useWindowStore } from './stores/window'
 import { useConnection } from './composables/useConnection'
 import { getState as getWsState } from './lib/ws-client'
+import { on as onEventBus, off as offEventBus } from './lib/event-bus'
 import { useProvider } from './composables/useProvider'
 import { useSession } from './composables/useSession'
 import type { ToastItem } from './components/toast/ToastContainer.vue'
@@ -79,6 +80,8 @@ const windowStore = useWindowStore()
 
 const toasts = ref<ToastItem[]>([])
 const TOAST_DURATION_MS = 4_000
+const TOAST_LONG_DURATION_MS = 8_000
+const WS_DISCONNECT_WARN_DELAY_MS = 10_000
 const sidebarVisible = ref(false)
 
 // 创建 session 后自动跳转：监听 session 数量变化
@@ -136,6 +139,20 @@ async function createSession() {
   isCreatingFromSidebar = true
   prevSessionCount = sessionStore.sessions.length
   doCreateSession(result.path, label)
+}
+
+function handleGlobalError(msg: { type: string; payload: { message?: string; sessionId?: string } }) {
+  // 没有 sessionId 的错误：session.create 失败等场景
+  if (!msg.payload.sessionId) {
+    const id = crypto.randomUUID()
+    toasts.value.push({
+      id,
+      type: 'danger',
+      title: '操作失败',
+      description: msg.payload.message ?? '未知错误',
+    })
+    setTimeout(() => dismissToast(id), TOAST_LONG_DURATION_MS)
+  }
 }
 
 function dismissToast(id: string) {
@@ -230,9 +247,52 @@ onMounted(async () => {
 
   // Global keyboard listener for keys not registered in Electron
   document.addEventListener('keydown', handleKeydown)
+
+  // ── Runtime 启动错误反馈 ──
+  if (window.electronAPI?.onRuntimeError) {
+    window.electronAPI.onRuntimeError((error) => {
+      const id = crypto.randomUUID()
+      toasts.value.push({
+        id,
+        type: 'danger',
+        title: 'Runtime 启动失败',
+        description: error.message + '。请确保已安装 pi：npm i -g @anthropic/pi',
+      })
+    })
+  }
+
+  // ── WS 断连反馈（断连 10 秒后仍连接不上才提示） ──
+  let disconnectToastId: string | null = null
+  const wsWatchState = getWsState()
+  watch(wsWatchState, (state) => {
+    if (state === 'disconnected' || state === 'reconnecting') {
+      if (!disconnectToastId) {
+        setTimeout(() => {
+          if (wsWatchState.value !== 'connected' && !disconnectToastId) {
+            disconnectToastId = crypto.randomUUID()
+            toasts.value.push({
+              id: disconnectToastId,
+              type: 'warning',
+              title: '连接断开',
+              description: '正在尝试重新连接 Runtime 服务…',
+            })
+          }
+        }, WS_DISCONNECT_WARN_DELAY_MS)
+      }
+    } else if (state === 'connected') {
+      if (disconnectToastId) {
+        dismissToast(disconnectToastId)
+        disconnectToastId = null
+      }
+    }
+  })
+
+  // ── 全局 error 事件 fallback（处理无 sessionId 的错误） ──
+  onEventBus('error', handleGlobalError)
 })
 
 onUnmounted(() => {
+  offEventBus('error', handleGlobalError)
   document.removeEventListener('keydown', handleKeydown)
   teardownConnection()
 })
