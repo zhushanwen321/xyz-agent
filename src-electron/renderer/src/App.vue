@@ -263,11 +263,13 @@ onMounted(async () => {
 
   // ── WS 断连反馈（断连 10 秒后仍连接不上才提示） ──
   let disconnectToastId: string | null = null
+  let disconnectTimer: ReturnType<typeof setTimeout> | null = null
   const wsWatchState = getWsState()
   watch(wsWatchState, (state) => {
     if (state === 'disconnected' || state === 'reconnecting') {
-      if (!disconnectToastId) {
-        setTimeout(() => {
+      if (!disconnectToastId && !disconnectTimer) {
+        disconnectTimer = setTimeout(() => {
+          disconnectTimer = null
           if (wsWatchState.value !== 'connected' && !disconnectToastId) {
             disconnectToastId = crypto.randomUUID()
             toasts.value.push({
@@ -280,6 +282,10 @@ onMounted(async () => {
         }, WS_DISCONNECT_WARN_DELAY_MS)
       }
     } else if (state === 'connected') {
+      if (disconnectTimer) {
+        clearTimeout(disconnectTimer)
+        disconnectTimer = null
+      }
       if (disconnectToastId) {
         dismissToast(disconnectToastId)
         disconnectToastId = null

@@ -186,6 +186,7 @@ export class RuntimeManager {
 
     // 打包后 app.getAppPath() 返回 app.asar（文件），不能作为 cwd
     const cwd = app.isPackaged ? process.resourcesPath : projectRoot
+    // eslint-disable-next-line no-magic-numbers -- TypeScript tuple index, not a business constant
     const spawnOptions: Parameters<typeof spawn>[2] = {
       stdio: ['pipe', 'pipe', 'pipe'],
       cwd,
