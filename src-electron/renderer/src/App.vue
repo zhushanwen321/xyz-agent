@@ -53,6 +53,7 @@ import { useWindowStore } from './stores/window'
 import { useConnection } from './composables/useConnection'
 import { getState as getWsState } from './lib/ws-client'
 import { on as onEventBus, off as offEventBus } from './lib/event-bus'
+import type { ServerMessage } from '@xyz-agent/shared'
 import { useProvider } from './composables/useProvider'
 import { useSession } from './composables/useSession'
 import type { ToastItem } from './components/toast/ToastContainer.vue'
@@ -141,8 +142,10 @@ async function createSession() {
   doCreateSession(result.path, label)
 }
 
-function handleGlobalError(msg: { type: string; payload: { message?: string; sessionId?: string } }) {
-  // 没有 sessionId 的错误：session.create 失败等场景
+// 全局 error 事件 fallback：处理无 sessionId 的错误
+// 分工约定：PanelSessionView 只处理有 sessionId 的 error（路由到对应 chat store），
+// App.vue 只处理无 sessionId 的 error（全局 toast 提示）。
+function handleGlobalError(msg: ServerMessage) {
   if (!msg.payload.sessionId) {
     const id = crypto.randomUUID()
     toasts.value.push({
@@ -159,6 +162,9 @@ function dismissToast(id: string) {
   toasts.value = toasts.value.filter(t => t.id !== id)
 }
 
+
+// IPC listener cleanup functions — filled during onMounted
+const ipcCleanupFns: Array<() => void> = []
 
 onMounted(async () => {
   await initConnection()
@@ -218,14 +224,14 @@ onMounted(async () => {
 
   // ── Listen for window list changes to keep overview fresh ──
   if (window.electronAPI?.onWindowListUpdated) {
-    window.electronAPI.onWindowListUpdated(() => {
+    ipcCleanupFns.push(window.electronAPI.onWindowListUpdated(() => {
       windowStore.refreshFromIPC()
-    })
+    }))
   }
 
   // ── Electron IPC: 监听快捷键事件
   if (window.electronAPI) {
-    window.electronAPI.onShortcut((type) => {
+    ipcCleanupFns.push(window.electronAPI.onShortcut((type) => {
       switch (type) {
         case 'standard':
         case 'focus':
@@ -242,7 +248,7 @@ onMounted(async () => {
           settingsStore.setView(settingsStore.currentView === 'settings' ? 'chat' : 'settings')
           break
       }
-    })
+    }))
   }
 
   // Global keyboard listener for keys not registered in Electron
@@ -250,15 +256,16 @@ onMounted(async () => {
 
   // ── Runtime 启动错误反馈 ──
   if (window.electronAPI?.onRuntimeError) {
-    window.electronAPI.onRuntimeError((error) => {
+    ipcCleanupFns.push(window.electronAPI.onRuntimeError((error) => {
       const id = crypto.randomUUID()
       toasts.value.push({
         id,
         type: 'danger',
         title: 'Runtime 启动失败',
-        description: error.message + '。请确保已安装 pi：npm i -g @anthropic/pi',
+        description: error.message,
       })
-    })
+      setTimeout(() => dismissToast(id), TOAST_LONG_DURATION_MS)
+    }))
   }
 
   // ── WS 断连反馈（断连 10 秒后仍连接不上才提示） ──
@@ -300,6 +307,8 @@ onMounted(async () => {
 onUnmounted(() => {
   offEventBus('error', handleGlobalError)
   document.removeEventListener('keydown', handleKeydown)
+  for (const cleanup of ipcCleanupFns) cleanup()
+  ipcCleanupFns.length = 0
   teardownConnection()
 })
 </script>
