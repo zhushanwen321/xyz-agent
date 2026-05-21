@@ -156,7 +156,7 @@ export class RuntimeManager {
         'app.asar.unpacked',
         'dist',
         'runtime',
-        'index.js',
+        'index.cjs',
       )
       if (!existsSync(runtimeDist)) {
         throw new Error(`Runtime bundle not found at ${runtimeDist}`)
@@ -181,9 +181,11 @@ export class RuntimeManager {
       console.log(`[runtime] node ${tsxPath} ${runtimeEntry} --port=${port}`)
     }
 
+    // 打包后 app.getAppPath() 返回 app.asar（文件），不能作为 cwd
+    const cwd = app.isPackaged ? process.resourcesPath : projectRoot
     this.child = spawn(cmd, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      cwd: projectRoot,
+      cwd,
     })
 
     this.child.on('error', (err) => {

@@ -3,11 +3,12 @@ import { defineConfig } from 'tsup'
 export default defineConfig({
   entry: ['src/index.ts'],
   outDir: '../dist/runtime',
-  format: ['esm'],
+  format: ['cjs'],
   target: 'node22',
   bundle: true,
   clean: true,
-  // Node.js 内置模块不打包
+  // Node.js 内置模块不打包；ws 必须打包，否则 asar.unpacked 产物找不到 node_modules
+  noExternal: ['ws'],
   external: [
     'node:child_process',
     'node:fs',
