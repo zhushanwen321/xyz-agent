@@ -1,7 +1,6 @@
 import { basename, dirname, join } from 'node:path'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import type { WebSocket } from 'ws'
 import type {
   SessionSummary,
   SessionGroup,
@@ -52,14 +51,13 @@ interface ManagedSession {
   sessionFilePath?: string
 }
 
-const WS_OPEN = 1
-
 export class SessionPool {
   private sessions = new Map<string, ManagedSession>()
   private pm = new ProcessManager()
-  private clients = new Set<WebSocket>()
+  private onBroadcast: (msg: ServerMessage) => void
 
-  constructor() {
+  constructor(onBroadcast?: (msg: ServerMessage) => void) {
+    this.onBroadcast = onBroadcast ?? (() => {})
     migrateLabelsIfNeeded()
     // 进程崩溃时清理对应 session
     this.pm.onSessionExit((sessionId, code) => {
@@ -77,28 +75,8 @@ export class SessionPool {
     })
   }
 
-  // ── WebSocket binding ──────────────────────────────────────────
-
-  addClient(ws: WebSocket): void {
-    this.clients.add(ws)
-  }
-
-  removeClient(ws: WebSocket): void {
-    this.clients.delete(ws)
-  }
-
   private send(msg: ServerMessage): void {
-    for (const ws of this.clients) {
-      if (ws.readyState === WS_OPEN) {
-        try {
-          ws.send(JSON.stringify(msg))
-        } catch (e) {
-          console.error('[session-pool] send error, removing client:', e)
-          ws.close()
-          this.clients.delete(ws)
-        }
-      }
-    }
+    this.onBroadcast(msg)
   }
 
   // ── Session CRUD ───────────────────────────────────────────────
@@ -524,26 +502,6 @@ export class SessionPool {
   getSummary(sessionId: string): SessionSummary | undefined {
     const session = this.sessions.get(sessionId)
     return session ? this.toSummary(session) : undefined
-  }
-
-  // ── Tool approval (exposed for server routing) ─────────────────
-
-  async approveTool(sessionId: string, toolCallId: string): Promise<void> {
-    const client = this.pm.getClient(sessionId)
-    if (!client) throw new Error(`Session ${sessionId} not found`)
-    await client.approveTool(toolCallId)
-  }
-
-  async denyTool(sessionId: string, toolCallId: string): Promise<void> {
-    const client = this.pm.getClient(sessionId)
-    if (!client) throw new Error(`Session ${sessionId} not found`)
-    await client.denyTool(toolCallId)
-  }
-
-  async alwaysAllowTool(sessionId: string, toolName: string): Promise<void> {
-    const client = this.pm.getClient(sessionId)
-    if (!client) throw new Error(`Session ${sessionId} not found`)
-    await client.alwaysAllowTool(toolName)
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────

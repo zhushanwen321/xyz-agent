@@ -252,14 +252,6 @@ export class RpcClient {
     return this.sendCommand('get_available_models')
   }
 
-  /**
-   * List models available for the current provider.
-   * Alias for getAvailableModels().
-   */
-  getModels(): Promise<PiMessage> {
-    return this.getAvailableModels()
-  }
-
   getHistory(): Promise<PiMessage> {
     return this.sendCommand('get_messages')
   }
@@ -274,39 +266,6 @@ export class RpcClient {
    */
   clear(): Promise<PiMessage> {
     return this.sendCommand('new_session')
-  }
-
-  /**
-   * Tool approval commands. pi RPC mode handles tool approvals
-   * internally via extension_ui_request/extension_ui_response protocol.
-   * These are kept as no-ops for API compatibility.
-   */
-  approveTool(_toolCallId: string): Promise<PiMessage> {
-    // pi handles tool approvals via extension UI protocol, not direct commands
-    void _toolCallId
-    return Promise.resolve({
-      type: 'response',
-      command: 'toolApprove',
-      success: true,
-    })
-  }
-
-  denyTool(_toolCallId: string): Promise<PiMessage> {
-    void _toolCallId
-    return Promise.resolve({
-      type: 'response',
-      command: 'toolDeny',
-      success: true,
-    })
-  }
-
-  alwaysAllowTool(_toolName: string): Promise<PiMessage> {
-    void _toolName
-    return Promise.resolve({
-      type: 'response',
-      command: 'toolAlwaysAllow',
-      success: true,
-    })
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────

@@ -243,29 +243,4 @@ export class EventAdapter {
     }
   }
 
-  // ── Helper methods for non-session messages ──────────────────────
-
-  sendSessionCreated(id: string, session: Record<string, unknown>): void {
-    this.send({ type: 'session.created', id, payload: { session } })
-  }
-
-  sendSessionDeleted(id: string, sessionId: string): void {
-    this.send({ type: 'session.deleted', id, payload: { sessionId } })
-  }
-
-  sendSessionList(sessions: Record<string, unknown>[]): void {
-    this.send({ type: 'session.list', payload: { sessions } })
-  }
-
-  sendProviderList(providers: Record<string, unknown>[]): void {
-    this.send({ type: 'config.providers', payload: { providers } })
-  }
-
-  sendModelList(models: Record<string, unknown>[]): void {
-    this.send({ type: 'model.list', payload: { models } })
-  }
-
-  sendError(code: string, message: string, id?: string): void {
-    this.send({ type: 'error', id, payload: { code, message } })
-  }
 }

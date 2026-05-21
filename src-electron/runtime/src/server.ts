@@ -26,7 +26,7 @@ const KILOBYTE = 1000
 export class SidecarServer {
   private httpServer: HttpServer
   private wss: WebSocketServer
-  private pool = new SessionPool()
+  private pool = new SessionPool((msg) => this.broadcast(msg))
   private clients = new Set<WsType>()
   private pushId = 0
   private heartbeatTimers = new Map<WsType, ReturnType<typeof setTimeout>>()
@@ -89,7 +89,6 @@ export class SidecarServer {
 
   private handleConnection(ws: WsType): void {
     this.clients.add(ws)
-    this.pool.addClient(ws)
     console.log(`[runtime] client connected (total: ${this.clients.size})`)
 
     this.sendInitialState(ws)
@@ -108,16 +107,14 @@ export class SidecarServer {
 
     ws.on('close', () => {
       this.clients.delete(ws)
-      this.pool.removeClient(ws)
       this.clearHeartbeat(ws)
       console.log(`[runtime] client disconnected (total: ${this.clients.size})`)
     })
 
     ws.on('error', (err) => {
       console.error('[runtime] ws error:', err)
-      // ws error 后通常会触发 close，但如果没触发就主动清理
+      // ws error 後通常会触发 close，但如果没触发就主动清理
       this.clients.delete(ws)
-      this.pool.removeClient(ws)
       this.clearHeartbeat(ws)
     })
   }
@@ -271,13 +268,9 @@ export class SidecarServer {
         return true
       }
       case 'tool.approve':
-        await this.pool.approveTool((msg.payload as { sessionId: string; toolCallId: string }).sessionId, (msg.payload as { sessionId: string; toolCallId: string }).toolCallId)
-        return true
       case 'tool.deny':
-        await this.pool.denyTool((msg.payload as { sessionId: string; toolCallId: string }).sessionId, (msg.payload as { sessionId: string; toolCallId: string }).toolCallId)
-        return true
       case 'tool.always_allow':
-        await this.pool.alwaysAllowTool((msg.payload as { sessionId: string; toolName: string }).sessionId, (msg.payload as { sessionId: string; toolName: string }).toolName)
+        // Tool approval handled via extension_ui_request/response protocol
         return true
       default:
         return false
