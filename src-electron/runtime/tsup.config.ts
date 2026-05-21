@@ -7,7 +7,8 @@ export default defineConfig({
   target: 'node22',
   bundle: true,
   clean: true,
-  // Node.js 内置模块不打包；ws 必须打包，否则 asar.unpacked 产物找不到 node_modules
+  // 打包所有 npm 依赖（external 已排除 node:* 内置模块）
+  // 新增 npm 依赖时必须加入此列表，否则 asar.unpacked 产物运行时找不到
   noExternal: ['ws'],
   external: [
     'node:child_process',
