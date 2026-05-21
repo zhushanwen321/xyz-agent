@@ -7,29 +7,11 @@ import type {
   SessionStatus,
   Message,
   ServerMessage,
-  ThinkingBlock,
-  ToolCall,
 } from '@xyz-agent/shared'
 import { ProcessManager } from './process-manager.js'
 import type { RpcClient } from './rpc-client.js'
-
-/** Raw message format returned by pi's get_messages command */
-interface PiHistoryMessage {
-  role: 'user' | 'assistant' | 'toolResult'
-  content: Array<{
-    type: 'text' | 'thinking' | 'toolCall' | 'tool_use'
-    text?: string
-    thinking?: string
-    id?: string
-    name?: string
-    arguments?: Record<string, unknown>
-  }>
-  timestamp?: number
-  stopReason?: string
-  toolCallId?: string
-  toolName?: string
-  isError?: boolean
-}
+import { convertPiHistory } from './message-converter.js'
+import type { PiHistoryMessage as PiHistoryMessage } from './pi-rpc-types.js'
 import { EventAdapter } from './event-adapter.js'
 import { getDefaultModel, loadSkills } from './config-store.js'
 import { scanSessions, deleteSessionFile, invalidateScanCache, type ScannedSession } from './session-scanner.js'
@@ -313,7 +295,7 @@ export class SessionPool {
       const result = await client.getHistory()
       const data = result.data as { messages?: PiHistoryMessage[] } | undefined
       const raw = data?.messages ?? (result.payload?.messages as PiHistoryMessage[] | undefined) ?? []
-      return this.convertPiHistory(raw)
+      return convertPiHistory(raw)
     }
 
     // Inactive session: parse messages from session file
@@ -341,76 +323,7 @@ export class SessionPool {
       }
     }
 
-    return this.convertPiHistory(piMessages)
-  }
-
-  /** Convert pi message list, merging toolResults into their parent assistant message */
-  private convertPiHistory(raw: PiHistoryMessage[]): Message[] {
-    const result: Message[] = []
-    let lastAssistantWithToolCalls = -1
-
-    for (const m of raw) {
-      if (m.role === 'toolResult') {
-        // Merge tool result into the last assistant message's matching toolCall
-        if (lastAssistantWithToolCalls >= 0) {
-          const lastAssistant = result[lastAssistantWithToolCalls]
-          if (lastAssistant?.toolCalls) {
-            const tc = lastAssistant.toolCalls.find(t => t.id === m.toolCallId)
-            if (tc) {
-              const textParts = (Array.isArray(m.content) ? m.content : [])
-                .filter((p: { type: string }) => p.type === 'text')
-                .map((p: { text?: string }) => p.text ?? '')
-                .join('\n')
-              tc.output = textParts
-              if (m.isError) tc.status = 'error'
-            }
-          }
-        }
-        continue
-      }
-
-      // user or assistant
-      const parts = Array.isArray(m.content) ? m.content : [{ type: 'text' as const, text: String(m.content) }]
-      let textContent = ''
-      const thinking: ThinkingBlock[] = []
-      const toolCalls: ToolCall[] = []
-
-      for (const part of parts) {
-        if (part.type === 'text') {
-          textContent += part.text ?? ''
-        } else if (part.type === 'thinking') {
-          thinking.push({
-            id: crypto.randomUUID(),
-            content: part.thinking ?? '',
-            collapsed: true,
-          })
-        } else if (part.type === 'toolCall') {
-          toolCalls.push({
-            id: part.id ?? crypto.randomUUID(),
-            toolName: part.name ?? '',
-            input: part.arguments ?? {},
-            status: 'completed',
-            startTime: m.timestamp ?? Date.now(),
-          })
-        }
-      }
-
-      const msg: Message = {
-        id: crypto.randomUUID(),
-        role: m.role === 'user' ? 'user' : 'assistant',
-        content: textContent,
-        status: 'complete',
-        ...(thinking.length > 0 && { thinking }),
-        ...(toolCalls.length > 0 && { toolCalls }),
-        timestamp: m.timestamp ?? Date.now(),
-      }
-      result.push(msg)
-      if (toolCalls.length > 0) {
-        lastAssistantWithToolCalls = result.length - 1
-      }
-    }
-
-    return result
+    return convertPiHistory(piMessages)
   }
 
   // ── Listing ────────────────────────────────────────────────────
