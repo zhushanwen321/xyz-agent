@@ -5,6 +5,12 @@ import { join } from 'node:path'
 import { mkdirSync } from 'node:fs'
 import { buildProviderEnv, getDefaultModel } from './config-store.js'
 
+/**
+ * Generic shape of a message received from pi's JSONL stdout.
+ * Broader than PiAnyIncomingMessage in types.ts — covers both RPC responses
+ * (with success/error/data) and unsolicited events (with various payloads).
+ * The listener API uses this wide type; consumers narrow via event.type.
+ */
 export interface PiMessage {
   id?: string
   type: string
