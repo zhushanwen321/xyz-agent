@@ -11,7 +11,7 @@ import type {
 import { ProcessManager } from './process-manager.js'
 import type { RpcClient } from './rpc-client.js'
 import { convertPiHistory } from './message-converter.js'
-import type { PiHistoryMessage as PiHistoryMessage } from './pi-rpc-types.js'
+import type { PiHistoryMessage as PiHistoryMessage } from './types.js'
 import { EventAdapter } from './event-adapter.js'
 import { getDefaultModel, loadSkills } from './config-store.js'
 import { scanSessions, deleteSessionFile, invalidateScanCache, type ScannedSession } from './session-scanner.js'

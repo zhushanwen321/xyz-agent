@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { convertPiHistory } from '../src/message-converter.js'
-import type { PiHistoryMessage, PiHistoryToolResult } from '../src/pi-rpc-types.js'
+import type { PiHistoryMessage, PiHistoryToolResult } from '../src/types.js'
 
 describe('convertPiHistory', () => {
   it('converts user and assistant text messages', () => {
