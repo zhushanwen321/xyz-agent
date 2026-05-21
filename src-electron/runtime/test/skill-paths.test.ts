@@ -26,12 +26,16 @@ vi.mock('node:child_process', () => ({
   },
 }))
 
-// Mock config-store to control loadSkills / getDefaultModel / buildProviderEnv
-const mockSkills: SkillInfo[] = []
+// Mock config-store for getDefaultModel / buildProviderEnv
 vi.mock('../src/config-store.js', () => ({
-  loadSkills: (_cwd: string) => mockSkills,
   getDefaultModel: () => 'test/provider-model',
   buildProviderEnv: () => ({} as Record<string, string>),
+}))
+
+// Mock skill-store for loadSkills
+const mockSkills: SkillInfo[] = []
+vi.mock('../src/skill-store.js', () => ({
+  loadSkills: (_cwd: string) => mockSkills,
 }))
 
 // Mock fs.existsSync to control path validation
