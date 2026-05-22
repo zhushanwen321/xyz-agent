@@ -17,6 +17,16 @@ files:
 asarUnpack:
   - "dist/runtime/**/*"
 
+# pi Bun binary + bundled agent (extensions + skills)
+# from 路径相对于 src-electron/（electron-builder 的工作目录）
+extraResources:
+  - from: resources/pi
+    to: pi
+    filter:
+      - "**/*"
+      - "!**/*.tar.gz"
+      - "!**/*.zip"
+
 # NOTE: macos-latest 是 arm64 runner，无法交叉编译 x64。
 # 如需 Intel Mac 支持，追加 macos-13 (Intel) 或配置 universal。
 mac:

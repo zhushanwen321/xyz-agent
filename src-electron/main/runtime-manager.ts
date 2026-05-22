@@ -192,7 +192,11 @@ export class RuntimeManager {
       cwd,
       // 打包后用 ELECTRON_RUN_AS_NODE 让 Electron 二进制以纯 Node 运行 sidecar；
       // 开发模式也显式设置 env 确保行为一致
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: app.isPackaged ? '1' : undefined },
+      env: {
+        ...process.env,
+        ELECTRON_RUN_AS_NODE: app.isPackaged ? '1' : undefined,
+        XYZ_AGENT_PACKAGED: app.isPackaged ? '1' : undefined,
+      },
     }
     this.child = spawn(cmd, args, spawnOptions)
 
