@@ -86,10 +86,8 @@ const WS_DISCONNECT_WARN_DELAY_MS = 10_000
 const sidebarVisible = ref(false)
 
 // ── P1 #6: 全局错误处理 — 没有 sessionId 的 error 显示为全局 toast ──
-import { on as onEvent } from './lib/event-bus'
-import type { ServerMessage } from '@xyz-agent/shared'
 
-const globalErrorUnregister = onEvent('error', (msg: ServerMessage) => {
+const globalErrorUnregister = onEventBus('error', (msg: ServerMessage) => {
   const payload = msg.payload as { message?: string; code?: string; sessionId?: string }
   // 没有 sessionId 的错误属于全局错误（如 runtime 崩溃、配置错误等）
   if (!payload.sessionId && payload.message) {
