@@ -229,14 +229,14 @@ const onCompacted = (msg: ServerMessage) => handleCompacted(msg)
 
 onMounted(() => {
   chatStore.ensureSession(props.sessionId)
-  on('tool.approval_request', handleToolApprovalRequest)
+  on('message.tool_call_pending', handleToolApprovalRequest)
   on('error', handleErrorMessage)
   on('session.compacting', onCompacting)
   on('session.compacted', onCompacted)
 })
 
 onUnmounted(() => {
-  off('tool.approval_request', handleToolApprovalRequest)
+  off('message.tool_call_pending', handleToolApprovalRequest)
   off('error', handleErrorMessage)
   off('session.compacting', onCompacting)
   off('session.compacted', onCompacted)

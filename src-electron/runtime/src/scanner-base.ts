@@ -9,8 +9,14 @@ export function expandHome(p: string): string {
 
 /** Infer scan source type from the path's directory conventions. */
 export function inferSourceType(path: string): ScanSourceType {
-  if (path.includes('.pi/')) return 'pi'
-  if (path.includes('.claude/')) return 'claude'
-  if (path.includes('.agents/')) return 'agents'
+  // 用路径分隔符限定，避免 .pi-backup、.claude-old 等误判
+  const sep = /[/\\]/
+  // 检查路径中是否包含 /.<name>/ 或 \<name>\ 的目录段
+  const segments = path.split(sep)
+  for (const seg of segments) {
+    if (seg === '.pi') return 'pi'
+    if (seg === '.claude') return 'claude'
+    if (seg === '.agents') return 'agents'
+  }
   return 'custom'
 }

@@ -12,9 +12,19 @@ function parseArgs(): { port: number; projectRoot?: string } {
   let projectRoot: string | undefined
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--port' && i + 1 < args.length) {
-      port = parseInt(args[i + 1], 10)
+      const parsed = parseInt(args[i + 1], 10)
+      if (isNaN(parsed)) {
+        console.error(`[runtime] invalid --port value: ${args[i + 1]}`)
+        process.exit(1)
+      }
+      port = parsed
     } else if (args[i].startsWith('--port=')) {
-      port = parseInt(args[i].split('=')[1], 10)
+      const parsed = parseInt(args[i].split('=')[1], 10)
+      if (isNaN(parsed)) {
+        console.error(`[runtime] invalid --port value: ${args[i].split('=')[1]}`)
+        process.exit(1)
+      }
+      port = parsed
     } else if (args[i] === '--project-root' && i + 1 < args.length) {
       projectRoot = args[i + 1]
     } else if (args[i].startsWith('--project-root=')) {

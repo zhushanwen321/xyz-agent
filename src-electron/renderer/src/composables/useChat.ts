@@ -28,6 +28,8 @@ function createGlobalHandlers() {
 
   function ensureStreamingMessage(sid: string) {
     const session = store.getSessionState(sid)
+    // abort 后 isGenerating=false，忽略残余 delta 避免创建幽灵 streaming message
+    if (!session.isGenerating) return
     if (!session.streamingMessage) {
 
       store.setStreaming({

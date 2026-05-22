@@ -27,8 +27,12 @@ export function convertPiHistory(raw: (PiHistoryMessage | PiHistoryToolResult)[]
               .join('\n')
             tc.output = textParts
             if (toolResult.isError) tc.status = 'error'
+          } else {
+            console.warn('[message-converter] toolResult has no matching toolCall:', toolResult.toolCallId)
           }
         }
+      } else {
+        console.warn('[message-converter] toolResult with no preceding assistant message:', toolResult.toolCallId)
       }
       continue
     }
@@ -36,7 +40,7 @@ export function convertPiHistory(raw: (PiHistoryMessage | PiHistoryToolResult)[]
     // user or assistant
     const parts = Array.isArray(m.content)
       ? m.content
-      : [{ type: 'text' as const, text: String(m.content) }]
+      : [{ type: 'text' as const, text: m.content != null ? String(m.content) : '' }]
     let textContent = ''
     const thinking: ThinkingBlock[] = []
     const toolCalls: ToolCall[] = []
