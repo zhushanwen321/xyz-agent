@@ -103,6 +103,44 @@ lsof -i :1420 -P | grep node
 # 检查进程 cwd 是否指向当前 worktree 的 renderer 目录
 ```
 
+### 9. Bare Repo Workspace 模式下的 Git/gh 注意事项
+
+本项目使用 bare repo + worktree 模式（`xyz-agent-workspace/.bare/`），以下是此模式特有的问题：
+
+#### Remote 命名
+- `origin` 指向本地 bare repo（`xyz-agent-workspace/.bare`），不是 GitHub
+- GitHub 的 remote 叫 `github`（`git@github.com:zhushanwen321/xyz-agent.git`）
+- push 到 GitHub：`git push github HEAD:fix-xxx`，不是 `git push origin`
+
+#### `gh` CLI 在 workspace root 不可用
+- workspace root（`xyz-agent-workspace/`）不是 git repo，`gh` 无法自动发现 repo
+- 所有 `gh` 命令必须带 `--repo zhushanwen321/xyz-agent`
+- 或在 worktree 目录内运行（此时 `gh` 能从 `.git` 文件追溯到 bare repo）
+
+#### worktree 的 upstream tracking
+- `git-cwt` 创建 worktree 时不自动设置分支 tracking
+- 默认 `@{upstream}` 可能指向 `origin/main`，导致 `git log @{upstream}..HEAD` 显示所有 feature commits
+- 修复：`git branch --set-upstream-to=origin/<branch-name>`
+
+#### `src-electron/` 依赖需要单独安装
+- `src-electron/` 是独立 npm project（不在根 workspaces 里）
+- `pre-merge-check.sh` 和 `npm ci` 只装根目录依赖
+- 需要 `cd src-electron && ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm install`
+- `git-cwt` 的 `setup-worktree.sh` 会自动处理，但手动操作时容易遗漏
+
+#### merge-worktree 脚本的 bare repo 兼容
+- 脚本已修复：自动检测 `GH_REPO` 并给所有 `gh` 调用加 `--repo`
+- 没有 main worktree 时，用 bare repo（`.bare/`）做 `git --git-dir`
+- 版本 bump push 用 `HEAD:refs/heads/main` 而不是 `main`（worktree 中本地没有 main 分支）
+
+Vite 使用 `strictPort: true`（端口 1420 被占则静默失败）。同一机器上另一个进程（main worktree 或其他项目）占 1420 端口时，当前 worktree 的 Vite 不会启动，Electron 加载的是旧代码。现象：代码改了但浏览器不更新，DOM 出现已删除的旧元素。
+
+```bash
+# 确认 1420 端口属于当前 worktree
+lsof -i :1420 -P | grep node
+# 检查进程 cwd 是否指向当前 worktree 的 renderer 目录
+```
+
 ## 前端编码规范
 
 **权威标准文档**: `~/Code/xyz-ui/CONVENTIONS.md`

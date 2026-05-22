@@ -4,6 +4,8 @@ import { contextBridge, ipcRenderer } from 'electron'
 export interface ElectronAPI {
   /** 监听 runtime 端口事件 */
   onRuntimePort(callback: (port: number) => void): () => void
+  /** 监听 runtime 启动失败事件 */
+  onRuntimeError(callback: (error: { message: string }) => void): () => void
   /** 监听快捷键事件（替代 @tauri-apps/api/event 的 listen('shortcut')） */
   onShortcut(callback: (type: string) => void): () => void
   /** 打开设置窗口 */
@@ -38,6 +40,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const handler = (_event: Electron.IpcRendererEvent, port: number) => callback(port)
     ipcRenderer.on('runtime-port', handler)
     return () => ipcRenderer.removeListener('runtime-port', handler)
+  },
+  onRuntimeError: (callback: (error: { message: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, error: { message: string }) => callback(error)
+    ipcRenderer.on('runtime-error', handler)
+    return () => ipcRenderer.removeListener('runtime-error', handler)
   },
   onShortcut: (callback: (type: string) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, type: string) => callback(type)

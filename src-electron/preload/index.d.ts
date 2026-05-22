@@ -1,5 +1,6 @@
 export interface ElectronAPI {
   onRuntimePort(callback: (port: number) => void): () => void
+  onRuntimeError(callback: (error: { message: string }) => void): () => void
   onShortcut(callback: (type: string) => void): () => void
   openSettingsWindow(): void
   getRuntimePort(): Promise<number>

@@ -164,9 +164,9 @@ export class RuntimeManager {
       if (!existsSync(runtimeDist)) {
         throw new Error(`Runtime bundle not found at ${runtimeDist}`)
       }
-      cmd = 'node'
+      cmd = process.execPath
       args = [runtimeDist, `--port=${port}`]
-      console.log(`[runtime] node ${runtimeDist} --port=${port}`)
+      console.log(`[runtime] ${cmd} ${runtimeDist} --port=${port}`)
     } else {
       // 开发环境：tsx 运行 TS 源码
       const tsxPath = path.join(projectRoot, 'node_modules', '.bin', 'tsx')
@@ -186,10 +186,15 @@ export class RuntimeManager {
 
     // 打包后 app.getAppPath() 返回 app.asar（文件），不能作为 cwd
     const cwd = app.isPackaged ? process.resourcesPath : projectRoot
-    this.child = spawn(cmd, args, {
+    // eslint-disable-next-line no-magic-numbers -- TypeScript tuple index, not a business constant
+    const spawnOptions: Parameters<typeof spawn>[2] = {
       stdio: ['pipe', 'pipe', 'pipe'],
       cwd,
-    })
+      // 打包后用 ELECTRON_RUN_AS_NODE 让 Electron 二进制以纯 Node 运行 sidecar；
+      // 开发模式也显式设置 env 确保行为一致
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: app.isPackaged ? '1' : undefined },
+    }
+    this.child = spawn(cmd, args, spawnOptions)
 
     this.child.on('error', (err) => {
       console.error(`[runtime] Spawn error: ${err.message}`)
