@@ -3,52 +3,71 @@ phase: pr
 verdict: pass
 ---
 
-# Overall Retrospect — Runtime + Front-end Architecture Refactoring
+# Overall Retrospective — Runtime + Front-end Architecture Refactoring
 
-覆盖全部 5 个 phase（spec → plan → dev → test → pr），43 文件变更，+4,747 / -975 行。
-
----
+覆盖全部 5 个 Phase（Spec → Plan → Dev → Test → PR）。项目：xyz-agent Runtime Service Layer 提取 + 前端快速修复 + 健壮性修复。
 
 ## 1. Phase Execution Review
 
 ### Summary
 
-本次 harness 将 xyz-agent Runtime 从两个上帝类（server.ts 574L + session-pool.ts 600L）重构为 Transport + Service 分层架构，同时完成了前端类型安全、死代码清理和 refCount 修复。全流程 5 个 phase 依次完成，PR #42 已合并，CI 全绿（lint / test 46 用例 / tsc --noEmit）。
+将 xyz-agent Runtime 层从两个上帝类（server.ts 574L + session-pool.ts 472L）重构为 Transport + Service 分层架构，同时完成前端快速修复和 19 项健壮性修复。
 
-| Phase | 核心产出 | 评审轮次 | 最终状态 |
-|-------|---------|----------|---------|
-| spec | 9 FR + 7 决策 + infrastructure scan | 3 轮 | pass |
-| plan | 10 Task / 4 执行组 + E2E test plan + test cases | 3 轮 | pass |
-| dev | 43 文件 +4,747/-975 行，session-pool.ts 完全删除 | 2 轮 code review | pass |
-| test | 20 用例执行，46 vitest 全过，tsc 零错误 | 1 轮 | pass |
-| pr | PR #42，13 commits，CI 全绿 | — | pass |
+**最终指标：**
+- 23 commits，60 files，+6406/-993
+- server.ts: 569L → ~370L Transport 层
+- session-pool.ts: 完全删除
+- 新增：services/ 目录（3 个 Service，680L）、interfaces.ts（142L）、message-converter.ts（80L）
+- 前端：删除 3 个死 composable，新增 system-notification 工厂，useSession/useProvider refCount 保护
+- 健壮性修复：1 个 P0（tool approval 事件名）+ 8 个 P1 + 10 个 P2
+- 4 个 ADR 创建（手动 DI、SessionPool 删除、PiEvent 松散类型、原子写入）
+- 测试：46 runtime tests 全通过，20 个测试用例全部 PASS
+- CI：Lint + TypeCheck + Test 全 PASS
 
-### 全流程关键成就
+### Phase-by-Phase 回顾
 
-1. **session-pool.ts 600L 完全删除**，功能分散到 3 个独立 Service（SessionService、RpcClientService、ProcessManagerService）+ Transport 层。这是整个重构中最核心也最危险的操作，没有出现功能回归。
-2. **DI 接口 + setServices 注入模式**成功解决了"谁先创建"的循环依赖问题。plan 阶段设计的 `server 先创建 → Service 构造 → setServices 注入` 方案在实际执行中完全可行。
-3. **前端 refCount 保护**修复了 split mode 下事件重复注册的潜在 runtime bug，属于 spec 阶段未充分重视但 dev 阶段正确处理的问题。
+#### Phase 1 (Spec) — 3 轮评审
 
-### 全流程关键问题
+Infra scan → spec 编写 → 3 轮评审（v1 fail → v2 pass → v3 确认）。核心问题是 session-pool 去向未在一开始明确，导致 FR/AC 文字残留不一致。教训：决策先行，FR/AC 后写；修改决策后必须全文搜索验证。
 
-1. **AC 目标与现实的偏差**：spec 的 AC-1 要求 server.ts ≤250L，实际 365L。这条偏差贯穿 dev 和 test 阶段（TC-7-02 R1 失败），最终以 code review 接受收尾。根因是 spec/plan 阶段没有精确估算 switch/case 路由的最小体积（27 case × ~4 行 = ~108L 路由本身）。教训：涉及行数约束的 AC，必须在 plan 中附带估算依据。
-2. **4 个前端测试 pre-existing failure 从未修复**：从 spec 扫描发现到 dev 执行确认再到 test 记录，Vite 配置缺 `@vitejs/plugin-vue` 的问题在 5 个 phase 中被传递了 3 次却从未解决。每次都是"记录在案"然后继续。这是一个典型的"非本次变更范围"问题被无限推迟的模式。
-3. **测试计划与实际执行不一致**：E2E test plan 描述的是"启动 Runtime → WS 连接 → 发消息"，实际执行全部用 vitest mock。对纯重构项目风险可控，但方法论上自相矛盾——如果需要端到端验证，这个差距就会变成真正的缺陷。
-4. **评审总轮次偏高**：spec 3 轮 + plan 3 轮 + dev 2 轮 + test 1 轮 = 9 轮。spec 和 plan 各 3 轮的主要原因是"第一次粗写 → 第二次修结构性问题 → 第三次精扫"。如果初始产出质量更高（尤其是 AC 全文搜索验证和 Task 粒度控制），可以各减 1 轮。
+#### Phase 2 (Plan) — 3 轮评审
+
+10 个 Task 分 4 个 Execution Group（BG1/BG2/BG3/FG1）。核心问题是 BG3 Task 8 粒度过粗（把"定义接口 + 提取 3 个 Service + 重写 server + 删 session-pool"塞进一个 Task），3 轮后才拆为 Task 7 + Task 8。教训：涉及"删一个类 + 提取到 N 个新类 + 重写调用方"的操作默认应拆成多个子 Task。
+
+#### Phase 3 (Dev) — 3 Wave 执行
+
+Wave 1（BG1）和 Wave 2（BG2+FG1）各用 1 个 subagent，顺利通过。Wave 3（BG3）是核心重构，用 1 个 high-complexity subagent 完成。server.ts 365L 超出 AC-1 的 ≤250L 目标，code review 接受。教训：AC 行数目标应附估算依据。
+
+健壮性修复在 dev phase 完成后追加，用 3 个 parallel subagent 执行（Runtime 核心 + 类型安全 + 前端），共修复 19 个问题。这是计划外的工作量，但对生产质量至关重要。
+
+#### Phase 4 (Test) — 20 用例
+
+TC-11-01（`vue-tsc` 类型错误）R1 失败，原因是 SystemNotification.vue 缺少 `'info'` prop。这应在 dev 阶段的 `npm run build` 中被发现，说明 dev 阶段的编译检查不够严格。TC-7-02（server.ts 行数超标）R1 失败，R2 以 code review 结论接受。
+
+#### Phase 5 (PR) — 多次迭代
+
+CI 首轮失败（3 个 unused import），修复后通过。后续健壮性修复推送后 GitHub CI 未再触发新 run（PR synchronize batching），通过本地 pre-merge-check.sh 等价验证。用户在 PR 阶段额外要求了 code-review-worktree 审查和 ADR 创建，这些属于 scope 扩展但合理。
+
+### Problems Encountered (Overall)
+
+1. **Spec 行数目标脱离实际**：server.ts ≤250L 在 27 个消息 handler 的 switch/case 不可压缩的前提下不可能实现。从 spec 到 plan 到 test 三个 phase 都在处理这个偏差。根源是 spec 编写时没有做最小行数估算。
+2. **PiEvent 类型绑定的设计承诺无法兑现**：Spec FR-2 承诺 event-adapter 的 translate() 使用 PiEvent 联合类型做 exhaustive check，实际发现 pi 发送 union 外的事件类型。这是 spec 阶段对 pi 协议理解不足导致的——写 spec 时没有实际运行 pi 观察其完整事件输出。
+3. **CI pipeline 触发不稳定**：健壮性修复推送后 GitHub CI 未触发新 run，只能用本地验证替代。根本原因是 `concurrency: cancel-in-progress: true` 配合快速连续 push 导致事件被吞。这个问题的解决需要要么改 CI 配置要么减慢 push 频率。
+4. **健壮性修复是计划外工作**：code-review-worktree 发现的 19 个问题中，大部分是基线 bug（不是本次重构引入的），但 P0 #1（tool approval 事件名）直接导致核心功能失效。如果不在 PR 阶段发现并修复，merge 后用户会遇到工具审批永远弹不出的严重问题。
 
 ### What Would You Do Differently
 
-1. **Spec 阶段决策先行**：先确定所有关键决策（删哪些文件、新建哪些接口、DI 模式），再写 FR/AC。避免决策分散在 FR 描述和 Decisions Made 两处导致的 AC 残留不一致问题。
-2. **Plan 阶段按 subagent 约束拆 Task**：默认每个 Task ≤5 文件、≤1000 行。BG3 Task 8（同时提取 3 Service + 重写 server + 删 session-pool + 更新 index，超 3000 行）必须拆成 2-3 个子 Task。
-3. **Dev 阶段强制每 Task 完成后跑 `npm run build`**：TC-11-01 的 `vue-tsc` 类型错误（SystemNotification.vue 缺少 `info` 变体）本应在 dev 阶段就暴露，不应拖到 test 阶段。
-4. **合并 E2E test plan + test cases template 为一份文件**：两份文件内容高度重叠，维护同步成本不必要。
+1. **Spec 阶段加入"代码实证"环节**：对于关键假设（如"pi 事件类型都在 PiEvent union 中"、"server.ts 可以压到 250L"），在 spec 评审前跑一段实际代码验证，而不是基于代码阅读做推断。这 10 分钟的验证可以省掉后续 3 个 phase 的偏差处理。
+2. **Dev 阶段每个 subagent task 完成后强制 `npm run build`**：而不是只在每个 Wave 结束后跑 `tsc --noEmit`。TC-11-01 的类型错误本应在 BG3 Task 8 完成时就被发现。
+3. **健壮性审查提前到 Dev 阶段**：code-review-worktree 发现的 P0/P1 问题不应该等到 PR 阶段才修复。应在 BG3 完成后、进入 Test 之前做一轮独立的健壮性审查。
+4. **减少评审迭代**：5 个 phase 共做了 10 轮评审（spec 3 + plan 3 + code review 2 + test review 1 + PR review 1）。如果评审者在首轮做更彻底的"决策影响分析"和"行数估算验证"，至少可以减少 2-3 轮。
 
-### Key Risks（后续迭代注意）
+### Key Risks (Post-Merge)
 
-1. **server.ts 365L 膨胀趋势**：当前 27 个 case 的 Transport 路由已经接近 365L。如果后续新增消息类型，需要在添加前先做 Map-based 路由重构或按 domain 分文件。
-2. **6 个 LOW 技术债**：event-adapter.ts 中 PiEvent 类型未完全利用、async handler 缺 return 等。这些不会立即出 bug，但会在后续维护中造成困惑。
-3. **无真实 WS 集成测试**：所有集成测试都是 vitest mock。未来如果修改传输层（如心跳、断连重连、消息序列化），需要补充端到端 WS 测试。
-4. **4 个前端测试文件长期不可用**：Vite 配置问题未修，导致前端测试基线无法建立。后续任何前端变更都无法通过 CI 验证前端代码。
+1. **server.ts 370L 仍有增长趋势**：每新增一个消息类型会增加 ~10 行。建议在下一个 spec 中引入 Map-based 路由（`Map<ClientMessageType, MessageHandler>`）彻底解耦。
+2. **PiEvent 松散类型绑定的维护成本**：ADR-0003 解释了为什么 translate() 不严格绑定 PiEvent，但未来开发者可能会"修复"这个看起来像 bug 的设计。需要在 event-adapter.ts 的注释中持续维护决策说明。
+3. **4 个前端测试 baseline 失败**：Vite 配置缺少 `@vitejs/plugin-vue`，导致前端测试长期不可用。应尽快修复。
+4. **atomicWrite 放在 scanner-base.ts 不直觉**：后续应移到独立的 `fs-utils.ts`。
 
 ---
 
@@ -56,55 +75,41 @@ verdict: pass
 
 ### Flow Friction
 
-5 个 phase 的推进节奏总体自然，没有需要 workaround 的硬性阻塞。主要摩擦点：
+**整体顺畅。** Spec → Plan → Dev → Test → PR 的线性流程清晰，每个 phase 的交付物和下游依赖关系明确。主要摩擦点：
 
-- **Spec → Plan 的评审迭代成本高**：spec 3 轮 + plan 3 轮共 6 轮评审占了全流程相当比例。根因是初始产出粒度不够细（spec 的 handler 枚举靠记忆、plan 的 BG3 Task 粒度过粗）。如果在 spec/plan 阶段有结构性预检（如"AC 全文搜索验证"、"Task 行数估算"），可以各减 1 轮。
-- **Phase 之间的信息传递依赖 markdown 文件**：spec → plan → dev → test 的上下文传递完全靠 markdown 文件的交叉引用。这在 5 个 phase 中工作正常，但如果某个 phase 的交付物质量不达标（如 plan 的 AC 估算不准），下游 phase 会继承偏差。目前没有跨 phase 的自动一致性检查。
+1. **Gate check 需要手动运行 Python 脚本**。每次 gate 前需要 `python3 skills/xyz-harness-gate/scripts/check_gate.py {topic} {phase}`，而且需要确保 YAML frontmatter 格式完全正确（布尔值 vs 字符串、`must_fix` 数字等）。格式错误导致 gate FAIL 的频率高于预期——在本项目的 5 个 phase 中，至少 2 次 gate FAIL 是因为 YAML 格式问题（字符串 `"true"` vs 布尔 `true`、缺少顶层 frontmatter 字段）。
+2. **Phase 5 的 scope 扩展处理不够结构化**。用户在 PR 阶段要求了 code-review-worktree 审查、健壮性修复、ADR 创建——这些都不在原始 spec/plan 范围内。Harness 没有提供"scope 扩展"的标准流程，只能临时回到 dev 模式修复。
+3. **CI 等待是隐形时间消耗**。每次 push 后等待 GitHub CI（30-50 秒）在整个 PR 阶段累积了相当可观的时间。如果 CI 可以在 gate check 时自动验证（而不是手动 `gh pr checks`），流程会更紧凑。
 
 ### Gate Quality
 
-Gate 检查在整个流程中发挥了有效作用：
+**Gate check 整体有效**，正确识别了多个阻塞项：
+- Spec v1: 3 条 MUST FIX（session-pool 去向、types.ts 位置、handler 枚举）
+- Code review: 正确区分了 MUST FIX 和 LOW
+- Test execution: 正确检测了 TC-7-02 和 TC-11-01 的失败
 
-- **Spec gate**：3 条 MUST FIX（session-pool 去向、types.ts 位置、handler 枚举）全部是真阻塞项，没有 false positive。
-- **Plan gate**：Task 粒度问题被准确识别，BG3 拆分后通过。
-- **Dev gate**：双轮 code review 设计（v1 审代码 → v2 审测试证据）比单轮全量 review 效果好，6 个 LOW 正确分类为不阻塞。
-- **Test gate**：一轮通过，4 LOW + 1 INFO 全部有意义（AC 覆盖缺口、测试方式不一致）。
-
-没有出现 gate 漏检导致下游返工的情况。
+**一个值得改进的点**：gate 脚本检查 YAML frontmatter 的严格程度有时过高。例如 `pr_created: true`（布尔）vs `pr_created: "true"`（字符串）的区别在实践中容易混淆。建议 gate 脚本对布尔字段做类型宽松处理（同时接受布尔和字符串 "true"/"yes"），减少格式问题导致的 false FAIL。
 
 ### Prompt Clarity
 
-各 phase 的 prompt/stage 描述质量整体较高：
+**Harness 的 prompt 质量整体较高**，特别是：
+- 每个 phase skill 的 Prerequisites/Steps/Self-Check 结构清晰
+- YAML frontmatter 的字段说明表（类型/必填/允许值/常见错误）非常实用
+- test_cases_template.json 的 steps 字段足够具体
 
-- **最佳**：Plan 阶段的 File Structure 表 + Wave Schedule + Execution Groups 三重引导结构。AI 可以立即理解执行顺序和分组策略。
-- **最佳**：Test 阶段的 test_cases_template.json，steps 字段指定了具体 grep 命令和文件路径，几乎零歧义。
-- **需改进**：Dev 阶段的 FG1 Task 9 说"修改所有调用系统通知的组件"但未列出具体组件名。subagent 需要自行 grep 浪费上下文。
-- **需改进**：Spec 阶段的 AC 行数目标（≤250L）没有附估算依据，导致 dev/test 阶段的反复讨论。
+**可以改进的地方**：
+- **Phase 5 skill 的 "Merge" 步骤应区分"可以 merge"和"禁止 merge"两种模式**。当前 skill 写了 merge 步骤但 coding-workflow 又加了 `CRITICAL RULE: MUST NOT merge`，两者矛盾。如果 harness 自动管理 merge（Auto Mode），skill 中就不应出现 merge 步骤的详细描述。
+- **Retrospect 的触发时机描述不够清晰**。Phase 5 skill 写"当 merge 完成后立即执行"，但 coding-workflow 的扩展在 gate PASS 后就自动 dispatch retrospect subagent。主 agent 不知道是应该自己写 retrospect 还是等 subagent 写，导致有时写两次。
 
 ### Automation Gaps
 
-按优先级排列，最值得投入自动化的 3 项：
-
-1. **测试 evidence 自动生成**（dev + test phase）：`vitest --reporter=json` + `cloc` + `git diff --stat` 就能生成 `test_results.md` 90% 的内容。当前手动构造 JSON 测试记录是最大的重复劳动。
-2. **AC 覆盖矩阵自动生成**（test phase）：test_cases_template.json 每条用例标注覆盖的 AC ID，脚本自动生成覆盖矩阵。当前需要人工逐条映射。
-3. **决策变更影响分析**（spec phase）：每次修改 Decision 后，全文搜索被删除/重命名的文件名，列出所有出现位置。当前靠人工扫描，v3 的 AC 残留不一致就是遗漏的后果。
-
-次要自动化：
-
-4. **Handler 枚举从代码生成**（spec phase）：从 `ClientMessageType` 联合类型自动提取 handler 清单，避免手写计数。
-5. **Baseline 测试快照**（dev phase）：CI 基线快照机制，自动标注 pre-existing failure，避免每轮手动验证 base commit。
-6. **Plan 结构性检查脚本**（plan phase）：自动验证每个 Task 的文件数 ≤10、有验证步骤、依赖关系无环。
+1. **Gate YAML 格式验证可以前置**：在 `test_results.md` / `code_review_v1.md` / `pr_evidence.md` 等文件的写入阶段就验证 YAML 格式，而不是等到 gate check 才发现格式错误。可以在 skill 的"Record Results"步骤中加入格式校验 snippet。
+2. **CI 结果可以自动收集**：`gh pr checks` 的输出可以自动解析并填入 `ci_results.md`，不需要手动复制 URL 和 commit SHA。
+3. **Spec AC ↔ Test Case 的覆盖矩阵可以自动生成**：如果 test_cases_template.json 中每个用例标注覆盖的 AC ID（`"acRefs": ["AC-1", "AC-4"]`），覆盖矩阵可以从 JSON 自动生成。
+4. **健壮性审查没有标准流程**：code-review-worktree 是独立 skill，不在 harness 流程中。应在 Dev 和 Test 之间或 Test 和 PR 之间增加一个可选的"健壮性审查"阶段。
 
 ### Time Sinks
 
-全流程最大的时间消耗：
-
-1. **评审迭代（9 轮）**：spec 3 + plan 3 + dev 2 + test 1。如果初始产出粒度更细，可降至 spec 2 + plan 2 + dev 1 + test 1 = 6 轮，节省约 33%。
-2. **BG3 Task 8 单 Task 超 3000 行变更**：提取 3 Service + 重写 server + 删 session-pool + 更新 index 塞进一个 Task。验证和 code review 的认知负担远超正常水平。拆成 2-3 个子 Task 后每步验证成本更低。
-3. **测试 evidence 手动构造**：20 个用例的 JSON 记录需要逐条填写 execute_steps 和 evidence，重复且无创造性。
-
-### 全流程综合评价
-
-本次 harness 完成了一次中等复杂度的架构重构（43 文件、+4,747/-975 行、session-pool 完全删除），5 个 phase 全部 pass，CI 全绿，没有功能回归。harness 流程在结构化引导、质量门控、上下文传递方面发挥了核心作用。
-
-主要改进方向：**减少评审轮次**（通过更细的初始粒度和结构性预检）和**自动化 evidence 生成**（测试记录、AC 覆盖矩阵）。这两项改进预计可以将同规模 harness 的总时间缩短 25-30%。
+1. **评审迭代（10 轮）**是最大的时间消耗。Spec 3 轮 + Plan 3 轮是正常范围，但每次评审需要完整重读 spec/plan。如果评审能在首轮更彻底（做行数估算验证、决策影响分析），可以减少 2-3 轮。
+2. **CI 等待和调试**：CI 首轮失败（unused import）→ 修复 → 等待 → 健壮性修复推送 → CI 未触发 → 调试 GitHub Actions 配置。累计消耗了约 5 分钟的等待时间。
+3. **Gate YAML 格式调试**：2 次 gate FAIL 是因为 YAML 格式问题（缺少顶层 frontmatter、布尔值写成了字符串）。这类问题每次需要 1-2 分钟排查和修复，累计约 3 分钟。
