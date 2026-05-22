@@ -1,10 +1,10 @@
 <template>
   <div
     :class="[
-      'rounded-sm border border-border border-l-[3px] bg-surface overflow-hidden',
-      pending.dangerLevel === 'safe' && 'border-l-success',
-      pending.dangerLevel === 'caution' && 'border-l-warning',
-      pending.dangerLevel === 'danger' && 'border-l-danger',
+      'rounded-sm border overflow-hidden',
+      pending.dangerLevel === 'safe' && 'border-success/40 bg-level-safe',
+      pending.dangerLevel === 'caution' && 'border-warning/40 bg-level-caution',
+      pending.dangerLevel === 'danger' && 'border-danger/40 bg-level-danger',
     ]"
   >
     <div class="flex items-center justify-between px-2.5 py-2 gap-2">

@@ -18,60 +18,101 @@
     </div>
   </div>
 
-  <!-- assistant / user 消息 -->
+  <!-- assistant 消息 -->
   <div
-    v-else
-    :data-role="message.role"
-    :class="[
-      'py-3 px-4 leading-[1.6] text-sm',
-      message.role === 'user'
-        ? 'self-end max-w-[75%] bg-accent text-white rounded rounded-br-xs'
-        : 'self-start w-full bg-transparent',
-    ]"
+    v-else-if="message.role === 'assistant'"
+    data-role="assistant"
+    class="self-start w-full bg-transparent py-3 px-4 leading-[1.6] text-sm"
   >
-    <div
-      :class="[
-        'text-[10px] font-semibold uppercase tracking-[0.04em] leading-[1.4] mb-[3px]',
-        message.role === 'user' ? 'text-right text-[var(--white-70)]' : 'text-muted',
-      ]"
-    >
-      <template v-if="message.role === 'assistant'">助手</template>
-      <template v-else>用户</template>
+    <div class="text-[10px] font-semibold uppercase tracking-[0.04em] leading-[1.4] mb-[3px] text-muted">
+      助手
+      <span v-if="message.timestamp" class="font-normal normal-case tracking-normal text-[10px] opacity-60 ml-1.5">{{ formatTime(message.timestamp) }}</span>
     </div>
 
-    <!-- Thinking blocks -->
-    <ThinkingBlock
-      v-for="block in message.thinking"
-      :key="block.id"
-      :text="block.content"
-      :streaming="message.status === 'streaming'"
-      :collapsed="block.collapsed"
-    />
+    <!-- 有序渲染：按 contentBlocks 顺序 -->
+    <template v-if="message.contentBlocks?.length">
+      <template v-for="block in message.contentBlocks" :key="block.refId">
+        <!-- Thinking block -->
+        <ThinkingBlock
+          v-if="block.type === 'thinking'"
+          :text="getThinkingContent(block.refId)"
+          :streaming="message.status === 'streaming'"
+          :collapsed="getThinkingCollapsed(block.refId)"
+        />
+        <!-- Tool call card -->
+        <ToolCallCard
+          v-else-if="block.type === 'toolCall'"
+          :tool-call="getToolCall(block.refId)!"
+          :batch-info="batchInfoMap.get(block.refId)"
+        />
+        <!-- Text content -->
+        <div
+          v-else-if="block.type === 'text' && message.content"
+          class="msg__body select-text"
+          :data-message-id="message.id"
+          @click="handleBodyClick"
+        >
+          <!-- eslint-disable-next-line vue/no-v-html -->
+          <span v-html="renderedContent"></span>
+          <span v-if="isStreaming" class="inline-block w-0.5 h-[1.1em] bg-accent rounded-[1px] align-text-bottom animate-blink motion-reduce:opacity-60 motion-reduce:animate-none"></span>
+        </div>
+      </template>
+    </template>
 
-    <!-- Tool call cards -->
-    <ToolCallCard
-      v-for="tc in message.toolCalls"
-      :key="tc.id"
-      :tool-call="tc"
-      :batch-info="batchInfoMap.get(tc.id)"
-    />
-
-    <!-- Markdown content -->
-    <div
-      v-if="message.content"
-      class="msg__body select-text"
-      :data-message-id="message.id"
-      @click="handleBodyClick"
-    >
-      <span
-        v-if="message.role === 'user' && message.skillName"
-        class="inline-flex items-center gap-0.5 text-[11px] font-medium py-[1px] px-1.5 rounded-full bg-[var(--white-25)] text-white mr-1 align-middle leading-[1.4]"
+    <!-- Fallback: 无 contentBlocks 时用固定顺序（历史消息兼容） -->
+    <template v-else>
+      <ThinkingBlock
+        v-for="block in message.thinking"
+        :key="block.id"
+        :text="block.content"
+        :streaming="message.status === 'streaming'"
+        :collapsed="block.collapsed"
+      />
+      <ToolCallCard
+        v-for="tc in message.toolCalls"
+        :key="tc.id"
+        :tool-call="tc"
+        :batch-info="batchInfoMap.get(tc.id)"
+      />
+      <div
+        v-if="message.content"
+        class="msg__body select-text"
+        :data-message-id="message.id"
+        @click="handleBodyClick"
       >
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="10" height="10"><path d="M2 8l4 4 8-8"/></svg>
-        {{ message.skillName }}
-      </span>
-      <!-- eslint-disable-next-line vue/no-v-html -->
-      <span v-html="renderedContent"></span>
+        <!-- eslint-disable-next-line vue/no-v-html -->
+        <span v-html="renderedContent"></span>
+        <span v-if="isStreaming" class="inline-block w-0.5 h-[1.1em] bg-accent rounded-[1px] align-text-bottom animate-blink motion-reduce:opacity-60 motion-reduce:animate-none"></span>
+      </div>
+    </template>
+  </div>
+
+  <!-- user 消息：标签在气泡外面 -->
+  <div
+    v-else
+    data-role="user"
+    class="self-end max-w-[75%]"
+  >
+    <div class="text-[10px] font-semibold uppercase tracking-[0.04em] leading-[1.4] mb-[3px] text-right text-muted">
+      用户
+    </div>
+    <div class="py-3 px-4 leading-[1.6] text-sm bg-accent text-white rounded-bubble rounded-br-sm">
+      <div
+        v-if="message.content"
+        class="msg__body select-text"
+        :data-message-id="message.id"
+        @click="handleBodyClick"
+      >
+        <span
+          v-if="message.skillName"
+          class="inline-flex items-center gap-0.5 text-[11px] font-medium py-[1px] px-1.5 rounded-full bg-[var(--white-25)] text-white mr-1 align-middle leading-[1.4]"
+        >
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="10" height="10"><path d="M2 8l4 4 8-8"/></svg>
+          {{ message.skillName }}
+        </span>
+        <!-- eslint-disable-next-line vue/no-v-html -->
+        <span v-html="renderedContent"></span>
+      </div>
     </div>
   </div>
 </template>
@@ -85,13 +126,35 @@ import { useSettingsStore } from '../../stores/settings'
 import ThinkingBlock from './ThinkingBlock.vue'
 import ToolCallCard from './ToolCallCard.vue'
 
-const props = defineProps<{ message: Message }>()
+const props = defineProps<{ message: Message; isStreaming?: boolean }>()
 const settings = useSettingsStore()
 
 const COPY_FEEDBACK_MS = 1500
 const BYTES_PER_KB = 1024
 const MIN_TOOL_CALLS = 2
 const BATCH_MIN_SIZE = 2
+
+// ── ContentBlocks 查找辅助 ──
+
+function formatTime(ts: number): string {
+  const PAD_WIDTH = 2
+  const d = new Date(ts)
+  const h = d.getHours().toString().padStart(PAD_WIDTH, '0')
+  const m = d.getMinutes().toString().padStart(PAD_WIDTH, '0')
+  return `${h}:${m}`
+}
+
+function getThinkingContent(refId: string): string {
+  return props.message.thinking?.find(b => b.id === refId)?.content ?? ''
+}
+
+function getThinkingCollapsed(refId: string): boolean {
+  return props.message.thinking?.find(b => b.id === refId)?.collapsed ?? true
+}
+
+function getToolCall(refId: string): import('@xyz-agent/shared').ToolCall | undefined {
+  return props.message.toolCalls?.find(tc => tc.id === refId)
+}
 
 // 完整渲染缓存（renderFull 是异步的）
 const fullRenderCache = ref('')

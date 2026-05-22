@@ -1,8 +1,5 @@
 <template>
-  <div v-if="message" class="flex items-start gap-1">
-    <MessageBubble :message="message" />
-    <span v-if="isStreaming" class="inline-block w-0.5 h-4 bg-accent rounded-[1px] mt-0.5 animate-blink motion-reduce:opacity-60 motion-reduce:animate-none"></span>
-  </div>
+  <MessageBubble v-if="message" :message="message" :is-streaming="isStreaming" />
 </template>
 
 <script setup lang="ts">

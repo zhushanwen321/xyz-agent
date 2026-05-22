@@ -53,6 +53,7 @@ export default {
         xs: '4px',
         lg: '12px',
         md: '8px',
+        bubble: 'var(--radius-bubble)',
       },
       boxShadow: {
         xs: 'var(--shadow-xs)',

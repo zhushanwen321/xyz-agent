@@ -22,7 +22,7 @@
       </div>
       <!-- Empty state (only when not loading) -->
       <div v-else-if="messages.length === 0" class="flex flex-col items-center justify-center h-full p-20 px-10 gap-3 text-muted">
-        <svg class="text-muted mb-2 opacity-50" width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <svg class="text-border mb-2" width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
           <path d="M8 10C8 8.89543 8.89543 8 10 8H38C39.1046 8 40 8.89543 40 10V30C40 31.1046 39.1046 32 38 32H22L14 40V32H10C8.89543 32 8 31.1046 8 30V10Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
           <path d="M16 18H32" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
           <path d="M16 24H26" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
@@ -53,8 +53,8 @@
         </template>
 
         <!-- Thinking indicator: waiting for first token -->
-        <div v-if="isStreaming && !streamingMessage" class="self-start w-full p-3 px-4 bg-surface border border-border rounded-lg leading-relaxed text-sm">
-          <div class="text-[10px] font-semibold uppercase tracking-[0.04em] leading-snug text-muted mb-1.5">助手</div>
+        <div v-if="isStreaming && !streamingMessage" class="self-start w-full p-3 px-4 bg-surface border border-border rounded-sm leading-relaxed text-sm">
+          <div class="text-[10px] font-semibold uppercase tracking-[0.04em] leading-[1.4] mb-[3px] text-muted">助手</div>
           <div class="flex items-center gap-2">
             <span class="inline-block w-1.5 h-1.5 rounded-full bg-accent shrink-0 animate-thinking-pulse motion-reduce:opacity-60 motion-reduce:animate-none"></span>
             <span class="font-mono text-[11px] leading-snug text-muted">思考中...</span>

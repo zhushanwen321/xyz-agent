@@ -34,6 +34,7 @@
   --radius: 12px;
   --radius-sm: 8px;
   --radius-xs: 4px;
+  --radius-bubble: 8px;
   /* Aliases for backwards compat */
   --radius-lg: 12px;
   --radius-md: 8px;
