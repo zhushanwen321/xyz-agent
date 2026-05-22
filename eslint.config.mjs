@@ -12,6 +12,7 @@ export default [
       'src-electron/**/dist/**',
       'tools/*.cjs',
       'src-electron/preload/preload.js',
+      'vendor/**',
     ],
   },
 ];

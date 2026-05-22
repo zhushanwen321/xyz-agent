@@ -38,6 +38,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          submodules: recursive
 
       - uses: actions/setup-node@v4
         with:
@@ -79,6 +80,14 @@ jobs:
         run: |
           npm -w @xyz-agent/runtime run test
           npm -w @xyz-agent/frontend run test
+
+      - name: Download and prepare pi resources
+        shell: bash
+        env:
+          PI_VERSION: '0.75.4'
+        run: |
+          chmod +x scripts/prepare-pi-resources.sh
+          ./scripts/prepare-pi-resources.sh "$PI_VERSION"
 
       - name: Build
         working-directory: src-electron
