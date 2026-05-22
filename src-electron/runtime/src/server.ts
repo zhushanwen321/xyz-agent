@@ -105,23 +105,28 @@ export class SidecarServer implements IMessageBroker {
   }
 
   private sendInitialState(ws: WsType): void {
+    // 每个 init 消息独立 try-catch：单个失败不阻塞后续
     try {
       const groups = this.sessionService.listPersistedSessions()
       this.send(ws, { type: 'session.list', id: this.nextPushId(), payload: { groups } })
+    // eslint-disable-next-line taste/no-silent-catch -- init: best-effort, single failure must not block others
     } catch (e) { console.error('[runtime] sendInitialState: session.list failed:', e) }
     try {
       const providers = this.configService.listProviders()
       this.send(ws, { type: 'config.providers', id: this.nextPushId(), payload: { providers } })
       const models = this.modelService.aggregateModels(providers)
       this.send(ws, { type: 'model.list', id: this.nextPushId(), payload: { models } })
+    // eslint-disable-next-line taste/no-silent-catch -- init: best-effort, single failure must not block others
     } catch (e) { console.error('[runtime] sendInitialState: config.providers/model.list failed:', e) }
     try {
       const skills = this.configService.loadSkills(this.projectRoot)
       this.send(ws, { type: 'config.skills', id: this.nextPushId(), payload: { skills } })
+    // eslint-disable-next-line taste/no-silent-catch -- init: best-effort, single failure must not block others
     } catch (e) { console.error('[runtime] sendInitialState: config.skills failed:', e) }
     try {
       const agents = this.configService.loadAgents(this.projectRoot)
       this.send(ws, { type: 'config.agents', id: this.nextPushId(), payload: { agents } })
+    // eslint-disable-next-line taste/no-silent-catch -- init: best-effort, single failure must not block others
     } catch (e) { console.error('[runtime] sendInitialState: config.agents failed:', e) }
   }
 
