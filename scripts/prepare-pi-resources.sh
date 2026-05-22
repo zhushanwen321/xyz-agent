@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# prepare-pi-resources.sh — Download pi binary and copy extensions/skills for local build testing.
+# Usage: ./scripts/prepare-pi-resources.sh [PI_VERSION]
+# CI 和本地开发共用此脚本，减少维护成本。
+set -euo pipefail
+
+PI_VERSION="${1:-0.75.4}"
+PLATFORM="$(uname -s | tr '[:upper:]' '[:lower:]')"
+ARCH="$(uname -m)"
+
+# Map uname -m to pi binary arch naming (matches Node.js process.arch)
+case "$ARCH" in
+  arm64|aarch64) PI_ARCH="arm64" ;;
+  x86_64|amd64)  PI_ARCH="x64" ;;
+  *) echo "Unsupported arch: $ARCH" >&2; exit 1 ;;
+esac
+
+RESOURCES_DIR="src-electron/resources/pi"
+AGENT_DIR="${RESOURCES_DIR}/agent"
+EXTENSIONS_DIR="${AGENT_DIR}/extensions"
+SKILLS_DIR="${AGENT_DIR}/skills"
+
+echo "=== prepare-pi-resources ==="
+echo "Platform: ${PLATFORM}  Arch: ${PI_ARCH}  Version: ${PI_VERSION}"
+
+# --- Determine asset filename ---
+if [ "$PLATFORM" = "darwin" ]; then
+  ASSET="pi-darwin-${PI_ARCH}.tar.gz"
+  BINARY_NAME="pi-darwin-${PI_ARCH}"
+elif [ "$PLATFORM" = "linux" ]; then
+  ASSET="pi-linux-${PI_ARCH}.tar.gz"
+  BINARY_NAME="pi-linux-${PI_ARCH}"
+elif [[ "$PLATFORM" == mingw* ]] || [[ "$PLATFORM" == msys* ]] || [[ "$PLATFORM" == cygwin* ]]; then
+  ASSET="pi-windows-${PI_ARCH}.zip"
+  BINARY_NAME="pi-windows-${PI_ARCH}.exe"
+else
+  echo "Unknown platform: $PLATFORM" >&2; exit 1
+fi
+
+# --- Download pi binary ---
+mkdir -p "$RESOURCES_DIR"
+
+# Check if binary already exists
+BINARY_PATH="${RESOURCES_DIR}/${BINARY_NAME}"
+if [ -f "$BINARY_PATH" ]; then
+  echo "Binary already exists at ${BINARY_PATH}, skipping download."
+else
+  echo "Downloading pi v${PI_VERSION} (${ASSET})..."
+  gh release download "v${PI_VERSION}" \
+    -R earendil-works/pi \
+    -p "$ASSET" \
+    -D "$RESOURCES_DIR" \
+    --clobber
+
+  echo "Extracting..."
+  pushd "$RESOURCES_DIR" > /dev/null
+  if [[ "$ASSET" == *.tar.gz ]]; then
+    tar xzf "$ASSET"
+  else
+    unzip -o "$ASSET"
+  fi
+  rm -f "$ASSET"
+  chmod +x pi-* 2>/dev/null || true
+  popd > /dev/null
+fi
+
+# --- Copy extensions from vendor submodule ---
+echo "Copying extensions from vendor/xyz-pi-extensions/..."
+mkdir -p "$EXTENSIONS_DIR"
+for ext in subagent goal todo; do
+  if [ -d "vendor/xyz-pi-extensions/${ext}" ]; then
+    cp -RL "vendor/xyz-pi-extensions/${ext}" "$EXTENSIONS_DIR/"
+    echo "  copied: ${ext}"
+  else
+    echo "  missing: ${ext} (submodule not initialized? run: git submodule update --init)"
+  fi
+done
+
+# --- Copy skills from vendor submodule ---
+echo "Copying skills from vendor/xyz-harness/skills/..."
+mkdir -p "$SKILLS_DIR"
+if [ -d "vendor/xyz-harness/skills" ]; then
+  cp -RL vendor/xyz-harness/skills/* "$SKILLS_DIR/"
+  SKILL_COUNT=$(ls -1 "$SKILLS_DIR" | wc -l | tr -d ' ')
+  echo "  copied: ${SKILL_COUNT} skills"
+else
+  echo "  missing: vendor/xyz-harness/skills/ (submodule not initialized?)"
+fi
+
+echo "=== Done ==="
+echo "Resources ready at: ${RESOURCES_DIR}/"
+ls -la "$RESOURCES_DIR/"

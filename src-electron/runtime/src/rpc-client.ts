@@ -62,6 +62,11 @@ export class RpcClient {
       ...this.options.env,
     }
 
+    // Packaged mode: redirect pi's agent directory to bundled extensions/skills
+    if (process.env.XYZ_AGENT_PACKAGED === '1') {
+      env.PI_CODING_AGENT_DIR = join(process.cwd(), 'pi', 'agent')
+    }
+
     if (providerId) {
       Object.assign(env, buildProviderEnv(providerId))
     }

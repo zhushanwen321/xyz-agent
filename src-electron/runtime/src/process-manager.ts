@@ -9,6 +9,31 @@ import { RpcClient, type RpcClientOptions } from './rpc-client.js'
 // 2. nvm managed node installations
 // 3. Common locations
 function findPiExecutable(): string {
+  // Packaged mode: use bundled pi binary from resources
+  if (process.env.XYZ_AGENT_PACKAGED === '1') {
+    const platform = process.platform  // 'darwin' | 'win32' | 'linux'
+    const arch = process.arch          // 'arm64' | 'x64'
+
+    const binaryName = platform === 'win32'
+      ? `pi-windows-${arch}.exe`
+      : `pi-${platform}-${arch}`
+
+    // Sidecar's cwd = process.resourcesPath (set by runtime-manager.ts)
+    const bundledPi = join(process.cwd(), 'pi', binaryName)
+
+    if (!existsSync(bundledPi)) {
+      throw new Error(
+        `Bundled pi binary not found at ${bundledPi}. `
+        + `Expected binary: ${binaryName}. `
+        + 'The application installation may be corrupted.',
+      )
+    }
+
+    console.log(`[process-manager] using bundled pi: ${bundledPi}`)
+    return bundledPi
+  }
+
+  // Development mode: original discovery logic
   const isWindows = process.platform === 'win32'
 
   // 1. Try PATH
@@ -118,6 +143,12 @@ export class ProcessManager {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       if (msg.includes('spawn') || msg.includes('ENOENT')) {
+        if (process.env.XYZ_AGENT_PACKAGED === '1') {
+          throw new Error(
+            `Failed to start bundled pi process. The application installation may be corrupted. `
+            + `Attempted binary: ${this.piPath}. Original error: ${msg}`,
+          )
+        }
         throw new Error(
           `Failed to start pi process. Ensure pi is installed globally (npm i -g @mariozechner/pi-coding-agent). `
           + `Searched: PATH, ~/.nvm/versions/*/bin/pi, /usr/local/bin/pi. `

@@ -38,6 +38,9 @@ const DEFAULTS: Readonly<AppConfig> = {
 }
 
 function loadPiConfig(): Record<string, ProviderConfig> | null {
+  // Packaged mode: skip reading from ~/.pi (not bundled)
+  if (process.env.XYZ_AGENT_PACKAGED === '1') return null
+
   try {
     const piJsonPath = join(homedir(), '.pi', 'config.json')
     if (existsSync(piJsonPath)) {
@@ -148,6 +151,9 @@ export function buildProviderEnv(providerId: string): Record<string, string> {
  * in "provider/modelId" format. Falls back to config defaults.
  */
 function readPiDefaultModel(): string | null {
+  // Packaged mode: skip reading from ~/.pi (not bundled)
+  if (process.env.XYZ_AGENT_PACKAGED === '1') return null
+
   try {
     const piModelsPath = join(homedir(), '.pi', 'agent', 'models.json')
     if (!existsSync(piModelsPath)) return null
