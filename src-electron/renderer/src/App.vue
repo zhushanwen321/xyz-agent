@@ -85,6 +85,48 @@ const TOAST_LONG_DURATION_MS = 8_000
 const WS_DISCONNECT_WARN_DELAY_MS = 10_000
 const sidebarVisible = ref(false)
 
+// ── P1 #6: 全局错误处理 — 没有 sessionId 的 error 显示为全局 toast ──
+
+const globalErrorUnregister = onEventBus('error', (msg: ServerMessage) => {
+  const payload = msg.payload as { message?: string; code?: string; sessionId?: string }
+  // 没有 sessionId 的错误属于全局错误（如 runtime 崩溃、配置错误等）
+  if (!payload.sessionId && payload.message) {
+    const id = crypto.randomUUID()
+    toasts.value.push({
+      id,
+      type: 'warning',
+      title: 'Runtime 错误',
+      description: payload.message,
+    })
+    setTimeout(() => dismissToast(id), TOAST_DURATION_MS)
+  }
+})
+
+// ── P1 #7: WS 断连提示 — 10 秒内未重连则显示 toast ──
+let wsDisconnectTimer: ReturnType<typeof setTimeout> | null = null
+const wsState = getWsState()
+const wsStateUnwatch = watch(wsState, (newState) => {
+  if (newState === 'disconnected' || newState === 'reconnecting') {
+    if (!wsDisconnectTimer) {
+      wsDisconnectTimer = setTimeout(() => {
+        const id = crypto.randomUUID()
+        toasts.value.push({
+          id,
+          type: 'warning',
+          title: '连接已断开',
+          description: 'Runtime 连接已断开，正在尝试重新连接…',
+        })
+        setTimeout(() => dismissToast(id), 8_000)
+      }, WS_DISCONNECT_WARN_DELAY_MS)
+    }
+  } else if (newState === 'connected') {
+    if (wsDisconnectTimer) {
+      clearTimeout(wsDisconnectTimer)
+      wsDisconnectTimer = null
+    }
+  }
+})
+
 // 创建 session 后自动跳转：监听 session 数量变化
 let isCreatingFromSidebar = false
 let prevSessionCount = 0
@@ -307,6 +349,9 @@ onMounted(async () => {
 onUnmounted(() => {
   offEventBus('error', handleGlobalError)
   document.removeEventListener('keydown', handleKeydown)
+  globalErrorUnregister()
+  wsStateUnwatch()
+  if (wsDisconnectTimer) clearTimeout(wsDisconnectTimer)
   for (const cleanup of ipcCleanupFns) cleanup()
   ipcCleanupFns.length = 0
   teardownConnection()

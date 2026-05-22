@@ -27,12 +27,16 @@ vi.mock('node:child_process', () => ({
   },
 }))
 
-// Mock config-store to control loadSkills / getDefaultModel / buildProviderEnv
-const mockSkills: SkillInfo[] = []
+// Mock config-store for getDefaultModel / buildProviderEnv
 vi.mock('../src/config-store.js', () => ({
-  loadSkills: (_cwd: string) => mockSkills,
   getDefaultModel: () => 'test/provider-model',
   buildProviderEnv: () => ({} as Record<string, string>),
+}))
+
+// Mock skill-store for loadSkills
+const mockSkills: SkillInfo[] = []
+vi.mock('../src/skill-store.js', () => ({
+  loadSkills: (_cwd: string) => mockSkills,
 }))
 
 // Mock fs.existsSync to control path validation
@@ -62,6 +66,24 @@ vi.mock('../src/session-scanner.js', () => ({
   deleteSessionFile: vi.fn(),
 }))
 
+// Mock session-label-store
+vi.mock('../src/session-label-store.js', () => ({
+  saveLabel: vi.fn(),
+  removeLabel: vi.fn(),
+  migrateLabelsIfNeeded: vi.fn(),
+}))
+
+// Mock agent-store
+vi.mock('../src/agent-store.js', () => ({
+  loadAgents: vi.fn().mockReturnValue([]),
+  saveAgents: vi.fn(),
+}))
+
+// Mock model-db
+vi.mock('../src/model-db.js', () => ({
+  lookupPiProvider: vi.fn().mockReturnValue(undefined),
+}))
+
 // Mock node:os — keep all real exports, override homedir
 vi.mock('node:os', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:os')>()
@@ -70,6 +92,14 @@ vi.mock('node:os', async (importOriginal) => {
   homedir: () => '/mock/home',
   }
 })
+
+// Mock event-adapter for SessionService
+vi.mock('../src/event-adapter.js', () => ({
+  EventAdapter: class MockEventAdapter {
+    attach = vi.fn()
+    detach = vi.fn()
+  },
+}))
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -89,6 +119,16 @@ function resetMocks(): void {
   spawnArgsCapture.length = 0
   existingPaths.clear()
   mockScannedSessions.length = 0
+}
+
+/** Create a SessionService with mocked deps */
+async function createSessionService() {
+  const { ProcessManager } = await import('../src/process-manager.js')
+  const { SessionService } = await import('../src/services/session-service.js')
+  const pm = new ProcessManager()
+  const noopBroker = { send: vi.fn(), broadcast: vi.fn(), sendError: vi.fn() }
+  const adapterFactory = () => ({ attach: vi.fn(), detach: vi.fn() })
+  return new SessionService(pm, noopBroker as never, adapterFactory, '/tmp')
 }
 
 // ── Tests ──────────────────────────────────────────────────────────
@@ -140,7 +180,7 @@ describe('skillPaths passing chain', () => {
   })
 
   it('getSkillPaths collects enabled skill dirs, skips non-existent paths', async () => {
-  const { SessionPool } = await import('../src/session-pool.js')
+  const service = await createSessionService()
 
   // Set up mock skills: 3 enabled, 1 disabled, 1 non-existent path
   const skillDirA = '/project/.agents/skills/skill-a'
@@ -151,10 +191,10 @@ describe('skillPaths passing chain', () => {
   const skillFileC = `${skillDirC}/SKILL.md`
 
   mockSkills.push(
-    { id: 'a', name: 'A', description: '', enabled: true, source: 'pi', triggers: [], sourcePath: skillFileA },
-    { id: 'b', name: 'B', description: '', enabled: true, source: 'pi', triggers: [], sourcePath: skillFileB },
-    { id: 'c', name: 'C', description: '', enabled: false, source: 'pi', triggers: [], sourcePath: skillFileC },
-    { id: 'd', name: 'D', description: '', enabled: true, source: 'pi', triggers: [], sourcePath: '/nonexistent/skill-d/SKILL.md' },
+  { id: 'a', name: 'A', description: '', enabled: true, source: 'pi', triggers: [], sourcePath: skillFileA },
+  { id: 'b', name: 'B', description: '', enabled: true, source: 'pi', triggers: [], sourcePath: skillFileB },
+  { id: 'c', name: 'C', description: '', enabled: false, source: 'pi', triggers: [], sourcePath: skillFileC },
+  { id: 'd', name: 'D', description: '', enabled: true, source: 'pi', triggers: [], sourcePath: '/nonexistent/skill-d/SKILL.md' },
   )
 
   // Only skillDirA and skillDirB exist on filesystem (dir + SKILL.md)
@@ -167,11 +207,9 @@ describe('skillPaths passing chain', () => {
   existingPaths.add(path.normalize(skillFileC))
   // /nonexistent doesn't exist — should be filtered by existsSync
 
-  const pool = new SessionPool()
-  // getSkillPaths is private, but it's called inside createSession → pm.createSession
-  // We test via the side effect: create() spawns a process with correct --skill args
+  // getSkillPaths is called inside create() → pm.createSession
   try {
-    await pool.create('/project')
+    await service.create('/project')
   } catch {
     // create() calls get_state which fails since our mock proc exits immediately
     // but the spawn call has already happened by then
@@ -184,12 +222,11 @@ describe('skillPaths passing chain', () => {
   })
 
   it('no --skill args when no enabled skills exist', async () => {
-  const { SessionPool } = await import('../src/session-pool.js')
+  const service = await createSessionService()
 
   // No skills configured
-  const pool = new SessionPool()
   try {
-    await pool.create('/empty-project')
+    await service.create('/empty-project')
   } catch {
     // expected
   }
@@ -200,16 +237,15 @@ describe('skillPaths passing chain', () => {
   })
 
   it('skills with empty sourcePath are skipped', async () => {
-  const { SessionPool } = await import('../src/session-pool.js')
+  const service = await createSessionService()
 
   mockSkills.push(
   { id: 'x', name: 'X', description: '', enabled: true, source: 'pi', triggers: [], sourcePath: undefined },
   { id: 'y', name: 'Y', description: '', enabled: true, source: 'pi', triggers: [], sourcePath: '' },
   )
 
-  const pool = new SessionPool()
   try {
-  await pool.create('/project')
+  await service.create('/project')
   } catch {
   // expected
   }
@@ -220,7 +256,7 @@ describe('skillPaths passing chain', () => {
   })
 
   it('restoreSession passes skillPaths to spawned process', async () => {
-  const { SessionPool } = await import('../src/session-pool.js')
+  const service = await createSessionService()
 
   const skillDirA = '/project/.agents/skills/skill-a'
   const skillFileA = `${skillDirA}/SKILL.md`
@@ -242,9 +278,8 @@ describe('skillPaths passing chain', () => {
   size: 100,
   })
 
-  const pool = new SessionPool()
   try {
-  await pool.restoreSession('existing-session-id')
+    await service.restoreSession('existing-session-id')
   } catch {
   // restoreSession calls switch_session which fails since mock proc exits
   // but the spawn call has already happened

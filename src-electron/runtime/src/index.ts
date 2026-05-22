@@ -1,4 +1,9 @@
 import { SidecarServer } from './server.js'
+import { SessionService } from './services/session-service.js'
+import { ConfigService } from './services/config-service.js'
+import { ModelService } from './services/model-service.js'
+import { ProcessManager } from './process-manager.js'
+import { EventAdapter } from './event-adapter.js'
 
 function parseArgs(): { port: number; projectRoot?: string } {
   // eslint-disable-next-line no-magic-numbers -- argv[0] is node, argv[1] is script
@@ -7,9 +12,19 @@ function parseArgs(): { port: number; projectRoot?: string } {
   let projectRoot: string | undefined
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--port' && i + 1 < args.length) {
-      port = parseInt(args[i + 1], 10)
+      const parsed = parseInt(args[i + 1], 10)
+      if (isNaN(parsed)) {
+        console.error(`[runtime] invalid --port value: ${args[i + 1]}`)
+        process.exit(1)
+      }
+      port = parsed
     } else if (args[i].startsWith('--port=')) {
-      port = parseInt(args[i].split('=')[1], 10)
+      const parsed = parseInt(args[i].split('=')[1], 10)
+      if (isNaN(parsed)) {
+        console.error(`[runtime] invalid --port value: ${args[i].split('=')[1]}`)
+        process.exit(1)
+      }
+      port = parsed
     } else if (args[i] === '--project-root' && i + 1 < args.length) {
       projectRoot = args[i + 1]
     } else if (args[i].startsWith('--project-root=')) {
@@ -21,7 +36,26 @@ function parseArgs(): { port: number; projectRoot?: string } {
 
 async function main(): Promise<void> {
   const { port, projectRoot } = parseArgs()
+  const effectiveRoot = projectRoot ?? process.cwd()
+
+  // Infrastructure
+  const pm = new ProcessManager()
+
+  // Transport layer
   const server = new SidecarServer(port, projectRoot)
+
+  // Service layer (DI)
+  const sessionService = new SessionService(
+    pm,
+    server,  // IMessageBroker
+    (sessionId: string) => new EventAdapter(sessionId, (msg) => server.broadcast(msg)),
+    effectiveRoot,
+  )
+  const configService = new ConfigService(effectiveRoot)
+  const modelService = new ModelService()
+
+  // Wire services into server
+  server.setServices(sessionService, configService, modelService)
 
   // Graceful shutdown on signals
   let shuttingDown = false

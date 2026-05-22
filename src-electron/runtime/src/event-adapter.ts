@@ -1,14 +1,10 @@
 import type { ServerMessage } from '@xyz-agent/shared'
 import type { PiEventListener } from './rpc-client.js'
+// Canonical pi event union from types.ts.
+// translate() accepts Record<string, unknown> because pi sends event types
+// beyond the defined union (compaction_*, auto_retry_*, extension_* etc.).
 
 export type WsSender = (msg: ServerMessage) => void
-
-/**
- * Loosely typed representation of a pi RPC event.
- * pi sends events with various shapes that don't fit the narrow PiMessage interface.
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi events have dynamic shapes
-type PiEvent = Record<string, any>
 
 const STOP_REASON_MAP: Record<string, string> = {
   stop: 'end_turn',
@@ -45,7 +41,7 @@ export class EventAdapter {
 
   /** Start listening to events from an RpcClient. */
   attach(client: { onEvent: (listener: PiEventListener) => (() => void) }): void {
-    this.unsub = client.onEvent((event) => this.handleEvent(event as unknown as PiEvent))
+    this.unsub = client.onEvent((event) => this.handleEvent(event as unknown as Record<string, unknown>))
   }
 
   /** Stop listening. */
@@ -56,17 +52,17 @@ export class EventAdapter {
     }
   }
 
-  private handleEvent(event: PiEvent): void {
+  private handleEvent(event: Record<string, unknown>): void {
     const msg = this.translate(event)
     if (msg) {
       this.send(msg)
     }
   }
 
-  private translate(event: PiEvent): ServerMessage | null {
+  private translate(event: Record<string, unknown>): ServerMessage | null {
     const sid = this.sessionId
 
-    switch (event.type) {
+    switch (event.type as string) {
       // ── Streaming content ────────────────────────────────────────
       case 'message_update': {
         const sub = event.assistantMessageEvent as
@@ -134,10 +130,11 @@ export class EventAdapter {
         const raw = event.result ?? event.output
         if (typeof raw === 'string') {
           output = raw
-        } else if (raw && typeof raw === 'object' && Array.isArray(raw.content)) {
-          output = raw.content
-            .filter((c: { type: string }) => c.type === 'text')
-            .map((c: { text?: string }) => c.text ?? '')
+        } else if (raw && typeof raw === 'object' && Array.isArray((raw as Record<string, unknown>).content)) {
+          const contentArr = (raw as Record<string, unknown>).content as Array<Record<string, unknown>>
+          output = contentArr
+            .filter((c) => c.type === 'text')
+            .map((c) => (c.text as string) ?? '')
             .join('\n')
         } else if (raw != null) {
           output = JSON.stringify(raw)
@@ -243,29 +240,4 @@ export class EventAdapter {
     }
   }
 
-  // ── Helper methods for non-session messages ──────────────────────
-
-  sendSessionCreated(id: string, session: Record<string, unknown>): void {
-    this.send({ type: 'session.created', id, payload: { session } })
-  }
-
-  sendSessionDeleted(id: string, sessionId: string): void {
-    this.send({ type: 'session.deleted', id, payload: { sessionId } })
-  }
-
-  sendSessionList(sessions: Record<string, unknown>[]): void {
-    this.send({ type: 'session.list', payload: { sessions } })
-  }
-
-  sendProviderList(providers: Record<string, unknown>[]): void {
-    this.send({ type: 'config.providers', payload: { providers } })
-  }
-
-  sendModelList(models: Record<string, unknown>[]): void {
-    this.send({ type: 'model.list', payload: { models } })
-  }
-
-  sendError(code: string, message: string, id?: string): void {
-    this.send({ type: 'error', id, payload: { code, message } })
-  }
 }

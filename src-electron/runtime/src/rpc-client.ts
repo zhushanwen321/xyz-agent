@@ -5,6 +5,12 @@ import { join } from 'node:path'
 import { mkdirSync } from 'node:fs'
 import { buildProviderEnv, getDefaultModel } from './config-store.js'
 
+/**
+ * Generic shape of a message received from pi's JSONL stdout.
+ * Broader than PiAnyIncomingMessage in types.ts — covers both RPC responses
+ * (with success/error/data) and unsolicited events (with various payloads).
+ * The listener API uses this wide type; consumers narrow via event.type.
+ */
 export interface PiMessage {
   id?: string
   type: string
@@ -252,14 +258,6 @@ export class RpcClient {
     return this.sendCommand('get_available_models')
   }
 
-  /**
-   * List models available for the current provider.
-   * Alias for getAvailableModels().
-   */
-  getModels(): Promise<PiMessage> {
-    return this.getAvailableModels()
-  }
-
   getHistory(): Promise<PiMessage> {
     return this.sendCommand('get_messages')
   }
@@ -274,39 +272,6 @@ export class RpcClient {
    */
   clear(): Promise<PiMessage> {
     return this.sendCommand('new_session')
-  }
-
-  /**
-   * Tool approval commands. pi RPC mode handles tool approvals
-   * internally via extension_ui_request/extension_ui_response protocol.
-   * These are kept as no-ops for API compatibility.
-   */
-  approveTool(_toolCallId: string): Promise<PiMessage> {
-    // pi handles tool approvals via extension UI protocol, not direct commands
-    void _toolCallId
-    return Promise.resolve({
-      type: 'response',
-      command: 'toolApprove',
-      success: true,
-    })
-  }
-
-  denyTool(_toolCallId: string): Promise<PiMessage> {
-    void _toolCallId
-    return Promise.resolve({
-      type: 'response',
-      command: 'toolDeny',
-      success: true,
-    })
-  }
-
-  alwaysAllowTool(_toolName: string): Promise<PiMessage> {
-    void _toolName
-    return Promise.resolve({
-      type: 'response',
-      command: 'toolAlwaysAllow',
-      success: true,
-    })
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────

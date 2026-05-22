@@ -9,16 +9,14 @@ import { WebSocket } from 'ws'
  * XML injection, sanitization, empty fields, structural integrity.
  */
 
-// ── Mock SessionPool ───────────────────────────────────────────────
+// ── Mock SessionService ───────────────────────────────────────────
 
 const sendMessageMock = vi.fn().mockResolvedValue(undefined)
 
-vi.mock('../src/session-pool.js', () => {
+vi.mock('../src/services/session-service.js', () => {
   return {
-  SessionPool: class MockSessionPool {
+  SessionService: class MockSessionService {
     sendMessage = sendMessageMock
-    addClient = vi.fn()
-    removeClient = vi.fn()
     listPersistedSessions = vi.fn().mockReturnValue([])
     getSummary = vi.fn().mockReturnValue(undefined)
     getHistory = vi.fn().mockResolvedValue([])
@@ -32,21 +30,61 @@ vi.mock('../src/session-pool.js', () => {
     compact = vi.fn().mockResolvedValue(undefined)
     abort = vi.fn().mockResolvedValue(undefined)
     switchModel = vi.fn().mockResolvedValue(undefined)
-    approveTool = vi.fn().mockResolvedValue(undefined)
-    denyTool = vi.fn().mockResolvedValue(undefined)
-    alwaysAllowTool = vi.fn().mockResolvedValue(undefined)
   },
   }
 })
 
+// Mock config-service
+vi.mock('../src/services/config-service.js', () => ({
+  ConfigService: class MockConfigService {
+    listProviders = vi.fn().mockReturnValue([])
+    setProvider = vi.fn()
+    deleteProvider = vi.fn().mockReturnValue(true)
+    getProvider = vi.fn().mockReturnValue(undefined)
+    updateToolPermissions = vi.fn()
+    loadSkills = vi.fn().mockReturnValue([])
+    saveSkills = vi.fn()
+    loadAgents = vi.fn().mockReturnValue([])
+    saveAgents = vi.fn()
+    scanSkills = vi.fn().mockReturnValue([])
+    scanAgents = vi.fn().mockReturnValue([])
+  },
+}))
+
+// Mock model-service
+vi.mock('../src/services/model-service.js', () => ({
+  ModelService: class MockModelService {
+    aggregateModels = vi.fn().mockReturnValue([])
+    discoverModelsFromApi = vi.fn().mockResolvedValue([])
+  },
+}))
+
+// Mock process-manager (transitive dep)
+vi.mock('../src/process-manager.js', () => ({
+  ProcessManager: class MockProcessManager {
+    createSession = vi.fn()
+    destroySession = vi.fn().mockResolvedValue(undefined)
+    getClient = vi.fn()
+    hasClient = vi.fn().mockReturnValue(false)
+    destroyAll = vi.fn().mockResolvedValue(undefined)
+    onSessionExit = vi.fn()
+    rekey = vi.fn()
+    getSessionIdByClient = vi.fn()
+  },
+}))
+
+vi.mock('../src/event-adapter.js', () => ({
+  EventAdapter: class MockEventAdapter {
+    attach = vi.fn()
+    detach = vi.fn()
+  },
+}))
+
 vi.mock('../src/config-store.js', () => ({
   updateToolPermissions: vi.fn(),
   getProvider: vi.fn().mockReturnValue(undefined),
-  loadSkills: vi.fn().mockReturnValue([]),
-  saveSkills: vi.fn(),
-  loadAgents: vi.fn().mockReturnValue([]),
-  saveAgents: vi.fn(),
-  getDefaultModel: vi.fn().mockReturnValue(undefined),
+  getDefaultModel: vi.fn().mockReturnValue('test/model'),
+  buildProviderEnv: vi.fn().mockReturnValue({}),
 }))
 
 vi.mock('../src/provider-store.js', () => ({
@@ -67,7 +105,32 @@ vi.mock('../src/agent-scanner.js', () => ({
   scanAgents: vi.fn().mockReturnValue([]),
 }))
 
+vi.mock('../src/session-scanner.js', () => ({
+  scanSessions: vi.fn().mockReturnValue([]),
+  deleteSessionFile: vi.fn(),
+  invalidateScanCache: vi.fn(),
+}))
+
+vi.mock('../src/session-label-store.js', () => ({
+  saveLabel: vi.fn(),
+  removeLabel: vi.fn(),
+  migrateLabelsIfNeeded: vi.fn(),
+}))
+
+vi.mock('../src/skill-store.js', () => ({
+  loadSkills: vi.fn().mockReturnValue([]),
+  saveSkills: vi.fn(),
+}))
+
+vi.mock('../src/agent-store.js', () => ({
+  loadAgents: vi.fn().mockReturnValue([]),
+  saveAgents: vi.fn(),
+}))
+
 import { SidecarServer } from '../src/server.js'
+import { SessionService } from '../src/services/session-service.js'
+import { ConfigService } from '../src/services/config-service.js'
+import { ModelService } from '../src/services/model-service.js'
 
 function getFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -93,6 +156,11 @@ describe('SidecarServer message.send subagent — boundary & error paths', () =>
   sendMessageMock.mockClear()
   port = await getFreePort()
   server = new SidecarServer(port, '/tmp/test-project')
+  server.setServices(
+    new SessionService({} as never, {} as never, {} as never, '/tmp'),
+    new ConfigService('/tmp'),
+    new ModelService(),
+  )
   await server.start()
   })
 
@@ -204,13 +272,13 @@ describe('SidecarServer message.send subagent — boundary & error paths', () =>
   const client = await connectClient()
 
   await sendAndCollect(client, {
-    type: 'message.send',
-    id: 'test-empty-agent',
-    payload: {
-    sessionId: 'sess-empty-agent',
-    content: 'unused',
-    subagent: { agent: '', task: 'do something' },
-    },
+  type: 'message.send',
+  id: 'test-empty-agent',
+  payload: {
+  sessionId: 'sess-empty-agent',
+  content: 'unused',
+  subagent: { agent: '', task: 'do something' },
+  },
   })
 
   expect(sendMessageMock).toHaveBeenCalledTimes(1)
@@ -232,13 +300,13 @@ describe('SidecarServer message.send subagent — boundary & error paths', () =>
   const client = await connectClient()
 
   await sendAndCollect(client, {
-    type: 'message.send',
-    id: 'test-empty-task',
-    payload: {
-    sessionId: 'sess-empty-task',
-    content: 'unused',
-    subagent: { agent: 'agent-name', task: '' },
-    },
+  type: 'message.send',
+  id: 'test-empty-task',
+  payload: {
+  sessionId: 'sess-empty-task',
+  content: 'unused',
+  subagent: { agent: 'agent-name', task: '' },
+  },
   })
 
   expect(sendMessageMock).toHaveBeenCalledTimes(1)
@@ -291,13 +359,13 @@ describe('SidecarServer message.send subagent — boundary & error paths', () =>
   const client = await connectClient()
 
   await sendAndCollect(client, {
-    type: 'message.send',
-    id: 'test-single-quote',
-    payload: {
-    sessionId: 'sess-quote',
-    content: 'unused',
-    subagent: { agent: "agent's-name", task: "it's O'Reilly's book" },
-    },
+  type: 'message.send',
+  id: 'test-single-quote',
+  payload: {
+  sessionId: 'sess-quote',
+  content: 'unused',
+  subagent: { agent: "agent's-name", task: "it's O'Reilly's book" },
+  },
   })
 
   expect(sendMessageMock).toHaveBeenCalledTimes(1)

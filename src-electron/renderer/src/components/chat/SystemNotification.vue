@@ -13,7 +13,7 @@
 
 <script setup lang="ts">
 defineProps<{
-  type: 'done' | 'alert'
+  type: 'done' | 'alert' | 'info'
   title: string
   content?: string
   description?: string

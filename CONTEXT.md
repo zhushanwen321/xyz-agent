@@ -31,6 +31,22 @@ Agent Runtime（一个 Node.js 进程）
 
 设计原则：变化隔离——pi 升级改 pi-adapter，业务能力改 engine，不同速率的变化不交叉。
 
+**内部模块（2026-05 架构重构后）**:
+
+| 模块 | 职责 | 对外接口 |
+|------|------|----------|
+| Transport (`server.ts`) | WS 连接管理 + 消息分发 | 无（内部消费 Service） |
+| SessionService | Session 生命周期、历史、compaction、restore | `ISessionService` |
+| ConfigService | Provider/Skill/Agent/Model CRUD 编排 | `IConfigService` |
+| ModelService | 模型聚合 + API 发现 | `IModelService` |
+| RpcClient | pi 子进程通信（JSON-RPC） | `IRpcClient` |
+| EventAdapter | pi 事件 → ServerMessage 翻译 | `IEventAdapter` |
+| ProcessManager | pi 进程 spawn/kill/lookup | `IProcessManager` |
+| MessageConverter | pi 历史格式 → 前端 Message[] | 纯函数 |
+| MessageBroker | 统一 WS 广播 | `IMessageBroker` |
+
+**依赖方向**: Transport → Service → Adapter/Config。Service 不直接碰 pi 协议，Transport 不包含业务逻辑。
+
 ### SubAgent
 pi 引擎的底层 extension，负责派生子进程执行子任务。这是 pi 侧的实现概念，不是 xyz-agent 的领域术语。
 

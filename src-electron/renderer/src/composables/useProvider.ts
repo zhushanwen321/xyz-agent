@@ -1,8 +1,25 @@
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted, getCurrentInstance } from 'vue'
 import { useProviderStore } from '../stores/provider'
 import { on, off } from '../lib/event-bus'
 import { send } from '../lib/ws-client'
 import type { ServerMessage, ProviderInfo, ModelInfo, SkillInfo, AgentInfo, ScannedSkillInfo, ScannedAgentInfo } from '@xyz-agent/shared'
+
+// ── 全局事件处理器（ref-counted，解决多组件重复注册问题）───
+
+let globalListenerRefCount = 0
+let globalEventMap: Record<string, (msg: ServerMessage) => void> | null = null
+
+function registerGlobalListeners(handlers: Record<string, (msg: ServerMessage) => void>) {
+  if (globalEventMap) return
+  globalEventMap = handlers
+  for (const [evt, fn] of Object.entries(handlers)) on(evt, fn)
+}
+
+function unregisterGlobalListeners() {
+  if (!globalEventMap) return
+  for (const [evt, fn] of Object.entries(globalEventMap)) off(evt, fn)
+  globalEventMap = null
+}
 
 export function useProvider() {
   const store = useProviderStore()
@@ -62,12 +79,22 @@ export function useProvider() {
     'config.agentDeleted': onAgents,
   }
 
-  onMounted(() => {
-    for (const [evt, fn] of Object.entries(handlers)) on(evt, fn)
-  })
-  onUnmounted(() => {
-    for (const [evt, fn] of Object.entries(handlers)) off(evt, fn)
-  })
+  // 全局事件 listener 生命周期：第一个组件 mounted 时注册，最后一个 unmounted 时注销
+  if (getCurrentInstance()) {
+    onMounted(() => {
+      if (globalListenerRefCount === 0) {
+        registerGlobalListeners(handlers)
+      }
+      globalListenerRefCount++
+    })
+
+    onUnmounted(() => {
+      globalListenerRefCount--
+      if (globalListenerRefCount === 0) {
+        unregisterGlobalListeners()
+      }
+    })
+  }
 
   function loadProviders() {
     send({ type: 'config.getProviders', payload: {} })

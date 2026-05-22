@@ -1,41 +1,28 @@
+/**
+ * SessionService — extracted from session-pool.ts.
+ *
+ * Manages session lifecycle: creation, deletion, messaging, history,
+ * model switching, compaction, and persistence.
+ */
 import { basename, dirname, join } from 'node:path'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import type { WebSocket } from 'ws'
 import type {
   SessionSummary,
   SessionGroup,
   SessionStatus,
   Message,
-  ServerMessage,
-  ThinkingBlock,
-  ToolCall,
 } from '@xyz-agent/shared'
-import { ProcessManager } from './process-manager.js'
-import type { RpcClient } from './rpc-client.js'
-
-/** Raw message format returned by pi's get_messages command */
-interface PiHistoryMessage {
-  role: 'user' | 'assistant' | 'toolResult'
-  content: Array<{
-    type: 'text' | 'thinking' | 'toolCall' | 'tool_use'
-    text?: string
-    thinking?: string
-    id?: string
-    name?: string
-    arguments?: Record<string, unknown>
-  }>
-  timestamp?: number
-  stopReason?: string
-  toolCallId?: string
-  toolName?: string
-  isError?: boolean
-}
-import { EventAdapter } from './event-adapter.js'
-import { getDefaultModel, loadSkills } from './config-store.js'
-import { scanSessions, deleteSessionFile, invalidateScanCache, type ScannedSession } from './session-scanner.js'
-import { saveLabel, removeLabel, migrateLabelsIfNeeded } from './session-label-store.js'
-import { lookupPiProvider } from './model-db.js'
+import type { ISessionService, IProcessManager, IMessageBroker, IEventAdapter } from '../interfaces.js'
+import type { IRpcClient } from '../interfaces.js'
+import type { PiMessage } from '../rpc-client.js'
+import { convertPiHistory } from '../message-converter.js'
+import type { PiHistoryMessage } from '../types.js'
+import { getDefaultModel } from '../config-store.js'
+import { loadSkills } from '../skill-store.js'
+import { scanSessions, deleteSessionFile, invalidateScanCache, type ScannedSession } from '../session-scanner.js'
+import { saveLabel, removeLabel, migrateLabelsIfNeeded } from '../session-label-store.js'
+import { lookupPiProvider } from '../model-db.js'
 
 interface ManagedSession {
   id: string
@@ -46,20 +33,21 @@ interface ManagedSession {
   lastActiveAt: number
   tokenCount: number
   isGenerating: boolean
-  adapter: EventAdapter
+  adapter: IEventAdapter
   unsubUsageListener: (() => void) | null
-  /** pi 分配的持久化 session 文件路径 */
   sessionFilePath?: string
 }
 
-const WS_OPEN = 1
-
-export class SessionPool {
+export class SessionService implements ISessionService {
   private sessions = new Map<string, ManagedSession>()
-  private pm = new ProcessManager()
-  private clients = new Set<WebSocket>()
+  private restoringSessions = new Set<string>()
 
-  constructor() {
+  constructor(
+    private pm: IProcessManager,
+    private broker: IMessageBroker,
+    private adapterFactory: (sessionId: string) => IEventAdapter,
+    private projectRoot: string,
+  ) {
     migrateLabelsIfNeeded()
     // 进程崩溃时清理对应 session
     this.pm.onSessionExit((sessionId, code) => {
@@ -68,37 +56,13 @@ export class SessionPool {
         session.adapter.detach()
         if (session.unsubUsageListener) session.unsubUsageListener()
         this.sessions.delete(sessionId)
-        this.send({ type: 'session.list', payload: { groups: this.listPersistedSessions() } })
-        this.send({
+        this.broker.broadcast({ type: 'session.list', payload: { groups: this.listPersistedSessions() } })
+        this.broker.broadcast({
           type: 'message.error',
           payload: { sessionId, message: `Session process exited unexpectedly (code: ${code})` },
         })
       }
     })
-  }
-
-  // ── WebSocket binding ──────────────────────────────────────────
-
-  addClient(ws: WebSocket): void {
-    this.clients.add(ws)
-  }
-
-  removeClient(ws: WebSocket): void {
-    this.clients.delete(ws)
-  }
-
-  private send(msg: ServerMessage): void {
-    for (const ws of this.clients) {
-      if (ws.readyState === WS_OPEN) {
-        try {
-          ws.send(JSON.stringify(msg))
-        } catch (e) {
-          console.error('[session-pool] send error, removing client:', e)
-          ws.close()
-          this.clients.delete(ws)
-        }
-      }
-    }
   }
 
   // ── Session CRUD ───────────────────────────────────────────────
@@ -110,21 +74,21 @@ export class SessionPool {
 
     const client = await this.pm.createSession(tempId, sessionCwd, { skillPaths: this.getSkillPaths(sessionCwd) })
 
-    // 从 pi 获取真实 session ID（pi 在启动时创建 session 并分配 ID）
+    // 从 pi 获取真实 session ID
     let piSessionId: string
     let sessionFilePath: string | undefined
     try {
-      const stateResp = await client.sendCommand('get_state')
+      const stateResp = await client.sendCommand('get_state') as PiMessage
       const stateData = stateResp.data ?? stateResp.payload
       piSessionId = (stateData?.sessionId as string) ?? ''
       sessionFilePath = stateData?.sessionFile as string | undefined
     } catch (e) {
-      await this.pm.destroySession(tempId)
+      await this.pm.destroySession(tempId).catch(() => {})
       throw new Error(`Failed to get session state from pi: ${e instanceof Error ? e.message : e}`)
     }
 
     if (!piSessionId) {
-      await this.pm.destroySession(tempId)
+      await this.pm.destroySession(tempId).catch(() => {})
       throw new Error('pi did not return a session ID')
     }
 
@@ -134,7 +98,7 @@ export class SessionPool {
       this.pm.rekey(tempId, id)
     }
 
-    const adapter = new EventAdapter(id, (msg) => this.send(msg))
+    const adapter = this.adapterFactory(id)
     adapter.attach(client)
 
     // 从 agent_end 事件中提取 token 使用量
@@ -167,7 +131,7 @@ export class SessionPool {
     }
     this.sessions.set(id, session)
 
-    // Persist label to independent store (not pi's .jsonl)
+    // Persist label to independent store
     if (session.label) {
       saveLabel(id, session.label)
     }
@@ -189,7 +153,6 @@ export class SessionPool {
   async delete(sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId)
     if (session) {
-      // 活跃 session：关闭进程 + 删除持久化文件
       session.adapter.detach()
       if (session.unsubUsageListener) session.unsubUsageListener()
       await this.pm.destroySession(sessionId)
@@ -199,7 +162,6 @@ export class SessionPool {
       }
       removeLabel(sessionId)
     } else {
-      // 非活跃 session：直接删除持久化文件
       const target = this.findScannedSession(sessionId)
       if (!target) throw new Error(`Session ${sessionId} not found`)
       await deleteSessionFile(target.filePath)
@@ -213,40 +175,42 @@ export class SessionPool {
   async sendMessage(sessionId: string, content: string): Promise<void> {
     let client = this.pm.getClient(sessionId)
 
-    // If session is not active, restore it from persisted file
     if (!client) {
-      console.log(`[session-pool] sendMessage: session ${sessionId} not active, restoring...`)
+      console.log(`[session-service] sendMessage: session ${sessionId} not active, restoring...`)
+      if (this.restoringSessions.has(sessionId)) return
+      this.restoringSessions.add(sessionId)
       try {
         await this.restoreSession(sessionId)
         client = this.pm.getClient(sessionId)
         if (!client) throw new Error('Restore succeeded but client not available')
       } catch (e) {
         const errMsg = `Failed to restore session: ${e instanceof Error ? e.message : String(e)}`
-        console.error(`[session-pool] ${errMsg}`)
-        this.send({ type: 'message.error', payload: { sessionId, message: errMsg } })
+        console.error(`[session-service] ${errMsg}`)
+        this.broker.broadcast({ type: 'message.error', payload: { sessionId, message: errMsg } })
         return
+      } finally {
+        this.restoringSessions.delete(sessionId)
       }
     }
 
-    // Find the managed session (may have a different id after restore)
     const activeSession = this.findSessionByClient(client)
     if (activeSession) {
       activeSession.lastActiveAt = Date.now()
       activeSession.isGenerating = true
     }
-    console.log(`[session-pool] sendMessage: sessionId=${sessionId}`)
+    console.log(`[session-service] sendMessage: sessionId=${sessionId}`)
     try {
       await client.prompt(content)
-      console.log(`[session-pool] prompt acknowledged: sessionId=${sessionId}`)
+      console.log(`[session-service] prompt acknowledged: sessionId=${sessionId}`)
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : String(e)
-      console.error(`[session-pool] prompt failed: sessionId=${sessionId}`, errMsg)
+      console.error(`[session-service] prompt failed: sessionId=${sessionId}`, errMsg)
       if (activeSession) activeSession.isGenerating = false
-      this.send({ type: 'message.error', payload: { sessionId, message: errMsg } })
+      this.broker.broadcast({ type: 'message.error', payload: { sessionId, message: errMsg } })
     }
   }
 
-  private findSessionByClient(client: RpcClient): ManagedSession | undefined {
+  private findSessionByClient(client: IRpcClient): ManagedSession | undefined {
     const id = this.pm.getSessionIdByClient(client)
     return id ? this.sessions.get(id) : undefined
   }
@@ -262,14 +226,11 @@ export class SessionPool {
   async switchModel(sessionId: string, provider: string, modelId: string): Promise<string> {
     const session = this.sessions.get(sessionId)
 
-    // 非活跃 session：不恢复进程，静默成功
-    // 模型偏好会在下次 session 恢复时通过 sendMessage 的 restore 流程生效
     if (!session) return sessionId
 
     session.modelId = `${provider}/${modelId}`
     const client = this.pm.getClient(sessionId)
     if (client) {
-      // xyz-agent 的 provider ID（如 "router"）不是 pi 认识的 provider，需要映射
       const piProvider = lookupPiProvider(modelId) ?? provider
       await client.setModel(piProvider, modelId)
     }
@@ -287,31 +248,28 @@ export class SessionPool {
     const startTime = Date.now()
     const client = this.pm.getClient(sessionId)
     if (!client) {
-      console.error('[session-pool] compact: session not found, sessionId=' + sessionId)
+      console.error('[session-service] compact: session not found, sessionId=' + sessionId)
       throw new Error(`Session ${sessionId} not found`)
     }
 
-    console.log('[session-pool] compact: start, sessionId=' + sessionId)
-    this.send({
+    console.log('[session-service] compact: start, sessionId=' + sessionId)
+    this.broker.broadcast({
       type: 'session.compacting',
       payload: { sessionId, status: 'compacting' },
     })
-    // pi compact 内部会 _disconnectFromAgent + abort，不会产生 agent 事件
-    // EventAdapter 不转发 compaction_start/compaction_end，无需 detach
     try {
       await client.compact()
-      console.log('[session-pool] compact: complete, sessionId=' + sessionId + ', elapsed=' + (Date.now() - startTime) + 'ms')
+      console.log('[session-service] compact: complete, sessionId=' + sessionId + ', elapsed=' + (Date.now() - startTime) + 'ms')
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : String(e)
-      console.error('[session-pool] compact: failed, sessionId=' + sessionId + ', error=' + errMsg + ', elapsed=' + (Date.now() - startTime) + 'ms')
-      // 无论成功与否都必须通知前端结束 compacting，否则 UI 永久禁用
-      this.send({
+      console.error('[session-service] compact: failed, sessionId=' + sessionId + ', error=' + errMsg + ', elapsed=' + (Date.now() - startTime) + 'ms')
+      this.broker.broadcast({
         type: 'session.compacted',
         payload: { sessionId, status: 'compacted', error: errMsg },
       })
       throw e
     }
-    this.send({
+    this.broker.broadcast({
       type: 'session.compacted',
       payload: { sessionId, status: 'compacted' },
     })
@@ -331,18 +289,15 @@ export class SessionPool {
   async getHistory(sessionId: string): Promise<Message[]> {
     const client = this.pm.getClient(sessionId)
     if (client) {
-      // Active session: get messages from running pi process
-      const result = await client.getHistory()
+      const result = await client.getHistory() as PiMessage
       const data = result.data as { messages?: PiHistoryMessage[] } | undefined
       const raw = data?.messages ?? (result.payload?.messages as PiHistoryMessage[] | undefined) ?? []
-      return this.convertPiHistory(raw)
+      return convertPiHistory(raw)
     }
 
-    // Inactive session: parse messages from session file
     return await this.getHistoryFromFile(sessionId)
   }
 
-  /** Parse messages from a persisted session file for an inactive session */
   private async getHistoryFromFile(sessionId: string): Promise<Message[]> {
     const target = this.findScannedSession(sessionId)
     if (!target) return []
@@ -358,86 +313,20 @@ export class SessionPool {
           piMessages.push(entry.message as PiHistoryMessage)
         }
       } catch {
-        // expected: malformed line, skip
         void 0
       }
     }
 
-    return this.convertPiHistory(piMessages)
-  }
-
-  /** Convert pi message list, merging toolResults into their parent assistant message */
-  private convertPiHistory(raw: PiHistoryMessage[]): Message[] {
-    const result: Message[] = []
-    let lastAssistantWithToolCalls = -1
-
-    for (const m of raw) {
-      if (m.role === 'toolResult') {
-        // Merge tool result into the last assistant message's matching toolCall
-        if (lastAssistantWithToolCalls >= 0) {
-          const lastAssistant = result[lastAssistantWithToolCalls]
-          if (lastAssistant?.toolCalls) {
-            const tc = lastAssistant.toolCalls.find(t => t.id === m.toolCallId)
-            if (tc) {
-              const textParts = (Array.isArray(m.content) ? m.content : [])
-                .filter((p: { type: string }) => p.type === 'text')
-                .map((p: { text?: string }) => p.text ?? '')
-                .join('\n')
-              tc.output = textParts
-              if (m.isError) tc.status = 'error'
-            }
-          }
-        }
-        continue
-      }
-
-      // user or assistant
-      const parts = Array.isArray(m.content) ? m.content : [{ type: 'text' as const, text: String(m.content) }]
-      let textContent = ''
-      const thinking: ThinkingBlock[] = []
-      const toolCalls: ToolCall[] = []
-
-      for (const part of parts) {
-        if (part.type === 'text') {
-          textContent += part.text ?? ''
-        } else if (part.type === 'thinking') {
-          thinking.push({
-            id: crypto.randomUUID(),
-            content: part.thinking ?? '',
-            collapsed: true,
-          })
-        } else if (part.type === 'toolCall') {
-          toolCalls.push({
-            id: part.id ?? crypto.randomUUID(),
-            toolName: part.name ?? '',
-            input: part.arguments ?? {},
-            status: 'completed',
-            startTime: m.timestamp ?? Date.now(),
-          })
-        }
-      }
-
-      const msg: Message = {
-        id: crypto.randomUUID(),
-        role: m.role === 'user' ? 'user' : 'assistant',
-        content: textContent,
-        status: 'complete',
-        ...(thinking.length > 0 && { thinking }),
-        ...(toolCalls.length > 0 && { toolCalls }),
-        timestamp: m.timestamp ?? Date.now(),
-      }
-      result.push(msg)
-      if (toolCalls.length > 0) {
-        lastAssistantWithToolCalls = result.length - 1
-      }
-    }
-
-    return result
+    return convertPiHistory(piMessages)
   }
 
   // ── Listing ────────────────────────────────────────────────────
 
-  listGrouped(): SessionGroup[] {
+  listPersistedSessions(): SessionGroup[] {
+    return this.listGrouped()
+  }
+
+  private listGrouped(): SessionGroup[] {
     const summaries = this.listAll()
     const groups = new Map<string, SessionSummary[]>()
     for (const s of summaries) {
@@ -448,11 +337,9 @@ export class SessionPool {
     return Array.from(groups.entries()).map(([cwd, sessions]) => ({ cwd, sessions }))
   }
 
-  listAll(): SessionSummary[] {
-    // 活跃 session
+  private listAll(): SessionSummary[] {
     const active = Array.from(this.sessions.values()).map(s => this.toSummary(s))
 
-    // 已持久化但未激活的 session（通过 filePath 去重）
     const activeFilePaths = new Set<string>()
     for (const s of this.sessions.values()) {
       if (s.sessionFilePath) activeFilePaths.add(s.sessionFilePath)
@@ -465,28 +352,23 @@ export class SessionPool {
     return [...active, ...persisted].sort((a, b) => b.lastActiveAt - a.lastActiveAt)
   }
 
-  /** 合并活跃 + 持久化 session 的分组列表 */
-  listPersistedSessions(): SessionGroup[] {
-    return this.listGrouped()
-  }
-
-  /** 从持久化文件恢复 session：启动 pi 进程并加载已有文件 */
+  /** 从持久化文件恢复 session */
   async restoreSession(sessionId: string): Promise<SessionSummary> {
     const target = this.findScannedSession(sessionId)
     if (!target) throw new Error(`Persisted session ${sessionId} not found`)
 
-    // Detach existing adapter if present (race: rapid sends to cold session)
     const existing = this.sessions.get(sessionId)
     if (existing) {
       existing.adapter.detach()
-      existing.unsubUsageListener?.()
+      if (existing.unsubUsageListener) existing.unsubUsageListener()
+      await this.pm.destroySession(sessionId).catch(() => {})
+      this.sessions.delete(sessionId)
     }
     const id = sessionId
     const client = await this.pm.createSession(id, target.cwd, { skillPaths: this.getSkillPaths(target.cwd) })
-    const adapter = new EventAdapter(id, (msg) => this.send(msg))
+    const adapter = this.adapterFactory(id)
     adapter.attach(client)
 
-    // 加载已有 session 文件
     await client.sendCommand('switch_session', { sessionPath: target.filePath })
 
     const unsubUsage = client.onEvent((event) => {
@@ -526,26 +408,6 @@ export class SessionPool {
     return session ? this.toSummary(session) : undefined
   }
 
-  // ── Tool approval (exposed for server routing) ─────────────────
-
-  async approveTool(sessionId: string, toolCallId: string): Promise<void> {
-    const client = this.pm.getClient(sessionId)
-    if (!client) throw new Error(`Session ${sessionId} not found`)
-    await client.approveTool(toolCallId)
-  }
-
-  async denyTool(sessionId: string, toolCallId: string): Promise<void> {
-    const client = this.pm.getClient(sessionId)
-    if (!client) throw new Error(`Session ${sessionId} not found`)
-    await client.denyTool(toolCallId)
-  }
-
-  async alwaysAllowTool(sessionId: string, toolName: string): Promise<void> {
-    const client = this.pm.getClient(sessionId)
-    if (!client) throw new Error(`Session ${sessionId} not found`)
-    await client.alwaysAllowTool(toolName)
-  }
-
   // ── Lifecycle ──────────────────────────────────────────────────
 
   async destroyAll(): Promise<void> {
@@ -559,10 +421,6 @@ export class SessionPool {
 
   // ── Internal ───────────────────────────────────────────────────
 
-  /** Collect enabled skill directory paths for passing to pi as --skill args */
-  /** 收集当前 enabled skill 的目录路径，传给 pi --skill 参数。
-   *  cwd 用于定位 .xyz-agent/skills.json（项目级配置），
-   *  restore 时用原始 session 的 cwd，确保读取原始项目的 skill 配置。 */
   private getSkillPaths(cwd: string): string[] {
     return loadSkills(cwd ?? process.cwd())
       .filter(s => s.enabled && s.sourcePath)
