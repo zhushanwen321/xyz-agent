@@ -81,6 +81,15 @@ export const useChatStore = defineStore('chat', () => {
 
   // ── Session 管理 ────────────────────────────────────────────
 
+  /**
+   * 获取指定 session 的状态分区。如果不存在则自动创建。
+   *
+   * 无条件创建是有意为之：
+   * - 组件 mount 时 ensureSession 依赖此行为确保 state 就绪
+   * - WS 事件可能先于 session 注册到达（延迟消息、重连后重放），
+   *   此时自动创建空 state 容纳事件，避免消息丢失
+   * - removeSession 用于显式清理不再需要的 session
+   */
   function getSessionState(sessionId: string): ChatSessionState {
     if (!chatSessions.has(sessionId)) {
       chatSessions.set(sessionId, createSessionState())

@@ -1,6 +1,7 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
+import { readFileSync, mkdirSync, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { atomicWrite } from './scanner-base.js'
 
 const CONFIG_DIR = join(homedir(), '.xyz-agent')
 const CONFIG_PATH = join(CONFIG_DIR, 'config.json')
@@ -84,7 +85,7 @@ const JSON_INDENT = 2
 export function saveConfig(config: AppConfig): void {
   try {
     if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true })
-    writeFileSync(CONFIG_PATH, JSON.stringify(config, null, JSON_INDENT))
+    atomicWrite(CONFIG_PATH, JSON.stringify(config, null, JSON_INDENT))
   // eslint-disable-next-line taste/no-silent-catch -- intentional: save failure is best-effort
   } catch (e) {
     console.error('[config] save error:', e)
