@@ -40,6 +40,7 @@ interface ManagedSession {
 
 export class SessionService implements ISessionService {
   private sessions = new Map<string, ManagedSession>()
+  private restoringSessions = new Set<string>()
 
   constructor(
     private pm: IProcessManager,
@@ -82,12 +83,12 @@ export class SessionService implements ISessionService {
       piSessionId = (stateData?.sessionId as string) ?? ''
       sessionFilePath = stateData?.sessionFile as string | undefined
     } catch (e) {
-      await this.pm.destroySession(tempId)
+      await this.pm.destroySession(tempId).catch(() => {})
       throw new Error(`Failed to get session state from pi: ${e instanceof Error ? e.message : e}`)
     }
 
     if (!piSessionId) {
-      await this.pm.destroySession(tempId)
+      await this.pm.destroySession(tempId).catch(() => {})
       throw new Error('pi did not return a session ID')
     }
 
@@ -176,6 +177,8 @@ export class SessionService implements ISessionService {
 
     if (!client) {
       console.log(`[session-service] sendMessage: session ${sessionId} not active, restoring...`)
+      if (this.restoringSessions.has(sessionId)) return
+      this.restoringSessions.add(sessionId)
       try {
         await this.restoreSession(sessionId)
         client = this.pm.getClient(sessionId)
@@ -185,6 +188,8 @@ export class SessionService implements ISessionService {
         console.error(`[session-service] ${errMsg}`)
         this.broker.broadcast({ type: 'message.error', payload: { sessionId, message: errMsg } })
         return
+      } finally {
+        this.restoringSessions.delete(sessionId)
       }
     }
 
@@ -355,7 +360,9 @@ export class SessionService implements ISessionService {
     const existing = this.sessions.get(sessionId)
     if (existing) {
       existing.adapter.detach()
-      existing.unsubUsageListener?.()
+      if (existing.unsubUsageListener) existing.unsubUsageListener()
+      await this.pm.destroySession(sessionId).catch(() => {})
+      this.sessions.delete(sessionId)
     }
     const id = sessionId
     const client = await this.pm.createSession(id, target.cwd, { skillPaths: this.getSkillPaths(target.cwd) })

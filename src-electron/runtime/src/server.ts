@@ -105,16 +105,24 @@ export class SidecarServer implements IMessageBroker {
   }
 
   private sendInitialState(ws: WsType): void {
-    const groups = this.sessionService.listPersistedSessions()
-    this.send(ws, { type: 'session.list', id: this.nextPushId(), payload: { groups } })
-    const providers = this.configService.listProviders()
-    this.send(ws, { type: 'config.providers', id: this.nextPushId(), payload: { providers } })
-    const models = this.modelService.aggregateModels(providers)
-    this.send(ws, { type: 'model.list', id: this.nextPushId(), payload: { models } })
-    const skills = this.configService.loadSkills(this.projectRoot)
-    this.send(ws, { type: 'config.skills', id: this.nextPushId(), payload: { skills } })
-    const agents = this.configService.loadAgents(this.projectRoot)
-    this.send(ws, { type: 'config.agents', id: this.nextPushId(), payload: { agents } })
+    try {
+      const groups = this.sessionService.listPersistedSessions()
+      this.send(ws, { type: 'session.list', id: this.nextPushId(), payload: { groups } })
+    } catch (e) { console.error('[runtime] sendInitialState: session.list failed:', e) }
+    try {
+      const providers = this.configService.listProviders()
+      this.send(ws, { type: 'config.providers', id: this.nextPushId(), payload: { providers } })
+      const models = this.modelService.aggregateModels(providers)
+      this.send(ws, { type: 'model.list', id: this.nextPushId(), payload: { models } })
+    } catch (e) { console.error('[runtime] sendInitialState: config.providers/model.list failed:', e) }
+    try {
+      const skills = this.configService.loadSkills(this.projectRoot)
+      this.send(ws, { type: 'config.skills', id: this.nextPushId(), payload: { skills } })
+    } catch (e) { console.error('[runtime] sendInitialState: config.skills failed:', e) }
+    try {
+      const agents = this.configService.loadAgents(this.projectRoot)
+      this.send(ws, { type: 'config.agents', id: this.nextPushId(), payload: { agents } })
+    } catch (e) { console.error('[runtime] sendInitialState: config.agents failed:', e) }
   }
 
   // ── Message routing ───────────────────────────────────────────
@@ -150,7 +158,17 @@ export class SidecarServer implements IMessageBroker {
               console.error('[runtime] failed to load history for switch:', e)
               this.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: switchId, session: summary, messages: [] } })
             }
-          } else { this.sendError(ws, 'not_found', `Session ${switchId} not found`, msg.id, switchId) }
+          } else {
+            // Auto-restore inactive session
+            try {
+              const restored = await this.sessionService.restoreSession(switchId)
+              const messages = await this.sessionService.getHistory(switchId)
+              this.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: switchId, session: restored, messages } })
+            } catch (e) {
+              console.error('[runtime] session.switch auto-restore failed:', e)
+              this.sendError(ws, 'not_found', `Session ${switchId} not found or restore failed`, msg.id, switchId)
+            }
+          }
           return
         }
         case 'session.history': {
@@ -158,7 +176,7 @@ export class SidecarServer implements IMessageBroker {
           const messages = await this.sessionService.getHistory(histId)
           return this.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: histId, messages } })
         }
-        case 'session.compact': return this.handleSessionCompact(msg)
+        case 'session.compact': return this.handleSessionCompact(msg, ws)
         case 'session.clear': {
           const clearId = msg.payload.sessionId as string
           await this.sessionService.clear(clearId)
@@ -194,7 +212,7 @@ export class SidecarServer implements IMessageBroker {
         case 'message.abort':
           return await this.sessionService.abort(msg.payload.sessionId as string)
         default:
-          if (!this.handleSettingsMessage(msg, ws)) {
+          if (!await this.handleSettingsMessage(msg, ws)) {
             const unknownSid = (msg as { payload?: { sessionId?: string } }).payload?.sessionId
             this.sendError(ws, 'unknown_type', `Unknown message type: ${(msg as { type: string }).type}`, msg.id, unknownSid)
           }
@@ -206,7 +224,7 @@ export class SidecarServer implements IMessageBroker {
     }
   }
 
-  private handleSessionCompact(msg: ClientMessage): void {
+  private handleSessionCompact(msg: ClientMessage, ws: WsType): void {
     const compactId = msg.payload.sessionId as string
     const startTime = Date.now()
     console.log('[server] session.compact: sessionId=' + compactId)
@@ -220,7 +238,10 @@ export class SidecarServer implements IMessageBroker {
       this.sessionService.restoreSession(compactId).then(() => {
         console.log('[server] session.compact: auto-restored, sessionId=' + compactId)
         runCompact()
-      }).catch(() => { /* restoreSession error already handled by service */ })
+      }).catch((e) => {
+        console.error('[server] session.compact: auto-restore failed, sessionId=' + compactId)
+        this.sendError(ws, 'session.compact_failed', 'Failed to restore session for compact: ' + (e instanceof Error ? e.message : String(e)), msg.id, compactId)
+      })
     } else { runCompact() }
   }
 
@@ -359,6 +380,10 @@ export class SidecarServer implements IMessageBroker {
 
   async stop(): Promise<void> {
     await this.sessionService.destroyAll()
+    for (const timer of this.heartbeatTimers.values()) {
+      clearInterval(timer)
+    }
+    this.heartbeatTimers.clear()
     this.wss.close()
     return new Promise((resolve) => { this.httpServer.close(() => resolve()) })
   }
