@@ -3,7 +3,7 @@ import { useSessionStore } from '../stores/session'
 import { send } from '../lib/ws-client'
 import { on, off } from '../lib/event-bus'
 import { onMounted, onUnmounted, type Ref, unref, getCurrentInstance } from 'vue'
-import type { ServerMessage, ToolCall } from '@xyz-agent/shared'
+import type { ServerMessage, ToolCall, ContentBlock } from '@xyz-agent/shared'
 import { createSystemNotification } from '../lib/system-notification'
 
 const RADIX_36 = 36
@@ -46,6 +46,13 @@ function createGlobalHandlers() {
     const sid = getSid(msg)
     if (!sid) return
     ensureStreamingMessage(sid)
+    // 第一次收到 text 时注册 text contentBlock
+    const session = store.getSessionState(sid)
+    if (session.streamingMessage && !(session.streamingMessage.contentBlocks ?? []).some(b => b.type === 'text')) {
+      const blocks: ContentBlock[] = [...(session.streamingMessage.contentBlocks ?? [])]
+      blocks.push({ type: 'text', refId: 'text' })
+      session.streamingMessage = { ...session.streamingMessage, contentBlocks: blocks }
+    }
     store.appendToStreaming(msg.payload.delta as string, sid)
   }
 
@@ -53,16 +60,20 @@ function createGlobalHandlers() {
     const sid = getSid(msg)
     if (!sid) return
     ensureStreamingMessage(sid)
-    // 初始化一个空的 thinking block，后续 thinking_delta 会追加内容
     const streaming = store.getSessionState(sid).streamingMessage
     if (streaming) {
       const existing = streaming.thinking ?? []
       // 只在没有活跃的（未折叠的）thinking block 时才创建新的
       const last = existing[existing.length - 1]
       if (!last || last.collapsed) {
+        const blockId = `thk-${Date.now()}`
+        const blocks: ContentBlock[] = [...(streaming.contentBlocks ?? [])]
+        // 如果已有 text block，insert 在 text 之前（thinking 总在 text 前面）
+        blocks.push({ type: 'thinking', refId: blockId })
         store.setStreaming({
           ...streaming,
-          thinking: [...existing, { id: `thk-${Date.now()}`, content: '', collapsed: false }],
+          thinking: [...existing, { id: blockId, content: '', collapsed: false }],
+          contentBlocks: blocks,
         }, sid)
       }
     }
@@ -114,7 +125,9 @@ function createGlobalHandlers() {
         startTime: Date.now(),
       }
       const calls = [...(streaming.toolCalls ?? []), tc]
-      store.setStreaming({ ...streaming, toolCalls: calls }, sid)
+      const blocks: ContentBlock[] = [...(streaming.contentBlocks ?? [])]
+      blocks.push({ type: 'toolCall', refId: tc.id })
+      store.setStreaming({ ...streaming, toolCalls: calls, contentBlocks: blocks }, sid)
     }
   }
 

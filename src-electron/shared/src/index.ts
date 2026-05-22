@@ -4,7 +4,7 @@ export type {
 } from './protocol'
 export type {
   MessageRole, MessageStatus, ToolCallStatus,
-  ToolCall, ThinkingBlock, Usage, Message,
+  ToolCall, ThinkingBlock, ContentBlockType, ContentBlock, Usage, Message,
 } from './message'
 export type {
   SessionStatus, SessionSummary, SessionGroup,
