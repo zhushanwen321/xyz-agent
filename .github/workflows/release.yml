@@ -85,6 +85,7 @@ jobs:
         shell: bash
         env:
           PI_VERSION: '0.75.4'
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           chmod +x scripts/prepare-pi-resources.sh
           ./scripts/prepare-pi-resources.sh "$PI_VERSION"
