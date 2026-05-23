@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Code Block Comparison — Syntax Highlight & Radius</title>
+<style>
+  :root {
+    --font-body: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+    --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { -webkit-font-smoothing: antialiased; }
+  body {
+    font-family: var(--font-body); font-size: 14px; line-height: 1.6;
+    display: flex; height: 100vh; overflow: hidden; margin: 0;
+    background: #111;
+  }
+
+  .demo-col {
+    flex: 1; display: flex; flex-direction: column; min-width: 0;
+    position: relative; padding: 60px 24px 24px;
+  }
+  .demo-col + .demo-col { border-left: 2px dashed #333; }
+  .demo-label {
+    position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    padding: 5px 16px; border-radius: 100px;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.03em; z-index: 100;
+    font-family: var(--font-mono); white-space: nowrap;
+  }
+
+  /* Dark neutral base for all three */
+  .demo-col {
+    --bg: oklch(12% 0 0);
+    --surface: oklch(20% 0 0);
+    --elevated: oklch(28% 0 0);
+    --fg: oklch(95% 0 0);
+    --muted: oklch(58% 0 0);
+    --border: oklch(35% 0 0);
+    --accent: oklch(72% 0 0);
+    background: var(--bg); color: var(--fg);
+  }
+
+  .col-a .demo-label { background: #3a3028; color: #c4a882; }
+  .col-b .demo-label { background: #2a3a3a; color: #a0d0c0; }
+  .col-c .demo-label { background: #2a2a3a; color: #a0b0d0; }
+
+  .chat-msgs {
+    flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 12px;
+    max-width: 700px; margin: 0 auto; width: 100%;
+  }
+
+  .msg { padding: 10px 14px; line-height: 1.6; font-size: 13px; background: var(--surface); }
+  .msg--bot { border: 1px solid var(--border); }
+
+  /* ── Column A: No highlight, large radius ── */
+  .col-a .code-block {
+    border-radius: 8px; overflow: hidden; border: 1px solid var(--border);
+    margin: 6px 0; background: var(--elevated);
+  }
+  .col-a .code-block__hd {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 5px 10px; font-size: 10px; font-family: var(--font-mono);
+    color: var(--muted); border-bottom: 1px solid var(--border); background: var(--surface);
+  }
+  .col-a .code-block__bd {
+    padding: 8px 12px; font-family: var(--font-mono); font-size: 11px; line-height: 1.6;
+    color: var(--fg);
+  }
+
+  /* ── Column B: Basic syntax highlight, small radius ── */
+  .col-b .code-block {
+    border-radius: 4px; overflow: hidden; border: 1px solid var(--border);
+    margin: 6px 0; background: var(--elevated);
+  }
+  .col-b .code-block__hd {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 5px 10px; font-size: 10px; font-family: var(--font-mono);
+    color: var(--muted); border-bottom: 1px solid var(--border); background: var(--surface);
+  }
+  .col-b .code-block__bd {
+    padding: 8px 12px; font-family: var(--font-mono); font-size: 11px; line-height: 1.6;
+    color: var(--fg);
+  }
+  /* Token colors — basic */
+  .col-b .tok-kw { color: #c792ea; }      /* keyword */
+  .col-b .tok-type { color: #82aaff; }    /* type */
+  .col-b .tok-str { color: #c3e88d; }     /* string */
+  .col-b .tok-func { color: #82aaff; }    /* function */
+  .col-b .tok-num { color: #f78c6c; }     /* number */
+  .col-b .tok-cmt { color: #676e95; }     /* comment */
+  .col-b .tok-punc { color: #89ddff; }    /* punctuation */
+
+  /* ── Column C: Full syntax highlight, zero radius (VS Code style) ── */
+  .col-c .code-block {
+    border-radius: 0; overflow: hidden; border: 1px solid var(--border);
+    margin: 6px 0; background: var(--elevated);
+  }
+  .col-c .code-block__hd {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 5px 10px; font-size: 10px; font-family: var(--font-mono);
+    color: var(--muted); border-bottom: 1px solid var(--border); background: var(--surface);
+  }
+  .col-c .code-block__bd {
+    padding: 8px 12px; font-family: var(--font-mono); font-size: 11px; line-height: 1.6;
+    color: #d4d4d4;
+  }
+  /* VS Code Dark+ token colors */
+  .col-c .tok-kw { color: #569cd6; }
+  .col-c .tok-type { color: #4ec9b0; }
+  .col-c .tok-str { color: #ce9178; }
+  .col-c .tok-func { color: #dcdcaa; }
+  .col-c .tok-num { color: #b5cea8; }
+  .col-c .tok-cmt { color: #6a9955; }
+  .col-c .tok-punc { color: #d4d4d4; }
+  .col-c .tok-prop { color: #9cdcfe; }
+
+  .caption {
+    font-size: 10px; color: var(--muted); margin-top: 8px;
+    font-family: var(--font-mono); text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<!-- ════════════════════════════════════════════════════════════════
+     COLUMN A: No syntax highlight, 8px radius
+     ════════════════════════════════════════════════════════════════ -->
+<div class="demo-col col-a">
+  <div class="demo-label">No Highlight + 8px radius</div>
+  <div class="chat-msgs">
+    <div class="msg msg--bot">
+      <p style="margin-bottom:8px">我来重构认证模块：</p>
+      <div class="code-block">
+        <div class="code-block__hd"><span>typescript</span><span>src/auth/interfaces.ts</span></div>
+        <div class="code-block__bd">
+export interface IAuthResponse {<br>
+&nbsp;&nbsp;token: string;<br>
+&nbsp;&nbsp;expiresAt: Date;<br>
+&nbsp;&nbsp;user: IUser;<br>
+}<br><br>
+export class AuthService {<br>
+&nbsp;&nbsp;async login(credentials: ICredentials): Promise&lt;IAuthResponse&gt; {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;// validate input<br>
+&nbsp;&nbsp;&nbsp;&nbsp;const user = await this.validateUser(credentials);<br>
+&nbsp;&nbsp;&nbsp;&nbsp;return this.createToken(user);<br>
+&nbsp;&nbsp;}<br>
+}
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="caption">Current style: all white text, soft 8px radius</div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════
+     COLUMN B: Basic syntax highlight, 4px radius
+     ════════════════════════════════════════════════════════════════ -->
+<div class="demo-col col-b">
+  <div class="demo-label">Basic Highlight + 4px radius</div>
+  <div class="chat-msgs">
+    <div class="msg msg--bot">
+      <p style="margin-bottom:8px">我来重构认证模块：</p>
+      <div class="code-block">
+        <div class="code-block__hd"><span>typescript</span><span>src/auth/interfaces.ts</span></div>
+        <div class="code-block__bd">
+<span class="tok-kw">export</span> <span class="tok-kw">interface</span> <span class="tok-type">IAuthResponse</span> <span class="tok-punc">{</span><br>
+&nbsp;&nbsp;<span class="tok-prop">token</span><span class="tok-punc">:</span> <span class="tok-type">string</span><span class="tok-punc">;</span><br>
+&nbsp;&nbsp;<span class="tok-prop">expiresAt</span><span class="tok-punc">:</span> <span class="tok-type">Date</span><span class="tok-punc">;</span><br>
+&nbsp;&nbsp;<span class="tok-prop">user</span><span class="tok-punc">:</span> <span class="tok-type">IUser</span><span class="tok-punc">;</span><br>
+<span class="tok-punc">}</span><br><br>
+<span class="tok-kw">export</span> <span class="tok-kw">class</span> <span class="tok-type">AuthService</span> <span class="tok-punc">{</span><br>
+&nbsp;&nbsp;<span class="tok-kw">async</span> <span class="tok-func">login</span><span class="tok-punc">(</span><span class="tok-prop">credentials</span><span class="tok-punc">:</span> <span class="tok-type">ICredentials</span><span class="tok-punc">):</span> <span class="tok-type">Promise</span><span class="tok-punc">&lt;</span><span class="tok-type">IAuthResponse</span><span class="tok-punc">&gt; {</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="tok-cmt">// validate input</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="tok-kw">const</span> <span class="tok-prop">user</span> <span class="tok-punc">=</span> <span class="tok-kw">await</span> <span class="tok-kw">this</span><span class="tok-punc">.</span><span class="tok-func">validateUser</span><span class="tok-punc">(</span><span class="tok-prop">credentials</span><span class="tok-punc">);</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="tok-kw">return</span> <span class="tok-kw">this</span><span class="tok-punc">.</span><span class="tok-func">createToken</span><span class="tok-punc">(</span><span class="tok-prop">user</span><span class="tok-punc">);</span><br>
+&nbsp;&nbsp;<span class="tok-punc">}</span><br>
+<span class="tok-punc">}</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="caption">Material Oceanic: 4px radius, basic 4-color highlight</div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════
+     COLUMN C: Full syntax highlight, 0px radius (VS Code style)
+     ════════════════════════════════════════════════════════════════ -->
+<div class="demo-col col-c">
+  <div class="demo-label">Full Highlight + 0px radius</div>
+  <div class="chat-msgs">
+    <div class="msg msg--bot">
+      <p style="margin-bottom:8px">我来重构认证模块：</p>
+      <div class="code-block">
+        <div class="code-block__hd"><span>typescript</span><span>src/auth/interfaces.ts</span></div>
+        <div class="code-block__bd">
+<span class="tok-kw">export</span> <span class="tok-kw">interface</span> <span class="tok-type">IAuthResponse</span> <span class="tok-punc">{</span><br>
+&nbsp;&nbsp;<span class="tok-prop">token</span><span class="tok-punc">:</span> <span class="tok-type">string</span><span class="tok-punc">;</span><br>
+&nbsp;&nbsp;<span class="tok-prop">expiresAt</span><span class="tok-punc">:</span> <span class="tok-type">Date</span><span class="tok-punc">;</span><br>
+&nbsp;&nbsp;<span class="tok-prop">user</span><span class="tok-punc">:</span> <span class="tok-type">IUser</span><span class="tok-punc">;</span><br>
+<span class="tok-punc">}</span><br><br>
+<span class="tok-kw">export</span> <span class="tok-kw">class</span> <span class="tok-type">AuthService</span> <span class="tok-punc">{</span><br>
+&nbsp;&nbsp;<span class="tok-kw">async</span> <span class="tok-func">login</span><span class="tok-punc">(</span><span class="tok-prop">credentials</span><span class="tok-punc">:</span> <span class="tok-type">ICredentials</span><span class="tok-punc">):</span> <span class="tok-type">Promise</span><span class="tok-punc">&lt;</span><span class="tok-type">IAuthResponse</span><span class="tok-punc">&gt; {</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="tok-cmt">// validate input</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="tok-kw">const</span> <span class="tok-prop">user</span> <span class="tok-punc">=</span> <span class="tok-kw">await</span> <span class="tok-kw">this</span><span class="tok-punc">.</span><span class="tok-func">validateUser</span><span class="tok-punc">(</span><span class="tok-prop">credentials</span><span class="tok-punc">);</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="tok-kw">return</span> <span class="tok-kw">this</span><span class="tok-punc">.</span><span class="tok-func">createToken</span><span class="tok-punc">(</span><span class="tok-prop">user</span><span class="tok-punc">);</span><br>
+&nbsp;&nbsp;<span class="tok-punc">}</span><br>
+<span class="tok-punc">}</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="caption">VS Code Dark+: 0px radius, full 7-color highlight</div>
+</div>
+
+</body>
+</html>

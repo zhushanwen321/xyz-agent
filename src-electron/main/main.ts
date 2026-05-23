@@ -39,6 +39,7 @@ function createWindow(options?: { windowId?: string; sessionId?: string }): Brow
     minHeight: 600,
     show: false,
     title: 'xyz-agent',
+    titleBarStyle: 'hiddenInset',
     webPreferences: {
       preload: path.join(app.getAppPath(), 'dist/preload/preload.cjs'),
       contextIsolation: true,

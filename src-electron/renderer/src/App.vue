@@ -1,44 +1,44 @@
 <template>
-  <div class="flex flex-col h-screen overflow-hidden">
-    <AppHeader @toggle-sidebar="toggleSidebar" />
-    <div class="flex flex-1 overflow-hidden relative">
-      <AppSidebar :visible="sidebarVisible" @create="createSession" @close="sidebarVisible = false" />
-      <main class="flex-1 flex min-w-0 overflow-hidden relative">
-        <SettingsView v-if="settingsStore.currentView === 'settings'" />
-        <PanelTreeRenderer v-else
-          :node="panelStore.tree"
-          :focused-panel-id="panelStore.focusedPanelId"
-        />
-        <!-- Drawers -->
-        <DrawerOverlay :visible="settingsStore.inspectorOpen" @close="settingsStore.closeInspector()" />
-        <InspectorRight
-          v-if="settingsStore.inspectorSide === 'right'"
-          :open="settingsStore.inspectorOpen"
-          :tree-nodes="[]"
-          :done-items="[]"
-          :alert-items="[]"
-          active-node-id=""
-          @close="settingsStore.closeInspector()"
-        />
-        <InspectorLeft
-          v-if="panelStore.panelCount > 1 && settingsStore.inspectorSide === 'left'"
-          :open="settingsStore.inspectorOpen"
-          :tree-nodes="[]"
-          :done-items="[]"
-          :alert-items="[]"
-          active-node-id=""
-          @close="settingsStore.closeInspector()"
-        />
-      </main>
-    </div>
-    <AppStatusbar />
+  <div class="app-container">
+    <!-- Sidebar: unified with controls -->
+    <AppSidebar
+      @create="createSession"
+      @toggle-panel-grid="settingsStore.togglePanelGrid()"
+      @toggle-settings="settingsStore.setView(settingsStore.currentView === 'settings' ? 'chat' : 'settings')"
+    />
+    <!-- Content area -->
+    <main class="content-area">
+      <SettingsView v-if="settingsStore.currentView === 'settings'" />
+      <PanelTreeRenderer v-else
+        :node="panelStore.tree"
+        :focused-panel-id="panelStore.focusedPanelId"
+      />
+      <!-- Drawers -->
+      <DrawerOverlay :visible="settingsStore.inspectorOpen" @close="settingsStore.closeInspector()" />
+      <InspectorRight
+        v-if="settingsStore.inspectorSide === 'right'"
+        :open="settingsStore.inspectorOpen"
+        :tree-nodes="[]"
+        :done-items="[]"
+        :alert-items="[]"
+        active-node-id=""
+        @close="settingsStore.closeInspector()"
+      />
+      <InspectorLeft
+        v-if="panelStore.panelCount > 1 && settingsStore.inspectorSide === 'left'"
+        :open="settingsStore.inspectorOpen"
+        :tree-nodes="[]"
+        :done-items="[]"
+        :alert-items="[]"
+        active-node-id=""
+        @close="settingsStore.closeInspector()"
+      />
+    </main>
     <!-- PanelGrid -->
     <PanelGrid
       :visible="settingsStore.panelGridVisible"
       @close="settingsStore.panelGridVisible = false"
     />
-    <!-- Sidebar backdrop -->
-    <div v-if="sidebarVisible" class="sidebar-backdrop" @click="sidebarVisible = false" />
     <!-- Custom Toast -->
     <ToastContainer :toasts="toasts" @dismiss="dismissToast" />
   </div>
@@ -57,8 +57,6 @@ import type { ServerMessage } from '@xyz-agent/shared'
 import { useProvider } from './composables/useProvider'
 import { useSession } from './composables/useSession'
 import type { ToastItem } from './components/toast/ToastContainer.vue'
-import AppHeader from './components/layout/AppHeader.vue'
-import AppStatusbar from './components/layout/AppStatusbar.vue'
 import AppSidebar from './components/layout/AppSidebar.vue'
 import SettingsView from './components/layout/SettingsView.vue'
 import PanelTreeRenderer from './components/panel/PanelTreeRenderer.vue'
@@ -67,10 +65,8 @@ import InspectorRight from './components/side-inspector/InspectorRight.vue'
 import InspectorLeft from './components/side-inspector/InspectorLeft.vue'
 import PanelGrid from './components/panel-grid/PanelGrid.vue'
 import ToastContainer from './components/toast/ToastContainer.vue'
-// Data comes from WS events via composables/stores — no mock imports
 
 const { init: initConnection, teardown: teardownConnection } = useConnection()
-// useProvider listens for WS config.provider* / model.* events
 useProvider()
 const { loadSessions, createSession: doCreateSession, switchSession } = useSession()
 
@@ -83,13 +79,9 @@ const toasts = ref<ToastItem[]>([])
 const TOAST_DURATION_MS = 4_000
 const TOAST_LONG_DURATION_MS = 8_000
 const WS_DISCONNECT_WARN_DELAY_MS = 10_000
-const sidebarVisible = ref(false)
-
-// ── P1 #6: 全局错误处理 — 没有 sessionId 的 error 显示为全局 toast ──
 
 const globalErrorUnregister = onEventBus('error', (msg: ServerMessage) => {
   const payload = msg.payload as { message?: string; code?: string; sessionId?: string }
-  // 没有 sessionId 的错误属于全局错误（如 runtime 崩溃、配置错误等）
   if (!payload.sessionId && payload.message) {
     const id = crypto.randomUUID()
     toasts.value.push({
@@ -102,7 +94,6 @@ const globalErrorUnregister = onEventBus('error', (msg: ServerMessage) => {
   }
 })
 
-// ── P1 #7: WS 断连提示 — 10 秒内未重连则显示 toast ──
 let wsDisconnectTimer: ReturnType<typeof setTimeout> | null = null
 const wsState = getWsState()
 const wsStateUnwatch = watch(wsState, (newState) => {
@@ -127,19 +118,9 @@ const wsStateUnwatch = watch(wsState, (newState) => {
   }
 })
 
-// 创建 session 后自动跳转：监听 session 数量变化
 let isCreatingFromSidebar = false
 let prevSessionCount = 0
 
-function toggleSidebar() {
-  sidebarVisible.value = !sidebarVisible.value
-  // 与通知 Drawer 互斥：sidebar 打开时关闭通知 drawer
-  if (sidebarVisible.value) {
-    settingsStore.closeInspector()
-  }
-}
-
-// Global keyboard shortcut handler (Vue-level, for keys not registered in Electron)
 function handleKeydown(e: KeyboardEvent) {
   const mod = e.metaKey || e.ctrlKey
   if (!mod) return
@@ -147,10 +128,6 @@ function handleKeydown(e: KeyboardEvent) {
     case 'w':
       e.preventDefault()
       panelStore.unbindSession(panelStore.focusedPanelId)
-      break
-    case 'b':
-      e.preventDefault()
-      toggleSidebar()
       break
     case 'd':
       e.preventDefault()
@@ -170,9 +147,8 @@ function handleKeydown(e: KeyboardEvent) {
 }
 
 async function createSession() {
-  // Open directory picker dialog
   if (!window.electronAPI?.pickDirectory) {
-    console.warn('[createSession] pickDirectory API not available — rebuild preload with: cd src-electron && npm run build:preload')
+    console.warn('[createSession] pickDirectory API not available')
     return
   }
   const result = await window.electronAPI.pickDirectory({ title: '选择项目目录' })
@@ -184,9 +160,6 @@ async function createSession() {
   doCreateSession(result.path, label)
 }
 
-// 全局 error 事件 fallback：处理无 sessionId 的错误
-// 分工约定：PanelSessionView 只处理有 sessionId 的 error（路由到对应 chat store），
-// App.vue 只处理无 sessionId 的 error（全局 toast 提示）。
 function handleGlobalError(msg: ServerMessage) {
   if (!msg.payload.sessionId) {
     const id = crypto.randomUUID()
@@ -204,14 +177,11 @@ function dismissToast(id: string) {
   toasts.value = toasts.value.filter(t => t.id !== id)
 }
 
-
-// IPC listener cleanup functions — filled during onMounted
 const ipcCleanupFns: Array<() => void> = []
 
 onMounted(async () => {
   await initConnection()
 
-  // Wait for WebSocket connection before loading sessions
   const wsState = getWsState()
   if (wsState.value === 'connected') {
     loadSessions()
@@ -224,10 +194,8 @@ onMounted(async () => {
     })
   }
 
-  // 恢复主题和 palette 到 DOM
   settingsStore.applyTheme()
 
-  // ── 创建 session 后自动跳转到新 session ──
   watch(
     () => sessionStore.sessions.length,
     (newLen) => {
@@ -242,8 +210,6 @@ onMounted(async () => {
     },
   )
 
-  // ── 多窗口初始化 ────────────────────────────────────────────────
-  // 从 URL query 读取 windowId 和 sessionId（由 main.ts createWindow 传入）
   const params = new URLSearchParams(window.location.search)
   const queryWindowId = params.get('windowId')
   const querySessionId = params.get('sessionId')
@@ -255,7 +221,6 @@ onMounted(async () => {
     panelStore.bindSession(panelStore.focusedPanelId, querySessionId)
   }
 
-  // ── Sync pane state to main process on changes ──
   watch(
     () => [panelStore.tree, panelStore.focusedPanelId] as const,
     ([tree, focusedPanelId]) => {
@@ -264,14 +229,12 @@ onMounted(async () => {
     { deep: true },
   )
 
-  // ── Listen for window list changes to keep overview fresh ──
   if (window.electronAPI?.onWindowListUpdated) {
     ipcCleanupFns.push(window.electronAPI.onWindowListUpdated(() => {
       windowStore.refreshFromIPC()
     }))
   }
 
-  // ── Electron IPC: 监听快捷键事件
   if (window.electronAPI) {
     ipcCleanupFns.push(window.electronAPI.onShortcut((type) => {
       switch (type) {
@@ -293,10 +256,8 @@ onMounted(async () => {
     }))
   }
 
-  // Global keyboard listener for keys not registered in Electron
   document.addEventListener('keydown', handleKeydown)
 
-  // ── Runtime 启动错误反馈 ──
   if (window.electronAPI?.onRuntimeError) {
     ipcCleanupFns.push(window.electronAPI.onRuntimeError((error) => {
       const id = crypto.randomUUID()
@@ -310,7 +271,6 @@ onMounted(async () => {
     }))
   }
 
-  // ── WS 断连反馈（断连 10 秒后仍连接不上才提示） ──
   let disconnectToastId: string | null = null
   let disconnectTimer: ReturnType<typeof setTimeout> | null = null
   const wsWatchState = getWsState()
@@ -342,7 +302,6 @@ onMounted(async () => {
     }
   })
 
-  // ── 全局 error 事件 fallback（处理无 sessionId 的错误） ──
   onEventBus('error', handleGlobalError)
 })
 
@@ -359,10 +318,18 @@ onUnmounted(() => {
 </script>
 
 <style>
-.sidebar-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 55;
-  background: rgba(0, 0, 0, 0.3);
+.app-container {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  height: 100vh;
+  overflow: hidden;
+}
+.content-area {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  position: relative;
+  background: var(--bg);
 }
 </style>

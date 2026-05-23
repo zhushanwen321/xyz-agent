@@ -4,7 +4,7 @@ import type { ThemeMode, ThemePreset } from '@xyz-agent/shared'
 
 export const useSettingsStore = defineStore('settings', () => {
   const theme = ref<ThemeMode>('light')
-  const themePreset = ref<ThemePreset>('warm-teal')
+  const themePreset = ref<ThemePreset>('neutral')
   const locale = ref<string>('zh-CN')
   const defaultModel = ref('')
   const currentView = ref<'chat' | 'settings'>('chat')

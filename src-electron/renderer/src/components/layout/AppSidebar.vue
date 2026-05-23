@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useSessionStore } from '../../stores/session'
 import { usePanelStore } from '../../stores/panel'
 import { useSession } from '../../composables/useSession'
+import { useSettingsStore } from '../../stores/settings'
 import { send } from '../../lib/ws-client'
 import { SessionItem } from '../sidebar'
 import { useI18n } from 'vue-i18n'
@@ -10,12 +11,13 @@ import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 const sessionStore = useSessionStore()
 const panelStore = usePanelStore()
+const settingsStore = useSettingsStore()
 const { switchSession, deleteSession } = useSession()
 
-const props = defineProps<{ visible: boolean }>()
-const emit = defineEmits<{
+defineEmits<{
   create: []
-  close: []
+  'toggle-panel-grid': []
+  'toggle-settings': []
 }>()
 
 const renamingSessionId = ref<string | null>(null)
@@ -49,31 +51,42 @@ function onCancelRename() {
 function handleSessionClick(sessionId: string) {
   switchSession(sessionId)
   panelStore.openSessionSmart(sessionId)
-  emit('close')
 }
+
+const isSettingsActive = computed(() => settingsStore.currentView === 'settings')
 </script>
 
 <template>
-  <aside :class="['fixed top-0 left-0 bottom-0 w-[280px] z-[60] bg-surface border-r border-border -translate-x-full transition-transform duration-200 ease-out flex flex-col', { 'translate-x-0': props.visible }]">
-    <div class="flex items-center justify-between px-[14px] py-[10px] border-b border-solid border-border">
-      <span class="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">{{ t('sidebar.sessions') }}</span>
-      <div class="flex items-center gap-1">
-        <!-- eslint-disable-next-line taste/no-native-html-elements -->
-        <button class="w-[22px] h-[22px] rounded-xs border border-solid border-border bg-transparent text-muted text-[13px] cursor-pointer flex items-center justify-center transition-all duration-200 ease-ease hover:bg-accent-light hover:text-accent hover:border-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2" @click="$emit('create')" :title="t('sidebar.newSession')">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" style="width:14px;height:14px"><path d="M8 3v10M3 8h10"/></svg>
-        </button>
-        <!-- eslint-disable-next-line taste/no-native-html-elements -->
-        <button class="w-[22px] h-[22px] rounded-xs border border-solid border-border bg-transparent text-muted text-[13px] cursor-pointer flex items-center justify-center transition-all duration-200 ease-ease hover:bg-accent-light hover:text-accent hover:border-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2" @click="$emit('close')" title="Close">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:14px;height:14px"><path d="M4 4l8 8M12 4l-8 8"/></svg>
-        </button>
-      </div>
+  <aside class="sidebar">
+    <!-- Top: Controls -->
+    <div class="sidebar__top">
+      <button class="ctrl-btn" :title="t('header.overview') + ' (Cmd+J)'" @click="$emit('toggle-panel-grid')">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <rect x="1" y="1" width="6" height="6" rx="1"/>
+          <rect x="9" y="1" width="6" height="6" rx="1"/>
+          <rect x="1" y="9" width="6" height="6" rx="1"/>
+          <rect x="9" y="9" width="6" height="6" rx="1"/>
+        </svg>
+      </button>
+      <button class="ctrl-btn" :class="{ active: isSettingsActive }" :title="t('header.settings') + ' (Cmd+,)'" @click="$emit('toggle-settings')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 008.58 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 8.58a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+        </svg>
+      </button>
+      <!-- eslint-disable-next-line taste/no-native-html-elements -->
+      <button class="sidebar__new" @click="$emit('create')">+ New</button>
     </div>
 
-    <div class="flex-1 overflow-y-auto py-[6px]">
+    <!-- Brand -->
+    <div class="sidebar__brand">xyz<span>-agent</span></div>
+
+    <!-- Session list -->
+    <div class="sidebar__body">
       <template v-if="sessionStore.groupedSessions.length > 0">
         <div v-for="group in sessionStore.groupedSessions" :key="group.cwd" class="s-group">
-          <div class="flex items-center gap-[5px] px-[14px] py-[6px] text-xs font-medium normal-case tracking-normal text-muted cursor-pointer select-none hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2" tabindex="0" @click="($event.currentTarget as HTMLElement).parentElement?.classList.toggle('collapsed')" @keydown.enter="($event.currentTarget as HTMLElement).parentElement?.classList.toggle('collapsed')">
-            <span class="s-group__toggle text-[8px] inline-block w-[10px] text-center transition-transform duration-200 ease-ease">&#9662;</span>
+          <div class="sg-hd" tabindex="0" @click="($event.currentTarget as HTMLElement).parentElement?.classList.toggle('collapsed')" @keydown.enter="($event.currentTarget as HTMLElement).parentElement?.classList.toggle('collapsed')">
+            <svg class="sg-hd__chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6l4 4 4-4"/></svg>
             {{ dirname(group.cwd) }}
           </div>
           <div class="s-group__items">
@@ -92,16 +105,128 @@ function handleSessionClick(sessionId: string) {
           </div>
         </div>
       </template>
-      <div v-else class="px-[14px] py-[20px] text-center text-muted text-xs">
+      <div v-else class="empty">
         {{ t('sidebar.noSessions') }}
       </div>
+    </div>
+
+    <!-- Bottom: User + Status -->
+    <div class="sidebar__btm">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M8 11a3 3 0 100-6 3 3 0 000 6z"/><path d="M1.6 13a7 7 0 0112.8 0"/>
+      </svg>
+      <span class="sidebar__btm-user">{{ t('sidebar.user') ?? 'User' }}</span>
+      <span class="sidebar__btm-status">● ws</span>
     </div>
   </aside>
 </template>
 
-
 <style scoped>
-/* Parent-child selector required: collapsed toggle rotation via DOM class toggle */
-.s-group.collapsed .s-group__toggle { transform: rotate(-90deg); }
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  overflow: hidden;
+  /* No border-right — color difference separates from content */
+}
+
+.sidebar__top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* macOS traffic lights 浮在左上角，左侧留空让按钮排在它们右边 */
+  padding: 10px 14px 8px 72px;
+  flex-shrink: 0;
+}
+
+.ctrl-btn {
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.ctrl-btn:hover { background: oklch(22% 0 0); color: var(--fg); }
+.ctrl-btn.active { background: oklch(22% 0 0); color: var(--accent); }
+.ctrl-btn svg { width: 14px; height: 14px; }
+
+.sidebar__new {
+  margin-left: auto;
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-family: var(--font-body);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.sidebar__new:hover { border-color: var(--muted); color: var(--fg); }
+
+.sidebar__brand {
+  padding: 0 14px 10px;
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+  letter-spacing: -0.01em;
+  flex-shrink: 0;
+}
+.sidebar__brand span { color: var(--accent); }
+
+.sidebar__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 8px;
+}
+
+.sg-hd {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+.sg-hd:hover { color: var(--fg); }
+.sg-hd__chevron {
+  width: 10px;
+  height: 10px;
+  transition: transform 0.2s ease;
+}
+.s-group.collapsed .sg-hd__chevron { transform: rotate(-90deg); }
 .s-group.collapsed .s-group__items { display: none; }
+
+.empty {
+  padding: 20px 14px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.sidebar__btm {
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.sidebar__btm svg { width: 14px; height: 14px; }
+.sidebar__btm-user { flex: 1; }
+.sidebar__btm-status { color: var(--success); font-size: 10px; }
 </style>

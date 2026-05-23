@@ -22,11 +22,11 @@
       <div class="flex flex-col gap-2.5 px-3 pb-3 pt-1">
         <div v-if="oldText">
           <div class="font-mono text-[10px] text-danger font-semibold mb-1">− Removed</div>
-          <pre class="whitespace-pre-wrap font-mono text-xs text-danger bg-bg rounded-md border border-danger/20 p-2.5 m-0 max-h-[130px] overflow-y-auto">{{ oldText }}</pre>
+          <pre class="whitespace-pre-wrap font-mono text-xs text-danger bg-bg rounded-none border border-danger/20 p-2.5 m-0 max-h-[130px] overflow-y-auto">{{ oldText }}</pre>
         </div>
         <div v-if="newText">
           <div class="font-mono text-[10px] text-success font-semibold mb-1">+ Added</div>
-          <pre class="whitespace-pre-wrap font-mono text-xs text-success bg-bg rounded-md border border-success/20 p-2.5 m-0 max-h-[130px] overflow-y-auto">{{ newText }}</pre>
+          <pre class="whitespace-pre-wrap font-mono text-xs text-success bg-bg rounded-none border border-success/20 p-2.5 m-0 max-h-[130px] overflow-y-auto">{{ newText }}</pre>
         </div>
       </div>
     </div>

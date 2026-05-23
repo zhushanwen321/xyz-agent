@@ -3,7 +3,7 @@
   <div
     v-if="message.role === 'system'"
     :class="[
-      'self-stretch w-full max-w-none my-2 border border-border bg-surface rounded-sm px-3.5 py-2.5 text-[13px] flex items-start gap-2.5 box-border',
+      'self-stretch w-full max-w-none my-2 border border-border bg-surface rounded-none px-3.5 py-2.5 text-[13px] flex items-start gap-2.5 box-border',
       message.status === 'error' && 'border-danger bg-danger-light',
     ]"
   >
@@ -18,13 +18,13 @@
     </div>
   </div>
 
-  <!-- assistant 消息 -->
+  <!-- assistant 消息：标签在外面，thinking/tool 在外面，只有 text 在气泡中 -->
   <div
     v-else-if="message.role === 'assistant'"
     data-role="assistant"
-    class="self-start w-full bg-transparent py-3 px-4 leading-[1.6] text-sm"
+    class="self-start w-full"
   >
-    <div class="text-[10px] font-semibold uppercase tracking-[0.04em] leading-[1.4] mb-[3px] text-muted">
+    <div class="text-[10px] font-semibold uppercase tracking-[0.04em] leading-[1.4] mb-1 text-muted">
       助手
       <span v-if="message.timestamp" class="font-normal normal-case tracking-normal text-[10px] opacity-60 ml-1.5">{{ formatTime(message.timestamp) }}</span>
     </div>
@@ -32,29 +32,32 @@
     <!-- 有序渲染：按 contentBlocks 顺序 -->
     <template v-if="message.contentBlocks?.length">
       <template v-for="block in message.contentBlocks" :key="block.refId">
-        <!-- Thinking block -->
+        <!-- Thinking block (outside bubble) -->
         <ThinkingBlock
           v-if="block.type === 'thinking'"
           :text="getThinkingContent(block.refId)"
           :streaming="message.status === 'streaming'"
-          :collapsed="getThinkingCollapsed(block.refId)"
         />
-        <!-- Tool call card -->
+        <!-- Tool call card (outside bubble) -->
         <ToolCallCard
           v-else-if="block.type === 'toolCall'"
           :tool-call="getToolCall(block.refId)!"
           :batch-info="batchInfoMap.get(block.refId)"
         />
-        <!-- Text content -->
+        <!-- Text content (inside bubble) -->
         <div
           v-else-if="block.type === 'text' && message.content"
-          class="msg__body select-text"
-          :data-message-id="message.id"
-          @click="handleBodyClick"
+          class="py-3 px-4 leading-[1.6] text-sm bg-surface border-l-2 border-border rounded-sm"
         >
-          <!-- eslint-disable-next-line vue/no-v-html -->
-          <span v-html="renderedContent"></span>
-          <span v-if="isStreaming" class="inline-block w-0.5 h-[1.1em] bg-accent rounded-[1px] align-text-bottom animate-blink motion-reduce:opacity-60 motion-reduce:animate-none"></span>
+          <div
+            class="msg__body select-text"
+            :data-message-id="message.id"
+            @click="handleBodyClick"
+          >
+            <!-- eslint-disable-next-line vue/no-v-html -->
+            <span v-html="renderedContent"></span>
+            <span v-if="isStreaming" class="inline-block w-0.5 h-[1.1em] bg-accent rounded-[1px] align-text-bottom animate-blink motion-reduce:opacity-60 motion-reduce:animate-none"></span>
+          </div>
         </div>
       </template>
     </template>
@@ -66,7 +69,6 @@
         :key="block.id"
         :text="block.content"
         :streaming="message.status === 'streaming'"
-        :collapsed="block.collapsed"
       />
       <ToolCallCard
         v-for="tc in message.toolCalls"
@@ -76,13 +78,17 @@
       />
       <div
         v-if="message.content"
-        class="msg__body select-text"
-        :data-message-id="message.id"
-        @click="handleBodyClick"
+        class="py-3 px-4 leading-[1.6] text-sm bg-surface border-l-2 border-border rounded-sm"
       >
-        <!-- eslint-disable-next-line vue/no-v-html -->
-        <span v-html="renderedContent"></span>
-        <span v-if="isStreaming" class="inline-block w-0.5 h-[1.1em] bg-accent rounded-[1px] align-text-bottom animate-blink motion-reduce:opacity-60 motion-reduce:animate-none"></span>
+        <div
+          class="msg__body select-text"
+          :data-message-id="message.id"
+          @click="handleBodyClick"
+        >
+          <!-- eslint-disable-next-line vue/no-v-html -->
+          <span v-html="renderedContent"></span>
+          <span v-if="isStreaming" class="inline-block w-0.5 h-[1.1em] bg-accent rounded-[1px] align-text-bottom animate-blink motion-reduce:opacity-60 motion-reduce:animate-none"></span>
+        </div>
       </div>
     </template>
   </div>
@@ -94,9 +100,10 @@
     class="self-end max-w-[75%]"
   >
     <div class="text-[10px] font-semibold uppercase tracking-[0.04em] leading-[1.4] mb-[3px] text-right text-muted">
+      <span v-if="message.timestamp" class="font-normal normal-case tracking-normal text-[10px] opacity-60 mr-1.5">{{ formatTime(message.timestamp) }}</span>
       用户
     </div>
-    <div class="py-3 px-4 leading-[1.6] text-sm bg-accent text-white rounded-bubble rounded-br-sm">
+    <div class="py-3 px-4 leading-[1.6] text-sm bg-surface text-fg border-l-2 border-accent rounded-sm">
       <div
         v-if="message.content"
         class="msg__body select-text"
@@ -146,10 +153,6 @@ function formatTime(ts: number): string {
 
 function getThinkingContent(refId: string): string {
   return props.message.thinking?.find(b => b.id === refId)?.content ?? ''
-}
-
-function getThinkingCollapsed(refId: string): boolean {
-  return props.message.thinking?.find(b => b.id === refId)?.collapsed ?? true
 }
 
 function getToolCall(refId: string): import('@xyz-agent/shared').ToolCall | undefined {

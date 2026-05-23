@@ -12,7 +12,7 @@
       @close-pane="$emit('close-pane')"
     />
 
-    <div ref="chatMsgsRef" class="flex-1 overflow-y-auto overflow-x-hidden p-5 px-6 flex flex-col gap-[14px] relative max-w-[960px] mx-auto w-full" @scroll="onChatScroll">
+    <div ref="chatMsgsRef" class="flex-1 overflow-y-auto overflow-x-hidden p-5 px-6 flex flex-col gap-[6px] relative max-w-[960px] mx-auto w-full" @scroll="onChatScroll">
       <!-- Loading history state -->
       <div v-if="isLoadingHistory" class="flex flex-col items-center justify-center h-full p-20 px-10 gap-3 text-muted">
         <div class="flex items-center gap-2">
@@ -53,7 +53,7 @@
         </template>
 
         <!-- Thinking indicator: waiting for first token -->
-        <div v-if="isStreaming && !streamingMessage" class="self-start w-full p-3 px-4 bg-surface border border-border rounded-sm leading-relaxed text-sm">
+        <div v-if="isStreaming && !streamingMessage" class="self-start w-full p-3 px-4 bg-surface border border-border rounded-none leading-relaxed text-sm">
           <div class="text-[10px] font-semibold uppercase tracking-[0.04em] leading-[1.4] mb-[3px] text-muted">助手</div>
           <div class="flex items-center gap-2">
             <span class="inline-block w-1.5 h-1.5 rounded-full bg-accent shrink-0 animate-thinking-pulse motion-reduce:opacity-60 motion-reduce:animate-none"></span>

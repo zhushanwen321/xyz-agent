@@ -1,7 +1,7 @@
 <template>
-  <div class="border border-border rounded-sm bg-surface my-2 overflow-hidden" :class="cardBorderClass">
+  <div class="tool-card my-2 overflow-hidden" :class="cardBorderClass">
     <!-- Header -->
-    <Button variant="ghost" class="flex items-center gap-1.5 px-2.5 py-1.5 cursor-pointer text-[11px] leading-snug font-mono select-none transition-colors duration-150 ease-ease w-full text-left justify-start !rounded-none hover:bg-accent-light focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2" @click="toggleExpand">
+    <button class="tool-header" @click="toggleExpand">
       <!-- Status indicator -->
       <span v-if="isRunning" class="inline-block w-2.5 h-2.5 border-2 border-accent border-t-transparent rounded-full animate-spin shrink-0"></span>
       <svg v-else :class="['transition-transform duration-150 ease-ease shrink-0', { '-rotate-90': !expanded }]" xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
@@ -18,7 +18,7 @@
         <span v-if="fileSizeRaw" class="opacity-60">{{ fileSizeRaw }}</span>
         <span :class="['min-w-[3em] text-right font-medium', elapsedClass]">{{ elapsedDisplay }}</span>
       </span>
-    </Button>
+    </button>
 
     <!-- Progress bar (running only) -->
     <div v-if="isRunning" class="h-0.5 bg-border overflow-hidden">
@@ -43,7 +43,6 @@
 import { ref, shallowRef, computed, onMounted, onUnmounted, watch, type Component } from 'vue'
 import type { ToolCall } from '@xyz-agent/shared'
 import { getToolRenderer } from '../../lib/tool-renderer-registry'
-import { Button } from '../../design-system'
 import DefaultToolRenderer from './ToolRenderers/DefaultToolRenderer.vue'
 
 export interface BatchInfo {
@@ -57,7 +56,7 @@ const props = defineProps<{
   toolCall: ToolCall
   batchInfo?: BatchInfo
 }>()
-const expanded = ref(false)
+const expanded = ref(true)
 // Vue 组件定义不能被 reactive 包裹，用 shallowRef 避免性能开销
 const rendererComp = shallowRef<Component | null>(null)
 
@@ -200,6 +199,30 @@ function toggleExpand() {
 </script>
 
 <style scoped>
+.tool-card {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  border-radius: 3px;
+}
+.tool-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  border: none;
+  background: linear-gradient(to right, var(--hover-bg) 0%, var(--hover-bg) 40%, transparent 100%);
+  transition: background 0.15s ease;
+  width: 100%;
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.tool-header:hover {
+  background: linear-gradient(to right, var(--hover-bg) 0%, var(--hover-bg) 55%, transparent 100%);
+}
+
 @keyframes progress-indeterminate {
   0%   { transform: translateX(-100%); }
   50%  { transform: translateX(200%); }

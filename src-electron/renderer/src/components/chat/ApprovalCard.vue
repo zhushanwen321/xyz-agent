@@ -1,7 +1,7 @@
 <template>
   <div
     :class="[
-      'rounded-sm border overflow-hidden',
+      'rounded-none border overflow-hidden',
       pending.dangerLevel === 'safe' && 'border-success/40 bg-level-safe',
       pending.dangerLevel === 'caution' && 'border-warning/40 bg-level-caution',
       pending.dangerLevel === 'danger' && 'border-danger/40 bg-level-danger',
@@ -11,7 +11,7 @@
       <span class="font-mono font-semibold text-[13px] text-fg">{{ pending.toolName }}</span>
       <span
         :class="[
-          'font-mono text-[11px] font-medium uppercase tracking-[0.04em] py-px px-1.5 rounded-sm',
+          'font-mono text-[11px] font-medium uppercase tracking-[0.04em] py-px px-1.5 rounded-none',
           pending.dangerLevel === 'safe' && 'text-success bg-level-safe',
           pending.dangerLevel === 'caution' && 'text-warning bg-level-caution',
           pending.dangerLevel === 'danger' && 'text-danger bg-level-danger',
@@ -20,9 +20,9 @@
     </div>
     <pre class="m-0 px-2.5 py-1.5 max-h-40 overflow-auto font-mono text-xs leading-normal text-muted border-t border-border whitespace-pre-wrap break-all">{{ formattedInput }}</pre>
     <div class="flex gap-2 px-2.5 py-2 border-t border-border">
-      <Button variant="ghost" class="py-1 px-3 rounded-sm font-body text-[13px] font-medium cursor-pointer transition-colors duration-150 bg-transparent border border-transparent text-muted hover:bg-bg hover:text-fg" @click="handleAlwaysAllow">Always Allow</Button>
-      <Button variant="ghost" class="py-1 px-3 rounded-sm font-body text-[13px] font-medium cursor-pointer transition-colors duration-150 bg-transparent border border-border text-fg hover:border-danger hover:text-danger" @click="handleDeny">Deny</Button>
-      <Button variant="primary" class="py-1 px-3 rounded-sm font-body text-[13px] font-medium cursor-pointer transition-colors duration-150 bg-accent border border-accent text-white hover:opacity-88" @click="handleApprove">Approve</Button>
+      <Button variant="ghost" class="py-1 px-3 rounded-none font-body text-[13px] font-medium cursor-pointer transition-colors duration-150 bg-transparent border border-transparent text-muted hover:bg-bg hover:text-fg" @click="handleAlwaysAllow">Always Allow</Button>
+      <Button variant="ghost" class="py-1 px-3 rounded-none font-body text-[13px] font-medium cursor-pointer transition-colors duration-150 bg-transparent border border-border text-fg hover:border-danger hover:text-danger" @click="handleDeny">Deny</Button>
+      <Button variant="primary" class="py-1 px-3 rounded-none font-body text-[13px] font-medium cursor-pointer transition-colors duration-150 bg-accent border border-accent text-white hover:opacity-88" @click="handleApprove">Approve</Button>
       <span class="ml-auto font-mono text-xs text-muted whitespace-nowrap leading-7">{{ remainingSeconds }}s</span>
     </div>
   </div>

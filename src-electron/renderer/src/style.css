@@ -31,10 +31,10 @@
   --font-display: 'Tiempos Headline', 'Newsreader', 'Iowan Old Style', Georgia, serif;
   --font-body: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
-  --radius: 12px;
-  --radius-sm: 8px;
-  --radius-xs: 4px;
-  --radius-bubble: 8px;
+  --radius: 4px;
+  --radius-sm: 2px;
+  --radius-xs: 0px;
+  --radius-bubble: 0px;
   /* Aliases for backwards compat */
   --radius-lg: 12px;
   --radius-md: 8px;
@@ -63,24 +63,24 @@
 }
 
 [data-theme="dark"] {
-  --bg: oklch(13% 0.008 75);
-  --surface: oklch(16% 0.008 75);
-  --fg: oklch(92% 0.005 75);
-  --muted: oklch(55% 0.010 75);
-  --border: oklch(24% 0.010 75);
-  --accent: oklch(55% 0.08 195);
-  --accent-light: oklch(22% 0.04 195);
-  --success: oklch(65% 0.10 145);
-  --success-light: oklch(22% 0.04 145);
-  --warning: oklch(75% 0.10 85);
-  --warning-light: oklch(25% 0.04 85);
-  --danger: oklch(55% 0.12 25);
-  --danger-light: oklch(25% 0.04 25);
+  --bg: oklch(12% 0 0);
+  --surface: oklch(16% 0 0);
+  --fg: oklch(94% 0 0);
+  --muted: oklch(58% 0 0);
+  --border: oklch(26% 0 0);
+  --accent: oklch(72% 0 0);
+  --accent-light: oklch(30% 0 0);
+  --success: oklch(68% 0.12 145);
+  --success-light: oklch(28% 0.05 145);
+  --warning: oklch(78% 0.10 85);
+  --warning-light: oklch(30% 0.04 85);
+  --danger: oklch(58% 0.15 25);
+  --danger-light: oklch(30% 0.05 25);
   --agent: oklch(65% 0.15 250);
   --agent-light: oklch(22% 0.04 250);
-  --section-bg: oklch(20% 0.010 75);
-  --hover-bg: oklch(19% 0.010 75);
-  --divider: oklch(22% 0.010 75);
+  --section-bg: oklch(20% 0 0);
+  --hover-bg: oklch(19% 0 0);
+  --divider: oklch(22% 0 0);
 
   --shadow-xs: 0 1px 6px rgba(0, 0, 0, 0.2);
   --shadow-sm: 0 2px 12px rgba(0, 0, 0, 0.3);
