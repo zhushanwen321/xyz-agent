@@ -49,7 +49,7 @@ onUnmounted(() => {
           v-for="tab in tabs"
           :key="tab.key"
           :class="[
-            'flex items-center gap-2 py-[9px] px-4 text-[13px] text-muted cursor-pointer transition-all duration-150 border-l-[3px] select-none [&_svg]:w-3.5 [&_svg]:h-3.5 hover:bg-accent-light hover:text-fg',
+            'flex items-center gap-2 py-[9px] px-4 text-[13px] text-muted cursor-pointer transition-all duration-150 border-l-[3px] select-none [&_svg]:w-3.5 [&_svg]:h-3.5 hover:bg-accent-light hover:text-fg rounded-sm',
             activeTab === tab.key ? 'text-accent border-l-accent font-semibold bg-accent-light' : 'border-l-transparent'
           ]"
           @click="activeTab = tab.key"

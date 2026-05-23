@@ -135,7 +135,7 @@ const isSettingsActive = computed(() => settingsStore.currentView === 'settings'
   align-items: center;
   gap: 6px;
   /* macOS traffic lights 浮在左上角，padding 使 ctrl-btn 与红绿灯垂直居中对齐 */
-  padding: 6px 14px 8px 78px;
+  padding: 8px 14px 8px 78px;
   flex-shrink: 0;
 }
 

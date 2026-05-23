@@ -17,7 +17,7 @@
         <button
           v-for="session in recentSessions"
           :key="session.id"
-          class="flex items-center gap-2 w-full px-3 py-2 border border-border rounded-none bg-surface cursor-pointer font-body text-[13px] text-fg transition-all duration-150 ease-ease mb-1 leading-snug hover:border-accent hover:bg-accent-light"
+          class="flex items-center gap-2 w-full px-3 py-2 border border-border rounded-sm bg-surface cursor-pointer font-body text-[13px] text-fg transition-all duration-150 ease-ease mb-1 leading-snug hover:border-accent hover:bg-accent-light"
           @click="handleSelectSession(session.id)"
         >
           <svg class="text-muted shrink-0" width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -30,7 +30,7 @@
       </div>
 
       <!-- eslint-disable-next-line taste/no-native-html-elements -->
-      <button class="inline-flex items-center gap-1.5 px-5 py-2 border border-border rounded-none bg-surface text-fg font-body text-[13px] font-medium cursor-pointer transition-all duration-150 ease-ease hover:border-accent hover:bg-accent-light hover:text-accent" @click="handleCreateSession">
+      <button class="inline-flex items-center gap-1.5 px-5 py-2 border border-border rounded-sm bg-surface text-fg font-body text-[13px] font-medium cursor-pointer transition-all duration-150 ease-ease hover:border-accent hover:bg-accent-light hover:text-accent" @click="handleCreateSession">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
           <line x1="8" y1="3" x2="8" y2="13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
           <line x1="3" y1="8" x2="13" y2="8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
