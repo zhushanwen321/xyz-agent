@@ -85,10 +85,15 @@ export class WindowManager {
 }
 
 // 递归遍历 pane 树，找到 sessionId 对应的 pane leaf id
-function findPaneBySessionId(node: PanelTree, sessionId: string): string | null {
+// 限制递归深度防止畸形 payload 导致 stack overflow
+const MAX_PANE_DEPTH = 16
+
+function findPaneBySessionId(node: PanelTree, sessionId: string, depth = 0): string | null {
+  if (depth > MAX_PANE_DEPTH) return null
   if (node.type === 'pane') return node.sessionId === sessionId ? node.id : null
+  // eslint-disable-next-line no-magic-numbers -- binary tree always has 2 children max
   if (!node.children || node.children.length < 2) return null
-  return findPaneBySessionId(node.children[0], sessionId) ?? findPaneBySessionId(node.children[1], sessionId)
+  return findPaneBySessionId(node.children[0], sessionId, depth + 1) ?? findPaneBySessionId(node.children[1], sessionId, depth + 1)
 }
 
 export function initialWindowState(windowId: string): WindowState {

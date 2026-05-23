@@ -5,6 +5,23 @@ import { join } from 'node:path'
 import { mkdirSync } from 'node:fs'
 import { buildProviderEnv, getDefaultModel } from './config-store.js'
 
+/** 子进程允许继承的环境变量前缀白名单 */
+const ENV_WHITELIST_PREFIXES = ['PATH', 'HOME', 'USER', 'LANG', 'TERM', 'NODE_', 'NVM_', 'XYZ_', 'XDG_', 'APPDATA', 'LOCALAPPDATA', 'PROGRAMFILES', 'SYSTEMROOT', 'TEMP', 'TMP']
+
+/** 构建最小权限的环境变量：只继承白名单前缀 + 额外指定变量 */
+function buildSafeEnv(extras: Record<string, string | undefined>): Record<string, string> {
+  const safe: Record<string, string> = {}
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined && ENV_WHITELIST_PREFIXES.some(prefix => key.startsWith(prefix) || key === prefix)) {
+      safe[key] = value
+    }
+  }
+  for (const [key, value] of Object.entries(extras)) {
+    if (value !== undefined) safe[key] = value
+  }
+  return safe
+}
+
 /**
  * Generic shape of a message received from pi's JSONL stdout.
  * Broader than PiAnyIncomingMessage in types.ts — covers both RPC responses
@@ -57,10 +74,9 @@ export class RpcClient {
     const model = this.options.model ?? getDefaultModel()
     const providerId = this.options.provider ?? model.split('/')[0]
 
-    const env: Record<string, string> = {
-      ...process.env as Record<string, string>,
+    const env = buildSafeEnv({
       ...this.options.env,
-    }
+    })
 
     // Packaged mode: redirect pi's agent directory to bundled extensions/skills
     if (process.env.XYZ_AGENT_PACKAGED === '1') {
@@ -128,11 +144,16 @@ export class RpcClient {
 
     // Wait briefly to confirm process didn't exit immediately
     await new Promise<void>((resolve, reject) => {
+      let settled = false
       const onExit = (code: number | null) => {
+        if (settled) return
+        settled = true
         cleanup()
         reject(new Error(`pi process exited immediately with code ${code}`))
       }
       const onError = (err: Error) => {
+        if (settled) return
+        settled = true
         cleanup()
         reject(new Error(`pi spawn error: ${err.message}`))
       }
@@ -143,6 +164,7 @@ export class RpcClient {
       proc.on('exit', onExit)
       proc.on('error', onError)
       setTimeout(() => {
+        if (settled) return
         cleanup()
         if (!this._exited) resolve()
         else reject(new Error('pi process exited during startup'))
@@ -211,7 +233,10 @@ export class RpcClient {
 
       try {
         console.log('[rpc] send: type=' + type)
-        this.proc.stdin!.write(msg)
+        const ok = this.proc.stdin!.write(msg)
+        if (!ok) {
+          this.proc.stdin!.once('drain', () => {})
+        }
       } catch (e) {
         clearTimeout(timer)
         this.pending.delete(id)

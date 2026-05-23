@@ -39,6 +39,7 @@ function createWindow(options?: { windowId?: string; sessionId?: string }): Brow
     minHeight: 600,
     show: false,
     title: 'xyz-agent',
+    titleBarStyle: 'hiddenInset',
     webPreferences: {
       preload: path.join(app.getAppPath(), 'dist/preload/preload.cjs'),
       contextIsolation: true,
@@ -107,26 +108,40 @@ app.whenReady().then(async () => {
 
 // 主窗口关闭时停止 runtime 并注销快捷键
 app.on('window-all-closed', () => {
-  runtimeManager.stop()
-  unregisterShortcuts()
-
+  // macOS 保留 runtime：activate 会复用它，避免不必要的重启
   if (process.platform !== 'darwin') {
+    runtimeManager.stop()
+    unregisterShortcuts()
     app.quit()
   }
 })
 
 // macOS: 点击 dock 图标时重建窗口
-app.on('activate', () => {
+app.on('activate', async () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     mainWindow = createWindow({ windowId: 'win-1' })
     mainWindow.on('closed', () => { mainWindow = null })
     windowManager.register('win-1', mainWindow, initialWindowState('win-1'))
     registerShortcuts(mainWindow)
+
+    // 确保 runtime 可用（可能被 window-all-closed 或之前异常停止）
+    if (process.env.XYZ_MOCK !== '1') {
+      try {
+        const port = await runtimeManager.start()
+        mainWindow.webContents.send('runtime-port', port)
+      } catch (err) {
+        console.error('[main] Failed to restart runtime on activate:', err)
+        mainWindow.webContents.send('runtime-error', { message: (err as Error).message })
+      }
+    }
   }
 })
 
-// 应用退出前清理
-app.on('before-quit', () => {
-  runtimeManager.stop()
-  unregisterShortcuts()
+// 应用退出前清理：确保 sidecar 进程完全退出再 quit
+app.on('before-quit', (event) => {
+  event.preventDefault()
+  runtimeManager.stop().finally(() => {
+    unregisterShortcuts()
+    app.quit()
+  })
 })

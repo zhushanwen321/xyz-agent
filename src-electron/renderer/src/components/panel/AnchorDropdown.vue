@@ -46,13 +46,13 @@ onBeforeUnmount(() => document.removeEventListener('click', onClickOutside))
 </script>
 
 <template>
-  <div :class="['flex items-center gap-1.5 px-2.5 py-[3px] rounded-sm cursor-pointer text-fg font-semibold text-xs transition-colors duration-150 ease-ease relative select-none hover:bg-accent-light', { 'bg-accent-light': open }]" ref="anchorRef">
+  <div :class="['flex items-center gap-1.5 px-2.5 py-[3px] rounded-none cursor-pointer text-fg font-semibold text-xs transition-colors duration-150 ease-ease relative select-none hover:bg-accent-light', { 'bg-accent-light': open }]" ref="anchorRef">
     <Button variant="ghost" class="flex items-center gap-1.5 bg-transparent border-none p-0 [font:inherit] [color:inherit] cursor-[inherit] hover:bg-transparent hover:text-inherit !rounded-none" @click.stop="toggle">
       <span class="w-1.5 h-1.5 rounded-full shrink-0" :style="{ background: currentColor }"></span>
       <span class="leading-none">{{ currentLabel }}</span>
       <span :class="['text-[9px] text-muted ml-0.5 transition-transform duration-150 ease-ease', { 'rotate-180': open }]">&#9662;</span>
     </Button>
-    <div v-if="open" class="absolute top-full left-0 mt-1 bg-surface border border-border rounded-sm shadow-md min-w-[220px] z-30 overflow-hidden">
+    <div v-if="open" class="absolute top-full left-0 mt-1 bg-surface border border-border rounded-none shadow-md min-w-[220px] z-30 overflow-hidden">
       <div
         v-for="opt in options"
         :key="opt.id"

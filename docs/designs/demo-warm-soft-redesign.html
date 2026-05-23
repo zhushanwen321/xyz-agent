@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>xyz-agent — Sidebar + Tone Iteration Demo</title>
+<style>
+/*
+  Tone v2: 比 v1 的 hue=50/chroma=0.012 冷一点
+  → hue=50 保持, chroma 降到 0.006-0.01
+  → 背景不再泛棕, 但也不是纯灰
+  → 略带暖意的冷灰色
+*/
+
+:root {
+  --bg:          oklch(13% 0.006 50);
+  --surface:     oklch(17% 0.008 50);
+  --hover-bg:    oklch(20% 0.009 50);
+  --section-bg:  oklch(22% 0.009 50);
+  --border:      oklch(28% 0.008 50);
+  --fg:          oklch(93% 0.005 55);
+  --muted:       oklch(58% 0.008 50);
+  --accent:      oklch(68% 0.10 28);
+  --accent-light:oklch(28% 0.04 28);
+  --success:       oklch(68% 0.14 145);
+  --success-light: oklch(26% 0.05 145);
+  --danger:        oklch(60% 0.16 25);
+  --danger-light:  oklch(28% 0.05 25);
+
+  --user-bubble-bg:    oklch(22% 0.015 40);
+  --user-bubble-border:oklch(30% 0.02 40);
+  --assistant-bubble-bg: oklch(17% 0.008 50);
+  --card-bg:        oklch(15% 0.006 50);
+  --card-header-bg: oklch(22% 0.012 45);
+
+  --radius: 1px;
+  --radius-sm: 1px;
+  --radius-md: 2px;
+  --font-display: 'Tiempos Headline', Georgia, serif;
+  --font-body: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Menlo', monospace;
+  --sidebar-w: 220px;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: var(--font-body); background: var(--bg); color: var(--fg);
+  height: 100vh; overflow: hidden; display: flex; font-size: 14px; line-height: 1.6;
+}
+
+/* ==================== SIDEBAR ==================== */
+.sidebar {
+  width: var(--sidebar-w);
+  background: var(--surface);
+  display: flex; flex-direction: column; flex-shrink: 0; overflow: hidden;
+}
+
+/* ---- Non-fullscreen: two rows ---- */
+.sidebar-header { flex-shrink: 0; }
+.sidebar-row1 {
+  display: flex; align-items: center; gap: 4px;
+  padding: 8px 14px 4px 78px; /* 78px left for traffic lights */
+  position: relative;
+}
+/* Right-aligned nav buttons */
+.sidebar-nav {
+  display: flex; align-items: center; gap: 4px;
+  margin-left: auto;
+}
+.sidebar-row2 {
+  display: flex; align-items: center; gap: 8px;
+  padding: 2px 14px 8px 14px;
+}
+
+/* Fullscreen override: no traffic lights */
+.sidebar-header--fullscreen .sidebar-row1 {
+  padding-left: 14px;
+}
+.sidebar-header--fullscreen .sidebar-row2 {
+  padding-left: 14px;
+}
+
+/* Traffic lights */
+.traffic-lights {
+  display: flex; gap: 8px;
+  position: absolute; left: 14px; top: 10px;
+}
+.tl { width: 12px; height: 12px; border-radius: 50%; }
+.tl--r { background: #ff5f57; }
+.tl--y { background: #febc2e; }
+.tl--g { background: #28c840; }
+
+.ctrl-btn {
+  width: 22px; height: 22px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: var(--radius); border: none; background: transparent;
+  color: var(--muted); cursor: pointer; transition: all 0.15s var(--ease);
+}
+.ctrl-btn:hover { background: var(--hover-bg); color: var(--fg); }
+.ctrl-btn.active { background: var(--hover-bg); color: var(--accent); }
+.ctrl-btn svg { width: 13px; height: 13px; }
+
+.sidebar-brand {
+  font-family: var(--font-display);
+  font-size: 13px; font-weight: 700;
+  color: var(--muted); letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+.sidebar-brand span { color: var(--accent); }
+
+.sidebar-new {
+  padding: 3px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: transparent; color: var(--muted);
+  font-size: 11px; font-family: var(--font-body);
+  cursor: pointer; transition: all 0.15s; line-height: 1;
+  white-space: nowrap;
+}
+.sidebar-new:hover { border-color: var(--muted); color: var(--fg); }
+.sidebar-new--wide {
+  width: 100%;
+  text-align: center;
+  padding: 6px 12px;
+}
+
+/* ---- Session list ---- */
+.sidebar__body { flex: 1; overflow-y: auto; padding: 4px 8px; border-top: 1px solid var(--border); }
+.sg-hd {
+  display: flex; align-items: center; gap: 4px;
+  padding: 6px 8px; font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--muted); cursor: pointer; user-select: none;
+}
+.sg-hd:hover { color: var(--fg); }
+.session-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px 7px 20px;
+  cursor: pointer; border-radius: var(--radius);
+  transition: all 0.15s var(--ease);
+  border-left: 3px solid transparent; font-size: 13px;
+}
+.session-item:hover { background: var(--hover-bg); }
+.session-item.active { background: var(--accent-light); border-left-color: var(--accent); color: var(--fg); font-weight: 500; }
+.session-item .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--border); flex-shrink: 0; }
+.session-item.active .dot { background: var(--success); }
+.session-item .label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.session-item .time { font-size: 11px; color: var(--muted); }
+
+/* ---- Bottom ---- */
+.sidebar__btm {
+  padding: 10px 14px; display: flex; align-items: center; gap: 8px;
+  font-size: 11px; color: var(--muted); border-top: 1px solid var(--border); flex-shrink: 0;
+}
+.sidebar__btm svg { width: 14px; height: 14px; }
+.sidebar__btm-user { flex: 1; }
+.sidebar__btm-status { color: var(--success); font-size: 10px; }
+
+/* ==================== MAIN ==================== */
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
+
+.panel-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 14px; background: var(--surface);
+  border-bottom: 1px solid var(--border); font-size: 12px; color: var(--muted); flex-shrink: 0;
+}
+.panel-bar .breadcrumb { display: flex; align-items: center; gap: 4px; font-family: var(--font-mono); font-size: 11px; }
+.panel-bar .breadcrumb span { color: var(--fg); }
+.panel-bar .close-btn {
+  margin-left: auto; background: none; border: none; color: var(--muted);
+  cursor: pointer; font-size: 14px; padding: 2px 6px; border-radius: var(--radius);
+}
+.panel-bar .close-btn:hover { background: var(--hover-bg); color: var(--fg); }
+
+.chat {
+  flex: 1; overflow-y: auto; padding: 20px 24px;
+  display: flex; flex-direction: column; gap: 6px;
+  max-width: 960px; margin: 0 auto; width: 100%;
+}
+
+/* ==================== MESSAGES ==================== */
+.msg-group { display: flex; flex-direction: column; gap: 2px; }
+.msg-label {
+  font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--muted); line-height: 1.4; padding: 0 4px;
+}
+.msg-label--user { text-align: right; }
+.msg-label .timestamp { font-weight: 400; text-transform: none; letter-spacing: normal; opacity: 0.6; }
+.msg-label--user .timestamp { margin-right: 6px; }
+.msg-label--assistant .timestamp { margin-left: 6px; }
+
+.bubble {
+  padding: 12px 16px; line-height: 1.6; font-size: 14px;
+  border-radius: var(--radius-sm); transition: background 0.15s;
+}
+.bubble--assistant { background: var(--assistant-bubble-bg); border-top: 1px solid var(--border); }
+.bubble--user { background: var(--user-bubble-bg); border: 1px solid var(--user-bubble-border); max-width: 75%; align-self: flex-end; }
+
+/* ==================== THINKING ==================== */
+.thinking-block {
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--card-bg); overflow: hidden; margin: 4px 0;
+}
+.thinking-header {
+  display: flex; align-items: center; gap: 6px; padding: 6px 12px;
+  cursor: pointer;
+  background: linear-gradient(to right, var(--card-header-bg) 0%, var(--card-header-bg) 40%, transparent 100%);
+  border: none; width: 100%; text-align: left; font-family: var(--font-mono); transition: background 0.15s;
+}
+.thinking-header:hover { background: linear-gradient(to right, var(--card-header-bg) 0%, var(--card-header-bg) 55%, transparent 100%); }
+.thinking-header .title { font-size: 11px; font-weight: 500; color: var(--accent); }
+.thinking-header .chevron { margin-left: auto; color: var(--muted); transition: transform 0.2s; font-size: 11px; }
+.thinking-header .chevron.collapsed { transform: rotate(-90deg); }
+.thinking-body { border-top: 1px solid var(--border); padding: 8px 12px; display: none; }
+.thinking-body.open { display: block; }
+.thinking-body pre { font-family: var(--font-mono); font-size: 11px; line-height: 1.5; color: var(--muted); white-space: pre-wrap; }
+
+/* ==================== TOOL CARD ==================== */
+.tool-card {
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--card-bg); overflow: hidden; margin: 4px 0;
+}
+.tool-header {
+  display: flex; align-items: center; gap: 6px; padding: 6px 10px;
+  cursor: pointer;
+  background: linear-gradient(to right, var(--hover-bg) 0%, var(--hover-bg) 40%, transparent 100%);
+  border: none; width: 100%; text-align: left; font-family: var(--font-mono); font-size: 11px; transition: background 0.15s;
+}
+.tool-header:hover { background: linear-gradient(to right, var(--hover-bg) 0%, var(--hover-bg) 55%, transparent 100%); }
+.tool-header .tool-name { font-weight: 600; color: var(--accent); }
+.tool-header .file-path { color: var(--muted); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin: 0 4px; }
+.tool-header .meta { font-size: 10px; color: var(--muted); margin-left: auto; display: flex; gap: 6px; }
+.tool-header .elapsed { color: var(--success); font-weight: 500; }
+.tool-header .chevron { color: var(--muted); transition: transform 0.2s; font-size: 11px; }
+.tool-header .chevron.collapsed { transform: rotate(-90deg); }
+.tool-body { border-top: 1px solid var(--border); padding: 8px 12px; display: none; }
+.tool-body.open { display: block; }
+.tool-body pre { font-family: var(--font-mono); font-size: 11px; line-height: 1.5; color: var(--muted); white-space: pre-wrap; }
+
+.spinner { width: 10px; height: 10px; border: 2px solid var(--accent); border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; flex-shrink: 0; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ==================== INPUT ==================== */
+.input-area { max-width: 960px; margin: 0 auto; width: 100%; padding: 0 24px 12px; flex-shrink: 0; }
+.input-box {
+  background: var(--surface); border: 2px solid transparent; border-radius: var(--radius-sm);
+  padding: 10px 14px; display: flex; align-items: flex-end; gap: 8px; transition: border-color 0.15s;
+}
+.input-box:focus-within { border-color: var(--accent); }
+.input-box textarea {
+  flex: 1; border: none; background: transparent; color: var(--fg); font-family: var(--font-body);
+  font-size: 14px; line-height: 1.5; resize: none; outline: none; min-height: 21px; max-height: 120px;
+}
+.input-box textarea::placeholder { color: var(--muted); }
+.input-box .send-btn {
+  width: 28px; height: 28px; border: none; border-radius: var(--radius-sm);
+  background: var(--accent); color: white; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; font-size: 14px; transition: opacity 0.15s;
+}
+.input-box .send-btn:hover { opacity: 0.88; }
+.input-box .model-tag {
+  font-family: var(--font-mono); font-size: 11px; color: var(--muted);
+  padding: 2px 8px; background: var(--hover-bg); border-radius: var(--radius-sm);
+  cursor: pointer; white-space: nowrap;
+}
+.input-box .model-tag:hover { color: var(--fg); }
+
+.system-msg {
+  padding: 10px 16px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface); font-size: 13px;
+  display: flex; align-items: flex-start; gap: 8px; margin: 6px 0;
+}
+.system-msg .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); margin-top: 5px; flex-shrink: 0; }
+
+.code-block {
+  background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 10px 12px; margin: 6px 0; font-family: var(--font-mono); font-size: 11px;
+  color: var(--muted); line-height: 1.5; white-space: pre-wrap;
+}
+
+/* ==================== DEMO TABS ==================== */
+.demo-tabs {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 200;
+  display: flex; justify-content: center;
+  background: oklch(10% 0.006 50); padding: 6px 0; border-bottom: 1px solid var(--border); gap: 2px;
+}
+.demo-tab {
+  padding: 4px 14px; border: none; background: transparent; color: var(--muted);
+  font-size: 12px; font-family: var(--font-body); cursor: pointer;
+  border-radius: var(--radius-sm); transition: all 0.15s;
+}
+.demo-tab:hover { background: var(--hover-bg); color: var(--fg); }
+.demo-tab.active { background: var(--accent-light); color: var(--accent); font-weight: 500; }
+
+.demo-container { display: none; width: 100%; height: 100vh; padding-top: 30px; }
+.demo-container.active { display: flex; }
+
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+</style>
+</head>
+<body>
+
+<div class="demo-tabs">
+  <button class="demo-tab active" onclick="showDemo('windowed')">Non-Fullscreen</button>
+  <button class="demo-tab" onclick="showDemo('fullscreen')">Fullscreen</button>
+  <button class="demo-tab" onclick="showDemo('comparison')">Tone Comparison</button>
+</div>
+
+<!-- ==================== NON-FULLSCREEN (has traffic lights) ==================== -->
+<div class="demo-container active" id="demo-windowed">
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <!-- Row 1: Traffic lights + Overview + Settings + Back + Forward -->
+      <div class="sidebar-row1">
+        <div class="traffic-lights">
+          <div class="tl tl--r"></div>
+          <div class="tl tl--y"></div>
+          <div class="tl tl--g"></div>
+        </div>
+        <div class="sidebar-nav">
+          <button class="ctrl-btn" title="Overview (Cmd+J)">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>
+          </button>
+          <button class="ctrl-btn" title="Settings (Cmd+,)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 008.58 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 8.58a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+          </button>
+          <button class="ctrl-btn" title="Back">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 3L5 8l5 5"/></svg>
+          </button>
+          <button class="ctrl-btn" title="Forward">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 3l5 5-5 5"/></svg>
+          </button>
+        </div>
+      </div>
+      <!-- Row 2: Logo + New Session -->
+      <div class="sidebar-row2">
+        <span class="sidebar-brand">xyz<span>-agent</span></span>
+        <button class="sidebar-new" style="margin-left:auto;">+ New Session</button>
+      </div>
+    </div>
+
+    <div class="sidebar__body">
+      <div class="sg-hd">
+        <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6l4 4 4-4"/></svg>
+        xyz-agent
+      </div>
+      <div class="session-item active"><span class="dot"></span><span class="label">Refactor auth module</span><span class="time">2m</span></div>
+      <div class="session-item"><span class="dot"></span><span class="label">Fix sidebar alignment</span><span class="time">1h</span></div>
+      <div class="session-item"><span class="dot"></span><span class="label">Design warm theme</span><span class="time">3h</span></div>
+    </div>
+    <div class="sidebar__btm">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 11a3 3 0 100-6 3 3 0 000 6z"/><path d="M1.6 13a7 7 0 0112.8 0"/></svg>
+      <span class="sidebar__btm-user">User</span>
+      <span class="sidebar__btm-status">● Connected</span>
+    </div>
+  </aside>
+
+  <div class="main">
+    <div class="panel-bar">
+      <div class="breadcrumb"><span>~/code/xyz-agent</span><span style="color:var(--muted)">/</span><span>src-electron</span></div>
+      <button class="close-btn">&#x2715;</button>
+    </div>
+    <div class="chat">
+      <div class="system-msg"><span class="dot"></span><span>Session started in <code style="font-family:var(--font-mono);font-size:12px;">~/code/xyz-agent</code> with model glm-5.1</span></div>
+
+      <div class="msg-group">
+        <div class="msg-label msg-label--user"><span class="timestamp">14:30</span>用户</div>
+        <div class="bubble bubble--user">重构 auth 模块，把 JWT 验证逻辑从中间件提取到独立的 service 层，同时确保所有现有路由兼容。</div>
+      </div>
+
+      <div class="msg-group">
+        <div class="msg-label msg-label--assistant">助手<span class="timestamp">14:30</span></div>
+        <div class="thinking-block">
+          <button class="thinking-header" onclick="toggleBlock(this)">
+            <span class="title">Thinking</span>
+            <span class="chevron collapsed">&#9660;</span>
+          </button>
+          <div class="thinking-body"><pre>用户要求重构 auth 模块。需要：
+1. 分析现有中间件中的 JWT 验证逻辑
+2. 设计 service 层接口
+3. 确保向后兼容
+
+先读取当前的 auth middleware 文件...</pre></div>
+        </div>
+        <div class="tool-card">
+          <button class="tool-header" onclick="toggleBlock(this)">
+            <span class="chevron collapsed">&#9660;</span>
+            <span class="tool-name">edit</span>
+            <span class="file-path">src/middleware/auth.ts</span>
+            <span class="meta"><span>+18 -5</span> <span class="elapsed">0.3s</span></span>
+          </button>
+          <div class="tool-body"><pre>export class AuthService {
+  async verifyToken(token: string): Promise&lt;JwtPayload&gt; { ... }
+}</pre></div>
+        </div>
+        <div class="tool-card">
+          <button class="tool-header" onclick="toggleBlock(this)">
+            <span class="chevron collapsed">&#9660;</span>
+            <span class="tool-name">write</span>
+            <span class="file-path">src/services/auth.service.ts</span>
+            <span class="meta"><span>new file</span> <span class="elapsed">0.2s</span></span>
+          </button>
+          <div class="tool-body"><pre>Created new file with extracted auth logic</pre></div>
+        </div>
+        <div class="bubble bubble--assistant">
+          已完成 auth 模块重构。主要变更：
+          <div class="code-block">src/services/auth.service.ts  ← 新文件
+src/middleware/auth.ts        ← 简化为调用 service</div>
+          <strong style="margin-top:8px;display:block;">变更摘要：</strong>
+          <span style="color:var(--muted);font-size:13px;">
+            1. 新建 <code style="font-family:var(--font-mono);font-size:12px;">AuthService</code> 类，封装 JWT 验证、刷新、黑名单逻辑<br>
+            2. 中间件简化为调用 <code style="font-family:var(--font-mono);font-size:12px;">AuthService.verifyToken()</code><br>
+            3. 所有现有路由保持兼容，无需修改
+          </span>
+        </div>
+      </div>
+
+      <div class="msg-group">
+        <div class="msg-label msg-label--user"><span class="timestamp">14:32</span>用户</div>
+        <div class="bubble bubble--user">写一下单元测试，覆盖率 80% 以上</div>
+      </div>
+
+      <div class="msg-group">
+        <div class="msg-label msg-label--assistant">助手<span class="timestamp">14:32</span></div>
+        <div class="tool-card">
+          <button class="tool-header">
+            <div class="spinner"></div>
+            <span class="tool-name">bash</span>
+            <span class="file-path">npx vitest run --coverage</span>
+            <span class="meta"><span class="elapsed">4.7s</span></span>
+          </button>
+        </div>
+        <div class="bubble bubble--assistant">
+          正在运行测试套件<span style="display:inline-block;width:2px;height:1.1em;background:var(--accent);animation:blink 1s step-end infinite;vertical-align:text-bottom;margin-left:1px;"></span>
+        </div>
+      </div>
+    </div>
+    <div class="input-area">
+      <div class="input-box">
+        <textarea rows="1" placeholder="输入消息… (Enter 发送, Shift+Enter 换行, / 命令)"></textarea>
+        <span class="model-tag">glm-5.1 @ Router</span>
+        <button class="send-btn">&#8593;</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== FULLSCREEN (no traffic lights) ==================== -->
+<div class="demo-container" id="demo-fullscreen">
+  <aside class="sidebar">
+    <div class="sidebar-header sidebar-header--fullscreen">
+      <!-- Row 1: Logo + Overview + Settings + Back + Forward -->
+      <div class="sidebar-row1">
+        <span class="sidebar-brand">xyz<span>-agent</span></span>
+        <div class="sidebar-nav">
+          <button class="ctrl-btn" title="Overview (Cmd+J)">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>
+          </button>
+          <button class="ctrl-btn" title="Settings (Cmd+,)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 008.58 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 8.58a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+          </button>
+          <button class="ctrl-btn" title="Back">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 3L5 8l5 5"/></svg>
+          </button>
+          <button class="ctrl-btn" title="Forward">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 3l5 5-5 5"/></svg>
+          </button>
+        </div>
+      </div>
+      <!-- Row 2: New Session full width -->
+      <div class="sidebar-row2">
+        <button class="sidebar-new sidebar-new--wide">+ New Session</button>
+      </div>
+    </div>
+
+    <div class="sidebar__body">
+      <div class="sg-hd">
+        <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6l4 4 4-4"/></svg>
+        xyz-agent
+      </div>
+      <div class="session-item active"><span class="dot"></span><span class="label">Refactor auth module</span><span class="time">2m</span></div>
+      <div class="session-item"><span class="dot"></span><span class="label">Fix sidebar alignment</span><span class="time">1h</span></div>
+      <div class="session-item"><span class="dot"></span><span class="label">Design warm theme</span><span class="time">3h</span></div>
+    </div>
+    <div class="sidebar__btm">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 11a3 3 0 100-6 3 3 0 000 6z"/><path d="M1.6 13a7 7 0 0112.8 0"/></svg>
+      <span class="sidebar__btm-user">User</span>
+      <span class="sidebar__btm-status">● Connected</span>
+    </div>
+  </aside>
+
+  <div class="main">
+    <div class="panel-bar">
+      <div class="breadcrumb"><span>~/code/xyz-agent</span><span style="color:var(--muted)">/</span><span>src-electron</span></div>
+      <button class="close-btn">&#x2715;</button>
+    </div>
+    <div class="chat">
+      <div class="system-msg"><span class="dot"></span><span>Session started. Fullscreen mode, no traffic lights.</span></div>
+      <div class="msg-group">
+        <div class="msg-label msg-label--assistant">助手<span class="timestamp">14:30</span></div>
+        <div class="bubble bubble--assistant">全屏模式下，sidebar 顶部布局变化：第一行是 Logo + 控制按钮，第二行是全宽的 New Session 按钮。没有 traffic lights，所以左上角直接从 Logo 开始。</div>
+      </div>
+    </div>
+    <div class="input-area">
+      <div class="input-box">
+        <textarea rows="1" placeholder="输入消息… (Enter 发送, Shift+Enter 换行, / 命令)"></textarea>
+        <span class="model-tag">glm-5.1 @ Router</span>
+        <button class="send-btn">&#8593;</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== TONE COMPARISON ==================== -->
+<div class="demo-container" id="demo-comparison" style="flex-direction:column;padding-top:30px;">
+  <div style="display:flex;flex:1;overflow:hidden;">
+    <div style="flex:1;padding:24px;overflow-y:auto;border-right:1px solid var(--border);">
+      <h3 style="font-size:12px;text-transform:uppercase;letter-spacing:0.05em;color:var(--danger);margin-bottom:12px;font-weight:600;">v1 — Too Warm (hue=50, chroma=0.012-0.025)</h3>
+      <div style="background:oklch(13% 0.012 50);padding:16px;border-radius:2px;">
+        <div style="background:oklch(17% 0.015 50);padding:12px;margin-bottom:8px;border-radius:1px;">
+          <div style="font-size:14px;color:oklch(93% 0.008 60);">This is assistant text on a warm background.</div>
+          <div style="font-size:11px;color:oklch(58% 0.012 50);margin-top:4px;">Background: oklch(17% 0.015 50) — 明显泛棕</div>
+        </div>
+        <div style="background:oklch(24% 0.025 40);border:1px solid oklch(32% 0.03 40);padding:12px;margin-bottom:8px;border-radius:1px;max-width:75%;margin-left:auto;">
+          <div style="font-size:14px;color:oklch(93% 0.008 60);">User bubble — very warm tinted.</div>
+        </div>
+        <div style="font-size:11px;color:oklch(58% 0.012 50);">Surface delta: bg L=13% → surface L=17% (4% gap, warm)</div>
+      </div>
+    </div>
+    <div style="flex:1;padding:24px;overflow-y:auto;border-right:1px solid var(--border);">
+      <h3 style="font-size:12px;text-transform:uppercase;letter-spacing:0.05em;color:var(--success);margin-bottom:12px;font-weight:600;">v2 — Cooler (hue=50, chroma=0.006-0.01) ← Current</h3>
+      <div style="background:oklch(13% 0.006 50);padding:16px;border-radius:2px;">
+        <div style="background:oklch(17% 0.008 50);padding:12px;margin-bottom:8px;border-radius:1px;border-top:1px solid oklch(28% 0.008 50);">
+          <div style="font-size:14px;color:oklch(93% 0.005 55);">This is assistant text — cooler but not pure gray.</div>
+          <div style="font-size:11px;color:oklch(58% 0.008 50);margin-top:4px;">Background: oklch(17% 0.008 50) — 微暖，接近中性</div>
+        </div>
+        <div style="background:oklch(22% 0.015 40);border:1px solid oklch(30% 0.02 40);padding:12px;margin-bottom:8px;border-radius:1px;max-width:75%;margin-left:auto;">
+          <div style="font-size:14px;color:oklch(93% 0.005 55);">User bubble — subtle warmth.</div>
+        </div>
+        <div style="font-size:11px;color:oklch(58% 0.008 50);">Surface delta: bg L=13% → surface L=17% (4% gap, subtle warm)</div>
+      </div>
+    </div>
+    <div style="flex:1;padding:24px;overflow-y:auto;">
+      <h3 style="font-size:12px;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);margin-bottom:12px;font-weight:600;">v0 — Neutral Gray (hue=0, chroma=0)</h3>
+      <div style="background:oklch(12% 0 0);padding:16px;border-radius:2px;">
+        <div style="background:oklch(16% 0 0);padding:12px;margin-bottom:8px;border-radius:1px;border-left:2px solid oklch(72% 0 0);">
+          <div style="font-size:14px;color:oklch(94% 0 0);">This is assistant text on pure gray.</div>
+          <div style="font-size:11px;color:oklch(58% 0 0);margin-top:4px;">Background: oklch(16% 0 0) — 纯灰，无暖意</div>
+        </div>
+        <div style="background:oklch(16% 0 0);border-left:2px solid oklch(72% 0 0);padding:12px;margin-bottom:8px;border-radius:1px;max-width:75%;margin-left:auto;">
+          <div style="font-size:14px;color:oklch(94% 0 0);">User bubble — same bg, side-stripe border.</div>
+        </div>
+        <div style="font-size:11px;color:oklch(58% 0 0);">Pure neutral — clean but cold, no personality</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function showDemo(id) {
+  document.querySelectorAll('.demo-container').forEach(d => d.classList.remove('active'));
+  document.querySelectorAll('.demo-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('demo-' + id).classList.add('active');
+  event.target.classList.add('active');
+}
+function toggleBlock(header) {
+  const body = header.nextElementSibling;
+  const chevron = header.querySelector('.chevron');
+  if (!body) return;
+  const isOpen = body.classList.contains('open');
+  if (isOpen) { body.classList.remove('open'); if (chevron) chevron.classList.add('collapsed'); }
+  else { body.classList.add('open'); if (chevron) chevron.classList.remove('collapsed'); }
+}
+</script>
+</body>
+</html>

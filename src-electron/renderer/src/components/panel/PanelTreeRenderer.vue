@@ -2,7 +2,7 @@
   <!-- Pane leaf node -->
   <div
     v-if="node.type === 'pane'"
-    :class="['flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden border-t-2', node.id === focusedPanelId ? 'border-t-accent' : 'border-t-border']"
+    :class="['flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden bg-bg', node.id === focusedPanelId ? '' : '']"    
     @mousedown="panelStore.navigateToPanel(node.id)"
   >
     <PanelSessionView

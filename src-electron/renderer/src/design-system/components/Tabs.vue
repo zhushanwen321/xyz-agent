@@ -28,7 +28,7 @@ const emit = defineEmits<{
 
 const listClasses = computed(() =>
   cn(
-    'inline-flex h-10 items-center justify-center rounded-md p-1',
+    'inline-flex h-10 items-center justify-center rounded-sm p-1',
   ),
 )
 

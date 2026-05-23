@@ -115,7 +115,7 @@ const sourceTypeLabels = computed<Record<string, string>>(() => ({
 </script>
 
 <template>
-  <div class="border border-border rounded-lg overflow-hidden mb-3">
+  <div class="border border-border rounded-sm overflow-hidden mb-3">
     <div class="flex items-center py-[10px] px-4 bg-[var(--section-bg)] border-b border-border min-h-[42px]">
       <span class="text-[13px] font-semibold">{{ t('settings.scanAndImport') }}</span>
     </div>
@@ -126,7 +126,7 @@ const sourceTypeLabels = computed<Record<string, string>>(() => ({
         v-for="src in sources"
         :key="src.id"
         :class="[
-          'flex items-center gap-2 py-1.5 px-3 border rounded-md text-xs cursor-pointer transition-all duration-120 select-none',
+          'flex items-center gap-2 py-1.5 px-3 border rounded-sm text-xs cursor-pointer transition-all duration-120 select-none',
           activeSources.has(src.id)
             ? 'border-[var(--accent)] bg-[var(--accent-light)] text-[var(--accent)] font-medium'
             : 'border-border bg-surface hover:border-[oklch(80%_0.01_70)] hover:bg-[var(--hover-bg)]',
@@ -135,7 +135,7 @@ const sourceTypeLabels = computed<Record<string, string>>(() => ({
       >
         <span
           :class="[
-            'w-[22px] h-[22px] rounded-[5px] text-[10px] font-bold flex items-center justify-center shrink-0 transition-colors duration-120',
+            'w-[22px] h-[22px] rounded-sm text-[10px] font-bold flex items-center justify-center shrink-0 transition-colors duration-120',
             activeSources.has(src.id)
               ? 'bg-[var(--accent)] text-white'
               : 'bg-[var(--accent-light)] text-[var(--accent)]',
@@ -152,7 +152,7 @@ const sourceTypeLabels = computed<Record<string, string>>(() => ({
         v-for="src in customPaths"
         :key="src.id"
         :class="[
-          'flex items-center gap-2 py-1.5 px-3 border rounded-md text-xs cursor-pointer transition-all duration-120 select-none',
+          'flex items-center gap-2 py-1.5 px-3 border rounded-sm text-xs cursor-pointer transition-all duration-120 select-none',
           activeSources.has(src.id)
             ? 'border-[var(--accent)] bg-[var(--accent-light)] text-[var(--accent)] font-medium'
             : 'border-border bg-surface hover:border-[oklch(80%_0.01_70)] hover:bg-[var(--hover-bg)]',
@@ -161,7 +161,7 @@ const sourceTypeLabels = computed<Record<string, string>>(() => ({
       >
         <span
           :class="[
-            'w-[22px] h-[22px] rounded-[5px] text-[10px] font-bold flex items-center justify-center shrink-0',
+            'w-[22px] h-[22px] rounded-sm text-[10px] font-bold flex items-center justify-center shrink-0',
             activeSources.has(src.id)
               ? 'bg-[var(--accent)] text-white'
               : 'bg-[var(--accent-light)] text-[var(--accent)]',
@@ -221,7 +221,7 @@ const sourceTypeLabels = computed<Record<string, string>>(() => ({
         <!-- Checkbox -->
         <div
           :class="[
-            'w-4 h-4 rounded-[3px] border-[1.5px] flex items-center justify-center shrink-0 transition-all duration-120',
+            'w-4 h-4 rounded-sm border-[1.5px] flex items-center justify-center shrink-0 transition-all duration-120',
             item.alreadyImported
               ? 'opacity-40 cursor-not-allowed border-border'
               : selectedItems.has(item.id)
@@ -241,13 +241,13 @@ const sourceTypeLabels = computed<Record<string, string>>(() => ({
         <div class="flex-1 min-w-0">
           <div class="font-semibold text-xs flex items-center gap-1.5">
             {{ item.name }}
-            <span class="text-[9px] py-[1px] px-[5px] rounded-[3px] bg-[var(--section-bg)] text-muted font-medium">{{ sourceTypeLabels[item.sourceType] ?? item.sourceType }}</span>
+            <span class="text-[9px] py-[1px] px-[5px] rounded-sm bg-[var(--section-bg)] text-muted font-medium">{{ sourceTypeLabels[item.sourceType] ?? item.sourceType }}</span>
           </div>
           <div class="text-[11px] text-muted truncate">{{ item.description }}</div>
         </div>
 
         <!-- Imported badge -->
-        <span v-if="item.alreadyImported" class="text-[9px] py-[1px] px-[5px] rounded-[3px] bg-[var(--success-light)] text-[var(--success)] font-semibold shrink-0">{{ t('settings.imported') }}</span>
+        <span v-if="item.alreadyImported" class="text-[9px] py-[1px] px-[5px] rounded-sm bg-[var(--success-light)] text-[var(--success)] font-semibold shrink-0">{{ t('settings.imported') }}</span>
       </div>
 
       <!-- Import action bar -->

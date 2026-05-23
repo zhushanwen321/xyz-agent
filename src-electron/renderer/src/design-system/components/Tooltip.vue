@@ -30,7 +30,7 @@ const sideMap: Record<Position, 'top' | 'bottom' | 'left' | 'right'> = {
 
 const contentClasses = computed(() =>
   cn(
-    'z-50 overflow-hidden rounded-md px-3 py-1.5 text-xs animate-in fade-in-0 zoom-in-95',
+    'z-50 overflow-hidden rounded-sm px-3 py-1.5 text-xs animate-in fade-in-0 zoom-in-95',
     'shadow-md',
   ),
 )

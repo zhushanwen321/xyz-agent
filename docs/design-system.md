@@ -91,9 +91,12 @@
 
 | Token | 值 | 用途 |
 |-------|-----|------|
-| `--radius-sm` | `0.25rem` | 小元素（标签、内联代码） |
-| `--radius-md` | `0.375rem` | 卡片、代码块 |
-| `--radius-lg` | `0.5rem` | 大容器 |
+| `--radius-xs` | `1px` | 默认（所有元素） |
+| `--radius-sm` | `1px` | 默认（同 xs） |
+| `--radius-md` | `2px` | 特殊场景 |
+| `--radius-lg` | `2px` | 特殊场景 |
+
+> 默认 radius = 1px，2px 仅用于特殊场景。详见 docs/standards.md §7.1
 
 ## 5. Markdown 渲染
 

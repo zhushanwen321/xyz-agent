@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Card Style Comparison — Bubble vs Sharp vs Borderline</title>
+<style>
+  :root {
+    --font-body: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+    --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { -webkit-font-smoothing: antialiased; }
+  body {
+    font-family: var(--font-body); font-size: 14px; line-height: 1.6;
+    display: flex; height: 100vh; overflow: hidden; margin: 0;
+    background: #111;
+  }
+
+  .demo-col {
+    flex: 1; display: flex; flex-direction: column; min-width: 0;
+    position: relative; padding: 60px 24px 24px;
+  }
+  .demo-col + .demo-col { border-left: 2px dashed #333; }
+  .demo-label {
+    position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    padding: 5px 16px; border-radius: 100px;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.03em; z-index: 100;
+    font-family: var(--font-mono); white-space: nowrap;
+  }
+
+  /* Neutral dark base */
+  .demo-col {
+    --bg: oklch(12% 0 0);
+    --surface: oklch(20% 0 0);
+    --elevated: oklch(28% 0 0);
+    --fg: oklch(95% 0 0);
+    --muted: oklch(58% 0 0);
+    --border: oklch(35% 0 0);
+    --accent: oklch(72% 0 0);
+    --accent-light: oklch(30% 0 0);
+    --success: oklch(68% 0.12 145);
+    background: var(--bg); color: var(--fg);
+  }
+
+  .col-a .demo-label { background: #3a2830; color: #d4a0a0; }
+  .col-b .demo-label { background: #283a30; color: #a0d4b0; }
+  .col-c .demo-label { background: #28303a; color: #a0b8d4; }
+
+  .chat-msgs {
+    flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 12px;
+    max-width: 700px; margin: 0 auto; width: 100%;
+  }
+
+  /* ── Column A: Large radius (12px) + border — BUBBLE ── */
+  .col-a .msg {
+    padding: 10px 14px; line-height: 1.6; font-size: 13px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; max-width: min(80%, 65ch);
+  }
+  .col-a .msg--user {
+    align-self: flex-end; max-width: min(70%, 50ch);
+    background: var(--accent-light); border-bottom-right-radius: 4px;
+  }
+  .col-a .msg--bot {
+    align-self: flex-start; border-bottom-left-radius: 4px;
+  }
+  .col-a .msg__role {
+    font-size: 9px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.04em; color: var(--muted); margin-bottom: 3px;
+  }
+
+  /* ── Column B: Small radius (4px) + no border — SHARP ── */
+  .col-b .msg {
+    padding: 10px 14px; line-height: 1.6; font-size: 13px;
+    background: var(--surface); border: none;
+    border-radius: 4px; max-width: min(80%, 65ch);
+  }
+  .col-b .msg--user {
+    align-self: flex-end; max-width: min(70%, 50ch);
+    background: var(--accent-light); border-bottom-right-radius: 2px;
+  }
+  .col-b .msg--bot {
+    align-self: flex-start; background: var(--elevated);
+    border-bottom-left-radius: 2px;
+  }
+  .col-b .msg__role {
+    font-size: 9px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.04em; color: var(--muted); margin-bottom: 3px;
+  }
+
+  /* ── Column C: Zero radius + left accent border — EDITOR ── */
+  .col-c .msg {
+    padding: 10px 14px; line-height: 1.6; font-size: 13px;
+    background: var(--surface); border: none;
+    border-radius: 0; max-width: min(80%, 65ch);
+    border-left: 3px solid transparent;
+  }
+  .col-c .msg--user {
+    align-self: flex-end; max-width: min(70%, 50ch);
+    background: var(--accent-light); border-left-color: var(--accent);
+  }
+  .col-c .msg--bot {
+    align-self: flex-start; background: var(--elevated);
+    border-left-color: var(--border);
+  }
+  .col-c .msg__role {
+    font-size: 9px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.04em; color: var(--muted); margin-bottom: 3px;
+  }
+
+  .caption {
+    font-size: 10px; color: var(--muted); margin-top: 12px;
+    font-family: var(--font-mono); text-align: center; line-height: 1.5;
+  }
+
+  /* System msg shared */
+  .msg--system {
+    align-self: stretch; width: 100%; max-width: none; margin: 2px 0;
+    background: var(--surface); padding: 8px 12px; font-size: 12px;
+    display: flex; align-items: center; gap: 8px; border: 1px solid var(--border);
+  }
+  .col-b .msg--system { border: none; background: var(--elevated); }
+  .col-c .msg--system { border: none; border-left: 3px solid var(--success); background: var(--elevated); }
+  .msg--system__dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); flex-shrink: 0; }
+  .msg--system__title { font-weight: 600; }
+</style>
+</head>
+<body>
+
+<!-- ════════════════════════════════════════════════════════════════
+     COLUMN A: Large radius (12px) + border = BUBBLE feel
+     ════════════════════════════════════════════════════════════════ -->
+<div class="demo-col col-a">
+  <div class="demo-label">12px radius + border</div>
+  <div class="chat-msgs">
+    <div class="msg msg--user">
+      <div class="msg__role">用户</div>
+      <div>帮我重构整个 auth 模块</div>
+    </div>
+    <div class="msg msg--bot">
+      <div class="msg__role">助手</div>
+      <div>好的，我来分析现有结构，然后统一接口定义、重构错误处理。</div>
+    </div>
+    <div class="msg msg--bot">
+      <div class="msg__role">助手</div>
+      <div>发现了 3 个问题：接口散落、错误类冗余、Session 耦合。</div>
+    </div>
+    <div class="msg--system">
+      <span class="msg--system__dot"></span>
+      <span class="msg--system__title">分析代码结构已完成</span>
+    </div>
+    <div class="msg msg--user">
+      <div class="msg__role">用户</div>
+      <div>继续，把测试也补上</div>
+    </div>
+  </div>
+  <div class="caption">Bubble feel. Messages look like floating<br>pills or speech balloons.</div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════
+     COLUMN B: Small radius (4px) + no border + bg diff = SHARP
+     ════════════════════════════════════════════════════════════════ -->
+<div class="demo-col col-b">
+  <div class="demo-label">4px radius + no border</div>
+  <div class="chat-msgs">
+    <div class="msg msg--user">
+      <div class="msg__role">用户</div>
+      <div>帮我重构整个 auth 模块</div>
+    </div>
+    <div class="msg msg--bot">
+      <div class="msg__role">助手</div>
+      <div>好的，我来分析现有结构，然后统一接口定义、重构错误处理。</div>
+    </div>
+    <div class="msg msg--bot">
+      <div class="msg__role">助手</div>
+      <div>发现了 3 个问题：接口散落、错误类冗余、Session 耦合。</div>
+    </div>
+    <div class="msg--system">
+      <span class="msg--system__dot"></span>
+      <span class="msg--system__title">分析代码结构已完成</span>
+    </div>
+    <div class="msg msg--user">
+      <div class="msg__role">用户</div>
+      <div>继续，把测试也补上</div>
+    </div>
+  </div>
+  <div class="caption">Sharp feel. Messages look like content blocks<br>in an editor or document.</div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════
+     COLUMN C: Zero radius + left accent border = EDITOR feel
+     ════════════════════════════════════════════════════════════════ -->
+<div class="demo-col col-c">
+  <div class="demo-label">0px radius + accent border</div>
+  <div class="chat-msgs">
+    <div class="msg msg--user">
+      <div class="msg__role">用户</div>
+      <div>帮我重构整个 auth 模块</div>
+    </div>
+    <div class="msg msg--bot">
+      <div class="msg__role">助手</div>
+      <div>好的，我来分析现有结构，然后统一接口定义、重构错误处理。</div>
+    </div>
+    <div class="msg msg--bot">
+      <div class="msg__role">助手</div>
+      <div>发现了 3 个问题：接口散落、错误类冗余、Session 耦合。</div>
+    </div>
+    <div class="msg--system">
+      <span class="msg--system__dot"></span>
+      <span class="msg--system__title">分析代码结构已完成</span>
+    </div>
+    <div class="msg msg--user">
+      <div class="msg__role">用户</div>
+      <div>继续，把测试也补上</div>
+    </div>
+  </div>
+  <div class="caption">Editor feel. Like GitHub PR comments<br>or IDE inline hints.</div>
+</div>
+
+</body>
+</html>

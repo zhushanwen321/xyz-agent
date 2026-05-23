@@ -31,13 +31,14 @@
   --font-display: 'Tiempos Headline', 'Newsreader', 'Iowan Old Style', Georgia, serif;
   --font-body: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
-  --radius: 12px;
-  --radius-sm: 8px;
-  --radius-xs: 4px;
-  --radius-bubble: 8px;
-  /* Aliases for backwards compat */
-  --radius-lg: 12px;
-  --radius-md: 8px;
+  /* Radius system: default 1px, special cases 2px */
+  --radius: 1px;
+  --radius-sm: 1px;
+  --radius-xs: 1px;
+  --radius-bubble: 1px;
+  /* 2px for special cases only */
+  --radius-lg: 2px;
+  --radius-md: 2px;
   --sidebar-w: 240px;
   --inspector-w: 380px;
   --header-h: 48px;
@@ -63,26 +64,28 @@
 }
 
 [data-theme="dark"] {
-  --bg: oklch(13% 0.008 75);
-  --surface: oklch(16% 0.008 75);
-  --fg: oklch(92% 0.005 75);
-  --muted: oklch(55% 0.010 75);
-  --border: oklch(24% 0.010 75);
-  --accent: oklch(55% 0.08 195);
-  --accent-light: oklch(22% 0.04 195);
-  --success: oklch(65% 0.10 145);
-  --success-light: oklch(22% 0.04 145);
-  --warning: oklch(75% 0.10 85);
-  --warning-light: oklch(25% 0.04 85);
-  --danger: oklch(55% 0.12 25);
-  --danger-light: oklch(25% 0.04 25);
+  --bg: oklch(13% 0.006 50);
+  --surface: oklch(17% 0.008 50);
+  --fg: oklch(93% 0.005 55);
+  --muted: oklch(58% 0.008 50);
+  --border: oklch(28% 0.008 50);
+  --accent: oklch(68% 0.10 28);
+  --accent-light: oklch(28% 0.04 28);
+  --success: oklch(68% 0.12 145);
+  --success-light: oklch(28% 0.05 145);
+  --warning: oklch(78% 0.10 85);
+  --warning-light: oklch(28% 0.04 85);
+  --danger: oklch(58% 0.15 25);
+  --danger-light: oklch(28% 0.05 25);
   --agent: oklch(65% 0.15 250);
   --agent-light: oklch(22% 0.04 250);
-  --section-bg: oklch(20% 0.010 75);
-  --hover-bg: oklch(19% 0.010 75);
-  --divider: oklch(22% 0.010 75);
+  --section-bg: oklch(22% 0.009 50);
+  --hover-bg: oklch(20% 0.009 50);
+  --divider: oklch(22% 0.008 50);
 
-  --shadow-xs: 0 1px 6px rgba(0, 0, 0, 0.2);
+  /* User message bubble */
+  --user-bubble-bg: oklch(22% 0.015 40);
+  --user-bubble-border: oklch(30% 0.02 40);
   --shadow-sm: 0 2px 12px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
   --shadow-lg: 0 4px 20px rgba(0, 0, 0, 0.35);
@@ -120,16 +123,16 @@
 }
 
 [data-theme="dark"][data-palette="neutral"] {
-  --bg: oklch(12% 0 0);
-  --surface: oklch(16% 0 0);
-  --fg: oklch(95% 0 0);
-  --muted: oklch(55% 0 0);
-  --border: oklch(24% 0 0);
-  --accent: oklch(88% 0 0);
-  --accent-light: oklch(28% 0 0);
-  --section-bg: oklch(20% 0 0);
-  --hover-bg: oklch(19% 0 0);
-  --divider: oklch(22% 0 0);
+  --bg: oklch(13% 0.006 50);
+  --surface: oklch(17% 0.008 50);
+  --fg: oklch(93% 0.005 55);
+  --muted: oklch(58% 0.008 50);
+  --border: oklch(28% 0.008 50);
+  --accent: oklch(68% 0.10 28);
+  --accent-light: oklch(28% 0.04 28);
+  --section-bg: oklch(22% 0.009 50);
+  --hover-bg: oklch(20% 0.009 50);
+  --divider: oklch(22% 0.008 50);
 }
 
 [data-theme="dark"][data-palette="sharp"] {
@@ -362,7 +365,7 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 ::selection { background: var(--accent); color: white; }
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 1px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 
 /* ── Markdown 渲染样式（msg__body 内的 v-html 内容） ── */

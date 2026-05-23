@@ -109,16 +109,30 @@ interface ManagedProcess {
 export class ProcessManager {
   private processes = new Map<string, ManagedProcess>()
   private clientToId = new Map<RpcClient, string>()
-  private exitCallback: ((sessionId: string, code: number | null) => void) | null = null
-  private piPath: string
+  private exitCallbacks = new Set<(sessionId: string, code: number | null) => void>()
+  private piPath: string | null = null
+  private piPathPromise: Promise<string> | null = null
 
   constructor() {
-    this.piPath = findPiExecutable()
-    if (this.piPath !== 'pi') {
-      console.log(`[process-manager] using pi at: ${this.piPath}`)
-    } else {
-      console.warn('[process-manager] pi not found in common locations, relying on PATH')
-    }
+    // 懒初始化：不在构造函数中执行同步 I/O，避免阻塞事件循环
+    // piPath 在首次 createSession 时才解析
+  }
+
+  /** 获取或解析 pi 可执行文件路径（只执行一次） */
+  private getPiPath(): Promise<string> {
+    if (this.piPath) return Promise.resolve(this.piPath)
+    if (this.piPathPromise) return this.piPathPromise
+    this.piPathPromise = Promise.resolve().then(() => {
+      const resolved = findPiExecutable()
+      this.piPath = resolved
+      if (resolved !== 'pi') {
+        console.log(`[process-manager] using pi at: ${resolved}`)
+      } else {
+        console.warn('[process-manager] pi not found in common locations, relying on PATH')
+      }
+      return resolved
+    })
+    return this.piPathPromise
   }
 
   /**
@@ -130,14 +144,16 @@ export class ProcessManager {
       await this.destroySession(sessionId)
     }
 
+    const piPath = await this.getPiPath()
+
     // Inject discovered pi directory into PATH so spawn('pi', ...) resolves
-    const piDir = this.piPath !== 'pi' ? join(this.piPath, '..') : undefined
+    const piDir = piPath !== 'pi' ? join(piPath, '..') : undefined
     const pathEnv: Record<string, string> = {}
     if (piDir) {
       pathEnv.PATH = `${piDir}${pathDelimiter}${process.env.PATH ?? ''}`
     }
 
-    const client = new RpcClient({ cwd, ...options, env: { ...pathEnv, ...options?.env }, piCommand: this.piPath !== 'pi' ? this.piPath : undefined })
+    const client = new RpcClient({ cwd, ...options, env: { ...pathEnv, ...options?.env }, piCommand: piPath !== 'pi' ? piPath : undefined })
     try {
       await client.start()
     } catch (e) {
@@ -146,7 +162,7 @@ export class ProcessManager {
         if (process.env.XYZ_AGENT_PACKAGED === '1') {
           throw new Error(
             `Failed to start bundled pi process. The application installation may be corrupted. `
-            + `Attempted binary: ${this.piPath}. Original error: ${msg}`,
+            + `Attempted binary: ${piPath}. Original error: ${msg}`,
           )
         }
         throw new Error(
@@ -165,8 +181,8 @@ export class ProcessManager {
       console.warn(`[process-manager] session ${sessionId} process exited unexpectedly (code: ${code})`)
       this.processes.delete(sessionId)
       this.clientToId.delete(client)
-      if (this.exitCallback) {
-        this.exitCallback(sessionId, code)
+      for (const cb of this.exitCallbacks) {
+        cb(sessionId, code)
       }
     })
 
@@ -256,9 +272,10 @@ export class ProcessManager {
     this.clientToId.set(entry.client, newId)
   }
 
-  /** Register a callback for when a session's process exits unexpectedly. */
-  onSessionExit(callback: (sessionId: string, code: number | null) => void): void {
-    this.exitCallback = callback
+  /** Register a callback for when a session's process exits unexpectedly. Returns unsubscribe function. */
+  onSessionExit(callback: (sessionId: string, code: number | null) => void): () => void {
+    this.exitCallbacks.add(callback)
+    return () => { this.exitCallbacks.delete(callback) }
   }
 
   /** Number of active processes. */

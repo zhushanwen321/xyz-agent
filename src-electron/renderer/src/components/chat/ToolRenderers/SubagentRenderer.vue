@@ -2,9 +2,9 @@
   <div class="p-0" :data-status="toolCall.status">
   <!-- Agent line: icon + name + mode tag -->
   <div class="flex items-center gap-1.5 px-2.5 py-1.5 border-b border-border bg-surface">
-    <div class="w-3.5 h-3.5 rounded-sm bg-agent flex items-center justify-center text-white text-[9px] font-bold shrink-0">A</div>
+    <div class="w-3.5 h-3.5 rounded-none bg-agent flex items-center justify-center text-white text-[9px] font-bold shrink-0">A</div>
     <span class="font-mono text-xs font-semibold text-agent">{{ agentName }}</span>
-    <span class="text-[10px] text-muted px-1.5 py-px bg-surface border border-border rounded-sm">{{ mode }}</span>
+    <span class="text-[10px] text-muted px-1.5 py-px bg-surface border border-border rounded-none">{{ mode }}</span>
   </div>
 
   <!-- Task description -->
@@ -13,7 +13,7 @@
   </div>
 
   <!-- Output area -->
-  <div v-if="showOutput" class="mx-2.5 my-2 max-h-[180px] overflow-y-auto rounded-sm border border-border bg-bg p-2">
+  <div v-if="showOutput" class="mx-2.5 my-2 max-h-[180px] overflow-y-auto rounded-none border border-border bg-bg p-2">
     <pre class="whitespace-pre-wrap font-mono text-xs text-fg leading-relaxed m-0">{{ toolCall.output }}</pre>
   </div>
   </div>

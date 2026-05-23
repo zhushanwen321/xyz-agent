@@ -4,7 +4,7 @@
       <div
         v-for="toast in toasts"
         :key="toast.id"
-        class="w-[340px] bg-surface border border-border rounded py-3 px-[14px] shadow-lg pointer-events-auto flex gap-[10px]"
+        class="w-[340px] bg-surface border border-border rounded-sm py-3 px-[14px] shadow-lg pointer-events-auto flex gap-[10px]"
         :class="{ 'opacity-0 -translate-x-[120%]': toast.removing }"
       >
         <span class="w-2 h-2 rounded-full shrink-0 mt-1" :style="{ background: dotColor(toast.type) }"></span>

@@ -224,9 +224,46 @@ src-electron/
 
 ---
 
-## 7. 自动化检查
+## 7. 样式规范
 
-### 7.1 现有检查工具
+### 7.1 Border-radius 约束
+
+**项目全局只允许 1px 和 2px 两种 border-radius 值。1px 是默认值，2px 仅用于特殊场景。**
+
+| 场景 | 使用值 | Tailwind class |
+|------|--------|----------------|
+| 所有默认元素（气泡、卡片、按钮、面板、session、输入框等） | 1px | `rounded-sm` 或 `rounded-xs` |
+| 特殊场景（需要更大圆角时） | 2px | `rounded-md` 或 `rounded-lg` |
+| 圆形指示器、头像（不受限） | 50% | `rounded-full` |
+| 无圆角（强制） | 0 | `rounded-none` |
+
+**Tailwind 配置（tailwind.config.ts）：**
+```ts
+borderRadius: {
+  DEFAULT: '1px',  // rounded
+  sm: '1px',        // rounded-sm (默认)
+  xs: '1px',        // rounded-xs (同 sm)
+  md: '2px',        // rounded-md (特殊)
+  lg: '2px',        // rounded-lg (特殊)
+}
+```
+
+**CSS 变量（style.css）：**
+```css
+--radius: 1px;
+--radius-sm: 1px;     /* 默认 */
+--radius-xs: 1px;
+--radius-lg: 2px;     /* 特殊 */
+--radius-md: 2px;     /* 特殊 */
+```
+
+**设计意图：** 1px 的锐利几何风格是 xyz-agent 的视觉标识。接近零但不为零的圆角提供微小软化的同时保持整体锋利感。
+
+---
+
+## 8. 自动化检查
+
+### 8.1 现有检查工具
 
 | 工具 | 覆盖范围 | 触发时机 |
 |------|---------|---------|
@@ -234,7 +271,7 @@ src-electron/
 | vue_rules_checker.py | 行数上限 / CSS 选择器 / Tab 缩进 / 原生元素 / emoji / v-model | pre-commit |
 | pre-commit hook | ESLint + vue_rules_checker | git commit |
 
-### 7.2 共享类型同步
+### 8.2 共享类型同步
 
 `src-electron/shared/` 中的类型定义是前端与 sidecar 的唯一协议源。修改协议类型时：
 

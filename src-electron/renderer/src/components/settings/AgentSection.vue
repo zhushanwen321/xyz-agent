@@ -55,7 +55,7 @@ function cancelDelete() {
       <div class="flex-1 min-w-0">
         <div class="text-[13px] font-semibold flex items-center gap-2">
           {{ agent.name }}
-          <span v-if="sourceLabel" class="text-[10px] font-semibold py-[1px] px-1.5 rounded bg-[var(--accent-light)] text-[var(--accent)]">{{ sourceLabel }}</span>
+          <span v-if="sourceLabel" class="text-[10px] font-semibold py-[1px] px-1.5 rounded-sm bg-[var(--accent-light)] text-[var(--accent)]">{{ sourceLabel }}</span>
         </div>
         <div class="text-[11px] text-muted mt-px line-clamp-1">{{ agent.description }}</div>
       </div>
@@ -71,7 +71,7 @@ function cancelDelete() {
         <circle cx="7" cy="7" r="5.5" /><path d="M7 4.5v3M7 9v.5" />
       </svg>
       {{ t('settings.confirmDeleteAgent', { name: agent.name }) }}
-      <Button variant="ghost" size="sm" class="!bg-[var(--danger)] !text-white hover:!opacity-80 !py-[3px] !px-2 !text-[11px] !rounded-[3px] !border-none" @click="confirmDelete">{{ t('settings.confirmDelete') }}</Button>
+      <Button variant="ghost" size="sm" class="!bg-[var(--danger)] !text-white hover:!opacity-80 !py-[3px] !px-2 !text-[11px] !rounded-sm !border-none" @click="confirmDelete">{{ t('settings.confirmDelete') }}</Button>
       <Button variant="ghost" size="sm" class="!text-[var(--danger)] !py-[3px] !px-2 !text-[11px]" @click="cancelDelete">{{ t('common.cancel') }}</Button>
     </div>
   </div>

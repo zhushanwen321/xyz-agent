@@ -11,7 +11,7 @@
     </Button>
     <div
       v-if="open"
-      class="absolute bottom-[calc(100%+6px)] left-0 min-w-[260px] max-h-[280px] bg-surface border border-border rounded-sm shadow-md z-[200] overflow-y-auto overflow-x-hidden"
+      class="absolute bottom-[calc(100%+6px)] left-0 min-w-[260px] max-h-[280px] bg-surface border border-border rounded-none shadow-md z-[200] overflow-y-auto overflow-x-hidden"
     >
       <div
         v-for="(group, gIdx) in groupedModels"

@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dimensional Fix Preview — xyz-agent (Light + Dark)</title>
+<style>
+  /* ============================================================
+     BASE
+     ============================================================ */
+  :root {
+    --font-body: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+    --font-display: 'Tiempos Headline', 'Newsreader', 'Iowan Old Style', Georgia, serif;
+    --radius: 12px; --radius-sm: 8px; --radius-xs: 4px;
+    --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { -webkit-font-smoothing: antialiased; }
+  body {
+    font-family: var(--font-body); font-size: 14px; line-height: 1.6;
+    display: flex; height: 100vh; overflow: hidden; margin: 0;
+    background: #1a1a1a;
+  }
+
+  /* ============================================================
+     VARIANT A: CURRENT (FLAT)
+     ============================================================ */
+  .variant-a {
+    /* Light */
+    --bg: oklch(97% 0.010 75);
+    --surface: oklch(99% 0.006 75);
+    --elevated: oklch(99% 0.008 75);
+    --fg: oklch(22% 0.012 75);
+    --muted: oklch(50% 0.010 75);
+    --border: oklch(90% 0.008 75);
+    --accent: oklch(55% 0.08 195);
+    --accent-light: oklch(93% 0.03 195);
+    --success: oklch(62% 0.10 145);
+    --success-light: oklch(95% 0.04 145);
+    --danger: oklch(55% 0.12 25);
+    --danger-light: oklch(93% 0.04 25);
+    --section-bg: oklch(95% 0.014 70);
+    --shadow-xs: 0 1px 6px rgba(0,0,0,0.04);
+    --shadow-sm: 0 2px 12px rgba(0,0,0,0.08);
+    --shadow-md: 0 4px 16px rgba(0,0,0,0.12);
+  }
+  .variant-a[data-theme="dark"] {
+    --bg: oklch(13% 0.008 75);
+    --surface: oklch(16% 0.008 75);
+    --elevated: oklch(18% 0.010 75);
+    --fg: oklch(92% 0.005 75);
+    --muted: oklch(55% 0.010 75);
+    --border: oklch(24% 0.010 75);
+    --accent: oklch(55% 0.08 195);
+    --accent-light: oklch(22% 0.04 195);
+    --success: oklch(65% 0.10 145);
+    --success-light: oklch(22% 0.04 145);
+    --danger: oklch(58% 0.12 25);
+    --danger-light: oklch(28% 0.04 25);
+    --section-bg: oklch(18% 0.012 70);
+    --shadow-xs: 0 1px 6px rgba(0,0,0,0.20);
+    --shadow-sm: 0 2px 12px rgba(0,0,0,0.30);
+    --shadow-md: 0 4px 16px rgba(0,0,0,0.40);
+  }
+
+  /* ============================================================
+     VARIANT B: FIXED (DIMENSIONAL)
+     ============================================================ */
+  .variant-b {
+    /* Light */
+    --bg: oklch(94% 0.012 70);
+    --surface: oklch(100% 0.008 70);
+    --elevated: oklch(100% 0.010 70);
+    --fg: oklch(18% 0.015 50);
+    --muted: oklch(48% 0.012 50);
+    --border: oklch(84% 0.012 70);
+    --accent: oklch(64% 0.13 28);
+    --accent-light: oklch(92% 0.04 28);
+    --success: oklch(62% 0.12 145);
+    --success-light: oklch(95% 0.05 145);
+    --danger: oklch(58% 0.15 25);
+    --danger-light: oklch(93% 0.05 25);
+    --section-bg: oklch(90% 0.016 70);
+    --shadow-xs: 0 1px 4px rgba(0,0,0,0.06);
+    --shadow-sm: 0 3px 14px rgba(0,0,0,0.10);
+    --shadow-md: 0 6px 24px rgba(0,0,0,0.12);
+  }
+  .variant-b[data-theme="dark"] {
+    --bg: oklch(10% 0.008 75);
+    --surface: oklch(18% 0.010 75);
+    --elevated: oklch(25% 0.012 75);
+    --fg: oklch(94% 0.006 70);
+    --muted: oklch(58% 0.010 70);
+    --border: oklch(32% 0.012 70);
+    --accent: oklch(68% 0.13 28);
+    --accent-light: oklch(28% 0.06 28);
+    --success: oklch(65% 0.12 145);
+    --success-light: oklch(28% 0.05 145);
+    --danger: oklch(60% 0.15 25);
+    --danger-light: oklch(30% 0.05 25);
+    --section-bg: oklch(22% 0.014 70);
+    --shadow-xs: 0 1px 4px rgba(0,0,0,0.25);
+    --shadow-sm: 0 3px 14px rgba(0,0,0,0.35);
+    --shadow-md: 0 6px 24px rgba(0,0,0,0.45);
+  }
+
+  /* ============================================================
+     SHARED COMPONENT STYLES
+     ============================================================ */
+
+  .demo-col {
+    flex: 1; display: flex; flex-direction: column; min-width: 0;
+    position: relative;
+  }
+  .demo-col + .demo-col { border-left: 2px dashed #444; }
+  .demo-label {
+    position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+    background: #222; color: #fff; padding: 4px 14px; border-radius: 100px;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.03em; z-index: 100;
+    font-family: var(--font-mono);
+  }
+
+  /* App shell */
+  .app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; background: var(--bg); color: var(--fg); transition: background 0.25s var(--ease), color 0.25s var(--ease); }
+  .header { display: flex; align-items: center; height: 48px; padding: 0 16px; background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; gap: 8px; z-index: 20; }
+  .header__logo { font-family: var(--font-display); font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
+  .header__logo span { color: var(--accent); }
+  .header__spacer { flex: 1; }
+  .h-btn { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: transparent; color: var(--muted); cursor: pointer; transition: all 0.2s var(--ease); }
+  .h-btn:hover { background: var(--accent-light); color: var(--accent); border-color: var(--accent); }
+  .h-btn svg { width: 16px; height: 16px; }
+  .h-divider { width: 1px; height: 24px; background: var(--border); margin: 0 4px; }
+
+  .app-body { display: flex; flex: 1; overflow: hidden; position: relative; }
+
+  /* Sidebar */
+  .sidebar { width: 220px; display: flex; flex-direction: column; background: var(--surface); border-right: 1px solid var(--border); overflow: hidden; flex-shrink: 0; }
+  .sidebar__hd { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+  .sidebar__hd-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+  .sidebar__hd-btn { width: 22px; height: 22px; border-radius: var(--radius-xs); border: 1px solid var(--border); background: transparent; color: var(--muted); font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s var(--ease); }
+  .sidebar__hd-btn:hover { background: var(--accent-light); color: var(--accent); border-color: var(--accent); }
+  .sidebar__body { flex: 1; overflow-y: auto; padding: 6px 0; }
+  .s-group__hd { display: flex; align-items: center; gap: 5px; padding: 6px 14px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+  .s-item { display: flex; align-items: center; gap: 8px; padding: 7px 14px 7px 24px; cursor: pointer; border-left: 3px solid transparent; transition: background 0.15s var(--ease), border-color 0.15s var(--ease); }
+  .s-item:hover { background: var(--accent-light); }
+  .s-item.active { background: var(--accent-light); border-left-color: var(--accent); }
+  .s-item__title { flex: 1; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .s-item__meta { font-size: 11px; color: var(--muted); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--border); }
+  .dot--run { background: var(--success); }
+
+  .main-area { flex: 1; display: flex; min-width: 0; overflow: hidden; position: relative; }
+  .chat-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+
+  .panel-bar { display: flex; align-items: center; gap: 8px; padding: 0 16px; height: 36px; background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; font-size: 12px; }
+  .anchor { display: flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: var(--radius-sm); cursor: pointer; color: var(--fg); font-weight: 600; font-size: 12px; transition: background 0.15s var(--ease); }
+  .anchor:hover { background: var(--accent-light); }
+  .anchor__dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+
+  .chat-msgs { flex: 1; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 14px; position: relative; max-width: 900px; margin: 0 auto; width: 100%; }
+
+  .msg { max-width: min(80%, 70ch); padding: 10px 14px; border-radius: var(--radius); line-height: 1.6; font-size: 14px; }
+  .msg__role { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 3px; }
+  .msg__body p { margin-bottom: 6px; }
+  .msg__body p:last-child { margin-bottom: 0; }
+
+  /* User message */
+  .msg--user { align-self: flex-end; max-width: min(70%, 50ch); background: var(--accent-light); border-bottom-right-radius: var(--radius-xs); }
+  .variant-a[data-theme="dark"] .msg--user { color: var(--fg); }
+  .variant-b[data-theme="dark"] .msg--user { color: var(--fg); }
+
+  /* Assistant message: KEY DIFFERENCE */
+  .variant-a .msg--bot { align-self: flex-start; background: transparent; }
+  .variant-b .msg--bot {
+    align-self: flex-start; background: var(--surface);
+    border: 1px solid var(--border);
+    border-bottom-left-radius: var(--radius-xs);
+    box-shadow: var(--shadow-xs);
+  }
+
+  /* System message */
+  .msg--system {
+    align-self: stretch; width: 100%; max-width: none; margin: 4px 0;
+    border: 1px solid var(--border); background: var(--surface);
+    border-radius: var(--radius-sm); padding: 10px 14px; font-size: 13px;
+    display: flex; align-items: flex-start; gap: 10px;
+  }
+  .variant-a .msg--system { border-color: oklch(80% 0.02 145); background: oklch(97% 0.02 145); }
+  .variant-a[data-theme="dark"] .msg--system { border-color: oklch(35% 0.02 145); background: oklch(20% 0.02 145); }
+  .variant-b .msg--system { border-color: var(--border); background: var(--elevated); box-shadow: var(--shadow-xs); }
+
+  .msg--system__dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 4px; background: var(--success); }
+  .msg--system__title { font-weight: 600; font-size: 13px; margin-bottom: 2px; }
+  .msg--system__desc { color: var(--muted); font-size: 12px; }
+
+  /* Code block: KEY DIFFERENCE */
+  .code-block { border-radius: var(--radius-sm); overflow: hidden; border: 1px solid var(--border); margin: 8px 0; }
+  .variant-a .code-block { background: var(--section-bg); }
+  .variant-b .code-block { background: var(--elevated); box-shadow: inset 0 1px 3px rgba(0,0,0,0.04); }
+  .variant-b[data-theme="dark"] .code-block { box-shadow: inset 0 1px 3px rgba(0,0,0,0.25); }
+
+  .code-block__hd {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 6px 12px; font-size: 11px; font-family: var(--font-mono);
+    color: var(--muted); border-bottom: 1px solid var(--border);
+  }
+  .variant-b .code-block__hd { background: var(--section-bg); }
+  .code-block__lang { font-weight: 600; }
+  .code-block__bd { padding: 10px 14px; font-family: var(--font-mono); font-size: 12px; line-height: 1.6; overflow-x: auto; }
+  .variant-a .code-block__bd { background: var(--section-bg); }
+  .variant-b .code-block__bd { background: var(--elevated); }
+
+  /* Tool call card */
+  .tool-card { border: 1px solid var(--border); border-radius: var(--radius-sm); margin: 6px 0; overflow: hidden; }
+  .variant-a .tool-card { background: var(--bg); }
+  .variant-b .tool-card { background: var(--surface); box-shadow: var(--shadow-xs); }
+  .tool-card__hd {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; font-size: 11px; font-family: var(--font-mono);
+    border-bottom: 1px solid var(--border);
+  }
+  .tool-card__name { font-weight: 600; color: var(--accent); }
+  .tool-card__status { margin-left: auto; font-size: 10px; color: var(--success); }
+  .tool-card__bd { padding: 8px 12px; font-size: 11px; line-height: 1.5; font-family: var(--font-mono); color: var(--muted); }
+
+  /* Chat input: KEY DIFFERENCE */
+  .chat-input-wrap { position: relative; margin: 0 20px 16px; flex-shrink: 0; max-width: 860px; width: 100%; align-self: center; }
+  .chat-input-container {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: visible; position: relative; z-index: 10;
+    transition: border-color 0.15s var(--ease), box-shadow 0.15s var(--ease);
+  }
+  .variant-a .chat-input-container { box-shadow: var(--shadow-xs); }
+  .variant-b .chat-input-container { box-shadow: var(--shadow-sm); }
+  .chat-input-container:focus-within { border-color: var(--accent); }
+  .variant-a .chat-input-container:focus-within { box-shadow: var(--shadow-sm); }
+  .variant-b .chat-input-container:focus-within { box-shadow: var(--shadow-md); }
+
+  .chat-input-textarea {
+    display: block; width: 100%; min-height: 52px; max-height: 140px;
+    padding: 10px 14px 6px; border: none; background: transparent;
+    color: var(--fg); font-family: var(--font-body); font-size: 14px;
+    line-height: 1.45; resize: none; outline: none;
+  }
+  .chat-input-textarea::placeholder { color: var(--muted); }
+  .chat-input-toolbar { display: flex; align-items: center; gap: 6px; padding: 4px 10px 8px; }
+  .tb-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    height: 28px; padding: 0 8px; border: none; border-radius: var(--radius-xs);
+    background: transparent; color: var(--muted); font-size: 12px;
+    cursor: pointer; transition: all 0.15s var(--ease);
+  }
+  .tb-btn:hover { background: var(--accent-light); color: var(--accent); }
+  .tb-btn svg { width: 14px; height: 14px; }
+  .tb-model { display: inline-flex; align-items: center; gap: 4px; padding: 0 8px; height: 28px; border-radius: var(--radius-xs); font-size: 11px; font-family: var(--font-mono); color: var(--fg); cursor: pointer; }
+  .tb-model:hover { background: var(--accent-light); color: var(--accent); }
+  .tb-model__provider { color: var(--muted); font-weight: 400; }
+  .tb-model__sep { color: var(--border); margin: 0 1px; }
+  .tb-spacer { flex: 1; }
+  .tb-btn--send { background: var(--accent); color: white; width: 30px; height: 30px; border-radius: var(--radius-xs); }
+  .tb-btn--send:hover { opacity: 0.88; }
+
+  .statusbar { display: flex; align-items: center; height: 28px; padding: 0 16px; background: var(--surface); border-top: 1px solid var(--border); font-size: 11px; color: var(--muted); flex-shrink: 0; gap: 14px; }
+
+  .msg__body code {
+    background: var(--section-bg); padding: 1px 5px; border-radius: var(--radius-xs);
+    font-size: 0.88em; font-family: var(--font-mono);
+  }
+
+  /* ============================================================
+     CONTROLS
+     ============================================================ */
+  .control-bar {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 0; background: #222; border-radius: 8px; overflow: hidden;
+    z-index: 200; box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  }
+  .control-btn {
+    padding: 8px 18px; border: none; background: transparent; color: #888;
+    font-size: 12px; font-weight: 600; cursor: pointer; font-family: var(--font-mono);
+    transition: all 0.15s;
+  }
+  .control-btn.active { background: #444; color: #fff; }
+  .control-btn:hover:not(.active) { color: #ccc; }
+  .control-sep { width: 1px; background: #333; }
+
+  .theme-indicator {
+    position: fixed; top: 8px; right: 16px;
+    font-size: 11px; font-family: var(--font-mono); color: #666;
+    background: #111; padding: 4px 10px; border-radius: 4px;
+    z-index: 200;
+  }
+</style>
+</head>
+<body>
+
+<div class="theme-indicator" id="themeLabel">theme: light</div>
+
+<!-- ════════════════════════════════════════════════════════════════
+     VARIANT A: CURRENT (FLAT)
+     ════════════════════════════════════════════════════════════════ -->
+<div class="demo-col variant-a" id="colA" data-theme="light">
+  <div class="demo-label">A: CURRENT (FLAT)</div>
+  <div class="app">
+    <div class="header">
+      <div class="header__logo">xyz<span>-agent</span></div>
+      <div class="header__spacer"></div>
+      <button class="h-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg></button>
+      <div class="h-divider"></div>
+      <button class="h-btn"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg></button>
+      <button class="h-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 008.58 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 8.58a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg></button>
+    </div>
+    <div class="app-body">
+      <div class="sidebar">
+        <div class="sidebar__hd"><span class="sidebar__hd-title">Sessions</span><button class="sidebar__hd-btn">+</button></div>
+        <div class="sidebar__body">
+          <div class="s-group__hd">&#9662; xyz-agent</div>
+          <div class="s-item active"><span class="dot dot--run"></span><span class="s-item__title">重构 auth 模块</span><span class="s-item__meta">2m</span></div>
+          <div class="s-item"><span class="dot"></span><span class="s-item__title">API 文档生成</span><span class="s-item__meta">1h</span></div>
+        </div>
+      </div>
+      <div class="main-area">
+        <div class="chat-panel">
+          <div class="panel-bar"><div class="anchor"><span class="anchor__dot" style="background:var(--success)"></span>主线对话</div></div>
+          <div class="chat-msgs">
+            <div class="msg msg--user">
+              <div class="msg__role">用户</div>
+              <div class="msg__body"><p>帮我重构整个 auth 模块，包括接口定义、错误处理和单元测试。</p></div>
+            </div>
+            <div class="msg msg--bot">
+              <div class="msg__role">助手</div>
+              <div class="msg__body">
+                <p>好的，我来分步进行：</p>
+                <p>1. <strong>分析现有 auth 模块结构</strong>，梳理接口定义和依赖关系<br>
+                   2. <strong>统一接口定义</strong>，消除重复和冗余<br>
+                   3. <strong>重构错误处理</strong>，建立统一的错误类型体系</p>
+              </div>
+            </div>
+            <div class="msg--system">
+              <span class="msg--system__dot"></span>
+              <div class="msg--system__content">
+                <div class="msg--system__title">分析代码结构已完成</div>
+                <div class="msg--system__desc">耗时 2m 34s · 消耗 1.2k tokens</div>
+              </div>
+            </div>
+            <div class="msg msg--bot">
+              <div class="msg__role">助手</div>
+              <div class="msg__body">
+                <p>发现了 3 个主要问题：</p>
+                <ul style="padding-left:18px;margin:6px 0;">
+                  <li>接口定义散落在 3 个文件中</li>
+                  <li>错误处理使用了 5 种不同的错误类</li>
+                  <li>Session 管理逻辑与认证逻辑耦合</li>
+                </ul>
+                <p>开始重构 <code>src/auth/interfaces.ts</code>:</p>
+                <div class="code-block">
+                  <div class="code-block__hd"><span class="code-block__lang">typescript</span><span>src/auth/interfaces.ts</span></div>
+                  <div class="code-block__bd">export interface IAuthResponse {<br>&nbsp;&nbsp;token: string;<br>&nbsp;&nbsp;expiresAt: Date;<br>}</div>
+                </div>
+              </div>
+            </div>
+            <div class="msg msg--bot">
+              <div class="msg__role">助手</div>
+              <div class="msg__body">
+                <div class="tool-card">
+                  <div class="tool-card__hd"><span class="tool-card__name">edit</span><span>src/auth/errors.ts</span><span class="tool-card__status">完成</span></div>
+                  <div class="tool-card__bd">统一错误类型为 AuthError 基类，减少重复代码 47 行</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="chat-input-wrap">
+            <div class="chat-input-container">
+              <textarea class="chat-input-textarea" placeholder="输入消息… (Enter 发送)"></textarea>
+              <div class="chat-input-toolbar">
+                <button class="tb-btn"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3v10M3 8h10"/></svg></button>
+                <div class="tb-model"><span>sonnet</span><span class="tb-model__sep">@</span><span class="tb-model__provider">anthropic</span></div>
+                <div class="tb-spacer"></div>
+                <button class="tb-btn tb-btn--send"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M8 2v12M4 6l4-4 4 4"/></svg></button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="statusbar">
+      <span style="display:flex;align-items:center;gap:6px"><span class="dot dot--run"></span> 运行中</span>
+      <span>ws: connected</span>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════
+     VARIANT B: FIXED (DIMENSIONAL)
+     ════════════════════════════════════════════════════════════════ -->
+<div class="demo-col variant-b" id="colB" data-theme="light">
+  <div class="demo-label">B: FIXED (DIMENSIONAL)</div>
+  <div class="app">
+    <div class="header">
+      <div class="header__logo">xyz<span>-agent</span></div>
+      <div class="header__spacer"></div>
+      <button class="h-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg></button>
+      <div class="h-divider"></div>
+      <button class="h-btn"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg></button>
+      <button class="h-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 008.58 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 8.58a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg></button>
+    </div>
+    <div class="app-body">
+      <div class="sidebar">
+        <div class="sidebar__hd"><span class="sidebar__hd-title">Sessions</span><button class="sidebar__hd-btn">+</button></div>
+        <div class="sidebar__body">
+          <div class="s-group__hd">&#9662; xyz-agent</div>
+          <div class="s-item active"><span class="dot dot--run"></span><span class="s-item__title">重构 auth 模块</span><span class="s-item__meta">2m</span></div>
+          <div class="s-item"><span class="dot"></span><span class="s-item__title">API 文档生成</span><span class="s-item__meta">1h</span></div>
+        </div>
+      </div>
+      <div class="main-area">
+        <div class="chat-panel">
+          <div class="panel-bar"><div class="anchor"><span class="anchor__dot" style="background:var(--success)"></span>主线对话</div></div>
+          <div class="chat-msgs">
+            <div class="msg msg--user">
+              <div class="msg__role">用户</div>
+              <div class="msg__body"><p>帮我重构整个 auth 模块，包括接口定义、错误处理和单元测试。</p></div>
+            </div>
+            <div class="msg msg--bot">
+              <div class="msg__role">助手</div>
+              <div class="msg__body">
+                <p>好的，我来分步进行：</p>
+                <p>1. <strong>分析现有 auth 模块结构</strong>，梳理接口定义和依赖关系<br>
+                   2. <strong>统一接口定义</strong>，消除重复和冗余<br>
+                   3. <strong>重构错误处理</strong>，建立统一的错误类型体系</p>
+              </div>
+            </div>
+            <div class="msg--system">
+              <span class="msg--system__dot"></span>
+              <div class="msg--system__content">
+                <div class="msg--system__title">分析代码结构已完成</div>
+                <div class="msg--system__desc">耗时 2m 34s · 消耗 1.2k tokens</div>
+              </div>
+            </div>
+            <div class="msg msg--bot">
+              <div class="msg__role">助手</div>
+              <div class="msg__body">
+                <p>发现了 3 个主要问题：</p>
+                <ul style="padding-left:18px;margin:6px 0;">
+                  <li>接口定义散落在 3 个文件中</li>
+                  <li>错误处理使用了 5 种不同的错误类</li>
+                  <li>Session 管理逻辑与认证逻辑耦合</li>
+                </ul>
+                <p>开始重构 <code>src/auth/interfaces.ts</code>:</p>
+                <div class="code-block">
+                  <div class="code-block__hd"><span class="code-block__lang">typescript</span><span>src/auth/interfaces.ts</span></div>
+                  <div class="code-block__bd">export interface IAuthResponse {<br>&nbsp;&nbsp;token: string;<br>&nbsp;&nbsp;expiresAt: Date;<br>}</div>
+                </div>
+              </div>
+            </div>
+            <div class="msg msg--bot">
+              <div class="msg__role">助手</div>
+              <div class="msg__body">
+                <div class="tool-card">
+                  <div class="tool-card__hd"><span class="tool-card__name">edit</span><span>src/auth/errors.ts</span><span class="tool-card__status">完成</span></div>
+                  <div class="tool-card__bd">统一错误类型为 AuthError 基类，减少重复代码 47 行</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="chat-input-wrap">
+            <div class="chat-input-container">
+              <textarea class="chat-input-textarea" placeholder="输入消息… (Enter 发送)"></textarea>
+              <div class="chat-input-toolbar">
+                <button class="tb-btn"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3v10M3 8h10"/></svg></button>
+                <div class="tb-model"><span>sonnet</span><span class="tb-model__sep">@</span><span class="tb-model__provider">anthropic</span></div>
+                <div class="tb-spacer"></div>
+                <button class="tb-btn tb-btn--send"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M8 2v12M4 6l4-4 4 4"/></svg></button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="statusbar">
+      <span style="display:flex;align-items:center;gap:6px"><span class="dot dot--run"></span> 运行中</span>
+      <span>ws: connected</span>
+    </div>
+  </div>
+</div>
+
+<!-- Controls -->
+<div class="control-bar">
+  <button class="control-btn active" onclick="toggleTheme('light')">Light</button>
+  <div class="control-sep"></div>
+  <button class="control-btn" onclick="toggleTheme('dark')">Dark</button>
+  <div class="control-sep"></div>
+  <button class="control-btn" onclick="toggleView('both')">Both</button>
+  <div class="control-sep"></div>
+  <button class="control-btn" onclick="toggleView('a')">A Only</button>
+  <div class="control-sep"></div>
+  <button class="control-btn" onclick="toggleView('b')">B Only</button>
+</div>
+
+<script>
+let currentTheme = 'light';
+let currentView = 'both';
+
+function toggleTheme(theme) {
+  currentTheme = theme;
+  document.getElementById('colA').setAttribute('data-theme', theme);
+  document.getElementById('colB').setAttribute('data-theme', theme);
+  document.getElementById('themeLabel').textContent = 'theme: ' + theme;
+  document.querySelectorAll('.control-btn').forEach(b => {
+    if (b.textContent.toLowerCase() === theme) b.classList.add('active');
+    else if (['light','dark'].includes(b.textContent.toLowerCase())) b.classList.remove('active');
+  });
+}
+
+function toggleView(view) {
+  currentView = view;
+  const colA = document.getElementById('colA');
+  const colB = document.getElementById('colB');
+  if (view === 'both') { colA.style.display = ''; colB.style.display = ''; }
+  else if (view === 'a') { colA.style.display = ''; colB.style.display = 'none'; }
+  else if (view === 'b') { colA.style.display = 'none'; colB.style.display = ''; }
+  document.querySelectorAll('.control-btn').forEach(b => {
+    const t = b.textContent.toLowerCase().replace(' only','');
+    if (t === view) b.classList.add('active');
+    else if (!['light','dark'].includes(b.textContent.toLowerCase())) b.classList.remove('active');
+  });
+}
+</script>
+
+</body>
+</html>

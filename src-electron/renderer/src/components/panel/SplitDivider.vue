@@ -1,8 +1,23 @@
 <template>
   <div
-    :class="['bg-border shrink-0 relative z-[5] transition-colors duration-150 opacity-30', direction === 'horizontal' ? 'w-1 cursor-col-resize' : 'h-1 cursor-row-resize', { 'bg-accent opacity-100': dragging }, { 'hover:bg-accent hover:opacity-100': !dragging }]"
+    :class="[
+      'shrink-0 relative z-[5] transition-colors duration-150',
+      direction === 'horizontal' ? 'w-[5px] cursor-col-resize' : 'h-[5px] cursor-row-resize',
+    ]"
     @mousedown="startDrag"
-  ></div>
+  >
+    <div
+      :class="[
+        'absolute transition-colors duration-150',
+        direction === 'horizontal'
+          ? 'top-0 bottom-0 left-[2px] w-px'
+          : 'left-0 right-0 top-[2px] h-px',
+        dragging
+          ? 'bg-accent opacity-80'
+          : 'bg-border opacity-40 hover:bg-accent hover:opacity-60',
+      ]"
+    />
+  </div>
 </template>
 
 <script setup lang="ts">

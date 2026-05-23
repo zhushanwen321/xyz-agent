@@ -36,14 +36,14 @@ const modelCount = computed(() => props.models.length)
 <template>
   <div
     :class="[
-      'border border-border rounded-lg overflow-hidden mb-3 transition-all duration-150 hover:border-[oklch(86%_0.012_70)]',
+      'border border-border rounded-sm overflow-hidden mb-3 transition-all duration-150 hover:border-[oklch(86%_0.012_70)]',
       { 'opacity-50': provider.enabled === false },
     ]"
   >
     <!-- Header -->
     <div class="flex items-center gap-3 py-[9px] px-4 bg-[var(--section-bg)] min-h-[42px] border-b border-border">
       <div
-        class="w-[30px] h-[30px] rounded-[5px] bg-[var(--accent-light)] flex items-center justify-center font-display font-bold text-sm text-[var(--accent)] shrink-0"
+        class="w-[30px] h-[30px] rounded-sm bg-[var(--accent-light)] flex items-center justify-center font-display font-bold text-sm text-[var(--accent)] shrink-0"
       >{{ initial }}</div>
       <div class="flex-1 min-w-0">
         <div class="text-[13px] font-semibold flex items-center gap-1.5">

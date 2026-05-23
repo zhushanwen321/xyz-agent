@@ -22,7 +22,7 @@
 
       <!-- File content -->
       <div class="px-3 pb-2.5 pt-1">
-        <div class="max-h-[250px] overflow-y-auto rounded-md border border-border bg-bg p-2.5">
+        <div class="max-h-[250px] overflow-y-auto rounded-none border border-border bg-bg p-2.5">
           <pre class="whitespace-pre-wrap font-mono text-xs text-muted leading-relaxed m-0">{{ fileContent }}</pre>
         </div>
       </div>

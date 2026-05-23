@@ -1,6 +1,6 @@
 <template>
   <div
-    class="bg-surface border-2 border-border rounded overflow-hidden cursor-pointer transition-all duration-200 ease-ease flex flex-col hover:border-accent hover:-translate-y-[2px] hover:scale-[1.02] hover:shadow-lg"
+    class="bg-surface border-2 border-border rounded-sm overflow-hidden cursor-pointer transition-all duration-200 ease-ease flex flex-col hover:border-accent hover:-translate-y-[2px] hover:scale-[1.02] hover:shadow-lg"
     :class="{ 'border-accent ring-3 ring-[oklch(64%_0.13_28_/_0.4)]': highlighted }"
     @click="$emit('select')"
   >

@@ -40,7 +40,7 @@ const emit = defineEmits<{
 
 const triggerClasses = computed(() =>
   cn(
-    'flex h-10 w-full items-center justify-between rounded-md border border-solid border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--fg)]',
+    'flex h-10 w-full items-center justify-between rounded-sm border border-solid border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--fg)]',
     'transition-colors',
     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
     'disabled:cursor-not-allowed disabled:opacity-50',
@@ -49,7 +49,7 @@ const triggerClasses = computed(() =>
   ),
 )
 
-const contentClasses = 'z-[200] overflow-hidden rounded-md border border-solid border-[var(--border)] bg-[var(--surface)] shadow-md'
+const contentClasses = 'z-[200] overflow-hidden rounded-sm border border-solid border-[var(--border)] bg-[var(--surface)] shadow-md'
 
 const itemClasses = computed(() =>
   cn(

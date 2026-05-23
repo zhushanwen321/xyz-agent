@@ -120,7 +120,7 @@ const HOURS_PER_DAY = 24
 <template>
   <div
     :class="[
-      'group flex items-center gap-2 py-[7px] pl-6 pr-3.5 cursor-pointer border-l-[3px] border-transparent select-none transition-colors duration-150 ease-ease hover:bg-accent-light focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2',
+      'group flex items-center gap-2 py-[7px] pl-6 pr-3.5 cursor-pointer border-l-[3px] border-transparent select-none transition-colors duration-150 ease-ease hover:bg-accent-light focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 rounded-sm',
       { 'border-l-0 bg-accent-light': isActive, 'font-semibold': hasNotif, 'pr-3.5': renaming }
     ]"
     role="button"

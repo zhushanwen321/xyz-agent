@@ -22,9 +22,9 @@
       </button>
     </div>
     <div class="mt-7 text-xs text-[oklch(70%_0_0_/_0.7)] flex gap-5">
-      <span><kbd class="inline-flex items-center py-[2px] px-1.5 bg-[oklch(30%_0_0_/_0.5)] rounded font-mono text-[11px] text-[oklch(85%_0_0)] mx-[3px]">Enter</kbd> 聚焦窗口</span>
-      <span><kbd class="inline-flex items-center py-[2px] px-1.5 bg-[oklch(30%_0_0_/_0.5)] rounded font-mono text-[11px] text-[oklch(85%_0_0)] mx-[3px]">&larr;</kbd><kbd class="inline-flex items-center py-[2px] px-1.5 bg-[oklch(30%_0_0_/_0.5)] rounded font-mono text-[11px] text-[oklch(85%_0_0)] mx-[3px]">&rarr;</kbd> 选择</span>
-      <span><kbd class="inline-flex items-center py-[2px] px-1.5 bg-[oklch(30%_0_0_/_0.5)] rounded font-mono text-[11px] text-[oklch(85%_0_0)] mx-[3px]">Esc</kbd> 返回</span>
+      <span><kbd class="inline-flex items-center py-[2px] px-1.5 bg-[oklch(30%_0_0_/_0.5)] rounded-sm font-mono text-[11px] text-[oklch(85%_0_0)] mx-[3px]">Enter</kbd> 聚焦窗口</span>
+      <span><kbd class="inline-flex items-center py-[2px] px-1.5 bg-[oklch(30%_0_0_/_0.5)] rounded-sm font-mono text-[11px] text-[oklch(85%_0_0)] mx-[3px]">&larr;</kbd><kbd class="inline-flex items-center py-[2px] px-1.5 bg-[oklch(30%_0_0_/_0.5)] rounded-sm font-mono text-[11px] text-[oklch(85%_0_0)] mx-[3px]">&rarr;</kbd> 选择</span>
+      <span><kbd class="inline-flex items-center py-[2px] px-1.5 bg-[oklch(30%_0_0_/_0.5)] rounded-sm font-mono text-[11px] text-[oklch(85%_0_0)] mx-[3px]">Esc</kbd> 返回</span>
     </div>
   </div>
 </template>
