@@ -19,7 +19,7 @@
       >
         <span
           :class="[
-            'inline-flex items-center justify-center text-[9px] font-medium tracking-[0.02em] rounded-[3px] shrink-0 w-[52px] h-4',
+            'inline-flex items-center justify-center text-[9px] font-medium tracking-[0.02em] rounded-sm shrink-0 w-[52px] h-4',
             cmd.source === 'builtin'
               ? 'bg-border text-muted'
               : cmd.source === 'skill'
@@ -31,7 +31,7 @@
     <span class="text-[11px] text-muted flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap pl-2 border-l border-border" :title="cmd.description">{{ cmd.description }}</span>
     <span
       v-if="cmd.argumentHint"
-      class="text-[11px] font-mono text-accent/70 whitespace-nowrap shrink max-w-[40%] overflow-hidden text-ellipsis py-[1px] px-[5px] bg-accent-light rounded-[3px]"
+      class="text-[11px] font-mono text-accent/70 whitespace-nowrap shrink max-w-[40%] overflow-hidden text-ellipsis py-[1px] px-[5px] bg-accent-light rounded-sm"
     >{{ cmd.argumentHint }}</span>
       </Button>
     </div>

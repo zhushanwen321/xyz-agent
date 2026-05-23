@@ -160,6 +160,7 @@ lsof -i :1420 -P | grep node
 7. **Promise.allSettled** — 独立数据源用 `allSettled`，不用 `all`
 8. **禁止硬编码颜色** — 用 CSS 变量（`var(--accent)`）或语义 Tailwind 类
 9. **禁止魔数间距** — 用标准 Tailwind scale，不用 `p-[17px]`
+10. **border-radius 只允许 1px 和 2px** — 用 `rounded-sm`(2px) 或 `rounded-[1px]`(1px)。禁止 `rounded-md`/`rounded-lg`/`rounded-[3px]`/`rounded-[5px]` 等。详见 docs/standards.md §7.1
 
 ### 自动化检查
 

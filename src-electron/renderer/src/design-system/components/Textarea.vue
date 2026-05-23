@@ -34,7 +34,7 @@ const textareaClasses = computed(() => {
     return 'flex w-full resize-none text-sm'
   }
   return cn(
-    'flex w-full rounded-md px-3 py-2 text-sm transition-colors',
+    'flex w-full rounded-sm px-3 py-2 text-sm transition-colors',
     'placeholder:text-[var(--muted)]',
     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
     'disabled:cursor-not-allowed disabled:opacity-50',

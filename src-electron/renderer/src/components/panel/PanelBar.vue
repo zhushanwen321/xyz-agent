@@ -209,7 +209,7 @@ function splitPanel(direction: 'horizontal' | 'vertical') {
   align-items: center;
   gap: 4px;
   padding: 2px 8px;
-  border-radius: 4px;
+  border-radius: 2px;
   font-size: 10px;
   font-weight: 600;
   cursor: pointer;
@@ -225,7 +225,7 @@ function splitPanel(direction: 'horizontal' | 'vertical') {
   justify-content: center;
   min-width: 14px;
   height: 14px;
-  border-radius: 3px;
+  border-radius: 2px;
   font-size: 9px;
   font-weight: 700;
   color: white;
@@ -239,7 +239,7 @@ function splitPanel(direction: 'horizontal' | 'vertical') {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 3px;
+  border-radius: 2px;
   border: none;
   background: transparent;
   color: var(--muted);
@@ -258,7 +258,7 @@ function splitPanel(direction: 'horizontal' | 'vertical') {
   padding: 4px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 2px;
   box-shadow: var(--shadow-sm);
   font-size: 12px;
   line-height: 1.5;
@@ -269,7 +269,7 @@ function splitPanel(direction: 'horizontal' | 'vertical') {
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  border-radius: 3px;
+  border-radius: 2px;
   cursor: pointer;
   white-space: nowrap;
   transition: all 0.1s ease;

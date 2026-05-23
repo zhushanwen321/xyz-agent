@@ -94,7 +94,7 @@ function closeModal() {
     />
 
     <!-- Agent sections -->
-    <div v-if="agents.length > 0" class="border border-border rounded-lg overflow-hidden mb-3">
+    <div v-if="agents.length > 0" class="border border-border rounded-sm overflow-hidden mb-3">
       <div class="flex items-center justify-between py-[10px] px-4 bg-[var(--section-bg)] border-b border-border min-h-[42px]">
         <span class="text-[13px] font-semibold">{{ t('settings.imported') }}</span>
         <span class="text-[10px] text-muted font-medium bg-[var(--hover-bg)] py-[2px] px-[6px] rounded-sm">{{ agents.length }}</span>

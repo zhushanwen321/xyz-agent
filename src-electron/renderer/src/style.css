@@ -31,13 +31,14 @@
   --font-display: 'Tiempos Headline', 'Newsreader', 'Iowan Old Style', Georgia, serif;
   --font-body: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
-  --radius: 4px;
+  /* Radius system: only 1px and 2px allowed */
+  --radius: 2px;
   --radius-sm: 2px;
-  --radius-xs: 0px;
-  --radius-bubble: 0px;
-  /* Aliases for backwards compat */
-  --radius-lg: 12px;
-  --radius-md: 8px;
+  --radius-xs: 1px;
+  --radius-bubble: 1px;
+  /* Legacy aliases — all resolve to 2px */
+  --radius-lg: 2px;
+  --radius-md: 2px;
   --sidebar-w: 240px;
   --inspector-w: 380px;
   --header-h: 48px;
@@ -362,7 +363,7 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 ::selection { background: var(--accent); color: white; }
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 
 /* ── Markdown 渲染样式（msg__body 内的 v-html 内容） ── */

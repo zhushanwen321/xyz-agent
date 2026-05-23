@@ -47,7 +47,7 @@
         <!-- Text content (inside bubble) -->
         <div
           v-else-if="block.type === 'text' && message.content"
-          class="py-3 px-4 leading-[1.6] text-sm bg-surface border-l-2 border-border rounded-sm"
+          class="py-3 px-4 leading-[1.6] text-sm bg-surface border-l-2 border-border rounded-[1px]"
         >
           <div
             class="msg__body select-text"
@@ -78,7 +78,7 @@
       />
       <div
         v-if="message.content"
-        class="py-3 px-4 leading-[1.6] text-sm bg-surface border-l-2 border-border rounded-sm"
+        class="py-3 px-4 leading-[1.6] text-sm bg-surface border-l-2 border-border rounded-[1px]"
       >
         <div
           class="msg__body select-text"
@@ -103,7 +103,7 @@
       <span v-if="message.timestamp" class="font-normal normal-case tracking-normal text-[10px] opacity-60 mr-1.5">{{ formatTime(message.timestamp) }}</span>
       用户
     </div>
-    <div class="py-3 px-4 leading-[1.6] text-sm bg-surface text-fg border-l-2 border-accent rounded-sm">
+    <div class="py-3 px-4 leading-[1.6] text-sm bg-surface text-fg border-l-2 border-accent rounded-[1px]">
       <div
         v-if="message.content"
         class="msg__body select-text"

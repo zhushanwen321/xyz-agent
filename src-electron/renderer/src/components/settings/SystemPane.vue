@@ -70,7 +70,7 @@ function selectPalette(id: ThemePreset) {
 <template>
   <div class="max-w-[860px]">
     <!-- Section: 语言与外观 -->
-    <div class="border border-border rounded-lg overflow-hidden mb-3">
+    <div class="border border-border rounded-sm overflow-hidden mb-3">
       <div class="flex items-center py-[9px] px-4 bg-[var(--section-bg)] min-h-[42px]">
         <span class="text-[13px] font-semibold">{{ t('settings.languageAndAppearance') }}</span>
       </div>
@@ -91,7 +91,7 @@ function selectPalette(id: ThemePreset) {
     </div>
 
     <!-- Section: 配色主题 -->
-    <div class="border border-border rounded-lg overflow-hidden mb-3">
+    <div class="border border-border rounded-sm overflow-hidden mb-3">
       <div class="flex items-center py-[9px] px-4 bg-[var(--section-bg)] min-h-[42px]">
         <span class="text-[13px] font-semibold">{{ t('settings.colorTheme') }}</span>
       </div>

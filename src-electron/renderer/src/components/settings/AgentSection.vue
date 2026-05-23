@@ -71,7 +71,7 @@ function cancelDelete() {
         <circle cx="7" cy="7" r="5.5" /><path d="M7 4.5v3M7 9v.5" />
       </svg>
       {{ t('settings.confirmDeleteAgent', { name: agent.name }) }}
-      <Button variant="ghost" size="sm" class="!bg-[var(--danger)] !text-white hover:!opacity-80 !py-[3px] !px-2 !text-[11px] !rounded-[3px] !border-none" @click="confirmDelete">{{ t('settings.confirmDelete') }}</Button>
+      <Button variant="ghost" size="sm" class="!bg-[var(--danger)] !text-white hover:!opacity-80 !py-[3px] !px-2 !text-[11px] !rounded-sm !border-none" @click="confirmDelete">{{ t('settings.confirmDelete') }}</Button>
       <Button variant="ghost" size="sm" class="!text-[var(--danger)] !py-[3px] !px-2 !text-[11px]" @click="cancelDelete">{{ t('common.cancel') }}</Button>
     </div>
   </div>

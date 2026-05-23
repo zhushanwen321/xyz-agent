@@ -134,8 +134,8 @@ const isSettingsActive = computed(() => settingsStore.currentView === 'settings'
   display: flex;
   align-items: center;
   gap: 6px;
-  /* macOS traffic lights 浮在左上角，左侧留空让按钮排在它们右边 */
-  padding: 10px 14px 8px 72px;
+  /* macOS traffic lights 浮在左上角，padding 使 ctrl-btn 与红绿灯垂直居中对齐 */
+  padding: 12px 14px 8px 78px;
   flex-shrink: 0;
 }
 
@@ -145,7 +145,7 @@ const isSettingsActive = computed(() => settingsStore.currentView === 'settings'
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
+  border-radius: 2px;
   border: none;
   background: transparent;
   color: var(--muted);
@@ -159,7 +159,7 @@ const isSettingsActive = computed(() => settingsStore.currentView === 'settings'
 .sidebar__new {
   margin-left: auto;
   padding: 4px 10px;
-  border-radius: 4px;
+  border-radius: 2px;
   border: 1px solid var(--border);
   background: transparent;
   color: var(--muted);
