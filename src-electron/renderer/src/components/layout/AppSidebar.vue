@@ -135,13 +135,13 @@ const isSettingsActive = computed(() => settingsStore.currentView === 'settings'
   align-items: center;
   gap: 6px;
   /* macOS traffic lights 浮在左上角，padding 使 ctrl-btn 与红绿灯垂直居中对齐 */
-  padding: 12px 14px 8px 78px;
+  padding: 6px 14px 8px 78px;
   flex-shrink: 0;
 }
 
 .ctrl-btn {
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -154,11 +154,11 @@ const isSettingsActive = computed(() => settingsStore.currentView === 'settings'
 }
 .ctrl-btn:hover { background: oklch(22% 0 0); color: var(--fg); }
 .ctrl-btn.active { background: oklch(22% 0 0); color: var(--accent); }
-.ctrl-btn svg { width: 14px; height: 14px; }
+.ctrl-btn svg { width: 13px; height: 13px; }
 
 .sidebar__new {
   margin-left: auto;
-  padding: 4px 10px;
+  padding: 3px 9px;
   border-radius: 2px;
   border: 1px solid var(--border);
   background: transparent;
@@ -167,6 +167,7 @@ const isSettingsActive = computed(() => settingsStore.currentView === 'settings'
   font-family: var(--font-body);
   cursor: pointer;
   transition: all 0.15s;
+  line-height: 1;
 }
 .sidebar__new:hover { border-color: var(--muted); color: var(--fg); }
 
