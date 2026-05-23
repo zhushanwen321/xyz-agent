@@ -15,7 +15,7 @@
 import { ref } from 'vue'
 
 defineProps<{ text: string; streaming?: boolean }>()
-const expanded = ref(true)
+const expanded = ref(false)
 
 // 始终展开，不做自动折叠
 </script>

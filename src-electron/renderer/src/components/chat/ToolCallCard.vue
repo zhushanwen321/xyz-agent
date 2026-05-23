@@ -56,7 +56,7 @@ const props = defineProps<{
   toolCall: ToolCall
   batchInfo?: BatchInfo
 }>()
-const expanded = ref(true)
+const expanded = ref(false)
 // Vue 组件定义不能被 reactive 包裹，用 shallowRef 避免性能开销
 const rendererComp = shallowRef<Component | null>(null)
 

@@ -218,3 +218,33 @@ Depth is conveyed entirely through lightness (L%) differences:
 | `src-electron/renderer/src/components/chat/ChatInput.vue` | Borderless → focus-reveal border |
 | All ToolRenderers (6 files) | `rounded-sm/md` → `rounded-none` |
 | `ApprovalCard.vue`, `SlashMenu.vue`, `SystemNotification.vue`, etc. | `rounded-sm` → `rounded-none` |
+
+## v3 Update: Cool-Warm Theme + Critique Fixes (2026-05-23)
+
+### Changes from v2
+
+| Item | v2 (之前) | v3 (当前) | Reason |
+|------|-----------|-----------|--------|
+| Dark theme chroma | 0 (pure gray) | 0.006-0.01 (hue=50) | Cool-warm: 微暖但不泛棕，比纯灰有温度 |
+| Accent color | oklch(88% 0 0) (white-ish gray) | oklch(68% 0.10 28) (terracotta) | 品牌回归 PRODUCT.md 的 "Warm & Soft" 定位 |
+| User bubble | `bg-surface border-l-2 border-accent` (side-stripe) | `bg: var(--user-bubble-bg)` + full border | Side-stripe border 是 impeccable 禁止的 AI slop 标志 |
+| Assistant bubble | `bg-surface border-l-2 border-border` (side-stripe) | `bg-surface border-t border-border` | 同上，用 top border 替代 side-stripe |
+| ThinkingBlock | 默认展开 | **默认折叠** | Critique P1: 全展开导致信息过载 |
+| ToolCallCard | 默认展开 | **默认折叠** | 同上 |
+| Sidebar layout | 单行: controls + brand | **两行**: row1=nav buttons, row2=logo+new session | 新设计：左上角 logo 与 traffic lights 对齐 |
+| Fullscreen | 不支持 | **支持**: logo 移到 row1, new session 全宽 | 全屏无 traffic lights 时布局自适应 |
+| Connection status | `● ws` | `● Connected` | Critique: 用户不知道 "ws" 是什么 |
+
+### CSS Variables (Dark Theme)
+
+```css
+/* Cool-warm neutrals: hue=50, very low chroma */
+--bg:          oklch(13% 0.006 50);
+--surface:     oklch(17% 0.008 50);
+--border:      oklch(28% 0.008 50);
+--accent:      oklch(68% 0.10 28);  /* terracotta — brand accent */
+
+/* User bubble */
+--user-bubble-bg:    oklch(22% 0.015 40);
+--user-bubble-border: oklch(30% 0.02 40);
+```
