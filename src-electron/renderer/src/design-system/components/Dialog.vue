@@ -63,6 +63,7 @@ const contentClasses = computed(() =>
           background: 'var(--surface)',
           border: '1px solid var(--border)',
         }"
+        aria-modal="true"
         :aria-describedby="undefined"
         :aria-labelledby="title ? 'dialog-title' : undefined"
       >

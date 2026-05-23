@@ -62,10 +62,14 @@ export function loadConfig(): AppConfig {
     if (existsSync(CONFIG_PATH)) {
       const raw = readFileSync(CONFIG_PATH, 'utf-8')
       const parsed = JSON.parse(raw)
-      return {
-        defaults: { ...DEFAULTS.defaults, ...parsed.defaults },
-        providers: { ...DEFAULTS.providers, ...parsed.providers },
-        ...(parsed.toolPermissions && { toolPermissions: parsed.toolPermissions }),
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        console.error('[config] config.json is not a valid object, using defaults')
+      } else {
+        return {
+          defaults: { ...DEFAULTS.defaults, ...(typeof parsed.defaults === 'object' && parsed.defaults ? parsed.defaults : {}) },
+          providers: { ...DEFAULTS.providers, ...(typeof parsed.providers === 'object' && parsed.providers ? parsed.providers : {}) },
+          ...(parsed.toolPermissions && typeof parsed.toolPermissions === 'object' ? { toolPermissions: parsed.toolPermissions } : {}),
+        }
       }
     }
   // eslint-disable-next-line taste/no-silent-catch -- intentional: config file missing/corrupt is handled by fallback

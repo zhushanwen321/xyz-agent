@@ -5,6 +5,23 @@ import path from 'node:path'
 import { app } from 'electron'
 import { homedir } from 'node:os'
 
+/** 子进程允许继承的环境变量前缀白名单 */
+const ENV_WHITELIST_PREFIXES = ['PATH', 'HOME', 'USER', 'LANG', 'TERM', 'NODE_', 'NVM_', 'ELECTRON_', 'XYZ_', 'XDG_', 'APPDATA', 'LOCALAPPDATA', 'PROGRAMFILES', 'SYSTEMROOT', 'TEMP', 'TMP']
+
+/** 构建最小权限的环境变量：只继承白名单前缀 + 额外指定变量 */
+function buildSafeEnv(extras: Record<string, string | undefined>): Record<string, string> {
+  const safe: Record<string, string> = {}
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined && ENV_WHITELIST_PREFIXES.some(prefix => key.startsWith(prefix) || key === prefix)) {
+      safe[key] = value
+    }
+  }
+  for (const [key, value] of Object.entries(extras)) {
+    if (value !== undefined) safe[key] = value
+  }
+  return safe
+}
+
 /** tsup (CJS format) 输出的 runtime 入口文件名，必须与 runtime/tsup.config.ts 的 format 保持一致 */
 const RUNTIME_ENTRY_FILE = 'index.cjs'
 
@@ -35,9 +52,13 @@ export class RuntimeManager {
     return this._port
   }
 
+  /** 只 kill 已知的 agent 相关进程名 */
+  private static readonly SAFE_KILL_NAMES = /^(:?node|pi|tsx|electron|bash|sh|zsh)$/i
+
   /**
    * 用 lsof 查找占用端口的进程并 kill。
    * 先 SIGTERM，等 200ms 后再 SIGKILL，和 Rust 版行为一致。
+   * 只 kill 进程名匹配 node/pi/tsx 等的进程，防止误杀无关服务。
    */
   private killStaleProcessOnPort(port: number): void {
     try {
@@ -50,6 +71,11 @@ export class RuntimeManager {
       for (const line of output.trim().split('\n')) {
         const pid = Number(line.trim())
         if (!Number.isNaN(pid) && pid > 0) {
+          // 验证进程名，只 kill 已知的 agent 相关进程
+          if (!this.isSafeToKill(pid)) {
+            console.warn(`[runtime] Port ${port} occupied by PID ${pid} but process name not in allowlist, skipping kill`)
+            continue
+          }
           console.log(`[runtime] Killing stale process ${pid} on port ${port}`)
           try {
             process.kill(pid, 'SIGTERM')
@@ -71,6 +97,21 @@ export class RuntimeManager {
     // eslint-disable-next-line taste/no-silent-catch
     } catch {
       // lsof 没找到进程，正常情况，无需处理
+    }
+  }
+
+  /** 检查进程名是否在安全 kill 列表中 */
+  private isSafeToKill(pid: number): boolean {
+    try {
+      const name = execSync(`ps -p ${pid} -o comm= 2>/dev/null || true`, {
+        encoding: 'utf-8',
+        shell: '/bin/bash',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      }).trim()
+      // ps comm 返回进程名（不含路径），如 "node", "pi", "bash"
+      return RuntimeManager.SAFE_KILL_NAMES.test(name)
+    } catch {
+      return false
     }
   }
 
@@ -192,11 +233,10 @@ export class RuntimeManager {
       cwd,
       // 打包后用 ELECTRON_RUN_AS_NODE 让 Electron 二进制以纯 Node 运行 sidecar；
       // 开发模式也显式设置 env 确保行为一致
-      env: {
-        ...process.env,
+      env: buildSafeEnv({
         ELECTRON_RUN_AS_NODE: app.isPackaged ? '1' : undefined,
         XYZ_AGENT_PACKAGED: app.isPackaged ? '1' : undefined,
-      },
+      }),
     }
     this.child = spawn(cmd, args, spawnOptions)
 

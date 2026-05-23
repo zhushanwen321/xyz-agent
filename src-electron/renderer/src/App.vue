@@ -107,7 +107,7 @@ const wsStateUnwatch = watch(wsState, (newState) => {
           title: '连接已断开',
           description: 'Runtime 连接已断开，正在尝试重新连接…',
         })
-        setTimeout(() => dismissToast(id), 8_000)
+        setTimeout(() => dismissToast(id), TOAST_LONG_DURATION_MS)
       }, WS_DISCONNECT_WARN_DELAY_MS)
     }
   } else if (newState === 'connected') {
