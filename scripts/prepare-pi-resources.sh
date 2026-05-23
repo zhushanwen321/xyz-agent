@@ -55,12 +55,24 @@ else
   echo "Extracting..."
   pushd "$RESOURCES_DIR" > /dev/null
   if [[ "$ASSET" == *.tar.gz ]]; then
+    # pi release tar.gz 包一层 pi/ 目录（for mise compatibility）
     tar xzf "$ASSET"
+    # 展平 pi/ 前缀目录，重命名二进制为 process-manager 期望的文件名
+    if [[ -d "pi" ]]; then
+      cp -R pi/assets pi/export-html pi/package.json pi/photon_rs_bg.wasm pi/theme . 2>/dev/null || true
+      cp pi/pi "${BINARY_NAME}" 2>/dev/null || cp pi/pi.exe "${BINARY_NAME}" 2>/dev/null || true
+      rm -rf pi
+    fi
   else
     unzip -o "$ASSET"
+    if [[ -d "pi" ]]; then
+      cp -R pi/assets pi/export-html pi/package.json pi/photon_rs_bg.wasm pi/theme . 2>/dev/null || true
+      cp pi/pi "${BINARY_NAME}" 2>/dev/null || cp pi/pi.exe "${BINARY_NAME}" 2>/dev/null || true
+      rm -rf pi
+    fi
   fi
   rm -f "$ASSET"
-  chmod +x pi-* 2>/dev/null || true
+  chmod +x "${BINARY_NAME}" 2>/dev/null || true
   popd > /dev/null
 fi
 
