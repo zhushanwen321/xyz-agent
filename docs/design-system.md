@@ -91,12 +91,12 @@
 
 | Token | 值 | 用途 |
 |-------|-----|------|
-| `--radius-xs` | `1px` | 消息气泡、输入框、极小元素 |
-| `--radius-sm` | `2px` | 卡片、按钮、面板、下拉菜单 |
-| `--radius-md` | `2px` | 历史别名，等同于 sm |
-| `--radius-lg` | `2px` | 历史别名，等同于 sm |
+| `--radius-xs` | `1px` | 默认（所有元素） |
+| `--radius-sm` | `1px` | 默认（同 xs） |
+| `--radius-md` | `2px` | 特殊场景 |
+| `--radius-lg` | `2px` | 特殊场景 |
 
-> 项目只允许 1px 和 2px 两种 radius 值。详见 docs/standards.md §7.1
+> 默认 radius = 1px，2px 仅用于特殊场景。详见 docs/standards.md §7.1
 
 ## 5. Markdown 渲染
 

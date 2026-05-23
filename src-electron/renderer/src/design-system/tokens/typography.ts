@@ -4,9 +4,9 @@ export const fonts = {
   'font-mono': "'JetBrains Mono','IBM Plex Mono',ui-monospace,Menlo,monospace",
 }
 
-/* Radius system: only 1px and 2px allowed project-wide */
+/* Radius system: default 1px, special cases 2px */
 export const radii = {
   'radius-lg': '2px',
   'radius-md': '2px',
-  'radius-sm': '2px',
+  'radius-sm': '1px',
 }

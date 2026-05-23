@@ -23,7 +23,7 @@ const expanded = ref(true)
 <style scoped>
 .thinking-block {
   background: var(--bg);
-  border-radius: 2px;
+  border-radius: 1px;
 }
 .thinking-header {
   display: flex;

@@ -48,11 +48,11 @@ export default {
         mono: ['JetBrains Mono', 'IBM Plex Mono', 'ui-monospace', 'Menlo', 'monospace'],
       },
       borderRadius: {
-        DEFAULT: '12px',
-        sm: '8px',
-        xs: '4px',
-        lg: '12px',
-        md: '8px',
+        DEFAULT: '1px',
+        sm: '1px',
+        xs: '1px',
+        md: '2px',
+        lg: '2px',
         bubble: 'var(--radius-bubble)',
       },
       boxShadow: {

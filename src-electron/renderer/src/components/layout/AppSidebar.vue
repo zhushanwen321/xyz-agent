@@ -145,7 +145,7 @@ const isSettingsActive = computed(() => settingsStore.currentView === 'settings'
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 2px;
+  border-radius: 1px;
   border: none;
   background: transparent;
   color: var(--muted);
@@ -159,7 +159,7 @@ const isSettingsActive = computed(() => settingsStore.currentView === 'settings'
 .sidebar__new {
   margin-left: auto;
   padding: 3px 9px;
-  border-radius: 2px;
+  border-radius: 1px;
   border: 1px solid var(--border);
   background: transparent;
   color: var(--muted);

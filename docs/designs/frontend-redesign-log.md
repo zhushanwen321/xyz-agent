@@ -188,7 +188,7 @@ Depth is conveyed entirely through lightness (L%) differences:
 - Thinking uses accent-light (stronger), ToolUse uses hover-bg (subtler)
 - Creates hierarchy: Thinking > ToolUse in visual weight
 
-### Decided: 2-3px border-radius (not 0, not 8px)
+### Decided: 1px border-radius (default) (not 0, not 8px)
 - 0px felt overly harsh, "unfinished"
 - Standard 8px too round for the sharp aesthetic
 - 2-3px adds just enough softness without breaking the geometric intent

@@ -202,7 +202,7 @@ function toggleExpand() {
 .tool-card {
   border: 1px solid var(--border);
   background: var(--bg);
-  border-radius: 2px;
+  border-radius: 1px;
 }
 .tool-header {
   display: flex;

@@ -47,7 +47,7 @@
         <!-- Text content (inside bubble) -->
         <div
           v-else-if="block.type === 'text' && message.content"
-          class="py-3 px-4 leading-[1.6] text-sm bg-surface border-l-2 border-border rounded-[1px]"
+          class="py-3 px-4 leading-[1.6] text-sm bg-surface border-l-2 border-border rounded-sm"
         >
           <div
             class="msg__body select-text"
@@ -56,7 +56,7 @@
           >
             <!-- eslint-disable-next-line vue/no-v-html -->
             <span v-html="renderedContent"></span>
-            <span v-if="isStreaming" class="inline-block w-0.5 h-[1.1em] bg-accent rounded-[1px] align-text-bottom animate-blink motion-reduce:opacity-60 motion-reduce:animate-none"></span>
+            <span v-if="isStreaming" class="inline-block w-0.5 h-[1.1em] bg-accent rounded-sm align-text-bottom animate-blink motion-reduce:opacity-60 motion-reduce:animate-none"></span>
           </div>
         </div>
       </template>
@@ -78,7 +78,7 @@
       />
       <div
         v-if="message.content"
-        class="py-3 px-4 leading-[1.6] text-sm bg-surface border-l-2 border-border rounded-[1px]"
+        class="py-3 px-4 leading-[1.6] text-sm bg-surface border-l-2 border-border rounded-sm"
       >
         <div
           class="msg__body select-text"
@@ -87,7 +87,7 @@
         >
           <!-- eslint-disable-next-line vue/no-v-html -->
           <span v-html="renderedContent"></span>
-          <span v-if="isStreaming" class="inline-block w-0.5 h-[1.1em] bg-accent rounded-[1px] align-text-bottom animate-blink motion-reduce:opacity-60 motion-reduce:animate-none"></span>
+          <span v-if="isStreaming" class="inline-block w-0.5 h-[1.1em] bg-accent rounded-sm align-text-bottom animate-blink motion-reduce:opacity-60 motion-reduce:animate-none"></span>
         </div>
       </div>
     </template>
@@ -103,7 +103,7 @@
       <span v-if="message.timestamp" class="font-normal normal-case tracking-normal text-[10px] opacity-60 mr-1.5">{{ formatTime(message.timestamp) }}</span>
       用户
     </div>
-    <div class="py-3 px-4 leading-[1.6] text-sm bg-surface text-fg border-l-2 border-accent rounded-[1px]">
+    <div class="py-3 px-4 leading-[1.6] text-sm bg-surface text-fg border-l-2 border-accent rounded-sm">
       <div
         v-if="message.content"
         class="msg__body select-text"

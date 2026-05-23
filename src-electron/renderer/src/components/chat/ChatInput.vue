@@ -9,7 +9,7 @@
     <div
       ref="containerRef"
       :class="[
-        'bg-surface border-2 border-transparent rounded-[1px] transition-colors duration-150 ease-ease overflow-visible relative z-10 focus-within:border-accent',
+        'bg-surface border-2 border-transparent rounded-sm transition-colors duration-150 ease-ease overflow-visible relative z-10 focus-within:border-accent',
         activeCommand ? 'border-accent' : '',
       ]"
     >

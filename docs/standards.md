@@ -228,30 +228,36 @@ src-electron/
 
 ### 7.1 Border-radius 约束
 
-**项目全局只允许 1px 和 2px 两种 border-radius 值。**
+**项目全局只允许 1px 和 2px 两种 border-radius 值。1px 是默认值，2px 仅用于特殊场景。**
 
-| 场景 | 使用值 | CSS 变量 | Tailwind class |
-|------|--------|----------|----------------|
-| 消息气泡、输入框、极小元素 | 1px | `var(--radius-xs)` | `rounded-[1px]` |
-| 卡片、按钮、面板、session 项、下拉菜单等 | 2px | `var(--radius-sm)` | `rounded-sm` |
-| 圆形指示器、头像（不受限） | 50% | — | `rounded-full` |
-| 无圆角（强制） | 0 | — | `rounded-none` |
+| 场景 | 使用值 | Tailwind class |
+|------|--------|----------------|
+| 所有默认元素（气泡、卡片、按钮、面板、session、输入框等） | 1px | `rounded-sm` 或 `rounded-xs` |
+| 特殊场景（需要更大圆角时） | 2px | `rounded-md` 或 `rounded-lg` |
+| 圆形指示器、头像（不受限） | 50% | `rounded-full` |
+| 无圆角（强制） | 0 | `rounded-none` |
 
-**禁止使用的值：**
-- `rounded-md`（8px）、`rounded-lg`（12px）— 过圆
-- `rounded-[3px]`、`rounded-[5px]` 等任意像素值 — 不在规范范围内
-- `border-radius: 3px`、`4px`、`5px`、`8px`、`12px` 等 — 同上
-
-**CSS 变量定义（style.css）：**
-```css
---radius: 2px;       /* 基础 */
---radius-sm: 2px;    /* 卡片/按钮 */
---radius-xs: 1px;    /* 气泡/极小元素 */
---radius-lg: 2px;    /* 历史别名，等于 sm */
---radius-md: 2px;    /* 历史别名，等于 sm */
+**Tailwind 配置（tailwind.config.ts）：**
+```ts
+borderRadius: {
+  DEFAULT: '1px',  // rounded
+  sm: '1px',        // rounded-sm (默认)
+  xs: '1px',        // rounded-xs (同 sm)
+  md: '2px',        // rounded-md (特殊)
+  lg: '2px',        // rounded-lg (特殊)
+}
 ```
 
-**设计意图：** 锐利的几何风格是 xyz-agent 的视觉标识。接近零但不为零的圆角提供微小软化的同时保持整体锋利感。
+**CSS 变量（style.css）：**
+```css
+--radius: 1px;
+--radius-sm: 1px;     /* 默认 */
+--radius-xs: 1px;
+--radius-lg: 2px;     /* 特殊 */
+--radius-md: 2px;     /* 特殊 */
+```
+
+**设计意图：** 1px 的锐利几何风格是 xyz-agent 的视觉标识。接近零但不为零的圆角提供微小软化的同时保持整体锋利感。
 
 ---
 
