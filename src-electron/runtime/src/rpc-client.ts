@@ -235,7 +235,7 @@ export class RpcClient {
         console.log('[rpc] send: type=' + type)
         const ok = this.proc.stdin!.write(msg)
         if (!ok) {
-          await new Promise<void>(resolve => this.proc!.stdin!.once('drain', resolve))
+          this.proc.stdin!.once('drain', () => {})
         }
       } catch (e) {
         clearTimeout(timer)
