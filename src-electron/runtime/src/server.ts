@@ -219,7 +219,7 @@ export class SidecarServer implements IMessageBroker {
         case 'session.tree-data': {
           const sid = msg.payload.sessionId as string
           const treeData = await this.sessionService.getTree(sid)
-          return this.send(ws, { type: 'session.tree-data', id: msg.id, payload: treeData })
+          return this.send(ws, { type: 'session.tree-data', id: msg.id, payload: { ...treeData } })
         }
         case 'session.tree-navigate': {
           const sid = msg.payload.sessionId as string

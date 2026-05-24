@@ -54,6 +54,8 @@ vi.mock('../src/event-adapter.js', () => ({
 
   attach = attachMock
   detach = detachMock
+  setNavigateResolver = vi.fn()
+  clearNavigateResolver = vi.fn()
   },
 }))
 
@@ -118,6 +120,8 @@ function createService(): SessionService {
     return {
       attach: attachMock,
       detach: detachMock,
+      setNavigateResolver: vi.fn(),
+      clearNavigateResolver: vi.fn(),
     }
   }
   // Use a minimal mock pm that satisfies the constructor

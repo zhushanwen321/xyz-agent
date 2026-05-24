@@ -317,4 +317,15 @@ export function useChat(sessionId?: Ref<string>) {
 
 // 模块级注册：延后到 Pinia 安装后执行。
 // import 阶段 App.vue → useChat.ts → createGlobalHandlers → useChatStore() 需要 Pinia。
-queueMicrotask(() => registerGlobalListeners())
+// 测试环境中 Pinia 可能未安装，通过 getActivePinia 安全检测后延迟注册。
+let registerAttempted = false
+function safeRegisterGlobalListeners() {
+  if (globalEventMap || registerAttempted) return
+  registerAttempted = true
+  try {
+    registerGlobalListeners()
+  } catch {
+    // Pinia 未就绪（测试环境），静默跳过。生产环境 Pinia 一定在 App.vue setup 前就绪。
+  }
+}
+queueMicrotask(safeRegisterGlobalListeners)

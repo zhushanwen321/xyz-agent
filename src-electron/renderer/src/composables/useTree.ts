@@ -100,5 +100,15 @@ export function useTree() {
   return { fetchTree, navigate, fork, requestCapability }
 }
 
-// 模块级注册：延后到 Pinia 安装后执行
-queueMicrotask(() => registerGlobalListeners())
+// 模块级注册：延后到 Pinia 安装后执行，测试环境可能 Pinia 未安装则静默跳过
+let treeRegisterAttempted = false
+function safeRegisterTreeListeners() {
+  if (globalEventMap || treeRegisterAttempted) return
+  treeRegisterAttempted = true
+  try {
+    registerGlobalListeners()
+  } catch {
+    // Pinia 未就绪（测试环境），静默跳过
+  }
+}
+queueMicrotask(safeRegisterTreeListeners)

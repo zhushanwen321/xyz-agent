@@ -78,6 +78,8 @@ vi.mock('../src/event-adapter.js', () => ({
   EventAdapter: class MockEventAdapter {
     attach = vi.fn()
     detach = vi.fn()
+    setNavigateResolver = vi.fn()
+    clearNavigateResolver = vi.fn()
   },
 }))
 
