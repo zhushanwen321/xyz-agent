@@ -138,7 +138,10 @@ app.on('activate', async () => {
 })
 
 // 应用退出前清理：确保 sidecar 进程完全退出再 quit
+let isQuitting = false
 app.on('before-quit', (event) => {
+  if (isQuitting) return // 第二次进入（app.quit() 触发），放行
+  isQuitting = true
   event.preventDefault()
   runtimeManager.stop().finally(() => {
     unregisterShortcuts()
