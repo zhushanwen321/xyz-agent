@@ -8,6 +8,8 @@ export interface ToolCall {
   toolName: string
   input: unknown
   output?: string
+  /** pi tool_execution_end result.details — 结构化扩展数据 */
+  details?: Record<string, unknown>
   status: ToolCallStatus
   startTime: number
   endTime?: number

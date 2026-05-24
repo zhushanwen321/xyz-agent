@@ -138,7 +138,7 @@ function createGlobalHandlers() {
     if (streaming?.toolCalls) {
       const calls = streaming.toolCalls.map((tc) =>
         tc.id === (msg.payload.toolCallId as string)
-          ? { ...tc, output: msg.payload.output as string | undefined, status: 'completed' as const, endTime: Date.now() }
+          ? { ...tc, output: msg.payload.output as string | undefined, details: msg.payload.details as Record<string, unknown> | undefined, status: 'completed' as const, endTime: Date.now() }
           : tc,
       )
       store.setStreaming({ ...streaming, toolCalls: calls }, sid)

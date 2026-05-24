@@ -141,12 +141,22 @@ export class EventAdapter {
         } else {
           output = ''
         }
+        // 提取 result.details — pi RPC 返回的结构化扩展数据
+        let details: Record<string, unknown> | undefined
+        if (raw && typeof raw === 'object') {
+          const d = (raw as Record<string, unknown>).details
+          if (d && typeof d === 'object' && !Array.isArray(d)) {
+            details = d as Record<string, unknown>
+          }
+        }
+
         return {
           type: 'message.tool_call_end',
           payload: {
             sessionId: sid,
             toolCallId: event.toolCallId ?? '',
             output,
+            details,
             error: event.isError ? output : event.error,
           },
         }
