@@ -187,6 +187,7 @@ export default {
     selectedSources: '{n} sources selected',
     scan: 'Scan',
     imported: 'Imported',
+    selectAll: 'Select All',
     selectedCount: '{n} selected',
     importSelected: 'Import Selected',
     manualAdd: 'Manual Add',

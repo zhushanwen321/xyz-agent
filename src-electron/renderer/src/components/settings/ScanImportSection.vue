@@ -86,6 +86,22 @@ const importableItems = computed(() =>
   (props.scannedResults as Array<ScannedSkillInfo | ScannedAgentInfo>).filter(i => !i.alreadyImported),
 )
 
+const allImportableSelected = computed(() =>
+  importableItems.value.length > 0 && importableItems.value.every(i => selectedItems.value.has(i.id)),
+)
+
+function toggleSelectAll() {
+  if (allImportableSelected.value) {
+    for (const item of importableItems.value) {
+      selectedItems.value.delete(item.id)
+    }
+  } else {
+    for (const item of importableItems.value) {
+      selectedItems.value.add(item.id)
+    }
+  }
+}
+
 const selectedImportCount = computed(() => {
   let count = 0
   for (const id of selectedItems.value) {
@@ -210,6 +226,28 @@ const sourceTypeLabels = computed<Record<string, string>>(() => ({
 
     <!-- Scan results -->
     <div v-if="scannedResults.length > 0" class="border-t border-border animate-[fadeIn_200ms_ease-out]">
+      <!-- Select all row -->
+      <div
+        v-if="importableItems.length > 0"
+        class="flex items-center gap-2.5 py-[7px] px-4 text-xs border-b border-[var(--divider)] bg-[var(--hover-bg)] select-none"
+      >
+        <div
+          :class="[
+            'w-4 h-4 rounded-sm border-[1.5px] flex items-center justify-center shrink-0 transition-all duration-120 cursor-pointer',
+            allImportableSelected
+              ? 'bg-[var(--accent)] border-[var(--accent)]'
+              : 'border-border bg-surface',
+          ]"
+          @click="toggleSelectAll"
+        >
+          <template v-if="allImportableSelected">
+            <svg width="8" height="5" viewBox="0 0 8 5" fill="none" stroke="white" stroke-width="2">
+              <path d="M1 2.5l2 2 4-4" />
+            </svg>
+          </template>
+        </div>
+        <span class="text-muted text-[11px]">{{ t('settings.selectAll') }}</span>
+      </div>
       <div
         v-for="item in scannedResults"
         :key="item.id"

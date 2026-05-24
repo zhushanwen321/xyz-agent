@@ -187,6 +187,7 @@ export default {
     selectedSources: '已选 {n} 个来源',
     scan: '扫描',
     imported: '已导入',
+    selectAll: '全选',
     selectedCount: '已选 {n} 个',
     importSelected: '导入选中',
     manualAdd: '手动添加',
