@@ -24,9 +24,11 @@
               ? 'bg-border text-muted'
               : cmd.source === 'skill'
               ? 'bg-accent-light text-accent'
+              : cmd.source === 'extension'
+              ? 'bg-[var(--section-bg)] text-muted'
               : 'bg-agent-light text-agent',
           ]"
-        >{{ cmd.source === 'builtin' ? 'command' : cmd.source === 'skill' ? 'skill' : 'agent' }}</span>
+        >{{ cmd.source === 'builtin' ? 'command' : cmd.source === 'skill' ? 'skill' : cmd.source === 'extension' ? 'ext' : 'agent' }}</span>
     <span class="text-xs font-semibold font-mono whitespace-nowrap text-accent min-w-[120px] max-w-[40%] shrink-0 overflow-hidden text-ellipsis">/{{ displayName(cmd) }}</span>
     <span class="text-[11px] text-muted flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap pl-2 border-l border-border" :title="cmd.description">{{ cmd.description }}</span>
     <span
@@ -115,8 +117,11 @@ function onOutsideClick(e: MouseEvent) {
 }
 
 function displayName(cmd: SlashCommand): string {
-  // Agent 命令名有 `agent:` 前缀，但左侧已有 agent tag，显示时去掉
-  return cmd.source === 'agent' ? cmd.name.replace(/^agent:/, '') : cmd.name
+  // Agent 命令名有 `agent:` 前缀，显示时去掉
+  // Extension 命令名可能有 `skill:` 前缀，显示时去掉
+  if (cmd.source === 'agent') return cmd.name.replace(/^agent:/, '')
+  if (cmd.source === 'extension') return cmd.name.replace(/^skill:/, '')
+  return cmd.name
 }
 
 onMounted(() => {

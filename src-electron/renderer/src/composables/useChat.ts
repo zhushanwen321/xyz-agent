@@ -5,6 +5,7 @@ import { on, off } from '../lib/event-bus'
 import { onMounted, onUnmounted, type Ref, unref, getCurrentInstance } from 'vue'
 import type { ServerMessage, ToolCall, ContentBlock } from '@xyz-agent/shared'
 import { createSystemNotification } from '../lib/system-notification'
+import { useSlashCommands } from './useSlashCommands'
 
 const RADIX_36 = 36
 const SUBSTRING_START = 2
@@ -21,6 +22,7 @@ let globalListenerRefCount = 0
 
 function createGlobalHandlers() {
   const store = useChatStore()
+  const { setExtensionCommands } = useSlashCommands()
 
   function getSid(msg: ServerMessage): string | null {
     return (msg.payload?.sessionId as string) ?? null
@@ -200,6 +202,9 @@ function createGlobalHandlers() {
     'message.error': onError,
     'context.update': onContextUpdate,
     'message.status': onStatus,
+    'session.commands': ((msg: ServerMessage) => {
+      setExtensionCommands((msg.payload as { commands: Array<{ name: string; description?: string; source: string }> }).commands)
+    }),
   } as Record<string, (msg: ServerMessage) => void>
 }
 

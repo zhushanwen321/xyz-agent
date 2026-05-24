@@ -249,6 +249,11 @@ function handleSend() {
         emit('send', { content: trimmed || '', subagent: { agent: agentName, task: taskContent } })
         break
       }
+      case 'extension': {
+        const content = `/${cmd.action.commandName} ${trimmed}`.trim()
+        emit('send', { content })
+        break
+      }
     }
     clearCommand()
   } else {

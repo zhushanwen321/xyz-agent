@@ -45,6 +45,8 @@ export interface RpcClientOptions {
   skillPaths?: string[]
   /** pi 可执行文件路径（默认 'pi'，从 PATH 查找） */
   piCommand?: string
+  /** pi 扩展路径列表，每个路径通过 --extension 参数传递 */
+  extensionPaths?: string[]
 }
 
 const CMD_TIMEOUT_MS = 60_000
@@ -85,6 +87,11 @@ export class RpcClient {
     if (this.options.skillPaths?.length) {
       for (const skillPath of this.options.skillPaths) {
         args.push('--skill', skillPath)
+      }
+    }
+    if (this.options.extensionPaths?.length) {
+      for (const extPath of this.options.extensionPaths) {
+        args.push('--extension', extPath)
       }
     }
 
@@ -294,6 +301,12 @@ export class RpcClient {
    */
   clear(): Promise<PiMessage> {
     return this.sendCommand('new_session')
+  }
+
+  async getCommands(): Promise<Array<{ name: string; description?: string; source: string }>> {
+    const resp = await this.sendCommand('get_commands')
+    const data = resp.data ?? resp.payload
+    return (data?.commands as Array<{ name: string; description?: string; source: string }>) ?? []
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────

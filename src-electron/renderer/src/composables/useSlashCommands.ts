@@ -3,13 +3,14 @@ import type { SkillInfo, AgentInfo } from '@xyz-agent/shared'
 
 // ── 类型定义 ────────────────────────────────────────────────────
 
-export type SlashCommandSource = 'builtin' | 'skill' | 'agent'
+export type SlashCommandSource = 'builtin' | 'skill' | 'agent' | 'extension'
 
 export type SlashCommandAction =
   | { type: 'local'; handler: (ctx: CommandContext) => void }
   | { type: 'protocol'; messageType: string }
   | { type: 'skill'; skillId: string }
   | { type: 'agent'; agentName: string }
+  | { type: 'extension'; commandName: string }
 
 export interface SlashCommand {
   name: string
@@ -30,6 +31,7 @@ export interface CommandContext {
 // ── 单例状态 ────────────────────────────────────────────────────
 
 const builtinCommands = ref<SlashCommand[]>([])
+const extensionCommands = ref<SlashCommand[]>([])
 let defaultsInitialized = false
 
 // ── composable ──────────────────────────────────────────────────
@@ -61,7 +63,7 @@ export function useSlashCommands() {
         action: { type: 'agent' as const, agentName: a.name },
       }))
 
-    const all = [...builtinCommands.value, ...skillCmds, ...agentCmds]
+    const all = [...builtinCommands.value, ...skillCmds, ...agentCmds, ...extensionCommands.value]
     // 去重（skill 可能与 builtin 同名）
     const seen = new Set<string>()
     return all
@@ -116,11 +118,22 @@ export function useSlashCommands() {
     })
   }
 
+  /** 将 pi get_commands 返回的命令转换为 SlashCommand 格式 */
+  function setExtensionCommands(commands: Array<{ name: string; description?: string; source: string }>) {
+    extensionCommands.value = commands.map(cmd => ({
+      name: cmd.name,
+      description: cmd.description ?? '',
+      source: 'extension' as const,
+      action: { type: 'extension' as const, commandName: cmd.name },
+    }))
+  }
+
   return {
     builtinCommands,
     registerBuiltin,
     mergeSkillCommands,
     filterCommands,
     initDefaultCommands,
+    setExtensionCommands,
   }
 }
