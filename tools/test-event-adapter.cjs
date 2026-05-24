@@ -1,8 +1,8 @@
 /**
- * Integration test: EventAdapter navigate-result interception
+ * Integration test: NavigateInterceptor
  *
  * Tests the cross-chunk buffering and JSON parsing of navigate-result
- * messages within the EventAdapter's text_delta handling.
+ * messages within the NavigateInterceptor's WsSender decoration.
  *
  * Run: node tools/test-event-adapter.cjs
  */
@@ -41,7 +41,7 @@ function simulateNavigateInterception(deltas, hasResolver = true) {
   for (const delta of deltas) {
     // Simulate text_delta handling
     if (navigateResolve) {
-      if (delta.startsWith('{"__xyz_type":"navigate-result"')) {
+      if (!isNavigateStream && /"__xyz_type"\s*:\s*"navigate-result"/.test(delta)) {
         isNavigateStream = true
         navigateBuffer = delta
       } else if (isNavigateStream) {

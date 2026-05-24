@@ -78,8 +78,6 @@ vi.mock('../src/event-adapter.js', () => ({
   EventAdapter: class MockEventAdapter {
     attach = vi.fn()
     detach = vi.fn()
-    setNavigateResolver = vi.fn()
-    clearNavigateResolver = vi.fn()
   },
 }))
 
@@ -148,9 +146,10 @@ describe('SidecarServer message.send with subagent field', () => {
   port = await getFreePort()
   server = new SidecarServer(port, '/tmp/test-project')
   server.setServices(
-    new SessionService({} as never, {} as never, {} as never, '/tmp'),
+    new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never),
     new ConfigService('/tmp'),
     new ModelService(),
+    {} as never,
   )
   await server.start()
   })

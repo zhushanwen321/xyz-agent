@@ -11,7 +11,7 @@
  * - Message entries: { type: "message", message: { role, content: [...] } }
  */
 
-import { readFileSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import type { TreeNode } from './types.js'
 
 // ── Content block shapes from pi JSONL ─────────────────────────────
@@ -70,8 +70,8 @@ const TEXT_PREVIEW_MAX = 100
  * @param filePath - Absolute path to a `.jsonl` session file.
  * @returns Tree data: node map, root nodes, and label map.
  */
-export function buildTreeFromFile(filePath: string): BuildTreeResult {
-  const raw = readFileSync(filePath, 'utf-8')
+export async function buildTreeFromFile(filePath: string): Promise<BuildTreeResult> {
+  const raw = await readFile(filePath, 'utf-8')
   const lines = raw.split('\n')
 
   const byId = new Map<string, TreeNode>()

@@ -1,7 +1,18 @@
 import { useTreeStore } from '../stores/tree'
 import { send } from '../lib/ws-client'
-import { on } from '../lib/event-bus'
+import { on, emit } from '../lib/event-bus'
 import type { ServerMessage } from '@xyz-agent/shared'
+
+// ── 全局状态 ──────────────────────────────────────────────────
+
+/** Navigate 后的 editorText，按 session 存储，避免 split mode 交叉污染 */
+const pendingEditorTexts = new Map<string, string>()
+
+export function consumePendingEditorText(sessionId: string): string | null {
+  const text = pendingEditorTexts.get(sessionId) ?? null
+  pendingEditorTexts.delete(sessionId)
+  return text
+}
 
 // ── 全局事件处理器 ────────────────────────────────────────────────
 
@@ -29,8 +40,17 @@ function createGlobalHandlers() {
     if (!success) {
       const errMsg = (msg.payload.error as string) ?? 'Navigate failed'
       store.setError(sid, errMsg)
+      return
     }
-    // 成功时 session.history 由 useChat 全局处理器更新消息
+    // Navigate 成功：刷新消息历史 + tree 数据
+    send({ type: 'session.history', payload: { sessionId: sid } })
+    send({ type: 'session.tree-data', payload: { sessionId: sid } })
+    // 预填 editorText（navigate 到 user message 时的原始文本）
+    const editorText = msg.payload.editorText as string | undefined
+    if (editorText) {
+      pendingEditorTexts.set(sid, editorText)
+      emit('editor-text-pending')
+    }
   }
 
   function onTreeForkResult(msg: ServerMessage) {
@@ -40,8 +60,14 @@ function createGlobalHandlers() {
     if (!success) {
       const errMsg = (msg.payload.error as string) ?? 'Fork failed'
       store.setError(sid, errMsg)
+      return
     }
-    // 成功时 session.list 由 useSession 全局处理器更新
+    // Fork 成功：刷新 session 列表 + 自动切换到新 session
+    const newSessionId = msg.payload.newSessionId as string | undefined
+    if (newSessionId) {
+      send({ type: 'session.list', payload: {} })
+      send({ type: 'session.switch', payload: { sessionId: newSessionId } })
+    }
   }
 
   function onTreeCapability(msg: ServerMessage) {

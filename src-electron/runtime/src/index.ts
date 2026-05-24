@@ -1,9 +1,11 @@
 import { SidecarServer } from './server.js'
 import { SessionService } from './services/session-service.js'
+import { TreeService } from './services/tree-service.js'
 import { ConfigService } from './services/config-service.js'
 import { ModelService } from './services/model-service.js'
 import { ProcessManager } from './process-manager.js'
 import { EventAdapter } from './event-adapter.js'
+import type { NavigateInterceptor } from './navigate-interceptor.js'
 
 function parseArgs(): { port: number; projectRoot?: string } {
   // eslint-disable-next-line no-magic-numbers -- argv[0] is node, argv[1] is script
@@ -45,17 +47,19 @@ async function main(): Promise<void> {
   const server = new SidecarServer(port, projectRoot)
 
   // Service layer (DI)
+  const treeService = new TreeService(pm)
   const sessionService = new SessionService(
     pm,
     server,  // IMessageBroker
-    (sessionId: string) => new EventAdapter(sessionId, (msg) => server.broadcast(msg)),
+    (sessionId: string, interceptor: NavigateInterceptor) => new EventAdapter(sessionId, interceptor.send),
     effectiveRoot,
+    treeService,
   )
   const configService = new ConfigService(effectiveRoot)
   const modelService = new ModelService()
 
   // Wire services into server
-  server.setServices(sessionService, configService, modelService)
+  server.setServices(sessionService, configService, modelService, treeService)
 
   // Graceful shutdown on signals
   let shuttingDown = false

@@ -86,8 +86,6 @@ vi.mock('../src/event-adapter.js', () => ({
   EventAdapter: class MockEventAdapter {
     attach = vi.fn()
     detach = vi.fn()
-    setNavigateResolver = vi.fn()
-    clearNavigateResolver = vi.fn()
   },
 }))
 
@@ -117,8 +115,7 @@ async function createSessionService() {
   const { SessionService } = await import('../src/services/session-service.js')
   const pm = new ProcessManager()
   const noopBroker = { send: vi.fn(), broadcast: vi.fn(), sendError: vi.fn() }
-  const adapterFactory = () => ({ attach: vi.fn(), detach: vi.fn(), setNavigateResolver: vi.fn(), clearNavigateResolver: vi.fn() })
-  return new SessionService(pm, noopBroker as never, adapterFactory, '/tmp')
+  return new SessionService(pm, noopBroker as never, () => ({ attach: vi.fn(), detach: vi.fn() }), '/tmp', {} as never)
 }
 
 // ── Tests ──────────────────────────────────────────────────────────

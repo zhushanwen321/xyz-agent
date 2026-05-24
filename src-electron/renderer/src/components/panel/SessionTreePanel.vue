@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, watch, onMounted } from 'vue'
+import { computed, watchImmediate } from 'vue'
 import { useTreeStore } from '../../stores/tree'
 import { useTree } from '../../composables/useTree'
 import { Select, Button, ScrollArea } from '../../design-system'
@@ -82,16 +82,8 @@ function truncate(text: string, max: number): string {
   return first.length > max ? first.slice(0, max) + '...' : first
 }
 
-// 面板打开时自动加载数据
-onMounted(() => {
-  if (sessionState.value.tree.length === 0) {
-    fetchTree(props.sessionId)
-  }
-  requestCapability(props.sessionId)
-})
-
-// sessionId 变化时重新加载
-watch(() => props.sessionId, (newSid) => {
+// sessionId 变化或首次挂载时加载数据（watchImmediate 替代 onMounted + watch 组合，避免重复请求）
+watchImmediate(() => props.sessionId, (newSid) => {
   if (treeStore.getSessionState(newSid).tree.length === 0) {
     fetchTree(newSid)
   }

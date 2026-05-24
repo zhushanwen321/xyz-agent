@@ -4,7 +4,15 @@ export default {
       description: "Navigate the session tree to a specified entry",
       handler: async (args, ctx) => {
         const entryId = args.trim();
-        if (!entryId) return;
+        if (!entryId) {
+          ctx.sendMessage(JSON.stringify({
+            __xyz_type: "navigate-result",
+            cancelled: true,
+            newLeafId: null,
+            editorText: null,
+          }));
+          return;
+        }
 
         try {
           const result = await ctx.navigateTree(entryId, { summarize: false });

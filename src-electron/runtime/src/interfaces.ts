@@ -17,7 +17,6 @@ import type {
   ScannedSkillInfo,
   ScannedAgentInfo,
 } from '@xyz-agent/shared'
-import type { TreeData, NavigateResult, ForkResult } from './types.js'
 import type { PiEventListener } from './rpc-client.js'
 
 // ── IRpcClient ────────────────────────────────────────────────────
@@ -82,8 +81,6 @@ export interface IMessageBroker {
 export interface IEventAdapter {
   attach(client: { onEvent: (listener: PiEventListener) => (() => void) }): void
   detach(): void
-  setNavigateResolver(fn: (data: unknown) => void): void
-  clearNavigateResolver(): void
 }
 
 // ── ISessionService ───────────────────────────────────────────────
@@ -104,10 +101,6 @@ export interface ISessionService {
   getSummary(sessionId: string): SessionSummary | undefined
   listPersistedSessions(): SessionGroup[]
   destroyAll(): Promise<void>
-  getTree(sessionId: string): Promise<TreeData>
-  navigateTree(sessionId: string, targetEntryId: string): Promise<NavigateResult>
-  forkFromEntry(sessionId: string, entryId: string): Promise<ForkResult>
-  isNavigateCapable(sessionId: string): boolean
 }
 
 // ── IConfigService ────────────────────────────────────────────────

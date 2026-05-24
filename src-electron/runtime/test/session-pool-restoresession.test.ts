@@ -54,8 +54,6 @@ vi.mock('../src/event-adapter.js', () => ({
 
   attach = attachMock
   detach = detachMock
-  setNavigateResolver = vi.fn()
-  clearNavigateResolver = vi.fn()
   },
 }))
 
@@ -116,12 +114,10 @@ function createService(): SessionService {
     broadcast: vi.fn(),
     sendError: vi.fn(),
   }
-  const adapterFactory = (_sessionId: string): IEventAdapter => {
+  const adapterFactory = (_sessionId: string, _interceptor: unknown): IEventAdapter => {
     return {
       attach: attachMock,
       detach: detachMock,
-      setNavigateResolver: vi.fn(),
-      clearNavigateResolver: vi.fn(),
     }
   }
   // Use a minimal mock pm that satisfies the constructor
@@ -140,6 +136,7 @@ function createService(): SessionService {
     noopBroker,
     adapterFactory,
     '/tmp',
+    {} as never,
   )
 }
 

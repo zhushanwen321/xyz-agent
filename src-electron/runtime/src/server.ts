@@ -24,11 +24,13 @@ export class SidecarServer implements IMessageBroker {
   private sessionService!: ISessionService
   private configService!: IConfigService
   private modelService!: IModelService
+  private treeService!: import('./services/tree-service.js').TreeService
 
-  setServices(session: ISessionService, config: IConfigService, model: IModelService): void {
+  setServices(session: ISessionService, config: IConfigService, model: IModelService, tree: import('./services/tree-service.js').TreeService): void {
     this.sessionService = session
     this.configService = config
     this.modelService = model
+    this.treeService = tree
   }
 
   constructor(private port: number, projectRoot?: string) {
@@ -218,19 +220,19 @@ export class SidecarServer implements IMessageBroker {
           return await this.sessionService.abort(msg.payload.sessionId as string)
         case 'session.tree-data': {
           const sid = msg.payload.sessionId as string
-          const treeData = await this.sessionService.getTree(sid)
+          const treeData = await this.treeService.getTree(sid)
           return this.send(ws, { type: 'session.tree-data', id: msg.id, payload: { ...treeData } })
         }
         case 'session.tree-navigate': {
           const sid = msg.payload.sessionId as string
           const targetEntryId = msg.payload.targetEntryId as string
-          const result = await this.sessionService.navigateTree(sid, targetEntryId)
+          const result = await this.treeService.navigateTree(sid, targetEntryId)
           return this.send(ws, { type: 'session.tree-navigate-result', id: msg.id, payload: { sessionId: sid, ...result } })
         }
         case 'session.tree-fork': {
           const sid = msg.payload.sessionId as string
           const entryId = msg.payload.entryId as string
-          const result = await this.sessionService.forkFromEntry(sid, entryId)
+          const result = await this.treeService.forkFromEntry(sid, entryId)
           if (result.success) {
             this.broadcastSessionList()
           }
@@ -238,7 +240,7 @@ export class SidecarServer implements IMessageBroker {
         }
         case 'session.tree-capability': {
           const sid = msg.payload.sessionId as string
-          return this.send(ws, { type: 'session.tree-capability', id: msg.id, payload: { sessionId: sid, navigateCapable: this.sessionService.isNavigateCapable(sid) } })
+          return this.send(ws, { type: 'session.tree-capability', id: msg.id, payload: { sessionId: sid, navigateCapable: this.treeService.isNavigateCapable(sid) } })
         }
         default:
           if (!await this.handleSettingsMessage(msg, ws)) {
