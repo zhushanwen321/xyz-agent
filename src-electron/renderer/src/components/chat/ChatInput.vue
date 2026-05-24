@@ -103,9 +103,11 @@ const {
   mergeSkillCommands,
   filterCommands,
   initDefaultCommands,
+  initNativeCommands,
 } = useSlashCommands()
 
 initDefaultCommands()
+initNativeCommands()
 
 const text = ref('')
 const isComposing = ref(false)
@@ -193,8 +195,8 @@ function handleSlashSelect(cmd: SlashCommand) {
   text.value = ''
   slashVisible.value = false
   // protocol 和 local 类型命令直接执行，不需要标签确认步骤
-  // skill 类型需要参数输入，保留标签
-  if (cmd.action.type === 'protocol' || cmd.action.type === 'local') {
+  // native 类型也直接执行（以 /commandName 形式发送给 pi）
+  if (cmd.action.type === 'protocol' || cmd.action.type === 'local' || cmd.action.type === 'native') {
     activeCommand.value = cmd
     handleSend()
     // 执行后聚焦 textarea，确保后续输入正常
@@ -247,6 +249,16 @@ function handleSend() {
           ? trimmed.slice(`/agent:${agentName}`.length).trim()
           : trimmed
         emit('send', { content: trimmed || '', subagent: { agent: agentName, task: taskContent } })
+        break
+      }
+      case 'extension': {
+        const content = `/${cmd.action.commandName} ${trimmed}`.trim()
+        emit('send', { content })
+        break
+      }
+      case 'native': {
+        const content = trimmed ? `/${cmd.action.commandName} ${trimmed}` : `/${cmd.action.commandName}`
+        emit('send', { content })
         break
       }
     }

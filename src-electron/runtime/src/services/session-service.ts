@@ -130,6 +130,15 @@ export class SessionService implements ISessionService {
 
     refreshSessions()
 
+    // 获取 pi 的可用命令列表并推送给前端
+    try {
+      const commands = await (client as IRpcClient).getCommands() as Array<{ name: string; description?: string; source: string }>
+      console.log(`[session-service] getCommands returned ${commands.length} commands:`, commands.map(c => c.name))
+      this.broker.broadcast({ type: 'session.commands', payload: { sessionId: id, commands } })
+    } catch (e) {
+      console.warn('[session-service] getCommands failed:', e)
+    }
+
     return this.toSummary(session)
   }
 
@@ -391,6 +400,14 @@ export class SessionService implements ISessionService {
       sessionFilePath: target.filePath,
     }
     this.sessions.set(id, session)
+
+    // 获取 pi 的可用命令列表并推送给前端
+    try {
+      const commands = await (client as IRpcClient).getCommands() as Array<{ name: string; description?: string; source: string }>
+      this.broker.broadcast({ type: 'session.commands', payload: { sessionId: id, commands } })
+    } catch (e) {
+      console.warn('[session-service] getCommands failed:', e)
+    }
 
     return this.toSummary(session)
   }

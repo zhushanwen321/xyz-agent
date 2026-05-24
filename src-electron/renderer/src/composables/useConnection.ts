@@ -23,7 +23,14 @@ export function useConnection() {
   const statusText = computed(() => STATUS_TEXT[status.value] ?? status.value)
 
   async function init(): Promise<void> {
-    if (initialised) return
+    if (initialised) {
+      // HMR 后重连——connect() 内部有去重逻辑
+      if (import.meta.env.VITE_MOCK !== 'true') {
+        const port = DEFAULT_PORT
+        connect('ws://localhost:' + port)
+      }
+      return
+    }
     initialised = true
 
     if (import.meta.env.VITE_MOCK === 'true') {
@@ -39,7 +46,7 @@ export function useConnection() {
         removeRuntimePortListener = window.electronAPI.onRuntimePort((newPort) => {
           if (newPort && state.value !== 'disconnected') {
             disconnect()
-            connect(`ws://localhost:${newPort}`)
+            connect('ws://localhost:' + newPort)
           }
         })
 
@@ -47,20 +54,18 @@ export function useConnection() {
         try {
           const knownPort = await window.electronAPI.getRuntimePort()
           if (knownPort) {
-            connect(`ws://localhost:${knownPort}`)
+            connect('ws://localhost:' + knownPort)
             return
           }
-        // eslint-disable-next-line taste/no-silent-catch -- intentional: runtime may not be ready yet, fall through to default port
         } catch (e) {
           console.error('[useConnection] runtime port not ready:', e)
         }
       }
-    // eslint-disable-next-line taste/no-silent-catch -- intentional: fall back to default port when Electron API is unavailable
     } catch (e) {
       console.error('[useConnection] Electron API unavailable, using default port:', e)
     }
 
-    connect(`ws://localhost:${port}`)
+    connect('ws://localhost:' + port)
   }
 
   function teardown(): void {

@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { join } from 'node:path'
-import { getDefaultModel, getPiSessionsDir } from './pi-config-bridge.js'
+import { getDefaultModel, getSessionsDir } from './pi-config-bridge.js'
 
 /** 子进程允许继承的环境变量前缀白名单 */
 const ENV_WHITELIST_PREFIXES = ['PATH', 'HOME', 'USER', 'LANG', 'TERM', 'NODE_', 'NVM_', 'XYZ_', 'XDG_', 'APPDATA', 'LOCALAPPDATA', 'PROGRAMFILES', 'SYSTEMROOT', 'TEMP', 'TMP']
@@ -45,6 +45,8 @@ export interface RpcClientOptions {
   skillPaths?: string[]
   /** pi 可执行文件路径（默认 'pi'，从 PATH 查找） */
   piCommand?: string
+  /** pi 扩展路径列表，每个路径通过 --extension 参数传递 */
+  extensionPaths?: string[]
 }
 
 const CMD_TIMEOUT_MS = 60_000
@@ -87,9 +89,14 @@ export class RpcClient {
         args.push('--skill', skillPath)
       }
     }
+    if (this.options.extensionPaths?.length) {
+      for (const extPath of this.options.extensionPaths) {
+        args.push('--extension', extPath)
+      }
+    }
 
     // 使用 pi 的 sessions 目录
-    const sessionDir = getPiSessionsDir()
+    const sessionDir = getSessionsDir()
     args.push('--session-dir', sessionDir)
 
     this.proc = spawn(this.options.piCommand ?? 'pi', args, {
@@ -294,6 +301,12 @@ export class RpcClient {
    */
   clear(): Promise<PiMessage> {
     return this.sendCommand('new_session')
+  }
+
+  async getCommands(): Promise<Array<{ name: string; description?: string; source: string }>> {
+    const resp = await this.sendCommand('get_commands')
+    const data = resp.data ?? resp.payload
+    return (data?.commands as Array<{ name: string; description?: string; source: string }>) ?? []
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────

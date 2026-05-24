@@ -1,14 +1,19 @@
 /**
- * Pi Config Bridge — xyz-agent 读写 pi 原生配置文件的桥接层。
+ * Config Bridge — xyz-agent 独立配置文件的读写层。
  *
- * 所有 provider/model/settings 操作直接读写 ~/.pi/agent/ 下的文件，
- * 不再维护 ~/.xyz-agent/ 的独立配置。
+ * 所有 provider/model/settings 操作读写 ~/.xyz-agent/ 下的文件，
+ * 独立于 pi 的配置目录（~/.pi/agent/）。
+ *
+ * 配置文件结构：
+ *   ~/.xyz-agent/models.json    — Provider & Model 定义
+ *   ~/.xyz-agent/settings.json  — 全局设置（默认模型、thinking level 等）
+ *   ~/.xyz-agent/agents/        — Agent markdown 文件
+ *   ~/.xyz-agent/sessions/      — Session jsonl 文件
  *
  * 设计原则：
  * - 读操作有内存缓存 + TTL，避免每次请求穿透到磁盘
  * - 写操作使用原子写入 + JSON 校验
- * - 不使用文件锁（pi 的 proper-lockfile 是同步阻塞的，不适合 Node async 场景）
- *   写入频率极低（用户手动操作 Settings），冲突概率可忽略
+ * - 不使用文件锁（写入频率极低，用户手动操作 Settings，冲突概率可忽略）
  */
 
 import { existsSync, readFileSync, readdirSync, mkdirSync, statSync, unlinkSync } from 'node:fs'
@@ -18,11 +23,11 @@ import { atomicWrite } from './scanner-base.js'
 
 // ── 路径常量 ─────────────────────────────────────────────────────
 
-const PI_AGENT_DIR = join(homedir(), '.pi', 'agent')
-const PI_MODELS_PATH = join(PI_AGENT_DIR, 'models.json')
-const PI_SETTINGS_PATH = join(PI_AGENT_DIR, 'settings.json')
-const PI_SESSIONS_DIR = join(PI_AGENT_DIR, 'sessions')
-const PI_AGENTS_DIR = join(PI_AGENT_DIR, 'agents')
+const CONFIG_DIR = join(homedir(), '.xyz-agent')
+const MODELS_PATH = join(CONFIG_DIR, 'models.json')
+const SETTINGS_PATH = join(CONFIG_DIR, 'settings.json')
+const SESSIONS_DIR = join(CONFIG_DIR, 'sessions')
+const AGENTS_DIR = join(CONFIG_DIR, 'agents')
 
 // ── 类型定义（对齐 pi models.json 的 schema）───────────────────────
 
@@ -103,7 +108,7 @@ function readJsonFile<T>(filePath: string, fallback: T): T {
   } catch (err: unknown) {
     const code = (err as NodeJS.ErrnoException).code
     if (code !== 'ENOENT') {
-      console.warn(`[pi-config-bridge] 读取 ${filePath} 失败:`, err)
+      console.warn(`[config-bridge] 读取 ${filePath} 失败:`, err)
     }
     return fallback
   }
@@ -120,9 +125,9 @@ function writeJsonFile(filePath: string, data: unknown): void {
 
 export function readModels(): PiModelsConfig {
   if (!isExpired(modelsCache)) return modelsCache!.data
-  const data = readJsonFile<PiModelsConfig>(PI_MODELS_PATH, { providers: {} })
+  const data = readJsonFile<PiModelsConfig>(MODELS_PATH, { providers: {} })
   if (!data || typeof data !== 'object' || typeof data.providers !== 'object') {
-    console.warn(`[pi-config-bridge] ${PI_MODELS_PATH} schema 不匹配，使用 fallback`)
+    console.warn(`[config-bridge] ${MODELS_PATH} schema 不匹配，使用 fallback`)
     return { providers: {} }
   }
   modelsCache = { data, timestamp: Date.now() }
@@ -130,7 +135,7 @@ export function readModels(): PiModelsConfig {
 }
 
 export function writeModels(config: PiModelsConfig): void {
-  writeJsonFile(PI_MODELS_PATH, config)
+  writeJsonFile(MODELS_PATH, config)
   modelsCache = { data: JSON.parse(JSON.stringify(config)), timestamp: Date.now() }
 }
 
@@ -176,9 +181,9 @@ export function getApiKeyForProvider(providerId: string): string | undefined {
 
 export function readSettings(): PiSettings {
   if (!isExpired(settingsCache)) return settingsCache!.data
-  const data = readJsonFile<PiSettings>(PI_SETTINGS_PATH, {})
+  const data = readJsonFile<PiSettings>(SETTINGS_PATH, {})
   if (!data || typeof data !== 'object') {
-    console.warn(`[pi-config-bridge] ${PI_SETTINGS_PATH} schema 不匹配，使用 fallback`)
+  console.warn(`[config-bridge] ${SETTINGS_PATH} schema 不匹配，使用 fallback`)
     return {}
   }
   settingsCache = { data, timestamp: Date.now() }
@@ -186,7 +191,7 @@ export function readSettings(): PiSettings {
 }
 
 export function writeSettings(settings: PiSettings): void {
-  writeJsonFile(PI_SETTINGS_PATH, settings)
+  writeJsonFile(SETTINGS_PATH, settings)
   settingsCache = { data: JSON.parse(JSON.stringify(settings)), timestamp: Date.now() }
 }
 
@@ -257,18 +262,18 @@ export function removeSkillPath(path: string): void {
   setSkillPaths(paths)
 }
 
-// ── Agent 管理（读写 ~/.pi/agent/agents/ 目录）───────────────────
+// ── Agent 管理（读写 ~/.xyz-agent/agents/ 目录）───────────────────
 
 export function getAgentsDir(): string {
-  return PI_AGENTS_DIR
+  return AGENTS_DIR
 }
 
 export function listAgentFiles(): Array<{ name: string; path: string; content: string }> {
-  if (!existsSync(PI_AGENTS_DIR)) return []
+  if (!existsSync(AGENTS_DIR)) return []
   const results: Array<{ name: string; path: string; content: string }> = []
-  const files = readdirSync(PI_AGENTS_DIR).filter(f => f.endsWith('.md'))
+  const files = readdirSync(AGENTS_DIR).filter(f => f.endsWith('.md'))
   for (const file of files) {
-    const filePath = join(PI_AGENTS_DIR, file)
+    const filePath = join(AGENTS_DIR, file)
     try {
       const content = readFileSync(filePath, 'utf-8')
       results.push({ name: file.replace(/\.md$/, ''), path: filePath, content })
@@ -280,15 +285,15 @@ export function listAgentFiles(): Array<{ name: string; path: string; content: s
 }
 
 export function writeAgentFile(name: string, content: string): void {
-  if (!existsSync(PI_AGENTS_DIR)) mkdirSync(PI_AGENTS_DIR, { recursive: true })
+  if (!existsSync(AGENTS_DIR)) mkdirSync(AGENTS_DIR, { recursive: true })
   const fileName = name.endsWith('.md') ? name : `${name}.md`
-  const filePath = join(PI_AGENTS_DIR, fileName)
+  const filePath = join(AGENTS_DIR, fileName)
   atomicWrite(filePath, content)
 }
 
 export function deleteAgentFile(name: string): boolean {
   const fileName = name.endsWith('.md') ? name : `${name}.md`
-  const filePath = join(PI_AGENTS_DIR, fileName)
+  const filePath = join(AGENTS_DIR, fileName)
   if (!existsSync(filePath)) return false
   try {
     unlinkSync(filePath)
@@ -300,8 +305,8 @@ export function deleteAgentFile(name: string): boolean {
 
 // ── Session 相关 ─────────────────────────────────────────────────
 
-export function getPiSessionsDir(): string {
-  return PI_SESSIONS_DIR
+export function getSessionsDir(): string {
+  return SESSIONS_DIR
 }
 
 /**
@@ -317,7 +322,7 @@ export function scanPiSessions(): Array<{
   lastModified: number
   size: number
 }> {
-  if (!existsSync(PI_SESSIONS_DIR)) return []
+  if (!existsSync(SESSIONS_DIR)) return []
 
   const results: Array<{
     id: string
@@ -331,10 +336,10 @@ export function scanPiSessions(): Array<{
 
   // pi 的 sessions 目录结构: sessions/<cwd-hash-dir>/*.jsonl
   // 也可能是 flat 的 *.jsonl（兼容两种）
-  const entries = readdirSync(PI_SESSIONS_DIR)
+  const entries = readdirSync(SESSIONS_DIR)
 
   for (const entry of entries) {
-    const entryPath = join(PI_SESSIONS_DIR, entry)
+    const entryPath = join(SESSIONS_DIR, entry)
     let stat
     try {
       stat = statSync(entryPath)
@@ -456,14 +461,14 @@ export function refreshSettings(): void {
   invalidateSettingsCache()
 }
 
-export function getPiAgentDir(): string {
-  return PI_AGENT_DIR
+export function getConfigDir(): string {
+  return CONFIG_DIR
 }
 
 export function getModelsPath(): string {
-  return PI_MODELS_PATH
+  return MODELS_PATH
 }
 
 export function getSettingsPath(): string {
-  return PI_SETTINGS_PATH
+  return SETTINGS_PATH
 }

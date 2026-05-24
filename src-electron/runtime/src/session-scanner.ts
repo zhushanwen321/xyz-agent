@@ -20,8 +20,8 @@ export interface ScannedSession {
 }
 
 /**
- * Scan pi's sessions directory for all session files.
- * Delegates to pi-config-bridge.scanPiSessions() which handles
+ * Scan sessions directory for all session files.
+ * Delegates to config-bridge.scanPiSessions() which handles
  * both flat and subdirectory layouts.
  */
 export function scanSessions(): ScannedSession[] {

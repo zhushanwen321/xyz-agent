@@ -31,6 +31,7 @@ export interface IRpcClient {
   compact(): Promise<unknown>
   clear(): Promise<unknown>
   sendCommand(type: string, params?: Record<string, unknown>, timeout?: number): Promise<unknown>
+  getCommands(): Promise<unknown>
   onEvent(listener: PiEventListener): () => void
   onExit(callback: (code: number | null) => void): void
   readonly exited: boolean
@@ -48,6 +49,7 @@ export interface IProcessManager {
     model?: string
     env?: Record<string, string>
     skillPaths?: string[]
+    extensionPaths?: string[]
     piCommand?: string
   }): Promise<IRpcClient>
   destroySession(sessionId: string): Promise<void>

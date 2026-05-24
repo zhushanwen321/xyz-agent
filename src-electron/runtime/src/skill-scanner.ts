@@ -71,6 +71,43 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / BYTES_1MB).toFixed(1)} MB`
 }
 
+/**
+ * Load a single skill from its directory (containing SKILL.md directly).
+ * Used by loadSkills to read already-registered skill paths.
+ * Returns null if the directory doesn't contain a valid SKILL.md.
+ */
+export function loadSkillFromDir(rawDirPath: string): ScannedSkillInfo | null {
+  const dirPath = expandHome(rawDirPath)
+  if (!existsSync(dirPath)) return null
+
+  const skillMdPath = join(dirPath, 'SKILL.md')
+  if (!existsSync(skillMdPath)) return null
+
+  try {
+    const content = readFileSync(skillMdPath, 'utf-8')
+    const { description, triggers, argumentHint } = parseSkillMd(content)
+    const stat = statSync(skillMdPath)
+    const name = dirPath.split('/').pop() ?? ''
+    const sourceType = inferSourceType(rawDirPath)
+
+    return {
+      id: `${sourceType}-${name}`,
+      name,
+      description,
+      sourceType,
+      sourcePath: skillMdPath,
+      triggers,
+      argumentHint,
+      content,
+      fileSize: formatFileSize(stat.size),
+      tools: [],
+      alreadyImported: false,
+    }
+  } catch {
+    return null
+  }
+}
+
 export function scanSkills(sources: string[], existingSkillIds: Set<string>): ScannedSkillInfo[] {
   const results: ScannedSkillInfo[] = []
 

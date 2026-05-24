@@ -3,6 +3,9 @@ import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
 import { emit } from './event-bus'
 import { mockConnect, mockSend, mockDisconnect } from '../mock/mock-ws'
 
+// Vite HMR data — persists WebSocket URL across hot reloads
+let hmrUrl = (import.meta.hot?.data as { wsUrl?: string } | undefined)?.wsUrl ?? null
+
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting'
 
 const state = ref<ConnectionState>('disconnected')
@@ -25,6 +28,9 @@ export function connect(url: string): void {
     mockConnect((s) => { state.value = s })
     return
   }
+
+  // Save URL for HMR reconnect
+  hmrUrl = url
 
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return
 
@@ -139,4 +145,28 @@ function enqueueMessage(msg: ClientMessage): void {
 
 export function getState() {
   return readonly(state)
+}
+
+// ── Vite HMR — reconnect WebSocket after hot reload ───────────
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    // Save WS URL for the new module instance
+    if (hmrUrl) {
+      (import.meta.hot!.data as Record<string, unknown>).wsUrl = hmrUrl
+    }
+    // Close old WebSocket so reconnect can happen
+    if (ws) {
+      const old = ws
+      ws = null
+      old.onclose = null
+      old.onerror = null
+      old.onmessage = null
+      old.close()
+    }
+  })
+
+  // Reconnect if we had a URL before HMR
+  if (hmrUrl) {
+    connect(hmrUrl)
+  }
 }

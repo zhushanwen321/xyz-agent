@@ -32,6 +32,7 @@ export type ServerMessageType =
   | 'config.skills' | 'config.agents'
   | 'model.list' | 'model.switched'
   | 'pong' | 'error'
+  | 'session.commands'
 
 export interface ServerMessage {
   type: ServerMessageType

@@ -1,10 +1,11 @@
 import { useChatStore } from '../stores/chat'
 import { useSessionStore } from '../stores/session'
 import { send } from '../lib/ws-client'
-import { on, off } from '../lib/event-bus'
-import { onMounted, onUnmounted, type Ref, unref, getCurrentInstance } from 'vue'
+import { on } from '../lib/event-bus'
+import { type Ref, unref } from 'vue'
 import type { ServerMessage, ToolCall, ContentBlock } from '@xyz-agent/shared'
 import { createSystemNotification } from '../lib/system-notification'
+import { useSlashCommands } from './useSlashCommands'
 
 const RADIX_36 = 36
 const SUBSTRING_START = 2
@@ -15,12 +16,13 @@ const SUBSTRING_END = 6
  * 事件处理器从消息 payload 中提取 sessionId，路由到正确的 ChatStore 分区。
  * 不再绑定到特定 useChat 实例的闭包。
  */
-let globalListenerRefCount = 0
+
 
 // ── 全局事件处理器 ────────────────────────────────────────────────
 
 function createGlobalHandlers() {
   const store = useChatStore()
+  const { setExtensionCommands } = useSlashCommands()
 
   function getSid(msg: ServerMessage): string | null {
     return (msg.payload?.sessionId as string) ?? null
@@ -138,7 +140,7 @@ function createGlobalHandlers() {
     if (streaming?.toolCalls) {
       const calls = streaming.toolCalls.map((tc) =>
         tc.id === (msg.payload.toolCallId as string)
-          ? { ...tc, output: msg.payload.output as string | undefined, status: 'completed' as const, endTime: Date.now() }
+          ? { ...tc, output: msg.payload.output as string | undefined, details: msg.payload.details as Record<string, unknown> | undefined, status: 'completed' as const, endTime: Date.now() }
           : tc,
       )
       store.setStreaming({ ...streaming, toolCalls: calls }, sid)
@@ -200,6 +202,10 @@ function createGlobalHandlers() {
     'message.error': onError,
     'context.update': onContextUpdate,
     'message.status': onStatus,
+    'session.commands': ((msg: ServerMessage) => {
+      const cmds = (msg.payload as { commands: Array<{ name: string; description?: string; source: string }> }).commands
+      setExtensionCommands(cmds)
+    }),
   } as Record<string, (msg: ServerMessage) => void>
 }
 
@@ -213,13 +219,7 @@ function registerGlobalListeners() {
   }
 }
 
-function unregisterGlobalListeners() {
-  if (!globalEventMap) return
-  for (const [evt, handler] of Object.entries(globalEventMap)) {
-    off(evt, handler)
-  }
-  globalEventMap = null
-}
+// unregisterGlobalListeners: removed — listeners registered at module load, never unregistered
 
 // ── useChat composable ─────────────────────────────────────────────
 
@@ -272,23 +272,9 @@ export function useChat(sessionId?: Ref<string>) {
     }, sid)
   }
 
-  // 全局事件 listener 生命周期：第一个组件 mounted 时注册，最后一个 unmounted 时注销
-  // 使用 getCurrentInstance() 确保只在组件上下文中执行
-  if (getCurrentInstance()) {
-    onMounted(() => {
-      if (globalListenerRefCount === 0) {
-        registerGlobalListeners()
-      }
-      globalListenerRefCount++
-    })
-
-    onUnmounted(() => {
-      globalListenerRefCount--
-      if (globalListenerRefCount === 0) {
-        unregisterGlobalListeners()
-      }
-    })
-  }
-
   return { sendMessage, abort }
 }
+
+// 模块级注册：延后到 Pinia 安装后执行。
+// import 阶段 App.vue → useChat.ts → createGlobalHandlers → useChatStore() 需要 Pinia。
+queueMicrotask(() => registerGlobalListeners())
