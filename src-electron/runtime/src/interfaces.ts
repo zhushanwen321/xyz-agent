@@ -111,7 +111,7 @@ export interface IConfigService {
     type?: string
     apiKey?: string
     baseUrl?: string
-    models?: Array<string | { id: string; name?: string; ctx?: number; tags?: string[]; enabled?: boolean }>
+    models?: Array<string | { id: string; name?: string; contextWindow?: number }>
     enabled?: boolean
   }): void
   deleteProvider(providerId: string): boolean
@@ -138,5 +138,5 @@ export interface IModelService {
     baseUrl: string,
     apiKey?: string,
     providerType?: string,
-  ): Promise<Array<{ id: string; name: string; ctx?: number }>>
+  ): Promise<Array<{ id: string; name: string; contextWindow?: number }>>
 }

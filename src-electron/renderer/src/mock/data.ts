@@ -205,9 +205,13 @@ export const mockProviders: MockProvider[] = [
   {
     id: 'anthropic',
     name: 'Anthropic',
-    type: 'anthropic',
+    api: 'anthropic-messages',
     status: 'connected',
-    models: ['claude-sonnet-4', 'claude-opus-4', 'claude-haiku-4'],
+    models: [
+      { id: 'claude-sonnet-4', name: 'Claude Sonnet 4', contextWindow: 200000 },
+      { id: 'claude-opus-4', name: 'Claude Opus 4', contextWindow: 200000 },
+      { id: 'claude-haiku-4', name: 'Claude Haiku 4', contextWindow: 200000 },
+    ],
     apiKeySet: true,
     baseUrl: 'https://api.anthropic.com',
     icon: 'A',
@@ -215,9 +219,14 @@ export const mockProviders: MockProvider[] = [
   {
     id: 'openai',
     name: 'OpenAI',
-    type: 'openai',
+    api: 'openai-completions',
     status: 'connected',
-    models: ['gpt-4o', 'gpt-4o-mini', 'o3', 'o4-mini'],
+    models: [
+      { id: 'gpt-4o', name: 'GPT-4o', contextWindow: 128000 },
+      { id: 'gpt-4o-mini', name: 'GPT-4o Mini', contextWindow: 128000 },
+      { id: 'o3', name: 'o3', contextWindow: 200000 },
+      { id: 'o4-mini', name: 'o4-mini', contextWindow: 200000 },
+    ],
     apiKeySet: true,
     baseUrl: 'https://api.openai.com',
     icon: 'O',
@@ -225,9 +234,12 @@ export const mockProviders: MockProvider[] = [
   {
     id: 'google',
     name: 'Google',
-    type: 'google',
+    api: 'openai-completions',
     status: 'connected',
-    models: ['gemini-2.5-pro', 'gemini-2.5-flash'],
+    models: [
+      { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', contextWindow: 1000000 },
+      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', contextWindow: 1000000 },
+    ],
     apiKeySet: true,
     baseUrl: 'https://generativelanguage.googleapis.com',
     icon: 'G',
@@ -235,9 +247,12 @@ export const mockProviders: MockProvider[] = [
   {
     id: 'deepseek',
     name: 'DeepSeek',
-    type: 'deepseek',
+    api: 'openai-completions',
     status: 'connected',
-    models: ['deepseek-v4', 'deepseek-v4-flash'],
+    models: [
+      { id: 'deepseek-v4', name: 'DeepSeek V4', contextWindow: 1000000, reasoning: true },
+      { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', contextWindow: 1000000, reasoning: true },
+    ],
     apiKeySet: true,
     baseUrl: 'https://api.deepseek.com',
     icon: 'D',
@@ -245,9 +260,11 @@ export const mockProviders: MockProvider[] = [
   {
     id: 'ollama',
     name: '本地 Ollama',
-    type: 'ollama',
+    api: 'openai-completions',
     status: 'not_configured',
-    models: ['qwen3-32b'],
+    models: [
+      { id: 'qwen3-32b', name: 'Qwen3 32B', contextWindow: 128000 },
+    ],
     apiKeySet: false,
     baseUrl: 'http://localhost:11434',
     icon: 'L',
@@ -259,26 +276,25 @@ export const mockProviders: MockProvider[] = [
 // ═══════════════════════════════════════════════════════════════════
 
 export interface MockModel extends ModelInfo {
-  tags: string[]
-  ctx: string
+  contextWindow: number
   enabled: boolean
 }
 
 export const mockModels: MockModel[] = [
   // Anthropic
-  { id: 'claude-sonnet-4', name: 'claude-sonnet-4', providerId: 'anthropic', providerName: 'Anthropic', tags: ['power', 'efficient'], ctx: '128K', enabled: true },
-  { id: 'claude-haiku-4', name: 'claude-haiku-4', providerId: 'anthropic', providerName: 'Anthropic', tags: ['fast'], ctx: '128K', enabled: true },
-  { id: 'claude-opus-4', name: 'claude-opus-4', providerId: 'anthropic', providerName: 'Anthropic', tags: ['power'], ctx: '200K', enabled: true },
+  { id: 'claude-sonnet-4', name: 'claude-sonnet-4', providerId: 'anthropic', providerName: 'Anthropic', contextWindow: 128_000, enabled: true },
+  { id: 'claude-haiku-4', name: 'claude-haiku-4', providerId: 'anthropic', providerName: 'Anthropic', contextWindow: 128_000, enabled: true },
+  { id: 'claude-opus-4', name: 'claude-opus-4', providerId: 'anthropic', providerName: 'Anthropic', contextWindow: 200_000, enabled: true },
   // OpenAI
-  { id: 'gpt-4o', name: 'gpt-4o', providerId: 'openai', providerName: 'OpenAI', tags: ['power', 'efficient'], ctx: '128K', enabled: true },
-  { id: 'gpt-4o-mini', name: 'gpt-4o-mini', providerId: 'openai', providerName: 'OpenAI', tags: ['fast'], ctx: '128K', enabled: true },
-  { id: 'o3', name: 'o3', providerId: 'openai', providerName: 'OpenAI', tags: ['power'], ctx: '200K', enabled: true },
-  { id: 'o4-mini', name: 'o4-mini', providerId: 'openai', providerName: 'OpenAI', tags: ['efficient', 'fast'], ctx: '200K', enabled: true },
+  { id: 'gpt-4o', name: 'gpt-4o', providerId: 'openai', providerName: 'OpenAI', contextWindow: 128_000, enabled: true },
+  { id: 'gpt-4o-mini', name: 'gpt-4o-mini', providerId: 'openai', providerName: 'OpenAI', contextWindow: 128_000, enabled: true },
+  { id: 'o3', name: 'o3', providerId: 'openai', providerName: 'OpenAI', contextWindow: 200_000, enabled: true },
+  { id: 'o4-mini', name: 'o4-mini', providerId: 'openai', providerName: 'OpenAI', contextWindow: 200_000, enabled: true },
   // DeepSeek
-  { id: 'deepseek-v4', name: 'deepseek-v4', providerId: 'deepseek', providerName: 'DeepSeek', tags: ['power', 'efficient'], ctx: '128K', enabled: true },
-  { id: 'deepseek-v4-flash', name: 'deepseek-v4-flash', providerId: 'deepseek', providerName: 'DeepSeek', tags: ['fast'], ctx: '128K', enabled: true },
+  { id: 'deepseek-v4', name: 'deepseek-v4', providerId: 'deepseek', providerName: 'DeepSeek', contextWindow: 128_000, enabled: true },
+  { id: 'deepseek-v4-flash', name: 'deepseek-v4-flash', providerId: 'deepseek', providerName: 'DeepSeek', contextWindow: 128_000, enabled: true },
   // Ollama
-  { id: 'qwen3-32b', name: 'qwen3:32b', providerId: 'ollama', providerName: '本地 Ollama', tags: ['efficient'], ctx: '32K', enabled: true },
+  { id: 'qwen3-32b', name: 'qwen3:32b', providerId: 'ollama', providerName: '本地 Ollama', contextWindow: 32_000, enabled: true },
 ]
 
 /** Map model id → MockModel for quick lookup. */
@@ -626,15 +642,9 @@ export function toModelInfos(models: MockModel[]): import('@xyz-agent/shared').M
     name: m.name,
     providerId: m.providerId,
     providerName: m.providerName,
-    tags: m.tags,
-    contextWindow: parseCtxToNumber(m.ctx),
+    contextWindow: m.contextWindow,
     enabled: m.enabled,
   }))
-}
-
-function parseCtxToNumber(ctx: string): number {
-  const match = ctx.match(/(\d+)/)
-  return match ? parseInt(match[1], 10) * 1000 : 128000
 }
 
 export const mockPanelGridCards: PanelGridCard[] = [

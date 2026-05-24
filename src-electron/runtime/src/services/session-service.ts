@@ -4,8 +4,7 @@
  * Manages session lifecycle: creation, deletion, messaging, history,
  * model switching, compaction, and persistence.
  */
-import { basename, dirname, join } from 'node:path'
-import { existsSync } from 'node:fs'
+import { basename } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import type {
   SessionSummary,
@@ -18,11 +17,9 @@ import type { IRpcClient } from '../interfaces.js'
 import type { PiMessage } from '../rpc-client.js'
 import { convertPiHistory } from '../message-converter.js'
 import type { PiHistoryMessage } from '../types.js'
-import { getDefaultModel } from '../config-store.js'
-import { loadSkills } from '../skill-store.js'
-import { scanSessions, deleteSessionFile, invalidateScanCache, type ScannedSession } from '../session-scanner.js'
-import { saveLabel, removeLabel, migrateLabelsIfNeeded } from '../session-label-store.js'
-import { lookupPiProvider } from '../model-db.js'
+import { getDefaultModel } from '../pi-config-bridge.js'
+import * as piBridge from '../pi-config-bridge.js'
+import { scanSessions, deleteSessionFile, refreshSessions, type ScannedSession } from '../session-scanner.js'
 
 interface ManagedSession {
   id: string
@@ -48,7 +45,6 @@ export class SessionService implements ISessionService {
     private adapterFactory: (sessionId: string) => IEventAdapter,
     private projectRoot: string,
   ) {
-    migrateLabelsIfNeeded()
     // 进程崩溃时清理对应 session
     this.pm.onSessionExit((sessionId, code) => {
       const session = this.sessions.get(sessionId)
@@ -70,7 +66,8 @@ export class SessionService implements ISessionService {
   async create(cwd?: string, label?: string): Promise<SessionSummary> {
     const tempId = crypto.randomUUID()
     const sessionCwd = cwd ?? process.cwd()
-    const modelId = getDefaultModel()
+    const modelRef = getDefaultModel()
+    const modelId = modelRef ? `${modelRef.provider}/${modelRef.modelId}` : ''
 
     const client = await this.pm.createSession(tempId, sessionCwd, { skillPaths: this.getSkillPaths(sessionCwd) })
 
@@ -131,11 +128,7 @@ export class SessionService implements ISessionService {
     }
     this.sessions.set(id, session)
 
-    // Persist label to independent store
-    if (session.label) {
-      saveLabel(id, session.label)
-    }
-    invalidateScanCache()
+    refreshSessions()
 
     return this.toSummary(session)
   }
@@ -146,8 +139,7 @@ export class SessionService implements ISessionService {
       session.label = newName
     }
 
-    saveLabel(sessionId, newName)
-    invalidateScanCache()
+    refreshSessions()
   }
 
   async delete(sessionId: string): Promise<void> {
@@ -160,14 +152,12 @@ export class SessionService implements ISessionService {
       if (session.sessionFilePath) {
         await deleteSessionFile(session.sessionFilePath)
       }
-      removeLabel(sessionId)
     } else {
       const target = this.findScannedSession(sessionId)
       if (!target) throw new Error(`Session ${sessionId} not found`)
       await deleteSessionFile(target.filePath)
-      removeLabel(sessionId)
     }
-    invalidateScanCache()
+    refreshSessions()
   }
 
   // ── Messaging ──────────────────────────────────────────────────
@@ -231,8 +221,7 @@ export class SessionService implements ISessionService {
     session.modelId = `${provider}/${modelId}`
     const client = this.pm.getClient(sessionId)
     if (client) {
-      const piProvider = lookupPiProvider(modelId) ?? provider
-      await client.setModel(piProvider, modelId)
+      await client.setModel(provider, modelId)
     }
 
     return sessionId
@@ -385,11 +374,14 @@ export class SessionService implements ISessionService {
       }
     })
 
+    const modelRef = getDefaultModel()
+    const modelId = modelRef ? `${modelRef.provider}/${modelRef.modelId}` : ''
+
     const session: ManagedSession = {
       id,
       cwd: target.cwd,
       label: target.name ?? basename(target.cwd),
-      modelId: getDefaultModel(),
+      modelId,
       createdAt: Date.now(),
       lastActiveAt: target.lastModified,
       tokenCount: 0,
@@ -421,11 +413,9 @@ export class SessionService implements ISessionService {
 
   // ── Internal ───────────────────────────────────────────────────
 
-  private getSkillPaths(cwd: string): string[] {
-    return loadSkills(cwd ?? process.cwd())
-      .filter(s => s.enabled && s.sourcePath)
-      .map(s => dirname(s.sourcePath!))
-      .filter(p => existsSync(p) && existsSync(join(p, 'SKILL.md')))
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- interface requires cwd param
+  private getSkillPaths(_cwd: string): string[] {
+    return piBridge.getSkillPaths()
   }
 
   private toSummary(s: ManagedSession): SessionSummary {

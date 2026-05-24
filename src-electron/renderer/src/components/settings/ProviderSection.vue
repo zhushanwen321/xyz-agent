@@ -71,7 +71,6 @@ const modelCount = computed(() => props.models.length)
         :key="model.id"
         :name="model.name"
         :ctx="model.contextWindow ? `${Math.round(model.contextWindow / 1000)}K` : '--'"
-        :tags="model.tags ?? []"
       />
     </div>
   </div>

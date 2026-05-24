@@ -16,27 +16,17 @@ let stateCallback: ((state: ConnectionState) => void) | null = null
 const DISCOVERY_DELAY_MS = 1500
 
 const typeModelMap: Record<string, Array<{ id: string; name: string; ctx?: number }>> = {
-  anthropic: [
+  'anthropic-messages': [
     { id: 'claude-sonnet-4', name: 'claude-sonnet-4', ctx: 200000 },
     { id: 'claude-opus-4', name: 'claude-opus-4', ctx: 200000 },
     { id: 'claude-haiku-4', name: 'claude-haiku-4', ctx: 200000 },
   ],
-  openai: [
+  'openai-completions': [
     { id: 'gpt-4o', name: 'gpt-4o', ctx: 128000 },
     { id: 'gpt-4o-mini', name: 'gpt-4o-mini', ctx: 128000 },
     { id: 'o3', name: 'o3', ctx: 200000 },
-  ],
-  deepseek: [
     { id: 'deepseek-v4', name: 'deepseek-v4', ctx: 1000000 },
-    { id: 'deepseek-v4-flash', name: 'deepseek-v4-flash', ctx: 1000000 },
-  ],
-  google: [
     { id: 'gemini-2.5-pro', name: 'gemini-2.5-pro', ctx: 1000000 },
-    { id: 'gemini-2.5-flash', name: 'gemini-2.5-flash', ctx: 1000000 },
-  ],
-  ollama: [
-    { id: 'qwen3-32b', name: 'qwen3:32b', ctx: 32000 },
-    { id: 'llama3-70b', name: 'llama3:70b', ctx: 32000 },
   ],
 }
 
@@ -119,7 +109,7 @@ export function mockSend(msg: ClientMessage): void {
       break
     case 'config.getProviders':
       respond('config.providers', { providers: mockProviders.map(p => ({
-        id: p.id, name: p.name, type: p.type, status: p.status, models: p.models, apiKeySet: p.apiKeySet, baseUrl: p.baseUrl, enabled: p.enabled
+        id: p.id, name: p.name, api: p.api, status: p.status, models: p.models, apiKeySet: p.apiKeySet, baseUrl: p.baseUrl, enabled: p.enabled
       })) })
       break
     case 'config.setProvider': {
@@ -131,28 +121,21 @@ export function mockSend(msg: ClientMessage): void {
       const pType = msg.payload.type as string | undefined
       const pStatus = msg.payload.status as string | undefined
 
-      // 将 model 对象数组转为 name 字符串数组
-      const toModelNames = (raw: unknown): string[] => {
-        if (!Array.isArray(raw)) return []
-        return raw.map(m => (typeof m === 'string' ? m : (m as { name: string }).name))
-      }
-      const pModels = toModelNames(pModelsRaw)
-
       if (pId && pName) {
         const existing = mockProviders.find(p => p.id === pId)
         if (existing) {
           existing.name = pName
-          if (pType) existing.type = pType
+          if (pType) existing.api = pType
           if (pBaseUrl !== undefined) existing.baseUrl = pBaseUrl
           if (pKey && pKey !== '••••••••') existing.apiKeySet = true
-          if (pModels.length) existing.models = pModels
+          if (pModelsRaw && Array.isArray(pModelsRaw)) existing.models = pModelsRaw as typeof existing.models
         } else {
           mockProviders.push({
             id: pId,
             name: pName,
-            type: pType ?? 'openai-compatible',
+            api: pType ?? 'openai-completions',
             status: 'not_configured',
-            models: pModels,
+            models: Array.isArray(pModelsRaw) ? pModelsRaw as typeof mockProviders[0]['models'] : [],
             apiKeySet: !!pKey && pKey !== '••••••••',
             baseUrl: pBaseUrl ?? '',
             icon: pName.charAt(0).toUpperCase(),
@@ -165,7 +148,7 @@ export function mockSend(msg: ClientMessage): void {
 
       respond('config.providerUpdated', { providerId: pId })
       respond('config.providers', { providers: mockProviders.map(p => ({
-        id: p.id, name: p.name, type: p.type, status: p.status, models: p.models, apiKeySet: p.apiKeySet, baseUrl: p.baseUrl
+        id: p.id, name: p.name, api: p.api, status: p.status, models: p.models, apiKeySet: p.apiKeySet, baseUrl: p.baseUrl
       })) })
       break
     }
@@ -177,7 +160,7 @@ export function mockSend(msg: ClientMessage): void {
       }
       respond('config.providerUpdated', { providerId: delId })
       respond('config.providers', { providers: mockProviders.map(p => ({
-        id: p.id, name: p.name, type: p.type, status: p.status, models: p.models, apiKeySet: p.apiKeySet, baseUrl: p.baseUrl
+        id: p.id, name: p.name, api: p.api, status: p.status, models: p.models, apiKeySet: p.apiKeySet, baseUrl: p.baseUrl
       })) })
       break
     }
@@ -224,7 +207,7 @@ function fireInitialData(): void {
   respond('session.list', { groups: mockSessionGroups })
   respond('session.history', { sessionId: DEFAULT_SESSION_ID, messages: mockMessages })
   respond('config.providers', { providers: mockProviders.map(p => ({
-    id: p.id, name: p.name, type: p.type, status: p.status, models: p.models, apiKeySet: p.apiKeySet, baseUrl: p.baseUrl
+    id: p.id, name: p.name, api: p.api, status: p.status, models: p.models, apiKeySet: p.apiKeySet, baseUrl: p.baseUrl
   })) })
   respond('model.list', { models: toModelInfos(mockModels) })
 

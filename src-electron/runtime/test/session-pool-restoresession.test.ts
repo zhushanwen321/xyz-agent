@@ -34,12 +34,6 @@ vi.mock('../src/config-store.js', () => ({
   loadSkills: vi.fn().mockReturnValue([]),
 }))
 
-// ── Mock model-db ───────────────────────────────────────────────
-
-vi.mock('../src/model-db.js', () => ({
-  lookupPiProvider: vi.fn().mockReturnValue(undefined),
-}))
-
 // ── Mock EventAdapter ───────────────────────────────────────────
 
 const attachMock = vi.fn()
@@ -81,19 +75,14 @@ vi.mock('../src/process-manager.js', () => ({
   },
 }))
 
-// ── Mock session-label-store ─────────────────────────────────────
+// ── Mock pi-config-bridge ────────────────────────────────────────
 
-vi.mock('../src/session-label-store.js', () => ({
-  saveLabel: vi.fn(),
-  removeLabel: vi.fn(),
-  migrateLabelsIfNeeded: vi.fn(),
-}))
-
-// ── Mock skill-store ─────────────────────────────────────────────
-
-vi.mock('../src/skill-store.js', () => ({
-  loadSkills: vi.fn().mockReturnValue([]),
-  saveSkills: vi.fn(),
+vi.mock('../src/pi-config-bridge.js', () => ({
+  getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
+  getSkillPaths: () => [],
+  getPiSessionsDir: () => '/mock/sessions',
+  readModels: () => ({ providers: {} }),
+  readSettings: () => ({}),
 }))
 
 // ── Import after mocks ──────────────────────────────────────────

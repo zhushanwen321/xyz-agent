@@ -84,17 +84,12 @@ vi.mock('../src/config-store.js', () => ({
   updateToolPermissions: vi.fn(),
   getProvider: vi.fn().mockReturnValue(undefined),
   getDefaultModel: vi.fn().mockReturnValue('test/model'),
-  buildProviderEnv: vi.fn().mockReturnValue({}),
 }))
 
 vi.mock('../src/provider-store.js', () => ({
   listProviders: vi.fn().mockReturnValue([]),
   setProvider: vi.fn(),
   deleteProvider: vi.fn(),
-}))
-
-vi.mock('../src/model-db.js', () => ({
-  lookupModel: vi.fn().mockReturnValue(undefined),
 }))
 
 vi.mock('../src/skill-scanner.js', () => ({
@@ -111,20 +106,12 @@ vi.mock('../src/session-scanner.js', () => ({
   invalidateScanCache: vi.fn(),
 }))
 
-vi.mock('../src/session-label-store.js', () => ({
-  saveLabel: vi.fn(),
-  removeLabel: vi.fn(),
-  migrateLabelsIfNeeded: vi.fn(),
-}))
-
-vi.mock('../src/skill-store.js', () => ({
-  loadSkills: vi.fn().mockReturnValue([]),
-  saveSkills: vi.fn(),
-}))
-
-vi.mock('../src/agent-store.js', () => ({
-  loadAgents: vi.fn().mockReturnValue([]),
-  saveAgents: vi.fn(),
+vi.mock('../src/pi-config-bridge.js', () => ({
+  getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
+  getSkillPaths: () => [],
+  getPiSessionsDir: () => '/mock/sessions',
+  readModels: () => ({ providers: {} }),
+  readSettings: () => ({}),
 }))
 
 import { SidecarServer } from '../src/server.js'

@@ -1,9 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createInterface } from 'node:readline'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { mkdirSync } from 'node:fs'
-import { buildProviderEnv, getDefaultModel } from './config-store.js'
+import { getDefaultModel, getPiSessionsDir } from './pi-config-bridge.js'
 
 /** 子进程允许继承的环境变量前缀白名单 */
 const ENV_WHITELIST_PREFIXES = ['PATH', 'HOME', 'USER', 'LANG', 'TERM', 'NODE_', 'NVM_', 'XYZ_', 'XDG_', 'APPDATA', 'LOCALAPPDATA', 'PROGRAMFILES', 'SYSTEMROOT', 'TEMP', 'TMP']
@@ -42,7 +40,6 @@ export type PiEventListener = (event: PiMessage) => void
 
 export interface RpcClientOptions {
   cwd?: string
-  provider?: string
   model?: string
   env?: Record<string, string>
   skillPaths?: string[]
@@ -71,8 +68,8 @@ export class RpcClient {
   constructor(private options: RpcClientOptions = {}) {}
 
   async start(): Promise<void> {
-    const model = this.options.model ?? getDefaultModel()
-    const providerId = this.options.provider ?? model.split('/')[0]
+    const modelRef = getDefaultModel()
+    const model = this.options.model ?? (modelRef ? `${modelRef.provider}/${modelRef.modelId}` : '')
 
     const env = buildSafeEnv({
       ...this.options.env,
@@ -83,10 +80,6 @@ export class RpcClient {
       env.PI_CODING_AGENT_DIR = join(process.cwd(), 'pi', 'agent')
     }
 
-    if (providerId) {
-      Object.assign(env, buildProviderEnv(providerId))
-    }
-
     const args = ['--mode', 'rpc']
     if (model) args.push('--model', model)
     if (this.options.skillPaths?.length) {
@@ -95,9 +88,8 @@ export class RpcClient {
       }
     }
 
-    // 使用独立的 session 目录，避免和 pi 本身的数据混合
-    const sessionDir = join(homedir(), '.xyz-agent', 'sessions')
-    mkdirSync(sessionDir, { recursive: true })
+    // 使用 pi 的 sessions 目录
+    const sessionDir = getPiSessionsDir()
     args.push('--session-dir', sessionDir)
 
     this.proc = spawn(this.options.piCommand ?? 'pi', args, {

@@ -3,7 +3,7 @@ import { ref, watch, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Button, Input, Select } from '../../design-system'
 import type { ProviderInfo, ModelInfo } from '@xyz-agent/shared'
-import { TagPill } from './shared'
+// TagPill removed — tags no longer used
 import { send } from '../../lib/ws-client'
 import { on as onEvent, off as offEvent } from '../../lib/event-bus'
 
@@ -29,8 +29,7 @@ const emit = defineEmits<{
 interface ModalModel {
   id: string
   name: string
-  ctx: string | number | undefined
-  tags: string[]
+  contextWindow: number
   enabled?: boolean
 }
 
@@ -49,7 +48,7 @@ const CTX_1M = 1_000_000
 const CTX_1K = 1000
 
 const formName = ref('')
-const formType = ref('anthropic')
+const formType = ref('openai-completions')
 const formUrl = ref('')
 const formKey = ref('')
 const testResult = ref<'none' | 'ok' | 'err'>('none')
@@ -78,15 +77,9 @@ function formatCtx(v: string | number | undefined): string {
   return `${Math.round(n / CTX_1K)}K`
 }
 
-const allTags = ['power', 'efficient', 'fast'] as const
-
 const typeOptions = [
-  { label: 'Anthropic', value: 'anthropic' },
-  { label: 'OpenAI', value: 'openai' },
-  { label: t('settings.providerTypeCompatible'), value: 'openai-compatible' },
-  { label: 'Google AI', value: 'google' },
-  { label: 'DeepSeek', value: 'deepseek' },
-  { label: t('settings.providerTypeLocal'), value: 'ollama' },
+  { label: 'Anthropic', value: 'anthropic-messages' },
+  { label: 'OpenAI Compatible', value: 'openai-completions' },
 ]
 
 // ─── Watch provider changes ─────────────────────────────────────
@@ -95,20 +88,19 @@ watch(() => props.visible, (v) => {
   if (v) {
     if (props.provider) {
       formName.value = props.provider.name
-      formType.value = props.provider.type ?? (props.provider.id === 'ollama' ? 'ollama' : props.provider.id)
+      formType.value = props.provider.api ?? 'openai-completions'
       formUrl.value = props.provider.baseUrl ?? ''
       formKey.value = props.provider.apiKeySet ? '••••••••' : ''
     } else {
       formName.value = ''
-      formType.value = 'anthropic'
+      formType.value = 'openai-completions'
       formUrl.value = ''
       formKey.value = ''
     }
     modalModels.value = props.models.map(m => ({
       id: m.id,
       name: m.name,
-      ctx: m.contextWindow ?? '--',
-      tags: [...(m.tags ?? [])],
+      contextWindow: m.contextWindow ?? 0,
     }))
     testResult.value = 'none'
     testMessage.value = ''
@@ -122,12 +114,8 @@ watch(() => props.visible, (v) => {
 watch(formType, (t) => {
   if (formUrl.value) return
   const defaults: Record<string, string> = {
-    anthropic: 'https://api.anthropic.com',
-    openai: 'https://api.openai.com',
-    'openai-compatible': '',
-    google: 'https://generativelanguage.googleapis.com',
-    deepseek: 'https://api.deepseek.com',
-    ollama: 'http://localhost:11434',
+    'anthropic-messages': 'https://api.anthropic.com',
+    'openai-completions': '',
   }
   formUrl.value = defaults[t] ?? ''
 })
@@ -138,20 +126,13 @@ function removeModel(index: number) {
   modalModels.value.splice(index, 1)
 }
 
-function toggleModelTag(model: ModalModel, tag: string) {
-  const idx = model.tags.indexOf(tag)
-  if (idx >= 0) model.tags.splice(idx, 1)
-  else model.tags.push(tag)
-}
-
 function addModel() {
   const name = addModelName.value.trim()
   if (!name) return
   modalModels.value.push({
     id: `new-${Date.now()}`,
     name,
-    ctx: addModelCtx.value || '--',
-    tags: [],
+    contextWindow: Number(addModelCtx.value) || 200_000,
   })
   addModelName.value = ''
   addModelCtx.value = '200000'
@@ -222,7 +203,7 @@ function handleDiscover() {
     cleanupDiscover()
 
     const payload = (msg as { payload: Record<string, unknown> }).payload
-    const models = payload.models as Array<{ id: string; name: string; ctx?: number }>
+    const models = payload.models as Array<{ id: string; name: string; contextWindow?: number }>
     const success = payload.success as boolean
     const error = payload.error as string | undefined
 
@@ -232,8 +213,7 @@ function handleDiscover() {
         return {
           id: m.id,
           name: m.name,
-          ctx: m.ctx,
-          tags: [],
+          contextWindow: m.contextWindow ?? 0,
           enabled: existing?.enabled ?? true,
         }
       })
@@ -374,18 +354,7 @@ onUnmounted(() => {
           <div class="max-h-60 overflow-y-auto">
             <div v-for="(model, idx) in modalModels" :key="model.id" class="flex items-center gap-2.5 py-2.5 px-3.5 border-b border-border last:border-b-0">
               <span class="font-mono text-xs font-semibold min-w-[180px]">{{ model.name }}</span>
-              <span class="text-[11px] text-muted font-mono min-w-[60px]">{{ formatCtx(model.ctx) }}</span>
-              <div class="flex gap-1 flex-1">
-                <TagPill
-                  v-for="tag in allTags"
-                  :key="tag"
-                  :variant="tag"
-                  :active="model.tags.includes(tag)"
-                  @toggle="toggleModelTag(model, tag)"
-                >
-                  {{ tag === 'power' ? t('settings.tagPower') : tag === 'efficient' ? t('settings.tagEfficient') : t('settings.tagFast') }}
-                </TagPill>
-              </div>
+              <span class="text-[11px] text-muted font-mono min-w-[60px]">{{ formatCtx(model.contextWindow) }}</span>
               <Button variant="ghost" size="sm" class="hover:!text-[var(--danger)] hover:!bg-[var(--danger-light)]" @click="removeModel(idx)">
                 <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M1 1l8 8M9 1L1 9" />
