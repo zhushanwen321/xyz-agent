@@ -3,7 +3,7 @@ import type { SkillInfo, AgentInfo } from '@xyz-agent/shared'
 
 // ── 类型定义 ────────────────────────────────────────────────────
 
-export type SlashCommandSource = 'builtin' | 'skill' | 'agent' | 'extension'
+export type SlashCommandSource = 'builtin' | 'skill' | 'agent' | 'extension' | 'native'
 
 export type SlashCommandAction =
   | { type: 'local'; handler: (ctx: CommandContext) => void }
@@ -11,6 +11,7 @@ export type SlashCommandAction =
   | { type: 'skill'; skillId: string }
   | { type: 'agent'; agentName: string }
   | { type: 'extension'; commandName: string }
+  | { type: 'native'; commandName: string }
 
 export interface SlashCommand {
   name: string
@@ -32,6 +33,7 @@ export interface CommandContext {
 
 const builtinCommands = ref<SlashCommand[]>([])
 const extensionCommands = ref<SlashCommand[]>([])
+const nativeCommands = ref<SlashCommand[]>([])
 let defaultsInitialized = false
 
 // ── composable ──────────────────────────────────────────────────
@@ -63,7 +65,7 @@ export function useSlashCommands() {
         action: { type: 'agent' as const, agentName: a.name },
       }))
 
-    const all = [...builtinCommands.value, ...skillCmds, ...agentCmds, ...extensionCommands.value]
+    const all = [...builtinCommands.value, ...nativeCommands.value, ...skillCmds, ...agentCmds, ...extensionCommands.value]
     // 去重（skill 可能与 builtin 同名）
     const seen = new Set<string>()
     return all
@@ -128,12 +130,48 @@ export function useSlashCommands() {
     }))
   }
 
+  /** 注册 pi 原生内置 slash 命令（排除 xyz-agent 已有同名命令） */
+  function initNativeCommands() {
+    // xyz-agent 已有的 builtin 命令名，pi 原生命令中跳过这些
+    const existingNames = new Set(builtinCommands.value.map(c => c.name))
+
+    const piCommands: Array<{ name: string; description: string }> = [
+      { name: 'model', description: '查看或切换模型' },
+      { name: 'scoped-models', description: '管理 Ctrl+P 模型循环范围' },
+      { name: 'export', description: '导出会话 (HTML/JSONL)' },
+      { name: 'import', description: '导入 JSONL 会话并恢复' },
+      { name: 'share', description: '分享会话为 GitHub Gist' },
+      { name: 'copy', description: '复制最后一条 assistant 消息到剪贴板' },
+      { name: 'name', description: '设置会话显示名称' },
+      { name: 'session', description: '显示会话信息和统计' },
+      { name: 'changelog', description: '显示变更日志' },
+      { name: 'hotkeys', description: '显示所有快捷键' },
+      { name: 'fork', description: '从历史消息创建分支' },
+      { name: 'clone', description: '在当前位置复制会话' },
+      { name: 'tree', description: '导航会话树（切换分支）' },
+      { name: 'login', description: '配置 provider 认证' },
+      { name: 'logout', description: '移除 provider 认证' },
+      { name: 'resume', description: '恢复其他会话' },
+      { name: 'reload', description: '重新加载配置和扩展' },
+    ]
+
+    nativeCommands.value = piCommands
+      .filter(cmd => !existingNames.has(cmd.name))
+      .map(cmd => ({
+        name: cmd.name,
+        description: cmd.description,
+        source: 'native' as const,
+        action: { type: 'native' as const, commandName: cmd.name },
+      }))
+  }
+
   return {
     builtinCommands,
     registerBuiltin,
     mergeSkillCommands,
     filterCommands,
     initDefaultCommands,
+    initNativeCommands,
     setExtensionCommands,
   }
 }
