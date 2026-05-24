@@ -50,7 +50,7 @@ function toggleProvider(id: string) {
   send({ type: 'config.setProvider', payload: { providerId: id, enabled: !newEnabled } })
 }
 
-function handleSave(data: { name: string; type: string; url: string; key: string; models: { id: string; name: string; ctx: string | number | undefined; tags: string[]; enabled?: boolean }[]; providerId?: string }) {
+function handleSave(data: { name: string; type: string; url: string; key: string; models: { id: string; name: string; contextWindow?: number }[]; providerId?: string }) {
   const { providerId: _pid, ...rest } = data
   const providerId = _pid || data.name.toLowerCase().replace(/\s+/g, '-')
   const { url, key, ...configData } = rest

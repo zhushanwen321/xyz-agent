@@ -3,11 +3,25 @@ export type ProviderStatus = 'connected' | 'not_configured' | 'error'
 export interface ProviderInfo {
   id: string
   name: string
-  type?: string
-  status: ProviderStatus
-  models: Array<string | { id: string; name?: string; ctx?: number; tags?: string[] }>
-  apiKeySet: boolean
+  api?: string
   baseUrl?: string
+  apiKeySet: boolean
+  headers?: Record<string, string>
+  authHeader?: boolean
+  status: ProviderStatus
+  models: Array<{
+    id: string
+    name?: string
+    api?: string
+    baseUrl?: string
+    reasoning?: boolean
+    input?: Array<'text' | 'image'>
+    contextWindow?: number
+    maxTokens?: number
+    thinkingLevelMap?: Record<string, string | null>
+    cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }
+    compat?: Record<string, unknown>
+  }>
   enabled?: boolean
 }
 
@@ -16,8 +30,13 @@ export interface ModelInfo {
   name: string
   providerId: string
   providerName: string
-  tags?: string[]
+  api?: string
+  reasoning?: boolean
   contextWindow?: number
+  maxTokens?: number
+  thinkingLevelMap?: Record<string, string | null>
+  cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }
+  enabled?: boolean
 }
 
 export interface SkillInfo {

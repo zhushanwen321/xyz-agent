@@ -245,7 +245,7 @@ export class ProcessManager {
     env[`${prefix}_API_KEY`] = apiKey
     if (baseUrl) env[`${prefix}_BASE_URL`] = baseUrl
 
-    const client = new RpcClient({ provider: providerId, env })
+    const client = new RpcClient({ env })
     try {
       await client.start()
       const result = await client.getAvailableModels()

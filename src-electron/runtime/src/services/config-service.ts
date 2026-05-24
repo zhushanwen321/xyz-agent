@@ -1,13 +1,13 @@
 /**
  * ConfigService — facade for Provider/Skill/Agent CRUD.
  *
- * Delegates to provider-store, skill-store, agent-store, skill-scanner,
- * agent-scanner, and config-store. Extracted from server.ts
- * handleSettingsMessage() logic.
- *
- * Also encapsulates the findIdx→splice→save CRUD patterns that were
- * previously inline in handleSettingsMessage.
+ * Delegates Provider CRUD to pi-config-bridge (reads/writes pi's native
+ * models.json), Skill discovery to pi's skill paths + skill-scanner,
+ * Agent discovery to pi's agents/ directory, and tool permissions to
+ * config-store.
  */
+import { dirname } from 'node:path'
+
 import type {
   ProviderInfo,
   SkillInfo,
@@ -16,12 +16,49 @@ import type {
   ScannedAgentInfo,
 } from '@xyz-agent/shared'
 import type { IConfigService } from '../interfaces.js'
-import * as providerStore from '../provider-store.js'
-import { updateToolPermissions, getProvider } from '../config-store.js'
-import { loadSkills, saveSkills } from '../skill-store.js'
-import { loadAgents, saveAgents } from '../agent-store.js'
+import * as piBridge from '../pi-config-bridge.js'
+import type { PiModelDefinition } from '../pi-config-bridge.js'
+import { updateToolPermissions } from '../config-store.js'
 import { scanSkills } from '../skill-scanner.js'
 import { scanAgents } from '../agent-scanner.js'
+
+// ── Helpers ─────────────────────────────────────────────────────
+
+/** Map xyz-agent provider type strings to pi's api identifiers. */
+function mapTypeToApi(type: string): string {
+  const map: Record<string, string> = {
+    anthropic: 'anthropic-messages',
+    openai: 'openai-completions',
+    'openai-compatible': 'openai-completions',
+    google: 'openai-completions',
+    deepseek: 'openai-completions',
+    ollama: 'openai-completions',
+  }
+  return map[type] ?? type
+}
+
+/** Extract name and description from agent markdown frontmatter. */
+function parseAgentMd(content: string): { name: string; description: string } {
+  const lines = content.split('\n')
+  let inFrontmatter = false
+  const frontmatterLines: string[] = []
+  for (const line of lines) {
+    if (line.trim() === '---') {
+      if (!inFrontmatter) { inFrontmatter = true; continue }
+      else break
+    }
+    if (inFrontmatter) frontmatterLines.push(line)
+  }
+  let name = ''
+  let description = ''
+  for (const fl of frontmatterLines) {
+    if (fl.startsWith('name:')) name = fl.slice(5).trim()
+    if (fl.startsWith('description:')) description = fl.slice(12).trim()
+  }
+  return { name, description }
+}
+
+// ── Service ─────────────────────────────────────────────────────
 
 export class ConfigService implements IConfigService {
   constructor(private projectRoot: string) {}
@@ -29,7 +66,26 @@ export class ConfigService implements IConfigService {
   // ── Provider CRUD ──────────────────────────────────────────────
 
   listProviders(): ProviderInfo[] {
-    return providerStore.listProviders()
+    const models = piBridge.readModels()
+    return Object.entries(models.providers).map(([id, config]) => ({
+      id,
+      name: id,
+      baseUrl: config.baseUrl,
+      apiKeySet: !!config.apiKey,
+      status: config.apiKey ? 'connected' as const : 'not_configured' as const,
+      models: (config.models ?? []).map(m => ({
+        id: m.id,
+        name: m.name,
+        api: m.api,
+        baseUrl: m.baseUrl,
+        reasoning: m.reasoning,
+        input: m.input,
+        contextWindow: m.contextWindow,
+        maxTokens: m.maxTokens,
+        compat: m.compat,
+      })),
+      enabled: true,
+    }))
   }
 
   setProvider(providerId: string, data: {
@@ -37,18 +93,33 @@ export class ConfigService implements IConfigService {
     type?: string
     apiKey?: string
     baseUrl?: string
-    models?: Array<string | { id: string; name?: string; ctx?: number; tags?: string[]; enabled?: boolean }>
+    models?: Array<string | { id: string; name?: string; contextWindow?: number }>
     enabled?: boolean
   }): void {
-    providerStore.setProvider(providerId, data)
+    const existing = piBridge.getProviderConfig(providerId) ?? {}
+    const merged = { ...existing }
+    if (data.apiKey !== undefined) merged.apiKey = data.apiKey as string
+    if (data.baseUrl !== undefined) merged.baseUrl = data.baseUrl as string
+    if (data.type !== undefined) merged.api = mapTypeToApi(data.type as string)
+    if (data.models !== undefined) {
+      const rawModels = data.models as Array<Record<string, unknown>>
+      merged.models = rawModels.map(m => {
+        const model: Record<string, unknown> = { id: String(m.id ?? '') }
+        if (m.name) model.name = String(m.name)
+        if (typeof m.contextWindow === 'number') model.contextWindow = m.contextWindow
+        return model as unknown as PiModelDefinition
+      })
+    }
+    // name and enabled are not part of PiProviderConfig; pi uses providerId as name
+    piBridge.upsertProvider(providerId, merged)
   }
 
   deleteProvider(providerId: string): boolean {
-    return providerStore.deleteProvider(providerId)
+    return piBridge.removeProvider(providerId)
   }
 
   getProvider(providerId: string): { apiKey?: string; name?: string; type?: string; baseUrl?: string; models?: unknown[]; enabled?: boolean } | undefined {
-    return getProvider(providerId)
+    return piBridge.getProviderConfig(providerId)
   }
 
   // ── Tool permissions ───────────────────────────────────────────
@@ -59,48 +130,92 @@ export class ConfigService implements IConfigService {
 
   // ── Skill CRUD ─────────────────────────────────────────────────
 
-  loadSkills(projectRoot: string): SkillInfo[] {
-    return loadSkills(projectRoot)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- interface requires projectRoot param
+  loadSkills(_projectRoot: string): SkillInfo[] {
+    const skillPaths = piBridge.getSkillPaths()
+    const results: SkillInfo[] = []
+    for (const path of skillPaths) {
+      const scanned = scanSkills([path], new Set())
+      for (const s of scanned) {
+        results.push({
+          id: s.id,
+          name: s.name,
+          description: s.description,
+          enabled: true,
+          source: s.sourceType,
+          triggers: s.triggers,
+          argumentHint: s.argumentHint,
+          sourcePath: s.sourcePath,
+          content: s.content,
+          fileSize: s.fileSize,
+          tools: s.tools,
+        })
+      }
+    }
+    return results
   }
 
-  saveSkills(projectRoot: string, skills: SkillInfo[]): void {
-    saveSkills(projectRoot, skills)
+  /** No-op: skills are now discovered from pi's skill paths, not independently persisted. */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  saveSkills(_projectRoot: string, _skills: SkillInfo[]): void {
+    // no-op — skill persistence is managed by pi's settings.json
   }
 
-  /** Upsert a single skill into the persisted list. */
+  /** Register a skill directory in pi's settings.json. */
   upsertSkill(skill: SkillInfo): void {
-    const skills = loadSkills(this.projectRoot)
-    const idx = skills.findIndex(s => s.id === skill.id)
-    if (idx >= 0) skills[idx] = skill; else skills.push(skill)
-    saveSkills(this.projectRoot, skills)
+    if (skill.sourcePath) {
+      const dir = dirname(skill.sourcePath)
+      piBridge.addSkillPath(dir)
+    }
   }
 
-  /** Delete a skill by id from the persisted list. */
+  /** Remove a skill directory from pi's settings.json. */
   deleteSkill(skillId: string): void {
-    saveSkills(this.projectRoot, loadSkills(this.projectRoot).filter(s => s.id !== skillId))
+    const skills = this.loadSkills(this.projectRoot)
+    const skill = skills.find(s => s.id === skillId)
+    if (skill?.sourcePath) {
+      const dir = dirname(skill.sourcePath)
+      piBridge.removeSkillPath(dir)
+    }
   }
 
   // ── Agent CRUD ─────────────────────────────────────────────────
 
-  loadAgents(projectRoot: string): AgentInfo[] {
-    return loadAgents(projectRoot)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- interface requires projectRoot param
+  loadAgents(_projectRoot: string): AgentInfo[] {
+    const files = piBridge.listAgentFiles()
+    return files.map(f => {
+      const { name, description } = parseAgentMd(f.content)
+      return {
+        id: f.name,
+        name: name || f.name,
+        description: description || '',
+        enabled: true,
+        modelStrategy: 'auto',
+        source: 'pi',
+        sourceType: 'pi',
+        content: f.content,
+        tools: [],
+      }
+    })
   }
 
-  saveAgents(projectRoot: string, agents: AgentInfo[]): void {
-    saveAgents(projectRoot, agents)
+  /** No-op: agents are now managed as files in ~/.pi/agent/agents/. */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  saveAgents(_projectRoot: string, _agents: AgentInfo[]): void {
+    // no-op — agent persistence is managed as .md files in pi's agents dir
   }
 
-  /** Upsert a single agent into the persisted list. */
+  /** Write agent content to a .md file in pi's agents directory. */
   upsertAgent(agent: AgentInfo): void {
-    const agents = loadAgents(this.projectRoot)
-    const aIdx = agents.findIndex(a => a.id === agent.id)
-    if (aIdx >= 0) agents[aIdx] = agent; else agents.push(agent)
-    saveAgents(this.projectRoot, agents)
+    if (agent.content) {
+      piBridge.writeAgentFile(agent.name || agent.id, agent.content)
+    }
   }
 
-  /** Delete an agent by id from the persisted list. */
+  /** Delete an agent .md file from pi's agents directory. */
   deleteAgent(agentId: string): void {
-    saveAgents(this.projectRoot, loadAgents(this.projectRoot).filter(a => a.id !== agentId))
+    piBridge.deleteAgentFile(agentId)
   }
 
   // ── Scanning ───────────────────────────────────────────────────
