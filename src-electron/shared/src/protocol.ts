@@ -10,6 +10,7 @@ export type ClientMessageType =
   | 'model.list' | 'model.switch'
   | 'tool.approve' | 'tool.deny' | 'tool.always_allow'
   | 'ping'
+  | 'session.tree-data' | 'session.tree-navigate' | 'session.tree-fork' | 'session.tree-capability'
 
 export interface ClientMessage {
   type: ClientMessageType
@@ -33,6 +34,7 @@ export type ServerMessageType =
   | 'model.list' | 'model.switched'
   | 'pong' | 'error'
   | 'session.commands'
+  | 'session.tree-data' | 'session.tree-navigate-result' | 'session.tree-fork-result' | 'session.tree-capability'
 
 export interface ServerMessage {
   type: ServerMessageType

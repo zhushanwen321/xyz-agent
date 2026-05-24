@@ -4,7 +4,7 @@
  * Manages session lifecycle: creation, deletion, messaging, history,
  * model switching, compaction, and persistence.
  */
-import { basename } from 'node:path'
+import { basename, resolve } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import type {
   SessionSummary,
@@ -16,10 +16,11 @@ import type { ISessionService, IProcessManager, IMessageBroker, IEventAdapter } 
 import type { IRpcClient } from '../interfaces.js'
 import type { PiMessage } from '../rpc-client.js'
 import { convertPiHistory } from '../message-converter.js'
-import type { PiHistoryMessage } from '../types.js'
+import type { PiHistoryMessage, TreeData, NavigateResult, ForkResult } from '../types.js'
 import { getDefaultModel } from '../pi-config-bridge.js'
 import * as piBridge from '../pi-config-bridge.js'
 import { scanSessions, deleteSessionFile, refreshSessions, type ScannedSession } from '../session-scanner.js'
+import { buildTreeFromFile, countBranches } from '../session-tree-reader.js'
 
 interface ManagedSession {
   id: string
@@ -38,6 +39,8 @@ interface ManagedSession {
 export class SessionService implements ISessionService {
   private sessions = new Map<string, ManagedSession>()
   private restoringSessions = new Set<string>()
+  private navigateCapableMap = new Map<string, boolean>()
+  private extensionPath: string = ''
 
   constructor(
     private pm: IProcessManager,
@@ -45,6 +48,7 @@ export class SessionService implements ISessionService {
     private adapterFactory: (sessionId: string) => IEventAdapter,
     private projectRoot: string,
   ) {
+    this.extensionPath = resolve(this.projectRoot, 'xyz-agent-extension.js')
     // 进程崩溃时清理对应 session
     this.pm.onSessionExit((sessionId, code) => {
       const session = this.sessions.get(sessionId)
@@ -69,7 +73,10 @@ export class SessionService implements ISessionService {
     const modelRef = getDefaultModel()
     const modelId = modelRef ? `${modelRef.provider}/${modelRef.modelId}` : ''
 
-    const client = await this.pm.createSession(tempId, sessionCwd, { skillPaths: this.getSkillPaths(sessionCwd) })
+    const client = await this.pm.createSession(tempId, sessionCwd, {
+      skillPaths: this.getSkillPaths(sessionCwd),
+      extensionPaths: [this.extensionPath],
+    })
 
     // 从 pi 获取真实 session ID
     let piSessionId: string
@@ -135,6 +142,12 @@ export class SessionService implements ISessionService {
       const commands = await (client as IRpcClient).getCommands() as Array<{ name: string; description?: string; source: string }>
       console.log(`[session-service] getCommands returned ${commands.length} commands:`, commands.map(c => c.name))
       this.broker.broadcast({ type: 'session.commands', payload: { sessionId: id, commands } })
+      // 检查 xyz-navigate extension 是否可用
+      const navCapable = commands.some(c => c.name === 'xyz-navigate' && c.source === 'extension')
+      this.navigateCapableMap.set(id, navCapable)
+      if (!navCapable) {
+        console.warn('[session-service] xyz-navigate extension not found, navigate will be unavailable')
+      }
     } catch (e) {
       console.warn('[session-service] getCommands failed:', e)
     }
@@ -363,7 +376,10 @@ export class SessionService implements ISessionService {
       this.sessions.delete(sessionId)
     }
     const id = sessionId
-    const client = await this.pm.createSession(id, target.cwd, { skillPaths: this.getSkillPaths(target.cwd) })
+    const client = await this.pm.createSession(id, target.cwd, {
+      skillPaths: this.getSkillPaths(target.cwd),
+      extensionPaths: [this.extensionPath],
+    })
     const adapter = this.adapterFactory(id)
     adapter.attach(client)
 
@@ -405,11 +421,120 @@ export class SessionService implements ISessionService {
     try {
       const commands = await (client as IRpcClient).getCommands() as Array<{ name: string; description?: string; source: string }>
       this.broker.broadcast({ type: 'session.commands', payload: { sessionId: id, commands } })
+      // 检查 xyz-navigate extension 是否可用
+      const navCapable = commands.some(c => c.name === 'xyz-navigate' && c.source === 'extension')
+      this.navigateCapableMap.set(id, navCapable)
+      if (!navCapable) {
+        console.warn('[session-service] xyz-navigate extension not found, navigate will be unavailable')
+      }
     } catch (e) {
       console.warn('[session-service] getCommands failed:', e)
     }
 
     return this.toSummary(session)
+  }
+
+  // ── Tree operations ───────────────────────────────────────────
+
+  async getTree(sessionId: string): Promise<TreeData> {
+    const client = this.pm.getClient(sessionId)
+    if (!client) throw new Error(`Session ${sessionId} not found`)
+
+    // 获取 leafId 和 cwd
+    const stateResp = await client.sendCommand('get_state') as PiMessage
+    const stateData = stateResp.data ?? stateResp.payload
+    const leafId = (stateData?.leafId as string) ?? null
+    const sessionFile = stateData?.sessionFile as string | undefined
+
+    if (!sessionFile) {
+      return { sessionId, tree: [], leafId, branchCount: 0, navigateCapable: this.navigateCapableMap.get(sessionId) ?? false }
+    }
+
+    // 从 JSONL 文件构建树
+    const { rootNodes } = buildTreeFromFile(sessionFile)
+    const branchCount = countBranches(rootNodes)
+
+    return {
+      sessionId,
+      tree: rootNodes,
+      leafId,
+      branchCount,
+      navigateCapable: this.navigateCapableMap.get(sessionId) ?? false,
+    }
+  }
+
+  async navigateTree(sessionId: string, targetEntryId: string): Promise<NavigateResult> {
+    const client = this.pm.getClient(sessionId)
+    if (!client) throw new Error(`Session ${sessionId} not found`)
+
+    // no-op: navigate 到当前 leaf
+    const stateResp = await client.sendCommand('get_state') as PiMessage
+    const currentLeafId = (stateResp.data ?? stateResp.payload)?.leafId as string | undefined
+    if (currentLeafId === targetEntryId) {
+      return { success: true, newLeafId: targetEntryId }
+    }
+
+    // 检查 extension 可用性
+    if (!this.navigateCapableMap.get(sessionId)) {
+      return { success: false, error: 'Navigate extension not available' }
+    }
+
+    // 通过 EventAdapter 注入 resolver 来捕获 navigate 结果
+    const session = this.sessions.get(sessionId)
+    if (!session) throw new Error(`Session ${sessionId} managed state not found`)
+
+    return new Promise<NavigateResult>((resolve) => {
+      const timeout = setTimeout(() => {
+        session.adapter.clearNavigateResolver()
+        resolve({ success: false, error: 'Navigate 超时' })
+      }, 5000)
+
+      session.adapter.setNavigateResolver((data: unknown) => {
+        clearTimeout(timeout)
+        const result = data as { cancelled?: boolean; newLeafId?: string; editorText?: string | null }
+        resolve({
+          success: !result.cancelled,
+          newLeafId: result.newLeafId,
+          editorText: result.editorText ?? undefined,
+        })
+      })
+
+      // 发送 navigate 命令（不等待 prompt 返回，结果通过 resolver 回传）
+      client.prompt(`/xyz-navigate ${targetEntryId}`).catch((e) => {
+        clearTimeout(timeout)
+        session.adapter.clearNavigateResolver()
+        resolve({ success: false, error: e instanceof Error ? e.message : String(e) })
+      })
+    })
+  }
+
+  async forkFromEntry(sessionId: string, entryId: string): Promise<ForkResult> {
+    const client = this.pm.getClient(sessionId)
+    if (!client) throw new Error(`Session ${sessionId} not found`)
+
+    try {
+      const result = await client.sendCommand('fork', { entryId }) as PiMessage
+      if (result.success === false) {
+        return { success: false, error: result.error ?? 'Fork failed' }
+      }
+
+      // 获取新 session ID
+      const stateResp = await client.sendCommand('get_state') as PiMessage
+      const stateData = stateResp.data ?? stateResp.payload
+      const newSessionId = stateData?.sessionId as string | undefined
+
+      if (!newSessionId) {
+        return { success: false, error: 'Fork succeeded but could not get new session ID' }
+      }
+
+      return { success: true, newSessionId }
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  }
+
+  isNavigateCapable(sessionId: string): boolean {
+    return this.navigateCapableMap.get(sessionId) ?? false
   }
 
   getSummary(sessionId: string): SessionSummary | undefined {

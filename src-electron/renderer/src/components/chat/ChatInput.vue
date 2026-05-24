@@ -69,11 +69,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, watch } from 'vue'
+import { ref, computed, nextTick, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '../../stores/settings'
 import { useProviderStore } from '../../stores/provider'
 import { Textarea, Button } from '../../design-system'
+import { consumePendingEditorText } from '../../composables/useChat'
+import { on } from '../../lib/event-bus'
 import ModelPicker from './ModelPicker.vue'
 import SlashMenu from './SlashMenu.vue'
 import {
@@ -112,6 +114,26 @@ initNativeCommands()
 const text = ref('')
 const isComposing = ref(false)
 const activeCommand = ref<SlashCommand | null>(null)
+
+// Navigate 到 user message 后预填输入框
+watch(() => props.sessionId, () => {
+  nextTick(() => {
+    const editorText = consumePendingEditorText()
+    if (editorText) text.value = editorText
+  })
+})
+onMounted(() => {
+  const editorText = consumePendingEditorText()
+  if (editorText) text.value = editorText
+})
+// 同 session 内 navigate 时 sessionId 不变，需要事件驱动
+const unsubEditorText = on('editor-text-pending', () => {
+  nextTick(() => {
+    const editorText = consumePendingEditorText()
+    if (editorText) text.value = editorText
+  })
+})
+onUnmounted(() => { unsubEditorText?.() })
 
 // activeCommand 存在时动态展示 skill 专属提示，否则用默认 placeholder
 const placeholder = computed(() => {

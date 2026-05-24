@@ -216,6 +216,30 @@ export class SidecarServer implements IMessageBroker {
         }
         case 'message.abort':
           return await this.sessionService.abort(msg.payload.sessionId as string)
+        case 'session.tree-data': {
+          const sid = msg.payload.sessionId as string
+          const treeData = await this.sessionService.getTree(sid)
+          return this.send(ws, { type: 'session.tree-data', id: msg.id, payload: treeData })
+        }
+        case 'session.tree-navigate': {
+          const sid = msg.payload.sessionId as string
+          const targetEntryId = msg.payload.targetEntryId as string
+          const result = await this.sessionService.navigateTree(sid, targetEntryId)
+          return this.send(ws, { type: 'session.tree-navigate-result', id: msg.id, payload: { sessionId: sid, ...result } })
+        }
+        case 'session.tree-fork': {
+          const sid = msg.payload.sessionId as string
+          const entryId = msg.payload.entryId as string
+          const result = await this.sessionService.forkFromEntry(sid, entryId)
+          if (result.success) {
+            this.broadcastSessionList()
+          }
+          return this.send(ws, { type: 'session.tree-fork-result', id: msg.id, payload: { sessionId: sid, ...result } })
+        }
+        case 'session.tree-capability': {
+          const sid = msg.payload.sessionId as string
+          return this.send(ws, { type: 'session.tree-capability', id: msg.id, payload: { sessionId: sid, navigateCapable: this.sessionService.isNavigateCapable(sid) } })
+        }
         default:
           if (!await this.handleSettingsMessage(msg, ws)) {
             const unknownSid = (msg as { payload?: { sessionId?: string } }).payload?.sessionId

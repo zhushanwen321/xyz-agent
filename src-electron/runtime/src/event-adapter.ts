@@ -33,6 +33,11 @@ const STOP_REASON_MAP: Record<string, string> = {
  */
 export class EventAdapter {
   private unsub: (() => void) | null = null
+  private navigateResolve: ((data: unknown) => void) | null = null
+  /** Buffer for accumulating navigate-result JSON across multiple text_delta events. */
+  private navigateBuffer = ''
+  /** Track whether we're inside a message that started with navigate-result marker. */
+  private isNavigateStream = false
 
   constructor(
     private sessionId: string,
@@ -50,6 +55,18 @@ export class EventAdapter {
       this.unsub()
       this.unsub = null
     }
+  }
+
+  setNavigateResolver(fn: (data: unknown) => void): void {
+    this.navigateResolve = fn
+    this.navigateBuffer = ''
+    this.isNavigateStream = false
+  }
+
+  clearNavigateResolver(): void {
+    this.navigateResolve = null
+    this.navigateBuffer = ''
+    this.isNavigateStream = false
   }
 
   private handleEvent(event: Record<string, unknown>): void {
@@ -70,11 +87,43 @@ export class EventAdapter {
         if (!sub) return null
 
         switch (sub.type) {
-          case 'text_delta':
+          case 'text_delta': {
+            const delta = sub.delta ?? ''
+
+            // Intercept navigate-result messages from extension.
+            // pi's sendMessage() may produce the JSON in a single delta or
+            // spread across multiple deltas within the same assistant turn.
+            if (this.navigateResolve) {
+              if (delta.startsWith('{"__xyz_type":"navigate-result"')) {
+                // Start of navigate-result stream
+                this.isNavigateStream = true
+                this.navigateBuffer = delta
+              } else if (this.isNavigateStream) {
+                // Continuation of navigate-result stream
+                this.navigateBuffer += delta
+              }
+
+              if (this.isNavigateStream) {
+                try {
+                  const parsed = JSON.parse(this.navigateBuffer) as Record<string, unknown>
+                  const resolver = this.navigateResolve
+                  this.navigateResolve = null
+                  this.navigateBuffer = ''
+                  this.isNavigateStream = false
+                  resolver(parsed)
+                  return null
+                } catch {
+                  // JSON incomplete, wait for more deltas
+                  return null
+                }
+              }
+            }
+
             return {
               type: 'message.text_delta',
-              payload: { sessionId: sid, delta: sub.delta ?? '' },
+              payload: { sessionId: sid, delta },
             }
+          }
 
           case 'thinking_start':
             return {
@@ -232,6 +281,10 @@ export class EventAdapter {
       case 'turn_start':
       case 'turn_end':
       case 'message_end':
+        // Clean up navigate stream state when message ends
+        this.isNavigateStream = false
+        this.navigateBuffer = ''
+        return null
       case 'extension_ui_response':
       case 'extension_config':
       case 'extension_error':

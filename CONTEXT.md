@@ -107,6 +107,16 @@ Session 级状态，表示 pi 进程正在工作（从用户发送消息到 agen
 ### Side Inspector
 当前 Panel 的运行时状态面板。三个 Tab：TaskTree（任务树）、已完成（completed TaskNode 列表）、请求回应（pending approval 列表）。跟随当前 Panel 绑定的 Session，上下文敏感。从 Panel 侧边滑出。
 
+### Session Tree
+pi session 文件（JSONL）中通过 `parentId` 构建的逻辑树结构。同一文件内可存在多个分支（fork 点），唯一的可变状态是内存中的 `leafId` 指针。xyz-agent 通过 sidecar 直接读取 JSONL 文件构建树，不依赖 pi RPC。
+
+**术语映射**:
+- Entry — JSONL 文件中每行一个 JSON 对象（message/branch_summary/label 等）
+- leafId — pi 进程内存中指向当前活跃分支末端的指针，不在 JSONL 文件中持久化
+- Navigate — 在同一文件内移动 leafId 到历史某个 entry（不创建新文件）
+- Fork — 从历史某个 entry 创建新 session 文件，复制 root→entry 的路径
+- Clone — Fork 的特例，在当前 leaf 位置复制完整路径
+
 ### Panel Grid
 全局面板网格视图。展示所有 Panel 的缩略图，类似 macOS Mission Control / Windows Task View。用于快速定位和跳转 Panel。
 

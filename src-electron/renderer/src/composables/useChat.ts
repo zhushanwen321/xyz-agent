@@ -1,7 +1,7 @@
 import { useChatStore } from '../stores/chat'
 import { useSessionStore } from '../stores/session'
 import { send } from '../lib/ws-client'
-import { on } from '../lib/event-bus'
+import { on, emit } from '../lib/event-bus'
 import { type Ref, unref } from 'vue'
 import type { ServerMessage, ToolCall, ContentBlock } from '@xyz-agent/shared'
 import { createSystemNotification } from '../lib/system-notification'
@@ -17,6 +17,17 @@ const SUBSTRING_END = 6
  * 不再绑定到特定 useChat 实例的闭包。
  */
 
+
+// ── 全局状态 ──────────────────────────────────────────────────
+
+/** Navigate 后的 editorText，等待 session.history 回来后由组件消费 */
+let pendingEditorText: string | null = null
+
+export function consumePendingEditorText(): string | null {
+  const text = pendingEditorText
+  pendingEditorText = null
+  return text
+}
 
 // ── 全局事件处理器 ────────────────────────────────────────────────
 
@@ -202,6 +213,35 @@ function createGlobalHandlers() {
     'message.error': onError,
     'context.update': onContextUpdate,
     'message.status': onStatus,
+    'session.tree-navigate-result': ((msg: ServerMessage) => {
+      const sid = getSid(msg)
+      if (!sid) return
+      if (msg.payload.success) {
+        // Navigate 成功后刷新消息和 tree 数据
+        send({ type: 'session.history', payload: { sessionId: sid } })
+        send({ type: 'session.tree-data', payload: { sessionId: sid } })
+        // 如果 navigate 到 user message，设置 editorText 到输入框
+        const editorText = msg.payload.editorText as string | undefined
+        if (editorText) {
+          pendingEditorText = editorText
+          // 通知 ChatInput 消费，即 sessionId 不变时也能触发
+          emit('editor-text-pending')
+        }
+      }
+    }),
+    'session.tree-fork-result': ((msg: ServerMessage) => {
+      const sid = getSid(msg)
+      if (!sid) return
+      if (msg.payload.success) {
+        const newSessionId = msg.payload.newSessionId as string | undefined
+        if (newSessionId) {
+          // 刷新 session 列表
+          send({ type: 'session.list', payload: {} })
+          // 自动切换到新 session
+          send({ type: 'session.switch', payload: { sessionId: newSessionId } })
+        }
+      }
+    }),
     'session.commands': ((msg: ServerMessage) => {
       const cmds = (msg.payload as { commands: Array<{ name: string; description?: string; source: string }> }).commands
       setExtensionCommands(cmds)
