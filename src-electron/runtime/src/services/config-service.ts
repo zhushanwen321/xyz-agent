@@ -19,7 +19,7 @@ import type { IConfigService } from '../interfaces.js'
 import * as piBridge from '../pi-config-bridge.js'
 import type { PiModelDefinition } from '../pi-config-bridge.js'
 import { updateToolPermissions } from '../config-store.js'
-import { scanSkills } from '../skill-scanner.js'
+import { scanSkills, loadSkillFromDir } from '../skill-scanner.js'
 import { scanAgents } from '../agent-scanner.js'
 
 // ── Helpers ─────────────────────────────────────────────────────
@@ -135,20 +135,20 @@ export class ConfigService implements IConfigService {
     const skillPaths = piBridge.getSkillPaths()
     const results: SkillInfo[] = []
     for (const path of skillPaths) {
-      const scanned = scanSkills([path], new Set())
-      for (const s of scanned) {
+      const scanned = loadSkillFromDir(path)
+      if (scanned) {
         results.push({
-          id: s.id,
-          name: s.name,
-          description: s.description,
+          id: scanned.id,
+          name: scanned.name,
+          description: scanned.description,
           enabled: true,
-          source: s.sourceType,
-          triggers: s.triggers,
-          argumentHint: s.argumentHint,
-          sourcePath: s.sourcePath,
-          content: s.content,
-          fileSize: s.fileSize,
-          tools: s.tools,
+          source: scanned.sourceType,
+          triggers: scanned.triggers,
+          argumentHint: scanned.argumentHint,
+          sourcePath: scanned.sourcePath,
+          content: scanned.content,
+          fileSize: scanned.fileSize,
+          tools: scanned.tools,
         })
       }
     }
