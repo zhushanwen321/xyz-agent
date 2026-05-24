@@ -110,7 +110,7 @@ vi.mock('../src/session-scanner.js', () => ({
 vi.mock('../src/pi-config-bridge.js', () => ({
   getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
   getSkillPaths: () => [],
-  getPiSessionsDir: () => '/mock/sessions',
+  getSessionsDir: () => '/mock/sessions',
   readModels: () => ({ providers: {} }),
   readSettings: () => ({}),
 }))

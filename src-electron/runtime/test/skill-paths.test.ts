@@ -38,7 +38,7 @@ const mockSkillPaths: string[] = []
 vi.mock('../src/pi-config-bridge.js', () => ({
   getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
   getSkillPaths: () => mockSkillPaths,
-  getPiSessionsDir: () => '/mock/home/.pi/agent/sessions',
+  getSessionsDir: () => '/mock/home/.xyz-agent/sessions',
   readModels: () => ({ providers: {} }),
   readSettings: () => ({}),
   scanPiSessions: () => mockScannedSessions,
@@ -213,7 +213,7 @@ describe('skillPaths passing chain', () => {
     // Set up a scanned session for restoreSession to find
     mockScannedSessions.push({
       id: 'existing-session-id',
-      filePath: '/mock/home/.pi/agent/sessions/test.jsonl',
+      filePath: '/mock/home/.xyz-agent/sessions/test.jsonl',
       cwd: '/project',
       timestamp: new Date().toISOString(),
       name: null,

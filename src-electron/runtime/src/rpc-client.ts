@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { join } from 'node:path'
-import { getDefaultModel, getPiSessionsDir } from './pi-config-bridge.js'
+import { getDefaultModel, getSessionsDir } from './pi-config-bridge.js'
 
 /** 子进程允许继承的环境变量前缀白名单 */
 const ENV_WHITELIST_PREFIXES = ['PATH', 'HOME', 'USER', 'LANG', 'TERM', 'NODE_', 'NVM_', 'XYZ_', 'XDG_', 'APPDATA', 'LOCALAPPDATA', 'PROGRAMFILES', 'SYSTEMROOT', 'TEMP', 'TMP']
@@ -89,7 +89,7 @@ export class RpcClient {
     }
 
     // 使用 pi 的 sessions 目录
-    const sessionDir = getPiSessionsDir()
+    const sessionDir = getSessionsDir()
     args.push('--session-dir', sessionDir)
 
     this.proc = spawn(this.options.piCommand ?? 'pi', args, {

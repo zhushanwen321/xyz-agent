@@ -310,7 +310,7 @@ export interface MockSkill {
   enabled: boolean
   source: string         // 'pi' | 'claude' | 'agents'
   sourceIcon: string     // 'P' | 'C' | 'A'
-  sourcePath: string     // '~/.pi/agent/skills/code-trace/SKILL.md'
+  sourcePath: string     // '~/.xyz-agent/skills/code-trace/SKILL.md'
   triggers: string[]     // ['分析链路', 'trace code', ...]
   fileSize: string       // '4.2 KB'
   tools: string[]        // ['read', 'bash', 'grep']
@@ -325,7 +325,7 @@ export const mockSkills: MockSkill[] = [
     enabled: true,
     source: 'pi',
     sourceIcon: 'P',
-    sourcePath: '~/.pi/agent/skills/code-trace/SKILL.md',
+    sourcePath: '~/.xyz-agent/skills/code-trace/SKILL.md',
     triggers: ['分析链路', 'trace code', 'code-trace', '链路分析'],
     fileSize: '4.2 KB',
     tools: ['read', 'bash', 'grep'],
@@ -338,7 +338,7 @@ export const mockSkills: MockSkill[] = [
     enabled: true,
     source: 'pi',
     sourceIcon: 'P',
-    sourcePath: '~/.pi/agent/skills/issue-trace/SKILL.md',
+    sourcePath: '~/.xyz-agent/skills/issue-trace/SKILL.md',
     triggers: ['分析问题', 'issue-trace', '问题链路', '审查问题'],
     fileSize: '3.8 KB',
     tools: ['read', 'bash', 'grep'],
@@ -351,7 +351,7 @@ export const mockSkills: MockSkill[] = [
     enabled: true,
     source: 'pi',
     sourceIcon: 'P',
-    sourcePath: '~/.pi/agent/skills/review-tracer/SKILL.md',
+    sourcePath: '~/.xyz-agent/skills/review-tracer/SKILL.md',
     triggers: ['审查审查者', 'review-tracer', '评估审查质量'],
     fileSize: '2.9 KB',
     tools: ['read', 'bash'],
@@ -364,7 +364,7 @@ export const mockSkills: MockSkill[] = [
     enabled: true,
     source: 'pi',
     sourceIcon: 'P',
-    sourcePath: '~/.pi/agent/skills/batch-tracer/SKILL.md',
+    sourcePath: '~/.xyz-agent/skills/batch-tracer/SKILL.md',
     triggers: ['批量分析', 'batch-tracer', '全量分析'],
     fileSize: '5.1 KB',
     tools: ['read', 'bash', 'grep'],
@@ -377,7 +377,7 @@ export const mockSkills: MockSkill[] = [
     enabled: false,
     source: 'pi',
     sourceIcon: 'P',
-    sourcePath: '~/.pi/agent/skills/ts-taste-check/SKILL.md',
+    sourcePath: '~/.xyz-agent/skills/ts-taste-check/SKILL.md',
     triggers: ['品味检查', 'ts-taste-check', '审查ts代码质量'],
     fileSize: '6.3 KB',
     tools: ['read', 'bash', 'edit'],
@@ -390,7 +390,7 @@ export const mockSkills: MockSkill[] = [
     enabled: true,
     source: 'pi',
     sourceIcon: 'P',
-    sourcePath: '~/.pi/agent/skills/zcommit/SKILL.md',
+    sourcePath: '~/.xyz-agent/skills/zcommit/SKILL.md',
     triggers: ['zcommit', '提交', 'commit', '提交代码'],
     fileSize: '1.8 KB',
     tools: ['bash', 'read', 'edit'],
@@ -407,7 +407,7 @@ export interface MockAgent {
   name: string
   description: string
   active: boolean
-  source: string       // '内置 Agent' | 'pi · ~/.pi/agent/agents/...'
+  source: string       // '内置 Agent' | 'xyz-agent · ~/.xyz-agent/agents/...'
   sourceType: string   // 'builtin' | 'pi' | 'agents'
   icon: string         // 'D' | 'R' | 'O' | 'A'
   iconBg: string       // 'accent' | 'success' | 'warning' | 'danger'
@@ -441,7 +441,7 @@ export const mockAgents: MockAgent[] = [
     name: '代码审查员',
     description: '专注于代码审查和质量评估的 Agent。',
     active: true,
-    source: 'pi · ~/.pi/agent/agents/reviewer/',
+    source: 'xyz-agent · ~/.xyz-agent/agents/reviewer/',
     sourceType: 'pi',
     icon: 'R',
     iconBg: 'success',
@@ -457,7 +457,7 @@ export const mockAgents: MockAgent[] = [
     name: '任务编排器',
     description: '负责复杂任务的分解和子任务编排调度。',
     active: true,
-    source: 'pi · ~/.pi/agent/agents/orchestrator/',
+    source: 'xyz-agent · ~/.xyz-agent/agents/orchestrator/',
     sourceType: 'pi',
     icon: 'O',
     iconBg: 'warning',
