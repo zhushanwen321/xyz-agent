@@ -1,6 +1,18 @@
 import { defineStore } from 'pinia'
 import { reactive } from 'vue'
 
+// ── i18n: filter labels ────────────────────────────────────────
+
+/** 树面板筛选器文字，可按需替换为其他语言 */
+export const FILTER_LABELS_ZH = {
+  all: '全部',
+  noTools: '无工具',
+  user: '用户',
+  labeled: '有标签',
+} as const
+
+export type FilterLabels = typeof FILTER_LABELS_ZH
+
 // ── Types ──────────────────────────────────────────────────────────
 
 /** 与后端一致的树节点结构 */

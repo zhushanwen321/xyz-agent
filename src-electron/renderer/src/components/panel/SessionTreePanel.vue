@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useTreeStore } from '../../stores/tree'
+import { useTreeStore, FILTER_LABELS_ZH } from '../../stores/tree'
 import { useTree } from '../../composables/useTree'
 import { Select, Button, ScrollArea } from '../../design-system'
 import type { FlatNode, FilterMode } from '../../stores/tree'
@@ -29,12 +29,12 @@ const selectedNode = computed<FlatNode | null>(() => {
 })
 
 // 过滤选项
-const filterOptions = [
-  { label: 'All', value: 'all' },
-  { label: 'No Tools', value: 'no-tools' },
-  { label: 'User', value: 'user' },
-  { label: 'Labeled', value: 'labeled' },
-]
+const filterOptions = computed(() => [
+  { label: FILTER_LABELS_ZH.all, value: 'all' },
+  { label: FILTER_LABELS_ZH.noTools, value: 'no-tools' },
+  { label: FILTER_LABELS_ZH.user, value: 'user' },
+  { label: FILTER_LABELS_ZH.labeled, value: 'labeled' },
+])
 
 function handleFilterChange(val: string | number) {
   treeStore.setFilterMode(props.sessionId, val as FilterMode)
@@ -111,8 +111,9 @@ watch(() => props.sessionId, (newSid: string) => {
       <Select
         :model-value="sessionState.filterMode"
         :options="filterOptions"
-        placeholder="Filter"
+        placeholder="筛选"
         class="!h-6 !text-[10px] !w-[90px] !py-0"
+        item-class="!text-[10px]"
         @update:model-value="handleFilterChange"
       />
       <Button size="icon" variant="ghost" aria-label="Close" @click="handleClose">

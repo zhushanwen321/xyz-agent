@@ -26,6 +26,13 @@ function createGlobalHandlers() {
   function onTreeData(msg: ServerMessage) {
     const sid = getSid(msg)
     if (!sid) return
+    // 服务器返回的错误
+    const errMsg = msg.payload.error as string | undefined
+    if (errMsg) {
+      store.setError(sid, errMsg)
+      store.setLoading(sid, false)
+      return
+    }
     const tree = (msg.payload.tree as Array<import('../stores/tree').TreeNode>) ?? []
     const leafId = (msg.payload.leafId as string | null) ?? null
     const navigateCapable = (msg.payload.navigateCapable as boolean) ?? false
