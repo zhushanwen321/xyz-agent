@@ -89,7 +89,8 @@ export class TreeService {
 
     // no-op: navigate to current leaf
     const stateResp = await client.sendCommand('get_state') as PiMessage
-    const currentLeafId = (stateResp.data ?? stateResp.payload)?.leafId as string | undefined
+    const stateData = stateResp.data ?? stateResp.payload
+    const currentLeafId = stateData?.leafId as string | undefined
     if (currentLeafId === targetEntryId) {
       return { success: true, newLeafId: targetEntryId }
     }
@@ -98,39 +99,36 @@ export class TreeService {
       return { success: false, error: 'Navigate extension not available' }
     }
 
-    const session = this.sessions.get(sessionId)
-    if (!session) throw new Error(`Session ${sessionId} tree state not found`)
+    // 发送 navigate 命令。extension 不返回结果，prompt resolve 后检查 state
+    try {
+      await client.prompt(`/xyz-navigate ${targetEntryId}`)
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) }
+    }
 
-    return new Promise<NavigateResult>((resolve) => {
-      const timeout = setTimeout(() => {
-        session.interceptor.clearResolver()
-        resolve({ success: false, error: 'Navigate 超时' })
-      }, 5000)
+    // 检查 navigate 后的 leafId
+    const newStateResp = await client.sendCommand('get_state') as PiMessage
+    const newStateData = newStateResp.data ?? newStateResp.payload
+    const newLeafId = newStateData?.leafId as string | undefined
 
-      session.interceptor.setResolver((data: unknown) => {
-        clearTimeout(timeout)
-        const result = data as { cancelled?: boolean; newLeafId?: string; editorText?: string | null; error?: string }
-        if (result.cancelled) {
-          resolve({
-            success: false,
-            newLeafId: result.newLeafId,
-            error: result.error ?? 'Navigate failed or was cancelled',
-          })
-        } else {
-          resolve({
-            success: true,
-            newLeafId: result.newLeafId,
-            editorText: result.editorText ?? undefined,
-          })
-        }
-      })
+    if (!newLeafId || newLeafId === currentLeafId) {
+      return { success: false, error: 'Navigate executed but leaf did not change' }
+    }
 
-      client.prompt(`/xyz-navigate ${targetEntryId}`).catch((e) => {
-        clearTimeout(timeout)
-        session.interceptor.clearResolver()
-        resolve({ success: false, error: e instanceof Error ? e.message : String(e) })
-      })
-    })
+    // 获取 editorText：从树数据中找到新 leaf 的 entry text
+    let editorText: string | undefined
+    const sessionFile = newStateData?.sessionFile as string | undefined
+    if (sessionFile && newLeafId) {
+      try {
+        const { byId } = await buildTreeFromFile(sessionFile)
+        const node = byId.get(newLeafId)
+        if (node?.text) editorText = node.text
+      } catch {
+        // silent — editorText is optional
+      }
+    }
+
+    return { success: true, newLeafId, editorText }
   }
 
   /** Fork a new session from a specific entry. */

@@ -37,18 +37,8 @@ console.log('\nTC-3-01: Extension command registration')
   // Verify command handler uses navigateTree
   assert(extContent.includes('ctx.navigateTree'), 'Handler calls ctx.navigateTree')
 
-  // Verify result sending via sendMessage closure (captures pi.sendMessage)
-  assert(extContent.includes('sendMessage('), 'Handler uses sendMessage closure')
-
-  // Verify __xyz_type marker in payload
-  assert(extContent.includes('__xyz_type') && extContent.includes('navigate-result'), 'Payload has __xyz_type marker')
-
-  // Verify error handling with cancelled state
-  assert(extContent.includes('cancelled: true'), 'Error case sends cancelled: true')
-
-  // Verify successful result includes newLeafId and editorText
-  assert(extContent.includes('newLeafId'), 'Success payload includes newLeafId')
-  assert(extContent.includes('editorText'), 'Success payload includes editorText')
+  // Verify handler does NOT call pi.sendMessage (avoids chat bubble pollution)
+  assert(!/sendMessage\(\{/.test(extContent), 'No pi.sendMessage call (avoids chat bubble)')
 
   // Verify export structure: factory function, not object with onInit
   assert(extContent.includes('export default function'), 'Exports factory function')
