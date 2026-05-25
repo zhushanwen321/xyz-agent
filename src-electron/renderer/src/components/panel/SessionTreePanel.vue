@@ -178,22 +178,30 @@ watch(() => props.sessionId, (newSid: string) => {
 
     <!-- Action bar -->
     <div
-      v-if="selectedNode && !selectedNode.isLeaf && selectedNode.node.role === 'user'"
+      v-if="selectedNode"
       class="flex items-center gap-2 px-3.5 py-1.5 border-t border-solid border-[var(--border)] bg-[var(--surface)]"
     >
       <span class="text-[10px] text-[var(--muted)] flex-1">
-        {{ selectedNode.node.role === 'user' ? 'User message' : selectedNode.node.role === 'assistant' ? 'Assistant response' : 'Branch summary' }}
+        {{ selectedNode.node.role === 'user' ? 'User message' : selectedNode.node.role === 'assistant' ? 'Assistant response' : selectedNode.node.type }}
       </span>
-      <Button size="sm" variant="outline" :disabled="isOperating" @click="handleFork">
-        Fork from here
+      <Button
+        v-if="selectedNode.node.role === 'user'"
+        size="sm"
+        variant="outline"
+        :disabled="isOperating"
+        title="从该用户消息创建新 session"
+        @click="handleFork"
+      >
+        Fork
       </Button>
       <Button
-        v-if="sessionState.navigateCapable"
+        v-if="sessionState.navigateCapable && selectedNode.node.id !== sessionState.leafId"
         size="sm"
         :disabled="isOperating"
+        title="定位到该节点"
         @click="handleNavigate"
       >
-        Navigate here
+        Navigate
       </Button>
     </div>
   </div>
