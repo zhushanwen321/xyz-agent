@@ -220,27 +220,63 @@ export class SidecarServer implements IMessageBroker {
           return await this.sessionService.abort(msg.payload.sessionId as string)
         case 'session.tree-data': {
           const sid = msg.payload.sessionId as string
-          const treeData = await this.treeService.getTree(sid)
-          return this.send(ws, { type: 'session.tree-data', id: msg.id, payload: { ...treeData } })
+          try {
+            const treeData = await this.treeService.getTree(sid)
+            return this.send(ws, { type: 'session.tree-data', id: msg.id, payload: { ...treeData } })
+          } catch (e) {
+            if ((e instanceof Error && e.message.includes('not found')) || !this.sessionService.getSummary(sid)) {
+              // 会话未激活 — 尝试自动还原后再取 tree
+              try {
+                await this.sessionService.restoreSession(sid)
+                const treeData = await this.treeService.getTree(sid)
+                return this.send(ws, { type: 'session.tree-data', id: msg.id, payload: { ...treeData } })
+              } catch (restoreErr) {
+                console.error('[runtime] tree-data auto-restore failed:', restoreErr)
+                return this.send(ws, { type: 'session.tree-data', id: msg.id, payload: { sessionId: sid, tree: [], leafId: null, branchCount: 0, navigateCapable: false, error: 'Session not available' } })
+              }
+            }
+            throw e
+          }
         }
         case 'session.tree-navigate': {
           const sid = msg.payload.sessionId as string
           const targetEntryId = msg.payload.targetEntryId as string
-          const result = await this.treeService.navigateTree(sid, targetEntryId)
-          return this.send(ws, { type: 'session.tree-navigate-result', id: msg.id, payload: { sessionId: sid, ...result } })
+          try {
+            const result = await this.treeService.navigateTree(sid, targetEntryId)
+            return this.send(ws, { type: 'session.tree-navigate-result', id: msg.id, payload: { sessionId: sid, ...result } })
+          } catch (e) {
+            if (e instanceof Error && e.message.includes('not found')) {
+              return this.send(ws, { type: 'session.tree-navigate-result', id: msg.id, payload: { sessionId: sid, success: false, error: 'Session not active' } })
+            }
+            throw e
+          }
         }
         case 'session.tree-fork': {
           const sid = msg.payload.sessionId as string
           const entryId = msg.payload.entryId as string
-          const result = await this.treeService.forkFromEntry(sid, entryId)
-          if (result.success) {
-            this.broadcastSessionList()
+          try {
+            const result = await this.treeService.forkFromEntry(sid, entryId)
+            if (result.success) {
+              this.broadcastSessionList()
+            }
+            return this.send(ws, { type: 'session.tree-fork-result', id: msg.id, payload: { sessionId: sid, ...result } })
+          } catch (e) {
+            if (e instanceof Error && e.message.includes('not found')) {
+              return this.send(ws, { type: 'session.tree-fork-result', id: msg.id, payload: { sessionId: sid, success: false, error: 'Session not active' } })
+            }
+            throw e
           }
-          return this.send(ws, { type: 'session.tree-fork-result', id: msg.id, payload: { sessionId: sid, ...result } })
         }
         case 'session.tree-capability': {
           const sid = msg.payload.sessionId as string
-          return this.send(ws, { type: 'session.tree-capability', id: msg.id, payload: { sessionId: sid, navigateCapable: this.treeService.isNavigateCapable(sid) } })
+          try {
+            return this.send(ws, { type: 'session.tree-capability', id: msg.id, payload: { sessionId: sid, navigateCapable: this.treeService.isNavigateCapable(sid) } })
+          } catch (e) {
+            if (e instanceof Error && e.message.includes('not found')) {
+              return this.send(ws, { type: 'session.tree-capability', id: msg.id, payload: { sessionId: sid, navigateCapable: false } })
+            }
+            throw e
+          }
         }
         default:
           if (!await this.handleSettingsMessage(msg, ws)) {
