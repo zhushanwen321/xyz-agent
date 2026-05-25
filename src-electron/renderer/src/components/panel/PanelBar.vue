@@ -279,7 +279,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
   top: 100%;
   left: 0;
   right: 0;
-  height: 320px;
+  height: min(640px, calc(100vh - 44px));
   z-index: 50;
   background: var(--surface);
   border: 1px solid var(--border);

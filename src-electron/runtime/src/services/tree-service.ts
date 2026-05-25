@@ -6,10 +6,10 @@
  * coordination) from session lifecycle management.
  */
 
-import type { IProcessManager } from '../interfaces.js'
+import type { IProcessManager, IRpcClient } from '../interfaces.js'
 import type { PiMessage } from '../rpc-client.js'
 import type { TreeData, NavigateResult, ForkResult } from '../types.js'
-import { buildTreeFromFile, countBranches } from '../session-tree-reader.js'
+import { buildTreeFromFile, countBranches, extractFullText } from '../session-tree-reader.js'
 import { NavigateInterceptor } from '../navigate-interceptor.js'
 
 interface TreeManagedSession {
@@ -25,7 +25,6 @@ export class TreeService {
 
   /** Register a session's interceptor (called during session creation). */
   registerSession(sessionId: string, interceptor: NavigateInterceptor): void {
-    // Subscribe to pi events to detect message_end for navigate cleanup
     const client = this.pm.getClient(sessionId)
     let unsubPiEvents: (() => void) | null = null
     if (client) {
@@ -63,15 +62,20 @@ export class TreeService {
 
     const stateResp = await client.sendCommand('get_state') as PiMessage
     const stateData = stateResp.data ?? stateResp.payload
-    const leafId = (stateData?.leafId as string) ?? null
+    let leafId = (stateData?.leafId as string | null) ?? null
     const sessionFile = stateData?.sessionFile as string | undefined
 
     if (!sessionFile) {
       return { sessionId, tree: [], leafId, branchCount: 0, navigateCapable: this.navigateCapableMap.get(sessionId) ?? false }
     }
 
-    const { rootNodes } = await buildTreeFromFile(sessionFile)
+    const { rootNodes, lastEntryId } = await buildTreeFromFile(sessionFile)
     const branchCount = countBranches(rootNodes)
+
+    // pi 不暴露 leafId（get_state 不返回此字段），用 tree 最后一个 entry 近似
+    if (!leafId) {
+      leafId = lastEntryId
+    }
 
     return {
       sessionId,
@@ -87,48 +91,44 @@ export class TreeService {
     const client = this.pm.getClient(sessionId)
     if (!client) throw new Error(`Session ${sessionId} not found`)
 
-    // no-op: navigate to current leaf
-    const stateResp = await client.sendCommand('get_state') as PiMessage
-    const stateData = stateResp.data ?? stateResp.payload
-    const currentLeafId = stateData?.leafId as string | undefined
-    if (currentLeafId === targetEntryId) {
-      return { success: true, newLeafId: targetEntryId }
-    }
-
     if (!this.navigateCapableMap.get(sessionId)) {
       return { success: false, error: 'Navigate extension not available' }
     }
 
-    // 发送 navigate 命令。extension 不返回结果，prompt resolve 后检查 state
+    // 从 JSONL 读取目标 entry，提取完整 editorText + 验证 entry 存在
+    let editorText: string | undefined
+    try {
+      const sessionFile = await this.getSessionFile(client)
+      if (sessionFile) {
+        const { byId, rawEntries } = await buildTreeFromFile(sessionFile)
+        if (!byId.has(targetEntryId)) {
+          return { success: false, error: `Entry ${targetEntryId} not found in session tree` }
+        }
+        const targetNode = byId.get(targetEntryId)!
+        if (targetNode.role === 'user') {
+          const raw = rawEntries.get(targetEntryId)
+          if (raw) editorText = extractFullText(raw)
+        }
+      }
+    } catch {
+      // silent — editorText is optional, entry validation best-effort
+    }
+
+    // 发送 navigate 命令。prompt resolve 即视为成功（pi 内部已更新 leaf 和消息列表）
     try {
       await client.prompt(`/xyz-navigate ${targetEntryId}`)
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : String(e) }
     }
 
-    // 检查 navigate 后的 leafId
-    const newStateResp = await client.sendCommand('get_state') as PiMessage
-    const newStateData = newStateResp.data ?? newStateResp.payload
-    const newLeafId = newStateData?.leafId as string | undefined
+    return { success: true, editorText }
+  }
 
-    if (!newLeafId || newLeafId === currentLeafId) {
-      return { success: false, error: 'Navigate executed but leaf did not change' }
-    }
-
-    // 获取 editorText：从树数据中找到新 leaf 的 entry text
-    let editorText: string | undefined
-    const sessionFile = newStateData?.sessionFile as string | undefined
-    if (sessionFile && newLeafId) {
-      try {
-        const { byId } = await buildTreeFromFile(sessionFile)
-        const node = byId.get(newLeafId)
-        if (node?.text) editorText = node.text
-      } catch {
-        // silent — editorText is optional
-      }
-    }
-
-    return { success: true, newLeafId, editorText }
+  /** Get session file path from pi's get_state. */
+  private async getSessionFile(client: IRpcClient): Promise<string | undefined> {
+    const stateResp = await client.sendCommand('get_state') as PiMessage
+    const stateData = stateResp.data ?? stateResp.payload
+    return stateData?.sessionFile as string | undefined
   }
 
   /** Fork a new session from a specific entry. */

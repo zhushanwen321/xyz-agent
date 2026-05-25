@@ -25,15 +25,6 @@ export interface TreeNode {
   children: TreeNode[]
 }
 
-/** 扁平化后的渲染节点 */
-export interface FlatNode {
-  node: TreeNode
-  depth: number
-  onPath: boolean
-  isLeaf: boolean
-  hasSiblings: boolean
-}
-
 export type FilterMode = 'all' | 'no-tools'
 
 /** 每个 session 的树状态分区 */
@@ -47,6 +38,30 @@ export interface TreeSessionState {
   isOpen: boolean
   isLoading: boolean
   error: string | null
+}
+
+// ── 归组后的展示节点 ──────────────────────────────────────────
+
+/** 当前活跃路径上的展示节点 */
+export interface PathNode {
+  /** 代表 entry 的 id（用于 navigate/fork） */
+  entryId: string
+  /** 显示角色 */
+  role: 'user' | 'assistant'
+  /** 显示文本（已截断） */
+  text: string
+  /** 此节点之后的分支 tabs（如果有分叉） */
+  branchTabs?: BranchTab[]
+}
+
+/** 分支 tab */
+export interface BranchTab {
+  /** 分支标签（第一个 user message 截断 或 assistant 摘要） */
+  label: string
+  /** navigate 到该分支时的 target entryId */
+  targetId: string
+  /** 是否是当前活跃分支 */
+  isActive: boolean
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -65,33 +80,195 @@ function createSessionState(): TreeSessionState {
   }
 }
 
-/**
- * 从 leaf 到 root 收集活跃路径上所有节点 id
- * 递归遍历树，构建 parentId → children 的映射以加速查找
- */
-function buildPathToRoot(tree: TreeNode[], leafId: string | null): Set<string> {
-  if (!leafId) return new Set()
+/** 首行截断 */
+function truncateFirst(text: string, max: number): string {
+  if (!text) return ''
+  const first = text.split('\n')[0] ?? ''
+  return first.length > max ? first.slice(0, max) + '...' : first
+}
 
-  // 扁平化所有节点，建立 id → parentId 映射
+// ── Active Path 构建 ────────────────────────────────────────────
+
+/**
+ * 从原始 tree + leafId 构建当前活跃路径的展示节点列表。
+ *
+ * 归组规则：
+ * - user 节点直接显示
+ * - assistant + 后续 toolResult + toolCall-only assistant 归为一组，
+ *   只显示最终有 text 的 assistant
+ * - toolResult 永远不显示
+ * - 非 message 节点（compaction 等）跳过
+ *
+ * 分支规则：
+ * - 节点有多个 "有意义的子节点"（user 或 assistant）时生成分支 tab
+ * - 每个 tab 标签取分支中第一个 user message 的截断文本
+ */
+function buildActivePath(tree: TreeNode[], leafId: string | null): PathNode[] {
+  if (!leafId || tree.length === 0) return []
+
+  // 构建 id → node map 和 id → parentId map
+  const byId = new Map<string, TreeNode>()
   const parentMap = new Map<string, string | null>()
   const visited = new Set<string>()
   function walk(nodes: TreeNode[]) {
     for (const n of nodes) {
-      if (visited.has(n.id)) continue  // 防环引用
+      if (visited.has(n.id)) continue
       visited.add(n.id)
+      byId.set(n.id, n)
       parentMap.set(n.id, n.parentId)
       if (n.children.length > 0) walk(n.children)
     }
   }
   walk(tree)
 
-  const path = new Set<string>()
-  let cur: string | null | undefined = leafId
-  while (cur && !path.has(cur)) {
-    path.add(cur)
-    cur = parentMap.get(cur)
+  // 从 leaf 到 root 收集路径 id（逆序），然后反转
+  const pathIds: string[] = []
+  const pathIdSet = new Set<string>()
+  let cur: string | null = leafId
+  while (cur && !pathIdSet.has(cur)) {
+    pathIdSet.add(cur)
+    pathIds.push(cur)
+    cur = parentMap.get(cur) ?? null
   }
-  return path
+  pathIds.reverse()
+
+  // 遍历路径，构建 PathNode[]
+  const result: PathNode[] = []
+  let i = 0
+
+  while (i < pathIds.length) {
+    const node = byId.get(pathIds[i]!)
+    if (!node) { i++; continue }
+
+    // 跳过非 message 节点
+    if (node.type !== 'message') { i++; continue }
+
+    // 跳过 toolResult
+    if (node.role === 'toolResult') { i++; continue }
+
+    if (node.role === 'user') {
+      const pathNode: PathNode = {
+        entryId: node.id,
+        role: 'user',
+        text: truncateFirst(node.text || '', 70),
+      }
+
+      // 分支检查
+      const tabs = buildBranchTabs(node, leafId, parentMap)
+      if (tabs && tabs.length > 1) {
+        pathNode.branchTabs = tabs
+      }
+
+      result.push(pathNode)
+      i++
+    } else if (node.role === 'assistant') {
+      // 归组：沿路径向下找最终有 text 的 assistant
+      let displayText = node.text
+      let representativeId = node.id
+      let lastAssistantIdx = i
+
+      let j = i + 1
+      while (j < pathIds.length) {
+        const nextNode = byId.get(pathIds[j]!)
+        if (!nextNode) break
+        if (nextNode.type !== 'message') { j++; continue }
+        if (nextNode.role === 'toolResult') { j++; continue }
+        if (nextNode.role === 'assistant') {
+          if (nextNode.text) {
+            displayText = nextNode.text
+            representativeId = nextNode.id
+          }
+          lastAssistantIdx = j
+          j++
+          continue
+        }
+        // 遇到 user 或其他角色，停止归组
+        break
+      }
+
+      const pathNode: PathNode = {
+        entryId: representativeId,
+        role: 'assistant',
+        text: displayText ? truncateFirst(displayText, 70) : '...',
+      }
+
+      // 分支检查在链的最后一个 assistant
+      const lastAssistant = byId.get(pathIds[lastAssistantIdx]!)
+      if (lastAssistant) {
+        const tabs = buildBranchTabs(lastAssistant, leafId, parentMap)
+        if (tabs && tabs.length > 1) {
+          pathNode.branchTabs = tabs
+        }
+      }
+
+      result.push(pathNode)
+      i = j // 跳过归组内的所有节点
+    } else {
+      // 未知 role 的 message 节点（如 system），跳过
+      i++
+    }
+  }
+
+  return result
+}
+
+/** 构建分支 tabs（检查节点是否有多个有意义的子节点） */
+function buildBranchTabs(
+  node: TreeNode,
+  leafId: string,
+  parentMap: Map<string, string | null>,
+): BranchTab[] | null {
+  const meaningfulChildren = node.children.filter(
+    c => c.type === 'message' && c.role !== 'toolResult',
+  )
+  if (meaningfulChildren.length <= 1) return null
+
+  return meaningfulChildren.map(child => ({
+    label: getBranchLabel(child),
+    targetId: getFirstNavigableId(child),
+    isActive: isAncestorOf(child.id, leafId, parentMap),
+  }))
+}
+
+/** 分支标签：找分支中第一个 user message 的截断文本 */
+function getBranchLabel(node: TreeNode): string {
+  if (node.role === 'user' && node.text) {
+    return truncateFirst(node.text, 20)
+  }
+  if (node.role === 'assistant' && node.text) {
+    return truncateFirst(node.text, 20)
+  }
+  // 递归找子节点
+  for (const child of node.children) {
+    if (child.type === 'message') {
+      const label = getBranchLabel(child)
+      if (label !== '...') return label
+    }
+  }
+  return '...'
+}
+
+/** 找到分支中第一个可 navigate 的 entry id */
+function getFirstNavigableId(node: TreeNode): string {
+  if (node.role === 'user' || node.role === 'assistant') return node.id
+  for (const child of node.children) {
+    return getFirstNavigableId(child)
+  }
+  return node.id
+}
+
+/** 检查 nodeId 是否是 descendantId 的祖先（或自身） */
+function isAncestorOf(
+  nodeId: string,
+  descendantId: string,
+  parentMap: Map<string, string | null>,
+): boolean {
+  let cur: string | null = descendantId
+  while (cur) {
+    if (cur === nodeId) return true
+    cur = parentMap.get(cur) ?? null
+  }
+  return false
 }
 
 /** 计算分支数：有多于 1 个 children 的节点数 */
@@ -108,71 +285,6 @@ function countBranches(nodes: TreeNode[]): number {
   }
   walk(nodes)
   return count
-}
-
-/** 根据过滤模式决定节点是否可见 */
-function shouldShow(node: TreeNode, mode: FilterMode): boolean {
-  switch (mode) {
-    case 'all': return true
-    case 'no-tools': return node.type !== 'tool'
-  }
-}
-
-/**
- * 将树形结构扁平化为 FlatNode[]。
- *
- * 算法：
- * - 线性链（0-1 个 children）→ 同一 depth 追加，不增加缩进
- * - 分支点（>1 个 children）→ 父节点追加后，每个 child 以 depth+1 递归
- */
-function flattenTree(
-  nodes: TreeNode[],
-  leafId: string | null,
-  pathSet: Set<string>,
-  mode: FilterMode,
-): FlatNode[] {
-  const result: FlatNode[] = []
-  const visited = new Set<string>()
-
-  function walk(list: TreeNode[], depth: number) {
-    for (const node of list) {
-      if (visited.has(node.id)) continue
-      visited.add(node.id)
-      if (!shouldShow(node, mode)) {
-        // 被过滤掉的节点，其 children 仍需遍历
-        if (node.children.length > 0) {
-          if (node.children.length > 1) {
-            walk(node.children, depth + 1)
-          } else {
-            walk(node.children, depth)
-          }
-        }
-        continue
-      }
-
-      const isLeaf = node.id === leafId
-      const hasSiblings = list.length > 1
-
-      result.push({
-        node,
-        depth,
-        onPath: pathSet.has(node.id),
-        isLeaf,
-        hasSiblings,
-      })
-
-      if (node.children.length > 1) {
-        // 分支：子节点缩进
-        walk(node.children, depth + 1)
-      } else if (node.children.length === 1) {
-        // 线性：同层级继续
-        walk(node.children, depth)
-      }
-    }
-  }
-
-  walk(nodes, 0)
-  return result
 }
 
 // ── Store ──────────────────────────────────────────────────────────
@@ -240,13 +352,12 @@ export const useTreeStore = defineStore('tree', () => {
     getSessionState(sid).isLoading = loading
   }
 
-  // ── 计算属性：扁平化节点列表 ────────────────────────────────
+  // ── 计算属性：活跃路径的展示节点列表 ────────────────────────
 
-  function getFlatNodes(sid: string): FlatNode[] {
+  function getActivePath(sid: string): PathNode[] {
     const s = getSessionState(sid)
     if (s.tree.length === 0) return []
-    const pathSet = buildPathToRoot(s.tree, s.leafId)
-    return flattenTree(s.tree, s.leafId, pathSet, s.filterMode)
+    return buildActivePath(s.tree, s.leafId)
   }
 
   return {
@@ -269,6 +380,6 @@ export const useTreeStore = defineStore('tree', () => {
     setLoading,
 
     // 计算属性
-    getFlatNodes,
+    getActivePath,
   }
 })

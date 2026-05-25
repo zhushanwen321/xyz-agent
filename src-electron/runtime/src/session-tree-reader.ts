@@ -55,6 +55,10 @@ interface BuildTreeResult {
   byId: Map<string, TreeNode>
   rootNodes: TreeNode[]
   labelsById: Map<string, string>
+  /** 最后一条 entry 的 id（近似 leafId，pi 不暴露真实 leafId 时使用） */
+  lastEntryId: string | null
+  /** 原始 JSONL entry map（用于提取完整文本等场景，TreeNode.text 是截断预览） */
+  rawEntries: Map<string, RawEntry>
 }
 
 // ── Constants ──────────────────────────────────────────────────────
@@ -104,8 +108,10 @@ export async function buildTreeFromFile(filePath: string): Promise<BuildTreeResu
     entries.push(entry)
   }
 
-  // Build TreeNode for each entry
+  // Build TreeNode for each entry + 保留原始 entry map（用于提取完整文本）
+  const rawEntries = new Map<string, RawEntry>()
   for (const entry of entries) {
+    rawEntries.set(entry.id, entry)
     const node: TreeNode = {
       id: entry.id,
       parentId: entry.parentId ?? null,
@@ -129,6 +135,9 @@ export async function buildTreeFromFile(filePath: string): Promise<BuildTreeResu
     byId.set(entry.id, node)
   }
 
+  // 最后一条 entry 的 id（pi 的 _buildIndex 用同样的逻辑恢复 leafId）
+  const lastEntryId = entries.length > 0 ? entries[entries.length - 1].id : null
+
   // Build parent-child relationships and identify roots
   const rootNodes: TreeNode[] = []
 
@@ -149,7 +158,7 @@ export async function buildTreeFromFile(filePath: string): Promise<BuildTreeResu
   // Sort children by timestamp (oldest first)
   sortChildrenRecursive(rootNodes)
 
-  return { byId, rootNodes, labelsById }
+  return { byId, rootNodes, labelsById, lastEntryId, rawEntries }
 }
 
 /**
@@ -173,6 +182,21 @@ export function computeActivePath(byId: Map<string, TreeNode>, leafId: string): 
   }
 
   return path
+}
+
+/**
+ * 从原始 entry 中提取完整的用户消息文本（不截断）。
+ * 用于 navigate 到 user message 时预填编辑器。
+ */
+export function extractFullText(entry: RawEntry): string | undefined {
+  if (entry.type !== 'message' || !entry.message?.content) return undefined
+  const content = entry.message.content
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return undefined
+  return content
+    .filter((b): b is TextBlock => typeof b === 'object' && b !== null && b.type === 'text' && 'text' in b)
+    .map(b => b.text)
+    .join('\n') || undefined
 }
 
 /**

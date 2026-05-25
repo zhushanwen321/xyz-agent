@@ -49,8 +49,10 @@ function createGlobalHandlers() {
       store.setError(sid, errMsg)
       return
     }
-    // Navigate 成功：清除错误 + 刷新消息历史 + tree 数据
+    // Navigate 成功：清除错误 + 关闭面板 + 刷新消息历史 + tree 数据
     store.clearError(sid)
+    store.setPanelOpen(sid, false)
+    store.selectNode(sid, null)
     send({ type: 'session.history', payload: { sessionId: sid } })
     send({ type: 'session.tree-data', payload: { sessionId: sid } })
     // 预填 editorText（navigate 到 user message 时的原始文本）
