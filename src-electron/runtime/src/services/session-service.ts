@@ -50,7 +50,9 @@ export class SessionService implements ISessionService {
     private projectRoot: string,
     readonly treeService: TreeService,
   ) {
-    this.extensionPath = resolve(this.projectRoot, 'xyz-agent-extension.js')
+    // extension 在 repo root（src-electron/ 的父目录），不在 projectRoot（可能是 src-electron/）
+    const repoRoot = resolve(this.projectRoot, '..')
+    this.extensionPath = resolve(repoRoot, 'xyz-agent-extension.js')
     // 进程崩溃时清理对应 session
     this.pm.onSessionExit((sessionId, code) => {
       const session = this.sessions.get(sessionId)
