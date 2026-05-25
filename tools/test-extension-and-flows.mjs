@@ -29,7 +29,7 @@ console.log('\nTC-3-01: Extension command registration')
   const fs = await import('fs')
   const extContent = fs.readFileSync(new URL('../xyz-agent-extension.js', import.meta.url), 'utf-8')
 
-  // Extension uses onInit(pi) { pi.registerCommand("xyz-navigate", {...}) } pattern
+  // Extension uses factory function pattern: export default function(pi) { pi.registerCommand(...) }
   assert(extContent.includes('registerCommand'), 'Extension calls registerCommand')
   assert(extContent.includes('xyz-navigate'), 'Command name is xyz-navigate')
   assert(extContent.includes('description:'), 'Has description field')
@@ -37,8 +37,8 @@ console.log('\nTC-3-01: Extension command registration')
   // Verify command handler uses navigateTree
   assert(extContent.includes('ctx.navigateTree'), 'Handler calls ctx.navigateTree')
 
-  // Verify result sending via sendMessage
-  assert(extContent.includes('ctx.sendMessage'), 'Handler sends result via ctx.sendMessage')
+  // Verify result sending via sendMessage closure (captures pi.sendMessage)
+  assert(extContent.includes('sendMessage('), 'Handler uses sendMessage closure')
 
   // Verify __xyz_type marker in payload
   assert(extContent.includes('__xyz_type') && extContent.includes('navigate-result'), 'Payload has __xyz_type marker')
@@ -50,9 +50,8 @@ console.log('\nTC-3-01: Extension command registration')
   assert(extContent.includes('newLeafId'), 'Success payload includes newLeafId')
   assert(extContent.includes('editorText'), 'Success payload includes editorText')
 
-  // Verify export structure
-  assert(extContent.includes('export default'), 'Uses export default')
-  assert(extContent.includes('onInit'), 'Has onInit method for pi extension lifecycle')
+  // Verify export structure: factory function, not object with onInit
+  assert(extContent.includes('export default function'), 'Exports factory function')
 }
 
 // ══════════════════════════════════════════════════════════════════

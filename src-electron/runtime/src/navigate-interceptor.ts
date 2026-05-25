@@ -2,9 +2,11 @@
  * NavigateInterceptor — decorates a WsSender to intercept navigate-result
  * messages from pi extension's sendMessage() output.
  *
- * The pi extension sends navigate results as JSON embedded in text_delta events.
- * This interceptor detects the __xyz_type marker, buffers across chunks,
- * and resolves the caller's Promise instead of forwarding to the UI.
+ * The pi extension sends navigate results as custom messages via
+ * `pi.sendMessage({ customType: "xyz-navigate-result", content: "..." })`.
+ * Pi emits message_start with the custom message data, EventAdapter forwards
+ * it as `message.message_start` with `customType`, and this interceptor
+ * detects it and resolves the caller's Promise instead of forwarding to the UI.
  *
  * EventAdapter stays pure (event translation only).
  * NavigateInterceptor handles the navigate-specific stream interception.
@@ -14,74 +16,57 @@ import type { ServerMessage } from '@xyz-agent/shared'
 
 export type WsSender = (msg: ServerMessage) => void
 
+const NAVIGATE_CUSTOM_TYPE = 'xyz-navigate-result'
+
 export class NavigateInterceptor {
   private resolveFn: ((data: unknown) => void) | null = null
-  private buffer = ''
-  private streaming = false
-  private cancelled = false
+  private pending = false
 
   constructor(private readonly downstream: WsSender) {}
 
   /** Set the resolver for the next navigate operation. */
   setResolver(fn: (data: unknown) => void): void {
     this.resolveFn = fn
-    this.buffer = ''
-    this.streaming = false
+    this.pending = false
   }
 
   /** Clear the resolver without resolving (used by timeout). */
   clearResolver(): void {
     this.resolveFn = null
-    this.buffer = ''
-    this.streaming = false
-    this.cancelled = true
+    this.pending = false
   }
 
   /**
    * Called when the pi message turn ends (message_end).
-   * If a navigate stream was in progress but not completed, resolve as cancelled.
+   * If a navigate resolver is pending, resolve as cancelled.
    */
   onMessageEnd(): void {
-    if (this.resolveFn && this.streaming) {
+    if (this.resolveFn) {
       const resolver = this.resolveFn
       this.resolveFn = null
-      this.buffer = ''
-      this.streaming = false
+      this.pending = false
       resolver({ cancelled: true })
     }
-    // 流结束后重置 cancelled 标志，后续消息正常转发
-    this.cancelled = false
   }
 
   /** The decorated sender — pass this to EventAdapter instead of the raw WsSender. */
   readonly send: WsSender = (msg: ServerMessage) => {
-    // 超时/取消后吞掉后续 delta，避免 JSON 碎片泄露给 UI
-    if (this.cancelled && msg.type === 'message.text_delta') {
-      return
-    }
-
-    if (this.resolveFn && msg.type === 'message.text_delta') {
-      const delta = (msg.payload as { delta?: string }).delta ?? ''
-
-      if (!this.streaming && /"__xyz_type"\s*:\s*"navigate-result"/.test(delta)) {
-        this.streaming = true
-        this.buffer = delta
-      } else if (this.streaming) {
-        this.buffer += delta
-      }
-
-      if (this.streaming) {
+    // Detect navigate result from custom message
+    if (this.resolveFn && msg.type === 'message.message_start') {
+      const payload = msg.payload as Record<string, unknown>
+      if (payload.customType === NAVIGATE_CUSTOM_TYPE) {
+        this.pending = true
         try {
-          const parsed = JSON.parse(this.buffer) as Record<string, unknown>
+          const content = payload.content as string
+          const parsed = JSON.parse(content) as Record<string, unknown>
           const resolver = this.resolveFn
           this.resolveFn = null
-          this.buffer = ''
-          this.streaming = false
+          this.pending = false
           resolver(parsed)
           return // intercepted — don't forward to UI
         } catch {
-          // JSON incomplete, wait for more deltas
-          return
+          // JSON parse error — rare, forward to UI and let timeout handle it
+          this.pending = false
         }
       }
     }

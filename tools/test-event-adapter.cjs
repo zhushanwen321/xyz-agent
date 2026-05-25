@@ -1,201 +1,238 @@
 /**
- * Integration test: NavigateInterceptor
+ * Integration test: NavigateInterceptor (message_start-based interception)
  *
- * Tests the cross-chunk buffering and JSON parsing of navigate-result
- * messages within the NavigateInterceptor's WsSender decoration.
+ * Tests that the NavigateInterceptor correctly detects navigate results
+ * from custom message_start events (via pi.sendMessage) and resolves
+ * the pending navigate promise.
  *
  * Run: node tools/test-event-adapter.cjs
  */
 
-// This is a self-contained test that mirrors the EventAdapter's navigate
-// interception logic and verifies it handles single-delta, multi-delta,
-// and edge cases correctly.
-
-const fs = require('fs')
-const path = require('path')
+// Simulate NavigateInterceptor logic
+const NAVIGATE_CUSTOM_TYPE = 'xyz-navigate-result'
 
 let passed = 0
 let failed = 0
 
 function assert(condition, msg) {
   if (condition) {
-    console.log(`  ✓ ${msg}`)
     passed++
+    console.log(`  PASS: ${msg}`)
   } else {
-    console.log(`  ✗ ${msg}`)
     failed++
+    console.error(`  FAIL: ${msg}`)
   }
 }
 
-/**
- * Simulates the EventAdapter's navigate interception logic.
- * Extracted from event-adapter.ts for isolated testing.
- */
-function simulateNavigateInterception(deltas, hasResolver = true) {
-  let navigateResolve = hasResolver ? (data) => { capturedResult = data } : null
-  let navigateBuffer = ''
-  let isNavigateStream = false
-  let capturedResult = null
-  const forwardedDeltas = []
+function summary() {
+  console.log(`\n═══ Summary: ${passed} passed, ${failed} failed ═══`)
+  process.exit(failed > 0 ? 1 : 0)
+}
 
-  for (const delta of deltas) {
-    // Simulate text_delta handling
-    if (navigateResolve) {
-      if (!isNavigateStream && /"__xyz_type"\s*:\s*"navigate-result"/.test(delta)) {
-        isNavigateStream = true
-        navigateBuffer = delta
-      } else if (isNavigateStream) {
-        navigateBuffer += delta
-      }
+// ── Simulated NavigateInterceptor ──────────────────────────────────
 
-      if (isNavigateStream) {
+class MockInterceptor {
+  constructor() {
+    this.resolveFn = null
+    this.pending = false
+    this.intercepted = []
+    this.forwarded = []
+  }
+
+  setResolver(fn) {
+    this.resolveFn = fn
+    this.pending = false
+  }
+
+  clearResolver() {
+    this.resolveFn = null
+    this.pending = false
+  }
+
+  onMessageEnd() {
+    if (this.resolveFn) {
+      const resolver = this.resolveFn
+      this.resolveFn = null
+      this.pending = false
+      resolver({ cancelled: true })
+    }
+  }
+
+  send(msg) {
+    if (this.resolveFn && msg.type === 'message.message_start') {
+      if (msg.payload?.customType === NAVIGATE_CUSTOM_TYPE) {
+        this.pending = true
         try {
-          const parsed = JSON.parse(navigateBuffer)
-          navigateResolve(parsed)
-          navigateResolve = null
-          navigateBuffer = ''
-          isNavigateStream = false
-          continue // don't forward
+          const parsed = JSON.parse(msg.payload.content)
+          const resolver = this.resolveFn
+          this.resolveFn = null
+          this.pending = false
+          this.intercepted.push(parsed)
+          resolver(parsed)
+          return // intercepted
         } catch {
-          // JSON incomplete, wait for more
-          continue // don't forward
+          this.pending = false
         }
       }
     }
-
-    forwardedDeltas.push(delta)
+    this.forwarded.push(msg)
   }
-
-  // Simulate message_end cleanup
-  isNavigateStream = false
-  navigateBuffer = ''
-
-  return { capturedResult, forwardedDeltas }
 }
 
-// ══════════════════════════════════════════════════════════════════
-// Test: Single-delta navigate-result (happy path)
-// ══════════════════════════════════════════════════════════════════
-console.log('\nTest: Single-delta navigate-result')
+// ── Test 1: Single message_start with navigate result ──────────────
+
+console.log('\n[Test 1] Single message_start with navigate result')
 
 {
-  const payload = JSON.stringify({
-    __xyz_type: 'navigate-result',
-    success: true,
-    newLeafId: 'entry-abc123',
-    editorText: 'Hello world',
+  const it = new MockInterceptor()
+  const results = []
+
+  it.setResolver((data) => results.push(data))
+  it.send({
+    type: 'message.message_start',
+    payload: {
+      sessionId: 'test-1',
+      customType: 'xyz-navigate-result',
+      content: JSON.stringify({
+        __xyz_type: 'navigate-result',
+        cancelled: false,
+        newLeafId: 'entry-42',
+        editorText: 'hello world',
+      }),
+    },
   })
 
-  const { capturedResult, forwardedDeltas } = simulateNavigateInterception([payload])
-
-  assert(capturedResult !== null, 'Result captured')
-  assert(capturedResult.__xyz_type === 'navigate-result', 'Has correct __xyz_type')
-  assert(capturedResult.success === true, 'success === true')
-  assert(capturedResult.newLeafId === 'entry-abc123', 'newLeafId correct')
-  assert(capturedResult.editorText === 'Hello world', 'editorText correct')
-  assert(forwardedDeltas.length === 0, 'No deltas forwarded to chat')
+  assert(results.length === 1, 'resolver called once')
+  assert(results[0].cancelled === false, 'cancelled = false')
+  assert(results[0].newLeafId === 'entry-42', 'newLeafId = entry-42')
+  assert(results[0].editorText === 'hello world', 'editorText = hello world')
+  assert(it.intercepted.length === 1, 'message was intercepted (not forwarded)')
+  assert(it.forwarded.length === 0, 'no messages forwarded to downstream')
 }
 
-// ══════════════════════════════════════════════════════════════════
-// Test: Multi-delta navigate-result (split across 3 chunks)
-// ══════════════════════════════════════════════════════════════════
-console.log('\nTest: Multi-delta navigate-result (3 chunks)')
+// ── Test 2: Cancelled navigate ─────────────────────────────────────
+
+console.log('\n[Test 2] Cancelled navigate')
 
 {
-  const fullJson = '{"__xyz_type":"navigate-result","success":true,"newLeafId":"entry-xyz","editorText":null}'
-  // First chunk must contain the full marker for startsWith to work
-  const chunk1 = fullJson.slice(0, 45) // includes full marker + part of payload
-  const chunk2 = fullJson.slice(45, 70)
-  const chunk3 = fullJson.slice(70)
+  const it = new MockInterceptor()
+  const results = []
 
-  const { capturedResult, forwardedDeltas } = simulateNavigateInterception([chunk1, chunk2, chunk3])
-
-  assert(capturedResult !== null, 'Result captured from 3 chunks')
-  assert(capturedResult.success === true, 'success === true')
-  assert(capturedResult.newLeafId === 'entry-xyz', 'newLeafId correct')
-  assert(forwardedDeltas.length === 0, 'No deltas forwarded during accumulation')
-}
-
-// ══════════════════════════════════════════════════════════════════
-// Test: Normal text_delta not intercepted (no navigate marker)
-// ══════════════════════════════════════════════════════════════════
-console.log('\nTest: Normal text_delta passes through')
-
-{
-  const { capturedResult, forwardedDeltas } = simulateNavigateInterception([
-    'Hello, ',
-    'how can I ',
-    'help you?',
-  ])
-
-  assert(capturedResult === null, 'No navigate result captured')
-  assert(forwardedDeltas.length === 3, 'All 3 deltas forwarded')
-  assert(forwardedDeltas.join('') === 'Hello, how can I help you?', 'Content preserved')
-}
-
-// ══════════════════════════════════════════════════════════════════
-// Test: No resolver set — navigate-result treated as normal text
-// ══════════════════════════════════════════════════════════════════
-console.log('\nTest: No resolver — navigate-result forwarded as text')
-
-{
-  const payload = JSON.stringify({
-    __xyz_type: 'navigate-result',
-    success: false,
-    error: 'Navigate failed',
+  it.setResolver((data) => results.push(data))
+  it.send({
+    type: 'message.message_start',
+    payload: {
+      sessionId: 'test-2',
+      customType: 'xyz-navigate-result',
+      content: JSON.stringify({
+        __xyz_type: 'navigate-result',
+        cancelled: true,
+        newLeafId: null,
+        editorText: null,
+      }),
+    },
   })
 
-  const { capturedResult, forwardedDeltas } = simulateNavigateInterception([payload], false)
-
-  assert(capturedResult === null, 'Nothing captured (no resolver)')
-  assert(forwardedDeltas.length === 1, 'Delta forwarded as normal text')
+  assert(results.length === 1, 'resolver called once')
+  assert(results[0].cancelled === true, 'cancelled = true')
+  assert(it.intercepted.length === 1, 'message intercepted')
 }
 
-// ══════════════════════════════════════════════════════════════════
-// Test: Navigate-result followed by normal text in same message
-// ══════════════════════════════════════════════════════════════════
-console.log('\nTest: Navigate-result then normal text')
+// ── Test 3: Normal messages pass through uninterrupted ─────────────
+
+console.log('\n[Test 3] Normal messages pass through')
 
 {
-  const navPayload = JSON.stringify({
-    __xyz_type: 'navigate-result',
-    success: true,
-    newLeafId: 'entry-1',
-    editorText: null,
-  })
+  const it = new MockInterceptor()
+  it.setResolver(() => {}) // resolver set but no navigate result
 
-  const { capturedResult, forwardedDeltas } = simulateNavigateInterception([
-    navPayload,
-    'Some normal text after',
-    'more text',
-  ])
+  it.send({ type: 'message.text_delta', payload: { delta: 'Hello' } })
+  it.send({ type: 'message.message_start', payload: { sessionId: 's1' } })
+  it.send({ type: 'message.complete', payload: { sessionId: 's1' } })
 
-  assert(capturedResult !== null, 'Navigate result captured')
-  assert(capturedResult.success === true, 'Navigate success')
-  assert(forwardedDeltas.length === 2, 'Normal text forwarded after navigate')
-  assert(forwardedDeltas.join('') === 'Some normal text aftermore text', 'Normal text preserved')
+  assert(it.forwarded.length === 3, '3 messages forwarded')
+  assert(it.intercepted.length === 0, '0 messages intercepted')
 }
 
-// ══════════════════════════════════════════════════════════════════
-// Test: Cancelled navigate (extension error)
-// ══════════════════════════════════════════════════════════════════
-console.log('\nTest: Cancelled navigate result')
+// ── Test 4: message_start without customType passes through ────────
+
+console.log('\n[Test 4] message_start without customType passes through')
 
 {
-  const payload = JSON.stringify({
-    __xyz_type: 'navigate-result',
-    cancelled: true,
-    newLeafId: 'entry-original',
-    editorText: null,
+  const it = new MockInterceptor()
+  it.setResolver(() => {})
+
+  it.send({
+    type: 'message.message_start',
+    payload: { sessionId: 's1' }, // no customType
   })
 
-  const { capturedResult, forwardedDeltas } = simulateNavigateInterception([payload])
-
-  assert(capturedResult !== null, 'Result captured')
-  assert(capturedResult.cancelled === true, 'cancelled === true')
-  assert(forwardedDeltas.length === 0, 'Not forwarded to chat')
+  assert(it.forwarded.length === 1, 'message_start forwarded')
+  assert(it.intercepted.length === 0, 'not intercepted')
 }
 
-// ── Summary ──
-console.log(`\n═══ Summary: ${passed} passed, ${failed} failed ═══`)
-process.exit(failed > 0 ? 1 : 0)
+// ── Test 5: message_end cancels pending navigate ───────────────────
+
+console.log('\n[Test 5] onMessageEnd cancels pending navigate')
+
+{
+  // Resolver set but NO navigate result arrives before message_end
+  const it = new MockInterceptor()
+  const results = []
+
+  it.setResolver((data) => results.push(data))
+  it.send({ type: 'message.text_delta', payload: { delta: 'normal text' } })
+  // Simulate end of turn without navigate result
+  it.onMessageEnd()
+
+  assert(results.length === 1, 'resolver called on message_end')
+  assert(results[0].cancelled === true, 'cancelled = true from message_end')
+}
+
+// ── Test 6: Clear resolver (timeout) ──────────────────────────────
+
+console.log('\n[Test 6] clearResolver cancels pending')
+
+{
+  const it = new MockInterceptor()
+  let called = false
+
+  it.setResolver(() => { called = true })
+  it.clearResolver()
+
+  it.send({
+    type: 'message.message_start',
+    payload: {
+      customType: 'xyz-navigate-result',
+      content: JSON.stringify({ cancelled: false }),
+    },
+  })
+
+  assert(called === false, 'resolver not called after clear')
+  assert(it.forwarded.length === 1, 'message forwarded after clear')
+}
+
+// ── Test 7: Error in JSON content ──────────────────────────────────
+
+console.log('\n[Test 7] Unparseable JSON content')
+
+{
+  const it = new MockInterceptor()
+  let resolved = false
+
+  it.setResolver(() => { resolved = true })
+  it.send({
+    type: 'message.message_start',
+    payload: {
+      customType: 'xyz-navigate-result',
+      content: 'not-json{{{',
+    },
+  })
+
+  assert(resolved === false, 'resolver NOT called for bad JSON')
+  assert(it.forwarded.length === 1, 'bad message forwarded to UI')
+}
+
+// ── Done ───────────────────────────────────────────────────────────
+
+summary()

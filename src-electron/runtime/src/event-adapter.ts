@@ -224,11 +224,20 @@ export class EventAdapter {
         }
 
       // ── Lifecycle events ────────────────────────────────────────
-      case 'message_start':
+      case 'message_start': {
+        const msg = event.message as Record<string, unknown> | undefined
+        // custom message（来自 pi.sendMessage）包含 customType/content，转发给 interceptor
+        if (msg?.customType) {
+          return {
+            type: 'message.message_start',
+            payload: { sessionId: sid, customType: msg.customType as string, content: msg.content as string },
+          }
+        }
         return {
           type: 'message.message_start',
           payload: { sessionId: sid },
         }
+      }
 
       // ── Lifecycle events not forwarded to frontend ─────────────
       case 'agent_start':
