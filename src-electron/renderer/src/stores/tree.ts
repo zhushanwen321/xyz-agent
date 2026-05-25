@@ -6,9 +6,7 @@ import { reactive } from 'vue'
 /** 树面板筛选器文字，可按需替换为其他语言 */
 export const FILTER_LABELS_ZH = {
   all: '全部',
-  noTools: '无工具',
-  user: '用户',
-  labeled: '有标签',
+  noTools: '隐藏工具调用',
 } as const
 
 export type FilterLabels = typeof FILTER_LABELS_ZH
@@ -36,7 +34,7 @@ export interface FlatNode {
   hasSiblings: boolean
 }
 
-export type FilterMode = 'all' | 'no-tools' | 'user' | 'labeled'
+export type FilterMode = 'all' | 'no-tools'
 
 /** 每个 session 的树状态分区 */
 export interface TreeSessionState {
@@ -117,8 +115,6 @@ function shouldShow(node: TreeNode, mode: FilterMode): boolean {
   switch (mode) {
     case 'all': return true
     case 'no-tools': return node.type !== 'tool'
-    case 'user': return node.role === 'user'
-    case 'labeled': return !!node.label
   }
 }
 
@@ -143,8 +139,8 @@ function flattenTree(
       if (visited.has(node.id)) continue
       visited.add(node.id)
       if (!shouldShow(node, mode)) {
-        // 被过滤掉的节点，但其 children 仍需遍历（user 模式除外）
-        if (mode !== 'user' && node.children.length > 0) {
+        // 被过滤掉的节点，其 children 仍需遍历
+        if (node.children.length > 0) {
           if (node.children.length > 1) {
             walk(node.children, depth + 1)
           } else {

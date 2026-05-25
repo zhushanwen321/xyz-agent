@@ -29,8 +29,6 @@ function flattenTree(nodes, leafId, pathSet, mode) {
     switch (mode) {
       case 'all': return true
       case 'no-tools': return node.type !== 'tool'
-      case 'user': return node.role === 'user'
-      case 'labeled': return !!node.label
       default: return true
     }
   }
@@ -38,7 +36,7 @@ function flattenTree(nodes, leafId, pathSet, mode) {
   function walk(list, depth) {
     for (const node of list) {
       if (!shouldShow(node, mode)) {
-        if (mode !== 'user' && node.children.length > 0) {
+        if (node.children.length > 0) {
           if (node.children.length > 1) {
             walk(node.children, depth + 1)
           } else {
@@ -169,26 +167,26 @@ console.log('\nTest: Active path — only u1→a1→u2 path highlighted')
 }
 
 // ══════════════════════════════════════════════════════════════════
-// Test: Filter mode 'user' — only user nodes
 // ══════════════════════════════════════════════════════════════════
-console.log('\nTest: Filter mode "user"')
+// Test: Filter mode 'no-tools' — hides tool nodes
+// ══════════════════════════════════════════════════════════════════
+console.log('\nTest: Filter mode "no-tools"')
 
 {
   const tree = [
     { id: 'u1', parentId: null, type: 'message', role: 'user', text: 'hi', children: [
-      { id: 'a1', parentId: 'u1', type: 'message', role: 'assistant', text: 'hey', children: [
-        { id: 'u2', parentId: 'a1', type: 'message', role: 'user', text: 'more', children: [] }
-      ]}
-    ]}
+      { id: 't1', parentId: 'u1', type: 'tool', text: 'search', children: [
+        { id: 'r1', parentId: 't1', type: 'result', text: 'results', children: [
+          { id: 'a1', parentId: 'r1', type: 'message', role: 'assistant', text: 'found', children: [] },
+        ]},
+      ]},
+    ]},
   ]
 
-  const flat = flattenTree(tree, 'u2', new Set(['u1', 'a1', 'u2']), 'user')
-
-  // Filter 'user' mode: assistant nodes are skipped AND their children are not traversed
-  // (mode === 'user' explicitly skips children traversal for filtered nodes)
-  // So only u1 appears (a1 is filtered, u2 is a1's child and not traversed)
+  // no-tools hides tool nodes; children are traversed at same depth (single child)
+  const flat = flattenTree(tree, 'a1', new Set([]), 'no-tools')
   const ids = flat.map(n => n.node.id)
-  assert(ids.join(',') === 'u1', `Top-level user only: ${ids.join(',')}`)
+  assert(ids.join(',') === 'u1,r1,a1', 'Tool filtered, children traversed')
 }
 
 // ══════════════════════════════════════════════════════════════════

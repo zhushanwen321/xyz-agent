@@ -32,8 +32,6 @@ const selectedNode = computed<FlatNode | null>(() => {
 const filterOptions = computed(() => [
   { label: FILTER_LABELS_ZH.all, value: 'all' },
   { label: FILTER_LABELS_ZH.noTools, value: 'no-tools' },
-  { label: FILTER_LABELS_ZH.user, value: 'user' },
-  { label: FILTER_LABELS_ZH.labeled, value: 'labeled' },
 ])
 
 function handleFilterChange(val: string | number) {
