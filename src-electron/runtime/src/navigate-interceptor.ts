@@ -18,6 +18,7 @@ export class NavigateInterceptor {
   private resolveFn: ((data: unknown) => void) | null = null
   private buffer = ''
   private streaming = false
+  private cancelled = false
 
   constructor(private readonly downstream: WsSender) {}
 
@@ -33,6 +34,7 @@ export class NavigateInterceptor {
     this.resolveFn = null
     this.buffer = ''
     this.streaming = false
+    this.cancelled = true
   }
 
   /**
@@ -47,10 +49,17 @@ export class NavigateInterceptor {
       this.streaming = false
       resolver({ cancelled: true })
     }
+    // 流结束后重置 cancelled 标志，后续消息正常转发
+    this.cancelled = false
   }
 
   /** The decorated sender — pass this to EventAdapter instead of the raw WsSender. */
   readonly send: WsSender = (msg: ServerMessage) => {
+    // 超时/取消后吞掉后续 delta，避免 JSON 碎片泄露给 UI
+    if (this.cancelled && msg.type === 'message.text_delta') {
+      return
+    }
+
     if (this.resolveFn && msg.type === 'message.text_delta') {
       const delta = (msg.payload as { delta?: string }).delta ?? ''
 

@@ -2,6 +2,7 @@ import { onMounted, onUnmounted, getCurrentInstance } from 'vue'
 import { useSessionStore } from '../stores/session'
 import { useChatStore } from '../stores/chat'
 import { usePanelStore } from '../stores/panel'
+import { useTreeStore } from '../stores/tree'
 import { send } from '../lib/ws-client'
 import { on, off } from '../lib/event-bus'
 import type { ServerMessage, SessionSummary, Message } from '@xyz-agent/shared'
@@ -42,7 +43,9 @@ function createGlobalHandlers() {
   }
 
   function onSessionDeleted(msg: ServerMessage) {
-    sessionStore.removeSession((msg.payload as { sessionId: string }).sessionId)
+    const sid = (msg.payload as { sessionId: string }).sessionId
+    sessionStore.removeSession(sid)
+    useTreeStore().removeSession(sid)
   }
 
   function onSessionRestored(msg: ServerMessage) {
@@ -73,6 +76,7 @@ function createGlobalHandlers() {
       if (oldState.isGenerating) chatStore.setGenerating(true, newSessionId)
       if (oldState.completedMessages.length > 0) chatStore.replaceMessages([...oldState.completedMessages], newSessionId)
       chatStore.removeSession(oldSessionId)
+      useTreeStore().removeSession(oldSessionId)
     }
   }
 

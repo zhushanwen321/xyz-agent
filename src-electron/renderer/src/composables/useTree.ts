@@ -109,6 +109,14 @@ export function useTree() {
   function fetchTree(sessionId: string) {
     store.setLoading(sessionId, true)
     send({ type: 'session.tree-data', payload: { sessionId } })
+    // 超时保护：10s 内未收到 tree-data 响应则重置 loading，避免 UI 永久卡死
+    setTimeout(() => {
+      const state = store.getSessionState(sessionId)
+      if (state.isLoading) {
+        store.setLoading(sessionId, false)
+        store.setError(sessionId, 'Tree data request timed out')
+      }
+    }, 10_000)
   }
 
   function navigate(sessionId: string, targetEntryId: string) {
@@ -130,11 +138,11 @@ export function useTree() {
 let treeRegisterAttempted = false
 function safeRegisterTreeListeners() {
   if (globalEventMap || treeRegisterAttempted) return
-  treeRegisterAttempted = true
   try {
     registerGlobalListeners()
+    treeRegisterAttempted = true  // 成功后才标记，允许重试
   } catch {
-    // Pinia 未就绪（测试环境），静默跳过
+    // Pinia 未就绪（测试环境），不标记 attempted，允许后续重试
   }
 }
 queueMicrotask(safeRegisterTreeListeners)

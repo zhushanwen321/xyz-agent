@@ -178,8 +178,8 @@ export class SessionService implements ISessionService {
       } catch (e) {
         const errMsg = `Failed to restore session: ${e instanceof Error ? e.message : String(e)}`
         console.error(`[session-service] ${errMsg}`)
-        this.broker.broadcast({ type: 'message.error', payload: { sessionId, message: errMsg } })
-        return
+        // 不在这里广播 message.error，让 server.ts 的外层 catch 统一发送 handler_error
+        throw e
       } finally {
         this.restoringSessions.delete(sessionId)
       }
@@ -363,7 +363,14 @@ export class SessionService implements ISessionService {
     const adapter = this.adapterFactory(id, interceptor)
     adapter.attach(client)
 
-    await client.sendCommand('switch_session', { sessionPath: target.filePath })
+    try {
+      await client.sendCommand('switch_session', { sessionPath: target.filePath })
+    } catch (e) {
+      // switch_session 失败时清理已创建的资源，避免子进程/监听器泄漏
+      adapter.detach()
+      await this.pm.destroySession(id).catch(() => {})
+      throw e
+    }
 
     const unsubUsage = this.attachUsageListener(id, client)
 
@@ -400,6 +407,7 @@ export class SessionService implements ISessionService {
 
   async destroyAll(): Promise<void> {
     for (const session of this.sessions.values()) {
+      this.treeService.unregisterSession(session.id)
       this.detachSession(session)
     }
     await this.pm.destroyAll()

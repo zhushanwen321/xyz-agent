@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useTreeStore } from '../../stores/tree'
 import { useTree } from '../../composables/useTree'
 import { Select, Button, ScrollArea } from '../../design-system'
@@ -45,16 +45,25 @@ function handleSelectNode(id: string) {
   treeStore.selectNode(props.sessionId, current === id ? null : id)
 }
 
+const isOperating = ref(false)
+
 function handleNavigate() {
+  if (isOperating.value) return
   const sid = sessionState.value.selectedId
   if (!sid) return
+  isOperating.value = true
   navigate(props.sessionId, sid)
+  // 3s 后自动解锁，防止结果未到达时永久禁用
+  setTimeout(() => { isOperating.value = false }, 3000)
 }
 
 function handleFork() {
+  if (isOperating.value) return
   const sid = sessionState.value.selectedId
   if (!sid) return
+  isOperating.value = true
   fork(props.sessionId, sid)
+  setTimeout(() => { isOperating.value = false }, 3000)
 }
 
 function handleClose() {
@@ -176,12 +185,13 @@ watch(() => props.sessionId, (newSid: string) => {
       <span class="text-[10px] text-[var(--muted)] flex-1">
         {{ selectedNode.node.role === 'user' ? 'User message' : selectedNode.node.role === 'assistant' ? 'Assistant response' : 'Branch summary' }}
       </span>
-      <Button size="sm" variant="outline" @click="handleFork">
+      <Button size="sm" variant="outline" :disabled="isOperating" @click="handleFork">
         Fork from here
       </Button>
       <Button
         v-if="sessionState.navigateCapable"
         size="sm"
+        :disabled="isOperating"
         @click="handleNavigate"
       >
         Navigate here

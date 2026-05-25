@@ -64,8 +64,11 @@ function buildPathToRoot(tree: TreeNode[], leafId: string | null): Set<string> {
 
   // 扁平化所有节点，建立 id → parentId 映射
   const parentMap = new Map<string, string | null>()
+  const visited = new Set<string>()
   function walk(nodes: TreeNode[]) {
     for (const n of nodes) {
+      if (visited.has(n.id)) continue  // 防环引用
+      visited.add(n.id)
       parentMap.set(n.id, n.parentId)
       if (n.children.length > 0) walk(n.children)
     }
@@ -74,7 +77,7 @@ function buildPathToRoot(tree: TreeNode[], leafId: string | null): Set<string> {
 
   const path = new Set<string>()
   let cur: string | null | undefined = leafId
-  while (cur) {
+  while (cur && !path.has(cur)) {
     path.add(cur)
     cur = parentMap.get(cur)
   }
@@ -84,10 +87,13 @@ function buildPathToRoot(tree: TreeNode[], leafId: string | null): Set<string> {
 /** 计算分支数：有多于 1 个 children 的节点数 */
 function countBranches(nodes: TreeNode[]): number {
   let count = 0
+  const visited = new Set<string>()
   function walk(list: TreeNode[]) {
     for (const n of list) {
+      if (visited.has(n.id)) continue
+      visited.add(n.id)
       if (n.children.length > 1) count++
-      walk(n.children)
+      if (n.children.length > 0) walk(n.children)
     }
   }
   walk(nodes)
@@ -118,9 +124,12 @@ function flattenTree(
   mode: FilterMode,
 ): FlatNode[] {
   const result: FlatNode[] = []
+  const visited = new Set<string>()
 
   function walk(list: TreeNode[], depth: number) {
     for (const node of list) {
+      if (visited.has(node.id)) continue
+      visited.add(node.id)
       if (!shouldShow(node, mode)) {
         // 被过滤掉的节点，但其 children 仍需遍历（user 模式除外）
         if (mode !== 'user' && node.children.length > 0) {
