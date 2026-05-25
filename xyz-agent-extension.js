@@ -45,7 +45,7 @@ export default function (pi) {
           newLeafId: newLeafId ?? null,
           editorText: result.editorText ?? null,
         });
-      } catch {
+      } catch (e) {
         // navigateTree 抛出异常时依然上报，避免前端等待 5s 超时
         const leafId = ctx.sessionManager.getLeafId();
         sendMessage({
@@ -53,6 +53,7 @@ export default function (pi) {
           cancelled: true,
           newLeafId: leafId ?? null,
           editorText: null,
+          error: e instanceof Error ? e.message : String(e),
         });
       }
     },

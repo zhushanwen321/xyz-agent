@@ -109,12 +109,20 @@ export class TreeService {
 
       session.interceptor.setResolver((data: unknown) => {
         clearTimeout(timeout)
-        const result = data as { cancelled?: boolean; newLeafId?: string; editorText?: string | null }
-        resolve({
-          success: !result.cancelled,
-          newLeafId: result.newLeafId,
-          editorText: result.editorText ?? undefined,
-        })
+        const result = data as { cancelled?: boolean; newLeafId?: string; editorText?: string | null; error?: string }
+        if (result.cancelled) {
+          resolve({
+            success: false,
+            newLeafId: result.newLeafId,
+            error: result.error ?? 'Navigate failed or was cancelled',
+          })
+        } else {
+          resolve({
+            success: true,
+            newLeafId: result.newLeafId,
+            editorText: result.editorText ?? undefined,
+          })
+        }
       })
 
       client.prompt(`/xyz-navigate ${targetEntryId}`).catch((e) => {

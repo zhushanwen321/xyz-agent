@@ -110,7 +110,7 @@ watch(() => props.sessionId, (newSid: string) => {
         :model-value="sessionState.filterMode"
         :options="filterOptions"
         placeholder="筛选"
-        class="!h-6 !text-[10px] !w-[90px] !py-0"
+        class="!h-6 !text-[10px] !w-[130px] !py-0"
         item-class="!text-[10px]"
         @update:model-value="handleFilterChange"
       />
@@ -178,7 +178,7 @@ watch(() => props.sessionId, (newSid: string) => {
 
     <!-- Action bar -->
     <div
-      v-if="selectedNode && !selectedNode.isLeaf"
+      v-if="selectedNode && !selectedNode.isLeaf && selectedNode.node.role === 'user'"
       class="flex items-center gap-2 px-3.5 py-1.5 border-t border-solid border-[var(--border)] bg-[var(--surface)]"
     >
       <span class="text-[10px] text-[var(--muted)] flex-1">

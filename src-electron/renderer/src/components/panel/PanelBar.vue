@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { usePanelStore } from '../../stores/panel'
 import { useSessionStore } from '../../stores/session'
 import { useWindowStore } from '../../stores/window'
@@ -100,6 +100,13 @@ function closeTree() {
   if (!props.sessionId) return
   treeStore.setPanelOpen(props.sessionId, false)
 }
+
+// ESC 关闭 tree 面板
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && isTreeOpen.value) closeTree()
+}
+onMounted(() => document.addEventListener('keydown', onKeydown))
+onUnmounted(() => document.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
@@ -211,9 +218,14 @@ function closeTree() {
     </Teleport>
 
     <!-- Tree overlay panel -->
-    <div v-if="isTreeOpen && sessionId" class="tree-overlay">
+    <div v-if="isTreeOpen && sessionId" class="tree-overlay" @keydown.escape="closeTree">
       <SessionTreePanel :session-id="sessionId" @close="closeTree" />
     </div>
+
+    <!-- Tree backdrop: click outside 关闭 -->
+    <Teleport to="body">
+      <div v-if="isTreeOpen" class="fixed inset-0 z-40" @click="closeTree" />
+    </Teleport>
   </div>
 </template>
 
