@@ -72,7 +72,7 @@ export class TreeService {
     const { rootNodes, lastEntryId } = await buildTreeFromFile(sessionFile)
     const branchCount = countBranches(rootNodes)
 
-    // pi 不暴露 leafId（get_state 不返回此字段），用 tree 最后一个 entry 近似
+    // Fallback: 如果 get_state 仍然没返回 leafId（旧版 pi），用 tree 最后一个 entry 近似
     if (!leafId) {
       leafId = lastEntryId
     }
@@ -114,14 +114,22 @@ export class TreeService {
       // silent — editorText is optional, entry validation best-effort
     }
 
-    // 发送 navigate 命令。prompt resolve 即视为成功（pi 内部已更新 leaf 和消息列表）
+    // 发送 navigate 命令，5s 超时保护（spec AC3）
+    const NAVIGATE_TIMEOUT_MS = 5_000
     try {
-      await client.prompt(`/xyz-navigate ${targetEntryId}`)
+      await Promise.race([
+        client.prompt(`/xyz-navigate ${targetEntryId}`),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Navigate timeout')), NAVIGATE_TIMEOUT_MS)
+        ),
+      ])
     } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : String(e) }
+      const msg = e instanceof Error ? e.message : String(e)
+      const isTimeout = msg.includes('timeout')
+      return { success: false, error: isTimeout ? 'Navigate timeout' : msg }
     }
 
-    return { success: true, editorText }
+    return { success: true, newLeafId: targetEntryId, editorText }
   }
 
   /** Get session file path from pi's get_state. */
@@ -129,6 +137,31 @@ export class TreeService {
     const stateResp = await client.sendCommand('get_state') as PiMessage
     const stateData = stateResp.data ?? stateResp.payload
     return stateData?.sessionFile as string | undefined
+  }
+
+  /** Clone the current session (snapshot at current leaf). */
+  async cloneSession(sessionId: string): Promise<ForkResult> {
+    const client = this.pm.getClient(sessionId)
+    if (!client) throw new Error(`Session ${sessionId} not found`)
+
+    try {
+      const result = await client.sendCommand('clone') as PiMessage
+      if (result.success === false) {
+        return { success: false, error: result.error ?? 'Clone failed' }
+      }
+
+      const stateResp = await client.sendCommand('get_state') as PiMessage
+      const stateData = stateResp.data ?? stateResp.payload
+      const newSessionId = stateData?.sessionId as string | undefined
+
+      if (!newSessionId) {
+        return { success: false, error: 'Clone succeeded but could not get new session ID' }
+      }
+
+      return { success: true, newSessionId }
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) }
+    }
   }
 
   /** Fork a new session from a specific entry. */

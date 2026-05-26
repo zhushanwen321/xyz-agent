@@ -47,11 +47,17 @@ function createGlobalHandlers() {
     if (!success) {
       const errMsg = (msg.payload.error as string) ?? 'Navigate failed'
       store.setError(sid, errMsg)
+      store.setLoading(sid, false)
       return
     }
-    // Navigate 成功：清除错误 + 关闭面板 + 刷新消息历史 + tree 数据
+    // Navigate 成功：直接设置 leafId（不等服务端 tree-data），然后刷新消息和 tree 结构
     store.clearError(sid)
     store.selectNode(sid, null)
+    // 服务端回传 newLeafId（即 targetEntryId），前端直接设为 active path 的 leaf
+    const newLeafId = msg.payload.newLeafId as string | undefined
+    if (newLeafId) {
+      store.setLeafId(sid, newLeafId)
+    }
     send({ type: 'session.history', payload: { sessionId: sid } })
     send({ type: 'session.tree-data', payload: { sessionId: sid } })
     // 预填 editorText（navigate 到 user message 时的原始文本）
@@ -129,10 +135,12 @@ export function useTree() {
   }
 
   function navigate(sessionId: string, targetEntryId: string) {
+    store.setLoading(sessionId, true)
     send({ type: 'session.tree-navigate', payload: { sessionId, targetEntryId } })
   }
 
   function fork(sessionId: string, entryId: string) {
+    store.setLoading(sessionId, true)
     send({ type: 'session.tree-fork', payload: { sessionId, entryId } })
   }
 

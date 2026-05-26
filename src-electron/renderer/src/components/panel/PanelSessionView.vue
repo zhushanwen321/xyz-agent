@@ -34,6 +34,7 @@ import { usePanelStore } from '../../stores/panel'
 import { useProviderStore } from '../../stores/provider'
 import { useSettingsStore } from '../../stores/settings'
 import { useChat } from '../../composables/useChat'
+import { useTree } from '../../composables/useTree'
 import { send } from '../../lib/ws-client'
 import { on, off } from '../../lib/event-bus'
 import type { ServerMessage, ClientMessageType } from '@xyz-agent/shared'
@@ -229,6 +230,10 @@ const onCompacted = (msg: ServerMessage) => handleCompacted(msg)
 
 onMounted(() => {
   chatStore.ensureSession(props.sessionId)
+  // 预加载 tree 数据，避免首次打开 tree 面板时的延迟
+  const { fetchTree, requestCapability } = useTree()
+  fetchTree(props.sessionId)
+  requestCapability(props.sessionId)
   on('message.tool_call_pending', handleToolApprovalRequest)
   on('error', handleErrorMessage)
   on('session.compacting', onCompacting)

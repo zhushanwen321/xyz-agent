@@ -225,13 +225,12 @@ export class SidecarServer implements IMessageBroker {
             return this.send(ws, { type: 'session.tree-data', id: msg.id, payload: { ...treeData } })
           } catch (e) {
             if ((e instanceof Error && e.message.includes('not found')) || !this.sessionService.getSummary(sid)) {
-              // 会话未激活 — 尝试自动还原后再取 tree
               try {
                 await this.sessionService.restoreSession(sid)
                 const treeData = await this.treeService.getTree(sid)
                 return this.send(ws, { type: 'session.tree-data', id: msg.id, payload: { ...treeData } })
               } catch (restoreErr) {
-                console.error('[runtime] tree-data auto-restore failed:', restoreErr)
+                console.error('[tree-data] auto-restore failed:', restoreErr)
                 return this.send(ws, { type: 'session.tree-data', id: msg.id, payload: { sessionId: sid, tree: [], leafId: null, branchCount: 0, navigateCapable: false, error: 'Session not available' } })
               }
             }

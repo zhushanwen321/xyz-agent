@@ -30,6 +30,11 @@ const selectedNode = computed<PathNode | null>(() => {
 
 const isOperating = ref(false)
 
+// navigate/fork 完成后自动解锁（tree store isLoading → false）
+watch(() => treeStore.getSessionState(props.sessionId).isLoading, (loading) => {
+  if (!loading) isOperating.value = false
+})
+
 function handleSelectNode(entryId: string) {
   const current = sessionState.value.selectedId
   treeStore.selectNode(props.sessionId, current === entryId ? null : entryId)
@@ -41,7 +46,6 @@ function handleNavigate() {
   if (!sid) return
   isOperating.value = true
   navigate(props.sessionId, sid)
-  setTimeout(() => { isOperating.value = false }, 3000)
 }
 
 function handleFork() {
@@ -50,7 +54,6 @@ function handleFork() {
   if (!sid) return
   isOperating.value = true
   fork(props.sessionId, sid)
-  setTimeout(() => { isOperating.value = false }, 3000)
 }
 
 /** 点击分支 tab → navigate 到该分支 */
@@ -58,7 +61,6 @@ function handleBranchClick(targetId: string) {
   if (isOperating.value) return
   isOperating.value = true
   navigate(props.sessionId, targetId)
-  setTimeout(() => { isOperating.value = false }, 3000)
 }
 
 function handleClose() {

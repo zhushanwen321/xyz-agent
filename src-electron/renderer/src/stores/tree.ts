@@ -38,6 +38,8 @@ export interface TreeSessionState {
   isOpen: boolean
   isLoading: boolean
   error: string | null
+  /** Internal: set by setLeafId, prevents setTreeData from overwriting with stale JSONL data */
+  _userSetLeafId?: boolean
 }
 
 // ── 归组后的展示节点 ──────────────────────────────────────────
@@ -225,7 +227,7 @@ function buildBranchTabs(
 
   return meaningfulChildren.map(child => ({
     label: getBranchLabel(child),
-    targetId: getFirstNavigableId(child),
+    targetId: getDeepestLeafId(child),
     isActive: isAncestorOf(child.id, leafId, parentMap),
   }))
 }
@@ -255,6 +257,12 @@ function getFirstNavigableId(node: TreeNode): string {
     return getFirstNavigableId(child)
   }
   return node.id
+}
+
+/** 找到子树中最深的叶子节点 id（用于 navigate 到分支末端） */
+function getDeepestLeafId(node: TreeNode): string {
+  if (node.children.length === 0) return node.id
+  return getDeepestLeafId(node.children[node.children.length - 1]!)
 }
 
 /** 检查 nodeId 是否是 descendantId 的祖先（或自身） */
@@ -310,7 +318,11 @@ export const useTreeStore = defineStore('tree', () => {
   function setTreeData(sid: string, data: { tree: TreeNode[]; leafId: string | null; navigateCapable?: boolean; branchCount?: number }) {
     const s = getSessionState(sid)
     s.tree = data.tree
-    s.leafId = data.leafId
+    // 如果 navigate 已设置了正确的 leafId，不用 JSONL 的 fallback 覆盖
+    if (!s._userSetLeafId) {
+      s.leafId = data.leafId
+    }
+    s._userSetLeafId = false
     s.branchCount = data.branchCount ?? countBranches(data.tree)
     if (data.navigateCapable !== undefined) {
       s.navigateCapable = data.navigateCapable
@@ -325,6 +337,14 @@ export const useTreeStore = defineStore('tree', () => {
 
   function setFilterMode(sid: string, mode: FilterMode): void {
     getSessionState(sid).filterMode = mode
+  }
+
+  /** Set leafId directly (used after navigate to immediately update active path).
+   *  Marks it as "user-set" so setTreeData won't overwrite it with stale JSONL data. */
+  function setLeafId(sid: string, leafId: string): void {
+    const s = getSessionState(sid)
+    s.leafId = leafId
+    s._userSetLeafId = true
   }
 
   function togglePanel(sid: string): void {
@@ -375,6 +395,7 @@ export const useTreeStore = defineStore('tree', () => {
     togglePanel,
     setPanelOpen,
     setNavigateCapable,
+    setLeafId,
     setError,
     clearError,
     setLoading,
