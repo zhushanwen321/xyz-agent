@@ -3,6 +3,9 @@ import { send } from '../lib/ws-client'
 import { on, emit } from '../lib/event-bus'
 import type { ServerMessage } from '@xyz-agent/shared'
 
+// ── 常量 ────────────────────────────────────────────────────────
+const TREE_FETCH_TIMEOUT_MS = 10_000
+
 // ── 全局状态 ──────────────────────────────────────────────────
 
 /** Navigate 后的 editorText，按 session 存储，避免 split mode 交叉污染 */
@@ -149,7 +152,7 @@ export function useTree() {
         store.setLoading(sessionId, false)
         store.setError(sessionId, 'Tree data request timed out')
       }
-    }, 10_000)
+    }, TREE_FETCH_TIMEOUT_MS)
   }
 
   function navigate(sessionId: string, targetEntryId: string) {

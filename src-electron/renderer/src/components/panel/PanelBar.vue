@@ -101,9 +101,13 @@ function closeTree() {
   treeStore.setPanelOpen(props.sessionId, false)
 }
 
-// ESC 关闭 tree 面板
+// ESC 关闭 tree 面板（仅在 tree 面板打开且无其他聚焦元素时响应）
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape' && isTreeOpen.value) closeTree()
+  if (e.key !== 'Escape' || !isTreeOpen.value) return
+  // 如果焦点在 input/textarea/contenteditable 内，让组件自己处理 ESC
+  const tag = (e.target as HTMLElement)?.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return
+  closeTree()
 }
 onMounted(() => document.addEventListener('keydown', onKeydown))
 onUnmounted(() => document.removeEventListener('keydown', onKeydown))

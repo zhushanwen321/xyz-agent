@@ -83,6 +83,10 @@ function createSessionState(): TreeSessionState {
 }
 
 /** 首行截断 */
+// ── 截断长度常量 ──
+const PATH_NODE_TEXT_MAX = 70
+const BRANCH_TAB_TEXT_MAX = 20
+
 function truncateFirst(text: string, max: number): string {
   if (!text) return ''
   const first = text.split('\n')[0] ?? ''
@@ -152,7 +156,7 @@ function buildActivePath(tree: TreeNode[], leafId: string | null): PathNode[] {
       const pathNode: PathNode = {
         entryId: node.id,
         role: 'user',
-        text: truncateFirst(node.text || '', 70),
+        text: truncateFirst(node.text || '', PATH_NODE_TEXT_MAX),
       }
 
       // 分支检查
@@ -191,7 +195,7 @@ function buildActivePath(tree: TreeNode[], leafId: string | null): PathNode[] {
       const pathNode: PathNode = {
         entryId: representativeId,
         role: 'assistant',
-        text: displayText ? truncateFirst(displayText, 70) : '...',
+        text: displayText ? truncateFirst(displayText, PATH_NODE_TEXT_MAX) : '...',
       }
 
       // 分支检查在链的最后一个 assistant
@@ -235,10 +239,10 @@ function buildBranchTabs(
 /** 分支标签：找分支中第一个 user message 的截断文本 */
 function getBranchLabel(node: TreeNode): string {
   if (node.role === 'user' && node.text) {
-    return truncateFirst(node.text, 20)
+    return truncateFirst(node.text, BRANCH_TAB_TEXT_MAX)
   }
   if (node.role === 'assistant' && node.text) {
-    return truncateFirst(node.text, 20)
+    return truncateFirst(node.text, BRANCH_TAB_TEXT_MAX)
   }
   // 递归找子节点
   for (const child of node.children) {
@@ -248,15 +252,6 @@ function getBranchLabel(node: TreeNode): string {
     }
   }
   return '...'
-}
-
-/** 找到分支中第一个可 navigate 的 entry id */
-function getFirstNavigableId(node: TreeNode): string {
-  if (node.role === 'user' || node.role === 'assistant') return node.id
-  for (const child of node.children) {
-    return getFirstNavigableId(child)
-  }
-  return node.id
 }
 
 /** 找到子树中最深的叶子节点 id（用于 navigate 到分支末端） */

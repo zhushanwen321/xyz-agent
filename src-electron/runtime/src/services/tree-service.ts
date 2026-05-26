@@ -110,8 +110,14 @@ export class TreeService {
           if (raw) editorText = extractFullText(raw)
         }
       }
-    } catch {
-      // silent — editorText is optional, entry validation best-effort
+    } catch (e) {
+      console.warn('Failed to read editorText for navigate entry:', e)
+    }
+
+    // Prevent navigate result from leaking to UI
+    const managed = this.sessions.get(sessionId)
+    if (managed) {
+      managed.interceptor.setResolver(() => {})
     }
 
     // 发送 navigate 命令，5s 超时保护（spec AC3）
@@ -124,6 +130,7 @@ export class TreeService {
         ),
       ])
     } catch (e) {
+      managed?.interceptor.clearResolver()
       const msg = e instanceof Error ? e.message : String(e)
       const isTimeout = msg.includes('timeout')
       return { success: false, error: isTimeout ? 'Navigate timeout' : msg }
