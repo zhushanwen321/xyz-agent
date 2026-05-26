@@ -277,6 +277,21 @@ export class SidecarServer implements IMessageBroker {
             throw e
           }
         }
+        case 'session.tree-clone': {
+          const sid = msg.payload.sessionId as string
+          try {
+            const result = await this.treeService.cloneSession(sid)
+            if (result.success) {
+              this.broadcastSessionList()
+            }
+            return this.send(ws, { type: 'session.tree-clone-result', id: msg.id, payload: { sessionId: sid, ...result } })
+          } catch (e) {
+            if (e instanceof Error && e.message.includes('not found')) {
+              return this.send(ws, { type: 'session.tree-clone-result', id: msg.id, payload: { sessionId: sid, success: false, error: 'Session not active' } })
+            }
+            throw e
+          }
+        }
         default:
           if (!await this.handleSettingsMessage(msg, ws)) {
             const unknownSid = (msg as { payload?: { sessionId?: string } }).payload?.sessionId

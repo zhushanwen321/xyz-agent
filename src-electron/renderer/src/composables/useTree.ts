@@ -85,6 +85,23 @@ function createGlobalHandlers() {
     }
   }
 
+  function onTreeCloneResult(msg: ServerMessage) {
+    const sid = getSid(msg)
+    if (!sid) return
+    const success = msg.payload.success as boolean
+    if (!success) {
+      const errMsg = (msg.payload.error as string) ?? 'Clone failed'
+      store.setError(sid, errMsg)
+      return
+    }
+    // Clone 成功：刷新 session 列表 + 自动切换到新 session
+    const newSessionId = msg.payload.newSessionId as string | undefined
+    if (newSessionId) {
+      send({ type: 'session.list', payload: {} })
+      send({ type: 'session.switch', payload: { sessionId: newSessionId } })
+    }
+  }
+
   function onTreeCapability(msg: ServerMessage) {
     const sid = getSid(msg)
     if (!sid) return
@@ -96,6 +113,7 @@ function createGlobalHandlers() {
     'session.tree-data': onTreeData,
     'session.tree-navigate-result': onTreeNavigateResult,
     'session.tree-fork-result': onTreeForkResult,
+    'session.tree-clone-result': onTreeCloneResult,
     'session.tree-capability': onTreeCapability,
   } as Record<string, (msg: ServerMessage) => void>
 }
@@ -148,7 +166,11 @@ export function useTree() {
     send({ type: 'session.tree-capability', payload: { sessionId } })
   }
 
-  return { fetchTree, navigate, fork, requestCapability }
+  function cloneSession(sessionId: string) {
+    send({ type: 'session.tree-clone', payload: { sessionId } })
+  }
+
+  return { fetchTree, navigate, fork, requestCapability, cloneSession }
 }
 
 // 模块级注册：延后到 Pinia 安装后执行，测试环境可能 Pinia 未安装则静默跳过
