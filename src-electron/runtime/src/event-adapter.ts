@@ -199,7 +199,7 @@ export class EventAdapter {
         // Interactive methods: confirm, select, input, notify
         if (method === 'confirm' || method === 'select' || method === 'input' || method === 'notify') {
           const rawOptions = event.options as Array<{ label: string; value: string }> | undefined
-          const requestId = event.id ?? ''
+          const requestId = String(event.id ?? '')
           this.options?.onExtensionUIRequest?.(requestId, sid, method)
           return {
             type: 'extension.ui_request',
