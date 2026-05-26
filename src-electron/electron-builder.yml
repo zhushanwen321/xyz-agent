@@ -26,6 +26,10 @@ extraResources:
       - "**/*"
       - "!**/*.tar.gz"
       - "!**/*.zip"
+  # xyz-agent pi extension (xyz-navigate command)
+  # 源文件在 repo root，打包到 Resources 根目录
+  - from: ../xyz-agent-extension.js
+    to: xyz-agent-extension.js
 
 # NOTE: macos-latest 是 arm64 runner，无法交叉编译 x64。
 # 如需 Intel Mac 支持，追加 macos-13 (Intel) 或配置 universal。

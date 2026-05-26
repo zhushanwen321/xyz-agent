@@ -32,12 +32,17 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Sidecar 的 AI Agent 桌面工作
   - Settings Skills: [views_settings-skills.html](docs/designs/views_settings-skills.html)
 
 **外部项目源码**:
-- pi 源码: `~/GitApp/pi-mono/` — AI coding agent 引擎，xyz-agent 的 sidecar 通过 RPC 调用 pi
-  - Skill 加载: `packages/coding-agent/src/core/skills.ts` — skill 发现、加载、格式化
-  - Skill 展开: `packages/coding-agent/src/core/agent-session.ts` — `_expandSkillCommand()` 将 `/skill:name` 展开为 `<skill>` XML 块
-  - Slash 命令: `packages/coding-agent/src/core/slash-commands.ts` — 内置命令定义
-  - RPC 协议: `packages/coding-agent/src/modes/rpc/rpc-mode.ts` — RPC 模式命令处理
-  - TUI 交互: `packages/coding-agent/src/modes/interactive/interactive-mode.ts` — TUI 模式完整交互
+- **xyz-pi（fork 版本）**: [zhushanwen321/pi](https://github.com/zhushanwen321/pi) — 基于 [pi](https://github.com/nicepkg/pi-coding-agent) 的 fork，增加了 session tree 透出（`leafId` in `get_state`）等定制功能
+  - **重要**: xyz-agent **不能**使用原版 pi，必须使用 fork 版本。原版 pi 不支持 `leafId` 字段，会导致 session tree 功能失效
+  - npm 包: `xyz-pi`（区别于原版 `@mariozechner/pi`）
+  - 本地源码: `~/Code/pi-mono-workspace/`（bare repo + worktree 模式）
+  - 当前版本: `0.75.5-xyz-0.1`
+  - fork 关键改动: `get_state` RPC 响应中增加 `leafId` 字段，用于 session tree 导航
+  - Skill 加载: `packages/coding-agent/src/core/skills.ts`
+  - Skill 展开: `packages/coding-agent/src/core/agent-session.ts` — `_expandSkillCommand()`
+  - Slash 命令: `packages/coding-agent/src/core/slash-commands.ts`
+  - RPC 协议: `packages/coding-agent/src/modes/rpc/rpc-mode.ts`
+  - TUI 交互: `packages/coding-agent/src/modes/interactive/interactive-mode.ts`
 
 **Settings 模块设计文档**:
 - [Settings 视觉 demo](docs/designs/settings-final.html) — Section Groups 风格的最终 HTML demo

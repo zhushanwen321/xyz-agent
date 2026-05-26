@@ -54,9 +54,14 @@ export class SessionService implements ISessionService {
     private projectRoot: string,
     readonly treeService: TreeService,
   ) {
-    // extension 在 repo root（src-electron/ 的父目录），不在 projectRoot（可能是 src-electron/）
-    const repoRoot = resolve(this.projectRoot, '..')
-    this.extensionPath = resolve(repoRoot, 'xyz-agent-extension.js')
+    // 打包模式：extension 在 Resources 根目录（由 electron-builder.yml extraResources 打包）
+    // 开发模式：extension 在 repo root（src-electron/ 的父目录）
+    if (process.env.XYZ_AGENT_PACKAGED === '1') {
+      this.extensionPath = resolve(process.cwd(), 'xyz-agent-extension.js')
+    } else {
+      const repoRoot = resolve(this.projectRoot, '..')
+      this.extensionPath = resolve(repoRoot, 'xyz-agent-extension.js')
+    }
     // 进程崩溃时清理对应 session
     this.pm.onSessionExit((sessionId, code) => {
       const session = this.sessions.get(sessionId)
@@ -82,7 +87,7 @@ export class SessionService implements ISessionService {
 
     const client = await this.pm.createSession(tempId, sessionCwd, {
       skillPaths: this.getSkillPaths(sessionCwd),
-      extensionPaths: [this.extensionPath],
+      extensionPaths: this.getExtensionPaths(),
     })
 
     // 从 pi 获取真实 session ID
@@ -347,7 +352,7 @@ export class SessionService implements ISessionService {
     const id = sessionId
     const client = await this.pm.createSession(id, target.cwd, {
       skillPaths: this.getSkillPaths(target.cwd),
-      extensionPaths: [this.extensionPath],
+      extensionPaths: this.getExtensionPaths(),
     })
 
     try {
@@ -385,6 +390,15 @@ export class SessionService implements ISessionService {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- interface requires cwd param
   private getSkillPaths(_cwd: string): string[] {
     return piBridge.getSkillPaths()
+  }
+
+  /** 返回有效的 extension 路径列表（文件不存在则跳过，避免 pi exit 1） */
+  private getExtensionPaths(): string[] {
+    if (this.extensionPath && existsSync(this.extensionPath)) {
+      return [this.extensionPath]
+    }
+    console.warn(`[session-service] extension file not found: ${this.extensionPath}, skipping`)
+    return []
   }
 
   private toSummary(s: ManagedSession): SessionSummary {

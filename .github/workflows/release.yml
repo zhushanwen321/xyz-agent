@@ -84,7 +84,7 @@ jobs:
       - name: Download and prepare pi resources
         shell: bash
         env:
-          PI_VERSION: '0.75.4'
+          PI_VERSION: '0.75.5-xyz-0.1'
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           chmod +x scripts/prepare-pi-resources.sh

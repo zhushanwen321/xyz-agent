@@ -2,7 +2,9 @@
 
 AI Agent 桌面工作台，基于 Electron + Vue 3 + Node.js Sidecar 架构。
 
-通过 [pi](https://github.com/nicepkg/pi-coding-agent) 的子进程 RPC 协议与各类 AI Agent 通信，提供多 session 管理、split view、focus mode、drawer 面板等功能。
+通过 [xyz-pi](https://github.com/zhushanwen321/pi)（[pi](https://github.com/nicepkg/pi-coding-agent) 的 fork 版本）的子进程 RPC 协议与各类 AI Agent 通信，提供多 session 管理、split view、focus mode、drawer 面板等功能。
+
+> **重要**: 本项目使用 fork 版 `xyz-pi`（npm 包名 `xyz-pi`），不是原版 `@mariozechner/pi`。Fork 版本增加了 `leafId` 透出等定制功能，原版 pi 不兼容。详见 [CLAUDE.md](CLAUDE.md)。
 
 ## 架构
 
