@@ -89,11 +89,33 @@ vi.mock('../../../lib/event-bus', () => ({
   off: vi.fn(),
 }))
 
+vi.mock('../../../composables/useTree', () => ({
+  useTree: () => ({
+  fetchTree: vi.fn(),
+  requestCapability: vi.fn(),
+  }),
+}))
+
+vi.mock('../../../composables/useToolApproval', () => ({
+  useToolApproval: () => ({
+  pendingToolCalls: ref([]),
+  approve: vi.fn(),
+  deny: vi.fn(),
+  alwaysAllow: vi.fn(),
+  }),
+}))
+
+vi.mock('../../../composables/useModel', () => ({
+  useModel: () => ({
+  currentModel: ref('test/model'),
+  }),
+}))
+
 // Mock ChatPanel — we just need it to forward the 'send' event
 const ChatPanelStub = {
   name: 'ChatPanel',
   props: [
-  'agentOptions', 'activeAgentId', 'paneId', 'sessionId',
+  'agentOptions', 'activeAgentId', 'panelId', 'sessionId',
   'agentViews', 'messages', 'streamingMessage', 'isStreaming',
   'pendingApproval', 'doneCount', 'alertCount', 'isCompacting',
   ],
@@ -110,10 +132,10 @@ const ChatPanelStub = {
 
 import PanelSessionView from '../PanelSessionView.vue'
 
-function mountPanel(overrides: { sessionId?: string; paneId?: string } = {}) {
+function mountPanel(overrides: { sessionId?: string; panelId?: string } = {}) {
   return mount(PanelSessionView, {
   props: {
-    paneId: overrides.paneId ?? 'pane-1',
+    panelId: overrides.panelId ?? 'pane-1',
     sessionId: overrides.sessionId ?? 'session-1',
   },
   global: {
