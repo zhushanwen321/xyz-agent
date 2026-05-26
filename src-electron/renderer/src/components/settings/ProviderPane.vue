@@ -4,13 +4,14 @@ import { useI18n } from 'vue-i18n'
 import { Button } from '../../design-system'
 import type { ProviderInfo, ModelInfo } from '@xyz-agent/shared'
 import { useProviderStore } from '../../stores/provider'
-import { send } from '../../lib/ws-client'
+import { useProvider } from '../../composables/useProvider'
 import ProviderSection from './ProviderSection.vue'
 import ProviderModal from './ProviderModal.vue'
 
 const { t } = useI18n()
 
 const providerStore = useProviderStore()
+const { setProvider, deleteProvider } = useProvider()
 
 const providers = computed(() => providerStore.providers)
 const models = computed(() => providerStore.models)
@@ -39,7 +40,7 @@ function openEdit(id: string) {
 }
 
 function handleDelete(id: string) {
-  send({ type: 'config.deleteProvider', payload: { providerId: id } })
+  deleteProvider(id)
 }
 
 function toggleProvider(id: string) {
@@ -47,7 +48,7 @@ function toggleProvider(id: string) {
   if (!p) return
   const newEnabled = p.enabled !== false
   providerStore.updateProvider(id, { enabled: !newEnabled })
-  send({ type: 'config.setProvider', payload: { providerId: id, enabled: !newEnabled } })
+  setProvider(id, { enabled: !newEnabled })
 }
 
 function handleSave(data: { name: string; type: string; url: string; key: string; models: { id: string; name: string; contextWindow?: number }[]; providerId?: string }) {
@@ -55,7 +56,11 @@ function handleSave(data: { name: string; type: string; url: string; key: string
   const providerId = _pid || data.name.toLowerCase().replace(/\s+/g, '-')
   const { url, key, ...configData } = rest
   const apiKey = key && key !== '••••••••' ? key : undefined
-  send({ type: 'config.setProvider', payload: { providerId, baseUrl: url, ...(apiKey !== undefined && { apiKey: apiKey }), ...configData } })
+  setProvider(providerId, {
+    ...(apiKey !== undefined && { apiKey }),
+    ...(url && { baseUrl: url }),
+    ...configData,
+  })
   showModal.value = false
   editingProvider.value = null
 }

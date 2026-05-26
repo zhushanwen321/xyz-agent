@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useProviderStore } from '../../stores/provider'
+import { useProvider } from '../../composables/useProvider'
 import { Button } from '../../design-system'
 import type { ScannedSkillInfo, SkillInfo } from '@xyz-agent/shared'
 import ScanImportSection from './ScanImportSection.vue'
@@ -11,6 +12,7 @@ import SkillModal from './SkillModal.vue'
 const { t } = useI18n()
 
 const providerStore = useProviderStore()
+const { scanSkills, setSkill, deleteSkill, toggleSkill, importSkills } = useProvider()
 const skills = computed(() => providerStore.skills)
 const showModal = ref(false)
 const editingSkill = ref<SkillInfo | null>(null)
@@ -22,23 +24,23 @@ const scanSources = [
 ]
 
 function handleScan(sources: string[]) {
-  providerStore.scanSkillsAction(sources)
+  scanSkills(sources)
 }
 
 function handleImport(items: ScannedSkillInfo[] | import('@xyz-agent/shared').ScannedAgentInfo[]) {
-  providerStore.importSkills(items as ScannedSkillInfo[])
+  importSkills(items as ScannedSkillInfo[])
 }
 
 function handleSkillSave(data: { name: string; description: string; content: string }) {
   if (editingSkill.value) {
-    providerStore.setSkill({
+    setSkill({
       ...editingSkill.value,
       name: data.name,
       description: data.description,
       content: data.content,
     })
   } else {
-    providerStore.setSkill({
+    setSkill({
       id: `skill-${Date.now()}`,
       name: data.name,
       description: data.description,
@@ -105,9 +107,9 @@ function closeModal() {
           v-for="skill in skills"
           :key="skill.id"
           :skill="skill"
-          @toggle-enabled="providerStore.toggleSkill(skill.id)"
+          @toggle-enabled="toggleSkill(skill.id)"
           @edit="openEditModal(skill)"
-          @delete="providerStore.deleteSkillAction(skill.id)"
+          @delete="deleteSkill(skill.id)"
         />
       </div>
     </div>

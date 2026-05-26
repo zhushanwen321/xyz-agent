@@ -1,8 +1,12 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { ProviderInfo, ModelInfo, SkillInfo, AgentInfo, ScannedSkillInfo, ScannedAgentInfo } from '@xyz-agent/shared'
-import { send } from '../lib/ws-client'
 
+/**
+ * Provider store — 纯状态容器。
+ * 所有 send() 调用已上移到 useProvider composable。
+ * Store 只负责状态读写，不直接与 WebSocket 通信。
+ */
 export const useProviderStore = defineStore('provider', () => {
   const providers = ref<ProviderInfo[]>([])
   const models = ref<ModelInfo[]>([])
@@ -28,79 +32,6 @@ export const useProviderStore = defineStore('provider', () => {
   function setScannedSkills(list: ScannedSkillInfo[]) { scannedSkills.value = list }
   function setScannedAgents(list: ScannedAgentInfo[]) { scannedAgents.value = list }
 
-  function scanSkillsAction(sources: string[]) {
-    isScanningSkills.value = true
-    send({ type: 'config.scanSkills', payload: { sources } })
-  }
-
-  function scanAgentsAction(sources: string[]) {
-    isScanningAgents.value = true
-    send({ type: 'config.scanAgents', payload: { sources } })
-  }
-
-  function setSkill(skill: SkillInfo) {
-    send({ type: 'config.setSkill', payload: { skill } })
-  }
-
-  function deleteSkillAction(skillId: string) {
-    send({ type: 'config.deleteSkill', payload: { skillId } })
-  }
-
-  function toggleSkill(skillId: string) {
-    const s = skills.value.find(s => s.id === skillId)
-    if (s) setSkill({ ...s, enabled: !s.enabled })
-  }
-
-  function importSkills(items: ScannedSkillInfo[]) {
-    for (const item of items) {
-      const skill: SkillInfo = {
-        id: item.id,
-        name: item.name,
-        description: item.description,
-        enabled: true,
-        source: item.sourceType,
-        triggers: item.triggers,
-        argumentHint: item.argumentHint,
-        sourcePath: item.sourcePath,
-        content: item.content,
-        fileSize: item.fileSize,
-        tools: item.tools,
-      }
-      send({ type: 'config.setSkill', payload: { skill } })
-    }
-  }
-
-  function setAgent(agent: AgentInfo) {
-    send({ type: 'config.setAgent', payload: { agent } })
-  }
-
-  function deleteAgentAction(agentId: string) {
-    send({ type: 'config.deleteAgent', payload: { agentId } })
-  }
-
-  function toggleAgent(agentId: string) {
-    const a = agents.value.find(a => a.id === agentId)
-    if (a) setAgent({ ...a, enabled: !a.enabled })
-  }
-
-  function importAgents(items: ScannedAgentInfo[]) {
-    for (const item of items) {
-      const agent: AgentInfo = {
-        id: item.id,
-        name: item.name,
-        description: item.description,
-        enabled: true,
-        modelStrategy: 'auto',
-        icon: item.icon,
-        source: item.sourceType,
-        sourceType: item.sourceType,
-        content: item.content,
-        tools: item.tools,
-      }
-      send({ type: 'config.setAgent', payload: { agent } })
-    }
-  }
-
   return {
     providers, models, skills, agents,
     scannedSkills, scannedAgents,
@@ -108,8 +39,5 @@ export const useProviderStore = defineStore('provider', () => {
     setProviders, setModels, setSkills, setAgents,
     setScannedSkills, setScannedAgents,
     addProvider, removeProvider, updateProvider,
-    scanSkillsAction, scanAgentsAction,
-    setSkill, deleteSkillAction, toggleSkill, importSkills,
-    setAgent, deleteAgentAction, toggleAgent, importAgents,
   }
 })

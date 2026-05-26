@@ -25,6 +25,8 @@ interface Props {
   placeholder?: string
   disabled?: boolean
   class?: HTMLAttributes['class']
+  /** 用于 SelectItem 的额外 class，例如统一缩小字体 */
+  itemClass?: HTMLAttributes['class']
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -32,6 +34,7 @@ const props = withDefaults(defineProps<Props>(), {
   options: () => [],
   placeholder: 'Select...',
   disabled: false,
+  itemClass: '',
 })
 
 const emit = defineEmits<{
@@ -58,6 +61,7 @@ const itemClasses = computed(() =>
     'hover:bg-[var(--accent-light)]',
     'data-[highlighted]:bg-[var(--accent-light)]',
     'data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
+    props.itemClass,
   ),
 )
 </script>

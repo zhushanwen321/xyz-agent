@@ -2,6 +2,7 @@ import { onMounted, onUnmounted, getCurrentInstance } from 'vue'
 import { useSessionStore } from '../stores/session'
 import { useChatStore } from '../stores/chat'
 import { usePanelStore } from '../stores/panel'
+import { useTreeStore } from '../stores/tree'
 import { send } from '../lib/ws-client'
 import { on, off } from '../lib/event-bus'
 import type { ServerMessage, SessionSummary, Message } from '@xyz-agent/shared'
@@ -42,7 +43,9 @@ function createGlobalHandlers() {
   }
 
   function onSessionDeleted(msg: ServerMessage) {
-    sessionStore.removeSession((msg.payload as { sessionId: string }).sessionId)
+    const sid = (msg.payload as { sessionId: string }).sessionId
+    sessionStore.removeSession(sid)
+    useTreeStore().removeSession(sid)
   }
 
   function onSessionRestored(msg: ServerMessage) {
@@ -73,6 +76,7 @@ function createGlobalHandlers() {
       if (oldState.isGenerating) chatStore.setGenerating(true, newSessionId)
       if (oldState.completedMessages.length > 0) chatStore.replaceMessages([...oldState.completedMessages], newSessionId)
       chatStore.removeSession(oldSessionId)
+      useTreeStore().removeSession(oldSessionId)
     }
   }
 
@@ -131,8 +135,8 @@ export function useSession() {
     send({ type: 'session.history', payload: { sessionId } })
   }
 
-  function compactSession() {
-    const sid = sessionStore.currentSessionId
+  function compactSession(sessionId?: string) {
+    const sid = sessionId ?? sessionStore.currentSessionId
     if (!sid) return
     send({ type: 'session.compact', payload: { sessionId: sid } })
   }
@@ -141,6 +145,10 @@ export function useSession() {
     const sid = sessionStore.currentSessionId
     if (!sid) return
     send({ type: 'session.clear', payload: { sessionId: sid } })
+  }
+
+  function renameSession(sessionId: string, newName: string) {
+    send({ type: 'session.rename', payload: { sessionId, name: newName } })
   }
 
   // 全局事件 listener 生命周期：第一个组件 mounted 时注册，最后一个 unmounted 时注销
@@ -160,5 +168,5 @@ export function useSession() {
     })
   }
 
-  return { loadSessions, createSession, deleteSession, switchSession, compactSession, clearSession }
+  return { loadSessions, createSession, deleteSession, switchSession, compactSession, clearSession, renameSession }
 }

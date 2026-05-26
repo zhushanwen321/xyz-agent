@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Session Tree — Flat + Conditional Indent Demo</title>
+<style>
+  :root {
+    --bg: #0f0f17;
+    --surface: #171724;
+    --surface2: #1c1c2e;
+    --border: #2a2a42;
+    --fg: #d8d8e8;
+    --muted: #6e6e8a;
+    --accent: #6c8cff;
+    --accent-dim: rgba(108,140,255,0.12);
+    --user-color: #5bc0eb;
+    --assistant-color: #9b5de5;
+    --tool-color: #f15bb5;
+    --summary-color: #fca311;
+    --leaf-color: #00f5d4;
+    --danger: #ff4757;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── Top bar (simulates PanelBar) ── */
+  .topbar {
+    height: 40px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 14px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+    font-size: 12px;
+  }
+  .topbar-agent {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    background: var(--accent-dim);
+    border-radius: 3px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 11px;
+    color: var(--accent);
+  }
+  .topbar-agent .dot { width:5px; height:5px; border-radius:50%; background:var(--accent); }
+  .topbar-agent .chevron { font-size:8px; opacity:0.5; }
+  .topbar-breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .topbar-breadcrumb .dir { color: var(--fg); font-weight: 500; }
+
+  /* session tree trigger */
+  .tree-trigger {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 10px;
+    transition: all 0.15s;
+    margin-left: 2px;
+  }
+  .tree-trigger:hover { background: var(--accent-dim); color: var(--accent); }
+  .tree-trigger svg { width:12px; height:12px; }
+  .tree-trigger .branch-count {
+    background: var(--accent-dim);
+    color: var(--accent);
+    padding: 0 5px;
+    border-radius: 2px;
+    font-weight: 600;
+    font-size: 9px;
+    line-height: 16px;
+  }
+
+  .topbar-right { margin-left: auto; display:flex; align-items:center; gap:6px; }
+
+  /* ── Tree dropdown panel ── */
+  .tree-dropdown {
+    position: absolute;
+    top: 40px;
+    left: 0;
+    right: 0;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    z-index: 50;
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.2s ease;
+  }
+  .tree-dropdown.open { max-height: 60vh; }
+  .tree-dropdown-inner {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    max-height: 60vh;
+  }
+
+  .tree-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+  }
+  .tree-toolbar .title { font-weight: 600; color: var(--fg); flex:1; }
+  .tree-toolbar .info { color: var(--muted); font-size: 10px; }
+  .filter-btn {
+    font-size: 10px;
+    padding: 2px 7px;
+    border-radius: 3px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .filter-btn:hover { background: rgba(255,255,255,0.04); color: var(--fg); }
+  .filter-btn.active { background: var(--accent-dim); color: var(--accent); border-color: rgba(108,140,255,0.25); }
+
+  .tree-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+  }
+  .tree-list::-webkit-scrollbar { width:5px; }
+  .tree-list::-webkit-scrollbar-track { background:transparent; }
+  .tree-list::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+
+  /* ── Flat tree nodes ── */
+  .tnode {
+    display: flex;
+    align-items: center;
+    min-height: 32px;
+    padding: 0 14px;
+    cursor: pointer;
+    transition: background 0.1s;
+    position: relative;
+  }
+  .tnode:hover { background: rgba(255,255,255,0.025); }
+  .tnode.selected { background: var(--accent-dim); }
+  .tnode.on-path { background: rgba(0,245,212,0.03); }
+  .tnode.is-leaf { background: rgba(0,245,212,0.05); }
+
+  /* indent for branched children */
+  .tnode-indent {
+    display: flex;
+    flex-shrink: 0;
+  }
+  .indent-seg {
+    width: 24px;
+    position: relative;
+    height: 32px;
+  }
+  .indent-seg.has-line::after {
+    content: '';
+    position: absolute;
+    left: 11px;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--border);
+  }
+  .indent-seg.has-tee::after {
+    content: '';
+    position: absolute;
+    left: 11px;
+    top: 0;
+    height: 50%;
+    width: 1px;
+    background: var(--border);
+  }
+  .indent-seg.has-tee::before {
+    content: '';
+    position: absolute;
+    left: 11px;
+    top: 50%;
+    width: 12px;
+    height: 1px;
+    background: var(--border);
+  }
+
+  .tnode-icon {
+    width: 18px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    font-size: 9px;
+    font-weight: 700;
+    border-radius: 2px;
+  }
+  .icon-u { color: var(--user-color); background: rgba(91,192,235,0.1); }
+  .icon-a { color: var(--assistant-color); background: rgba(155,93,229,0.1); }
+  .icon-s { color: var(--summary-color); background: rgba(252,163,17,0.1); }
+
+  .tnode-text {
+    flex: 1;
+    min-width: 0;
+    padding: 0 8px;
+    font-size: 12px;
+    line-height: 1.4;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tnode.on-path .tnode-text { color: var(--fg); }
+  .tnode:not(.on-path) .tnode-text { color: var(--muted); }
+
+  .tnode-label {
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 2px;
+    background: rgba(108,140,255,0.1);
+    color: var(--accent);
+    font-weight: 500;
+    flex-shrink: 0;
+  }
+
+  .leaf-indicator {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--leaf-color);
+    flex-shrink: 0;
+    margin-left: 6px;
+    box-shadow: 0 0 6px rgba(0,245,212,0.4);
+    animation: glow 2s ease infinite;
+  }
+  @keyframes glow { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  /* ── Chat area (mock) ── */
+  .chat-area {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .chat-msg {
+    max-width: 720px;
+    padding: 12px 16px;
+    border-radius: 4px;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  .chat-msg.user {
+    align-self: flex-end;
+    background: var(--accent-dim);
+    border: 1px solid rgba(108,140,255,0.15);
+    color: var(--fg);
+  }
+  .chat-msg.assistant {
+    align-self: flex-start;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--fg);
+  }
+  .chat-msg .role {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 6px;
+  }
+  .chat-msg.user .role { color: var(--user-color); }
+  .chat-msg.assistant .role { color: var(--assistant-color); }
+
+  /* ── Action bar on selected node ── */
+  .action-bar {
+    display: none;
+    padding: 6px 14px;
+    border-top: 1px solid var(--border);
+    background: var(--surface2);
+    gap: 6px;
+    align-items: center;
+    font-size: 11px;
+  }
+  .action-bar.show { display: flex; }
+  .action-bar .info { color: var(--muted); flex: 1; font-size: 10px; }
+  .abtn {
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--fg);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .abtn:hover { border-color: var(--accent); color: var(--accent); }
+  .abtn-primary { background: var(--accent); border-color: var(--accent); color:#fff; }
+  .abtn-primary:hover { opacity:0.85; }
+</style>
+</head>
+<body>
+
+<!-- ── Top bar ── -->
+<div class="topbar" style="position:relative;">
+  <div class="topbar-agent">
+    <span class="dot"></span>
+    <span>Claude</span>
+    <span class="chevron">&#9662;</span>
+  </div>
+
+  <div class="topbar-breadcrumb">
+    <span style="color:var(--border)">/</span>
+    <span class="dir">xyz-agent</span>
+    <span style="color:var(--border)">/</span>
+    <span>login-feature</span>
+  </div>
+
+  <!-- Tree trigger -->
+  <div class="tree-trigger" id="treeToggle" onclick="toggleTree()">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+      <path d="M2 4h4M2 8h4M2 12h4" stroke-linecap="round"/>
+      <path d="M8 4h6M8 8h6M8 12h6" stroke-linecap="round"/>
+      <circle cx="6" cy="4" r="1.2" fill="currentColor" stroke="none"/>
+      <circle cx="6" cy="8" r="1.2" fill="currentColor" stroke="none"/>
+      <circle cx="6" cy="12" r="1.2" fill="currentColor" stroke="none"/>
+    </svg>
+    <span class="branch-count">3</span>
+  </div>
+
+  <div class="topbar-right">
+    <span style="font-size:10px;color:var(--muted)">14 entries</span>
+  </div>
+
+  <!-- Dropdown panel -->
+  <div class="tree-dropdown" id="treeDropdown">
+    <div class="tree-dropdown-inner">
+      <div class="tree-toolbar">
+        <span class="title">Session Tree</span>
+        <span class="info">Leaf: H8</span>
+        <button class="filter-btn active" data-f="default">Default</button>
+        <button class="filter-btn" data-f="no-tools">No Tools</button>
+        <button class="filter-btn" data-f="user">User</button>
+        <button class="filter-btn" data-f="labeled">Labeled</button>
+      </div>
+      <div class="tree-list" id="treeList"></div>
+      <div class="action-bar" id="actionBar">
+        <span class="info" id="actionInfo"></span>
+        <button class="abtn" onclick="doFork()">Fork from here</button>
+        <button class="abtn abtn-primary" onclick="doNavigate()">Navigate here</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Chat area (mock context) ── -->
+<div class="chat-area" id="chatArea">
+  <div class="chat-msg user">
+    <div class="role">User</div>
+    帮我实现一个用户登录功能，需要支持邮箱和手机号两种方式
+  </div>
+  <div class="chat-msg assistant">
+    <div class="role">Assistant</div>
+    好的，我来帮你实现。首先设计数据模型和 API 接口...
+  </div>
+  <div class="chat-msg user">
+    <div class="role">User</div>
+    先从类型定义和 API 路由开始，用 Express
+  </div>
+  <div class="chat-msg assistant">
+    <div class="role">Assistant</div>
+    已创建 src/types/auth.ts 和 src/api/auth.ts...
+  </div>
+  <div class="chat-msg user">
+    <div class="role">User</div>
+    继续，用 Prisma 做 ORM
+  </div>
+  <div class="chat-msg assistant">
+    <div class="role">Assistant</div>
+    已完成 src/services/auth.ts，使用 Prisma Client。完整登录功能已完成。需要我写测试吗？
+  </div>
+  <div class="chat-msg user">
+    <div class="role">User</div>
+    写单元测试，用 Vitest
+  </div>
+  <div class="chat-msg assistant">
+    <div class="role">Assistant</div>
+    已创建测试文件，6 个测试用例全部通过。覆盖率 92%。
+  </div>
+</div>
+
+<script>
+// Mock data - same tree structure as before
+const E = {
+  a1: { id:'a1', pid:null, role:'user', text:'帮我实现一个用户登录功能，需要支持邮箱和手机号两种方式', label:null },
+  b2: { id:'b2', pid:'a1', role:'assistant', text:'好的，我来帮你实现。首先设计数据模型和 API 接口...' },
+  c3: { id:'c3', pid:'b2', role:'user', text:'先从类型定义和 API 路由开始，用 Express', label:'v1-express' },
+  d4: { id:'d4', pid:'c3', role:'assistant', text:'已创建 src/types/auth.ts 和 src/api/auth.ts...' },
+  e5: { id:'e5', pid:'d4', role:'user', text:'继续，用 Prisma 做 ORM', label:null },
+  f6: { id:'f6', pid:'e5', role:'assistant', text:'已完成 src/services/auth.ts，使用 Prisma Client。完整登录功能已完成。需要我写测试吗？' },
+  // branch from b2
+  c3x:{ id:'c3x',pid:'b2', role:'user', text:'先从类型定义开始，用 Fastify 框架', label:'v2-fastify' },
+  d4x:{ id:'d4x',pid:'c3x',role:'assistant',text:'Fastify 版本：src/types/auth.ts + src/routes/auth.ts...' },
+  // branch from f6
+  bs1: { id:'bs1', pid:'f6', role:'summary', text:'[branch summary]: User explored adding OAuth support. Deferred to separate branch.', label:null },
+  g7: { id:'g7', pid:'f6', role:'user', text:'写单元测试，用 Vitest', label:null },
+  h8: { id:'h8', pid:'g7', role:'assistant', text:'已创建测试文件，6 个测试用例全部通过。覆盖率 92%。' },
+  // branch from f6
+  g7y:{ id:'g7y',pid:'f6', role:'user', text:'加上速率限制，防止暴力破解', label:null },
+  h8y:{ id:'h8y',pid:'g7y',role:'assistant',text:'安装了 express-rate-limit，配置登录: 5次/分钟/IP...'},
+};
+
+const LEAF = 'h8';
+const ACTIVE_PATH = new Set(['a1','b2','c3','d4','e5','f6','g7','h8']);
+
+function childrenOf(id) {
+  return Object.values(E).filter(e => e.pid === id);
+}
+
+function hasMultipleChildren(id) {
+  return childrenOf(id).length > 1;
+}
+
+let selectedId = null;
+let treeOpen = false;
+
+function toggleTree() {
+  treeOpen = !treeOpen;
+  document.getElementById('treeDropdown').classList.toggle('open', treeOpen);
+  if (treeOpen) renderTree();
+}
+
+function getIcon(role) {
+  if (role === 'user') return { cls: 'icon-u', ch: 'U' };
+  if (role === 'assistant') return { cls: 'icon-a', ch: 'A' };
+  if (role === 'summary') return { cls: 'icon-s', ch: 'S' };
+  return { cls: '', ch: '?' };
+}
+
+function truncate(text, len) {
+  if (!text) return '';
+  const first = text.split('\n')[0];
+  return first.length > len ? first.slice(0, len) + '...' : first;
+}
+
+// Render flat list with conditional indent
+function renderTree() {
+  const list = document.getElementById('treeList');
+  list.innerHTML = '';
+
+  function renderEntry(entry, depth, parentHasSiblings) {
+    const el = document.createElement('div');
+    el.className = 'tnode';
+    if (ACTIVE_PATH.has(entry.id)) el.classList.add('on-path');
+    if (entry.id === LEAF) el.classList.add('is-leaf');
+    if (entry.id === selectedId) el.classList.add('selected');
+
+    // indent segments (only when depth > 0, i.e. parent had multiple children)
+    if (depth > 0) {
+      const indent = document.createElement('div');
+      indent.className = 'tnode-indent';
+      for (let i = 0; i < depth; i++) {
+        const seg = document.createElement('div');
+        seg.className = 'indent-seg has-line';
+        indent.appendChild(seg);
+      }
+      el.appendChild(indent);
+    }
+
+    // icon
+    const icon = getIcon(entry.role);
+    const iconEl = document.createElement('div');
+    iconEl.className = `tnode-icon ${icon.cls}`;
+    iconEl.textContent = icon.ch;
+    el.appendChild(iconEl);
+
+    // text
+    const textEl = document.createElement('div');
+    textEl.className = 'tnode-text';
+    textEl.textContent = truncate(entry.text, 70);
+    el.appendChild(textEl);
+
+    // label
+    if (entry.label) {
+      const lbl = document.createElement('span');
+      lbl.className = 'tnode-label';
+      lbl.textContent = entry.label;
+      el.appendChild(lbl);
+    }
+
+    // leaf indicator
+    if (entry.id === LEAF) {
+      const dot = document.createElement('div');
+      dot.className = 'leaf-indicator';
+      el.appendChild(dot);
+    }
+
+    el.addEventListener('click', () => selectNode(entry.id));
+    list.appendChild(el);
+
+    // children
+    const children = childrenOf(entry.id);
+    if (children.length > 1) {
+      // branched: render with indent
+      children.forEach(child => renderEntry(child, depth + 1, true));
+    } else if (children.length === 1) {
+      // linear: same indent level
+      renderEntry(children[0], depth, false);
+    }
+  }
+
+  // Start from root
+  const roots = Object.values(E).filter(e => e.pid === null);
+  roots.forEach(root => renderEntry(root, 0, false));
+}
+
+function selectNode(id) {
+  selectedId = id;
+  renderTree();
+
+  const bar = document.getElementById('actionBar');
+  const info = document.getElementById('actionInfo');
+
+  if (id === LEAF) {
+    bar.classList.remove('show');
+    return;
+  }
+
+  bar.classList.add('show');
+  const entry = E[id];
+  const role = entry.role === 'user' ? 'User message' : entry.role === 'assistant' ? 'Assistant response' : 'Branch summary';
+  const pathLen = getPathToRoot(id).length;
+  info.textContent = `${role} | ${pathLen} entries from root`;
+}
+
+function getPathToRoot(id) {
+  const path = [];
+  let cur = id;
+  while (cur) { path.push(cur); cur = E[cur]?.pid; }
+  return path.reverse();
+}
+
+function doNavigate() {
+  if (!selectedId) return;
+  alert(`Navigate to ${selectedId}\n\nSends: RPC prompt "/xyz-navigate ${selectedId}"\nExtension handler calls ctx.navigateTree("${selectedId}", {summarize:false})\nResult sent back via ctx.sendMessage()`);
+}
+
+function doFork() {
+  if (!selectedId) return;
+  alert(`Fork from ${selectedId}\n\nSends: RPC { type: "fork", entryId: "${selectedId}" }\nCreates new session file with root→parent path`);
+}
+
+// Filter buttons
+document.querySelectorAll('.filter-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    // For demo, just re-render (filter not fully implemented)
+    renderTree();
+  });
+});
+
+// Click outside to close
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.tree-dropdown') && !e.target.closest('.tree-trigger') && treeOpen) {
+    treeOpen = false;
+    document.getElementById('treeDropdown').classList.remove('open');
+  }
+});
+</script>
+</body>
+</html>

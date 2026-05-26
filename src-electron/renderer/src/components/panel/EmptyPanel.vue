@@ -48,7 +48,6 @@ import { useSessionStore } from '../../stores/session'
 import { usePanelStore } from '../../stores/panel'
 import { useChatStore } from '../../stores/chat'
 import { useSession } from '../../composables/useSession'
-import { send } from '../../lib/ws-client'
 
 const { t } = useI18n()
 
@@ -59,7 +58,7 @@ const props = defineProps<{
 const sessionStore = useSessionStore()
 const panelStore = usePanelStore()
 const chatStore = useChatStore()
-const { createSession: doCreateSession } = useSession()
+const { createSession: doCreateSession, switchSession: doSwitchSession } = useSession()
 
 // Track session creation to bind new session to this pane
 const isCreating = ref(false)
@@ -75,7 +74,7 @@ function handleSelectSession(sessionId: string) {
   panelStore.bindSession(props.panelId, sessionId)
   // Load history for the selected session
   chatStore.ensureSession(sessionId)
-  send({ type: 'session.history', payload: { sessionId } })
+  doSwitchSession(sessionId)
 }
 
 function handleCreateSession() {

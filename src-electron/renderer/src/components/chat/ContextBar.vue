@@ -12,8 +12,8 @@
 
 <script setup lang="ts">
 import { computed, watch } from 'vue'
-import { send } from '../../lib/ws-client'
 import { useChatStore } from '../../stores/chat'
+import { useSession } from '../../composables/useSession'
 
 const BAR_FULL = 100
 const THRESHOLD_HIGH = 85
@@ -27,11 +27,12 @@ const props = defineProps<{
 const chatStore = useChatStore()
 
 // Auto-compact when server-reported context exceeds 85% during generation
+const { compactSession } = useSession()
 watch(() => props.percentage, (pct) => {
   if (pct > THRESHOLD_HIGH && props.sessionId) {
     const s = chatStore.getSessionState(props.sessionId)
     if (s.isGenerating) {
-      send({ type: 'session.compact', payload: { sessionId: props.sessionId } })
+      compactSession(props.sessionId)
     }
   }
 })

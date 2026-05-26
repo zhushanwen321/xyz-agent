@@ -13,10 +13,22 @@ import { WebSocket } from 'ws'
 
 const sendMessageMock = vi.fn().mockResolvedValue(undefined)
 
+// sendSubagentMessageMock 模拟真实编码逻辑，将 subagent 参数编码后调用 sendMessage
+const sendSubagentMessageMock = vi.fn().mockImplementation(
+  async (sessionId: string, agent: string, task: string, content?: string) => {
+    const payload = JSON.stringify({ agent, task })
+    const encoded = Buffer.from(payload, 'utf-8').toString('base64')
+    const marker = `<!-- xyz-agent-force-subagent:${encoded} -->`
+    const promptText = content || `Execute task using agent '${agent}'`
+    await sendMessageMock(sessionId, `${marker}\n${promptText}`)
+  },
+)
+
 vi.mock('../src/services/session-service.js', () => {
   return {
   SessionService: class MockSessionService {
     sendMessage = sendMessageMock
+    sendSubagentMessage = sendSubagentMessageMock
     listPersistedSessions = vi.fn().mockReturnValue([])
     getSummary = vi.fn().mockReturnValue(undefined)
     getHistory = vi.fn().mockResolvedValue([])
@@ -87,12 +99,6 @@ vi.mock('../src/config-store.js', () => ({
   getDefaultModel: vi.fn().mockReturnValue('test/model'),
 }))
 
-vi.mock('../src/provider-store.js', () => ({
-  listProviders: vi.fn().mockReturnValue([]),
-  setProvider: vi.fn(),
-  deleteProvider: vi.fn(),
-}))
-
 vi.mock('../src/skill-scanner.js', () => ({
   scanSkills: vi.fn().mockReturnValue([]),
 }))
@@ -101,18 +107,18 @@ vi.mock('../src/agent-scanner.js', () => ({
   scanAgents: vi.fn().mockReturnValue([]),
 }))
 
-vi.mock('../src/session-scanner.js', () => ({
-  scanSessions: vi.fn().mockReturnValue([]),
-  deleteSessionFile: vi.fn(),
-  invalidateScanCache: vi.fn(),
-}))
-
 vi.mock('../src/pi-config-bridge.js', () => ({
   getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
   getSkillPaths: () => [],
   getSessionsDir: () => '/mock/sessions',
   readModels: () => ({ providers: {} }),
   readSettings: () => ({}),
+  scanPiSessions: () => [],
+  refreshAll: () => {},
+}))
+
+vi.mock('../src/trash.js', () => ({
+  trash: vi.fn(),
 }))
 
 import { SidecarServer } from '../src/server.js'
@@ -143,12 +149,14 @@ describe('SidecarServer message.send with subagent field', () => {
 
   beforeEach(async () => {
   sendMessageMock.mockClear()
+  sendSubagentMessageMock.mockClear()
   port = await getFreePort()
   server = new SidecarServer(port, '/tmp/test-project')
   server.setServices(
-    new SessionService({} as never, {} as never, {} as never, '/tmp'),
+    new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never),
     new ConfigService('/tmp'),
     new ModelService(),
+    {} as never,
   )
   await server.start()
   })

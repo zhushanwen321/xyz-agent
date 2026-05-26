@@ -91,6 +91,7 @@ export interface ISessionService {
   delete(sessionId: string): Promise<void>
   renameSession(sessionId: string, newName: string): Promise<void>
   sendMessage(sessionId: string, content: string): Promise<void>
+  sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string): Promise<void>
   abort(sessionId: string): Promise<void>
   switchModel(sessionId: string, provider: string, modelId: string): Promise<string>
   compact(sessionId: string): Promise<void>

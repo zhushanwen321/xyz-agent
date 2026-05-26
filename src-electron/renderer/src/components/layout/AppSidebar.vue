@@ -4,7 +4,6 @@ import { useSessionStore } from '../../stores/session'
 import { usePanelStore } from '../../stores/panel'
 import { useSession } from '../../composables/useSession'
 import { useSettingsStore } from '../../stores/settings'
-import { send } from '../../lib/ws-client'
 import { SessionItem } from '../sidebar'
 import { useI18n } from 'vue-i18n'
 
@@ -12,7 +11,7 @@ const { t } = useI18n()
 const sessionStore = useSessionStore()
 const panelStore = usePanelStore()
 const settingsStore = useSettingsStore()
-const { switchSession, deleteSession } = useSession()
+const { switchSession, deleteSession, renameSession } = useSession()
 
 defineEmits<{
   create: []
@@ -40,12 +39,13 @@ function onStartRename(sessionId: string) {
 }
 
 function onConfirmRename(sessionId: string, newName: string) {
+  // 乐观更新 store
   const session = sessionStore.sessions.find(s => s.id === sessionId)
   if (session) {
     session.label = newName
   }
   renamingSessionId.value = null
-  send({ type: 'session.rename', payload: { sessionId, name: newName } })
+  renameSession(sessionId, newName)
 }
 
 function onCancelRename() {

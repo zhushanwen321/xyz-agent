@@ -381,7 +381,7 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .msg__body h1:first-child, .msg__body h2:first-child, .msg__body h3:first-child { margin-top: 0; }
 
 /* ── 段落 ── */
-.msg__body p { margin-bottom: 16px; }
+.msg__body p { margin-bottom: 0.25em; }
 .msg__body p:last-child { margin-bottom: 0; }
 
 /* ── 列表 ── */

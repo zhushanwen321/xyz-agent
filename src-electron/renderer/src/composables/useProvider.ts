@@ -2,7 +2,7 @@ import { onMounted, onUnmounted, getCurrentInstance } from 'vue'
 import { useProviderStore } from '../stores/provider'
 import { on, off } from '../lib/event-bus'
 import { send } from '../lib/ws-client'
-import type { ServerMessage, ProviderInfo, ModelInfo, SkillInfo, AgentInfo, ScannedSkillInfo, ScannedAgentInfo } from '@xyz-agent/shared'
+import type { ServerMessage, ProviderInfo, ModelInfo, SkillInfo, AgentInfo, ScannedSkillInfo, ScannedAgentInfo, SetProviderData } from '@xyz-agent/shared'
 
 // ── 全局事件处理器（ref-counted，解决多组件重复注册问题）───
 
@@ -100,13 +100,93 @@ export function useProvider() {
     send({ type: 'config.getProviders', payload: {} })
   }
 
-  function setProvider(providerId: string, apiKey: string, baseUrl?: string) {
-    send({ type: 'config.setProvider', payload: { providerId, apiKey, baseUrl } })
+  function setProvider(providerId: string, data: SetProviderData = {}) {
+    send({ type: 'config.setProvider', payload: { providerId, ...data } })
   }
 
   function deleteProvider(providerId: string) {
     send({ type: 'config.deleteProvider', payload: { providerId } })
   }
 
-  return { store, loadProviders, setProvider, deleteProvider }
+  function discoverModels(baseUrl: string, apiKey?: string, providerType?: string, providerId?: string) {
+    send({ type: 'config.discoverModels', payload: { baseUrl, ...(apiKey && { apiKey }), ...(providerType && { providerType }), ...(providerId && { providerId }) } })
+  }
+
+  function scanSkills(sources: string[]) {
+    store.isScanningSkills = true
+    send({ type: 'config.scanSkills', payload: { sources } })
+  }
+
+  function setSkill(skill: SkillInfo) {
+    send({ type: 'config.setSkill', payload: { skill } })
+  }
+
+  function deleteSkill(skillId: string) {
+    send({ type: 'config.deleteSkill', payload: { skillId } })
+  }
+
+  function scanAgents(sources: string[]) {
+    store.isScanningAgents = true
+    send({ type: 'config.scanAgents', payload: { sources } })
+  }
+
+  function setAgent(agent: AgentInfo) {
+    send({ type: 'config.setAgent', payload: { agent } })
+  }
+
+  function deleteAgent(agentId: string) {
+    send({ type: 'config.deleteAgent', payload: { agentId } })
+  }
+
+  function toggleSkill(skillId: string) {
+    const s = store.skills.find(s => s.id === skillId)
+    if (s) setSkill({ ...s, enabled: !s.enabled })
+  }
+
+  function toggleAgent(agentId: string) {
+    const a = store.agents.find(a => a.id === agentId)
+    if (a) setAgent({ ...a, enabled: !a.enabled })
+  }
+
+  function importSkills(items: ScannedSkillInfo[]) {
+    for (const item of items) {
+      setSkill({
+        id: item.id,
+        name: item.name,
+        description: item.description,
+        enabled: true,
+        source: item.sourceType,
+        triggers: item.triggers,
+        argumentHint: item.argumentHint,
+        sourcePath: item.sourcePath,
+        content: item.content,
+        fileSize: item.fileSize,
+        tools: item.tools,
+      })
+    }
+  }
+
+  function importAgents(items: ScannedAgentInfo[]) {
+    for (const item of items) {
+      setAgent({
+        id: item.id,
+        name: item.name,
+        description: item.description,
+        enabled: true,
+        modelStrategy: 'auto',
+        icon: item.icon,
+        source: item.sourceType,
+        sourceType: item.sourceType,
+        content: item.content,
+        tools: item.tools,
+      })
+    }
+  }
+
+  return {
+    store, loadProviders, setProvider, deleteProvider,
+    discoverModels,
+    scanSkills, setSkill, deleteSkill, toggleSkill, importSkills,
+    scanAgents, setAgent, deleteAgent, toggleAgent, importAgents,
+  }
 }

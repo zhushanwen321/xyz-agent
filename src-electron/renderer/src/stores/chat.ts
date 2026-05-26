@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { reactive, computed } from 'vue'
 import type { Message, ToolCall } from '@xyz-agent/shared'
+import { createSystemNotification } from '../lib/system-notification'
 
 // SystemNotification: local system notification (not from API)
 export interface SystemNotification {
@@ -235,6 +236,54 @@ export const useChatStore = defineStore('chat', () => {
     getSessionState(sessionId).isCompacting = v
   }
 
+  // ── 流式消息高层生命周期方法 ──────────────────────────────
+
+  /** 开始新一轮流式消息 */
+  function startStreaming(sid: string, msg: Message) {
+    const s = getSessionState(sid)
+    s.isGenerating = true
+    s.streamingMessage = msg
+  }
+
+  /** 追加流式文本（streamingMessage 为 null 时忽略） */
+  function appendStreamText(delta: string, sid: string) {
+    appendToStreaming(delta, sid)
+  }
+
+  /** 追加 thinking 内容 */
+  function appendStreamThinking(delta: string, sid: string) {
+    appendThinkingDelta(delta, sid)
+  }
+
+  /** 添加流式 tool call */
+  function addStreamToolCall(tc: ToolCall, sid: string) {
+    addStreamingToolCall(tc, sid)
+  }
+
+  /** 更新流式 tool call 结果 */
+  function updateStreamToolCall(id: string, output: string, sid: string) {
+    updateStreamingToolCall(id, output, sid)
+  }
+
+  /** 完成流式消息，自动重置 isGenerating */
+  function completeStream(sid: string) {
+    completeStreaming({}, sid)
+  }
+
+  /** 终止流式消息（统一封装 reset 三步 + 可选错误通知） */
+  function abortStream(sid: string, errorMsg?: string) {
+    setGenerating(false, sid)
+    setStreaming(null, sid)
+    setError(null, sid)
+    if (errorMsg) {
+      addMessage({
+        ...createSystemNotification('alert', errorMsg),
+        content: errorMsg,
+        status: 'error',
+      }, sid)
+    }
+  }
+
   return {
     // State
     chatSessions,
@@ -255,5 +304,10 @@ export const useChatStore = defineStore('chat', () => {
     updateContextInfo, setError, switchAgent,
     setTokenUsage, setDoneCount, setAlertCount, setCompacting,
     setLoadingHistory,
+
+    // 流式消息高层方法
+    startStreaming, appendStreamText, appendStreamThinking,
+    addStreamToolCall, updateStreamToolCall,
+    completeStream, abortStream,
   }
 })

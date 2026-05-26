@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import type { SkillInfo, AgentInfo } from '@xyz-agent/shared'
+import { on } from '../lib/event-bus'
 
 // ── 类型定义 ────────────────────────────────────────────────────
 
@@ -175,3 +176,23 @@ export function useSlashCommands() {
     setExtensionCommands,
   }
 }
+
+// ── 全局事件监听 ────────────────────────────────────────────────
+// session.commands 由后端推送，包含 pi extension 注册的命令
+// 直接在模块级注册（extensionCommands 是模块级 ref）
+
+let commandsListenerRegistered = false
+function registerCommandsListener() {
+  if (commandsListenerRegistered) return
+  commandsListenerRegistered = true
+  on('session.commands', (msg: { payload: { commands: Array<{ name: string; description?: string; source: string }> } }) => {
+    // 内联 extensionCommands 更新，避免依赖 composable 内部函数
+    extensionCommands.value = msg.payload.commands.map(cmd => ({
+      name: cmd.name,
+      description: cmd.description ?? '',
+      source: 'extension' as const,
+      action: { type: 'extension' as const, commandName: cmd.name },
+    }))
+  })
+}
+registerCommandsListener()

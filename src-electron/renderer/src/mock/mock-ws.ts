@@ -72,8 +72,8 @@ export function mockSend(msg: ClientMessage): void {
       respond('session.created', {
         session: {
           id: 'mock-new-' + Date.now(),
-          label: (msg.payload.label as string) || '新会话',
-          cwd: (msg.payload.cwd as string) || '/Users/mock/project',
+          label: msg.payload.label || '新会话',
+          cwd: msg.payload.cwd || '/Users/mock/project',
           status: 'idle',
           lastActiveAt: Date.now(),
           modelId: 'claude-sonnet',
@@ -82,7 +82,7 @@ export function mockSend(msg: ClientMessage): void {
       })
       break
     case 'session.delete': {
-      const delId = msg.payload.sessionId as string
+      const delId = msg.payload.sessionId
       // 从 mock 数据中真正移除
       for (const group of mockSessionGroups) {
         const idx = group.sessions.findIndex(s => s.id === delId)
@@ -95,7 +95,7 @@ export function mockSend(msg: ClientMessage): void {
     case 'session.compact':
       respond('session.compacting', { sessionId: msg.payload.sessionId, status: 'compacting' })
       setTimeout(() => {
-        respond('session.compacted', { sessionId: msg.payload.sessionId as string, status: 'compacted' })
+        respond('session.compacted', { sessionId: msg.payload.sessionId, status: 'compacted' })
       }, 500)
       break
     case 'session.clear':
@@ -113,13 +113,13 @@ export function mockSend(msg: ClientMessage): void {
       })) })
       break
     case 'config.setProvider': {
-      const pId = msg.payload.providerId as string | undefined
-      const pName = msg.payload.name as string | undefined
-      const pBaseUrl = (msg.payload.baseUrl ?? msg.payload.url) as string | undefined
-      const pKey = (msg.payload.apiKey ?? msg.payload.key) as string | undefined
+      const pId = msg.payload.providerId
+      const pName = msg.payload.name
+      const pBaseUrl = msg.payload.baseUrl
+      const pKey = msg.payload.apiKey
       const pModelsRaw = msg.payload.models as unknown
-      const pType = msg.payload.type as string | undefined
-      const pStatus = msg.payload.status as string | undefined
+      const pType = msg.payload.type
+      const pEnabled = msg.payload.enabled
 
       if (pId && pName) {
         const existing = mockProviders.find(p => p.id === pId)
@@ -141,9 +141,9 @@ export function mockSend(msg: ClientMessage): void {
             icon: pName.charAt(0).toUpperCase(),
           })
         }
-      } else if (pId && pStatus) {
+      } else if (pId && pEnabled !== undefined) {
         const target = mockProviders.find(p => p.id === pId)
-        if (target) target.status = pStatus as typeof target.status
+        if (target) target.enabled = !target.enabled
       }
 
       respond('config.providerUpdated', { providerId: pId })
@@ -153,7 +153,7 @@ export function mockSend(msg: ClientMessage): void {
       break
     }
     case 'config.deleteProvider': {
-      const delId = msg.payload.providerId as string | undefined
+      const delId = msg.payload.providerId
       if (delId) {
         const idx = mockProviders.findIndex(p => p.id === delId)
         if (idx >= 0) mockProviders.splice(idx, 1)
@@ -167,7 +167,7 @@ export function mockSend(msg: ClientMessage): void {
     case 'config.discoverModels': {
       // Mock: 使用硬编码数据模拟发现结果
       setTimeout(() => {
-        const discType = msg.payload.providerType as string | undefined
+        const discType = msg.payload.providerType
         const discModels = typeModelMap[discType ?? ''] ?? []
         respond('config.discoveredModels', {
           models: discModels,
@@ -251,8 +251,9 @@ function fireInitialData(): void {
 }
 
 function handleMockMessageSend(msg: ClientMessage): void {
-  const sessionId = msg.payload.sessionId as string
-  const content = msg.payload.content as string
+  if (msg.type !== 'message.send') return
+  const payload = msg.payload as { sessionId: string; content: string }
+  const { sessionId, content } = payload
 
   setTimeout(() => {
     respond('message.thinking_start', { sessionId })

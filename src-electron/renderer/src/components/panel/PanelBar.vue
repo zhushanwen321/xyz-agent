@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { usePanelStore } from '../../stores/panel'
 import { useSessionStore } from '../../stores/session'
 import { useWindowStore } from '../../stores/window'
+import { useTreeStore } from '../../stores/tree'
+import { useTree } from '../../composables/useTree'
 import AnchorDropdown from './AnchorDropdown.vue'
+import SessionTreePanel from './SessionTreePanel.vue'
 
 interface AgentOption {
   id: string
@@ -34,6 +37,8 @@ defineEmits<{
 const panelStore = usePanelStore()
 const windowStore = useWindowStore()
 const sessionStore = useSessionStore()
+const treeStore = useTreeStore()
+const { fetchTree } = useTree()
 
 const sessionInfo = computed(() => {
   if (!props.sessionId) return null
@@ -78,6 +83,34 @@ function splitPanel(direction: 'horizontal' | 'vertical') {
   if (!props.panelId) return
   panelStore.splitPanel(props.panelId, direction)
 }
+
+// ── Session Tree ──────────────────────────────────────────────────
+const treeState = computed(() => props.sessionId ? treeStore.getSessionState(props.sessionId) : null)
+const isTreeOpen = computed(() => treeState.value?.isOpen ?? false)
+const branchCount = computed(() => treeState.value?.branchCount ?? 0)
+
+function toggleTree() {
+  if (!props.sessionId) return
+  const wasOpen = treeState.value?.isOpen ?? false
+  treeStore.togglePanel(props.sessionId)
+  if (!wasOpen) fetchTree(props.sessionId)
+}
+
+function closeTree() {
+  if (!props.sessionId) return
+  treeStore.setPanelOpen(props.sessionId, false)
+}
+
+// ESC 关闭 tree 面板（仅在 tree 面板打开且无其他聚焦元素时响应）
+function onKeydown(e: KeyboardEvent) {
+  if (e.key !== 'Escape' || !isTreeOpen.value) return
+  // 如果焦点在 input/textarea/contenteditable 内，让组件自己处理 ESC
+  const tag = (e.target as HTMLElement)?.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return
+  closeTree()
+}
+onMounted(() => document.addEventListener('keydown', onKeydown))
+onUnmounted(() => document.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
@@ -96,6 +129,25 @@ function splitPanel(direction: 'horizontal' | 'vertical') {
       <span v-if="sessionInfo.label && sessionInfo.label !== dirName" class="breadcrumb__label">{{ sessionInfo.label }}</span>
     </span>
     <span v-else class="breadcrumb breadcrumb--empty">空面板</span>
+
+    <!-- Tree trigger -->
+    <!-- eslint-disable-next-line taste/no-native-html-elements -- compact icon trigger, consistent with panel-close -->
+    <button
+      v-if="sessionId"
+      class="tree-trigger"
+      :class="{ 'tree-trigger--active': isTreeOpen }"
+      aria-label="Session tree"
+      @click="toggleTree"
+    >
+      <!-- git-branch icon -->
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="6" y1="3" x2="6" y2="15"/>
+        <circle cx="18" cy="6" r="3"/>
+        <circle cx="6" cy="18" r="3"/>
+        <path d="M18 9a9 9 0 0 1-9 9"/>
+      </svg>
+      <span v-if="branchCount > 0" class="tree-badge">{{ branchCount }}</span>
+    </button>
 
     <!-- Notification chips -->
     <div v-if="(doneCount ?? 0) > 0 || (alertCount ?? 0) > 0" class="panel-notifs">
@@ -168,6 +220,16 @@ function splitPanel(direction: 'horizontal' | 'vertical') {
         </div>
       </div>
     </Teleport>
+
+    <!-- Tree overlay panel -->
+    <div v-if="isTreeOpen && sessionId" class="tree-overlay" @keydown.escape="closeTree">
+      <SessionTreePanel :session-id="sessionId" @close="closeTree" />
+    </div>
+
+    <!-- Tree backdrop: click outside 关闭 -->
+    <Teleport to="body">
+      <div v-if="isTreeOpen" class="fixed inset-0 z-40" @click="closeTree" />
+    </Teleport>
   </div>
 </template>
 
@@ -180,7 +242,54 @@ function splitPanel(direction: 'horizontal' | 'vertical') {
   height: 40px;
   flex-shrink: 0;
   font-size: 12px;
-  /* No border-bottom — fused into content */
+  position: relative;
+}
+
+.tree-trigger {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: 1px;
+  transition: all 0.15s ease;
+}
+.tree-trigger:hover { background: var(--accent-light); color: var(--accent); }
+.tree-trigger--active { color: var(--accent); background: var(--accent-light); }
+
+.tree-badge {
+  position: absolute;
+  top: -4px;
+  right: -6px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 1px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+  color: white;
+  background: var(--accent);
+}
+
+.tree-overlay {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  height: min(640px, calc(100vh - 44px));
+  z-index: 50;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: none;
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
 }
 
 .breadcrumb {

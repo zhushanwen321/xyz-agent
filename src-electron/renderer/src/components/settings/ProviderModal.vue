@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { Button, Input, Select } from '../../design-system'
 import type { ProviderInfo, ModelInfo } from '@xyz-agent/shared'
 // TagPill removed — tags no longer used
-import { send } from '../../lib/ws-client'
+import { useProvider } from '../../composables/useProvider'
 import { on as onEvent, off as offEvent } from '../../lib/event-bus'
 
 interface Props {
@@ -191,7 +191,7 @@ function handleDiscover() {
   // 清理旧监听和超时
   cleanupDiscover()
 
-  // 超时保护：runtime 未响应或版本过旧时防止永久 loading
+  // 超时保护
   discoverTimer = setTimeout(() => {
     cleanupDiscover()
     discoverStatus.value = 'error'
@@ -229,17 +229,14 @@ function handleDiscover() {
   }
   onEvent('config.discoveredModels', discoverHandler)
 
-  // 通过 runtime 发起 HTTP 请求
-  // 掩码 key 不发送，runtime 会通过 providerId 从 config-store 读取已保存的 key
-  send({
-    type: 'config.discoverModels',
-    payload: {
-      baseUrl,
-      apiKey: keyIsMask ? undefined : key || undefined,
-      providerType: type,
-      providerId: props.provider?.id || undefined,
-    },
-  })
+  // 通过 composable 发起发现请求
+  const { discoverModels } = useProvider()
+  discoverModels(
+    baseUrl,
+    keyIsMask ? undefined : key || undefined,
+    type,
+    props.provider?.id || undefined,
+  )
 }
 
 function handleSave() {

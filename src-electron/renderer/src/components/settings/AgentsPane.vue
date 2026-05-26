@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue'
 import { Button } from '../../design-system'
 import { useProviderStore } from '../../stores/provider'
+import { useProvider } from '../../composables/useProvider'
 import type { ScannedAgentInfo, AgentInfo } from '@xyz-agent/shared'
 import ScanImportSection from './ScanImportSection.vue'
 import AgentSection from './AgentSection.vue'
@@ -10,6 +11,7 @@ import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 const providerStore = useProviderStore()
+const { scanAgents, setAgent, deleteAgent, toggleAgent, importAgents } = useProvider()
 const agents = computed(() => providerStore.agents)
 const showModal = ref(false)
 const editingAgent = ref<AgentInfo | null>(null)
@@ -21,16 +23,16 @@ const scanSources = [
 ]
 
 function handleScan(sources: string[]) {
-  providerStore.scanAgentsAction(sources)
+  scanAgents(sources)
 }
 
 function handleImport(items: ScannedAgentInfo[]) {
-  providerStore.importAgents(items)
+  importAgents(items)
 }
 
 function handleAgentSave(data: { name: string; description: string; content: string }) {
   if (editingAgent.value) {
-    providerStore.setAgent({
+    setAgent({
       ...editingAgent.value,
       name: data.name,
       description: data.description,
@@ -45,7 +47,7 @@ function handleAgentSave(data: { name: string; description: string; content: str
       modelStrategy: 'auto',
       content: data.content,
     }
-    providerStore.setAgent(newAgent)
+    setAgent(newAgent)
   }
   showModal.value = false
   editingAgent.value = null
@@ -104,9 +106,9 @@ function closeModal() {
           v-for="agent in agents"
           :key="agent.id"
           :agent="agent"
-          @toggle-enabled="providerStore.toggleAgent(agent.id)"
+          @toggle-enabled="toggleAgent(agent.id)"
           @edit="openEditModal(agent)"
-          @delete="providerStore.deleteAgentAction(agent.id)"
+          @delete="deleteAgent(agent.id)"
         />
       </div>
     </div>

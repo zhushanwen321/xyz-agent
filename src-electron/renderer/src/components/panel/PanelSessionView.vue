@@ -34,13 +34,16 @@ import { usePanelStore } from '../../stores/panel'
 import { useProviderStore } from '../../stores/provider'
 import { useSettingsStore } from '../../stores/settings'
 import { useChat } from '../../composables/useChat'
-import { send } from '../../lib/ws-client'
+import { useTree } from '../../composables/useTree'
+import { useToolApproval } from '../../composables/useToolApproval'
+import { useModel } from '../../composables/useModel'
 import { on, off } from '../../lib/event-bus'
-import type { ServerMessage, ClientMessageType } from '@xyz-agent/shared'
+import type { ServerMessage, ClientMessage } from '@xyz-agent/shared'
 import type { PendingToolCall } from '../chat/ApprovalCard.vue'
 import type { AgentOption, AgentView } from './ChatPanel.vue'
 import ChatPanel from './ChatPanel.vue'
 import { createSystemNotification } from '../../lib/system-notification'
+import { send } from '../../lib/ws-client' // 仅用于 handleSendCommand 的动态消息路由
 
 const props = defineProps<{
   panelId: string
@@ -54,6 +57,8 @@ const settingsStore = useSettingsStore()
 
 const sessionIdRef = toRef(props, 'sessionId')
 const { sendMessage, abort } = useChat(sessionIdRef)
+const { approve: approveTool, deny: denyTool, alwaysAllow: alwaysAllowTool } = useToolApproval()
+const { switchModel } = useModel()
 
 // Session-partitioned state — reads from reactive Map via computed
 // Vue tracks reactive accesses inside computed, so changes to Map entries trigger re-evaluation
@@ -98,7 +103,9 @@ function handleSend(payload: { content: string; skillName?: string; subagent?: {
 function handleSendCommand(payload: { type: string; payload: Record<string, unknown> }) {
   const sid = props.sessionId
   if (!sid) return
-  send({ type: payload.type as ClientMessageType, payload: { ...payload.payload, sessionId: sid } })
+  // 动态路由：slash command 的通用消息转发，需绕过 discriminated union 收窄
+  const msg = { type: payload.type, payload: { ...payload.payload, sessionId: sid } } as ClientMessage
+  send(msg)
 }
 
 function handleLocalAction(payload: { action: string; data?: unknown }) {
@@ -127,23 +134,22 @@ function handleSelectModel(modelId: string) {
   if (!model) return
   const provider = providerStore.providers.find(p => p.id === model.providerId)
   if (provider && provider.enabled === false) return
-  // 乐观更新 UI，后端可能在非活跃 session 上静默成功
   settingsStore.defaultModel = `${model.providerId}/${model.id}`
-  send({ type: 'model.switch', payload: { sessionId: props.sessionId, provider: model.providerId, modelId: model.id } })
+  switchModel(props.sessionId, model.providerId, model.id)
 }
 
 function handleApprove(toolCallId: string) {
-  send({ type: 'tool.approve', payload: { sessionId: props.sessionId, toolCallId } })
+  approveTool(props.sessionId, toolCallId)
   pendingApproval.value = null
 }
 
 function handleDeny(payload: { toolCallId: string; reason?: string }) {
-  send({ type: 'tool.deny', payload: { sessionId: props.sessionId, ...payload } })
+  denyTool(props.sessionId, payload)
   pendingApproval.value = null
 }
 
 function handleAlwaysAllow(toolName: string) {
-  send({ type: 'tool.always_allow', payload: { sessionId: props.sessionId, toolName } })
+  alwaysAllowTool(props.sessionId, toolName)
   pendingApproval.value = null
 }
 
@@ -175,14 +181,7 @@ function handleErrorMessage(msg: ServerMessage) {
   const currentSid = panelStore.panels.find(p => p.id === props.panelId)?.sessionId
   if (!currentSid || payload.sessionId !== currentSid) return
   const errMsg = payload.message ?? 'Unknown error'
-  chatStore.setGenerating(false, currentSid)
-  chatStore.setStreaming(null, currentSid)
-  chatStore.setError(null, currentSid)
-  chatStore.addMessage({
-    ...createSystemNotification('alert', errMsg),
-    content: errMsg,
-    status: 'error',
-  }, currentSid)
+  chatStore.abortStream(currentSid, errMsg)
 }
 
 function handleCompactionState(msg: ServerMessage, value: boolean) {
@@ -229,6 +228,10 @@ const onCompacted = (msg: ServerMessage) => handleCompacted(msg)
 
 onMounted(() => {
   chatStore.ensureSession(props.sessionId)
+  // 预加载 tree 数据，避免首次打开 tree 面板时的延迟
+  const { fetchTree, requestCapability } = useTree()
+  fetchTree(props.sessionId)
+  requestCapability(props.sessionId)
   on('message.tool_call_pending', handleToolApprovalRequest)
   on('error', handleErrorMessage)
   on('session.compacting', onCompacting)

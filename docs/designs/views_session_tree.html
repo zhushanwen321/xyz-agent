@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Session Tree — Interactive Demo</title>
+<style>
+  :root {
+    --bg: #1a1a2e;
+    --surface: #16213e;
+    --surface2: #1e2a47;
+    --border: #2a3a5c;
+    --fg: #e0e0e0;
+    --muted: #8892a8;
+    --accent: #6c8cff;
+    --accent-dim: rgba(108,140,255,0.15);
+    --user: #5bc0eb;
+    --assistant: #9b5de5;
+    --tool: #f15bb5;
+    --branch-sum: #fca311;
+    --leaf: #00f5d4;
+    --compact: #ff6b6b;
+    --active-bg: rgba(108,140,255,0.12);
+    --hover-bg: rgba(255,255,255,0.04);
+    --danger: #ff4757;
+  }
+
+  * { margin:0; padding:0; box-sizing:border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* Left panel: tree */
+  .tree-panel {
+    width: 380px;
+    min-width: 300px;
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+  }
+
+  .tree-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .tree-header h2 {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--fg);
+    flex: 1;
+  }
+
+  .tree-header .badge {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    background: var(--accent-dim);
+    color: var(--accent);
+    font-weight: 500;
+  }
+
+  .filter-bar {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    gap: 4px;
+  }
+
+  .filter-btn {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 3px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .filter-btn:hover { background: var(--hover-bg); color: var(--fg); }
+  .filter-btn.active { background: var(--accent-dim); color: var(--accent); border-color: rgba(108,140,255,0.3); }
+
+  .tree-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 0;
+  }
+
+  .tree-scroll::-webkit-scrollbar { width: 5px; }
+  .tree-scroll::-webkit-scrollbar-track { background: transparent; }
+  .tree-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* Tree nodes */
+  .tree-node {
+    display: flex;
+    align-items: flex-start;
+    padding: 2px 12px;
+    cursor: pointer;
+    transition: background 0.1s;
+    position: relative;
+  }
+  .tree-node:hover { background: var(--hover-bg); }
+  .tree-node.selected { background: var(--accent-dim); }
+  .tree-node.on-active-path { background: var(--active-bg); }
+  .tree-node.is-current-leaf { background: rgba(0,245,212,0.08); }
+
+  /* Branch lines */
+  .node-indent {
+    display: flex;
+    align-items: stretch;
+    min-height: 28px;
+    flex-shrink: 0;
+  }
+  .indent-unit {
+    width: 20px;
+    position: relative;
+  }
+  .indent-unit.has-line::before {
+    content: '';
+    position: absolute;
+    left: 9px;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--border);
+  }
+  .indent-unit.is-branch::before {
+    content: '';
+    position: absolute;
+    left: 9px;
+    top: 0;
+    bottom: 50%;
+    width: 1px;
+    background: var(--border);
+  }
+  .indent-unit.is-branch::after {
+    content: '';
+    position: absolute;
+    left: 9px;
+    top: 50%;
+    width: 10px;
+    height: 1px;
+    background: var(--border);
+  }
+  .indent-unit.is-last::before {
+    content: '';
+    position: absolute;
+    left: 9px;
+    top: 0;
+    bottom: 50%;
+    width: 1px;
+    background: var(--border);
+  }
+  .indent-unit.is-last::after {
+    content: '';
+    position: absolute;
+    left: 9px;
+    top: 50%;
+    width: 10px;
+    height: 1px;
+    background: var(--border);
+  }
+
+  .node-icon {
+    width: 16px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    font-size: 10px;
+    font-weight: 700;
+  }
+
+  .node-content {
+    flex: 1;
+    min-width: 0;
+    padding: 4px 0 4px 4px;
+  }
+
+  .node-label {
+    font-size: 12px;
+    line-height: 1.4;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--fg);
+  }
+
+  .node-meta {
+    font-size: 10px;
+    color: var(--muted);
+    margin-top: 1px;
+  }
+
+  /* Role colors for icon */
+  .icon-user { color: var(--user); }
+  .icon-assistant { color: var(--assistant); }
+  .icon-tool { color: var(--tool); }
+  .icon-summary { color: var(--branch-sum); }
+  .icon-compact { color: var(--compact); }
+  .icon-leaf { color: var(--leaf); }
+
+  /* Leaf indicator */
+  .leaf-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--leaf);
+    flex-shrink: 0;
+    margin-top: 11px;
+    margin-left: 4px;
+    box-shadow: 0 0 6px rgba(0,245,212,0.4);
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  /* Right panel: preview */
+  .preview-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+  }
+
+  .preview-header {
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .preview-header h3 {
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .preview-actions {
+    margin-left: auto;
+    display: flex;
+    gap: 6px;
+  }
+
+  .btn {
+    font-size: 11px;
+    padding: 5px 12px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--fg);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn-primary:hover { opacity: 0.9; }
+  .btn-danger { border-color: var(--danger); color: var(--danger); }
+  .btn-danger:hover { background: rgba(255,71,87,0.1); }
+
+  .preview-content {
+    flex: 1;
+    padding: 20px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .msg-preview {
+    padding: 16px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .msg-preview .role {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 8px;
+  }
+  .msg-preview .text {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--fg);
+    white-space: pre-wrap;
+  }
+  .msg-preview.user-msg .role { color: var(--user); }
+  .msg-preview.assistant-msg .role { color: var(--assistant); }
+
+  /* Context bar at bottom */
+  .context-bar {
+    padding: 8px 20px;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .context-bar .stat { display: flex; align-items: center; gap: 4px; }
+  .context-bar .dot { width: 4px; height: 4px; border-radius: 50%; }
+  .dot-green { background: #2ed573; }
+  .dot-yellow { background: #ffa502; }
+  .dot-blue { background: var(--accent); }
+
+  /* Tooltip */
+  .tooltip {
+    position: fixed;
+    padding: 8px 12px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 11px;
+    color: var(--fg);
+    max-width: 300px;
+    z-index: 100;
+    pointer-events: none;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    display: none;
+  }
+
+  /* Summary dialog */
+  .dialog-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+  }
+  .dialog-overlay.show { display: flex; }
+  .dialog {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px;
+    width: 400px;
+    max-width: 90vw;
+  }
+  .dialog h3 { font-size: 14px; margin-bottom: 16px; }
+  .dialog .options { display: flex; flex-direction: column; gap: 8px; }
+  .dialog .option {
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .dialog .option:hover { border-color: var(--accent); background: var(--accent-dim); }
+  .dialog .option .title { font-size: 13px; font-weight: 500; }
+  .dialog .option .desc { font-size: 11px; color: var(--muted); margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<!-- Tree Panel -->
+<div class="tree-panel">
+  <div class="tree-header">
+    <h2>Session Tree</h2>
+    <span class="badge">14 entries</span>
+    <span class="badge" style="background:rgba(0,245,212,0.12);color:var(--leaf);">3 branches</span>
+  </div>
+
+  <div class="filter-bar">
+    <button class="filter-btn active" data-filter="default">Default</button>
+    <button class="filter-btn" data-filter="no-tools">No Tools</button>
+    <button class="filter-btn" data-filter="user">User</button>
+    <button class="filter-btn" data-filter="labeled">Labeled</button>
+    <button class="filter-btn" data-filter="all">All</button>
+  </div>
+
+  <div class="tree-scroll" id="treeContainer">
+    <!-- Rendered by JS -->
+  </div>
+</div>
+
+<!-- Preview Panel -->
+<div class="preview-panel">
+  <div class="preview-header">
+    <h3 id="previewTitle">Select a node to preview</h3>
+    <div class="preview-actions" id="previewActions" style="display:none">
+      <button class="btn" onclick="actionFork()">Fork from here</button>
+      <button class="btn" onclick="actionLabel()">Label</button>
+      <button class="btn btn-primary" onclick="actionNavigate()">Navigate here</button>
+    </div>
+  </div>
+  <div class="preview-content" id="previewContent">
+    <div style="color:var(--muted);font-size:13px;text-align:center;margin-top:40%;">
+      Click a node in the tree to preview its content.
+      <br><br>
+      <span style="font-size:11px;">
+        Green dot = current leaf position<br>
+        Highlighted path = active branch<br>
+        Right-click = context menu
+      </span>
+    </div>
+  </div>
+  <div class="context-bar">
+    <div class="stat"><span class="dot dot-green"></span> Session: a1b2c3d4</div>
+    <div class="stat"><span class="dot dot-blue"></span> Leaf: H (id: h8)</div>
+    <div class="stat"><span class="dot dot-yellow"></span> 3 branches</div>
+    <div class="stat" style="margin-left:auto;">Branch depth: 4 | Total entries: 14</div>
+  </div>
+</div>
+
+<!-- Summary Dialog -->
+<div class="dialog-overlay" id="summaryDialog">
+  <div class="dialog">
+    <h3>Navigate to this node?</h3>
+    <div class="options">
+      <div class="option" onclick="doNavigate(false)">
+        <div class="title">Navigate without summary</div>
+        <div class="desc">Jump to this point. The skipped branch remains in the file.</div>
+      </div>
+      <div class="option" onclick="doNavigate(true)">
+        <div class="title">Navigate with branch summary</div>
+        <div class="desc">Generate an AI summary of the skipped branch before navigating. Uses ~16K tokens.</div>
+      </div>
+      <div class="option" onclick="closeDialog()">
+        <div class="title" style="color:var(--muted)">Cancel</div>
+        <div class="desc">Stay at current position.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Mock session tree data (simulates JSONL entries with parentId)
+const entries = {
+  'session': { type: 'session', id: 'session', parentId: null },
+  'a1': { type: 'message', id: 'a1', parentId: null, role: 'user', text: '帮我实现一个用户登录功能，需要支持邮箱和手机号两种方式', label: null },
+  'b2': { type: 'message', id: 'b2', parentId: 'a1', role: 'assistant', text: '好的，我来帮你实现用户登录功能。首先设计数据模型和 API 接口：\n\n```typescript\ninterface LoginRequest {\n  type: "email" | "phone";\n  credential: string;\n  password: string;\n}\n```\n\n需要以下文件：\n1. `src/types/auth.ts` — 类型定义\n2. `src/api/auth.ts` — API 路由\n3. `src/services/auth.ts` — 业务逻辑\n4. `src/middleware/auth.ts` — JWT 中间件\n\n先从哪个开始？' },
+  'c3': { type: 'message', id: 'c3', parentId: 'b2', role: 'user', text: '先从类型定义和 API 路由开始，用 Express', label: 'v1-express' },
+  'd4': { type: 'message', id: 'd4', parentId: 'c3', role: 'assistant', text: '我创建了以下文件：\n\n`src/types/auth.ts` — 定义了 LoginRequest、LoginResponse、User 等类型\n`src/api/auth.ts` — POST /auth/login 路由，支持 email/phone 登录\n`src/middleware/auth.ts` — JWT verify 中间件\n\n还差业务逻辑层和数据库集成。要继续吗？' },
+  // Branch 1: from b2 → c3-alt → d4-alt
+  'c3x': { type: 'message', id: 'c3x', parentId: 'b2', role: 'user', text: '先从类型定义开始，用 Fastify 框架', label: 'v2-fastify' },
+  'd4x': { type: 'message', id: 'd4x', parentId: 'c3x', role: 'assistant', text: 'Fastify 版本：\n\n`src/types/auth.ts` — 同样的类型定义\n`src/routes/auth.ts` — Fastify 路由，带 schema validation\n\nFastify 的 TypeScript 支持更好，路由定义更简洁。继续业务逻辑？' },
+  // Branch 1 continued: c3 → d4 → e5 → f6 (main branch)
+  'e5': { type: 'message', id: 'e5', parentId: 'd4', role: 'user', text: '继续，用 Prisma 做 ORM', label: null },
+  'f6': { type: 'message', id: 'f6', parentId: 'e5', role: 'assistant', text: '已完成 `src/services/auth.ts`，使用 Prisma Client：\n\n- `login()` — 查询用户、bcrypt 验证、签发 JWT\n- `getUser()` — JWT payload 查用户\n\n`prisma/schema.prisma` 已生成。运行 `npx prisma migrate dev` 即可。\n\n完整登录功能已完成。需要我写测试吗？' },
+  // Branch from e5 → g7-alt (abandoned approach)
+  'bs1': { type: 'branch_summary', id: 'bs1', parentId: 'f6', role: null, text: '[branch summary]: User explored adding OAuth support (GitHub + Google). Decided to defer OAuth to a separate feature branch.', label: null },
+  // Main branch continued from f6
+  'g7': { type: 'message', id: 'g7', parentId: 'f6', role: 'user', text: '写单元测试，用 Vitest', label: null },
+  'h8': { type: 'message', id: 'h8', parentId: 'g7', role: 'assistant', text: '已创建测试文件 `src/services/__tests__/auth.test.ts`：\n\n- 成功登录（邮箱）\n- 成功登录（手机号）\n- 密码错误\n- 用户不存在\n- JWT 过期\n\n6 个测试用例全部通过。覆盖率 92%。' },
+  // Another branch from f6
+  'g7y': { type: 'message', id: 'g7y', parentId: 'f6', role: 'user', text: '加上速率限制，防止暴力破解', label: null },
+  'h8y': { type: 'message', id: 'h8y', parentId: 'g7y', role: 'assistant', text: '安装了 `express-rate-limit`，在 auth 路由上配置：\n\n- 登录: 5次/分钟/IP\n- 全局: 100次/分钟/IP\n\n已集成到 `src/api/auth.ts`。' },
+};
+
+const leafId = 'h8';
+const activePath = new Set(['a1', 'b2', 'c3', 'd4', 'e5', 'f6', 'g7', 'h8']);
+
+// Build tree
+function buildTree() {
+  const nodes = {};
+  const roots = [];
+
+  for (const [id, entry] of Object.entries(entries)) {
+    if (id === 'session') continue;
+    nodes[id] = { ...entry, children: [] };
+  }
+
+  for (const [id, node] of Object.entries(nodes)) {
+    if (!node.parentId) {
+      roots.push(nodes[id]);
+    } else if (nodes[node.parentId]) {
+      nodes[node.parentId].children.push(nodes[id]);
+    } else {
+      roots.push(nodes[id]);
+    }
+  }
+
+  // Sort children by id for consistent order
+  const sortChildren = (node) => {
+    node.children.sort((a, b) => {
+      // Put active path children first
+      const aActive = activePath.has(a.id) ? 0 : 1;
+      const bActive = activePath.has(b.id) ? 0 : 1;
+      if (aActive !== bActive) return aActive - bActive;
+      return a.id.localeCompare(b.id);
+    });
+    node.children.forEach(sortChildren);
+  };
+  roots.forEach(sortChildren);
+  return roots;
+}
+
+function getTypeIcon(entry) {
+  if (entry.type === 'branch_summary') return { icon: 'S', cls: 'icon-summary', label: 'Summary' };
+  if (entry.role === 'user') return { icon: 'U', cls: 'icon-user', label: 'User' };
+  if (entry.role === 'assistant') return { icon: 'A', cls: 'icon-assistant', label: 'Assistant' };
+  return { icon: '?', cls: '', label: 'Unknown' };
+}
+
+function getPreviewText(entry) {
+  return entry.text || '(no content)';
+}
+
+function getNodeLabel(entry) {
+  const text = entry.text || '';
+  if (entry.type === 'branch_summary') return '[branch summary]';
+  const firstLine = text.split('\n')[0];
+  return firstLine.length > 60 ? firstLine.slice(0, 60) + '...' : firstLine;
+}
+
+let selectedId = null;
+
+function renderTree(filterMode) {
+  const container = document.getElementById('treeContainer');
+  container.innerHTML = '';
+  const roots = buildTree();
+
+  function shouldShow(entry) {
+    if (filterMode === 'all') return true;
+    if (filterMode === 'user') return entry.role === 'user';
+    if (filterMode === 'labeled') return entry.label;
+    if (filterMode === 'no-tools') return entry.type !== 'tool_result';
+    // default: hide settings types
+    return true;
+  }
+
+  function renderNode(node, depth, parentChildren, indexInParent) {
+    if (!shouldShow(node)) {
+      node.children.forEach((child, i) => renderNode(child, depth, [], 0));
+      return;
+    }
+
+    const isLast = indexInParent === parentChildren.length - 1;
+    const isActivePath = activePath.has(node.id);
+    const isLeaf = node.id === leafId;
+    const isSelected = node.id === selectedId;
+
+    const el = document.createElement('div');
+    el.className = 'tree-node';
+    if (isActivePath) el.classList.add('on-active-path');
+    if (isLeaf) el.classList.add('is-current-leaf');
+    if (isSelected) el.classList.add('selected');
+    el.dataset.id = node.id;
+
+    // Indent
+    let indentHtml = '<div class="node-indent">';
+    for (let i = 0; i < depth; i++) {
+      indentHtml += '<div class="indent-unit"></div>';
+    }
+    indentHtml += '</div>';
+    el.innerHTML = indentHtml;
+
+    // Icon
+    const typeInfo = getTypeIcon(node);
+    const iconEl = document.createElement('div');
+    iconEl.className = `node-icon ${typeInfo.cls}`;
+    iconEl.textContent = typeInfo.icon;
+    el.appendChild(iconEl);
+
+    // Content
+    const contentEl = document.createElement('div');
+    contentEl.className = 'node-content';
+
+    const labelEl = document.createElement('div');
+    labelEl.className = 'node-label';
+    labelEl.textContent = getNodeLabel(node);
+    contentEl.appendChild(labelEl);
+
+    if (node.label) {
+      const metaEl = document.createElement('div');
+      metaEl.className = 'node-meta';
+      metaEl.textContent = node.label;
+      contentEl.appendChild(metaEl);
+    }
+
+    el.appendChild(contentEl);
+
+    // Leaf dot
+    if (isLeaf) {
+      const dot = document.createElement('div');
+      dot.className = 'leaf-dot';
+      el.appendChild(dot);
+    }
+
+    // Click handler
+    el.addEventListener('click', () => selectNode(node.id));
+
+    container.appendChild(el);
+
+    // Children
+    const visibleChildren = node.children.filter(shouldShow);
+    node.children.forEach((child, i) => renderNode(child, depth + 1, node.children, i));
+  }
+
+  roots.forEach((root, i) => renderNode(root, 0, roots, i));
+}
+
+function selectNode(id) {
+  selectedId = id;
+  renderTree(currentFilter);
+
+  const entry = entries[id];
+  const typeInfo = getTypeIcon(entry);
+
+  document.getElementById('previewTitle').textContent = `${typeInfo.label} — ${id}`;
+  document.getElementById('previewActions').style.display = id !== leafId ? 'flex' : 'none';
+
+  const content = document.getElementById('previewContent');
+  content.innerHTML = '';
+
+  const div = document.createElement('div');
+  div.className = `msg-preview ${entry.role === 'user' ? 'user-msg' : 'assistant-msg'}`;
+  div.innerHTML = `
+    <div class="role">${typeInfo.label} ${entry.label ? '— ' + entry.label : ''}</div>
+    <div class="text">${getPreviewText(entry)}</div>
+  `;
+  content.appendChild(div);
+
+  // Show path info
+  const pathDiv = document.createElement('div');
+  pathDiv.style.cssText = 'font-size:11px;color:var(--muted);padding:8px;border:1px dashed var(--border);border-radius:4px;';
+  const path = getPathToRoot(id);
+  pathDiv.innerHTML = `<strong>Path to root:</strong> ${path.map(p => entries[p].role === 'user' ? 'U' : entries[p].role === 'assistant' ? 'A' : 'S').join(' → ')} (${path.length} entries)`;
+  content.appendChild(pathDiv);
+}
+
+function getPathToRoot(id) {
+  const path = [];
+  let current = id;
+  while (current) {
+    path.push(current);
+    current = entries[current]?.parentId;
+  }
+  return path.reverse();
+}
+
+function actionNavigate() {
+  if (!selectedId || selectedId === leafId) return;
+  document.getElementById('summaryDialog').classList.add('show');
+}
+
+function actionFork() {
+  alert(`Fork from entry ${selectedId}\n\nThis would:\n1. Copy root → parent(${selectedId}) to new session file\n2. Open new session with entry text in editor\n3. Let user edit and re-send`);
+}
+
+function actionLabel() {
+  const label = prompt('Enter label for this entry:', entries[selectedId]?.label || '');
+  if (label !== null) {
+    entries[selectedId].label = label || null;
+    renderTree(currentFilter);
+  }
+}
+
+function doNavigate(withSummary) {
+  closeDialog();
+  const entry = entries[selectedId];
+  alert(`Navigate to ${selectedId}\nWith summary: ${withSummary}\n\nThis would:\n1. Move leaf pointer from ${leafId} → ${selectedId}\n2. ${withSummary ? 'Call LLM to summarize skipped branch\n3. ' : ''}Rebuild agent context from new branch\n4. ${entry.role === 'user' ? 'Put entry text in editor for re-editing' : 'Continue from this assistant response'}`);
+}
+
+function closeDialog() {
+  document.getElementById('summaryDialog').classList.remove('show');
+}
+
+let currentFilter = 'default';
+
+// Filter buttons
+document.querySelectorAll('.filter-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentFilter = btn.dataset.filter;
+    renderTree(currentFilter);
+  });
+});
+
+// Initial render
+renderTree('default');
+
+// Auto-select leaf
+selectNode(leafId);
+</script>
+
+</body>
+</html>

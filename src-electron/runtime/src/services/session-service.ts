@@ -4,7 +4,7 @@
  * Manages session lifecycle: creation, deletion, messaging, history,
  * model switching, compaction, and persistence.
  */
-import { basename } from 'node:path'
+import { basename, resolve } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import type {
   SessionSummary,
@@ -17,9 +17,15 @@ import type { IRpcClient } from '../interfaces.js'
 import type { PiMessage } from '../rpc-client.js'
 import { convertPiHistory } from '../message-converter.js'
 import type { PiHistoryMessage } from '../types.js'
-import { getDefaultModel } from '../pi-config-bridge.js'
+import { getDefaultModel, scanPiSessions, refreshAll } from '../pi-config-bridge.js'
 import * as piBridge from '../pi-config-bridge.js'
-import { scanSessions, deleteSessionFile, refreshSessions, type ScannedSession } from '../session-scanner.js'
+import { existsSync } from 'node:fs'
+import { trash } from '../trash.js'
+import { NavigateInterceptor } from '../navigate-interceptor.js'
+import { TreeService } from './tree-service.js'
+
+// session-scanner 已删除，直接用 pi-config-bridge 的返回类型
+type ScannedSession = Awaited<ReturnType<typeof scanPiSessions>>[number]
 
 interface ManagedSession {
   id: string
@@ -31,6 +37,7 @@ interface ManagedSession {
   tokenCount: number
   isGenerating: boolean
   adapter: IEventAdapter
+  interceptor: NavigateInterceptor
   unsubUsageListener: (() => void) | null
   sessionFilePath?: string
 }
@@ -38,13 +45,18 @@ interface ManagedSession {
 export class SessionService implements ISessionService {
   private sessions = new Map<string, ManagedSession>()
   private restoringSessions = new Set<string>()
+  private extensionPath: string = ''
 
   constructor(
     private pm: IProcessManager,
     private broker: IMessageBroker,
-    private adapterFactory: (sessionId: string) => IEventAdapter,
+    private adapterFactory: (sessionId: string, interceptor: NavigateInterceptor) => IEventAdapter,
     private projectRoot: string,
+    readonly treeService: TreeService,
   ) {
+    // extension 在 repo root（src-electron/ 的父目录），不在 projectRoot（可能是 src-electron/）
+    const repoRoot = resolve(this.projectRoot, '..')
+    this.extensionPath = resolve(repoRoot, 'xyz-agent-extension.js')
     // 进程崩溃时清理对应 session
     this.pm.onSessionExit((sessionId, code) => {
       const session = this.sessions.get(sessionId)
@@ -52,6 +64,7 @@ export class SessionService implements ISessionService {
         session.adapter.detach()
         if (session.unsubUsageListener) session.unsubUsageListener()
         this.sessions.delete(sessionId)
+        this.treeService.unregisterSession(sessionId)
         this.broker.broadcast({ type: 'session.list', payload: { groups: this.listPersistedSessions() } })
         this.broker.broadcast({
           type: 'message.error',
@@ -66,10 +79,11 @@ export class SessionService implements ISessionService {
   async create(cwd?: string, label?: string): Promise<SessionSummary> {
     const tempId = crypto.randomUUID()
     const sessionCwd = cwd ?? process.cwd()
-    const modelRef = getDefaultModel()
-    const modelId = modelRef ? `${modelRef.provider}/${modelRef.modelId}` : ''
 
-    const client = await this.pm.createSession(tempId, sessionCwd, { skillPaths: this.getSkillPaths(sessionCwd) })
+    const client = await this.pm.createSession(tempId, sessionCwd, {
+      skillPaths: this.getSkillPaths(sessionCwd),
+      extensionPaths: [this.extensionPath],
+    })
 
     // 从 pi 获取真实 session ID
     let piSessionId: string
@@ -95,50 +109,10 @@ export class SessionService implements ISessionService {
       this.pm.rekey(tempId, id)
     }
 
-    const adapter = this.adapterFactory(id)
-    adapter.attach(client)
-
-    // 从 agent_end 事件中提取 token 使用量
-    const unsubUsage = client.onEvent((event) => {
-      if (event.type === 'agent_end') {
-        const s = this.sessions.get(id)
-        if (s) {
-          s.isGenerating = false
-          const usage = event.payload?.usage as
-            { outputTokens?: number; inputTokens?: number; totalTokens?: number } | undefined
-          if (usage) {
-            s.tokenCount = (usage.totalTokens ?? usage.outputTokens ?? 0) as number
-          }
-        }
-      }
-    })
-
-    const session: ManagedSession = {
-      id,
-      cwd: sessionCwd,
-      label: label ?? basename(sessionCwd),
-      modelId,
-      createdAt: Date.now(),
-      lastActiveAt: Date.now(),
-      tokenCount: 0,
-      isGenerating: false,
-      adapter,
-      unsubUsageListener: unsubUsage,
-      sessionFilePath,
-    }
-    this.sessions.set(id, session)
-
-    refreshSessions()
-
-    // 获取 pi 的可用命令列表并推送给前端
-    try {
-      const commands = await (client as IRpcClient).getCommands() as Array<{ name: string; description?: string; source: string }>
-      console.log(`[session-service] getCommands returned ${commands.length} commands:`, commands.map(c => c.name))
-      this.broker.broadcast({ type: 'session.commands', payload: { sessionId: id, commands } })
-    } catch (e) {
-      console.warn('[session-service] getCommands failed:', e)
-    }
-
+    const session = await this.initializeManagedSession(
+      id, client, sessionCwd, label ?? basename(sessionCwd), sessionFilePath,
+    )
+    refreshAll()
     return this.toSummary(session)
   }
 
@@ -148,25 +122,25 @@ export class SessionService implements ISessionService {
       session.label = newName
     }
 
-    refreshSessions()
+    refreshAll()
   }
 
   async delete(sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId)
     if (session) {
-      session.adapter.detach()
-      if (session.unsubUsageListener) session.unsubUsageListener()
+      this.detachSession(session)
       await this.pm.destroySession(sessionId)
       this.sessions.delete(sessionId)
-      if (session.sessionFilePath) {
-        await deleteSessionFile(session.sessionFilePath)
+      this.treeService.unregisterSession(sessionId)
+      if (session.sessionFilePath && existsSync(session.sessionFilePath)) {
+        await trash(session.sessionFilePath)
       }
     } else {
       const target = this.findScannedSession(sessionId)
       if (!target) throw new Error(`Session ${sessionId} not found`)
-      await deleteSessionFile(target.filePath)
+      if (existsSync(target.filePath)) await trash(target.filePath)
     }
-    refreshSessions()
+    refreshAll()
   }
 
   // ── Messaging ──────────────────────────────────────────────────
@@ -185,8 +159,8 @@ export class SessionService implements ISessionService {
       } catch (e) {
         const errMsg = `Failed to restore session: ${e instanceof Error ? e.message : String(e)}`
         console.error(`[session-service] ${errMsg}`)
-        this.broker.broadcast({ type: 'message.error', payload: { sessionId, message: errMsg } })
-        return
+        // 不在这里广播 message.error，让 server.ts 的外层 catch 统一发送 handler_error
+        throw e
       } finally {
         this.restoringSessions.delete(sessionId)
       }
@@ -207,6 +181,15 @@ export class SessionService implements ISessionService {
       if (activeSession) activeSession.isGenerating = false
       this.broker.broadcast({ type: 'message.error', payload: { sessionId, message: errMsg } })
     }
+  }
+
+  /** 构造 subagent 隐藏标记并发送 prompt */
+  async sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string): Promise<void> {
+    const payload = JSON.stringify({ agent, task })
+    const encoded = Buffer.from(payload, 'utf-8').toString('base64')
+    const marker = `<!-- xyz-agent-force-subagent:${encoded} -->`
+    const promptText = content || `Execute task using agent '${agent}'`
+    await this.sendMessage(sessionId, `${marker}\n${promptText}`)
   }
 
   private findSessionByClient(client: IRpcClient): ManagedSession | undefined {
@@ -343,7 +326,7 @@ export class SessionService implements ISessionService {
       if (s.sessionFilePath) activeFilePaths.add(s.sessionFilePath)
     }
 
-    const persisted = scanSessions()
+    const persisted = scanPiSessions()
       .filter(s => !activeFilePaths.has(s.filePath))
       .map(s => this.scannedToSummary(s))
 
@@ -357,58 +340,27 @@ export class SessionService implements ISessionService {
 
     const existing = this.sessions.get(sessionId)
     if (existing) {
-      existing.adapter.detach()
-      if (existing.unsubUsageListener) existing.unsubUsageListener()
+      this.detachSession(existing)
       await this.pm.destroySession(sessionId).catch(() => {})
       this.sessions.delete(sessionId)
     }
     const id = sessionId
-    const client = await this.pm.createSession(id, target.cwd, { skillPaths: this.getSkillPaths(target.cwd) })
-    const adapter = this.adapterFactory(id)
-    adapter.attach(client)
-
-    await client.sendCommand('switch_session', { sessionPath: target.filePath })
-
-    const unsubUsage = client.onEvent((event) => {
-      if (event.type === 'agent_end') {
-        const s = this.sessions.get(id)
-        if (s) {
-          s.isGenerating = false
-          const usage = event.payload?.usage as
-            { outputTokens?: number; inputTokens?: number; totalTokens?: number } | undefined
-          if (usage) {
-            s.tokenCount = (usage.totalTokens ?? usage.outputTokens ?? 0) as number
-          }
-        }
-      }
+    const client = await this.pm.createSession(id, target.cwd, {
+      skillPaths: this.getSkillPaths(target.cwd),
+      extensionPaths: [this.extensionPath],
     })
 
-    const modelRef = getDefaultModel()
-    const modelId = modelRef ? `${modelRef.provider}/${modelRef.modelId}` : ''
-
-    const session: ManagedSession = {
-      id,
-      cwd: target.cwd,
-      label: target.name ?? basename(target.cwd),
-      modelId,
-      createdAt: Date.now(),
-      lastActiveAt: target.lastModified,
-      tokenCount: 0,
-      isGenerating: false,
-      adapter,
-      unsubUsageListener: unsubUsage,
-      sessionFilePath: target.filePath,
-    }
-    this.sessions.set(id, session)
-
-    // 获取 pi 的可用命令列表并推送给前端
     try {
-      const commands = await (client as IRpcClient).getCommands() as Array<{ name: string; description?: string; source: string }>
-      this.broker.broadcast({ type: 'session.commands', payload: { sessionId: id, commands } })
+      await client.sendCommand('switch_session', { sessionPath: target.filePath })
     } catch (e) {
-      console.warn('[session-service] getCommands failed:', e)
+      // switch_session 失败时清理已创建的资源，避免子进程/监听器泄漏
+      await this.pm.destroySession(id).catch(() => {})
+      throw e
     }
 
+    const session = await this.initializeManagedSession(
+      id, client, target.cwd, target.name ?? basename(target.cwd), target.filePath,
+    )
     return this.toSummary(session)
   }
 
@@ -421,8 +373,8 @@ export class SessionService implements ISessionService {
 
   async destroyAll(): Promise<void> {
     for (const session of this.sessions.values()) {
-      session.adapter.detach()
-      if (session.unsubUsageListener) session.unsubUsageListener()
+      this.treeService.unregisterSession(session.id)
+      this.detachSession(session)
     }
     await this.pm.destroyAll()
     this.sessions.clear()
@@ -448,7 +400,7 @@ export class SessionService implements ISessionService {
   }
 
   private findScannedSession(sessionId: string): ScannedSession | undefined {
-    return scanSessions().find(s => s.id === sessionId)
+    return scanPiSessions().find(s => s.id === sessionId)
   }
 
   private scannedToSummary(s: ScannedSession): SessionSummary {
@@ -461,5 +413,87 @@ export class SessionService implements ISessionService {
       modelId: '',
       tokenCount: 0,
     }
+  }
+
+  // ── Shared session helpers (消除 create/restoreSession 重复) ───
+
+  /**
+   * 初始化 ManagedSession：创建 interceptor/adapter、注册监听、存入 sessions Map、查询 commands。
+   * create() 和 restoreSession() 共享此方法。
+   */
+  private async initializeManagedSession(
+    id: string,
+    client: IRpcClient,
+    cwd: string,
+    label: string,
+    sessionFilePath?: string,
+  ): Promise<ManagedSession> {
+    const interceptor = new NavigateInterceptor((msg) => this.broker.broadcast(msg))
+    const adapter = this.adapterFactory(id, interceptor)
+    adapter.attach(client)
+
+    const unsubUsage = this.attachUsageListener(id, client)
+
+    const modelRef = getDefaultModel()
+    const modelId = modelRef ? `${modelRef.provider}/${modelRef.modelId}` : ''
+
+    const session: ManagedSession = {
+      id,
+      cwd,
+      label,
+      modelId,
+      createdAt: Date.now(),
+      lastActiveAt: Date.now(),
+      tokenCount: 0,
+      isGenerating: false,
+      adapter,
+      interceptor,
+      unsubUsageListener: unsubUsage,
+      sessionFilePath,
+    }
+    this.sessions.set(id, session)
+
+    await this.fetchAndBroadcastCommands(id, client, interceptor)
+    return session
+  }
+
+  /** Attach agent_end listener to track token usage and isGenerating state. */
+  private attachUsageListener(id: string, client: IRpcClient): () => void {
+    return client.onEvent((event) => {
+      if (event.type === 'agent_end') {
+        const s = this.sessions.get(id)
+        if (s) {
+          s.isGenerating = false
+          const usage = event.payload?.usage as
+            { outputTokens?: number; inputTokens?: number; totalTokens?: number } | undefined
+          if (usage) {
+            s.tokenCount = (usage.totalTokens ?? usage.outputTokens ?? 0) as number
+          }
+        }
+      }
+    })
+  }
+
+  /** Query pi for extension commands and register navigate capability. */
+  private async fetchAndBroadcastCommands(id: string, client: IRpcClient, interceptor: NavigateInterceptor): Promise<void> {
+    try {
+      const commands = await client.getCommands() as Array<{ name: string; description?: string; source: string }>
+      console.log(`[session-service] getCommands returned ${commands.length} commands:`, commands.map(c => c.name))
+      this.broker.broadcast({ type: 'session.commands', payload: { sessionId: id, commands } })
+      const navCapable = commands.some(c => c.name === 'xyz-navigate' && c.source === 'extension')
+      this.treeService.registerSession(id, interceptor)
+      this.treeService.setNavigateCapable(id, navCapable)
+      if (!navCapable) {
+        console.warn('[session-service] xyz-navigate extension not found, navigate will be unavailable')
+      }
+    } catch (e) {
+      console.warn('[session-service] getCommands failed:', e)
+    }
+  }
+
+  /** Detach adapter and unsubscribe usage listener. */
+  private detachSession(session: ManagedSession): void {
+    session.adapter.detach()
+    if (session.unsubUsageListener) session.unsubUsageListener()
   }
 }

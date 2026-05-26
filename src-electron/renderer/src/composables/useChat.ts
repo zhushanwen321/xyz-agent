@@ -5,7 +5,6 @@ import { on } from '../lib/event-bus'
 import { type Ref, unref } from 'vue'
 import type { ServerMessage, ToolCall, ContentBlock } from '@xyz-agent/shared'
 import { createSystemNotification } from '../lib/system-notification'
-import { useSlashCommands } from './useSlashCommands'
 
 const RADIX_36 = 36
 const SUBSTRING_START = 2
@@ -22,7 +21,6 @@ const SUBSTRING_END = 6
 
 function createGlobalHandlers() {
   const store = useChatStore()
-  const { setExtensionCommands } = useSlashCommands()
 
   function getSid(msg: ServerMessage): string | null {
     return (msg.payload?.sessionId as string) ?? null
@@ -55,7 +53,7 @@ function createGlobalHandlers() {
       blocks.push({ type: 'text', refId: 'text' })
       session.streamingMessage = { ...session.streamingMessage, contentBlocks: blocks }
     }
-    store.appendToStreaming(msg.payload.delta as string, sid)
+    store.appendStreamText(msg.payload.delta as string, sid)
   }
 
   function onThinkingStart(msg: ServerMessage) {
@@ -162,21 +160,14 @@ function createGlobalHandlers() {
   function onComplete(msg: ServerMessage) {
     const sid = getSid(msg)
     if (!sid) return
-    store.completeStreaming(undefined, sid)
+    store.completeStream(sid)
   }
 
   function onError(msg: ServerMessage) {
     const sid = getSid(msg)
     if (!sid) return
     const errMsg = (msg.payload as { message?: string }).message ?? 'Unknown error'
-    store.setGenerating(false, sid)
-    store.setStreaming(null, sid)
-    store.setError(null, sid)
-    store.addMessage({
-      ...createSystemNotification('alert', errMsg),
-      content: errMsg,
-      status: 'error' as const,
-    }, sid)
+    store.abortStream(sid, errMsg)
   }
 
   function onContextUpdate(msg: ServerMessage) {
@@ -202,10 +193,6 @@ function createGlobalHandlers() {
     'message.error': onError,
     'context.update': onContextUpdate,
     'message.status': onStatus,
-    'session.commands': ((msg: ServerMessage) => {
-      const cmds = (msg.payload as { commands: Array<{ name: string; description?: string; source: string }> }).commands
-      setExtensionCommands(cmds)
-    }),
   } as Record<string, (msg: ServerMessage) => void>
 }
 
@@ -251,10 +238,7 @@ export function useChat(sessionId?: Ref<string>) {
     }
     store.setGenerating(true, sid)
     store.setError(null, sid)
-    const payload: Record<string, unknown> = { sessionId: sid, content }
-    if (subagent) {
-      payload.subagent = subagent
-    }
+    const payload = { sessionId: sid, content, ...(subagent && { subagent }) }
     send({ type: 'message.send', payload })
   }
 
@@ -263,7 +247,7 @@ export function useChat(sessionId?: Ref<string>) {
     if (!sid) return
     send({ type: 'message.abort', payload: { sessionId: sid } })
     // 立即完成当前流，不等后端确认
-    store.completeStreaming(undefined, sid)
+    store.completeStream(sid)
     // 插入系统消息提示用户操作已终止
     store.addMessage({
       ...createSystemNotification('info', '操作已被用户终止'),
@@ -277,4 +261,15 @@ export function useChat(sessionId?: Ref<string>) {
 
 // 模块级注册：延后到 Pinia 安装后执行。
 // import 阶段 App.vue → useChat.ts → createGlobalHandlers → useChatStore() 需要 Pinia。
-queueMicrotask(() => registerGlobalListeners())
+// 测试环境中 Pinia 可能未安装，通过 getActivePinia 安全检测后延迟注册。
+let registerAttempted = false
+function safeRegisterGlobalListeners() {
+  if (globalEventMap || registerAttempted) return
+  registerAttempted = true
+  try {
+    registerGlobalListeners()
+  } catch {
+    // Pinia 未就绪（测试环境），静默跳过。生产环境 Pinia 一定在 App.vue setup 前就绪。
+  }
+}
+queueMicrotask(safeRegisterGlobalListeners)
