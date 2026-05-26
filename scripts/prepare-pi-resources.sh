@@ -4,7 +4,7 @@
 # CI 和本地开发共用此脚本，减少维护成本。
 set -euo pipefail
 
-PI_VERSION="${1:-0.75.4}"
+PI_VERSION="${1:-0.75.5-xyz-0.1}"
 PLATFORM="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
 
@@ -47,7 +47,7 @@ if [ -f "$BINARY_PATH" ]; then
 else
   echo "Downloading pi v${PI_VERSION} (${ASSET})..."
   gh release download "v${PI_VERSION}" \
-    -R earendil-works/pi \
+    -R zhushanwen321/pi \
     -p "$ASSET" \
     -D "$RESOURCES_DIR" \
     --clobber
