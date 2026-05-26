@@ -5,7 +5,7 @@
  */
 import { createServer, type Server as HttpServer } from 'node:http'
 import { WebSocketServer, WebSocket, type WebSocket as WsType } from 'ws'
-import type { ClientMessage, ServerMessage, SkillInfo, AgentInfo } from '@xyz-agent/shared'
+import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
 import type { ISessionService, IConfigService, IModelService, IMessageBroker } from './interfaces.js'
 
 const HTTP_OK = 200
@@ -140,22 +140,19 @@ export class SidecarServer implements IMessageBroker {
         case 'ping':
           return this.send(ws, { type: 'pong', id: msg.id, payload: {} })
         case 'session.create': {
-          const cwd = msg.payload.cwd as string | undefined
-          const label = msg.payload.label as string | undefined
-          const session = await this.sessionService.create(cwd, label)
+          const session = await this.sessionService.create(msg.payload.cwd, msg.payload.label)
           this.send(ws, { type: 'session.created', id: msg.id, payload: { session } })
           return this.broadcastSessionList()
         }
         case 'session.delete': {
-          const sid = msg.payload.sessionId as string
-          await this.sessionService.delete(sid)
-          this.send(ws, { type: 'session.deleted', id: msg.id, payload: { sessionId: sid } })
+          await this.sessionService.delete(msg.payload.sessionId)
+          this.send(ws, { type: 'session.deleted', id: msg.id, payload: { sessionId: msg.payload.sessionId } })
           return this.broadcastSessionList()
         }
         case 'session.list':
           return this.send(ws, { type: 'session.list', id: msg.id, payload: { groups: this.sessionService.listPersistedSessions() } })
         case 'session.switch': {
-          const switchId = msg.payload.sessionId as string
+          const switchId = msg.payload.sessionId
           const summary = this.sessionService.getSummary(switchId)
           if (summary) {
             try {
@@ -179,47 +176,37 @@ export class SidecarServer implements IMessageBroker {
           return
         }
         case 'session.history': {
-          const histId = msg.payload.sessionId as string
-          const messages = await this.sessionService.getHistory(histId)
-          return this.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: histId, messages } })
+          const messages = await this.sessionService.getHistory(msg.payload.sessionId)
+          return this.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: msg.payload.sessionId, messages } })
         }
         case 'session.compact': return this.handleSessionCompact(msg, ws)
         case 'session.clear': {
-          const clearId = msg.payload.sessionId as string
-          await this.sessionService.clear(clearId)
-          return this.send(ws, { type: 'session.deleted', id: msg.id, payload: { sessionId: clearId } })
+          await this.sessionService.clear(msg.payload.sessionId)
+          return this.send(ws, { type: 'session.deleted', id: msg.id, payload: { sessionId: msg.payload.sessionId } })
         }
         case 'session.restore': {
-          const restoreId = msg.payload.sessionId as string
-          const session = await this.sessionService.restoreSession(restoreId)
+          const session = await this.sessionService.restoreSession(msg.payload.sessionId)
           this.send(ws, { type: 'session.restored', id: msg.id, payload: { session } })
           return this.broadcastSessionList()
         }
         case 'session.rename': {
-          const { sessionId: renameId, name } = msg.payload as { sessionId: string; name: string }
-          await this.sessionService.renameSession(renameId, name)
-          this.send(ws, { type: 'session.renamed', id: msg.id, payload: { sessionId: renameId, name } })
+          await this.sessionService.renameSession(msg.payload.sessionId, msg.payload.name)
+          this.send(ws, { type: 'session.renamed', id: msg.id, payload: { sessionId: msg.payload.sessionId, name: msg.payload.name } })
           return this.broadcastSessionList()
         }
         case 'message.send': {
-          const sessionId = msg.payload.sessionId as string
-          const content = msg.payload.content as string
-          const subagent = msg.payload.subagent as { agent: string; task: string } | undefined
+          const { sessionId, content, subagent } = msg.payload
           if (subagent) {
-            const payload = JSON.stringify({ agent: subagent.agent, task: subagent.task })
-            const encoded = Buffer.from(payload, 'utf-8').toString('base64')
-            const marker = `<!-- xyz-agent-force-subagent:${encoded} -->`
-            const promptText = content || `Execute task using agent '${subagent.agent}'`
-            await this.sessionService.sendMessage(sessionId, `${marker}\n${promptText}`)
+            await this.sessionService.sendSubagentMessage(sessionId, subagent.agent, subagent.task, content)
           } else {
             await this.sessionService.sendMessage(sessionId, content)
           }
           return this.send(ws, { type: 'message.status', id: msg.id, payload: { sessionId, status: 'sent' } })
         }
         case 'message.abort':
-          return await this.sessionService.abort(msg.payload.sessionId as string)
+          return await this.sessionService.abort(msg.payload.sessionId)
         case 'session.tree-data': {
-          const sid = msg.payload.sessionId as string
+          const sid = msg.payload.sessionId
           try {
             const treeData = await this.treeService.getTree(sid)
             return this.send(ws, { type: 'session.tree-data', id: msg.id, payload: { ...treeData } })
@@ -238,8 +225,8 @@ export class SidecarServer implements IMessageBroker {
           }
         }
         case 'session.tree-navigate': {
-          const sid = msg.payload.sessionId as string
-          const targetEntryId = msg.payload.targetEntryId as string
+          const sid = msg.payload.sessionId
+          const targetEntryId = msg.payload.targetEntryId
           try {
             const result = await this.treeService.navigateTree(sid, targetEntryId)
             return this.send(ws, { type: 'session.tree-navigate-result', id: msg.id, payload: { sessionId: sid, ...result } })
@@ -251,8 +238,8 @@ export class SidecarServer implements IMessageBroker {
           }
         }
         case 'session.tree-fork': {
-          const sid = msg.payload.sessionId as string
-          const entryId = msg.payload.entryId as string
+          const sid = msg.payload.sessionId
+          const entryId = msg.payload.entryId
           try {
             const result = await this.treeService.forkFromEntry(sid, entryId)
             if (result.success) {
@@ -267,7 +254,7 @@ export class SidecarServer implements IMessageBroker {
           }
         }
         case 'session.tree-capability': {
-          const sid = msg.payload.sessionId as string
+          const sid = msg.payload.sessionId
           try {
             return this.send(ws, { type: 'session.tree-capability', id: msg.id, payload: { sessionId: sid, navigateCapable: this.treeService.isNavigateCapable(sid) } })
           } catch (e) {
@@ -278,7 +265,7 @@ export class SidecarServer implements IMessageBroker {
           }
         }
         case 'session.tree-clone': {
-          const sid = msg.payload.sessionId as string
+          const sid = msg.payload.sessionId
           try {
             const result = await this.treeService.cloneSession(sid)
             if (result.success) {
@@ -294,19 +281,22 @@ export class SidecarServer implements IMessageBroker {
         }
         default:
           if (!await this.handleSettingsMessage(msg, ws)) {
-            const unknownSid = (msg as { payload?: { sessionId?: string } }).payload?.sessionId
-            this.sendError(ws, 'unknown_type', `Unknown message type: ${(msg as { type: string }).type}`, msg.id, unknownSid)
+            // handleSettingsMessage 返回 false，说明 type 也不在 settings 分支中
+            // 此时 msg 走的是 default 分支，无法收窄，需要手动读取
+            const rawMsg = msg as { type: string; payload?: { sessionId?: string } }
+            this.sendError(ws, 'unknown_type', `Unknown message type: ${rawMsg.type}`, msg.id, rawMsg.payload?.sessionId)
           }
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e)
-      const sessionId = (msg as { payload?: { sessionId?: string } }).payload?.sessionId
+      // default 分支中 msg 无法收窄到具体 type，手动提取 sessionId
+      const sessionId = ('sessionId' in msg.payload ? msg.payload.sessionId : undefined) as string | undefined
       this.sendError(ws, 'handler_error', message, msg.id, sessionId)
     }
   }
 
-  private handleSessionCompact(msg: ClientMessage, ws: WsType): void {
-    const compactId = msg.payload.sessionId as string
+  private handleSessionCompact(msg: Extract<ClientMessage, { type: 'session.compact' }>, ws: WsType): void {
+    const compactId = msg.payload.sessionId
     const startTime = Date.now()
     console.log('[server] session.compact: sessionId=' + compactId)
     const runCompact = async () => {
@@ -332,60 +322,53 @@ export class SidecarServer implements IMessageBroker {
         this.send(ws, { type: 'config.providers', id: msg.id, payload: { providers: this.configService.listProviders() } })
         return true
       case 'config.setProvider': {
-        const { providerId, ...data } = msg.payload as Record<string, unknown>
-        this.configService.setProvider(providerId as string, data as Parameters<IConfigService['setProvider']>[1])
+        const { providerId, ...data } = msg.payload
+        this.configService.setProvider(providerId, data as Parameters<IConfigService['setProvider']>[1])
         this.send(ws, { type: 'config.providerUpdated', id: msg.id, payload: { providerId } })
         this.broadcastProviderList()
         return true
       }
       case 'config.deleteProvider': {
-        const delId = msg.payload.providerId as string
-        this.configService.deleteProvider(delId)
-        this.send(ws, { type: 'config.providerUpdated', id: msg.id, payload: { providerId: delId, deleted: true } })
+        this.configService.deleteProvider(msg.payload.providerId)
+        this.send(ws, { type: 'config.providerUpdated', id: msg.id, payload: { providerId: msg.payload.providerId, deleted: true } })
         this.broadcastProviderList()
         return true
       }
       case 'config.setToolPermissions':
-        this.configService.updateToolPermissions(msg.payload.permissions as Record<string, string>)
+        this.configService.updateToolPermissions(msg.payload.permissions)
         this.send(ws, { type: 'config.providerUpdated', id: msg.id, payload: { saved: true } })
         return true
       case 'config.scanSkills': {
-        const sources = msg.payload.sources as string[]
         const existingIds = new Set(this.configService.loadSkills(this.projectRoot).map(s => s.id))
-        this.send(ws, { type: 'config.scannedSkills', id: msg.id, payload: { skills: this.configService.scanSkills(sources, existingIds), success: true } })
+        this.send(ws, { type: 'config.scannedSkills', id: msg.id, payload: { skills: this.configService.scanSkills(msg.payload.sources, existingIds), success: true } })
         return true
       }
       case 'config.setSkill': {
-        const skill = msg.payload.skill as SkillInfo
-        this.configService.upsertSkill(skill)
-        this.send(ws, { type: 'config.skillUpdated', id: msg.id, payload: { skill, success: true } })
+        this.configService.upsertSkill(msg.payload.skill)
+        this.send(ws, { type: 'config.skillUpdated', id: msg.id, payload: { skill: msg.payload.skill, success: true } })
         this.broadcastSkillList()
         return true
       }
       case 'config.deleteSkill': {
-        const skillId = msg.payload.skillId as string
-        this.configService.deleteSkill(skillId)
-        this.send(ws, { type: 'config.skillDeleted', id: msg.id, payload: { skillId, success: true } })
+        this.configService.deleteSkill(msg.payload.skillId)
+        this.send(ws, { type: 'config.skillDeleted', id: msg.id, payload: { skillId: msg.payload.skillId, success: true } })
         this.broadcastSkillList()
         return true
       }
       case 'config.scanAgents': {
-        const sources = msg.payload.sources as string[]
         const existingIds = new Set(this.configService.loadAgents(this.projectRoot).map(a => a.id))
-        this.send(ws, { type: 'config.scannedAgents', id: msg.id, payload: { agents: this.configService.scanAgents(sources, existingIds), success: true } })
+        this.send(ws, { type: 'config.scannedAgents', id: msg.id, payload: { agents: this.configService.scanAgents(msg.payload.sources, existingIds), success: true } })
         return true
       }
       case 'config.setAgent': {
-        const agent = msg.payload.agent as AgentInfo
-        this.configService.upsertAgent(agent)
-        this.send(ws, { type: 'config.agentUpdated', id: msg.id, payload: { agent, success: true } })
+        this.configService.upsertAgent(msg.payload.agent)
+        this.send(ws, { type: 'config.agentUpdated', id: msg.id, payload: { agent: msg.payload.agent, success: true } })
         this.broadcastAgentList()
         return true
       }
       case 'config.deleteAgent': {
-        const agentId = msg.payload.agentId as string
-        this.configService.deleteAgent(agentId)
-        this.send(ws, { type: 'config.agentDeleted', id: msg.id, payload: { agentId, success: true } })
+        this.configService.deleteAgent(msg.payload.agentId)
+        this.send(ws, { type: 'config.agentDeleted', id: msg.id, payload: { agentId: msg.payload.agentId, success: true } })
         this.broadcastAgentList()
         return true
       }
@@ -394,7 +377,7 @@ export class SidecarServer implements IMessageBroker {
         this.send(ws, { type: 'model.list', id: msg.id, payload: { models: this.modelService.aggregateModels(this.configService.listProviders()) } })
         return true
       case 'model.switch': {
-        const { sessionId, provider, modelId } = msg.payload as { sessionId: string; provider: string; modelId: string }
+        const { sessionId, provider, modelId } = msg.payload
         console.log(`[runtime] model.switch: sessionId=${sessionId}, provider=${provider}, modelId=${modelId}`)
         await this.sessionService.switchModel(sessionId, provider, modelId)
         this.send(ws, { type: 'model.switched', id: msg.id, payload: { sessionId, provider, modelId } })
@@ -408,8 +391,8 @@ export class SidecarServer implements IMessageBroker {
     }
   }
 
-  private handleDiscoverModels(msg: ClientMessage, ws: WsType): boolean {
-    const { baseUrl, apiKey, providerType, providerId } = msg.payload as { baseUrl: string; apiKey?: string; providerType?: string; providerId?: string }
+  private handleDiscoverModels(msg: Extract<ClientMessage, { type: 'config.discoverModels' }>, ws: WsType): boolean {
+    const { baseUrl, apiKey, providerType, providerId } = msg.payload
     let resolvedApiKey = apiKey
     if (!resolvedApiKey && providerId) resolvedApiKey = this.configService.getProvider(providerId)?.apiKey
     this.modelService.discoverModelsFromApi(baseUrl, resolvedApiKey, providerType)

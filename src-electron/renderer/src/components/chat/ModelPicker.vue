@@ -49,7 +49,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useProviderStore } from '../../stores/provider'
-import { send } from '../../lib/ws-client'
+import { useModel } from '../../composables/useModel'
 import { Button } from '../../design-system'
 
 const props = defineProps<{ currentModel: string }>()
@@ -60,7 +60,8 @@ const open = ref(false)
 const pickerRef = ref<HTMLElement | null>(null)
 
 onMounted(() => {
-  send({ type: 'model.list', payload: {} })
+  const { listModels } = useModel()
+  listModels()
   document.addEventListener('click', onClickOutside)
 })
 

@@ -12,7 +12,7 @@ import type { WebSocket } from 'ws'
  * so the tests run without spawning real pi processes or touching the filesystem.
  */
 
-// ── Mock session-scanner ────────────────────────────────────────
+// ── Mock pi-config-bridge（session-scanner 已内联）──────────
 
 const mockScannedSessions: Array<{
   id: string
@@ -20,11 +20,22 @@ const mockScannedSessions: Array<{
   cwd: string
   name: string | null
   lastModified: number
+  timestamp: string
+  size: number
 }> = []
 
-vi.mock('../src/session-scanner.js', () => ({
-  scanSessions: () => mockScannedSessions,
-  deleteSessionFile: vi.fn(),
+vi.mock('../src/pi-config-bridge.js', () => ({
+  getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
+  getSkillPaths: () => [],
+  getSessionsDir: () => '/mock/sessions',
+  readModels: () => ({ providers: {} }),
+  readSettings: () => ({}),
+  scanPiSessions: () => mockScannedSessions,
+  refreshAll: () => {},
+}))
+
+vi.mock('../src/trash.js', () => ({
+  trash: vi.fn(),
 }))
 
 // ── Mock config-store ───────────────────────────────────────────
@@ -75,16 +86,6 @@ vi.mock('../src/process-manager.js', () => ({
   },
 }))
 
-// ── Mock pi-config-bridge ────────────────────────────────────────
-
-vi.mock('../src/pi-config-bridge.js', () => ({
-  getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
-  getSkillPaths: () => [],
-  getSessionsDir: () => '/mock/sessions',
-  readModels: () => ({ providers: {} }),
-  readSettings: () => ({}),
-}))
-
 // ── Import after mocks ──────────────────────────────────────────
 
 import { SessionService } from '../src/services/session-service.js'
@@ -92,7 +93,7 @@ import type { IMessageBroker, IEventAdapter } from '../src/interfaces.js'
 
 /** Minimal scanned session fixture */
 function addScannedSession(id: string, cwd = '/tmp/test-project') {
-  const entry = { id, filePath: `/fake/sessions/${id}.jsonl`, cwd, name: null, lastModified: Date.now() }
+  const entry = { id, filePath: `/fake/sessions/${id}.jsonl`, cwd, name: null, lastModified: Date.now(), timestamp: new Date().toISOString(), size: 0 }
   mockScannedSessions.push(entry)
   return entry
 }

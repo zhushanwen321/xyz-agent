@@ -35,13 +35,15 @@ import { useProviderStore } from '../../stores/provider'
 import { useSettingsStore } from '../../stores/settings'
 import { useChat } from '../../composables/useChat'
 import { useTree } from '../../composables/useTree'
-import { send } from '../../lib/ws-client'
+import { useToolApproval } from '../../composables/useToolApproval'
+import { useModel } from '../../composables/useModel'
 import { on, off } from '../../lib/event-bus'
 import type { ServerMessage, ClientMessageType } from '@xyz-agent/shared'
 import type { PendingToolCall } from '../chat/ApprovalCard.vue'
 import type { AgentOption, AgentView } from './ChatPanel.vue'
 import ChatPanel from './ChatPanel.vue'
 import { createSystemNotification } from '../../lib/system-notification'
+import { send } from '../../lib/ws-client' // 仅用于 handleSendCommand 的动态消息路由
 
 const props = defineProps<{
   panelId: string
@@ -55,6 +57,8 @@ const settingsStore = useSettingsStore()
 
 const sessionIdRef = toRef(props, 'sessionId')
 const { sendMessage, abort } = useChat(sessionIdRef)
+const { approve: approveTool, deny: denyTool, alwaysAllow: alwaysAllowTool } = useToolApproval()
+const { switchModel } = useModel()
 
 // Session-partitioned state — reads from reactive Map via computed
 // Vue tracks reactive accesses inside computed, so changes to Map entries trigger re-evaluation
@@ -128,23 +132,22 @@ function handleSelectModel(modelId: string) {
   if (!model) return
   const provider = providerStore.providers.find(p => p.id === model.providerId)
   if (provider && provider.enabled === false) return
-  // 乐观更新 UI，后端可能在非活跃 session 上静默成功
   settingsStore.defaultModel = `${model.providerId}/${model.id}`
-  send({ type: 'model.switch', payload: { sessionId: props.sessionId, provider: model.providerId, modelId: model.id } })
+  switchModel(props.sessionId, model.providerId, model.id)
 }
 
 function handleApprove(toolCallId: string) {
-  send({ type: 'tool.approve', payload: { sessionId: props.sessionId, toolCallId } })
+  approveTool(props.sessionId, toolCallId)
   pendingApproval.value = null
 }
 
 function handleDeny(payload: { toolCallId: string; reason?: string }) {
-  send({ type: 'tool.deny', payload: { sessionId: props.sessionId, ...payload } })
+  denyTool(props.sessionId, payload)
   pendingApproval.value = null
 }
 
 function handleAlwaysAllow(toolName: string) {
-  send({ type: 'tool.always_allow', payload: { sessionId: props.sessionId, toolName } })
+  alwaysAllowTool(props.sessionId, toolName)
   pendingApproval.value = null
 }
 
@@ -176,14 +179,7 @@ function handleErrorMessage(msg: ServerMessage) {
   const currentSid = panelStore.panels.find(p => p.id === props.panelId)?.sessionId
   if (!currentSid || payload.sessionId !== currentSid) return
   const errMsg = payload.message ?? 'Unknown error'
-  chatStore.setGenerating(false, currentSid)
-  chatStore.setStreaming(null, currentSid)
-  chatStore.setError(null, currentSid)
-  chatStore.addMessage({
-    ...createSystemNotification('alert', errMsg),
-    content: errMsg,
-    status: 'error',
-  }, currentSid)
+  chatStore.abortStream(currentSid, errMsg)
 }
 
 function handleCompactionState(msg: ServerMessage, value: boolean) {

@@ -135,8 +135,8 @@ export function useSession() {
     send({ type: 'session.history', payload: { sessionId } })
   }
 
-  function compactSession() {
-    const sid = sessionStore.currentSessionId
+  function compactSession(sessionId?: string) {
+    const sid = sessionId ?? sessionStore.currentSessionId
     if (!sid) return
     send({ type: 'session.compact', payload: { sessionId: sid } })
   }
@@ -145,6 +145,10 @@ export function useSession() {
     const sid = sessionStore.currentSessionId
     if (!sid) return
     send({ type: 'session.clear', payload: { sessionId: sid } })
+  }
+
+  function renameSession(sessionId: string, newName: string) {
+    send({ type: 'session.rename', payload: { sessionId, name: newName } })
   }
 
   // 全局事件 listener 生命周期：第一个组件 mounted 时注册，最后一个 unmounted 时注销
@@ -164,5 +168,5 @@ export function useSession() {
     })
   }
 
-  return { loadSessions, createSession, deleteSession, switchSession, compactSession, clearSession }
+  return { loadSessions, createSession, deleteSession, switchSession, compactSession, clearSession, renameSession }
 }

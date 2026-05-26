@@ -1,5 +1,6 @@
 export type {
-  ClientMessageType, ClientMessage,
+  ClientMessageType, ClientMessage, ClientMessageMap,
+  ExtractPayload, SpecificClientMessage, SetProviderData,
   ServerMessageType, ServerMessage,
 } from './protocol'
 export type {

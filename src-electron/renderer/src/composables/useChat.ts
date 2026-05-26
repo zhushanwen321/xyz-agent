@@ -53,7 +53,7 @@ function createGlobalHandlers() {
       blocks.push({ type: 'text', refId: 'text' })
       session.streamingMessage = { ...session.streamingMessage, contentBlocks: blocks }
     }
-    store.appendToStreaming(msg.payload.delta as string, sid)
+    store.appendStreamText(msg.payload.delta as string, sid)
   }
 
   function onThinkingStart(msg: ServerMessage) {
@@ -160,21 +160,14 @@ function createGlobalHandlers() {
   function onComplete(msg: ServerMessage) {
     const sid = getSid(msg)
     if (!sid) return
-    store.completeStreaming(undefined, sid)
+    store.completeStream(sid)
   }
 
   function onError(msg: ServerMessage) {
     const sid = getSid(msg)
     if (!sid) return
     const errMsg = (msg.payload as { message?: string }).message ?? 'Unknown error'
-    store.setGenerating(false, sid)
-    store.setStreaming(null, sid)
-    store.setError(null, sid)
-    store.addMessage({
-      ...createSystemNotification('alert', errMsg),
-      content: errMsg,
-      status: 'error' as const,
-    }, sid)
+    store.abortStream(sid, errMsg)
   }
 
   function onContextUpdate(msg: ServerMessage) {
@@ -245,10 +238,7 @@ export function useChat(sessionId?: Ref<string>) {
     }
     store.setGenerating(true, sid)
     store.setError(null, sid)
-    const payload: Record<string, unknown> = { sessionId: sid, content }
-    if (subagent) {
-      payload.subagent = subagent
-    }
+    const payload = { sessionId: sid, content, ...(subagent && { subagent }) }
     send({ type: 'message.send', payload })
   }
 
@@ -257,7 +247,7 @@ export function useChat(sessionId?: Ref<string>) {
     if (!sid) return
     send({ type: 'message.abort', payload: { sessionId: sid } })
     // 立即完成当前流，不等后端确认
-    store.completeStreaming(undefined, sid)
+    store.completeStream(sid)
     // 插入系统消息提示用户操作已终止
     store.addMessage({
       ...createSystemNotification('info', '操作已被用户终止'),

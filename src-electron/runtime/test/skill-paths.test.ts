@@ -35,6 +35,15 @@ vi.mock('../src/config-store.js', () => ({
 
 // Mock pi-config-bridge — the central config module
 const mockSkillPaths: string[] = []
+const mockScannedSessions: Array<{
+  id: string
+  filePath: string
+  cwd: string
+  timestamp: string
+  name: string | null
+  lastModified: number
+  size: number
+}> = []
 vi.mock('../src/pi-config-bridge.js', () => ({
   getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
   getSkillPaths: () => mockSkillPaths,
@@ -42,6 +51,7 @@ vi.mock('../src/pi-config-bridge.js', () => ({
   readModels: () => ({ providers: {} }),
   readSettings: () => ({}),
   scanPiSessions: () => mockScannedSessions,
+  refreshAll: () => {},
 }))
 
 // Mock fs.existsSync to control path validation
@@ -57,19 +67,9 @@ vi.mock('node:fs', () => ({
   unlinkSync: vi.fn(),
 }))
 
-// Mock session-scanner to control scanned sessions
-const mockScannedSessions: Array<{
-  id: string
-  filePath: string
-  cwd: string
-  timestamp: string
-  name: string | null
-  lastModified: number
-  size: number
-}> = []
-vi.mock('../src/session-scanner.js', () => ({
-  scanSessions: () => mockScannedSessions,
-  deleteSessionFile: vi.fn(),
+// Mock trash
+vi.mock('../src/trash.js', () => ({
+  trash: vi.fn(),
 }))
 
 // Mock node:os — keep all real exports, override homedir
