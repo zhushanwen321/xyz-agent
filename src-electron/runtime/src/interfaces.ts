@@ -100,6 +100,8 @@ export interface ISessionService {
   restoreSession(sessionId: string): Promise<SessionSummary>
   hasActiveSession(sessionId: string): boolean
   getSummary(sessionId: string): SessionSummary | undefined
+  /** Get the underlying RpcClient for direct command sending (e.g., extension responses). */
+  getRpcClient(sessionId: string): IRpcClient | undefined
   listPersistedSessions(): SessionGroup[]
   destroyAll(): Promise<void>
 }
@@ -130,6 +132,16 @@ export interface IConfigService {
   deleteAgent(agentId: string): void
   scanSkills(sources: string[], existingIds: Set<string>): ScannedSkillInfo[]
   scanAgents(sources: string[], existingIds: Set<string>): ScannedAgentInfo[]
+}
+
+// ── IExtensionService ──────────────────────────────────────────────
+
+/** Extension lifecycle: discovery, enable/disable, path resolution. */
+export interface IExtensionService {
+  scanExtensions(): Promise<import('@xyz-agent/shared').ExtensionInfo[]>
+  getEnabledExtensions(): Promise<import('@xyz-agent/shared').ExtensionInfo[]>
+  toggleExtension(name: string, enabled: boolean): Promise<void>
+  getExtensionPaths(): Promise<string[]>
 }
 
 // ── IModelService ─────────────────────────────────────────────────

@@ -15,6 +15,7 @@ import type {
 } from '@xyz-agent/shared'
 import type { ISessionService, IProcessManager, IMessageBroker, IEventAdapter } from '../interfaces.js'
 import type { IRpcClient } from '../interfaces.js'
+import type { IExtensionService } from '../interfaces.js'
 import type { PiMessage } from '../rpc-client.js'
 import { convertPiHistory } from '../message-converter.js'
 import type { PiHistoryMessage } from '../types.js'
@@ -53,6 +54,7 @@ export class SessionService implements ISessionService {
     private adapterFactory: (sessionId: string, interceptor: NavigateInterceptor) => IEventAdapter,
     private projectRoot: string,
     readonly treeService: TreeService,
+    private extensionService: IExtensionService,
   ) {
     // 打包模式：extension 在 Resources 根目录（由 electron-builder.yml extraResources 打包）
     // 开发模式：extension 在 repo root（src-electron/ 的父目录）
@@ -90,9 +92,13 @@ export class SessionService implements ISessionService {
       throw new Error('No model configured. Please configure a provider and model in Settings before starting a session.')
     }
 
+    // Collect extension paths: built-in repo extension + user-enabled extensions
+    const userExtPaths = await this.extensionService.getExtensionPaths()
+    const allExtPaths = [this.extensionPath, ...userExtPaths] (feat: transparently expose pi extension capabilities to GUI layer)
+
     const client = await this.pm.createSession(tempId, sessionCwd, {
       skillPaths: this.getSkillPaths(sessionCwd),
-      extensionPaths: this.getExtensionPaths(),
+      extensionPaths: allExtPaths,
     })
 
     // 从 pi 获取真实 session ID
@@ -233,6 +239,10 @@ export class SessionService implements ISessionService {
     return this.pm.hasClient(sessionId)
   }
 
+  getRpcClient(sessionId: string): IRpcClient | undefined {
+    return this.pm.getClient(sessionId)
+  }
+
   // ── Compact & Clear ────────────────────────────────────────────
 
   async compact(sessionId: string): Promise<void> {
@@ -359,9 +369,12 @@ export class SessionService implements ISessionService {
       this.sessions.delete(sessionId)
     }
     const id = sessionId
+    // Collect extension paths: built-in repo extension + user-enabled extensions
+    const userExtPaths = await this.extensionService.getExtensionPaths()
+    const allExtPaths = [this.extensionPath, ...userExtPaths]
     const client = await this.pm.createSession(id, target.cwd, {
       skillPaths: this.getSkillPaths(target.cwd),
-      extensionPaths: this.getExtensionPaths(),
+      extensionPaths: allExtPaths,
     })
 
     try {

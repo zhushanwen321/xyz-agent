@@ -71,6 +71,7 @@ export default {
     tabSkills: '技能',
     tabAgents: '代理',
     tabSystem: '系统',
+    tabExtensions: '扩展',
     addProvider: '添加供应商',
     editProvider: '编辑供应商',
     deleteProvider: '删除供应商',
@@ -198,6 +199,16 @@ export default {
     confirmDeleteAgent: '确认删除此 Agent？',
 
     // --- System (additional) ---
+
+    // --- Extensions ---
+    extensionConfig: 'Extension 配置',
+    extensionConfigDesc: '管理已安装的 Extension 模块',
+    installedExtensions: '已安装',
+    noExtensions: '暂无已安装的 Extension',
+    extensionMetaName: '名称',
+    extensionMetaVersion: '版本',
+    extensionMetaPath: '路径',
+
     languageAndAppearance: '语言与外观',
     appearanceMode: '外观模式',
     colorTheme: '配色主题',

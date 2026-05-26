@@ -2,6 +2,8 @@ export type {
   ClientMessageType, ClientMessage, ClientMessageMap,
   ExtractPayload, SpecificClientMessage, SetProviderData,
   ServerMessageType, ServerMessage,
+  ExtensionUIRequestPayload, ExtensionUIResponsePayload,
+  ExtensionErrorPayload, ToolCallUpdatePayload, ExtensionInfo,
 } from './protocol'
 export type {
   MessageRole, MessageStatus, ToolCallStatus,

@@ -6,13 +6,16 @@
 import { createServer, type Server as HttpServer } from 'node:http'
 import { WebSocketServer, WebSocket, type WebSocket as WsType } from 'ws'
 import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
-import type { ISessionService, IConfigService, IModelService, IMessageBroker } from './interfaces.js'
+import type { ISessionService, IConfigService, IModelService, IMessageBroker, IExtensionService } from './interfaces.js'
 
 const HTTP_OK = 200
 const HTTP_NOT_FOUND = 404
 const MAX_WS_CLOSE_CODE = 4000
 const WS_OPEN = WebSocket.OPEN
 const HEARTBEAT_TIMEOUT_MS = 45_000
+
+/** Timeout for extension UI requests before auto-responding with defaults */
+const EXTENSION_UI_REQUEST_TIMEOUT_MS = 300_000 // 5 minutes
 
 export class SidecarServer implements IMessageBroker {
   private httpServer: HttpServer
@@ -25,12 +28,20 @@ export class SidecarServer implements IMessageBroker {
   private configService!: IConfigService
   private modelService!: IModelService
   private treeService!: import('./services/tree-service.js').TreeService
+  private extensionService!: IExtensionService
 
-  setServices(session: ISessionService, config: IConfigService, model: IModelService, tree: import('./services/tree-service.js').TreeService): void {
+  // ── Extension UI request timeout tracking ───────────────────────
+  /** Pending timeout timers keyed by requestId */
+  private extensionTimeouts = new Map<string, NodeJS.Timeout>()
+  /** sessionId → Set of requestIds for session-scoped cleanup */
+  private extensionSessionRequests = new Map<string, Set<string>>()
+
+  setServices(session: ISessionService, config: IConfigService, model: IModelService, tree: import('./services/tree-service.js').TreeService, extension?: IExtensionService): void {
     this.sessionService = session
     this.configService = config
     this.modelService = model
     this.treeService = tree
+    if (extension) this.extensionService = extension
   }
 
   constructor(private port: number, projectRoot?: string) {
@@ -145,8 +156,10 @@ export class SidecarServer implements IMessageBroker {
           return this.broadcastSessionList()
         }
         case 'session.delete': {
-          await this.sessionService.delete(msg.payload.sessionId)
-          this.send(ws, { type: 'session.deleted', id: msg.id, payload: { sessionId: msg.payload.sessionId } })
+          const delSid = msg.payload.sessionId
+          this.clearExtensionTimeoutsForSession(delSid)
+          await this.sessionService.delete(delSid)
+          this.send(ws, { type: 'session.deleted', id: msg.id, payload: { sessionId: delSid } })
           return this.broadcastSessionList()
         }
         case 'session.list':
@@ -278,6 +291,36 @@ export class SidecarServer implements IMessageBroker {
             }
             throw e
           }
+        }
+        // ── Extension messages ──────────────────────────────────────────
+        case 'extension.ui_response': {
+          const { sessionId: extSid, requestId, result: extResult } = msg.payload
+          const client = this.sessionService.getRpcClient(extSid)
+          if (!client) {
+            // 会话不存在时清计时器并发错
+            this.clearExtensionTimeout(requestId)
+            return this.sendError(ws, 'handler_error', `No active session for extension response: ${extSid}`, msg.id, extSid)
+          }
+          // 先发送响应，成功后再清计时器
+          // 如果 sendCommand 抛异常，计时器保留让超时机制党底
+          await client.sendCommand('extension_ui_response', { id: requestId, response: extResult ?? null })
+          this.clearExtensionTimeout(requestId)
+          return
+        }
+        case 'extension.list': {
+          if (!this.extensionService) {
+            return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions: [] } })
+          }
+          const extensions = await this.extensionService.scanExtensions()
+          return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions } })
+        }
+        case 'extension.toggle': {
+          if (!this.extensionService) {
+            return this.sendError(ws, 'handler_error', 'Extension service not available', msg.id)
+          }
+          await this.extensionService.toggleExtension(msg.payload.name, msg.payload.enabled)
+          const extensions = await this.extensionService.scanExtensions()
+          return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions } })
         }
         default:
           if (!await this.handleSettingsMessage(msg, ws)) {
@@ -439,6 +482,93 @@ export class SidecarServer implements IMessageBroker {
   }
   private broadcastAgentList(): void {
     this.broadcast({ type: 'config.agents', id: this.nextPushId(), payload: { agents: this.configService.loadAgents(this.projectRoot) } })
+  }
+
+  // ── Extension timeout management ─────────────────────────────────
+
+  /**
+   * Register a timeout for an extension UI request.
+   * Called by EventAdapter when translating `extension_ui_request` to `extension.ui_request`.
+   * On timeout: sends default response to pi and notifies frontend.
+   */
+  registerExtensionTimeout(sessionId: string, requestId: string, method: string): void {
+    // notify is fire-and-forget, no response expected
+    if (method === 'notify') return
+
+    // Clear any existing timer for this requestId
+    this.clearExtensionTimeout(requestId)
+
+    const timer = setTimeout(() => {
+      this.extensionTimeouts.delete(requestId)
+      this.removeSessionRequest(sessionId, requestId)
+
+      // Determine default response based on method
+      const defaultResponse = method === 'confirm' ? false : null
+
+      // Send default response to pi
+      const client = this.sessionService.getRpcClient(sessionId)
+      if (client) {
+        client.sendCommand('extension_ui_response', { id: requestId, response: defaultResponse }).catch((e: unknown) => {
+          console.error('[runtime] extension timeout response failed:', e)
+        })
+      }
+
+      // Notify frontend of timeout
+      this.broadcast({
+        type: 'extension.ui_timeout',
+        id: this.nextPushId(),
+        payload: { sessionId, requestId },
+      })
+    }, EXTENSION_UI_REQUEST_TIMEOUT_MS)
+
+    this.extensionTimeouts.set(requestId, timer)
+
+    // Track sessionId → requestIds for session cleanup
+    let requestSet = this.extensionSessionRequests.get(sessionId)
+    if (!requestSet) {
+      requestSet = new Set()
+      this.extensionSessionRequests.set(sessionId, requestSet)
+    }
+    requestSet.add(requestId)
+  }
+
+  /** Clear the timeout timer for a specific requestId (called when ui_response arrives). */
+  clearExtensionTimeout(requestId: string): void {
+    const timer = this.extensionTimeouts.get(requestId)
+    if (timer) {
+      clearTimeout(timer)
+      this.extensionTimeouts.delete(requestId)
+    }
+    // Also remove from session tracking (find sessionId by requestId)
+    for (const [sid, reqs] of this.extensionSessionRequests) {
+      if (reqs.delete(requestId)) {
+        if (reqs.size === 0) this.extensionSessionRequests.delete(sid)
+        break
+      }
+    }
+  }
+
+  /** Clear all pending timeouts for a session (called on session.delete). */
+  clearExtensionTimeoutsForSession(sessionId: string): void {
+    const requestIds = this.extensionSessionRequests.get(sessionId)
+    if (!requestIds) return
+    for (const reqId of requestIds) {
+      const timer = this.extensionTimeouts.get(reqId)
+      if (timer) {
+        clearTimeout(timer)
+        this.extensionTimeouts.delete(reqId)
+      }
+    }
+    this.extensionSessionRequests.delete(sessionId)
+  }
+
+  /** Remove a single requestId from session tracking without clearing the timer. */
+  private removeSessionRequest(sessionId: string, requestId: string): void {
+    const requestSet = this.extensionSessionRequests.get(sessionId)
+    if (requestSet) {
+      requestSet.delete(requestId)
+      if (requestSet.size === 0) this.extensionSessionRequests.delete(sessionId)
+    }
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────

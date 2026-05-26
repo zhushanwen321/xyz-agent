@@ -10,6 +10,10 @@ export function getToolRenderer(name: string): Component | undefined {
   return registry.get(name)
 }
 
+export function unregisterToolRenderer(name: string): boolean {
+  return registry.delete(name)
+}
+
 export function getRegisteredToolNames(): string[] {
   return Array.from(registry.keys())
 }

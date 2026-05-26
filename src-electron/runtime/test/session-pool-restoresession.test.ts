@@ -139,6 +139,7 @@ function createService(): SessionService {
     adapterFactory,
     '/tmp',
     {} as never,
+    { getExtensionPaths: vi.fn().mockResolvedValue([]) } as never,
   )
 }
 

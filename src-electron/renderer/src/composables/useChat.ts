@@ -1,9 +1,10 @@
 import { useChatStore } from '../stores/chat'
 import { useSessionStore } from '../stores/session'
+import { getActivePinia } from 'pinia'
 import { send } from '../lib/ws-client'
 import { on } from '../lib/event-bus'
 import { type Ref, unref } from 'vue'
-import type { ServerMessage, ToolCall, ContentBlock } from '@xyz-agent/shared'
+import type { ServerMessage, ToolCall, ContentBlock, ExtensionErrorPayload, ToolCallUpdatePayload } from '@xyz-agent/shared'
 import { createSystemNotification } from '../lib/system-notification'
 
 const RADIX_36 = 36
@@ -181,6 +182,34 @@ function createGlobalHandlers() {
     void _msg
   }
 
+  function onExtensionError(msg: ServerMessage) {
+    const sid = getSid(msg)
+    if (!sid) return
+    const payload = msg.payload as unknown as ExtensionErrorPayload
+    const title = `Extension: ${payload.extensionName}`
+    const description = payload.error ?? 'Unknown extension error'
+    store.addMessage({
+      ...createSystemNotification('alert', title, description),
+      content: description,
+      status: 'error',
+    }, sid)
+  }
+
+  function onToolCallUpdate(msg: ServerMessage) {
+    const sid = getSid(msg)
+    if (!sid) return
+    const payload = msg.payload as unknown as ToolCallUpdatePayload
+    const streaming = store.getSessionState(sid).streamingMessage
+    if (streaming?.toolCalls) {
+      const calls = streaming.toolCalls.map((tc) =>
+        tc.id === payload.toolCallId
+          ? { ...tc, ...(payload.progress !== undefined && { progress: payload.progress }), ...(payload.detail !== undefined && { detail: payload.detail }) }
+          : tc,
+      )
+      store.setStreaming({ ...streaming, toolCalls: calls }, sid)
+    }
+  }
+
   return {
     'message.message_start': onMessageStart,
     'message.text_delta': onTextDelta,
@@ -189,8 +218,10 @@ function createGlobalHandlers() {
     'message.thinking_end': onThinkingEnd,
     'message.tool_call_start': onToolCallStart,
     'message.tool_call_end': onToolCallEnd,
+    'message.tool_call_update': onToolCallUpdate,
     'message.complete': onComplete,
     'message.error': onError,
+    'extension.error': onExtensionError,
     'context.update': onContextUpdate,
     'message.status': onStatus,
   } as Record<string, (msg: ServerMessage) => void>
@@ -266,10 +297,10 @@ let registerAttempted = false
 function safeRegisterGlobalListeners() {
   if (globalEventMap || registerAttempted) return
   registerAttempted = true
-  try {
-    registerGlobalListeners()
-  } catch {
-    // Pinia 未就绪（测试环境），静默跳过。生产环境 Pinia 一定在 App.vue setup 前就绪。
+  if (!getActivePinia()) {
+    console.warn('[useChat] Pinia not active, global listeners deferred')
+    return
   }
+  registerGlobalListeners()
 }
 queueMicrotask(safeRegisterGlobalListeners)

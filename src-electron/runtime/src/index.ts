@@ -5,6 +5,7 @@ import { ConfigService } from './services/config-service.js'
 import { ModelService } from './services/model-service.js'
 import { ProcessManager } from './process-manager.js'
 import { EventAdapter } from './event-adapter.js'
+import { ExtensionService } from './extension-service.js'
 import type { NavigateInterceptor } from './navigate-interceptor.js'
 
 function parseArgs(): { port: number; projectRoot?: string } {
@@ -47,19 +48,25 @@ async function main(): Promise<void> {
   const server = new SidecarServer(port, projectRoot)
 
   // Service layer (DI)
+  const extensionService = new ExtensionService()
   const treeService = new TreeService(pm)
   const sessionService = new SessionService(
     pm,
     server,  // IMessageBroker
-    (sessionId: string, interceptor: NavigateInterceptor) => new EventAdapter(sessionId, interceptor.send),
+    (sessionId: string, interceptor: NavigateInterceptor) => new EventAdapter(sessionId, interceptor.send, {
+      onExtensionUIRequest: (requestId, sid, method) => {
+        server.registerExtensionTimeout(sid, requestId, method)
+      },
+    }),
     effectiveRoot,
     treeService,
+    extensionService,
   )
   const configService = new ConfigService(effectiveRoot)
   const modelService = new ModelService()
 
   // Wire services into server
-  server.setServices(sessionService, configService, modelService, treeService)
+  server.setServices(sessionService, configService, modelService, treeService, extensionService)
 
   // Graceful shutdown on signals
   let shuttingDown = false

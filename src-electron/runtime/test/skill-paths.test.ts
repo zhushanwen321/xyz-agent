@@ -116,7 +116,7 @@ async function createSessionService() {
   const { SessionService } = await import('../src/services/session-service.js')
   const pm = new ProcessManager()
   const noopBroker = { send: vi.fn(), broadcast: vi.fn(), sendError: vi.fn() }
-  return new SessionService(pm, noopBroker as never, () => ({ attach: vi.fn(), detach: vi.fn() }), '/tmp', {} as never)
+  return new SessionService(pm, noopBroker as never, () => ({ attach: vi.fn(), detach: vi.fn() }), '/tmp', {} as never, { getExtensionPaths: vi.fn().mockResolvedValue([]) } as never)
 }
 
 // ── Tests ──────────────────────────────────────────────────────────

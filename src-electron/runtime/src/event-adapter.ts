@@ -31,12 +31,18 @@ const STOP_REASON_MAP: Record<string, string> = {
  *
  * Each session gets its own adapter instance bound to a WsSender.
  */
+export interface EventAdapterOptions {
+  /** Called after successfully translating an extension_ui_request event. */
+  onExtensionUIRequest?: (requestId: string, sessionId: string, method: string) => void
+}
+
 export class EventAdapter {
   private unsub: (() => void) | null = null
 
   constructor(
     private sessionId: string,
     private send: WsSender,
+    private options?: EventAdapterOptions,
   ) {}
 
   /** Start listening to events from an RpcClient. */
@@ -185,18 +191,27 @@ export class EventAdapter {
         }
       }
 
-      // ── Extension UI requests (tool approvals etc.) ────────────
+      // ── Extension UI requests ────────────────────────────────
       case 'extension_ui_request': {
         const method = event.method as string | undefined
-        // Forward confirm/select as tool approval requests
-        if (method === 'confirm' || method === 'select') {
+        // setStatus/setWidget are internal-only, discard
+        if (method === 'setStatus' || method === 'setWidget') return null
+        // Interactive methods: confirm, select, input, notify
+        if (method === 'confirm' || method === 'select' || method === 'input' || method === 'notify') {
+          const rawOptions = event.options as Array<{ label: string; value: string }> | undefined
+          const requestId = event.id ?? ''
+          this.options?.onExtensionUIRequest?.(requestId, sid, method)
           return {
-            type: 'message.tool_call_pending',
+            type: 'extension.ui_request',
             payload: {
               sessionId: sid,
-              toolCallId: event.id ?? '',
-              toolName: event.title ?? '',
-              input: event,
+              requestId,
+              method,
+              title: event.title,
+              message: event.message,
+              options: rawOptions ? rawOptions.map((o) => o.label) : undefined,
+              default: event.default as string | undefined,
+              level: event.level as 'info' | 'warn' | 'error' | undefined,
             },
           }
         }
@@ -244,11 +259,28 @@ export class EventAdapter {
       case 'turn_start':
       case 'turn_end':
       case 'message_end':
-        return null
-      case 'extension_ui_response':
       case 'extension_config':
-      case 'extension_error':
+      case 'extension_ui_response':
       case 'response':
+        return null
+      case 'extension_error':
+        return {
+          type: 'extension.error',
+          payload: {
+            sessionId: sid,
+            extensionName: event.extensionName ?? '',
+            error: event.error ?? 'Unknown extension error',
+          },
+        }
+      case 'tool_execution_update':
+        return {
+          type: 'message.tool_call_update',
+          payload: {
+            sessionId: sid,
+            toolCallId: event.toolCallId ?? '',
+            detail: event.partialResult as string | undefined,
+          },
+        }
       // compact 生命周期事件由 session-pool 手动转发，此处丢弃避免重复
       case 'compaction_start':
       case 'compaction_end':
