@@ -251,7 +251,9 @@ function fireInitialData(): void {
 }
 
 function handleMockMessageSend(msg: ClientMessage): void {
-  const { sessionId, content } = msg.payload
+  if (msg.type !== 'message.send') return
+  const payload = msg.payload as { sessionId: string; content: string }
+  const { sessionId, content } = payload
 
   setTimeout(() => {
     respond('message.thinking_start', { sessionId })

@@ -103,7 +103,9 @@ function handleSend(payload: { content: string; skillName?: string; subagent?: {
 function handleSendCommand(payload: { type: string; payload: Record<string, unknown> }) {
   const sid = props.sessionId
   if (!sid) return
-  send({ type: payload.type as ClientMessageType, payload: { ...payload.payload, sessionId: sid } })
+  // 动态路由：slash command 的通用消息转发，需绕过 discriminated union 收窄
+  const msg = { type: payload.type, payload: { ...payload.payload, sessionId: sid } } as ClientMessage
+  send(msg)
 }
 
 function handleLocalAction(payload: { action: string; data?: unknown }) {
