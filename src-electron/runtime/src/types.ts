@@ -437,6 +437,8 @@ export interface ForkResult {
   success: boolean
   /** ID of the new session created by the fork. */
   newSessionId?: string
+  /** Path to the new session file (for dedup in session list). */
+  sessionFile?: string
   /** Error message if fork failed. */
   error?: string
 }

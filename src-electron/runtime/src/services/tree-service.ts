@@ -191,7 +191,9 @@ export class TreeService {
         return { success: false, error: 'Fork succeeded but could not get new session ID' }
       }
 
-      return { success: true, newSessionId }
+      const sessionFile = stateData?.sessionFile as string | undefined
+
+      return { success: true, newSessionId, sessionFile }
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : String(e) }
     }

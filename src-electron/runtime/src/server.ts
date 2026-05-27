@@ -261,7 +261,9 @@ export class SidecarServer implements IMessageBroker {
           const entryId = msg.payload.entryId
           try {
             const result = await this.treeService.forkFromEntry(sid, entryId)
-            if (result.success) {
+            if (result.success && result.newSessionId) {
+              // Fork 后 pi 进程已被 rebind 到新 session，需要更新 runtime 的 session 注册
+              this.sessionService.rebindAfterFork(sid, result.newSessionId, result.sessionFile)
               this.broadcastSessionList()
             }
             return this.send(ws, { type: 'session.tree-fork-result', id: msg.id, payload: { sessionId: sid, ...result } })

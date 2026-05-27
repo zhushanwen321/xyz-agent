@@ -435,6 +435,27 @@ export class SessionService implements ISessionService {
     return this.toSummary(session)
   }
 
+  /** Fork 后重新绑定：原 session 的 pi 进程已被 rebind 到新 session，
+   *  需要更新 runtime 的 sessions Map 和 process manager 的 key。 */
+  rebindAfterFork(oldSessionId: string, newSessionId: string, sessionFilePath?: string): void {
+    const old = this.sessions.get(oldSessionId)
+    if (!old) throw new Error(`Session ${oldSessionId} not found in sessions map`)
+
+    // Detach 旧的 adapter/listener（不 kill pi 进程）
+    this.detachSession(old)
+    this.treeService.unregisterSession(oldSessionId)
+    this.sessions.delete(oldSessionId)
+
+    // rekey process manager：client 仍然是同一个 pi 进程
+    this.pm.rekey(oldSessionId, newSessionId)
+
+    // 用新 ID 重新注册 managed session（异步：注册 tree + commands 在后台完成）
+    const client = this.pm.getClient(newSessionId)
+    if (!client) throw new Error(`Client not found after rekey: ${newSessionId}`)
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises -- fire-and-forget: register tree + commands in background
+    this.initializeManagedSession(newSessionId, client, old.cwd, old.label, sessionFilePath)
+  }
+
   getSummary(sessionId: string): SessionSummary | undefined {
     const session = this.sessions.get(sessionId)
     return session ? this.toSummary(session) : undefined

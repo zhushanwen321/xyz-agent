@@ -78,9 +78,12 @@ function createGlobalHandlers() {
     if (!success) {
       const errMsg = (msg.payload.error as string) ?? 'Fork failed'
       store.setError(sid, errMsg)
+      store.setLoading(sid, false)
       return
     }
-    // Fork 成功：刷新 session 列表 + 自动切换到新 session
+    // Fork 成功：重置 loading + 关闭面板 + 刷新 session 列表 + 切换到新 session
+    store.setLoading(sid, false)
+    store.setPanelOpen(sid, false)
     const newSessionId = msg.payload.newSessionId as string | undefined
     if (newSessionId) {
       send({ type: 'session.list', payload: {} })
