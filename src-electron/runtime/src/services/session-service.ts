@@ -92,9 +92,10 @@ export class SessionService implements ISessionService {
       throw new Error('No model configured. Please configure a provider and model in Settings before starting a session.')
     }
 
-    // Collect extension paths: built-in repo extension + user-enabled extensions
+    // Collect extension paths: built-in + bundled + user-enabled extensions
+    const bundleExtPaths = this.getExtensionPaths()
     const userExtPaths = await this.extensionService.getExtensionPaths()
-    const allExtPaths = [this.extensionPath, ...userExtPaths]
+    const allExtPaths = [...bundleExtPaths, ...userExtPaths]
 
     const client = await this.pm.createSession(tempId, sessionCwd, {
       skillPaths: this.getSkillPaths(sessionCwd),
@@ -413,9 +414,10 @@ export class SessionService implements ISessionService {
       this.sessions.delete(sessionId)
     }
     const id = sessionId
-    // Collect extension paths: built-in repo extension + user-enabled extensions
+    // Collect extension paths: built-in + bundled + user-enabled extensions
+    const bundleExtPaths = this.getExtensionPaths()
     const userExtPaths = await this.extensionService.getExtensionPaths()
-    const allExtPaths = [this.extensionPath, ...userExtPaths]
+    const allExtPaths = [...bundleExtPaths, ...userExtPaths]
     const client = await this.pm.createSession(id, target.cwd, {
       skillPaths: this.getSkillPaths(target.cwd),
       extensionPaths: allExtPaths,
@@ -495,24 +497,41 @@ export class SessionService implements ISessionService {
       console.warn(`[session-service] extension file not found: ${this.extensionPath}, skipping`)
     }
 
-    // 从 agent dir 发现 bundled pi extensions（subagent, goal, todo 等）
-    // 这些会通过 --extension 显式传递，配合 --no-extensions 避免与项目本地/全局 pi extensions 冲突
+    // 收集要扫描的目录列表
+    const scanDirs: string[] = []
+
+    // 1. 运行时 agent dir（~/.xyz-agent/pi/agent/extensions/）
+    //    打包模式由 migrateToPiSubdir() 从 Resources 同步到这里
     const agentDir = this.getAgentDir()
-    const bundledExtDir = join(agentDir, 'extensions')
-    if (existsSync(bundledExtDir)) {
+    scanDirs.push(join(agentDir, 'extensions'))
+
+    // 2. 开发模式：项目源码中的 bundled extensions（src-electron/resources/pi/agent/extensions/）
+    if (process.env.XYZ_AGENT_PACKAGED !== '1') {
+      scanDirs.push(join(this.projectRoot, 'resources', 'pi', 'agent', 'extensions'))
+    }
+
+    const seenExts = new Set<string>()
+    for (const bundledExtDir of scanDirs) {
+      if (!existsSync(bundledExtDir)) continue
       try {
         for (const entry of readdirSync(bundledExtDir)) {
           const entryPath = join(bundledExtDir, entry)
           let stat
           try { stat = statSync(entryPath) } catch { continue }
           if (!stat.isDirectory()) continue
+          // 跳过 shared/ 目录（不是 extension，只是共享模块）
+          if (entry === 'shared') continue
+          // 按 extension name 去重（不同目录可能有同名 extension，runtime 目录优先）
+          if (seenExts.has(entry)) continue
           // 查找 index.ts 或 index.js
           const indexTs = join(entryPath, 'index.ts')
           const indexJs = join(entryPath, 'index.js')
           if (existsSync(indexTs)) {
             paths.push(indexTs)
+            seenExts.add(entry)
           } else if (existsSync(indexJs)) {
             paths.push(indexJs)
+            seenExts.add(entry)
           }
         }
       // eslint-disable-next-line taste/no-silent-catch -- bundled extensions discovery: failure must not block session creation
