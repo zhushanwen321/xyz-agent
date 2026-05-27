@@ -52,8 +52,8 @@ function parseAgentMd(content: string): { name: string; description: string } {
   let name = ''
   let description = ''
   for (const fl of frontmatterLines) {
-    if (fl.startsWith('name:')) name = fl.slice(5).trim()
-    if (fl.startsWith('description:')) description = fl.slice(12).trim()
+    if (fl.startsWith('name:')) name = fl.slice('name:'.length).trim()
+    if (fl.startsWith('description:')) description = fl.slice('description:'.length).trim()
   }
   return { name, description }
 }
@@ -67,6 +67,7 @@ export class ConfigService implements IConfigService {
 
   listProviders(): ProviderInfo[] {
     const models = piBridge.readModels()
+    // eslint-disable-next-line taste/no-unsafe-object-entries -- providers is a known schema Record<string, PiProviderConfig>, not arbitrary user input
     return Object.entries(models.providers).map(([id, config]) => ({
       id,
       name: id,

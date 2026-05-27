@@ -110,6 +110,7 @@ export class TreeService {
           if (raw) editorText = extractFullText(raw)
         }
       }
+    // eslint-disable-next-line taste/no-silent-catch -- navigate: failure to read editor text is non-critical, continue with available content
     } catch (e) {
       console.warn('Failed to read editorText for navigate entry:', e)
     }

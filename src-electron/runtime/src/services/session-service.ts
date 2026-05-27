@@ -436,6 +436,7 @@ export class SessionService implements ISessionService {
             paths.push(indexJs)
           }
         }
+      // eslint-disable-next-line taste/no-silent-catch -- bundled extensions discovery: failure must not block session creation
       } catch (e) {
         console.warn(`[session-service] failed to read bundled extensions dir: ${bundledExtDir}`, e)
       }
@@ -548,6 +549,7 @@ export class SessionService implements ISessionService {
       if (!navCapable) {
         console.warn('[session-service] xyz-navigate extension not found, navigate will be unavailable')
       }
+    // eslint-disable-next-line taste/no-silent-catch -- getCommands: failure to query extension commands must not block session
     } catch (e) {
       console.warn('[session-service] getCommands failed:', e)
     }

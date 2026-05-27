@@ -42,6 +42,8 @@ const OLD_SETTINGS_PATH = join(CONFIG_DIR, 'settings.json')
 const OLD_SESSIONS_DIR = join(CONFIG_DIR, 'sessions')
 const OLD_AGENTS_DIR = join(CONFIG_DIR, 'agents')
 
+const JSON_INDENT = 2
+
 /**
  * 首次加载时执行一次性迁移：将旧路径下的文件移动到新的 xyz-pi 目录结构。
  * 幂等：如果新路径已存在文件，跳过迁移。
@@ -87,9 +89,15 @@ function migrateToPiSubdir(): void {
           if (remaining.length === 0) {
             rmdirSync(OLD_SESSIONS_DIR)
           }
-        } catch { /* 忽略删除失败 */ }
+          // eslint-disable-next-line taste/no-silent-catch -- migration: failure to remove old dir must not block startup
+        } catch (e) {
+          console.warn('[config-bridge] failed to remove old sessions dir:', e instanceof Error ? e.message : e)
+        }
       }
-    } catch { /* 旧目录不可读，跳过 */ }
+      // eslint-disable-next-line taste/no-silent-catch -- migration: failure to migrate sessions must not block startup
+    } catch (e) {
+      console.warn('[config-bridge] failed to migrate sessions dir:', e instanceof Error ? e.message : e)
+    }
   }
 
   // 迁移 agents/ 目录下的文件
@@ -115,9 +123,15 @@ function migrateToPiSubdir(): void {
           if (remaining.length === 0) {
             rmdirSync(OLD_AGENTS_DIR)
           }
-        } catch { /* 忽略删除失败 */ }
+          // eslint-disable-next-line taste/no-silent-catch -- migration: failure to remove old dir must not block startup
+        } catch (e) {
+          console.warn('[config-bridge] failed to remove old agents dir:', e instanceof Error ? e.message : e)
+        }
       }
-    } catch { /* 旧目录不可读，跳过 */ }
+      // eslint-disable-next-line taste/no-silent-catch -- migration: failure to migrate agents must not block startup
+    } catch (e) {
+      console.warn('[config-bridge] failed to migrate agents dir:', e instanceof Error ? e.message : e)
+    }
   }
 
   // 打包模式：从 bundled 资源同步 extensions 和 skills 到 xyz-pi agent 目录
@@ -130,8 +144,9 @@ function migrateToPiSubdir(): void {
         try {
           cpSync(src, dest, { recursive: true })
           console.log(`[config-bridge] synced bundled ${subDir} → ${dest}`)
+          // eslint-disable-next-line taste/no-silent-catch -- bundled sync: failure must not block startup
         } catch (e) {
-          console.warn(`[config-bridge] failed to sync bundled ${subDir}:`, e)
+          console.error(`[config-bridge] failed to sync bundled ${subDir}:`, e)
         }
       }
     }
@@ -229,7 +244,7 @@ function readJsonFile<T>(filePath: string, fallback: T): T {
 function writeJsonFile(filePath: string, data: unknown): void {
   const dir = dirname(filePath)
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-  const json = JSON.stringify(data, null, 2) + '\n'
+  const json = JSON.stringify(data, null, JSON_INDENT) + '\n'
   atomicWrite(filePath, json)
 }
 
@@ -295,7 +310,7 @@ export function readSettings(): PiSettings {
   if (!isExpired(settingsCache)) return settingsCache!.data
   const data = readJsonFile<PiSettings>(SETTINGS_PATH, {})
   if (!data || typeof data !== 'object') {
-  console.warn(`[config-bridge] ${SETTINGS_PATH} schema 不匹配，使用 fallback`)
+    console.warn(`[config-bridge] ${SETTINGS_PATH} schema 不匹配，使用 fallback`)
     return {}
   }
   settingsCache = { data, timestamp: Date.now() }
@@ -389,6 +404,7 @@ export function listAgentFiles(): Array<{ name: string; path: string; content: s
     try {
       const content = readFileSync(filePath, 'utf-8')
       results.push({ name: file.replace(/\.md$/, ''), path: filePath, content })
+    // eslint-disable-next-line taste/no-silent-catch -- scanning: skip unreadable agent files, continue scanning
     } catch {
       // skip unreadable files
     }
@@ -482,10 +498,12 @@ export function scanPiSessions(): Array<{
               lastModified: fstat.mtimeMs,
               size: fstat.size,
             })
+            // eslint-disable-next-line taste/no-silent-catch -- scanning: skip unreadable session entries, continue scanning
           } catch {
             // skip
           }
         }
+        // eslint-disable-next-line taste/no-silent-catch -- scanning: skip unreadable session subdirectory
       } catch {
         // skip unreadable dir
       }
@@ -504,6 +522,7 @@ export function scanPiSessions(): Array<{
           lastModified: stat.mtimeMs,
           size: stat.size,
         })
+        // eslint-disable-next-line taste/no-silent-catch -- scanning: skip unreadable session entry, continue scanning
       } catch {
         // skip
       }
@@ -552,6 +571,7 @@ function extractSessionName(filePath: string): string | null {
         if (entry.type === 'session_info' && entry.name) {
           return entry.name as string
         }
+        // eslint-disable-next-line taste/no-silent-catch -- parsing: skip malformed session line, continue parsing
       } catch {
         // skip malformed line
       }
