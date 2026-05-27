@@ -1,22 +1,27 @@
 /**
- * Config Bridge — xyz-agent 独立配置文件的读写层。
+ * Config Bridge — xyz-agent 的 xyz-pi 配置文件读写层。
  *
- * 所有 provider/model/settings 操作读写 ~/.xyz-agent/ 下的文件，
- * 独立于 pi 的配置目录（~/.pi/agent/）。
+ * xyz-pi 的目录结构等价于系统 pi 的 ~/.pi/，但完全独立：
  *
- * 配置文件结构：
- *   ~/.xyz-agent/models.json    — Provider & Model 定义
- *   ~/.xyz-agent/settings.json  — 全局设置（默认模型、thinking level 等）
- *   ~/.xyz-agent/agents/        — Agent markdown 文件
- *   ~/.xyz-agent/sessions/      — Session jsonl 文件
+ *   ~/.xyz-agent/                    ← xyz-agent 配置根目录
+ *     config.json                    ← xyz-agent 自身配置（temperature、toolPermissions）
+ *     pi/                            ← xyz-pi 的根目录（等价于系统 pi 的 ~/.pi/）
+ *       agent/                       ← xyz-pi 的 agent 目录（等价于 ~/.pi/agent/）
+ *         models.json                ← Provider & Model 定义
+ *         settings.json              ← xyz-pi 设置（默认模型、thinking level 等）
+ *         agents/                    ← Agent markdown 文件
+ *         extensions/                ← bundled extensions（subagent, goal, todo 等）
+ *         skills/                    ← bundled skills
+ *       sessions/                    ← Session jsonl 文件
  *
  * 设计原则：
  * - 读操作有内存缓存 + TTL，避免每次请求穿透到磁盘
  * - 写操作使用原子写入 + JSON 校验
  * - 不使用文件锁（写入频率极低，用户手动操作 Settings，冲突概率可忽略）
+ * - 不读取、不修改、不使用系统 pi 的 ~/.pi/ 目录
  */
 
-import { existsSync, readFileSync, readdirSync, mkdirSync, statSync, unlinkSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, mkdirSync, statSync, unlinkSync, renameSync, rmdirSync, cpSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { atomicWrite } from './scanner-base.js'
@@ -24,10 +29,132 @@ import { atomicWrite } from './scanner-base.js'
 // ── 路径常量 ─────────────────────────────────────────────────────
 
 const CONFIG_DIR = join(homedir(), '.xyz-agent')
-const MODELS_PATH = join(CONFIG_DIR, 'models.json')
-const SETTINGS_PATH = join(CONFIG_DIR, 'settings.json')
-const SESSIONS_DIR = join(CONFIG_DIR, 'sessions')
-const AGENTS_DIR = join(CONFIG_DIR, 'agents')
+const PI_ROOT = join(CONFIG_DIR, 'pi')
+const PI_AGENT_DIR = join(PI_ROOT, 'agent')
+const MODELS_PATH = join(PI_AGENT_DIR, 'models.json')
+const SETTINGS_PATH = join(PI_AGENT_DIR, 'settings.json')
+const SESSIONS_DIR = join(PI_ROOT, 'sessions')
+const AGENTS_DIR = join(PI_AGENT_DIR, 'agents')
+
+// ── 旧路径常量（用于迁移）─────────────────────────────────────────
+const OLD_MODELS_PATH = join(CONFIG_DIR, 'models.json')
+const OLD_SETTINGS_PATH = join(CONFIG_DIR, 'settings.json')
+const OLD_SESSIONS_DIR = join(CONFIG_DIR, 'sessions')
+const OLD_AGENTS_DIR = join(CONFIG_DIR, 'agents')
+
+const JSON_INDENT = 2
+
+/**
+ * 首次加载时执行一次性迁移：将旧路径下的文件移动到新的 xyz-pi 目录结构。
+ * 幂等：如果新路径已存在文件，跳过迁移。
+ */
+function migrateToPiSubdir(): void {
+  // 确保新目录存在
+  mkdirSync(PI_AGENT_DIR, { recursive: true })
+  mkdirSync(SESSIONS_DIR, { recursive: true })
+  mkdirSync(AGENTS_DIR, { recursive: true })
+
+  // 迁移 models.json
+  if (existsSync(OLD_MODELS_PATH) && !existsSync(MODELS_PATH)) {
+    renameSync(OLD_MODELS_PATH, MODELS_PATH)
+    console.log('[config-bridge] migrated models.json → pi/agent/models.json')
+  }
+
+  // 迁移 settings.json
+  if (existsSync(OLD_SETTINGS_PATH) && !existsSync(SETTINGS_PATH)) {
+    renameSync(OLD_SETTINGS_PATH, SETTINGS_PATH)
+    console.log('[config-bridge] migrated settings.json → pi/agent/settings.json')
+  }
+
+  // 迁移 sessions/ 目录下的文件
+  if (existsSync(OLD_SESSIONS_DIR)) {
+    try {
+      const entries = readdirSync(OLD_SESSIONS_DIR)
+      if (entries.length > 0) {
+        let migrated = 0
+        for (const entry of entries) {
+          const oldPath = join(OLD_SESSIONS_DIR, entry)
+          const newPath = join(SESSIONS_DIR, entry)
+          if (!existsSync(newPath)) {
+            renameSync(oldPath, newPath)
+            migrated++
+          }
+        }
+        if (migrated > 0) {
+          console.log(`[config-bridge] migrated ${migrated} session files → pi/sessions/`)
+        }
+        // 如果旧目录已空，尝试删除
+        try {
+          const remaining = readdirSync(OLD_SESSIONS_DIR)
+          if (remaining.length === 0) {
+            rmdirSync(OLD_SESSIONS_DIR)
+          }
+          // eslint-disable-next-line taste/no-silent-catch -- migration: failure to remove old dir must not block startup
+        } catch (e) {
+          console.warn('[config-bridge] failed to remove old sessions dir:', e instanceof Error ? e.message : e)
+        }
+      }
+      // eslint-disable-next-line taste/no-silent-catch -- migration: failure to migrate sessions must not block startup
+    } catch (e) {
+      console.warn('[config-bridge] failed to migrate sessions dir:', e instanceof Error ? e.message : e)
+    }
+  }
+
+  // 迁移 agents/ 目录下的文件
+  if (existsSync(OLD_AGENTS_DIR)) {
+    try {
+      const entries = readdirSync(OLD_AGENTS_DIR)
+      if (entries.length > 0) {
+        let migrated = 0
+        for (const entry of entries) {
+          const oldPath = join(OLD_AGENTS_DIR, entry)
+          const newPath = join(AGENTS_DIR, entry)
+          if (!existsSync(newPath)) {
+            renameSync(oldPath, newPath)
+            migrated++
+          }
+        }
+        if (migrated > 0) {
+          console.log(`[config-bridge] migrated ${migrated} agent files → pi/agent/agents/`)
+        }
+        // 如果旧目录已空，尝试删除
+        try {
+          const remaining = readdirSync(OLD_AGENTS_DIR)
+          if (remaining.length === 0) {
+            rmdirSync(OLD_AGENTS_DIR)
+          }
+          // eslint-disable-next-line taste/no-silent-catch -- migration: failure to remove old dir must not block startup
+        } catch (e) {
+          console.warn('[config-bridge] failed to remove old agents dir:', e instanceof Error ? e.message : e)
+        }
+      }
+      // eslint-disable-next-line taste/no-silent-catch -- migration: failure to migrate agents must not block startup
+    } catch (e) {
+      console.warn('[config-bridge] failed to migrate agents dir:', e instanceof Error ? e.message : e)
+    }
+  }
+
+  // 打包模式：从 bundled 资源同步 extensions 和 skills 到 xyz-pi agent 目录
+  if (process.env.XYZ_AGENT_PACKAGED === '1') {
+    const bundledAgentDir = join(process.cwd(), 'pi', 'agent')
+    for (const subDir of ['extensions', 'skills'] as const) {
+      const src = join(bundledAgentDir, subDir)
+      const dest = join(PI_AGENT_DIR, subDir)
+      if (existsSync(src) && !existsSync(dest)) {
+        try {
+          cpSync(src, dest, { recursive: true })
+          console.log(`[config-bridge] synced bundled ${subDir} → ${dest}`)
+          // eslint-disable-next-line taste/no-silent-catch -- bundled sync: failure must not block startup
+        } catch (e) {
+          console.error(`[config-bridge] failed to sync bundled ${subDir}:`, e)
+        }
+      }
+    }
+  }
+}
+
+// 模块加载时执行一次性迁移
+migrateToPiSubdir()
 
 // ── 类型定义（对齐 pi models.json 的 schema）───────────────────────
 
@@ -117,7 +244,7 @@ function readJsonFile<T>(filePath: string, fallback: T): T {
 function writeJsonFile(filePath: string, data: unknown): void {
   const dir = dirname(filePath)
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-  const json = JSON.stringify(data, null, 2) + '\n'
+  const json = JSON.stringify(data, null, JSON_INDENT) + '\n'
   atomicWrite(filePath, json)
 }
 
@@ -183,7 +310,7 @@ export function readSettings(): PiSettings {
   if (!isExpired(settingsCache)) return settingsCache!.data
   const data = readJsonFile<PiSettings>(SETTINGS_PATH, {})
   if (!data || typeof data !== 'object') {
-  console.warn(`[config-bridge] ${SETTINGS_PATH} schema 不匹配，使用 fallback`)
+    console.warn(`[config-bridge] ${SETTINGS_PATH} schema 不匹配，使用 fallback`)
     return {}
   }
   settingsCache = { data, timestamp: Date.now() }
@@ -277,6 +404,7 @@ export function listAgentFiles(): Array<{ name: string; path: string; content: s
     try {
       const content = readFileSync(filePath, 'utf-8')
       results.push({ name: file.replace(/\.md$/, ''), path: filePath, content })
+    // eslint-disable-next-line taste/no-silent-catch -- scanning: skip unreadable agent files, continue scanning
     } catch {
       // skip unreadable files
     }
@@ -370,10 +498,12 @@ export function scanPiSessions(): Array<{
               lastModified: fstat.mtimeMs,
               size: fstat.size,
             })
+            // eslint-disable-next-line taste/no-silent-catch -- scanning: skip unreadable session entries, continue scanning
           } catch {
             // skip
           }
         }
+        // eslint-disable-next-line taste/no-silent-catch -- scanning: skip unreadable session subdirectory
       } catch {
         // skip unreadable dir
       }
@@ -392,6 +522,7 @@ export function scanPiSessions(): Array<{
           lastModified: stat.mtimeMs,
           size: stat.size,
         })
+        // eslint-disable-next-line taste/no-silent-catch -- scanning: skip unreadable session entry, continue scanning
       } catch {
         // skip
       }
@@ -440,6 +571,7 @@ function extractSessionName(filePath: string): string | null {
         if (entry.type === 'session_info' && entry.name) {
           return entry.name as string
         }
+        // eslint-disable-next-line taste/no-silent-catch -- parsing: skip malformed session line, continue parsing
       } catch {
         // skip malformed line
       }
@@ -466,6 +598,11 @@ export function refreshSettings(): void {
 
 export function getConfigDir(): string {
   return CONFIG_DIR
+}
+
+/** xyz-pi agent 目录：~/.xyz-agent/pi/agent/ */
+export function getPiAgentDir(): string {
+  return PI_AGENT_DIR
 }
 
 export function getModelsPath(): string {

@@ -52,8 +52,8 @@ function parseAgentMd(content: string): { name: string; description: string } {
   let name = ''
   let description = ''
   for (const fl of frontmatterLines) {
-    if (fl.startsWith('name:')) name = fl.slice(5).trim()
-    if (fl.startsWith('description:')) description = fl.slice(12).trim()
+    if (fl.startsWith('name:')) name = fl.slice('name:'.length).trim()
+    if (fl.startsWith('description:')) description = fl.slice('description:'.length).trim()
   }
   return { name, description }
 }
@@ -67,6 +67,7 @@ export class ConfigService implements IConfigService {
 
   listProviders(): ProviderInfo[] {
     const models = piBridge.readModels()
+    // eslint-disable-next-line taste/no-unsafe-object-entries -- providers is a known schema Record<string, PiProviderConfig>, not arbitrary user input
     return Object.entries(models.providers).map(([id, config]) => ({
       id,
       name: id,
@@ -200,7 +201,7 @@ export class ConfigService implements IConfigService {
     })
   }
 
-  /** No-op: agents are now managed as files in ~/.xyz-agent/agents/. */
+  /** No-op: agents are now managed as files in ~/.xyz-agent/pi/agent/agents/. */
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   saveAgents(_projectRoot: string, _agents: AgentInfo[]): void {
     // no-op — agent persistence is managed as .md files in pi's agents dir

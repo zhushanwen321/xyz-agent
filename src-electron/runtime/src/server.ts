@@ -300,6 +300,7 @@ export class SidecarServer implements IMessageBroker {
     const startTime = Date.now()
     console.log('[server] session.compact: sessionId=' + compactId)
     const runCompact = async () => {
+      // eslint-disable-next-line taste/no-silent-catch -- compact: error already logged, caller informed via broadcast
       try { await this.sessionService.compact(compactId) } catch (e) {
         console.error('[server] session.compact: failed, sessionId=' + compactId + ', error=' + (e instanceof Error ? e.message : String(e)))
       }

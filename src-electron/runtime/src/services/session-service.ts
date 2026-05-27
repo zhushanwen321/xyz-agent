@@ -7,7 +7,6 @@
 import { basename, resolve, join } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import { existsSync, readdirSync, statSync } from 'node:fs'
-import { homedir } from 'node:os'
 import type {
   SessionSummary,
   SessionGroup,
@@ -19,7 +18,7 @@ import type { IRpcClient } from '../interfaces.js'
 import type { PiMessage } from '../rpc-client.js'
 import { convertPiHistory } from '../message-converter.js'
 import type { PiHistoryMessage } from '../types.js'
-import { getDefaultModel, scanPiSessions, refreshAll } from '../pi-config-bridge.js'
+import { getDefaultModel, scanPiSessions, refreshAll, getPiAgentDir } from '../pi-config-bridge.js'
 import * as piBridge from '../pi-config-bridge.js'
 import { trash } from '../trash.js'
 import { NavigateInterceptor } from '../navigate-interceptor.js'
@@ -437,6 +436,7 @@ export class SessionService implements ISessionService {
             paths.push(indexJs)
           }
         }
+      // eslint-disable-next-line taste/no-silent-catch -- bundled extensions discovery: failure must not block session creation
       } catch (e) {
         console.warn(`[session-service] failed to read bundled extensions dir: ${bundledExtDir}`, e)
       }
@@ -445,12 +445,9 @@ export class SessionService implements ISessionService {
     return paths
   }
 
-  /** 获取 pi agent 目录（打包模式用 bundled 路径，开发模式用 ~/.pi/agent） */
+  /** 获取 xyz-pi agent 目录（开发和打包模式统一：~/.xyz-agent/pi/agent/） */
   private getAgentDir(): string {
-    if (process.env.XYZ_AGENT_PACKAGED === '1') {
-      return join(process.cwd(), 'pi', 'agent')
-    }
-    return join(homedir(), '.pi', 'agent')
+    return getPiAgentDir()
   }
 
   private toSummary(s: ManagedSession): SessionSummary {
@@ -552,6 +549,7 @@ export class SessionService implements ISessionService {
       if (!navCapable) {
         console.warn('[session-service] xyz-navigate extension not found, navigate will be unavailable')
       }
+    // eslint-disable-next-line taste/no-silent-catch -- getCommands: failure to query extension commands must not block session
     } catch (e) {
       console.warn('[session-service] getCommands failed:', e)
     }

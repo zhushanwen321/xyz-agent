@@ -28,6 +28,7 @@ vi.mock('../src/pi-config-bridge.js', () => ({
   getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
   getSkillPaths: () => [],
   getSessionsDir: () => '/mock/sessions',
+  getPiAgentDir: () => '/mock/xyz-agent/pi/agent',
   readModels: () => ({ providers: {} }),
   readSettings: () => ({}),
   scanPiSessions: () => mockScannedSessions,
