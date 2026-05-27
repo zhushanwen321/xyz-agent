@@ -108,7 +108,7 @@ const wsStateUnwatch = watch(wsState, (newState) => {
 })
 const ipcCleanupFns: Array<() => void> = []
 let extTimeoutUnregister: (() => void) | null = null
-let errorUnregister: (() => void) | null = null (feat: transparently expose pi extension capabilities to GUI layer)
+let errorUnregister: (() => void) | null = null
 
 let isCreatingFromSidebar = false
 let prevSessionCount = 0
@@ -313,7 +313,7 @@ onUnmounted(() => {
   errorUnregister?.()
   document.removeEventListener('keydown', handleKeydown)
   wsStateUnwatch()
-  if (wsDisconnectTimer) clearTimeout(wsDisconnectTimer) (feat: transparently expose pi extension capabilities to GUI layer)
+  if (wsDisconnectTimer) clearTimeout(wsDisconnectTimer)
   for (const cleanup of ipcCleanupFns) cleanup()
   ipcCleanupFns.length = 0
   teardownConnection()

@@ -182,8 +182,14 @@ export class SidecarServer implements IMessageBroker {
               const messages = await this.sessionService.getHistory(switchId)
               this.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: switchId, session: restored, messages } })
             } catch (e) {
-              console.error('[runtime] session.switch auto-restore failed:', e)
-              this.sendError(ws, 'not_found', `Session ${switchId} not found or restore failed`, msg.id, switchId)
+              const errMsg = e instanceof Error ? e.message : String(e)
+              // ENOENT: session 文件不存在（pi 异常退出未 flush、文件被外部删除）
+              const isENOENT = errMsg.includes('ENOENT')
+              const userMsg = isENOENT
+                ? `Session file missing — the session was not saved properly. Error: ${errMsg}`
+                : `Session ${switchId} not found or restore failed`
+              console.error('[runtime] session.switch auto-restore failed:', errMsg)
+              this.sendError(ws, isENOENT ? 'file_not_found' : 'not_found', userMsg, msg.id, switchId)
             }
           }
           return

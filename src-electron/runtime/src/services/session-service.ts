@@ -94,7 +94,7 @@ export class SessionService implements ISessionService {
 
     // Collect extension paths: built-in repo extension + user-enabled extensions
     const userExtPaths = await this.extensionService.getExtensionPaths()
-    const allExtPaths = [this.extensionPath, ...userExtPaths] (feat: transparently expose pi extension capabilities to GUI layer)
+    const allExtPaths = [this.extensionPath, ...userExtPaths]
 
     const client = await this.pm.createSession(tempId, sessionCwd, {
       skillPaths: this.getSkillPaths(sessionCwd),
@@ -303,7 +303,18 @@ export class SessionService implements ISessionService {
     const target = this.findScannedSession(sessionId)
     if (!target) return []
 
-    const content = await readFile(target.filePath, 'utf-8')
+    let content: string
+    try {
+      content = await readFile(target.filePath, 'utf-8')
+    } catch (e) {
+      // Session 文件可能已被外部删除（pi 进程异常退出未 flush、用户手动清理等）
+      const code = (e as NodeJS.ErrnoException).code
+      if (code === 'ENOENT') {
+        console.warn(`[session-service] session file missing, returning empty history: ${target.filePath}`)
+        return []
+      }
+      throw e
+    }
     const lines = content.split('\n').filter(l => l.trim())
     const piMessages: PiHistoryMessage[] = []
 
