@@ -1,8 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createInterface } from 'node:readline'
-import { join } from 'node:path'
-import { existsSync } from 'node:fs'
-import { getDefaultModel, getSessionsDir } from './pi-config-bridge.js'
+import { getDefaultModel, getSessionsDir, getPiAgentDir } from './pi-config-bridge.js'
 
 /** 子进程允许继承的环境变量前缀白名单 */
 const ENV_WHITELIST_PREFIXES = ['PATH', 'HOME', 'USER', 'LANG', 'TERM', 'NODE_', 'NVM_', 'XYZ_', 'XDG_', 'APPDATA', 'LOCALAPPDATA', 'PROGRAMFILES', 'SYSTEMROOT', 'TEMP', 'TMP']
@@ -82,14 +80,9 @@ export class RpcClient {
       ...this.options.env,
     })
 
-    // Packaged mode: redirect pi's agent directory to bundled extensions/skills
-    if (process.env.XYZ_AGENT_PACKAGED === '1') {
-      const agentDir = join(process.cwd(), 'pi', 'agent')
-      if (!existsSync(agentDir)) {
-        console.warn(`[rpc] PI_CODING_AGENT_DIR does not exist: ${agentDir}. pi may fail to load bundled extensions/skills.`)
-      }
-      env.PI_CODING_AGENT_DIR = agentDir
-    }
+    // xyz-pi agent 目录：~/.xyz-agent/pi/agent/
+    // 开发模式和打包模式统一使用此目录，不使用系统 pi 的 ~/.pi/agent/
+    env.PI_CODING_AGENT_DIR = getPiAgentDir()
 
     const args = ['--mode', 'rpc', '--no-extensions']
     if (model) args.push('--model', model)

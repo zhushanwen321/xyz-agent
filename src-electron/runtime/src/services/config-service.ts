@@ -200,7 +200,7 @@ export class ConfigService implements IConfigService {
     })
   }
 
-  /** No-op: agents are now managed as files in ~/.xyz-agent/agents/. */
+  /** No-op: agents are now managed as files in ~/.xyz-agent/pi/agent/agents/. */
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   saveAgents(_projectRoot: string, _agents: AgentInfo[]): void {
     // no-op — agent persistence is managed as .md files in pi's agents dir

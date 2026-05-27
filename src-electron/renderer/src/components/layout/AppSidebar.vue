@@ -127,12 +127,8 @@ const isSettingsActive = computed(() => settingsStore.currentView === 'settings'
       </div>
     </div>
 
-    <!-- Bottom: User + Status -->
+    <!-- Bottom: Status -->
     <div class="sidebar__btm">
-      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-        <path d="M8 11a3 3 0 100-6 3 3 0 000 6z"/><path d="M1.6 13a7 7 0 0112.8 0"/>
-      </svg>
-      <span class="sidebar__btm-user">{{ t('sidebar.user') ?? 'User' }}</span>
       <span class="sidebar__btm-status">● Connected</span>
     </div>
   </aside>
@@ -277,7 +273,5 @@ const isSettingsActive = computed(() => settingsStore.currentView === 'settings'
   border-top: 1px solid var(--border);
   flex-shrink: 0;
 }
-.sidebar__btm svg { width: 14px; height: 14px; }
-.sidebar__btm-user { flex: 1; }
 .sidebar__btm-status { color: var(--success); font-size: 10px; }
 </style>
