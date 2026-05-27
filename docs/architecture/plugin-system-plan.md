@@ -1,19 +1,65 @@
 # 插件系统实施规划
 
 > 基于 [融合设计报告](docs/architecture/plugin-system-design-part1.md) / [Part 2](docs/architecture/plugin-system-design-part2.md)
+> 代码盘点: [extension-audit.md](../feature-map/extension-audit.md)
+
+---
+
+## 术语约定
+
+**extension** 和 **plugin** 是两个不同的概念，必须严格区分：
+
+```
+extension（已有，pi 侧）            plugin（新建，xyz-agent 侧）
+───────────────────────            ─────────────────────────
+运行在 pi 进程内                     运行在 Sidecar 的 Worker Thread
+使用 pi 的 ExtensionAPI             使用 xyz-agent 自己的 agentAPI
+不需要进程隔离                       需要 Worker + 权限 + 沙箱
+通过 ExtensionService 管理          通过 PluginService 管理
+数据目录: ~/.xyz-agent/extensions/  数据目录: ~/.xyz-agent/plugins/
+```
+
+**实施过程中：**
+- ExtensionService 保持不动——它是 pi extension 的管理入口
+- PluginService 是全新模块——它是 xyz-agent plugin 的管理入口
+- 两者在 server.ts 中共存，分别处理各自的 ClientMessage 类型
+- plugin 可以影响 pi 的行为（通过 AgentBridge API 和 hooks），但不能直接访问 pi 的 ExtensionAPI
 
 ---
 
 ## 现状盘点
 
-已完成的 Phase 0（2026-05-26 plugin-arch-refactor-phase1）：
+详细的代码盘点见 [extension-audit.md](../feature-map/extension-audit.md)。摘要如下：
 
-- `IExtensionService`：扫描 `~/.xyz-agent/extensions/`、配置 `--extension` 路径
-- Extension UI Bridge：`extension_ui_request/response` 协议转发
-- Session 生命周期修复（UC-S1 ~ S7）
-- pi extension 能力透出到 GUI 层
+### 已完成（14 项完整）
 
-**Phase 0 不是本项目（feat-plugin-arch-2）的部分**，而是 `refactor-plugin-arch` 分支已合并的内容。本分支从 Phase 1 开始。
+| 模块 | 文件 | 说明 |
+|------|------|------|
+| ExtensionService | `runtime/src/extension-service.ts` | 扫描、启用/禁用、路径收集 |
+| Extension UI Bridge | `runtime/src/server.ts` + `event-adapter.ts` | extension_ui_request/response 协议转发 + 5min 超时 |
+| Extension 消息路由 | `runtime/src/server.ts` | list/toggle/ui_response/timeout/error |
+| Pi --extension 参数 | `runtime/src/process-manager.ts` + `session-service.ts` | 用户 extension + 内置 extension 合并传递 |
+| 共享类型 | `shared/src/protocol.ts` | ExtensionInfo, ExtensionUIRequestPayload 等 5 个 Payload |
+| ExtensionUIDialog | `renderer/src/components/extension/` | confirm/select/input 三种交互 |
+| ExtensionsPane | `renderer/src/components/settings/ExtensionsPane.vue` | Settings 中的 tab，enable/disable toggle |
+| SlashMenu 集成 | `renderer/src/composables/useSlashCommands.ts` | extension 命令的合并和渲染 |
+| 测试覆盖 | `runtime/test/` (4 文件 ~1170 行) | 协议、事件翻译、消息路由、服务逻辑 |
+
+### 缺失（Plugin 系统需要全新构建的部分）
+
+| 规划任务 | 当前状态 | 说明 |
+|---------|---------|------|
+| PluginService | 不存在 | ExtensionService 和 PluginService 职责不同 |
+| Worker Thread 池 | 不存在 | 所有 extension 在 pi 进程内运行 |
+| JSON-RPC over MessagePort | 不存在 | 没有 Worker 间 RPC 通信基础设施 |
+| agentAPI 代理 | 不存在 | 没有任何 xyz-agent 自定义的插件 API |
+| 权限检查 | 不存在 | extension 是 pi 的"全信任"模型 |
+| Pi 事件钩子拦截链 | 不存在 | 没有 hooks.onBeforeXXX 机制 |
+| Plugin Store（前端） | 不存在 | Pinia store 中没有 plugin 状态管理 |
+| Plugin 管理 UI | 不存在 | 只有 ExtensionsPane（extension 列表 + toggle） |
+| Plugin 分发（npm install） | 不存在 | extension 只支持手动复制目录 |
+
+**Phase 0（refactor-plugin-arch 分支，已合并）不是本项目的一部分**。本分支从 Phase 1 开始。
 
 ---
 
