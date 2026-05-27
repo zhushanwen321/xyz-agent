@@ -208,6 +208,8 @@ describe('skillPaths passing chain', () => {
 
     const skillDirA = '/project/.agents/skills/skill-a'
     mockSkillPaths.push(skillDirA)
+    // 路径必须“存在”于文件系统才能通过 existsSync 过滤
+    existingPaths.add(path.normalize(skillDirA))
 
     // Set up a scanned session for restoreSession to find
     mockScannedSessions.push({

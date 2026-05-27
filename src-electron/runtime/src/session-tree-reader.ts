@@ -75,7 +75,13 @@ const TEXT_PREVIEW_MAX = 100
  * @returns Tree data: node map, root nodes, and label map.
  */
 export async function buildTreeFromFile(filePath: string): Promise<BuildTreeResult> {
-  const raw = await readFile(filePath, 'utf-8')
+  let raw: string
+  try {
+    raw = await readFile(filePath, 'utf-8')
+  } catch {
+    // 文件可能不存在（pi 延迟写入：assistant 消息到达前不会 flush session 文件）
+    return { byId: new Map(), rootNodes: [], labelsById: new Map(), lastEntryId: null, rawEntries: new Map() }
+  }
   const lines = raw.split('\n')
 
   const byId = new Map<string, TreeNode>()
