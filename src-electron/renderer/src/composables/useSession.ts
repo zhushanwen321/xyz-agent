@@ -132,6 +132,10 @@ export function useSession() {
     sessionStore.switchSession(sessionId)
     chatStore.ensureSession(sessionId)
     chatStore.setLoadingHistory(true, sessionId)
+    // session.history: 对活跃 session 通过 RPC 获取 history，
+    // 对非活跃 session 从磁盘文件读取。更可靠的路径——
+    // session.switch 会因 session 在内存 Map 中（驻留但 pi 进程已退出）
+    // 而跳过 auto-restore，导致 RPC 调用到死进程返回空历史。
     send({ type: 'session.history', payload: { sessionId } })
   }
 

@@ -167,35 +167,44 @@ export const usePanelStore = defineStore('panel', () => {
 
   /**
    * 智能打开 session：
-   * 1. 已在某个 panel 中 → 导航到该 panel
-   * 2. 只有一个空 panel → 直接绑定
-   * 3. 只有一个有内容的 panel → split 后绑定到新 panel
-   * 4. panel 数 2-3 → split 后绑定到新 panel
-   * 5. 4 个 panel 已达上限 → 返回 false
+   * 1. 已在当前 window 的某个 panel 中 → 导航到该 panel
+   * 2. 已在其他 window 中 → 聚焦该 window
+   * 3. 只有一个空 panel → 直接绑定
+   * 4. 只有一个有内容的 panel → split 后绑定到新 panel
+   * 5. panel 数 >= 2 → 创建新窗口
    */
   async function openSessionSmart(sessionId: string): Promise<boolean> {
+    // 1. 已在当前 window 的某个 panel 中
     const existingPanel = panels.value.find(p => p.sessionId === sessionId)
     if (existingPanel) {
       navigateToPanel(existingPanel.id)
       return true
     }
 
+    // 2. 检查是否在其他 window 中打开
+    const { useWindowStore } = await import('./window')
+    const windowStore = useWindowStore()
+    const existing = await windowStore.findSessionWindow(sessionId)
+    if (existing) {
+      windowStore.focusWindow(existing.windowId)
+      return true
+    }
+
+    // 3. 只有一个空 panel
     if (panelCount.value === 1 && panels.value[0].sessionId === null) {
       bindSession(focusedPanelId.value, sessionId)
       return true
     }
 
+    // 4. 只有一个有内容的 panel → split
     if (panelCount.value === 1) {
       splitPanel(focusedPanelId.value, 'horizontal')
       bindSession(focusedPanelId.value, sessionId)
       return true
     }
 
-    // 已有 2-3 个面板 → 创建新窗口进行分流
-    const MIN_PANELS_FOR_NEW_WINDOW = 2
-    if (panelCount.value >= MIN_PANELS_FOR_NEW_WINDOW && panelCount.value < MAX_PANELS) {
-      const { useWindowStore } = await import('./window')
-      const windowStore = useWindowStore()
+    // 5. 已有 >= 2 个 panel → 创建新窗口
+    if (panelCount.value < MAX_PANELS) {
       void windowStore.createWindow(sessionId)
       return true
     }

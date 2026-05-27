@@ -19,7 +19,7 @@ import type { IExtensionService } from '../interfaces.js'
 import type { PiMessage } from '../rpc-client.js'
 import { convertPiHistory } from '../message-converter.js'
 import type { PiHistoryMessage } from '../types.js'
-import { getDefaultModel, scanPiSessions, refreshAll, getPiAgentDir } from '../pi-config-bridge.js'
+import { getDefaultModel, scanPiSessions, refreshAll, getPiAgentDir, persistSessionName, ensureSessionFile } from '../pi-config-bridge.js'
 import * as piBridge from '../pi-config-bridge.js'
 import { trash } from '../trash.js'
 import { NavigateInterceptor } from '../navigate-interceptor.js'
@@ -128,6 +128,14 @@ export class SessionService implements ISessionService {
     const session = await this.initializeManagedSession(
       id, client, sessionCwd, label ?? basename(sessionCwd), sessionFilePath,
     )
+
+    // pi 延迟写入：session 文件在首次 assistant 消息前可能不存在。
+    // 主动创建最小文件确保 scanPiSessions 能找到该 session，
+    // 避免空对话 session 在重启后消失。
+    if (sessionFilePath) {
+      ensureSessionFile(sessionFilePath, id, sessionCwd, label)
+    }
+
     refreshAll()
     return this.toSummary(session)
   }
@@ -136,6 +144,16 @@ export class SessionService implements ISessionService {
     const session = this.sessions.get(sessionId)
     if (session) {
       session.label = newName
+      // 活跃 session：写入 sessionFilePath 使重启后保留
+      if (session.sessionFilePath) {
+        persistSessionName(session.sessionFilePath, newName, session.id, session.cwd)
+      }
+    } else {
+      // 非 active session：从磁盘查找 jsonl 文件并写入
+      const target = this.findScannedSession(sessionId)
+      if (target) {
+        persistSessionName(target.filePath, newName, target.id, target.cwd)
+      }
     }
 
     refreshAll()
@@ -290,10 +308,25 @@ export class SessionService implements ISessionService {
   async getHistory(sessionId: string): Promise<Message[]> {
     const client = this.pm.getClient(sessionId)
     if (client) {
-      const result = await client.getHistory() as PiMessage
-      const data = result.data as { messages?: PiHistoryMessage[] } | undefined
-      const raw = data?.messages ?? (result.payload?.messages as PiHistoryMessage[] | undefined) ?? []
-      return convertPiHistory(raw)
+      try {
+        const result = await client.getHistory() as PiMessage
+        const data = result.data as { messages?: PiHistoryMessage[] } | undefined
+        const raw = data?.messages ?? (result.payload?.messages as PiHistoryMessage[] | undefined) ?? []
+        if (raw.length > 0) return convertPiHistory(raw)
+
+        // RPC 返回空时，只有 session 闲置时才 fallback 到磁盘
+        // 生成中的 session 不 fallback（磁盘可能未持久化最新消息）
+        const session = this.sessions.get(sessionId)
+        if (session && !session.isGenerating) {
+          console.warn(`[session-service] getHistory via RPC returned empty for idle session ${sessionId}, falling back to file read`)
+          return await this.getHistoryFromFile(sessionId)
+        }
+        // 生成中但返回空 — 返回空（RPC 数据比磁盘新）
+        return []
+      } catch (e) {
+        console.warn(`[session-service] getHistory via RPC failed: ${e instanceof Error ? e.message : e}, falling back to file read`)
+        return await this.getHistoryFromFile(sessionId)
+      }
     }
 
     return await this.getHistoryFromFile(sessionId)

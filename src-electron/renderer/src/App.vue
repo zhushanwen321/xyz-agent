@@ -323,7 +323,7 @@ onUnmounted(() => {
 <style>
 .app-container {
   display: grid;
-  grid-template-columns: 220px 1fr;
+  grid-template-columns: var(--sidebar-w) 1fr;
   height: 100vh;
   overflow: hidden;
 }
