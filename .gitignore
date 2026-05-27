@@ -28,4 +28,7 @@ src-electron/resources/pi/export-html/
 src-electron/resources/pi/package.json
 src-electron/resources/pi/photon_rs_bg.wasm
 src-electron/resources/pi/theme/
-src-electron/resources/pi/agent/
+# pi agent data (runtime data only — bundled extensions & skills are tracked)
+src-electron/resources/pi/agent/*
+!src-electron/resources/pi/agent/extensions/
+!src-electron/resources/pi/agent/skills/
