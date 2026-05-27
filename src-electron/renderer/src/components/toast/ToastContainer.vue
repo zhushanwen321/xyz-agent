@@ -10,7 +10,7 @@
         <span class="w-2 h-2 rounded-full shrink-0 mt-1" :style="{ background: dotColor(toast.type) }"></span>
         <div class="flex-1 min-w-0">
           <div class="text-[13px] font-semibold mb-[2px]">{{ toast.title }}</div>
-          <div v-if="toast.description" class="text-xs text-muted leading-snug">{{ toast.description }}</div>
+          <div v-if="toast.description" class="text-xs text-muted leading-snug overflow-wrap-anywhere line-clamp-4">{{ toast.description }}</div>
           <div v-if="toast.actions?.length" class="flex gap-[6px] mt-2">
             <Button
               v-for="action in toast.actions"

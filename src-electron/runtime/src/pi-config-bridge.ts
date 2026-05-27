@@ -306,6 +306,9 @@ export function deleteAgentFile(name: string): boolean {
 // ── Session 相关 ─────────────────────────────────────────────────
 
 export function getSessionsDir(): string {
+  if (!existsSync(SESSIONS_DIR)) {
+    mkdirSync(SESSIONS_DIR, { recursive: true })
+  }
   return SESSIONS_DIR
 }
 

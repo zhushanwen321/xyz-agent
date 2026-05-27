@@ -80,20 +80,6 @@ const TOAST_DURATION_MS = 4_000
 const TOAST_LONG_DURATION_MS = 8_000
 const WS_DISCONNECT_WARN_DELAY_MS = 10_000
 
-const globalErrorUnregister = onEventBus('error', (msg: ServerMessage) => {
-  const payload = msg.payload as { message?: string; code?: string; sessionId?: string }
-  if (!payload.sessionId && payload.message) {
-    const id = crypto.randomUUID()
-    toasts.value.push({
-      id,
-      type: 'warning',
-      title: 'Runtime 错误',
-      description: payload.message,
-    })
-    setTimeout(() => dismissToast(id), TOAST_DURATION_MS)
-  }
-})
-
 let wsDisconnectTimer: ReturnType<typeof setTimeout> | null = null
 const wsState = getWsState()
 const wsStateUnwatch = watch(wsState, (newState) => {
@@ -308,7 +294,6 @@ onMounted(async () => {
 onUnmounted(() => {
   offEventBus('error', handleGlobalError)
   document.removeEventListener('keydown', handleKeydown)
-  globalErrorUnregister()
   wsStateUnwatch()
   if (wsDisconnectTimer) clearTimeout(wsDisconnectTimer)
   for (const cleanup of ipcCleanupFns) cleanup()

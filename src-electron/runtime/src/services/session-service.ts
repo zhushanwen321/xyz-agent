@@ -4,8 +4,10 @@
  * Manages session lifecycle: creation, deletion, messaging, history,
  * model switching, compaction, and persistence.
  */
-import { basename, resolve } from 'node:path'
+import { basename, resolve, join } from 'node:path'
 import { readFile } from 'node:fs/promises'
+import { existsSync, readdirSync, statSync } from 'node:fs'
+import { homedir } from 'node:os'
 import type {
   SessionSummary,
   SessionGroup,
@@ -19,7 +21,6 @@ import { convertPiHistory } from '../message-converter.js'
 import type { PiHistoryMessage } from '../types.js'
 import { getDefaultModel, scanPiSessions, refreshAll } from '../pi-config-bridge.js'
 import * as piBridge from '../pi-config-bridge.js'
-import { existsSync } from 'node:fs'
 import { trash } from '../trash.js'
 import { NavigateInterceptor } from '../navigate-interceptor.js'
 import { TreeService } from './tree-service.js'
@@ -84,6 +85,11 @@ export class SessionService implements ISessionService {
   async create(cwd?: string, label?: string): Promise<SessionSummary> {
     const tempId = crypto.randomUUID()
     const sessionCwd = cwd ?? process.cwd()
+
+    // 启动 pi 前检查 model 配置，避免 pi 因无 model 直接 exit(1)
+    if (!getDefaultModel()) {
+      throw new Error('No model configured. Please configure a provider and model in Settings before starting a session.')
+    }
 
     const client = await this.pm.createSession(tempId, sessionCwd, {
       skillPaths: this.getSkillPaths(sessionCwd),
@@ -343,6 +349,10 @@ export class SessionService implements ISessionService {
     const target = this.findScannedSession(sessionId)
     if (!target) throw new Error(`Persisted session ${sessionId} not found`)
 
+    // 启动 pi 前检查 model 配置
+    if (!getDefaultModel()) {
+      throw new Error('No model configured. Please configure a provider and model in Settings before restoring a session.')
+    }
     const existing = this.sessions.get(sessionId)
     if (existing) {
       this.detachSession(existing)
@@ -389,16 +399,58 @@ export class SessionService implements ISessionService {
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- interface requires cwd param
   private getSkillPaths(_cwd: string): string[] {
-    return piBridge.getSkillPaths()
+    return piBridge.getSkillPaths().filter((p) => {
+      if (existsSync(p)) return true
+      console.warn(`[session-service] skill path not found, skipping: ${p}`)
+      return false
+    })
   }
 
-  /** 返回有效的 extension 路径列表（文件不存在则跳过，避免 pi exit 1） */
+  /** 返回有效的 extension 路径列表（跳过不存在的文件） */
   private getExtensionPaths(): string[] {
+    const paths: string[] = []
+
+    // xyz-agent 自定义 extension
     if (this.extensionPath && existsSync(this.extensionPath)) {
-      return [this.extensionPath]
+      paths.push(this.extensionPath)
+    } else if (this.extensionPath) {
+      console.warn(`[session-service] extension file not found: ${this.extensionPath}, skipping`)
     }
-    console.warn(`[session-service] extension file not found: ${this.extensionPath}, skipping`)
-    return []
+
+    // 从 agent dir 发现 bundled pi extensions（subagent, goal, todo 等）
+    // 这些会通过 --extension 显式传递，配合 --no-extensions 避免与项目本地/全局 pi extensions 冲突
+    const agentDir = this.getAgentDir()
+    const bundledExtDir = join(agentDir, 'extensions')
+    if (existsSync(bundledExtDir)) {
+      try {
+        for (const entry of readdirSync(bundledExtDir)) {
+          const entryPath = join(bundledExtDir, entry)
+          let stat
+          try { stat = statSync(entryPath) } catch { continue }
+          if (!stat.isDirectory()) continue
+          // 查找 index.ts 或 index.js
+          const indexTs = join(entryPath, 'index.ts')
+          const indexJs = join(entryPath, 'index.js')
+          if (existsSync(indexTs)) {
+            paths.push(indexTs)
+          } else if (existsSync(indexJs)) {
+            paths.push(indexJs)
+          }
+        }
+      } catch (e) {
+        console.warn(`[session-service] failed to read bundled extensions dir: ${bundledExtDir}`, e)
+      }
+    }
+
+    return paths
+  }
+
+  /** 获取 pi agent 目录（打包模式用 bundled 路径，开发模式用 ~/.pi/agent） */
+  private getAgentDir(): string {
+    if (process.env.XYZ_AGENT_PACKAGED === '1') {
+      return join(process.cwd(), 'pi', 'agent')
+    }
+    return join(homedir(), '.pi', 'agent')
   }
 
   private toSummary(s: ManagedSession): SessionSummary {

@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { join } from 'node:path'
+import { existsSync } from 'node:fs'
 import { getDefaultModel, getSessionsDir } from './pi-config-bridge.js'
 
 /** 子进程允许继承的环境变量前缀白名单 */
@@ -53,6 +54,8 @@ const CMD_TIMEOUT_MS = 60_000
 const COMPACT_TIMEOUT_MS = 300_000
 const KILL_TIMEOUT_MS = 2_000
 const STARTUP_DELAY_MS = 100
+const STDERR_BUFFER_MAX_LINES = 50
+const STDERR_TAIL_LINES = 10
 
 export class RpcClient {
   private proc: ChildProcess | null = null
@@ -66,6 +69,8 @@ export class RpcClient {
   private _exited = false
   private _killing = false
   private exitCallback: ((code: number | null) => void) | null = null
+  /** 收集 pi 进程的 stderr 输出，用于在启动失败时提供具体错误信息 */
+  private stderrChunks: string[] = []
 
   constructor(private options: RpcClientOptions = {}) {}
 
@@ -79,10 +84,14 @@ export class RpcClient {
 
     // Packaged mode: redirect pi's agent directory to bundled extensions/skills
     if (process.env.XYZ_AGENT_PACKAGED === '1') {
-      env.PI_CODING_AGENT_DIR = join(process.cwd(), 'pi', 'agent')
+      const agentDir = join(process.cwd(), 'pi', 'agent')
+      if (!existsSync(agentDir)) {
+        console.warn(`[rpc] PI_CODING_AGENT_DIR does not exist: ${agentDir}. pi may fail to load bundled extensions/skills.`)
+      }
+      env.PI_CODING_AGENT_DIR = agentDir
     }
 
-    const args = ['--mode', 'rpc']
+    const args = ['--mode', 'rpc', '--no-extensions']
     if (model) args.push('--model', model)
     if (this.options.skillPaths?.length) {
       for (const skillPath of this.options.skillPaths) {
@@ -99,7 +108,9 @@ export class RpcClient {
     const sessionDir = getSessionsDir()
     args.push('--session-dir', sessionDir)
 
-    this.proc = spawn(this.options.piCommand ?? 'pi', args, {
+    const piCmd = this.options.piCommand ?? 'pi'
+
+    this.proc = spawn(piCmd, args, {
       cwd: this.options.cwd ?? process.cwd(),
       env,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -115,7 +126,7 @@ export class RpcClient {
     proc.on('exit', (code) => {
       this._exited = true
       console.log(`[rpc] process exited with code ${code}`)
-      this.rejectAll(new Error(`pi process exited with code ${code}`))
+      this.rejectAll(new Error(`pi process exited with code ${code}${this.formatStderrSuffix()}`))
       if (this.exitCallback && !this._killing) {
         this.exitCallback(code)
       }
@@ -134,10 +145,17 @@ export class RpcClient {
       }
     })
 
-    // Forward stderr to logs
+    // 收集 stderr 用于错误诊断，同时转发到日志
+    this.stderrChunks = []
     if (proc.stderr) {
       proc.stderr.on('data', (data: Buffer) => {
-        console.error('[rpc:stderr]', data.toString().trimEnd())
+        const text = data.toString().trimEnd()
+        console.error('[rpc:stderr]', text)
+        // 只保留最后 N 行，避免内存泄漏
+        this.stderrChunks.push(text)
+        if (this.stderrChunks.length > STDERR_BUFFER_MAX_LINES) {
+          this.stderrChunks.shift()
+        }
       })
     }
 
@@ -148,7 +166,7 @@ export class RpcClient {
         if (settled) return
         settled = true
         cleanup()
-        reject(new Error(`pi process exited immediately with code ${code}`))
+        reject(new Error(`pi process exited immediately with code ${code}${this.formatStderrSuffix()}`))
       }
       const onError = (err: Error) => {
         if (settled) return
@@ -166,7 +184,7 @@ export class RpcClient {
         if (settled) return
         cleanup()
         if (!this._exited) resolve()
-        else reject(new Error('pi process exited during startup'))
+        else reject(new Error(`pi process exited during startup${this.formatStderrSuffix()}`))
       }, STARTUP_DELAY_MS)
     })
   }
@@ -256,6 +274,13 @@ export class RpcClient {
   onEvent(listener: PiEventListener): () => void {
     this.listeners.add(listener)
     return () => { this.listeners.delete(listener) }
+  }
+
+  /** 将收集到的 pi stderr 格式化为可读后缀，附到错误消息末尾 */
+  private formatStderrSuffix(): string {
+    if (this.stderrChunks.length === 0) return ''
+    const last = this.stderrChunks.slice(-STDERR_TAIL_LINES)
+    return `\n\npi stderr (last ${last.length} lines):\n${last.join('\n')}`
   }
 
   get exited(): boolean {
