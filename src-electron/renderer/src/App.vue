@@ -39,6 +39,8 @@
       :visible="settingsStore.panelGridVisible"
       @close="settingsStore.panelGridVisible = false"
     />
+    <!-- Extension UI Dialog -->
+    <ExtensionUIDialog />
     <!-- Custom Toast -->
     <ToastContainer :toasts="toasts" @dismiss="dismissToast" />
   </div>
@@ -65,6 +67,7 @@ import InspectorRight from './components/side-inspector/InspectorRight.vue'
 import InspectorLeft from './components/side-inspector/InspectorLeft.vue'
 import PanelGrid from './components/panel-grid/PanelGrid.vue'
 import ToastContainer from './components/toast/ToastContainer.vue'
+import ExtensionUIDialog from './components/extension/ExtensionUIDialog.vue'
 
 const { init: initConnection, teardown: teardownConnection } = useConnection()
 useProvider()
@@ -103,6 +106,9 @@ const wsStateUnwatch = watch(wsState, (newState) => {
     }
   }
 })
+const ipcCleanupFns: Array<() => void> = []
+let extTimeoutUnregister: (() => void) | null = null
+let errorUnregister: (() => void) | null = null
 
 let isCreatingFromSidebar = false
 let prevSessionCount = 0
@@ -162,8 +168,6 @@ function handleGlobalError(msg: ServerMessage) {
 function dismissToast(id: string) {
   toasts.value = toasts.value.filter(t => t.id !== id)
 }
-
-const ipcCleanupFns: Array<() => void> = []
 
 onMounted(async () => {
   await initConnection()
@@ -288,11 +292,25 @@ onMounted(async () => {
     }
   })
 
-  onEventBus('error', handleGlobalError)
+  // extension UI timeout → toast
+  extTimeoutUnregister = onEventBus('extension.ui_timed_out', (payload: { extensionName: string }) => {
+    const id = crypto.randomUUID()
+    toasts.value.push({
+      id,
+      type: 'warning',
+      title: 'Extension 请求超时',
+      description: `${payload.extensionName} 的 UI 请求已超时`,
+    })
+    setTimeout(() => dismissToast(id), TOAST_DURATION_MS)
+  })
+
+  errorUnregister = onEventBus('error', handleGlobalError)
 })
 
 onUnmounted(() => {
   offEventBus('error', handleGlobalError)
+  extTimeoutUnregister?.()
+  errorUnregister?.()
   document.removeEventListener('keydown', handleKeydown)
   wsStateUnwatch()
   if (wsDisconnectTimer) clearTimeout(wsDisconnectTimer)
@@ -305,7 +323,7 @@ onUnmounted(() => {
 <style>
 .app-container {
   display: grid;
-  grid-template-columns: 220px 1fr;
+  grid-template-columns: var(--sidebar-w) 1fr;
   height: 100vh;
   overflow: hidden;
 }

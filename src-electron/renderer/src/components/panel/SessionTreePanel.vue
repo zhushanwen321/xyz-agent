@@ -29,10 +29,18 @@ const selectedNode = computed<PathNode | null>(() => {
 })
 
 const isOperating = ref(false)
+const isNavigating = ref(false)
 
 // navigate/fork 完成后自动解锁（tree store isLoading → false）
-watch(() => treeStore.getSessionState(props.sessionId).isLoading, (loading) => {
-  if (!loading) isOperating.value = false
+watch(() => treeStore.getSessionState(props.sessionId).isLoading, (loading, prevLoading) => {
+  if (!loading) {
+    isOperating.value = false
+    // navigate 成功（无 error）后自动关闭 tree 面板
+    if (isNavigating.value && prevLoading && !treeStore.getSessionState(props.sessionId).error) {
+      treeStore.setPanelOpen(props.sessionId, false)
+    }
+    isNavigating.value = false
+  }
 })
 
 function handleSelectNode(entryId: string) {
@@ -45,6 +53,7 @@ function handleNavigate() {
   const sid = sessionState.value.selectedId
   if (!sid) return
   isOperating.value = true
+  isNavigating.value = true
   navigate(props.sessionId, sid)
 }
 
@@ -60,6 +69,7 @@ function handleFork() {
 function handleBranchClick(targetId: string) {
   if (isOperating.value) return
   isOperating.value = true
+  isNavigating.value = true
   navigate(props.sessionId, targetId)
 }
 

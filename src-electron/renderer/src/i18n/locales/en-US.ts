@@ -71,6 +71,7 @@ export default {
     tabSkills: 'Skills',
     tabAgents: 'Agents',
     tabSystem: 'System',
+    tabExtensions: 'Extensions',
     addProvider: 'Add Provider',
     editProvider: 'Edit Provider',
     deleteProvider: 'Delete Provider',
@@ -198,6 +199,16 @@ export default {
     confirmDeleteAgent: 'Are you sure you want to delete this agent?',
 
     // --- System (additional) ---
+
+    // --- Extensions ---
+    extensionConfig: 'Extension Configuration',
+    extensionConfigDesc: 'Manage installed extension modules',
+    installedExtensions: 'Installed',
+    noExtensions: 'No extensions installed',
+    extensionMetaName: 'Name',
+    extensionMetaVersion: 'Version',
+    extensionMetaPath: 'Path',
+
     languageAndAppearance: 'Language & Appearance',
     appearanceMode: 'Appearance Mode',
     colorTheme: 'Color Theme',

@@ -141,8 +141,17 @@ export async function buildTreeFromFile(filePath: string): Promise<BuildTreeResu
     byId.set(entry.id, node)
   }
 
-  // 最后一条 entry 的 id（pi 的 _buildIndex 用同样的逻辑恢复 leafId）
-  const lastEntryId = entries.length > 0 ? entries[entries.length - 1].id : null
+  // 最后一条 message entry 的 id（pi 的 leafId fallback）
+  // 注意：不使用 entries 最后一项，因为 JSONL 中可能有多棵树，
+  // 最后一棵可能全是 model_change/thinking_level_change，没有实际消息。
+  // 遍历所有 entry，找到最后一个 type=message 的作为 leafId 近似值。
+  let lastEntryId: string | null = null
+  for (let i = entries.length - 1; i >= 0; i--) {
+    if (entries[i]!.type === 'message') {
+      lastEntryId = entries[i]!.id
+      break
+    }
+  }
 
   // Build parent-child relationships and identify roots
   const rootNodes: TreeNode[] = []

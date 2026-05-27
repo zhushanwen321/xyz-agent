@@ -15,10 +15,11 @@ import type {
 } from '@xyz-agent/shared'
 import type { ISessionService, IProcessManager, IMessageBroker, IEventAdapter } from '../interfaces.js'
 import type { IRpcClient } from '../interfaces.js'
+import type { IExtensionService } from '../interfaces.js'
 import type { PiMessage } from '../rpc-client.js'
 import { convertPiHistory } from '../message-converter.js'
 import type { PiHistoryMessage } from '../types.js'
-import { getDefaultModel, scanPiSessions, refreshAll, getPiAgentDir } from '../pi-config-bridge.js'
+import { getDefaultModel, scanPiSessions, refreshAll, getPiAgentDir, persistSessionName, ensureSessionFile } from '../pi-config-bridge.js'
 import * as piBridge from '../pi-config-bridge.js'
 import { trash } from '../trash.js'
 import { NavigateInterceptor } from '../navigate-interceptor.js'
@@ -53,6 +54,7 @@ export class SessionService implements ISessionService {
     private adapterFactory: (sessionId: string, interceptor: NavigateInterceptor) => IEventAdapter,
     private projectRoot: string,
     readonly treeService: TreeService,
+    private extensionService: IExtensionService,
   ) {
     // 打包模式：extension 在 Resources 根目录（由 electron-builder.yml extraResources 打包）
     // 开发模式：extension 在 repo root（src-electron/ 的父目录）
@@ -90,9 +92,13 @@ export class SessionService implements ISessionService {
       throw new Error('No model configured. Please configure a provider and model in Settings before starting a session.')
     }
 
+    // Collect extension paths: built-in repo extension + user-enabled extensions
+    const userExtPaths = await this.extensionService.getExtensionPaths()
+    const allExtPaths = [this.extensionPath, ...userExtPaths]
+
     const client = await this.pm.createSession(tempId, sessionCwd, {
       skillPaths: this.getSkillPaths(sessionCwd),
-      extensionPaths: this.getExtensionPaths(),
+      extensionPaths: allExtPaths,
     })
 
     // 从 pi 获取真实 session ID
@@ -122,6 +128,14 @@ export class SessionService implements ISessionService {
     const session = await this.initializeManagedSession(
       id, client, sessionCwd, label ?? basename(sessionCwd), sessionFilePath,
     )
+
+    // pi 延迟写入：session 文件在首次 assistant 消息前可能不存在。
+    // 主动创建最小文件确保 scanPiSessions 能找到该 session，
+    // 避免空对话 session 在重启后消失。
+    if (sessionFilePath) {
+      ensureSessionFile(sessionFilePath, id, sessionCwd, label)
+    }
+
     refreshAll()
     return this.toSummary(session)
   }
@@ -130,6 +144,16 @@ export class SessionService implements ISessionService {
     const session = this.sessions.get(sessionId)
     if (session) {
       session.label = newName
+      // 活跃 session：写入 sessionFilePath 使重启后保留
+      if (session.sessionFilePath) {
+        persistSessionName(session.sessionFilePath, newName, session.id, session.cwd)
+      }
+    } else {
+      // 非 active session：从磁盘查找 jsonl 文件并写入
+      const target = this.findScannedSession(sessionId)
+      if (target) {
+        persistSessionName(target.filePath, newName, target.id, target.cwd)
+      }
     }
 
     refreshAll()
@@ -233,6 +257,10 @@ export class SessionService implements ISessionService {
     return this.pm.hasClient(sessionId)
   }
 
+  getRpcClient(sessionId: string): IRpcClient | undefined {
+    return this.pm.getClient(sessionId)
+  }
+
   // ── Compact & Clear ────────────────────────────────────────────
 
   async compact(sessionId: string): Promise<void> {
@@ -280,10 +308,25 @@ export class SessionService implements ISessionService {
   async getHistory(sessionId: string): Promise<Message[]> {
     const client = this.pm.getClient(sessionId)
     if (client) {
-      const result = await client.getHistory() as PiMessage
-      const data = result.data as { messages?: PiHistoryMessage[] } | undefined
-      const raw = data?.messages ?? (result.payload?.messages as PiHistoryMessage[] | undefined) ?? []
-      return convertPiHistory(raw)
+      try {
+        const result = await client.getHistory() as PiMessage
+        const data = result.data as { messages?: PiHistoryMessage[] } | undefined
+        const raw = data?.messages ?? (result.payload?.messages as PiHistoryMessage[] | undefined) ?? []
+        if (raw.length > 0) return convertPiHistory(raw)
+
+        // RPC 返回空时，只有 session 闲置时才 fallback 到磁盘
+        // 生成中的 session 不 fallback（磁盘可能未持久化最新消息）
+        const session = this.sessions.get(sessionId)
+        if (session && !session.isGenerating) {
+          console.warn(`[session-service] getHistory via RPC returned empty for idle session ${sessionId}, falling back to file read`)
+          return await this.getHistoryFromFile(sessionId)
+        }
+        // 生成中但返回空 — 返回空（RPC 数据比磁盘新）
+        return []
+      } catch (e) {
+        console.warn(`[session-service] getHistory via RPC failed: ${e instanceof Error ? e.message : e}, falling back to file read`)
+        return await this.getHistoryFromFile(sessionId)
+      }
     }
 
     return await this.getHistoryFromFile(sessionId)
@@ -293,7 +336,18 @@ export class SessionService implements ISessionService {
     const target = this.findScannedSession(sessionId)
     if (!target) return []
 
-    const content = await readFile(target.filePath, 'utf-8')
+    let content: string
+    try {
+      content = await readFile(target.filePath, 'utf-8')
+    } catch (e) {
+      // Session 文件可能已被外部删除（pi 进程异常退出未 flush、用户手动清理等）
+      const code = (e as NodeJS.ErrnoException).code
+      if (code === 'ENOENT') {
+        console.warn(`[session-service] session file missing, returning empty history: ${target.filePath}`)
+        return []
+      }
+      throw e
+    }
     const lines = content.split('\n').filter(l => l.trim())
     const piMessages: PiHistoryMessage[] = []
 
@@ -359,9 +413,12 @@ export class SessionService implements ISessionService {
       this.sessions.delete(sessionId)
     }
     const id = sessionId
+    // Collect extension paths: built-in repo extension + user-enabled extensions
+    const userExtPaths = await this.extensionService.getExtensionPaths()
+    const allExtPaths = [this.extensionPath, ...userExtPaths]
     const client = await this.pm.createSession(id, target.cwd, {
       skillPaths: this.getSkillPaths(target.cwd),
-      extensionPaths: this.getExtensionPaths(),
+      extensionPaths: allExtPaths,
     })
 
     try {
@@ -376,6 +433,28 @@ export class SessionService implements ISessionService {
       id, client, target.cwd, target.name ?? basename(target.cwd), target.filePath,
     )
     return this.toSummary(session)
+  }
+
+  /** Fork 后重新绑定：原 session 的 pi 进程已被 rebind 到新 session，
+   *  需要更新 runtime 的 sessions Map 和 process manager 的 key。
+   *  必须同步等待初始化完成，否则后续请求（tree-data、navigate）可能因注册未完成而失败。 */
+  async rebindAfterFork(oldSessionId: string, newSessionId: string, sessionFilePath?: string): Promise<void> {
+    const old = this.sessions.get(oldSessionId)
+    if (!old) throw new Error(`Session ${oldSessionId} not found in sessions map`)
+
+    // 先 rekey process manager（client 仍然是同一个 pi 进程）
+    // 必须在 detach/delete 之前执行，确保 rekey 失败时旧状态不被破坏
+    this.pm.rekey(oldSessionId, newSessionId)
+
+    // rekey 成功后，安全地清理旧 session 的 adapter/listener/registry
+    this.detachSession(old)
+    this.treeService.unregisterSession(oldSessionId)
+    this.sessions.delete(oldSessionId)
+
+    // 用新 ID 重新注册 managed session（同步等待完成，确保 tree/adapter/command 全部就绪）
+    const client = this.pm.getClient(newSessionId)
+    if (!client) throw new Error(`Client not found after rekey: ${newSessionId}`)
+    await this.initializeManagedSession(newSessionId, client, old.cwd, old.label, sessionFilePath)
   }
 
   getSummary(sessionId: string): SessionSummary | undefined {

@@ -274,7 +274,7 @@ export interface PiToolExecutionResult {
 export interface PiExtensionUiRequestEvent extends PiBaseMessage {
   type: 'extension_ui_request'
   /** Request method — determines the UI interaction type. */
-  method: 'confirm' | 'select' | 'setStatus' | 'setWidget'
+  method: 'confirm' | 'select' | 'input' | 'notify' | 'setStatus' | 'setWidget'
   /** Unique id for correlating the response back. */
   id?: string
   /** Display title (often used as tool name). */
@@ -437,6 +437,8 @@ export interface ForkResult {
   success: boolean
   /** ID of the new session created by the fork. */
   newSessionId?: string
+  /** Path to the new session file (for dedup in session list). */
+  sessionFile?: string
   /** Error message if fork failed. */
   error?: string
 }

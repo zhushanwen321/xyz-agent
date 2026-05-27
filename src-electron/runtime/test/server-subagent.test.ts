@@ -153,9 +153,10 @@ describe('SidecarServer message.send with subagent field', () => {
   port = await getFreePort()
   server = new SidecarServer(port, '/tmp/test-project')
   server.setServices(
-    new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never),
+    new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never),
     new ConfigService('/tmp'),
     new ModelService(),
+    {} as never,
     {} as never,
   )
   await server.start()

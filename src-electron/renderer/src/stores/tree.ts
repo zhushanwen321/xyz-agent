@@ -109,8 +109,19 @@ function truncateFirst(text: string, max: number): string {
  * - 节点有多个 "有意义的子节点"（user 或 assistant）时生成分支 tab
  * - 每个 tab 标签取分支中第一个 user message 的截断文本
  */
+/** 在所有树节点中找到最后一个 message 类型的 entry id（用于 leafId fallback） */
+function findLastMessageId(byId: Map<string, TreeNode>): string | null {
+  let lastMsgId: string | null = null
+  for (const node of byId.values()) {
+    if (node.type === 'message' && node.role !== 'toolResult') {
+      lastMsgId = node.id
+    }
+  }
+  return lastMsgId
+}
+
 function buildActivePath(tree: TreeNode[], leafId: string | null): PathNode[] {
-  if (!leafId || tree.length === 0) return []
+  if (tree.length === 0) return []
 
   // 构建 id → node map 和 id → parentId map
   const byId = new Map<string, TreeNode>()
@@ -126,6 +137,31 @@ function buildActivePath(tree: TreeNode[], leafId: string | null): PathNode[] {
     }
   }
   walk(tree)
+
+  // 如果没有 leafId，或 leafId 路径上没有 message 节点（后端 fallback 可能指向非 message 的 entry），
+  // 自动查找所有节点中最后一个 message 类型的节点作为 fallback leaf
+  if (!leafId || !byId.has(leafId)) {
+    leafId = findLastMessageId(byId)
+    if (!leafId) return []
+  } else {
+    // leafId 存在但可能指向 model_change 等非 message 节点，检查路径上是否有 message
+    let hasMessage = false
+    let check: string | null = leafId
+    const checked = new Set<string>()
+    while (check && !checked.has(check)) {
+      checked.add(check)
+      const node = byId.get(check)
+      if (node && node.type === 'message' && node.role !== 'toolResult') {
+        hasMessage = true
+        break
+      }
+      check = parentMap.get(check) ?? null
+    }
+    if (!hasMessage) {
+      leafId = findLastMessageId(byId)
+      if (!leafId) return []
+    }
+  }
 
   // 从 leaf 到 root 收集路径 id（逆序），然后反转
   const pathIds: string[] = []

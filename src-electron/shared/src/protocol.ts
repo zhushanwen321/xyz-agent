@@ -14,6 +14,7 @@ export type ClientMessageType =
   | 'config.scanAgents' | 'config.setAgent' | 'config.deleteAgent'
   | 'model.list' | 'model.switch'
   | 'tool.approve' | 'tool.deny' | 'tool.always_allow'
+  | 'extension.ui_response' | 'extension.toggle' | 'extension.list'
   | 'ping'
   | 'session.tree-data' | 'session.tree-navigate' | 'session.tree-fork' | 'session.tree-clone' | 'session.tree-capability'
 
@@ -66,6 +67,9 @@ export interface ClientMessageMap {
   'tool.approve': { sessionId: string; toolCallId?: string }
   'tool.deny': { sessionId: string; toolCallId?: string; reason?: string }
   'tool.always_allow': { sessionId: string; toolName?: string }
+  'extension.ui_response': { sessionId: string; requestId: string; result: boolean | string | null }
+  'extension.toggle': { name: string; enabled: boolean }
+  'extension.list': Record<string, never>
 }
 
 export type ClientMessage =
@@ -102,6 +106,9 @@ export type ClientMessage =
   | { type: 'tool.approve'; id?: string; payload: ClientMessageMap['tool.approve'] }
   | { type: 'tool.deny'; id?: string; payload: ClientMessageMap['tool.deny'] }
   | { type: 'tool.always_allow'; id?: string; payload: ClientMessageMap['tool.always_allow'] }
+  | { type: 'extension.ui_response'; id?: string; payload: ClientMessageMap['extension.ui_response'] }
+  | { type: 'extension.toggle'; id?: string; payload: ClientMessageMap['extension.toggle'] }
+  | { type: 'extension.list'; id?: string; payload: ClientMessageMap['extension.list'] }
 
 // ── 辅助类型 ────────────────────────────────────────────────────
 
@@ -127,6 +134,8 @@ export type ServerMessageType =
   | 'config.skills' | 'config.agents'
   | 'model.list' | 'model.switched'
   | 'pong' | 'error'
+  | 'extension.ui_request' | 'extension.ui_timeout' | 'extension.error'
+  | 'message.tool_call_update' | 'config.extensions'
   | 'session.commands'
   | 'session.tree-data' | 'session.tree-navigate-result' | 'session.tree-fork-result' | 'session.tree-clone-result' | 'session.tree-capability'
 
@@ -134,4 +143,44 @@ export interface ServerMessage {
   type: ServerMessageType
   id?: string
   payload: Record<string, unknown>
+}
+
+// ── Extension payload interfaces ────────────────────────────────
+
+export interface ExtensionUIRequestPayload {
+  sessionId: string
+  requestId: string
+  method: 'confirm' | 'select' | 'input' | 'notify'
+  title?: string
+  message?: string
+  options?: string[]
+  default?: string
+  level?: 'info' | 'warn' | 'error'
+}
+
+export interface ExtensionUIResponsePayload {
+  sessionId: string
+  requestId: string
+  result: boolean | string | null
+}
+
+export interface ExtensionErrorPayload {
+  sessionId: string
+  extensionName: string
+  error: string
+}
+
+export interface ToolCallUpdatePayload {
+  sessionId: string
+  toolCallId: string
+  progress?: number
+  detail?: string
+}
+
+export interface ExtensionInfo {
+  name: string
+  version: string
+  description: string
+  path: string
+  enabled: boolean
 }
