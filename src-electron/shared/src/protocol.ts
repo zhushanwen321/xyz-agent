@@ -17,6 +17,7 @@ export type ClientMessageType =
   | 'extension.ui_response' | 'extension.toggle' | 'extension.list'
   | 'ping'
   | 'session.tree-data' | 'session.tree-navigate' | 'session.tree-fork' | 'session.tree-clone' | 'session.tree-capability'
+  | 'plugin.list' | 'plugin.toggle'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -70,6 +71,8 @@ export interface ClientMessageMap {
   'extension.ui_response': { sessionId: string; requestId: string; result: boolean | string | null }
   'extension.toggle': { name: string; enabled: boolean }
   'extension.list': Record<string, never>
+  'plugin.list': Record<string, never>
+  'plugin.toggle': { pluginId: string; enabled: boolean }
 }
 
 export type ClientMessage =
@@ -109,6 +112,8 @@ export type ClientMessage =
   | { type: 'extension.ui_response'; id?: string; payload: ClientMessageMap['extension.ui_response'] }
   | { type: 'extension.toggle'; id?: string; payload: ClientMessageMap['extension.toggle'] }
   | { type: 'extension.list'; id?: string; payload: ClientMessageMap['extension.list'] }
+  | { type: 'plugin.list'; id?: string; payload: Record<string, never> }
+  | { type: 'plugin.toggle'; id?: string; payload: ClientMessageMap['plugin.toggle'] }
 
 // ── 辅助类型 ────────────────────────────────────────────────────
 
@@ -138,6 +143,7 @@ export type ServerMessageType =
   | 'message.tool_call_update' | 'config.extensions'
   | 'session.commands'
   | 'session.tree-data' | 'session.tree-navigate-result' | 'session.tree-fork-result' | 'session.tree-clone-result' | 'session.tree-capability'
+  | 'config.plugins' | 'plugin:crashed' | 'plugin:notification'
 
 export interface ServerMessage {
   type: ServerMessageType
@@ -183,4 +189,28 @@ export interface ExtensionInfo {
   description: string
   path: string
   enabled: boolean
+}
+
+// ── Plugin payload interfaces ───────────────────────────────────
+
+export interface PluginInfo {
+  pluginId: string
+  version: string
+  displayName: string
+  description: string
+  status: 'discovered' | 'loaded' | 'active' | 'inactive' | 'crashed'
+  trustLevel: 'trusted' | 'sandbox'
+  enabled: boolean
+}
+
+export interface PluginCrashedPayload {
+  pluginId: string
+  workerId: string
+  error: string
+}
+
+export interface PluginNotificationPayload {
+  pluginId: string
+  level: 'info' | 'warning' | 'error'
+  message: string
 }

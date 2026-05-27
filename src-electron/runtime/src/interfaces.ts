@@ -157,3 +157,13 @@ export interface IModelService {
     providerType?: string,
   ): Promise<Array<{ id: string; name: string; contextWindow?: number }>>
 }
+
+// ── IPluginService ────────────────────────────────────────────────
+
+/** Plugin lifecycle: discovery, activation, deactivation, shutdown. */
+export interface IPluginService {
+  initialize(): Promise<void>
+  getDiscoveredPlugins(): import('./services/plugin-service/plugin-types.js').PluginDescriptor[]
+  togglePlugin(pluginId: string, enabled: boolean): Promise<import('./services/plugin-service/plugin-types.js').PluginDescriptor[]>
+  shutdown(): Promise<void>
+}

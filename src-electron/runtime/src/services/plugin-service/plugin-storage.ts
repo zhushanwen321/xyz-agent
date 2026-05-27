@@ -1,0 +1,208 @@
+import { mkdir, readFile, writeFile, rename } from 'node:fs/promises'
+import { join } from 'node:path'
+import { createHash } from 'node:crypto'
+
+const MAX_TOTAL_SIZE = 10 * 1024 * 1024 // 10MB
+const MAX_VALUE_SIZE = 1 * 1024 * 1024 // 1MB
+const FLUSH_DEBOUNCE_MS = 500
+
+interface CacheEntry {
+  data: Map<string, unknown>
+  dirty: boolean
+  flushTimer: ReturnType<typeof setTimeout> | null
+  totalSize: number
+}
+
+export class PluginStorage {
+  private caches = new Map<string, CacheEntry>()
+  private baseDir = ''
+  private projectRoot = ''
+
+  async init(baseDir: string, projectRoot: string): Promise<void> {
+    this.baseDir = baseDir
+    this.projectRoot = projectRoot
+    const pluginsDir = join(baseDir, 'plugins')
+    await mkdir(pluginsDir, { recursive: true })
+  }
+
+  // ── Scoped API (global or workspace) ───────────────────────────
+
+  async get(pluginId: string, key: string, scope: 'global' | 'workspace' = 'global'): Promise<unknown | undefined> {
+    const cache = await this.getCache(pluginId, scope)
+    return cache.data.get(key)
+  }
+
+  async set(pluginId: string, key: string, value: unknown, scope: 'global' | 'workspace' = 'global'): Promise<void> {
+    const valueSize = Buffer.byteLength(JSON.stringify(value), 'utf-8')
+    if (valueSize > MAX_VALUE_SIZE) {
+      throw Object.assign(
+        new Error(`Value exceeds 1MB limit (${valueSize} bytes)`),
+        { code: -32021 },
+      )
+    }
+
+    const cache = await this.getCache(pluginId, scope)
+    const oldValue = cache.data.get(key)
+    const oldSize =
+      oldValue !== undefined
+        ? Buffer.byteLength(JSON.stringify(oldValue), 'utf-8')
+        : 0
+    const newTotal = cache.totalSize - oldSize + valueSize
+
+    if (newTotal > MAX_TOTAL_SIZE) {
+      throw Object.assign(
+        new Error('Storage exceeds 10MB limit'),
+        { code: -32040 },
+      )
+    }
+
+    cache.data.set(key, value)
+    cache.totalSize = newTotal
+    cache.dirty = true
+    this.scheduleFlush(pluginId, scope)
+  }
+
+  async delete(pluginId: string, key: string, scope: 'global' | 'workspace' = 'global'): Promise<void> {
+    const cache = await this.getCache(pluginId, scope)
+    const oldValue = cache.data.get(key)
+    if (oldValue !== undefined) {
+      cache.totalSize -= Buffer.byteLength(JSON.stringify(oldValue), 'utf-8')
+      cache.data.delete(key)
+      cache.dirty = true
+      this.scheduleFlush(pluginId, scope)
+    }
+  }
+
+  async keys(pluginId: string, scope: 'global' | 'workspace' = 'global'): Promise<string[]> {
+    const cache = await this.getCache(pluginId, scope)
+    return Array.from(cache.data.keys())
+  }
+
+  // ── Lifecycle ───────────────────────────────────────────────────
+
+  async flush(pluginId: string): Promise<void> {
+    // flush 所有 scope（global + workspace）
+    for (const scope of ['global', 'workspace'] as const) {
+      const cacheKey = `${pluginId}:${scope}`
+      const cache = this.caches.get(cacheKey)
+      if (!cache || !cache.dirty) continue
+      if (cache.flushTimer) {
+        clearTimeout(cache.flushTimer)
+        cache.flushTimer = null
+      }
+      await this.writeToDisk(pluginId, scope, cache)
+      cache.dirty = false
+    }
+  }
+
+  async flushAll(): Promise<void> {
+    const promises: Promise<void>[] = []
+    for (const [cacheKey, cache] of Array.from(this.caches)) {
+      if (cache.dirty) {
+        const parts = cacheKey.split(':')
+        const pluginId = parts[0]
+        const scope = (parts[1] ?? 'global') as 'global' | 'workspace'
+        if (cache.flushTimer) {
+          clearTimeout(cache.flushTimer)
+          cache.flushTimer = null
+        }
+        promises.push(
+          this.writeToDisk(pluginId, scope, cache).then(() => {
+            cache.dirty = false
+          }),
+        )
+      }
+    }
+    await Promise.allSettled(promises)
+  }
+
+  onExternalChange(pluginId: string): void {
+    this.caches.delete(`${pluginId}:global`)
+    this.caches.delete(`${pluginId}:workspace`)
+  }
+
+  // ── Private ─────────────────────────────────────────────────────
+
+  private async getCache(
+    pluginId: string,
+    _scope: 'global' | 'workspace',
+  ): Promise<CacheEntry> {
+    const cacheKey = `${pluginId}:${_scope}`
+    const existing = this.caches.get(cacheKey)
+    if (existing) return existing
+
+    const filePath = this.getFilePath(pluginId, _scope)
+    const data = new Map<string, unknown>()
+    let totalSize = 0
+    try {
+      const raw = await readFile(filePath, 'utf-8')
+      const parsed = JSON.parse(raw) as Record<string, unknown>
+      for (const [k, v] of Object.entries(parsed)) {
+        data.set(k, v)
+        totalSize += Buffer.byteLength(JSON.stringify(v), 'utf-8')
+      }
+    } catch (e: unknown) {
+      // 文件不存在（首次访问）或 JSON 解析失败 → 空 Map 是正确回退
+      const isEnoent = e instanceof Error && 'code' in e && (e as NodeJS.ErrnoException).code === 'ENOENT'
+      if (!isEnoent) {
+        console.warn(`[plugin-storage] failed to load ${filePath}:`, e instanceof Error ? e.message : String(e))
+      }
+    }
+
+    const cache: CacheEntry = { data, dirty: false, flushTimer: null, totalSize }
+    this.caches.set(cacheKey, cache)
+    return cache
+  }
+
+  private scheduleFlush(
+    pluginId: string,
+    scope: 'global' | 'workspace',
+  ): void {
+    const cacheKey = `${pluginId}:${scope}`
+    const cache = this.caches.get(cacheKey)
+    if (!cache) return
+    if (cache.flushTimer) clearTimeout(cache.flushTimer)
+    cache.flushTimer = setTimeout(() => {
+      cache.flushTimer = null
+      this.flush(pluginId).catch((e: unknown) => {
+        console.error(`[plugin-storage] flush failed for ${pluginId}:`, e)
+      })
+    }, FLUSH_DEBOUNCE_MS)
+  }
+
+  private async writeToDisk(
+    pluginId: string,
+    scope: 'global' | 'workspace',
+    cache: CacheEntry,
+  ): Promise<void> {
+    const filePath = this.getFilePath(pluginId, scope)
+    const dir = join(filePath, '..')
+    await mkdir(dir, { recursive: true })
+    const obj: Record<string, unknown> = {}
+    for (const [k, v] of Array.from(cache.data)) obj[k] = v
+    const content = JSON.stringify(obj, null, 2)
+    // 原子写入: temp + rename
+    const tmpPath = filePath + '.tmp'
+    await writeFile(tmpPath, content, 'utf-8')
+    await rename(tmpPath, filePath)
+  }
+
+  private getFilePath(
+    pluginId: string,
+    scope: 'global' | 'workspace',
+  ): string {
+    if (scope === 'global') {
+      return join(this.baseDir, 'plugins', pluginId, 'globalState.json')
+    }
+    const cwdHash = createHash('sha256')
+      .update(this.projectRoot)
+      .digest('hex')
+      .slice(0, 12)
+    return join(
+      this.baseDir,
+      'plugins',
+      pluginId,
+      `workspace-${cwdHash}.json`,
+    )
+  }
+}

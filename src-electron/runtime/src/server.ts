@@ -6,7 +6,7 @@
 import { createServer, type Server as HttpServer } from 'node:http'
 import { WebSocketServer, WebSocket, type WebSocket as WsType } from 'ws'
 import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
-import type { ISessionService, IConfigService, IModelService, IMessageBroker, IExtensionService } from './interfaces.js'
+import type { ISessionService, IConfigService, IModelService, IMessageBroker, IExtensionService, IPluginService } from './interfaces.js'
 
 const HTTP_OK = 200
 const HTTP_NOT_FOUND = 404
@@ -29,6 +29,7 @@ export class SidecarServer implements IMessageBroker {
   private modelService!: IModelService
   private treeService!: import('./services/tree-service.js').TreeService
   private extensionService!: IExtensionService
+  private pluginService!: IPluginService
 
   // ── Extension UI request timeout tracking ───────────────────────
   /** Pending timeout timers keyed by requestId */
@@ -36,12 +37,13 @@ export class SidecarServer implements IMessageBroker {
   /** sessionId → Set of requestIds for session-scoped cleanup */
   private extensionSessionRequests = new Map<string, Set<string>>()
 
-  setServices(session: ISessionService, config: IConfigService, model: IModelService, tree: import('./services/tree-service.js').TreeService, extension?: IExtensionService): void {
+  setServices(session: ISessionService, config: IConfigService, model: IModelService, tree: import('./services/tree-service.js').TreeService, extension?: IExtensionService, plugin?: IPluginService): void {
     this.sessionService = session
     this.configService = config
     this.modelService = model
     this.treeService = tree
     if (extension) this.extensionService = extension
+    if (plugin) this.pluginService = plugin
   }
 
   constructor(private port: number, projectRoot?: string) {
@@ -141,6 +143,13 @@ export class SidecarServer implements IMessageBroker {
       this.send(ws, { type: 'config.agents', id: this.nextPushId(), payload: { agents } })
     // eslint-disable-next-line taste/no-silent-catch -- init: best-effort, single failure must not block others
     } catch (e) { console.error('[runtime] sendInitialState: config.agents failed:', e) }
+    try {
+      if (this.pluginService) {
+        const plugins = this.pluginService.getDiscoveredPlugins()
+        this.send(ws, { type: 'config.plugins', id: this.nextPushId(), payload: { plugins } })
+      }
+    // eslint-disable-next-line taste/no-silent-catch -- init: best-effort, single failure must not block others
+    } catch (e) { console.error('[runtime] sendInitialState: config.plugins failed:', e) }
   }
 
   // ── Message routing ───────────────────────────────────────────
@@ -330,6 +339,21 @@ export class SidecarServer implements IMessageBroker {
           await this.extensionService.toggleExtension(msg.payload.name, msg.payload.enabled)
           const extensions = await this.extensionService.scanExtensions()
           return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions } })
+        }
+        // ── Plugin messages ───────────────────────────────────────────
+        case 'plugin.list': {
+          if (!this.pluginService) {
+            return this.send(ws, { type: 'config.plugins', id: msg.id, payload: { plugins: [] } })
+          }
+          const plugins = this.pluginService.getDiscoveredPlugins()
+          return this.send(ws, { type: 'config.plugins', id: msg.id, payload: { plugins } })
+        }
+        case 'plugin.toggle': {
+          if (!this.pluginService) {
+            return this.sendError(ws, 'handler_error', 'Plugin service not available', msg.id)
+          }
+          const toggledPlugins = await this.pluginService.togglePlugin(msg.payload.pluginId, msg.payload.enabled)
+          return this.send(ws, { type: 'config.plugins', id: msg.id, payload: { plugins: toggledPlugins } })
         }
         default:
           if (!await this.handleSettingsMessage(msg, ws)) {
@@ -583,6 +607,7 @@ export class SidecarServer implements IMessageBroker {
   // ── Lifecycle ──────────────────────────────────────────────────
 
   async stop(): Promise<void> {
+    if (this.pluginService) await this.pluginService.shutdown()
     await this.sessionService.destroyAll()
     for (const timer of this.heartbeatTimers.values()) {
       clearInterval(timer)
