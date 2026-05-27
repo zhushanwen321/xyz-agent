@@ -436,24 +436,25 @@ export class SessionService implements ISessionService {
   }
 
   /** Fork 后重新绑定：原 session 的 pi 进程已被 rebind 到新 session，
-   *  需要更新 runtime 的 sessions Map 和 process manager 的 key。 */
-  rebindAfterFork(oldSessionId: string, newSessionId: string, sessionFilePath?: string): void {
+   *  需要更新 runtime 的 sessions Map 和 process manager 的 key。
+   *  必须同步等待初始化完成，否则后续请求（tree-data、navigate）可能因注册未完成而失败。 */
+  async rebindAfterFork(oldSessionId: string, newSessionId: string, sessionFilePath?: string): Promise<void> {
     const old = this.sessions.get(oldSessionId)
     if (!old) throw new Error(`Session ${oldSessionId} not found in sessions map`)
 
-    // Detach 旧的 adapter/listener（不 kill pi 进程）
+    // 先 rekey process manager（client 仍然是同一个 pi 进程）
+    // 必须在 detach/delete 之前执行，确保 rekey 失败时旧状态不被破坏
+    this.pm.rekey(oldSessionId, newSessionId)
+
+    // rekey 成功后，安全地清理旧 session 的 adapter/listener/registry
     this.detachSession(old)
     this.treeService.unregisterSession(oldSessionId)
     this.sessions.delete(oldSessionId)
 
-    // rekey process manager：client 仍然是同一个 pi 进程
-    this.pm.rekey(oldSessionId, newSessionId)
-
-    // 用新 ID 重新注册 managed session（异步：注册 tree + commands 在后台完成）
+    // 用新 ID 重新注册 managed session（同步等待完成，确保 tree/adapter/command 全部就绪）
     const client = this.pm.getClient(newSessionId)
     if (!client) throw new Error(`Client not found after rekey: ${newSessionId}`)
-    // eslint-disable-next-line @typescript-eslint/no-floating-promises -- fire-and-forget: register tree + commands in background
-    this.initializeManagedSession(newSessionId, client, old.cwd, old.label, sessionFilePath)
+    await this.initializeManagedSession(newSessionId, client, old.cwd, old.label, sessionFilePath)
   }
 
   getSummary(sessionId: string): SessionSummary | undefined {
