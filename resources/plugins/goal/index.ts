@@ -5,10 +5,11 @@
  * 注册 goal_manager 工具和 pi 事件钩子。
  */
 
+import type { PluginContext } from '../../../src-electron/runtime/src/services/plugin-service/plugin-types.js'
 import { createGoalTool } from './src/goal-tool.js'
 import { createGoalHooks } from './src/goal-hooks.js'
 
-export async function activate(context: any) {
+export async function activate(context: PluginContext) {
   const api = context.api
 
   // 注册 goal_manager 工具
