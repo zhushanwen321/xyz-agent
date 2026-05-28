@@ -665,7 +665,6 @@ export class SidecarServer implements IMessageBroker {
 
         case 'bridge:event': {
           const eventName = data.eventName as string
-          const eventData = data.eventData as Record<string, unknown> ?? data.data
           console.log(`[server] bridge event: ${eventName} from session ${sessionId}`)
           // Events are fire-and-forget — no meaningful response expected
           await client.sendCommand('extension_ui_response', { id: requestId, response: null })

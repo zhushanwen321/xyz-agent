@@ -337,10 +337,10 @@ export class PluginService implements IPluginService {
    * TODO (Phase 2 BG4): 实现实际的 RPC 路由到注册插件的工具 handler
    */
   async handleBridgeToolExecute(request: BridgeToolExecuteRequest): Promise<BridgeToolExecuteResponse> {
-    const toolKey = request.toolName
-    const entry = this.toolRegistry.get(toolKey)
+    // 按 schema.name 匹配（toolRegistry key 是 pluginId:name 格式）
+    const entry = Array.from(this.toolRegistry.values()).find(e => e.schema.name === request.toolName)
     if (!entry) {
-      return { content: `Tool not found: ${toolKey}`, isError: true }
+      return { content: `Tool not found: ${request.toolName}`, isError: true }
     }
     // Stubbed 结果 — 实际工具执行在后续实现
     return { content: JSON.stringify({ success: true }), isError: false }

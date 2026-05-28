@@ -199,7 +199,7 @@ describe('PluginService.handleBridgeToolExecute', () => {
 
     const request: BridgeToolExecuteRequest = {
       type: 'bridge.tool.execute',
-      toolName: 'p1:hello',
+      toolName: 'hello',
       parameters: { name: 'world' },
     }
     const result = await service.handleBridgeToolExecute(request)
