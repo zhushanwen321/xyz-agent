@@ -180,6 +180,8 @@ describe('Plugin Integration', () => {
       permissions: [],
       engines: { 'xyz-agent': '*' },
       pluginPath: '/tmp/crash-plugin',
+      source: 'external' as const,
+      extensionDependencies: [],
     }
     crashActivator.registerDescriptors([desc])
 

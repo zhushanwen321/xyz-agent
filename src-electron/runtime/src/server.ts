@@ -36,6 +36,8 @@ export class SidecarServer implements IMessageBroker {
   private extensionTimeouts = new Map<string, NodeJS.Timeout>()
   /** sessionId → Set of requestIds for session-scoped cleanup */
   private extensionSessionRequests = new Map<string, Set<string>>()
+  /** Bridge request IDs (no frontend timeout) */
+  private bridgeRequestIds = new Set<string>()
 
   setServices(session: ISessionService, config: IConfigService, model: IModelService, tree: import('./services/tree-service.js').TreeService, extension?: IExtensionService, plugin?: IPluginService): void {
     this.sessionService = session
@@ -313,6 +315,15 @@ export class SidecarServer implements IMessageBroker {
         // ── Extension messages ──────────────────────────────────────────
         case 'extension.ui_response': {
           const { sessionId: extSid, requestId, result: extResult } = msg.payload
+
+          // Bridge response: route to PluginService
+          if (this.bridgeRequestIds.has(requestId)) {
+            this.bridgeRequestIds.delete(requestId)
+            // Bridge responses are handled internally, not forwarded to pi RPC
+            // PluginService processes the response data from the caller
+            return
+          }
+
           const client = this.sessionService.getRpcClient(extSid)
           if (!client) {
             // 会话不存在时清计时器并发错
@@ -528,6 +539,19 @@ export class SidecarServer implements IMessageBroker {
     // notify is fire-and-forget, no response expected
     if (method === 'notify') return
 
+    // Bridge: track only, no frontend timeout
+    if (method.startsWith('bridge:')) {
+      this.bridgeRequestIds.add(requestId)
+      // Also track in session for cleanup on session deletion
+      let requestSet = this.extensionSessionRequests.get(sessionId)
+      if (!requestSet) {
+        requestSet = new Set()
+        this.extensionSessionRequests.set(sessionId, requestSet)
+      }
+      requestSet.add(requestId)
+      return
+    }
+
     // Clear any existing timer for this requestId
     this.clearExtensionTimeout(requestId)
 
@@ -591,8 +615,85 @@ export class SidecarServer implements IMessageBroker {
         clearTimeout(timer)
         this.extensionTimeouts.delete(reqId)
       }
+      // Also clean up bridge request IDs for this session
+      this.bridgeRequestIds.delete(reqId)
     }
     this.extensionSessionRequests.delete(sessionId)
+  }
+
+  /**
+   * Handle a bridge extension request directly (bypassing frontend).
+   * Called by EventAdapter's onBridgeUIRequest callback for 'bridge:' methods.
+   * Routes to PluginService and sends extension_ui_response back to pi RPC.
+   */
+  async handleBridgeRequest(sessionId: string, requestId: string, method: string, data: Record<string, unknown>): Promise<void> {
+    const client = this.sessionService.getRpcClient(sessionId)
+    if (!client) {
+      console.warn(`[server] bridge request for inactive session: ${sessionId}, method: ${method}`)
+      return
+    }
+
+    try {
+      const methodName = method as string
+      switch (methodName) {
+        case 'bridge:sync': {
+          const tools: Array<{ name: string; description: string; parameters: Record<string, unknown> }> = []
+          const commands: Array<{ name: string }> = []
+          if (this.pluginService?.getToolSchemas) {
+            const schemas = this.pluginService.getToolSchemas()
+            for (const s of schemas) {
+              tools.push({ name: s.name, description: s.description, parameters: s.parameters })
+            }
+          }
+          await client.sendCommand('extension_ui_response', { id: requestId, response: { tools, commands, success: true } })
+          return
+        }
+
+        case 'bridge:tool_execute': {
+          const toolName = data.toolName as string
+          const params = data.params as Record<string, unknown> ?? {}
+          if (!this.pluginService?.handleBridgeToolExecute) {
+            await client.sendCommand('extension_ui_response', { id: requestId, response: { content: 'Plugin system not available', isError: true } })
+            return
+          }
+          const result = await this.pluginService.handleBridgeToolExecute({
+            toolName, params, toolCallId: data.toolCallId as string ?? '', sessionId,
+          } as unknown as import('./services/plugin-service/plugin-types.js').BridgeToolExecuteRequest)
+          await client.sendCommand('extension_ui_response', { id: requestId, response: result })
+          return
+        }
+
+        case 'bridge:event': {
+          const eventName = data.eventName as string
+          console.log(`[server] bridge event: ${eventName} from session ${sessionId}`)
+          // Events are fire-and-forget — no meaningful response expected
+          await client.sendCommand('extension_ui_response', { id: requestId, response: null })
+          return
+        }
+
+        case 'bridge:intercept': {
+          const eventName = data.eventName as string
+          const eventData = data.data as Record<string, unknown> ?? {}
+          if (this.pluginService?.handleBridgeIntercept && eventName === 'before_agent_start') {
+            const result = await this.pluginService.handleBridgeIntercept(eventName, eventData, sessionId)
+            await client.sendCommand('extension_ui_response', { id: requestId, response: result })
+            return
+          }
+          await client.sendCommand('extension_ui_response', { id: requestId, response: {} })
+          return
+        }
+
+        default: {
+          console.warn(`[server] Unknown bridge method: ${methodName}`)
+          await client.sendCommand('extension_ui_response', { id: requestId, response: { error: `Unknown bridge method: ${methodName}` } })
+        }
+      }
+    } catch (e) {
+      console.error(`[server] bridge request failed: ${method}`, e)
+      try {
+        await client.sendCommand('extension_ui_response', { id: requestId, response: { error: String(e) } })
+      } catch { /* ignore send error */ }
+    }
   }
 
   /** Remove a single requestId from session tracking without clearing the timer. */

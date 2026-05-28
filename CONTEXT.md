@@ -138,3 +138,23 @@ xyz-agent 管理的 extension 存储目录（`~/.xyz-agent/extensions/`）。与
 
 ### Extension Service
 runtime 侧的新增服务模块（`extension-service.ts`），负责扫描 Extension Data Directory、解析 extension manifest、管理启用/禁用状态、将 extension 路径注入 pi 进程启动参数。
+
+### Plugin
+xyz-agent 自己的插件系统（Phase 1+），运行在 sidecar 的 Worker Thread 中，使用 agentAPI（非 pi ExtensionAPI）。与 pi Extension 是完全不同的概念。Plugin 通过 PluginService 管理，数据存储在 `~/.xyz-agent/plugins/`。
+
+**避免使用**: "扩展"（Extension）——Extension 指 pi 的扩展，Plugin 指 xyz-agent 的插件。
+
+### Pi Bridge Extension
+特殊的 pi extension，作为 xyz-agent plugin 系统与 pi 引擎之间的唯一适配层。职责：向 pi 注册代理 tool/slash command、转发 tool execute 请求到 sidecar、桥接 pi 事件到 PluginService、代理 pi.appendEntry()。Bridge 是插件系统内部唯一感知 pi 存在的模块。
+
+### sessionData
+Plugin 的 per-session KV 存储 API（`api.sessionData`）。数据通过 Pi Bridge 走 `pi.appendEntry()` 持久化在 pi 的 session JSONL 文件中，天然跟随 session 生灭。与 PluginStorage（global/workspace scope，存在独立 JSON 文件中）不同。
+
+### Built-in Plugin
+随 xyz-agent 打包分发的插件（`source: 'built-in'`）。不可卸载、不可禁用、自动 trusted。存放在 app resources 的 `plugins/` 目录下。
+
+### Plugin Source
+插件的来源分类：`built-in`（随 app 打包）、`external`（用户安装）。`bundled`（预装可卸载）留到 Phase 3+。
+
+### Plugin Dependency
+插件间依赖关系，通过 manifest 的 `extensionDependencies` 字段声明（格式：`pluginId@semverRange`）。激活时拓扑排序，循环依赖拒绝激活。

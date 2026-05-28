@@ -15,11 +15,20 @@ import type {
   HostToWorkerMessage,
   PluginModule,
   PluginContext,
-  Phase1AgentAPI,
+  Phase2AgentAPI,
   PluginStateStorage,
   Disposable,
 } from './plugin-types.js'
 import { PluginRpcClient } from './plugin-rpc-client.js'
+import { createRequireInterceptor, createEnvProxy } from './plugin-sandbox.js'
+import { createToolApi } from './tool-api.js'
+import { createHookApi } from './hook-api.js'
+import { createSessionApi } from './api/session-api.js'
+import { createConfigApi } from './api/config-api.js'
+import { createSessionDataApi } from './api/session-data-api.js'
+import { createUiApi } from './api/ui-api.js'
+import { createAgentApi } from './api/agent-api.js'
+import { createWorkspaceApi } from './api/workspace-api.js'
 
 const rpcClient = new PluginRpcClient()
 const loadedModules = new Map<string, PluginModule>()
@@ -42,6 +51,11 @@ async function handleMessage(msg: HostToWorkerMessage): Promise<void> {
   switch (msg.type) {
     case 'load': {
       try {
+        // sandbox 模式下初始化 require 拦截
+        if (msg.trustLevel === 'sandbox') {
+          initSandbox(msg.pluginPath)
+        }
+
         const moduleUrl = pathToFileURL(msg.pluginPath).href
         const mod = (await import(moduleUrl)) as PluginModule
         loadedModules.set(msg.pluginId, mod)
@@ -108,7 +122,7 @@ function createPluginContext(pluginId: string, pluginDir: string): PluginContext
   }
 }
 
-function createAgentAPI(pluginId: string): Phase1AgentAPI {
+function createAgentAPI(pluginId: string): Phase2AgentAPI {
   return {
     storage: {
       global: createStateStorageProxy(pluginId, 'global'),
@@ -122,10 +136,7 @@ function createAgentAPI(pluginId: string): Phase1AgentAPI {
       error: (msg: string) =>
         rpcClient.request('plugin.notify', { pluginId, level: 'error', message: msg }).then(() => {}),
     },
-    sessions: {
-      list: () =>
-        rpcClient.request('plugin.sessions.list', { pluginId }).then(v => (v as Phase1AgentAPI['sessions'] extends { list(): Promise<infer R> } ? R : never) ?? []),
-    },
+    sessions: createSessionApi(rpcClient, pluginId),
     events: {
       on: (event: string, handler: (data: unknown) => void): Disposable => {
         const unsubscribe = rpcClient.onNotification(`plugin.event.${event}`, handler)
@@ -135,6 +146,13 @@ function createAgentAPI(pluginId: string): Phase1AgentAPI {
         rpcClient.notify(`plugin.event.${event}`, { pluginId, data })
       },
     },
+    tools: createToolApi(rpcClient, pluginId),
+    hooks: createHookApi(rpcClient, pluginId),
+    config: createConfigApi(rpcClient, pluginId),
+    sessionData: createSessionDataApi(rpcClient, pluginId),
+    ui: createUiApi(rpcClient, pluginId),
+    agent: createAgentApi(rpcClient, pluginId),
+    workspace: createWorkspaceApi(rpcClient, pluginId),
   }
 }
 
@@ -169,4 +187,31 @@ function createStateStorageProxy(
         .request(`plugin.storage.${scope}.keys`, { pluginId })
         .then(v => (v as string[]) ?? []),
   }
+}
+
+/**
+ * 初始化 sandbox 环境：拦截 require 调用和替换 process.env。
+ *
+ * 在 Worker Thread 的 load 阶段调用，确保后续插件代码的 require
+ * 受到 BLOCKED_BUILTINS 和路径边界约束。
+ */
+function initSandbox(pluginDir: string): void {
+  // Worker Thread 中可用 require()，此处是同步操作
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const Module = require('node:module')
+  const interceptor = createRequireInterceptor(pluginDir)
+
+  const _originalResolveFilename = Module._resolveFilename
+  Module._resolveFilename = function (
+    request: string,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Module._resolveFilename has variadic args
+    ...args: any[]
+  ): string {
+    const resolved = _originalResolveFilename.call(this, request, ...args) as string
+    interceptor(request, resolved)
+    return resolved
+  }
+
+  // 替换 process.env 为空 Proxy
+  process.env = createEnvProxy()
 }

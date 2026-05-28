@@ -13,6 +13,11 @@ export default defineConfig({
       'test/plugin-host.test.ts',
       'test/plugin-activator.test.ts',
       'test/plugin-integration.test.ts',
+      'test/plugin-foundation.test.ts',
+      'test/plugin-sandbox.test.ts',
+      'test/plugin-permission.test.ts',
+      'test/plugin-api-tools.test.ts',
+      'test/plugin-api-hooks.test.ts',
     ],
   },
 })

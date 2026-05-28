@@ -75,7 +75,7 @@ export class PluginHost implements ActivatorHost {
    * 向指定 Worker 发送 load 指令，等待 loaded/error 响应。
    * 超时 10 秒后 reject。
    */
-  async loadPlugin(workerId: string, pluginPath: string): Promise<void> {
+  async loadPlugin(workerId: string, pluginPath: string, trustLevel?: 'trusted' | 'sandbox'): Promise<void> {
     const worker = this.workerInstances.get(workerId)
     if (!worker) throw new Error(`Worker not found: ${workerId}`)
 
@@ -98,6 +98,7 @@ export class PluginHost implements ActivatorHost {
         type: 'load',
         pluginId: pluginPath.split('/').pop() ?? 'unknown',
         pluginPath,
+        trustLevel: trustLevel ?? this.inferTrustLevel(workerId),
       })
     })
   }
@@ -170,6 +171,12 @@ export class PluginHost implements ActivatorHost {
   }
 
   // ── Private ──────────────────────────────────────────────────────
+
+  /** 从 workerId 推断 trustLevel（用于 loadPlugin 未显式指定时） */
+  private inferTrustLevel(workerId: string): 'trusted' | 'sandbox' {
+    const handle = this.workers.get(workerId)
+    return handle?.trustLevel ?? 'sandbox'
+  }
 
   private createWorker(
     workerId: string,

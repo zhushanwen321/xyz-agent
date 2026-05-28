@@ -25,6 +25,9 @@ import { trash } from '../trash.js'
 import { NavigateInterceptor } from '../navigate-interceptor.js'
 import { TreeService } from './tree-service.js'
 
+/** SendMessage hook 类型：在消息发送前触发，可阻止发送 */
+export type SendMessageHook = (sessionId: string, content: string) => Promise<{ blocked: boolean; reason?: string } | null>
+
 // session-scanner 已删除，直接用 pi-config-bridge 的返回类型
 type ScannedSession = Awaited<ReturnType<typeof scanPiSessions>>[number]
 
@@ -47,6 +50,7 @@ export class SessionService implements ISessionService {
   private sessions = new Map<string, ManagedSession>()
   private restoringSessions = new Set<string>()
   private extensionPath: string = ''
+  private sendMessageHook: SendMessageHook | null = null
 
   constructor(
     private pm: IProcessManager,
@@ -178,9 +182,38 @@ export class SessionService implements ISessionService {
     refreshAll()
   }
 
+  /**
+   * 设置消息发送前 hook。
+   * 由 PluginService 在初始化时调用，实现 beforeSend 拦截。
+   */
+  setSendMessageHook(hook: SendMessageHook): void {
+    this.sendMessageHook = hook
+  }
+
   // ── Messaging ──────────────────────────────────────────────────
 
   async sendMessage(sessionId: string, content: string): Promise<void> {
+    // ── BeforeSend hook 执行点 ───────────────────────────────────
+    try {
+      if (this.sendMessageHook) {
+        const hookResult = await this.sendMessageHook(sessionId, content)
+        if (hookResult?.blocked) {
+          this.broker.broadcast({
+            type: 'message.error',
+            payload: { sessionId, message: hookResult.reason ?? 'Message blocked by plugin hook' },
+          })
+          return
+        }
+      }
+    } catch (e) {
+      console.error('[session-service] sendMessage hook error:', e)
+      this.broker.broadcast({
+        type: 'message.error',
+        payload: { sessionId, message: 'Plugin hook error: ' + (e instanceof Error ? e.message : String(e)) },
+      })
+      return
+    }
+
     let client = this.pm.getClient(sessionId)
 
     if (!client) {

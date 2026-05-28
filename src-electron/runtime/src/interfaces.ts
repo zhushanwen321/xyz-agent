@@ -166,4 +166,11 @@ export interface IPluginService {
   getDiscoveredPlugins(): import('./services/plugin-service/plugin-types.js').PluginDescriptor[]
   togglePlugin(pluginId: string, enabled: boolean): Promise<import('./services/plugin-service/plugin-types.js').PluginDescriptor[]>
   shutdown(): Promise<void>
+
+  /** Bridge routing methods */
+  handleBridgeRequest?(method: string, payload: Record<string, unknown>, sessionId: string): Promise<unknown>
+  getToolSchemas?(): import('./services/plugin-service/plugin-types.js').ToolRegistration[]
+  handleBridgeToolExecute?(request: import('./services/plugin-service/plugin-types.js').BridgeToolExecuteRequest): Promise<import('./services/plugin-service/plugin-types.js').BridgeToolExecuteResponse>
+  handleBridgeEvent?(eventName: string, data: unknown, sessionId: string): void
+  handleBridgeIntercept?(eventName: string, data: Record<string, unknown>, sessionId: string): Promise<import('./services/plugin-service/plugin-types.js').BridgeInterceptResponse>
 }
