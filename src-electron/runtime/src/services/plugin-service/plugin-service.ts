@@ -630,7 +630,8 @@ export class PluginService implements IPluginService {
     const cache = this.sessionDataCache.get(sessionId)
     if (!cache) return
 
-    const entries = [...dirtyKeys].map(key => ({ key, value: cache.get(key) }))
+    // TODO: restore entries when bridge flush is ready
+    // const entries = [...dirtyKeys].map(key => ({ key, value: cache.get(key) }))
     try {
       await Promise.race([
         // TODO: bridge flush when bridge is ready

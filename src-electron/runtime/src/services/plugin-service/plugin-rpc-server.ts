@@ -159,7 +159,7 @@ export class PluginRpcServer {
 
   dispose(): void {
     // Reject all pending invokes
-    for (const [id, pending] of this.pendingInvokes) {
+    for (const pending of this.pendingInvokes.values()) {
       clearTimeout(pending.timer)
       pending.reject(new Error('RPC server disposed'))
     }
