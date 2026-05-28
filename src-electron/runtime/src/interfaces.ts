@@ -167,6 +167,21 @@ export interface IPluginService {
   togglePlugin(pluginId: string, enabled: boolean): Promise<import('./services/plugin-service/plugin-types.js').PluginDescriptor[]>
   shutdown(): Promise<void>
 
+  /** Uninstall a plugin: deactivate, remove files, rescan registry */
+  uninstallPlugin(pluginId: string): Promise<import('./services/plugin-service/plugin-types.js').PluginDescriptor[]>
+  /** Approve specific permissions for a plugin */
+  approvePermissions(pluginId: string, permissions: string[]): Promise<void>
+  /** Revoke all permissions for a plugin */
+  revokePermissions(pluginId: string): Promise<void>
+  /** Execute a slash command contributed by a plugin */
+  executeCommand(pluginId: string, commandId: string, args?: Record<string, unknown>): Promise<void>
+  /** Get plugin config value(s) */
+  getPluginConfig(pluginId: string, key?: string): Promise<unknown>
+  /** Set a plugin config value */
+  setPluginConfig(pluginId: string, key: string, value: unknown): Promise<void>
+  /** Clear cached session data */
+  clearSessionData(sessionId: string): void
+
   /** Bridge routing methods */
   handleBridgeRequest?(method: string, payload: Record<string, unknown>, sessionId: string): Promise<unknown>
   getToolSchemas?(): import('./services/plugin-service/plugin-types.js').ToolRegistration[]

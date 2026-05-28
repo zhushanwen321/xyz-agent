@@ -216,8 +216,18 @@ export class PluginHost implements ActivatorHost {
     worker.on('message', (msg: unknown) => {
       const m = msg as Record<string, unknown>
       if (m.type === 'rpc') {
-        // RPC 请求/通知：转发给 PluginRpcServer
-        this.rpcServer.dispatch(workerId, m as unknown as RpcRequest)
+        // Check if this is an RPC response to a pending invoke
+        const rpcMsg = m as Record<string, unknown>
+        if (('result' in rpcMsg || 'error' in rpcMsg) && typeof rpcMsg.id === 'number') {
+          // Response to our outgoing invoke request
+          this.rpcServer.handleResponse(rpcMsg as unknown as import('./plugin-types.js').RpcResponse)
+        } else if (rpcMsg.request && typeof (rpcMsg.request as Record<string, unknown>).method === 'string') {
+          // Incoming RPC request from Worker
+          this.rpcServer.dispatch(workerId, (rpcMsg.request as unknown as RpcRequest))
+        } else if (typeof rpcMsg.method === 'string') {
+          // Direct RpcRequest-style message
+          this.rpcServer.dispatch(workerId, m as unknown as RpcRequest)
+        }
       } else if (m.type === 'fatal_error') {
         this.handleWorkerCrash(workerId, String(m.error ?? 'unknown'))
       } else if (

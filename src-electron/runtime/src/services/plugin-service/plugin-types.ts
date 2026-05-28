@@ -269,6 +269,8 @@ export interface BridgeToolExecuteRequest {
   type: 'bridge.tool.execute'
   toolName: string
   parameters: Record<string, unknown>
+  sessionId?: string
+  toolCallId?: string
 }
 
 /** 插件返回工具执行结果 */
@@ -387,6 +389,9 @@ export interface HookContext {
 /** Hook 通用返回结果 */
 export interface HookResult {
   blocked: boolean
+  blockedBy?: string
+  reason?: string
+  transformedData?: unknown
 }
 
 /** Hook 被阻止时的详细结果 */

@@ -366,6 +366,54 @@ export class SidecarServer implements IMessageBroker {
           const toggledPlugins = await this.pluginService.togglePlugin(msg.payload.pluginId, msg.payload.enabled)
           return this.send(ws, { type: 'config.plugins', id: msg.id, payload: { plugins: toggledPlugins } })
         }
+        case 'plugin.uninstall': {
+          if (!this.pluginService) {
+            return this.sendError(ws, 'handler_error', 'Plugin service not available', msg.id)
+          }
+          const uninstalledPlugins = await this.pluginService.uninstallPlugin(msg.payload.pluginId)
+          return this.send(ws, { type: 'config.plugins', id: msg.id, payload: { plugins: uninstalledPlugins } })
+        }
+        case 'plugin.approvePermissions': {
+          if (!this.pluginService) {
+            return this.sendError(ws, 'handler_error', 'Plugin service not available', msg.id)
+          }
+          await this.pluginService.approvePermissions(msg.payload.pluginId, msg.payload.permissions)
+          return this.send(ws, { type: 'config.plugins', id: msg.id, payload: { plugins: this.pluginService.getDiscoveredPlugins() } })
+        }
+        case 'plugin.revokePermissions': {
+          if (!this.pluginService) {
+            return this.sendError(ws, 'handler_error', 'Plugin service not available', msg.id)
+          }
+          await this.pluginService.revokePermissions(msg.payload.pluginId)
+          return this.send(ws, { type: 'config.plugins', id: msg.id, payload: { plugins: this.pluginService.getDiscoveredPlugins() } })
+        }
+        case 'plugin.executeCommand': {
+          if (!this.pluginService) {
+            return this.sendError(ws, 'handler_error', 'Plugin service not available', msg.id)
+          }
+          await this.pluginService.executeCommand(msg.payload.pluginId, msg.payload.commandId, msg.payload.args)
+          return this.send(ws, { type: 'pong', id: msg.id, payload: {} })
+        }
+        case 'plugin.config.get': {
+          if (!this.pluginService) {
+            return this.sendError(ws, 'handler_error', 'Plugin service not available', msg.id)
+          }
+          const configValue = await this.pluginService.getPluginConfig(msg.payload.pluginId, msg.payload.key)
+          const configKey = msg.payload.key ?? '__all__'
+          return this.send(ws, { type: 'plugin:config', id: msg.id, payload: { pluginId: msg.payload.pluginId, config: configKey === '__all__' ? (configValue as Record<string, unknown>) : { [configKey]: configValue } } })
+        }
+        case 'plugin.config.set': {
+          if (!this.pluginService) {
+            return this.sendError(ws, 'handler_error', 'Plugin service not available', msg.id)
+          }
+          await this.pluginService.setPluginConfig(msg.payload.pluginId, msg.payload.key, msg.payload.value)
+          const allConfig = await this.pluginService.getPluginConfig(msg.payload.pluginId)
+          return this.send(ws, { type: 'plugin:config', id: msg.id, payload: { pluginId: msg.payload.pluginId, config: allConfig as Record<string, unknown> } })
+        }
+        case 'plugin.install': {
+          // Phase 4: npm install integration
+          return this.sendError(ws, 'not_implemented', 'Plugin install requires Phase 4 npm integration', msg.id)
+        }
         default:
           if (!await this.handleSettingsMessage(msg, ws)) {
             // handleSettingsMessage 返回 false，说明 type 也不在 settings 分支中
@@ -657,8 +705,9 @@ export class SidecarServer implements IMessageBroker {
             return
           }
           const result = await this.pluginService.handleBridgeToolExecute({
-            toolName, params, toolCallId: data.toolCallId as string ?? '', sessionId,
-          } as unknown as import('./services/plugin-service/plugin-types.js').BridgeToolExecuteRequest)
+            type: 'bridge.tool.execute',
+            toolName, parameters: params, toolCallId: data.toolCallId as string ?? '', sessionId,
+          })
           await client.sendCommand('extension_ui_response', { id: requestId, response: result })
           return
         }

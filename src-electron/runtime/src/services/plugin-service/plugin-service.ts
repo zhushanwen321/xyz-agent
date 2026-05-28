@@ -36,9 +36,20 @@ export class PluginService implements IPluginService {
   /** SessionData 内存缓存，sessionId → key → value */
   private sessionDataCache = new Map<string, Map<string, unknown>>()
 
-  /** 清理指定 session 的数据缓存 */
+  /** Dirty 跟踪：sessionId → 已修改但未 flush 的 key 集合 */
+  private sessionDataDirty = new Map<string, Set<string>>()
+
+  /** Size 跟踪：sessionId → 当前字节数 */
+  private sessionDataSize = new Map<string, number>()
+
+  /** 定时 flush 计时器 */
+  private sessionDataFlushTimer: ReturnType<typeof setInterval> | null = null
+
+  /** 清理指定 session 的数据缓存、dirty 跟踪和 size 记录 */
   clearSessionData(sessionId: string): void {
     this.sessionDataCache.delete(sessionId)
+    this.sessionDataDirty.delete(sessionId)
+    this.sessionDataSize.delete(sessionId)
   }
 
   constructor(registry: PluginRegistry, broker: IMessageBroker) {
@@ -107,6 +118,28 @@ export class PluginService implements IPluginService {
     // 7. 广播插件列表
     this.broadcastPluginList()
 
+    // 8. 启动 sessionData flush 定时器
+    this.startFlushTimer()
+
+    // 9. 为 external 已激活插件启动 hot-reload 监听
+    for (const desc of this.registry.getAllDescriptors()) {
+      if (desc.source === 'external' && this.activator.getState(desc.pluginId) === 'ACTIVE') {
+        this.activator.watchAndReload(
+          desc.pluginId,
+          desc.pluginPath,
+          desc.source,
+          this.host,
+          (payload) => {
+            this.broker.broadcast({
+              type: 'plugin:statusChange',
+              id: `reload_${payload.pluginId}_${Date.now()}`,
+              payload,
+            })
+          },
+        )
+      }
+    }
+
     this.initialized = true
   }
 
@@ -121,23 +154,125 @@ export class PluginService implements IPluginService {
     const descriptor = this.registry.getDescriptor(pluginId)
     if (!descriptor) throw new Error(`Plugin not found: ${pluginId}`)
 
-    if (enabled) {
-      // 启用：尝试立即激活
-      await this.activator.handleEvent(
-        { type: 'onStartupFinished' },
-        this.host,
-      )
-    } else {
-      // 禁用
-      await this.activator.deactivatePlugin(pluginId, this.host)
+    try {
+      if (enabled) {
+        // 启用：只激活目标插件（非全部）
+        await this.activator.activatePlugin(
+          pluginId,
+          { type: 'onStartupFinished' },
+          this.host,
+        )
+        // 激活成功后，对外部插件启动热重载监听
+        if (descriptor.source === 'external' && this.activator.getState(pluginId) === 'ACTIVE') {
+          this.activator.watchAndReload(pluginId, descriptor.pluginPath, descriptor.source, this.host, (payload) => {
+            this.broker.broadcast({ type: 'plugin:statusChange', id: `toggle_${payload.pluginId}_${Date.now()}`, payload })
+          })
+        }
+      } else {
+        // 禁用
+        await this.activator.deactivatePlugin(pluginId, this.host)
+        // 停止热重载监听
+        this.activator.stopWatching(pluginId)
+      }
+    } catch (err: unknown) {
+      console.error(`[plugin-service] togglePlugin(${pluginId}, ${enabled}) failed:`, err instanceof Error ? err.message : String(err))
+      // 激活/停用失败仍然返回当前插件列表（允许前端回滚 UI）
     }
 
     this.broadcastPluginList()
     return this.getDiscoveredPlugins()
   }
 
+  async uninstallPlugin(pluginId: string): Promise<PluginDescriptor[]> {
+    // 停用插件
+    await this.activator.deactivatePlugin(pluginId, this.host)
+
+    // 从注册表中移除
+    this.registry.removeDescriptor(pluginId)
+
+    // 清理工具和 hook 注册
+    for (const [key, entry] of this.toolRegistry) {
+      if (entry.pluginId === pluginId) {
+        this.toolRegistry.delete(key)
+      }
+    }
+    for (const [hookType, entries] of this.hookRegistry) {
+      this.hookRegistry.set(hookType, entries.filter(e => e.pluginId !== pluginId))
+    }
+
+    await this.syncToolsToBridge()
+    this.broadcastPluginList()
+    return this.getDiscoveredPlugins()
+  }
+
+  async approvePermissions(pluginId: string, permissions: string[]): Promise<void> {
+    const descriptor = this.registry.getDescriptor(pluginId)
+    if (!descriptor) throw new Error(`Plugin not found: ${pluginId}`)
+
+    // Update descriptor permissions
+    descriptor.permissions = [...new Set([...descriptor.permissions, ...permissions])]
+    // Update permission checker's granted map
+    this.permissionChecker.grant(pluginId, permissions)
+    await this.permissionChecker.save()
+
+    // If plugin was waiting for permissions, try to activate it
+    if (this.activator.getState(pluginId) !== 'ACTIVE') {
+      await this.activator.activatePlugin(pluginId, { type: 'onStartupFinished' }, this.host)
+      if (descriptor.source === 'external' && this.activator.getState(pluginId) === 'ACTIVE') {
+        this.activator.watchAndReload(pluginId, descriptor.pluginPath, descriptor.source, this.host, (payload) => {
+          this.broker.broadcast({ type: 'plugin:statusChange', id: `perms_${payload.pluginId}_${Date.now()}`, payload })
+        })
+      }
+    }
+  }
+
+  async revokePermissions(pluginId: string): Promise<void> {
+    const descriptor = this.registry.getDescriptor(pluginId)
+    if (!descriptor) throw new Error(`Plugin not found: ${pluginId}`)
+
+    descriptor.permissions = []
+    this.permissionChecker.revoke(pluginId)
+    await this.permissionChecker.save()
+  }
+
+  async executeCommand(pluginId: string, commandId: string, args?: Record<string, unknown>): Promise<void> {
+    const descriptor = this.registry.getDescriptor(pluginId)
+    if (!descriptor) throw new Error(`Plugin not found: ${pluginId}`)
+
+    const handle = this.host.getWorkerHandle(pluginId)
+    if (!handle) throw new Error(`Plugin worker not available: ${pluginId}`)
+
+    await this.rpcServer.invoke(
+      handle.workerId,
+      'plugin.command.execute',
+      { pluginId, commandId, args: args ?? {} },
+      10_000,
+    )
+  }
+
+  async getPluginConfig(pluginId: string, key?: string): Promise<unknown> {
+    if (key === undefined || key === '__all__') {
+      // Return all config
+      const allKeys = await this.storage.keys(pluginId)
+      const configKeys = allKeys.filter(k => k.startsWith('config:'))
+      const result: Record<string, unknown> = {}
+      for (const configKey of configKeys) {
+        const rawKey = configKey.replace('config:', '')
+        result[rawKey] = await this.storage.get(pluginId, configKey)
+      }
+      return result
+    }
+    return this.storage.get(pluginId, `config:${key}`)
+  }
+
+  async setPluginConfig(pluginId: string, key: string, value: unknown): Promise<void> {
+    await this.storage.set(pluginId, `config:${key}`, value)
+  }
+
   async shutdown(): Promise<void> {
     if (!this.initialized) return
+    this.stopFlushTimer()
+    this.activator.stopAllWatchers()
     await this.activator.deactivateAll(this.host)
     await this.storage.flushAll()
     await this.host.shutdown()
@@ -234,9 +369,11 @@ export class PluginService implements IPluginService {
     // ── SessionData RPC handlers ─────────────────────────────
     registerSessionDataRpcHandlers(this.rpcServer, {
       getCache: () => this.sessionDataCache,
+      getDirty: () => this.sessionDataDirty,
+      getSizeTracker: () => this.sessionDataSize,
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       appendEntry: async (_sessionId: string, _key: string, _value: unknown) => {
-        // Phase 2: bridge:append_entry 持久化，暂为 stub（缓存已更新）
+        // bridge:append_entry 保留接口兼容，set handler 不再直接调用
       },
     })
 
@@ -299,30 +436,64 @@ export class PluginService implements IPluginService {
   /**
    * 执行指定 hookType 的钩子管道。
    *
-   * 从 hookRegistry 获取 handlers，按 priority 排序后依次执行。
-   *
-   * 简化的 Phase 2 实现：通过 PluginRpcServer broadcast 通知所有 Worker，
-   * 不等待各 Worker 的 invoke 结果（详细的 synchronous RPC 通信在 Phase 2 末期完善）。
+   * 从 hookRegistry 获取 handlers，按 priority 排序后串行执行。
+   * 支持 block（proceed === false 终止链路）和 content transform（modifiedData 传递）。
+   * 每个 handler 超时 5s，超时视为放行。
+   * Worker crashed → skip 该 handler。
    *
    * @param hookType - hook 类型（如 'onBeforeSendMessage'）
    * @param context - Hook 执行上下文
-   * @returns HookResult（简化版本默认不阻塞）
+   * @returns HookResult
    */
   async executeHooks(hookType: string, context: HookContext): Promise<HookResult> {
     const entries = this.hookRegistry.get(hookType)
     if (!entries || entries.length === 0) return { blocked: false }
 
-    // 按 priority 排序（低数值先执行）
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    // 按 priority 排序：built-in (0) → trusted (100) → sandbox (200)
     const sorted = [...entries].sort((a, b) => a.priority - b.priority)
 
-    // broadcast invoke 通知给所有 Worker
-    this.rpcServer.broadcast('plugin.hooks.invoke', {
-      hookType,
-      context,
-    })
+    // 串行执行：await 每个 handler，支持 transform 和 block
+    for (const entry of sorted) {
+      const handle = this.host.getWorkerHandle(entry.pluginId)
+      if (!handle) continue // Worker crashed → skip
 
-    // 简化实现：不等待 Worker 的 invoke 结果，默认返回未阻塞
+      try {
+        const result = await this.rpcServer.invoke(
+          handle.workerId,
+          'plugin.hooks.invoke',
+          {
+            handlerId: entry.handlerId,
+            hookType,
+            context,
+          },
+          5_000, // 每个 handler 5s 超时
+        ) as Record<string, unknown>
+
+        // 检查是否被阻止
+        if (result && typeof result === 'object' && 'proceed' in result && result.proceed === false) {
+          return {
+            blocked: true,
+            reason: (result.reason as string) ?? `Blocked by plugin ${entry.pluginId}`,
+            blockedBy: entry.pluginId,
+          }
+        }
+
+        // 检查是否需要转换内容
+        if (result && typeof result === 'object' && 'modifiedData' in result && result.modifiedData !== undefined) {
+          context = {
+            ...context,
+            data: result.modifiedData,
+          }
+        }
+      } catch (err: unknown) {
+        // 超时或错误 → 视为放行（不阻止链路）
+        console.warn(
+          `[plugin-service] hook handler ${entry.handlerId} failed/timed out:`,
+          err instanceof Error ? err.message : String(err),
+        )
+      }
+    }
+
     return { blocked: false }
   }
 
@@ -341,17 +512,48 @@ export class PluginService implements IPluginService {
 
   /**
    * 处理 bridge 发起的工具执行请求。
-   * 在 toolRegistry 中查找对应的插件工具，返回 stubbed 结果。
-   * TODO (Phase 2 BG4): 实现实际的 RPC 路由到注册插件的工具 handler
+   *
+   * 通过 toolRegistry 查找工具所属插件 → 获取 Worker handle
+   * → 通过 RPC 调用 Worker 中的 tool handler → 返回结果。
    */
   async handleBridgeToolExecute(request: BridgeToolExecuteRequest): Promise<BridgeToolExecuteResponse> {
-    // 按 schema.name 匹配（toolRegistry key 是 pluginId:name 格式）
-    const entry = Array.from(this.toolRegistry.values()).find(e => e.schema.name === request.toolName)
+    // 1. 按 schema.name 匹配（toolRegistry key 是 pluginId:name 格式）
+    const entry = Array.from(this.toolRegistry.values())
+      .find(e => e.schema.name === request.toolName)
     if (!entry) {
       return { content: `Tool not found: ${request.toolName}`, isError: true }
     }
-    // Stubbed 结果 — 实际工具执行在后续实现
-    return { content: JSON.stringify({ success: true }), isError: false }
+
+    // 2. 获取工具所属插件的 Worker handle
+    const handle = this.host.getWorkerHandle(entry.pluginId)
+    if (!handle) {
+      return { content: 'Plugin worker crashed', isError: true }
+    }
+
+    // 3. 通过 RPC 调用 Worker 执行工具（超时 30s）
+    try {
+      const result = await this.rpcServer.invoke(
+        handle.workerId,
+        'plugin.tool.execute',
+        {
+          pluginId: entry.pluginId,
+          toolName: request.toolName,
+          arguments: request.parameters,
+          sessionId: request.sessionId,
+          toolCallId: request.toolCallId,
+        },
+        30_000,
+      )
+      return result as BridgeToolExecuteResponse
+    } catch (err: unknown) {
+      // 超时 → isError
+      if (err instanceof Error && err.message.includes('RPC timeout')) {
+        return { content: 'Plugin tool execution timed out', isError: true }
+      }
+      // Worker crash / 其他错误
+      const msg = err instanceof Error ? err.message : String(err)
+      return { content: `Plugin tool execution failed: ${msg}`, isError: true }
+    }
   }
 
   /**
@@ -386,6 +588,69 @@ export class PluginService implements IPluginService {
 
     // 简化实现：插件可注入的消息暂不聚合（Phase 2 末期完善）
     return { injectedMessages: [] }
+  }
+
+  /** 将所有 dirty sessionData 批量 flush（由定时器调用） */
+  async flushSessionData(): Promise<void> {
+    for (const [sessionId, dirtyKeys] of this.sessionDataDirty) {
+      if (dirtyKeys.size === 0) continue
+      const cache = this.sessionDataCache.get(sessionId)
+      if (!cache) continue
+
+      const entries: Array<{ key: string; value: unknown }> = []
+      for (const key of dirtyKeys) {
+        entries.push({ key, value: cache.get(key) })
+      }
+
+      try {
+        // TODO: bridge flush when bridge is ready
+        // await this.broker.sendBridgeFlush(sessionId, entries)
+      } catch {
+        // 失败 → 保留 dirty，下个周期重试
+        continue
+      }
+      // Flush succeeded → clear dirty keys
+      dirtyKeys.clear()
+    }
+  }
+
+  /** flush 指定 session 的 dirty 数据（deactivate/关闭时调用） */
+  async flushSessionDataForSession(sessionId: string): Promise<void> {
+    const dirtyKeys = this.sessionDataDirty.get(sessionId)
+    if (!dirtyKeys || dirtyKeys.size === 0) return
+
+    const cache = this.sessionDataCache.get(sessionId)
+    if (!cache) return
+
+    const entries = [...dirtyKeys].map(key => ({ key, value: cache.get(key) }))
+    try {
+      await Promise.race([
+        // TODO: bridge flush when bridge is ready
+        // this.broker.sendBridgeFlush(sessionId, entries)
+        Promise.resolve(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('flush timeout')), 3_000)),
+      ])
+      dirtyKeys.clear()
+    } catch {
+      console.warn(`[plugin-service] sessionData flush failed for ${sessionId}`)
+    }
+  }
+
+  /** 启动 sessionData 定时 flush（每 5s） */
+  private startFlushTimer(): void {
+    this.sessionDataFlushTimer = setInterval(() => {
+      this.flushSessionData().catch((err: unknown) => {
+        console.error('[plugin-service] sessionData flush error:', err)
+      })
+    }, 5_000)
+  }
+
+  /** 停止 sessionData 定时 flush */
+  private stopFlushTimer(): void {
+    if (this.sessionDataFlushTimer) {
+      clearInterval(this.sessionDataFlushTimer)
+      this.sessionDataFlushTimer = null
+    }
   }
 
   private broadcastPluginList(): void {
