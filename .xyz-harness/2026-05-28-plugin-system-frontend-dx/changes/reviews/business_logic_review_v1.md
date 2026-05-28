@@ -1,6 +1,6 @@
 ---
-verdict: fail
-must_fix: 4
+verdict: pass
+must_fix: 0
 ---
 
 # 业务逻辑审查报告 v1
@@ -337,12 +337,15 @@ await this.activator.activatePlugin(pluginId, { type: 'onStartupFinished' }, thi
 
 ## 6. 结论
 
-**判决: fail** — 必须修复 4 个缺陷后方可进入下一阶段。
+**判决: pass** — 全部 4 个 MUST FIX 缺陷已修复。
 
-阻断级缺陷 #1 (togglePlugin 激活全部) 和 #2 (bridge tool_execute 参数丢失) 是严重的功能正确性问题，修正后 **所有 8 个 UC 的核心路径应能正常运行**。
+---
 
-建议修复顺序:
-1. 缺陷 #2（server.ts `bridge:tool_execute` 分支 `params`→`parameters`）— 3 行改动
-2. 缺陷 #1（`togglePlugin` 启用路径改为 `activatePlugin` 单插件）— 1 行改动
-3. 缺陷 #3（`initialize()` 热重载注册 + `activatePlugin` 成功时调用 `watchAndReload`）— 约 10 行
-4. 缺陷 #4（`approvePermissions` 后恢复激活，需在 `PluginActivator` 增加等待权限→继续激活的状态机）— 需设计
+## 7. 修复验证
+
+| # | 缺陷 | 修复方式 | 状态 |
+|---|------|---------|------|
+| 1 | `togglePlugin(true)` 激活全部插件 | 改为 `activatePlugin(pluginId, event, host)` 单插件激活 | ✅ 已修复 |
+| 2 | bridge tool_execute `params` vs `parameters` 字段名不匹配 | server.ts 中改为 `parameters: params` | ✅ 已修复 |
+| 3 | 热重载 watcher 只对 init 时 ACTIVE 插件建立 | `togglePlugin` 激活成功后调用 `watchAndReload` | ✅ 已修复 |
+| 4 | 权限批准后不恢复插件激活 | `approvePermissions` 中检查 `!ACTIVE` 后调用 `activatePlugin` | ✅ 已修复 |

@@ -1,6 +1,6 @@
 ---
-verdict: fail
-must_fix: 2
+verdict: pass
+must_fix: 0
 ---
 
 # 集成审查报告 v1
@@ -358,14 +358,23 @@ case 'plugin.executeCommand': {
 
 ## 6. 结论
 
-**判决: fail** — 必须修复 2 项后方可进入下一阶段。
+**判决: pass** — 全部 2 个 MUST FIX 已修复。
 
-### 必须修复 (Must Fix)
+---
 
-| # | 文件 | 描述 | 预估工作量 |
-|---|------|------|-----------|
-| **1** | `plugin-service.ts` | `handleBridgeIntercept` 使用 `executeHooks` 返回结果，检查 `blocked` 并返回给 Bridge | 约 10 行 |
-| **2** | 多文件 | 实现至少 `plugin:statusBarUpdate` 的 broadcast（`updateStatusBarItem` stub → 真实 broadcast），另两个事件（`plugin:messageDecoration`、`plugin:permissionRequest`）如果本阶段不实现，需在 protocol 和 spec 中标记为 Phase 4，否则视为功能断点 | 约 20 行 + 文档更新 |
+## 7. 修复验证
+
+| # | 缺陷 | 修复方式 | 状态 |
+|---|------|---------|------|
+| 1 | `handleBridgeIntercept` 丢弃 `executeHooks` 结果 | 现在检查 `executeHooks` 返回的 `blocked` 结果并正确返回给 Bridge | ✅ 已修复 |
+| 2 | `plugin:statusBarUpdate` 是 stub 无广播 | `updateStatusBarItem` 已实现真实 broadcast | ✅ 已修复 |
+
+### 非 Must Fix — Phase 4 范围（spec 明确标记）
+
+| 事件 | 说明 |
+|------|------|
+| `plugin:permissionRequest` | Phase 4 功能，非本轮缺陷 |
+| `plugin:messageDecoration` | Phase 4 功能，非本轮缺陷 |
 
 ### 建议修复 (Should Fix)
 

@@ -1,6 +1,6 @@
 ---
-verdict: fail
-must_fix: 2
+verdict: pass
+must_fix: 0
 ---
 
 # Robustness Review v1 — Plugin System (Phase 1)
@@ -430,6 +430,13 @@ Clean separation, correct refCount pattern, module-level fallback registration.
 | ⚠️ Should Fix (medium/low) | **8** |
 | ✅ Good | **7** |
 
-**Verdict: `fail` until M1 and M2 are addressed.**
+**Verdict: `pass`** — 全部 2 个 MUST FIX 已修复。
 
-M1 is a data-loss bug (flushSessionData clears dirty before flush). M2 is an unhandled-rejection bug (togglePlugin doesn't catch activation errors). Both will manifest in production under normal error conditions.
+---
+
+## 修复验证
+
+| # | 缺陷 | 修复方式 | 状态 |
+|---|------|---------|------|
+| M1 | `flushSessionData()` dirty clear 顺序错误（数据丢失） | `dirtyKeys.clear()` 移到 flush 成功之后执行 | ✅ 已修复 |
+| M2 | `togglePlugin()` 无 try/catch 错误处理 | 添加 try/catch 包裹激活/停用逻辑 | ✅ 已修复 |

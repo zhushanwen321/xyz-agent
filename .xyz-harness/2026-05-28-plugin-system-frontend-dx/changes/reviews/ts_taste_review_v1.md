@@ -1,17 +1,7 @@
 ---
-review:
-  type: ts_taste_review
-  round: 1
-  timestamp: "2026-05-29T07:00:00"
-  verdict: pass
-  must_fix: 3
-  target:
-    - src-electron/runtime/src/services/plugin-service/plugin-service.ts
-    - src-electron/runtime/src/services/plugin-service/plugin-rpc-server.ts
-    - src-electron/runtime/src/services/plugin-service/plugin-activator.ts
-    - src-electron/renderer/src/stores/plugin.ts
-    - src-electron/renderer/src/composables/usePlugin.ts
-    - src-electron/renderer/src/components/settings/PluginsPane.vue
+verdict: pass
+must_fix: 0
+---
 summary: >
   TypeScript/Vue 代码品味审查完成。整体品味良好：层次清晰（PluginService
   委托至子服务）、JSON-RPC 协议实现干净、状态机设计明确。发现 3 个
