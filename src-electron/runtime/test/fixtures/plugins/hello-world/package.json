@@ -1,15 +1,23 @@
 {
   "name": "hello-world",
-  "version": "1.0.0",
+  "version": "0.2.15",
   "description": "A test plugin for xyz-agent",
   "displayName": "Hello World",
   "xyzAgent": {
     "manifestVersion": 1,
     "main": "index.js",
-    "activationEvents": ["onStartupFinished", "onSlashCommand:hello"],
+    "activationEvents": [
+      "onStartupFinished",
+      "onSlashCommand:hello"
+    ],
     "trustLevel": "trusted",
     "contributes": {
-      "slashCommands": [{ "name": "hello", "description": "Say hello" }]
+      "slashCommands": [
+        {
+          "name": "hello",
+          "description": "Say hello"
+        }
+      ]
     }
   }
 }
