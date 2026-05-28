@@ -1,4 +1,4 @@
-import type { PluginDescriptor, ToolEntry, HookEntry, HookContext, HookResult, HookBlockedResult, BridgeToolExecuteRequest, BridgeToolExecuteResponse, BridgeInterceptResponse, ToolRegistration, HookType } from './plugin-types.js'
+import { PluginPermissionChecker as PermissionChecker } from './plugin-permission.js'
 import type { IPluginService } from '../../interfaces.js'
 import type { IMessageBroker } from '../../interfaces.js'
 import { PluginRegistry } from './plugin-registry.js'
@@ -34,6 +34,7 @@ export class PluginService implements IPluginService {
   private toolRegistry = new Map<string, ToolEntry>()
 
   /** Hook 注册表，key 为 hookType，value 为该类型的所有注册条目 */
+  private permissionChecker: PermissionChecker
   private hookRegistry = new Map<string, HookEntry[]>()
 
   /** Session 数据缓存，key 为 sessionId */
@@ -47,6 +48,7 @@ export class PluginService implements IPluginService {
     this.rpcServer = new PluginRpcServer()
     this.host = new PluginHost(this.rpcServer)
     this.activator = new PluginActivator()
+    this.permissionChecker = new PermissionChecker(registry)
   }
 
   async initialize(): Promise<void> {
@@ -64,6 +66,9 @@ export class PluginService implements IPluginService {
 
     // 3. 注册 RPC 方法
     this.registerRpcMethods()
+
+    // 3b. 加载权限
+    await this.permissionChecker.load()
 
     // 4. 设置 Worker crash callback
     this.host.setCrashCallback((workerId, pluginIds, error) => {
