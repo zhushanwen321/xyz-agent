@@ -5,6 +5,9 @@
         <span class="w-[5px] h-[5px] rounded-full" :style="{ background: dotColor }"></span>
         {{ statusText }}
       </span>
+      <template v-for="item in pluginItems" :key="item.id">
+        <span class="inline-flex items-center gap-1 border-l border-border pl-2">{{ item.text }}</span>
+      </template>
     </div>
     <div class="inline-flex items-center gap-2 min-w-0">
       <span v-if="activeSession?.modelId" class="font-mono text-[10px]">{{ activeSession.modelId }}</span>
@@ -13,13 +16,20 @@
   </footer>
 </template>
 
+<script lang="ts">
+// Module-level refCount shared across component instances
+let _refCount = 0
+let _cleanup: (() => void) | null = null
+</script>
+
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useSessionStore } from '../../stores/session'
 import { usePanelStore } from '../../stores/panel'
 import { useChatStore } from '../../stores/chat'
 import { getState } from '../../lib/ws-client'
 import { useI18n } from 'vue-i18n'
+import { on } from '../../lib/event-bus'
 
 const { t } = useI18n()
 const sessionStore = useSessionStore()
@@ -45,6 +55,33 @@ const tokenDisplay = computed(() => {
   if (!sid) return ''
   const state = chatStore.getSessionState(sid)
   return state.contextUsagePercent ? formatTokens(state.contextUsagePercent) : ''
+})
+
+interface PluginStatusItem {
+  id: string
+  text: string
+  icon?: string
+}
+
+const pluginItems = ref<PluginStatusItem[]>([])
+
+onMounted(() => {
+  _refCount++
+  if (_refCount === 1) {
+    _cleanup = on('plugin:status_bar_update', (items: PluginStatusItem[]) => {
+      pluginItems.value = items.filter(
+        (item, index, arr) => arr.findIndex(i => i.id === item.id) === index,
+      )
+    })
+  }
+})
+
+onUnmounted(() => {
+  _refCount--
+  if (_refCount === 0 && _cleanup) {
+    _cleanup()
+    _cleanup = null
+  }
 })
 
 const dotColor = computed(() => {

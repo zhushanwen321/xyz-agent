@@ -19,7 +19,7 @@ import type {
 /** PluginHost 的最小接口——Activator 只依赖这几个方法 */
 export interface PluginHost {
   assignWorker(pluginId: string, trustLevel: 'trusted' | 'sandbox'): Promise<string>
-  loadPlugin(workerId: string, pluginPath: string): Promise<void>
+  loadPlugin(workerId: string, pluginPath: string, trustLevel?: 'trusted' | 'sandbox'): Promise<void>
   terminateWorker(workerId: string): Promise<void>
   getWorkerHandle(pluginId: string): { workerId: string; postMessage(message: unknown): void } | undefined
 }
@@ -203,6 +203,126 @@ export class PluginActivator {
       pending.resolve(true)
     } else if (msg.type === 'error') {
       pending.resolve(false)
+    }
+  }
+
+  // ── Dependency Management ────────────────────────────────────────
+
+  /**
+   * 对插件列表进行拓扑排序（Kahn's algorithm）。
+   *
+   * 按 extensionDependencies 建立有向无环图，输出依赖顺序的插件列表。
+   * 依赖在前，依赖者在后。
+   *
+   * @param descriptors - 待排序的插件列表
+   * @returns 按拓扑顺序排列的插件列表
+   */
+  topologicalSort(descriptors: PluginDescriptor[]): PluginDescriptor[] {
+    const inDegree = new Map<string, number>()
+    const adjList = new Map<string, string[]>()
+    const descMap = new Map<string, PluginDescriptor>()
+
+    for (const desc of descriptors) {
+      const deps = desc.extensionDependencies ?? []
+      inDegree.set(desc.pluginId, deps.length)
+      // 不要覆盖 adjList：该 pluginId 可能已在依赖遍历时被添加
+      if (!adjList.has(desc.pluginId)) {
+        adjList.set(desc.pluginId, [])
+      }
+      descMap.set(desc.pluginId, desc)
+
+      for (const dep of deps) {
+        if (!adjList.has(dep)) adjList.set(dep, [])
+        adjList.get(dep)!.push(desc.pluginId)
+      }
+    }
+
+    const queue: string[] = []
+    for (const [id, degree] of inDegree) {
+      if (degree === 0) queue.push(id)
+    }
+
+    const result: PluginDescriptor[] = []
+    while (queue.length > 0) {
+      const id = queue.shift()!
+      result.push(descMap.get(id)!)
+
+      for (const neighbor of adjList.get(id) ?? []) {
+        const newDegree = (inDegree.get(neighbor) ?? 1) - 1
+        inDegree.set(neighbor, newDegree)
+        if (newDegree === 0) queue.push(neighbor)
+      }
+    }
+
+    return result
+  }
+
+  /**
+   * 检测插件依赖图中的循环依赖。
+   *
+   * 利用 Kahn's algorithm 的特性：拓扑排序结果长度小于输入列表时，
+   * 未被排序的节点参与循环。
+   *
+   * @param descriptors - 待检测的插件列表
+   * @returns 参与循环的 pluginId 数组，无循环则返回 null
+   */
+  detectCycle(descriptors: PluginDescriptor[]): string[] | null {
+    const sorted = this.topologicalSort(descriptors)
+    if (sorted.length === descriptors.length) return null
+
+    const sortedIds = new Set(sorted.map(d => d.pluginId))
+    return descriptors
+      .map(d => d.pluginId)
+      .filter(id => !sortedIds.has(id))
+  }
+
+  /**
+   * 按依赖顺序激活插件列表。
+   *
+   * 流程：
+   * 1. 检查缺失依赖（extensionDependencies 引用了不存在的插件）
+   * 2. 检测循环依赖
+   * 3. 拓扑排序
+   * 4. 按序逐个激活
+   *
+   * @param descriptors - 待激活的插件列表
+   * @param host - PluginHost 实例
+   * @throws 当存在缺失依赖或循环依赖时抛出 Error
+   */
+  async activateWithDeps(
+    descriptors: PluginDescriptor[],
+    host: PluginHost,
+  ): Promise<void> {
+    // 0. 注册描述符到内部状态（使激活流程能找到插件）
+    this.registerDescriptors(descriptors)
+
+    // 1. 检查缺失依赖
+    const availableIds = new Set(descriptors.map(d => d.pluginId))
+    const missingDeps = new Set<string>()
+
+    for (const desc of descriptors) {
+      for (const dep of desc.extensionDependencies ?? []) {
+        if (!availableIds.has(dep)) {
+          missingDeps.add(dep)
+        }
+      }
+    }
+
+    if (missingDeps.size > 0) {
+      throw new Error(`Missing plugin dependencies: ${[...missingDeps].join(', ')}`)
+    }
+
+    // 2. 检测循环依赖
+    const cycled = this.detectCycle(descriptors)
+    if (cycled) {
+      throw new Error(`Circular dependencies detected: ${cycled.join(' -> ')}`)
+    }
+
+    // 3. 拓扑排序 + 顺序激活
+    const sorted = this.topologicalSort(descriptors)
+
+    for (const desc of sorted) {
+      await this.activatePlugin(desc.pluginId, { type: 'onStartupFinished' }, host)
     }
   }
 

@@ -19,6 +19,8 @@ function makeDescriptor(overrides: Partial<PluginDescriptor> = {}): PluginDescri
     permissions: [],
     engines: { 'xyz-agent': '*' },
     pluginPath: '/tmp/test-plugin',
+    source: 'external',
+    extensionDependencies: [],
     ...overrides,
   }
 }

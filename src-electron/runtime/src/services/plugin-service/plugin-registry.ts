@@ -1,7 +1,7 @@
 import { readFile, readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
-import type { XyzAgentPackageJson, PluginDescriptor, PluginState, PluginContributes } from './plugin-types.js'
+import type { XyzAgentPackageJson, PluginDescriptor, PluginState, PluginContributes, PluginSource } from './plugin-types.js'
 
 /**
  * 插件注册中心：扫描本地插件目录，解析 package.json 中的 xyzAgent manifest，
@@ -20,12 +20,13 @@ export class PluginRegistry {
   }
 
   async scan(): Promise<PluginDescriptor[]> {
-    const dirs = [
-      join(homedir(), '.xyz-agent', 'plugins'),
-      join(this.projectRoot, '.xyz-agent', 'plugins'),
+    const dirs: Array<{ path: string; source: PluginSource }> = [
+      { path: join(homedir(), '.xyz-agent', 'plugins'), source: 'external' },
+      { path: join(this.projectRoot, '.xyz-agent', 'plugins'), source: 'external' },
+      { path: join(this.projectRoot, 'resources', 'plugins'), source: 'built-in' },
     ]
     const results: PluginDescriptor[] = []
-    for (const dir of dirs) {
+    for (const { path: dir, source } of dirs) {
       let entries: string[]
       try {
         entries = await readdir(dir)
@@ -42,7 +43,7 @@ export class PluginRegistry {
           console.warn(`[plugin-registry] cannot stat ${fullPath}, skipping`)
           continue
         }
-        const descriptor = await this.parsePlugin(entry, fullPath)
+        const descriptor = await this.parsePlugin(entry, fullPath, source)
         if (descriptor) results.push(descriptor)
       }
     }
@@ -67,7 +68,7 @@ export class PluginRegistry {
     return this.scan()
   }
 
-  private async parsePlugin(dirName: string, fullPath: string): Promise<PluginDescriptor | null> {
+  private async parsePlugin(dirName: string, fullPath: string, source: PluginSource): Promise<PluginDescriptor | null> {
     const pkgPath = join(fullPath, 'package.json')
     let raw: string
     try {
@@ -103,6 +104,8 @@ export class PluginRegistry {
       permissions: manifest.permissions ?? [],
       engines: pkg.engines?.['xyz-agent'] ? { 'xyz-agent': pkg.engines['xyz-agent'] } : { 'xyz-agent': '*' },
       pluginPath: fullPath,
+      source,
+      extensionDependencies: manifest.extensionDependencies ?? [],
     }
   }
 

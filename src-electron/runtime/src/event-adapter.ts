@@ -34,6 +34,8 @@ const STOP_REASON_MAP: Record<string, string> = {
 export interface EventAdapterOptions {
   /** Called after successfully translating an extension_ui_request event. */
   onExtensionUIRequest?: (requestId: string, sessionId: string, method: string) => void
+  /** Called for bridge: prefixed extension_ui_request events. Routes the request directly without frontend timeout. */
+  onBridgeUIRequest?: (requestId: string, sessionId: string, method: string, data: Record<string, unknown>) => void
 }
 
 export class EventAdapter {
@@ -196,6 +198,13 @@ export class EventAdapter {
         const method = event.method as string | undefined
         // setStatus/setWidget are internal-only, discard
         if (method === 'setStatus' || method === 'setWidget') return null
+        // Bridge methods: route directly via callback, no frontend timeout
+        if (method?.startsWith('bridge:')) {
+          const requestId = String(event.id ?? '')
+          const data = (event as Record<string, unknown>).data as Record<string, unknown> ?? {}
+          this.options?.onBridgeUIRequest?.(requestId, sid, method, data)
+          return null
+        }
         // Interactive methods: confirm, select, input, notify
         if (method === 'confirm' || method === 'select' || method === 'input' || method === 'notify') {
           const rawOptions = event.options as Array<{ label: string; value: string }> | undefined

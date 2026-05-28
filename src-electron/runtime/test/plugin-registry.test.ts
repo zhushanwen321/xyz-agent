@@ -46,7 +46,7 @@ describe('PluginRegistry', () => {
     assert.ok(descriptors.length >= 1, 'should discover at least one plugin')
     const hw = descriptors.find(d => d.pluginId === 'hello-world')
     assert.ok(hw, 'should find hello-world plugin')
-    assert.strictEqual(hw.version, '1.0.0')
+    assert.strictEqual(hw.version, '0.2.15')
     assert.strictEqual(hw.displayName, 'Hello World')
     assert.strictEqual(hw.description, 'A test plugin for xyz-agent')
     assert.strictEqual(hw.main, 'index.js')
@@ -123,6 +123,8 @@ describe('PluginRegistry', () => {
       permissions: [],
       engines: { 'xyz-agent': '*' },
       pluginPath: '/tmp/plugin-a',
+      source: 'external' as const,
+      extensionDependencies: [],
     }
     const descB = {
       pluginId: 'plugin-b',
@@ -137,6 +139,8 @@ describe('PluginRegistry', () => {
       permissions: [],
       engines: { 'xyz-agent': '*' },
       pluginPath: '/tmp/plugin-b',
+      source: 'external' as const,
+      extensionDependencies: [],
     }
 
     registry.cacheDescriptors([descA, descB])

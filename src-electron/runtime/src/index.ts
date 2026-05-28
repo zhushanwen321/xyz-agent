@@ -59,6 +59,9 @@ async function main(): Promise<void> {
       onExtensionUIRequest: (requestId, sid, method) => {
         server.registerExtensionTimeout(sid, requestId, method)
       },
+      onBridgeUIRequest: (requestId, sid, method, data) => {
+        server.handleBridgeRequest(sid, requestId, method, data)
+      },
     }),
     effectiveRoot,
     treeService,
