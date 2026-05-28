@@ -1,0 +1,195 @@
+{
+  "test_execution": [
+    {
+      "caseId": "TC-1-01",
+      "round": 1,
+      "passed": true,
+      "execute_steps": [
+        "run vitest: plugin-hooks-integration.test.ts TC-HKP-06/07 verify syncToolsToBridge collects tool schemas from toolRegistry",
+        "run vitest: bridge-sync.test.ts verifies getToolSchemas() returns registered tools",
+        "verify PluginService.getToolSchemas() reads from runtime toolRegistry (not manifest)"
+      ],
+      "evidence": "230 tests pass, TC-HKP-06/07 + bridge-sync.test.ts confirm bridge:sync returns tool schemas"
+    },
+    {
+      "caseId": "TC-1-02",
+      "round": 1,
+      "passed": true,
+      "execute_steps": [
+        "run vitest: plugin-hooks-integration.test.ts TC-HKP-08 verify handleBridgeToolExecute with existing tool returns success",
+        "run vitest: plugin-hooks-integration.test.ts TC-HKP-09 verify non-existent tool returns error",
+        "verify server.ts bridge:tool_execute handler calls pluginService.handleBridgeToolExecute()"
+      ],
+      "evidence": "230 tests pass, TC-HKP-08/09 confirm tool execute routes via schema.name lookup"
+    },
+    {
+      "caseId": "TC-1-03",
+      "round": 1,
+      "passed": true,
+      "execute_steps": [
+        "code_review: bridge/index.ts implements async state machine with Disconnected→Syncing→Ready states",
+        "code_review: sync() method retries on failure with 2s interval, max 30 attempts",
+        "code_review: onDisconnect handler sets state to Disconnected and calls sync() to reconnect"
+      ],
+      "evidence": "resources/pi/agent/extensions/bridge/index.ts lines 15-42 implement reconnect state machine. No automated test (requires live sidecar process), verified by code review"
+    },
+    {
+      "caseId": "TC-2-01",
+      "round": 1,
+      "passed": true,
+      "execute_steps": [
+        "run vitest: plugin-api-tools.test.ts verifies tool registration stores schema in PluginService",
+        "run vitest: plugin-hooks-integration.test.ts TC-HKP-06 verifies syncToolsToBridge called after registration",
+        "verify tool_register RPC handler stores in toolRegistry and triggers sync"
+      ],
+      "evidence": "230 tests pass, tool-api.ts registerHandler stores entry, syncToolsToBridge reflects changes"
+    },
+    {
+      "caseId": "TC-2-02",
+      "round": 1,
+      "passed": true,
+      "execute_steps": [
+        "run vitest: plugin-hooks-integration.test.ts TC-HKP-13/14 verify executeHooks returns injectedMessages",
+        "run vitest: plugin-api-hooks.test.ts verifies onBeforeAgentStart registration and handler invocation",
+        "code_review: goal-hooks.ts onBeforeAgentStart returns { injectedMessages: [task status] }"
+      ],
+      "evidence": "230 tests pass, hook registration + execution pipeline verified"
+    },
+    {
+      "caseId": "TC-3-01",
+      "round": 1,
+      "passed": true,
+      "execute_steps": [
+        "run vitest: plugin-hooks-integration.test.ts TC-HKP-02 verifies sorted handlers broadcast invoke",
+        "run vitest: plugin-hooks-integration.test.ts TC-HKP-04 verifies handlers sorted by priority ascending",
+        "code_review: plugin-activator.ts executeHooks checks blocked:true and stops chain"
+      ],
+      "evidence": "230 tests pass, executeHooks priority sort and broadcast verified"
+    },
+    {
+      "caseId": "TC-3-02",
+      "round": 1,
+      "passed": true,
+      "execute_steps": [
+        "run vitest: plugin-api-hooks.test.ts verifies beforeSend hook registration",
+        "code_review: plugin-service.ts sendMessage calls executeHooks('message:beforeSend', ...) before sending",
+        "code_review: server.ts beforeSend hook integration in message.send handler"
+      ],
+      "evidence": "230 tests pass, beforeSend hook API and sendMessage integration verified"
+    },
+    {
+      "caseId": "TC-4-01",
+      "round": 1,
+      "passed": true,
+      "execute_steps": [
+        "run vitest: plugin-permission.test.ts verifies PERMISSION_DENIED for unauthorized sandbox plugin",
+        "run vitest: plugin-rpc.test.ts verifies dispatch checks permissions before handler execution"
+      ],
+      "evidence": "230 tests pass, permission check blocks unauthorized RPC calls"
+    },
+    {
+      "caseId": "TC-4-02",
+      "round": 1,
+      "passed": true,
+      "execute_steps": [
+        "run vitest: plugin-permission.test.ts verifies trusted plugin bypasses permission check",
+        "run vitest: plugin-host.test.ts TC-2-02 verifies trusted plugins share worker"
+      ],
+      "evidence": "230 tests pass, trusted plugins skip permission validation"
+    },
+    {
+      "caseId": "TC-5-01",
+      "round": 1,
+      "passed": true,
+      "execute_steps": [
+        "run vitest: plugin-sandbox.test.ts verifies require('fs') throws with blocked module error",
+        "code_review: plugin-sandbox.ts Module._resolveFilename intercepts and throws on builtin modules"
+      ],
+      "evidence": "230 tests pass, sandbox blocks Node.js builtins"
+    },
+    {
+      "caseId": "TC-5-02",
+      "round": 1,
+      "passed": true,
+      "execute_steps": [
+        "run vitest: plugin-storage.test.ts verifies get/set KV operations",
+        "run vitest: plugin-api-extended.test.ts verifies sessionData API (set/get/delete/keys)"
+      ],
+      "evidence": "230 tests pass, storage API works in sandboxed Worker"
+    },
+    {
+      "caseId": "TC-6-01",
+      "round": 1,
+      "passed": true,
+      "execute_steps": [
+        "run vitest: plugin-registry.test.ts verifies built-in plugin discovery and source field",
+        "code_review: plugin-service.ts togglePlugin rejects built-in plugins"
+      ],
+      "evidence": "230 tests pass, built-in plugins cannot be disabled"
+    },
+    {
+      "caseId": "TC-7-01",
+      "round": 1,
+      "passed": true,
+      "execute_steps": [
+        "run vitest: plugin-dependencies.test.ts verifies topological sort respects dependency order",
+        "run vitest: plugin-activator.test.ts verifies activateWithDeps activates in correct order"
+      ],
+      "evidence": "230 tests pass, topological sort and activation order verified"
+    },
+    {
+      "caseId": "TC-7-02",
+      "round": 1,
+      "passed": true,
+      "execute_steps": [
+        "run vitest: plugin-dependencies.test.ts verifies detectCycle rejects circular dependencies",
+        "run vitest: plugin-activator.test.ts verifies error thrown for cyclic deps"
+      ],
+      "evidence": "230 tests pass, cycle detection throws error before activation"
+    },
+    {
+      "caseId": "TC-8-01",
+      "round": 1,
+      "passed": true,
+      "execute_steps": [
+        "code_review: goal-tool.ts create_tasks action calls api.sessionData.set with goal state",
+        "code_review: goal-state.ts GoalState type defines task list structure",
+        "code_review: goal-tool.ts returns tasks array with id/text/status fields"
+      ],
+      "evidence": "Goal plugin code review confirms sessionData persistence for create_tasks. Covered by plugin-api-extended.test.ts sessionData API tests"
+    },
+    {
+      "caseId": "TC-8-02",
+      "round": 1,
+      "passed": true,
+      "execute_steps": [
+        "code_review: goal-hooks.ts onBeforeAgentStart reads goal state from sessionData",
+        "code_review: goal-hooks.ts returns { injectedMessages: [{ role: 'system', content: taskStatus }] }",
+        "run vitest: plugin-hooks-integration.test.ts TC-HKP-13/14 verify intercept returns injectedMessages"
+      ],
+      "evidence": "Goal hooks code review confirms steering prompt injection. Covered by hook integration tests"
+    },
+    {
+      "caseId": "TC-9-01",
+      "round": 1,
+      "passed": true,
+      "execute_steps": [
+        "code_review: todo-tool.ts add action calls api.sessionData.set with updated todo list",
+        "code_review: todo-tool.ts list action reads from sessionData cache",
+        "run vitest: plugin-api-extended.test.ts verifies sessionData set/get operations"
+      ],
+      "evidence": "Todo plugin code review confirms sessionData persistence. Covered by sessionData API tests"
+    },
+    {
+      "caseId": "TC-9-02",
+      "round": 1,
+      "passed": true,
+      "execute_steps": [
+        "code_review: todo-tool.ts activate() reads sessionData on plugin startup to restore state",
+        "code_review: todo-state.ts TodoState defines persistence schema",
+        "run vitest: plugin-api-extended.test.ts verifies sessionData cache isolation per session"
+      ],
+      "evidence": "Todo plugin code review confirms state recovery on activation. Covered by sessionData cache tests"
+    }
+  ]
+}
