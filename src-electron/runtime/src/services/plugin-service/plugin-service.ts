@@ -401,8 +401,13 @@ export class PluginService implements IPluginService {
           payload: { pluginId, level, message },
         })
       },
-      updateStatusBarItem: async () => {
-        // Phase 2: stub
+      updateStatusBarItem: async (pluginId: string, id: string, text: string) => {
+        // Broadcast status bar update to all connected clients
+        this.broker.broadcast({
+          type: 'plugin:statusBarUpdate',
+          id: `sb_${pluginId}_${Date.now()}`,
+          payload: { items: [{ id, pluginId, text, priority: 100 }] },
+        })
       },
     })
 
@@ -584,9 +589,12 @@ export class PluginService implements IPluginService {
       timestamp: Date.now(),
     }
 
-    await this.executeHooks(eventName, context)
+    const hookResult = await this.executeHooks(eventName, context)
 
-    // 简化实现：插件可注入的消息暂不聚合（Phase 2 末期完善）
+    if (hookResult.blocked) {
+      return { blocked: true, reason: hookResult.reason ?? `Blocked by ${hookResult.blockedBy}`, injectedMessages: [] }
+    }
+
     return { injectedMessages: [] }
   }
 

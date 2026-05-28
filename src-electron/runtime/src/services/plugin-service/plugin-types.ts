@@ -238,6 +238,8 @@ export type PermissionConstant = (typeof PermissionConstants)[keyof typeof Permi
 
 /** Bridge 拦截响应，包含注入的消息列表 */
 export interface BridgeInterceptResponse {
+  blocked?: boolean
+  reason?: string
   injectedMessages: unknown[]
 }
 
