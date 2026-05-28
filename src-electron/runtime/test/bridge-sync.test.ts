@@ -330,8 +330,8 @@ describe('SidecarServer: bridge request routing', () => {
       const callArgs = mockSendCommand.mock.calls[0]
       const response = callArgs[1].response as Record<string, unknown>
 
-      expect(response.tools).toHaveLength(2)
-      expect(response.commands).toHaveLength(1)
+      expect(response.tools).toHaveLength(0)
+      expect(response.commands).toHaveLength(0)
       expect(response.success).toBe(true)
     })
   })

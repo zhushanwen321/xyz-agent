@@ -637,27 +637,12 @@ export class SidecarServer implements IMessageBroker {
       const methodName = method as string
       switch (methodName) {
         case 'bridge:sync': {
-          // Get tools and commands from PluginService
           const tools: Array<{ name: string; description: string; parameters: Record<string, unknown> }> = []
           const commands: Array<{ name: string }> = []
-          if (this.pluginService) {
-            // Plugin tools exposed through PluginService
-            const plugins = this.pluginService.getDiscoveredPlugins()
-            for (const plugin of plugins) {
-              if (plugin.contributes?.tools) {
-                for (const tool of plugin.contributes.tools) {
-                  tools.push({
-                    name: tool.name,
-                    description: tool.description,
-                    parameters: tool.parameters as Record<string, unknown>,
-                  })
-                }
-              }
-              if (plugin.contributes?.slashCommands) {
-                for (const cmd of plugin.contributes.slashCommands) {
-                  commands.push({ name: cmd.name })
-                }
-              }
+          if (this.pluginService?.getToolSchemas) {
+            const schemas = this.pluginService.getToolSchemas()
+            for (const s of schemas) {
+              tools.push({ name: s.name, description: s.description, parameters: s.parameters })
             }
           }
           await client.sendCommand('extension_ui_response', { id: requestId, response: { tools, commands, success: true } })
@@ -667,13 +652,14 @@ export class SidecarServer implements IMessageBroker {
         case 'bridge:tool_execute': {
           const toolName = data.toolName as string
           const params = data.params as Record<string, unknown> ?? {}
-          // toolCallId and sessionId are passed through to support tool execution tracking
-          if (!this.pluginService) {
+          if (!this.pluginService?.handleBridgeToolExecute) {
             await client.sendCommand('extension_ui_response', { id: requestId, response: { content: 'Plugin system not available', isError: true } })
             return
           }
-          // TODO (Phase 2 BG4): route to PluginService tool executor
-          await client.sendCommand('extension_ui_response', { id: requestId, response: { content: 'Tool execution not implemented', isError: true } })
+          const result = await this.pluginService.handleBridgeToolExecute({
+            toolName, params, toolCallId: data.toolCallId as string ?? '', sessionId,
+          } as import('./services/plugin-service/plugin-types.js').BridgeToolExecuteRequest)
+          await client.sendCommand('extension_ui_response', { id: requestId, response: result })
           return
         }
 
@@ -689,10 +675,9 @@ export class SidecarServer implements IMessageBroker {
         case 'bridge:intercept': {
           const eventName = data.eventName as string
           const eventData = data.data as Record<string, unknown> ?? {}
-          // before_agent_start interception: allow plugins to inject messages
-          if (this.pluginService && eventName === 'before_agent_start') {
-            // TODO (Phase 2 BG4): route to PluginService hook system for message injection
-            await client.sendCommand('extension_ui_response', { id: requestId, response: {} })
+          if (this.pluginService?.handleBridgeIntercept && eventName === 'before_agent_start') {
+            const result = await this.pluginService.handleBridgeIntercept(eventName, eventData, sessionId)
+            await client.sendCommand('extension_ui_response', { id: requestId, response: result })
             return
           }
           await client.sendCommand('extension_ui_response', { id: requestId, response: {} })
