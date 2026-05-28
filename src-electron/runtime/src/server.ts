@@ -658,7 +658,7 @@ export class SidecarServer implements IMessageBroker {
           }
           const result = await this.pluginService.handleBridgeToolExecute({
             toolName, params, toolCallId: data.toolCallId as string ?? '', sessionId,
-          } as import('./services/plugin-service/plugin-types.js').BridgeToolExecuteRequest)
+          } as unknown as import('./services/plugin-service/plugin-types.js').BridgeToolExecuteRequest)
           await client.sendCommand('extension_ui_response', { id: requestId, response: result })
           return
         }

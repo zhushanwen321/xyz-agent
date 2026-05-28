@@ -114,7 +114,7 @@ describe('Tool API — registerToolRpcHandlers', () => {
     const resp = extractLastResponse(port)
     assert.strictEqual(resp.id, 2)
     assert.ok('error' in resp)
-    assert.ok(resp.error.message.includes('already registered'))
+    assert.ok(resp.error!.message.includes('already registered'))
     // 注册表大小不变
     assert.strictEqual(toolRegistry.size, 1)
     // sync 不应被调用

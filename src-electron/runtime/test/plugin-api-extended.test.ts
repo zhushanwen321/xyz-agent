@@ -45,10 +45,10 @@ function createMockPort(): WorkerPort & { messages: unknown[] } {
   }
 }
 
-function extractLastResponse(port: ReturnType<typeof createMockPort>): RpcResponse & { error?: { code: number; message: string } } {
+function extractLastResponse(port: ReturnType<typeof createMockPort>): any {
   if (port.messages.length === 0) return { jsonrpc: '2.0', id: 0, result: undefined }
   const last = port.messages[port.messages.length - 1] as { response: RpcResponse }
-  return last.response as RpcResponse & { error?: { code: number; message: string } }
+  return last.response as any
 }
 
 // ── Helper: mock PluginRpcClient ───────────────────────────────────

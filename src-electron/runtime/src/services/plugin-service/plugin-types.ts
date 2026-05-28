@@ -361,7 +361,7 @@ export interface Phase2AgentAPI extends Phase1AgentAPI {
 // ── Hook 类型（插件拦截/观察机制）────────────────────────────────────
 
 /** 可拦截的 hook 类型，插件可阻止或修改数据 */
-export type InterceptorHookType = 'onToolCall' | 'onSlashCommand' | 'onMessageSend'
+export type InterceptorHookType = 'onToolCall' | 'onSlashCommand' | 'onMessageSend' | 'onBeforeSendMessage' | 'onBeforeToolCall' | 'onBeforeAgentStart' | 'onAfterToolResult'
 
 /** 只观察的 hook 类型，插件只能读取数据不能阻止 */
 export type ObserverHookType = 'onMessage' | 'onSessionCreate' | 'onSessionDestroy'

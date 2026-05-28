@@ -150,7 +150,7 @@ function makeMockClient() {
   }
 }
 
-function attachAndEmit(adapter: { attach: (client: { onEvent: ReturnType<typeof vi.fn> }) => void }, mockClient: { onEvent: ReturnType<typeof vi.fn> }, event: Record<string, unknown>): void {
+function attachAndEmit(adapter: any, mockClient: { onEvent: ReturnType<typeof vi.fn> }, event: Record<string, unknown>): void {
   mockClient.onEvent.mockImplementationOnce((listener: (event: Record<string, unknown>) => void) => {
     listener(event)
     return () => {}

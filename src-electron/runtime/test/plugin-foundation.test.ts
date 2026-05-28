@@ -166,11 +166,11 @@ describe('Task 1: Plugin Types + Built-in Scan + Registry', () => {
         parameters: { a: 1 },
       }
       const res: BridgeToolExecuteResponse = {
-        success: true,
-        result: 'ok',
+        content: 'ok',
+        isError: false,
       }
       assert.strictEqual(req.toolName, 'myTool')
-      assert.strictEqual(res.result, 'ok')
+      assert.strictEqual(res.content, 'ok')
     })
   })
 

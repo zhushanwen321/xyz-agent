@@ -277,7 +277,7 @@ describe('Hook API — createHookApi (Worker side)', () => {
 
     const disposable = await hookApi.onBeforeSendMessage(async (ctx) => {
       invokedParams.push(ctx)
-      return { blocked: true, modifiedContent: ctx.data }
+      return { blocked: true, proceed: false, modifiedContent: ctx.data }
     })
 
     const registerCall = mockClient.requestCalls.find(c => c.method === 'plugin.hooks.register')
@@ -313,7 +313,7 @@ describe('Hook API — createHookApi (Worker side)', () => {
     const collected: number[] = []
     const disposable = await hookApi.onBeforeToolCall(async (ctx) => {
       collected.push(1)
-      return { blocked: false }
+      return { blocked: false, proceed: true }
     })
 
     const registerCall = mockClient.requestCalls.find(c => c.method === 'plugin.hooks.register')
