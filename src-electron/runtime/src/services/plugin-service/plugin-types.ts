@@ -273,9 +273,8 @@ export interface BridgeToolExecuteRequest {
 
 /** 插件返回工具执行结果 */
 export interface BridgeToolExecuteResponse {
-  success: boolean
-  result: unknown
-  error?: string
+  content: string
+  isError?: boolean
 }
 
 // ── Phase 2: Tool 类型 ──────────────────────────────────────────────

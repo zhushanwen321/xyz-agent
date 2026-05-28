@@ -1,5 +1,5 @@
 import { PluginPermissionChecker as PermissionChecker } from './plugin-permission.js'
-import type { PluginDescriptor, ToolEntry, HookEntry, HookContext, HookResult, HookBlockedResult, BridgeToolExecuteRequest, BridgeToolExecuteResponse, BridgeInterceptResponse, ToolRegistration, HookType } from './plugin-types.js'
+import type { PluginDescriptor, ToolEntry, HookEntry, HookContext, HookResult, BridgeToolExecuteRequest, BridgeToolExecuteResponse, BridgeInterceptResponse, ToolRegistration, HookType } from './plugin-types.js'
 import type { IPluginService } from '../../interfaces.js'
 import type { IMessageBroker } from '../../interfaces.js'
 import { PluginRegistry } from './plugin-registry.js'
@@ -10,17 +10,11 @@ import { PluginActivator } from './plugin-activator.js'
 import { registerToolRpcHandlers } from './tool-api.js'
 import { registerHookRpcHandlers } from './hook-api.js'
 import { registerSessionRpcHandlers } from './api/session-api.js'
-import type { SessionHandlers } from './api/session-api.js'
 import { registerConfigRpcHandlers } from './api/config-api.js'
-import type { ConfigHandlers } from './api/config-api.js'
 import { registerSessionDataRpcHandlers } from './api/session-data-api.js'
-import type { SessionDataHandlers } from './api/session-data-api.js'
 import { registerUiRpcHandlers } from './api/ui-api.js'
-import type { UiHandlers } from './api/ui-api.js'
 import { registerAgentRpcHandlers } from './api/agent-api.js'
-import type { AgentHandlers } from './api/agent-api.js'
 import { registerWorkspaceRpcHandlers } from './api/workspace-api.js'
-import type { WorkspaceHandlers } from './api/workspace-api.js'
 
 export class PluginService implements IPluginService {
   private registry: PluginRegistry
@@ -41,6 +35,11 @@ export class PluginService implements IPluginService {
   /** Session 数据缓存，key 为 sessionId */
   /** SessionData 内存缓存，sessionId → key → value */
   private sessionDataCache = new Map<string, Map<string, unknown>>()
+
+  /** 清理指定 session 的数据缓存 */
+  clearSessionData(sessionId: string): void {
+    this.sessionDataCache.delete(sessionId)
+  }
 
   constructor(registry: PluginRegistry, broker: IMessageBroker) {
     this.registry = registry
