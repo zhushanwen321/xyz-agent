@@ -12,6 +12,7 @@ import type {
   TaskStatus,
   SubTodoStatus,
 } from './goal-state.js'
+import type { Phase2AgentAPI } from '../../../../src-electron/runtime/src/services/plugin-service/plugin-types.js'
 import {
   createInitialState,
   isTerminalTaskStatus,
@@ -23,7 +24,7 @@ import {
 
 // ── 工具注册 ────────────────────────────────────────────
 
-export async function createGoalTool(api: any): Promise<{ dispose(): void }> {
+export async function createGoalTool(api: Phase2AgentAPI): Promise<{ dispose(): void }> {
   return api.tools.register({
     name: 'goal_manager',
     description:
@@ -87,10 +88,12 @@ export async function createGoalTool(api: any): Promise<{ dispose(): void }> {
       required: ['action'],
     },
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi tool handler extra context is loosely typed
     handler: async (params: GoalManagerParams, extra: any) => {
       // 加载/初始化状态
       let state: GoalState
       try {
+        // @ts-expect-error - pi sessionData.get accepts single-arg form for plugin-scoped keys
         state = (await api.sessionData.get('goal-state')) as GoalState | undefined
       } catch {
         state = undefined
@@ -137,7 +140,7 @@ export async function createGoalTool(api: any): Promise<{ dispose(): void }> {
           default:
             throw new Error(`未知 action: ${params.action}`)
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         // 错误时也持久化（状态可能已部分修改）
         await api.sessionData.set('goal-state', state)
         throw new Error(`${err.message}\n\nInput: ${JSON.stringify(params, null, 2)}`)

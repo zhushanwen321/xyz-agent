@@ -70,6 +70,11 @@ export class PluginService implements IPluginService {
     // 3b. 加载权限
     await this.permissionChecker.load()
 
+    // 3c. 设置 RPC 权限检查
+    this.rpcServer.setPermissionChecker((pluginId, method) => {
+      return this.permissionChecker.check(pluginId, method)
+    })
+
     // 4. 设置 Worker crash callback
     this.host.setCrashCallback((workerId, pluginIds, error) => {
       for (const pluginId of pluginIds) {

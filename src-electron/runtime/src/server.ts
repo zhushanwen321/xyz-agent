@@ -542,6 +542,13 @@ export class SidecarServer implements IMessageBroker {
     // Bridge: track only, no frontend timeout
     if (method.startsWith('bridge:')) {
       this.bridgeRequestIds.add(requestId)
+      // Also track in session for cleanup on session deletion
+      let requestSet = this.extensionSessionRequests.get(sessionId)
+      if (!requestSet) {
+        requestSet = new Set()
+        this.extensionSessionRequests.set(sessionId, requestSet)
+      }
+      requestSet.add(requestId)
       return
     }
 
@@ -608,6 +615,8 @@ export class SidecarServer implements IMessageBroker {
         clearTimeout(timer)
         this.extensionTimeouts.delete(reqId)
       }
+      // Also clean up bridge request IDs for this session
+      this.bridgeRequestIds.delete(reqId)
     }
     this.extensionSessionRequests.delete(sessionId)
   }

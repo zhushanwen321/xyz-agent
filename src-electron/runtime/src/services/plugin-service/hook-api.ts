@@ -147,12 +147,12 @@ export function createHookApi(
             handlerId: p.handlerId,
             result,
           })
-          .catch(() => {
-            /* 主线程已不关心此结果 */
+          .catch((e: unknown) => {
+            console.error('[hook-api] hook invoke result delivery failed:', e instanceof Error ? e.message : String(e))
           })
       })
-      .catch(() => {
-        /* hook handler 出错时不中断通知处理 */
+      .catch((e: unknown) => {
+        console.error('[hook-api] hook handler error:', e instanceof Error ? e.message : String(e))
       })
   })
 
@@ -179,7 +179,9 @@ export function createHookApi(
         handlers.delete(handlerId)
         rpcClient
           .request('plugin.hooks.unregister', { pluginId, hookType, handlerId })
-          .catch(() => {})
+          .catch((e: unknown) => {
+            console.error('[hook-api] hook unregister failed:', e instanceof Error ? e.message : String(e))
+          })
       },
     }
   }

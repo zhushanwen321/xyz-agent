@@ -1,9 +1,8 @@
-import type { PiExtensionAPI } from '@mariozechner/pi'
-
 let bridgeState: 'Disconnected' | 'Syncing' | 'Ready' = 'Disconnected'
 let syncAttempts = 0
 const MAX_SYNC_ATTEMPTS = 30
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi extension API is loosely typed
 export async function activate(api: any) {
   bridgeState = 'Disconnected'
 
@@ -19,6 +18,7 @@ export async function activate(api: any) {
       if (response?.tools) {
         bridgeState = 'Syncing'
         for (const tool of response.tools) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi API callbacks are loosely typed
           api.registerTool(tool.name, tool.description, tool.parameters, async (params: any, extra: any) => {
             if (bridgeState !== 'Ready') return { content: 'Plugin system initializing', isError: true }
             return api.extension_ui_request({
@@ -40,6 +40,7 @@ export async function activate(api: any) {
   const EVENTS = ['agent_start','agent_end','tool_call','tool_result',
     'turn_end','message_end','session_start','session_compact','session_tree','before_agent_start']
   for (const evt of EVENTS) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi events carry arbitrary data
     api.on(evt, async (data: any) => {
       try {
         if (evt === 'before_agent_start') {
@@ -55,6 +56,7 @@ export async function activate(api: any) {
   }
 
   // 3. append_entry response handling
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi extension response payload is JSON-typed
   api.on('extension_ui_response', async (msg: any) => {
     try {
       const payload = JSON.parse(msg?.payload || '{}')

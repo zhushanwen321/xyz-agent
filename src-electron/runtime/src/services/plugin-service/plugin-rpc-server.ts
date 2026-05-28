@@ -10,6 +10,9 @@ import { PluginRpcErrorCodes } from './plugin-types.js'
 
 export type RpcMethodHandler = (params: Record<string, unknown>) => Promise<unknown>
 
+/** 权限检查函数签名 — 返回 true 表示放行，false 表示拒绝 */
+export type PermissionCheckFn = (pluginId: string, method: string) => boolean
+
 /** Worker 通信端口的抽象（MessagePort / parentPort 均可适配） */
 export interface WorkerPort {
   postMessage(message: unknown): void
@@ -18,6 +21,12 @@ export interface WorkerPort {
 export class PluginRpcServer {
   private methods = new Map<string, RpcMethodHandler>()
   private workers = new Map<string, WorkerPort>()
+  private permissionCheck: PermissionCheckFn | null = null
+
+  /** 设置权限检查钩子，dispatch 前调用 */
+  setPermissionChecker(checker: PermissionCheckFn): void {
+    this.permissionCheck = checker
+  }
 
   registerMethod(method: string, handler: RpcMethodHandler): void {
     this.methods.set(method, handler)
@@ -64,6 +73,15 @@ export class PluginRpcServer {
     if (!handler) {
       worker.postMessage({ type: 'rpc', response: this.makeErrorResponse(message.id, PluginRpcErrorCodes.METHOD_NOT_FOUND, `Method not found: ${message.method}`) })
       return
+    }
+
+    // 权限检查
+    if (this.permissionCheck) {
+      const pluginId = (message.params?.pluginId as string) || 'unknown'
+      if (!this.permissionCheck(pluginId, message.method)) {
+        worker.postMessage({ type: 'rpc', response: this.makeErrorResponse(message.id, PluginRpcErrorCodes.PERMISSION_DENIED, `PERMISSION_DENIED: ${message.method}`) })
+        return
+      }
     }
 
     try {

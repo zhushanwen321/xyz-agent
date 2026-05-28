@@ -8,18 +8,20 @@
 
 import type { GoalState } from './goal-state.js'
 import { getIncompleteTasks, getCompletedCount } from './goal-state.js'
+import type { Phase2AgentAPI } from '../../../../src-electron/runtime/src/services/plugin-service/plugin-types.js'
 
 // ── 钩子注册 ────────────────────────────────────────────
 
-export function createGoalHooks(api: any): Array<{ dispose(): void }> {
+export function createGoalHooks(api: Phase2AgentAPI): Array<{ dispose(): void }> {
   const disposables: Array<{ dispose(): void }> = []
 
   // ── onBeforeAgentStart: 注入 steering prompt ──────────
 
   disposables.push(
-    api.hooks.onBeforeAgentStart(async (ctx: any) => {
+    api.hooks.onBeforeAgentStart(async (_ctx: any) => {
       let state: GoalState | undefined
       try {
+        // @ts-expect-error - pi sessionData.get accepts single-arg form for plugin-scoped keys
         state = (await api.sessionData.get('goal-state')) as GoalState | undefined
       } catch {
         state = undefined
@@ -74,9 +76,10 @@ export function createGoalHooks(api: any): Array<{ dispose(): void }> {
   // ── agent_end: 清理 pendingMessage ────────────────────
 
   disposables.push(
-    api.hooks.onPiEvent('agent_end', async (data: any) => {
+    api.hooks.onPiEvent('agent_end', async (_data: any) => {
       let state: GoalState | undefined
       try {
+        // @ts-expect-error - pi sessionData.get accepts single-arg form for plugin-scoped keys
         state = (await api.sessionData.get('goal-state')) as GoalState | undefined
       } catch {
         state = undefined
