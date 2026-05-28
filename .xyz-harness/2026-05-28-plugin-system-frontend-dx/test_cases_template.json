@@ -3,6 +3,10 @@
     {
       "id": "TC-1-01",
       "type": "integration",
+      "verification_method": "automated",
+      "planTaskId": "T1",
+      "ac_ref": "AC-A1",
+      "fr_ref": "FR-A1",
       "title": "handleBridgeToolExecute routes to Worker and returns real result",
       "description": "Verify tool execute request is routed to the correct Worker via RPC and the result is non-stub",
       "steps": [
@@ -16,6 +20,10 @@
     {
       "id": "TC-1-02",
       "type": "integration",
+      "verification_method": "automated",
+      "planTaskId": "T1",
+      "ac_ref": "AC-A1",
+      "fr_ref": "FR-A1",
       "title": "handleBridgeToolExecute returns error for unknown tool",
       "description": "Verify tool not found returns isError: true",
       "steps": [
@@ -27,6 +35,10 @@
     {
       "id": "TC-1-03",
       "type": "integration",
+      "verification_method": "automated",
+      "planTaskId": "T1",
+      "ac_ref": "AC-A1",
+      "fr_ref": "FR-A1",
       "title": "handleBridgeToolExecute handles Worker crash",
       "description": "Verify Worker crash during tool execution returns error",
       "steps": [
@@ -40,6 +52,10 @@
     {
       "id": "TC-2-01",
       "type": "integration",
+      "verification_method": "automated",
+      "planTaskId": "T2",
+      "ac_ref": "AC-A2",
+      "fr_ref": "FR-A2",
       "title": "executeHooks runs handlers in priority order",
       "description": "Verify hook handlers execute serially by priority (trusted before sandbox)",
       "steps": [
@@ -52,6 +68,10 @@
     {
       "id": "TC-2-02",
       "type": "integration",
+      "verification_method": "automated",
+      "planTaskId": "T2",
+      "ac_ref": "AC-A2",
+      "fr_ref": "FR-A2",
       "title": "executeHooks stops chain when handler blocks",
       "description": "Verify blocked: true from a handler stops the chain",
       "steps": [
@@ -65,6 +85,10 @@
     {
       "id": "TC-2-03",
       "type": "integration",
+      "verification_method": "automated",
+      "planTaskId": "T2",
+      "ac_ref": "AC-A3",
+      "fr_ref": "FR-A2",
       "title": "executeHooks passes transformedContent through chain",
       "description": "Verify content transformation propagates to next handler",
       "steps": [
@@ -77,6 +101,10 @@
     {
       "id": "TC-3-01",
       "type": "api",
+      "verification_method": "automated",
+      "planTaskId": "T3",
+      "ac_ref": "AC-B1",
+      "fr_ref": "FR-B1",
       "title": "Plugin list WS message returns installed plugins",
       "description": "Verify plugin.list returns Goal and Todo built-in plugins",
       "steps": [
@@ -89,6 +117,10 @@
     {
       "id": "TC-4-01",
       "type": "integration",
+      "verification_method": "automated",
+      "planTaskId": "T4",
+      "ac_ref": "AC-C4",
+      "fr_ref": "FR-C4",
       "title": "sessionData cache returns value when bridge unavailable",
       "description": "Verify local cache serves reads when pi bridge is down",
       "steps": [
@@ -102,6 +134,10 @@
     {
       "id": "TC-4-02",
       "type": "integration",
+      "verification_method": "automated",
+      "planTaskId": "T4",
+      "ac_ref": "AC-C4",
+      "fr_ref": "FR-C4",
       "title": "sessionData flushes dirty cache on deactivate",
       "description": "Verify cache is flushed to bridge when plugin deactivates",
       "steps": [
@@ -115,6 +151,10 @@
     {
       "id": "TC-5-01",
       "type": "integration",
+      "verification_method": "automated",
+      "planTaskId": "T5",
+      "ac_ref": "AC-C5",
+      "fr_ref": "FR-C5",
       "title": "Hot reload detects file change and reactivates plugin",
       "description": "Verify fs.watch triggers deactivate + activate on file change",
       "steps": [
@@ -129,6 +169,10 @@
     {
       "id": "TC-5-02",
       "type": "integration",
+      "verification_method": "automated",
+      "planTaskId": "T5",
+      "ac_ref": "AC-C5",
+      "fr_ref": "FR-C5",
       "title": "Hot reload ignores built-in plugins",
       "description": "Verify fs.watch does not watch resources/plugins/ directory",
       "steps": [
@@ -140,6 +184,10 @@
     {
       "id": "TC-6-01",
       "type": "integration",
+      "verification_method": "automated",
+      "planTaskId": "T6",
+      "ac_ref": "AC-C1",
+      "fr_ref": "FR-C1",
       "title": "Bridge reconnects after pi restart",
       "description": "Verify Bridge goes Disconnected → Syncing → Ready after pi restart",
       "steps": [
@@ -154,6 +202,10 @@
     {
       "id": "TC-7-01",
       "type": "unit",
+      "verification_method": "automated",
+      "planTaskId": "T7",
+      "ac_ref": "AC-C2",
+      "fr_ref": "FR-C2",
       "title": "Goal plugin create_tasks creates task list",
       "description": "Verify Goal plugin handles create_tasks action correctly",
       "steps": [
@@ -166,6 +218,10 @@
     {
       "id": "TC-7-02",
       "type": "unit",
+      "verification_method": "automated",
+      "planTaskId": "T7",
+      "ac_ref": "AC-C2",
+      "fr_ref": "FR-C2",
       "title": "Goal plugin complete_goal marks all tasks done",
       "description": "Verify complete_goal action completes the goal",
       "steps": [
@@ -178,6 +234,10 @@
     {
       "id": "TC-7-03",
       "type": "unit",
+      "verification_method": "automated",
+      "planTaskId": "T7",
+      "ac_ref": "AC-C2",
+      "fr_ref": "FR-C2",
       "title": "Todo plugin add creates new todo items",
       "description": "Verify Todo plugin handles add action",
       "steps": [
@@ -190,6 +250,10 @@
     {
       "id": "TC-8-01",
       "type": "ui",
+      "verification_method": "code_review",
+      "planTaskId": "T9",
+      "ac_ref": "AC-B1",
+      "fr_ref": "FR-B2",
       "title": "PluginsPane renders plugin list from store",
       "description": "Verify PluginsPane displays plugin cards with correct info",
       "steps": [
@@ -202,6 +266,10 @@
     {
       "id": "TC-8-02",
       "type": "ui",
+      "verification_method": "code_review",
+      "planTaskId": "T10",
+      "ac_ref": "AC-B3",
+      "fr_ref": "FR-B3",
       "title": "PluginSettingsForm renders dynamic form from schema",
       "description": "Verify form fields match manifest contributes.settings",
       "steps": [
@@ -215,6 +283,10 @@
     {
       "id": "TC-8-03",
       "type": "ui",
+      "verification_method": "code_review",
+      "planTaskId": "T11",
+      "ac_ref": "AC-B7",
+      "fr_ref": "FR-B5",
       "title": "PermissionDialog shows and submits permission approval",
       "description": "Verify permission dialog displays permissions and sends approval",
       "steps": [
@@ -228,6 +300,10 @@
     {
       "id": "TC-12-01",
       "type": "ui",
+      "verification_method": "code_review",
+      "planTaskId": "T12",
+      "ac_ref": "AC-B5",
+      "fr_ref": "FR-B4",
       "title": "SlashMenu includes plugin slash commands",
       "description": "Verify plugin slash commands appear in SlashMenu",
       "steps": [
@@ -240,6 +316,10 @@
     {
       "id": "TC-12-02",
       "type": "ui",
+      "verification_method": "code_review",
+      "planTaskId": "T12",
+      "ac_ref": "AC-B6",
+      "fr_ref": "FR-B4",
       "title": "MessageDecoration renders plugin tags on messages",
       "description": "Verify decoration tags appear on matching messages",
       "steps": [
