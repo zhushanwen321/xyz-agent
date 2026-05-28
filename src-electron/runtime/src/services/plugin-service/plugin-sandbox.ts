@@ -49,7 +49,7 @@ export function createRequireInterceptor(pluginDir: string): (request: string, r
         const normalizedResolved = resolvedPath.startsWith('/') ? resolvedPath : ''
         if (!normalizedResolved.startsWith(normalizedPluginDir)) {
           const err = new Error(`Sandbox: require('${request}') resolves outside plugin directory`)
-          ;(err as Record<string, unknown>).code = 'PERMISSION_DENIED'
+          ;(err as unknown as Record<string, unknown>).code = 'PERMISSION_DENIED'
           throw err
         }
       }
@@ -59,7 +59,7 @@ export function createRequireInterceptor(pluginDir: string): (request: string, r
     // npm 包名 / 内置模块：检查 blocklist
     if (BLOCKED_BUILTINS.includes(request)) {
       const err = new Error(`Sandbox: require('${request}') is blocked`)
-      ;(err as Record<string, unknown>).code = 'PERMISSION_DENIED'
+      ;(err as unknown as Record<string, unknown>).code = 'PERMISSION_DENIED'
       throw err
     }
 

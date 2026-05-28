@@ -1,4 +1,5 @@
 import { PluginPermissionChecker as PermissionChecker } from './plugin-permission.js'
+import type { PluginDescriptor, ToolEntry, HookEntry, HookContext, HookResult, HookBlockedResult, BridgeToolExecuteRequest, BridgeToolExecuteResponse, BridgeInterceptResponse, ToolRegistration, HookType } from './plugin-types.js'
 import type { IPluginService } from '../../interfaces.js'
 import type { IMessageBroker } from '../../interfaces.js'
 import { PluginRegistry } from './plugin-registry.js'
