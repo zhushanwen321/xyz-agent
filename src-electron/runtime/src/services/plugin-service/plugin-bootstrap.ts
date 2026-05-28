@@ -202,9 +202,9 @@ function initSandbox(pluginDir: string): void {
   const interceptor = createRequireInterceptor(pluginDir)
 
   const _originalResolveFilename = Module._resolveFilename
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any
   Module._resolveFilename = function (
     request: string,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Module._resolveFilename has variadic args
     ...args: any[]
   ): string {
     const resolved = _originalResolveFilename.call(this, request, ...args) as string

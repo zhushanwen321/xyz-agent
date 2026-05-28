@@ -28,7 +28,7 @@ export async function activate(api: any) {
           })
         }
         for (const cmd of response.commands || []) {
-          api.registerCommand(cmd.name, async (args: string) => {})
+          api.registerCommand(cmd.name, async () => {})
         }
         bridgeState = 'Ready'
         clearInterval(syncInterval)

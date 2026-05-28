@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { Dialog, Button, Toggle } from '../../../design-system'
+import { Dialog, Button, Toggle } from '../../design-system'
 
 interface Props {
   pluginId: string
@@ -18,7 +18,7 @@ const props = withDefaults(defineProps<Props>(), {
 
 const emit = defineEmits<{
   confirm: [permissions: string[]]
-  cancel: void
+  cancel: []
 }>()
 
 const selectedPermissions = ref<Set<string>>(new Set())

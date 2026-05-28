@@ -89,7 +89,8 @@ export async function createGoalTool(api: Phase2AgentAPI): Promise<{ dispose(): 
     },
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi tool handler extra context is loosely typed
-    handler: async (params: GoalManagerParams, extra: any) => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any -- pi tool handler extra context is loosely typed
+    handler: async (params: GoalManagerParams, _extra: any) => {
       // 加载/初始化状态
       let state: GoalState
       try {

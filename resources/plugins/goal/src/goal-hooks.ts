@@ -18,6 +18,7 @@ export function createGoalHooks(api: Phase2AgentAPI): Array<{ dispose(): void }>
   // ── onBeforeAgentStart: 注入 steering prompt ──────────
 
   disposables.push(
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     api.hooks.onBeforeAgentStart(async (_ctx) => {
       let state: GoalState | undefined
       try {
@@ -76,6 +77,7 @@ export function createGoalHooks(api: Phase2AgentAPI): Array<{ dispose(): void }>
   // ── agent_end: 清理 pendingMessage ────────────────────
 
   disposables.push(
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     api.hooks.onPiEvent('agent_end', async (_data) => {
       let state: GoalState | undefined
       try {

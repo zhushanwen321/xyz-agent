@@ -202,8 +202,10 @@ export class PluginService implements IPluginService {
     // ── Sessions RPC handlers ────────────────────────────────
     registerSessionRpcHandlers(this.rpcServer, {
       listSessions: () => [],
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       getSession: (_id: string) => undefined,
       getActiveSession: () => undefined,
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       sendMessage: async (_sessionId: string | undefined, _role: string, _content: string) => {
         // Phase 2: session 消息发送需要 ISessionService，暂为 stub
       },
@@ -232,6 +234,7 @@ export class PluginService implements IPluginService {
     // ── SessionData RPC handlers ─────────────────────────────
     registerSessionDataRpcHandlers(this.rpcServer, {
       getCache: () => this.sessionDataCache,
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       appendEntry: async (_sessionId: string, _key: string, _value: unknown) => {
         // Phase 2: bridge:append_entry 持久化，暂为 stub（缓存已更新）
       },
@@ -239,14 +242,17 @@ export class PluginService implements IPluginService {
 
     // ── UI RPC handlers ─────────────────────────────────────
     registerUiRpcHandlers(this.rpcServer, {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       showSelect: async (_title: string, _options: string[], _pluginId: string) => {
         // Phase 2: stub — 返回 undefined
         return undefined
       },
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       showConfirm: async (_title: string, _message: string, _pluginId: string) => {
         // Phase 2: stub — 返回 true
         return true
       },
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       showInput: async (_title: string, _defaultValue: string | undefined, _pluginId: string) => {
         // Phase 2: stub — 返回 undefined
         return undefined
@@ -279,6 +285,7 @@ export class PluginService implements IPluginService {
         const cwd = process.cwd()
         return cwd.split(/[/\\]/).pop() ?? ''
       },
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       findFiles: async (_pattern: string) => {
         // Phase 2: stub — 文件查找需要 glob 库
         return []
@@ -306,6 +313,7 @@ export class PluginService implements IPluginService {
     if (!entries || entries.length === 0) return { blocked: false }
 
     // 按 priority 排序（低数值先执行）
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const sorted = [...entries].sort((a, b) => a.priority - b.priority)
 
     // broadcast invoke 通知给所有 Worker
