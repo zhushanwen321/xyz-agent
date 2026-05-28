@@ -51,7 +51,9 @@ export async function activate(api: any) {
         } else {
           void api.extension_ui_request({ method: 'bridge:event', eventName: evt, data, sessionId: data?.sessionId })
         }
-      } catch { /* silent */ }
+      } catch (e) {
+        console.error('[bridge] event forward error:', e)
+      }
     })
   }
 
@@ -63,6 +65,8 @@ export async function activate(api: any) {
       if (payload.method === 'bridge:append_entry' && payload.type === 'plugin-data') {
         api.appendEntry(payload.type, payload.data)
       }
-    } catch { /* silent */ }
+    } catch (e) {
+      console.error('[bridge] append_entry error:', e)
+    }
   })
 }

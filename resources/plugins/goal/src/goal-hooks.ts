@@ -18,7 +18,7 @@ export function createGoalHooks(api: Phase2AgentAPI): Array<{ dispose(): void }>
   // ── onBeforeAgentStart: 注入 steering prompt ──────────
 
   disposables.push(
-    api.hooks.onBeforeAgentStart(async (_ctx: any) => {
+    api.hooks.onBeforeAgentStart(async (_ctx) => {
       let state: GoalState | undefined
       try {
         // @ts-expect-error - pi sessionData.get accepts single-arg form for plugin-scoped keys
@@ -76,7 +76,7 @@ export function createGoalHooks(api: Phase2AgentAPI): Array<{ dispose(): void }>
   // ── agent_end: 清理 pendingMessage ────────────────────
 
   disposables.push(
-    api.hooks.onPiEvent('agent_end', async (_data: any) => {
+    api.hooks.onPiEvent('agent_end', async (_data) => {
       let state: GoalState | undefined
       try {
         // @ts-expect-error - pi sessionData.get accepts single-arg form for plugin-scoped keys
