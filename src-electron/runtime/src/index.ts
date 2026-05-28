@@ -6,6 +6,8 @@ import { ModelService } from './services/model-service.js'
 import { ProcessManager } from './process-manager.js'
 import { EventAdapter } from './event-adapter.js'
 import { ExtensionService } from './extension-service.js'
+import { PluginRegistry } from './services/plugin-service/plugin-registry.js'
+import { PluginService } from './services/plugin-service/plugin-service.js'
 import type { NavigateInterceptor } from './navigate-interceptor.js'
 
 function parseArgs(): { port: number; projectRoot?: string } {
@@ -66,7 +68,9 @@ async function main(): Promise<void> {
   const modelService = new ModelService()
 
   // Wire services into server
-  server.setServices(sessionService, configService, modelService, treeService, extensionService)
+  const pluginRegistry = new PluginRegistry(effectiveRoot)
+  const pluginService = new PluginService(pluginRegistry, server)
+  server.setServices(sessionService, configService, modelService, treeService, extensionService, pluginService)
 
   // Graceful shutdown on signals
   let shuttingDown = false
@@ -88,6 +92,15 @@ async function main(): Promise<void> {
 
   await server.start()
   console.log('[runtime] ready')
+
+  // 插件系统初始化（扫描、激活 onStartupFinished 插件）
+  try {
+    await pluginService.initialize()
+    console.log('[runtime] plugins initialized')
+  // eslint-disable-next-line taste/no-silent-catch -- init: plugin failure must not block server
+  } catch (e) {
+    console.error('[runtime] plugin initialization failed:', e)
+  }
 }
 
 main().catch((e) => {
