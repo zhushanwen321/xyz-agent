@@ -143,7 +143,8 @@ export async function createGoalTool(api: Phase2AgentAPI): Promise<{ dispose(): 
       } catch (err: unknown) {
         // 错误时也持久化（状态可能已部分修改）
         await api.sessionData.set('goal-state', state)
-        throw new Error(`${err.message}\n\nInput: ${JSON.stringify(params, null, 2)}`)
+        const errorMessage = err instanceof Error ? err.message : String(err)
+        throw new Error(`${errorMessage}\n\nInput: ${JSON.stringify(params, null, 2)}`)
       }
 
       // 持久化状态

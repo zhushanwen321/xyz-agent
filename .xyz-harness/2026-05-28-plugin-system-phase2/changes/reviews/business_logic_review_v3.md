@@ -7,7 +7,7 @@ review:
   verdict: fail
   must_fix: 5
   summary: "V2 报告的 3 个修复项验证结果：1 项完全修复（MF-8 IPluginService 接口），1 项完全修复（MF-4 PermissionChecker 接线到 RPC dispatch），server.ts 的 bridge handler 仍未调用接口方法导致 MF-1/MF-2/MF-3 继续断路。新增 0 条问题。剩余 5 条 MUST FIX 均为 v2 已报告、v3 未修复的问题。"
-
+---
 v3_fix_verification:
   - fix_id: "V2-MF-8: IPluginService 接口添加 bridge 方法"
     status: RESOLVED
