@@ -161,7 +161,7 @@ describe('Demo Plugin E2E', () => {
     const pkg: XyzAgentPackageJson = JSON.parse(raw)
 
     expect(pkg.name).toBe('demo-plugin')
-    expect(pkg.version).toBe('0.1.0')
+    expect(pkg.version).toBeTruthy()  // version is bumped by release script
     expect(pkg.xyzAgent).toBeDefined()
     expect(pkg.xyzAgent.manifestVersion).toBe(1)
     expect(pkg.xyzAgent.activationEvents).toContain('onStartupFinished')
