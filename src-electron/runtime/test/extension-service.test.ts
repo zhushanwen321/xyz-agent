@@ -11,6 +11,11 @@ import { tmpdir } from 'node:os'
 
 // ── Mock fs/promises ──────────────────────────────────────────────
 
+/** 标准化路径分隔符为 /，用于跨平台路径匹配 */
+function normalizePath(p: string): string {
+  return p.replace(/\\/g, '/')
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- fs mock needs any for flexible call signatures
 const mockFs: Record<string, any> = {
   readdir: vi.fn(),
@@ -71,7 +76,7 @@ describe('ExtensionService', () => {
       mockFs.readdir.mockResolvedValue([])
       mockFs.readFile.mockImplementation((path: string | Buffer | URL) => {
         const p = path.toString()
-        if (p.includes('extension-state.json')) return Promise.resolve('{"disabled":[]}')
+        if (normalizePath(p).includes('extension-state.json')) return Promise.resolve('{"disabled":[]}')
         return Promise.reject(new Error('not found'))
       })
 
@@ -85,8 +90,8 @@ describe('ExtensionService', () => {
       // ext-a has package.json, ext-b doesn't
       mockFs.readFile.mockImplementation((path: string | Buffer | URL) => {
         const p = path.toString()
-        if (p.includes('ext-a/package.json')) return Promise.resolve(makePackageJson('ext-a'))
-        if (p.includes('extension-state.json')) return Promise.resolve('{"disabled":[]}')
+        if (normalizePath(p).includes('ext-a/package.json')) return Promise.resolve(makePackageJson('ext-a'))
+        if (normalizePath(p).includes('extension-state.json')) return Promise.resolve('{"disabled":[]}')
         const err = new Error('ENOENT') as NodeJS.ErrnoException
         err.code = 'ENOENT'
         return Promise.reject(err)
@@ -102,8 +107,8 @@ describe('ExtensionService', () => {
       mockFs.readdir.mockResolvedValue(['my-ext'])
       mockFs.readFile.mockImplementation((path: string | Buffer | URL) => {
         const p = path.toString()
-        if (p.includes('my-ext/package.json')) return Promise.resolve(makePackageJson('my-ext', '2.1.0', 'A cool extension'))
-        if (p.includes('extension-state.json')) return Promise.resolve('{"disabled":[]}')
+        if (normalizePath(p).includes('my-ext/package.json')) return Promise.resolve(makePackageJson('my-ext', '2.1.0', 'A cool extension'))
+        if (normalizePath(p).includes('extension-state.json')) return Promise.resolve('{"disabled":[]}')
         return Promise.reject(new Error('not found'))
       })
 
@@ -124,9 +129,9 @@ describe('ExtensionService', () => {
       mockFs.readdir.mockResolvedValue(['ext-a', 'ext-b'])
       mockFs.readFile.mockImplementation((path: string | Buffer | URL) => {
         const p = path.toString()
-        if (p.includes('ext-a/package.json')) return Promise.resolve(makePackageJson('ext-a'))
-        if (p.includes('ext-b/package.json')) return Promise.resolve(makePackageJson('ext-b'))
-        if (p.includes('extension-state.json')) return Promise.resolve('{"disabled":["ext-b"]}')
+        if (normalizePath(p).includes('ext-a/package.json')) return Promise.resolve(makePackageJson('ext-a'))
+        if (normalizePath(p).includes('ext-b/package.json')) return Promise.resolve(makePackageJson('ext-b'))
+        if (normalizePath(p).includes('extension-state.json')) return Promise.resolve('{"disabled":["ext-b"]}')
         return Promise.reject(new Error('not found'))
       })
 
@@ -141,8 +146,8 @@ describe('ExtensionService', () => {
       mockFs.readdir.mockResolvedValue(['ext-a'])
       mockFs.readFile.mockImplementation((path: string | Buffer | URL) => {
         const p = path.toString()
-        if (p.includes('ext-a/package.json')) return Promise.resolve(makePackageJson('ext-a'))
-        if (p.includes('extension-state.json')) {
+        if (normalizePath(p).includes('ext-a/package.json')) return Promise.resolve(makePackageJson('ext-a'))
+        if (normalizePath(p).includes('extension-state.json')) {
           const err = new Error('ENOENT') as NodeJS.ErrnoException
           err.code = 'ENOENT'
           return Promise.reject(err)
@@ -160,8 +165,8 @@ describe('ExtensionService', () => {
       mockFs.readdir.mockResolvedValue(['bad-ext'])
       mockFs.readFile.mockImplementation((path: string | Buffer | URL) => {
         const p = path.toString()
-        if (p.includes('bad-ext/package.json')) return Promise.resolve('not json{{{')
-        if (p.includes('extension-state.json')) return Promise.resolve('{"disabled":[]}')
+        if (normalizePath(p).includes('bad-ext/package.json')) return Promise.resolve('not json{{{')
+        if (normalizePath(p).includes('extension-state.json')) return Promise.resolve('{"disabled":[]}')
         return Promise.reject(new Error('not found'))
       })
 
@@ -174,8 +179,8 @@ describe('ExtensionService', () => {
       mockFs.readdir.mockResolvedValue(['no-name'])
       mockFs.readFile.mockImplementation((path: string | Buffer | URL) => {
         const p = path.toString()
-        if (p.includes('no-name/package.json')) return Promise.resolve('{"version":"1.0.0"}')
-        if (p.includes('extension-state.json')) return Promise.resolve('{"disabled":[]}')
+        if (normalizePath(p).includes('no-name/package.json')) return Promise.resolve('{"version":"1.0.0"}')
+        if (normalizePath(p).includes('extension-state.json')) return Promise.resolve('{"disabled":[]}')
         return Promise.reject(new Error('not found'))
       })
 
@@ -197,8 +202,8 @@ describe('ExtensionService', () => {
       mockFs.readdir.mockResolvedValue(['minimal'])
       mockFs.readFile.mockImplementation((path: string | Buffer | URL) => {
         const p = path.toString()
-        if (p.includes('minimal/package.json')) return Promise.resolve('{"name":"minimal"}')
-        if (p.includes('extension-state.json')) return Promise.resolve('{"disabled":[]}')
+        if (normalizePath(p).includes('minimal/package.json')) return Promise.resolve('{"name":"minimal"}')
+        if (normalizePath(p).includes('extension-state.json')) return Promise.resolve('{"disabled":[]}')
         return Promise.reject(new Error('not found'))
       })
 
@@ -223,10 +228,10 @@ describe('ExtensionService', () => {
       mockFs.readdir.mockResolvedValue(['ext-a', 'ext-b', 'ext-c'])
       mockFs.readFile.mockImplementation((path: string | Buffer | URL) => {
         const p = path.toString()
-        if (p.includes('ext-a/package.json')) return Promise.resolve(makePackageJson('ext-a'))
-        if (p.includes('ext-b/package.json')) return Promise.resolve(makePackageJson('ext-b'))
-        if (p.includes('ext-c/package.json')) return Promise.resolve(makePackageJson('ext-c'))
-        if (p.includes('extension-state.json')) return Promise.resolve('{"disabled":["ext-b"]}')
+        if (normalizePath(p).includes('ext-a/package.json')) return Promise.resolve(makePackageJson('ext-a'))
+        if (normalizePath(p).includes('ext-b/package.json')) return Promise.resolve(makePackageJson('ext-b'))
+        if (normalizePath(p).includes('ext-c/package.json')) return Promise.resolve(makePackageJson('ext-c'))
+        if (normalizePath(p).includes('extension-state.json')) return Promise.resolve('{"disabled":["ext-b"]}')
         return Promise.reject(new Error('not found'))
       })
 
@@ -240,8 +245,8 @@ describe('ExtensionService', () => {
       mockFs.readdir.mockResolvedValue(['ext-a'])
       mockFs.readFile.mockImplementation((path: string | Buffer | URL) => {
         const p = path.toString()
-        if (p.includes('ext-a/package.json')) return Promise.resolve(makePackageJson('ext-a'))
-        if (p.includes('extension-state.json')) return Promise.resolve('{"disabled":["ext-a"]}')
+        if (normalizePath(p).includes('ext-a/package.json')) return Promise.resolve(makePackageJson('ext-a'))
+        if (normalizePath(p).includes('extension-state.json')) return Promise.resolve('{"disabled":["ext-a"]}')
         return Promise.reject(new Error('not found'))
       })
 
@@ -347,9 +352,9 @@ describe('ExtensionService', () => {
       mockFs.readdir.mockResolvedValue(['ext-a', 'ext-b'])
       mockFs.readFile.mockImplementation((path: string | Buffer | URL) => {
         const p = path.toString()
-        if (p.includes('ext-a/package.json')) return Promise.resolve(makePackageJson('ext-a'))
-        if (p.includes('ext-b/package.json')) return Promise.resolve(makePackageJson('ext-b'))
-        if (p.includes('extension-state.json')) return Promise.resolve('{"disabled":["ext-b"]}')
+        if (normalizePath(p).includes('ext-a/package.json')) return Promise.resolve(makePackageJson('ext-a'))
+        if (normalizePath(p).includes('ext-b/package.json')) return Promise.resolve(makePackageJson('ext-b'))
+        if (normalizePath(p).includes('extension-state.json')) return Promise.resolve('{"disabled":["ext-b"]}')
         return Promise.reject(new Error('not found'))
       })
 
@@ -370,8 +375,8 @@ describe('ExtensionService', () => {
       mockFs.readdir.mockResolvedValue(['ext-a'])
       mockFs.readFile.mockImplementation((path: string | Buffer | URL) => {
         const p = path.toString()
-        if (p.includes('ext-a/package.json')) return Promise.resolve(makePackageJson('ext-a'))
-        if (p.includes('extension-state.json')) return Promise.resolve('{"disabled":["ext-a"]}')
+        if (normalizePath(p).includes('ext-a/package.json')) return Promise.resolve(makePackageJson('ext-a'))
+        if (normalizePath(p).includes('extension-state.json')) return Promise.resolve('{"disabled":["ext-a"]}')
         return Promise.reject(new Error('not found'))
       })
 
