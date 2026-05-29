@@ -43,7 +43,7 @@ describe('PluginRegistry', () => {
     const descriptors = await registry.scan()
 
     expect(descriptors.length >= 1).toBeTruthy()
-    const hw = descriptors.find(d => d.pluginId === 'hello-world')
+    const hw = descriptors.find(d => d.pluginId === 'hello-world')!
     expect(hw).toBeTruthy()
     expect(hw.version).toBe('0.3.2')
     expect(hw.displayName).toBe('Hello World')
@@ -91,7 +91,7 @@ describe('PluginRegistry', () => {
 
     const registry = new PluginRegistry(tmpDir)
     await registry.scan()
-    const desc = registry.getDescriptor('infer-test')
+    const desc = registry.getDescriptor('infer-test')!
 
     expect(desc).toBeTruthy()
     expect(desc.activationEvents.includes('onStartupFinished')).toBeTruthy()

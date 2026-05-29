@@ -47,7 +47,7 @@ describe('PluginRpcServer', () => {
     expect(resp.jsonrpc).toBe('2.0')
     expect(resp.id).toBe(1)
     expect('result' in resp).toBeTruthy()
-    expect(resp.result).toEqual({ echo: 'hello' })
+    expect((resp as { result: unknown }).result).toEqual({ echo: 'hello' })
   })
 
   // ── TC-3-02: unregistered method → METHOD_NOT_FOUND error ────
@@ -67,8 +67,8 @@ describe('PluginRpcServer', () => {
     expect(wrapper.type).toBe('rpc')
     const resp = wrapper.response
     expect('error' in resp).toBeTruthy()
-    expect(resp.error.code).toBe(PluginRpcErrorCodes.METHOD_NOT_FOUND)
-    expect(resp.error.message.includes('nonexistent.method')).toBeTruthy()
+    expect((resp as { error: { code: number; message: string } }).error.code).toBe(PluginRpcErrorCodes.METHOD_NOT_FOUND)
+    expect((resp as { error: { code: number; message: string } }).error.message.includes('nonexistent.method')).toBeTruthy()
   })
 
   // ── TC-3-03: handler throws → INTERNAL_ERROR response ─────────
@@ -93,8 +93,8 @@ describe('PluginRpcServer', () => {
     const resp = wrapper.response
     expect('error' in resp).toBeTruthy()
     // 无自定义 code → 默认 INTERNAL_ERROR
-    expect(resp.error.code).toBe(PluginRpcErrorCodes.INTERNAL_ERROR)
-    expect(resp.error.message).toBe('boom')
+    expect((resp as { error: { code: number; message: string } }).error.code).toBe(PluginRpcErrorCodes.INTERNAL_ERROR)
+    expect((resp as { error: { code: number; message: string } }).error.message).toBe('boom')
   })
 
   // ── TC-3-04: notify → sends notification to worker ────────────

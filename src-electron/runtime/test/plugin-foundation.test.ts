@@ -237,7 +237,7 @@ describe('Task 1: Plugin Types + Built-in Scan + Registry', () => {
       )
 
       const descriptors = await registry.scan()
-      const coreTool = descriptors.find(d => d.pluginId === 'core-tool')
+      const coreTool = descriptors.find(d => d.pluginId === 'core-tool')!
       expect(coreTool).toBeTruthy()
       expect(coreTool.source).toBe('built-in')
       expect(coreTool.extensionDependencies).toEqual([])
@@ -263,7 +263,7 @@ describe('Task 1: Plugin Types + Built-in Scan + Registry', () => {
 
       const registry = new PluginRegistry(tmpDir)
       const descriptors = await registry.scan()
-      const ext = descriptors.find(d => d.pluginId === 'ext-plugin')
+      const ext = descriptors.find(d => d.pluginId === 'ext-plugin')!
       expect(ext).toBeTruthy()
       expect(ext.source).toBe('external')
       expect(ext.extensionDependencies).toEqual(['core-tool'])

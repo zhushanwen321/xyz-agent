@@ -84,7 +84,7 @@ describe('Plugin Integration', () => {
     // 1. 扫描发现插件
     const descriptors = await registry.scan()
     expect(descriptors.length >= 1).toBeTruthy()
-    const hw = descriptors.find(d => d.pluginId === 'hello-world')
+    const hw = descriptors.find(d => d.pluginId === 'hello-world')!
     expect(hw).toBeTruthy()
     expect(hw.trustLevel).toBe('trusted')
     expect(hw.activationEvents.includes('onStartupFinished')).toBeTruthy()

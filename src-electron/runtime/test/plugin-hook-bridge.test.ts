@@ -32,7 +32,7 @@ describe('EventAdapter: onHookExecute callback', () => {
   })
 
   it('calls onHookExecute with correct hookType and context for tool_execution_start', async () => {
-    const hookFn = vi.fn<Promise<HookResult>, [string, Record<string, unknown>]>().mockResolvedValue({ blocked: false })
+    const hookFn = vi.fn().mockResolvedValue({ blocked: false }) as unknown as (hookType: string, context: Record<string, unknown>) => Promise<HookResult>
 
     const options: EventAdapterOptions = { onHookExecute: hookFn }
     const adapter = new EventAdapter('sess-1', send, options)
@@ -59,7 +59,7 @@ describe('EventAdapter: onHookExecute callback', () => {
   })
 
   it('calls onHookExecute for tool_execution_end with onAfterToolResult', async () => {
-    const hookFn = vi.fn<Promise<HookResult>, [string, Record<string, unknown>]>().mockResolvedValue({ blocked: false })
+    const hookFn = vi.fn().mockResolvedValue({ blocked: false }) as unknown as (hookType: string, context: Record<string, unknown>) => Promise<HookResult>
 
     const options: EventAdapterOptions = { onHookExecute: hookFn }
     const adapter = new EventAdapter('sess-2', send, options)
@@ -85,10 +85,10 @@ describe('EventAdapter: onHookExecute callback', () => {
   })
 
   it('blocks event when hookResult.blocked === true', async () => {
-    const hookFn = vi.fn<Promise<HookResult>, [string, Record<string, unknown>]>().mockResolvedValue({
+    const hookFn = vi.fn().mockResolvedValue({
       blocked: true,
       reason: 'Plugin blocked this tool',
-    })
+    }) as unknown as (hookType: string, context: Record<string, unknown>) => Promise<HookResult>
 
     const options: EventAdapterOptions = { onHookExecute: hookFn }
     const adapter = new EventAdapter('sess-3', send, options)
@@ -113,10 +113,10 @@ describe('EventAdapter: onHookExecute callback', () => {
 
   it('replaces input with transformedData when hook returns it', async () => {
     const transformedInput = { path: '/safe/path.txt', sanitized: true }
-    const hookFn = vi.fn<Promise<HookResult>, [string, Record<string, unknown>]>().mockResolvedValue({
+    const hookFn = vi.fn().mockResolvedValue({
       blocked: false,
       transformedData: transformedInput,
-    })
+    }) as unknown as (hookType: string, context: Record<string, unknown>) => Promise<HookResult>
 
     const options: EventAdapterOptions = { onHookExecute: hookFn }
     const adapter = new EventAdapter('sess-4', send, options)
@@ -141,10 +141,10 @@ describe('EventAdapter: onHookExecute callback', () => {
   })
 
   it('replaces output with transformedData for tool_execution_end', async () => {
-    const hookFn = vi.fn<Promise<HookResult>, [string, Record<string, unknown>]>().mockResolvedValue({
+    const hookFn = vi.fn().mockResolvedValue({
       blocked: false,
       transformedData: 'REDACTED OUTPUT',
-    })
+    }) as unknown as (hookType: string, context: Record<string, unknown>) => Promise<HookResult>
 
     const options: EventAdapterOptions = { onHookExecute: hookFn }
     const adapter = new EventAdapter('sess-5', send, options)
@@ -190,7 +190,7 @@ describe('EventAdapter: onHookExecute callback', () => {
   })
 
   it('proceeds with original data when hook throws', async () => {
-    const hookFn = vi.fn<Promise<HookResult>, [string, Record<string, unknown>]>().mockRejectedValue(new Error('hook crash'))
+    const hookFn = vi.fn().mockRejectedValue(new Error('hook crash')) as unknown as (hookType: string, context: Record<string, unknown>) => Promise<HookResult>
 
     const options: EventAdapterOptions = { onHookExecute: hookFn }
     const adapter = new EventAdapter('sess-7', send, options)

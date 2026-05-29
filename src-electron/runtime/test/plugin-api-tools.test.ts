@@ -74,11 +74,11 @@ describe('Tool API — registerToolRpcHandlers', () => {
     const resp = extractLastResponse(port)
     expect(resp.id).toBe(1)
     expect('result' in resp).toBeTruthy()
-    expect(resp.result).toBe('my-plugin:my-tool')
+    expect((resp as { result: unknown }).result).toBe('my-plugin:my-tool')
 
     // 验证注册表
     expect(toolRegistry.size).toBe(1)
-    const entry = toolRegistry.get('my-plugin:my-tool')
+    const entry = toolRegistry.get('my-plugin:my-tool')!
     expect(entry).toBeTruthy()
     expect(entry.pluginId).toBe('my-plugin')
     expect(entry.schema.name).toBe('my-tool')

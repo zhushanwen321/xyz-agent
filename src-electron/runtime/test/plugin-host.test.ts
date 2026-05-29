@@ -59,8 +59,8 @@ describe('PluginHost', () => {
     expect(workerId1.startsWith('sandbox-')).toBeTruthy()
     expect(workerId2.startsWith('sandbox-')).toBeTruthy()
 
-    const handle1 = host.getWorkerHandleById(workerId1)
-    const handle2 = host.getWorkerHandleById(workerId2)
+    const handle1 = host.getWorkerHandleById(workerId1)!
+    const handle2 = host.getWorkerHandleById(workerId2)!
     expect(handle1).toBeTruthy()
     expect(handle2).toBeTruthy()
     expect(handle1.trustLevel).toBe('sandbox')
@@ -84,7 +84,7 @@ describe('PluginHost', () => {
     expect(workerId1).toBe(workerId2)
     expect(workerId2).toBe(workerId3)
 
-    const handle = host.getWorkerHandleById(workerId1)
+    const handle = host.getWorkerHandleById(workerId1)!
     expect(handle).toBeTruthy()
     expect(handle.trustLevel).toBe('trusted')
     expect(handle.pluginIds.length).toBe(3)
@@ -154,7 +154,7 @@ describe('PluginHost', () => {
     })
 
     const workerId = await host.assignWorker('crash-test', 'sandbox')
-    const workerInstance = host.getWorkerInstance(workerId)
+    const workerInstance = host.getWorkerInstance(workerId)!
     expect(workerInstance).toBeTruthy()
 
     // 直接 terminate 让 Worker 退出（exit code != 0 触发 crash handler）

@@ -119,10 +119,10 @@ describe('Hook API — registerHookRpcHandlers', () => {
     const resp = extractLastResponse(port)
     expect(resp.id).toBe(1)
     expect('result' in resp).toBeTruthy()
-    expect(resp.result).toEqual({ registered: true })
+    expect((resp as { result: unknown }).result).toEqual({ registered: true })
 
     // 验证 registry
-    const entries = hookRegistry.get('onBeforeSendMessage')
+    const entries = hookRegistry.get('onBeforeSendMessage')!
     expect(entries).toBeTruthy()
     expect(entries.length).toBe(1)
     expect(entries[0].handlerId).toBe('hook_my-plugin_1')
@@ -197,7 +197,7 @@ describe('Hook API — registerHookRpcHandlers', () => {
       params: { pluginId: 'plugin-trusted', hookType: 'onBeforeSendMessage', handlerId: 'h_trusted' },
     })
 
-    const entries = hookRegistry.get('onBeforeSendMessage')
+    const entries = hookRegistry.get('onBeforeSendMessage')!
     expect(entries).toBeTruthy()
     expect(entries.length).toBe(3)
 
@@ -236,7 +236,7 @@ describe('Hook API — createHookApi (Worker side)', () => {
     })
 
     // 验证注册请求已发送
-    const registerCall = mockClient.requestCalls.find(c => c.method === 'plugin.hooks.register')
+    const registerCall = mockClient.requestCalls.find(c => c.method === 'plugin.hooks.register')!
     expect(registerCall).toBeTruthy()
     expect(registerCall.params.pluginId).toBe('test-plugin')
     expect(registerCall.params.hookType).toBe('onPiEvent:session:create')
@@ -245,7 +245,7 @@ describe('Hook API — createHookApi (Worker side)', () => {
     const handlerId = registerCall.params.handlerId as string
 
     // 模拟主线程发送 hook.invoke 通知
-    const invokeHandler = mockClient.onNotificationHandlers.get('plugin.hooks.invoke')
+    const invokeHandler = mockClient.onNotificationHandlers.get('plugin.hooks.invoke')!
     expect(invokeHandler).toBeTruthy()
 
     // 触发 invoke
@@ -261,7 +261,7 @@ describe('Hook API — createHookApi (Worker side)', () => {
     expect(collected[0].data).toEqual({ sessionId: 's1' })
 
     // 验证 invoke result 已返回
-    const resultCall = mockClient.requestCalls.find(c => c.method === 'plugin.hooks.invoke.result')
+    const resultCall = mockClient.requestCalls.find(c => c.method === 'plugin.hooks.invoke.result')!
     expect(resultCall).toBeTruthy()
     expect(resultCall.params.handlerId).toBe(handlerId)
 
@@ -279,12 +279,12 @@ describe('Hook API — createHookApi (Worker side)', () => {
       return { blocked: true, proceed: false, modifiedContent: ctx.data }
     })
 
-    const registerCall = mockClient.requestCalls.find(c => c.method === 'plugin.hooks.register')
+    const registerCall = mockClient.requestCalls.find(c => c.method === 'plugin.hooks.register')!
     expect(registerCall).toBeTruthy()
     expect(registerCall.params.hookType).toBe('onBeforeSendMessage')
 
     const handlerId = registerCall.params.handlerId as string
-    const invokeHandler = mockClient.onNotificationHandlers.get('plugin.hooks.invoke')
+    const invokeHandler = mockClient.onNotificationHandlers.get('plugin.hooks.invoke')!
     expect(invokeHandler).toBeTruthy()
 
     invokeHandler({
@@ -297,7 +297,7 @@ describe('Hook API — createHookApi (Worker side)', () => {
     expect((invokedParams[0] as Record<string, unknown>).hookType).toBe('onBeforeSendMessage')
 
     // 验证结果已返回
-    const resultCall = mockClient.requestCalls.find(c => c.method === 'plugin.hooks.invoke.result')
+    const resultCall = mockClient.requestCalls.find(c => c.method === 'plugin.hooks.invoke.result')!
     expect(resultCall).toBeTruthy()
     expect((resultCall.params.result as Record<string, unknown>).blocked).toBeTruthy()
 
@@ -315,7 +315,7 @@ describe('Hook API — createHookApi (Worker side)', () => {
       return { blocked: false, proceed: true }
     })
 
-    const registerCall = mockClient.requestCalls.find(c => c.method === 'plugin.hooks.register')
+    const registerCall = mockClient.requestCalls.find(c => c.method === 'plugin.hooks.register')!
     expect(registerCall).toBeTruthy()
     const handlerId = registerCall.params.handlerId as string
 
@@ -323,15 +323,15 @@ describe('Hook API — createHookApi (Worker side)', () => {
     disposable.dispose()
 
     // 再次触发 invoke → 不触发 handler（已清除）
-    const invokeHandler = mockClient.onNotificationHandlers.get('plugin.hooks.invoke')
+    const invokeHandler = mockClient.onNotificationHandlers.get('plugin.hooks.invoke')!
     expect(invokeHandler).toBeTruthy()
     invokeHandler({ handlerId, context: {} })
 
     await new Promise(resolve => setTimeout(resolve, 10))
-    expect(collected.length).toBe(0, 'handler should not be called after dispose')
+    expect(collected.length).toBe(0) // handler should not be called after dispose
 
     // 验证 unregister 请求已发送
-    const unregisterCall = mockClient.requestCalls.find(c => c.method === 'plugin.hooks.unregister')
+    const unregisterCall = mockClient.requestCalls.find(c => c.method === 'plugin.hooks.unregister')!
     expect(unregisterCall).toBeTruthy()
     expect(unregisterCall.params.handlerId).toBe(handlerId)
   })
