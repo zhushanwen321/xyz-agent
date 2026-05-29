@@ -1,14 +1,21 @@
 {
   "name": "todo",
-  "version": "1.0.0",
+  "version": "0.3.1",
   "displayName": "Todo List",
   "description": "Lightweight todo list manager for tracking tasks and todos",
   "xyzAgent": {
     "manifestVersion": 1,
     "main": "index.js",
-    "activationEvents": ["onStartupFinished"],
+    "activationEvents": [
+      "onStartupFinished"
+    ],
     "trustLevel": "trusted",
     "source": "built-in",
-    "permissions": ["tools.register", "hooks.onPiEvent", "sessionData.get", "sessionData.set"]
+    "permissions": [
+      "tools.register",
+      "hooks.onPiEvent",
+      "sessionData.get",
+      "sessionData.set"
+    ]
   }
 }
