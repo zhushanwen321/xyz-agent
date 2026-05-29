@@ -30,6 +30,9 @@ function createAdapter(): { adapter: EventAdapter; sent: ServerMessage[] } {
   return { adapter, sent }
 }
 
+/** Wait for async handleEvent to flush */
+const flushAsync = () => new Promise<void>(r => setTimeout(r, 0))
+
 describe('EventAdapter: extension event translation', () => {
   let adapter: EventAdapter
   let sent: ServerMessage[]
@@ -43,7 +46,7 @@ describe('EventAdapter: extension event translation', () => {
   // ── extension_ui_request → extension.ui_request ──────────────
 
   describe('extension_ui_request (interactive methods)', () => {
-    it('translates confirm method to extension.ui_request', () => {
+    it('translates confirm method to extension.ui_request', async () => {
       adapter.attach({
         onEvent: (listener) => {
           listener(piEvent({
@@ -56,6 +59,7 @@ describe('EventAdapter: extension event translation', () => {
           return () => {}
         },
       })
+      await flushAsync()
 
       expect(sent).toHaveLength(1)
       expect(sent[0].type).toBe('extension.ui_request')
@@ -68,7 +72,7 @@ describe('EventAdapter: extension event translation', () => {
       })
     })
 
-    it('translates select method to extension.ui_request', () => {
+    it('translates select method to extension.ui_request', async () => {
       adapter.attach({
         onEvent: (listener) => {
           listener(piEvent({
@@ -84,6 +88,7 @@ describe('EventAdapter: extension event translation', () => {
           return () => {}
         },
       })
+      await flushAsync()
 
       expect(sent).toHaveLength(1)
       expect(sent[0].type).toBe('extension.ui_request')
@@ -93,7 +98,7 @@ describe('EventAdapter: extension event translation', () => {
       expect(payload.options).toEqual(['A', 'B'])
     })
 
-    it('translates input method to extension.ui_request', () => {
+    it('translates input method to extension.ui_request', async () => {
       adapter.attach({
         onEvent: (listener) => {
           listener(piEvent({
@@ -106,6 +111,7 @@ describe('EventAdapter: extension event translation', () => {
           return () => {}
         },
       })
+      await flushAsync()
 
       expect(sent).toHaveLength(1)
       expect(sent[0].type).toBe('extension.ui_request')
@@ -118,7 +124,7 @@ describe('EventAdapter: extension event translation', () => {
       })
     })
 
-    it('translates notify method to extension.ui_request', () => {
+    it('translates notify method to extension.ui_request', async () => {
       adapter.attach({
         onEvent: (listener) => {
           listener(piEvent({
@@ -131,6 +137,7 @@ describe('EventAdapter: extension event translation', () => {
           return () => {}
         },
       })
+      await flushAsync()
 
       expect(sent).toHaveLength(1)
       expect(sent[0].type).toBe('extension.ui_request')
@@ -143,7 +150,7 @@ describe('EventAdapter: extension event translation', () => {
       })
     })
 
-    it('does NOT produce message.tool_call_pending for confirm', () => {
+    it('does NOT produce message.tool_call_pending for confirm', async () => {
       adapter.attach({
         onEvent: (listener) => {
           listener(piEvent({
@@ -155,12 +162,13 @@ describe('EventAdapter: extension event translation', () => {
           return () => {}
         },
       })
+      await flushAsync()
 
       const toolCallPending = sent.find((m) => m.type === 'message.tool_call_pending')
       expect(toolCallPending).toBeUndefined()
     })
 
-    it('does NOT produce message.tool_call_pending for select', () => {
+    it('does NOT produce message.tool_call_pending for select', async () => {
       adapter.attach({
         onEvent: (listener) => {
           listener(piEvent({
@@ -172,6 +180,7 @@ describe('EventAdapter: extension event translation', () => {
           return () => {}
         },
       })
+      await flushAsync()
 
       const toolCallPending = sent.find((m) => m.type === 'message.tool_call_pending')
       expect(toolCallPending).toBeUndefined()
@@ -181,7 +190,7 @@ describe('EventAdapter: extension event translation', () => {
   // ── extension_ui_request (discard methods) ─────────────────────
 
   describe('extension_ui_request (discard methods)', () => {
-    it('discards setStatus method (returns null)', () => {
+    it('discards setStatus method (returns null)', async () => {
       adapter.attach({
         onEvent: (listener) => {
           listener(piEvent({
@@ -192,11 +201,12 @@ describe('EventAdapter: extension event translation', () => {
           return () => {}
         },
       })
+      await flushAsync()
 
       expect(sent).toHaveLength(0)
     })
 
-    it('discards setWidget method (returns null)', () => {
+    it('discards setWidget method (returns null)', async () => {
       adapter.attach({
         onEvent: (listener) => {
           listener(piEvent({
@@ -207,6 +217,7 @@ describe('EventAdapter: extension event translation', () => {
           return () => {}
         },
       })
+      await flushAsync()
 
       expect(sent).toHaveLength(0)
     })
@@ -215,7 +226,7 @@ describe('EventAdapter: extension event translation', () => {
   // ── extension_error → extension.error ─────────────────────────
 
   describe('extension_error', () => {
-    it('translates extension_error to extension.error', () => {
+    it('translates extension_error to extension.error', async () => {
       adapter.attach({
         onEvent: (listener) => {
           listener(piEvent({
@@ -226,6 +237,7 @@ describe('EventAdapter: extension event translation', () => {
           return () => {}
         },
       })
+      await flushAsync()
 
       expect(sent).toHaveLength(1)
       expect(sent[0].type).toBe('extension.error')
@@ -236,7 +248,7 @@ describe('EventAdapter: extension event translation', () => {
       })
     })
 
-    it('handles extension_error without sessionId in raw event', () => {
+    it('handles extension_error without sessionId in raw event', async () => {
       adapter.attach({
         onEvent: (listener) => {
           listener(piEvent({
@@ -247,6 +259,7 @@ describe('EventAdapter: extension event translation', () => {
           return () => {}
         },
       })
+      await flushAsync()
 
       expect(sent).toHaveLength(1)
       expect(sent[0].payload).toMatchObject({
@@ -259,7 +272,7 @@ describe('EventAdapter: extension event translation', () => {
   // ── tool_execution_update → message.tool_call_update ──────────
 
   describe('tool_execution_update', () => {
-    it('translates tool_execution_update to message.tool_call_update', () => {
+    it('translates tool_execution_update to message.tool_call_update', async () => {
       adapter.attach({
         onEvent: (listener) => {
           listener(piEvent({
@@ -271,6 +284,7 @@ describe('EventAdapter: extension event translation', () => {
           return () => {}
         },
       })
+      await flushAsync()
 
       expect(sent).toHaveLength(1)
       expect(sent[0].type).toBe('message.tool_call_update')
@@ -281,7 +295,7 @@ describe('EventAdapter: extension event translation', () => {
       })
     })
 
-    it('handles tool_execution_update without partialResult', () => {
+    it('handles tool_execution_update without partialResult', async () => {
       adapter.attach({
         onEvent: (listener) => {
           listener(piEvent({
@@ -292,6 +306,7 @@ describe('EventAdapter: extension event translation', () => {
           return () => {}
         },
       })
+      await flushAsync()
 
       expect(sent).toHaveLength(1)
       expect(sent[0].type).toBe('message.tool_call_update')
@@ -305,7 +320,7 @@ describe('EventAdapter: extension event translation', () => {
   // ── SessionId injection ────────────────────────────────────────
 
   describe('sessionId injection', () => {
-    it('injects constructor sessionId into all extension messages', () => {
+    it('injects constructor sessionId into all extension messages', async () => {
       const localSent: ServerMessage[] = []
       const localSend: WsSender = (msg) => { localSent.push(msg) }
       const localAdapter = new EventAdapter('custom-session-42', localSend)
@@ -318,6 +333,7 @@ describe('EventAdapter: extension event translation', () => {
           return () => {}
         },
       })
+      await flushAsync()
 
       for (const msg of localSent) {
         expect((msg.payload as Record<string, unknown>).sessionId).toBe('custom-session-42')
@@ -328,7 +344,7 @@ describe('EventAdapter: extension event translation', () => {
   // ── Non-extension events unchanged ─────────────────────────────
 
   describe('non-extension events (regression)', () => {
-    it('still translates tool_execution_start correctly', () => {
+    it('still translates tool_execution_start correctly', async () => {
       adapter.attach({
         onEvent: (listener) => {
           listener(piEvent({
@@ -340,6 +356,7 @@ describe('EventAdapter: extension event translation', () => {
           return () => {}
         },
       })
+      await flushAsync()
 
       expect(sent).toHaveLength(1)
       expect(sent[0].type).toBe('message.tool_call_start')
@@ -350,7 +367,7 @@ describe('EventAdapter: extension event translation', () => {
       })
     })
 
-    it('still translates status events correctly', () => {
+    it('still translates status events correctly', async () => {
       adapter.attach({
         onEvent: (listener) => {
           listener(piEvent({
@@ -361,6 +378,7 @@ describe('EventAdapter: extension event translation', () => {
           return () => {}
         },
       })
+      await flushAsync()
 
       expect(sent).toHaveLength(1)
       expect(sent[0].type).toBe('message.status')

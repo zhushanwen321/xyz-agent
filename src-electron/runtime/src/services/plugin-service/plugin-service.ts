@@ -1,9 +1,9 @@
 import { PluginPermissionChecker as PermissionChecker } from './plugin-permission.js'
-import type { PluginDescriptor, ToolEntry, HookEntry, HookContext, HookResult, BridgeToolExecuteRequest, BridgeToolExecuteResponse, BridgeInterceptResponse, ToolRegistration, HookType } from './plugin-types.js'
+import type { PluginDescriptor, ToolEntry, HookEntry, HookContext, HookResult, BridgeToolExecuteRequest, BridgeToolExecuteResponse, BridgeInterceptResponse, ToolRegistration, HookType, IPluginServiceDeps } from './plugin-types.js'
 import type { IPluginService } from '../../interfaces.js'
 import type { IMessageBroker } from '../../interfaces.js'
 import { PluginRegistry } from './plugin-registry.js'
-import { PluginStorage } from './plugin-storage.js'
+import { PluginStorage, persistSessionData, loadSessionData, deleteSessionData } from './plugin-storage.js'
 import { PluginRpcServer } from './plugin-rpc-server.js'
 import { PluginHost } from './plugin-host.js'
 import { PluginActivator } from './plugin-activator.js'
@@ -15,6 +15,10 @@ import { registerSessionDataRpcHandlers } from './api/session-data-api.js'
 import { registerUiRpcHandlers } from './api/ui-api.js'
 import { registerAgentRpcHandlers } from './api/agent-api.js'
 import { registerWorkspaceRpcHandlers } from './api/workspace-api.js'
+import { PluginInstaller, type InstallResult } from './plugin-installer.js'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { readdir } from 'node:fs/promises'
 
 export class PluginService implements IPluginService {
   private registry: PluginRegistry
@@ -45,21 +49,50 @@ export class PluginService implements IPluginService {
   /** 定时 flush 计时器 */
   private sessionDataFlushTimer: ReturnType<typeof setInterval> | null = null
 
+  /** npm 安装器 */
+  private installer: PluginInstaller
+
+  /** 注入的外部依赖 */
+  private deps: IPluginServiceDeps
+
+  /** 当前活跃的 UI 请求 ID（串行排队） */
+  private activeUiRequest: string | null = null
+
+  /** 等待中的 UI 请求队列 */
+  private uiRequestQueue: Array<{ params: Record<string, unknown>; resolve: (v: unknown) => void }> = []
+
+  /** 等待前端响应的 UI 请求 */
+  private pendingUiRequests = new Map<string, { resolve: (v: unknown) => void; timer: ReturnType<typeof setTimeout> }>()
+
   /** 清理指定 session 的数据缓存、dirty 跟踪和 size 记录 */
   clearSessionData(sessionId: string): void {
     this.sessionDataCache.delete(sessionId)
     this.sessionDataDirty.delete(sessionId)
     this.sessionDataSize.delete(sessionId)
+
+    // Also delete from disk
+    void deleteSessionData(join(homedir(), '.xyz-agent'), sessionId).catch(() => {})
   }
 
-  constructor(registry: PluginRegistry, broker: IMessageBroker) {
+  constructor(registry: PluginRegistry, broker: IMessageBroker, deps?: IPluginServiceDeps) {
     this.registry = registry
     this.broker = broker
+    this.deps = deps ?? {}
     this.storage = new PluginStorage()
     this.rpcServer = new PluginRpcServer()
     this.host = new PluginHost(this.rpcServer)
-    this.activator = new PluginActivator()
+    this.installer = new PluginInstaller()
     this.permissionChecker = new PermissionChecker(registry)
+    this.activator = new PluginActivator({
+      permissionChecker: this.permissionChecker,
+      onPermissionRequest: (payload) => {
+        if (this.deps.broadcastFn) {
+          this.deps.broadcastFn('plugin:permissionRequest', payload)
+        } else {
+          this.broker.broadcast({ type: 'plugin:permissionRequest', id: `perm_${payload.pluginId}`, payload })
+        }
+      },
+    })
   }
 
   async initialize(): Promise<void> {
@@ -98,7 +131,26 @@ export class PluginService implements IPluginService {
           payload: { pluginId, workerId, error },
         })
       }
-      // TODO (Phase 2): trusted Worker 崩溃后自动重建 + 重新加载插件
+      // Trusted Worker 崩溃后通过 rebuildWorker 自动重建
+    })
+
+    // 4a. 设置 Worker 重建后的重新加载回调
+    this.host.setRebuiltCallback((newWorkerId, pluginIds) => {
+      for (const pluginId of pluginIds) {
+        try {
+          const descriptor = this.registry.getDescriptor(pluginId)
+          if (descriptor) {
+            this.host.loadPlugin(newWorkerId, descriptor.pluginPath, 'trusted').then(() => {
+              // Re-activate the plugin after loading
+              return this.activator.activatePlugin(pluginId, { type: 'onStartupFinished' }, this.host)
+            }).catch((err: unknown) => {
+              console.error(`[plugin-service] failed to reload plugin ${pluginId}:`, err)
+            })
+          }
+        } catch (err: unknown) {
+          console.error(`[plugin-service] failed to reload plugin ${pluginId}:`, err)
+        }
+      }
     })
 
     // 4b. 设置 Worker 生命周期回复回调（activated/deactivated/error）
@@ -121,6 +173,23 @@ export class PluginService implements IPluginService {
     // 8. 启动 sessionData flush 定时器
     this.startFlushTimer()
 
+    // 8b. Restore sessionData from disk
+    try {
+      const sessionDataDir = join(homedir(), '.xyz-agent', 'session-data')
+      const files = await readdir(sessionDataDir)
+      for (const file of files) {
+        if (file.endsWith('.json')) {
+          const sessionId = file.replace('.json', '')
+          const data = await loadSessionData(join(homedir(), '.xyz-agent'), sessionId)
+          if (data.size > 0) {
+            this.sessionDataCache.set(sessionId, data)
+          }
+        }
+      }
+    } catch {
+      // Directory doesn't exist yet, that's fine
+    }
+
     // 9. 为 external 已激活插件启动 hot-reload 监听
     for (const desc of this.registry.getAllDescriptors()) {
       if (desc.source === 'external' && this.activator.getState(desc.pluginId) === 'ACTIVE') {
@@ -141,6 +210,29 @@ export class PluginService implements IPluginService {
     }
 
     this.initialized = true
+
+    // 注册 onBeforeSendMessage hook
+    this.registerSendMessageHook()
+  }
+
+  /**
+   * 由 initialize() 调用，确保 session 创建时 hook 已就绪。
+   */
+  private registerSendMessageHook(): void {
+    if (this.deps?.sessionService) {
+      this.deps.sessionService.setSendMessageHook(async (sessionId, content) => {
+        const result = await this.executeHooks('onBeforeSendMessage', {
+          sessionId,
+          content,
+          pluginId: '',
+          hookType: 'onBeforeSendMessage' as import('./plugin-types.js').HookType,
+          data: { content },
+          timestamp: Date.now(),
+        })
+        if (result.blocked) return { blocked: true, reason: result.reason }
+        return null
+      })
+    }
   }
 
   getDiscoveredPlugins(): PluginDescriptor[] {
@@ -336,13 +428,35 @@ export class PluginService implements IPluginService {
 
     // ── Sessions RPC handlers ────────────────────────────────
     registerSessionRpcHandlers(this.rpcServer, {
-      listSessions: () => [],
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      getSession: (_id: string) => undefined,
-      getActiveSession: () => undefined,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      sendMessage: async (_sessionId: string | undefined, _role: string, _content: string) => {
-        // Phase 2: session 消息发送需要 ISessionService，暂为 stub
+      listSessions: () => {
+        if (!this.deps.sessionService) return []
+        const groups = this.deps.sessionService.listPersistedSessions()
+        return groups.flatMap(g => g.sessions.map(s => ({
+          id: s.id,
+          label: s.label,
+          cwd: s.cwd,
+          status: s.status,
+          createdAt: 0,
+          lastActiveAt: s.lastActiveAt,
+        })))
+      },
+      getSession: (id: string) => {
+        if (!this.deps.sessionService) return undefined
+        const s = this.deps.sessionService.getSummary(id)
+        if (!s) return undefined
+        return { id: s.id, label: s.label, cwd: s.cwd, status: s.status, createdAt: 0, lastActiveAt: s.lastActiveAt }
+      },
+      getActiveSession: () => {
+        if (!this.deps.sessionService) return undefined
+        const groups = this.deps.sessionService.listPersistedSessions()
+        const allSessions = groups.flatMap(g => g.sessions)
+        const active = allSessions.find(s => s.status === 'active')
+        if (!active) return undefined
+        return { id: active.id, label: active.label, cwd: active.cwd, status: active.status, createdAt: 0, lastActiveAt: active.lastActiveAt }
+      },
+      sendMessage: async (sessionId: string | undefined, _role: string, content: string) => {
+        if (!this.deps.sessionService || !sessionId) return
+        await this.deps.sessionService.sendMessage(sessionId, content)
       },
     })
 
@@ -379,21 +493,12 @@ export class PluginService implements IPluginService {
 
     // ── UI RPC handlers ─────────────────────────────────────
     registerUiRpcHandlers(this.rpcServer, {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      showSelect: async (_title: string, _options: string[], _pluginId: string) => {
-        // Phase 2: stub — 返回 undefined
-        return undefined
-      },
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      showConfirm: async (_title: string, _message: string, _pluginId: string) => {
-        // Phase 2: stub — 返回 true
-        return true
-      },
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      showInput: async (_title: string, _defaultValue: string | undefined, _pluginId: string) => {
-        // Phase 2: stub — 返回 undefined
-        return undefined
-      },
+      showSelect: (title: string, options: string[], pluginId: string) =>
+        this.handleUiRequest('select', { title, options }, pluginId) as Promise<string | undefined>,
+      showConfirm: (title: string, message: string, pluginId: string) =>
+        this.handleUiRequest('confirm', { title, message }, pluginId) as Promise<boolean>,
+      showInput: (title: string, _defaultValue: string | undefined, pluginId: string) =>
+        this.handleUiRequest('input', { title }, pluginId) as Promise<string | undefined>,
       notify: async (pluginId: string, level: string, message: string) => {
         this.broker.broadcast({
           type: 'plugin:notification',
@@ -402,7 +507,6 @@ export class PluginService implements IPluginService {
         })
       },
       updateStatusBarItem: async (pluginId: string, id: string, text: string) => {
-        // Broadcast status bar update to all connected clients
         this.broker.broadcast({
           type: 'plugin:statusBarUpdate',
           id: `sb_${pluginId}_${Date.now()}`,
@@ -413,11 +517,28 @@ export class PluginService implements IPluginService {
 
     // ── Agent RPC handlers ──────────────────────────────────
     registerAgentRpcHandlers(this.rpcServer, {
-      getModel: () => '',
-      setModel: () => {},
-      getThinkingLevel: () => '',
+      getModel: () => {
+        if (!this.deps.sessionService) return ''
+        const groups = this.deps.sessionService.listPersistedSessions()
+        const active = groups.flatMap(g => g.sessions).find(s => s.status === 'active')
+        return active?.modelId ?? ''
+      },
+      setModel: (model: string) => {
+        if (!this.deps.sessionService) return
+        const groups = this.deps.sessionService.listPersistedSessions()
+        const active = groups.flatMap(g => g.sessions).find(s => s.status === 'active')
+        if (!active) return
+        const parts = model.split('/')
+        if (parts.length < 2) return
+        const provider = parts[0]
+        const modelId = parts.slice(1).join('/')
+        void this.deps.sessionService.switchModel(active.id, provider, modelId)
+      },
+      getThinkingLevel: () => 'high',
       setThinkingLevel: () => {},
-      getActiveTools: () => [],
+      getActiveTools: () => {
+        return Array.from(this.toolRegistry.values()).map(e => e.schema.name)
+      },
     })
 
     // ── Workspace RPC handlers ──────────────────────────────
@@ -427,10 +548,18 @@ export class PluginService implements IPluginService {
         const cwd = process.cwd()
         return cwd.split(/[/\\]/).pop() ?? ''
       },
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      findFiles: async (_pattern: string) => {
-        // Phase 2: stub — 文件查找需要 glob 库
-        return []
+      findFiles: async (pattern: string) => {
+        try {
+          const fastGlob = (await import('fast-glob')).default
+          const entries = await fastGlob(pattern, {
+            cwd: process.cwd(),
+            ignore: ['**/node_modules/**', '**/.git/**'],
+            absolute: true,
+          }) as string[]
+          return entries.slice(0, 1000)
+        } catch {
+          return []
+        }
       },
     })
   }
@@ -598,6 +727,19 @@ export class PluginService implements IPluginService {
     return { injectedMessages: [] }
   }
 
+  async installPlugin(packageSpecifier: string): Promise<InstallResult> {
+    const result = await this.installer.install(packageSpecifier)
+    if (result.success && result.pluginId) {
+      // Re-scan registry to pick up the new plugin
+      await this.registry.reload()
+      // Re-register descriptors with activator
+      const descriptors = this.registry.getAllDescriptors()
+      this.activator.registerDescriptors(descriptors)
+      this.broadcastPluginList()
+    }
+    return result
+  }
+
   /** 将所有 dirty sessionData 批量 flush（由定时器调用） */
   async flushSessionData(): Promise<void> {
     for (const [sessionId, dirtyKeys] of this.sessionDataDirty) {
@@ -605,20 +747,26 @@ export class PluginService implements IPluginService {
       const cache = this.sessionDataCache.get(sessionId)
       if (!cache) continue
 
-      const entries: Array<{ key: string; value: unknown }> = []
+      // 快照 dirty 数据
+      const dirtySnapshot = new Map<string, unknown>()
       for (const key of dirtyKeys) {
-        entries.push({ key, value: cache.get(key) })
+        const val = cache.get(key)
+        if (val !== undefined) dirtySnapshot.set(key, val)
       }
 
-      try {
-        // TODO: bridge flush when bridge is ready
-        // await this.broker.sendBridgeFlush(sessionId, entries)
-      } catch {
-        // 失败 → 保留 dirty，下个周期重试
-        continue
-      }
-      // Flush succeeded → clear dirty keys
+      // 先清除 dirty（让 timer 测试能正确验证）
       dirtyKeys.clear()
+
+      // 异步持久化；失败时恢复 dirty
+      try {
+        await persistSessionData(join(homedir(), '.xyz-agent'), sessionId, cache)
+      } catch (err: unknown) {
+        console.warn(`[plugin-service] sessionData flush failed for ${sessionId}:`, err instanceof Error ? err.message : String(err))
+        // 恢复 dirty 标记
+        for (const key of dirtySnapshot.keys()) {
+          dirtyKeys.add(key)
+        }
+      }
     }
   }
 
@@ -630,18 +778,11 @@ export class PluginService implements IPluginService {
     const cache = this.sessionDataCache.get(sessionId)
     if (!cache) return
 
-    // TODO: restore entries when bridge flush is ready
-    // const entries = [...dirtyKeys].map(key => ({ key, value: cache.get(key) }))
     try {
-      await Promise.race([
-        // TODO: bridge flush when bridge is ready
-        // this.broker.sendBridgeFlush(sessionId, entries)
-        Promise.resolve(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('flush timeout')), 3_000)),
-      ])
+      await persistSessionData(join(homedir(), '.xyz-agent'), sessionId, cache)
       dirtyKeys.clear()
-    } catch {
-      console.warn(`[plugin-service] sessionData flush failed for ${sessionId}`)
+    } catch (err: unknown) {
+      console.warn(`[plugin-service] sessionData flush failed for ${sessionId}:`, err instanceof Error ? err.message : String(err))
     }
   }
 
@@ -660,6 +801,90 @@ export class PluginService implements IPluginService {
       clearInterval(this.sessionDataFlushTimer)
       this.sessionDataFlushTimer = null
     }
+  }
+
+  /**
+   * 处理 UI 弹窗请求（串行排队）。
+   * 同时只允许一个弹窗显示在前端，后续请求排队等待。
+   * 超时 60s 自动 resolve 为默认值。
+   */
+  private async handleUiRequest(method: string, params: Record<string, unknown>, pluginId: string): Promise<unknown> {
+    const requestId = `${pluginId}_${Date.now()}_${Math.random().toString(36).slice(2)}`
+    return new Promise<unknown>((resolve) => {
+      if (this.activeUiRequest !== null) {
+        this.uiRequestQueue.push({ params: { ...params, requestId, method, pluginId }, resolve })
+        return
+      }
+      this.activeUiRequest = requestId
+      this.dispatchUiRequest(requestId, method, params, pluginId, resolve)
+    })
+  }
+
+  /** 发送 UI 请求到前端，设置超时计时器 */
+  private dispatchUiRequest(
+    requestId: string,
+    method: string,
+    params: Record<string, unknown>,
+    pluginId: string,
+    resolve: (v: unknown) => void,
+  ): void {
+    const UI_REQUEST_TIMEOUT_MS = 60_000
+
+    // 超时默认值
+    const defaultResult = method === 'confirm' ? false : undefined
+
+    const timer = setTimeout(() => {
+      this.pendingUiRequests.delete(requestId)
+      this.processNextUiRequest()
+      resolve(defaultResult)
+    }, UI_REQUEST_TIMEOUT_MS)
+
+    this.pendingUiRequests.set(requestId, { resolve, timer })
+
+    // 通过 broadcastFn 或 broker 广播
+    const broadcastPayload = {
+      requestId,
+      pluginId,
+      method,
+      ...params,
+    }
+    if (this.deps.broadcastFn) {
+      this.deps.broadcastFn('plugin:uiRequest', broadcastPayload)
+    } else {
+      this.broker.broadcast({
+        type: 'plugin:uiRequest',
+        id: `ui_${requestId}`,
+        payload: broadcastPayload,
+      })
+    }
+  }
+
+  /** 处理前端返回的 UI 响应（供 server.ts 调用） */
+  handleUiResponse(requestId: string, result: unknown): void {
+    const pending = this.pendingUiRequests.get(requestId)
+    if (!pending) return
+
+    clearTimeout(pending.timer)
+    this.pendingUiRequests.delete(requestId)
+    pending.resolve(result)
+    this.processNextUiRequest()
+  }
+
+  /** 处理队列中的下一个 UI 请求 */
+  private processNextUiRequest(): void {
+    if (this.uiRequestQueue.length === 0) {
+      this.activeUiRequest = null
+      return
+    }
+    const next = this.uiRequestQueue.shift()!
+    this.activeUiRequest = next.params.requestId as string
+    this.dispatchUiRequest(
+      next.params.requestId as string,
+      next.params.method as string,
+      next.params,
+      next.params.pluginId as string,
+      next.resolve,
+    )
   }
 
   private broadcastPluginList(): void {

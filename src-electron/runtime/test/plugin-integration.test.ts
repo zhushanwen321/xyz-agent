@@ -6,8 +6,7 @@
  * TC-int-02/03 使用真实文件系统验证 storage 持久化。
  */
 
-import { describe, it, before, after, mock } from 'node:test'
-import assert from 'node:assert/strict'
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
 import { mkdtemp, mkdir, rm, cp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve, dirname } from 'node:path'
@@ -28,7 +27,7 @@ let storage: PluginStorage
 let rpcServer: PluginRpcServer
 let activator: PluginActivator
 
-before(async () => {
+beforeAll(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), 'plugin-integration-test-'))
   const pluginDir = join(tmpDir, '.xyz-agent', 'plugins', 'hello-world')
   await mkdir(pluginDir, { recursive: true })
@@ -42,7 +41,7 @@ before(async () => {
   await storage.init(tmpDir, tmpDir)
 })
 
-after(async () => {
+afterAll(async () => {
   await storage.flushAll()
   await rm(tmpDir, { recursive: true, force: true })
 })
@@ -54,13 +53,13 @@ after(async () => {
  */
 function createIntegrationHost(activator: PluginActivator): ActivatorHost {
   return {
-    assignWorker: mock.fn((_pluginId: string, _trustLevel: 'trusted' | 'sandbox') =>
+    assignWorker: vi.fn((_pluginId: string, _trustLevel: 'trusted' | 'sandbox') =>
       Promise.resolve('mock-worker-1'),
     ),
-    loadPlugin: mock.fn(() => Promise.resolve()),
-    getWorkerHandle: mock.fn((pluginId: string) => ({
+    loadPlugin: vi.fn(() => Promise.resolve()),
+    getWorkerHandle: vi.fn((pluginId: string) => ({
       workerId: 'mock-worker-1',
-      postMessage: mock.fn((msg: unknown) => {
+      postMessage: vi.fn((msg: unknown) => {
         const m = msg as { type: string; pluginId?: string }
         if (m.type === 'activate') {
           queueMicrotask(() => {
@@ -73,7 +72,7 @@ function createIntegrationHost(activator: PluginActivator): ActivatorHost {
         }
       }),
     })),
-    terminateWorker: mock.fn(() => Promise.resolve()),
+    terminateWorker: vi.fn(() => Promise.resolve()),
   }
 }
 
@@ -84,15 +83,15 @@ describe('Plugin Integration', () => {
 
     // 1. 扫描发现插件
     const descriptors = await registry.scan()
-    assert.ok(descriptors.length >= 1, 'should discover plugins')
-    const hw = descriptors.find(d => d.pluginId === 'hello-world')
-    assert.ok(hw, 'should find hello-world')
-    assert.strictEqual(hw.trustLevel, 'trusted')
-    assert.ok(hw.activationEvents.includes('onStartupFinished'))
+    expect(descriptors.length >= 1).toBeTruthy()
+    const hw = descriptors.find(d => d.pluginId === 'hello-world')!
+    expect(hw).toBeTruthy()
+    expect(hw.trustLevel).toBe('trusted')
+    expect(hw.activationEvents.includes('onStartupFinished')).toBeTruthy()
 
     // 2. 注册描述符
     activator.registerDescriptors(descriptors)
-    assert.strictEqual(activator.getState('hello-world'), 'UNLOADED')
+    expect(activator.getState('hello-world')).toBe('UNLOADED')
 
     // 3. 注册 RPC storage 方法（模拟 PluginService.registerRpcMethods）
     rpcServer.registerMethod('plugin.storage.global.get', async (params) => {
@@ -113,20 +112,20 @@ describe('Plugin Integration', () => {
       { type: 'onStartupFinished' },
       host,
     )
-    assert.strictEqual(activator.getState('hello-world'), 'ACTIVE')
-    assert.deepStrictEqual(activator.getActivePlugins(), ['hello-world'])
+    expect(activator.getState('hello-world')).toBe('ACTIVE')
+    expect(activator.getActivePlugins()).toEqual(['hello-world'])
 
     // 5. 也可以通过 slash command 触发已激活的插件（幂等）
     await activator.handleEvent(
       { type: 'onSlashCommand', command: 'hello' },
       host,
     )
-    assert.strictEqual(activator.getState('hello-world'), 'ACTIVE')
+    expect(activator.getState('hello-world')).toBe('ACTIVE')
 
     // 6. 停用
     await activator.deactivatePlugin('hello-world', host)
-    assert.strictEqual(activator.getState('hello-world'), 'UNLOADED')
-    assert.strictEqual(activator.getActivePlugins().length, 0)
+    expect(activator.getState('hello-world')).toBe('UNLOADED')
+    expect(activator.getActivePlugins().length).toBe(0)
   })
 
   // ── TC-int-02: storage round-trip through RPC ─────────────────
@@ -152,16 +151,16 @@ describe('Plugin Integration', () => {
 
     // 读取
     const count = await getMethod('rpc-test', 'count')
-    assert.strictEqual(count, 42)
+    expect(count).toBe(42)
 
     const label = await getMethod('rpc-test', 'label')
-    assert.strictEqual(label, 'hello')
+    expect(label).toBe('hello')
 
     // 新 storage 实例验证持久化
     const storage2 = new PluginStorage()
     await storage2.init(tmpDir, tmpDir)
-    assert.strictEqual(await storage2.get('rpc-test', 'count'), 42)
-    assert.strictEqual(await storage2.get('rpc-test', 'label'), 'hello')
+    expect(await storage2.get('rpc-test', 'count')).toBe(42)
+    expect(await storage2.get('rpc-test', 'label')).toBe('hello')
   })
 
   // ── TC-int-03: crash recovery ─────────────────────────────────
@@ -189,11 +188,11 @@ describe('Plugin Integration', () => {
 
     // 模拟 Worker 在 activate 时回复 error
     const errorHost: ActivatorHost = {
-      assignWorker: mock.fn(() => Promise.resolve('crash-worker')),
-      loadPlugin: mock.fn(() => Promise.resolve()),
-      getWorkerHandle: mock.fn((pluginId: string) => ({
+      assignWorker: vi.fn(() => Promise.resolve('crash-worker')),
+      loadPlugin: vi.fn(() => Promise.resolve()),
+      getWorkerHandle: vi.fn((pluginId: string) => ({
         workerId: 'crash-worker',
-        postMessage: mock.fn(() => {
+        postMessage: vi.fn(() => {
           queueMicrotask(() => {
             crashActivator.handleWorkerReply({
               type: 'error',
@@ -203,7 +202,7 @@ describe('Plugin Integration', () => {
           })
         }),
       })),
-      terminateWorker: mock.fn(() => Promise.resolve()),
+      terminateWorker: vi.fn(() => Promise.resolve()),
     }
 
     // 激活失败
@@ -214,22 +213,22 @@ describe('Plugin Integration', () => {
     )
 
     // 状态应该是 UNLOADED（不是 ACTIVE）
-    assert.strictEqual(crashActivator.getState('crash-plugin'), 'UNLOADED')
-    assert.strictEqual(crashActivator.getActivePlugins().length, 0)
+    expect(crashActivator.getState('crash-plugin')).toBe('UNLOADED')
+    expect(crashActivator.getActivePlugins().length).toBe(0)
 
     // 可以重新尝试激活（恢复）
     const recoveryHost: ActivatorHost = {
-      assignWorker: mock.fn(() => Promise.resolve('recovery-worker')),
-      loadPlugin: mock.fn(() => Promise.resolve()),
-      getWorkerHandle: mock.fn((pluginId: string) => ({
+      assignWorker: vi.fn(() => Promise.resolve('recovery-worker')),
+      loadPlugin: vi.fn(() => Promise.resolve()),
+      getWorkerHandle: vi.fn((pluginId: string) => ({
         workerId: 'recovery-worker',
-        postMessage: mock.fn(() => {
+        postMessage: vi.fn(() => {
           queueMicrotask(() => {
             crashActivator.handleWorkerReply({ type: 'activated', pluginId })
           })
         }),
       })),
-      terminateWorker: mock.fn(() => Promise.resolve()),
+      terminateWorker: vi.fn(() => Promise.resolve()),
     }
 
     await crashActivator.activatePlugin(
@@ -237,6 +236,6 @@ describe('Plugin Integration', () => {
       { type: 'onStartupFinished' },
       recoveryHost,
     )
-    assert.strictEqual(crashActivator.getState('crash-plugin'), 'ACTIVE', 'should recover after crash')
+    expect(crashActivator.getState('crash-plugin')).toBe('ACTIVE')
   })
 })

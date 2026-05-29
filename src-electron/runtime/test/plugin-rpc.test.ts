@@ -1,5 +1,4 @@
-import { describe, it, beforeEach } from 'node:test'
-import assert from 'node:assert/strict'
+import { describe, it, expect, beforeEach } from 'vitest'
 
 import { PluginRpcServer } from '../src/services/plugin-service/plugin-rpc-server.js'
 import type { WorkerPort, RpcMethodHandler } from '../src/services/plugin-service/plugin-rpc-server.js'
@@ -41,14 +40,14 @@ describe('PluginRpcServer', () => {
       params: { msg: 'hello' },
     })
 
-    assert.strictEqual(port.messages.length, 1)
+    expect(port.messages.length).toBe(1)
     const wrapper = port.messages[0] as { type: string; response: RpcResponse }
-    assert.strictEqual(wrapper.type, 'rpc')
+    expect(wrapper.type).toBe('rpc')
     const resp = wrapper.response
-    assert.strictEqual(resp.jsonrpc, '2.0')
-    assert.strictEqual(resp.id, 1)
-    assert.ok('result' in resp)
-    assert.deepStrictEqual(resp.result, { echo: 'hello' })
+    expect(resp.jsonrpc).toBe('2.0')
+    expect(resp.id).toBe(1)
+    expect('result' in resp).toBeTruthy()
+    expect((resp as { result: unknown }).result).toEqual({ echo: 'hello' })
   })
 
   // ── TC-3-02: unregistered method → METHOD_NOT_FOUND error ────
@@ -63,13 +62,13 @@ describe('PluginRpcServer', () => {
       params: {},
     })
 
-    assert.strictEqual(port.messages.length, 1)
+    expect(port.messages.length).toBe(1)
     const wrapper = port.messages[0] as { type: string; response: RpcResponse }
-    assert.strictEqual(wrapper.type, 'rpc')
+    expect(wrapper.type).toBe('rpc')
     const resp = wrapper.response
-    assert.ok('error' in resp)
-    assert.strictEqual(resp.error.code, PluginRpcErrorCodes.METHOD_NOT_FOUND)
-    assert.ok(resp.error.message.includes('nonexistent.method'))
+    expect('error' in resp).toBeTruthy()
+    expect((resp as { error: { code: number; message: string } }).error.code).toBe(PluginRpcErrorCodes.METHOD_NOT_FOUND)
+    expect((resp as { error: { code: number; message: string } }).error.message.includes('nonexistent.method')).toBeTruthy()
   })
 
   // ── TC-3-03: handler throws → INTERNAL_ERROR response ─────────
@@ -90,12 +89,12 @@ describe('PluginRpcServer', () => {
     })
 
     const wrapper = port.messages[0] as { type: string; response: RpcResponse }
-    assert.strictEqual(wrapper.type, 'rpc')
+    expect(wrapper.type).toBe('rpc')
     const resp = wrapper.response
-    assert.ok('error' in resp)
+    expect('error' in resp).toBeTruthy()
     // 无自定义 code → 默认 INTERNAL_ERROR
-    assert.strictEqual(resp.error.code, PluginRpcErrorCodes.INTERNAL_ERROR)
-    assert.strictEqual(resp.error.message, 'boom')
+    expect((resp as { error: { code: number; message: string } }).error.code).toBe(PluginRpcErrorCodes.INTERNAL_ERROR)
+    expect((resp as { error: { code: number; message: string } }).error.message).toBe('boom')
   })
 
   // ── TC-3-04: notify → sends notification to worker ────────────
@@ -107,14 +106,14 @@ describe('PluginRpcServer', () => {
 
     rpc.notify('w1', 'test.event', { data: 42 })
 
-    assert.strictEqual(port1.messages.length, 1, 'target worker should receive notification')
-    assert.strictEqual(port2.messages.length, 0, 'other worker should not receive notification')
+    expect(port1.messages.length).toBe(1)
+    expect(port2.messages.length).toBe(0)
 
     const msg = port1.messages[0] as { type: string; notification: { jsonrpc: string; method: string; params: Record<string, unknown> } }
-    assert.strictEqual(msg.type, 'rpc')
-    assert.strictEqual(msg.notification.jsonrpc, '2.0')
-    assert.strictEqual(msg.notification.method, 'test.event')
-    assert.deepStrictEqual(msg.notification.params, { data: 42 })
+    expect(msg.type).toBe('rpc')
+    expect(msg.notification.jsonrpc).toBe('2.0')
+    expect(msg.notification.method).toBe('test.event')
+    expect(msg.notification.params).toEqual({ data: 42 })
   })
 
   // ── TC-3-05: broadcast → sends to all workers ─────────────────
@@ -128,14 +127,14 @@ describe('PluginRpcServer', () => {
 
     rpc.broadcast('system.update', { version: '2.0' })
 
-    assert.strictEqual(port1.messages.length, 1)
-    assert.strictEqual(port2.messages.length, 1)
-    assert.strictEqual(port3.messages.length, 1)
+    expect(port1.messages.length).toBe(1)
+    expect(port2.messages.length).toBe(1)
+    expect(port3.messages.length).toBe(1)
 
     for (const port of [port1, port2, port3]) {
       const msg = port.messages[0] as { type: string; notification: { method: string } }
-      assert.strictEqual(msg.type, 'rpc')
-      assert.strictEqual(msg.notification.method, 'system.update')
+      expect(msg.type).toBe('rpc')
+      expect(msg.notification.method).toBe('system.update')
     }
   })
 })

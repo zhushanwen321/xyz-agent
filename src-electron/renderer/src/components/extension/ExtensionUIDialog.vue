@@ -12,6 +12,12 @@ const dialogOpen = computed(
   () => activeRequest.value !== null && activeRequest.value.method !== 'notify',
 )
 
+const dialogTitle = computed(() => {
+  const prefix = activeRequest.value?.source === 'plugin' ? 'Plugin' : 'Extension'
+  return activeRequest.value?.title ?? `${prefix} Request`
+})
+
+
 // 每次 dialog 打开时重置内部状态
 watch(dialogOpen, (open) => {
   if (open && activeRequest.value) {
@@ -47,7 +53,7 @@ const method = computed(() => activeRequest.value?.method)
 </script>
 
 <template>
-  <Dialog :open="dialogOpen" :title="activeRequest?.title ?? 'Extension Request'" @update:open="handleCancel">
+  <Dialog :open="dialogOpen" :title="dialogTitle" @update:open="handleCancel">
     <!-- confirm -->
     <template v-if="method === 'confirm'">
       <p v-if="activeRequest?.message" class="text-sm leading-relaxed mb-5" style="color: var(--muted)">

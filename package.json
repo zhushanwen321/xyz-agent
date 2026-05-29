@@ -6,7 +6,8 @@
   "workspaces": [
     "src-electron/renderer",
     "src-electron/runtime",
-    "src-electron/shared"
+    "src-electron/shared",
+    "packages/plugin-sdk"
   ],
   "scripts": {
     "dev": "cd src-electron && npm run dev",

@@ -2,6 +2,7 @@ import { readFile, readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type { XyzAgentPackageJson, PluginDescriptor, PluginState, PluginContributes, PluginSource } from './plugin-types.js'
+import { checkPluginCompatibility } from './plugin-version-checker.js'
 
 /**
  * 插件注册中心：扫描本地插件目录，解析 package.json 中的 xyzAgent manifest，
@@ -96,7 +97,10 @@ export class PluginRegistry {
     const manifest = pkg.xyzAgent
     const activationEvents = this.inferActivationEvents(manifest.activationEvents ?? [], manifest.contributes)
 
-    return {
+    const engineRange = pkg.engines?.['xyz-agent'] ?? '*'
+    const compat = checkPluginCompatibility(typeof engineRange === 'string' ? engineRange : '*')
+
+    const descriptor: PluginDescriptor = {
       pluginId: dirName,
       version: pkg.version ?? '0.0.0',
       displayName: pkg.displayName ?? pkg.name ?? dirName,
@@ -104,14 +108,21 @@ export class PluginRegistry {
       main: manifest.main ?? 'index.js',
       activationEvents,
       trustLevel: manifest.trustLevel ?? 'sandbox',
-      status: 'UNLOADED' as PluginState,
+      status: compat.compatible ? ('UNLOADED' as PluginState) : ('DEPS_MISSING' as PluginState),
       contributes: manifest.contributes ?? {} as PluginContributes,
       permissions: manifest.permissions ?? [],
-      engines: pkg.engines?.['xyz-agent'] ? { 'xyz-agent': pkg.engines['xyz-agent'] } : { 'xyz-agent': '*' },
+      engines: { 'xyz-agent': engineRange ?? '*' },
       pluginPath: fullPath,
       source,
       extensionDependencies: manifest.extensionDependencies ?? [],
+      ...(compat.compatible ? {} : { compatibilityError: compat.reason }),
     }
+
+    if (!compat.compatible) {
+      console.warn(`[plugin-registry] ${dirName}: ${compat.reason}`)
+    }
+
+    return descriptor
   }
 
   /**

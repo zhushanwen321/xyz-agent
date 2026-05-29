@@ -52,6 +52,13 @@ async function main(): Promise<void> {
   // Service layer (DI)
   const extensionService = new ExtensionService()
   const treeService = new TreeService(pm)
+
+  // pluginService declared before sessionService but assigned after —
+  // the adapter factory closure reads pluginService at session creation time,
+  // by which point pluginService is already initialized.
+  // eslint-disable-next-line prefer-const
+  let pluginService: PluginService | undefined
+
   const sessionService = new SessionService(
     pm,
     server,  // IMessageBroker
@@ -62,6 +69,14 @@ async function main(): Promise<void> {
       onBridgeUIRequest: (requestId, sid, method, data) => {
         server.handleBridgeRequest(sid, requestId, method, data)
       },
+      onHookExecute: pluginService!
+        ? (hookType, context) => pluginService!.executeHooks(hookType, {
+            pluginId: '',
+            hookType: hookType as import('./services/plugin-service/plugin-types.js').HookType,
+            data: { ...context, sessionId },
+            timestamp: Date.now(),
+          })
+        : undefined,
     }),
     effectiveRoot,
     treeService,
@@ -72,7 +87,11 @@ async function main(): Promise<void> {
 
   // Wire services into server
   const pluginRegistry = new PluginRegistry(effectiveRoot)
-  const pluginService = new PluginService(pluginRegistry, server)
+  pluginService = new PluginService(pluginRegistry, server, {
+    sessionService,
+    configService,
+    broadcastFn: (type, payload) => server.broadcast({ type: type as 'session.list', id: `push_${Date.now()}`, payload } as import('@xyz-agent/shared').ServerMessage),
+  })
   server.setServices(sessionService, configService, modelService, treeService, extensionService, pluginService)
 
   // Graceful shutdown on signals

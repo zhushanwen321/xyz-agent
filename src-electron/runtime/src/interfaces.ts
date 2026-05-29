@@ -106,6 +106,9 @@ export interface ISessionService {
   getRpcClient(sessionId: string): IRpcClient | undefined
   listPersistedSessions(): SessionGroup[]
   destroyAll(): Promise<void>
+
+  /** 注册 onBeforeSendMessage hook，由 PluginService 调用 */
+  setSendMessageHook(hook: (sessionId: string, content: string) => Promise<{ blocked: boolean; reason?: string } | null>): void
 }
 
 // ── IConfigService ────────────────────────────────────────────────
@@ -181,9 +184,14 @@ export interface IPluginService {
   setPluginConfig(pluginId: string, key: string, value: unknown): Promise<void>
   /** Clear cached session data */
   clearSessionData(sessionId: string): void
+  /** Handle UI response from frontend (confirm/select/input dialogs) */
+  handleUiResponse(requestId: string, result: unknown): void
 
   /** Bridge routing methods */
   handleBridgeRequest?(method: string, payload: Record<string, unknown>, sessionId: string): Promise<unknown>
+
+  /** Install a plugin from an npm package specifier */
+  installPlugin(packageSpecifier: string): Promise<import('./services/plugin-service/plugin-installer.js').InstallResult>
   getToolSchemas?(): import('./services/plugin-service/plugin-types.js').ToolRegistration[]
   handleBridgeToolExecute?(request: import('./services/plugin-service/plugin-types.js').BridgeToolExecuteRequest): Promise<import('./services/plugin-service/plugin-types.js').BridgeToolExecuteResponse>
   handleBridgeEvent?(eventName: string, data: unknown, sessionId: string): void

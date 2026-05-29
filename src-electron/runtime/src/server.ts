@@ -411,8 +411,27 @@ export class SidecarServer implements IMessageBroker {
           return this.send(ws, { type: 'plugin:config', id: msg.id, payload: { pluginId: msg.payload.pluginId, config: allConfig as Record<string, unknown> } })
         }
         case 'plugin.install': {
-          // Phase 4: npm install integration
-          return this.sendError(ws, 'not_implemented', 'Plugin install requires Phase 4 npm integration', msg.id)
+          if (!this.pluginService) return this.sendError(ws, 'service_not_ready', 'PluginService not initialized', msg.id)
+          const { packageSpec: packageSpecifier } = msg.payload as { packageSpec: string }
+          if (!packageSpecifier) {
+            return this.sendError(ws, 'invalid_params', 'Missing packageSpec', msg.id)
+          }
+          const result = await this.pluginService.installPlugin(packageSpecifier)
+          if (result.success) {
+            const plugins = this.pluginService.getDiscoveredPlugins()
+            this.send(ws, { type: 'config.plugins', id: msg.id, payload: { plugins } })
+          } else {
+            this.sendError(ws, 'install_failed', (result as unknown as Record<string, unknown>).error as string ?? 'Install failed', msg.id)
+          }
+          break
+        }
+        case 'plugin.uiResponse': {
+          if (!this.pluginService) return this.sendError(ws, 'handler_error', 'Plugin service not available', msg.id)
+          const uiService = this.pluginService as unknown as { handleUiResponse(requestId: string, result: unknown): void }
+          if (uiService.handleUiResponse) {
+            uiService.handleUiResponse((msg.payload as { requestId: string; result: unknown }).requestId, (msg.payload as { requestId: string; result: unknown }).result)
+          }
+          return this.send(ws, { type: 'pong', id: msg.id, payload: {} })
         }
         default:
           if (!await this.handleSettingsMessage(msg, ws)) {

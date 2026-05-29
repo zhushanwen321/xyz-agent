@@ -24,17 +24,44 @@ export class PluginHost implements ActivatorHost {
   private memoryMonitorTimer: ReturnType<typeof setInterval> | null = null
   private trustedCounter = 0
 
+  /** Per-plugin crash counter */
+  private crashCounts = new Map<string, number>()
+  /** Saved pluginIds from crashed trusted workers for rebuild */
+  private crashedTrustedWorkers = new Map<string, { pluginIds: string[]; trustLevel: 'trusted' }>()
+
+  private static readonly MAX_REBUILD_ATTEMPTS = 3
+  private rebuildCooldownMs = 5_000
+
   constructor(rpcServer: PluginRpcServer) {
     this.rpcServer = rpcServer
   }
 
+  /** 设置 crash callback（含 Worker 重建后的重新加载） */
   setCrashCallback(cb: CrashCallback): void {
     this.onCrash = cb
+  }
+
+  /** 设置 Worker 重建后的重新加载回调 */
+  private onRebuilt: ((newWorkerId: string, pluginIds: string[]) => void) | null = null
+
+  /** 设置 Worker 重建回调（由 PluginService 调用） */
+  setRebuiltCallback(cb: (newWorkerId: string, pluginIds: string[]) => void): void {
+    this.onRebuilt = cb
   }
 
   /** 设置 Worker 生命周期回复的回调（activated/deactivated/error） */
   setReplyCallback(cb: ReplyCallback): void {
     this.onReply = cb
+  }
+
+  /** 覆盖重建冷却时间（测试用） */
+  setRebuildCooldownMs(ms: number): void {
+    this.rebuildCooldownMs = ms
+  }
+
+  /** 获取指定插件的 crash 次数（测试用） */
+  getCrashCount(pluginId: string): number {
+    return this.crashCounts.get(pluginId) ?? 0
   }
 
   /**
@@ -270,16 +297,65 @@ export class PluginHost implements ActivatorHost {
 
     handle.status = 'crashed'
     const pluginIds = [...handle.pluginIds]
+    const trustLevel = handle.trustLevel
     this.rpcServer.unregisterWorker(workerId)
 
-    // TODO (Phase 2): 如果是 trusted Worker，标记为需要重建，
-    // 等待下次 assignWorker 时自动重新创建。
-    // Phase 1 先不实现重建逻辑，仅清理状态。
-    if (handle.trustLevel === 'trusted') {
+    if (trustLevel === 'trusted') {
+      // Save plugin info for potential rebuild before cleanup
+      this.crashedTrustedWorkers.set(workerId, { pluginIds, trustLevel })
       this.workerInstances.delete(workerId)
       this.workers.delete(workerId)
+
+      // Increment crash counts per plugin
+      for (const pluginId of pluginIds) {
+        const count = (this.crashCounts.get(pluginId) ?? 0) + 1
+        this.crashCounts.set(pluginId, count)
+      }
+
+      // Schedule rebuild attempt
+      const maxAttempts = PluginHost.MAX_REBUILD_ATTEMPTS
+      const exceeded = pluginIds.some(pid => (this.crashCounts.get(pid) ?? 0) > maxAttempts)
+      if (!exceeded) {
+        setTimeout(() => {
+          this.rebuildWorker(workerId, pluginIds).catch((err: unknown) => {
+            console.error(`[plugin-host] rebuild failed for ${workerId}:`, err)
+          })
+        }, this.rebuildCooldownMs)
+      } else {
+        console.warn(`[plugin-host] ${pluginIds.join(',')} exceeded max rebuild attempts (${maxAttempts})`)
+      }
     }
 
     this.onCrash?.(workerId, pluginIds, error)
+  }
+
+  /**
+   * Rebuild a crashed trusted worker.
+   * Creates a new Worker and re-assigns the same plugins.
+   */
+  private async rebuildWorker(oldWorkerId: string, pluginIds: string[]): Promise<void> {
+    const info = this.crashedTrustedWorkers.get(oldWorkerId)
+    if (!info) return
+
+    this.crashedTrustedWorkers.delete(oldWorkerId)
+
+    // Create a new trusted worker with the first plugin
+    if (pluginIds.length === 0) return
+
+    this.trustedCounter++
+    const newWorkerId = `trusted-${this.trustedCounter}`
+    const primaryPluginId = pluginIds[0]
+
+    const handle = this.createWorker(newWorkerId, 'trusted', primaryPluginId)
+
+    // Add remaining plugins to the shared worker
+    for (let i = 1; i < pluginIds.length; i++) {
+      handle.pluginIds.push(pluginIds[i])
+    }
+
+    console.log(`[plugin-host] rebuilt trusted worker ${oldWorkerId} as ${newWorkerId} for plugins: ${pluginIds.join(',')}`)
+
+    // Notify listener to reload plugins into the new worker
+    this.onRebuilt?.(newWorkerId, pluginIds)
   }
 }

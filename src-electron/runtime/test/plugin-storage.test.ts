@@ -1,5 +1,4 @@
-import { describe, it, before, after } from 'node:test'
-import assert from 'node:assert/strict'
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { mkdtemp, mkdir, rm, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,13 +8,13 @@ import { PluginStorage } from '../src/services/plugin-service/plugin-storage.js'
 let tmpDir: string
 let storage: PluginStorage
 
-before(async () => {
+beforeAll(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), 'plugin-storage-test-'))
   storage = new PluginStorage()
   await storage.init(tmpDir, '/test/project')
 })
 
-after(async () => {
+afterAll(async () => {
   await storage.flushAll()
   await rm(tmpDir, { recursive: true, force: true })
 })
@@ -27,17 +26,17 @@ describe('PluginStorage', () => {
 
     // get 对不存在的 key 返回 undefined
     const missing = await storage.get(pluginId, 'nonexistent')
-    assert.strictEqual(missing, undefined)
+    expect(missing).toBe(undefined)
 
     // set → get
     await storage.set(pluginId, 'name', 'hello')
     const val = await storage.get(pluginId, 'name')
-    assert.strictEqual(val, 'hello')
+    expect(val).toBe('hello')
 
     // 覆盖写入
     await storage.set(pluginId, 'name', 'world')
     const updated = await storage.get(pluginId, 'name')
-    assert.strictEqual(updated, 'world')
+    expect(updated).toBe('world')
   })
 
   // ── TC-5-02: delete key ───────────────────────────────────────
@@ -46,11 +45,11 @@ describe('PluginStorage', () => {
 
     await storage.set(pluginId, 'toDelete', 42)
     const before = await storage.get(pluginId, 'toDelete')
-    assert.strictEqual(before, 42)
+    expect(before).toBe(42)
 
     await storage.delete(pluginId, 'toDelete')
     const after = await storage.get(pluginId, 'toDelete')
-    assert.strictEqual(after, undefined)
+    expect(after).toBe(undefined)
   })
 
   // ── TC-5-03: keys() returns all keys ──────────────────────────
@@ -63,7 +62,7 @@ describe('PluginStorage', () => {
 
     const allKeys = await storage.keys(pluginId)
     allKeys.sort()
-    assert.deepStrictEqual(allKeys, ['a', 'b', 'c'])
+    expect(allKeys).toEqual(['a', 'b', 'c'])
   })
 
   // ── TC-5-04: flush persists to disk, readable after restart ───
@@ -77,13 +76,13 @@ describe('PluginStorage', () => {
     const filePath = join(tmpDir, 'plugins', pluginId, 'globalState.json')
     const raw = await readFile(filePath, 'utf-8')
     const parsed = JSON.parse(raw) as Record<string, string>
-    assert.strictEqual(parsed.persistent, 'value-123')
+    expect(parsed.persistent).toBe('value-123')
 
     // 新实例读取应能恢复数据
     const storage2 = new PluginStorage()
     await storage2.init(tmpDir, '/test/project')
     const restored = await storage2.get(pluginId, 'persistent')
-    assert.strictEqual(restored, 'value-123')
+    expect(restored).toBe('value-123')
   })
 
   // ── TC-5-05: rejects writes exceeding limit ───────────────────
@@ -92,13 +91,12 @@ describe('PluginStorage', () => {
     // JSON.stringify 会给字符串加引号，所以实际 > 1MB
     const bigValue = 'x'.repeat(1024 * 1024 + 2)
 
-    await assert.rejects(
-      () => storage.set(pluginId, 'big', bigValue),
-      (err: unknown) => {
-        assert.ok(err instanceof Error)
-        assert.strictEqual((err as unknown as { code: number }).code, -32021)
-        return true
-      },
-    )
+    try {
+      await storage.set(pluginId, 'big', bigValue)
+      expect.unreachable('should have thrown')
+    } catch (err) {
+      expect(err).toBeInstanceOf(Error)
+      expect((err as unknown as { code: number }).code).toBe(-32021)
+    }
   })
 })

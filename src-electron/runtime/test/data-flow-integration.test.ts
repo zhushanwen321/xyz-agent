@@ -163,6 +163,9 @@ function waitForMessage(ws: WebSocket, type: string, timeout = 3000): Promise<Re
   })
 }
 
+/** Wait for async handleEvent to flush */
+const flushAsync = () => new Promise<void>(r => setTimeout(r, 0))
+
 function connectClient(port: number): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(`ws://localhost:${port}`)
@@ -280,6 +283,7 @@ describe('DF-1: Extension UI 请求-响应 (EventAdapter → Server → RpcClien
       title: 'Allow file access?',
       message: 'Extension wants to read /tmp/test.txt',
     })
+    await flushAsync()
 
     // 2. EventAdapter 翻译 + 触发 onExtensionUIRequest
     expect(fixture.adapterSent).toHaveLength(1)
@@ -327,6 +331,7 @@ describe('DF-1: Extension UI 请求-响应 (EventAdapter → Server → RpcClien
         { label: 'Option B', value: 'b' },
       ],
     })
+    await flushAsync()
 
     // 2. 验证 adapter 翻译 (options 变为 string[])
     expect(fixture.adapterSent).toHaveLength(1)
@@ -364,6 +369,7 @@ describe('DF-1: Extension UI 请求-响应 (EventAdapter → Server → RpcClien
       id: 'req-cancel-1',
       title: 'Allow?',
     })
+    await flushAsync()
 
     expect(fixture.adapterSent).toHaveLength(1)
 
@@ -397,6 +403,7 @@ describe('DF-1: Extension UI 请求-响应 (EventAdapter → Server → RpcClien
       id: 'req-null-1',
       title: 'Enter value',
     })
+    await flushAsync()
 
     expect(fixture.adapterSent).toHaveLength(1)
 
@@ -567,12 +574,13 @@ describe('DF-2: Extension 错误转发 (EventAdapter → server broadcast)', () 
     await fixture.cleanup()
   })
 
-  it('extension_error → EventAdapter 翻译为 extension.error (含 sessionId)', () => {
+  it('extension_error → EventAdapter 翻译为 extension.error (含 sessionId)', async () => {
     fixture.emitPiEvent({
       type: 'extension_error',
       extensionName: 'my-extension',
       error: 'Extension crashed unexpectedly',
     })
+    await flushAsync()
 
     expect(fixture.adapterSent).toHaveLength(1)
     expect(fixture.adapterSent[0].type).toBe('extension.error')
@@ -583,12 +591,13 @@ describe('DF-2: Extension 错误转发 (EventAdapter → server broadcast)', () 
     })
   })
 
-  it('extension_error 无显式 sessionId → EventAdapter 注入构造函数的 sessionId', () => {
+  it('extension_error 无显式 sessionId → EventAdapter 注入构造函数的 sessionId', async () => {
     fixture.emitPiEvent({
       type: 'extension_error',
       extensionName: 'ext-no-sid',
       error: 'some error',
     })
+    await flushAsync()
 
     expect(fixture.adapterSent).toHaveLength(1)
     expect(fixture.adapterSent[0].payload).toMatchObject({
@@ -615,13 +624,14 @@ describe('DF-3: 工具进度更新 (EventAdapter → server broadcast)', () => {
     await fixture.cleanup()
   })
 
-  it('progress + partialResult → EventAdapter 翻译为 message.tool_call_update', () => {
+  it('progress + partialResult → EventAdapter 翻译为 message.tool_call_update', async () => {
     fixture.emitPiEvent({
       type: 'tool_execution_update',
       toolCallId: 'tc-progress-1',
       toolName: 'read_file',
       partialResult: 'processing',
     })
+    await flushAsync()
 
     expect(fixture.adapterSent).toHaveLength(1)
     expect(fixture.adapterSent[0].type).toBe('message.tool_call_update')
@@ -632,12 +642,13 @@ describe('DF-3: 工具进度更新 (EventAdapter → server broadcast)', () => {
     })
   })
 
-  it('无 partialResult → detail 为 undefined', () => {
+  it('无 partialResult → detail 为 undefined', async () => {
     fixture.emitPiEvent({
       type: 'tool_execution_update',
       toolCallId: 'tc-progress-2',
       toolName: 'search',
     })
+    await flushAsync()
 
     expect(fixture.adapterSent).toHaveLength(1)
     expect(fixture.adapterSent[0].payload).toMatchObject({
