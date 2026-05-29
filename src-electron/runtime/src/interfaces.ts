@@ -184,6 +184,8 @@ export interface IPluginService {
   setPluginConfig(pluginId: string, key: string, value: unknown): Promise<void>
   /** Clear cached session data */
   clearSessionData(sessionId: string): void
+  /** Handle UI response from frontend (confirm/select/input dialogs) */
+  handleUiResponse(requestId: string, result: unknown): void
 
   /** Bridge routing methods */
   handleBridgeRequest?(method: string, payload: Record<string, unknown>, sessionId: string): Promise<unknown>

@@ -3,7 +3,7 @@ import type { PluginDescriptor, ToolEntry, HookEntry, HookContext, HookResult, B
 import type { IPluginService } from '../../interfaces.js'
 import type { IMessageBroker } from '../../interfaces.js'
 import { PluginRegistry } from './plugin-registry.js'
-import { PluginStorage, persistSessionData } from './plugin-storage.js'
+import { PluginStorage, persistSessionData, loadSessionData, deleteSessionData } from './plugin-storage.js'
 import { PluginRpcServer } from './plugin-rpc-server.js'
 import { PluginHost } from './plugin-host.js'
 import { PluginActivator } from './plugin-activator.js'
@@ -17,6 +17,7 @@ import { registerAgentRpcHandlers } from './api/agent-api.js'
 import { registerWorkspaceRpcHandlers } from './api/workspace-api.js'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { readdir } from 'node:fs/promises'
 
 export class PluginService implements IPluginService {
   private registry: PluginRegistry
@@ -64,6 +65,9 @@ export class PluginService implements IPluginService {
     this.sessionDataCache.delete(sessionId)
     this.sessionDataDirty.delete(sessionId)
     this.sessionDataSize.delete(sessionId)
+
+    // Also delete from disk
+    void deleteSessionData(join(homedir(), '.xyz-agent'), sessionId).catch(() => {})
   }
 
   constructor(registry: PluginRegistry, broker: IMessageBroker, deps?: IPluginServiceDeps) {
@@ -73,7 +77,16 @@ export class PluginService implements IPluginService {
     this.storage = new PluginStorage()
     this.rpcServer = new PluginRpcServer()
     this.host = new PluginHost(this.rpcServer)
-    this.activator = new PluginActivator()
+    this.activator = new PluginActivator({
+      permissionChecker: this.permissionChecker,
+      onPermissionRequest: (payload) => {
+        if (this.deps.broadcastFn) {
+          this.deps.broadcastFn('plugin:permissionRequest', payload)
+        } else {
+          this.broker.broadcast({ type: 'plugin:permissionRequest', id: `perm_${payload.pluginId}`, payload })
+        }
+      },
+    })
     this.permissionChecker = new PermissionChecker(registry)
   }
 
@@ -113,7 +126,26 @@ export class PluginService implements IPluginService {
           payload: { pluginId, workerId, error },
         })
       }
-      // TODO (Phase 2): trusted Worker 崩溃后自动重建 + 重新加载插件
+      // Trusted Worker 崩溃后通过 rebuildWorker 自动重建
+    })
+
+    // 4a. 设置 Worker 重建后的重新加载回调
+    this.host.setRebuiltCallback((newWorkerId, pluginIds) => {
+      for (const pluginId of pluginIds) {
+        try {
+          const descriptor = this.registry.getDescriptor(pluginId)
+          if (descriptor) {
+            this.host.loadPlugin(newWorkerId, descriptor.pluginPath, 'trusted').then(() => {
+              // Re-activate the plugin after loading
+              return this.activator.activatePlugin(pluginId, { type: 'onStartupFinished' }, this.host)
+            }).catch((err: unknown) => {
+              console.error(`[plugin-service] failed to reload plugin ${pluginId}:`, err)
+            })
+          }
+        } catch (err: unknown) {
+          console.error(`[plugin-service] failed to reload plugin ${pluginId}:`, err)
+        }
+      }
     })
 
     // 4b. 设置 Worker 生命周期回复回调（activated/deactivated/error）
@@ -135,6 +167,23 @@ export class PluginService implements IPluginService {
 
     // 8. 启动 sessionData flush 定时器
     this.startFlushTimer()
+
+    // 8b. Restore sessionData from disk
+    try {
+      const sessionDataDir = join(homedir(), '.xyz-agent', 'session-data')
+      const files = await readdir(sessionDataDir)
+      for (const file of files) {
+        if (file.endsWith('.json')) {
+          const sessionId = file.replace('.json', '')
+          const data = await loadSessionData(join(homedir(), '.xyz-agent'), sessionId)
+          if (data.size > 0) {
+            this.sessionDataCache.set(sessionId, data)
+          }
+        }
+      }
+    } catch {
+      // Directory doesn't exist yet, that's fine
+    }
 
     // 9. 为 external 已激活插件启动 hot-reload 监听
     for (const desc of this.registry.getAllDescriptors()) {

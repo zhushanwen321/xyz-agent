@@ -36,8 +36,17 @@ export class PluginHost implements ActivatorHost {
     this.rpcServer = rpcServer
   }
 
+  /** 设置 crash callback（含 Worker 重建后的重新加载） */
   setCrashCallback(cb: CrashCallback): void {
     this.onCrash = cb
+  }
+
+  /** 设置 Worker 重建后的重新加载回调 */
+  private onRebuilt: ((newWorkerId: string, pluginIds: string[]) => void) | null = null
+
+  /** 设置 Worker 重建回调（由 PluginService 调用） */
+  setRebuiltCallback(cb: (newWorkerId: string, pluginIds: string[]) => void): void {
+    this.onRebuilt = cb
   }
 
   /** 设置 Worker 生命周期回复的回调（activated/deactivated/error） */
@@ -345,5 +354,8 @@ export class PluginHost implements ActivatorHost {
     }
 
     console.log(`[plugin-host] rebuilt trusted worker ${oldWorkerId} as ${newWorkerId} for plugins: ${pluginIds.join(',')}`)
+
+    // Notify listener to reload plugins into the new worker
+    this.onRebuilt?.(newWorkerId, pluginIds)
   }
 }
