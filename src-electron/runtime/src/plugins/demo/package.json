@@ -1,6 +1,6 @@
 {
   "name": "demo-plugin",
-  "version": "0.1.0",
+  "version": "0.3.4",
   "description": "Demo plugin showcasing xyz-agent plugin API (session, storage, hooks, tools, UI)",
   "displayName": "Demo Plugin",
   "main": "index.js",
@@ -10,7 +10,9 @@
   "xyzAgent": {
     "manifestVersion": 1,
     "main": "index.js",
-    "activationEvents": ["onStartupFinished"],
+    "activationEvents": [
+      "onStartupFinished"
+    ],
     "trustLevel": "sandbox",
     "contributes": {
       "tools": [
@@ -25,12 +27,18 @@
                 "description": "Glob pattern to search"
               }
             },
-            "required": ["pattern"]
+            "required": [
+              "pattern"
+            ]
           }
         }
       ],
-      "hooks": ["onBeforeSendMessage"]
+      "hooks": [
+        "onBeforeSendMessage"
+      ]
     },
-    "permissions": ["workspace:file:search"]
+    "permissions": [
+      "workspace:file:search"
+    ]
   }
 }

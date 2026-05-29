@@ -1,6 +1,6 @@
 {
   "name": "pi-extension-workflow",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Multi-agent workflow orchestration for Pi — stateful workflow management with persistence, state machine, and execution tracing.",
   "main": "index.ts",
   "keywords": [

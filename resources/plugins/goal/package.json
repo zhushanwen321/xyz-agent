@@ -1,6 +1,6 @@
 {
   "name": "goal",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "displayName": "Goal Manager",
   "description": "Goal mode task management - track progress, manage tasks, and guide LLM execution",
   "xyzAgent": {
