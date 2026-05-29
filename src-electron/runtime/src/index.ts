@@ -72,7 +72,11 @@ async function main(): Promise<void> {
 
   // Wire services into server
   const pluginRegistry = new PluginRegistry(effectiveRoot)
-  const pluginService = new PluginService(pluginRegistry, server)
+  const pluginService = new PluginService(pluginRegistry, server, {
+    sessionService,
+    configService,
+    broadcastFn: (type, payload) => server.broadcast({ type: type as 'session.list', id: `push_${Date.now()}`, payload } as import('@xyz-agent/shared').ServerMessage),
+  })
   server.setServices(sessionService, configService, modelService, treeService, extensionService, pluginService)
 
   // Graceful shutdown on signals

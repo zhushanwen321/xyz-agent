@@ -1,3 +1,5 @@
+import type { ISessionService, IConfigService } from '../../interfaces.js'
+
 /**
  * 插件系统内部类型定义
  *
@@ -409,4 +411,23 @@ export interface HookResult {
 export interface HookBlockedResult extends HookResult {
   blocked: true
   reason: string
+}
+
+// ── PluginService 依赖注入 ──────────────────────────────────────────
+
+/** PluginService 外部依赖，构造时可选注入 */
+export interface IPluginServiceDeps {
+  sessionService?: ISessionService
+  configService?: IConfigService
+  broadcastFn?: (type: string, payload: unknown) => void
+}
+
+/** 插件向后端请求前端 UI 弹窗 */
+export interface PluginUIRequest {
+  sessionId: string
+  requestId: string
+  method: 'confirm' | 'select' | 'input'
+  title: string
+  message?: string
+  options?: string[]
 }

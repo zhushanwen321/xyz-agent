@@ -414,6 +414,14 @@ export class SidecarServer implements IMessageBroker {
           // Phase 4: npm install integration
           return this.sendError(ws, 'not_implemented', 'Plugin install requires Phase 4 npm integration', msg.id)
         }
+        case 'plugin.uiResponse': {
+          if (!this.pluginService) return this.sendError(ws, 'handler_error', 'Plugin service not available', msg.id)
+          const uiService = this.pluginService as unknown as { handleUiResponse(requestId: string, result: unknown): void }
+          if (uiService.handleUiResponse) {
+            uiService.handleUiResponse((msg.payload as { requestId: string; result: unknown }).requestId, (msg.payload as { requestId: string; result: unknown }).result)
+          }
+          return this.send(ws, { type: 'pong', id: msg.id, payload: {} })
+        }
         default:
           if (!await this.handleSettingsMessage(msg, ws)) {
             // handleSettingsMessage 返回 false，说明 type 也不在 settings 分支中
