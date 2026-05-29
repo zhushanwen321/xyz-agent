@@ -48,7 +48,7 @@ describe('PluginInstaller', () => {
           const tgzPath = join(packDest, 'my-test-plugin-1.0.0.tgz')
           writeFile(tgzPath, 'fake tarball', 'utf-8').then(() => {
             // tar mock: extract by copying from our pre-made structure
-            ;(cb as (err: null, result: { stdout: string; stderr: string }) => void)(null, { stdout: tgzPath, stderr: '' })
+            ;(cb as unknown as (err: null, result: { stdout: string; stderr: string }) => void)(null, { stdout: tgzPath, stderr: '' })
           })
           return {} as any
         }
@@ -61,7 +61,7 @@ describe('PluginInstaller', () => {
             xyzAgent: { manifestVersion: 1, main: 'index.js' },
           }
           void createFakeTarball(extractDir, fakePkg).then(() => {
-            ;(cb as (err: null, result: { stdout: string; stderr: string }) => void)(null, { stdout: '', stderr: '' })
+            ;(cb as unknown as (err: null, result: { stdout: string; stderr: string }) => void)(null, { stdout: '', stderr: '' })
           })
           return {} as any
         }
@@ -88,7 +88,7 @@ describe('PluginInstaller', () => {
       mockExecFile.mockImplementation((cmd, _args, _opts, cb) => {
         if (cmd === 'npm') {
           const err = new Error('npm pack failed: package not found')
-          ;(cb as (err: Error) => void)(err)
+          ;(cb as unknown as (err: Error) => void)(err)
         }
         return {} as any
       })
@@ -109,7 +109,7 @@ describe('PluginInstaller', () => {
           const packDest = args![3] as string
           const tgzPath = join(packDest, 'no-manifest-1.0.0.tgz')
           void writeFile(tgzPath, 'fake', 'utf-8').then(() => {
-            ;(cb as (err: null, result: { stdout: string; stderr: string }) => void)(null, { stdout: tgzPath, stderr: '' })
+            ;(cb as unknown as (err: null, result: { stdout: string; stderr: string }) => void)(null, { stdout: tgzPath, stderr: '' })
           })
           return {} as any
         }
@@ -121,7 +121,7 @@ describe('PluginInstaller', () => {
             // no xyzAgent field
           }
           void createFakeTarball(extractDir, fakePkg).then(() => {
-            ;(cb as (err: null, result: { stdout: string; stderr: string }) => void)(null, { stdout: '', stderr: '' })
+            ;(cb as unknown as (err: null, result: { stdout: string; stderr: string }) => void)(null, { stdout: '', stderr: '' })
           })
           return {} as any
         }
@@ -144,7 +144,7 @@ describe('PluginInstaller', () => {
           const packDest = args![3] as string
           const tgzPath = join(packDest, 'wrong-version-1.0.0.tgz')
           void writeFile(tgzPath, 'fake', 'utf-8').then(() => {
-            ;(cb as (err: null, result: { stdout: string; stderr: string }) => void)(null, { stdout: tgzPath, stderr: '' })
+            ;(cb as unknown as (err: null, result: { stdout: string; stderr: string }) => void)(null, { stdout: tgzPath, stderr: '' })
           })
           return {} as any
         }
@@ -156,7 +156,7 @@ describe('PluginInstaller', () => {
             xyzAgent: { manifestVersion: 2 },
           }
           void createFakeTarball(extractDir, fakePkg).then(() => {
-            ;(cb as (err: null, result: { stdout: string; stderr: string }) => void)(null, { stdout: '', stderr: '' })
+            ;(cb as unknown as (err: null, result: { stdout: string; stderr: string }) => void)(null, { stdout: '', stderr: '' })
           })
           return {} as any
         }
@@ -177,7 +177,7 @@ describe('PluginInstaller', () => {
       mockExecFile.mockImplementation((cmd, _args, _opts, cb) => {
         if (cmd === 'npm') {
           // npm pack "succeeds" but no .tgz file is created
-          ;(cb as (err: null, result: { stdout: string; stderr: string }) => void)(null, { stdout: '', stderr: '' })
+          ;(cb as unknown as (err: null, result: { stdout: string; stderr: string }) => void)(null, { stdout: '', stderr: '' })
         }
         return {} as any
       })

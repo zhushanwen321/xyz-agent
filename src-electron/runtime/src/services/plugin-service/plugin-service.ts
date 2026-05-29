@@ -82,6 +82,7 @@ export class PluginService implements IPluginService {
     this.rpcServer = new PluginRpcServer()
     this.host = new PluginHost(this.rpcServer)
     this.installer = new PluginInstaller()
+    this.permissionChecker = new PermissionChecker(registry)
     this.activator = new PluginActivator({
       permissionChecker: this.permissionChecker,
       onPermissionRequest: (payload) => {
@@ -92,7 +93,6 @@ export class PluginService implements IPluginService {
         }
       },
     })
-    this.permissionChecker = new PermissionChecker(registry)
   }
 
   async initialize(): Promise<void> {

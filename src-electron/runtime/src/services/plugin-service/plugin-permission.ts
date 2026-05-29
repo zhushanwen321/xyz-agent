@@ -66,6 +66,29 @@ export class PluginPermissionChecker {
   }
 
   /**
+   * 返回尚未审批的权限列表。
+   * Activator 在激活插件时调用，用于判断是否需要弹出权限审批 UI。
+   *
+   * @param pluginId 插件 ID
+   * @param permissions 插件声明的权限列表
+   * @returns 尚未审批的权限子集
+   */
+  getUnapproved(pluginId: string, permissions: string[]): string[] {
+    const descriptor = this.registry.getDescriptor(pluginId)
+    if (!descriptor) return permissions
+
+    // trusted / built-in 插件不需要审批
+    if (descriptor.trustLevel === 'trusted' || descriptor.source === 'built-in') {
+      return []
+    }
+
+    const granted = this.granted.get(pluginId)
+    if (!granted) return permissions
+
+    return permissions.filter(p => !granted.has(p))
+  }
+
+  /**
    * 撤销插件的所有权限。
    *
    * @param pluginId 插件 ID
