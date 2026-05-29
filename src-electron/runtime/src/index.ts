@@ -56,7 +56,7 @@ async function main(): Promise<void> {
   // pluginService declared before sessionService but assigned after —
   // the adapter factory closure reads pluginService at session creation time,
   // by which point pluginService is already initialized.
-  let pluginService: PluginService | undefined
+  const pluginService: PluginService | undefined
 
   const sessionService = new SessionService(
     pm,

@@ -3,7 +3,7 @@ import type { PluginDescriptor, ToolEntry, HookEntry, HookContext, HookResult, B
 import type { IPluginService } from '../../interfaces.js'
 import type { IMessageBroker } from '../../interfaces.js'
 import { PluginRegistry } from './plugin-registry.js'
-import { PluginStorage, persistSessionData, loadSessionData, deleteSessionData } from './plugin-storage.js'
+import { PluginStorage, persistSessionData } from './plugin-storage.js'
 import { PluginRpcServer } from './plugin-rpc-server.js'
 import { PluginHost } from './plugin-host.js'
 import { PluginActivator } from './plugin-activator.js'

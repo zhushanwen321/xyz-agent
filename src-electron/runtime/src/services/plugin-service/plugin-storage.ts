@@ -1,7 +1,6 @@
 import { mkdir, readFile, writeFile, rename, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
-import { homedir } from 'node:os'
 
 const MAX_TOTAL_SIZE = 10 * 1024 * 1024 // 10MB
 const MAX_VALUE_SIZE = 1 * 1024 * 1024 // 1MB
