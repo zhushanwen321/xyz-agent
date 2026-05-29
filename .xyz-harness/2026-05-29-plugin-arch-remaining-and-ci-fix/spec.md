@@ -40,11 +40,57 @@ SettingsView.vue 的 tabs 数组中缺少 plugins 条目，settings/index.ts 未
 但 Worker 端 `plugin-bootstrap.ts` 的 `msg.type === 'rpc'` 分支只处理 `response` 和 `notification`，
 不处理主线程发来的 `request`，导致 LLM 调用插件工具时 Worker 无响应。
 
+**设计细节：**
+
+1. **ToolRegistration 新增 execute handler**：
+   ```typescript
+   // plugin-types.ts
+   export type ToolExecuteHandler = (params: {
+     arguments: Record<string, unknown>
+     sessionId?: string
+     toolCallId?: string
+   }) => Promise<BridgeToolExecuteResponse>
+
+   export interface ToolRegistration {
+     name: string
+     description: string
+     parameters: Record<string, unknown>
+     execute: ToolExecuteHandler
+   }
+   ```
+
+2. **Worker 侧本地 handler Map**：
+   - `plugin-bootstrap.ts` 新增 `const toolHandlers = new Map<string, ToolExecuteHandler>()`
+   - key 格式：`${pluginId}:${toolName}`（与主线程 toolRegistry key 一致）
+
+3. **tool-api.ts Worker 侧 register 流程**：
+   - `createToolApi().register(registration)` → 本地存储 `registration.execute` 到 `toolHandlers` Map
+   - 同时通过 RPC 将 schema（不含 execute）发送到主线程 toolRegistry
+   - 注意：execute 函数不可序列化，仅留在 Worker 进程内
+
+4. **plugin-bootstrap.ts 处理 msg.request**：
+   - 在 `msg.type === 'rpc'` case 中增加 `msg.request` 处理
+   - 根据 `msg.request.method === 'plugin.tool.execute'` 查找 `toolHandlers` Map
+   - 找到 → 执行 handler → 通过 `parentPort` 发送 `{ type: 'rpc', response: { jsonrpc: '2.0', id, result } }`
+   - 未找到 → 发送 error response `{ jsonrpc: '2.0', id, error: { code, message } }`
+
+5. **HostToWorkerMessage 类型变更**：
+   - `plugin-types.ts` 中 `HostToWorkerMessage` 的 `rpc` 变体增加 `request?: RpcRequest` 字段
+   - 对应 `plugin-host.ts` 中 `rpcServer.invoke()` 已经发送的 `{ type: 'rpc', request: { ... } }` 格式
+
 **改动范围：**
-- `src-electron/runtime/src/services/plugin-service/plugin-bootstrap.ts` — 在 `rpc` case 中添加 `msg.request` 处理
-- Worker 需要维护一个本地 tool handler Map（插件通过 `api.tools.register()` 注册时同时注册本地 execute handler）
-- `src-electron/runtime/src/services/plugin-service/plugin-types.ts` — ToolRegistration 增加 execute 签名
-- `src-electron/runtime/src/services/plugin-service/tool-api.ts` — Worker 侧 register 同时存储 handler
+- `src-electron/runtime/src/services/plugin-service/plugin-types.ts` — 新增 `ToolExecuteHandler` 类型；`ToolRegistration` 增加 `execute` 字段；`HostToWorkerMessage.rpc` 增加 `request` 字段
+- `src-electron/runtime/src/services/plugin-service/plugin-bootstrap.ts` — 新增 `toolHandlers` Map；`rpc` case 中处理 `msg.request`；分发到 tool handler
+- `src-electron/runtime/src/services/plugin-service/tool-api.ts` — Worker 侧 `register` 同时存储 handler 到本地 Map（通过回调或直接 import Map）
+
+**已知限制（Phase 4 处理）：**
+- 多个插件注册同名 tool 时，`handleBridgeToolExecute` 返回第一个匹配，不保证顺序
+- 内置插件 Goal/Todo 当前不使用 `api.tools.register()`（它们是 pi extension，不经过 xyz-agent plugin 系统），不受此改动影响
+
+**测试策略：**
+- 在 `plugin-bootstrap.ts` 中导出 `handleMessage` 函数，单元测试发送 `{ type: 'rpc', request: { jsonrpc: '2.0', id: 1, method: 'plugin.tool.execute', params: { ... } } }`
+- 验证：注册 handler → 发 RPC request → 收到正确 response
+- 验证：未注册 handler → 收到 error response
 
 ### FR-3: CI Windows 构建修复
 
@@ -56,13 +102,18 @@ SettingsView.vue 的 tabs 数组中缺少 plugins 条目，settings/index.ts 未
    匹配路径，但 Windows 上路径分隔符是 `\`，导致 11/20 测试失败。
 
 **改动范围：**
-- `scripts/prepare-pi-resources.sh` — unzip 后检测 `pi.exe` 直接存在的情况，rename + 资源处理
-- `src-electron/runtime/test/extension-service.test.ts` — 用 `p.replace(/\\/g, '/')` 或 `path.normalize` 处理路径比较
+- `scripts/prepare-pi-resources.sh` — unzip 后检测 `pi.exe` 直接存在于根目录的情况（非 `pi/` 子目录），
+  将 `pi.exe` 重命名为 `${BINARY_NAME}`（即 `pi-windows-x64.exe`）；
+  同时将 `assets/`、`package.json`、`theme/` 等资源保留在 `RESOURCES_DIR` 根目录（已经是正确位置，无需移动）
+- `src-electron/runtime/test/extension-service.test.ts` — 所有 `p.includes('xxx/package.json')` 匹配
+  改为路径标准化后匹配：`p.replace(/\\/g, '/').endsWith('ext-a/package.json')`，
+  或使用 `path.basename(path.dirname(p)) === 'ext-a' && path.basename(p) === 'package.json'` 精确匹配
 
 ## Acceptance Criteria
 
 - AC-1: Settings 页面出现 Plugins tab，点击后显示 PluginsPane 内容
-- AC-2: 插件注册的 tool 能通过 LLM 调用并返回结果（Worker 端 execute handler 生效）
+- AC-2: Worker 端 `plugin-bootstrap.ts` 的 `handleMessage` 能正确处理 `msg.request`（method=`plugin.tool.execute`），
+  执行注册的 tool handler 并通过 `parentPort` 返回 RPC response（有单元测试覆盖）
 - AC-3: CI Windows Build 的 "Download and prepare pi resources" 步骤成功
 - AC-4: CI Windows Build 的 extension-service 测试全部通过
 - AC-5: 现有 macOS/Linux CI 不受影响（lint + typecheck + test 全通过）
