@@ -44,6 +44,11 @@ export function registerToolHandler(toolKey: string, handler: ToolExecuteHandler
   toolHandlers.set(toolKey, handler)
 }
 
+/** 注销 tool handler（由 tool-api.ts 调用） */
+export function unregisterToolHandler(toolKey: string): void {
+  toolHandlers.delete(toolKey)
+}
+
 if (parentPort) {
   rpcClient.attach(parentPort)
 
@@ -163,15 +168,17 @@ function postRpcResponse(
   error: { code: number; message: string } | undefined,
 ): void {
   if (id === null) return
+  // JSON-RPC id: 项目内约定为 number，RpcResponse.id 类型为 number
+  const numericId = typeof id === 'number' ? id : Number(id)
   if (error) {
     parentPort!.postMessage({
       type: 'rpc',
-      response: { jsonrpc: '2.0', id: id as number, error },
+      response: { jsonrpc: '2.0', id: numericId, error },
     })
   } else {
     parentPort!.postMessage({
       type: 'rpc',
-      response: { jsonrpc: '2.0', id: id as number, result },
+      response: { jsonrpc: '2.0', id: numericId, result },
     })
   }
 }

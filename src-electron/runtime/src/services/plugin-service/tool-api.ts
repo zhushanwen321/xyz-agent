@@ -89,24 +89,29 @@ export function createToolApi(
      */
     register: async (registration: ToolRegistration): Promise<string> => {
       const toolKey = `${pluginId}:${registration.name}`
-      if (registration.execute) {
-        const { registerToolHandler: rth } = await import('./plugin-bootstrap.js')
-        rth(toolKey, registration.execute)
-      }
-      return rpcClient.request('plugin.tools.register', {
+      // 先通过 RPC 注册 schema 到主线程，成功后再存本地 handler
+      const result = await rpcClient.request('plugin.tools.register', {
         pluginId,
         name: registration.name,
         description: registration.description,
         parameters: registration.parameters,
-      }) as Promise<string>
+      }) as string
+      // RPC 成功后才存本地 handler，避免 RPC 失败时 handler 残留
+      if (registration.execute) {
+        const { registerToolHandler: rth } = await import('./plugin-bootstrap.js')
+        rth(toolKey, registration.execute)
+      }
+      return result
     },
 
     /**
      * 注销工具。不存在的 toolKey 静默成功。
      */
-    unregister: (toolKey: string): Promise<void> =>
-      rpcClient
-        .request('plugin.tools.unregister', { pluginId, toolKey })
-        .then(() => {}),
+    unregister: async (toolKey: string): Promise<void> => {
+      await rpcClient.request('plugin.tools.unregister', { pluginId, toolKey })
+      // 清理本地 handler
+      const { unregisterToolHandler } = await import('./plugin-bootstrap.js')
+      unregisterToolHandler(toolKey)
+    },
   }
 }
