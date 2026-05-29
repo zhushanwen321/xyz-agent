@@ -189,6 +189,9 @@ export interface IPluginService {
 
   /** Bridge routing methods */
   handleBridgeRequest?(method: string, payload: Record<string, unknown>, sessionId: string): Promise<unknown>
+
+  /** Install a plugin from an npm package specifier */
+  installPlugin(packageSpecifier: string): Promise<unknown>
   getToolSchemas?(): import('./services/plugin-service/plugin-types.js').ToolRegistration[]
   handleBridgeToolExecute?(request: import('./services/plugin-service/plugin-types.js').BridgeToolExecuteRequest): Promise<import('./services/plugin-service/plugin-types.js').BridgeToolExecuteResponse>
   handleBridgeEvent?(eventName: string, data: unknown, sessionId: string): void

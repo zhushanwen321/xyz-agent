@@ -411,8 +411,19 @@ export class SidecarServer implements IMessageBroker {
           return this.send(ws, { type: 'plugin:config', id: msg.id, payload: { pluginId: msg.payload.pluginId, config: allConfig as Record<string, unknown> } })
         }
         case 'plugin.install': {
-          // Phase 4: npm install integration
-          return this.sendError(ws, 'not_implemented', 'Plugin install requires Phase 4 npm integration', msg.id)
+          if (!this.pluginService) return this.sendError(ws, 'service_not_ready', 'PluginService not initialized', msg.id)
+          const { packageSpecifier } = msg.payload as { packageSpecifier: string }
+          if (!packageSpecifier) {
+            return this.sendError(ws, 'invalid_params', 'Missing packageSpecifier', msg.id)
+          }
+          const result = await this.pluginService.installPlugin(packageSpecifier)
+          if (result.success) {
+            const plugins = this.pluginService.getDiscoveredPlugins()
+            this.send(ws, { type: 'config.plugins', id: msg.id, payload: { plugins } })
+          } else {
+            this.sendError(ws, 'install_failed', (result as Record<string, unknown>).error as string ?? 'Install failed', msg.id)
+          }
+          break
         }
         case 'plugin.uiResponse': {
           if (!this.pluginService) return this.sendError(ws, 'handler_error', 'Plugin service not available', msg.id)

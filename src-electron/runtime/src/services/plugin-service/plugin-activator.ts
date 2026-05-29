@@ -159,6 +159,12 @@ export class PluginActivator {
     const currentState = this.pluginStates.get(pluginId)
     if (currentState === 'ACTIVE' || currentState === 'ACTIVATING') return
 
+    // 版本不兼容的插件不能激活
+    if (currentState === 'DEPS_MISSING') {
+      console.warn(`[plugin-activator] skipping ${pluginId}: incompatible version`)
+      return
+    }
+
     this.pluginStates.set(pluginId, 'ACTIVATING')
 
     try {

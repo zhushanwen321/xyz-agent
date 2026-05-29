@@ -53,6 +53,8 @@ export interface PluginDescriptor {
   source: PluginSource
   /** 该插件依赖的其他插件 ID 列表 */
   extensionDependencies: string[]
+  /** 版本不兼容时的错误描述 */
+  compatibilityError?: string
 }
 
 export interface PluginContributes {

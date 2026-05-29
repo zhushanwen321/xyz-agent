@@ -15,6 +15,7 @@ import { registerSessionDataRpcHandlers } from './api/session-data-api.js'
 import { registerUiRpcHandlers } from './api/ui-api.js'
 import { registerAgentRpcHandlers } from './api/agent-api.js'
 import { registerWorkspaceRpcHandlers } from './api/workspace-api.js'
+import { PluginInstaller, type InstallResult } from './plugin-installer.js'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { readdir } from 'node:fs/promises'
@@ -48,6 +49,9 @@ export class PluginService implements IPluginService {
   /** 定时 flush 计时器 */
   private sessionDataFlushTimer: ReturnType<typeof setInterval> | null = null
 
+  /** npm 安装器 */
+  private installer: PluginInstaller
+
   /** 注入的外部依赖 */
   private deps: IPluginServiceDeps
 
@@ -77,6 +81,7 @@ export class PluginService implements IPluginService {
     this.storage = new PluginStorage()
     this.rpcServer = new PluginRpcServer()
     this.host = new PluginHost(this.rpcServer)
+    this.installer = new PluginInstaller()
     this.activator = new PluginActivator({
       permissionChecker: this.permissionChecker,
       onPermissionRequest: (payload) => {
@@ -720,6 +725,19 @@ export class PluginService implements IPluginService {
     }
 
     return { injectedMessages: [] }
+  }
+
+  async installPlugin(packageSpecifier: string): Promise<InstallResult> {
+    const result = await this.installer.install(packageSpecifier)
+    if (result.success && result.pluginId) {
+      // Re-scan registry to pick up the new plugin
+      await this.registry.reload()
+      // Re-register descriptors with activator
+      const descriptors = this.registry.getAllDescriptors()
+      this.activator.registerDescriptors(descriptors)
+      this.broadcastPluginList()
+    }
+    return result
   }
 
   /** 将所有 dirty sessionData 批量 flush（由定时器调用） */
