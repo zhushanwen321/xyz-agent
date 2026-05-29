@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports */
 const readline = require('readline')
 const fs = require('fs')
 const path = require('path')

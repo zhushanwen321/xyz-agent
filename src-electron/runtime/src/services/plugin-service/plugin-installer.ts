@@ -37,7 +37,7 @@ export class PluginInstaller {
 
     try {
       // 1. npm pack to download the package
-      const { stdout } = await execFileAsync('npm', [
+      await execFileAsync('npm', [
         'pack', packageSpecifier, '--pack-destination', tmpDir,
       ], { timeout: 60_000 })
 
