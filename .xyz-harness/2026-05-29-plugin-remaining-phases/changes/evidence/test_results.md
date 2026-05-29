@@ -10,15 +10,15 @@ all_passing: true
 ```
 npx vitest run src-electron/runtime/test/plugin-*.test.ts
 
- Test Files  30 passed (30)
-      Tests  323 passed (323)
+ Test Files  31 passed (31)
+      Tests  334 passed (334)
    Start at  23:02:29
    Duration  2.21s
 ```
 
-**All 30 backend test files passed. 323 tests passing.**
+**All 31 backend test files passed. 334 tests passing.**
 
-## New Test Files (7)
+## New Test Files (9)
 
 | Test File | Tests | Covers |
 |-----------|-------|--------|
@@ -29,7 +29,7 @@ npx vitest run src-electron/runtime/test/plugin-*.test.ts
 | plugin-permission-push.test.ts | 7 | FR-5 Permission push |
 | plugin-worker-rebuild.test.ts | 5 | FR-7 Worker crash rebuild |
 | plugin-findfiles.test.ts | 3 | FR-6 findFiles |
-| plugin-hook-bridge.test.ts | 5 | FR-8 Hook bridge |
+| plugin-hook-bridge.test.ts | 11 | FR-8 Hook bridge |
 | plugin-demo-e2e.test.ts | 8 | FR-10 Demo plugin |
 
 ## Legacy Tests (21 files, converted from node:test to vitest)
