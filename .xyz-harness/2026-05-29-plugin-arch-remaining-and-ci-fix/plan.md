@@ -176,13 +176,13 @@ export type ToolExecuteHandler = (params: {
 }) => Promise<BridgeToolExecuteResponse>
 ```
 
-2. 在 `ToolRegistration` 接口中添加 `execute` 字段：
+2. 在 `ToolRegistration` 接口中添加 `execute` 可选字段（可选因为主线程侧 schema 不可序列化 execute 函数）：
 ```typescript
 export interface ToolRegistration {
   name: string
   description: string
   parameters: Record<string, unknown>
-  execute: ToolExecuteHandler
+  execute?: ToolExecuteHandler
 }
 ```
 
@@ -193,7 +193,7 @@ export interface ToolRegistration {
 
 - [ ] **Step 2: Worker 侧 handler Map + msg.request 处理（plugin-bootstrap.ts）**
 
-1. 新增导入和模块级 Map：
+1. 将 `handleMessage` 从内部函数改为 export，新增导入和模块级 Map：
 ```typescript
 import type { ToolExecuteHandler, RpcRequest, RpcResponse } from './plugin-types.js'
 import { PluginRpcErrorCodes } from './plugin-types.js'
@@ -206,6 +206,8 @@ export function registerToolHandler(toolKey: string, handler: ToolExecuteHandler
   toolHandlers.set(toolKey, handler)
 }
 ```
+
+同时将现有的 `async function handleMessage` 改为 `export async function handleMessage`，使单元测试可以 import。
 
 2. 在 `handleMessage` 的 `msg.type === 'rpc'` case 中，在现有 `msg.response` 和 `msg.notification` 处理之后，添加 `msg.request` 处理：
 ```typescript
@@ -508,6 +510,7 @@ else
   elif [[ -f "pi.exe" ]]; then
     # Windows zip 风格：文件直接在根层级，无 pi/ 子目录
     mv pi.exe "${BINARY_NAME}"
+    chmod +x "${BINARY_NAME}" 2>/dev/null || true
     # assets/、theme/、package.json 等已在根目录，无需移动
   fi
 fi
