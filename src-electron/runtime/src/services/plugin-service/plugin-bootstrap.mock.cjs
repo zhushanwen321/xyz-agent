@@ -3,8 +3,7 @@
  * Mock Worker bootstrap for PluginHost unit tests.
  *
  * Handles load / activate / deactivate / rpc messages without loading real plugins.
- * This file is a CommonJS test fixture — Worker threads need a directly
- * executable script, and CJS is the simplest format for that purpose.
+ * This file is temporarily placed at the path PluginHost expects during tests.
  */
 
 const { parentPort } = require('node:worker_threads')

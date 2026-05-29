@@ -1,7 +1,7 @@
 # 插件系统实施规划
 
-> 基于 [融合设计报告](docs/architecture/plugin-system-design-part1.md) / [Part 2](docs/architecture/plugin-system-design-part2.md)
-> 代码盘点: [extension-audit.md](../feature-map/extension-audit.md)
+> 基于 [融合设计报告](design-part1.md) / [Part 2](design-part2.md)
+> 代码盘点: [extension-audit.md](extension-audit.md)
 
 ---
 
@@ -29,7 +29,7 @@ extension（已有，pi 侧）            plugin（新建，xyz-agent 侧）
 
 ## 现状盘点
 
-详细的代码盘点见 [extension-audit.md](../feature-map/extension-audit.md)。摘要如下：
+详细的代码盘点见 [extension-audit.md](extension-audit.md)。摘要如下：
 
 ### 已完成（14 项完整）
 

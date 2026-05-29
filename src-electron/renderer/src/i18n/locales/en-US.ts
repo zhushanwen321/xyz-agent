@@ -71,6 +71,7 @@ export default {
     tabSkills: 'Skills',
     tabAgents: 'Agents',
     tabSystem: 'System',
+    tabPlugins: 'Plugins',
     tabExtensions: 'Extensions',
     addProvider: 'Add Provider',
     editProvider: 'Edit Provider',

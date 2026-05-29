@@ -181,7 +181,7 @@ export type HostToWorkerMessage =
   | { type: 'load'; pluginId: string; pluginPath: string; trustLevel?: 'trusted' | 'sandbox' }
   | { type: 'activate'; pluginId: string; pluginDir: string; event: ActivationEvent }
   | { type: 'deactivate'; pluginId: string }
-  | { type: 'rpc'; response?: RpcResponse; notification?: RpcNotification }
+  | { type: 'rpc'; response?: RpcResponse; notification?: RpcNotification; request?: RpcRequest }
 
 export type WorkerToHostMessage =
   | { type: 'loaded'; pluginId: string }
@@ -281,6 +281,13 @@ export interface BridgeToolExecuteResponse {
   isError?: boolean
 }
 
+/** Worker 侧 tool 执行处理函数 */
+export type ToolExecuteHandler = (params: {
+  arguments: Record<string, unknown>
+  sessionId?: string
+  toolCallId?: string
+}) => Promise<BridgeToolExecuteResponse>
+
 // ── Phase 2: Tool 类型 ──────────────────────────────────────────────
 
 /** 工具注册请求（插件通过 api.tools.register() 提交） */
@@ -288,6 +295,8 @@ export interface ToolRegistration {
   name: string
   description: string
   parameters: Record<string, unknown>
+  /** Worker 侧本地执行 handler，在 createToolApi 注册时存储 */
+  execute?: ToolExecuteHandler
 }
 
 /** 工具注册表中存储的条目（主线程侧） */

@@ -69,6 +69,9 @@ else
       cp -R pi/assets pi/export-html pi/package.json pi/photon_rs_bg.wasm pi/theme . 2>/dev/null || true
       cp pi/pi "${BINARY_NAME}" 2>/dev/null || cp pi/pi.exe "${BINARY_NAME}" 2>/dev/null || true
       rm -rf pi
+    elif [[ -f "pi.exe" ]]; then
+      mv pi.exe "${BINARY_NAME}"
+      chmod +x "${BINARY_NAME}" 2>/dev/null || true
     fi
   fi
   rm -f "$ASSET"

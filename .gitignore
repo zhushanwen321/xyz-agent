@@ -32,3 +32,4 @@ src-electron/resources/pi/theme
 src-electron/resources/pi/agent/*
 !src-electron/resources/pi/agent/extensions/
 !src-electron/resources/pi/agent/skills/
+.pi/

@@ -18,7 +18,10 @@ import type {
   Phase2AgentAPI,
   PluginStateStorage,
   Disposable,
+  RpcRequest,
+  ToolExecuteHandler,
 } from './plugin-types.js'
+import { PluginRpcErrorCodes } from './plugin-types.js'
 import { PluginRpcClient } from './plugin-rpc-client.js'
 import { createRequireInterceptor, createEnvProxy } from './plugin-sandbox.js'
 import { createToolApi } from './tool-api.js'
@@ -32,6 +35,19 @@ import { createWorkspaceApi } from './api/workspace-api.js'
 
 const rpcClient = new PluginRpcClient()
 const loadedModules = new Map<string, PluginModule>()
+
+/** Worker 本地 tool handler 注册表 */
+const toolHandlers = new Map<string, ToolExecuteHandler>()
+
+/** 注册 tool handler（由 tool-api.ts 调用） */
+export function registerToolHandler(toolKey: string, handler: ToolExecuteHandler): void {
+  toolHandlers.set(toolKey, handler)
+}
+
+/** 注销 tool handler（由 tool-api.ts 调用） */
+export function unregisterToolHandler(toolKey: string): void {
+  toolHandlers.delete(toolKey)
+}
 
 if (parentPort) {
   rpcClient.attach(parentPort)
@@ -47,7 +63,7 @@ if (parentPort) {
   })
 }
 
-async function handleMessage(msg: HostToWorkerMessage): Promise<void> {
+export async function handleMessage(msg: HostToWorkerMessage): Promise<void> {
   switch (msg.type) {
     case 'load': {
       try {
@@ -104,8 +120,66 @@ async function handleMessage(msg: HostToWorkerMessage): Promise<void> {
       if (msg.notification) {
         rpcClient.handleNotification(msg.notification)
       }
+      if (msg.request) {
+        handleIncomingRequest(msg.request)
+      }
       break
     }
+  }
+}
+
+async function handleIncomingRequest(request: RpcRequest): Promise<void> {
+  if (request.method === 'plugin.tool.execute') {
+    const { pluginId, toolName, arguments: args, sessionId, toolCallId } = request.params as Record<string, unknown>
+    const toolKey = `${pluginId}:${toolName}`
+    const handler = toolHandlers.get(toolKey)
+    if (!handler) {
+      postRpcResponse(request.id, undefined, {
+        code: PluginRpcErrorCodes.METHOD_NOT_FOUND,
+        message: `Tool handler not found: ${toolKey}`,
+      })
+      return
+    }
+    try {
+      const result = await handler({
+        arguments: args as Record<string, unknown>,
+        sessionId: sessionId as string | undefined,
+        toolCallId: toolCallId as string | undefined,
+      })
+      postRpcResponse(request.id, result, undefined)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      postRpcResponse(request.id, undefined, {
+        code: PluginRpcErrorCodes.INTERNAL_ERROR,
+        message: `Tool execution error: ${msg}`,
+      })
+    }
+  } else {
+    postRpcResponse(request.id, undefined, {
+      code: PluginRpcErrorCodes.METHOD_NOT_FOUND,
+      message: `Unknown method: ${request.method}`,
+    })
+  }
+}
+
+function postRpcResponse(
+  id: number | string | null,
+  result: unknown,
+  error: { code: number; message: string } | undefined,
+): void {
+  if (id === null) return
+  // JSON-RPC id: 项目内约定为 number，RpcResponse.id 类型为 number
+  const numericId = typeof id === 'number' ? id : Number(id)
+  if (error) {
+    parentPort!.postMessage({
+      type: 'rpc',
+      response: { jsonrpc: '2.0', id: numericId, error },
+    })
+  } else {
+    parentPort!.postMessage({
+      type: 'rpc',
+      response: { jsonrpc: '2.0', id: numericId, result },
+    })
   }
 }
 

@@ -2,7 +2,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '../../stores/settings'
-import { ProviderPane, SkillsPane, AgentsPane, ExtensionsPane, SystemPane } from '../settings'
+import { ProviderPane, SkillsPane, AgentsPane, ExtensionsPane, SystemPane, PluginsPane } from '../settings'
 
 const { t } = useI18n()
 const settingsStore = useSettingsStore()
@@ -13,6 +13,7 @@ const tabs = [
   { key: 'skills', labelKey: 'settings.tabSkills', icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2l2 4h4l-3 3 1 4-4-2-4 2 1-4-3-3h4z"/></svg>' },
   { key: 'agents', labelKey: 'settings.tabAgents', icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="5" r="3"/><path d="M2 14c0-3.3 2.7-6 6-6s6 2.7 6 6"/></svg>' },
   { key: 'system', labelKey: 'settings.tabSystem', icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="2"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41"/></svg>' },
+  { key: 'plugins', labelKey: 'settings.tabPlugins', icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 2H3a1 1 0 00-1 1v3m0 4v3a1 1 0 001 1h3m4-12h3a1 1 0 011 1v3m0 4v3a1 1 0 01-1 1h-3"/><path d="M6 6h4v4H6z"/></svg>' },
   { key: 'extensions', labelKey: 'settings.tabExtensions', icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><path d="M11 9v4M9 11h4"/></svg>' },
 ] as const
 
@@ -75,6 +76,9 @@ onUnmounted(() => {
       </div>
       <div v-show="activeTab === 'system'">
         <SystemPane />
+      </div>
+      <div v-show="activeTab === 'plugins'">
+        <PluginsPane />
       </div>
       <div v-show="activeTab === 'extensions'">
         <ExtensionsPane />
