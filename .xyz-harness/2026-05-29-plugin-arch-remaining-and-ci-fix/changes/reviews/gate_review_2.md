@@ -9,19 +9,19 @@ must_fix: 0
 
 | 检查项 | 结果 | 说明 |
 |--------|------|------|
-| Task 列表覆盖所有 spec 需求 | PASS | plan.md 的 5 个 Task 明确映射到 spec.md 的 5 个 AC：Task1→FR-1/AC-1, Task2→FR-2/AC-2, Task3→AC-3, Task4→AC-4, Task5→AC-5。plan 中附带 Spec Coverage Matrix 表直接对照 |
-| 每个 Task 有具体步骤 | PASS | 所有 Task 均包含多步详细操作：Task1 (5 步含精确代码块、文件路径、验证命令、commit)，Task2 (7 步含类型定义、mock 代码、完整测试代码)，Task3 (3 步含 shell 脚本 diff)，Task4 (3 步含路径标准化代码)，Task5 (3 步含全量命令) |
-| 依赖关系合理 | PASS | FG1/BG1/BG2 三个 Group 完全独立并行 → Task5 全量回归依赖前三者完成，结构合理 |
-| Execution Group 配置完整 | PASS | 每个 Group 均包含文件列表（含 create/modify 标记）、Subagent 配置（Agent 类型、model、注入上下文、读取/修改文件列表）、Execution Flow |
-| 引用的源文件存在 | PASS | 所有 9 个引用文件已验证存在（index.ts, SettingsView.vue, zh-CN.ts, en-US.ts, plugin-types.ts, plugin-bootstrap.ts, tool-api.ts, prepare-pi-resources.sh, extension-service.test.ts）。plan 中标记 "Create" 的测试文件不存在，符合计划预期 |
-| E2E 测试计划覆盖 | PASS | e2e-test-plan.md 的 5 个场景 (TS-1~TS-5) 对应 5 个 AC，有具体步骤和环境定义 |
-| 测试用例模板完整 | PASS | test_cases_template.json 的 11 个用例覆盖所有 AC，每个含 id/type/title/description/steps |
-| Git 提交证据 | PASS | git log 显示 plan.md 经过 review 迭代（commit 611d20b 修复 MUST_FIX 项），证明真实的审查-修改流程 |
+| task 与 spec 需求对应关系 | PASS | plan.md 包含 Spec Coverage Matrix，5 个 Task 完整覆盖 spec 的 3 个 FR 和 5 个 AC（Task 1→FR-1/AC-1, Task 2→FR-2/AC-2, Task 3→AC-3, Task 4→AC-4, Task 5→AC-5） |
+| task 描述详细程度 | PASS | 每个 Task 包含多步，附具体代码片段、diff、文件路径和验证命令。Task 2（最复杂）7 步含完整类型定义和 66 行测试代码 |
+| 依赖关系合理性 | PASS | 依赖图清晰：FG1/BG1/BG2 三个独立 Group 并行执行，Task 5（回归验证）依赖前三者全部完成，逻辑合理 |
+| Execution Group 配置 | PASS | FG1/BG1/BG2 均有完整的 Description、Tasks、Files、Subagent 配置（Agent、Model、上下文注入指令、读写文件列表）、Execution Flow、Dependencies |
+| 引用源文件真实性 | PASS | plan.md 中引用的 9 个源文件全部真实存在（`src-electron/renderer/...` 4 个，`src-electron/runtime/...` 4 个，`scripts/` 1 个） |
+| E2E Test Plan | PASS | 5 个测试场景映射到 5 个 AC，含具体步骤和环境说明。无模糊或缺失场景 |
+| Test Cases Template | PASS | 11 个 case，包含 id/type/title/description/steps，类型覆盖 ui/api/integration，覆盖所有 AC |
+| Git 历史真实性 | PASS | git log 展示完整的工作流：spec → spec review → fix → plan → plan review → fix → retrospect，共 10 个 commit，无异常 |
 
 ### MUST_FIX 问题
 
-无。
+无。所有 deliverables 均通过伪造信号检查。
 
 ### 总结
 
-未发现确凿的伪造证据。plan.md 的 Task 列表完整覆盖 spec 的 5 个 Acceptance Criteria，每个 Task 有精确到代码块的具体步骤，Execution Group 配置包含完整的文件列表和 subagent 配置，依赖关系合理。e2e-test-plan.md 和 test_cases_template.json 结构完整，测试用例对应所有验收标准。所有引用文件（除 plan 中标记为 "Create" 的测试文件）均验证存在。git log 显示 plan 经过真实的 review 修复迭代。deliverable 可信度符合 gate 要求。
+plan.md 内容翔实，task 与 spec 需求完全对应，每步附带可执行的代码和命令。Execution Group 配置完备。E2E 测试计划和 test cases template 完整且可验证。引用的源文件全部真实存在，git 历史显示逐步迭代的工作记录。无任何确凿伪造证据。
