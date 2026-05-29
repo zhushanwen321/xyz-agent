@@ -13,7 +13,6 @@ import type { PluginRpcServer } from './plugin-rpc-server.js'
 import type { PluginRpcClient } from './plugin-rpc-client.js'
 import type { ToolRegistration, ToolEntry } from './plugin-types.js'
 import { PluginRpcErrorCodes } from './plugin-types.js'
-
 /** Tool 注册服务依赖（主线程侧） */
 export interface ToolService {
   /** 工具注册表，key 为 toolKey */
@@ -88,13 +87,19 @@ export function createToolApi(
      * 注册工具，返回 toolKey。
      * toolKey 格式: `${pluginId}:${name}`
      */
-    register: (registration: ToolRegistration): Promise<string> =>
-      rpcClient.request('plugin.tools.register', {
+    register: async (registration: ToolRegistration): Promise<string> => {
+      const toolKey = `${pluginId}:${registration.name}`
+      if (registration.execute) {
+        const { registerToolHandler: rth } = await import('./plugin-bootstrap.js')
+        rth(toolKey, registration.execute)
+      }
+      return rpcClient.request('plugin.tools.register', {
         pluginId,
         name: registration.name,
         description: registration.description,
         parameters: registration.parameters,
-      }) as Promise<string>,
+      }) as Promise<string>
+    },
 
     /**
      * 注销工具。不存在的 toolKey 静默成功。
