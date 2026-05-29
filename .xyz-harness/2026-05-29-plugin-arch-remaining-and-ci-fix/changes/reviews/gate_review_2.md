@@ -9,14 +9,17 @@ must_fix: 0
 
 | 检查项 | 结果 | 说明 |
 |--------|------|------|
-| task 与 spec 需求对应关系 | PASS | plan.md 包含 Spec Coverage Matrix，5 个 Task 完整覆盖 spec 的 3 个 FR 和 5 个 AC（Task 1→FR-1/AC-1, Task 2→FR-2/AC-2, Task 3→AC-3, Task 4→AC-4, Task 5→AC-5） |
-| task 描述详细程度 | PASS | 每个 Task 包含多步，附具体代码片段、diff、文件路径和验证命令。Task 2（最复杂）7 步含完整类型定义和 66 行测试代码 |
-| 依赖关系合理性 | PASS | 依赖图清晰：FG1/BG1/BG2 三个独立 Group 并行执行，Task 5（回归验证）依赖前三者全部完成，逻辑合理 |
-| Execution Group 配置 | PASS | FG1/BG1/BG2 均有完整的 Description、Tasks、Files、Subagent 配置（Agent、Model、上下文注入指令、读写文件列表）、Execution Flow、Dependencies |
-| 引用源文件真实性 | PASS | plan.md 中引用的 9 个源文件全部真实存在（`src-electron/renderer/...` 4 个，`src-electron/runtime/...` 4 个，`scripts/` 1 个） |
-| E2E Test Plan | PASS | 5 个测试场景映射到 5 个 AC，含具体步骤和环境说明。无模糊或缺失场景 |
-| Test Cases Template | PASS | 11 个 case，包含 id/type/title/description/steps，类型覆盖 ui/api/integration，覆盖所有 AC |
-| Git 历史真实性 | PASS | git log 展示完整的工作流：spec → spec review → fix → plan → plan review → fix → retrospect，共 10 个 commit，无异常 |
+| Task 与 Spec 需求对应关系 | PASS | plan.md 的 Spec Coverage Matrix 显示 5 个 Task 完整覆盖 spec 的 3 个 FR 和 5 个 AC。FR-1→Task 1, FR-2→Task 2, FR-3 拆为 Task 3+4, AC-5→Task 5。无遗漏需求 |
+| Task 描述详细程度 | PASS | 每个 Task 包含多步（Task 1: 5 步, Task 2: 7 步含 66 行测试代码, Task 3: 3 步, Task 4: 3 步, Task 5: 3 步）。附有完整代码片段、diff、文件路径、验证命令 |
+| 依赖关系合理性 | PASS | 依赖图 FG1/BG1/BG2 完全独立并行，Task 5 回归验证依赖前三者完成。逻辑合理无循环依赖 |
+| Execution Group 配置 | PASS | 3 个 Group 均有 Description、Tasks、Files、Subagent 配置（Agent 类型、Model 复杂度、上下文注入指令、读/写文件列表）、Execution Flow、Dependencies |
+| 引用源文件真实性 | PASS | 引用的 9 个源文件全部真实存在：PluginsPane.vue(355 行)、settings/index.ts、SettingsView.vue、zh-CN.ts、en-US.ts、plugin-types.ts(13708 行)、plugin-bootstrap.ts(7399 行)、tool-api.ts(3257 行)、prepare-pi-resources.sh、extension-service.test.ts(15297 行) |
+| 代码细节准确性 | PASS | plan 中对当前代码结构的描述与实际相符：`HostToWorkerMessage.rpc` 当前只有 response/notification 无 request（line 192）；`handleMessage` 只处理 response 和 notification（line 101-107）；`createToolApi.register` 当前未存储本地 execute handler；`PluginRpcErrorCodes.METHOD_NOT_FOUND` 和 `INTERNAL_ERROR` 真实存在（line 213-214） |
+| E2E Test Plan | PASS | 5 个场景映射到 5 个 AC，每个含具体步骤和环境说明。环境表明确（macOS/Linux/Windows + 本地 CI 验证命令） |
+| Test Cases Template | PASS | 11 个 case 含 id/type/title/description/steps，类型覆盖 ui/integration/api，覆盖所有 AC |
+| Git 历史真实性 | PASS | git log 展示完整逐步迭代：10 个 commit 从 spec→spec review→fix→plan→plan review(v1→v2)→fix→retrospect→gate review，无异常跳跃 |
+| 分支存在性 | PASS | `feat-plugin-arch-5` 分支存在，base 于 `feat-plugin-arch-4`（PR #57），与 spec 背景一致 |
+| 非功能性设计 | PASS | non-functional-design.md 覆盖稳定性、数据一致性、性能、安全等维度，内容合理 |
 
 ### MUST_FIX 问题
 
@@ -24,4 +27,4 @@ must_fix: 0
 
 ### 总结
 
-plan.md 内容翔实，task 与 spec 需求完全对应，每步附带可执行的代码和命令。Execution Group 配置完备。E2E 测试计划和 test cases template 完整且可验证。引用的源文件全部真实存在，git 历史显示逐步迭代的工作记录。无任何确凿伪造证据。
+plan.md、e2e-test-plan.md、test_cases_template.json 三份 deliverable 均通过防伪造审查。Plan 中引用的所有源文件真实存在，代码细节与实际实现一致，git 历史显示完整迭代工作流。无任何确凿的伪造或严重缺失证据。
