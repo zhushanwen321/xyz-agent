@@ -1,6 +1,6 @@
 {
   "name": "pi-extension-todo",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "AI-driven todo list for Pi — stateful task management with session persistence and /todos command.",
   "main": "src/index.ts",
   "keywords": [
