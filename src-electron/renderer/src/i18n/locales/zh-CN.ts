@@ -71,6 +71,7 @@ export default {
     tabSkills: '技能',
     tabAgents: '代理',
     tabSystem: '系统',
+    tabPlugins: '插件',
     tabExtensions: '扩展',
     addProvider: '添加供应商',
     editProvider: '编辑供应商',
