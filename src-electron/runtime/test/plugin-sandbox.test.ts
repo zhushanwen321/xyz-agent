@@ -9,8 +9,7 @@
  * 不创建真实 Worker Thread，只单元测试拦截函数逻辑。
  */
 
-import { describe, it, beforeEach } from 'node:test'
-import assert from 'node:assert/strict'
+import { describe, it, expect, beforeEach } from 'vitest'
 
 import {
   createRequireInterceptor,
@@ -20,19 +19,19 @@ import {
 describe('Task 2: Worker Sandbox (require 拦截)', () => {
   describe('BLOCKED_BUILTINS', () => {
     it('includes dangerous modules', () => {
-      assert.ok(BLOCKED_BUILTINS.includes('fs'))
-      assert.ok(BLOCKED_BUILTINS.includes('child_process'))
-      assert.ok(BLOCKED_BUILTINS.includes('cluster'))
-      assert.ok(BLOCKED_BUILTINS.includes('dgram'))
-      assert.ok(BLOCKED_BUILTINS.includes('dns'))
-      assert.ok(BLOCKED_BUILTINS.includes('net'))
+      expect(BLOCKED_BUILTINS.includes('fs')).toBeTruthy()
+      expect(BLOCKED_BUILTINS.includes('child_process')).toBeTruthy()
+      expect(BLOCKED_BUILTINS.includes('cluster')).toBeTruthy()
+      expect(BLOCKED_BUILTINS.includes('dgram')).toBeTruthy()
+      expect(BLOCKED_BUILTINS.includes('dns')).toBeTruthy()
+      expect(BLOCKED_BUILTINS.includes('net')).toBeTruthy()
     })
 
     it('does not block safe modules', () => {
-      assert.ok(!BLOCKED_BUILTINS.includes('path'))
-      assert.ok(!BLOCKED_BUILTINS.includes('url'))
-      assert.ok(!BLOCKED_BUILTINS.includes('util'))
-      assert.ok(!BLOCKED_BUILTINS.includes('events'))
+      expect(!BLOCKED_BUILTINS.includes('path')).toBeTruthy()
+      expect(!BLOCKED_BUILTINS.includes('url')).toBeTruthy()
+      expect(!BLOCKED_BUILTINS.includes('util')).toBeTruthy()
+      expect(!BLOCKED_BUILTINS.includes('events')).toBeTruthy()
     })
   })
 
@@ -43,39 +42,37 @@ describe('Task 2: Worker Sandbox (require 拦截)', () => {
       const interceptor = createRequireInterceptor(pluginDir)
       // 应该不抛异常
       const result = interceptor('./utils', '/tmp/test-plugin/utils.js')
-      assert.strictEqual(result, '/tmp/test-plugin/utils.js')
+      expect(result).toBe('/tmp/test-plugin/utils.js')
     })
 
     it('rejects relative paths outside pluginDir', () => {
       const interceptor = createRequireInterceptor(pluginDir)
-      assert.throws(
-        () => interceptor('../escape', '/tmp/escape.js'),
-        (err: unknown) => {
-          assert.ok(err instanceof Error)
-          assert.strictEqual((err as { code?: string }).code, 'PERMISSION_DENIED')
-          return true
-        },
-      )
+      try {
+        interceptor('../escape', '/tmp/escape.js')
+        expect.unreachable('should have thrown')
+      } catch (err) {
+        expect(err).toBeInstanceOf(Error)
+        expect((err as { code?: string }).code).toBe('PERMISSION_DENIED')
+      }
     })
 
     it('allows non-blocked npm packages', () => {
       const interceptor = createRequireInterceptor(pluginDir)
       // 不在 blocklist 中的包名不抛异常（实际 resolve 可能失败，但拦截层不阻止）
       const result = interceptor('lodash', undefined)
-      assert.strictEqual(result, 'lodash')
+      expect(result).toBe('lodash')
     })
 
     it('rejects blocked builtin modules', () => {
       const interceptor = createRequireInterceptor(pluginDir)
       for (const mod of ['fs', 'child_process', 'net']) {
-        assert.throws(
-          () => interceptor(mod, undefined),
-          (err: unknown) => {
-            assert.ok(err instanceof Error)
-            assert.strictEqual((err as { code?: string }).code, 'PERMISSION_DENIED')
-            return true
-          },
-        )
+        try {
+          interceptor(mod, undefined)
+          expect.unreachable('should have thrown')
+        } catch (err) {
+          expect(err).toBeInstanceOf(Error)
+          expect((err as { code?: string }).code).toBe('PERMISSION_DENIED')
+        }
       }
     })
 
@@ -83,20 +80,19 @@ describe('Task 2: Worker Sandbox (require 拦截)', () => {
       const interceptor = createRequireInterceptor(pluginDir)
       for (const mod of ['path', 'url', 'util', 'events']) {
         const result = interceptor(mod, undefined)
-        assert.strictEqual(result, mod)
+        expect(result).toBe(mod)
       }
     })
 
     it('handles nested path traversal attempts', () => {
       const interceptor = createRequireInterceptor(pluginDir)
-      assert.throws(
-        () => interceptor('./../../etc/passwd', '/tmp/etc/passwd'),
-        (err: unknown) => {
-          assert.ok(err instanceof Error)
-          assert.strictEqual((err as { code?: string }).code, 'PERMISSION_DENIED')
-          return true
-        },
-      )
+      try {
+        interceptor('./../../etc/passwd', '/tmp/etc/passwd')
+        expect.unreachable('should have thrown')
+      } catch (err) {
+        expect(err).toBeInstanceOf(Error)
+        expect((err as { code?: string }).code).toBe('PERMISSION_DENIED')
+      }
     })
   })
 })

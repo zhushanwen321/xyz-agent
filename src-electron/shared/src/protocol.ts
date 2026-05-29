@@ -186,6 +186,8 @@ export interface ExtensionUIRequestPayload {
   options?: string[]
   default?: string
   level?: 'info' | 'warn' | 'error'
+  /** Origin of the request — determines which WS channel the response is sent to */
+  source?: 'extension' | 'plugin'
 }
 
 export interface ExtensionUIResponsePayload {

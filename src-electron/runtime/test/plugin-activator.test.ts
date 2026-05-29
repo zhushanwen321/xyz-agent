@@ -1,5 +1,4 @@
-import { describe, it, mock } from 'node:test'
-import assert from 'node:assert/strict'
+import { describe, it, expect, vi } from 'vitest'
 
 import { PluginActivator } from '../src/services/plugin-service/plugin-activator.js'
 import type { PluginHost as ActivatorHost } from '../src/services/plugin-service/plugin-activator.js'
@@ -36,17 +35,17 @@ function createMockHost(
   let currentPluginId = 'test-plugin'
 
   return {
-    assignWorker: mock.fn((_pluginId: string, _trustLevel: 'trusted' | 'sandbox') => {
+    assignWorker: vi.fn((_pluginId: string, _trustLevel: 'trusted' | 'sandbox') => {
       return Promise.resolve('worker-1')
     }),
-    loadPlugin: mock.fn((_workerId: string, _pluginPath: string) => {
+    loadPlugin: vi.fn((_workerId: string, _pluginPath: string) => {
       return Promise.resolve()
     }),
-    getWorkerHandle: mock.fn((pluginId: string) => {
+    getWorkerHandle: vi.fn((pluginId: string) => {
       currentPluginId = pluginId
       return {
         workerId: 'worker-1',
-        postMessage: mock.fn(() => {
+        postMessage: vi.fn(() => {
           // 模拟 Worker 回复
           queueMicrotask(() => {
             activator.handleWorkerReply({
@@ -57,7 +56,7 @@ function createMockHost(
         }),
       }
     }),
-    terminateWorker: mock.fn(() => Promise.resolve()),
+    terminateWorker: vi.fn(() => Promise.resolve()),
   }
 }
 
@@ -77,9 +76,9 @@ describe('PluginActivator', () => {
     activator.registerDescriptors([desc1, desc2])
 
     // 注册后，两个插件都应处于 UNLOADED 状态
-    assert.strictEqual(activator.getState('p1'), 'UNLOADED')
-    assert.strictEqual(activator.getState('p2'), 'UNLOADED')
-    assert.strictEqual(activator.getActivePlugins().length, 0)
+    expect(activator.getState('p1')).toBe('UNLOADED')
+    expect(activator.getState('p2')).toBe('UNLOADED')
+    expect(activator.getActivePlugins().length).toBe(0)
   })
 
   // ── TC-4-02: handleEvent matches activationEvents ─────────────
@@ -100,7 +99,7 @@ describe('PluginActivator', () => {
     )
 
     // 激活流程完成（mock host 立即回复 'activated'）
-    assert.strictEqual(activator.getState('slash-plugin'), 'ACTIVE')
+    expect(activator.getState('slash-plugin')).toBe('ACTIVE')
   })
 
   // ── TC-4-03: activatePlugin sets state to ACTIVE ──────────────
@@ -111,12 +110,12 @@ describe('PluginActivator', () => {
 
     const host = createMockHost(activator, 'activated')
 
-    assert.strictEqual(activator.getState('act-test'), 'UNLOADED')
+    expect(activator.getState('act-test')).toBe('UNLOADED')
 
     await activator.activatePlugin('act-test', { type: 'onStartupFinished' }, host)
 
-    assert.strictEqual(activator.getState('act-test'), 'ACTIVE')
-    assert.deepStrictEqual(activator.getActivePlugins(), ['act-test'])
+    expect(activator.getState('act-test')).toBe('ACTIVE')
+    expect(activator.getActivePlugins()).toEqual(['act-test'])
   })
 
   // ── TC-4-04: deactivatePlugin sets state to UNLOADED ──────────
@@ -128,13 +127,13 @@ describe('PluginActivator', () => {
     // 先激活
     const activateHost = createMockHost(activator, 'activated')
     await activator.activatePlugin('deact-test', { type: 'onStartupFinished' }, activateHost)
-    assert.strictEqual(activator.getState('deact-test'), 'ACTIVE')
+    expect(activator.getState('deact-test')).toBe('ACTIVE')
 
     // 再停用
     const deactivateHost = createMockHost(activator, 'deactivated')
     await activator.deactivatePlugin('deact-test', deactivateHost)
-    assert.strictEqual(activator.getState('deact-test'), 'UNLOADED')
-    assert.strictEqual(activator.getActivePlugins().length, 0)
+    expect(activator.getState('deact-test')).toBe('UNLOADED')
+    expect(activator.getActivePlugins().length).toBe(0)
   })
 
   // ── 幂等：重复激活应跳过 ──────────────────────────────────────
@@ -146,13 +145,13 @@ describe('PluginActivator', () => {
     const host = createMockHost(activator, 'activated')
 
     await activator.activatePlugin('idempotent-test', { type: 'onStartupFinished' }, host)
-    assert.strictEqual(activator.getState('idempotent-test'), 'ACTIVE')
+    expect(activator.getState('idempotent-test')).toBe('ACTIVE')
 
     // 第二次激活应直接跳过（assignWorker 不应被再次调用）
-    const assignCallsBefore = (host.assignWorker as unknown as ReturnType<typeof mock.fn>).mock.calls.length
+    const assignCallsBefore = (host.assignWorker as unknown as ReturnType<typeof vi.fn>).mock.calls.length
     await activator.activatePlugin('idempotent-test', { type: 'onStartupFinished' }, host)
-    const assignCallsAfter = (host.assignWorker as unknown as ReturnType<typeof mock.fn>).mock.calls.length
-    assert.strictEqual(assignCallsAfter, assignCallsBefore, 'should not call assignWorker again')
+    const assignCallsAfter = (host.assignWorker as unknown as ReturnType<typeof vi.fn>).mock.calls.length
+    expect(assignCallsAfter).toBe(assignCallsBefore)
   })
 
   // ── Worker 回复 error 时状态应为 UNLOADED ─────────────────────
@@ -163,11 +162,11 @@ describe('PluginActivator', () => {
 
     // 创建一个 host，其 postMessage 触发 error 回复
     const errorHost: ActivatorHost = {
-      assignWorker: mock.fn(() => Promise.resolve('worker-1')),
-      loadPlugin: mock.fn(() => Promise.resolve()),
-      getWorkerHandle: mock.fn((pluginId: string) => ({
+      assignWorker: vi.fn(() => Promise.resolve('worker-1')),
+      loadPlugin: vi.fn(() => Promise.resolve()),
+      getWorkerHandle: vi.fn((pluginId: string) => ({
         workerId: 'worker-1',
-        postMessage: mock.fn(() => {
+        postMessage: vi.fn(() => {
           queueMicrotask(() => {
             activator.handleWorkerReply({
               type: 'error',
@@ -177,11 +176,11 @@ describe('PluginActivator', () => {
           })
         }),
       })),
-      terminateWorker: mock.fn(() => Promise.resolve()),
+      terminateWorker: vi.fn(() => Promise.resolve()),
     }
 
     await activator.activatePlugin('error-test', { type: 'onStartupFinished' }, errorHost)
-    assert.strictEqual(activator.getState('error-test'), 'UNLOADED')
+    expect(activator.getState('error-test')).toBe('UNLOADED')
   })
 
   // ── deactivatePlugin 对未激活插件是 no-op ─────────────────────
@@ -190,10 +189,10 @@ describe('PluginActivator', () => {
     activator.registerDescriptors([makeDescriptor({ pluginId: 'no-op-test' })])
 
     const host = createMockHost(activator, 'deactivated')
-    assert.strictEqual(activator.getState('no-op-test'), 'UNLOADED')
+    expect(activator.getState('no-op-test')).toBe('UNLOADED')
 
     await activator.deactivatePlugin('no-op-test', host)
-    assert.strictEqual(activator.getState('no-op-test'), 'UNLOADED')
+    expect(activator.getState('no-op-test')).toBe('UNLOADED')
   })
 
   // ── deactivateAll 停用所有已激活插件 ──────────────────────────
@@ -208,13 +207,13 @@ describe('PluginActivator', () => {
 
     await activator.activatePlugin('all-1', { type: 'onStartupFinished' }, host1)
     await activator.activatePlugin('all-2', { type: 'onStartupFinished' }, host2)
-    assert.strictEqual(activator.getActivePlugins().length, 2)
+    expect(activator.getActivePlugins().length).toBe(2)
 
     const deactHost = createMockHost(activator, 'deactivated')
     await activator.deactivateAll(deactHost)
-    assert.strictEqual(activator.getActivePlugins().length, 0)
-    assert.strictEqual(activator.getState('all-1'), 'UNLOADED')
-    assert.strictEqual(activator.getState('all-2'), 'UNLOADED')
+    expect(activator.getActivePlugins().length).toBe(0)
+    expect(activator.getState('all-1')).toBe('UNLOADED')
+    expect(activator.getState('all-2')).toBe('UNLOADED')
   })
 
   // ── handleEvent 不匹配时不会激活 ──────────────────────────────
@@ -233,7 +232,7 @@ describe('PluginActivator', () => {
       host,
     )
 
-    assert.strictEqual(activator.getState('no-match'), 'UNLOADED')
+    expect(activator.getState('no-match')).toBe('UNLOADED')
   })
 
   // ── 未知插件 activatePlugin 是 no-op ─────────────────────────
@@ -242,6 +241,6 @@ describe('PluginActivator', () => {
     const host = createMockHost(activator, 'activated')
 
     await activator.activatePlugin('nonexistent', { type: 'onStartupFinished' }, host)
-    assert.strictEqual(activator.getState('nonexistent'), undefined)
+    expect(activator.getState('nonexistent')).toBe(undefined)
   })
 })

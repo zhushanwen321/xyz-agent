@@ -397,6 +397,9 @@ export interface HookContext {
   hookType: HookType
   data: unknown
   timestamp: number
+  /** Phase 3: 从 event-adapter/index.ts 透传的额外上下文 */
+  sessionId?: string
+  content?: string
 }
 
 /** Hook 通用返回结果 */

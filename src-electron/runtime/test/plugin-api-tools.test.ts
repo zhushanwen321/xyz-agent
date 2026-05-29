@@ -8,8 +8,7 @@
  * - plugin.tools.unregister 不存在工具 → 静默成功
  */
 
-import { describe, it, beforeEach } from 'node:test'
-import assert from 'node:assert/strict'
+import { describe, it, expect, beforeEach } from 'vitest'
 
 import { PluginRpcServer } from '../src/services/plugin-service/plugin-rpc-server.js'
 import type { WorkerPort } from '../src/services/plugin-service/plugin-rpc-server.js'
@@ -73,20 +72,20 @@ describe('Tool API — registerToolRpcHandlers', () => {
     })
 
     const resp = extractLastResponse(port)
-    assert.strictEqual(resp.id, 1)
-    assert.ok('result' in resp)
-    assert.strictEqual(resp.result, 'my-plugin:my-tool')
+    expect(resp.id).toBe(1)
+    expect('result' in resp).toBeTruthy()
+    expect(resp.result).toBe('my-plugin:my-tool')
 
     // 验证注册表
-    assert.strictEqual(toolRegistry.size, 1)
+    expect(toolRegistry.size).toBe(1)
     const entry = toolRegistry.get('my-plugin:my-tool')
-    assert.ok(entry)
-    assert.strictEqual(entry.pluginId, 'my-plugin')
-    assert.strictEqual(entry.schema.name, 'my-tool')
-    assert.strictEqual(entry.schema.description, 'A test tool')
+    expect(entry).toBeTruthy()
+    expect(entry.pluginId).toBe('my-plugin')
+    expect(entry.schema.name).toBe('my-tool')
+    expect(entry.schema.description).toBe('A test tool')
 
     // 验证 sync 被调用
-    assert.strictEqual(syncCalls, 1)
+    expect(syncCalls).toBe(1)
   })
 
   // ── 重复注册 ──────────────────────────────────────────────────
@@ -112,13 +111,13 @@ describe('Tool API — registerToolRpcHandlers', () => {
     })
 
     const resp = extractLastResponse(port)
-    assert.strictEqual(resp.id, 2)
-    assert.ok('error' in resp)
-    assert.ok(resp.error!.message.includes('already registered'))
+    expect(resp.id).toBe(2)
+    expect('error' in resp).toBeTruthy()
+    expect(resp.error!.message.includes('already registered')).toBeTruthy()
     // 注册表大小不变
-    assert.strictEqual(toolRegistry.size, 1)
+    expect(toolRegistry.size).toBe(1)
     // sync 不应被调用
-    assert.strictEqual(syncCalls, 0)
+    expect(syncCalls).toBe(0)
   })
 
   // ── 注销已注册工具 ────────────────────────────────────────────
@@ -139,11 +138,11 @@ describe('Tool API — registerToolRpcHandlers', () => {
     })
 
     const resp = extractLastResponse(port)
-    assert.strictEqual(resp.id, 3)
-    assert.ok('result' in resp)
+    expect(resp.id).toBe(3)
+    expect('result' in resp).toBeTruthy()
     // unregister 不返回特定值，但应成功（无 error）
-    assert.strictEqual(toolRegistry.size, 0)
-    assert.strictEqual(syncCalls, 1)
+    expect(toolRegistry.size).toBe(0)
+    expect(syncCalls).toBe(1)
   })
 
   // ── 注销不存在工具 ────────────────────────────────────────────
@@ -157,10 +156,10 @@ describe('Tool API — registerToolRpcHandlers', () => {
     })
 
     const resp = extractLastResponse(port)
-    assert.strictEqual(resp.id, 4)
-    assert.ok('result' in resp, 'unregister should succeed for non-existent key')
+    expect(resp.id).toBe(4)
+    expect('result' in resp).toBeTruthy()
     // sync 不被调用（没有删除操作）
-    assert.strictEqual(syncCalls, 0)
+    expect(syncCalls).toBe(0)
   })
 
   // ── unregister 不带 pluginId 向前兼容 ─────────────────────────
@@ -180,6 +179,6 @@ describe('Tool API — registerToolRpcHandlers', () => {
       params: { toolKey: 'other:tool' },
     })
 
-    assert.strictEqual(toolRegistry.size, 0)
+    expect(toolRegistry.size).toBe(0)
   })
 })

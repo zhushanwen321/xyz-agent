@@ -106,6 +106,9 @@ export interface ISessionService {
   getRpcClient(sessionId: string): IRpcClient | undefined
   listPersistedSessions(): SessionGroup[]
   destroyAll(): Promise<void>
+
+  /** 注册 onBeforeSendMessage hook，由 PluginService 调用 */
+  setSendMessageHook(hook: (sessionId: string, content: string) => Promise<{ blocked: boolean; reason?: string } | null>): void
 }
 
 // ── IConfigService ────────────────────────────────────────────────

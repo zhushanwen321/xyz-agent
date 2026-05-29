@@ -156,6 +156,29 @@ export class PluginService implements IPluginService {
     }
 
     this.initialized = true
+
+    // 注册 onBeforeSendMessage hook
+    this.registerSendMessageHook()
+  }
+
+  /**
+   * 由 initialize() 调用，确保 session 创建时 hook 已就绪。
+   */
+  private registerSendMessageHook(): void {
+    if (this.deps?.sessionService) {
+      this.deps.sessionService.setSendMessageHook(async (sessionId, content) => {
+        const result = await this.executeHooks('onBeforeSendMessage', {
+          sessionId,
+          content,
+          pluginId: '',
+          hookType: 'onBeforeSendMessage' as import('./plugin-types.js').HookType,
+          data: { content },
+          timestamp: Date.now(),
+        })
+        if (result.blocked) return { blocked: true, reason: result.reason }
+        return null
+      })
+    }
   }
 
   getDiscoveredPlugins(): PluginDescriptor[] {
@@ -471,10 +494,18 @@ export class PluginService implements IPluginService {
         const cwd = process.cwd()
         return cwd.split(/[/\\]/).pop() ?? ''
       },
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      findFiles: async (_pattern: string) => {
-        // Phase 2: stub — 文件查找需要 glob 库
-        return []
+      findFiles: async (pattern: string) => {
+        try {
+          const fastGlob = (await import('fast-glob')).default
+          const entries = await fastGlob(pattern, {
+            cwd: process.cwd(),
+            ignore: ['**/node_modules/**', '**/.git/**'],
+            absolute: true,
+          }) as string[]
+          return entries.slice(0, 1000)
+        } catch {
+          return []
+        }
       },
     })
   }

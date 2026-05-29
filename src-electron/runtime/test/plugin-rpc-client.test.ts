@@ -1,5 +1,4 @@
-import { describe, it, beforeEach } from 'node:test'
-import assert from 'node:assert/strict'
+import { describe, it, expect, beforeEach } from 'vitest'
 
 import { PluginRpcClient } from '../src/services/plugin-service/plugin-rpc-client.js'
 import type { ClientPort } from '../src/services/plugin-service/plugin-rpc-client.js'
@@ -30,10 +29,10 @@ describe('PluginRpcClient', () => {
     const promise = client.request('test.slow', {}, 50)
 
     // Verify request was sent
-    assert.strictEqual(port.messages.length, 1)
+    expect(port.messages.length).toBe(1)
     const sent = port.messages[0] as { type: string; method: string; id: number }
-    assert.strictEqual(sent.type, 'rpc')
-    assert.strictEqual(sent.method, 'test.slow')
+    expect(sent.type).toBe('rpc')
+    expect(sent.method).toBe('test.slow')
 
     // No response arrives → timeout after 50ms
     const start = Date.now()
@@ -43,11 +42,11 @@ describe('PluginRpcClient', () => {
     } catch (e: unknown) {
       caught = true
       const elapsed = Date.now() - start
-      assert.ok(elapsed >= 45, `timeout should take ~50ms, took ${elapsed}ms`)
-      assert.ok((e as Error).message.includes('RPC timeout'))
-      assert.strictEqual((e as { code?: number }).code, PluginRpcErrorCodes.RPC_TIMEOUT)
+      expect(elapsed >= 45).toBeTruthy()
+      expect((e as Error).message.includes('RPC timeout')).toBeTruthy()
+      expect((e as { code?: number }).code).toBe(PluginRpcErrorCodes.RPC_TIMEOUT)
     }
-    assert.ok(caught, 'request should have rejected with timeout')
+    expect(caught).toBeTruthy()
   })
 
   // ── request succeeds when response arrives before timeout ──────
@@ -63,7 +62,7 @@ describe('PluginRpcClient', () => {
     })
 
     const result = await promise
-    assert.deepStrictEqual(result, { echoed: true })
+    expect(result).toEqual({ echoed: true })
   })
 
   // ── request rejects with error response ────────────────────────
@@ -82,10 +81,10 @@ describe('PluginRpcClient', () => {
       await promise
     } catch (e: unknown) {
       caught = true
-      assert.ok((e as Error).message.includes('bad request'))
-      assert.strictEqual((e as { code?: number }).code, -32600)
+      expect((e as Error).message.includes('bad request')).toBeTruthy()
+      expect((e as { code?: number }).code).toBe(-32600)
     }
-    assert.ok(caught, 'should reject with error')
+    expect(caught).toBeTruthy()
   })
 
   // ── dispose cancels pending requests ───────────────────────────
@@ -100,9 +99,9 @@ describe('PluginRpcClient', () => {
       await promise
     } catch (e: unknown) {
       caught = true
-      assert.ok((e as Error).message.includes('disposed'))
+      expect((e as Error).message.includes('disposed')).toBeTruthy()
     }
-    assert.ok(caught, 'pending request should reject after dispose')
+    expect(caught).toBeTruthy()
   })
 
   // ── multiple concurrent requests get correct responses ─────────
@@ -120,18 +119,18 @@ describe('PluginRpcClient', () => {
     client.handleResponse({ jsonrpc: '2.0', id: ids[1], result: 'B' })
 
     const results = await Promise.all(promises)
-    assert.deepStrictEqual(results, ['A', 'B', 'C'])
+    expect(results).toEqual(['A', 'B', 'C'])
   })
 
   // ── notification sends without id ──────────────────────────────
   it('notify() sends notification without id', () => {
     client.notify('test.event', { data: 42 })
 
-    assert.strictEqual(port.messages.length, 1)
+    expect(port.messages.length).toBe(1)
     const msg = port.messages[0] as { type: string; method: string; id?: number }
-    assert.strictEqual(msg.type, 'rpc')
-    assert.strictEqual(msg.method, 'test.event')
-    assert.strictEqual(msg.id, undefined)
+    expect(msg.type).toBe('rpc')
+    expect(msg.method).toBe('test.event')
+    expect(msg.id).toBe(undefined)
   })
 
   // ── onNotification receives notifications ──────────────────────
@@ -144,9 +143,9 @@ describe('PluginRpcClient', () => {
     client.handleNotification({ jsonrpc: '2.0', method: 'test.push', params: { n: 1 } })
     client.handleNotification({ jsonrpc: '2.0', method: 'test.push', params: { n: 2 } })
 
-    assert.strictEqual(received.length, 2)
-    assert.deepStrictEqual(received[0], { n: 1 })
-    assert.deepStrictEqual(received[1], { n: 2 })
+    expect(received.length).toBe(2)
+    expect(received[0]).toEqual({ n: 1 })
+    expect(received[1]).toEqual({ n: 2 })
   })
 
   // ── onNotification unsubscribe stops receiving ─────────────────
@@ -160,6 +159,6 @@ describe('PluginRpcClient', () => {
     unsub()
     client.handleNotification({ jsonrpc: '2.0', method: 'test.temp', params: { a: 2 } })
 
-    assert.strictEqual(received.length, 1)
+    expect(received.length).toBe(1)
   })
 })
