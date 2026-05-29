@@ -216,10 +216,16 @@ export class PluginHost implements ActivatorHost {
     worker.on('message', (msg: unknown) => {
       const m = msg as Record<string, unknown>
       if (m.type === 'rpc') {
-        // Check if this is an RPC response to a pending invoke
+        // Worker 发来的 RPC 消息可能有三种格式：
+        // 1. { type: 'rpc', response: RpcResponse } — 对 invoke 的响应（plugin-bootstrap postRpcResponse）
+        // 2. { type: 'rpc', request: RpcRequest } — Worker 主动发来的请求
+        // 3. 扁平格式 { type: 'rpc', method, params, id } — PluginRpcClient
         const rpcMsg = m as Record<string, unknown>
-        if (('result' in rpcMsg || 'error' in rpcMsg) && typeof rpcMsg.id === 'number') {
-          // Response to our outgoing invoke request
+        if (rpcMsg.response && typeof (rpcMsg.response as Record<string, unknown>).id !== 'undefined') {
+          // 嵌套 response 格式: { type: 'rpc', response: RpcResponse }
+          this.rpcServer.handleResponse(rpcMsg.response as unknown as import('./plugin-types.js').RpcResponse)
+        } else if (('result' in rpcMsg || 'error' in rpcMsg) && typeof rpcMsg.id === 'number') {
+          // 扁平 response 格式: { type: 'rpc', id, result/error }
           this.rpcServer.handleResponse(rpcMsg as unknown as import('./plugin-types.js').RpcResponse)
         } else if (rpcMsg.request && typeof (rpcMsg.request as Record<string, unknown>).method === 'string') {
           // Incoming RPC request from Worker
