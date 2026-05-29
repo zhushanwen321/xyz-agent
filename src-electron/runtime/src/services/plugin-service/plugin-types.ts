@@ -238,6 +238,8 @@ export type PermissionConstant = (typeof PermissionConstants)[keyof typeof Permi
 
 /** Bridge 拦截响应，包含注入的消息列表 */
 export interface BridgeInterceptResponse {
+  blocked?: boolean
+  reason?: string
   injectedMessages: unknown[]
 }
 
@@ -269,6 +271,8 @@ export interface BridgeToolExecuteRequest {
   type: 'bridge.tool.execute'
   toolName: string
   parameters: Record<string, unknown>
+  sessionId?: string
+  toolCallId?: string
 }
 
 /** 插件返回工具执行结果 */
@@ -387,6 +391,9 @@ export interface HookContext {
 /** Hook 通用返回结果 */
 export interface HookResult {
   blocked: boolean
+  blockedBy?: string
+  reason?: string
+  transformedData?: unknown
 }
 
 /** Hook 被阻止时的详细结果 */

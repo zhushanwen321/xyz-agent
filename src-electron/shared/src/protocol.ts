@@ -18,6 +18,10 @@ export type ClientMessageType =
   | 'ping'
   | 'session.tree-data' | 'session.tree-navigate' | 'session.tree-fork' | 'session.tree-clone' | 'session.tree-capability'
   | 'plugin.list' | 'plugin.toggle'
+  | 'plugin.install' | 'plugin.uninstall'
+  | 'plugin.approvePermissions' | 'plugin.revokePermissions'
+  | 'plugin.executeCommand'
+  | 'plugin.config.get' | 'plugin.config.set'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -72,7 +76,14 @@ export interface ClientMessageMap {
   'extension.toggle': { name: string; enabled: boolean }
   'extension.list': Record<string, never>
   'plugin.list': Record<string, never>
-  'plugin.toggle': { pluginId: string; enabled: boolean }
+  'plugin.toggle': { pluginId: string; enabled: boolean; trustLevel?: 'trusted' | 'sandbox' }
+  'plugin.install': { packageSpec: string }
+  'plugin.uninstall': { pluginId: string }
+  'plugin.approvePermissions': { pluginId: string; permissions: string[] }
+  'plugin.revokePermissions': { pluginId: string }
+  'plugin.executeCommand': { pluginId: string; commandId: string; args?: Record<string, unknown> }
+  'plugin.config.get': { pluginId: string; key?: string }
+  'plugin.config.set': { pluginId: string; key: string; value: unknown }
 }
 
 export type ClientMessage =
@@ -114,6 +125,13 @@ export type ClientMessage =
   | { type: 'extension.list'; id?: string; payload: ClientMessageMap['extension.list'] }
   | { type: 'plugin.list'; id?: string; payload: Record<string, never> }
   | { type: 'plugin.toggle'; id?: string; payload: ClientMessageMap['plugin.toggle'] }
+  | { type: 'plugin.install'; id?: string; payload: ClientMessageMap['plugin.install'] }
+  | { type: 'plugin.uninstall'; id?: string; payload: ClientMessageMap['plugin.uninstall'] }
+  | { type: 'plugin.approvePermissions'; id?: string; payload: ClientMessageMap['plugin.approvePermissions'] }
+  | { type: 'plugin.revokePermissions'; id?: string; payload: ClientMessageMap['plugin.revokePermissions'] }
+  | { type: 'plugin.executeCommand'; id?: string; payload: ClientMessageMap['plugin.executeCommand'] }
+  | { type: 'plugin.config.get'; id?: string; payload: ClientMessageMap['plugin.config.get'] }
+  | { type: 'plugin.config.set'; id?: string; payload: ClientMessageMap['plugin.config.set'] }
 
 // ── 辅助类型 ────────────────────────────────────────────────────
 
@@ -144,6 +162,8 @@ export type ServerMessageType =
   | 'session.commands'
   | 'session.tree-data' | 'session.tree-navigate-result' | 'session.tree-fork-result' | 'session.tree-clone-result' | 'session.tree-capability'
   | 'config.plugins' | 'plugin:crashed' | 'plugin:notification'
+  | 'plugin:statusChange' | 'plugin:permissionRequest'
+  | 'plugin:statusBarUpdate' | 'plugin:messageDecoration' | 'plugin:config'
 
 export interface ServerMessage {
   type: ServerMessageType
@@ -213,4 +233,49 @@ export interface PluginNotificationPayload {
   pluginId: string
   level: 'info' | 'warning' | 'error'
   message: string
+}
+
+// ── Plugin Server → Client payload interfaces ────────────────────
+
+export interface PluginStatusChangePayload {
+  pluginId: string
+  oldStatus: string
+  newStatus: string
+}
+
+export interface PluginPermissionRequestPayload {
+  pluginId: string
+  permissions: string[]
+}
+
+export interface StatusBarItem {
+  id: string
+  pluginId: string
+  text: string
+  tooltip?: string
+  commandId?: string
+  priority: number
+}
+
+export interface PluginStatusBarUpdatePayload {
+  items: StatusBarItem[]
+}
+
+export interface MessageDecoration {
+  type: string
+  pluginId: string
+  label: string
+  color?: string
+  commandId?: string
+}
+
+export interface PluginMessageDecorationPayload {
+  sessionId: string
+  messageId: string
+  decorations: MessageDecoration[]
+}
+
+export interface PluginConfigPayload {
+  pluginId: string
+  config: Record<string, unknown>
 }

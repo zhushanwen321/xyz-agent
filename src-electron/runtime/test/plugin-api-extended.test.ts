@@ -321,15 +321,21 @@ describe('SessionData API — registerSessionDataRpcHandlers', () => {
   let rpc: PluginRpcServer
   let port: ReturnType<typeof createMockPort>
   const cache = new Map<string, Map<string, unknown>>()
+  const dirty = new Map<string, Set<string>>()
+  const sizeTracker = new Map<string, number>()
   let bridgeCalls: Array<{ sessionId: string; key: string; value: unknown }> = []
 
   beforeEach(() => {
     rpc = new PluginRpcServer()
     cache.clear()
+    dirty.clear()
+    sizeTracker.clear()
     bridgeCalls = []
 
     const deps: SessionDataHandlers = {
       getCache: () => cache,
+      getDirty: () => dirty,
+      getSizeTracker: () => sizeTracker,
       appendEntry: async (sessionId: string, key: string, value: unknown) => {
         bridgeCalls.push({ sessionId, key, value })
       },
@@ -354,9 +360,10 @@ describe('SessionData API — registerSessionDataRpcHandlers', () => {
     assert.ok(s1cache)
     assert.deepStrictEqual(s1cache.get('goal-state'), { active: true })
 
-    // 验证 bridge
-    assert.strictEqual(bridgeCalls.length, 1)
-    assert.strictEqual(bridgeCalls[0].key, 'goal-state')
+    // 验证 dirty tracking（set handler 不再调用 appendEntry，改为 dirty tracking）
+    const dirtyKeys = dirty.get('s1')
+    assert.ok(dirtyKeys)
+    assert.ok(dirtyKeys.has('goal-state'))
   })
 
   it('plugin.sessionData.get → reads from cache', async () => {

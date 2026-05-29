@@ -63,6 +63,11 @@ export class PluginRegistry {
     return [...this.cache.values()]
   }
 
+  /** Remove a descriptor from the cache (used during uninstall) */
+  removeDescriptor(pluginId: string): boolean {
+    return this.cache.delete(pluginId)
+  }
+
   async reload(): Promise<PluginDescriptor[]> {
     this.cache.clear()
     return this.scan()

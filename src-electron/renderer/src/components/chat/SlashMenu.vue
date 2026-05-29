@@ -1,12 +1,12 @@
 <template>
   <div
-    v-if="visible && commands.length > 0"
+    v-if="visible && mergedCommands.length > 0"
     ref="menuRef"
     class="absolute bottom-full left-[24px] right-[24px] mb-1 bg-surface border border-border rounded-none shadow-md max-h-[calc(28px*5)] overflow-y-auto z-20"
   >
     <div>
       <Button
-        v-for="(cmd, idx) in commands"
+        v-for="(cmd, idx) in mergedCommands"
         :key="cmd.name"
         :ref="(el) => { if (idx === activeIndex) activeEl = (el as any)?.$el ?? el }"
         variant="ghost"
@@ -28,9 +28,11 @@
               ? 'bg-[var(--section-bg)] text-accent'
               : cmd.source === 'extension'
               ? 'bg-[var(--section-bg)] text-muted'
+              : cmd.source === 'plugin'
+              ? 'bg-[var(--warning-light)] text-[var(--warning)]'
               : 'bg-agent-light text-agent',
           ]"
-        >{{ cmd.source === 'builtin' ? 'command' : cmd.source === 'skill' ? 'skill' : cmd.source === 'native' ? 'native' : cmd.source === 'extension' ? 'ext' : 'agent' }}</span>
+        >{{ cmd.source === 'builtin' ? 'command' : cmd.source === 'skill' ? 'skill' : cmd.source === 'native' ? 'native' : cmd.source === 'extension' ? 'ext' : cmd.source === 'plugin' ? 'plugin' : 'agent' }}</span>
     <span class="text-xs font-semibold font-mono whitespace-nowrap text-accent min-w-[120px] max-w-[40%] shrink-0 overflow-hidden text-ellipsis">/{{ displayName(cmd) }}</span>
     <span class="text-[11px] text-muted flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap pl-2 border-l border-border" :title="cmd.description">{{ cmd.description }}</span>
     <span
@@ -43,8 +45,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick, onBeforeUnmount, onMounted } from 'vue'
+import { ref, computed, watch, nextTick, onBeforeUnmount, onMounted } from 'vue'
 import { Button } from '../../design-system'
+import { usePluginStore } from '../../stores/plugin'
 import type { SlashCommand } from '../../composables/useSlashCommands'
 
 const props = defineProps<{
@@ -57,6 +60,21 @@ const emit = defineEmits<{
   select: [cmd: SlashCommand]
 }>()
 
+const pluginStore = usePluginStore()
+
+/** Map plugin store's slash commands into SlashCommand format */
+const pluginCommands = computed<SlashCommand[]>(() =>
+  pluginStore.allSlashCommands.map(cmd => ({
+    name: cmd.name,
+    description: `${cmd.description} (Plugin: ${pluginStore.pluginById(cmd.pluginId)?.displayName ?? cmd.pluginId})`,
+    source: 'plugin' as const,
+    action: { type: 'plugin' as const, pluginId: cmd.pluginId, commandName: cmd.name },
+  })),
+)
+
+/** Merge existing commands with plugin commands */
+const mergedCommands = computed(() => [...props.commands, ...pluginCommands.value])
+
 const activeIndex = ref(0)
 const activeEl = ref<HTMLElement | null>(null)
 const menuRef = ref<HTMLElement | null>(null)
@@ -65,8 +83,8 @@ watch(() => props.commands, () => {
   activeIndex.value = 0
 })
 
-watch(() => props.visible, (val) => {
-  if (val) {
+watch(() => [props.visible, pluginCommands.value.length] as const, ([visible]) => {
+  if (visible) {
     activeIndex.value = 0
     document.addEventListener('keydown', onKeyDown)
   } else {
@@ -75,19 +93,19 @@ watch(() => props.visible, (val) => {
 })
 
 function onKeyDown(e: KeyboardEvent) {
-  if (!props.visible || props.commands.length === 0) return
+  if (!props.visible || mergedCommands.value.length === 0) return
 
   if (e.key === 'ArrowDown') {
     e.preventDefault()
-    activeIndex.value = (activeIndex.value + 1) % props.commands.length
+    activeIndex.value = (activeIndex.value + 1) % mergedCommands.value.length
     scrollActiveIntoView()
   } else if (e.key === 'ArrowUp') {
     e.preventDefault()
-    activeIndex.value = (activeIndex.value - 1 + props.commands.length) % props.commands.length
+    activeIndex.value = (activeIndex.value - 1 + mergedCommands.value.length) % mergedCommands.value.length
     scrollActiveIntoView()
   } else if (e.key === 'Enter' || e.key === 'Tab') {
     e.preventDefault()
-    const cmd = props.commands[activeIndex.value]
+    const cmd = mergedCommands.value[activeIndex.value]
     if (cmd) handleSelect(cmd)
   } else if (e.key === 'Escape') {
     e.preventDefault()
@@ -102,7 +120,12 @@ function scrollActiveIntoView() {
 }
 
 function handleSelect(cmd: SlashCommand) {
-  emit('select', cmd)
+  if (cmd.action.type === 'plugin') {
+    pluginStore.executeCommand(cmd.action.pluginId, cmd.action.commandName)
+    emit('close')
+  } else {
+    emit('select', cmd)
+  }
 }
 
 // 点击外部关闭

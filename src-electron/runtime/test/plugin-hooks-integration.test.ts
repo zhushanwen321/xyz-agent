@@ -29,7 +29,8 @@ function serviceRegistry(service: PluginService) {
   return service as unknown as {
     hookRegistry: Map<string, HookEntry[]>
     toolRegistry: Map<string, ToolEntry>
-    rpcServer: { broadcast: ReturnType<typeof vi.fn> }
+    rpcServer: { broadcast: ReturnType<typeof vi.fn>; invoke: ReturnType<typeof vi.fn> }
+    host: { getWorkerHandle: ReturnType<typeof vi.fn> }
   }
 }
 
@@ -185,8 +186,8 @@ describe('PluginService.syncToolsToBridge', () => {
 // ══════════════════════════════════════════════════════════════════
 
 describe('PluginService.handleBridgeToolExecute', () => {
-  // ── TC-HKP-08: 存在的工具返回 stubbed 结果 ──────────────────────
-  it('TC-HKP-08: existing tool returns stubbed success', async () => {
+  // ── TC-HKP-08: 存在的工具路由到 Worker 执行并返回结果 ──────────
+  it('TC-HKP-08: existing tool routes to worker and returns result', async () => {
     const broker = createMockBroker()
     const service = new PluginService({} as never, broker)
     const reg = serviceRegistry(service)
@@ -195,6 +196,18 @@ describe('PluginService.handleBridgeToolExecute', () => {
       pluginId: 'p1',
       handlerId: 'p1:hello',
       schema: { name: 'hello', description: '', parameters: {} },
+    })
+
+    // Mock host.getWorkerHandle to return a valid handle
+    reg.host.getWorkerHandle = vi.fn().mockReturnValue({
+      workerId: 'worker-1',
+      postMessage: vi.fn(),
+    })
+
+    // Mock rpcServer.invoke to return success
+    reg.rpcServer.invoke = vi.fn().mockResolvedValue({
+      content: JSON.stringify({ success: true }),
+      isError: false,
     })
 
     const request: BridgeToolExecuteRequest = {

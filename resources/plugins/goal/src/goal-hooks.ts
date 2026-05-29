@@ -6,39 +6,44 @@
  *   - agent_end: 清理 pendingMessage，更新状态
  */
 
+import type { PluginContext } from '../../../../src-electron/runtime/src/services/plugin-service/plugin-types.js'
 import type { GoalState } from './goal-state.js'
 import { getIncompleteTasks, getCompletedCount } from './goal-state.js'
-import type { Phase2AgentAPI } from '../../../../src-electron/runtime/src/services/plugin-service/plugin-types.js'
+
+// Goal 状态存储在 globalState 中（跨 session 全局共享）
+const GOAL_STATE_KEY = 'goal-state'
 
 // ── 钩子注册 ────────────────────────────────────────────
 
-export function createGoalHooks(api: Phase2AgentAPI): Array<{ dispose(): void }> {
-  const disposables: Array<{ dispose(): void }> = []
+export async function createGoalHooks(context: PluginContext): Promise<void> {
+  const api = context.api
+  const store = context.globalState
 
   // ── onBeforeAgentStart: 注入 steering prompt ──────────
 
-  disposables.push(
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    api.hooks.onBeforeAgentStart(async (_ctx) => {
+  const onBeforeAgentStartDisposable = await api.hooks.onBeforeAgentStart(
+    async () => {
       let state: GoalState | undefined
       try {
-        // @ts-expect-error - pi sessionData.get accepts single-arg form for plugin-scoped keys
-        state = (await api.sessionData.get('goal-state')) as GoalState | undefined
+        state = (await store.get(GOAL_STATE_KEY)) as GoalState | undefined
       } catch {
         state = undefined
       }
 
       if (!state || !state.goal) {
-        return {} // 无活跃 goal，不注入
+        return { proceed: true } // 无活跃 goal，放行
       }
 
       // 先检查是否有 pendingMessage
       if (state.pendingMessage) {
         const msg = { ...state.pendingMessage }
         state.pendingMessage = null
-        await api.sessionData.set('goal-state', state)
+        await store.set(GOAL_STATE_KEY, state)
         return {
-          injectedMessages: [msg],
+          proceed: true,
+          modifiedData: {
+            injectedMessages: [msg],
+          },
         }
       }
 
@@ -63,26 +68,29 @@ export function createGoalHooks(api: Phase2AgentAPI): Array<{ dispose(): void }>
       content += `</goal_context>`
 
       return {
-        injectedMessages: [
-          {
-            role: 'user',
-            content,
-            display: false,
-          },
-        ],
+        proceed: true,
+        modifiedData: {
+          injectedMessages: [
+            {
+              role: 'user',
+              content,
+              display: false,
+            },
+          ],
+        },
       }
-    }),
+    },
   )
+  context.subscriptions.push(onBeforeAgentStartDisposable)
 
   // ── agent_end: 清理 pendingMessage ────────────────────
 
-  disposables.push(
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    api.hooks.onPiEvent('agent_end', async (_data) => {
+  const onAgentEndDisposable = await api.hooks.onPiEvent(
+    'agent_end',
+    async () => {
       let state: GoalState | undefined
       try {
-        // @ts-expect-error - pi sessionData.get accepts single-arg form for plugin-scoped keys
-        state = (await api.sessionData.get('goal-state')) as GoalState | undefined
+        state = (await store.get(GOAL_STATE_KEY)) as GoalState | undefined
       } catch {
         state = undefined
       }
@@ -91,12 +99,11 @@ export function createGoalHooks(api: Phase2AgentAPI): Array<{ dispose(): void }>
       // 如果 goal 已取消/完成，清理 pendingMessage
       if (!state.goal) {
         state.pendingMessage = null
-        await api.sessionData.set('goal-state', state)
+        await store.set(GOAL_STATE_KEY, state)
       }
-    }),
+    },
   )
-
-  return disposables
+  context.subscriptions.push(onAgentEndDisposable)
 }
 
 // ── Helpers ─────────────────────────────────────────────

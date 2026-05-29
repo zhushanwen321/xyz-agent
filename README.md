@@ -86,6 +86,32 @@ npm run lint
 - **Settings** — Provider / Skill / Agent / System 四标签完整管理
 - **快捷键** — Standard / Split / Focus / Overview / Settings 全局切换
 
+## Plugin System
+
+xyz-agent 内置插件系统，支持扩展功能（tools、hooks、slash commands、status bar items）。
+
+### 架构
+
+- **Backend**: PluginService 管理 Worker Thread 池，每个插件独立 Worker 进程
+- **Frontend**: Pinia store + Vue 组件（PluginsPane、PluginSettingsForm、MessageDecoration）
+- **Communication**: WebSocket（前端↔后端）+ JSON-RPC over MessagePort（后端↔Worker）
+
+### Built-in Plugins
+
+- **Goal**: 目标管理（create_tasks, update_tasks, complete_goal, cancel_goal）
+- **Todo**: 待办清单（add, update, delete, clear, list）
+
+### Extension Points
+
+| 扩展点 | 描述 |
+|--------|------|
+| Tools | 注册 LLM 可调用的工具（通过 Pi Bridge Extension） |
+| Hooks | 拦截消息流（onBeforeSendMessage, onAfterToolUse 等） |
+| Slash Commands | 注册 /command 快捷操作 |
+| Status Bar Items | 在状态栏显示插件状态 |
+| Message Decorations | 在消息气泡上显示标签 |
+| Settings | 插件配置项（自动渲染表单） |
+
 ## 功能开发地图
 
 项目长期规划按 7 个 Phase 推进，详见 [docs/feature-map/](docs/feature-map/)。

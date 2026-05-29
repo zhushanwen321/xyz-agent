@@ -1,7 +1,10 @@
 /**
  * Goal 插件 — goal_manager 工具
  *
- * 注册 goal_manager 工具（10 个 action），通过 api.sessionData 持久化状态。
+ * 注册 goal_manager 工具 schema，并提供 executeGoalAction 供
+ * Worker 侧 tool execution handler 调用。
+ *
+ * 状态通过 context.globalState 持久化（跨 session 全局共享）。
  */
 
 import type {
@@ -12,7 +15,7 @@ import type {
   TaskStatus,
   SubTodoStatus,
 } from './goal-state.js'
-import type { Phase2AgentAPI } from '../../../../src-electron/runtime/src/services/plugin-service/plugin-types.js'
+import type { PluginContext } from '../../../../src-electron/runtime/src/services/plugin-service/plugin-types.js'
 import {
   createInitialState,
   isTerminalTaskStatus,
@@ -22,10 +25,17 @@ import {
   formatTaskList,
 } from './goal-state.js'
 
+// Goal 状态存储在 globalState 中（跨 session 全局共享）
+const GOAL_STATE_KEY = 'goal-state'
+
 // ── 工具注册 ────────────────────────────────────────────
 
-export async function createGoalTool(api: Phase2AgentAPI): Promise<{ dispose(): void }> {
-  return api.tools.register({
+/**
+ * 注册 goal_manager tool schema 到 plugin API。
+ * 返回 toolKey（格式: pluginId:goal_manager）。
+ */
+export async function registerGoalTool(context: PluginContext): Promise<string> {
+  return context.api.tools.register({
     name: 'goal_manager',
     description:
       '管理 /goal 模式的任务清单、完成状态和退出\n\n' +
@@ -87,89 +97,101 @@ export async function createGoalTool(api: Phase2AgentAPI): Promise<{ dispose(): 
       },
       required: ['action'],
     },
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi tool handler extra context is loosely typed
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any -- pi tool handler extra context is loosely typed
-    handler: async (params: GoalManagerParams, _extra: any) => {
-      // 加载/初始化状态
-      let state: GoalState
-      try {
-        // @ts-expect-error - pi sessionData.get accepts single-arg form for plugin-scoped keys
-        state = (await api.sessionData.get('goal-state')) as GoalState | undefined
-      } catch {
-        state = undefined
-      }
-      if (!state) {
-        state = createInitialState()
-      }
-
-      // 路由 action
-      let resultText: string
-
-      try {
-        switch (params.action) {
-          case 'create_tasks':
-            resultText = handleCreateTasks(state, params)
-            break
-          case 'add_tasks':
-            resultText = handleAddTasks(state, params)
-            break
-          case 'update_tasks':
-            resultText = handleUpdateTasks(state, params)
-            break
-          case 'list_tasks':
-            resultText = formatTaskList(state.tasks)
-            break
-          case 'complete_goal':
-            resultText = handleCompleteGoal(state, params)
-            break
-          case 'cancel_goal':
-            resultText = handleCancelGoal(state, params)
-            break
-          case 'report_blocked':
-            resultText = handleReportBlocked(state, params)
-            break
-          case 'add_sub_todos':
-            resultText = handleAddSubTodos(state, params)
-            break
-          case 'update_sub_todos':
-            resultText = handleUpdateSubTodos(state, params)
-            break
-          case 'delete_sub_todos':
-            resultText = handleDeleteSubTodos(state, params)
-            break
-          default:
-            throw new Error(`未知 action: ${params.action}`)
-        }
-      } catch (err: unknown) {
-        // 错误时也持久化（状态可能已部分修改）
-        await api.sessionData.set('goal-state', state)
-        const errorMessage = err instanceof Error ? err.message : String(err)
-        throw new Error(`${errorMessage}\n\nInput: ${JSON.stringify(params, null, 2)}`)
-      }
-
-      // 持久化状态
-      await api.sessionData.set('goal-state', state)
-
-      // 构建返回
-      const completed = getCompletedCount(state.tasks)
-      const total = state.tasks.length
-      return {
-        content: JSON.stringify({
-          result: resultText,
-          summary: `${completed}/${total} 完成`,
-          tasks: state.tasks.map(t => ({
-            id: t.id,
-            description: t.description,
-            status: t.status,
-            evidence: t.evidence,
-            subTodos: t.subTodos,
-          })),
-          goal: state.goal,
-        }),
-      }
-    },
   })
+}
+
+// ── Tool Execution Handler ─────────────────────────────
+
+/**
+ * 执行 goal_manager action。
+ * 由 Worker 侧 tool execution handler 调用。
+ *
+ * @param context - Plugin context（提供 globalState 存储）
+ * @param params - goal_manager action 参数
+ * @returns 工具执行结果
+ */
+export async function executeGoalAction(
+  context: PluginContext,
+  params: GoalManagerParams,
+): Promise<{ content: string }> {
+  const store = context.globalState
+
+  // 加载/初始化状态
+  let state: GoalState | undefined
+  try {
+    state = (await store.get(GOAL_STATE_KEY)) as GoalState | undefined
+  } catch {
+    state = undefined
+  }
+  if (!state) {
+    state = createInitialState()
+  }
+
+  // 路由 action
+  let resultText: string
+
+  try {
+    switch (params.action) {
+      case 'create_tasks':
+        resultText = handleCreateTasks(state, params)
+        break
+      case 'add_tasks':
+        resultText = handleAddTasks(state, params)
+        break
+      case 'update_tasks':
+        resultText = handleUpdateTasks(state, params)
+        break
+      case 'list_tasks':
+        resultText = formatTaskList(state.tasks)
+        break
+      case 'complete_goal':
+        resultText = handleCompleteGoal(state, params)
+        break
+      case 'cancel_goal':
+        resultText = handleCancelGoal(state, params)
+        break
+      case 'report_blocked':
+        resultText = handleReportBlocked(state, params)
+        break
+      case 'add_sub_todos':
+        resultText = handleAddSubTodos(state, params)
+        break
+      case 'update_sub_todos':
+        resultText = handleUpdateSubTodos(state, params)
+        break
+      case 'delete_sub_todos':
+        resultText = handleDeleteSubTodos(state, params)
+        break
+      default:
+        throw new Error(`未知 action: ${params.action}`)
+    }
+  } catch (err: unknown) {
+    // 错误时也持久化（状态可能已部分修改）
+    await store.set(GOAL_STATE_KEY, state)
+    const errorMessage = err instanceof Error ? err.message : String(err)
+    throw new Error(`${errorMessage}\n\nInput: ${JSON.stringify(params, null, 2)}`)
+  }
+
+  // 持久化状态
+  await store.set(GOAL_STATE_KEY, state)
+
+  // 构建返回
+  const completed = getCompletedCount(state.tasks)
+  const total = state.tasks.length
+  return {
+    content: JSON.stringify({
+      result: resultText,
+      summary: `${completed}/${total} 完成`,
+      tasks: state.tasks.map(t => ({
+        id: t.id,
+        description: t.description,
+        status: t.status,
+        evidence: t.evidence,
+        subTodos: t.subTodos,
+      })),
+      goal: state.goal,
+    }),
+  }
 }
 
 // ── Action Handlers ─────────────────────────────────────

@@ -8,10 +8,14 @@
  * 调用本方法，Activator 解析 pending promises 完成异步等待。
  */
 
+import { watch, type FSWatcher } from 'node:fs'
+import { dirname } from 'node:path'
+
 import type {
   ActivationEvent,
   PluginState,
   PluginDescriptor,
+  PluginSource,
   Disposable,
   WorkerToHostMessage,
 } from './plugin-types.js'
@@ -24,8 +28,17 @@ export interface PluginHost {
   getWorkerHandle(pluginId: string): { workerId: string; postMessage(message: unknown): void } | undefined
 }
 
+/** Callback to broadcast plugin status changes */
+export type StatusChangeCallback = (payload: {
+  pluginId: string
+  oldStatus: string
+  newStatus: string
+}) => void
+
 const DEACTIVATE_TIMEOUT_MS = 5_000
 const ACTIVATE_TIMEOUT_MS = 30_000
+const HOT_RELOAD_DEBOUNCE_MS = 300
+const HOT_RELOAD_DEACTIVATE_TIMEOUT_MS = 5_000
 
 interface PendingReply {
   resolve: (success: boolean) => void
@@ -36,12 +49,24 @@ interface PluginContextState {
   subscriptions: Disposable[]
 }
 
+interface ReloadContext {
+  host: PluginHost
+  onStatusChange: StatusChangeCallback
+}
+
 export class PluginActivator {
   private pluginStates = new Map<string, PluginState>()
   private eventMap = new Map<string, string[]>() // eventPattern → pluginIds
   private contexts = new Map<string, PluginContextState>()
   private descriptors = new Map<string, PluginDescriptor>()
   private pendingReplies = new Map<string, PendingReply>()
+
+  /** Hot-reload watchers: pluginId → FSWatcher */
+  private watchers = new Map<string, FSWatcher>()
+  /** Hot-reload debounce timers: pluginId → timeout handle */
+  private reloadTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  /** Reload context (host + callback) for each watched plugin */
+  private reloadContexts = new Map<string, ReloadContext>()
 
   /** 注册插件描述符，构建 activationEvent 索引 */
   registerDescriptors(descriptors: PluginDescriptor[]): void {
@@ -323,6 +348,110 @@ export class PluginActivator {
 
     for (const desc of sorted) {
       await this.activatePlugin(desc.pluginId, { type: 'onStartupFinished' }, host)
+    }
+  }
+
+  // ── Hot Reload ────────────────────────────────────────────────────
+
+  /**
+   * Watch an external plugin's directory for changes and auto-reload.
+   * Built-in plugins (source === 'built-in') are excluded.
+   */
+  watchAndReload(
+    pluginId: string,
+    pluginPath: string,
+    source: PluginSource,
+    host: PluginHost,
+    onStatusChange: StatusChangeCallback,
+  ): void {
+    // Built-in plugins: never watch
+    if (source === 'built-in') return
+
+    // Don't double-watch
+    if (this.watchers.has(pluginId)) return
+
+    // Store reload context for later use by debounce timer
+    this.reloadContexts.set(pluginId, { host, onStatusChange })
+
+    const watchDir = dirname(pluginPath)
+    const watcher = watch(watchDir, { recursive: true }, (eventType, filename) => {
+      if (!filename) return
+
+      // Only watch for JS/TS file changes
+      if (!filename.endsWith('.js') && !filename.endsWith('.ts')) return
+
+      // Debounce: 300ms
+      const existing = this.reloadTimers.get(pluginId)
+      if (existing) clearTimeout(existing)
+
+      this.reloadTimers.set(pluginId, setTimeout(async () => {
+        this.reloadTimers.delete(pluginId)
+        const ctx = this.reloadContexts.get(pluginId)
+        if (ctx) {
+          await this.performReload(pluginId, ctx.host, ctx.onStatusChange)
+        }
+      }, HOT_RELOAD_DEBOUNCE_MS))
+    })
+
+    this.watchers.set(pluginId, watcher)
+  }
+
+  /**
+   * Perform a hot reload: deactivate → activate → broadcast status change.
+   */
+  async performReload(
+    pluginId: string,
+    host: PluginHost,
+    onStatusChange: StatusChangeCallback,
+  ): Promise<void> {
+    const currentState = this.pluginStates.get(pluginId)
+    if (currentState !== 'ACTIVE') return // Only reload active plugins
+
+    const oldStatus = 'active'
+
+    // 1. Deactivate (timeout 5s)
+    try {
+      await Promise.race([
+        this.deactivatePlugin(pluginId, host),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('deactivate timeout')), HOT_RELOAD_DEACTIVATE_TIMEOUT_MS)
+        ),
+      ])
+    } catch {
+      // Deactivate timeout → force terminate Worker
+      console.warn(`[plugin-activator] hot reload: force terminate for ${pluginId}`)
+      const handle = host.getWorkerHandle(pluginId)
+      if (handle) await host.terminateWorker(handle.workerId)
+      this.disposeContext(pluginId)
+      this.pluginStates.set(pluginId, 'UNLOADED')
+    }
+
+    // 2. Re-activate
+    await this.activatePlugin(pluginId, { type: 'onStartupFinished' }, host)
+
+    // 3. Notify frontend of status change
+    const newStatus = this.pluginStates.get(pluginId) === 'ACTIVE' ? 'active' : 'crashed'
+    onStatusChange({ pluginId, oldStatus, newStatus })
+  }
+
+  /** Stop watching a specific plugin */
+  stopWatching(pluginId: string): void {
+    const watcher = this.watchers.get(pluginId)
+    if (watcher) {
+      watcher.close()
+      this.watchers.delete(pluginId)
+    }
+    const timer = this.reloadTimers.get(pluginId)
+    if (timer) {
+      clearTimeout(timer)
+      this.reloadTimers.delete(pluginId)
+    }
+  }
+
+  /** Stop all watchers (used during shutdown) */
+  stopAllWatchers(): void {
+    for (const pluginId of this.watchers.keys()) {
+      this.stopWatching(pluginId)
     }
   }
 

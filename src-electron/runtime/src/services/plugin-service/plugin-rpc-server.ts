@@ -18,10 +18,19 @@ export interface WorkerPort {
   postMessage(message: unknown): void
 }
 
+/** Pending outgoing invoke entry */
+interface PendingInvoke {
+  resolve: (value: unknown) => void
+  reject: (reason: unknown) => void
+  timer: ReturnType<typeof setTimeout>
+}
+
 export class PluginRpcServer {
   private methods = new Map<string, RpcMethodHandler>()
   private workers = new Map<string, WorkerPort>()
   private permissionCheck: PermissionCheckFn | null = null
+  private nextRequestId = 1
+  private pendingInvokes = new Map<number, PendingInvoke>()
 
   /** 设置权限检查钩子，dispatch 前调用 */
   setPermissionChecker(checker: PermissionCheckFn): void {
@@ -61,6 +70,60 @@ export class PluginRpcServer {
   }
 
   /**
+   * 发起 RPC 请求到指定 Worker，等待响应。
+   *
+   * 用于主线程主动调用 Worker 的方法（如 plugin.tool.execute）。
+   * 创建 pending entry，发送请求到 Worker port，等待 handleResponse 匹配。
+   *
+   * @param workerId - 目标 Worker ID
+   * @param method - RPC 方法名
+   * @param params - 请求参数
+   * @param timeoutMs - 超时时间（毫秒）
+   */
+  invoke(workerId: string, method: string, params: Record<string, unknown>, timeoutMs: number): Promise<unknown> {
+    const worker = this.workers.get(workerId)
+    if (!worker) {
+      return Promise.reject(new Error(`Worker not found: ${workerId}`))
+    }
+
+    const id = this.nextRequestId++
+
+    return new Promise<unknown>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingInvokes.delete(id)
+        reject(new Error('RPC timeout'))
+      }, timeoutMs)
+
+      this.pendingInvokes.set(id, { resolve, reject, timer })
+
+      const request: RpcRequest = { jsonrpc: '2.0', id, method, params }
+      worker.postMessage({ type: 'rpc', request })
+    })
+  }
+
+  /**
+   * 处理来自 Worker 的 RPC 响应（对应 invoke 发出的请求）。
+   *
+   * 当 PluginHost 收到 type: 'rpc' 消息且包含 id + (result | error) 时调用。
+   * 如果 id 匹配 pendingInvokes，resolve/reject 对应的 Promise。
+   * 如果不匹配（属于 Worker 主动发起的请求），返回 false。
+   */
+  handleResponse(response: import('./plugin-types.js').RpcResponse): boolean {
+    const pending = this.pendingInvokes.get(response.id)
+    if (!pending) return false
+
+    clearTimeout(pending.timer)
+    this.pendingInvokes.delete(response.id)
+
+    if ('error' in response) {
+      pending.reject(new Error(response.error.message))
+    } else {
+      pending.resolve(response.result)
+    }
+    return true
+  }
+
+  /**
    * 处理来自 Worker 的 RPC 请求，调用对应 handler 并回复结果。
    *
    * 调用方（PluginHost）从 WorkerToHostMessage 中提取 RpcRequest 后传入。
@@ -95,6 +158,12 @@ export class PluginRpcServer {
   }
 
   dispose(): void {
+    // Reject all pending invokes
+    for (const pending of this.pendingInvokes.values()) {
+      clearTimeout(pending.timer)
+      pending.reject(new Error('RPC server disposed'))
+    }
+    this.pendingInvokes.clear()
     this.methods.clear()
     this.workers.clear()
   }

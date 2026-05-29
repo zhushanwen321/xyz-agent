@@ -4,7 +4,7 @@ import { on } from '../lib/event-bus'
 
 // ── 类型定义 ────────────────────────────────────────────────────
 
-export type SlashCommandSource = 'builtin' | 'skill' | 'agent' | 'extension' | 'native'
+export type SlashCommandSource = 'builtin' | 'skill' | 'agent' | 'extension' | 'native' | 'plugin'
 
 export type SlashCommandAction =
   | { type: 'local'; handler: (ctx: CommandContext) => void }
@@ -13,6 +13,7 @@ export type SlashCommandAction =
   | { type: 'agent'; agentName: string }
   | { type: 'extension'; commandName: string }
   | { type: 'native'; commandName: string }
+  | { type: 'plugin'; pluginId: string; commandName: string }
 
 export interface SlashCommand {
   name: string

@@ -5,8 +5,15 @@
         <span class="w-[5px] h-[5px] rounded-full" :style="{ background: dotColor }"></span>
         {{ statusText }}
       </span>
-      <template v-for="item in pluginItems" :key="item.id">
-        <span class="inline-flex items-center gap-1 border-l border-border pl-2">{{ item.text }}</span>
+      <template v-for="item in pluginStatusBarItems" :key="item.id">
+        <span
+          role="button"
+          tabindex="0"
+          class="inline-flex items-center gap-1 border-l border-border pl-2 hover:text-fg transition-colors cursor-pointer disabled:cursor-default disabled:hover:text-muted"
+          :class="{ 'cursor-default hover:text-muted': !item.commandId }"
+          :title="item.tooltip ?? ''"
+          @click="handleStatusItemClick(item)"
+        >{{ item.text }}</span>
       </template>
     </div>
     <div class="inline-flex items-center gap-2 min-w-0">
@@ -16,25 +23,21 @@
   </footer>
 </template>
 
-<script lang="ts">
-// Module-level refCount shared across component instances
-let _refCount = 0
-let _cleanup: (() => void) | null = null
-</script>
-
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { computed } from 'vue'
 import { useSessionStore } from '../../stores/session'
 import { usePanelStore } from '../../stores/panel'
 import { useChatStore } from '../../stores/chat'
+import { usePluginStore } from '../../stores/plugin'
 import { getState } from '../../lib/ws-client'
 import { useI18n } from 'vue-i18n'
-import { on } from '../../lib/event-bus'
+import type { PluginStatusItem } from '../../types/plugin'
 
 const { t } = useI18n()
 const sessionStore = useSessionStore()
 const panelStore = usePanelStore()
 const chatStore = useChatStore()
+const pluginStore = usePluginStore()
 const connState = getState()
 
 const activeSessionId = computed(() => panelStore.focusedPanel?.sessionId ?? null)
@@ -57,32 +60,15 @@ const tokenDisplay = computed(() => {
   return state.contextUsagePercent ? formatTokens(state.contextUsagePercent) : ''
 })
 
-interface PluginStatusItem {
-  id: string
-  text: string
-  icon?: string
+/** Plugin status bar items from store, sorted by priority */
+const pluginStatusBarItems = computed(() => pluginStore.allStatusBarItems)
+
+/** Handle click on a plugin status bar item */
+function handleStatusItemClick(item: PluginStatusItem) {
+  if (item.commandId) {
+    pluginStore.executeCommand(item.pluginId, item.commandId)
+  }
 }
-
-const pluginItems = ref<PluginStatusItem[]>([])
-
-onMounted(() => {
-  _refCount++
-  if (_refCount === 1) {
-    _cleanup = on('plugin:status_bar_update', (items: PluginStatusItem[]) => {
-      pluginItems.value = items.filter(
-        (item, index, arr) => arr.findIndex(i => i.id === item.id) === index,
-      )
-    })
-  }
-})
-
-onUnmounted(() => {
-  _refCount--
-  if (_refCount === 0 && _cleanup) {
-    _cleanup()
-    _cleanup = null
-  }
-})
 
 const dotColor = computed(() => {
   switch (connState.value) {
