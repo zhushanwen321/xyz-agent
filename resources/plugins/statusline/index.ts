@@ -33,7 +33,7 @@ interface StatusSetUpdateData {
 
 interface BridgeEventData {
   eventName: string
-  data: StatusSetUpdateData
+  data: StatusSetUpdateData | null | undefined
   sessionId: string
 }
 
@@ -45,24 +45,31 @@ export async function activate(context: PluginContext): Promise<void> {
   const disposable = await api.hooks.onPiEvent(
     'plugin:statusSetUpdate',
     async (_eventName: string, data: unknown) => {
-      const bridgeData = data as BridgeEventData
-      const { sessionId, key, text } = bridgeData.data
+      try {
+        const bridgeData = data as BridgeEventData
+        const eventData = bridgeData.data ?? {}
+        const sessionId = (eventData as Record<string, unknown>).sessionId as string ?? ''
+        const key = String((eventData as Record<string, unknown>).key ?? '')
+        const text = (eventData as Record<string, unknown>).text == null ? '' : String((eventData as Record<string, unknown>).text)
 
-      // Empty text means clear — skip calling updateStatusBarItem
-      if (text === '') return
+        // Empty text means clear — skip calling updateStatusBarItem
+        if (text === '') return
 
-      const meta = KEY_METADATA_MAP[key] ?? DEFAULT_METADATA
+        const meta = KEY_METADATA_MAP[key] ?? DEFAULT_METADATA
 
-      await api.ui.updateStatusBarItem(
-        `pi-${key}`,
-        text,
-        {
-          tooltip: meta.tooltip,
-          priority: meta.priority,
-          scope: meta.scope,
-          sessionId: meta.scope === 'per-session' ? sessionId : undefined,
-        },
-      )
+        await api.ui.updateStatusBarItem(
+          `pi-${key}`,
+          text,
+          {
+            tooltip: meta.tooltip,
+            priority: meta.priority,
+            scope: meta.scope,
+            sessionId: meta.scope === 'per-session' ? sessionId : undefined,
+          },
+        )
+      } catch (err) {
+        console.error('[statusline] Error handling statusSetUpdate:', err)
+      }
     },
   )
 

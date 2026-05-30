@@ -3,7 +3,6 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
 import { useProviderStore } from '../../stores/provider'
 import { useChatStore } from '../../stores/chat'
-import { useSessionStore } from '../../stores/session'
 import { Button } from '../../design-system'
 import ModelPicker from './ModelPicker.vue'
 
@@ -23,7 +22,6 @@ const emit = defineEmits<{
 const settingsStore = useSettingsStore()
 const providerStore = useProviderStore()
 const chatStore = useChatStore()
-const sessionStore = useSessionStore()
 
 // ── Model ──────────────────────────────────────────────────────
 
@@ -78,7 +76,8 @@ function getThinkingColor(level: string): string {
 function pickThinking(level: string) {
   currentThinkingLevel.value = level
   thinkingOpen.value = false
-  emit('select-thinking-level', level)
+  // Thinking level server handler not yet available — emit disabled until pi supports setThinkingLevel RPC
+  // emit('select-thinking-level', level)
 }
 
 function toggleThinking() {
@@ -115,15 +114,6 @@ function formatTokenCount(n: number): string {
   if (n >= 1000) return (n / 1000).toFixed(1) + 'k'
   return String(n)
 }
-
-// ── Branch name ────────────────────────────────────────────────
-
-const branchName = computed(() => {
-  const session = sessionStore.sessions.find(s => s.id === props.sessionId)
-  if (!session?.cwd) return ''
-  const parts = session.cwd.replace(/\/$/, '').split('/')
-  return parts[parts.length - 1] || ''
-})
 
 // ── Click outside for thinking dropdown ────────────────────────
 
@@ -213,9 +203,6 @@ onBeforeUnmount(() => {
     </span>
 
     <span class="flex-1"></span>
-
-    <!-- Branch name (compact) -->
-    <span v-if="branchName" class="text-[10px] font-mono text-muted truncate max-w-[120px]">{{ branchName }}</span>
 
     <!-- Stop / Send button -->
     <Button

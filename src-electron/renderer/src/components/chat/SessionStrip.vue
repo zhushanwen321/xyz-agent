@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { usePluginStore } from '../../stores/plugin'
+import { useSessionStore } from '../../stores/session'
 import type { PluginStatusItem } from '../../types/plugin'
 
 const props = defineProps<{
@@ -8,10 +9,18 @@ const props = defineProps<{
 }>()
 
 const pluginStore = usePluginStore()
+const sessionStore = useSessionStore()
 
 const extensionChips = computed(() =>
   pluginStore.getSessionStatusBarItems(props.sessionId),
 )
+
+const branchName = computed(() => {
+  const session = sessionStore.sessions.find(s => s.id === props.sessionId)
+  if (!session?.cwd) return ''
+  const parts = session.cwd.replace(/\/$/, '').split('/')
+  return parts[parts.length - 1] || ''
+})
 
 function getChipClasses(id: string): { bg: string; text: string; dot: string } {
   if (id.startsWith('goal')) return { bg: 'bg-accent-light', text: 'text-accent', dot: 'bg-accent' }
@@ -29,9 +38,11 @@ function handleChipClick(item: PluginStatusItem) {
 
 <template>
   <div
-    v-if="extensionChips.length > 0"
+    v-if="extensionChips.length > 0 || branchName"
     class="flex items-center gap-1.5 px-2 pt-1 pb-2 text-[10px] font-mono text-muted min-h-[22px] flex-wrap"
   >
+    <span v-if="branchName" class="text-[10px] text-accent truncate max-w-[120px]">{{ branchName }}</span>
+
     <span
       v-for="chip in extensionChips"
       :key="chip.id"

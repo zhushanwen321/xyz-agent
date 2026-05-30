@@ -70,7 +70,8 @@ async function main(): Promise<void> {
         const providers = configService.listProviders()
         const models = modelService.aggregateModels(providers)
         const session = sessionService.getSummary(sid)
-        const modelRef = session?.modelId ?? ''
+        if (!session) return
+        const modelRef = session.modelId ?? ''
         const sepIdx = modelRef.indexOf('/')
         const model = sepIdx >= 0
           ? models.find(m => m.providerId === modelRef.slice(0, sepIdx) && m.id === modelRef.slice(sepIdx + 1))

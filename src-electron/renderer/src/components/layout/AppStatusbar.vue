@@ -7,6 +7,8 @@ import { getState } from '../../lib/ws-client'
 import { useI18n } from 'vue-i18n'
 import type { PluginStatusItem } from '../../types/plugin'
 
+const PI_VERSION = '0.75.5-xyz-0.1'
+
 const { t } = useI18n()
 const pluginStore = usePluginStore()
 const sessionStore = useSessionStore()
@@ -64,6 +66,7 @@ const statusText = computed(() => {
         {{ statusText }}
       </span>
       <span v-if="branchName" class="text-[10px] text-accent truncate max-w-[160px]">{{ branchName }}</span>
+      <span class="text-[10px] text-muted">pi {{ PI_VERSION }}</span>
     </div>
 
     <!-- Right: global extension chips -->

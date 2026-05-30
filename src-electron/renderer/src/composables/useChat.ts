@@ -161,6 +161,10 @@ function createGlobalHandlers() {
   function onComplete(msg: ServerMessage) {
     const sid = getSid(msg)
     if (!sid) return
+    const usage = msg.payload.usage as { totalTokens?: number } | undefined
+    if (usage?.totalTokens) {
+      store.setTokenUsage(usage.totalTokens, sid)
+    }
     store.completeStream(sid)
   }
 
