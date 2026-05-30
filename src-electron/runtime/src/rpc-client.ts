@@ -302,7 +302,9 @@ export class RpcClient {
   }
 
   setThinkingLevel(level: string): Promise<PiMessage> {
-    return this.sendCommand('set_thinking_level', { level })
+    // Map 'max' to 'xhigh' — pi's highest supported ThinkingLevel
+    const piLevel = level === 'max' ? 'xhigh' : level
+    return this.sendCommand('set_thinking_level', { level: piLevel })
   }
 
   getAvailableModels(): Promise<PiMessage> {
