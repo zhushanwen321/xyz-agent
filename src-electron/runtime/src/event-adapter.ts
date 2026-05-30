@@ -36,6 +36,10 @@ export interface EventAdapterOptions {
   onExtensionUIRequest?: (requestId: string, sessionId: string, method: string) => void
   /** Called for bridge: prefixed extension_ui_request events. Routes the request directly without frontend timeout. */
   onBridgeUIRequest?: (requestId: string, sessionId: string, method: string, data: Record<string, unknown>) => void
+  /** Called when pi extension fires setStatus via ctx.ui.setStatus(key, text). */
+  onStatusSetUpdate?: (payload: { sessionId: string; key: string; text: string }) => void
+  /** Called after agent_end with usage data for context window tracking. */
+  onContextUpdate?: (sessionId: string, data: { inputTokens: number; totalTokens: number }) => void
 }
 
 export class EventAdapter {
@@ -196,8 +200,17 @@ export class EventAdapter {
       // ── Extension UI requests ────────────────────────────────
       case 'extension_ui_request': {
         const method = event.method as string | undefined
-        // setStatus/setWidget are internal-only, discard
-        if (method === 'setStatus' || method === 'setWidget') return null
+        // setStatus: translate to internal callback
+        if (method === 'setStatus') {
+          this.options?.onStatusSetUpdate?.({
+            sessionId: sid,
+            key: String(event.key ?? ''),
+            text: String(event.text ?? ''),
+          })
+          return null
+        }
+        // setWidget is internal-only, discard
+        if (method === 'setWidget') return null
         // Bridge methods: route directly via callback, no frontend timeout
         if (method?.startsWith('bridge:')) {
           const requestId = String(event.id ?? '')
