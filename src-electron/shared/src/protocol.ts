@@ -31,7 +31,7 @@ export interface SetProviderData {
   type?: string
   apiKey?: string
   baseUrl?: string
-  models?: Array<string | { id: string; name?: string; contextWindow?: number }>
+  models?: Array<string | { id: string; name?: string; contextWindow?: number; thinkingLevelMap?: Record<string, string | null> }>
   enabled?: boolean
 }
 

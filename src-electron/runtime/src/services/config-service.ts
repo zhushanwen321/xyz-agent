@@ -96,7 +96,7 @@ export class ConfigService implements IConfigService {
     type?: string
     apiKey?: string
     baseUrl?: string
-    models?: Array<string | { id: string; name?: string; contextWindow?: number }>
+    models?: Array<string | { id: string; name?: string; contextWindow?: number; thinkingLevelMap?: Record<string, string | null> }>
     enabled?: boolean
   }): void {
     const existing = piBridge.getProviderConfig(providerId) ?? {}
@@ -110,6 +110,9 @@ export class ConfigService implements IConfigService {
         const model: Record<string, unknown> = { id: String(m.id ?? '') }
         if (m.name) model.name = String(m.name)
         if (typeof m.contextWindow === 'number') model.contextWindow = m.contextWindow
+        if (m.thinkingLevelMap && typeof m.thinkingLevelMap === 'object') {
+          model.thinkingLevelMap = m.thinkingLevelMap as Record<string, string | null>
+        }
         return model as unknown as PiModelDefinition
       })
     }

@@ -51,18 +51,29 @@ function toggleProvider(id: string) {
   setProvider(id, { enabled: !newEnabled })
 }
 
-function handleSave(data: { name: string; type: string; url: string; key: string; models: { id: string; name: string; contextWindow?: number }[]; providerId?: string }) {
+function handleSave(data: {
+  name: string
+  type: string
+  url: string
+  key: string
+  models: { id: string; name: string; contextWindow?: number; thinkingLevelMap?: Record<string, string | null> }[]
+  providerId?: string
+}) {
   const { providerId: _pid, ...rest } = data
   const providerId = _pid || data.name.toLowerCase().replace(/\s+/g, '-')
   const { url, key, ...configData } = rest
   const apiKey = key && key !== '••••••••' ? key : undefined
-  setProvider(providerId, {
-    ...(apiKey !== undefined && { apiKey }),
-    ...(url && { baseUrl: url }),
-    ...configData,
-  })
-  showModal.value = false
-  editingProvider.value = null
+  try {
+    setProvider(providerId, {
+      ...(apiKey !== undefined && { apiKey }),
+      ...(url && { baseUrl: url }),
+      ...configData,
+    })
+    showModal.value = false
+    editingProvider.value = null
+  } catch (e: unknown) {
+    console.error('Failed to save provider:', e)
+  }
 }
 </script>
 

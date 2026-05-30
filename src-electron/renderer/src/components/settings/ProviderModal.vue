@@ -5,6 +5,7 @@ import { Button, Input, Select } from '../../design-system'
 import type { ProviderInfo, ModelInfo } from '@xyz-agent/shared'
 // TagPill removed — tags no longer used
 import { useProvider } from '../../composables/useProvider'
+import ThinkingLevelConfig from './ThinkingLevelConfig.vue'
 import { on as onEvent, off as offEvent } from '../../lib/event-bus'
 
 interface Props {
@@ -31,6 +32,7 @@ interface ModalModel {
   name: string
   contextWindow: number
   enabled?: boolean
+  thinkingLevelMap?: Record<string, string | null>
 }
 
 interface ModalFormData {
@@ -54,6 +56,15 @@ const formKey = ref('')
 const testResult = ref<'none' | 'ok' | 'err'>('none')
 const testMessage = ref('')
 const modalModels = ref<ModalModel[]>([])
+const expandedModels = ref<Set<string>>(new Set())
+
+function toggleExpand(modelId: string) {
+  if (expandedModels.value.has(modelId)) {
+    expandedModels.value.delete(modelId)
+  } else {
+    expandedModels.value.add(modelId)
+  }
+}
 
 // ─── Auto-discover state ────────────────────────────────────────
 
@@ -101,6 +112,7 @@ watch(() => props.visible, (v) => {
       id: m.id,
       name: m.name,
       contextWindow: m.contextWindow ?? 0,
+      thinkingLevelMap: m.thinkingLevelMap,
     }))
     testResult.value = 'none'
     testMessage.value = ''
@@ -215,6 +227,7 @@ function handleDiscover() {
           name: m.name,
           contextWindow: m.contextWindow ?? 0,
           enabled: existing?.enabled ?? true,
+          thinkingLevelMap: existing?.thinkingLevelMap,
         }
       })
       discoverStatus.value = 'success'
@@ -349,14 +362,32 @@ onUnmounted(() => {
             </div>
           </div>
           <div class="max-h-60 overflow-y-auto">
-            <div v-for="(model, idx) in modalModels" :key="model.id" class="flex items-center gap-2.5 py-2.5 px-3.5 border-b border-border last:border-b-0">
-              <span class="font-mono text-xs font-semibold min-w-[180px]">{{ model.name }}</span>
-              <span class="text-[11px] text-muted font-mono min-w-[60px]">{{ formatCtx(model.contextWindow) }}</span>
-              <Button variant="ghost" size="sm" class="hover:!text-[var(--danger)] hover:!bg-[var(--danger-light)]" @click="removeModel(idx)">
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M1 1l8 8M9 1L1 9" />
-                </svg>
-              </Button>
+            <div v-for="(model, idx) in modalModels" :key="model.id">
+              <div class="flex items-center gap-2.5 py-2.5 px-3.5 border-b border-border">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  class="shrink-0 !w-5 !h-5 !p-0 rounded-sm transition-transform duration-200"
+                  :class="{ 'rotate-90': expandedModels.has(model.id) }"
+                  @click="toggleExpand(model.id)"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6" /></svg>
+                </Button>
+                <span class="font-mono text-xs font-semibold min-w-[160px]">{{ model.name }}</span>
+                <span
+                  v-if="model.thinkingLevelMap && Object.keys(model.thinkingLevelMap).length > 0"
+                  class="text-[10px] px-1.5 py-px rounded-sm bg-accent/10 text-accent"
+                >mapped</span>
+                <span class="text-[11px] text-muted font-mono min-w-[50px]">{{ formatCtx(model.contextWindow) }}</span>
+                <Button variant="ghost" size="sm" class="hover:!text-[var(--danger)] hover:!bg-[var(--danger-light)]" @click="removeModel(idx)">
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M1 1l8 8M9 1L1 9" />
+                  </svg>
+                </Button>
+              </div>
+              <div v-if="expandedModels.has(model.id)" class="border-b border-border">
+                <ThinkingLevelConfig v-model="model.thinkingLevelMap" />
+              </div>
             </div>
           </div>
           <div class="flex gap-2 py-2.5 px-3.5 bg-bg border-t border-border">
