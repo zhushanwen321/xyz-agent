@@ -73,27 +73,22 @@ function initThinkingLevel() {
 }
 initThinkingLevel()
 
-const THINKING_BAR_HEIGHTS: Record<string, number[]> = {
-  off: [3, 3, 3, 3, 3],
-  minimal: [2, 4, 5, 6, 7],
-  low: [2, 4, 6, 8, 9],
-  medium: [2, 5, 7, 9, 10],
-  high: [2, 5, 8, 10, 11],
-  xhigh: [3, 6, 9, 11, 12],
-  max: [4, 7, 10, 12, 13],
+// getBarColor and getBarCount replace old getBarHeights/getThinkingColor
+// Bar heights are linear: 4 + i * 1.5 px, no lookup table needed
+
+const BAR_COLORS = ['var(--muted)', 'var(--accent)', 'var(--accent)', 'var(--warning)', 'var(--warning)', 'var(--danger)', 'var(--danger)']
+
+function getBarColor(level: string, barIndex: number): string {
+  const levelIdx = thinkingLevels.value.indexOf(level)
+  if (levelIdx < 0) return 'var(--border)'
+  // Bars up to levelIdx are "active", bars beyond are dim
+  if (barIndex <= levelIdx) return BAR_COLORS[barIndex] ?? 'var(--accent)'
+  return 'var(--border)'
 }
 
-function getBarHeights(level: string): number[] {
-  if (THINKING_BAR_HEIGHTS[level]) return THINKING_BAR_HEIGHTS[level]
-  const idx = thinkingLevels.value.indexOf(level)
-  const step = 2.4
-  return Array.from({ length: 5 }, (_, i) => Math.round(2 + (idx + 1) * step * (i / 4)))
-}
-
-function getThinkingColor(level: string): string {
-  const colors = ['var(--muted)', 'var(--accent)', 'var(--success)', 'var(--warning)', 'var(--danger)']
-  const idx = thinkingLevels.value.indexOf(level)
-  return colors[Math.min(idx, colors.length - 1)]
+function getBarCount(): number {
+  // One bar per thinking level, max 7
+  return Math.min(thinkingLevels.value.length, 7)
 }
 
 function pickThinking(level: string) {
@@ -164,16 +159,16 @@ onBeforeUnmount(() => {
         class="inline-flex items-center gap-[5px] px-1.5 h-7 border-none rounded-xs bg-transparent text-fg text-[11px] font-mono cursor-pointer whitespace-nowrap transition-all duration-150 ease-ease hover:bg-accent-light hover:text-accent"
         @click="toggleThinking"
       >
-        <!-- Signal bars SVG -->
+        <!-- Signal bars: one bar per level, active bars colored, inactive dim -->
         <span class="inline-flex items-end gap-[1.5px] h-3">
           <span
-            v-for="(h, i) in getBarHeights(currentThinkingLevel)"
+            v-for="(_, i) in getBarCount()"
             :key="i"
             class="block w-[3px] rounded-[0.5px] transition-all duration-150 ease-ease"
-            :style="{ height: h + 'px', background: getThinkingColor(currentThinkingLevel) }"
+            :style="{ height: (4 + i * 1.5) + 'px', background: getBarColor(currentThinkingLevel, i) }"
           ></span>
         </span>
-        <span :style="{ color: getThinkingColor(currentThinkingLevel) }">{{ currentThinkingLevel }}</span>
+        <span class="text-muted">{{ currentThinkingLevel }}</span>
       </Button>
       <!-- Thinking dropdown -->
       <div
@@ -192,10 +187,10 @@ onBeforeUnmount(() => {
         >
           <span class="inline-flex items-end gap-[1.5px] h-3">
             <span
-              v-for="(h, i) in getBarHeights(level)"
+              v-for="(_, i) in getBarCount()"
               :key="i"
               class="block w-[3px] rounded-[0.5px]"
-              :style="{ height: h + 'px', background: getThinkingColor(level) }"
+              :style="{ height: (4 + i * 1.5) + 'px', background: getBarColor(level, i) }"
             ></span>
           </span>
           <span class="flex-1 font-mono">{{ level }}</span>
