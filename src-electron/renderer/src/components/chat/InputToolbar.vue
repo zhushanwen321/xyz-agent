@@ -39,7 +39,7 @@ const resolvedModel = computed(() => {
 // - reasoning=false → only ["off"]
 // - reasoning=true + thinkingLevelMap → filter by map (null=exclude, undefined=keep, xhigh needs explicit)
 // - reasoning=true + no map → ["off","minimal","low","medium","high"] (all except xhigh)
-const ALL_THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
+const ALL_THINKING_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 
 const thinkingLevels = computed(() => {
   const model = resolvedModel.value
@@ -61,7 +61,7 @@ const thinkingLevels = computed(() => {
 
 const showThinkingPicker = computed(() => thinkingLevels.value.length > 0)
 
-const currentThinkingLevel = ref('max')
+const currentThinkingLevel = ref('low')
 const thinkingOpen = ref(false)
 const thinkingRef = ref<HTMLElement | null>(null)
 
@@ -76,14 +76,11 @@ initThinkingLevel()
 // getBarColor and getBarCount replace old getBarHeights/getThinkingColor
 // Bar heights are linear: 4 + i * 1.5 px, no lookup table needed
 
-const BAR_COLORS = ['var(--muted)', 'var(--accent)', 'var(--accent)', 'var(--warning)', 'var(--warning)', 'var(--danger)', 'var(--danger)']
-
+// getBarColor: active bars use accent, inactive dim
 function getBarColor(level: string, barIndex: number): string {
   const levelIdx = thinkingLevels.value.indexOf(level)
   if (levelIdx < 0) return 'var(--border)'
-  // Bars up to levelIdx are "active", bars beyond are dim
-  if (barIndex <= levelIdx) return BAR_COLORS[barIndex] ?? 'var(--accent)'
-  return 'var(--border)'
+  return barIndex <= levelIdx ? 'var(--accent)' : 'var(--border)'
 }
 
 function getBarCount(): number {
