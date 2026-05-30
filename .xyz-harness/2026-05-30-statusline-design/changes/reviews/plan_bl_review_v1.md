@@ -1,11 +1,12 @@
 ---
+verdict: pass
+must_fix: 0
 review:
   type: plan_bl_review
   round: 1
   timestamp: "2026-05-30T23:30:00"
   target: "plan-backend.md, plan-frontend.md, plan-api-contract.md"
-  verdict: pass
-  must_fix: 0
+---
   summary: "后端/前端对齐审查。plan-api-contract.md 定义了 WS 消息契约和 RPC 方法签名，plan-backend.md 和 plan-frontend.md 的接口调用与契约完全一致。无 MUST FIX。"
 
 alignment_checks:
