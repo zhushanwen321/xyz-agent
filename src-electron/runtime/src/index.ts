@@ -8,7 +8,6 @@ import { EventAdapter } from './event-adapter.js'
 import { ExtensionService } from './extension-service.js'
 import { PluginRegistry } from './services/plugin-service/plugin-registry.js'
 import { PluginService } from './services/plugin-service/plugin-service.js'
-import { ensureThinkingLevelMapOnDisk } from './pi-config-bridge.js'
 import type { NavigateInterceptor } from './navigate-interceptor.js'
 
 function parseArgs(): { port: number; projectRoot?: string } {
@@ -43,9 +42,6 @@ function parseArgs(): { port: number; projectRoot?: string } {
 async function main(): Promise<void> {
   const { port, projectRoot } = parseArgs()
   const effectiveRoot = projectRoot ?? process.cwd()
-
-  // Ensure reasoning models have thinkingLevelMap before pi reads models.json
-  ensureThinkingLevelMapOnDisk()
 
   // Infrastructure
   const pm = new ProcessManager()
