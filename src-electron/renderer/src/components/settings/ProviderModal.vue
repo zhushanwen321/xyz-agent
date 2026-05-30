@@ -472,11 +472,10 @@ onUnmounted(() => {
       @click.stop
     >
       <div class="strategy-dropdown-label">Thinking Strategy</div>
-      <Button
+      <div
         v-for="s in (['all-levels', 'on-off', 'high-max'] as const)"
         :key="s"
-        variant="ghost"
-        :class="['strategy-dropdown-item', { active: getStrategyFromMap(activeStrategyModel.thinkingLevelMap) === s }]"
+        :class="['strategy-dropdown-item', { active: getStrategyFromMap(activeStrategyModel!.thinkingLevelMap) === s }]"
         @click="applyThinkingStrategy(activeStrategyModel!, s); openStrategyDropdown = null"
       >
         <span class="check">&#10003;</span>
@@ -486,7 +485,7 @@ onUnmounted(() => {
           <div v-else-if="s === 'on-off'" class="strategy-dropdown-desc">Off / On (xhigh)</div>
           <div v-else class="strategy-dropdown-desc">off + high + xhigh&#8594;max</div>
         </div>
-      </Button>
+      </div>
     </div>
   </Teleport>
 </template>
@@ -542,31 +541,28 @@ onUnmounted(() => {
   border: 1px solid var(--border);
   border-radius: 1px;
   box-shadow: var(--shadow-md);
-  min-width: 190px;
-  padding: 4px 0;
+  min-width: 160px;
+  padding: 3px 0;
 }
 .strategy-dropdown-label {
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 600;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  padding: 6px 14px 2px;
+  padding: 5px 10px 2px;
 }
 .strategy-dropdown-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 14px;
-  font-size: 12px;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 11px;
   cursor: pointer;
-  border: none;
-  background: none;
   width: 100%;
   text-align: left;
   color: var(--fg);
   transition: background 80ms ease;
-  font-family: inherit;
 }
 .strategy-dropdown-item:hover {
   background: var(--hover-bg);
@@ -576,17 +572,18 @@ onUnmounted(() => {
   font-weight: 600;
 }
 .strategy-dropdown-item .check {
-  width: 14px;
+  width: 12px;
   text-align: center;
-  font-size: 11px;
+  font-size: 10px;
   color: var(--accent);
   visibility: hidden;
+  flex-shrink: 0;
 }
 .strategy-dropdown-item.active .check {
   visibility: visible;
 }
 .strategy-dropdown-desc {
-  font-size: 10px;
+  font-size: 9px;
   color: var(--muted);
   margin-top: 1px;
 }
