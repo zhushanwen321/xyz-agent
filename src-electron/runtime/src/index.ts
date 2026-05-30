@@ -62,6 +62,31 @@ async function main(): Promise<void> {
       onBridgeUIRequest: (requestId, sid, method, data) => {
         server.handleBridgeRequest(sid, requestId, method, data)
       },
+      onStatusSetUpdate: (payload) => {
+        server.handleStatusSetUpdate(payload)
+      },
+      onContextUpdate: (sid, ctxData) => {
+        // Look up current model's contextWindow from session model info
+        const providers = configService.listProviders()
+        const models = modelService.aggregateModels(providers)
+        const session = sessionService.getSummary(sid)
+        const modelRef = session?.modelId ?? ''
+        const sepIdx = modelRef.indexOf('/')
+        const model = sepIdx >= 0
+          ? models.find(m => m.providerId === modelRef.slice(0, sepIdx) && m.id === modelRef.slice(sepIdx + 1))
+          : undefined
+        const contextWindow = model?.contextWindow
+        const inputTokens = ctxData.inputTokens
+        if (!inputTokens || inputTokens === 0) return
+        const usagePercent = contextWindow
+          ? Math.min(Math.round((inputTokens / contextWindow) * 100), 100)
+          : 0
+        server.broadcast({
+          type: 'context.update',
+          id: `ctx_${Date.now()}`,
+          payload: { sessionId: sid, usagePercent, inputTokens, contextLimit: contextWindow ?? 0 },
+        })
+      },
     }),
     effectiveRoot,
     treeService,
