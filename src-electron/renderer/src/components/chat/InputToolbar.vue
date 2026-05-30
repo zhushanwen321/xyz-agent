@@ -122,6 +122,7 @@ const contextColor = computed(() => {
 // ── Token Stats ────────────────────────────────────────────────
 
 const inputTokens = computed(() => sessionState.value.contextInputTokens ?? 0)
+const outputTokens = computed(() => Math.max(0, (sessionState.value.tokenUsage ?? 0) - inputTokens.value))
 
 function formatTokenCount(n: number): string {
   if (n >= 1000) return (n / 1000).toFixed(1) + 'k'
@@ -206,12 +207,14 @@ onBeforeUnmount(() => {
           :style="{ width: Math.min(contextUsagePercent, 100) + '%', background: contextColor }"
         ></span>
       </span>
-      <span>{{ Math.min(contextUsagePercent, 100) }}%</span>
+      <span>{{ Math.min(contextUsagePercent, 100).toFixed(contextUsagePercent < 1 ? 1 : 0) }}%</span>
     </span>
 
     <!-- Token Stats: input tokens only (total tokens not available per-request) -->
     <span class="inline-flex items-center gap-0.5 px-1 h-7 font-mono text-[10px] text-muted whitespace-nowrap">
       <span class="text-accent">&#8593;</span><span>{{ formatTokenCount(inputTokens) }}</span>
+      <span class="text-muted mx-px">/</span>
+      <span class="text-warning">&#8595;</span><span>{{ formatTokenCount(outputTokens) }}</span>
     </span>
 
     <span class="flex-1"></span>

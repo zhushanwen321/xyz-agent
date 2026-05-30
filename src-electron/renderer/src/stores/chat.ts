@@ -164,7 +164,7 @@ export const useChatStore = defineStore('chat', () => {
       if (!isSystemNotification(msg) && msg.role === 'assistant' && msg.usage) {
         s.contextInputTokens = msg.usage.inputTokens
         s.tokenUsage = msg.usage.inputTokens + msg.usage.outputTokens
-        s.contextUsagePercent = Math.min(100, Math.round((s.contextInputTokens / s.contextLimit) * 100))
+        s.contextUsagePercent = Math.min(100, Math.round((s.contextInputTokens / s.contextLimit) * 1000) / 10)
         break
       }
     }
