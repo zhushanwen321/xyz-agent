@@ -164,6 +164,7 @@ export type ServerMessageType =
   | 'config.plugins' | 'plugin:crashed' | 'plugin:notification'
   | 'plugin:statusChange' | 'plugin:permissionRequest'
   | 'plugin:statusBarUpdate' | 'plugin:messageDecoration' | 'plugin:config'
+  | 'plugin:statusSetUpdate'
 
 export interface ServerMessage {
   type: ServerMessageType
@@ -255,10 +256,18 @@ export interface StatusBarItem {
   tooltip?: string
   commandId?: string
   priority: number
+  scope: 'per-session' | 'global'
+  sessionId?: string
 }
 
 export interface PluginStatusBarUpdatePayload {
   items: StatusBarItem[]
+}
+
+export interface StatusSetUpdatePayload {
+  sessionId: string
+  key: string
+  text: string
 }
 
 export interface MessageDecoration {
