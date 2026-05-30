@@ -8,6 +8,15 @@ import type { IModelService } from '../interfaces.js'
 
 const API_FETCH_TIMEOUT_MS = 10_000
 
+export const DEFAULT_THINKING_LEVEL_MAP: Record<string, string | null> = {
+  off: null,
+  minimal: null,
+  low: 'low',
+  medium: 'medium',
+  high: 'high',
+  xhigh: 'max',
+}
+
 export class ModelService implements IModelService {
   aggregateModels(providers: ProviderInfo[]): ModelInfo[] {
     return providers.flatMap(p =>
@@ -20,7 +29,7 @@ export class ModelService implements IModelService {
         reasoning: m.reasoning,
         contextWindow: m.contextWindow,
         maxTokens: m.maxTokens,
-        thinkingLevelMap: m.thinkingLevelMap,
+        thinkingLevelMap: m.thinkingLevelMap ?? (m.reasoning ? DEFAULT_THINKING_LEVEL_MAP : undefined),
         cost: m.cost,
         enabled: true,
       } as ModelInfo)),

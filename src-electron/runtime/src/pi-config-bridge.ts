@@ -170,6 +170,7 @@ export interface PiModelDefinition {
   headers?: Record<string, string>
   cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }
   compat?: Record<string, unknown>
+  thinkingLevelMap?: Record<string, string | null>
 }
 
 export interface PiProviderConfig {
@@ -250,6 +251,29 @@ function writeJsonFile(filePath: string, data: unknown): void {
 
 // ── Models.json 操作 ──────────────────────────────────────────────
 
+// ── 默认 thinkingLevelMap ──────────────────────────────────────
+// 所有 reasoning=true 但没有 thinkingLevelMap 的模型自动注入
+// 确保前端 'max' → pi 'xhigh' → API 'max' 的映射链完整
+const DEFAULT_THINKING_LEVEL_MAP: Record<string, string | null> = {
+  off: null,
+  minimal: null,
+  low: 'low',
+  medium: 'medium',
+  high: 'high',
+  xhigh: 'max',
+}
+
+/** 为 reasoning 模型注入默认 thinkingLevelMap（如果没有显式配置） */
+function injectDefaultThinkingLevelMap(config: PiModelsConfig): void {
+  for (const provider of Object.values(config.providers)) {
+    for (const model of provider.models ?? []) {
+      if (model.reasoning && !model.thinkingLevelMap) {
+        model.thinkingLevelMap = { ...DEFAULT_THINKING_LEVEL_MAP }
+      }
+    }
+  }
+}
+
 export function readModels(): PiModelsConfig {
   if (!isExpired(modelsCache)) return modelsCache!.data
   const data = readJsonFile<PiModelsConfig>(MODELS_PATH, { providers: {} })
@@ -257,6 +281,7 @@ export function readModels(): PiModelsConfig {
     console.warn(`[config-bridge] ${MODELS_PATH} schema 不匹配，使用 fallback`)
     return { providers: {} }
   }
+  injectDefaultThinkingLevelMap(data)
   modelsCache = { data, timestamp: Date.now() }
   return data
 }
@@ -666,6 +691,29 @@ export function refreshAll(): void {
 
 export function refreshModels(): void {
   invalidateModelsCache()
+}
+
+/**
+ * 将默认 thinkingLevelMap 写回 models.json 磁盘文件。
+ * 这样 pi 进程读磁盘时也能拿到映射，确保 xhigh → API "max" 完整生效。
+ * 幂等：已有 thinkingLevelMap 的模型不会被覆盖。
+ */
+export function ensureThinkingLevelMapOnDisk(): void {
+  const raw = readJsonFile<PiModelsConfig>(MODELS_PATH, { providers: {} })
+  if (!raw || typeof raw !== 'object' || typeof raw.providers !== 'object') return
+  let changed = false
+  for (const provider of Object.values(raw.providers)) {
+    for (const model of provider.models ?? []) {
+      if (model.reasoning && !model.thinkingLevelMap) {
+        model.thinkingLevelMap = { ...DEFAULT_THINKING_LEVEL_MAP }
+        changed = true
+      }
+    }
+  }
+  if (changed) {
+    writeModels(raw)
+    console.log('[config-bridge] injected default thinkingLevelMap into models.json')
+  }
 }
 
 export function refreshSettings(): void {
