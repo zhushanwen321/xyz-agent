@@ -114,6 +114,7 @@ watch(() => props.visible, (v) => {
       contextWindow: m.contextWindow ?? 0,
       thinkingLevelMap: m.thinkingLevelMap,
     }))
+    expandedModels.value = new Set()
     testResult.value = 'none'
     testMessage.value = ''
     addModelName.value = ''

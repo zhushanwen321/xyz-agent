@@ -52,14 +52,20 @@ function buildMap(): Record<string, string | null> | undefined {
   return hasNonTrivial ? map : undefined
 }
 
+let selfEmitting = false
+
 function onToggle(idx: number): void {
   levels.value[idx].enabled = !levels.value[idx].enabled
+  selfEmitting = true
   emit('update:modelValue', buildMap())
+  selfEmitting = false
 }
 
 function onInput(idx: number, value: string): void {
   levels.value[idx].apiValue = value
+  selfEmitting = true
   emit('update:modelValue', buildMap())
+  selfEmitting = false
 }
 
 function applyPreset(name: 'deepseek' | 'all-on' | 'generic'): void {
@@ -102,13 +108,15 @@ function applyPreset(name: 'deepseek' | 'all-on' | 'generic'): void {
       })
       break
   }
+  selfEmitting = true
   emit('update:modelValue', buildMap())
+  selfEmitting = false
 }
 
 initLevels(props.modelValue)
 
 watch(() => props.modelValue, (newVal) => {
-  initLevels(newVal)
+  if (!selfEmitting) initLevels(newVal)
 })
 </script>
 

@@ -58,6 +58,12 @@ function parseAgentMd(content: string): { name: string; description: string } {
   return { name, description }
 }
 
+/** Runtime type guard for thinkingLevelMap values. */
+function isValidThinkingLevelMap(v: unknown): v is Record<string, string | null> {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return false
+  return Object.values(v as Record<string, unknown>).every(val => val === null || typeof val === 'string')
+}
+
 // ── Service ─────────────────────────────────────────────────────
 
 export class ConfigService implements IConfigService {
@@ -106,12 +112,18 @@ export class ConfigService implements IConfigService {
     if (data.type !== undefined) merged.api = mapTypeToApi(data.type as string)
     if (data.models !== undefined) {
       const rawModels = data.models as Array<Record<string, unknown>>
+      const existingModels = (existing.models ?? []) as PiModelDefinition[]
       merged.models = rawModels.map(m => {
-        const model: Record<string, unknown> = { id: String(m.id ?? '') }
+        const id = String(m.id ?? '')
+        const base = existingModels.find(em => em.id === id) ?? {}
+        const model: Record<string, unknown> = { ...base, id }
         if (m.name) model.name = String(m.name)
         if (typeof m.contextWindow === 'number') model.contextWindow = m.contextWindow
-        if (m.thinkingLevelMap && typeof m.thinkingLevelMap === 'object') {
-          model.thinkingLevelMap = m.thinkingLevelMap as Record<string, string | null>
+        if (isValidThinkingLevelMap(m.thinkingLevelMap)) {
+          model.thinkingLevelMap = m.thinkingLevelMap
+        } else if (m.thinkingLevelMap === undefined && base.thinkingLevelMap) {
+          // buildMap() returned undefined (all passthrough) → remove from model
+          delete model.thinkingLevelMap
         }
         return model as unknown as PiModelDefinition
       })
