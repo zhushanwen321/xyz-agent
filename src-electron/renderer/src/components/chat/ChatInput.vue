@@ -60,7 +60,6 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useSettingsStore } from '../../stores/settings'
 import { useProviderStore } from '../../stores/provider'
 import { Textarea } from '../../design-system'
 import { consumePendingEditorText } from '../../composables/useTree'
@@ -89,7 +88,6 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-const settingsStore = useSettingsStore()
 const providerStore = useProviderStore()
 const {
   mergeSkillCommands,
@@ -153,8 +151,6 @@ const tagDisplayName = computed(() => {
 })
 
 const containerRef = ref<HTMLElement | null>(null)
-
-const currentModel = computed(() => settingsStore.defaultModel)
 
 const canSend = computed(() => {
   const trimmed = text.value.trim()
