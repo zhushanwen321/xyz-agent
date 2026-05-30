@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, onUnmounted } from 'vue'
+import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Button, Input, Select } from '../../design-system'
 import type { ProviderInfo, ModelInfo } from '@xyz-agent/shared'
@@ -281,15 +281,35 @@ function applyThinkingStrategy(model: ModalModel, strategy: ThinkingStrategy) {
 }
 
 const openStrategyDropdown = ref<string | null>(null)
+const dropdownPos = ref({ top: 0, left: 0 })
+
+const activeStrategyModel = computed(() => {
+  if (!openStrategyDropdown.value) return null
+  return modalModels.value.find(m => m.id === openStrategyDropdown.value) ?? null
+})
 
 function toggleStrategyDropdown(modelId: string) {
-  openStrategyDropdown.value = openStrategyDropdown.value === modelId ? null : modelId
+  if (openStrategyDropdown.value === modelId) {
+    openStrategyDropdown.value = null
+    return
+  }
+  openStrategyDropdown.value = modelId
+  nextTick(() => {
+    const trigger = document.querySelector(`[data-strategy-trigger="${modelId}"]`) as HTMLElement
+    if (!trigger) return
+    const rect = trigger.getBoundingClientRect()
+    dropdownPos.value = { top: rect.bottom + 4, left: rect.left }
+  })
 }
 
 function handleKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
     e.preventDefault()
     e.stopPropagation()
+    if (openStrategyDropdown.value) {
+      openStrategyDropdown.value = null
+      return
+    }
     emit('close')
   }
 }
@@ -388,8 +408,10 @@ onUnmounted(() => {
             <div v-for="(model, idx) in modalModels" :key="model.id" class="relative">
               <div class="flex items-center gap-2.5 py-2.5 px-3.5 border-b border-border">
                 <span class="font-mono text-xs font-semibold min-w-[160px]">{{ model.name }}</span>
-                <div class="relative" @click.stop>
-                  <button
+                <div class="relative strategy-trigger" @click.stop>
+                  <Button
+                    variant="ghost"
+                    :data-strategy-trigger="model.id"
                     :class="['strategy-badge', {
                       'strategy-badge--default': getStrategyFromMap(model.thinkingLevelMap) === 'all-levels',
                       'strategy-badge--binary': getStrategyFromMap(model.thinkingLevelMap) === 'on-off',
@@ -399,24 +421,7 @@ onUnmounted(() => {
                   >
                     {{ STRATEGY_LABELS[getStrategyFromMap(model.thinkingLevelMap)] }}
                     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9" /></svg>
-                  </button>
-                  <div v-if="openStrategyDropdown === model.id" class="strategy-dropdown">
-                    <div class="strategy-dropdown-label">Thinking Strategy</div>
-                    <button
-                      v-for="s in (['all-levels', 'on-off', 'high-max'] as const)"
-                      :key="s"
-                      :class="['strategy-dropdown-item', { active: getStrategyFromMap(model.thinkingLevelMap) === s }]"
-                      @click="applyThinkingStrategy(model, s); openStrategyDropdown = null"
-                    >
-                      <span class="check">&#10003;</span>
-                      <div>
-                        <div>{{ STRATEGY_LABELS[s] }}</div>
-                        <div v-if="s === 'all-levels'" class="strategy-dropdown-desc">All 6 levels visible</div>
-                        <div v-else-if="s === 'on-off'" class="strategy-dropdown-desc">Off / On (xhigh)</div>
-                        <div v-else class="strategy-dropdown-desc">off + high + xhigh→max</div>
-                      </div>
-                    </button>
-                  </div>
+                  </Button>
                 </div>
                 <span class="text-[11px] text-muted font-mono min-w-[50px]">{{ formatCtx(model.contextWindow) }}</span>
                 <Button variant="ghost" size="sm" class="hover:!text-[var(--danger)] hover:!bg-[var(--danger-light)]" @click="removeModel(idx)">
@@ -457,6 +462,33 @@ onUnmounted(() => {
       </div>
     </div>
   </div>
+
+  <!-- Strategy dropdown (teleported to body to escape overflow clipping) -->
+  <Teleport to="body">
+    <div
+      v-if="activeStrategyModel && openStrategyDropdown"
+      class="strategy-dropdown"
+      :style="{ top: dropdownPos.top + 'px', left: dropdownPos.left + 'px' }"
+      @click.stop
+    >
+      <div class="strategy-dropdown-label">Thinking Strategy</div>
+      <Button
+        v-for="s in (['all-levels', 'on-off', 'high-max'] as const)"
+        :key="s"
+        variant="ghost"
+        :class="['strategy-dropdown-item', { active: getStrategyFromMap(activeStrategyModel.thinkingLevelMap) === s }]"
+        @click="applyThinkingStrategy(activeStrategyModel!, s); openStrategyDropdown = null"
+      >
+        <span class="check">&#10003;</span>
+        <div>
+          <div>{{ STRATEGY_LABELS[s] }}</div>
+          <div v-if="s === 'all-levels'" class="strategy-dropdown-desc">All 6 levels visible</div>
+          <div v-else-if="s === 'on-off'" class="strategy-dropdown-desc">Off / On (xhigh)</div>
+          <div v-else class="strategy-dropdown-desc">off + high + xhigh&#8594;max</div>
+        </div>
+      </Button>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -473,7 +505,7 @@ onUnmounted(() => {
   transition: all 120ms ease;
 }
 .strategy-badge--default {
-  background: oklch(94% 0.01 70);
+  background: var(--section-bg);
   color: var(--muted);
   border-color: var(--border);
 }
@@ -482,29 +514,34 @@ onUnmounted(() => {
   color: var(--accent);
 }
 .strategy-badge--binary {
-  background: oklch(93% 0.03 250);
-  color: oklch(50% 0.1 250);
+  background: var(--agent-light);
+  color: var(--agent);
 }
 .strategy-badge--binary:hover {
-  border-color: oklch(55% 0.12 250);
+  border-color: var(--agent);
 }
 .strategy-badge--highmax {
-  background: oklch(92% 0.04 25);
-  color: oklch(55% 0.12 25);
+  background: var(--accent-light);
+  color: var(--accent);
 }
 .strategy-badge--highmax:hover {
-  border-color: oklch(55% 0.12 25);
+  border-color: var(--accent);
 }
 
+.strategy-trigger :deep(span) {
+  /* reset Button ghost padding for compact badge */
+}
+</style>
+
+<!-- Teleported dropdown uses global styles (not scoped) -->
+<style>
 .strategy-dropdown {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  z-index: 300;
-  background: var(--surface, white);
+  position: fixed;
+  z-index: 500;
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 1px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  box-shadow: var(--shadow-md);
   min-width: 190px;
   padding: 4px 0;
 }
@@ -532,7 +569,7 @@ onUnmounted(() => {
   font-family: inherit;
 }
 .strategy-dropdown-item:hover {
-  background: oklch(96% 0.01 70);
+  background: var(--hover-bg);
 }
 .strategy-dropdown-item.active {
   color: var(--accent);
