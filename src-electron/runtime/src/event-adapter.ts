@@ -185,6 +185,13 @@ export class EventAdapter {
         const rawReason = (lastMsg?.stopReason as string) ?? 'stop'
         const usage = lastMsg?.usage as
           { totalTokens?: number; inputTokens?: number; outputTokens?: number } | undefined
+        // Emit context.update callback for context window tracking
+        if (usage?.inputTokens) {
+          this.options?.onContextUpdate?.(sid, {
+            inputTokens: usage.inputTokens ?? 0,
+            totalTokens: usage.totalTokens ?? 0,
+          })
+        }
         return {
           type: 'message.complete',
           payload: {
