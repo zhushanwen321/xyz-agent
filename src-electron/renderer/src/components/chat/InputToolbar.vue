@@ -61,7 +61,7 @@ const thinkingLevels = computed(() => {
 
 const showThinkingPicker = computed(() => thinkingLevels.value.length > 0)
 
-const currentThinkingLevel = ref('low')
+const currentThinkingLevel = ref('max')
 const thinkingOpen = ref(false)
 const thinkingRef = ref<HTMLElement | null>(null)
 
