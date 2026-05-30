@@ -69,6 +69,20 @@ export const usePluginStore = defineStore('plugin', () => {
     [...statusBarItems.value].sort((a, b) => a.priority - b.priority),
   )
 
+  /** Global-scope status bar items, sorted by priority */
+  const globalStatusBarItems = computed(() =>
+    statusBarItems.value
+      .filter(item => item.scope === 'global')
+      .sort((a, b) => a.priority - b.priority),
+  )
+
+  /** Per-session status bar items for a given sessionId, sorted by priority */
+  function getSessionStatusBarItems(sessionId: string): PluginStatusItem[] {
+    return statusBarItems.value
+      .filter(item => item.scope === 'per-session' && item.sessionId === sessionId)
+      .sort((a, b) => a.priority - b.priority)
+  }
+
   /** Whether there are pending permission requests */
   const hasPendingPermissions = computed(() => permissionRequests.size > 0)
 
@@ -242,6 +256,7 @@ export const usePluginStore = defineStore('plugin', () => {
     externalPlugins,
     allSlashCommands,
     allStatusBarItems,
+    globalStatusBarItems,
     hasPendingPermissions,
 
     // Actions: WS send
@@ -267,5 +282,6 @@ export const usePluginStore = defineStore('plugin', () => {
 
     // Helpers
     pluginById,
+    getSessionStatusBarItems,
   }
 })

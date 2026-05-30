@@ -14,6 +14,8 @@ export interface PluginStatusItem {
   tooltip?: string
   commandId?: string
   priority: number
+  scope: 'per-session' | 'global'
+  sessionId?: string
 }
 
 // ── Message decoration ────────────────────────────────────────
