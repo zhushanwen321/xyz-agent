@@ -7,6 +7,7 @@
 import { basename, resolve, join } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import { existsSync, readdirSync, statSync } from 'node:fs'
+import { execSync } from 'node:child_process'
 import type {
   SessionSummary,
   SessionGroup,
@@ -44,6 +45,21 @@ interface ManagedSession {
   interceptor: NavigateInterceptor
   unsubUsageListener: (() => void) | null
   sessionFilePath?: string
+}
+
+/** Read git branch name from cwd. Returns undefined if not a git repo. */
+function readGitBranch(cwd: string): string | undefined {
+  try {
+    const branch = execSync('git rev-parse --abbrev-ref HEAD', {
+      cwd,
+      timeout: 2000,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim()
+    return branch || undefined
+  } catch {
+    return undefined
+  }
 }
 
 export class SessionService implements ISessionService {
@@ -593,6 +609,7 @@ export class SessionService implements ISessionService {
       id: s.id,
       label: s.label,
       cwd: s.cwd,
+      gitBranch: readGitBranch(s.cwd),
       status: s.isGenerating ? ('active' as SessionStatus) : ('idle' as SessionStatus),
       lastActiveAt: s.lastActiveAt,
       modelId: s.modelId,
@@ -609,6 +626,7 @@ export class SessionService implements ISessionService {
       id: s.id,
       label: s.name ?? basename(s.cwd),
       cwd: s.cwd,
+      gitBranch: readGitBranch(s.cwd),
       status: 'idle' as SessionStatus,
       lastActiveAt: s.lastModified,
       modelId: '',

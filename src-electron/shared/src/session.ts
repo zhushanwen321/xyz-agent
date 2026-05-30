@@ -4,6 +4,7 @@ export interface SessionSummary {
   id: string
   label: string
   cwd: string
+  gitBranch?: string
   status: SessionStatus
   lastActiveAt: number
   modelId: string
