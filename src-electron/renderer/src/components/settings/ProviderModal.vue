@@ -5,7 +5,6 @@ import { Button, Input, Select } from '../../design-system'
 import type { ProviderInfo, ModelInfo } from '@xyz-agent/shared'
 // TagPill removed — tags no longer used
 import { useProvider } from '../../composables/useProvider'
-import ThinkingLevelConfig from './ThinkingLevelConfig.vue'
 import { on as onEvent, off as offEvent } from '../../lib/event-bus'
 
 interface Props {
@@ -56,16 +55,6 @@ const formKey = ref('')
 const testResult = ref<'none' | 'ok' | 'err'>('none')
 const testMessage = ref('')
 const modalModels = ref<ModalModel[]>([])
-const expandedModels = ref<Set<string>>(new Set())
-
-function toggleExpand(modelId: string) {
-  if (expandedModels.value.has(modelId)) {
-    expandedModels.value.delete(modelId)
-  } else {
-    expandedModels.value.add(modelId)
-  }
-}
-
 // ─── Auto-discover state ────────────────────────────────────────
 
 const discoverStatus = ref<'idle' | 'loading' | 'error' | 'empty' | 'success'>('idle')
@@ -114,7 +103,6 @@ watch(() => props.visible, (v) => {
       contextWindow: m.contextWindow ?? 0,
       thinkingLevelMap: m.thinkingLevelMap,
     }))
-    expandedModels.value = new Set()
     testResult.value = 'none'
     testMessage.value = ''
     addModelName.value = ''
@@ -264,6 +252,19 @@ function handleSave() {
   })
 }
 
+function applyThinkingPreset(preset: 'deepseek' | 'clear') {
+  for (const m of modalModels.value) {
+    if (preset === 'deepseek') {
+      m.thinkingLevelMap = {
+        minimal: null, low: null, medium: null,
+        high: 'high', xhigh: 'max',
+      }
+    } else {
+      m.thinkingLevelMap = undefined
+    }
+  }
+}
+
 function handleKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
     e.preventDefault()
@@ -362,18 +363,17 @@ onUnmounted(() => {
               </Button>
             </div>
           </div>
+          <div v-if="modalModels.length > 0" class="flex gap-2 mb-3 px-3.5 pt-3">
+            <Button variant="outline" size="sm" @click="applyThinkingPreset('deepseek')">
+              DeepSeek 预设
+            </Button>
+            <Button variant="outline" size="sm" @click="applyThinkingPreset('clear')">
+              清空映射
+            </Button>
+          </div>
           <div class="max-h-60 overflow-y-auto">
             <div v-for="(model, idx) in modalModels" :key="model.id">
               <div class="flex items-center gap-2.5 py-2.5 px-3.5 border-b border-border">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  class="shrink-0 !w-5 !h-5 !p-0 rounded-sm transition-transform duration-200"
-                  :class="{ 'rotate-90': expandedModels.has(model.id) }"
-                  @click="toggleExpand(model.id)"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6" /></svg>
-                </Button>
                 <span class="font-mono text-xs font-semibold min-w-[160px]">{{ model.name }}</span>
                 <span
                   v-if="model.thinkingLevelMap && Object.keys(model.thinkingLevelMap).length > 0"
@@ -385,9 +385,6 @@ onUnmounted(() => {
                     <path d="M1 1l8 8M9 1L1 9" />
                   </svg>
                 </Button>
-              </div>
-              <div v-if="expandedModels.has(model.id)" class="border-b border-border">
-                <ThinkingLevelConfig v-model="model.thinkingLevelMap" />
               </div>
             </div>
           </div>
