@@ -101,14 +101,14 @@ function selectPalette(id: ThemePreset) {
             <span class="text-xs font-medium">展开思考过程</span>
             <span class="text-[10px] text-muted ml-1.5">自动展开 Thinking 内容</span>
           </div>
-          <Toggle v-model="settingsStore.autoExpandThinking" />
+          <Toggle :checked="settingsStore.autoExpandThinking" @update:checked="settingsStore.autoExpandThinking = $event" />
         </div>
         <div class="flex items-center justify-between gap-4 py-2.5 px-4">
           <div>
             <span class="text-xs font-medium">展开工具调用</span>
             <span class="text-[10px] text-muted ml-1.5">自动展开 ToolCall 输入/输出</span>
           </div>
-          <Toggle v-model="settingsStore.autoExpandToolCalls" />
+          <Toggle :checked="settingsStore.autoExpandToolCalls" @update:checked="settingsStore.autoExpandToolCalls = $event" />
         </div>
       </div>
     </div>
