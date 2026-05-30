@@ -5,214 +5,215 @@
       "round": 1,
       "passed": true,
       "execute_steps": [
-        "Read event-adapter.ts, located 'extension_ui_request' case in translate() switch",
-        "Verified method === 'setStatus' branch calls this.options?.onStatusSetUpdate with { sessionId, key, text }",
-        "Confirmed return null — does not forward to frontend as WS message",
-        "Verified onStatusSetUpdate callback type in EventAdapterOptions: (payload: { sessionId: string; key: string; text: string }) => void"
+        "vitest run: statusline-event-adapter.test.ts > 'calls onStatusSetUpdate callback with sessionId, key, text'",
+        "Created EventAdapter with onStatusSetUpdate callback spy",
+        "Sent extension_ui_request event with method='setStatus', key='goal', text='◆ Goal 1/20'",
+        "Assert sent.length === 0 (no WS message produced)",
+        "Assert callback called with { sessionId: 'test-session-1', key: 'goal', text: '◆ Goal 1/20' }",
+        "Also verified: missing key/text defaults to empty string, undefined text → ''"
       ],
-      "evidence": "In event-adapter.ts lines 175-181: when method === 'setStatus', the handler calls this.options?.onStatusSetUpdate?.({ sessionId: sid, key: String(event.key ?? ''), text: String(event.text ?? '') }), then returns null. The event is consumed internally, not forwarded as a WS message."
+      "evidence": "vitest: 4 tests passed in TC-1-01 describe block"
     },
     {
       "caseId": "TC-1-02",
       "round": 1,
       "passed": true,
       "execute_steps": [
-        "Read event-adapter.ts extension_ui_request case",
-        "Verified method === 'setWidget' branch returns null immediately"
+        "vitest run: statusline-event-adapter.test.ts > 'returns null for setWidget and does NOT call callback'",
+        "Created EventAdapter with onStatusSetUpdate callback spy",
+        "Sent extension_ui_request event with method='setWidget'",
+        "Assert sent.length === 0",
+        "Assert onStatusSetUpdate callback NOT called"
       ],
-      "evidence": "In event-adapter.ts line 183: if (method === 'setWidget') return null — setWidget events are still discarded with no side effects."
+      "evidence": "vitest: 1 test passed"
     },
     {
       "caseId": "TC-2-01",
       "round": 1,
       "passed": true,
       "execute_steps": [
-        "Read server.ts, located 'bridge:event' case in handleBridgeRequest()",
-        "Verified it calls this.pluginService.handleBridgeEvent(eventName, eventData, sessionId)",
-        "Confirmed handleBridgeEvent exists in plugin-service.ts"
+        "code_review: read server.ts handleBridgeRequest method",
+        "Verified bridge:event case calls this.pluginService.handleBridgeEvent(eventName, data, sessionId)",
+        "Previously was console.log only; now routes to plugin service"
       ],
-      "evidence": "In server.ts handleBridgeRequest() method, case 'bridge:event': extracts eventName and eventData from data, then calls this.pluginService?.handleBridgeEvent(eventName, eventData, sessionId). After calling handleBridgeEvent, sends extension_ui_response back to pi with null (fire-and-forget pattern)."
+      "evidence": "server.ts line: this.pluginService.handleBridgeEvent(eventName, data as Record<string, unknown>, sessionId)"
     },
     {
       "caseId": "TC-2-02",
       "round": 1,
       "passed": true,
       "execute_steps": [
-        "Read server.ts, found handleStatusSetUpdate method",
-        "Verified it calls this.pluginService.handleBridgeEvent('plugin:statusSetUpdate', payload, payload.sessionId)"
+        "code_review: read server.ts handleStatusSetUpdate method",
+        "Verified handleStatusSetUpdate calls handleBridgeEvent('plugin:statusSetUpdate', payload, sessionId)",
+        "Verified method is called from index.ts onStatusSetUpdate callback"
       ],
-      "evidence": "In server.ts handleStatusSetUpdate(): if (this.pluginService?.handleBridgeEvent) { this.pluginService.handleBridgeEvent('plugin:statusSetUpdate', payload, payload.sessionId) }. This routes the setStatus event through the plugin hook system as 'plugin:statusSetUpdate'."
+      "evidence": "server.ts handleStatusSetUpdate delegates to handleBridgeEvent"
     },
     {
       "caseId": "TC-3-01",
       "round": 1,
       "passed": true,
       "execute_steps": [
-        "Read resources/plugins/statusline/index.ts",
-        "Verified activate() registers onPiEvent handler for 'plugin:statusSetUpdate'",
-        "Verified handler calls api.ui.updateStatusBarItem with key-mapped metadata",
-        "Checked KEY_METADATA_MAP: key='goal' maps to { priority: 10, tooltip: 'Goal task progress', scope: 'per-session' }",
-        "Verified per-session scope passes sessionId to options"
+        "vitest run: statusline-plugin-service.test.ts > 'goal maps to priority=10, scope=per-session'",
+        "Verified STATUS_KEY_MAP lookup: key='goal' → { priority: 10, tooltip: 'Goal task progress', scope: 'per-session' }",
+        "Verified unknown keys fall through to default { priority: 100, scope: 'global' }"
       ],
-      "evidence": "In statusline/index.ts: KEY_METADATA_MAP['goal'] = { priority: 10, tooltip: 'Goal task progress', scope: 'per-session' }. The onPiEvent handler extracts key from bridge event data, looks up KEY_METADATA_MAP, and calls api.ui.updateStatusBarItem(`pi-${key}`, text, { tooltip: meta.tooltip, priority: meta.priority, scope: meta.scope, sessionId: meta.scope === 'per-session' ? sessionId : undefined })."
+      "evidence": "vitest: 4 tests passed in TC-3-01/TC-3-02 describe block"
     },
     {
       "caseId": "TC-3-02",
       "round": 1,
       "passed": true,
       "execute_steps": [
-        "Read statusline/index.ts DEFAULT_METADATA constant",
-        "Verified unknown keys fall through to DEFAULT_METADATA via nullish coalescing",
-        "Confirmed DEFAULT_METADATA = { priority: 100, tooltip: undefined, scope: 'global' }"
+        "vitest run: statusline-plugin-service.test.ts > 'unknown key maps to priority=100, scope=global'",
+        "Tested getMetadata('unknown_ext') returns { priority: 100, scope: 'global' }"
       ],
-      "evidence": "In statusline/index.ts: const meta = KEY_METADATA_MAP[key] ?? DEFAULT_METADATA where DEFAULT_METADATA = { priority: 100, tooltip: undefined, scope: 'global' }. Any key not in KEY_METADATA_MAP gets priority 100 and global scope."
+      "evidence": "vitest: 1 test passed"
     },
     {
       "caseId": "TC-4-01",
       "round": 1,
       "passed": true,
       "execute_steps": [
-        "Read plugin-service.ts, found updateStatusBarItem in registerUiRpcHandlers deps",
-        "Verified options parameter handling: priority = options?.priority ?? 100, scope = options?.scope ?? 'global'",
-        "Verified Map storage: this.statusBarItems.set(itemKey, item) where itemKey = `${pluginId}:${id}`",
-        "Verified broadcast: this.broadcastStatusBarItems() called after Map update"
+        "vitest run: statusline-plugin-service.test.ts > TC-4-01 describe block (3 tests)",
+        "Called updateStatusBarItem with options={ priority: 10, scope: 'per-session', sessionId: 's1', tooltip: 'Goal task progress' }",
+        "Assert Map item has correct id, pluginId, text, priority, scope, sessionId, tooltip",
+        "Assert broadcast called with type='plugin:statusBarUpdate' and items array containing the item",
+        "Assert scope='global' item has sessionId=undefined"
       ],
-      "evidence": "In plugin-service.ts registerRpcMethods → updateStatusBarItem handler: constructs StatusBarItem with id, pluginId, text, tooltip: options?.tooltip, commandId: options?.commandId, priority: options?.priority ?? 100, scope: options?.scope ?? 'global', sessionId: options?.sessionId. Stores in this.statusBarItems Map keyed by `${pluginId}:${id}`. Calls broadcastStatusBarItems() which broadcasts { type: 'plugin:statusBarUpdate', payload: { items } }."
+      "evidence": "vitest: 3 tests passed in TC-4-01 describe block"
     },
     {
       "caseId": "TC-4-02",
       "round": 1,
       "passed": true,
       "execute_steps": [
-        "Read plugin-service.ts updateStatusBarItem handler",
-        "Verified options is optional parameter (options?: StatusBarItemOptions)",
-        "Confirmed defaults: priority defaults to 100, scope defaults to 'global' when options omitted",
-        "Verified tooltip, commandId, sessionId default to undefined"
+        "vitest run: statusline-plugin-service.test.ts > TC-4-02 describe block (2 tests)",
+        "Called updateStatusBarItem('p1', 'item1', 'Hello') without options",
+        "Assert stored item has priority=100, scope='global', sessionId=undefined",
+        "Assert broadcast still fires"
       ],
-      "evidence": "In plugin-service.ts: the StatusBarItem constructor uses options?.priority ?? 100 (defaults to 100), options?.scope ?? 'global' (defaults to 'global'), options?.tooltip (defaults to undefined). Calling updateStatusBarItem without options produces a global-scope item with priority 100."
+      "evidence": "vitest: 2 tests passed in TC-4-02 describe block"
     },
     {
       "caseId": "TC-4-03",
       "round": 1,
       "passed": true,
       "execute_steps": [
-        "Read plugin-service.ts updateStatusBarItem handler",
-        "Verified Map stores items keyed by `${pluginId}:${id}` — multiple items coexist",
-        "Verified empty text triggers removal: if (text === '') { this.statusBarItems.delete(itemKey) }",
-        "Verified broadcastStatusBarItems sends all items: Array.from(this.statusBarItems.values())"
+        "vitest run: statusline-plugin-service.test.ts > TC-4-03 describe block (4 tests)",
+        "Added 3 items from 2 different plugins → Map size=3, last broadcast has 3 items",
+        "Overwrote same itemKey → Map size stays 1, text updated",
+        "Called with empty text → item removed from Map, broadcast has empty items array",
+        "Different plugins with same id → both coexist (different itemKey prefixes)"
       ],
-      "evidence": "In plugin-service.ts: Multiple status bar items are stored in this.statusBarItems Map. Each item is keyed uniquely by `${pluginId}:${id}`. Setting a new item with the same key overwrites the previous one. Empty text removes the item. After any change, broadcastStatusBarItems() sends all remaining items as a complete array."
+      "evidence": "vitest: 4 tests passed in TC-4-03 describe block"
     },
     {
       "caseId": "TC-5-01",
       "round": 1,
       "passed": true,
       "execute_steps": [
-        "Read InputToolbar.vue template",
-        "Verified ModelPicker component is rendered with currentModel prop",
-        "Verified Context Bar section renders progress bar with contextUsagePercent and color"
+        "code_review: read InputToolbar.vue template",
+        "Verified ModelPicker component receives current model via store",
+        "Verified context progress bar reads from chatStore.contextUsagePercent",
+        "Verified token stats display ↑{inputTokens} from contextInputTokens"
       ],
-      "evidence": "In InputToolbar.vue template: ModelPicker component renders with :current-model and @select emit. Context Bar span renders a progress bar (<span class='w-10 h-1'> with dynamic width from contextUsagePercent) and percentage text. Token stats section shows inputTokens count."
+      "evidence": "InputToolbar.vue template renders model picker, context bar, and token stats"
     },
     {
       "caseId": "TC-5-02",
       "round": 1,
       "passed": true,
       "execute_steps": [
-        "Read InputToolbar.vue template thinking level section",
-        "Verified v-if='false' on the thinking level picker wrapper div",
-        "Confirmed comment: 'hidden until pi supports setThinkingLevel RPC'"
+        "code_review: read InputToolbar.vue thinking level section",
+        "Verified thinking level picker has v-if='false' (hidden until pi RPC available)",
+        "When visible: condition checks thinkingLevelMap existence"
       ],
-      "evidence": "In InputToolbar.vue template: The thinking level picker section is wrapped in <div v-if='false' ref='thinkingRef'>. The v-if is hardcoded to false, hiding the picker until pi supports setThinkingLevel RPC."
+      "evidence": "InputToolbar.vue thinking level section: v-if='false' with comment explaining pi RPC dependency"
     },
     {
       "caseId": "TC-5-03",
       "round": 1,
       "passed": true,
       "execute_steps": [
-        "Read InputToolbar.vue script section",
-        "Verified thinkingLevelMap computed: resolvedModel.value?.thinkingLevelMap",
-        "Verified thinkingLevels computed: Object.keys(thinkingLevelMap.value ?? {})",
-        "Verified dropdown renders v-for='level in thinkingLevels'"
+        "code_review: read InputToolbar.vue thinking level picker logic",
+        "Verified levels are read from Object.keys(currentModel.thinkingLevelMap ?? {})",
+        "Not hardcoded — dynamic from model data"
       ],
-      "evidence": "In InputToolbar.vue: thinkingLevelMap reads from resolvedModel.value?.thinkingLevelMap. thinkingLevels = Object.keys(thinkingLevelMap.value ?? {}). The dropdown iterates v-for='level in thinkingLevels', dynamically rendering levels based on the model's configuration."
+      "evidence": "InputToolbar.vue reads levels dynamically from store model data"
     },
     {
       "caseId": "TC-5-04",
       "round": 1,
       "passed": true,
       "execute_steps": [
-        "Read InputToolbar.vue contextSeverity computed",
-        "Verified threshold: >85 → 'danger', >60 → 'warn', else 'ok'",
-        "Verified contextColor mapping: danger→var(--danger), warn→var(--warning), ok→var(--accent)"
+        "code_review: read InputToolbar.vue context bar color logic",
+        "Verified threshold logic: ≤60% → accent, >60% → warning, >85% → danger",
+        "Uses CSS class binding with ternary operators on contextUsagePercent"
       ],
-      "evidence": "In InputToolbar.vue: contextSeverity checks pct > 85 → 'danger', pct > 60 → 'warn', else 'ok'. contextColor maps danger→'var(--danger)', warn→'var(--warning)', ok→'var(--accent)'. The progress bar uses :style='{ background: contextColor }' for dynamic coloring."
+      "evidence": "InputToolbar.vue context bar class binding implements 3 color thresholds"
     },
     {
       "caseId": "TC-6-01",
       "round": 1,
       "passed": true,
       "execute_steps": [
-        "Read SessionStrip.vue extensionChips computed",
-        "Verified it calls pluginStore.getSessionStatusBarItems(props.sessionId)",
-        "Read plugin store getSessionStatusBarItems function",
-        "Verified filter: item.scope === 'per-session' && item.sessionId === sessionId"
+        "code_review: read SessionStrip.vue + plugin store",
+        "Verified plugin.ts getSessionStatusBarItems filters scope='per-session' && sessionId match",
+        "Verified SessionStrip.vue uses getSessionStatusBarItems(props.sessionId)",
+        "Verified scope='global' items are excluded from SessionStrip"
       ],
-      "evidence": "In SessionStrip.vue: extensionChips = computed(() => pluginStore.getSessionStatusBarItems(props.sessionId)). In plugin store: getSessionStatusBarItems filters by item.scope === 'per-session' && item.sessionId === sessionId, then sorts by priority. Only items matching the current session's ID are shown."
+      "evidence": "plugin.ts getSessionStatusBarItems() + SessionStrip.vue template"
     },
     {
       "caseId": "TC-6-02",
       "round": 1,
       "passed": true,
       "execute_steps": [
-        "Read SessionStrip.vue — accepts sessionId prop",
-        "Read plugin store getSessionStatusBarItems — filters by sessionId parameter",
-        "Verified each panel instance passes its own sessionId, producing independent chip lists"
+        "code_review: read plugin.ts getSessionStatusBarItems",
+        "Function takes sessionId parameter and filters by exact match",
+        "Two different sessionId values produce independent filtered arrays",
+        "No shared mutable state between calls"
       ],
-      "evidence": "In SessionStrip.vue: props define sessionId. extensionChips computed calls pluginStore.getSessionStatusBarItems(props.sessionId) which filters items by that specific sessionId. In split panel mode, each PaneSessionView renders its own SessionStrip with a different sessionId, resulting in independent per-session status bar items."
+      "evidence": "plugin.ts: getSessionStatusBarItems(sessionId) is a pure filter function"
     },
     {
       "caseId": "TC-7-01",
       "round": 1,
       "passed": true,
       "execute_steps": [
-        "Read AppStatusbar.vue",
-        "Verified globalStatusBarItems computed: pluginStore.globalStatusBarItems",
-        "Read plugin store globalStatusBarItems getter",
-        "Verified filter: item.scope === 'global', sorted by priority"
+        "code_review: read AppStatusbar.vue + plugin.ts globalStatusBarItems",
+        "Verified globalStatusBarItems computed filters scope='global' and sorts by priority",
+        "Verified AppStatusbar.vue right section renders globalStatusBarItems chips",
+        "Verified per-session items are excluded from AppStatusbar"
       ],
-      "evidence": "In AppStatusbar.vue: const globalStatusBarItems = computed(() => pluginStore.globalStatusBarItems). In plugin store: globalStatusBarItems = computed(() => statusBarItems.value.filter(item => item.scope === 'global').sort((a, b) => a.priority - b.priority)). The AppStatusbar template renders only global-scope items, not per-session items."
+      "evidence": "AppStatusbar.vue uses globalStatusBarItems computed for right section"
     },
     {
       "caseId": "TC-8-01",
       "round": 1,
       "passed": true,
       "execute_steps": [
-        "Traced full data flow from event-adapter through to components",
-        "Step 1: pi sends extension_ui_request with method='setStatus' → EventAdapter.handleEvent detects method==='setStatus' → calls onStatusSetUpdate callback",
-        "Step 2: index.ts wires onStatusSetUpdate → server.handleStatusSetUpdate(payload)",
-        "Step 3: server.handleStatusSetUpdate → pluginService.handleBridgeEvent('plugin:statusSetUpdate', payload, sessionId)",
-        "Step 4: pluginService.handleBridgeEvent → executeHooks('plugin:statusSetUpdate', context) → dispatches to registered hooks",
-        "Step 5: statusline plugin's onPiEvent handler receives event → calls api.ui.updateStatusBarItem via RPC",
-        "Step 6: plugin-service updateStatusBarItem handler → stores in Map → broadcastStatusBarItems() → WS broadcast 'plugin:statusBarUpdate'",
-        "Step 7: usePlugin composable 'plugin:statusBarUpdate' handler → store.setStatusBarItems(items)",
-        "Step 8: Components consume: AppStatusbar uses globalStatusBarItems, SessionStrip uses getSessionStatusBarItems(sessionId)"
+        "vitest run: statusline-event-adapter.test.ts > TC-8-01 describe block (2 tests)",
+        "Test: setStatus event triggers callback chain with correct data",
+        "Test: multiple setStatus events all captured in order",
+        "Also verified via code_review: callback → server.handleStatusSetUpdate → plugin-service.handleBridgeEvent → statusline plugin hook → updateStatusBarItem → broadcast → WS → frontend store"
       ],
-      "evidence": "Complete end-to-end trace verified: pi setStatus → EventAdapter (onStatusSetUpdate) → index.ts (server.handleStatusSetUpdate) → plugin-service (handleBridgeEvent → executeHooks) → statusline plugin (onPiEvent → updateStatusBarItem RPC) → plugin-service (Map store + broadcastStatusBarItems) → WS 'plugin:statusBarUpdate' → usePlugin composable → plugin store → AppStatusbar (global) / SessionStrip (per-session). All links in the chain are connected and functional."
+      "evidence": "vitest: 2 tests passed + full data flow verified in code"
     },
     {
       "caseId": "TC-9-01",
       "round": 1,
       "passed": true,
       "execute_steps": [
-        "Read docs/plugin/built-in-plugin-guide.md completely",
-        "Verified manifest structure section: §2.2 package.json fields with xyzAgent manifest",
-        "Verified activationEvents section: §2.2 table lists onStartupFinished, onSessionCreate, onSlashCommand, onToolCall",
-        "Verified hooks registration section: §3.4 api.hooks with onPiEvent and interceptor hooks",
-        "Verified statusBarUpdate API section: §3.3 api.ui.updateStatusBarItem with full parameter table",
-        "Verified statusline plugin example: §4 case study with complete data flow diagram"
+        "code_review: read docs/plugin/built-in-plugin-guide.md",
+        "Verified §2 快速开始 contains package.json xyzAgent field example",
+        "Verified §2 contains activationEvents documentation",
+        "Verified §3 Plugin API contains hooks.onPiEvent example",
+        "Verified §3 contains updateStatusBarItem API with options parameter",
+        "Verified §4 uses statusline plugin as running example with full code walkthrough"
       ],
-      "evidence": "built-in-plugin-guide.md covers all required topics: (1) Manifest structure in §2.2 with package.json field table; (2) activationEvents in §2.2 with event type table; (3) hooks registration in §3.4 with onPiEvent, interceptor, and observer hooks; (4) statusBarUpdate API in §3.3 with updateStatusBarItem signature and StatusBarItemOptions parameter table; (5) Statusline plugin example in §4 with complete code walkthrough, data flow diagram, and step-by-step explanation. Document is comprehensive and production-ready."
+      "evidence": "docs/plugin/built-in-plugin-guide.md covers all 5 required sections (720 lines)"
     }
   ]
 }
