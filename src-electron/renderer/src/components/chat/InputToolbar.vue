@@ -60,6 +60,14 @@ const thinkingLevels = computed(() => {
 
 const showThinkingPicker = computed(() => thinkingLevels.value.length > 0)
 
+// Option C: label inference — when only 2 levels visible (off + one other), show Off/On
+function getThinkingDisplayLabel(level: string): string {
+  if (thinkingLevels.value.length === 2 && thinkingLevels.value.includes('off')) {
+    return level === 'off' ? 'Off' : 'On'
+  }
+  return level
+}
+
 const currentThinkingLevel = computed(() => settingsStore.currentThinkingLevel)
 const thinkingOpen = ref(false)
 const thinkingRef = ref<HTMLElement | null>(null)
@@ -189,7 +197,7 @@ onBeforeUnmount(() => {
               :style="{ height: (4 + i * 1.5) + 'px', background: getBarColor(level, i) }"
             ></span>
           </span>
-          <span class="flex-1 font-mono">{{ level }}</span>
+          <span class="flex-1 font-mono">{{ getThinkingDisplayLabel(level) }}</span>
           <span v-if="level === currentThinkingLevel" class="w-3.5 h-3.5 inline-flex items-center justify-center shrink-0 text-accent">
             <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 8 6.5 11.5 13 4.5" /></svg>
           </span>

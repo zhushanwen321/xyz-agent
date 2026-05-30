@@ -134,6 +134,7 @@ function addModel() {
     id: `new-${Date.now()}`,
     name,
     contextWindow: Number(addModelCtx.value) || 200_000,
+    thinkingLevelMap: structuredClone(THINKING_PRESETS['on-off']),
   })
   addModelName.value = ''
   addModelCtx.value = '200000'
@@ -216,7 +217,7 @@ function handleDiscover() {
           name: m.name,
           contextWindow: m.contextWindow ?? 0,
           enabled: existing?.enabled ?? true,
-          thinkingLevelMap: existing?.thinkingLevelMap,
+          thinkingLevelMap: existing?.thinkingLevelMap ?? structuredClone(THINKING_PRESETS['on-off']),
         }
       })
       discoverStatus.value = 'success'
@@ -252,17 +253,37 @@ function handleSave() {
   })
 }
 
-function applyThinkingPreset(preset: 'deepseek' | 'clear') {
-  for (const m of modalModels.value) {
-    if (preset === 'deepseek') {
-      m.thinkingLevelMap = {
-        minimal: null, low: null, medium: null,
-        high: 'high', xhigh: 'max',
-      }
-    } else {
-      m.thinkingLevelMap = undefined
-    }
-  }
+// ─── Thinking strategy presets ────────────────────────────────
+
+type ThinkingStrategy = 'all-levels' | 'on-off' | 'high-max'
+
+const THINKING_PRESETS: Record<ThinkingStrategy, Record<string, string | null> | undefined> = {
+  'all-levels': undefined,
+  'on-off': { minimal: null, low: null, medium: null, high: null },
+  'high-max': { minimal: null, low: null, medium: null, high: 'high', xhigh: 'max' },
+}
+
+const STRATEGY_LABELS: Record<ThinkingStrategy, string> = {
+  'all-levels': 'All Levels',
+  'on-off': 'On / Off',
+  'high-max': 'high / max',
+}
+
+function getStrategyFromMap(map?: Record<string, string | null>): ThinkingStrategy {
+  if (!map) return 'all-levels'
+  if (map.xhigh === 'max') return 'high-max'
+  return 'on-off'
+}
+
+function applyThinkingStrategy(model: ModalModel, strategy: ThinkingStrategy) {
+  const preset = THINKING_PRESETS[strategy]
+  model.thinkingLevelMap = preset ? structuredClone(preset) : undefined
+}
+
+const openStrategyDropdown = ref<string | null>(null)
+
+function toggleStrategyDropdown(modelId: string) {
+  openStrategyDropdown.value = openStrategyDropdown.value === modelId ? null : modelId
 }
 
 function handleKeydown(e: KeyboardEvent) {
@@ -363,22 +384,40 @@ onUnmounted(() => {
               </Button>
             </div>
           </div>
-          <div v-if="modalModels.length > 0" class="flex gap-2 mb-3 px-3.5 pt-3">
-            <Button variant="outline" size="sm" @click="applyThinkingPreset('deepseek')">
-              DeepSeek 预设
-            </Button>
-            <Button variant="outline" size="sm" @click="applyThinkingPreset('clear')">
-              清空映射
-            </Button>
-          </div>
           <div class="max-h-60 overflow-y-auto">
-            <div v-for="(model, idx) in modalModels" :key="model.id">
+            <div v-for="(model, idx) in modalModels" :key="model.id" class="relative">
               <div class="flex items-center gap-2.5 py-2.5 px-3.5 border-b border-border">
                 <span class="font-mono text-xs font-semibold min-w-[160px]">{{ model.name }}</span>
-                <span
-                  v-if="model.thinkingLevelMap && Object.keys(model.thinkingLevelMap).length > 0"
-                  class="text-[10px] px-1.5 py-px rounded-sm bg-accent/10 text-accent"
-                >mapped</span>
+                <div class="relative" @click.stop>
+                  <button
+                    :class="['strategy-badge', {
+                      'strategy-badge--default': getStrategyFromMap(model.thinkingLevelMap) === 'all-levels',
+                      'strategy-badge--binary': getStrategyFromMap(model.thinkingLevelMap) === 'on-off',
+                      'strategy-badge--highmax': getStrategyFromMap(model.thinkingLevelMap) === 'high-max',
+                    }]"
+                    @click="toggleStrategyDropdown(model.id)"
+                  >
+                    {{ STRATEGY_LABELS[getStrategyFromMap(model.thinkingLevelMap)] }}
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9" /></svg>
+                  </button>
+                  <div v-if="openStrategyDropdown === model.id" class="strategy-dropdown">
+                    <div class="strategy-dropdown-label">Thinking Strategy</div>
+                    <button
+                      v-for="s in (['all-levels', 'on-off', 'high-max'] as const)"
+                      :key="s"
+                      :class="['strategy-dropdown-item', { active: getStrategyFromMap(model.thinkingLevelMap) === s }]"
+                      @click="applyThinkingStrategy(model, s); openStrategyDropdown = null"
+                    >
+                      <span class="check">&#10003;</span>
+                      <div>
+                        <div>{{ STRATEGY_LABELS[s] }}</div>
+                        <div v-if="s === 'all-levels'" class="strategy-dropdown-desc">All 6 levels visible</div>
+                        <div v-else-if="s === 'on-off'" class="strategy-dropdown-desc">Off / On (xhigh)</div>
+                        <div v-else class="strategy-dropdown-desc">off + high + xhigh→max</div>
+                      </div>
+                    </button>
+                  </div>
+                </div>
                 <span class="text-[11px] text-muted font-mono min-w-[50px]">{{ formatCtx(model.contextWindow) }}</span>
                 <Button variant="ghost" size="sm" class="hover:!text-[var(--danger)] hover:!bg-[var(--danger-light)]" @click="removeModel(idx)">
                   <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2">
@@ -419,3 +458,99 @@ onUnmounted(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.strategy-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 100px;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 120ms ease;
+}
+.strategy-badge--default {
+  background: oklch(94% 0.01 70);
+  color: var(--muted);
+  border-color: var(--border);
+}
+.strategy-badge--default:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.strategy-badge--binary {
+  background: oklch(93% 0.03 250);
+  color: oklch(50% 0.1 250);
+}
+.strategy-badge--binary:hover {
+  border-color: oklch(55% 0.12 250);
+}
+.strategy-badge--highmax {
+  background: oklch(92% 0.04 25);
+  color: oklch(55% 0.12 25);
+}
+.strategy-badge--highmax:hover {
+  border-color: oklch(55% 0.12 25);
+}
+
+.strategy-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 300;
+  background: var(--surface, white);
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  min-width: 190px;
+  padding: 4px 0;
+}
+.strategy-dropdown-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 6px 14px 2px;
+}
+.strategy-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  font-size: 12px;
+  cursor: pointer;
+  border: none;
+  background: none;
+  width: 100%;
+  text-align: left;
+  color: var(--fg);
+  transition: background 80ms ease;
+  font-family: inherit;
+}
+.strategy-dropdown-item:hover {
+  background: oklch(96% 0.01 70);
+}
+.strategy-dropdown-item.active {
+  color: var(--accent);
+  font-weight: 600;
+}
+.strategy-dropdown-item .check {
+  width: 14px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--accent);
+  visibility: hidden;
+}
+.strategy-dropdown-item.active .check {
+  visibility: visible;
+}
+.strategy-dropdown-desc {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 1px;
+}
+</style>
