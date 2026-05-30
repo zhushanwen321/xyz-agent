@@ -1,0 +1,158 @@
+{
+  "test_cases": [
+    {
+      "id": "TC-3-01",
+      "type": "ui",
+      "title": "展开/折叠 thinking level 配置",
+      "description": "点击模型行 chevron 图标展开 thinking level 配置面板，再次点击折叠",
+      "preconditions": "Settings → Providers → 编辑已有 provider",
+      "steps": [
+        "点击模型行左侧 chevron 图标",
+        "验证 7 个 level 行出现（off → max）",
+        "再次点击 chevron",
+        "验证配置面板折叠"
+      ],
+      "expected": "展开时显示完整 level 配置，折叠时隐藏，动画平滑",
+      "spec_ref": "AC-1"
+    },
+    {
+      "id": "TC-3-02",
+      "type": "ui",
+      "title": "Toggle 开关切换 level 启用/禁用",
+      "description": "切换 level toggle 控制该 level 的启用状态，OFF 时输入框置灰",
+      "preconditions": "已展开模型的 thinking level 配置",
+      "steps": [
+        "点击 'medium' 行的 toggle，切换为 OFF",
+        "验证 medium 行的输入框变为 disabled 样式",
+        "验证 medium 标签变为灰色",
+        "点击 'medium' toggle 切回 ON",
+        "验证输入框恢复可编辑"
+      ],
+      "expected": "Toggle OFF 时输入框禁用且置灰，ON 时恢复",
+      "spec_ref": "AC-2"
+    },
+    {
+      "id": "TC-3-03",
+      "type": "ui",
+      "title": "新模型默认状态为全 ON + 空",
+      "description": "无 thinkingLevelMap 的新模型，所有 toggle 默认 ON，输入框为空",
+      "preconditions": "展开一个无 thinkingLevelMap 的模型",
+      "steps": [
+        "添加一个新模型并展开其 thinking level 配置",
+        "验证 7 个 level 的 toggle 全部为 ON",
+        "验证所有输入框为空"
+      ],
+      "expected": "所有 toggle ON，所有输入框为空",
+      "spec_ref": "AC-2"
+    },
+    {
+      "id": "TC-3-04",
+      "type": "ui",
+      "title": "编辑 API 参数值",
+      "description": "在 enabled 状态下编辑 level 的 API 参数值",
+      "preconditions": "已展开模型配置，某 level toggle ON",
+      "steps": [
+        "在 'high' 输入框中输入 'high'",
+        "在 'xhigh' 输入框中输入 'max'",
+        "在 'max' 输入框中输入 'max'",
+        "验证输入值正确显示"
+      ],
+      "expected": "输入值正确保存并显示",
+      "spec_ref": "AC-2"
+    },
+    {
+      "id": "TC-3-05",
+      "type": "ui",
+      "title": "应用 DeepSeek 预设",
+      "description": "点击 DeepSeek 预设按钮，自动配置为 off~medium OFF、high/xhigh/max 启用",
+      "preconditions": "已展开模型 thinking level 配置",
+      "steps": [
+        "点击 'DeepSeek' 预设按钮",
+        "验证 off、minimal、low、medium toggle OFF",
+        "验证 high toggle ON，值为 'high'",
+        "验证 xhigh toggle ON，值为 'max'",
+        "验证 max toggle ON，值为 'max'"
+      ],
+      "expected": "DeepSeek 预设正确覆盖配置",
+      "spec_ref": "AC-6"
+    },
+    {
+      "id": "TC-3-06",
+      "type": "ui",
+      "title": "应用全开（透传）预设",
+      "description": "点击全开预设，所有 toggle ON 且输入框为空",
+      "preconditions": "已展开模型 thinking level 配置",
+      "steps": [
+        "先应用 DeepSeek 预设",
+        "点击 '全开（透传）' 预设按钮",
+        "验证所有 toggle ON",
+        "验证所有输入框为空"
+      ],
+      "expected": "全开预设清除所有映射配置",
+      "spec_ref": "AC-6"
+    },
+    {
+      "id": "TC-1-2-5-01",
+      "type": "manual",
+      "title": "保存并验证 models.json 写入 thinkingLevelMap",
+      "description": "编辑 thinkingLevelMap 后保存，验证 models.json 正确写入",
+      "preconditions": "已编辑模型 thinkingLevelMap（如 DeepSeek 预设）",
+      "steps": [
+        "对 ds-flash 应用 DeepSeek 预设",
+        "点击保存",
+        "打开 ~/.xyz-agent/pi/agent/models.json",
+        "验证 ds-flash 的 thinkingLevelMap 为 {off:null, minimal:null, low:null, medium:null, high:'high', xhigh:'max', max:'max'}"
+      ],
+      "expected": "models.json 正确包含 thinkingLevelMap 字段",
+      "spec_ref": "AC-3"
+    },
+    {
+      "id": "TC-1-2-5-02",
+      "type": "manual",
+      "title": "全透传不写入 thinkingLevelMap 字段",
+      "description": "模型全 ON + 全空时保存，验证 models.json 中不出现 thinkingLevelMap",
+      "preconditions": "编辑一个新模型，保持默认全 ON + 空",
+      "steps": [
+        "添加新模型，保持 thinkingLevelMap 默认状态",
+        "点击保存",
+        "检查 models.json 中该模型无 thinkingLevelMap 字段"
+      ],
+      "expected": "models.json 中不出现 thinkingLevelMap（省略 = 透传）",
+      "spec_ref": "AC-3"
+    },
+    {
+      "id": "TC-5-01",
+      "type": "manual",
+      "title": "InputToolbar 过滤联动验证",
+      "description": "保存 thinkingLevelMap 后，聊天界面 InputToolbar 正确过滤 level 选项",
+      "preconditions": "ds-flash 已保存 DeepSeek 预设（off~medium 禁用）",
+      "steps": [
+        "切换到聊天界面",
+        "选择 DeepSeek provider 的 ds-flash 模型",
+        "打开 InputToolbar thinking level 下拉",
+        "验证只显示 high、xhigh、max 三个选项",
+        "切换到无 thinkingLevelMap 的模型",
+        "验证显示全部 7 个 level"
+      ],
+      "expected": "InputToolbar 根据 thinkingLevelMap 过滤显示",
+      "spec_ref": "AC-5"
+    },
+    {
+      "id": "TC-5-02",
+      "type": "manual",
+      "title": "保存失败不关闭 Modal",
+      "description": "保存时 WS 断连，Modal 不关闭，用户可继续编辑",
+      "preconditions": "编辑模型 thinkingLevelMap，模拟 sidecar 断连",
+      "steps": [
+        "编辑 ds-flash 的 thinkingLevelMap",
+        "关闭 sidecar 进程模拟断连",
+        "点击保存",
+        "验证 Modal 仍然打开",
+        "验证错误提示出现",
+        "恢复 sidecar 后重新保存成功"
+      ],
+      "expected": "失败时 Modal 不关闭，编辑内容保留",
+      "spec_ref": "AC-4"
+    }
+  ]
+}
