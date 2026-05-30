@@ -158,6 +158,16 @@ export const useChatStore = defineStore('chat', () => {
     const s = getSessionState(sessionId)
     s.completedMessages = msgs
     s.isLoadingHistory = false
+    // Restore context/token data from the latest assistant message with usage
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const msg = msgs[i]
+      if (!isSystemNotification(msg) && msg.role === 'assistant' && msg.usage) {
+        s.contextInputTokens = msg.usage.inputTokens
+        s.tokenUsage = msg.usage.inputTokens + msg.usage.outputTokens
+        s.contextUsagePercent = Math.min(100, Math.round((s.contextInputTokens / s.contextLimit) * 100))
+        break
+      }
+    }
   }
 
   function setLoadingHistory(v: boolean, sessionId: string) {
