@@ -39,7 +39,7 @@ const resolvedModel = computed(() => {
 // - reasoning=false → only ["off"]
 // - reasoning=true + thinkingLevelMap → filter by map (null=exclude, undefined=keep, xhigh needs explicit)
 // - reasoning=true + no map → ["off","minimal","low","medium","high"] (all except xhigh)
-const ALL_THINKING_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+const ALL_THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const
 
 const thinkingLevels = computed(() => {
   const model = resolvedModel.value
@@ -54,7 +54,6 @@ const thinkingLevels = computed(() => {
     const mapped = map[level]
     if (mapped === null) return false
     if (level === 'xhigh') return mapped !== undefined
-    if (level === 'max') return mapped !== undefined
     return true
   })
 })
@@ -66,8 +65,8 @@ const thinkingOpen = ref(false)
 const thinkingRef = ref<HTMLElement | null>(null)
 
 function initThinkingLevel() {
-  if (thinkingLevels.value.length > 0 && !thinkingLevels.value.includes(settingsStore.currentThinkingLevel)) {
-    settingsStore.currentThinkingLevel = thinkingLevels.value[0]
+  if (thinkingLevels.value.length > 0 && !thinkingLevels.value.includes(settingsStore.currentThinkingLevel as typeof ALL_THINKING_LEVELS[number])) {
+    settingsStore.currentThinkingLevel = thinkingLevels.value[0] as typeof ALL_THINKING_LEVELS[number]
   }
 }
 initThinkingLevel()
@@ -77,7 +76,7 @@ initThinkingLevel()
 
 // getBarColor: active bars use accent, inactive dim
 function getBarColor(level: string, barIndex: number): string {
-  const levelIdx = thinkingLevels.value.indexOf(level)
+  const levelIdx = thinkingLevels.value.indexOf(level as typeof ALL_THINKING_LEVELS[number])
   if (levelIdx < 0) return 'var(--border)'
   return barIndex <= levelIdx ? 'var(--accent)' : 'var(--border)'
 }
