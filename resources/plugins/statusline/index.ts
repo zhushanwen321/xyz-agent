@@ -1,0 +1,70 @@
+import type { PluginContext } from '../../../src-electron/runtime/src/services/plugin-service/plugin-types.js'
+
+// ── key → metadata mapping ────────────────────────────────────────
+
+interface StatusKeyMetadata {
+  priority: number
+  tooltip?: string
+  scope: 'per-session' | 'global'
+}
+
+const KEY_METADATA_MAP: Record<string, StatusKeyMetadata> = {
+  goal:     { priority: 10, tooltip: 'Goal task progress', scope: 'per-session' },
+  todo:     { priority: 20, tooltip: 'Todo list progress', scope: 'per-session' },
+  workflow: { priority: 15, tooltip: 'Workflow status',    scope: 'per-session' },
+  preset:   { priority: 30, tooltip: 'Active preset',      scope: 'global' },
+  ssh:      { priority: 40, tooltip: 'SSH connection',     scope: 'global' },
+  model:    { priority: 50, tooltip: 'Current model',      scope: 'global' },
+}
+
+const DEFAULT_METADATA: StatusKeyMetadata = {
+  priority: 100,
+  tooltip: undefined,
+  scope: 'global',
+}
+
+// ── event payload types ───────────────────────────────────────────
+
+interface StatusSetUpdateData {
+  sessionId: string
+  key: string
+  text: string
+}
+
+interface BridgeEventData {
+  eventName: string
+  data: StatusSetUpdateData
+  sessionId: string
+}
+
+// ── plugin activation ─────────────────────────────────────────────
+
+export async function activate(context: PluginContext): Promise<void> {
+  const { api } = context
+
+  const disposable = await api.hooks.onPiEvent(
+    'plugin:statusSetUpdate',
+    async (_eventName: string, data: unknown) => {
+      const bridgeData = data as BridgeEventData
+      const { sessionId, key, text } = bridgeData.data
+
+      // Empty text means clear — skip calling updateStatusBarItem
+      if (text === '') return
+
+      const meta = KEY_METADATA_MAP[key] ?? DEFAULT_METADATA
+
+      await api.ui.updateStatusBarItem(
+        `pi-${key}`,
+        text,
+        {
+          tooltip: meta.tooltip,
+          priority: meta.priority,
+          scope: meta.scope,
+          sessionId: meta.scope === 'per-session' ? sessionId : undefined,
+        },
+      )
+    },
+  )
+
+  context.subscriptions.push(disposable)
+}
