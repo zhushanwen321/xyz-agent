@@ -46,7 +46,6 @@ const thinkingLevels = computed(() => {
   if (!model) return []
   if (!model.reasoning) return []
   const map = model.thinkingLevelMap
-  console.log(`[InputToolbar] thinkingLevels computed: model=${model.id}, reasoning=${model.reasoning}, thinkingLevelMap=${JSON.stringify(map)}`)
   if (!map) {
     // No map but reasoning=true → all levels
     return [...ALL_THINKING_LEVELS]
@@ -62,14 +61,13 @@ const thinkingLevels = computed(() => {
 
 const showThinkingPicker = computed(() => thinkingLevels.value.length > 0)
 
-const currentThinkingLevel = ref('max')
+const currentThinkingLevel = computed(() => settingsStore.currentThinkingLevel)
 const thinkingOpen = ref(false)
 const thinkingRef = ref<HTMLElement | null>(null)
 
-// Initialize thinking level when model changes
 function initThinkingLevel() {
-  if (thinkingLevels.value.length > 0 && !thinkingLevels.value.includes(currentThinkingLevel.value)) {
-    currentThinkingLevel.value = thinkingLevels.value[0]
+  if (thinkingLevels.value.length > 0 && !thinkingLevels.value.includes(settingsStore.currentThinkingLevel)) {
+    settingsStore.currentThinkingLevel = thinkingLevels.value[0]
   }
 }
 initThinkingLevel()
@@ -90,8 +88,7 @@ function getBarCount(): number {
 }
 
 function pickThinking(level: string) {
-  console.log(`[InputToolbar] pickThinking: level=${level}, resolvedModel=${resolvedModel.value?.id}, reasoning=${resolvedModel.value?.reasoning}, thinkingLevelMap=${JSON.stringify(resolvedModel.value?.thinkingLevelMap)}`)
-  currentThinkingLevel.value = level
+  settingsStore.currentThinkingLevel = level
   thinkingOpen.value = false
   emit('select-thinking-level', level)
 }

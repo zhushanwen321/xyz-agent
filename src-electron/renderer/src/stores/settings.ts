@@ -7,6 +7,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const themePreset = ref<ThemePreset>('neutral')
   const locale = ref<string>('zh-CN')
   const defaultModel = ref('')
+  const currentThinkingLevel = ref('max')
   const currentView = ref<'chat' | 'settings'>('chat')
   const panelGridVisible = ref(false)
   const inspectorOpen = ref(false)
@@ -50,7 +51,7 @@ export const useSettingsStore = defineStore('settings', () => {
   function closeInspector() { inspectorOpen.value = false }
 
   return {
-    theme, themePreset, locale, defaultModel, currentView,
+    theme, themePreset, locale, defaultModel, currentThinkingLevel, currentView,
     panelGridVisible, inspectorOpen, inspectorSide,
     autoExpandThinking, autoExpandToolCalls,
     toggleTheme, applyTheme, setThemePreset, setView,

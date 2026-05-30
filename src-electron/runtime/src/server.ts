@@ -521,7 +521,6 @@ export class SidecarServer implements IMessageBroker {
       }
       case 'session.setThinkingLevel': {
         const { sessionId: sid, level } = msg.payload
-        console.log(`[server] session.setThinkingLevel: sessionId=${sid}, level=${level}`)
         await this.sessionService.setThinkingLevel(sid as string, level as string)
         this.send(ws, { type: 'session.thinkingLevelSet', id: msg.id, payload: { sessionId: sid, level } })
         return true
