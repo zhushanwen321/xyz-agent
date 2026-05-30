@@ -126,9 +126,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
 
     <!-- Session path + git branch -->
     <span v-if="sessionInfo" class="breadcrumb" :title="sessionInfo.cwd">
-      <template v-for="(part, idx) in dirParts" :key="idx">
-        <span class="breadcrumb__sep">/</span>
-      </template>
+      <span class="breadcrumb__sep">/</span>
       <span class="breadcrumb__dir">{{ dirParts[0] }}</span>
       <span v-if="dirParts[1]" class="breadcrumb__sep">/</span>
       <span v-if="dirParts[1]" class="breadcrumb__dir">{{ dirParts[1] }}</span>
