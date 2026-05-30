@@ -320,9 +320,13 @@ export class SessionService implements ISessionService {
   }
 
   async setThinkingLevel(sessionId: string, level: string): Promise<void> {
+    console.log(`[session-service] setThinkingLevel called: sessionId=${sessionId}, level=${level}`)
     const client = this.pm.getClient(sessionId)
     if (client) {
+      console.log(`[session-service] sending set_thinking_level to pi: level=${level}`)
       await client.setThinkingLevel(level)
+    } else {
+      console.warn(`[session-service] no RPC client for sessionId=${sessionId}, thinking level not set`)
     }
   }
 

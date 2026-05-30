@@ -302,6 +302,7 @@ export class RpcClient {
   }
 
   setThinkingLevel(level: string): Promise<PiMessage> {
+    console.log(`[rpc-client] sendCommand('set_thinking_level', { level: '${level}' })`)
     return this.sendCommand('set_thinking_level', { level })
   }
 

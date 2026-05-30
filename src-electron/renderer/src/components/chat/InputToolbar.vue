@@ -46,6 +46,7 @@ const thinkingLevels = computed(() => {
   if (!model) return []
   if (!model.reasoning) return []
   const map = model.thinkingLevelMap
+  console.log(`[InputToolbar] thinkingLevels computed: model=${model.id}, reasoning=${model.reasoning}, thinkingLevelMap=${JSON.stringify(map)}`)
   if (!map) {
     // No map but reasoning=true → all levels
     return [...ALL_THINKING_LEVELS]
@@ -89,6 +90,7 @@ function getBarCount(): number {
 }
 
 function pickThinking(level: string) {
+  console.log(`[InputToolbar] pickThinking: level=${level}, resolvedModel=${resolvedModel.value?.id}, reasoning=${resolvedModel.value?.reasoning}, thinkingLevelMap=${JSON.stringify(resolvedModel.value?.thinkingLevelMap)}`)
   currentThinkingLevel.value = level
   thinkingOpen.value = false
   emit('select-thinking-level', level)
