@@ -35,11 +35,33 @@ const resolvedModel = computed(() => {
   return models.find(m => m.id === currentModel.value || m.id === currentModel.value.split('/').pop()) ?? models[0]
 })
 
-const thinkingLevelMap = computed(() => resolvedModel.value?.thinkingLevelMap)
-const thinkingLevels = computed(() => Object.keys(thinkingLevelMap.value ?? {}))
+// Pi's getSupportedThinkingLevels logic:
+// - reasoning=false → only ["off"]
+// - reasoning=true + thinkingLevelMap → filter by map (null=exclude, undefined=keep, xhigh needs explicit)
+// - reasoning=true + no map → ["off","minimal","low","medium","high"] (all except xhigh)
+const ALL_THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
+
+const thinkingLevels = computed(() => {
+  const model = resolvedModel.value
+  if (!model) return []
+  if (!model.reasoning) return []
+  const map = model.thinkingLevelMap
+  if (!map) {
+    // No map but reasoning=true → all levels
+    return [...ALL_THINKING_LEVELS]
+  }
+  return ALL_THINKING_LEVELS.filter(level => {
+    const mapped = map[level]
+    if (mapped === null) return false
+    if (level === 'xhigh') return mapped !== undefined
+    if (level === 'max') return mapped !== undefined
+    return true
+  })
+})
+
 const showThinkingPicker = computed(() => thinkingLevels.value.length > 0)
 
-const currentThinkingLevel = ref('')
+const currentThinkingLevel = ref('max')
 const thinkingOpen = ref(false)
 const thinkingRef = ref<HTMLElement | null>(null)
 
@@ -58,6 +80,7 @@ const THINKING_BAR_HEIGHTS: Record<string, number[]> = {
   medium: [2, 5, 7, 9, 10],
   high: [2, 5, 8, 10, 11],
   xhigh: [3, 6, 9, 11, 12],
+  max: [4, 7, 10, 12, 13],
 }
 
 function getBarHeights(level: string): number[] {
