@@ -1,6 +1,6 @@
 ---
 verdict: pass
-must_fix: 1
+must_fix: 0
 reviewer: ts-taste-check v1
 date: 2026-05-30
 scope: 54f68e6..HEAD (statusline feature)
@@ -18,11 +18,11 @@ scope: 54f68e6..HEAD (statusline feature)
 
 | 优先级 | 类别 | 位置 | 描述 | 建议 |
 |--------|------|------|------|------|
-| **P0** | 结构 | L68-89 | `onContextUpdate` 回调内嵌 22 行逻辑（provider 查询、model 查找、百分比计算、广播），在 DI 工厂的 lambda 内直接操作 3 个 service | 提取为独立函数 `computeAndBroadcastContextUpdate(sid, ctxData, deps)`，lambda 内仅一行调用 |
+| **P1** | 结构 | L68-89 | `onContextUpdate` 回调内嵌 22 行逻辑（provider 查询、model 查找、百分比计算、广播），在 DI 工厂的 lambda 内直接操作 3 个 service | 提取为独立函数 `computeAndBroadcastContextUpdate(sid, ctxData, deps)`，lambda 内仅一行调用 |
 | P1 | 魔法数字 | L80 | `inputTokens === 0` 跳过 + 隐式语义"token 为 0 时无意义" | 可接受——0 是业务语义而非魔法值 |
 | P1 | 类型 | L72 | `session?.modelId` 返回 `string \| undefined`，下游 `modelRef.indexOf('/')` 安全，但 `modelRef.slice(0, sepIdx)` 拼接 providerId/modelId 的隐式解析散落在此 | 已有 `sepIdx >= 0` 保护，但建议 future 提取为 `parseModelRef(modelId): { providerId, modelId } \| null` |
 
-**统计**: P0: 1 | P1: 1
+**统计**: P0: 0 | P1: 2
 
 ---
 
@@ -132,7 +132,7 @@ scope: 54f68e6..HEAD (statusline feature)
 | — | 命名 | 全文件 | `KEY_METADATA_MAP` 用 Record + 白名单模式管理 key 映射，良好实践 | 良好 |
 | — | 结构 | 全文件 | 70 行，职责单一：监听 statusSetUpdate 事件，调用 UI API | 良好 |
 
-**统计**: P0: 1 | P1: 1
+**统计**: P0: 0 | P1: 2
 
 ---
 
