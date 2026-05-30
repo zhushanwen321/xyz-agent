@@ -258,3 +258,4 @@ describe('TC-8-01: full setStatus data flow (event-adapter → callback)', () =>
     expect(statusUpdates[2].text).toBe('')  // clear event
   })
 })
+// trigger CI
