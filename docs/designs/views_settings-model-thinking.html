@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light" data-palette="neutral">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Provider 模型 Thinking Level 映射配置</title>
+<style>
+  :root {
+    --bg: oklch(98% 0 0);
+    --surface: oklch(100% 0 0);
+    --fg: oklch(12% 0 0);
+    --muted: oklch(50% 0 0);
+    --border: oklch(86% 0 0);
+    --accent: oklch(55% 0.08 195);
+    --accent-light: oklch(95% 0.03 195);
+    --section-bg: oklch(97% 0.005 195);
+    --hover-bg: oklch(92% 0.01 195);
+    --success: oklch(55% 0.15 150);
+    --success-light: oklch(95% 0.04 150);
+    --danger: oklch(55% 0.15 15);
+    --danger-light: oklch(95% 0.04 15);
+    --warning: oklch(65% 0.16 80);
+    --warning-light: oklch(95% 0.05 80);
+    --divider: oklch(91% 0 0);
+  }
+  [data-theme="dark"] {
+    --bg: oklch(14% 0.005 250);
+    --surface: oklch(18% 0.005 250);
+    --fg: oklch(92% 0 0);
+    --muted: oklch(58% 0 0);
+    --border: oklch(24% 0.01 250);
+    --section-bg: oklch(20% 0.008 250);
+    --hover-bg: oklch(22% 0.015 250);
+    --danger-light: oklch(20% 0.03 15);
+    --success-light: oklch(20% 0.03 150);
+    --warning-light: oklch(20% 0.03 80);
+    --divider: oklch(22% 0.01 250);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--fg); font-size: 14px; }
+  body { padding: 40px; max-width: 900px; margin: 0 auto; }
+
+  h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.3px; margin-bottom: 4px; }
+  .desc { font-size: 12px; color: var(--muted); margin-bottom: 32px; }
+
+  /* ── Provider Card ── */
+  .card { border: 1px solid var(--border); border-radius: 1px; overflow: hidden; margin-bottom: 16px; }
+  .card-header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 9px 16px; background: var(--section-bg); min-height: 42px;
+    border-bottom: 1px solid var(--border);
+  }
+  .card-header .avatar {
+    width: 30px; height: 30px; border-radius: 1px;
+    background: var(--accent-light); display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 14px; color: var(--accent); flex-shrink: 0;
+  }
+  .card-header .name { font-size: 13px; font-weight: 600; }
+  .card-header .url { font-size: 11px; color: var(--muted); font-family: monospace; margin-left: 8px; }
+
+  /* ── Model Row ── */
+  .model-row { border-bottom: 1px solid var(--divider); }
+  .model-row:last-child { border-bottom: none; }
+  .model-summary {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 16px; cursor: pointer; transition: background 0.1s;
+  }
+  .model-summary:hover { background: var(--hover-bg); }
+  .model-summary .chevron {
+    width: 16px; height: 16px; display: flex; align-items: center; justify-content: center;
+    color: var(--muted); transition: transform 0.15s ease;
+  }
+  .model-summary .chevron svg { width: 10px; height: 10px; }
+  .model-summary .m-name { font-family: monospace; font-size: 13px; font-weight: 600; flex: 1; }
+  .model-summary .m-meta { font-size: 11px; color: var(--muted); font-family: monospace; display: flex; gap: 12px; align-items: center; }
+  .model-summary .badge {
+    font-size: 9px; font-weight: 600; text-transform: uppercase; padding: 1px 6px;
+    border-radius: 1px;
+  }
+  .badge-reasoning { background: var(--accent-light); color: var(--accent); }
+  .badge-mapped { background: var(--warning-light); color: var(--warning); }
+  .row-expanded .chevron { transform: rotate(90deg); }
+
+  /* ── Expanded Thinking Config ── */
+  .thinking-config {
+    display: none; padding: 0 16px 12px; background: oklch(from var(--bg) calc(l + 0.01) c h);
+    border-top: 1px solid var(--divider);
+  }
+  .row-expanded .thinking-config { display: block; }
+
+  .thinking-config-header {
+    display: flex; align-items: center; padding: 10px 0 6px;
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.04em; color: var(--muted);
+  }
+  .thinking-config-header .col-label { width: 90px; flex-shrink: 0; }
+  .thinking-config-header .col-api { flex: 1; padding-left: 8px; }
+
+  .thinking-level-row {
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 0; border-bottom: 1px solid var(--divider);
+  }
+  .thinking-level-row:last-child { border-bottom: none; }
+
+  /* ── Toggle ── */
+  .toggle {
+    position: relative; width: 32px; height: 18px; flex-shrink: 0;
+  }
+  .toggle input { display: none; }
+  .toggle .track {
+    display: block; width: 100%; height: 100%; border-radius: 9px;
+    background: var(--border); cursor: pointer; transition: background 0.15s;
+  }
+  .toggle input:checked + .track {
+    background: var(--accent);
+  }
+  .toggle .thumb {
+    position: absolute; top: 2px; left: 2px;
+    width: 14px; height: 14px; border-radius: 50%;
+    background: white; transition: transform 0.15s;
+  }
+  .toggle input:checked + .track + .thumb,
+  .toggle input:checked + .track .thumb {
+    transform: translateX(14px);
+  }
+
+  .level-name {
+    width: 64px; font-size: 12px; font-family: monospace; font-weight: 500; flex-shrink: 0;
+  }
+  .level-name.disabled { opacity: 0.35; }
+
+  /* ── Level bars visual ── */
+  .level-bars {
+    display: flex; gap: 1px; margin-left: 6px; width: 48px; flex-shrink: 0; align-items: flex-end; height: 16px;
+  }
+  .level-bar {
+    width: 6px; border-radius: 1px; background: var(--border); transition: background 0.15s;
+  }
+  .level-bar.active { background: var(--accent); }
+
+  .api-input {
+    flex: 1; max-width: 90px;
+    padding: 2px 6px; font-size: 11px; font-family: monospace;
+    border: 1px solid var(--border); border-radius: 1px;
+    background: var(--surface); color: var(--fg);
+    outline: none;
+  }
+  .api-input:focus { border-color: var(--accent); }
+  .api-input.disabled { opacity: 0.35; pointer-events: none; background: transparent; border-color: transparent; }
+  .api-input.disabled::placeholder { color: transparent; }
+
+  /* ── Quick Presets ── */
+  .presets { display: flex; gap: 6px; margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--divider); }
+  .preset-btn {
+    font-size: 10px; font-weight: 500; padding: 2px 8px;
+    border: 1px solid var(--border); border-radius: 1px;
+    background: var(--surface); color: var(--muted); cursor: pointer;
+    transition: all 0.1s;
+  }
+  .preset-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-light); }
+
+  /* ── Labels / explanation ── */
+  .note { font-size: 11px; color: var(--muted); margin-top: 8px; line-height: 1.5; }
+  .note strong { color: var(--fg); }
+
+  /* ── Theme toggle ── */
+  .theme-toggle {
+    position: fixed; top: 16px; right: 16px;
+    font-size: 11px; cursor: pointer; padding: 4px 10px;
+    border: 1px solid var(--border); border-radius: 1px;
+    background: var(--surface); color: var(--muted);
+  }
+</style>
+</head>
+<body>
+
+<button class="theme-toggle" onclick="toggleTheme()">Dark / Light</button>
+
+<h1>模型 Thinking Level 映射配置</h1>
+<p class="desc">
+  在 Provider 设置中，每个模型可展开配置 thinking level：<strong>启用/禁用</strong>各个 level（控制 UI 可选列表），及每个 level 对应的 <strong>API 参数值</strong>（传给 LLM）。
+  配置保存到 models.json 的 <code>thinkingLevelMap</code> 字段。
+</p>
+
+<!-- Router OpenAI -->
+<div class="card">
+  <div class="card-header">
+    <div class="avatar">R</div>
+    <div class="name">Router OpenAI</div>
+    <span class="url">http://127.0.0.1:9981</span>
+  </div>
+
+  <div class="model-list">
+
+    <!-- GLM-5.1 — 默认展开，全启用，无映射 -->
+    <div class="model-row">
+      <div class="model-summary" onclick="this.parentElement.classList.toggle('row-expanded')">
+        <span class="chevron"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg></span>
+        <span class="m-name">glm-5.1</span>
+        <span class="m-meta">
+          <span class="badge badge-reasoning">reasoning</span>
+          <span>200K</span>
+        </span>
+      </div>
+      <div class="thinking-config">
+        <div class="thinking-config-header">
+          <span class="col-label" style="width:32px"></span>
+          <span class="col-label">Level</span>
+          <span class="col-label" style="width:48px"></span>
+          <span class="col-api">API 参数</span>
+        </div>
+
+        <!-- all levels enabled, pass-through API -->
+        <div class="thinking-level-row">
+          <label class="toggle"><input type="checkbox" onchange="toggleLevel(this)"><span class="track"></span><span class="thumb"></span></label>
+          <span class="level-name">off</span><span class="level-bars"></span>
+          <input class="api-input disabled" placeholder="(pass through)" disabled>
+        </div>
+        <div class="thinking-level-row">
+          <label class="toggle"><input type="checkbox" checked onchange="toggleLevel(this)"><span class="track"></span><span class="thumb"></span></label>
+          <span class="level-name">minimal</span>
+          <span class="level-bars"><span class="level-bar active" style="height:4px"></span></span>
+          <input class="api-input disabled" placeholder="(pass through)" disabled>
+        </div>
+        <div class="thinking-level-row">
+          <label class="toggle"><input type="checkbox" checked onchange="toggleLevel(this)"><span class="track"></span><span class="thumb"></span></label>
+          <span class="level-name">low</span>
+          <span class="level-bars"><span class="level-bar active" style="height:6px"></span><span class="level-bar active" style="height:6px"></span></span>
+          <input class="api-input disabled" placeholder="(pass through)" disabled>
+        </div>
+        <div class="thinking-level-row">
+          <label class="toggle"><input type="checkbox" checked onchange="toggleLevel(this)"><span class="track"></span><span class="thumb"></span></label>
+          <span class="level-name">medium</span>
+          <span class="level-bars"><span class="level-bar active" style="height:8px"></span><span class="level-bar active" style="height:8px"></span><span class="level-bar active" style="height:8px"></span></span>
+          <input class="api-input disabled" placeholder="(pass through)" disabled>
+        </div>
+        <div class="thinking-level-row">
+          <label class="toggle"><input type="checkbox" checked onchange="toggleLevel(this)"><span class="track"></span><span class="thumb"></span></label>
+          <span class="level-name">high</span>
+          <span class="level-bars"><span class="level-bar active" style="height:10px"></span><span class="level-bar active" style="height:10px"></span><span class="level-bar active" style="height:10px"></span><span class="level-bar active" style="height:10px"></span></span>
+          <input class="api-input disabled" placeholder="(pass through)" disabled>
+        </div>
+        <div class="thinking-level-row">
+          <label class="toggle"><input type="checkbox" checked onchange="toggleLevel(this)"><span class="track"></span><span class="thumb"></span></label>
+          <span class="level-name">xhigh</span>
+          <span class="level-bars"><span class="level-bar active" style="height:12px"></span><span class="level-bar active" style="height:12px"></span><span class="level-bar active" style="height:12px"></span><span class="level-bar active" style="height:12px"></span><span class="level-bar active" style="height:12px"></span></span>
+          <input class="api-input disabled" placeholder="(pass through)" disabled>
+        </div>
+        <div class="thinking-level-row">
+          <label class="toggle"><input type="checkbox" checked onchange="toggleLevel(this)"><span class="track"></span><span class="thumb"></span></label>
+          <span class="level-name">max</span>
+          <span class="level-bars"><span class="level-bar active" style="height:14px"></span><span class="level-bar active" style="height:14px"></span><span class="level-bar active" style="height:14px"></span><span class="level-bar active" style="height:14px"></span><span class="level-bar active" style="height:14px"></span><span class="level-bar active" style="height:14px"></span></span>
+          <input class="api-input disabled" placeholder="(pass through)" disabled>
+        </div>
+
+        <p class="note"><strong>GLM-5.1</strong> — 全 level 启用，API 参数透传。<br>models.json: 不写 thinkingLevelMap（或全为 undefined）。</p>
+      </div>
+    </div>
+
+    <!-- DeepSeek Flash — 预配置映射 -->
+    <div class="model-row row-expanded">
+      <div class="model-summary" onclick="this.parentElement.classList.toggle('row-expanded')">
+        <span class="chevron"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg></span>
+        <span class="m-name">ds-flash</span>
+        <span class="m-meta">
+          <span class="badge badge-reasoning">reasoning</span>
+          <span class="badge badge-mapped">mapped</span>
+          <span>1M</span>
+        </span>
+      </div>
+      <div class="thinking-config">
+        <div class="thinking-config-header">
+          <span class="col-label" style="width:32px"></span>
+          <span class="col-label">Level</span>
+          <span class="col-label" style="width:48px"></span>
+          <span class="col-api">API 参数</span>
+        </div>
+
+        <div class="thinking-level-row">
+          <label class="toggle"><input type="checkbox" onchange="toggleLevel(this)"><span class="track"></span><span class="thumb"></span></label>
+          <span class="level-name disabled">off</span><span class="level-bars"></span>
+          <input class="api-input disabled" value="" placeholder="null">
+        </div>
+        <div class="thinking-level-row">
+          <label class="toggle"><input type="checkbox" onchange="toggleLevel(this)"><span class="track"></span><span class="thumb"></span></label>
+          <span class="level-name disabled">minimal</span><span class="level-bars"></span>
+          <input class="api-input disabled" value="" placeholder="null">
+        </div>
+        <div class="thinking-level-row">
+          <label class="toggle"><input type="checkbox" onchange="toggleLevel(this)"><span class="track"></span><span class="thumb"></span></label>
+          <span class="level-name disabled">low</span><span class="level-bars"></span>
+          <input class="api-input disabled" value="" placeholder="null">
+        </div>
+        <div class="thinking-level-row">
+          <label class="toggle"><input type="checkbox" onchange="toggleLevel(this)"><span class="track"></span><span class="thumb"></span></label>
+          <span class="level-name disabled">medium</span><span class="level-bars"></span>
+          <input class="api-input disabled" value="" placeholder="null">
+        </div>
+        <div class="thinking-level-row">
+          <label class="toggle"><input type="checkbox" checked onchange="toggleLevel(this)"><span class="track"></span><span class="thumb"></span></label>
+          <span class="level-name">high</span>
+          <span class="level-bars"><span class="level-bar active" style="height:10px"></span><span class="level-bar active" style="height:10px"></span><span class="level-bar active" style="height:10px"></span><span class="level-bar active" style="height:10px"></span></span>
+          <input class="api-input" value="high" onchange="this.style.borderColor='var(--accent)'">
+        </div>
+        <div class="thinking-level-row">
+          <label class="toggle"><input type="checkbox" checked onchange="toggleLevel(this)"><span class="track"></span><span class="thumb"></span></label>
+          <span class="level-name">xhigh</span>
+          <span class="level-bars"><span class="level-bar active" style="height:12px"></span><span class="level-bar active" style="height:12px"></span><span class="level-bar active" style="height:12px"></span><span class="level-bar active" style="height:12px"></span><span class="level-bar active" style="height:12px"></span></span>
+          <input class="api-input" value="max" onchange="this.style.borderColor='var(--accent)'">
+        </div>
+        <div class="thinking-level-row">
+          <label class="toggle"><input type="checkbox" checked onchange="toggleLevel(this)"><span class="track"></span><span class="thumb"></span></label>
+          <span class="level-name">max</span>
+          <span class="level-bars"><span class="level-bar active" style="height:14px"></span><span class="level-bar active" style="height:14px"></span><span class="level-bar active" style="height:14px"></span><span class="level-bar active" style="height:14px"></span><span class="level-bar active" style="height:14px"></span><span class="level-bar active" style="height:14px"></span></span>
+          <input class="api-input" value="max" onchange="this.style.borderColor='var(--accent)'">
+        </div>
+
+        <div class="presets">
+          <span style="font-size:10px;color:var(--muted);margin-right:4px;line-height:20px">Presets:</span>
+          <button class="preset-btn" onclick="alert('会重置为: 仅 high/xhigh/max 启用 + xhigh→max 映射')">DeepSeek (high+xhigh+max)</button>
+          <button class="preset-btn" onclick="alert('会重置为: 所有 level 启用 + 透传')">全开 (透传)</button>
+          <button class="preset-btn" onclick="alert('会重置为: 所有 level 启用 + high→high, xhigh→max, max→max')">通用映射</button>
+        </div>
+
+        <p class="note"><strong>DeepSeek Flash</strong> — 仅 high/xhigh/max 启用，xhigh→max 映射。<br>对应的 models.json: <code>"thinkingLevelMap": {"high":"high","xhigh":"max","max":"max"}</code> — 未列出的 level 存为 <code>null</code>。</p>
+      </div>
+    </div>
+
+    <!-- Kimi — 仅 high 启用 (示例) -->
+    <div class="model-row">
+      <div class="model-summary" onclick="this.parentElement.classList.toggle('row-expanded')">
+        <span class="chevron"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg></span>
+        <span class="m-name">kimi-for-coding</span>
+        <span class="m-meta">
+          <span class="badge badge-reasoning">reasoning</span>
+          <span>256K</span>
+        </span>
+      </div>
+      <div class="thinking-config">
+        <div class="thinking-config-header">
+          <span class="col-label" style="width:32px"></span>
+          <span class="col-label">Level</span>
+          <span class="col-label" style="width:48px"></span>
+          <span class="col-api">API 参数</span>
+        </div>
+        <div class="thinking-level-row">
+          <label class="toggle"><input type="checkbox" onchange="toggleLevel(this)"><span class="track"></span><span class="thumb"></span></label>
+          <span class="level-name disabled">off</span><span class="level-bars"></span>
+          <input class="api-input disabled" value="" placeholder="null">
+        </div>
+        <div class="thinking-level-row">
+          <label class="toggle"><input type="checkbox" onchange="toggleLevel(this)"><span class="track"></span><span class="thumb"></span></label>
+          <span class="level-name disabled">minimal</span><span class="level-bars"></span>
+          <input class="api-input disabled" value="" placeholder="null">
+        </div>
+        <div class="thinking-level-row">
+          <label class="toggle"><input type="checkbox" onchange="toggleLevel(this)"><span class="track"></span><span class="thumb"></span></label>
+          <span class="level-name disabled">low</span><span class="level-bars"></span>
+          <input class="api-input disabled" value="" placeholder="null">
+        </div>
+        <div class="thinking-level-row">
+          <label class="toggle"><input type="checkbox" onchange="toggleLevel(this)"><span class="track"></span><span class="thumb"></span></label>
+          <span class="level-name disabled">medium</span><span class="level-bars"></span>
+          <input class="api-input disabled" value="" placeholder="null">
+        </div>
+        <div class="thinking-level-row">
+          <label class="toggle"><input type="checkbox" checked onchange="toggleLevel(this)"><span class="track"></span><span class="thumb"></span></label>
+          <span class="level-name">high</span>
+          <span class="level-bars"><span class="level-bar active" style="height:10px"></span><span class="level-bar active" style="height:10px"></span><span class="level-bar active" style="height:10px"></span><span class="level-bar active" style="height:10px"></span></span>
+          <input class="api-input" value="high" onchange="this.style.borderColor='var(--accent)'">
+        </div>
+        <div class="thinking-level-row">
+          <label class="toggle"><input type="checkbox" onchange="toggleLevel(this)"><span class="track"></span><span class="thumb"></span></label>
+          <span class="level-name disabled">xhigh</span><span class="level-bars"></span>
+          <input class="api-input disabled" placeholder="null">
+        </div>
+        <div class="thinking-level-row">
+          <label class="toggle"><input type="checkbox" onchange="toggleLevel(this)"><span class="track"></span><span class="thumb"></span></label>
+          <span class="level-name disabled">max</span><span class="level-bars"></span>
+          <input class="api-input disabled" placeholder="null">
+        </div>
+        <p class="note"><strong>Kimi</strong> — 仅 high 启用（Kimi 实际只支持 high effort）。<br>对应的 models.json: <code>"thinkingLevelMap": {"high":"high"}</code></p>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- 数据流说明 -->
+<div class="card" style="margin-top: 24px;">
+  <div class="card-header">
+    <div class="avatar" style="background:var(--warning-light); color:var(--warning)">→</div>
+    <div class="name">完整链路</div>
+  </div>
+  <div style="padding: 12px 16px; font-size: 12px; line-height: 1.8; font-family: monospace;">
+    <div style="margin-bottom:8px;color:var(--muted)">当用户选择 "max" 并发送消息时：</div>
+    <div>① <strong>UI InputToolbar</strong> 读取 model.thinkingLevelMap → 只显示非 null 的 level</div>
+    <div>② 用户选 <code>max</code> → rpc-client 发送 <code>set_thinking_level: "max"</code></div>
+    <div>③ <strong>pi setThinkingLevel</strong> 内部 <code>max → xhigh</code>（pi-ai 只支持到 xhigh）</div>
+    <div>④ <strong>pi buildParams</strong> 读取 model.thinkingLevelMap.xhigh → <code>"max"</code> 作为 reasoning_effort</div>
+    <div>⑤ <strong>API 请求</strong> → <code>reasoning_effort: "max"</code></div>
+  </div>
+</div>
+
+<script>
+function toggleTheme() {
+  const el = document.documentElement;
+  el.dataset.theme = el.dataset.theme === 'dark' ? 'light' : 'dark';
+}
+
+function toggleLevel(cb) {
+  const row = cb.closest('.thinking-level-row');
+  const label = row.querySelector('.level-name');
+  const apiInput = row.querySelector('.api-input');
+  if (cb.checked) {
+    label.classList.remove('disabled');
+    apiInput.classList.remove('disabled');
+    apiInput.disabled = false;
+  } else {
+    label.classList.add('disabled');
+    apiInput.classList.add('disabled');
+    apiInput.disabled = true;
+  }
+}
+</script>
+</body>
+</html>
