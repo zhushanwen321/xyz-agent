@@ -83,6 +83,8 @@ export class ConfigService implements IConfigService {
         input: m.input,
         contextWindow: m.contextWindow,
         maxTokens: m.maxTokens,
+        thinkingLevelMap: m.thinkingLevelMap,
+        cost: m.cost,
         compat: m.compat,
       })),
       enabled: true,
