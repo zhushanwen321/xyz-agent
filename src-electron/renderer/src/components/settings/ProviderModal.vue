@@ -318,6 +318,7 @@ watch(() => props.visible, (v) => {
   if (v) document.addEventListener('keydown', handleKeydown)
   else {
     document.removeEventListener('keydown', handleKeydown)
+    openStrategyDropdown.value = null
     // modal 关闭时清理 discover 监听
     cleanupDiscover()
   }
