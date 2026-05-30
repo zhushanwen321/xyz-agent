@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { usePluginStore } from '../../stores/plugin'
-import { useSessionStore } from '../../stores/session'
-import { usePanelStore } from '../../stores/panel'
 import { getState } from '../../lib/ws-client'
 import { useI18n } from 'vue-i18n'
 import type { PluginStatusItem } from '../../types/plugin'
@@ -11,22 +9,10 @@ const PI_VERSION = '0.75.5-xyz-0.1'
 
 const { t } = useI18n()
 const pluginStore = usePluginStore()
-const sessionStore = useSessionStore()
-const panelStore = usePanelStore()
 const connState = getState()
 
-// ── Branch name from focused session ───────────────────────────
-
-const activeSessionId = computed(() => panelStore.focusedPanel?.sessionId ?? null)
-
-const branchName = computed(() => {
-  const sid = activeSessionId.value
-  if (!sid) return ''
-  const session = sessionStore.sessions.find(s => s.id === sid)
-  if (!session?.cwd) return ''
-  const parts = session.cwd.replace(/\/$/, '').split('/')
-  return parts[parts.length - 1] || ''
-})
+// ── Branch name is displayed in SessionStrip (per-session) ─────
+// AppStatusbar only shows global info (connection, version, global chips)
 
 // ── Plugin status bar items (global scope only) ────────────────
 
@@ -59,13 +45,12 @@ const statusText = computed(() => {
 
 <template>
   <footer class="flex items-center justify-between h-statusbar px-3.5 bg-surface border-t border-border text-[11px] text-muted shrink-0">
-    <!-- Left: connection + branch -->
+    <!-- Left: connection + version -->
     <div class="inline-flex items-center gap-3 min-w-0">
       <span class="inline-flex items-center gap-1">
         <span class="w-[5px] h-[5px] rounded-full" :style="{ background: dotColor }"></span>
         {{ statusText }}
       </span>
-      <span v-if="branchName" class="text-[10px] text-accent truncate max-w-[160px]">{{ branchName }}</span>
       <span class="text-[10px] text-muted">pi {{ PI_VERSION }}</span>
     </div>
 

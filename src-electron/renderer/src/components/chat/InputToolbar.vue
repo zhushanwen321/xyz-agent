@@ -37,7 +37,8 @@ const resolvedModel = computed(() => {
 
 const thinkingLevelMap = computed(() => resolvedModel.value?.thinkingLevelMap)
 const thinkingLevels = computed(() => Object.keys(thinkingLevelMap.value ?? {}))
-const showThinkingPicker = computed(() => thinkingLevels.value.length > 0)
+// Thinking level picker disabled — hidden via v-if="false" until pi supports setThinkingLevel RPC
+// const showThinkingPicker = computed(() => thinkingLevels.value.length > 0)
 
 const currentThinkingLevel = ref('')
 const thinkingOpen = ref(false)
@@ -108,7 +109,6 @@ const contextColor = computed(() => {
 // ── Token Stats ────────────────────────────────────────────────
 
 const inputTokens = computed(() => sessionState.value.contextInputTokens ?? 0)
-const outputTokens = computed(() => sessionState.value.tokenUsage ?? 0)
 
 function formatTokenCount(n: number): string {
   if (n >= 1000) return (n / 1000).toFixed(1) + 'k'
@@ -136,8 +136,8 @@ onBeforeUnmount(() => {
     <!-- Model Picker -->
     <ModelPicker :current-model="currentModel" @select="(id: string) => emit('select-model', id)" />
 
-    <!-- Thinking Level Picker -->
-    <div v-if="showThinkingPicker" ref="thinkingRef" class="relative">
+    <!-- Thinking Level Picker — hidden until pi supports setThinkingLevel RPC -->
+    <div v-if="false" ref="thinkingRef" class="relative">
       <Button
         variant="ghost"
         class="inline-flex items-center gap-[5px] px-1.5 h-7 border-none rounded-xs bg-transparent text-fg text-[11px] font-mono cursor-pointer whitespace-nowrap transition-all duration-150 ease-ease hover:bg-accent-light hover:text-accent"
@@ -196,10 +196,9 @@ onBeforeUnmount(() => {
       <span>{{ Math.min(contextUsagePercent, 100) }}%</span>
     </span>
 
-    <!-- Token Stats -->
+    <!-- Token Stats: input tokens only (total tokens not available per-request) -->
     <span class="inline-flex items-center gap-0.5 px-1 h-7 font-mono text-[10px] text-muted whitespace-nowrap">
       <span class="text-accent">&#8593;</span><span>{{ formatTokenCount(inputTokens) }}</span>
-      <span class="text-muted ml-0.5">&#8595;</span><span>{{ formatTokenCount(outputTokens) }}</span>
     </span>
 
     <span class="flex-1"></span>

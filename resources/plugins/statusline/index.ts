@@ -52,8 +52,7 @@ export async function activate(context: PluginContext): Promise<void> {
         const key = String((eventData as Record<string, unknown>).key ?? '')
         const text = (eventData as Record<string, unknown>).text == null ? '' : String((eventData as Record<string, unknown>).text)
 
-        // Empty text means clear — skip calling updateStatusBarItem
-        if (text === '') return
+        // Empty text means clear — let updateStatusBarItem handle removal (plugin-service deletes from Map)
 
         const meta = KEY_METADATA_MAP[key] ?? DEFAULT_METADATA
 
