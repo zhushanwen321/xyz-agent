@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
+import { ref, watch, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Button, Input, Select } from '../../design-system'
 import type { ProviderInfo, ModelInfo } from '@xyz-agent/shared'
@@ -280,34 +280,23 @@ function applyThinkingStrategy(model: ModalModel, strategy: ThinkingStrategy) {
   model.thinkingLevelMap = preset ? structuredClone(preset) : undefined
 }
 
-const openStrategyDropdown = ref<string | null>(null)
-const dropdownPos = ref({ top: 0, left: 0 })
+const editingModelId = ref<string | null>(null)
 
-const activeStrategyModel = computed(() => {
-  if (!openStrategyDropdown.value) return null
-  return modalModels.value.find(m => m.id === openStrategyDropdown.value) ?? null
-})
+function toggleModelEdit(modelId: string) {
+  editingModelId.value = editingModelId.value === modelId ? null : modelId
+}
 
-function toggleStrategyDropdown(modelId: string) {
-  if (openStrategyDropdown.value === modelId) {
-    openStrategyDropdown.value = null
-    return
-  }
-  openStrategyDropdown.value = modelId
-  nextTick(() => {
-    const trigger = document.querySelector(`[data-strategy-trigger="${modelId}"]`) as HTMLElement
-    if (!trigger) return
-    const rect = trigger.getBoundingClientRect()
-    dropdownPos.value = { top: rect.bottom + 4, left: rect.left }
-  })
+function pickStrategy(model: ModalModel, strategy: ThinkingStrategy) {
+  applyThinkingStrategy(model, strategy)
+  editingModelId.value = null
 }
 
 function handleKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
     e.preventDefault()
     e.stopPropagation()
-    if (openStrategyDropdown.value) {
-      openStrategyDropdown.value = null
+    if (editingModelId.value) {
+      editingModelId.value = null
       return
     }
     emit('close')
@@ -318,8 +307,7 @@ watch(() => props.visible, (v) => {
   if (v) document.addEventListener('keydown', handleKeydown)
   else {
     document.removeEventListener('keydown', handleKeydown)
-    openStrategyDropdown.value = null
-    // modal 关闭时清理 discover 监听
+    editingModelId.value = null
     cleanupDiscover()
   }
 })
@@ -406,44 +394,52 @@ onUnmounted(() => {
             </div>
           </div>
           <div class="max-h-60 overflow-y-auto">
-            <div v-for="(model, idx) in modalModels" :key="model.id" class="relative">
-              <div class="flex items-center gap-2.5 py-2.5 px-3.5 border-b border-border">
-                <span class="font-mono text-xs font-semibold min-w-[160px]">{{ model.name }}</span>
-                <div class="relative strategy-trigger" @click.stop>
-                  <Button
-                    variant="ghost"
-                    :data-strategy-trigger="model.id"
-                    :class="['strategy-badge', {
-                      'strategy-badge--default': getStrategyFromMap(model.thinkingLevelMap) === 'all-levels',
-                      'strategy-badge--binary': getStrategyFromMap(model.thinkingLevelMap) === 'on-off',
-                      'strategy-badge--highmax': getStrategyFromMap(model.thinkingLevelMap) === 'high-max',
-                    }]"
-                    @click="toggleStrategyDropdown(model.id)"
-                  >
-                    {{ STRATEGY_LABELS[getStrategyFromMap(model.thinkingLevelMap)] }}
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9" /></svg>
-                  </Button>
+            <div
+              v-for="(model, idx) in modalModels"
+              :key="model.id"
+              :class="['model-row', { editing: editingModelId === model.id }]"
+              @click="toggleModelEdit(model.id)"
+            >
+              <span class="model-name font-mono text-xs font-semibold">{{ model.name }}</span>
+              <div class="col-badge">
+                <!-- Inline pills (visible when editing) -->
+                <div class="strategy-pills">
+                  <button
+                    v-for="s in (['all-levels', 'on-off', 'high-max'] as const)"
+                    :key="s"
+                    :class="['pill', { 'pill--default active': getStrategyFromMap(model.thinkingLevelMap) === 'all-levels', 'pill--binary active': getStrategyFromMap(model.thinkingLevelMap) === 'on-off', 'pill--highmax active': getStrategyFromMap(model.thinkingLevelMap) === 'high-max' }]"
+                    @click.stop="pickStrategy(model, s)"
+                  >{{ s === 'all-levels' ? 'All' : s === 'on-off' ? 'O/O' : 'H/M' }}</button>
                 </div>
-                <span class="text-[11px] text-muted font-mono min-w-[50px]">{{ formatCtx(model.contextWindow) }}</span>
-                <Button variant="ghost" size="sm" class="hover:!text-[var(--danger)] hover:!bg-[var(--danger-light)]" @click="removeModel(idx)">
-                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M1 1l8 8M9 1L1 9" />
-                  </svg>
+                <!-- Badge (visible when not editing) -->
+                <span
+                  :class="['badge', {
+                    'badge--default': getStrategyFromMap(model.thinkingLevelMap) === 'all-levels',
+                    'badge--binary': getStrategyFromMap(model.thinkingLevelMap) === 'on-off',
+                    'badge--highmax': getStrategyFromMap(model.thinkingLevelMap) === 'high-max',
+                  }]"
+                >{{ STRATEGY_LABELS[getStrategyFromMap(model.thinkingLevelMap)] }}</span>
+              </div>
+              <span class="col-ctx">{{ formatCtx(model.contextWindow) }}</span>
+              <div class="col-remove">
+                <Button variant="ghost" size="sm" class="hover:!text-[var(--danger)] hover:!bg-[var(--danger-light)]" @click.stop="removeModel(idx)">
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 1l8 8M9 1L1 9" /></svg>
                 </Button>
               </div>
             </div>
           </div>
-          <div class="flex gap-2 py-2.5 px-3.5 bg-bg border-t border-border">
+          <div class="flex items-center gap-2 py-2.5 px-3.5 bg-bg border-t border-border">
             <Input
               v-model="addModelName"
               :placeholder="t('settings.manualInputModel')"
               class="flex-1"
               @keydown.enter="addModel"
             />
+            <span class="badge badge--binary" style="width:56px;font-size:9px">On / Off</span>
             <Select
               v-model="addModelCtx"
               :options="ctxOptions"
-              class="!max-w-[120px]"
+              class="!max-w-[100px]"
             />
             <Button variant="outline" size="sm" @click="addModel">{{ t('common.create') }}</Button>
           </div>
@@ -463,129 +459,102 @@ onUnmounted(() => {
       </div>
     </div>
   </div>
-
-  <!-- Strategy dropdown (teleported to body to escape overflow clipping) -->
-  <Teleport to="body">
-    <div
-      v-if="activeStrategyModel && openStrategyDropdown"
-      class="strategy-dropdown"
-      :style="{ top: dropdownPos.top + 'px', left: dropdownPos.left + 'px' }"
-      @click.stop
-    >
-      <div class="strategy-dropdown-label">Thinking Strategy</div>
-      <div
-        v-for="s in (['all-levels', 'on-off', 'high-max'] as const)"
-        :key="s"
-        :class="['strategy-dropdown-item', { active: getStrategyFromMap(activeStrategyModel!.thinkingLevelMap) === s }]"
-        @click="applyThinkingStrategy(activeStrategyModel!, s); openStrategyDropdown = null"
-      >
-        <span class="check">&#10003;</span>
-        <div>
-          <div>{{ STRATEGY_LABELS[s] }}</div>
-          <div v-if="s === 'all-levels'" class="strategy-dropdown-desc">All 6 levels visible</div>
-          <div v-else-if="s === 'on-off'" class="strategy-dropdown-desc">Off / On (xhigh)</div>
-          <div v-else class="strategy-dropdown-desc">off + high + xhigh&#8594;max</div>
-        </div>
-      </div>
-    </div>
-  </Teleport>
 </template>
 
 <style scoped>
-.strategy-badge {
+/* Fixed column layout */
+.model-row {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  border-bottom: 1px solid var(--divider);
+  transition: background 120ms ease;
+  cursor: pointer;
+}
+.model-row:last-child { border-bottom: none; }
+.model-row:hover { background: var(--hover-bg); }
+
+.model-name {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 0 7px 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.col-badge {
+  width: 80px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.col-ctx {
+  width: 48px;
+  flex-shrink: 0;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  padding-right: 8px;
+}
+.col-remove {
+  width: 28px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Badge */
+.badge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
+  justify-content: center;
+  width: 72px;
+  padding: 2px 0;
   border-radius: 100px;
   font-size: 10px;
   font-weight: 600;
   cursor: pointer;
   border: 1px solid transparent;
-  transition: all 120ms ease;
+  transition: all 100ms ease;
 }
-.strategy-badge--default {
-  background: var(--section-bg);
-  color: var(--muted);
-  border-color: var(--border);
-}
-.strategy-badge--default:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.strategy-badge--binary {
-  background: var(--agent-light);
-  color: var(--agent);
-}
-.strategy-badge--binary:hover {
-  border-color: var(--agent);
-}
-.strategy-badge--highmax {
-  background: var(--accent-light);
-  color: var(--accent);
-}
-.strategy-badge--highmax:hover {
-  border-color: var(--accent);
-}
+.badge--default { background: var(--section-bg); color: var(--muted); border-color: var(--border); }
+.badge--default:hover { border-color: var(--accent); color: var(--accent); }
+.badge--binary { background: var(--agent-light); color: var(--agent); }
+.badge--binary:hover { opacity: 0.8; }
+.badge--highmax { background: var(--accent-light); color: var(--accent); }
+.badge--highmax:hover { opacity: 0.8; }
 
-.strategy-trigger :deep(span) {
-  /* reset Button ghost padding for compact badge */
-}
-</style>
-
-<!-- Teleported dropdown uses global styles (not scoped) -->
-<style>
-.strategy-dropdown {
-  position: fixed;
-  z-index: 500;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 1px;
-  box-shadow: var(--shadow-md);
-  min-width: 160px;
-  padding: 3px 0;
-}
-.strategy-dropdown-label {
-  font-size: 9px;
-  font-weight: 600;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  padding: 5px 10px 2px;
-}
-.strategy-dropdown-item {
-  display: flex;
+/* Inline pills (hidden by default, shown when editing) */
+.strategy-pills {
+  display: none;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  font-size: 11px;
-  cursor: pointer;
-  width: 100%;
-  text-align: left;
-  color: var(--fg);
-  transition: background 80ms ease;
+  gap: 2px;
 }
-.strategy-dropdown-item:hover {
-  background: var(--hover-bg);
-}
-.strategy-dropdown-item.active {
-  color: var(--accent);
-  font-weight: 600;
-}
-.strategy-dropdown-item .check {
-  width: 12px;
-  text-align: center;
-  font-size: 10px;
-  color: var(--accent);
-  visibility: hidden;
-  flex-shrink: 0;
-}
-.strategy-dropdown-item.active .check {
-  visibility: visible;
-}
-.strategy-dropdown-desc {
+.model-row.editing .strategy-pills { display: flex; }
+.model-row.editing .badge { display: none; }
+
+.pill {
+  width: 24px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-size: 9px;
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: 100px;
+  border: 1px solid transparent;
+  transition: all 100ms ease;
+  background: transparent;
   color: var(--muted);
-  margin-top: 1px;
+  font-family: inherit;
 }
+.pill:hover { border-color: var(--border); }
+.pill--default.active { background: var(--section-bg); color: var(--fg); border-color: var(--border); }
+.pill--binary.active { background: var(--agent-light); color: var(--agent); }
+.pill--highmax.active { background: var(--accent-light); color: var(--accent); }
 </style>

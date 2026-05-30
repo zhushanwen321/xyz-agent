@@ -71,6 +71,7 @@ const modelCount = computed(() => props.models.length)
         :key="model.id"
         :name="model.name"
         :ctx="model.contextWindow ? `${Math.round(model.contextWindow / 1000)}K` : '--'"
+        :thinking-level-map="model.thinkingLevelMap"
       />
     </div>
   </div>
