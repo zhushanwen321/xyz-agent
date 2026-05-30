@@ -519,6 +519,12 @@ export class SidecarServer implements IMessageBroker {
         this.send(ws, { type: 'model.switched', id: msg.id, payload: { sessionId, provider, modelId } })
         return true
       }
+      case 'session.setThinkingLevel': {
+        const { sessionId: sid, level } = msg.payload
+        await this.sessionService.setThinkingLevel(sid as string, level as string)
+        this.send(ws, { type: 'session.thinkingLevelSet', id: msg.id, payload: { sessionId: sid, level } })
+        return true
+      }
       case 'tool.approve':
       case 'tool.deny':
       case 'tool.always_allow':

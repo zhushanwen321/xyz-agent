@@ -287,6 +287,13 @@ export class SessionService implements ISessionService {
     return sessionId
   }
 
+  async setThinkingLevel(sessionId: string, level: string): Promise<void> {
+    const client = this.pm.getClient(sessionId)
+    if (client) {
+      await client.setThinkingLevel(level)
+    }
+  }
+
   hasActiveSession(sessionId: string): boolean {
     return this.pm.hasClient(sessionId)
   }
