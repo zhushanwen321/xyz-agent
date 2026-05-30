@@ -44,7 +44,7 @@ const statusText = computed(() => {
 </script>
 
 <template>
-  <footer class="flex items-center justify-between h-statusbar px-3.5 bg-surface border-t border-border text-[11px] text-muted shrink-0">
+  <footer class="flex items-center justify-between h-statusbar px-3.5 bg-surface border-t border-border text-[11px] text-muted shrink-0 col-span-2">
     <!-- Left: connection + version -->
     <div class="inline-flex items-center gap-3 min-w-0">
       <span class="inline-flex items-center gap-1">

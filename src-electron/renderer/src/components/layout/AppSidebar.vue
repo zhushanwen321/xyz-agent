@@ -127,10 +127,6 @@ const isSettingsActive = computed(() => settingsStore.currentView === 'settings'
       </div>
     </div>
 
-    <!-- Bottom: Status -->
-    <div class="sidebar__btm">
-      <span class="sidebar__btm-status">● Connected</span>
-    </div>
   </aside>
 </template>
 
@@ -262,16 +258,5 @@ const isSettingsActive = computed(() => settingsStore.currentView === 'settings'
   font-size: 12px;
 }
 
-/* ---- Bottom ---- */
-.sidebar__btm {
-  padding: 10px 14px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 11px;
-  color: var(--muted);
-  border-top: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.sidebar__btm-status { color: var(--success); font-size: 10px; }
+/* ---- End ---- */
 </style>

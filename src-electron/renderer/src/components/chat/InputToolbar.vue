@@ -37,8 +37,7 @@ const resolvedModel = computed(() => {
 
 const thinkingLevelMap = computed(() => resolvedModel.value?.thinkingLevelMap)
 const thinkingLevels = computed(() => Object.keys(thinkingLevelMap.value ?? {}))
-// Thinking level picker disabled — hidden via v-if="false" until pi supports setThinkingLevel RPC
-// const showThinkingPicker = computed(() => thinkingLevels.value.length > 0)
+const showThinkingPicker = computed(() => thinkingLevels.value.length > 0)
 
 const currentThinkingLevel = ref('')
 const thinkingOpen = ref(false)
@@ -77,8 +76,7 @@ function getThinkingColor(level: string): string {
 function pickThinking(level: string) {
   currentThinkingLevel.value = level
   thinkingOpen.value = false
-  // Thinking level server handler not yet available — emit disabled until pi supports setThinkingLevel RPC
-  // emit('select-thinking-level', level)
+  emit('select-thinking-level', level)
 }
 
 function toggleThinking() {
@@ -136,8 +134,8 @@ onBeforeUnmount(() => {
     <!-- Model Picker -->
     <ModelPicker :current-model="currentModel" @select="(id: string) => emit('select-model', id)" />
 
-    <!-- Thinking Level Picker — hidden until pi supports setThinkingLevel RPC -->
-    <div v-if="false" ref="thinkingRef" class="relative">
+    <!-- Thinking Level Picker -->
+    <div v-if="showThinkingPicker" ref="thinkingRef" class="relative">
       <Button
         variant="ghost"
         class="inline-flex items-center gap-[5px] px-1.5 h-7 border-none rounded-xs bg-transparent text-fg text-[11px] font-mono cursor-pointer whitespace-nowrap transition-all duration-150 ease-ease hover:bg-accent-light hover:text-accent"
