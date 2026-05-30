@@ -12,6 +12,10 @@ export const useSettingsStore = defineStore('settings', () => {
   const inspectorOpen = ref(false)
   const inspectorSide = ref<'left' | 'right'>('right')
 
+  // Chat display settings
+  const autoExpandThinking = ref(true)
+  const autoExpandToolCalls = ref(true)
+
   // 旧值迁移: 'warm' → 'warm-teal', 'claude' → 'terracotta'
   function migratePalette(p: string): ThemePreset {
     if (p === 'warm') return 'warm-teal'
@@ -48,7 +52,8 @@ export const useSettingsStore = defineStore('settings', () => {
   return {
     theme, themePreset, locale, defaultModel, currentView,
     panelGridVisible, inspectorOpen, inspectorSide,
+    autoExpandThinking, autoExpandToolCalls,
     toggleTheme, applyTheme, setThemePreset, setView,
     togglePanelGrid, openInspector, closeInspector,
   }
-}, { persist: { key: 'xyz-settings', pick: ['theme', 'themePreset', 'locale', 'defaultModel'] } })
+}, { persist: { key: 'xyz-settings', pick: ['theme', 'themePreset', 'locale', 'defaultModel', 'autoExpandThinking', 'autoExpandToolCalls'] } })

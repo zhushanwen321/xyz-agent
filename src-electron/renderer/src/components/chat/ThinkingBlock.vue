@@ -17,6 +17,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { useSettingsStore } from '../../stores/settings'
 
 const props = defineProps<{
   text: string
@@ -24,7 +25,8 @@ const props = defineProps<{
   startTime?: number
   endTime?: number
 }>()
-const expanded = ref(false)
+const settingsStore = useSettingsStore()
+const expanded = ref(settingsStore.autoExpandThinking)
 
 // ── Elapsed time ──────────────────────────────────────────────
 const MS_PER_SECOND = 1000
