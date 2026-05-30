@@ -1,0 +1,991 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>xyz-agent — Statusline v2 Design Demo</title>
+<link rel="stylesheet" href="css_design-system.css">
+<style>
+/* ═══════════════════════════════════════════════════════════════
+   Overrides & extensions for this demo
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Thinking level colors ── */
+:root {
+  --tl-off: oklch(55% 0.02 50);
+  --tl-minimal: oklch(62% 0.06 240);
+  --tl-low: oklch(66% 0.08 200);
+  --tl-medium: oklch(68% 0.10 160);
+  --tl-high: oklch(68% 0.13 100);
+  --tl-xhigh: oklch(65% 0.16 55);
+}
+
+/* ── Highlight zones for annotation ── */
+.zone-highlight {
+  position: relative;
+  outline: 2px dashed transparent;
+  outline-offset: 4px;
+  transition: outline-color 0.25s var(--ease);
+}
+.zone-highlight:hover {
+  outline-color: var(--accent);
+}
+
+/* ── Zone label badge (top-right of each zone) ── */
+.zone-label {
+  position: absolute;
+  top: -20px;
+  right: 0;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  background: var(--accent-light);
+  padding: 1px 6px;
+  border-radius: 1px;
+  pointer-events: none;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.2s var(--ease);
+}
+.zone-highlight:hover .zone-label {
+  opacity: 1;
+}
+
+/* ── Thinking picker bars ── */
+.tl-bars {
+  display: inline-flex;
+  gap: 1.5px;
+  align-items: flex-end;
+  height: 12px;
+}
+.tl-bars span {
+  display: block;
+  width: 3px;
+  border-radius: 0.5px;
+  transition: height 0.15s var(--ease), background 0.15s var(--ease);
+}
+
+/* ── Thinking level button ── */
+.tb-thinking {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 6px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+  transition: all 0.15s var(--ease);
+  white-space: nowrap;
+  color: var(--fg);
+}
+.tb-thinking:hover {
+  background: var(--accent-light);
+}
+
+/* ── Context bar in toolbar ── */
+.tb-ctx {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  height: 28px;
+  flex-shrink: 0;
+}
+.tb-ctx__track {
+  width: 40px;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.tb-ctx__fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease, background 0.3s ease;
+}
+.tb-ctx__fill[data-sev="ok"]     { background: var(--accent); }
+.tb-ctx__fill[data-sev="warn"]   { background: var(--warning); }
+.tb-ctx__fill[data-sev="danger"] { background: var(--danger); }
+
+/* ── Token stats ── */
+.tb-tokens {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px;
+  height: 28px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SESSION STRIP — 输入框下方 per-panel 信息条
+   ═══════════════════════════════════════════════════════════════ */
+.session-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px 8px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--muted);
+  min-height: 22px;
+  flex-wrap: wrap;
+}
+.ss-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+.ss-sep {
+  color: var(--border);
+  user-select: none;
+}
+.ss-branch {
+  color: var(--accent);
+}
+.ss-cost {
+  color: var(--muted);
+}
+
+/* ── Extension status chips in session strip ── */
+.ss-ext-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: 1px;
+  font-size: 10px;
+  font-weight: 600;
+  transition: all 0.15s var(--ease);
+}
+.ss-ext-chip--goal {
+  background: var(--accent-light);
+  color: var(--accent);
+}
+.ss-ext-chip--todo {
+  background: var(--success-light);
+  color: var(--success);
+}
+.ss-ext-chip__dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.ss-ext-chip--goal .ss-ext-chip__dot { background: var(--accent); }
+.ss-ext-chip--todo .ss-ext-chip__dot { background: var(--success); }
+
+/* ═══════════════════════════════════════════════════════════════
+   GLOBAL STATUSBAR — 窗口最底部（用 design-system 的 .statusbar）
+   ═══════════════════════════════════════════════════════════════ */
+.global-statusbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--statusbar-h);
+  padding: 0 14px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--muted);
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+}
+.gs-left, .gs-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+.gs-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.gs-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.gs-dot--conn    { background: var(--success); }
+.gs-dot--reconn  { background: var(--warning); animation: dot-pulse 1s ease-in-out infinite; }
+.gs-dot--disconn { background: var(--border); }
+
+/* ── Extension chips in global statusbar ── */
+.gs-ext {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.gs-ext__dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.gs-ext__dot--pi       { background: var(--accent); }
+.gs-ext__dot--xyz      { background: var(--success); }
+.gs-ext__dot--workflow { background: var(--warning); }
+.gs-divider {
+  width: 1px;
+  height: 12px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+/* ── Channel badge in global statusbar ── */
+.gs-channel {
+  font-size: 8px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 3px;
+  border-radius: 1px;
+  line-height: 1;
+}
+.gs-channel--pi  { background: var(--accent-light); color: var(--accent); }
+.gs-channel--xyz { background: var(--success-light); color: var(--success); }
+
+/* ═══════════════════════════════════════════════════════════════
+   DROPDOWNS (reused from design-system style)
+   ═══════════════════════════════════════════════════════════════ */
+.dropdown-panel {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  min-width: 220px;
+  max-height: 280px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.12);
+  overflow-y: auto;
+  z-index: 200;
+  padding: 4px 0;
+  display: none;
+}
+.dropdown-panel.visible { display: block; }
+
+.dd-section {
+  padding: 4px 0;
+}
+.dd-section + .dd-section {
+  border-top: 1px solid var(--border);
+}
+.dd-section-title {
+  padding: 6px 12px 3px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+.dd-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  font-size: 12px;
+  color: var(--fg);
+  cursor: pointer;
+  transition: background 0.1s var(--ease);
+}
+.dd-item:hover { background: var(--accent-light); }
+.dd-item--active { color: var(--accent); font-weight: 600; }
+.dd-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--border);
+  flex-shrink: 0;
+}
+.dd-item--active .dd-dot { background: var(--accent); }
+.dd-name { flex: 1; font-family: var(--font-mono); font-size: 12px; }
+.dd-meta { font-size: 10px; color: var(--muted); }
+
+/* ── Thinking dropdown ── */
+.tl-dropdown { min-width: 200px; }
+.tl-dropdown .dd-item { gap: 10px; padding: 8px 12px; }
+.tl-label { flex: 1; }
+.tl-desc { font-size: 10px; color: var(--muted); font-weight: 400; }
+.tl-check {
+  width: 14px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--accent);
+  opacity: 0;
+  transition: opacity 0.1s var(--ease);
+}
+.dd-item--active .tl-check { opacity: 1; }
+
+/* ═══════════════════════════════════════════════════════════════
+   DEMO PANEL — 右下角浮动
+   ═══════════════════════════════════════════════════════════════ */
+.demo-panel {
+  position: fixed;
+  bottom: 44px;
+  right: 16px;
+  z-index: 900;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  width: 230px;
+  font-size: 12px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.12);
+}
+.demo-panel__title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.demo-panel__group {
+  margin-bottom: 8px;
+}
+.demo-panel__label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 11px;
+}
+.demo-panel__range-label {
+  font-size: 10px;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+.demo-panel input[type="range"] {
+  width: 100%;
+  margin: 2px 0 6px;
+  accent-color: var(--accent);
+}
+.demo-panel select {
+  width: 100%;
+  padding: 4px 8px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  margin-bottom: 6px;
+}
+.demo-panel__note {
+  font-size: 9px;
+  color: var(--muted);
+  margin-top: 4px;
+  line-height: 1.4;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   ANNOTATION LEGEND — 左下角浮动
+   ═══════════════════════════════════════════════════════════════ */
+.legend {
+  position: fixed;
+  bottom: 44px;
+  left: 256px;
+  z-index: 900;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  width: 420px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.12);
+  font-size: 11px;
+  line-height: 1.8;
+}
+.legend__title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.legend__row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.legend__num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  background: var(--accent);
+  color: white;
+  font-size: 9px;
+  font-weight: 700;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.legend__text { color: var(--fg); }
+.legend__text em {
+  color: var(--accent);
+  font-style: normal;
+  font-weight: 600;
+}
+.legend__section {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.legend__section-title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.legend__flow {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.7;
+  color: var(--muted);
+  background: var(--bg);
+  padding: 8px 10px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border);
+  white-space: pre;
+  overflow-x: auto;
+}
+.legend__flow .hl-accent { color: var(--accent); font-weight: 600; }
+.legend__flow .hl-success { color: var(--success); font-weight: 600; }
+.legend__flow .hl-warning { color: var(--warning); font-weight: 600; }
+
+/* ── Collapsible sections ── */
+.legend__toggle {
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.legend__toggle:hover { color: var(--accent); }
+.legend__toggle-icon {
+  font-size: 8px;
+  transition: transform 0.15s var(--ease);
+  display: inline-block;
+}
+.legend__toggle.collapsed .legend__toggle-icon {
+  transform: rotate(-90deg);
+}
+.legend__toggle.collapsed + .legend__content {
+  display: none;
+}
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     APP SHELL
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="app">
+  <!-- ── Sidebar ── -->
+  <aside class="sidebar">
+    <div class="sidebar__hd">
+      <span class="sidebar__hd-title">Sessions</span>
+    </div>
+    <div class="sidebar__body">
+      <div class="s-item active">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+        <span class="s-item__title">xyz-agent</span>
+        <span class="s-item__meta"><span class="dot dot--run"></span></span>
+      </div>
+      <div class="s-item">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+        <span class="s-item__title">pi-mono-workspace</span>
+        <span class="s-item__meta"><span class="dot dot--idle"></span></span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ── Main content ── -->
+  <main class="main-area">
+    <div class="chat-panel">
+
+      <!-- Panel bar -->
+      <div class="panel-bar">
+        <div class="anchor">
+          <span class="anchor__dot" style="background:var(--success)"></span>
+          <span>主线对话</span>
+          <span class="anchor__chevron">▾</span>
+        </div>
+        <div class="panel-notifs">
+          <span class="pn-chip pn-chip--done">
+            <span class="pn-chip__num">3</span> Done
+          </span>
+        </div>
+      </div>
+
+      <!-- Chat messages -->
+      <div class="chat-msgs">
+        <div class="msg msg--user">
+          <div class="msg__role">用户</div>
+          <div class="msg__body"><p>帮我设计 statusline 的三区布局，需要区分 per-panel 和全局信息。</p></div>
+        </div>
+        <div class="msg msg--bot">
+          <div class="msg__role">助手</div>
+          <div class="msg__body">
+            <p>statusline 分三层：</p>
+            <p>1. <strong>Input Toolbar</strong> — 输入框内部底部，per-panel<br>
+               2. <strong>Session Strip</strong> — 输入框下方，per-panel<br>
+               3. <strong>Global Statusbar</strong> — 窗口底部，全局共享</p>
+            <p>信息不重复：context + tokens 只在 Input Toolbar；branch + cost + extension 在 Session Strip；连接 + 版本 + extension chips 在 Global Statusbar。</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════════
+           ZONE A: Input Area (Toolbar + Strip)
+           ═══════════════════════════════════════════════════════ -->
+      <div style="flex-shrink:0;padding:0 16px;max-width:960px;width:100%;align-self:center;">
+
+        <!-- ── ZONE 1: Input Toolbar (inside input box) ── -->
+        <div class="chat-input-wrap zone-highlight" id="zone-input-toolbar">
+          <span class="zone-label">Zone 1 · Input Toolbar</span>
+          <div class="chat-input-container">
+            <textarea class="chat-input-textarea" placeholder="输入消息…" rows="2"></textarea>
+            <div class="chat-input-toolbar">
+
+              <!-- ❶ Model picker -->
+              <div class="tb-model" id="modelPickerWrap" style="position:relative">
+                <span id="modelName">sonnet-4</span>
+                <span class="tb-model__sep">@</span>
+                <span class="tb-model__provider" id="modelProv">anthropic</span>
+                <div class="dropdown-panel model-dropdown" id="modelDD">
+                  <div class="dd-section">
+                    <div class="dd-section-title">Anthropic</div>
+                    <div class="dd-item dd-item--active" onclick="pickModel('sonnet-4','anthropic',this)">
+                      <span class="dd-dot"></span>
+                      <span class="dd-name">claude-sonnet-4</span>
+                      <span class="dd-meta">200k</span>
+                    </div>
+                    <div class="dd-item" onclick="pickModel('opus-4','anthropic',this)">
+                      <span class="dd-dot"></span>
+                      <span class="dd-name">claude-opus-4</span>
+                      <span class="dd-meta">200k</span>
+                    </div>
+                    <div class="dd-item" onclick="pickModel('haiku-3.5','anthropic',this)">
+                      <span class="dd-dot"></span>
+                      <span class="dd-name">claude-3.5-haiku</span>
+                      <span class="dd-meta">200k</span>
+                    </div>
+                  </div>
+                  <div class="dd-section">
+                    <div class="dd-section-title">OpenAI</div>
+                    <div class="dd-item" onclick="pickModel('gpt-4o','openai',this)">
+                      <span class="dd-dot"></span>
+                      <span class="dd-name">gpt-4o</span>
+                      <span class="dd-meta">128k</span>
+                    </div>
+                    <div class="dd-item" onclick="pickModel('o3','openai',this)">
+                      <span class="dd-dot"></span>
+                      <span class="dd-name">o3</span>
+                      <span class="dd-meta">200k</span>
+                    </div>
+                  </div>
+                  <div class="dd-section">
+                    <div class="dd-section-title">DeepSeek</div>
+                    <div class="dd-item" onclick="pickModel('deepseek-v4','deepseek',this)">
+                      <span class="dd-dot"></span>
+                      <span class="dd-name">deepseek-v4</span>
+                      <span class="dd-meta">128k</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ❷ Thinking level picker -->
+              <div id="thinkingPickerWrap" style="position:relative">
+                <button class="tb-thinking" id="tlBtn" onclick="toggleDD('tlDD')">
+                  <!-- injected by JS -->
+                </button>
+                <div class="dropdown-panel tl-dropdown" id="tlDD">
+                  <!-- injected by JS -->
+                </div>
+              </div>
+
+              <!-- ❸ Context bar -->
+              <div class="tb-ctx">
+                <div class="tb-ctx__track">
+                  <div class="tb-ctx__fill" id="ctxFill" style="width:42%" data-sev="ok"></div>
+                </div>
+                <span id="ctxPct">42%</span>
+              </div>
+
+              <!-- ❹ Token stats -->
+              <span class="tb-tokens">
+                <span style="color:var(--accent)">↑</span><span id="statIn">12.4k</span>
+                <span style="color:oklch(65% 0.06 260)">↓</span><span id="statOut">3.2k</span>
+              </span>
+
+              <div class="tb-spacer"></div>
+
+              <!-- ❺ Send button -->
+              <button class="tb-btn tb-btn--send" title="发送">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V3M4 7l4-4 4 4"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── ZONE 2: Session Strip (below input box) ── -->
+        <div class="session-strip zone-highlight" id="zone-session-strip">
+          <span class="zone-label">Zone 2 · Session Strip</span>
+          <span class="ss-item">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 01-9 9"/></svg>
+            <span class="ss-branch">feat-statusline</span>
+          </span>
+          <span class="ss-sep">|</span>
+          <span class="ss-item">
+            <span class="ss-cost">$0.042</span>
+          </span>
+          <span class="ss-sep">|</span>
+          <!-- Extension status chips (from pi extension setStatus) -->
+          <span class="ss-item" id="ssGoalChip">
+            <span class="ss-ext-chip ss-ext-chip--goal">
+              <span class="ss-ext-chip__dot"></span>
+              Goal 3/20 · 2/5 tasks
+            </span>
+          </span>
+          <span class="ss-item" id="ssTodoChip">
+            <span class="ss-ext-chip ss-ext-chip--todo">
+              <span class="ss-ext-chip__dot"></span>
+              Todo 4/7
+            </span>
+          </span>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════════
+           ZONE 3: Global Statusbar (window bottom)
+           ═══════════════════════════════════════════════════════ -->
+      <div class="global-statusbar zone-highlight" id="zone-global-statusbar">
+        <span class="zone-label">Zone 3 · Global Statusbar</span>
+        <div class="gs-left">
+          <!-- Connection status -->
+          <span class="gs-item" id="gsConn">
+            <span class="gs-dot gs-dot--conn" id="gsConnDot"></span>
+            <span id="gsConnText">Connected</span>
+          </span>
+          <!-- pi version -->
+          <span class="gs-item">v0.75.5-xyz-0.1</span>
+        </div>
+        <div class="gs-right">
+          <!-- Channel A: pi extension setStatus → event-adapter -->
+          <span class="gs-item" id="gsGoal" title="Data: pi extension setStatus → event-adapter → frontend">
+            <span class="gs-channel gs-channel--pi">PI</span>
+            <span class="gs-ext__dot gs-ext__dot--pi"></span>
+            Goal 3/20
+          </span>
+
+          <span class="gs-divider"></span>
+
+          <!-- Channel B: xyz-agent plugin statusBarUpdate -->
+          <span class="gs-item" id="gsTodo" title="Data: xyz-agent plugin → statusBarUpdate → frontend">
+            <span class="gs-channel gs-channel--xyz">XYZ</span>
+            <span class="gs-ext__dot gs-ext__dot--xyz"></span>
+            Todo 4/7
+          </span>
+
+          <span class="gs-item" id="gsWorkflow" title="Data: xyz-agent plugin → statusBarUpdate → frontend">
+            <span class="gs-channel gs-channel--xyz">XYZ</span>
+            <span class="gs-ext__dot gs-ext__dot--workflow"></span>
+            Phase 3/5
+          </span>
+        </div>
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     ANNOTATION LEGEND
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="legend">
+  <div class="legend__title">Annotation Key</div>
+
+  <div class="legend__row"><span class="legend__num">1</span><span class="legend__text"><em>Model picker</em> — 输入框 toolbar 内，按 provider 分组，显示 context window 大小</span></div>
+  <div class="legend__row"><span class="legend__num">2</span><span class="legend__text"><em>Thinking level</em> — 信号柱 + 名称，仅 reasoning model 可选。6 级: off / minimal / low / medium / high / xhigh</span></div>
+  <div class="legend__row"><span class="legend__num">3</span><span class="legend__text"><em>Context bar</em> — 迷你进度条 + 百分比。&lt;60% accent / 60-85% warning / &gt;85% danger</span></div>
+  <div class="legend__row"><span class="legend__num">4</span><span class="legend__text"><em>Token stats</em> — ↑input / ↓output token 计数，per-panel</span></div>
+  <div class="legend__row"><span class="legend__num">5</span><span class="legend__text"><em>Session Strip</em> — 输入框下方: branch / cost / extension status (goal, todo)。Per-panel 隔离</span></div>
+  <div class="legend__row"><span class="legend__num">6</span><span class="legend__text"><em>Global Statusbar</em> — 窗口底部: 连接状态 / pi 版本 / extension chips (汇聚两条数据通道)</span></div>
+
+  <!-- ── Data Flow Diagram ── -->
+  <div class="legend__section">
+    <div class="legend__section-title legend__toggle" onclick="this.classList.toggle('collapsed')">
+      <span class="legend__toggle-icon">▾</span>
+      Data Flow — 两条数据通道
+    </div>
+    <div class="legend__content">
+      <div class="legend__flow"><span class="hl-accent">Channel A: pi extension</span>
+  pi extension <span class="hl-accent">setStatus()</span>
+    → sidecar event-adapter (normalized)
+      → frontend <span class="hl-accent">statusBarStore</span>
+        → Global Statusbar <span class="hl-accent">[PI]</span> chips
+        → Session Strip <span class="hl-accent">goal chip</span>
+
+<span class="hl-success">Channel B: xyz-agent plugin</span>
+  xyz-agent plugin (Worker)
+    → <span class="hl-success">statusBarUpdate</span> event
+      → server.ts → WS → frontend <span class="hl-success">statusBarStore</span>
+        → Global Statusbar <span class="hl-success">[XYZ]</span> chips
+        → Session Strip <span class="hl-success">todo chip</span>
+
+<span class="hl-warning">汇聚点</span>: Global Statusbar 同时展示 [PI] 和 [XYZ] chips
+  - 不重复: context + tokens 只在 Input Toolbar
+  - 不重复: branch + cost 只在 Session Strip
+  - 不重复: 连接 + 版本只在 Global Statusbar</div>
+    </div>
+  </div>
+
+  <!-- ── xyz-agent plugin wrapper ── -->
+  <div class="legend__section">
+    <div class="legend__section-title legend__toggle" onclick="this.classList.toggle('collapsed')">
+      <span class="legend__toggle-icon">▾</span>
+      xyz-agent plugin 如何封装 pi extension
+    </div>
+    <div class="legend__content">
+      <div class="legend__flow"><span class="hl-accent">pi extension</span> (外部, 运行在 pi 进程)
+  - 通过 ctx.ui.setStatus({text, type}) 上报状态
+  - 例子: goal extension 上报 "Goal 3/20 | 2/5 tasks"
+  - 数据格式: {text: string, type: 'info'|'warn'|'error'}
+
+<span class="hl-success">xyz-agent plugin</span> (内部, 运行在 Worker Thread)
+  - plugin system 的 Worker 线程
+  - 通过 pluginContext.statusBar.update({key, label, ...})
+  - 例子: todo plugin 上报 "Todo 4/7"
+  - 数据格式: StatusBarEntry {id, label, color?, priority?}
+
+<span class="hl-warning">封装逻辑</span> (在 server.ts / event-adapter)
+  1. pi extension setStatus → 转换为统一 StatusBarEntry
+  2. xyz-agent plugin statusBarUpdate → 已是 StatusBarEntry
+  3. 两条流 merge 后统一 push 给前端
+  4. 前端 statusBarStore 按 source 标记 [PI] / [XYZ]</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     DEMO CONTROLS
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="demo-panel">
+  <div class="demo-panel__title">Demo Controls</div>
+
+  <div class="demo-panel__group">
+    <div class="demo-panel__range-label">Context Usage</div>
+    <input type="range" min="5" max="100" value="42" oninput="setContext(this.value)">
+  </div>
+
+  <div class="demo-panel__group">
+    <div class="demo-panel__range-label">Connection</div>
+    <select onchange="setConn(this.value)">
+      <option value="connected" selected>Connected</option>
+      <option value="reconnecting">Reconnecting</option>
+      <option value="disconnected">Disconnected</option>
+    </select>
+  </div>
+
+  <div class="demo-panel__group">
+    <div class="demo-panel__range-label">Thinking Level</div>
+    <select onchange="setThinkingLevel(this.value)">
+      <option value="off">Off</option>
+      <option value="minimal">Minimal</option>
+      <option value="low">Low</option>
+      <option value="medium">Medium</option>
+      <option value="high" selected>High</option>
+      <option value="xhigh">XHigh</option>
+    </select>
+  </div>
+
+  <label class="demo-panel__label">
+    <input type="checkbox" checked onchange="toggleExt('goal',this.checked)">
+    Goal extension (Channel A · PI)
+  </label>
+  <label class="demo-panel__label">
+    <input type="checkbox" checked onchange="toggleExt('todo',this.checked)">
+    Todo extension (Channel B · XYZ)
+  </label>
+  <label class="demo-panel__label">
+    <input type="checkbox" checked onchange="toggleExt('workflow',this.checked)">
+    Workflow extension (Channel B · XYZ)
+  </label>
+
+  <div class="demo-panel__note">
+    Hover over each zone to see its label. <br>
+    Zone 1/2 = per-panel · Zone 3 = global
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     JAVASCRIPT
+     ═══════════════════════════════════════════════════════════════ -->
+<script>
+// ── Thinking Level ──
+const LEVELS = [
+  { id:'off',     label:'Off',     desc:'No thinking',     heights:[3,3,3,3,3],   color:'var(--tl-off)' },
+  { id:'minimal', label:'Minimal', desc:'Brief reasoning', heights:[2,4,5,6,7],   color:'var(--tl-minimal)' },
+  { id:'low',     label:'Low',     desc:'Light analysis',  heights:[2,4,6,8,9],   color:'var(--tl-low)' },
+  { id:'medium',  label:'Medium',  desc:'Balanced',        heights:[2,5,7,9,10],  color:'var(--tl-medium)' },
+  { id:'high',    label:'High',    desc:'Deep reasoning',  heights:[2,5,8,10,11], color:'var(--tl-high)' },
+  { id:'xhigh',   label:'XHigh',   desc:'Maximum effort',  heights:[3,6,9,11,12], color:'var(--tl-xhigh)' },
+];
+let currentLevel = 'high';
+
+function barsHTML(h, c) {
+  return h.map(v => `<span style="height:${v}px;background:${c}"></span>`).join('');
+}
+
+function renderTLButton() {
+  const lv = LEVELS.find(l => l.id === currentLevel);
+  document.getElementById('tlBtn').innerHTML =
+    `<span class="tl-bars">${barsHTML(lv.heights, lv.color)}</span>` +
+    `<span style="color:${lv.color}">${lv.label}</span>`;
+}
+
+function renderTLDropdown() {
+  document.getElementById('tlDD').innerHTML = LEVELS.map(lv => `
+    <div class="dd-item ${lv.id===currentLevel?'dd-item--active':''}" onclick="pickTL('${lv.id}',this)">
+      <span class="tl-bars">${barsHTML(lv.heights, lv.color)}</span>
+      <span class="tl-label">${lv.label}</span>
+      <span class="tl-desc">${lv.desc}</span>
+      <span class="tl-check">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 8 6.5 11.5 13 4.5"/></svg>
+      </span>
+    </div>
+  `).join('');
+}
+
+renderTLButton();
+renderTLDropdown();
+
+// ── Dropdown toggle ──
+function toggleDD(id) {
+  const el = document.getElementById(id);
+  const open = el.classList.contains('visible');
+  closeAllDD();
+  if (!open) el.classList.add('visible');
+}
+
+function closeAllDD() {
+  document.querySelectorAll('.dropdown-panel').forEach(d => d.classList.remove('visible'));
+}
+
+document.addEventListener('click', e => {
+  if (!e.target.closest('#modelPickerWrap') && !e.target.closest('#thinkingPickerWrap')) {
+    closeAllDD();
+  }
+});
+
+// ── Model picker ──
+function pickModel(name, prov, el) {
+  document.getElementById('modelName').textContent = name;
+  document.getElementById('modelProv').textContent = prov;
+  const dd = el.closest('.dropdown-panel');
+  dd.querySelectorAll('.dd-item').forEach(i => i.classList.remove('dd-item--active'));
+  el.classList.add('dd-item--active');
+  closeAllDD();
+}
+
+// ── Thinking level ──
+function pickTL(id, el) {
+  currentLevel = id;
+  renderTLButton();
+  el.closest('.dropdown-panel').querySelectorAll('.dd-item').forEach(i => i.classList.remove('dd-item--active'));
+  el.classList.add('dd-item--active');
+  closeAllDD();
+  // Sync demo panel select
+  document.querySelector('.demo-panel select[onchange*="setThinkingLevel"]').value = id;
+}
+
+function setThinkingLevel(id) {
+  currentLevel = id;
+  renderTLButton();
+  renderTLDropdown();
+}
+
+// ── Context usage ──
+function setContext(pct) {
+  pct = +pct;
+  const fill = document.getElementById('ctxFill');
+  const label = document.getElementById('ctxPct');
+  fill.style.width = pct + '%';
+  label.textContent = pct + '%';
+  fill.setAttribute('data-sev', pct > 85 ? 'danger' : pct > 60 ? 'warn' : 'ok');
+
+  // Also update token stats proportionally
+  const inTokens = Math.round(pct * 0.295 * 100) / 100;  // ~0 to ~30k
+  const outTokens = Math.round(pct * 0.076 * 100) / 100;  // ~0 to ~7.6k
+  document.getElementById('statIn').textContent = inTokens.toFixed(1) + 'k';
+  document.getElementById('statOut').textContent = outTokens.toFixed(1) + 'k';
+}
+
+// ── Connection status ──
+function setConn(s) {
+  const dot = document.getElementById('gsConnDot');
+  const text = document.getElementById('gsConnText');
+  dot.className = 'gs-dot ' + (
+    s === 'connected' ? 'gs-dot--conn' :
+    s === 'reconnecting' ? 'gs-dot--reconn' :
+    'gs-dot--disconn'
+  );
+  text.textContent = s === 'connected' ? 'Connected' :
+                     s === 'reconnecting' ? 'Reconnecting…' :
+                     'Disconnected';
+}
+
+// ── Extension toggles ──
+function toggleExt(name, on) {
+  const extMap = {
+    goal:     { global: 'gsGoal',     strip: 'ssGoalChip' },
+    todo:     { global: 'gsTodo',     strip: 'ssTodoChip' },
+    workflow: { global: 'gsWorkflow', strip: null },
+  };
+  const targets = extMap[name];
+  if (!targets) return;
+
+  const globalEl = document.getElementById(targets.global);
+  if (globalEl) globalEl.style.display = on ? '' : 'none';
+
+  if (targets.strip) {
+    const stripEl = document.getElementById(targets.strip);
+    if (stripEl) stripEl.style.display = on ? '' : 'none';
+  }
+}
+</script>
+
+</body>
+</html>
