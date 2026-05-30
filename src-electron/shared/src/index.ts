@@ -4,6 +4,7 @@ export type {
   ServerMessageType, ServerMessage,
   ExtensionUIRequestPayload, ExtensionUIResponsePayload,
   ExtensionErrorPayload, ToolCallUpdatePayload, ExtensionInfo,
+  StatusBarItem, StatusSetUpdatePayload, PluginStatusBarUpdatePayload,
 } from './protocol'
 export type {
   MessageRole, MessageStatus, ToolCallStatus,

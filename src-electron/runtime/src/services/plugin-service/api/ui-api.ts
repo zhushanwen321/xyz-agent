@@ -15,6 +15,7 @@
 
 import type { PluginRpcServer } from '../plugin-rpc-server.js'
 import type { PluginRpcClient } from '../plugin-rpc-client.js'
+import type { StatusBarItemOptions } from '../plugin-types.js'
 
 /** UI 服务依赖（主线程侧） */
 export interface UiHandlers {
@@ -26,7 +27,7 @@ export interface UiHandlers {
   showConfirm(title: string, message: string, pluginId: string): Promise<boolean>
   showInput(title: string, defaultValue: string | undefined, pluginId: string): Promise<string | undefined>
   notify(pluginId: string, level: string, message: string): Promise<void>
-  updateStatusBarItem(pluginId: string, id: string, text: string): Promise<void>
+  updateStatusBarItem(pluginId: string, id: string, text: string, options?: StatusBarItemOptions): Promise<void>
 }
 
 export function registerUiRpcHandlers(
@@ -65,7 +66,8 @@ export function registerUiRpcHandlers(
     const pluginId = params.pluginId as string
     const id = params.id as string
     const text = params.text as string
-    await deps.updateStatusBarItem(pluginId, id, text)
+    const options = params.options as StatusBarItemOptions | undefined
+    await deps.updateStatusBarItem(pluginId, id, text, options)
   })
 }
 
@@ -77,7 +79,7 @@ export function createUiApi(
   showConfirm(title: string, message: string): Promise<boolean>
   showInput(title: string, defaultValue?: string): Promise<string | undefined>
   notify(level: 'info' | 'warn' | 'error', message: string): Promise<void>
-  updateStatusBarItem(id: string, text: string): Promise<void>
+  updateStatusBarItem(id: string, text: string, options?: StatusBarItemOptions): Promise<void>
 } {
   return {
     showSelect: (title: string, options: string[]) =>
@@ -92,7 +94,7 @@ export function createUiApi(
     notify: (level: 'info' | 'warn' | 'error', message: string) =>
       rpcClient.request('plugin.ui.notify', { pluginId, level, message }).then(() => {}),
 
-    updateStatusBarItem: (id: string, text: string) =>
-      rpcClient.request('plugin.ui.updateStatusBarItem', { pluginId, id, text }).then(() => {}),
+    updateStatusBarItem: (id: string, text: string, options?: StatusBarItemOptions) =>
+      rpcClient.request('plugin.ui.updateStatusBarItem', { pluginId, id, text, options }).then(() => {}),
   }
 }
