@@ -13,37 +13,27 @@ import type { PluginHost as ActivatorHost } from './plugin-activator.js'
 import { PluginRpcServer } from './plugin-rpc-server.js'
 
 /**
- * 解析 plugin-host.ts 所在目录。
+ * 解析 plugin-host.ts 所在目录（即 dist/runtime/）。
  *
- * - CJS bundle（tsup 产物）: __dirname 由 tsup 注入
- * - ESM 源码（开发/测试）: 通过 import.meta.url 推导
+ * - CJS bundle（tsup 产物）: __dirname 是 Node.js CJS 模块变量，指向 bundle 所在目录
+ * - ESM 源码（开发/测试 tsx）: import.meta.url 推导
  * - 均不可用时抛出清晰错误
+ *
+ * 关键：CJS 中 __dirname 是模块作用域变量，不在 globalThis 上。
+ * tsup 用 esbuild 编译，__dirname 引用会原样保留到 CJS 输出。
  */
 function resolvePluginHostDir(): string {
-  // __dirname 在 tsup CJS bundle 中由运行时注入，ESM 源码直跑时为 undefined
-  // 用 globalThis 访问避免 @ts-expect-error/@ts-ignore 的 tsc vs eslint 冲突
-  const dir = (globalThis as Record<string, unknown>).__dirname
-  if (typeof dir === 'string' && dir) {
-    // 开发模式下交叉验证 import.meta.url（仅在两者都可用时）
-    if (typeof import.meta !== 'undefined' && import.meta.url) {
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports -- 动态 require 避免顶层 import 在 CJS bundle 中报错
-        const { fileURLToPath } = require('node:url') as typeof import('node:url')
-        const metaDir = dirname(fileURLToPath(import.meta.url))
-        if (metaDir !== dir) {
-          console.warn(
-            `[plugin-host] path divergence detected: __dirname=${dir} vs import.meta.url→${metaDir}. ` +
-            `Using __dirname (CJS bundle path).`,
-          )
-        }
-      } catch {
-        // fileURLToPath 不可用则跳过交叉验证
-      }
-    }
-    return dir
+  // CJS: __dirname 是 Node.js 注入的模块局部变量，指向当前文件所在目录
+  // tsup/esbuild 不转换 typeof 检查，CJS 运行时 typeof __dirname === 'string'
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const cjsDir = typeof __dirname !== 'undefined' ? __dirname : undefined
+  if (cjsDir && cjsDir !== '.') {
+    return cjsDir
   }
 
   // ESM 源码路径（开发/测试直跑 tsx）
+  // 注意：tsup CJS 输出中 import.meta 被替换为 var import_meta = {}
+  // 所以 import.meta.url 在生产 bundle 中为 undefined，不会误入此分支
   if (typeof import.meta !== 'undefined' && import.meta.url) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports -- 动态 require 避免顶层 import 在 CJS bundle 中报错

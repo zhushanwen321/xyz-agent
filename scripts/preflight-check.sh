@@ -161,12 +161,22 @@ if [ -f "$EB_YML" ]; then
 
     # 致命：files 中排除 dist/runtime 会导致 asarUnpack 无文件可解压
     # 排除 YAML 注释行（以 # 开头）
-    if grep -v '^\s*#' "$EB_YML" | grep -qE '!dist/runtime'; then
+    if grep -v '^[[:space:]]*#' "$EB_YML" | grep -qE '!dist/runtime'; then
         echo -e "  ${RED}✗ FATAL: files 规则排除了 dist/runtime，asarUnpack 将失效${NC}"
         echo -e "  ${YELLOW}  FIX: 删除 files 中的 '!dist/runtime/**/*'，让 asarUnpack 处理${NC}"
         FAILED=1
     else
         echo -e "  ${GREEN}✓ files 未排除 dist/runtime${NC}"
+    fi
+
+    # 致命：files 必须显式包含 dist/runtime，否则 asarUnpack 无文件可 unpack
+    # electron-builder 的 files 和 asarUnpack 是 AND 关系
+    if grep -v '^[[:space:]]*#' "$EB_YML" | grep -qE '^\s*-\s+dist/runtime/'; then
+        echo -e "  ${GREEN}✓ files 显式包含 dist/runtime${NC}"
+    else
+        echo -e "  ${RED}✗ FATAL: files 未显式包含 dist/runtime，asarUnpack 将静默失败${NC}"
+        echo -e "  ${YELLOW}  FIX: 在 files 中添加 '- dist/runtime/**/*'${NC}"
+        FAILED=1
     fi
 fi
 

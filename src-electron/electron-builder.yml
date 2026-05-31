@@ -6,6 +6,7 @@ asar: true
 files:
   - dist/main/**/*
   - dist/preload/**/*
+  - dist/runtime/**/*   # asarUnpack 的前提：files 必须先包含，才能 unpack
   - renderer/dist/**/*
   - package.json
   # ══════════════════════════════════════════════════════════════

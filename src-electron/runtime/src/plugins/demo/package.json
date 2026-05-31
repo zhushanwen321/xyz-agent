@@ -1,6 +1,6 @@
 {
   "name": "demo-plugin",
-  "version": "0.3.9",
+  "version": "0.3.10",
   "description": "Demo plugin showcasing xyz-agent plugin API (session, storage, hooks, tools, UI)",
   "displayName": "Demo Plugin",
   "main": "index.js",
