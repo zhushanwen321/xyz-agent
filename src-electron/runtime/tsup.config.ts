@@ -1,7 +1,15 @@
 import { defineConfig } from 'tsup'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
+const pkgPath = resolve(__dirname, '../package.json')
+const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as { version: string }
 
 export default defineConfig({
-  entry: ['src/index.ts'],
+  entry: {
+    index: 'src/index.ts',
+    'plugin-bootstrap': 'src/services/plugin-service/plugin-bootstrap.ts',
+  },
   outDir: '../dist/runtime',
   format: ['cjs'],
   platform: 'node',  // 自动将所有 Node.js 内置模块标为 external
@@ -21,19 +29,35 @@ export default defineConfig({
   splitting: false,
   sourcemap: false,
   minify: false,
+  define: {
+    'process.env.XYZ_AGENT_VERSION': JSON.stringify(pkg.version),
+  },
   // 打包后验证：检查产物存在 + 体积合理（不执行模块，避免启动 sidecar）
   onSuccess: async () => {
     const { existsSync, statSync } = await import('node:fs')
     const path = await import('node:path')
+
+    // 验证主 bundle
     const bundlePath = path.join('..', 'dist', 'runtime', 'index.cjs')
     if (!existsSync(bundlePath)) {
       throw new Error(`Runtime bundle not found: ${bundlePath}`)
     }
-    const sizeKB = Math.round(statSync(bundlePath).size / 1024)
+    const BYTES_PER_KB = 1024
+    const sizeKB = Math.round(statSync(bundlePath).size / BYTES_PER_KB)
     console.log(`[tsup] Runtime bundle: ${bundlePath} (${sizeKB}KB)`)
-    if (sizeKB < 100) {
+    const MIN_BUNDLE_SIZE_KB = 100
+    if (sizeKB < MIN_BUNDLE_SIZE_KB) {
       throw new Error(`Runtime bundle too small (${sizeKB}KB), likely missing dependencies`)
     }
+
+    // 验证 Worker bootstrap（plugin-host.ts 运行时依赖）
+    const bootstrapPath = path.join('..', 'dist', 'runtime', 'plugin-bootstrap.cjs')
+    if (!existsSync(bootstrapPath)) {
+      throw new Error(`Plugin bootstrap not found: ${bootstrapPath}`)
+    }
+    const bootstrapSizeKB = Math.round(statSync(bootstrapPath).size / BYTES_PER_KB)
+    console.log(`[tsup] Plugin bootstrap: ${bootstrapPath} (${bootstrapSizeKB}KB)`)
+
     console.log('[tsup] Runtime bundle validated ✓')
   },
 })

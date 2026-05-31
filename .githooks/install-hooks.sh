@@ -289,6 +289,38 @@ else
 fi
 
 # ============================================================================
+# 打包配置预检查（electron-builder.yml / tsup.config.ts / resources/pi 有变更时触发）
+# ============================================================================
+
+PREFLIGHT_CHECKER="scripts/preflight-check.sh"
+
+if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_PREFLIGHT_CHECK" != "1" ]; then
+    if echo "$STAGED_FILES" | grep -qE "^src-electron/electron-builder\.yml$|^src-electron/runtime/tsup\.config\.ts$|^resources/pi/"; then
+        print_section "[打包配置预检查]"
+        echo -e "${BLUE}[INFO] 打包配置有变更，运行 preflight 检查...${NC}"
+
+        if [ ! -f "$PREFLIGHT_CHECKER" ]; then
+            echo -e "${RED}[ERROR] 找不到验证脚本: $PREFLIGHT_CHECKER${NC}"
+            exit 1
+        fi
+
+        bash "$PREFLIGHT_CHECKER"
+        EXIT_CODE=$?
+
+        if [ $EXIT_CODE -ne 0 ]; then
+            echo ""
+            echo -e "${RED}[ERROR] 打包配置预检查失败${NC}"
+            echo -e "${YELLOW}[INFO] 设置 SKIP_PREFLIGHT_CHECK=1 跳过检查${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${GREEN}[OK] 打包配置无变更，跳过 preflight 检查${NC}"
+    fi
+else
+    echo -e "${YELLOW}[SKIP] 打包配置预检查已跳过${NC}"
+fi
+
+# ============================================================================
 # 全部通过
 # ============================================================================
 
@@ -304,6 +336,7 @@ echo -e "  ${YELLOW}SKIP_CODE_RULES_CHECK=1${NC}   - 跳过代码规范"
 echo -e "  ${YELLOW}SKIP_SIDECAR_SESSION_CHECK=1${NC} - 跳过 session 隔离"
 echo -e "  ${YELLOW}SKIP_CSS_TOKENS_CHECK=1${NC}      - 跳过 CSS tokens"
 echo -e "  ${YELLOW}SKIP_RUNTIME_BUNDLE_CHECK=1${NC}  - 跳过 runtime bundle 验证"
+echo -e "  ${YELLOW}SKIP_PREFLIGHT_CHECK=1${NC}       - 跳过打包配置预检查"
 echo ""
 
 exit 0
@@ -328,6 +361,7 @@ echo -e "  ${GREEN}[+]${NC} 前端 ESLint 代码检查"
 echo -e "  ${GREEN}[+]${NC} vue-tsc 类型检查（全量，与 CI 等价）"
 echo -e "  ${GREEN}[+]${NC} Vue 组件规范检查（禁止原生 HTML、Emoji、自定义 CSS）"
 echo -e "  ${GREEN}[+]${NC} Runtime Bundle 验证（依赖打包 + CJS 兼容 + 健康检查）"
+echo -e "  ${GREEN}[+]${NC} 打包配置预检查（asarUnpack/files 一致性 + symlink 检查）"
 echo ""
 echo -e "${CYAN}Hook 脚本位置:${NC} .githooks/"
 echo ""

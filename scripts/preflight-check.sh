@@ -6,6 +6,9 @@
 # 2. 产物存在性（dist/main, dist/preload, dist/runtime, renderer/dist）
 # 3. tsup noExternal 与 runtime dependencies 一致性
 # 4. electron-builder.yml 结构完整性
+# 5. asarUnpack 与 files 一致性（防止 files 排除 dist/runtime）
+# 6. resources/pi 无指向外部绝对路径的 symlink
+# 7. 磁盘空间
 #
 # 用法: npm run preflight 或 CI 中单独调用
 # CI 模式: ./scripts/preflight-check.sh --ci（任何失败都非 0）
@@ -144,9 +147,9 @@ else
     FAILED=1
 fi
 
-# ── 5. asarUnpack 配置检查 ─────────────────────────────────────────
+# ── 5. asarUnpack 与 files 一致性检查 ─────────────────────────────
 echo ""
-echo -e "${BLUE}[5/6] asarUnpack configuration...${NC}"
+echo -e "${BLUE}[5/7] asarUnpack vs files consistency...${NC}"
 
 if [ -f "$EB_YML" ]; then
     if grep -q "asarUnpack" "$EB_YML" && grep -q "dist/runtime" "$EB_YML"; then
@@ -155,11 +158,43 @@ if [ -f "$EB_YML" ]; then
         echo -e "  ${RED}✗ runtime 未配置在 asarUnpack 中${NC}"
         FAILED=1
     fi
+
+    # 致命：files 中排除 dist/runtime 会导致 asarUnpack 无文件可解压
+    # 排除 YAML 注释行（以 # 开头）
+    if grep -v '^\s*#' "$EB_YML" | grep -qE '!dist/runtime'; then
+        echo -e "  ${RED}✗ FATAL: files 规则排除了 dist/runtime，asarUnpack 将失效${NC}"
+        echo -e "  ${YELLOW}  FIX: 删除 files 中的 '!dist/runtime/**/*'，让 asarUnpack 处理${NC}"
+        FAILED=1
+    else
+        echo -e "  ${GREEN}✓ files 未排除 dist/runtime${NC}"
+    fi
 fi
 
-# ── 6. 磁盘空间检查 ────────────────────────────────────────────────
+# ── 6. resources/pi symlink 检查 ───────────────────────────────────
 echo ""
-echo -e "${BLUE}[6/6] Disk space...${NC}"
+echo -e "${BLUE}[6/7] resources/pi symlink check...${NC}"
+
+PI_RES_DIR="$ELECTRON_DIR/resources/pi"
+SYMLINK_FOUND=false
+if [ -d "$PI_RES_DIR" ]; then
+    while IFS= read -r link; do
+        target=$(readlink "$link")
+        echo -e "  ${RED}✗${NC} 发现 symlink: $(basename "$link") -> $target"
+        SYMLINK_FOUND=true
+    done < <(find "$PI_RES_DIR" -maxdepth 1 -type l 2>/dev/null)
+fi
+
+if [ "$SYMLINK_FOUND" = true ]; then
+    echo -e "  ${RED}✗ resources/pi 中存在 symlink，打包后目标路径在用户机器上不存在${NC}"
+    echo -e "  ${YELLOW}  FIX: 用真实目录替换 symlink：cd $PI_RES_DIR && for l in \$(find . -maxdepth 1 -type l); do t=\$(readlink \$l); rm \$l; cp -R \"\$t\" \$(basename \$l); done${NC}"
+    FAILED=1
+else
+    echo -e "  ${GREEN}✓ resources/pi 无 symlink${NC}"
+fi
+
+# ── 7. 磁盘空间检查 ────────────────────────────────────────────────
+echo ""
+echo -e "${BLUE}[7/7] Disk space...${NC}"
 
 AVAILABLE_GB=$(df -g . | tail -1 | awk '{print $4}')
 if [ "$AVAILABLE_GB" -lt 3 ]; then

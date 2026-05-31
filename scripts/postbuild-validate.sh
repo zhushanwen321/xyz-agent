@@ -104,6 +104,13 @@ if [ -d "$OUTPUT_DIR/mac-arm64" ]; then
                 echo -e "  ${RED}✗${NC} runtime/index.cjs 缺失"
                 FAILED=1
             fi
+
+            if [ -f "$APP_PATH/Contents/Resources/app.asar.unpacked/dist/runtime/plugin-bootstrap.cjs" ]; then
+                echo -e "  ${GREEN}✓${NC} runtime/plugin-bootstrap.cjs"
+            else
+                echo -e "  ${RED}✗${NC} runtime/plugin-bootstrap.cjs 缺失"
+                FAILED=1
+            fi
         else
             echo -e "  ${RED}✗${NC} app.asar.unpacked/dist/runtime 缺失"
             FAILED=1
@@ -112,6 +119,15 @@ if [ -d "$OUTPUT_DIR/mac-arm64" ]; then
         # extraResources (pi binary)
         if [ -d "$APP_PATH/Contents/Resources/pi" ]; then
             echo -e "  ${GREEN}✓${NC} pi binary in Resources"
+
+            # 致命：pi 目录中不能有指向外部绝对路径的 symlink
+            PI_SYMLINK=$(find "$APP_PATH/Contents/Resources/pi" -maxdepth 1 -type l 2>/dev/null | head -1)
+            if [ -n "$PI_SYMLINK" ]; then
+                echo -e "  ${RED}✗${NC} Resources/pi 存在 symlink: $(basename "$PI_SYMLINK")"
+                FAILED=1
+            else
+                echo -e "  ${GREEN}✓${NC} Resources/pi 无 symlink"
+            fi
         fi
     else
         echo -e "  ${YELLOW}⚠ 未找到 .app 目录${NC}"

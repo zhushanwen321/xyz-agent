@@ -13,7 +13,7 @@ export default [
       'tools/*.cjs',
       'src-electron/preload/preload.js',
       'vendor/**',
-      'src-electron/resources/pi/agent/**',
+      'src-electron/resources/pi/**',
     ],
   },
 ];
