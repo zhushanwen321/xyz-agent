@@ -124,7 +124,7 @@ describe('TC-1-02: setWidget still discarded', () => {
 // ── TC-5 (context.update): onContextUpdate callback from agent_end ──────
 
 describe('context.update: onContextUpdate from agent_end', () => {
-  it('calls onContextUpdate when agent_end has usage with inputTokens > 0', () => {
+  it('calls onContextUpdate when agent_end has usage with inputTokens > 0', async () => {
     const onContextUpdate = vi.fn()
     const { adapter, sent } = createAdapter({ onContextUpdate })
 
@@ -136,14 +136,17 @@ describe('context.update: onContextUpdate from agent_end', () => {
             role: 'assistant',
             stopReason: 'end_turn',
             usage: { inputTokens: 5000, outputTokens: 3000, totalTokens: 8000 },
-          }],
+          },
+          ] as [{ role: string; stopReason: string; usage: { inputTokens: number; outputTokens: number; totalTokens: number } }],
         }))
         return () => {}
       },
     })
 
-    // message.complete is still produced
-    expect(sent).toHaveLength(1)
+    // handleEvent is async (void), wait for microtask to flush
+    await vi.waitFor(() => {
+      expect(sent).toHaveLength(1)
+    })
     expect(sent[0].type).toBe('message.complete')
 
     // callback is called
@@ -154,7 +157,7 @@ describe('context.update: onContextUpdate from agent_end', () => {
     })
   })
 
-  it('does NOT call onContextUpdate when inputTokens is 0', () => {
+  it('does NOT call onContextUpdate when inputTokens is 0', async () => {
     const onContextUpdate = vi.fn()
     const { adapter } = createAdapter({ onContextUpdate })
 
@@ -172,10 +175,12 @@ describe('context.update: onContextUpdate from agent_end', () => {
       },
     })
 
-    expect(onContextUpdate).not.toHaveBeenCalled()
+    await vi.waitFor(() => {
+      expect(onContextUpdate).not.toHaveBeenCalled()
+    })
   })
 
-  it('does NOT call onContextUpdate when usage is missing', () => {
+  it('does NOT call onContextUpdate when usage is missing', async () => {
     const onContextUpdate = vi.fn()
     const { adapter } = createAdapter({ onContextUpdate })
 
@@ -192,7 +197,9 @@ describe('context.update: onContextUpdate from agent_end', () => {
       },
     })
 
-    expect(onContextUpdate).not.toHaveBeenCalled()
+    await vi.waitFor(() => {
+      expect(onContextUpdate).not.toHaveBeenCalled()
+    })
   })
 })
 
