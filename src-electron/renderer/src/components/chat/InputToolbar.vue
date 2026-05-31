@@ -50,8 +50,16 @@ const thinkingLevels = computed(() => {
     // No map but reasoning=true → all levels
     return [...ALL_THINKING_LEVELS]
   }
+  // Normalize legacy presets: on-off missing xhigh, high-max missing off
+  const normalized = { ...map }
+  if (normalized.minimal === null && normalized.low === null && normalized.medium === null && normalized.high === null && !('xhigh' in normalized)) {
+    normalized.xhigh = 'xhigh'
+  }
+  if (normalized.high === 'high' && normalized.xhigh === 'max' && !('off' in normalized)) {
+    normalized.off = null
+  }
   return ALL_THINKING_LEVELS.filter(level => {
-    const mapped = map[level]
+    const mapped = normalized[level]
     if (mapped === null) return false
     if (level === 'xhigh') return mapped !== undefined
     return true
