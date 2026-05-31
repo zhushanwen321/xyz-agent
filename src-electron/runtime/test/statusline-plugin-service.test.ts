@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { StatusBarItem, StatusBarItemOptions } from '@xyz-agent/shared'
+import type { StatusBarItem } from '@xyz-agent/shared'
+import type { StatusBarItemOptions } from '../src/services/plugin-service/plugin-types.js'
 
 /**
  * Statusline feature tests: PluginService updateStatusBarItem (TC-4-01 ~ TC-4-03)

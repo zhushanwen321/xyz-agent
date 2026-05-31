@@ -115,7 +115,7 @@ export class ConfigService implements IConfigService {
       const existingModels = (existing.models ?? []) as PiModelDefinition[]
       merged.models = rawModels.map(m => {
         const id = String(m.id ?? '')
-        const base = existingModels.find(em => em.id === id) ?? {}
+        const base = existingModels.find(em => em.id === id) ?? {} as Partial<PiModelDefinition>
         const model: Record<string, unknown> = { ...base, id }
         if (m.name) model.name = String(m.name)
         if (typeof m.contextWindow === 'number') model.contextWindow = m.contextWindow

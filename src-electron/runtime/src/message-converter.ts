@@ -73,12 +73,11 @@ export function convertPiHistory(raw: (PiHistoryMessage | PiHistoryToolResult)[]
       ...(thinking.length > 0 && { thinking }),
       ...(toolCalls.length > 0 && { toolCalls }),
       // Extract usage from pi assistant messages (input/output token counts)
-      ...(m.role === 'assistant' && (m as { usage?: { input?: number; output?: number } }).usage && {
-        usage: {
-          inputTokens: (m as { usage?: { input?: number; output?: number } }).usage.input ?? 0,
-          outputTokens: (m as { usage?: { input?: number; output?: number } }).usage.output ?? 0,
-        },
-      }),
+      ...(() => {
+        if (m.role !== 'assistant') return {}
+        const u = (m as { usage?: { input?: number; output?: number } }).usage
+        return u ? { usage: { inputTokens: u.input ?? 0, outputTokens: u.output ?? 0 } } : {}
+      })(),
       timestamp: m.timestamp ?? Date.now(),
     }
     result.push(msg)

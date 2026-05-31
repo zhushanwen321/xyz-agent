@@ -34,6 +34,13 @@ vi.mock('../../../stores/provider', () => ({
   }),
 }))
 
+vi.mock('../../../stores/chat', () => ({
+  useChatStore: () => ({
+  sessions: new Map(),
+  getSessionState: () => ({ contextUsage: 0 }),
+  }),
+}))
+
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({
   t: (key: string) => key,
@@ -83,6 +90,7 @@ function mountChatInput(overrides: { sessionId?: string; isStreaming?: boolean }
     ModelPicker: ModelPickerStub,
     Textarea: TextareaStub,
     Button: ButtonStub,
+    SessionStrip: true,
     },
   },
   })

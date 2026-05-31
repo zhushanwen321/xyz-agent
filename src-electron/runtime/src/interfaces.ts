@@ -37,6 +37,7 @@ export interface IRpcClient {
   readonly exited: boolean
   kill(): Promise<void>
   start(): Promise<void>
+  setThinkingLevel(level: string): Promise<unknown>
 }
 
 // ── IProcessManager ───────────────────────────────────────────────
@@ -109,6 +110,8 @@ export interface ISessionService {
 
   /** 注册 onBeforeSendMessage hook，由 PluginService 调用 */
   setSendMessageHook(hook: (sessionId: string, content: string) => Promise<{ blocked: boolean; reason?: string } | null>): void
+  /** Set thinking level for a session's pi subprocess */
+  setThinkingLevel(sessionId: string, level: string): Promise<void>
 }
 
 // ── IConfigService ────────────────────────────────────────────────
