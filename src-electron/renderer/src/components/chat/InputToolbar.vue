@@ -5,6 +5,7 @@ import { useProviderStore } from '../../stores/provider'
 import { useChatStore } from '../../stores/chat'
 import { useI18n } from 'vue-i18n'
 import { Button } from '../../design-system'
+import ModelPicker from './ModelPicker.vue'
 
 const { t } = useI18n()
 
