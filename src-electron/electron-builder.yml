@@ -4,13 +4,28 @@ directories:
   output: dist/builder-output
 asar: true
 files:
-  - dist/**/*
+  - dist/main/**/*
+  - dist/preload/**/*
   - renderer/dist/**/*
   - package.json
-  - node_modules/**/*
+  # ══════════════════════════════════════════════════════════════
+  # files 规则（违反导致打包膨胀或缺文件）
+  # ──────────────────────────────────────────────────────────────
+  # 只打包主进程直接 require 的包；其余已被 tsup bundle 进 runtime
+  # 新增主进程依赖时必须同步更新此列表
+  # 检查：scripts/preflight-check.sh
+  # ══════════════════════════════════════════════════════════════
+  - node_modules/electron-store/**/*
+  - node_modules/is-glob/**/*
+  - node_modules/markdown-it-footnote/**/*
+  - node_modules/@types/markdown-it-footnote/**/*
+  # 排除
   - "!node_modules/**/test/**"
   - "!node_modules/**/tests/**"
   - "!node_modules/**/*.md"
+  - "!node_modules/**/*.map"
+  - "!node_modules/**/*.ts"
+  - "!dist/runtime/**/*"        # runtime 在 asarUnpack 中
   - "!dist/builder-output/**/*"
 
 # runtime 预编译产物必须排除在 asar 之外，

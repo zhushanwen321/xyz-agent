@@ -56,6 +56,15 @@ npm run dev          # 开发模式 (Electron + Vite HMR)
 npm run build        # 生产构建 (electron-builder)
 npm run lint         # ESLint 检查
 npm run prepare      # 安装 git hooks
+
+# 打包流程
+cd src-electron && npm install    # 安装依赖（ELECTRON_SKIP_BINARY_DOWNLOAD=1 跳过二进制下载）
+cd .. && bash scripts/preflight-check.sh   # 打包前检查
+npm run build                             # 构建 DMG/ZIP/EXE
+bash scripts/postbuild-validate.sh         # 打包后验证
+
+# 单独验证 runtime bundle
+bash scripts/validate-runtime-bundle.sh
 ```
 
 ## 关键规则（违反必出 bug）
@@ -166,6 +175,33 @@ lsof -i :1420 -P | grep node
 - **WS 命名约定**: Client→Server 用点号（`plugin.xxx`），Server→Client 用冒号+camelCase（`plugin:statusBarUpdate`）
 - **Plugin Store**: 前端使用 `stores/plugin.ts` + `composables/usePlugin.ts` 管理 plugin 状态和 WS 事件
 - **数据目录隔离**: `~/.xyz-agent/` 与 `~/.pi/agent/` 完全隔离（已有规则 #10）
+
+### 12. Electron 打包约束（违反必出 bug）
+
+**tsup 配置** (`src-electron/runtime/tsup.config.ts`):
+- `platform: 'node'` + `target: 'node20'` — 自动处理所有 Node 内置模块 external，匹配 Electron 33 内置 Node 版本
+- `noExternal` 必须覆盖 **所有** runtime `dependencies` — 新增 npm 依赖时必须同步追加，否则 `asar.unpacked` 运行时 `Cannot find module`
+- 禁止在 runtime 源码中使用 `import.meta.url` 或 `fileURLToPath(import.meta.url)` — CJS bundle 时为 `undefined`，必须用 `__dirname` 兼容层或 `process.cwd()`
+
+**electron-builder 配置** (`src-electron/electron-builder.yml`):
+- `asarUnpack: dist/runtime/**/*` — runtime 必须在 unpacked 目录，子进程无法读取 asar 内的 JS 文件
+- `files` 只包含主进程直接 `require` 的 `node_modules`（其余已被 tsup 打包进 runtime bundle）
+
+**子进程启动** (`src-electron/main/runtime-manager.ts`):
+- 必须用 `process.execPath` + `ELECTRON_RUN_AS_NODE=1` 启动 runtime，不能用 `node` 路径
+- 打包后路径必须用 `process.resourcesPath/app.asar.unpacked/...`，不能用 `app.getAppPath()`（返回 asar 虚拟路径）
+
+**自动验证脚本**:
+- `scripts/preflight-check.sh` — 打包前检查（产物存在、noExternal 一致性、asarUnpack 配置）
+- `scripts/postbuild-validate.sh` — 打包后验证（asar 结构、runtime unpacked、产物大小）
+- `scripts/validate-runtime-bundle.sh` — runtime bundle 深度验证（依赖打包、CJS 兼容、健康检查）
+- pre-commit hook 自动触发 `validate-runtime-bundle.sh`（当 `src-electron/runtime/src/` 有变更时）
+
+**跳过检查**:
+```bash
+SKIP_RUNTIME_BUNDLE_CHECK=1 git commit   # 跳过 runtime bundle 验证
+SKIP_ALL_CHECKS=1 git commit            # 跳过所有（仅紧急情况）
+```
 
 ## 前端编码规范
 

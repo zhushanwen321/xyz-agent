@@ -7,10 +7,17 @@
 
 import { Worker } from 'node:worker_threads'
 import { resolve, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import type { WorkerHandle, RpcRequest } from './plugin-types.js'
 import type { PluginHost as ActivatorHost } from './plugin-activator.js'
 import { PluginRpcServer } from './plugin-rpc-server.js'
+
+/** 兼容 CJS bundle（import.meta.url 在 CJS 下为 undefined） */
+function getPluginHostDir(): string {
+  // @ts-ignore CJS bundle 时 __dirname 可用
+  if (typeof __dirname !== 'undefined') return __dirname
+  // fallback：解析 process.execPath 的目录
+  return dirname(process.execPath)
+}
 
 type CrashCallback = (workerId: string, pluginIds: string[], error: string) => void
 type ReplyCallback = (msg: unknown) => void
@@ -212,7 +219,7 @@ export class PluginHost implements ActivatorHost {
   ): WorkerHandle {
     // 编译后的 bootstrap 脚本与 plugin-host.js 同目录
     const bootstrapPath = resolve(
-      dirname(fileURLToPath(import.meta.url)),
+      dirname(getPluginHostDir()),
       'plugin-bootstrap.js',
     )
 
