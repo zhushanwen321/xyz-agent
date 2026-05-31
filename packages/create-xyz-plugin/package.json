@@ -1,6 +1,6 @@
 {
   "name": "create-xyz-plugin",
-  "version": "0.3.7",
+  "version": "0.3.8",
   "description": "Scaffold a new xyz-agent plugin project",
   "bin": {
     "create-xyz-plugin": "./bin/create-xyz-plugin.js"
