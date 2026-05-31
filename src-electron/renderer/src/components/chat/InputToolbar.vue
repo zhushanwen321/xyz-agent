@@ -60,8 +60,13 @@ const thinkingLevels = computed(() => {
 
 const showThinkingPicker = computed(() => thinkingLevels.value.length > 0)
 
-// Option C: label inference — when only 2 levels visible (off + one other), show Off/On
+// Show mapped value when non-identity (e.g. xhigh → 'max'), otherwise Off/On inference
 function getThinkingDisplayLabel(level: string): string {
+  const map = resolvedModel.value?.thinkingLevelMap
+  if (map && map[level] !== undefined && map[level] !== null && map[level] !== level) {
+    return map[level]
+  }
+  // Off/On inference for binary strategies
   if (thinkingLevels.value.length === 2 && thinkingLevels.value.includes('off')) {
     return level === 'off' ? 'Off' : 'On'
   }
@@ -73,7 +78,12 @@ const thinkingOpen = ref(false)
 const thinkingRef = ref<HTMLElement | null>(null)
 
 function initThinkingLevel() {
-  if (thinkingLevels.value.length > 0 && !thinkingLevels.value.includes(settingsStore.currentThinkingLevel as typeof ALL_THINKING_LEVELS[number])) {
+  if (thinkingLevels.value.length === 0) return
+  if (thinkingLevels.value.includes(settingsStore.currentThinkingLevel as typeof ALL_THINKING_LEVELS[number])) return
+  // On/off (2 levels with off): default to 'on'
+  if (thinkingLevels.value.length === 2 && thinkingLevels.value.includes('off')) {
+    settingsStore.currentThinkingLevel = thinkingLevels.value.find(l => l !== 'off') as typeof ALL_THINKING_LEVELS[number]
+  } else {
     settingsStore.currentThinkingLevel = thinkingLevels.value[0] as typeof ALL_THINKING_LEVELS[number]
   }
 }

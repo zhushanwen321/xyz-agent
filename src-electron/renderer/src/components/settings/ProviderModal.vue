@@ -259,8 +259,8 @@ type ThinkingStrategy = 'all-levels' | 'on-off' | 'high-max'
 
 const THINKING_PRESETS: Record<ThinkingStrategy, Record<string, string | null> | undefined> = {
   'all-levels': undefined,
-  'on-off': { minimal: null, low: null, medium: null, high: null },
-  'high-max': { minimal: null, low: null, medium: null, high: 'high', xhigh: 'max' },
+  'on-off': { minimal: null, low: null, medium: null, high: null, xhigh: 'xhigh' },
+  'high-max': { off: null, minimal: null, low: null, medium: null, high: 'high', xhigh: 'max' },
 }
 
 const STRATEGY_LABELS: Record<ThinkingStrategy, string> = {
