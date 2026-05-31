@@ -11,6 +11,7 @@ files:
   - "!node_modules/**/test/**"
   - "!node_modules/**/tests/**"
   - "!node_modules/**/*.md"
+  - "!dist/builder-output/**/*"
 
 # runtime 预编译产物必须排除在 asar 之外，
 # 因为 Node.js 子进程无法直接读取 asar 内的文件。
