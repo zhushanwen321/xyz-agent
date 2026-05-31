@@ -22,6 +22,7 @@ export type ClientMessageType =
   | 'plugin.approvePermissions' | 'plugin.revokePermissions'
   | 'plugin.executeCommand'
   | 'plugin.config.get' | 'plugin.config.set'
+  | 'plugin.uiResponse'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -85,6 +86,7 @@ export interface ClientMessageMap {
   'plugin.executeCommand': { pluginId: string; commandId: string; args?: Record<string, unknown> }
   'plugin.config.get': { pluginId: string; key?: string }
   'plugin.config.set': { pluginId: string; key: string; value: unknown }
+  'plugin.uiResponse': { requestId: string; result: unknown }
 }
 
 export type ClientMessage =
@@ -134,6 +136,7 @@ export type ClientMessage =
   | { type: 'plugin.executeCommand'; id?: string; payload: ClientMessageMap['plugin.executeCommand'] }
   | { type: 'plugin.config.get'; id?: string; payload: ClientMessageMap['plugin.config.get'] }
   | { type: 'plugin.config.set'; id?: string; payload: ClientMessageMap['plugin.config.set'] }
+  | { type: 'plugin.uiResponse'; id?: string; payload: ClientMessageMap['plugin.uiResponse'] }
 
 // ── 辅助类型 ────────────────────────────────────────────────────
 
@@ -168,6 +171,7 @@ export type ServerMessageType =
   | 'plugin:statusChange' | 'plugin:permissionRequest'
   | 'plugin:statusBarUpdate' | 'plugin:messageDecoration' | 'plugin:config'
   | 'plugin:statusSetUpdate'
+  | 'plugin:uiRequest'
 
 export interface ServerMessage {
   type: ServerMessageType
@@ -186,6 +190,8 @@ export interface ExtensionUIRequestPayload {
   options?: string[]
   default?: string
   level?: 'info' | 'warn' | 'error'
+  /** Origin of the request — determines which WS channel the response is sent to */
+  source?: 'extension' | 'plugin'
 }
 
 export interface ExtensionUIResponsePayload {

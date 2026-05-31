@@ -10,8 +10,7 @@
  * - save() + load() 往返正确
  */
 
-import { describe, it, before, after, beforeEach } from 'node:test'
-import assert from 'node:assert/strict'
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { mkdtemp, rm, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -50,11 +49,11 @@ function createMockRegistry(descriptors: PluginDescriptor[]): PluginRegistry {
   } as unknown as PluginRegistry
 }
 
-before(async () => {
+beforeAll(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), 'plugin-permission-test-'))
 })
 
-after(async () => {
+afterAll(async () => {
   await rm(tmpDir, { recursive: true, force: true })
 })
 
@@ -66,9 +65,9 @@ describe('Task 3: PermissionChecker', () => {
       ])
       const checker = new PluginPermissionChecker(registry)
 
-      assert.strictEqual(checker.check('trusted-1', 'tools.register'), true)
-      assert.strictEqual(checker.check('trusted-1', 'hooks.register'), true)
-      assert.strictEqual(checker.check('trusted-1', 'any.method'), true)
+      expect(checker.check('trusted-1', 'tools.register')).toBe(true)
+      expect(checker.check('trusted-1', 'hooks.register')).toBe(true)
+      expect(checker.check('trusted-1', 'any.method')).toBe(true)
     })
 
     it('check() returns true regardless of granted permissions for trusted', () => {
@@ -78,7 +77,7 @@ describe('Task 3: PermissionChecker', () => {
       const checker = new PluginPermissionChecker(registry)
 
       // 即使没 grant，trusted 也能通过
-      assert.strictEqual(checker.check('trusted-2', 'tools.register'), true)
+      expect(checker.check('trusted-2', 'tools.register')).toBe(true)
     })
   })
 
@@ -89,7 +88,7 @@ describe('Task 3: PermissionChecker', () => {
       ])
       const checker = new PluginPermissionChecker(registry)
 
-      assert.strictEqual(checker.check('sandbox-1', 'tools.register'), false)
+      expect(checker.check('sandbox-1', 'tools.register')).toBe(false)
     })
 
     it('check() returns true after grant()', () => {
@@ -99,8 +98,8 @@ describe('Task 3: PermissionChecker', () => {
       const checker = new PluginPermissionChecker(registry)
 
       checker.grant('sandbox-2', ['tools.register', 'hooks.register'])
-      assert.strictEqual(checker.check('sandbox-2', 'tools.register'), true)
-      assert.strictEqual(checker.check('sandbox-2', 'hooks.register'), true)
+      expect(checker.check('sandbox-2', 'tools.register')).toBe(true)
+      expect(checker.check('sandbox-2', 'hooks.register')).toBe(true)
     })
 
     it('check() returns false for non-granted methods', () => {
@@ -110,8 +109,8 @@ describe('Task 3: PermissionChecker', () => {
       const checker = new PluginPermissionChecker(registry)
 
       checker.grant('sandbox-3', ['tools.register'])
-      assert.strictEqual(checker.check('sandbox-3', 'tools.register'), true)
-      assert.strictEqual(checker.check('sandbox-3', 'hooks.register'), false)
+      expect(checker.check('sandbox-3', 'tools.register')).toBe(true)
+      expect(checker.check('sandbox-3', 'hooks.register')).toBe(false)
     })
 
     it('check() returns false after revoke()', () => {
@@ -121,10 +120,10 @@ describe('Task 3: PermissionChecker', () => {
       const checker = new PluginPermissionChecker(registry)
 
       checker.grant('sandbox-4', ['tools.register'])
-      assert.strictEqual(checker.check('sandbox-4', 'tools.register'), true)
+      expect(checker.check('sandbox-4', 'tools.register')).toBe(true)
 
       checker.revoke('sandbox-4')
-      assert.strictEqual(checker.check('sandbox-4', 'tools.register'), false)
+      expect(checker.check('sandbox-4', 'tools.register')).toBe(false)
     })
 
     it('revoke() on unknown pluginId is no-op', () => {
@@ -139,7 +138,7 @@ describe('Task 3: PermissionChecker', () => {
       const registry = createMockRegistry([])
       const checker = new PluginPermissionChecker(registry)
 
-      assert.strictEqual(checker.check('nonexistent', 'tools.register'), false)
+      expect(checker.check('nonexistent', 'tools.register')).toBe(false)
     })
 
     it('grant() appends to existing permissions', () => {
@@ -151,8 +150,8 @@ describe('Task 3: PermissionChecker', () => {
       checker.grant('sandbox-5', ['tools.register'])
       checker.grant('sandbox-5', ['hooks.register'])
 
-      assert.strictEqual(checker.check('sandbox-5', 'tools.register'), true)
-      assert.strictEqual(checker.check('sandbox-5', 'hooks.register'), true)
+      expect(checker.check('sandbox-5', 'tools.register')).toBe(true)
+      expect(checker.check('sandbox-5', 'hooks.register')).toBe(true)
     })
   })
 })
@@ -162,8 +161,8 @@ describe('Task 3: PermissionStorage', () => {
     const storage = new PermissionStorage(join(tmpDir, 'nonexistent-dir'))
     const map = await storage.load()
 
-    assert.ok(map instanceof Map)
-    assert.strictEqual(map.size, 0)
+    expect(map instanceof Map).toBeTruthy()
+    expect(map.size).toBe(0)
   })
 
   it('save() + load() round-trip preserves data', async () => {
@@ -178,9 +177,9 @@ describe('Task 3: PermissionStorage', () => {
     await storage.save(data)
 
     const loaded = await storage.load()
-    assert.strictEqual(loaded.size, 2)
-    assert.deepStrictEqual(loaded.get('plugin-a'), ['tools.register', 'hooks.register'])
-    assert.deepStrictEqual(loaded.get('plugin-b'), ['sessions.sendMessage'])
+    expect(loaded.size).toBe(2)
+    expect(loaded.get('plugin-a')).toEqual(['tools.register', 'hooks.register'])
+    expect(loaded.get('plugin-b')).toEqual(['sessions.sendMessage'])
   })
 
   it('save() overwrites previous data', async () => {
@@ -197,9 +196,9 @@ describe('Task 3: PermissionStorage', () => {
     await storage.save(data2)
 
     const loaded = await storage.load()
-    assert.strictEqual(loaded.size, 1)
-    assert.deepStrictEqual(loaded.get('plugin-b'), ['hooks.register'])
-    assert.strictEqual(loaded.get('plugin-a'), undefined)
+    expect(loaded.size).toBe(1)
+    expect(loaded.get('plugin-b')).toEqual(['hooks.register'])
+    expect(loaded.get('plugin-a')).toBe(undefined)
   })
 
   it('load() handles corrupted JSON gracefully', async () => {
@@ -210,7 +209,7 @@ describe('Task 3: PermissionStorage', () => {
 
     const storage = new PermissionStorage(dir)
     const map = await storage.load()
-    assert.ok(map instanceof Map)
-    assert.strictEqual(map.size, 0)
+    expect(map instanceof Map).toBeTruthy()
+    expect(map.size).toBe(0)
   })
 })

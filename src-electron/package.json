@@ -1,6 +1,6 @@
 {
   "name": "xyz-agent-electron",
-  "version": "0.3.2",
+  "version": "0.3.5",
   "private": true,
   "description": "AI Agent Desktop Workstation",
   "author": {
@@ -29,6 +29,7 @@
   "dependencies": {
     "@types/markdown-it-footnote": "^3.0.4",
     "electron-store": "^10",
+    "is-glob": "^4.0.3",
     "markdown-it-footnote": "^4.0.0"
   },
   "devDependencies": {

@@ -7,8 +7,7 @@
  * - createHookApi.onPiEvent 注册并触发回调
  */
 
-import { describe, it, beforeEach } from 'node:test'
-import assert from 'node:assert/strict'
+import { describe, it, expect, beforeEach } from 'vitest'
 
 import { PluginRpcServer } from '../src/services/plugin-service/plugin-rpc-server.js'
 import type { WorkerPort } from '../src/services/plugin-service/plugin-rpc-server.js'
@@ -118,17 +117,17 @@ describe('Hook API — registerHookRpcHandlers', () => {
     })
 
     const resp = extractLastResponse(port)
-    assert.strictEqual(resp.id, 1)
-    assert.ok('result' in resp)
-    assert.deepStrictEqual(resp.result, { registered: true })
+    expect(resp.id).toBe(1)
+    expect('result' in resp).toBeTruthy()
+    expect((resp as { result: unknown }).result).toEqual({ registered: true })
 
     // 验证 registry
-    const entries = hookRegistry.get('onBeforeSendMessage')
-    assert.ok(entries)
-    assert.strictEqual(entries.length, 1)
-    assert.strictEqual(entries[0].handlerId, 'hook_my-plugin_1')
+    const entries = hookRegistry.get('onBeforeSendMessage')!
+    expect(entries).toBeTruthy()
+    expect(entries.length).toBe(1)
+    expect(entries[0].handlerId).toBe('hook_my-plugin_1')
     // 没有 descriptor → 默认 priority 200
-    assert.strictEqual(entries[0].priority, 200)
+    expect(entries[0].priority).toBe(200)
   })
 
   // ── TC-HK-02: 多个 handler 按优先级排序 ─────────────────────────
@@ -198,19 +197,19 @@ describe('Hook API — registerHookRpcHandlers', () => {
       params: { pluginId: 'plugin-trusted', hookType: 'onBeforeSendMessage', handlerId: 'h_trusted' },
     })
 
-    const entries = hookRegistry.get('onBeforeSendMessage')
-    assert.ok(entries)
-    assert.strictEqual(entries.length, 3)
+    const entries = hookRegistry.get('onBeforeSendMessage')!
+    expect(entries).toBeTruthy()
+    expect(entries.length).toBe(3)
 
     // 期望顺序: built-in (priority=0) → trusted (priority=100) → sandbox (priority=200)
-    assert.strictEqual(entries[0].handlerId, 'h_builtin')
-    assert.strictEqual(entries[0].priority, 0)
+    expect(entries[0].handlerId).toBe('h_builtin')
+    expect(entries[0].priority).toBe(0)
 
-    assert.strictEqual(entries[1].handlerId, 'h_trusted')
-    assert.strictEqual(entries[1].priority, 100)
+    expect(entries[1].handlerId).toBe('h_trusted')
+    expect(entries[1].priority).toBe(100)
 
-    assert.strictEqual(entries[2].handlerId, 'h_sandbox')
-    assert.strictEqual(entries[2].priority, 200)
+    expect(entries[2].handlerId).toBe('h_sandbox')
+    expect(entries[2].priority).toBe(200)
   })
 })
 
@@ -237,17 +236,17 @@ describe('Hook API — createHookApi (Worker side)', () => {
     })
 
     // 验证注册请求已发送
-    const registerCall = mockClient.requestCalls.find(c => c.method === 'plugin.hooks.register')
-    assert.ok(registerCall, 'should have sent register request')
-    assert.strictEqual(registerCall.params.pluginId, 'test-plugin')
-    assert.strictEqual(registerCall.params.hookType, 'onPiEvent:session:create')
-    assert.ok(typeof registerCall.params.handlerId === 'string')
+    const registerCall = mockClient.requestCalls.find(c => c.method === 'plugin.hooks.register')!
+    expect(registerCall).toBeTruthy()
+    expect(registerCall.params.pluginId).toBe('test-plugin')
+    expect(registerCall.params.hookType).toBe('onPiEvent:session:create')
+    expect(typeof registerCall.params.handlerId === 'string').toBeTruthy()
 
     const handlerId = registerCall.params.handlerId as string
 
     // 模拟主线程发送 hook.invoke 通知
-    const invokeHandler = mockClient.onNotificationHandlers.get('plugin.hooks.invoke')
-    assert.ok(invokeHandler, 'should have registered invoke notification handler')
+    const invokeHandler = mockClient.onNotificationHandlers.get('plugin.hooks.invoke')!
+    expect(invokeHandler).toBeTruthy()
 
     // 触发 invoke
     invokeHandler({
@@ -257,14 +256,14 @@ describe('Hook API — createHookApi (Worker side)', () => {
 
     // 验证 handler 被调用（等待微任务）
     await new Promise(resolve => setTimeout(resolve, 10))
-    assert.strictEqual(collected.length, 1)
-    assert.strictEqual(collected[0].eventName, 'session:create')
-    assert.deepStrictEqual(collected[0].data, { sessionId: 's1' })
+    expect(collected.length).toBe(1)
+    expect(collected[0].eventName).toBe('session:create')
+    expect(collected[0].data).toEqual({ sessionId: 's1' })
 
     // 验证 invoke result 已返回
-    const resultCall = mockClient.requestCalls.find(c => c.method === 'plugin.hooks.invoke.result')
-    assert.ok(resultCall, 'should have sent invoke result')
-    assert.strictEqual(resultCall.params.handlerId, handlerId)
+    const resultCall = mockClient.requestCalls.find(c => c.method === 'plugin.hooks.invoke.result')!
+    expect(resultCall).toBeTruthy()
+    expect(resultCall.params.handlerId).toBe(handlerId)
 
     // 清理
     disposable.dispose()
@@ -280,13 +279,13 @@ describe('Hook API — createHookApi (Worker side)', () => {
       return { blocked: true, proceed: false, modifiedContent: ctx.data }
     })
 
-    const registerCall = mockClient.requestCalls.find(c => c.method === 'plugin.hooks.register')
-    assert.ok(registerCall)
-    assert.strictEqual(registerCall.params.hookType, 'onBeforeSendMessage')
+    const registerCall = mockClient.requestCalls.find(c => c.method === 'plugin.hooks.register')!
+    expect(registerCall).toBeTruthy()
+    expect(registerCall.params.hookType).toBe('onBeforeSendMessage')
 
     const handlerId = registerCall.params.handlerId as string
-    const invokeHandler = mockClient.onNotificationHandlers.get('plugin.hooks.invoke')
-    assert.ok(invokeHandler)
+    const invokeHandler = mockClient.onNotificationHandlers.get('plugin.hooks.invoke')!
+    expect(invokeHandler).toBeTruthy()
 
     invokeHandler({
       handlerId,
@@ -294,13 +293,13 @@ describe('Hook API — createHookApi (Worker side)', () => {
     })
 
     await new Promise(resolve => setTimeout(resolve, 10))
-    assert.strictEqual(invokedParams.length, 1)
-    assert.strictEqual((invokedParams[0] as Record<string, unknown>).hookType, 'onBeforeSendMessage')
+    expect(invokedParams.length).toBe(1)
+    expect((invokedParams[0] as Record<string, unknown>).hookType).toBe('onBeforeSendMessage')
 
     // 验证结果已返回
-    const resultCall = mockClient.requestCalls.find(c => c.method === 'plugin.hooks.invoke.result')
-    assert.ok(resultCall)
-    assert.ok((resultCall.params.result as Record<string, unknown>).blocked)
+    const resultCall = mockClient.requestCalls.find(c => c.method === 'plugin.hooks.invoke.result')!
+    expect(resultCall).toBeTruthy()
+    expect((resultCall.params.result as Record<string, unknown>).blocked).toBeTruthy()
 
     disposable.dispose()
   })
@@ -316,24 +315,24 @@ describe('Hook API — createHookApi (Worker side)', () => {
       return { blocked: false, proceed: true }
     })
 
-    const registerCall = mockClient.requestCalls.find(c => c.method === 'plugin.hooks.register')
-    assert.ok(registerCall)
+    const registerCall = mockClient.requestCalls.find(c => c.method === 'plugin.hooks.register')!
+    expect(registerCall).toBeTruthy()
     const handlerId = registerCall.params.handlerId as string
 
     // dispose
     disposable.dispose()
 
     // 再次触发 invoke → 不触发 handler（已清除）
-    const invokeHandler = mockClient.onNotificationHandlers.get('plugin.hooks.invoke')
-    assert.ok(invokeHandler)
+    const invokeHandler = mockClient.onNotificationHandlers.get('plugin.hooks.invoke')!
+    expect(invokeHandler).toBeTruthy()
     invokeHandler({ handlerId, context: {} })
 
     await new Promise(resolve => setTimeout(resolve, 10))
-    assert.strictEqual(collected.length, 0, 'handler should not be called after dispose')
+    expect(collected.length).toBe(0) // handler should not be called after dispose
 
     // 验证 unregister 请求已发送
-    const unregisterCall = mockClient.requestCalls.find(c => c.method === 'plugin.hooks.unregister')
-    assert.ok(unregisterCall)
-    assert.strictEqual(unregisterCall.params.handlerId, handlerId)
+    const unregisterCall = mockClient.requestCalls.find(c => c.method === 'plugin.hooks.unregister')!
+    expect(unregisterCall).toBeTruthy()
+    expect(unregisterCall.params.handlerId).toBe(handlerId)
   })
 })

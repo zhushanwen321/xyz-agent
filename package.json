@@ -1,12 +1,13 @@
 {
   "name": "xyz-agent",
-  "version": "0.3.2",
+  "version": "0.3.5",
   "private": true,
   "type": "module",
   "workspaces": [
     "src-electron/renderer",
     "src-electron/runtime",
-    "src-electron/shared"
+    "src-electron/shared",
+    "packages/plugin-sdk"
   ],
   "scripts": {
     "dev": "cd src-electron && npm run dev",

@@ -12,6 +12,13 @@ function onUIRequest(msg: ServerMessage) {
   activeRequest.value = msg.payload as unknown as ExtensionUIRequestPayload
 }
 
+function onPluginUIRequest(msg: ServerMessage) {
+  activeRequest.value = {
+    ...(msg.payload as Record<string, unknown>),
+    source: 'plugin',
+  } as unknown as ExtensionUIRequestPayload
+}
+
 function onUITimeout(_msg: ServerMessage) {
   void _msg
   if (!activeRequest.value) return
@@ -26,6 +33,7 @@ function registerListeners() {
   listenersRegistered = true
   on('extension.ui_request', onUIRequest)
   on('extension.ui_timeout', onUITimeout)
+  on('plugin:uiRequest', onPluginUIRequest)
 }
 
 // 模块加载时注册监听
@@ -35,10 +43,20 @@ registerListeners()
 
 export function useExtensionUI() {
   function sendResponse(requestId: string, result: boolean | string | null, sessionId: string) {
-    send({
-      type: 'extension.ui_response',
-      payload: { sessionId, requestId, result },
-    })
+    const source = activeRequest.value?.source
+    if (source === 'plugin') {
+      // Plugin UI response — no sessionId needed
+      send({
+        type: 'plugin.uiResponse',
+        payload: { requestId, result },
+      })
+    } else {
+      // Extension UI response — existing behavior
+      send({
+        type: 'extension.ui_response',
+        payload: { sessionId, requestId, result },
+      })
+    }
     activeRequest.value = null
   }
 

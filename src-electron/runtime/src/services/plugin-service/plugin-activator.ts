@@ -16,6 +16,7 @@ import type {
   PluginState,
   PluginDescriptor,
   PluginSource,
+  PluginPermission,
   Disposable,
   WorkerToHostMessage,
 } from './plugin-types.js'
@@ -37,6 +38,7 @@ export type StatusChangeCallback = (payload: {
 
 const DEACTIVATE_TIMEOUT_MS = 5_000
 const ACTIVATE_TIMEOUT_MS = 30_000
+const PERMISSION_TIMEOUT_MS = 30_000
 const HOT_RELOAD_DEBOUNCE_MS = 300
 const HOT_RELOAD_DEACTIVATE_TIMEOUT_MS = 5_000
 
@@ -54,6 +56,24 @@ interface ReloadContext {
   onStatusChange: StatusChangeCallback
 }
 
+/** PermissionChecker 最小接口——Activator 只调用 getUnapproved */
+export interface PermissionCheckerLike {
+  getUnapproved(pluginId: string, permissions: PluginPermission[]): PluginPermission[]
+}
+
+/** Activator 构造函数选项 */
+export interface ActivatorOptions {
+  permissionChecker?: PermissionCheckerLike
+  onPermissionRequest?: (payload: { pluginId: string; permissions: PluginPermission[] }) => void
+  /** 覆盖权限审批超时（测试用） */
+  permissionTimeoutMs?: number
+}
+
+interface PendingPermission {
+  resolve: (approved: boolean) => void
+  timer: ReturnType<typeof setTimeout>
+}
+
 export class PluginActivator {
   private pluginStates = new Map<string, PluginState>()
   private eventMap = new Map<string, string[]>() // eventPattern → pluginIds
@@ -61,12 +81,25 @@ export class PluginActivator {
   private descriptors = new Map<string, PluginDescriptor>()
   private pendingReplies = new Map<string, PendingReply>()
 
+  /** 权限检查（可选） */
+  private permissionChecker?: PermissionCheckerLike
+  private onPermissionRequest?: (payload: { pluginId: string; permissions: PluginPermission[] }) => void
+  private permissionTimeoutMs: number
+  /** 待审批的权限请求 */
+  private pendingPermissions = new Map<string, PendingPermission>()
+
   /** Hot-reload watchers: pluginId → FSWatcher */
   private watchers = new Map<string, FSWatcher>()
   /** Hot-reload debounce timers: pluginId → timeout handle */
   private reloadTimers = new Map<string, ReturnType<typeof setTimeout>>()
   /** Reload context (host + callback) for each watched plugin */
   private reloadContexts = new Map<string, ReloadContext>()
+
+  constructor(options?: ActivatorOptions) {
+    this.permissionChecker = options?.permissionChecker
+    this.onPermissionRequest = options?.onPermissionRequest
+    this.permissionTimeoutMs = options?.permissionTimeoutMs ?? PERMISSION_TIMEOUT_MS
+  }
 
   /** 注册插件描述符，构建 activationEvent 索引 */
   registerDescriptors(descriptors: PluginDescriptor[]): void {
@@ -126,9 +159,31 @@ export class PluginActivator {
     const currentState = this.pluginStates.get(pluginId)
     if (currentState === 'ACTIVE' || currentState === 'ACTIVATING') return
 
+    // 版本不兼容的插件不能激活
+    if (currentState === 'DEPS_MISSING') {
+      console.warn(`[plugin-activator] skipping ${pluginId}: incompatible version`)
+      return
+    }
+
     this.pluginStates.set(pluginId, 'ACTIVATING')
 
     try {
+      // 0. 权限检查（在分配 Worker 之前）
+      if (this.permissionChecker && descriptor.permissions.length > 0) {
+        const unapproved = this.permissionChecker.getUnapproved(pluginId, descriptor.permissions)
+        if (unapproved.length > 0) {
+          // 先注册 pending promise，再通知外部（避免回调中立即 resolve 时竞态）
+          const approvalPromise = this.waitForPermissionApproval(pluginId)
+          this.onPermissionRequest?.({ pluginId, permissions: unapproved })
+          // 等待审批结果
+          const approved = await approvalPromise
+          if (!approved) {
+            this.pluginStates.set(pluginId, 'UNLOADED')
+            return
+          }
+        }
+      }
+
       // 1. 分配 Worker
       const workerId = await host.assignWorker(pluginId, descriptor.trustLevel)
 
@@ -208,6 +263,35 @@ export class PluginActivator {
   /** 将插件状态标记为 CRASHED（由 PluginService crash callback 调用） */
   markCrashed(pluginId: string): void {
     this.pluginStates.set(pluginId, 'CRASHED')
+  }
+
+  /**
+   * 等待权限审批结果。
+   * 返回 Promise，超时自动拒绝。
+   */
+  private waitForPermissionApproval(pluginId: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.pendingPermissions.delete(pluginId)
+        resolve(false)
+      }, this.permissionTimeoutMs)
+
+      this.pendingPermissions.set(pluginId, { resolve, timer })
+    })
+  }
+
+  /**
+   * 外部调用以解决权限审批请求。
+   * @param pluginId 插件 ID
+   * @param approved true 通过，false 拒绝
+   */
+  resolvePermissionApproval(pluginId: string, approved: boolean): void {
+    const pending = this.pendingPermissions.get(pluginId)
+    if (!pending) return
+
+    clearTimeout(pending.timer)
+    this.pendingPermissions.delete(pluginId)
+    pending.resolve(approved)
   }
 
   /**

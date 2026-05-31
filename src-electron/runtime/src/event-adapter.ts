@@ -40,6 +40,8 @@ export interface EventAdapterOptions {
   onStatusSetUpdate?: (payload: { sessionId: string; key: string; text: string }) => void
   /** Called after agent_end with usage data for context window tracking. */
   onContextUpdate?: (sessionId: string, data: { inputTokens: number; totalTokens: number }) => void
+  /** Called by EventAdapter to execute plugin hooks on tool/message events. */
+  onHookExecute?: (hookType: string, context: Record<string, unknown>) => Promise<import('./services/plugin-service/plugin-types.js').HookResult>
 }
 
 export class EventAdapter {
@@ -53,7 +55,11 @@ export class EventAdapter {
 
   /** Start listening to events from an RpcClient. */
   attach(client: { onEvent: (listener: PiEventListener) => (() => void) }): void {
-    this.unsub = client.onEvent((event) => this.handleEvent(event as unknown as Record<string, unknown>))
+    this.unsub = client.onEvent((event) => {
+      void this.handleEvent(event as unknown as Record<string, unknown>).catch((err: unknown) => {
+        console.error('[EventAdapter] handleEvent error:', err)
+      })
+    })
   }
 
   /** Stop listening. */
@@ -64,14 +70,22 @@ export class EventAdapter {
     }
   }
 
-  private handleEvent(event: Record<string, unknown>): void {
-    const msg = this.translate(event)
+  private hookCallback: EventAdapterOptions['onHookExecute'] | undefined
+
+  private async handleEvent(event: Record<string, unknown>): Promise<void> {
+    // Capture hookCallback once per event — options is set at construction and never changes
+    this.hookCallback = this.options?.onHookExecute
+    const msg = await this.translate(event)
     if (msg) {
       this.send(msg)
     }
   }
 
-  private translate(event: Record<string, unknown>): ServerMessage | null {
+  private fireHookEvent(eventType: string, data: Record<string, unknown>): void {
+    this.hookCallback?.('onPiEvent', { event: eventType, ...data }).catch(() => {})
+  }
+
+  private async translate(event: Record<string, unknown>): Promise<ServerMessage | null> {
     const sid = this.sessionId
 
     switch (event.type as string) {
@@ -128,16 +142,38 @@ export class EventAdapter {
       }
 
       // ── Tool execution ────────────────────────────────────────
-      case 'tool_execution_start':
+      case 'tool_execution_start': {
+        const toolName = event.toolName ?? '' as string
+        let input = event.args ?? event.input
+
+        // onBeforeToolCall hook: plugin can block or transform params
+        if (this.hookCallback) {
+          try {
+            const hookResult = await this.hookCallback('onBeforeToolCall', { toolName, input })
+            if (hookResult.blocked === true) {
+              this.fireHookEvent('tool_execution_start', { toolCallId: event.toolCallId ?? '', toolName, input, blocked: true })
+              return null
+            }
+            if (hookResult.transformedData !== undefined) {
+              input = hookResult.transformedData
+            }
+          } catch {
+            // hook error → proceed with original data
+          }
+        }
+
+        this.fireHookEvent('tool_execution_start', { toolCallId: event.toolCallId ?? '', toolName, input })
+
         return {
           type: 'message.tool_call_start',
           payload: {
             sessionId: sid,
             toolCallId: event.toolCallId ?? '',
-            toolName: event.toolName ?? '',
-            input: event.args ?? event.input,
+            toolName,
+            input,
           },
         }
+      }
 
       case 'tool_execution_end': {
         // pi result is { content: [{ type: 'text', text: '...' }] } or a string
@@ -165,11 +201,27 @@ export class EventAdapter {
           }
         }
 
+        const toolCallId = event.toolCallId ?? '' as string
+
+        // onAfterToolResult hook: plugin can transform output
+        if (this.hookCallback) {
+          try {
+            const hookResult = await this.hookCallback('onAfterToolResult', { toolCallId, output })
+            if (hookResult.transformedData !== undefined) {
+              output = hookResult.transformedData as string
+            }
+          } catch {
+            // hook error → proceed with original data
+          }
+        }
+
+        this.fireHookEvent('tool_execution_end', { toolCallId, output, details })
+
         return {
           type: 'message.tool_call_end',
           payload: {
             sessionId: sid,
-            toolCallId: event.toolCallId ?? '',
+            toolCallId,
             output,
             details,
             error: event.isError ? output : event.error,
@@ -178,6 +230,10 @@ export class EventAdapter {
       }
 
       // ── Agent lifecycle ────────────────────────────────────────
+      case 'agent_start':
+        this.fireHookEvent('agent_start', {})
+        return null
+
       case 'agent_end': {
         const messages = event.messages as
           Array<Record<string, unknown>> | undefined
@@ -192,6 +248,7 @@ export class EventAdapter {
             totalTokens: usage.totalTokens ?? 0,
           })
         }
+        this.fireHookEvent('agent_end', { stopReason: STOP_REASON_MAP[rawReason] ?? rawReason, usage })
         return {
           type: 'message.complete',
           payload: {

@@ -64,7 +64,9 @@ else
       rm -rf pi
     fi
   else
-    unzip -o "$ASSET"
+    # Windows zip: 删除已存在的 symlink/目录，避免 unzip checkdir error
+    rm -rf assets theme export-html 2>/dev/null || true
+    unzip -o "$ASSET" 2>/dev/null || true
     if [[ -d "pi" ]]; then
       cp -R pi/assets pi/export-html pi/package.json pi/photon_rs_bg.wasm pi/theme . 2>/dev/null || true
       cp pi/pi "${BINARY_NAME}" 2>/dev/null || cp pi/pi.exe "${BINARY_NAME}" 2>/dev/null || true

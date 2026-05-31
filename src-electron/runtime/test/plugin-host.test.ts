@@ -2,13 +2,12 @@
  * PluginHost 单元测试
  *
  * 需要 mock-bootstrap.cjs 位于 PluginHost 期望的 plugin-bootstrap.js 路径。
- * 测试在 before() 中将 mock bootstrap 复制到该路径，after() 中清理。
+ * 测试在 beforeAll() 中将 mock bootstrap 复制到该路径，afterAll() 中清理。
  *
- * 运行命令: cd src-electron && npx tsx --test runtime/test/plugin-host.test.ts
+ * 运行命令: cd src-electron && npx vitest run runtime/test/plugin-host.test.ts
  */
 
-import { describe, it, before, after } from 'node:test'
-import assert from 'node:assert/strict'
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { readFileSync, writeFileSync, unlinkSync, existsSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -32,7 +31,7 @@ const TARGET_BOOTSTRAP = resolve(
 
 let createdBootstrap = false
 
-before(() => {
+beforeAll(() => {
   if (!existsSync(TARGET_BOOTSTRAP)) {
     const code = readFileSync(MOCK_BOOTSTRAP_SOURCE, 'utf-8')
     writeFileSync(TARGET_BOOTSTRAP, code, 'utf-8')
@@ -40,7 +39,7 @@ before(() => {
   }
 })
 
-after(() => {
+afterAll(() => {
   if (createdBootstrap) {
     try { unlinkSync(TARGET_BOOTSTRAP) } catch { /* best effort */ }
   }
@@ -56,18 +55,18 @@ describe('PluginHost', () => {
     const workerId2 = await host.assignWorker('plugin-b', 'sandbox')
 
     // sandbox 插件各自独占 Worker
-    assert.notStrictEqual(workerId1, workerId2, 'sandbox workers should be unique')
-    assert.ok(workerId1.startsWith('sandbox-'), `expected sandbox- prefix, got ${workerId1}`)
-    assert.ok(workerId2.startsWith('sandbox-'), `expected sandbox- prefix, got ${workerId2}`)
+    expect(workerId1).not.toBe(workerId2)
+    expect(workerId1.startsWith('sandbox-')).toBeTruthy()
+    expect(workerId2.startsWith('sandbox-')).toBeTruthy()
 
-    const handle1 = host.getWorkerHandleById(workerId1)
-    const handle2 = host.getWorkerHandleById(workerId2)
-    assert.ok(handle1)
-    assert.ok(handle2)
-    assert.strictEqual(handle1.trustLevel, 'sandbox')
-    assert.strictEqual(handle2.trustLevel, 'sandbox')
-    assert.strictEqual(handle1.status, 'active')
-    assert.strictEqual(handle2.status, 'active')
+    const handle1 = host.getWorkerHandleById(workerId1)!
+    const handle2 = host.getWorkerHandleById(workerId2)!
+    expect(handle1).toBeTruthy()
+    expect(handle2).toBeTruthy()
+    expect(handle1.trustLevel).toBe('sandbox')
+    expect(handle2.trustLevel).toBe('sandbox')
+    expect(handle1.status).toBe('active')
+    expect(handle2.status).toBe('active')
 
     await host.shutdown()
   })
@@ -82,13 +81,13 @@ describe('PluginHost', () => {
     const workerId3 = await host.assignWorker('tp-3', 'trusted')
 
     // trusted 插件应共享同一个 Worker（≤10 个插件时）
-    assert.strictEqual(workerId1, workerId2, 'trusted plugins should share worker')
-    assert.strictEqual(workerId2, workerId3, 'trusted plugins should share worker')
+    expect(workerId1).toBe(workerId2)
+    expect(workerId2).toBe(workerId3)
 
-    const handle = host.getWorkerHandleById(workerId1)
-    assert.ok(handle)
-    assert.strictEqual(handle.trustLevel, 'trusted')
-    assert.strictEqual(handle.pluginIds.length, 3, 'shared worker should track 3 plugins')
+    const handle = host.getWorkerHandleById(workerId1)!
+    expect(handle).toBeTruthy()
+    expect(handle.trustLevel).toBe('trusted')
+    expect(handle.pluginIds.length).toBe(3)
 
     await host.shutdown()
   })
@@ -100,12 +99,12 @@ describe('PluginHost', () => {
 
     const workerId = await host.assignWorker('term-test', 'sandbox')
 
-    assert.ok(host.getWorkerHandleById(workerId), 'worker should exist before terminate')
+    expect(host.getWorkerHandleById(workerId)).toBeTruthy()
 
     await host.terminateWorker(workerId)
 
     const afterTerminate = host.getWorkerHandleById(workerId)
-    assert.strictEqual(afterTerminate, undefined, 'worker should be removed after terminate')
+    expect(afterTerminate).toBe(undefined)
 
     await host.shutdown()
   })
@@ -115,7 +114,7 @@ describe('PluginHost', () => {
     const rpc = new PluginRpcServer()
     const host = new PluginHost(rpc)
 
-    assert.deepStrictEqual(host.getAllWorkers(), [])
+    expect(host.getAllWorkers()).toEqual([])
 
     host.shutdown()
   })
@@ -138,10 +137,10 @@ describe('PluginHost', () => {
 
     await host.assignWorker('s-1', 'sandbox')
     await host.assignWorker('s-2', 'sandbox')
-    assert.strictEqual(host.getAllWorkers().length, 2)
+    expect(host.getAllWorkers().length).toBe(2)
 
     await host.shutdown()
-    assert.deepStrictEqual(host.getAllWorkers(), [])
+    expect(host.getAllWorkers()).toEqual([])
   })
 
   // ── 补充：crash callback 触发 ────────────────────────────────
@@ -155,8 +154,8 @@ describe('PluginHost', () => {
     })
 
     const workerId = await host.assignWorker('crash-test', 'sandbox')
-    const workerInstance = host.getWorkerInstance(workerId)
-    assert.ok(workerInstance, 'worker instance should exist')
+    const workerInstance = host.getWorkerInstance(workerId)!
+    expect(workerInstance).toBeTruthy()
 
     // 直接 terminate 让 Worker 退出（exit code != 0 触发 crash handler）
     workerInstance.terminate()

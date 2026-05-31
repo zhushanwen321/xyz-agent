@@ -5,8 +5,7 @@
  * 以及 PluginDescriptor 的 source / extensionDependencies 字段。
  */
 
-import { describe, it, before, after } from 'node:test'
-import assert from 'node:assert/strict'
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve, dirname } from 'node:path'
@@ -36,11 +35,11 @@ import { PluginRegistry } from '../src/services/plugin-service/plugin-registry.j
 const __dirname = dirname(fileURLToPath(import.meta.url))
 let tmpDir: string
 
-before(async () => {
+beforeAll(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), 'plugin-foundation-test-'))
 })
 
-after(async () => {
+afterAll(async () => {
   await rm(tmpDir, { recursive: true, force: true })
 })
 
@@ -51,15 +50,15 @@ describe('Task 1: Plugin Types + Built-in Scan + Registry', () => {
     it('accepts built-in and external values', () => {
       const builtIn: PluginSource = 'built-in'
       const external: PluginSource = 'external'
-      assert.strictEqual(builtIn, 'built-in')
-      assert.strictEqual(external, 'external')
+      expect(builtIn).toBe('built-in')
+      expect(external).toBe('external')
     })
   })
 
   describe('PluginState', () => {
     it('includes DEPS_MISSING state', () => {
       const state: PluginState = 'DEPS_MISSING'
-      assert.strictEqual(state, 'DEPS_MISSING')
+      expect(state).toBe('DEPS_MISSING')
     })
 
     it('still supports all original states', () => {
@@ -67,7 +66,7 @@ describe('Task 1: Plugin Types + Built-in Scan + Registry', () => {
         'UNLOADED', 'LOADING', 'ACTIVATING', 'ACTIVE',
         'DEACTIVATING', 'CRASHED', 'DEPS_MISSING',
       ]
-      assert.strictEqual(states.length, 7)
+      expect(states.length).toBe(7)
     })
   })
 
@@ -80,8 +79,8 @@ describe('Task 1: Plugin Types + Built-in Scan + Registry', () => {
         source: 'built-in',
         extensionDependencies: ['core-tools'],
       }
-      assert.strictEqual(manifest.source, 'built-in')
-      assert.deepStrictEqual(manifest.extensionDependencies, ['core-tools'])
+      expect(manifest.source).toBe('built-in')
+      expect(manifest.extensionDependencies).toEqual(['core-tools'])
     })
 
     it('source and extensionDependencies are optional', () => {
@@ -90,8 +89,8 @@ describe('Task 1: Plugin Types + Built-in Scan + Registry', () => {
         main: 'index.js',
         activationEvents: [],
       }
-      assert.strictEqual(manifest.source, undefined)
-      assert.strictEqual(manifest.extensionDependencies, undefined)
+      expect(manifest.source).toBe(undefined)
+      expect(manifest.extensionDependencies).toBe(undefined)
     })
   })
 
@@ -113,8 +112,8 @@ describe('Task 1: Plugin Types + Built-in Scan + Registry', () => {
         source: 'external',
         extensionDependencies: [],
       }
-      assert.strictEqual(desc.source, 'external')
-      assert.deepStrictEqual(desc.extensionDependencies, [])
+      expect(desc.source).toBe('external')
+      expect(desc.extensionDependencies).toEqual([])
     })
   })
 
@@ -122,12 +121,12 @@ describe('Task 1: Plugin Types + Built-in Scan + Registry', () => {
 
   describe('PermissionConstants', () => {
     it('defines required permission constants', () => {
-      assert.ok(PermissionConstants.TOOLS_REGISTER)
-      assert.ok(PermissionConstants.HOOKS_REGISTER)
-      assert.ok(PermissionConstants.SESSIONS_SEND_MESSAGE)
-      assert.strictEqual(typeof PermissionConstants.TOOLS_REGISTER, 'string')
-      assert.strictEqual(typeof PermissionConstants.HOOKS_REGISTER, 'string')
-      assert.strictEqual(typeof PermissionConstants.SESSIONS_SEND_MESSAGE, 'string')
+      expect(PermissionConstants.TOOLS_REGISTER).toBeTruthy()
+      expect(PermissionConstants.HOOKS_REGISTER).toBeTruthy()
+      expect(PermissionConstants.SESSIONS_SEND_MESSAGE).toBeTruthy()
+      expect(typeof PermissionConstants.TOOLS_REGISTER).toBe('string')
+      expect(typeof PermissionConstants.HOOKS_REGISTER).toBe('string')
+      expect(typeof PermissionConstants.SESSIONS_SEND_MESSAGE).toBe('string')
     })
   })
 
@@ -140,8 +139,8 @@ describe('Task 1: Plugin Types + Built-in Scan + Registry', () => {
         connected: true,
         lastSyncAt: Date.now(),
       }
-      assert.strictEqual(state.pluginId, 'test')
-      assert.strictEqual(state.connected, true)
+      expect(state.pluginId).toBe('test')
+      expect(state.connected).toBe(true)
     })
 
     it('BridgeSyncRequest/Response have correct shape', () => {
@@ -155,8 +154,8 @@ describe('Task 1: Plugin Types + Built-in Scan + Registry', () => {
         registeredTools: [],
         registeredHooks: [],
       }
-      assert.strictEqual(req.type, 'bridge.sync')
-      assert.strictEqual(res.success, true)
+      expect(req.type).toBe('bridge.sync')
+      expect(res.success).toBe(true)
     })
 
     it('BridgeToolExecuteRequest/Response have correct shape', () => {
@@ -169,8 +168,8 @@ describe('Task 1: Plugin Types + Built-in Scan + Registry', () => {
         content: 'ok',
         isError: false,
       }
-      assert.strictEqual(req.toolName, 'myTool')
-      assert.strictEqual(res.content, 'ok')
+      expect(req.toolName).toBe('myTool')
+      expect(res.content).toBe('ok')
     })
   })
 
@@ -179,20 +178,20 @@ describe('Task 1: Plugin Types + Built-in Scan + Registry', () => {
   describe('Hook types', () => {
     it('InterceptorHookType includes expected values', () => {
       const hook: InterceptorHookType = 'onToolCall'
-      assert.strictEqual(hook, 'onToolCall')
+      expect(hook).toBe('onToolCall')
     })
 
     it('ObserverHookType includes expected values', () => {
       const hook: ObserverHookType = 'onMessage'
-      assert.strictEqual(hook, 'onMessage')
+      expect(hook).toBe('onMessage')
     })
 
     it('HookResult can be success or blocked', () => {
       const success: HookResult = { blocked: false }
       const blocked: HookBlockedResult = { blocked: true, reason: 'not allowed' }
-      assert.strictEqual(success.blocked, false)
-      assert.strictEqual(blocked.blocked, true)
-      assert.strictEqual(blocked.reason, 'not allowed')
+      expect(success.blocked).toBe(false)
+      expect(blocked.blocked).toBe(true)
+      expect(blocked.reason).toBe('not allowed')
     })
 
     it('HookContext has correct shape', () => {
@@ -202,16 +201,16 @@ describe('Task 1: Plugin Types + Built-in Scan + Registry', () => {
         data: { tool: 'myTool' },
         timestamp: Date.now(),
       }
-      assert.strictEqual(ctx.pluginId, 'test')
+      expect(ctx.pluginId).toBe('test')
     })
 
     it('InterceptorResult can allow or deny with modification', () => {
       const allow: InterceptorResult = { proceed: true }
       const deny: InterceptorResult = { proceed: false, reason: 'blocked' }
       const modify: InterceptorResult = { proceed: true, modifiedData: { a: 2 } }
-      assert.strictEqual(allow.proceed, true)
-      assert.strictEqual(deny.proceed, false)
-      assert.ok(modify.modifiedData)
+      expect(allow.proceed).toBe(true)
+      expect(deny.proceed).toBe(false)
+      expect(modify.modifiedData).toBeTruthy()
     })
   })
 
@@ -238,10 +237,10 @@ describe('Task 1: Plugin Types + Built-in Scan + Registry', () => {
       )
 
       const descriptors = await registry.scan()
-      const coreTool = descriptors.find(d => d.pluginId === 'core-tool')
-      assert.ok(coreTool, 'should discover built-in plugin from resources/plugins/')
-      assert.strictEqual(coreTool.source, 'built-in')
-      assert.deepStrictEqual(coreTool.extensionDependencies, [])
+      const coreTool = descriptors.find(d => d.pluginId === 'core-tool')!
+      expect(coreTool).toBeTruthy()
+      expect(coreTool.source).toBe('built-in')
+      expect(coreTool.extensionDependencies).toEqual([])
     })
 
     it('external plugins are marked as external', async () => {
@@ -264,10 +263,10 @@ describe('Task 1: Plugin Types + Built-in Scan + Registry', () => {
 
       const registry = new PluginRegistry(tmpDir)
       const descriptors = await registry.scan()
-      const ext = descriptors.find(d => d.pluginId === 'ext-plugin')
-      assert.ok(ext, 'should discover external plugin')
-      assert.strictEqual(ext.source, 'external')
-      assert.deepStrictEqual(ext.extensionDependencies, ['core-tool'])
+      const ext = descriptors.find(d => d.pluginId === 'ext-plugin')!
+      expect(ext).toBeTruthy()
+      expect(ext.source).toBe('external')
+      expect(ext.extensionDependencies).toEqual(['core-tool'])
     })
   })
 })
