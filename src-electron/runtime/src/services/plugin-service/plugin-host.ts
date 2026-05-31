@@ -21,7 +21,7 @@ import { PluginRpcServer } from './plugin-rpc-server.js'
  */
 function resolvePluginHostDir(): string {
   // __dirname 在 tsup CJS bundle 中由运行时注入，ESM 源码直跑时为全局未定义
-  // @ts-expect-error __dirname 在 ESM 中不存在，但 tsup CJS bundle 会注入
+  // @ts-ignore __dirname 在 ESM 运行时为 undefined，但 Node.js 类型声明中是 string
   if (typeof __dirname !== 'undefined' && __dirname) {
     // 开发模式下交叉验证 import.meta.url（仅在两者都可用时）
     if (typeof import.meta !== 'undefined' && import.meta.url) {
