@@ -1,6 +1,6 @@
 {
   "name": "pi-extension-subagent",
-  "version": "0.3.10",
+  "version": "0.3.11",
   "description": "Subagent delegation tool — parallel/chain/single execution with model selection, background jobs, and TUI rendering.",
   "main": "src/index.ts",
   "keywords": [
