@@ -93,6 +93,8 @@ export default {
     thinkingMedium: '中度思考',
     thinkingLow: '轻度思考',
     thinkingNone: '不思考',
+    thinkingInstant: '即时',
+    thinkingDeep: '深度思考',
     temperature: '温度',
     language: '语言',
     theme: '主题',

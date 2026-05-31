@@ -93,6 +93,8 @@ export default {
     thinkingMedium: 'Medium',
     thinkingLow: 'Low',
     thinkingNone: 'None',
+    thinkingInstant: 'Instant',
+    thinkingDeep: 'Thinking',
     temperature: 'Temperature',
     language: 'Language',
     theme: 'Theme',

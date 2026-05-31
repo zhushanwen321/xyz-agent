@@ -3,8 +3,10 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
 import { useProviderStore } from '../../stores/provider'
 import { useChatStore } from '../../stores/chat'
+import { useI18n } from 'vue-i18n'
 import { Button } from '../../design-system'
-import ModelPicker from './ModelPicker.vue'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   sessionId: string
@@ -74,9 +76,9 @@ function getThinkingDisplayLabel(level: string): string {
   if (map && map[level] !== undefined && map[level] !== null && map[level] !== level) {
     return map[level]
   }
-  // Off/On inference for binary strategies
+  // Instant/Thinking for binary strategies
   if (thinkingLevels.value.length === 2 && thinkingLevels.value.includes('off')) {
-    return level === 'off' ? 'Off' : 'On'
+    return level === 'off' ? t('chat.thinkingInstant') : t('chat.thinkingDeep')
   }
   return level
 }
