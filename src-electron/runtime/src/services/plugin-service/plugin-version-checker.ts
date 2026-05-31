@@ -2,12 +2,17 @@ import semver from 'semver'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 
-/** 使用 process.cwd() 定位 package.json，兼容 CJS bundle */
+/** 获取 xyz-agent 版本号。优先使用构建时注入的环境变量，回退到 cwd 向上查找 package.json。 */
 function getAppVersion(): string {
+  // tsup define 在构建时注入（tsup.config.ts）
+  const injected = process.env.XYZ_AGENT_VERSION
+  if (injected) return injected
+
+  // 回退：开发模式下从 package.json 读取
   try {
-    // CJS bundle 时 import.meta.url 为 undefined，用 cwd() + 向上查找代替
     let dir = process.cwd()
-    for (let i = 0; i < 10; i++) {
+    const MAX_PARENT_LEVELS = 10
+    for (let i = 0; i < MAX_PARENT_LEVELS; i++) {
       const pkgPath = path.join(dir, 'package.json')
       try {
         const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as { version: string }

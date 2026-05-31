@@ -310,7 +310,18 @@ export class PluginHost implements ActivatorHost {
   ): WorkerHandle {
     // plugin-bootstrap.js 与本文件（plugin-host）同目录
     // resolveAndValidateFile 在文件不存在时抛出含诊断信息的错误
-    const bootstrapPath = resolveAndValidateFile('plugin-bootstrap.js')
+    // 生产环境（CJS bundle）用 .cjs，开发/测试（JS 源码直跑）用 .js，
+    // 测试 mock 场景也使用 .js（test setup 会写入 plugin-bootstrap.js）
+    let bootstrapPath: string
+    try {
+      bootstrapPath = resolveAndValidateFile('plugin-bootstrap.cjs')
+    } catch {
+      try {
+        bootstrapPath = resolveAndValidateFile('plugin-bootstrap.js')
+      } catch {
+        bootstrapPath = resolveAndValidateFile('plugin-bootstrap.ts')
+      }
+    }
 
     let worker: Worker
     try {

@@ -97,11 +97,11 @@ async function main(): Promise<void> {
       },
       onHookExecute: pluginService!
         ? (hookType, context) => pluginService!.executeHooks(hookType, {
-            pluginId: '',
-            hookType: hookType as import('./services/plugin-service/plugin-types.js').HookType,
-            data: { ...context, sessionId },
-            timestamp: Date.now(),
-          })
+          pluginId: '',
+          hookType: hookType as import('./services/plugin-service/plugin-types.js').HookType,
+          data: { ...context, sessionId },
+          timestamp: Date.now(),
+        })
         : undefined,
     }),
     effectiveRoot,

@@ -178,23 +178,42 @@ lsof -i :1420 -P | grep node
 
 ### 12. Electron 打包约束（违反必出 bug）
 
-**tsup 配置** (`src-electron/runtime/tsup.config.ts`):
+#### tsup 配置 (`src-electron/runtime/tsup.config.ts`)
 - `platform: 'node'` + `target: 'node20'` — 自动处理所有 Node 内置模块 external，匹配 Electron 33 内置 Node 版本
 - `noExternal` 必须覆盖 **所有** runtime `dependencies` — 新增 npm 依赖时必须同步追加，否则 `asar.unpacked` 运行时 `Cannot find module`
+- **Worker 入口必须独立打包**：`plugin-bootstrap.ts` 是 Worker Thread 入口，tsup `entry` 必须包含它，输出为 `plugin-bootstrap.cjs`，与 `index.cjs` 同目录。禁止只打包 `index.ts` 一个 entry
 - 禁止在 runtime 源码中使用 `import.meta.url` 或 `fileURLToPath(import.meta.url)` — CJS bundle 时为 `undefined`，必须用 `__dirname` 兼容层或 `process.cwd()`
 
-**electron-builder 配置** (`src-electron/electron-builder.yml`):
+#### electron-builder 配置 (`src-electron/electron-builder.yml`)
 - `asarUnpack: dist/runtime/**/*` — runtime 必须在 unpacked 目录，子进程无法读取 asar 内的 JS 文件
+- **`files` 与 `asarUnpack` 的致命交互**：`asarUnpack` 只作用于**已被 `files` 包含的文件**。如果 `files` 中用了 `!dist/runtime/**/*` 排除 runtime，asarUnpack 将无文件可解压，导致打包产物中**缺失整个 runtime**。必须确保 `files` 包含 `dist/runtime/**/*`
 - `files` 只包含主进程直接 `require` 的 `node_modules`（其余已被 tsup 打包进 runtime bundle）
 
-**子进程启动** (`src-electron/main/runtime-manager.ts`):
+#### extraResources 与 symlink
+- `resources/pi/` 中**禁止存在指向外部绝对路径的 symlink**。electron-builder 的 `extraResources` 复制时保留 symlink，用户机器上目标路径不存在会导致 pi 运行时资源缺失
+- 构建前必须 dereference：`cp -RL` 替代 `cp -R`，或脚本中显式将 symlink 替换为真实目录拷贝
+
+#### 子进程启动 (`src-electron/main/runtime-manager.ts`)
 - 必须用 `process.execPath` + `ELECTRON_RUN_AS_NODE=1` 启动 runtime，不能用 `node` 路径
 - 打包后路径必须用 `process.resourcesPath/app.asar.unpacked/...`，不能用 `app.getAppPath()`（返回 asar 虚拟路径）
 
-**自动验证脚本**:
-- `scripts/preflight-check.sh` — 打包前检查（产物存在、noExternal 一致性、asarUnpack 配置）
-- `scripts/postbuild-validate.sh` — 打包后验证（asar 结构、runtime unpacked、产物大小）
-- `scripts/validate-runtime-bundle.sh` — runtime bundle 深度验证（依赖打包、CJS 兼容、健康检查）
+#### 打包验证流程（三阶段，缺一不可）
+1. **Preflight** (`scripts/preflight-check.sh`)：
+   - 产物存在性（dist/main, dist/preload, dist/runtime/index.cjs, dist/runtime/plugin-bootstrap.cjs, renderer/dist）
+   - tsup noExternal 与 runtime dependencies 一致性
+   - `files` 未排除 `dist/runtime`（正则扫描 `!dist/runtime` 模式）
+   - `resources/pi` 无 symlink
+2. **Build** (`npm run build`)：electron-builder 执行打包，产出 dmg/zip/exe
+3. **Postbuild** (`scripts/postbuild-validate.sh`)：
+   - asar 内容正确性（dist/main/main.cjs, dist/preload/preload.cjs）
+   - `app.asar.unpacked/dist/runtime/` 存在且包含 `index.cjs` + `plugin-bootstrap.cjs`
+   - `Resources/pi` 无 symlink
+   - 产物大小合理性
+
+#### 自动验证脚本
+- `scripts/preflight-check.sh` — 打包前检查
+- `scripts/postbuild-validate.sh` — 打包后验证
+- `scripts/validate-runtime-bundle.sh` — runtime bundle 深度验证（依赖打包、CJS 兼容、Worker bootstrap 存在性、健康检查）
 - pre-commit hook 自动触发 `validate-runtime-bundle.sh`（当 `src-electron/runtime/src/` 有变更时）
 
 **跳过检查**:

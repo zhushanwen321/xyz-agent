@@ -97,16 +97,16 @@ export async function executeTodoAction(
     case 'list': {
       resultText = todos.length
         ? todos
-            .map((t) => {
-              const mark =
+          .map((t) => {
+            const mark =
                 t.status === 'completed'
                   ? 'x'
                   : t.status === 'in_progress'
                     ? '~'
                     : ' '
-              return `[${mark}] #${t.id}: ${t.text}`
-            })
-            .join('\n')
+            return `[${mark}] #${t.id}: ${t.text}`
+          })
+          .join('\n')
         : '暂无 todo'
       break
     }

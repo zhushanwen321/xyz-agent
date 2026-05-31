@@ -25,11 +25,19 @@ files:
   - "!node_modules/**/*.md"
   - "!node_modules/**/*.map"
   - "!node_modules/**/*.ts"
-  - "!dist/runtime/**/*"        # runtime 在 asarUnpack 中
+  # 警告：asarUnpack 只作用于已被 files 包含的文件。
+  # 如果在此排除 dist/runtime，asarUnpack 将无文件可解压，
+  # 导致打包产物中缺失整个 runtime，应用启动即崩溃。
+  # 历史回归：2026-05-31 因添加 '!dist/runtime/**/*' 导致 0.3.8 DMG 无法启动。
   - "!dist/builder-output/**/*"
 
 # runtime 预编译产物必须排除在 asar 之外，
 # 因为 Node.js 子进程无法直接读取 asar 内的文件。
+# 关键约束：asarUnpack 只作用于已被 files 包含的文件。
+# dist/runtime 必须在 files 中存在，然后 asarUnpack 会把它从 asar
+# 中剔除到 app.asar.unpacked/ 目录。如果 files 排除了 dist/runtime，
+# 这里只会静默失败，产物中不会有 app.asar.unpacked/dist/runtime/。
+# 检查：scripts/preflight-check.sh [5/7] asarUnpack vs files consistency
 asarUnpack:
   - "dist/runtime/**/*"
 
