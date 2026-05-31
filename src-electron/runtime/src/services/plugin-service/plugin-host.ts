@@ -20,18 +20,19 @@ import { PluginRpcServer } from './plugin-rpc-server.js'
  * - 均不可用时抛出清晰错误
  */
 function resolvePluginHostDir(): string {
-  // __dirname 在 tsup CJS bundle 中由运行时注入，ESM 源码直跑时为全局未定义
-  // @ts-ignore __dirname 在 ESM 运行时为 undefined，但 Node.js 类型声明中是 string
-  if (typeof __dirname !== 'undefined' && __dirname) {
+  // __dirname 在 tsup CJS bundle 中由运行时注入，ESM 源码直跑时为 undefined
+  // 用 globalThis 访问避免 @ts-expect-error/@ts-ignore 的 tsc vs eslint 冲突
+  const dir = (globalThis as Record<string, unknown>).__dirname
+  if (typeof dir === 'string' && dir) {
     // 开发模式下交叉验证 import.meta.url（仅在两者都可用时）
     if (typeof import.meta !== 'undefined' && import.meta.url) {
       try {
         // eslint-disable-next-line @typescript-eslint/no-require-imports -- 动态 require 避免顶层 import 在 CJS bundle 中报错
         const { fileURLToPath } = require('node:url') as typeof import('node:url')
         const metaDir = dirname(fileURLToPath(import.meta.url))
-        if (metaDir !== __dirname) {
+        if (metaDir !== dir) {
           console.warn(
-            `[plugin-host] path divergence detected: __dirname=${__dirname} vs import.meta.url→${metaDir}. ` +
+            `[plugin-host] path divergence detected: __dirname=${dir} vs import.meta.url→${metaDir}. ` +
             `Using __dirname (CJS bundle path).`,
           )
         }
@@ -39,7 +40,7 @@ function resolvePluginHostDir(): string {
         // fileURLToPath 不可用则跳过交叉验证
       }
     }
-    return __dirname
+    return dir
   }
 
   // ESM 源码路径（开发/测试直跑 tsx）
