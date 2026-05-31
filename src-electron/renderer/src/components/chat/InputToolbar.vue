@@ -190,7 +190,7 @@ onBeforeUnmount(() => {
             :style="{ height: (4 + i * 1.5) + 'px', background: getBarColor(currentThinkingLevel, i) }"
           ></span>
         </span>
-        <span class="text-muted">{{ currentThinkingLevel }}</span>
+        <span class="text-muted">{{ getThinkingDisplayLabel(currentThinkingLevel) }}</span>
       </Button>
       <!-- Thinking dropdown -->
       <div
