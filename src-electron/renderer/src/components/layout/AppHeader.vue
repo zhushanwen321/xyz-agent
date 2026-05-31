@@ -6,6 +6,7 @@
       </svg>
     </Button>
     <div class="font-display text-base font-bold leading-tight -tracking-[0.01em]">xyz<span class="text-accent">-agent</span></div>
+    <span class="text-[10px] text-muted leading-tight ml-0.5 mt-0.5">v{{ appVersion }}</span>
     <div class="flex-1"></div>
     <Button variant="ghost" size="icon" class="relative rounded-sm text-muted hover:text-accent" @click="openInspector" :title="t('header.notifications')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px">
@@ -59,6 +60,11 @@ const settingsStore = useSettingsStore()
 const panelStore = usePanelStore()
 const chatStore = useChatStore()
 const isDark = ref(document.documentElement.getAttribute('data-theme') === 'dark')
+
+// Vite define 在构建时从 package.json 注入
+declare const __APP_VERSION__: string
+const appVersion = __APP_VERSION__
+
 defineEmits<{ 'toggle-sidebar': [] }>()
 
 // 从 focused pane 的 session 分区读取通知计数
