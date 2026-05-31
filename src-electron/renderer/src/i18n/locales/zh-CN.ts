@@ -61,6 +61,8 @@ export default {
     compactDone: '上下文已压缩',
     emptyTitle: 'Hello, xyz-agent',
     emptySubtitle: '开始与 AI 对话…',
+    thinkingInstant: '即时',
+    thinkingDeep: '深度思考',
   },
   settings: {
     title: '设置',
@@ -93,8 +95,6 @@ export default {
     thinkingMedium: '中度思考',
     thinkingLow: '轻度思考',
     thinkingNone: '不思考',
-    thinkingInstant: '即时',
-    thinkingDeep: '深度思考',
     temperature: '温度',
     language: '语言',
     theme: '主题',

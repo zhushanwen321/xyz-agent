@@ -61,6 +61,8 @@ export default {
     compactDone: 'Context compacted',
     emptyTitle: 'Hello, xyz-agent',
     emptySubtitle: 'Start a conversation with AI...',
+    thinkingInstant: 'Instant',
+    thinkingDeep: 'Thinking',
   },
   settings: {
     title: 'Settings',
@@ -93,8 +95,6 @@ export default {
     thinkingMedium: 'Medium',
     thinkingLow: 'Low',
     thinkingNone: 'None',
-    thinkingInstant: 'Instant',
-    thinkingDeep: 'Thinking',
     temperature: 'Temperature',
     language: 'Language',
     theme: 'Theme',
