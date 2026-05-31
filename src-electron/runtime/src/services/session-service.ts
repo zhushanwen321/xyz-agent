@@ -6,7 +6,8 @@
  */
 import { basename, resolve, join } from 'node:path'
 import { readFile } from 'node:fs/promises'
-import { existsSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs'
+import { execSync } from 'node:child_process'
 import type {
   SessionSummary,
   SessionGroup,
@@ -44,6 +45,37 @@ interface ManagedSession {
   interceptor: NavigateInterceptor
   unsubUsageListener: (() => void) | null
   sessionFilePath?: string
+}
+
+export interface GitInfo {
+  branch: string
+  isWorktree: boolean
+}
+
+/** Read git branch and worktree status from cwd. Returns undefined if not a git repo. */
+function readGitInfo(cwd: string): GitInfo | undefined {
+  try {
+    const branch = execSync('git rev-parse --abbrev-ref HEAD', {
+      cwd,
+      timeout: 2000,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim()
+    if (!branch) return undefined
+    // Detect worktree: .git is a file (not dir) containing 'gitdir:'
+    let isWorktree = false
+    try {
+      const gitPath = join(cwd, '.git')
+      const st = statSync(gitPath)
+      if (st.isFile()) {
+        const content = readFileSync(gitPath, 'utf-8')
+        isWorktree = content.startsWith('gitdir:')
+      }
+    } catch { /* not a worktree */ }
+    return { branch, isWorktree }
+  } catch {
+    return undefined
+  }
 }
 
 export class SessionService implements ISessionService {
@@ -285,6 +317,13 @@ export class SessionService implements ISessionService {
     }
 
     return sessionId
+  }
+
+  async setThinkingLevel(sessionId: string, level: string): Promise<void> {
+    const client = this.pm.getClient(sessionId)
+    if (client) {
+      await client.setThinkingLevel(level)
+    }
   }
 
   hasActiveSession(sessionId: string): boolean {
@@ -582,10 +621,13 @@ export class SessionService implements ISessionService {
   }
 
   private toSummary(s: ManagedSession): SessionSummary {
+    const git = readGitInfo(s.cwd)
     return {
       id: s.id,
       label: s.label,
       cwd: s.cwd,
+      gitBranch: git?.branch,
+      gitIsWorktree: git?.isWorktree,
       status: s.isGenerating ? ('active' as SessionStatus) : ('idle' as SessionStatus),
       lastActiveAt: s.lastActiveAt,
       modelId: s.modelId,
@@ -598,10 +640,13 @@ export class SessionService implements ISessionService {
   }
 
   private scannedToSummary(s: ScannedSession): SessionSummary {
+    const git = readGitInfo(s.cwd)
     return {
       id: s.id,
       label: s.name ?? basename(s.cwd),
       cwd: s.cwd,
+      gitBranch: git?.branch,
+      gitIsWorktree: git?.isWorktree,
       status: 'idle' as SessionStatus,
       lastActiveAt: s.lastModified,
       modelId: '',

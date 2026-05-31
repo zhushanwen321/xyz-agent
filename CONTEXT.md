@@ -158,3 +158,15 @@ Plugin 的 per-session KV 存储 API（`api.sessionData`）。数据通过 Pi Br
 
 ### Plugin Dependency
 插件间依赖关系，通过 manifest 的 `extensionDependencies` 字段声明（格式：`pluginId@semverRange`）。激活时拓扑排序，循环依赖拒绝激活。
+
+### Statusline
+xyz-agent 的运行时状态可视化系统，包含三个 UI 区域：Input Toolbar（输入框内底部，per-panel）、Session Strip（输入框下方，per-panel）、Global Statusbar（窗口底部，全局）。数据来源于两条通道：pi extension 的 `setStatus()` 和 xyz-agent plugin 的 `updateStatusBarItem()`。
+
+### Input Toolbar
+输入框内部的底部工具栏，per-panel。包含 model picker、thinking level picker、context bar、token stats、send button。显示 session 级的模型和资源使用信息。
+
+### Session Strip
+输入框下方的信息条，per-panel。包含 git branch、cost、extension status chips（如 goal/todo 进度）。split panel 时各 panel 独立。
+
+### Global Statusbar
+窗口最底部的全局状态栏。包含连接状态、pi 版本、所有活跃 extension 的 status chips。聚合 pi extension setStatus 和 xyz-agent plugin statusBarUpdate 两条数据通道。

@@ -301,6 +301,10 @@ export class RpcClient {
     return this.sendCommand('set_model', { provider, modelId })
   }
 
+  setThinkingLevel(level: string): Promise<PiMessage> {
+    return this.sendCommand('set_thinking_level', { level })
+  }
+
   getAvailableModels(): Promise<PiMessage> {
     return this.sendCommand('get_available_models')
   }

@@ -44,6 +44,7 @@ import { ref, shallowRef, computed, onMounted, onUnmounted, watch, type Componen
 import type { ToolCall } from '@xyz-agent/shared'
 import { getToolRenderer } from '../../lib/tool-renderer-registry'
 import DefaultToolRenderer from './ToolRenderers/DefaultToolRenderer.vue'
+import { useSettingsStore } from '../../stores/settings'
 
 export interface BatchInfo {
   index: number
@@ -56,7 +57,9 @@ const props = defineProps<{
   toolCall: ToolCall
   batchInfo?: BatchInfo
 }>()
-const expanded = ref(false)
+const settingsStore = useSettingsStore()
+
+const expanded = ref(settingsStore.autoExpandToolCalls)
 // Vue 组件定义不能被 reactive 包裹，用 shallowRef 避免性能开销
 const rendererComp = shallowRef<Component | null>(null)
 
@@ -103,7 +106,7 @@ watch(() => props.toolCall.status, (status) => {
     stopTimer()
     now.value = props.toolCall.endTime ?? Date.now()
     // Auto-expand with slight delay for completion animation
-    setTimeout(() => { expanded.value = true }, AUTO_EXPAND_DELAY_MS)
+    setTimeout(() => { expanded.value = settingsStore.autoExpandToolCalls }, AUTO_EXPAND_DELAY_MS)
   }
 })
 

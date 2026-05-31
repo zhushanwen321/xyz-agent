@@ -538,6 +538,12 @@ export class SidecarServer implements IMessageBroker {
         this.send(ws, { type: 'model.switched', id: msg.id, payload: { sessionId, provider, modelId } })
         return true
       }
+      case 'session.setThinkingLevel': {
+        const { sessionId: sid, level } = msg.payload
+        await this.sessionService.setThinkingLevel(sid as string, level as string)
+        this.send(ws, { type: 'session.thinkingLevelSet', id: msg.id, payload: { sessionId: sid, level } })
+        return true
+      }
       case 'tool.approve':
       case 'tool.deny':
       case 'tool.always_allow':
@@ -733,7 +739,11 @@ export class SidecarServer implements IMessageBroker {
 
         case 'bridge:event': {
           const eventName = data.eventName as string
+          const eventData = data.data as Record<string, unknown> ?? {}
           console.log(`[server] bridge event: ${eventName} from session ${sessionId}`)
+          if (this.pluginService?.handleBridgeEvent) {
+            this.pluginService.handleBridgeEvent(eventName, eventData, sessionId)
+          }
           // Events are fire-and-forget — no meaningful response expected
           await client.sendCommand('extension_ui_response', { id: requestId, response: null })
           return
@@ -761,6 +771,16 @@ export class SidecarServer implements IMessageBroker {
       try {
         await client.sendCommand('extension_ui_response', { id: requestId, response: { error: String(e) } })
       } catch { /* ignore send error */ }
+    }
+  }
+
+  /**
+   * Handle statusSetUpdate events from event-adapter.
+   * Routes to PluginService.handleBridgeEvent for plugin hook dispatch.
+   */
+  handleStatusSetUpdate(payload: { sessionId: string; key: string; text: string }): void {
+    if (this.pluginService?.handleBridgeEvent) {
+      this.pluginService.handleBridgeEvent('plugin:statusSetUpdate', payload, payload.sessionId)
     }
   }
 

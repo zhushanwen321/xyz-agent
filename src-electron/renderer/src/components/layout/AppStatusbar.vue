@@ -1,74 +1,30 @@
-<template>
-  <footer class="flex items-center justify-between h-statusbar px-4 bg-surface border-t border-border text-[11px] text-muted shrink-0">
-    <div class="inline-flex items-center gap-2 min-w-0">
-      <span class="inline-flex items-center gap-1">
-        <span class="w-[5px] h-[5px] rounded-full" :style="{ background: dotColor }"></span>
-        {{ statusText }}
-      </span>
-      <template v-for="item in pluginStatusBarItems" :key="item.id">
-        <span
-          role="button"
-          tabindex="0"
-          class="inline-flex items-center gap-1 border-l border-border pl-2 hover:text-fg transition-colors cursor-pointer disabled:cursor-default disabled:hover:text-muted"
-          :class="{ 'cursor-default hover:text-muted': !item.commandId }"
-          :title="item.tooltip ?? ''"
-          @click="handleStatusItemClick(item)"
-        >{{ item.text }}</span>
-      </template>
-    </div>
-    <div class="inline-flex items-center gap-2 min-w-0">
-      <span v-if="activeSession?.modelId" class="font-mono text-[10px]">{{ activeSession.modelId }}</span>
-      <span v-if="tokenDisplay" class="font-mono text-[10px]">{{ tokenDisplay }}</span>
-    </div>
-  </footer>
-</template>
-
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useSessionStore } from '../../stores/session'
-import { usePanelStore } from '../../stores/panel'
-import { useChatStore } from '../../stores/chat'
 import { usePluginStore } from '../../stores/plugin'
 import { getState } from '../../lib/ws-client'
 import { useI18n } from 'vue-i18n'
 import type { PluginStatusItem } from '../../types/plugin'
 
+const PI_VERSION = '0.75.5-xyz-0.1'
+
 const { t } = useI18n()
-const sessionStore = useSessionStore()
-const panelStore = usePanelStore()
-const chatStore = useChatStore()
 const pluginStore = usePluginStore()
 const connState = getState()
 
-const activeSessionId = computed(() => panelStore.focusedPanel?.sessionId ?? null)
-const activeSession = computed(() => {
-  if (!activeSessionId.value) return sessionStore.currentSession
-  return sessionStore.sessions.find(s => s.id === activeSessionId.value) ?? sessionStore.currentSession
-})
+// ── Branch name is displayed in SessionStrip (per-session) ─────
+// AppStatusbar only shows global info (connection, version, global chips)
 
-const TOKEN_THRESHOLD = 1000
-function formatTokens(n: number) {
-  return n >= TOKEN_THRESHOLD
-    ? (n / TOKEN_THRESHOLD).toFixed(1) + 'k tokens'
-    : n + ' tokens'
-}
+// ── Plugin status bar items (global scope only) ────────────────
 
-const tokenDisplay = computed(() => {
-  const sid = activeSessionId.value
-  if (!sid) return ''
-  const state = chatStore.getSessionState(sid)
-  return state.contextUsagePercent ? formatTokens(state.contextUsagePercent) : ''
-})
+const globalStatusBarItems = computed(() => pluginStore.globalStatusBarItems)
 
-/** Plugin status bar items from store, sorted by priority */
-const pluginStatusBarItems = computed(() => pluginStore.allStatusBarItems)
-
-/** Handle click on a plugin status bar item */
 function handleStatusItemClick(item: PluginStatusItem) {
   if (item.commandId) {
     pluginStore.executeCommand(item.pluginId, item.commandId)
   }
 }
+
+// ── Connection status ──────────────────────────────────────────
 
 const dotColor = computed(() => {
   switch (connState.value) {
@@ -87,3 +43,32 @@ const statusText = computed(() => {
 })
 </script>
 
+<template>
+  <footer class="flex items-center justify-between h-statusbar px-3.5 bg-surface border-t border-border text-[11px] text-muted shrink-0 col-span-2">
+    <!-- Left: connection + version -->
+    <div class="inline-flex items-center gap-3 min-w-0">
+      <span class="inline-flex items-center gap-1">
+        <span class="w-[5px] h-[5px] rounded-full" :style="{ background: dotColor }"></span>
+        {{ statusText }}
+      </span>
+      <span class="text-[10px] text-muted">pi {{ PI_VERSION }}</span>
+    </div>
+
+    <!-- Right: global extension chips -->
+    <div class="inline-flex items-center gap-2 min-w-0">
+      <template v-for="(item, idx) in globalStatusBarItems" :key="item.id">
+        <span v-if="idx > 0" class="w-px h-3 bg-border shrink-0"></span>
+        <span
+          role="button"
+          tabindex="0"
+          :class="[
+            'inline-flex items-center gap-1 text-[10px] transition-colors',
+            item.commandId ? 'cursor-pointer hover:text-fg' : 'cursor-default',
+          ]"
+          :title="item.tooltip ?? ''"
+          @click="handleStatusItemClick(item)"
+        >{{ item.text }}</span>
+      </template>
+    </div>
+  </footer>
+</template>

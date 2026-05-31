@@ -170,6 +170,7 @@ export interface PiModelDefinition {
   headers?: Record<string, string>
   cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }
   compat?: Record<string, unknown>
+  thinkingLevelMap?: Record<string, string | null>
 }
 
 export interface PiProviderConfig {

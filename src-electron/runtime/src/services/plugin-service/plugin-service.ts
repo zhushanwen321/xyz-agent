@@ -1,5 +1,6 @@
 import { PluginPermissionChecker as PermissionChecker } from './plugin-permission.js'
-import type { PluginDescriptor, ToolEntry, HookEntry, HookContext, HookResult, BridgeToolExecuteRequest, BridgeToolExecuteResponse, BridgeInterceptResponse, ToolRegistration, HookType, IPluginServiceDeps } from './plugin-types.js'
+import type { PluginDescriptor, ToolEntry, HookEntry, HookContext, HookResult, BridgeToolExecuteRequest, BridgeToolExecuteResponse, BridgeInterceptResponse, ToolRegistration, HookType, StatusBarItemOptions, IPluginServiceDeps } from './plugin-types.js'
+import type { StatusBarItem } from '@xyz-agent/shared'
 import type { IPluginService } from '../../interfaces.js'
 import type { IMessageBroker } from '../../interfaces.js'
 import { PluginRegistry } from './plugin-registry.js'
@@ -35,6 +36,9 @@ export class PluginService implements IPluginService {
   /** Hook 注册表，key 为 hookType，value 为该类型的所有注册条目 */
   private permissionChecker: PermissionChecker
   private hookRegistry = new Map<string, HookEntry[]>()
+
+  /** Status bar items registry，key 为 `${pluginId}:${id}` */
+  private statusBarItems = new Map<string, StatusBarItem>()
 
   /** Session 数据缓存，key 为 sessionId */
   /** SessionData 内存缓存，sessionId → key → value */
@@ -265,6 +269,8 @@ export class PluginService implements IPluginService {
         await this.activator.deactivatePlugin(pluginId, this.host)
         // 停止热重载监听
         this.activator.stopWatching(pluginId)
+        // 清理 status bar items
+        this.clearStatusBarItems(pluginId)
       }
     } catch (err: unknown) {
       console.error(`[plugin-service] togglePlugin(${pluginId}, ${enabled}) failed:`, err instanceof Error ? err.message : String(err))
@@ -291,6 +297,9 @@ export class PluginService implements IPluginService {
     for (const [hookType, entries] of this.hookRegistry) {
       this.hookRegistry.set(hookType, entries.filter(e => e.pluginId !== pluginId))
     }
+
+    // 清理 status bar items
+    this.clearStatusBarItems(pluginId)
 
     await this.syncToolsToBridge()
     this.broadcastPluginList()
@@ -506,12 +515,25 @@ export class PluginService implements IPluginService {
           payload: { pluginId, level, message },
         })
       },
-      updateStatusBarItem: async (pluginId: string, id: string, text: string) => {
-        this.broker.broadcast({
-          type: 'plugin:statusBarUpdate',
-          id: `sb_${pluginId}_${Date.now()}`,
-          payload: { items: [{ id, pluginId, text, priority: 100 }] },
-        })
+      updateStatusBarItem: async (pluginId: string, id: string, text: string, options?: StatusBarItemOptions) => {
+        const itemKey = `${pluginId}:${id}`
+        // Empty text = remove item
+        if (text === '') {
+          this.statusBarItems.delete(itemKey)
+        } else {
+          const item: StatusBarItem = {
+            id,
+            pluginId,
+            text,
+            tooltip: options?.tooltip,
+            commandId: options?.commandId,
+            priority: options?.priority ?? 100,
+            scope: options?.scope ?? 'global',
+            sessionId: options?.sessionId,
+          }
+          this.statusBarItems.set(itemKey, item)
+        }
+        this.broadcastStatusBarItems()
       },
     })
 
@@ -894,6 +916,33 @@ export class PluginService implements IPluginService {
       id: `plugins_${Date.now()}`,
       payload: { plugins },
     })
+  }
+
+  /** Broadcast current status bar items to all clients */
+  private broadcastStatusBarItems(): void {
+    const items = Array.from(this.statusBarItems.values())
+    this.broker.broadcast({
+      type: 'plugin:statusBarUpdate',
+      id: `sb_${Date.now()}`,
+      payload: { items },
+    })
+  }
+
+  /** Get all current status bar items */
+  getStatusBarItems(): StatusBarItem[] {
+    return Array.from(this.statusBarItems.values())
+  }
+
+  /** Clear all status bar items for a given plugin (used during deactivation) */
+  clearStatusBarItems(pluginId: string): void {
+    let changed = false
+    for (const [key, item] of this.statusBarItems) {
+      if (item.pluginId === pluginId) {
+        this.statusBarItems.delete(key)
+        changed = true
+      }
+    }
+    if (changed) this.broadcastStatusBarItems()
   }
 
   /** 将内部 PluginState（UPPER_CASE）映射为协议层展示状态（lower_case） */

@@ -45,11 +45,15 @@ const sessionInfo = computed(() => {
   return sessionStore.sessions.find(s => s.id === props.sessionId) ?? null
 })
 
-const dirName = computed(() => {
+const dirParts = computed(() => {
   const cwd = sessionInfo.value?.cwd
-  if (!cwd) return ''
-  return cwd.split('/').pop() ?? cwd
+  if (!cwd) return []
+  const segs = cwd.replace(/\/$/, '').split('/').filter(Boolean)
+  return segs.slice(-2)
 })
+
+const gitBranch = computed(() => sessionInfo.value?.gitBranch)
+const gitIsWorktree = computed(() => sessionInfo.value?.gitIsWorktree)
 
 const showCloseButton = computed(() => panelStore.panelCount > 1)
 
@@ -121,12 +125,16 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
       @select="$emit('switch-agent', $event)"
     />
 
-    <!-- Session path -->
+    <!-- Session path + git branch -->
     <span v-if="sessionInfo" class="breadcrumb" :title="sessionInfo.cwd">
       <span class="breadcrumb__sep">/</span>
-      <span class="breadcrumb__dir">{{ dirName }}</span>
-      <span v-if="sessionInfo.label && sessionInfo.label !== dirName" class="breadcrumb__sep">/</span>
-      <span v-if="sessionInfo.label && sessionInfo.label !== dirName" class="breadcrumb__label">{{ sessionInfo.label }}</span>
+      <span class="breadcrumb__dir">{{ dirParts[0] }}</span>
+      <span v-if="dirParts[1]" class="breadcrumb__sep">/</span>
+      <span v-if="dirParts[1]" class="breadcrumb__dir">{{ dirParts[1] }}</span>
+      <span v-if="gitBranch" class="breadcrumb__branch">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+        {{ gitIsWorktree ? 'wt:' : '' }}{{ gitBranch }}
+      </span>
     </span>
     <span v-else class="breadcrumb breadcrumb--empty">空面板</span>
 
@@ -305,6 +313,19 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
 .breadcrumb__sep { color: var(--border); }
 .breadcrumb__dir { color: var(--fg); font-weight: 500; }
 .breadcrumb__label { color: var(--muted); }
+.breadcrumb__branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 6px;
+  padding: 0 5px;
+  height: 16px;
+  border-radius: 1px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--accent);
+  background: var(--accent-light);
+}
 .breadcrumb--empty { font-style: italic; opacity: 0.5; }
 
 .panel-notifs {

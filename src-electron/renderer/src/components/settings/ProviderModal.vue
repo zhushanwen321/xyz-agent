@@ -31,6 +31,7 @@ interface ModalModel {
   name: string
   contextWindow: number
   enabled?: boolean
+  thinkingLevelMap?: Record<string, string | null>
 }
 
 interface ModalFormData {
@@ -54,7 +55,6 @@ const formKey = ref('')
 const testResult = ref<'none' | 'ok' | 'err'>('none')
 const testMessage = ref('')
 const modalModels = ref<ModalModel[]>([])
-
 // ─── Auto-discover state ────────────────────────────────────────
 
 const discoverStatus = ref<'idle' | 'loading' | 'error' | 'empty' | 'success'>('idle')
@@ -101,6 +101,7 @@ watch(() => props.visible, (v) => {
       id: m.id,
       name: m.name,
       contextWindow: m.contextWindow ?? 0,
+      thinkingLevelMap: m.thinkingLevelMap,
     }))
     testResult.value = 'none'
     testMessage.value = ''
@@ -133,6 +134,7 @@ function addModel() {
     id: `new-${Date.now()}`,
     name,
     contextWindow: Number(addModelCtx.value) || 200_000,
+    thinkingLevelMap: structuredClone(THINKING_PRESETS['on-off']),
   })
   addModelName.value = ''
   addModelCtx.value = '200000'
@@ -215,6 +217,7 @@ function handleDiscover() {
           name: m.name,
           contextWindow: m.contextWindow ?? 0,
           enabled: existing?.enabled ?? true,
+          thinkingLevelMap: existing?.thinkingLevelMap ?? structuredClone(THINKING_PRESETS['on-off']),
         }
       })
       discoverStatus.value = 'success'
@@ -250,10 +253,52 @@ function handleSave() {
   })
 }
 
+// ─── Thinking strategy presets ────────────────────────────────
+
+type ThinkingStrategy = 'all-levels' | 'on-off' | 'high-max'
+
+const THINKING_PRESETS: Record<ThinkingStrategy, Record<string, string | null> | undefined> = {
+  'all-levels': undefined,
+  'on-off': { minimal: null, low: null, medium: null, high: null, xhigh: 'xhigh' },
+  'high-max': { off: null, minimal: null, low: null, medium: null, high: 'high', xhigh: 'max' },
+}
+
+const STRATEGY_LABELS: Record<ThinkingStrategy, string> = {
+  'all-levels': 'All Levels',
+  'on-off': 'On / Off',
+  'high-max': 'high / max',
+}
+
+function getStrategyFromMap(map?: Record<string, string | null>): ThinkingStrategy {
+  if (!map) return 'all-levels'
+  if (map.xhigh === 'max') return 'high-max'
+  return 'on-off'
+}
+
+function applyThinkingStrategy(model: ModalModel, strategy: ThinkingStrategy) {
+  const preset = THINKING_PRESETS[strategy]
+  model.thinkingLevelMap = preset ? structuredClone(preset) : undefined
+}
+
+const editingModelId = ref<string | null>(null)
+
+function toggleModelEdit(modelId: string) {
+  editingModelId.value = editingModelId.value === modelId ? null : modelId
+}
+
+function pickStrategy(model: ModalModel, strategy: ThinkingStrategy) {
+  applyThinkingStrategy(model, strategy)
+  editingModelId.value = null
+}
+
 function handleKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
     e.preventDefault()
     e.stopPropagation()
+    if (editingModelId.value) {
+      editingModelId.value = null
+      return
+    }
     emit('close')
   }
 }
@@ -262,7 +307,7 @@ watch(() => props.visible, (v) => {
   if (v) document.addEventListener('keydown', handleKeydown)
   else {
     document.removeEventListener('keydown', handleKeydown)
-    // modal 关闭时清理 discover 监听
+    editingModelId.value = null
     cleanupDiscover()
   }
 })
@@ -349,27 +394,52 @@ onUnmounted(() => {
             </div>
           </div>
           <div class="max-h-60 overflow-y-auto">
-            <div v-for="(model, idx) in modalModels" :key="model.id" class="flex items-center gap-2.5 py-2.5 px-3.5 border-b border-border last:border-b-0">
-              <span class="font-mono text-xs font-semibold min-w-[180px]">{{ model.name }}</span>
-              <span class="text-[11px] text-muted font-mono min-w-[60px]">{{ formatCtx(model.contextWindow) }}</span>
-              <Button variant="ghost" size="sm" class="hover:!text-[var(--danger)] hover:!bg-[var(--danger-light)]" @click="removeModel(idx)">
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M1 1l8 8M9 1L1 9" />
-                </svg>
-              </Button>
+            <div
+              v-for="(model, idx) in modalModels"
+              :key="model.id"
+              :class="['model-row', { editing: editingModelId === model.id }]"
+              @click="toggleModelEdit(model.id)"
+            >
+              <span class="model-name font-mono text-xs font-semibold">{{ model.name }}</span>
+              <div class="col-badge">
+                <!-- Inline pills (visible when editing) -->
+                <div class="strategy-pills">
+                  <button
+                    v-for="s in (['all-levels', 'on-off', 'high-max'] as const)"
+                    :key="s"
+                    :class="['pill', { 'pill--default active': getStrategyFromMap(model.thinkingLevelMap) === 'all-levels', 'pill--binary active': getStrategyFromMap(model.thinkingLevelMap) === 'on-off', 'pill--highmax active': getStrategyFromMap(model.thinkingLevelMap) === 'high-max' }]"
+                    @click.stop="pickStrategy(model, s)"
+                  >{{ s === 'all-levels' ? 'All' : s === 'on-off' ? 'O/O' : 'H/M' }}</button>
+                </div>
+                <!-- Badge (visible when not editing) -->
+                <span
+                  :class="['badge', {
+                    'badge--default': getStrategyFromMap(model.thinkingLevelMap) === 'all-levels',
+                    'badge--binary': getStrategyFromMap(model.thinkingLevelMap) === 'on-off',
+                    'badge--highmax': getStrategyFromMap(model.thinkingLevelMap) === 'high-max',
+                  }]"
+                >{{ STRATEGY_LABELS[getStrategyFromMap(model.thinkingLevelMap)] }}</span>
+              </div>
+              <span class="col-ctx">{{ formatCtx(model.contextWindow) }}</span>
+              <div class="col-remove">
+                <Button variant="ghost" size="sm" class="hover:!text-[var(--danger)] hover:!bg-[var(--danger-light)]" @click.stop="removeModel(idx)">
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 1l8 8M9 1L1 9" /></svg>
+                </Button>
+              </div>
             </div>
           </div>
-          <div class="flex gap-2 py-2.5 px-3.5 bg-bg border-t border-border">
+          <div class="flex items-center gap-2 py-2.5 px-3.5 bg-bg border-t border-border">
             <Input
               v-model="addModelName"
               :placeholder="t('settings.manualInputModel')"
               class="flex-1"
               @keydown.enter="addModel"
             />
+            <span class="badge badge--binary" style="width:56px;font-size:9px">On / Off</span>
             <Select
               v-model="addModelCtx"
               :options="ctxOptions"
-              class="!max-w-[120px]"
+              class="!max-w-[100px]"
             />
             <Button variant="outline" size="sm" @click="addModel">{{ t('common.create') }}</Button>
           </div>
@@ -390,3 +460,101 @@ onUnmounted(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* Fixed column layout */
+.model-row {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  border-bottom: 1px solid var(--divider);
+  transition: background 120ms ease;
+  cursor: pointer;
+}
+.model-row:last-child { border-bottom: none; }
+.model-row:hover { background: var(--hover-bg); }
+
+.model-name {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 0 7px 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.col-badge {
+  width: 80px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.col-ctx {
+  width: 48px;
+  flex-shrink: 0;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  padding-right: 8px;
+}
+.col-remove {
+  width: 28px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Badge */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  padding: 2px 0;
+  border-radius: 100px;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 100ms ease;
+}
+.badge--default { background: var(--section-bg); color: var(--muted); border-color: var(--border); }
+.badge--default:hover { border-color: var(--accent); color: var(--accent); }
+.badge--binary { background: var(--agent-light); color: var(--agent); }
+.badge--binary:hover { opacity: 0.8; }
+.badge--highmax { background: var(--accent-light); color: var(--accent); }
+.badge--highmax:hover { opacity: 0.8; }
+
+/* Inline pills (hidden by default, shown when editing) */
+.strategy-pills {
+  display: none;
+  align-items: center;
+  gap: 2px;
+}
+.model-row.editing .strategy-pills { display: flex; }
+.model-row.editing .badge { display: none; }
+
+.pill {
+  width: 24px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: 100px;
+  border: 1px solid transparent;
+  transition: all 100ms ease;
+  background: transparent;
+  color: var(--muted);
+  font-family: inherit;
+}
+.pill:hover { border-color: var(--border); }
+.pill--default.active { background: var(--section-bg); color: var(--fg); border-color: var(--border); }
+.pill--binary.active { background: var(--agent-light); color: var(--agent); }
+.pill--highmax.active { background: var(--accent-light); color: var(--accent); }
+</style>

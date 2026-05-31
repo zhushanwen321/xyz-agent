@@ -36,6 +36,10 @@ export interface EventAdapterOptions {
   onExtensionUIRequest?: (requestId: string, sessionId: string, method: string) => void
   /** Called for bridge: prefixed extension_ui_request events. Routes the request directly without frontend timeout. */
   onBridgeUIRequest?: (requestId: string, sessionId: string, method: string, data: Record<string, unknown>) => void
+  /** Called when pi extension fires setStatus via ctx.ui.setStatus(key, text). */
+  onStatusSetUpdate?: (payload: { sessionId: string; key: string; text: string }) => void
+  /** Called after agent_end with usage data for context window tracking. */
+  onContextUpdate?: (sessionId: string, data: { inputTokens: number; totalTokens: number }) => void
   /** Called by EventAdapter to execute plugin hooks on tool/message events. */
   onHookExecute?: (hookType: string, context: Record<string, unknown>) => Promise<import('./services/plugin-service/plugin-types.js').HookResult>
 }
@@ -237,6 +241,13 @@ export class EventAdapter {
         const rawReason = (lastMsg?.stopReason as string) ?? 'stop'
         const usage = lastMsg?.usage as
           { totalTokens?: number; inputTokens?: number; outputTokens?: number } | undefined
+        // Emit context.update callback for context window tracking
+        if (usage?.inputTokens) {
+          this.options?.onContextUpdate?.(sid, {
+            inputTokens: usage.inputTokens ?? 0,
+            totalTokens: usage.totalTokens ?? 0,
+          })
+        }
         this.fireHookEvent('agent_end', { stopReason: STOP_REASON_MAP[rawReason] ?? rawReason, usage })
         return {
           type: 'message.complete',
@@ -253,8 +264,17 @@ export class EventAdapter {
       // ── Extension UI requests ────────────────────────────────
       case 'extension_ui_request': {
         const method = event.method as string | undefined
-        // setStatus/setWidget are internal-only, discard
-        if (method === 'setStatus' || method === 'setWidget') return null
+        // setStatus: translate to internal callback
+        if (method === 'setStatus') {
+          this.options?.onStatusSetUpdate?.({
+            sessionId: sid,
+            key: String(event.key ?? ''),
+            text: String(event.text ?? ''),
+          })
+          return null
+        }
+        // setWidget is internal-only, discard
+        if (method === 'setWidget') return null
         // Bridge methods: route directly via callback, no frontend timeout
         if (method?.startsWith('bridge:')) {
           const requestId = String(event.id ?? '')

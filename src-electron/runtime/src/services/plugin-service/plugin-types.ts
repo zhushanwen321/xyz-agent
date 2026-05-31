@@ -312,6 +312,15 @@ export interface ToolEntry {
 
 // ── Phase 2: Hook 注册表条目 ──────────────────────────────────────────
 
+/** Status bar item options for plugin API */
+export interface StatusBarItemOptions {
+  tooltip?: string
+  commandId?: string
+  priority?: number
+  scope?: 'per-session' | 'global'
+  sessionId?: string
+}
+
 /** Hook 注册表中存储的条目（主线程侧） */
 export interface HookEntry {
   pluginId: string
@@ -359,7 +368,7 @@ export interface Phase2AgentAPI extends Phase1AgentAPI {
     showConfirm(title: string, message: string): Promise<boolean>
     showInput(title: string, defaultValue?: string): Promise<string | undefined>
     notify(level: 'info' | 'warn' | 'error', message: string): Promise<void>
-    updateStatusBarItem(id: string, text: string): Promise<void>
+    updateStatusBarItem(id: string, text: string, options?: StatusBarItemOptions): Promise<void>
   }
   readonly agent: {
     setModel(model: string): Promise<void>

@@ -35,7 +35,7 @@
       </div>
       <Textarea
         v-model="text"
-    :placeholder="placeholder"
+        :placeholder="placeholder"
         class="block w-full min-h-[calc(1.45em*2+16px)] max-h-[calc(1.45em*10+16px)] pt-[10px] pb-2 px-3.5 border-none bg-transparent text-fg font-body text-sm leading-[1.45] resize-none outline-none placeholder:text-muted"
         :rows="1"
         no-style
@@ -43,41 +43,30 @@
         @compositionstart="isComposing = true"
         @compositionend="onCompositionEnd"
       />
-      <div class="flex items-center gap-1 px-2 pb-1.5">
-        <ModelPicker :current-model="currentModel" @select="(id) => emit('select-model', id)" />
-        <div class="flex-1"></div>
-        <Button
-          v-if="isStreaming"
-          variant="ghost"
-          class="inline-flex items-center justify-center h-7 px-2 border-none rounded-xs bg-transparent text-muted text-xs font-body cursor-pointer transition-all duration-150 ease-ease gap-1 shrink-0 font-bold text-[11px] w-7 h-7 hover:bg-danger-light hover:text-danger"
-          @click="emit('cancel')"
-          :title="t('chat.stop')"
-        >■</Button>
-        <Button
-          v-else
-          variant="primary"
-          class="bg-accent text-white w-7 h-7 rounded-xs disabled:opacity-40 disabled:cursor-default hover:opacity-88"
-          :disabled="!canSend"
-          @click="handleSend"
-          :title="t('chat.send')"
-        >
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V3M4 7l4-4 4 4"/></svg>
-        </Button>
-      </div>
+      <InputToolbar
+        :session-id="sessionId"
+        :is-streaming="isStreaming"
+        :can-send="canSend"
+        @select-model="(id: string) => emit('select-model', id)"
+        @select-thinking-level="(l: string) => emit('send-command', { type: 'session.setThinkingLevel', payload: { sessionId, level: l } })"
+        @send="handleSend"
+        @cancel="emit('cancel')"
+      />
     </div>
+    <SessionStrip :session-id="sessionId" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, nextTick, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useSettingsStore } from '../../stores/settings'
 import { useProviderStore } from '../../stores/provider'
-import { Textarea, Button } from '../../design-system'
+import { Textarea } from '../../design-system'
 import { consumePendingEditorText } from '../../composables/useTree'
 import { on } from '../../lib/event-bus'
-import ModelPicker from './ModelPicker.vue'
 import SlashMenu from './SlashMenu.vue'
+import InputToolbar from './InputToolbar.vue'
+import SessionStrip from './SessionStrip.vue'
 import {
   useSlashCommands,
   type SlashCommand,
@@ -99,7 +88,6 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-const settingsStore = useSettingsStore()
 const providerStore = useProviderStore()
 const {
   mergeSkillCommands,
@@ -164,17 +152,15 @@ const tagDisplayName = computed(() => {
 
 const containerRef = ref<HTMLElement | null>(null)
 
-const currentModel = computed(() => settingsStore.defaultModel)
+const canSend = computed(() => {
+  const trimmed = text.value.trim()
+  return (trimmed.length > 0 || activeCommand.value !== null) && !props.isStreaming && !props.isCompacting
+})
 
 // 合并内置命令 + skill 命令
 const allCommands = computed(() =>
   mergeSkillCommands(providerStore.skills, providerStore.agents)
 )
-
-const canSend = computed(() => {
-  const trimmed = text.value.trim()
-  return (trimmed.length > 0 || activeCommand.value !== null) && !props.isStreaming && !props.isCompacting
-})
 
 // Slash command 状态
 const slashVisible = ref(false)

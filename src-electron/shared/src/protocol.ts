@@ -12,7 +12,7 @@ export type ClientMessageType =
   | 'config.discoverModels'
   | 'config.scanSkills' | 'config.setSkill' | 'config.deleteSkill'
   | 'config.scanAgents' | 'config.setAgent' | 'config.deleteAgent'
-  | 'model.list' | 'model.switch'
+  | 'model.list' | 'model.switch' | 'session.setThinkingLevel'
   | 'tool.approve' | 'tool.deny' | 'tool.always_allow'
   | 'extension.ui_response' | 'extension.toggle' | 'extension.list'
   | 'ping'
@@ -32,7 +32,7 @@ export interface SetProviderData {
   type?: string
   apiKey?: string
   baseUrl?: string
-  models?: Array<string | { id: string; name?: string; contextWindow?: number }>
+  models?: Array<string | { id: string; name?: string; contextWindow?: number; thinkingLevelMap?: Record<string, string | null> }>
   enabled?: boolean
 }
 
@@ -70,6 +70,7 @@ export interface ClientMessageMap {
   'config.deleteAgent': { agentId: string }
   'model.list': Record<string, never>
   'model.switch': { sessionId: string; provider: string; modelId: string }
+  'session.setThinkingLevel': { sessionId: string; level: string }
   'tool.approve': { sessionId: string; toolCallId?: string }
   'tool.deny': { sessionId: string; toolCallId?: string; reason?: string }
   'tool.always_allow': { sessionId: string; toolName?: string }
@@ -119,6 +120,7 @@ export type ClientMessage =
   | { type: 'config.deleteAgent'; id?: string; payload: ClientMessageMap['config.deleteAgent'] }
   | { type: 'model.list'; id?: string; payload: Record<string, never> }
   | { type: 'model.switch'; id?: string; payload: ClientMessageMap['model.switch'] }
+  | { type: 'session.setThinkingLevel'; id?: string; payload: ClientMessageMap['session.setThinkingLevel'] }
   | { type: 'tool.approve'; id?: string; payload: ClientMessageMap['tool.approve'] }
   | { type: 'tool.deny'; id?: string; payload: ClientMessageMap['tool.deny'] }
   | { type: 'tool.always_allow'; id?: string; payload: ClientMessageMap['tool.always_allow'] }
@@ -159,6 +161,7 @@ export type ServerMessageType =
   | 'config.scannedAgents' | 'config.agentUpdated' | 'config.agentDeleted'
   | 'config.skills' | 'config.agents'
   | 'model.list' | 'model.switched'
+  | 'session.thinkingLevelSet'
   | 'pong' | 'error'
   | 'extension.ui_request' | 'extension.ui_timeout' | 'extension.error'
   | 'message.tool_call_update' | 'config.extensions'
@@ -167,6 +170,7 @@ export type ServerMessageType =
   | 'config.plugins' | 'plugin:crashed' | 'plugin:notification'
   | 'plugin:statusChange' | 'plugin:permissionRequest'
   | 'plugin:statusBarUpdate' | 'plugin:messageDecoration' | 'plugin:config'
+  | 'plugin:statusSetUpdate'
   | 'plugin:uiRequest'
 
 export interface ServerMessage {
@@ -261,10 +265,18 @@ export interface StatusBarItem {
   tooltip?: string
   commandId?: string
   priority: number
+  scope: 'per-session' | 'global'
+  sessionId?: string
 }
 
 export interface PluginStatusBarUpdatePayload {
   items: StatusBarItem[]
+}
+
+export interface StatusSetUpdatePayload {
+  sessionId: string
+  key: string
+  text: string
 }
 
 export interface MessageDecoration {

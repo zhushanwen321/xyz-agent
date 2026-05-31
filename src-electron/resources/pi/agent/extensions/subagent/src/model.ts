@@ -46,7 +46,7 @@ export interface ModelResolutionContext {
 /** Map subagent ThinkingLevel to Pi CLI --thinking flag values. */
 export const THINKING_TO_PI: Record<ThinkingLevel, string> = {
 	high: "high",
-	max: "xhigh",
+	max: "max",
 };
 
 export const SUBAGENT_MODELS_PATH = path.join(os.homedir(), ".pi", "agent", "subagent-models.json");

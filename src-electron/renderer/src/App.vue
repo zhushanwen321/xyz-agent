@@ -34,6 +34,8 @@
         @close="settingsStore.closeInspector()"
       />
     </main>
+    <!-- Global Statusbar: spans entire width -->
+    <AppStatusbar />
     <!-- PanelGrid -->
     <PanelGrid
       :visible="settingsStore.panelGridVisible"
@@ -60,6 +62,7 @@ import { useProvider } from './composables/useProvider'
 import { useSession } from './composables/useSession'
 import type { ToastItem } from './components/toast/ToastContainer.vue'
 import AppSidebar from './components/layout/AppSidebar.vue'
+import AppStatusbar from './components/layout/AppStatusbar.vue'
 import SettingsView from './components/layout/SettingsView.vue'
 import PanelTreeRenderer from './components/panel/PanelTreeRenderer.vue'
 import DrawerOverlay from './components/panel/DrawerOverlay.vue'
@@ -324,6 +327,7 @@ onUnmounted(() => {
 .app-container {
   display: grid;
   grid-template-columns: var(--sidebar-w) 1fr;
+  grid-template-rows: 1fr auto;
   height: 100vh;
   overflow: hidden;
 }

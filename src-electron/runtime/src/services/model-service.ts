@@ -20,6 +20,8 @@ export class ModelService implements IModelService {
         reasoning: m.reasoning,
         contextWindow: m.contextWindow,
         maxTokens: m.maxTokens,
+        thinkingLevelMap: m.thinkingLevelMap,
+        cost: m.cost,
         enabled: true,
       } as ModelInfo)),
     )

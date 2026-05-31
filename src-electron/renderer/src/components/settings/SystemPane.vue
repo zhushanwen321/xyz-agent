@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '../../stores/settings'
-import { Select, Button } from '../../design-system'
+import { Select, Button, Toggle } from '../../design-system'
 import { setLocale, getLocale, type Locale } from '../../i18n'
 import type { ThemePreset } from '@xyz-agent/shared'
 
@@ -86,6 +86,29 @@ function selectPalette(id: ThemePreset) {
           <div class="flex-1 max-w-[200px]">
             <Select v-model="currentThemeMode" :options="themeModeOptions" />
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Section: 聊天显示 -->
+    <div class="border border-border rounded-sm overflow-hidden mb-3">
+      <div class="flex items-center py-[9px] px-4 bg-[var(--section-bg)] min-h-[42px]">
+        <span class="text-[13px] font-semibold">聊天显示</span>
+      </div>
+      <div>
+        <div class="flex items-center justify-between gap-4 py-2.5 px-4 border-b border-[var(--divider)]">
+          <div>
+            <span class="text-xs font-medium">展开思考过程</span>
+            <span class="text-[10px] text-muted ml-1.5">自动展开 Thinking 内容</span>
+          </div>
+          <Toggle :checked="settingsStore.autoExpandThinking" @update:checked="settingsStore.autoExpandThinking = $event" />
+        </div>
+        <div class="flex items-center justify-between gap-4 py-2.5 px-4">
+          <div>
+            <span class="text-xs font-medium">展开工具调用</span>
+            <span class="text-[10px] text-muted ml-1.5">自动展开 ToolCall 输入/输出</span>
+          </div>
+          <Toggle :checked="settingsStore.autoExpandToolCalls" @update:checked="settingsStore.autoExpandToolCalls = $event" />
         </div>
       </div>
     </div>
