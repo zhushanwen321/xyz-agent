@@ -13,7 +13,7 @@ import { PluginRpcServer } from './plugin-rpc-server.js'
 
 /** 兼容 CJS bundle（import.meta.url 在 CJS 下为 undefined） */
 function getPluginHostDir(): string {
-  // @ts-ignore CJS bundle 时 __dirname 可用
+  // @ts-expect-error CJS bundle 时 __dirname 可用
   if (typeof __dirname !== 'undefined') return __dirname
   // fallback：解析 process.execPath 的目录
   return dirname(process.execPath)
@@ -217,9 +217,9 @@ export class PluginHost implements ActivatorHost {
     trustLevel: 'trusted' | 'sandbox',
     pluginId: string,
   ): WorkerHandle {
-    // 编译后的 bootstrap 脚本与 plugin-host.js 同目录
+    // plugin-bootstrap.js 与本文件（plugin-host）同目录
     const bootstrapPath = resolve(
-      dirname(getPluginHostDir()),
+      getPluginHostDir(),
       'plugin-bootstrap.js',
     )
 

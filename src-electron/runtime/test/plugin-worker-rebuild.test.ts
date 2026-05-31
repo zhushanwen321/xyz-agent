@@ -10,7 +10,7 @@
  * 运行命令: npx vitest run src-electron/runtime/test/plugin-worker-rebuild.test.ts
  */
 
-import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { readFileSync, writeFileSync, unlinkSync, existsSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -19,24 +19,36 @@ import { PluginHost } from '../src/services/plugin-service/plugin-host.js'
 import { PluginRpcServer } from '../src/services/plugin-service/plugin-rpc-server.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const MOCK_BOOTSTRAP_SOURCE = resolve(__dirname, 'fixtures/mock-bootstrap.cjs')
+// Mock 在源码目录（与 plugin-host.ts 同目录）
+const MOCK_BOOTSTRAP_SOURCE = resolve(
+  __dirname,
+  '../src/services/plugin-service/plugin-bootstrap.mock.cjs',
+)
+// Worker 从 getPluginHostDir() 加载 bootstrap，即 plugin-host.ts 的目录
 const TARGET_BOOTSTRAP = resolve(
   __dirname,
   '../src/services/plugin-service/plugin-bootstrap.js',
 )
 
-let createdBootstrap = false
+let originalContent: string | null = null
+let targetExisted = false
 
 beforeAll(() => {
-  if (!existsSync(TARGET_BOOTSTRAP)) {
-    const code = readFileSync(MOCK_BOOTSTRAP_SOURCE, 'utf-8')
-    writeFileSync(TARGET_BOOTSTRAP, code, 'utf-8')
-    createdBootstrap = true
+  // 记录原始文件是否存在，存在则备份内容
+  if (existsSync(TARGET_BOOTSTRAP)) {
+    targetExisted = true
+    originalContent = readFileSync(TARGET_BOOTSTRAP, 'utf-8')
   }
+  const mockCode = readFileSync(MOCK_BOOTSTRAP_SOURCE, 'utf-8')
+  writeFileSync(TARGET_BOOTSTRAP, mockCode, 'utf-8')
 })
 
 afterAll(() => {
-  if (createdBootstrap) {
+  if (targetExisted && originalContent !== null) {
+    // 恢复原始内容
+    writeFileSync(TARGET_BOOTSTRAP, originalContent, 'utf-8')
+  } else if (!targetExisted) {
+    // 文件原本不存在，清理
     try { unlinkSync(TARGET_BOOTSTRAP) } catch { /* best effort */ }
   }
 })
