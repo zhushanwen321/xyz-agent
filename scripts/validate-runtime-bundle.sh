@@ -178,6 +178,22 @@ done
 
 if [ "$READY" = true ]; then
     echo -e "${GREEN}[OK] Runtime 启动成功 (port $PORT)${NC}"
+
+    # 检查 plugin 初始化是否成功（防止 globalThis.__dirname 等错误被 try-catch 吞掉）
+    if grep -q 'plugin initialization failed' /tmp/runtime-validate.log; then
+        echo -e "${RED}[ERROR] Plugin 初始化失败（被 try-catch 吞掉但不应忽略）${NC}"
+        echo -e "${YELLOW}日志:${NC}"
+        grep 'plugin initialization failed\|plugin-host\|Required file not found' /tmp/runtime-validate.log | tail -10
+        echo -e "${YELLOW}[FIX] 检查 plugin-host.ts 的 __dirname 兼容层、tsup 配置、plugin-bootstrap.cjs 是否存在${NC}"
+        exit 1
+    fi
+
+    # 确认 plugins initialized 成功输出
+    if grep -q 'plugins initialized' /tmp/runtime-validate.log; then
+        echo -e "${GREEN}[OK] Plugin 系统初始化成功${NC}"
+    else
+        echo -e "${YELLOW}[WARN] 未检测到 'plugins initialized' 日志（可能无插件或被 catch）${NC}"
+    fi
 else
     echo -e "${RED}[ERROR] Runtime 启动超时或失败${NC}"
     echo -e "${YELLOW}日志:${NC}"
