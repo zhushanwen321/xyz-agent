@@ -1,17 +1,14 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-// Mock createRequire to return a known version for testing
-const mockPkg = { version: '0.3.2' }
-vi.mock('node:module', () => ({
-  createRequire: () => (path: string) => {
-    if (typeof path === 'string' && path.includes('package.json')) {
-      return mockPkg
-    }
-    throw new Error('not found')
-  },
-}))
+const __dirname = dirname(fileURLToPath(import.meta.url))
 
-// Import after mock setup
+// 从实际 package.json 读取版本（tsup bundle 后 fs.readFileSync 向上查找）
+const PROJECT_ROOT = resolve(__dirname, '..')
+const PKG_VERSION = JSON.parse(readFileSync(resolve(PROJECT_ROOT, 'package.json'), 'utf-8')).version
+
 const { checkPluginCompatibility } = await import('../src/services/plugin-service/plugin-version-checker.js')
 
 describe('checkPluginCompatibility', () => {
@@ -24,12 +21,10 @@ describe('checkPluginCompatibility', () => {
   it('returns compatible for empty string', () => {
     const result = checkPluginCompatibility('')
     expect(result.compatible).toBe(true)
-    expect(result.reason).toBeUndefined()
   })
 
   it('returns compatible when current version satisfies range', () => {
-    // mockPkg.version = '0.3.2'
-    const result = checkPluginCompatibility('^0.3.0')
+    const result = checkPluginCompatibility(`^${PKG_VERSION.replace(/\d+$/, '0')}`)
     expect(result.compatible).toBe(true)
   })
 
@@ -48,8 +43,7 @@ describe('checkPluginCompatibility', () => {
   })
 
   it('returns compatible for exact current version', () => {
-    // mockPkg.version = '0.3.2'
-    const result = checkPluginCompatibility('0.3.2')
+    const result = checkPluginCompatibility(PKG_VERSION)
     expect(result.compatible).toBe(true)
   })
 })

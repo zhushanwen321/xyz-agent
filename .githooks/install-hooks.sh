@@ -256,6 +256,39 @@ else
 fi
 
 # ============================================================================
+# Runtime Bundle 验证（runtime 源码有变更时触发）
+# ============================================================================
+
+RUNTIME_BUNDLE_CHECKER="scripts/validate-runtime-bundle.sh"
+RUNTIME_SRC="src-electron/runtime/src"
+
+if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_RUNTIME_BUNDLE_CHECK" != "1" ]; then
+    if echo "$STAGED_FILES" | grep -q "^$RUNTIME_SRC/"; then
+        print_section "[Runtime Bundle 验证]"
+        echo -e "${BLUE}[INFO] runtime 源码有变更，运行 Bundle 验证...${NC}"
+
+        if [ ! -f "$RUNTIME_BUNDLE_CHECKER" ]; then
+            echo -e "${RED}[ERROR] 找不到验证脚本: $RUNTIME_BUNDLE_CHECKER${NC}"
+            exit 1
+        fi
+
+        bash "$RUNTIME_BUNDLE_CHECKER"
+        EXIT_CODE=$?
+
+        if [ $EXIT_CODE -ne 0 ]; then
+            echo ""
+            echo -e "${RED}[ERROR] Runtime Bundle 验证失败${NC}"
+            echo -e "${YELLOW}[INFO] 设置 SKIP_RUNTIME_BUNDLE_CHECK=1 跳过检查${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${GREEN}[OK] runtime 源码无变更，跳过 Bundle 验证${NC}"
+    fi
+else
+    echo -e "${YELLOW}[SKIP] Runtime Bundle 验证已跳过${NC}"
+fi
+
+# ============================================================================
 # 全部通过
 # ============================================================================
 
@@ -270,6 +303,7 @@ echo -e "  ${YELLOW}SKIP_TYPE_CHECK=1${NC}          - 跳过 vue-tsc"
 echo -e "  ${YELLOW}SKIP_CODE_RULES_CHECK=1${NC}   - 跳过代码规范"
 echo -e "  ${YELLOW}SKIP_SIDECAR_SESSION_CHECK=1${NC} - 跳过 session 隔离"
 echo -e "  ${YELLOW}SKIP_CSS_TOKENS_CHECK=1${NC}      - 跳过 CSS tokens"
+echo -e "  ${YELLOW}SKIP_RUNTIME_BUNDLE_CHECK=1${NC}  - 跳过 runtime bundle 验证"
 echo ""
 
 exit 0
@@ -293,6 +327,7 @@ echo -e "${CYAN}已安装的检查项目:${NC}"
 echo -e "  ${GREEN}[+]${NC} 前端 ESLint 代码检查"
 echo -e "  ${GREEN}[+]${NC} vue-tsc 类型检查（全量，与 CI 等价）"
 echo -e "  ${GREEN}[+]${NC} Vue 组件规范检查（禁止原生 HTML、Emoji、自定义 CSS）"
+echo -e "  ${GREEN}[+]${NC} Runtime Bundle 验证（依赖打包 + CJS 兼容 + 健康检查）"
 echo ""
 echo -e "${CYAN}Hook 脚本位置:${NC} .githooks/"
 echo ""

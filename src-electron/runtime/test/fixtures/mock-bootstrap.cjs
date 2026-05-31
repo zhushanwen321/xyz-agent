@@ -1,10 +1,8 @@
-/* eslint-disable @typescript-eslint/no-require-imports */
 /**
  * Mock Worker bootstrap for PluginHost unit tests.
  *
  * Handles load / activate / deactivate / rpc / crash messages without loading real plugins.
- * Written in ESM-compatible format (no require) because the runtime package
- * uses "type": "module" — the copied .js file must be valid ESM.
+ * Uses ESM syntax because runtime package has "type": "module" — .js files are treated as ESM.
  */
 
 import { parentPort } from 'node:worker_threads'
@@ -21,7 +19,6 @@ if (parentPort) {
     } else if (m.type === 'rpc' && m.id !== undefined) {
       parentPort.postMessage({ jsonrpc: '2.0', id: m.id, result: null })
     } else if (m.type === 'crash') {
-      // Simulate crash: exit with non-zero code
       process.exit(1)
     }
   })

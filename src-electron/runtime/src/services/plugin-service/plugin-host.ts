@@ -7,10 +7,108 @@
 
 import { Worker } from 'node:worker_threads'
 import { resolve, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { existsSync, readdirSync } from 'node:fs'
 import type { WorkerHandle, RpcRequest } from './plugin-types.js'
 import type { PluginHost as ActivatorHost } from './plugin-activator.js'
 import { PluginRpcServer } from './plugin-rpc-server.js'
+
+/**
+ * 解析 plugin-host.ts 所在目录。
+ *
+ * - CJS bundle（tsup 产物）: __dirname 由 tsup 注入
+ * - ESM 源码（开发/测试）: 通过 import.meta.url 推导
+ * - 均不可用时抛出清晰错误
+ */
+function resolvePluginHostDir(): string {
+  // __dirname 在 tsup CJS bundle 中由运行时注入，ESM 源码直跑时为 undefined
+  // 用 globalThis 访问避免 @ts-expect-error/@ts-ignore 的 tsc vs eslint 冲突
+  const dir = (globalThis as Record<string, unknown>).__dirname
+  if (typeof dir === 'string' && dir) {
+    // 开发模式下交叉验证 import.meta.url（仅在两者都可用时）
+    if (typeof import.meta !== 'undefined' && import.meta.url) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports -- 动态 require 避免顶层 import 在 CJS bundle 中报错
+        const { fileURLToPath } = require('node:url') as typeof import('node:url')
+        const metaDir = dirname(fileURLToPath(import.meta.url))
+        if (metaDir !== dir) {
+          console.warn(
+            `[plugin-host] path divergence detected: __dirname=${dir} vs import.meta.url→${metaDir}. ` +
+            `Using __dirname (CJS bundle path).`,
+          )
+        }
+      } catch {
+        // fileURLToPath 不可用则跳过交叉验证
+      }
+    }
+    return dir
+  }
+
+  // ESM 源码路径（开发/测试直跑 tsx）
+  if (typeof import.meta !== 'undefined' && import.meta.url) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports -- 动态 require 避免顶层 import 在 CJS bundle 中报错
+      const { fileURLToPath } = require('node:url') as typeof import('node:url')
+      return dirname(fileURLToPath(import.meta.url))
+    } catch {
+      // fallthrough
+    }
+  }
+
+  throw new Error(
+    '[plugin-host] Cannot resolve plugin host directory: ' +
+    'both __dirname and import.meta.url are unavailable. ' +
+    'Ensure this module runs in Node.js (CJS bundle or ESM).',
+  )
+}
+
+/**
+ * 解析并验证 plugin-bootstrap.js 的路径。
+ *
+ * @param filename - 要查找的文件名（默认 'plugin-bootstrap.js'）
+ * @returns 验证通过的绝对路径
+ * @throws 包含期望路径和目录实际文件列表的清晰错误
+ */
+function resolveAndValidateFile(filename: string): string {
+  const hostDir = resolvePluginHostDir()
+  const filePath = resolve(hostDir, filename)
+
+  if (existsSync(filePath)) return filePath
+
+  // 收集诊断信息
+  const diagnostics: string[] = [
+    `Expected: ${filePath}`,
+    `hostDir: ${hostDir}`,
+  ]
+
+  // 列出 hostDir 中的 .js 文件（帮助发现 dirname 多走一级等问题）
+  try {
+    const files = readdirSync(hostDir)
+      .filter(f => f.endsWith('.js') || f.endsWith('.cjs') || f.endsWith('.mjs'))
+    diagnostics.push(
+      files.length > 0
+        ? `Available in hostDir: ${files.join(', ')}`
+        : `No JS files in hostDir`,
+    )
+  } catch {
+    diagnostics.push(`hostDir does not exist or is not readable`)
+  }
+
+  // 检查上一级目录（dirname 多走一级的常见错误）
+  const parentDir = dirname(hostDir)
+  try {
+    const parentFile = resolve(parentDir, filename)
+    if (existsSync(parentFile)) {
+      diagnostics.push(`HINT: Found at parent directory: ${parentFile} (dirname may have gone one level too deep)`,
+      )
+    }
+  } catch {
+    // ignore
+  }
+
+  throw new Error(
+    `[plugin-host] Required file not found: ${filename}\n${diagnostics.join('\n')}`,
+  )
+}
 
 type CrashCallback = (workerId: string, pluginIds: string[], error: string) => void
 type ReplyCallback = (msg: unknown) => void
@@ -210,11 +308,9 @@ export class PluginHost implements ActivatorHost {
     trustLevel: 'trusted' | 'sandbox',
     pluginId: string,
   ): WorkerHandle {
-    // 编译后的 bootstrap 脚本与 plugin-host.js 同目录
-    const bootstrapPath = resolve(
-      dirname(fileURLToPath(import.meta.url)),
-      'plugin-bootstrap.js',
-    )
+    // plugin-bootstrap.js 与本文件（plugin-host）同目录
+    // resolveAndValidateFile 在文件不存在时抛出含诊断信息的错误
+    const bootstrapPath = resolveAndValidateFile('plugin-bootstrap.js')
 
     let worker: Worker
     try {
@@ -222,6 +318,10 @@ export class PluginHost implements ActivatorHost {
         name: workerId,
       })
     } catch (err: unknown) {
+      // 区分路径错误 vs Worker 创建错误
+      if (err instanceof Error && err.message.startsWith('[plugin-host] Required file not found')) {
+        throw err // 路径验证错误，已包含完整诊断信息
+      }
       console.error(`[plugin-host] failed to create worker ${workerId}:`, err)
       throw err
     }

@@ -29,18 +29,22 @@ const TARGET_BOOTSTRAP = resolve(
   '../src/services/plugin-service/plugin-bootstrap.js',
 )
 
-let createdBootstrap = false
+let originalContent: string | null = null
+let targetExisted = false
 
 beforeAll(() => {
-  if (!existsSync(TARGET_BOOTSTRAP)) {
-    const code = readFileSync(MOCK_BOOTSTRAP_SOURCE, 'utf-8')
-    writeFileSync(TARGET_BOOTSTRAP, code, 'utf-8')
-    createdBootstrap = true
+  if (existsSync(TARGET_BOOTSTRAP)) {
+    targetExisted = true
+    originalContent = readFileSync(TARGET_BOOTSTRAP, 'utf-8')
   }
+  const mockCode = readFileSync(MOCK_BOOTSTRAP_SOURCE, 'utf-8')
+  writeFileSync(TARGET_BOOTSTRAP, mockCode, 'utf-8')
 })
 
 afterAll(() => {
-  if (createdBootstrap) {
+  if (targetExisted && originalContent !== null) {
+    writeFileSync(TARGET_BOOTSTRAP, originalContent, 'utf-8')
+  } else if (!targetExisted) {
     try { unlinkSync(TARGET_BOOTSTRAP) } catch { /* best effort */ }
   }
 })
