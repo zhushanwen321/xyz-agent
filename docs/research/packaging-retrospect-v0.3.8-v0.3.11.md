@@ -366,11 +366,11 @@ PR #61 写了详细的 CLAUDE.md 规则 #12（Electron 打包约束），包括 
 
 | # | 行动 | 优先级 | 说明 |
 |---|------|--------|------|
-| 7 | CI smoke test（ELECTRON_RUN_AS_NODE 运行 bundle） | **P0** | 唯一能拦截所有打包链路错误的检查 |
-| 8 | validate-runtime-bundle 增加 CJS bundle smoke test | P1 | 本地 pre-commit 阶段拦截 |
-| 9 | electron-builder.yml 变更触发 postbuild-validate | P1 | pre-commit hook 扩展 |
-| 10 | 解决 tsc @ts-expect-error vs ESLint @ts-ignore 冲突 | P2 | 根治 "creative workaround" 诱因 |
-| 11 | 打包相关 PR 的强制拆分规范 | P2 | CLAUDE.md 增加规则：tsup/config/yml 改动必须逐个 commit |
+| 7 | CI smoke test（ELECTRON_RUN_AS_NODE 运行 bundle） | **已完成** | macOS 运行 /health 验证，Win/Linux 验证文件存在 |
+| 8 | validate-runtime-bundle 增加 plugin 初始化检查 | **已完成** | 第 6 步检查 plugin initialization failed 日志 |
+| 9 | electron-builder.yml 变更触发 runtime bundle 验证 | **已完成** | pre-commit hook 在配置变更时额外跑 validate-runtime-bundle.sh |
+| 10 | tsc/eslint 冲突 | **已解决** | typeof __dirname 不触发 tsc 错误也不触发 eslint 规则 |
+| 11 | 打包相关改动必须逐个 commit 规范 | **已完成** | CLAUDE.md 增加拆分规范 + 自动触发 runtime bundle 验证 |
 
 ---
 

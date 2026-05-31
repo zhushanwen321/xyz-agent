@@ -201,6 +201,7 @@ lsof -i :1420 -P | grep node
 1. **Preflight** (`scripts/preflight-check.sh`)：
    - 产物存在性（dist/main, dist/preload, dist/runtime/index.cjs, dist/runtime/plugin-bootstrap.cjs, renderer/dist）
    - tsup noExternal 与 runtime dependencies 一致性
+   - `files` 显式包含 `dist/runtime/**/*`（不只是"未排除"）
    - `files` 未排除 `dist/runtime`（正则扫描 `!dist/runtime` 模式）
    - `resources/pi` 无 symlink
 2. **Build** (`npm run build`)：electron-builder 执行打包，产出 dmg/zip/exe
@@ -209,11 +210,25 @@ lsof -i :1420 -P | grep node
    - `app.asar.unpacked/dist/runtime/` 存在且包含 `index.cjs` + `plugin-bootstrap.cjs`
    - `Resources/pi` 无 symlink
    - 产物大小合理性
+4. **CI Runtime Smoke Test**（release workflow）：
+   - macOS: `ELECTRON_RUN_AS_NODE=1 <electron> <runtime> --port=<random>` → `/health` 返回 ok
+   - Windows/Linux: 验证 `app.asar.unpacked/dist/runtime/index.cjs` 存在
+
+#### 打包相关改动规范（违反必出 bug）
+
+**tsup.config.ts、electron-builder.yml、plugin-host.ts、runtime 相关文件的改动必须逐个 commit、逐个验证。** 禁止在一个 commit 中同时修改多个打包子系统。
+
+原因：v0.3.8 的 PR #61 在一个 commit 中同时改了 tsup 配置、electron-builder files、plugin-host 路径解析、plugin-version-checker，引入了两个独立致命 bug，无法定位是哪个改动导致的问题。
+
+正确流程：
+1. 每个改动独立 commit
+2. 每次 commit 后运行 `bash scripts/validate-runtime-bundle.sh`（含第 6 步 smoke test）
+3. 打包配置变更（electron-builder.yml/tsup.config.ts）额外触发 pre-commit 的 runtime bundle 验证
 
 #### 自动验证脚本
 - `scripts/preflight-check.sh` — 打包前检查
-- `scripts/postbuild-validate.sh` — 打包后验证
-- `scripts/validate-runtime-bundle.sh` — runtime bundle 深度验证（依赖打包、CJS 兼容、Worker bootstrap 存在性、健康检查）
+- `scripts/postbuild-validate.sh` — 打包后验证 + CI 自动拦截
+- `scripts/validate-runtime-bundle.sh` — runtime bundle 深度验证（依赖打包、CJS 兼容、Worker bootstrap 存在性、健康检查、plugin 初始化成功）
 - pre-commit hook 自动触发 `validate-runtime-bundle.sh`（当 `src-electron/runtime/src/` 有变更时）
 
 **跳过检查**:

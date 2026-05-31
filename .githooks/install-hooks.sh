@@ -313,6 +313,18 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_PREFLIGHT_CHECK" != "1" ]; then
             echo -e "${YELLOW}[INFO] 设置 SKIP_PREFLIGHT_CHECK=1 跳过检查${NC}"
             exit 1
         fi
+
+        # electron-builder.yml 或 tsup.config.ts 变更时，额外运行 runtime bundle 验证
+        # 包含 CJS smoke test（第 6 步），能拦截 files/asarUnpack 不一致等打包配置错误
+        if echo "$STAGED_FILES" | grep -qE '^src-electron/electron-builder\.yml$|^src-electron/runtime/tsup\.config\.ts$'; then
+            echo -e "${BLUE}[INFO] 打包配置变更，额外运行 runtime bundle 验证（含 smoke test）...${NC}"
+            bash "$RUNTIME_BUNDLE_CHECKER"
+            if [ $? -ne 0 ]; then
+                echo -e "${RED}[ERROR] Runtime bundle 验证失败（可能需要重新 build）${NC}"
+                echo -e "${YELLOW}[FIX] cd src-electron/runtime && npm run build，然后重新 commit${NC}"
+                exit 1
+            fi
+        fi
     else
         echo -e "${GREEN}[OK] 打包配置无变更，跳过 preflight 检查${NC}"
     fi
