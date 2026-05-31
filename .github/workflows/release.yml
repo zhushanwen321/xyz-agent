@@ -97,6 +97,10 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: false
         run: npm run build
 
+      - name: Postbuild validation
+        shell: bash
+        run: bash scripts/postbuild-validate.sh --ci
+
       - name: List build output
         shell: bash
         working-directory: src-electron
