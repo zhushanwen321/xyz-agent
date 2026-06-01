@@ -83,6 +83,16 @@ const sessionStore = useSessionStore()
 const windowStore = useWindowStore()
 const navStore = useNavigationStore()
 
+// Sync panel focus when navigation changes to a different chat session
+watch(
+  () => navStore.currentEntry?.view === 'chat' ? navStore.currentEntry.sessionId : null,
+  (sessionId) => {
+    if (sessionId && panelStore.focusedPanel?.sessionId !== sessionId) {
+      panelStore.openSessionSmart(sessionId)
+    }
+  },
+)
+
 const toasts = ref<ToastItem[]>([])
 const TOAST_DURATION_MS = 4_000
 const TOAST_LONG_DURATION_MS = 8_000
