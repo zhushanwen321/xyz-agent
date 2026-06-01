@@ -4,7 +4,7 @@
     <AppSidebar
       @create="createSession"
       @toggle-panel-grid="settingsStore.togglePanelGrid()"
-      @toggle-settings="navStore.currentView === 'settings' ? navStore.back() : navStore.push({ view: 'settings', activeTab: navStore.getLastSettingsTab() })"
+      @toggle-settings="navStore.currentView === 'settings' ? (navStore.canGoBack ? navStore.back() : navStore.reset()) : navStore.push({ view: 'settings', activeTab: navStore.getLastSettingsTab() })"
     />
     <!-- Content area -->
     <main class="content-area">
@@ -87,7 +87,6 @@ const navStore = useNavigationStore()
 watch(
   () => navStore.currentEntry?.view === 'chat' ? navStore.currentEntry.sessionId : null,
   (sessionId) => {
-    console.log('[nav-watcher] sessionId:', sessionId, 'focusedPanel.sessionId:', panelStore.focusedPanel?.sessionId, 'entries:', JSON.stringify(navStore.entries), 'pointer:', navStore.pointer)
     if (sessionId && panelStore.focusedPanel?.sessionId !== sessionId) {
       panelStore.openSessionSmart(sessionId)
     }
@@ -260,7 +259,7 @@ onMounted(async () => {
           break
         case 'settings':
           if (navStore.currentView === 'settings') {
-            navStore.back()
+            if (navStore.canGoBack) { navStore.back() } else { navStore.reset() }
           } else {
             navStore.push({ view: 'settings', activeTab: navStore.getLastSettingsTab() })
           }

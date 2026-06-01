@@ -29,11 +29,10 @@ export const useNavigationStore = defineStore('navigation', () => {
     () => currentEntry.value?.view ?? 'chat',
   )
 
-  const canGoBack = computed(() => pointer.value >= 0)
+  const canGoBack = computed(() => pointer.value > 0)
   const canGoForward = computed(() => pointer.value < entries.value.length - 1)
 
   function push(entry: NavEntry) {
-    console.log('[nav-push] entry:', JSON.stringify(entry), 'pointer-before:', pointer.value, 'entries-before:', JSON.stringify(entries.value))
     // Truncate any forward branch before pushing
     if (pointer.value >= 0 && pointer.value < entries.value.length - 1) {
       entries.value.splice(pointer.value + 1)
@@ -50,18 +49,18 @@ export const useNavigationStore = defineStore('navigation', () => {
   }
 
   function back() {
-    console.log('[nav-back] pointer-before:', pointer.value, 'entries:', JSON.stringify(entries.value))
     if (pointer.value > 0) {
       pointer.value -= 1
-    } else if (pointer.value === 0) {
-      // Pop last entry — return to empty stack (default chat view)
-      entries.value = []
-      pointer.value = -1
     }
   }
 
+  /** Clear entire stack, return to default chat view */
+  function reset() {
+    entries.value = []
+    pointer.value = -1
+  }
+
   function forward() {
-    console.log('[nav-forward] canGoForward:', canGoForward.value, 'pointer:', pointer.value, 'entries.length:', entries.value.length, 'entries:', JSON.stringify(entries.value))
     if (canGoForward.value) pointer.value += 1
   }
 
@@ -92,6 +91,7 @@ export const useNavigationStore = defineStore('navigation', () => {
     push,
     back,
     forward,
+    reset,
     updateCurrentTab,
     getLastSettingsTab,
   }

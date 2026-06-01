@@ -131,19 +131,38 @@ describe('useNavigationStore', () => {
     expect(store.pointer).toBe(-1)
   })
 
-  it('back pops last entry when pointer=0, returning to empty state', () => {
+  it('back is no-op when pointer=0 (first entry)', () => {
     const store = useNavigationStore()
 
-    // Settings as only entry
+    store.push({ view: 'chat', sessionId: 'A' })
+    store.push({ view: 'chat', sessionId: 'B' })
+    expect(store.pointer).toBe(1)
+
+    // Back to first entry
+    store.back()
+    expect(store.pointer).toBe(0)
+    expect(store.canGoBack).toBe(false)
+    expect(store.canGoForward).toBe(true)
+    expect(store.entries).toHaveLength(2)
+
+    // Back at pointer=0 is no-op
+    store.back()
+    expect(store.pointer).toBe(0)
+    expect(store.entries).toHaveLength(2)
+  })
+
+  it('reset clears entire stack regardless of state', () => {
+    const store = useNavigationStore()
+
     store.push({ view: 'settings', activeTab: 'providers' })
     expect(store.pointer).toBe(0)
-    expect(store.canGoBack).toBe(true)
+    expect(store.canGoBack).toBe(false)
 
-    store.back()
+    // reset() clears the stack even when canGoBack is false
+    store.reset()
     expect(store.pointer).toBe(-1)
     expect(store.entries).toHaveLength(0)
     expect(store.currentView).toBe('chat')
-    expect(store.canGoBack).toBe(false)
     expect(store.canGoForward).toBe(false)
   })
 })

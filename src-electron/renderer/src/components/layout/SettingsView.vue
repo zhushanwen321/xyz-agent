@@ -23,7 +23,7 @@ function onKeydown(e: KeyboardEvent) {
     if (document.querySelector('[data-modal-visible]')) return
     e.preventDefault()
     e.stopPropagation()
-    navStore.back()
+    if (navStore.canGoBack) { navStore.back() } else { navStore.reset() }
     return
   }
 }
