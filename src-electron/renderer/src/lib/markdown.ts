@@ -70,6 +70,7 @@ const mdLight = new MarkdownIt({
   html: true,
   linkify: true,
   typographer: true,
+  breaks: true,
 }).enable(['strikethrough', 'table']).use(footnote)
 
 // ══════════════════════════════════════════════════════════════
@@ -79,6 +80,7 @@ const mdFull = new MarkdownIt({
   html: true,
   linkify: true,
   typographer: true,
+  breaks: true,
 }).enable(['strikethrough', 'table']).use(footnote)
 
 mdFull.use(texmath, {
