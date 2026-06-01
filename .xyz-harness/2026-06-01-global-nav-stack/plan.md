@@ -100,6 +100,7 @@ complexity: L1
 | Template: sidebar emit | Line 7 | Remove `@toggle-settings` handler, replace with navStore.push | FR-3 |
 | IPC: settings shortcut | Line 245-247 | Toggle → push/fallback | FR-4 |
 | IPC: standard shortcut | Line 237 | Direct currentView assignment → navStore.push or no-op | — |
+| Panel focus watcher | After navStore init | Watch currentEntry.sessionId → panelStore.openSessionSmart | FR-5 |
 
 ### Module: AppSidebar.vue (modifications)
 
@@ -167,7 +168,7 @@ Switch Settings tab          →  updateCurrentTab(tab)   →  update entry in p
 | FR-2 Settings tab 状态保留 | adopted | Task 1, Task 3 |
 | FR-3 侧边栏按钮映射 | adopted | Task 2 |
 | FR-4 键盘快捷键对齐 | adopted | Task 3, Task 4 |
-| FR-5 Panel 行为不变 | adopted | Task 2 (read-only panel) |
+| FR-5 Panel 焦点同步 | adopted | Task 2 (watcher in App.vue) |
 | AC-1 基本导航序列 | adopted | Task 1, Task 2 |
 | AC-2 截断行为 | adopted | Task 1 |
 | AC-3 Settings Tab 恢复 | adopted | Task 1, Task 3 |
@@ -353,7 +354,22 @@ Line 7: Change `@toggle-settings="settingsStore.setView(...)` to `@toggle-settin
 
 Line 11: Change `v-if="settingsStore.currentView === 'settings'"` to `v-if="navStore.currentView === 'settings'"`
 
-- [ ] **Step 3: Update IPC shortcut handlers**
+- [ ] **Step 3: Add panel focus sync watcher**
+
+After `const navStore = useNavigationStore()`, add a watcher that syncs panel focus when navigating between chat sessions:
+```ts
+watch(
+  () => navStore.currentEntry?.view === 'chat' ? navStore.currentEntry.sessionId : null,
+  (sessionId) => {
+    if (sessionId && panelStore.focusedPanel?.sessionId !== sessionId) {
+      panelStore.openSessionSmart(sessionId)
+    }
+  },
+)
+```
+This ensures that `back()`/`forward()` between chat entries actually switches the visible panel, not just the navStore pointer. Without this watcher, the PanelTreeRenderer would continue showing the previously focused session. (FR-5)
+
+- [ ] **Step 4: Update IPC shortcut handlers**
 
 In `onShortcut` callback (lines 231-249):
 

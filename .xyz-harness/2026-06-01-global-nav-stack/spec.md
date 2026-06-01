@@ -50,26 +50,28 @@ verdict: pass
 - **ESC（Settings 中）** — 同后退：`back()`
 - ESC 只在 Settings 开启且无 modal 打开时生效（已有逻辑）
 
-### FR-5: Panel 行为不变
+### FR-5: Panel 焦点同步
 
-- `panelStore.openSessionSmart` 的逻辑不受影响
 - 导航栈不修改 panel tree 的树结构、不修改 session 绑定逻辑
+- 但当 `back()`/`forward()` 导致当前 chat entry 的 sessionId 变化时，必须通过 `panelStore.openSessionSmart(sessionId)` 同步 panel 焦点
+- 同步机制：App.vue watcher 监听 `navStore.currentEntry.sessionId`，变化时调用 `openSessionSmart`
 - 多条 chat 条目指向同一个 sessionId 是合法的（用户可在不同时刻反复聚焦同一个 session）
-
 ## Acceptance Criteria
 
 ### AC-1: 基本导航序列
 
 ```
 前提: 栈为空，初始 Chat(A)
-1. push Chat(A)                → 栈: [Chat(A)]            pointer=0
+1. push Chat(A)                → 栈: [Chat(A)]            pointer=0, panel 焦点切换到 A
 2. push Settings               → 栈: [Chat(A), Settings]  pointer=1
-3. push Chat(B)（点 session B） → 栈: [Chat(A), Settings, Chat(B)]  pointer=2
+3. push Chat(B)（点 session B） → 栈: [Chat(A), Settings, Chat(B)]  pointer=2, panel 焦点切换到 B
 4. back()                      → pointer=1, 显示 Settings，恢复上次 tab
-5. back()                      → pointer=0, 显示 Chat(A)
+5. back()                      → pointer=0, 显示 Chat(A), panel 焦点切换到 A
 6. forward()                   → pointer=1, 显示 Settings
-7. forward()                   → pointer=2, 显示 Chat(B)
+7. forward()                   → pointer=2, 显示 Chat(B), panel 焦点切换到 B
 ```
+
+> 步骤 5, 7 中的 panel 焦点切换由 App.vue watcher 自动完成（FR-5）。
 
 ### AC-2: 截断行为
 
