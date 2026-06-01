@@ -4,6 +4,7 @@ import { useSessionStore } from '../../stores/session'
 import { usePanelStore } from '../../stores/panel'
 import { useSession } from '../../composables/useSession'
 import { useSettingsStore } from '../../stores/settings'
+import { useNavigationStore } from '../../stores/navigation'
 import { SessionItem } from '../sidebar'
 import { useI18n } from 'vue-i18n'
 
@@ -15,6 +16,7 @@ const { t } = useI18n()
 const sessionStore = useSessionStore()
 const panelStore = usePanelStore()
 const settingsStore = useSettingsStore()
+const navStore = useNavigationStore()
 const { switchSession, deleteSession, renameSession } = useSession()
 
 defineEmits<{
@@ -59,9 +61,10 @@ function onCancelRename() {
 function handleSessionClick(sessionId: string) {
   switchSession(sessionId)
   panelStore.openSessionSmart(sessionId)
+  navStore.push({ view: 'chat', sessionId })
 }
 
-const isSettingsActive = computed(() => settingsStore.currentView === 'settings')
+const isSettingsActive = computed(() => navStore.currentView === 'settings')
 </script>
 
 <template>
@@ -87,10 +90,10 @@ const isSettingsActive = computed(() => settingsStore.currentView === 'settings'
               <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 008.58 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 8.58a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
             </svg>
           </button>
-          <button class="ctrl-btn" title="Back">
+          <button class="ctrl-btn" title="Back" @click="navStore.back()" :disabled="!navStore.canGoBack">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 3L5 8l5 5"/></svg>
           </button>
-          <button class="ctrl-btn" title="Forward">
+          <button class="ctrl-btn" title="Forward" @click="navStore.forward()" :disabled="!navStore.canGoForward">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 3l5 5-5 5"/></svg>
           </button>
         </div>

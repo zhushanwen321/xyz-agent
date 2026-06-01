@@ -4,11 +4,11 @@
     <AppSidebar
       @create="createSession"
       @toggle-panel-grid="settingsStore.togglePanelGrid()"
-      @toggle-settings="settingsStore.setView(settingsStore.currentView === 'settings' ? 'chat' : 'settings')"
+      @toggle-settings="navStore.currentView === 'settings' ? navStore.back() : navStore.push({ view: 'settings', activeTab: navStore.getLastSettingsTab() })"
     />
     <!-- Content area -->
     <main class="content-area">
-      <SettingsView v-if="settingsStore.currentView === 'settings'" />
+      <SettingsView v-if="navStore.currentView === 'settings'" />
       <PanelTreeRenderer v-else
         :node="panelStore.tree"
         :focused-panel-id="panelStore.focusedPanelId"
@@ -54,6 +54,7 @@ import { useSettingsStore } from './stores/settings'
 import { usePanelStore } from './stores/panel'
 import { useSessionStore } from './stores/session'
 import { useWindowStore } from './stores/window'
+import { useNavigationStore } from './stores/navigation'
 import { useConnection } from './composables/useConnection'
 import { getState as getWsState } from './lib/ws-client'
 import { on as onEventBus, off as offEventBus } from './lib/event-bus'
@@ -80,6 +81,7 @@ const settingsStore = useSettingsStore()
 const panelStore = usePanelStore()
 const sessionStore = useSessionStore()
 const windowStore = useWindowStore()
+const navStore = useNavigationStore()
 
 const toasts = ref<ToastItem[]>([])
 const TOAST_DURATION_MS = 4_000
@@ -234,7 +236,10 @@ onMounted(async () => {
         case 'standard':
         case 'focus':
           panelStore.mergeToSingle()
-          settingsStore.currentView = 'chat'
+          if (navStore.currentView !== 'chat') {
+            const sid = panelStore.focusedPanel?.sessionId ?? ''
+            if (sid) navStore.push({ view: 'chat', sessionId: sid })
+          }
           break
         case 'split':
           panelStore.splitPanel(panelStore.focusedPanelId, 'horizontal')
@@ -243,7 +248,11 @@ onMounted(async () => {
           settingsStore.togglePanelGrid()
           break
         case 'settings':
-          settingsStore.setView(settingsStore.currentView === 'settings' ? 'chat' : 'settings')
+          if (navStore.currentView === 'settings') {
+            navStore.back()
+          } else {
+            navStore.push({ view: 'settings', activeTab: navStore.getLastSettingsTab() })
+          }
           break
       }
     }))
