@@ -42,7 +42,6 @@ export const useNavigationStore = defineStore('navigation', () => {
     // Evict oldest when exceeding capacity
     if (entries.value.length > MAX_ENTRIES) {
       entries.value.shift()
-      pointer.value -= 1
     }
 
     pointer.value = entries.value.length - 1

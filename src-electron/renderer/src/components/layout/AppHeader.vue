@@ -98,7 +98,11 @@ function openInspector() {
 }
 
 function openSettings() {
-  navStore.push({ view: 'settings', activeTab: navStore.getLastSettingsTab() })
+  if (navStore.currentView === 'settings') {
+    if (navStore.canGoBack) { navStore.back() } else { navStore.reset() }
+  } else {
+    navStore.push({ view: 'settings', activeTab: navStore.getLastSettingsTab() })
+  }
 }
 
 function toggleTheme() {

@@ -4,7 +4,7 @@
     <AppSidebar
       @create="createSession"
       @toggle-panel-grid="settingsStore.togglePanelGrid()"
-      @toggle-settings="navStore.currentView === 'settings' ? (navStore.canGoBack ? navStore.back() : navStore.reset()) : navStore.push({ view: 'settings', activeTab: navStore.getLastSettingsTab() })"
+      @toggle-settings="toggleSettings()"
     />
     <!-- Content area -->
     <main class="content-area">
@@ -82,6 +82,16 @@ const panelStore = usePanelStore()
 const sessionStore = useSessionStore()
 const windowStore = useWindowStore()
 const navStore = useNavigationStore()
+
+
+// Unified settings toggle — used by sidebar emit and IPC shortcut
+function toggleSettings() {
+  if (navStore.currentView === 'settings') {
+    if (navStore.canGoBack) { navStore.back() } else { navStore.reset() }
+  } else {
+    navStore.push({ view: 'settings', activeTab: navStore.getLastSettingsTab() })
+  }
+}
 
 // Sync panel focus when navigation changes to a different chat session
 watch(
@@ -258,11 +268,7 @@ onMounted(async () => {
           settingsStore.togglePanelGrid()
           break
         case 'settings':
-          if (navStore.currentView === 'settings') {
-            if (navStore.canGoBack) { navStore.back() } else { navStore.reset() }
-          } else {
-            navStore.push({ view: 'settings', activeTab: navStore.getLastSettingsTab() })
-          }
+          toggleSettings()
           break
       }
     }))
