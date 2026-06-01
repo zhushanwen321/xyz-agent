@@ -29,7 +29,7 @@ export const useNavigationStore = defineStore('navigation', () => {
     () => currentEntry.value?.view ?? 'chat',
   )
 
-  const canGoBack = computed(() => pointer.value > 0)
+  const canGoBack = computed(() => pointer.value >= 0)
   const canGoForward = computed(() => pointer.value < entries.value.length - 1)
 
   function push(entry: NavEntry) {
@@ -49,7 +49,13 @@ export const useNavigationStore = defineStore('navigation', () => {
   }
 
   function back() {
-    if (canGoBack.value) pointer.value -= 1
+    if (pointer.value > 0) {
+      pointer.value -= 1
+    } else if (pointer.value === 0) {
+      // Pop last entry — return to empty stack (default chat view)
+      entries.value = []
+      pointer.value = -1
+    }
   }
 
   function forward() {

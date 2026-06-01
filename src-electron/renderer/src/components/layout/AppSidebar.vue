@@ -6,6 +6,7 @@ import { useSession } from '../../composables/useSession'
 
 import { useNavigationStore } from '../../stores/navigation'
 import { SessionItem } from '../sidebar'
+import { Button } from '../../design-system'
 import { useI18n } from 'vue-i18n'
 
 // Vite define 在构建时从 package.json 注入
@@ -90,12 +91,12 @@ const isSettingsActive = computed(() => navStore.currentView === 'settings')
               <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 008.58 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 8.58a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
             </svg>
           </button>
-          <button class="ctrl-btn" title="Back" @click="navStore.back()" :disabled="!navStore.canGoBack">
+          <Button variant="ghost" size="icon" class="ctrl-btn" title="Back" @click="navStore.back()" :disabled="!navStore.canGoBack">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 3L5 8l5 5"/></svg>
-          </button>
-          <button class="ctrl-btn" title="Forward" @click="navStore.forward()" :disabled="!navStore.canGoForward">
+          </Button>
+          <Button variant="ghost" size="icon" class="ctrl-btn" title="Forward" @click="navStore.forward()" :disabled="!navStore.canGoForward">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 3l5 5-5 5"/></svg>
-          </button>
+          </Button>
         </div>
       </div>
       <!-- Row 2: logo + new session (non-fullscreen) or full-width new session (fullscreen) -->

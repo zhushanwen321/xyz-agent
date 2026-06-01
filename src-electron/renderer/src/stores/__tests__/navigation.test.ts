@@ -130,4 +130,20 @@ describe('useNavigationStore', () => {
     store.forward()
     expect(store.pointer).toBe(-1)
   })
+
+  it('back pops last entry when pointer=0, returning to empty state', () => {
+    const store = useNavigationStore()
+
+    // Settings as only entry
+    store.push({ view: 'settings', activeTab: 'providers' })
+    expect(store.pointer).toBe(0)
+    expect(store.canGoBack).toBe(true)
+
+    store.back()
+    expect(store.pointer).toBe(-1)
+    expect(store.entries).toHaveLength(0)
+    expect(store.currentView).toBe('chat')
+    expect(store.canGoBack).toBe(false)
+    expect(store.canGoForward).toBe(false)
+  })
 })
