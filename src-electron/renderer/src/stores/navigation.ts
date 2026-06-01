@@ -61,6 +61,7 @@ export const useNavigationStore = defineStore('navigation', () => {
   }
 
   function forward() {
+    console.log('[nav-forward] canGoForward:', canGoForward.value, 'pointer:', pointer.value, 'entries.length:', entries.value.length, 'entries:', JSON.stringify(entries.value))
     if (canGoForward.value) pointer.value += 1
   }
 
