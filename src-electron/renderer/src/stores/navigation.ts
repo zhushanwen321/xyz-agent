@@ -73,7 +73,7 @@ export const useNavigationStore = defineStore('navigation', () => {
   function getLastSettingsTab(): string {
     for (let i = entries.value.length - 1; i >= 0; i--) {
       if (entries.value[i].view === 'settings') {
-        return entries.value[i].activeTab
+        return (entries.value[i] as { view: 'settings'; activeTab: string }).activeTab
       }
     }
     return 'providers'
