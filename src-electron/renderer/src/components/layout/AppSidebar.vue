@@ -7,6 +7,10 @@ import { useSettingsStore } from '../../stores/settings'
 import { SessionItem } from '../sidebar'
 import { useI18n } from 'vue-i18n'
 
+// Vite define 在构建时从 package.json 注入
+declare const __APP_VERSION__: string
+const appVersion = __APP_VERSION__
+
 const { t } = useI18n()
 const sessionStore = useSessionStore()
 const panelStore = usePanelStore()
@@ -67,6 +71,7 @@ const isSettingsActive = computed(() => settingsStore.currentView === 'settings'
       <!-- Row 1: traffic lights space (non-fullscreen) or logo (fullscreen) + nav buttons right -->
       <div class="sidebar-row1">
         <span v-if="isFullscreen" class="sidebar-brand">xyz<span>-agent</span></span>
+        <span v-if="isFullscreen" class="text-[10px] text-muted leading-tight" style="margin-left:-2px">v{{ appVersion }}</span>
         <div class="sidebar-nav">
           <button class="ctrl-btn" :title="t('header.overview') + ' (Cmd+J)'" @click="$emit('toggle-panel-grid')">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -93,6 +98,7 @@ const isSettingsActive = computed(() => settingsStore.currentView === 'settings'
       <!-- Row 2: logo + new session (non-fullscreen) or full-width new session (fullscreen) -->
       <div class="sidebar-row2">
         <span v-if="!isFullscreen" class="sidebar-brand">xyz<span>-agent</span></span>
+        <span v-if="!isFullscreen" class="text-[10px] text-muted leading-tight">v{{ appVersion }}</span>
         <!-- eslint-disable-next-line taste/no-native-html-elements -->
         <button class="sidebar__new" :class="{ 'sidebar__new--wide': isFullscreen }" @click="$emit('create')">+ New Session</button>
       </div>
