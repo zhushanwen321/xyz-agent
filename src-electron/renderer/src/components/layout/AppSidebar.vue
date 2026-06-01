@@ -3,7 +3,7 @@ import { ref, computed } from 'vue'
 import { useSessionStore } from '../../stores/session'
 import { usePanelStore } from '../../stores/panel'
 import { useSession } from '../../composables/useSession'
-import { useSettingsStore } from '../../stores/settings'
+
 import { useNavigationStore } from '../../stores/navigation'
 import { SessionItem } from '../sidebar'
 import { useI18n } from 'vue-i18n'
@@ -15,7 +15,7 @@ const appVersion = __APP_VERSION__
 const { t } = useI18n()
 const sessionStore = useSessionStore()
 const panelStore = usePanelStore()
-const settingsStore = useSettingsStore()
+
 const navStore = useNavigationStore()
 const { switchSession, deleteSession, renameSession } = useSession()
 
