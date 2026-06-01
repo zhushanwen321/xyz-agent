@@ -32,7 +32,7 @@
       </svg>
     </Button>
     <span class="w-px h-6 bg-border mx-1"></span>
-    <Button variant="ghost" size="icon" :class="['rounded-sm text-muted hover:text-accent', { 'text-accent': settingsStore.currentView === 'settings' }]" @click="openSettings" :title="t('header.settings') + ' (Cmd+)'">
+    <Button variant="ghost" size="icon" :class="['rounded-sm text-muted hover:text-accent', { 'text-accent': navStore.currentView === 'settings' }]" @click="openSettings" :title="t('header.settings') + ' (Cmd+)'">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:16px;height:16px">
         <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 008.58 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 8.58a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
       </svg>
@@ -52,11 +52,17 @@
 import { ref, computed } from 'vue'
 import { Button } from '../../design-system'
 import { useSettingsStore } from '../../stores/settings'
+import { useNavigationStore } from '../../stores/navigation'
+
+
 import { usePanelStore } from '../../stores/panel'
+
 import { useChatStore } from '../../stores/chat'
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 const settingsStore = useSettingsStore()
+const navStore = useNavigationStore()
+
 const panelStore = usePanelStore()
 const chatStore = useChatStore()
 const isDark = ref(document.documentElement.getAttribute('data-theme') === 'dark')
@@ -92,7 +98,11 @@ function openInspector() {
 }
 
 function openSettings() {
-  settingsStore.setView(settingsStore.currentView === 'settings' ? 'chat' : 'settings')
+  if (navStore.currentView === 'settings') {
+    if (navStore.canGoBack) { navStore.back() } else { navStore.reset() }
+  } else {
+    navStore.push({ view: 'settings', activeTab: navStore.getLastSettingsTab() })
+  }
 }
 
 function toggleTheme() {

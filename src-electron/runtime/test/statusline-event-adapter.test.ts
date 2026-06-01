@@ -135,9 +135,9 @@ describe('context.update: onContextUpdate from agent_end', () => {
           messages: [{
             role: 'assistant',
             stopReason: 'end_turn',
-            usage: { inputTokens: 5000, outputTokens: 3000, totalTokens: 8000 },
+            usage: { input: 5000, output: 3000, totalTokens: 8000 },
           },
-          ] as [{ role: string; stopReason: string; usage: { inputTokens: number; outputTokens: number; totalTokens: number } }],
+          ] as [{ role: string; stopReason: string; usage: { input: number; output: number; totalTokens: number } }]
         }))
         return () => {}
       },
@@ -168,7 +168,7 @@ describe('context.update: onContextUpdate from agent_end', () => {
           messages: [{
             role: 'assistant',
             stopReason: 'end_turn',
-            usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+            usage: { input: 0, output: 0, totalTokens: 0 },
           }],
         }))
         return () => {}

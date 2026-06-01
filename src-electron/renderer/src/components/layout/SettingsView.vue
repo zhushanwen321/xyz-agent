@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useSettingsStore } from '../../stores/settings'
+import { useNavigationStore } from '../../stores/navigation'
 import { ProviderPane, SkillsPane, AgentsPane, ExtensionsPane, SystemPane, PluginsPane } from '../settings'
 
 const { t } = useI18n()
-const settingsStore = useSettingsStore()
+const navStore = useNavigationStore()
 const activeTab = ref('providers')
 
 const tabs = [
@@ -23,14 +23,18 @@ function onKeydown(e: KeyboardEvent) {
     if (document.querySelector('[data-modal-visible]')) return
     e.preventDefault()
     e.stopPropagation()
-    settingsStore.setView('chat')
+    if (navStore.canGoBack) { navStore.back() } else { navStore.reset() }
     return
   }
-  if ((e.metaKey || e.ctrlKey) && e.key === ',') {
-    e.preventDefault()
-    settingsStore.setView('chat')
-  }
 }
+
+watch(
+  () => navStore.currentEntry,
+  (entry) => {
+    if (entry?.view === 'settings') activeTab.value = entry.activeTab
+  },
+  { immediate: true },
+)
 
 onMounted(() => {
   document.addEventListener('keydown', onKeydown)
@@ -54,7 +58,7 @@ onUnmounted(() => {
             'flex items-center gap-2 py-[9px] px-4 text-[13px] text-muted cursor-pointer transition-all duration-150 border-l-[3px] select-none [&_svg]:w-3.5 [&_svg]:h-3.5 hover:bg-accent-light hover:text-fg rounded-sm',
             activeTab === tab.key ? 'text-accent border-l-accent font-semibold bg-accent-light' : 'border-l-transparent'
           ]"
-          @click="activeTab = tab.key"
+          @click="activeTab = tab.key; navStore.updateCurrentTab(tab.key)"
         >
           <!-- eslint-disable-next-line vue/no-v-html -->
           <span v-html="tab.icon" />

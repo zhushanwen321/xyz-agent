@@ -8,7 +8,6 @@ export const useSettingsStore = defineStore('settings', () => {
   const locale = ref<string>('zh-CN')
   const defaultModel = ref('')
   const currentThinkingLevel = ref('off')
-  const currentView = ref<'chat' | 'settings'>('chat')
   const panelGridVisible = ref(false)
   const inspectorOpen = ref(false)
   const inspectorSide = ref<'left' | 'right'>('right')
@@ -45,16 +44,15 @@ export const useSettingsStore = defineStore('settings', () => {
     document.documentElement.setAttribute('data-palette', preset)
     localStorage.setItem('xyz-agent-palette', preset)
   }
-  function setView(v: 'chat' | 'settings') { currentView.value = v }
   function togglePanelGrid() { panelGridVisible.value = !panelGridVisible.value }
   function openInspector(side: 'left' | 'right') { inspectorOpen.value = true; inspectorSide.value = side }
   function closeInspector() { inspectorOpen.value = false }
 
   return {
-    theme, themePreset, locale, defaultModel, currentThinkingLevel, currentView,
+    theme, themePreset, locale, defaultModel, currentThinkingLevel,
     panelGridVisible, inspectorOpen, inspectorSide,
     autoExpandThinking, autoExpandToolCalls,
-    toggleTheme, applyTheme, setThemePreset, setView,
+    toggleTheme, applyTheme, setThemePreset,
     togglePanelGrid, openInspector, closeInspector,
   }
 }, { persist: { key: 'xyz-settings', pick: ['theme', 'themePreset', 'locale', 'defaultModel', 'autoExpandThinking', 'autoExpandToolCalls'] } })
