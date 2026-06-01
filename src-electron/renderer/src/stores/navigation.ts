@@ -33,6 +33,7 @@ export const useNavigationStore = defineStore('navigation', () => {
   const canGoForward = computed(() => pointer.value < entries.value.length - 1)
 
   function push(entry: NavEntry) {
+    console.log('[nav-push] entry:', JSON.stringify(entry), 'pointer-before:', pointer.value, 'entries-before:', JSON.stringify(entries.value))
     // Truncate any forward branch before pushing
     if (pointer.value >= 0 && pointer.value < entries.value.length - 1) {
       entries.value.splice(pointer.value + 1)
@@ -49,6 +50,7 @@ export const useNavigationStore = defineStore('navigation', () => {
   }
 
   function back() {
+    console.log('[nav-back] pointer-before:', pointer.value, 'entries:', JSON.stringify(entries.value))
     if (pointer.value > 0) {
       pointer.value -= 1
     } else if (pointer.value === 0) {

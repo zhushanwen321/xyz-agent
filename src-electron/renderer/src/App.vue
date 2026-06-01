@@ -87,6 +87,7 @@ const navStore = useNavigationStore()
 watch(
   () => navStore.currentEntry?.view === 'chat' ? navStore.currentEntry.sessionId : null,
   (sessionId) => {
+    console.log('[nav-watcher] sessionId:', sessionId, 'focusedPanel.sessionId:', panelStore.focusedPanel?.sessionId, 'entries:', JSON.stringify(navStore.entries), 'pointer:', navStore.pointer)
     if (sessionId && panelStore.focusedPanel?.sessionId !== sessionId) {
       panelStore.openSessionSmart(sessionId)
     }
