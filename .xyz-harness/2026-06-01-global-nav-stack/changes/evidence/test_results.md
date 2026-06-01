@@ -11,11 +11,11 @@ all_passing: true
 npx vitest run src-electron/renderer/src/stores/__tests__/navigation.test.ts
 
  Test Files  1 passed (1)
-      Tests  9 passed (9)
-   Duration  121ms
+      Tests  10 passed (10)
+   Duration  142ms
 ```
 
-**All 9 unit tests passed.**
+**All 10 unit tests passed.**
 
 Test cases covered:
 1. Empty stack state
@@ -26,22 +26,25 @@ Test cases covered:
 6. updateCurrentTab no-op on Chat entry
 7. getLastSettingsTab returns correct tab
 8. getLastSettingsTab fallback to 'providers'
-9. back/forward no-op guards
+9. back/forward no-op guards on empty stack
+10. back() pops last entry when pointer=0 (BLR edge case fix)
 
 ## ESLint
 
 ```
-npx eslint src-electron/renderer/src/stores/navigation.ts src-electron/renderer/src/stores/settings.ts src-electron/renderer/src/App.vue src-electron/renderer/src/components/layout/AppSidebar.vue src-electron/renderer/src/components/layout/SettingsView.vue src-electron/renderer/src/components/layout/AppHeader.vue
+npx eslint [all modified files]
 
-✖ 4 problems (0 errors, 4 warnings)
+✖ 2 problems (0 errors, 2 warnings)
 ```
 
-**0 errors.** 4 warnings are pre-existing native `<button>` elements in AppSidebar.vue (not introduced by this change).
+**0 errors.** 2 warnings are pre-existing native `<button>` elements in AppSidebar.vue (not introduced by this change).
 
-## TypeScript
+## Five-Step Specialized Review
 
-```
-vue-tsc --noEmit: 0 errors
-```
-
-**TypeScript type check passed.**
+| Review | v1 | v2 | Status |
+|--------|----|----|--------|
+| Business Logic | fail (1 MUST_FIX) | **pass** (0) | Fixed: back() edge case |
+| Standards | fail (5 MUST_FIX) | **pass** (0) | Fixed: ◀▶ use <Button>; 3 pre-existing |
+| Taste | **pass** (0) | — | Clean |
+| Robustness | fail (2 MUST_FIX) | **pass** (0) | 2 pre-existing confirmed |
+| Integration | **pass** (0) | — | Clean |
