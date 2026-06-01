@@ -240,11 +240,11 @@ export class EventAdapter {
         const lastMsg = messages?.[messages.length - 1]
         const rawReason = (lastMsg?.stopReason as string) ?? 'stop'
         const usage = lastMsg?.usage as
-          { totalTokens?: number; inputTokens?: number; outputTokens?: number } | undefined
+          { input: number; output: number; totalTokens?: number; cacheRead?: number; cacheWrite?: number } | undefined
         // Emit context.update callback for context window tracking
-        if (usage?.inputTokens) {
+        if (usage?.input) {
           this.options?.onContextUpdate?.(sid, {
-            inputTokens: usage.inputTokens ?? 0,
+            inputTokens: usage.input,
             totalTokens: usage.totalTokens ?? 0,
           })
         }
@@ -255,7 +255,7 @@ export class EventAdapter {
             sessionId: sid,
             stopReason: STOP_REASON_MAP[rawReason] ?? rawReason,
             usage: usage
-              ? { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0, totalTokens: usage.totalTokens ?? 0 }
+              ? { inputTokens: usage.input ?? 0, outputTokens: usage.output ?? 0, totalTokens: usage.totalTokens ?? 0 }
               : undefined,
           },
         }
