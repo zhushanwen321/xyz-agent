@@ -1,6 +1,6 @@
 {
   "name": "todo",
-  "version": "0.3.11",
+  "version": "0.3.12",
   "displayName": "Todo List",
   "description": "Lightweight todo list manager for tracking tasks and todos",
   "xyzAgent": {
