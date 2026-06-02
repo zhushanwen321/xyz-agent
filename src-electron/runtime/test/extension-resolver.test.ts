@@ -51,7 +51,7 @@ describe('ExtensionResolver', () => {
   })
 
   describe('scanNpmExtensions', () => {
-    it('discovers pi-* packages with piExtension field', () => {
+    it('discovers pi-* packages and uses short name as key', () => {
       const scopeDir = '/project/node_modules/@zhushanwen'
       mockedExistsSync.mockImplementation((p: unknown) => typeof p === 'string' && p === scopeDir)
       mockedReaddirSync.mockImplementation((p: unknown) => {
@@ -67,21 +67,23 @@ describe('ExtensionResolver', () => {
       mockedReadFileSync.mockImplementation((p: unknown) => {
         if (typeof p !== 'string') throw new Error('not found')
         if (p.includes('pi-code-review')) {
-          return JSON.stringify({ name: '@zhushanwen/pi-code-review', piExtension: true })
+          return JSON.stringify({ name: '@zhushanwen/pi-code-review' })
         }
         if (p.includes('pi-something')) {
-          return JSON.stringify({ name: '@zhushanwen/pi-something', piExtension: true })
+          return JSON.stringify({ name: '@zhushanwen/pi-something' })
         }
         throw new Error('not found')
       })
 
       const result = resolver.scanNpmExtensions('/project')
       expect(result.size).toBe(2)
-      expect(result.get('@zhushanwen/pi-code-review')).toBe('/project/node_modules/@zhushanwen/pi-code-review')
-      expect(result.get('@zhushanwen/pi-something')).toBe('/project/node_modules/@zhushanwen/pi-something')
+      // key 是短名（不带 @zhushanwen/ scope），与 bundled/third-party 一致
+      expect(result.get('pi-code-review')).toBe('/project/node_modules/@zhushanwen/pi-code-review')
+      expect(result.get('pi-something')).toBe('/project/node_modules/@zhushanwen/pi-something')
     })
 
-    it('ignores packages without piExtension field', () => {
+
+    it('includes all pi-* packages regardless of package.json fields', () => {
       const scopeDir = '/project/node_modules/@zhushanwen'
       mockedExistsSync.mockImplementation((p: unknown) => typeof p === 'string' && p === scopeDir)
       mockedReaddirSync.mockImplementation((p: unknown) => {
@@ -91,14 +93,16 @@ describe('ExtensionResolver', () => {
       mockedStatSync.mockImplementation(() => ({ isDirectory: () => true } as import('node:fs').Stats))
       mockedReadFileSync.mockImplementation((p: unknown) => {
         if (typeof p === 'string' && p.includes('pi-review')) {
-          return JSON.stringify({ name: '@zhushanwen/pi-review' }) // no piExtension
+          return JSON.stringify({ name: '@zhushanwen/pi-review' })
         }
         throw new Error('not found')
       })
 
       const result = resolver.scanNpmExtensions('/project')
-      expect(result.size).toBe(0)
+      expect(result.size).toBe(1)
+      expect(result.get('pi-review')).toBe('/project/node_modules/@zhushanwen/pi-review')
     })
+
 
     it('returns empty when node_modules/@zhushanwen does not exist', () => {
       mockedExistsSync.mockReturnValue(false)
@@ -259,7 +263,7 @@ describe('ExtensionResolver', () => {
       mockedReadFileSync.mockImplementation((p: unknown) => {
         if (typeof p !== 'string') throw new Error('not found')
         if (p.includes('pi-ext-a')) {
-          return JSON.stringify({ name: '@zhushanwen/pi-ext-a', piExtension: true })
+          return JSON.stringify({ name: '@zhushanwen/pi-ext-a' })
         }
         throw new Error('not found')
       })

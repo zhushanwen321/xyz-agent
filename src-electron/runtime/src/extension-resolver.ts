@@ -66,17 +66,19 @@ export class ExtensionResolver {
         } catch {
           continue
         }
-        // 使用包名作为 key（不带 @zhushanwen/ 前缀）
+        // 使用目录名（不带 @zhushanwen/ scope）作为 key，与 bundled/third-party/user 一致
+        // pi-ext 包当前未发布编译产物，jiti 直接加载 src/index.ts
+        // 无需检查 piExtension 字段——所有 @zhushanwen/pi-* 目录都是 extension
         const pkgJsonPath = join(pkgDir, 'package.json')
         let extName = entry
         try {
           const raw = readFileSync(pkgJsonPath, 'utf-8')
-          const pkg = JSON.parse(raw) as { name?: string; piExtension?: unknown }
-          // 只包含声明了 piExtension 的包
-          if (!pkg.piExtension) continue
-          extName = pkg.name ?? entry
+          const pkg = JSON.parse(raw) as { name?: string }
+          // 从 scoped name 提取短名：@zhushanwen/pi-goal → pi-goal
+          const shortName = (pkg.name ?? entry).replace(/^@[^/]+\//, '')
+          extName = shortName || entry
         } catch {
-          continue
+          // package.json 不存在或解析失败，用目录名
         }
         result.set(extName, pkgDir)
       }
