@@ -6,7 +6,7 @@
  */
 import { basename, resolve, join } from 'node:path'
 import { readFile } from 'node:fs/promises'
-import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs'
+import { existsSync, statSync, readFileSync } from 'node:fs'
 import { execSync } from 'node:child_process'
 import type {
   SessionSummary,
@@ -25,6 +25,7 @@ import * as piBridge from '../pi-config-bridge.js'
 import { trash } from '../trash.js'
 import { NavigateInterceptor } from '../navigate-interceptor.js'
 import { TreeService } from './tree-service.js'
+import { ExtensionResolver } from '../extension-resolver.js'
 
 /** SendMessage hook 类型：在消息发送前触发，可阻止发送 */
 export type SendMessageHook = (sessionId: string, content: string) => Promise<{ blocked: boolean; reason?: string } | null>
@@ -558,61 +559,17 @@ export class SessionService implements ISessionService {
     })
   }
 
-  /** 返回有效的 extension 路径列表（跳过不存在的文件） */
+  /** 返回有效的 extension 路径列表（通过 ExtensionResolver 四源扫描+去重） */
   private getExtensionPaths(): string[] {
-    const paths: string[] = []
-
-    // xyz-agent 自定义 extension
+    const resolver = new ExtensionResolver()
+    const isPackaged = process.env.XYZ_AGENT_PACKAGED === '1'
+    const userExtPaths: string[] = []
+    // xyz-agent 自定义 extension（单个文件路径）
     if (this.extensionPath && existsSync(this.extensionPath)) {
-      paths.push(this.extensionPath)
-    } else if (this.extensionPath) {
-      console.warn(`[session-service] extension file not found: ${this.extensionPath}, skipping`)
+      userExtPaths.push(this.extensionPath)
     }
-
-    // 收集要扫描的目录列表
-    const scanDirs: string[] = []
-
-    // 1. 运行时 agent dir（~/.xyz-agent/pi/agent/extensions/）
-    //    打包模式由 migrateToPiSubdir() 从 Resources 同步到这里
-    const agentDir = this.getAgentDir()
-    scanDirs.push(join(agentDir, 'extensions'))
-
-    // 2. 开发模式：项目源码中的 bundled extensions（src-electron/resources/pi/agent/extensions/）
-    if (process.env.XYZ_AGENT_PACKAGED !== '1') {
-      scanDirs.push(join(this.projectRoot, 'resources', 'pi', 'agent', 'extensions'))
-    }
-
-    const seenExts = new Set<string>()
-    for (const bundledExtDir of scanDirs) {
-      if (!existsSync(bundledExtDir)) continue
-      try {
-        for (const entry of readdirSync(bundledExtDir)) {
-          const entryPath = join(bundledExtDir, entry)
-          let stat
-          try { stat = statSync(entryPath) } catch { continue }
-          if (!stat.isDirectory()) continue
-          // 跳过 shared/ 目录（不是 extension，只是共享模块）
-          if (entry === 'shared') continue
-          // 按 extension name 去重（不同目录可能有同名 extension，runtime 目录优先）
-          if (seenExts.has(entry)) continue
-          // 查找 index.ts 或 index.js
-          const indexTs = join(entryPath, 'index.ts')
-          const indexJs = join(entryPath, 'index.js')
-          if (existsSync(indexTs)) {
-            paths.push(indexTs)
-            seenExts.add(entry)
-          } else if (existsSync(indexJs)) {
-            paths.push(indexJs)
-            seenExts.add(entry)
-          }
-        }
-      // eslint-disable-next-line taste/no-silent-catch -- bundled extensions discovery: failure must not block session creation
-      } catch (e) {
-        console.warn(`[session-service] failed to read bundled extensions dir: ${bundledExtDir}`, e)
-      }
-    }
-
-    return paths
+    const result = resolver.resolve(this.projectRoot, isPackaged, userExtPaths)
+    return result.extensionDirs
   }
 
   /** 获取 xyz-pi agent 目录（开发和打包模式统一：~/.xyz-agent/pi/agent/） */
