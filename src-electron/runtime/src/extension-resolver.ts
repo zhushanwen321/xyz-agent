@@ -9,7 +9,7 @@ import { join } from 'node:path'
 const log = {
   info: (...args: unknown[]) => console.log('[extension-resolver]', ...args),
   warn: (...args: unknown[]) => console.warn('[extension-resolver]', ...args),
-  debug: (..._args: unknown[]) => {},
+  debug: () => {},
 }
 /** 优先级：数值越小优先级越高（npm 最高） */
 const PRIORITY_ORDER = ['npm', 'user', 'third-party', 'bundled'] as const
