@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { on, off } from '../lib/event-bus'
+import { EXTENSION_EVENTS } from '@xyz-agent/shared'
 import type { ExtensionWidgetPayload, ExtensionStatusPayload } from '@xyz-agent/shared'
 
 // Module-level singleton state (shared across components in split mode)
@@ -23,14 +24,14 @@ function onStatus(msg: { payload: ExtensionStatusPayload }) {
 
 export function useExtensionWidget() {
   if (refCount++ === 0) {
-    on('extension.widget', onWidget)
-    on('extension.status', onStatus)
+    on(EXTENSION_EVENTS.WIDGET, onWidget)
+    on(EXTENSION_EVENTS.STATUS, onStatus)
   }
 
   function cleanup() {
     if (--refCount === 0) {
-      off('extension.widget', onWidget)
-      off('extension.status', onStatus)
+      off(EXTENSION_EVENTS.WIDGET, onWidget)
+      off(EXTENSION_EVENTS.STATUS, onStatus)
       widgets.value = new Map()
       statuses.value = new Map()
     }

@@ -1,4 +1,5 @@
 import type { ServerMessage, ServerMessageType } from '@xyz-agent/shared'
+import { EXTENSION_EVENTS } from '@xyz-agent/shared'
 import type { PiEventListener } from './rpc-client.js'
 // Canonical pi event union from types.ts.
 // translate() accepts Record<string, unknown> because pi sends event types
@@ -271,8 +272,9 @@ export class EventAdapter {
             key: String(event.key ?? ''),
             text: String(event.text ?? ''),
           })
+          const statusType: ServerMessageType = EXTENSION_EVENTS.STATUS
           this.send({
-            type: 'extension.status' as ServerMessageType,
+            type: statusType,
             payload: {
               sessionId: sid,
               statusKey: String(event.key ?? ''),
@@ -283,8 +285,9 @@ export class EventAdapter {
         }
         // setWidget: send WS event to frontend
         if (method === 'setWidget') {
+          const widgetType: ServerMessageType = EXTENSION_EVENTS.WIDGET
           this.send({
-            type: 'extension.widget' as ServerMessageType,
+            type: widgetType,
             payload: {
               sessionId: sid,
               widgetKey: String(event.key ?? ''),

@@ -6,7 +6,12 @@
  */
 import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-
+// eslint-disable-next-line no-console
+const log = {
+  info: (...args: unknown[]) => console.log('[extension-resolver]', ...args),
+  warn: (...args: unknown[]) => console.warn('[extension-resolver]', ...args),
+  debug: (...args: unknown[]) => {},
+}
 /** 优先级：数值越小优先级越高（npm 最高） */
 const PRIORITY_ORDER = ['npm', 'user', 'third-party', 'bundled'] as const
 type SourceName = (typeof PRIORITY_ORDER)[number]
@@ -25,24 +30,21 @@ interface SourceMap {
 
 export class ExtensionResolver {
   /**
-   * 解析所有 extension 路径，按优先级去重
+   * 解析所有 extension 路径，按优先级去重。
+   * deduplicate() 按 PRIORITY_ORDER 升序遍历（高优先级先写入），first-write-wins。
    */
   resolve(projectRoot: string, packaged: boolean, userExtPaths: string[]): ExtensionPaths {
     const sources: SourceMap[] = []
 
-    // 按优先级从低到高添加，deduplicate 用 first-write-wins（高优先级后写覆盖低优先级）
-    // bundled（最低优先级）
     sources.push({ source: 'bundled', extensions: this.scanBundledExtensions(projectRoot, packaged) })
-    // third-party
     sources.push({ source: 'third-party', extensions: this.scanThirdPartyExtensions() })
-    // user
     if (userExtPaths.length > 0) {
       sources.push({ source: 'user', extensions: this.scanUserExtensions(userExtPaths) })
     }
-    // npm（最高优先级）
     sources.push({ source: 'npm', extensions: this.scanNpmExtensions(projectRoot) })
 
     const deduped = this.deduplicate(sources)
+    log.info(`[extension-resolver] resolved ${deduped.size} extensions from ${sources.length} sources`)
     return { extensionDirs: [...deduped.values()] }
   }
 
@@ -55,35 +57,36 @@ export class ExtensionResolver {
 
     if (!existsSync(scopeDir)) return result
 
+    let dirEntries: string[]
     try {
-      const entries = readdirSync(scopeDir)
-      for (const entry of entries) {
-        if (!entry.startsWith('pi-')) continue
-        const pkgDir = join(scopeDir, entry)
-        try {
-          const stat = statSync(pkgDir)
-          if (!stat.isDirectory()) continue
-        } catch {
-          continue
-        }
-        // 使用目录名（不带 @zhushanwen/ scope）作为 key，与 bundled/third-party/user 一致
-        // pi-ext 包当前未发布编译产物，jiti 直接加载 src/index.ts
-        // 无需检查 piExtension 字段——所有 @zhushanwen/pi-* 目录都是 extension
-        const pkgJsonPath = join(pkgDir, 'package.json')
-        let extName = entry
-        try {
-          const raw = readFileSync(pkgJsonPath, 'utf-8')
-          const pkg = JSON.parse(raw) as { name?: string }
-          // 从 scoped name 提取短名：@zhushanwen/pi-goal → pi-goal
-          const shortName = (pkg.name ?? entry).replace(/^@[^/]+\//, '')
-          extName = shortName || entry
-        } catch {
-          // package.json 不存在或解析失败，用目录名
-        }
-        result.set(extName, pkgDir)
+      dirEntries = readdirSync(scopeDir)
+    } catch (e) {
+      log.warn(`[extension-resolver] failed to read ${scopeDir}: ${e}`)
+      return result
+    }
+
+    for (const entry of dirEntries) {
+      if (!entry.startsWith('pi-')) continue
+      const pkgDir = join(scopeDir, entry)
+      try {
+        if (!statSync(pkgDir).isDirectory()) continue
+      } catch {
+        continue
       }
-    } catch {
-      // node_modules/@zhushanwen 不可读
+      // 使用目录名（不带 @zhushanwen/ scope）作为 key，与 bundled/third-party/user 一致
+      const pkgJsonPath = join(pkgDir, 'package.json')
+      let extName = entry
+      try {
+        const raw = readFileSync(pkgJsonPath, 'utf-8')
+        const pkg = JSON.parse(raw) as { name?: string }
+        // 从 scoped name 提取短名：@zhushanwen/pi-goal → pi-goal
+        const shortName = (pkg.name ?? entry).replace(/^@[^/]+\//, '')
+        extName = shortName || entry
+      } catch {
+        // package.json 不存在或解析失败，用目录名
+        log.debug(`[extension-resolver] no package.json in ${pkgDir}, using dir name`)
+      }
+      result.set(extName, pkgDir)
     }
 
     return result
@@ -102,7 +105,7 @@ export class ExtensionResolver {
 
     if (!existsSync(bundledDir)) return result
 
-    this.scanDirectory(bundledDir, result)
+    this.scanDirectory(bundledDir, result, 'bundled')
     return result
   }
 
@@ -117,7 +120,7 @@ export class ExtensionResolver {
     const thirdPartyDir = join(homeDir, '.xyz-agent', 'pi', 'agent', 'extensions')
     if (!existsSync(thirdPartyDir)) return result
 
-    this.scanDirectory(thirdPartyDir, result)
+    this.scanDirectory(thirdPartyDir, result, 'third-party')
     return result
   }
 
@@ -130,8 +133,7 @@ export class ExtensionResolver {
     for (const extPath of userExtPaths) {
       if (!existsSync(extPath)) continue
       try {
-        const stat = statSync(extPath)
-        if (!stat.isDirectory()) continue
+        if (!statSync(extPath).isDirectory()) continue
       } catch {
         continue
       }
@@ -145,13 +147,13 @@ export class ExtensionResolver {
   }
 
   /**
-   * 去重：按 PRIORITY_ORDER 降序遍历（高优先级在前），first-write-wins
-   * 高优先级先写入 Map，低优先级遇到已存在的 key 跳过
+   * 去重：按 PRIORITY_ORDER 升序遍历（高优先级在前），first-write-wins。
+   * 高优先级先写入 Map，低优先级遇到已存在的 key 跳过。
    */
   deduplicate(sources: SourceMap[]): ExtensionMap {
     const merged: ExtensionMap = new Map()
 
-    // 按优先级从高到低排序（npm 最先）
+    // 按优先级排序（npm=0 最先，bundled=3 最后）
     const sorted = [...sources].sort((a, b) => {
       return PRIORITY_ORDER.indexOf(a.source) - PRIORITY_ORDER.indexOf(b.source)
     })
@@ -170,23 +172,22 @@ export class ExtensionResolver {
   // ── Private helpers ──────────────────────────────────────────────
 
   /** 扫描目录下的子目录，跳过 shared/ */
-  private scanDirectory(dir: string, result: ExtensionMap): void {
+  private scanDirectory(dir: string, result: ExtensionMap, label: string): void {
     try {
       const entries = readdirSync(dir)
       for (const entry of entries) {
         if (entry === 'shared') continue
         const entryPath = join(dir, entry)
         try {
-          const stat = statSync(entryPath)
-          if (!stat.isDirectory()) continue
+          if (!statSync(entryPath).isDirectory()) continue
         } catch {
           continue
         }
-        // 使用目录名作为 extension name
         result.set(entry, entryPath)
       }
-    } catch {
-      // 目录不可读
+      log.debug(`[extension-resolver] ${label}: found ${result.size} extensions in ${dir}`)
+    } catch (e) {
+      log.warn(`[extension-resolver] failed to scan ${label} dir ${dir}: ${e}`)
     }
   }
 }
