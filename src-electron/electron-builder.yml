@@ -51,6 +51,14 @@ extraResources:
       - "**/*"
       - "!**/*.tar.gz"
       - "!**/*.zip"
+  # @zhushanwen/pi-* npm extension packages + transitive deps
+  # runtime 进程 cwd = Resources/，scanNpmExtensions 从 cwd/node_modules/@zhushanwen/ 扫描
+  - from: node_modules/@zhushanwen
+    to: node_modules/@zhushanwen
+  - from: node_modules/js-yaml
+    to: node_modules/js-yaml
+  - from: node_modules/argparse
+    to: node_modules/argparse
   # xyz-agent pi extension (xyz-navigate command)
   # 源文件在 repo root，打包到 Resources 根目录
   - from: ../xyz-agent-extension.js

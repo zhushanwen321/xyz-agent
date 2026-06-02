@@ -8,7 +8,9 @@
 # 4. electron-builder.yml 结构完整性
 # 5. asarUnpack 与 files 一致性（防止 files 排除 dist/runtime）
 # 6. resources/pi 无指向外部绝对路径的 symlink
-# 7. 磁盘空间
+# 7. @zhushanwen/pi-* npm packages 存在且入口文件存在
+# 8. pi-ext 传递依赖完整性
+# 9. 磁盘空间
 #
 # 用法: npm run preflight 或 CI 中单独调用
 # CI 模式: ./scripts/preflight-check.sh --ci（任何失败都非 0）
@@ -38,7 +40,7 @@ FAILED=0
 
 # ── 1. package.json 完整性 ─────────────────────────────────────────
 echo ""
-echo -e "${BLUE}[1/6] package.json fields...${NC}"
+echo -e "${BLUE}[1/9] package.json fields...${NC}"
 
 # 检查 src-electron/package.json（electron-builder 的工作目录）
 ELECTRON_PKG="$ELECTRON_DIR/package.json"
@@ -56,7 +58,7 @@ console.log('  ✓', pkg.name, 'v' + pkg.version);
 
 # ── 2. 产物存在性 ──────────────────────────────────────────────────
 echo ""
-echo -e "${BLUE}[2/6] Build artifacts exist...${NC}"
+echo -e "${BLUE}[2/9] Build artifacts exist...${NC}"
 
 check_file() {
     local path="$1"
@@ -89,7 +91,7 @@ check_dir() {
 
 # ── 3. tsup noExternal 与 runtime dependencies 同步 ─────────────────
 echo ""
-echo -e "${BLUE}[3/6] tsup noExternal vs runtime dependencies...${NC}"
+echo -e "${BLUE}[3/9] tsup noExternal vs runtime dependencies...${NC}"
 
 RUNTIME_PKG="$ELECTRON_DIR/runtime/package.json"
 RUNTIME_TSUP="$ELECTRON_DIR/runtime/tsup.config.ts"
@@ -124,7 +126,7 @@ fi
 
 # ── 4. electron-builder.yml 结构 ────────────────────────────────────
 echo ""
-echo -e "${BLUE}[4/6] electron-builder.yml structure...${NC}"
+echo -e "${BLUE}[4/9] electron-builder.yml structure...${NC}"
 
 EB_YML="$ELECTRON_DIR/electron-builder.yml"
 if [ -f "$EB_YML" ]; then
@@ -149,7 +151,7 @@ fi
 
 # ── 5. asarUnpack 与 files 一致性检查 ─────────────────────────────
 echo ""
-echo -e "${BLUE}[5/7] asarUnpack vs files consistency...${NC}"
+echo -e "${BLUE}[5/9] asarUnpack vs files consistency...${NC}"
 
 if [ -f "$EB_YML" ]; then
     if grep -q "asarUnpack" "$EB_YML" && grep -q "dist/runtime" "$EB_YML"; then
@@ -182,7 +184,7 @@ fi
 
 # ── 6. resources/pi symlink 检查 ───────────────────────────────────
 echo ""
-echo -e "${BLUE}[6/7] resources/pi symlink check...${NC}"
+echo -e "${BLUE}[6/9] resources/pi symlink check...${NC}"
 
 PI_RES_DIR="$ELECTRON_DIR/resources/pi"
 SYMLINK_FOUND=false
@@ -202,9 +204,61 @@ else
     echo -e "  ${GREEN}✓ resources/pi 无 symlink${NC}"
 fi
 
-# ── 7. 磁盘空间检查 ────────────────────────────────────────────────
+# ── 7. @zhushanwen/pi-* npm packages check ───────────────────────
 echo ""
-echo -e "${BLUE}[7/7] Disk space...${NC}"
+echo -e "${BLUE}[7/9] @zhushanwen/pi-* npm packages...${NC}"
+
+found=0
+for pkg in "$ELECTRON_DIR/node_modules/@zhushanwen"/pi-*/package.json; do
+  if [ -f "$pkg" ]; then
+    pkg_dir=$(dirname "$pkg")
+    pkg_name=$(basename "$pkg_dir")
+    # 验证 main 入口文件存在（FR-7.4a）
+    main_entry=$(node -e "const p=require('$pkg');console.log(p.main||'index.js')" 2>/dev/null || echo "index.js")
+    if [ ! -f "$pkg_dir/$main_entry" ] && [ ! -f "$pkg_dir/index.ts" ]; then
+      echo -e "  ${YELLOW}⚠ $pkg_name missing entry ($main_entry)${NC}"
+    fi
+    found=$((found + 1))
+  fi
+done
+if [ "$found" -lt 1 ]; then
+  echo -e "  ${RED}✗ No @zhushanwen/pi-* packages found in node_modules${NC}"
+  FAILED=1
+else
+  echo -e "  ${GREEN}✓ Found $found pi-ext packages${NC}"
+fi
+
+# ── 8. pi-ext transitive dependencies check ───────────────────────
+echo ""
+echo -e "${BLUE}[8/9] pi-ext transitive dependencies...${NC}"
+
+missing_deps=0
+for pkg in "$ELECTRON_DIR/node_modules/@zhushanwen"/pi-*/package.json; do
+  [ -f "$pkg" ] || continue
+  pkg_name=$(basename "$(dirname "$(dirname "$pkg")")")
+  deps=$(node -e "
+    const p = require('$pkg');
+    const all = Object.keys(p.dependencies || {});
+    const external = all.filter(d => !d.startsWith('@zhushanwen/'));
+    console.log(external.join('\n'));
+  " 2>/dev/null || true)
+  for dep in $deps; do
+    if [ ! -d "$ELECTRON_DIR/node_modules/$dep" ]; then
+      echo -e "  ${RED}✗ Missing transitive dep: $dep (required by $pkg_name)${NC}"
+      missing_deps=$((missing_deps + 1))
+    fi
+  done
+done
+if [ "$missing_deps" -gt 0 ]; then
+  echo -e "  ${RED}✗ $missing_deps missing transitive dependencies${NC}"
+  FAILED=1
+else
+  echo -e "  ${GREEN}✓ All pi-ext transitive dependencies present${NC}"
+fi
+
+# ── 9. 磁盘空间检查 ────────────────────────────────────────────────
+echo ""
+echo -e "${BLUE}[9/9] Disk space...${NC}"
 
 AVAILABLE_GB=$(df -g . | tail -1 | awk '{print $4}')
 if [ "$AVAILABLE_GB" -lt 3 ]; then
