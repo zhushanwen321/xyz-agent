@@ -2,16 +2,22 @@
  * ExtensionResolver — 四源扫描与去重
  *
  * 扫描四个来源的 extension，按优先级去重后返回目录路径列表：
- *   npm (@zhushanwen/pi-*) > user > third-party > bundled
+ *   npm > user > third-party > bundled
+ *
+ * npm 扫描：读取 package.json 的 dependencies，对每个包用 require.resolve 定位目录，
+ * 再用 isValidPiExtension() 验证是否为有效 pi extension。
+ * 不硬编码 scope 或前缀 —— dependencies 本身就是白名单。
  */
 import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
+
 const log = {
   info: (...args: unknown[]) => console.log('[extension-resolver]', ...args),
   warn: (...args: unknown[]) => console.warn('[extension-resolver]', ...args),
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   debug: (..._args: unknown[]) => {},
 }
+
 /** 优先级：数值越小优先级越高（npm 最高） */
 const PRIORITY_ORDER = ['npm', 'user', 'third-party', 'bundled'] as const
 type SourceName = (typeof PRIORITY_ORDER)[number]
@@ -28,7 +34,14 @@ export interface SourceMap {
   extensions: ExtensionMap
 }
 
+export interface ResolverOptions {
+  /** 打包模式下的 npm 扫描搜索路径（默认用 process.cwd()） */
+  npmResolvePaths?: string[]
+}
+
 export class ExtensionResolver {
+  constructor(private readonly options: ResolverOptions = {}) {}
+
   /**
    * 解析所有 extension 路径，按优先级去重。
    * deduplicate() 按 PRIORITY_ORDER 升序遍历（高优先级先写入），first-write-wins。
@@ -49,43 +62,47 @@ export class ExtensionResolver {
   }
 
   /**
-   * 扫描 node_modules/@zhushanwen/pi-* 包
+   * 扫描 npm extension：从 package.json dependencies 提取白名单
+   *
+   * 白名单 = package.json dependencies 中的所有包。
+   * 对每个包 require.resolve 定位目录，再用 isValidPiExtension() 验证。
+   * 不限制 scope 或前缀 —— dependencies 声明即意图。
    */
   scanNpmExtensions(projectRoot: string): ExtensionMap {
     const result: ExtensionMap = new Map()
-    const scopeDir = join(projectRoot, 'node_modules', '@zhushanwen')
+    const pkgJsonPath = join(projectRoot, 'package.json')
 
-    if (!existsSync(scopeDir)) return result
+    if (!existsSync(pkgJsonPath)) return result
 
-    let dirEntries: string[]
+    let dependencies: Record<string, string>
     try {
-      dirEntries = readdirSync(scopeDir)
-    } catch (e) {
-      log.warn(`[extension-resolver] failed to read ${scopeDir}: ${e}`)
+      const raw = readFileSync(pkgJsonPath, 'utf-8')
+      const pkg = JSON.parse(raw) as { dependencies?: Record<string, string> }
+      dependencies = pkg.dependencies ?? {}
+    } catch {
+      log.warn(`[extension-resolver] failed to read ${pkgJsonPath}`)
       return result
     }
 
-    for (const entry of dirEntries) {
-      if (!entry.startsWith('pi-')) continue
-      const pkgDir = join(scopeDir, entry)
+    const resolvePaths = this.options.npmResolvePaths ?? [projectRoot]
+
+    for (const pkgName of Object.keys(dependencies)) {
+      let pkgDir: string
       try {
-        if (!statSync(pkgDir).isDirectory()) continue
+        const resolved = require.resolve(`${pkgName}/package.json`, { paths: resolvePaths })
+        pkgDir = dirname(resolved)
       } catch {
+        // 包未安装，跳过
         continue
       }
-      // 使用目录名（不带 @zhushanwen/ scope）作为 key，与 bundled/third-party/user 一致
-      const pkgJsonPath = join(pkgDir, 'package.json')
-      let extName = entry
-      try {
-        const raw = readFileSync(pkgJsonPath, 'utf-8')
-        const pkg = JSON.parse(raw) as { name?: string }
-        // 从 scoped name 提取短名：@zhushanwen/pi-goal → pi-goal
-        const shortName = (pkg.name ?? entry).replace(/^@[^/]+\//, '')
-        extName = shortName || entry
-      } catch {
-        // package.json 不存在或解析失败，用目录名
-        log.debug(`[extension-resolver] no package.json in ${pkgDir}, using dir name`)
+
+      // 验证是否为有效的 pi extension
+      if (!this.isValidPiExtension(pkgDir)) {
+        continue
       }
+
+      // dedup key：取包短名（去掉 scope 和 pi- 前缀）
+      const extName = this.normalizeExtName(pkgName)
       result.set(extName, pkgDir)
     }
 
@@ -137,10 +154,8 @@ export class ExtensionResolver {
       } catch {
         continue
       }
-      // 使用目录名作为 key
-      const parts = extPath.replace(/\\/g, '/').split('/')
-      const dirName = parts[parts.length - 1] || extPath
-      result.set(dirName, extPath)
+      const extName = this.normalizeExtName(extPath.split('/').pop() ?? extPath)
+      result.set(extName, extPath)
     }
 
     return result
@@ -171,6 +186,55 @@ export class ExtensionResolver {
 
   // ── Private helpers ──────────────────────────────────────────────
 
+  /**
+   * 验证包是否为有效的 pi extension。
+   * 白名单机制：不靠文件名判断，靠 package.json 元数据。
+   *
+   * 有效条件（满足任一）：
+   * - keywords 包含 'pi-package'
+   * - peerDependencies 包含任意含 'pi-coding-agent' 或 'pi-agent-core' 的包
+   * - package.json 中有 'pi' manifest 字段
+   */
+  private isValidPiExtension(pkgDir: string): boolean {
+    const pkgJsonPath = join(pkgDir, 'package.json')
+    if (!existsSync(pkgJsonPath)) return false
+
+    try {
+      const raw = readFileSync(pkgJsonPath, 'utf-8')
+      const pkg = JSON.parse(raw) as {
+        pi?: unknown
+        keywords?: string[]
+        peerDependencies?: Record<string, string>
+      }
+
+      // pi manifest 字段
+      if (pkg.pi) return true
+
+      // keywords 包含 'pi-package'
+      if (pkg.keywords?.includes('pi-package')) return true
+
+      // peerDependencies 包含 pi-coding-agent 或 pi-agent-core（不同 scope）
+      const peerDeps = Object.keys(pkg.peerDependencies ?? {})
+      if (peerDeps.some(d => /pi-coding-agent|pi-agent-core/.test(d))) return true
+
+      return false
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * 规范化 extension name 用于去重。
+   * - 去掉 npm scope: @zhushanwen/pi-goal → pi-goal
+   * - 去掉 pi- 前缀: pi-goal → goal, pi-subagents → subagents
+   * - bundled/subagent → subagent
+   * 这样不同来源的同功能 extension 能正确去重。
+   */
+  private normalizeExtName(name: string): string {
+    const unscoped = name.replace(/^@[^/]+\//, '')
+    return unscoped.replace(/^pi-/, '')
+  }
+
   /** 扫描目录下的子目录，跳过 shared/ */
   private scanDirectory(dir: string, result: ExtensionMap, label: string): void {
     try {
@@ -183,7 +247,7 @@ export class ExtensionResolver {
         } catch {
           continue
         }
-        result.set(entry, entryPath)
+        result.set(this.normalizeExtName(entry), entryPath)
       }
       log.debug(`[extension-resolver] ${label}: found ${result.size} extensions in ${dir}`)
     } catch (e) {
