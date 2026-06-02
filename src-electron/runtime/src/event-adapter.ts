@@ -1,4 +1,4 @@
-import type { ServerMessage } from '@xyz-agent/shared'
+import type { ServerMessage, ServerMessageType } from '@xyz-agent/shared'
 import type { PiEventListener } from './rpc-client.js'
 // Canonical pi event union from types.ts.
 // translate() accepts Record<string, unknown> because pi sends event types
@@ -264,17 +264,35 @@ export class EventAdapter {
       // ── Extension UI requests ────────────────────────────────
       case 'extension_ui_request': {
         const method = event.method as string | undefined
-        // setStatus: translate to internal callback
+        // setStatus: translate to internal callback + send WS event
         if (method === 'setStatus') {
           this.options?.onStatusSetUpdate?.({
             sessionId: sid,
             key: String(event.key ?? ''),
             text: String(event.text ?? ''),
           })
+          this.send({
+            type: 'extension.status' as ServerMessageType,
+            payload: {
+              sessionId: sid,
+              statusKey: String(event.key ?? ''),
+              text: String(event.text ?? ''),
+            },
+          })
           return null
         }
-        // setWidget is internal-only, discard
-        if (method === 'setWidget') return null
+        // setWidget: send WS event to frontend
+        if (method === 'setWidget') {
+          this.send({
+            type: 'extension.widget' as ServerMessageType,
+            payload: {
+              sessionId: sid,
+              widgetKey: String(event.key ?? ''),
+              lines: Array.isArray(event.lines) ? (event.lines as unknown[]).map(String) : [],
+            },
+          })
+          return null
+        }
         // Bridge methods: route directly via callback, no frontend timeout
         if (method?.startsWith('bridge:')) {
           const requestId = String(event.id ?? '')

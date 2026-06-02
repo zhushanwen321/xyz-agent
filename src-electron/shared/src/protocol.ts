@@ -172,6 +172,7 @@ export type ServerMessageType =
   | 'plugin:statusBarUpdate' | 'plugin:messageDecoration' | 'plugin:config'
   | 'plugin:statusSetUpdate'
   | 'plugin:uiRequest'
+  | 'extension.widget' | 'extension.status'
 
 export interface ServerMessage {
   type: ServerMessageType
