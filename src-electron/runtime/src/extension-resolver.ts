@@ -6,11 +6,10 @@
  */
 import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-// eslint-disable-next-line no-console
 const log = {
   info: (...args: unknown[]) => console.log('[extension-resolver]', ...args),
   warn: (...args: unknown[]) => console.warn('[extension-resolver]', ...args),
-  debug: (...args: unknown[]) => {},
+  debug: (..._args: unknown[]) => {},
 }
 /** 优先级：数值越小优先级越高（npm 最高） */
 const PRIORITY_ORDER = ['npm', 'user', 'third-party', 'bundled'] as const
@@ -23,7 +22,7 @@ export interface ExtensionPaths {
   extensionDirs: string[]
 }
 
-interface SourceMap {
+export interface SourceMap {
   source: SourceName
   extensions: ExtensionMap
 }

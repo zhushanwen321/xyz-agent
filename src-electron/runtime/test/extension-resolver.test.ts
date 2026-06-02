@@ -26,10 +26,10 @@ function mockDir(path: string): void {
     if (typeof p !== 'string') return false
     return p === path || p.startsWith(path + '/')
   })
-  mockedReaddirSync.mockImplementation((p: unknown) => {
-    if (p === path) return ['ext-a', 'ext-b', 'shared'] as string[]
-    return [] as string[]
-  })
+  mockedReaddirSync.mockImplementation(((p: unknown) => {
+    if (p === path) return ['ext-a', 'ext-b', 'shared']
+    return []
+  }) as unknown as typeof readdirSync)
   mockedStatSync.mockImplementation((p: unknown) => {
     if (typeof p !== 'string') throw new Error('not found')
     const basename = p.split('/').pop() ?? ''
@@ -54,10 +54,10 @@ describe('ExtensionResolver', () => {
     it('discovers pi-* packages and uses short name as key', () => {
       const scopeDir = '/project/node_modules/@zhushanwen'
       mockedExistsSync.mockImplementation((p: unknown) => typeof p === 'string' && p === scopeDir)
-      mockedReaddirSync.mockImplementation((p: unknown) => {
+      mockedReaddirSync.mockImplementation(((p: unknown) => {
         if (p === scopeDir) return ['pi-code-review', 'pi-something', 'not-pi-pkg'] as string[]
         return [] as string[]
-      })
+      }) as unknown as typeof readdirSync)
       mockedStatSync.mockImplementation((p: unknown) => {
         if (typeof p !== 'string') throw new Error('not found')
         const basename = p.split('/').pop() ?? ''
@@ -86,10 +86,10 @@ describe('ExtensionResolver', () => {
     it('includes all pi-* packages regardless of package.json fields', () => {
       const scopeDir = '/project/node_modules/@zhushanwen'
       mockedExistsSync.mockImplementation((p: unknown) => typeof p === 'string' && p === scopeDir)
-      mockedReaddirSync.mockImplementation((p: unknown) => {
+      mockedReaddirSync.mockImplementation(((p: unknown) => {
         if (p === scopeDir) return ['pi-review'] as string[]
         return [] as string[]
-      })
+      }) as unknown as typeof readdirSync)
       mockedStatSync.mockImplementation(() => ({ isDirectory: () => true } as import('node:fs').Stats))
       mockedReadFileSync.mockImplementation((p: unknown) => {
         if (typeof p === 'string' && p.includes('pi-review')) {
@@ -244,12 +244,12 @@ describe('ExtensionResolver', () => {
         if (typeof p !== 'string') return false
         return p === bundledDir || p === thirdPartyDir || p === '/custom/my-ext' || p === '/project/node_modules/@zhushanwen'
       })
-      mockedReaddirSync.mockImplementation((p: unknown) => {
+      mockedReaddirSync.mockImplementation(((p: unknown) => {
         if (p === bundledDir) return ['ext-a', 'shared'] as string[]
         if (p === thirdPartyDir) return ['ext-c'] as string[]
         if (p === '/project/node_modules/@zhushanwen') return ['pi-ext-a'] as string[]
         return [] as string[]
-      })
+      }) as unknown as typeof readdirSync)
       mockedStatSync.mockImplementation((p: unknown) => {
         if (typeof p !== 'string') throw new Error('not found')
         const basename = p.split('/').pop() ?? ''
@@ -295,10 +295,10 @@ describe('ExtensionResolver', () => {
         if (typeof p !== 'string') return false
         return p === thirdPartyDir
       })
-      mockedReaddirSync.mockImplementation((p: unknown) => {
+      mockedReaddirSync.mockImplementation(((p: unknown) => {
         if (p === thirdPartyDir) return ['ext-c'] as string[]
         return [] as string[]
-      })
+      }) as unknown as typeof readdirSync)
       mockedStatSync.mockImplementation(() => ({ isDirectory: () => true } as import('node:fs').Stats))
 
       const result = resolver.resolve('/project', true, [])
