@@ -28,6 +28,17 @@
   },
   "dependencies": {
     "@types/markdown-it-footnote": "^3.0.4",
+    "@zhushanwen/pi-goal": "latest",
+    "@zhushanwen/pi-todo": "latest",
+    "@zhushanwen/pi-workflow": "latest",
+    "@zhushanwen/pi-coding-workflow": "latest",
+    "@zhushanwen/pi-skill-state": "latest",
+    "@zhushanwen/pi-evolve-daily": "latest",
+    "@zhushanwen/pi-statusline": "latest",
+    "@zhushanwen/pi-taste-lint": "latest",
+    "@zhushanwen/pi-context-engineering": "latest",
+    "@zhushanwen/pi-claude-rules-loader": "latest",
+    "@zhushanwen/pi-unified-hooks": "latest",
     "electron-store": "^10",
     "is-glob": "^4.0.3",
     "markdown-it-footnote": "^4.0.0"
