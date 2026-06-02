@@ -564,8 +564,19 @@ export class SessionService implements ISessionService {
     const resolver = new ExtensionResolver()
     const isPackaged = process.env.XYZ_AGENT_PACKAGED === '1'
     const userExtPaths: string[] = []
-    // xyz-agent 自定义 extension（单个文件路径）
+    // xyz-agent 自定义 extension
     if (this.extensionPath && existsSync(this.extensionPath)) {
+      // 文件型 extension（如 xyz-agent-extension.js）不经过 resolver 的目录扫描
+      // 直接追加到最终结果，避免被 isDirectory() 校验过滤
+      try {
+        if (statSync(this.extensionPath).isFile()) {
+          const result = resolver.resolve(this.projectRoot, isPackaged, [])
+          result.extensionDirs.push(this.extensionPath)
+          return result.extensionDirs
+        }
+      } catch {
+        // statSync 失败，继续走 resolver
+      }
       userExtPaths.push(this.extensionPath)
     }
     const result = resolver.resolve(this.projectRoot, isPackaged, userExtPaths)
