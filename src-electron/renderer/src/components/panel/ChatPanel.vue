@@ -32,16 +32,6 @@
       </div>
 
       <template v-else>
-        <!-- Extension widgets -->
-        <template v-if="extensionWidgets.length > 0">
-          <ExtensionWidgetPanel
-            v-for="w in extensionWidgets"
-            :key="w.widgetKey"
-            :widget-key="w.widgetKey"
-            :lines="w.lines"
-          />
-        </template>
-
         <!-- Only render the active agent's messages -->
         <template v-for="view in agentViews" :key="view.agentId">
           <template v-if="view.agentId === localActiveAgentId">
@@ -89,6 +79,9 @@
       </template>
     </div>
 
+    <!-- Widget Dock: fixed above input, max 2 columns -->
+    <WidgetDock :widgets="extensionWidgets" />
+
     <!-- Extension status items -->
     <div v-if="extensionStatuses.length > 0" class="flex items-center gap-2 px-4 py-1 border-t border-border bg-surface">
       <span
@@ -125,7 +118,7 @@ import MessageBubble from '../chat/MessageBubble.vue'
 import StreamingMessage from '../chat/StreamingMessage.vue'
 import ApprovalCard from '../chat/ApprovalCard.vue'
 import ChatInput from '../chat/ChatInput.vue'
-import ExtensionWidgetPanel from '../extension/ExtensionWidgetPanel.vue'
+import WidgetDock from '../extension/WidgetDock.vue'
 
 export interface AgentOption {
   id: string

@@ -1,0 +1,866 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Extension Widget/Status Bridge Demo — xyz-agent</title>
+<style>
+  :root {
+    --bg: #0a0a0b;
+    --surface: #111113;
+    --elevated: #18181b;
+    --inset: #1f1f23;
+    --bg-ai: #131517;
+    --bg-user: #1c1a14;
+    --border: #27272a;
+    --border-hover: #3f3f46;
+    --fg: #fafafa;
+    --muted: #a1a1aa;
+    --dim: #71717a;
+    --accent: #22c55e;
+    --accent-hover: #16a34a;
+    --accent-light: rgba(34,197,94,0.15);
+    --accent-blue: #3b82f6;
+    --accent-yellow: #eab308;
+    --accent-red: #ef4444;
+    --font-sans: 'Inter', 'SF Pro Text', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
+    --radius: 1px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: var(--font-sans);
+    background: var(--bg);
+    color: var(--fg);
+    font-size: 13px;
+    line-height: 1.5;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── Header ── */
+  .demo-header {
+    padding: 12px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+  .demo-header h1 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--fg);
+  }
+  .demo-header__tag {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: var(--accent-light);
+    color: var(--accent);
+  }
+  .demo-header__desc {
+    font-size: 11px;
+    color: var(--dim);
+    margin-left: auto;
+  }
+
+  /* ── Main layout ── */
+  .demo-body {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* ── Chat panel ── */
+  .chat-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--border);
+  }
+  .panel-bar {
+    padding: 6px 12px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .panel-bar__dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: pulse-dot 1.5s ease-in-out infinite;
+  }
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  .chat-msgs {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 0;
+  }
+
+  /* ── Messages ── */
+  .msg {
+    max-width: 95%;
+    margin: 0 auto 8px;
+    padding: 10px 12px;
+    border-radius: var(--radius);
+    border-left: 3px solid transparent;
+  }
+  .msg--user {
+    background: var(--bg-user);
+    border-left-color: var(--border-hover);
+  }
+  .msg--bot {
+    background: var(--bg-ai);
+    border-left-color: var(--accent);
+  }
+  .msg__role {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 4px;
+  }
+  .msg__body p { margin: 4px 0; }
+  .msg__body strong { color: var(--fg); font-weight: 600; }
+  .msg__body code {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    background: var(--inset);
+    padding: 1px 4px;
+    border-radius: 2px;
+    color: var(--accent-blue);
+  }
+
+  /* ── Tool call card ── */
+  .tool {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin: 6px 0;
+    overflow: hidden;
+  }
+  .tool__hd {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    background: var(--inset);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .tool__chevron { color: var(--dim); font-size: 10px; }
+  .tool__name { color: var(--accent); font-family: var(--font-mono); font-weight: 600; }
+  .tool__path { color: var(--muted); font-size: 11px; }
+  .tool__status { margin-left: auto; font-size: 10px; font-weight: 600; }
+  .tool__status--ok { color: var(--accent); }
+  .tool__bd {
+    display: none;
+    padding: 8px 10px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--muted);
+    background: var(--surface);
+    line-height: 1.6;
+    white-space: pre-wrap;
+  }
+  .tool:not(.collapsed) .tool__bd { display: block; }
+  .tool:not(.collapsed) .tool__chevron { transform: rotate(0deg); }
+  .tool.collapsed .tool__chevron { transform: rotate(-90deg); display: inline-block; }
+
+  /* ══════════════════════════════════════════════════════════════════
+     Extension Widget Panel (NEW — 本 PR 新增组件)
+     ══════════════════════════════════════════════════════════════════ */
+  .ext-widget {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin: 6px 0;
+    background: var(--surface);
+    overflow: hidden;
+  }
+  .ext-widget__header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.1s;
+  }
+  .ext-widget__header:hover {
+    background: rgba(255,255,255,0.03);
+  }
+  .ext-widget__chevron {
+    width: 12px;
+    height: 12px;
+    color: var(--dim);
+    flex-shrink: 0;
+    transition: transform 0.15s;
+  }
+  .ext-widget:not(.collapsed) .ext-widget__chevron {
+    transform: rotate(0deg);
+  }
+  .ext-widget.collapsed .ext-widget__chevron {
+    transform: rotate(-90deg);
+  }
+  .ext-widget__icon {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+  }
+  .ext-widget__key {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .ext-widget__badge {
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    padding: 0px 4px;
+    border-radius: 2px;
+    background: var(--accent-light);
+    color: var(--accent);
+    text-transform: uppercase;
+    flex-shrink: 0;
+  }
+  .ext-widget__lines {
+    padding: 2px 10px 8px 28px;
+  }
+  .ext-widget.collapsed .ext-widget__lines {
+    display: none;
+  }
+  .ext-widget__line {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--dim);
+    padding: 1px 0;
+  }
+  .ext-widget__line--highlight {
+    color: var(--accent);
+  }
+  .ext-widget__line--warn {
+    color: var(--accent-yellow);
+  }
+  .ext-widget__line--error {
+    color: var(--accent-red);
+  }
+
+  /* ── Status bar ── */
+  .status-bar {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    padding: 0 8px;
+    height: 24px;
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+  .status-bar__item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 8px;
+    height: 100%;
+    font-size: 11px;
+    color: var(--muted);
+    border-right: 1px solid var(--border);
+    white-space: nowrap;
+    cursor: default;
+    transition: background 0.1s;
+  }
+  .status-bar__item:hover {
+    background: rgba(255,255,255,0.03);
+  }
+  .status-bar__item:last-child {
+    border-right: none;
+  }
+  .status-bar__dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .status-bar__dot--green { background: var(--accent); }
+  .status-bar__dot--yellow { background: var(--accent-yellow); }
+  .status-bar__dot--blue { background: var(--accent-blue); }
+  .status-bar__label {
+    font-size: 10px;
+    color: var(--dim);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .status-bar__value {
+    color: var(--muted);
+  }
+
+  /* ── Right side: data flow diagram ── */
+  .demo-sidebar {
+    width: 340px;
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    overflow-y: auto;
+  }
+  .demo-sidebar__section {
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .demo-sidebar__title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 12px;
+  }
+  .demo-sidebar__title--accent {
+    color: var(--accent);
+  }
+
+  /* ── Data flow ── */
+  .flow-step {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 12px;
+    position: relative;
+  }
+  .flow-step__marker {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex-shrink: 0;
+    width: 20px;
+  }
+  .flow-step__dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    border: 2px solid var(--accent);
+    flex-shrink: 0;
+  }
+  .flow-step__dot--active {
+    background: var(--accent);
+    animation: pulse-dot 1.5s ease-in-out infinite;
+  }
+  .flow-step__line {
+    width: 1px;
+    flex: 1;
+    background: var(--border);
+    margin-top: 4px;
+  }
+  .flow-step__content {
+    flex: 1;
+    min-width: 0;
+  }
+  .flow-step__label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--fg);
+    margin-bottom: 2px;
+  }
+  .flow-step__desc {
+    font-size: 11px;
+    color: var(--dim);
+    line-height: 1.4;
+  }
+  .flow-step__code {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    background: var(--inset);
+    padding: 4px 6px;
+    border-radius: 2px;
+    color: var(--accent-blue);
+    margin-top: 4px;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+
+  /* ── Simulate button ── */
+  .sim-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--bg);
+    background: var(--accent);
+    border: none;
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: background 0.15s;
+    font-family: var(--font-sans);
+  }
+  .sim-btn:hover { background: var(--accent-hover); }
+  .sim-btn--outline {
+    background: transparent;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+  }
+  .sim-btn--outline:hover {
+    background: var(--accent-light);
+  }
+  .sim-btn--sm {
+    padding: 3px 8px;
+    font-size: 11px;
+  }
+  .sim-btn-group {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  /* ── WS event log ── */
+  .ws-log {
+    background: var(--inset);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 6px 8px;
+    max-height: 160px;
+    overflow-y: auto;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    line-height: 1.5;
+    color: var(--dim);
+  }
+  .ws-log__entry {
+    padding: 2px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .ws-log__entry:last-child { border-bottom: none; }
+  .ws-log__ts { color: var(--dim); }
+  .ws-log__type { color: var(--accent); font-weight: 600; }
+  .ws-log__payload { color: var(--muted); }
+
+  /* ── Annotation badges ── */
+  .anno {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 5px;
+    border-radius: 2px;
+    vertical-align: middle;
+  }
+  .anno--new { background: var(--accent-light); color: var(--accent); }
+  .anno--existing { background: rgba(59,130,246,0.15); color: var(--accent-blue); }
+  .anno--bridge { background: rgba(234,179,8,0.15); color: var(--accent-yellow); }
+</style>
+</head>
+<body>
+
+<!-- ── Header ── -->
+<div class="demo-header">
+  <h1>Extension Widget/Status Bridge</h1>
+  <span class="demo-header__tag">DEMO</span>
+  <span class="demo-header__desc">setWidget / setStatus 事件桥接到 GUI 前端的完整数据流</span>
+</div>
+
+<!-- ── Main body ── -->
+<div class="demo-body">
+
+  <!-- ═══ Left: Chat panel ═══ -->
+  <div class="chat-panel">
+    <div class="panel-bar">
+      <span class="panel-bar__dot"></span>
+      <span>主线对话</span>
+      <span style="margin-left:auto;font-size:11px;color:var(--dim)">feat-integration-pi-extension</span>
+    </div>
+
+    <div class="chat-msgs" id="chatMsgs">
+      <!-- User message -->
+      <div class="msg msg--user">
+        <div class="msg__role">用户</div>
+        <div class="msg__body"><p>运行 /goal 把剩余的 pi-ext extension 全部迁移到 npm 包消费</p></div>
+      </div>
+
+      <!-- Bot message with tool call -->
+      <div class="msg msg--bot">
+        <div class="msg__role">助手</div>
+        <div class="msg__body">
+          <p>开始执行 goal，先扫描当前 extension 状态：</p>
+          <div class="tool collapsed" onclick="this.classList.toggle('collapsed')">
+            <div class="tool__hd">
+              <span class="tool__chevron">▾</span>
+              <span class="tool__name">bash</span>
+              <span class="tool__path">ls resources/pi/agent/extensions/</span>
+              <span class="tool__status tool__status--ok">完成</span>
+            </div>
+            <div class="tool__bd">goal/  hooks/  shared/  subagent/  todo/  usage-tracker/  workflow/</div>
+          </div>
+
+          <!-- ═══ Extension Widget: goal tracker ═══ -->
+          <div class="ext-widget" id="widget-goal" onclick="this.classList.toggle('collapsed')">
+            <div class="ext-widget__header">
+              <svg class="ext-widget__chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6l4 4 4-4"/></svg>
+              <svg class="ext-widget__icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 2"/></svg>
+              <span class="ext-widget__key">goal-tracker</span>
+              <span class="anno anno--new">NEW</span>
+            </div>
+            <div class="ext-widget__lines">
+              <div class="ext-widget__line ext-widget__line--highlight">✓ TC-1: ExtensionResolver 四源扫描 <span style="color:var(--dim)">(15 tests)</span></div>
+              <div class="ext-widget__line ext-widget__line--highlight">✓ TC-3a: setWidget/setStatus 事件桥接 <span style="color:var(--dim)">(5 tests)</span></div>
+              <div class="ext-widget__line ext-widget__line--highlight">✓ TC-4: 删除 bundled goal/todo/workflow <span style="color:var(--dim)">(30 files)</span></div>
+              <div class="ext-widget__line">○ TC-5: 打包适配 <span style="color:var(--dim)">(in progress)</span></div>
+              <div class="ext-widget__line">○ TC-6: 前端 composable 集成 <span style="color:var(--dim)">(pending)</span></div>
+            </div>
+          </div>
+
+          <p>已完成 3 个 task，正在处理打包配置。</p>
+        </div>
+      </div>
+
+      <!-- Bot message with budget widget -->
+      <div class="msg msg--bot">
+        <div class="msg__role">助手 · 执行中</div>
+        <div class="msg__body">
+          <p>运行 preflight 检查：</p>
+          <div class="tool" onclick="this.classList.toggle('collapsed')">
+            <div class="tool__hd">
+              <span class="tool__chevron">▾</span>
+              <span class="tool__name">bash</span>
+              <span class="tool__path">scripts/preflight-check.sh</span>
+              <span class="tool__status tool__status--ok">完成</span>
+            </div>
+            <div class="tool__bd">[7/9] @zhushanwen/pi-* npm packages...
+  ✓ Found 11 pi-ext packages
+
+[8/9] pi-ext transitive dependencies...
+  ✓ All transitive dependencies present
+
+[9/9] File-type extension check...
+  ✓ xyz-agent-extension.js: file-type extension, bypassing resolver</div>
+          </div>
+
+          <!-- ═══ Extension Widget: budget ═══ -->
+          <div class="ext-widget" onclick="this.classList.toggle('collapsed')">
+            <div class="ext-widget__header">
+              <svg class="ext-widget__chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6l4 4 4-4"/></svg>
+              <svg class="ext-widget__icon" viewBox="0 0 16 16" fill="none" stroke="var(--accent-yellow)" stroke-width="1.5"><path d="M2 4h12M2 4a2 2 0 002 2h8a2 2 0 002-2M2 4V2h12v2M4 6v6a2 2 0 002 2h4a2 2 0 002-2V6"/></svg>
+              <span class="ext-widget__key">budget</span>
+              <span class="anno anno--new">NEW</span>
+            </div>
+            <div class="ext-widget__lines">
+              <div class="ext-widget__line">Token: 24,512 / 80,000 <span style="color:var(--dim)">(30.6%)</span></div>
+              <div class="ext-widget__line ext-widget__line--warn">Cost: $0.42 <span style="color:var(--dim)">(est. $1.37 total)</span></div>
+              <div class="ext-widget__line">Turns: 12 / 30 <span style="color:var(--dim)">(40%)</span></div>
+            </div>
+          </div>
+
+          <p>预算充足，继续下一个 task。</p>
+        </div>
+      </div>
+
+      <!-- Bot message: streaming with widget -->
+      <div class="msg msg--bot" style="border-left-color: var(--accent);">
+        <div class="msg__role">助手 · 生成中<span style="display:inline-block;width:2px;height:13px;background:var(--accent);margin-left:2px;vertical-align:middle;animation:cursor-blink 1s step-end infinite;"></span></div>
+        <div class="msg__body">
+          <p>正在修改 <code>electron-builder.yml</code>，添加 pi-ext extraResources 配置</p>
+
+          <!-- ═══ Extension Widget: workflow ═══ -->
+          <div class="ext-widget" onclick="this.classList.toggle('collapsed')">
+            <div class="ext-widget__header">
+              <svg class="ext-widget__chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6l4 4 4-4"/></svg>
+              <svg class="ext-widget__icon" viewBox="0 0 16 16" fill="none" stroke="var(--accent-blue)" stroke-width="1.5"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>
+              <span class="ext-widget__key">workflow-orchestrator</span>
+              <span class="anno anno--new">NEW</span>
+            </div>
+            <div class="ext-widget__lines">
+              <div class="ext-widget__line ext-widget__line--highlight">● Task 5: electron-builder.yml + preflight-check.sh</div>
+              <div class="ext-widget__line" style="padding-left:12px">├─ Step 1: extraResources 配置 <span style="color:var(--accent)">✓</span></div>
+              <div class="ext-widget__line" style="padding-left:12px">├─ Step 2: transitive deps 白名单 <span style="color:var(--accent)">✓</span></div>
+              <div class="ext-widget__line" style="padding-left:12px">└─ Step 3: preflight check 脚本 <span style="color:var(--accent-yellow)">⟳</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Status bar -->
+      <div style="height: 8px;"></div>
+    </div>
+
+    <!-- ═══ Status bar: extension statuses ═══ -->
+    <div class="status-bar" id="statusBar">
+      <div class="status-bar__item">
+        <span class="status-bar__dot status-bar__dot--green" style="animation:pulse-dot 1.5s ease-in-out infinite;"></span>
+        <span class="status-bar__label">pi</span>
+        <span class="status-bar__value">connected</span>
+      </div>
+      <div class="status-bar__item" id="status-ext-goal">
+        <span class="status-bar__dot status-bar__dot--green"></span>
+        <span class="status-bar__label">goal</span>
+        <span class="status-bar__value">3/6 tasks done</span>
+      </div>
+      <div class="status-bar__item" id="status-ext-budget">
+        <span class="status-bar__dot status-bar__dot--yellow"></span>
+        <span class="status-bar__label">budget</span>
+        <span class="status-bar__value">$0.42 / ~$1.37</span>
+      </div>
+      <div class="status-bar__item" id="status-ext-workflow">
+        <span class="status-bar__dot status-bar__dot--blue"></span>
+        <span class="status-bar__label">workflow</span>
+        <span class="status-bar__value">Task 5: Step 3/3</span>
+      </div>
+      <div class="status-bar__item" style="margin-left:auto;border-left:1px solid var(--border);padding-left:8px;">
+        <span style="font-size:10px;color:var(--dim)">11 exts loaded</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ Right sidebar: Data flow + interaction ═══ -->
+  <div class="demo-sidebar">
+    <!-- ── Data flow ── -->
+    <div class="demo-sidebar__section">
+      <div class="demo-sidebar__title demo-sidebar__title--accent">Data Flow</div>
+
+      <div class="flow-step">
+        <div class="flow-step__marker">
+          <div class="flow-step__dot"></div>
+          <div class="flow-step__line"></div>
+        </div>
+        <div class="flow-step__content">
+          <div class="flow-step__label">pi extension 调用</div>
+          <div class="flow-step__desc">extension 在 TUI 中调用 <code>setWidget(key, lines)</code> 或 <code>setStatus(key, text)</code></div>
+          <div class="flow-step__code">extension_ui_request {
+  method: "setWidget",
+  key: "goal-tracker",
+  lines: ["✓ TC-1: ...", "○ TC-5: ..."]
+}</div>
+        </div>
+      </div>
+
+      <div class="flow-step">
+        <div class="flow-step__marker">
+          <div class="flow-step__dot flow-step__dot--active"></div>
+          <div class="flow-step__line"></div>
+        </div>
+        <div class="flow-step__content">
+          <div class="flow-step__label">event-adapter.ts <span class="anno anno--bridge">BRIDGE</span></div>
+          <div class="flow-step__desc">拦截 <code>extension_ui_request</code>，根据 method 分发</div>
+          <div class="flow-step__code">case 'extension_ui_request':
+  if (method === 'setWidget')
+    → send WS event
+       { type: 'extension.widget',
+         payload: { widgetKey, lines } }
+  if (method === 'setStatus')
+    → callback + send WS event
+       { type: 'extension.status',
+         payload: { statusKey, text } }</div>
+        </div>
+      </div>
+
+      <div class="flow-step">
+        <div class="flow-step__marker">
+          <div class="flow-step__dot"></div>
+          <div class="flow-step__line"></div>
+        </div>
+        <div class="flow-step__content">
+          <div class="flow-step__label">WebSocket → event-bus</div>
+          <div class="flow-step__desc">WS 消息到达前端，<code>event-bus.ts</code> 按 type 分发到 composable</div>
+        </div>
+      </div>
+
+      <div class="flow-step">
+        <div class="flow-step__marker">
+          <div class="flow-step__dot"></div>
+        </div>
+        <div class="flow-step__content">
+          <div class="flow-step__label">useExtensionWidget.ts <span class="anno anno--new">NEW</span></div>
+          <div class="flow-step__desc">composable 消费事件，更新 reactive Map</div>
+          <div class="flow-step__code">// refCount protected
+on('extension.widget', onWidget)
+on('extension.status', onStatus)
+
+widgets = Map&lt;key, payload&gt;
+statuses = Map&lt;key, payload&gt;</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Simulate ── -->
+    <div class="demo-sidebar__section">
+      <div class="demo-sidebar__title">Simulate Events</div>
+      <div class="sim-btn-group">
+        <button class="sim-btn sim-btn--sm" onclick="simulateWidget()">setWidget</button>
+        <button class="sim-btn sim-btn--sm" onclick="simulateStatus()">setStatus</button>
+        <button class="sim-btn sim-btn--sm sim-btn--outline" onclick="clearLog()">Clear Log</button>
+      </div>
+    </div>
+
+    <!-- ── WS event log ── -->
+    <div class="demo-sidebar__section" style="flex:1;">
+      <div class="demo-sidebar__title">WS Event Log</div>
+      <div class="ws-log" id="wsLog">
+        <div class="ws-log__entry">
+          <span class="ws-log__ts">12:04:31</span>
+          <span class="ws-log__type">extension.widget</span>
+          <span class="ws-log__payload">{widgetKey: "goal-tracker", lines: [...]}</span>
+        </div>
+        <div class="ws-log__entry">
+          <span class="ws-log__ts">12:04:31</span>
+          <span class="ws-log__type">extension.status</span>
+          <span class="ws-log__payload">{statusKey: "goal", text: "3/6 tasks done"}</span>
+        </div>
+        <div class="ws-log__entry">
+          <span class="ws-log__ts">12:05:12</span>
+          <span class="ws-log__type">extension.widget</span>
+          <span class="ws-log__payload">{widgetKey: "budget", lines: [...]}</span>
+        </div>
+        <div class="ws-log__entry">
+          <span class="ws-log__ts">12:05:12</span>
+          <span class="ws-log__type">extension.status</span>
+          <span class="ws-log__payload">{statusKey: "budget", text: "$0.42 / ~$1.37"}</span>
+        </div>
+        <div class="ws-log__entry">
+          <span class="ws-log__ts">12:06:03</span>
+          <span class="ws-log__type">extension.widget</span>
+          <span class="ws-log__payload">{widgetKey: "workflow-orchestrator", lines: [...]}</span>
+        </div>
+        <div class="ws-log__entry">
+          <span class="ws-log__ts">12:06:03</span>
+          <span class="ws-log__type">extension.status</span>
+          <span class="ws-log__payload">{statusKey: "workflow", text: "Task 5: Step 3/3"}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Before/After ── -->
+    <div class="demo-sidebar__section">
+      <div class="demo-sidebar__title">Before vs After</div>
+      <div style="margin-bottom:8px;">
+        <div style="font-size:11px;font-weight:600;color:var(--accent-red);margin-bottom:4px;">Before (RPC 模式)</div>
+        <div style="font-size:11px;color:var(--dim);line-height:1.5;">
+          extension 调用 setWidget/setStatus<br>
+          → event-adapter 返回 null<br>
+          → <span style="color:var(--accent-red)">静默丢弃，GUI 看不到任何输出</span>
+        </div>
+      </div>
+      <div>
+        <div style="font-size:11px;font-weight:600;color:var(--accent);margin-bottom:4px;">After (本 PR)</div>
+        <div style="font-size:11px;color:var(--dim);line-height:1.5;">
+          extension 调用 setWidget/setStatus<br>
+          → event-adapter 拦截并转为 WS 事件<br>
+          → <span style="color:var(--accent)">前端渲染 Widget + Status Bar</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function now() {
+  const d = new Date();
+  return d.toTimeString().slice(0, 8);
+}
+
+function addLogEntry(type, payload) {
+  const log = document.getElementById('wsLog');
+  const entry = document.createElement('div');
+  entry.className = 'ws-log__entry';
+  entry.innerHTML = `<span class="ws-log__ts">${now()}</span> <span class="ws-log__type">${type}</span> <span class="ws-log__payload">${payload}</span>`;
+  log.appendChild(entry);
+  log.scrollTop = log.scrollHeight;
+}
+
+function clearLog() {
+  document.getElementById('wsLog').innerHTML = '';
+}
+
+const widgetData = [
+  { key: 'code-trace', lines: ['→ src/auth/index.ts:authenticate()', '  → validateToken(token)', '  → SessionManager.create()', '  → emit("auth:success")', '', 'Call chain: 4 levels, 0 cycles'] },
+  { key: 'taste-lint', lines: ['Scanning 23 files...', '✓ no-any: 0 violations', '⚠ no-magic-numbers: 3 violations', '  src/utils.ts:42 — magic 0.95', '  src/config.ts:17 — magic 3000', '  src/api.ts:88 — magic 100', '✓ no-silent-catch: 0 violations'] },
+  { key: 'test-runner', lines: ['✓ extension-resolver.test.ts (15 tests)', '✓ event-adapter-bridge.test.ts (5 tests)', '○ robustness-review (skipped)', '', 'Total: 20 passed, 0 failed, 1 skipped'] },
+];
+
+const statusData = [
+  { key: 'code-trace', text: 'tracing: src/auth/index.ts', color: 'blue' },
+  { key: 'taste-lint', text: '3 warnings found', color: 'yellow' },
+  { key: 'test-runner', text: '20/20 passed', color: 'green' },
+];
+
+let widgetIdx = 0;
+let statusIdx = 0;
+
+function simulateWidget() {
+  const d = widgetData[widgetIdx % widgetData.length];
+  widgetIdx++;
+
+  // Add widget to last bot message
+  const msgs = document.querySelectorAll('.msg--bot');
+  const lastMsg = msgs[msgs.length - 1];
+  const body = lastMsg.querySelector('.msg__body');
+
+  const widget = document.createElement('div');
+  widget.className = 'ext-widget';
+  widget.onclick = function() { this.classList.toggle('collapsed'); };
+
+  let linesHtml = d.lines.map(l => {
+    let cls = 'ext-widget__line';
+    if (l.startsWith('✓') || l.startsWith('→')) cls += ' ext-widget__line--highlight';
+    if (l.startsWith('⚠')) cls += ' ext-widget__line--warn';
+    return `<div class="${cls}">${l}</div>`;
+  }).join('');
+
+  widget.innerHTML = `
+    <div class="ext-widget__header">
+      <svg class="ext-widget__chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6l4 4 4-4"/></svg>
+      <svg class="ext-widget__icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 2"/></svg>
+      <span class="ext-widget__key">${d.key}</span>
+      <span class="anno anno--new">NEW</span>
+    </div>
+    <div class="ext-widget__lines">${linesHtml}</div>`;
+
+  body.appendChild(widget);
+
+  addLogEntry('extension.widget', `{widgetKey: "${d.key}", lines: [${d.lines.length} items]}`);
+
+  // Scroll chat to bottom
+  const chatMsgs = document.getElementById('chatMsgs');
+  chatMsgs.scrollTop = chatMsgs.scrollHeight;
+}
+
+function simulateStatus() {
+  const d = statusData[statusIdx % statusData.length];
+  statusIdx++;
+
+  // Add to status bar
+  const bar = document.getElementById('statusBar');
+  const refItem = bar.querySelector('.status-bar__item:last-child');
+
+  const item = document.createElement('div');
+  item.className = 'status-bar__item';
+  item.innerHTML = `
+    <span class="status-bar__dot status-bar__dot--${d.color}"></span>
+    <span class="status-bar__label">${d.key}</span>
+    <span class="status-bar__value">${d.text}</span>`;
+  bar.insertBefore(item, refItem);
+
+  addLogEntry('extension.status', `{statusKey: "${d.key}", text: "${d.text}"}`);
+}
+</script>
+
+</body>
+</html>
