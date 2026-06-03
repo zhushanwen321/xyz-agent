@@ -173,7 +173,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex items-center gap-1 px-2 pb-1.5">
+  <div class="flex items-center gap-1 px-2 pb-1.5 overflow-hidden">
     <!-- Model Picker -->
     <ModelPicker :current-model="currentModel" @select="(id: string) => emit('select-model', id)" />
 

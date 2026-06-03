@@ -47,7 +47,7 @@
   <!-- Hover tooltip: Teleport 到 body + position: fixed，脱离所有 overflow 裁剪 -->
   <Teleport to="body">
     <div
-      v-if="hoverTipFor"
+      v-if="visible && hoverTipFor"
       class="hover-tip"
       :style="{ top: tipPos.top + 'px', left: tipPos.left + 'px' }"
       @mouseenter="onTipEnter"
