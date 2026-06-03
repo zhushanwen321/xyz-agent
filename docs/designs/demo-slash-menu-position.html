@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Slash Menu 位置对比 — xyz-agent</title>
+<style>
+  :root {
+    --bg: oklch(97% 0.010 75);
+    --surface: oklch(99% 0.006 75);
+    --fg: oklch(22% 0.012 75);
+    --muted: oklch(50% 0.010 75);
+    --border: oklch(90% 0.008 75);
+    --accent: oklch(55% 0.08 195);
+    --accent-light: oklch(93% 0.03 195);
+    --agent: oklch(55% 0.15 250);
+    --agent-light: oklch(93% 0.04 250);
+    --section-bg: oklch(95% 0.014 70);
+    --font-body: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+    --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: var(--font-body);
+    font-size: 14px;
+    line-height: 1.6;
+    background: var(--bg);
+    color: var(--fg);
+    padding: 24px 16px;
+  }
+
+  .page-title {
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+  .page-desc {
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 24px;
+    max-width: 960px;
+  }
+  .page-desc code {
+    font-family: var(--font-mono);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 1px 5px;
+    border-radius: 1px;
+    font-size: 12px;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    max-width: 1400px;
+  }
+  .cell {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    border-radius: 1px;
+    overflow: hidden;
+    min-width: 0;
+  }
+  .cell-label {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+  }
+  .cell-label__name {
+    font-size: 12px;
+    font-weight: 700;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .cell-label__badge {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 5px;
+    border-radius: 1px;
+    background: var(--muted);
+    color: var(--bg);
+    letter-spacing: 0.03em;
+  }
+  .cell-label__badge--current { background: var(--accent); color: #fff; }
+  .cell-label__css {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted);
+    line-height: 1.4;
+  }
+  .cell-label__note {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 4px;
+    line-height: 1.4;
+  }
+
+  /* ── Mock chat panel (matches ChatInput.vue structure) ── */
+  .panel {
+    display: flex;
+    flex-direction: column;
+    height: 420px;
+    background: var(--bg);
+    overflow: hidden;
+  }
+  .panel__msgs {
+    flex: 1;
+    overflow: hidden;
+    padding: 12px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .msg {
+    padding: 8px 10px;
+    border-radius: 1px;
+    font-size: 12px;
+    line-height: 1.5;
+    max-width: 90%;
+  }
+  .msg--user {
+    align-self: flex-end;
+    background: var(--accent-light);
+    color: var(--fg);
+  }
+  .msg--bot {
+    align-self: flex-start;
+    background: var(--surface);
+    border: 1px solid var(--border);
+  }
+
+  /* ── Chat input wrap (relative parent) ── */
+  .input-wrap {
+    position: relative;
+    margin: 0 12px 8px;
+    flex-shrink: 0;
+  }
+  /* ── Chat input container (z-10) ── */
+  .input-container {
+    position: relative;
+    z-index: 10;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 1px;
+    transition: border-color 0.15s var(--ease);
+  }
+  .input-container:focus-within {
+    border-color: var(--accent);
+  }
+  /* ── Textarea row (matches pt-2 + text-sm + leading-[1.45]) ── */
+  .input-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
+    padding: 8px 14px 4px;
+  }
+  .input-textarea {
+    display: block;
+    width: 100%;
+    min-height: calc(1.45em * 2 + 16px);
+    border: none;
+    background: transparent;
+    color: var(--fg);
+    font-family: var(--font-body);
+    font-size: 14px;
+    line-height: 1.45;
+    resize: none;
+    outline: none;
+  }
+  .input-textarea::placeholder { color: var(--muted); }
+  /* ── Toolbar ── */
+  .input-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px 6px;
+  }
+  .tb-btn {
+    width: 28px; height: 28px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    border-radius: 1px;
+    cursor: pointer;
+    font-size: 11px;
+  }
+  .tb-btn--send { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .tb-model {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border: 1px solid var(--border);
+    border-radius: 1px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .tb-spacer { flex: 1; }
+  .tb-context {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .tb-context__bar {
+    width: 50px;
+    height: 4px;
+    background: var(--border);
+    border-radius: 1px;
+    overflow: hidden;
+  }
+  .tb-context__fill {
+    height: 100%;
+    background: var(--accent);
+  }
+
+  /* ── Session strip (below input container) ── */
+  .session-strip {
+    margin-top: 6px;
+    display: flex;
+    gap: 4px;
+    font-size: 10px;
+    color: var(--muted);
+  }
+  .session-strip__chip {
+    padding: 2px 6px;
+    border: 1px solid var(--border);
+    border-radius: 1px;
+    background: var(--surface);
+  }
+
+  /* ═══════════════════════════════════════════════
+     Slash popup (4 variants)
+     ═══════════════════════════════════════════════ */
+  .slash {
+    position: absolute;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 1px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.10);
+    max-height: calc(28px * 5);
+    overflow-y: auto;
+    z-index: 20;
+  }
+  .slash__item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 4px 10px;
+    background: transparent;
+    color: var(--fg);
+    font-family: var(--font-body);
+    font-size: 12px;
+    line-height: 1.4;
+    text-align: left;
+    cursor: pointer;
+    border: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .slash__item:last-child { border-bottom: none; }
+  .slash__item.active { background: var(--accent-light); }
+  .slash__tag {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    border-radius: 1px;
+    flex-shrink: 0;
+    width: 52px;
+    height: 16px;
+  }
+  .slash__tag--cmd { background: var(--border); color: var(--muted); }
+  .slash__tag--sk { background: var(--accent-light); color: var(--accent); }
+  .slash__tag--ag { background: var(--agent-light); color: var(--agent); }
+  .slash__name {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent);
+    white-space: nowrap;
+    flex-shrink: 0;
+    min-width: 100px;
+  }
+  .slash__desc {
+    font-size: 11px;
+    color: var(--muted);
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding-left: 8px;
+    border-left: 1px solid var(--border);
+  }
+  .slash__arg {
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--accent);
+    opacity: 0.7;
+    white-space: nowrap;
+    flex-shrink: 0;
+    padding: 1px 5px;
+    background: var(--accent-light);
+    border-radius: 1px;
+  }
+
+  /* ── Variant 1: current (bug) ── */
+  .v1 .slash {
+    top: 100%;
+    left: 12px;
+    right: 12px;
+    margin-top: 4px;
+  }
+  /* ── Variant 2: design demo (4px offset) ── */
+  .v2 .slash {
+    bottom: 100%;
+    left: 12px;
+    right: 12px;
+    margin-bottom: 4px;
+  }
+  /* ── Variant 3: "略偏下一行" = 24px ── */
+  .v3 .slash {
+    bottom: 100%;
+    left: 12px;
+    right: 12px;
+    margin-bottom: 24px;
+  }
+  /* ── Variant 4: top-[28px] (覆盖向下) ── */
+  .v4 .slash {
+    top: 28px;
+    left: 12px;
+    right: 12px;
+  }
+
+  /* ── Annotation overlay (visual aid only) ── */
+  .annot {
+    position: absolute;
+    pointer-events: none;
+    font-size: 10px;
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-weight: 600;
+    background: var(--bg);
+    padding: 1px 4px;
+    border: 1px solid var(--accent);
+    border-radius: 1px;
+    white-space: nowrap;
+  }
+  /* Input top guideline (where line-1 baseline sits) */
+  .guideline {
+    position: absolute;
+    left: 0; right: 0;
+    top: 28.3px;
+    border-top: 1px dashed var(--accent);
+    opacity: 0.5;
+    pointer-events: none;
+  }
+  .guideline-label {
+    position: absolute;
+    right: 6px;
+    top: 22px;
+    font-size: 9px;
+    font-family: var(--font-mono);
+    color: var(--accent);
+    background: var(--surface);
+    padding: 0 4px;
+    pointer-events: none;
+  }
+
+  /* Mobile fallback */
+  @media (max-width: 1100px) {
+    .grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+  <h1 class="page-title">Slash Menu 位置对比</h1>
+  <p class="page-desc">
+    4 种方案并排。蓝色虚线标记第一行 textarea 文字底部（input 顶 + pt-2 + 1.45em ≈ 28.3px），
+    蓝色注释标记 menu 底部/顶部位置。当前 bug 是 Variant 1，期望是 Variant 3 或 4。
+  </p>
+
+  <div class="grid">
+
+    <!-- ── Variant 1: current (bug) ── -->
+    <div class="cell">
+      <div class="cell-label">
+        <div class="cell-label__name">
+          <span class="cell-label__badge cell-label__badge--current">Current (Bug)</span>
+          Variant 1
+        </div>
+        <div class="cell-label__css">top: 100%; margin-top: 4px;</div>
+        <div class="cell-label__note">menu 整个在 input 下方 ❌</div>
+      </div>
+      <div class="panel v1">
+        <div class="panel__msgs">
+          <div class="msg msg--user">帮我重构 auth 模块</div>
+          <div class="msg msg--bot">好的，先看现有结构：</div>
+        </div>
+        <div class="input-wrap">
+          <!-- Slash popup (positioned absolutely) -->
+          <div class="slash">
+            <button class="slash__item active">
+              <span class="slash__tag slash__tag--cmd">command</span>
+              <span class="slash__name">/clear</span>
+              <span class="slash__desc">清空当前对话</span>
+            </button>
+            <button class="slash__item">
+              <span class="slash__tag slash__tag--cmd">command</span>
+              <span class="slash__name">/compact</span>
+              <span class="slash__desc">压缩上下文</span>
+            </button>
+            <button class="slash__item">
+              <span class="slash__tag slash__tag--sk">skill</span>
+              <span class="slash__name">/code-trace</span>
+              <span class="slash__desc">追踪代码调用链</span>
+              <span class="slash__arg">&lt;文件路径&gt;</span>
+            </button>
+            <button class="slash__item">
+              <span class="slash__tag slash__tag--sk">skill</span>
+              <span class="slash__name">/zcommit</span>
+              <span class="slash__desc">智能分析变更并提交</span>
+            </button>
+          </div>
+          <!-- Input container -->
+          <div class="input-container">
+            <div class="input-row">
+              <textarea class="input-textarea" rows="1">/</textarea>
+            </div>
+            <div class="input-toolbar">
+              <button class="tb-btn">+</button>
+              <span class="tb-model">sonnet@anthropic</span>
+              <span class="tb-context">34%<span class="tb-context__bar"><span class="tb-context__fill" style="width:34%"></span></span></span>
+              <span class="tb-spacer"></span>
+              <button class="tb-btn tb-btn--send">↑</button>
+            </div>
+          </div>
+          <div class="session-strip">
+            <span class="session-strip__chip">main</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Variant 2: design demo (4px) ── -->
+    <div class="cell">
+      <div class="cell-label">
+        <div class="cell-label__name">
+          <span class="cell-label__badge">Variant 2</span>
+        </div>
+        <div class="cell-label__css">bottom: 100%; margin-bottom: 4px;</div>
+        <div class="cell-label__note">design demo 一致 — 紧贴 input 顶部</div>
+      </div>
+      <div class="panel v2">
+        <div class="panel__msgs">
+          <div class="msg msg--user">帮我重构 auth 模块</div>
+          <div class="msg msg--bot">好的，先看现有结构：</div>
+        </div>
+        <div class="input-wrap">
+          <div class="slash">
+            <button class="slash__item active">
+              <span class="slash__tag slash__tag--cmd">command</span>
+              <span class="slash__name">/clear</span>
+              <span class="slash__desc">清空当前对话</span>
+            </button>
+            <button class="slash__item">
+              <span class="slash__tag slash__tag--cmd">command</span>
+              <span class="slash__name">/compact</span>
+              <span class="slash__desc">压缩上下文</span>
+            </button>
+            <button class="slash__item">
+              <span class="slash__tag slash__tag--sk">skill</span>
+              <span class="slash__name">/code-trace</span>
+              <span class="slash__desc">追踪代码调用链</span>
+              <span class="slash__arg">&lt;文件路径&gt;</span>
+            </button>
+            <button class="slash__item">
+              <span class="slash__tag slash__tag--sk">skill</span>
+              <span class="slash__name">/zcommit</span>
+              <span class="slash__desc">智能分析变更并提交</span>
+            </button>
+          </div>
+          <div class="input-container" style="position:relative">
+            <div class="guideline"></div>
+            <div class="guideline-label">line-1 底部</div>
+            <div class="input-row">
+              <textarea class="input-textarea" rows="1">/</textarea>
+            </div>
+            <div class="input-toolbar">
+              <button class="tb-btn">+</button>
+              <span class="tb-model">sonnet@anthropic</span>
+              <span class="tb-context">34%<span class="tb-context__bar"><span class="tb-context__fill" style="width:34%"></span></span></span>
+              <span class="tb-spacer"></span>
+              <button class="tb-btn tb-btn--send">↑</button>
+            </div>
+          </div>
+          <div class="session-strip">
+            <span class="session-strip__chip">main</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Variant 3: "略偏下一行" (24px) ── -->
+    <div class="cell">
+      <div class="cell-label">
+        <div class="cell-label__name">
+          <span class="cell-label__badge" style="background:var(--accent);color:#fff">Recommended</span>
+          Variant 3
+        </div>
+        <div class="cell-label__css">bottom: 100%; margin-bottom: 24px;</div>
+        <div class="cell-label__note">"覆盖在 input 上，略偏下一行" — 露第一行文字</div>
+      </div>
+      <div class="panel v3">
+        <div class="panel__msgs">
+          <div class="msg msg--user">帮我重构 auth 模块</div>
+          <div class="msg msg--bot">好的，先看现有结构：</div>
+        </div>
+        <div class="input-wrap">
+          <div class="slash">
+            <button class="slash__item active">
+              <span class="slash__tag slash__tag--cmd">command</span>
+              <span class="slash__name">/clear</span>
+              <span class="slash__desc">清空当前对话</span>
+            </button>
+            <button class="slash__item">
+              <span class="slash__tag slash__tag--cmd">command</span>
+              <span class="slash__name">/compact</span>
+              <span class="slash__desc">压缩上下文</span>
+            </button>
+            <button class="slash__item">
+              <span class="slash__tag slash__tag--sk">skill</span>
+              <span class="slash__name">/code-trace</span>
+              <span class="slash__desc">追踪代码调用链</span>
+              <span class="slash__arg">&lt;文件路径&gt;</span>
+            </button>
+            <button class="slash__item">
+              <span class="slash__tag slash__tag--sk">skill</span>
+              <span class="slash__name">/zcommit</span>
+              <span class="slash__desc">智能分析变更并提交</span>
+            </button>
+          </div>
+          <div class="input-container" style="position:relative">
+            <div class="guideline"></div>
+            <div class="guideline-label">line-1 底部</div>
+            <div class="input-row">
+              <textarea class="input-textarea" rows="1">/</textarea>
+            </div>
+            <div class="input-toolbar">
+              <button class="tb-btn">+</button>
+              <span class="tb-model">sonnet@anthropic</span>
+              <span class="tb-context">34%<span class="tb-context__bar"><span class="tb-context__fill" style="width:34%"></span></span></span>
+              <span class="tb-spacer"></span>
+              <button class="tb-btn tb-btn--send">↑</button>
+            </div>
+          </div>
+          <div class="session-strip">
+            <span class="session-strip__chip">main</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Variant 4: top-[28px] (向下覆盖) ── -->
+    <div class="cell">
+      <div class="cell-label">
+        <div class="cell-label__name">
+          <span class="cell-label__badge">Variant 4</span>
+        </div>
+        <div class="cell-label__css">top: 28px;</div>
+        <div class="cell-label__note">向下展开覆盖 input — 露第一行文字</div>
+      </div>
+      <div class="panel v4">
+        <div class="panel__msgs">
+          <div class="msg msg--user">帮我重构 auth 模块</div>
+          <div class="msg msg--bot">好的，先看现有结构：</div>
+        </div>
+        <div class="input-wrap">
+          <div class="slash">
+            <button class="slash__item active">
+              <span class="slash__tag slash__tag--cmd">command</span>
+              <span class="slash__name">/clear</span>
+              <span class="slash__desc">清空当前对话</span>
+            </button>
+            <button class="slash__item">
+              <span class="slash__tag slash__tag--cmd">command</span>
+              <span class="slash__name">/compact</span>
+              <span class="slash__desc">压缩上下文</span>
+            </button>
+            <button class="slash__item">
+              <span class="slash__tag slash__tag--sk">skill</span>
+              <span class="slash__name">/code-trace</span>
+              <span class="slash__desc">追踪代码调用链</span>
+              <span class="slash__arg">&lt;文件路径&gt;</span>
+            </button>
+            <button class="slash__item">
+              <span class="slash__tag slash__tag--sk">skill</span>
+              <span class="slash__name">/zcommit</span>
+              <span class="slash__desc">智能分析变更并提交</span>
+            </button>
+          </div>
+          <div class="input-container" style="position:relative">
+            <div class="guideline"></div>
+            <div class="guideline-label">line-1 底部</div>
+            <div class="input-row">
+              <textarea class="input-textarea" rows="1">/</textarea>
+            </div>
+            <div class="input-toolbar">
+              <button class="tb-btn">+</button>
+              <span class="tb-model">sonnet@anthropic</span>
+              <span class="tb-context">34%<span class="tb-context__bar"><span class="tb-context__fill" style="width:34%"></span></span></span>
+              <span class="tb-spacer"></span>
+              <button class="tb-btn tb-btn--send">↑</button>
+            </div>
+          </div>
+          <div class="session-strip">
+            <span class="session-strip__chip">main</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+</body>
+</html>
