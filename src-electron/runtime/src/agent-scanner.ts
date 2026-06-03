@@ -30,9 +30,9 @@ function parseAgentMd(content: string): { description: string; tools: string[] }
 
   const fmText = frontmatterLines.join('\n')
 
-  // 从 frontmatter 提取 description（支持多行 > 或 |）
+  // 从 frontmatter 提取 description（支持多行 > 或 |，含 chomping indicator -/+）
   let description = ''
-  const fmDescMatch = fmText.match(/^description:\s*[>\|]?\s*$/m)
+  const fmDescMatch = fmText.match(/^description:\s*[>\|][-+]?\s*$/m)
   if (fmDescMatch) {
     // 多行 description（> 或 | 格式）：取后续缩进行
     const startIdx = fmText.indexOf(fmDescMatch[0]) + fmDescMatch[0].length
@@ -44,7 +44,8 @@ function parseAgentMd(content: string): { description: string; tools: string[] }
     }
     description = multilineParts.join(' ').trim().slice(0, DESCRIPTION_MAX_LENGTH)
   } else {
-    const singleLine = fmText.match(/^description:\s*["']?(.+?)["']?\s*$/m)?.[1]?.trim()
+    // 单行描述；用 [>\|]? 避免被 `description: >-` 的 `-` 错配为描述内容
+    const singleLine = fmText.match(/^description:\s*[>\|]?(.+?)\s*$/m)?.[1]?.trim()
     if (singleLine) description = singleLine.slice(0, DESCRIPTION_MAX_LENGTH)
   }
 
