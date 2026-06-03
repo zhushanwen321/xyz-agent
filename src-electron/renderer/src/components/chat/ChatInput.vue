@@ -13,13 +13,13 @@
         activeCommand ? 'border-accent' : '',
       ]"
     >
-      <!-- Input row: skill tag left + textarea -->
-      <div class="flex items-end gap-1.5 px-3.5 pb-1 pt-2">
-        <!-- Skill tag: fixed at input left -->
+      <!-- Input content: badge on top + textarea below, unified in one area -->
+      <div class="px-3.5 pb-1 pt-2">
+        <!-- Skill badge inside input area -->
         <div
           v-if="activeCommand"
           :class="[
-            'inline-flex items-center gap-1 py-[2px] px-2 rounded-full text-xs font-medium shrink-0',
+            'inline-flex items-center gap-1 py-[2px] px-2 rounded-full text-xs font-medium mb-1',
             activeCommand.source === 'builtin'
               ? 'bg-border text-muted'
               : activeCommand.source === 'skill'
