@@ -51,9 +51,24 @@ function parseAgentMd(content: string): { name: string; description: string } {
   }
   let name = ''
   let description = ''
+  const fmText = frontmatterLines.join('\n')
   for (const fl of frontmatterLines) {
     if (fl.startsWith('name:')) name = fl.slice('name:'.length).trim()
-    if (fl.startsWith('description:')) description = fl.slice('description:'.length).trim()
+  }
+  // 支持 YAML 多行 description（>- 或 | 格式，含 chomping indicator -/+）
+  const fmDescMatch = fmText.match(/^description:\s*[>\|][-+]?\s*$/m)
+  if (fmDescMatch) {
+    const startIdx = fmText.indexOf(fmDescMatch[0]) + fmDescMatch[0].length
+    const remaining = fmText.slice(startIdx)
+    const multilineParts: string[] = []
+    for (const line of remaining.split('\n')) {
+      if (line && !line.startsWith(' ') && !line.startsWith('\t')) break
+      multilineParts.push(line.trim())
+    }
+    description = multilineParts.join(' ').trim()
+  } else {
+    const singleLine = fmText.match(/^description:\s*[>\|]?(.+?)\s*$/m)?.[1]?.trim()
+    if (singleLine) description = singleLine
   }
   return { name, description }
 }
