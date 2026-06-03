@@ -351,6 +351,32 @@ export class SidecarServer implements IMessageBroker {
           const extensions = await this.extensionService.scanExtensions()
           return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions } })
         }
+        case 'extension.install': {
+          if (!this.extensionService) {
+            return this.sendError(ws, 'handler_error', 'Extension service not available', msg.id)
+          }
+          try {
+            await this.extensionService.installExtension(msg.payload.source)
+          } catch (e) {
+            const errMsg = e instanceof Error ? e.message : String(e)
+            return this.sendError(ws, 'install_failed', errMsg, msg.id)
+          }
+          const installExtensions = await this.extensionService.scanExtensions()
+          return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions: installExtensions } })
+        }
+        case 'extension.uninstall': {
+          if (!this.extensionService) {
+            return this.sendError(ws, 'handler_error', 'Extension service not available', msg.id)
+          }
+          try {
+            await this.extensionService.uninstallExtension(msg.payload.name)
+          } catch (e) {
+            const errMsg = e instanceof Error ? e.message : String(e)
+            return this.sendError(ws, 'uninstall_failed', errMsg, msg.id)
+          }
+          const uninstallExtensions = await this.extensionService.scanExtensions()
+          return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions: uninstallExtensions } })
+        }
         // ── Plugin messages ───────────────────────────────────────────
         case 'plugin.list': {
           if (!this.pluginService) {

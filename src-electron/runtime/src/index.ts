@@ -50,7 +50,7 @@ async function main(): Promise<void> {
   const server = new SidecarServer(port, projectRoot)
 
   // Service layer (DI)
-  const extensionService = new ExtensionService()
+  const extensionService = new ExtensionService({ projectRoot: effectiveRoot })
   const treeService = new TreeService(pm)
 
   // pluginService declared before sessionService but assigned after —

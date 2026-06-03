@@ -15,6 +15,7 @@ export type ClientMessageType =
   | 'model.list' | 'model.switch' | 'session.setThinkingLevel'
   | 'tool.approve' | 'tool.deny' | 'tool.always_allow'
   | 'extension.ui_response' | 'extension.toggle' | 'extension.list'
+  | 'extension.install' | 'extension.uninstall'
   | 'ping'
   | 'session.tree-data' | 'session.tree-navigate' | 'session.tree-fork' | 'session.tree-clone' | 'session.tree-capability'
   | 'plugin.list' | 'plugin.toggle'
@@ -77,6 +78,8 @@ export interface ClientMessageMap {
   'extension.ui_response': { sessionId: string; requestId: string; result: boolean | string | null }
   'extension.toggle': { name: string; enabled: boolean }
   'extension.list': Record<string, never>
+  'extension.install': { source: string }
+  'extension.uninstall': { name: string }
   'plugin.list': Record<string, never>
   'plugin.toggle': { pluginId: string; enabled: boolean; trustLevel?: 'trusted' | 'sandbox' }
   'plugin.install': { packageSpec: string }
@@ -127,6 +130,8 @@ export type ClientMessage =
   | { type: 'extension.ui_response'; id?: string; payload: ClientMessageMap['extension.ui_response'] }
   | { type: 'extension.toggle'; id?: string; payload: ClientMessageMap['extension.toggle'] }
   | { type: 'extension.list'; id?: string; payload: ClientMessageMap['extension.list'] }
+  | { type: 'extension.install'; id?: string; payload: ClientMessageMap['extension.install'] }
+  | { type: 'extension.uninstall'; id?: string; payload: ClientMessageMap['extension.uninstall'] }
   | { type: 'plugin.list'; id?: string; payload: Record<string, never> }
   | { type: 'plugin.toggle'; id?: string; payload: ClientMessageMap['plugin.toggle'] }
   | { type: 'plugin.install'; id?: string; payload: ClientMessageMap['plugin.install'] }
@@ -220,6 +225,7 @@ export interface ExtensionInfo {
   description: string
   path: string
   enabled: boolean
+  source: 'built-in' | 'user-installed'
 }
 
 // ── Plugin payload interfaces ───────────────────────────────────

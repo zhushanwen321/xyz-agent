@@ -1,12 +1,16 @@
 /**
- * ExtensionResolver — 四源扫描与去重
+ * ExtensionResolver — 五源扫描与去重
  *
- * 扫描四个来源的 extension，按优先级去重后返回目录路径列表：
- *   npm > user > third-party > bundled
+ * 扫描五个来源的 extension，按优先级去重后返回目录路径列表：
+ *   npm > user > settings > third-party > bundled
  *
  * npm 扫描：读取 package.json 的 dependencies，对每个包用 require.resolve 定位目录，
  * 再用 isValidPiExtension() 验证是否为有效 pi extension。
  * 不硬编码 scope 或前缀 —— dependencies 本身就是白名单。
+ *
+ * settings 扫描：读取 ~/.xyz-agent/pi/agent/settings.json 的 packages[]，
+ * 定位 ~/.xyz-agent/pi/agent/npm/node_modules/ 下的扩展目录。
+ * disabled-packages.json 控制启用/禁用状态。
  */
 import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
@@ -19,7 +23,7 @@ const log = {
 }
 
 /** 优先级：数值越小优先级越高（npm 最高） */
-const PRIORITY_ORDER = ['npm', 'user', 'third-party', 'bundled'] as const
+const PRIORITY_ORDER = ['npm', 'user', 'settings', 'third-party', 'bundled'] as const
 type SourceName = (typeof PRIORITY_ORDER)[number]
 
 /** 扫描结果：extension name → 目录绝对路径 */
@@ -37,6 +41,8 @@ export interface SourceMap {
 export interface ResolverOptions {
   /** 打包模式下的 npm 扫描搜索路径（默认用 process.cwd()） */
   npmResolvePaths?: string[]
+  /** 用户 settings 目录，默认 ~/.xyz-agent/pi/agent */
+  settingsDir?: string
 }
 
 export class ExtensionResolver {
@@ -51,6 +57,7 @@ export class ExtensionResolver {
 
     sources.push({ source: 'bundled', extensions: this.scanBundledExtensions(projectRoot, packaged) })
     sources.push({ source: 'third-party', extensions: this.scanThirdPartyExtensions() })
+    sources.push({ source: 'settings', extensions: this.scanSettingsExtensions() })
     if (userExtPaths.length > 0) {
       sources.push({ source: 'user', extensions: this.scanUserExtensions(userExtPaths) })
     }
@@ -63,10 +70,6 @@ export class ExtensionResolver {
 
   /**
    * 扫描 npm extension：从 package.json dependencies 提取白名单
-   *
-   * 白名单 = package.json dependencies 中的所有包。
-   * 对每个包 require.resolve 定位目录，再用 isValidPiExtension() 验证。
-   * 不限制 scope 或前缀 —— dependencies 声明即意图。
    */
   scanNpmExtensions(projectRoot: string): ExtensionMap {
     const result: ExtensionMap = new Map()
@@ -92,16 +95,11 @@ export class ExtensionResolver {
         const resolved = require.resolve(`${pkgName}/package.json`, { paths: resolvePaths })
         pkgDir = dirname(resolved)
       } catch {
-        // 包未安装，跳过
         continue
       }
 
-      // 验证是否为有效的 pi extension
-      if (!this.isValidPiExtension(pkgDir)) {
-        continue
-      }
+      if (!this.isValidPiExtension(pkgDir)) continue
 
-      // dedup key：取包短名（去掉 scope 和 pi- 前缀）
       const extName = this.normalizeExtName(pkgName)
       result.set(extName, pkgDir)
     }
@@ -110,9 +108,73 @@ export class ExtensionResolver {
   }
 
   /**
+   * 扫描 user-installed extensions。
+   * 读取 ~/.xyz-agent/pi/agent/settings.json 的 packages[]，
+   * 过滤 disabled-packages.json 中的禁用项，
+   * 定位 npm/ 目录下的扩展。
+   */
+  scanSettingsExtensions(): ExtensionMap {
+    const result: ExtensionMap = new Map()
+    const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? ''
+    const settingsDir = this.options.settingsDir ?? (homeDir ? join(homeDir, '.xyz-agent', 'pi', 'agent') : '')
+    const settingsPath = join(settingsDir, 'settings.json')
+    if (!existsSync(settingsPath)) return result
+
+    // 读取 disabled-packages.json
+    const disabled = this.readDisabledPackages(settingsDir)
+
+    // 读取 packages[]
+    let packages: string[]
+    try {
+      const raw = readFileSync(settingsPath, 'utf-8')
+      const settings = JSON.parse(raw) as { packages?: string[] }
+      packages = settings.packages ?? []
+    } catch {
+      log.warn(`[extension-resolver] failed to parse ${settingsPath}`)
+      return result
+    }
+
+    for (const source of packages) {
+      if (!source.startsWith('npm:')) continue
+      if (disabled.has(source)) continue
+
+      const pkgName = source.slice(4) // 去掉 "npm:"
+      const pkgDir = join(settingsDir, 'npm', 'node_modules', pkgName)
+
+      if (!existsSync(pkgDir)) {
+        log.debug(`[extension-resolver] settings package not installed: ${pkgName}`)
+        continue
+      }
+
+      if (!this.isValidPiExtension(pkgDir)) continue
+
+      const extName = this.normalizeExtName(pkgName)
+      result.set(extName, pkgDir)
+    }
+
+    return result
+  }
+
+  /**
+   * 读取 disabled-packages.json，返回禁用的 source 集合。
+   * 文件不存在时返回空集合。
+   */
+  private readDisabledPackages(settingsDir: string): Set<string> {
+    const disabledPath = join(settingsDir, 'disabled-packages.json')
+    if (!existsSync(disabledPath)) return new Set()
+
+    try {
+      const raw = readFileSync(disabledPath, 'utf-8')
+      const data = JSON.parse(raw) as { disabled?: string[] }
+      return new Set(data.disabled ?? [])
+    } catch {
+      log.warn(`[extension-resolver] failed to parse ${disabledPath}`)
+      return new Set()
+    }
+  }
+
+  /**
    * 扫描 bundled extensions
-   * - 打包模式：返回空（由 migrateToPiSubdir 同步到 third-party 目录）
-   * - 开发模式：扫描 resources/pi/agent/extensions/
    */
   scanBundledExtensions(projectRoot: string, packaged: boolean): ExtensionMap {
     if (packaged) return new Map()
@@ -163,12 +225,10 @@ export class ExtensionResolver {
 
   /**
    * 去重：按 PRIORITY_ORDER 升序遍历（高优先级在前），first-write-wins。
-   * 高优先级先写入 Map，低优先级遇到已存在的 key 跳过。
    */
   deduplicate(sources: SourceMap[]): ExtensionMap {
     const merged: ExtensionMap = new Map()
 
-    // 按优先级排序（npm=0 最先，bundled=3 最后）
     const sorted = [...sources].sort((a, b) => {
       return PRIORITY_ORDER.indexOf(a.source) - PRIORITY_ORDER.indexOf(b.source)
     })
@@ -188,11 +248,9 @@ export class ExtensionResolver {
 
   /**
    * 验证包是否为有效的 pi extension。
-   * 白名单机制：不靠文件名判断，靠 package.json 元数据。
-   *
    * 有效条件（满足任一）：
    * - keywords 包含 'pi-package'
-   * - peerDependencies 包含任意含 'pi-coding-agent' 或 'pi-agent-core' 的包
+   * - peerDependencies 包含含 'pi-coding-agent' 或 'pi-agent-core' 的包
    * - package.json 中有 'pi' manifest 字段
    */
   private isValidPiExtension(pkgDir: string): boolean {
@@ -207,13 +265,9 @@ export class ExtensionResolver {
         peerDependencies?: Record<string, string>
       }
 
-      // pi manifest 字段
       if (pkg.pi) return true
-
-      // keywords 包含 'pi-package'
       if (pkg.keywords?.includes('pi-package')) return true
 
-      // peerDependencies 包含 pi-coding-agent 或 pi-agent-core（不同 scope）
       const peerDeps = Object.keys(pkg.peerDependencies ?? {})
       if (peerDeps.some(d => /pi-coding-agent|pi-agent-core/.test(d))) return true
 
@@ -227,8 +281,6 @@ export class ExtensionResolver {
    * 规范化 extension name 用于去重。
    * - 去掉 npm scope: @zhushanwen/pi-goal → pi-goal
    * - 去掉 pi- 前缀: pi-goal → goal, pi-subagents → subagents
-   * - bundled/subagent → subagent
-   * 这样不同来源的同功能 extension 能正确去重。
    */
   private normalizeExtName(name: string): string {
     const unscoped = name.replace(/^@[^/]+\//, '')

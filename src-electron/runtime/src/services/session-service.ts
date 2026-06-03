@@ -25,7 +25,6 @@ import * as piBridge from '../pi-config-bridge.js'
 import { trash } from '../trash.js'
 import { NavigateInterceptor } from '../navigate-interceptor.js'
 import { TreeService } from './tree-service.js'
-import { ExtensionResolver } from '../extension-resolver.js'
 
 /** SendMessage hook 类型：在消息发送前触发，可阻止发送 */
 export type SendMessageHook = (sessionId: string, content: string) => Promise<{ blocked: boolean; reason?: string } | null>
@@ -129,11 +128,8 @@ export class SessionService implements ISessionService {
       throw new Error('No model configured. Please configure a provider and model in Settings before starting a session.')
     }
 
-    // Collect extension paths: built-in + bundled + user-enabled extensions
-    const bundleExtPaths = this.getExtensionPaths()
-    const userExtPaths = await this.extensionService.getExtensionPaths()
-    const allExtPaths = [...bundleExtPaths, ...userExtPaths]
-
+    // Collect extension paths: built-in + user-installed + file-type
+    const allExtPaths = await this.getExtensionPaths()
     const client = await this.pm.createSession(tempId, sessionCwd, {
       skillPaths: this.getSkillPaths(sessionCwd),
       extensionPaths: allExtPaths,
@@ -487,10 +483,8 @@ export class SessionService implements ISessionService {
       this.sessions.delete(sessionId)
     }
     const id = sessionId
-    // Collect extension paths: built-in + bundled + user-enabled extensions
-    const bundleExtPaths = this.getExtensionPaths()
-    const userExtPaths = await this.extensionService.getExtensionPaths()
-    const allExtPaths = [...bundleExtPaths, ...userExtPaths]
+    // Collect extension paths: built-in + user-installed + file-type
+    const allExtPaths = await this.getExtensionPaths()
     const client = await this.pm.createSession(id, target.cwd, {
       skillPaths: this.getSkillPaths(target.cwd),
       extensionPaths: allExtPaths,
@@ -559,28 +553,17 @@ export class SessionService implements ISessionService {
     })
   }
 
-  /** 返回有效的 extension 路径列表（通过 ExtensionResolver 四源扫描+去重） */
-  private getExtensionPaths(): string[] {
-    const resolver = new ExtensionResolver()
-    const isPackaged = process.env.XYZ_AGENT_PACKAGED === '1'
-    const userExtPaths: string[] = []
-    // xyz-agent 自定义 extension
-    if (this.extensionPath && existsSync(this.extensionPath)) {
-      // 文件型 extension（如 xyz-agent-extension.js）不经过 resolver 的目录扫描
-      // 直接追加到最终结果，避免被 isDirectory() 校验过滤
-      try {
-        if (statSync(this.extensionPath).isFile()) {
-          const result = resolver.resolve(this.projectRoot, isPackaged, [])
-          result.extensionDirs.push(this.extensionPath)
-          return result.extensionDirs
-        }
-      } catch {
-        // statSync 失败，继续走 resolver
-      }
-      userExtPaths.push(this.extensionPath)
+  /**
+   * 返回有效的 extension 路径列表（通过 ExtensionService 单调用链）。
+   * ExtensionService 封装 ExtensionResolver.resolve() + settings 状态过滤 + 文件型 extension。
+   */
+  private async getExtensionPaths(): Promise<string[]> {
+    try {
+      return await this.extensionService.getExtensionPaths()
+    } catch (e) {
+      console.warn('[session-service] getExtensionPaths failed:', e)
+      return []
     }
-    const result = resolver.resolve(this.projectRoot, isPackaged, userExtPaths)
-    return result.extensionDirs
   }
 
   /** 获取 xyz-pi agent 目录（开发和打包模式统一：~/.xyz-agent/pi/agent/） */

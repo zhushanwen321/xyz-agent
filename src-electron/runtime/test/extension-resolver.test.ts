@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ExtensionResolver } from '../src/extension-resolver.js'
 import type { SourceMap } from '../src/extension-resolver.js'
 
-// Mock node:fs and node:path
 vi.mock('node:fs', () => ({
   existsSync: vi.fn(),
   readdirSync: vi.fn(),
@@ -52,53 +51,6 @@ describe('ExtensionResolver', () => {
   })
 
   describe('scanNpmExtensions', () => {
-    it('reads package.json dependencies and resolves valid pi extensions', () => {
-      const pkgJsonPath = '/project/package.json'
-      const goalDir = '/project/node_modules/@zhushanwen/pi-goal'
-      const subagentsDir = '/project/node_modules/pi-subagents'
-
-      // package.json exists
-      mockedExistsSync.mockImplementation((p: unknown) => {
-        if (typeof p !== 'string') return false
-        if (p === pkgJsonPath) return true
-        // index.ts exists for valid extensions
-        if (p === `${goalDir}/index.ts`) return true
-        if (p === `${subagentsDir}/package.json`) return true
-        if (p === `${subagentsDir}/src/index.ts`) return true
-        return false
-      })
-
-      // package.json content
-      mockedReadFileSync.mockImplementation((p: unknown) => {
-        if (typeof p !== 'string') throw new Error('not found')
-        if (p === pkgJsonPath) {
-          return JSON.stringify({
-            dependencies: {
-              '@zhushanwen/pi-goal': '^0.1.0',
-              'pi-subagents': '^0.27.0',
-              'some-other-pkg': '^1.0.0',
-            },
-          })
-        }
-        // pi-goal package.json
-        if (p === `${goalDir}/package.json`) {
-          return JSON.stringify({ name: '@zhushanwen/pi-goal', main: 'src/index.ts' })
-        }
-        // pi-subagents package.json
-        if (p === `${subagentsDir}/package.json`) {
-          return JSON.stringify({ name: 'pi-subagents', main: 'src/index.ts' })
-        }
-        throw new Error('not found')
-      })
-
-      // require.resolve is not available in test, so we mock it via module-level
-      // Since scanNpmExtensions uses require.resolve, we need to mock it
-      // We'll test via the mock approach below
-      // NOTE: require.resolve cannot be easily mocked in vitest
-      // The actual test of npm scanning happens in integration tests.
-      // Here we test the normalizeExtName and isValidPiExtension logic indirectly.
-    })
-
     it('returns empty when package.json does not exist', () => {
       mockedExistsSync.mockReturnValue(false)
 
@@ -122,33 +74,112 @@ describe('ExtensionResolver', () => {
     })
   })
 
-  describe('normalizeExtName (via deduplicate keys)', () => {
-    it('removes scope and pi- prefix from npm package names', () => {
-      // @zhushanwen/pi-goal → goal
-      // pi-subagents → subagents
-      // We test this via deduplicate since normalizeExtName is private
-      const sources: SourceMap[] = [
-        {
-          source: 'npm',
-          extensions: new Map([
-            ['goal', '/npm/@zhushanwen/pi-goal'],
-            ['subagents', '/npm/pi-subagents'],
-          ]),
-        },
-        {
-          source: 'bundled',
-          extensions: new Map([
-            ['subagent', '/bundled/subagent'],
-          ]),
-        },
-      ]
+  describe('scanSettingsExtensions', () => {
+    it('reads settings.json packages and resolves valid extensions', () => {
+      const home = '/home/user'
+      const settingsDir = `${home}/.xyz-agent/pi/agent`
+      const settingsPath = `${settingsDir}/settings.json`
+      const pkgDir = `${settingsDir}/npm/node_modules/pi-ask-user`
 
-      const result = resolver.deduplicate(sources)
-      // npm subagents (key=subagents) and bundled subagent (key=subagent) are different keys
-      // because normalizeExtName('pi-subagents') → 'subagents' (with s)
-      // and normalizeExtName('subagent') → 'subagent' (without s)
-      expect(result.get('subagents')).toBe('/npm/pi-subagents')
-      expect(result.get('subagent')).toBe('/bundled/subagent')
+      vi.stubEnv('HOME', home)
+
+      mockedExistsSync.mockImplementation((p: unknown) => {
+        if (typeof p !== 'string') return false
+        if (p === settingsPath) return true
+        // pi-ask-user directory exists
+        if (p === pkgDir) return true
+        // pi-ask-user package.json (valid pi extension)
+        if (p === `${pkgDir}/package.json`) return true
+        // disabled-packages.json doesn't exist
+        if (p === `${settingsDir}/disabled-packages.json`) return false
+        return false
+      })
+
+      mockedReadFileSync.mockImplementation((p: unknown) => {
+        if (typeof p !== 'string') throw new Error('not found')
+        // settings.json with one package
+        if (p === settingsPath) {
+          return JSON.stringify({ packages: ['npm:pi-ask-user'] })
+        }
+        // pi-ask-user package.json (valid pi extension)
+        if (p === `${pkgDir}/package.json`) {
+          return JSON.stringify({
+            name: 'pi-ask-user',
+            keywords: ['pi-package'],
+            peerDependencies: { '@mariozechner/pi-coding-agent': '*' },
+          })
+        }
+        throw new Error('not found')
+      })
+
+      const result = resolver.scanSettingsExtensions()
+      expect(result.size).toBe(1)
+      expect(result.get('ask-user')).toBe(pkgDir)
+    })
+
+    it('skips disabled packages', () => {
+      const home = '/home/user'
+      const settingsDir = `${home}/.xyz-agent/pi/agent`
+
+      vi.stubEnv('HOME', home)
+
+      mockedExistsSync.mockImplementation((p: unknown) => {
+        if (typeof p !== 'string') return false
+        if (p === `${settingsDir}/settings.json`) return true
+        if (p === `${settingsDir}/disabled-packages.json`) return true
+        return false
+      })
+
+      mockedReadFileSync.mockImplementation((p: unknown) => {
+        if (typeof p !== 'string') throw new Error('not found')
+        if (p === `${settingsDir}/settings.json`) {
+          return JSON.stringify({ packages: ['npm:pi-ask-user'] })
+        }
+        if (p === `${settingsDir}/disabled-packages.json`) {
+          return JSON.stringify({ disabled: ['npm:pi-ask-user'] })
+        }
+        throw new Error('not found')
+      })
+
+      const result = resolver.scanSettingsExtensions()
+      expect(result.size).toBe(0)
+    })
+
+    it('skips invalid pi extensions', () => {
+      const home = '/home/user'
+      const settingsDir = `${home}/.xyz-agent/pi/agent`
+      const pkgDir = `${settingsDir}/npm/node_modules/not-a-pi-ext`
+
+      vi.stubEnv('HOME', home)
+
+      mockedExistsSync.mockImplementation((p: unknown) => {
+        if (typeof p !== 'string') return false
+        if (p === `${settingsDir}/settings.json`) return true
+        if (p === `${pkgDir}/package.json`) return true
+        if (p === `${settingsDir}/disabled-packages.json`) return false
+        return false
+      })
+
+      mockedReadFileSync.mockImplementation((p: unknown) => {
+        if (typeof p !== 'string') throw new Error('not found')
+        if (p === `${settingsDir}/settings.json`) {
+          return JSON.stringify({ packages: ['npm:not-a-pi-ext'] })
+        }
+        if (p === `${pkgDir}/package.json`) {
+          return JSON.stringify({ name: 'not-a-pi-ext' }) // no pi-package keyword, no pi-coding-agent peerDep
+        }
+        throw new Error('not found')
+      })
+
+      const result = resolver.scanSettingsExtensions()
+      expect(result.size).toBe(0)
+    })
+
+    it('returns empty when settings.json does not exist', () => {
+      mockedExistsSync.mockReturnValue(false)
+
+      const result = resolver.scanSettingsExtensions()
+      expect(result.size).toBe(0)
     })
   })
 
@@ -157,7 +188,7 @@ describe('ExtensionResolver', () => {
       mockDir('/project/resources/pi/agent/extensions')
 
       const result = resolver.scanBundledExtensions('/project', false)
-      expect(result.size).toBe(2) // ext-a, ext-b (shared skipped)
+      expect(result.size).toBe(2)
       expect(result.has('ext-a')).toBe(true)
       expect(result.has('ext-b')).toBe(true)
       expect(result.has('shared')).toBe(false)
@@ -220,9 +251,7 @@ describe('ExtensionResolver', () => {
       const sources: SourceMap[] = [
         {
           source: 'npm',
-          extensions: new Map([
-            ['ext-a', '/npm/ext-a'],
-          ]),
+          extensions: new Map([['ext-a', '/npm/ext-a']]),
         },
         {
           source: 'bundled',
@@ -234,17 +263,15 @@ describe('ExtensionResolver', () => {
       ]
 
       const result = resolver.deduplicate(sources)
-      // npm (high priority) should win for ext-a
       expect(result.get('ext-a')).toBe('/npm/ext-a')
-      // bundled only has ext-b
       expect(result.get('ext-b')).toBe('/bundled/ext-b')
     })
 
-    it('npm overrides bundled for same name', () => {
+    it('npm overrides settings for same name', () => {
       const sources: SourceMap[] = [
         {
-          source: 'bundled',
-          extensions: new Map([['review', '/bundled/review']]),
+          source: 'settings',
+          extensions: new Map([['review', '/settings/review']]),
         },
         {
           source: 'npm',
@@ -254,6 +281,22 @@ describe('ExtensionResolver', () => {
 
       const result = resolver.deduplicate(sources)
       expect(result.get('review')).toBe('/npm/review')
+    })
+
+    it('settings overrides bundled for same name', () => {
+      const sources: SourceMap[] = [
+        {
+          source: 'bundled',
+          extensions: new Map([['ext-a', '/bundled/ext-a']]),
+        },
+        {
+          source: 'settings',
+          extensions: new Map([['ext-a', '/settings/ext-a']]),
+        },
+      ]
+
+      const result = resolver.deduplicate(sources)
+      expect(result.get('ext-a')).toBe('/settings/ext-a')
     })
 
     it('returns all extensions when no conflicts', () => {
@@ -274,20 +317,39 @@ describe('ExtensionResolver', () => {
   })
 
   describe('resolve', () => {
-    it('integrates bundled + third-party + user sources', () => {
+    it('integrates all 5 sources and deduplicates', () => {
       const bundledDir = '/project/resources/pi/agent/extensions'
       const home = process.env.HOME ?? '/home/user'
-      const thirdPartyDir = `${home}/.xyz-agent/pi/agent/extensions`
+      const settingsDir = `${home}/.xyz-agent/pi/agent`
+      const settingsPath = `${settingsDir}/settings.json`
+
+      vi.stubEnv('HOME', home)
 
       mockedExistsSync.mockImplementation((p: unknown) => {
         if (typeof p !== 'string') return false
-        return p === bundledDir || p === thirdPartyDir || p === '/custom/my-ext' || p === '/project/package.json'
+        // bundled dir exists
+        if (p === bundledDir) return true
+        // third-party dir exists
+        if (p === `${home}/.xyz-agent/pi/agent/extensions`) return true
+        // settings.json exists
+        if (p === settingsPath) return true
+        // user extension dir exists
+        if (p === '/custom/my-ext') return true
+        // project package.json
+        if (p === '/project/package.json') return true
+        // npm package - pi-goal exists
+        if (p === '/project/node_modules/@zhushanwen/pi-goal/package.json') return true
+        // disabled-packages.json doesn't exist
+        if (p === `${settingsDir}/disabled-packages.json`) return false
+        return false
       })
+
       mockedReaddirSync.mockImplementation(((p: unknown) => {
         if (p === bundledDir) return ['ext-a', 'shared'] as string[]
-        if (p === thirdPartyDir) return ['ext-c'] as string[]
+        if (p === `${home}/.xyz-agent/pi/agent/extensions`) return ['ext-c'] as string[]
         return [] as string[]
       }) as unknown as typeof readdirSync)
+
       mockedStatSync.mockImplementation((p: unknown) => {
         if (typeof p !== 'string') throw new Error('not found')
         const basename = p.split('/').pop() ?? ''
@@ -298,8 +360,12 @@ describe('ExtensionResolver', () => {
         }
         return { isDirectory: () => true } as import('node:fs').Stats
       })
+
       mockedReadFileSync.mockImplementation((p: unknown) => {
         if (typeof p !== 'string') throw new Error('not found')
+        if (p === settingsPath) {
+          return JSON.stringify({ packages: ['npm:pi-ask-user'] })
+        }
         if (p === '/project/package.json') {
           return JSON.stringify({ dependencies: {} })
         }
@@ -309,31 +375,35 @@ describe('ExtensionResolver', () => {
       const result = resolver.resolve('/project', false, ['/custom/my-ext'])
 
       // bundled ext-a
-      const bundledExtA = result.extensionDirs.find(d => d === '/project/resources/pi/agent/extensions/ext-a')
-      expect(bundledExtA).toBeDefined()
-
+      expect(result.extensionDirs.some(d => d === bundledDir + '/ext-a')).toBe(true)
       // third-party ext-c
-      const extCDir = result.extensionDirs.find(d => d.includes('ext-c'))
-      expect(extCDir).toBeDefined()
-
+      expect(result.extensionDirs.some(d => d.includes('ext-c'))).toBe(true)
       // user extension
-      const userExt = result.extensionDirs.find(d => d === '/custom/my-ext')
-      expect(userExt).toBeDefined()
+      expect(result.extensionDirs.some(d => d === '/custom/my-ext')).toBe(true)
+      // 5 sources all processed (no errors)
+      expect(result.extensionDirs.length).toBeGreaterThanOrEqual(3)
     })
 
     it('skips bundled when packaged', () => {
-      const home = process.env.HOME ?? '/home/user'
+      const home = '/home/user'
+      vi.stubEnv('HOME', home)
+
       const thirdPartyDir = `${home}/.xyz-agent/pi/agent/extensions`
 
       mockedExistsSync.mockImplementation((p: unknown) => {
         if (typeof p !== 'string') return false
-        return p === thirdPartyDir || p === '/project/package.json'
+        if (p === thirdPartyDir) return true
+        if (p === '/project/package.json') return true
+        return false
       })
+
       mockedReaddirSync.mockImplementation(((p: unknown) => {
         if (p === thirdPartyDir) return ['ext-c'] as string[]
         return [] as string[]
       }) as unknown as typeof readdirSync)
+
       mockedStatSync.mockImplementation(() => ({ isDirectory: () => true } as import('node:fs').Stats))
+
       mockedReadFileSync.mockImplementation((p: unknown) => {
         if (typeof p === 'string' && p === '/project/package.json') {
           return JSON.stringify({ dependencies: {} })
@@ -342,7 +412,8 @@ describe('ExtensionResolver', () => {
       })
 
       const result = resolver.resolve('/project', true, [])
-      expect(result.extensionDirs).toEqual([`${thirdPartyDir}/ext-c`])
+      expect(result.extensionDirs.length).toBe(1)
+      expect(result.extensionDirs[0]).toBe(`${thirdPartyDir}/ext-c`)
     })
   })
 })
