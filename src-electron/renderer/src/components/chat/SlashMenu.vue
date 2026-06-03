@@ -2,7 +2,7 @@
   <div
     v-if="visible && mergedCommands.length > 0"
     ref="menuRef"
-    class="absolute top-full left-[24px] right-[24px] mt-1 bg-surface border border-border rounded-none shadow-md max-h-[calc(28px*5)] overflow-y-auto z-20"
+    class="absolute top-[28px] left-[24px] right-[24px] bg-surface border border-border rounded-none shadow-md max-h-[calc(28px*5)] overflow-y-auto z-20"
   >
     <div>
       <Button
@@ -42,6 +42,25 @@
       </Button>
     </div>
   </div>
+
+  <!-- Hover tooltip: Teleport 到 body + position: fixed，脱离所有 overflow 裁剪 -->
+  <Teleport to="body">
+    <div
+      v-if="hoverTipFor"
+      class="hover-tip"
+      :style="{ top: tipPos.top + 'px', left: tipPos.left + 'px' }"
+      @mouseenter="onTipEnter"
+      @mouseleave="onTipLeave"
+    >
+      <div class="hover-tip__name">/{{ displayName(hoverTipFor) }}</div>
+      <div class="hover-tip__desc">{{ hoverTipFor.description }}</div>
+      <div v-if="hoverTipFor.argumentHint" class="hover-tip__arg">
+        <span class="hover-tip__arg-label">参数:</span>
+        <span class="hover-tip__arg-value">{{ hoverTipFor.argumentHint }}</span>
+      </div>
+      <div class="hover-tip__arrow" />
+    </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -79,6 +98,20 @@ const activeIndex = ref(0)
 const activeEl = ref<HTMLElement | null>(null)
 const menuRef = ref<HTMLElement | null>(null)
 
+// Hover tooltip 状态：Teleport + position: fixed
+const HOVER_CLOSE_DELAY_MS = 120
+const SCROLL_CAPTURE_PHASE = true
+const CENTER_DIVISOR = 2
+const hoveredIdx = ref<number | null>(null)
+const tipPos = ref({ top: 0, left: 0 })
+let closeTimer: ReturnType<typeof setTimeout> | null = null
+
+// 优先用 hover idx，否则跟随键盘 activeIndex
+const hoverTipFor = computed<SlashCommand | null>(() => {
+  const idx = hoveredIdx.value ?? activeIndex.value
+  return mergedCommands.value[idx] ?? null
+})
+
 watch(() => props.commands, () => {
   activeIndex.value = 0
 })
@@ -91,6 +124,54 @@ watch(() => [props.visible, pluginCommands.value.length] as const, ([visible]) =
     document.removeEventListener('keydown', onKeyDown)
   }
 })
+
+// Hover 事件 handler（被 template @mouseenter/@mouseleave 引用，eslint 看不到故忽略检测）
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const onItemEnter = (idx: number) => {
+  if (closeTimer) {
+    clearTimeout(closeTimer)
+    closeTimer = null
+  }
+  hoveredIdx.value = idx
+  nextTick(updateTipPos)
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const onItemLeave = () => {
+  // 缓冲时间，让鼠标有时间移到 tooltip 上不闪
+  closeTimer = setTimeout(() => {
+    hoveredIdx.value = null
+  }, HOVER_CLOSE_DELAY_MS)
+}
+
+const onTipEnter = () => {
+  if (closeTimer) {
+    clearTimeout(closeTimer)
+    closeTimer = null
+  }
+}
+
+const onTipLeave = () => {
+  hoveredIdx.value = null
+}
+
+function updateTipPos() {
+  if (!hoverTipFor.value || !menuRef.value) return
+  const items = menuRef.value.querySelectorAll<HTMLElement>('[class*="cursor-pointer"]')
+  const idx = hoveredIdx.value ?? activeIndex.value
+  const item = items[idx]
+  if (!item) return
+  const rect = item.getBoundingClientRect()
+  // transform: translate(-50%, -100%) → tooltip 底部对齐 rect.top, tooltip 中心对齐 item 中心
+  tipPos.value = {
+    top: rect.top,
+    left: rect.left + rect.width / CENTER_DIVISOR,
+  }
+}
+
+function onWindowChange() {
+  if (hoverTipFor.value) updateTipPos()
+}
 
 function onKeyDown(e: KeyboardEvent) {
   if (!props.visible || mergedCommands.value.length === 0) return
@@ -151,11 +232,96 @@ function displayName(cmd: SlashCommand): string {
 
 onMounted(() => {
   document.addEventListener('mousedown', onOutsideClick)
+  window.addEventListener('resize', onWindowChange)
+  window.addEventListener('scroll', onWindowChange, SCROLL_CAPTURE_PHASE)
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', onKeyDown)
   document.removeEventListener('mousedown', onOutsideClick)
+  window.removeEventListener('resize', onWindowChange)
+  window.removeEventListener('scroll', onWindowChange, SCROLL_CAPTURE_PHASE)
+  if (closeTimer) clearTimeout(closeTimer)
 })
+
+// popup 关闭时清掉 hover
+watch(() => props.visible, (v) => {
+  if (!v) {
+    hoveredIdx.value = null
+    if (closeTimer) clearTimeout(closeTimer)
+  }
+})
+
+// 键盘切换 activeIndex 时，hover 没设置则更新位置
+watch(activeIndex, () => {
+  if (hoveredIdx.value === null) {
+    nextTick(updateTipPos)
+  }
+})
+
+// tooltip 第一次出现时 / popup visible 变 true 时也需要更新位置
+watch(hoverTipFor, (v) => {
+  if (v) nextTick(updateTipPos)
+}, { immediate: true })
 </script>
+
+<style scoped>
+/* Hover tooltip — Teleport 到 body + position: fixed，脱离所有 overflow/transform 裁剪 */
+.hover-tip {
+  position: fixed;
+  z-index: 50;
+  min-width: 240px;
+  max-width: 380px;
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-left-width: 3px;
+  border-radius: 1px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.14);
+  padding: 10px 12px;
+  /* 中心 + 浮在 item 顶部上方：bottom 对齐到 inline top（item.top），center 对齐 item 中心 */
+  transform: translate(-50%, -100%);
+  pointer-events: auto;
+  font-family: var(--font-body);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg);
+  word-break: break-word;
+}
+.hover-tip__name {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+.hover-tip__desc {
+  color: var(--fg);
+}
+.hover-tip__arg {
+  margin-top: 6px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.hover-tip__arg-label { color: var(--muted); }
+.hover-tip__arg-value {
+  color: var(--accent);
+  background: var(--accent-light);
+  padding: 1px 5px;
+  border-radius: 1px;
+}
+.hover-tip__arrow {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0; height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 5px solid var(--accent);
+}
+</style>
 
