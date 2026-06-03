@@ -588,7 +588,8 @@ export class PluginActivator {
     const ctx = this.contexts.get(pluginId)
     if (ctx) {
       for (const sub of ctx.subscriptions) {
-        try { sub.dispose() } catch { /* best effort */ }
+        // eslint-disable-next-line taste/no-silent-catch -- best-effort dispose, caller cannot recover
+        try { sub.dispose() } catch (e: unknown) { console.debug('[plugin-activator] dispose subscription failed:', e) }
       }
       this.contexts.delete(pluginId)
     }

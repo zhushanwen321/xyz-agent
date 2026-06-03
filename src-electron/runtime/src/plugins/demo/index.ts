@@ -34,7 +34,8 @@ const plugin: PluginModule = {
           timestamp: Date.now(),
         })
 
-        const fileList = results.slice(0, 10).join('\n')
+        const MAX_DISPLAY_FILES = 10
+        const fileList = results.slice(0, MAX_DISPLAY_FILES).join('\n')
         return {
           content: `Found ${results.length} files matching '${pattern}':\n${fileList}`,
         }

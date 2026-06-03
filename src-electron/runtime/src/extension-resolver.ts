@@ -138,7 +138,8 @@ export class ExtensionResolver {
       if (!source.startsWith('npm:')) continue
       if (disabled.has(source)) continue
 
-      const pkgName = source.slice(4) // 去掉 "npm:"
+      const NPM_PREFIX_LEN = 4
+      const pkgName = source.slice(NPM_PREFIX_LEN)
       const pkgDir = join(settingsDir, 'npm', 'node_modules', pkgName)
 
       if (!existsSync(pkgDir)) {

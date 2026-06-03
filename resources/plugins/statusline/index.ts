@@ -68,6 +68,7 @@ export async function activate(context: PluginContext): Promise<void> {
         )
       } catch (err) {
         console.error('[statusline] Error handling statusSetUpdate:', err)
+        throw err
       }
     },
   )

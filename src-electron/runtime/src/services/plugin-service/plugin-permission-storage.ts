@@ -59,7 +59,8 @@ export class PermissionStorage {
       obj[k] = v
     }
 
-    const content = JSON.stringify(obj, null, 2)
+    const JSON_INDENT = 2
+    const content = JSON.stringify(obj, null, JSON_INDENT)
     await writeFile(tmpPath, content, 'utf-8')
     await rename(tmpPath, filePath)
   }

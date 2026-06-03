@@ -6,8 +6,10 @@ const props = defineProps<{
   widgets: ExtensionWidgetPayload[]
 }>()
 
+const MAX_WIDGET_COLUMNS = 2
+
 /** 最多展示 2 列 */
-const columns = computed(() => props.widgets.slice(0, 2))
+const columns = computed(() => props.widgets.slice(0, MAX_WIDGET_COLUMNS))
 const mode = computed(() => columns.value.length === 1 ? 'single' : 'double')
 </script>
 

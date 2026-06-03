@@ -7,15 +7,17 @@ import { createServer, type Server as HttpServer } from 'node:http'
 import { WebSocketServer, WebSocket, type WebSocket as WsType } from 'ws'
 import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
 import type { ISessionService, IConfigService, IModelService, IMessageBroker, IExtensionService, IPluginService } from './interfaces.js'
+import { ExtensionTimeoutManager } from './extension-timeout-manager.js'
+import { BridgeHandler } from './bridge-handler.js'
+import { SettingsMessageHandler } from './settings-message-handler.js'
+import { PluginMessageHandler } from './plugin-message-handler.js'
+import { TreeMessageHandler } from './tree-message-handler.js'
 
 const HTTP_OK = 200
 const HTTP_NOT_FOUND = 404
 const MAX_WS_CLOSE_CODE = 4000
 const WS_OPEN = WebSocket.OPEN
 const HEARTBEAT_TIMEOUT_MS = 45_000
-
-/** Timeout for extension UI requests before auto-responding with defaults */
-const EXTENSION_UI_REQUEST_TIMEOUT_MS = 300_000 // 5 minutes
 
 export class SidecarServer implements IMessageBroker {
   private httpServer: HttpServer
@@ -32,12 +34,11 @@ export class SidecarServer implements IMessageBroker {
   private pluginService!: IPluginService
 
   // ── Extension UI request timeout tracking ───────────────────────
-  /** Pending timeout timers keyed by requestId */
-  private extensionTimeouts = new Map<string, NodeJS.Timeout>()
-  /** sessionId → Set of requestIds for session-scoped cleanup */
-  private extensionSessionRequests = new Map<string, Set<string>>()
-  /** Bridge request IDs (no frontend timeout) */
-  private bridgeRequestIds = new Set<string>()
+  private extensionTimeoutMgr = new ExtensionTimeoutManager()
+  private bridgeHandler = new BridgeHandler(null)
+  private settingsHandler = new SettingsMessageHandler(this as unknown as import('./settings-message-handler.js').SettingsHandlerContext)
+  private pluginMessageHandler = new PluginMessageHandler(this as unknown as import('./plugin-message-handler.js').PluginHandlerContext)
+  private treeMessageHandler = new TreeMessageHandler(this as unknown as import('./tree-message-handler.js').TreeHandlerContext)
 
   setServices(session: ISessionService, config: IConfigService, model: IModelService, tree: import('./services/tree-service.js').TreeService, extension?: IExtensionService, plugin?: IPluginService): void {
     this.sessionService = session
@@ -45,7 +46,10 @@ export class SidecarServer implements IMessageBroker {
     this.modelService = model
     this.treeService = tree
     if (extension) this.extensionService = extension
-    if (plugin) this.pluginService = plugin
+    if (plugin) {
+      this.pluginService = plugin
+      this.bridgeHandler = new BridgeHandler(plugin)
+    }
   }
 
   constructor(private port: number, projectRoot?: string) {
@@ -161,320 +165,196 @@ export class SidecarServer implements IMessageBroker {
       switch (msg.type) {
         case 'ping':
           return this.send(ws, { type: 'pong', id: msg.id, payload: {} })
-        case 'session.create': {
-          const session = await this.sessionService.create(msg.payload.cwd, msg.payload.label)
-          this.send(ws, { type: 'session.created', id: msg.id, payload: { session } })
-          return this.broadcastSessionList()
-        }
-        case 'session.delete': {
-          const delSid = msg.payload.sessionId
-          this.clearExtensionTimeoutsForSession(delSid)
-          await this.sessionService.delete(delSid)
-          this.send(ws, { type: 'session.deleted', id: msg.id, payload: { sessionId: delSid } })
-          return this.broadcastSessionList()
-        }
+        case 'session.create':
+        case 'session.delete':
         case 'session.list':
-          return this.send(ws, { type: 'session.list', id: msg.id, payload: { groups: this.sessionService.listPersistedSessions() } })
-        case 'session.switch': {
-          const switchId = msg.payload.sessionId
-          const summary = this.sessionService.getSummary(switchId)
-          if (summary) {
-            try {
-              const messages = await this.sessionService.getHistory(switchId)
-              this.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: switchId, session: summary, messages } })
-            } catch (e) {
-              console.error('[runtime] failed to load history for switch:', e)
-              this.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: switchId, session: summary, messages: [] } })
-            }
-          } else {
-            // Auto-restore inactive session
-            try {
-              const restored = await this.sessionService.restoreSession(switchId)
-              const messages = await this.sessionService.getHistory(switchId)
-              this.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: switchId, session: restored, messages } })
-            } catch (e) {
-              const errMsg = e instanceof Error ? e.message : String(e)
-              // ENOENT: session 文件不存在（pi 异常退出未 flush、文件被外部删除）
-              const isENOENT = errMsg.includes('ENOENT')
-              const userMsg = isENOENT
-                ? `Session file missing — the session was not saved properly. Error: ${errMsg}`
-                : `Session ${switchId} not found or restore failed`
-              console.error('[runtime] session.switch auto-restore failed:', errMsg)
-              this.sendError(ws, isENOENT ? 'file_not_found' : 'not_found', userMsg, msg.id, switchId)
-            }
-          }
-          return
-        }
-        case 'session.history': {
-          const messages = await this.sessionService.getHistory(msg.payload.sessionId)
-          return this.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: msg.payload.sessionId, messages } })
-        }
-        case 'session.compact': return this.handleSessionCompact(msg, ws)
-        case 'session.clear': {
-          await this.sessionService.clear(msg.payload.sessionId)
-          return this.send(ws, { type: 'session.deleted', id: msg.id, payload: { sessionId: msg.payload.sessionId } })
-        }
-        case 'session.restore': {
-          const session = await this.sessionService.restoreSession(msg.payload.sessionId)
-          this.send(ws, { type: 'session.restored', id: msg.id, payload: { session } })
-          return this.broadcastSessionList()
-        }
-        case 'session.rename': {
-          await this.sessionService.renameSession(msg.payload.sessionId, msg.payload.name)
-          this.send(ws, { type: 'session.renamed', id: msg.id, payload: { sessionId: msg.payload.sessionId, name: msg.payload.name } })
-          return this.broadcastSessionList()
-        }
-        case 'message.send': {
-          const { sessionId, content, subagent } = msg.payload
-          if (subagent) {
-            await this.sessionService.sendSubagentMessage(sessionId, subagent.agent, subagent.task, content)
-          } else {
-            await this.sessionService.sendMessage(sessionId, content)
-          }
-          return this.send(ws, { type: 'message.status', id: msg.id, payload: { sessionId, status: 'sent' } })
-        }
+        case 'session.switch':
+        case 'session.history':
+        case 'session.clear':
+        case 'session.restore':
+        case 'session.rename':
+        case 'message.send':
         case 'message.abort':
-          return await this.sessionService.abort(msg.payload.sessionId)
-        case 'session.tree-data': {
-          const sid = msg.payload.sessionId
-          try {
-            const treeData = await this.treeService.getTree(sid)
-            return this.send(ws, { type: 'session.tree-data', id: msg.id, payload: { ...treeData } })
-          } catch (e) {
-            if ((e instanceof Error && e.message.includes('not found')) || !this.sessionService.getSummary(sid)) {
-              try {
-                await this.sessionService.restoreSession(sid)
-                const treeData = await this.treeService.getTree(sid)
-                return this.send(ws, { type: 'session.tree-data', id: msg.id, payload: { ...treeData } })
-              } catch (restoreErr) {
-                console.error('[tree-data] auto-restore failed:', restoreErr)
-                return this.send(ws, { type: 'session.tree-data', id: msg.id, payload: { sessionId: sid, tree: [], leafId: null, branchCount: 0, navigateCapable: false, error: 'Session not available' } })
-              }
-            }
-            throw e
-          }
-        }
-        case 'session.tree-navigate': {
-          const sid = msg.payload.sessionId
-          const targetEntryId = msg.payload.targetEntryId
-          try {
-            const result = await this.treeService.navigateTree(sid, targetEntryId)
-            return this.send(ws, { type: 'session.tree-navigate-result', id: msg.id, payload: { sessionId: sid, ...result } })
-          } catch (e) {
-            if (e instanceof Error && e.message.includes('not found')) {
-              return this.send(ws, { type: 'session.tree-navigate-result', id: msg.id, payload: { sessionId: sid, success: false, error: 'Session not active' } })
-            }
-            throw e
-          }
-        }
-        case 'session.tree-fork': {
-          const sid = msg.payload.sessionId
-          const entryId = msg.payload.entryId
-          try {
-            const result = await this.treeService.forkFromEntry(sid, entryId)
-            if (result.success && result.newSessionId) {
-              // Fork 后 pi 进程已被 rebind 到新 session，需要更新 runtime 的 session 注册
-              // 必须同步等待，确保 tree/adapter/command 全部就绪后再响应前端
-              await this.sessionService.rebindAfterFork(sid, result.newSessionId, result.sessionFile)
-              this.broadcastSessionList()
-            }
-            return this.send(ws, { type: 'session.tree-fork-result', id: msg.id, payload: { sessionId: sid, ...result } })
-          } catch (e) {
-            if (e instanceof Error && e.message.includes('not found')) {
-              return this.send(ws, { type: 'session.tree-fork-result', id: msg.id, payload: { sessionId: sid, success: false, error: 'Session not active' } })
-            }
-            throw e
-          }
-        }
-        case 'session.tree-capability': {
-          const sid = msg.payload.sessionId
-          try {
-            return this.send(ws, { type: 'session.tree-capability', id: msg.id, payload: { sessionId: sid, navigateCapable: this.treeService.isNavigateCapable(sid) } })
-          } catch (e) {
-            if (e instanceof Error && e.message.includes('not found')) {
-              return this.send(ws, { type: 'session.tree-capability', id: msg.id, payload: { sessionId: sid, navigateCapable: false } })
-            }
-            throw e
-          }
-        }
-        case 'session.tree-clone': {
-          const sid = msg.payload.sessionId
-          try {
-            const result = await this.treeService.cloneSession(sid)
-            if (result.success) {
-              this.broadcastSessionList()
-            }
-            return this.send(ws, { type: 'session.tree-clone-result', id: msg.id, payload: { sessionId: sid, ...result } })
-          } catch (e) {
-            if (e instanceof Error && e.message.includes('not found')) {
-              return this.send(ws, { type: 'session.tree-clone-result', id: msg.id, payload: { sessionId: sid, success: false, error: 'Session not active' } })
-            }
-            throw e
-          }
-        }
+          return this.handleSessionMessage(msg, ws)
+        case 'session.compact': return this.handleSessionCompact(msg, ws)
+        case 'session.tree-data':
+        case 'session.tree-navigate':
+        case 'session.tree-fork':
+        case 'session.tree-capability':
+        case 'session.tree-clone':
+          return this.treeMessageHandler.handleTreeMessage(msg, ws)
         // ── Extension messages ──────────────────────────────────────────
-        case 'extension.ui_response': {
-          const { sessionId: extSid, requestId, result: extResult } = msg.payload
-
-          // Bridge response: route to PluginService
-          if (this.bridgeRequestIds.has(requestId)) {
-            this.bridgeRequestIds.delete(requestId)
-            // Bridge responses are handled internally, not forwarded to pi RPC
-            // PluginService processes the response data from the caller
-            return
-          }
-
-          const client = this.sessionService.getRpcClient(extSid)
-          if (!client) {
-            // 会话不存在时清计时器并发错
-            this.clearExtensionTimeout(requestId)
-            return this.sendError(ws, 'handler_error', `No active session for extension response: ${extSid}`, msg.id, extSid)
-          }
-          // 先发送响应，成功后再清计时器
-          // 如果 sendCommand 抛异常，计时器保留让超时机制党底
-          await client.sendCommand('extension_ui_response', { id: requestId, response: extResult ?? null })
-          this.clearExtensionTimeout(requestId)
-          return
-        }
-        case 'extension.list': {
-          if (!this.extensionService) {
-            return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions: [] } })
-          }
-          const extensions = await this.extensionService.scanExtensions()
-          return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions } })
-        }
-        case 'extension.toggle': {
-          if (!this.extensionService) {
-            return this.sendError(ws, 'handler_error', 'Extension service not available', msg.id)
-          }
-          await this.extensionService.toggleExtension(msg.payload.name, msg.payload.enabled)
-          const extensions = await this.extensionService.scanExtensions()
-          return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions } })
-        }
-        case 'extension.install': {
-          if (!this.extensionService) {
-            return this.sendError(ws, 'handler_error', 'Extension service not available', msg.id)
-          }
-          try {
-            await this.extensionService.installExtension(msg.payload.source)
-          } catch (e) {
-            const errMsg = e instanceof Error ? e.message : String(e)
-            return this.sendError(ws, 'install_failed', errMsg, msg.id)
-          }
-          const installExtensions = await this.extensionService.scanExtensions()
-          return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions: installExtensions } })
-        }
-        case 'extension.uninstall': {
-          if (!this.extensionService) {
-            return this.sendError(ws, 'handler_error', 'Extension service not available', msg.id)
-          }
-          try {
-            await this.extensionService.uninstallExtension(msg.payload.name)
-          } catch (e) {
-            const errMsg = e instanceof Error ? e.message : String(e)
-            return this.sendError(ws, 'uninstall_failed', errMsg, msg.id)
-          }
-          const uninstallExtensions = await this.extensionService.scanExtensions()
-          return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions: uninstallExtensions } })
-        }
+        case 'extension.ui_response':
+        case 'extension.list':
+        case 'extension.toggle':
+        case 'extension.install':
+        case 'extension.uninstall':
+          return this.handleExtensionMessage(msg, ws)
         // ── Plugin messages ───────────────────────────────────────────
-        case 'plugin.list': {
-          if (!this.pluginService) {
-            return this.send(ws, { type: 'config.plugins', id: msg.id, payload: { plugins: [] } })
-          }
-          const plugins = this.pluginService.getDiscoveredPlugins()
-          return this.send(ws, { type: 'config.plugins', id: msg.id, payload: { plugins } })
-        }
-        case 'plugin.toggle': {
-          if (!this.pluginService) {
-            return this.sendError(ws, 'handler_error', 'Plugin service not available', msg.id)
-          }
-          const toggledPlugins = await this.pluginService.togglePlugin(msg.payload.pluginId, msg.payload.enabled)
-          return this.send(ws, { type: 'config.plugins', id: msg.id, payload: { plugins: toggledPlugins } })
-        }
-        case 'plugin.uninstall': {
-          if (!this.pluginService) {
-            return this.sendError(ws, 'handler_error', 'Plugin service not available', msg.id)
-          }
-          const uninstalledPlugins = await this.pluginService.uninstallPlugin(msg.payload.pluginId)
-          return this.send(ws, { type: 'config.plugins', id: msg.id, payload: { plugins: uninstalledPlugins } })
-        }
-        case 'plugin.approvePermissions': {
-          if (!this.pluginService) {
-            return this.sendError(ws, 'handler_error', 'Plugin service not available', msg.id)
-          }
-          await this.pluginService.approvePermissions(msg.payload.pluginId, msg.payload.permissions)
-          return this.send(ws, { type: 'config.plugins', id: msg.id, payload: { plugins: this.pluginService.getDiscoveredPlugins() } })
-        }
-        case 'plugin.revokePermissions': {
-          if (!this.pluginService) {
-            return this.sendError(ws, 'handler_error', 'Plugin service not available', msg.id)
-          }
-          await this.pluginService.revokePermissions(msg.payload.pluginId)
-          return this.send(ws, { type: 'config.plugins', id: msg.id, payload: { plugins: this.pluginService.getDiscoveredPlugins() } })
-        }
-        case 'plugin.executeCommand': {
-          if (!this.pluginService) {
-            return this.sendError(ws, 'handler_error', 'Plugin service not available', msg.id)
-          }
-          await this.pluginService.executeCommand(msg.payload.pluginId, msg.payload.commandId, msg.payload.args)
-          return this.send(ws, { type: 'pong', id: msg.id, payload: {} })
-        }
-        case 'plugin.config.get': {
-          if (!this.pluginService) {
-            return this.sendError(ws, 'handler_error', 'Plugin service not available', msg.id)
-          }
-          const configValue = await this.pluginService.getPluginConfig(msg.payload.pluginId, msg.payload.key)
-          const configKey = msg.payload.key ?? '__all__'
-          return this.send(ws, { type: 'plugin:config', id: msg.id, payload: { pluginId: msg.payload.pluginId, config: configKey === '__all__' ? (configValue as Record<string, unknown>) : { [configKey]: configValue } } })
-        }
-        case 'plugin.config.set': {
-          if (!this.pluginService) {
-            return this.sendError(ws, 'handler_error', 'Plugin service not available', msg.id)
-          }
-          await this.pluginService.setPluginConfig(msg.payload.pluginId, msg.payload.key, msg.payload.value)
-          const allConfig = await this.pluginService.getPluginConfig(msg.payload.pluginId)
-          return this.send(ws, { type: 'plugin:config', id: msg.id, payload: { pluginId: msg.payload.pluginId, config: allConfig as Record<string, unknown> } })
-        }
-        case 'plugin.install': {
-          if (!this.pluginService) return this.sendError(ws, 'service_not_ready', 'PluginService not initialized', msg.id)
-          const { packageSpec: packageSpecifier } = msg.payload as { packageSpec: string }
-          if (!packageSpecifier) {
-            return this.sendError(ws, 'invalid_params', 'Missing packageSpec', msg.id)
-          }
-          const result = await this.pluginService.installPlugin(packageSpecifier)
-          if (result.success) {
-            const plugins = this.pluginService.getDiscoveredPlugins()
-            this.send(ws, { type: 'config.plugins', id: msg.id, payload: { plugins } })
-          } else {
-            this.sendError(ws, 'install_failed', (result as unknown as Record<string, unknown>).error as string ?? 'Install failed', msg.id)
-          }
-          break
-        }
-        case 'plugin.uiResponse': {
-          if (!this.pluginService) return this.sendError(ws, 'handler_error', 'Plugin service not available', msg.id)
-          const uiService = this.pluginService as unknown as { handleUiResponse(requestId: string, result: unknown): void }
-          if (uiService.handleUiResponse) {
-            uiService.handleUiResponse((msg.payload as { requestId: string; result: unknown }).requestId, (msg.payload as { requestId: string; result: unknown }).result)
-          }
-          return this.send(ws, { type: 'pong', id: msg.id, payload: {} })
-        }
+        case 'plugin.list':
+        case 'plugin.toggle':
+        case 'plugin.uninstall':
+        case 'plugin.approvePermissions':
+        case 'plugin.revokePermissions':
+        case 'plugin.executeCommand':
+        case 'plugin.config.get':
+        case 'plugin.config.set':
+        case 'plugin.install':
+        case 'plugin.uiResponse':
+          return this.pluginMessageHandler.handlePluginMessage(msg, ws)
         default:
-          if (!await this.handleSettingsMessage(msg, ws)) {
-            // handleSettingsMessage 返回 false，说明 type 也不在 settings 分支中
-            // 此时 msg 走的是 default 分支，无法收窄，需要手动读取
+          if (!await this.settingsHandler.handleSettingsMessage(msg, ws)) {
             const rawMsg = msg as { type: string; payload?: { sessionId?: string } }
             this.sendError(ws, 'unknown_type', `Unknown message type: ${rawMsg.type}`, msg.id, rawMsg.payload?.sessionId)
           }
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e)
-      // default 分支中 msg 无法收窄到具体 type，手动提取 sessionId
       const sessionId = ('sessionId' in msg.payload ? msg.payload.sessionId : undefined) as string | undefined
       this.sendError(ws, 'handler_error', message, msg.id, sessionId)
     }
   }
 
+  /** Handle session.* and message.* messages */
+  private async handleSessionMessage(msg: ClientMessage, ws: WsType): Promise<void> {
+    switch (msg.type) {
+      case 'session.create': {
+        const session = await this.sessionService.create(msg.payload.cwd, msg.payload.label)
+        this.send(ws, { type: 'session.created', id: msg.id, payload: { session } })
+        return this.broadcastSessionList()
+      }
+      case 'session.delete': {
+        const delSid = msg.payload.sessionId
+        this.extensionTimeoutMgr.clearForSession(delSid)
+        await this.sessionService.delete(delSid)
+        this.send(ws, { type: 'session.deleted', id: msg.id, payload: { sessionId: delSid } })
+        return this.broadcastSessionList()
+      }
+      case 'session.list':
+        return this.send(ws, { type: 'session.list', id: msg.id, payload: { groups: this.sessionService.listPersistedSessions() } })
+      case 'session.switch': {
+        const switchId = msg.payload.sessionId
+        const summary = this.sessionService.getSummary(switchId)
+        if (summary) {
+          try {
+            const messages = await this.sessionService.getHistory(switchId)
+            this.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: switchId, session: summary, messages } })
+          } catch (e) {
+            console.error('[runtime] failed to load history for switch:', e)
+            this.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: switchId, session: summary, messages: [] } })
+          }
+        } else {
+          try {
+            const restored = await this.sessionService.restoreSession(switchId)
+            const messages = await this.sessionService.getHistory(switchId)
+            this.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: switchId, session: restored, messages } })
+          } catch (e) {
+            const errMsg = e instanceof Error ? e.message : String(e)
+            const isENOENT = errMsg.includes('ENOENT')
+            const userMsg = isENOENT
+              ? `Session file missing — the session was not saved properly. Error: ${errMsg}`
+              : `Session ${switchId} not found or restore failed`
+            console.error('[runtime] session.switch auto-restore failed:', errMsg)
+            this.sendError(ws, isENOENT ? 'file_not_found' : 'not_found', userMsg, msg.id, switchId)
+          }
+        }
+        return
+      }
+      case 'session.history': {
+        const messages = await this.sessionService.getHistory(msg.payload.sessionId)
+        return this.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: msg.payload.sessionId, messages } })
+      }
+      case 'session.clear': {
+        await this.sessionService.clear(msg.payload.sessionId)
+        return this.send(ws, { type: 'session.deleted', id: msg.id, payload: { sessionId: msg.payload.sessionId } })
+      }
+      case 'session.restore': {
+        const session = await this.sessionService.restoreSession(msg.payload.sessionId)
+        this.send(ws, { type: 'session.restored', id: msg.id, payload: { session } })
+        return this.broadcastSessionList()
+      }
+      case 'session.rename': {
+        await this.sessionService.renameSession(msg.payload.sessionId, msg.payload.name)
+        this.send(ws, { type: 'session.renamed', id: msg.id, payload: { sessionId: msg.payload.sessionId, name: msg.payload.name } })
+        return this.broadcastSessionList()
+      }
+      case 'message.send': {
+        const { sessionId, content, subagent } = msg.payload
+        if (subagent) {
+          await this.sessionService.sendSubagentMessage(sessionId, subagent.agent, subagent.task, content)
+        } else {
+          await this.sessionService.sendMessage(sessionId, content)
+        }
+        return this.send(ws, { type: 'message.status', id: msg.id, payload: { sessionId, status: 'sent' } })
+      }
+      case 'message.abort':
+        return await this.sessionService.abort(msg.payload.sessionId)
+    }
+  }
+
+  /** Handle session.tree-* messages */
+  private async handleExtensionMessage(msg: ClientMessage, ws: WsType): Promise<void> {
+    switch (msg.type) {
+      case 'extension.ui_response': {
+        const { sessionId: extSid, requestId, result: extResult } = msg.payload
+
+        if (this.extensionTimeoutMgr.isBridgeRequest(requestId)) {
+          this.extensionTimeoutMgr.removeBridgeRequest(requestId)
+          return
+        }
+
+        const client = this.sessionService.getRpcClient(extSid)
+        if (!client) {
+          this.extensionTimeoutMgr.clearTimeout(requestId)
+          return this.sendError(ws, 'handler_error', `No active session for extension response: ${extSid}`, msg.id, extSid)
+        }
+        await client.sendCommand('extension_ui_response', { id: requestId, response: extResult ?? null })
+        this.extensionTimeoutMgr.clearTimeout(requestId)
+        return
+      }
+      case 'extension.list': {
+        if (!this.extensionService) {
+          return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions: [] } })
+        }
+        const extensions = await this.extensionService.scanExtensions()
+        return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions } })
+      }
+      case 'extension.toggle': {
+        if (!this.extensionService) {
+          return this.sendError(ws, 'handler_error', 'Extension service not available', msg.id)
+        }
+        await this.extensionService.toggleExtension(msg.payload.name, msg.payload.enabled)
+        const extensions = await this.extensionService.scanExtensions()
+        return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions } })
+      }
+      case 'extension.install': {
+        if (!this.extensionService) {
+          return this.sendError(ws, 'handler_error', 'Extension service not available', msg.id)
+        }
+        try {
+          await this.extensionService.installExtension(msg.payload.source)
+        } catch (e) {
+          const errMsg = e instanceof Error ? e.message : String(e)
+          return this.sendError(ws, 'install_failed', errMsg, msg.id)
+        }
+        const installed = await this.extensionService.scanExtensions()
+        return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions: installed } })
+      }
+      case 'extension.uninstall': {
+        if (!this.extensionService) {
+          return this.sendError(ws, 'handler_error', 'Extension service not available', msg.id)
+        }
+        try {
+          await this.extensionService.uninstallExtension(msg.payload.name)
+        } catch (e) {
+          const errMsg = e instanceof Error ? e.message : String(e)
+          return this.sendError(ws, 'uninstall_failed', errMsg, msg.id)
+        }
+        const uninstalled = await this.extensionService.scanExtensions()
+        return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions: uninstalled } })
+      }
+    }
+  }
   private handleSessionCompact(msg: Extract<ClientMessage, { type: 'session.compact' }>, ws: WsType): void {
     const compactId = msg.payload.sessionId
     const startTime = Date.now()
@@ -495,102 +375,6 @@ export class SidecarServer implements IMessageBroker {
         this.sendError(ws, 'session.compact_failed', 'Failed to restore session for compact: ' + (e instanceof Error ? e.message : String(e)), msg.id, compactId)
       })
     } else { runCompact() }
-  }
-
-  private async handleSettingsMessage(msg: ClientMessage, ws: WsType): Promise<boolean> {
-    switch (msg.type) {
-      case 'config.getProviders':
-        this.send(ws, { type: 'config.providers', id: msg.id, payload: { providers: this.configService.listProviders() } })
-        return true
-      case 'config.setProvider': {
-        const { providerId, ...data } = msg.payload
-        this.configService.setProvider(providerId, data as Parameters<IConfigService['setProvider']>[1])
-        this.send(ws, { type: 'config.providerUpdated', id: msg.id, payload: { providerId } })
-        this.broadcastProviderList()
-        return true
-      }
-      case 'config.deleteProvider': {
-        this.configService.deleteProvider(msg.payload.providerId)
-        this.send(ws, { type: 'config.providerUpdated', id: msg.id, payload: { providerId: msg.payload.providerId, deleted: true } })
-        this.broadcastProviderList()
-        return true
-      }
-      case 'config.setToolPermissions':
-        this.configService.updateToolPermissions(msg.payload.permissions)
-        this.send(ws, { type: 'config.providerUpdated', id: msg.id, payload: { saved: true } })
-        return true
-      case 'config.scanSkills': {
-        const existingIds = new Set(this.configService.loadSkills(this.projectRoot).map(s => s.id))
-        this.send(ws, { type: 'config.scannedSkills', id: msg.id, payload: { skills: this.configService.scanSkills(msg.payload.sources, existingIds), success: true } })
-        return true
-      }
-      case 'config.setSkill': {
-        this.configService.upsertSkill(msg.payload.skill)
-        this.send(ws, { type: 'config.skillUpdated', id: msg.id, payload: { skill: msg.payload.skill, success: true } })
-        this.broadcastSkillList()
-        return true
-      }
-      case 'config.deleteSkill': {
-        this.configService.deleteSkill(msg.payload.skillId)
-        this.send(ws, { type: 'config.skillDeleted', id: msg.id, payload: { skillId: msg.payload.skillId, success: true } })
-        this.broadcastSkillList()
-        return true
-      }
-      case 'config.scanAgents': {
-        const existingIds = new Set(this.configService.loadAgents(this.projectRoot).map(a => a.id))
-        this.send(ws, { type: 'config.scannedAgents', id: msg.id, payload: { agents: this.configService.scanAgents(msg.payload.sources, existingIds), success: true } })
-        return true
-      }
-      case 'config.setAgent': {
-        this.configService.upsertAgent(msg.payload.agent)
-        this.send(ws, { type: 'config.agentUpdated', id: msg.id, payload: { agent: msg.payload.agent, success: true } })
-        this.broadcastAgentList()
-        return true
-      }
-      case 'config.deleteAgent': {
-        this.configService.deleteAgent(msg.payload.agentId)
-        this.send(ws, { type: 'config.agentDeleted', id: msg.id, payload: { agentId: msg.payload.agentId, success: true } })
-        this.broadcastAgentList()
-        return true
-      }
-      case 'config.discoverModels': return this.handleDiscoverModels(msg, ws)
-      case 'model.list':
-        this.send(ws, { type: 'model.list', id: msg.id, payload: { models: this.modelService.aggregateModels(this.configService.listProviders()) } })
-        return true
-      case 'model.switch': {
-        const { sessionId, provider, modelId } = msg.payload
-        console.log(`[runtime] model.switch: sessionId=${sessionId}, provider=${provider}, modelId=${modelId}`)
-        await this.sessionService.switchModel(sessionId, provider, modelId)
-        this.send(ws, { type: 'model.switched', id: msg.id, payload: { sessionId, provider, modelId } })
-        return true
-      }
-      case 'session.setThinkingLevel': {
-        const { sessionId: sid, level } = msg.payload
-        await this.sessionService.setThinkingLevel(sid as string, level as string)
-        this.send(ws, { type: 'session.thinkingLevelSet', id: msg.id, payload: { sessionId: sid, level } })
-        return true
-      }
-      case 'tool.approve':
-      case 'tool.deny':
-      case 'tool.always_allow':
-        return true
-      default: return false
-    }
-  }
-
-  private handleDiscoverModels(msg: Extract<ClientMessage, { type: 'config.discoverModels' }>, ws: WsType): boolean {
-    const { baseUrl, apiKey, providerType, providerId } = msg.payload
-    let resolvedApiKey = apiKey
-    if (!resolvedApiKey && providerId) resolvedApiKey = this.configService.getProvider(providerId)?.apiKey
-    this.modelService.discoverModelsFromApi(baseUrl, resolvedApiKey, providerType)
-      .then((models) => { this.send(ws, { type: 'config.discoveredModels', id: msg.id, payload: { models, success: true } }) })
-      .catch((e: unknown) => {
-        const raw = e instanceof Error ? e.message : String(e)
-        const message = raw.includes('ByteString') ? '请求失败：Base URL 或 API Key 包含 HTTP 不支持的字符'
-          : raw.includes('fetch failed') ? `连接失败：无法访问 ${baseUrl}/v1/models` : raw
-        this.send(ws, { type: 'config.discoveredModels', id: msg.id, payload: { models: [], success: false, error: message } })
-      })
-    return true
   }
 
   // ── IMessageBroker ──────────────────────────────────────────────
@@ -629,194 +413,45 @@ export class SidecarServer implements IMessageBroker {
 
   // ── Extension timeout management ─────────────────────────────────
 
-  /**
-   * Register a timeout for an extension UI request.
-   * Called by EventAdapter when translating `extension_ui_request` to `extension.ui_request`.
-   * On timeout: sends default response to pi and notifies frontend.
-   */
+
+  // ── Extension timeout delegation ─────────────────────────────────
+
   registerExtensionTimeout(sessionId: string, requestId: string, method: string): void {
-    // notify is fire-and-forget, no response expected
-    if (method === 'notify') return
-
-    // Bridge: track only, no frontend timeout
-    if (method.startsWith('bridge:')) {
-      this.bridgeRequestIds.add(requestId)
-      // Also track in session for cleanup on session deletion
-      let requestSet = this.extensionSessionRequests.get(sessionId)
-      if (!requestSet) {
-        requestSet = new Set()
-        this.extensionSessionRequests.set(sessionId, requestSet)
-      }
-      requestSet.add(requestId)
-      return
-    }
-
-    // Clear any existing timer for this requestId
-    this.clearExtensionTimeout(requestId)
-
-    const timer = setTimeout(() => {
-      this.extensionTimeouts.delete(requestId)
-      this.removeSessionRequest(sessionId, requestId)
-
-      // Determine default response based on method
+    this.extensionTimeoutMgr.registerTimeout(sessionId, requestId, method, () => {
       const defaultResponse = method === 'confirm' ? false : null
-
-      // Send default response to pi
       const client = this.sessionService.getRpcClient(sessionId)
       if (client) {
         client.sendCommand('extension_ui_response', { id: requestId, response: defaultResponse }).catch((e: unknown) => {
           console.error('[runtime] extension timeout response failed:', e)
         })
       }
-
-      // Notify frontend of timeout
       this.broadcast({
         type: 'extension.ui_timeout',
         id: this.nextPushId(),
         payload: { sessionId, requestId },
       })
-    }, EXTENSION_UI_REQUEST_TIMEOUT_MS)
-
-    this.extensionTimeouts.set(requestId, timer)
-
-    // Track sessionId → requestIds for session cleanup
-    let requestSet = this.extensionSessionRequests.get(sessionId)
-    if (!requestSet) {
-      requestSet = new Set()
-      this.extensionSessionRequests.set(sessionId, requestSet)
-    }
-    requestSet.add(requestId)
+    })
   }
 
-  /** Clear the timeout timer for a specific requestId (called when ui_response arrives). */
   clearExtensionTimeout(requestId: string): void {
-    const timer = this.extensionTimeouts.get(requestId)
-    if (timer) {
-      clearTimeout(timer)
-      this.extensionTimeouts.delete(requestId)
-    }
-    // Also remove from session tracking (find sessionId by requestId)
-    for (const [sid, reqs] of this.extensionSessionRequests) {
-      if (reqs.delete(requestId)) {
-        if (reqs.size === 0) this.extensionSessionRequests.delete(sid)
-        break
-      }
-    }
+    this.extensionTimeoutMgr.clearTimeout(requestId)
   }
 
-  /** Clear all pending timeouts for a session (called on session.delete). */
   clearExtensionTimeoutsForSession(sessionId: string): void {
-    const requestIds = this.extensionSessionRequests.get(sessionId)
-    if (!requestIds) return
-    for (const reqId of requestIds) {
-      const timer = this.extensionTimeouts.get(reqId)
-      if (timer) {
-        clearTimeout(timer)
-        this.extensionTimeouts.delete(reqId)
-      }
-      // Also clean up bridge request IDs for this session
-      this.bridgeRequestIds.delete(reqId)
-    }
-    this.extensionSessionRequests.delete(sessionId)
+    this.extensionTimeoutMgr.clearForSession(sessionId)
   }
 
-  /**
-   * Handle a bridge extension request directly (bypassing frontend).
-   * Called by EventAdapter's onBridgeUIRequest callback for 'bridge:' methods.
-   * Routes to PluginService and sends extension_ui_response back to pi RPC.
-   */
   async handleBridgeRequest(sessionId: string, requestId: string, method: string, data: Record<string, unknown>): Promise<void> {
     const client = this.sessionService.getRpcClient(sessionId)
     if (!client) {
       console.warn(`[server] bridge request for inactive session: ${sessionId}, method: ${method}`)
       return
     }
-
-    try {
-      const methodName = method as string
-      switch (methodName) {
-        case 'bridge:sync': {
-          const tools: Array<{ name: string; description: string; parameters: Record<string, unknown> }> = []
-          const commands: Array<{ name: string }> = []
-          if (this.pluginService?.getToolSchemas) {
-            const schemas = this.pluginService.getToolSchemas()
-            for (const s of schemas) {
-              tools.push({ name: s.name, description: s.description, parameters: s.parameters })
-            }
-          }
-          await client.sendCommand('extension_ui_response', { id: requestId, response: { tools, commands, success: true } })
-          return
-        }
-
-        case 'bridge:tool_execute': {
-          const toolName = data.toolName as string
-          const params = data.params as Record<string, unknown> ?? {}
-          if (!this.pluginService?.handleBridgeToolExecute) {
-            await client.sendCommand('extension_ui_response', { id: requestId, response: { content: 'Plugin system not available', isError: true } })
-            return
-          }
-          const result = await this.pluginService.handleBridgeToolExecute({
-            type: 'bridge.tool.execute',
-            toolName, parameters: params, toolCallId: data.toolCallId as string ?? '', sessionId,
-          })
-          await client.sendCommand('extension_ui_response', { id: requestId, response: result })
-          return
-        }
-
-        case 'bridge:event': {
-          const eventName = data.eventName as string
-          const eventData = data.data as Record<string, unknown> ?? {}
-          console.log(`[server] bridge event: ${eventName} from session ${sessionId}`)
-          if (this.pluginService?.handleBridgeEvent) {
-            this.pluginService.handleBridgeEvent(eventName, eventData, sessionId)
-          }
-          // Events are fire-and-forget — no meaningful response expected
-          await client.sendCommand('extension_ui_response', { id: requestId, response: null })
-          return
-        }
-
-        case 'bridge:intercept': {
-          const eventName = data.eventName as string
-          const eventData = data.data as Record<string, unknown> ?? {}
-          if (this.pluginService?.handleBridgeIntercept && eventName === 'before_agent_start') {
-            const result = await this.pluginService.handleBridgeIntercept(eventName, eventData, sessionId)
-            await client.sendCommand('extension_ui_response', { id: requestId, response: result })
-            return
-          }
-          await client.sendCommand('extension_ui_response', { id: requestId, response: {} })
-          return
-        }
-
-        default: {
-          console.warn(`[server] Unknown bridge method: ${methodName}`)
-          await client.sendCommand('extension_ui_response', { id: requestId, response: { error: `Unknown bridge method: ${methodName}` } })
-        }
-      }
-    } catch (e) {
-      console.error(`[server] bridge request failed: ${method}`, e)
-      try {
-        await client.sendCommand('extension_ui_response', { id: requestId, response: { error: String(e) } })
-      } catch { /* ignore send error */ }
-    }
+    await this.bridgeHandler.handleBridgeRequest(sessionId, requestId, method, data, client)
   }
 
-  /**
-   * Handle statusSetUpdate events from event-adapter.
-   * Routes to PluginService.handleBridgeEvent for plugin hook dispatch.
-   */
   handleStatusSetUpdate(payload: { sessionId: string; key: string; text: string }): void {
-    if (this.pluginService?.handleBridgeEvent) {
-      this.pluginService.handleBridgeEvent('plugin:statusSetUpdate', payload, payload.sessionId)
-    }
-  }
-
-  /** Remove a single requestId from session tracking without clearing the timer. */
-  private removeSessionRequest(sessionId: string, requestId: string): void {
-    const requestSet = this.extensionSessionRequests.get(sessionId)
-    if (requestSet) {
-      requestSet.delete(requestId)
-      if (requestSet.size === 0) this.extensionSessionRequests.delete(sessionId)
-    }
+    this.bridgeHandler.handleStatusSetUpdate(payload)
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────

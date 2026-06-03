@@ -1,6 +1,7 @@
 let bridgeState: 'Disconnected' | 'Syncing' | 'Ready' = 'Disconnected'
 let syncAttempts = 0
 const MAX_SYNC_ATTEMPTS = 30
+const SYNC_INTERVAL_MS = 2000
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi extension API is loosely typed
 export async function activate(api: any) {
@@ -33,8 +34,11 @@ export async function activate(api: any) {
         bridgeState = 'Ready'
         clearInterval(syncInterval)
       }
-    } catch { /* retry */ }
-  }, 2000)
+    } catch (e) {
+      console.debug('[bridge] sync attempt failed, retrying:', e)
+      return
+    }
+  }, SYNC_INTERVAL_MS)
 
   // 2. Event forwarding
   const EVENTS = ['agent_start','agent_end','tool_call','tool_result',
@@ -53,6 +57,7 @@ export async function activate(api: any) {
         }
       } catch (e) {
         console.error('[bridge] event forward error:', e)
+        throw e
       }
     })
   }
@@ -67,6 +72,7 @@ export async function activate(api: any) {
       }
     } catch (e) {
       console.error('[bridge] append_entry error:', e)
+      throw e
     }
   })
 }

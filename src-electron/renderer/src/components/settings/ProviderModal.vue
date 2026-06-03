@@ -57,6 +57,7 @@ const testMessage = ref('')
 const modalModels = ref<ModalModel[]>([])
 // ─── Auto-discover state ────────────────────────────────────────
 
+const DEFAULT_NEW_MODEL_CTX = 200_000
 const discoverStatus = ref<'idle' | 'loading' | 'error' | 'empty' | 'success'>('idle')
 const discoverMessage = ref('')
 const addModelName = ref('')
@@ -133,7 +134,7 @@ function addModel() {
   modalModels.value.push({
     id: `new-${Date.now()}`,
     name,
-    contextWindow: Number(addModelCtx.value) || 200_000,
+    contextWindow: Number(addModelCtx.value) || DEFAULT_NEW_MODEL_CTX,
     thinkingLevelMap: structuredClone(THINKING_PRESETS['on-off']),
   })
   addModelName.value = ''

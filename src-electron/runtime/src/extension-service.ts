@@ -8,7 +8,7 @@
  */
 import { execSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs'
-import { join, dirname, resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import type { ExtensionInfo } from '@xyz-agent/shared'
 import { ExtensionResolver } from './extension-resolver.js'
@@ -17,7 +17,14 @@ const log = {
   info: (...args: unknown[]) => console.log('[extension-service]', ...args),
   warn: (...args: unknown[]) => console.warn('[extension-service]', ...args),
   error: (...args: unknown[]) => console.error('[extension-service]', ...args),
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  debug: (..._args: unknown[]) => { /* no-op in production */ },
 }
+
+const NPM_PREFIX_LENGTH = 4 // "npm:" 前缀长度
+const INDENT_SPACES = 2
+const NPM_INSTALL_TIMEOUT = 60_000
+const NPM_UNINSTALL_TIMEOUT = 30_000
 
 /** 获取 xyz-agent 的 agent 配置目录 */
 function getSettingsDir(): string {
@@ -80,7 +87,9 @@ export class ExtensionService {
         name = pkg.name ?? name
         version = pkg.version ?? ''
         description = pkg.description ?? ''
-      } catch { /* use default values */ }
+      } catch (e) {
+        log.debug(`[extension-service] failed to read package.json at ${pkgJsonPath}: ${e instanceof Error ? e.message : String(e)}`)
+      }
 
       // 判断 source：路径在 settings packages[] 中则为 user-installed
       const sourceKey = `npm:${name}`
@@ -132,7 +141,7 @@ export class ExtensionService {
       throw new Error(`Unsupported source: ${source}. Only npm:xxx format is supported.`)
     }
 
-    const pkgName = source.slice(4) // 去掉 "npm:"
+    const pkgName = source.slice(NPM_PREFIX_LENGTH)
     const npmDir = join(this.settingsDir, 'npm')
 
     // 确保 npm 目录有 package.json
@@ -148,7 +157,7 @@ export class ExtensionService {
     try {
       execSync(`npm install ${pkgName} --prefix ${npmDir} --omit=peer`, {
         stdio: 'pipe',
-        timeout: 60_000,
+        timeout: NPM_INSTALL_TIMEOUT,
       })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -160,10 +169,9 @@ export class ExtensionService {
     if (!existsSync(pkgInstallDir) || !this.resolver['isValidPiExtension'](pkgInstallDir)) {
       // 回滚
       try {
-        execSync(`npm uninstall ${pkgName} --prefix ${npmDir}`, { stdio: 'pipe', timeout: 30_000 })
-      } catch {
-        // 回滚失败：记录 warning，不阻塞用户
-        log.warn(`[extension-service] rollback npm uninstall failed for ${pkgName}, manual cleanup may be needed`)
+        execSync(`npm uninstall ${pkgName} --prefix ${npmDir}`, { stdio: 'pipe', timeout: NPM_UNINSTALL_TIMEOUT })
+      } catch (e) {
+        log.warn(`[extension-service] rollback npm uninstall failed for ${pkgName}: ${e instanceof Error ? e.message : String(e)}`)
       }
       throw new Error(`"${pkgName}" is not a valid pi extension.`)
     }
@@ -175,7 +183,9 @@ export class ExtensionService {
       if (existsSync(settingsPath)) {
         settings = JSON.parse(readFileSync(settingsPath, 'utf-8'))
       }
-    } catch { /* use empty */ }
+    } catch (e) {
+      log.debug(`[extension-service] failed to read settings.json for install: ${e instanceof Error ? e.message : String(e)}`)
+    }
 
     const packages = settings.packages ?? []
     if (!packages.includes(source)) {
@@ -185,7 +195,7 @@ export class ExtensionService {
 
     // 原子写入
     const tmpPath = settingsPath + '.tmp'
-    writeFileSync(tmpPath, JSON.stringify(settings, null, 2), 'utf-8')
+    writeFileSync(tmpPath, JSON.stringify(settings, null, INDENT_SPACES), 'utf-8')
     renameSync(tmpPath, settingsPath)
   }
 
@@ -204,7 +214,7 @@ export class ExtensionService {
         const packages = (settings.packages ?? []).filter(p => p !== source)
         settings.packages = packages
         const tmpPath = settingsPath + '.tmp'
-        writeFileSync(tmpPath, JSON.stringify(settings, null, 2), 'utf-8')
+        writeFileSync(tmpPath, JSON.stringify(settings, null, INDENT_SPACES), 'utf-8')
         renameSync(tmpPath, settingsPath)
       } catch (e) {
         log.warn(`[extension-service] failed to update settings.json for uninstall: ${e}`)
@@ -219,21 +229,26 @@ export class ExtensionService {
         const data = JSON.parse(raw) as { disabled?: string[] }
         const disabled = (data.disabled ?? []).filter(d => d !== source)
         if (disabled.length > 0) {
-          writeFileSync(disabledPath, JSON.stringify({ disabled }, null, 2), 'utf-8')
+          writeFileSync(disabledPath, JSON.stringify({ disabled }, null, INDENT_SPACES), 'utf-8')
         } else {
-          // 空的 disabled 列表 → 删除文件
-          try { renameSync(disabledPath, disabledPath + '.bak') } catch { /* ignore */ }
+          // 空的 disabled 列表 → 备份后不再使用
+          try {
+            renameSync(disabledPath, disabledPath + '.bak')
+          } catch (e) {
+            log.debug(`[extension-service] failed to backup disabled-packages.json: ${e instanceof Error ? e.message : String(e)}`)
+          }
         }
-      } catch { /* ignore */ }
+      } catch (e) {
+        log.debug(`[extension-service] failed to update disabled-packages.json for uninstall: ${e instanceof Error ? e.message : String(e)}`)
+      }
     }
 
     // npm uninstall
     const npmDir = join(this.settingsDir, 'npm')
     if (existsSync(npmDir)) {
       try {
-        execSync(`npm uninstall ${name} --prefix ${npmDir}`, { stdio: 'pipe', timeout: 30_000 })
+        execSync(`npm uninstall ${name} --prefix ${npmDir}`, { stdio: 'pipe', timeout: NPM_UNINSTALL_TIMEOUT })
       } catch (e) {
-        // 包可能已损坏，只记录 warning
         log.warn(`[extension-service] npm uninstall warning for ${name}: ${e instanceof Error ? e.message : String(e)}`)
       }
     }
@@ -252,7 +267,9 @@ export class ExtensionService {
       try {
         const raw = readFileSync(disabledPath, 'utf-8')
         disabled = (JSON.parse(raw) as { disabled?: string[] }).disabled ?? []
-      } catch { /* use empty */ }
+      } catch (e) {
+        log.debug(`[extension-service] failed to read disabled-packages.json for toggle: ${e instanceof Error ? e.message : String(e)}`)
+      }
     }
 
     if (enabled) {
@@ -266,10 +283,14 @@ export class ExtensionService {
     }
 
     if (disabled.length > 0) {
-      writeFileSync(disabledPath, JSON.stringify({ disabled }, null, 2), 'utf-8')
+      writeFileSync(disabledPath, JSON.stringify({ disabled }, null, INDENT_SPACES), 'utf-8')
     } else if (existsSync(disabledPath)) {
-      // 空列表删除文件
-      try { renameSync(disabledPath, disabledPath + '.bak') } catch { /* ignore */ }
+      // 空列表备份
+      try {
+        renameSync(disabledPath, disabledPath + '.bak')
+      } catch (e) {
+        log.debug(`[extension-service] failed to backup disabled-packages.json: ${e instanceof Error ? e.message : String(e)}`)
+      }
     }
   }
 
@@ -283,7 +304,9 @@ export class ExtensionService {
       if (existsSync(settingsPath)) {
         packages = (JSON.parse(readFileSync(settingsPath, 'utf-8')) as { packages?: string[] }).packages ?? []
       }
-    } catch { /* use empty */ }
+    } catch (e) {
+      log.debug(`[extension-service] failed to read settings.json packages: ${e instanceof Error ? e.message : String(e)}`)
+    }
 
     const disabledPath = join(this.settingsDir, 'disabled-packages.json')
     let disabled: string[] = []
@@ -291,7 +314,9 @@ export class ExtensionService {
       if (existsSync(disabledPath)) {
         disabled = (JSON.parse(readFileSync(disabledPath, 'utf-8')) as { disabled?: string[] }).disabled ?? []
       }
-    } catch { /* use empty */ }
+    } catch (e) {
+      log.debug(`[extension-service] failed to read disabled-packages.json: ${e instanceof Error ? e.message : String(e)}`)
+    }
 
     return { packages, disabled }
   }

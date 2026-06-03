@@ -443,9 +443,8 @@ describe('SidecarServer: bridge timeout exclusion', () => {
     server.registerExtensionTimeout('sess-1', 'req-bridge-track', 'bridge:sync')
 
     // Bridge requestIds should be tracked
-    expect((server as unknown as Record<string, unknown>).bridgeRequestIds).toBeDefined()
-    const bridgeSet = (server as unknown as { bridgeRequestIds: Set<string> }).bridgeRequestIds
-    expect(bridgeSet.has('req-bridge-track')).toBe(true)
+    const mgr = (server as unknown as { extensionTimeoutMgr: { isBridgeRequest(id: string): boolean } }).extensionTimeoutMgr
+    expect(mgr.isBridgeRequest('req-bridge-track')).toBe(true)
   })
 
   it('still registers normal timeout for non-bridge methods', () => {

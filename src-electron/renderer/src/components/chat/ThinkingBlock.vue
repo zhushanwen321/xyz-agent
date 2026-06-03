@@ -1,5 +1,6 @@
 <template>
   <div class="overflow-hidden border border-border mb-2 thinking-block">
+    <!-- eslint-disable-next-line taste/no-native-html-elements -- thinking-header has complex gradient styles + flex layout in <style scoped>, xyz-ui Button variant="ghost" doesn't support this customization -->
     <button class="thinking-header" @click="expanded = !expanded">
       <!-- Left: arrow + label -->
       <svg :class="['transition-transform duration-150 ease-ease shrink-0', { '-rotate-90': !expanded }]" xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
@@ -30,13 +31,15 @@ const expanded = ref(settingsStore.autoExpandThinking)
 
 // ── Elapsed time ──────────────────────────────────────────────
 const MS_PER_SECOND = 1000
+const DECISECOND_MS = 100
+const SECONDS_PER_MINUTE = 60
 
 const now = ref(Date.now())
 let timerInterval: ReturnType<typeof setInterval> | undefined
 
 onMounted(() => {
   if (props.streaming) {
-    timerInterval = setInterval(() => { now.value = Date.now() }, 100)
+    timerInterval = setInterval(() => { now.value = Date.now() }, DECISECOND_MS)
   }
 })
 
@@ -58,10 +61,10 @@ const elapsedDisplay = computed(() => {
   const ms = elapsedMs.value
   if (ms === 0) return ''
   const s = ms / MS_PER_SECOND
-  if (s < 1) return `${(ms / 100).toFixed(1)}s`
-  if (s < 60) return `${s.toFixed(1)}s`
-  const m = Math.floor(s / 60)
-  const sec = Math.floor(s % 60)
+  if (s < 1) return `${(ms / DECISECOND_MS).toFixed(1)}s`
+  if (s < SECONDS_PER_MINUTE) return `${s.toFixed(1)}s`
+  const m = Math.floor(s / SECONDS_PER_MINUTE)
+  const sec = Math.floor(s % SECONDS_PER_MINUTE)
   return `${m}m${sec}s`
 })
 </script>

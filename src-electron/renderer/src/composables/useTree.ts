@@ -186,8 +186,10 @@ function safeRegisterTreeListeners() {
   try {
     registerGlobalListeners()
     treeRegisterAttempted = true  // 成功后才标记，允许重试
-  } catch {
+  // eslint-disable-next-line taste/no-silent-catch
+  } catch (e) {
     // Pinia 未就绪（测试环境），不标记 attempted，允许后续重试
+    console.debug('[useTree] Tree listeners registration deferred (Pinia not ready):', e)
   }
 }
 queueMicrotask(safeRegisterTreeListeners)

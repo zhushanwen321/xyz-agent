@@ -301,9 +301,9 @@ describe('Bridge reconnect lifecycle', () => {
       server.registerExtensionTimeout(SESSION_ID, 'req-bridge2', 'bridge:tool_execute')
 
       // Bridge request IDs should be tracked internally
-      const bridgeSet = (server as unknown as { bridgeRequestIds: Set<string> }).bridgeRequestIds
-      expect(bridgeSet.has('req-bridge')).toBe(true)
-      expect(bridgeSet.has('req-bridge2')).toBe(true)
+      const mgr = (server as unknown as { extensionTimeoutMgr: { isBridgeRequest(id: string): boolean } }).extensionTimeoutMgr
+      expect(mgr.isBridgeRequest('req-bridge')).toBe(true)
+      expect(mgr.isBridgeRequest('req-bridge2')).toBe(true)
     })
   })
 

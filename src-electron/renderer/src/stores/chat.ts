@@ -54,6 +54,11 @@ export interface ChatSessionState {
 
 // ── Helpers ────────────────────────────────────────────────────────
 
+// ── Magic number constants ────────────────────────────────────
+const PERCENT_MAX = 100
+const PERCENT_SCALE = 1000
+const PERCENT_PRECISION = 10
+
 function createSessionState(): ChatSessionState {
   return {
     completedMessages: [],
@@ -164,7 +169,7 @@ export const useChatStore = defineStore('chat', () => {
       if (!isSystemNotification(msg) && msg.role === 'assistant' && msg.usage) {
         s.contextInputTokens = msg.usage.inputTokens
         s.tokenUsage = msg.usage.inputTokens + msg.usage.outputTokens
-        s.contextUsagePercent = Math.min(100, Math.round((s.contextInputTokens / s.contextLimit) * 1000) / 10)
+        s.contextUsagePercent = Math.min(PERCENT_MAX, Math.round((s.contextInputTokens / s.contextLimit) * PERCENT_SCALE) / PERCENT_PRECISION)
         break
       }
     }

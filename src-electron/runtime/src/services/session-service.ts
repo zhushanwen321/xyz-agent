@@ -4,10 +4,8 @@
  * Manages session lifecycle: creation, deletion, messaging, history,
  * model switching, compaction, and persistence.
  */
-import { basename, resolve, join } from 'node:path'
-import { readFile } from 'node:fs/promises'
-import { existsSync, statSync, readFileSync } from 'node:fs'
-import { execSync } from 'node:child_process'
+import { basename, resolve } from 'node:path'
+import { existsSync } from 'node:fs'
 import type {
   SessionSummary,
   SessionGroup,
@@ -25,6 +23,8 @@ import * as piBridge from '../pi-config-bridge.js'
 import { trash } from '../trash.js'
 import { NavigateInterceptor } from '../navigate-interceptor.js'
 import { TreeService } from './tree-service.js'
+import { readGitInfo } from './git-info.js'
+import { getHistoryFromFile } from './session-history.js'
 
 /** SendMessage hook 类型：在消息发送前触发，可阻止发送 */
 export type SendMessageHook = (sessionId: string, content: string) => Promise<{ blocked: boolean; reason?: string } | null>
@@ -45,37 +45,6 @@ interface ManagedSession {
   interceptor: NavigateInterceptor
   unsubUsageListener: (() => void) | null
   sessionFilePath?: string
-}
-
-export interface GitInfo {
-  branch: string
-  isWorktree: boolean
-}
-
-/** Read git branch and worktree status from cwd. Returns undefined if not a git repo. */
-function readGitInfo(cwd: string): GitInfo | undefined {
-  try {
-    const branch = execSync('git rev-parse --abbrev-ref HEAD', {
-      cwd,
-      timeout: 2000,
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim()
-    if (!branch) return undefined
-    // Detect worktree: .git is a file (not dir) containing 'gitdir:'
-    let isWorktree = false
-    try {
-      const gitPath = join(cwd, '.git')
-      const st = statSync(gitPath)
-      if (st.isFile()) {
-        const content = readFileSync(gitPath, 'utf-8')
-        isWorktree = content.startsWith('gitdir:')
-      }
-    } catch { /* not a worktree */ }
-    return { branch, isWorktree }
-  } catch {
-    return undefined
-  }
 }
 
 export class SessionService implements ISessionService {
@@ -389,50 +358,17 @@ export class SessionService implements ISessionService {
         const session = this.sessions.get(sessionId)
         if (session && !session.isGenerating) {
           console.warn(`[session-service] getHistory via RPC returned empty for idle session ${sessionId}, falling back to file read`)
-          return await this.getHistoryFromFile(sessionId)
+          return await getHistoryFromFile(sessionId)
         }
         // 生成中但返回空 — 返回空（RPC 数据比磁盘新）
         return []
       } catch (e) {
         console.warn(`[session-service] getHistory via RPC failed: ${e instanceof Error ? e.message : e}, falling back to file read`)
-        return await this.getHistoryFromFile(sessionId)
+        return await getHistoryFromFile(sessionId)
       }
     }
 
-    return await this.getHistoryFromFile(sessionId)
-  }
-
-  private async getHistoryFromFile(sessionId: string): Promise<Message[]> {
-    const target = this.findScannedSession(sessionId)
-    if (!target) return []
-
-    let content: string
-    try {
-      content = await readFile(target.filePath, 'utf-8')
-    } catch (e) {
-      // Session 文件可能已被外部删除（pi 进程异常退出未 flush、用户手动清理等）
-      const code = (e as NodeJS.ErrnoException).code
-      if (code === 'ENOENT') {
-        console.warn(`[session-service] session file missing, returning empty history: ${target.filePath}`)
-        return []
-      }
-      throw e
-    }
-    const lines = content.split('\n').filter(l => l.trim())
-    const piMessages: PiHistoryMessage[] = []
-
-    for (const line of lines) {
-      try {
-        const entry = JSON.parse(line)
-        if (entry.type === 'message' && entry.message) {
-          piMessages.push(entry.message as PiHistoryMessage)
-        }
-      } catch {
-        void 0
-      }
-    }
-
-    return convertPiHistory(piMessages)
+    return await getHistoryFromFile(sessionId)
   }
 
   // ── Listing ────────────────────────────────────────────────────

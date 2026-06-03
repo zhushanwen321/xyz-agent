@@ -2,9 +2,16 @@ import { mkdir, readFile, writeFile, rename, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 
-const MAX_TOTAL_SIZE = 10 * 1024 * 1024 // 10MB
-const MAX_VALUE_SIZE = 1 * 1024 * 1024 // 1MB
+const BYTES_PER_KB = 1024
+const MB = BYTES_PER_KB * BYTES_PER_KB
+const TEN = 10
+const MAX_TOTAL_SIZE = TEN * MB // 10MB
+const MAX_VALUE_SIZE = 1 * MB // 1MB
 const FLUSH_DEBOUNCE_MS = 500
+const JSON_FORMAT_INDENT = 2
+const HASH_SLICE_LENGTH = 12
+const RADIX_BASE36 = 36
+const SLICE_START = 2
 
 interface CacheEntry {
   data: Map<string, unknown>
@@ -180,7 +187,7 @@ export class PluginStorage {
     await mkdir(dir, { recursive: true })
     const obj: Record<string, unknown> = {}
     for (const [k, v] of Array.from(cache.data)) obj[k] = v
-    const content = JSON.stringify(obj, null, 2)
+    const content = JSON.stringify(obj, null, JSON_FORMAT_INDENT)
     // 原子写入: temp + rename
     const tmpPath = filePath + '.tmp'
     await writeFile(tmpPath, content, 'utf-8')
@@ -197,7 +204,7 @@ export class PluginStorage {
     const cwdHash = createHash('sha256')
       .update(this.projectRoot)
       .digest('hex')
-      .slice(0, 12)
+      .slice(0, HASH_SLICE_LENGTH)
     return join(
       this.baseDir,
       'plugins',
@@ -209,7 +216,7 @@ export class PluginStorage {
 
 // ── SessionData 文件持久化（独立函数）────────────────────────────────
 
-const SESSION_DATA_SIZE_LIMIT = 10 * 1024 * 1024 // 10MB
+const SESSION_DATA_SIZE_LIMIT = TEN * MB // 10MB
 
 /**
  * 将 sessionData 持久化到磁盘（原子写入）。
@@ -233,7 +240,7 @@ export async function persistSessionData(
   const dir = join(baseDir, 'session-data')
   await mkdir(dir, { recursive: true })
   const filePath = join(dir, `${sessionId}.json`)
-  const tmpPath = `${filePath}.tmp_${Date.now()}_${Math.random().toString(36).slice(2)}`
+  const tmpPath = `${filePath}.tmp_${Date.now()}_${Math.random().toString(RADIX_BASE36).slice(SLICE_START)}`
   await writeFile(tmpPath, content, 'utf-8')
   await rename(tmpPath, filePath)
 }

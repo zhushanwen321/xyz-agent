@@ -100,7 +100,6 @@ const activeEl = ref<HTMLElement | null>(null)
 const menuRef = ref<HTMLElement | null>(null)
 
 // Hover tooltip 状态：Teleport + position: fixed
-const HOVER_CLOSE_DELAY_MS = 120
 const SCROLL_CAPTURE_PHASE = true
 const CENTER_DIVISOR = 2
 const hoveredIdx = ref<number | null>(null)
@@ -126,25 +125,7 @@ watch(() => [props.visible, pluginCommands.value.length] as const, ([visible]) =
   }
 })
 
-// Hover 事件 handler（被 template @mouseenter/@mouseleave 引用，eslint 看不到故忽略检测）
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-const onItemEnter = (idx: number) => {
-  if (closeTimer) {
-    clearTimeout(closeTimer)
-    closeTimer = null
-  }
-  hoveredIdx.value = idx
-  nextTick(updateTipPos)
-}
-
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-const onItemLeave = () => {
-  // 缓冲时间，让鼠标有时间移到 tooltip 上不闪
-  closeTimer = setTimeout(() => {
-    hoveredIdx.value = null
-  }, HOVER_CLOSE_DELAY_MS)
-}
-
+// Tooltip hover handlers
 const onTipEnter = () => {
   if (closeTimer) {
     clearTimeout(closeTimer)

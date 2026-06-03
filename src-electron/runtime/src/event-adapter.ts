@@ -158,8 +158,9 @@ export class EventAdapter {
             if (hookResult.transformedData !== undefined) {
               input = hookResult.transformedData
             }
-          } catch {
-            // hook error → proceed with original data
+          // eslint-disable-next-line taste/no-silent-catch
+          } catch (e) {
+            console.debug(`[event-adapter] hook tool_execution_start error: ${e instanceof Error ? e.message : String(e)}`)
           }
         }
 
@@ -211,8 +212,9 @@ export class EventAdapter {
             if (hookResult.transformedData !== undefined) {
               output = hookResult.transformedData as string
             }
-          } catch {
-            // hook error → proceed with original data
+          // eslint-disable-next-line taste/no-silent-catch
+          } catch (e) {
+            console.debug(`[event-adapter] hook tool_execution_end error: ${e instanceof Error ? e.message : String(e)}`)
           }
         }
 

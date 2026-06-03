@@ -82,11 +82,11 @@ onUnmounted(() => {
       </div>
       <div v-if="showInstall" class="px-4 py-3 border-t border-[var(--divider)] bg-[var(--section-bg)]">
         <div class="flex items-center gap-2">
-          <input
+          <Input
             v-model="installSource"
             type="text"
             placeholder="npm:pi-ask-user"
-            class="flex-1 text-[13px] px-3 py-[7px] bg-bg border border-border rounded-sm outline-none focus:border-accent transition-colors"
+            class="flex-1"
             @keydown.enter="handleInstall"
           />
           <Button
