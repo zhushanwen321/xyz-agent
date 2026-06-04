@@ -13,12 +13,14 @@ let listenersRegistered = false
 
 function onWidget(msg: { payload: ExtensionWidgetPayload }) {
   const p = msg.payload
+  console.log('[useExtensionWidget] onWidget:', p?.widgetKey, 'sessionId:', p?.sessionId, 'lines:', p?.lines?.length)
   if (!p?.sessionId || !p?.widgetKey) return
   widgets.value = new Map(widgets.value.set(`${p.sessionId}:${p.widgetKey}`, p))
 }
 
 function onStatus(msg: { payload: ExtensionStatusPayload }) {
   const p = msg.payload
+  console.log('[useExtensionWidget] onStatus:', p?.statusKey, 'sessionId:', p?.sessionId, 'text:', p?.text)
   if (!p?.sessionId || !p?.statusKey) return
   statuses.value = new Map(statuses.value.set(`${p.sessionId}:${p.statusKey}`, p))
 }

@@ -294,13 +294,15 @@ export class EventAdapter {
         // setWidget: send WS event to frontend
         if (method === 'setWidget') {
           const widgetType: ServerMessageType = EXTENSION_EVENTS.WIDGET
+          const widgetPayload = {
+            sessionId: sid,
+            widgetKey: String(event.widgetKey ?? ''),
+            lines: Array.isArray(event.widgetLines) ? (event.widgetLines as unknown[]).map(l => stripAnsi(String(l))) : [],
+          }
+          console.log('[EventAdapter] setWidget:', widgetPayload.widgetKey, 'lines:', widgetPayload.lines.length, 'sessionId:', sid)
           this.send({
             type: widgetType,
-            payload: {
-              sessionId: sid,
-              widgetKey: String(event.widgetKey ?? ''),
-              lines: Array.isArray(event.widgetLines) ? (event.widgetLines as unknown[]).map(l => stripAnsi(String(l))) : [],
-            },
+            payload: widgetPayload,
           })
           return null
         }

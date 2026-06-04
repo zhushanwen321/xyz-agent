@@ -1,13 +1,5 @@
 <template>
   <div class="p-0" :data-status="toolCall.status">
-  <!-- Header -->
-  <div class="flex items-center gap-1.5 px-2.5 py-1.5 border-b border-border bg-surface">
-    <div class="w-3.5 h-3.5 rounded-none flex items-center justify-center text-[9px] font-bold shrink-0"
-         :class="headerIconClass">{{ headerIcon }}</div>
-    <span class="font-mono text-xs font-semibold text-fg">{{ toolCall.toolName }}</span>
-    <span v-if="renderType" class="text-[10px] text-muted px-1.5 py-px bg-surface border border-border rounded-none">{{ renderType }}</span>
-  </div>
-
   <!-- Summary -->
   <div v-if="renderDesc?.summary" class="px-2.5 py-1.5 text-xs text-muted border-b border-border">
     {{ renderDesc.summary }}
@@ -68,12 +60,12 @@
 
   <!-- code-block -->
   <div v-else-if="renderType === 'code-block'" class="mx-2.5 my-2 border border-border bg-bg p-2 max-h-[180px] overflow-auto">
-    <pre class="whitespace-pre-wrap font-mono text-xs text-fg leading-relaxed m-0">{{ codeContent }}</pre>
+    <pre class="whitespace-pre-wrap text-xs text-fg leading-relaxed m-0">{{ codeContent }}</pre>
   </div>
 
   <!-- fallback: plain output -->
   <div v-else-if="toolCall.output" class="mx-2.5 my-2 max-h-[180px] overflow-y-auto border border-border bg-bg p-2">
-    <pre class="whitespace-pre-wrap font-mono text-xs text-fg leading-relaxed m-0">{{ toolCall.output }}</pre>
+    <pre class="whitespace-pre-wrap text-xs text-fg leading-relaxed m-0">{{ toolCall.output }}</pre>
   </div>
   </div>
 </template>
@@ -144,22 +136,6 @@ const progressPercent = computed(() => {
 const codeContent = computed(() => {
   const data = renderDesc.value?.data as { content?: string } | undefined
   return data?.content ?? ''
-})
-
-const headerIcon = computed(() => {
-  switch (props.toolCall.toolName) {
-    case 'goal_manager': return 'G'
-    case 'todo': return 'T'
-    default: return 'R'
-  }
-})
-
-const headerIconClass = computed(() => {
-  switch (props.toolCall.toolName) {
-    case 'goal_manager': return 'bg-accent text-white'
-    case 'todo': return 'bg-agent text-white'
-    default: return 'bg-muted text-white'
-  }
 })
 
 function statusIcon(status: string): string {
