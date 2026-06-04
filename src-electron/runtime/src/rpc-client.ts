@@ -103,6 +103,8 @@ export class RpcClient {
 
     const piCmd = this.options.piCommand ?? 'pi'
 
+    console.log('[rpc] spawning pi:', piCmd, args.join(' '))
+
     this.proc = spawn(piCmd, args, {
       cwd: this.options.cwd ?? process.cwd(),
       env,
