@@ -1,0 +1,940 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pi TUI → xyz-agent GUI 组件映射 Demo</title>
+<style>
+/* ── xyz-agent Design System Variables ── */
+:root {
+  --bg: oklch(97% 0.010 75);
+  --surface: oklch(99% 0.006 75);
+  --fg: oklch(22% 0.012 75);
+  --muted: oklch(50% 0.010 75);
+  --border: oklch(90% 0.008 75);
+  --accent: oklch(55% 0.08 195);
+  --accent-light: oklch(93% 0.03 195);
+  --success: oklch(62% 0.10 145);
+  --success-light: oklch(95% 0.04 145);
+  --warning: oklch(75% 0.10 85);
+  --warning-light: oklch(95% 0.04 85);
+  --danger: oklch(55% 0.12 25);
+  --danger-light: oklch(93% 0.04 25);
+  --agent: oklch(55% 0.15 250);
+  --agent-light: oklch(93% 0.04 250);
+  --section-bg: oklch(95% 0.014 70);
+  --hover-bg: oklch(96% 0.01 70);
+  --divider: oklch(94% 0.008 70);
+  --font-body: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+  --radius: 1px;
+  --radius-sm: 1px;
+  --radius-lg: 2px;
+  --radius-md: 2px;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --shadow-sm: 0 2px 12px rgba(0,0,0,0.08);
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.12);
+  --msg-assistant-bg: oklch(98% 0.008 250);
+  --msg-thinking-bg: oklch(97% 0.015 195);
+  --msg-tool-bg: oklch(97% 0.010 70);
+}
+[data-theme="dark"] {
+  --bg: oklch(13% 0.006 50);
+  --surface: oklch(17% 0.008 50);
+  --fg: oklch(93% 0.005 55);
+  --muted: oklch(58% 0.008 50);
+  --border: oklch(28% 0.008 50);
+  --accent: oklch(68% 0.10 28);
+  --accent-light: oklch(28% 0.04 28);
+  --success: oklch(68% 0.12 145);
+  --success-light: oklch(28% 0.05 145);
+  --warning: oklch(78% 0.10 85);
+  --warning-light: oklch(28% 0.04 85);
+  --danger: oklch(58% 0.15 25);
+  --danger-light: oklch(28% 0.05 25);
+  --agent: oklch(65% 0.15 250);
+  --agent-light: oklch(22% 0.04 250);
+  --section-bg: oklch(22% 0.009 50);
+  --hover-bg: oklch(20% 0.009 50);
+  --divider: oklch(22% 0.008 50);
+  --shadow-sm: 0 2px 12px rgba(0,0,0,0.3);
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.4);
+  --msg-assistant-bg: oklch(18% 0.010 250);
+  --msg-thinking-bg: oklch(19% 0.020 195);
+  --msg-tool-bg: oklch(19% 0.010 50);
+}
+
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-font-smoothing:antialiased}
+body{font-family:var(--font-body);font-size:14px;line-height:1.6;background:var(--bg);color:var(--fg);transition:background .25s var(--ease),color .25s var(--ease)}
+code{font-family:var(--font-mono);font-size:.9em}
+
+/* ── Layout ── */
+.app-shell{display:grid;grid-template-columns:1fr;grid-template-rows:48px 1fr 32px;min-height:100vh}
+.app-header{display:flex;align-items:center;justify-content:space-between;padding:0 20px;background:var(--surface);border-bottom:1px solid var(--border);height:48px}
+.app-header h1{font-size:15px;font-weight:600}
+.app-header .controls{display:flex;gap:8px;align-items:center}
+.app-body{display:flex;gap:0;overflow:hidden}
+.main-area{flex:1;display:flex;flex-direction:column;overflow-y:auto;padding:32px 24px}
+.app-footer{display:flex;align-items:center;justify-content:space-between;padding:0 14px;background:var(--surface);border-top:1px solid var(--border);height:32px;font-size:11px;color:var(--muted)}
+
+/* ── Section ── */
+.section{margin-bottom:40px}
+.section-title{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--accent);margin-bottom:16px;padding-bottom:8px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
+.section-title .badge{font-size:10px;font-weight:600;padding:2px 6px;border-radius:var(--radius-sm);text-transform:none;letter-spacing:0}
+.badge-ok{background:var(--success-light);color:var(--success)}
+.badge-new{background:var(--warning-light);color:var(--warning)}
+.badge-partial{background:var(--accent-light);color:var(--accent)}
+.badge-skip{background:var(--section-bg);color:var(--muted)}
+.component-grid{display:flex;flex-direction:column;gap:16px}
+.component-row{display:grid;grid-template-columns:200px 1fr;gap:16px;align-items:start}
+.component-label{font-size:12px;font-weight:600;color:var(--muted);padding-top:8px}
+.component-label small{display:block;font-weight:400;font-size:11px;color:var(--border);margin-top:2px}
+
+/* ── Shared Card ── */
+.card{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);overflow:hidden}
+.card-header{padding:6px 12px;border-bottom:1px solid var(--border);font-size:11px;font-weight:600;color:var(--muted);font-family:var(--font-mono);display:flex;align-items:center;gap:6px}
+.card-body{padding:12px}
+.card-body.compact{padding:8px 12px}
+
+/* ── Buttons ── */
+.btn{display:inline-flex;align-items:center;gap:4px;padding:4px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--fg);font-size:12px;cursor:pointer;transition:all .15s var(--ease);font-family:var(--font-body)}
+.btn:hover{background:var(--hover-bg);border-color:var(--muted)}
+.btn-primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.btn-primary:hover{opacity:.9}
+.btn-sm{padding:2px 8px;font-size:11px}
+
+/* ── Input ── */
+.input{padding:4px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--fg);font-size:13px;font-family:var(--font-body);outline:none;transition:border-color .15s}
+.input:focus{border-color:var(--accent)}
+.textarea{width:100%;min-height:80px;padding:8px 10px;resize:vertical;font-size:13px;font-family:var(--font-mono)}
+
+/* ── Theme Toggle ── */
+.theme-toggle{cursor:pointer;background:none;border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px 10px;font-size:11px;color:var(--muted)}
+
+/* ══════════════════════════════════════════════════════════════
+   COMPONENT DEMOS
+   ══════════════════════════════════════════════════════════════ */
+
+/* ── 1. Message Bubbles ── */
+.msg{border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 14px}
+.msg-user{background:var(--accent);color:#fff;border-color:var(--accent)}
+.msg-user .msg-role{color:rgba(255,255,255,.7)}
+.msg-assistant{background:var(--msg-assistant-bg);border-color:var(--border)}
+.msg-custom{background:var(--accent-light);border-left:3px solid var(--accent)}
+.msg-role{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;color:var(--muted)}
+.msg-text{font-size:13px;line-height:1.6}
+.msg-custom-type{font-size:10px;color:var(--accent);font-family:var(--font-mono);margin-bottom:2px}
+
+/* ── 2. Thinking Block ── */
+.thinking-block{background:var(--msg-thinking-bg);border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden}
+.thinking-header{display:flex;align-items:center;gap:6px;padding:6px 12px;font-size:11px;font-weight:600;color:var(--muted);cursor:pointer;user-select:none}
+.thinking-header .dot{width:6px;height:6px;border-radius:50%;background:var(--accent);animation:pulse 2s infinite}
+.thinking-body{padding:8px 12px;font-size:12px;color:var(--muted);font-style:italic;border-top:1px solid var(--border)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* ── 3. Tool Cards ── */
+.tool-card{background:var(--msg-tool-bg);border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden}
+.tool-header{display:flex;align-items:center;gap:6px;padding:6px 12px;border-bottom:1px solid var(--border)}
+.tool-name{font-size:11px;font-weight:700;font-family:var(--font-mono);color:var(--fg)}
+.tool-path{font-size:11px;color:var(--muted);font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.tool-status{font-size:10px;font-weight:600}
+.tool-status.running{color:var(--warning)}
+.tool-status.done{color:var(--success)}
+.tool-status.error{color:var(--danger)}
+.tool-body{padding:10px 12px;font-size:12px;font-family:var(--font-mono);white-space:pre-wrap;max-height:200px;overflow-y:auto}
+.tool-expand{width:100%;padding:4px;background:var(--section-bg);border:none;border-top:1px solid var(--border);color:var(--muted);cursor:pointer;font-size:11px;text-align:center}
+.tool-expand:hover{color:var(--fg)}
+.tool-badge{font-size:10px;padding:1px 5px;border-radius:var(--radius-sm);font-weight:600}
+.tool-badge-bash{background:var(--warning-light);color:var(--warning)}
+.tool-badge-edit{background:var(--success-light);color:var(--success)}
+.tool-badge-custom{background:var(--accent-light);color:var(--accent)}
+
+/* ── 4. Working Indicator ── */
+.working-row{display:flex;align-items:center;gap:8px;padding:8px 14px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface)}
+.working-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);animation:pulse 1.2s infinite}
+.working-text{font-size:12px;color:var(--muted)}
+.working-custom{color:var(--accent);font-weight:500}
+
+/* ── 5. Widget ── */
+.widget-dock{display:flex;gap:0;overflow:hidden;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);max-height:180px}
+.widget-col{flex:1;min-width:0;overflow-y:auto;border-right:1px solid var(--border)}
+.widget-col:last-child{border-right:none}
+.widget-col-header{display:flex;align-items:center;gap:6px;padding:4px 10px;background:var(--section-bg);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:1}
+.widget-col-header .key{font-family:var(--font-mono);font-size:10px;font-weight:700;color:var(--accent)}
+.widget-col-header .preview{font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.widget-line{padding:2px 10px;font-family:var(--font-mono);font-size:11px;line-height:1.6;color:var(--muted)}
+.widget-line:hover{background:var(--hover-bg)}
+.widget-line .done{color:var(--success)}
+.widget-line .pending{color:var(--muted)}
+.widget-line .active{color:var(--accent);font-weight:600}
+.widget-structured{padding:8px 10px}
+.widget-progress{height:4px;background:var(--section-bg);border-radius:2px;overflow:hidden;margin:4px 0}
+.widget-progress-bar{height:100%;background:var(--accent);border-radius:2px;transition:width .3s var(--ease)}
+
+/* ── 6. Editor ── */
+.editor-area{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);overflow:hidden}
+.editor-toolbar{display:flex;align-items:center;gap:8px;padding:4px 10px;border-bottom:1px solid var(--border);background:var(--section-bg)}
+.editor-toolbar .mode-badge{font-size:10px;font-weight:600;padding:1px 6px;border-radius:var(--radius-sm);font-family:var(--font-mono)}
+.mode-insert{background:var(--success-light);color:var(--success)}
+.mode-normal{background:var(--warning-light);color:var(--warning)}
+.editor-input{width:100%;border:none;outline:none;padding:8px 12px;font-size:13px;font-family:var(--font-body);background:transparent;color:var(--fg);resize:none;min-height:36px}
+
+/* ── 7. Autocomplete ── */
+.autocomplete-wrap{position:relative;display:inline-block}
+.autocomplete-menu{position:absolute;bottom:100%;left:0;right:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow-md);overflow:hidden;z-index:10;min-width:240px}
+.autocomplete-item{display:flex;align-items:center;gap:8px;padding:6px 12px;cursor:pointer;font-size:12px}
+.autocomplete-item:hover,.autocomplete-item.active{background:var(--hover-bg)}
+.autocomplete-item .prefix{font-family:var(--font-mono);color:var(--accent);font-weight:600;font-size:11px}
+.autocomplete-item .desc{color:var(--muted);font-size:11px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ── 8. Dialog ── */
+.dialog-overlay{position:fixed;inset:0;background:rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center;z-index:100;backdrop-filter:blur(2px)}
+.dialog{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);box-shadow:var(--shadow-xl);width:420px;max-width:90vw;overflow:hidden}
+.dialog-header{padding:16px 20px 0;font-size:15px;font-weight:600}
+.dialog-body{padding:12px 20px 16px}
+.dialog-footer{display:flex;justify-content:flex-end;gap:8px;padding:0 20px 16px}
+.dialog-row{display:flex;flex-direction:column;gap:4px;margin-bottom:12px}
+.dialog-row label{font-size:12px;font-weight:500;color:var(--muted)}
+.dialog-option{display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;transition:all .15s}
+.dialog-option:hover{border-color:var(--accent)}
+.dialog-option.selected{border-color:var(--accent);background:var(--accent-light)}
+.dialog-option .radio{width:14px;height:14px;border:2px solid var(--border);border-radius:50%;display:flex;align-items:center;justify-content:center}
+.dialog-option.selected .radio{border-color:var(--accent)}
+.dialog-option.selected .radio::after{content:'';width:6px;height:6px;border-radius:50%;background:var(--accent)}
+.dialog-countdown{font-size:11px;color:var(--warning);font-family:var(--font-mono)}
+
+/* ── 9. Notification / Toast ── */
+.toast{display:flex;align-items:center;gap:8px;padding:8px 14px;border-radius:var(--radius-sm);border:1px solid var(--border);font-size:12px;box-shadow:var(--shadow-sm);animation:slideIn .3s var(--ease)}
+.toast-info{background:var(--surface);border-left:3px solid var(--accent)}
+.toast-warning{background:var(--warning-light);border-left:3px solid var(--warning)}
+.toast-error{background:var(--danger-light);border-left:3px solid var(--danger)}
+.toast .icon{font-size:14px;flex-shrink:0}
+@keyframes slideIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
+
+/* ── 10. Status Bar Items ── */
+.status-chip{display:inline-flex;align-items:center;gap:4px;font-size:10px;padding:2px 6px;border-radius:var(--radius-sm);background:var(--section-bg);color:var(--muted)}
+.status-chip.active{color:var(--accent);background:var(--accent-light)}
+.status-dot{width:5px;height:5px;border-radius:50%;display:inline-block}
+
+/* ── 11. Overlay ── */
+.overlay-demo{position:relative;height:300px;border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;background:var(--bg)}
+.overlay-panel{position:absolute;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow-md);overflow:hidden;z-index:5}
+.overlay-panel-right{right:8px;top:8px;bottom:8px;width:50%}
+.overlay-panel-center{top:50%;left:50%;transform:translate(-50%,-50%);width:60%}
+.overlay-panel-header{padding:6px 12px;border-bottom:1px solid var(--border);font-size:11px;font-weight:600;color:var(--muted);display:flex;justify-content:space-between;align-items:center}
+.overlay-panel-body{padding:12px;font-size:12px}
+
+/* ── 12. Extension Error ── */
+.ext-error{display:flex;align-items:flex-start;gap:8px;padding:8px 12px;border:1px solid var(--danger);border-radius:var(--radius-sm);background:var(--danger-light);font-size:12px}
+.ext-error .icon{color:var(--danger);flex-shrink:0;margin-top:1px}
+.ext-error .ext-name{font-family:var(--font-mono);font-weight:600;font-size:11px;color:var(--danger)}
+
+/* ── 13. EditorDialog (new) ── */
+.editor-dialog .dialog-body textarea{width:100%;min-height:160px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--fg);font-family:var(--font-mono);font-size:12px;resize:vertical;outline:none;line-height:1.6}
+.editor-dialog .dialog-body textarea:focus{border-color:var(--accent)}
+
+/* ── Mapping tag ── */
+.mapping-tag{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:600;padding:2px 8px;border-radius:var(--radius-sm);font-family:var(--font-mono)}
+.tag-existing{background:var(--success-light);color:var(--success)}
+.tag-new{background:var(--warning-light);color:var(--warning)}
+.tag-enhance{background:var(--accent-light);color:var(--accent)}
+.tag-skip{background:var(--section-bg);color:var(--muted)}
+.mapping-info{margin-top:12px;padding:10px 14px;background:var(--section-bg);border:1px solid var(--border);border-radius:var(--radius-sm);font-size:11px;color:var(--muted);line-height:1.7}
+.mapping-info code{background:var(--surface);padding:1px 4px;border-radius:var(--radius-sm);font-size:11px}
+</style>
+</head>
+<body>
+<div class="app-shell">
+
+<!-- ═══ Header ═══ -->
+<div class="app-header">
+  <h1>Pi TUI → xyz-agent GUI 组件映射 Demo</h1>
+  <div class="controls">
+    <button class="theme-toggle" onclick="toggleTheme()">Dark / Light</button>
+  </div>
+</div>
+
+<!-- ═══ Main ═══ -->
+<div class="main-area" style="max-width:960px;margin:0 auto;width:100%">
+
+<!-- ═══════════════════════════════════════════════════════════════
+     Section 1: 消息区
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">1. 消息区 Messages <span class="badge badge-ok">已有组件</span></div>
+  <div class="component-grid">
+
+    <!-- User Message -->
+    <div class="component-row">
+      <div class="component-label">UserMessage<small>MessageBubble.vue</small></div>
+      <div class="msg msg-user">
+        <div class="msg-role">用户</div>
+        <div class="msg-text">帮我分析一下这个函数的性能瓶颈</div>
+      </div>
+    </div>
+
+    <!-- Assistant Message -->
+    <div class="component-row">
+      <div class="component-label">AssistantMessage<small>StreamingMessage.vue</small></div>
+      <div class="msg msg-assistant">
+        <div class="msg-role">助手</div>
+        <div class="msg-text">我来分析一下这个函数。首先看时间复杂度...</div>
+      </div>
+    </div>
+
+    <!-- Thinking Block -->
+    <div class="component-row">
+      <div class="component-label">ThinkingBlock<small>ThinkingBlock.vue</small></div>
+      <div class="thinking-block">
+        <div class="thinking-header"><span class="dot"></span> 思考中 (expanded)</div>
+        <div class="thinking-body">Let me analyze the time complexity of this function. The nested loop suggests O(n²) but the early exit might reduce average case...</div>
+      </div>
+    </div>
+
+    <!-- Custom Message — NEW -->
+    <div class="component-row">
+      <div class="component-label">CustomMessage <span class="mapping-tag tag-new">NEW</span><small>CustomMessageRenderer.vue</small></div>
+      <div class="msg msg-custom">
+        <div class="msg-custom-type">[plan-mode]</div>
+        <div class="msg-role">助手</div>
+        <div class="msg-text">进入 Plan 模式 — AI 将只规划不执行代码修改</div>
+      </div>
+      <div class="mapping-info">
+        <strong>新组件：</strong><code>CustomMessageRenderer.vue</code><br>
+        接收 <code>customType: string</code> + <code>content: string</code>，按 customType 路由到不同样式。<br>
+        <strong>Props：</strong><code>customType, content, details?, expanded</code><br>
+        <strong>数据来源：</strong>RPC <code>message_start</code> 事件中的 <code>msg.customType</code>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     Section 2: 工具调用
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">2. 工具调用 Tool Calls <span class="badge badge-ok">已有组件</span></div>
+  <div class="component-grid">
+
+    <!-- Bash tool -->
+    <div class="component-row">
+      <div class="component-label">Bash Tool<small>BashToolRenderer.vue</small></div>
+      <div class="tool-card">
+        <div class="tool-header">
+          <span class="tool-badge tool-badge-bash">bash</span>
+          <span class="tool-path">npm run test -- --reporter=verbose</span>
+          <span class="tool-status done">done</span>
+        </div>
+        <div class="tool-body" style="max-height:80px">Test Files  12 passed (12)
+Tests       47 passed (47)
+Duration    3.2s</div>
+      </div>
+    </div>
+
+    <!-- Edit tool -->
+    <div class="component-row">
+      <div class="component-label">Edit Tool<small>EditToolRenderer.vue</small></div>
+      <div class="tool-card">
+        <div class="tool-header">
+          <span class="tool-badge tool-badge-edit">edit</span>
+          <span class="tool-path">src/utils/parser.ts</span>
+          <span class="tool-status done">done</span>
+        </div>
+        <div class="tool-body" style="color:var(--success)">- const result = parse(input);
++ const result = parseStrict(input);</div>
+      </div>
+    </div>
+
+    <!-- Custom tool — ENHANCE -->
+    <div class="component-row">
+      <div class="component-label">Custom Tool <span class="mapping-tag tag-enhance">ENHANCE</span><small>CustomToolRenderer.vue</small></div>
+      <div class="tool-card">
+        <div class="tool-header">
+          <span class="tool-badge tool-badge-custom">my_tool</span>
+          <span class="tool-path">action: summarize</span>
+          <span class="tool-status running">running</span>
+        </div>
+        <div class="tool-body">Processing 3 files...</div>
+        <button class="tool-expand">to expand ▾</button>
+      </div>
+      <div class="mapping-info">
+        <strong>新组件：</strong><code>CustomToolRenderer.vue</code><br>
+        按 tool name 渲染自定义工具调用和结果。扩展 <code>ToolCallCard.vue</code>，新增 customTool 渲染分支。<br>
+        <strong>Props：</strong><code>toolName, input, output, details, isPartial, expanded</code><br>
+        <strong>数据来源：</strong>RPC <code>tool_execution_start/end</code> 事件；自定义渲染数据需 bridge extension
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     Section 3: Working Indicator
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">3. Working Indicator <span class="badge badge-partial">需增强</span></div>
+  <div class="component-grid">
+
+    <div class="component-row">
+      <div class="component-label">默认思考指示<small>ChatPanel.vue (已有)</small></div>
+      <div class="working-row">
+        <span class="working-dot"></span>
+        <span class="working-text">思考中...</span>
+      </div>
+    </div>
+
+    <div class="component-row">
+      <div class="component-label">自定义文案 <span class="mapping-tag tag-enhance">ENHANCE</span><small>修改 ChatPanel.vue</small></div>
+      <div class="working-row">
+        <span class="working-dot"></span>
+        <span class="working-text working-custom">深度分析中...</span>
+      </div>
+      <div class="mapping-info">
+        <strong>增强：</strong>ChatPanel.vue 的思考指示器支持外部文案覆盖。<br>
+        <strong>数据来源：</strong>bridge extension 将 <code>setWorkingMessage</code> 的文案通过 bridge 传递
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     Section 4: Widget
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">4. Widget (编辑器上方/下方) <span class="badge badge-partial">需增强</span></div>
+  <div class="component-grid">
+
+    <!-- String Widget — existing -->
+    <div class="component-row">
+      <div class="component-label">纯文本 Widget<small>WidgetDock.vue (已有)</small></div>
+      <div class="widget-dock">
+        <div class="widget-col">
+          <div class="widget-col-header">
+            <span class="key">plan</span>
+            <span class="preview">Phase 2: Writing Plan</span>
+          </div>
+          <div class="widget-line"><span class="done">✓</span> Phase 1: Spec</div>
+          <div class="widget-line"><span class="active">●</span> Phase 2: Writing Plan</div>
+          <div class="widget-line"><span class="pending">○</span> Phase 3: Dev</div>
+          <div class="widget-line"><span class="pending">○</span> Phase 4: Test</div>
+        </div>
+        <div class="widget-col">
+          <div class="widget-col-header">
+            <span class="key">tasks</span>
+            <span class="preview">3/7 completed</span>
+          </div>
+          <div class="widget-line"><span class="done">✓</span> Setup project structure</div>
+          <div class="widget-line"><span class="done">✓</span> Define interfaces</div>
+          <div class="widget-line"><span class="done">✓</span> Implement core logic</div>
+          <div class="widget-line"><span class="active">●</span> Write unit tests</div>
+          <div class="widget-line"><span class="pending">○</span> Integration test</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Structured Widget — NEW -->
+    <div class="component-row">
+      <div class="component-label">结构化 Widget <span class="mapping-tag tag-enhance">ENHANCE</span><small>增强 WidgetDock.vue</small></div>
+      <div class="widget-dock" style="max-height:none">
+        <div class="widget-col" style="border-right:none">
+          <div class="widget-col-header">
+            <span class="key">build</span>
+            <span class="preview">构建进度</span>
+          </div>
+          <div class="widget-structured">
+            <div style="font-size:11px;color:var(--muted);margin-bottom:4px">编译进度</div>
+            <div class="widget-progress"><div class="widget-progress-bar" style="width:72%"></div></div>
+            <div style="font-size:11px;color:var(--accent);font-weight:600">72% — 36/50 files</div>
+          </div>
+        </div>
+      </div>
+      <div class="mapping-info">
+        <strong>增强：</strong><code>WidgetDock.vue</code> 支持结构化数据渲染（进度条、任务列表等），不只是 <code>string[]</code>。<br>
+        <strong>方案：</strong>bridge extension 将 widget 内容序列化为 JSON（含 type 字段），前端按 type 路由渲染
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     Section 5: Editor
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">5. Editor 输入区 <span class="badge badge-partial">部分已有</span></div>
+  <div class="component-grid">
+
+    <div class="component-row">
+      <div class="component-label">普通输入<small>ChatInput.vue (已有)</small></div>
+      <div class="editor-area">
+        <textarea class="editor-input" rows="2" placeholder="输入消息..."></textarea>
+      </div>
+    </div>
+
+    <div class="component-row">
+      <div class="component-label">预填充文本<small>setEditorText (已有)</small></div>
+      <div class="editor-area">
+        <textarea class="editor-input" rows="2">帮我修复这个函数的 bug</textarea>
+      </div>
+    </div>
+
+    <div class="component-row">
+      <div class="component-label">Autocomplete <span class="mapping-tag tag-enhance">ENHANCE</span><small>增强 ChatInput.vue</small></div>
+      <div style="position:relative;display:inline-block;width:100%">
+        <div class="editor-area" style="position:relative">
+          <input class="editor-input" value="/fix-tests " style="min-height:auto">
+        </div>
+        <div class="autocomplete-menu" style="bottom:auto;top:100%;margin-top:2px">
+          <div class="autocomplete-item active"><span class="prefix">/fix-tests</span><span class="desc">Fix failing tests</span></div>
+          <div class="autocomplete-item"><span class="prefix">/review</span><span class="desc">Code review</span></div>
+          <div class="autocomplete-item"><span class="prefix">/deploy</span><span class="desc">Deploy to staging</span></div>
+          <div class="autocomplete-item" style="border-top:1px solid var(--border);margin-top:2px;padding-top:6px"><span class="prefix" style="color:var(--warning)">#2983</span><span class="desc">Extension API issue</span></div>
+          <div class="autocomplete-item"><span class="prefix" style="color:var(--warning)">#2753</span><span class="desc">Resource reload bug</span></div>
+        </div>
+      </div>
+      <div class="mapping-info">
+        <strong>增强：</strong>ChatInput.vue 的 SlashMenu 叠加 extension 注册的自定义补全（如 <code>#issue</code> 编号）。<br>
+        <strong>数据来源：</strong>bridge extension 通过 <code>bridge:event</code> 传递补全数据
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     Section 6: Dialog
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">6. 弹窗交互 Dialogs <span class="badge badge-partial">部分已有</span></div>
+  <div class="component-grid">
+
+    <!-- Confirm — existing -->
+    <div class="component-row">
+      <div class="component-label">Confirm<small>ExtensionUIDialog.vue (已有)</small></div>
+      <div class="card" style="width:380px">
+        <div class="card-header">Extension Request</div>
+        <div class="card-body">
+          <p style="font-size:13px;margin-bottom:16px;color:var(--muted)">This will clear the entire conversation history. Are you sure?</p>
+          <div style="display:flex;justify-content:flex-end;gap:8px">
+            <button class="btn btn-sm">取消</button>
+            <button class="btn btn-sm btn-primary">确认</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Select — existing -->
+    <div class="component-row">
+      <div class="component-label">Select<small>ExtensionUIDialog.vue (已有)</small></div>
+      <div class="card" style="width:380px">
+        <div class="card-header">Extension Request</div>
+        <div class="card-body">
+          <p style="font-size:13px;margin-bottom:12px;color:var(--muted)">Choose deployment target:</p>
+          <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px">
+            <div class="dialog-option"><div class="radio"></div><span style="font-size:13px">staging</span></div>
+            <div class="dialog-option selected"><div class="radio"></div><span style="font-size:13px">production</span></div>
+            <div class="dialog-option"><div class="radio"></div><span style="font-size:13px">preview</span></div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px">
+            <button class="btn btn-sm">取消</button>
+            <button class="btn btn-sm btn-primary">选择</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Input — existing -->
+    <div class="component-row">
+      <div class="component-label">Input<small>ExtensionUIDialog.vue (已有)</small></div>
+      <div class="card" style="width:380px">
+        <div class="card-header">Extension Request</div>
+        <div class="card-body">
+          <p style="font-size:13px;margin-bottom:12px;color:var(--muted)">Enter branch name:</p>
+          <input class="input" style="width:100%;margin-bottom:16px" value="feat/new-widget">
+          <div style="display:flex;justify-content:flex-end;gap:8px">
+            <button class="btn btn-sm">取消</button>
+            <button class="btn btn-sm btn-primary">提交</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Editor Dialog — NEW -->
+    <div class="component-row">
+      <div class="component-label">Editor <span class="mapping-tag tag-new">NEW</span><small>EditorDialog.vue</small></div>
+      <div class="card editor-dialog" style="width:480px">
+        <div class="card-header">Extension Request — Multi-line Editor</div>
+        <div class="card-body">
+          <p style="font-size:13px;margin-bottom:12px;color:var(--muted)">Edit the commit message:</p>
+          <textarea>feat: add widget dock component
+
+- Support string[] and structured data widgets
+- Add progress bar widget type
+- Integrate with bridge extension protocol</textarea>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
+            <button class="btn btn-sm">取消</button>
+            <button class="btn btn-sm btn-primary">提交</button>
+          </div>
+        </div>
+      </div>
+      <div class="mapping-info">
+        <strong>新组件：</strong><code>EditorDialog.vue</code> — 多行文本编辑 dialog<br>
+        <strong>Props：</strong><code>title, prefill, onConfirm, onCancel</code><br>
+        <strong>触发：</strong>pi extension 调用 <code>ctx.ui.editor(title, prefill)</code>
+      </div>
+    </div>
+
+    <!-- Timed Confirm — NEW variant -->
+    <div class="component-row">
+      <div class="component-label">Timed Dialog <span class="mapping-tag tag-enhance">ENHANCE</span><small>增强 ExtensionUIDialog.vue</small></div>
+      <div class="card" style="width:380px">
+        <div class="card-header">Extension Request <span class="dialog-countdown">(4s)</span></div>
+        <div class="card-body">
+          <p style="font-size:13px;margin-bottom:16px;color:var(--muted)">Auto-proceed in 4 seconds. Approve deployment?</p>
+          <div style="display:flex;justify-content:flex-end;gap:8px">
+            <button class="btn btn-sm">取消</button>
+            <button class="btn btn-sm btn-primary">确认</button>
+          </div>
+          <div style="height:3px;background:var(--section-bg);border-radius:2px;margin-top:12px;overflow:hidden">
+            <div style="height:100%;width:40%;background:var(--warning);border-radius:2px;transition:width 1s linear"></div>
+          </div>
+        </div>
+      </div>
+      <div class="mapping-info">
+        <strong>增强：</strong>ExtensionUIDialog.vue 支持倒计时自动关闭。<br>
+        <strong>触发：</strong>pi extension 调用 <code>ctx.ui.confirm(title, msg, { timeout: 5000 })</code>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     Section 7: Notification
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">7. Notification / Toast <span class="badge badge-ok">已有组件</span></div>
+  <div class="component-grid">
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div class="toast toast-info"><span class="icon">i</span> Extension loaded successfully</div>
+      <div class="toast toast-warning"><span class="icon">!</span> Dangerous command detected: rm -rf</div>
+      <div class="toast toast-error"><span class="icon">x</span> Failed to execute tool: timeout exceeded</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     Section 8: Status Bar
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">8. Status Bar Items <span class="badge badge-partial">需增强</span></div>
+  <div class="component-grid">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <span class="status-chip active"><span class="status-dot" style="background:var(--accent)"></span> plan-mode: active</span>
+      <span class="status-chip"><span class="status-dot" style="background:var(--success)"></span> thinking: high</span>
+      <span class="status-chip"><span class="status-dot" style="background:var(--warning)"></span> build: 72%</span>
+      <span class="status-chip"><span class="status-dot" style="background:var(--muted)"></span> turn: 3</span>
+    </div>
+    <div class="mapping-info">
+      <strong>增强：</strong><code>AppStatusbar.vue</code> 将 extension status 也渲染到右侧区域（目前只有 plugin status）。<br>
+      <strong>数据来源：</strong>RPC <code>extension_ui_request</code> 中的 <code>setStatus</code> 方法（已通过 EventAdapter 转发）
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     Section 9: Overlay
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">9. Overlay / 浮层 <span class="badge badge-skip">P2 延后</span></div>
+  <div class="component-grid">
+    <div class="overlay-demo">
+      <div style="padding:20px;font-size:12px;color:var(--muted)">
+        <!-- 聊天消息模拟 -->
+        <div style="margin-bottom:8px;color:var(--fg)">帮我写一个解析函数</div>
+        <div style="margin-bottom:8px;padding:6px 10px;background:var(--msg-assistant-bg);border-radius:var(--radius-sm)">好的，我来分析需求并实现...</div>
+        <div style="color:var(--border)">...</div>
+      </div>
+      <!-- Right overlay panel -->
+      <div class="overlay-panel overlay-panel-right">
+        <div class="overlay-panel-header">
+          <span>Extension: plan-mode</span>
+          <button class="btn btn-sm" style="padding:1px 6px">ESC</button>
+        </div>
+        <div class="overlay-panel-body">
+          <div style="font-size:11px;font-weight:600;color:var(--accent);margin-bottom:8px">Current Plan</div>
+          <div style="font-size:12px;line-height:1.8">
+            <div><span style="color:var(--success)">✓</span> Analyze requirements</div>
+            <div><span style="color:var(--success)">✓</span> Define interfaces</div>
+            <div><span style="color:var(--accent);font-weight:600">●</span> Implement parser</div>
+            <div><span style="color:var(--muted)">○</span> Write tests</div>
+            <div><span style="color:var(--muted)">○</span> Review</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="mapping-info">
+      <strong>P2 延后：</strong><code>ExtensionOverlay.vue</code> — 浮层容器组件。<br>
+      xyz-agent 已有 <code>DrawerOverlay.vue</code> 基础设施，但需要定义 overlay 协议。<br>
+      <strong>成本高：</strong>需要 bridge extension 序列化整个组件内容，ROI 低。大多数场景用 Widget + Dialog 即可覆盖。
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     Section 10: Extension Error
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">10. Extension Error <span class="badge badge-ok">已有协议</span></div>
+  <div class="component-grid">
+    <div class="ext-error">
+      <span class="icon">!</span>
+      <div>
+        <div class="ext-name">plan-mode</div>
+        <div style="margin-top:2px">Cannot read properties of undefined (reading 'sessionId')</div>
+      </div>
+    </div>
+    <div class="mapping-info">
+      <strong>已有协议：</strong>RPC <code>extension_error</code> 事件，EventAdapter 已翻译为 <code>extension.error</code> WS 事件。<br>
+      前端可渲染为 SystemNotification 或内联 error 消息。
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     Summary
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="section" style="margin-bottom:0">
+  <div class="section-title">组件映射汇总</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:12px">
+
+    <div class="card">
+      <div class="card-header" style="color:var(--success)">✅ 已有组件 (直接可用)</div>
+      <div class="card-body compact" style="line-height:2">
+        <div><code>MessageBubble.vue</code> ← UserMessage / AssistantMessage</div>
+        <div><code>StreamingMessage.vue</code> ← AssistantMessage 流式</div>
+        <div><code>ThinkingBlock.vue</code> ← ThinkingBlock</div>
+        <div><code>ToolCallCard.vue</code> ← ToolExecutionComponent (含展开/折叠)</div>
+        <div><code>BashToolRenderer.vue</code> ← Bash Tool</div>
+        <div><code>EditToolRenderer.vue</code> ← Edit Tool</div>
+        <div><code>WriteToolRenderer.vue</code> ← Write Tool</div>
+        <div><code>ReadToolRenderer.vue</code> ← Read Tool</div>
+        <div><code>ExtensionUIDialog.vue</code> ← confirm/select/input</div>
+        <div><code>WidgetDock.vue</code> ← setWidget (string[])</div>
+        <div><code>AppStatusbar.vue</code> ← setStatus (plugin only)</div>
+        <div><code>ToastContainer.vue</code> ← notify</div>
+        <div><code>ThemeProvider.vue</code> ← setTheme / getAllThemes</div>
+        <div><code>SystemNotification.vue</code> ← extension_error</div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-header" style="color:var(--warning)">🔨 新组件 (需新建)</div>
+        <div class="card-body compact" style="line-height:2">
+          <div><code>EditorDialog.vue</code> ← ctx.ui.editor() 多行编辑</div>
+          <div><code>CustomMessageRenderer.vue</code> ← registerMessageRenderer</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header" style="color:var(--accent)">⚡ 需增强的组件</div>
+        <div class="card-body compact" style="line-height:2">
+          <div><code>WidgetDock.vue</code> — 支持结构化数据 + belowEditor</div>
+          <div><code>AppStatusbar.vue</code> — 支持 extension status</div>
+          <div><code>ChatPanel.vue</code> — 可配置 working 文案 + 显隐</div>
+          <div><code>ExtensionUIDialog.vue</code> — 倒计时 + editor 分支</div>
+          <div><code>ChatInput.vue</code> — 自定义补全叠加</div>
+          <div><code>ToolCallCard.vue</code> — 截断 + 图片 + 自定义渲染</div>
+          <div><code>EditToolRenderer.vue</code> — inline diff 高亮</div>
+          <div><code>SystemNotification.vue</code> — compaction/branch/skill 消息</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     Section 11: Diff Rendering (遗漏补充)
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">11. Diff 高亮渲染 <span class="badge badge-partial">需增强</span></div>
+  <div class="component-grid">
+    <div class="component-row">
+      <div class="component-label">当前状态<small>EditToolRenderer.vue</small></div>
+      <div class="tool-card">
+        <div class="tool-header">
+          <span class="tool-badge tool-badge-edit">edit</span>
+          <span class="tool-path">src/utils/parser.ts</span>
+          <span class="tool-status done">done</span>
+          <span style="font-size:11px;color:var(--muted);margin-left:4px">+3/-1</span>
+        </div>
+        <div class="tool-body" style="max-height:60px;color:var(--muted)">(无 diff 高亮，只显示统计数字)</div>
+      </div>
+    </div>
+    <div class="component-row">
+      <div class="component-label">增强后 <span class="mapping-tag tag-enhance">ENHANCE</span><small>EditToolRenderer.vue 增强</small></div>
+      <div class="tool-card">
+        <div class="tool-header">
+          <span class="tool-badge tool-badge-edit">edit</span>
+          <span class="tool-path">src/utils/parser.ts</span>
+          <span class="tool-status done">done</span>
+          <span style="font-size:11px;color:var(--success);margin-left:4px">+3</span>
+          <span style="font-size:11px;color:var(--danger);margin-left:2px">-1</span>
+        </div>
+        <div class="tool-body" style="font-size:12px;line-height:1.7">
+<span style="color:var(--muted)">  12 | function parse(input: string) {</span>
+<span style="color:var(--danger);background:var(--danger-light)">- 13 |   const result = oldParser(input);</span>
+<span style="color:var(--success);background:var(--success-light)">+ 13 |   const result = parseStrict(input);</span>
+<span style="color:var(--success);background:var(--success-light)">+ 14 |   result.validated = true;</span>
+<span style="color:var(--success);background:var(--success-light)">+ 15 |   return result;</span>
+<span style="color:var(--muted)">  16 | }</span></div>
+        <button class="tool-expand">to expand ▾</button>
+      </div>
+      <div class="mapping-info">
+        <strong>增强：</strong><code>EditToolRenderer.vue</code> — 解析 tool result 中的 diff 内容，按行高亮渲染。<br>
+        added 行用 success 色，removed 行用 danger 色，context 行用 muted 色。支持折叠/展开。
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     Section 12: Tool Output 截断 + 图片 (遗漏补充)
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">12. Tool Output 截断 + 图片 <span class="badge badge-partial">需增强</span></div>
+  <div class="component-grid">
+    <!-- 截断 -->
+    <div class="component-row">
+      <div class="component-label">输出截断 <span class="mapping-tag tag-enhance">ENHANCE</span><small>ToolCallCard.vue 增强</small></div>
+      <div class="tool-card">
+        <div class="tool-header">
+          <span class="tool-badge tool-badge-bash">bash</span>
+          <span class="tool-path">find / -name "*.log"</span>
+          <span class="tool-status done">done</span>
+        </div>
+        <div class="tool-body" style="max-height:60px;overflow:hidden;position:relative">
+/var/log/system.log
+/var/log/install.log
+/var/log/diagnostic.log
+/var/log/wifi.log
+...<div style="position:absolute;bottom:0;left:0;right:0;height:30px;background:linear-gradient(transparent,var(--msg-tool-bg));pointer-events:none"></div></div>
+        <div style="padding:4px 12px;font-size:11px;color:var(--muted);display:flex;justify-content:space-between">
+          <span>Showing 4 of 1,247 lines</span>
+          <span class="" style="color:var(--accent);cursor:pointer">展开全部 ▾</span>
+        </div>
+      </div>
+    </div>
+    <!-- 图片 -->
+    <div class="component-row">
+      <div class="component-label">图片输出 <span class="mapping-tag tag-enhance">ENHANCE</span><small>ToolCallCard.vue 增强</small></div>
+      <div class="tool-card">
+        <div class="tool-header">
+          <span class="tool-badge tool-badge-custom">screenshot</span>
+          <span class="tool-path">capture viewport</span>
+          <span class="tool-status done">done</span>
+        </div>
+        <div class="tool-body" style="text-align:center;padding:12px">
+          <div style="display:inline-block;background:var(--section-bg);border:1px solid var(--border);border-radius:var(--radius-sm);padding:20px 40px;color:var(--muted);font-size:12px">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom:8px;display:block;margin-inline:auto;opacity:.4">
+              <rect x="3" y="3" width="18" height="18" rx="2"/>
+              <circle cx="8.5" cy="8.5" r="1.5"/>
+              <path d="m21 15-5-5L5 21"/>
+            </svg>
+            <img> rendered here<br>
+            <span style="font-size:10px;color:var(--border)">base64-decoded from tool result content[type=image]</span>
+          </div>
+        </div>
+      </div>
+      <div class="mapping-info">
+        <strong>增强：</strong><code>ToolCallCard.vue</code> — tool result 中 <code>type: "image"</code> 的 content 块渲染为 <code>&lt;img&gt;</code> 标签。<br>
+        pi 的 tool-execution 组件已支持 Kitty/iTerm2 图片渲染，xyz-agent 需要在 GUI 侧对等实现。
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     Section 13: 特殊消息类型 (遗漏补充)
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">13. 特殊消息类型 <span class="badge badge-partial">需增强</span></div>
+  <div class="component-grid">
+    <!-- Compaction Summary -->
+    <div class="component-row">
+      <div class="component-label">Compaction Summary <span class="mapping-tag tag-enhance">ENHANCE</span><small>SystemNotification.vue 增强</small></div>
+      <div class="card" style="border-left:3px solid var(--accent)">
+        <div class="card-body compact">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+            <span style="font-size:11px;font-weight:700;color:var(--accent)">Compaction</span>
+            <span style="font-size:10px;color:var(--muted)">150,000 → 23,000 tokens (85% saved)</span>
+          </div>
+          <div style="font-size:12px;color:var(--muted);line-height:1.6">Session context was compacted. Summary: Analyzed the authentication module, identified performance bottlenecks in JWT validation, proposed caching strategy...</div>
+          <button class="btn btn-sm" style="margin-top:6px;padding:1px 6px;font-size:10px">展开详情</button>
+        </div>
+      </div>
+    </div>
+    <!-- Branch Summary -->
+    <div class="component-row">
+      <div class="component-label">Branch Summary <span class="mapping-tag tag-enhance">ENHANCE</span><small>SystemNotification.vue 增强</small></div>
+      <div class="card" style="border-left:3px solid var(--warning)">
+        <div class="card-body compact">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+            <span style="font-size:11px;font-weight:700;color:var(--warning)">Branch Abandoned</span>
+            <span style="font-size:10px;color:var(--muted)">entry_abc123</span>
+          </div>
+          <div style="font-size:12px;color:var(--muted);line-height:1.6">Navigated to earlier checkpoint. Abandoned branch summary: Attempted recursive refactor but hit circular dependency...</div>
+        </div>
+      </div>
+    </div>
+    <!-- Skill Invocation -->
+    <div class="component-row">
+      <div class="component-label">Skill Invocation <span class="mapping-tag tag-enhance">ENHANCE</span><small>MessageBubble.vue 增强</small></div>
+      <div class="card" style="border-left:3px solid var(--agent)">
+        <div class="card-body compact">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+            <span style="font-size:10px;font-weight:700;color:var(--agent);background:var(--agent-light);padding:1px 6px;border-radius:var(--radius-sm)">skill: ts-taste-check</span>
+            <span style="font-size:10px;color:var(--muted)">/skill:ts-taste-check</span>
+          </div>
+          <div style="font-size:12px;color:var(--muted);line-height:1.6;max-height:60px;overflow:hidden">
+            # TypeScript Taste Check\n\nAnalyze the code quality of the provided files against established coding principles...<div style="color:var(--accent);cursor:pointer;font-size:11px;margin-top:4px">展开全部 ▾</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="mapping-info">
+      <strong>增强：</strong><code>SystemNotification.vue</code> 和 <code>MessageBubble.vue</code> 增加特殊消息类型渲染：<br>
+      • <strong>Compaction Summary</strong>：显示 compaction 前后 token 数和摘要内容<br>
+      • <strong>Branch Summary</strong>：tree 导航时显示被放弃分支的摘要<br>
+      • <strong>Skill Invocation</strong>：skill 调用时显示 skill 标签 + 调用内容（折叠/展开）<br>
+      <strong>数据来源：</strong>RPC <code>compaction_end</code> 事件、<code>message_start</code> 中的特殊标记
+    </div>
+  </div>
+</div>
+
+</div><!-- main-area -->
+
+<!-- ═══ Footer ═══ -->
+<div class="app-footer">
+  <div style="display:flex;align-items:center;gap:10px">
+    <span style="display:inline-flex;align-items:center;gap:4px">
+      <span style="width:5px;height:5px;border-radius:50%;background:var(--success)"></span>
+      connected
+    </span>
+    <span style="font-size:10px">pi 0.75.5-xyz-0.1</span>
+  </div>
+  <div style="display:flex;align-items:center;gap:8px">
+    <span class="status-chip active"><span class="status-dot" style="background:var(--accent)"></span> plan-mode: active</span>
+    <span class="status-chip"><span class="status-dot" style="background:var(--success)"></span> thinking: high</span>
+  </div>
+</div>
+
+</div><!-- app-shell -->
+
+<script>
+function toggleTheme() {
+  const html = document.documentElement
+  const current = html.getAttribute('data-theme')
+  html.setAttribute('data-theme', current === 'dark' ? 'light' : 'dark')
+}
+</script>
+</body>
+</html>

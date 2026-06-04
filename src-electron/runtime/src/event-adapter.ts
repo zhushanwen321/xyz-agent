@@ -7,6 +7,12 @@ import type { PiEventListener } from './rpc-client.js'
 
 export type WsSender = (msg: ServerMessage) => void
 
+/** Strip ANSI escape sequences from text (pi RPC mode sends raw escape codes for themed output) */
+const ANSI_REGEX = /\x1b\[[0-9;]*m/g
+function stripAnsi(text: string): string {
+  return text.replace(ANSI_REGEX, '')
+}
+
 const STOP_REASON_MAP: Record<string, string> = {
   stop: 'end_turn',
   end_turn: 'end_turn',
@@ -271,16 +277,16 @@ export class EventAdapter {
         if (method === 'setStatus') {
           this.options?.onStatusSetUpdate?.({
             sessionId: sid,
-            key: String(event.key ?? ''),
-            text: String(event.text ?? ''),
+            key: String(event.statusKey ?? ''),
+            text: stripAnsi(String(event.statusText ?? '')),
           })
           const statusType: ServerMessageType = EXTENSION_EVENTS.STATUS
           this.send({
             type: statusType,
             payload: {
               sessionId: sid,
-              statusKey: String(event.key ?? ''),
-              text: String(event.text ?? ''),
+              statusKey: String(event.statusKey ?? ''),
+              text: stripAnsi(String(event.statusText ?? '')),
             },
           })
           return null
@@ -288,13 +294,15 @@ export class EventAdapter {
         // setWidget: send WS event to frontend
         if (method === 'setWidget') {
           const widgetType: ServerMessageType = EXTENSION_EVENTS.WIDGET
+          const widgetPayload = {
+            sessionId: sid,
+            widgetKey: String(event.widgetKey ?? ''),
+            lines: Array.isArray(event.widgetLines) ? (event.widgetLines as unknown[]).map(l => stripAnsi(String(l))) : [],
+          }
+          console.log('[EventAdapter] setWidget:', widgetPayload.widgetKey, 'lines:', widgetPayload.lines.length, 'sessionId:', sid)
           this.send({
             type: widgetType,
-            payload: {
-              sessionId: sid,
-              widgetKey: String(event.key ?? ''),
-              lines: Array.isArray(event.lines) ? (event.lines as unknown[]).map(String) : [],
-            },
+            payload: widgetPayload,
           })
           return null
         }

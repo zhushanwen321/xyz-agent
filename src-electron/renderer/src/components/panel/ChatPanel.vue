@@ -67,32 +67,23 @@
           :message="streamingMessage"
           :is-streaming="isStreaming"
         />
-
-        <!-- Approval card -->
-        <ApprovalCard
-          v-if="pendingApproval"
-          :pending="pendingApproval"
-          @approve="$emit('approve', $event)"
-          @deny="$emit('deny', $event)"
-          @always-allow="$emit('always-allow', $event)"
-        />
       </template>
     </div>
 
-    <!-- Widget Dock: fixed above input, max 2 columns -->
+    <!-- Widget Dock -->
     <WidgetDock :widgets="extensionWidgets" />
 
-    <!-- Extension status items -->
-    <div v-if="extensionStatuses.length > 0" class="flex items-center gap-2 px-4 py-1 border-t border-border bg-surface">
-      <span
-        v-for="s in extensionStatuses"
-        :key="s.statusKey"
-        class="inline-flex items-center gap-1 text-[10px] text-muted"
-        :title="s.statusKey"
-      >{{ s.text }}</span>
+    <!-- Approval card overlays ChatInput when pending -->
+    <div v-if="pendingApproval" class="relative">
+      <ApprovalCard
+        :pending="pendingApproval"
+        @approve="$emit('approve', $event)"
+        @deny="$emit('deny', $event)"
+        @always-allow="$emit('always-allow', $event)"
+      />
     </div>
-
     <ChatInput
+      v-else
       :is-streaming="isStreaming"
       :is-compacting="isCompacting"
       :session-id="sessionId ?? ''"
@@ -107,7 +98,7 @@
 
 <script setup lang="ts">
 import { ref, watch, nextTick, onMounted } from 'vue'
-import type { Message, ExtensionWidgetPayload, ExtensionStatusPayload } from '@xyz-agent/shared'
+import type { Message, ExtensionWidgetPayload } from '@xyz-agent/shared'
 import type { PendingToolCall } from '../chat/ApprovalCard.vue'
 import type { ChatMessage } from '../../stores/chat'
 import { isSystemNotification } from '../../stores/chat'
@@ -147,7 +138,6 @@ const props = withDefaults(
     isCompacting?: boolean
     isLoadingHistory?: boolean
     extensionWidgets?: ExtensionWidgetPayload[]
-    extensionStatuses?: ExtensionStatusPayload[]
   }>(),
   {
     agentOptions: () => [],
@@ -160,7 +150,6 @@ const props = withDefaults(
     isCompacting: false,
     isLoadingHistory: false,
     extensionWidgets: () => [],
-    extensionStatuses: () => [],
   }
 )
 

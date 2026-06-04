@@ -27,13 +27,13 @@
     </div>
 
     <!-- Body (expandable) -->
-    <div v-if="expanded" class="border-t border-border text-[11px] leading-normal font-mono text-muted">
+    <div v-if="expanded" class="border-t border-transparent text-xs leading-relaxed text-muted">
       <component v-if="rendererComp" :is="rendererComp" :tool-call="toolCall" />
       <DefaultToolRenderer v-else :tool-call="toolCall" />
     </div>
 
     <!-- Batch summary (last card of a write/edit batch) -->
-    <div v-if="showBatchSummary" class="flex items-center gap-1.5 px-3 py-1.5 border-t border-border text-[10px] font-mono text-success">
+    <div v-if="showBatchSummary" class="flex items-center gap-1.5 px-3 py-1.5 border-t border-transparent text-[10px] text-success">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="10" height="10" class="shrink-0"><path d="M4 8l3 3 5-6"/></svg>
       <span class="font-medium">{{ batchSummaryText }}</span>
     </div>
@@ -123,8 +123,15 @@ const cardBorderClass = computed(() => {
 })
 
 const elapsedMs = computed(() => {
-  const end = props.toolCall.endTime ?? now.value
-  return Math.max(0, end - props.toolCall.startTime)
+  const start = props.toolCall.startTime
+  if (!start) return 0
+  if (props.toolCall.endTime) {
+    return Math.max(0, props.toolCall.endTime - start)
+  }
+  if (isRunning.value) {
+    return Math.max(0, now.value - start)
+  }
+  return 0
 })
 
 const elapsedDisplay = computed(() => {
@@ -204,8 +211,8 @@ function toggleExpand() {
 
 <style scoped>
 .tool-card {
-  border: 1px solid var(--border);
-  background: var(--bg);
+  border: 1px solid transparent;
+  background: var(--msg-tool-bg);
   border-radius: 1px;
 }
 .tool-header {
@@ -219,7 +226,6 @@ function toggleExpand() {
   transition: background 0.15s ease;
   width: 100%;
   text-align: left;
-  font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.4;
 }

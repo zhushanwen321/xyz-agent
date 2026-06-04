@@ -1,23 +1,23 @@
 <template>
-  <div class="overflow-hidden border border-border mb-2 thinking-block">
+  <div class="overflow-hidden border border-transparent mb-2 thinking-block">
     <!-- eslint-disable-next-line taste/no-native-html-elements -- thinking-header has complex gradient styles + flex layout in <style scoped>, xyz-ui Button variant="ghost" doesn't support this customization -->
     <button class="thinking-header" @click="expanded = !expanded">
       <!-- Left: arrow + label -->
       <svg :class="['transition-transform duration-150 ease-ease shrink-0', { '-rotate-90': !expanded }]" xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
       <span v-if="streaming" class="inline-block w-[5px] h-2.5 bg-accent animate-pulse-bar motion-reduce:opacity-60 motion-reduce:animate-none"></span>
-      <span class="text-[11px] font-mono leading-snug text-accent font-medium">Thinking</span>
+      <span class="text-[11px] leading-snug text-accent font-medium">Thinking</span>
       <span class="flex-1"></span>
       <!-- Right: elapsed time -->
       <span class="shrink-0 text-[10px] tabular-nums leading-normal text-muted font-medium">{{ elapsedDisplay }}</span>
     </button>
-    <div v-if="expanded" class="border-t border-border px-3 py-2">
-      <pre class="whitespace-pre-wrap font-mono text-[11px] leading-normal text-muted m-0">{{ text }}</pre>
+    <div v-if="expanded" class="border-t border-transparent px-3 py-2">
+      <pre class="whitespace-pre-wrap text-xs leading-relaxed text-muted m-0">{{ text }}</pre>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
 
 const props = defineProps<{
@@ -35,23 +35,37 @@ const DECISECOND_MS = 100
 const SECONDS_PER_MINUTE = 60
 
 const now = ref(Date.now())
+const localStartTime = ref<number>(0)
 let timerInterval: ReturnType<typeof setInterval> | undefined
 
-onMounted(() => {
-  if (props.streaming) {
+function startTimer() {
+  if (!localStartTime.value) localStartTime.value = Date.now()
+  now.value = Date.now()
+  if (!timerInterval) {
     timerInterval = setInterval(() => { now.value = Date.now() }, DECISECOND_MS)
   }
-})
+}
 
-onBeforeUnmount(() => {
+function stopTimer() {
   if (timerInterval !== undefined) {
     clearInterval(timerInterval)
     timerInterval = undefined
   }
+}
+
+onMounted(() => {
+  if (props.streaming) startTimer()
 })
 
+watch(() => props.streaming, (streaming) => {
+  if (streaming) startTimer()
+  else stopTimer()
+})
+
+onBeforeUnmount(stopTimer)
+
 const elapsedMs = computed(() => {
-  const start = props.startTime
+  const start = props.startTime ?? localStartTime.value
   if (!start) return 0
   const end = props.streaming ? now.value : (props.endTime ?? now.value)
   return Math.max(0, end - start)
@@ -71,7 +85,7 @@ const elapsedDisplay = computed(() => {
 
 <style scoped>
 .thinking-block {
-  background: var(--bg);
+  background: var(--msg-thinking-bg);
   border-radius: 1px;
 }
 .thinking-header {

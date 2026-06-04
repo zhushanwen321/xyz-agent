@@ -57,6 +57,11 @@
   --level-caution-bg: oklch(95% 0.06 85);
   --level-danger-bg: oklch(95% 0.06 25);
 
+  /* Message area subtle backgrounds */
+  --msg-assistant-bg: oklch(98% 0.008 250);
+  --msg-thinking-bg: oklch(97% 0.015 195);
+  --msg-tool-bg: oklch(97% 0.010 70);
+
   /* White overlay (for text/code inside accent-colored elements) */
   --white-70: rgba(255, 255, 255, 0.7);
   --white-25: rgba(255, 255, 255, 0.25);
@@ -94,6 +99,11 @@
   --level-safe-bg: oklch(30% 0.06 145);
   --level-caution-bg: oklch(30% 0.06 85);
   --level-danger-bg: oklch(30% 0.06 25);
+
+  /* Message area subtle backgrounds */
+  --msg-assistant-bg: oklch(18% 0.010 250);
+  --msg-thinking-bg: oklch(19% 0.020 195);
+  --msg-tool-bg: oklch(19% 0.010 50);
 }
 
 /* ── Palette overrides (dark) ────────────────────────────────── */

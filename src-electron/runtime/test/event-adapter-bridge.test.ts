@@ -26,8 +26,8 @@ describe('EventAdapter extension bridge', () => {
       listener({
         type: 'extension_ui_request',
         method: 'setWidget',
-        key: 'my-widget',
-        lines: ['line 1', 'line 2', 'line 3'],
+        widgetKey: 'my-widget',
+        widgetLines: ['line 1', 'line 2', 'line 3'],
       })
 
       // Wait for async handling
@@ -70,8 +70,8 @@ describe('EventAdapter extension bridge', () => {
       listener({
         type: 'extension_ui_request',
         method: 'setWidget',
-        key: 'widget',
-        lines: [42, null, 'text'],
+        widgetKey: 'widget',
+        widgetLines: [42, null, 'text'],
       })
 
       await vi.waitFor(() => sent.length > 0)
@@ -92,8 +92,8 @@ describe('EventAdapter extension bridge', () => {
       listener({
         type: 'extension_ui_request',
         method: 'setStatus',
-        key: 'my-status',
-        text: 'Loading...',
+        statusKey: 'my-status',
+        statusText: 'Loading...',
       })
 
       await vi.waitFor(() => sent.length > 0)
@@ -125,8 +125,8 @@ describe('EventAdapter extension bridge', () => {
       listener({
         type: 'extension_ui_request',
         method: 'setStatus',
-        key: 'status',
-        text: 'Done',
+        statusKey: 'status',
+        statusText: 'Done',
       })
 
       await vi.waitFor(() => sent.length > 0)

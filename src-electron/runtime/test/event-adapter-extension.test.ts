@@ -197,8 +197,8 @@ describe('EventAdapter: extension event translation', () => {
             type: 'extension_ui_request',
             method: 'setStatus',
             id: 'req-d1',
-            key: 'status-key',
-            text: 'some status',
+            statusKey: 'status-key',
+            statusText: 'some status',
           }))
           return () => {}
         },
@@ -218,8 +218,8 @@ describe('EventAdapter: extension event translation', () => {
             type: 'extension_ui_request',
             method: 'setWidget',
             id: 'req-d2',
-            key: 'widget-key',
-            lines: ['line1', 'line2'],
+            widgetKey: 'widget-key',
+            widgetLines: ['line1', 'line2'],
           }))
           return () => {}
         },

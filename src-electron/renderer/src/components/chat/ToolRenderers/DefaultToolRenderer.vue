@@ -2,7 +2,7 @@
   <div class="p-0">
     <pre v-if="toolCall.input" class="whitespace-pre-wrap px-2.5 py-2 font-mono text-xs text-muted m-0">{{ formatInput(toolCall) }}</pre>
     <div v-if="toolCall.output !== undefined && toolCall.status !== 'running'" class="mx-2.5 mb-2 max-h-[200px] overflow-y-auto rounded-none border border-border bg-bg p-2">
-      <pre class="whitespace-pre-wrap font-mono text-xs text-muted m-0">{{ toolCall.output }}</pre>
+      <pre class="whitespace-pre-wrap text-xs text-muted m-0">{{ toolCall.output }}</pre>
     </div>
   </div>
 </template>

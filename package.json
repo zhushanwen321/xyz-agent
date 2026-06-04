@@ -15,6 +15,10 @@
     "lint": "eslint .",
     "prepare": "bash .githooks/install-hooks.sh"
   },
+  "dependencies": {
+    "@zhushanwen/pi-goal": "^0.1.4",
+    "@zhushanwen/pi-todo": "^0.1.4"
+  },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "eslint": "^10.3.0",

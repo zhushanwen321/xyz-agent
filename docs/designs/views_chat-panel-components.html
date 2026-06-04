@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ChatPanel Component Map</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #181b24;
+    --border: #2a2d38;
+    --text: #d4d4d8;
+    --muted: #71717a;
+    --accent: #14b8a6;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    padding: 40px 20px;
+  }
+  h1 { text-align: center; font-size: 14px; font-weight: 600; color: var(--muted); margin-bottom: 6px; letter-spacing: 0.05em; text-transform: uppercase; }
+  .subtitle { text-align: center; font-size: 12px; color: var(--muted); margin-bottom: 24px; opacity: 0.6; }
+
+  .panel-frame { max-width: 700px; margin: 0 auto 20px; border: 2px solid #ef4444; border-radius: 6px; overflow: hidden; position: relative; }
+  .panel-frame::before { content: attr(data-label); position: absolute; top: -20px; left: 0; font-size: 10px; font-weight: 600; color: #ef4444; font-family: 'SF Mono', Monaco, monospace; }
+
+  .comp { position: relative; }
+  .comp::before {
+    content: attr(data-label);
+    position: absolute; top: -17px; left: 4px;
+    font-size: 9px; font-weight: 600; font-family: 'SF Mono', Monaco, monospace;
+    padding: 1px 5px; border-radius: 2px; z-index: 10; white-space: nowrap;
+  }
+
+  /* Colors */
+  .c-panelbar { border: 2px solid #3b82f6; } .c-panelbar::before { background: #3b82f6; color: #fff; }
+  .c-chatarea { border: 2px solid #a855f7; } .c-chatarea::before { background: #a855f7; color: #fff; }
+  .c-sysmsg { border: 2px dashed #f59e0b; } .c-sysmsg::before { background: #f59e0b; color: #000; }
+  .c-msgbubble { border: 2px solid #22c55e; } .c-msgbubble::before { background: #22c55e; color: #000; }
+  .c-thinking { border: 2px dashed #06b6d4; } .c-thinking::before { background: #06b6d4; color: #000; }
+  .c-streaming { border: 2px solid #f97316; } .c-streaming::before { background: #f97316; color: #fff; }
+  .c-approval { border: 2px solid #ec4899; } .c-approval::before { background: #ec4899; color: #fff; }
+  .c-widgetdock { border: 2px solid #14b8a6; } .c-widgetdock::before { background: #14b8a6; color: #000; }
+  .c-chatinput { border: 2px solid #14b8a6; } .c-chatinput::before { background: #14b8a6; color: #000; }
+  .c-inputtoolbar { border: 1px dashed #14b8a6; } .c-inputtoolbar::before { background: #14b8a6; color: #000; }
+  .c-sessionstrip { border: 1px dashed #6366f1; } .c-sessionstrip::before { background: #6366f1; color: #fff; }
+  .c-statusbar { border: 2px solid #64748b; } .c-statusbar::before { background: #64748b; color: #fff; }
+  .c-removed { border: 2px dashed #ef4444; background: #ef44440d; } .c-removed::before { background: #ef4444; color: #fff; }
+
+  /* Content */
+  .inner { padding: 8px 12px; font-size: 12px; color: var(--muted); }
+
+  .panelbar-inner { display: flex; align-items: center; justify-content: space-between; padding: 6px 12px; background: var(--surface); border-bottom: 1px solid var(--border); }
+  .panelbar-inner .tab { font-size: 11px; color: var(--accent); font-weight: 500; }
+  .panelbar-inner .actions { font-size: 10px; color: var(--muted); }
+
+  .chatarea-inner { padding: 12px 20px; display: flex; flex-direction: column; gap: 5px; background: var(--bg); min-height: 140px; }
+
+  .msgbubble-inner { padding: 7px 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 2px; }
+  .msg-label { font-size: 9px; font-weight: 600; color: var(--muted); margin-bottom: 3px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .msg-text { font-size: 11px; color: var(--text); line-height: 1.5; }
+
+  .thinking-inner { padding: 8px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 2px; display: flex; align-items: center; gap: 6px; }
+  .thinking-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); animation: pulse 1.5s infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
+  .thinking-text { font-size: 10px; font-family: 'SF Mono', Monaco, monospace; color: var(--muted); }
+
+  .widget-inner { padding: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 2px; }
+  .widget-header { display: flex; align-items: center; gap: 6px; padding: 3px 8px; background: #13151d; border-bottom: 1px solid var(--border); }
+  .widget-header .key { font-family: 'SF Mono', Monaco, monospace; font-size: 9px; font-weight: 600; color: var(--accent); }
+  .widget-header .summary { font-size: 9px; color: #52525b; }
+  .widget-line { padding: 1px 8px; font-family: 'SF Mono', Monaco, monospace; font-size: 10px; color: var(--muted); line-height: 1.5; }
+
+  .input-box { border: 1px solid var(--border); border-radius: 4px; background: var(--surface); overflow: hidden; margin: 0 20px 10px; }
+  .input-text { padding: 10px 12px; font-size: 12px; color: var(--muted); }
+  .input-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 5px 10px; border-top: 1px solid var(--border); font-size: 10px; color: var(--muted); }
+  .input-toolbar .model { color: var(--text); font-weight: 500; }
+  .input-toolbar .send { width: 24px; height: 24px; border-radius: 3px; background: var(--accent); display: flex; align-items: center; justify-content: center; color: #000; font-size: 12px; }
+
+  .statusbar-inner { display: flex; align-items: center; justify-content: space-between; padding: 5px 12px; background: var(--surface); border-top: 1px solid var(--border); font-size: 10px; color: var(--muted); }
+  .statusbar-inner .dot { display: inline-block; width: 4px; height: 4px; border-radius: 50%; background: #22c55e; margin-right: 6px; }
+
+  .note { max-width: 700px; margin: 16px auto 0; font-size: 11px; color: var(--muted); line-height: 1.7; padding: 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; }
+  .note strong { color: var(--text); }
+  .note code { font-family: 'SF Mono', Monaco, monospace; font-size: 10px; background: #1e2130; padding: 1px 4px; border-radius: 2px; }
+
+  .legend { max-width: 700px; margin: 24px auto 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 6px; }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--muted); }
+  .legend-color { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+
+  .gap-label { text-align: center; font-size: 9px; color: var(--dim); font-style: italic; padding: 2px 0; }
+
+  .approval-inner { padding: 10px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; margin: 0 20px 10px; }
+  .approval-inner .title { font-size: 11px; color: var(--text); font-weight: 500; margin-bottom: 4px; }
+  .approval-inner .desc { font-size: 10px; color: var(--muted); margin-bottom: 8px; }
+  .approval-inner .actions { display: flex; gap: 6px; }
+  .approval-inner .btn { padding: 3px 10px; border-radius: 2px; font-size: 10px; }
+  .approval-inner .btn-deny { border: 1px solid var(--border); color: var(--muted); }
+  .approval-inner .btn-approve { background: var(--accent); color: #000; font-weight: 500; }
+</style>
+</head>
+<body>
+
+<h1>ChatPanel Component Map</h1>
+<p class="subtitle">当前面板组件结构（更新于 2026-06-04）</p>
+
+<!-- ── Main Panel ── -->
+<div class="panel-frame" data-label="ChatPanel (根容器)">
+
+  <!-- 1. PanelBar -->
+  <div class="comp c-panelbar" data-label="PanelBar" style="margin-top: 8px;">
+    <div class="panelbar-inner">
+      <span class="tab">● main</span>
+      <span class="actions">Agent: main | ● 0 alerts | ✓ 2 done</span>
+    </div>
+  </div>
+
+  <!-- 2. Messages Area -->
+  <div class="comp c-chatarea" data-label="MessagesArea (scrollable, max-w-[960px] centered)">
+    <div class="chatarea-inner">
+      <!-- SystemNotification -->
+      <div class="comp c-sysmsg" data-label="SystemNotification" style="margin-top: 12px;">
+        <div class="inner" style="display:flex;align-items:center;gap:6px;">
+          <span style="width:6px;height:6px;border-radius:50%;background:#22c55e;"></span>
+          <span style="font-size:11px;color:var(--text);">系统通知：操作已被用户终止</span>
+        </div>
+      </div>
+
+      <!-- User Message -->
+      <div class="comp c-msgbubble" data-label="MessageBubble (user)" style="margin-top: 12px;">
+        <div class="msgbubble-inner" style="margin-left:auto;max-width:70%;">
+          <span class="msg-text">帮我检查一下这个项目的 UI 组件</span>
+        </div>
+      </div>
+
+      <!-- Assistant Message with Thinking + ToolCall -->
+      <div class="comp c-msgbubble" data-label="MessageBubble (assistant)" style="margin-top: 12px;">
+        <div class="msgbubble-inner">
+          <div class="msg-label">助手</div>
+          <div class="comp c-thinking" data-label="ThinkingBlock" style="margin-top: 6px;">
+            <div class="thinking-inner">
+              <div class="thinking-dot"></div>
+              <span class="thinking-text">Thinking</span>
+              <span style="flex:1;"></span>
+              <span style="font-size:9px;">3.2s</span>
+            </div>
+          </div>
+          <div class="comp c-thinking" data-label="ToolCallCard" style="margin-top: 6px;">
+            <div class="thinking-inner">
+              <div class="thinking-dot" style="background:#f59e0b;"></div>
+              <span class="thinking-text" style="color:var(--accent);font-weight:600;">read</span>
+              <span style="flex:1;font-size:10px;margin-left:4px;">package.json</span>
+              <span style="font-size:9px;">1.2s</span>
+            </div>
+          </div>
+          <div class="msg-text" style="margin-top: 6px;">分析结果：该项目使用了自定义的 UI 组件库...</div>
+        </div>
+      </div>
+
+      <!-- StreamingMessage -->
+      <div class="comp c-streaming" data-label="StreamingMessage" style="margin-top: 12px;">
+        <div class="msgbubble-inner" style="border-color:#f97316;">
+          <div class="msg-label">助手</div>
+          <span class="msg-text">正在流式输出的内容...</span><span style="display:inline-block;width:1.5px;height:12px;background:var(--accent);animation:blink 1s infinite;vertical-align:text-bottom;"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Gap -->
+  <div class="gap-label">↕ gap (WidgetDock 与 ChatInput 的间隔)</div>
+
+  <!-- 3. WidgetDock -->
+  <div class="comp c-widgetdock" data-label="WidgetDock (可折叠，collapsed 时右侧出现悬浮按钮)" style="margin: 4px 20px;">
+    <div class="widget-inner">
+      <div class="widget-header">
+        <span class="key">goal</span>
+        <span class="summary">3/4 completed</span>
+        <span style="flex:1;"></span>
+        <span style="font-size:9px;color:var(--dim);cursor:pointer;">▸ 收起</span>
+      </div>
+      <div class="widget-line"><span style="color:#22c55e;">✓</span> 分析需求并拆分任务</div>
+      <div class="widget-line"><span style="color:#22c55e;">✓</span> 实现 core 数据结构</div>
+      <div class="widget-line"><span style="color:#22c55e;">✓</span> 编写单元测试</div>
+      <div class="widget-line"><span style="color:#f59e0b;">●</span> 集成测试和文档</div>
+    </div>
+  </div>
+
+  <!-- 4a. ApprovalCard (v-if, replaces ChatInput position) -->
+  <div class="comp c-approval" data-label="ApprovalCard (覆盖 ChatInput 位置, v-if/v-else 切换)" style="margin-top: 12px;">
+    <div class="approval-inner">
+      <div class="title">需要确认</div>
+      <div class="desc">工具调用需要你的许可</div>
+      <div class="actions">
+        <span class="btn btn-deny">拒绝</span>
+        <span class="btn btn-approve">允许</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4b. ChatInput (v-else, shown when no pendingApproval) -->
+  <div class="comp c-chatinput" data-label="ChatInput" style="margin-top: 12px;">
+    <div class="input-box">
+      <div class="input-text">输入消息... (Enter 发送, Shift+Enter 换行)</div>
+      <div class="comp c-inputtoolbar" data-label="InputToolbar" style="margin-top: -1px;">
+        <div class="input-toolbar">
+          <span><span class="model">ds-flash</span> @ router-openai</span>
+          <span style="display:flex;align-items:center;gap:6px;">
+            <span>↑14.0k / ↓29</span>
+            <span class="send">↑</span>
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- AppStatusbar (outside ChatPanel) -->
+<div class="panel-frame" data-label="" style="border-color:#64748b;">
+  <div class="comp c-statusbar" data-label="AppStatusbar (全局底栏, 所有 panel 共享)" style="margin-top: 8px;">
+    <div class="statusbar-inner">
+      <span><span class="dot"></span>已连接 pi 0.75.5-xyz-0.1</span>
+      <span>plugin status items (global only)</span>
+    </div>
+  </div>
+</div>
+
+<!-- Legend -->
+<div class="legend">
+  <div class="legend-item"><div class="legend-color" style="background:#3b82f6;"></div>PanelBar</div>
+  <div class="legend-item"><div class="legend-color" style="background:#a855f7;"></div>MessagesArea</div>
+  <div class="legend-item"><div class="legend-color" style="background:#f59e0b;border:1px dashed #f59e0b;"></div>SystemNotification</div>
+  <div class="legend-item"><div class="legend-color" style="background:#22c55e;"></div>MessageBubble</div>
+  <div class="legend-item"><div class="legend-color" style="background:#06b6d4;border:1px dashed #06b6d4;"></div>ThinkingBlock / ToolCallCard</div>
+  <div class="legend-item"><div class="legend-color" style="background:#f97316;"></div>StreamingMessage</div>
+  <div class="legend-item"><div class="legend-color" style="background:#14b8a6;"></div>WidgetDock (可折叠)</div>
+  <div class="legend-item"><div class="legend-color" style="background:#ec4899;"></div>ApprovalCard (覆盖 ChatInput)</div>
+  <div class="legend-item"><div class="legend-color" style="background:#14b8a6;border:1px dashed #14b8a6;"></div>ChatInput</div>
+  <div class="legend-item"><div class="legend-color" style="background:#64748b;"></div>AppStatusbar</div>
+</div>
+
+<div class="note">
+  <strong>组件层级：</strong><br>
+  <code>ChatPanel</code> → <code>PanelBar</code> + <code>MessagesArea</code>(scrollable) + <code>WidgetDock</code>(可折叠) + <code>ApprovalCard | ChatInput</code>(二选一)<br><br>
+  <code>MessagesArea</code> → <code>SystemNotification</code> | <code>MessageBubble</code>(含 <code>ThinkingBlock</code>, <code>ToolCallCard</code>) | <code>StreamingMessage</code><br><br>
+  <code>WidgetDock</code> → 展示 extension widget 数据（如 goal 进度），点击收起后右侧边距出现悬浮按钮<br><br>
+  <code>ApprovalCard</code> 和 <code>ChatInput</code> 通过 <code>v-if/v-else</code> 切换，不会同时显示<br><br>
+  <code>AppStatusbar</code> 在 ChatPanel 外层，所有 panel 共享，只显示全局 plugin status<br><br>
+  <strong>已移除：</strong>Extension Status（per-session 状态展示已从 AppStatusbar 移除）
+</div>
+
+<style>@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }</style>
+
+</body>
+</html>

@@ -14,7 +14,6 @@
     :is-compacting="sessionState.isCompacting"
     :is-loading-history="sessionState.isLoadingHistory"
     :extension-widgets="sessionWidgets"
-    :extension-statuses="sessionStatuses"
     @send="handleSend"
     @cancel="handleCancel"
     @select-model="handleSelectModel"
@@ -41,7 +40,7 @@ import { useToolApproval } from '../../composables/useToolApproval'
 import { useModel } from '../../composables/useModel'
 import { useExtensionWidget } from '../../composables/useExtensionWidget'
 import { on, off } from '../../lib/event-bus'
-import type { ServerMessage, ClientMessage, ExtensionWidgetPayload, ExtensionStatusPayload } from '@xyz-agent/shared'
+import type { ServerMessage, ClientMessage, ExtensionWidgetPayload } from '@xyz-agent/shared'
 import type { PendingToolCall } from '../chat/ApprovalCard.vue'
 import type { AgentOption, AgentView } from './ChatPanel.vue'
 import ChatPanel from './ChatPanel.vue'
@@ -62,7 +61,7 @@ const sessionIdRef = toRef(props, 'sessionId')
 const { sendMessage, abort } = useChat(sessionIdRef)
 const { approve: approveTool, deny: denyTool, alwaysAllow: alwaysAllowTool } = useToolApproval()
 const { switchModel } = useModel()
-const { widgets: allWidgets, statuses: allStatuses, cleanup: cleanupExtWidget } = useExtensionWidget()
+const { widgets: allWidgets } = useExtensionWidget()
 
 // Session-partitioned state — reads from reactive Map via computed
 // Vue tracks reactive accesses inside computed, so changes to Map entries trigger re-evaluation
@@ -81,14 +80,6 @@ const sessionWidgets = computed(() => {
   const result: ExtensionWidgetPayload[] = []
   for (const w of allWidgets.value.values()) {
     if (w.sessionId === props.sessionId) result.push(w)
-  }
-  return result
-})
-
-const sessionStatuses = computed(() => {
-  const result: ExtensionStatusPayload[] = []
-  for (const s of allStatuses.value.values()) {
-    if (s.sessionId === props.sessionId) result.push(s)
   }
   return result
 })
@@ -269,6 +260,5 @@ onUnmounted(() => {
   off('error', handleErrorMessage)
   off('session.compacting', onCompacting)
   off('session.compacted', onCompacted)
-  cleanupExtWidget()
 })
 </script>

@@ -3,8 +3,8 @@
   <div
     v-if="message.role === 'system'"
     :class="[
-      'self-stretch w-full max-w-none my-2 border border-border bg-surface rounded-none px-3.5 py-2.5 text-[13px] flex items-start gap-2.5 box-border',
-      message.status === 'error' && 'border-danger bg-danger-light',
+      'self-stretch w-full max-w-none my-2 border border-transparent bg-surface rounded-none px-3.5 py-2.5 text-[13px] flex items-start gap-2.5 box-border',
+      message.status === 'error' && 'border-danger/50 bg-danger-light',
     ]"
   >
     <span
@@ -47,7 +47,8 @@
         <!-- Text content (inside bubble) -->
         <div
           v-else-if="block.type === 'text' && message.content"
-          class="py-2 px-3 leading-[1.6] text-xs bg-surface border-t border-border rounded-sm"
+          class="py-2 px-3 leading-[1.6] text-xs border-t border-transparent rounded-sm"
+          style="background:var(--msg-assistant-bg)"
         >
           <div
             class="msg__body select-text"
@@ -78,7 +79,8 @@
       />
       <div
         v-if="message.content"
-        class="py-2 px-3 leading-[1.6] text-xs bg-surface border-t border-border rounded-sm"
+        class="py-2 px-3 leading-[1.6] text-xs border-t border-transparent rounded-sm"
+        style="background:var(--msg-assistant-bg)"
       >
         <div
           class="msg__body select-text"
