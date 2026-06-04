@@ -71,7 +71,7 @@ export function createWorkspaceApi(
   }
 
   // 初始化时通过 RPC 获取缓存值
-  Promise.all([
+  Promise.allSettled([
     rpcClient.request('plugin.workspace.rootPath', { pluginId })
       .then(v => { cachedRootPath = v as string }),
     rpcClient.request('plugin.workspace.name', { pluginId })

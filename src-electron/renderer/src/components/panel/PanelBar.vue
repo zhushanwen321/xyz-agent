@@ -45,11 +45,13 @@ const sessionInfo = computed(() => {
   return sessionStore.sessions.find(s => s.id === props.sessionId) ?? null
 })
 
+const DIR_PARTS_COUNT = 2
+
 const dirParts = computed(() => {
   const cwd = sessionInfo.value?.cwd
   if (!cwd) return []
   const segs = cwd.replace(/\/$/, '').split('/').filter(Boolean)
-  return segs.slice(-2)
+  return segs.slice(-DIR_PARTS_COUNT)
 })
 
 const gitBranch = computed(() => sessionInfo.value?.gitBranch)
@@ -79,6 +81,7 @@ async function moveToNewWindow() {
     panelStore.unbindSession(props.panelId)
   } catch (e) {
     console.error('Failed to move pane to new window:', e)
+    return
   }
 }
 
@@ -169,7 +172,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
       </span>
     </div>
 
-    <!-- Close panel button (always show when >1 panel) -->
+    <!-- eslint-disable-next-line taste/no-native-html-elements -- panel-close has custom transition styles in <style scoped>, xyz-ui Button variant="ghost" doesn't match this compact 20x20 design -->
     <button
       v-if="showCloseButton"
       class="panel-close"

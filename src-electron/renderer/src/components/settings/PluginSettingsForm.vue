@@ -14,6 +14,7 @@ const store = usePluginStore()
 
 // ── Debounced config writes ────────────────────────────────────
 
+const DEBOUNCE_FLUSH_MS = 500
 const pendingChanges = reactive(new Map<string, unknown>())
 let flushTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -39,7 +40,7 @@ function handleSettingChange(key: string, value: unknown) {
       store.setConfig(props.pluginId, k, v)
     }
     pendingChanges.clear()
-  }, 500)
+  }, DEBOUNCE_FLUSH_MS)
 }
 
 // ── Value helpers ──────────────────────────────────────────────

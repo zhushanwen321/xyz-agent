@@ -49,10 +49,14 @@ let hookCounter = 0
  * - trusted 外部插件: 100
  * - sandbox 插件: 200（最低优先级）
  */
+const PRIORITY_BUILT_IN = 0
+const PRIORITY_TRUSTED = 100
+const PRIORITY_SANDBOX = 200
+
 function computePriority(descriptor: PluginDescriptor): number {
-  if (descriptor.source === 'built-in') return 0
-  if (descriptor.trustLevel === 'trusted') return 100
-  return 200
+  if (descriptor.source === 'built-in') return PRIORITY_BUILT_IN
+  if (descriptor.trustLevel === 'trusted') return PRIORITY_TRUSTED
+  return PRIORITY_SANDBOX
 }
 
 /**
@@ -73,7 +77,7 @@ export function registerHookRpcHandlers(
 
     // 获取插件描述符以计算优先级
     const descriptor = service.getDescriptor(pluginId)
-    const priority = descriptor ? computePriority(descriptor) : 200
+    const priority = descriptor ? computePriority(descriptor) : PRIORITY_SANDBOX
 
     // 存储到 hookRegistry
     let entries = service.hookRegistry.get(hookType)

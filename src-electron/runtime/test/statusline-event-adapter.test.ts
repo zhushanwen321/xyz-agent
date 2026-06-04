@@ -42,8 +42,9 @@ describe('TC-1-01: setStatus → onStatusSetUpdate callback', () => {
       },
     })
 
-    // setStatus does NOT produce a ServerMessage via send()
-    expect(sent).toHaveLength(0)
+    // setStatus now also sends a WS event
+    expect(sent).toHaveLength(1)
+    expect(sent[0].type).toBe('extension:status')
     // Instead, it calls the callback
     expect(onStatusSetUpdate).toHaveBeenCalledTimes(1)
     expect(onStatusSetUpdate).toHaveBeenCalledWith({
@@ -100,8 +101,8 @@ describe('TC-1-01: setStatus → onStatusSetUpdate callback', () => {
 
 // ── TC-1-02: event-adapter still discards setWidget ─────────────────────
 
-describe('TC-1-02: setWidget still discarded', () => {
-  it('returns null for setWidget and does NOT call callback', () => {
+describe('TC-1-02: setWidget bridges to extension:widget', () => {
+  it('sends extension.widget WS event for setWidget', () => {
     const onStatusSetUpdate = vi.fn()
     const { adapter, sent } = createAdapter({ onStatusSetUpdate })
 
@@ -111,12 +112,17 @@ describe('TC-1-02: setWidget still discarded', () => {
           type: 'extension_ui_request',
           method: 'setWidget',
           id: 'req-w1',
+          key: 'widget-key',
+          lines: ['line1'],
         }))
         return () => {}
       },
     })
 
-    expect(sent).toHaveLength(0)
+    expect(sent).toHaveLength(1)
+    expect(sent[0].type).toBe('extension:widget')
+    expect(sent[0].payload.widgetKey).toBe('widget-key')
+    expect(sent[0].payload.lines).toEqual(['line1'])
     expect(onStatusSetUpdate).not.toHaveBeenCalled()
   })
 })
@@ -230,8 +236,9 @@ describe('TC-8-01: full setStatus data flow (event-adapter → callback)', () =>
       },
     })
 
-    // Verify: no message sent via WS (setStatus is callback-based)
-    expect(sent).toHaveLength(0)
+    // Verify: setStatus now sends WS event
+    expect(sent).toHaveLength(1)
+    expect(sent[0].type).toBe('extension:status')
     // Verify: callback received correct data
     expect(statusUpdates).toHaveLength(1)
     expect(statusUpdates[0]).toEqual({

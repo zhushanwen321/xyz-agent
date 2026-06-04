@@ -77,6 +77,7 @@ const isSettingsActive = computed(() => navStore.currentView === 'settings')
         <span v-if="isFullscreen" class="sidebar-brand">xyz<span>-agent</span></span>
         <span v-if="isFullscreen" class="text-[10px] text-muted leading-tight" style="margin-left:-2px">v{{ appVersion }}</span>
         <div class="sidebar-nav">
+          <!-- eslint-disable-next-line taste/no-native-html-elements -- ctrl-btn has custom gradient+transition styles in <style scoped>, consistent with adjacent native buttons -->
           <button class="ctrl-btn" :title="t('header.overview') + ' (Cmd+J)'" @click="$emit('toggle-panel-grid')">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
               <rect x="1" y="1" width="6" height="6" rx="1"/>
@@ -85,6 +86,7 @@ const isSettingsActive = computed(() => navStore.currentView === 'settings')
               <rect x="9" y="9" width="6" height="6" rx="1"/>
             </svg>
           </button>
+          <!-- eslint-disable-next-line taste/no-native-html-elements -- ctrl-btn has custom gradient+transition styles in <style scoped>, consistent with adjacent native buttons -->
           <button class="ctrl-btn" :class="{ active: isSettingsActive }" :title="t('header.settings') + ' (Cmd+,)'" @click="$emit('toggle-settings')">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
               <circle cx="12" cy="12" r="3"/>

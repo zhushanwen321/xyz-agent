@@ -25,7 +25,6 @@ import { PluginRpcServer } from './plugin-rpc-server.js'
 function resolvePluginHostDir(): string {
   // CJS: __dirname 是 Node.js 注入的模块局部变量，指向当前文件所在目录
   // tsup/esbuild 不转换 typeof 检查，CJS 运行时 typeof __dirname === 'string'
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const cjsDir = typeof __dirname !== 'undefined' ? __dirname : undefined
   if (cjsDir && cjsDir !== '.') {
     return cjsDir
@@ -39,8 +38,9 @@ function resolvePluginHostDir(): string {
       // eslint-disable-next-line @typescript-eslint/no-require-imports -- 动态 require 避免顶层 import 在 CJS bundle 中报错
       const { fileURLToPath } = require('node:url') as typeof import('node:url')
       return dirname(fileURLToPath(import.meta.url))
-    } catch {
-      // fallthrough
+    // eslint-disable-next-line taste/no-silent-catch -- ESM path detection: fallthrough to CJS path is expected
+    } catch (e: unknown) {
+      console.debug('[plugin-host] ESM path resolution failed:', e)
     }
   }
 
@@ -91,14 +91,21 @@ function resolveAndValidateFile(filename: string): string {
       diagnostics.push(`HINT: Found at parent directory: ${parentFile} (dirname may have gone one level too deep)`,
       )
     }
-  } catch {
-    // ignore
+    // eslint-disable-next-line taste/no-silent-catch -- diagnostic hint: failure to check parent dir must not block validation
+  } catch (e: unknown) {
+    console.debug('[plugin-host] parent dir check failed:', e)
   }
 
   throw new Error(
     `[plugin-host] Required file not found: ${filename}\n${diagnostics.join('\n')}`,
   )
 }
+
+const MAX_PLUGINS_PER_TRUSTED_WORKER = 10
+const LOAD_PLUGIN_TIMEOUT_MS = 10_000
+const MEMORY_MONITOR_DEFAULT_INTERVAL_MS = 30_000
+const MAX_REBUILD_ATTEMPTS = 3
+const REBUILD_COOLDOWN_MS = 5_000
 
 type CrashCallback = (workerId: string, pluginIds: string[], error: string) => void
 type ReplyCallback = (msg: unknown) => void
@@ -117,8 +124,9 @@ export class PluginHost implements ActivatorHost {
   /** Saved pluginIds from crashed trusted workers for rebuild */
   private crashedTrustedWorkers = new Map<string, { pluginIds: string[]; trustLevel: 'trusted' }>()
 
-  private static readonly MAX_REBUILD_ATTEMPTS = 3
-  private rebuildCooldownMs = 5_000
+  private static readonly MAX_REBUILD_ATTEMPTS = MAX_REBUILD_ATTEMPTS
+  private static readonly REBUILD_COOLDOWN_MS = REBUILD_COOLDOWN_MS
+  private rebuildCooldownMs = PluginHost.REBUILD_COOLDOWN_MS
 
   constructor(rpcServer: PluginRpcServer) {
     this.rpcServer = rpcServer
@@ -174,7 +182,7 @@ export class PluginHost implements ActivatorHost {
       if (
         handle.trustLevel === 'trusted' &&
         handle.status === 'active' &&
-        handle.pluginIds.length < 10
+        handle.pluginIds.length < MAX_PLUGINS_PER_TRUSTED_WORKER
       ) {
         handle.pluginIds.push(pluginId)
         return handle.workerId
@@ -197,7 +205,7 @@ export class PluginHost implements ActivatorHost {
     return new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
         reject(new Error(`loadPlugin timeout for worker ${workerId}`))
-      }, 10_000)
+      }, LOAD_PLUGIN_TIMEOUT_MS)
 
       const onMessage = (msg: unknown) => {
         const m = msg as Record<string, unknown>
@@ -261,7 +269,7 @@ export class PluginHost implements ActivatorHost {
    * 定期刷新 Worker handle 的 lastActiveAt。
    * 未来可扩展为从 /proc 或 process.memoryUsage() 采集实际内存。
    */
-  startMemoryMonitor(intervalMs: number = 30_000): void {
+  startMemoryMonitor(intervalMs: number = MEMORY_MONITOR_DEFAULT_INTERVAL_MS): void {
     if (this.memoryMonitorTimer) clearInterval(this.memoryMonitorTimer)
     this.memoryMonitorTimer = setInterval(() => {
       for (const [workerId] of this.workerInstances) {
@@ -277,7 +285,7 @@ export class PluginHost implements ActivatorHost {
       clearInterval(this.memoryMonitorTimer)
       this.memoryMonitorTimer = null
     }
-    await Promise.all(
+    await Promise.allSettled(
       [...this.workerInstances.values()].map(w => w.terminate()),
     )
     this.workerInstances.clear()

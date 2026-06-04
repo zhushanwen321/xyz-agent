@@ -144,12 +144,13 @@ export interface IConfigService {
 
 // ── IExtensionService ──────────────────────────────────────────────
 
-/** Extension lifecycle: discovery, enable/disable, path resolution. */
+/** Extension lifecycle: discovery, enable/disable, install/uninstall, path resolution. */
 export interface IExtensionService {
   scanExtensions(): Promise<import('@xyz-agent/shared').ExtensionInfo[]>
-  getEnabledExtensions(): Promise<import('@xyz-agent/shared').ExtensionInfo[]>
   toggleExtension(name: string, enabled: boolean): Promise<void>
   getExtensionPaths(): Promise<string[]>
+  installExtension(source: string): Promise<void>
+  uninstallExtension(name: string): Promise<void>
 }
 
 // ── IModelService ─────────────────────────────────────────────────

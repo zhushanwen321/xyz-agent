@@ -28,9 +28,21 @@
   },
   "dependencies": {
     "@types/markdown-it-footnote": "^3.0.4",
+    "@zhushanwen/pi-claude-rules-loader": "^0.1.1",
+    "@zhushanwen/pi-coding-workflow": "^0.1.2",
+    "@zhushanwen/pi-context-engineering": "^0.1.1",
+    "@zhushanwen/pi-evolve-daily": "^0.1.2",
+    "@zhushanwen/pi-goal": "^0.1.1",
+    "@zhushanwen/pi-skill-state": "^0.1.1",
+    "@zhushanwen/pi-statusline": "^0.1.1",
+    "@zhushanwen/pi-taste-lint": "^0.1.0",
+    "@zhushanwen/pi-todo": "^0.1.2",
+    "@zhushanwen/pi-unified-hooks": "^0.0.2",
+    "@zhushanwen/pi-workflow": "^0.1.1",
     "electron-store": "^10",
     "is-glob": "^4.0.3",
-    "markdown-it-footnote": "^4.0.0"
+    "markdown-it-footnote": "^4.0.0",
+    "pi-subagents": "^0.27.0"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",

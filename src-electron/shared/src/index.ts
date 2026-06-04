@@ -25,3 +25,4 @@ export type { ToolPermission, ThemeMode, ThemePreset } from './settings'
 export type {
   PanelLeaf, SplitNode, PanelTree, WindowState,
 } from './panel'
+export * from './extension'

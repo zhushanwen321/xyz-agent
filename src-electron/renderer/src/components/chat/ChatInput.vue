@@ -13,11 +13,13 @@
         activeCommand ? 'border-accent' : '',
       ]"
     >
-      <!-- Command/Skill 标签栏 -->
-      <div v-if="activeCommand" class="flex pt-2 px-3.5">
+      <!-- Input content: badge on top + textarea below, unified in one area -->
+      <div class="px-3.5 pb-1 pt-2">
+        <!-- Skill badge inside input area -->
         <div
+          v-if="activeCommand"
           :class="[
-            'inline-flex items-center gap-1 py-[2px] px-2 rounded-full text-xs font-medium',
+            'inline-flex items-center gap-1 py-[2px] px-2 rounded-full text-xs font-medium mb-1',
             activeCommand.source === 'builtin'
               ? 'bg-border text-muted'
               : activeCommand.source === 'skill'
@@ -32,17 +34,17 @@
           <span class="leading-[1.4]">/{{ tagDisplayName }}</span>
           <span class="cursor-pointer ml-0.5 opacity-60 text-sm leading-none hover:opacity-100" @click="clearCommand">&times;</span>
         </div>
+        <Textarea
+          v-model="text"
+          :placeholder="placeholder"
+          class="block w-full min-h-[calc(1.45em*2+16px)] max-h-[calc(1.45em*10+16px)] border-none bg-transparent text-fg font-body text-sm leading-[1.45] resize-none outline-none placeholder:text-muted"
+          :rows="1"
+          no-style
+          @keydown="onKeyDown"
+          @compositionstart="isComposing = true"
+          @compositionend="onCompositionEnd"
+        />
       </div>
-      <Textarea
-        v-model="text"
-        :placeholder="placeholder"
-        class="block w-full min-h-[calc(1.45em*2+16px)] max-h-[calc(1.45em*10+16px)] pt-[10px] pb-2 px-3.5 border-none bg-transparent text-fg font-body text-sm leading-[1.45] resize-none outline-none placeholder:text-muted"
-        :rows="1"
-        no-style
-        @keydown="onKeyDown"
-        @compositionstart="isComposing = true"
-        @compositionend="onCompositionEnd"
-      />
       <InputToolbar
         :session-id="sessionId"
         :is-streaming="isStreaming"

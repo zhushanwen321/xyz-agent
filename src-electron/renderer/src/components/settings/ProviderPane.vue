@@ -73,6 +73,7 @@ function handleSave(data: {
     editingProvider.value = null
   } catch (e: unknown) {
     console.error('Failed to save provider:', e)
+    return
   }
 }
 </script>

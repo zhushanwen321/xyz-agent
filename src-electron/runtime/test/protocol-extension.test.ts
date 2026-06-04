@@ -208,6 +208,24 @@ describe('Protocol: extension types', () => {
     expect(full.progress).toBe(75)
   })
 
+  it('ClientMessage accepts extension.install type', () => {
+    const msg: ClientMessage = {
+      type: 'extension.install',
+      payload: { source: 'npm:pi-ask-user' },
+    }
+    expect(msg.type).toBe('extension.install')
+    expect((msg.payload as { source: string }).source).toBe('npm:pi-ask-user')
+  })
+
+  it('ClientMessage accepts extension.uninstall type', () => {
+    const msg: ClientMessage = {
+      type: 'extension.uninstall',
+      payload: { name: 'pi-ask-user' },
+    }
+    expect(msg.type).toBe('extension.uninstall')
+    expect((msg.payload as { name: string }).name).toBe('pi-ask-user')
+  })
+
   it('ExtensionInfo has correct shape', () => {
     const info: ExtensionInfo = {
       name: 'my-extension',
@@ -215,8 +233,20 @@ describe('Protocol: extension types', () => {
       description: 'A test extension',
       path: '/path/to/ext',
       enabled: true,
+      source: 'built-in',
     }
     expect(info.name).toBe('my-extension')
     expect(info.enabled).toBe(true)
+    expect(info.source).toBe('built-in')
+
+    const userInfo: ExtensionInfo = {
+      name: 'user-ext',
+      version: '0.1.0',
+      description: '',
+      path: '/other/path',
+      enabled: true,
+      source: 'user-installed',
+    }
+    expect(userInfo.source).toBe('user-installed')
   })
 })

@@ -27,6 +27,7 @@ import {
 
 // Goal 状态存储在 globalState 中（跨 session 全局共享）
 const GOAL_STATE_KEY = 'goal-state'
+const JSON_INDENT = 2
 
 // ── 工具注册 ────────────────────────────────────────────
 
@@ -169,7 +170,7 @@ export async function executeGoalAction(
     // 错误时也持久化（状态可能已部分修改）
     await store.set(GOAL_STATE_KEY, state)
     const errorMessage = err instanceof Error ? err.message : String(err)
-    throw new Error(`${errorMessage}\n\nInput: ${JSON.stringify(params, null, 2)}`)
+    throw new Error(`${errorMessage}\n\nInput: ${JSON.stringify(params, null, JSON_INDENT)}`)
   }
 
   // 持久化状态

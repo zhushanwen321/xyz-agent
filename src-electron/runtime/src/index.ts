@@ -3,6 +3,8 @@ import { SessionService } from './services/session-service.js'
 import { TreeService } from './services/tree-service.js'
 import { ConfigService } from './services/config-service.js'
 import { ModelService } from './services/model-service.js'
+
+const MAX_PERCENT = 100
 import { ProcessManager } from './process-manager.js'
 import { EventAdapter } from './event-adapter.js'
 import { ExtensionService } from './extension-service.js'
@@ -50,7 +52,7 @@ async function main(): Promise<void> {
   const server = new SidecarServer(port, projectRoot)
 
   // Service layer (DI)
-  const extensionService = new ExtensionService()
+  const extensionService = new ExtensionService({ projectRoot: effectiveRoot })
   const treeService = new TreeService(pm)
 
   // pluginService declared before sessionService but assigned after —
@@ -87,7 +89,7 @@ async function main(): Promise<void> {
         const inputTokens = ctxData.inputTokens
         if (!inputTokens || inputTokens === 0) return
         const usagePercent = contextWindow
-          ? Math.min(Math.round((inputTokens / contextWindow) * 100), 100)
+          ? Math.min(Math.round((inputTokens / contextWindow) * MAX_PERCENT), MAX_PERCENT)
           : 0
         server.broadcast({
           type: 'context.update',

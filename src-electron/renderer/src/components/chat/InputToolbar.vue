@@ -69,6 +69,13 @@ const thinkingLevels = computed(() => {
   })
 })
 
+// ── Magic number constants ──────────────────────────────────────
+const BINARY_LEVEL_COUNT = 2
+const MAX_BAR_COUNT = 7
+const CONTEXT_DANGER_THRESHOLD = 85
+const CONTEXT_WARN_THRESHOLD = 60
+const TOKEN_K_UNIT = 1000
+
 const showThinkingPicker = computed(() => thinkingLevels.value.length > 0)
 
 // Show mapped value when non-identity (e.g. xhigh → 'max'), otherwise Off/On inference
@@ -78,7 +85,7 @@ function getThinkingDisplayLabel(level: string): string {
     return map[level]
   }
   // Instant/Thinking for binary strategies
-  if (thinkingLevels.value.length === 2 && thinkingLevels.value.includes('off')) {
+  if (thinkingLevels.value.length === BINARY_LEVEL_COUNT && thinkingLevels.value.includes('off')) {
     return level === 'off' ? t('chat.thinkingInstant') : t('chat.thinkingDeep')
   }
   return level
@@ -92,7 +99,7 @@ function initThinkingLevel() {
   if (thinkingLevels.value.length === 0) return
   if (thinkingLevels.value.includes(settingsStore.currentThinkingLevel as typeof ALL_THINKING_LEVELS[number])) return
   // On/off (2 levels with off): default to 'on'
-  if (thinkingLevels.value.length === 2 && thinkingLevels.value.includes('off')) {
+  if (thinkingLevels.value.length === BINARY_LEVEL_COUNT && thinkingLevels.value.includes('off')) {
     settingsStore.currentThinkingLevel = thinkingLevels.value.find(l => l !== 'off') as typeof ALL_THINKING_LEVELS[number]
   } else {
     settingsStore.currentThinkingLevel = thinkingLevels.value[0] as typeof ALL_THINKING_LEVELS[number]
@@ -112,7 +119,7 @@ function getBarColor(level: string, barIndex: number): string {
 
 function getBarCount(): number {
   // One bar per thinking level, max 7
-  return Math.min(thinkingLevels.value.length, 7)
+  return Math.min(thinkingLevels.value.length, MAX_BAR_COUNT)
 }
 
 function pickThinking(level: string) {
@@ -133,8 +140,8 @@ const contextUsagePercent = computed(() => sessionState.value.contextUsagePercen
 
 const contextSeverity = computed<'ok' | 'warn' | 'danger'>(() => {
   const pct = contextUsagePercent.value
-  if (pct > 85) return 'danger'
-  if (pct > 60) return 'warn'
+  if (pct > CONTEXT_DANGER_THRESHOLD) return 'danger'
+  if (pct > CONTEXT_WARN_THRESHOLD) return 'warn'
   return 'ok'
 })
 
@@ -152,7 +159,7 @@ const inputTokens = computed(() => sessionState.value.contextInputTokens ?? 0)
 const outputTokens = computed(() => Math.max(0, (sessionState.value.tokenUsage ?? 0) - inputTokens.value))
 
 function formatTokenCount(n: number): string {
-  if (n >= 1000) return (n / 1000).toFixed(1) + 'k'
+  if (n >= TOKEN_K_UNIT) return (n / TOKEN_K_UNIT).toFixed(1) + 'k'
   return String(n)
 }
 
@@ -173,7 +180,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex items-center gap-1 px-2 pb-1.5">
+  <div class="flex items-center gap-1 px-2 pb-1.5 overflow-hidden">
     <!-- Model Picker -->
     <ModelPicker :current-model="currentModel" @select="(id: string) => emit('select-model', id)" />
 

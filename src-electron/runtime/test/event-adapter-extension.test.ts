@@ -187,39 +187,49 @@ describe('EventAdapter: extension event translation', () => {
     })
   })
 
-  // ── extension_ui_request (discard methods) ─────────────────────
+  // ── extension_ui_request (bridge methods) ─────────────────────
 
-  describe('extension_ui_request (discard methods)', () => {
-    it('discards setStatus method (returns null)', async () => {
+  describe('extension_ui_request (bridge methods)', () => {
+    it('bridges setStatus to extension.status WS event', async () => {
       adapter.attach({
         onEvent: (listener) => {
           listener(piEvent({
             type: 'extension_ui_request',
             method: 'setStatus',
             id: 'req-d1',
+            key: 'status-key',
+            text: 'some status',
           }))
           return () => {}
         },
       })
       await flushAsync()
 
-      expect(sent).toHaveLength(0)
+      expect(sent).toHaveLength(1)
+      expect(sent[0].type).toBe('extension:status')
+      expect(sent[0].payload.statusKey).toBe('status-key')
+      expect(sent[0].payload.text).toBe('some status')
     })
 
-    it('discards setWidget method (returns null)', async () => {
+    it('bridges setWidget to extension.widget WS event', async () => {
       adapter.attach({
         onEvent: (listener) => {
           listener(piEvent({
             type: 'extension_ui_request',
             method: 'setWidget',
             id: 'req-d2',
+            key: 'widget-key',
+            lines: ['line1', 'line2'],
           }))
           return () => {}
         },
       })
       await flushAsync()
 
-      expect(sent).toHaveLength(0)
+      expect(sent).toHaveLength(1)
+      expect(sent[0].type).toBe('extension:widget')
+      expect(sent[0].payload.widgetKey).toBe('widget-key')
+      expect(sent[0].payload.lines).toEqual(['line1', 'line2'])
     })
   })
 

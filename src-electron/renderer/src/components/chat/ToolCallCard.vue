@@ -1,6 +1,7 @@
 <template>
   <div class="tool-card my-2 overflow-hidden" :class="cardBorderClass">
     <!-- Header -->
+    <!-- eslint-disable-next-line taste/no-native-html-elements -- tool-header has complex gradient styles + flex layout in <style scoped>, xyz-ui Button variant="ghost" doesn't support this customization -->
     <button class="tool-header" @click="toggleExpand">
       <!-- Status indicator -->
       <span v-if="isRunning" class="inline-block w-2.5 h-2.5 border-2 border-accent border-t-transparent rounded-full animate-spin shrink-0"></span>

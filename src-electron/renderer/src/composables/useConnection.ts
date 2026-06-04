@@ -57,12 +57,16 @@ export function useConnection() {
             connect('ws://localhost:' + knownPort)
             return
           }
+        // eslint-disable-next-line taste/no-silent-catch
         } catch (e) {
           console.error('[useConnection] runtime port not ready:', e)
+          // Fallback: 继续使用默认端口连接
         }
       }
+    // eslint-disable-next-line taste/no-silent-catch
     } catch (e) {
       console.error('[useConnection] Electron API unavailable, using default port:', e)
+      // Fallback: 继续使用默认端口连接
     }
 
     connect('ws://localhost:' + port)

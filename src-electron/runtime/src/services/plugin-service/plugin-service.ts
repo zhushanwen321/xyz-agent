@@ -1,25 +1,27 @@
 import { PluginPermissionChecker as PermissionChecker } from './plugin-permission.js'
-import type { PluginDescriptor, ToolEntry, HookEntry, HookContext, HookResult, BridgeToolExecuteRequest, BridgeToolExecuteResponse, BridgeInterceptResponse, ToolRegistration, HookType, StatusBarItemOptions, IPluginServiceDeps } from './plugin-types.js'
+import type { PluginDescriptor, ToolEntry, HookEntry, HookContext, HookResult, BridgeToolExecuteRequest, BridgeToolExecuteResponse, BridgeInterceptResponse, ToolRegistration, IPluginServiceDeps } from './plugin-types.js'
 import type { StatusBarItem } from '@xyz-agent/shared'
 import type { IPluginService } from '../../interfaces.js'
 import type { IMessageBroker } from '../../interfaces.js'
 import { PluginRegistry } from './plugin-registry.js'
-import { PluginStorage, persistSessionData, loadSessionData, deleteSessionData } from './plugin-storage.js'
+import { PluginStorage, loadSessionData, deleteSessionData } from './plugin-storage.js'
+import { flushSessionData, flushSessionDataForSession, startFlushTimer, stopFlushTimer } from './session-data-flush.js'
 import { PluginRpcServer } from './plugin-rpc-server.js'
 import { PluginHost } from './plugin-host.js'
 import { PluginActivator } from './plugin-activator.js'
-import { registerToolRpcHandlers } from './tool-api.js'
-import { registerHookRpcHandlers } from './hook-api.js'
-import { registerSessionRpcHandlers } from './api/session-api.js'
-import { registerConfigRpcHandlers } from './api/config-api.js'
-import { registerSessionDataRpcHandlers } from './api/session-data-api.js'
-import { registerUiRpcHandlers } from './api/ui-api.js'
-import { registerAgentRpcHandlers } from './api/agent-api.js'
-import { registerWorkspaceRpcHandlers } from './api/workspace-api.js'
+import { registerAllRpcMethods } from './plugin-rpc-setup.js'
 import { PluginInstaller, type InstallResult } from './plugin-installer.js'
+import { handleBridgeToolExecute, handleBridgeEvent, handleBridgeIntercept } from './bridge-interop.js'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { readdir } from 'node:fs/promises'
+
+const COMMAND_EXECUTE_TIMEOUT_MS = 10_000
+const HOOK_HANDLER_TIMEOUT_MS = 5_000
+function randomSuffix(): string {
+  // eslint-disable-next-line no-magic-numbers
+  return Math.random().toString(36).slice(2)
+}
 
 export class PluginService implements IPluginService {
   private registry: PluginRegistry
@@ -151,6 +153,7 @@ export class PluginService implements IPluginService {
               console.error(`[plugin-service] failed to reload plugin ${pluginId}:`, err)
             })
           }
+        // eslint-disable-next-line taste/no-silent-catch -- worker reload: error logged, other plugins unaffected
         } catch (err: unknown) {
           console.error(`[plugin-service] failed to reload plugin ${pluginId}:`, err)
         }
@@ -190,6 +193,7 @@ export class PluginService implements IPluginService {
           }
         }
       }
+    // eslint-disable-next-line taste/no-silent-catch -- sessionData restore: directory may not exist initially
     } catch {
       // Directory doesn't exist yet, that's fine
     }
@@ -272,6 +276,7 @@ export class PluginService implements IPluginService {
         // 清理 status bar items
         this.clearStatusBarItems(pluginId)
       }
+    // eslint-disable-next-line taste/no-silent-catch -- toggle: failure returns plugin list for UI rollback
     } catch (err: unknown) {
       console.error(`[plugin-service] togglePlugin(${pluginId}, ${enabled}) failed:`, err instanceof Error ? err.message : String(err))
       // 激活/停用失败仍然返回当前插件列表（允许前端回滚 UI）
@@ -347,7 +352,7 @@ export class PluginService implements IPluginService {
       handle.workerId,
       'plugin.command.execute',
       { pluginId, commandId, args: args ?? {} },
-      10_000,
+      COMMAND_EXECUTE_TIMEOUT_MS,
     )
   }
 
@@ -382,207 +387,20 @@ export class PluginService implements IPluginService {
   }
 
   private registerRpcMethods(): void {
-    // Tool RPC handlers
-    registerToolRpcHandlers(this.rpcServer, {
+    registerAllRpcMethods({
+      rpcServer: this.rpcServer,
+      storage: this.storage,
       toolRegistry: this.toolRegistry,
-      syncToolsToBridge: () => this.syncToolsToBridge(),
-    })
-
-    // Hook RPC handlers
-    registerHookRpcHandlers(this.rpcServer, {
       hookRegistry: this.hookRegistry,
+      statusBarItems: this.statusBarItems,
+      deps: this.deps,
+      broadcastStatusBarItems: () => this.broadcastStatusBarItems(),
+      handleUiRequest: (method, params, pluginId) => this.handleUiRequest(method, params, pluginId),
+      syncToolsToBridge: () => this.syncToolsToBridge(),
       getDescriptor: (pluginId) => this.registry.getDescriptor(pluginId),
-    })
-
-    // Storage RPC methods — global scope
-    this.rpcServer.registerMethod('plugin.storage.global.get', async (params) => {
-      return this.storage.get(params.pluginId as string, params.key as string)
-    })
-    this.rpcServer.registerMethod('plugin.storage.global.set', async (params) => {
-      await this.storage.set(params.pluginId as string, params.key as string, params.value)
-    })
-    this.rpcServer.registerMethod('plugin.storage.global.delete', async (params) => {
-      await this.storage.delete(params.pluginId as string, params.key as string)
-    })
-    this.rpcServer.registerMethod('plugin.storage.global.keys', async (params) => {
-      return this.storage.keys(params.pluginId as string)
-    })
-
-    // Storage RPC methods — workspace scope
-    this.rpcServer.registerMethod('plugin.storage.workspace.get', async (params) => {
-      return this.storage.get(params.pluginId as string, params.key as string, 'workspace')
-    })
-    this.rpcServer.registerMethod('plugin.storage.workspace.set', async (params) => {
-      await this.storage.set(params.pluginId as string, params.key as string, params.value, 'workspace')
-    })
-    this.rpcServer.registerMethod('plugin.storage.workspace.delete', async (params) => {
-      await this.storage.delete(params.pluginId as string, params.key as string, 'workspace')
-    })
-    this.rpcServer.registerMethod('plugin.storage.workspace.keys', async (params) => {
-      return this.storage.keys(params.pluginId as string, 'workspace')
-    })
-
-    // Notify RPC method
-    this.rpcServer.registerMethod('plugin.notify', async (params) => {
-      this.broker.broadcast({
-        type: 'plugin:notification',
-        id: `notify_${Date.now()}`,
-        payload: {
-          pluginId: params.pluginId as string,
-          level: params.level as string,
-          message: params.message as string,
-        },
-      })
-    })
-
-    // ── Sessions RPC handlers ────────────────────────────────
-    registerSessionRpcHandlers(this.rpcServer, {
-      listSessions: () => {
-        if (!this.deps.sessionService) return []
-        const groups = this.deps.sessionService.listPersistedSessions()
-        return groups.flatMap(g => g.sessions.map(s => ({
-          id: s.id,
-          label: s.label,
-          cwd: s.cwd,
-          status: s.status,
-          createdAt: 0,
-          lastActiveAt: s.lastActiveAt,
-        })))
-      },
-      getSession: (id: string) => {
-        if (!this.deps.sessionService) return undefined
-        const s = this.deps.sessionService.getSummary(id)
-        if (!s) return undefined
-        return { id: s.id, label: s.label, cwd: s.cwd, status: s.status, createdAt: 0, lastActiveAt: s.lastActiveAt }
-      },
-      getActiveSession: () => {
-        if (!this.deps.sessionService) return undefined
-        const groups = this.deps.sessionService.listPersistedSessions()
-        const allSessions = groups.flatMap(g => g.sessions)
-        const active = allSessions.find(s => s.status === 'active')
-        if (!active) return undefined
-        return { id: active.id, label: active.label, cwd: active.cwd, status: active.status, createdAt: 0, lastActiveAt: active.lastActiveAt }
-      },
-      sendMessage: async (sessionId: string | undefined, _role: string, content: string) => {
-        if (!this.deps.sessionService || !sessionId) return
-        await this.deps.sessionService.sendMessage(sessionId, content)
-      },
-    })
-
-    // ── Config RPC handlers ──────────────────────────────────
-    registerConfigRpcHandlers(this.rpcServer, {
-      get: async (pluginId: string, key: string) => {
-        return this.storage.get(pluginId, `config:${key}`)
-      },
-      getAll: async (pluginId: string) => {
-        const allKeys = await this.storage.keys(pluginId)
-        const configKeys = allKeys.filter(k => k.startsWith('config:'))
-        const result: Record<string, unknown> = {}
-        for (const key of configKeys) {
-          const rawKey = key.replace('config:', '')
-          result[rawKey] = await this.storage.get(pluginId, key)
-        }
-        return result
-      },
-      set: async (pluginId: string, key: string, value: unknown) => {
-        await this.storage.set(pluginId, `config:${key}`, value)
-      },
-    })
-
-    // ── SessionData RPC handlers ─────────────────────────────
-    registerSessionDataRpcHandlers(this.rpcServer, {
-      getCache: () => this.sessionDataCache,
-      getDirty: () => this.sessionDataDirty,
-      getSizeTracker: () => this.sessionDataSize,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      appendEntry: async (_sessionId: string, _key: string, _value: unknown) => {
-        // bridge:append_entry 保留接口兼容，set handler 不再直接调用
-      },
-    })
-
-    // ── UI RPC handlers ─────────────────────────────────────
-    registerUiRpcHandlers(this.rpcServer, {
-      showSelect: (title: string, options: string[], pluginId: string) =>
-        this.handleUiRequest('select', { title, options }, pluginId) as Promise<string | undefined>,
-      showConfirm: (title: string, message: string, pluginId: string) =>
-        this.handleUiRequest('confirm', { title, message }, pluginId) as Promise<boolean>,
-      showInput: (title: string, _defaultValue: string | undefined, pluginId: string) =>
-        this.handleUiRequest('input', { title }, pluginId) as Promise<string | undefined>,
-      notify: async (pluginId: string, level: string, message: string) => {
-        this.broker.broadcast({
-          type: 'plugin:notification',
-          id: `notify_${Date.now()}`,
-          payload: { pluginId, level, message },
-        })
-      },
-      updateStatusBarItem: async (pluginId: string, id: string, text: string, options?: StatusBarItemOptions) => {
-        const itemKey = `${pluginId}:${id}`
-        // Empty text = remove item
-        if (text === '') {
-          this.statusBarItems.delete(itemKey)
-        } else {
-          const item: StatusBarItem = {
-            id,
-            pluginId,
-            text,
-            tooltip: options?.tooltip,
-            commandId: options?.commandId,
-            priority: options?.priority ?? 100,
-            scope: options?.scope ?? 'global',
-            sessionId: options?.sessionId,
-          }
-          this.statusBarItems.set(itemKey, item)
-        }
-        this.broadcastStatusBarItems()
-      },
-    })
-
-    // ── Agent RPC handlers ──────────────────────────────────
-    registerAgentRpcHandlers(this.rpcServer, {
-      getModel: () => {
-        if (!this.deps.sessionService) return ''
-        const groups = this.deps.sessionService.listPersistedSessions()
-        const active = groups.flatMap(g => g.sessions).find(s => s.status === 'active')
-        return active?.modelId ?? ''
-      },
-      setModel: (model: string) => {
-        if (!this.deps.sessionService) return
-        const groups = this.deps.sessionService.listPersistedSessions()
-        const active = groups.flatMap(g => g.sessions).find(s => s.status === 'active')
-        if (!active) return
-        const parts = model.split('/')
-        if (parts.length < 2) return
-        const provider = parts[0]
-        const modelId = parts.slice(1).join('/')
-        void this.deps.sessionService.switchModel(active.id, provider, modelId)
-      },
-      getThinkingLevel: () => 'high',
-      setThinkingLevel: () => {},
-      getActiveTools: () => {
-        return Array.from(this.toolRegistry.values()).map(e => e.schema.name)
-      },
-    })
-
-    // ── Workspace RPC handlers ──────────────────────────────
-    registerWorkspaceRpcHandlers(this.rpcServer, {
-      getRootPath: () => process.cwd(),
-      getName: () => {
-        const cwd = process.cwd()
-        return cwd.split(/[/\\]/).pop() ?? ''
-      },
-      findFiles: async (pattern: string) => {
-        try {
-          const fastGlob = (await import('fast-glob')).default
-          const entries = await fastGlob(pattern, {
-            cwd: process.cwd(),
-            ignore: ['**/node_modules/**', '**/.git/**'],
-            absolute: true,
-          }) as string[]
-          return entries.slice(0, 1000)
-        } catch {
-          return []
-        }
-      },
+      sessionDataCache: this.sessionDataCache,
+      sessionDataDirty: this.sessionDataDirty,
+      sessionDataSize: this.sessionDataSize,
     })
   }
 
@@ -622,7 +440,7 @@ export class PluginService implements IPluginService {
             hookType,
             context,
           },
-          5_000, // 每个 handler 5s 超时
+          HOOK_HANDLER_TIMEOUT_MS, // 每个 handler 超时
         ) as Record<string, unknown>
 
         // 检查是否被阻止
@@ -641,6 +459,7 @@ export class PluginService implements IPluginService {
             data: result.modifiedData,
           }
         }
+      // eslint-disable-next-line taste/no-silent-catch -- hook: timeout/error means proceed, non-blocking by design
       } catch (err: unknown) {
         // 超时或错误 → 视为放行（不阻止链路）
         console.warn(
@@ -673,80 +492,15 @@ export class PluginService implements IPluginService {
    * → 通过 RPC 调用 Worker 中的 tool handler → 返回结果。
    */
   async handleBridgeToolExecute(request: BridgeToolExecuteRequest): Promise<BridgeToolExecuteResponse> {
-    // 1. 按 schema.name 匹配（toolRegistry key 是 pluginId:name 格式）
-    const entry = Array.from(this.toolRegistry.values())
-      .find(e => e.schema.name === request.toolName)
-    if (!entry) {
-      return { content: `Tool not found: ${request.toolName}`, isError: true }
-    }
-
-    // 2. 获取工具所属插件的 Worker handle
-    const handle = this.host.getWorkerHandle(entry.pluginId)
-    if (!handle) {
-      return { content: 'Plugin worker crashed', isError: true }
-    }
-
-    // 3. 通过 RPC 调用 Worker 执行工具（超时 30s）
-    try {
-      const result = await this.rpcServer.invoke(
-        handle.workerId,
-        'plugin.tool.execute',
-        {
-          pluginId: entry.pluginId,
-          toolName: request.toolName,
-          arguments: request.parameters,
-          sessionId: request.sessionId,
-          toolCallId: request.toolCallId,
-        },
-        30_000,
-      )
-      return result as BridgeToolExecuteResponse
-    } catch (err: unknown) {
-      // 超时 → isError
-      if (err instanceof Error && err.message.includes('RPC timeout')) {
-        return { content: 'Plugin tool execution timed out', isError: true }
-      }
-      // Worker crash / 其他错误
-      const msg = err instanceof Error ? err.message : String(err)
-      return { content: `Plugin tool execution failed: ${msg}`, isError: true }
-    }
+    return handleBridgeToolExecute(request, this.toolRegistry, this.host, this.rpcServer)
   }
 
-  /**
-   * 广播 bridge 事件给所有注册了对应 hookType 的 Worker。
-   * 用于 observer 类型事件的 fire-and-forget 通知。
-   */
   handleBridgeEvent(eventName: string, data: unknown, sessionId: string): void {
-    const context: HookContext = {
-      pluginId: '',
-      hookType: eventName as HookType,
-      data: { eventName, data, sessionId },
-      timestamp: Date.now(),
-    }
-    this.executeHooks(eventName, context).catch((err: unknown) => {
-      console.error(`[plugin-service] handleBridgeEvent error:`, err)
-    })
+    handleBridgeEvent(eventName, data, sessionId, (hookType, context) => this.executeHooks(hookType, context))
   }
 
-  /**
-   * 处理 bridge 拦截请求。
-   * 调用 executeHooks 获取插件注入的消息，返回拦截响应。
-   */
   async handleBridgeIntercept(eventName: string, data: unknown, sessionId: string): Promise<BridgeInterceptResponse> {
-    const context: HookContext = {
-      pluginId: '',
-      hookType: eventName as HookType,
-      data: { eventName, data, sessionId },
-      timestamp: Date.now(),
-    }
-
-    const hookResult = await this.executeHooks(eventName, context)
-
-    if (hookResult.blocked) {
-      return { blocked: true, reason: hookResult.reason ?? `Blocked by ${hookResult.blockedBy}`, injectedMessages: [] }
-    }
-
-    return { injectedMessages: [] }
+    return handleBridgeIntercept(eventName, data, sessionId, (hookType, context) => this.executeHooks(hookType, context))
   }
 
   async installPlugin(packageSpecifier: string): Promise<InstallResult> {
@@ -764,65 +518,22 @@ export class PluginService implements IPluginService {
 
   /** 将所有 dirty sessionData 批量 flush（由定时器调用） */
   async flushSessionData(): Promise<void> {
-    for (const [sessionId, dirtyKeys] of this.sessionDataDirty) {
-      if (dirtyKeys.size === 0) continue
-      const cache = this.sessionDataCache.get(sessionId)
-      if (!cache) continue
-
-      // 快照 dirty 数据
-      const dirtySnapshot = new Map<string, unknown>()
-      for (const key of dirtyKeys) {
-        const val = cache.get(key)
-        if (val !== undefined) dirtySnapshot.set(key, val)
-      }
-
-      // 先清除 dirty（让 timer 测试能正确验证）
-      dirtyKeys.clear()
-
-      // 异步持久化；失败时恢复 dirty
-      try {
-        await persistSessionData(join(homedir(), '.xyz-agent'), sessionId, cache)
-      } catch (err: unknown) {
-        console.warn(`[plugin-service] sessionData flush failed for ${sessionId}:`, err instanceof Error ? err.message : String(err))
-        // 恢复 dirty 标记
-        for (const key of dirtySnapshot.keys()) {
-          dirtyKeys.add(key)
-        }
-      }
-    }
+    await flushSessionData(this.sessionDataDirty, this.sessionDataCache)
   }
 
   /** flush 指定 session 的 dirty 数据（deactivate/关闭时调用） */
   async flushSessionDataForSession(sessionId: string): Promise<void> {
-    const dirtyKeys = this.sessionDataDirty.get(sessionId)
-    if (!dirtyKeys || dirtyKeys.size === 0) return
-
-    const cache = this.sessionDataCache.get(sessionId)
-    if (!cache) return
-
-    try {
-      await persistSessionData(join(homedir(), '.xyz-agent'), sessionId, cache)
-      dirtyKeys.clear()
-    } catch (err: unknown) {
-      console.warn(`[plugin-service] sessionData flush failed for ${sessionId}:`, err instanceof Error ? err.message : String(err))
-    }
+    await flushSessionDataForSession(sessionId, this.sessionDataDirty, this.sessionDataCache)
   }
 
   /** 启动 sessionData 定时 flush（每 5s） */
   private startFlushTimer(): void {
-    this.sessionDataFlushTimer = setInterval(() => {
-      this.flushSessionData().catch((err: unknown) => {
-        console.error('[plugin-service] sessionData flush error:', err)
-      })
-    }, 5_000)
+    this.sessionDataFlushTimer = startFlushTimer(this.sessionDataDirty, this.sessionDataCache)
   }
 
   /** 停止 sessionData 定时 flush */
   private stopFlushTimer(): void {
-    if (this.sessionDataFlushTimer) {
-      clearInterval(this.sessionDataFlushTimer)
-      this.sessionDataFlushTimer = null
-    }
+    this.sessionDataFlushTimer = stopFlushTimer(this.sessionDataFlushTimer)
   }
 
   /**
@@ -831,7 +542,7 @@ export class PluginService implements IPluginService {
    * 超时 60s 自动 resolve 为默认值。
    */
   private async handleUiRequest(method: string, params: Record<string, unknown>, pluginId: string): Promise<unknown> {
-    const requestId = `${pluginId}_${Date.now()}_${Math.random().toString(36).slice(2)}`
+    const requestId = `${pluginId}_${Date.now()}_${randomSuffix()}`
     return new Promise<unknown>((resolve) => {
       if (this.activeUiRequest !== null) {
         this.uiRequestQueue.push({ params: { ...params, requestId, method, pluginId }, resolve })
@@ -851,7 +562,6 @@ export class PluginService implements IPluginService {
     resolve: (v: unknown) => void,
   ): void {
     const UI_REQUEST_TIMEOUT_MS = 60_000
-
     // 超时默认值
     const defaultResult = method === 'confirm' ? false : undefined
 

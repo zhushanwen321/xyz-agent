@@ -4,10 +4,8 @@
  * Manages session lifecycle: creation, deletion, messaging, history,
  * model switching, compaction, and persistence.
  */
-import { basename, resolve, join } from 'node:path'
-import { readFile } from 'node:fs/promises'
-import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs'
-import { execSync } from 'node:child_process'
+import { basename, resolve } from 'node:path'
+import { existsSync } from 'node:fs'
 import type {
   SessionSummary,
   SessionGroup,
@@ -25,6 +23,8 @@ import * as piBridge from '../pi-config-bridge.js'
 import { trash } from '../trash.js'
 import { NavigateInterceptor } from '../navigate-interceptor.js'
 import { TreeService } from './tree-service.js'
+import { readGitInfo } from './git-info.js'
+import { getHistoryFromFile } from './session-history.js'
 
 /** SendMessage hook 类型：在消息发送前触发，可阻止发送 */
 export type SendMessageHook = (sessionId: string, content: string) => Promise<{ blocked: boolean; reason?: string } | null>
@@ -45,37 +45,6 @@ interface ManagedSession {
   interceptor: NavigateInterceptor
   unsubUsageListener: (() => void) | null
   sessionFilePath?: string
-}
-
-export interface GitInfo {
-  branch: string
-  isWorktree: boolean
-}
-
-/** Read git branch and worktree status from cwd. Returns undefined if not a git repo. */
-function readGitInfo(cwd: string): GitInfo | undefined {
-  try {
-    const branch = execSync('git rev-parse --abbrev-ref HEAD', {
-      cwd,
-      timeout: 2000,
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim()
-    if (!branch) return undefined
-    // Detect worktree: .git is a file (not dir) containing 'gitdir:'
-    let isWorktree = false
-    try {
-      const gitPath = join(cwd, '.git')
-      const st = statSync(gitPath)
-      if (st.isFile()) {
-        const content = readFileSync(gitPath, 'utf-8')
-        isWorktree = content.startsWith('gitdir:')
-      }
-    } catch { /* not a worktree */ }
-    return { branch, isWorktree }
-  } catch {
-    return undefined
-  }
 }
 
 export class SessionService implements ISessionService {
@@ -128,11 +97,8 @@ export class SessionService implements ISessionService {
       throw new Error('No model configured. Please configure a provider and model in Settings before starting a session.')
     }
 
-    // Collect extension paths: built-in + bundled + user-enabled extensions
-    const bundleExtPaths = this.getExtensionPaths()
-    const userExtPaths = await this.extensionService.getExtensionPaths()
-    const allExtPaths = [...bundleExtPaths, ...userExtPaths]
-
+    // Collect extension paths: built-in + user-installed + file-type
+    const allExtPaths = await this.getExtensionPaths()
     const client = await this.pm.createSession(tempId, sessionCwd, {
       skillPaths: this.getSkillPaths(sessionCwd),
       extensionPaths: allExtPaths,
@@ -392,50 +358,17 @@ export class SessionService implements ISessionService {
         const session = this.sessions.get(sessionId)
         if (session && !session.isGenerating) {
           console.warn(`[session-service] getHistory via RPC returned empty for idle session ${sessionId}, falling back to file read`)
-          return await this.getHistoryFromFile(sessionId)
+          return await getHistoryFromFile(sessionId)
         }
         // 生成中但返回空 — 返回空（RPC 数据比磁盘新）
         return []
       } catch (e) {
         console.warn(`[session-service] getHistory via RPC failed: ${e instanceof Error ? e.message : e}, falling back to file read`)
-        return await this.getHistoryFromFile(sessionId)
+        return await getHistoryFromFile(sessionId)
       }
     }
 
-    return await this.getHistoryFromFile(sessionId)
-  }
-
-  private async getHistoryFromFile(sessionId: string): Promise<Message[]> {
-    const target = this.findScannedSession(sessionId)
-    if (!target) return []
-
-    let content: string
-    try {
-      content = await readFile(target.filePath, 'utf-8')
-    } catch (e) {
-      // Session 文件可能已被外部删除（pi 进程异常退出未 flush、用户手动清理等）
-      const code = (e as NodeJS.ErrnoException).code
-      if (code === 'ENOENT') {
-        console.warn(`[session-service] session file missing, returning empty history: ${target.filePath}`)
-        return []
-      }
-      throw e
-    }
-    const lines = content.split('\n').filter(l => l.trim())
-    const piMessages: PiHistoryMessage[] = []
-
-    for (const line of lines) {
-      try {
-        const entry = JSON.parse(line)
-        if (entry.type === 'message' && entry.message) {
-          piMessages.push(entry.message as PiHistoryMessage)
-        }
-      } catch {
-        void 0
-      }
-    }
-
-    return convertPiHistory(piMessages)
+    return await getHistoryFromFile(sessionId)
   }
 
   // ── Listing ────────────────────────────────────────────────────
@@ -486,10 +419,8 @@ export class SessionService implements ISessionService {
       this.sessions.delete(sessionId)
     }
     const id = sessionId
-    // Collect extension paths: built-in + bundled + user-enabled extensions
-    const bundleExtPaths = this.getExtensionPaths()
-    const userExtPaths = await this.extensionService.getExtensionPaths()
-    const allExtPaths = [...bundleExtPaths, ...userExtPaths]
+    // Collect extension paths: built-in + user-installed + file-type
+    const allExtPaths = await this.getExtensionPaths()
     const client = await this.pm.createSession(id, target.cwd, {
       skillPaths: this.getSkillPaths(target.cwd),
       extensionPaths: allExtPaths,
@@ -558,61 +489,17 @@ export class SessionService implements ISessionService {
     })
   }
 
-  /** 返回有效的 extension 路径列表（跳过不存在的文件） */
-  private getExtensionPaths(): string[] {
-    const paths: string[] = []
-
-    // xyz-agent 自定义 extension
-    if (this.extensionPath && existsSync(this.extensionPath)) {
-      paths.push(this.extensionPath)
-    } else if (this.extensionPath) {
-      console.warn(`[session-service] extension file not found: ${this.extensionPath}, skipping`)
+  /**
+   * 返回有效的 extension 路径列表（通过 ExtensionService 单调用链）。
+   * ExtensionService 封装 ExtensionResolver.resolve() + settings 状态过滤 + 文件型 extension。
+   */
+  private async getExtensionPaths(): Promise<string[]> {
+    try {
+      return await this.extensionService.getExtensionPaths()
+    } catch (e) {
+      console.warn('[session-service] getExtensionPaths failed:', e)
+      return []
     }
-
-    // 收集要扫描的目录列表
-    const scanDirs: string[] = []
-
-    // 1. 运行时 agent dir（~/.xyz-agent/pi/agent/extensions/）
-    //    打包模式由 migrateToPiSubdir() 从 Resources 同步到这里
-    const agentDir = this.getAgentDir()
-    scanDirs.push(join(agentDir, 'extensions'))
-
-    // 2. 开发模式：项目源码中的 bundled extensions（src-electron/resources/pi/agent/extensions/）
-    if (process.env.XYZ_AGENT_PACKAGED !== '1') {
-      scanDirs.push(join(this.projectRoot, 'resources', 'pi', 'agent', 'extensions'))
-    }
-
-    const seenExts = new Set<string>()
-    for (const bundledExtDir of scanDirs) {
-      if (!existsSync(bundledExtDir)) continue
-      try {
-        for (const entry of readdirSync(bundledExtDir)) {
-          const entryPath = join(bundledExtDir, entry)
-          let stat
-          try { stat = statSync(entryPath) } catch { continue }
-          if (!stat.isDirectory()) continue
-          // 跳过 shared/ 目录（不是 extension，只是共享模块）
-          if (entry === 'shared') continue
-          // 按 extension name 去重（不同目录可能有同名 extension，runtime 目录优先）
-          if (seenExts.has(entry)) continue
-          // 查找 index.ts 或 index.js
-          const indexTs = join(entryPath, 'index.ts')
-          const indexJs = join(entryPath, 'index.js')
-          if (existsSync(indexTs)) {
-            paths.push(indexTs)
-            seenExts.add(entry)
-          } else if (existsSync(indexJs)) {
-            paths.push(indexJs)
-            seenExts.add(entry)
-          }
-        }
-      // eslint-disable-next-line taste/no-silent-catch -- bundled extensions discovery: failure must not block session creation
-      } catch (e) {
-        console.warn(`[session-service] failed to read bundled extensions dir: ${bundledExtDir}`, e)
-      }
-    }
-
-    return paths
   }
 
   /** 获取 xyz-pi agent 目录（开发和打包模式统一：~/.xyz-agent/pi/agent/） */

@@ -40,6 +40,7 @@
 
   <!-- summary-table -->
   <div v-else-if="renderType === 'summary-table'" class="px-2.5 py-1.5 overflow-x-auto">
+    <!-- eslint-disable-next-line taste/no-native-html-elements -- xyz-ui has no Table component -->
     <table class="w-full text-xs border-collapse">
       <thead>
         <tr class="border-b border-border">
@@ -131,10 +132,13 @@ const progressData = computed(() => {
   return renderDesc.value?.data as { label: string; current: number; total: number; unit?: string } | null
 })
 
+const PERCENT_MULTIPLIER = 100
+const PERCENT_ROUND_DIVISOR = 100
+
 const progressPercent = computed(() => {
   const d = progressData.value
   if (!d || d.total <= 0) return 0
-  return Math.min(100, Math.round((d.current / d.total) * 100))
+  return Math.min(PERCENT_MULTIPLIER, Math.round((d.current / d.total) * PERCENT_ROUND_DIVISOR))
 })
 
 const codeContent = computed(() => {
