@@ -141,7 +141,18 @@ export const useChatStore = defineStore('chat', () => {
   function completeStreaming(opts: { keepGenerating?: boolean } | undefined, sessionId: string) {
     const s = getSessionState(sessionId)
     if (s.streamingMessage) {
-      s.completedMessages = [...s.completedMessages, { ...s.streamingMessage, status: 'complete' }]
+      // 收尾：标记未完成的 tool calls 为 completed，折叠未结束的 thinking blocks
+      const cleaned: Message = {
+        ...s.streamingMessage,
+        status: 'complete',
+        toolCalls: s.streamingMessage.toolCalls?.map(tc =>
+          tc.status === 'running' ? { ...tc, status: 'completed' as const, endTime: Date.now() } : tc
+        ),
+        thinking: s.streamingMessage.thinking?.map(th =>
+          th.collapsed ? th : { ...th, collapsed: true }
+        ),
+      }
+      s.completedMessages = [...s.completedMessages, cleaned]
       s.streamingMessage = null
     }
     if (!opts?.keepGenerating) {
