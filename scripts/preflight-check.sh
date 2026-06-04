@@ -208,18 +208,23 @@ fi
 echo ""
 echo -e "${BLUE}[7/9] @zhushanwen/pi-* npm packages...${NC}"
 
+# builtin pi extension 在根 node_modules（通过 extraResources 打包），不在 src-electron/node_modules
+PI_EXT_SEARCH_DIRS=("$PROJECT_ROOT/node_modules/@zhushanwen" "$ELECTRON_DIR/node_modules/@zhushanwen")
+
 found=0
-for pkg in "$ELECTRON_DIR/node_modules/@zhushanwen"/pi-*/package.json; do
-  if [ -f "$pkg" ]; then
-    pkg_dir=$(dirname "$pkg")
-    pkg_name=$(basename "$pkg_dir")
-    # 验证 main 入口文件存在（FR-7.4a）
-    main_entry=$(node -e "const p=require('$pkg');console.log(p.main||'index.js')" 2>/dev/null || echo "index.js")
-    if [ ! -f "$pkg_dir/$main_entry" ] && [ ! -f "$pkg_dir/index.ts" ]; then
-      echo -e "  ${YELLOW}⚠ $pkg_name missing entry ($main_entry)${NC}"
+for search_dir in "${PI_EXT_SEARCH_DIRS[@]}"; do
+  for pkg in "$search_dir"/pi-*/package.json; do
+    if [ -f "$pkg" ]; then
+      pkg_dir=$(dirname "$pkg")
+      pkg_name=$(basename "$pkg_dir")
+      # 验证 main 入口文件存在（FR-7.4a）
+      main_entry=$(node -e "const p=require('$pkg');console.log(p.main||'index.js')" 2>/dev/null || echo "index.js")
+      if [ ! -f "$pkg_dir/$main_entry" ] && [ ! -f "$pkg_dir/index.ts" ]; then
+        echo -e "  ${YELLOW}⚠ $pkg_name missing entry ($main_entry)${NC}"
+      fi
+      found=$((found + 1))
     fi
-    found=$((found + 1))
-  fi
+  done
 done
 if [ "$found" -lt 1 ]; then
   echo -e "  ${RED}✗ No @zhushanwen/pi-* packages found in node_modules${NC}"
@@ -233,20 +238,23 @@ echo ""
 echo -e "${BLUE}[8/9] pi-ext transitive dependencies...${NC}"
 
 missing_deps=0
-for pkg in "$ELECTRON_DIR/node_modules/@zhushanwen"/pi-*/package.json; do
-  [ -f "$pkg" ] || continue
-  pkg_name=$(basename "$(dirname "$(dirname "$pkg")")")
-  deps=$(node -e "
-    const p = require('$pkg');
-    const all = Object.keys(p.dependencies || {});
-    const external = all.filter(d => !d.startsWith('@zhushanwen/'));
-    console.log(external.join('\n'));
-  " 2>/dev/null || true)
-  for dep in $deps; do
-    if [ ! -d "$ELECTRON_DIR/node_modules/$dep" ]; then
-      echo -e "  ${RED}✗ Missing transitive dep: $dep (required by $pkg_name)${NC}"
-      missing_deps=$((missing_deps + 1))
-    fi
+for search_dir in "${PI_EXT_SEARCH_DIRS[@]}"; do
+  for pkg in "$search_dir"/pi-*/package.json; do
+    [ -f "$pkg" ] || continue
+    pkg_name=$(basename "$(dirname "$pkg")")
+    deps=$(node -e "
+      const p = require('$pkg');
+      const all = Object.keys(p.dependencies || {});
+      const external = all.filter(d => !d.startsWith('@zhushanwen/'));
+      console.log(external.join('\n'));
+    " 2>/dev/null || true)
+    for dep in $deps; do
+      # 检查两个位置
+      if [ ! -d "$PROJECT_ROOT/node_modules/$dep" ] && [ ! -d "$ELECTRON_DIR/node_modules/$dep" ]; then
+        echo -e "  ${RED}✗ Missing transitive dep: $dep (required by $pkg_name)${NC}"
+        missing_deps=$((missing_deps + 1))
+      fi
+    done
   done
 done
 if [ "$missing_deps" -gt 0 ]; then
