@@ -61,7 +61,7 @@ export class ExtensionResolver {
     if (userExtPaths.length > 0) {
       sources.push({ source: 'user', extensions: this.scanUserExtensions(userExtPaths) })
     }
-    sources.push({ source: 'npm', extensions: this.scanNpmExtensions(projectRoot) })
+    sources.push({ source: 'npm', extensions: this.scanNpmExtensions(projectRoot, packaged) })
 
     const deduped = this.deduplicate(sources)
     log.info(`[extension-resolver] resolved ${deduped.size} extensions from ${sources.length} sources`)
@@ -69,12 +69,39 @@ export class ExtensionResolver {
   }
 
   /**
-   * 扫描 npm extension：从 package.json dependencies 提取白名单
+   * 扫描 npm extension：从 package.json dependencies 提取白名单。
+   *
+   * 打包模式下 projectRoot = Resources/，该目录没有 package.json，
+   * 但 extraResources 已将 node_modules/@zhushanwen/ 拷贝到 Resources/ 下。
+   * 此时用 projectRoot 本身作为 resolvePaths，require.resolve 即可找到
+   * Resources/node_modules/@zhushanwen/pi-xxx/package.json。
+   *
+   * 开发模式下 projectRoot = 项目根目录，npmResolvePaths 默认也是项目根，
+   * 正常 resolve node_modules/@zhushanwen/。
    */
-  scanNpmExtensions(projectRoot: string): ExtensionMap {
+  scanNpmExtensions(projectRoot: string, packaged: boolean): ExtensionMap {
     const result: ExtensionMap = new Map()
-    const pkgJsonPath = join(projectRoot, 'package.json')
 
+    // 打包模式：不用读 package.json，直接从 extraResources 拷贝的 node_modules 扫描
+    if (packaged) {
+      const bundledNmDir = join(projectRoot, 'node_modules', '@zhushanwen')
+      if (!existsSync(bundledNmDir)) return result
+      try {
+        const entries = readdirSync(bundledNmDir)
+        for (const entry of entries) {
+          const pkgDir = join(bundledNmDir, entry)
+          if (!statSync(pkgDir).isDirectory()) continue
+          if (!this.isValidPiExtension(pkgDir)) continue
+          result.set(this.normalizeExtName(entry), pkgDir)
+        }
+      } catch (e) {
+        log.warn(`[extension-resolver] failed to scan packaged node_modules: ${e}`)
+      }
+      return result
+    }
+
+    // 开发模式：从 package.json dependencies 白名单 resolve
+    const pkgJsonPath = join(projectRoot, 'package.json')
     if (!existsSync(pkgJsonPath)) return result
 
     let dependencies: Record<string, string>
