@@ -19,14 +19,15 @@ description: >-
 
 ### [MANDATORY] 1. Pre-merge 验证
 
-```bash
-cd /Users/zhushanwen/Code/xyz-agent-workspace/main
+**在当前 feature worktree 内执行**（不是 main worktree）。验证的是待 PR 的代码。
 
+```bash
 # Lint 检查
 npm run lint
 
-# 单元测试
-npm test
+# 单元测试（根 package.json 没有 test script，需要分别跑）
+cd src-electron/runtime && npx vitest run
+cd ../renderer && npx vitest run
 
 # 构建验证(确认 build 不报错)
 npm run build
@@ -54,21 +55,27 @@ git commit -m "<描述性 commit message>"
 
 ### 3. Push 并创建 PR
 
-```bash
-# Push 到远程分支
-git push origin HEAD
+**bare repo workspace 注意**：`origin` 指向本地 bare repo，GitHub 的 remote 叫 `github`。
 
-# 创建 PR(使用 gh CLI)
+```bash
+# Push 到远程分支（用 github remote，不是 origin）
+git push github HEAD
+
+# 创建 PR（bare repo workspace 下需要显式指定 repo 和 head）
 gh pr create \
+  --repo zhushanwen321/xyz-agent \
+  --head "zhushanwen321:$(git branch --show-current)" \
   --title "<PR 标题>" \
   --body "<PR 描述,包含改动摘要和测试说明>"
 ```
+
+如果 worktree 内 `gh` 能自动发现 repo（`.git` 文件追溯到 bare repo），可省略 `--repo` 和 `--head`。
 
 ## 项目特化约束
 
 - **Electron 打包验证**:本地 build 通过即可,全量 DMG/EXE 产物由 CI 生成
 - **构建产物路径**:`src-electron/dist/`,`.agents/skills/` 不参与构建
-- **预发布检查脚本**:
+- **预发布检查脚本**（项目 `scripts/` 目录下）:
   - `scripts/preflight-check.sh` - 综合预检
   - `scripts/postbuild-validate.sh` - 构建后验证
   - `scripts/validate-runtime-bundle.sh` - 运行时 bundle 验证
