@@ -1,6 +1,6 @@
 {
   "name": "statusline",
-  "version": "0.3.12",
+  "version": "0.3.13",
   "displayName": "Statusline",
   "description": "Bridges pi extension setStatus events to xyz-agent status bar system",
   "xyzAgent": {
