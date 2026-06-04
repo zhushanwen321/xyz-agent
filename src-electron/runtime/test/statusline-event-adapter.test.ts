@@ -35,8 +35,8 @@ describe('TC-1-01: setStatus → onStatusSetUpdate callback', () => {
         listener(piEvent({
           type: 'extension_ui_request',
           method: 'setStatus',
-          key: 'goal',
-          text: '◆ Goal 1/20',
+          statusKey: 'goal',
+          statusText: '◆ Goal 1/20',
         }))
         return () => {}
       },
@@ -84,8 +84,8 @@ describe('TC-1-01: setStatus → onStatusSetUpdate callback', () => {
         listener(piEvent({
           type: 'extension_ui_request',
           method: 'setStatus',
-          key: 'todo',
-          text: undefined,
+          statusKey: 'todo',
+          statusText: undefined,
         }))
         return () => {}
       },
@@ -112,8 +112,8 @@ describe('TC-1-02: setWidget bridges to extension:widget', () => {
           type: 'extension_ui_request',
           method: 'setWidget',
           id: 'req-w1',
-          key: 'widget-key',
-          lines: ['line1'],
+          widgetKey: 'widget-key',
+          widgetLines: ['line1'],
         }))
         return () => {}
       },
@@ -229,8 +229,8 @@ describe('TC-8-01: full setStatus data flow (event-adapter → callback)', () =>
         listener(piEvent({
           type: 'extension_ui_request',
           method: 'setStatus',
-          key: 'goal',
-          text: '◆ Goal 3/20',
+          statusKey: 'goal',
+          statusText: '◆ Goal 3/20',
         }))
         return () => {}
       },
@@ -259,9 +259,9 @@ describe('TC-8-01: full setStatus data flow (event-adapter → callback)', () =>
 
     adapter.attach({
       onEvent: (listener) => {
-        listener(piEvent({ type: 'extension_ui_request', method: 'setStatus', key: 'goal', text: '3/20' }))
-        listener(piEvent({ type: 'extension_ui_request', method: 'setStatus', key: 'todo', text: '5/10' }))
-        listener(piEvent({ type: 'extension_ui_request', method: 'setStatus', key: 'goal', text: '' }))  // clear
+        listener(piEvent({ type: 'extension_ui_request', method: 'setStatus', statusKey: 'goal', statusText: '3/20' }))
+        listener(piEvent({ type: 'extension_ui_request', method: 'setStatus', statusKey: 'todo', statusText: '5/10' }))
+        listener(piEvent({ type: 'extension_ui_request', method: 'setStatus', statusKey: 'goal', statusText: '' }))  // clear
         return () => {}
       },
     })
