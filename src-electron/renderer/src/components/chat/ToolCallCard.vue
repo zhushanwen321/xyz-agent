@@ -123,8 +123,15 @@ const cardBorderClass = computed(() => {
 })
 
 const elapsedMs = computed(() => {
-  const end = props.toolCall.endTime ?? now.value
-  return Math.max(0, end - props.toolCall.startTime)
+  const start = props.toolCall.startTime
+  if (!start) return 0
+  if (props.toolCall.endTime) {
+    return Math.max(0, props.toolCall.endTime - start)
+  }
+  if (isRunning.value) {
+    return Math.max(0, now.value - start)
+  }
+  return 0
 })
 
 const elapsedDisplay = computed(() => {

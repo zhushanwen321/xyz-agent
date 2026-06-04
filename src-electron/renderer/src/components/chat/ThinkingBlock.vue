@@ -17,7 +17,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
 
 const props = defineProps<{
@@ -35,23 +35,37 @@ const DECISECOND_MS = 100
 const SECONDS_PER_MINUTE = 60
 
 const now = ref(Date.now())
+const localStartTime = ref<number>(0)
 let timerInterval: ReturnType<typeof setInterval> | undefined
 
-onMounted(() => {
-  if (props.streaming) {
+function startTimer() {
+  if (!localStartTime.value) localStartTime.value = Date.now()
+  now.value = Date.now()
+  if (!timerInterval) {
     timerInterval = setInterval(() => { now.value = Date.now() }, DECISECOND_MS)
   }
-})
+}
 
-onBeforeUnmount(() => {
+function stopTimer() {
   if (timerInterval !== undefined) {
     clearInterval(timerInterval)
     timerInterval = undefined
   }
+}
+
+onMounted(() => {
+  if (props.streaming) startTimer()
 })
 
+watch(() => props.streaming, (streaming) => {
+  if (streaming) startTimer()
+  else stopTimer()
+})
+
+onBeforeUnmount(stopTimer)
+
 const elapsedMs = computed(() => {
-  const start = props.startTime
+  const start = props.startTime ?? localStartTime.value
   if (!start) return 0
   const end = props.streaming ? now.value : (props.endTime ?? now.value)
   return Math.max(0, end - start)
