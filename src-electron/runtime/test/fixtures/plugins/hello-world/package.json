@@ -1,6 +1,6 @@
 {
   "name": "hello-world",
-  "version": "0.3.13",
+  "version": "0.3.14",
   "description": "A test plugin for xyz-agent",
   "displayName": "Hello World",
   "xyzAgent": {
