@@ -3,7 +3,7 @@
  * Handles registration, clearing, and session-scoped cleanup of extension timeouts.
  */
 
-const EXTENSION_UI_REQUEST_TIMEOUT_MS = 30_000
+const EXTENSION_UI_REQUEST_TIMEOUT_MS = 300_000 // 5min — UI interactions (select/confirm) need user manual action
 
 export class ExtensionTimeoutManager {
   private extensionTimeouts = new Map<string, NodeJS.Timeout>()

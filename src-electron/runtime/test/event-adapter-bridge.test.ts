@@ -34,7 +34,7 @@ describe('EventAdapter extension bridge', () => {
       await vi.waitFor(() => sent.length > 0)
 
       expect(sent).toHaveLength(1)
-      expect(sent[0].type).toBe('extension.widget')
+      expect(sent[0].type).toBe('extension:widget')
       expect(sent[0].payload).toEqual({
         sessionId: 'test-session-id',
         widgetKey: 'my-widget',
@@ -107,7 +107,7 @@ describe('EventAdapter extension bridge', () => {
 
       // WS event should be sent
       expect(sent).toHaveLength(1)
-      expect(sent[0].type).toBe('extension.status')
+      expect(sent[0].type).toBe('extension:status')
       expect(sent[0].payload).toEqual({
         sessionId: 'test-session-id',
         statusKey: 'my-status',
@@ -131,7 +131,7 @@ describe('EventAdapter extension bridge', () => {
 
       await vi.waitFor(() => sent.length > 0)
 
-      expect(sent[0].type).toBe('extension.status')
+      expect(sent[0].type).toBe('extension:status')
       expect(sent[0].payload.statusKey).toBe('status')
       expect(sent[0].payload.text).toBe('Done')
     })

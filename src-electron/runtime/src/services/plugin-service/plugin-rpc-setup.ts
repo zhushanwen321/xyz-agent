@@ -92,6 +92,8 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
     }
     if (deps.broadcastFn) {
       deps.broadcastFn('plugin:notification', payload)
+    } else {
+      console.warn('[plugin-rpc-setup] plugin.notify dropped: no broadcastFn configured')
     }
   })
 
@@ -172,6 +174,8 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
       // Notify via broadcastFn
       if (deps.broadcastFn) {
         deps.broadcastFn('plugin:notification', { pluginId, level, message })
+      } else {
+        console.warn('[plugin-rpc-setup] ui-api notify dropped: no broadcastFn configured')
       }
     },
     updateStatusBarItem: async (pluginId: string, id: string, text: string, options?: StatusBarItemOptions) => {

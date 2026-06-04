@@ -309,6 +309,7 @@ export class SidecarServer implements IMessageBroker {
           return this.sendError(ws, 'handler_error', `No active session for extension response: ${extSid}`, msg.id, extSid)
         }
         await client.sendCommand('extension_ui_response', { id: requestId, response: extResult ?? null })
+        // Only clear timeout after successful sendCommand — if it throws, timeout callback will handle it
         this.extensionTimeoutMgr.clearTimeout(requestId)
         return
       }
@@ -323,9 +324,13 @@ export class SidecarServer implements IMessageBroker {
         if (!this.extensionService) {
           return this.sendError(ws, 'handler_error', 'Extension service not available', msg.id)
         }
-        await this.extensionService.toggleExtension(msg.payload.name, msg.payload.enabled)
-        const extensions = await this.extensionService.scanExtensions()
-        return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions } })
+        try {
+          await this.extensionService.toggleExtension(msg.payload.name, msg.payload.enabled)
+          const extensions = await this.extensionService.scanExtensions()
+          return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions } })
+        } catch (e) {
+          return this.sendError(ws, 'toggle_failed', e instanceof Error ? e.message : String(e), msg.id)
+        }
       }
       case 'extension.install': {
         if (!this.extensionService) {

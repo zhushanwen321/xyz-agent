@@ -6,6 +6,7 @@ const SYNC_INTERVAL_MS = 2000
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi extension API is loosely typed
 export async function activate(api: any) {
   bridgeState = 'Disconnected'
+  syncAttempts = 0
 
   // 1. Sync loop
   const syncInterval = setInterval(async () => {
@@ -34,9 +35,10 @@ export async function activate(api: any) {
         bridgeState = 'Ready'
         clearInterval(syncInterval)
       }
+      // eslint-disable-next-line taste/no-silent-catch
     } catch (e) {
       console.debug('[bridge] sync attempt failed, retrying:', e)
-      return
+      // next interval will retry
     }
   }, SYNC_INTERVAL_MS)
 
@@ -55,9 +57,10 @@ export async function activate(api: any) {
         } else {
           void api.extension_ui_request({ method: 'bridge:event', eventName: evt, data, sessionId: data?.sessionId })
         }
+        // eslint-disable-next-line taste/no-silent-catch
       } catch (e) {
         console.error('[bridge] event forward error:', e)
-        throw e
+        // Intentionally silent — single event failure should not break the extension
       }
     })
   }
@@ -70,9 +73,10 @@ export async function activate(api: any) {
       if (payload.method === 'bridge:append_entry' && payload.type === 'plugin-data') {
         api.appendEntry(payload.type, payload.data)
       }
+      // eslint-disable-next-line taste/no-silent-catch
     } catch (e) {
       console.error('[bridge] append_entry error:', e)
-      throw e
+      // Intentionally silent — single append failure should not break the extension
     }
   })
 }

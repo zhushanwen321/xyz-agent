@@ -3,7 +3,7 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { on, off } from '../../lib/event-bus'
 import { send } from '../../lib/ws-client'
-import { Button, Dialog } from '../../design-system'
+import { Button, Dialog, Input } from '../../design-system'
 import type { ServerMessage, ExtensionInfo } from '@xyz-agent/shared'
 import ExtensionSection from './ExtensionSection.vue'
 
@@ -21,6 +21,16 @@ function onExtensions(msg: ServerMessage) {
   if (payload.extensions) {
     extensions.value = payload.extensions
   }
+  // Reset installing state on any extensions update (install success/failure)
+  installing.value = false
+}
+
+function onInstallError(msg: ServerMessage) {
+  const payload = msg.payload as { code?: string; message?: string }
+  if (payload.code === 'install_failed') {
+    installError.value = payload.message ?? 'Install failed'
+    installing.value = false
+  }
 }
 
 function handleToggle(payload: { name: string; enabled: boolean }) {
@@ -30,7 +40,7 @@ function handleToggle(payload: { name: string; enabled: boolean }) {
   send({ type: 'extension.toggle', payload: { name, enabled } })
 }
 
-async function handleInstall() {
+function handleInstall() {
   const source = installSource.value.trim()
   if (!source) return
   installing.value = true
@@ -50,11 +60,13 @@ function doUninstall() {
 
 onMounted(() => {
   on('config.extensions', onExtensions)
+  on('error', onInstallError)
   send({ type: 'extension.list', payload: {} })
 })
 
 onUnmounted(() => {
   off('config.extensions', onExtensions)
+  off('error', onInstallError)
 })
 </script>
 

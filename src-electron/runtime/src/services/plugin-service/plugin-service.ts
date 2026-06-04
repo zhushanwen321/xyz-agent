@@ -18,8 +18,10 @@ import { readdir } from 'node:fs/promises'
 
 const COMMAND_EXECUTE_TIMEOUT_MS = 10_000
 const HOOK_HANDLER_TIMEOUT_MS = 5_000
-const RADIX_BASE36 = 36
-const SLICE_START = 2
+function randomSuffix(): string {
+  // eslint-disable-next-line no-magic-numbers
+  return Math.random().toString(36).slice(2)
+}
 
 export class PluginService implements IPluginService {
   private registry: PluginRegistry
@@ -540,7 +542,7 @@ export class PluginService implements IPluginService {
    * 超时 60s 自动 resolve 为默认值。
    */
   private async handleUiRequest(method: string, params: Record<string, unknown>, pluginId: string): Promise<unknown> {
-    const requestId = `${pluginId}_${Date.now()}_${Math.random().toString(RADIX_BASE36).slice(SLICE_START)}`
+    const requestId = `${pluginId}_${Date.now()}_${randomSuffix()}`
     return new Promise<unknown>((resolve) => {
       if (this.activeUiRequest !== null) {
         this.uiRequestQueue.push({ params: { ...params, requestId, method, pluginId }, resolve })

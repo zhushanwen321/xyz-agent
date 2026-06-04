@@ -16,6 +16,7 @@
         ]"
         @click="handleSelect(cmd)"
         @mouseenter="activeIndex = idx"
+        @mouseleave="startCloseTimer()"
       >
         <span
           :class="[
@@ -102,9 +103,16 @@ const menuRef = ref<HTMLElement | null>(null)
 // Hover tooltip 状态：Teleport + position: fixed
 const SCROLL_CAPTURE_PHASE = true
 const CENTER_DIVISOR = 2
+const HOVER_CLOSE_DELAY_MS = 150
 const hoveredIdx = ref<number | null>(null)
 const tipPos = ref({ top: 0, left: 0 })
 let closeTimer: ReturnType<typeof setTimeout> | null = null
+
+function startCloseTimer() {
+  closeTimer = setTimeout(() => {
+    hoveredIdx.value = null
+  }, HOVER_CLOSE_DELAY_MS)
+}
 
 // 优先用 hover idx，否则跟随键盘 activeIndex
 const hoverTipFor = computed<SlashCommand | null>(() => {

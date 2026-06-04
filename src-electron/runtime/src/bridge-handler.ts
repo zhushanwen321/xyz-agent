@@ -78,10 +78,10 @@ export class BridgeHandler {
       console.error(`[server] bridge request failed: ${method}`, e)
       try {
         await client.sendCommand('extension_ui_response', { id: requestId, response: { error: String(e) } })
+        // eslint-disable-next-line taste/no-silent-catch
       } catch (sendErr) {
-        console.error(`[server] failed to send extension_ui_response error: ${sendErr instanceof Error ? sendErr.message : String(sendErr)}`)
+        console.error(`[bridge-handler] failed to send error response to pi: ${sendErr instanceof Error ? sendErr.message : String(sendErr)}`)
         // Cannot propagate further — both pi and frontend channels exhausted
-        throw sendErr
       }
     }
   }

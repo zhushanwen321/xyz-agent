@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { ExtensionService } from '../src/extension-service.js'
 
@@ -43,8 +43,7 @@ describe('ExtensionService', () => {
   afterEach(() => {
     // Cleanup test dir
     try {
-      const fs = require('node:fs')
-      fs.rmSync(testSettingsDir, { recursive: true, force: true })
+      rmSync(testSettingsDir, { recursive: true, force: true })
     } catch { /* ignore */ }
   })
 
@@ -67,8 +66,12 @@ describe('ExtensionService', () => {
 
       const extensions = await service.scanExtensions()
       const askUser = extensions.find(e => e.name === 'pi-ask-user')
+      // pi-ask-user may not exist in test environment (depends on npm dependencies)
       if (askUser) {
         expect(askUser.enabled).toBe(false)
+      } else {
+        // eslint-disable-next-line no-console
+        console.log('[test] pi-ask-user not found in test environment, skipping disabled assertion')
       }
     })
 
@@ -76,8 +79,7 @@ describe('ExtensionService', () => {
       // Clear settings packages
       writeFileSync(join(testSettingsDir, 'settings.json'), JSON.stringify({}), 'utf-8')
       // Remove the fake npm package
-      const fs = require('node:fs')
-      fs.rmSync(join(testSettingsDir, 'npm'), { recursive: true, force: true })
+      rmSync(join(testSettingsDir, 'npm'), { recursive: true, force: true })
 
       const extensions = await service.scanExtensions()
       // Should still have built-in extensions from npm dependencies

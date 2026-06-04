@@ -166,7 +166,7 @@ export class ExtensionService {
 
     // 验证是否为有效的 pi extension
     const pkgInstallDir = join(npmDir, 'node_modules', pkgName)
-    if (!existsSync(pkgInstallDir) || !this.resolver['isValidPiExtension'](pkgInstallDir)) {
+    if (!existsSync(pkgInstallDir) || !this.resolver.isValidPiExtension(pkgInstallDir)) {
       // 回滚
       try {
         execSync(`npm uninstall ${pkgName} --prefix ${npmDir}`, { stdio: 'pipe', timeout: NPM_UNINSTALL_TIMEOUT })

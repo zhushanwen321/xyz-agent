@@ -254,7 +254,7 @@ export class ExtensionResolver {
    * - peerDependencies 包含含 'pi-coding-agent' 或 'pi-agent-core' 的包
    * - package.json 中有 'pi' manifest 字段
    */
-  private isValidPiExtension(pkgDir: string): boolean {
+  isValidPiExtension(pkgDir: string): boolean {
     const pkgJsonPath = join(pkgDir, 'package.json')
     if (!existsSync(pkgJsonPath)) return false
 

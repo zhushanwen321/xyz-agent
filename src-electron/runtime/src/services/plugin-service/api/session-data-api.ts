@@ -21,10 +21,10 @@ import type { PluginRpcServer } from '../plugin-rpc-server.js'
 import type { PluginRpcClient } from '../plugin-rpc-client.js'
 import { PluginRpcErrorCodes } from '../plugin-types.js'
 
-const BYTES_PER_KB = 1024
-const MB = BYTES_PER_KB * BYTES_PER_KB
-const TEN = 10
-const DEFAULT_MAX_SESSION_DATA_BYTES = TEN * MB // 10MB
+// eslint-disable-next-line no-magic-numbers
+const MB = 1024 * 1024
+// eslint-disable-next-line no-magic-numbers
+const DEFAULT_MAX_SESSION_DATA_BYTES = 10 * MB // 10MB
 
 /** SessionData 服务依赖（主线程侧） */
 export interface SessionDataHandlers {

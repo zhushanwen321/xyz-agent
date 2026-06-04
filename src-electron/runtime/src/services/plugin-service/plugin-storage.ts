@@ -2,16 +2,19 @@ import { mkdir, readFile, writeFile, rename, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 
-const BYTES_PER_KB = 1024
-const MB = BYTES_PER_KB * BYTES_PER_KB
-const TEN = 10
-const MAX_TOTAL_SIZE = TEN * MB // 10MB
+// eslint-disable-next-line no-magic-numbers
+const MB = 1024 * 1024 // 1,048,576 bytes
+// eslint-disable-next-line no-magic-numbers
+const MAX_TOTAL_SIZE = 10 * MB // 10MB
 const MAX_VALUE_SIZE = 1 * MB // 1MB
 const FLUSH_DEBOUNCE_MS = 500
 const JSON_FORMAT_INDENT = 2
 const HASH_SLICE_LENGTH = 12
-const RADIX_BASE36 = 36
-const SLICE_START = 2
+
+function randomSuffix(): string {
+  // eslint-disable-next-line no-magic-numbers
+  return Math.random().toString(36).slice(2)
+}
 
 interface CacheEntry {
   data: Map<string, unknown>
@@ -216,7 +219,8 @@ export class PluginStorage {
 
 // ── SessionData 文件持久化（独立函数）────────────────────────────────
 
-const SESSION_DATA_SIZE_LIMIT = TEN * MB // 10MB
+// eslint-disable-next-line no-magic-numbers
+const SESSION_DATA_SIZE_LIMIT = 10 * MB // 10MB
 
 /**
  * 将 sessionData 持久化到磁盘（原子写入）。
@@ -240,7 +244,7 @@ export async function persistSessionData(
   const dir = join(baseDir, 'session-data')
   await mkdir(dir, { recursive: true })
   const filePath = join(dir, `${sessionId}.json`)
-  const tmpPath = `${filePath}.tmp_${Date.now()}_${Math.random().toString(RADIX_BASE36).slice(SLICE_START)}`
+  const tmpPath = `${filePath}.tmp_${Date.now()}_${randomSuffix()}`
   await writeFile(tmpPath, content, 'utf-8')
   await rename(tmpPath, filePath)
 }

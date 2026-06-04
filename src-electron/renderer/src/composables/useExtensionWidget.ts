@@ -13,13 +13,13 @@ let refCount = 0
 function onWidget(msg: { payload: ExtensionWidgetPayload }) {
   const p = msg.payload
   if (!p?.sessionId || !p?.widgetKey) return
-  widgets.value = new Map(widgets.value.set(p.widgetKey, p))
+  widgets.value = new Map(widgets.value.set(`${p.sessionId}:${p.widgetKey}`, p))
 }
 
 function onStatus(msg: { payload: ExtensionStatusPayload }) {
   const p = msg.payload
   if (!p?.sessionId || !p?.statusKey) return
-  statuses.value = new Map(statuses.value.set(p.statusKey, p))
+  statuses.value = new Map(statuses.value.set(`${p.sessionId}:${p.statusKey}`, p))
 }
 
 export function useExtensionWidget() {
