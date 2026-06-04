@@ -77,7 +77,6 @@ jobs:
           npm -w @xyz-agent/shared run typecheck
 
       - name: Test
-        continue-on-error: true  # TODO: fix event-adapter/statusline tests, remove this
         run: |
           npm -w @xyz-agent/runtime run test
           npm -w @xyz-agent/frontend run test
