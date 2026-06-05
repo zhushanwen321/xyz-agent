@@ -142,6 +142,18 @@ export class EventAdapter {
           case 'text_end':
             return null
 
+          // FR-5: streaming error (e.g. user abort, upstream failure) — surface
+          // as message.stream_error so the renderer can show a final error state.
+          case 'error':
+            return {
+              type: 'message.stream_error',
+              payload: {
+                sessionId: sid,
+                reason: 'error',
+                content: sub.content ?? '',
+              },
+            }
+
           default:
             console.warn('[EventAdapter] Unhandled message_update sub-type:', sub.type)
             return null
@@ -184,17 +196,31 @@ export class EventAdapter {
       }
 
       case 'tool_execution_end': {
-        // pi result is { content: [{ type: 'text', text: '...' }] } or a string
+        // pi result is { content: [{ type: 'text', text: '...' }, { type: 'image', ... }] } or a string
         let output: string
+        let images: Array<{ data: string; mimeType: string }> | undefined
         const raw = event.result ?? event.output
         if (typeof raw === 'string') {
           output = raw
         } else if (raw && typeof raw === 'object' && Array.isArray((raw as Record<string, unknown>).content)) {
           const contentArr = (raw as Record<string, unknown>).content as Array<Record<string, unknown>>
+          // Concatenate text blocks into a single output string for the renderer.
           output = contentArr
             .filter((c) => c.type === 'text')
             .map((c) => (c.text as string) ?? '')
             .join('\n')
+          // Extract image blocks (data + mimeType) so the renderer can display them
+          // alongside the text output.
+          const imageBlocks = contentArr
+            .filter((c) => c.type === 'image')
+            .map((c) => ({
+              data: String(c.data ?? ''),
+              mimeType: String(c.mimeType ?? ''),
+            }))
+            .filter((img) => img.data !== '' || img.mimeType !== '')
+          if (imageBlocks.length > 0) {
+            images = imageBlocks
+          }
         } else if (raw != null) {
           output = JSON.stringify(raw)
         } else {
@@ -224,7 +250,7 @@ export class EventAdapter {
           }
         }
 
-        this.fireHookEvent('tool_execution_end', { toolCallId, output, details })
+        this.fireHookEvent('tool_execution_end', { toolCallId, output, details, images })
 
         return {
           type: 'message.tool_call_end',
@@ -233,6 +259,7 @@ export class EventAdapter {
             toolCallId,
             output,
             details,
+            images,
             error: event.isError ? output : event.error,
           },
         }
@@ -250,6 +277,10 @@ export class EventAdapter {
         const rawReason = (lastMsg?.stopReason as string) ?? 'stop'
         const usage = lastMsg?.usage as
           { input: number; output: number; totalTokens?: number; cacheRead?: number; cacheWrite?: number } | undefined
+        // Extract responseModel and diagnostics from the last message so the
+        // renderer can show which model answered and per-turn metrics.
+        const responseModel = lastMsg?.responseModel as string | undefined
+        const diagnostics = lastMsg?.diagnostics as Record<string, unknown> | undefined
         // Emit context.update callback for context window tracking
         if (usage?.input) {
           this.options?.onContextUpdate?.(sid, {
@@ -266,6 +297,8 @@ export class EventAdapter {
             usage: usage
               ? { inputTokens: usage.input ?? 0, outputTokens: usage.output ?? 0, totalTokens: usage.totalTokens ?? 0 }
               : undefined,
+            responseModel,
+            diagnostics,
           },
         }
       }
@@ -306,6 +339,26 @@ export class EventAdapter {
           })
           return null
         }
+        // setEditorText: TUI bridge — forward text to frontend
+        if (method === 'set_editor_text') {
+          return {
+            type: 'extension:setEditorText',
+            payload: {
+              sessionId: sid,
+              text: String(event.text ?? ''),
+            },
+          }
+        }
+        // setTitle: TUI bridge — forward window/tab title to frontend
+        if (method === 'setTitle') {
+          return {
+            type: 'extension:setTitle',
+            payload: {
+              sessionId: sid,
+              title: String(event.title ?? ''),
+            },
+          }
+        }
         // Bridge methods: route directly via callback, no frontend timeout
         if (method?.startsWith('bridge:')) {
           const requestId = String(event.id ?? '')
@@ -313,8 +366,8 @@ export class EventAdapter {
           this.options?.onBridgeUIRequest?.(requestId, sid, method, data)
           return null
         }
-        // Interactive methods: confirm, select, input, notify
-        if (method === 'confirm' || method === 'select' || method === 'input' || method === 'notify') {
+        // Interactive methods: confirm, select, input, notify, editor
+        if (method === 'confirm' || method === 'select' || method === 'input' || method === 'notify' || method === 'editor') {
           const rawOptions = event.options as Array<{ label: string; value: string }> | undefined
           const requestId = String(event.id ?? '')
           this.options?.onExtensionUIRequest?.(requestId, sid, method)
@@ -329,6 +382,8 @@ export class EventAdapter {
               options: rawOptions ? rawOptions.map((o) => o.label) : undefined,
               default: event.default as string | undefined,
               level: event.level as 'info' | 'warn' | 'error' | undefined,
+              // editor: optional prefill value to seed the input
+              prefill: method === 'editor' ? (event.prefill as string | undefined) : undefined,
             },
           }
         }
@@ -358,11 +413,61 @@ export class EventAdapter {
       // ── Lifecycle events ────────────────────────────────────────
       case 'message_start': {
         const msg = event.message as Record<string, unknown> | undefined
-        // custom message（来自 pi.sendMessage）包含 customType/content，转发给 interceptor
-        if (msg?.customType) {
+        // If no message body, emit a minimal message_start so the renderer
+        // can still open the bubble.
+        if (!msg) {
           return {
             type: 'message.message_start',
-            payload: { sessionId: sid, customType: msg.customType as string, content: msg.content as string },
+            payload: { sessionId: sid },
+          }
+        }
+        const role = msg.role as string | undefined
+        // Role-based routing for non-assistant messages produced by pi.
+        // Each role carries a distinct payload shape that the renderer needs.
+        if (role === 'bashExecution') {
+          return {
+            type: 'message.bashExecution',
+            payload: {
+              sessionId: sid,
+              command: msg.command as string | undefined,
+              output: msg.output as string | undefined,
+              exitCode: msg.exitCode as number | undefined,
+            },
+          }
+        }
+        if (role === 'compactionSummary') {
+          return {
+            type: 'message.compactionSummary',
+            payload: {
+              sessionId: sid,
+              summary: msg.summary as string | undefined,
+              tokensBefore: msg.tokensBefore as number | undefined,
+            },
+          }
+        }
+        if (role === 'branchSummary') {
+          return {
+            type: 'message.branchSummary',
+            payload: {
+              sessionId: sid,
+              summary: msg.summary as string | undefined,
+              fromId: msg.fromId as string | undefined,
+            },
+          }
+        }
+        // custom message（来自 pi.sendMessage）包含 customType/content，转发给 interceptor
+        if (msg.customType) {
+          return {
+            type: 'message.message_start',
+            payload: {
+              sessionId: sid,
+              customType: msg.customType as string,
+              content: msg.content as string | undefined,
+              // Forward optional structured metadata so the renderer can render
+              // expandable details / visibility hints for custom message types.
+              details: msg.details as Record<string, unknown> | undefined,
+              display: msg.display as boolean | undefined,
+            },
           }
         }
         return {
@@ -385,26 +490,85 @@ export class EventAdapter {
           type: 'extension.error',
           payload: {
             sessionId: sid,
-            extensionName: event.extensionName ?? '',
+            // pi RPC sends the extension file path as `extensionPath`; expose it
+            // as `extensionName` for the renderer (which already keys by name).
+            extensionName: (event.extensionPath as string) ?? '',
             error: event.error ?? 'Unknown extension error',
+            errorEvent: event.event as string | undefined,
           },
         }
-      case 'tool_execution_update':
+      case 'tool_execution_update': {
+        // partialResult may be a string (simple text progress) or a structured
+        // object (e.g. { content, details }) — pass both through unchanged.
+        const partialResult = event.partialResult
+        const detail: string | Record<string, unknown> | undefined =
+          partialResult != null && typeof partialResult === 'object'
+            ? (partialResult as Record<string, unknown>)
+            : (partialResult as string | undefined)
         return {
           type: 'message.tool_call_update',
           payload: {
             sessionId: sid,
             toolCallId: event.toolCallId ?? '',
-            detail: event.partialResult as string | undefined,
+            detail,
           },
         }
+      }
       // compact 生命周期事件由 session-pool 手动转发，此处丢弃避免重复
       case 'compaction_start':
       case 'compaction_end':
-      // auto-retry 事件暂不转发
-      case 'auto_retry_start':
-      case 'auto_retry_end':
         return null
+
+      // ── FR-3: new event types (TUI bridge surface) ───────────
+      case 'auto_retry_start':
+        return {
+          type: 'message.auto_retry_start',
+          payload: {
+            sessionId: sid,
+            attempt: event.attempt as number | undefined,
+            maxAttempts: event.maxAttempts as number | undefined,
+            delayMs: event.delayMs as number | undefined,
+            errorMessage: event.errorMessage as string | undefined,
+          },
+        }
+
+      case 'auto_retry_end':
+        return {
+          type: 'message.auto_retry_end',
+          payload: {
+            sessionId: sid,
+            success: event.success as boolean | undefined,
+            attempt: event.attempt as number | undefined,
+          },
+        }
+
+      case 'queue_update':
+        return {
+          type: 'message.queue_update',
+          payload: {
+            sessionId: sid,
+            steering: event.steering as string[] | undefined,
+            followUp: event.followUp as string[] | undefined,
+          },
+        }
+
+      case 'session_info_changed':
+        return {
+          type: 'session.renamed',
+          payload: {
+            sessionId: sid,
+            name: event.name as string | undefined,
+          },
+        }
+
+      case 'thinking_level_changed':
+        return {
+          type: 'session.thinkingLevelSet',
+          payload: {
+            sessionId: sid,
+            level: event.level as string | undefined,
+          },
+        }
 
       default:
         console.warn('[EventAdapter] Unhandled pi event type:', event.type)
