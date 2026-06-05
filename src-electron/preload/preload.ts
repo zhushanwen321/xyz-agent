@@ -33,6 +33,8 @@ export interface ElectronAPI {
   pickDirectory(options?: { title?: string }): Promise<{ canceled: boolean; path: string | null }>
   /** 在默认浏览器中打开外部链接 */
   openExternal(url: string): Promise<void>
+  /** 监听 macOS 全屏状态变化 */
+  onFullscreenChanged(callback: (payload: { isFullscreen: boolean }) => void): () => void
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -77,4 +79,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   pickDirectory: (options?: { title?: string }) => ipcRenderer.invoke('pick-directory', options),
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
+  onFullscreenChanged: (callback: (payload: { isFullscreen: boolean }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: { isFullscreen: boolean }) => callback(payload)
+    ipcRenderer.on('fullscreen-changed', handler)
+    return () => ipcRenderer.removeListener('fullscreen-changed', handler)
+  },
 } satisfies ElectronAPI)
