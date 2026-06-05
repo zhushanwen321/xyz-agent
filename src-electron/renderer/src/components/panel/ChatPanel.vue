@@ -332,6 +332,8 @@ const branchTabsMap = computed<Map<string, BranchTab[]>>(() => {
   return map
 })
 
+const TIME_PAD_WIDTH = 2
+
 function toggleBatchMode() {
   batchMode.value = !batchMode.value
   if (!batchMode.value) {
@@ -368,8 +370,8 @@ function collectBatchContent(elements: HTMLElement[], format: 'markdown' | 'plai
     let timeLabel = ''
     if (ts > 0) {
       const d = new Date(ts)
-      const hh = d.getHours().toString().padStart(2, '0')
-      const mm = d.getMinutes().toString().padStart(2, '0')
+      const hh = d.getHours().toString().padStart(TIME_PAD_WIDTH, '0')
+      const mm = d.getMinutes().toString().padStart(TIME_PAD_WIDTH, '0')
       timeLabel = ` ${hh}:${mm}`
     }
     const content = collectMessageContent(el, { format })

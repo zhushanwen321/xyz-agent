@@ -222,7 +222,7 @@ const props = withDefaults(defineProps<{
   branchTabs: () => [],
 })
 
-const emit = defineEmits<{
+defineEmits<{
   navigate: [targetEntryId: string]
   'toggle-select': []
 }>()
@@ -426,11 +426,11 @@ function formatBatchSize(bytes: number): string {
   return `${(bytes / (BYTES_PER_KB * BYTES_PER_KB)).toFixed(1)}MB`
 }
 
-function onSelectClick() {
-  emit('toggle-select')
-}
+const batchInfoMap = computed(() => {
+  const result = new Map<string, BatchInfo>()
   const toolCalls = props.message.toolCalls
   if (!toolCalls || toolCalls.length < MIN_TOOL_CALLS) return result
+
 
   let batchStart = 0
   for (let i = 1; i <= toolCalls.length; i++) {
