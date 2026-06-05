@@ -48,18 +48,17 @@
 import { ref, computed } from 'vue'
 import { useTreeStore, type BranchTab } from '../../stores/tree'
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- entryId used by parent component template binding
-const props = defineProps<{
+defineProps<{
   entryId: string
   siblingCount: number
-}>()()
+}>()
 
 const emit = defineEmits<{
   navigate: [targetEntryId: string]
 }>()
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- will be used when integrated with MessageList for branch tabs
-const treeStore = useTreeStore()
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+useTreeStore()
 const dropdownOpen = ref(false)
 const pillRef = ref<HTMLElement | null>(null)
 
