@@ -291,8 +291,8 @@ export class SidecarServer implements IMessageBroker {
       }
       case 'message.steer': {
         const steerSid = msg.payload.sessionId
-        // Abort current processing then send new message
-        try { await this.sessionService.abort(steerSid) } catch { /* session may not be active */ }
+        // eslint-disable-next-line taste/no-silent-catch -- steer: abort best-effort, session may not be actively generating
+        try { await this.sessionService.abort(steerSid) } catch (e) { console.log('[runtime] steer abort: session not active or abort failed:', e instanceof Error ? e.message : String(e)) }
         await this.sessionService.sendMessage(steerSid, msg.payload.content)
         return this.send(ws, { type: 'message.status', id: msg.id, payload: { sessionId: steerSid, status: 'sent' } })
       }
