@@ -4,7 +4,10 @@ import { getActivePinia } from 'pinia'
 import { send } from '../lib/ws-client'
 import { on } from '../lib/event-bus'
 import { type Ref, unref } from 'vue'
-import type { ServerMessage, ToolCall, ContentBlock, ExtensionErrorPayload, ToolCallUpdatePayload } from '@xyz-agent/shared'
+import type {
+  ServerMessage, ServerMessageType, ToolCall, ContentBlock,
+  ExtensionErrorPayload, ToolCallUpdatePayload,
+} from '@xyz-agent/shared'
 import { createSystemNotification } from '../lib/system-notification'
 
 const RADIX_36 = 36
@@ -22,6 +25,7 @@ const SUBSTRING_END = 6
 
 function createGlobalHandlers() {
   const store = useChatStore()
+  const sessionStore = useSessionStore()
 
   function getSid(msg: ServerMessage): string | null {
     return (msg.payload?.sessionId as string) ?? null
@@ -214,6 +218,131 @@ function createGlobalHandlers() {
     }
   }
 
+  // ── TUI Bridge Phase 0 handlers (FR-8, FR-9) ─────────────────
+
+  /** extension:setEditorText → set pending editor text on the session */
+  function onSetEditorText(msg: ServerMessage) {
+    const sid = getSid(msg)
+    if (!sid) return
+    const text = (msg.payload as { text?: string }).text
+    store.setPendingEditorText(text, sid)
+  }
+
+  /**
+   * message.bashExecution → add a system notification summarizing the
+   * bash command and its output. Matches the pattern used by
+   * onExtensionError (alert + system role).
+   */
+  function onBashExecution(msg: ServerMessage) {
+    const sid = getSid(msg)
+    if (!sid) return
+    const p = msg.payload as { command?: string; output?: string; exitCode?: number }
+    const title = p.command ? `Bash: ${p.command}` : 'Bash execution'
+    const description = p.output ?? (p.exitCode !== undefined ? `Exit code: ${p.exitCode}` : undefined)
+    store.addMessage(createSystemNotification('info', title, description), sid)
+  }
+
+  /** message.compactionSummary → add a system notification */
+  function onCompactionSummary(msg: ServerMessage) {
+    const sid = getSid(msg)
+    if (!sid) return
+    const p = msg.payload as { summary?: string; tokensBefore?: number; tokensAfter?: number }
+    const description = p.summary ?? (p.tokensBefore !== undefined
+      ? `Context reduced from ${p.tokensBefore} to ${p.tokensAfter ?? '?'} tokens`
+      : undefined)
+    store.addMessage(createSystemNotification('info', 'Compaction', description), sid)
+  }
+
+  /** message.branchSummary → add a system notification */
+  function onBranchSummary(msg: ServerMessage) {
+    const sid = getSid(msg)
+    if (!sid) return
+    const p = msg.payload as { branch?: string; summary?: string }
+    const title = p.branch ? `Branch: ${p.branch}` : 'Branch summary'
+    store.addMessage(createSystemNotification('info', title, p.summary), sid)
+  }
+
+  /** message.auto_retry_start → set active AutoRetryState */
+  function onAutoRetryStart(msg: ServerMessage) {
+    const sid = getSid(msg)
+    if (!sid) return
+    const p = msg.payload as {
+      attempt?: number
+      maxAttempts?: number
+      delayMs?: number
+      errorMessage?: string
+    }
+    store.setAutoRetryState({
+      active: true,
+      attempt: p.attempt ?? 0,
+      maxAttempts: p.maxAttempts ?? 0,
+      delayMs: p.delayMs ?? 0,
+      errorMessage: p.errorMessage,
+    }, sid)
+  }
+
+  /** message.auto_retry_end → clear AutoRetryState */
+  function onAutoRetryEnd(msg: ServerMessage) {
+    const sid = getSid(msg)
+    if (!sid) return
+    store.setAutoRetryState(undefined, sid)
+  }
+
+  /** message.queue_update → set QueueState */
+  function onQueueUpdate(msg: ServerMessage) {
+    const sid = getSid(msg)
+    if (!sid) return
+    const p = msg.payload as { steering?: string[]; followUp?: string[] }
+    store.setQueueState({
+      steering: p.steering ?? [],
+      followUp: p.followUp ?? [],
+    }, sid)
+  }
+
+  /**
+   * session.renamed → update the matching session's `label` field in
+   * the SessionStore. The server sends `payload.name`; the renderer
+   * stores it as `label` (the canonical UI display name).
+   * Iterates the `sessions` array to find the matching sessionId;
+   * no-op if not found.
+   */
+  function onSessionRenamed(msg: ServerMessage) {
+    const sid = getSid(msg)
+    if (!sid) return
+    const name = (msg.payload as { name?: string }).name
+    if (name === undefined) return
+    const idx = sessionStore.sessions.findIndex(s => s.id === sid)
+    if (idx >= 0) {
+      sessionStore.sessions[idx] = { ...sessionStore.sessions[idx], label: name }
+    }
+  }
+
+  /** session.thinkingLevelSet → set thinking level on the session */
+  function onThinkingLevelSet(msg: ServerMessage) {
+    const sid = getSid(msg)
+    if (!sid) return
+    const level = (msg.payload as { level?: string }).level
+    store.setThinkingLevel(level, sid)
+  }
+
+  /**
+   * extension:setTitle → call window.electronAPI.setTitle. Uses
+   * optional chaining to tolerate missing API (browser/dev mode).
+   */
+  function onExtensionSetTitle(msg: ServerMessage) {
+    const title = (msg.payload as { title?: string }).title
+    if (title === undefined) return
+    window.electronAPI?.setTitle(title)
+  }
+
+  /** message.stream_error → add an alert system notification */
+  function onStreamError(msg: ServerMessage) {
+    const sid = getSid(msg)
+    if (!sid) return
+    const content = (msg.payload as { content?: string }).content ?? 'Stream error'
+    store.addMessage(createSystemNotification('alert', content), sid)
+  }
+
   return {
     'message.message_start': onMessageStart,
     'message.text_delta': onTextDelta,
@@ -228,6 +357,18 @@ function createGlobalHandlers() {
     'extension.error': onExtensionError,
     'context.update': onContextUpdate,
     'message.status': onStatus,
+    // TUI Bridge Phase 0 (FR-8, FR-9)
+    'extension:setEditorText': onSetEditorText,
+    'message.bashExecution': onBashExecution,
+    'message.compactionSummary': onCompactionSummary,
+    'message.branchSummary': onBranchSummary,
+    'message.auto_retry_start': onAutoRetryStart,
+    'message.auto_retry_end': onAutoRetryEnd,
+    'message.queue_update': onQueueUpdate,
+    'session.renamed': onSessionRenamed,
+    'session.thinkingLevelSet': onThinkingLevelSet,
+    'extension:setTitle': onExtensionSetTitle,
+    'message.stream_error': onStreamError,
   } as Record<string, (msg: ServerMessage) => void>
 }
 
@@ -236,7 +377,10 @@ let globalEventMap: Record<string, (msg: ServerMessage) => void> | null = null
 function registerGlobalListeners() {
   if (globalEventMap) return // 已注册
   globalEventMap = createGlobalHandlers()
-  for (const [evt, handler] of Object.entries(globalEventMap)) {
+  // Task 3 type-hardened `on()` to require ServerMessageType, but
+  // Object.entries() returns [string, ...] tuples. Cast at the call
+  // site: globalEventMap is built from typed keys, so the cast is safe.
+  for (const [evt, handler] of Object.entries(globalEventMap) as [ServerMessageType, (msg: ServerMessage) => void][]) {
     on(evt, handler)
   }
 }
@@ -308,3 +452,24 @@ function safeRegisterGlobalListeners() {
   registerGlobalListeners()
 }
 queueMicrotask(safeRegisterGlobalListeners)
+
+/**
+ * @internal — testing helper. Triggers global handler registration against
+ * the currently active Pinia. Idempotent at the event-bus level (the
+ * mocked `on` overwrites the previous handler for each event).
+ *
+ * Production code does not call this; it relies on the auto-registration
+ * scheduled above. Tests call this from beforeEach to ensure registration
+ * occurs even when the microtask fires before Pinia is set up, and to
+ * re-create handlers per test against fresh Pinia + mock stores.
+ */
+export function __test_registerGlobalHandlers(): void {
+  if (!getActivePinia()) return
+  // Re-create handlers on every call so the latest mock stores are picked up.
+  // In production, `registerGlobalListeners` is only called once via the
+  // microtask; in tests we want a fresh handler set per test case.
+  globalEventMap = createGlobalHandlers()
+  for (const [evt, handler] of Object.entries(globalEventMap) as [ServerMessageType, (msg: ServerMessage) => void][]) {
+    on(evt, handler)
+  }
+}
