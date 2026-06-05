@@ -241,7 +241,7 @@ describe('EventAdapter: extension event translation', () => {
         onEvent: (listener) => {
           listener(piEvent({
             type: 'extension_error',
-            extensionName: 'my-extension',
+            extensionPath: 'my-extension',
             error: 'Extension crashed unexpectedly',
           }))
           return () => {}
@@ -263,7 +263,7 @@ describe('EventAdapter: extension event translation', () => {
         onEvent: (listener) => {
           listener(piEvent({
             type: 'extension_error',
-            extensionName: 'ext-2',
+            extensionPath: 'ext-2',
             error: 'some error',
           }))
           return () => {}
@@ -337,7 +337,7 @@ describe('EventAdapter: extension event translation', () => {
 
       localAdapter.attach({
         onEvent: (listener) => {
-          listener(piEvent({ type: 'extension_error', extensionName: 'e', error: 'err' }))
+          listener(piEvent({ type: 'extension_error', extensionPath: 'e', error: 'err' }))
           listener(piEvent({ type: 'extension_ui_request', method: 'confirm', id: 'r1' }))
           listener(piEvent({ type: 'tool_execution_update', toolCallId: 'tc1', toolName: 't' }))
           return () => {}

@@ -4,6 +4,8 @@ export interface ElectronAPI {
   onShortcut(callback: (type: string) => void): () => void
   openSettingsWindow(): void
   getRuntimePort(): Promise<number>
+  /** Set the OS window title (used by extension:setTitle from TUI bridge) */
+  setTitle(title: string): void
   // ── 窗口管理 ──────────────────────────────────────────────────
   createWindow(sessionId?: string): Promise<{ windowId: string }>
   getWindows(): Promise<import('@xyz-agent/shared').WindowState[]>
