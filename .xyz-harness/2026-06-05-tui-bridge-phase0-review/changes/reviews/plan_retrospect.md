@@ -1,11 +1,6 @@
 ---
 phase: plan
 verdict: pass
-absorbed: false
-topic: "2026-06-05-tui-bridge-phase0-review"
-harness_issues:
-  - "plan_review_v1 的 YAML frontmatter 格式要求不明确。首次用复杂嵌套 YAML 被拒（'no closing ---'），但实际根因是 YAML 解析器不支持多行复杂结构。应明确要求 plan review 使用与 spec review 相同的扁平格式（verdict + must_fix）"
-  - "gate check 不验证 e2e-test-plan.md 和 test_cases_template.json 的内容质量，只验证存在性。对于本次 plan 这些文件质量很高，但如果未来产出空壳文件也会 PASS"
 ---
 
 # Phase 2 Retrospect: Plan
