@@ -77,7 +77,7 @@ describe('TreeMessageHandler fork/clone label naming (AC10)', () => {
     await ctx.handler.handleTreeMessage(msg as any, {} as any)
 
     // forkFromEntry called with correct args
-    expect(ctx.treeService.forkFromEntry).toHaveBeenCalledWith('sid-1', 'entry-5', '-fork')
+    expect(ctx.treeService.forkFromEntry).toHaveBeenCalledWith('sid-1', 'entry-5')
 
     // rebindAfterFork called with label = 'my-session-fork'
     expect(ctx.rebindAfterFork).toHaveBeenCalledWith(
@@ -102,7 +102,7 @@ describe('TreeMessageHandler fork/clone label naming (AC10)', () => {
     await ctx.handler.handleTreeMessage(msg as any, {} as any)
 
     // cloneSession called with '-clone' suffix
-    expect(ctx.treeService.cloneSession).toHaveBeenCalledWith('sid-1', '-clone')
+    expect(ctx.treeService.cloneSession).toHaveBeenCalledWith('sid-1')
 
     // renameSession called on the new session with label = 'my-session-clone'
     expect(ctx.renameSession).toHaveBeenCalledWith('new-clone-id', 'my-session-clone')

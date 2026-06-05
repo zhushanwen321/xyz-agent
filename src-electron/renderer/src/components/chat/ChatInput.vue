@@ -144,13 +144,18 @@ function onGlobalKeyDown(e: KeyboardEvent) {
 function onGlobalKeyUp(e: KeyboardEvent) {
   if (e.key === 'Alt') isAltPressed.value = false
 }
+function onWindowBlur() {
+  isAltPressed.value = false
+}
 onMounted(() => {
   document.addEventListener('keydown', onGlobalKeyDown)
   document.addEventListener('keyup', onGlobalKeyUp)
+  window.addEventListener('blur', onWindowBlur)
 })
 onUnmounted(() => {
   document.removeEventListener('keydown', onGlobalKeyDown)
   document.removeEventListener('keyup', onGlobalKeyUp)
+  window.removeEventListener('blur', onWindowBlur)
 })
 
 // activeCommand 存在时动态展示 skill 专属提示，否则用默认 placeholder
@@ -183,12 +188,8 @@ const tagDisplayName = computed(() => {
 const containerRef = ref<HTMLElement | null>(null)
 
 const canSend = computed(() => {
-  const trimmed = text.value.trim()
   if (props.isCompacting) return false
-  if (!props.isStreaming) {
-    return trimmed.length > 0 || activeCommand.value !== null
-  }
-  // In streaming mode, allow steer/queue with text content
+  const trimmed = text.value.trim()
   return trimmed.length > 0 || activeCommand.value !== null
 })
 

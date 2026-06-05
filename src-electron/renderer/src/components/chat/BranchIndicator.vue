@@ -9,6 +9,7 @@
     <!-- Multiple children: solid pill with dropdown -->
     <template v-else>
       <span
+        ref="pillRef"
         class="branch-pill branch-pill--multi"
         @click.stop="toggleDropdown"
       >

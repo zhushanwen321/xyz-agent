@@ -148,8 +148,7 @@ export class TreeService {
   }
 
   /** Clone the current session (snapshot at current leaf). */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- labelSuffix reserved for caller coordination
-  async cloneSession(sessionId: string, labelSuffix = '-clone'): Promise<ForkResult> {
+  async cloneSession(sessionId: string): Promise<ForkResult> {
     const client = this.pm.getClient(sessionId)
     if (!client) throw new Error(`Session ${sessionId} not found`)
 
@@ -174,8 +173,7 @@ export class TreeService {
   }
 
   /** Fork a new session from a specific entry. */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- labelSuffix reserved for caller coordination
-  async forkFromEntry(sessionId: string, entryId: string, labelSuffix = '-fork'): Promise<ForkResult> {
+  async forkFromEntry(sessionId: string, entryId: string): Promise<ForkResult> {
     const client = this.pm.getClient(sessionId)
     if (!client) throw new Error(`Session ${sessionId} not found`)
 
