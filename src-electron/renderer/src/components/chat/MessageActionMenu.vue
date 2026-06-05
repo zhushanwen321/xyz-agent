@@ -26,11 +26,11 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
         <span>Navigate</span>
       </div>
-      <div class="msg-action-menu__item msg-action-menu__item--stub" @click="handleFork">
+      <div class="msg-action-menu__item" @click="handleFork">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
         <span>Fork</span>
       </div>
-      <div class="msg-action-menu__item msg-action-menu__item--stub" @click="handleClone">
+      <div class="msg-action-menu__item" @click="handleClone">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
         <span>Clone</span>
       </div>
@@ -43,9 +43,11 @@ import { ref, computed, watch, nextTick } from 'vue'
 import type { Message } from '@xyz-agent/shared'
 import { collectMessageContent } from '../../lib/collectMessageContent'
 import { copyWithToast } from '../../lib/clipboard'
+import { useTree } from '../../composables/useTree'
 
 const props = defineProps<{
   entryId: string
+  sessionId: string
   message: Message
   format: 'markdown' | 'plain'
   visible: boolean
@@ -57,6 +59,8 @@ const emit = defineEmits<{
   close: []
   navigate: [targetEntryId: string]
 }>()
+
+const { fork, cloneSession } = useTree()
 
 const menuRef = ref<HTMLElement | null>(null)
 
@@ -106,12 +110,16 @@ function handleNavigate() {
 }
 
 function handleFork() {
-  // Stub: Task 23 will fill in
+  if (props.sessionId && props.entryId) {
+    fork(props.sessionId, props.entryId)
+  }
   emit('close')
 }
 
 function handleClone() {
-  // Stub: Task 23 will fill in
+  if (props.sessionId) {
+    cloneSession(props.sessionId)
+  }
   emit('close')
 }
 
@@ -152,9 +160,6 @@ watch(() => props.visible, (val) => {
 .msg-action-menu__item:hover {
   background: var(--accent-light);
   color: var(--accent);
-}
-.msg-action-menu__item--stub {
-  opacity: 0.45;
 }
 .msg-action-menu__divider {
   margin: 4px 8px;

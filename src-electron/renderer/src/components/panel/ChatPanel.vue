@@ -54,7 +54,7 @@
                     @action="$emit('notification-action', msg)"
                   />
                   <!-- User / Assistant messages -->
-                  <MessageBubble v-else :message="msg" />
+                  <MessageBubble v-else :message="msg" :session-id="sessionId ?? ''" :entry-id="msg.id" />
                 </template>
               </template>
             </template>

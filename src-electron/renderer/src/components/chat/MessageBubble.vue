@@ -165,6 +165,7 @@
   <MessageActionMenu
     v-if="message.role !== 'system'"
     :entry-id="entryId"
+    :session-id="sessionId"
     :message="message"
     :format="'markdown'"
     :visible="showActionMenu"
@@ -189,9 +190,11 @@ const props = withDefaults(defineProps<{
   message: Message
   isStreaming?: boolean
   entryId?: string
+  sessionId?: string
   siblingCount?: number
 }>(), {
   entryId: '',
+  sessionId: '',
   siblingCount: 0,
 })
 
