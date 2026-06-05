@@ -726,3 +726,22 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 /* Focus-visible 和 reduced-motion 规则已迁移到各组件 <style scoped> 中 */
 
 .hidden{display:none!important}
+
+/* ── Fullscreen Layout (macOS) ───────────────────────────────── */
+/* When .is-fullscreen is on the app-container, override sidebar header layout:
+   - Row1 loses traffic-light padding
+   - Brand + version are hidden in Row2 (shown in Row1 via AppSidebar reactive logic)
+   - New Session button goes full-width */
+.is-fullscreen .sidebar-row1 {
+  padding-left: 14px !important;
+}
+.is-fullscreen .sidebar-row2 .sidebar-brand,
+.is-fullscreen .sidebar-row2 .text-muted {
+  display: none !important;
+}
+.is-fullscreen .sidebar__new {
+  width: 100% !important;
+  text-align: center;
+  padding: 6px 12px;
+  margin-left: 0;
+}
