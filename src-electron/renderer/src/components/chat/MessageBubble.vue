@@ -162,7 +162,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
           复制
         </button>
-        <button class="msg-action-btn" title="编辑">
+        <button class="msg-action-btn" title="编辑" disabled>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
           编辑
         </button>
@@ -336,8 +336,11 @@ watch(
       renderVersion.value++
       const version = renderVersion.value
       const effectiveTheme = getEffectiveTheme()
+      // 用户气泡始终为深色背景：不论 app 主题，都使用 dark Shiki 主题保证代码可读
+      const codeTheme: 'light' | 'dark' | undefined =
+        props.message.role === 'user' ? 'dark' : undefined
       try {
-        const result = await renderFull(content, effectiveTheme)
+        const result = await renderFull(content, effectiveTheme, { codeTheme })
         if (version === renderVersion.value) {
           fullRenderCache.value = result
         }
@@ -543,6 +546,14 @@ const batchInfoMap = computed(() => {
 .msg-action-btn:hover {
   background: var(--hover-bg);
   color: var(--fg);
+}
+.msg-action-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.msg-action-btn:disabled:hover {
+  background: transparent;
+  color: var(--muted);
 }
 .msg-action-btn--more {
   padding: 3px 5px;

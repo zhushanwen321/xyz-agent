@@ -251,7 +251,7 @@ function forceScrollToBottom() {
 // 记录用户是否在底部
 const userAtBottom = ref(true)
 
-// Scroll state for UtilityRail
+// Scroll state for FAB
 const scrollTop = ref(0)
 const scrollHeight = ref(0)
 const clientHeight = ref(0)

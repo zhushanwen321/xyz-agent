@@ -15,10 +15,6 @@
       tabindex="-1"
       @keydown.esc="$emit('close')"
     >
-      <div class="msg-action-menu__item" @click="handleCopy">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-        <span>复制</span>
-      </div>
       <div class="msg-action-menu__item" @click="handleCopyPlain">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
         <span>复制纯文本</span>
@@ -26,15 +22,11 @@
       <div class="msg-action-menu__divider" />
       <div class="msg-action-menu__item" @click="handleNavigate">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
-        <span>Navigate</span>
-      </div>
-      <div class="msg-action-menu__item" @click="handleFork">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
-        <span>Fork</span>
+        <span>导航到此消息</span>
       </div>
       <div class="msg-action-menu__item" @click="handleClone">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-        <span>Clone</span>
+        <span>克隆会话</span>
       </div>
     </div>
   </Teleport>
@@ -63,7 +55,7 @@ const emit = defineEmits<{
   navigate: [targetEntryId: string]
 }>()
 
-const { fork, cloneSession } = useTree()
+const { cloneSession } = useTree()
 
 const menuRef = ref<HTMLElement | null>(null)
 
@@ -89,23 +81,6 @@ function getMessageEl(): HTMLElement | null {
     ?? null
 }
 
-async function handleCopy() {
-  const el = getMessageEl()
-  if (!el) {
-    console.warn('[MessageActionMenu] message element not found for entryId:', props.entryId)
-    emitEvent('toast:show', {
-      type: 'danger',
-      title: '无法复制',
-      description: '消息已不在视图中',
-    })
-    emit('close')
-    return
-  }
-  const text = collectMessageContent(el, { format: 'markdown' })
-  await copyWithToast(text, { format: 'markdown' })
-  emit('close')
-}
-
 async function handleCopyPlain() {
   const el = getMessageEl()
   if (!el) {
@@ -125,13 +100,6 @@ async function handleCopyPlain() {
 
 function handleNavigate() {
   emit('navigate', props.entryId)
-  emit('close')
-}
-
-function handleFork() {
-  if (props.sessionId && props.entryId) {
-    fork(props.sessionId, props.entryId)
-  }
   emit('close')
 }
 

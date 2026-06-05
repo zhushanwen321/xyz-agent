@@ -166,14 +166,14 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
     <button
       v-if="sessionId"
       class="batch-select-trigger"
-      aria-label="批量选择"
+      aria-label="批量选择消息"
+      title="批量选择"
       @click="$emit('toggle-batch-select')"
     >
-      <!-- hamburger ≡ icon -->
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-        <line x1="4" y1="6" x2="20" y2="6" />
-        <line x1="4" y1="12" x2="20" y2="12" />
-        <line x1="4" y1="18" x2="20" y2="18" />
+      <!-- check-square icon for "select" -->
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="9 11 12 14 22 4"/>
+        <path d="M19 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V9a2 2 0 012-2h7"/>
       </svg>
     </button>
 
