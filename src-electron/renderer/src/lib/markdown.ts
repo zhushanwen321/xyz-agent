@@ -2,6 +2,8 @@ import MarkdownIt from 'markdown-it'
 // @ts-expect-error markdown-it-texmath has no types
 import texmath from 'markdown-it-texmath'
 import footnote from 'markdown-it-footnote'
+// @ts-expect-error markdown-it-task-lists has no types
+import taskLists from 'markdown-it-task-lists'
 import katex from 'katex'
 import DOMPurify from 'dompurify'
 import { codeToHtml } from 'shiki'
@@ -23,9 +25,25 @@ const TOKEN_SKIP_PREFIX = 2
 const TOKEN_END = 8
 
 // ── DOMPurify 共享配置：允许代码块/KaTeX/task list 所需的属性和标签 ──
+// MathML 标签必须显式列出，否则 KaTeX 输出中的 <semantics>/<annotation>
+// 会被剥掉，导致原始 LaTeX 源码作为文本节点泄露（公式显示两遍）。
 const PURIFY_CONFIG = {
-  ADD_ATTR: ['class', 'style', 'aria-*', 'data-action', 'data-mermaid', 'data-lines', 'data-collapsed', 'data-lang'],
-  ADD_TAGS: ['input'],
+  ADD_ATTR: [
+    'class', 'style', 'aria-*',
+    'data-action', 'data-mermaid', 'data-lines', 'data-collapsed', 'data-lang',
+    // KaTeX annotation 需要 encoding 属性
+    'encoding',
+  ],
+  ADD_TAGS: [
+    'input',
+    // MathML：让 KaTeX 完整保留
+    'math', 'semantics', 'annotation',
+    'mrow', 'mi', 'mo', 'mn', 'ms', 'mtext',
+    'msup', 'msub', 'mfrac', 'msqrt', 'mroot',
+    'mover', 'munder', 'munderover',
+    'mspace', 'mstyle', 'mpadded', 'mphantom', 'menclose',
+    'mtable', 'mtd', 'mtr',
+  ],
   // 只允许明确列出的 scheme，拒绝 javascript: 等危险协议
   ALLOWED_URI_REGEXP: /^(?:(?:https?|local-file|mailto|tel):|[^a-z])/i,
 }
@@ -72,6 +90,8 @@ const mdLight = new MarkdownIt({
   typographer: true,
   breaks: true,
 }).enable(['strikethrough', 'table']).use(footnote)
+  // task list 插件：enabled:false → checkbox disabled（用户不能交互切换）
+  .use(taskLists, { enabled: false })
 
 // ══════════════════════════════════════════════════════════════
 // 阶段二：完整渲染（异步，用于完成阶段）
@@ -82,6 +102,7 @@ const mdFull = new MarkdownIt({
   typographer: true,
   breaks: true,
 }).enable(['strikethrough', 'table']).use(footnote)
+  .use(taskLists, { enabled: false })
 
 mdFull.use(texmath, {
   engine: katex,
@@ -92,7 +113,6 @@ mdFull.use(texmath, {
 export function renderLightweight(text: string): string {
   if (!text) return ''
   let html = mdLight.render(text)
-  html = postprocessTaskLists(html)
   html = postprocessTables(html)
   html = postprocessImages(html)
   return DOMPurify.sanitize(html, PURIFY_CONFIG)
@@ -164,23 +184,6 @@ function escapeRegex(str: string): string {
 }
 
 /**
- * Task list 后处理：将 markdown-it 渲染的 checkbox 模式转换为带 input 的 li
- * markdown-it 会把 `- [x] text` 渲染为 `<li>[x] text</li>`
- *
- * 注意：依赖 vanilla markdown-it 不解析 task list 的行为。
- * 如果将来引入 markdown-it-task-lists 插件，需移除此后处理。
- */
-function postprocessTaskLists(html: string): string {
-  return html.replace(
-    /<li>\[(x| )\] (.+?)<\/li>/g,
-    (_match, checked: string, text: string) => {
-      const isChecked = checked === 'x'
-      return `<li class="task-list-item"><input type="checkbox"${isChecked ? ' checked' : ''} disabled>${text}</li>`
-    },
-  )
-}
-
-/**
  * 表格后处理：给 <table> 包裹滚动容器，让宽表格可以水平滚动，窄表格占满宽度
  */
 function postprocessTables(html: string): string {
@@ -203,18 +206,24 @@ function postprocessImages(html: string): string {
   )
 }
 
-export async function renderFull(text: string, theme: 'light' | 'dark'): Promise<string> {
+export async function renderFull(
+  text: string,
+  theme: 'light' | 'dark',
+  options: { codeTheme?: 'light' | 'dark' } = {},
+): Promise<string> {
   if (!text) return ''
 
-  // 阶段 1：预处理提取代码块 → markdown-it 渲染 → task list 后处理
+  // 阶段 1：预处理提取代码块 → markdown-it 渲染（task list 插件已处理 [x]/[ ]）
   const { processed, blocks } = preprocessCodeBlocks(text)
 
   let html = mdFull.render(processed)
-  html = postprocessTaskLists(html)
 
   // 阶段 2：Shiki 高亮替换占位符
-  const shikiTheme = SHIKI_THEMES[theme] ?? SHIKI_THEMES['dark']
-  html = await postprocessCodeBlocks(html, blocks, shikiTheme)
+  // codeTheme 可独立于 app theme：例如用户气泡始终为深色背景，
+  // 即使 app 是 light 主题也应使用 dark Shiki 主题以保证可读性。
+  const shikiTheme = options.codeTheme ? SHIKI_THEMES[options.codeTheme] : SHIKI_THEMES[theme]
+  const finalShikiTheme = shikiTheme ?? SHIKI_THEMES['dark']
+  html = await postprocessCodeBlocks(html, blocks, finalShikiTheme)
 
   // 阶段 3：给 <table> 包裹滚动容器 + 图片路径修正
   html = postprocessTables(html)
