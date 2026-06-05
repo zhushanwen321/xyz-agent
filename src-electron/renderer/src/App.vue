@@ -1,5 +1,5 @@
 <template>
-  <div class="app-container">
+  <div ref="appContainer" class="app-container">
     <!-- Sidebar: unified with controls -->
     <AppSidebar
       @create="createSession"
@@ -76,6 +76,8 @@ import ExtensionUIDialog from './components/extension/ExtensionUIDialog.vue'
 const { init: initConnection, teardown: teardownConnection } = useConnection()
 useProvider()
 const { loadSessions, createSession: doCreateSession, switchSession } = useSession()
+
+const appContainer = ref<HTMLElement | null>(null)
 
 const settingsStore = useSettingsStore()
 const panelStore = usePanelStore()
@@ -333,6 +335,19 @@ onMounted(async () => {
   })
 
   errorUnregister = onEventBus('error', handleGlobalError)
+
+  // macOS fullscreen state → toggle .is-fullscreen class on root element
+  if (window.electronAPI?.onFullscreenChanged) {
+    ipcCleanupFns.push(window.electronAPI.onFullscreenChanged(({ isFullscreen }) => {
+      if (appContainer.value) {
+        if (isFullscreen) {
+          appContainer.value.classList.add('is-fullscreen')
+        } else {
+          appContainer.value.classList.remove('is-fullscreen')
+        }
+      }
+    }))
+  }
 })
 
 onUnmounted(() => {
