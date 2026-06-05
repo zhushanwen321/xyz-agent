@@ -64,6 +64,7 @@
           <div
             class="msg__body select-text"
             :data-message-id="message.id"
+            :data-markdown-source="message.content"
             @click="handleBodyClick"
           >
             <!-- eslint-disable-next-line vue/no-v-html -->
@@ -96,6 +97,7 @@
         <div
           class="msg__body select-text"
           :data-message-id="message.id"
+          :data-markdown-source="message.content"
           @click="handleBodyClick"
         >
           <!-- eslint-disable-next-line vue/no-v-html -->
@@ -141,6 +143,7 @@
         v-if="message.content"
         class="msg__body select-text"
         :data-message-id="message.id"
+        :data-markdown-source="message.content"
         @click="handleBodyClick"
       >
         <span

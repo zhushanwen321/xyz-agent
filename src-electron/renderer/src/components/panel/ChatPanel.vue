@@ -319,6 +319,12 @@ const selectedIds = ref<Set<string>>(new Set())
 const tree = useTree()
 const treeStore = useTreeStore()
 
+// Reset batch mode when session changes (avoid stale state from previous session)
+watch(() => props.sessionId, () => {
+  batchMode.value = false
+  selectedIds.value = new Set()
+})
+
 // Build a map from message id -> branchTabs so each MessageBubble can render its branch indicator correctly
 const branchTabsMap = computed<Map<string, BranchTab[]>>(() => {
   if (!props.sessionId) return new Map()
@@ -391,7 +397,10 @@ async function copyBatchAs(format: 'markdown' | 'plain') {
     const el = document.querySelector(`[data-entry-id="${id}"]`) as HTMLElement | null
     if (el) elements.push(el)
   }
-  if (elements.length === 0) return
+  if (elements.length === 0) {
+    console.warn('[ChatPanel] no message elements found for batch copy, ids:', ids)
+    return
+  }
   const text = collectBatchContent(elements, format)
   await copyWithToast(text, { format })
   exitBatchMode()

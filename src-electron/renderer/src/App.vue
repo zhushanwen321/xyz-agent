@@ -140,6 +140,7 @@ const wsStateUnwatch = watch(wsState, (newState) => {
 const ipcCleanupFns: Array<() => void> = []
 let extTimeoutUnregister: (() => void) | null = null
 let errorUnregister: (() => void) | null = null
+let toastUnregister: (() => void) | null = null
 
 let isCreatingFromSidebar = false
 let prevSessionCount = 0
@@ -338,6 +339,18 @@ onMounted(async () => {
     setTimeout(() => dismissToast(id), TOAST_DURATION_MS)
   })
 
+  // toast:show → generic toast (clipboard, MessageActionMenu errors, etc.)
+  toastUnregister = onEventBus('toast:show', (payload: { type: 'success' | 'warning' | 'danger' | 'info'; title: string; description?: string }) => {
+    const id = crypto.randomUUID()
+    toasts.value.push({
+      id,
+      type: payload.type,
+      title: payload.title,
+      description: payload.description,
+    })
+    setTimeout(() => dismissToast(id), TOAST_DURATION_MS)
+  })
+
   errorUnregister = onEventBus('error', handleGlobalError)
 
   // macOS fullscreen state → toggle .is-fullscreen class on root element AND sync to layout store
@@ -359,6 +372,7 @@ onUnmounted(() => {
   offEventBus('error', handleGlobalError)
   extTimeoutUnregister?.()
   errorUnregister?.()
+  toastUnregister?.()
   document.removeEventListener('keydown', handleKeydown)
   wsStateUnwatch()
   if (wsDisconnectTimer) clearTimeout(wsDisconnectTimer)

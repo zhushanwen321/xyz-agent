@@ -54,9 +54,19 @@ export function collectMessageContent(
   // 3. Collect message body text
   const body = messageEl.querySelector('.msg__body')
   if (body) {
-    const text = body.textContent?.trim() ?? ''
-    if (text) {
-      parts.push(text)
+    // For markdown format, prefer the original markdown source stored in data attribute
+    // (textContent loses markdown formatting since v-html renders HTML)
+    if (format === 'markdown') {
+      const markdownSource = body.getAttribute('data-markdown-source')
+      if (markdownSource) {
+        parts.push(markdownSource)
+      } else {
+        const text = body.textContent?.trim() ?? ''
+        if (text) parts.push(text)
+      }
+    } else {
+      const text = body.textContent?.trim() ?? ''
+      if (text) parts.push(text)
     }
   }
 
