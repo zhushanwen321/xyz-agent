@@ -1,4 +1,6 @@
 ---
+verdict: pass
+must_fix: 0
 review:
   type: plan_review
   round: 2
@@ -13,6 +15,7 @@ statistics:
   still_open: 1
   must_fix_resolved: 1
   new_issues: 0
+  must_fix: 0
 
 v1_issue_status:
   - id: 1
