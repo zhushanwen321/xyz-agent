@@ -48,15 +48,17 @@
 import { ref, computed } from 'vue'
 import { useTreeStore, type BranchTab } from '../../stores/tree'
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- entryId used by parent component template binding
 const props = defineProps<{
   entryId: string
   siblingCount: number
-}>()
+}>()()
 
 const emit = defineEmits<{
   navigate: [targetEntryId: string]
 }>()
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- will be used when integrated with MessageList for branch tabs
 const treeStore = useTreeStore()
 const dropdownOpen = ref(false)
 const pillRef = ref<HTMLElement | null>(null)
@@ -74,8 +76,9 @@ const dropdownStyle = computed(() => {
   const pill = pillRef.value
   if (!pill) return {}
   const rect = pill.getBoundingClientRect()
+  const DROPDOWN_OFFSET_Y = 4
   return {
-    top: `${rect.bottom + 4}px`,
+    top: `${rect.bottom + DROPDOWN_OFFSET_Y}px`,
     left: `${rect.left}px`,
   }
 })

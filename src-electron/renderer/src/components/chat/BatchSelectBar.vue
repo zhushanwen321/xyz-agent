@@ -16,6 +16,7 @@
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
           <span>复制 Markdown</span>
         </button>
+        <!-- eslint-disable-next-line taste/no-native-html-elements -- compact action buttons matching existing toast/action-menu style -->
         <button
           class="batch-select-bar__btn"
           @click="$emit('copy-plain')"
@@ -24,6 +25,7 @@
           <span>复制纯文本</span>
         </button>
         <div class="batch-select-bar__divider" />
+        <!-- eslint-disable-next-line taste/no-native-html-elements -- compact cancel button matching action-menu style -->
         <button
           class="batch-select-bar__btn batch-select-bar__btn--cancel"
           @click="$emit('cancel')"
