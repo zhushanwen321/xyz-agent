@@ -100,7 +100,7 @@ export interface ISessionService {
   getHistory(sessionId: string): Promise<Message[]>
   restoreSession(sessionId: string): Promise<SessionSummary>
   /** Fork 后重新绑定 session（更新 runtime 和 process manager 的 key） */
-  rebindAfterFork(oldSessionId: string, newSessionId: string, sessionFilePath?: string): Promise<void>
+  rebindAfterFork(oldSessionId: string, newSessionId: string, label: string, sessionFilePath?: string): Promise<void>
   hasActiveSession(sessionId: string): boolean
   getSummary(sessionId: string): SessionSummary | undefined
   /** Get the underlying RpcClient for direct command sending (e.g., extension responses). */
