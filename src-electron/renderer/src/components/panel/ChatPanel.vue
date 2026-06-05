@@ -60,6 +60,8 @@
                     :message="msg"
                     :session-id="sessionId ?? ''"
                     :entry-id="msg.id"
+                    :sibling-count="branchTabsMap.get(msg.id)?.length ?? 0"
+                    :branch-tabs="branchTabsMap.get(msg.id) ?? []"
                     :selectable="batchMode"
                     :selected="selectedIds.has(msg.id)"
                     @toggle-select="toggleSelect(msg.id)"
@@ -152,6 +154,8 @@ import BatchSelectBar from '../chat/BatchSelectBar.vue'
 import { collectMessageContent } from '../../lib/collectMessageContent'
 import { copyWithToast } from '../../lib/clipboard'
 import { useTree } from '../../composables/useTree'
+import { useTreeStore } from '../../stores/tree'
+import type { BranchTab } from '../../stores/tree'
 
 export interface AgentOption {
   id: string
@@ -313,6 +317,20 @@ function switchAgent(id: string) {
 const batchMode = ref(false)
 const selectedIds = ref<Set<string>>(new Set())
 const tree = useTree()
+const treeStore = useTreeStore()
+
+// Build a map from message id -> branchTabs so each MessageBubble can render its branch indicator correctly
+const branchTabsMap = computed<Map<string, BranchTab[]>>(() => {
+  if (!props.sessionId) return new Map()
+  const pathNodes = treeStore.getActivePath(props.sessionId)
+  const map = new Map<string, BranchTab[]>()
+  for (const node of pathNodes) {
+    if (node.branchTabs && node.branchTabs.length > 0) {
+      map.set(node.entryId, node.branchTabs)
+    }
+  }
+  return map
+})
 
 function toggleBatchMode() {
   batchMode.value = !batchMode.value

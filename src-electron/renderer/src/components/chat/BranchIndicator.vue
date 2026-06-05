@@ -28,7 +28,7 @@
           :style="dropdownStyle"
         >
           <div
-            v-for="tab in branchTabs"
+            v-for="tab in tabs"
             :key="tab.targetId"
             class="branch-dropdown__item"
             :class="{ 'branch-dropdown__item--active': tab.isActive }"
@@ -46,30 +46,24 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { useTreeStore, type BranchTab } from '../../stores/tree'
+import type { BranchTab } from '../../stores/tree'
 
-defineProps<{
+const props = withDefaults(defineProps<{
   entryId: string
   siblingCount: number
-}>()
+  branchTabs?: BranchTab[]
+}>(), {
+  branchTabs: () => [],
+})
 
 const emit = defineEmits<{
   navigate: [targetEntryId: string]
 }>()
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-useTreeStore()
 const dropdownOpen = ref(false)
 const pillRef = ref<HTMLElement | null>(null)
 
-const branchTabs = computed<BranchTab[]>(() => {
-  // Find the path node that contains this entryId to get its branchTabs
-  // We need to find the active path for the current session and match
-  // Since we don't have sessionId directly, we rely on treeStore's global state
-  // The parent component (MessageList) should provide the tabs via the tree
-  // For now, return empty - will be populated when integrated with MessageList
-  return []
-})
+const tabs = computed<BranchTab[]>(() => props.branchTabs ?? [])
 
 const dropdownStyle = computed(() => {
   const pill = pillRef.value

@@ -107,9 +107,10 @@
 
     <!-- Branch indicator -->
     <BranchIndicator
-      v-if="entryId && siblingCount > 0"
+      v-if="entryId && (siblingCount > 0 || branchTabs.length > 0)"
       :entry-id="entryId"
       :sibling-count="siblingCount"
+      :branch-tabs="branchTabs"
       @navigate="$emit('navigate', $event)"
     />
   </div>
@@ -156,9 +157,10 @@
 
     <!-- Branch indicator -->
     <BranchIndicator
-      v-if="entryId && siblingCount > 0"
+      v-if="entryId && (siblingCount > 0 || branchTabs.length > 0)"
       :entry-id="entryId"
       :sibling-count="siblingCount"
+      :branch-tabs="branchTabs"
       @navigate="$emit('navigate', $event)"
     />
   </div>
@@ -194,6 +196,7 @@
 import { ref, computed, watch, nextTick } from 'vue'
 import type { Message } from '@xyz-agent/shared'
 import type { BatchInfo } from './ToolCallCard.vue'
+import type { BranchTab } from '../../stores/tree'
 import { renderLightweight, renderFull } from '../../lib/markdown'
 import { useSettingsStore } from '../../stores/settings'
 import ThinkingBlock from './ThinkingBlock.vue'
@@ -209,12 +212,14 @@ const props = withDefaults(defineProps<{
   siblingCount?: number
   selectable?: boolean
   selected?: boolean
+  branchTabs?: BranchTab[]
 }>(), {
   entryId: '',
   sessionId: '',
   siblingCount: 0,
   selectable: false,
   selected: false,
+  branchTabs: () => [],
 })
 
 const emit = defineEmits<{
