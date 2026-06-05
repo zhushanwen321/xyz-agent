@@ -28,6 +28,7 @@ const PURIFY_CONFIG = {
     'class', 'style', 'aria-*',
     'data-action', 'data-mermaid', 'data-lines', 'data-collapsed', 'data-lang',
     'encoding',
+    'type',
   ],
   ADD_TAGS: [
     'input',
@@ -38,6 +39,7 @@ const PURIFY_CONFIG = {
     'mspace', 'mstyle', 'mpadded', 'mphantom', 'menclose',
     'mtable', 'mtd', 'mtr',
   ],
+  ADD_URI_SAFE_ATTR: ['type'],
   ALLOWED_URI_REGEXP: /^(?:(?:https?|local-file|mailto|tel):|[^a-z])/i,
 }
 
@@ -189,6 +191,15 @@ describe('markdown renderer', () => {
       const html = renderLightSync('- [x] task\n- normal\n- [ ] another')
       const count = (html.match(/<input[^>]*type="checkbox"/g) ?? []).length
       expect(count).toBe(2)
+    })
+
+    // 回归：DOMPurify 默认不保留 type 属性 (在 ALLOWED_URI_REGEXP 模式下 type 会被当 URI 处理并被剥)
+    // 这会让 checkbox input 退化成 type="text" 文本框, 加 ADD_URI_SAFE_ATTR: ['type'] 后保留
+    it('回归: input[type=checkbox] 在 DOMPurify sanitize 后保留 type 属性', () => {
+      const html = renderLightSync('- [ ] 任务项')
+      expect(html).toMatch(/<input[^>]*type="checkbox"/)
+      // 且不能退化成 text
+      expect(html).not.toMatch(/<input[^>]*type="text"/)
     })
   })
 

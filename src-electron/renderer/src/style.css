@@ -495,8 +495,31 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .msg__body del { color: var(--muted); }
 
 /* ── 任务列表 ── */
-.msg__body .task-list-item { list-style: none; margin-left: -1.5em; }
-.msg__body .task-list-item input[type="checkbox"] { margin-right: 6px; accent-color: var(--accent); }
+/* task list 的 checkbox 已经被 markdown-it-task-lists 插件插入在 li 开头
+   不要让 ul/li 本身的 disc marker 再加一个 bullet 上去
+   同时给 checkbox 留空间、给个明显的视觉样式 */
+.msg__body ul.contains-task-list,
+.msg__body ul[class*="task-list"] {
+  list-style: none;
+  padding-left: 0;
+}
+.msg__body li.task-list-item,
+.msg__body li[class*="task-list-item"] {
+  list-style: none;
+  position: relative;
+  padding-left: 1.6em;
+}
+.msg__body li.task-list-item > input.task-list-item-checkbox,
+.msg__body li[class*="task-list-item"] > input[type="checkbox"] {
+  position: absolute;
+  left: 0;
+  top: 0.2em;
+  width: 1em;
+  height: 1em;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: default;
+}
 
 /* ── 代码块 ── */
 .msg__body .code-block {

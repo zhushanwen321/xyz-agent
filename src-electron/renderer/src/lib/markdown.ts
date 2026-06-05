@@ -33,6 +33,8 @@ const PURIFY_CONFIG = {
     'data-action', 'data-mermaid', 'data-lines', 'data-collapsed', 'data-lang',
     // KaTeX annotation 需要 encoding 属性
     'encoding',
+    // task-list checkbox 需要 type="checkbox" (否则 input 退化成 type="text" 文本框)
+    'type',
   ],
   ADD_TAGS: [
     'input',
@@ -44,6 +46,9 @@ const PURIFY_CONFIG = {
     'mspace', 'mstyle', 'mpadded', 'mphantom', 'menclose',
     'mtable', 'mtd', 'mtr',
   ],
+  // type 不在 DOMPurify 默认 URI_SAFE_ATTRIBUTES 中, 添加后它才不会把
+  // type="checkbox" 的 value 当 URI 检测 (ALLOWED_URI_REGEXP 拒绝非 scheme 字符)
+  ADD_URI_SAFE_ATTR: ['type'],
   // 只允许明确列出的 scheme，拒绝 javascript: 等危险协议
   ALLOWED_URI_REGEXP: /^(?:(?:https?|local-file|mailto|tel):|[^a-z])/i,
 }
