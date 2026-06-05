@@ -577,7 +577,7 @@ describe('DF-2: Extension 错误转发 (EventAdapter → server broadcast)', () 
   it('extension_error → EventAdapter 翻译为 extension.error (含 sessionId)', async () => {
     fixture.emitPiEvent({
       type: 'extension_error',
-      extensionName: 'my-extension',
+      extensionPath: 'my-extension',
       error: 'Extension crashed unexpectedly',
     })
     await flushAsync()
@@ -594,7 +594,7 @@ describe('DF-2: Extension 错误转发 (EventAdapter → server broadcast)', () 
   it('extension_error 无显式 sessionId → EventAdapter 注入构造函数的 sessionId', async () => {
     fixture.emitPiEvent({
       type: 'extension_error',
-      extensionName: 'ext-no-sid',
+      extensionPath: 'ext-no-sid',
       error: 'some error',
     })
     await flushAsync()

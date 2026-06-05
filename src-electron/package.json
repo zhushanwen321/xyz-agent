@@ -16,7 +16,7 @@
   ],
   "main": "dist/main/main.cjs",
   "scripts": {
-    "dev": "concurrently \"npm run dev:vite\" \"npm run dev:electron\"",
+    "dev": "node scripts/electron-ensure.mjs && concurrently \"npm run dev:vite\" \"npm run dev:electron\"",
     "dev:vite": "npm -w @xyz-agent/frontend run dev",
     "dev:cleanup": "node scripts/dev-cleanup.mjs",
     "dev:electron": "npm run dev:cleanup && npm run build:main && npm run build:preload && electron . --remote-debugging-port=9222",
@@ -35,8 +35,8 @@
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
-    "electron": "33.4.11",
-    "electron-builder": "^25",
+    "electron": "^42.3.3",
+    "electron-builder": "^26.8.1",
     "tsx": "^4",
     "typescript": "^5.8",
     "vite": "^8.0.11",

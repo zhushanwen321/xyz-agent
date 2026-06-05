@@ -13,7 +13,7 @@ export interface ToolCall {
   /** Extension tool_call_update 进度百分比 (0-100) */
   progress?: number
   /** Extension tool_call_update 详细信息 */
-  detail?: string
+  detail?: string | Record<string, unknown>
   status: ToolCallStatus
   startTime: number
   endTime?: number

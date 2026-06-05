@@ -34,3 +34,6 @@ src-electron/resources/pi/agent/*
 !src-electron/resources/pi/agent/skills/
 .pi/
 .pi/infinite-context/
+
+# Electron binary cache (immutable, shared across worktrees)
+.electron-dist/

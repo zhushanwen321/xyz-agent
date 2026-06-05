@@ -33,6 +33,21 @@ export interface PendingApproval {
   createdAt: number
 }
 
+/** Auto-retry state surfaced by the backend (FR-8) */
+export interface AutoRetryState {
+  active: boolean
+  attempt: number
+  maxAttempts: number
+  delayMs: number
+  errorMessage?: string
+}
+
+/** Message queue surfaced by the backend (FR-8): steering + follow-up lists */
+export interface QueueState {
+  steering: string[]
+  followUp: string[]
+}
+
 /** Per-session chat state partition */
 export interface ChatSessionState {
   completedMessages: ChatMessage[]
@@ -50,6 +65,17 @@ export interface ChatSessionState {
   doneCount: number
   alertCount: number
   isCompacting: boolean
+  // ── TUI Bridge Phase 0 (FR-8, FR-9) ───────────────────────
+  /** Pending text to seed the editor (extension:setEditorText) */
+  pendingEditorText?: string
+  /** Active auto-retry state (message.auto_retry_start / _end) */
+  autoRetryState?: AutoRetryState
+  /** Queued steering + follow-up messages (message.queue_update) */
+  queueState?: QueueState
+  /** Thinking level set for this session (session.thinkingLevelSet) */
+  thinkingLevel?: string
+  /** Response model id for this session (FR-8, set by future event) */
+  responseModel?: string
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -262,6 +288,33 @@ export const useChatStore = defineStore('chat', () => {
     getSessionState(sessionId).isCompacting = v
   }
 
+  // ── TUI Bridge Phase 0 setters (FR-8, FR-9) ─────────────────
+
+  /** Set pending editor text (extension:setEditorText). Undefined clears. */
+  function setPendingEditorText(text: string | undefined, sessionId: string) {
+    getSessionState(sessionId).pendingEditorText = text
+  }
+
+  /** Set auto-retry state (message.auto_retry_start / _end). */
+  function setAutoRetryState(state: AutoRetryState | undefined, sessionId: string) {
+    getSessionState(sessionId).autoRetryState = state
+  }
+
+  /** Set queue state (message.queue_update). */
+  function setQueueState(state: QueueState | undefined, sessionId: string) {
+    getSessionState(sessionId).queueState = state
+  }
+
+  /** Set thinking level (session.thinkingLevelSet). */
+  function setThinkingLevel(level: string | undefined, sessionId: string) {
+    getSessionState(sessionId).thinkingLevel = level
+  }
+
+  /** Set response model id for the session (FR-8). */
+  function setResponseModel(model: string | undefined, sessionId: string) {
+    getSessionState(sessionId).responseModel = model
+  }
+
   // ── 流式消息高层生命周期方法 ──────────────────────────────
 
   /** 开始新一轮流式消息 */
@@ -330,6 +383,10 @@ export const useChatStore = defineStore('chat', () => {
     updateContextInfo, setError, switchAgent,
     setTokenUsage, setDoneCount, setAlertCount, setCompacting,
     setLoadingHistory,
+
+    // TUI Bridge Phase 0 setters (FR-8, FR-9)
+    setPendingEditorText, setAutoRetryState, setQueueState,
+    setThinkingLevel, setResponseModel,
 
     // 流式消息高层方法
     startStreaming, appendStreamText, appendStreamThinking,

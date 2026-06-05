@@ -178,6 +178,10 @@ export type ServerMessageType =
   | 'plugin:statusSetUpdate'
   | 'plugin:uiRequest'
   | 'extension:widget' | 'extension:status'
+  | 'extension:setEditorText' | 'extension:setTitle'
+  | 'message.bashExecution' | 'message.compactionSummary' | 'message.branchSummary'
+  | 'message.auto_retry_start' | 'message.auto_retry_end' | 'message.queue_update'
+  | 'message.stream_error'
 
 export interface ServerMessage {
   type: ServerMessageType
@@ -187,10 +191,13 @@ export interface ServerMessage {
 
 // ── Extension payload interfaces ────────────────────────────────
 
+/** Interactive extension UI methods that produce extension.ui_request WS events */
+export type ExtensionUIMethod = 'confirm' | 'select' | 'input' | 'notify' | 'editor'
+
 export interface ExtensionUIRequestPayload {
   sessionId: string
   requestId: string
-  method: 'confirm' | 'select' | 'input' | 'notify'
+  method: ExtensionUIMethod
   title?: string
   message?: string
   options?: string[]
@@ -210,13 +217,14 @@ export interface ExtensionErrorPayload {
   sessionId: string
   extensionName: string
   error: string
+  errorEvent?: string
 }
 
 export interface ToolCallUpdatePayload {
   sessionId: string
   toolCallId: string
   progress?: number
-  detail?: string
+  detail?: string | Record<string, unknown>
 }
 
 export interface ExtensionInfo {
