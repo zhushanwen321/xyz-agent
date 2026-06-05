@@ -22,8 +22,18 @@
   <div
     v-else-if="message.role === 'assistant'"
     data-role="assistant"
-    class="self-start w-full"
+    :data-entry-id="entryId"
+    class="self-start w-full relative group/msg"
   >
+    <!-- ⋯ action button -->
+    <!-- eslint-disable-next-line taste/no-native-html-elements -- compact 20x20 icon trigger, matches panel-close style -->
+    <button
+      class="msg-action-btn msg-action-btn--assistant"
+      aria-label="消息操作"
+      @click="onActionBtnClick"
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+    </button>
     <div class="text-[10px] font-semibold uppercase tracking-[0.04em] leading-[1.4] mb-1 text-muted">
       助手
       <span v-if="message.timestamp" class="font-normal normal-case tracking-normal text-[10px] opacity-60 ml-1.5">{{ formatTime(message.timestamp) }}</span>
@@ -93,14 +103,32 @@
         </div>
       </div>
     </template>
+
+    <!-- Branch indicator -->
+    <BranchIndicator
+      v-if="entryId && siblingCount > 0"
+      :entry-id="entryId"
+      :sibling-count="siblingCount"
+      @navigate="$emit('navigate', $event)"
+    />
   </div>
 
   <!-- user 消息：标签在气泡外面 -->
   <div
     v-else
     data-role="user"
-    class="self-end max-w-[75%]"
+    :data-entry-id="entryId"
+    class="self-end max-w-[75%] relative group/msg"
   >
+    <!-- ⋯ action button -->
+    <!-- eslint-disable-next-line taste/no-native-html-elements -- compact 20x20 icon trigger, matches panel-close style -->
+    <button
+      class="msg-action-btn msg-action-btn--user"
+      aria-label="消息操作"
+      @click="onActionBtnClick"
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+    </button>
     <div class="text-[10px] font-semibold uppercase tracking-[0.04em] leading-[1.4] mb-[3px] text-right text-muted">
       <span v-if="message.timestamp" class="font-normal normal-case tracking-normal text-[10px] opacity-60 mr-1.5">{{ formatTime(message.timestamp) }}</span>
       用户
@@ -123,7 +151,27 @@
         <span v-html="renderedContent"></span>
       </div>
     </div>
+
+    <!-- Branch indicator -->
+    <BranchIndicator
+      v-if="entryId && siblingCount > 0"
+      :entry-id="entryId"
+      :sibling-count="siblingCount"
+      @navigate="$emit('navigate', $event)"
+    />
   </div>
+
+  <!-- Action menu (shared for both roles) -->
+  <MessageActionMenu
+    v-if="message.role !== 'system'"
+    :entry-id="entryId"
+    :message="message"
+    :format="'markdown'"
+    :visible="showActionMenu"
+    :anchor-rect="actionMenuAnchor"
+    @close="closeActionMenu"
+    @navigate="$emit('navigate', $event)"
+  />
 </template>
 
 <script setup lang="ts">
@@ -134,14 +182,43 @@ import { renderLightweight, renderFull } from '../../lib/markdown'
 import { useSettingsStore } from '../../stores/settings'
 import ThinkingBlock from './ThinkingBlock.vue'
 import ToolCallCard from './ToolCallCard.vue'
+import MessageActionMenu from './MessageActionMenu.vue'
+import BranchIndicator from './BranchIndicator.vue'
 
-const props = defineProps<{ message: Message; isStreaming?: boolean }>()
+const props = withDefaults(defineProps<{
+  message: Message
+  isStreaming?: boolean
+  entryId?: string
+  siblingCount?: number
+}>(), {
+  entryId: '',
+  siblingCount: 0,
+})
+
+defineEmits<{
+  navigate: [targetEntryId: string]
+}>()
+
 const settings = useSettingsStore()
 
 const COPY_FEEDBACK_MS = 1500
 const BYTES_PER_KB = 1024
 const MIN_TOOL_CALLS = 2
 const BATCH_MIN_SIZE = 2
+
+// ── Action menu state ──
+const showActionMenu = ref(false)
+const actionMenuAnchor = ref<DOMRect | null>(null)
+
+function onActionBtnClick(e: MouseEvent) {
+  const btn = e.currentTarget as HTMLElement
+  actionMenuAnchor.value = btn.getBoundingClientRect()
+  showActionMenu.value = !showActionMenu.value
+}
+
+function closeActionMenu() {
+  showActionMenu.value = false
+}
 
 // ── ContentBlocks 查找辅助 ──
 
@@ -358,4 +435,36 @@ const batchInfoMap = computed(() => {
 <style scoped>
 /* msg__body 内的元素由 v-html 渲染，无法用 Tailwind 类作用于动态内容 */
 /* 所有样式已移至 style.css，如在此处添加样式请确保 style.css 同步更新 */
+
+/* ⋯ action button */
+.msg-action-btn {
+  position: absolute;
+  top: 2px;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: var(--radius);
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+  z-index: 10;
+}
+.msg-action-btn:hover {
+  background: var(--accent-light);
+  color: var(--accent);
+}
+.group\/msg:hover .msg-action-btn {
+  opacity: 1;
+}
+.msg-action-btn--assistant {
+  right: -34px;
+}
+.msg-action-btn--user {
+  left: -34px;
+}
 </style>
