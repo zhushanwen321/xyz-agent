@@ -28,6 +28,15 @@ export class WindowManager {
 
   register(windowId: string, win: BrowserWindow, initialState: WindowState): void {
     this.windows.set(windowId, { windowId, win, state: initialState })
+
+    // Notify renderer when macOS fullscreen state changes
+    win.on('enter-full-screen', () => {
+      win.webContents.send('fullscreen-changed', { isFullscreen: true })
+    })
+    win.on('leave-full-screen', () => {
+      win.webContents.send('fullscreen-changed', { isFullscreen: false })
+    })
+
     win.on('closed', () => {
       this.windows.delete(windowId)
       this.onWindowListChanged?.()
