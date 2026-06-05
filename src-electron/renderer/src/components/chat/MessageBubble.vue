@@ -23,6 +23,7 @@
     v-else-if="message.role === 'assistant'"
     data-role="assistant"
     :data-entry-id="entryId"
+    :data-timestamp="message.timestamp ?? ''"
     class="self-start w-full relative group/msg"
   >
     <!-- ⋯ action button -->
@@ -118,6 +119,7 @@
     v-else
     data-role="user"
     :data-entry-id="entryId"
+    :data-timestamp="message.timestamp ?? ''"
     class="self-end max-w-[75%] relative group/msg"
   >
     <!-- ⋯ action button -->
@@ -173,6 +175,19 @@
     @close="closeActionMenu"
     @navigate="$emit('navigate', $event)"
   />
+
+  <!-- Batch selection checkbox (rendered as sibling overlay) -->
+  <!-- eslint-disable-next-line taste/no-native-html-elements -- compact batch-mode checkbox overlay -->
+  <div v-if="selectable" class="msg-batch-checkbox" @click.stop>
+    <!-- eslint-disable-next-line taste/no-native-html-elements -->
+    <input
+      type="checkbox"
+      class="msg-batch-checkbox__input"
+      :checked="selected"
+      :aria-label="selected ? '取消选择' : '选择消息'"
+      @change="$emit('toggle-select')"
+    />
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -192,14 +207,19 @@ const props = withDefaults(defineProps<{
   entryId?: string
   sessionId?: string
   siblingCount?: number
+  selectable?: boolean
+  selected?: boolean
 }>(), {
   entryId: '',
   sessionId: '',
   siblingCount: 0,
+  selectable: false,
+  selected: false,
 })
 
-defineEmits<{
+const emit = defineEmits<{
   navigate: [targetEntryId: string]
+  'toggle-select': []
 }>()
 
 const settings = useSettingsStore()
@@ -256,7 +276,7 @@ const renderedContent = computed(() => {
 })
 
 // 版本号防止竞态：组件级闭包，避免多实例共享
-let renderVersion = 0
+const renderVersion = ref(0)
 
 // Mermaid 模块级单例（动态导入，延迟初始化）
 let mermaidModule: typeof import('mermaid').default | null = null
@@ -268,15 +288,16 @@ watch(
   () => [props.message.content, props.message.status, settings.theme] as const,
   async ([content, status]) => {
     if (status !== 'streaming' && content) {
-      const version = ++renderVersion
+      renderVersion.value++
+      const version = renderVersion.value
       const effectiveTheme = getEffectiveTheme()
       try {
         const result = await renderFull(content, effectiveTheme)
-        if (version === renderVersion) {
+        if (version === renderVersion.value) {
           fullRenderCache.value = result
         }
       } catch {
-        if (version === renderVersion) {
+        if (version === renderVersion.value) {
           // fallback 到轻量渲染
           fullRenderCache.value = renderLightweight(content)
         }
@@ -400,8 +421,9 @@ function formatBatchSize(bytes: number): string {
   return `${(bytes / (BYTES_PER_KB * BYTES_PER_KB)).toFixed(1)}MB`
 }
 
-const batchInfoMap = computed(() => {
-  const result = new Map<string, BatchInfo>()
+function onSelectClick() {
+  emit('toggle-select')
+}
   const toolCalls = props.message.toolCalls
   if (!toolCalls || toolCalls.length < MIN_TOOL_CALLS) return result
 
@@ -456,6 +478,26 @@ const batchInfoMap = computed(() => {
   opacity: 0;
   transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
   z-index: 10;
+}
+
+/* Batch selection checkbox */
+.msg-batch-checkbox {
+  position: absolute;
+  top: 2px;
+  left: -28px;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 11;
+  cursor: pointer;
+}
+.msg-batch-checkbox__input {
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+  accent-color: var(--accent);
 }
 .msg-action-btn:hover {
   background: var(--accent-light);

@@ -10,6 +10,7 @@
       @switch-agent="switchAgent"
       @open-inspector="$emit('open-inspector', $event)"
       @close-pane="$emit('close-pane')"
+      @toggle-batch-select="toggleBatchMode"
     />
 
     <PanelBody>
@@ -54,7 +55,16 @@
                     @action="$emit('notification-action', msg)"
                   />
                   <!-- User / Assistant messages -->
-                  <MessageBubble v-else :message="msg" :session-id="sessionId ?? ''" :entry-id="msg.id" />
+                  <MessageBubble
+                    v-else
+                    :message="msg"
+                    :session-id="sessionId ?? ''"
+                    :entry-id="msg.id"
+                    :selectable="batchMode"
+                    :selected="selectedIds.has(msg.id)"
+                    @toggle-select="toggleSelect(msg.id)"
+                    @navigate="onNavigate"
+                  />
                 </template>
               </template>
             </template>
@@ -79,6 +89,15 @@
 
         <!-- Widget Dock -->
         <WidgetDock :widgets="extensionWidgets" />
+
+        <!-- Batch select bar (visible when batchMode is on) -->
+        <BatchSelectBar
+          v-if="batchMode"
+          :selected-ids="Array.from(selectedIds)"
+          @cancel="exitBatchMode"
+          @copy-markdown="copyBatchAs('markdown')"
+          @copy-plain="copyBatchAs('plain')"
+        />
 
         <!-- Approval card overlays ChatInput when pending -->
         <div v-if="pendingApproval" class="relative">
@@ -129,6 +148,10 @@ import ApprovalCard from '../chat/ApprovalCard.vue'
 import ChatInput from '../chat/ChatInput.vue'
 import WidgetDock from '../extension/WidgetDock.vue'
 import UtilityRail from '../chat/UtilityRail.vue'
+import BatchSelectBar from '../chat/BatchSelectBar.vue'
+import { collectMessageContent } from '../../lib/collectMessageContent'
+import { copyWithToast } from '../../lib/clipboard'
+import { useTree } from '../../composables/useTree'
 
 export interface AgentOption {
   id: string
@@ -284,5 +307,73 @@ onMounted(() => {
 function switchAgent(id: string) {
   localActiveAgentId.value = id
   emit('switch-agent', id)
+}
+
+// ── Batch selection mode ──
+const batchMode = ref(false)
+const selectedIds = ref<Set<string>>(new Set())
+const tree = useTree()
+
+function toggleBatchMode() {
+  batchMode.value = !batchMode.value
+  if (!batchMode.value) {
+    selectedIds.value = new Set()
+  }
+}
+
+function exitBatchMode() {
+  batchMode.value = false
+  selectedIds.value = new Set()
+}
+
+function toggleSelect(entryId: string) {
+  const next = new Set(selectedIds.value)
+  if (next.has(entryId)) {
+    next.delete(entryId)
+  } else {
+    next.add(entryId)
+  }
+  selectedIds.value = next
+}
+
+function onNavigate(targetId: string) {
+  if (props.sessionId) {
+    tree.navigate(props.sessionId, targetId)
+  }
+}
+
+function collectBatchContent(elements: HTMLElement[], format: 'markdown' | 'plain'): string {
+  const parts: string[] = []
+  for (const el of elements) {
+    const role = el.getAttribute('data-role') === 'user' ? '用户' : '助手'
+    const ts = Number(el.getAttribute('data-timestamp') ?? '0')
+    let timeLabel = ''
+    if (ts > 0) {
+      const d = new Date(ts)
+      const hh = d.getHours().toString().padStart(2, '0')
+      const mm = d.getMinutes().toString().padStart(2, '0')
+      timeLabel = ` ${hh}:${mm}`
+    }
+    const content = collectMessageContent(el, { format })
+    if (content) {
+      parts.push(`--- ${role}${timeLabel} ---\n${content}`)
+    }
+  }
+  return parts.join('\n\n')
+}
+
+async function copyBatchAs(format: 'markdown' | 'plain') {
+  const ids = Array.from(selectedIds.value)
+  if (ids.length === 0) return
+  // Collect DOM elements in selection order
+  const elements: HTMLElement[] = []
+  for (const id of ids) {
+    const el = document.querySelector(`[data-entry-id="${id}"]`) as HTMLElement | null
+    if (el) elements.push(el)
+  }
+  if (elements.length === 0) return
+  const text = collectBatchContent(elements, format)
+  await copyWithToast(text, { format })
+  exitBatchMode()
 }
 </script>
