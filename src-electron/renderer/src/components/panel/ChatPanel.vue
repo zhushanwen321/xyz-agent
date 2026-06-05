@@ -238,7 +238,7 @@ function forceScrollToBottom() {
   nextTick(() => {
     const el = chatMsgsRef.value
     if (el) {
-      el.scrollTop = el.scrollHeight
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
       userAtBottom.value = true
     }
   })
@@ -271,12 +271,12 @@ function onChatScroll() {
 
 function handleScrollToTop() {
   const el = chatMsgsRef.value
-  if (el) el.scrollTop = 0
+  if (el) el.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
 function handleScrollToBottom() {
   const el = chatMsgsRef.value
-  if (el) el.scrollTop = el.scrollHeight
+  if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
 }
 
 // 新消息 / streaming 更新时智能滚动
@@ -286,7 +286,7 @@ watch(
     nextTick(() => {
       if (!userAtBottom.value) return
       const el = chatMsgsRef.value
-      if (el) el.scrollTop = el.scrollHeight
+      if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
     })
   },
 )
