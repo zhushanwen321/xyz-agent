@@ -148,7 +148,7 @@ export class TreeService {
   }
 
   /** Clone the current session (snapshot at current leaf). */
-  async cloneSession(sessionId: string): Promise<ForkResult> {
+  async cloneSession(sessionId: string, _labelSuffix = '-clone'): Promise<ForkResult> {
     const client = this.pm.getClient(sessionId)
     if (!client) throw new Error(`Session ${sessionId} not found`)
 
@@ -173,7 +173,7 @@ export class TreeService {
   }
 
   /** Fork a new session from a specific entry. */
-  async forkFromEntry(sessionId: string, entryId: string): Promise<ForkResult> {
+  async forkFromEntry(sessionId: string, entryId: string, _labelSuffix = '-fork'): Promise<ForkResult> {
     const client = this.pm.getClient(sessionId)
     if (!client) throw new Error(`Session ${sessionId} not found`)
 
