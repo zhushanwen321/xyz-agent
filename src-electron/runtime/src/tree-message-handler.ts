@@ -18,8 +18,13 @@ export class TreeMessageHandler {
   constructor(private ctx: TreeHandlerContext) {}
 
   async handleTreeMessage(msg: ClientMessage, ws: WsType): Promise<void> {
-    const payload = msg.payload as { sessionId: string; targetEntryId?: string; entryId?: string }
+    const payload = msg.payload as { sessionId?: string; targetEntryId?: string; entryId?: string }
     const sid = payload.sessionId
+    // Fail-fast on missing sessionId — surface a structured error to the client
+    // rather than letting downstream code throw a TypeError on undefined.
+    if (!sid) {
+      return this.ctx.send(ws, { type: 'session.tree-fork-result', id: msg.id, payload: { success: false, error: 'sessionId required' } })
+    }
     switch (msg.type) {
       case 'session.tree-data': {
         try {
@@ -40,7 +45,10 @@ export class TreeMessageHandler {
         }
       }
       case 'session.tree-navigate': {
-        const targetEntryId = payload.targetEntryId as string
+        const targetEntryId = payload.targetEntryId
+        if (!targetEntryId) {
+          return this.ctx.send(ws, { type: 'session.tree-navigate-result', id: msg.id, payload: { sessionId: sid, success: false, error: 'targetEntryId required' } })
+        }
         try {
           const result = await this.ctx.treeService.navigateTree(sid, targetEntryId)
           return this.ctx.send(ws, { type: 'session.tree-navigate-result', id: msg.id, payload: { sessionId: sid, ...result } })
@@ -52,7 +60,10 @@ export class TreeMessageHandler {
         }
       }
       case 'session.tree-fork': {
-        const entryId = payload.entryId as string
+        const entryId = payload.entryId
+        if (!entryId) {
+          return this.ctx.send(ws, { type: 'session.tree-fork-result', id: msg.id, payload: { sessionId: sid, success: false, error: 'entryId required' } })
+        }
         try {
           const originalLabel = this.ctx.sessionService.getSummary(sid)?.label ?? 'session'
           const newLabel = originalLabel + '-fork'
