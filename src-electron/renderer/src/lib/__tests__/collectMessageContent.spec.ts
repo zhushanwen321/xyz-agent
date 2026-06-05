@@ -101,4 +101,37 @@ describe('collectMessageContent', () => {
     expect(result).not.toContain('[Thinking:')
     expect(result).toContain('Answer')
   })
+
+  it('markdown format reads from data-markdown-source when available', () => {
+    const el = createElement(`
+      <div>
+        <div class="msg__body" data-markdown-source="# Title\n\n**bold** text\n- item 1\n- item 2">Rendered Title bold text item 1 item 2</div>
+      </div>
+    `)
+    const result = collectMessageContent(el, { format: 'markdown' })
+    expect(result).toContain('# Title')
+    expect(result).toContain('**bold**')
+    expect(result).toContain('- item 1')
+    // textContent would lose these markdown symbols
+    expect(result).not.toBe('Rendered Title bold text item 1 item 2')
+  })
+
+  it('markdown format falls back to textContent without data-markdown-source', () => {
+    const el = createElement(`
+      <div><div class="msg__body">Plain text fallback</div></div>
+    `)
+    const result = collectMessageContent(el, { format: 'markdown' })
+    expect(result).toContain('Plain text fallback')
+  })
+
+  it('plain format ignores data-markdown-source and uses textContent', () => {
+    const el = createElement(`
+      <div>
+        <div class="msg__body" data-markdown-source="# Title\n**bold**">Rendered text</div>
+      </div>
+    `)
+    const result = collectMessageContent(el, { format: 'plain' })
+    // plain mode should use textContent, not data-markdown-source
+    expect(result).toContain('Rendered text')
+  })
 })
