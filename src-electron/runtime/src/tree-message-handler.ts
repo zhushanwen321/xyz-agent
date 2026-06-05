@@ -54,9 +54,11 @@ export class TreeMessageHandler {
       case 'session.tree-fork': {
         const entryId = payload.entryId as string
         try {
-          const result = await this.ctx.treeService.forkFromEntry(sid, entryId)
+          const originalLabel = this.ctx.sessionService.getSummary(sid)?.label ?? 'session'
+          const newLabel = originalLabel + '-fork'
+          const result = await this.ctx.treeService.forkFromEntry(sid, entryId, '-fork')
           if (result.success && result.newSessionId) {
-            await this.ctx.sessionService.rebindAfterFork(sid, result.newSessionId, result.sessionFile)
+            await this.ctx.sessionService.rebindAfterFork(sid, result.newSessionId, newLabel, result.sessionFile)
             this.ctx.broadcastSessionList()
           }
           return this.ctx.send(ws, { type: 'session.tree-fork-result', id: msg.id, payload: { sessionId: sid, ...result } })
@@ -79,8 +81,10 @@ export class TreeMessageHandler {
       }
       case 'session.tree-clone': {
         try {
-          const result = await this.ctx.treeService.cloneSession(sid)
-          if (result.success) {
+          const originalLabel = this.ctx.sessionService.getSummary(sid)?.label ?? 'session'
+          const result = await this.ctx.treeService.cloneSession(sid, '-clone')
+          if (result.success && result.newSessionId) {
+            await this.ctx.sessionService.renameSession(result.newSessionId, originalLabel + '-clone')
             this.ctx.broadcastSessionList()
           }
           return this.ctx.send(ws, { type: 'session.tree-clone-result', id: msg.id, payload: { sessionId: sid, ...result } })
