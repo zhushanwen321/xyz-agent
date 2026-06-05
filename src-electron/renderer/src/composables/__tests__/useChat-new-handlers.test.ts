@@ -50,6 +50,10 @@ vi.mock('../../stores/session', () => ({
   useSessionStore: () => ({
     get currentSessionId() { return 's1' },
     get sessions() { return mockSessions },
+    renameSession(id: string, label: string) {
+      const idx = mockSessions.findIndex(s => s.id === id)
+      if (idx >= 0) mockSessions[idx] = { ...mockSessions[idx], label }
+    },
   }),
 }))
 
@@ -57,7 +61,8 @@ vi.mock('../../stores/session', () => ({
 // IMPORTANT: imports must come AFTER vi.mock calls. Vitest hoists
 // vi.mock, but static imports of source files still need to be below
 // the mock declarations for clarity.
-import { useChat, __test_registerGlobalHandlers } from '../useChat'
+import { useChat } from '../useChat'
+import { __test_registerGlobalHandlers } from './test-utils'
 import { useChatStore } from '../../stores/chat'
 import type { SystemNotification } from '../../stores/chat'
 
@@ -76,6 +81,19 @@ function invokeHandler(type: string, msg: ServerMessage): void {
     throw new Error(`No handler captured for event "${type}". Captured: ${Array.from(capturedHandlers.keys()).join(', ')}`)
   }
   handler(msg)
+}
+
+/** Invoke handler and return the first system notification from store */
+function invokeAndGetNotification(
+  eventType: ServerMessage['type'],
+  payload: Record<string, unknown>,
+  sid = 's1',
+): SystemNotification {
+  const store = useChatStore()
+  invokeHandler(eventType, makeMsg(eventType, { sessionId: sid, ...payload }))
+  const msgs = store.getSessionState(sid).completedMessages
+  expect(msgs).toHaveLength(1)
+  return msgs[0] as SystemNotification
 }
 
 // ── Setup / Teardown ───────────────────────────────────────────────
@@ -125,34 +143,17 @@ describe('Task 4 — handler routing (FR-8, FR-9)', () => {
   })
 
   it('onBashExecution adds a system message', () => {
-    const store = useChatStore()
-    invokeHandler(
-      'message.bashExecution',
-      makeMsg('message.bashExecution', { sessionId: 's1', command: 'ls', output: 'file' }),
-    )
-    const msgs = store.getSessionState('s1').completedMessages
-    expect(msgs).toHaveLength(1)
-    const msg = msgs[0] as SystemNotification
+    const msg = invokeAndGetNotification('message.bashExecution', { command: 'ls', output: 'file' })
     expect(msg.role).toBe('system')
     expect(msg.notificationType).toBeDefined()
   })
 
   it('onCompactionSummary adds a system message', () => {
-    const store = useChatStore()
-    invokeHandler(
-      'message.compactionSummary',
-      makeMsg('message.compactionSummary', { sessionId: 's1', summary: 'compacted' }),
-    )
-    expect(store.getSessionState('s1').completedMessages).toHaveLength(1)
+    invokeAndGetNotification('message.compactionSummary', { summary: 'compacted' })
   })
 
   it('onBranchSummary adds a system message', () => {
-    const store = useChatStore()
-    invokeHandler(
-      'message.branchSummary',
-      makeMsg('message.branchSummary', { sessionId: 's1', branch: 'feature' }),
-    )
-    expect(store.getSessionState('s1').completedMessages).toHaveLength(1)
+    invokeAndGetNotification('message.branchSummary', { branch: 'feature' })
   })
 
   it('onAutoRetryStart sets active AutoRetryState', () => {
@@ -261,14 +262,7 @@ describe('Task 4 — handler routing (FR-8, FR-9)', () => {
   })
 
   it('onStreamError adds an alert system message', () => {
-    const store = useChatStore()
-    invokeHandler(
-      'message.stream_error',
-      makeMsg('message.stream_error', { sessionId: 's1', content: 'fail' }),
-    )
-    const msgs = store.getSessionState('s1').completedMessages
-    expect(msgs).toHaveLength(1)
-    const msg = msgs[0] as SystemNotification
+    const msg = invokeAndGetNotification('message.stream_error', { content: 'fail' })
     expect(msg.role).toBe('system')
     expect(msg.notificationType).toBe('alert')
   })

@@ -191,10 +191,13 @@ export interface ServerMessage {
 
 // ── Extension payload interfaces ────────────────────────────────
 
+/** Interactive extension UI methods that produce extension.ui_request WS events */
+export type ExtensionUIMethod = 'confirm' | 'select' | 'input' | 'notify' | 'editor'
+
 export interface ExtensionUIRequestPayload {
   sessionId: string
   requestId: string
-  method: 'confirm' | 'select' | 'input' | 'notify' | 'editor'
+  method: ExtensionUIMethod
   title?: string
   message?: string
   options?: string[]

@@ -311,10 +311,7 @@ function createGlobalHandlers() {
     if (!sid) return
     const name = (msg.payload as { name?: string }).name
     if (name === undefined) return
-    const idx = sessionStore.sessions.findIndex(s => s.id === sid)
-    if (idx >= 0) {
-      sessionStore.sessions[idx] = { ...sessionStore.sessions[idx], label: name }
-    }
+    sessionStore.renameSession(sid, name)
   }
 
   /** session.thinkingLevelSet → set thinking level on the session */
@@ -343,44 +340,40 @@ function createGlobalHandlers() {
     store.addMessage(createSystemNotification('alert', content), sid)
   }
 
-  return {
-    'message.message_start': onMessageStart,
-    'message.text_delta': onTextDelta,
-    'message.thinking_start': onThinkingStart,
-    'message.thinking_delta': onThinkingDelta,
-    'message.thinking_end': onThinkingEnd,
-    'message.tool_call_start': onToolCallStart,
-    'message.tool_call_end': onToolCallEnd,
-    'message.tool_call_update': onToolCallUpdate,
-    'message.complete': onComplete,
-    'message.error': onError,
-    'extension.error': onExtensionError,
-    'context.update': onContextUpdate,
-    'message.status': onStatus,
-    // TUI Bridge Phase 0 (FR-8, FR-9)
-    'extension:setEditorText': onSetEditorText,
-    'message.bashExecution': onBashExecution,
-    'message.compactionSummary': onCompactionSummary,
-    'message.branchSummary': onBranchSummary,
-    'message.auto_retry_start': onAutoRetryStart,
-    'message.auto_retry_end': onAutoRetryEnd,
-    'message.queue_update': onQueueUpdate,
-    'session.renamed': onSessionRenamed,
-    'session.thinkingLevelSet': onThinkingLevelSet,
-    'extension:setTitle': onExtensionSetTitle,
-    'message.stream_error': onStreamError,
-  } as Record<string, (msg: ServerMessage) => void>
+  return new Map<ServerMessageType, (msg: ServerMessage) => void>([
+    ['message.message_start', onMessageStart],
+    ['message.text_delta', onTextDelta],
+    ['message.thinking_start', onThinkingStart],
+    ['message.thinking_delta', onThinkingDelta],
+    ['message.thinking_end', onThinkingEnd],
+    ['message.tool_call_start', onToolCallStart],
+    ['message.tool_call_end', onToolCallEnd],
+    ['message.tool_call_update', onToolCallUpdate],
+    ['message.complete', onComplete],
+    ['message.error', onError],
+    ['extension.error', onExtensionError],
+    ['context.update', onContextUpdate],
+    ['message.status', onStatus],
+    ['extension:setEditorText', onSetEditorText],
+    ['message.bashExecution', onBashExecution],
+    ['message.compactionSummary', onCompactionSummary],
+    ['message.branchSummary', onBranchSummary],
+    ['message.auto_retry_start', onAutoRetryStart],
+    ['message.auto_retry_end', onAutoRetryEnd],
+    ['message.queue_update', onQueueUpdate],
+    ['session.renamed', onSessionRenamed],
+    ['session.thinkingLevelSet', onThinkingLevelSet],
+    ['extension:setTitle', onExtensionSetTitle],
+    ['message.stream_error', onStreamError],
+  ])
 }
 
-let globalEventMap: Record<string, (msg: ServerMessage) => void> | null = null
+let globalEventMap: Map<ServerMessageType, (msg: ServerMessage) => void> | null = null
 
 function registerGlobalListeners() {
   if (globalEventMap) return // 已注册
   globalEventMap = createGlobalHandlers()
-  // Task 3 type-hardened `on()` to require ServerMessageType, but
-  // Object.entries() returns [string, ...] tuples. Cast at the call
-  // site: globalEventMap is built from typed keys, so the cast is safe.
-  for (const [evt, handler] of Object.entries(globalEventMap) as [ServerMessageType, (msg: ServerMessage) => void][]) {
+  for (const [evt, handler] of globalEventMap) {
     on(evt, handler)
   }
 }
@@ -465,11 +458,8 @@ queueMicrotask(safeRegisterGlobalListeners)
  */
 export function __test_registerGlobalHandlers(): void {
   if (!getActivePinia()) return
-  // Re-create handlers on every call so the latest mock stores are picked up.
-  // In production, `registerGlobalListeners` is only called once via the
-  // microtask; in tests we want a fresh handler set per test case.
   globalEventMap = createGlobalHandlers()
-  for (const [evt, handler] of Object.entries(globalEventMap) as [ServerMessageType, (msg: ServerMessage) => void][]) {
+  for (const [evt, handler] of globalEventMap) {
     on(evt, handler)
   }
 }

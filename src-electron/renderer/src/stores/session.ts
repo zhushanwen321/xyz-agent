@@ -26,6 +26,14 @@ export const useSessionStore = defineStore('session', () => {
   function removeSession(id: string) { sessions.value = sessions.value.filter(s => s.id !== id) }
   function switchSession(id: string) { currentSessionId.value = id }
 
+  /** Rename a session by id. No-op if session not found. */
+  function renameSession(id: string, label: string) {
+    const idx = sessions.value.findIndex(s => s.id === id)
+    if (idx >= 0) {
+      sessions.value[idx] = { ...sessions.value[idx], label }
+    }
+  }
+
   const PAD_LENGTH = 2
 
   /** Generate a unique label like "new-session-01" for a given cwd */
@@ -42,7 +50,7 @@ export const useSessionStore = defineStore('session', () => {
 
   return {
     sessions, currentSessionId, groupedSessions, currentSession,
-    setSessions, addSession, removeSession, switchSession,
+    setSessions, addSession, removeSession, switchSession, renameSession,
     generateSessionLabel,
   }
 })
