@@ -295,19 +295,29 @@ function handleMessageStart(event: PiEvent, ctx: HandlerContext): HandlerResult 
   if (role === 'bashExecution') {
     return {
       type: 'message.bashExecution',
-      payload: { sessionId: sid, command: msg.command as string | undefined, output: msg.output as string | undefined, exitCode: msg.exitCode as number | undefined },
+      payload: {
+        sessionId: sid,
+        command: msg.command as string | undefined,
+        output: msg.output as string | undefined,
+        exitCode: msg.exitCode as number | undefined,
+        cancelled: msg.cancelled as boolean | undefined,
+        truncated: msg.truncated as boolean | undefined,
+        fullOutputPath: msg.fullOutputPath as string | undefined,
+        timestamp: msg.timestamp as number | undefined,
+        excludeFromContext: msg.excludeFromContext as boolean | undefined,
+      },
     }
   }
   if (role === 'compactionSummary') {
     return {
       type: 'message.compactionSummary',
-      payload: { sessionId: sid, summary: msg.summary as string | undefined, tokensBefore: msg.tokensBefore as number | undefined },
+      payload: { sessionId: sid, summary: msg.summary as string | undefined, tokensBefore: msg.tokensBefore as number | undefined, timestamp: msg.timestamp as number | undefined },
     }
   }
   if (role === 'branchSummary') {
     return {
       type: 'message.branchSummary',
-      payload: { sessionId: sid, summary: msg.summary as string | undefined, fromId: msg.fromId as string | undefined },
+      payload: { sessionId: sid, summary: msg.summary as string | undefined, fromId: msg.fromId as string | undefined, timestamp: msg.timestamp as number | undefined },
     }
   }
   // custom message from pi.sendMessage
@@ -374,6 +384,7 @@ function handleAutoRetryEnd(event: PiEvent, ctx: HandlerContext): HandlerResult 
       sessionId: ctx.sessionId,
       success: event.success as boolean | undefined,
       attempt: event.attempt as number | undefined,
+      finalError: event.finalError as string | undefined,
     },
   }
 }
