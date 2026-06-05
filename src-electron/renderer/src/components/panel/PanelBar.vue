@@ -32,6 +32,7 @@ defineEmits<{
   'switch-agent': [id: string]
   'open-inspector': [type: string]
   'close-pane': []
+  'toggle-batch-select': []
 }>()
 
 const panelStore = usePanelStore()
@@ -160,6 +161,22 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
       <span v-if="branchCount > 0" class="tree-badge">{{ branchCount }}</span>
     </button>
 
+    <!-- Batch select trigger -->
+    <!-- eslint-disable-next-line taste/no-native-html-elements -- compact icon trigger, consistent with tree-trigger style -->
+    <button
+      v-if="sessionId"
+      class="batch-select-trigger"
+      aria-label="批量选择"
+      @click="$emit('toggle-batch-select')"
+    >
+      <!-- hamburger ≡ icon -->
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <line x1="4" y1="6" x2="20" y2="6" />
+        <line x1="4" y1="12" x2="20" y2="12" />
+        <line x1="4" y1="18" x2="20" y2="18" />
+      </svg>
+    </button>
+
     <!-- Notification chips -->
     <div v-if="(doneCount ?? 0) > 0 || (alertCount ?? 0) > 0" class="panel-notifs">
       <span v-if="(doneCount ?? 0) > 0" class="notif-chip notif-chip--done" @click="$emit('open-inspector', 'done')">
@@ -272,6 +289,21 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
 }
 .tree-trigger:hover { background: var(--accent-light); color: var(--accent); }
 .tree-trigger--active { color: var(--accent); background: var(--accent-light); }
+
+.batch-select-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: 1px;
+  transition: all 0.15s ease;
+}
+.batch-select-trigger:hover { background: var(--accent-light); color: var(--accent); }
 
 .tree-badge {
   position: absolute;
