@@ -5,6 +5,25 @@ import type {
 import type { Message, ThinkingBlock, ToolCall } from '@xyz-agent/shared'
 
 /**
+ * Parse `<skill name="xxx" location="...">...</skill>` blocks from
+ * a user message's text content. Returns the extracted skill name and the
+ * remaining user text (everything after the closing `</skill>` tag).
+ * Returns `null` if no skill block is found.
+ */
+function parseSkillBlock(text: string): { skillName: string; skillLocation?: string; userText: string } | null {
+  const match = text.match(/^<skill\s+name="([^"]+)"\s+location="([^"]+)"[^>]*>[\s\S]*?<\/skill>([\s\S]*)$/)
+    || text.match(/^<skill\s+name="([^"]+)"[^>]*>[\s\S]*?<\/skill>([\s\S]*)$/)
+  if (!match) return null
+  // 3-group match (with location) or 2-group match (without location)
+  // match.length: 1 full match + N capture groups; 4 = full + 3 groups (with location)
+  // eslint-disable-next-line no-magic-numbers
+  if (match.length === 4) {
+    return { skillName: match[1], skillLocation: match[2], userText: match[3].trim() }
+  }
+  return { skillName: match[1], userText: match[2].trim() }
+}
+
+/**
  * Convert pi message list into frontend Message[], merging toolResult
  * entries into their parent assistant message's matching toolCall.
  */
@@ -79,6 +98,18 @@ export function convertPiHistory(raw: (PiHistoryMessage | PiHistoryToolResult)[]
         return u ? { usage: { inputTokens: u.input ?? 0, outputTokens: u.output ?? 0 } } : {}
       })(),
       timestamp: m.timestamp ?? Date.now(),
+    }
+
+    // For user messages, parse <skill> blocks injected by pi backend.
+    // Strips the entire skill document from content, sets skillName,
+    // and leaves only the user's actual text.
+    if (m.role === 'user' && textContent) {
+      const parsed = parseSkillBlock(textContent)
+      if (parsed) {
+        msg.skillName = parsed.skillName
+        if (parsed.skillLocation) msg.skillLocation = parsed.skillLocation
+        msg.content = parsed.userText
+      }
     }
     result.push(msg)
     if (toolCalls.length > 0) {

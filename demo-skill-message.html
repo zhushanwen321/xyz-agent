@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Skill Message Rendering Demos</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: oklch(13% 0.006 50);
+    --surface: oklch(17% 0.008 50);
+    --fg: oklch(93% 0.005 55);
+    --muted: oklch(58% 0.008 50);
+    --border: oklch(28% 0.008 50);
+    --accent: oklch(68% 0.10 28);
+    --accent-light: oklch(28% 0.04 28);
+    --hover-bg: oklch(20% 0.009 50);
+    --radius: 1px;
+    --font-body: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+    --msg-assistant-bg: oklch(18% 0.010 250);
+    --user-bubble-bg: oklch(22% 0.015 40);
+    --user-bubble-border: oklch(30% 0.02 40);
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-body);
+    font-size: 13px;
+    line-height: 1.6;
+    padding: 40px 20px;
+  }
+
+  h1 {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--fg);
+    margin-bottom: 8px;
+    letter-spacing: -0.01em;
+  }
+
+  .subtitle {
+    color: var(--muted);
+    font-size: 12px;
+    margin-bottom: 32px;
+  }
+
+  /* ── Scene card ── */
+  .scene {
+    margin-bottom: 48px;
+  }
+  .scene-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--accent);
+    margin-bottom: 4px;
+  }
+  .scene-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--fg);
+    margin-bottom: 4px;
+  }
+  .scene-desc {
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 16px;
+    line-height: 1.5;
+  }
+
+  /* ── Chat panel container ── */
+  .chat-panel {
+    max-width: 640px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  /* ── Messages ── */
+  .msg {
+    display: flex;
+    flex-direction: column;
+  }
+  .msg--user {
+    align-items: flex-end;
+  }
+  .msg--assistant {
+    align-items: flex-start;
+  }
+
+  .msg__role {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    line-height: 1.4;
+    margin-bottom: 3px;
+    color: var(--muted);
+  }
+  .msg--user .msg__role { text-align: right; }
+  .msg--assistant .msg__role { text-align: left; }
+
+  .msg__timestamp {
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: normal;
+    font-size: 10px;
+    opacity: 0.6;
+    margin-right: 6px;
+  }
+
+  /* ── Bubble ── */
+  .msg__bubble {
+    padding: 8px 12px;
+    line-height: 1.6;
+    font-size: 12px;
+    border-radius: var(--radius);
+    max-width: 85%;
+  }
+  .msg--user .msg__bubble {
+    background: var(--user-bubble-bg);
+    border: 1px solid var(--user-bubble-border);
+    color: var(--fg);
+  }
+  .msg--assistant .msg__bubble {
+    background: var(--msg-assistant-bg);
+    color: var(--fg);
+  }
+  .msg__bubble p { margin-bottom: 6px; }
+  .msg__bubble p:last-child { margin-bottom: 0; }
+  .msg__bubble code {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    background: oklch(15% 0.01 50);
+    padding: 1px 4px;
+    border-radius: 2px;
+  }
+
+  /* ── Skill badge (current broken inline style) ── */
+  .skill-badge-current {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 1px 6px;
+    border-radius: 99px;
+    background: rgba(255,255,255,0.25);
+    color: white;
+    margin-right: 4px;
+    vertical-align: middle;
+    line-height: 1.4;
+  }
+
+  /* ── ──────────────────────────────────────────── ── */
+  /* ── PROPOSED: Skill header bar ── */
+  /* ── ──────────────────────────────────────────── ── */
+
+  .skill-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: var(--radius);
+    font-size: 11px;
+    line-height: 1.4;
+    margin-bottom: 3px;
+    /* Per-scheme A: muted pill, icon + text */
+    background: oklch(20% 0.012 250);
+    border: 1px solid oklch(28% 0.012 250);
+    color: var(--muted);
+  }
+  .skill-header svg {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+    color: var(--accent);
+  }
+  .skill-header__name {
+    font-weight: 600;
+    color: var(--fg);
+    font-family: var(--font-mono);
+    font-size: 11px;
+  }
+
+  /* Variant B: accent left border */
+  .skill-header--accent {
+    background: oklch(20% 0.015 250);
+    border: none;
+    border-left: 2px solid var(--accent);
+    padding-left: 8px;
+  }
+
+  /* Variant C: compact inline, no bg */
+  .skill-header--compact {
+    background: none;
+    border: none;
+    padding: 0;
+    margin-bottom: 2px;
+    font-size: 10px;
+    color: var(--muted);
+  }
+  .skill-header--compact .skill-header__name {
+    color: var(--accent);
+    font-size: 10px;
+  }
+
+  /* ── Divider between scenes ── */
+  .divider {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 32px 0;
+  }
+
+  /* ── Broken state illustration ── */
+  .broken-marker {
+    display: inline-block;
+    background: oklch(55% 0.12 25);
+    color: white;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 2px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 12px;
+  }
+  .fixed-marker {
+    display: inline-block;
+    background: oklch(55% 0.12 150);
+    color: white;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 2px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 12px;
+  }
+
+  /* ── Long skill content simulation ── */
+  .skill-content-overflow {
+    max-height: 120px;
+    overflow: hidden;
+    position: relative;
+    font-size: 11px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+  .skill-content-overflow::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 40px;
+    background: linear-gradient(transparent, var(--user-bubble-bg));
+  }
+
+  /* ── Comparison grid ── */
+  .compare-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+  .compare-col h3 {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    margin-bottom: 12px;
+  }
+</style>
+</head>
+<body>
+
+<h1>Skill 消息渲染方案对比</h1>
+<p class="subtitle">对比 3 个场景 x 3 种样式方案。场景 4 展示历史恢复时的当前问题。</p>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SCENE 1: Skill + 用户文本 -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="scene">
+  <div class="scene-label">Scene 1</div>
+  <div class="scene-title">Skill + 用户文本</div>
+  <div class="scene-desc">
+    用户输入 <code>/skill:summarize 分析这段代码的性能问题</code>。前端发送时 content="/skill:summarize 分析这段代码的性能问题"，skillName="summarize"。<br>
+    JSONL 历史中存储为 <code>&lt;skill name="summarize"&gt;...SKILL.md 全文...&lt;/skill&gt; 分析这段代码的性能问题</code>。
+  </div>
+
+  <div class="compare-grid">
+    <!-- Current broken -->
+    <div class="compare-col">
+      <h3>❌ 当前（发送时）</h3>
+      <div class="chat-panel">
+        <div class="msg msg--user">
+          <div class="msg__role"><span class="msg__timestamp">14:32</span>用户</div>
+          <div class="msg__bubble">
+            <span class="skill-badge-current">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="10" height="10"><path d="M2 8l4 4 8-8"/></svg>
+              summarize
+            </span>
+            /skill:summarize 分析这段代码的性能问题
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Proposal A: Skill header bar above bubble -->
+    <div class="compare-col">
+      <h3>A · Skill 标头条（独立行）</h3>
+      <div class="chat-panel">
+        <div class="msg msg--user">
+          <div class="msg__role"><span class="msg__timestamp">14:32</span>用户</div>
+          <div class="skill-header">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 2H12.5A1.5 1.5 0 0114 3.5V12.5A1.5 1.5 0 0112.5 14H3.5A1.5 1.5 0 012 12.5V3.5A1.5 1.5 0 013.5 2Z"/><path d="M8 2v12"/><path d="M2 8h6"/></svg>
+            加载 Skill：<span class="skill-header__name">summarize</span>
+          </div>
+          <div class="msg__bubble">分析这段代码的性能问题</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Proposal B: Accent left border -->
+    <div class="compare-col">
+      <h3>B · 左侧色带</h3>
+      <div class="chat-panel">
+        <div class="msg msg--user">
+          <div class="msg__role"><span class="msg__timestamp">14:32</span>用户</div>
+          <div class="skill-header skill-header--accent">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 2H12.5A1.5 1.5 0 0114 3.5V12.5A1.5 1.5 0 0112.5 14H3.5A1.5 1.5 0 012 12.5V3.5A1.5 1.5 0 013.5 2Z"/><path d="M8 2v12"/><path d="M2 8h6"/></svg>
+            Skill：<span class="skill-header__name">summarize</span>
+          </div>
+          <div class="msg__bubble">分析这段代码的性能问题</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Proposal C: Compact inline -->
+    <div class="compare-col">
+      <h3>C · 紧凑内联</h3>
+      <div class="chat-panel">
+        <div class="msg msg--user">
+          <div class="msg__role"><span class="msg__timestamp">14:32</span>用户</div>
+          <div class="skill-header skill-header--compact">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 2H12.5A1.5 1.5 0 0114 3.5V12.5A1.5 1.5 0 0112.5 14H3.5A1.5 1.5 0 012 12.5V3.5A1.5 1.5 0 013.5 2Z"/><path d="M8 2v12"/><path d="M2 8h6"/></svg>
+            加载 Skill：<span class="skill-header__name">summarize</span>
+          </div>
+          <div class="msg__bubble">分析这段代码的性能问题</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<hr class="divider">
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SCENE 2: Skill only, no user text -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="scene">
+  <div class="scene-label">Scene 2</div>
+  <div class="scene-title">Skill only（无用户文本）</div>
+  <div class="scene-desc">
+    用户只选了 skill 没输入任何文字。JSONL 中 <code>&lt;skill name="code-review"&gt;...&lt;/skill&gt;</code>，<code>&lt;/skill&gt;</code> 之后为空。
+  </div>
+
+  <div class="compare-grid">
+    <!-- Current broken -->
+    <div class="compare-col">
+      <h3>❌ 当前（发送时）</h3>
+      <div class="chat-panel">
+        <div class="msg msg--user">
+          <div class="msg__role"><span class="msg__timestamp">14:33</span>用户</div>
+          <div class="msg__bubble">
+            <span class="skill-badge-current">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="10" height="10"><path d="M2 8l4 4 8-8"/></svg>
+              code-review
+            </span>
+            /skill:code-review
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Proposal A -->
+    <div class="compare-col">
+      <h3>A · Skill 标头条（独立行）</h3>
+      <div class="chat-panel">
+        <div class="msg msg--user">
+          <div class="msg__role"><span class="msg__timestamp">14:33</span>用户</div>
+          <div class="skill-header">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 2H12.5A1.5 1.5 0 0114 3.5V12.5A1.5 1.5 0 0112.5 14H3.5A1.5 1.5 0 012 12.5V3.5A1.5 1.5 0 013.5 2Z"/><path d="M8 2v12"/><path d="M2 8h6"/></svg>
+            加载 Skill：<span class="skill-header__name">code-review</span>
+          </div>
+          <!-- No bubble when user text is empty -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Proposal B -->
+    <div class="compare-col">
+      <h3>B · 左侧色带</h3>
+      <div class="chat-panel">
+        <div class="msg msg--user">
+          <div class="msg__role"><span class="msg__timestamp">14:33</span>用户</div>
+          <div class="skill-header skill-header--accent">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 2H12.5A1.5 1.5 0 0114 3.5V12.5A1.5 1.5 0 0112.5 14H3.5A1.5 1.5 0 012 12.5V3.5A1.5 1.5 0 013.5 2Z"/><path d="M8 2v12"/><path d="M2 8h6"/></svg>
+            Skill：<span class="skill-header__name">code-review</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Proposal C -->
+    <div class="compare-col">
+      <h3>C · 紧凑内联</h3>
+      <div class="chat-panel">
+        <div class="msg msg--user">
+          <div class="msg__role"><span class="msg__timestamp">14:33</span>用户</div>
+          <div class="skill-header skill-header--compact">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 2H12.5A1.5 1.5 0 0114 3.5V12.5A1.5 1.5 0 0112.5 14H3.5A1.5 1.5 0 012 12.5V3.5A1.5 1.5 0 013.5 2Z"/><path d="M8 2v12"/><path d="M2 8h6"/></svg>
+            加载 Skill：<span class="skill-header__name">code-review</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<hr class="divider">
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SCENE 3: Normal user message (no skill) -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="scene">
+  <div class="scene-label">Scene 3</div>
+  <div class="scene-title">普通用户消息（无 skill）</div>
+  <div class="scene-desc">
+    不带 skill 的普通消息，作为对比基线。不应有任何变化。
+  </div>
+
+  <div class="compare-grid">
+    <div class="compare-col">
+      <h3>当前（不变）</h3>
+      <div class="chat-panel">
+        <div class="msg msg--user">
+          <div class="msg__role"><span class="msg__timestamp">14:35</span>用户</div>
+          <div class="msg__bubble">帮我看看这个函数的时间复杂度</div>
+        </div>
+      </div>
+    </div>
+    <div class="compare-col">
+      <h3>修复后（不变）</h3>
+      <div class="chat-panel">
+        <div class="msg msg--user">
+          <div class="msg__role"><span class="msg__timestamp">14:35</span>用户</div>
+          <div class="msg__bubble">帮我看看这个函数的时间复杂度</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<hr class="divider">
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SCENE 4: History restore — the broken case -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="scene">
+  <div class="scene-label">Scene 4</div>
+  <div class="scene-title">历史恢复（核心问题）</div>
+  <div class="scene-desc">
+    重新打开 session 时，JSONL 中的用户消息包含了整个 SKILL.md 内容（pi 注入的 <code>&lt;skill&gt;</code> 标签包裹）。<br>
+    当前：整个 SKILL.md 被渲染到用户气泡中（可能几千到上万字）。<br>
+    修复后：与发送时一致，只显示 skill 标识条 + 用户实际文本。
+  </div>
+
+  <div class="compare-grid">
+    <!-- Current broken: history restore -->
+    <div class="compare-col">
+      <h3>❌ 当前（历史恢复）</h3>
+      <div class="chat-panel">
+        <div class="msg msg--user">
+          <div class="msg__role"><span class="msg__timestamp">14:32</span>用户</div>
+          <div class="msg__bubble">
+            <div class="skill-content-overflow">
+              <p><strong>&lt;skill name="summarize"&gt;</strong></p>
+              <p>References are relative to /Users/zhushanwen/.agents/skills/summarize.</p>
+              <p># Summarize Skill</p>
+              <p>Generates concise summaries of code, documents, or conversations.</p>
+              <p>## Setup</p>
+              <p>You MUST do these steps before proceeding:</p>
+              <p>1. Read the target file or content provided by the user.</p>
+              <p>2. Analyze the structure and identify key sections.</p>
+              <p>3. Generate a hierarchical summary.</p>
+              <p>## Design guidance</p>
+              <p>Produce ready-to-ship, production-grade code, not prototypes or starting points. Take no shortcuts unless the user asks for them. Every page, section or component crafted is battle tested using the tools available to you. The model is capable of extraordinary work. Don't hold back.</p>
+              <p>### General rules</p>
+              <p>#### Color</p>
+              <p>Verify contrast. Body text must hit ≥4.5:1 against its background; large text (≥18px or bold ≥14px) needs ≥3:1.</p>
+              <p>#### Typography</p>
+              <p>Cap body line length at 65–75ch. Hierarchy through scale + weight contrast (≥1.25 ratio between steps).</p>
+              <p>... （此处省略 SKILL.md 的后续几千字内容）...</p>
+              <p><strong>&lt;/skill&gt;</strong></p>
+              <p>分析这段代码的性能问题</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Fixed: history restore with skill header -->
+    <div class="compare-col">
+      <h3>✅ 修复后（A · Skill 标头条）</h3>
+      <div class="chat-panel">
+        <div class="msg msg--user">
+          <div class="msg__role"><span class="msg__timestamp">14:32</span>用户</div>
+          <div class="skill-header">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 2H12.5A1.5 1.5 0 0114 3.5V12.5A1.5 1.5 0 0112.5 14H3.5A1.5 1.5 0 012 12.5V3.5A1.5 1.5 0 013.5 2Z"/><path d="M8 2v12"/><path d="M2 8h6"/></svg>
+            加载 Skill：<span class="skill-header__name">summarize</span>
+          </div>
+          <div class="msg__bubble">分析这段代码的性能问题</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<hr class="divider">
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- SCENE 5: Full conversation context -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="scene">
+  <div class="scene-label">Scene 5</div>
+  <div class="scene-title">完整对话上下文（方案 A）</div>
+  <div class="scene-desc">
+    一段完整对话，展示 skill 消息在正常消息流中的视觉效果。
+  </div>
+
+  <div class="chat-panel">
+    <div class="msg msg--user">
+      <div class="msg__role"><span class="msg__timestamp">14:30</span>用户</div>
+      <div class="msg__bubble">帮我看看 src/utils.ts 里的 debounce 函数</div>
+    </div>
+
+    <div class="msg msg--assistant">
+      <div class="msg__role">助手</div>
+      <div class="msg__bubble">
+        <p>看了 <code>src/utils.ts</code> 中的 debounce 函数，有几个可以优化的地方：</p>
+        <p>1. 当前的 <code>leading</code> 选项没有正确处理 <code>this</code> 上下文<br>
+        2. <code>cancel()</code> 方法没有清理 <code>pending</code> 状态<br>
+        3. 缺少 <code>flush()</code> 方法</p>
+      </div>
+    </div>
+
+    <div class="msg msg--user">
+      <div class="msg__role"><span class="msg__timestamp">14:32</span>用户</div>
+      <div class="skill-header">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 2H12.5A1.5 1.5 0 0114 3.5V12.5A1.5 1.5 0 0112.5 14H3.5A1.5 1.5 0 012 12.5V3.5A1.5 1.5 0 013.5 2Z"/><path d="M8 2v12"/><path d="M2 8h6"/></svg>
+        加载 Skill：<span class="skill-header__name">code-review</span>
+      </div>
+      <div class="msg__bubble">review 这个文件并给出改进建议</div>
+    </div>
+
+    <div class="msg msg--assistant">
+      <div class="msg__role">助手</div>
+      <div class="msg__bubble">
+        <p>基于 code-review skill 的检查清单，以下是对 <code>src/utils.ts</code> 的全面 review：</p>
+        <p><strong>问题 1（高优先级）</strong>：debounce 中的内存泄漏风险...</p>
+      </div>
+    </div>
+
+    <div class="msg msg--user">
+      <div class="msg__role"><span class="msg__timestamp">14:35</span>用户</div>
+      <div class="skill-header">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 2H12.5A1.5 1.5 0 0114 3.5V12.5A1.5 1.5 0 0112.5 14H3.5A1.5 1.5 0 012 12.5V3.5A1.5 1.5 0 013.5 2Z"/><path d="M8 2v12"/><path d="M2 8h6"/></svg>
+        加载 Skill：<span class="skill-header__name">pr-worktree</span>
+      </div>
+      <!-- No bubble: skill-only message -->
+    </div>
+
+    <div class="msg msg--assistant">
+      <div class="msg__role">助手</div>
+      <div class="msg__bubble">
+        <p>好的，已加载 pr-worktree skill。当前分支是 <code>feat/debounce-optimize</code>，有 3 个已提交的变更。</p>
+        <p>正在推送并创建 PR...</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

@@ -135,21 +135,47 @@
       <span v-if="message.timestamp" class="font-normal normal-case tracking-normal text-[10px] opacity-60 mr-1.5">{{ formatTime(message.timestamp) }}</span>
       用户
     </div>
-    <div class="py-2 px-3 leading-[1.6] text-xs text-fg rounded-sm" style="background:var(--user-bubble-bg);border:1px solid var(--user-bubble-border);">
+    <!-- Skill + user bubble wrapper: shared max-width constraint -->
+    <div v-if="resolvedSkillName" class="flex flex-col items-stretch max-w-[85%] ml-auto">
+      <!-- Skill header bar (option B: left accent border) -->
+      <div class="skill-header" :class="{ 'skill-header--clickable': message.skillLocation, 'skill-header--expanded': skillExpanded }" @click="handleSkillHeaderClick">
+        <svg v-if="skillExpanded" class="skill-header__chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 10l4-4 4 4"/></svg>
+        <svg v-else class="skill-header__icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 2H12.5A1.5 1.5 0 0114 3.5V12.5A1.5 1.5 0 0112.5 14H3.5A1.5 1.5 0 012 12.5V3.5A1.5 1.5 0 013.5 2Z"/><path d="M8 2v12"/><path d="M2 8h6"/></svg>
+        <span class="skill-header__label">加载 Skill：</span><span class="skill-header__name">{{ resolvedSkillName }}</span>
+        <svg v-if="skillLoading" class="skill-header__spin" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 1.5a6.5 6.5 0 016.5 6.5"/></svg>
+      </div>
+      <!-- Skill content (expanded): same container style as user bubble -->
+      <div v-if="skillExpanded && skillRenderedContent" class="py-2 px-3 leading-[1.6] text-xs text-fg rounded-sm max-h-[400px] overflow-y-auto" style="background:var(--user-bubble-bg);border:1px solid var(--user-bubble-border);border-left:2px solid var(--accent);">
+        <div
+          class="msg__body select-text"
+          :data-message-id="message.id + '-skill'"
+          :data-markdown-source="skillRawContent"
+        >
+          <!-- eslint-disable-next-line vue/no-v-html -->
+          <span v-html="skillRenderedContent"></span>
+        </div>
+      </div>
+      <!-- User bubble: only show when there is actual user text -->
+      <div v-if="displayContent" class="py-2 px-3 leading-[1.6] text-xs text-fg rounded-sm" style="background:var(--user-bubble-bg);border:1px solid var(--user-bubble-border);">
+        <div
+          class="msg__body select-text"
+          :data-message-id="message.id"
+          :data-markdown-source="displayContent"
+          @click="handleBodyClick"
+        >
+          <!-- eslint-disable-next-line vue/no-v-html -->
+          <span v-html="renderedContent"></span>
+        </div>
+      </div>
+    </div>
+    <!-- Non-skill user bubble (no wrapper needed) -->
+    <div v-if="!resolvedSkillName && displayContent" class="py-2 px-3 leading-[1.6] text-xs text-fg rounded-sm" style="background:var(--user-bubble-bg);border:1px solid var(--user-bubble-border);">
       <div
-        v-if="message.content"
         class="msg__body select-text"
         :data-message-id="message.id"
-        :data-markdown-source="message.content"
+        :data-markdown-source="displayContent"
         @click="handleBodyClick"
       >
-        <span
-          v-if="message.skillName"
-          class="inline-flex items-center gap-0.5 text-[11px] font-medium py-[1px] px-1.5 rounded-full bg-[var(--white-25)] text-white mr-1 align-middle leading-[1.4]"
-        >
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="10" height="10"><path d="M2 8l4 4 8-8"/></svg>
-          {{ message.skillName }}
-        </span>
         <!-- eslint-disable-next-line vue/no-v-html -->
         <span v-html="renderedContent"></span>
       </div>
@@ -208,7 +234,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, onUnmounted } from 'vue'
 import type { Message } from '@xyz-agent/shared'
 import type { BatchInfo } from './ToolCallCard.vue'
 import type { BranchTab } from '../../stores/tree'
@@ -217,6 +243,9 @@ import { useSettingsStore } from '../../stores/settings'
 import { copyWithToast } from '../../lib/clipboard'
 import { collectMessageContent } from '../../lib/collectMessageContent'
 import { useTree } from '../../composables/useTree'
+import { send } from '../../lib/ws-client'
+import { on, off } from '../../lib/event-bus'
+import type { ServerMessage } from '@xyz-agent/shared'
 import ThinkingBlock from './ThinkingBlock.vue'
 import ToolCallCard from './ToolCallCard.vue'
 import MessageActionMenu from './MessageActionMenu.vue'
@@ -255,6 +284,79 @@ const BATCH_MIN_SIZE = 2
 // ── Action menu state ──
 const showActionMenu = ref(false)
 const actionMenuAnchor = ref<DOMRect | null>(null)
+
+// ── Skill display logic ──
+// For real-time messages: content has "/skill:xxx" prefix
+// For history messages: message-converter already stripped the <skill> block
+const resolvedSkillName = computed(() => {
+  if (props.message.skillName) return props.message.skillName
+  // Fallback: detect /skill: prefix in content (real-time messages)
+  const match = props.message.content?.match(/^\/skill:([^\s]+)(?:\s|$)/)
+  return match ? match[1] : undefined
+})
+
+const displayContent = computed(() => {
+  if (!resolvedSkillName.value) return props.message.content
+  // History messages: converter already stripped <skill> block
+  if (props.message.skillName) return props.message.content
+  // Real-time messages: strip /skill:xxx prefix
+  return props.message.content?.replace(/^\/skill:[^\s]+\s*/, '').trim() || ''
+})
+
+// ── Skill content expansion ──
+const skillExpanded = ref(false)
+const skillLoading = ref(false)
+const skillRawContent = ref('')
+const skillRenderedContent = ref('')
+let skillRequestId = ''
+
+function handleSkillHeaderClick() {
+  // Only expand if we have a skillLocation (history messages)
+  if (!props.message.skillLocation) return
+  if (skillExpanded.value) {
+    skillExpanded.value = false
+    return
+  }
+  if (skillRawContent.value) {
+    // Already loaded, just toggle
+    skillExpanded.value = true
+    return
+  }
+  // Load from file
+  skillLoading.value = true
+  skillRequestId = `fr-${Date.now()}`
+  send({ type: 'file.read', id: skillRequestId, payload: { path: props.message.skillLocation } })
+}
+
+async function handleFileReadResult(msg: ServerMessage) {
+  if (msg.id !== skillRequestId) return
+  const payload = msg.payload as { content?: string; error?: string }
+  if (payload.error) {
+    skillRawContent.value = ''
+    skillRenderedContent.value = `<p style="color:var(--muted)">加载失败: ${payload.error}</p>`
+  } else if (payload.content) {
+    skillRawContent.value = payload.content
+    const theme = getEffectiveTheme()
+    skillRenderedContent.value = await renderFull(payload.content, theme, { codeTheme: theme })
+  }
+  skillLoading.value = false
+  skillExpanded.value = true
+}
+
+onUnmounted(() => {
+  off('file.read:result', handleFileReadResult)
+  off('file.read:error', handleFileReadResult)
+})
+
+// Register / unregister listeners reactively
+watch(resolvedSkillName, (name) => {
+  off('file.read:result', handleFileReadResult)
+  off('file.read:error', handleFileReadResult)
+  if (name) {
+    on('file.read:result', handleFileReadResult)
+    on('file.read:error', handleFileReadResult)
+  }
+}, { immediate: true })
 
 function onActionBtnClick(e: MouseEvent) {
   const btn = e.currentTarget as HTMLElement
@@ -310,7 +412,7 @@ function getToolCall(refId: string): import('@xyz-agent/shared').ToolCall | unde
 const fullRenderCache = ref('')
 
 // 流式阶段直接用轻量渲染
-const lightweightContent = computed(() => renderLightweight(props.message.content))
+const lightweightContent = computed(() => renderLightweight(displayContent.value))
 
 // 最终输出：流式用轻量，完成用缓存
 const renderedContent = computed(() => {
@@ -330,7 +432,7 @@ let mermaidInitTheme: string | null = null
 
 // 监听 content/status/theme 变化，触发完整渲染
 watch(
-  () => [props.message.content, props.message.status, settings.theme] as const,
+  () => [displayContent.value, props.message.status, settings.theme] as const,
   async ([content, status]) => {
     if (status !== 'streaming' && content) {
       renderVersion.value++
@@ -583,4 +685,70 @@ const batchInfoMap = computed(() => {
   accent-color: var(--accent);
 }
 /* Batch selection checkbox styles remain */
+
+/* Skill header bar (option B: left accent border) */
+.skill-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--radius);
+  font-size: 11px;
+  line-height: 1.4;
+  margin-bottom: 4px;
+  background: oklch(20% 0.015 250);
+  border: none;
+  border-left: 2px solid var(--accent);
+  color: var(--muted);
+}
+.skill-header--clickable {
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.skill-header--clickable:hover {
+  background: oklch(24% 0.018 250);
+}
+.skill-header--expanded {
+  border-left-color: var(--muted);
+}
+.skill-header__chevron {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.skill-header__icon {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  color: var(--accent);
+}
+.skill-header__label {
+  color: var(--muted);
+}
+.skill-header__name {
+  font-weight: 600;
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.skill-header__spin {
+  width: 10px;
+  height: 10px;
+  color: var(--muted);
+  animation: skill-spin 0.8s linear infinite;
+}
+@keyframes skill-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Dark theme override */
+:root[data-theme='dark'] .skill-header {
+  background: oklch(20% 0.015 250);
+}
+/* Light theme override */
+:root[data-theme='light'] .skill-header,
+:root:not([data-theme]) .skill-header {
+  background: oklch(96% 0.012 250);
+}
 </style>

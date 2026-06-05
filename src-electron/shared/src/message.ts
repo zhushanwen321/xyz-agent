@@ -52,4 +52,6 @@ export interface Message {
   timestamp: number
   /** 当消息通过 skill 命令触发时设置 */
   skillName?: string
+  /** SKILL.md 文件路径，从 <skill location="..."> 中提取 */
+  skillLocation?: string
 }

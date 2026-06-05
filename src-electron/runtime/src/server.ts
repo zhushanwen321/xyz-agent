@@ -204,6 +204,10 @@ export class SidecarServer implements IMessageBroker {
         case 'plugin.install':
         case 'plugin.uiResponse':
           return this.pluginMessageHandler.handlePluginMessage(msg, ws)
+
+        // ── File read (for skill content expansion) ───────────────────
+        case 'file.read':
+          return this.handleFileRead(msg, ws)
         default:
           if (!await this.settingsHandler.handleSettingsMessage(msg, ws)) {
             const rawMsg = msg as { type: string; payload?: { sessionId?: string } }
@@ -485,6 +489,23 @@ export class SidecarServer implements IMessageBroker {
 
   handleStatusSetUpdate(payload: { sessionId: string; key: string; text: string }): void {
     this.bridgeHandler.handleStatusSetUpdate(payload)
+  }
+
+  /** Handle file.read — reads a file path and returns its text content */
+  private async handleFileRead(msg: ClientMessage, ws: WsType): Promise<void> {
+    const { path } = msg.payload as { path: string }
+    if (!path || typeof path !== 'string') {
+      this.send(ws, { type: 'file.read:error', id: msg.id, payload: { error: 'Missing or invalid path' } })
+      return
+    }
+    try {
+      const fs = await import('fs/promises')
+      const content = await fs.readFile(path, 'utf-8')
+      this.send(ws, { type: 'file.read:result', id: msg.id, payload: { content, path } })
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      this.send(ws, { type: 'file.read:error', id: msg.id, payload: { error: message, path } })
+    }
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────

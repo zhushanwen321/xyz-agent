@@ -24,6 +24,7 @@ export type ClientMessageType =
   | 'plugin.executeCommand'
   | 'plugin.config.get' | 'plugin.config.set'
   | 'plugin.uiResponse'
+  | 'file.read'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -92,6 +93,7 @@ export interface ClientMessageMap {
   'plugin.config.get': { pluginId: string; key?: string }
   'plugin.config.set': { pluginId: string; key: string; value: unknown }
   'plugin.uiResponse': { requestId: string; result: unknown }
+  'file.read': { path: string }
 }
 
 export type ClientMessage =
@@ -146,6 +148,7 @@ export type ClientMessage =
   | { type: 'plugin.config.get'; id?: string; payload: ClientMessageMap['plugin.config.get'] }
   | { type: 'plugin.config.set'; id?: string; payload: ClientMessageMap['plugin.config.set'] }
   | { type: 'plugin.uiResponse'; id?: string; payload: ClientMessageMap['plugin.uiResponse'] }
+  | { type: 'file.read'; id?: string; payload: ClientMessageMap['file.read'] }
 
 // ── 辅助类型 ────────────────────────────────────────────────────
 
@@ -186,6 +189,7 @@ export type ServerMessageType =
   | 'message.bashExecution' | 'message.compactionSummary' | 'message.branchSummary'
   | 'message.auto_retry_start' | 'message.auto_retry_end' | 'message.queue_update'
   | 'message.stream_error'
+  | 'file.read:result' | 'file.read:error'
 
 export interface ServerMessage {
   type: ServerMessageType
