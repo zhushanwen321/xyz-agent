@@ -29,11 +29,13 @@ export async function copyWithToast(
       type: 'success',
       title: opts?.format === 'plain' ? '已复制（纯文本）' : '已复制',
     } satisfies CopyToastPayload)
-  } catch {
+  } catch (e) {
+    // Preserve original error for diagnostics; users see a Toast, devs see the stack.
+    console.error('[clipboard] writeText failed:', e)
     emit('toast:show', {
       type: 'danger',
       title: '复制失败',
-      description: '无法访问剪贴板',
+      description: e instanceof Error ? e.message : '无法访问剪贴板',
     } satisfies CopyToastPayload)
   }
 }
