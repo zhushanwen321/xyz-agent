@@ -45,6 +45,7 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import type { Message } from '@xyz-agent/shared'
 import { collectMessageContent } from '../../lib/collectMessageContent'
 import { copyWithToast } from '../../lib/clipboard'
+import { emit as emitEvent } from '../../lib/event-bus'
 import { useTree } from '../../composables/useTree'
 
 const props = defineProps<{
@@ -90,19 +91,35 @@ function getMessageEl(): HTMLElement | null {
 
 async function handleCopy() {
   const el = getMessageEl()
-  if (el) {
-    const text = collectMessageContent(el, { format: 'markdown' })
-    await copyWithToast(text, { format: 'markdown' })
+  if (!el) {
+    console.warn('[MessageActionMenu] message element not found for entryId:', props.entryId)
+    emitEvent('toast:show', {
+      type: 'danger',
+      title: '无法复制',
+      description: '消息已不在视图中',
+    })
+    emit('close')
+    return
   }
+  const text = collectMessageContent(el, { format: 'markdown' })
+  await copyWithToast(text, { format: 'markdown' })
   emit('close')
 }
 
 async function handleCopyPlain() {
   const el = getMessageEl()
-  if (el) {
-    const text = collectMessageContent(el, { format: 'plain' })
-    await copyWithToast(text, { format: 'plain' })
+  if (!el) {
+    console.warn('[MessageActionMenu] message element not found for entryId:', props.entryId)
+    emitEvent('toast:show', {
+      type: 'danger',
+      title: '无法复制',
+      description: '消息已不在视图中',
+    })
+    emit('close')
+    return
   }
+  const text = collectMessageContent(el, { format: 'plain' })
+  await copyWithToast(text, { format: 'plain' })
   emit('close')
 }
 
