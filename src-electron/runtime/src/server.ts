@@ -175,6 +175,8 @@ export class SidecarServer implements IMessageBroker {
         case 'session.rename':
         case 'message.send':
         case 'message.abort':
+        case 'message.steer':
+        case 'message.follow_up':
           return this.handleSessionMessage(msg, ws)
         case 'session.compact': return this.handleSessionCompact(msg, ws)
         case 'session.tree-data':
@@ -286,6 +288,19 @@ export class SidecarServer implements IMessageBroker {
           await this.sessionService.sendMessage(sessionId, content)
         }
         return this.send(ws, { type: 'message.status', id: msg.id, payload: { sessionId, status: 'sent' } })
+      }
+      case 'message.steer': {
+        const steerSid = msg.payload.sessionId
+        // Abort current processing then send new message
+        try { await this.sessionService.abort(steerSid) } catch { /* session may not be active */ }
+        await this.sessionService.sendMessage(steerSid, msg.payload.content)
+        return this.send(ws, { type: 'message.status', id: msg.id, payload: { sessionId: steerSid, status: 'sent' } })
+      }
+      case 'message.follow_up': {
+        // Queue message without interrupting — just send, pi will queue internally
+        const followSid = msg.payload.sessionId
+        await this.sessionService.sendMessage(followSid, msg.payload.content)
+        return this.send(ws, { type: 'message.status', id: msg.id, payload: { sessionId: followSid, status: 'queued' } })
       }
       case 'message.abort':
         return await this.sessionService.abort(msg.payload.sessionId)
