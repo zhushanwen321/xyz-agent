@@ -18,6 +18,24 @@ const isDev = !app.isPackaged
 
 const VITE_DEV_URL = 'http://localhost:1420'
 
+/**
+ * 等待 Vite dev server 就绪（轮询直到连接成功）
+ * 解决 concurrently 下 Electron 比 Vite 先启动导致白屏的问题
+ */
+async function waitForVite(url: string, timeoutMs = 30_000): Promise<void> {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const res = await fetch(url)
+      if (res.ok || res.status === 200) return
+    } catch {
+      // Vite 还没启动，继续等待
+    }
+    await new Promise((r) => setTimeout(r, 300))
+  }
+  throw new Error(`Vite dev server at ${url} did not become ready within ${timeoutMs}ms`)
+}
+
 function getProductionIndexPath(): string {
   return path.join(app.getAppPath(), 'renderer/dist/index.html')
 }
@@ -29,7 +47,7 @@ const runtimeManager = new RuntimeManager()
 const windowManager = new WindowManager()
 
 // ── 窗口工厂 ─────────────────────────────────────────────────────
-function createWindow(options?: { windowId?: string; sessionId?: string }): BrowserWindow {
+async function createWindow(options?: { windowId?: string; sessionId?: string }): Promise<BrowserWindow> {
   const windowId = options?.windowId ?? windowManager.generateId()
 
   const win = new BrowserWindow({
@@ -54,6 +72,7 @@ function createWindow(options?: { windowId?: string; sessionId?: string }): Brow
   if (isDev) {
     const params = new URLSearchParams({ windowId })
     if (options?.sessionId) params.set('sessionId', options.sessionId)
+    await waitForVite(VITE_DEV_URL)
     win.loadURL(`${VITE_DEV_URL}?${params.toString()}`)
     win.webContents.openDevTools()
   } else {
@@ -84,7 +103,7 @@ app.whenReady().then(async () => {
     return net.fetch(`file://${filePath}`)
   })
 
-  mainWindow = createWindow({ windowId: 'win-1' })
+  mainWindow = await createWindow({ windowId: 'win-1' })
   mainWindow.on('closed', () => { mainWindow = null })
   windowManager.register('win-1', mainWindow, initialWindowState('win-1'))
 
@@ -119,7 +138,7 @@ app.on('window-all-closed', () => {
 // macOS: 点击 dock 图标时重建窗口
 app.on('activate', async () => {
   if (BrowserWindow.getAllWindows().length === 0) {
-    mainWindow = createWindow({ windowId: 'win-1' })
+    mainWindow = await createWindow({ windowId: 'win-1' })
     mainWindow.on('closed', () => { mainWindow = null })
     windowManager.register('win-1', mainWindow, initialWindowState('win-1'))
     registerShortcuts(mainWindow)

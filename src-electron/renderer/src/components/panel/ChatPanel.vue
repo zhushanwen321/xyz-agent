@@ -15,10 +15,10 @@
 
     <PanelBody>
       <!-- chat-content: flex column for messages + input -->
-      <div class="flex-1 flex flex-col min-w-0">
+      <div class="flex-1 flex flex-col min-w-0 min-h-0 relative">
         <div
           ref="chatMsgsRef"
-          class="flex-1 overflow-y-auto overflow-x-hidden p-5 px-6 flex flex-col gap-[6px] relative max-w-[960px] mx-auto w-full"
+          class="flex-1 overflow-y-auto overflow-x-hidden p-5 px-6 flex flex-col gap-[6px] max-w-[960px] mx-auto w-full"
           @scroll="onChatScroll"
         >
           <!-- Loading history state -->
@@ -89,6 +89,19 @@
           </template>
         </div>
 
+        <!-- Floating scroll-to-bottom FAB (between messages and input, floats right) -->
+        <Transition name="fab">
+          <div v-if="showScrollBottom" class="relative h-0 max-w-[960px] mx-auto w-full px-6">
+            <button
+              class="scroll-fab"
+              aria-label="回到底部"
+              @click="handleScrollToBottom"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+          </div>
+        </Transition>
+
         <!-- Widget Dock -->
         <WidgetDock :widgets="extensionWidgets" />
 
@@ -122,14 +135,6 @@
           @local-action="$emit('local-action', $event)"
         />
       </div>
-
-      <!-- utility-rail: scroll navigation -->
-      <UtilityRail
-        :show-scroll-top="showScrollTop"
-        :show-scroll-bottom="showScrollBottom"
-        @scroll-to-top="handleScrollToTop"
-        @scroll-to-bottom="handleScrollToBottom"
-      />
     </PanelBody>
   </div>
 </template>
@@ -149,7 +154,6 @@ import StreamingMessage from '../chat/StreamingMessage.vue'
 import ApprovalCard from '../chat/ApprovalCard.vue'
 import ChatInput from '../chat/ChatInput.vue'
 import WidgetDock from '../extension/WidgetDock.vue'
-import UtilityRail from '../chat/UtilityRail.vue'
 import BatchSelectBar from '../chat/BatchSelectBar.vue'
 import { collectMessageContent } from '../../lib/collectMessageContent'
 import { copyWithToast } from '../../lib/clipboard'
@@ -254,7 +258,6 @@ const clientHeight = ref(0)
 
 const SCROLL_BUTTON_THRESHOLD = 40
 
-const showScrollTop = computed(() => scrollTop.value > SCROLL_BUTTON_THRESHOLD)
 const showScrollBottom = computed(() =>
   scrollTop.value + clientHeight.value < scrollHeight.value - SCROLL_BUTTON_THRESHOLD
 )
@@ -267,11 +270,6 @@ function onChatScroll() {
     scrollHeight.value = el.scrollHeight
     clientHeight.value = el.clientHeight
   }
-}
-
-function handleScrollToTop() {
-  const el = chatMsgsRef.value
-  if (el) el.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
 function handleScrollToBottom() {
@@ -406,3 +404,40 @@ async function copyBatchAs(format: 'markdown' | 'plain') {
   exitBatchMode()
 }
 </script>
+
+<style scoped>
+.scroll-fab {
+  position: absolute;
+  bottom: 4px;
+  right: 24px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--muted);
+  transition: all 0.2s ease;
+  z-index: 10;
+}
+.scroll-fab:hover {
+  color: var(--fg);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  border-color: var(--muted);
+}
+
+/* FAB transition */
+.fab-enter-active,
+.fab-leave-active {
+  transition: all 0.2s ease;
+}
+.fab-enter-from,
+.fab-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
+}
+</style>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ChevronRight, PanelLeftClose } from 'lucide-vue-next'
+import { ChevronRight } from 'lucide-vue-next'
 import { useSidebarStore } from '../../stores/sidebar'
 import { Button } from '../../design-system'
 
@@ -24,17 +24,5 @@ function handleToggle() {
     @click="handleToggle"
   >
     <ChevronRight :size="16" :stroke-width="1.8" />
-  </Button>
-
-  <!-- Expanded state: right edge handle (narrow strip, hover highlight) -->
-  <Button
-    v-else
-    variant="ghost"
-    as="button"
-    class="absolute top-0 right-0 z-10 w-[6px] h-full rounded-none hover:w-[10px]"
-    title="Collapse sidebar"
-    @click="handleToggle"
-  >
-    <PanelLeftClose :size="14" :stroke-width="1.5" class="opacity-0 hover:opacity-100 transition-opacity duration-150" />
   </Button>
 </template>

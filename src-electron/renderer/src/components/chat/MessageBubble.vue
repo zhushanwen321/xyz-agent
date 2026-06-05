@@ -26,15 +26,6 @@
     :data-timestamp="message.timestamp ?? ''"
     class="self-start w-full relative group/msg"
   >
-    <!-- ⋯ action button -->
-    <!-- eslint-disable-next-line taste/no-native-html-elements -- compact 20x20 icon trigger, matches panel-close style -->
-    <button
-      class="msg-action-btn msg-action-btn--assistant"
-      aria-label="消息操作"
-      @click="onActionBtnClick"
-    >
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
-    </button>
     <div class="text-[10px] font-semibold uppercase tracking-[0.04em] leading-[1.4] mb-1 text-muted">
       助手
       <span v-if="message.timestamp" class="font-normal normal-case tracking-normal text-[10px] opacity-60 ml-1.5">{{ formatTime(message.timestamp) }}</span>
@@ -107,14 +98,29 @@
       </div>
     </template>
 
-    <!-- Branch indicator -->
-    <BranchIndicator
-      v-if="entryId && (siblingCount > 0 || branchTabs.length > 0)"
-      :entry-id="entryId"
-      :sibling-count="siblingCount"
-      :branch-tabs="branchTabs"
-      @navigate="$emit('navigate', $event)"
-    />
+    <!-- Inline actions + Branch indicator -->
+    <div class="flex items-center gap-1 mt-1">
+      <div class="msg-actions" :class="{ 'msg-actions--active': showActionMenu }">
+        <button class="msg-action-btn" title="复制" @click="handleCopy">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+          复制
+        </button>
+        <button class="msg-action-btn" title="分叉" @click="handleFork">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 01-9 9"/></svg>
+          分叉
+        </button>
+        <button class="msg-action-btn msg-action-btn--more" title="更多" @click="onActionBtnClick">
+          <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+        </button>
+      </div>
+      <BranchIndicator
+        v-if="entryId && siblingCount > 1"
+        :entry-id="entryId"
+        :sibling-count="siblingCount"
+        :branch-tabs="branchTabs"
+        @navigate="$emit('navigate', $event)"
+      />
+    </div>
   </div>
 
   <!-- user 消息：标签在气泡外面 -->
@@ -123,17 +129,8 @@
     data-role="user"
     :data-entry-id="entryId"
     :data-timestamp="message.timestamp ?? ''"
-    class="self-end max-w-[75%] relative group/msg"
+    class="self-stretch relative group/msg"
   >
-    <!-- ⋯ action button -->
-    <!-- eslint-disable-next-line taste/no-native-html-elements -- compact 20x20 icon trigger, matches panel-close style -->
-    <button
-      class="msg-action-btn msg-action-btn--user"
-      aria-label="消息操作"
-      @click="onActionBtnClick"
-    >
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
-    </button>
     <div class="text-[10px] font-semibold uppercase tracking-[0.04em] leading-[1.4] mb-[3px] text-right text-muted">
       <span v-if="message.timestamp" class="font-normal normal-case tracking-normal text-[10px] opacity-60 mr-1.5">{{ formatTime(message.timestamp) }}</span>
       用户
@@ -158,14 +155,29 @@
       </div>
     </div>
 
-    <!-- Branch indicator -->
-    <BranchIndicator
-      v-if="entryId && (siblingCount > 0 || branchTabs.length > 0)"
-      :entry-id="entryId"
-      :sibling-count="siblingCount"
-      :branch-tabs="branchTabs"
-      @navigate="$emit('navigate', $event)"
-    />
+    <!-- Inline actions (right-aligned for user) + Branch indicator -->
+    <div class="flex items-center justify-end gap-1 mt-1">
+      <div class="msg-actions" :class="{ 'msg-actions--active': showActionMenu }">
+        <button class="msg-action-btn" title="复制" @click="handleCopy">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+          复制
+        </button>
+        <button class="msg-action-btn" title="编辑">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          编辑
+        </button>
+        <button class="msg-action-btn msg-action-btn--more" title="更多" @click="onActionBtnClick">
+          <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+        </button>
+      </div>
+      <BranchIndicator
+        v-if="entryId && siblingCount > 1"
+        :entry-id="entryId"
+        :sibling-count="siblingCount"
+        :branch-tabs="branchTabs"
+        @navigate="$emit('navigate', $event)"
+      />
+    </div>
   </div>
 
   <!-- Action menu (shared for both roles) -->
@@ -202,6 +214,9 @@ import type { BatchInfo } from './ToolCallCard.vue'
 import type { BranchTab } from '../../stores/tree'
 import { renderLightweight, renderFull } from '../../lib/markdown'
 import { useSettingsStore } from '../../stores/settings'
+import { copyWithToast } from '../../lib/clipboard'
+import { collectMessageContent } from '../../lib/collectMessageContent'
+import { useTree } from '../../composables/useTree'
 import ThinkingBlock from './ThinkingBlock.vue'
 import ToolCallCard from './ToolCallCard.vue'
 import MessageActionMenu from './MessageActionMenu.vue'
@@ -249,6 +264,28 @@ function onActionBtnClick(e: MouseEvent) {
 
 function closeActionMenu() {
   showActionMenu.value = false
+}
+
+// ── Inline action handlers ──
+const { fork } = useTree()
+
+function getMessageEl(): HTMLElement | null {
+  return document.querySelector(`[data-entry-id="${props.entryId}"]`)
+    ?? document.querySelector(`[data-message-id="${props.message.id}"]`)
+    ?? null
+}
+
+async function handleCopy() {
+  const el = getMessageEl()
+  if (!el) return
+  const text = collectMessageContent(el, { format: 'markdown' })
+  await copyWithToast(text, { format: 'markdown' })
+}
+
+function handleFork() {
+  if (props.sessionId && props.entryId) {
+    fork(props.sessionId, props.entryId)
+  }
 }
 
 // ── ContentBlocks 查找辅助 ──
@@ -469,23 +506,50 @@ const batchInfoMap = computed(() => {
 /* msg__body 内的元素由 v-html 渲染，无法用 Tailwind 类作用于动态内容 */
 /* 所有样式已移至 style.css，如在此处添加样式请确保 style.css 同步更新 */
 
-/* ⋯ action button */
-.msg-action-btn {
-  position: absolute;
-  top: 2px;
-  width: 22px;
-  height: 22px;
+/* Inline action bar: appears on hover */
+.msg-actions {
   display: flex;
   align-items: center;
-  justify-content: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.group\/msg:hover .msg-actions {
+  opacity: 1;
+}
+.msg-actions--active {
+  opacity: 1 !important;
+}
+.msg-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
   border: none;
   background: transparent;
   color: var(--muted);
+  font-size: 11px;
+  font-family: var(--font-body);
   cursor: pointer;
   border-radius: var(--radius);
-  opacity: 0;
-  transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
-  z-index: 10;
+  transition: all 0.12s ease;
+  line-height: 1;
+}
+.msg-action-btn svg {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+}
+.msg-action-btn:hover {
+  background: var(--hover-bg);
+  color: var(--fg);
+}
+.msg-action-btn--more {
+  padding: 3px 5px;
+}
+.msg-action-btn--more svg {
+  width: 14px;
+  height: 14px;
 }
 
 /* Batch selection checkbox */
@@ -507,17 +571,5 @@ const batchInfoMap = computed(() => {
   cursor: pointer;
   accent-color: var(--accent);
 }
-.msg-action-btn:hover {
-  background: var(--accent-light);
-  color: var(--accent);
-}
-.group\/msg:hover .msg-action-btn {
-  opacity: 1;
-}
-.msg-action-btn--assistant {
-  right: -34px;
-}
-.msg-action-btn--user {
-  left: -34px;
-}
+/* Batch selection checkbox styles remain */
 </style>

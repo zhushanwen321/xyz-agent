@@ -5,7 +5,7 @@ import { usePanelStore } from '../../stores/panel'
 import { useSession } from '../../composables/useSession'
 
 import { useNavigationStore } from '../../stores/navigation'
-import { SessionItem, SidebarHeader, SidebarCollapseHandle } from '../sidebar'
+import { SessionItem, SidebarCollapseHandle } from '../sidebar'
 import { useSidebarStore } from '../../stores/sidebar'
 import { useLayoutStore } from '../../stores/layout'
 import { Button } from '../../design-system'
@@ -75,7 +75,6 @@ const isCollapsed = computed(() => sidebarStore.collapsed)
 
 <template>
   <aside v-if="!isCollapsed" class="sidebar">
-    <SidebarHeader />
     <!-- Header: two rows -->
     <div class="sidebar-header" :class="{ 'sidebar-header--fullscreen': isFullscreen }">
       <!-- Row 1: traffic lights space (non-fullscreen) or logo (fullscreen) + nav buttons right -->
@@ -105,6 +104,15 @@ const isCollapsed = computed(() => sidebarStore.collapsed)
           <Button variant="ghost" size="icon" class="ctrl-btn" title="Forward" @click="navStore.forward()" :disabled="!navStore.canGoForward">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 3l5 5-5 5"/></svg>
           </Button>
+
+          <!-- Collapse sidebar button: last item in nav row, panel-left icon -->
+          <!-- eslint-disable-next-line taste/no-native-html-elements -->
+          <button class="ctrl-btn" title="Collapse sidebar" @click="sidebarStore.toggle()">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="1.5" y="1.5" width="13" height="13" rx="2"/>
+              <line x1="11" y1="1.5" x2="11" y2="14.5"/>
+            </svg>
+          </button>
         </div>
       </div>
       <!-- Row 2: logo + new session (non-fullscreen) or full-width new session (fullscreen) -->
@@ -144,13 +152,10 @@ const isCollapsed = computed(() => sidebarStore.collapsed)
         {{ t('sidebar.noSessions') }}
       </div>
     </div>
-
-    <!-- Right-edge collapse handle (visible only when sidebar is expanded) -->
-    <SidebarCollapseHandle />
   </aside>
 
-  <!-- Standalone handle when sidebar is collapsed: left-edge expand button -->
-  <SidebarCollapseHandle v-else />
+  <!-- Standalone expand button when sidebar is collapsed -->
+  <SidebarCollapseHandle v-if="isCollapsed" />
 </template>
 
 <style scoped>
