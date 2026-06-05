@@ -1,6 +1,7 @@
 ---
 phase: dev
 verdict: pass
+all_passing: true
 ---
 
 # Test Results — TUI Bridge Phase 0
