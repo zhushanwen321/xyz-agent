@@ -30,7 +30,7 @@ const modeLabel = computed(() => {
 
 const modeHint = computed(() => {
   switch (props.mode) {
-    case 'steer': return '将中断当前 AI 处理'
+    case 'steer': return 'AI 处理中，消息将中断流程'
     case 'queue': return 'Alt+Enter 排队'
     default: return 'Enter 发送'
   }
