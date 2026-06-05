@@ -1,5 +1,5 @@
 <template>
-  <div ref="appContainer" class="app-container">
+  <div ref="appContainer" class="app-container" :class="{ 'app-container--sidebar-collapsed': sidebarStore.collapsed }">
     <!-- Sidebar: unified with controls -->
     <AppSidebar
       @create="createSession"
@@ -55,6 +55,8 @@ import { usePanelStore } from './stores/panel'
 import { useSessionStore } from './stores/session'
 import { useWindowStore } from './stores/window'
 import { useNavigationStore } from './stores/navigation'
+import { useSidebarStore } from './stores/sidebar'
+import { useLayoutStore } from './stores/layout'
 import { useConnection } from './composables/useConnection'
 import { getState as getWsState } from './lib/ws-client'
 import { on as onEventBus, off as offEventBus } from './lib/event-bus'
@@ -84,6 +86,8 @@ const panelStore = usePanelStore()
 const sessionStore = useSessionStore()
 const windowStore = useWindowStore()
 const navStore = useNavigationStore()
+const sidebarStore = useSidebarStore()
+const layoutStore = useLayoutStore()
 
 
 // Unified settings toggle — used by sidebar emit and IPC shortcut
@@ -336,9 +340,10 @@ onMounted(async () => {
 
   errorUnregister = onEventBus('error', handleGlobalError)
 
-  // macOS fullscreen state → toggle .is-fullscreen class on root element
+  // macOS fullscreen state → toggle .is-fullscreen class on root element AND sync to layout store
   if (window.electronAPI?.onFullscreenChanged) {
     ipcCleanupFns.push(window.electronAPI.onFullscreenChanged(({ isFullscreen }) => {
+      layoutStore.setFullscreen(isFullscreen)
       if (appContainer.value) {
         if (isFullscreen) {
           appContainer.value.classList.add('is-fullscreen')
