@@ -320,49 +320,47 @@ CSS 改了看不出效果时，按顺序检查：
 
 聊天 markdown 样式**手写**优于引入 prose 类。
 
-#### 7.2.6 [HISTORICAL] Shiki `.line` 必须用 `display: block`，不能用默认 inline
+#### 7.2.6 [HISTORICAL] Skill 展开内容必须强制使用 dark Shiki 主题
 
-**这条规则来自 2026-06 的视觉 bug：用户反馈代码块"line 1 占了 2 行"，切流式↔完整渲染视觉突变。**
+**这条规则来自 2026-06 的视觉 bug：用户反馈 skill-header 展开时代码块"line 1 占了 2 行"。**
 
 **根因**：
 
-Shiki 4.x 输出 `<pre><code><span class="line">line1</span>\n<span class="line">line2</span></code></pre>`，`.line` 默认 `display: inline`，配合 `pre { white-space: pre }` 让换行符生效。
+`MessageBubble.vue` 渲染 skill 展开内容时调 `renderFull(payload.content, theme, { codeTheme: theme })` —— `codeTheme` 直接用 app 主题。当 app 是 light 主题时，Shiki 用 `github-light` 主题（黑字白底）。
 
-inline 渲染的问题：
+但 skill 内容**渲染到 `--user-bubble-bg`（深色）容器**里（`MessageBubble.vue:148`）：
 
-- inline span 高度 = 字符 visual height（12-14px），不是 line-height（18px）
-- 浏览器按 baseline 对齐把 span 塞进 line-box，leading 上下分布
-- 短字符（`---`、`===`、`#`、`-` 等无 ascender/descender 的符号）visual 部分紧贴 baseline 附近（dash 横线就 1-3px 高）
-- 字符 visual 中心落在 line-box **底部**，上方留白 ≈ 半行
+```html
+<div class="... leading-[1.6] text-xs text-fg ..." 
+     style="background:var(--user-bubble-bg); border:1px solid var(--user-bubble-border); border-left:2px solid var(--accent);">
+```
 
-**视觉后果**：line 1 (`---`) 字符挤在 line-box 底部，跟 line 2 (`verdict: pass`，字符撑满 line-box 中部）对比，line 1 看起来下方留白 28px ≈ 2 个 line-height 高度，即"line 1 占了 2 行"。
+Shiki 给的 token 颜色 `#24292E`（黑）在 `--user-bubble-bg`（深色）背景上**几乎不可见**。
+
+**视觉后果**：
+- `---` 等带语义颜色的 token 仍然可见（`#005CC5` 蓝色对深色背景有对比度）
+- 普通文本 token (`#24292E` 黑字) 不可见
+- 眼睛只能看到 `---` 等有颜色的行，line 1 `---` 到下一个有颜色的行（line 4 `---`）之间"看起来空了两行" → 视觉上"line 1 占了 2 行"
 
 **为什么"有时候 2 行有时候 1 行"**：
-
-- **流式阶段**（`renderLightweight`）：markdown-it 默认 `<pre><code>line1\nline2</code></pre>`，text node 占据整个 line-box 高度，字符 baseline 在 line-box 底部，visual 居中 → 视觉正常 1 行
-- **完整阶段**（`renderFull`）：Shiki 输出 inline `.line` → 上面描述的 baseline 偏移 → 视觉上 line 1 占了 2 行
+- **流式阶段**（`renderLightweight`）：markdown-it 默认无 Shiki 高亮 → 文字用 `.msg__body` 的 `text-fg` 变量（深色背景下浅色）→ 文字可见 → 视觉正常
+- **完整阶段**（`renderFull`）：Shiki 用 light theme → 黑字 → 不可见 → 视觉异常
 
 切流式↔完整渲染就切视觉。
 
 **修复**：
 
-```css
-.msg__body .code-block pre code .line,
-.msg__body .code-block pre .shiki .line {
-  display: block;
-  min-height: 1em;
-}
+`MessageBubble.vue:340` skill 渲染调用必须强制 dark codeTheme（与 444 行 user 消息判断的逻辑一致）：
+
+```ts
+// skill 容器背景始终是深色（--user-bubble-bg），不论 app 主题都用 dark Shiki 主题
+const codeTheme: 'light' | 'dark' | undefined = 'dark'
+skillRenderedContent.value = await renderFull(payload.content, theme, { codeTheme })
 ```
 
-block 模式下每个 span 占据完整 line-box 高度（18px），字符 baseline 在 line-box 内一致（line-box top + ascent 偏移处），所有 line 字符 visual 中心对齐，跟 line-numbers 列（line-height 1.5 = 18px）严格对齐。
+**不要把 codeTheme 改成跟随 app theme** —— skill 容器背景是硬编码的深色，主题不一致必然导致文字不可见。
 
-**配套生效**：`code-block-header`（line-height 19.2px 来自 `.skill-content-wrapper` 的 `leading-[1.6]`）内的 code 文本也会受益，不会因为外层 leading 撑出 36px 的"高 header"。
-
-**禁止**：
-- 改回 `display: inline` —— 会重现 line 1 视觉偏移 bug
-- 用 `vertical-align` 调整 inline `.line` baseline —— 治标不治本，不同 lang 字符 ascender/descender 不一样，每个 case 都要调
-
-**未来 Shiki 升级时验证**：如果 Shiki 改成输出 `<div class="line">` 或默认 display: block，本规则可以删除（检查 `codeToHtml` 输出即可）。
+**未来重构时验证**：如果 skill 容器背景支持跟随 app theme 切换，本规则需要相应调整（dark bg → dark theme, light bg → light theme）。
 
 ---
 

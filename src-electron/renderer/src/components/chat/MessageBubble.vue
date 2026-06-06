@@ -337,7 +337,9 @@ async function handleFileReadResult(msg: ServerMessage) {
   } else if (payload.content) {
     skillRawContent.value = payload.content
     const theme = getEffectiveTheme()
-    skillRenderedContent.value = await renderFull(payload.content, theme, { codeTheme: theme })
+    // skill 展开容器背景始终是深色（--user-bubble-bg），不论 app 主题都用 dark Shiki 主题
+    // 否则 light theme 下 Shiki 输出的黑字在深色背景上几乎不可见（详见 docs/standards.md §7.2.6）
+    skillRenderedContent.value = await renderFull(payload.content, theme, { codeTheme: 'dark' })
   }
   skillLoading.value = false
   skillExpanded.value = true
