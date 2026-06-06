@@ -11,16 +11,13 @@ import type { Message, ThinkingBlock, ToolCall } from '@xyz-agent/shared'
  * Returns `null` if no skill block is found.
  */
 function parseSkillBlock(text: string): { skillName: string; skillLocation?: string; userText: string } | null {
-  const match = text.match(/^<skill\s+name="([^"]+)"\s+location="([^"]+)"[^>]*>[\s\S]*?<\/skill>([\s\S]*)$/)
-    || text.match(/^<skill\s+name="([^"]+)"[^>]*>[\s\S]*?<\/skill>([\s\S]*)$/)
+  const match = text.match(/^<skill\s+name="([^"]+)"(?:\s+location="([^"]+)")?[^>]*>[\s\S]*?<\/skill>([\s\S]*)$/)
   if (!match) return null
-  // 3-group match (with location) or 2-group match (without location)
-  // match.length: 1 full match + N capture groups; 4 = full + 3 groups (with location)
-  // eslint-disable-next-line no-magic-numbers
-  if (match.length === 4) {
-    return { skillName: match[1], skillLocation: match[2], userText: match[3].trim() }
+  return {
+    skillName: match[1],
+    skillLocation: match[2] || undefined,
+    userText: match[3].trim(),
   }
-  return { skillName: match[1], userText: match[2].trim() }
 }
 
 /**

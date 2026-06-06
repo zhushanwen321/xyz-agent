@@ -4,6 +4,7 @@
  * ServerMessages back to TUI clients via WebSocket.
  */
 import { createServer, type Server as HttpServer } from 'node:http'
+import { resolve } from 'node:path'
 import { WebSocketServer, WebSocket, type WebSocket as WsType } from 'ws'
 import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
 import type { ISessionService, IConfigService, IModelService, IMessageBroker, IExtensionService, IPluginService } from './interfaces.js'
@@ -491,20 +492,33 @@ export class SidecarServer implements IMessageBroker {
     this.bridgeHandler.handleStatusSetUpdate(payload)
   }
 
-  /** Handle file.read — reads a file path and returns its text content */
+  /** Handle file.read — reads a skill file and returns its text content.
+   *  Restricted to skill directories for security (no arbitrary file read). */
   private async handleFileRead(msg: ClientMessage, ws: WsType): Promise<void> {
-    const { path } = msg.payload as { path: string }
-    if (!path || typeof path !== 'string') {
+    const { path: filePath } = msg.payload as { path: string }
+    if (!filePath || typeof filePath !== 'string') {
       this.send(ws, { type: 'file.read:error', id: msg.id, payload: { error: 'Missing or invalid path' } })
+      return
+    }
+    // Validate path is within allowed skill directories
+    const absPath = resolve(filePath)
+    const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? ''
+    const allowedPrefixes = [
+      resolve(homeDir, '.agents/skills'),
+      resolve(homeDir, '.pi/agent/skills'),
+      resolve(homeDir, '.pi/agent/npm'),
+    ]
+    if (!allowedPrefixes.some(prefix => absPath.startsWith(prefix + '/') || absPath === prefix)) {
+      this.send(ws, { type: 'file.read:error', id: msg.id, payload: { error: 'Path outside allowed skill directories', path: filePath } })
       return
     }
     try {
       const fs = await import('fs/promises')
-      const content = await fs.readFile(path, 'utf-8')
-      this.send(ws, { type: 'file.read:result', id: msg.id, payload: { content, path } })
+      const content = await fs.readFile(filePath, 'utf-8')
+      this.send(ws, { type: 'file.read:result', id: msg.id, payload: { content, path: filePath } })
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e)
-      this.send(ws, { type: 'file.read:error', id: msg.id, payload: { error: message, path } })
+      this.send(ws, { type: 'file.read:error', id: msg.id, payload: { error: message, path: filePath } })
     }
   }
 
