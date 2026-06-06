@@ -9,7 +9,7 @@ export interface SystemNotification {
   role: 'system'
   status?: string
   content?: string
-  notificationType?: 'done' | 'alert' | 'info'
+  notificationType?: 'done' | 'alert' | 'info' | 'warning'
   notificationTitle?: string
   notificationDescription?: string
   notificationAction?: string

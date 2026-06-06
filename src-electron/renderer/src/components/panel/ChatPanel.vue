@@ -43,32 +43,39 @@
             <!-- Only render the active agent's messages -->
             <template v-for="view in agentViews" :key="view.agentId">
               <template v-if="view.agentId === localActiveAgentId">
-                <template v-for="msg in view.messages" :key="msg.id">
-                  <!-- System messages -->
-                  <SystemNotification
-                    v-if="msg.role === 'system'"
-                    :type="isSystemNotification(msg) ? (msg.notificationType || (msg.status === 'error' ? 'alert' : 'done')) : 'done'"
-                    :title="isSystemNotification(msg) ? (msg.notificationTitle || '') : ''"
-                    :content="msg.content ?? ''"
-                    :description="isSystemNotification(msg) ? msg.notificationDescription : undefined"
-                    :action-label="isSystemNotification(msg) ? msg.notificationAction : undefined"
-                    @action="$emit('notification-action', msg)"
-                  />
-                  <!-- User / Assistant messages -->
-                  <MessageBubble
-                    v-else
-                    :message="msg"
-                    :session-id="sessionId ?? ''"
-                    :entry-id="msg.id"
-                    :sibling-count="branchTabsMap.get(msg.id)?.length ?? 0"
-                    :branch-tabs="branchTabsMap.get(msg.id) ?? []"
-                    :selectable="batchMode"
-                    :selected="selectedIds.has(msg.id)"
-                    @toggle-select="toggleSelect(msg.id)"
-                    @navigate="onNavigate"
-                    @open-skill="openSkillDrawer"
-                    :skill-drawer-open="skillDrawerVisible && skillDrawerName === msg.skillName"                  />
-                </template>
+                <div
+                  v-for="group in getTurnGroups(view.messages)"
+                  :key="group.key"
+                  :class="['turn-group', { 'turn-group--system-only': group.messages.every(m => m.role === 'system') }]"
+                >
+                  <template v-for="msg in group.messages" :key="msg.id">
+                    <!-- System messages -->
+                    <SystemNotification
+                      v-if="msg.role === 'system'"
+                      :type="isSystemNotification(msg) ? (msg.notificationType || (msg.status === 'error' ? 'alert' : 'done')) : 'done'"
+                      :title="isSystemNotification(msg) ? (msg.notificationTitle || '') : ''"
+                      :content="msg.content ?? ''"
+                      :description="isSystemNotification(msg) ? msg.notificationDescription : undefined"
+                      :action-label="isSystemNotification(msg) ? msg.notificationAction : undefined"
+                      @action="$emit('notification-action', msg)"
+                    />
+                    <!-- User / Assistant messages -->
+                    <MessageBubble
+                      v-else
+                      :message="msg"
+                      :session-id="sessionId ?? ''"
+                      :entry-id="msg.id"
+                      :sibling-count="branchTabsMap.get(msg.id)?.length ?? 0"
+                      :branch-tabs="branchTabsMap.get(msg.id) ?? []"
+                      :selectable="batchMode"
+                      :selected="selectedIds.has(msg.id)"
+                      @toggle-select="toggleSelect(msg.id)"
+                      @navigate="onNavigate"
+                      @open-skill="openSkillDrawer"
+                      :skill-drawer-open="skillDrawerVisible && skillDrawerName === msg.skillName"
+                    />
+                  </template>
+                </div>
               </template>
             </template>
 
@@ -142,7 +149,6 @@
           @send-command="$emit('send-command', $event)"
           @local-action="$emit('local-action', $event)"
         />
-      </div>
 
         <!-- Skill drawer (panel-scoped, overlays chat area) -->
         <SkillDrawer
@@ -152,12 +158,13 @@
           :panel-id="panelId"
           @close="closeSkillDrawer"
         />
+      </div>
     </PanelBody>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import type { Message, ExtensionWidgetPayload } from '@xyz-agent/shared'
 import type { PendingToolCall } from '../chat/ApprovalCard.vue'
 import type { ChatMessage } from '../../stores/chat'
@@ -178,6 +185,7 @@ import { collectMessageContent } from '../../lib/collectMessageContent'
 import { copyWithToast } from '../../lib/clipboard'
 import { useTree } from '../../composables/useTree'
 import { useTreeStore } from '../../stores/tree'
+import { useTurnGroups } from '../../composables/useTurnGroups'
 import type { BranchTab } from '../../stores/tree'
 
 export interface AgentOption {
@@ -251,20 +259,48 @@ watch(
 /** 距离底部多少 px 以内视为「在底部」 */
 const SCROLL_NEAR_BOTTOM_THRESHOLD = 80
 
+// Session 级滚动位置缓存：split 时组件重建，通过此缓存恢复滚动位置
+const scrollPositionCache = new Map<string, number>()
+
 // 智能自动滚动：底部时跟随新内容，用户上滚后不强制拉回
 function isNearBottom(el: HTMLElement): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_NEAR_BOTTOM_THRESHOLD
 }
 
-// 强制滚到底部（用于 session 切换、首次加载等场景）
+// 强制滚到底部（用于 session 切换、首次加载等场景），无动画
 function forceScrollToBottom() {
   nextTick(() => {
     const el = chatMsgsRef.value
     if (el) {
-      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+      el.scrollTo({ top: el.scrollHeight, behavior: 'instant' })
       userAtBottom.value = true
     }
   })
+}
+
+// 从缓存恢复滚动位置（split 重建时使用），无缓存时滚到底部
+function restoreScrollPosition(sessionId: string) {
+  nextTick(() => {
+    const el = chatMsgsRef.value
+    if (!el) return
+    const saved = scrollPositionCache.get(sessionId)
+    if (saved !== undefined) {
+      el.scrollTo({ top: saved, behavior: 'instant' })
+      userAtBottom.value = isNearBottom(el)
+    } else {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'instant' })
+      userAtBottom.value = true
+    }
+  })
+}
+
+// 缓存当前滚动位置
+function saveScrollPosition() {
+  const el = chatMsgsRef.value
+  const sid = props.sessionId
+  if (el && sid) {
+    scrollPositionCache.set(sid, el.scrollTop)
+  }
 }
 
 // 记录用户是否在底部
@@ -288,6 +324,7 @@ function onChatScroll() {
     scrollTop.value = el.scrollTop
     scrollHeight.value = el.scrollHeight
     clientHeight.value = el.clientHeight
+    saveScrollPosition()
   }
 }
 
@@ -326,11 +363,23 @@ watch(
   },
 )
 
-// 组件首次挂载，如果已有消息也滚到底
+// 组件首次挂载，恢复缓存位置或滚到底部
 onMounted(() => {
   if (props.messages.length > 0) {
-    forceScrollToBottom()
+    const sid = props.sessionId
+    if (sid && scrollPositionCache.has(sid)) {
+      // 有缓存 → split 重建场景，恢复位置
+      restoreScrollPosition(sid)
+    } else {
+      // 无缓存 → 新打开 session，滚到底部
+      forceScrollToBottom()
+    }
   }
+})
+
+// 组件卸载前缓存滚动位置
+onBeforeUnmount(() => {
+  saveScrollPosition()
 })
 
 function switchAgent(id: string) {
@@ -358,6 +407,25 @@ const batchMode = ref(false)
 const selectedIds = ref<Set<string>>(new Set())
 const tree = useTree()
 const treeStore = useTreeStore()
+const { turnGroups } = useTurnGroups(() => props.messages)
+
+/** Get turn groups for a specific agent view */
+function getTurnGroups(viewMessages: ChatMessage[]) {
+  if (viewMessages === props.messages) return turnGroups.value
+  // For non-primary views, compute inline
+  const groups: { key: string; messages: ChatMessage[] }[] = []
+  let current: ChatMessage[] = []
+  for (const msg of viewMessages) {
+    if (msg.role === 'user') {
+      if (current.length > 0) groups.push({ key: current[0].id, messages: current })
+      current = [msg]
+    } else {
+      current.push(msg)
+    }
+  }
+  if (current.length > 0) groups.push({ key: current[0].id, messages: current })
+  return groups
+}
 
 // Reset batch mode when session changes (avoid stale state from previous session)
 watch(() => props.sessionId, () => {

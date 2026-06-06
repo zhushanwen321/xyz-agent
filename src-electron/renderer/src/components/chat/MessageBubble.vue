@@ -1,26 +1,7 @@
 <template>
-  <!-- system 消息：全宽横幅 -->
+  <!-- assistant 消息：section 分组（thinking / tool / text） -->
   <div
-    v-if="message.role === 'system'"
-    :class="[
-      'self-stretch w-full max-w-none my-2 border border-transparent bg-surface rounded-none px-3.5 py-2.5 text-[13px] flex items-start gap-2.5 box-border',
-      message.status === 'error' && 'border-danger/50 bg-danger-light',
-    ]"
-  >
-    <span
-      :class="[
-        'w-2 h-2 rounded-full shrink-0 mt-1',
-        message.status === 'error' ? 'bg-danger' : 'bg-success',
-      ]"
-    ></span>
-    <div class="flex-1">
-      <div class="font-semibold text-[13px]">{{ message.content }}</div>
-    </div>
-  </div>
-
-  <!-- assistant 消息：标签在外面，thinking/tool 在外面，只有 text 在气泡中 -->
-  <div
-    v-else-if="message.role === 'assistant'"
+    v-if="message.role === 'assistant'"
     data-role="assistant"
     :data-entry-id="entryId"
     :data-timestamp="message.timestamp ?? ''"
@@ -31,39 +12,63 @@
       <span v-if="message.timestamp" class="font-normal normal-case tracking-normal text-[10px] opacity-60 ml-1.5">{{ formatTime(message.timestamp) }}</span>
     </div>
 
-    <!-- 有序渲染：按 contentBlocks 顺序 -->
-    <template v-if="message.contentBlocks?.length">
-      <template v-for="block in message.contentBlocks" :key="block.refId">
-        <!-- Thinking block (outside bubble) -->
-        <ThinkingBlock
-          v-if="block.type === 'thinking'"
-          :text="getThinkingContent(block.refId)"
-          :streaming="message.status === 'streaming'"
-        />
-        <!-- Tool call card (outside bubble) -->
-        <ToolCallCard
-          v-else-if="block.type === 'toolCall'"
-          :tool-call="getToolCall(block.refId)!"
-          :batch-info="batchInfoMap.get(block.refId)"
-        />
-        <!-- Text content (inside bubble) -->
-        <div
-          v-else-if="block.type === 'text' && message.content"
-          class="py-2 px-3 leading-[1.6] text-xs border-t border-transparent rounded-sm"
-          style="background:var(--msg-assistant-bg)"
-        >
-          <div
-            class="msg__body select-text"
-            :data-message-id="message.id"
-            :data-markdown-source="message.content"
-            @click="handleBodyClick"
-          >
-            <!-- eslint-disable-next-line vue/no-v-html -->
-            <span v-html="renderedContent"></span>
-            <span v-if="isStreaming" class="inline-block w-0.5 h-[1.1em] bg-accent rounded-sm align-text-bottom animate-blink motion-reduce:opacity-60 motion-reduce:animate-none"></span>
-          </div>
+    <!-- Section-grouped rendering (contentBlocks available) -->
+    <template v-if="assistantSections.length">
+      <div
+        v-for="(section, si) in assistantSections"
+        :key="si"
+        class="asst-section"
+      >
+        <!-- Section label: only show for tool groups with 2+ calls (ThinkingBlock has its own header) -->
+        <div v-if="section.type === 'toolCall' && toolCallCount > 1" class="asst-section__label">
+          <span class="asst-section__dot asst-section__dot--tool"></span>
+          {{ toolCallCount }} 次工具调用
         </div>
-      </template>
+        <!-- Text section gets a subtle dot to mark "final answer" -->
+        <div v-else-if="section.type === 'text'" class="asst-section__label">
+          <span class="asst-section__dot asst-section__dot--text"></span>
+          回答
+        </div>
+
+        <!-- Thinking blocks -->
+        <template v-if="section.type === 'thinking'">
+          <ThinkingBlock
+            v-for="block in section.blocks"
+            :key="block.refId"
+            :text="getThinkingContent(block.refId)"
+            :streaming="message.status === 'streaming'"
+          />
+        </template>
+
+        <!-- Tool call blocks -->
+        <template v-else-if="section.type === 'toolCall'">
+          <ToolCallCard
+            v-for="block in section.blocks"
+            :key="block.refId"
+            :tool-call="getToolCall(block.refId)!"
+            :batch-info="batchInfoMap.get(block.refId)"
+          />
+        </template>
+
+        <!-- Text block -->
+        <template v-else-if="section.type === 'text' && message.content">
+          <div
+            class="py-2 px-3 leading-[1.6] text-xs rounded-sm"
+            style="background:var(--msg-assistant-bg)"
+          >
+            <div
+              class="msg__body select-text"
+              :data-message-id="message.id"
+              :data-markdown-source="message.content"
+              @click="handleBodyClick"
+            >
+              <!-- eslint-disable-next-line vue/no-v-html -->
+              <span v-html="renderedContent"></span>
+              <span v-if="isStreaming" class="inline-block w-0.5 h-[1.1em] bg-accent rounded-sm align-text-bottom animate-blink motion-reduce:opacity-60 motion-reduce:animate-none"></span>
+            </div>
+          </div>
+        </template>
+      </div>
     </template>
 
     <!-- Fallback: 无 contentBlocks 时用固定顺序（历史消息兼容） -->
@@ -135,47 +140,24 @@
       <span v-if="message.timestamp" class="font-normal normal-case tracking-normal text-[10px] opacity-60 mr-1.5">{{ formatTime(message.timestamp) }}</span>
       用户
     </div>
-    <!-- Skill + user bubble wrapper: shared max-width constraint -->
-    <div v-if="resolvedSkillName" class="flex flex-col items-stretch max-w-[85%] ml-auto">
-      <!-- Skill header bar (option B: left accent border) -->
-      <div class="skill-header" :class="{ 'skill-header--clickable': message.skillLocation, 'skill-header--expanded': skillExpanded }" @click="handleSkillHeaderClick">
-        <svg v-if="skillExpanded" class="skill-header__chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 10l4-4 4 4"/></svg>
-        <svg v-else class="skill-header__icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 2H12.5A1.5 1.5 0 0114 3.5V12.5A1.5 1.5 0 0112.5 14H3.5A1.5 1.5 0 012 12.5V3.5A1.5 1.5 0 013.5 2Z"/><path d="M8 2v12"/><path d="M2 8h6"/></svg>
-        <span class="skill-header__label">加载 Skill：</span><span class="skill-header__name">{{ resolvedSkillName }}</span>
-        <svg v-if="skillLoading" class="skill-header__spin" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 1.5a6.5 6.5 0 016.5 6.5"/></svg>
-      </div>
-      <!-- Skill content (expanded): same container style as user bubble -->
-      <div v-if="skillExpanded && skillRenderedContent" class="py-2 px-3 leading-[1.6] text-xs text-fg rounded-sm max-h-[400px] overflow-y-auto" style="background:var(--user-bubble-bg);border:1px solid var(--user-bubble-border);border-left:2px solid var(--accent);">
-        <div
-          class="msg__body select-text"
-          :data-message-id="message.id + '-skill'"
-          :data-markdown-source="skillRawContent"
-        >
-          <!-- eslint-disable-next-line vue/no-v-html -->
-          <span v-html="skillRenderedContent"></span>
-        </div>
-      </div>
-      <!-- User bubble: only show when there is actual user text -->
-      <div v-if="displayContent" class="py-2 px-3 leading-[1.6] text-xs text-fg rounded-sm" style="background:var(--user-bubble-bg);border:1px solid var(--user-bubble-border);">
-        <div
-          class="msg__body select-text"
-          :data-message-id="message.id"
-          :data-markdown-source="displayContent"
-          @click="handleBodyClick"
-        >
-          <!-- eslint-disable-next-line vue/no-v-html -->
-          <span v-html="renderedContent"></span>
-        </div>
-      </div>
-    </div>
-    <!-- Non-skill user bubble (no wrapper needed) -->
-    <div v-if="!resolvedSkillName && displayContent" class="py-2 px-3 leading-[1.6] text-xs text-fg rounded-sm" style="background:var(--user-bubble-bg);border:1px solid var(--user-bubble-border);">
+    <!-- User bubble: skill-link embedded inline when skill is present -->
+    <div v-if="displayContent" class="py-2 px-3 leading-[1.6] text-xs text-fg rounded-sm" style="background:var(--user-bubble-bg);border:1px solid var(--user-bubble-border);">
       <div
         class="msg__body select-text"
         :data-message-id="message.id"
         :data-markdown-source="displayContent"
         @click="handleBodyClick"
       >
+        <!-- Inline skill link (Codex-style) -->
+        <a
+          v-if="resolvedSkillName"
+          class="skill-link"
+          :class="{ 'skill-link--active': skillDrawerOpen }"
+          @click.stop="handleSkillLinkClick"
+        >
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 2H12.5A1.5 1.5 0 0114 3.5V12.5A1.5 1.5 0 0112.5 14H3.5A1.5 1.5 0 012 12.5V3.5A1.5 1.5 0 013.5 2Z"/><path d="M8 2v12"/><path d="M2 8h6"/></svg>
+          {{ resolvedSkillName }}
+        </a>
         <!-- eslint-disable-next-line vue/no-v-html -->
         <span v-html="renderedContent"></span>
       </div>
@@ -235,7 +217,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
-import type { Message } from '@xyz-agent/shared'
+import type { Message, ContentBlock } from '@xyz-agent/shared'
 import type { BatchInfo } from './ToolCallCard.vue'
 import type { BranchTab } from '../../stores/tree'
 import { renderLightweight, renderFull } from '../../lib/markdown'
@@ -278,6 +260,40 @@ const COPY_FEEDBACK_MS = 1500
 const BYTES_PER_KB = 1024
 const MIN_TOOL_CALLS = 2
 const BATCH_MIN_SIZE = 2
+
+// ── Section grouping for assistant content blocks ──
+type SectionType = 'thinking' | 'toolCall' | 'text'
+
+interface AssistantSection {
+  type: SectionType
+  blocks: ContentBlock[]
+}
+
+/** Merge adjacent same-type contentBlocks into sections */
+const assistantSections = computed<AssistantSection[]>(() => {
+  const blocks = props.message.contentBlocks
+  if (!blocks?.length) return []
+  const sections: AssistantSection[] = []
+  let current: AssistantSection | null = null
+
+  for (const block of blocks) {
+    // Treat 'text' blocks without content as skip
+    if (block.type === 'text' && !props.message.content) continue
+
+    if (current && current.type === block.type) {
+      current.blocks.push(block)
+    } else {
+      if (current) sections.push(current)
+      current = { type: block.type as SectionType, blocks: [block] }
+    }
+  }
+  if (current) sections.push(current)
+  return sections
+})
+
+const toolCallCount = computed(() =>
+  props.message.toolCalls?.length ?? 0
+)
 
 // ── Action menu state ──
 const showActionMenu = ref(false)
@@ -635,8 +651,6 @@ const batchInfoMap = computed(() => {
   accent-color: var(--accent);
 }
 /* Batch selection checkbox styles remain */
-
-/* Skill header bar (option B: left accent border) */
 
 /* Skill link (inline, Codex-style) */
 .skill-link {

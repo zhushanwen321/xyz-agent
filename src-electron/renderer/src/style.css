@@ -810,3 +810,67 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .app-container--sidebar-collapsed {
   --sidebar-w: 0px;
 }
+
+/* ── Turn grouping (layout message turn B) ────────────── */
+/* Each conversation turn (user + assistant) is a visual unit.
+   Turns are separated by border-top + vertical padding.
+   Assistant content is grouped into sections (thinking / tool / text)
+   with border-left indent and colored dot labels. */
+
+.turn-group {
+  padding: 6px 0;
+}
+.turn-group + .turn-group {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  margin-top: 4px;
+}
+/* System-only turns should not have turn styling */
+.turn-group--system-only {
+  padding: 0;
+  border-top: none;
+  margin-top: 0;
+}
+.turn-group--system-only + .turn-group {
+  border-top: none;
+  padding-top: 0;
+}
+.turn-group + .turn-group--system-only {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 0;
+}
+
+/* Section grouping inside assistant message */
+.asst-section {
+  margin-bottom: 6px;
+  padding-left: 12px;
+  border-left: 2px solid var(--border);
+  position: relative;
+}
+.asst-section:last-child {
+  margin-bottom: 0;
+}
+
+.asst-section__label {
+  font-size: 10px;
+  color: var(--muted);
+  font-weight: 500;
+  margin-bottom: 3px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.asst-section__dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+}
+.asst-section__dot--thinking { background: var(--accent); }
+.asst-section__dot--tool { background: var(--success); }
+.asst-section__dot--text { background: var(--agent); }
+
+/* Reset ThinkingBlock margin inside section containers */
+.asst-section .thinking-block {
+  margin-bottom: 0;
+}

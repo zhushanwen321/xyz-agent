@@ -11,6 +11,7 @@
         <span class="inline-block w-1.5 h-1.5 rounded-full bg-accent animate-pulse"></span>
         <span class="text-muted text-xs font-mono">加载中...</span>
       </div>
+      <!-- eslint-disable-next-line vue/no-v-html -->
       <div v-else class="skill-drawer__body msg__body" v-html="renderedContent"></div>
     </div>
   </Transition>
@@ -20,7 +21,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, onBeforeUnmount } from 'vue'
 import { renderLightweight, renderFull } from '../../lib/markdown'
 import { useSettingsStore } from '../../stores/settings'
 import { send } from '../../lib/ws-client'
@@ -81,6 +82,12 @@ watch(() => props.visible, (vis) => {
     on('file.read:error', handleResult)
   }
 }, { immediate: true })
+
+// Cleanup on unmount to prevent event-bus listener leak
+onBeforeUnmount(() => {
+  off('file.read:result', handleResult)
+  off('file.read:error', handleResult)
+})
 </script>
 
 <style scoped>
