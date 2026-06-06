@@ -54,16 +54,15 @@ describe('UtilityRail', () => {
     expect(wrapper.emitted('scroll-to-bottom')).toHaveLength(1)
   })
 
-  it('has correct width class (w-9 = 36px)', () => {
+  it('has utility-rail base class', () => {
     const wrapper = mountRail()
     const rail = wrapper.find('div')
-    expect(rail.classes()).toContain('w-9')
+    expect(rail.classes()).toContain('utility-rail')
   })
 
-  it('has group-hover opacity transition', () => {
+  it('has pointer-events-none for rail container', () => {
     const wrapper = mountRail()
     const rail = wrapper.find('div')
-    expect(rail.classes()).toContain('opacity-0')
-    expect(rail.classes()).toContain('group-hover:opacity-100')
+    expect(rail.classes()).toContain('pointer-events-none')
   })
 })
