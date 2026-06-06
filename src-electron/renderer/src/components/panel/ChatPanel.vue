@@ -13,7 +13,7 @@
       @toggle-batch-select="toggleBatchMode"
     />
 
-    <PanelBody>
+    <div class="flex-1 flex flex-col min-w-0 min-h-0 h-0">
       <!-- chat-content: flex column for messages + input -->
       <div class="flex-1 flex flex-col min-w-0 min-h-0 relative">
         <div
@@ -161,19 +161,18 @@
           @close="closeSkillDrawer"
         />
       </div>
-    </PanelBody>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch } from 'vue'
 import type { Message, ExtensionWidgetPayload } from '@xyz-agent/shared'
 import type { PendingToolCall } from '../chat/ApprovalCard.vue'
 import type { ChatMessage } from '../../stores/chat'
 import { isSystemNotification } from '../../stores/chat'
 
 import PanelBar from './PanelBar.vue'
-import PanelBody from './PanelBody.vue'
 import SystemNotification from '../chat/SystemNotification.vue'
 import MessageBubble from '../chat/MessageBubble.vue'
 import StreamingMessage from '../chat/StreamingMessage.vue'
@@ -183,11 +182,11 @@ import WidgetDock from '../extension/WidgetDock.vue'
 import BatchSelectBar from '../chat/BatchSelectBar.vue'
 import ChatOutline from '../chat/ChatOutline.vue'
 import SkillDrawer from '../chat/SkillDrawer.vue'
-import { collectMessageContent } from '../../lib/collectMessageContent'
-import { copyWithToast } from '../../lib/clipboard'
 import { useTree } from '../../composables/useTree'
 import { useTreeStore } from '../../stores/tree'
 import { useTurnGroups } from '../../composables/useTurnGroups'
+import { useChatScroll } from '../../composables/useChatScroll'
+import { useBatchSelect } from '../../composables/useBatchSelect'
 import { groupIntoTurns } from '../../lib/message-layout'
 import type { BranchTab } from '../../stores/tree'
 
@@ -201,6 +200,8 @@ export interface AgentView {
   agentId: string
   messages: ChatMessage[]
 }
+
+const OUTLINE_MIN_MESSAGES = 3
 
 const props = withDefaults(
   defineProps<{
@@ -230,7 +231,7 @@ const props = withDefaults(
     isCompacting: false,
     isLoadingHistory: false,
     extensionWidgets: () => [],
-  }
+  },
 )
 
 const emit = defineEmits<{
@@ -252,146 +253,62 @@ const emit = defineEmits<{
 const localActiveAgentId = ref(props.activeAgentId)
 const chatMsgsRef = ref<HTMLElement | null>(null)
 
-watch(
-  () => props.activeAgentId,
-  (v) => {
-    localActiveAgentId.value = v
-  }
+watch(() => props.activeAgentId, (v) => { localActiveAgentId.value = v })
+
+// ── Scroll management (extracted composable) ──
+const {
+  showScrollBottom,
+  onChatScroll,
+  handleScrollToBottom,
+  scrollToMessage,
+} = useChatScroll(
+  () => chatMsgsRef.value,
+  () => props.sessionId,
+  () => props.messages.length,
+  () => props.streamingMessage?.content,
+  () => props.isLoadingHistory,
 )
 
-/** 距离底部多少 px 以内视为「在底部」 */
-const SCROLL_NEAR_BOTTOM_THRESHOLD = 80
-const OUTLINE_MIN_MESSAGES = 3
-
-// Session 级滚动位置缓存：split 时组件重建，通过此缓存恢复滚动位置
-const scrollPositionCache = new Map<string, number>()
-
-// 智能自动滚动：底部时跟随新内容，用户上滚后不强制拉回
-function isNearBottom(el: HTMLElement): boolean {
-  return el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_NEAR_BOTTOM_THRESHOLD
-}
-
-// 强制滚到底部（用于 session 切换、首次加载等场景），无动画
-function forceScrollToBottom() {
-  nextTick(() => {
-    const el = chatMsgsRef.value
-    if (el) {
-      el.scrollTo({ top: el.scrollHeight, behavior: 'instant' })
-      userAtBottom.value = true
-    }
-  })
-}
-
-// 从缓存恢复滚动位置（split 重建时使用），无缓存时滚到底部
-function restoreScrollPosition(sessionId: string) {
-  nextTick(() => {
-    const el = chatMsgsRef.value
-    if (!el) return
-    const saved = scrollPositionCache.get(sessionId)
-    if (saved !== undefined) {
-      el.scrollTo({ top: saved, behavior: 'instant' })
-      userAtBottom.value = isNearBottom(el)
-    } else {
-      el.scrollTo({ top: el.scrollHeight, behavior: 'instant' })
-      userAtBottom.value = true
-    }
-  })
-}
-
-// 缓存当前滚动位置
-function saveScrollPosition() {
-  const el = chatMsgsRef.value
-  const sid = props.sessionId
-  if (el && sid) {
-    scrollPositionCache.set(sid, el.scrollTop)
-  }
-}
-
-// 记录用户是否在底部
-const userAtBottom = ref(true)
-
-// Scroll state for FAB
-const scrollTop = ref(0)
-const scrollHeight = ref(0)
-const clientHeight = ref(0)
-
-const SCROLL_BUTTON_THRESHOLD = 40
-
-const showScrollBottom = computed(() =>
-  scrollTop.value + clientHeight.value < scrollHeight.value - SCROLL_BUTTON_THRESHOLD
+// ── Batch selection (extracted composable) ──
+const {
+  batchMode,
+  selectedIds,
+  toggleBatchMode,
+  exitBatchMode,
+  toggleSelect,
+  copyBatchAs,
+} = useBatchSelect(
+  () => props.sessionId,
+  () => chatMsgsRef.value,
 )
 
-function onChatScroll() {
-  const el = chatMsgsRef.value
-  if (el) {
-    userAtBottom.value = isNearBottom(el)
-    scrollTop.value = el.scrollTop
-    scrollHeight.value = el.scrollHeight
-    clientHeight.value = el.clientHeight
-    saveScrollPosition()
-  }
+// ── Tree + turn grouping ──
+const tree = useTree()
+const treeStore = useTreeStore()
+const { turnGroups } = useTurnGroups(() => props.messages)
+
+function getTurnGroups(viewMessages: ChatMessage[]) {
+  if (viewMessages === props.messages) return turnGroups.value
+  return groupIntoTurns(viewMessages)
 }
 
-function handleScrollToBottom() {
-  const el = chatMsgsRef.value
-  if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
-
-}
-function scrollToMessage(messageId: string) {
-  const el = chatMsgsRef.value?.querySelector(`[data-entry-id="${messageId}"]`) as HTMLElement | null
-  if (el) {
-    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-  }
-}
-
-
-// 新消息 / streaming 更新时智能滚动
-watch(
-  () => [props.messages.length, props.streamingMessage?.content],
-  () => {
-    nextTick(() => {
-      if (!userAtBottom.value) return
-      const el = chatMsgsRef.value
-      if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
-    })
-  },
-)
-
-// session 切换或 history 加载完成时，强制滚到底部
-watch(
-  () => [props.sessionId, props.isLoadingHistory],
-  ([sid, loading]) => {
-    if (sid && !loading) {
-      forceScrollToBottom()
-    }
-  },
-)
-
-// 组件首次挂载，恢复缓存位置或滚到底部
-onMounted(() => {
-  if (props.messages.length > 0) {
-    const sid = props.sessionId
-    if (sid && scrollPositionCache.has(sid)) {
-      // 有缓存 → split 重建场景，恢复位置
-      restoreScrollPosition(sid)
-    } else {
-      // 无缓存 → 新打开 session，滚到底部
-      forceScrollToBottom()
+const branchTabsMap = computed<Map<string, BranchTab[]>>(() => {
+  if (!props.sessionId) return new Map()
+  const pathNodes = treeStore.getActivePath(props.sessionId)
+  const map = new Map<string, BranchTab[]>()
+  for (const node of pathNodes) {
+    if (node.branchTabs && node.branchTabs.length > 0) {
+      map.set(node.entryId, node.branchTabs)
     }
   }
+  return map
 })
 
-// 组件卸载前缓存滚动位置
-onBeforeUnmount(() => {
-  saveScrollPosition()
-})
-
-function switchAgent(id: string) {
-  localActiveAgentId.value = id
-  emit('switch-agent', id)
+function onNavigate(targetId: string) {
+  if (props.sessionId) {
+    tree.navigate(props.sessionId, targetId)
+  }
 }
-
-// ── Batch selection mode ──
 
 // ── Skill drawer state ──
 const skillDrawerVisible = ref(false)
@@ -407,103 +324,10 @@ function openSkillDrawer(payload: { name: string; location?: string }) {
 function closeSkillDrawer() {
   skillDrawerVisible.value = false
 }
-const batchMode = ref(false)
-const selectedIds = ref<Set<string>>(new Set())
-const tree = useTree()
-const treeStore = useTreeStore()
-const { turnGroups } = useTurnGroups(() => props.messages)
 
-/** Get turn groups for a specific agent view */
-function getTurnGroups(viewMessages: ChatMessage[]) {
-  if (viewMessages === props.messages) return turnGroups.value
-  return groupIntoTurns(viewMessages)
-}
-
-// Reset batch mode when session changes (avoid stale state from previous session)
-watch(() => props.sessionId, () => {
-  batchMode.value = false
-  selectedIds.value = new Set()
-})
-
-// Build a map from message id -> branchTabs so each MessageBubble can render its branch indicator correctly
-const branchTabsMap = computed<Map<string, BranchTab[]>>(() => {
-  if (!props.sessionId) return new Map()
-  const pathNodes = treeStore.getActivePath(props.sessionId)
-  const map = new Map<string, BranchTab[]>()
-  for (const node of pathNodes) {
-    if (node.branchTabs && node.branchTabs.length > 0) {
-      map.set(node.entryId, node.branchTabs)
-    }
-  }
-  return map
-})
-
-const TIME_PAD_WIDTH = 2
-
-function toggleBatchMode() {
-  batchMode.value = !batchMode.value
-  if (!batchMode.value) {
-    selectedIds.value = new Set()
-  }
-}
-
-function exitBatchMode() {
-  batchMode.value = false
-  selectedIds.value = new Set()
-}
-
-function toggleSelect(entryId: string) {
-  const next = new Set(selectedIds.value)
-  if (next.has(entryId)) {
-    next.delete(entryId)
-  } else {
-    next.add(entryId)
-  }
-  selectedIds.value = next
-}
-
-function onNavigate(targetId: string) {
-  if (props.sessionId) {
-    tree.navigate(props.sessionId, targetId)
-  }
-}
-
-function collectBatchContent(elements: HTMLElement[], format: 'markdown' | 'plain'): string {
-  const parts: string[] = []
-  for (const el of elements) {
-    const role = el.getAttribute('data-role') === 'user' ? '用户' : '助手'
-    const ts = Number(el.getAttribute('data-timestamp') ?? '0')
-    let timeLabel = ''
-    if (ts > 0) {
-      const d = new Date(ts)
-      const hh = d.getHours().toString().padStart(TIME_PAD_WIDTH, '0')
-      const mm = d.getMinutes().toString().padStart(TIME_PAD_WIDTH, '0')
-      timeLabel = ` ${hh}:${mm}`
-    }
-    const content = collectMessageContent(el, { format })
-    if (content) {
-      parts.push(`--- ${role}${timeLabel} ---\n${content}`)
-    }
-  }
-  return parts.join('\n\n')
-}
-
-async function copyBatchAs(format: 'markdown' | 'plain') {
-  const ids = Array.from(selectedIds.value)
-  if (ids.length === 0) return
-  // Collect DOM elements in selection order
-  const elements: HTMLElement[] = []
-  for (const id of ids) {
-    const el = document.querySelector(`[data-entry-id="${id}"]`) as HTMLElement | null
-    if (el) elements.push(el)
-  }
-  if (elements.length === 0) {
-    console.warn('[ChatPanel] no message elements found for batch copy, ids:', ids)
-    return
-  }
-  const text = collectBatchContent(elements, format)
-  await copyWithToast(text, { format })
-  exitBatchMode()
+function switchAgent(id: string) {
+  localActiveAgentId.value = id
+  emit('switch-agent', id)
 }
 </script>
 

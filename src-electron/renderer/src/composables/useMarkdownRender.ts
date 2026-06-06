@@ -20,7 +20,8 @@ export function useMarkdownRender(
 ) {
   const settings = useSettingsStore()
   const fullRenderCache = ref('')
-  const renderVersion = ref(0)
+  // Non-reactive counter: no dependency tracking needed, avoids unnecessary re-computation
+  let renderVersion = 0
 
   let mermaidModule: typeof import('mermaid').default | null = null
   let mermaidInitTheme: string | null = null
@@ -38,18 +39,18 @@ export function useMarkdownRender(
     () => [contentGetter(), options?.status(), settings.theme] as const,
     async ([content, status]) => {
       if (status !== 'streaming' && content) {
-        renderVersion.value++
-        const version = renderVersion.value
+        renderVersion++
+        const version = renderVersion
         const effectiveTheme = getEffectiveTheme()
         const codeTheme: 'light' | 'dark' | undefined =
           options?.forceDarkCode ? 'dark' : undefined
         try {
           const result = await renderFull(content, effectiveTheme, { codeTheme })
-          if (version === renderVersion.value) {
+          if (version === renderVersion) {
             fullRenderCache.value = result
           }
         } catch {
-          if (version === renderVersion.value) {
+          if (version === renderVersion) {
             fullRenderCache.value = renderLightweight(content)
           }
         }

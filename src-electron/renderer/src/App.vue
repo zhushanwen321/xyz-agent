@@ -1,5 +1,5 @@
 <template>
-  <div ref="appContainer" class="app-container" :class="{ 'app-container--sidebar-collapsed': sidebarStore.collapsed }">
+  <div class="app-container" :class="{ 'app-container--sidebar-collapsed': sidebarStore.collapsed, 'is-fullscreen': layoutStore.isFullscreen }">
     <!-- Sidebar: unified with controls -->
     <AppSidebar
       @create="createSession"
@@ -78,8 +78,6 @@ import ExtensionUIDialog from './components/extension/ExtensionUIDialog.vue'
 const { init: initConnection, teardown: teardownConnection } = useConnection()
 useProvider()
 const { loadSessions, createSession: doCreateSession, switchSession } = useSession()
-
-const appContainer = ref<HTMLElement | null>(null)
 
 const settingsStore = useSettingsStore()
 const panelStore = usePanelStore()
@@ -357,13 +355,6 @@ onMounted(async () => {
   if (window.electronAPI?.onFullscreenChanged) {
     ipcCleanupFns.push(window.electronAPI.onFullscreenChanged(({ isFullscreen }) => {
       layoutStore.setFullscreen(isFullscreen)
-      if (appContainer.value) {
-        if (isFullscreen) {
-          appContainer.value.classList.add('is-fullscreen')
-        } else {
-          appContainer.value.classList.remove('is-fullscreen')
-        }
-      }
     }))
   }
 })
