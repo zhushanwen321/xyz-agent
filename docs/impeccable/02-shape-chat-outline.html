@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Shape: Chat Outline 摘要目录对比</title>
+<style>
+:root {
+  --bg: oklch(97% 0.010 75);
+  --surface: oklch(99% 0.006 75);
+  --fg: oklch(22% 0.012 75);
+  --muted: oklch(50% 0.010 75);
+  --border: oklch(90% 0.008 75);
+  --accent: oklch(55% 0.08 195);
+  --accent-light: oklch(93% 0.03 195);
+  --success: oklch(62% 0.10 145);
+  --success-light: oklch(95% 0.04 145);
+  --warning: oklch(75% 0.10 85);
+  --danger: oklch(55% 0.12 25);
+  --danger-light: oklch(93% 0.04 25);
+  --agent: oklch(55% 0.15 250);
+  --agent-light: oklch(93% 0.04 250);
+  --section-bg: oklch(95% 0.014 70);
+  --hover-bg: oklch(96% 0.01 70);
+  --radius: 1px;
+  --font-body: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+}
+*,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--font-body); font-size: 14px; line-height: 1.6; background: var(--bg); color: var(--fg); -webkit-font-smoothing: antialiased; }
+
+.page-header { padding: 32px 40px 24px; max-width: 1400px; margin: 0 auto; }
+.page-header h1 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+.page-header p { font-size: 13px; color: var(--muted); }
+
+.demos-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0 40px 60px;
+}
+
+.demo-panel {
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.demo-label {
+  padding: 10px 16px;
+  font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  background: var(--section-bg);
+}
+.demo-label span { color: var(--accent); font-weight: 700; }
+.demo-body { padding: 20px; }
+
+/* ── Variant A: Sidebar outline rail ── */
+.outline-rail {
+  display: flex;
+  gap: 0;
+  height: 520px;
+}
+.outline-sidebar {
+  width: 200px;
+  border-right: 1px solid var(--border);
+  padding: 12px 0;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+.outline-sidebar-title {
+  font-size: 10px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--muted);
+  padding: 0 12px 8px;
+}
+.outline-item {
+  display: flex; align-items: flex-start; gap: 6px;
+  padding: 5px 12px; cursor: pointer;
+  transition: background 0.12s;
+  font-size: 11px; line-height: 1.4;
+  color: var(--muted);
+  border-left: 2px solid transparent;
+}
+.outline-item:hover { background: var(--hover-bg); }
+.outline-item--active {
+  color: var(--fg); background: var(--hover-bg);
+  border-left-color: var(--accent);
+}
+.outline-item--active .outline-item-label { font-weight: 600; }
+.outline-dot {
+  width: 5px; height: 5px; border-radius: 50%; margin-top: 5px; flex-shrink: 0;
+}
+.outline-dot--user { background: var(--accent); }
+.outline-dot--assistant { background: var(--agent); }
+.outline-dot--system-done { background: var(--success); }
+.outline-dot--system-alert { background: var(--danger); }
+.outline-item-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.outline-item-time { font-family: var(--font-mono); font-size: 9px; color: var(--muted); opacity: 0.6; flex-shrink: 0; }
+.outline-progress {
+  margin-top: auto; padding: 10px 12px; border-top: 1px solid var(--border);
+  font-size: 11px; color: var(--muted);
+}
+.outline-progress-bar {
+  height: 3px; background: var(--border); border-radius: 1px; margin-top: 4px; overflow: hidden;
+}
+.outline-progress-fill { height: 100%; background: var(--success); border-radius: 1px; width: 60%; }
+
+.outline-chat {
+  flex: 1; padding: 16px 20px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.msg-placeholder {
+  padding: 8px 12px; font-size: 12px; border-radius: var(--radius);
+  line-height: 1.6; color: var(--muted);
+}
+.msg-placeholder--user { background: var(--accent-light); color: var(--fg); max-width: 80%; margin-left: auto; }
+.msg-placeholder--assistant { background: oklch(98% 0.008 250); }
+.msg-placeholder--system { background: var(--success-light); display: flex; align-items: flex-start; gap: 6px; }
+
+/* ── Variant B: Floating mini-outline ── */
+.floating-outline-container {
+  position: relative;
+  height: 520px;
+  overflow-y: auto;
+  padding-right: 160px;
+}
+.floating-chat { display: flex; flex-direction: column; gap: 6px; padding: 16px 20px; }
+.floating-outline {
+  position: absolute; right: 12px; top: 12px; bottom: 12px;
+  width: 140px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 2px;
+  padding: 8px 0; overflow-y: auto;
+  box-shadow: 0 1px 6px rgba(0,0,0,0.04);
+}
+.floating-outline-title {
+  font-size: 9px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--muted); padding: 0 8px 6px;
+}
+.floating-item {
+  padding: 3px 8px; font-size: 10px; color: var(--muted); cursor: pointer;
+  display: flex; align-items: center; gap: 4px;
+  border-left: 2px solid transparent;
+  transition: all 0.12s;
+}
+.floating-item:hover { background: var(--hover-bg); }
+.floating-item--active { color: var(--fg); border-left-color: var(--accent); background: var(--hover-bg); }
+.floating-dot { width: 4px; height: 4px; border-radius: 50%; flex-shrink: 0; }
+.floating-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+
+/* ── Variant C: Top breadcrumb progress ── */
+.topbar-container {
+  height: 520px;
+  display: flex; flex-direction: column;
+}
+.topbar {
+  display: flex; align-items: center; gap: 2px;
+  padding: 8px 16px; border-bottom: 1px solid var(--border);
+  background: var(--surface); overflow-x: auto; flex-shrink: 0;
+}
+.topbar-segment {
+  display: flex; align-items: center; gap: 4px;
+  padding: 3px 8px; font-size: 10px; color: var(--muted);
+  border-radius: var(--radius); cursor: pointer;
+  transition: all 0.12s; white-space: nowrap;
+}
+.topbar-segment:hover { background: var(--hover-bg); }
+.topbar-segment--active { background: var(--accent-light); color: var(--accent); font-weight: 600; }
+.topbar-dot { width: 4px; height: 4px; border-radius: 50%; }
+.topbar-divider { color: var(--border); font-size: 10px; }
+.topbar-progress-text { margin-left: auto; font-family: var(--font-mono); font-size: 10px; color: var(--muted); }
+
+.topbar-chat {
+  flex: 1; padding: 16px 20px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 6px;
+}
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>Shape: Chat Outline 聊天摘要目录对比</h1>
+  <p>展示 3 种聊天内容导航方式: 侧边栏目录、浮动迷你目录、顶部面包屑进度</p>
+</div>
+
+<div class="demos-grid">
+  <!-- ════════════ VARIANT A: Sidebar outline ════════════ -->
+  <div class="demo-panel">
+    <div class="demo-label"><span>A.</span> 侧边栏目录</div>
+    <div class="outline-rail">
+      <div class="outline-sidebar">
+        <div class="outline-sidebar-title">对话目录</div>
+        <div class="outline-item outline-item--active">
+          <span class="outline-dot outline-dot--user"></span>
+          <span class="outline-item-label">Review chat area 代码</span>
+          <span class="outline-item-time">14:32</span>
+        </div>
+        <div class="outline-item">
+          <span class="outline-dot outline-dot--assistant"></span>
+          <span class="outline-item-label">Thinking: 分析组件层次</span>
+          <span class="outline-item-time">14:32</span>
+        </div>
+        <div class="outline-item">
+          <span class="outline-dot outline-dot--assistant"></span>
+          <span class="outline-item-label">read MessageBubble.vue</span>
+          <span class="outline-item-time">14:33</span>
+        </div>
+        <div class="outline-item">
+          <span class="outline-dot outline-dot--assistant"></span>
+          <span class="outline-item-label">read ThinkingBlock.vue</span>
+          <span class="outline-item-time">14:33</span>
+        </div>
+        <div class="outline-item">
+          <span class="outline-dot outline-dot--assistant"></span>
+          <span class="outline-item-label">bash git diff</span>
+          <span class="outline-item-time">14:33</span>
+        </div>
+        <div class="outline-item">
+          <span class="outline-dot outline-dot--assistant"></span>
+          <span class="outline-item-label">审查结果: P0 视觉混乱</span>
+          <span class="outline-item-time">14:34</span>
+        </div>
+        <div class="outline-item">
+          <span class="outline-dot outline-dot--system-done"></span>
+          <span class="outline-item-label">SubAgent #1 完成</span>
+          <span class="outline-item-time">14:34</span>
+        </div>
+        <div class="outline-item">
+          <span class="outline-dot outline-dot--user"></span>
+          <span class="outline-item-label">修复 P0 问题</span>
+          <span class="outline-item-time">14:35</span>
+        </div>
+        <div class="outline-item">
+          <span class="outline-dot outline-dot--assistant"></span>
+          <span class="outline-item-label">write MessageBubble.vue</span>
+          <span class="outline-item-time">14:36</span>
+        </div>
+        <div class="outline-item">
+          <span class="outline-dot outline-dot--assistant"></span>
+          <span class="outline-item-label">修复方案: Turn 分组布局</span>
+          <span class="outline-item-time">14:37</span>
+        </div>
+        <div class="outline-item">
+          <span class="outline-dot outline-dot--system-alert"></span>
+          <span class="outline-item-label">SubAgent #2 等待确认</span>
+          <span class="outline-item-time">14:37</span>
+        </div>
+        <div class="outline-progress">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span>进度</span><span style="font-family:var(--font-mono);font-size:10px">7/11</span>
+          </div>
+          <div class="outline-progress-bar"><div class="outline-progress-fill"></div></div>
+        </div>
+      </div>
+      <div class="outline-chat">
+        <div class="msg-placeholder msg-placeholder--user">帮我 review 一下 chat area 的代码变更...</div>
+        <div class="msg-placeholder msg-placeholder--assistant">Thinking: 需要分析组件层次...</div>
+        <div class="msg-placeholder msg-placeholder--assistant">read MessageBubble.vue (1.8s)</div>
+        <div class="msg-placeholder msg-placeholder--assistant">read ThinkingBlock.vue (0.9s)</div>
+        <div class="msg-placeholder msg-placeholder--assistant">bash git diff --name-only (0.4s)</div>
+        <div class="msg-placeholder msg-placeholder--assistant" style="color:var(--fg)">P0 [视觉混乱] 三个组件背景色差异仅 1%...</div>
+        <div class="msg-placeholder msg-placeholder--system"><span style="width:6px;height:6px;border-radius:50%;background:var(--success);flex-shrink:0"></span>SubAgent #1 已完成</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════ VARIANT B: Floating mini-outline ════════════ -->
+  <div class="demo-panel">
+    <div class="demo-label"><span>B.</span> 浮动迷你目录</div>
+    <div class="floating-outline-container">
+      <div class="floating-chat">
+        <div class="msg-placeholder msg-placeholder--user">帮我 review 一下 chat area 的代码变更...</div>
+        <div class="msg-placeholder msg-placeholder--assistant">Thinking: 需要分析组件层次...</div>
+        <div class="msg-placeholder msg-placeholder--assistant">read MessageBubble.vue (1.8s)</div>
+        <div class="msg-placeholder msg-placeholder--assistant">read ThinkingBlock.vue (0.9s)</div>
+        <div class="msg-placeholder msg-placeholder--assistant">bash git diff --name-only (0.4s)</div>
+        <div class="msg-placeholder msg-placeholder--assistant" style="color:var(--fg)">P0 [视觉混乱] 三个组件背景色差异仅 1%...</div>
+        <div class="msg-placeholder msg-placeholder--system"><span style="width:6px;height:6px;border-radius:50%;background:var(--success);flex-shrink:0"></span>SubAgent #1 已完成</div>
+        <div class="msg-placeholder msg-placeholder--user">修复 P0 问题</div>
+        <div class="msg-placeholder msg-placeholder--assistant">write MessageBubble.vue (2.1s)</div>
+        <div class="msg-placeholder msg-placeholder--assistant" style="color:var(--fg)">修复方案: Turn 分组布局...</div>
+        <div class="msg-placeholder" style="background:var(--danger-light);display:flex;align-items:flex-start;gap:6px"><span style="width:6px;height:6px;border-radius:50%;background:var(--danger);flex-shrink:0"></span>SubAgent #2 等待确认: 需要用户批准写入权限</div>
+      </div>
+      <div class="floating-outline">
+        <div class="floating-outline-title">目录</div>
+        <div class="floating-item floating-item--active">
+          <span class="floating-dot" style="background:var(--accent)"></span>
+          <span class="floating-label">Review 请求</span>
+        </div>
+        <div class="floating-item">
+          <span class="floating-dot" style="background:var(--agent)"></span>
+          <span class="floating-label">分析组件</span>
+        </div>
+        <div class="floating-item">
+          <span class="floating-dot" style="background:var(--agent)"></span>
+          <span class="floating-label">读取文件 x3</span>
+        </div>
+        <div class="floating-item">
+          <span class="floating-dot" style="background:var(--agent)"></span>
+          <span class="floating-label">审查结果</span>
+        </div>
+        <div class="floating-item">
+          <span class="floating-dot" style="background:var(--success)"></span>
+          <span class="floating-label">SubAgent 完成</span>
+        </div>
+        <div class="floating-item">
+          <span class="floating-dot" style="background:var(--accent)"></span>
+          <span class="floating-label">修复 P0</span>
+        </div>
+        <div class="floating-item">
+          <span class="floating-dot" style="background:var(--agent)"></span>
+          <span class="floating-label">写入文件</span>
+        </div>
+        <div class="floating-item">
+          <span class="floating-dot" style="background:var(--agent)"></span>
+          <span class="floating-label">修复方案</span>
+        </div>
+        <div class="floating-item">
+          <span class="floating-dot" style="background:var(--danger)"></span>
+          <span class="floating-label" style="font-weight:600;color:var(--danger)">等待确认</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════ VARIANT C: Top breadcrumb ════════════ -->
+  <div class="demo-panel">
+    <div class="demo-label"><span>C.</span> 顶部面包屑进度</div>
+    <div class="topbar-container">
+      <div class="topbar">
+        <div class="topbar-segment">
+          <span class="topbar-dot" style="background:var(--accent)"></span>
+          Review 请求
+        </div>
+        <span class="topbar-divider">/</span>
+        <div class="topbar-segment">
+          <span class="topbar-dot" style="background:var(--agent)"></span>
+          分析 x3
+        </div>
+        <span class="topbar-divider">/</span>
+        <div class="topbar-segment topbar-segment--active">
+          <span class="topbar-dot" style="background:var(--accent)"></span>
+          审查结果
+        </div>
+        <span class="topbar-divider">/</span>
+        <div class="topbar-segment">
+          <span class="topbar-dot" style="background:var(--success)"></span>
+          SA#1 完成
+        </div>
+        <span class="topbar-divider">/</span>
+        <div class="topbar-segment">
+          <span class="topbar-dot" style="background:var(--accent)"></span>
+          修复
+        </div>
+        <span class="topbar-divider">/</span>
+        <div class="topbar-segment">
+          <span class="topbar-dot" style="background:var(--danger)"></span>
+          <span style="font-weight:600;color:var(--danger)">等待确认</span>
+        </div>
+        <span class="topbar-progress-text">7/11 · 63%</span>
+      </div>
+      <div class="topbar-chat">
+        <div class="msg-placeholder msg-placeholder--user">帮我 review 一下 chat area 的代码变更...</div>
+        <div class="msg-placeholder msg-placeholder--assistant">Thinking: 需要分析组件层次...</div>
+        <div class="msg-placeholder msg-placeholder--assistant">read MessageBubble.vue (1.8s)</div>
+        <div class="msg-placeholder msg-placeholder--assistant">read ThinkingBlock.vue (0.9s)</div>
+        <div class="msg-placeholder msg-placeholder--assistant">bash git diff --name-only (0.4s)</div>
+        <div class="msg-placeholder msg-placeholder--assistant" style="color:var(--fg)">P0 [视觉混乱] 三个组件背景色差异仅 1%...</div>
+        <div class="msg-placeholder msg-placeholder--system"><span style="width:6px;height:6px;border-radius:50%;background:var(--success);flex-shrink:0"></span>SubAgent #1 已完成</div>
+        <div class="msg-placeholder msg-placeholder--user">修复 P0 问题</div>
+        <div class="msg-placeholder msg-placeholder--assistant">write MessageBubble.vue (2.1s)</div>
+        <div class="msg-placeholder msg-placeholder--assistant" style="color:var(--fg)">修复方案: Turn 分组布局...</div>
+        <div class="msg-placeholder" style="background:var(--danger-light);display:flex;align-items:flex-start;gap:6px"><span style="width:6px;height:6px;border-radius:50%;background:var(--danger);flex-shrink:0"></span>SubAgent #2 等待确认: 需要用户批准写入权限</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div style="max-width:1400px;margin:0 auto;padding:0 40px 40px;font-size:12px;color:var(--muted);line-height:1.8">
+  <strong style="color:var(--fg)">关键差异</strong><br>
+  <strong>A. 侧边栏目录</strong>: 占用左侧空间(200px)，可显示完整标题和时间戳，适合长对话(50+条)。底部有进度条<br>
+  <strong>B. 浮动迷你目录</strong>: 覆盖在右侧(140px)，不占布局空间，自动合并同类项(如"读取文件 x3")，适合中等对话<br>
+  <strong>C. 顶部面包屑</strong>: 水平排列，最省空间，可点击跳转。右侧有进度计数。适合短对话或作为轻量导航
+</div>
+
+</body>
+</html>

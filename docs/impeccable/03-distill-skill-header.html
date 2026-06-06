@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Distill: Skill Header 精简对比</title>
+<style>
+:root {
+  --bg: oklch(97% 0.010 75);
+  --surface: oklch(99% 0.006 75);
+  --fg: oklch(22% 0.012 75);
+  --muted: oklch(50% 0.010 75);
+  --border: oklch(90% 0.008 75);
+  --accent: oklch(55% 0.08 195);
+  --accent-light: oklch(93% 0.03 195);
+  --success: oklch(62% 0.10 145);
+  --danger: oklch(55% 0.12 25);
+  --agent: oklch(55% 0.15 250);
+  --agent-light: oklch(93% 0.04 250);
+  --section-bg: oklch(95% 0.014 70);
+  --hover-bg: oklch(96% 0.01 70);
+  --radius: 1px;
+  --font-body: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+}
+*,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--font-body); font-size: 14px; line-height: 1.6; background: var(--bg); color: var(--fg); -webkit-font-smoothing: antialiased; }
+
+.page-header { padding: 32px 40px 24px; max-width: 1400px; margin: 0 auto; }
+.page-header h1 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+.page-header p { font-size: 13px; color: var(--muted); }
+
+.demos-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0 40px 60px;
+}
+
+.demo-panel {
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.demo-label {
+  padding: 10px 16px;
+  font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  background: var(--section-bg);
+}
+.demo-label span { color: var(--accent); font-weight: 700; }
+.demo-body { padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+
+/* Shared user bubble */
+.user-bubble {
+  max-width: 85%; margin-left: auto;
+  padding: 8px 12px; font-size: 12px; line-height: 1.6;
+  background: var(--accent-light); border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.user-label {
+  text-align: right; font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 3px;
+}
+
+/* ── CURRENT Skill Header ── */
+.cur-skill {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 10px; font-size: 11px;
+  margin-bottom: 4px; border-radius: var(--radius);
+  background: oklch(96% 0.012 250);
+  border: none; border-left: 2px solid var(--accent);
+  max-width: 85%; margin-left: auto;
+}
+.cur-skill svg { width: 12px; height: 12px; flex-shrink: 0; color: var(--accent); }
+.cur-skill .label { color: var(--muted); }
+.cur-skill .name { font-weight: 600; color: var(--fg); font-family: var(--font-mono); }
+
+/* ── VARIANT A: Inline pill ── */
+.va-skill {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; font-size: 10px;
+  border-radius: 100px;
+  background: var(--accent-light); color: var(--accent);
+  font-weight: 600; max-width: 85%; margin-left: auto;
+  margin-bottom: 3px;
+  font-family: var(--font-mono);
+}
+
+/* ── VARIANT B: Subtle text prefix ── */
+.vb-skill {
+  max-width: 85%; margin-left: auto;
+  font-size: 11px; color: var(--muted); margin-bottom: 2px;
+  display: flex; align-items: center; justify-content: flex-end; gap: 4px;
+}
+.vb-skill .name { font-family: var(--font-mono); color: var(--accent); font-weight: 600; }
+
+/* ── VARIANT C: Badge in user label line ── */
+.vc-label-line {
+  display: flex; align-items: center; justify-content: flex-end; gap: 6px;
+  font-size: 10px; color: var(--muted); margin-bottom: 3px;
+}
+.vc-badge {
+  padding: 1px 6px; border-radius: 2px; font-size: 9px;
+  font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em;
+  background: oklch(96% 0.012 250); color: var(--agent);
+  font-family: var(--font-mono);
+}
+
+/* ── Expanded skill content variants ── */
+.skill-expanded {
+  max-width: 85%; margin-left: auto;
+  padding: 8px 12px; font-size: 11px; line-height: 1.6;
+  border-radius: var(--radius);
+  background: oklch(97% 0.012 250);
+  border: 1px solid var(--border);
+  margin-bottom: 4px;
+  max-height: 80px; overflow: hidden;
+  color: var(--muted);
+}
+
+/* ── Multiple skill scenario ── */
+.multi-section { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border); }
+.multi-section-title { font-size: 11px; font-weight: 600; color: var(--fg); margin-bottom: 12px; }
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>Distill: Skill Header 精简对比</h1>
+  <p>展示 3 种 Skill 加载标识方式: 当前方案、内联标签、文本前缀。同时展示多 Skill 加载场景。</p>
+</div>
+
+<div class="demos-grid">
+
+  <!-- ════════════ CURRENT ════════════ -->
+  <div class="demo-panel">
+    <div class="demo-label"><span>A.</span> 当前方案: 左边线卡片</div>
+    <div class="demo-body">
+      <!-- Single skill -->
+      <div>
+        <div class="user-label" style="display:flex;align-items:center;justify-content:flex-end;gap:6px">
+          <span style="font-weight:400;opacity:0.6;font-size:10px">14:32</span> 用户
+        </div>
+        <div class="cur-skill">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M8 2v12"/><path d="M2 8h6"/></svg>
+          <span class="label">加载 Skill：</span><span class="name">code-review</span>
+        </div>
+        <div class="user-bubble">帮我 review 一下 chat area 的代码变更</div>
+      </div>
+
+      <!-- Skill expanded -->
+      <div>
+        <div class="user-label" style="display:flex;align-items:center;justify-content:flex-end;gap:6px">
+          <span style="font-weight:400;opacity:0.6;font-size:10px">14:35</span> 用户
+        </div>
+        <div class="cur-skill" style="border-left-color:var(--muted)">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 10l4-4 4 4"/></svg>
+          <span class="label">加载 Skill：</span><span class="name">remotion-video-design</span>
+        </div>
+        <div class="skill-expanded">
+          ## Remotion Video Design Skill
+          使用此 skill 来规划 Remotion 视频项目，包括场景设计、语音生成、时间线对齐等...
+        </div>
+        <div class="user-bubble">帮我设计一个产品宣传视频</div>
+      </div>
+
+      <!-- Multiple skills -->
+      <div class="multi-section">
+        <div class="multi-section-title">多 Skill 场景</div>
+        <div>
+          <div class="user-label" style="display:flex;align-items:center;justify-content:flex-end;gap:6px">
+            <span style="font-weight:400;opacity:0.6;font-size:10px">14:40</span> 用户
+          </div>
+          <div class="cur-skill">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M8 2v12"/><path d="M2 8h6"/></svg>
+            <span class="label">加载 Skill：</span><span class="name">code-trace</span>
+          </div>
+          <div class="cur-skill" style="margin-top:2px">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M8 2v12"/><path d="M2 8h6"/></svg>
+            <span class="label">加载 Skill：</span><span class="name">issue-trace</span>
+          </div>
+          <div class="user-bubble">分析 MessageBubble 的调用链路并验证问题</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════ VARIANT A: Inline pill ════════════ -->
+  <div class="demo-panel">
+    <div class="demo-label"><span>B.</span> 方案 A: 内联标签</div>
+    <div class="demo-body">
+      <div>
+        <div style="display:flex;align-items:center;justify-content:flex-end;gap:6px;margin-bottom:3px">
+          <span style="font-size:10px;color:var(--muted);font-weight:400;opacity:0.6">14:32</span>
+          <span style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.04em">用户</span>
+        </div>
+        <div style="display:flex;justify-content:flex-end;margin-bottom:3px">
+          <div class="va-skill">code-review</div>
+        </div>
+        <div class="user-bubble">帮我 review 一下 chat area 的代码变更</div>
+      </div>
+
+      <!-- Expanded -->
+      <div>
+        <div style="display:flex;align-items:center;justify-content:flex-end;gap:6px;margin-bottom:3px">
+          <span style="font-size:10px;color:var(--muted);font-weight:400;opacity:0.6">14:35</span>
+          <span style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.04em">用户</span>
+        </div>
+        <div style="display:flex;justify-content:flex-end;margin-bottom:3px">
+          <div class="va-skill" style="cursor:pointer">remotion-video-design ▾</div>
+        </div>
+        <div class="skill-expanded">
+          ## Remotion Video Design Skill
+          使用此 skill 来规划 Remotion 视频项目，包括场景设计、语音生成、时间线对齐等...
+        </div>
+        <div class="user-bubble">帮我设计一个产品宣传视频</div>
+      </div>
+
+      <!-- Multiple -->
+      <div class="multi-section">
+        <div class="multi-section-title">多 Skill 场景</div>
+        <div>
+          <div style="display:flex;align-items:center;justify-content:flex-end;gap:6px;margin-bottom:3px">
+            <span style="font-size:10px;color:var(--muted);font-weight:400;opacity:0.6">14:40</span>
+            <span style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.04em">用户</span>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:4px;margin-bottom:3px">
+            <div class="va-skill">code-trace</div>
+            <div class="va-skill">issue-trace</div>
+          </div>
+          <div class="user-bubble">分析 MessageBubble 的调用链路并验证问题</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════ VARIANT B: Label-line badge ════════════ -->
+  <div class="demo-panel">
+    <div class="demo-label"><span>C.</span> 方案 B: 标签行徽标</div>
+    <div class="demo-body">
+      <div>
+        <div class="vc-label-line">
+          <span class="vc-badge">code-review</span>
+          <span style="font-weight:400;opacity:0.6;font-size:10px">14:32</span>
+          <span style="font-weight:600;text-transform:uppercase;letter-spacing:0.04em">用户</span>
+        </div>
+        <div class="user-bubble">帮我 review 一下 chat area 的代码变更</div>
+      </div>
+
+      <!-- Expanded -->
+      <div>
+        <div class="vc-label-line">
+          <span class="vc-badge" style="cursor:pointer">remotion-video-design ▾</span>
+          <span style="font-weight:400;opacity:0.6;font-size:10px">14:35</span>
+          <span style="font-weight:600;text-transform:uppercase;letter-spacing:0.04em">用户</span>
+        </div>
+        <div class="skill-expanded">
+          ## Remotion Video Design Skill
+          使用此 skill 来规划 Remotion 视频项目...
+        </div>
+        <div class="user-bubble">帮我设计一个产品宣传视频</div>
+      </div>
+
+      <!-- Multiple -->
+      <div class="multi-section">
+        <div class="multi-section-title">多 Skill 场景</div>
+        <div>
+          <div class="vc-label-line">
+            <span class="vc-badge">code-trace</span>
+            <span class="vc-badge">issue-trace</span>
+            <span style="font-weight:400;opacity:0.6;font-size:10px">14:40</span>
+            <span style="font-weight:600;text-transform:uppercase;letter-spacing:0.04em">用户</span>
+          </div>
+          <div class="user-bubble">分析 MessageBubble 的调用链路并验证问题</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div style="max-width:1400px;margin:0 auto;padding:0 40px 40px;font-size:12px;color:var(--muted);line-height:1.8">
+  <strong style="color:var(--fg)">关键差异</strong><br>
+  <strong>A. 当前方案</strong>: 独立的左边线卡片，占用垂直空间，加载文字显式("加载 Skill:")，展开内容与气泡同级<br>
+  <strong>B. 内联标签</strong>: 药丸形标签，右对齐在气泡上方，省空间，多 Skill 时可并排<br>
+  <strong>C. 标签行徽标</strong>: 嵌入时间戳标签行，零额外垂直空间，最紧凑，多 Skill 时平铺在标签行内
+</div>
+
+</body>
+</html>
