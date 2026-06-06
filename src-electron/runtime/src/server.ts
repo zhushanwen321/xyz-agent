@@ -297,8 +297,12 @@ export class SidecarServer implements IMessageBroker {
       case 'message.steer': {
         const steerSid = msg.payload.sessionId
         // steer: abort best-effort, session may not be actively generating
-        // eslint-disable-next-line taste/no-silent-catch -- abort is best-effort; steer must proceed to sendMessage
-        try { await this.sessionService.abort(steerSid) } catch (e) { console.warn('[runtime] steer abort: session not active or abort failed:', e instanceof Error ? e.message : String(e)) }
+        // abort is best-effort; steer must proceed to sendMessage
+        try {
+          await this.sessionService.abort(steerSid)
+        } catch (e) {
+          console.warn('[runtime] steer abort: session not active or abort failed:', e instanceof Error ? e.message : String(e))
+        }
         // RACE CONDITION NOTE: pi's abort is async — the subprocess may still be
         // processing when sendMessage arrives. Pi internally queues the new message
         // and applies it after the current turn completes, so this is safe in practice.

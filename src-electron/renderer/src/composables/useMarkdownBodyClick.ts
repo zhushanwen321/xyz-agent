@@ -29,6 +29,8 @@ export function useMarkdownBodyClick() {
         target.textContent = '已复制'
         setTimeout(() => { target.textContent = '复制' }, COPY_FEEDBACK_MS)
       } catch {
+        // Clipboard API may be denied by browser security policy;
+        // the visual feedback ("复制失败") is sufficient for the user.
         target.textContent = '复制失败'
         setTimeout(() => { target.textContent = '复制' }, COPY_FEEDBACK_MS)
       }

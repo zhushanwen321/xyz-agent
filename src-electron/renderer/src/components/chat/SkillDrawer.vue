@@ -48,7 +48,7 @@ function handleResult(msg: ServerMessage) {
   if (msg.id !== requestId) return
   const payload = msg.payload as { content?: string; error?: string }
   if (payload.error) {
-    renderedContent.value = `<p style="color:var(--muted)">加载失败: ${payload.error}</p>`
+    renderedContent.value = '<p class="skill-drawer__empty">加载失败: ' + payload.error + '</p>'
   } else if (payload.content) {
     const theme = settings.theme === 'dark' ? 'dark' : settings.theme === 'light' ? 'light'
       : window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
@@ -76,7 +76,7 @@ watch(() => props.visible, async (vis) => {
   on('file.read:error', handleResult)
 
   if (!props.skillLocation) {
-    renderedContent.value = '<p style="color:var(--muted)">无 Skill 内容可显示</p>'
+    renderedContent.value = '<p class="skill-drawer__empty">无 Skill 内容可显示</p>'
     return
   }
   loading.value = true
@@ -126,6 +126,9 @@ onBeforeUnmount(() => {
 .skill-drawer__body {
   flex: 1; overflow-y: auto; padding: 14px 16px;
   font-size: 12px; line-height: 1.7;
+}
+.skill-drawer__empty {
+  color: var(--muted);
 }
 
 .skill-drawer__backdrop {

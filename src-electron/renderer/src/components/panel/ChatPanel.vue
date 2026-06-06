@@ -360,7 +360,7 @@ function switchAgent(id: string) {
   border-radius: 50%;
   background: var(--surface);
   border: 1px solid var(--border);
-  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  box-shadow: var(--shadow-xs);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -370,7 +370,7 @@ function switchAgent(id: string) {
 }
 .scroll-fab:hover {
   color: var(--fg);
-  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  box-shadow: var(--shadow-md);
   border-color: var(--muted);
 }
 

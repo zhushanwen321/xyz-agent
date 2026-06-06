@@ -1,5 +1,5 @@
 <template>
-  <div class="chat-outline" @keydown.escape="onEsc">
+  <div class="chat-outline">
     <!-- Toggle button (always visible, same style as scroll-fab) -->
     <button
       class="chat-outline__toggle"
@@ -118,26 +118,21 @@ const progressPercent = computed(() => {
   return Math.round((users / total) * 100)
 })
 
-function toggle() {
-  expanded.value = !expanded.value
-}
-
-function onEsc() {
+// Global ESC listener (component may not have focus)
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- addEventListener signature requires KeyboardEvent param
+function globalEscHandler(_e: KeyboardEvent) {
   if (expanded.value) {
     expanded.value = false
   }
 }
 
+function toggle() {
+  expanded.value = !expanded.value
+}
+
 function scrollToItem(index: number, item: OutlineItem) {
   activeIndex.value = index
   emit('scroll-to-message', item.messageId)
-}
-
-// Global ESC listener (component may not have focus)
-function globalEscHandler(e: KeyboardEvent) {
-  if (e.key === 'Escape' && expanded.value) {
-    expanded.value = false
-  }
 }
 
 onMounted(() => {

@@ -27,6 +27,8 @@ const props = withDefaults(
   }>(),
   {
     panelId: '',
+    doneCount: 0,
+    alertCount: 0,
   }
 )
 
@@ -198,12 +200,12 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
     </button>
 
     <!-- Notification chips -->
-    <div v-if="(doneCount ?? 0) > 0 || (alertCount ?? 0) > 0" class="panel-notifs">
-      <span v-if="(doneCount ?? 0) > 0" class="notif-chip notif-chip--done" @click="$emit('open-inspector', 'done')">
+    <div v-if="doneCount > 0 || alertCount > 0" class="panel-notifs">
+      <span v-if="doneCount > 0" class="notif-chip notif-chip--done" @click="$emit('open-inspector', 'done')">
         <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" style="width:10px;height:10px"><polyline points="2 6 5 9 10 3"/></svg>
         <span class="notif-chip__num">{{ doneCount }}</span>
       </span>
-      <span v-if="(alertCount ?? 0) > 0" class="notif-chip notif-chip--alert" @click="$emit('open-inspector', 'alert')">
+      <span v-if="alertCount > 0" class="notif-chip notif-chip--alert" @click="$emit('open-inspector', 'alert')">
         <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" style="width:10px;height:10px"><circle cx="6" cy="6" r="4.5"/><path d="M6 4v2.5M6 8v.5"/></svg>
         <span class="notif-chip__num">{{ alertCount }}</span>
       </span>

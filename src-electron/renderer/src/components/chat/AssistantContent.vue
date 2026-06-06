@@ -24,11 +24,12 @@
 
       <!-- Tool call blocks -->
       <template v-else-if="section.type === 'toolCall'">
-        <ToolCallCard
-          v-for="block in section.blocks"
-          :key="block.refId"
-          :tool-call="resolveToolCall(block.refId)!"
-        />
+        <template v-for="block in section.blocks" :key="block.refId">
+          <ToolCallCard
+            v-if="resolveToolCall(block.refId)"
+            :tool-call="resolveToolCall(block.refId)!"
+          />
+        </template>
       </template>
 
       <!-- Text block -->
