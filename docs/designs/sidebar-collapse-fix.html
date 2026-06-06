@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sidebar Collapse — Fix Demos</title>
+<style>
+  :root {
+    --bg: oklch(97% 0.010 75);
+    --surface: oklch(99% 0.006 75);
+    --fg: oklch(22% 0.012 75);
+    --muted: oklch(50% 0.010 75);
+    --border: oklch(90% 0.008 75);
+    --accent: oklch(55% 0.08 195);
+    --accent-light: oklch(93% 0.03 195);
+    --hover-bg: oklch(96% 0.01 70);
+    --font-body: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    --font-display: 'Tiempos Headline', Georgia, serif;
+    --radius: 1px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: var(--font-body);
+    background: oklch(94% 0.006 75);
+    color: var(--fg);
+    padding: 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 48px;
+  }
+  h1 {
+    font-family: var(--font-display);
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin-bottom: 6px;
+  }
+  .desc {
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 20px;
+    line-height: 1.6;
+  }
+  .tag {
+    display: inline-block;
+    padding: 2px 8px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--accent);
+    background: var(--accent-light);
+    border-radius: var(--radius);
+    margin-bottom: 10px;
+  }
+
+  /* Window chrome */
+  .window {
+    position: relative;
+    width: 100%;
+    max-width: 960px;
+    height: 480px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--bg);
+  }
+  .traffic-lights {
+    position: absolute;
+    top: 13px;
+    left: 14px;
+    display: flex;
+    gap: 8px;
+    z-index: 100;
+  }
+  .traffic-lights span {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+  }
+  .tl-close { background: oklch(65% 0.18 25); }
+  .tl-min { background: oklch(78% 0.15 85); }
+  .tl-max { background: oklch(72% 0.14 145); }
+
+  /* Grid */
+  .app-grid {
+    display: grid;
+    height: 100%;
+  }
+  .app-grid--expanded {
+    grid-template-columns: 240px 1fr;
+  }
+  .app-grid--collapsed {
+    grid-template-columns: 1fr;
+  }
+
+  /* Sidebar */
+  .sidebar {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .sidebar-header {
+    padding: 8px 14px 4px 78px;
+  }
+  .sidebar-brand {
+    font-family: var(--font-display);
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--muted);
+  }
+  .sidebar-brand em { font-style: normal; color: var(--accent); }
+  .sidebar-body {
+    flex: 1;
+    padding: 8px;
+    border-top: 1px solid var(--border);
+  }
+  .sidebar-item {
+    padding: 6px 8px;
+    font-size: 12px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    color: var(--muted);
+    margin-bottom: 2px;
+  }
+  .sidebar-item.active {
+    background: var(--accent-light);
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  /* Content area */
+  .content-area {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: hidden;
+    position: relative;
+    background: var(--bg);
+  }
+
+  /* Panel bar */
+  .panel-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 40px;
+    flex-shrink: 0;
+    font-size: 12px;
+    padding: 0 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .panel-bar--safe {
+    padding-left: 78px;
+  }
+
+  .anchor-dropdown {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 8px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 12px;
+    transition: background 0.15s;
+  }
+  .anchor-dropdown:hover { background: var(--accent-light); }
+  .anchor-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: oklch(62% 0.10 145);
+  }
+  .anchor-caret { font-size: 9px; color: var(--muted); }
+  .breadcrumb { font-size: 11px; color: var(--muted); }
+  .breadcrumb strong { color: var(--fg); font-weight: 500; }
+  .breadcrumb-branch {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    margin-left: 8px;
+    padding: 0 5px;
+    height: 16px;
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--accent);
+    background: var(--accent-light);
+    border-radius: var(--radius);
+  }
+
+  /* Chat */
+  .chat-area {
+    flex: 1;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    overflow-y: auto;
+  }
+  .msg {
+    max-width: 70%;
+    padding: 10px 14px;
+    border-radius: var(--radius);
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  .msg-user {
+    align-self: flex-end;
+    background: var(--accent-light);
+    color: var(--accent);
+  }
+  .msg-assistant {
+    align-self: flex-start;
+    background: oklch(98% 0.008 250);
+    border: 1px solid var(--border);
+  }
+  .msg-system {
+    align-self: center;
+    font-size: 11px;
+    color: var(--muted);
+    background: var(--surface);
+    padding: 4px 12px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+  }
+
+  /* Split divider */
+  .split-divider {
+    width: 1px;
+    background: var(--border);
+    flex-shrink: 0;
+  }
+
+  /* ── Issue 1: overlap indicator ── */
+  .danger-zone {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 78px;
+    height: 40px;
+    background: oklch(55% 0.12 25 / 0.06);
+    border-bottom: 1px dashed oklch(55% 0.12 25 / 0.25);
+    z-index: 10;
+    pointer-events: none;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding-bottom: 3px;
+  }
+  .danger-zone span {
+    font-size: 9px;
+    color: oklch(55% 0.12 25 / 0.6);
+    font-weight: 600;
+  }
+
+  /* ── Issue 2: Floating Pill (chosen solution) ── */
+  .expand-pill {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    transform: translateY(-50%);
+    width: 24px;
+    height: 48px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: none;
+    border-radius: 0 var(--radius) var(--radius) 0;
+    cursor: pointer;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    color: var(--muted);
+    box-shadow: 1px 0 4px rgba(0,0,0,0.04);
+  }
+  .expand-pill:hover {
+    background: var(--hover-bg);
+    border-color: var(--muted);
+    color: var(--fg);
+    width: 28px;
+    box-shadow: 2px 0 6px rgba(0,0,0,0.06);
+  }
+
+  /* Toggle buttons */
+  .toggle-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .toggle-btn {
+    padding: 5px 14px;
+    font-size: 11px;
+    font-weight: 500;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    font-family: var(--font-body);
+    transition: all 0.15s;
+  }
+  .toggle-btn:hover { border-color: var(--muted); color: var(--fg); }
+  .toggle-btn.active { background: var(--accent-light); border-color: var(--accent); color: var(--accent); }
+
+  /* Compare grid */
+  .compare-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+  .compare-grid .window { max-width: 100%; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- ISSUE 1: Traffic Lights Safe Zone — with split panel          -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<h1>Issue 1: Traffic Lights Safe Zone</h1>
+<p class="desc">
+  Sidebar collapsed 后，PanelBar 需要避开 macOS traffic lights（78px 区域）。<br>
+  Split panel 时，只有<strong>最左侧</strong>的 PanelBar 需要 safe-zone padding，右侧 panel 不受影响。<br>
+  判断逻辑：PanelBar 检测自己是否是窗口最左侧的 panel（通过 DOM 位置或 prop 传入）。
+</p>
+
+<div class="compare-grid">
+  <!-- Problem: single panel -->
+  <div>
+    <span class="tag">Problem — single panel</span>
+    <div class="window" style="height: 360px;">
+      <div class="traffic-lights">
+        <span class="tl-close"></span><span class="tl-min"></span><span class="tl-max"></span>
+      </div>
+      <div class="danger-zone"><span>overlap</span></div>
+      <div class="app-grid app-grid--collapsed">
+        <div class="content-area">
+          <div class="panel-bar" style="padding-left: 14px;">
+            <div class="anchor-dropdown">
+              <span class="anchor-dot"></span><span>主线对话</span><span class="anchor-caret">&#9662;</span>
+            </div>
+            <span class="breadcrumb"><strong>xyz-agent</strong></span>
+          </div>
+          <div class="chat-area">
+            <div class="msg msg-user">"主线对话" 被 traffic lights 遮挡</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Fixed: single panel -->
+  <div>
+    <span class="tag">Fixed — single panel</span>
+    <div class="window" style="height: 360px;">
+      <div class="traffic-lights">
+        <span class="tl-close"></span><span class="tl-min"></span><span class="tl-max"></span>
+      </div>
+      <div class="app-grid app-grid--collapsed">
+        <div class="content-area">
+          <div class="panel-bar panel-bar--safe">
+            <div class="anchor-dropdown">
+              <span class="anchor-dot"></span><span>主线对话</span><span class="anchor-caret">&#9662;</span>
+            </div>
+            <span class="breadcrumb"><strong>xyz-agent</strong></span>
+          </div>
+          <div class="chat-area">
+            <div class="msg msg-assistant">padding-left: 78px，文字完整显示在安全区域内</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Split panel scenarios -->
+<div style="margin-top: 32px;">
+  <span class="tag">Problem — split panel (left-right)</span>
+  <p class="desc">
+    左右分屏时，左侧 panel 的 header 被遮挡，右侧 panel 正常。<br>
+    点击下方按钮切换问题/修复状态。
+  </p>
+
+  <div class="toggle-row">
+    <button class="toggle-btn active" onclick="toggleSplit('problem')">Problem</button>
+    <button class="toggle-btn" onclick="toggleSplit('fixed')">Fixed</button>
+  </div>
+
+  <div class="window" id="split-window" style="height: 400px;">
+    <div class="traffic-lights">
+      <span class="tl-close"></span><span class="tl-min"></span><span class="tl-max"></span>
+    </div>
+    <div id="split-danger" class="danger-zone"><span>overlap</span></div>
+    <div class="app-grid app-grid--collapsed">
+      <div class="content-area">
+        <!-- Split: left panel + divider + right panel -->
+        <div style="display:flex; flex:1; min-height:0;">
+          <!-- Left panel -->
+          <div style="flex:1; display:flex; flex-direction:column; min-width:0;">
+            <div class="panel-bar" id="split-left-bar" style="padding-left: 14px;">
+              <div class="anchor-dropdown">
+                <span class="anchor-dot"></span><span>主线对话</span><span class="anchor-caret">&#9662;</span>
+              </div>
+              <span class="breadcrumb"><strong>xyz-agent</strong></span>
+            </div>
+            <div class="chat-area">
+              <div class="msg msg-user">左侧面板</div>
+              <div class="msg msg-assistant">这个 header 被遮挡了</div>
+            </div>
+          </div>
+          <!-- Divider -->
+          <div class="split-divider"></div>
+          <!-- Right panel -->
+          <div style="flex:1; display:flex; flex-direction:column; min-width:0;">
+            <div class="panel-bar">
+              <div class="anchor-dropdown">
+                <span class="anchor-dot" style="background: oklch(55% 0.15 250);"></span><span>SubAgent</span><span class="anchor-caret">&#9662;</span>
+              </div>
+              <span class="breadcrumb"><strong>auth-refactor</strong></span>
+            </div>
+            <div class="chat-area">
+              <div class="msg msg-assistant">右侧面板，header 不受 traffic lights 影响</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function toggleSplit(state) {
+  const bar = document.getElementById('split-left-bar');
+  const danger = document.getElementById('split-danger');
+  const btns = document.querySelectorAll('.toggle-btn');
+  btns.forEach(b => b.classList.remove('active'));
+
+  if (state === 'problem') {
+    bar.classList.remove('panel-bar--safe');
+    bar.style.paddingLeft = '14px';
+    danger.style.display = '';
+    btns[0].classList.add('active');
+  } else {
+    bar.classList.add('panel-bar--safe');
+    bar.style.paddingLeft = '';
+    danger.style.display = 'none';
+    btns[1].classList.add('active');
+  }
+}
+</script>
+
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- ISSUE 2: Floating Pill Expand Button                         -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<div style="margin-top: 48px; padding-top: 40px; border-top: 1px solid var(--border);">
+  <h1>Issue 2: Expand Button — Floating Pill</h1>
+  <p class="desc">
+    左侧居中的浮动小按钮，始终可见但不抢眼。hover 时略微展开并加深。<br>
+    使用设计系统 token（--surface, --border, --muted），不引入新颜色。
+  </p>
+
+  <div class="toggle-row">
+    <button class="toggle-btn active" onclick="togglePill('expanded')">Sidebar Expanded</button>
+    <button class="toggle-btn" onclick="togglePill('collapsed')">Sidebar Collapsed</button>
+  </div>
+
+  <div class="window" id="pill-window" style="height: 480px;">
+    <div class="traffic-lights" id="pill-tl">
+      <span class="tl-close"></span><span class="tl-min"></span><span class="tl-max"></span>
+    </div>
+    <div class="app-grid app-grid--expanded" id="pill-grid">
+      <!-- Sidebar -->
+      <div class="sidebar" id="pill-sidebar">
+        <div class="sidebar-header">
+          <div class="sidebar-brand">xyz<em>-agent</em></div>
+        </div>
+        <div class="sidebar-body">
+          <div class="sidebar-item active">feat-chat-area-impr</div>
+          <div class="sidebar-item">fix-sidebar-collapse</div>
+          <div class="sidebar-item">add-plugin-system</div>
+          <div class="sidebar-item">dark-theme-polish</div>
+        </div>
+      </div>
+
+      <!-- Content -->
+      <div class="content-area" id="pill-content">
+        <!-- Floating pill expand button -->
+        <button class="expand-pill" id="pill-expand" style="display: none;" title="Expand sidebar" onclick="togglePill('expanded')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+
+        <div class="panel-bar" id="pill-bar">
+          <div class="anchor-dropdown">
+            <span class="anchor-dot"></span><span>主线对话</span><span class="anchor-caret">&#9662;</span>
+          </div>
+          <span class="breadcrumb"><strong>xyz-agent</strong> / <strong>feat-chat</strong></span>
+          <span class="breadcrumb-branch">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+            feat-chat
+          </span>
+        </div>
+
+        <div class="chat-area">
+          <div class="msg msg-user">帮我重构 auth 模块</div>
+          <div class="msg msg-assistant">好的，我来分析 auth 模块的结构并制定重构方案。</div>
+          <div class="msg msg-assistant">已检查路由守卫，建议分为三层：认证层、授权层、审计层。具体改动如下...</div>
+          <div class="msg-system">context compacted · 12000 → 3000 tokens</div>
+          <div class="msg msg-user">审计层需要记录哪些信息？</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- COMBINED: Both fixes together + split panel                   -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<div style="margin-top: 48px; padding-top: 40px; border-top: 1px solid var(--border);">
+  <h1>Combined: Floating Pill + Safe Zone + Split Panel</h1>
+  <p class="desc">
+    两个修复同时生效。左右 split panel：左侧 header 有 safe-zone，右侧不受影响。<br>
+    Floating Pill 居中显示在左侧边缘。
+  </p>
+
+  <div class="toggle-row">
+    <button class="toggle-btn active" onclick="toggleCombined('expanded')">Expanded</button>
+    <button class="toggle-btn" onclick="toggleCombined('collapsed')">Collapsed</button>
+  </div>
+
+  <div class="window" id="combo-window" style="height: 480px;">
+    <div class="traffic-lights">
+      <span class="tl-close"></span><span class="tl-min"></span><span class="tl-max"></span>
+    </div>
+    <div class="app-grid app-grid--expanded" id="combo-grid">
+      <!-- Sidebar -->
+      <div class="sidebar" id="combo-sidebar">
+        <div class="sidebar-header">
+          <div class="sidebar-brand">xyz<em>-agent</em></div>
+        </div>
+        <div class="sidebar-body">
+          <div class="sidebar-item active">feat-chat-area-impr</div>
+          <div class="sidebar-item">fix-sidebar-collapse</div>
+          <div class="sidebar-item">add-plugin-system</div>
+        </div>
+      </div>
+
+      <!-- Content -->
+      <div class="content-area">
+        <!-- Floating pill -->
+        <button class="expand-pill" id="combo-pill" style="display: none;" title="Expand sidebar" onclick="toggleCombined('expanded')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+
+        <!-- Split layout -->
+        <div style="display:flex; flex:1; min-height:0;">
+          <!-- Left panel -->
+          <div style="flex:1; display:flex; flex-direction:column; min-width:0;">
+            <div class="panel-bar" id="combo-left-bar">
+              <div class="anchor-dropdown">
+                <span class="anchor-dot"></span><span>主线对话</span><span class="anchor-caret">&#9662;</span>
+              </div>
+              <span class="breadcrumb"><strong>xyz-agent</strong> / <strong>feat-chat</strong></span>
+            </div>
+            <div class="chat-area">
+              <div class="msg msg-user">重构 auth 模块</div>
+              <div class="msg msg-assistant">好的，分析结构并制定方案。</div>
+              <div class="msg msg-assistant">建议分三层：认证、授权、审计。</div>
+            </div>
+          </div>
+          <!-- Divider -->
+          <div class="split-divider"></div>
+          <!-- Right panel -->
+          <div style="flex:1; display:flex; flex-direction:column; min-width:0;">
+            <div class="panel-bar">
+              <div class="anchor-dropdown">
+                <span class="anchor-dot" style="background: oklch(55% 0.15 250);"></span><span>SubAgent</span><span class="anchor-caret">&#9662;</span>
+              </div>
+              <span class="breadcrumb"><strong>auth-refactor</strong></span>
+            </div>
+            <div class="chat-area">
+              <div class="msg msg-user">检查路由守卫</div>
+              <div class="msg msg-assistant">发现 3 处中间件缺失。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function togglePill(state) {
+  const grid = document.getElementById('pill-grid');
+  const sidebar = document.getElementById('pill-sidebar');
+  const expand = document.getElementById('pill-expand');
+  const bar = document.getElementById('pill-bar');
+  const btns = document.querySelectorAll('.toggle-btn');
+
+  // Find the toggle buttons in the pill section
+  const pillBtns = document.querySelectorAll('#pill-window').length;
+
+  document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+
+  if (state === 'expanded') {
+    grid.className = 'app-grid app-grid--expanded';
+    sidebar.style.display = '';
+    expand.style.display = 'none';
+    bar.classList.remove('panel-bar--safe');
+    bar.style.paddingLeft = '14px';
+  } else {
+    grid.className = 'app-grid app-grid--collapsed';
+    sidebar.style.display = 'none';
+    expand.style.display = '';
+    bar.classList.add('panel-bar--safe');
+    bar.style.paddingLeft = '';
+  }
+  event.target.classList.add('active');
+}
+
+function toggleCombined(state) {
+  const grid = document.getElementById('combo-grid');
+  const sidebar = document.getElementById('combo-sidebar');
+  const pill = document.getElementById('combo-pill');
+  const bar = document.getElementById('combo-left-bar');
+
+  document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+
+  if (state === 'expanded') {
+    grid.className = 'app-grid app-grid--expanded';
+    sidebar.style.display = '';
+    pill.style.display = 'none';
+    bar.classList.remove('panel-bar--safe');
+    bar.style.paddingLeft = '14px';
+  } else {
+    grid.className = 'app-grid app-grid--collapsed';
+    sidebar.style.display = 'none';
+    pill.style.display = '';
+    bar.classList.add('panel-bar--safe');
+    bar.style.paddingLeft = '';
+  }
+  event.target.classList.add('active');
+}
+</script>
+
+</body>
+</html>

@@ -18,8 +18,19 @@ export class TreeMessageHandler {
   constructor(private ctx: TreeHandlerContext) {}
 
   async handleTreeMessage(msg: ClientMessage, ws: WsType): Promise<void> {
-    const payload = msg.payload as { sessionId: string; targetEntryId?: string; entryId?: string }
+    const payload = msg.payload as { sessionId?: string; targetEntryId?: string; entryId?: string }
     const sid = payload.sessionId
+    // Fail-fast on missing sessionId — surface a structured error to the client
+    // rather than letting downstream code throw a TypeError on undefined.
+    if (!sid) {
+      // Return error matching the request message type
+      const errorType = msg.type === 'session.tree-data' ? 'session.tree-data'
+        : msg.type === 'session.tree-navigate' ? 'session.tree-navigate-result'
+          : msg.type === 'session.tree-fork' ? 'session.tree-fork-result'
+            : msg.type === 'session.tree-clone' ? 'session.tree-clone-result'
+              : 'session.tree-capability'
+      return this.ctx.send(ws, { type: errorType as ServerMessage['type'], id: msg.id, payload: { success: false, error: 'sessionId required' } })
+    }
     switch (msg.type) {
       case 'session.tree-data': {
         try {
@@ -40,7 +51,10 @@ export class TreeMessageHandler {
         }
       }
       case 'session.tree-navigate': {
-        const targetEntryId = payload.targetEntryId as string
+        const targetEntryId = payload.targetEntryId
+        if (!targetEntryId) {
+          return this.ctx.send(ws, { type: 'session.tree-navigate-result', id: msg.id, payload: { sessionId: sid, success: false, error: 'targetEntryId required' } })
+        }
         try {
           const result = await this.ctx.treeService.navigateTree(sid, targetEntryId)
           return this.ctx.send(ws, { type: 'session.tree-navigate-result', id: msg.id, payload: { sessionId: sid, ...result } })
@@ -52,11 +66,16 @@ export class TreeMessageHandler {
         }
       }
       case 'session.tree-fork': {
-        const entryId = payload.entryId as string
+        const entryId = payload.entryId
+        if (!entryId) {
+          return this.ctx.send(ws, { type: 'session.tree-fork-result', id: msg.id, payload: { sessionId: sid, success: false, error: 'entryId required' } })
+        }
         try {
+          const originalLabel = this.ctx.sessionService.getSummary(sid)?.label ?? 'session'
+          const newLabel = originalLabel + '-fork'
           const result = await this.ctx.treeService.forkFromEntry(sid, entryId)
           if (result.success && result.newSessionId) {
-            await this.ctx.sessionService.rebindAfterFork(sid, result.newSessionId, result.sessionFile)
+            await this.ctx.sessionService.rebindAfterFork(sid, result.newSessionId, newLabel, result.sessionFile)
             this.ctx.broadcastSessionList()
           }
           return this.ctx.send(ws, { type: 'session.tree-fork-result', id: msg.id, payload: { sessionId: sid, ...result } })
@@ -79,8 +98,10 @@ export class TreeMessageHandler {
       }
       case 'session.tree-clone': {
         try {
+          const originalLabel = this.ctx.sessionService.getSummary(sid)?.label ?? 'session'
           const result = await this.ctx.treeService.cloneSession(sid)
-          if (result.success) {
+          if (result.success && result.newSessionId) {
+            await this.ctx.sessionService.renameSession(result.newSessionId, originalLabel + '-clone')
             this.ctx.broadcastSessionList()
           }
           return this.ctx.send(ws, { type: 'session.tree-clone-result', id: msg.id, payload: { sessionId: sid, ...result } })

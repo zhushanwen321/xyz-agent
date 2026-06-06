@@ -5,7 +5,9 @@ import { usePanelStore } from '../../stores/panel'
 import { useSession } from '../../composables/useSession'
 
 import { useNavigationStore } from '../../stores/navigation'
-import { SessionItem } from '../sidebar'
+import { SessionItem, SidebarCollapseHandle } from '../sidebar'
+import { useSidebarStore } from '../../stores/sidebar'
+import { useLayoutStore } from '../../stores/layout'
 import { Button } from '../../design-system'
 import { useI18n } from 'vue-i18n'
 
@@ -16,6 +18,8 @@ const appVersion = __APP_VERSION__
 const { t } = useI18n()
 const sessionStore = useSessionStore()
 const panelStore = usePanelStore()
+const sidebarStore = useSidebarStore()
+const layoutStore = useLayoutStore()
 
 const navStore = useNavigationStore()
 const { switchSession, deleteSession, renameSession } = useSession()
@@ -29,8 +33,8 @@ defineEmits<{
 const renamingSessionId = ref<string | null>(null)
 
 // hiddenInset 模式下 traffic lights 始终存在（非全屏）；全屏时无 traffic lights
-// TODO: 通过 Electron API 检测全屏状态
-const isFullscreen = ref(false)
+// Source of truth: useLayoutStore, kept in sync via window.electronAPI.onFullscreenChanged
+const isFullscreen = computed(() => layoutStore.isFullscreen)
 
 function dirname(cwd: string): string {
   const parts = cwd.replace(/\/$/, '').split('/')
@@ -66,10 +70,11 @@ function handleSessionClick(sessionId: string) {
 }
 
 const isSettingsActive = computed(() => navStore.currentView === 'settings')
+const isCollapsed = computed(() => sidebarStore.collapsed)
 </script>
 
 <template>
-  <aside class="sidebar">
+  <aside v-if="!isCollapsed" class="sidebar">
     <!-- Header: two rows -->
     <div class="sidebar-header" :class="{ 'sidebar-header--fullscreen': isFullscreen }">
       <!-- Row 1: traffic lights space (non-fullscreen) or logo (fullscreen) + nav buttons right -->
@@ -99,6 +104,15 @@ const isSettingsActive = computed(() => navStore.currentView === 'settings')
           <Button variant="ghost" size="icon" class="ctrl-btn" title="Forward" @click="navStore.forward()" :disabled="!navStore.canGoForward">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 3l5 5-5 5"/></svg>
           </Button>
+
+          <!-- Collapse sidebar button: last item in nav row, panel-left icon -->
+          <!-- eslint-disable-next-line taste/no-native-html-elements -->
+          <button class="ctrl-btn" title="Collapse sidebar" @click="sidebarStore.toggle()">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="1.5" y="1.5" width="13" height="13" rx="2"/>
+              <line x1="11" y1="1.5" x2="11" y2="14.5"/>
+            </svg>
+          </button>
         </div>
       </div>
       <!-- Row 2: logo + new session (non-fullscreen) or full-width new session (fullscreen) -->
@@ -138,8 +152,10 @@ const isSettingsActive = computed(() => navStore.currentView === 'settings')
         {{ t('sidebar.noSessions') }}
       </div>
     </div>
-
   </aside>
+
+  <!-- Standalone expand button when sidebar is collapsed -->
+  <SidebarCollapseHandle v-if="isCollapsed" />
 </template>
 
 <style scoped>

@@ -7,7 +7,7 @@ import type { SkillInfo, AgentInfo } from './provider'
 export type ClientMessageType =
   | 'session.create' | 'session.delete' | 'session.list' | 'session.switch' | 'session.history'
   | 'session.compact' | 'session.clear' | 'session.restore' | 'session.rename'
-  | 'message.send' | 'message.abort'
+  | 'message.send' | 'message.abort' | 'message.steer' | 'message.follow_up'
   | 'config.getProviders' | 'config.setProvider' | 'config.deleteProvider' | 'config.setToolPermissions'
   | 'config.discoverModels'
   | 'config.scanSkills' | 'config.setSkill' | 'config.deleteSkill'
@@ -24,6 +24,7 @@ export type ClientMessageType =
   | 'plugin.executeCommand'
   | 'plugin.config.get' | 'plugin.config.set'
   | 'plugin.uiResponse'
+  | 'file.read'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -53,6 +54,8 @@ export interface ClientMessageMap {
   'session.rename': { sessionId: string; name: string }
   'message.send': { sessionId: string; content: string; subagent?: { agent: string; task: string } }
   'message.abort': { sessionId: string }
+  'message.steer': { sessionId: string; content: string }
+  'message.follow_up': { sessionId: string; content: string }
   'session.tree-data': { sessionId: string }
   'session.tree-navigate': { sessionId: string; targetEntryId: string }
   'session.tree-fork': { sessionId: string; entryId: string }
@@ -90,6 +93,7 @@ export interface ClientMessageMap {
   'plugin.config.get': { pluginId: string; key?: string }
   'plugin.config.set': { pluginId: string; key: string; value: unknown }
   'plugin.uiResponse': { requestId: string; result: unknown }
+  'file.read': { path: string }
 }
 
 export type ClientMessage =
@@ -105,6 +109,8 @@ export type ClientMessage =
   | { type: 'session.rename'; id?: string; payload: ClientMessageMap['session.rename'] }
   | { type: 'message.send'; id?: string; payload: ClientMessageMap['message.send'] }
   | { type: 'message.abort'; id?: string; payload: ClientMessageMap['message.abort'] }
+  | { type: 'message.steer'; id?: string; payload: ClientMessageMap['message.steer'] }
+  | { type: 'message.follow_up'; id?: string; payload: ClientMessageMap['message.follow_up'] }
   | { type: 'session.tree-data'; id?: string; payload: ClientMessageMap['session.tree-data'] }
   | { type: 'session.tree-navigate'; id?: string; payload: ClientMessageMap['session.tree-navigate'] }
   | { type: 'session.tree-fork'; id?: string; payload: ClientMessageMap['session.tree-fork'] }
@@ -142,6 +148,7 @@ export type ClientMessage =
   | { type: 'plugin.config.get'; id?: string; payload: ClientMessageMap['plugin.config.get'] }
   | { type: 'plugin.config.set'; id?: string; payload: ClientMessageMap['plugin.config.set'] }
   | { type: 'plugin.uiResponse'; id?: string; payload: ClientMessageMap['plugin.uiResponse'] }
+  | { type: 'file.read'; id?: string; payload: ClientMessageMap['file.read'] }
 
 // ── 辅助类型 ────────────────────────────────────────────────────
 
@@ -182,6 +189,7 @@ export type ServerMessageType =
   | 'message.bashExecution' | 'message.compactionSummary' | 'message.branchSummary'
   | 'message.auto_retry_start' | 'message.auto_retry_end' | 'message.queue_update'
   | 'message.stream_error'
+  | 'file.read:result' | 'file.read:error'
 
 export interface ServerMessage {
   type: ServerMessageType

@@ -259,6 +259,109 @@ borderRadius: {
 
 **设计意图：** 1px 的锐利几何风格是 xyz-agent 的视觉标识。接近零但不为零的圆角提供微小软化的同时保持整体锋利感。
 
+### 7.2 Markdown 文本元素样式规范
+
+**适用于 `.msg__body`（聊天消息体、v-html 渲染的 markdown 容器）。** 参照 `@tailwindcss/typography` 和 `ChatGPT-Next-Web` 的主流范式。完整调研：`docs/research/markdown-list-styling-research.md`。
+
+#### 7.2.1 v-html 包装陷阱（必读）
+
+`<MessageBubble>` 的 markdown 容器结构是：
+
+```html
+<div class="msg__body">
+  <span v-html="renderedContent">   <!-- 多了一层 <span> -->
+    <ul>...</ul>
+  </span>
+</div>
+```
+
+**因此 `.msg__body > ul` 不匹配**，必须用后代选择器 `.msg__body ul`。这是其他 Chat UI（lobe-chat、shadcn）也普遍存在的结构。
+
+#### 7.2.2 列表样式范式
+
+```css
+/* 主流选择: outside + padding-left，不用 inside */
+.msg__body ul, .msg__body ol {
+  margin-top: 0;
+  margin-bottom: 12px;
+  padding-left: 1.5em;   /* 12px 聊天气泡下 = 18px，介于 GitHub (2em) 和 typography (1.625em) 之间 */
+}
+.msg__body ol { list-style-type: decimal; }  /* Tailwind preflight 重置了 list-style: none，需显式恢复 */
+.msg__body ul { list-style-type: disc; }
+.msg__body li { margin-top: 0.15em; margin-bottom: 0.15em; }
+.msg__body li + li { margin-top: 0.25em; }
+.msg__body li > p { margin-top: 0; margin-bottom: 0; }  /* 关键: li 内的 p (markdown-it 输出) 不撑开间距 */
+.msg__body li ul, .msg__body li ol { margin-top: 0.25em; margin-bottom: 0.25em; }
+```
+
+#### 7.2.3 为什么不用 `list-style-position: inside`
+
+| 模式 | 多行换行后表现 | 主流选择 |
+|------|----------------|---------|
+| `outside`（默认） | 换行后文字左对齐 li 容器边缘 | typography / NextChat / GitHub |
+| `inside` | 换行后文字缩进到标记下方（看起来像两层缩进） | **仅** streamdown（Vercel 流式聊天） |
+
+聊天场景消息宽度窄，文字经常换行，**必须用 `outside`**。仅流式渲染 + li 极短时可考虑 `inside`。
+
+#### 7.2.4 调试陷阱
+
+CSS 改了看不出效果时，按顺序检查：
+
+1. **选择器对了吗？** `document.querySelectorAll('.msg__body > ul').length === 0` 说明 `>` 没匹配（v-html 包装陷阱）
+2. **CSS 规则被覆盖？** 遍历 `document.styleSheets` 找所有匹配规则
+3. **Vite HMR 重载了？** `style.css` 改了之后需要等 HMR 推送，computed style 才会更新
+4. **DOM 实际值？** `getComputedStyle(el).listStylePosition` 看真实生效值（不是源码写的值）
+
+#### 7.2.5 不要引入 @tailwindcss/typography
+
+- 增加 ~20KB CSS 产出
+- 带来大量不需要的样式（h1-h6、figure、video 等 chat 场景不需要）
+- 与现有 CSS 变量主题系统冲突
+
+聊天 markdown 样式**手写**优于引入 prose 类。
+
+#### 7.2.6 [HISTORICAL] Skill 展开内容必须强制使用 dark Shiki 主题
+
+**这条规则来自 2026-06 的视觉 bug：用户反馈 skill-header 展开时代码块"line 1 占了 2 行"。**
+
+**根因**：
+
+`MessageBubble.vue` 渲染 skill 展开内容时调 `renderFull(payload.content, theme, { codeTheme: theme })` —— `codeTheme` 直接用 app 主题。当 app 是 light 主题时，Shiki 用 `github-light` 主题（黑字白底）。
+
+但 skill 内容**渲染到 `--user-bubble-bg`（深色）容器**里（`MessageBubble.vue:148`）：
+
+```html
+<div class="... leading-[1.6] text-xs text-fg ..." 
+     style="background:var(--user-bubble-bg); border:1px solid var(--user-bubble-border); border-left:2px solid var(--accent);">
+```
+
+Shiki 给的 token 颜色 `#24292E`（黑）在 `--user-bubble-bg`（深色）背景上**几乎不可见**。
+
+**视觉后果**：
+- `---` 等带语义颜色的 token 仍然可见（`#005CC5` 蓝色对深色背景有对比度）
+- 普通文本 token (`#24292E` 黑字) 不可见
+- 眼睛只能看到 `---` 等有颜色的行，line 1 `---` 到下一个有颜色的行（line 4 `---`）之间"看起来空了两行" → 视觉上"line 1 占了 2 行"
+
+**为什么"有时候 2 行有时候 1 行"**：
+- **流式阶段**（`renderLightweight`）：markdown-it 默认无 Shiki 高亮 → 文字用 `.msg__body` 的 `text-fg` 变量（深色背景下浅色）→ 文字可见 → 视觉正常
+- **完整阶段**（`renderFull`）：Shiki 用 light theme → 黑字 → 不可见 → 视觉异常
+
+切流式↔完整渲染就切视觉。
+
+**修复**：
+
+`MessageBubble.vue:340` skill 渲染调用必须强制 dark codeTheme（与 444 行 user 消息判断的逻辑一致）：
+
+```ts
+// skill 容器背景始终是深色（--user-bubble-bg），不论 app 主题都用 dark Shiki 主题
+const codeTheme: 'light' | 'dark' | undefined = 'dark'
+skillRenderedContent.value = await renderFull(payload.content, theme, { codeTheme })
+```
+
+**不要把 codeTheme 改成跟随 app theme** —— skill 容器背景是硬编码的深色，主题不一致必然导致文字不可见。
+
+**未来重构时验证**：如果 skill 容器背景支持跟随 app theme 切换，本规则需要相应调整（dark bg → dark theme, light bg → light theme）。
+
 ---
 
 ## 8. 自动化检查

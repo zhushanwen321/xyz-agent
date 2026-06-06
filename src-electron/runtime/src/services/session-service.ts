@@ -443,7 +443,7 @@ export class SessionService implements ISessionService {
   /** Fork 后重新绑定：原 session 的 pi 进程已被 rebind 到新 session，
    *  需要更新 runtime 的 sessions Map 和 process manager 的 key。
    *  必须同步等待初始化完成，否则后续请求（tree-data、navigate）可能因注册未完成而失败。 */
-  async rebindAfterFork(oldSessionId: string, newSessionId: string, sessionFilePath?: string): Promise<void> {
+  async rebindAfterFork(oldSessionId: string, newSessionId: string, label: string, sessionFilePath?: string): Promise<void> {
     const old = this.sessions.get(oldSessionId)
     if (!old) throw new Error(`Session ${oldSessionId} not found in sessions map`)
 
@@ -456,10 +456,10 @@ export class SessionService implements ISessionService {
     this.treeService.unregisterSession(oldSessionId)
     this.sessions.delete(oldSessionId)
 
-    // 用新 ID 重新注册 managed session（同步等待完成，确保 tree/adapter/command 全部就绪）
+    // 用新 ID 重新注册 managed session（label 由调用方传入，已含 -fork/-clone 后缀）
     const client = this.pm.getClient(newSessionId)
     if (!client) throw new Error(`Client not found after rekey: ${newSessionId}`)
-    await this.initializeManagedSession(newSessionId, client, old.cwd, old.label, sessionFilePath)
+    await this.initializeManagedSession(newSessionId, client, old.cwd, label, sessionFilePath)
   }
 
   getSummary(sessionId: string): SessionSummary | undefined {

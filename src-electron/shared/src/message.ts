@@ -1,7 +1,6 @@
 export type MessageRole = 'user' | 'assistant' | 'system'
 export type MessageStatus = 'streaming' | 'complete' | 'error'
 export type ToolCallStatus = 'running' | 'completed' | 'error'
-export type ApprovalStatus = 'pending' | 'approved' | 'denied'
 
 export interface ToolCall {
   id: string
@@ -23,6 +22,10 @@ export interface ThinkingBlock {
   id: string
   content: string
   collapsed: boolean
+  /** Thinking 开始的毫秒时间戳（由后端 thinking_start 事件或会话记录提供） */
+  startTime?: number
+  /** Thinking 结束的毫秒时间戳（由后端 thinking_end 事件提供） */
+  endTime?: number
 }
 
 /** 有序内容块类型，保证流式消息各 block 按到达顺序渲染 */
@@ -52,4 +55,6 @@ export interface Message {
   timestamp: number
   /** 当消息通过 skill 命令触发时设置 */
   skillName?: string
+  /** SKILL.md 文件路径，从 <skill location="..."> 中提取 */
+  skillLocation?: string
 }

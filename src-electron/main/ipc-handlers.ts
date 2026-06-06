@@ -18,7 +18,7 @@ export function registerIpcHandlers(deps: {
   setSettingsWindow: (win: BrowserWindow | null) => void
   runtimeManager: RuntimeManager
   isDev: boolean
-  createWindow: (options?: { windowId?: string; sessionId?: string }) => BrowserWindow
+  createWindow: (options?: { windowId?: string; sessionId?: string }) => Promise<BrowserWindow>
   windowManager: WindowManager
 }): void {
   const { getSettingsWindow, setSettingsWindow, runtimeManager, isDev, createWindow, windowManager } = deps
@@ -64,7 +64,7 @@ export function registerIpcHandlers(deps: {
   // ── 窗口管理 ─────────────────────────────────────────────────────
   ipcMain.handle('create-window', async (_event, options?: { sessionId?: string }) => {
     const windowId = windowManager.generateId()
-    const win = createWindow({ windowId, sessionId: options?.sessionId })
+    const win = await createWindow({ windowId, sessionId: options?.sessionId })
     windowManager.register(windowId, win, initialWindowState(windowId))
     // Notify all existing windows about the new window
     broadcastWindowList()

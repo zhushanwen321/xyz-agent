@@ -1,5 +1,5 @@
 <template>
-  <div class="app-container">
+  <div class="app-container" :class="{ 'app-container--sidebar-collapsed': sidebarStore.collapsed, 'is-fullscreen': layoutStore.isFullscreen }">
     <!-- Sidebar: unified with controls -->
     <AppSidebar
       @create="createSession"
@@ -55,6 +55,8 @@ import { usePanelStore } from './stores/panel'
 import { useSessionStore } from './stores/session'
 import { useWindowStore } from './stores/window'
 import { useNavigationStore } from './stores/navigation'
+import { useSidebarStore } from './stores/sidebar'
+import { useLayoutStore } from './stores/layout'
 import { useConnection } from './composables/useConnection'
 import { getState as getWsState } from './lib/ws-client'
 import { on as onEventBus, off as offEventBus } from './lib/event-bus'
@@ -82,6 +84,8 @@ const panelStore = usePanelStore()
 const sessionStore = useSessionStore()
 const windowStore = useWindowStore()
 const navStore = useNavigationStore()
+const sidebarStore = useSidebarStore()
+const layoutStore = useLayoutStore()
 
 
 // Unified settings toggle — used by sidebar emit and IPC shortcut
@@ -134,6 +138,7 @@ const wsStateUnwatch = watch(wsState, (newState) => {
 const ipcCleanupFns: Array<() => void> = []
 let extTimeoutUnregister: (() => void) | null = null
 let errorUnregister: (() => void) | null = null
+let toastUnregister: (() => void) | null = null
 
 let isCreatingFromSidebar = false
 let prevSessionCount = 0
@@ -332,13 +337,33 @@ onMounted(async () => {
     setTimeout(() => dismissToast(id), TOAST_DURATION_MS)
   })
 
+  // toast:show → generic toast (clipboard, MessageActionMenu errors, etc.)
+  toastUnregister = onEventBus('toast:show', (payload: { type: 'success' | 'warning' | 'danger' | 'info'; title: string; description?: string }) => {
+    const id = crypto.randomUUID()
+    toasts.value.push({
+      id,
+      type: payload.type,
+      title: payload.title,
+      description: payload.description,
+    })
+    setTimeout(() => dismissToast(id), TOAST_DURATION_MS)
+  })
+
   errorUnregister = onEventBus('error', handleGlobalError)
+
+  // macOS fullscreen state → toggle .is-fullscreen class on root element AND sync to layout store
+  if (window.electronAPI?.onFullscreenChanged) {
+    ipcCleanupFns.push(window.electronAPI.onFullscreenChanged(({ isFullscreen }) => {
+      layoutStore.setFullscreen(isFullscreen)
+    }))
+  }
 })
 
 onUnmounted(() => {
   offEventBus('error', handleGlobalError)
   extTimeoutUnregister?.()
   errorUnregister?.()
+  toastUnregister?.()
   document.removeEventListener('keydown', handleKeydown)
   wsStateUnwatch()
   if (wsDisconnectTimer) clearTimeout(wsDisconnectTimer)
@@ -363,5 +388,6 @@ onUnmounted(() => {
   overflow: hidden;
   position: relative;
   background: var(--bg);
+  grid-column: 2;
 }
 </style>

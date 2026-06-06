@@ -5,6 +5,8 @@ import { useSessionStore } from '../../stores/session'
 import { useWindowStore } from '../../stores/window'
 import { useTreeStore } from '../../stores/tree'
 import { useTree } from '../../composables/useTree'
+import { useSidebarStore } from '../../stores/sidebar'
+import { useLayoutStore } from '../../stores/layout'
 import AnchorDropdown from './AnchorDropdown.vue'
 import SessionTreePanel from './SessionTreePanel.vue'
 
@@ -25,6 +27,8 @@ const props = withDefaults(
   }>(),
   {
     panelId: '',
+    doneCount: 0,
+    alertCount: 0,
   }
 )
 
@@ -32,13 +36,32 @@ defineEmits<{
   'switch-agent': [id: string]
   'open-inspector': [type: string]
   'close-pane': []
+  'toggle-batch-select': []
 }>()
 
 const panelStore = usePanelStore()
 const windowStore = useWindowStore()
 const sessionStore = useSessionStore()
 const treeStore = useTreeStore()
+const sidebarStore = useSidebarStore()
+const layoutStore = useLayoutStore()
 const { fetchTree } = useTree()
+
+/**
+ * Whether this PanelBar needs traffic-light safe-zone padding.
+ * Conditions: sidebar collapsed + non-fullscreen + this panel is the
+ * leftmost panel in the panel tree.
+ */
+const needsSafeZone = computed(() => {
+  if (!sidebarStore.collapsed || layoutStore.isFullscreen) return false
+  // Single panel: always needs safe-zone
+  if (panelStore.panelCount <= 1) return true
+  // Multi-panel: only if this panel is the leftmost leaf in the tree
+  // Check if this panel's bounding rect starts near x=0
+  // (determined at render time via onMounted / nextTick is too late for initial paint)
+  // Instead, check if this panel is the leftmost in the tree structure
+  return panelStore.isLeftmostPanel(props.panelId)
+})
 
 const sessionInfo = computed(() => {
   if (!props.sessionId) return null
@@ -121,7 +144,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
-  <div class="panel-bar" @contextmenu.prevent="onContextMenu">
+  <div class="panel-bar" :class="{ 'panel-bar--safe-zone': needsSafeZone }" @contextmenu.prevent="onContextMenu">
     <AnchorDropdown
       :options="agentOptions"
       :current-id="activeAgentId"
@@ -160,13 +183,29 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
       <span v-if="branchCount > 0" class="tree-badge">{{ branchCount }}</span>
     </button>
 
+    <!-- Batch select trigger -->
+    <!-- eslint-disable-next-line taste/no-native-html-elements -- compact icon trigger, consistent with tree-trigger style -->
+    <button
+      v-if="sessionId"
+      class="batch-select-trigger"
+      aria-label="批量选择消息"
+      title="批量选择"
+      @click="$emit('toggle-batch-select')"
+    >
+      <!-- check-square icon for "select" -->
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="9 11 12 14 22 4"/>
+        <path d="M19 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V9a2 2 0 012-2h7"/>
+      </svg>
+    </button>
+
     <!-- Notification chips -->
-    <div v-if="(doneCount ?? 0) > 0 || (alertCount ?? 0) > 0" class="panel-notifs">
-      <span v-if="(doneCount ?? 0) > 0" class="notif-chip notif-chip--done" @click="$emit('open-inspector', 'done')">
+    <div v-if="doneCount > 0 || alertCount > 0" class="panel-notifs">
+      <span v-if="doneCount > 0" class="notif-chip notif-chip--done" @click="$emit('open-inspector', 'done')">
         <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" style="width:10px;height:10px"><polyline points="2 6 5 9 10 3"/></svg>
         <span class="notif-chip__num">{{ doneCount }}</span>
       </span>
-      <span v-if="(alertCount ?? 0) > 0" class="notif-chip notif-chip--alert" @click="$emit('open-inspector', 'alert')">
+      <span v-if="alertCount > 0" class="notif-chip notif-chip--alert" @click="$emit('open-inspector', 'alert')">
         <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" style="width:10px;height:10px"><circle cx="6" cy="6" r="4.5"/><path d="M6 4v2.5M6 8v.5"/></svg>
         <span class="notif-chip__num">{{ alertCount }}</span>
       </span>
@@ -255,6 +294,9 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
   font-size: 12px;
   position: relative;
 }
+.panel-bar--safe-zone {
+  padding-left: 78px;
+}
 
 .tree-trigger {
   position: relative;
@@ -272,6 +314,21 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
 }
 .tree-trigger:hover { background: var(--accent-light); color: var(--accent); }
 .tree-trigger--active { color: var(--accent); background: var(--accent-light); }
+
+.batch-select-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: 1px;
+  transition: all 0.15s ease;
+}
+.batch-select-trigger:hover { background: var(--accent-light); color: var(--accent); }
 
 .tree-badge {
   position: absolute;

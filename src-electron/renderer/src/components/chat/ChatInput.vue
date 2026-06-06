@@ -6,6 +6,7 @@
       @close="closeSlashMenu"
       @select="handleSlashSelect"
     />
+    <SendModeStatusBar :mode="sendMode" />
     <div
       ref="containerRef"
       :class="[
@@ -69,6 +70,8 @@ import { on } from '../../lib/event-bus'
 import SlashMenu from './SlashMenu.vue'
 import InputToolbar from './InputToolbar.vue'
 import SessionStrip from './SessionStrip.vue'
+import SendModeStatusBar from './SendModeStatusBar.vue'
+import type { SendMode } from './SendModeStatusBar.vue'
 import {
   useSlashCommands,
   type SlashCommand,
@@ -82,7 +85,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  send: [payload: { content: string; skillName?: string; subagent?: { agent: string; task: string } }]
+  send: [payload: { content: string; skillName?: string; subagent?: { agent: string; task: string }; sendMode?: 'send' | 'steer' | 'queue' }]
   cancel: []
   'select-model': [modelId: string]
   'send-command': [payload: { type: string; payload: Record<string, unknown> }]
@@ -104,6 +107,7 @@ initNativeCommands()
 const text = ref('')
 const isComposing = ref(false)
 const activeCommand = ref<SlashCommand | null>(null)
+const isAltPressed = ref(false)
 
 // Navigate 到 user message 后预填输入框
 watch(() => props.sessionId, () => {
@@ -124,6 +128,35 @@ const unsubEditorText = on('editor-text-pending', () => {
   })
 })
 onUnmounted(() => { unsubEditorText?.() })
+
+// ── Send Mode ────────────────────────────────────────────────────
+const sendMode = computed<SendMode>(() => {
+  if (props.isStreaming && isAltPressed.value) return 'queue'
+  if (props.isStreaming) return 'steer'
+  if (isAltPressed.value) return 'queue'
+  return 'send'
+})
+
+// ── Alt key detection ─────────────────────────────────────────────
+function onGlobalKeyDown(e: KeyboardEvent) {
+  if (e.key === 'Alt') isAltPressed.value = true
+}
+function onGlobalKeyUp(e: KeyboardEvent) {
+  if (e.key === 'Alt') isAltPressed.value = false
+}
+function onWindowBlur() {
+  isAltPressed.value = false
+}
+onMounted(() => {
+  document.addEventListener('keydown', onGlobalKeyDown)
+  document.addEventListener('keyup', onGlobalKeyUp)
+  window.addEventListener('blur', onWindowBlur)
+})
+onUnmounted(() => {
+  document.removeEventListener('keydown', onGlobalKeyDown)
+  document.removeEventListener('keyup', onGlobalKeyUp)
+  window.removeEventListener('blur', onWindowBlur)
+})
 
 // activeCommand 存在时动态展示 skill 专属提示，否则用默认 placeholder
 const placeholder = computed(() => {
@@ -155,8 +188,9 @@ const tagDisplayName = computed(() => {
 const containerRef = ref<HTMLElement | null>(null)
 
 const canSend = computed(() => {
+  if (props.isCompacting) return false
   const trimmed = text.value.trim()
-  return (trimmed.length > 0 || activeCommand.value !== null) && !props.isStreaming && !props.isCompacting
+  return trimmed.length > 0 || activeCommand.value !== null
 })
 
 // 合并内置命令 + skill 命令
@@ -274,7 +308,7 @@ function handleSend() {
     }
     clearCommand()
   } else {
-    emit('send', { content: trimmed })
+    emit('send', { content: trimmed, sendMode: sendMode.value })
   }
 
   text.value = ''

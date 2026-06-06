@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Layout: Message Turn 对比</title>
+<style>
+/* ── Design tokens from style.css ── */
+:root {
+  --bg: oklch(97% 0.010 75);
+  --surface: oklch(99% 0.006 75);
+  --fg: oklch(22% 0.012 75);
+  --muted: oklch(50% 0.010 75);
+  --border: oklch(90% 0.008 75);
+  --accent: oklch(55% 0.08 195);
+  --accent-light: oklch(93% 0.03 195);
+  --success: oklch(62% 0.10 145);
+  --success-light: oklch(95% 0.04 145);
+  --danger: oklch(55% 0.12 25);
+  --danger-light: oklch(93% 0.04 25);
+  --agent: oklch(55% 0.15 250);
+  --agent-light: oklch(93% 0.04 250);
+  --section-bg: oklch(95% 0.014 70);
+  --hover-bg: oklch(96% 0.01 70);
+  --msg-assistant-bg: oklch(98% 0.008 250);
+  --msg-thinking-bg: oklch(97% 0.015 195);
+  --msg-tool-bg: oklch(97% 0.010 70);
+  --radius: 1px;
+  --font-body: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--font-body); font-size: 14px; line-height: 1.6; background: var(--bg); color: var(--fg); -webkit-font-smoothing: antialiased; }
+
+/* ── Page layout ── */
+.page-header { padding: 32px 40px 24px; max-width: 1400px; margin: 0 auto; }
+.page-header h1 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+.page-header p { font-size: 13px; color: var(--muted); }
+
+.demos-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0 40px 60px;
+}
+
+.demo-panel {
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.demo-label {
+  padding: 10px 16px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  background: var(--section-bg);
+}
+.demo-label span { color: var(--accent); font-weight: 700; }
+
+/* ── Shared chat area styles ── */
+.chat-stream { padding: 16px 20px; display: flex; flex-direction: column; gap: 6px; max-height: 800px; overflow-y: auto; }
+
+/* ── CURRENT: What we have now ── */
+
+/* User message (current) */
+.cur-user { max-width: 85%; margin-left: auto; }
+.cur-user-label { text-align: right; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 3px; }
+.cur-user-label .time { font-weight: 400; text-transform: none; letter-spacing: 0; opacity: 0.6; margin-right: 6px; }
+.cur-user-bubble { padding: 8px 12px; line-height: 1.6; font-size: 12px; background: var(--accent-light); border: 1px solid var(--border); border-radius: var(--radius); }
+
+/* Assistant message (current) */
+.cur-assistant { width: 100%; }
+.cur-assistant-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 4px; }
+.cur-assistant-label .time { font-weight: 400; text-transform: none; letter-spacing: 0; opacity: 0.6; margin-left: 6px; }
+
+.cur-thinking {
+  overflow: hidden; border: 1px solid transparent;
+  background: var(--msg-thinking-bg); border-radius: var(--radius); margin-bottom: 8px;
+}
+.cur-thinking-header {
+  display: flex; align-items: center; gap: 6px; padding: 6px 12px;
+  border: none; background: linear-gradient(to right, var(--accent-light) 0%, var(--accent-light) 40%, transparent 100%);
+  font-size: 11px; color: var(--accent); font-weight: 500;
+}
+
+.cur-tool {
+  border: 1px solid transparent; background: var(--msg-tool-bg);
+  border-radius: var(--radius); margin-bottom: 8px; overflow: hidden;
+}
+.cur-tool-header {
+  display: flex; align-items: center; gap: 6px; padding: 6px 10px;
+  border: none; background: linear-gradient(to right, var(--hover-bg) 0%, var(--hover-bg) 40%, transparent 100%);
+  font-size: 11px;
+}
+.cur-tool-header .tool-name { font-weight: 600; color: var(--accent); }
+.cur-tool-header .tool-path { color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cur-tool-header .tool-time { font-size: 10px; color: var(--success); font-weight: 500; font-family: var(--font-mono); tabular-nums: true; }
+
+.cur-text-block {
+  padding: 8px 12px; line-height: 1.6; font-size: 12px;
+  background: var(--msg-assistant-bg); border-top: 1px solid transparent; border-radius: var(--radius);
+}
+
+/* System notification (current) */
+.cur-system {
+  width: 100%; padding: 10px 14px; display: flex; align-items: flex-start; gap: 10px;
+  font-size: 13px; border-radius: 0;
+}
+.cur-system--done { background: var(--success-light); }
+.cur-system--alert { background: var(--danger-light); }
+.cur-system-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 4px; }
+.cur-system--done .cur-system-dot { background: var(--success); }
+.cur-system--alert .cur-system-dot { background: var(--danger); }
+
+/* Skill header (current) */
+.cur-skill {
+  display: flex; align-items: center; gap: 6px; padding: 4px 10px;
+  font-size: 11px; margin-bottom: 4px; border-radius: var(--radius);
+  background: oklch(96% 0.012 250); border: none; border-left: 2px solid var(--accent);
+}
+.cur-skill .label { color: var(--muted); }
+.cur-skill .name { font-weight: 600; color: var(--fg); font-family: var(--font-mono); }
+
+/* ── VARIANT A: Turn grouping with thin dividers ── */
+
+.va-turn { position: relative; padding-bottom: 12px; }
+.va-turn + .va-turn { border-top: 1px solid var(--border); padding-top: 12px; }
+
+.va-turn-indicator {
+  position: absolute; left: -16px; top: 12px; width: 3px; height: calc(100% - 24px);
+  border-radius: 2px;
+}
+.va-turn-indicator--user { background: var(--accent-light); }
+.va-turn-indicator--assistant { background: var(--agent-light); }
+
+.va-user { max-width: 80%; margin-left: auto; }
+.va-user-bubble { padding: 8px 12px; font-size: 12px; line-height: 1.6; background: var(--accent-light); border-radius: var(--radius); }
+
+.va-assistant { width: 100%; }
+.va-assistant-section {
+  margin-bottom: 6px;
+  padding-left: 12px;
+  border-left: 1px solid var(--border);
+}
+.va-assistant-section:last-child { margin-bottom: 0; }
+
+.va-section-label {
+  font-size: 10px; color: var(--muted); font-weight: 500; margin-bottom: 3px;
+  display: flex; align-items: center; gap: 4px;
+}
+.va-section-dot { width: 4px; height: 4px; border-radius: 50%; }
+.va-section-dot--thinking { background: var(--accent); }
+.va-section-dot--tool { background: var(--success); }
+.va-section-dot--text { background: var(--agent); }
+
+.va-thinking-body { font-size: 11px; color: var(--muted); padding: 4px 0; }
+.va-tool-row { font-size: 11px; padding: 4px 0; display: flex; align-items: center; gap: 6px; }
+.va-tool-row .name { font-weight: 600; color: var(--accent); }
+.va-tool-row .path { color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.va-tool-row .time { font-size: 10px; color: var(--success); font-family: var(--font-mono); }
+.va-text-body { font-size: 12px; line-height: 1.6; }
+
+/* ── VARIANT B: Minimal with indent + color accent ── */
+
+.vb-turn { margin-bottom: 4px; }
+.vb-turn + .vb-turn { margin-top: 16px; }
+
+.vb-user {
+  max-width: 80%; margin-left: auto; padding: 8px 14px; font-size: 12px;
+  line-height: 1.6; background: var(--accent-light); border-radius: 2px;
+}
+
+.vb-assistant-group {
+  margin-top: 2px; padding-left: 14px;
+  border-left: 2px solid var(--agent-light);
+}
+.vb-block { padding: 3px 0; font-size: 12px; }
+.vb-block + .vb-block { margin-top: 2px; }
+
+.vb-think-toggle {
+  font-size: 11px; color: var(--muted); cursor: pointer;
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.vb-think-toggle svg { width: 9px; height: 9px; }
+.vb-tool-inline {
+  font-size: 11px; display: inline-flex; align-items: center; gap: 6px;
+  padding: 2px 0; color: var(--muted);
+}
+.vb-tool-inline .name { font-weight: 600; color: var(--accent); }
+.vb-tool-inline .time { font-family: var(--font-mono); font-size: 10px; color: var(--success); }
+
+.vb-text { line-height: 1.6; }
+
+/* ── VARIANT C: Card-like turn containers ── */
+.vc-turn {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 2px;
+  padding: 14px 16px; margin-bottom: 8px;
+}
+.vc-turn + .vc-turn { margin-top: 16px; }
+
+.vc-turn-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+  font-size: 11px; color: var(--muted);
+}
+.vc-turn-badge {
+  padding: 1px 6px; border-radius: 2px; font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.03em;
+}
+.vc-turn-badge--user { background: var(--accent-light); color: var(--accent); }
+.vc-turn-badge--assistant { background: var(--agent-light); color: var(--agent); }
+.vc-turn-time { font-family: var(--font-mono); font-size: 10px; opacity: 0.6; }
+
+.vc-user-text { font-size: 12px; line-height: 1.6; padding: 6px 10px; background: var(--accent-light); border-radius: var(--radius); max-width: 85%; margin-left: auto; }
+
+.vc-block { padding: 6px 0; }
+.vc-block + .vc-block { border-top: 1px solid var(--border); padding-top: 6px; margin-top: 6px; }
+
+.vc-thinking { font-size: 11px; color: var(--muted); }
+.vc-thinking-label { color: var(--accent); font-weight: 500; margin-bottom: 2px; display: flex; align-items: center; gap: 4px; }
+.vc-tool { font-size: 11px; display: flex; align-items: center; gap: 6px; }
+.vc-tool .name { font-weight: 600; color: var(--accent); }
+.vc-tool .path { color: var(--muted); flex: 1; }
+.vc-tool .time { font-family: var(--font-mono); font-size: 10px; color: var(--success); }
+.vc-text { font-size: 12px; line-height: 1.6; }
+
+/* system message in all variants */
+.va-system, .vb-system, .vc-system {
+  width: 100%; padding: 8px 14px; display: flex; align-items: flex-start; gap: 8px;
+  font-size: 12px;
+}
+.va-system--done, .vb-system--done, .vc-system--done { background: var(--success-light); }
+.va-system--alert, .vb-system--alert, .vc-system--alert { background: var(--danger-light); }
+.sys-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; margin-top: 5px; }
+.sys-dot--done { background: var(--success); }
+.sys-dot--alert { background: var(--danger); }
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>Layout: Message Turn 布局对比</h1>
+  <p>每个变体展示相同的对话流: 用户消息 → Skill 加载 → 助手回复(思考+工具+文本) → 系统通知</p>
+</div>
+
+<div class="demos-grid">
+  <!-- ════════════ CURRENT ════════════ -->
+  <div class="demo-panel">
+    <div class="demo-label"><span>A.</span> 当前方案</div>
+    <div class="chat-stream">
+
+      <!-- User message -->
+      <div class="cur-user">
+        <div class="cur-user-label"><span class="time">14:32</span>用户</div>
+        <div class="cur-skill">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M8 2v12"/><path d="M2 8h6"/></svg>
+          <span class="label">加载 Skill：</span><span class="name">code-review</span>
+        </div>
+        <div class="cur-user-bubble">帮我 review 一下 chat area 的代码变更，重点关注消息气泡、thinking block 和 tool call card 的视觉层次</div>
+      </div>
+
+      <!-- Assistant message -->
+      <div class="cur-assistant">
+        <div class="cur-assistant-label">助手 <span class="time">14:32</span></div>
+
+        <div class="cur-thinking">
+          <div class="cur-thinking-header">
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            <span style="width:5px;height:10px;background:var(--accent);border-radius:1px;animation:pulse 2s infinite"></span>
+            <span>Thinking</span>
+            <span style="flex:1"></span>
+            <span style="font-size:10px;font-family:var(--font-mono);color:var(--muted)">3.2s</span>
+          </div>
+        </div>
+
+        <div class="cur-tool" style="border-color: color-mix(in oklch, var(--accent) 30%, transparent);">
+          <div class="cur-tool-header">
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            <span class="tool-name">read</span>
+            <span class="tool-path">src/components/chat/MessageBubble.vue</span>
+            <span class="tool-time">1.8s</span>
+          </div>
+        </div>
+
+        <div class="cur-tool">
+          <div class="cur-tool-header">
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            <span class="tool-name">read</span>
+            <span class="tool-path">src/components/chat/ThinkingBlock.vue</span>
+            <span class="tool-time">0.9s</span>
+          </div>
+        </div>
+
+        <div class="cur-tool">
+          <div class="cur-tool-header">
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            <span class="tool-name">bash</span>
+            <span class="tool-path">git diff --name-only HEAD~5</span>
+            <span class="tool-time">0.4s</span>
+          </div>
+        </div>
+
+        <div class="cur-text-block">
+          我已经审查了所有相关文件。以下是按严重程度排列的发现:
+          <br><br>
+          <strong>P0 [视觉混乱]</strong> MessageBubble, ThinkingBlock, ToolCallCard 三个组件使用几乎相同的背景色 (L=97-98%), 相同的 1px border-radius, 相同的渐变 header。用户无法在 0.5 秒内区分它们。
+          <br><br>
+          <strong>P1 [间距单调]</strong> 所有块之间间距统一为 my-2 (8px)，缺乏分组节奏...
+        </div>
+      </div>
+
+      <!-- System notification -->
+      <div class="cur-system cur-system--done">
+        <span class="cur-system-dot"></span>
+        <div><strong>SubAgent #1 已完成</strong> code-review 分析完成，发现 2 个 P0 问题</div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ════════════ VARIANT A: Turn grouping ════════════ -->
+  <div class="demo-panel">
+    <div class="demo-label"><span>B.</span> 方案 A: Turn 分组 + 细分割线</div>
+    <div class="chat-stream">
+
+      <!-- User turn -->
+      <div class="va-turn">
+        <div class="va-turn-indicator va-turn-indicator--user"></div>
+        <div class="va-user">
+          <div style="font-size:10px;color:var(--muted);margin-bottom:2px;text-align:right">
+            <span style="font-family:var(--font-mono);font-size:10px;opacity:0.6">14:32</span> 用户
+          </div>
+          <div style="display:flex;align-items:center;gap:4px;margin-bottom:3px;font-size:11px;color:var(--muted)">
+            <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M8 2v12"/><path d="M2 8h6"/></svg>
+            <span style="font-family:var(--font-mono);color:var(--accent);font-weight:600">code-review</span>
+          </div>
+          <div class="va-user-bubble">帮我 review 一下 chat area 的代码变更，重点关注消息气泡、thinking block 和 tool call card 的视觉层次</div>
+        </div>
+      </div>
+
+      <!-- Assistant turn -->
+      <div class="va-turn">
+        <div class="va-turn-indicator va-turn-indicator--assistant"></div>
+        <div class="va-assistant">
+          <div style="font-size:10px;color:var(--muted);margin-bottom:6px">
+            助手 <span style="font-family:var(--font-mono);font-size:10px;opacity:0.6">14:32</span>
+          </div>
+
+          <!-- Thinking section -->
+          <div class="va-assistant-section">
+            <div class="va-section-label"><span class="va-section-dot va-section-dot--thinking"></span> Thinking <span style="font-family:var(--font-mono);font-size:10px;opacity:0.6">3.2s</span></div>
+            <div class="va-thinking-body">需要分析 MessageBubble, ThinkingBlock, ToolCallCard 三个组件的视觉差异...</div>
+          </div>
+
+          <!-- Tool calls section -->
+          <div class="va-assistant-section">
+            <div class="va-section-label"><span class="va-section-dot va-section-dot--tool"></span> 3 次工具调用</div>
+            <div class="va-tool-row"><span class="name">read</span><span class="path">MessageBubble.vue</span><span class="time">1.8s</span></div>
+            <div class="va-tool-row"><span class="name">read</span><span class="path">ThinkingBlock.vue</span><span class="time">0.9s</span></div>
+            <div class="va-tool-row"><span class="name">bash</span><span class="path">git diff --name-only</span><span class="time">0.4s</span></div>
+          </div>
+
+          <!-- Text section -->
+          <div class="va-assistant-section">
+            <div class="va-text-body">
+              <strong style="color:var(--fg)">P0 [视觉混乱]</strong> 三个组件使用几乎相同的背景色和 border-radius，用户无法在 0.5 秒内区分它们。
+              <br><br>
+              <strong style="color:var(--fg)">P1 [间距单调]</strong> 所有块之间间距统一为 8px，缺乏分组节奏...
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- System notification -->
+      <div class="va-system va-system--done">
+        <span class="sys-dot sys-dot--done"></span>
+        <div><strong>SubAgent #1 已完成</strong> code-review 分析完成，发现 2 个 P0 问题</div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ════════════ VARIANT B: Minimal indent ════════════ -->
+  <div class="demo-panel">
+    <div class="demo-label"><span>C.</span> 方案 B: 极简缩进 + 彩色左边线</div>
+    <div class="chat-stream">
+
+      <!-- User turn -->
+      <div class="vb-turn">
+        <div style="font-size:10px;color:var(--muted);text-align:right;margin-bottom:2px">14:32</div>
+        <div class="vb-user">帮我 review 一下 chat area 的代码变更，重点关注消息气泡、thinking block 和 tool call card 的视觉层次</div>
+      </div>
+
+      <!-- Assistant turn -->
+      <div class="vb-turn">
+        <div class="vb-assistant-group">
+          <!-- Thinking (collapsed) -->
+          <div class="vb-block">
+            <div class="vb-think-toggle">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6" transform="rotate(-90 12 12)"/></svg>
+              Thinking · 3.2s
+            </div>
+          </div>
+          <!-- Tool calls (inline) -->
+          <div class="vb-block">
+            <div class="vb-tool-inline"><span class="name">read</span> MessageBubble.vue <span class="time">1.8s</span></div>
+          </div>
+          <div class="vb-block">
+            <div class="vb-tool-inline"><span class="name">read</span> ThinkingBlock.vue <span class="time">0.9s</span></div>
+          </div>
+          <div class="vb-block">
+            <div class="vb-tool-inline"><span class="name">bash</span> git diff --name-only <span class="time">0.4s</span></div>
+          </div>
+          <!-- Text -->
+          <div class="vb-block">
+            <div class="vb-text">
+              <strong>P0 [视觉混乱]</strong> 三个组件使用几乎相同的背景色和 border-radius，用户无法在 0.5 秒内区分它们。
+              <br><br>
+              <strong>P1 [间距单调]</strong> 所有块之间间距统一为 8px，缺乏分组节奏...
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- System notification -->
+      <div class="vb-system vb-system--done">
+        <span class="sys-dot sys-dot--done"></span>
+        <div><strong>SubAgent #1 已完成</strong> code-review 分析完成，发现 2 个 P0 问题</div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ════════════ VARIANT C: Turn cards ════════════ -->
+  <!-- Skipping: user asked for demo comparisons, will add if requested -->
+
+</div>
+
+<!-- Legend -->
+<div style="max-width:1400px;margin:0 auto;padding:0 40px 40px;font-size:12px;color:var(--muted);line-height:1.8">
+  <strong style="color:var(--fg)">关键差异</strong><br>
+  <strong>A. 当前方案</strong>: 每个组件(Thinking/Tool/Text)独立渲染，背景色差异仅 L=1%，无边框分组，视觉层次弱<br>
+  <strong>B. Turn 分组</strong>: 每轮对话(用户+助手)作为一个视觉单元，内部用 1px border-left 分区，缩进 12px<br>
+  <strong>C. 极简缩进</strong>: 助手内容统一缩进 + 2px 彩色左边线，thinking/tool 默认折叠为单行，文本直接展开
+</div>
+
+<style>
+@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+</style>
+</body>
+</html>

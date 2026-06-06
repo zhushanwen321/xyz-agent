@@ -9,7 +9,7 @@ export interface SystemNotification {
   role: 'system'
   status?: string
   content?: string
-  notificationType?: 'done' | 'alert' | 'info'
+  notificationType?: 'done' | 'alert' | 'info' | 'warning'
   notificationTitle?: string
   notificationDescription?: string
   notificationAction?: string
@@ -167,15 +167,18 @@ export const useChatStore = defineStore('chat', () => {
   function completeStreaming(opts: { keepGenerating?: boolean } | undefined, sessionId: string) {
     const s = getSessionState(sessionId)
     if (s.streamingMessage) {
+      const completedAt = Date.now()
       // 收尾：标记未完成的 tool calls 为 completed，折叠未结束的 thinking blocks
       const cleaned: Message = {
         ...s.streamingMessage,
         status: 'complete',
         toolCalls: s.streamingMessage.toolCalls?.map(tc =>
-          tc.status === 'running' ? { ...tc, status: 'completed' as const, endTime: Date.now() } : tc
+          tc.status === 'running' ? { ...tc, status: 'completed' as const, endTime: tc.endTime ?? completedAt } : tc
         ),
         thinking: s.streamingMessage.thinking?.map(th =>
-          th.collapsed ? th : { ...th, collapsed: true }
+          th.collapsed
+            ? { ...th, endTime: th.endTime ?? completedAt }
+            : { ...th, collapsed: true, endTime: th.endTime ?? completedAt }
         ),
       }
       s.completedMessages = [...s.completedMessages, cleaned]
@@ -315,34 +318,7 @@ export const useChatStore = defineStore('chat', () => {
     getSessionState(sessionId).responseModel = model
   }
 
-  // ── 流式消息高层生命周期方法 ──────────────────────────────
-
-  /** 开始新一轮流式消息 */
-  function startStreaming(sid: string, msg: Message) {
-    const s = getSessionState(sid)
-    s.isGenerating = true
-    s.streamingMessage = msg
-  }
-
-  /** 追加流式文本（streamingMessage 为 null 时忽略） */
-  function appendStreamText(delta: string, sid: string) {
-    appendToStreaming(delta, sid)
-  }
-
-  /** 追加 thinking 内容 */
-  function appendStreamThinking(delta: string, sid: string) {
-    appendThinkingDelta(delta, sid)
-  }
-
-  /** 添加流式 tool call */
-  function addStreamToolCall(tc: ToolCall, sid: string) {
-    addStreamingToolCall(tc, sid)
-  }
-
-  /** 更新流式 tool call 结果 */
-  function updateStreamToolCall(id: string, output: string, sid: string) {
-    updateStreamingToolCall(id, output, sid)
-  }
+  // ── 流式消息高层生命周期方法（已内联到 useChat handlers，仅保留 completeStream / abortStream） ──
 
   /** 完成流式消息，自动重置 isGenerating */
   function completeStream(sid: string) {
@@ -388,9 +364,7 @@ export const useChatStore = defineStore('chat', () => {
     setPendingEditorText, setAutoRetryState, setQueueState,
     setThinkingLevel, setResponseModel,
 
-    // 流式消息高层方法
-    startStreaming, appendStreamText, appendStreamThinking,
-    addStreamToolCall, updateStreamToolCall,
+    // 流式消息方法
     completeStream, abortStream,
   }
 })

@@ -17,6 +17,8 @@ export interface ElectronAPI {
   onWindowListUpdated(callback: () => void): () => void
   pickDirectory(options?: { title?: string }): Promise<{ canceled: boolean; path: string | null }>
   openExternal(url: string): Promise<void>
+  /** 监听 macOS 全屏状态变化 */
+  onFullscreenChanged(callback: (payload: { isFullscreen: boolean }) => void): () => void
 }
 
 declare global {

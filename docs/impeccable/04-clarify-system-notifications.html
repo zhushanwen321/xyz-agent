@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clarify: System Notifications 区分度对比</title>
+<style>
+:root {
+  --bg: oklch(97% 0.010 75);
+  --surface: oklch(99% 0.006 75);
+  --fg: oklch(22% 0.012 75);
+  --muted: oklch(50% 0.010 75);
+  --border: oklch(90% 0.008 75);
+  --accent: oklch(55% 0.08 195);
+  --accent-light: oklch(93% 0.03 195);
+  --success: oklch(62% 0.10 145);
+  --success-light: oklch(95% 0.04 145);
+  --warning: oklch(75% 0.10 85);
+  --warning-light: oklch(95% 0.04 85);
+  --danger: oklch(55% 0.12 25);
+  --danger-light: oklch(93% 0.04 25);
+  --agent: oklch(55% 0.15 250);
+  --agent-light: oklch(93% 0.04 250);
+  --section-bg: oklch(95% 0.014 70);
+  --hover-bg: oklch(96% 0.01 70);
+  --radius: 1px;
+  --font-body: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+}
+*,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--font-body); font-size: 14px; line-height: 1.6; background: var(--bg); color: var(--fg); -webkit-font-smoothing: antialiased; }
+
+.page-header { padding: 32px 40px 24px; max-width: 1400px; margin: 0 auto; }
+.page-header h1 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+.page-header p { font-size: 13px; color: var(--muted); }
+
+.demos-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0 40px 60px;
+}
+
+.demo-panel {
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.demo-label {
+  padding: 10px 16px;
+  font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  background: var(--section-bg);
+}
+.demo-label span { color: var(--accent); font-weight: 700; }
+.demo-body { padding: 16px 20px; display: flex; flex-direction: column; gap: 10px; }
+
+.section-label {
+  font-size: 10px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--muted); margin-top: 8px; margin-bottom: 2px;
+}
+
+/* ── CURRENT ── */
+.cur-notif {
+  width: 100%; padding: 10px 14px;
+  display: flex; align-items: flex-start; gap: 10px;
+  font-size: 13px;
+}
+.cur-notif--done { background: var(--success-light); }
+.cur-notif--alert { background: var(--danger-light); }
+.cur-notif--info { background: var(--success-light); }
+.cur-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 4px; }
+.cur-notif--done .cur-dot { background: var(--success); }
+.cur-notif--alert .cur-dot { background: var(--danger); }
+.cur-notif--info .cur-dot { background: var(--success); }
+.cur-notif-title { font-weight: 600; font-size: 13px; margin-bottom: 2px; }
+.cur-notif-desc { font-size: 12px; color: var(--muted); }
+.cur-notif-action { font-size: 12px; color: var(--accent); font-weight: 600; cursor: pointer; margin-top: 4px; display: inline-flex; align-items: center; gap: 2px; }
+
+/* ── VARIANT A: Labeled sections with icon + tinted border ── */
+.va-notif {
+  width: 100%; padding: 8px 14px;
+  display: flex; align-items: flex-start; gap: 8px;
+  font-size: 12px; border-radius: var(--radius);
+  border: 1px solid transparent;
+}
+.va-notif--done {
+  background: var(--success-light);
+  border-color: color-mix(in oklch, var(--success) 25%, transparent);
+}
+.va-notif--alert {
+  background: var(--danger-light);
+  border-color: color-mix(in oklch, var(--danger) 25%, transparent);
+}
+.va-notif--warning {
+  background: var(--warning-light);
+  border-color: color-mix(in oklch, var(--warning) 25%, transparent);
+}
+.va-notif--progress {
+  background: var(--agent-light);
+  border-color: color-mix(in oklch, var(--agent) 20%, transparent);
+}
+.va-icon { flex-shrink: 0; margin-top: 1px; width: 14px; height: 14px; }
+.va-content { flex: 1; }
+.va-title { font-weight: 600; font-size: 12px; }
+.va-desc { font-size: 11px; color: var(--muted); margin-top: 1px; }
+.va-action { font-size: 11px; color: var(--accent); font-weight: 600; cursor: pointer; margin-top: 3px; }
+
+/* ── VARIANT B: Inline status line ── */
+.vb-notif {
+  width: 100%; padding: 5px 12px;
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; border-radius: var(--radius);
+}
+.vb-notif--done { background: var(--success-light); color: var(--success); }
+.vb-notif--alert { background: var(--danger-light); color: var(--danger); }
+.vb-notif--warning { background: var(--warning-light); color: var(--warning); }
+.vb-notif--progress { background: var(--agent-light); color: var(--agent); }
+.vb-icon { width: 12px; height: 12px; flex-shrink: 0; }
+.vb-text { flex: 1; font-weight: 500; }
+.vb-text .desc { color: var(--muted); font-weight: 400; }
+.vb-action { font-weight: 600; cursor: pointer; text-decoration: underline; }
+.vb-time { font-family: var(--font-mono); font-size: 9px; opacity: 0.6; flex-shrink: 0; }
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>Clarify: System Notifications 区分度对比</h1>
+  <p>展示 3 种系统通知样式: 当前方案、带图标+边框、内联状态行。覆盖 done/alert/warning/progress 四种类型。</p>
+</div>
+
+<div class="demos-grid">
+
+  <!-- ════════════ CURRENT ════════════ -->
+  <div class="demo-panel">
+    <div class="demo-label"><span>A.</span> 当前方案</div>
+    <div class="demo-body">
+
+      <div class="section-label">完成通知 (done)</div>
+      <div class="cur-notif cur-notif--done">
+        <span class="cur-dot"></span>
+        <div>
+          <div class="cur-notif-title">SubAgent #1 已完成</div>
+          <div class="cur-notif-desc">code-review 分析完成，发现 2 个 P0 问题</div>
+        </div>
+      </div>
+
+      <div class="section-label">告警通知 (alert)</div>
+      <div class="cur-notif cur-notif--alert">
+        <span class="cur-dot"></span>
+        <div>
+          <div class="cur-notif-title">SubAgent #2 等待确认</div>
+          <div class="cur-notif-desc">需要用户批准写入权限才能继续</div>
+          <span class="cur-notif-action">查看详情 →</span>
+        </div>
+      </div>
+
+      <div class="section-label">普通通知 (info)</div>
+      <div class="cur-notif cur-notif--info">
+        <span class="cur-dot"></span>
+        <div>
+          <div class="cur-notif-title">会话已自动压缩上下文</div>
+          <div class="cur-notif-desc">Token 使用量从 85% 降至 42%</div>
+        </div>
+      </div>
+
+      <div class="section-label">问题: done 和 info 看起来完全相同</div>
+      <div style="display:flex;gap:8px;align-items:flex-start">
+        <div class="cur-notif cur-notif--done" style="flex:1">
+          <span class="cur-dot"></span>
+          <div><div class="cur-notif-title" style="font-size:12px">完成</div></div>
+        </div>
+        <div class="cur-notif cur-notif--info" style="flex:1">
+          <span class="cur-dot"></span>
+          <div><div class="cur-notif-title" style="font-size:12px">通知</div></div>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--danger);background:var(--danger-light);padding:6px 10px;border-radius:var(--radius)">
+        ↑ 两者背景色和圆点颜色完全一致，无法区分
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════ VARIANT A: Icon + border ─═══════════ -->
+  <div class="demo-panel">
+    <div class="demo-label"><span>B.</span> 方案 A: 图标 + 边框</div>
+    <div class="demo-body">
+
+      <div class="section-label">完成 (done)</div>
+      <div class="va-notif va-notif--done">
+        <svg class="va-icon" viewBox="0 0 16 16" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round"><circle cx="8" cy="8" r="6"/><path d="M5.5 8l2 2 3.5-3.5"/></svg>
+        <div class="va-content">
+          <div class="va-title">SubAgent #1 已完成</div>
+          <div class="va-desc">code-review 分析完成，发现 2 个 P0 问题</div>
+        </div>
+      </div>
+
+      <div class="section-label">告警 (alert)</div>
+      <div class="va-notif va-notif--alert">
+        <svg class="va-icon" viewBox="0 0 16 16" fill="none" stroke="var(--danger)" stroke-width="2" stroke-linecap="round"><circle cx="8" cy="8" r="6"/><line x1="8" y1="5" x2="8" y2="9"/><circle cx="8" cy="11" r="0.5" fill="var(--danger)"/></svg>
+        <div class="va-content">
+          <div class="va-title">SubAgent #2 等待确认</div>
+          <div class="va-desc">需要用户批准写入权限才能继续</div>
+          <div class="va-action">查看详情 →</div>
+        </div>
+      </div>
+
+      <div class="section-label">警告 (warning)</div>
+      <div class="va-notif va-notif--warning">
+        <svg class="va-icon" viewBox="0 0 16 16" fill="none" stroke="var(--warning)" stroke-width="2" stroke-linecap="round"><path d="M8 2L2 13h12L8 2z"/><line x1="8" y1="6" x2="8" y2="9.5"/><circle cx="8" cy="11" r="0.5" fill="var(--warning)"/></svg>
+        <div class="va-content">
+          <div class="va-title">Token 使用量达到 85%</div>
+          <div class="va-desc">系统将在下次生成时自动压缩上下文</div>
+        </div>
+      </div>
+
+      <div class="section-label">进度 (progress)</div>
+      <div class="va-notif va-notif--progress">
+        <svg class="va-icon" viewBox="0 0 16 16" fill="none" stroke="var(--agent)" stroke-width="2" stroke-linecap="round"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2.5 1.5"/></svg>
+        <div class="va-content">
+          <div class="va-title">会话上下文已压缩</div>
+          <div class="va-desc">Token 使用量从 85% 降至 42%</div>
+        </div>
+      </div>
+
+      <div class="section-label">对比: 4 种类型清晰区分</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <div class="va-notif va-notif--done" style="flex:1;min-width:120px;padding:6px 10px"><svg class="va-icon" viewBox="0 0 16 16" fill="none" stroke="var(--success)" stroke-width="2"><circle cx="8" cy="8" r="6"/><path d="M5.5 8l2 2 3.5-3.5"/></svg><span style="font-size:11px;font-weight:600">Done</span></div>
+        <div class="va-notif va-notif--alert" style="flex:1;min-width:120px;padding:6px 10px"><svg class="va-icon" viewBox="0 0 16 16" fill="none" stroke="var(--danger)" stroke-width="2"><circle cx="8" cy="8" r="6"/><line x1="8" y1="5" x2="8" y2="9"/></svg><span style="font-size:11px;font-weight:600">Alert</span></div>
+        <div class="va-notif va-notif--warning" style="flex:1;min-width:120px;padding:6px 10px"><svg class="va-icon" viewBox="0 0 16 16" fill="none" stroke="var(--warning)" stroke-width="2"><path d="M8 2L2 13h12L8 2z"/></svg><span style="font-size:11px;font-weight:600">Warning</span></div>
+        <div class="va-notif va-notif--progress" style="flex:1;min-width:120px;padding:6px 10px"><svg class="va-icon" viewBox="0 0 16 16" fill="none" stroke="var(--agent)" stroke-width="2"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2.5 1.5"/></svg><span style="font-size:11px;font-weight:600">Info</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════ VARIANT B: Inline status line ════════════ -->
+  <div class="demo-panel">
+    <div class="demo-label"><span>C.</span> 方案 B: 内联状态行</div>
+    <div class="demo-body">
+
+      <div class="section-label">完成 (done)</div>
+      <div class="vb-notif vb-notif--done">
+        <svg class="vb-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="8" cy="8" r="6"/><path d="M5.5 8l2 2 3.5-3.5"/></svg>
+        <span class="vb-text">SubAgent #1 已完成 <span class="desc">· 发现 2 个 P0 问题</span></span>
+        <span class="vb-time">14:34</span>
+      </div>
+
+      <div class="section-label">告警 (alert) + 操作</div>
+      <div class="vb-notif vb-notif--alert">
+        <svg class="vb-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="8" cy="8" r="6"/><line x1="8" y1="5" x2="8" y2="9"/><circle cx="8" cy="11" r="0.5" fill="currentColor"/></svg>
+        <span class="vb-text">SubAgent #2 等待确认 <span class="desc">· 需要写入权限</span></span>
+        <span class="vb-action">查看</span>
+        <span class="vb-time">14:37</span>
+      </div>
+
+      <div class="section-label">警告 (warning)</div>
+      <div class="vb-notif vb-notif--warning">
+        <svg class="vb-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 2L2 13h12L8 2z"/><line x1="8" y1="6" x2="8" y2="9.5"/></svg>
+        <span class="vb-text">Token 使用量 85% <span class="desc">· 下次生成时自动压缩</span></span>
+        <span class="vb-time">14:38</span>
+      </div>
+
+      <div class="section-label">进度 (progress)</div>
+      <div class="vb-notif vb-notif--progress">
+        <svg class="vb-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2.5 1.5"/></svg>
+        <span class="vb-text">上下文已压缩 <span class="desc">· 85% → 42%</span></span>
+        <span class="vb-time">14:38</span>
+      </div>
+
+      <div class="section-label">在消息流中的效果</div>
+      <div style="display:flex;flex-direction:column;gap:4px;padding:8px 0">
+        <div style="max-width:85%;margin-left:auto;padding:8px 12px;font-size:12px;background:var(--accent-light);border-radius:var(--radius)">帮我 review 一下代码</div>
+        <div style="padding:8px 12px;font-size:12px;background:oklch(98% 0.008 250);border-radius:var(--radius)">Thinking · 3.2s</div>
+        <div style="padding:4px 12px;font-size:11px;color:var(--muted)">read MessageBubble.vue · 1.8s</div>
+        <div style="padding:8px 12px;font-size:12px;background:oklch(98% 0.008 250);border-radius:var(--radius)">P0 [视觉混乱] 三个组件背景色差异仅 1%...</div>
+        <div class="vb-notif vb-notif--done" style="border-radius:var(--radius)">
+          <svg class="vb-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="8" cy="8" r="6"/><path d="M5.5 8l2 2 3.5-3.5"/></svg>
+          <span class="vb-text">SubAgent #1 已完成 <span class="desc">· 2 个 P0</span></span>
+        </div>
+        <div style="max-width:85%;margin-left:auto;padding:8px 12px;font-size:12px;background:var(--accent-light);border-radius:var(--radius)">修复 P0</div>
+        <div class="vb-notif vb-notif--alert" style="border-radius:var(--radius)">
+          <svg class="vb-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="8" cy="8" r="6"/><line x1="8" y1="5" x2="8" y2="9"/></svg>
+          <span class="vb-text">SubAgent #2 等待确认 <span class="desc">· 需要写入权限</span></span>
+          <span class="vb-action">查看</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div style="max-width:1400px;margin:0 auto;padding:0 40px 40px;font-size:12px;color:var(--muted);line-height:1.8">
+  <strong style="color:var(--fg)">关键差异</strong><br>
+  <strong>A. 当前方案</strong>: done 和 info 用相同的绿色圆点+浅绿背景，alert 用红色圆点+浅红背景。仅 2 种视觉状态，warning/progress 缺失<br>
+  <strong>B. 图标+边框</strong>: 每种类型有独立图标、独立背景色、独立边框色。4 种状态 (done/alert/warning/progress) 清晰区分<br>
+  <strong>C. 内联状态行</strong>: 单行紧凑通知，带图标和颜色文字。适合轻量通知，告警操作用内联按钮。在消息流中不突兀
+</div>
+
+</body>
+</html>

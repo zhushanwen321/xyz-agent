@@ -97,7 +97,7 @@ const agentViews = computed<AgentView[]>(() => {
 
 // --- Event handlers ---
 
-function handleSend(payload: { content: string; skillName?: string; subagent?: { agent: string; task: string } }) {
+function handleSend(payload: { content: string; skillName?: string; subagent?: { agent: string; task: string }; sendMode?: 'send' | 'steer' | 'queue' }) {
   const sid = props.sessionId
   if (!sid) return
   chatStore.setError(null, sid)
@@ -114,7 +114,18 @@ function handleSend(payload: { content: string; skillName?: string; subagent?: {
     timestamp: Date.now(),
     ...(payload.skillName ? { skillName: payload.skillName } : {}),
   }, sid)
-  sendMessage(payload.content, payload.subagent)
+
+  const mode = payload.sendMode ?? 'send'
+  if (mode === 'steer') {
+    // Steer: runtime handles abort+send atomically in message.steer handler
+    chatStore.setGenerating(true, sid)
+    send({ type: 'message.steer', payload: { sessionId: sid, content: payload.content } })
+  } else if (mode === 'queue') {
+    // Queue: send via message.follow_up without interrupting
+    send({ type: 'message.follow_up', payload: { sessionId: sid, content: payload.content } })
+  } else {
+    sendMessage(payload.content, payload.subagent)
+  }
 }
 
 function handleSendCommand(payload: { type: string; payload: Record<string, unknown> }) {

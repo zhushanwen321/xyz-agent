@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>xyz-agent Chat — 优化 Demo v5</title>
+<style>
+:root {
+  --bg: oklch(97% 0.014 70); --surface: oklch(99% 0.006 70); --fg: oklch(22% 0.015 50);
+  --muted: oklch(50% 0.012 50); --border: oklch(90% 0.010 70);
+  --accent: oklch(64% 0.13 28); --accent-light: oklch(92% 0.04 28);
+  --success: oklch(70% 0.18 145); --success-light: oklch(95% 0.06 145);
+  --warning: oklch(78% 0.15 85); --warning-light: oklch(95% 0.06 85);
+  --danger: oklch(62% 0.20 25); --danger-light: oklch(93% 0.06 25);
+  --agent: oklch(55% 0.18 250); --agent-light: oklch(93% 0.04 250);
+  --section-bg: oklch(95% 0.014 70); --hover-bg: oklch(96% 0.010 70); --divider: oklch(94% 0.008 70);
+  --user-bubble-bg: oklch(92% 0.03 28); --user-bubble-border: oklch(88% 0.04 28);
+  --msg-assistant-bg: oklch(98% 0.008 250); --msg-thinking-bg: oklch(97% 0.015 195); --msg-tool-bg: oklch(97% 0.010 70);
+  --font-body: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-display: 'Tiempos Headline','Newsreader',Georgia,serif;
+  --font-mono: 'JetBrains Mono','IBM Plex Mono',ui-monospace,Menlo,monospace;
+  --ease: cubic-bezier(0.4,0,0.2,1);
+  --shadow-xs: 0 1px 6px rgba(0,0,0,0.04);
+  --shadow-sm: 0 2px 12px rgba(0,0,0,0.08);
+  --shadow-menu: 0 4px 20px rgba(0,0,0,0.12);
+  --rail-w: 36px;
+  --traffic-light-w: 68px; /* width reservation for macOS 3 dots */
+}
+[data-theme="dark"] {
+  --bg: oklch(13% 0.008 50); --surface: oklch(17% 0.010 50); --fg: oklch(93% 0.006 55);
+  --muted: oklch(58% 0.008 50); --border: oklch(28% 0.008 50);
+  --accent: oklch(68% 0.12 28); --accent-light: oklch(28% 0.05 28);
+  --success: oklch(68% 0.14 145); --success-light: oklch(28% 0.05 145);
+  --warning: oklch(78% 0.12 85); --warning-light: oklch(28% 0.05 85);
+  --danger: oklch(58% 0.17 25); --danger-light: oklch(28% 0.06 25);
+  --agent: oklch(65% 0.17 250); --agent-light: oklch(22% 0.05 250);
+  --section-bg: oklch(22% 0.010 50); --hover-bg: oklch(20% 0.009 50); --divider: oklch(22% 0.008 50);
+  --user-bubble-bg: oklch(25% 0.025 40); --user-bubble-border: oklch(33% 0.03 40);
+  --msg-assistant-bg: oklch(18% 0.010 250); --msg-thinking-bg: oklch(19% 0.020 195); --msg-tool-bg: oklch(19% 0.010 50);
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font-body);background:var(--bg);color:var(--fg);line-height:1.6;font-size:14px;height:100vh;overflow:hidden}
+
+/* ── App Layout ── */
+.app-layout{display:flex;height:100vh;position:relative}
+
+/* ── macOS traffic lights (always present) ── */
+.mac-traffic-lights{
+  position:fixed;top:8px;left:10px;z-index:1000;
+  display:flex;align-items:center;gap:7px;
+  pointer-events:auto;
+}
+.mac-traffic-lights .dot{
+  width:12px;height:12px;border-radius:50%;
+  transition:opacity 0.12s;
+}
+.mac-traffic-lights .dot:nth-child(1){background:#ff5f57;border:0.5px solid #e5423e}
+.mac-traffic-lights .dot:nth-child(2){background:#febc2e;border:0.5px solid #e5a120}
+.mac-traffic-lights .dot:nth-child(3){background:#28c840;border:0.5px solid #13ab28}
+/* In fullscreen, traffic lights are INSIDE the sidebar header */
+.is-fullscreen .mac-traffic-lights{
+  position:fixed;left:10px;top:8px;
+}
+
+/* ============================================================
+   SIDEBAR
+   ============================================================ */
+.sidebar{
+  width:260px;background:var(--surface);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;flex-shrink:0;
+  transition:width 0.2s var(--ease);overflow:hidden;position:relative;
+}
+.sidebar.collapsed{width:0;border-right:none}
+
+/* Sidebar Header — matches AppSidebar.vue layout */
+.sidebar-header{flex-shrink:0}
+/* Row 1 */
+.sidebar-row1{
+  display:flex;align-items:center;gap:4px;
+  padding:8px 4px 4px var(--traffic-light-w); /* left room for traffic lights */
+  position:relative;
+}
+.is-fullscreen .sidebar-row1{padding-left:14px} /* no traffic lights need room */
+
+/* Brand logo & version */
+.sidebar-brand{font-family:var(--font-display);font-size:13px;font-weight:700;color:var(--muted);letter-spacing:-0.01em;white-space:nowrap}
+.sidebar-brand span{color:var(--accent)}
+.sidebar-version{font-size:10px;color:var(--muted);leading-trim:both}
+/* In fullscreen mode, brand+version move to row1 */
+.is-fullscreen .sidebar-brand{display:inline} /* shown in row1 */
+
+/* Nav buttons (overview, settings, ◀, ▶) */
+.sidebar-nav{display:flex;align-items:center;gap:2px;margin-left:auto}
+.nav-btn{
+  width:26px;height:26px;display:flex;align-items:center;justify-content:center;
+  border:none;border-radius:1px;background:transparent;color:var(--muted);
+  cursor:pointer;transition:all 0.12s var(--ease);
+}
+.nav-btn:hover{background:var(--hover-bg);color:var(--fg)}
+.nav-btn.active{background:var(--hover-bg);color:var(--accent)}
+.nav-btn svg{width:14px;height:14px}
+
+/* Collapse button (top nav area) */
+.collapse-btn{
+  width:22px;height:26px;display:flex;align-items:center;justify-content:center;
+  border:none;border-radius:1px;background:transparent;color:var(--muted);
+  cursor:pointer;transition:all 0.12s var(--ease);font-size:12px;
+}
+.collapse-btn:hover{background:var(--hover-bg);color:var(--accent)}
+
+/* Row 2 */
+.sidebar-row2{
+  display:flex;align-items:center;gap:8px;
+  padding:2px 14px 8px 14px;
+}
+.is-fullscreen .sidebar-row2{padding-top:4px}
+
+/* New session button */
+.new-session-btn{
+  margin-left:auto;padding:5px 14px;height:28px;
+  border-radius:1px;border:1px solid var(--border);
+  background:transparent;color:var(--muted);
+  font-size:11px;font-family:var(--font-body);
+  cursor:pointer;transition:all 0.12s var(--ease);
+  white-space:nowrap;line-height:1;
+}
+.new-session-btn:hover{border-color:var(--muted);color:var(--fg)}
+.new-session-btn--wide{width:100%;text-align:center;margin-left:0;padding:6px 12px}
+
+/* Sidebar collapse handle on the right edge */
+.sidebar-handle{
+  position:absolute;top:0;right:-14px;width:14px;height:100%;
+  z-index:20;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  background:transparent;transition:background 0.15s var(--ease);
+  pointer-events:auto;
+}
+.sidebar-handle::after{
+  content:'';width:2px;height:24px;border-radius:1px;
+  background:var(--border);transition:background 0.15s var(--ease);
+}
+.sidebar-handle:hover::after{background:var(--accent)}
+
+/* Outer expand button (when sidebar collapsed) */
+.sidebar-expand-outer{
+  position:fixed;left:0;top:48px;z-index:25;
+  width:20px;height:32px;
+  display:none;align-items:center;justify-content:center;
+  border:1px solid var(--border);border-left:none;
+  border-radius:0 1px 1px 0;
+  background:var(--surface);color:var(--muted);cursor:pointer;
+  font-size:12px;transition:all 0.12s var(--ease);
+}
+.sidebar-expand-outer:hover{background:var(--accent-light);color:var(--accent);border-color:var(--accent)}
+.sidebar-expand-outer.visible{display:flex}
+
+/* Session search */
+.sidebar-search{padding:6px 12px;flex-shrink:0}
+.sidebar.collapsed .sidebar-search{padding:0;opacity:0}
+.sidebar-search input{
+  width:100%;padding:5px 8px;border-radius:1px;border:1px solid var(--border);
+  background:var(--bg);color:var(--fg);font-size:12px;font-family:var(--font-body);outline:none;
+}
+.sidebar-search input:focus{border-color:var(--accent)}
+
+/* Session list */
+.sidebar-list{flex:1;overflow-y:auto;padding:2px 0;border-top:1px solid var(--border)}
+.sidebar.collapsed .sidebar-list{padding:0;opacity:0}
+.session-group-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--muted);padding:6px 16px 2px}
+.session-item{display:flex;align-items:center;gap:8px;padding:5px 16px 5px 20px;cursor:pointer;font-size:13px;line-height:1.4;border-left:3px solid transparent;transition:all 0.15s var(--ease)}
+.session-item:hover{background:var(--hover-bg)}
+.session-item.active{border-left-color:var(--accent);background:var(--accent-light)}
+.session-item .status-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.session-item .status-dot.running{background:var(--success)}
+.session-item .status-dot.idle{background:var(--border)}
+.session-item .session-title{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ============================================================
+   PANEL GRID
+   ============================================================ */
+.panel-grid{flex:1;display:flex;min-width:0;overflow:hidden;position:relative}
+.panel{flex:1;display:flex;flex-direction:column;min-width:0;position:relative}
+.panel+.panel{border-left:1px solid var(--border)}
+
+.panel-header{height:48px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 12px 0 16px;gap:8px;flex-shrink:0}
+.panel-header h2{font-family:var(--font-display);font-size:15px;font-weight:600;letter-spacing:-0.01em;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.panel-header-actions{display:flex;align-items:center;gap:4px}
+.panel-header-btn{width:34px;height:34px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:1px;background:transparent;color:var(--muted);cursor:pointer;transition:all 0.15s var(--ease)}
+.panel-header-btn:hover{background:var(--accent-light);color:var(--accent);border-color:var(--accent)}
+.panel-header-btn.active{background:var(--accent-light);color:var(--accent);border-color:var(--accent)}
+
+.split-divider{width:4px;background:var(--bg);cursor:col-resize;flex-shrink:0;position:relative;z-index:10;display:none}
+.split-divider.active{display:block}
+.split-divider:hover{background:var(--accent-light)}
+.split-divider::after{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:2px;height:32px;border-radius:1px;background:var(--border)}
+.split-divider:hover::after{background:var(--accent)}
+
+/* ============================================================
+   PANEL BODY
+   ============================================================ */
+.panel-body{flex:1;display:flex;min-height:0;overflow:hidden}
+.chat-content{flex:1;display:flex;flex-direction:column;min-width:0}
+
+.chat-messages{flex:1;overflow-y:auto;padding:16px 0 8px;display:flex;flex-direction:column;gap:6px}
+.chat-messages::-webkit-scrollbar{width:4px}
+.chat-messages::-webkit-scrollbar-track{background:transparent}
+.chat-messages::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.chat-messages::-webkit-scrollbar-thumb:hover{background:var(--muted)}
+
+.utility-rail{width:var(--rail-w);flex-shrink:0;display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 0;border-left:1px solid var(--border);background:var(--surface)}
+.utility-rail .rail-top-spacer{flex:1}
+.utility-rail-btn{width:28px;height:28px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;border-radius:1px;background:transparent;color:var(--muted);cursor:pointer;transition:all 0.15s var(--ease);flex-shrink:0;opacity:0;transform:translateY(4px)}
+.panel-body:hover .utility-rail-btn{opacity:1;transform:translateY(0)}
+.utility-rail-btn.visible{opacity:1;transform:translateY(0)}
+.utility-rail-btn:hover{background:var(--accent-light);color:var(--accent);border-color:var(--accent)}
+.utility-rail-btn svg{width:15px;height:15px}
+.rail-separator{width:18px;height:1px;background:var(--border);margin:2px 0;flex-shrink:0}
+.rail-indicator{width:4px;height:4px;border-radius:50%;background:var(--border);flex-shrink:0;opacity:0;transition:opacity 0.15s var(--ease)}
+.panel-body:hover .rail-indicator{opacity:0.6}
+
+/* ── Batch bar ── */
+.batch-bar{position:sticky;top:0;z-index:30;background:var(--accent-light);border-bottom:1px solid var(--accent);display:flex;align-items:center;gap:10px;font-size:12px;color:var(--accent);font-weight:500;opacity:0;pointer-events:none;transition:all 0.15s var(--ease);height:0;overflow:hidden;padding:0 16px}
+.batch-bar.visible{opacity:1;pointer-events:auto;height:auto;padding:8px 16px}
+.batch-bar .count{font-weight:600}
+.batch-bar .spacer{flex:1}
+.batch-bar .batch-btn{padding:3px 10px;border:1px solid var(--accent);border-radius:1px;background:transparent;color:var(--accent);font-size:11px;cursor:pointer;font-family:var(--font-body);transition:background 0.1s var(--ease)}
+.batch-bar .batch-btn:hover{background:var(--accent);color:white}
+.batch-bar .batch-btn.secondary{border-color:var(--border);color:var(--muted)}
+.batch-bar .batch-btn.secondary:hover{border-color:var(--accent);color:var(--accent);background:transparent}
+
+/* ── Messages ── */
+.message-wrapper{max-width:960px;width:100%;margin:0 auto;padding:0 16px}
+.message-wrapper.user{display:flex;flex-direction:column;align-items:flex-end}
+.message-wrapper.assistant{display:flex;flex-direction:column;align-items:flex-start}
+.message-wrapper.system{display:flex;flex-direction:column;align-items:stretch}
+.message-bubble{position:relative;transition:all 0.15s var(--ease)}
+.message-bubble.user{max-width:78%;align-self:flex-end}
+.message-bubble.assistant{align-self:flex-start;width:100%;max-width:100%}
+.message-bubble.selected-batch{outline:2px solid var(--accent);outline-offset:2px;border-radius:1px}
+.message-bubble.batch-selectable{cursor:pointer}
+.message-bubble.batch-selectable::before{content:'';position:absolute;top:50%;transform:translateY(-50%);left:-22px;width:14px;height:14px;border:1.5px solid var(--border);border-radius:1px;background:var(--surface);opacity:0;transition:opacity 0.12s var(--ease);z-index:6}
+.message-bubble.batch-selectable:hover::before{opacity:0.7}
+.message-bubble.selected-batch::before{border-color:var(--accent);background:var(--accent);opacity:1!important}
+.message-bubble.selected-batch::after{content:'✓';position:absolute;top:50%;transform:translateY(-50%);left:-22px;width:14px;height:14px;display:flex;align-items:center;justify-content:center;color:white;font-size:8px;font-weight:700;z-index:7}
+.message-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--muted);margin-bottom:2px;line-height:1.4}
+.message-label .timestamp{font-weight:400;text-transform:none;letter-spacing:0;opacity:0.6;margin-left:6px}
+.message-wrapper.user .message-label{text-align:right}
+.bubble-body{padding:8px 12px;line-height:1.6;border-radius:1px;position:relative;font-size:13px}
+.bubble-body.user{background:var(--user-bubble-bg);border:1px solid var(--user-bubble-border)}
+.bubble-body.assistant{background:var(--msg-assistant-bg);border:1px solid var(--border)}
+.bubble-body p{margin:4px 0}
+.bubble-body p:first-child{margin-top:0}
+.bubble-body p:last-child{margin-bottom:0}
+.bubble-body ul,.bubble-body ol{margin:4px 0;padding-left:20px}
+.bubble-body code{font-family:var(--font-mono);font-size:11px;background:var(--section-bg);padding:0.5px 4px;border-radius:1px}
+.bubble-body pre{background:var(--section-bg);border-radius:1px;padding:8px 10px;margin:6px 0;font-family:var(--font-mono);font-size:11px;line-height:1.5;overflow-x:auto;position:relative}
+.bubble-body pre .code-copy{position:absolute;top:4px;right:4px;padding:2px 6px;font-size:10px;background:var(--surface);border:1px solid var(--border);border-radius:1px;color:var(--muted);cursor:pointer;opacity:0;transition:opacity 0.15s var(--ease)}
+.bubble-body pre:hover .code-copy{opacity:1}
+.bubble-body pre .code-copy:hover{background:var(--accent-light);color:var(--accent)}
+.action-menu-btn{position:absolute;top:-2px;right:-34px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:1px;background:var(--surface);color:var(--muted);cursor:pointer;opacity:0;transition:all 0.12s var(--ease);z-index:5;font-size:15px}
+.message-bubble:hover .action-menu-btn{opacity:1}
+.action-menu-btn:hover{background:var(--accent-light);color:var(--accent);border-color:var(--accent)}
+.action-menu-btn.active{opacity:1;background:var(--accent-light);color:var(--accent);border-color:var(--accent)}
+.message-wrapper.user .message-bubble .action-menu-btn{right:auto;left:-34px}
+.action-dropdown{position:absolute;top:28px;right:-8px;min-width:210px;background:var(--surface);border:1px solid var(--border);border-radius:1px;box-shadow:var(--shadow-menu);z-index:100;padding:4px;opacity:0;transform:translateY(-4px);pointer-events:none;transition:all 0.12s var(--ease)}
+.action-dropdown.visible{opacity:1;transform:translateY(0);pointer-events:auto}
+.message-wrapper.user .message-bubble .action-dropdown{right:auto;left:-8px}
+.action-dropdown-item{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:1px;cursor:pointer;font-size:12px;color:var(--fg);transition:background 0.1s var(--ease);border:none;background:transparent;width:100%;text-align:left;font-family:var(--font-body)}
+.action-dropdown-item:hover{background:var(--accent-light)}
+.action-dropdown-item .icon{width:15px;height:15px;flex-shrink:0;color:var(--muted)}
+.action-dropdown-item .shortcut{margin-left:auto;font-size:10px;color:var(--muted);opacity:0.5;font-family:var(--font-mono)}
+.action-dropdown-divider{height:1px;background:var(--border);margin:2px 4px}
+.branch-indicator{display:inline-flex;align-items:center;gap:3px;padding:1px 7px;height:19px;margin-top:3px;border:1px solid var(--border);border-radius:100px;background:var(--surface);cursor:pointer;font-size:10px;color:var(--muted);transition:all 0.12s var(--ease);position:relative}
+.branch-indicator:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-light)}
+.branch-indicator .branch-icon{width:10px;height:10px;flex-shrink:0}
+.branch-indicator .branch-count{font-weight:600;font-size:11px}
+.branch-dropdown{position:absolute;top:calc(100% + 4px);left:0;min-width:230px;max-width:300px;background:var(--surface);border:1px solid var(--border);border-radius:1px;box-shadow:var(--shadow-menu);z-index:100;padding:4px}
+.branch-item{display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:1px;cursor:pointer;font-size:11px;color:var(--fg);transition:background 0.1s var(--ease)}
+.branch-item:hover{background:var(--accent-light)}
+.branch-item.active{background:var(--accent-light);color:var(--accent);font-weight:500}
+.branch-item .branch-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;background:var(--border)}
+.branch-item.active .branch-dot{background:var(--accent)}
+.branch-item .branch-label{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.system-message{padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:1px;display:flex;align-items:flex-start;gap:8px;font-size:13px}
+.system-message .dot{width:8px;height:8px;border-radius:50%;margin-top:4px;flex-shrink:0}
+.system-message .dot.success{background:var(--success)}
+.system-message .dot.alert{background:var(--danger)}
+.system-message .dot.info{background:var(--accent)}
+.system-message .content{flex:1}
+.system-message .content strong{display:block;font-weight:600}
+.tool-call-card{border:1px solid var(--border);background:var(--msg-tool-bg);border-radius:1px;padding:6px 10px;margin-bottom:4px;font-size:11px;font-family:var(--font-mono);color:var(--muted)}
+.tool-call-card .tool-name{color:var(--agent);font-weight:500}
+.tool-call-card .tool-status{float:right;font-size:10px}
+.tool-call-card .tool-status.done{color:var(--success)}
+.tool-call-card .tool-status.running{color:var(--accent)}
+.thinking-block{border:1px solid var(--border);background:var(--msg-thinking-bg);border-radius:1px;overflow:hidden;margin-bottom:4px}
+.thinking-header{display:flex;align-items:center;gap:6px;padding:6px 12px;cursor:pointer;border:none;background:linear-gradient(to right,var(--accent-light) 0%,var(--accent-light) 40%,transparent 100%);color:var(--accent);font-family:var(--font-body);font-size:11px;font-weight:500;width:100%;text-align:left;transition:background 0.15s var(--ease)}
+.thinking-header:hover{background:linear-gradient(to right,var(--accent-light) 0%,var(--accent-light) 55%,transparent 100%)}
+.thinking-header .arrow{width:9px;height:9px;transition:transform 0.15s var(--ease);flex-shrink:0}
+.thinking-header .arrow.collapsed{transform:rotate(-90deg)}
+.thinking-header .pulse-bar{width:5px;height:10px;background:var(--accent);border-radius:1px;animation:pulse-bar 1.2s ease-in-out infinite}
+.thinking-header .elapsed{margin-left:auto;font-size:10px;font-weight:400;color:var(--muted);font-variant-numeric:tabular-nums}
+.thinking-body{padding:8px 12px;border-top:1px solid var(--border);font-family:var(--font-mono);font-size:11px;line-height:1.5;color:var(--muted);white-space:pre-wrap}
+.copy-toast{position:fixed;bottom:180px;left:50%;transform:translateX(-50%) translateY(10px);background:var(--fg);color:var(--bg);font-size:12px;padding:6px 14px;border-radius:1px;opacity:0;pointer-events:none;transition:all 0.2s var(--ease);z-index:300;white-space:nowrap}
+.copy-toast.visible{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* ── Input ── */
+.chat-input{flex-shrink:0;padding:0 16px 10px;max-width:960px;width:100%;margin:0 auto}
+.send-mode-bar{height:20px;display:flex;align-items:center;gap:6px;padding:0 2px;margin-bottom:2px;font-size:10px;color:var(--muted);font-family:var(--font-mono);transition:color 0.15s var(--ease);user-select:none}
+.send-mode-bar .mode-label{font-weight:500}
+.send-mode-bar .mode-hint{opacity:0.6}
+.send-mode-bar .mode-kb{margin-left:auto;opacity:0.4;font-size:9px}
+.send-mode-bar.mode-steer{color:var(--accent)}
+.send-mode-bar.mode-steer .mode-label{color:var(--accent)}
+.send-mode-bar.mode-queue{color:var(--warning)}
+.send-mode-bar.mode-queue .mode-label{color:var(--warning)}
+.chat-input-area{background:var(--surface);border:2px solid transparent;border-radius:1px;transition:border-color 0.15s var(--ease)}
+.chat-input-area:focus-within{border-color:var(--accent)}
+.chat-input-inner{padding:6px 12px 2px}
+.chat-input-inner textarea{width:100%;min-height:44px;max-height:180px;border:none;background:transparent;color:var(--fg);font-family:var(--font-body);font-size:13px;line-height:1.45;resize:none;outline:none}
+.chat-input-inner textarea::placeholder{color:var(--muted)}
+.chat-input-toolbar{display:flex;align-items:center;gap:4px;padding:0 8px 4px}
+.toolbar-btn{padding:2px 6px;height:26px;border:none;background:transparent;color:var(--muted);font-size:10px;font-family:var(--font-mono);cursor:pointer;border-radius:1px;display:inline-flex;align-items:center;gap:4px;transition:background 0.1s var(--ease)}
+.toolbar-btn:hover{background:var(--accent-light);color:var(--accent)}
+.toolbar-btn .signal-bars{display:inline-flex;align-items:flex-end;gap:1.5px;height:12px}
+.toolbar-btn .signal-bars span{width:3px;border-radius:0.5px;background:currentColor}
+.context-bar{display:inline-flex;align-items:center;gap:4px;font-size:10px;color:var(--muted);font-family:var(--font-mono)}
+.context-bar .bar-track{width:40px;height:4px;background:var(--border);border-radius:1px;overflow:hidden}
+.context-bar .bar-fill{height:100%;border-radius:1px;background:var(--accent);transition:width 0.3s var(--ease)}
+.btn-send{width:28px;height:28px;display:flex;align-items:center;justify-content:center;border:none;border-radius:1px;cursor:pointer;margin-left:auto;background:var(--accent);color:white;transition:all 0.15s var(--ease)}
+.btn-send:hover{opacity:0.88}
+.btn-send svg{width:14px;height:14px}
+.btn-send.stop{background:var(--danger)}
+
+/* ── Controls ── */
+.controls{position:fixed;bottom:16px;left:16px;z-index:200;display:flex;gap:8px}
+.controls button{padding:6px 14px;border:1px solid var(--border);border-radius:100px;background:var(--surface);color:var(--muted);font-size:11px;cursor:pointer;font-family:var(--font-body);transition:all 0.15s var(--ease)}
+.controls button:hover{background:var(--accent-light);color:var(--accent);border-color:var(--accent)}
+
+@keyframes thinking-pulse{0%,100%{opacity:.35}50%{opacity:1}}
+@keyframes pulse-bar{0%,100%{opacity:.3}50%{opacity:1}}
+</style>
+</head>
+<body>
+
+<!-- macOS traffic lights (fixed, always visible) -->
+<div class="mac-traffic-lights" id="macTraffic">
+  <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+</div>
+
+<div class="app-layout" id="appLayout">
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <!-- Header: two rows (matches AppSidebar.vue) -->
+    <div class="sidebar-header" id="sidebarHeader">
+      <!-- Row 1: traffic lights → brand (fullscreen) + nav + collapse -->
+      <div class="sidebar-row1">
+        <span class="sidebar-brand" id="brandRow1" style="display:none">xyz<span>-agent</span></span>
+        <span class="sidebar-version" id="verRow1" style="display:none">v0.4.1</span>
+        <div class="sidebar-nav">
+          <button class="nav-btn" title="Overview (Cmd+J)">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>
+          </button>
+          <button class="nav-btn" title="Settings (Cmd+ ,)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 008.58 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 8.58a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+          </button>
+          <button class="nav-btn" title="Back"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 3L5 8l5 5"/></svg></button>
+          <button class="nav-btn" title="Forward"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 3l5 5-5 5"/></svg></button>
+        </div>
+        <!-- Collapse button in header -->
+        <button class="collapse-btn" onclick="toggleSidebar()" title="收起侧边栏">◀</button>
+      </div>
+
+      <!-- Row 2: logo (non-fullscreen) + new session -->
+      <div class="sidebar-row2">
+        <span class="sidebar-brand" id="brandRow2">xyz<span>-agent</span></span>
+        <span class="sidebar-version" id="verRow2">v0.4.1</span>
+        <button class="new-session-btn" id="newSessionBtn">+ New Session</button>
+      </div>
+    </div>
+
+    <div class="sidebar-search"><input type="text" placeholder="搜索会话…"></div>
+    <div class="sidebar-list">
+      <div class="session-group-label">今天</div>
+      <div class="session-item active"><span class="status-dot running"></span><span class="session-title">重构 auth 模块</span></div>
+      <div class="session-item"><span class="status-dot idle"></span><span class="session-title">修复单元测试 · Merge PR #892</span></div>
+      <div class="session-item"><span class="status-dot idle"></span><span class="session-title">优化数据库查询 / Session Tree</span></div>
+      <div class="session-group-label">昨天</div>
+      <div class="session-item"><span class="status-dot idle"></span><span class="session-title">SubAgent 并行执行 demo</span></div>
+    </div>
+
+    <!-- Sidebar collapse handle (right edge) -->
+    <div class="sidebar-handle" onclick="toggleSidebar()" title="收起侧边栏"></div>
+  </aside>
+
+  <!-- Outer expand button -->
+  <button class="sidebar-expand-outer" id="sidebarExpandBtn" onclick="toggleSidebar()" title="展开侧边栏">▸</button>
+
+  <!-- Panel Grid -->
+  <div class="panel-grid" id="panelGrid">
+    <div class="panel" id="panel1">
+      <div class="panel-header">
+        <h2>重构 auth 模块</h2>
+        <div class="panel-header-actions">
+          <button class="panel-header-btn" title="搜索">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="6.5" cy="6.5" r="4.5"/><path d="M10 10l4 4"/></svg>
+          </button>
+          <button class="panel-header-btn" id="batchBtn1" title="选择消息" onclick="toggleBatchSelect(1)">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2 4h12M2 8h8M2 12h10"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="batch-bar" id="batchBar1"> ... </div>
+
+      <div class="panel-body">
+        <div class="chat-content">
+          <!-- Messages (truncated for brevity, includes all same content) -->
+          <div class="chat-messages" id="chatMessages1">
+            <div class="message-wrapper system"><div class="system-message"><span class="dot info"></span><div class="content"><strong>Session 已恢复</strong> 已加载 24 条历史消息。</div></div></div>
+            <div class="message-wrapper user">
+              <div class="message-label">14:23 <span class="timestamp">用户</span></div>
+              <div class="message-bubble user">
+                <div class="bubble-body user"><p>重构 <code>authMiddleware</code>，函数太长了。</p></div>
+                <button class="action-menu-btn" onclick="toggleMenu(this)">⋯</button>
+                <div class="action-dropdown">
+                  <button class="action-dropdown-item" onclick="copyMessage(this,'markdown')"><svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="10" height="12" rx="1"/><path d="M5 1h6v2H5z"/></svg> 复制 <span class="shortcut">⌘C</span></button>
+                  <button class="action-dropdown-item" onclick="copyMessage(this,'text')"><svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="10" height="12" rx="1"/><path d="M5 1h6v2H5z"/></svg> 复制纯文本</button>
+                  <div class="action-dropdown-divider"></div>
+                  <button class="action-dropdown-item" onclick="alert('Navigate')"><svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 12l5-10 5 10"/><path d="M5 9h6"/></svg> Navigate</button>
+                  <button class="action-dropdown-item" onclick="alert('Fork')"><svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 13V3h10"/><path d="M8 3v10"/><path d="M3 8h10"/></svg> Fork</button>
+                  <button class="action-dropdown-item" onclick="alert('Clone')"><svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="1"/><path d="M6 6h4v4H6z"/></svg> Clone</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Input -->
+          <div class="chat-input">
+            <div class="send-mode-bar" id="sendModeBar1">
+              <span class="mode-label" id="modeLabel1">Send</span>
+              <span class="mode-hint" id="modeHint1">· Enter 发送</span>
+              <span class="mode-kb" id="modeKb1">Alt+Enter 排队</span>
+            </div>
+            <div class="chat-input-area">
+              <div class="chat-input-inner"><textarea placeholder="输入消息…" rows="2"></textarea></div>
+              <div class="chat-input-toolbar">
+                <button class="toolbar-btn">deepseek/v4-pro</button>
+                <button class="toolbar-btn"><span class="signal-bars"><span style="height:4px"></span><span style="height:6px"></span><span style="height:8px"></span><span style="height:5px"></span></span> high</button>
+                <span class="context-bar"><span class="bar-track"><span class="bar-fill" style="width:28%"></span></span>28%</span>
+                <span class="toolbar-btn" style="font-size:10px"><span style="color:var(--accent)">↑</span>2.4k <span style="color:var(--muted);margin:0 1px">/</span> <span style="color:var(--success)">↓</span>8.7k</span>
+                <span style="flex:1"></span>
+                <button class="btn-send" onclick="handleSend(1)" title="发送 (Enter)">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 13V3M4 7l4-4 4 4"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Utility Rail (full height) -->
+        <div class="utility-rail" id="rail1">
+          <div class="rail-indicator"></div><div class="rail-indicator"></div>
+          <div class="rail-separator"></div>
+          <button class="utility-rail-btn" onclick="scrollTo('chatMessages1','top')" title="回到顶端">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 13V4M4 8l4-4 4 4"/></svg>
+          </button>
+          <button class="utility-rail-btn" onclick="scrollTo('chatMessages1','bottom')" title="回到底部">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 4v9M4 9l4 4 4-4"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<button class="sidebar-expand-outer" id="sidebarExpandBtn" onclick="toggleSidebar()">▸</button>
+<div class="copy-toast" id="copyToast"></div>
+<div class="controls">
+  <button onclick="toggleTheme()">🌓 主题</button>
+  <button id="splitBtn" onclick="toggleSplit()">|| 分屏</button>
+  <button id="streamToggle" onclick="toggleStreaming()">▶ 流式</button>
+  <button id="fullscreenToggle" onclick="toggleFullscreen()">⬜ 全屏</button>
+</div>
+
+<script>
+/* ── Theme ── */
+function toggleTheme(){
+  const h=document.documentElement;
+  h.setAttribute('data-theme',h.getAttribute('data-theme')==='dark'?'light':'dark');
+}
+
+/* ── Fullscreen toggle (simulates macOS fullscreen behavior) ── */
+let isFullscreen = false;
+function toggleFullscreen() {
+  isFullscreen = !isFullscreen;
+  document.body.classList.toggle('is-fullscreen', isFullscreen);
+
+  // Row 1: show/hide brand+version
+  const brandR1 = document.getElementById('brandRow1');
+  const verR1 = document.getElementById('verRow1');
+  const brandR2 = document.getElementById('brandRow2');
+  const verR2 = document.getElementById('verRow2');
+  const newBtn = document.getElementById('newSessionBtn');
+
+  if (isFullscreen) {
+    // Logo moves to row1, row2 only has wide new session button
+    brandR1.style.display = 'inline';
+    verR1.style.display = 'inline';
+    brandR2.style.display = 'none';
+    verR2.style.display = 'none';
+    newBtn.className = 'new-session-btn new-session-btn--wide';
+    newBtn.textContent = '+ New Session';
+  } else {
+    brandR1.style.display = 'none';
+    verR1.style.display = 'none';
+    brandR2.style.display = 'inline';
+    verR2.style.display = 'inline';
+    newBtn.className = 'new-session-btn';
+  }
+
+  document.getElementById('fullscreenToggle').textContent = isFullscreen ? '⬜ 窗口化' : '⬜ 全屏';
+}
+
+/* ── Sidebar collapse ── */
+let sidebarCollapsed=false;
+function toggleSidebar(){
+  sidebarCollapsed=!sidebarCollapsed;
+  document.getElementById('sidebar').classList.toggle('collapsed',sidebarCollapsed);
+  // Outer expand button
+  const outer=document.getElementById('sidebarExpandBtn');
+  if(outer) outer.classList.toggle('visible',sidebarCollapsed);
+}
+
+/* ── Menu ── */
+function toggleMenu(btn){
+  const wa=btn.classList.contains('active');
+  document.querySelectorAll('.action-menu-btn.active').forEach(b=>{b.classList.remove('active');b.nextElementSibling.classList.remove('visible')});
+  if(!wa){btn.classList.add('active');btn.nextElementSibling.classList.add('visible')}
+}
+document.addEventListener('click',function(e){
+  if(!e.target.closest('.action-menu-btn')&&!e.target.closest('.action-dropdown'))
+    document.querySelectorAll('.action-menu-btn.active').forEach(b=>{b.classList.remove('active');b.nextElementSibling.classList.remove('visible')})
+});
+function copyMessage(item,format){showToast('已复制');const d=item.closest('.action-dropdown'),b=d.closest('.message-bubble'),btn=b.querySelector('.action-menu-btn');if(btn){btn.classList.remove('active');d.classList.remove('visible')}}
+function showToast(t){const e=document.getElementById('copyToast');e.textContent=t;e.classList.add('visible');setTimeout(()=>e.classList.remove('visible'),1500)}
+
+function scrollTo(id,dir){const el=document.getElementById(id);if(!el)return;el.scrollTo({top:dir==='top'?0:el.scrollHeight,behavior:'smooth'})}
+
+/* ── Batch ── */
+const batchStates={};
+function toggleBatchSelect(pid){
+  const k='panel'+pid;batchStates[k]=!batchStates[k];const on=batchStates[k];
+  const bar=document.getElementById('batchBar'+pid);if(bar)bar.classList.toggle('visible',on);
+  const msgs=document.querySelectorAll('#chatMessages'+pid+' .message-bubble');
+  msgs.forEach(b=>{
+    b.classList.toggle('batch-selectable',on);if(!on)b.classList.remove('selected-batch');
+    b.onclick=on?function(e){if(e.target.closest('.action-menu-btn,.action-dropdown,.branch-indicator'))return;this.classList.toggle('selected-batch');updateBatchCount(pid)}:null;
+  });if(!on)updateBatchCount(pid);
+}
+function updateBatchCount(pid){const c=document.querySelectorAll('#chatMessages'+pid+' .message-bubble.selected-batch').length;const e=document.getElementById('batchCount'+pid);if(e)e.textContent=c}
+
+/* ── Split ── */
+let splitActive=false;
+function toggleSplit(){
+  splitActive=!splitActive;const grid=document.getElementById('panelGrid');const btn=document.getElementById('splitBtn');
+  if(splitActive){
+    const p1=document.getElementById('panel1');const p2=p1.cloneNode(true);
+    p2.id='panel2';p2.querySelectorAll('[id]').forEach(el=>{el.id=el.id.replace('1','2')});
+    const div=document.createElement('div');div.className='split-divider active';
+    p1.after(div);div.after(p2);
+    btn.textContent='□ 单屏';btn.style.borderColor='var(--accent)';btn.style.color='var(--accent)';
+  }else{
+    const div=document.querySelector('.split-divider');const p2=document.getElementById('panel2');
+    if(div)div.remove();if(p2)p2.remove();
+    btn.textContent='|| 分屏';btn.style.borderColor='';btn.style.color='';
+  }
+}
+
+/* ── Streaming & Send Mode ── */
+let streaming=false;
+const sendMode={active:'send'};
+function toggleStreaming(){
+  streaming=!streaming;
+  const btn=document.getElementById('streamToggle');
+  btn.textContent=streaming?'⏹ 停止':'▶ 流式';
+  btn.style.borderColor=streaming?'var(--danger)':'';btn.style.color=streaming?'var(--danger)':'';
+  document.querySelectorAll('.btn-send').forEach(b=>b.classList.toggle('stop',streaming));
+  updateModeBar(1);
+}
+function updateModeBar(pid){
+  const bar=document.getElementById('sendModeBar'+pid);const label=document.getElementById('modeLabel'+pid);const hint=document.getElementById('modeHint'+pid);const kb=document.getElementById('modeKb'+pid);
+  if(!bar)return;
+  bar.className='send-mode-bar';
+  if(sendMode.active==='queue'){
+    bar.classList.add('mode-queue');label.textContent='Queue';hint.textContent='· Alt+Enter 排队，AI 完成后自动发送';kb.textContent='';
+  }else if(streaming){
+    bar.classList.add('mode-steer');label.textContent='Steer';hint.textContent='· AI 处理中，消息将中断当前流程';kb.textContent='Alt+Enter 排队';
+  }else{
+    label.textContent='Send';hint.textContent='· Enter 发送';kb.textContent='Alt+Enter 排队';
+  }
+}
+function handleSend(pid){
+  if(streaming&&sendMode.active!=='queue')sendMode.active='steer',updateModeBar(pid);
+  showToast({send:'已发送',steer:'Steer — 中断 AI',queue:'已排队，完成后发送'}[sendMode.active]||'已发送');
+}
+document.addEventListener('keydown',function(e){if(e.key==='Alt'&&!e.repeat){sendMode.active='queue';updateModeBar(1)}});
+document.addEventListener('keyup',function(e){if(e.key==='Alt'){sendMode.active='send';updateModeBar(1)}});
+document.querySelectorAll('.chat-input-inner textarea').forEach(ta=>{
+  ta.addEventListener('keydown',function(e){
+    if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();const pid=(this.closest('.panel')?.id||'panel1').replace('panel','');if(e.altKey){sendMode.active='queue';updateModeBar(pid)}handleSend(pid);if(e.altKey)setTimeout(()=>{sendMode.active='send';updateModeBar(pid)},100)}
+  });
+});
+</script>
+</body>
+</html>

@@ -2,7 +2,7 @@ import { useChatStore } from '../stores/chat'
 import { useSessionStore } from '../stores/session'
 import { getActivePinia } from 'pinia'
 import { send } from '../lib/ws-client'
-import { on } from '../lib/event-bus'
+import { on, off } from '../lib/event-bus'
 import { type Ref, unref } from 'vue'
 import type {
   ServerMessage, ServerMessageType, ToolCall, ContentBlock,
@@ -58,7 +58,7 @@ function createGlobalHandlers() {
       blocks.push({ type: 'text', refId: 'text' })
       session.streamingMessage = { ...session.streamingMessage, contentBlocks: blocks }
     }
-    store.appendStreamText(msg.payload.delta as string, sid)
+    store.appendToStreaming(msg.payload.delta as string, sid)
   }
 
   function onThinkingStart(msg: ServerMessage) {
@@ -77,7 +77,7 @@ function createGlobalHandlers() {
         blocks.push({ type: 'thinking', refId: blockId })
         store.setStreaming({
           ...streaming,
-          thinking: [...existing, { id: blockId, content: '', collapsed: false }],
+          thinking: [...existing, { id: blockId, content: '', collapsed: false, startTime: Date.now() }],
           contentBlocks: blocks,
         }, sid)
       }
@@ -98,7 +98,7 @@ function createGlobalHandlers() {
       } else {
         store.setStreaming({
           ...streaming,
-          thinking: [...existing, { id: `thk-${Date.now()}`, content: msg.payload.delta as string, collapsed: false }],
+          thinking: [...existing, { id: `thk-${Date.now()}`, content: msg.payload.delta as string, collapsed: false, startTime: Date.now() }],
         }, sid)
       }
     }
@@ -109,8 +109,11 @@ function createGlobalHandlers() {
     if (!sid) return
     const streaming = store.getSessionState(sid).streamingMessage
     if (streaming?.thinking?.length) {
+      const now = Date.now()
       const updated = streaming.thinking.map((block, i) =>
-        i === streaming.thinking!.length - 1 ? { ...block, collapsed: true } : block,
+        i === streaming.thinking!.length - 1
+          ? { ...block, collapsed: true, endTime: block.endTime ?? now }
+          : block,
       )
       store.setStreaming({ ...streaming, thinking: updated }, sid)
     }
@@ -368,6 +371,9 @@ function createGlobalHandlers() {
   ])
 }
 
+// Module-level variable: holds the map of (event type → handler) created by createGlobalHandlers().
+// Declared before createGlobalHandlers for readability — the function references this variable,
+// but since registerGlobalListeners is called via queueMicrotask, the declaration is hoisted.
 let globalEventMap: Map<ServerMessageType, (msg: ServerMessage) => void> | null = null
 
 function registerGlobalListeners() {
@@ -458,6 +464,12 @@ queueMicrotask(safeRegisterGlobalListeners)
  */
 export function __test_registerGlobalHandlers(): void {
   if (!getActivePinia()) return
+  // Cleanup old handlers before re-registering
+  if (globalEventMap) {
+    for (const [evt, handler] of globalEventMap) {
+      off(evt, handler)
+    }
+  }
   globalEventMap = createGlobalHandlers()
   for (const [evt, handler] of globalEventMap) {
     on(evt, handler)

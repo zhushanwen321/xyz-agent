@@ -1,17 +1,16 @@
 <template>
-  <div class="overflow-hidden border border-transparent mb-2 thinking-block">
-    <!-- eslint-disable-next-line taste/no-native-html-elements -- thinking-header has complex gradient styles + flex layout in <style scoped>, xyz-ui Button variant="ghost" doesn't support this customization -->
-    <button class="thinking-header" @click="expanded = !expanded">
-      <!-- Left: arrow + label -->
-      <svg :class="['transition-transform duration-150 ease-ease shrink-0', { '-rotate-90': !expanded }]" xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
-      <span v-if="streaming" class="inline-block w-[5px] h-2.5 bg-accent animate-pulse-bar motion-reduce:opacity-60 motion-reduce:animate-none"></span>
-      <span class="text-[11px] leading-snug text-accent font-medium">Thinking</span>
-      <span class="flex-1"></span>
-      <!-- Right: elapsed time -->
-      <span class="shrink-0 text-[10px] tabular-nums leading-normal text-muted font-medium">{{ elapsedDisplay }}</span>
+  <div class="thinking-block">
+    <!-- Single-line toggle: "Thinking · 3.2s ▼" -->
+    <!-- eslint-disable-next-line taste/no-native-html-elements -- inline toggle with custom flex layout -->
+    <button class="thinking-toggle" @click="expanded = !expanded">
+      <svg :class="['thinking-toggle__chevron', { 'thinking-toggle__chevron--collapsed': !expanded }]" xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+      <span v-if="streaming" class="thinking-toggle__pulse" />
+      <span class="thinking-toggle__label">Thinking</span>
+      <span v-if="elapsedDisplay" class="thinking-toggle__time">· {{ elapsedDisplay }}</span>
     </button>
-    <div v-if="expanded" class="border-t border-transparent px-3 py-2">
-      <pre class="whitespace-pre-wrap text-xs leading-relaxed text-muted m-0">{{ text }}</pre>
+    <!-- Expanded body -->
+    <div v-if="expanded" class="thinking-body">
+      <pre class="thinking-body__text">{{ text }}</pre>
     </div>
   </div>
 </template>
@@ -67,12 +66,17 @@ onBeforeUnmount(stopTimer)
 const elapsedMs = computed(() => {
   const start = props.startTime ?? localStartTime.value
   if (!start) return 0
-  const end = props.streaming ? now.value : (props.endTime ?? now.value)
+  // History messages have no startTime: elapsed is meaningless, show nothing
+  if (!props.startTime && !props.streaming) return -1
+  const end = props.streaming
+    ? now.value
+    : (props.endTime ?? now.value)
   return Math.max(0, end - start)
 })
 
 const elapsedDisplay = computed(() => {
   const ms = elapsedMs.value
+  if (ms < 0) return '' // History message without timing data
   if (ms === 0) return ''
   const s = ms / MS_PER_SECOND
   if (s < 1) return `${(ms / DECISECOND_MS).toFixed(1)}s`
@@ -84,23 +88,69 @@ const elapsedDisplay = computed(() => {
 </script>
 
 <style scoped>
+/* Single-line inline toggle, no card background.
+   Section container provides the background and indent. */
 .thinking-block {
-  background: var(--msg-thinking-bg);
-  border-radius: 1px;
-}
-.thinking-header {
   display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.thinking-toggle {
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  width: 100%;
-  padding: 6px 12px;
+  gap: 4px;
+  padding: 0;
   cursor: pointer;
   border: none;
-  background: linear-gradient(to right, var(--accent-light) 0%, var(--accent-light) 40%, transparent 100%);
-  transition: background 0.15s ease;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
   text-align: left;
+  align-self: flex-start;
 }
-.thinking-header:hover {
-  background: linear-gradient(to right, var(--accent-light) 0%, var(--accent-light) 55%, transparent 100%);
+.thinking-toggle:hover {
+  color: var(--fg);
+}
+.thinking-toggle__chevron {
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.thinking-toggle__chevron--collapsed {
+  transform: rotate(-90deg);
+}
+.thinking-toggle__pulse {
+  display: inline-block;
+  width: 5px;
+  height: 10px;
+  background: var(--accent);
+  border-radius: 1px;
+  animation: thinking-pulse 2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@keyframes thinking-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.thinking-toggle__label {
+  color: var(--accent);
+  font-weight: 500;
+}
+.thinking-toggle__time {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+}
+.thinking-body {
+  padding: 4px 0 4px 13px;
+}
+.thinking-body__text {
+  white-space: pre-wrap;
+  font-family: var(--font-body);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--muted);
+  margin: 0;
 }
 </style>

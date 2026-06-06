@@ -4,6 +4,7 @@
  * ServerMessages back to TUI clients via WebSocket.
  */
 import { createServer, type Server as HttpServer } from 'node:http'
+import { resolve } from 'node:path'
 import { WebSocketServer, WebSocket, type WebSocket as WsType } from 'ws'
 import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
 import type { ISessionService, IConfigService, IModelService, IMessageBroker, IExtensionService, IPluginService } from './interfaces.js'
@@ -175,6 +176,8 @@ export class SidecarServer implements IMessageBroker {
         case 'session.rename':
         case 'message.send':
         case 'message.abort':
+        case 'message.steer':
+        case 'message.follow_up':
           return this.handleSessionMessage(msg, ws)
         case 'session.compact': return this.handleSessionCompact(msg, ws)
         case 'session.tree-data':
@@ -202,6 +205,10 @@ export class SidecarServer implements IMessageBroker {
         case 'plugin.install':
         case 'plugin.uiResponse':
           return this.pluginMessageHandler.handlePluginMessage(msg, ws)
+
+        // ── File read (for skill content expansion) ───────────────────
+        case 'file.read':
+          return this.handleFileRead(msg, ws)
         default:
           if (!await this.settingsHandler.handleSettingsMessage(msg, ws)) {
             const rawMsg = msg as { type: string; payload?: { sessionId?: string } }
@@ -286,6 +293,40 @@ export class SidecarServer implements IMessageBroker {
           await this.sessionService.sendMessage(sessionId, content)
         }
         return this.send(ws, { type: 'message.status', id: msg.id, payload: { sessionId, status: 'sent' } })
+      }
+      case 'message.steer': {
+        const steerSid = msg.payload.sessionId
+        // steer: abort best-effort, session may not be actively generating
+        // abort is best-effort; steer must proceed to sendMessage
+        try {
+          await this.sessionService.abort(steerSid)
+          // eslint-disable-next-line taste/no-silent-catch -- best-effort abort, failure must not block steer
+        } catch (e) {
+          console.warn('[runtime] steer abort: session not active or abort failed:', e instanceof Error ? e.message : String(e))
+        }
+        // RACE CONDITION NOTE: pi's abort is async — the subprocess may still be
+        // processing when sendMessage arrives. Pi internally queues the new message
+        // and applies it after the current turn completes, so this is safe in practice.
+        try {
+          await this.sessionService.sendMessage(steerSid, msg.payload.content)
+          return this.send(ws, { type: 'message.status', id: msg.id, payload: { sessionId: steerSid, status: 'sent' } })
+        } catch (e) {
+          const errMsg = e instanceof Error ? e.message : String(e)
+          console.error('[runtime] message.steer sendMessage failed:', errMsg)
+          return this.send(ws, { type: 'message.error', id: msg.id, payload: { sessionId: steerSid, message: errMsg } })
+        }
+      }
+      case 'message.follow_up': {
+        // Queue message without interrupting — just send, pi will queue internally
+        const followSid = msg.payload.sessionId
+        try {
+          await this.sessionService.sendMessage(followSid, msg.payload.content)
+          return this.send(ws, { type: 'message.status', id: msg.id, payload: { sessionId: followSid, status: 'queued' } })
+        } catch (e) {
+          const errMsg = e instanceof Error ? e.message : String(e)
+          console.error('[runtime] message.follow_up sendMessage failed:', errMsg)
+          return this.send(ws, { type: 'message.error', id: msg.id, payload: { sessionId: followSid, message: errMsg } })
+        }
       }
       case 'message.abort':
         return await this.sessionService.abort(msg.payload.sessionId)
@@ -457,6 +498,38 @@ export class SidecarServer implements IMessageBroker {
 
   handleStatusSetUpdate(payload: { sessionId: string; key: string; text: string }): void {
     this.bridgeHandler.handleStatusSetUpdate(payload)
+  }
+
+  /** Handle file.read — reads a skill file and returns its text content.
+   *  Restricted to skill directories for security (no arbitrary file read). */
+  private async handleFileRead(msg: ClientMessage, ws: WsType): Promise<void> {
+    const { path: filePath } = msg.payload as { path: string }
+    if (!filePath || typeof filePath !== 'string') {
+      this.send(ws, { type: 'file.read:error', id: msg.id, payload: { error: 'Missing or invalid path' } })
+      return
+    }
+    // Normalize separators to '/' for consistent prefix matching across platforms
+    const normalize = (p: string) => p.split(/[/\\]/).join('/')
+    const absPath = normalize(resolve(filePath))
+    const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? ''
+    const allowedPrefixes = [
+      normalize(resolve(homeDir, '.agents/skills')),
+      normalize(resolve(homeDir, '.pi/agent/skills')),
+      normalize(resolve(homeDir, '.pi/agent/npm')),
+    ]
+    // Only allow paths *inside* whitelisted directories, not the directory itself
+    if (!allowedPrefixes.some(prefix => absPath.startsWith(prefix + '/'))) {
+      this.send(ws, { type: 'file.read:error', id: msg.id, payload: { error: 'Path outside allowed skill directories', path: filePath } })
+      return
+    }
+    try {
+      const fs = await import('fs/promises')
+      const content = await fs.readFile(filePath, 'utf-8')
+      this.send(ws, { type: 'file.read:result', id: msg.id, payload: { content, path: filePath } })
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      this.send(ws, { type: 'file.read:error', id: msg.id, payload: { error: message, path: filePath } })
+    }
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────

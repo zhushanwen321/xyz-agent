@@ -74,6 +74,7 @@
   --fg: oklch(93% 0.005 55);
   --muted: oklch(58% 0.008 50);
   --border: oklch(28% 0.008 50);
+  --divider: oklch(38% 0.010 50);
   --accent: oklch(68% 0.10 28);
   --accent-light: oklch(28% 0.04 28);
   --success: oklch(68% 0.12 145);
@@ -115,6 +116,7 @@
   --fg: oklch(92% 0.005 75);
   --muted: oklch(55% 0.010 75);
   --border: oklch(24% 0.010 75);
+  --divider: oklch(36% 0.012 75);
   --accent: oklch(55% 0.08 195);
   --accent-light: oklch(22% 0.04 195);
 }
@@ -384,6 +386,13 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
   --code-collapse-lines: 12;
 }
 
+/* 防止长 token / 路径 / URL 撑破消息气泡 */
+.msg__body {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  min-width: 0;
+}
+
 .msg__body h1 { font-size: 1.5em; font-weight: 700; border-bottom: 1px solid var(--border); padding-bottom: 0.3em; margin: 24px 0 16px; }
 .msg__body h2 { font-size: 1.25em; font-weight: 600; border-bottom: 1px solid var(--border); padding-bottom: 0.3em; margin: 24px 0 16px; }
 .msg__body h3 { font-size: 1.1em; font-weight: 600; margin: 24px 0 16px; }
@@ -394,11 +403,29 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .msg__body p { margin-bottom: 0.25em; }
 .msg__body p:last-child { margin-bottom: 0; }
 
-/* ── 列表 ── */
-.msg__body ul, .msg__body ol { padding-left: 2em; margin-bottom: 16px; }
-.msg__body li { margin-bottom: 4px; }
-.msg__body li + li { margin-top: 4px; }
-.msg__body ul ul, .msg__body ol ol, .msg__body ul ol, .msg__body ol ul { margin-bottom: 4px; margin-top: 4px; }
+/* ── 列表 ──
+   目标：列表项相对正文适度右缩进，标记与文字基线对齐。
+   - 参照 ChatGPT-Next-Web (padding-left: 2em) + @tailwindcss/typography (1.625em)
+   - 适配 12px 聊天气泡的窄宽度，用 1.5em (18px)
+   - 不用 list-style-position: inside, 避免多行换行后缩进不一致
+   - 也不显式设 list-style-position: outside, 使用浏览器默认值
+   - 注: v-html 内容被包在 <span> 中,不能用 > 直接子选择器,必须用后代选择器 */
+.msg__body ul, .msg__body ol {
+  margin-top: 0;
+  margin-bottom: 12px;
+  padding-left: 1.5em;
+}
+.msg__body ol { list-style-type: decimal; }
+.msg__body ul { list-style-type: disc; }
+.msg__body li { margin-top: 0.15em; margin-bottom: 0.15em; }
+.msg__body li + li { margin-top: 0.25em; }
+/* li 内的 p 标签 (markdown-it 输出) 不产生额外间距, 避免 list 项被隔开 */
+.msg__body li > p { margin-top: 0; margin-bottom: 0; }
+/* 嵌套列表: 依赖浏览器默认嵌套缩进 (父 li 的 padding-left 与嵌套 ul/ol 叠加) */
+.msg__body li ul, .msg__body li ol {
+  margin-top: 0.25em;
+  margin-bottom: 0.25em;
+}
 
 /* ── 引用块 ── */
 .msg__body blockquote {
@@ -417,6 +444,9 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
   border-radius: var(--radius-xs);
   font-size: var(--code-font-size);
   font-family: var(--font-mono);
+  /* 防止长路径/长 token 撑破容器, 在任何字符处都允许折行 */
+  overflow-wrap: anywhere;
+  word-break: break-all;
 }
 
 /* ── 表格 ── */
@@ -460,7 +490,7 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
   border: none;
   height: 1px;
   background: linear-gradient(to right, transparent, var(--muted), transparent);
-  margin: 24px 0;
+  margin: 8px 0;
   opacity: 0.4;
 }
 
@@ -468,8 +498,31 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .msg__body del { color: var(--muted); }
 
 /* ── 任务列表 ── */
-.msg__body .task-list-item { list-style: none; margin-left: -1.5em; }
-.msg__body .task-list-item input[type="checkbox"] { margin-right: 6px; accent-color: var(--accent); }
+/* task list 的 checkbox 已经被 markdown-it-task-lists 插件插入在 li 开头
+   不要让 ul/li 本身的 disc marker 再加一个 bullet 上去
+   同时给 checkbox 留空间、给个明显的视觉样式 */
+.msg__body ul.contains-task-list,
+.msg__body ul[class*="task-list"] {
+  list-style: none;
+  padding-left: 0;
+}
+.msg__body li.task-list-item,
+.msg__body li[class*="task-list-item"] {
+  list-style: none;
+  position: relative;
+  padding-left: 1.6em;
+}
+.msg__body li.task-list-item > input.task-list-item-checkbox,
+.msg__body li[class*="task-list-item"] > input[type="checkbox"] {
+  position: absolute;
+  left: 0;
+  top: 0.2em;
+  width: 1em;
+  height: 1em;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: default;
+}
 
 /* ── 代码块 ── */
 .msg__body .code-block {
@@ -717,7 +770,9 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 }
 
 /* ── 用户消息气泡内的代码覆盖 ── */
-[data-role="user"] .msg__body code {
+[data-role="user"] .msg__body code,
+[data-role="user"] .msg__body kbd,
+[data-role="user"] .msg__body mark {
   background: rgba(255, 255, 255, 0.2);
   color: white;
 }
@@ -726,3 +781,66 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 /* Focus-visible 和 reduced-motion 规则已迁移到各组件 <style scoped> 中 */
 
 .hidden{display:none!important}
+
+/* ── Fullscreen Layout (macOS) ───────────────────────────────── */
+/* When .is-fullscreen is on the app-container, override sidebar header layout:
+   - Row1 loses traffic-light padding
+   - Brand + version are hidden in Row2 (shown in Row1 via AppSidebar reactive logic)
+   - New Session button goes full-width */
+.is-fullscreen .sidebar-row1 {
+  padding-left: 14px !important;
+}
+.is-fullscreen .sidebar-row2 .sidebar-brand,
+.is-fullscreen .sidebar-row2 .text-muted {
+  display: none !important;
+}
+.is-fullscreen .sidebar__new {
+  width: 100% !important;
+  text-align: center;
+  padding: 6px 12px;
+  margin-left: 0;
+}
+
+/* ── Sidebar collapse transition (AC8) ────────────────────────── */
+/* When the app-container is in sidebar-collapsed state, shrink the sidebar column to 0
+   while transitioning. The SidebarCollapseHandle component renders the left-edge expand
+   button when collapsed. */
+.app-container {
+  /* grid-template-columns transition disabled: Chromium 130 fails to
+     recalculate var() references mid-transition */
+}
+.app-container--sidebar-collapsed {
+  --sidebar-w: 0px;
+}
+
+/* ── Turn grouping (layout message turn B) ────────────── */
+/* Each conversation turn (user + assistant) is a visual unit.
+   Turns are separated by border-top + vertical padding.
+   Assistant content is grouped into sections (thinking / tool / text)
+   with border-left indent and colored dot labels. */
+
+.turn-group {
+  padding: 6px 0;
+}
+.turn-group + .turn-group {
+  border-top: 1px solid var(--divider);
+  padding-top: 12px;
+  margin-top: 4px;
+}
+/* System-only turns should not have turn styling */
+.turn-group--system-only {
+  padding: 0;
+  border-top: none;
+  margin-top: 0;
+}
+.turn-group--system-only + .turn-group {
+  border-top: none;
+  padding-top: 0;
+}
+.turn-group + .turn-group--system-only {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 0;
+}
+
+/* Section label + dot styles moved to AssistantSection.vue <style scoped> */

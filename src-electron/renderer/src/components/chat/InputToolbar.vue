@@ -257,7 +257,7 @@ onBeforeUnmount(() => {
     <Button
       v-if="isStreaming"
       variant="ghost"
-      class="inline-flex items-center justify-center w-7 h-7 border-none rounded-xs bg-transparent text-muted text-xs font-body cursor-pointer transition-all duration-150 ease-ease shrink-0 font-bold text-[11px] hover:bg-danger-light hover:text-danger"
+      class="inline-flex items-center justify-center w-7 h-7 border-none rounded-xs text-xs font-body cursor-pointer transition-all duration-150 ease-ease shrink-0 font-bold text-[11px] bg-danger text-white hover:opacity-88"
       @click="emit('cancel')"
       title="Stop"
     >&#9632;</Button>
