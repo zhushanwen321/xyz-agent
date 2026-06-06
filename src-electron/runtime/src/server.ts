@@ -299,6 +299,9 @@ export class SidecarServer implements IMessageBroker {
         // steer: abort best-effort, session may not be actively generating
         // eslint-disable-next-line taste/no-silent-catch -- abort is best-effort; steer must proceed to sendMessage
         try { await this.sessionService.abort(steerSid) } catch (e) { console.warn('[runtime] steer abort: session not active or abort failed:', e instanceof Error ? e.message : String(e)) }
+        // RACE CONDITION NOTE: pi's abort is async — the subprocess may still be
+        // processing when sendMessage arrives. Pi internally queues the new message
+        // and applies it after the current turn completes, so this is safe in practice.
         try {
           await this.sessionService.sendMessage(steerSid, msg.payload.content)
           return this.send(ws, { type: 'message.status', id: msg.id, payload: { sessionId: steerSid, status: 'sent' } })
@@ -500,15 +503,17 @@ export class SidecarServer implements IMessageBroker {
       this.send(ws, { type: 'file.read:error', id: msg.id, payload: { error: 'Missing or invalid path' } })
       return
     }
-    // Validate path is within allowed skill directories
-    const absPath = resolve(filePath)
+    // Normalize separators to '/' for consistent prefix matching across platforms
+    const normalize = (p: string) => p.split(/[/\\]/).join('/')
+    const absPath = normalize(resolve(filePath))
     const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? ''
     const allowedPrefixes = [
-      resolve(homeDir, '.agents/skills'),
-      resolve(homeDir, '.pi/agent/skills'),
-      resolve(homeDir, '.pi/agent/npm'),
+      normalize(resolve(homeDir, '.agents/skills')),
+      normalize(resolve(homeDir, '.pi/agent/skills')),
+      normalize(resolve(homeDir, '.pi/agent/npm')),
     ]
-    if (!allowedPrefixes.some(prefix => absPath.startsWith(prefix + '/') || absPath === prefix)) {
+    // Only allow paths *inside* whitelisted directories, not the directory itself
+    if (!allowedPrefixes.some(prefix => absPath.startsWith(prefix + '/'))) {
       this.send(ws, { type: 'file.read:error', id: msg.id, payload: { error: 'Path outside allowed skill directories', path: filePath } })
       return
     }

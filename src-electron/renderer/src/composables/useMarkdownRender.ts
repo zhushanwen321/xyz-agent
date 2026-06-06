@@ -7,6 +7,12 @@ import { ref, computed, watch, nextTick } from 'vue'
 import { renderLightweight, renderFull } from '../lib/markdown'
 import { useSettingsStore } from '../stores/settings'
 
+// ── Mermaid module-level singleton ──
+// mermaid.initialize() is global; per-instance state causes theme thrashing
+// in split-panel scenarios where two AssistantContent instances render concurrently.
+let mermaidModule: typeof import('mermaid').default | null = null
+let mermaidInitTheme: string | null = null
+
 export function useMarkdownRender(
   contentGetter: () => string,
   options?: {
@@ -22,9 +28,6 @@ export function useMarkdownRender(
   const fullRenderCache = ref('')
   // Non-reactive counter: no dependency tracking needed, avoids unnecessary re-computation
   let renderVersion = 0
-
-  let mermaidModule: typeof import('mermaid').default | null = null
-  let mermaidInitTheme: string | null = null
 
   const lightweightContent = computed(() => renderLightweight(contentGetter()))
 

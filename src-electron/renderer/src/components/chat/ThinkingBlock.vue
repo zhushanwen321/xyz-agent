@@ -66,6 +66,8 @@ onBeforeUnmount(stopTimer)
 const elapsedMs = computed(() => {
   const start = props.startTime ?? localStartTime.value
   if (!start) return 0
+  // History messages have no startTime: elapsed is meaningless, show nothing
+  if (!props.startTime && !props.streaming) return -1
   const end = props.streaming
     ? now.value
     : (props.endTime ?? now.value)
@@ -74,7 +76,8 @@ const elapsedMs = computed(() => {
 
 const elapsedDisplay = computed(() => {
   const ms = elapsedMs.value
-  if (ms <= 0) return ''
+  if (ms < 0) return '' // History message without timing data
+  if (ms === 0) return ''
   const s = ms / MS_PER_SECOND
   if (s < 1) return `${(ms / DECISECOND_MS).toFixed(1)}s`
   if (s < SECONDS_PER_MINUTE) return `${s.toFixed(1)}s`

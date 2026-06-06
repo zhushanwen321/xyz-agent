@@ -17,14 +17,17 @@
     <!-- Inline actions + Branch indicator -->
     <div class="flex items-center gap-1 mt-1">
       <div class="msg-actions" :class="{ 'msg-actions--active': showActionMenu }">
+        <!-- eslint-disable-next-line taste/no-native-html-elements -- inline action buttons need custom hover/opacity transitions not supported by xyz-ui Button -->
         <button class="msg-action-btn" title="复制" @click="handleCopy">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
           复制
         </button>
+        <!-- eslint-disable-next-line taste/no-native-html-elements -- inline action buttons need custom hover/opacity transitions -->
         <button class="msg-action-btn" title="分叉" @click="handleFork">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 01-9 9"/></svg>
           分叉
         </button>
+        <!-- eslint-disable-next-line taste/no-native-html-elements -- inline action buttons need custom hover/opacity transitions -->
         <button class="msg-action-btn msg-action-btn--more" title="更多" @click="onActionBtnClick">
           <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
         </button>
@@ -77,14 +80,17 @@
     <!-- Inline actions (right-aligned for user) + Branch indicator -->
     <div class="flex items-center justify-end gap-1 mt-1">
       <div class="msg-actions" :class="{ 'msg-actions--active': showActionMenu }">
+        <!-- eslint-disable-next-line taste/no-native-html-elements -- inline action buttons need custom hover/opacity transitions not supported by xyz-ui Button -->
         <button class="msg-action-btn" title="复制" @click="handleCopy">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
           复制
         </button>
+        <!-- eslint-disable-next-line taste/no-native-html-elements -- inline action buttons need custom hover/opacity transitions -->
         <button class="msg-action-btn" title="编辑" disabled>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
           编辑
         </button>
+        <!-- eslint-disable-next-line taste/no-native-html-elements -- inline action buttons need custom hover/opacity transitions -->
         <button class="msg-action-btn msg-action-btn--more" title="更多" @click="onActionBtnClick">
           <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
         </button>

@@ -16,8 +16,10 @@ const MAX_CACHE_SIZE = 50
 const scrollPositionCache = new Map<string, number>()
 
 function cacheSet(key: string, value: number) {
+  // Delete first so re-inserting an existing key moves it to the end (true LRU)
+  scrollPositionCache.delete(key)
   if (scrollPositionCache.size >= MAX_CACHE_SIZE) {
-    // Delete the oldest entry (first key inserted)
+    // Delete the oldest entry (first key in insertion order)
     const firstKey = scrollPositionCache.keys().next().value
     if (firstKey !== undefined) scrollPositionCache.delete(firstKey)
   }
