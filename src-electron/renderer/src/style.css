@@ -402,22 +402,27 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .msg__body p:last-child { margin-bottom: 0; }
 
 /* ── 列表 ──
-   目标：标记在 padding 区域内，与文字左对齐
-   参照 github-markdown-css (2em) 和 @tailwindcss/typography (1.625em) 的惯例 */
-.msg__body > ul, .msg__body > ol {
-  padding-left: 1.5em;
+   目标：列表项相对正文适度右缩进，标记与文字基线对齐。
+   - 参照 ChatGPT-Next-Web (padding-left: 2em) + @tailwindcss/typography (1.625em)
+   - 适配 12px 聊天气泡的窄宽度，用 1.5em (18px)
+   - 不用 list-style-position: inside, 避免多行换行后缩进不一致
+   - 也不显式设 list-style-position: outside, 使用浏览器默认值
+   - 注: v-html 内容被包在 <span> 中,不能用 > 直接子选择器,必须用后代选择器 */
+.msg__body ul, .msg__body ol {
+  margin-top: 0;
   margin-bottom: 12px;
+  padding-left: 1.5em;
 }
 .msg__body ol { list-style-type: decimal; }
 .msg__body ul { list-style-type: disc; }
-.msg__body li { margin-bottom: 4px; }
-.msg__body li + li { margin-top: 4px; }
-/* 嵌套列表: 需要足够 padding 避免标记与父项文字重叠
-   父 li 已有 1.5em padding，嵌套 ul 需略超过该值才能区分层级 */
-.msg__body li > ul, .msg__body li > ol {
-  padding-left: 1.5em;
-  margin-top: 4px;
-  margin-bottom: 4px;
+.msg__body li { margin-top: 0.15em; margin-bottom: 0.15em; }
+.msg__body li + li { margin-top: 0.25em; }
+/* li 内的 p 标签 (markdown-it 输出) 不产生额外间距, 避免 list 项被隔开 */
+.msg__body li > p { margin-top: 0; margin-bottom: 0; }
+/* 嵌套列表: 依赖浏览器默认嵌套缩进 (父 li 的 padding-left 与嵌套 ul/ol 叠加) */
+.msg__body li ul, .msg__body li ol {
+  margin-top: 0.25em;
+  margin-bottom: 0.25em;
 }
 
 /* ── 引用块 ── */

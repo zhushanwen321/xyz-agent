@@ -259,6 +259,111 @@ borderRadius: {
 
 **设计意图：** 1px 的锐利几何风格是 xyz-agent 的视觉标识。接近零但不为零的圆角提供微小软化的同时保持整体锋利感。
 
+### 7.2 Markdown 文本元素样式规范
+
+**适用于 `.msg__body`（聊天消息体、v-html 渲染的 markdown 容器）。** 参照 `@tailwindcss/typography` 和 `ChatGPT-Next-Web` 的主流范式。完整调研：`docs/research/markdown-list-styling-research.md`。
+
+#### 7.2.1 v-html 包装陷阱（必读）
+
+`<MessageBubble>` 的 markdown 容器结构是：
+
+```html
+<div class="msg__body">
+  <span v-html="renderedContent">   <!-- 多了一层 <span> -->
+    <ul>...</ul>
+  </span>
+</div>
+```
+
+**因此 `.msg__body > ul` 不匹配**，必须用后代选择器 `.msg__body ul`。这是其他 Chat UI（lobe-chat、shadcn）也普遍存在的结构。
+
+#### 7.2.2 列表样式范式
+
+```css
+/* 主流选择: outside + padding-left，不用 inside */
+.msg__body ul, .msg__body ol {
+  margin-top: 0;
+  margin-bottom: 12px;
+  padding-left: 1.5em;   /* 12px 聊天气泡下 = 18px，介于 GitHub (2em) 和 typography (1.625em) 之间 */
+}
+.msg__body ol { list-style-type: decimal; }  /* Tailwind preflight 重置了 list-style: none，需显式恢复 */
+.msg__body ul { list-style-type: disc; }
+.msg__body li { margin-top: 0.15em; margin-bottom: 0.15em; }
+.msg__body li + li { margin-top: 0.25em; }
+.msg__body li > p { margin-top: 0; margin-bottom: 0; }  /* 关键: li 内的 p (markdown-it 输出) 不撑开间距 */
+.msg__body li ul, .msg__body li ol { margin-top: 0.25em; margin-bottom: 0.25em; }
+```
+
+#### 7.2.3 为什么不用 `list-style-position: inside`
+
+| 模式 | 多行换行后表现 | 主流选择 |
+|------|----------------|---------|
+| `outside`（默认） | 换行后文字左对齐 li 容器边缘 | typography / NextChat / GitHub |
+| `inside` | 换行后文字缩进到标记下方（看起来像两层缩进） | **仅** streamdown（Vercel 流式聊天） |
+
+聊天场景消息宽度窄，文字经常换行，**必须用 `outside`**。仅流式渲染 + li 极短时可考虑 `inside`。
+
+#### 7.2.4 调试陷阱
+
+CSS 改了看不出效果时，按顺序检查：
+
+1. **选择器对了吗？** `document.querySelectorAll('.msg__body > ul').length === 0` 说明 `>` 没匹配（v-html 包装陷阱）
+2. **CSS 规则被覆盖？** 遍历 `document.styleSheets` 找所有匹配规则
+3. **Vite HMR 重载了？** `style.css` 改了之后需要等 HMR 推送，computed style 才会更新
+4. **DOM 实际值？** `getComputedStyle(el).listStylePosition` 看真实生效值（不是源码写的值）
+
+#### 7.2.5 不要引入 @tailwindcss/typography
+
+- 增加 ~20KB CSS 产出
+- 带来大量不需要的样式（h1-h6、figure、video 等 chat 场景不需要）
+- 与现有 CSS 变量主题系统冲突
+
+聊天 markdown 样式**手写**优于引入 prose 类。
+
+#### 7.2.6 [HISTORICAL] Shiki `.line` 必须用 `display: block`，不能用默认 inline
+
+**这条规则来自 2026-06 的视觉 bug：用户反馈代码块"line 1 占了 2 行"，切流式↔完整渲染视觉突变。**
+
+**根因**：
+
+Shiki 4.x 输出 `<pre><code><span class="line">line1</span>\n<span class="line">line2</span></code></pre>`，`.line` 默认 `display: inline`，配合 `pre { white-space: pre }` 让换行符生效。
+
+inline 渲染的问题：
+
+- inline span 高度 = 字符 visual height（12-14px），不是 line-height（18px）
+- 浏览器按 baseline 对齐把 span 塞进 line-box，leading 上下分布
+- 短字符（`---`、`===`、`#`、`-` 等无 ascender/descender 的符号）visual 部分紧贴 baseline 附近（dash 横线就 1-3px 高）
+- 字符 visual 中心落在 line-box **底部**，上方留白 ≈ 半行
+
+**视觉后果**：line 1 (`---`) 字符挤在 line-box 底部，跟 line 2 (`verdict: pass`，字符撑满 line-box 中部）对比，line 1 看起来下方留白 28px ≈ 2 个 line-height 高度，即"line 1 占了 2 行"。
+
+**为什么"有时候 2 行有时候 1 行"**：
+
+- **流式阶段**（`renderLightweight`）：markdown-it 默认 `<pre><code>line1\nline2</code></pre>`，text node 占据整个 line-box 高度，字符 baseline 在 line-box 底部，visual 居中 → 视觉正常 1 行
+- **完整阶段**（`renderFull`）：Shiki 输出 inline `.line` → 上面描述的 baseline 偏移 → 视觉上 line 1 占了 2 行
+
+切流式↔完整渲染就切视觉。
+
+**修复**：
+
+```css
+.msg__body .code-block pre code .line,
+.msg__body .code-block pre .shiki .line {
+  display: block;
+  min-height: 1em;
+}
+```
+
+block 模式下每个 span 占据完整 line-box 高度（18px），字符 baseline 在 line-box 内一致（line-box top + ascent 偏移处），所有 line 字符 visual 中心对齐，跟 line-numbers 列（line-height 1.5 = 18px）严格对齐。
+
+**配套生效**：`code-block-header`（line-height 19.2px 来自 `.skill-content-wrapper` 的 `leading-[1.6]`）内的 code 文本也会受益，不会因为外层 leading 撑出 36px 的"高 header"。
+
+**禁止**：
+- 改回 `display: inline` —— 会重现 line 1 视觉偏移 bug
+- 用 `vertical-align` 调整 inline `.line` baseline —— 治标不治本，不同 lang 字符 ascender/descender 不一样，每个 case 都要调
+
+**未来 Shiki 升级时验证**：如果 Shiki 改成输出 `<div class="line">` 或默认 display: block，本规则可以删除（检查 `codeToHtml` 输出即可）。
+
 ---
 
 ## 8. 自动化检查
