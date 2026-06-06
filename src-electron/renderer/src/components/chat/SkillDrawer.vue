@@ -2,6 +2,7 @@
   <Transition name="skill-drawer">
     <div v-if="visible" class="skill-drawer">
       <div class="skill-drawer__header">
+        <!-- eslint-disable-next-line taste/no-native-html-elements -- small icon close button, xyz-ui Button too heavy for this drawer header -->
         <button class="skill-drawer__close" aria-label="关闭" @click="$emit('close')">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
         </button>

@@ -300,6 +300,7 @@ export class SidecarServer implements IMessageBroker {
         // abort is best-effort; steer must proceed to sendMessage
         try {
           await this.sessionService.abort(steerSid)
+          // eslint-disable-next-line taste/no-silent-catch -- best-effort abort, failure must not block steer
         } catch (e) {
           console.warn('[runtime] steer abort: session not active or abort failed:', e instanceof Error ? e.message : String(e))
         }

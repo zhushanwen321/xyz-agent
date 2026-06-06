@@ -33,6 +33,7 @@ const hasWidgets = computed(() => columns.value.length > 0)
           <span class="font-mono text-[10px] font-semibold text-accent">{{ w.widgetKey }}</span>
           <span class="text-[10px] text-dim truncate flex-1 min-w-0">{{ w.lines[0] ?? '' }}</span>
           <!-- 收起按钮 -->
+          <!-- eslint-disable-next-line taste/no-native-html-elements -- compact 18x18 icon button in widget header, xyz-ui Button too heavy -->
           <button
             class="w-[18px] h-[18px] flex items-center justify-center border border-border rounded-sm bg-transparent text-muted hover:bg-hover hover:text-fg transition-colors duration-150 cursor-pointer"
             title="收起面板"
@@ -58,6 +59,7 @@ const hasWidgets = computed(() => columns.value.length > 0)
     </div>
 
     <!-- 折叠后的悬浮按钮：位于 ChatInput 右侧边距 -->
+    <!-- eslint-disable-next-line taste/no-native-html-elements -- floating expand pill, xyz-ui Button doesn't match this shape -->
     <button
       v-if="collapsed"
       class="absolute -right-[26px] bottom-[14px] w-5 h-5 flex items-center justify-center border border-border rounded-[3px] bg-surface text-accent hover:bg-hover transition-colors duration-150 cursor-pointer z-10"

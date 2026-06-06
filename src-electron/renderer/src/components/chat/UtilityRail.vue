@@ -2,6 +2,7 @@
   <!-- Narrow non-interactive rail; only the ↑↓ buttons are clickable -->
   <div class="utility-rail flex flex-col items-center py-2 shrink-0 pointer-events-none">
     <!-- ↑ Scroll to top -->
+    <!-- eslint-disable-next-line taste/no-native-html-elements -- small rail icon buttons, xyz-ui Button too heavy -->
     <button
       v-if="showScrollTop"
       class="rail-btn pointer-events-auto"
@@ -14,6 +15,7 @@
     <div class="flex-1" />
 
     <!-- ↓ Scroll to bottom -->
+    <!-- eslint-disable-next-line taste/no-native-html-elements -- small rail icon buttons, xyz-ui Button too heavy -->
     <button
       v-if="showScrollBottom"
       class="rail-btn pointer-events-auto"

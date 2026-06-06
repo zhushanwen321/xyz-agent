@@ -22,16 +22,20 @@ const VITE_DEV_URL = 'http://localhost:1420'
  * 等待 Vite dev server 就绪（轮询直到连接成功）
  * 解决 concurrently 下 Electron 比 Vite 先启动导致白屏的问题
  */
-async function waitForVite(url: string, timeoutMs = 30_000): Promise<void> {
+const VITE_READY_TIMEOUT_MS = 30_000
+const VITE_POLL_INTERVAL_MS = 300
+
+async function waitForVite(url: string, timeoutMs = VITE_READY_TIMEOUT_MS): Promise<void> {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
     try {
       const res = await fetch(url)
       if (res.ok) return
+    // eslint-disable-next-line taste/no-silent-catch -- Vite dev server not yet ready, retry expected
     } catch {
       // Vite 还没启动，继续等待
     }
-    await new Promise((r) => setTimeout(r, 300))
+    await new Promise((r) => setTimeout(r, VITE_POLL_INTERVAL_MS))
   }
   throw new Error(`Vite dev server at ${url} did not become ready within ${timeoutMs}ms`)
 }

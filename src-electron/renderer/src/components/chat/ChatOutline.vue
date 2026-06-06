@@ -1,6 +1,7 @@
 <template>
   <div class="chat-outline">
     <!-- Toggle button (always visible, same style as scroll-fab) -->
+    <!-- eslint-disable-next-line taste/no-native-html-elements -- icon-only toggle with custom active/focus states, xyz-ui Button too heavy -->
     <button
       class="chat-outline__toggle"
       :class="{ 'chat-outline__toggle--active': expanded }"
@@ -19,6 +20,7 @@
       <div v-if="expanded" class="chat-outline__panel">
         <div class="chat-outline__title">目录</div>
         <div class="chat-outline__items">
+          <!-- eslint-disable-next-line taste/no-native-html-elements -- outline item buttons need custom text-align/layout, xyz-ui Button doesn't match -->
           <button
             v-for="(item, i) in outlineItems"
             :key="i"
@@ -115,7 +117,8 @@ const progressPercent = computed(() => {
   const total = outlineItems.value.length
   if (total === 0) return 0
   const users = outlineItems.value.filter(i => i.role === 'user').length
-  return Math.round((users / total) * 100)
+  const PERCENT_MULTIPLIER = 100
+  return Math.round((users / total) * PERCENT_MULTIPLIER)
 })
 
 // Global ESC listener (component may not have focus)
