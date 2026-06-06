@@ -26,9 +26,9 @@ export class TreeMessageHandler {
       // Return error matching the request message type
       const errorType = msg.type === 'session.tree-data' ? 'session.tree-data'
         : msg.type === 'session.tree-navigate' ? 'session.tree-navigate-result'
-        : msg.type === 'session.tree-fork' ? 'session.tree-fork-result'
-        : msg.type === 'session.tree-clone' ? 'session.tree-clone-result'
-        : 'session.tree-capability'
+          : msg.type === 'session.tree-fork' ? 'session.tree-fork-result'
+            : msg.type === 'session.tree-clone' ? 'session.tree-clone-result'
+              : 'session.tree-capability'
       return this.ctx.send(ws, { type: errorType as ServerMessage['type'], id: msg.id, payload: { success: false, error: 'sessionId required' } })
     }
     switch (msg.type) {

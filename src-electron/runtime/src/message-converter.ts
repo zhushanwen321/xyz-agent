@@ -11,7 +11,7 @@ import type { Message, ThinkingBlock, ToolCall } from '@xyz-agent/shared'
  * Returns `null` if no skill block is found.
  */
 function parseSkillBlock(text: string): { skillName: string; skillLocation?: string; userText: string } | null {
-  const match = text.match(/^<skill\s+name="([^"]+)"(?:\s+location="([^"]+)")?[^>]*>[\s\S]*?<\/skill>([\s\S]*)$/)
+  const match = text.match(/<skill\s+name="([^"]+)"(?:\s+location="([^"]+)")?[^>]*>[\s\S]*?<\/skill>([\s\S]*)$/)
   if (!match) return null
   return {
     skillName: match[1],

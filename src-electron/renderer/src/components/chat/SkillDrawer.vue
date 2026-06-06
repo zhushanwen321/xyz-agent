@@ -62,6 +62,8 @@ function handleResult(msg: ServerMessage) {
 }
 
 // Single watch: register listeners BEFORE sending request, cleanup on hide/unmount
+// Uses immediate: true so that when visible starts as true (panel restore),
+// listeners are registered before any result arrives.
 watch(() => props.visible, async (vis) => {
   // Always cleanup previous listeners first
   off('file.read:result', handleResult)

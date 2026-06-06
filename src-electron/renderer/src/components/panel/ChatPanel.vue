@@ -184,7 +184,6 @@ import ChatOutline from '../chat/ChatOutline.vue'
 import SkillDrawer from '../chat/SkillDrawer.vue'
 import { useTree } from '../../composables/useTree'
 import { useTreeStore } from '../../stores/tree'
-import { useTurnGroups } from '../../composables/useTurnGroups'
 import { useChatScroll } from '../../composables/useChatScroll'
 import { useBatchSelect } from '../../composables/useBatchSelect'
 import { groupIntoTurns } from '../../lib/message-layout'
@@ -285,10 +284,8 @@ const {
 // ── Tree + turn grouping ──
 const tree = useTree()
 const treeStore = useTreeStore()
-const { turnGroups } = useTurnGroups(() => props.messages)
 
 function getTurnGroups(viewMessages: ChatMessage[]) {
-  if (viewMessages === props.messages) return turnGroups.value
   return groupIntoTurns(viewMessages)
 }
 

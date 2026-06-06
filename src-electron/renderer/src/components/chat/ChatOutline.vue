@@ -135,8 +135,6 @@ function scrollToItem(index: number, item: OutlineItem) {
   emit('scroll-to-message', item.messageId)
 }
 
-
-
 // Global ESC listener (component may not have focus)
 function globalEscHandler(e: KeyboardEvent) {
   if (e.key === 'Escape' && expanded.value) {

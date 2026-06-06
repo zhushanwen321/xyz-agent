@@ -371,6 +371,9 @@ function createGlobalHandlers() {
   ])
 }
 
+// Module-level variable: holds the map of (event type → handler) created by createGlobalHandlers().
+// Declared before createGlobalHandlers for readability — the function references this variable,
+// but since registerGlobalListeners is called via queueMicrotask, the declaration is hoisted.
 let globalEventMap: Map<ServerMessageType, (msg: ServerMessage) => void> | null = null
 
 function registerGlobalListeners() {
