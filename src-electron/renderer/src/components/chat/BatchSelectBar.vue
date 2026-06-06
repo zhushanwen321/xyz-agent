@@ -1,6 +1,5 @@
 <template>
-  <Transition name="batch-bar">
-    <div class="batch-select-bar">
+  <div class="batch-select-bar">
       <span class="batch-select-bar__count">
         {{ selectedIds.length > 0 ? `已选 ${selectedIds.length} 条消息` : '点击消息以选择' }}
       </span>
@@ -37,7 +36,6 @@
         </button>
       </div>
     </div>
-  </Transition>
 </template>
 
 <script setup lang="ts">
@@ -124,14 +122,17 @@ defineEmits<{
   margin: 0 2px;
 }
 
-/* Transition */
-.batch-bar-enter-from,
-.batch-bar-leave-to {
-  transform: translateY(-100%);
-  opacity: 0;
+/* Appear animation */
+@keyframes batch-bar-appear {
+  from {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }
-.batch-bar-enter-active,
-.batch-bar-leave-active {
-  transition: all 0.2s var(--ease);
-}
+.batch-select-bar {
+  animation: batch-bar-appear 0.2s var(--ease);
 </style>
