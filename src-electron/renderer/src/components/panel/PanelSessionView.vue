@@ -117,8 +117,7 @@ function handleSend(payload: { content: string; skillName?: string; subagent?: {
 
   const mode = payload.sendMode ?? 'send'
   if (mode === 'steer') {
-    // Steer: abort current processing, then send via message.steer
-    abort()
+    // Steer: runtime handles abort+send atomically in message.steer handler
     chatStore.setGenerating(true, sid)
     send({ type: 'message.steer', payload: { sessionId: sid, content: payload.content } })
   } else if (mode === 'queue') {

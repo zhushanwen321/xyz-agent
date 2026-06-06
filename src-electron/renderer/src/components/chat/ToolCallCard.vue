@@ -40,16 +40,8 @@ import { getToolRenderer } from '../../lib/tool-renderer-registry'
 import DefaultToolRenderer from './ToolRenderers/DefaultToolRenderer.vue'
 import { useSettingsStore } from '../../stores/settings'
 
-export interface BatchInfo {
-  index: number
-  total: number
-  isLast: boolean
-  totalSize: string
-}
-
 const props = defineProps<{
   toolCall: ToolCall
-  batchInfo?: BatchInfo
 }>()
 const settingsStore = useSettingsStore()
 

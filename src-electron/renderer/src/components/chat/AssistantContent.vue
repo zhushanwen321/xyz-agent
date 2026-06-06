@@ -28,7 +28,6 @@
           v-for="block in section.blocks"
           :key="block.refId"
           :tool-call="resolveToolCall(block.refId)!"
-          :batch-info="batchInfoMap.get(block.refId)"
         />
       </template>
 
@@ -68,16 +67,11 @@ import { computed } from 'vue'
 import type { Message } from '@xyz-agent/shared'
 import type { AssistantSection as Section } from '../../lib/message-layout'
 import { groupIntoSections } from '../../lib/message-layout'
-import type { BatchInfo } from './ToolCallCard.vue'
 import { useMarkdownRender } from '../../composables/useMarkdownRender'
 import { useMarkdownBodyClick } from '../../composables/useMarkdownBodyClick'
 import ThinkingBlock from './ThinkingBlock.vue'
 import ToolCallCard from './ToolCallCard.vue'
 import AssistantSection from './AssistantSection.vue'
-
-const BYTES_PER_KB = 1024
-const MIN_TOOL_CALLS = 2
-const BATCH_MIN_SIZE = 2
 
 const props = defineProps<{
   message: Message
@@ -135,56 +129,6 @@ const { renderedContent } = useMarkdownRender(
 
 // ── Event delegation: copy + collapse (shared composable) ──
 const { handleBodyClick } = useMarkdownBodyClick()
-
-// ── Batch detection ──
-
-function extractContentSize(input: unknown): number {
-  if (!input) return 0
-  try {
-    const obj = (typeof input === 'string' ? JSON.parse(input) : input) as Record<string, unknown>
-    const text = obj.content ?? obj.new_text ?? ''
-    return String(text).length
-  } catch { return 0 }
-}
-
-function formatBatchSize(bytes: number): string {
-  if (bytes <= 0) return ''
-  if (bytes < BYTES_PER_KB) return `${bytes}B`
-  if (bytes < BYTES_PER_KB * BYTES_PER_KB) return `${(bytes / BYTES_PER_KB).toFixed(1)}KB`
-  return `${(bytes / (BYTES_PER_KB * BYTES_PER_KB)).toFixed(1)}MB`
-}
-
-const batchInfoMap = computed(() => {
-  const result = new Map<string, BatchInfo>()
-  const toolCalls = props.message.toolCalls
-  if (!toolCalls || toolCalls.length < MIN_TOOL_CALLS) return result
-
-  let batchStart = 0
-  for (let i = 1; i <= toolCalls.length; i++) {
-    const isEnd = i === toolCalls.length || toolCalls[i].toolName !== toolCalls[batchStart].toolName
-    if (isEnd) {
-      const size = i - batchStart
-      const name = toolCalls[batchStart].toolName
-      if (size >= BATCH_MIN_SIZE && (name === 'write' || name === 'edit')) {
-        let totalBytes = 0
-        for (let j = batchStart; j < i; j++) {
-          totalBytes += extractContentSize(toolCalls[j].input)
-        }
-        const totalSize = formatBatchSize(totalBytes)
-        for (let j = batchStart; j < i; j++) {
-          result.set(toolCalls[j].id, {
-            index: j - batchStart,
-            total: size,
-            isLast: j === i - 1,
-            totalSize,
-          })
-        }
-      }
-      batchStart = i
-    }
-  }
-  return result
-})
 </script>
 
 <style scoped>

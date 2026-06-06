@@ -34,9 +34,11 @@ const DECISECOND_MS = 100
 const SECONDS_PER_MINUTE = 60
 
 const now = ref(Date.now())
+const localStartTime = ref<number>(0)
 let timerInterval: ReturnType<typeof setInterval> | undefined
 
 function startTimer() {
+  if (!localStartTime.value) localStartTime.value = Date.now()
   now.value = Date.now()
   if (!timerInterval) {
     timerInterval = setInterval(() => { now.value = Date.now() }, DECISECOND_MS)
@@ -62,7 +64,7 @@ watch(() => props.streaming, (streaming) => {
 onBeforeUnmount(stopTimer)
 
 const elapsedMs = computed(() => {
-  const start = props.startTime
+  const start = props.startTime ?? localStartTime.value
   if (!start) return 0
   const end = props.streaming
     ? now.value

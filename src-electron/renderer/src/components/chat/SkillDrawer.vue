@@ -44,19 +44,6 @@ const loading = ref(false)
 const renderedContent = ref('')
 let requestId = ''
 
-watch(() => props.visible, async (vis) => {
-  if (!vis) return
-  if (!props.skillLocation) {
-    // No file to load — show empty state
-    renderedContent.value = '<p style="color:var(--muted)">无 Skill 内容可显示</p>'
-    return
-  }
-  loading.value = true
-  requestId = `skill-dr-${Date.now()}`
-  send({ type: 'file.read', id: requestId, payload: { path: props.skillLocation } })
-}, { immediate: true })
-
-// Listen for file.read result
 function handleResult(msg: ServerMessage) {
   if (msg.id !== requestId) return
   const payload = msg.payload as { content?: string; error?: string }
@@ -74,16 +61,27 @@ function handleResult(msg: ServerMessage) {
   loading.value = false
 }
 
-watch(() => props.visible, (vis) => {
+// Single watch: register listeners BEFORE sending request, cleanup on hide/unmount
+watch(() => props.visible, async (vis) => {
+  // Always cleanup previous listeners first
   off('file.read:result', handleResult)
   off('file.read:error', handleResult)
-  if (vis) {
-    on('file.read:result', handleResult)
-    on('file.read:error', handleResult)
+
+  if (!vis) return
+
+  // Register listeners BEFORE sending request (ensures no race)
+  on('file.read:result', handleResult)
+  on('file.read:error', handleResult)
+
+  if (!props.skillLocation) {
+    renderedContent.value = '<p style="color:var(--muted)">无 Skill 内容可显示</p>'
+    return
   }
+  loading.value = true
+  requestId = `skill-dr-${Date.now()}`
+  send({ type: 'file.read', id: requestId, payload: { path: props.skillLocation } })
 }, { immediate: true })
 
-// Cleanup on unmount to prevent event-bus listener leak
 onBeforeUnmount(() => {
   off('file.read:result', handleResult)
   off('file.read:error', handleResult)
