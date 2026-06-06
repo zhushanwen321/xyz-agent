@@ -1,7 +1,7 @@
 /**
  * collectMessageContent — extract message content from a DOM element
  *
- * Collects: thinking blocks (expanded) → tool call cards → message body text
+ * Collects: thinking blocks (expanded) > tool call cards > message body text
  *
  * @param messageEl - The wrapper HTMLElement containing the message parts
  * @param opts.format - 'markdown' (default) preserves formatting; 'plain' strips markdown symbols
@@ -9,17 +9,27 @@
 
 /** Status symbol map for tool call cards */
 const TOOL_STATUS_SYMBOLS: Record<string, string> = {
-  success: '✓',
-  error: '✗',
-  running: '…',
+  success: '\u2713',
+  error: '\u2717',
+  running: '\u2026',
 }
 
-/** Regex for stripping markdown symbols in plain mode */
-const MARKDOWN_STRIP_RE = /[#*_~`>\[\]()]|!\[.*?\]\(.*?\)|\[([^\]]*)\]\([^)]*\)/g
-
+/**
+ * Strip markdown syntax for plain-text output.
+ * Removes headings, bold/italic, strikethrough, inline code,
+ * links, blockquotes, and list markers.
+ * Preserves non-markdown characters unlike a brute-force regex approach.
+ */
 function stripMarkdown(text: string): string {
   return text
-    .replace(MARKDOWN_STRIP_RE, (_, p1) => p1 ?? '')
+    .replace(/^ {0,3}#{1,6}\s*/gm, '')
+    .replace(/\*{1,3}([^*]+)\*{1,3}/g, '$1')
+    .replace(/_{1,3}([^_]+)_{1,3}/g, '$1')
+    .replace(/~~([^~]+)~~/g, '$1')
+    .replace(/`{1,3}([^`]+)`{1,3}/g, '$1')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/^ {0,3}>\s?/gm, '')
+    .replace(/^ {0,3}[-*+]\s+/gm, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
 }
@@ -54,8 +64,6 @@ export function collectMessageContent(
   // 3. Collect message body text
   const body = messageEl.querySelector('.msg__body')
   if (body) {
-    // For markdown format, prefer the original markdown source stored in data attribute
-    // (textContent loses markdown formatting since v-html renders HTML)
     if (format === 'markdown') {
       const markdownSource = body.getAttribute('data-markdown-source')
       if (markdownSource) {

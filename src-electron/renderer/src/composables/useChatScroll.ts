@@ -103,13 +103,16 @@ export function useChatScroll(
   }
 
   // Smart auto-scroll: follow new content when at bottom, don't force when user scrolled up
+  // Uses 'instant' instead of 'smooth' to prevent scroll lag during fast streaming.
+  // The smooth animation cannot keep up with rapid content growth, causing the user
+  // to visually fall behind even though userAtBottom remains true.
   watch(
     () => [messagesLength(), streamingContent()],
     () => {
       nextTick(() => {
         if (!userAtBottom.value) return
         const el = chatMsgsRef()
-        if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+        if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'instant' })
       })
     },
   )

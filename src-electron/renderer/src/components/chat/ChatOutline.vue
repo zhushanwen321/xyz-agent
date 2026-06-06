@@ -95,10 +95,8 @@ function extractLabel(msg: ChatMessage): string {
 const outlineItems = computed<OutlineItem[]>(() =>
   props.messages
     .filter(msg => {
-      // Hide pure tool-call messages (no text content)
-      if (msg.role === 'assistant' && !msg.content && msg.toolCalls?.length) return false
-      // Hide thinking-only messages
-      if (msg.role === 'assistant' && !msg.content && !msg.toolCalls?.length && msg.thinking?.length) return false
+      // Hide only truly empty assistant messages (no content, no toolCalls, no thinking)
+      if (msg.role === 'assistant' && !msg.content && !msg.toolCalls?.length && !msg.thinking?.length) return false
       return true
     })
     .map(msg => ({

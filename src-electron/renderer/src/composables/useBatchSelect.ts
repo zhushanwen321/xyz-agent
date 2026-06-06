@@ -73,7 +73,7 @@ export function useBatchSelect(
       if (el) elements.push(el)
     }
     if (elements.length === 0) {
-      console.warn('[useBatchSelect] no message elements found for batch copy, ids:', ids)
+      // Elements may be off-screen or already unmounted; silent return
       return
     }
     const text = collectBatchContent(elements, format)
