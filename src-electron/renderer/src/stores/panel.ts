@@ -166,6 +166,18 @@ export const usePanelStore = defineStore('panel', () => {
   }
 
   /**
+   * 给定 panelId，判断它是否是 tree 中最左侧的叶子节点。
+   * 用于 macOS traffic light safe-zone 判断。
+   */
+  function isLeftmostPanel(panelId: string): boolean {
+    function findLeftmost(node: PanelTree): PanelLeaf {
+      if (node.type === 'pane') return node
+      return findLeftmost(node.children[0])
+    }
+    return findLeftmost(tree.value).id === panelId
+  }
+
+  /**
    * 在当前焦点 panel 中打开 session：
    * 1. 已在当前 window 的某个 panel 中 → 导航到该 panel
    * 2. 否则直接在焦点 panel 中替换 sessionId
@@ -191,6 +203,6 @@ export const usePanelStore = defineStore('panel', () => {
     // actions
     splitPanel, unbindSession, closeEmptyPanel, bindSession,
     updateRatio, navigateToPanel, navigateNext, navigatePrev, mergeToSingle,
-    openSessionSmart,
+    openSessionSmart, isLeftmostPanel,
   }
 })

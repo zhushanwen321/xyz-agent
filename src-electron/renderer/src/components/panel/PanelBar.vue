@@ -5,6 +5,8 @@ import { useSessionStore } from '../../stores/session'
 import { useWindowStore } from '../../stores/window'
 import { useTreeStore } from '../../stores/tree'
 import { useTree } from '../../composables/useTree'
+import { useSidebarStore } from '../../stores/sidebar'
+import { useLayoutStore } from '../../stores/layout'
 import AnchorDropdown from './AnchorDropdown.vue'
 import SessionTreePanel from './SessionTreePanel.vue'
 
@@ -39,7 +41,25 @@ const panelStore = usePanelStore()
 const windowStore = useWindowStore()
 const sessionStore = useSessionStore()
 const treeStore = useTreeStore()
+const sidebarStore = useSidebarStore()
+const layoutStore = useLayoutStore()
 const { fetchTree } = useTree()
+
+/**
+ * Whether this PanelBar needs traffic-light safe-zone padding.
+ * Conditions: sidebar collapsed + non-fullscreen + this panel is the
+ * leftmost panel in the panel tree.
+ */
+const needsSafeZone = computed(() => {
+  if (!sidebarStore.collapsed || layoutStore.isFullscreen) return false
+  // Single panel: always needs safe-zone
+  if (panelStore.panelCount <= 1) return true
+  // Multi-panel: only if this panel is the leftmost leaf in the tree
+  // Check if this panel's bounding rect starts near x=0
+  // (determined at render time via onMounted / nextTick is too late for initial paint)
+  // Instead, check if this panel is the leftmost in the tree structure
+  return panelStore.isLeftmostPanel(props.panelId)
+})
 
 const sessionInfo = computed(() => {
   if (!props.sessionId) return null
@@ -122,7 +142,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
-  <div class="panel-bar" @contextmenu.prevent="onContextMenu">
+  <div class="panel-bar" :class="{ 'panel-bar--safe-zone': needsSafeZone }" @contextmenu.prevent="onContextMenu">
     <AnchorDropdown
       :options="agentOptions"
       :current-id="activeAgentId"
@@ -271,6 +291,9 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
   flex-shrink: 0;
   font-size: 12px;
   position: relative;
+}
+.panel-bar--safe-zone {
+  padding-left: 78px;
 }
 
 .tree-trigger {
