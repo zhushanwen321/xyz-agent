@@ -103,7 +103,7 @@
         <!-- Floating buttons (outline + scroll-to-bottom), outside scroll container -->
         <div class="chat-fab-container">
           <ChatOutline
-            v-if="messages.length > 3"
+            v-if="messages.length > OUTLINE_MIN_MESSAGES"
             :messages="messages"
             @scroll-to-message="scrollToMessage"
           />
@@ -261,6 +261,7 @@ watch(
 
 /** 距离底部多少 px 以内视为「在底部」 */
 const SCROLL_NEAR_BOTTOM_THRESHOLD = 80
+const OUTLINE_MIN_MESSAGES = 3
 
 // Session 级滚动位置缓存：split 时组件重建，通过此缓存恢复滚动位置
 const scrollPositionCache = new Map<string, number>()

@@ -49,7 +49,7 @@
   </template>
 
   <!-- Fallback: 无任何 section 时（空消息） -->
-  <div v-else-if="message.content" class="py-2 px-3 leading-[1.6] text-xs rounded-sm" style="background:var(--msg-assistant-bg)">
+  <div v-else-if="message.content" class="py-2 px-3 leading-[1.6] text-xs rounded-sm msg-assistant-fallback">
     <div
       class="msg__body select-text"
       :data-message-id="message.id"
@@ -70,11 +70,11 @@ import type { AssistantSection as Section } from '../../lib/message-layout'
 import { groupIntoSections } from '../../lib/message-layout'
 import type { BatchInfo } from './ToolCallCard.vue'
 import { useMarkdownRender } from '../../composables/useMarkdownRender'
+import { useMarkdownBodyClick } from '../../composables/useMarkdownBodyClick'
 import ThinkingBlock from './ThinkingBlock.vue'
 import ToolCallCard from './ToolCallCard.vue'
 import AssistantSection from './AssistantSection.vue'
 
-const COPY_FEEDBACK_MS = 1500
 const BYTES_PER_KB = 1024
 const MIN_TOOL_CALLS = 2
 const BATCH_MIN_SIZE = 2
@@ -133,46 +133,8 @@ const { renderedContent } = useMarkdownRender(
   },
 )
 
-// ── Event delegation: copy + collapse ──
-
-async function handleBodyClick(e: MouseEvent) {
-  const target = e.target as HTMLElement
-
-  const anchor = target.closest('a')
-  if (anchor instanceof HTMLAnchorElement) {
-    const href = anchor.href
-    if (href && /^https?:\/\//i.test(href)) {
-      e.preventDefault()
-      window.electronAPI?.openExternal(href)
-    }
-    return
-  }
-
-  if (target.matches('.code-copy-btn')) {
-    e.preventDefault()
-    const codeBlock = target.closest('.code-block')
-    const codeEl = codeBlock?.querySelector('pre code') ?? codeBlock?.querySelector('code')
-    const code = codeEl?.textContent ?? ''
-    try {
-      await navigator.clipboard.writeText(code)
-      target.textContent = '已复制'
-      setTimeout(() => { target.textContent = '复制' }, COPY_FEEDBACK_MS)
-    } catch {
-      target.textContent = '复制失败'
-      setTimeout(() => { target.textContent = '复制' }, COPY_FEEDBACK_MS)
-    }
-    return
-  }
-
-  if (target.matches('.code-expand-btn')) {
-    e.preventDefault()
-    const codeBlock = target.closest('.code-block')
-    if (!codeBlock) return
-    const isCollapsed = codeBlock.getAttribute('data-collapsed') === 'true'
-    codeBlock.setAttribute('data-collapsed', isCollapsed ? 'false' : 'true')
-    target.textContent = isCollapsed ? '收起' : '展开'
-  }
-}
+// ── Event delegation: copy + collapse (shared composable) ──
+const { handleBodyClick } = useMarkdownBodyClick()
 
 // ── Batch detection ──
 
@@ -224,3 +186,9 @@ const batchInfoMap = computed(() => {
   return result
 })
 </script>
+
+<style scoped>
+.msg-assistant-fallback {
+  background: var(--msg-assistant-bg);
+}
+</style>

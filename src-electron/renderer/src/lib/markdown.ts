@@ -123,7 +123,8 @@ export function renderLightweight(text: string): string {
   return DOMPurify.sanitize(html, PURIFY_CONFIG)
 }
 
-/** 向后兼容 */
+/** 向后兼容 — fallow reports zero consumers, kept for potential external use */
+// fallow-ignore-next-line unused-exports
 export const renderMarkdown = renderLightweight
 
 /**

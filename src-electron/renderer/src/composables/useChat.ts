@@ -2,7 +2,7 @@ import { useChatStore } from '../stores/chat'
 import { useSessionStore } from '../stores/session'
 import { getActivePinia } from 'pinia'
 import { send } from '../lib/ws-client'
-import { on } from '../lib/event-bus'
+import { on, off } from '../lib/event-bus'
 import { type Ref, unref } from 'vue'
 import type {
   ServerMessage, ServerMessageType, ToolCall, ContentBlock,
@@ -58,7 +58,7 @@ function createGlobalHandlers() {
       blocks.push({ type: 'text', refId: 'text' })
       session.streamingMessage = { ...session.streamingMessage, contentBlocks: blocks }
     }
-    store.appendStreamText(msg.payload.delta as string, sid)
+    store.appendToStreaming(msg.payload.delta as string, sid)
   }
 
   function onThinkingStart(msg: ServerMessage) {
@@ -461,6 +461,12 @@ queueMicrotask(safeRegisterGlobalListeners)
  */
 export function __test_registerGlobalHandlers(): void {
   if (!getActivePinia()) return
+  // Cleanup old handlers before re-registering
+  if (globalEventMap) {
+    for (const [evt, handler] of globalEventMap) {
+      off(evt, handler)
+    }
+  }
   globalEventMap = createGlobalHandlers()
   for (const [evt, handler] of globalEventMap) {
     on(evt, handler)

@@ -168,7 +168,7 @@ onBeforeUnmount(() => {
   border-radius: 50%;
   background: var(--surface);
   border: 1px solid var(--border);
-  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  box-shadow: var(--shadow-xs);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -178,7 +178,7 @@ onBeforeUnmount(() => {
 }
 .chat-outline__toggle:hover {
   color: var(--fg);
-  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  box-shadow: var(--shadow-md);
   border-color: var(--muted);
 }
 .chat-outline__toggle--active {
@@ -196,7 +196,7 @@ onBeforeUnmount(() => {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+  box-shadow: var(--shadow-lg);
   overflow: hidden;
 }
 

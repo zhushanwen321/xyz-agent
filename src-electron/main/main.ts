@@ -27,7 +27,7 @@ async function waitForVite(url: string, timeoutMs = 30_000): Promise<void> {
   while (Date.now() - start < timeoutMs) {
     try {
       const res = await fetch(url)
-      if (res.ok || res.status === 200) return
+      if (res.ok) return
     } catch {
       // Vite 还没启动，继续等待
     }

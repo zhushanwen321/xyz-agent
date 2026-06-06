@@ -52,7 +52,7 @@
       用户
     </div>
     <!-- User bubble: skill-link embedded inline when skill is present -->
-    <div v-if="displayContent" class="py-2 px-3 leading-[1.6] text-xs text-fg rounded-sm" style="background:var(--user-bubble-bg);border:1px solid var(--user-bubble-border);">
+    <div v-if="displayContent" class="py-2 px-3 leading-[1.6] text-xs text-fg rounded-sm msg-user-bubble">
       <div
         class="msg__body select-text"
         :data-message-id="message.id"
@@ -134,6 +134,7 @@ import { copyWithToast } from '../../lib/clipboard'
 import { collectMessageContent } from '../../lib/collectMessageContent'
 import { useTree } from '../../composables/useTree'
 import { useMarkdownRender } from '../../composables/useMarkdownRender'
+import { useMarkdownBodyClick } from '../../composables/useMarkdownBodyClick'
 import AssistantContent from './AssistantContent.vue'
 import MessageActionMenu from './MessageActionMenu.vue'
 import BranchIndicator from './BranchIndicator.vue'
@@ -161,8 +162,6 @@ const emit = defineEmits<{
   navigate: [targetEntryId: string]
   'toggle-select': []
 }>()
-
-const COPY_FEEDBACK_MS = 1500
 
 // ── Action menu state ──
 const showActionMenu = ref(false)
@@ -245,48 +244,8 @@ const { renderedContent } = useMarkdownRender(
   },
 )
 
-// ── 事件委托：复制 + 折叠 + 外部链接 ──
-async function handleBodyClick(e: MouseEvent) {
-  const target = e.target as HTMLElement
-
-  // 外部链接：在默认浏览器打开
-  const anchor = target.closest('a')
-  if (anchor instanceof HTMLAnchorElement) {
-    const href = anchor.href
-    if (href && /^https?:\/\//i.test(href)) {
-      e.preventDefault()
-      window.electronAPI?.openExternal(href)
-    }
-    return
-  }
-
-  // 复制按钮
-  if (target.matches('.code-copy-btn')) {
-    e.preventDefault()
-    const codeBlock = target.closest('.code-block')
-    const codeEl = codeBlock?.querySelector('pre code') ?? codeBlock?.querySelector('code')
-    const code = codeEl?.textContent ?? ''
-    try {
-      await navigator.clipboard.writeText(code)
-      target.textContent = '已复制'
-      setTimeout(() => { target.textContent = '复制' }, COPY_FEEDBACK_MS)
-    } catch {
-      target.textContent = '复制失败'
-      setTimeout(() => { target.textContent = '复制' }, COPY_FEEDBACK_MS)
-    }
-    return
-  }
-
-  // 折叠/展开按钮
-  if (target.matches('.code-expand-btn')) {
-    e.preventDefault()
-    const codeBlock = target.closest('.code-block')
-    if (!codeBlock) return
-    const isCollapsed = codeBlock.getAttribute('data-collapsed') === 'true'
-    codeBlock.setAttribute('data-collapsed', isCollapsed ? 'false' : 'true')
-    target.textContent = isCollapsed ? '收起' : '展开'
-  }
-}
+// ── 事件委托：复制 + 折叠 + 外部链接 (shared composable) ──
+const { handleBodyClick } = useMarkdownBodyClick()
 </script>
 
 <!-- msg__body 内的元素由 v-html 渲染，这些样式已移至 style.css -->
@@ -404,4 +363,9 @@ async function handleBodyClick(e: MouseEvent) {
 }
 .skill-link--active svg {
   opacity: 1;
-}</style>
+}
+.msg-user-bubble {
+  background: var(--user-bubble-bg);
+  border: 1px solid var(--user-bubble-border);
+}
+</style>

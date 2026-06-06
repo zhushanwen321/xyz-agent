@@ -135,4 +135,5 @@ defineEmits<{
 }
 .batch-select-bar {
   animation: batch-bar-appear 0.2s var(--ease);
+}
 </style>
