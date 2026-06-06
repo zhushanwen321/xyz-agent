@@ -258,6 +258,12 @@ SKIP_ALL_CHECKS=1 git commit            # 跳过所有（仅紧急情况）
 8. **禁止硬编码颜色** — 用 CSS 变量（`var(--accent)`）或语义 Tailwind 类
 9. **禁止魔数间距** — 用标准 Tailwind scale，不用 `p-[17px]`
 10. **border-radius 默认 1px，特殊场景 2px** — 用 `rounded-sm`(1px) 为默认。`rounded-md`/`rounded-lg`(2px) 仅特殊场景。禁止其他值。详见 docs/standards.md §7.1
+11. **macOS traffic light safe zone** — 所有涉及窗口左上角区域的 UI 布局（PanelBar header、sidebar header 等），在非全屏模式下必须考虑 macOS 原生 traffic light 按钮（红黄绿，约 78px 宽、40px 高的矩形区域）的遮挡。具体要求：
+    - Sidebar collapsed + 非 fullscreen 时，最左侧 panel 的 header（PanelBar）需要 `padding-left: 78px` 避开 traffic lights
+    - 左右 split panel 时，只有最左侧 panel 的 PanelBar 需要 safe-zone，右侧 panel 不受影响
+    - 全屏模式下无 traffic lights，不需要额外 padding
+    - 新增或修改任何窗口顶部区域 UI 时，必须在非全屏 + 全屏两种模式下验证
+    - 设计决策记录：[ADR 0016](docs/adr/0016-macos-traffic-light-safe-zone.md)，[交互式 demo](docs/designs/sidebar-collapse-fix.html)
 
 ### 自动化检查
 
