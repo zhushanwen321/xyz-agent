@@ -804,7 +804,8 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
    while transitioning. The SidebarCollapseHandle component renders the left-edge expand
    button when collapsed. */
 .app-container {
-  transition: grid-template-columns 0.2s ease;
+  /* grid-template-columns transition disabled: Chromium 130 fails to
+     recalculate var() references mid-transition */
 }
 .app-container--sidebar-collapsed {
   --sidebar-w: 0px;

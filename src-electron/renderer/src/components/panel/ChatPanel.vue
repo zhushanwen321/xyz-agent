@@ -18,7 +18,7 @@
       <div class="flex-1 flex flex-col min-w-0 min-h-0 relative">
         <div
           ref="chatMsgsRef"
-          class="flex-1 overflow-y-auto overflow-x-hidden p-5 px-6 flex flex-col gap-[6px] max-w-[960px] mx-auto w-full"
+          class="flex-1 overflow-y-auto overflow-x-hidden p-5 px-6 relative flex flex-col gap-[6px] max-w-[960px] mx-auto w-full"
           @scroll="onChatScroll"
         >
           <!-- Loading history state -->
@@ -66,7 +66,8 @@
                     :selected="selectedIds.has(msg.id)"
                     @toggle-select="toggleSelect(msg.id)"
                     @navigate="onNavigate"
-                  />
+                    @open-skill="openSkillDrawer"
+                    :skill-drawer-open="skillDrawerVisible && skillDrawerName === msg.skillName"                  />
                 </template>
               </template>
             </template>
@@ -87,9 +88,16 @@
               :is-streaming="isStreaming"
             />
           </template>
+
+          <!-- Chat Outline (floating mini table of contents) -->
+          <ChatOutline
+            v-if="messages.length > 3"
+            :messages="messages"
+            @scroll-to-message="scrollToMessage"
+          />
         </div>
 
-        <!-- Floating scroll-to-bottom FAB (between messages and input, floats right) -->
+
         <Transition name="fab">
           <div v-if="showScrollBottom" class="relative h-0 max-w-[960px] mx-auto w-full px-6">
             <button
@@ -135,6 +143,15 @@
           @local-action="$emit('local-action', $event)"
         />
       </div>
+
+        <!-- Skill drawer (panel-scoped, overlays chat area) -->
+        <SkillDrawer
+          :visible="skillDrawerVisible"
+          :skill-name="skillDrawerName"
+          :skill-location="skillDrawerLocation"
+          :panel-id="panelId"
+          @close="closeSkillDrawer"
+        />
     </PanelBody>
   </div>
 </template>
@@ -155,6 +172,8 @@ import ApprovalCard from '../chat/ApprovalCard.vue'
 import ChatInput from '../chat/ChatInput.vue'
 import WidgetDock from '../extension/WidgetDock.vue'
 import BatchSelectBar from '../chat/BatchSelectBar.vue'
+import ChatOutline from '../chat/ChatOutline.vue'
+import SkillDrawer from '../chat/SkillDrawer.vue'
 import { collectMessageContent } from '../../lib/collectMessageContent'
 import { copyWithToast } from '../../lib/clipboard'
 import { useTree } from '../../composables/useTree'
@@ -275,7 +294,15 @@ function onChatScroll() {
 function handleScrollToBottom() {
   const el = chatMsgsRef.value
   if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+
 }
+function scrollToMessage(messageId: string) {
+  const el = chatMsgsRef.value?.querySelector(`[data-entry-id="${messageId}"]`) as HTMLElement | null
+  if (el) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
+}
+
 
 // 新消息 / streaming 更新时智能滚动
 watch(
@@ -312,6 +339,21 @@ function switchAgent(id: string) {
 }
 
 // ── Batch selection mode ──
+
+// ── Skill drawer state ──
+const skillDrawerVisible = ref(false)
+const skillDrawerName = ref('')
+const skillDrawerLocation = ref<string | undefined>(undefined)
+
+function openSkillDrawer(payload: { name: string; location?: string }) {
+  skillDrawerName.value = payload.name
+  skillDrawerLocation.value = payload.location
+  skillDrawerVisible.value = true
+}
+
+function closeSkillDrawer() {
+  skillDrawerVisible.value = false
+}
 const batchMode = ref(false)
 const selectedIds = ref<Set<string>>(new Set())
 const tree = useTree()

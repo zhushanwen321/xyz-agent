@@ -234,7 +234,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onUnmounted } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import type { Message } from '@xyz-agent/shared'
 import type { BatchInfo } from './ToolCallCard.vue'
 import type { BranchTab } from '../../stores/tree'
@@ -243,9 +243,6 @@ import { useSettingsStore } from '../../stores/settings'
 import { copyWithToast } from '../../lib/clipboard'
 import { collectMessageContent } from '../../lib/collectMessageContent'
 import { useTree } from '../../composables/useTree'
-import { send } from '../../lib/ws-client'
-import { on, off } from '../../lib/event-bus'
-import type { ServerMessage } from '@xyz-agent/shared'
 import ThinkingBlock from './ThinkingBlock.vue'
 import ToolCallCard from './ToolCallCard.vue'
 import MessageActionMenu from './MessageActionMenu.vue'
@@ -260,16 +257,17 @@ const props = withDefaults(defineProps<{
   selectable?: boolean
   selected?: boolean
   branchTabs?: BranchTab[]
-}>(), {
+  skillDrawerOpen?: boolean}>(), {
   entryId: '',
   sessionId: '',
   siblingCount: 0,
   selectable: false,
   selected: false,
   branchTabs: () => [],
-})
+  skillDrawerOpen: false,})
 
-defineEmits<{
+const emit = defineEmits<{
+  'open-skill': [payload: { name: string; location?: string }]
   navigate: [targetEntryId: string]
   'toggle-select': []
 }>()
@@ -303,62 +301,12 @@ const displayContent = computed(() => {
   return props.message.content?.replace(/^\/skill:[^\s]+\s*/, '').trim() || ''
 })
 
-// ── Skill content expansion ──
-const skillExpanded = ref(false)
-const skillLoading = ref(false)
-const skillRawContent = ref('')
-const skillRenderedContent = ref('')
-let skillRequestId = ''
-
-function handleSkillHeaderClick() {
-  // Only expand if we have a skillLocation (history messages)
-  if (!props.message.skillLocation) return
-  if (skillExpanded.value) {
-    skillExpanded.value = false
-    return
-  }
-  if (skillRawContent.value) {
-    // Already loaded, just toggle
-    skillExpanded.value = true
-    return
-  }
-  // Load from file
-  skillLoading.value = true
-  skillRequestId = `fr-${Date.now()}`
-  send({ type: 'file.read', id: skillRequestId, payload: { path: props.message.skillLocation } })
+function handleSkillLinkClick() {
+  emit("open-skill", {
+    name: resolvedSkillName.value!,
+    location: props.message.skillLocation,
+  })
 }
-
-async function handleFileReadResult(msg: ServerMessage) {
-  if (msg.id !== skillRequestId) return
-  const payload = msg.payload as { content?: string; error?: string }
-  if (payload.error) {
-    skillRawContent.value = ''
-    skillRenderedContent.value = `<p style="color:var(--muted)">加载失败: ${payload.error}</p>`
-  } else if (payload.content) {
-    skillRawContent.value = payload.content
-    const theme = getEffectiveTheme()
-    // skill 展开容器背景始终是深色（--user-bubble-bg），不论 app 主题都用 dark Shiki 主题
-    // 否则 light theme 下 Shiki 输出的黑字在深色背景上几乎不可见（详见 docs/standards.md §7.2.6）
-    skillRenderedContent.value = await renderFull(payload.content, theme, { codeTheme: 'dark' })
-  }
-  skillLoading.value = false
-  skillExpanded.value = true
-}
-
-onUnmounted(() => {
-  off('file.read:result', handleFileReadResult)
-  off('file.read:error', handleFileReadResult)
-})
-
-// Register / unregister listeners reactively
-watch(resolvedSkillName, (name) => {
-  off('file.read:result', handleFileReadResult)
-  off('file.read:error', handleFileReadResult)
-  if (name) {
-    on('file.read:result', handleFileReadResult)
-    on('file.read:error', handleFileReadResult)
-  }
-}, { immediate: true })
 
 function onActionBtnClick(e: MouseEvent) {
   const btn = e.currentTarget as HTMLElement
@@ -689,68 +637,40 @@ const batchInfoMap = computed(() => {
 /* Batch selection checkbox styles remain */
 
 /* Skill header bar (option B: left accent border) */
-.skill-header {
-  display: flex;
+
+/* Skill link (inline, Codex-style) */
+.skill-link {
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: var(--radius);
-  font-size: 11px;
-  line-height: 1.4;
-  margin-bottom: 4px;
-  background: oklch(20% 0.015 250);
-  border: none;
-  border-left: 2px solid var(--accent);
-  color: var(--muted);
-}
-.skill-header--clickable {
-  cursor: pointer;
-  transition: background 0.15s ease;
-}
-.skill-header--clickable:hover {
-  background: oklch(24% 0.018 250);
-}
-.skill-header--expanded {
-  border-left-color: var(--muted);
-}
-.skill-header__chevron {
-  width: 10px;
-  height: 10px;
-  flex-shrink: 0;
-  color: var(--muted);
-}
-.skill-header__icon {
-  width: 12px;
-  height: 12px;
-  flex-shrink: 0;
+  gap: 3px;
   color: var(--accent);
-}
-.skill-header__label {
-  color: var(--muted);
-}
-.skill-header__name {
-  font-weight: 600;
-  color: var(--fg);
   font-family: var(--font-mono);
   font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in oklch, var(--accent) 40%, transparent);
+  transition: border-color 0.12s, background 0.12s;
+  vertical-align: baseline;
+  white-space: nowrap;
+  margin-right: 4px;
 }
-.skill-header__spin {
-  width: 10px;
-  height: 10px;
-  color: var(--muted);
-  animation: skill-spin 0.8s linear infinite;
+.skill-link:hover {
+  border-bottom-color: var(--accent);
 }
-@keyframes skill-spin {
-  to { transform: rotate(360deg); }
+.skill-link svg {
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+  opacity: 0.7;
 }
-
-/* Dark theme override */
-:root[data-theme='dark'] .skill-header {
-  background: oklch(20% 0.015 250);
+.skill-link--active {
+  background: var(--accent);
+  color: white;
+  padding: 0 3px;
+  border-radius: 1px;
+  border-bottom: none;
 }
-/* Light theme override */
-:root[data-theme='light'] .skill-header,
-:root:not([data-theme]) .skill-header {
-  background: oklch(96% 0.012 250);
-}
-</style>
+.skill-link--active svg {
+  opacity: 1;
+}</style>

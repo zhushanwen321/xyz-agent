@@ -397,5 +397,6 @@ onUnmounted(() => {
   overflow: hidden;
   position: relative;
   background: var(--bg);
+  grid-column: 2;
 }
 </style>
