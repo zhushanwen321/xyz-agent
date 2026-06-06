@@ -1,15 +1,20 @@
 <template>
-  <div class="chat-outline" :class="{ 'chat-outline--collapsed': !expanded }">
-    <!-- Toggle button (always visible, right-aligned) -->
-    <button class="chat-outline__toggle" :aria-label="expanded ? '收起目录' : '展开目录'" @click="expanded = !expanded">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <div class="chat-outline" @keydown.escape="onEsc">
+    <!-- Toggle button (always visible, same style as scroll-fab) -->
+    <button
+      class="chat-outline__toggle"
+      :class="{ 'chat-outline__toggle--active': expanded }"
+      :aria-label="expanded ? '收起目录' : '展开目录'"
+      @click="toggle"
+    >
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <line x1="3" y1="6" x2="21" y2="6" />
         <line x1="3" y1="12" x2="21" y2="12" />
         <line x1="3" y1="18" x2="21" y2="18" />
       </svg>
     </button>
 
-    <!-- Outline panel (visible when expanded) -->
+    <!-- Outline panel (slides left from button) -->
     <Transition name="outline-slide">
       <div v-if="expanded" class="chat-outline__panel">
         <div class="chat-outline__title">目录</div>
@@ -20,7 +25,7 @@
             :class="['chat-outline__item', { 'chat-outline__item--active': activeIndex === i }]"
             @click="scrollToItem(i, item)"
           >
-            <span class="chat-outline__dot" :class="'chat-outline__dot--' + item.dotType"></span>
+            <span class="chat-outline__role" :class="'chat-outline__role--' + item.role">{{ item.role === 'user' ? 'U' : 'A' }}</span>
             <span class="chat-outline__label">{{ item.label }}</span>
           </button>
         </div>
@@ -37,13 +42,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import type { ChatMessage } from '../../stores/chat'
 import { isSystemNotification } from '../../stores/chat'
 
 interface OutlineItem {
   label: string
-  dotType: 'user' | 'assistant' | 'done' | 'alert' | 'warning' | 'info'
   messageId: string
   role: string
 }
@@ -71,25 +75,16 @@ function extractLabel(msg: ChatMessage): string {
     return msg.notificationTitle || truncate(msg.content ?? '', MAX_LABEL_LEN) || '通知'
   }
   if (msg.role === 'user') {
-    // Strip /skill:xxx prefix
     const text = msg.content?.replace(/^\/skill:[^\s]+\s*/, '').trim() ?? ''
     return truncate(text, MAX_LABEL_LEN) || '用户消息'
   }
-  // assistant: prefer first tool call name, or text preview
+  // assistant: prefer text content, fallback to tool call name
+  if (msg.content) {
+    return truncate(msg.content.replace(/<[^>]+>/g, '').trim(), MAX_LABEL_LEN) || '助手'
+  }
   if (msg.toolCalls?.length) {
     const first = msg.toolCalls[0]
-    const name = first.toolName
-    const pathObj = parseInput(first.input)
-    const hint = pathObj?.path ?? pathObj?.file_path ?? pathObj?.command ?? ''
-    const hintStr = String(hint)
-    if (hintStr) {
-      const short = hintStr.length > 20 ? hintStr.slice(0, 20) + '...' : hintStr
-      return `${name} ${short}`
-    }
-    return name
-  }
-  if (msg.content) {
-    return truncate(msg.content.replace(/<[^>]+>/g, '').trim(), MAX_LABEL_LEN)
+    return first.toolName
   }
   if (msg.thinking?.length) {
     return 'Thinking'
@@ -97,96 +92,117 @@ function extractLabel(msg: ChatMessage): string {
   return '助手'
 }
 
-function extractDotType(msg: ChatMessage): OutlineItem['dotType'] {
-  if (isSystemNotification(msg)) {
-    const t: string = msg.notificationType || (msg.status === 'error' ? 'alert' : 'done')
-    if (t === 'alert') return 'alert'
-    if (t === 'warning') return 'warning'
-    if (t === 'info') return 'info'
-    return 'done'
-  }
-  if (msg.role === 'user') return 'user'
-  return 'assistant'
-}
-
 const outlineItems = computed<OutlineItem[]>(() =>
-  props.messages.map(msg => ({
-    label: extractLabel(msg),
-    dotType: extractDotType(msg),
-    messageId: msg.id,
-    role: msg.role,
-  })),
+  props.messages
+    .filter(msg => {
+      // Hide pure tool-call messages (no text content)
+      if (msg.role === 'assistant' && !msg.content && msg.toolCalls?.length) return false
+      // Hide thinking-only messages
+      if (msg.role === 'assistant' && !msg.content && !msg.toolCalls?.length && msg.thinking?.length) return false
+      return true
+    })
+    .map(msg => ({
+      label: extractLabel(msg),
+      messageId: msg.id,
+      role: msg.role,
+    })),
 )
 
 const progressLabel = computed(() => {
   const total = outlineItems.value.length
-  const done = outlineItems.value.filter(i => i.dotType === 'done' || i.dotType === 'assistant').length
-  return `${done}/${total}`
+  return `${total} 条`
 })
 
 const progressPercent = computed(() => {
   const total = outlineItems.value.length
   if (total === 0) return 0
-  const done = outlineItems.value.filter(i => i.dotType === 'done' || i.dotType === 'assistant').length
-  return Math.round((done / total) * 100)
+  const users = outlineItems.value.filter(i => i.role === 'user').length
+  return Math.round((users / total) * 100)
 })
+
+function toggle() {
+  expanded.value = !expanded.value
+}
+
+function onEsc() {
+  if (expanded.value) {
+    expanded.value = false
+  }
+}
 
 function scrollToItem(index: number, item: OutlineItem) {
   activeIndex.value = index
   emit('scroll-to-message', item.messageId)
 }
 
-function parseInput(input: unknown): Record<string, unknown> | null {
-  if (!input) return null
-  try {
-    return typeof input === 'string' ? JSON.parse(input) as Record<string, unknown> : input as Record<string, unknown>
-  } catch { return null }
+
+
+// Global ESC listener (component may not have focus)
+function globalEscHandler(e: KeyboardEvent) {
+  if (e.key === 'Escape' && expanded.value) {
+    expanded.value = false
+  }
 }
+
+onMounted(() => {
+  document.addEventListener('keydown', globalEscHandler)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('keydown', globalEscHandler)
+})
 </script>
 
 <style scoped>
 .chat-outline {
-  position: absolute;
-  right: 8px;
-  top: 8px;
-  z-index: 20;
+  position: relative;
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
+  align-items: center;
 }
 
+/* Same visual style as scroll-fab */
 .chat-outline__toggle {
-  width: 26px;
-  height: 26px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--muted);
   cursor: pointer;
-  border-radius: var(--radius);
-  transition: all 0.12s ease;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+  color: var(--muted);
+  transition: all 0.2s ease;
 }
 .chat-outline__toggle:hover {
+  color: var(--fg);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  border-color: var(--muted);
+}
+.chat-outline__toggle--active {
   color: var(--fg);
   background: var(--hover-bg);
 }
 
+/* Panel: positioned to the left of the button */
 .chat-outline__panel {
-  margin-top: 4px;
-  width: 160px;
+  position: absolute;
+  top: 0;
+  right: 100%;
+  margin-right: 8px;
+  width: 180px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  box-shadow: 0 1px 6px rgba(0,0,0,0.04);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.1);
   overflow: hidden;
 }
 
 .chat-outline__title {
-  padding: 6px 8px 4px;
-  font-size: 9px;
+  padding: 8px 10px 6px;
+  font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -201,13 +217,13 @@ function parseInput(input: unknown): Record<string, unknown> | null {
 .chat-outline__item {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   width: 100%;
-  padding: 3px 8px;
+  padding: 5px 10px;
   border: none;
   background: transparent;
   cursor: pointer;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.4;
   color: var(--muted);
   border-left: 2px solid transparent;
@@ -221,18 +237,30 @@ function parseInput(input: unknown): Record<string, unknown> | null {
   background: var(--hover-bg);
 }
 
-.chat-outline__dot {
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
+.chat-outline__role {
+  width: 16px;
+  height: 16px;
+  border-radius: 2px;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  font-family: var(--font-mono);
 }
-.chat-outline__dot--user { background: var(--accent); }
-.chat-outline__dot--assistant { background: var(--agent); }
-.chat-outline__dot--done { background: var(--success); }
-.chat-outline__dot--alert { background: var(--danger); }
-.chat-outline__dot--warning { background: var(--warning); }
-.chat-outline__dot--info { background: var(--agent); }
+.chat-outline__role--user {
+  background: var(--accent);
+  color: var(--surface);
+}
+.chat-outline__role--assistant {
+  background: var(--agent);
+  color: var(--surface);
+}
+.chat-outline__role--system {
+  background: var(--success);
+  color: var(--surface);
+}
 
 .chat-outline__label {
   flex: 1;
@@ -244,17 +272,17 @@ function parseInput(input: unknown): Record<string, unknown> | null {
 }
 
 .chat-outline__progress {
-  padding: 6px 8px;
+  padding: 8px 10px;
   border-top: 1px solid var(--border);
   font-size: 10px;
   color: var(--muted);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
+  gap: 8px;
 }
 .chat-outline__progress-bar {
-  width: 40px;
+  width: 48px;
   height: 3px;
   background: var(--border);
   border-radius: 1px;
@@ -267,7 +295,7 @@ function parseInput(input: unknown): Record<string, unknown> | null {
   transition: width 0.3s ease;
 }
 
-/* Transition */
+/* Slide-in from right */
 .outline-slide-enter-active,
 .outline-slide-leave-active {
   transition: all 0.15s ease;
@@ -275,6 +303,6 @@ function parseInput(input: unknown): Record<string, unknown> | null {
 .outline-slide-enter-from,
 .outline-slide-leave-to {
   opacity: 0;
-  transform: translateX(8px);
+  transform: translateX(12px);
 }
 </style>

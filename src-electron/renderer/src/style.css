@@ -74,6 +74,7 @@
   --fg: oklch(93% 0.005 55);
   --muted: oklch(58% 0.008 50);
   --border: oklch(28% 0.008 50);
+  --divider: oklch(38% 0.010 50);
   --accent: oklch(68% 0.10 28);
   --accent-light: oklch(28% 0.04 28);
   --success: oklch(68% 0.12 145);
@@ -115,6 +116,7 @@
   --fg: oklch(92% 0.005 75);
   --muted: oklch(55% 0.010 75);
   --border: oklch(24% 0.010 75);
+  --divider: oklch(36% 0.012 75);
   --accent: oklch(55% 0.08 195);
   --accent-light: oklch(22% 0.04 195);
 }
@@ -821,7 +823,7 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
   padding: 6px 0;
 }
 .turn-group + .turn-group {
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--divider);
   padding-top: 12px;
   margin-top: 4px;
 }
@@ -845,11 +847,30 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .asst-section {
   margin-bottom: 6px;
   padding-left: 12px;
-  border-left: 2px solid var(--border);
   position: relative;
 }
+.asst-section::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  background: var(--divider);
+  border-radius: 1px;
+}
+/* Per-type colored left border */
+.asst-section--thinking::before { background: var(--accent); }
+.asst-section--toolCall::before { background: var(--success); }
+.asst-section--text::before { background: var(--agent); }
 .asst-section:last-child {
   margin-bottom: 0;
+}
+/* Section-internal spacing between child components */
+.asst-section--spacing {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .asst-section__label {
@@ -869,8 +890,3 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .asst-section__dot--thinking { background: var(--accent); }
 .asst-section__dot--tool { background: var(--success); }
 .asst-section__dot--text { background: var(--agent); }
-
-/* Reset ThinkingBlock margin inside section containers */
-.asst-section .thinking-block {
-  margin-bottom: 0;
-}

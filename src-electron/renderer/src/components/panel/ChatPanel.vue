@@ -96,26 +96,28 @@
             />
           </template>
 
-          <!-- Chat Outline (floating mini table of contents) -->
+
+        </div>
+
+
+        <!-- Floating buttons (outline + scroll-to-bottom), outside scroll container -->
+        <div class="chat-fab-container">
           <ChatOutline
             v-if="messages.length > 3"
             :messages="messages"
             @scroll-to-message="scrollToMessage"
           />
-        </div>
-
-
-        <Transition name="fab">
-          <div v-if="showScrollBottom" class="relative h-0 max-w-[960px] mx-auto w-full px-6">
+          <Transition name="fab">
             <button
+              v-if="showScrollBottom"
               class="scroll-fab"
               aria-label="回到底部"
               @click="handleScrollToBottom"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
             </button>
-          </div>
-        </Transition>
+          </Transition>
+        </div>
 
         <!-- Widget Dock -->
         <WidgetDock :widgets="extensionWidgets" />
@@ -186,6 +188,7 @@ import { copyWithToast } from '../../lib/clipboard'
 import { useTree } from '../../composables/useTree'
 import { useTreeStore } from '../../stores/tree'
 import { useTurnGroups } from '../../composables/useTurnGroups'
+import { groupIntoTurns } from '../../lib/message-layout'
 import type { BranchTab } from '../../stores/tree'
 
 export interface AgentOption {
@@ -412,19 +415,7 @@ const { turnGroups } = useTurnGroups(() => props.messages)
 /** Get turn groups for a specific agent view */
 function getTurnGroups(viewMessages: ChatMessage[]) {
   if (viewMessages === props.messages) return turnGroups.value
-  // For non-primary views, compute inline
-  const groups: { key: string; messages: ChatMessage[] }[] = []
-  let current: ChatMessage[] = []
-  for (const msg of viewMessages) {
-    if (msg.role === 'user') {
-      if (current.length > 0) groups.push({ key: current[0].id, messages: current })
-      current = [msg]
-    } else {
-      current.push(msg)
-    }
-  }
-  if (current.length > 0) groups.push({ key: current[0].id, messages: current })
-  return groups
+  return groupIntoTurns(viewMessages)
 }
 
 // Reset batch mode when session changes (avoid stale state from previous session)
@@ -516,10 +507,32 @@ async function copyBatchAs(format: 'markdown' | 'plain') {
 </script>
 
 <style scoped>
-.scroll-fab {
+/* FAB container: absolute positioned, right column, fills parent height */
+.chat-fab-container {
   position: absolute;
-  bottom: 4px;
-  right: 24px;
+  top: 0;
+  right: 8px;
+  bottom: 0;
+  width: 32px;
+  z-index: 20;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 0 12px;
+  gap: 8px;
+}
+.chat-fab-container > * {
+  pointer-events: auto;
+}
+/* Outline button at mid-upper position */
+.chat-fab-container > :first-child {
+  margin-bottom: auto;
+  margin-top: 120px;
+}
+
+.scroll-fab {
   width: 32px;
   height: 32px;
   border-radius: 50%;
@@ -532,7 +545,6 @@ async function copyBatchAs(format: 'markdown' | 'plain') {
   cursor: pointer;
   color: var(--muted);
   transition: all 0.2s ease;
-  z-index: 10;
 }
 .scroll-fab:hover {
   color: var(--fg);

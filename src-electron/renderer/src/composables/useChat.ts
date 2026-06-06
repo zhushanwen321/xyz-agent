@@ -77,7 +77,7 @@ function createGlobalHandlers() {
         blocks.push({ type: 'thinking', refId: blockId })
         store.setStreaming({
           ...streaming,
-          thinking: [...existing, { id: blockId, content: '', collapsed: false }],
+          thinking: [...existing, { id: blockId, content: '', collapsed: false, startTime: Date.now() }],
           contentBlocks: blocks,
         }, sid)
       }
@@ -98,7 +98,7 @@ function createGlobalHandlers() {
       } else {
         store.setStreaming({
           ...streaming,
-          thinking: [...existing, { id: `thk-${Date.now()}`, content: msg.payload.delta as string, collapsed: false }],
+          thinking: [...existing, { id: `thk-${Date.now()}`, content: msg.payload.delta as string, collapsed: false, startTime: Date.now() }],
         }, sid)
       }
     }
@@ -109,8 +109,11 @@ function createGlobalHandlers() {
     if (!sid) return
     const streaming = store.getSessionState(sid).streamingMessage
     if (streaming?.thinking?.length) {
+      const now = Date.now()
       const updated = streaming.thinking.map((block, i) =>
-        i === streaming.thinking!.length - 1 ? { ...block, collapsed: true } : block,
+        i === streaming.thinking!.length - 1
+          ? { ...block, collapsed: true, endTime: block.endTime ?? now }
+          : block,
       )
       store.setStreaming({ ...streaming, thinking: updated }, sid)
     }

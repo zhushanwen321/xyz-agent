@@ -23,6 +23,10 @@ export interface ThinkingBlock {
   id: string
   content: string
   collapsed: boolean
+  /** Thinking 开始的毫秒时间戳（由后端 thinking_start 事件或会话记录提供） */
+  startTime?: number
+  /** Thinking 结束的毫秒时间戳（由后端 thinking_end 事件提供） */
+  endTime?: number
 }
 
 /** 有序内容块类型，保证流式消息各 block 按到达顺序渲染 */

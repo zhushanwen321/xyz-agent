@@ -1,5 +1,5 @@
 <template>
-  <!-- assistant 消息：section 分组（thinking / tool / text） -->
+  <!-- assistant 消息：frame + 委托 AssistantContent -->
   <div
     v-if="message.role === 'assistant'"
     data-role="assistant"
@@ -12,96 +12,7 @@
       <span v-if="message.timestamp" class="font-normal normal-case tracking-normal text-[10px] opacity-60 ml-1.5">{{ formatTime(message.timestamp) }}</span>
     </div>
 
-    <!-- Section-grouped rendering (contentBlocks available) -->
-    <template v-if="assistantSections.length">
-      <div
-        v-for="(section, si) in assistantSections"
-        :key="si"
-        class="asst-section"
-      >
-        <!-- Section label: only show for tool groups with 2+ calls (ThinkingBlock has its own header) -->
-        <div v-if="section.type === 'toolCall' && toolCallCount > 1" class="asst-section__label">
-          <span class="asst-section__dot asst-section__dot--tool"></span>
-          {{ toolCallCount }} 次工具调用
-        </div>
-        <!-- Text section gets a subtle dot to mark "final answer" -->
-        <div v-else-if="section.type === 'text'" class="asst-section__label">
-          <span class="asst-section__dot asst-section__dot--text"></span>
-          回答
-        </div>
-
-        <!-- Thinking blocks -->
-        <template v-if="section.type === 'thinking'">
-          <ThinkingBlock
-            v-for="block in section.blocks"
-            :key="block.refId"
-            :text="getThinkingContent(block.refId)"
-            :streaming="message.status === 'streaming'"
-          />
-        </template>
-
-        <!-- Tool call blocks -->
-        <template v-else-if="section.type === 'toolCall'">
-          <ToolCallCard
-            v-for="block in section.blocks"
-            :key="block.refId"
-            :tool-call="getToolCall(block.refId)!"
-            :batch-info="batchInfoMap.get(block.refId)"
-          />
-        </template>
-
-        <!-- Text block -->
-        <template v-else-if="section.type === 'text' && message.content">
-          <div
-            class="py-2 px-3 leading-[1.6] text-xs rounded-sm"
-            style="background:var(--msg-assistant-bg)"
-          >
-            <div
-              class="msg__body select-text"
-              :data-message-id="message.id"
-              :data-markdown-source="message.content"
-              @click="handleBodyClick"
-            >
-              <!-- eslint-disable-next-line vue/no-v-html -->
-              <span v-html="renderedContent"></span>
-              <span v-if="isStreaming" class="inline-block w-0.5 h-[1.1em] bg-accent rounded-sm align-text-bottom animate-blink motion-reduce:opacity-60 motion-reduce:animate-none"></span>
-            </div>
-          </div>
-        </template>
-      </div>
-    </template>
-
-    <!-- Fallback: 无 contentBlocks 时用固定顺序（历史消息兼容） -->
-    <template v-else>
-      <ThinkingBlock
-        v-for="block in message.thinking"
-        :key="block.id"
-        :text="block.content"
-        :streaming="message.status === 'streaming'"
-      />
-      <ToolCallCard
-        v-for="tc in message.toolCalls"
-        :key="tc.id"
-        :tool-call="tc"
-        :batch-info="batchInfoMap.get(tc.id)"
-      />
-      <div
-        v-if="message.content"
-        class="py-2 px-3 leading-[1.6] text-xs border-t border-transparent rounded-sm"
-        style="background:var(--msg-assistant-bg)"
-      >
-        <div
-          class="msg__body select-text"
-          :data-message-id="message.id"
-          :data-markdown-source="message.content"
-          @click="handleBodyClick"
-        >
-          <!-- eslint-disable-next-line vue/no-v-html -->
-          <span v-html="renderedContent"></span>
-          <span v-if="isStreaming" class="inline-block w-0.5 h-[1.1em] bg-accent rounded-sm align-text-bottom animate-blink motion-reduce:opacity-60 motion-reduce:animate-none"></span>
-        </div>
-      </div>
-    </template>
+    <AssistantContent :message="message" :is-streaming="isStreaming" />
 
     <!-- Inline actions + Branch indicator -->
     <div class="flex items-center gap-1 mt-1">
@@ -216,17 +127,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from 'vue'
-import type { Message, ContentBlock } from '@xyz-agent/shared'
-import type { BatchInfo } from './ToolCallCard.vue'
+import { ref, computed } from 'vue'
+import type { Message } from '@xyz-agent/shared'
 import type { BranchTab } from '../../stores/tree'
-import { renderLightweight, renderFull } from '../../lib/markdown'
-import { useSettingsStore } from '../../stores/settings'
 import { copyWithToast } from '../../lib/clipboard'
 import { collectMessageContent } from '../../lib/collectMessageContent'
 import { useTree } from '../../composables/useTree'
-import ThinkingBlock from './ThinkingBlock.vue'
-import ToolCallCard from './ToolCallCard.vue'
+import { useMarkdownRender } from '../../composables/useMarkdownRender'
+import AssistantContent from './AssistantContent.vue'
 import MessageActionMenu from './MessageActionMenu.vue'
 import BranchIndicator from './BranchIndicator.vue'
 
@@ -254,46 +162,7 @@ const emit = defineEmits<{
   'toggle-select': []
 }>()
 
-const settings = useSettingsStore()
-
 const COPY_FEEDBACK_MS = 1500
-const BYTES_PER_KB = 1024
-const MIN_TOOL_CALLS = 2
-const BATCH_MIN_SIZE = 2
-
-// ── Section grouping for assistant content blocks ──
-type SectionType = 'thinking' | 'toolCall' | 'text'
-
-interface AssistantSection {
-  type: SectionType
-  blocks: ContentBlock[]
-}
-
-/** Merge adjacent same-type contentBlocks into sections */
-const assistantSections = computed<AssistantSection[]>(() => {
-  const blocks = props.message.contentBlocks
-  if (!blocks?.length) return []
-  const sections: AssistantSection[] = []
-  let current: AssistantSection | null = null
-
-  for (const block of blocks) {
-    // Treat 'text' blocks without content as skip
-    if (block.type === 'text' && !props.message.content) continue
-
-    if (current && current.type === block.type) {
-      current.blocks.push(block)
-    } else {
-      if (current) sections.push(current)
-      current = { type: block.type as SectionType, blocks: [block] }
-    }
-  }
-  if (current) sections.push(current)
-  return sections
-})
-
-const toolCallCount = computed(() =>
-  props.message.toolCalls?.length ?? 0
-)
 
 // ── Action menu state ──
 const showActionMenu = ref(false)
@@ -366,118 +235,17 @@ function formatTime(ts: number): string {
   return `${h}:${m}`
 }
 
-function getThinkingContent(refId: string): string {
-  return props.message.thinking?.find(b => b.id === refId)?.content ?? ''
-}
-
-function getToolCall(refId: string): import('@xyz-agent/shared').ToolCall | undefined {
-  return props.message.toolCalls?.find(tc => tc.id === refId)
-}
-
-// 完整渲染缓存（renderFull 是异步的）
-const fullRenderCache = ref('')
-
-// 流式阶段直接用轻量渲染
-const lightweightContent = computed(() => renderLightweight(displayContent.value))
-
-// 最终输出：流式用轻量，完成用缓存
-const renderedContent = computed(() => {
-  if (props.message.status === 'streaming') {
-    return lightweightContent.value
-  }
-  return fullRenderCache.value || lightweightContent.value
-})
-
-// 版本号防止竞态：组件级闭包，避免多实例共享
-const renderVersion = ref(0)
-
-// Mermaid 模块级单例（动态导入，延迟初始化）
-let mermaidModule: typeof import('mermaid').default | null = null
-// 记录上次初始化时的主题，切换后需重新初始化
-let mermaidInitTheme: string | null = null
-
-// 监听 content/status/theme 变化，触发完整渲染
-watch(
-  () => [displayContent.value, props.message.status, settings.theme] as const,
-  async ([content, status]) => {
-    if (status !== 'streaming' && content) {
-      renderVersion.value++
-      const version = renderVersion.value
-      const effectiveTheme = getEffectiveTheme()
-      // 用户气泡始终为深色背景：不论 app 主题，都使用 dark Shiki 主题保证代码可读
-      const codeTheme: 'light' | 'dark' | undefined =
-        props.message.role === 'user' ? 'dark' : undefined
-      try {
-        const result = await renderFull(content, effectiveTheme, { codeTheme })
-        if (version === renderVersion.value) {
-          fullRenderCache.value = result
-        }
-      } catch {
-        if (version === renderVersion.value) {
-          // fallback 到轻量渲染
-          fullRenderCache.value = renderLightweight(content)
-        }
-      }
-      await nextTick()
-      renderMermaidBlocks()
-    }
+// ── Markdown rendering (user bubble) ──
+const { renderedContent } = useMarkdownRender(
+  () => displayContent.value,
+  {
+    messageId: () => props.message.id,
+    status: () => props.message.status,
+    forceDarkCode: props.message.role === 'user',
   },
-  { immediate: true },
 )
 
-// ── Mermaid 懒加载渲染 ──
-
-/** 获取当前实际主题（解析 system 为 light/dark） */
-function getEffectiveTheme(): 'light' | 'dark' {
-  if (settings.theme === 'dark') return 'dark'
-  if (settings.theme === 'light') return 'light'
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-}
-
-async function renderMermaidBlocks() {
-  const el = document.querySelector(`[data-message-id="${props.message.id}"] .mermaid-source[data-mermaid]`)
-  if (!el) return
-
-  try {
-    if (!mermaidModule) {
-      mermaidModule = (await import('mermaid')).default
-    }
-    const effectiveTheme = getEffectiveTheme()
-    // 首次初始化或主题切换后需重新初始化
-    if (mermaidInitTheme !== effectiveTheme) {
-      mermaidModule.initialize({
-        startOnLoad: false,
-        securityLevel: 'sandbox',
-        theme: effectiveTheme === 'dark' ? 'dark' : 'default',
-      })
-      mermaidInitTheme = effectiveTheme
-    }
-    const sources = document.querySelectorAll(`[data-message-id="${props.message.id}"] .mermaid-source[data-mermaid]`)
-    for (let i = 0; i < sources.length; i++) {
-      const source = sources[i]
-      const content = source.textContent ?? ''
-      // 消息级唯一 ID：messageId + 索引 + 时间戳，避免跨实例/跨 tick 冲突
-      const mermaidId = `mermaid-${props.message.id}-${i}-${Date.now()}`
-      const { svg } = await mermaidModule.render(mermaidId, content)
-      source.innerHTML = svg
-      source.removeAttribute('data-mermaid')
-      source.classList.remove('mermaid-source')
-      source.classList.add('mermaid-rendered')
-    }
-  } catch {
-    // Mermaid 渲染失败，fallback 显示原文 + 错误提示
-    const sources = document.querySelectorAll(`[data-message-id="${props.message.id}"] .mermaid-source[data-mermaid]`)
-    sources.forEach(source => {
-      source.classList.add('mermaid-error')
-      const errorEl = document.createElement('div')
-      errorEl.className = 'mermaid-error-msg'
-      errorEl.textContent = '图表渲染失败'
-      source.parentElement?.insertBefore(errorEl, source)
-    })
-  }
-}
-
-// ── 事件委托：复制 + 折叠 ──
+// ── 事件委托：复制 + 折叠 + 外部链接 ──
 async function handleBodyClick(e: MouseEvent) {
   const target = e.target as HTMLElement
 
@@ -519,57 +287,6 @@ async function handleBodyClick(e: MouseEvent) {
     target.textContent = isCollapsed ? '收起' : '展开'
   }
 }
-
-// ── Batch detection: consecutive same-type file operations ──
-function extractContentSize(input: unknown): number {
-  if (!input) return 0
-  try {
-    const obj = (typeof input === 'string' ? JSON.parse(input) : input) as Record<string, unknown>
-    const text = obj.content ?? obj.new_text ?? ''
-    return String(text).length
-  } catch { return 0 }
-}
-
-function formatBatchSize(bytes: number): string {
-  if (bytes <= 0) return ''
-  if (bytes < BYTES_PER_KB) return `${bytes}B`
-  if (bytes < BYTES_PER_KB * BYTES_PER_KB) return `${(bytes / BYTES_PER_KB).toFixed(1)}KB`
-  return `${(bytes / (BYTES_PER_KB * BYTES_PER_KB)).toFixed(1)}MB`
-}
-
-const batchInfoMap = computed(() => {
-  const result = new Map<string, BatchInfo>()
-  const toolCalls = props.message.toolCalls
-  if (!toolCalls || toolCalls.length < MIN_TOOL_CALLS) return result
-
-
-  let batchStart = 0
-  for (let i = 1; i <= toolCalls.length; i++) {
-    const isEnd = i === toolCalls.length || toolCalls[i].toolName !== toolCalls[batchStart].toolName
-    if (isEnd) {
-      const size = i - batchStart
-      // Only group file operation batches (write, edit)
-      const name = toolCalls[batchStart].toolName
-      if (size >= BATCH_MIN_SIZE && (name === 'write' || name === 'edit')) {
-        let totalBytes = 0
-        for (let j = batchStart; j < i; j++) {
-          totalBytes += extractContentSize(toolCalls[j].input)
-        }
-        const totalSize = formatBatchSize(totalBytes)
-        for (let j = batchStart; j < i; j++) {
-          result.set(toolCalls[j].id, {
-            index: j - batchStart,
-            total: size,
-            isLast: j === i - 1,
-            totalSize,
-          })
-        }
-      }
-      batchStart = i
-    }
-  }
-  return result
-})
 </script>
 
 <!-- msg__body 内的元素由 v-html 渲染，这些样式已移至 style.css -->
