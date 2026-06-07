@@ -15,13 +15,19 @@ const installSource = ref('')
 const installing = ref(false)
 const installError = ref('')
 const uninstallTarget = ref<ExtensionInfo | null>(null)
+const installTab = ref<'npm' | 'local' | 'git'>('npm')
+
+const installTabs = [
+  { key: 'npm' as const, label: 'npm' },
+  { key: 'local' as const, label: 'Local Dir' },
+  { key: 'git' as const, label: 'Git URL' },
+]
 
 function onExtensions(msg: ServerMessage) {
   const payload = msg.payload as { extensions?: ExtensionInfo[] }
   if (payload.extensions) {
     extensions.value = payload.extensions
   }
-  // Reset installing state on any extensions update (install success/failure)
   installing.value = false
 }
 
@@ -45,7 +51,14 @@ function handleInstall() {
   if (!source) return
   installing.value = true
   installError.value = ''
-  send({ type: 'extension.install', payload: { source } })
+
+  if (installTab.value === 'local') {
+    send({ type: 'extension.installDir', payload: { path: source } })
+  } else if (installTab.value === 'git') {
+    send({ type: 'extension.installGit', payload: { url: source } })
+  } else {
+    send({ type: 'extension.install', payload: { source } })
+  }
 }
 
 function confirmUninstall(ext: ExtensionInfo) {
@@ -56,6 +69,13 @@ function doUninstall() {
   if (!uninstallTarget.value) return
   send({ type: 'extension.uninstall', payload: { name: uninstallTarget.value.name } })
   uninstallTarget.value = null
+}
+
+function installButtonLabel(): string {
+  if (!installing.value) return 'Install'
+  if (installTab.value === 'git') return 'Cloning...'
+  if (installTab.value === 'local') return 'Scanning...'
+  return 'Installing...'
 }
 
 onMounted(() => {
@@ -93,23 +113,89 @@ onUnmounted(() => {
         </svg>
       </div>
       <div v-if="showInstall" class="px-4 py-3 border-t border-[var(--divider)] bg-[var(--section-bg)]">
-        <div class="flex items-center gap-2">
-          <Input
-            v-model="installSource"
-            type="text"
-            placeholder="npm:pi-ask-user"
-            class="flex-1"
-            @keydown.enter="handleInstall"
-          />
-          <Button
-            variant="primary"
-            size="sm"
-            :disabled="installing || !installSource.trim()"
-            @click="handleInstall"
-          >{{ installing ? 'Installing...' : 'Install' }}</Button>
+        <!-- Tab bar -->
+        <div class="flex gap-1 mb-3">
+          <button
+            v-for="tab in installTabs"
+            :key="tab.key"
+            class="text-[11px] px-2.5 py-1 cursor-pointer transition-colors duration-100"
+            :class="installTab === tab.key
+              ? 'bg-[var(--section-bg)] border border-border rounded-sm font-medium text-[var(--fg)]'
+              : 'text-muted hover:text-[var(--fg)]'"
+            @click="installTab = tab.key"
+          >
+            {{ tab.label }}
+          </button>
         </div>
+
+        <!-- npm tab -->
+        <template v-if="installTab === 'npm'">
+          <div class="flex items-center gap-2">
+            <Input
+              v-model="installSource"
+              type="text"
+              placeholder="npm:pi-ask-user"
+              class="flex-1"
+              @keydown.enter="handleInstall"
+            />
+            <Button
+              variant="primary"
+              size="sm"
+              :disabled="installing || !installSource.trim()"
+              @click="handleInstall"
+            >{{ installButtonLabel() }}</Button>
+          </div>
+          <div class="text-[10px] text-muted mt-1.5">
+            Enter an npm package name. The <span class="font-mono">npm:</span> prefix is optional.
+          </div>
+        </template>
+
+        <!-- Local Dir tab -->
+        <template v-else-if="installTab === 'local'">
+          <div class="flex items-center gap-2">
+            <Input
+              v-model="installSource"
+              type="text"
+              placeholder="/path/to/extension/directory"
+              class="flex-1"
+              @keydown.enter="handleInstall"
+            />
+            <Button
+              variant="primary"
+              size="sm"
+              :disabled="installing || !installSource.trim()"
+              @click="handleInstall"
+            >{{ installButtonLabel() }}</Button>
+          </div>
+          <div class="text-[10px] text-muted mt-1.5">
+            Path to a local directory containing pi extension(s).
+          </div>
+        </template>
+
+        <!-- Git URL tab -->
+        <template v-else>
+          <div class="flex items-center gap-2">
+            <Input
+              v-model="installSource"
+              type="text"
+              placeholder="https://github.com/user/repo.git"
+              class="flex-1"
+              @keydown.enter="handleInstall"
+            />
+            <Button
+              variant="primary"
+              size="sm"
+              :disabled="installing || !installSource.trim()"
+              @click="handleInstall"
+            >{{ installButtonLabel() }}</Button>
+          </div>
+          <div class="text-[10px] text-muted mt-1.5">
+            Git repository URL containing pi extension(s).
+          </div>
+        </template>
+
+        <!-- Error display -->
         <div v-if="installError" class="text-[11px] text-[var(--danger)] mt-1.5">{{ installError }}</div>
-        <div class="text-[10px] text-muted mt-1.5">Enter an npm package name with the <span class="font-mono">npm:</span> prefix.</div>
       </div>
     </div>
 
