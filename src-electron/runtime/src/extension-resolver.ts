@@ -272,7 +272,7 @@ export class ExtensionResolver {
     return merged
   }
 
-  // ── Private helpers ──────────────────────────────────────────────
+  // ── Public helpers ──────────────────────────────────────────────
 
   /**
    * 验证包是否为有效的 pi extension。
@@ -307,12 +307,18 @@ export class ExtensionResolver {
 
   /**
    * 规范化 extension name 用于去重。
-   * - 去掉 npm scope: @zhushanwen/pi-goal → pi-goal
-   * - 去掉 pi- 前缀: pi-goal → goal, pi-subagents → subagents
+   * 保留 scope，仅去掉 pi- 前缀：
+   * - @zhushanwen/pi-goal → @zhushanwen/goal
+   * - pi-subagents → subagents
+   * - @scope/subagents → @scope/subagents
    */
-  private normalizeExtName(name: string): string {
-    const unscoped = name.replace(/^@[^/]+\//, '')
-    return unscoped.replace(/^pi-/, '')
+  normalizeExtName(name: string): string {
+    const parts = name.split('/')
+    const last = parts[parts.length - 1].replace(/^pi-/, '')
+    if (parts.length > 1) {
+      return parts.slice(0, -1).join('/') + '/' + last
+    }
+    return last
   }
 
   /** 扫描目录下的子目录，跳过 shared/ */

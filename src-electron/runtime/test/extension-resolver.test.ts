@@ -50,6 +50,36 @@ describe('ExtensionResolver', () => {
     vi.clearAllMocks()
   })
 
+  describe('normalizeExtName', () => {
+    it('removes pi- prefix from unscoped name', () => {
+      expect(resolver.normalizeExtName('pi-subagents')).toBe('subagents')
+    })
+
+    it('preserves scope and removes pi- prefix', () => {
+      expect(resolver.normalizeExtName('@zhushanwen/pi-goal')).toBe('@zhushanwen/goal')
+    })
+
+    it('preserves non-pi scope intact', () => {
+      expect(resolver.normalizeExtName('@scope/subagents')).toBe('@scope/subagents')
+    })
+
+    it('handles scoped name without pi- prefix', () => {
+      expect(resolver.normalizeExtName('@scope/my-ext')).toBe('@scope/my-ext')
+    })
+
+    it('handles name without pi- prefix', () => {
+      expect(resolver.normalizeExtName('my-ext')).toBe('my-ext')
+    })
+
+    it('prevents dedup collision between different scopes', () => {
+      const name1 = resolver.normalizeExtName('@scope1/pi-goal')
+      const name2 = resolver.normalizeExtName('@scope2/pi-goal')
+      expect(name1).not.toBe(name2)
+      expect(name1).toBe('@scope1/goal')
+      expect(name2).toBe('@scope2/goal')
+    })
+  })
+
   describe('scanNpmExtensions', () => {
     it('returns empty when package.json does not exist', () => {
       mockedExistsSync.mockReturnValue(false)
