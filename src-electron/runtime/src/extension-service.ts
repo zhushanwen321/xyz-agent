@@ -4,10 +4,20 @@
  * 使用 ExtensionResolver 做发现，settings.json 管理 packages[]，
  * disabled-packages.json 管理启用/禁用状态。
  *
- * 旧版（扫描 ~/.xyz-agent/extensions/ + extension-state.json）已废弃。
+ * 支持三种安装来源：
+ * - npm install（npm:xxx）
+ * - 本地目录扫描（installLocalDirectory）
+ * - Git 仓库克隆扫描（installGitRepository）
+ *
+ * 本地/Git 安装流程：
+ * 1. 复制/克隆到临时目录 tmp/ext-scan-{ts}
+ * 2. discoverExtensions() 递归扫描有效 pi 扩展
+ * 3. 前端展示候选列表，用户选择
+ * 4. finishInstall() 复制选中到 extensions/ 目录
+ * 5. 清理临时目录
  */
 import { execSync } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, readdirSync, statSync, cpSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import type { ExtensionInfo } from '@xyz-agent/shared'
@@ -25,6 +35,8 @@ const NPM_PREFIX_LENGTH = 4 // "npm:" 前缀长度
 const INDENT_SPACES = 2
 const NPM_INSTALL_TIMEOUT = 60_000
 const NPM_UNINSTALL_TIMEOUT = 30_000
+const GIT_CLONE_TIMEOUT = 120_000
+const DISCOVERY_TEMP_PREFIX = 'ext-scan-'
 
 /** 获取 xyz-agent 的 agent 配置目录 */
 function getSettingsDir(): string {
@@ -263,7 +275,6 @@ export class ExtensionService {
         if (disabled.length > 0) {
           writeFileSync(disabledPath, JSON.stringify({ disabled }, null, INDENT_SPACES), 'utf-8')
         } else {
-          // 空的 disabled 列表 → 备份后不再使用
           try {
             renameSync(disabledPath, disabledPath + '.bak')
           } catch (e) {
@@ -305,10 +316,8 @@ export class ExtensionService {
     }
 
     if (enabled) {
-      // 启用：从 disabled 列表移除
       disabled = disabled.filter(d => d !== source)
     } else {
-      // 禁用：追加
       if (!disabled.includes(source)) {
         disabled.push(source)
       }
@@ -317,12 +326,108 @@ export class ExtensionService {
     if (disabled.length > 0) {
       writeFileSync(disabledPath, JSON.stringify({ disabled }, null, INDENT_SPACES), 'utf-8')
     } else if (existsSync(disabledPath)) {
-      // 空列表备份
       try {
         renameSync(disabledPath, disabledPath + '.bak')
       } catch (e) {
         log.debug(`[extension-service] failed to backup disabled-packages.json: ${e instanceof Error ? e.message : String(e)}`)
       }
+    }
+  }
+
+  // ── Local / Git install methods ────────────────────────────────
+
+  /**
+   * Install from a local directory path.
+   * Copies to temp dir, discovers extensions, returns candidates.
+   */
+  async installLocalDirectory(sourcePath: string): Promise<{ tempDir: string; candidates: ExtensionInfo[] }> {
+    const absPath = resolve(sourcePath)
+
+    if (!existsSync(absPath)) {
+      throw new Error(`Source path does not exist: ${absPath}`)
+    }
+
+    if (!statSync(absPath).isDirectory()) {
+      throw new Error(`Source path is not a directory: ${absPath}`)
+    }
+
+    // Create temp directory
+    const tempDir = join(this.settingsDir, 'tmp', `${DISCOVERY_TEMP_PREFIX}${Date.now()}`)
+    mkdirSync(tempDir, { recursive: true })
+
+    // Copy source to temp
+    cpSync(absPath, tempDir, { recursive: true })
+
+    // Discover extensions
+    const candidates = this.discoverExtensions(tempDir)
+
+    return { tempDir, candidates }
+  }
+
+  /**
+   * Install from a Git repository URL.
+   * Clones to temp dir, optionally runs npm install, discovers extensions.
+   */
+  async installGitRepository(url: string): Promise<{ tempDir: string; candidates: ExtensionInfo[] }> {
+    // Create temp directory
+    const tempDir = join(this.settingsDir, 'tmp', `${DISCOVERY_TEMP_PREFIX}${Date.now()}`)
+    mkdirSync(tempDir, { recursive: true })
+
+    // Git clone
+    try {
+      execSync(`git clone --depth 1 "${url}" "${tempDir}"`, {
+        stdio: 'pipe',
+        timeout: GIT_CLONE_TIMEOUT,
+      })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      // Cleanup temp dir on failure
+      try { rmSync(tempDir, { recursive: true, force: true }) } catch { /* ignore */ }
+      throw new Error(`git clone failed: ${msg}`)
+    }
+
+    // If package.json exists, run npm install
+    if (existsSync(join(tempDir, 'package.json'))) {
+      try {
+        execSync('npm install --omit=peer', {
+          cwd: tempDir,
+          stdio: 'pipe',
+          timeout: NPM_INSTALL_TIMEOUT,
+        })
+      } catch (e) {
+        log.warn(`[extension-service] npm install in git repo failed: ${e instanceof Error ? e.message : String(e)}`)
+        // Non-fatal — some repos don't need deps to discover extensions
+      }
+    }
+
+    // Discover extensions
+    const candidates = this.discoverExtensions(tempDir)
+
+    return { tempDir, candidates }
+  }
+
+  /**
+   * Finish installation: copy selected extensions from temp dir to extensions/ directory.
+   * Cleans up temp dir after copying.
+   */
+  async finishInstall(tempDir: string, selected: string[]): Promise<void> {
+    const extensionsDir = join(this.settingsDir, 'extensions')
+    mkdirSync(extensionsDir, { recursive: true })
+
+    for (const name of selected) {
+      const srcDir = join(tempDir, name)
+      if (!existsSync(srcDir)) {
+        throw new Error(`Selected extension "${name}" not found in temp directory`)
+      }
+      const destDir = join(extensionsDir, name)
+      cpSync(srcDir, destDir, { recursive: true })
+    }
+
+    // Cleanup temp dir
+    try {
+      rmSync(tempDir, { recursive: true, force: true })
+    } catch (e) {
+      log.warn(`[extension-service] failed to cleanup temp dir ${tempDir}: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 
@@ -359,5 +464,82 @@ export class ExtensionService {
       return 'not_found'
     }
     return 'network'
+  }
+
+  /**
+   * Recursively discover pi extensions in a directory.
+   * - If the directory itself is a valid pi extension, return it as single candidate.
+   * - Otherwise, scan subdirectories (skip . and node_modules).
+   */
+  private discoverExtensions(dir: string): ExtensionInfo[] {
+    const candidates: ExtensionInfo[] = []
+
+    // Check if dir itself is a valid pi extension
+    if (this.resolver.isValidPiExtension(dir)) {
+      const info = this.readPackageJson(dir)
+      candidates.push({
+        name: info.name,
+        version: info.version,
+        description: info.description,
+        path: dir,
+        enabled: true,
+        source: 'user-installed',
+      })
+      return candidates
+    }
+
+    // Scan subdirectories
+    try {
+      const entries = readdirSync(dir)
+      for (const entry of entries) {
+        if (entry === '.' || entry === 'node_modules') continue
+        const entryPath = join(dir, entry)
+        try {
+          if (!statSync(entryPath).isDirectory()) continue
+        } catch {
+          continue
+        }
+
+        // Check if this subdir is a valid pi extension
+        if (this.resolver.isValidPiExtension(entryPath)) {
+          const info = this.readPackageJson(entryPath)
+          candidates.push({
+            name: info.name,
+            version: info.version,
+            description: info.description,
+            path: entryPath,
+            enabled: true,
+            source: 'user-installed',
+          })
+        } else {
+          // Recurse into subdirectory for nested collections
+          candidates.push(...this.discoverExtensions(entryPath))
+        }
+      }
+    } catch (e) {
+      log.warn(`[extension-service] failed to scan directory ${dir}: ${e instanceof Error ? e.message : String(e)}`)
+    }
+
+    return candidates
+  }
+
+  /** Read package.json from a directory and return name/version/description */
+  private readPackageJson(dir: string): { name: string; version: string; description: string } {
+    const pkgJsonPath = join(dir, 'package.json')
+    try {
+      const raw = readFileSync(pkgJsonPath, 'utf-8')
+      const pkg = JSON.parse(raw) as { name?: string; version?: string; description?: string }
+      return {
+        name: pkg.name ?? dir.split('/').pop() ?? '',
+        version: pkg.version ?? '',
+        description: pkg.description ?? '',
+      }
+    } catch {
+      return {
+        name: dir.split('/').pop() ?? '',
+        version: '',
+        description: '',
+      }
+    }
   }
 }
