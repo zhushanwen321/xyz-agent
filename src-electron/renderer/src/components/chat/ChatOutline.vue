@@ -118,7 +118,7 @@ const outlineItems = computed<OutlineItem[]>(() => {
     const textMsg = [...assistantMsgs].reverse().find(m => m.content)
     if (textMsg) {
       items.push({
-        label: truncate(textMsg.content.replace(/<[^>]+>/g, '').trim(), MAX_LABEL_LEN) || '助手',
+        label: truncate((textMsg.content ?? '').replace(/<[^>]+>/g, '').trim(), MAX_LABEL_LEN) || '助手',
         messageId: textMsg.id,
         role: 'assistant',
       })

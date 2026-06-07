@@ -7,6 +7,8 @@ vi.mock('node:fs', () => ({
   readdirSync: vi.fn(),
   statSync: vi.fn(),
   readFileSync: vi.fn(),
+  mkdirSync: vi.fn(),
+  renameSync: vi.fn(),
 }))
 
 vi.mock('node:path', () => ({

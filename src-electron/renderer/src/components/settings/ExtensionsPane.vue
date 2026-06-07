@@ -183,8 +183,8 @@ onUnmounted(() => {
           <Button
             v-for="tab in installTabs"
             :key="tab.key"
-            :variant="installTab === tab.key ? 'secondary' : 'ghost'"
-            size="xs"
+            :variant="installTab === tab.key ? 'outline' : 'ghost'"
+            size="sm"
             @click="installTab = tab.key"
           >
             {{ tab.label }}
