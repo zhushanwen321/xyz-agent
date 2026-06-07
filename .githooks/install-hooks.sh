@@ -256,6 +256,60 @@ else
 fi
 
 # ============================================================================
+# ENV_WHITELIST_PREFIXES 同步检查
+# ============================================================================
+
+ENV_WHITELIST_CHECKER=".githooks/check_env_whitelist_sync.py"
+
+if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_ENV_WHITELIST_CHECK" != "1" ]; then
+    echo -e "${BLUE}[INFO] 运行 ENV_WHITELIST_PREFIXES 同步检查..."
+
+    if [ ! -f "$ENV_WHITELIST_CHECKER" ]; then
+        echo -e "${YELLOW}[WARN] 找不到检查脚本 $ENV_WHITELIST_CHECKER${NC}"
+    else
+        python3 "$ENV_WHITELIST_CHECKER"
+        EXIT_CODE=$?
+
+        if [ $EXIT_CODE -eq 2 ]; then
+            echo ""
+            echo -e "${RED}[ERROR] ENV_WHITELIST_PREFIXES 同步检查失败${NC}"
+            echo -e "${YELLOW}[INFO] runtime-manager.ts 和 rpc-client.ts 的白名单前缀必须保持同步${NC}"
+            echo -e "${YELLOW}[INFO] 设置 SKIP_ENV_WHITELIST_CHECK=1 跳过检查${NC}"
+            exit 1
+        fi
+    fi
+else
+    echo -e "${YELLOW}[SKIP] ENV_WHITELIST_PREFIXES 同步检查已跳过${NC}"
+fi
+
+# ============================================================================
+# 路径白名单动态化检查
+# ============================================================================
+
+PATH_WHITELIST_CHECKER=".githooks/check_path_whitelist.py"
+
+if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_PATH_WHITELIST_CHECK" != "1" ]; then
+    echo -e "${BLUE}[INFO] 运行路径白名单动态化检查..."
+
+    if [ ! -f "$PATH_WHITELIST_CHECKER" ]; then
+        echo -e "${YELLOW}[WARN] 找不到检查脚本 $PATH_WHITELIST_CHECKER${NC}"
+    else
+        python3 "$PATH_WHITELIST_CHECKER"
+        EXIT_CODE=$?
+
+        if [ $EXIT_CODE -eq 2 ]; then
+            echo ""
+            echo -e "${RED}[ERROR] 路径白名单动态化检查失败${NC}"
+            echo -e "${YELLOW}[INFO] 路径白名单必须使用 getConfigDir()/getPiAgentDir() 动态生成${NC}"
+            echo -e "${YELLOW}[INFO] 设置 SKIP_PATH_WHITELIST_CHECK=1 跳过检查${NC}"
+            exit 1
+        fi
+    fi
+else
+    echo -e "${YELLOW}[SKIP] 路径白名单动态化检查已跳过${NC}"
+fi
+
+# ============================================================================
 # Runtime Bundle 验证（runtime 源码有变更时触发）
 # ============================================================================
 
@@ -349,6 +403,8 @@ echo -e "  ${YELLOW}SKIP_SIDECAR_SESSION_CHECK=1${NC} - 跳过 session 隔离"
 echo -e "  ${YELLOW}SKIP_CSS_TOKENS_CHECK=1${NC}      - 跳过 CSS tokens"
 echo -e "  ${YELLOW}SKIP_RUNTIME_BUNDLE_CHECK=1${NC}  - 跳过 runtime bundle 验证"
 echo -e "  ${YELLOW}SKIP_PREFLIGHT_CHECK=1${NC}       - 跳过打包配置预检查"
+echo -e "  ${YELLOW}SKIP_ENV_WHITELIST_CHECK=1${NC}   - 跳过 ENV 白名单同步检查"
+echo -e "  ${YELLOW}SKIP_PATH_WHITELIST_CHECK=1${NC}   - 跳过路径白名单动态化检查"
 echo ""
 
 exit 0
@@ -372,6 +428,10 @@ echo -e "${CYAN}已安装的检查项目:${NC}"
 echo -e "  ${GREEN}[+]${NC} 前端 ESLint 代码检查"
 echo -e "  ${GREEN}[+]${NC} vue-tsc 类型检查（全量，与 CI 等价）"
 echo -e "  ${GREEN}[+]${NC} Vue 组件规范检查（禁止原生 HTML、Emoji、自定义 CSS）"
+echo -e "  ${GREEN}[+]${NC} Sidecar session 隔离检查"
+echo -e "  ${GREEN}[+]${NC} CSS tokens 检查"
+echo -e "  ${GREEN}[+]${NC} ENV_WHITELIST_PREFIXES 同步检查"
+echo -e "  ${GREEN}[+]${NC} 路径白名单动态化检查"
 echo -e "  ${GREEN}[+]${NC} Runtime Bundle 验证（依赖打包 + CJS 兼容 + 健康检查）"
 echo -e "  ${GREEN}[+]${NC} 打包配置预检查（asarUnpack/files 一致性 + symlink 检查）"
 echo ""

@@ -13,6 +13,7 @@ import type { ISessionService, IConfigService, IModelService, IMessageBroker, IE
 import { ExtensionTimeoutManager } from './extension-timeout-manager.js'
 import { BridgeHandler } from './bridge-handler.js'
 import { SettingsMessageHandler } from './settings-message-handler.js'
+import { getPiAgentDir } from './pi-config-bridge.js'
 import { PluginMessageHandler } from './plugin-message-handler.js'
 import { TreeMessageHandler } from './tree-message-handler.js'
 
@@ -564,6 +565,9 @@ export class SidecarServer implements IMessageBroker {
       normalize(resolve(homeDir, '.agents/skills')),
       normalize(resolve(homeDir, '.pi/agent/skills')),
       normalize(resolve(homeDir, '.pi/agent/npm')),
+      // xyz-agent 实例的 skill/extension 路径（支持 XYZ_AGENT_DATA_DIR 隔离）
+      normalize(resolve(getPiAgentDir(), 'skills')),
+      normalize(resolve(getPiAgentDir(), 'npm')),
     ]
     // Only allow paths *inside* whitelisted directories, not the directory itself
     if (!allowedPrefixes.some(prefix => absPath.startsWith(prefix + '/'))) {

@@ -281,9 +281,23 @@ SKIP_ALL_CHECKS=1 git commit            # 跳过所有（仅紧急情况）
 - **Sidecar 通信**: WebSocket，前端通过 `ws-client.ts` + `event-bus.ts` 消息分发
 - **Electron IPC**: 主进程通过 preload 暴露 `window.electronAPI`，渲染进程不直接使用 `ipcRenderer`
 
-### 10. xyz-agent 数据目录与 pi 数据目录完全隔离
+### 1. xyz-agent 数据目录与 pi 数据目录完全隔离
 
 xyz-agent 的数据目录（`~/.xyz-agent/`）与 pi 的数据目录（`~/.pi/agent/`）必须完全隔离。不得读写 pi 的 extension/skill/config 目录，不得复用 pi 的包管理命令管理 xyz-agent 的 extension。两边的 extension 列表、配置、安装状态互不影响。Extension 通过 `--extension` CLI 参数在 pi 启动时注入路径，pi 原生 loader 加载。
+
+### 2. 路径安全白名单必须动态化
+
+所有涉及路径匹配的访问控制（`allowedPrefixes`、白名单校验、沙箱边界），禁止硬编码 `~/.xyz-agent` 或 `~/.pi` 路径。必须从 `getConfigDir()` / `getPiAgentDir()` 动态推导。
+
+原因：实例隔离机制允许通过 `XYZ_AGENT_DATA_DIR` 环境变量改变数据目录（dev 模式为 `~/.xyz-agent-dev`），硬编码路径会导致白名单失效。
+
+**Pre-commit 自动检查**：`check_path_whitelist.py` 会扫描含 `allowedPrefixes` 的文件，验证是否使用了动态路径函数。
+
+### 3. ENV_WHITELIST_PREFIXES 保持同步
+
+`runtime-manager.ts` 和 `rpc-client.ts` 各有一份 `ENV_WHITELIST_PREFIXES`。runtime-manager 可以有额外前缀（如 `ELECTRON_`），但 rpc-client 的前缀必须是 runtime-manager 的子集。新增前缀时同时更新两处。
+
+**Pre-commit 自动检查**：`check_env_whitelist_sync.py` 会 diff 两份白名单，检测不一致。
 
 ## 跳过检查
 
@@ -291,4 +305,6 @@ xyz-agent 的数据目录（`~/.xyz-agent/`）与 pi 的数据目录（`~/.pi/ag
 SKIP_ALL_CHECKS=1 git commit       # 跳过所有（仅紧急情况）
 SKIP_FRONTEND_LINT=1 git commit    # 跳过 ESLint
 SKIP_CODE_RULES_CHECK=1 git commit # 跳过 vue_rules_checker
+SKIP_ENV_WHITELIST_CHECK=1 git commit   # 跳过 ENV 白名单同步检查
+SKIP_PATH_WHITELIST_CHECK=1 git commit   # 跳过路径白名单动态化检查
 ```
