@@ -477,6 +477,7 @@ export class ExtensionService {
     // Check if dir itself is a valid pi extension
     if (this.resolver.isValidPiExtension(dir)) {
       const info = this.readPackageJson(dir)
+      // name is intentionally raw (not normalized) — see readPackageJson doc
       candidates.push({
         name: info.name,
         version: info.version,
@@ -523,7 +524,18 @@ export class ExtensionService {
     return candidates
   }
 
-  /** Read package.json from a directory and return name/version/description */
+  /**
+   * Read package.json from a directory and return name/version/description.
+   *
+   * NOTE: `name` is intentionally the raw package.json `name` field, NOT
+   * normalized via `this.resolver.normalizeExtName()`. Reasons:
+   * 1. `ExtensionInfo.name` stores raw names throughout the codebase
+   *    (scanNpmExtensions, scanSettingsExtensions, scanDirectory all keep raw).
+   * 2. `finishInstall` uses `name` as a directory path for file operations —
+   *    normalizing would break tempDir → extensions/ copy.
+   * 3. Dedup normalization is handled by ExtensionResolver's internal Maps,
+   *    not by individual scan methods or ExtensionInfo fields.
+   */
   private readPackageJson(dir: string): { name: string; version: string; description: string } {
     const pkgJsonPath = join(dir, 'package.json')
     try {

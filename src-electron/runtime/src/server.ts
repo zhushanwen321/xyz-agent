@@ -9,6 +9,7 @@ import { WebSocketServer, WebSocket, type WebSocket as WsType } from 'ws'
 import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
 import type { ISessionService, IConfigService, IModelService, IMessageBroker, IExtensionService, IPluginService } from './interfaces.js'
 import { ExtensionTimeoutManager } from './extension-timeout-manager.js'
+import { ExtensionInstallError } from './extension-service.js'
 import { BridgeHandler } from './bridge-handler.js'
 import { SettingsMessageHandler } from './settings-message-handler.js'
 import { PluginMessageHandler } from './plugin-message-handler.js'
@@ -412,7 +413,8 @@ export class SidecarServer implements IMessageBroker {
           const result = await this.extensionService.installLocalDirectory(sourcePath)
           return this.send(ws, { type: 'extension.discovered', id: msg.id, payload: { tempDir: result.tempDir, candidates: result.candidates } })
         } catch (e) {
-          return this.send(ws, { type: 'extension.installError', id: msg.id, payload: { code: 'install_failed', message: e instanceof Error ? e.message : String(e) } })
+          const err = e instanceof ExtensionInstallError ? e : null
+          return this.send(ws, { type: 'extension.installError', id: msg.id, payload: { code: err?.code ?? 'install_failed', message: e instanceof Error ? e.message : String(e), hint: err?.hint } })
         }
       }
       case 'extension.installGit': {
@@ -424,7 +426,8 @@ export class SidecarServer implements IMessageBroker {
           const result = await this.extensionService.installGitRepository(url)
           return this.send(ws, { type: 'extension.discovered', id: msg.id, payload: { tempDir: result.tempDir, candidates: result.candidates } })
         } catch (e) {
-          return this.send(ws, { type: 'extension.installError', id: msg.id, payload: { code: 'install_failed', message: e instanceof Error ? e.message : String(e) } })
+          const err = e instanceof ExtensionInstallError ? e : null
+          return this.send(ws, { type: 'extension.installError', id: msg.id, payload: { code: err?.code ?? 'install_failed', message: e instanceof Error ? e.message : String(e), hint: err?.hint } })
         }
       }
       case 'extension.finishInstall': {
@@ -437,7 +440,8 @@ export class SidecarServer implements IMessageBroker {
           const extensions = await this.extensionService.scanExtensions()
           return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions } })
         } catch (e) {
-          return this.send(ws, { type: 'extension.installError', id: msg.id, payload: { code: 'install_failed', message: e instanceof Error ? e.message : String(e) } })
+          const err = e instanceof ExtensionInstallError ? e : null
+          return this.send(ws, { type: 'extension.installError', id: msg.id, payload: { code: err?.code ?? 'install_failed', message: e instanceof Error ? e.message : String(e), hint: err?.hint } })
         }
       }
     }
