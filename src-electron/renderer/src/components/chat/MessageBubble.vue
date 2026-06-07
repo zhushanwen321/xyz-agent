@@ -21,7 +21,7 @@
       class="flex items-center gap-2 mt-2 text-[10px] text-muted"
     >
       <span class="flex-1 h-px bg-muted/30" />
-      <span>已中断</span>
+      <span data-i18n="interrupted">已中断</span>
       <span class="flex-1 h-px bg-muted/30" />
     </div>
 

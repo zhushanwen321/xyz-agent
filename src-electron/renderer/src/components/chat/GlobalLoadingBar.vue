@@ -4,6 +4,7 @@
     :role="isGenerating ? 'status' : undefined"
     :aria-live="isGenerating ? 'polite' : undefined"
     :aria-label="isGenerating ? 'AI 正在处理' : undefined"
+    :data-i18n="isGenerating ? 'loading.aiProcessing' : undefined"
   >
     <div v-if="isGenerating" class="loading-bar-sweep" />
   </div>

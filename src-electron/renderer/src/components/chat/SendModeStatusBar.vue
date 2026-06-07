@@ -58,7 +58,7 @@
               class="text-[8px] leading-none"
             >&#9679;</span>
             <span v-else class="w-[8px] inline-block" />
-            <span class="font-medium">{{ item.label }}</span>
+            <span class="font-medium" :data-i18n="item.i18n">{{ item.label }}</span>
           </span>
           <span class="mode-shortcut-hint opacity-50">{{ item.shortcut }}</span>
         </button>
@@ -92,12 +92,13 @@ interface ModeItem {
   label: string
   shortcut: string
   activeClass: string
+  i18n: string
 }
 
 const modes: ModeItem[] = [
-  { value: 'send', label: 'Send', shortcut: isMac ? 'Enter' : 'Enter', activeClass: 'text-muted' },
-  { value: 'steer', label: 'Steer', shortcut: isMac ? 'Cmd+Enter' : 'Ctrl+Enter', activeClass: 'text-accent' },
-  { value: 'queue', label: 'Follow-up', shortcut: isMac ? 'Opt+Enter' : 'Alt+Enter', activeClass: 'text-warning' },
+  { value: 'send', label: 'Send', shortcut: isMac ? 'Enter' : 'Enter', activeClass: 'text-muted', i18n: 'mode.send' },
+  { value: 'steer', label: 'Steer', shortcut: isMac ? 'Cmd+Enter' : 'Ctrl+Enter', activeClass: 'text-accent', i18n: 'mode.steer' },
+  { value: 'queue', label: 'Follow-up', shortcut: isMac ? 'Opt+Enter' : 'Alt+Enter', activeClass: 'text-warning', i18n: 'mode.followup' },
 ]
 
 const modeLabel = computed(() => {

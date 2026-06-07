@@ -8,7 +8,7 @@
           <svg class="w-3 h-3 opacity-60" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
             <path d="M2 4h12M2 8h12M2 12h12" />
           </svg>
-          队列: {{ totalCount }} 条待处理
+          <span data-i18n="queue.pendingCount">队列: {{ totalCount }} 条待处理</span>
         </span>
       </div>
       <!-- list -->
@@ -18,11 +18,11 @@
           :key="i"
           class="flex items-center gap-2 text-[11px]"
         >
-          <span :class="['px-1.5 py-0.5 rounded-sm text-[9px] font-medium', badgeClass(item.type)]">
+          <span :class="['px-1.5 py-0.5 rounded-sm text-[9px] font-medium', badgeClass(item.type)]" :data-i18n="item.type === 'steer' ? 'queue.badge.steer' : 'queue.badge.followup'">
             {{ item.type }}
           </span>
           <span class="truncate flex-1 opacity-70">{{ item.text }}</span>
-          <span class="pulsing-dot" />
+          <span class="pulsing-dot" data-i18n="queue.waiting" title="等待中" />
         </div>
         <div v-if="overflowCount > 0" class="text-[10px] text-[var(--muted)]">
           +{{ overflowCount }} 更多
@@ -36,12 +36,12 @@
     <svg class="w-3 h-3 opacity-60 inline-block mr-1 -mt-px" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
       <path d="M2 4h12M2 8h12M2 12h12" />
     </svg>
-    {{ totalCount }} 条待处理
+    <span data-i18n="queue.pendingCount">{{ totalCount }} 条待处理</span>
   </div>
 
   <!-- Done banner -->
   <div v-if="showDoneBanner" class="text-[11px] text-[var(--success)] py-1.5 px-3.5">
-    队列已完成 · {{ doneCount }} 条已处理
+    <span data-i18n="queue.done">队列已完成 · {{ doneCount }} 条已处理</span>
   </div>
 </template>
 
