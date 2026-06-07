@@ -3,7 +3,29 @@
   从 MessageBubble 中提取，职责清晰：只管 assistant 内容的 sections 编排。
 -->
 <template>
-  <template v-if="sections.length">
+  <!-- ── Compact mode (completed messages only) ── -->
+  <template v-if="useCompact && !isStreaming">
+    <CompactSummaryBar
+      :message="message"
+      :expanded="expandedGroups"
+      @toggle-group="onToggleGroup"
+      @toggle-all="onToggleAll"
+    />
+    <!-- Text content always rendered -->
+    <div
+      v-if="message.content"
+      class="msg__body select-text py-1 leading-[1.6] text-fg text-xs"
+      :data-message-id="message.id"
+      :data-markdown-source="message.content"
+      @click="handleBodyClick"
+    >
+      <!-- eslint-disable-next-line vue/no-v-html -->
+      <span v-html="renderedContent"></span>
+    </div>
+  </template>
+
+  <!-- ── Normal section mode ── -->
+  <template v-else-if="sections.length">
     <AssistantSection
       v-for="(section, si) in sections"
       :key="si"
@@ -64,20 +86,50 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, reactive } from 'vue'
 import type { Message } from '@xyz-agent/shared'
 import type { AssistantSection as Section } from '../../lib/message-layout'
 import { groupIntoSections } from '../../lib/message-layout'
 import { useMarkdownRender } from '../../composables/useMarkdownRender'
 import { useMarkdownBodyClick } from '../../composables/useMarkdownBodyClick'
+import { useSettingsStore } from '../../stores/settings'
 import ThinkingBlock from './ThinkingBlock.vue'
 import ToolCallCard from './ToolCallCard.vue'
 import AssistantSection from './AssistantSection.vue'
+import CompactSummaryBar from './CompactSummaryBar.vue'
 
 const props = defineProps<{
   message: Message
   isStreaming?: boolean
 }>()
+
+const settingsStore = useSettingsStore()
+const useCompact = computed(() => settingsStore.compactStreaming)
+
+// ── Compact mode: expanded groups set ──
+const expandedGroups = reactive(new Set<number>())
+
+function onToggleGroup(index: number) {
+  if (expandedGroups.has(index)) {
+    expandedGroups.delete(index)
+  } else {
+    expandedGroups.add(index)
+  }
+}
+
+function onToggleAll() {
+  // If any group is expanded, collapse all. Otherwise expand all.
+  if (expandedGroups.size > 0) {
+    expandedGroups.clear()
+  } else {
+    // Compute chip count from sections (matching CompactSummaryBar logic)
+    let count = 0
+    if (props.message.thinking?.length) count++
+    const toolNames = new Set(props.message.toolCalls?.map(tc => tc.toolName) ?? [])
+    count += toolNames.size
+    for (let i = 0; i < count; i++) expandedGroups.add(i)
+  }
+}
 
 // ── Section grouping ──
 

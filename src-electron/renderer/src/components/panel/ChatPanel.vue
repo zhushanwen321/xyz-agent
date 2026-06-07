@@ -89,8 +89,12 @@
             </div>
 
             <!-- Streaming message -->
+            <CompactStreamingBubble
+              v-if="streamingMessage && settingsStore.compactStreaming"
+              :message="streamingMessage"
+            />
             <StreamingMessage
-              v-if="streamingMessage"
+              v-else-if="streamingMessage"
               :message="streamingMessage"
               :is-streaming="isStreaming"
             />
@@ -176,6 +180,7 @@ import PanelBar from './PanelBar.vue'
 import SystemNotification from '../chat/SystemNotification.vue'
 import MessageBubble from '../chat/MessageBubble.vue'
 import StreamingMessage from '../chat/StreamingMessage.vue'
+import CompactStreamingBubble from '../chat/CompactStreamingBubble.vue'
 import ApprovalCard from '../chat/ApprovalCard.vue'
 import ChatInput from '../chat/ChatInput.vue'
 import WidgetDock from '../extension/WidgetDock.vue'
@@ -184,6 +189,7 @@ import ChatOutline from '../chat/ChatOutline.vue'
 import SkillDrawer from '../chat/SkillDrawer.vue'
 import { useTree } from '../../composables/useTree'
 import { useTreeStore } from '../../stores/tree'
+import { useSettingsStore } from '../../stores/settings'
 import { useChatScroll } from '../../composables/useChatScroll'
 import { useBatchSelect } from '../../composables/useBatchSelect'
 import { groupIntoTurns } from '../../lib/message-layout'
@@ -280,6 +286,9 @@ const {
   () => props.sessionId,
   () => chatMsgsRef.value,
 )
+
+// ── Settings ──
+const settingsStore = useSettingsStore()
 
 // ── Tree + turn grouping ──
 const tree = useTree()

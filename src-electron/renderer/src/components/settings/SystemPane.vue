@@ -110,6 +110,13 @@ function selectPalette(id: ThemePreset) {
           </div>
           <Toggle :checked="settingsStore.autoExpandToolCalls" @update:checked="settingsStore.autoExpandToolCalls = $event" />
         </div>
+        <div class="flex items-center justify-between gap-4 py-2.5 px-4">
+          <div>
+            <span class="text-xs font-medium">折叠 Agent 操作过程</span>
+            <span class="text-[10px] text-muted ml-1.5">将 Thinking/ToolCall 合并为摘要标签</span>
+          </div>
+          <Toggle :checked="settingsStore.compactStreaming" @update:checked="settingsStore.compactStreaming = $event" />
+        </div>
       </div>
     </div>
 

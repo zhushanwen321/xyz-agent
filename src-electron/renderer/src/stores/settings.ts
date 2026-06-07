@@ -15,6 +15,7 @@ export const useSettingsStore = defineStore('settings', () => {
   // Chat display settings
   const autoExpandThinking = ref(true)
   const autoExpandToolCalls = ref(true)
+  const compactStreaming = ref(false)
 
   // 旧值迁移: 'warm' → 'warm-teal', 'claude' → 'terracotta'
   function migratePalette(p: string): ThemePreset {
@@ -51,8 +52,8 @@ export const useSettingsStore = defineStore('settings', () => {
   return {
     theme, themePreset, locale, defaultModel, currentThinkingLevel,
     panelGridVisible, inspectorOpen, inspectorSide,
-    autoExpandThinking, autoExpandToolCalls,
+    autoExpandThinking, autoExpandToolCalls, compactStreaming,
     toggleTheme, applyTheme, setThemePreset,
     togglePanelGrid, openInspector, closeInspector,
   }
-}, { persist: { key: 'xyz-settings', pick: ['theme', 'themePreset', 'locale', 'defaultModel', 'autoExpandThinking', 'autoExpandToolCalls'] } })
+}, { persist: { key: 'xyz-settings', pick: ['theme', 'themePreset', 'locale', 'defaultModel', 'autoExpandThinking', 'autoExpandToolCalls', 'compactStreaming'] } })
