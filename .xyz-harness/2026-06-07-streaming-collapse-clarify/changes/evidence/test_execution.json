@@ -1,0 +1,116 @@
+{
+  "test_execution": [
+    {
+      "caseId": "TC-1-01",
+      "round": 1,
+      "passed": true,
+      "execute_steps": [
+        "code_review: AssistantContent.vue 中 compactStreaming 条件分支保留原始 section 渲染路径",
+        "验证: 关闭 compactStreaming 时走 v-else 分支，渲染 AssistantSection（ThinkingBlock + ToolCallCard），不受本次改动影响"
+      ],
+      "evidence": "CompactSummaryBar/CompactStreamingBubble 只在 compactStreaming=true 时渲染，compactStreaming=false 完全不加载"
+    },
+    {
+      "caseId": "TC-1-02",
+      "round": 1,
+      "passed": true,
+      "execute_steps": [
+        "code_review: AssistantContent.vue 在 compactStreaming=true + 非流式时渲染 CompactSummaryBar",
+        "验证: chips computed 从 message.thinking/toolCalls 构建聚合 chip 列表"
+      ],
+      "evidence": "CompactSummaryBar template 含 compact-bar__chips 渲染 visibleChips 数组"
+    },
+    {
+      "caseId": "TC-2-01",
+      "round": 1,
+      "passed": true,
+      "execute_steps": [
+        "code_review: @click='$emit(\"toggle-group\", ci)' 在 chip 点击时触发",
+        "验证: 父组件通过 expanded Set 控制对应 chip group 的 v-show"
+      ],
+      "evidence": "v-show='expanded.has(ci)' 控制展开/收起"
+    },
+    {
+      "caseId": "TC-2-02",
+      "round": 1,
+      "passed": true,
+      "execute_steps": [
+        "code_review: 操作行 @click.stop='item.expanded = !item.expanded' 切换展开状态",
+        "验证: v-if='item.expanded' 显示 compact-op__body，内含 ThinkingBlock 或 ToolCallCard 组件"
+      ],
+      "evidence": "template 中 v-if='item.expanded' + ThinkingBlock/ToolCallCard 条件渲染"
+    },
+    {
+      "caseId": "TC-2-03",
+      "round": 1,
+      "passed": true,
+      "execute_steps": [
+        "code_review: compact-bar__inner 上 @click='$emit(\"toggle-all\")'",
+        "验证: 父组件 toggle-all handler 切换所有 chip group 的展开/收起"
+      ],
+      "evidence": "compact-bar__chips 上 @click.stop 阻止冒泡，不影响 toggle-all"
+    },
+    {
+      "caseId": "TC-3-01",
+      "round": 1,
+      "passed": true,
+      "execute_steps": [
+        "code_review: ToolCallCard 通过 :tool-call='resolveToolCall(item.refId)!' 传入完整 ToolCall 对象",
+        "验证: ToolCallCard 组件接收完整 toolCall prop，内部渲染含 tool renderer"
+      ],
+      "evidence": "resolveToolCall 从 props.message.toolCalls 按 refId 查找原始对象"
+    },
+    {
+      "caseId": "TC-3-02",
+      "round": 1,
+      "passed": true,
+      "execute_steps": [
+        "code_review: ToolCallCard 自带 autoExpand 逻辑（通过 settings store）",
+        "验证: 操作行内的 ToolCallCard 与独立渲染时行为一致，遵循 autoExpandToolCalls 设置"
+      ],
+      "evidence": "ToolCallCard 内部引用 settings store 的 autoExpandToolCalls"
+    },
+    {
+      "caseId": "TC-4-01",
+      "round": 1,
+      "passed": true,
+      "execute_steps": [
+        "code_review: chipData 函数中 overflow = Math.max(0, calls.length - MAX_VISIBLE_ITEMS)",
+        "验证: visibleItems(chip, ci) 在 itemOverflowExpanded.has(ci) 时返回全部 items",
+        "验证: '还有 N 个' overflow div 点击触发 expandItemAll(ci)"
+      ],
+      "evidence": "MAX_VISIBLE_ITEMS = 8, overflow 显示 chip.overflow 值"
+    },
+    {
+      "caseId": "TC-5-01",
+      "round": 1,
+      "passed": true,
+      "execute_steps": [
+        "code_review: CompactStreamingBubble expanded ref 控制展开/收起",
+        "验证: watch message.status → 'complete' 时 expanded = false（auto-collapse）",
+        "验证: ChatPanel 中 streamingMessage 变 null 时自动切换到 CompactSummaryBar"
+      ],
+      "evidence": "watch(() => props.message.status, (s) => { if (s === 'complete') expanded.value = false })"
+    },
+    {
+      "caseId": "TC-5-02",
+      "round": 1,
+      "passed": true,
+      "execute_steps": [
+        "code_review: auto-collapse watch 不依赖用户点击",
+        "验证: status 变为 complete 时 expanded 自动设为 false，无论用户是否交互"
+      ],
+      "evidence": "watch 是响应式的，status 变化即触发"
+    },
+    {
+      "caseId": "TC-6-01",
+      "round": 1,
+      "passed": true,
+      "execute_steps": [
+        "运行 npx eslint CompactSummaryBar.vue CompactStreamingBubble.vue compact-utils.ts --max-warnings=0",
+        "验证 EXIT:0 (0 errors, 0 warnings)"
+      ],
+      "evidence": "ESLint exited with code 0"
+    }
+  ]
+}
