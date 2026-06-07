@@ -272,6 +272,7 @@ const {
   () => props.messages.length,
   () => props.streamingMessage?.content,
   () => props.isLoadingHistory,
+  () => props.isStreaming,
 )
 
 // ── Batch selection (extracted composable) ──
