@@ -7,6 +7,9 @@ import type {
   ExtensionErrorPayload,
   ToolCallUpdatePayload,
   ExtensionInfo,
+  ExtensionDiscoveredPayload,
+  ExtensionInstallProgressPayload,
+  ExtensionInstallErrorPayload,
 } from '@xyz-agent/shared'
 
 /**
@@ -248,5 +251,104 @@ describe('Protocol: extension types', () => {
       source: 'user-installed',
     }
     expect(userInfo.source).toBe('user-installed')
+  })
+
+  // ── New install flow types (Task 2) ──────────────────────────────
+
+  describe('extension install flow messages', () => {
+    it('ClientMessage accepts extension.installDir type', () => {
+      const msg: ClientMessage = {
+        type: 'extension.installDir',
+        payload: { path: '/path/to/local/dir' },
+      }
+      expect(msg.type).toBe('extension.installDir')
+      expect((msg.payload as { path: string }).path).toBe('/path/to/local/dir')
+    })
+
+    it('ClientMessage accepts extension.installGit type', () => {
+      const msg: ClientMessage = {
+        type: 'extension.installGit',
+        payload: { url: 'https://github.com/user/repo.git' },
+      }
+      expect(msg.type).toBe('extension.installGit')
+      expect((msg.payload as { url: string }).url).toBe('https://github.com/user/repo.git')
+    })
+
+    it('ClientMessage accepts extension.finishInstall type', () => {
+      const msg: ClientMessage = {
+        type: 'extension.finishInstall',
+        payload: { tempDir: '/tmp/ext-scan-123', selected: ['ext-a', 'ext-b'] },
+      }
+      expect(msg.type).toBe('extension.finishInstall')
+      const p = msg.payload as { tempDir: string; selected: string[] }
+      expect(p.tempDir).toBe('/tmp/ext-scan-123')
+      expect(p.selected).toEqual(['ext-a', 'ext-b'])
+    })
+
+    it('ServerMessage accepts extension.discovered type', () => {
+      const msg: ServerMessage = {
+        type: 'extension.discovered',
+        payload: {
+          tempDir: '/tmp/ext-scan-123',
+          candidates: [
+            { name: 'ext-a', version: '1.0.0', description: 'Test', path: '/tmp/a', enabled: true, source: 'built-in' as const },
+          ],
+        },
+      }
+      expect(msg.type).toBe('extension.discovered')
+    })
+
+    it('ServerMessage accepts extension.installProgress type', () => {
+      const msg: ServerMessage = {
+        type: 'extension.installProgress',
+        payload: { phase: 'clone', status: 'running' },
+      }
+      expect(msg.type).toBe('extension.installProgress')
+    })
+
+    it('ServerMessage accepts extension.installError type', () => {
+      const msg: ServerMessage = {
+        type: 'extension.installError',
+        payload: { code: 'not_found', message: 'Package not found' },
+      }
+      expect(msg.type).toBe('extension.installError')
+    })
+
+    it('ExtensionDiscoveredPayload has correct shape', () => {
+      const payload: ExtensionDiscoveredPayload = {
+        tempDir: '/tmp/ext-scan-123',
+        candidates: [
+          { name: 'ext-a', version: '1.0.0', description: 'Test', path: '/tmp/a', enabled: true, source: 'built-in' },
+        ],
+      }
+      expect(payload.tempDir).toBe('/tmp/ext-scan-123')
+      expect(payload.candidates).toHaveLength(1)
+    })
+
+    it('ExtensionInstallProgressPayload supports all phases and statuses', () => {
+      const cloneRunning: ExtensionInstallProgressPayload = { phase: 'clone', status: 'running' }
+      expect(cloneRunning.phase).toBe('clone')
+
+      const scanDone: ExtensionInstallProgressPayload = { phase: 'scan', status: 'done', message: 'Found 3 extensions' }
+      expect(scanDone.message).toBe('Found 3 extensions')
+
+      const installError: ExtensionInstallProgressPayload = { phase: 'install', status: 'error', message: 'Failed' }
+      expect(installError.status).toBe('error')
+    })
+
+    it('ExtensionInstallErrorPayload has required and optional fields', () => {
+      const minimal: ExtensionInstallErrorPayload = {
+        code: 'network',
+        message: 'Connection timeout',
+      }
+      expect(minimal.hint).toBeUndefined()
+
+      const withHint: ExtensionInstallErrorPayload = {
+        code: 'not_found',
+        message: 'Package not found',
+        hint: 'Check the package name and registry',
+      }
+      expect(withHint.hint).toBe('Check the package name and registry')
+    })
   })
 })
