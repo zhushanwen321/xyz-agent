@@ -151,6 +151,9 @@ export interface IExtensionService {
   getExtensionPaths(): Promise<string[]>
   installExtension(source: string): Promise<void>
   uninstallExtension(name: string): Promise<void>
+  installLocalDirectory(sourcePath: string): Promise<{ tempDir: string; candidates: import('@xyz-agent/shared').ExtensionInfo[] }>
+  installGitRepository(url: string): Promise<{ tempDir: string; candidates: import('@xyz-agent/shared').ExtensionInfo[] }>
+  finishInstall(tempDir: string, selected: string[]): Promise<void>
 }
 
 // ── IModelService ─────────────────────────────────────────────────

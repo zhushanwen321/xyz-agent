@@ -6,7 +6,7 @@ import { WebSocket } from 'ws'
  *
  * Test strategy:
  * - Basic routing (ui_response, list, toggle) uses real timers via WS
- * - Timeout mechanism tested directly via registerExtensionTimeout + cleanupExtensionTimeouts
+ * - Timeout mechanism tested directly via registerExtensionTimeout + cleanupExtensionTimeout
  * - Session cleanup tested via clearExtensionTimeoutsForSession
  */
 
@@ -111,6 +111,20 @@ vi.mock('../src/pi-config-bridge.js', () => ({
   refreshAll: () => {},
 }))
 
+const mockInstallLocalDirectory = vi.fn().mockResolvedValue({
+  tempDir: '/tmp/ext-scan-test',
+  candidates: [
+    { name: 'pi-test-ext', version: '1.0.0', description: 'Test', path: '/tmp/test', enabled: true, source: 'user-installed' as const },
+  ],
+})
+const mockInstallGitRepository = vi.fn().mockResolvedValue({
+  tempDir: '/tmp/ext-scan-git',
+  candidates: [
+    { name: 'pi-git-ext', version: '0.5.0', description: 'Git', path: '/tmp/git', enabled: true, source: 'user-installed' as const },
+  ],
+})
+const mockFinishInstall = vi.fn().mockResolvedValue(undefined)
+
 vi.mock('../src/extension-service.js', () => {
   return {
     ExtensionService: class MockExtensionService {
@@ -118,6 +132,9 @@ vi.mock('../src/extension-service.js', () => {
       getEnabledExtensions = vi.fn().mockResolvedValue([])
       toggleExtension = vi.fn().mockResolvedValue(undefined)
       getExtensionPaths = vi.fn().mockResolvedValue([])
+      installLocalDirectory = mockInstallLocalDirectory
+      installGitRepository = mockInstallGitRepository
+      finishInstall = mockFinishInstall
     },
   }
 })
@@ -177,6 +194,9 @@ describe('SidecarServer: extension message routing', () => {
 
   beforeEach(async () => {
     mockSendCommand.mockClear()
+    mockInstallLocalDirectory.mockClear()
+    mockInstallGitRepository.mockClear()
+    mockFinishInstall.mockClear()
     port = await getFreePort()
     server = new SidecarServer(port, '/tmp/test-project')
     sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
@@ -344,6 +364,137 @@ describe('SidecarServer: extension message routing', () => {
       expect(msg.payload).toMatchObject({ extensions: [] })
     })
   })
+
+  // ── extension.installDir (Task 5) ───────────────────────────────
+
+  describe('extension.installDir', () => {
+    it('calls installLocalDirectory and returns discovered extensions', async () => {
+      await connectClient()
+
+      const responsePromise = waitForMessage(ws, 'extension.discovered')
+
+      ws.send(JSON.stringify({
+        type: 'extension.installDir',
+        id: 'ext-dir-1',
+        payload: { path: '/path/to/local/dir' },
+      }))
+
+      const msg = await responsePromise
+      expect(msg.id).toBe('ext-dir-1')
+      expect(mockInstallLocalDirectory).toHaveBeenCalledWith('/path/to/local/dir')
+      expect(msg.payload).toMatchObject({
+        tempDir: '/tmp/ext-scan-test',
+        candidates: expect.arrayContaining([
+          expect.objectContaining({ name: 'pi-test-ext' }),
+        ]),
+      })
+    })
+
+    it('sends installError when installLocalDirectory throws', async () => {
+      mockInstallLocalDirectory.mockRejectedValueOnce(new Error('Source path does not exist'))
+      await connectClient()
+
+      const responsePromise = waitForMessage(ws, 'extension.installError')
+
+      ws.send(JSON.stringify({
+        type: 'extension.installDir',
+        id: 'ext-dir-err',
+        payload: { path: '/nonexistent' },
+      }))
+
+      const msg = await responsePromise
+      expect(msg.id).toBe('ext-dir-err')
+      expect(msg.payload).toMatchObject({
+        code: 'install_failed',
+        message: expect.stringContaining('Source path does not exist'),
+      })
+    })
+  })
+
+  // ── extension.installGit (Task 5) ───────────────────────────────
+
+  describe('extension.installGit', () => {
+    it('calls installGitRepository and returns discovered extensions', async () => {
+      await connectClient()
+
+      const responsePromise = waitForMessage(ws, 'extension.discovered')
+
+      ws.send(JSON.stringify({
+        type: 'extension.installGit',
+        id: 'ext-git-1',
+        payload: { url: 'https://github.com/user/repo.git' },
+      }))
+
+      const msg = await responsePromise
+      expect(msg.id).toBe('ext-git-1')
+      expect(mockInstallGitRepository).toHaveBeenCalledWith('https://github.com/user/repo.git')
+      expect(msg.payload).toMatchObject({
+        tempDir: '/tmp/ext-scan-git',
+        candidates: expect.arrayContaining([
+          expect.objectContaining({ name: 'pi-git-ext' }),
+        ]),
+      })
+    })
+
+    it('sends installError when installGitRepository throws', async () => {
+      mockInstallGitRepository.mockRejectedValueOnce(new Error('git clone failed: not found'))
+      await connectClient()
+
+      const responsePromise = waitForMessage(ws, 'extension.installError')
+
+      ws.send(JSON.stringify({
+        type: 'extension.installGit',
+        id: 'ext-git-err',
+        payload: { url: 'https://github.com/bad/repo.git' },
+      }))
+
+      const msg = await responsePromise
+      expect(msg.payload).toMatchObject({
+        code: 'install_failed',
+        message: expect.stringContaining('git clone failed'),
+      })
+    })
+  })
+
+  // ── extension.finishInstall (Task 5) ────────────────────────────
+
+  describe('extension.finishInstall', () => {
+    it('calls finishInstall and returns updated extension list', async () => {
+      await connectClient()
+
+      const responsePromise = waitForMessage(ws, 'config.extensions')
+
+      ws.send(JSON.stringify({
+        type: 'extension.finishInstall',
+        id: 'ext-finish-1',
+        payload: { tempDir: '/tmp/ext-scan-test', selected: ['pi-test-ext'] },
+      }))
+
+      const msg = await responsePromise
+      expect(msg.id).toBe('ext-finish-1')
+      expect(mockFinishInstall).toHaveBeenCalledWith('/tmp/ext-scan-test', ['pi-test-ext'])
+      expect(msg.payload).toMatchObject({ extensions: [] })
+    })
+
+    it('sends error when finishInstall throws', async () => {
+      mockFinishInstall.mockRejectedValueOnce(new Error('not found in temp directory'))
+      await connectClient()
+
+      const responsePromise = waitForMessage(ws, 'extension.installError')
+
+      ws.send(JSON.stringify({
+        type: 'extension.finishInstall',
+        id: 'ext-finish-err',
+        payload: { tempDir: '/tmp/nonexistent', selected: ['missing'] },
+      }))
+
+      const msg = await responsePromise
+      expect(msg.payload).toMatchObject({
+        code: 'install_failed',
+        message: expect.stringContaining('not found in temp directory'),
+      })
+    })
+  })
 })
 
 // ── Tests with fake timers (timeout mechanism) ────────────────────
@@ -415,7 +566,6 @@ describe('SidecarServer: extension timeout mechanism', () => {
   it('does NOT trigger timeout if cleared by ui_response', () => {
     server.registerExtensionTimeout('sess-1', 'req-clear-1', 'confirm')
 
-    // Simulate clearing the timeout (as would happen when ui_response is received)
     server.clearExtensionTimeout('req-clear-1')
 
     vi.advanceTimersByTime(300_000)
@@ -432,7 +582,6 @@ describe('SidecarServer: extension timeout mechanism', () => {
 
     vi.advanceTimersByTime(300_000)
 
-    // Only req-c (sess-other) should have fired
     expect(mockSendCommand).toHaveBeenCalledTimes(1)
     expect(mockSendCommand).toHaveBeenCalledWith(
       'extension_ui_response',
@@ -441,7 +590,6 @@ describe('SidecarServer: extension timeout mechanism', () => {
   })
 
   it('notify method does not register timeout', () => {
-    // notify is fire-and-forget, no response expected
     server.registerExtensionTimeout('sess-1', 'req-notify', 'notify')
 
     vi.advanceTimersByTime(300_000)

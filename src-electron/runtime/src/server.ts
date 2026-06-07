@@ -192,6 +192,9 @@ export class SidecarServer implements IMessageBroker {
         case 'extension.toggle':
         case 'extension.install':
         case 'extension.uninstall':
+        case 'extension.installDir':
+        case 'extension.installGit':
+        case 'extension.finishInstall':
           return this.handleExtensionMessage(msg, ws)
         // ── Plugin messages ───────────────────────────────────────────
         case 'plugin.list':
@@ -333,7 +336,7 @@ export class SidecarServer implements IMessageBroker {
     }
   }
 
-  /** Handle session.tree-* messages */
+  /** Handle extension.* messages */
   private async handleExtensionMessage(msg: ClientMessage, ws: WsType): Promise<void> {
     switch (msg.type) {
       case 'extension.ui_response': {
@@ -398,6 +401,44 @@ export class SidecarServer implements IMessageBroker {
         }
         const uninstalled = await this.extensionService.scanExtensions()
         return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions: uninstalled } })
+      }
+      // ── Local directory / Git / finish install ────────────────────
+      case 'extension.installDir': {
+        if (!this.extensionService) {
+          return this.sendError(ws, 'handler_error', 'Extension service not available', msg.id)
+        }
+        try {
+          const { path: sourcePath } = msg.payload as { path: string }
+          const result = await this.extensionService.installLocalDirectory(sourcePath)
+          return this.send(ws, { type: 'extension.discovered', id: msg.id, payload: { tempDir: result.tempDir, candidates: result.candidates } })
+        } catch (e) {
+          return this.send(ws, { type: 'extension.installError', id: msg.id, payload: { code: 'install_failed', message: e instanceof Error ? e.message : String(e) } })
+        }
+      }
+      case 'extension.installGit': {
+        if (!this.extensionService) {
+          return this.sendError(ws, 'handler_error', 'Extension service not available', msg.id)
+        }
+        try {
+          const { url } = msg.payload as { url: string }
+          const result = await this.extensionService.installGitRepository(url)
+          return this.send(ws, { type: 'extension.discovered', id: msg.id, payload: { tempDir: result.tempDir, candidates: result.candidates } })
+        } catch (e) {
+          return this.send(ws, { type: 'extension.installError', id: msg.id, payload: { code: 'install_failed', message: e instanceof Error ? e.message : String(e) } })
+        }
+      }
+      case 'extension.finishInstall': {
+        if (!this.extensionService) {
+          return this.sendError(ws, 'handler_error', 'Extension service not available', msg.id)
+        }
+        try {
+          const { tempDir, selected } = msg.payload as { tempDir: string; selected: string[] }
+          await this.extensionService.finishInstall(tempDir, selected)
+          const extensions = await this.extensionService.scanExtensions()
+          return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions } })
+        } catch (e) {
+          return this.send(ws, { type: 'extension.installError', id: msg.id, payload: { code: 'install_failed', message: e instanceof Error ? e.message : String(e) } })
+        }
       }
     }
   }
