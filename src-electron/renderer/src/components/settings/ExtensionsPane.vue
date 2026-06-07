@@ -14,8 +14,15 @@ const showInstall = ref(false)
 const installSource = ref('')
 const installing = ref(false)
 const installError = ref('')
+const installHint = ref('')
 const uninstallTarget = ref<ExtensionInfo | null>(null)
 const installTab = ref<'npm' | 'local' | 'git'>('npm')
+
+// Discovery flow state
+const discoveredCandidates = ref<ExtensionInfo[]>([])
+const discoveryTempDir = ref('')
+const selectedCandidates = ref<string[]>([])
+const installPhase = ref<'idle' | 'discovering' | 'selecting' | 'installing' | 'done'>('idle')
 
 const installTabs = [
   { key: 'npm' as const, label: 'npm' },
@@ -23,21 +30,42 @@ const installTabs = [
   { key: 'git' as const, label: 'Git URL' },
 ]
 
+// ── Message handlers ────────────────────────────────────────────
+
 function onExtensions(msg: ServerMessage) {
   const payload = msg.payload as { extensions?: ExtensionInfo[] }
   if (payload.extensions) {
     extensions.value = payload.extensions
   }
+  // Reset all install state on extensions update
+  installing.value = false
+  installPhase.value = 'idle'
+  discoveredCandidates.value = []
+}
+
+function onDiscovered(msg: ServerMessage) {
+  const payload = msg.payload as { tempDir?: string; candidates?: ExtensionInfo[] }
+  if (payload.candidates && payload.candidates.length > 0) {
+    discoveredCandidates.value = payload.candidates
+    discoveryTempDir.value = payload.tempDir ?? ''
+    selectedCandidates.value = payload.candidates.map(c => c.name)
+    installPhase.value = 'selecting'
+  } else {
+    installError.value = 'No pi extensions found in the provided source.'
+    installPhase.value = 'idle'
+  }
   installing.value = false
 }
 
 function onInstallError(msg: ServerMessage) {
-  const payload = msg.payload as { code?: string; message?: string }
-  if (payload.code === 'install_failed') {
-    installError.value = payload.message ?? 'Install failed'
-    installing.value = false
-  }
+  const payload = msg.payload as { code?: string; message?: string; hint?: string }
+  installError.value = payload.message ?? 'Install failed'
+  installHint.value = payload.hint ?? ''
+  installing.value = false
+  installPhase.value = 'idle'
 }
+
+// ── Actions ─────────────────────────────────────────────────────
 
 function handleToggle(payload: { name: string; enabled: boolean }) {
   const { name, enabled } = payload
@@ -51,13 +79,43 @@ function handleInstall() {
   if (!source) return
   installing.value = true
   installError.value = ''
+  installHint.value = ''
 
   if (installTab.value === 'local') {
+    installPhase.value = 'discovering'
     send({ type: 'extension.installDir', payload: { path: source } })
   } else if (installTab.value === 'git') {
+    installPhase.value = 'discovering'
     send({ type: 'extension.installGit', payload: { url: source } })
   } else {
+    // npm — existing direct flow
+    installPhase.value = 'idle'
     send({ type: 'extension.install', payload: { source } })
+  }
+}
+
+function confirmInstallSelected() {
+  if (selectedCandidates.value.length === 0 || !discoveryTempDir.value) return
+  installPhase.value = 'installing'
+  send({
+    type: 'extension.finishInstall',
+    payload: { tempDir: discoveryTempDir.value, selected: selectedCandidates.value },
+  })
+}
+
+function cancelInstallSelection() {
+  installPhase.value = 'idle'
+  discoveredCandidates.value = []
+  discoveryTempDir.value = ''
+  selectedCandidates.value = []
+}
+
+function toggleCandidate(name: string) {
+  const idx = selectedCandidates.value.indexOf(name)
+  if (idx === -1) {
+    selectedCandidates.value.push(name)
+  } else {
+    selectedCandidates.value.splice(idx, 1)
   }
 }
 
@@ -78,14 +136,21 @@ function installButtonLabel(): string {
   return 'Installing...'
 }
 
+// ── Lifecycle ───────────────────────────────────────────────────
+
 onMounted(() => {
   on('config.extensions', onExtensions)
+  on('extension.discovered', onDiscovered)
+  on('extension.installError', onInstallError)
+  // Keep backward compat with generic error channel
   on('error', onInstallError)
   send({ type: 'extension.list', payload: {} })
 })
 
 onUnmounted(() => {
   off('config.extensions', onExtensions)
+  off('extension.discovered', onDiscovered)
+  off('extension.installError', onInstallError)
   off('error', onInstallError)
 })
 </script>
@@ -194,8 +259,70 @@ onUnmounted(() => {
           </div>
         </template>
 
-        <!-- Error display -->
-        <div v-if="installError" class="text-[11px] text-[var(--danger)] mt-1.5">{{ installError }}</div>
+        <!-- Error display with hint -->
+        <div v-if="installError" class="mt-1.5">
+          <div class="text-[11px] text-[var(--danger)]">{{ installError }}</div>
+          <div v-if="installHint" class="text-[11px] text-muted italic mt-0.5">{{ installHint }}</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Discovery: candidate selection -->
+    <div v-if="installPhase === 'selecting'" class="border border-border rounded-sm overflow-hidden mb-3">
+      <div class="flex items-center justify-between py-[10px] px-4 bg-[var(--section-bg)] border-b border-border min-h-[42px]">
+        <span class="text-[13px] font-semibold">Found {{ discoveredCandidates.length }} extension(s)</span>
+      </div>
+      <div>
+        <div
+          v-for="candidate in discoveredCandidates"
+          :key="candidate.name"
+          class="flex items-center gap-3 py-2 px-4 border-b border-[var(--divider)] last:border-b-0 cursor-pointer hover:bg-[var(--hover-bg)]"
+          @click="toggleCandidate(candidate.name)"
+        >
+          <!-- Checkbox indicator -->
+          <div
+            class="w-3.5 h-3.5 rounded-sm border flex items-center justify-center shrink-0 transition-colors duration-100"
+            :class="selectedCandidates.includes(candidate.name)
+              ? 'bg-[var(--accent)] border-[var(--accent)]'
+              : 'border-[var(--border)]'"
+          >
+            <svg
+              v-if="selectedCandidates.includes(candidate.name)"
+              width="8" height="8" viewBox="0 0 10 10"
+              fill="none" stroke="white" stroke-width="2"
+            >
+              <path d="M2 5l2.5 2.5L8 3" />
+            </svg>
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="text-[13px] font-semibold flex items-center gap-2">
+              {{ candidate.name }}
+              <span class="text-[10px] font-semibold py-[1px] px-1.5 rounded-sm bg-[var(--accent-light)] text-[var(--accent)]">{{ candidate.version }}</span>
+            </div>
+            <div class="text-[11px] text-muted mt-px line-clamp-1">{{ candidate.description }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="flex justify-end gap-2 py-2 px-4 border-t border-[var(--divider)] bg-[var(--section-bg)]">
+        <Button variant="outline" size="sm" @click="cancelInstallSelection">Cancel</Button>
+        <Button
+          variant="primary"
+          size="sm"
+          :disabled="selectedCandidates.length === 0"
+          @click="confirmInstallSelected"
+        >
+          Install Selected ({{ selectedCandidates.length }})
+        </Button>
+      </div>
+    </div>
+
+    <!-- Discovery: installing progress -->
+    <div v-if="installPhase === 'installing'" class="border border-border rounded-sm overflow-hidden mb-3">
+      <div class="flex items-center justify-center gap-2 py-4 px-4 bg-[var(--section-bg)]">
+        <svg class="animate-spin text-[var(--accent)]" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+        </svg>
+        <span class="text-[12px] text-muted">Installing selected extensions...</span>
       </div>
     </div>
 
