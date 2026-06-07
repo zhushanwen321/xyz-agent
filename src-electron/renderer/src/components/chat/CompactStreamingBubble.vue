@@ -15,7 +15,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import type { Message } from '@xyz-agent/shared'
 import MessageBubble from './MessageBubble.vue'
-import { formatTime, toolPath } from '../lib/compact-utils'
+import { formatTime, toolPath } from '@/lib/compact-utils'
 
 const props = defineProps<{
   message: Message

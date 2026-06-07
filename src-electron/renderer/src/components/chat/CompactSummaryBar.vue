@@ -79,7 +79,7 @@ import { computed, reactive, ref } from 'vue'
 import type { Message, ThinkingBlock as ThinkingBlockType, ToolCall } from '@xyz-agent/shared'
 import ThinkingBlock from './ThinkingBlock.vue'
 import ToolCallCard from './ToolCallCard.vue'
-import { formatTime, toolPath } from '../lib/compact-utils'
+import { formatTime, toolPath } from '@/lib/compact-utils'
 
 // ── Constants ──
 const MAX_VISIBLE_ITEMS = 8
@@ -188,6 +188,7 @@ function chipData(msg: Message): CompactChip[] {
   }
 
   for (const [name, calls] of toolGroups) {
+    if (!calls) continue
     // All items stored, overflow controls visibility
     const items: CompactChipItem[] = calls.map(tc => ({
       refId: tc.id,
