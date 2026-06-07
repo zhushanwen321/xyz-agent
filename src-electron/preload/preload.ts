@@ -12,6 +12,8 @@ export interface ElectronAPI {
   openSettingsWindow(): void
   /** 获取 runtime 端口 */
   getRuntimePort(): Promise<number>
+  /** 获取 runtime 端口偏移（dev 模式 +100） */
+  getRuntimePortOffset(): Promise<number>
   // ── 窗口管理 ──────────────────────────────────────────────────
   /** 创建新窗口，可选携带 sessionId 迁移 */
   createWindow(sessionId?: string): Promise<{ windowId: string }>
@@ -55,6 +57,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   openSettingsWindow: () => ipcRenderer.send('open-settings-window'),
   getRuntimePort: () => ipcRenderer.invoke('get-runtime-port'),
+  getRuntimePortOffset: () => ipcRenderer.invoke('get-runtime-port-offset'),
 
   // ── 窗口管理 ──────────────────────────────────────────────────
   createWindow: (sessionId?: string) => ipcRenderer.invoke('create-window', { sessionId }),

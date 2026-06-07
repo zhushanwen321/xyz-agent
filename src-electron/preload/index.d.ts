@@ -4,6 +4,8 @@ export interface ElectronAPI {
   onShortcut(callback: (type: string) => void): () => void
   openSettingsWindow(): void
   getRuntimePort(): Promise<number>
+  /** 获取 runtime 端口偏移（dev 模式 +100，prod 模式 0） */
+  getRuntimePortOffset(): Promise<number>
   /** Set the OS window title (used by extension:setTitle from TUI bridge) */
   setTitle(title: string): void
   // ── 窗口管理 ──────────────────────────────────────────────────
