@@ -31,6 +31,28 @@ function getSettingsDir(): string {
   return join(homedir(), '.xyz-agent', 'pi', 'agent')
 }
 
+// ── Error classes ─────────────────────────────────────────────────
+
+/**
+ * ExtensionInstallError — classified npm install errors.
+ *
+ * code values:
+ * - 'not_found'    — 404/E404 from npm registry
+ * - 'network'      — generic npm failure (timeout, permissions, etc.)
+ * - 'not_extension' — npm install succeeded but not a valid pi extension
+ */
+export class ExtensionInstallError extends Error {
+  readonly code: string
+  readonly hint?: string
+
+  constructor(code: string, message: string, hint?: string) {
+    super(message)
+    this.name = 'ExtensionInstallError'
+    this.code = code
+    this.hint = hint
+  }
+}
+
 export interface ExtensionServiceOptions {
   /** Agent 配置目录（默认 ~/.xyz-agent/pi/agent） */
   settingsDir?: string
@@ -135,6 +157,7 @@ export class ExtensionService {
   /**
    * 安装 npm 包 → 写 settings.json packages[] → 返回。
    * 验证 npm 包是否为有效的 pi extension。
+   * 失败时抛出 ExtensionInstallError，含 code 和 hint。
    */
   async installExtension(source: string): Promise<void> {
     if (!source.startsWith('npm:')) {
@@ -161,7 +184,12 @@ export class ExtensionService {
       })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      throw new Error(`npm install failed: ${msg}`)
+      const code = this.classifyNpmError(msg)
+      throw new ExtensionInstallError(
+        code,
+        `npm install failed: ${msg}`,
+        code === 'not_found' ? 'Check the package name, scope, and registry URL.' : undefined,
+      )
     }
 
     // 验证是否为有效的 pi extension
@@ -173,7 +201,11 @@ export class ExtensionService {
       } catch (e) {
         log.warn(`[extension-service] rollback npm uninstall failed for ${pkgName}: ${e instanceof Error ? e.message : String(e)}`)
       }
-      throw new Error(`"${pkgName}" is not a valid pi extension.`)
+      throw new ExtensionInstallError(
+        'not_extension',
+        `"${pkgName}" is not a valid pi extension.`,
+        'Check that the package has pi manifest fields (keywords: ["pi-package"], peerDependencies with pi-coding-agent, or a "pi" field in package.json).',
+      )
     }
 
     // 写入 settings.json
@@ -319,5 +351,13 @@ export class ExtensionService {
     }
 
     return { packages, disabled }
+  }
+
+  /** Classify npm error message into error code */
+  private classifyNpmError(msg: string): 'not_found' | 'network' {
+    if (/404|E404/i.test(msg)) {
+      return 'not_found'
+    }
+    return 'network'
   }
 }

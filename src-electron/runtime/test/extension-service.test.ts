@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { ExtensionService } from '../src/extension-service.js'
+import { ExtensionService, ExtensionInstallError } from '../src/extension-service.js'
 
 import { execSync } from 'node:child_process'
 
@@ -175,6 +175,90 @@ describe('ExtensionService', () => {
       const disabledPath = join(testSettingsDir, 'disabled-packages.json')
       // File should be deleted when disabled list becomes empty
       expect(existsSync(disabledPath)).toBe(false)
+    })
+  })
+
+  // ── Task 3: ExtensionInstallError and error classification ────
+
+  describe('ExtensionInstallError', () => {
+    it('has code, message, and optional hint', () => {
+      const err = new ExtensionInstallError('not_found', 'Package not found', 'Check the package name')
+      expect(err.code).toBe('not_found')
+      expect(err.message).toBe('Package not found')
+      expect(err.hint).toBe('Check the package name')
+      expect(err).toBeInstanceOf(Error)
+      expect(err).toBeInstanceOf(ExtensionInstallError)
+    })
+
+    it('works without hint', () => {
+      const err = new ExtensionInstallError('network', 'Connection timeout')
+      expect(err.code).toBe('network')
+      expect(err.hint).toBeUndefined()
+    })
+  })
+
+  describe('installExtension error classification', () => {
+    it('classifies 404 errors as not_found', async () => {
+      mockedExecSync.mockImplementation(() => {
+        const err = new Error('npm install failed: npm ERR! 404 Not Found - GET https://registry.npmjs.org/nonexistent-pkg')
+        throw err
+      })
+
+      try {
+        await service.installExtension('npm:nonexistent-pkg')
+        expect.unreachable('Should have thrown')
+      } catch (e) {
+        expect(e).toBeInstanceOf(ExtensionInstallError)
+        expect((e as ExtensionInstallError).code).toBe('not_found')
+      }
+    })
+
+    it('classifies E404 errors as not_found', async () => {
+      mockedExecSync.mockImplementation(() => {
+        const err = new Error('npm ERR! E404 Package not found')
+        throw err
+      })
+
+      try {
+        await service.installExtension('npm:e404-pkg')
+        expect.unreachable('Should have thrown')
+      } catch (e) {
+        expect(e).toBeInstanceOf(ExtensionInstallError)
+        expect((e as ExtensionInstallError).code).toBe('not_found')
+      }
+    })
+
+    it('classifies other npm errors as network', async () => {
+      mockedExecSync.mockImplementation(() => {
+        throw new Error('npm ERR! ETIMEOUT request timeout')
+      })
+
+      try {
+        await service.installExtension('npm:timeout-pkg')
+        expect.unreachable('Should have thrown')
+      } catch (e) {
+        expect(e).toBeInstanceOf(ExtensionInstallError)
+        expect((e as ExtensionInstallError).code).toBe('network')
+      }
+    })
+
+    it('classifies invalid pi extension as not_extension', async () => {
+      mockedExecSync.mockImplementation(() => '')
+      // Create an invalid package (no pi markers)
+      const npmDir = join(testSettingsDir, 'npm', 'node_modules', 'lodash')
+      mkdirSync(npmDir, { recursive: true })
+      writeFileSync(join(npmDir, 'package.json'), JSON.stringify({
+        name: 'lodash',
+        version: '4.17.21',
+      }), 'utf-8')
+
+      try {
+        await service.installExtension('npm:lodash')
+        expect.unreachable('Should have thrown')
+      } catch (e) {
+        expect(e).toBeInstanceOf(ExtensionInstallError)
+        expect((e as ExtensionInstallError).code).toBe('not_extension')
+      }
     })
   })
 })
