@@ -1,8 +1,8 @@
 <template>
   <div
     :class="['loading-bar-container', { 'loading-bar-container--active': isGenerating }]"
-    :role="isGenerating ? 'status' : undefined"
-    :aria-live="isGenerating ? 'polite' : undefined"
+    role="status"
+    aria-live="polite"
     :aria-label="isGenerating ? 'AI 正在处理' : undefined"
     :data-i18n="isGenerating ? 'loading.aiProcessing' : undefined"
   >

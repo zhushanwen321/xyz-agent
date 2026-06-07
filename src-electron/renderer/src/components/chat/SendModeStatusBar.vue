@@ -33,8 +33,7 @@
       <div
         v-if="open"
         ref="popoverRef"
-        class="absolute bottom-full left-0 mb-1 min-w-[140px] rounded-sm border shadow-lg z-50"
-        style="background: var(--surface); border-color: var(--border); box-shadow: 0 4px 12px rgba(0,0,0,0.15)"
+        class="mode-popover-panel absolute bottom-full left-0 mb-1 min-w-[140px] rounded-sm border shadow-lg"
         role="listbox"
         :aria-activedescendant="`mode-option-${mode}`"
       >
@@ -150,6 +149,14 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.mode-popover-panel {
+  background: var(--surface);
+  border-color: var(--border);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  /* W3: semantic z-index — popover layer, below modal-backdrop */
+  z-index: 100;
+}
+
 .mode-popover-enter-active,
 .mode-popover-leave-active {
   transition: opacity 0.12s ease, transform 0.12s ease;

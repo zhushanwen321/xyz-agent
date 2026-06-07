@@ -8,13 +8,13 @@
           <svg class="w-3 h-3 opacity-60" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
             <path d="M2 4h12M2 8h12M2 12h12" />
           </svg>
-          <span data-i18n="queue.pendingCount">队列: {{ totalCount }} 条待处理</span>
+          <span data-i18n="queue.pendingCount">队列: {{ visibleItems.length }} 条待处理</span>
         </span>
       </div>
       <!-- list -->
       <div class="space-y-1 pb-2">
         <div
-          v-for="(item, i) in queueItems"
+          v-for="(item, i) in visibleItems"
           :key="i"
           class="flex items-center gap-2 text-[11px]"
         >
@@ -46,10 +46,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import type { QueueState } from '@/stores/chat'
 
-const MAX_VISIBLE_ITEMS = 10
+const MAX_VISIBLE_ITEMS = 5
 
 interface QueueItem {
   type: 'steer' | 'follow-up'
@@ -80,6 +80,7 @@ const queueItems = computed<QueueItem[]>(() => {
 
 const totalCount = computed(() => queueItems.value.length)
 const hasItems = computed(() => totalCount.value > 0)
+const visibleItems = computed(() => queueItems.value.slice(0, MAX_VISIBLE_ITEMS))
 const overflowCount = computed(() =>
   Math.max(0, totalCount.value - MAX_VISIBLE_ITEMS)
 )
@@ -87,8 +88,8 @@ const overflowCount = computed(() =>
 // ── Badge class helper ──
 
 function badgeClass(type: 'steer' | 'follow-up'): string {
-  if (type === 'steer') return 'bg-[var(--warning)]/15 text-[var(--warning)]'
-  return 'bg-[var(--accent)]/15 text-[var(--accent)]'
+  if (type === 'steer') return 'badge-steer'
+  return 'badge-follow-up'
 }
 
 // ── Done banner ──
@@ -97,24 +98,25 @@ const showDoneBanner = ref(false)
 const doneCount = ref(0)
 let doneTimer: ReturnType<typeof setTimeout> | undefined
 
-watch(
-  () => props.queueState,
-  (_newVal, oldVal) => {
-    const prevHasItems = oldVal
-      ? (oldVal.steering.length + oldVal.followUp.length) > 0
-      : false
-    if (prevHasItems && !hasItems.value) {
-      doneCount.value = prevHasItems
-        ? (oldVal?.steering.length ?? 0) + (oldVal?.followUp.length ?? 0)
-        : 0
-      showDoneBanner.value = true
-      if (doneTimer) clearTimeout(doneTimer)
-      doneTimer = setTimeout(() => {
-        showDoneBanner.value = false
-      }, 3000)
-    }
+// B1 fix: track prevCount via ref, not oldVal (reactive object reference is stale)
+const prevCount = ref(0)
+
+watch(totalCount, (newCount) => {
+  if (prevCount.value > 0 && newCount === 0) {
+    doneCount.value = prevCount.value
+    showDoneBanner.value = true
+    if (doneTimer) clearTimeout(doneTimer)
+    doneTimer = setTimeout(() => {
+      showDoneBanner.value = false
+    }, 3000)
   }
-)
+  prevCount.value = newCount
+})
+
+// S3 fix: cleanup timer on unmount
+onBeforeUnmount(() => {
+  if (doneTimer) clearTimeout(doneTimer)
+})
 </script>
 
 <style scoped>
@@ -125,24 +127,26 @@ watch(
   overflow: hidden;
 }
 
-/* Container query: wide panel shows queue-full, hides queue-compact */
-@container (min-width: 520px) {
-  .queue-full {
-    display: block;
-  }
-  .queue-compact {
-    display: none;
-  }
+/* B2 fix: match container-name from style.css */
+@container panel (min-width: 520px) {
+  .queue-full { display: block; }
+  .queue-compact { display: none; }
 }
 
-/* Container query: narrow panel hides queue-full, shows queue-compact */
-@container (max-width: 519px) {
-  .queue-full {
-    display: none;
-  }
-  .queue-compact {
-    display: block;
-  }
+@container panel (max-width: 519px) {
+  .queue-full { display: none; }
+  .queue-compact { display: block; }
+}
+
+/* W2 fix: use scoped classes instead of arbitrary value + opacity syntax */
+.badge-steer {
+  background: color-mix(in srgb, var(--warning) 15%, transparent);
+  color: var(--warning);
+}
+
+.badge-follow-up {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
 }
 
 .pulsing-dot {

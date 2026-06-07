@@ -113,6 +113,7 @@ function handleSend(payload: { content: string; skillName?: string; subagent?: {
     status: 'complete',
     timestamp: Date.now(),
     ...(payload.skillName ? { skillName: payload.skillName } : {}),
+    ...(payload.sendMode && payload.sendMode !== 'send' ? { sendMode: payload.sendMode === 'queue' ? 'follow-up' as const : payload.sendMode } : {}),
   }, sid)
 
   const mode = payload.sendMode ?? 'send'

@@ -67,7 +67,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, nextTick, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, nextTick, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useChatStore } from '../../stores/chat'
 import { useProviderStore } from '../../stores/provider'
@@ -137,12 +137,15 @@ const isAltPressed = ref(false)
 const isCtrlPressed = ref(false)
 
 // ── SendMode tracking for message bubbles ──
-const sendModeMap = reactive(new Map<string, 'steer' | 'follow-up'>())
+// Tracks sendMode per message content for chip display.
+// Cleared on sessionId switch (W6) and after each send.
+const pendingSendMode = ref<'steer' | 'follow-up' | null>(null)
 
 watch(() => props.sessionId, (newSid, oldSid) => {
   if (newSid !== oldSid) {
     if (oldSid) chatStore.setPendingText(text.value || undefined, oldSid)
     text.value = chatStore.getPendingText(newSid)
+    pendingSendMode.value = null
     nextTick(() => {
       const editorText = consumePendingEditorText(newSid)
       if (editorText) text.value = editorText
@@ -323,8 +326,7 @@ function handleSend() {
   } else {
     const payload = { content: trimmed, sendMode: sendMode.value }
     if (sendMode.value === 'steer' || sendMode.value === 'queue') {
-      const chipMode = sendMode.value === 'queue' ? 'follow-up' as const : 'steer' as const
-      sendModeMap.set(trimmed, chipMode)
+      pendingSendMode.value = sendMode.value === 'queue' ? 'follow-up' : 'steer'
     }
     emit('send', payload)
     manualMode.value = null
