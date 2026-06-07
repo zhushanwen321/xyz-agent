@@ -187,7 +187,11 @@ function handleOpenDrawer(_tab: string) {
 }
 
 function handleClosePane() {
-  panelStore.closeEmptyPanel(props.panelId)
+  if (panelStore.panelCount > 1) {
+    panelStore.closeEmptyPanel(props.panelId)
+  } else {
+    panelStore.unbindSession(props.panelId)
+  }
 }
 
 function handleSwitchAgent(agentId: string) {

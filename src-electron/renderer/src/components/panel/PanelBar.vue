@@ -80,7 +80,9 @@ const dirParts = computed(() => {
 const gitBranch = computed(() => sessionInfo.value?.gitBranch)
 const gitIsWorktree = computed(() => sessionInfo.value?.gitIsWorktree)
 
-const showCloseButton = computed(() => panelStore.panelCount > 1)
+// Close button is always visible:
+// - Multi-panel: remove this panel (closeEmptyPanel)
+// - Single panel: unbind session → show EmptyPanel (landing page)
 
 // ── 右键上下文菜单 ────────────────────────────────────────────────
 const contextMenuVisible = ref(false)
@@ -213,7 +215,6 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
 
     <!-- eslint-disable-next-line taste/no-native-html-elements -- panel-close has custom transition styles in <style scoped>, xyz-ui Button variant="ghost" doesn't match this compact 20x20 design -->
     <button
-      v-if="showCloseButton"
       class="panel-close"
       aria-label="关闭面板"
       @click="$emit('close-pane')"
@@ -251,7 +252,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
             <line x1="4" y1="4" x2="12" y2="12" />
             <line x1="12" y1="4" x2="4" y2="12" />
           </svg>
-          <span>关闭面板</span>
+          <span>{{ panelStore.panelCount > 1 ? '关闭面板' : '返回首页' }}</span>
         </div>
         <div class="ctx-divider" />
         <div class="ctx-item" @click="splitPanel('horizontal')">
