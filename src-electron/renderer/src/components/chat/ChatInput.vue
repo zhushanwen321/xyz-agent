@@ -63,6 +63,7 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useChatStore } from '../../stores/chat'
 import { useProviderStore } from '../../stores/provider'
 import { Textarea } from '../../design-system'
 import { consumePendingEditorText } from '../../composables/useTree'
@@ -93,6 +94,7 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const chatStore = useChatStore()
 const providerStore = useProviderStore()
 const {
   mergeSkillCommands,
@@ -104,21 +106,41 @@ const {
 initDefaultCommands()
 initNativeCommands()
 
-const text = ref('')
+// ── Pending text: persisted per session across view switches ──
+const storeText = computed(() => chatStore.getPendingText(props.sessionId))
+const text = ref(storeText.value || '')
+// Save text to store on unmount (component destroyed when switching views)
+onUnmounted(() => {
+  chatStore.setPendingText(text.value || undefined, props.sessionId)
+})
+// Restore from store on mount
+onMounted(() => {
+  text.value = storeText.value || ''
+  const editorText = consumePendingEditorText(props.sessionId)
+  if (editorText) text.value = editorText
+})
+// Sync to store on each change (belt-and-suspenders with onUnmounted)
+watch(text, (val) => {
+  chatStore.setPendingText(val || undefined, props.sessionId)
+})
+
 const isComposing = ref(false)
 const activeCommand = ref<SlashCommand | null>(null)
 const isAltPressed = ref(false)
 
 // Navigate 到 user message 后预填输入框
-watch(() => props.sessionId, () => {
-  nextTick(() => {
-    const editorText = consumePendingEditorText(props.sessionId)
-    if (editorText) text.value = editorText
-  })
-})
-onMounted(() => {
-  const editorText = consumePendingEditorText(props.sessionId)
-  if (editorText) text.value = editorText
+// Restore from store when sessionId changes (same component, different session)
+watch(() => props.sessionId, (newSid, oldSid) => {
+  if (newSid !== oldSid) {
+    // Save old session's text before switching
+    if (oldSid) chatStore.setPendingText(text.value || undefined, oldSid)
+    // Restore new session's text
+    text.value = chatStore.getPendingText(newSid)
+    nextTick(() => {
+      const editorText = consumePendingEditorText(newSid)
+      if (editorText) text.value = editorText
+    })
+  }
 })
 // 同 session 内 navigate 时 sessionId 不变，需要事件驱动
 const unsubEditorText = on('editor-text-pending', () => {

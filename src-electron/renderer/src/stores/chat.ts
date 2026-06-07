@@ -76,6 +76,8 @@ export interface ChatSessionState {
   thinkingLevel?: string
   /** Response model id for this session (FR-8, set by future event) */
   responseModel?: string
+  /** Pending input text not yet submitted (persists across view switches) */
+  pendingText?: string
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -318,6 +320,16 @@ export const useChatStore = defineStore('chat', () => {
     getSessionState(sessionId).responseModel = model
   }
 
+  /** Set pending input text (persists across view switches). */
+  function setPendingText(text: string | undefined, sessionId: string) {
+    getSessionState(sessionId).pendingText = text
+  }
+
+  /** Get pending input text for a session. */
+  function getPendingText(sessionId: string): string {
+    return getSessionState(sessionId).pendingText ?? ''
+  }
+
   // ── 流式消息高层生命周期方法（已内联到 useChat handlers，仅保留 completeStream / abortStream） ──
 
   /** 完成流式消息，自动重置 isGenerating */
@@ -363,6 +375,8 @@ export const useChatStore = defineStore('chat', () => {
     // TUI Bridge Phase 0 setters (FR-8, FR-9)
     setPendingEditorText, setAutoRetryState, setQueueState,
     setThinkingLevel, setResponseModel,
+    // Pending text
+    setPendingText, getPendingText,
 
     // 流式消息方法
     completeStream, abortStream,

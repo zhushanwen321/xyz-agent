@@ -143,25 +143,31 @@ const HOURS_PER_DAY = 24
     </template>
     <!-- Normal mode: label + actions -->
     <template v-else>
-      <span class="flex-1 text-[13px] whitespace-nowrap overflow-hidden text-ellipsis">{{ session.label }}</span>
-      <span v-if="(session.doneCount ?? 0) > 0" class="inline-flex items-center justify-center min-w-[14px] h-[14px] rounded-full text-[9px] font-bold text-white ml-1 shrink-0 bg-success">{{ session.doneCount }}</span>
-      <span v-if="(session.alertCount ?? 0) > 0" class="inline-flex items-center justify-center min-w-[14px] h-[14px] rounded-full text-[9px] font-bold text-white ml-1 shrink-0 bg-danger">{{ session.alertCount }}</span>
-      <span class="text-[11px] text-muted whitespace-nowrap flex items-center gap-1">{{ relativeTime }}</span>
-      <!-- Rename button -->
-      <button v-bind="renameBtn">
-        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 1.5a2.121 2.121 0 013 3L5 14l-4 1 1-4z"/></svg>
-      </button>
-      <!-- Delete button -->
-      <button
-        v-if="!confirmDelete"
-        v-bind="deleteBtn"
-      >
-        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h12M5.33 4V2.67a1.33 1.33 0 011.34-1.34h2.66a1.33 1.33 0 011.34 1.34V4m2 0v9.33a1.33 1.33 0 01-1.34 1.34H4.67a1.33 1.33 0 01-1.34-1.34V4h9.34z"/></svg>
-      </button>
-      <button
-        v-else
-        v-bind="confirmDelBtn"
-      >confirm</button>
+      <!-- Left: name + badges -->
+      <span class="flex items-center gap-1 min-w-0 flex-1">
+        <span class="text-[13px] whitespace-nowrap overflow-hidden text-ellipsis">{{ session.label }}</span>
+        <span v-if="(session.doneCount ?? 0) > 0" class="inline-flex items-center justify-center min-w-[14px] h-[14px] rounded-full text-[9px] font-bold text-white shrink-0 bg-success">{{ session.doneCount }}</span>
+        <span v-if="(session.alertCount ?? 0) > 0" class="inline-flex items-center justify-center min-w-[14px] h-[14px] rounded-full text-[9px] font-bold text-white shrink-0 bg-danger">{{ session.alertCount }}</span>
+      </span>
+      <!-- Right: time + actions -->
+      <span class="flex items-center gap-0.5 shrink-0 ml-auto">
+        <span class="text-[11px] text-muted whitespace-nowrap">{{ relativeTime }}</span>
+        <!-- Rename button -->
+        <button v-bind="renameBtn">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 1.5a2.121 2.121 0 013 3L5 14l-4 1 1-4z"/></svg>
+        </button>
+        <!-- Delete button -->
+        <button
+          v-if="!confirmDelete"
+          v-bind="deleteBtn"
+        >
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h12M5.33 4V2.67a1.33 1.33 0 011.34-1.34h2.66a1.33 1.33 0 011.34 1.34V4m2 0v9.33a1.33 1.33 0 01-1.34 1.34H4.67a1.33 1.33 0 01-1.34-1.34V4h9.34z"/></svg>
+        </button>
+        <button
+          v-else
+          v-bind="confirmDelBtn"
+        >confirm</button>
+      </span>
     </template>
   </div>
 </template>

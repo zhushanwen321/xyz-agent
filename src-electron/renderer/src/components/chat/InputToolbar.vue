@@ -180,7 +180,10 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex items-center gap-1 px-2 pb-1.5 overflow-hidden">
+  <!-- NOTE: overflow-hidden intentionally omitted — it clips ModelPicker & Thinking Picker
+       dropdowns that extend upward via bottom-[calc(100%+6px)]. If toolbar items overflow
+       on narrow panels, add min-width:0/shrink to the flex-right items instead. -->
+  <div class="flex items-center gap-1 px-2 pb-1.5">
     <!-- Model Picker -->
     <ModelPicker :current-model="currentModel" @select="(id: string) => emit('select-model', id)" />
 
