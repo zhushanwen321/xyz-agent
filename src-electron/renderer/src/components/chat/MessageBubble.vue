@@ -6,6 +6,7 @@
     :data-entry-id="entryId"
     :data-timestamp="message.timestamp ?? ''"
     class="self-start w-full relative group/msg"
+    :class="{ 'opacity-65': message.isInterrupted }"
   >
     <div class="text-[10px] font-semibold uppercase tracking-[0.04em] leading-[1.4] mb-1 text-muted">
       助手
@@ -13,6 +14,16 @@
     </div>
 
     <AssistantContent :message="message" :is-streaming="isStreaming" />
+
+    <!-- Interrupted marker -->
+    <div
+      v-if="message.isInterrupted"
+      class="flex items-center gap-2 mt-2 text-[10px] text-muted"
+    >
+      <span class="flex-1 h-px bg-muted/30" />
+      <span>已中断</span>
+      <span class="flex-1 h-px bg-muted/30" />
+    </div>
 
     <!-- Inline actions + Branch indicator -->
     <div class="flex items-center gap-1 mt-1">
@@ -51,6 +62,10 @@
     class="self-stretch relative group/msg"
   >
     <div class="text-[10px] font-semibold uppercase tracking-[0.04em] leading-[1.4] mb-[3px] text-right text-muted">
+      <span
+        v-if="message.sendMode && message.sendMode !== 'send'"
+        :class="['inline-flex items-center px-1 py-0 rounded-sm text-[9px] font-medium mr-1', chipClass]"
+      >{{ chipLabel }}</span>
       <span v-if="message.timestamp" class="font-normal normal-case tracking-normal text-[10px] opacity-60 mr-1.5">{{ formatTime(message.timestamp) }}</span>
       用户
     </div>
@@ -172,6 +187,23 @@ const emit = defineEmits<{
 // ── Action menu state ──
 const showActionMenu = ref(false)
 const actionMenuAnchor = ref<DOMRect | null>(null)
+
+// ── Send mode chip ──
+const chipClass = computed(() => {
+  switch (props.message.sendMode) {
+    case 'steer': return 'bg-warning/15 text-warning'
+    case 'follow-up': return 'bg-accent/15 text-accent'
+    default: return ''
+  }
+})
+
+const chipLabel = computed(() => {
+  switch (props.message.sendMode) {
+    case 'steer': return 'steer'
+    case 'follow-up': return 'follow-up'
+    default: return ''
+  }
+})
 
 // ── Skill display logic ──
 // For real-time messages: content has "/skill:xxx" prefix
