@@ -1,6 +1,6 @@
 import { readFile, readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import { homedir } from 'node:os'
+import { getConfigDir } from '../../pi-config-bridge.js'
 import type { XyzAgentPackageJson, PluginDescriptor, PluginState, PluginContributes, PluginSource } from './plugin-types.js'
 import { checkPluginCompatibility } from './plugin-version-checker.js'
 
@@ -22,7 +22,7 @@ export class PluginRegistry {
 
   async scan(): Promise<PluginDescriptor[]> {
     const dirs: Array<{ path: string; source: PluginSource }> = [
-      { path: join(homedir(), '.xyz-agent', 'plugins'), source: 'external' },
+      { path: join(getConfigDir(), 'plugins'), source: 'external' },
       { path: join(this.projectRoot, '.xyz-agent', 'plugins'), source: 'external' },
       { path: join(this.projectRoot, 'resources', 'plugins'), source: 'built-in' },
     ]

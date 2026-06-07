@@ -19,9 +19,9 @@
 import { execSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, readdirSync, statSync, cpSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { homedir } from 'node:os'
 import type { ExtensionInfo } from '@xyz-agent/shared'
 import { ExtensionResolver } from './extension-resolver.js'
+import { getPiAgentDir } from './pi-config-bridge.js'
 
 const log = {
   info: (...args: unknown[]) => console.log('[extension-service]', ...args),
@@ -40,7 +40,7 @@ const DISCOVERY_TEMP_PREFIX = 'ext-scan-'
 
 /** 获取 xyz-agent 的 agent 配置目录 */
 function getSettingsDir(): string {
-  return join(homedir(), '.xyz-agent', 'pi', 'agent')
+  return getPiAgentDir()
 }
 
 // ── Error classes ─────────────────────────────────────────────────

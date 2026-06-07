@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { homedir } from 'node:os'
 import { app, BrowserWindow, protocol, net } from 'electron'
 import { RuntimeManager } from './runtime-manager.js'
 import { WindowManager, initialWindowState } from './window-manager.js'
@@ -15,6 +16,17 @@ process.stderr.on('error', (err: NodeJS.ErrnoException) => {
 
 // ── 路径 & 模式 ──────────────────────────────────────────────────
 const isDev = !app.isPackaged
+
+// Dev 模式：自动隔离数据目录和端口，防止与 prod 实例冲突
+if (isDev) {
+  process.env.XYZ_AGENT_DATA_DIR = process.env.XYZ_AGENT_DATA_DIR
+    ?? path.join(homedir(), '.xyz-agent-dev')
+  process.env.XYZ_AGENT_PORT_OFFSET = process.env.XYZ_AGENT_PORT_OFFSET ?? '100'
+  console.log(
+    '[main] dev mode: isolated data dir =', process.env.XYZ_AGENT_DATA_DIR,
+    ', port offset =', process.env.XYZ_AGENT_PORT_OFFSET,
+  )
+}
 
 const VITE_DEV_URL = 'http://localhost:1420'
 

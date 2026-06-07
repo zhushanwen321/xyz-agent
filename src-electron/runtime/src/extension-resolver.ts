@@ -14,6 +14,7 @@
  */
 import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
+import { getPiAgentDir } from './pi-config-bridge.js'
 
 const log = {
   info: (...args: unknown[]) => console.log('[extension-resolver]', ...args),
@@ -142,8 +143,7 @@ export class ExtensionResolver {
    */
   scanSettingsExtensions(): ExtensionMap {
     const result: ExtensionMap = new Map()
-    const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? ''
-    const settingsDir = this.options.settingsDir ?? (homeDir ? join(homeDir, '.xyz-agent', 'pi', 'agent') : '')
+    const settingsDir = this.options.settingsDir ?? getPiAgentDir()
     const settingsPath = join(settingsDir, 'settings.json')
     if (!existsSync(settingsPath)) return result
 
@@ -221,10 +221,7 @@ export class ExtensionResolver {
    */
   scanThirdPartyExtensions(): ExtensionMap {
     const result: ExtensionMap = new Map()
-    const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? ''
-    if (!homeDir) return result
-
-    const thirdPartyDir = join(homeDir, '.xyz-agent', 'pi', 'agent', 'extensions')
+    const thirdPartyDir = join(getPiAgentDir(), 'extensions')
     if (!existsSync(thirdPartyDir)) return result
 
     this.scanDirectory(thirdPartyDir, result, 'third-party')

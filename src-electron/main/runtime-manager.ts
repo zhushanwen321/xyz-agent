@@ -31,10 +31,11 @@ export class RuntimeManager {
   private _port: number | null = null
 
   // 端口/重试常量
+  // 端口范围可通过 XYZ_AGENT_PORT_OFFSET 偏移（dev 模式 +100 → 3310-3320）
   // eslint-disable-next-line no-magic-numbers
-  private static readonly PORT_START = 3210
+  private static readonly BASE_PORT_START = 3210
   // eslint-disable-next-line no-magic-numbers
-  private static readonly PORT_END = 3220
+  private static readonly BASE_PORT_END = 3220
   // eslint-disable-next-line no-magic-numbers
   private static readonly KILL_WAIT_MS = 200
   // eslint-disable-next-line no-magic-numbers
@@ -115,12 +116,27 @@ export class RuntimeManager {
     }
   }
 
+  /** 获取端口偏移（默认 0，dev 模式 +100） */
+  private getPortOffset(): number {
+    return parseInt(process.env.XYZ_AGENT_PORT_OFFSET ?? '0', 10) || 0
+  }
+
+  /** 获取动态端口范围的起止 */
+  private getPortRange(): { start: number; end: number } {
+    const offset = this.getPortOffset()
+    return {
+      start: RuntimeManager.BASE_PORT_START + offset,
+      end: RuntimeManager.BASE_PORT_END + offset,
+    }
+  }
+
   /**
-   * 在 3210-3220 范围内寻找可用端口。
+   * 在动态端口范围内寻找可用端口（默认 3210-3220，dev 3310-3320）。
    * 如果被占用则尝试 kill stale process，等 300ms 后重试。
    */
   private async findAvailablePort(): Promise<number> {
-    for (let port = RuntimeManager.PORT_START; port <= RuntimeManager.PORT_END; port++) {
+    const { start, end } = this.getPortRange()
+    for (let port = start; port <= end; port++) {
       const inUse = await this.isPortInUse(port)
       if (!inUse) return port
 
@@ -131,7 +147,7 @@ export class RuntimeManager {
       const stillInUse = await this.isPortInUse(port)
       if (!stillInUse) return port
     }
-    throw new Error('No available port in range 3210-3220')
+    throw new Error(`No available port in range ${start}-${end}`)
   }
 
   private isPortInUse(port: number, timeoutMs = RuntimeManager.CONNECT_TIMEOUT_MS): Promise<boolean> {
@@ -148,12 +164,12 @@ export class RuntimeManager {
     })
   }
 
-  /** 将端口写入 ~/.xyz-agent/runtime.port，供 cold-start 场景发现 */
+  /** 将端口写入 \$XYZ_AGENT_DATA_DIR/runtime.port（默认 ~/.xyz-agent/runtime.port） */
   private writePortFile(port: number): void {
     try {
-      const dir = path.join(homedir(), '.xyz-agent')
-      mkdirSync(dir, { recursive: true })
-      writeFileSync(path.join(dir, 'runtime.port'), String(port))
+      const dataDir = process.env.XYZ_AGENT_DATA_DIR ?? path.join(homedir(), '.xyz-agent')
+      mkdirSync(dataDir, { recursive: true })
+      writeFileSync(path.join(dataDir, 'runtime.port'), String(port))
     // eslint-disable-next-line taste/no-silent-catch -- 端口文件非关键，失败不阻塞主流程
     } catch (err) {
       console.error('[runtime] Failed to write port file:', err)
@@ -236,6 +252,9 @@ export class RuntimeManager {
       env: buildSafeEnv({
         ELECTRON_RUN_AS_NODE: app.isPackaged ? '1' : undefined,
         XYZ_AGENT_PACKAGED: app.isPackaged ? '1' : undefined,
+        // 透传实例隔离 env var，使 runtime 子进程使用隔离的数据目录
+        XYZ_AGENT_DATA_DIR: process.env.XYZ_AGENT_DATA_DIR,
+        XYZ_AGENT_PORT_OFFSET: process.env.XYZ_AGENT_PORT_OFFSET,
       }),
     }
     this.child = spawn(cmd, args, spawnOptions)

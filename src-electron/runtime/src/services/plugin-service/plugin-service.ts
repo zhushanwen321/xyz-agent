@@ -5,6 +5,7 @@ import type { IPluginService } from '../../interfaces.js'
 import type { IMessageBroker } from '../../interfaces.js'
 import { PluginRegistry } from './plugin-registry.js'
 import { PluginStorage, loadSessionData, deleteSessionData } from './plugin-storage.js'
+import { getConfigDir } from '../../pi-config-bridge.js'
 import { flushSessionData, flushSessionDataForSession, startFlushTimer, stopFlushTimer } from './session-data-flush.js'
 import { PluginRpcServer } from './plugin-rpc-server.js'
 import { PluginHost } from './plugin-host.js'
@@ -12,7 +13,6 @@ import { PluginActivator } from './plugin-activator.js'
 import { registerAllRpcMethods } from './plugin-rpc-setup.js'
 import { PluginInstaller, type InstallResult } from './plugin-installer.js'
 import { handleBridgeToolExecute, handleBridgeEvent, handleBridgeIntercept } from './bridge-interop.js'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { readdir } from 'node:fs/promises'
 
@@ -77,7 +77,7 @@ export class PluginService implements IPluginService {
     this.sessionDataSize.delete(sessionId)
 
     // Also delete from disk
-    void deleteSessionData(join(homedir(), '.xyz-agent'), sessionId).catch(() => {})
+    void deleteSessionData(getConfigDir(), sessionId).catch(() => {})
   }
 
   constructor(registry: PluginRegistry, broker: IMessageBroker, deps?: IPluginServiceDeps) {
@@ -109,9 +109,7 @@ export class PluginService implements IPluginService {
     this.activator.registerDescriptors(descriptors)
 
     // 2. 初始化存储
-    const { homedir } = await import('node:os')
-    const { join } = await import('node:path')
-    const baseDir = join(homedir(), '.xyz-agent')
+    const baseDir = getConfigDir()
     await this.storage.init(baseDir, process.cwd())
 
     // 3. 注册 RPC 方法
@@ -182,12 +180,12 @@ export class PluginService implements IPluginService {
 
     // 8b. Restore sessionData from disk
     try {
-      const sessionDataDir = join(homedir(), '.xyz-agent', 'session-data')
+      const sessionDataDir = join(getConfigDir(), 'session-data')
       const files = await readdir(sessionDataDir)
       for (const file of files) {
         if (file.endsWith('.json')) {
           const sessionId = file.replace('.json', '')
-          const data = await loadSessionData(join(homedir(), '.xyz-agent'), sessionId)
+          const data = await loadSessionData(getConfigDir(), sessionId)
           if (data.size > 0) {
             this.sessionDataCache.set(sessionId, data)
           }

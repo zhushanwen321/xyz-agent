@@ -12,8 +12,8 @@
 
 import type { PluginRegistry } from './plugin-registry.js'
 import { PermissionStorage } from './plugin-permission-storage.js'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { getConfigDir } from '../../pi-config-bridge.js'
 
 export class PluginPermissionChecker {
   private registry: PluginRegistry
@@ -23,7 +23,7 @@ export class PluginPermissionChecker {
   constructor(registry: PluginRegistry, storage?: PermissionStorage) {
     this.registry = registry
     this.storage = storage ?? new PermissionStorage(
-      join(homedir(), '.xyz-agent', 'plugins'),
+      join(getConfigDir(), 'plugins'),
     )
   }
 

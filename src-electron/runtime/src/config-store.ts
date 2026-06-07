@@ -1,11 +1,15 @@
 import { readFileSync, mkdirSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { homedir } from 'node:os'
 import { atomicWrite } from './scanner-base.js'
-import { getDefaultModel as getPiDefaultModel } from './pi-config-bridge.js'
+import { getDefaultModel as getPiDefaultModel, getConfigDir } from './pi-config-bridge.js'
 
-const CONFIG_DIR = join(homedir(), '.xyz-agent')
-const CONFIG_PATH = join(CONFIG_DIR, 'config.json')
+function configDir(): string {
+  return getConfigDir()
+}
+
+function configPath(): string {
+  return join(configDir(), 'config.json')
+}
 
 export interface AppConfig {
   defaults: {
@@ -24,8 +28,9 @@ const DEFAULTS: Readonly<AppConfig> = {
 
 export function loadConfig(): AppConfig {
   try {
-    if (existsSync(CONFIG_PATH)) {
-      const raw = readFileSync(CONFIG_PATH, 'utf-8')
+    const cp = configPath()
+    if (existsSync(cp)) {
+      const raw = readFileSync(cp, 'utf-8')
       const parsed = JSON.parse(raw)
       if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
         console.error('[config] config.json is not a valid object, using defaults')
@@ -48,8 +53,9 @@ const JSON_INDENT = 2
 
 export function saveConfig(config: AppConfig): void {
   try {
-    if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true })
-    atomicWrite(CONFIG_PATH, JSON.stringify(config, null, JSON_INDENT))
+    const cd = configDir()
+    if (!existsSync(cd)) mkdirSync(cd, { recursive: true })
+    atomicWrite(configPath(), JSON.stringify(config, null, JSON_INDENT))
   // eslint-disable-next-line taste/no-silent-catch -- intentional: save failure is best-effort
   } catch (e) {
     console.error('[config] save error:', e)
