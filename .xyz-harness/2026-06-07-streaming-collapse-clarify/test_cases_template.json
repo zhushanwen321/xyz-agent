@@ -1,0 +1,70 @@
+{
+  "test_cases": [
+    {
+      "id": "TC-1-01",
+      "type": "manual",
+      "title": "compactStreaming 关闭时聊天行为完全不变",
+      "steps": ["关闭 compactStreaming 开关", "发送消息触发 AI 回复（含 thinking + toolCall）", "验证消息以 section 方式渲染（ThinkingBlock + ToolCallCard 在 AssistantSection 内）"]
+    },
+    {
+      "id": "TC-1-02",
+      "type": "manual",
+      "title": "compactStreaming 开启时 completed 消息显示 summary bar",
+      "steps": ["开启 compactStreaming", "等待 AI 回复完成", "验证 completed 消息显示 summary bar（过程标签 + chips）而非 section 结构"]
+    },
+    {
+      "id": "TC-2-01",
+      "type": "manual",
+      "title": "点击 chip 展开操作行",
+      "steps": ["开启 compactStreaming", "等待含多个 toolCall 类型的 completed 消息", "点击一个 chip", "验证该类型所有操作行展开，显示 ToolCallCard/ThinkingBlock"]
+    },
+    {
+      "id": "TC-2-02",
+      "type": "manual",
+      "title": "点击操作行展开完整内容",
+      "steps": ["展开 chip group", "点击某条操作行", "验证展开 ToolCallCard/ThinkingBlock 完整渲染（非纯文本）"]
+    },
+    {
+      "id": "TC-2-03",
+      "type": "manual",
+      "title": "点击 summary bar 空白展开/收起全部",
+      "steps": ["点击 summary bar 空白区域", "验证所有 chip 类型展开", "再次点击", "验证全部收起"]
+    },
+    {
+      "id": "TC-3-01",
+      "type": "manual",
+      "title": "操作行 ToolCallCard 渲染完整 tool 内容",
+      "steps": ["展开一个 toolCall 操作行", "验证 ToolCallCard 组件渲染（含 tool renderer，非纯文本 body）"]
+    },
+    {
+      "id": "TC-3-02",
+      "type": "manual",
+      "title": "autoExpand 设置在操作行内生效",
+      "steps": ["关闭 autoExpandToolCalls", "展开一个 toolCall chip group", "验证操作行内的 ToolCallCard 默认收起"]
+    },
+    {
+      "id": "TC-4-01",
+      "type": "manual",
+      "title": "overflow 就地展开全部操作行",
+      "steps": ["触发一个 toolName 调用超过 8 次的回复", "验证显示前 8 条 + '还有 N 个'", "点击 '还有 N 个'", "验证该类型全部操作行展示"]
+    },
+    {
+      "id": "TC-5-01",
+      "type": "manual",
+      "title": "streaming bubble 展开和收回",
+      "steps": ["开启 compactStreaming", "发送消息", "streaming 中看到紧凑气泡", "点击气泡展开完整消息", "streaming 结束后气泡自动消失", "验证消息切换为 CompactSummaryBar"]
+    },
+    {
+      "id": "TC-5-02",
+      "type": "manual",
+      "title": "streaming bubble 不点击时自动切换",
+      "steps": ["开启 compactStreaming", "发送消息", "不点击 bubble", "streaming 结束", "验证直接切换为 CompactSummaryBar（无 bubble 残留）"]
+    },
+    {
+      "id": "TC-6-01",
+      "type": "manual",
+      "title": "lint 无错误",
+      "steps": ["运行 npm run lint", "验证 0 errors, 0 warnings"]
+    }
+  ]
+}

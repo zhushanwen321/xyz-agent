@@ -1,0 +1,1042 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ChatArea 消息发送 · 设计迭代 v2</title>
+<style>
+/* ── Design System ── */
+:root {
+  --bg: oklch(97% 0.018 70);
+  --surface: oklch(99% 0.008 70);
+  --surface-elevated: oklch(99% 0.01 70);
+  --fg: oklch(22% 0.02 50);
+  --muted: oklch(50% 0.018 50);
+  --border: oklch(90% 0.014 70);
+  --accent: oklch(64% 0.13 28);
+  --accent-light: oklch(92% 0.04 28);
+  --accent-subtle: oklch(96% 0.025 28);
+  --success: oklch(70% 0.18 145);
+  --success-light: oklch(95% 0.06 145);
+  --warning: oklch(78% 0.15 85);
+  --warning-light: oklch(95% 0.06 85);
+  --danger: oklch(62% 0.2 25);
+  --danger-light: oklch(93% 0.06 25);
+  --agent: oklch(60% 0.08 200);
+  --agent-light: oklch(94% 0.03 200);
+
+  --msg-assistant-bg: oklch(98% 0.008 250);
+  --user-bubble-bg: var(--accent-light);
+  --user-bubble-border: oklch(88% 0.04 28);
+  --divider: oklch(85% 0.01 70);
+
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+
+  --font-body: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+  --font-display: 'Tiempos Headline', 'Newsreader', 'Iowan Old Style', Georgia, serif;
+
+  --shadow-xs: 0 1px 6px rgba(0,0,0,0.04);
+  --shadow-sm: 0 2px 12px rgba(0,0,0,0.08);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--fg);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+.demo-container {
+  max-width: 960px;
+  margin: 0 auto;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Header ── */
+.demo-header {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.demo-header__logo {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.demo-header__logo span:first-child { color: var(--fg); }
+.demo-header__logo span:last-child { color: var(--accent); }
+
+/* ── PanelBar ── */
+.demo-panelbar {
+  height: 36px;
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  gap: 8px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  font-size: 12px;
+}
+.demo-panelbar__title { font-weight: 600; color: var(--fg); }
+.demo-panelbar__meta {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  margin-left: auto;
+}
+
+/* ── Messages Area ── */
+.demo-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+}
+
+.turn-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 4px;
+}
+
+/* ── Section Break ── */
+.section-break {
+  height: 1px;
+  background: var(--border);
+  margin: 16px 0 20px;
+  position: relative;
+}
+.section-break__label {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--bg);
+  padding: 0 12px;
+  font-size: 10px;
+  color: var(--muted);
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+/* ── Message Labels ── */
+.msg-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0 0 2px;
+  color: var(--muted);
+}
+.msg-label--user { justify-content: flex-end; }
+.msg-label__time {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+  opacity: 0.6;
+}
+
+/* ── Send mode chips on user messages ── */
+.send-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+  line-height: 1.4;
+  font-family: var(--font-mono);
+}
+.send-chip--steer {
+  background: var(--warning-light);
+  color: var(--warning);
+}
+.send-chip--followup {
+  background: var(--agent-light);
+  color: var(--agent);
+}
+
+/* ── User Bubble ── */
+.user-bubble {
+  padding: 8px 12px;
+  background: var(--user-bubble-bg);
+  border: 1px solid var(--user-bubble-border);
+  border-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-xs);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--fg);
+  max-width: 75%;
+  margin-left: auto;
+}
+
+/* ── Assistant Bubble ── */
+.asst-bubble {
+  background: var(--msg-assistant-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  max-width: 85%;
+}
+
+/* ── Section borders ── */
+.asst-section {
+  padding-left: 12px;
+  position: relative;
+  margin-bottom: 6px;
+}
+.asst-section::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  border-radius: 1px;
+}
+.asst-section--thinking::before { background: var(--accent); }
+.asst-section--tool::before { background: var(--success); }
+.asst-section--text::before { background: var(--agent); }
+.asst-section:last-child { margin-bottom: 0; }
+
+.asst-section__label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--muted);
+  font-weight: 500;
+  margin-bottom: 3px;
+}
+.asst-section__dot {
+  width: 4px; height: 4px;
+  border-radius: 50%;
+}
+.asst-section__dot--thinking { background: var(--accent); }
+.asst-section__dot--tool { background: var(--success); }
+.asst-section__dot--text { background: var(--agent); }
+
+/* ── Thinking Block ── */
+.thinking-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+  font-family: var(--font-body);
+}
+.thinking-toggle__pulse {
+  display: inline-block;
+  width: 5px; height: 10px;
+  background: var(--accent);
+  border-radius: 1px;
+  animation: thinking-pulse 2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@keyframes thinking-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.thinking-toggle__label { color: var(--accent); font-weight: 500; }
+.thinking-toggle__time {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+}
+
+/* ── Tool Call Card ── */
+.tool-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  text-align: left;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
+  width: 100%;
+  font-family: var(--font-body);
+}
+.tool-toggle__spinner {
+  display: inline-block;
+  width: 10px; height: 10px;
+  border: 2px solid var(--accent);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: tool-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes tool-spin {
+  to { transform: rotate(360deg); }
+}
+.tool-toggle__name { font-weight: 600; color: var(--accent); flex-shrink: 0; }
+.tool-toggle__path { color: var(--muted); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-toggle__meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--muted);
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.tool-toggle__time--running { color: var(--accent); opacity: 0.8; }
+
+.tool-progress {
+  height: 1px;
+  background: var(--border);
+  overflow: hidden;
+  margin-left: 15px;
+}
+.tool-progress__bar {
+  height: 100%;
+  width: 30%;
+  background: var(--accent);
+  opacity: 0.7;
+  animation: tool-progress 1.5s ease-in-out infinite;
+}
+@keyframes tool-progress {
+  0%   { transform: translateX(-100%); }
+  50%  { transform: translateX(200%); }
+  100% { transform: translateX(400%); }
+}
+
+.text-content {
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--fg);
+  padding: 2px 0;
+}
+
+/* ── Interrupted marker ── */
+.interrupted-marker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0 0;
+  margin-top: 2px;
+}
+.interrupted-marker__line { flex: 1; height: 1px; background: var(--border); }
+.interrupted-marker__text {
+  font-size: 9px;
+  color: var(--muted);
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   NEW: Global Loading Bar
+   ═══════════════════════════════════════════════════════════════ */
+.global-loading-bar {
+  position: relative;
+  height: 3px;
+  background: var(--border);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.global-loading-bar--idle {
+  height: 0;
+  opacity: 0;
+}
+.global-loading-bar__track {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+.global-loading-bar__fill {
+  position: absolute;
+  top: 0;
+  left: -40%;
+  width: 40%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent 0%, var(--accent) 50%, transparent 100%);
+  animation: loading-sweep 1.8s ease-in-out infinite;
+}
+@keyframes loading-sweep {
+  0%   { left: -40%; }
+  50%  { left: 100%; }
+  100% { left: 100%; }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   NEW: Queue Component (above ChatInput)
+   ═══════════════════════════════════════════════════════════════ */
+.queue-container {
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+}
+.queue-container--empty {
+  height: 0;
+  overflow: hidden;
+  border-top-color: transparent;
+}
+
+/* Inner wrapper: match input box alignment (max-w-[960px] mx-auto px-6) */
+.queue-inner {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+.queue-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 11px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+.queue-header__icon { width: 14px; height: 14px; flex-shrink: 0; opacity: 0.6; }
+.queue-header__count {
+  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--fg);
+}
+.queue-header__label { font-weight: 500; }
+.queue-header__spacer { flex: 1; }
+.queue-header__clear {
+  font-size: 10px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 3px;
+  transition: all 0.12s;
+}
+.queue-header__clear:hover {
+  background: var(--danger-light);
+  color: var(--danger);
+}
+/* i18n hint: "队列" / "Queue", "清除" / "Clear" */
+
+.queue-list {
+  padding: 6px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+/* ── Queue Item ── */
+.queue-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--accent-subtle);
+  border: 1px solid var(--accent-light);
+  border-radius: var(--radius-xs);
+  font-size: 12px;
+  color: var(--fg);
+  transition: all 0.2s ease;
+  position: relative;
+}
+.queue-item--steer {
+  border-color: var(--warning);
+  background: color-mix(in oklch, var(--warning-light) 60%, var(--surface));
+}
+.queue-item--followup {
+  border-color: var(--agent);
+  background: color-mix(in oklch, var(--agent-light) 60%, var(--surface));
+}
+.queue-item--leaving {
+  opacity: 0;
+  transform: translateX(20px);
+}
+
+.queue-item__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+}
+.queue-item__badge--steer {
+  background: var(--warning);
+  color: white;
+}
+.queue-item__badge--followup {
+  background: var(--agent);
+  color: white;
+}
+
+.queue-item__content {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--fg);
+  opacity: 0.85;
+}
+.queue-item__status {
+  font-size: 10px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.queue-item__status-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  animation: pulse 1.8s ease-in-out infinite;
+}
+.queue-item__status-dot--steer { background: var(--warning); }
+.queue-item__status-dot--followup { background: var(--agent); }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* ── Queue Done Banner ── */
+.queue-done {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  font-size: 11px;
+  color: var(--success);
+  background: var(--success-light);
+  flex-shrink: 0;
+}
+.queue-done svg { width: 13px; height: 13px; flex-shrink: 0; }
+
+/* ═══════════════════════════════════════════════════════════════
+   Input Area
+   ═══════════════════════════════════════════════════════════════ */
+.demo-input {
+  padding: 0 24px 16px;
+  flex-shrink: 0;
+}
+
+.input-container {
+  background: var(--surface);
+  border: 2px solid transparent;
+  border-radius: var(--radius-xs);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  box-shadow: var(--shadow-xs);
+}
+.input-container:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-sm);
+}
+
+.input-textarea {
+  padding: 10px 14px 4px;
+}
+.input-textarea__field {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  max-height: 140px;
+  border: none;
+  background: transparent;
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--fg);
+  resize: none;
+  outline: none;
+  padding: 0;
+}
+.input-textarea__field::placeholder { color: var(--muted); }
+
+/* ═══════════════════════════════════════════════════════════════
+   Input Toolbar + Mode Switcher (REDESIGNED)
+   ═══════════════════════════════════════════════════════════════ */
+.input-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px 8px;
+}
+
+/* ── Mode Switcher ── */
+.mode-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--bg);
+  border-radius: var(--radius-xs);
+  padding: 1px;
+  border: 1px solid var(--border);
+}
+.mode-btn {
+  padding: 2px 8px;
+  border: none;
+  background: transparent;
+  border-radius: 3px;
+  font-family: var(--font-body);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.12s ease;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.mode-btn:hover { color: var(--fg); background: var(--surface); }
+.mode-btn--active {
+  background: var(--accent);
+  color: white;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+.mode-btn--active:hover {
+  background: color-mix(in oklch, var(--accent) 90%, black);
+  color: white;
+}
+.mode-btn__hint {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  opacity: 0.5;
+  margin-left: 2px;
+}
+
+/* ── Toolbar buttons ── */
+.toolbar-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 6px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-xs);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.12s ease;
+}
+.toolbar-item:hover { background: var(--accent-light); color: var(--accent); }
+
+.thinking-bars {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 1.5px;
+  height: 12px;
+}
+.thinking-bars__bar { display: block; width: 3px; border-radius: 0.5px; transition: background 0.15s; }
+.thinking-bars__bar--active { background: var(--accent); }
+.thinking-bars__bar--inactive { background: var(--border); }
+
+.context-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.context-bar__track { width: 40px; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
+.context-bar__fill { height: 100%; border-radius: 2px; background: var(--accent); transition: width 0.3s ease; }
+.context-bar__label { font-family: var(--font-mono); font-size: 10px; color: var(--muted); }
+
+.token-stats {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px;
+}
+.token-stats__in { color: var(--accent); }
+.token-stats__out { color: var(--warning); }
+
+.toolbar-spacer { flex: 1; }
+
+/* ── Send button ── */
+.send-btn {
+  width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  border: none; border-radius: var(--radius-xs);
+  background: var(--accent); color: white;
+  cursor: pointer; transition: opacity 0.12s;
+  flex-shrink: 0;
+}
+.send-btn:hover { opacity: 0.88; }
+.send-btn svg { width: 14px; height: 14px; }
+
+/* ── Footer i18n hints ── */
+.footer-legend {
+  padding: 12px 24px 20px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+.footer-legend__title {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 8px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.footer-legend__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 20px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.footer-legend__item { display: flex; align-items: center; gap: 6px; }
+.footer-legend__tag {
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: white;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .demo-messages { padding: 16px 12px 8px; }
+  .demo-input { padding: 0 12px 12px; }
+  .queue-list { padding: 6px 12px; }
+  .queue-header { padding: 6px 12px; }
+  .footer-legend__grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<div class="demo-container">
+  <!-- Header -->
+  <header class="demo-header">
+    <div class="demo-header__logo"><span>xyz</span><span>-agent</span></div>
+  </header>
+
+  <!-- PanelBar -->
+  <div class="demo-panelbar">
+    <span class="demo-panelbar__title">主线对话</span>
+    <span class="demo-panelbar__meta">claude-sonnet-4-20250514 @ router-openai</span>
+  </div>
+
+  <!-- ─────────────────────── Messages Area ─────────────────────── -->
+  <div class="demo-messages">
+
+    <!-- === Turn 1: Normal send → AI response === -->
+    <div class="turn-group">
+      <div class="msg-label msg-label--user">
+        <span class="msg-label__time">14:23</span>
+        用户
+      </div>
+      <div class="user-bubble">
+        帮我分析一下这个项目的架构，看看有哪些可以优化的地方。
+      </div>
+
+      <div class="msg-label">
+        助手
+        <span class="msg-label__time">14:23</span>
+      </div>
+      <div class="asst-bubble">
+        <div class="asst-section asst-section--thinking">
+          <div class="asst-section__label"><span class="asst-section__dot asst-section__dot--thinking"></span></div>
+          <button class="thinking-toggle">
+            <span class="thinking-toggle__pulse"></span>
+            <span class="thinking-toggle__label">Thinking</span>
+            <span class="thinking-toggle__time">· 1.2s</span>
+          </button>
+        </div>
+        <div class="asst-section asst-section--tool">
+          <div class="asst-section__label"><span class="asst-section__dot asst-section__dot--tool"></span>read · write</div>
+          <button class="tool-toggle">
+            <span class="tool-toggle__spinner"></span>
+            <span class="tool-toggle__name">read</span>
+            <span class="tool-toggle__path">src/App.vue</span>
+            <span class="tool-toggle__meta"><span class="tool-toggle__time--running">0.8s</span></span>
+          </button>
+          <div class="tool-progress"><div class="tool-progress__bar"></div></div>
+        </div>
+        <div class="asst-section asst-section--text">
+          <div class="asst-section__label"><span class="asst-section__dot asst-section__dot--text"></span>回答</div>
+          <div class="text-content">
+            这个项目使用了 Vue 3 + Pinia 的状态管理方案，整体架构清晰...
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- === Turn 2: Steer === -->
+    <div class="section-break"><span class="section-break__label" data-i18n="section.steer">steer 模式 → 中断 AI · 立即处理</span></div>
+
+    <div class="turn-group">
+      <div class="msg-label msg-label--user">
+        <span class="send-chip send-chip--steer" data-i18n="chip.steer">steer</span>
+        <span class="msg-label__time">14:25</span>
+        用户
+      </div>
+      <div class="user-bubble">
+        等一下，先看看 src/stores/ 下面的文件。
+      </div>
+
+      <!-- Interrupted assistant -->
+      <div class="msg-label">助手 <span class="msg-label__time">14:25</span></div>
+      <div class="asst-bubble" style="opacity: 0.65;">
+        <div class="asst-section asst-section--text">
+          <div class="text-content">这个项目使用了 Vue 3 + Pinia 的状态管理方案...</div>
+        </div>
+        <div class="interrupted-marker">
+          <span class="interrupted-marker__line"></span>
+          <span class="interrupted-marker__text" data-i18n="interrupted">已中断</span>
+          <span class="interrupted-marker__line"></span>
+        </div>
+      </div>
+
+      <!-- New AI response after steer -->
+      <div class="asst-bubble">
+        <div class="asst-section asst-section--thinking">
+          <div class="asst-section__label"><span class="asst-section__dot asst-section__dot--thinking"></span></div>
+          <button class="thinking-toggle">
+            <span class="thinking-toggle__pulse"></span>
+            <span class="thinking-toggle__label">Thinking</span>
+            <span class="thinking-toggle__time">· 0.6s</span>
+          </button>
+        </div>
+        <div class="asst-section asst-section--text">
+          <div class="asst-section__label"><span class="asst-section__dot asst-section__dot--text"></span>回答</div>
+          <div class="text-content">好的，让我看看 src/stores/ 下的文件。来看 chat.ts...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- === Turn 3: Follow-up === -->
+    <div class="section-break"><span class="section-break__label" data-i18n="section.followup">follow-up 模式 → 排队等待 · 不打断 AI</span></div>
+
+    <div class="turn-group">
+      <div class="msg-label msg-label--user">
+        <span class="send-chip send-chip--followup" data-i18n="chip.followup">follow-up</span>
+        <span class="msg-label__time">14:26</span>
+        用户
+      </div>
+      <div class="user-bubble">
+        然后也看看 tools/ 目录下有没有什么脚本可以复用。
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════
+       GLOBAL LOADING BAR
+       ══════════════════════════════════════════════════════════════ -->
+  <div class="global-loading-bar">
+    <div class="global-loading-bar__track">
+      <div class="global-loading-bar__fill"></div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════
+       QUEUE COMPONENT (above ChatInput)
+       ══════════════════════════════════════════════════════════════ -->
+
+  <!-- Queue: has pending items -->
+  <div class="queue-container">
+    <div class="queue-inner">
+    <div class="queue-header">
+      <svg class="queue-header__icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="2" width="12" height="12" rx="2"/>
+        <line x1="5" y1="6" x2="11" y2="6"/>
+        <line x1="5" y1="9" x2="9" y2="9"/>
+      </svg>
+      <span class="queue-header__count">2</span>
+      <span class="queue-header__label" data-i18n="queue.pending">条消息待处理</span>
+      <span class="queue-header__spacer"></span>
+      <span class="queue-header__clear" data-i18n="queue.clear">清除</span>
+    </div>
+    <div class="queue-list">
+      <!-- Queue Item: Follow-up (queued first) -->
+      <div class="queue-item queue-item--followup">
+        <span class="queue-item__badge queue-item__badge--followup" data-i18n="queue.badge.followup">follow-up</span>
+        <span class="queue-item__content">然后也看看 tools/ 目录下有没有什么脚本可以复用。</span>
+        <span class="queue-item__status">
+          <span class="queue-item__status-dot queue-item__status-dot--followup"></span>
+          <span data-i18n="queue.waiting">等待中</span>
+        </span>
+      </div>
+
+      <!-- Queue Item: Steer (interrupt pending) -->
+      <div class="queue-item queue-item--steer">
+        <span class="queue-item__badge queue-item__badge--steer" data-i18n="queue.badge.steer">steer</span>
+        <span class="queue-item__content">等一下，先检查一下 vite.config.ts 的配置是否正确。</span>
+        <span class="queue-item__status">
+          <span class="queue-item__status-dot queue-item__status-dot--steer"></span>
+          <span data-i18n="queue.pending">待处理</span>
+        </span>
+      </div>
+
+      <!-- WidgetDock placeholder (integrated with queue area) -->
+      <div style="padding: 2px 0 0; display: flex; gap: 4px; justify-content: flex-end;">
+        <span style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 100px; font-size: 10px; color: var(--muted);">
+          <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2h8a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V4a2 2 0 012-2z"/><path d="M8 2v12"/><path d="M2 8h12"/></svg>
+          Plugin Widget
+        </span>
+      </div>
+    </div>
+    </div>
+  </div>
+
+  <!-- Queue: done state (alternate, shown when all processed) -->
+  <div class="queue-container" style="display: none;">
+    <div class="queue-inner">
+    <div class="queue-done">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5L6.5 12L13 4"/></svg>
+    <span data-i18n="queue.done">队列已完成 · 2 条已处理</span>
+    </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════
+       ChatInput
+       ══════════════════════════════════════════════════════════════ -->
+  <div class="demo-input">
+    <div class="input-container">
+      <div class="input-textarea">
+        <textarea class="input-textarea__field" placeholder="输入消息… (Enter 发送, Shift+Enter 换行, / 命令)" rows="2">检查 vite.config.ts 的代理配置</textarea>
+      </div>
+
+      <div class="input-toolbar">
+        <!-- Mode Switcher: Send | Steer | Follow-up  -->
+        <div class="mode-switcher">
+          <button class="mode-btn mode-btn--active" title="普通发送 (Enter)" data-i18n="mode.send">
+            Send <span class="mode-btn__hint">⏎</span>
+          </button>
+          <button class="mode-btn" title="中断 AI 并立即执行 (Ctrl+Enter)" data-i18n="mode.steer">
+            Steer <span class="mode-btn__hint">⌘⏎</span>
+          </button>
+          <button class="mode-btn" title="排队稍后执行 (Alt+Enter)" data-i18n="mode.followup">
+            Follow-up <span class="mode-btn__hint">⌥⏎</span>
+          </button>
+        </div>
+
+        <!-- Thinking level -->
+        <button class="toolbar-item">
+          <span class="thinking-bars">
+            <span class="thinking-bars__bar thinking-bars__bar--active" style="height: 4px"></span>
+            <span class="thinking-bars__bar thinking-bars__bar--active" style="height: 5.5px"></span>
+            <span class="thinking-bars__bar thinking-bars__bar--active" style="height: 7px"></span>
+            <span class="thinking-bars__bar thinking-bars__bar--inactive" style="height: 8.5px"></span>
+          </span>
+          high
+        </button>
+
+        <!-- Context bar -->
+        <span class="context-bar">
+          <span class="context-bar__track"><span class="context-bar__fill" style="width: 32%"></span></span>
+          <span class="context-bar__label">32%</span>
+        </span>
+
+        <!-- Token stats -->
+        <span class="token-stats">
+          <span class="token-stats__in">↑</span> 12.4k
+          <span style="opacity: 0.4;">/</span>
+          <span class="token-stats__out">↓</span> 3.2k
+        </span>
+
+        <span class="toolbar-spacer"></span>
+
+        <!-- Send button -->
+        <button class="send-btn" title="发送 (Enter)">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V3M4 7l4-4 4 4"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════
+       Design System Legend
+       ══════════════════════════════════════════════════════════════ -->
+  <div class="footer-legend">
+    <div class="footer-legend__title">设计方案 · 改动标注</div>
+    <div class="footer-legend__grid">
+      <div class="footer-legend__item">
+        <span class="footer-legend__tag" style="background: var(--accent);">NEW</span>
+        <span>Global Loading Bar：2px 渐变条，AI 执行时左右滚动</span>
+      </div>
+      <div class="footer-legend__item">
+        <span class="footer-legend__tag" style="background: var(--accent);">NEW</span>
+        <span>Queue Component：固定区域展示 pi 端排队的消息</span>
+      </div>
+      <div class="footer-legend__item">
+        <span class="footer-legend__tag" style="background: var(--accent);">NEW</span>
+        <span>Mode Switcher：Send / Steer / Follow-up 三段式选择</span>
+      </div>
+      <div class="footer-legend__item">
+        <span class="footer-legend__tag" style="background: var(--accent);">NEW</span>
+        <span>Send Chips：用户气泡上的 <span class="send-chip send-chip--steer">steer</span> / <span class="send-chip send-chip--followup">follow-up</span> 标识</span>
+      </div>
+      <div class="footer-legend__item">
+        <span class="footer-legend__tag" style="background: var(--accent);">i18n</span>
+        <span>所有标签标注 <code>data-i18n</code> 属性，支持翻译</span>
+      </div>
+      <div class="footer-legend__item">
+        <span class="footer-legend__tag" style="background: var(--accent);">CHG</span>
+        <span>WidgetDock 与 Queue 同区域，queue 有消息时置顶</span>
+      </div>
+    </div>
+
+    <!-- i18n Reference Table -->
+    <div style="margin-top: 12px; padding: 8px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-xs); font-size: 10px; color: var(--muted);">
+      <div style="font-weight: 600; margin-bottom: 4px;">i18n 参考映射</div>
+      <table style="width: 100%; border-collapse: collapse;">
+        <tr><td style="padding: 2px 4px;">mode.send</td><td style="padding: 2px 4px;">→</td><td style="padding: 2px 4px;">发送 / Send</td></tr>
+        <tr><td style="padding: 2px 4px;">mode.steer</td><td style="padding: 2px 4px;">→</td><td style="padding: 2px 4px;">中断发送 / Steer</td></tr>
+        <tr><td style="padding: 2px 4px;">mode.followup</td><td style="padding: 2px 4px;">→</td><td style="padding: 2px 4px;">排队 / Follow-up</td></tr>
+        <tr><td style="padding: 2px 4px;">chip.steer</td><td style="padding: 2px 4px;">→</td><td style="padding: 2px 4px;">中断 / steer</td></tr>
+        <tr><td style="padding: 2px 4px;">chip.followup</td><td style="padding: 2px 4px;">→</td><td style="padding: 2px 4px;">排队 / follow-up</td></tr>
+        <tr><td style="padding: 2px 4px;">queue.pending</td><td style="padding: 2px 4px;">→</td><td style="padding: 2px 4px;">N 条消息待处理</td></tr>
+        <tr><td style="padding: 2px 4px;">queue.badge.steer</td><td style="padding: 2px 4px;">→</td><td style="padding: 2px 4px;">steer</td></tr>
+        <tr><td style="padding: 2px 4px;">queue.badge.followup</td><td style="padding: 2px 4px;">→</td><td style="padding: 2px 4px;">follow-up</td></tr>
+        <tr><td style="padding: 2px 4px;">queue.done</td><td style="padding: 2px 4px;">→</td><td style="padding: 2px 4px;">队列已完成</td></tr>
+      </table>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
