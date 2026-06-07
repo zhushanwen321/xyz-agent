@@ -382,7 +382,9 @@ export class ExtensionService {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       // Cleanup temp dir on failure
-      try { rmSync(tempDir, { recursive: true, force: true }) } catch { /* ignore */ }
+      try { rmSync(tempDir, { recursive: true, force: true }) } catch (cleanupErr) {
+        log.warn('[extension-service] failed to cleanup temp dir:', cleanupErr)
+      }
       throw new Error(`git clone failed: ${msg}`)
     }
 

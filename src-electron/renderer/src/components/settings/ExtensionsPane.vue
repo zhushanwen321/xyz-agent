@@ -180,17 +180,15 @@ onUnmounted(() => {
       <div v-if="showInstall" class="px-4 py-3 border-t border-[var(--divider)] bg-[var(--section-bg)]">
         <!-- Tab bar -->
         <div class="flex gap-1 mb-3">
-          <button
+          <Button
             v-for="tab in installTabs"
             :key="tab.key"
-            class="text-[11px] px-2.5 py-1 cursor-pointer transition-colors duration-100"
-            :class="installTab === tab.key
-              ? 'bg-[var(--section-bg)] border border-border rounded-sm font-medium text-[var(--fg)]'
-              : 'text-muted hover:text-[var(--fg)]'"
+            :variant="installTab === tab.key ? 'secondary' : 'ghost'"
+            size="xs"
             @click="installTab = tab.key"
           >
             {{ tab.label }}
-          </button>
+          </Button>
         </div>
 
         <!-- npm tab -->

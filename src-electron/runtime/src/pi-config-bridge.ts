@@ -122,10 +122,12 @@ function migrateToPiSubdir(): void {
           if (remaining.length === 0) {
             rmdirSync(oldSessionsDir)
           }
+        // eslint-disable-next-line taste/no-silent-catch -- migration cleanup: error logged, non-critical
         } catch (e) {
           console.warn('[config-bridge] failed to remove old sessions dir:', e instanceof Error ? e.message : e)
         }
       }
+      // eslint-disable-next-line taste/no-silent-catch -- migration: error logged, non-critical
     } catch (e) {
       console.warn('[config-bridge] failed to migrate sessions dir:', e instanceof Error ? e.message : e)
     }
@@ -153,10 +155,12 @@ function migrateToPiSubdir(): void {
           if (remaining.length === 0) {
             rmdirSync(oldAgentsDir)
           }
+        // eslint-disable-next-line taste/no-silent-catch -- migration cleanup: error logged, non-critical
         } catch (e) {
           console.warn('[config-bridge] failed to remove old agents dir:', e instanceof Error ? e.message : e)
         }
       }
+      // eslint-disable-next-line taste/no-silent-catch -- migration: error logged, non-critical
     } catch (e) {
       console.warn('[config-bridge] failed to migrate agents dir:', e instanceof Error ? e.message : e)
     }
@@ -172,6 +176,7 @@ function migrateToPiSubdir(): void {
         try {
           cpSync(src, dest, { recursive: true })
           console.log(`[config-bridge] synced bundled ${subDir} → ${dest}`)
+        // eslint-disable-next-line taste/no-silent-catch -- bundled sync: error logged, non-critical
         } catch (e) {
           console.error(`[config-bridge] failed to sync bundled ${subDir}:`, e)
         }

@@ -1,3 +1,5 @@
+/* eslint max-lines: ["warn", {"max": 600, "skipBlankLines": true, "skipComments": true}] */
+
 /**
  * SidecarServer — pure Transport layer.
  * Routes ClientMessages to Service instances and pushes
