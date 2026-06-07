@@ -4,7 +4,7 @@
       <span class="compact-bar__label">过程</span>
       <div class="compact-bar__chips" @click.stop>
         <div
-          v-for="(chip, ci) in chips"
+          v-for="(chip, ci) in visibleChips"
           :key="ci"
           :class="['compact-chip', `compact-chip--${chip.variant}`, { 'compact-chip--active': expanded.has(ci) }]"
           @click="$emit('toggle-group', ci)"
@@ -13,6 +13,14 @@
           {{ chip.label }}
           <span v-if="chip.count > 0" class="compact-chip__count">{{ chip.count }}</span>
         </div>
+        <!-- Chip type overflow: >4 types -->
+        <div
+          v-if="chipOverflowCount > 0 && !chipOverflowExpanded"
+          class="compact-chip compact-chip--overflow"
+          @click.stop="chipOverflowExpanded = true"
+        >
+          +{{ chipOverflowCount }} more
+        </div>
       </div>
       <svg class="compact-bar__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
     </div>
@@ -20,14 +28,14 @@
     <!-- Block groups for expanded chips -->
     <div v-if="expanded.size > 0" class="compact-bar__groups">
       <div
-        v-for="(chip, ci) in chips"
+        v-for="(chip, ci) in visibleChips"
         :key="ci"
         v-show="expanded.has(ci)"
         class="compact-group"
       >
         <!-- Individual items for this group -->
         <div
-          v-for="(item, ii) in chip.items"
+          v-for="(item, ii) in visibleItems(chip, ci)"
           :key="ii"
           class="compact-op"
           @click.stop="item.expanded = !item.expanded"
@@ -39,11 +47,27 @@
             <span class="compact-op__time">{{ item.timeDisplay }}</span>
           </div>
           <div v-if="item.expanded" class="compact-op__body">
-            <div class="compact-op__body-inner">{{ item.body }}</div>
+            <!-- Thinking block: use ThinkingBlock component -->
+            <ThinkingBlock
+              v-if="chip.type === 'thinking'"
+              :text="resolveThinkingText(item.refId)"
+              :start-time="resolveThinking(item.refId)?.startTime"
+              :end-time="resolveThinking(item.refId)?.endTime"
+            />
+            <!-- Tool call: use ToolCallCard component -->
+            <ToolCallCard
+              v-else
+              :tool-call="resolveToolCall(item.refId)!"
+            />
           </div>
         </div>
-        <div v-if="chip.overflow > 0" class="compact-op__overflow">
-          还有 {{ chip.overflow }} 个（为演示展示前 {{ chip.items.length }} 个）
+        <!-- Item overflow: >8 items per type, click to expand all -->
+        <div
+          v-if="chip.overflow > 0 && !itemOverflowExpanded.has(ci)"
+          class="compact-op__overflow"
+          @click.stop="expandItemAll(ci)"
+        >
+          还有 {{ chip.overflow }} 个
         </div>
       </div>
     </div>
@@ -51,8 +75,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
-import type { Message } from '@xyz-agent/shared'
+import { computed, reactive, ref } from 'vue'
+import type { Message, ThinkingBlock as ThinkingBlockType, ToolCall } from '@xyz-agent/shared'
+import ThinkingBlock from './ThinkingBlock.vue'
+import ToolCallCard from './ToolCallCard.vue'
 
 // ── Constants ──
 const DECISECOND_MS = 100
@@ -60,11 +86,12 @@ const MS_PER_SECOND = 1000
 const SECONDS_PER_MINUTE = 60
 const PATH_MAX_LEN = 40
 const MAX_VISIBLE_ITEMS = 8
+const MAX_VISIBLE_CHIPS = 4
 
 export interface CompactChipItem {
+  refId: string
   path: string
   timeDisplay: string
-  body: string
   expanded: boolean
 }
 
@@ -78,7 +105,7 @@ export interface CompactChip {
   items: CompactChipItem[]
 }
 
-defineProps<{
+const props = defineProps<{
   message: Message
   expanded: Set<number>
 }>()
@@ -88,8 +115,46 @@ defineEmits<{
   'toggle-all': []
 }>()
 
+// ── Data resolvers (find original ThinkingBlock/ToolCall by refId) ──
+
+function resolveThinking(refId: string): ThinkingBlockType | undefined {
+  return props.message.thinking?.find(b => b.id === refId)
+}
+
+function resolveThinkingText(refId: string): string {
+  return resolveThinking(refId)?.content ?? ''
+}
+
+function resolveToolCall(refId: string): ToolCall | undefined {
+  return props.message.toolCalls?.find(tc => tc.id === refId)
+}
+
 // ── Reactive chips from message ──
-const chips = computed<CompactChip[]>(() => chipData(message))
+const chips = computed<CompactChip[]>(() => chipData(props.message))
+
+// ── Chip type overflow (>4 types → "+N more") ──
+const chipOverflowExpanded = ref(false)
+
+const visibleChips = computed<CompactChip[]>(() => {
+  if (chipOverflowExpanded.value || chips.value.length <= MAX_VISIBLE_CHIPS) return chips.value
+  return chips.value.slice(0, MAX_VISIBLE_CHIPS)
+})
+
+const chipOverflowCount = computed(() =>
+  chips.value.length > MAX_VISIBLE_CHIPS ? chips.value.length - MAX_VISIBLE_CHIPS : 0
+)
+
+// ── Item overflow (>8 items per type → "还有 N 个", click to expand all) ──
+const itemOverflowExpanded = reactive(new Set<number>())
+
+function expandItemAll(index: number) {
+  itemOverflowExpanded.add(index)
+}
+
+function visibleItems(chip: CompactChip, index: number): CompactChipItem[] {
+  if (itemOverflowExpanded.has(index)) return chip.items
+  return chip.items.slice(0, MAX_VISIBLE_ITEMS)
+}
 
 // ── Helpers ──
 
@@ -124,9 +189,9 @@ function chipData(msg: Message): CompactChip[] {
   // Thinking block group
   if (msg.thinking?.length) {
     const items: CompactChipItem[] = msg.thinking.map(th => ({
+      refId: th.id,
       path: '',
       timeDisplay: th.startTime && th.endTime ? formatTime(th.endTime - th.startTime) : '',
-      body: th.content || '(thinking content)',
       expanded: false,
     }))
     result.push({
@@ -151,10 +216,11 @@ function chipData(msg: Message): CompactChip[] {
   }
 
   for (const [name, calls] of toolGroups) {
-    const items: CompactChipItem[] = calls.slice(0, MAX_VISIBLE_ITEMS).map(tc => ({
+    // All items stored, overflow controls visibility
+    const items: CompactChipItem[] = calls.map(tc => ({
+      refId: tc.id,
       path: toolPath(tc.input),
       timeDisplay: tc.startTime && tc.endTime ? formatTime(tc.endTime - tc.startTime) : '',
-      body: tc.output ?? '(no output)',
       expanded: false,
     }))
     const overflow = Math.max(0, calls.length - MAX_VISIBLE_ITEMS)
@@ -249,6 +315,15 @@ function chipData(msg: Message): CompactChip[] {
 .compact-chip--tool.compact-chip--active {
   background: color-mix(in oklch, var(--success) 20%, transparent) !important;
 }
+.compact-chip--overflow {
+  background: var(--bg);
+  color: var(--muted-dim, var(--muted));
+  border-color: var(--border);
+}
+.compact-chip--overflow:hover {
+  background: var(--accent-light);
+  color: var(--muted);
+}
 
 .compact-chip__dot {
   width: 4px;
@@ -333,17 +408,9 @@ function chipData(msg: Message): CompactChip[] {
 
 .compact-op__body {
   margin: 4px 0 2px 13px;
-  padding: 8px 10px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-}
-.compact-op__body-inner {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  line-height: 1.6;
-  color: var(--muted);
-  white-space: pre-wrap;
+  padding: 0;
+  border: none;
+  background: transparent;
 }
 
 .compact-op__overflow {
@@ -352,5 +419,9 @@ function chipData(msg: Message): CompactChip[] {
   color: var(--muted-dim, var(--muted));
   padding: 2px 0 2px 12px;
   border-left: 2px solid transparent;
+  cursor: pointer;
+}
+.compact-op__overflow:hover {
+  color: var(--accent);
 }
 </style>

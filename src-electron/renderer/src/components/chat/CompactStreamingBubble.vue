@@ -22,6 +22,13 @@ const props = defineProps<{
 
 const expanded = ref(false)
 
+// Auto-collapse when streaming ends (status → 'complete')
+watch(() => props.message.status, (newStatus) => {
+  if (newStatus === 'complete') {
+    expanded.value = false
+  }
+})
+
 // ── Constants ──
 const TIMER_INTERVAL_MS = 100
 const MS_PER_SECOND = 1000
