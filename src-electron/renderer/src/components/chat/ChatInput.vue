@@ -6,7 +6,7 @@
       @close="closeSlashMenu"
       @select="handleSlashSelect"
     />
-    <SendModeStatusBar :mode="sendMode" />
+    <SendModeStatusBar :mode="sendMode" :is-streaming="isStreaming" />
     <div
       ref="containerRef"
       :class="[
@@ -127,6 +127,7 @@ watch(text, (val) => {
 const isComposing = ref(false)
 const activeCommand = ref<SlashCommand | null>(null)
 const isAltPressed = ref(false)
+const isCtrlPressed = ref(false)
 
 // Navigate 到 user message 后预填输入框
 // Restore from store when sessionId changes (same component, different session)
@@ -153,21 +154,27 @@ onUnmounted(() => { unsubEditorText?.() })
 
 // ── Send Mode ────────────────────────────────────────────────────
 const sendMode = computed<SendMode>(() => {
-  if (props.isStreaming && isAltPressed.value) return 'queue'
-  if (props.isStreaming) return 'steer'
+  // Ctrl/Cmd+Enter forces steer (interrupt AI)
+  if (isCtrlPressed.value) return 'steer'
+  // When AI is streaming, auto-queue instead of steering
+  if (props.isStreaming) return 'queue'
+  // Alt+Enter always queues
   if (isAltPressed.value) return 'queue'
   return 'send'
 })
 
-// ── Alt key detection ─────────────────────────────────────────────
+// ── Modifier key detection ────────────────────────────────────────
 function onGlobalKeyDown(e: KeyboardEvent) {
   if (e.key === 'Alt') isAltPressed.value = true
+  if (e.key === 'Control' || e.key === 'Meta') isCtrlPressed.value = true
 }
 function onGlobalKeyUp(e: KeyboardEvent) {
   if (e.key === 'Alt') isAltPressed.value = false
+  if (e.key === 'Control' || e.key === 'Meta') isCtrlPressed.value = false
 }
 function onWindowBlur() {
   isAltPressed.value = false
+  isCtrlPressed.value = false
 }
 onMounted(() => {
   document.addEventListener('keydown', onGlobalKeyDown)
@@ -344,7 +351,8 @@ function onKeyDown(e: KeyboardEvent) {
     return
   }
 
-  if (e.key === 'Enter' && !e.shiftKey && !isComposing.value) {
+  // Bypass isComposing for modifier-key combos (macOS dead-key workaround)
+  if (e.key === 'Enter' && !e.shiftKey && (!isComposing.value || e.altKey || e.ctrlKey || e.metaKey)) {
     e.preventDefault()
     if (slashVisible.value) return // SlashMenu 处理 Enter
     handleSend()

@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Send Mode Hints — Demo</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --bg: #1a1a1a;
+    --surface: #222;
+    --border: #333;
+    --fg: #e8e8e8;
+    --muted: #888;
+    --accent: #4a9eff;
+    --warning: #f0a030;
+    --danger: #e05050;
+    --font: -apple-system, BlinkMacSystemFont, 'SF Mono', 'Menlo', 'Consolas', monospace;
+    --body: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--body);
+    padding: 40px 24px;
+    max-width: 800px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 18px; font-weight: 600; margin-bottom: 8px; }
+  h2 { font-size: 14px; font-weight: 500; color: var(--muted); margin-bottom: 24px; font-weight: 400; }
+  h3 { font-size: 13px; font-weight: 500; margin: 32px 0 12px; color: var(--accent); }
+
+  /* Status bar */
+  .bar {
+    display: inline-flex;
+    align-items: center;
+    height: 20px;
+    padding: 0 14px;
+    font-family: var(--font);
+    font-size: 11px;
+    background: var(--surface);
+    border-radius: 2px;
+    border: 1px solid var(--border);
+    user-select: none;
+    margin-bottom: 8px;
+  }
+  .bar .label { font-weight: 600; }
+  .bar .dot { margin: 0 4px; opacity: 0.4; }
+  .bar .hint { opacity: 0.7; }
+  .bar .kbd { opacity: 0.5; }
+  .bar--send .label { color: var(--muted); }
+  .bar--steer .label { color: var(--accent); }
+  .bar--queue .label { color: var(--warning); }
+  .bar--send .hint { color: var(--muted); }
+  .bar--steer .hint { color: var(--accent); }
+  .bar--queue .hint { color: var(--warning); }
+
+  /* Keyboard shortcut badge */
+  kbd {
+    display: inline-block;
+    padding: 0 4px;
+    font-family: var(--font);
+    font-size: 9px;
+    line-height: 1.5;
+    color: var(--muted);
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 2px;
+    margin: 0 1px;
+  }
+  .bar kbd { font-size: 10px; }
+
+  .approach {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 20px;
+    margin-bottom: 24px;
+  }
+  .approach h4 {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 14px;
+    color: var(--fg);
+  }
+  .approach .bars { display: flex; flex-direction: column; gap: 4px; }
+
+  .tag {
+    display: inline-block;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    padding: 1px 5px;
+    border-radius: 2px;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .tag--auto { background: rgba(74,158,255,0.15); color: var(--accent); }
+  .tag--force { background: rgba(240,160,48,0.15); color: var(--warning); }
+
+  .legend {
+    margin-top: 12px;
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+  .legend code {
+    font-family: var(--font);
+    font-size: 11px;
+    color: var(--fg);
+    background: rgba(255,255,255,0.05);
+    padding: 1px 5px;
+    border-radius: 2px;
+  }
+  .legend strong { color: var(--fg); font-weight: 500; }
+
+  .recommend {
+    background: rgba(74,158,255,0.08);
+    border: 1px solid rgba(74,158,255,0.2);
+    border-radius: 4px;
+    padding: 16px 20px;
+    margin: 32px 0;
+  }
+  .recommend h3 { color: var(--accent); margin-top: 0; }
+  .recommend ul { list-style: none; padding: 0; font-size: 13px; line-height: 1.7; }
+  .recommend li::before { content: '✓'; color: var(--accent); margin-right: 8px; }
+  .recommend code {
+    font-family: var(--font);
+    font-size: 12px;
+    background: rgba(255,255,255,0.06);
+    padding: 1px 5px;
+    border-radius: 2px;
+  }
+</style>
+</head>
+<body>
+
+<h1>SendModeStatusBar — 三种模式提示设计 Demo</h1>
+<h2>清晰告诉用户每种模式怎么触发、什么时候自动切换</h2>
+
+<div class="approach">
+  <h4>方式 A · 简洁+快捷键标记</h4>
+  <div class="bars">
+    <!-- Send -->
+    <div class="bar bar--send">
+      <span class="label">Send</span>
+      <span class="dot">·</span>
+      <span class="hint"><kbd>Enter</kbd> 直接发送</span>
+    </div>
+    <!-- Steer -->
+    <div class="bar bar--steer">
+      <span class="label">Steer</span>
+      <span class="dot">·</span>
+      <span class="hint"><kbd>⌘+Enter</kbd> 中断并发送</span>
+    </div>
+    <!-- Queue -->
+    <div class="bar bar--queue">
+      <span class="label">Queue</span>
+      <span class="dot">·</span>
+      <span class="hint"><kbd>⌥+Enter</kbd> 排队 <span class="tag tag--auto">AI 回复中自动</span></span>
+    </div>
+  </div>
+  <div class="legend">
+    <strong>说明</strong>：每个 mode 只显示自己的快捷键和触发条件。Queue 模式加了 "AI 回复中自动" 标签。<br>
+    需要新增 <code>⌘+Enter</code> 作为 steer 快捷键（当前没有快捷键用于 steer）。
+  </div>
+</div>
+
+<div class="approach">
+  <h4>方式 B · 全部快捷键始终显示</h4>
+  <div class="bars">
+    <!-- Send -->
+    <div class="bar bar--send">
+      <span class="label">Send</span>
+      <span class="dot">·</span>
+      <span class="hint"><kbd>Enter</kbd> 发送</span>
+      <span class="kbd">&nbsp;&nbsp;<kbd>⌥+Enter</kbd> 排队</span>
+      <span class="kbd">&nbsp;&nbsp;<kbd>⌘+Enter</kbd> 中断</span>
+    </div>
+    <!-- Steer -->
+    <div class="bar bar--steer">
+      <span class="label">Steer</span>
+      <span class="dot">·</span>
+      <span class="hint"><kbd>⌘+Enter</kbd> 中断并发送</span>
+    </div>
+    <!-- Queue -->
+    <div class="bar bar--queue">
+      <span class="label">Queue</span>
+      <span class="dot">·</span>
+      <span class="hint"><kbd>⌥+Enter</kbd> 排队 <span class="tag tag--auto">AI 回复中自动</span></span>
+      <span class="kbd">&nbsp;&nbsp;要中断？用 <kbd>⌘+Enter</kbd></span>
+    </div>
+  </div>
+  <div class="legend">
+    <strong>说明</strong>：send 模式下也显示 queue 和 steer 的快捷键，方便用户发现。<br>
+    始终可见所有快捷键，降低学习成本。
+  </div>
+</div>
+
+<div class="approach">
+  <h4>方式 C · 极简，仅当前模式快捷键</h4>
+  <div class="bars">
+    <!-- Send -->
+    <div class="bar bar--send">
+      <span class="label">Send</span>
+      <span class="dot">·</span>
+      <span class="hint"><kbd>Enter</kbd></span>
+    </div>
+    <!-- Steer -->
+    <div class="bar bar--steer">
+      <span class="label">Steer</span>
+      <span class="dot">·</span>
+      <span class="hint"><kbd>⌘+Enter</kbd></span>
+    </div>
+    <!-- Queue -->
+    <div class="bar bar--queue">
+      <span class="label">Queue</span>
+      <span class="dot">·</span>
+      <span class="hint"><kbd>⌥+Enter</kbd> <span class="tag tag--auto">auto</span></span>
+    </div>
+  </div>
+  <div class="legend">
+    <strong>说明</strong>：极简风格，只有当前模式的快捷键。<br>
+    需要用户 hover 或点击查看详情（可以加 tooltip）。
+  </div>
+</div>
+
+<div class="recommend">
+  <h3>推荐方案</h3>
+  <ul>
+    <li>方式 A：简洁清楚，每个 mode 独立显示快捷键 + 触发条件</li>
+    <li>增加 <code>⌘+Enter</code>（macOS）/ <code>Ctrl+Enter</code>（Win/Linux）作为 <strong>steer 快捷键</strong></li>
+    <li>Queue 的 "AI 回复中自动" 标签用 <code>tag--auto</code> 样式，表示不用按住 Alt</li>
+    <li>SendModeStatusBar 接收一个新的 prop <code>isStreaming</code>，用来显示自动标签 &amp; 调整 queue 提示</li>
+  </ul>
+</div>
+
+<hr style="border: none; border-top: 1px solid var(--border); margin: 32px 0;">
+
+<h3>完整键盘映射</h3>
+<div class="legend">
+  <code>Enter</code> &nbsp; <strong>普通发送</strong> &nbsp;（非 streaming 时）<br>
+  <code>Alt+Enter</code> &nbsp; <strong>Queue 排队</strong> &nbsp;（强制 follow_up，不打断 AI）<br>
+  <code>⌘/Ctrl+Enter</code> &nbsp; <strong>Steer 中断</strong> &nbsp;（建议新增，强制打断 AI 并发送）<br><br>
+  当 <strong>AI 正在回复</strong>时，<code>Enter</code> 自动走 Queue（无需按 Alt）。
+</div>
+
+</body>
+</html>
