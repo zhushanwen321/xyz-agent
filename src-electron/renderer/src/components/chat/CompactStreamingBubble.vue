@@ -15,6 +15,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import type { Message } from '@xyz-agent/shared'
 import MessageBubble from './MessageBubble.vue'
+import { formatTime, toolPath } from '../lib/compact-utils'
 
 const props = defineProps<{
   message: Message
@@ -31,8 +32,7 @@ watch(() => props.message.status, (newStatus) => {
 
 // ── Constants ──
 const TIMER_INTERVAL_MS = 100
-const MS_PER_SECOND = 1000
-const SECONDS_PER_MINUTE = 60
+const ELAPSED_THRESHOLD_MS = 1000
 const PATH_DISPLAY_MAX = 50
 const TEXT_PREVIEW_MAX = 60
 
@@ -51,18 +51,8 @@ const statusText = computed(() => {
   const toolCalls = msg.toolCalls ?? []
   const runningTc = toolCalls.find(tc => tc.status === 'running')
   if (runningTc) {
-    try {
-      const raw = typeof runningTc.input === 'string' ? JSON.parse(runningTc.input) : runningTc.input
-      if (raw && typeof raw === 'object') {
-        const obj = raw as Record<string, unknown>
-        const p = (obj.path ?? obj.file_path ?? obj.command) as string | undefined
-        if (p) return `${runningTc.toolName} ${String(p).slice(0, PATH_DISPLAY_MAX)}`
-      }
-    // eslint-disable-next-line taste/no-silent-catch -- 优雅降级：解析失败时只显示工具名
-    } catch (e) {
-      console.warn('[CompactStreamingBubble] input parse error:', e)
-    }
-    return `${runningTc.toolName}...`
+    const p = toolPath(runningTc.input, PATH_DISPLAY_MAX)
+    return p ? `${runningTc.toolName} ${p}` : `${runningTc.toolName}...`
   }
 
   // Fallback: text preview
@@ -100,12 +90,8 @@ const elapsedMs = computed(() => {
 })
 const elapsedDisplay = computed(() => {
   const ms = elapsedMs.value
-  if (ms < MS_PER_SECOND) return ''
-  const s = ms / MS_PER_SECOND
-  if (s < SECONDS_PER_MINUTE) return `${s.toFixed(1)}s`
-  const m = Math.floor(s / SECONDS_PER_MINUTE)
-  const sec = Math.floor(s % SECONDS_PER_MINUTE)
-  return `${m}m${sec}s`
+  if (ms < ELAPSED_THRESHOLD_MS) return ''
+  return formatTime(ms)
 })
 </script>
 

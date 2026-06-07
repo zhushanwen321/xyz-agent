@@ -79,12 +79,9 @@ import { computed, reactive, ref } from 'vue'
 import type { Message, ThinkingBlock as ThinkingBlockType, ToolCall } from '@xyz-agent/shared'
 import ThinkingBlock from './ThinkingBlock.vue'
 import ToolCallCard from './ToolCallCard.vue'
+import { formatTime, toolPath } from '../lib/compact-utils'
 
 // ── Constants ──
-const DECISECOND_MS = 100
-const MS_PER_SECOND = 1000
-const SECONDS_PER_MINUTE = 60
-const PATH_MAX_LEN = 40
 const MAX_VISIBLE_ITEMS = 8
 const MAX_VISIBLE_CHIPS = 4
 
@@ -156,32 +153,7 @@ function visibleItems(chip: CompactChip, index: number): CompactChipItem[] {
   return chip.items.slice(0, MAX_VISIBLE_ITEMS)
 }
 
-// ── Helpers ──
-
-function formatTime(ms: number): string {
-  if (ms < MS_PER_SECOND) return `${(ms / DECISECOND_MS).toFixed(1)}s`
-  const s = ms / MS_PER_SECOND
-  if (s < SECONDS_PER_MINUTE) return `${s.toFixed(1)}s`
-  const m = Math.floor(s / SECONDS_PER_MINUTE)
-  const sec = Math.floor(s % SECONDS_PER_MINUTE)
-  return `${m}m${sec}s`
-}
-
-/** Extract a short path representation from tool call input */
-function toolPath(input: unknown): string {
-  try {
-    const obj = typeof input === 'string' ? JSON.parse(input) : input
-    if (obj && typeof obj === 'object') {
-      const rec = obj as Record<string, unknown>
-      const p = (rec.path ?? rec.file_path ?? rec.command) as string | undefined
-      if (p) return p
-    }
-  // eslint-disable-next-line taste/no-silent-catch -- 优雅降级：解析失败时返回原始输入截断
-  } catch (e) {
-    console.warn('[CompactSummaryBar] toolPath parse error:', e)
-  }
-  return String(input ?? '').slice(0, PATH_MAX_LEN)
-}
+// ── Helpers (imported from compact-utils) ──
 
 function chipData(msg: Message): CompactChip[] {
   const result: CompactChip[] = []
