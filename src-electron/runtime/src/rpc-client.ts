@@ -299,6 +299,14 @@ export class RpcClient {
     return this.sendCommand('abort')
   }
 
+  steer(content: string): Promise<PiMessage> {
+    return this.sendCommand('steer', { message: content })
+  }
+
+  followUp(content: string): Promise<PiMessage> {
+    return this.sendCommand('follow_up', { message: content })
+  }
+
   setModel(provider: string, modelId: string): Promise<PiMessage> {
     return this.sendCommand('set_model', { provider, modelId })
   }

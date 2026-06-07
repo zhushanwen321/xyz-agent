@@ -302,35 +302,23 @@ export class SidecarServer implements IMessageBroker {
       }
       case 'message.steer': {
         const steerSid = msg.payload.sessionId
-        // steer: abort best-effort, session may not be actively generating
-        // abort is best-effort; steer must proceed to sendMessage
         try {
-          await this.sessionService.abort(steerSid)
-          // eslint-disable-next-line taste/no-silent-catch -- best-effort abort, failure must not block steer
-        } catch (e) {
-          console.warn('[runtime] steer abort: session not active or abort failed:', e instanceof Error ? e.message : String(e))
-        }
-        // RACE CONDITION NOTE: pi's abort is async — the subprocess may still be
-        // processing when sendMessage arrives. Pi internally queues the new message
-        // and applies it after the current turn completes, so this is safe in practice.
-        try {
-          await this.sessionService.sendMessage(steerSid, msg.payload.content)
-          return this.send(ws, { type: 'message.status', id: msg.id, payload: { sessionId: steerSid, status: 'sent' } })
+          await this.sessionService.steerMessage(steerSid, msg.payload.content)
+          return this.send(ws, { type: 'message.status', id: msg.id, payload: { sessionId: steerSid, status: 'steered' } })
         } catch (e) {
           const errMsg = e instanceof Error ? e.message : String(e)
-          console.error('[runtime] message.steer sendMessage failed:', errMsg)
+          console.error('[runtime] message.steer failed:', errMsg)
           return this.send(ws, { type: 'message.error', id: msg.id, payload: { sessionId: steerSid, message: errMsg } })
         }
       }
       case 'message.follow_up': {
-        // Queue message without interrupting — just send, pi will queue internally
         const followSid = msg.payload.sessionId
         try {
-          await this.sessionService.sendMessage(followSid, msg.payload.content)
+          await this.sessionService.followUpMessage(followSid, msg.payload.content)
           return this.send(ws, { type: 'message.status', id: msg.id, payload: { sessionId: followSid, status: 'queued' } })
         } catch (e) {
           const errMsg = e instanceof Error ? e.message : String(e)
-          console.error('[runtime] message.follow_up sendMessage failed:', errMsg)
+          console.error('[runtime] message.follow_up failed:', errMsg)
           return this.send(ws, { type: 'message.error', id: msg.id, payload: { sessionId: followSid, message: errMsg } })
         }
       }

@@ -38,6 +38,8 @@ export interface IRpcClient {
   kill(): Promise<void>
   start(): Promise<void>
   setThinkingLevel(level: string): Promise<unknown>
+  steer(content: string): Promise<unknown>
+  followUp(content: string): Promise<unknown>
 }
 
 // ── IProcessManager ───────────────────────────────────────────────
