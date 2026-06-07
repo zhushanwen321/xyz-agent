@@ -38,6 +38,8 @@ vi.mock('../../../stores/chat', () => ({
   useChatStore: () => ({
   sessions: new Map(),
   getSessionState: () => ({ contextUsage: 0 }),
+  getPendingText: () => '',
+  setPendingText: () => {},
   }),
 }))
 
