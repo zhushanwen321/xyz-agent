@@ -166,7 +166,7 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  function completeStreaming(opts: { keepGenerating?: boolean } | undefined, sessionId: string) {
+  function completeStreaming(opts: { keepGenerating?: boolean; stopReason?: string } | undefined, sessionId: string) {
     const s = getSessionState(sessionId)
     if (s.streamingMessage) {
       const completedAt = Date.now()
@@ -182,6 +182,9 @@ export const useChatStore = defineStore('chat', () => {
             ? { ...th, endTime: th.endTime ?? completedAt }
             : { ...th, collapsed: true, endTime: th.endTime ?? completedAt }
         ),
+      }
+      if (opts?.stopReason === 'aborted') {
+        cleaned.isInterrupted = true
       }
       s.completedMessages = [...s.completedMessages, cleaned]
       s.streamingMessage = null
@@ -333,8 +336,10 @@ export const useChatStore = defineStore('chat', () => {
   // ── 流式消息高层生命周期方法（已内联到 useChat handlers，仅保留 completeStream / abortStream） ──
 
   /** 完成流式消息，自动重置 isGenerating */
-  function completeStream(sid: string) {
-    completeStreaming({}, sid)
+  function completeStream(opts: { stopReason?: string } | string, sid?: string) {
+    // 兼容旧调用: completeStream(sid)
+    const [actualOpts, actualSid] = typeof opts === 'string' ? [undefined, opts] : [opts, sid!]
+    completeStreaming(actualOpts, actualSid)
   }
 
   /** 终止流式消息（统一封装 reset 三步 + 可选错误通知） */

@@ -57,4 +57,8 @@ export interface Message {
   skillName?: string
   /** SKILL.md 文件路径，从 <skill location="..."> 中提取 */
   skillLocation?: string
+  /** 发送模式，仅 user 消息有值 */
+  sendMode?: 'send' | 'steer' | 'follow-up'
+  /** 是否被 abort 中断，仅 assistant 消息有值 */
+  isInterrupted?: boolean
 }
