@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ToolCall & Thinking — 嵌套展开 Demo</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --bg: #1a1a1a;
+    --surface: #222;
+    --border: #333;
+    --fg: #e8e8e8;
+    --muted: #888;
+    --accent: #4a9eff;
+    --success: #4caf50;
+    --warning: #f0a030;
+    --danger: #e05050;
+    --agent: #b388ff;
+    --font: -apple-system, BlinkMacSystemFont, 'SF Mono', 'Menlo', 'Consolas', monospace;
+  }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    padding: 40px 24px;
+    max-width: 700px;
+    margin: 0 auto;
+  }
+
+  .msg {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 16px 20px;
+    margin-bottom: 24px;
+  }
+
+  .msg h3 {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+
+  /* ── Section (group by tool type) ── */
+  .section {
+    padding-left: 12px;
+    border-left: 2px solid var(--success);
+    margin-bottom: 6px;
+  }
+
+  /* Level 1: filter toggle */
+  .filter {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+    padding: 2px 4px 2px 0;
+    font-size: 11px;
+    line-height: 1.4;
+    color: var(--muted);
+    border: none;
+    background: transparent;
+    user-select: none;
+  }
+  .filter:hover { color: var(--fg); }
+  .filter[aria-expanded="true"] { color: var(--fg); }
+
+  .filter__chevron {
+    transition: transform 0.15s ease;
+    flex-shrink: 0;
+    color: var(--muted);
+  }
+  .filter__chevron--closed { transform: rotate(-90deg); }
+  .filter__name {
+    font-weight: 600;
+    color: var(--success);
+  }
+  .filter__count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 8px;
+    background: rgba(76, 175, 80, 0.15);
+    color: var(--success);
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 1;
+    font-family: var(--font);
+  }
+  .filter__time {
+    font-family: var(--font);
+    font-size: 10px;
+    margin-left: auto;
+    opacity: 0.6;
+  }
+
+  /* Level 2: individual tool call list */
+  .tool-list {
+    margin-left: 15px;
+    margin-top: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .tool-item {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .tool-item__toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    padding: 2px 4px 2px 0;
+    font-size: 11px;
+    line-height: 1.4;
+    color: var(--muted);
+    border: none;
+    background: transparent;
+    width: 100%;
+    text-align: left;
+  }
+  .tool-item__toggle:hover { color: var(--fg); }
+
+  .tool-item__chevron {
+    transition: transform 0.15s ease;
+    flex-shrink: 0;
+    color: var(--muted);
+  }
+  .tool-item__chevron--closed { transform: rotate(-90deg); }
+  .tool-item__path {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tool-item__meta {
+    font-family: var(--font);
+    font-size: 10px;
+    opacity: 0.6;
+    margin-left: auto;
+  }
+  .tool-item__status--done { color: var(--success); }
+  .tool-item__status--error { color: var(--danger); }
+
+  /* Level 3: details (expanded body) */
+  .tool-details {
+    margin: 4px 0 4px 16px;
+    padding: 8px 10px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--muted);
+  }
+  .tool-details pre {
+    white-space: pre-wrap;
+    font-family: var(--font);
+    font-size: 10px;
+    margin: 6px 0 0;
+    padding: 6px 8px;
+    background: rgba(0,0,0,0.2);
+    border-radius: 2px;
+  }
+
+  /* ── Thinking section ── */
+  .section--thinking {
+    border-left-color: var(--accent);
+  }
+  .section--thinking .filter__name { color: var(--accent); }
+  .section--thinking .filter__count { background: rgba(74,158,255,0.15); color: var(--accent); }
+  .section--thinking .section__border { border-left-color: var(--accent); }
+
+  /* ── Thinking blocks ── */
+  .thinking-item__toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    padding: 2px 4px 2px 0;
+    font-size: 11px;
+    line-height: 1.4;
+    color: var(--muted);
+    border: none;
+    background: transparent;
+  }
+  .thinking-item__toggle:hover { color: var(--fg); }
+  .thinking-item__chevron {
+    transition: transform 0.15s ease;
+    flex-shrink: 0;
+    color: var(--muted);
+  }
+  .thinking-item__chevron--closed { transform: rotate(-90deg); }
+  .thinking-item__label { color: var(--accent); font-weight: 500; }
+  .thinking-item__time { font-family: var(--font); font-size: 10px; }
+  .thinking-item__body {
+    margin: 4px 0 4px 14px;
+    padding: 4px 0;
+  }
+  .thinking-item__body pre {
+    white-space: pre-wrap;
+    font-family: var(--font-body);
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--muted);
+    margin: 0;
+  }
+
+  hr { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
+
+  .note {
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--muted);
+    padding: 12px 16px;
+    border: 1px dashed var(--border);
+    border-radius: 4px;
+  }
+  .note strong { color: var(--fg); }
+</style>
+</head>
+<body>
+
+<h2 style="margin-bottom: 8px;">📐 两层嵌套展开</h2>
+<p style="color: var(--muted); font-size: 12px; margin-bottom: 24px;">
+  层级 1：按 tool 类型 / thinking 作为筛选 → 显示个数<br>
+  层级 2：个体 toolcall / thinking block → 点击展开详情
+</p>
+
+<!-- ── Tool Calls ── -->
+<div class="msg">
+  <h3>工具调用</h3>
+
+  <!-- read (3) -->
+  <div class="section">
+    <button class="filter" aria-expanded="true" onclick="this.closest('.section').querySelector('.tool-list')?.classList.toggle('hidden');this.querySelector('.filter__chevron')?.classList.toggle('filter__chevron--closed');this.toggleAttribute('aria-expanded')">
+      <svg class="filter__chevron" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+      <span class="filter__name">read</span>
+      <span class="filter__count">3</span>
+      <span class="filter__time">2.5s</span>
+    </button>
+
+    <div class="tool-list">
+      <!-- Individual tool call 1 -->
+      <div class="tool-item">
+        <button class="tool-item__toggle" onclick="this.nextElementSibling?.classList.toggle('hidden');this.querySelector('.tool-item__chevron')?.classList.toggle('tool-item__chevron--closed')">
+          <svg class="tool-item__chevron tool-item__chevron--closed" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+          <span class="tool-item__path">src/main.ts</span>
+          <span class="tool-item__meta"><span class="tool-item__status--done">1.2s</span></span>
+        </button>
+        <div class="tool-details hidden">
+          <div><strong>Path:</strong> src/main.ts</div>
+          <pre>export function main() {
+  console.log('hello')
+}</pre>
+        </div>
+      </div>
+
+      <!-- Individual tool call 2 -->
+      <div class="tool-item">
+        <button class="tool-item__toggle" onclick="this.nextElementSibling?.classList.toggle('hidden');this.querySelector('.tool-item__chevron')?.classList.toggle('tool-item__chevron--closed')">
+          <svg class="tool-item__chevron tool-item__chevron--closed" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+          <span class="tool-item__path">src/utils.ts</span>
+          <span class="tool-item__meta"><span class="tool-item__status--done">0.8s</span></span>
+        </button>
+        <div class="tool-details hidden">
+          <div><strong>Path:</strong> src/utils.ts</div>
+          <pre>export function helper() { return 42 }</pre>
+        </div>
+      </div>
+
+      <!-- Individual tool call 3 -->
+      <div class="tool-item">
+        <button class="tool-item__toggle" onclick="this.nextElementSibling?.classList.toggle('hidden');this.querySelector('.tool-item__chevron')?.classList.toggle('tool-item__chevron--closed')">
+          <svg class="tool-item__chevron tool-item__chevron--closed" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+          <span class="tool-item__path">package.json</span>
+          <span class="tool-item__meta"><span class="tool-item__status--done">0.5s</span></span>
+        </button>
+        <div class="tool-details hidden">
+          <div><strong>Path:</strong> package.json</div>
+          <pre>{ "name": "my-project" }</pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- write (2) -->
+  <div class="section">
+    <button class="filter" onclick="this.closest('.section').querySelector('.tool-list')?.classList.toggle('hidden');this.querySelector('.filter__chevron')?.classList.toggle('filter__chevron--closed');this.toggleAttribute('aria-expanded')">
+      <svg class="filter__chevron filter__chevron--closed" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+      <span class="filter__name">write</span>
+      <span class="filter__count">2</span>
+      <span class="filter__time">2.1s</span>
+    </button>
+    <div class="tool-list hidden">
+      <div class="tool-item">
+        <button class="tool-item__toggle" onclick="this.nextElementSibling?.classList.toggle('hidden');this.querySelector('.tool-item__chevron')?.classList.toggle('tool-item__chevron--closed')">
+          <svg class="tool-item__chevron tool-item__chevron--closed" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+          <span class="tool-item__path">src/new-file.ts</span>
+          <span class="tool-item__meta"><span class="tool-item__status--done">1.3s</span></span>
+        </button>
+        <div class="tool-details hidden">
+          <div><strong>Path:</strong> src/new-file.ts</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- edit (1) -->
+  <div class="section">
+    <button class="filter" onclick="this.closest('.section').querySelector('.tool-list')?.classList.toggle('hidden');this.querySelector('.filter__chevron')?.classList.toggle('filter__chevron--closed');this.toggleAttribute('aria-expanded')">
+      <svg class="filter__chevron filter__chevron--closed" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+      <span class="filter__name">edit</span>
+      <span class="filter__count">1</span>
+      <span class="filter__time">0.6s</span>
+    </button>
+  </div>
+</div>
+
+<!-- ── Thinking ── -->
+<div class="msg" style="border-left: 2px solid var(--accent); padding-left: 18px;">
+  <h3>思考过程</h3>
+
+  <!-- Thinking (2) -->
+  <div class="section section--thinking">
+    <button class="filter" aria-expanded="true" onclick="this.closest('.section').querySelector('.tool-list')?.classList.toggle('hidden');this.querySelector('.filter__chevron')?.classList.toggle('filter__chevron--closed');this.toggleAttribute('aria-expanded')">
+      <svg class="filter__chevron" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+      <span class="filter__name">思考</span>
+      <span class="filter__count">2</span>
+      <span class="filter__time">4.5s</span>
+    </button>
+
+    <div class="tool-list">
+      <!-- Individual thinking block 1 -->
+      <div class="tool-item">
+        <button class="thinking-item__toggle" onclick="this.nextElementSibling?.classList.toggle('hidden');this.querySelector('.thinking-item__chevron')?.classList.toggle('thinking-item__chevron--closed')">
+          <svg class="thinking-item__chevron thinking-item__chevron--closed" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+          <span class="thinking-item__label">Thinking</span>
+          <span class="thinking-item__time">· 3.2s</span>
+        </button>
+        <div class="thinking-item__body hidden">
+          <pre>Let me analyze the problem step by step.
+First, I need to understand the data flow...</pre>
+        </div>
+      </div>
+
+      <!-- Individual thinking block 2 -->
+      <div class="tool-item">
+        <button class="thinking-item__toggle" onclick="this.nextElementSibling?.classList.toggle('hidden');this.querySelector('.thinking-item__chevron')?.classList.toggle('thinking-item__chevron--closed')">
+          <svg class="thinking-item__chevron thinking-item__chevron--closed" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+          <span class="thinking-item__label">Thinking</span>
+          <span class="thinking-item__time">· 1.3s</span>
+        </button>
+        <div class="thinking-item__body hidden">
+          <pre>OK, I think the solution is to refactor the service layer.
+The current implementation mixes concerns...</pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<hr>
+
+<div class="note">
+  <strong>核心差别</strong>：当前实现把所有 toolcall 扁平排列在一条 section 下面。新设计改为<b>按 tool 名分组</b>，每个 tool 类型是一个可折叠的筛选入口，再展开是独立的 toolcall 列表，再展开是详情。<br><br>
+  <strong>Thinking 同理</strong>：所有 thinking block 归在一个「思考」筛选下，展开是各自的独立 block，每个 block 再展开看内容。
+</div>
+
+<style>
+.hidden { display: none !important; }
+</style>
+</body>
+</html>

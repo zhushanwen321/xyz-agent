@@ -1,0 +1,1067 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Settings — Pi Extensions (v2)</title>
+<style>
+  :root {
+    --bg: oklch(97% 0.018 70);
+    --surface: oklch(99% 0.008 70);
+    --fg: oklch(22% 0.02 50);
+    --muted: oklch(50% 0.018 50);
+    --border: oklch(90% 0.014 70);
+    --accent: oklch(64% 0.13 28);
+    --accent-light: oklch(92% 0.04 28);
+    --success: oklch(70% 0.18 145);
+    --success-light: oklch(95% 0.06 145);
+    --warning: oklch(78% 0.15 85);
+    --warning-light: oklch(95% 0.06 85);
+    --danger: oklch(62% 0.2 25);
+    --danger-light: oklch(93% 0.06 25);
+    --section-bg: oklch(95% 0.014 70);
+    --hover-bg: oklch(96% 0.01 70);
+    --divider: oklch(94% 0.008 70);
+    --font-display: 'Georgia', 'Iowan Old Style', serif;
+    --font-body: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: var(--font-body); font-size: 13px; line-height: 1.5;
+    color: var(--fg); background: var(--bg); -webkit-font-smoothing: antialiased;
+  }
+  .shell { display: flex; height: 100vh; overflow: hidden; }
+
+  /* ── Sidebar ── */
+  .sidebar {
+    width: 220px; background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; flex-shrink: 0;
+  }
+  .sidebar-title {
+    padding: 16px 20px; font-family: var(--font-display);
+    font-size: 15px; font-weight: 700; border-bottom: 1px solid var(--border);
+  }
+  .sidebar-nav { flex: 1; padding: 8px 0; }
+  .sidebar-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 20px; font-size: 13px; color: var(--muted);
+    cursor: pointer; transition: all 120ms ease; user-select: none;
+  }
+  .sidebar-item:hover { background: var(--hover-bg); color: var(--fg); }
+  .sidebar-item.active { color: var(--accent); font-weight: 600; background: var(--accent-light); }
+  .sidebar-item svg { width: 16px; height: 16px; flex-shrink: 0; opacity: 0.7; }
+
+  /* ── Content ── */
+  .content { flex: 1; overflow-y: auto; padding: 28px 40px; }
+  .pane { max-width: 800px; }
+
+  .pane-header { margin-bottom: 28px; }
+  .pane-title { font-family: var(--font-display); font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+  .pane-desc { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+  /* ── Section ── */
+  .section {
+    border: 1px solid var(--border); border-radius: 8px;
+    overflow: hidden; margin-bottom: 12px;
+  }
+  .section-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 11px 16px; background: var(--section-bg);
+    border-bottom: 1px solid var(--border); cursor: pointer;
+    user-select: none; transition: background 120ms;
+    min-height: 42px;
+  }
+  .section-header:hover { background: var(--hover-bg); }
+  .section-header-label {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 13px; font-weight: 600;
+  }
+  .section-body {
+    padding: 16px; background: var(--surface);
+  }
+  .section-body.hidden { display: none; }
+
+  /* ── Input / Form ── */
+  .input-group {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .input-group .input {
+    flex: 1; padding: 7px 12px; border: 1px solid var(--border);
+    border-radius: 6px; font-family: var(--font-body); font-size: 13px;
+    background: var(--surface); color: var(--fg); outline: none;
+    transition: border-color 150ms;
+  }
+  .input-group .input:focus { border-color: var(--accent); }
+  .input-group .input::placeholder { color: var(--muted); opacity: 0.6; }
+
+  .hint {
+    font-size: 11px; color: var(--muted); margin-top: 6px;
+    line-height: 1.5;
+  }
+  .hint code {
+    font-family: var(--font-mono); font-size: 10px;
+    background: var(--hover-bg); padding: 1px 5px; border-radius: 3px;
+  }
+  .hint kbd {
+    font-family: var(--font-mono); font-size: 10px;
+    background: var(--hover-bg); padding: 1px 5px; border-radius: 3px;
+    border: 1px solid var(--border);
+  }
+
+  /* ── Buttons ── */
+  .btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 6px 14px; border: 1px solid transparent; border-radius: 6px;
+    font-family: var(--font-body); font-size: 12px; font-weight: 500;
+    cursor: pointer; transition: all 120ms ease; white-space: nowrap;
+    background: none; line-height: 1.3;
+  }
+  .btn svg { width: 13px; height: 13px; }
+  .btn-primary { background: var(--accent); color: white; }
+  .btn-primary:hover { opacity: 0.88; }
+  .btn-primary:disabled { opacity: 0.45; pointer-events: none; }
+  .btn-ghost { color: var(--muted); }
+  .btn-ghost:hover { color: var(--accent); background: var(--accent-light); }
+  .btn-sm { padding: 4px 10px; font-size: 11px; }
+  .btn-xs { padding: 2px 8px; font-size: 10px; border-radius: 4px; }
+  .btn-danger { color: white; background: var(--danger); }
+  .btn-danger:hover { opacity: 0.88; }
+
+  /* ── Badge ── */
+  .badge {
+    display: inline-flex; font-size: 10px; font-weight: 600;
+    padding: 1px 7px; border-radius: 4px;
+    letter-spacing: 0.01em;
+  }
+  .badge-builtin { background: var(--accent-light); color: var(--accent); }
+  .badge-npm { background: var(--accent-light); color: var(--accent); }
+  .badge-local { background: oklch(92% 0.06 145); color: oklch(50% 0.18 145); }
+  .badge-git { background: oklch(92% 0.06 85); color: oklch(55% 0.15 85); }
+  .badge-version { background: oklch(90% 0.02 250); color: oklch(45% 0.08 250); }
+
+  /* ── Extension Row ── */
+  .ext-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 16px; min-height: 44px;
+    border-bottom: 1px solid var(--divider);
+    cursor: pointer; transition: background 120ms;
+  }
+  .ext-row:last-child { border-bottom: none; }
+  .ext-row:hover { background: var(--hover-bg); }
+  .ext-row.disabled { opacity: 0.45; }
+
+  .ext-info { flex: 1; min-width: 0; }
+  .ext-name {
+    font-size: 13px; font-weight: 600;
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  }
+  .ext-desc { font-size: 11px; color: var(--muted); margin-top: 1px; line-height: 1.4; }
+
+  /* ── Toggle / Checkbox ── */
+  .toggle {
+    position: relative; width: 32px; height: 18px;
+    flex-shrink: 0; cursor: pointer;
+  }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle-track {
+    position: absolute; inset: 0; border-radius: 10px;
+    background: var(--border); transition: background 200ms;
+  }
+  .toggle-thumb {
+    position: absolute; width: 14px; height: 14px;
+    left: 2px; top: 2px; border-radius: 50%; background: white;
+    transition: transform 200ms; box-shadow: 0 1px 2px rgba(0,0,0,0.12);
+  }
+  .toggle input:checked + .toggle-track { background: var(--accent); }
+  .toggle input:checked ~ .toggle-thumb { transform: translateX(14px); }
+  .toggle input:disabled + .toggle-track { opacity: 0.5; }
+  .toggle input:disabled ~ .toggle-thumb { opacity: 0.6; }
+
+  .checkbox {
+    width: 16px; height: 16px; flex-shrink: 0;
+    accent-color: var(--accent); cursor: pointer;
+  }
+
+  /* ── Chevron ── */
+  .chevron {
+    flex-shrink: 0; color: var(--muted);
+    transition: transform 200ms; width: 10px; height: 10px;
+  }
+  .chevron.open { transform: rotate(180deg); }
+
+  /* ── Detail Panel ── */
+  .ext-detail {
+    padding: 14px 16px; border-top: 1px solid var(--divider);
+    background: var(--section-bg); display: none;
+  }
+  .ext-detail.open { display: block; }
+  .meta-grid { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 11px; }
+  .meta-key { color: var(--muted); }
+  .meta-value { color: var(--fg); font-family: var(--font-mono); font-size: 10px; word-break: break-all; }
+
+  /* ── Counter ── */
+  .counter {
+    font-size: 10px; font-weight: 500; color: var(--muted);
+    background: var(--hover-bg); padding: 2px 7px; border-radius: 4px;
+  }
+
+  /* ── Tab Bar ── */
+  .tab-bar {
+    display: flex; gap: 0; border-bottom: 1px solid var(--border);
+    background: var(--section-bg); margin: 0;
+  }
+  .tab-item {
+    padding: 9px 16px; font-size: 12px; font-weight: 500;
+    color: var(--muted); cursor: pointer; user-select: none;
+    border-bottom: 2px solid transparent;
+    transition: all 150ms; position: relative; top: 1px;
+  }
+  .tab-item:hover { color: var(--fg); background: var(--hover-bg); }
+  .tab-item.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab-item svg { width: 14px; height: 14px; display: inline; vertical-align: -2px; margin-right: 5px; }
+
+  /* ── Path display ── */
+  .path-display {
+    flex: 1; padding: 7px 12px; border: 1px solid var(--border);
+    border-radius: 6px; background: var(--hover-bg);
+    color: var(--muted); font-size: 12px; font-family: var(--font-mono);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .browse-btn {
+    padding: 6px 12px; border: 1px solid var(--border);
+    border-radius: 6px; background: var(--surface);
+    font-size: 12px; cursor: pointer; color: var(--fg);
+    transition: all 120ms;
+  }
+  .browse-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* ── Error / Guidance ── */
+  .error-box {
+    margin-top: 8px; padding: 10px 12px;
+    background: var(--danger-light); border: 1px solid oklch(86% 0.08 25);
+    border-radius: 6px; display: none;
+  }
+  .error-box .e-title {
+    font-size: 12px; font-weight: 600; color: var(--danger);
+    display: flex; align-items: center; gap: 5px;
+  }
+  .error-box .e-body {
+    font-size: 11px; color: var(--fg); margin-top: 6px;
+    line-height: 1.6;
+  }
+  .error-box .e-body .e-reason {
+    color: var(--muted); margin-bottom: 4px;
+  }
+  .error-box .e-suggest {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 4px; padding: 8px 10px; margin-top: 6px;
+  }
+  .error-box .e-suggest .s-label {
+    font-size: 10px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.04em; color: var(--muted); margin-bottom: 4px;
+  }
+  .error-box .e-suggest ul {
+    list-style: none; padding: 0;
+  }
+  .error-box .e-suggest li {
+    font-size: 11px; padding: 2px 0; display: flex; align-items: baseline; gap: 5px;
+  }
+  .error-box .e-suggest li::before { content: '•'; color: var(--accent); font-weight: 700; }
+
+  /* ── Discovered extensions list ── */
+  .discovered-list {
+    border: 1px solid var(--border); border-radius: 6px;
+    margin-top: 10px; overflow: hidden;
+  }
+  .discovered-list .dl-header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; background: var(--section-bg);
+    border-bottom: 1px solid var(--border);
+    font-size: 11px; font-weight: 600;
+  }
+  .discovered-list .dl-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; border-bottom: 1px solid var(--divider);
+    font-size: 12px;
+  }
+  .discovered-list .dl-item:last-child { border-bottom: none; }
+  .discovered-list .dl-item:hover { background: var(--hover-bg); }
+  .discovered-list .dl-item .dl-name {
+    flex: 1; font-weight: 500;
+  }
+  .discovered-list .dl-item .dl-meta {
+    font-size: 10px; color: var(--muted); margin-left: 24px;
+  }
+
+  /* ── Empty state ── */
+  .empty-state {
+    padding: 32px 16px; text-align: center; color: var(--muted);
+  }
+  .empty-state svg { margin: 0 auto 10px; display: block; opacity: 0.4; }
+  .empty-state .t { font-size: 13px; margin-bottom: 3px; }
+  .empty-state .h { font-size: 11px; }
+
+  /* ── Phase indicators ── */
+  .phase-strip {
+    display: flex; align-items: center; gap: 6px;
+    margin-top: 8px; padding: 8px 12px;
+    background: var(--section-bg); border-radius: 6px;
+    font-size: 11px;
+  }
+  .phase-strip .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--border);
+  }
+  .phase-strip .dot.done { background: var(--success); }
+  .phase-strip .dot.active { background: var(--accent); animation: pulse 1s infinite; }
+  .phase-strip .dot.fail { background: var(--danger); }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+  .phase-strip .step-text { color: var(--muted); }
+  .phase-strip .step-text.done { color: var(--success); }
+  .phase-strip .step-text.active { color: var(--accent); font-weight: 500; }
+
+  /* ── Flow diagram ── */
+  .flow-section {
+    margin: 32px 0; padding: 20px 24px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .flow-section h3 {
+    font-family: var(--font-display); font-size: 15px;
+    font-weight: 700; margin-bottom: 16px;
+  }
+  .flow-step {
+    display: flex; align-items: flex-start; gap: 12px;
+    margin-bottom: 12px; position: relative;
+  }
+  .flow-step:last-child { margin-bottom: 0; }
+  .flow-num {
+    width: 22px; height: 22px; border-radius: 50%;
+    background: var(--accent); color: white; font-size: 11px;
+    font-weight: 700; display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; margin-top: 1px;
+  }
+  .flow-body { flex: 1; min-width: 0; }
+  .flow-body .t { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
+  .flow-body .d { font-size: 11px; color: var(--muted); line-height: 1.5; }
+  .flow-body code {
+    font-family: var(--font-mono); font-size: 10px;
+    background: var(--hover-bg); padding: 1px 5px; border-radius: 3px;
+  }
+  .flow-arrow {
+    position: absolute; left: 10px; bottom: -12px;
+    width: 2px; height: 16px; background: var(--border);
+  }
+  .flow-step:last-child .flow-arrow { display: none; }
+
+  .flow-branches {
+    display: grid; grid-template-columns: 1fr 1fr 1fr;
+    gap: 12px; margin: 16px 0;
+  }
+  .flow-branch {
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 12px; background: var(--section-bg);
+  }
+  .flow-branch h4 { font-size: 12px; font-weight: 700; margin-bottom: 6px; }
+  .flow-branch ul { list-style: none; padding: 0; }
+  .flow-branch li {
+    font-size: 11px; color: var(--muted); padding: 3px 0;
+    display: flex; align-items: flex-start; gap: 5px;
+  }
+  .flow-branch li::before { content: '→'; color: var(--accent); font-weight: 600; flex-shrink: 0; }
+
+  .pipeline {
+    display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
+    font-size: 11px; margin-top: 8px;
+  }
+  .pipe-step {
+    padding: 3px 10px; border-radius: 12px; font-weight: 600;
+    white-space: nowrap;
+  }
+  .pipe-step.input { background: var(--accent-light); color: var(--accent); }
+  .pipe-step.action { background: var(--divider); color: var(--muted); }
+  .pipe-step.resolver { background: var(--accent); color: white; }
+  .pipe-step.target { background: #e8f5e9; color: #2e7d32; }
+  .pipe-arr { color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- ── Sidebar ── -->
+  <div class="sidebar">
+    <div class="sidebar-title">Settings</div>
+    <div class="sidebar-nav">
+      <div class="sidebar-item"></svg>General</div>
+      <div class="sidebar-item">Providers</div>
+      <div class="sidebar-item">Skills</div>
+      <div class="sidebar-item">Models</div>
+      <div class="sidebar-item active">Extensions</div>
+      <div class="sidebar-item">Plugins</div>
+      <div class="sidebar-item">About</div>
+    </div>
+  </div>
+
+  <!-- ── Content ── -->
+  <div class="content">
+    <div class="pane">
+
+      <!-- ════ Header ════ -->
+      <div class="pane-header">
+        <div>
+          <div class="pane-title">Pi Extensions</div>
+          <div class="pane-desc">
+            Manage pi extension packages — install, enable, disable, and uninstall.
+            Built-in extensions cannot be disabled or removed.
+          </div>
+        </div>
+      </div>
+
+      <!-- ════ Section 1: Install ════ -->
+      <div class="section">
+        <div class="section-header" onclick="toggleSection('install-body')">
+          <div class="section-header-label">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="color:var(--accent)"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+            Install Extension
+          </div>
+          <svg class="chevron open" id="ch-install" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 4l3 3 3-3"/></svg>
+        </div>
+
+        <div class="section-body" id="install-body">
+
+          <!-- Tab bar -->
+          <div class="tab-bar">
+            <div class="tab-item active" id="t-npm" onclick="switchTab('npm')">npm package</div>
+            <div class="tab-item" id="t-local" onclick="switchTab('local')">Local directory</div>
+            <div class="tab-item" id="t-git" onclick="switchTab('git')">Git repository</div>
+          </div>
+
+          <!-- ── Tab: npm ── -->
+          <div class="tab-pane" id="p-npm" style="padding-top:14px;">
+            <div class="input-group">
+              <input class="input" type="text" placeholder="pi-subagents, @zhushanwen/pi-goal, or npm:pi-ask-user" id="npm-input" oninput="clearNpmError()">
+              <button class="btn btn-primary" id="npm-btn" onclick="installNpm()">Install</button>
+            </div>
+            <div class="hint">
+              Enter an npm package name. The <code>npm:</code> prefix is optional — the system auto-detects.
+              Package must contain a valid pi extension (detected via <code>pi</code> manifest field,
+              <code>pi-package</code> keyword, or pi peer dependencies).
+            </div>
+            <!-- Error + guidance box -->
+            <div class="error-box" id="npm-error">
+              <div class="e-title">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+                Install failed
+              </div>
+              <div class="e-body">
+                <div class="e-reason" id="npm-reason"></div>
+                <div class="e-suggest" id="npm-suggest">
+                  <div class="s-label">Suggested fix</div>
+                  <ul id="npm-suggest-list"></ul>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── Tab: Local ── -->
+          <div class="tab-pane" id="p-local" style="display:none; padding-top:14px;">
+            <div class="input-group">
+              <div class="path-display" id="local-path">Select a directory containing pi extension(s)…</div>
+              <button class="browse-btn" onclick="simulateBrowse('local')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:12px;height:12px;vertical-align:-1px;margin-right:3px;"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+                Browse…
+              </button>
+            </div>
+            <div class="hint">
+              Select a local directory. The system will scan for pi extensions recursively.
+              A directory may contain a single extension (with <code>package.json</code> + pi manifest)
+              or a collection of multiple extensions (one per subdirectory).
+            </div>
+            <!-- Discovered extensions -->
+            <div class="discovered-list" id="local-discovered" style="display:none;">
+              <div class="dl-header">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+                Discovered extensions — select which to install
+              </div>
+              <div id="local-discovered-items"></div>
+              <div style="padding:8px 12px; border-top:1px solid var(--border); background:var(--section-bg);">
+                <button class="btn btn-primary btn-sm" id="local-install-btn" disabled onclick="installLocalSelected()">Install Selected</button>
+                <button class="btn btn-ghost btn-sm" onclick="cancelDiscovery('local')">Cancel</button>
+              </div>
+            </div>
+            <!-- Error -->
+            <div class="error-box" id="local-error">
+              <div class="e-title">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+                  Validation failed
+              </div>
+              <div class="e-body">
+                <div class="e-reason" id="local-reason">No valid pi extension found at the specified path.</div>
+                <div class="e-suggest" id="local-suggest">
+                  <div class="s-label">Checklist</div>
+                  <ul><li>Verify the directory exists and is readable</li><li>Each extension must have a <code>package.json</code> with a <code>pi</code> manifest field, <code>pi-package</code> keyword, or pi peer dependency</li><li>Extensions can be in subdirectories for collection packages</li></ul>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── Tab: Git ── -->
+          <div class="tab-pane" id="p-git" style="display:none; padding-top:14px;">
+            <div class="input-group">
+              <input class="input" type="text" placeholder="github:user/pi-extensions, https://github.com/user/repo.git" id="git-input" oninput="clearGitError()">
+              <button class="btn btn-primary" id="git-btn" onclick="cloneAndScan()">Clone &amp; Scan</button>
+            </div>
+            <div class="hint">
+              Supports HTTPS and SSH URLs, plus shorthand <code>github:user/repo</code>.
+              The repo is cloned to a temporary directory, scanned for pi extensions,
+              then you select which ones to install into <code>~/.xyz-agent/pi/agent/extensions/</code>.
+            </div>
+            <!-- Clone progress -->
+            <div class="phase-strip" id="git-progress" style="display:none;">
+              <span class="dot" id="git-dot-1"></span><span class="step-text" id="git-step-1">Clone</span>
+              <span style="color:var(--muted)">→</span>
+              <span class="dot" id="git-dot-2"></span><span class="step-text" id="git-step-2">Scan</span>
+              <span style="color:var(--muted)">→</span>
+              <span class="dot" id="git-dot-3"></span><span class="step-text" id="git-step-3">Select</span>
+            </div>
+            <!-- Discovered -->
+            <div class="discovered-list" id="git-discovered" style="display:none;">
+              <div class="dl-header">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+                Discovered extensions — select which to install
+              </div>
+              <div id="git-discovered-items"></div>
+              <div style="padding:8px 12px; border-top:1px solid var(--border); background:var(--section-bg);">
+                <button class="btn btn-primary btn-sm" id="git-install-btn" disabled onclick="installGitSelected()">Install Selected</button>
+                <button class="btn btn-ghost btn-sm" onclick="cancelDiscovery('git')">Cancel</button>
+              </div>
+            </div>
+            <!-- Error -->
+            <div class="error-box" id="git-error">
+              <div class="e-title">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+                Clone / scan failed
+              </div>
+              <div class="e-body">
+                <div class="e-reason" id="git-reason"></div>
+                <div class="e-suggest" id="git-suggest">
+                  <div class="s-label">Suggested fix</div>
+                  <ul id="git-suggest-list"></ul>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div><!-- /section-body -->
+      </div><!-- /section -->
+
+      <!-- ════ Section 2: Installed ════ -->
+      <div class="section">
+        <div class="section-header" onclick="toggleSection('list-body')">
+          <div class="section-header-label">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="color:var(--accent)"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+            Installed Extensions
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="counter" id="ext-count">6</span>
+            <svg class="chevron open" id="ch-list" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 4l3 3 3-3"/></svg>
+          </div>
+        </div>
+
+        <div class="section-body" id="list-body" style="padding:0;">
+          <!-- Row template -->
+          <div class="ext-row">
+            <label class="toggle"><input type="checkbox" checked disabled><span class="toggle-track"></span></label>
+            <div class="ext-info">
+              <div class="ext-name">
+                goal
+                <span class="badge badge-version">0.5.3</span>
+                <span class="badge badge-builtin">built-in</span>
+              </div>
+              <div class="ext-desc">Goal-driven task management mode for structured objectives</div>
+            </div>
+            <svg class="chevron" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 4l3 3 3-3"/></svg>
+          </div>
+
+          <div class="ext-row">
+            <label class="toggle"><input type="checkbox" checked disabled><span class="toggle-track"></span></label>
+            <div class="ext-info">
+              <div class="ext-name">
+                todo
+                <span class="badge badge-version">0.3.1</span>
+                <span class="badge badge-builtin">built-in</span>
+              </div>
+              <div class="ext-desc">Lightweight todo list for tracking progress on multi-step work</div>
+            </div>
+            <svg class="chevron" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 4l3 3 3-3"/></svg>
+          </div>
+
+          <div class="ext-row">
+            <label class="toggle"><input type="checkbox" checked><span class="toggle-track"></span></label>
+            <div class="ext-info">
+              <div class="ext-name">
+                ask-user
+                <span class="badge badge-version">0.2.0</span>
+                <span class="badge badge-npm">npm</span>
+              </div>
+              <div class="ext-desc">Ask user for input during agent execution via dialog</div>
+            </div>
+            <button class="btn btn-xs btn-ghost" style="color:var(--danger);">Uninstall</button>
+            <svg class="chevron" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 4l3 3 3-3"/></svg>
+          </div>
+
+          <div class="ext-row">
+            <label class="toggle"><input type="checkbox" checked><span class="toggle-track"></span></label>
+            <div class="ext-info">
+              <div class="ext-name">
+                model-switch
+                <span class="badge badge-version">0.2.6</span>
+                <span class="badge badge-npm">npm</span>
+              </div>
+              <div class="ext-desc">Quickly switch between AI models during conversation</div>
+            </div>
+            <button class="btn btn-xs btn-ghost" style="color:var(--danger);">Uninstall</button>
+            <svg class="chevron" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 4l3 3 3-3"/></svg>
+          </div>
+
+          <div class="ext-row">
+            <label class="toggle"><input type="checkbox" checked><span class="toggle-track"></span></label>
+            <div class="ext-info">
+              <div class="ext-name">
+                my-custom-tool
+                <span class="badge badge-version">1.0.0</span>
+                <span class="badge badge-local">local</span>
+              </div>
+              <div class="ext-desc">Custom internal tool for project-specific automation</div>
+            </div>
+            <button class="btn btn-xs btn-ghost" style="color:var(--danger);">Uninstall</button>
+            <svg class="chevron" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 4l3 3 3-3"/></svg>
+          </div>
+
+          <div class="ext-row">
+            <label class="toggle"><input type="checkbox" checked><span class="toggle-track"></span></label>
+            <div class="ext-info">
+              <div class="ext-name">
+                quota-providers
+                <span class="badge badge-version">0.4.1</span>
+                <span class="badge badge-git">git</span>
+              </div>
+              <div class="ext-desc">Rate-limit aware provider quota management</div>
+            </div>
+            <button class="btn btn-xs btn-ghost" style="color:var(--danger);">Uninstall</button>
+            <svg class="chevron" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 4l3 3 3-3"/></svg>
+          </div>
+        </div>
+      </div>
+
+      <!-- ════ Flow Diagram ════ -->
+      <div class="flow-section">
+        <h3>How It Works — Full Mechanism</h3>
+
+        <div class="flow-branches">
+          <div class="flow-branch">
+            <h4 style="color:var(--accent);">① npm</h4>
+            <ul>
+              <li>Auto-detect plain name vs <code>npm:</code> prefix</li>
+              <li><code>npm install</code> to <code>~/.../npm/node_modules/</code></li>
+              <li>Validate <code>isValidPiExtension()</code> or rollback</li>
+              <li>On failure: classify error → show guidance</li>
+              <li>Add <code>npm:source</code> to <code>settings.json</code></li>
+            </ul>
+          </div>
+          <div class="flow-branch">
+            <h4 style="color:oklch(50% 0.18 145);">② Local</h4>
+            <ul>
+              <li>Copy dir → temp <code>tmp/ext-scan-*/</code></li>
+              <li>Recursively discover pi extensions</li>
+              <li>Show list → user selects</li>
+              <li><code>cp -r</code> selected → <code>extensions/&lt;name&gt;/</code></li>
+              <li>Clean up temp</li>
+            </ul>
+          </div>
+          <div class="flow-branch">
+            <h4 style="color:oklch(55% 0.15 85);">③ Git</h4>
+            <ul>
+              <li><code>git clone --depth 1</code> → <code>tmp/ext-scan-*/</code></li>
+              <li>Run <code>npm install</code> for deps</li>
+              <li>Recursively discover pi extensions</li>
+              <li>Show list → user selects</li>
+              <li><code>cp -r</code> selected → <code>extensions/&lt;name&gt;/</code></li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- Pipeline -->
+        <div style="border-top:1px solid var(--border); padding-top:14px; margin-top:12px;">
+          <div class="pipeline">
+            <span class="pipe-step input">npm:pi-xxx</span>
+            <span class="pipe-arr">→</span>
+            <span class="pipe-step action">npm install → npm/node_modules/</span>
+            <span class="pipe-arr">→</span>
+            <span class="pipe-step input">/local/path</span>
+            <span class="pipe-arr">→</span>
+            <span class="pipe-step action">cp → tmp/ → scan → select</span>
+            <span class="pipe-arr">→</span>
+            <span class="pipe-step input">github:user/repo</span>
+            <span class="pipe-arr">→</span>
+            <span class="pipe-step action">git clone → tmp/ → scan → select</span>
+            <span class="pipe-arr">→</span>
+            <span class="pipe-step target">extensions/&lt;name&gt;/</span>
+            <span class="pipe-arr">→</span>
+            <span class="pipe-step resolver">ExtensionResolver</span>
+            <span class="pipe-arr">→</span>
+            <span class="pipe-step action">--extension args</span>
+            <span class="pipe-arr">→</span>
+            <span class="pipe-step resolver">pi Agent</span>
+          </div>
+        </div>
+
+        <!-- Steps -->
+        <div style="border-top:1px solid var(--border); margin-top:14px; padding-top:14px;">
+          <div class="flow-step">
+            <div class="flow-num">1</div>
+            <div class="flow-body">
+              <div class="t">User submits input from Settings UI</div>
+              <div class="d">Frontend sends WebSocket message per source type: <code>extension.install</code> / <code>extension.installDir</code> / <code>extension.installGit</code></div>
+            </div>
+            <div class="flow-arrow"></div>
+          </div>
+          <div class="flow-step">
+            <div class="flow-num">2</div>
+            <div class="flow-body">
+              <div class="t">server.ts routes to ExtensionService</div>
+              <div class="d">Dispatches by message type. ExtensionService runs the corresponding install method.</div>
+            </div>
+            <div class="flow-arrow"></div>
+          </div>
+          <div class="flow-step">
+            <div class="flow-num">3</div>
+            <div class="flow-body">
+              <div class="t">npm install / clone / copy to temp</div>
+              <div class="d">
+                <strong>npm:</strong> auto-normalize name (<code>pi-xxx</code> → <code>npm:pi-xxx</code>), run npm install, validate, persist.<br>
+                <strong>Local:</strong> copy directory to <code>tmp/ext-scan-{ts}/</code> for safe scanning.<br>
+                <strong>Git:</strong> <code>git clone --depth 1</code> to <code>tmp/ext-scan-{ts}/</code>, install deps.
+              </div>
+            </div>
+            <div class="flow-arrow"></div>
+          </div>
+          <div class="flow-step">
+            <div class="flow-num">4</div>
+            <div class="flow-body">
+              <div class="t">Discover &amp; present collection</div>
+              <div class="d">
+                Recursively scan temp dir. Each subdirectory with a valid pi extension is a candidate.
+                Frontend shows a checkbox list — user selects which ones to install.
+                <strong>For npm:</strong> single extension, no discovery step needed.
+              </div>
+            </div>
+            <div class="flow-arrow"></div>
+          </div>
+          <div class="flow-step">
+            <div class="flow-num">5</div>
+            <div class="flow-body">
+              <div class="t">Install selected into target directory</div>
+              <div class="d">
+                <code>cp -r</code> each selected extension → <code>~/.xyz-agent/pi/agent/extensions/&lt;name&gt;/</code>.
+                Add to <code>settings.json packages[]</code> if needed. Clean up temp dir.
+                <code>ExtensionResolver.scanThirdPartyExtensions()</code> picks them up automatically.
+              </div>
+            </div>
+            <div class="flow-arrow"></div>
+          </div>
+          <div class="flow-step">
+            <div class="flow-num">6</div>
+            <div class="flow-body">
+              <div class="t">Loaded into pi on next session</div>
+              <div class="d"><code>getExtensionPaths()</code> → filter disabled → append file-type extension → <code>--extension &lt;path&gt;</code> arg on pi spawn → pi's jiti loader registers the extension.</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="border-top:1px solid var(--border); margin-top:14px; padding-top:14px;">
+          <div style="font-size:12px; font-weight:600; margin-bottom:8px;">npm Error Classification &amp; Guidance</div>
+          <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; font-size:11px;">
+            <div style="background:var(--danger-light); padding:8px 10px; border-radius:6px;">
+              <div style="font-weight:600; color:var(--danger);">Package not found</div>
+              <div style="color:var(--muted); margin-top:3px;">404 on npm registry. <span style="color:var(--fg);">→</span> Check spelling and scope. Try <code>npm view &lt;pkg&gt;</code> first.</div>
+            </div>
+            <div style="background:var(--warning-light); padding:8px 10px; border-radius:6px;">
+              <div style="font-weight:600; color:var(--warning);">Not a pi extension</div>
+              <div style="color:var(--muted); margin-top:3px;">Package exists but no pi manifest. <span style="color:var(--fg);">→</span> Verify <code>pi</code> field in package.json, or peerDeps matching pi.</div>
+            </div>
+            <div style="background:var(--section-bg); padding:8px 10px; border-radius:6px;">
+              <div style="font-weight:600; color:var(--muted);">Network / npm error</div>
+              <div style="color:var(--muted); margin-top:3px;">Timeout, registry unreachable, permission denied. <span style="color:var(--fg);">→</span> Check npm config and network. Try <code>npm install</code> manually.</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="border-top:1px solid var(--border); margin-top:14px; padding-top:14px;">
+          <div style="font-size:12px; font-weight:600; margin-bottom:8px;">Source Precedence (dedup — higher wins)</div>
+          <div class="pipeline">
+            <span class="pipe-step action">1. npm (package.json deps)</span>
+            <span class="pipe-arr">→</span>
+            <span class="pipe-step action">2. user (CLI --extension)</span>
+            <span class="pipe-arr">→</span>
+            <span class="pipe-step action">3. settings (npm: / git: sources)</span>
+            <span class="pipe-arr">→</span>
+            <span class="pipe-step action">4. third-party (extensions/ dir)</span>
+            <span class="pipe-arr">→</span>
+            <span class="pipe-step action">5. bundled</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="font-size:11px; color:var(--muted); padding:10px 1px 30px; border-top:1px solid var(--divider); margin-top:8px;">
+        <div style="margin-bottom:3px;"><strong>Data dir:</strong> <code>~/.xyz-agent/pi/agent/</code></div>
+        <div><strong>Temp dir:</strong> <code>~/.xyz-agent/pi/agent/tmp/ext-scan-*/</code> — auto cleaned after install.</div>
+        <div><strong>Apply:</strong> Extensions apply on next pi session. Use <code>/reload</code> for hot-reload.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Collapse sections ──
+function toggleSection(id) {
+  const body = document.getElementById(id);
+  const hid = body.style.display === 'none';
+  body.style.display = hid ? 'block' : 'none';
+  if (!hid) body.removeAttribute('style');
+}
+
+// ── Tab switching ──
+let currentTab = 'npm';
+function switchTab(t) {
+  currentTab = t;
+  ['npm','local','git'].forEach(x => {
+    document.getElementById('t-'+x).classList.toggle('active', x===t);
+    document.getElementById('p-'+x).style.display = x===t ? 'block' : 'none';
+    document.getElementById(x+'-error').style.display = 'none';
+  });
+}
+
+// ── npm install with error simulation ──
+function installNpm() {
+  const raw = document.getElementById('npm-input').value.trim();
+  if (!raw) return;
+  const btn = document.getElementById('npm-btn');
+  btn.textContent = 'Installing…'; btn.disabled = true;
+  clearNpmError();
+
+  // Simulate different outcomes based on input
+  setTimeout(() => {
+    const isScopePkg = raw.includes('/');
+    const isUnknown = raw.includes('unknown') || raw.includes('not-exist');
+    const isNotPi = raw.includes('not-pi') || raw === 'lodash';
+
+    if (isUnknown) {
+      const name = raw.replace(/^npm:/,'');
+      showNpmError(
+        `"${name}" was not found on the npm registry.`,
+        [
+          `Check the package name spelling: <code>${name}</code>`,
+          `Verify the package exists: <code>npm view ${name} version</code>`,
+          `If it's an internal package, check your npm authentication: <code>npm config list</code>`,
+          'The package may be scoped — did you mean <code>@scope/'+name+'</code>?'
+        ]
+      );
+      btn.textContent = 'Install'; btn.disabled = false;
+      return;
+    }
+
+    if (isNotPi) {
+      showNpmError(
+        `"${raw}" was downloaded but is not a valid pi extension.`,
+        [
+          'Check if the package has a <code>pi</code> field in its <code>package.json</code>',
+          'A pi extension must have <code>"pi": { ... }</code> manifest, or the <code>pi-package</code> keyword, or pi packages in <code>peerDependencies</code>',
+          'Some packages need <code>pi</code> metadata — check the extension documentation',
+          'Try a known pi extension: <code>pi-subagents</code>, <code>pi-goal</code>, <code>pi-ask-user</code>'
+        ]
+      );
+      btn.textContent = 'Install'; btn.disabled = false;
+      return;
+    }
+
+    // Success
+    const displayName = raw.replace(/^npm:/,'');
+    btn.textContent = '✓ Installed';
+    btn.style.background = 'var(--success)';
+    setTimeout(() => {
+      btn.textContent = 'Install'; btn.disabled = false;
+      btn.style.background = '';
+    }, 2000);
+  }, 1500);
+}
+
+function showNpmError(reason, suggestions) {
+  const box = document.getElementById('npm-error');
+  document.getElementById('npm-reason').innerHTML = reason;
+  const list = document.getElementById('npm-suggest-list');
+  list.innerHTML = suggestions.map(s => `<li>${s}</li>`).join('');
+  box.style.display = 'block';
+}
+
+function clearNpmError() {
+  document.getElementById('npm-error').style.display = 'none';
+}
+
+// ── Local: browse & scan ──
+const mockLocalPaths = {
+  'default': { name: '~/projects/my-pi-tools', extensions: [
+    { name: 'code-reviewer', version: '1.2.0', desc: 'Automated code review tools' },
+    { name: 'git-hooks', version: '0.8.0', desc: 'Git hook management for pi sessions' },
+    { name: 'metrics-collector', version: '0.3.0', desc: 'Session metrics and analytics' },
+  ]},
+  'single': { name: '~/dev/my-extension', extensions: [
+    { name: 'code-snippet-manager', version: '0.5.0', desc: 'Snippet management for pi' },
+  ]},
+};
+
+function simulateBrowse(type) {
+  // Pick a mock path to simulate directory selection
+  const mock = mockLocalPaths[Math.random() > 0.5 ? 'default' : (Math.random() > 0.5 ? 'default' : 'single')];
+  document.getElementById('local-path').textContent = mock.name;
+
+  // Show discovered extensions
+  const container = document.getElementById('local-discovered-items');
+  container.innerHTML = '';
+  mock.extensions.forEach((ext, i) => {
+    const div = document.createElement('div');
+    div.className = 'dl-item';
+    div.innerHTML = `
+      <input type="checkbox" class="checkbox local-cb" data-idx="${i}" checked onchange="toggleLocalInstall()">
+      <div style="flex:1">
+        <div class="dl-name">${ext.name} <span class="badge badge-version">${ext.version}</span></div>
+        <div style="font-size:10px;color:var(--muted)">${ext.desc}</div>
+      </div>
+    `;
+    container.appendChild(div);
+  });
+
+  document.getElementById('local-discovered').style.display = 'block';
+  document.getElementById('local-error').style.display = 'none';
+  toggleLocalInstall();
+}
+
+function toggleLocalInstall() {
+  const checked = document.querySelectorAll('.local-cb:checked').length;
+  document.getElementById('local-install-btn').disabled = checked === 0;
+}
+
+function installLocalSelected() {
+  const checked = document.querySelectorAll('.local-cb:checked');
+  const names = Array.from(checked).map(cb => {
+    const row = cb.closest('.dl-item');
+    return row.querySelector('.dl-name').textContent.trim().split(' ')[0];
+  });
+  const btn = document.getElementById('local-install-btn');
+  btn.textContent = `Installing ${names.length} extension${names.length>1?'s':''}…`;
+  btn.disabled = true;
+  setTimeout(() => {
+    document.getElementById('local-discovered').style.display = 'none';
+    document.getElementById('local-path').textContent = 'Select a directory containing pi extension(s)…';
+    btn.textContent = 'Install Selected';
+    btn.disabled = true;
+  }, 1200);
+}
+
+function cancelDiscovery(type) {
+  const prefix = type === 'local' ? 'local' : 'git';
+  document.getElementById(prefix+'-discovered').style.display = 'none';
+  if (type === 'git') document.getElementById('git-progress').style.display = 'none';
+}
+
+// ── Git: clone & scan ──
+function cloneAndScan() {
+  const url = document.getElementById('git-input').value.trim();
+  if (!url) return;
+  const btn = document.getElementById('git-btn');
+  btn.disabled = true; btn.textContent = 'Cloning…';
+  clearGitError();
+
+  const progress = document.getElementById('git-progress');
+  progress.style.display = 'flex';
+  ['1','2','3'].forEach(i => {
+    document.getElementById('git-dot-'+i).className = 'dot';
+    document.getElementById('git-step-'+i).className = 'step-text';
+  });
+  document.getElementById('git-dot-1').className = 'dot active';
+  document.getElementById('git-step-1').className = 'step-text active';
+
+  // Phase 1: clone
+  setTimeout(() => {
+    document.getElementById('git-dot-1').className = 'dot done';
+    document.getElementById('git-step-1').className = 'step-text done';
+    document.getElementById('git-dot-2').className = 'dot active';
+    document.getElementById('git-step-2').className = 'step-text active';
+    btn.textContent = 'Scanning…';
+
+    // Phase 2: scan
+    setTimeout(() => {
+      document.getElementById('git-dot-2').className = 'dot done';
+      document.getElementById('git-step-2').className = 'step-text done';
+      document.getElementById('git-dot-3').className = 'dot active';
+      document.getElementById('git-step-3').className = 'step-text active';
+
+      // Show discovered
+      const container = document.getElementById('git-discovered-items');
+      const exts = [
+        { name: 'coding-workflow', version: '1.0.0', desc: 'Coding workflow automation tools' },
+        { name: 'model-quota', version: '0.4.1', desc: 'Provider quota management' },
+        { name: 'session-tree-view', version: '0.2.0', desc: 'Enhanced session tree visualization' },
+      ];
+      container.innerHTML = '';
+      exts.forEach((ext, i) => {
+        const div = document.createElement('div');
+        div.className = 'dl-item';
+        div.innerHTML = `
+          <input type="checkbox" class="checkbox git-cb" data-idx="${i}" checked onchange="toggleGitInstall()">
+          <div style="flex:1">
+            <div class="dl-name">${ext.name} <span class="badge badge-version">${ext.version}</span></div>
+            <div style="font-size:10px;color:var(--muted)">${ext.desc}</div>
+          </div>
+        `;
+        container.appendChild(div);
+      });
+
+      document.getElementById('git-discovered').style.display = 'block';
+      document.getElementById('git-error').style.display = 'none';
+      btn.disabled = false; btn.textContent = 'Clone & Scan';
+      toggleGitInstall();
+    }, 1200);
+  }, 1500);
+}
+
+function toggleGitInstall() {
+  const checked = document.querySelectorAll('.git-cb:checked').length;
+  document.getElementById('git-install-btn').disabled = checked === 0;
+}
+
+function installGitSelected() {
+  const checked = document.querySelectorAll('.git-cb:checked');
+  const names = Array.from(checked).map(cb => {
+    const row = cb.closest('.dl-item');
+    return row.querySelector('.dl-name').textContent.trim().split(' ')[0];
+  });
+  const btn = document.getElementById('git-install-btn');
+  btn.textContent = `Installing ${names.length} extension${names.length>1?'s':''}…`;
+  btn.disabled = true;
+  setTimeout(() => {
+    document.getElementById('git-discovered').style.display = 'none';
+    document.getElementById('git-progress').style.display = 'none';
+    btn.textContent = 'Install Selected';
+    btn.disabled = true;
+  }, 1200);
+}
+
+function clearGitError() {
+  document.getElementById('git-error').style.display = 'none';
+}
+</script>
+</body>
+</html>

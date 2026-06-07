@@ -1,0 +1,739 @@
+<!--
+  Demo B (v2): Summary Chip Collapse — with overflow handling
+  - Streaming: compact rolling bubble
+  - Completed: collapsed into a thin summary chip bar
+  - Overflow: when too many chip types, show "+N more" pill
+  - Text is always visible
+-->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Demo B — Summary Chip Collapse (v2 w/ overflow)</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: oklch(97% 0.018 70);
+    --surface: oklch(99% 0.008 70);
+    --fg: oklch(22% 0.02 50);
+    --muted: oklch(50% 0.018 50);
+    --muted-dim: oklch(65% 0.012 50);
+    --border: oklch(90% 0.014 70);
+    --accent: oklch(64% 0.13 28);
+    --accent-light: oklch(92% 0.04 28);
+    --success: oklch(70% 0.18 145);
+    --success-light: oklch(95% 0.06 145);
+    --warning: oklch(78% 0.15 85);
+    --danger: oklch(62% 0.2 25);
+    --user-bubble-bg: var(--accent-light);
+    --msg-assistant-bg: var(--surface);
+    --font-body: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+    --radius: 4px;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-body);
+    font-size: 13px;
+    line-height: 1.6;
+    padding: 40px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .demo-header {
+    width: 100%;
+    max-width: 720px;
+    margin-bottom: 32px;
+  }
+  .demo-header h1 {
+    font-size: 20px;
+    font-weight: 600;
+    margin-bottom: 4px;
+    letter-spacing: -0.01em;
+  }
+  .demo-header p {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .demo-header .badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    background: var(--accent-light);
+    color: var(--accent);
+    padding: 2px 8px;
+    border-radius: 100px;
+    margin-bottom: 8px;
+  }
+
+  .chat-area {
+    width: 100%;
+    max-width: 720px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .turn-group { display: flex; flex-direction: column; gap: 0; }
+  .msg { width: 100%; }
+
+  .msg-role {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .msg-role .time {
+    font-weight: 400; text-transform: none; letter-spacing: normal; opacity: 0.6;
+  }
+
+  .msg-body {
+    padding: 10px 14px;
+    border-radius: var(--radius);
+    line-height: 1.7;
+  }
+  .msg--user .msg-body {
+    background: var(--user-bubble-bg);
+    border: 1px solid transparent;
+    border-bottom-right-radius: 2px;
+  }
+  .msg--asst .msg-body {
+    background: var(--msg-assistant-bg);
+    border: 1px solid var(--border);
+  }
+
+  .text-content { font-size: 13px; line-height: 1.7; color: var(--fg); }
+  .text-content p { margin-bottom: 8px; }
+  .text-content p:last-child { margin-bottom: 0; }
+  .text-content code {
+    font-family: var(--font-mono); font-size: 11px;
+    background: var(--accent-light); padding: 1px 5px; border-radius: 2px;
+  }
+  .text-content ul, .text-content ol { margin-left: 16px; margin-bottom: 8px; }
+
+  /* ── Summary Chip Bar ── */
+  .summary-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 8px;
+    padding: 5px 8px;
+    border-radius: var(--radius);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    cursor: pointer;
+    transition: all 0.12s;
+    flex-wrap: wrap;
+  }
+  .summary-bar:hover {
+    border-color: var(--accent);
+    background: var(--accent-light);
+  }
+
+  .summary-bar__left {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  .summary-bar__label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted-dim);
+    margin-right: 2px;
+    flex-shrink: 0;
+  }
+
+  /* ── The chips wrapper: clips overflow chips ── */
+  .summary-bar__chips {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+
+  .summary-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 7px;
+    border-radius: 100px;
+    font-size: 10px;
+    font-family: var(--font-mono);
+    line-height: 1.3;
+    transition: all 0.12s;
+    white-space: nowrap;
+  }
+  .summary-chip--thinking {
+    background: color-mix(in oklch, var(--accent) 12%, transparent);
+    color: var(--accent);
+  }
+  .summary-chip--tool {
+    background: color-mix(in oklch, var(--success) 12%, transparent);
+    color: color-mix(in oklch, var(--success) 80%, black);
+  }
+  .summary-chip--overflow {
+    background: var(--border);
+    color: var(--muted-dim);
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.12s;
+  }
+  .summary-chip--overflow:hover {
+    background: var(--accent-light);
+    color: var(--accent);
+  }
+  .summary-chip--active {
+    box-shadow: 0 0 0 1px var(--accent);
+    background: color-mix(in oklch, var(--accent) 18%, transparent) !important;
+  }
+
+  .summary-chip__dot {
+    width: 4px; height: 4px; border-radius: 50%;
+  }
+  .summary-chip__dot--thinking { background: var(--accent); }
+  .summary-chip__dot--tool { background: var(--success); }
+
+  /* ── Overflow: hide chips beyond the first 3 visible ── */
+  .summary-bar__chips--collapsed .summary-chip:nth-child(n+4) {
+    display: none;
+  }
+  .summary-bar__chips--collapsed .summary-chip--overflow {
+    display: inline-flex; /* always show overflow chip */
+  }
+  .summary-bar__chips:not(.summary-bar__chips--collapsed) .summary-chip--overflow {
+    /* when expanded, the overflow chip becomes "收起" */
+  }
+
+  .summary-bar__chevron {
+    width: 12px; height: 12px;
+    flex-shrink: 0;
+    color: var(--muted-dim);
+    transition: transform 0.15s;
+  }
+
+  /* ── Streaming Compact Bubble ── */
+  .stream-compact {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    cursor: pointer;
+    transition: all 0.15s;
+    margin-bottom: 4px;
+  }
+  .stream-compact:hover { border-color: var(--accent); background: var(--accent-light); }
+
+  .stream-compact__pulse {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent);
+    animation: pulse 2s ease-in-out infinite;
+    flex-shrink: 0;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(0.7); }
+  }
+  .stream-compact__label { font-size: 11px; font-weight: 500; color: var(--accent); flex-shrink: 0; }
+  .stream-compact__status {
+    font-size: 11px; color: var(--muted);
+    flex: 1; min-width: 0; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
+  }
+  .stream-compact__time {
+    font-family: var(--font-mono); font-size: 10px;
+    color: var(--muted-dim); flex-shrink: 0;
+  }
+  .stream-compact__chevron {
+    width: 12px; height: 12px;
+    flex-shrink: 0; color: var(--muted-dim);
+    transition: transform 0.15s;
+  }
+
+  /* ── Thinking Indicator ── */
+  .thinking-indicator {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 14px; background: var(--surface);
+    border: 1px solid var(--border); border-radius: var(--radius);
+  }
+  .thinking-indicator__dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent); animation: pulse 2s ease-in-out infinite;
+  }
+  .thinking-indicator__text { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+
+  /* ── Collapsible Detail Section ── */
+  /* Parent always display:block; items are individually controlled */
+  .detail-section { display: block; margin-top: 8px; }
+  .detail-section__item {
+    display: none; /* hidden by default; shown via item--visible or parent--visible */
+    flex-direction: column; gap: 4px;
+    padding: 6px 0 6px 12px;
+    border-left: 2px solid var(--border);
+    margin-bottom: 4px;
+  }
+  .detail-section__item--visible {
+    display: flex;
+  }
+  .detail-section--visible .detail-section__item {
+    display: flex; /* when parent expanded, show all items */
+  }
+  .detail-section__header {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11px; color: var(--muted);
+  }
+  .detail-section__dot { width: 4px; height: 4px; border-radius: 50%; flex-shrink: 0; }
+  .detail-section__dot--thinking { background: var(--accent); }
+  .detail-section__dot--tool { background: var(--success); }
+  .detail-section__name { font-weight: 500; color: var(--accent); }
+  .detail-section__name--tool { color: var(--success); }
+  .detail-section__path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .detail-section__time { font-family: var(--font-mono); font-size: 10px; color: var(--muted-dim); }
+  .detail-section__body {
+    font-family: var(--font-mono); font-size: 11px; line-height: 1.6;
+    color: var(--muted); white-space: pre-wrap;
+    padding: 4px 0 4px 13px;
+  }
+
+  .expand-all-btn {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 10px; color: var(--muted-dim); cursor: pointer;
+    border: 1px dashed var(--border); border-radius: 100px;
+    padding: 2px 10px; transition: all 0.12s; background: transparent;
+    margin-bottom: 6px;
+  }
+  .expand-all-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  .mt-1 { margin-top: 4px; }
+  .mt-2 { margin-top: 8px; }
+  .mb-1 { margin-bottom: 4px; }
+
+  .demo-nav {
+    display: flex; gap: 8px; margin-bottom: 24px; width: 100%; max-width: 720px;
+  }
+  .demo-nav a {
+    padding: 6px 14px; border: 1px solid var(--border); border-radius: var(--radius);
+    text-decoration: none; font-size: 12px; color: var(--muted); transition: all 0.12s;
+  }
+  .demo-nav a:hover { border-color: var(--accent); color: var(--accent); }
+  .demo-nav a.active {
+    background: var(--accent-light); border-color: var(--accent);
+    color: var(--accent); font-weight: 600;
+  }
+
+  .settings-demo {
+    width: 100%; max-width: 720px; margin-bottom: 28px;
+    padding: 14px 16px; background: var(--surface);
+    border: 1px solid var(--border); border-radius: var(--radius);
+  }
+  .settings-demo__title { font-size: 12px; font-weight: 600; margin-bottom: 10px; }
+  .settings-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; }
+  .settings-row + .settings-row { border-top: 1px solid var(--border); }
+  .settings-row__label { font-size: 12px; }
+  .settings-row__desc { font-size: 10px; color: var(--muted); }
+
+  .toggle {
+    width: 34px; height: 20px; border-radius: 10px;
+    background: var(--border); cursor: pointer; position: relative;
+    transition: background 0.15s; flex-shrink: 0;
+  }
+  .toggle--on { background: var(--accent); }
+  .toggle::after {
+    content: ''; position: absolute; top: 2px; left: 2px;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: white; transition: transform 0.15s;
+  }
+  .toggle--on::after { transform: translateX(14px); }
+
+  .demo-scenario {
+    font-size: 10px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--muted-dim);
+    margin: 20px 0 6px 0; padding: 4px 0;
+    border-bottom: 1px dashed var(--border);
+  }
+</style>
+</head>
+<body>
+
+<div class="demo-nav">
+  <a href="views_chat-collapse-demo-A.html">Demo A · Phase-Aware</a>
+  <a href="views_chat-collapse-demo-B.html" class="active">Demo B · Summary Chip (v2)</a>
+  <a href="views_chat-collapse-demo-C.html">Demo C · Flat Tag Stream</a>
+</div>
+
+<div class="demo-header">
+  <span class="badge">Demo B v2</span>
+  <h1>Summary Chip Collapse — with Overflow</h1>
+  <p>操作聚合同类 chip。类型过多时自动截断显示 "+N more" 点击展开全部。文本内容始终保持可见。</p>
+</div>
+
+<div class="settings-demo">
+  <div class="settings-demo__title">Streaming 折叠设置</div>
+  <div class="settings-row">
+    <div>
+      <div class="settings-row__label">折叠 Agent 操作过程</div>
+      <div class="settings-row__desc">完成后显示摘要标签；操作过多时自动折叠</div>
+    </div>
+    <div class="toggle toggle--on" onclick="this.classList.toggle('toggle--on')"></div>
+  </div>
+</div>
+
+<div class="chat-area">
+
+  <!-- ── Scenario 1: Streaming in progress ── -->
+  <div class="demo-scenario">▶ Streaming 进行中</div>
+  <div class="turn-group">
+    <div class="msg msg--user">
+      <div class="msg-role">用户 <span class="time">14:23</span></div>
+      <div class="msg-body">
+        <div class="text-content">帮我重构 auth 模块，先把接口定义统一了</div>
+      </div>
+    </div>
+    <div class="msg msg--asst">
+      <div class="msg-role">助手 <span class="time">14:23</span></div>
+      <div class="msg-body">
+        <div class="stream-compact" onclick="this.nextElementSibling.classList.toggle('detail-section--visible')">
+          <span class="stream-compact__pulse"></span>
+          <span class="stream-compact__label">思考中</span>
+          <span class="stream-compact__status">分析接口文件结构...</span>
+          <span class="stream-compact__time">3.5s</span>
+          <svg class="stream-compact__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+        </div>
+        <div class="detail-section">
+          <div class="detail-section__item">
+            <div class="detail-section__header">
+              <span class="detail-section__dot detail-section__dot--thinking"></span>
+              <span class="detail-section__name">Thinking</span>
+              <span class="detail-section__time">· 3.5s</span>
+            </div>
+            <div class="detail-section__body">分析 auth 模块接口分布，发现三个文件中的接口需要合并...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Scenario 2: Normal completed (2-3 types) ── -->
+  <div class="demo-scenario">▶ 已完成（正常 — 3 种操作类型）</div>
+  <div class="turn-group">
+    <div class="msg msg--user">
+      <div class="msg-role">用户 <span class="time">14:20</span></div>
+      <div class="msg-body"><div class="text-content">分析 src/auth/ 目录下的代码结构</div></div>
+    </div>
+    <div class="msg msg--asst">
+      <div class="msg-role">助手 <span class="time">14:20</span></div>
+      <div class="msg-body">
+
+        <div class="summary-bar" onclick="onBarClick(this)">
+          <div class="summary-bar__left">
+            <span class="summary-bar__label">过程</span>
+            <div class="summary-bar__chips">
+              <span class="summary-chip summary-chip--thinking" data-idx="0" onclick="onChipClick(this,event)">
+                <span class="summary-chip__dot summary-chip__dot--thinking"></span>思考 3.2s
+              </span>
+              <span class="summary-chip summary-chip--tool" data-idx="1" onclick="onChipClick(this,event)">
+                <span class="summary-chip__dot summary-chip__dot--tool"></span>read 2 文件
+              </span>
+              <span class="summary-chip summary-chip--tool" data-idx="2" onclick="onChipClick(this,event)">
+                <span class="summary-chip__dot summary-chip__dot--tool"></span>grep 1 搜索
+              </span>
+            </div>
+          </div>
+          <svg class="summary-bar__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+        </div>
+
+        <div class="detail-section">
+          <div class="detail-section__item">
+            <div class="detail-section__header">
+              <span class="detail-section__dot detail-section__dot--thinking"></span>
+              <span class="detail-section__name">Thinking</span>
+              <span class="detail-section__time">· 3.2s</span>
+            </div>
+            <div class="detail-section__body">分析 auth 模块结构。接口分布在 3 个文件中。错误类重复（AuthError 定义在两处）。Session 耦合在 User 类中。</div>
+          </div>
+          <div class="detail-section__item">
+            <div class="detail-section__header">
+              <span class="detail-section__dot detail-section__dot--tool"></span>
+              <span class="detail-section__name detail-section__name--tool">read</span>
+              <span class="detail-section__path">src/auth/interfaces.ts · errors.ts</span>
+              <span class="detail-section__time">1.4s</span>
+            </div>
+            <div class="detail-section__body">interfaces: 4 exports, 2 types<br>errors: AuthError 类, 2 个继承类</div>
+          </div>
+          <div class="detail-section__item">
+            <div class="detail-section__header">
+              <span class="detail-section__dot detail-section__dot--tool"></span>
+              <span class="detail-section__name detail-section__name--tool">grep</span>
+              <span class="detail-section__path">"AuthError|authError" src/**/*.ts</span>
+              <span class="detail-section__time">0.4s</span>
+            </div>
+            <div class="detail-section__body">12 matches across 5 files</div>
+          </div>
+        </div>
+
+        <div class="text-content mt-1">
+          <p>分析结果：auth 模块存在 <strong>3 个主要问题</strong>：</p>
+          <ul>
+            <li><strong>接口散落</strong> — <code>IAuthResponse</code>、<code>ITokenPayload</code>、<code>IAuthModule</code> 分布在三个文件中</li>
+            <li><strong>错误类重复</strong> — <code>AuthError</code> 在两处定义</li>
+            <li><strong>Session 耦合</strong> — Session 管理嵌入在 User 类中</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Scenario 3: Many tool call types (overflow case) ── -->
+  <div class="demo-scenario">▶ 多操作类型（自动截断 + overflow chip）</div>
+  <div class="turn-group">
+    <div class="msg msg--user">
+      <div class="msg-role">用户 <span class="time">14:22</span></div>
+      <div class="msg-body"><div class="text-content">全面检查整个项目的代码质量</div></div>
+    </div>
+    <div class="msg msg--asst">
+      <div class="msg-role">助手 <span class="time">14:22</span></div>
+      <div class="msg-body">
+
+        <!-- Summary bar with overflow: chips start collapsed -->
+        <div class="summary-bar" onclick="onBarClick(this)">
+          <div class="summary-bar__left">
+            <span class="summary-bar__label">过程</span>
+            <div class="summary-bar__chips summary-bar__chips--collapsed" id="overflow-chips">
+              <span class="summary-chip summary-chip--thinking" data-idx="0" onclick="onChipClick(this,event)">
+                <span class="summary-chip__dot summary-chip__dot--thinking"></span>思考 5.6s
+              </span>
+              <span class="summary-chip summary-chip--tool" data-idx="1" onclick="onChipClick(this,event)">
+                <span class="summary-chip__dot summary-chip__dot--tool"></span>read 85 文件
+              </span>
+              <span class="summary-chip summary-chip--tool" data-idx="2" onclick="onChipClick(this,event)">
+                <span class="summary-chip__dot summary-chip__dot--tool"></span>grep 23 搜索
+              </span>
+              <!-- Hidden when collapsed, visible when overflow expanded -->
+              <span class="summary-chip summary-chip--tool" data-idx="3" onclick="onChipClick(this,event)">
+                <span class="summary-chip__dot summary-chip__dot--tool"></span>bash 6 执行
+              </span>
+              <span class="summary-chip summary-chip--tool" data-idx="4" onclick="onChipClick(this,event)">
+                <span class="summary-chip__dot summary-chip__dot--tool"></span>write 3 文件
+              </span>
+              <span class="summary-chip summary-chip--tool" data-idx="5" onclick="onChipClick(this,event)">
+                <span class="summary-chip__dot summary-chip__dot--tool"></span>edit 12 文件
+              </span>
+              <!-- Overflow toggler -->
+              <span class="summary-chip summary-chip--overflow" onclick="event.stopPropagation();this.closest('.summary-bar__chips').classList.toggle('summary-bar__chips--collapsed');">
+                +3 more
+              </span>
+            </div>
+          </div>
+          <svg class="summary-bar__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+        </div>
+
+        <div class="detail-section">
+          <div class="detail-section__item">
+            <div class="detail-section__header">
+              <span class="detail-section__dot detail-section__dot--thinking"></span>
+              <span class="detail-section__name">Thinking</span>
+              <span class="detail-section__time">· 5.6s</span>
+            </div>
+            <div class="detail-section__body">全面检查项目代码质量，覆盖 200+ 文件。需要跨模块分析耦合度和代码规范。</div>
+          </div>
+          <div class="detail-section__item">
+            <div class="detail-section__header">
+              <span class="detail-section__dot detail-section__dot--tool"></span>
+              <span class="detail-section__name detail-section__name--tool">read</span>
+              <span class="detail-section__path">85 文件 (src/**/*.ts)</span>
+              <span class="detail-section__time">12.4s</span>
+            </div>
+            <div class="detail-section__body">读取了 src/ 下 85 个 TypeScript 文件</div>
+          </div>
+          <div class="detail-section__item">
+            <div class="detail-section__header">
+              <span class="detail-section__dot detail-section__dot--tool"></span>
+              <span class="detail-section__name detail-section__name--tool">grep</span>
+              <span class="detail-section__path">23 次搜索</span>
+              <span class="detail-section__time">8.2s</span>
+            </div>
+            <div class="detail-section__body">搜索了 any 类型、未使用的 import、重复定义等</div>
+          </div>
+          <div class="detail-section__item">
+            <div class="detail-section__header">
+              <span class="detail-section__dot detail-section__dot--tool"></span>
+              <span class="detail-section__name detail-section__name--tool">bash</span>
+              <span class="detail-section__path">6 次执行</span>
+              <span class="detail-section__time">3.4s</span>
+            </div>
+            <div class="detail-section__body">运行了 tsc --noEmit、eslint、prettier --check</div>
+          </div>
+          <div class="detail-section__item">
+            <div class="detail-section__header">
+              <span class="detail-section__dot detail-section__dot--tool"></span>
+              <span class="detail-section__name detail-section__name--tool">write</span>
+              <span class="detail-section__path">3 个报告文件</span>
+              <span class="detail-section__time">1.8s</span>
+            </div>
+            <div class="detail-section__body">生成了代码质量报告、修复建议、TODO 列表</div>
+          </div>
+          <div class="detail-section__item">
+            <div class="detail-section__header">
+              <span class="detail-section__dot detail-section__dot--tool"></span>
+              <span class="detail-section__name detail-section__name--tool">edit</span>
+              <span class="detail-section__path">12 个文件</span>
+              <span class="detail-section__time">5.7s</span>
+            </div>
+            <div class="detail-section__body">修复了 47 个 lint 问题、3 处类型错误、2 处重复定义</div>
+          </div>
+        </div>
+
+        <div class="text-content mt-1">
+          <p>检查结果：</p>
+          <ul>
+            <li><code>tsc</code> — 3 个类型错误已修复 ✅</li>
+            <li><code>eslint</code> — 47 个 warning 已修复 ✅</li>
+            <li>发现 2 处重复定义、5 处未使用的 import</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Scenario 4: Long session ── -->
+  <div class="demo-scenario">▶ 长对话回顾（全部折叠，可快速扫视）</div>
+
+  <div class="turn-group">
+    <div class="msg msg--user">
+      <div class="msg-role">用户 <span class="time">14:15</span></div>
+      <div class="msg-body"><div class="text-content">帮我重构 auth 模块</div></div>
+    </div>
+    <div class="msg msg--asst">
+      <div class="msg-role">助手 <span class="time">14:15</span></div>
+      <div class="msg-body">
+        <div class="summary-bar" onclick="onBarClick(this)">
+          <div class="summary-bar__left">
+            <span class="summary-bar__label">过程</span>
+            <div class="summary-bar__chips">
+              <span class="summary-chip summary-chip--thinking"><span class="summary-chip__dot summary-chip__dot--thinking"></span>思考 4.1s</span>
+              <span class="summary-chip summary-chip--tool"><span class="summary-chip__dot summary-chip__dot--tool"></span>read 1 文件</span>
+            </div>
+          </div>
+          <svg class="summary-bar__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+        </div>
+        <div class="detail-section"></div>
+        <div class="text-content"><p>好的，我来分解。需要重构接口定义、错误处理、Session 管理。</p></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="turn-group">
+    <div class="msg msg--user">
+      <div class="msg-role">用户 <span class="time">14:16</span></div>
+      <div class="msg-body"><div class="text-content">继续，先把接口定义统一了</div></div>
+    </div>
+    <div class="msg msg--asst">
+      <div class="msg-role">助手 <span class="time">14:16</span></div>
+      <div class="msg-body">
+        <div class="summary-bar" onclick="onBarClick(this)">
+          <div class="summary-bar__left">
+            <span class="summary-bar__label">过程</span>
+            <div class="summary-bar__chips">
+              <span class="summary-chip summary-chip--thinking"><span class="summary-chip__dot summary-chip__dot--thinking"></span>思考 1.8s</span>
+              <span class="summary-chip summary-chip--tool"><span class="summary-chip__dot summary-chip__dot--tool"></span>edit 2 文件</span>
+            </div>
+          </div>
+          <svg class="summary-bar__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+        </div>
+        <div class="detail-section"></div>
+        <div class="text-content">
+          <p>已完成接口统一：</p>
+          <ul>
+            <li>合并 <code>IAuthResponse</code>、<code>ITokenPayload</code> 到 <code>interfaces.ts</code></li>
+            <li>新增 <code>IAuthModule</code> 聚合接口</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="turn-group">
+    <div class="msg msg--user">
+      <div class="msg-role">用户 <span class="time">14:18</span></div>
+      <div class="msg-body"><div class="text-content">错误处理也统一一下</div></div>
+    </div>
+    <div class="msg msg--asst">
+      <div class="msg-role">助手 <span class="time">14:18</span></div>
+      <div class="msg-body">
+        <div class="summary-bar" onclick="onBarClick(this)">
+          <div class="summary-bar__left">
+            <span class="summary-bar__label">过程</span>
+            <div class="summary-bar__chips">
+              <span class="summary-chip summary-chip--thinking"><span class="summary-chip__dot summary-chip__dot--thinking"></span>思考 2.5s</span>
+              <span class="summary-chip summary-chip--tool"><span class="summary-chip__dot summary-chip__dot--tool"></span>read 1 文件</span>
+              <span class="summary-chip summary-chip--tool"><span class="summary-chip__dot summary-chip__dot--tool"></span>edit 1 文件</span>
+            </div>
+          </div>
+          <svg class="summary-bar__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+        </div>
+        <div class="detail-section"></div>
+        <div class="text-content"><p>错误处理已统一。所有 auth 模块错误使用 <code>AuthErrorCode</code> 枚举 + <code>AuthException</code> 类。</p></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/** Click a chip in the summary bar: toggle its corresponding detail item */
+function onChipClick(chipEl, ev) {
+  ev.stopPropagation();
+  // Find index of this chip (exclude overflow chip)
+  var chips = chipEl.closest('.summary-bar__chips').querySelectorAll('.summary-chip[data-idx]');
+  var idx = parseInt(chipEl.getAttribute('data-idx'), 10);
+  // Find corresponding detail item by index
+  var section = chipEl.closest('.msg-body').querySelector('.detail-section');
+  if (!section) return;
+  var items = section.querySelectorAll('.detail-section__item');
+  if (idx < 0 || idx >= items.length) return;
+  var item = items[idx];
+  item.classList.toggle('detail-section__item--visible');
+  chipEl.classList.toggle('summary-chip--active');
+  // Sync parent visibility
+  var anyVisible = section.querySelector('.detail-section__item--visible');
+  section.classList.toggle('detail-section--visible', !!anyVisible);
+}
+
+/** Click the summary bar area: toggle all items at once */
+function onBarClick(barEl) {
+  var section = barEl.nextElementSibling;
+  if (!section || !section.classList.contains('detail-section')) return;
+  var nowVis = !section.classList.contains('detail-section--visible');
+  section.classList.toggle('detail-section--visible', nowVis);
+  var chips = barEl.querySelectorAll('.summary-chip[data-idx]');
+  for (var i = 0; i < chips.length; i++) {
+    chips[i].classList.toggle('summary-chip--active', nowVis);
+  }
+}
+</script>
+
+</body>
+</html>
