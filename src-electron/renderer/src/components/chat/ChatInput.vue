@@ -1,12 +1,18 @@
 <template>
-  <div class="relative mx-auto mb-3 shrink-0 max-w-[960px] w-full px-6" data-chat-input>
+  <div class="panel-input-area relative mx-auto mb-3 shrink-0 max-w-[960px] w-full px-6" data-chat-input>
+    <GlobalLoadingBar :is-generating="isGenerating" />
+    <QueueComponent :queue-state="queueState" />
     <SlashMenu
       :visible="slashVisible"
       :commands="filteredCommands"
       @close="closeSlashMenu"
       @select="handleSlashSelect"
     />
-    <SendModeStatusBar :mode="sendMode" :is-streaming="isStreaming" />
+    <SendModeStatusBar
+      :mode="sendMode"
+      :is-streaming="isStreaming"
+      @update:mode="onModeSwitch"
+    />
     <div
       ref="containerRef"
       :class="[
@@ -61,7 +67,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, watch, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, nextTick, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useChatStore } from '../../stores/chat'
 import { useProviderStore } from '../../stores/provider'
@@ -72,6 +78,8 @@ import SlashMenu from './SlashMenu.vue'
 import InputToolbar from './InputToolbar.vue'
 import SessionStrip from './SessionStrip.vue'
 import SendModeStatusBar from './SendModeStatusBar.vue'
+import GlobalLoadingBar from './GlobalLoadingBar.vue'
+import QueueComponent from './QueueComponent.vue'
 import type { SendMode } from './SendModeStatusBar.vue'
 import {
   useSlashCommands,
@@ -96,6 +104,11 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const chatStore = useChatStore()
 const providerStore = useProviderStore()
+
+// ── Per-session reactive state from store ──
+const sessionState = computed(() => chatStore.getSessionState(props.sessionId))
+const isGenerating = computed(() => sessionState.value.isGenerating)
+const queueState = computed(() => sessionState.value.queueState)
 const {
   mergeSkillCommands,
   filterCommands,
@@ -106,36 +119,29 @@ const {
 initDefaultCommands()
 initNativeCommands()
 
-// ── Pending text: persisted per session across view switches ──
+// ── Pending text: persisted per session ──
 const storeText = computed(() => chatStore.getPendingText(props.sessionId))
 const text = ref(storeText.value || '')
-// Save text to store on unmount (component destroyed when switching views)
-onUnmounted(() => {
-  chatStore.setPendingText(text.value || undefined, props.sessionId)
-})
-// Restore from store on mount
+onUnmounted(() => { chatStore.setPendingText(text.value || undefined, props.sessionId) })
 onMounted(() => {
   text.value = storeText.value || ''
   const editorText = consumePendingEditorText(props.sessionId)
   if (editorText) text.value = editorText
 })
-// Sync to store on each change (belt-and-suspenders with onUnmounted)
-watch(text, (val) => {
-  chatStore.setPendingText(val || undefined, props.sessionId)
-})
+// Sync to store on each change
+watch(text, (val) => { chatStore.setPendingText(val || undefined, props.sessionId) })
 
 const isComposing = ref(false)
 const activeCommand = ref<SlashCommand | null>(null)
 const isAltPressed = ref(false)
 const isCtrlPressed = ref(false)
 
-// Navigate 到 user message 后预填输入框
-// Restore from store when sessionId changes (same component, different session)
+// ── SendMode tracking for message bubbles ──
+const sendModeMap = reactive(new Map<string, 'steer' | 'follow-up'>())
+
 watch(() => props.sessionId, (newSid, oldSid) => {
   if (newSid !== oldSid) {
-    // Save old session's text before switching
     if (oldSid) chatStore.setPendingText(text.value || undefined, oldSid)
-    // Restore new session's text
     text.value = chatStore.getPendingText(newSid)
     nextTick(() => {
       const editorText = consumePendingEditorText(newSid)
@@ -143,7 +149,7 @@ watch(() => props.sessionId, (newSid, oldSid) => {
     })
   }
 })
-// 同 session 内 navigate 时 sessionId 不变，需要事件驱动
+// Same-session navigate: event-driven
 const unsubEditorText = on('editor-text-pending', () => {
   nextTick(() => {
     const editorText = consumePendingEditorText(props.sessionId)
@@ -152,8 +158,12 @@ const unsubEditorText = on('editor-text-pending', () => {
 })
 onUnmounted(() => { unsubEditorText?.() })
 
-// ── Send Mode ────────────────────────────────────────────────────
+// ── Send Mode ──
+const manualMode = ref<SendMode | null>(null)
+
 const sendMode = computed<SendMode>(() => {
+  // Manual override from Mode Switcher click
+  if (manualMode.value) return manualMode.value
   // Ctrl/Cmd+Enter forces steer (interrupt AI)
   if (isCtrlPressed.value) return 'steer'
   // When AI is streaming, auto-queue instead of steering
@@ -163,7 +173,16 @@ const sendMode = computed<SendMode>(() => {
   return 'send'
 })
 
-// ── Modifier key detection ────────────────────────────────────────
+function onModeSwitch(mode: SendMode) {
+  // If user explicitly selected the auto-detected mode, clear override
+  const autoDetect: SendMode = (isCtrlPressed.value && 'steer')
+    || (props.isStreaming && 'queue')
+    || (isAltPressed.value && 'queue')
+    || 'send'
+  manualMode.value = mode === autoDetect ? null : mode
+}
+
+// ── Modifier key detection ──
 function onGlobalKeyDown(e: KeyboardEvent) {
   if (e.key === 'Alt') isAltPressed.value = true
   if (e.key === 'Control' || e.key === 'Meta') isCtrlPressed.value = true
@@ -187,12 +206,9 @@ onUnmounted(() => {
   window.removeEventListener('blur', onWindowBlur)
 })
 
-// activeCommand 存在时动态展示 skill 专属提示，否则用默认 placeholder
 const placeholder = computed(() => {
   if (activeCommand.value?.action.type === 'skill') {
-    return activeCommand.value.argumentHint
-      ? '编辑参数后发送…'
-      : '输入附加文本…'
+    return activeCommand.value.argumentHint ? '编辑参数后发送…' : '输入附加文本…'
   }
   return t('chat.inputPlaceholder')
 })
@@ -236,24 +252,14 @@ const filteredCommands = computed(() =>
 )
 
 watch(text, (val) => {
-  if (activeCommand.value) return  // Don't reopen slash menu when a command is active
-  if (val.startsWith('/')) {
-    slashVisible.value = true
-    slashFilter.value = val.slice(1)
-  } else {
-    slashVisible.value = false
-    slashFilter.value = ''
-  }
+  if (activeCommand.value) return
+  if (val.startsWith('/')) { slashVisible.value = true; slashFilter.value = val.slice(1) }
+  else { slashVisible.value = false; slashFilter.value = '' }
 })
 
-function closeSlashMenu() {
-  slashVisible.value = false
-}
+function closeSlashMenu() { slashVisible.value = false }
 
-function clearCommand() {
-  activeCommand.value = null
-  text.value = ''
-}
+function clearCommand() { activeCommand.value = null; text.value = '' }
 
 // 构建 CommandContext，供 local 类型命令使用
 function buildCommandContext(): CommandContext {
@@ -267,24 +273,17 @@ function buildCommandContext(): CommandContext {
 function handleSlashSelect(cmd: SlashCommand) {
   text.value = ''
   slashVisible.value = false
-  // protocol 和 local 类型命令直接执行，不需要标签确认步骤
-  // native 类型也直接执行（以 /commandName 形式发送给 pi）
   if (cmd.action.type === 'protocol' || cmd.action.type === 'local' || cmd.action.type === 'native') {
     activeCommand.value = cmd
     handleSend()
-    // 执行后聚焦 textarea，确保后续输入正常
-    nextTick(() => {
-      const ta = containerRef.value?.querySelector<HTMLTextAreaElement>('textarea')
-      ta?.focus()
-    })
+    nextTick(() => containerRef.value?.querySelector<HTMLTextAreaElement>('textarea')?.focus())
   } else {
     activeCommand.value = cmd
     if (cmd.action.type === 'agent') {
       text.value = ''
       nextTick(() => {
         slashVisible.value = false
-        const ta = containerRef.value?.querySelector<HTMLTextAreaElement>('textarea')
-        ta?.focus()
+        containerRef.value?.querySelector<HTMLTextAreaElement>('textarea')?.focus()
       })
     } else if (cmd.action.type === 'skill' && cmd.argumentHint) {
       text.value = cmd.argumentHint
@@ -294,41 +293,26 @@ function handleSlashSelect(cmd: SlashCommand) {
 
 function handleSend() {
   if (!canSend.value) return
-
   const trimmed = text.value.trim()
 
   if (activeCommand.value) {
     const cmd = activeCommand.value
     switch (cmd.action.type) {
-      case 'local':
-        cmd.action.handler(buildCommandContext())
-        break
-      case 'protocol':
-        emit('send-command', {
-          type: cmd.action.messageType,
-          payload: { sessionId: props.sessionId },
-        })
-        break
+      case 'local': cmd.action.handler(buildCommandContext()); break
+      case 'protocol': emit('send-command', { type: cmd.action.messageType, payload: { sessionId: props.sessionId } }); break
       case 'skill': {
         const prefix = `/skill:${cmd.name}`
-        const content = trimmed ? `${prefix} ${trimmed}` : prefix
-        emit('send', { content, skillName: cmd.name })
+        emit('send', { content: trimmed ? `${prefix} ${trimmed}` : prefix, skillName: cmd.name })
         break
       }
       case 'agent': {
         const agentName = cmd.action.agentName
-        // Strip /agent:<name> prefix only from the start of the string
         const taskContent = trimmed.startsWith(`/agent:${agentName}`)
-          ? trimmed.slice(`/agent:${agentName}`.length).trim()
-          : trimmed
+          ? trimmed.slice(`/agent:${agentName}`.length).trim() : trimmed
         emit('send', { content: trimmed || '', subagent: { agent: agentName, task: taskContent } })
         break
       }
-      case 'extension': {
-        const content = `/${cmd.action.commandName} ${trimmed}`.trim()
-        emit('send', { content })
-        break
-      }
+      case 'extension': emit('send', { content: `/${cmd.action.commandName} ${trimmed}`.trim() }); break
       case 'native': {
         const content = trimmed ? `/${cmd.action.commandName} ${trimmed}` : `/${cmd.action.commandName}`
         emit('send', { content })
@@ -337,9 +321,14 @@ function handleSend() {
     }
     clearCommand()
   } else {
-    emit('send', { content: trimmed, sendMode: sendMode.value })
+    const payload = { content: trimmed, sendMode: sendMode.value }
+    if (sendMode.value === 'steer' || sendMode.value === 'queue') {
+      const chipMode = sendMode.value === 'queue' ? 'follow-up' as const : 'steer' as const
+      sendModeMap.set(trimmed, chipMode)
+    }
+    emit('send', payload)
+    manualMode.value = null
   }
-
   text.value = ''
   slashVisible.value = false
   nextTick(resizeTextarea)
@@ -359,9 +348,7 @@ function onKeyDown(e: KeyboardEvent) {
   }
 }
 
-function onCompositionEnd() {
-  isComposing.value = false
-}
+function onCompositionEnd() { isComposing.value = false }
 
 const TEXTAREA_MAX_HEIGHT = 140
 

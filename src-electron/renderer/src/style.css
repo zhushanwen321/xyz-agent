@@ -844,3 +844,23 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 }
 
 /* Section label + dot styles moved to AssistantSection.vue <style scoped> */
+
+/* ── Container Queries for panel input area ──────────────────── */
+.panel-input-area {
+  container-type: inline-size;
+  container-name: panel;
+}
+
+@container panel (max-width: 519px) {
+  .mode-shortcut-hint { display: none; }
+  .queue-full { display: none; }
+  .queue-compact { display: flex; }
+  .token-stats { display: none; }
+}
+
+@container panel (min-width: 520px) {
+  .mode-shortcut-hint { display: inline; }
+  .queue-full { display: block; }
+  .queue-compact { display: none; }
+  .token-stats { display: inline-flex; }
+}
