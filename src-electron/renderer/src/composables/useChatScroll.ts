@@ -96,7 +96,8 @@ export function useChatScroll(
   }
 
   function scrollToMessage(messageId: string) {
-    const el = chatMsgsRef()?.querySelector(`[data-entry-id="${messageId}"]`) as HTMLElement | null
+    const el = (chatMsgsRef()?.querySelector(`[data-message-id="${messageId}"]`)
+      ?? chatMsgsRef()?.querySelector(`[data-entry-id="${messageId}"]`)) as HTMLElement | null
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }

@@ -47,6 +47,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import type { ChatMessage } from '../../stores/chat'
 import { isSystemNotification } from '../../stores/chat'
+import { groupIntoTurns } from '../../lib/message-layout'
 
 interface OutlineItem {
   label: string
@@ -94,19 +95,38 @@ function extractLabel(msg: ChatMessage): string {
   return '助手'
 }
 
-const outlineItems = computed<OutlineItem[]>(() =>
-  props.messages
-    .filter(msg => {
-      // Hide only truly empty assistant messages (no content, no toolCalls, no thinking)
-      if (msg.role === 'assistant' && !msg.content && !msg.toolCalls?.length && !msg.thinking?.length) return false
-      return true
-    })
-    .map(msg => ({
-      label: extractLabel(msg),
-      messageId: msg.id,
-      role: msg.role,
-    })),
-)
+const outlineItems = computed<OutlineItem[]>(() => {
+  const turns = groupIntoTurns(props.messages)
+  const items: OutlineItem[] = []
+
+  for (const turn of turns) {
+    // Skip turns consisting only of system notifications
+    if (turn.messages.every(m => m.role === 'system')) continue
+
+    // Find user message in this turn
+    const userMsg = turn.messages.find(m => m.role === 'user')
+    if (userMsg) {
+      items.push({
+        label: extractLabel(userMsg),
+        messageId: userMsg.id,
+        role: 'user',
+      })
+    }
+
+    // Find assistant messages in this turn — find the LAST one with text content
+    const assistantMsgs = turn.messages.filter(m => m.role === 'assistant')
+    const textMsg = [...assistantMsgs].reverse().find(m => m.content)
+    if (textMsg) {
+      items.push({
+        label: truncate(textMsg.content.replace(/<[^>]+>/g, '').trim(), MAX_LABEL_LEN) || '助手',
+        messageId: textMsg.id,
+        role: 'assistant',
+      })
+    }
+  }
+
+  return items
+})
 
 const progressLabel = computed(() => {
   const total = outlineItems.value.length
@@ -118,6 +138,7 @@ const progressPercent = computed(() => {
   if (total === 0) return 0
   const users = outlineItems.value.filter(i => i.role === 'user').length
   const PERCENT_MULTIPLIER = 100
+  if (users === 0) return 0
   return Math.round((users / total) * PERCENT_MULTIPLIER)
 })
 
