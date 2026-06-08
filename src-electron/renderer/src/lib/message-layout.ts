@@ -104,14 +104,17 @@ function groupByContentBlocks(msg: Message, standaloneTools: Set<string>): Assis
     }
   }
 
+  let hasText = false
+
   for (const block of msg.contentBlocks!) {
     if (isMergeBlock(block, msg, standaloneTools)) {
       mergeBlocks.push(block)
     } else {
       flushMerge()
       if (block.type === 'text') {
-        // Skip empty text blocks
-        if (!msg.content) continue
+        // Skip empty text or duplicate text blocks (message.content rendered once)
+        if (!msg.content || hasText) continue
+        hasText = true
         sections.push({ type: 'text', blocks: [block] })
       } else if (block.type === 'toolCall') {
         const tc = msg.toolCalls?.find(t => t.id === block.refId)

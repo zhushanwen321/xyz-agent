@@ -145,34 +145,34 @@ const elapsedMs = computed(() => {
   const tcs = props.message.toolCalls
   const thinking = props.message.thinking
 
-  // Collect all available timestamps
-  const times: number[] = []
+  // Collect start and end timestamps separately
+  const startTimes: number[] = []
+  const endTimes: number[] = []
 
   if (thinking?.length) {
     for (const b of thinking) {
-      if (b.startTime) times.push(b.startTime)
-      if (b.endTime) times.push(b.endTime)
+      if (b.startTime) startTimes.push(b.startTime)
+      if (b.endTime) endTimes.push(b.endTime)
     }
   }
 
   if (tcs?.length) {
     for (const tc of tcs) {
-      if (tc.startTime) times.push(tc.startTime)
-      if (tc.endTime) times.push(tc.endTime)
+      if (tc.startTime) startTimes.push(tc.startTime)
+      if (tc.endTime) endTimes.push(tc.endTime)
     }
   }
 
-  if (times.length === 0) return 0
+  const allTimes = [...startTimes, ...endTimes]
+  if (allTimes.length === 0) return 0
 
   if (props.isStreaming) {
-    return liveNow.value - Math.min(...times)
+    return liveNow.value - Math.min(...allTimes)
   }
 
-  // Complete: use max endTime - min startTime
-  const endTimes = times.length > 0 ? times : []
-  const start = Math.min(...times)
-  const end = Math.max(...endTimes)
-  return end - start
+  // Complete: max(endTimes) - min(startTimes)
+  if (endTimes.length === 0) return 0
+  return Math.max(...endTimes) - Math.min(...startTimes)
 })
 
 const formattedElapsed = computed(() => formatTime(elapsedMs.value))
