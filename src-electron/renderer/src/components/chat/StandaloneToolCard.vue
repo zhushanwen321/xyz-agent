@@ -92,17 +92,7 @@ const elapsedDisplay = computed(() => {
 .standalone-tool {
   display: flex;
   flex-direction: column;
-  border-left: 2px solid var(--success);
-  margin-bottom: 4px;
   font-size: 11px;
-}
-
-/* Status-specific border color */
-.standalone-tool--running {
-  border-left-color: var(--accent);
-}
-.standalone-tool--error {
-  border-left-color: var(--danger);
 }
 
 /* ── Header ── */
@@ -110,7 +100,7 @@ const elapsedDisplay = computed(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 0 3px 8px;
+  padding: 3px 0;
   cursor: pointer;
   border: none;
   background: transparent;
@@ -201,6 +191,6 @@ const elapsedDisplay = computed(() => {
 
 /* ── Expandable body ── */
 .standalone-tool__body {
-  padding: 4px 0 2px 13px;
+  padding: 4px 0 2px 0;
 }
 </style>

@@ -177,17 +177,9 @@ const streamElapsed = computed(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 8px;
-  border-radius: 4px;
-  background: var(--bg);
-  border: 1px solid var(--border);
+  padding: 3px 0;
   cursor: pointer;
-  transition: border-color 0.12s, background 0.12s;
-  margin-bottom: 4px;
-}
-.merge-bar:hover {
-  border-color: var(--accent);
-  background: var(--accent-light);
+  transition: opacity 0.12s;
 }
 
 .merge-bar__label {
@@ -246,7 +238,6 @@ const streamElapsed = computed(() => {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  margin-bottom: 4px;
 }
 
 /* ── Streaming mode: compact single-line ── */
@@ -254,12 +245,8 @@ const streamElapsed = computed(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 12px;
-  height: 28px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--surface);
-  margin-bottom: 4px;
+  padding: 3px 0;
+  height: 24px;
 }
 
 .merge-stream__pulse {
