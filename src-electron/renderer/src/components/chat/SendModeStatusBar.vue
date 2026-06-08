@@ -73,7 +73,6 @@ export type SendMode = 'send' | 'steer' | 'queue'
 
 const props = defineProps<{
   mode: SendMode
-  isStreaming?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -84,7 +83,7 @@ const containerRef = ref<HTMLElement | null>(null)
 const popoverRef = ref<HTMLElement | null>(null)
 const open = ref(false)
 
-const isMac = navigator.platform?.startsWith('Mac') ?? false
+const isMac = navigator.userAgent.includes('Mac')
 
 interface ModeItem {
   value: SendMode

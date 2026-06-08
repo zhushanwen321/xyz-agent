@@ -60,9 +60,8 @@ const props = defineProps<{
   queueState: QueueState | undefined
 }>()
 
-defineEmits<{
-  (e: 'send-mode-match', text: string, mode: 'steer' | 'follow-up'): void
-}>()
+// emit declarations are only needed if the component emits events
+// This component has no emits
 
 // ── Derived data ──
 
@@ -140,12 +139,12 @@ onBeforeUnmount(() => {
 
 /* W2 fix: use scoped classes instead of arbitrary value + opacity syntax */
 .badge-steer {
-  background: color-mix(in srgb, var(--warning) 15%, transparent);
+  background: color-mix(in oklch, var(--warning) 15%, transparent);
   color: var(--warning);
 }
 
 .badge-follow-up {
-  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  background: color-mix(in oklch, var(--accent) 15%, transparent);
   color: var(--accent);
 }
 

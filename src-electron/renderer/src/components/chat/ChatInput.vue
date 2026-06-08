@@ -10,7 +10,6 @@
     />
     <SendModeStatusBar
       :mode="sendMode"
-      :is-streaming="isStreaming"
       @update:mode="onModeSwitch"
     />
     <div
@@ -136,16 +135,10 @@ const activeCommand = ref<SlashCommand | null>(null)
 const isAltPressed = ref(false)
 const isCtrlPressed = ref(false)
 
-// ── SendMode tracking for message bubbles ──
-// Tracks sendMode per message content for chip display.
-// Cleared on sessionId switch (W6) and after each send.
-const pendingSendMode = ref<'steer' | 'follow-up' | null>(null)
-
 watch(() => props.sessionId, (newSid, oldSid) => {
   if (newSid !== oldSid) {
     if (oldSid) chatStore.setPendingText(text.value || undefined, oldSid)
     text.value = chatStore.getPendingText(newSid)
-    pendingSendMode.value = null
     nextTick(() => {
       const editorText = consumePendingEditorText(newSid)
       if (editorText) text.value = editorText
@@ -325,9 +318,6 @@ function handleSend() {
     clearCommand()
   } else {
     const payload = { content: trimmed, sendMode: sendMode.value }
-    if (sendMode.value === 'steer' || sendMode.value === 'queue') {
-      pendingSendMode.value = sendMode.value === 'queue' ? 'follow-up' : 'steer'
-    }
     emit('send', payload)
     manualMode.value = null
   }
