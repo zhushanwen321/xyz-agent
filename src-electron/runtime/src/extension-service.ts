@@ -16,9 +16,9 @@
  * 4. finishInstall() 复制选中到 extensions/ 目录
  * 5. 清理临时目录
  */
-import { execSync } from 'node:child_process'
+import { execSync, execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, readdirSync, statSync, cpSync, rmSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { join, resolve, basename } from 'node:path'
 import type { ExtensionInfo } from '@xyz-agent/shared'
 import { ExtensionResolver } from './extension-resolver.js'
 import { getPiAgentDir } from './pi-config-bridge.js'
@@ -111,7 +111,7 @@ export class ExtensionService {
 
     for (const dir of result.extensionDirs) {
       const pkgJsonPath = join(dir, 'package.json')
-      let name = dir.split('/').pop() ?? ''
+      let name = basename(dir)
       let version = ''
       let description = ''
 
@@ -154,7 +154,7 @@ export class ExtensionService {
 
     // 过滤禁用项
     const filtered = result.extensionDirs.filter(dir => {
-      const dirName = dir.split('/').pop() ?? ''
+      const dirName = basename(dir)
       return !disabledSet.has(`npm:${dirName}`)
     })
 
@@ -373,9 +373,9 @@ export class ExtensionService {
     const tempDir = join(this.settingsDir, 'tmp', `${DISCOVERY_TEMP_PREFIX}${Date.now()}`)
     mkdirSync(tempDir, { recursive: true })
 
-    // Git clone
+    // Git clone — use execFileSync to prevent command injection
     try {
-      execSync(`git clone --depth 1 "${url}" "${tempDir}"`, {
+      execFileSync('git', ['clone', '--depth', '1', url, tempDir], {
         stdio: 'pipe',
         timeout: GIT_CLONE_TIMEOUT,
       })
@@ -413,6 +413,21 @@ export class ExtensionService {
    * Cleans up temp dir after copying.
    */
   async finishInstall(tempDir: string, selected: string[]): Promise<void> {
+    // Validate tempDir is within settingsDir/tmp
+    const resolvedTemp = resolve(tempDir)
+    const allowedTmpPrefix = resolve(this.settingsDir, 'tmp')
+    if (!resolvedTemp.startsWith(allowedTmpPrefix)) {
+      throw new Error(`Invalid temp directory: ${tempDir}`)
+    }
+
+    // Validate selected names: no path traversal
+    for (const name of selected) {
+      if (name !== basename(name) || name.includes('..') || name.includes('/') || name.includes('\\')) {
+        throw new Error(`Invalid extension name: "${name}"`
+          + ' — must be a simple directory name without path separators or traversal')
+      }
+    }
+
     const extensionsDir = join(this.settingsDir, 'extensions')
     mkdirSync(extensionsDir, { recursive: true })
 
@@ -430,6 +445,23 @@ export class ExtensionService {
       rmSync(tempDir, { recursive: true, force: true })
     } catch (e) {
       log.warn(`[extension-service] failed to cleanup temp dir ${tempDir}: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+
+  /**
+   * Cancel installation: clean up temp directory without installing.
+   */
+  async cancelInstall(tempDir: string): Promise<void> {
+    const resolvedTemp = resolve(tempDir)
+    const allowedTmpPrefix = resolve(this.settingsDir, 'tmp')
+    if (!resolvedTemp.startsWith(allowedTmpPrefix)) {
+      throw new Error(`Invalid temp directory: ${tempDir}`)
+    }
+
+    try {
+      rmSync(tempDir, { recursive: true, force: true })
+    } catch (e) {
+      log.warn(`[extension-service] failed to cleanup temp dir on cancel ${tempDir}: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 
@@ -472,9 +504,15 @@ export class ExtensionService {
    * Recursively discover pi extensions in a directory.
    * - If the directory itself is a valid pi extension, return it as single candidate.
    * - Otherwise, scan subdirectories (skip . and node_modules).
+   * - maxDepth limits recursion to prevent runaway scans.
    */
-  private discoverExtensions(dir: string): ExtensionInfo[] {
+  private discoverExtensions(dir: string, maxDepth = 5, depth = 0): ExtensionInfo[] {
     const candidates: ExtensionInfo[] = []
+
+    if (depth > maxDepth) {
+      log.warn(`[extension-service] discoverExtensions: max depth ${maxDepth} exceeded at ${dir}, stopping`)
+      return candidates
+    }
 
     // Check if dir itself is a valid pi extension
     if (this.resolver.isValidPiExtension(dir)) {
@@ -516,7 +554,7 @@ export class ExtensionService {
           })
         } else {
           // Recurse into subdirectory for nested collections
-          candidates.push(...this.discoverExtensions(entryPath))
+          candidates.push(...this.discoverExtensions(entryPath, maxDepth, depth + 1))
         }
       }
     } catch (e) {
@@ -544,13 +582,13 @@ export class ExtensionService {
       const raw = readFileSync(pkgJsonPath, 'utf-8')
       const pkg = JSON.parse(raw) as { name?: string; version?: string; description?: string }
       return {
-        name: pkg.name ?? dir.split('/').pop() ?? '',
+        name: pkg.name ?? basename(dir),
         version: pkg.version ?? '',
         description: pkg.description ?? '',
       }
     } catch {
       return {
-        name: dir.split('/').pop() ?? '',
+        name: basename(dir),
         version: '',
         description: '',
       }

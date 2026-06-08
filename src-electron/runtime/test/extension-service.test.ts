@@ -3,13 +3,15 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, statSync } 
 import { join } from 'node:path'
 import { ExtensionService, ExtensionInstallError } from '../src/extension-service.js'
 
-import { execSync } from 'node:child_process'
+import { execSync, execFileSync } from 'node:child_process'
 
 vi.mock('node:child_process', () => ({
   execSync: vi.fn(() => ''),
+  execFileSync: vi.fn(() => ''),
 }))
 
 const mockedExecSync = vi.mocked(execSync)
+const mockedExecFileSync = vi.mocked(execFileSync)
 
 describe('ExtensionService', () => {
   let service: ExtensionService
@@ -311,11 +313,8 @@ describe('ExtensionService', () => {
 
   describe('installGitRepository', () => {
     it('throws when git clone fails', async () => {
-      mockedExecSync.mockImplementation((cmd: string) => {
-        if (cmd.includes('git clone')) {
-          throw new Error('git clone failed: repository not found')
-        }
-        return ''
+      mockedExecFileSync.mockImplementation(() => {
+        throw new Error('git clone failed: repository not found')
       })
 
       await expect(service.installGitRepository('https://github.com/nonexistent/repo.git'))
@@ -323,12 +322,11 @@ describe('ExtensionService', () => {
     })
 
     it('discovers extensions from a cloned git repo', async () => {
-      // Mock: when git clone is called, create the extension structure in the target dir
-      mockedExecSync.mockImplementation((cmd: string) => {
-        if (cmd.includes('git clone')) {
-          // Extract target dir — last quoted segment in the command
-          const matches = cmd.match(/"([^"]+)"(?=\s*$)/)
-          const targetDir = matches ? matches[1] : ''
+      // Mock: when git clone is called via execFileSync, create the extension structure in the target dir
+      mockedExecFileSync.mockImplementation((_cmd: string, args?: readonly string[]) => {
+        if (args?.[0] === 'clone') {
+          // args = ['clone', '--depth', '1', url, tempDir]
+          const targetDir = args[4] ?? ''
           if (targetDir) {
             mkdirSync(targetDir, { recursive: true })
             const extDir = join(targetDir, 'packages', 'pi-cloned-ext')
