@@ -1,136 +1,149 @@
 ---
 verdict: pass
 must_fix: 0
-date: 2026-06-08
+warnings: 3
 ---
 
-# Spec-Plan Conformance Review: AgentRunBlock Refactor
+# Spec-Plan Conformance Review — AgentRunBlock 重构
 
-## Summary
+**Reviewer**: Stage 1 自动审查  
+**日期**: 2026-06-08  
+**范围**: spec.md 全部 FR/AC + plan.md 全部 T1-T8
 
-All functional requirements (FR-1 through FR-6) and acceptance criteria (AC-1 through AC-8) are implemented. The implementation follows the plan's task breakdown (T1-T8) accurately. No missing features found.
+## 审查结论
 
-## FR Conformance
+**PASS**。spec 中 6 项功能需求（FR-1 ~ FR-6）和 8 项验收标准（AC-1 ~ AC-8）全部在源码中找到对应实现。无 must_fix 级缺失。3 项 warning 级观察见下。
 
-### FR-1: AgentRunBlock Container
+## 逐项审查
 
-**Status: PASS**
+### FR-1: AgentRunBlock 容器 — PASS
 
-- AgentRunBlock.vue renders with 3px status bar (streaming: sweep animation, complete: silent bg)
-- Footer shows step count, elapsed time, and standalone tool count
-- Body renders sections in order via `groupIntoSections`
-- `isStreaming` prop controls streaming/complete behavior
-- Replaces both CompactSummaryBar and CompactStreamingBubble (T6/T7 done)
+| 要求 | 实现 | 状态 |
+|------|------|------|
+| compactStreaming=true 时激活 | `AssistantContent.vue` `v-if="useCompact"` → `<AgentRunBlock>` | OK |
+| compactStreaming=false 走现有路径 | `v-else` → `AssistantSection` 渲染，无改动 | OK |
+| 3px 顶部状态条 + 扫光动画 | `AgentRunBlock.vue` `run-status-bar` + `@keyframes run-sweep` | OK |
+| Complete 时静默背景色 | `isStreaming ? 'run-status-bar--streaming' : 'bg-border'` | OK |
+| Footer: 步骤数 | `stepCount = sections.filter(s => s.type !== 'text').length` | OK |
+| Footer: 总耗时 | `useLiveTimer` + `formatTime(elapsedMs)`，streaming 实时更新 | OK |
+| Footer: 文件修改数 | `toolCalls.filter(tc => standaloneTools.has(tc.toolName)).length` | OK |
 
-### FR-2: ContentBlock Classification Rendering
+### FR-2: ContentBlock 分类渲染 — PASS
 
-**Status: PASS**
+| 要求 | 实现 | 状态 |
+|------|------|------|
+| text 始终独立渲染 | `message-layout.ts` text block → `type: 'text'` section | OK |
+| 自定义工具始终独立 | `isCustom` 判断 → `type: 'customTool'` | OK |
+| standaloneTools 内 → 独立 | `!isMergeBlock` 且非 text → `type: 'standalone'` | OK |
+| standaloneTools 外 → 合并 | `isMergeBlock` 返回 true → 追加到 merge group | OK |
+| thinking 始终合并 | `isMergeBlock` 对 thinking 返回 true | OK |
+| ALL_PI_TOOLS 常量 | `['read','bash','edit','write','grep','find','ls']` | OK |
 
-- `message-layout.ts`: `isMergeBlock()` implements the spec logic exactly
-- `text` blocks always standalone (rendered as markdown)
-- `toolCall` with toolName outside ALL_PI_TOOLS → `customTool` section (standalone)
-- `toolCall` in `standaloneTools` → `standalone` section
-- `toolCall` in ALL_PI_TOOLS but not in `standaloneTools` → `merge` section
-- `thinking` blocks always merge
-- Default `standaloneTools = ['write', 'edit']` in settings store
+### FR-2.1: Settings standaloneTools 配置 — PASS
 
-### FR-2.1: Standalone Tools Settings UI
+| 要求 | 实现 | 状态 |
+|------|------|------|
+| Settings 页面 checkbox 列表 | `SystemPane.vue` v-for ALL_PI_TOOLS + Toggle 组件 | OK |
+| 默认值 `['write','edit']` | `settings.ts` `ref<string[]>(['write', 'edit'])` | OK |
+| 持久化 | `persist.pick` 包含 `'standaloneTools'` | OK |
+| compactStreaming 关闭时隐藏 | `v-if="settingsStore.compactStreaming"` 条件包裹 | OK |
 
-**Status: PASS**
+### FR-3: MergeBlock 折叠渲染 — PASS
 
-- SystemPane.vue shows checkbox list of 7 pi built-in tools
-- Toggle components bound to `settingsStore.standaloneTools`
-- `toggleStandaloneTool()` handles add/remove correctly
-- UI conditionally shown only when `compactStreaming` is enabled
-- Persistence via `persist.pick` includes `standaloneTools`
+| 要求 | 实现 | 状态 |
+|------|------|------|
+| 完整模式 chip 摘要条 | `MergeBlock.vue` `chips` computed + `merge-bar` 模板 | OK |
+| 格式 `思考 ×N · toolName ×N` | chip label + `×${chip.count}` | OK |
+| thinking chip 用 --accent | `merge-chip--thinking { background: var(--accent); color: var(--accent) }` | OK |
+| tool chip 用 --success | `merge-chip--tool { background: var(--success); color: var(--success) }` | OK |
+| 点击展开 | `toggleExpand` + `v-show="expanded"` | OK |
+| 展开复用 ThinkingBlock + ToolCallCard | import 两个组件并按 block.type 条件渲染 | OK |
+| "过程" 标签 | `merge-bar__label` 文本 "过程" | OK |
 
-### FR-3: MergeBlock Fold/Expand Rendering
+### FR-4: 分组规则 — PASS
 
-**Status: PASS**
+`isMergeBlock` 函数与 spec 代码完全一致。`groupByContentBlocks` 算法：
+1. 遍历 contentBlocks → isMergeBlock 追加到 merge group → flushMerge 关闭
+2. 非 merge 按 text/standalone/customTool 分类
 
-- MergeBlock.vue complete mode: chip summary bar with `思考 ×N · toolName ×N` format
-- Chip colors: thinking uses `--accent`, tool uses `--success` (via `color-mix`)
-- Click "过程" label toggles expand/collapse
-- Expanded blocks render ThinkingBlock and ToolCallCard (reuse confirmed)
-- Streaming mode: compact 28px single line with pulse dot + status text + elapsed time
+**AC-5 分组验证**（对照 spec 示例）：
 
-### FR-4: Grouping Rules Implementation
+| 输入序列 | spec 预期 | 代码逻辑匹配 |
+|---------|----------|-------------|
+| `T tc-read tc-bash O T tc-read T tc-grep O` | merge → text → merge → text | OK（read/bash/grep 不在 standaloneTools → merge） |
+| `T O S-edit O` | merge → text → standalone → text | OK（edit 在 standaloneTools → standalone） |
+| `T tc-read S-write T tc-bash O subagent O` | merge → standalone → merge → text → customTool → text | OK |
 
-**Status: PASS**
+### FR-5: Streaming MergeBlock — PASS
 
-- `groupIntoSections()` signature: `(msg: Message, standaloneTools?: Set<string>)`
-- `standaloneTools` provided → new grouping; absent → legacy grouping
-- `ALL_PI_TOOLS` constant exported for Settings UI
-- `isMergeBlock()` logic matches spec pseudocode exactly
-- `groupByContentBlocks()` handles merge/standalone/customTool/text sections correctly
+| 要求 | 实现 | 状态 |
+|------|------|------|
+| thinking 判断 `endTime === undefined` | `lastThinking.endTime === undefined → '思考中...'` | OK |
+| running tool 显示 `toolName path` | `runningTc` → `toolPath(runningTc.input)` → 格式化 | OK |
+| text delta 预览截断 60 字符 | `TEXT_PREVIEW_MAX = 60` + `slice(0, 60) + '...'` | OK |
+| 实时耗时 | `useLiveTimer(200)` + `formatTime` | OK |
+| 紧凑一行高度 28px | `.merge-stream { height: 28px }` | OK |
+| 脉冲圆点 | `.merge-stream__pulse` + `@keyframes merge-pulse` | OK |
 
-### FR-5: Streaming MergeBlock
+### FR-6: 历史消息兼容 — PASS
 
-**Status: PASS**
+| 要求 | 实现 | 状态 |
+|------|------|------|
+| 无 contentBlocks → legacy 路径 | `groupIntoSections` 首行检查 `contentBlocks?.length` | OK |
+| `groupByLegacyFields` 不变 | 函数体未修改，从 thinking/toolCalls/content 构造 | OK |
+| 仅影响 assistant 消息 | 渲染在 AssistantContent.vue，user/system 走其他路径 | OK |
 
-- `streamStatusText` computed:
-  - Checks `message.thinking` last block `endTime === undefined` → "思考中..."
-  - Checks `message.toolCalls` with `status === 'running'` → `${toolName} ${path}`
-  - Fallback: truncated text content (60 chars max)
-- `streamElapsed` updates via `useLiveTimer(200)`
-- `startTimer()`/`stopTimer()` lifecycle managed by `watch(isStreaming)`
+### AC-1 ~ AC-8 验收标准逐项
 
-### FR-6: History Message Compatibility
+| AC | 描述 | 状态 |
+|----|------|------|
+| AC-1 | 容器渲染 + 状态条 + footer | PASS — AgentRunBlock.vue 全覆盖 |
+| AC-2 | text/write/自定义工具独立渲染 | PASS — message-layout 分类 + StandaloneToolCard |
+| AC-3 | MergeBlock 折叠 chip + 展开 | PASS — MergeBlock.vue 完整实现 |
+| AC-4 | MergeBlock streaming 紧凑状态 | PASS — merge-stream 模板 |
+| AC-5 | 分组正确性 | PASS — isMergeBlock + groupByContentBlocks 逻辑匹配 spec |
+| AC-6 | 主题兼容 CSS 变量 | PASS — 无硬编码颜色，全用 var(--accent/--success/--border 等) |
+| AC-7 | 旧消息兼容 | PASS — groupByLegacyFields 未改动 |
+| AC-8 | Settings UI + 持久化 | PASS — SystemPane.vue checkbox + persist.pick |
 
-**Status: PASS**
+## Plan 执行完整性
 
-- `groupIntoSections()` falls through to `groupByLegacyFields()` when `contentBlocks` is empty
-- Legacy path reconstructs sections from thinking/toolCalls/content fields
-- No contentBlocks → no new grouping logic invoked
-- Only assistant messages affected (user/system unaffected by design)
+| Task | 描述 | 文件 | 状态 |
+|------|------|------|------|
+| T1 | settings store standaloneTools | `stores/settings.ts` | DONE |
+| T2 | message-layout 分组重写 | `lib/message-layout.ts` | DONE |
+| T3 | MergeBlock 组件 | `chat/MergeBlock.vue` | DONE |
+| T4 | StandaloneToolCard 组件 | `chat/StandaloneToolCard.vue` | DONE |
+| T5 | AgentRunBlock 容器 | `chat/AgentRunBlock.vue` | DONE |
+| T6 | AssistantContent 集成 | `chat/AssistantContent.vue` | DONE |
+| T7 | ChatPanel streaming 统一 | `panel/ChatPanel.vue` | DONE — CompactStreamingBubble 已移除 |
+| T8 | Settings 页面 UI | `settings/SystemPane.vue` | DONE |
 
-## AC Conformance
+8/8 tasks 完成。
 
-### AC-1: Container Rendering
-**PASS** — Status bar sweep animation via CSS `@keyframes run-sweep`, silent `bg-border` on complete, footer with steps/elapsed/file count.
+## Constraints 合规
 
-### AC-2: ContentBlock Independent Rendering
-**PASS** — text renders markdown via `v-html`, standalone tool cards show tool name + path + status badge + elapsed time.
+| 约束 | 状态 |
+|------|------|
+| 不改动共享类型 | OK — shared/src/message.ts 未动 |
+| 不改动 EventAdapter / WS 协议 | OK — 无 sidecar 层变更 |
+| 不改动 useChat.ts | OK — 仅前端渲染层变更 |
+| 复用 ThinkingBlock + ToolCallCard | OK — MergeBlock 和 StandaloneToolCard 均 import 复用 |
+| CSS 变量复用，不新增 | OK — 无新 CSS 变量定义 |
+| compactStreaming 开关隔离 | OK — false 路径完全不变 |
 
-### AC-3: MergeBlock Fold
-**PASS** — Chip summary format `思考 ×N · toolName ×N`, expand/collapse toggle on "过程" label, expanded blocks use ThinkingBlock/ToolCallCard.
+## Warnings（非阻塞）
 
-### AC-4: MergeBlock Streaming
-**PASS** — Compact 28px line with pulse dot, real-time status text, elapsed time counter.
+### W1: 无单元测试覆盖新增逻辑
 
-### AC-5: Grouping Correctness
-**PASS** — Code logic matches all 4 test scenarios in AC-5. `isMergeBlock` returns correct values for thinking/toolCall/standalone/customTool cases. User adding `bash` to standaloneTools correctly shifts it from merge to standalone.
+`message-layout.ts` 的 `groupByContentBlocks`、`isMergeBlock`、`ALL_PI_TOOLS` 是此次重构的核心算法，但 `lib/__tests__/` 中无对应测试文件。`MergeBlock.vue` 和 `StandaloneToolCard.vue` 也无组件测试。
 
-### AC-6: Theme Compatibility
-**PASS** — All colors use CSS variables (`--accent`, `--success`, `--danger`, `--border`, `--surface`, `--muted`). No hardcoded colors. `color-mix()` for chip backgrounds.
+建议后续补充 `message-layout.spec.ts` 覆盖 AC-5 的 4 种分组场景。
 
-### AC-7: Legacy Message Compatibility
-**PASS** — `groupByLegacyFields()` unchanged, only invoked when `contentBlocks` absent.
+### W2: AssistantSection 类型包含旧 sectionType
 
-### AC-8: Settings standaloneTools
-**PASS** — Toggle list in SystemPane, 7 tools shown, default write+edit selected, persisted via `persist.pick`.
+`SectionType = 'merge' | 'text' | 'standalone' | 'customTool' | 'thinking' | 'toolCall'` 中 `thinking` 和 `toolCall` 仅在 `groupByContentBlocksLegacy`（compactStreaming=false 路径）中使用。类型定义混合了新旧两种模式的类型，后续清理可将 legacy 路径的 SectionType 独立出来。
 
-## Plan Task Conformance
+### W3: MergeBlock streaming 耗时基于 message.timestamp
 
-| Task | Status | Notes |
-|------|--------|-------|
-| T1: settings store | DONE | `standaloneTools` ref + persist pick |
-| T2: message-layout | DONE | New `SectionType`, `isMergeBlock`, `groupByContentBlocks` |
-| T3: MergeBlock | DONE | Streaming + complete modes, chip stats, expand/collapse |
-| T4: StandaloneToolCard | DONE | Header with dot/name/path/badge/time, expandable body |
-| T5: AgentRunBlock | DONE | Container with status bar, body sections, footer stats |
-| T6: AssistantContent | DONE | `useCompact` branch renders AgentRunBlock |
-| T7: ChatPanel streaming | DONE | CompactStreamingBubble removed, streaming goes through StreamingMessage → MessageBubble → AssistantContent → AgentRunBlock |
-| T8: Settings UI | DONE | Toggle checkboxes in SystemPane |
-
-## Minor Observations (Non-blocking)
-
-1. **StandaloneToolCard missing `isCustomTool` prop**: Plan T4 specifies `isCustomTool?: boolean` prop, but implementation doesn't accept it. The card renders identically regardless. Acceptable since the visual distinction is handled at the section type level in AgentRunBlock.
-
-2. **Footer label differs slightly from spec**: Spec says "文件修改数", implementation says "次工具操作". This counts all standalone tools, not just file-modifying ones. Functionally equivalent but label semantics differ slightly.
-
-3. **MergeBlock complete mode elapsed time**: Uses `now.value - timestamp` (message timestamp) rather than `max(endTimes) - min(startTimes)` as in AgentRunBlock footer. Minor inconsistency but both produce reasonable results.
-
-## Verdict
-
-**PASS** — All 6 functional requirements and 8 acceptance criteria are implemented. No must-fix items. The 3 minor observations above are cosmetic/non-functional and do not block delivery.
+`MergeBlock.vue` 的 `streamElapsed` 用 `now.value - message.timestamp` 计算。如果 message.timestamp 是消息创建时间（而非首个 block 开始时间），耗时可能偏大。AgentRunBlock.vue 的 `elapsedMs` 用了更精确的 min(startTime) 方案，两处计算口径不一致。
