@@ -5,7 +5,7 @@
     <button class="tool-toggle" @click="toggleExpand">
       <!-- Status indicator -->
       <span v-if="isRunning" class="tool-toggle__spinner" />
-      <svg v-else :class="['tool-toggle__chevron', { 'tool-toggle__chevron--collapsed': !expanded }]"" xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+      <svg v-else :class="['tool-toggle__chevron', { 'tool-toggle__chevron--collapsed': !expanded }]" xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
 
       <!-- Tool name -->
       <span class="tool-toggle__name">{{ toolCall.toolName }}</span>
