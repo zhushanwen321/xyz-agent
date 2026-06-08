@@ -94,3 +94,4 @@ const { renderedContent } = useMarkdownRender(
 // ── Event delegation ──
 
 const { handleBodyClick } = useMarkdownBodyClick()
+</script>
