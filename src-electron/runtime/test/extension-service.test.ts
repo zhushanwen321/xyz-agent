@@ -102,7 +102,7 @@ describe('ExtensionService', () => {
     })
 
     it('throws when package is not a valid pi extension', async () => {
-      mockedExecSync.mockImplementation(() => '')
+      mockedExecFileSync.mockImplementation(() => '')
       const npmDir = join(testSettingsDir, 'npm', 'node_modules', 'invalid-pkg')
       mkdirSync(npmDir, { recursive: true })
       writeFileSync(join(npmDir, 'package.json'), JSON.stringify({
@@ -131,7 +131,7 @@ describe('ExtensionService', () => {
       settings.packages = [...(settings.packages || []), 'npm:test-pkg']
       writeFileSync(settingsPath, JSON.stringify(settings), 'utf-8')
 
-      mockedExecSync.mockImplementation(() => '')
+      mockedExecFileSync.mockImplementation(() => '')
       await service.uninstallExtension('test-pkg')
 
       const updatedRaw = readFileSync(settingsPath, 'utf-8')
@@ -181,7 +181,7 @@ describe('ExtensionService', () => {
 
   describe('installExtension error classification', () => {
     it('classifies 404 errors as not_found', async () => {
-      mockedExecSync.mockImplementation(() => {
+      mockedExecFileSync.mockImplementation(() => {
         throw new Error('npm install failed: npm ERR! 404 Not Found - GET https://registry.npmjs.org/nonexistent-pkg')
       })
 
@@ -195,7 +195,7 @@ describe('ExtensionService', () => {
     })
 
     it('classifies E404 errors as not_found', async () => {
-      mockedExecSync.mockImplementation(() => {
+      mockedExecFileSync.mockImplementation(() => {
         throw new Error('npm ERR! E404 Package not found')
       })
 
@@ -209,7 +209,7 @@ describe('ExtensionService', () => {
     })
 
     it('classifies other npm errors as network', async () => {
-      mockedExecSync.mockImplementation(() => {
+      mockedExecFileSync.mockImplementation(() => {
         throw new Error('npm ERR! ETIMEOUT request timeout')
       })
 
@@ -223,7 +223,7 @@ describe('ExtensionService', () => {
     })
 
     it('classifies invalid pi extension as not_extension', async () => {
-      mockedExecSync.mockImplementation(() => '')
+      mockedExecFileSync.mockImplementation(() => '')
       const npmDir = join(testSettingsDir, 'npm', 'node_modules', 'lodash')
       mkdirSync(npmDir, { recursive: true })
       writeFileSync(join(npmDir, 'package.json'), JSON.stringify({

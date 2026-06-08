@@ -85,8 +85,10 @@ function isMergeBlock(block: ContentBlock, msg: Message, standaloneTools: Set<st
   if (block.type === 'thinking') return true
   if (block.type === 'toolCall') {
     const tc = msg.toolCalls?.find(t => t.id === block.refId)
+    // Orphaned block (refId not found) → merge as fallback to avoid silent discard
+    if (!tc) return true
     // Not in standaloneTools AND is a built-in tool → merge; custom tools → always standalone
-    return tc ? (ALL_PI_TOOLS as readonly string[]).includes(tc.toolName) && !standaloneTools.has(tc.toolName) : false
+    return (ALL_PI_TOOLS as readonly string[]).includes(tc.toolName) && !standaloneTools.has(tc.toolName)
   }
   return false
 }
@@ -148,12 +150,36 @@ function groupByContentBlocksLegacy(msg: Message): AssistantSection[] {
   return sections
 }
 
-/** 无 contentBlocks → 从 thinking/toolCalls/content 构造，返回 merge/standalone/customTool/text */
+/**
+ * 无 contentBlocks → 从 thinking/toolCalls/content 构造。
+ *
+ * - standaloneTools 未传入（normal 模式）→ 返回 thinking/toolCall/text（旧版展开行为）
+ * - standaloneTools 已传入（compact 模式）→ 返回 merge/standalone/customTool/text
+ */
 function groupByLegacyFields(msg: Message, standaloneTools?: Set<string>): AssistantSection[] {
-  const sections: AssistantSection[] = []
-  const tools = standaloneTools ?? new Set<string>()
+  // Normal 模式（standaloneTools 未传入）：保持旧版 thinking/toolCall/text 分类
+  if (!standaloneTools) {
+    const sections: AssistantSection[] = []
+    if (msg.thinking?.length) {
+      sections.push({
+        type: 'thinking',
+        blocks: msg.thinking.map(b => ({ type: 'thinking' as const, refId: b.id })),
+      })
+    }
+    if (msg.toolCalls?.length) {
+      sections.push({
+        type: 'toolCall',
+        blocks: msg.toolCalls.map(tc => ({ type: 'toolCall' as const, refId: tc.id })),
+      })
+    }
+    if (msg.content) {
+      sections.push({ type: 'text', blocks: [{ type: 'text', refId: 'text' }] })
+    }
+    return sections
+  }
 
-  // Collect merge-able items (thinking + non-standalone built-in toolCalls)
+  // Compact 模式：按 standaloneTools 设置分类
+  const sections: AssistantSection[] = []
   const mergeBlocks: ContentBlock[] = []
 
   if (msg.thinking?.length) {
@@ -165,31 +191,27 @@ function groupByLegacyFields(msg: Message, standaloneTools?: Set<string>): Assis
   if (msg.toolCalls?.length) {
     for (const tc of msg.toolCalls) {
       const isBuiltin = (ALL_PI_TOOLS as readonly string[]).includes(tc.toolName)
-      const isStandalone = tools.has(tc.toolName)
+      const isStandalone = standaloneTools.has(tc.toolName)
       const isCustom = !isBuiltin
 
       if (isCustom) {
-        // Flush merge buffer before standalone
         if (mergeBlocks.length > 0) {
           sections.push({ type: 'merge', blocks: [...mergeBlocks] })
           mergeBlocks.length = 0
         }
         sections.push({ type: 'customTool', blocks: [{ type: 'toolCall', refId: tc.id }] })
       } else if (isStandalone) {
-        // Flush merge buffer before standalone
         if (mergeBlocks.length > 0) {
           sections.push({ type: 'merge', blocks: [...mergeBlocks] })
           mergeBlocks.length = 0
         }
         sections.push({ type: 'standalone', blocks: [{ type: 'toolCall', refId: tc.id }] })
       } else {
-        // Built-in, not standalone → merge
         mergeBlocks.push({ type: 'toolCall', refId: tc.id })
       }
     }
   }
 
-  // Flush remaining merge items
   if (mergeBlocks.length > 0) {
     sections.push({ type: 'merge', blocks: mergeBlocks })
   }

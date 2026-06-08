@@ -37,6 +37,8 @@ export class RuntimeManager {
   // eslint-disable-next-line no-magic-numbers
   private static readonly BASE_PORT_END = 3220
   // eslint-disable-next-line no-magic-numbers
+  private static readonly MAX_PORT = 65535
+  // eslint-disable-next-line no-magic-numbers
   private static readonly KILL_WAIT_MS = 200
   // eslint-disable-next-line no-magic-numbers
   private static readonly PORT_RETRY_MS = 300
@@ -116,9 +118,10 @@ export class RuntimeManager {
     }
   }
 
-  /** 获取端口偏移（默认 0，dev 模式 +100） */
+  /** 获取端口偏移（默认 0，dev 模式 +100），clamp 到 [0, 65535-BASE_PORT_START] */
   private getPortOffset(): number {
-    return parseInt(process.env.XYZ_AGENT_PORT_OFFSET ?? '0', 10) || 0
+    const raw = parseInt(process.env.XYZ_AGENT_PORT_OFFSET ?? '0', 10) || 0
+    return Math.max(0, Math.min(raw, RuntimeManager.MAX_PORT - RuntimeManager.BASE_PORT_START))
   }
 
   /** 获取动态端口范围的起止 */

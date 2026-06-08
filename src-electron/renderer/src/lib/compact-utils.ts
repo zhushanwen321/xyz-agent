@@ -1,5 +1,5 @@
 /**
- * CompactSummaryBar / CompactStreamingBubble 共享工具函数
+ * MergeBlock / StandaloneToolCard 共享工具函数
  */
 
 // ── Time formatting ──

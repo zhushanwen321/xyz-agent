@@ -190,7 +190,7 @@ export class ExtensionService {
 
     // 执行 npm install
     try {
-      execSync(`npm install ${pkgName} --prefix ${npmDir} --omit=peer`, {
+      execFileSync('npm', ['install', pkgName, '--prefix', npmDir, '--omit=peer'], {
         stdio: 'pipe',
         timeout: NPM_INSTALL_TIMEOUT,
       })
@@ -209,7 +209,7 @@ export class ExtensionService {
     if (!existsSync(pkgInstallDir) || !this.resolver.isValidPiExtension(pkgInstallDir)) {
       // 回滚
       try {
-        execSync(`npm uninstall ${pkgName} --prefix ${npmDir}`, { stdio: 'pipe', timeout: NPM_UNINSTALL_TIMEOUT })
+        execFileSync('npm', ['uninstall', pkgName, '--prefix', npmDir], { stdio: 'pipe', timeout: NPM_UNINSTALL_TIMEOUT })
       } catch (e) {
         log.warn(`[extension-service] rollback npm uninstall failed for ${pkgName}: ${e instanceof Error ? e.message : String(e)}`)
       }
@@ -290,7 +290,7 @@ export class ExtensionService {
     const npmDir = join(this.settingsDir, 'npm')
     if (existsSync(npmDir)) {
       try {
-        execSync(`npm uninstall ${name} --prefix ${npmDir}`, { stdio: 'pipe', timeout: NPM_UNINSTALL_TIMEOUT })
+        execFileSync('npm', ['uninstall', name, '--prefix', npmDir], { stdio: 'pipe', timeout: NPM_UNINSTALL_TIMEOUT })
       } catch (e) {
         log.warn(`[extension-service] npm uninstall warning for ${name}: ${e instanceof Error ? e.message : String(e)}`)
       }
@@ -416,7 +416,7 @@ export class ExtensionService {
     // Validate tempDir is within settingsDir/tmp
     const resolvedTemp = resolve(tempDir)
     const allowedTmpPrefix = resolve(this.settingsDir, 'tmp')
-    if (!resolvedTemp.startsWith(allowedTmpPrefix)) {
+    if (!resolvedTemp.startsWith(allowedTmpPrefix + '/')) {
       throw new Error(`Invalid temp directory: ${tempDir}`)
     }
 
@@ -454,7 +454,7 @@ export class ExtensionService {
   async cancelInstall(tempDir: string): Promise<void> {
     const resolvedTemp = resolve(tempDir)
     const allowedTmpPrefix = resolve(this.settingsDir, 'tmp')
-    if (!resolvedTemp.startsWith(allowedTmpPrefix)) {
+    if (!resolvedTemp.startsWith(allowedTmpPrefix + '/')) {
       throw new Error(`Invalid temp directory: ${tempDir}`)
     }
 
