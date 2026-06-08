@@ -15,7 +15,8 @@ import type { NavigateInterceptor } from './navigate-interceptor.js'
 function parseArgs(): { port: number; projectRoot?: string } {
   // eslint-disable-next-line no-magic-numbers -- argv[0] is node, argv[1] is script
   const args = process.argv.slice(2)
-  const portOffset = parseInt(process.env.XYZ_AGENT_PORT_OFFSET ?? '0', 10) || 0
+  // eslint-disable-next-line no-magic-numbers -- max valid port offset: 65535 - base port 3210
+  const portOffset = Math.min(parseInt(process.env.XYZ_AGENT_PORT_OFFSET ?? '0', 10) || 0, 65535 - 3210)
   // eslint-disable-next-line no-magic-numbers -- base port for runtime
   let port = 3210 + portOffset
   let projectRoot: string | undefined
