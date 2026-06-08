@@ -172,10 +172,13 @@ const sendMode = computed<SendMode>(() => {
 
 function onModeSwitch(mode: SendMode) {
   // If user explicitly selected the auto-detected mode, clear override
-  const autoDetect: SendMode = (isCtrlPressed.value && 'steer')
-    || (props.isStreaming && 'queue')
-    || (isAltPressed.value && 'queue')
-    || 'send'
+  const autoDetect: SendMode = isCtrlPressed.value
+    ? 'steer'
+    : props.isStreaming
+      ? 'queue'
+      : isAltPressed.value
+        ? 'queue'
+        : 'send'
   manualMode.value = mode === autoDetect ? null : mode
 }
 

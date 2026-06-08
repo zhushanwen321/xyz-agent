@@ -23,6 +23,20 @@ const discoveredCandidates = ref<ExtensionInfo[]>([])
 const discoveryTempDir = ref('')
 const selectedCandidates = ref<string[]>([])
 const installPhase = ref<'idle' | 'discovering' | 'selecting' | 'installing' | 'done'>('idle')
+const INSTALL_TIMEOUT_MS = 60_000
+let installTimeout: ReturnType<typeof setTimeout> | undefined
+
+function startInstallTimeout() {
+  clearTimeout(installTimeout)
+  installTimeout = setTimeout(() => {
+    if (installPhase.value === 'discovering' || installPhase.value === 'installing') {
+      installError.value = 'Operation timed out after 60 seconds'
+      installPhase.value = 'idle'
+      installing.value = false
+    }
+  }, INSTALL_TIMEOUT_MS)
+}
+function clearInstallTimeout() { clearTimeout(installTimeout) }
 
 const installTabs = [
   { key: 'npm' as const, label: 'npm' },
@@ -33,11 +47,11 @@ const installTabs = [
 // ── Message handlers ────────────────────────────────────────────
 
 function onExtensions(msg: ServerMessage) {
+  clearInstallTimeout()
   const payload = msg.payload as { extensions?: ExtensionInfo[] }
   if (payload.extensions) {
     extensions.value = payload.extensions
   }
-  // Reset all install state on extensions update
   installing.value = false
   installPhase.value = 'idle'
   discoveredCandidates.value = []
@@ -58,6 +72,7 @@ function onDiscovered(msg: ServerMessage) {
 }
 
 function onInstallError(msg: ServerMessage) {
+  clearInstallTimeout()
   const msgType = (msg as { type?: string }).type
   if (msgType !== 'extension.installError') return
 
@@ -87,9 +102,11 @@ function handleInstall() {
   if (installTab.value === 'local') {
     installPhase.value = 'discovering'
     send({ type: 'extension.installDir', payload: { path: source } })
+    startInstallTimeout()
   } else if (installTab.value === 'git') {
     installPhase.value = 'discovering'
     send({ type: 'extension.installGit', payload: { url: source } })
+    startInstallTimeout()
   } else {
     // npm — auto-prepend npm: prefix if missing
     if (!source.startsWith('npm:')) {
@@ -107,6 +124,7 @@ function confirmInstallSelected() {
     type: 'extension.finishInstall',
     payload: { tempDir: discoveryTempDir.value, selected: selectedCandidates.value },
   })
+  startInstallTimeout()
 }
 
 function cancelInstallSelection() {
@@ -165,10 +183,10 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  clearInstallTimeout()
   off('config.extensions', onExtensions)
   off('extension.discovered', onDiscovered)
   off('extension.installError', onInstallError)
-  off('error', onInstallError)
 })
 </script>
 
@@ -331,11 +349,21 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Discovery: installing progress -->
+    <!-- Discovery: scanning/cloning progress -->
+    <div v-if="installPhase === 'discovering'" class="border border-border rounded-sm overflow-hidden mb-3">
+      <div class="flex items-center justify-center gap-2 py-4 px-4 bg-[var(--section-bg)]">
+        <svg class="animate-spin text-[var(--accent)]" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M21 12a9 9 0 1 1-6.22-8.56" />
+        </svg>
+        <span class="text-[12px] text-muted">{{ installTab === 'git' ? 'Cloning repository...' : 'Scanning directory...' }}</span>
+      </div>
+    </div>
+
+    <!-- Installing progress -->
     <div v-if="installPhase === 'installing'" class="border border-border rounded-sm overflow-hidden mb-3">
       <div class="flex items-center justify-center gap-2 py-4 px-4 bg-[var(--section-bg)]">
-        <svg class="animate-spin text-[var(--accent)]" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+        <svg class="animate-spin text-[var(--accent)]" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M21 12a9 9 0 1 1-6.22-8.56" />
         </svg>
         <span class="text-[12px] text-muted">Installing selected extensions...</span>
       </div>

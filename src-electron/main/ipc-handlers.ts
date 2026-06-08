@@ -62,7 +62,7 @@ export function registerIpcHandlers(deps: {
   })
 
   ipcMain.handle('get-runtime-port-offset', (): number => {
-    return parseInt(process.env.XYZ_AGENT_PORT_OFFSET ?? '0', 10) || 0
+    return runtimeManager.portOffset
   })
 
   // ── 窗口管理 ─────────────────────────────────────────────────────

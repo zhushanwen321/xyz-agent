@@ -308,6 +308,12 @@ export class ExtensionResolver {
    * - @zhushanwen/pi-goal → @zhushanwen/goal
    * - pi-subagents → subagents
    * - @scope/subagents → @scope/subagents
+   *
+   * NOTE: Behavioral change from old version — scope is now preserved.
+   * Old: @zhushanwen/pi-goal → goal (scope stripped)
+   * New: @zhushanwen/pi-goal → @zhushanwen/goal (scope kept)
+   * This allows scoped and unscoped packages with the same base name
+   * to coexist without dedup collision.
    */
   private normalizeExtName(name: string): string {
     const parts = name.split('/')

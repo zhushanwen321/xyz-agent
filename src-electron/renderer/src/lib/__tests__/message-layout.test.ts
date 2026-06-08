@@ -10,7 +10,7 @@
  *   TC-19: AC-7 — compactStreaming=false 不受影响
  */
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { groupIntoSections, ALL_PI_TOOLS, type AssistantSection } from '../message-layout'
 import type { ContentBlock, Message, ThinkingBlock, ToolCall } from '@xyz-agent/shared'
 
@@ -21,6 +21,8 @@ function nextId(prefix: string): string {
   idCounter++
   return `${prefix}-${idCounter}`
 }
+
+beforeEach(() => { idCounter = 0 })
 
 function makeThinking(content = 'thinking'): ThinkingBlock {
   return {
@@ -304,5 +306,51 @@ describe('ALL_PI_TOOLS constant', () => {
   it('contains exactly 7 pi built-in tools', () => {
     expect(ALL_PI_TOOLS).toHaveLength(7)
     expect([...ALL_PI_TOOLS].sort()).toEqual(['bash', 'edit', 'find', 'grep', 'ls', 'read', 'write'])
+  })
+})
+
+describe('Edge cases', () => {
+  it('empty contentBlocks with no content returns empty sections', () => {
+    const msg = makeMessage([], [], {})
+    const sections = groupIntoSections(msg, undefined)
+    expect(sections).toHaveLength(0)
+  })
+
+  it('empty contentBlocks with content returns text section', () => {
+    const msg = makeMessage([], [], { content: 'hello world' })
+    const sections = groupIntoSections(msg, undefined)
+    expect(sectionTypes(sections)).toEqual(['text'])
+  })
+
+  it('orphaned toolCall block goes to merge fallback', () => {
+    const blocks: ContentBlock[] = [
+      { type: 'toolCall', refId: 'orphan-id' },
+    ]
+    const msg = makeMessage(blocks, [], {})
+    const sections = groupIntoSections(msg, new Set())
+    expect(sectionTypes(sections)).toEqual(['merge'])
+  })
+
+  it('only text block with content returns text section', () => {
+    const blocks: ContentBlock[] = [
+      { type: 'text', refId: 't1', text: 'hello' },
+    ]
+    const msg = makeMessage(blocks, [], { content: 'hello world' })
+    const sections = groupIntoSections(msg, undefined)
+    expect(sectionTypes(sections)).toEqual(['text'])
+    expect(sections[0].blocks).toHaveLength(1)
+  })
+
+  it('normal mode produces single text section from msg.content', () => {
+    // In normal mode (standaloneTools=undefined), legacy path ignores contentBlocks
+    // and produces a single text section based on msg.content
+    const blocks: ContentBlock[] = [
+      { type: 'text', refId: 't1', text: 'first' },
+      { type: 'text', refId: 't2', text: 'second' },
+    ]
+    const msg = makeMessage(blocks, [], { content: 'content' })
+    const sections = groupIntoSections(msg, undefined)
+    expect(sectionTypes(sections)).toEqual(['text'])
+    expect(sections).toHaveLength(1)
   })
 })

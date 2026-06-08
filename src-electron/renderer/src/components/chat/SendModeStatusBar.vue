@@ -82,7 +82,6 @@ const emit = defineEmits<{
 }>()
 
 const containerRef = ref<HTMLElement | null>(null)
-const popoverRef = ref<HTMLElement | null>(null)
 const open = ref(false)
 
 const isMac = navigator.userAgent.includes('Mac')

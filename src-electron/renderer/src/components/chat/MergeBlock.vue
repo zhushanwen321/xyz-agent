@@ -200,7 +200,7 @@ const streamElapsed = computed(() => {
   align-items: center;
   gap: 6px;
   padding: 4px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-chip);
   background: var(--bg);
   border: 1px solid var(--border);
   cursor: pointer;
@@ -233,7 +233,7 @@ const streamElapsed = computed(() => {
   align-items: center;
   gap: 4px;
   padding: 2px 7px;
-  border-radius: 100px;
+  border-radius: var(--radius-pill);
   font-size: 10px;
   font-family: var(--font-mono);
   line-height: 1.3;
@@ -273,7 +273,7 @@ const streamElapsed = computed(() => {
   margin-top: 4px;
   padding: 6px 8px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-chip);
   background: var(--bg);
 }
 

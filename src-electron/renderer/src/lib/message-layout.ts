@@ -54,6 +54,12 @@ export function groupIntoTurns(msgs: ChatMessage[]): Turn[] {
 
 export type SectionType = 'merge' | 'text' | 'standalone' | 'customTool' | 'thinking' | 'toolCall'
 
+/** Compact mode section types (AgentRunBlock) */
+export type CompactSectionType = 'merge' | 'text' | 'standalone' | 'customTool'
+
+/** Normal mode section types (AssistantContent) */
+export type NormalSectionType = 'thinking' | 'toolCall' | 'text'
+
 export interface AssistantSection {
   type: SectionType
   /** contentBlocks 或构造出的虚拟 blocks */

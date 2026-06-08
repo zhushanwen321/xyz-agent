@@ -17,8 +17,9 @@
  * 5. 清理临时目录
  */
 import { execSync, execFileSync } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, readdirSync, statSync, cpSync, rmSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, readdirSync, statSync, lstatSync, cpSync, rmSync, mkdtempSync } from 'node:fs'
 import { join, resolve, basename } from 'node:path'
+import { homedir } from 'node:os'
 import type { ExtensionInfo } from '@xyz-agent/shared'
 import { ExtensionResolver } from './extension-resolver.js'
 import { getPiAgentDir } from './pi-config-bridge.js'
@@ -37,6 +38,8 @@ const NPM_INSTALL_TIMEOUT = 60_000
 const NPM_UNINSTALL_TIMEOUT = 30_000
 const GIT_CLONE_TIMEOUT = 120_000
 const DISCOVERY_TEMP_PREFIX = 'ext-scan-'
+// eslint-disable-next-line no-magic-numbers
+const ORPHAN_TEMP_MAX_AGE_MS = 24 * 60 * 60 * 1000 // 24 hours
 
 /** 获取 xyz-agent 的 agent 配置目录 */
 function getSettingsDir(): string {
@@ -95,6 +98,29 @@ export class ExtensionService {
     } else {
       this.extensionFilePath = resolve(this.projectRoot, '..', 'xyz-agent-extension.js')
     }
+
+    // Cleanup orphaned temp directories from previous crashes (>24h old)
+    this.cleanupOrphanedTempDirs()
+  }
+
+  private cleanupOrphanedTempDirs(): void {
+    try {
+      const tmpDir = join(this.settingsDir, 'tmp')
+      if (!existsSync(tmpDir)) return
+      const entries = readdirSync(tmpDir)
+      const cutoff = Date.now() - ORPHAN_TEMP_MAX_AGE_MS
+      for (const entry of entries) {
+        if (!entry.startsWith(DISCOVERY_TEMP_PREFIX)) continue
+        const fullPath = join(tmpDir, entry)
+        try {
+          const st = statSync(fullPath)
+          if (st.isDirectory() && st.mtimeMs < cutoff) {
+            rmSync(fullPath, { recursive: true, force: true })
+            log.info(`cleaned orphaned temp dir: ${fullPath}`)
+          }
+        } catch (e) { log.debug(`failed to check temp dir ${fullPath}: ${e instanceof Error ? e.message : String(e)}`) }
+      }
+    } catch (e) { log.debug(`failed to cleanup orphaned temp dirs: ${e instanceof Error ? e.message : String(e)}`) }
   }
 
   /**
@@ -352,9 +378,20 @@ export class ExtensionService {
       throw new Error(`Source path is not a directory: ${absPath}`)
     }
 
+    // Restrict source path to safe directories (home or /tmp)
+    const homeDir = homedir()
+    const isUnderHome = absPath.startsWith(homeDir + '/') || absPath === homeDir
+    const isUnderTmp = absPath.startsWith('/tmp/') || absPath === '/tmp'
+    if (!isUnderHome && !isUnderTmp) {
+      throw new Error(`Source path must be under home directory or /tmp`)
+    }
+
+    // Ensure tmp parent directory exists
+    const tmpParent = join(this.settingsDir, 'tmp')
+    mkdirSync(tmpParent, { recursive: true })
+
     // Create temp directory
-    const tempDir = join(this.settingsDir, 'tmp', `${DISCOVERY_TEMP_PREFIX}${Date.now()}`)
-    mkdirSync(tempDir, { recursive: true })
+    const tempDir = mkdtempSync(join(tmpParent, DISCOVERY_TEMP_PREFIX))
 
     // Copy source to temp
     cpSync(absPath, tempDir, { recursive: true })
@@ -370,9 +407,12 @@ export class ExtensionService {
    * Clones to temp dir, optionally runs npm install, discovers extensions.
    */
   async installGitRepository(url: string): Promise<{ tempDir: string; candidates: ExtensionInfo[] }> {
+    // Ensure tmp parent directory exists
+    const tmpParent = join(this.settingsDir, 'tmp')
+    mkdirSync(tmpParent, { recursive: true })
+
     // Create temp directory
-    const tempDir = join(this.settingsDir, 'tmp', `${DISCOVERY_TEMP_PREFIX}${Date.now()}`)
-    mkdirSync(tempDir, { recursive: true })
+    const tempDir = mkdtempSync(join(tmpParent, DISCOVERY_TEMP_PREFIX))
 
     // Git clone — use execFileSync to prevent command injection
     try {
@@ -534,10 +574,11 @@ export class ExtensionService {
     try {
       const entries = readdirSync(dir)
       for (const entry of entries) {
-        if (entry === '.' || entry === 'node_modules') continue
+        if (entry === '.' || entry === 'node_modules' || entry === '..') continue
         const entryPath = join(dir, entry)
         try {
-          if (!statSync(entryPath).isDirectory()) continue
+          const st = lstatSync(entryPath)
+          if (!st.isDirectory() || st.isSymbolicLink()) continue
         } catch {
           continue
         }

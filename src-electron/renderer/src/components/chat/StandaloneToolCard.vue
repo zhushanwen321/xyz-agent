@@ -40,10 +40,9 @@ const props = defineProps<{
   toolCall: ToolCall
 }>()
 
-const isCustomTool = computed(() => {
-  const builtin = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls']
-  return !builtin.includes(props.toolCall.toolName)
-})
+import { ALL_PI_TOOLS } from '../../lib/message-layout'
+
+const isCustomTool = computed(() => !ALL_PI_TOOLS.includes(props.toolCall.toolName as typeof ALL_PI_TOOLS[number]))
 
 const expanded = ref(false)
 

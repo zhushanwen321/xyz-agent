@@ -39,6 +39,9 @@
   /* 2px for special cases only */
   --radius-lg: 2px;
   --radius-md: 2px;
+  /* Component-specific radius */
+  --radius-chip: 4px;
+  --radius-pill: 100px;
   --sidebar-w: 260px;
   --inspector-w: 380px;
   --header-h: 48px;

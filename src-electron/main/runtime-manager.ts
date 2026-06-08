@@ -117,6 +117,9 @@ export class RuntimeManager {
     }
   }
 
+  /** 端口偏移量（供 IPC handler 读取） */
+  get portOffset(): number { return this.getPortOffset() }
+
   /** 获取端口偏移（默认 0，dev 模式 +100），clamp 到 [0, 65535-BASE_PORT_START] */
   private getPortOffset(): number {
     const raw = parseInt(process.env.XYZ_AGENT_PORT_OFFSET ?? '0', 10) || 0

@@ -64,8 +64,10 @@ const standaloneToolsSet = computed(() => new Set(settingsStore.standaloneTools)
 
 // ── Section grouping with pre-resolved toolCalls ──
 
+import type { SectionType } from '../../lib/message-layout'
+
 interface EnrichedSection {
-  type: string
+  type: SectionType
   blocks: import('@xyz-agent/shared').ContentBlock[]
   toolCall?: import('@xyz-agent/shared').ToolCall
 }
