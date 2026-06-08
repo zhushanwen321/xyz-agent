@@ -335,14 +335,9 @@ export const useChatStore = defineStore('chat', () => {
 
   // ── 流式消息高层生命周期方法（已内联到 useChat handlers，仅保留 completeStream / abortStream） ──
 
-  /** 完成流式消息，自动重置 isGenerating。支持新调用 completeStream(opts, sid) 和旧调用 completeStream(sid) */
-  function completeStream(optsOrSid: { stopReason?: string } | string, maybeSid?: string) {
-    if (typeof optsOrSid === 'string') {
-      completeStreaming(undefined, optsOrSid)
-    } else {
-      if (!maybeSid) return
-      completeStreaming(optsOrSid, maybeSid)
-    }
+  /** 完成流式消息，自动重置 isGenerating */
+  function completeStream(opts: { stopReason?: string }, sid: string) {
+    completeStreaming(opts ?? undefined, sid)
   }
 
   /** 终止流式消息（统一封装 reset 三步 + 可选错误通知） */

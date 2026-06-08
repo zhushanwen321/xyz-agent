@@ -426,7 +426,7 @@ export function useChat(sessionId?: Ref<string>) {
     if (!sid) return
     send({ type: 'message.abort', payload: { sessionId: sid } })
     // 立即完成当前流，不等后端确认
-    store.completeStream(sid)
+    store.completeStream({}, sid)
     // 插入系统消息提示用户操作已终止
     store.addMessage({
       ...createSystemNotification('info', '操作已被用户终止'),
