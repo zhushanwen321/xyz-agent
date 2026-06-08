@@ -54,27 +54,34 @@ describe('ExtensionResolver', () => {
 
   describe('normalizeExtName', () => {
     it('removes pi- prefix from unscoped name', () => {
+      // @ts-expect-error — testing private method
       expect(resolver.normalizeExtName('pi-subagents')).toBe('subagents')
     })
 
     it('preserves scope and removes pi- prefix', () => {
+      // @ts-expect-error — testing private method
       expect(resolver.normalizeExtName('@zhushanwen/pi-goal')).toBe('@zhushanwen/goal')
     })
 
     it('preserves non-pi scope intact', () => {
+      // @ts-expect-error — testing private method
       expect(resolver.normalizeExtName('@scope/subagents')).toBe('@scope/subagents')
     })
 
     it('handles scoped name without pi- prefix', () => {
+      // @ts-expect-error — testing private method
       expect(resolver.normalizeExtName('@scope/my-ext')).toBe('@scope/my-ext')
     })
 
     it('handles name without pi- prefix', () => {
+      // @ts-expect-error — testing private method
       expect(resolver.normalizeExtName('my-ext')).toBe('my-ext')
     })
 
     it('prevents dedup collision between different scopes', () => {
+      // @ts-expect-error — testing private method
       const name1 = resolver.normalizeExtName('@scope1/pi-goal')
+      // @ts-expect-error — testing private method
       const name2 = resolver.normalizeExtName('@scope2/pi-goal')
       expect(name1).not.toBe(name2)
       expect(name1).toBe('@scope1/goal')

@@ -309,7 +309,7 @@ export class ExtensionResolver {
    * - pi-subagents → subagents
    * - @scope/subagents → @scope/subagents
    */
-  normalizeExtName(name: string): string {
+  private normalizeExtName(name: string): string {
     const parts = name.split('/')
     const last = parts[parts.length - 1].replace(/^pi-/, '')
     if (parts.length > 1) {
