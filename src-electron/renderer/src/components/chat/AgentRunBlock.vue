@@ -37,15 +37,14 @@
 
         <!-- Standalone tool card -->
         <StandaloneToolCard
-          v-else-if="section.type === 'standalone'"
+          v-else-if="section.type === 'standalone' && resolveToolCall(section.blocks[0]?.refId)"
           :tool-call="resolveToolCall(section.blocks[0].refId)!"
         />
 
         <!-- Custom tool card -->
         <StandaloneToolCard
-          v-else-if="section.type === 'customTool'"
+          v-else-if="section.type === 'customTool' && resolveToolCall(section.blocks[0]?.refId)"
           :tool-call="resolveToolCall(section.blocks[0].refId)!"
-          :is-custom-tool="true"
         />
       </template>
     </div>
@@ -55,21 +54,22 @@
       <span>{{ stepCount }} 步</span>
       <span>·</span>
       <span>{{ formattedElapsed }}</span>
-      <template v-if="fileEditCount > 0">
+      <template v-if="standaloneToolCount > 0">
         <span>·</span>
-        <span>{{ fileEditCount }} 个文件修改</span>
+        <span>{{ standaloneToolCount }} 次工具操作</span>
       </template>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onBeforeUnmount } from 'vue'
+import { computed, watch } from 'vue'
 import type { Message, ToolCall } from '@xyz-agent/shared'
 import { groupIntoSections } from '../../lib/message-layout'
 import { useSettingsStore } from '../../stores/settings'
 import { useMarkdownRender } from '../../composables/useMarkdownRender'
 import { useMarkdownBodyClick } from '../../composables/useMarkdownBodyClick'
+import { useLiveTimer } from '../../composables/useLiveTimer'
 import { formatTime } from '@/lib/compact-utils'
 import MergeBlock from './MergeBlock.vue'
 import StandaloneToolCard from './StandaloneToolCard.vue'
@@ -115,7 +115,7 @@ const stepCount = computed(
   () => sections.value.filter(s => s.type !== 'text').length,
 )
 
-const fileEditCount = computed(() => {
+const standaloneToolCount = computed(() => {
   const tcs = props.message.toolCalls
   if (!tcs) return 0
   const standalone = standaloneToolsSet.value
@@ -124,22 +124,12 @@ const fileEditCount = computed(() => {
 
 // ── Elapsed time ──
 
-const TIMER_INTERVAL_MS = 200
-const liveNow = ref(Date.now())
-let timer: ReturnType<typeof setInterval> | undefined
+const { now: liveNow, start: startTimer, stop: stopTimer } = useLiveTimer(200)
 
-if (props.isStreaming) {
-  timer = setInterval(() => {
-    liveNow.value = Date.now()
-  }, TIMER_INTERVAL_MS)
-}
-
-onBeforeUnmount(() => {
-  if (timer !== undefined) {
-    clearInterval(timer)
-    timer = undefined
-  }
-})
+watch(() => props.isStreaming, (streaming) => {
+  if (streaming) startTimer()
+  else stopTimer()
+}, { immediate: true })
 
 const elapsedMs = computed(() => {
   const tcs = props.message.toolCalls

@@ -34,12 +34,9 @@ import ToolCallCard from './ToolCallCard.vue'
 import { formatTime, toolPath } from '@/lib/compact-utils'
 import type { ToolCall } from '@xyz-agent/shared'
 
-const props = withDefaults(defineProps<{
+const props = defineProps<{
   toolCall: ToolCall
-  isCustomTool?: boolean
-}>(), {
-  isCustomTool: false,
-})
+}>()
 
 const expanded = ref(false)
 

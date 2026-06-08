@@ -47,11 +47,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import type { ContentBlock, Message, ThinkingBlock as ThinkingBlockType, ToolCall } from '@xyz-agent/shared'
 import ThinkingBlock from './ThinkingBlock.vue'
 import ToolCallCard from './ToolCallCard.vue'
 import { formatTime, toolPath } from '@/lib/compact-utils'
+import { useLiveTimer } from '../../composables/useLiveTimer'
 
 // ── Types ──
 
@@ -122,26 +123,13 @@ const chips = computed<ChipInfo[]>(() => {
 
 // ── Streaming status (streaming mode) ──
 
-const TIMER_INTERVAL_MS = 200
 const TEXT_PREVIEW_MAX = 60
 
-const now = ref(Date.now())
-let timer: ReturnType<typeof setInterval> | undefined
-
-function startTimer() {
-  now.value = Date.now()
-  if (!timer) timer = setInterval(() => { now.value = Date.now() }, TIMER_INTERVAL_MS)
-}
-
-function stopTimer() {
-  if (timer !== undefined) { clearInterval(timer); timer = undefined }
-}
+const { now, start: startTimer } = useLiveTimer(200)
 
 onMounted(() => {
   if (props.isStreaming) startTimer()
 })
-
-onBeforeUnmount(stopTimer)
 
 const streamStatusText = computed(() => {
   const msg = props.message
