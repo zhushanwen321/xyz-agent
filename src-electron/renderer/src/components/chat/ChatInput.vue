@@ -170,7 +170,7 @@ const sendMode = computed<SendMode>(() => {
   return 'send'
 })
 
-function onModeSwitch(mode: SendMode) {
+function onModeSwitch({ mode }: { mode: SendMode }) {
   // If user explicitly selected the auto-detected mode, clear override
   const autoDetect: SendMode = isCtrlPressed.value
     ? 'steer'

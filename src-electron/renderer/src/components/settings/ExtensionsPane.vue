@@ -187,6 +187,7 @@ onUnmounted(() => {
   off('config.extensions', onExtensions)
   off('extension.discovered', onDiscovered)
   off('extension.installError', onInstallError)
+  off('error', onInstallError)
 })
 </script>
 
@@ -322,7 +323,7 @@ onUnmounted(() => {
             <svg
               v-if="selectedCandidates.includes(candidate.dirName)"
               width="8" height="8" viewBox="0 0 10 10"
-              fill="none" stroke="white" stroke-width="2"
+              fill="none" stroke="var(--surface)" stroke-width="2"
             >
               <path d="M2 5l2.5 2.5L8 3" />
             </svg>
@@ -404,7 +405,7 @@ onUnmounted(() => {
       :title="`Uninstall ${uninstallTarget?.name ?? ''}`"
       @update:open="() => { uninstallTarget = null }"
     >
-      <p class="text-sm leading-relaxed mb-4" style="color: var(--muted)">
+      <p class="text-sm leading-relaxed mb-4 text-muted">
         Are you sure you want to uninstall "{{ uninstallTarget?.name }}"? This will remove the package and configuration.
       </p>
       <div class="flex justify-end gap-2">

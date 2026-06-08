@@ -16,10 +16,10 @@
  * 4. finishInstall() 复制选中到 extensions/ 目录
  * 5. 清理临时目录
  */
-import { execSync, execFileSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, readdirSync, statSync, lstatSync, cpSync, rmSync, mkdtempSync } from 'node:fs'
 import { join, resolve, basename } from 'node:path'
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import type { ExtensionInfo } from '@xyz-agent/shared'
 import { ExtensionResolver } from './extension-resolver.js'
 import { getPiAgentDir } from './pi-config-bridge.js'
@@ -378,10 +378,11 @@ export class ExtensionService {
       throw new Error(`Source path is not a directory: ${absPath}`)
     }
 
-    // Restrict source path to safe directories (home or /tmp)
+    // Restrict source path to safe directories (home or os.tmpdir())
     const homeDir = homedir()
     const isUnderHome = absPath.startsWith(homeDir + '/') || absPath === homeDir
-    const isUnderTmp = absPath.startsWith('/tmp/') || absPath === '/tmp'
+    const sysTmpDir = tmpdir()
+    const isUnderTmp = absPath.startsWith(sysTmpDir + '/') || absPath === sysTmpDir
     if (!isUnderHome && !isUnderTmp) {
       throw new Error(`Source path must be under home directory or /tmp`)
     }
@@ -393,13 +394,15 @@ export class ExtensionService {
     // Create temp directory
     const tempDir = mkdtempSync(join(tmpParent, DISCOVERY_TEMP_PREFIX))
 
-    // Copy source to temp
-    cpSync(absPath, tempDir, { recursive: true })
-
-    // Discover extensions
-    const candidates = this.discoverExtensions(tempDir)
-
-    return { tempDir, candidates }
+    // Copy source to temp, clean up on failure
+    try {
+      cpSync(absPath, tempDir, { recursive: true })
+      const candidates = this.discoverExtensions(tempDir)
+      return { tempDir, candidates }
+    } catch (err) {
+      rmSync(tempDir, { recursive: true, force: true })
+      throw err
+    }
   }
 
   /**
@@ -413,6 +416,12 @@ export class ExtensionService {
 
     // Create temp directory
     const tempDir = mkdtempSync(join(tmpParent, DISCOVERY_TEMP_PREFIX))
+
+    // Validate Git URL format
+    const ALLOWED_GIT_PREFIXES = ['https://', 'http://', 'git://', 'ssh://', 'git@']
+    if (!ALLOWED_GIT_PREFIXES.some(p => url.startsWith(p))) {
+      throw new Error(`Invalid Git URL: ${url}. Must start with one of: ${ALLOWED_GIT_PREFIXES.join(', ')}`)
+    }
 
     // Git clone — use execFileSync to prevent command injection
     try {
@@ -432,7 +441,7 @@ export class ExtensionService {
     // If package.json exists, run npm install
     if (existsSync(join(tempDir, 'package.json'))) {
       try {
-        execSync('npm install --omit=peer', {
+        execFileSync('npm', ['install', '--omit=peer'], {
           cwd: tempDir,
           stdio: 'pipe',
           timeout: NPM_INSTALL_TIMEOUT,
@@ -469,14 +478,19 @@ export class ExtensionService {
       }
     }
 
+    // Pre-validate all source directories exist before copying
+    for (const name of selected) {
+      const srcDir = join(tempDir, name)
+      if (!existsSync(srcDir) || !statSync(srcDir).isDirectory()) {
+        throw new Error(`Extension "${name}" not found in temporary directory`)
+      }
+    }
+
     const extensionsDir = join(this.settingsDir, 'extensions')
     mkdirSync(extensionsDir, { recursive: true })
 
     for (const name of selected) {
       const srcDir = join(tempDir, name)
-      if (!existsSync(srcDir)) {
-        throw new Error(`Selected extension "${name}" not found in temp directory`)
-      }
       const destDir = join(extensionsDir, name)
       cpSync(srcDir, destDir, { recursive: true })
     }

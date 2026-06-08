@@ -78,7 +78,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'update:mode', mode: SendMode): void
+  (e: 'update:mode', payload: { mode: SendMode }): void
 }>()
 
 const containerRef = ref<HTMLElement | null>(null)
@@ -120,7 +120,7 @@ function toggle() {
 }
 
 function selectMode(value: SendMode) {
-  emit('update:mode', value)
+  emit('update:mode', { mode: value })
   open.value = false
 }
 

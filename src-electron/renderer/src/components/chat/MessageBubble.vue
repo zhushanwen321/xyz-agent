@@ -197,8 +197,8 @@ const actionMenuAnchor = ref<DOMRect | null>(null)
 // ── Send mode chip ──
 const chipClass = computed(() => {
   switch (props.message.sendMode) {
-    case 'steer': return 'bg-warning/15 text-warning'
-    case 'follow-up': return 'bg-accent/15 text-accent'
+    case 'steer': return 'chip-steer'
+    case 'follow-up': return 'chip-follow-up'
     default: return ''
   }
 })
@@ -411,5 +411,15 @@ const { handleBodyClick } = useMarkdownBodyClick()
 .msg-user-bubble {
   background: var(--user-bubble-bg);
   border: 1px solid var(--user-bubble-border);
+}
+
+/* W11 fix: color-mix instead of Tailwind opacity on CSS vars */
+.chip-steer {
+  background: color-mix(in oklch, var(--warning) 15%, transparent);
+  color: var(--warning);
+}
+.chip-follow-up {
+  background: color-mix(in oklch, var(--accent) 15%, transparent);
+  color: var(--accent);
 }
 </style>

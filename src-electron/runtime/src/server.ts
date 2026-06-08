@@ -479,14 +479,8 @@ export class SidecarServer implements IMessageBroker {
    * Primary: instanceof check. Fallback: branded property check (handles cross-bundle scenarios).
    */
   private extractExtensionError(e: unknown): { code: string; message: string; hint?: string } {
-    // Primary: instanceof (covers 99.9% — same process, same bundle)
     if (e instanceof ExtensionInstallError) {
       return { code: e.code, message: e.message, hint: e.hint }
-    }
-    // Fallback: branded property (defensive — cross-bundle or serialized errors)
-    if (e && typeof e === 'object' && '__brand' in e && (e as Record<string, unknown>).__brand === 'ExtensionInstallError') {
-      const obj = e as { code: string; message: string; hint?: string }
-      return { code: obj.code, message: obj.message, hint: obj.hint }
     }
     return { code: 'install_failed', message: e instanceof Error ? e.message : String(e) }
   }

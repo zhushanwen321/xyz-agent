@@ -124,6 +124,8 @@ const mockInstallGitRepository = vi.fn().mockResolvedValue({
   ],
 })
 const mockFinishInstall = vi.fn().mockResolvedValue(undefined)
+const mockInstallExtension = vi.fn().mockResolvedValue(undefined)
+const mockCancelInstall = vi.fn().mockResolvedValue(undefined)
 
 vi.mock('../src/extension-service.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/extension-service.js')>()
@@ -137,6 +139,8 @@ vi.mock('../src/extension-service.js', async (importOriginal) => {
       installLocalDirectory = mockInstallLocalDirectory
       installGitRepository = mockInstallGitRepository
       finishInstall = mockFinishInstall
+      installExtension = mockInstallExtension
+      cancelInstall = mockCancelInstall
     },
   }
 })
@@ -454,6 +458,85 @@ describe('SidecarServer: extension message routing', () => {
       expect(msg.payload).toMatchObject({
         code: 'install_failed',
         message: expect.stringContaining('git clone failed'),
+      })
+    })
+  })
+
+  // ── extension.install ─────────────────────────────────────────
+
+  describe('extension.install', () => {
+    it('calls installExtension with source and returns extension list', async () => {
+      await connectClient()
+
+      const responsePromise = waitForMessage(ws, 'config.extensions')
+
+      ws.send(JSON.stringify({
+        type: 'extension.install',
+        id: 'ext-install-1',
+        payload: { source: 'npm:pi-test-pkg' },
+      }))
+
+      const msg = await responsePromise
+      expect(msg.id).toBe('ext-install-1')
+      expect(mockInstallExtension).toHaveBeenCalledWith('npm:pi-test-pkg')
+      expect(msg.payload).toMatchObject({ extensions: [] })
+    })
+
+    it('sends installError when installExtension throws', async () => {
+      mockInstallExtension.mockRejectedValueOnce(new Error('npm install failed: 404'))
+      await connectClient()
+
+      const responsePromise = waitForMessage(ws, 'extension.installError')
+
+      ws.send(JSON.stringify({
+        type: 'extension.install',
+        id: 'ext-install-err',
+        payload: { source: 'npm:nonexistent-pkg' },
+      }))
+
+      const msg = await responsePromise
+      expect(msg.payload).toMatchObject({
+        code: 'install_failed',
+        message: expect.stringContaining('npm install failed'),
+      })
+    })
+  })
+
+  // ── extension.cancelInstall ─────────────────────────────────────
+
+  describe('extension.cancelInstall', () => {
+    it('calls cancelInstall with tempDir and returns installCancelled', async () => {
+      await connectClient()
+
+      const responsePromise = waitForMessage(ws, 'extension.installCancelled')
+
+      ws.send(JSON.stringify({
+        type: 'extension.cancelInstall',
+        id: 'ext-cancel-1',
+        payload: { tempDir: '/tmp/ext-cancel-test' },
+      }))
+
+      const msg = await responsePromise
+      expect(msg.id).toBe('ext-cancel-1')
+      expect(mockCancelInstall).toHaveBeenCalledWith('/tmp/ext-cancel-test')
+    })
+
+    it('sends error when cancelInstall throws', async () => {
+      mockCancelInstall.mockRejectedValueOnce(new Error('invalid temp directory'))
+      await connectClient()
+
+      const responsePromise = waitForMessage(ws, 'error')
+
+      ws.send(JSON.stringify({
+        type: 'extension.cancelInstall',
+        id: 'ext-cancel-err',
+        payload: { tempDir: '/etc/malicious' },
+      }))
+
+      const msg = await responsePromise
+      expect(msg.payload).toMatchObject({
+        code: 'cancel_failed',
+        message: expect.stringContaining('invalid temp directory'),
       })
     })
   })

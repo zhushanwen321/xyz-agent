@@ -128,12 +128,12 @@ onBeforeUnmount(() => {
 }
 
 /* B2 fix: match container-name from style.css */
-@container panel (min-width: 520px) {
+@container panel (min-width: 480px) {
   .queue-full { display: block; }
   .queue-compact { display: none; }
 }
 
-@container panel (max-width: 519px) {
+@container panel (max-width: 481px) {
   .queue-full { display: none; }
   .queue-compact { display: block; }
 }

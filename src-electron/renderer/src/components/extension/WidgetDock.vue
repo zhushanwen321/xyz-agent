@@ -45,8 +45,7 @@ function toggleCollapse(key: string) {
     <!-- Expanded widget panels -->
     <div
       v-if="expandedWidgets.length > 0"
-      class="flex gap-0 overflow-hidden border border-border rounded-sm bg-surface transition-all duration-200"
-      style="max-height: 180px"
+      class="flex gap-0 overflow-hidden border border-border rounded-sm bg-surface transition-all duration-200 max-h-[180px]"
     >
       <div
         v-for="w in expandedWidgets"

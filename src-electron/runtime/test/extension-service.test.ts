@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, mkdtempSync } from 'node:fs'
 import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { ExtensionService, ExtensionInstallError } from '../src/extension-service.js'
 
 import { execSync, execFileSync } from 'node:child_process'
@@ -15,12 +16,12 @@ const mockedExecFileSync = vi.mocked(execFileSync)
 
 describe('ExtensionService', () => {
   let service: ExtensionService
-  const testSettingsDir = '/tmp/xyz-agent-test/extensions'
+  let testSettingsDir: string
 
   beforeEach(() => {
     vi.clearAllMocks()
     // Create test directory structure
-    mkdirSync(testSettingsDir, { recursive: true })
+    testSettingsDir = mkdtempSync(join(tmpdir(), 'ext-service-test-'))
     writeFileSync(join(testSettingsDir, 'settings.json'), JSON.stringify({
       packages: ['npm:pi-ask-user'],
     }), 'utf-8')
@@ -400,7 +401,7 @@ describe('ExtensionService', () => {
       mkdirSync(tempDir, { recursive: true })
 
       await expect(service.finishInstall(tempDir, ['nonexistent']))
-        .rejects.toThrow('not found in temp directory')
+        .rejects.toThrow('not found in')
     })
   })
 })

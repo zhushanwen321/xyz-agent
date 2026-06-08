@@ -1,3 +1,6 @@
+/* eslint-disable */
+// @vitest-environment jsdom
+// Run with: npx vitest run --config src-electron/renderer/vitest.config.ts src-electron/renderer/src/components/panel/__tests__/PanelSessionView-subagent.test.ts
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { ref, nextTick } from 'vue'
