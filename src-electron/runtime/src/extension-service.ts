@@ -461,6 +461,8 @@ export class ExtensionService {
   /**
    * Finish installation: copy selected extensions from temp dir to extensions/ directory.
    * Cleans up temp dir after copying.
+   * @param selected - Array of dirName values (filesystem basenames) from discovered candidates.
+   *   NOT npm package names — scoped packages have dirName = basename(dir).
    */
   async finishInstall(tempDir: string, selected: string[]): Promise<void> {
     // Validate tempDir is within settingsDir/tmp
@@ -470,28 +472,30 @@ export class ExtensionService {
       throw new Error(`Invalid temp directory: ${tempDir}`)
     }
 
-    // Validate selected names: no path traversal
-    for (const name of selected) {
-      if (name !== basename(name) || name.includes('..') || name.includes('/') || name.includes('\\')) {
-        throw new Error(`Invalid extension name: "${name}"`
+    // Validate selected are simple dirNames: no path traversal
+    // NOTE: `selected` contains dirName values (filesystem basenames), not npm package names.
+    // scoped packages like @scope/pkg have dirName = 'pkg' (or whatever basename returns).
+    for (const dirName of selected) {
+      if (dirName !== basename(dirName) || dirName.includes('..') || dirName.includes('/') || dirName.includes('\\')) {
+        throw new Error(`Invalid extension dirName: "${dirName}"`
           + ' — must be a simple directory name without path separators or traversal')
       }
     }
 
     // Pre-validate all source directories exist before copying
-    for (const name of selected) {
-      const srcDir = join(tempDir, name)
+    for (const dirName of selected) {
+      const srcDir = join(tempDir, dirName)
       if (!existsSync(srcDir) || !statSync(srcDir).isDirectory()) {
-        throw new Error(`Extension "${name}" not found in temporary directory`)
+        throw new Error(`Extension "${dirName}" not found in temporary directory`)
       }
     }
 
     const extensionsDir = join(this.settingsDir, 'extensions')
     mkdirSync(extensionsDir, { recursive: true })
 
-    for (const name of selected) {
-      const srcDir = join(tempDir, name)
-      const destDir = join(extensionsDir, name)
+    for (const dirName of selected) {
+      const srcDir = join(tempDir, dirName)
+      const destDir = join(extensionsDir, dirName)
       cpSync(srcDir, destDir, { recursive: true })
     }
 
@@ -575,6 +579,7 @@ export class ExtensionService {
       // name is intentionally raw (not normalized) — see readPackageJson doc
       candidates.push({
         name: info.name,
+        dirName: basename(dir),
         version: info.version,
         description: info.description,
         path: dir,

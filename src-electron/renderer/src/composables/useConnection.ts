@@ -1,6 +1,6 @@
 import { computed } from 'vue'
 import { connect, disconnect, getState } from '../lib/ws-client'
-import { BASE_PORT } from '@xyz-agent/shared'
+import { BASE_PORT, DEV_PORT_OFFSET } from '@xyz-agent/shared'
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting'
 
@@ -13,7 +13,11 @@ async function resolveFallbackPort(): Promise<number> {
     }
   // eslint-disable-next-line taste/no-silent-catch
   } catch {
-    // IPC 不可用，使用 base port
+    // IPC 不可用（极端边界）
+  }
+  // DEV 环境下 runtime 在 BASE_PORT+100，不能 fallback 到 prod 端口
+  if (import.meta.env.DEV) {
+    return BASE_PORT + DEV_PORT_OFFSET
   }
   return BASE_PORT
 }

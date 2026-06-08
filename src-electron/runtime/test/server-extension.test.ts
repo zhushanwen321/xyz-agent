@@ -525,7 +525,7 @@ describe('SidecarServer: extension message routing', () => {
       mockCancelInstall.mockRejectedValueOnce(new Error('invalid temp directory'))
       await connectClient()
 
-      const responsePromise = waitForMessage(ws, 'error')
+      const responsePromise = waitForMessage(ws, 'extension.installError')
 
       ws.send(JSON.stringify({
         type: 'extension.cancelInstall',
@@ -534,10 +534,8 @@ describe('SidecarServer: extension message routing', () => {
       }))
 
       const msg = await responsePromise
-      expect(msg.payload).toMatchObject({
-        code: 'cancel_failed',
-        message: expect.stringContaining('invalid temp directory'),
-      })
+      expect(msg.type).toBe('extension.installError')
+      expect(msg.payload.message).toContain('invalid temp directory')
     })
   })
 

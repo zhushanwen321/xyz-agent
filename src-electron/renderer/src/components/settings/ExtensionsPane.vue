@@ -62,7 +62,7 @@ function onDiscovered(msg: ServerMessage) {
   if (payload.candidates && payload.candidates.length > 0) {
     discoveredCandidates.value = payload.candidates
     discoveryTempDir.value = payload.tempDir ?? ''
-    selectedCandidates.value = payload.candidates.map(c => c.name)
+    selectedCandidates.value = payload.candidates.map(c => c.dirName)
     installPhase.value = 'selecting'
   } else {
     installError.value = 'No pi extensions found in the provided source.'
@@ -177,8 +177,6 @@ onMounted(() => {
   on('config.extensions', onExtensions)
   on('extension.discovered', onDiscovered)
   on('extension.installError', onInstallError)
-  // Keep backward compat with generic error channel
-  on('error', onInstallError)
   send({ type: 'extension.list', payload: {} })
 })
 
@@ -187,7 +185,6 @@ onUnmounted(() => {
   off('config.extensions', onExtensions)
   off('extension.discovered', onDiscovered)
   off('extension.installError', onInstallError)
-  off('error', onInstallError)
 })
 </script>
 

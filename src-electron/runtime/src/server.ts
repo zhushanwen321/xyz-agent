@@ -445,7 +445,7 @@ export class SidecarServer implements IMessageBroker {
           await this.extensionService.cancelInstall(tempDir)
           return this.send(ws, { type: 'extension.installCancelled', id: msg.id, payload: {} })
         } catch (e) {
-          return this.sendError(ws, 'cancel_failed', e instanceof Error ? e.message : String(e), msg.id)
+          return this.send(ws, { type: 'extension.installError', id: msg.id, payload: this.extractExtensionError(e) })
         }
       }
     }

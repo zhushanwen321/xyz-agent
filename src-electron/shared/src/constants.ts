@@ -7,6 +7,10 @@
 // eslint-disable-next-line no-magic-numbers
 export const BASE_PORT = 3210 as const
 
+/** Port offset used in dev mode to avoid connecting to prod runtime */
+// eslint-disable-next-line no-magic-numbers
+export const DEV_PORT_OFFSET = 100 as const
+
 /** Maximum valid port number */
 // eslint-disable-next-line no-magic-numbers
 export const MAX_PORT = 65535 as const

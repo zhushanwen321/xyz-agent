@@ -1,5 +1,5 @@
 <template>
-  <!-- Wide panel (≥520px): full header + list -->
+  <!-- Wide panel (≥481px): full header + list -->
   <div v-if="hasItems" class="queue-full">
     <div class="max-w-[960px] mx-auto px-6">
       <!-- header -->
@@ -31,7 +31,7 @@
     </div>
   </div>
 
-  <!-- Narrow panel (<520px): inline badge -->
+  <!-- Narrow panel (≤480px): inline badge -->
   <div v-if="hasItems" class="queue-compact text-[11px] text-[var(--muted)] px-3.5 py-1 cursor-pointer">
     <svg class="w-3 h-3 opacity-60 inline-block mr-1 -mt-px" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
       <path d="M2 4h12M2 8h12M2 12h12" />
@@ -127,16 +127,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
-/* B2 fix: match container-name from style.css */
-@container panel (min-width: 480px) {
-  .queue-full { display: block; }
-  .queue-compact { display: none; }
-}
-
-@container panel (max-width: 481px) {
-  .queue-full { display: none; }
-  .queue-compact { display: block; }
-}
+/* Container query rules are defined globally in style.css to avoid duplication */
 
 /* W2 fix: use scoped classes instead of arbitrary value + opacity syntax */
 .badge-steer {
