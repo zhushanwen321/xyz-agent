@@ -188,7 +188,7 @@ function chipData(msg: Message): CompactChip[] {
   }
 
   // Tool calls grouped by toolName
-  const toolGroups = new Map<string, typeof msg.toolCalls>()
+  const toolGroups = new Map<string, ToolCall[]>()
   if (msg.toolCalls) {
     for (const tc of msg.toolCalls) {
       const g = toolGroups.get(tc.toolName) ?? []
