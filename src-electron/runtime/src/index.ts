@@ -4,6 +4,8 @@ import { TreeService } from './services/tree-service.js'
 import { ConfigService } from './services/config-service.js'
 import { ModelService } from './services/model-service.js'
 
+import { BASE_PORT, MAX_PORT } from '@xyz-agent/shared'
+
 const MAX_PERCENT = 100
 import { ProcessManager } from './process-manager.js'
 import { EventAdapter } from './event-adapter.js'
@@ -15,10 +17,8 @@ import type { NavigateInterceptor } from './navigate-interceptor.js'
 function parseArgs(): { port: number; projectRoot?: string } {
   // eslint-disable-next-line no-magic-numbers -- argv[0] is node, argv[1] is script
   const args = process.argv.slice(2)
-  // eslint-disable-next-line no-magic-numbers -- max valid port offset: 65535 - base port 3210
-  const portOffset = Math.min(parseInt(process.env.XYZ_AGENT_PORT_OFFSET ?? '0', 10) || 0, 65535 - 3210)
-  // eslint-disable-next-line no-magic-numbers -- base port for runtime
-  let port = 3210 + portOffset
+  const portOffset = Math.min(parseInt(process.env.XYZ_AGENT_PORT_OFFSET ?? '0', 10) || 0, MAX_PORT - BASE_PORT)
+  let port = BASE_PORT + portOffset
   let projectRoot: string | undefined
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--port' && i + 1 < args.length) {

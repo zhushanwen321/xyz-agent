@@ -125,8 +125,10 @@ const mockInstallGitRepository = vi.fn().mockResolvedValue({
 })
 const mockFinishInstall = vi.fn().mockResolvedValue(undefined)
 
-vi.mock('../src/extension-service.js', () => {
+vi.mock('../src/extension-service.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/extension-service.js')>()
   return {
+    ...actual,
     ExtensionService: class MockExtensionService {
       scanExtensions = vi.fn().mockResolvedValue([])
       getEnabledExtensions = vi.fn().mockResolvedValue([])

@@ -851,16 +851,14 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
   container-name: panel;
 }
 
-@container panel (max-width: 519px) {
+@container panel (max-width: 480px) {
   .mode-shortcut-hint { display: none; }
   .queue-full { display: none; }
   .queue-compact { display: flex; }
-  .token-stats { display: none; }
 }
 
-@container panel (min-width: 520px) {
+@container panel (min-width: 481px) {
   .mode-shortcut-hint { display: inline; }
   .queue-full { display: block; }
   .queue-compact { display: none; }
-  .token-stats { display: inline-flex; }
 }

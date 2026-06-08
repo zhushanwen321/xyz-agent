@@ -1,9 +1,8 @@
 import { computed } from 'vue'
 import { connect, disconnect, getState } from '../lib/ws-client'
+import { BASE_PORT } from '@xyz-agent/shared'
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting'
-
-const BASE_PORT = 3210
 
 /** 获取实际的 fallback 端口（考虑 dev 模式的端口偏移） */
 async function resolveFallbackPort(): Promise<number> {

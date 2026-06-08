@@ -8,7 +8,6 @@ import type {
   ToolCallUpdatePayload,
   ExtensionInfo,
   ExtensionDiscoveredPayload,
-  ExtensionInstallProgressPayload,
   ExtensionInstallErrorPayload,
 } from '@xyz-agent/shared'
 
@@ -298,14 +297,6 @@ describe('Protocol: extension types', () => {
       expect(msg.type).toBe('extension.discovered')
     })
 
-    it('ServerMessage accepts extension.installProgress type', () => {
-      const msg: ServerMessage = {
-        type: 'extension.installProgress',
-        payload: { phase: 'clone', status: 'running' },
-      }
-      expect(msg.type).toBe('extension.installProgress')
-    })
-
     it('ServerMessage accepts extension.installError type', () => {
       const msg: ServerMessage = {
         type: 'extension.installError',
@@ -318,22 +309,11 @@ describe('Protocol: extension types', () => {
       const payload: ExtensionDiscoveredPayload = {
         tempDir: '/tmp/ext-scan-123',
         candidates: [
-          { name: 'ext-a', version: '1.0.0', description: 'Test', path: '/tmp/a', enabled: true, source: 'built-in' },
+          { name: 'ext-a', dirName: 'ext-a', version: '1.0.0', description: 'Test', path: '/tmp/a', enabled: true, source: 'built-in' },
         ],
       }
       expect(payload.tempDir).toBe('/tmp/ext-scan-123')
       expect(payload.candidates).toHaveLength(1)
-    })
-
-    it('ExtensionInstallProgressPayload supports all phases and statuses', () => {
-      const cloneRunning: ExtensionInstallProgressPayload = { phase: 'clone', status: 'running' }
-      expect(cloneRunning.phase).toBe('clone')
-
-      const scanDone: ExtensionInstallProgressPayload = { phase: 'scan', status: 'done', message: 'Found 3 extensions' }
-      expect(scanDone.message).toBe('Found 3 extensions')
-
-      const installError: ExtensionInstallProgressPayload = { phase: 'install', status: 'error', message: 'Failed' }
-      expect(installError.status).toBe('error')
     })
 
     it('ExtensionInstallErrorPayload has required and optional fields', () => {

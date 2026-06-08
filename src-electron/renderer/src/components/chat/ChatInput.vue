@@ -137,6 +137,7 @@ const isCtrlPressed = ref(false)
 
 watch(() => props.sessionId, (newSid, oldSid) => {
   if (newSid !== oldSid) {
+    manualMode.value = null // reset send mode override on session switch
     if (oldSid) chatStore.setPendingText(text.value || undefined, oldSid)
     text.value = chatStore.getPendingText(newSid)
     nextTick(() => {

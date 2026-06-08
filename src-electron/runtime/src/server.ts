@@ -11,6 +11,7 @@ import { WebSocketServer, WebSocket, type WebSocket as WsType } from 'ws'
 import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
 import type { ISessionService, IConfigService, IModelService, IMessageBroker, IExtensionService, IPluginService } from './interfaces.js'
 import { ExtensionTimeoutManager } from './extension-timeout-manager.js'
+import { ExtensionInstallError } from './extension-service.js'
 import { BridgeHandler } from './bridge-handler.js'
 import { SettingsMessageHandler } from './settings-message-handler.js'
 import { getPiAgentDir } from './pi-config-bridge.js'
@@ -375,8 +376,11 @@ export class SidecarServer implements IMessageBroker {
         try {
           await this.extensionService.installExtension(msg.payload.source)
         } catch (e) {
-          const errMsg = e instanceof Error ? e.message : String(e)
-          return this.sendError(ws, 'install_failed', errMsg, msg.id)
+          return this.send(ws, {
+            type: 'extension.installError',
+            id: msg.id,
+            payload: this.extractExtensionError(e),
+          })
         }
         const installed = await this.extensionService.scanExtensions()
         return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions: installed } })
@@ -471,16 +475,20 @@ export class SidecarServer implements IMessageBroker {
   // ── Extension error helper ────────────────────────────────────
 
   /**
-   * Extract duck-typed ExtensionInstallError fields from unknown catch value.
-   * Uses property check instead of instanceof to work with mocked modules.
+   * Extract ExtensionInstallError fields from unknown catch value.
+   * Primary: instanceof check. Fallback: branded property check (handles cross-bundle scenarios).
    */
   private extractExtensionError(e: unknown): { code: string; message: string; hint?: string } {
-    const errObj = e && typeof e === 'object' && 'code' in e ? e as { code: string; hint?: string } : null
-    return {
-      code: errObj?.code ?? 'install_failed',
-      message: e instanceof Error ? e.message : String(e),
-      hint: errObj?.hint,
+    // Primary: instanceof (covers 99.9% — same process, same bundle)
+    if (e instanceof ExtensionInstallError) {
+      return { code: e.code, message: e.message, hint: e.hint }
     }
+    // Fallback: branded property (defensive — cross-bundle or serialized errors)
+    if (e && typeof e === 'object' && '__brand' in e && (e as Record<string, unknown>).__brand === 'ExtensionInstallError') {
+      const obj = e as { code: string; message: string; hint?: string }
+      return { code: obj.code, message: obj.message, hint: obj.hint }
+    }
+    return { code: 'install_failed', message: e instanceof Error ? e.message : String(e) }
   }
 
   // ── IMessageBroker ──────────────────────────────────────────────

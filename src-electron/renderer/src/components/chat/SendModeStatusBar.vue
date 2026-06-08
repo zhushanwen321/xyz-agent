@@ -167,11 +167,4 @@ onBeforeUnmount(() => {
   opacity: 0;
   transform: translateY(4px);
 }
-
-/* Container query: hide shortcut hints in narrow panels */
-@container (max-width: 480px) {
-  .mode-shortcut-hint {
-    display: none;
-  }
-}
 </style>

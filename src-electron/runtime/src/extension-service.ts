@@ -132,6 +132,7 @@ export class ExtensionService {
 
       extensions.push({
         name,
+        dirName: basename(dir),
         version,
         description,
         path: dir,
@@ -546,6 +547,7 @@ export class ExtensionService {
           const info = this.readPackageJson(entryPath)
           candidates.push({
             name: info.name,
+            dirName: entry,
             version: info.version,
             description: info.description,
             path: entryPath,

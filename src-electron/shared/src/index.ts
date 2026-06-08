@@ -4,7 +4,7 @@ export type {
   ServerMessageType, ServerMessage,
   ExtensionUIRequestPayload, ExtensionUIResponsePayload,
   ExtensionErrorPayload, ToolCallUpdatePayload, ExtensionInfo,
-  ExtensionDiscoveredPayload, ExtensionInstallProgressPayload, ExtensionInstallErrorPayload,
+  ExtensionDiscoveredPayload, ExtensionInstallErrorPayload,
   StatusBarItem, StatusSetUpdatePayload, PluginStatusBarUpdatePayload,
 } from './protocol'
 export type {
@@ -27,3 +27,4 @@ export type {
   PanelLeaf, SplitNode, PanelTree, WindowState,
 } from './panel'
 export * from './extension'
+export { BASE_PORT, MAX_PORT } from './constants'

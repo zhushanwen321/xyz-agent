@@ -58,9 +58,8 @@ function onDiscovered(msg: ServerMessage) {
 }
 
 function onInstallError(msg: ServerMessage) {
-  // Only handle extension-related errors to avoid swallowing unrelated errors
   const msgType = (msg as { type?: string }).type
-  if (msgType !== 'extension.installError' && msgType !== 'error') return
+  if (msgType !== 'extension.installError') return
 
   const payload = msg.payload as { code?: string; message?: string; hint?: string }
   installError.value = payload.message ?? 'Install failed'
@@ -291,19 +290,19 @@ onUnmounted(() => {
       <div>
         <div
           v-for="candidate in discoveredCandidates"
-          :key="candidate.name"
+          :key="candidate.dirName"
           class="flex items-center gap-3 py-2 px-4 border-b border-[var(--divider)] last:border-b-0 cursor-pointer hover:bg-[var(--hover-bg)]"
-          @click="toggleCandidate(candidate.name)"
+          @click="toggleCandidate(candidate.dirName)"
         >
           <!-- Checkbox indicator -->
           <div
             class="w-3.5 h-3.5 rounded-sm border flex items-center justify-center shrink-0 transition-colors duration-100"
-            :class="selectedCandidates.includes(candidate.name)
+            :class="selectedCandidates.includes(candidate.dirName)
               ? 'bg-[var(--accent)] border-[var(--accent)]'
               : 'border-[var(--border)]'"
           >
             <svg
-              v-if="selectedCandidates.includes(candidate.name)"
+              v-if="selectedCandidates.includes(candidate.dirName)"
               width="8" height="8" viewBox="0 0 10 10"
               fill="none" stroke="white" stroke-width="2"
             >

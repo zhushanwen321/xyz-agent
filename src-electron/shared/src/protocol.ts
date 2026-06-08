@@ -185,7 +185,7 @@ export type ServerMessageType =
   | 'session.thinkingLevelSet'
   | 'pong' | 'error'
   | 'extension.ui_request' | 'extension.ui_timeout' | 'extension.error'
-  | 'extension.discovered' | 'extension.installProgress' | 'extension.installError' | 'extension.installCancelled'
+  | 'extension.discovered' | 'extension.installError' | 'extension.installCancelled'
   | 'message.tool_call_update' | 'config.extensions'
   | 'session.commands'
   | 'session.tree-data' | 'session.tree-navigate-result' | 'session.tree-fork-result' | 'session.tree-clone-result' | 'session.tree-capability'
@@ -247,6 +247,8 @@ export interface ToolCallUpdatePayload {
 
 export interface ExtensionInfo {
   name: string
+  /** Filesystem directory basename (may differ from npm package name for scoped packages) */
+  dirName: string
   version: string
   description: string
   path: string
@@ -259,12 +261,6 @@ export interface ExtensionInfo {
 export interface ExtensionDiscoveredPayload {
   tempDir: string
   candidates: ExtensionInfo[]
-}
-
-export interface ExtensionInstallProgressPayload {
-  phase: 'clone' | 'scan' | 'install'
-  status: 'running' | 'done' | 'error'
-  message?: string
 }
 
 export interface ExtensionInstallErrorPayload {

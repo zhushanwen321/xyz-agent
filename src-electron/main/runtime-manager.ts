@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { app } from 'electron'
 import { homedir } from 'node:os'
+import { BASE_PORT, MAX_PORT as MAX_PORT_CONST } from '@xyz-agent/shared'
 
 /** 子进程允许继承的环境变量前缀白名单 */
 const ENV_WHITELIST_PREFIXES = ['PATH', 'HOME', 'USER', 'LANG', 'TERM', 'NODE_', 'NVM_', 'ELECTRON_', 'XYZ_', 'XDG_', 'APPDATA', 'LOCALAPPDATA', 'PROGRAMFILES', 'SYSTEMROOT', 'TEMP', 'TMP']
@@ -32,12 +33,10 @@ export class RuntimeManager {
 
   // 端口/重试常量
   // 端口范围可通过 XYZ_AGENT_PORT_OFFSET 偏移（dev 模式 +100 → 3310-3320）
-  // eslint-disable-next-line no-magic-numbers
-  private static readonly BASE_PORT_START = 3210
-  // eslint-disable-next-line no-magic-numbers
-  private static readonly BASE_PORT_END = 3220
-  // eslint-disable-next-line no-magic-numbers
-  private static readonly MAX_PORT = 65535
+  private static readonly BASE_PORT_START = BASE_PORT
+  // eslint-disable-next-line no-magic-numbers -- port range size: 10 consecutive ports
+  private static readonly BASE_PORT_END = BASE_PORT + 10
+  private static readonly MAX_PORT = MAX_PORT_CONST
   // eslint-disable-next-line no-magic-numbers
   private static readonly KILL_WAIT_MS = 200
   // eslint-disable-next-line no-magic-numbers
