@@ -506,7 +506,7 @@ export class ExtensionService {
    * - Otherwise, scan subdirectories (skip . and node_modules).
    * - maxDepth limits recursion to prevent runaway scans.
    */
-  private discoverExtensions(dir: string, maxDepth = 5, depth = 0): ExtensionInfo[] {
+  private discoverExtensions(dir: string, maxDepth = 5 /* eslint-disable-line no-magic-numbers */, depth = 0): ExtensionInfo[] {
     const candidates: ExtensionInfo[] = []
 
     if (depth > maxDepth) {

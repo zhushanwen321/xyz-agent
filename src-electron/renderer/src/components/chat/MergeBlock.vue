@@ -146,8 +146,10 @@ const chips = computed<ChipInfo[]>(() => {
 // ── Streaming status (streaming mode) ──
 
 const TEXT_PREVIEW_MAX = 60
+const REFRESH_INTERVAL_MS = 200
+const MIN_ELAPSED_MS = 1000
 
-const { now, start: startTimer, stop: stopTimer } = useLiveTimer(200)
+const { now, start: startTimer, stop: stopTimer } = useLiveTimer(REFRESH_INTERVAL_MS)
 
 watch(() => props.isStreaming, (streaming) => {
   if (streaming) startTimer()
@@ -186,7 +188,7 @@ const streamElapsed = computed(() => {
   const ts = props.message.timestamp
   if (!ts) return ''
   const ms = Math.max(0, now.value - ts)
-  if (ms < 1000) return ''
+  if (ms < MIN_ELAPSED_MS) return ''
   return formatTime(ms)
 })
 </script>

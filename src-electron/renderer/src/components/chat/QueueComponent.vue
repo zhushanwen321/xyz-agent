@@ -92,6 +92,7 @@ function badgeClass(type: 'steer' | 'follow-up'): string {
 }
 
 // ── Done banner ──
+const DONE_BANNER_DURATION_MS = 3000
 
 const showDoneBanner = ref(false)
 const doneCount = ref(0)
@@ -107,7 +108,7 @@ watch(totalCount, (newCount) => {
     if (doneTimer) clearTimeout(doneTimer)
     doneTimer = setTimeout(() => {
       showDoneBanner.value = false
-    }, 3000)
+    }, DONE_BANNER_DURATION_MS)
   }
   prevCount.value = newCount
 })

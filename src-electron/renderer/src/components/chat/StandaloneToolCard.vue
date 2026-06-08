@@ -48,7 +48,10 @@ const isCustomTool = computed(() => {
 const expanded = ref(false)
 
 // ── Elapsed time reactive counter ──
-const { now, start: startTimer, stop: stopTimer } = useLiveTimer(100)
+const REFRESH_INTERVAL_MS = 100
+const MAX_PATH_LENGTH = 50
+
+const { now, start: startTimer, stop: stopTimer } = useLiveTimer(REFRESH_INTERVAL_MS)
 
 watch(() => props.toolCall.status, (status) => {
   if (status === 'running') startTimer()
@@ -59,7 +62,7 @@ watch(() => props.toolCall.status, (status) => {
 const resolvedPath = computed(() => {
   const raw = toolPath(props.toolCall.input)
   if (!raw || raw === 'undefined') return ''
-  return raw.length > 50 ? raw.slice(0, 50) + '...' : raw
+  return raw.length > MAX_PATH_LENGTH ? raw.slice(0, MAX_PATH_LENGTH) + '...' : raw
 })
 
 // ── Status label ──

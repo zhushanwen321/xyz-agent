@@ -1,5 +1,6 @@
 <template>
   <div class="relative" ref="containerRef">
+    <!-- eslint-disable-next-line taste/no-native-html-elements -- custom mode switcher trigger, xyz-ui Button cannot replicate h-5/text-[11px]/font-mono inline layout -->
     <button
       type="button"
       :class="[
@@ -37,6 +38,7 @@
         role="listbox"
         :aria-activedescendant="`mode-option-${mode}`"
       >
+        <!-- eslint-disable-next-line taste/no-native-html-elements -- custom mode option items, xyz-ui Button cannot replicate h-7/text-[11px]/font-mono inline layout -->
         <button
           v-for="item in modes"
           :key="item.value"
