@@ -3,12 +3,8 @@ import { join } from 'node:path'
 import { atomicWrite } from './scanner-base.js'
 import { getDefaultModel as getPiDefaultModel, getConfigDir } from './pi-config-bridge.js'
 
-function configDir(): string {
-  return getConfigDir()
-}
-
 function configPath(): string {
-  return join(configDir(), 'config.json')
+  return join(getConfigDir(), 'config.json')
 }
 
 export interface AppConfig {
@@ -53,7 +49,7 @@ const JSON_INDENT = 2
 
 export function saveConfig(config: AppConfig): void {
   try {
-    const cd = configDir()
+    const cd = getConfigDir()
     if (!existsSync(cd)) mkdirSync(cd, { recursive: true })
     atomicWrite(configPath(), JSON.stringify(config, null, JSON_INDENT))
   // eslint-disable-next-line taste/no-silent-catch -- intentional: save failure is best-effort
