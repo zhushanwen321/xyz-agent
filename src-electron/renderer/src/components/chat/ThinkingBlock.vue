@@ -3,13 +3,13 @@
     <!-- Single-line toggle: "Thinking · 3.2s ▼" -->
     <!-- eslint-disable-next-line taste/no-native-html-elements -- inline toggle with custom flex layout -->
     <button class="thinking-toggle" @click="expanded = !expanded">
-      <svg :class="['thinking-toggle__chevron', { 'thinking-toggle__chevron--collapsed': !effectiveExpanded }]" xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+      <svg :class="['thinking-toggle__chevron', { 'thinking-toggle__chevron--collapsed': !expanded }]" xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
       <span v-if="streaming" class="thinking-toggle__pulse" />
       <span class="thinking-toggle__label">Thinking</span>
       <span v-if="elapsedDisplay" class="thinking-toggle__time">· {{ elapsedDisplay }}</span>
     </button>
     <!-- Expanded body -->
-    <div v-if="effectiveExpanded" class="thinking-body">
+    <div v-if="expanded" class="thinking-body">
       <pre class="thinking-body__text">{{ text }}</pre>
     </div>
   </div>
@@ -24,11 +24,9 @@ const props = defineProps<{
   streaming?: boolean
   startTime?: number
   endTime?: number
-  forceExpanded?: boolean
 }>()
 const settingsStore = useSettingsStore()
 const expanded = ref(settingsStore.autoExpandThinking)
-const effectiveExpanded = computed(() => props.forceExpanded ?? expanded.value)
 
 // ── Elapsed time ──────────────────────────────────────────────
 const MS_PER_SECOND = 1000

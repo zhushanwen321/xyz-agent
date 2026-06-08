@@ -37,12 +37,10 @@
           :text="resolveThinkingContent(block.refId)"
           :start-time="resolveThinking(block.refId)?.startTime"
           :end-time="resolveThinking(block.refId)?.endTime"
-          :force-expanded="expanded"
         />
         <ToolCallCard
           v-else-if="block.type === 'toolCall' && resolveToolCall(block.refId)"
           :tool-call="resolveToolCall(block.refId)!"
-          :force-expanded="expanded"
         />
       </template>
     </div>
