@@ -177,9 +177,15 @@ const streamElapsed = computed(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 0;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
   cursor: pointer;
-  transition: opacity 0.12s;
+  transition: border-color 0.12s, background 0.12s;
+}
+.merge-bar:hover {
+  border-color: var(--accent);
 }
 
 .merge-bar__label {

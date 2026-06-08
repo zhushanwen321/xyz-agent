@@ -69,6 +69,8 @@
                       :branch-tabs="branchTabsMap.get(msg.id) ?? []"
                       :selectable="batchMode"
                       :selected="selectedIds.has(msg.id)"
+                      :show-label="isFirstAssistant(group, msg)"
+                      :is-last-assistant="isLastAssistantInTurn(group, msg)"
                       @toggle-select="toggleSelect(msg.id)"
                       @navigate="onNavigate"
                       @open-skill="openSkillDrawer"
@@ -288,6 +290,25 @@ const treeStore = useTreeStore()
 
 function getTurnGroups(viewMessages: ChatMessage[]) {
   return groupIntoTurns(viewMessages)
+}
+
+/** 是否显示"助手"标签：Turn 内第一个 assistant 消息 */
+function isFirstAssistant(group: { messages: ChatMessage[] }, msg: ChatMessage): boolean {
+  if (isSystemNotification(msg) || msg.role !== 'assistant') return false
+  for (const m of group.messages) {
+    if (!isSystemNotification(m) && m.role === 'assistant') return m.id === msg.id
+  }
+  return false
+}
+
+/** 是否是 Turn 内最后一个 assistant 消息（决定 action bar 显示） */
+function isLastAssistantInTurn(group: { messages: ChatMessage[] }, msg: ChatMessage): boolean {
+  if (isSystemNotification(msg) || msg.role !== 'assistant') return false
+  for (let i = group.messages.length - 1; i >= 0; i--) {
+    const m = group.messages[i]
+    if (!isSystemNotification(m) && m.role === 'assistant') return m.id === msg.id
+  }
+  return false
 }
 
 const branchTabsMap = computed<Map<string, BranchTab[]>>(() => {

@@ -8,9 +8,8 @@
     class="self-start w-full relative group/msg"
     :class="{ 'opacity-65': message.isInterrupted }"
   >
-    <div class="text-[10px] font-semibold uppercase tracking-[0.04em] leading-[1.4] mb-1 text-muted">
+    <div v-if="showLabel" class="text-[10px] font-semibold uppercase tracking-[0.04em] leading-[1.4] mb-1 text-muted">
       助手
-      <span v-if="message.timestamp" class="font-normal normal-case tracking-normal text-[10px] opacity-60 ml-1.5">{{ formatTime(message.timestamp) }}</span>
     </div>
 
     <AssistantContent :message="message" :is-streaming="isStreaming" />
@@ -25,8 +24,9 @@
       <span class="flex-1 h-px bg-muted/30" />
     </div>
 
-    <!-- Inline actions + Branch indicator -->
-    <div class="flex items-center gap-1 mt-1">
+    <!-- Inline actions + Branch indicator (only on last assistant in turn) -->
+    <div v-if="isLastAssistant" class="flex items-center gap-1 mt-1">
+      <span v-if="message.timestamp" class="font-normal normal-case tracking-normal text-[10px] opacity-60 mr-2">{{ formatTime(message.timestamp) }}</span>
       <div class="msg-actions" :class="{ 'msg-actions--active': showActionMenu }">
         <!-- eslint-disable-next-line taste/no-native-html-elements -- inline action buttons need custom hover/opacity transitions not supported by xyz-ui Button -->
         <button class="msg-action-btn" title="复制" @click="handleCopy">
@@ -169,14 +169,20 @@ const props = withDefaults(defineProps<{
   selectable?: boolean
   selected?: boolean
   branchTabs?: BranchTab[]
-  skillDrawerOpen?: boolean}>(), {
+  skillDrawerOpen?: boolean
+  showLabel?: boolean
+  isLastAssistant?: boolean
+}>(), {
   entryId: '',
   sessionId: '',
   siblingCount: 0,
   selectable: false,
   selected: false,
   branchTabs: () => [],
-  skillDrawerOpen: false,})
+  skillDrawerOpen: false,
+  showLabel: true,
+  isLastAssistant: true,
+})
 
 const emit = defineEmits<{
   'open-skill': [payload: { name: string; location?: string }]
