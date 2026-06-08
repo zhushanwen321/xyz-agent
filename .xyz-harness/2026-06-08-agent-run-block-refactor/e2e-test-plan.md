@@ -65,12 +65,30 @@ verdict: pass
 
 ### E2E-5: 分组正确性（AC-5）
 
-通过构造不同 contentBlocks 序列验证分组。4 组时序：
+通过构造不同 contentBlocks 序列验证分组。4 组时序精确匹配 spec AC-5 定义：
 
-1. **纯合并序列** `[T, tc-read, tc-bash, T, tc-grep]` → 1 个 MergeBlock
-2. **合并+独立+合并** `[T, tc-read, text, T, tc-bash]` → MergeBlock + TextBlock + MergeBlock
-3. **合并+独立+合并+独立** `[T, tc-read, write, T, tc-bash, edit]` → MergeBlock + StandaloneBlock + MergeBlock + StandaloneBlock
-4. **自定义工具** `[T, tc-read, subagent]` → MergeBlock + CustomToolBlock
+**场景 A** `[T, tc-read, tc-bash, text, T, tc-read, T, tc-grep]`:
+- MergeBlock: [thk, tc-read, tc-bash]
+- TextBlock: text
+- MergeBlock: [thk, tc-read, thk, tc-grep]
+
+**场景 B** `[T, text, edit, text]` (edit 在 standaloneTools 中):
+- MergeBlock: [thk]
+- TextBlock: text
+- StandaloneBlock: edit
+- TextBlock: text
+
+**场景 C** `[T, tc-read, write, T, tc-bash, text, subagent, text]`:
+- MergeBlock: [thk, tc-read]
+- StandaloneBlock: write
+- MergeBlock: [thk, tc-bash]
+- TextBlock: text
+- CustomToolBlock: subagent
+- TextBlock: text
+
+**场景 D** (standaloneTools=['write','edit','bash']):
+- bash 从 MergeBlock 移出变为独立 StandaloneBlock
+- 验证: `[T, tc-bash]` → MergeBlock: [thk] + StandaloneBlock: bash
 
 ### E2E-6: 主题兼容（AC-6）
 

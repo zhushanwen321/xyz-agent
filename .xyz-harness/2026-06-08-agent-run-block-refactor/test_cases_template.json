@@ -90,31 +90,31 @@
     },
     {
       "id": "TC-12",
-      "name": "分组 - 纯合并序列",
+      "name": "分组 - 合并+text+合并 (AC-5 场景A)",
       "acRef": "AC-5",
-      "precondition": "contentBlocks: [thk, tc-read, tc-bash, thk, tc-grep]",
+      "precondition": "contentBlocks: [thk, tc-read, tc-bash, text, thk, tc-read, thk, tc-grep]",
       "steps": ["调用 groupByContentBlocks"],
-      "expected": "1 个 MergeBlock 包含全部 5 个 blocks"
+      "expected": "MergeBlock[thk,tc-read,tc-bash] + TextBlock + MergeBlock[thk,tc-read,thk,tc-grep]"
     },
     {
       "id": "TC-13",
-      "name": "分组 - 合并+text+合并",
+      "name": "分组 - edit 独立展示 (AC-5 场景B)",
       "acRef": "AC-5",
-      "precondition": "contentBlocks: [thk, tc-read, text, thk, tc-bash]",
+      "precondition": "contentBlocks: [thk, text, edit, text], standaloneTools=['write','edit']",
       "steps": ["调用 groupByContentBlocks"],
-      "expected": "MergeBlock[thk,tc-read] + TextBlock + MergeBlock[thk,tc-bash]"
+      "expected": "MergeBlock[thk] + TextBlock + StandaloneBlock(edit) + TextBlock"
     },
     {
       "id": "TC-14",
-      "name": "分组 - 混合含 standalone 和 customTool",
+      "name": "分组 - 混合含 standalone + customTool (AC-5 场景C)",
       "acRef": "AC-5",
       "precondition": "contentBlocks: [thk, tc-read, write, thk, tc-bash, text, subagent, text]",
       "steps": ["调用 groupByContentBlocks"],
-      "expected": "MergeBlock + StandaloneBlock(write) + MergeBlock + TextBlock + CustomToolBlock + TextBlock"
+      "expected": "MergeBlock[thk,tc-read] + StandaloneBlock(write) + MergeBlock[thk,tc-bash] + TextBlock + CustomToolBlock(subagent) + TextBlock"
     },
     {
       "id": "TC-15",
-      "name": "分组 - standaloneTools 变更影响",
+      "name": "分组 - standaloneTools 变更影响 (AC-5 场景D)",
       "acRef": "AC-5",
       "precondition": "standaloneTools=['write','edit','bash']",
       "steps": ["contentBlocks 包含 bash toolCall", "调用 groupByContentBlocks"],

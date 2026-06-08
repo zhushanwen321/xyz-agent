@@ -48,12 +48,14 @@ T1 (settings store)
    - 遍历 contentBlocks
    - isMergeBlock → 追加到当前 merge section
    - 否则 → 关闭当前 merge，创建独立 section（text/standalone/customTool）
-5. `groupIntoSections` 从 settings store 读取 standaloneTools，传入 groupByContentBlocks
-6. `groupByLegacyFields` 不变
+5. `groupByLegacyFields` 不变
 
-**注意**: `groupIntoSections` 现在需要访问 settings store。由于它是一个纯函数文件，改为接受第二个参数 `standaloneTools: Set<string>`，由调用方传入。调用方（AssistantContent.vue）从 store 读取并传入。
+**API 兼容策略**: `groupIntoSections` 签名改为 `groupIntoSections(msg: Message, standaloneTools?: Set<string>)`：
+- 传入 `standaloneTools` → 走新分组逻辑（compactStreaming=true 路径）
+- 不传或 `undefined` → 走原有 `groupByContentBlocks` 逻辑（compactStreaming=false 路径，行为不变）
+- 这样 compactStreaming=false 的调用方无需任何改动
 
-**验证**: 手动构造 contentBlocks 数组，调用 groupByContentBlocks 验证 AC-5 的 4 组时序
+**调用方变更**: 仅 AssistantContent.vue（compactStreaming=true 分支）传入 standaloneTools 参数。其他调用方（如有）不受影响。
 
 ---
 
@@ -176,16 +178,28 @@ interface Props {
 
 ---
 
-### T7: ChatPanel streaming 集成
+### T7: ChatPanel streaming 路径统一
 
 **文件**: `src-electron/renderer/src/components/panel/ChatPanel.vue`
 
-**改动**:
-- compactStreaming=true 时，streaming 消息不再单独渲染 CompactStreamingBubble
-- streaming 消息也走 AgentRunBlock（isStreaming=true），由 MessageList 内部处理
-- 可能需要调整 MessageList 或 ChatPanel 中 streaming 消息的渲染位置逻辑
+**当前架构**: ChatPanel 直接渲染 streaming 消息，不经过 MessageList/AssistantContent：
+```vue
+<CompactStreamingBubble v-if="streamingMessage && compactStreaming" :message="streamingMessage" />
+<StreamingMessage v-else-if="streamingMessage" :message="streamingMessage" />
+```
 
-**验证**: streaming 中 AgentRunBlock 实时更新，不再出现 CompactStreamingBubble
+**目标架构**: 移除 CompactStreamingBubble 分支。streaming 消息统一走 MessageBubble → AssistantContent → AgentRunBlock(isStreaming=true) 路径。ChatPanel 的 streaming 渲染变为：
+```vue
+<StreamingMessage v-if="streamingMessage" :message="streamingMessage" :is-streaming="isStreaming" />
+```
+StreamingMessage 内部使用 MessageBubble，MessageBubble 内部使用 AssistantContent。AssistantContent 根据 `compactStreaming` 决定渲染 AgentRunBlock 或 normal sections。compactStreaming=true 时 AgentRunBlock 接收 `isStreaming=true`，内部 MergeBlock 显示 streaming 状态。
+
+**具体改动**:
+1. 删除 `CompactStreamingBubble` 的 import 和模板中的 `v-if` 分支
+2. StreamingMessage 组件保持不变（它已经走 MessageBubble → AssistantContent 路径）
+3. 验证 streaming 消息通过 AssistantContent 正确渲染 AgentRunBlock
+
+**验证**: streaming 中 AgentRunBlock 实时更新，不再出现 CompactStreamingBubble。compactStreaming=false 时 streaming 走现有 normal section 路径不受影响。
 
 ---
 
