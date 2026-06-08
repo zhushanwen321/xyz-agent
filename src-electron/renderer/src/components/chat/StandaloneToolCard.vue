@@ -29,9 +29,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import ToolCallCard from './ToolCallCard.vue'
 import { formatTime, toolPath } from '@/lib/compact-utils'
+import { useLiveTimer } from '../../composables/useLiveTimer'
 import type { ToolCall } from '@xyz-agent/shared'
 
 const props = defineProps<{
@@ -41,37 +42,12 @@ const props = defineProps<{
 const expanded = ref(false)
 
 // ── Elapsed time reactive counter ──
-const TIMER_UPDATE_INTERVAL_MS = 100
-
-const now = ref(Date.now())
-let timerInterval: ReturnType<typeof setInterval> | undefined
-
-function startTimer() {
-  now.value = Date.now()
-  timerInterval = setInterval(() => { now.value = Date.now() }, TIMER_UPDATE_INTERVAL_MS)
-}
-
-function stopTimer() {
-  if (timerInterval !== undefined) {
-    clearInterval(timerInterval)
-    timerInterval = undefined
-  }
-}
-
-onMounted(() => {
-  if (props.toolCall.status === 'running') startTimer()
-})
-
-onUnmounted(stopTimer)
+const { now, start: startTimer, stop: stopTimer } = useLiveTimer(100)
 
 watch(() => props.toolCall.status, (status) => {
-  if (status === 'running') {
-    startTimer()
-  } else {
-    stopTimer()
-    now.value = props.toolCall.endTime ?? Date.now()
-  }
-})
+  if (status === 'running') startTimer()
+  else stopTimer()
+}, { immediate: true })
 
 // ── Path extraction ──
 const resolvedPath = computed(() => {

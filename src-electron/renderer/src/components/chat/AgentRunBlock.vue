@@ -37,14 +37,14 @@
 
         <!-- Standalone tool card -->
         <StandaloneToolCard
-          v-else-if="section.type === 'standalone' && resolveToolCall(section.blocks[0]?.refId)"
-          :tool-call="resolveToolCall(section.blocks[0].refId)!"
+          v-else-if="section.type === 'standalone' && section.toolCall"
+          :tool-call="section.toolCall"
         />
 
         <!-- Custom tool card -->
         <StandaloneToolCard
-          v-else-if="section.type === 'customTool' && resolveToolCall(section.blocks[0]?.refId)"
-          :tool-call="resolveToolCall(section.blocks[0].refId)!"
+          v-else-if="section.type === 'customTool' && section.toolCall"
+          :tool-call="section.toolCall"
         />
       </template>
     </div>
@@ -64,7 +64,7 @@
 
 <script setup lang="ts">
 import { computed, watch } from 'vue'
-import type { Message, ToolCall } from '@xyz-agent/shared'
+import type { Message } from '@xyz-agent/shared'
 import { groupIntoSections } from '../../lib/message-layout'
 import { useSettingsStore } from '../../stores/settings'
 import { useMarkdownRender } from '../../composables/useMarkdownRender'
@@ -85,15 +85,24 @@ const settingsStore = useSettingsStore()
 
 const standaloneToolsSet = computed(() => new Set(settingsStore.standaloneTools))
 
-// ── Section grouping ──
+// ── Section grouping with pre-resolved toolCalls ──
 
-const sections = computed(() => groupIntoSections(props.message, standaloneToolsSet.value))
-
-// ── Tool call resolution ──
-
-function resolveToolCall(refId: string): ToolCall | undefined {
-  return props.message.toolCalls?.find(tc => tc.id === refId)
+interface EnrichedSection {
+  type: string
+  blocks: import('@xyz-agent/shared').ContentBlock[]
+  toolCall?: import('@xyz-agent/shared').ToolCall
 }
+
+const rawSections = computed(() => groupIntoSections(props.message, standaloneToolsSet.value))
+
+const sections = computed<EnrichedSection[]>(() =>
+  rawSections.value.map(s => ({
+    ...s,
+    toolCall: s.blocks[0] && (s.type === 'standalone' || s.type === 'customTool')
+      ? props.message.toolCalls?.find(tc => tc.id === s.blocks[0].refId)
+      : undefined,
+  })),
+)
 
 // ── Markdown rendering ──
 
