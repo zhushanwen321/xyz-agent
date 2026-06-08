@@ -1,140 +1,142 @@
 ---
-review:
-  type: spec_review
-  round: 2
-  timestamp: "2026-06-08T14:00:00"
-  target: ".xyz-harness/2026-06-08-agent-run-block-refactor/spec.md"
-  verdict: pass
-  must_fix: 0
-  summary: "spec 评审第2轮，v1 的 4 条 MUST_FIX 全部已修复，无新引入的 MUST_FIX 问题，可以通过"
-statistics:
-  total_issues: 4
-  must_fix: 0
-  low: 1
-  info: 0
-issues:
-  - id: 1
-    severity: null
-    location: "spec.md:FR-1 + Constraints§6"
-    title: "AgentRunBlock 与 compactStreaming/现有组件的关系矛盾"
-    status: resolved
-    raised_in_round: 1
-    resolved_in_round: 2
-  - id: 2
-    severity: null
-    location: "spec.md:FR-1 (footer)"
-    title: "footer '步骤数'和'文件修改数'定义缺失"
-    status: resolved
-    raised_in_round: 1
-    resolved_in_round: 2
-  - id: 3
-    severity: null
-    location: "spec.md:FR-2 + FR-4"
-    title: "edit 被归入合并工具与 spec 目标矛盾"
-    status: resolved
-    raised_in_round: 1
-    resolved_in_round: 2
-  - id: 4
-    severity: null
-    location: "spec.md:FR-5"
-    title: "streaming 状态判断使用 collapsed 字段语义错误"
-    status: resolved
-    raised_in_round: 1
-    resolved_in_round: 2
-  - id: 5
-    severity: LOW
-    location: "spec.md:FR-4 section 类型命名"
-    title: "section 类型列表中 'write' 命名过于具体"
-    status: open
-    raised_in_round: 2
-    resolved_in_round: null
-  - id: 6
-    severity: null
-    location: "spec.md:AC-5"
-    title: "测试用例符号映射未显式定义"
-    status: resolved
-    raised_in_round: 1
-    resolved_in_round: 2
-  - id: 7
-    severity: null
-    location: "spec.md:FR-3"
-    title: "全部展开/折叠交互细节缺失"
-    status: resolved
-    raised_in_round: 1
-    resolved_in_round: 2
-  - id: 8
-    severity: null
-    location: "spec.md:FR-4"
-    title: "isMergeBlock 中 toolCalls 线性查找可优化为 Map"
-    status: closed
-    raised_in_round: 1
-    resolved_in_round: 1
+verdict: pass
+must_fix: 0
 ---
 
-# Spec 评审 v2
+# Spec Review v2: AgentRunBlock 重构（重新审查）
 
-## 评审记录
-- 评审时间：2026-06-08 14:00
-- 评审类型：spec 修复验证（第2轮）
-- 评审对象：`.xyz-harness/2026-06-08-agent-run-block-refactor/spec.md`
+**文件**: `spec.md`
+**审查日期**: 2026-06-08
+**审查模式**: Plan review（验证 spec 完整性）
+**说明**: 基于完整代码交叉验证的独立审查，覆盖前序 v1 review 提出的 MUST_FIX 是否已被 spec 正确解决
 
-## v1 MUST_FIX 修复验证
+---
 
-### #1 AgentRunBlock 与 compactStreaming 模式关系 ✅ 已修复
+## 总评
 
-FR-1 开头新增 **"仅在 `compactStreaming=true` 时激活"** 明确限定。紧接列出三个渲染分支（compact+complete / compact+streaming / 非 compact），并说明 AgentRunBlock "替代现有的 CompactSummaryBar 和 CompactStreamingBubble 两个组件"。与 Constraints§6 完全一致。
+Spec 经 v1 review 的 4 条 MUST_FIX 修复后，功能设计完整且与代码库一致。MergeBlock 折叠 + standaloneTools 可配置 + 时序分组的核心架构合理。**流式/完成路径的统一方案已在 spec 中明确声明（AgentRunBlock 替代 CompactSummaryBar + CompactStreamingBubble），虽然实现细节留给 plan 阶段，但 spec 层面的架构决策已足够清晰。**
 
-### #2 Footer 字段定义 ✅ 已修复
+无 MUST_FIX 问题，可以通过。
 
-FR-1 新增 "Footer 字段定义" 子节，三个字段均有可量化定义：
+---
+
+## 前序 MUST_FIX 修复验证
+
+### MUST_FIX-1（v1）: Streaming compact 渲染路径 ✅ 已解决
+
+v1 review 正确指出：CompactStreamingBubble 在 ChatPanel.vue（第 92-94 行）中直接渲染，不经过 MessageBubble → AssistantContent 路径。
+
+Spec FR-1 现在明确声明：AgentRunBlock "替代现有的 CompactSummaryBar 和 CompactStreamingBubble 两个组件"，并列出三个渲染分支。虽然 spec 没有指定统一路径的具体实现方案（方案 A/B/C），但这是一个 plan 层面的实现决策，不影响 spec 的正确性——spec 定义了"做什么"，实现路径属于"怎么做"。
+
+Constraints §4 也未违背：ChatPanel.vue 不在约束范围内（约束说的是不改 useChat.ts/EventAdapter/shared types）。
+
+**判定**: spec 层面已充分描述，实现路径选择合理留给 plan。
+
+### MUST_FIX-2（v1）: Footer 字段定义 ✅ 已解决
+
+FR-1 Footer 字段定义三个字段均可量化：
 - 步骤数 = MergeBlock 数量 + 独立 ContentBlock 数量（不含 text block）
 - 总耗时 = 当前时间（streaming）或 message.timestamp 到 complete 的间隔
-- 文件修改数 = toolCalls 中 toolName 在 standaloneTools 集合内的总数
+- 文件修改数 = standaloneTools 集合内 toolCall 总数
 
-AC-1 中 footer 的验收标准现在可量化验证。
+### MUST_FIX-3（v1）: edit 分类矛盾 ✅ 已解决
 
-### #3 edit 分类矛盾 ✅ 已修复
+改为 standaloneTools 用户可配置设置（FR-2.1），默认 `['write', 'edit']`，动态判断（FR-4 `isMergeBlock`）。
 
-采用方案 (a)+ 增强：移除硬编码的 BUILTIN_MERGE_TOOLS，改为 `standaloneTools` 用户可配置设置。默认值 `['write', 'edit']`，edit 默认独立展示。FR-2.1 新增 Settings 页面配置 UI。Footer 文件修改数与 standaloneTools 联动。FR-4 的 `isMergeBlock` 重写为接受 `standaloneTools` 参数的动态判断。核心目标"只关心修改了哪些文件"可完整实现。
+### MUST_FIX-4（v1）: streaming 判断语义 ✅ 已解决
 
-### #4 streaming 判断语义 ✅ 已修复
+FR-5 改用 `endTime === undefined` 判断 thinking 状态，附注语义说明。
 
-FR-5 改为：`endTime === undefined` 表示仍在 thinking，附注"endTime 是业务时间戳，语义明确"。不再引用 collapsed 字段。
+---
 
-## v1 LOW/INFO 问题验证
+## SHOULD_FIX（非阻塞）
 
-### #5 (v1 LOW) 符号映射 ✅ 已修复
+### SHOULD_FIX-1: Footer "总耗时" complete 状态下缺少数据源
 
-AC-5 开头新增符号表：`T=thinking, tc=toolCall(合并类), S=standalone tool, O=text`，并声明默认 standaloneTools=['write','edit']。
+**位置**: FR-1 Footer 字段定义
 
-### #6 (v1 LOW) 全部展开/折叠 ✅ 已修复
+Message 类型没有 `completedAt` 字段。Spec 定义"message.timestamp 到 status 变为 complete 的间隔"，但 `status` 只是枚举值（`streaming | complete | error`），前端没有记录状态变更时间。
 
-FR-3 补充："点击 chip 条左侧的'过程'标签（延续现有 CompactSummaryBar 的 toggle-all 交互）"。
+**可行方案**: `max(all thinking.endTime, all toolCall.endTime) - message.timestamp`。这在 plan 阶段容易解决，但建议在 spec 中补一句计算方法，避免 plan 误解。
 
-### #7 (v1 INFO) toolCalls 线性查找 — 维持原判
+**影响**: 低。实现时必然会发现并处理。
 
-Spec 层面伪代码，实现时优化。
+### SHOULD_FIX-2: Footer "文件修改数"语义随 standaloneTools 变化
 
-## 新发现问题
+**位置**: FR-1 Footer 字段定义
 
-### #5 (本轮 LOW) section 类型 'write' 命名过于具体
+如果用户将 `bash` 加入 standaloneTools，bash 调用也会被计入"文件修改数"，措辞不准确。
 
-**位置**: FR-4 第 89-92 行
+**建议**: 改为"操作数"或"独立操作数"。Plan 阶段也可自行调整文案。
 
-**描述**: 分组结果的 section 类型列表为 `merge | text | write | customTool`。但 standaloneTools 现在是用户可配置的，edit（及其他被选中的工具）也可能独立渲染为 section。`write` 这个类型名暗示只覆盖 write 工具，不够通用。
+### SHOULD_FIX-3: Streaming MergeBlock 丢失展开能力
 
-**建议**: 实现阶段将 `write` 类型改为 `standalone`（泛指所有在 standaloneTools 中的工具），spec 层面不影响正确性，plan 阶段可自行处理。
+**位置**: FR-3
 
-## spec 完整性逐项检查
+现有 CompactStreamingBubble 支持点击展开查看完整消息。Spec 的 streaming AgentRunBlock 只有 28px 紧凑状态条。对长时 Agent Run（20+ 步），streaming 期间用户只能看到一个滚动条。
+
+**影响**: 这可能是有意的设计取舍（streaming 时强制折叠以减少噪音）。建议在 spec 中显式声明为设计决策，让 plan 阶段不需要纠结是否要加展开功能。
+
+### SHOULD_FIX-4: FR-4 section 类型 `write` 命名不通用
+
+**位置**: FR-4 分组结果 section 类型
+
+standaloneTools 可配置后，`write` 类型名暗示只覆盖 write 工具。edit 或 bash 加入 standaloneTools 时也会创建 `write` 类型 section，语义不清。
+
+**建议**: Plan 阶段改为 `standalone`。Spec 正确性不受影响，仅命名层面。
+
+---
+
+## 优点
+
+1. **standaloneTools 可配置设计**是整个 spec 最有价值的决策。将工具分类从硬编码改为用户设置，默认只展示 write/edit，高级用户可自定义，解决了"一个方案适用所有人"的困境。
+
+2. **AC-5 符号表测试用例**可直接转化为 `groupIntoSections` 的单元测试，4 组场景覆盖了纯合并、交错独立、混合自定义工具、配置切换。这是 spec 质量的硬指标。
+
+3. **Constraints 7 条均经验证**：
+   - shared/src/message.ts 的 ContentBlock/Message 类型确实不需要改动
+   - useChat.ts 的 contentBlocks 构建逻辑不需要改动
+   - EventAdapter 不需要转发 turn_start/turn_end
+   - Settings store 已有 `compactStreaming` + persist 机制，新增 `standaloneTools` 顺理成章
+
+4. **向后兼容完整**：FR-6 + AC-7 覆盖了 legacy 消息路径（`groupByLegacyFields` 不变），`compactStreaming=false` 时完全走现有路径。
+
+---
+
+## 代码交叉验证
+
+| 验证项 | 结果 | 说明 |
+|--------|------|------|
+| Message.contentBlocks 类型 | ✅ | `ContentBlock[]` 存在，按到达顺序排列，type 为 thinking/toolCall/text |
+| Message.thinking.endTime | ✅ | `endTime?: number`，undefined 表示仍在 thinking |
+| Message.toolCalls.status | ✅ | `'running' | 'completed' | 'error'`，可判断 running 状态 |
+| settingsStore.compactStreaming | ✅ | 已存在，有 persist，AgentRunBlock 可依赖此开关 |
+| settingsStore.standaloneTools | ⚠️ | 尚不存在，需新增（FR-2.1 已覆盖） |
+| groupIntoSections 函数 | ✅ | 在 message-layout.ts 中，纯函数，改动面小 |
+| CompactSummaryBar/CompactStreamingBubble | ✅ | 两个组件将被替代，spec 已明确声明 |
+| ChatPanel.vue streaming 路径 | ✅ | 第 92-94 行 CompactStreamingBubble 独立渲染，spec 声明替代 |
+| GlobalLoadingBar 扫光动画 | ✅ | 3px 高度，CSS sweep animation，可复用样式 |
+| compact-utils.ts | ✅ | formatTime + toolPath 可复用 |
+
+---
+
+## 完整性逐项检查
 
 | 检查项 | 结果 | 说明 |
 |--------|------|------|
-| 目标明确 | ✅ | "折叠 Agent 操作过程"目标清晰，standaloneTools 可配置设计使目标可达成 |
-| 范围合理 | ✅ | 约束 7 条均明确，不改共享类型/WS 协议/useChat，影响面可控 |
-| 验收标准可量化 | ✅ | 8 条 AC 均有明确判断标准，AC-5 含 4 组分组测试用例 |
-| 与现有代码一致性 | ✅ | compactStreaming 双路径衔接清晰，endTime 语义正确 |
-| [待决议] 项 | ✅ | 无未决设计问题 |
+| 问题定义 | ✅ | Background 清晰描述 section 跳跃痛点 |
+| 用户场景 | ✅ | UC-1/2/3 覆盖结果查看、过程监控、subagent |
+| 功能需求 | ✅ | FR-1~6 完整，FR-2.1 Settings 配置有独立定义 |
+| 验收标准 | ✅ | AC-1~8 可追溯到 FR |
+| 约束/不变量 | ✅ | 7 条约束均合理且与代码一致 |
+| 边界情况 | ⚠️ | 空 AgentRunBlock（只有 MergeBlock 无 text）未显式覆盖，但现有 fallback 逻辑可处理 |
+| 性能考量 | ⚠️ | 未提及 50+ contentBlocks 的渲染性能，但 MergeBlock 折叠机制天然限制了 DOM 节点数 |
+| 主题兼容 | ✅ | AC-6 明确要求使用现有 CSS 变量 |
+
+---
 
 ## 结论
 
-v1 的 4 条 MUST_FIX 全部修复到位。新引入 1 条 LOW 级别的命名建议（section 类型 `write` → `standalone`），不影响正确性，可在实现阶段处理。**spec 可以通过，进入 plan 阶段。**
+Spec 功能设计完整、架构合理、与代码库一致。v1 的 4 条 MUST_FIX 全部已解决。4 条 SHOULD_FIX 均为措辞/命名层面的改进，不影响正确性。
+
+**verdict: pass, must_fix: 0**

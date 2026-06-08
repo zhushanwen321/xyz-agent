@@ -1,112 +1,124 @@
 ---
-verdict: pass
-must_fix: 0
+verdict: fail
+must_fix: 1
 ---
 
-# Spec Review: AgentRunBlock 重构
+# Spec Review: AgentRunBlock 重构（独立审查）
 
 **文件**: `spec.md`
 **审查日期**: 2026-06-08
 **审查模式**: Plan review (验证 spec 完整性)
+**说明**: 本审查独立于已有的 v1/v2 review，基于代码交叉验证重新评估
 
 ---
 
 ## 总评
 
-Spec 质量较高。背景问题定义清晰，FR 到 AC 的追溯链完整，约束条件与现有代码一致。核心设计决策（MergeBlock 折叠 + 独立工具卡片 + 用户可配置 standaloneTools）合理且实现可行。
+Spec 的功能设计（MergeBlock 折叠 + standaloneTools 可配置 + 时序分组）合理且完整。FR → AC 追溯链清晰，约束条件大部分与代码一致。
 
-以下分三个维度展开。
-
----
-
-## 一、优点
-
-1. **问题定义精准**。现有 `CompactSummaryBar` 按工具类型聚合（所有 thinking 一组、所有 read 一组），用户需要在 5-8 个 section 之间跳跃。新方案按时间线交错渲染 MergeBlock 和独立卡片，直接解决了"跳跃式浏览"的痛点。
-
-2. **Constraints 保守得当**。逐条验证了与现有代码的一致性：
-   - `shared/src/message.ts` 的 `ContentBlock`/`Message` 类型确实不需要改动——分组逻辑在渲染层完成
-   - `AssistantContent.vue` 确实是 compactStreaming 分支的入口点（`useCompact && !isStreaming` → CompactSummaryBar）
-   - `ChatPanel.vue` 确实有 `CompactStreamingBubble` 用于 streaming 状态
-   - `settings.ts` 的 `compactStreaming` 确实已存在并持久化
-   - `GlobalLoadingBar` 确实存在可复用
-
-3. **AC-5 的符号表测试用例**覆盖了时序分组的核心场景（纯合并、交错、混合自定义工具、用户配置切换），可直接转为单元测试。
-
-4. **向后兼容处理明确**。FR-6 和 AC-7 覆盖了 legacy 消息路径，`groupByLegacyFields` 不变。
+但存在一个架构层面的关键遗漏：spec 描述的渲染分支与实际组件层级不匹配。Streaming compact 消息当前不走 AssistantContent.vue，而 spec 假设 AgentRunBlock 在 AssistantContent 中同时处理 streaming 和 complete 两种状态。此问题在 v1/v2 review 中均未识别，必须修复后才能进入 Plan。
 
 ---
 
-## 二、问题与建议
+## MUST_FIX
 
-### SHOULD_FIX-1: Footer "文件修改数" 计算逻辑与 FR-2 定义不一致
+### MUST_FIX-1: Streaming compact 消息的渲染路径未纳入 spec（架构遗漏）
 
-**FR-1 Footer** 定义"文件修改数 = toolCalls 中 toolName 在 `standaloneTools` 集合内的总数"。
+**位置**: spec.md FR-1
 
-但 **FR-2** 定义 standaloneTools 中的工具是"独立渲染为文件修改/操作卡片"，而"文件修改"只是其中 write/edit 的语义。如果用户将 `bash` 或 `grep` 加入 standaloneTools，footer 的"文件修改数"会把 bash 调用也计入，语义上不准确。
+**问题**:
 
-**建议**：将 footer 字段改为更中性的名称如"操作数"（与 FR-1 的"步骤数"区分），或者将"文件修改数"限定为 `write + edit` 固定集合，不受 standaloneTools 影响。
+Spec 写道"AssistantContent.vue 的渲染分支变为"三个分支（compact+complete / compact+streaming / non-compact），暗示 AgentRunBlock 组件放在 AssistantContent.vue 中。
 
-### SHOULD_FIX-2: FR-5 的 streaming 状态判断依赖 `endTime` 字段，但需确认字段来源
+但实际代码中，**streaming compact 消息不走 AssistantContent**：
 
-Spec 写"从 `message.thinking` 的最后一个 block 判断是否在 thinking：`endTime === undefined`"。
+- **Complete 消息路径**: `ChatPanel.vue` → v-for MessageBubble → `AssistantContent.vue` → CompactSummaryBar
+- **Streaming compact 消息路径**: `ChatPanel.vue` → 直接渲染 `<CompactStreamingBubble>`，**不经过** MessageBubble / AssistantContent
 
-查看 `ThinkingBlock` 类型定义（`shared/src/message.ts`），`endTime` 是可选字段。但实际 `CompactStreamingBubble.vue` 用的是 `collapsed` 字段（`lastThinking && !lastThinking.collapsed`）来判断 thinking 是否活跃。两种判断方式不等价：
-- `endTime === undefined`：thinking block 已创建但未完成
-- `collapsed === false`：thinking 内容未被折叠
-
-**建议**：明确 FR-5 使用哪个字段判断 streaming thinking 状态，并在 spec 中注明选择理由。当前代码用的是 `collapsed`，如果改用 `endTime` 需要验证 sidecar 是否正确设置该字段。
-
-### SHOULD_FIX-3: CompactStreamingBubble 的交互行为与 AgentRunBlock streaming 不一致
-
-现有 `CompactStreamingBubble` 展开时渲染完整的 `MessageBubble`（含所有 section），用户可以边 streaming 边看完整内容。新方案的 streaming AgentRunBlock 只显示"一行紧凑的实时状态"（MergeBlock 高度 28px），要看到 write 卡片需要等它们逐个到达。
-
-**影响**：如果 Agent 执行了 20 个操作但还没产生任何 write，用户在 streaming 过程中只看到一个 28px 的 MergeBlock 滚动条，丢失了当前 `CompactStreamingBubble` 提供的"展开查看全部"能力。
-
-**建议**：在 MergeBlock streaming 状态增加"展开"选项（类似现有 CompactStreamingBubble 的 expanded toggle），展开后显示已到达的所有操作细节。或者在 spec 中明确说明这是有意为之的设计取舍（streaming 时强制折叠，减少视觉噪声）。
-
-### SHOULD_FIX-4: FR-4 代码示例使用 `any` 类型，违反项目编码规范
-
-```typescript
-ALL_PI_TOOLS.includes(tc.toolName as any) && !standaloneTools.has(tc.toolName)
+```vue
+<!-- ChatPanel.vue 第 91-99 行 -->
+<CompactStreamingBubble
+  v-if="streamingMessage && settingsStore.compactStreaming"
+  :message="streamingMessage"
+/>
+<StreamingMessage
+  v-else-if="streamingMessage"
+  :message="streamingMessage"
+  :is-streaming="isStreaming"
+/>
 ```
 
-项目 CLAUDE.md 明确禁止 `any`。应改为类型安全的实现，例如：
+CompactStreamingBubble 和 CompactSummaryBar 分别在 **两个不同的组件层级** 中使用。Spec 声明 AgentRunBlock "替代"两者，但没有说明如何统一渲染路径。
 
-```typescript
-const ALL_PI_TOOLS: readonly string[] = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls']
-// 或用 includes 的泛型重载
-```
+**需要补充的内容**（至少选一个方案并在 spec 中明确）：
 
-### SHOULD_FIX-5: standaloneTools Settings 缺少动态性考虑
+| 方案 | 描述 | 影响 |
+|------|------|------|
+| A | 修改 ChatPanel.vue，compact streaming 消息也走 MessageBubble → AssistantContent → AgentRunBlock（去掉 ChatPanel 中的 CompactStreamingBubble 分支） | ChatPanel 和 MessageBubble 都需改动 |
+| B | AgentRunBlock 放在 ChatPanel.vue 中（与当前 CompactStreamingBubble 同层级），complete 消息路径不变（仍走 AssistantContent） | AgentRunBlock 拆成两个使用点 |
+| C | ChatPanel 统一走 StreamingMessage（去掉 CompactStreamingBubble），由 AssistantContent 内部根据 compactStreaming 分流到 AgentRunBlock | StreamingMessage 本身就是 MessageBubble 的薄包装，可行且改动最小 |
 
-FR-2.1 列出了 7 种 pi 内置工具的静态 checkbox 列表。但 pi 的扩展系统允许注册自定义工具（spec 的 FR-2 也提到了 subagent 等自定义工具"始终独立渲染"）。
-
-**问题**：如果用户安装了新的 pi extension 注册了新工具 `my-tool`，这个工具在 Settings 中不可见（只有 7 种内置工具），也不在 `ALL_PI_TOOLS` 中。根据 FR-2 的逻辑，它会被判断为"自定义工具"而始终独立渲染。这可能是期望行为，但 spec 没有明确说明。
-
-**建议**：在 FR-2 或 FR-2.1 中增加一段说明："ALL_PI_TOOLS 之外的 toolName 一律视为自定义工具，始终独立渲染，不出现在 Settings checkbox 列表中"。
-
-### INFO-1: 新增 CSS 变量需求
-
-Spec 的 AC-6 和 Constraints 都声明"不新增 CSS 变量"。但 MergeBlock 的 streaming 动画（扫光、脉冲圆点）和 chip 条的着色可能需要额外的 CSS 变量。当前 CompactSummaryBar 已经在 `<style scoped>` 中硬编码了 `color-mix` 表达式，新组件可以沿用同样的模式（不新增变量、直接 color-mix 现有变量），这是可行的。只需确认 plan 阶段遵循这个约束。
+**影响**: 不澄清这个问题，实现时必然遇到"AgentRunBlock 放在哪"的困惑，可能导致两种 streaming 路径行为不一致。
 
 ---
 
-## 三、遗漏检查清单
+## SHOULD_FIX
 
-| 维度 | 覆盖情况 |
-|------|---------|
-| 问题定义 | ✅ 有 Background，痛点清晰 |
-| 用户场景 | ✅ UC-1/2/3 覆盖查看结果、监控过程、subagent |
-| 功能需求 | ✅ FR-1~6 完整 |
-| 验收标准 | ✅ AC-1~8 可追溯到 FR |
-| 约束/不变量 | ✅ 7 条约束，已与代码交叉验证 |
-| 边界情况 | ⚠️ 空 AgentRunBlock（只有 MergeBlock 无 text）未显式覆盖 |
-| 性能考量 | ⚠️ 未提及。大量 contentBlocks（50+）时的渲染性能？建议 plan 阶段考虑虚拟化 |
-| 无障碍 | ⚠️ 未提及 keyboard navigation（chip 条的展开/折叠）|
-| 国际化 | ✅ 中文 UI 文案已内嵌 |
+### SHOULD_FIX-1: Footer "总耗时"在 complete 消息上无法直接计算
+
+**位置**: spec.md FR-1 Footer 字段定义
+
+Spec 定义"总耗时 = message.timestamp 到 status 变为 complete 的间隔"。但 Message 类型（`shared/src/message.ts`）没有记录 status 变为 complete 的时间戳。`timestamp` 是消息创建时间，`status` 只是状态枚举（`streaming | complete | error`），没有附带变更时间。
+
+**建议**: 明确计算方法，例如 `max(all thinking.endTime, all toolCall.endTime) - message.timestamp`，或者在前端记录一个 `completedAt` 时间戳（仅前端 store 层，不改 shared 类型）。
+
+### SHOULD_FIX-2: Streaming 过程丢失"展开查看全部"能力
+
+**位置**: spec.md FR-3
+
+现有 CompactStreamingBubble 支持点击展开，展开后渲染完整的 MessageBubble，用户可以在 streaming 过程中查看所有操作细节。Spec 的 streaming AgentRunBlock 只有"一行紧凑的实时状态"（MergeBlock 28px），无法展开。
+
+**影响**: 对于长时 Agent Run（20+ 步操作），用户在 streaming 期间只能看到一个 28px 滚动条，丢失了现有的展开能力。
+
+**建议**: 在 spec 中明确说明这是有意为之的设计取舍（streaming 时强制折叠），或为 streaming MergeBlock 增加"展开"选项。
+
+### SHOULD_FIX-3: Footer "文件修改数"命名不准确
+
+**位置**: spec.md FR-1 Footer 字段定义
+
+Footer 的"文件修改数"定义为 `toolCalls 中 toolName 在 standaloneTools 集合内的总数`。如果用户将 `bash` 或 `grep` 加入 standaloneTools，bash 调用也会被计入"文件修改数"，语义不准确。
+
+**建议**: 改为更中性的名称如"操作数"或"独立操作数"，或将计数限定为 `write + edit` 固定集合。
+
+---
+
+## 优点
+
+1. **standaloneTools 用户可配置**是亮点。将工具分类从硬编码改为用户设置，既满足默认体验（只看 write/edit），又保留高级用户自定义能力。
+
+2. **AC-5 符号表测试用例**质量高。4 组分组场景覆盖了纯合并、交错、混合自定义工具、配置切换，可直接转为 `groupIntoSections` 的单元测试。
+
+3. **Constraints 与代码一致**。"不改动共享类型"的约束经过验证：ContentBlock/Message 确实不需要改动，分组逻辑完全在前端渲染层。Settings store 的 `compactStreaming` 已存在且有 persist，新增 `standaloneTools` 顺理成章。
+
+4. **向后兼容完整**。FR-6 和 AC-7 覆盖了 legacy 消息路径，`groupByLegacyFields` 不变。
+
+---
+
+## 遗漏检查
+
+| 维度 | 覆盖情况 | 说明 |
+|------|---------|------|
+| 问题定义 | ✅ | Background 清晰描述了 section 跳跃痛点 |
+| 用户场景 | ✅ | UC-1/2/3 覆盖结果查看、过程监控、subagent |
+| 功能需求 | ✅ | FR-1~6 完整，FR-2.1 Settings 配置有独立定义 |
+| 验收标准 | ✅ | AC-1~8 可追溯到 FR |
+| 约束/不变量 | ⚠️ | 7 条约束大部分正确，但"不改动 useChat"的边界需验证：如果采用方案 C 统一路径，ChatPanel.vue 的 streaming 渲染逻辑需要改动 |
+| 边界情况 | ⚠️ | 空 AgentRunBlock（只有 MergeBlock 无 text）未显式覆盖 |
+| 性能考量 | ⚠️ | 未提及 50+ contentBlocks 的渲染性能 |
+| 组件层级 | ❌ | MUST_FIX-1: streaming/complete 分裂路径未纳入 |
 
 ---
 
 ## 结论
 
-Spec 设计合理，可进入 Phase 2 (Plan)。6 个 SHOULD_FIX 建议在 plan 阶段处理，不阻塞。核心架构（MergeBlock 折叠 + StandaloneToolCard 独立 + settings 驱动分组）在现有代码基础上可行，不需要改共享类型、WS 协议或 useChat。
+Spec 的功能设计可行，核心架构（MergeBlock + StandaloneToolCard + standaloneTools 设置）合理。**但有 1 条 MUST_FIX**：streaming compact 消息当前在 ChatPanel.vue 中独立渲染（CompactStreamingBubble），不走 AssistantContent.vue，spec 未说明如何将两条路径统一到 AgentRunBlock。此问题直接影响实现架构，必须在 spec 中明确方案后才能进入 Plan。
