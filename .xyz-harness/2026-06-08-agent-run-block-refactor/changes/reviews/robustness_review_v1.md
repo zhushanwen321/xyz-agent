@@ -1,3 +1,8 @@
+---
+verdict: fail
+must_fix: 2
+---
+
 # Robustness Review v1
 
 **审查范围**: AgentRunBlock.vue, MergeBlock.vue, StandaloneToolCard.vue, message-layout.ts, useLiveTimer.ts
