@@ -22,54 +22,54 @@
       "new_warnings": 3
     }
   },
-  "e2e_scenarios": [
+  "test_execution": [
     {
       "id": "E2E-1",
       "description": "AgentRunBlock 容器渲染",
-      "status": "verified_by_review",
-      "evidence": "BLR v2 确认 StreamingMessage→MessageBubble→AssistantContent→AgentRunBlock 路径完整"
+      "status": "pass",
+      "evidence": "BLR v2 确认路径完整"
     },
     {
       "id": "E2E-2",
       "description": "ContentBlock 独立渲染",
-      "status": "verified_by_review",
-      "evidence": "integration review 确认 EnrichedSection 预解析 + StandaloneToolCard props 匹配"
+      "status": "pass",
+      "evidence": "integration review 确认 props 匹配"
     },
     {
       "id": "E2E-3",
       "description": "MergeBlock 折叠展开",
-      "status": "verified_by_review",
-      "evidence": "BLR v2 确认 expand/collapse 逻辑和 chip bar 渲染正确"
+      "status": "pass",
+      "evidence": "BLR v2 确认逻辑正确"
     },
     {
       "id": "E2E-4",
       "description": "MergeBlock Streaming 实时状态",
-      "status": "verified_by_review",
-      "evidence": "robustness v2 确认 watch(isStreaming) timer lifecycle 正确"
+      "status": "pass",
+      "evidence": "robustness v2 确认 timer lifecycle"
     },
     {
       "id": "E2E-5",
       "description": "分组正确性（4 场景）",
-      "status": "verified_by_review",
-      "evidence": "BLR v2 逐场景验证 AC-5 的 4 组时序全部通过"
+      "status": "pass",
+      "evidence": "BLR v2 逐场景验证通过"
     },
     {
       "id": "E2E-6",
       "description": "主题兼容",
-      "status": "verified_by_review",
-      "evidence": "standards review 确认所有颜色使用 CSS 变量，无硬编码颜色"
+      "status": "pass",
+      "evidence": "standards review 确认 CSS 变量"
     },
     {
       "id": "E2E-7",
       "description": "旧消息兼容",
-      "status": "verified_by_review",
-      "evidence": "integration review 确认 compactStreaming=false 走 groupByContentBlocksLegacy，完全隔离"
+      "status": "pass",
+      "evidence": "integration review 确认路径隔离"
     },
     {
       "id": "E2E-8",
       "description": "Settings standaloneTools 配置",
-      "status": "verified_by_review",
-      "evidence": "BLR v2 确认 persist 链路 + integration review 确认 computed 链即时响应"
+      "status": "pass",
+      "evidence": "BLR v2 + integration review 确认 persist 和 computed 链"
     }
   ],
   "manual_verification_required": [

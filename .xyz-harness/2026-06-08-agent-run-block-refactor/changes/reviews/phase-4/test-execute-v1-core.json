@@ -1,0 +1,220 @@
+{
+  "version": "v1-core",
+  "workflow": "test-fix-loop",
+  "phase": 4,
+  "scope": "core",
+  "timestamp": "2026-06-08T16:15:00+08:00",
+  "summary": {
+    "total": 17,
+    "passed": 17,
+    "failed": 0,
+    "skipped": 0,
+    "fixed": 0
+  },
+  "methodology": {
+    "execution": [
+      "vitest run for pure-function grouping logic (TC-12, TC-13, TC-14, TC-15) and backward compat (TC-18, TC-19)",
+      "vue-tsc --noEmit for type validation",
+      "vite build for production bundle validation",
+      "code review of Vue components for UI/visual assertions (TC-1 to TC-11, TC-16, TC-17)"
+    ],
+    "exclusions": "TC-20/21/22 (Settings UI) — requires runtime interaction, deferred to separate pass"
+  },
+  "cases": [
+    {
+      "id": "TC-1",
+      "name": "AgentRunBlock 容器 - streaming 状态条",
+      "acRef": "AC-1",
+      "status": "pass",
+      "method": "code-review",
+      "evidence": "AgentRunBlock.vue lines 9-13: conditional class 'run-status-bar--streaming' when isStreaming=true. <style scoped> defines @keyframes run-sweep sliding background-position 100%→-100% over 1.5s infinite. height h-[3px] + overflow-hidden. Background overlay uses var(--accent) base + rgba(255,255,255,0.3) translucent sweep.",
+      "file": "src-electron/renderer/src/components/chat/AgentRunBlock.vue",
+      "lines": "9-13, 181-191"
+    },
+    {
+      "id": "TC-2",
+      "name": "AgentRunBlock 容器 - complete 状态条",
+      "acRef": "AC-1",
+      "status": "pass",
+      "method": "code-review",
+      "evidence": "AgentRunBlock.vue lines 9-13: ternary returns 'bg-border' when isStreaming=false. bg-border is Tailwind utility for var(--border), static color, no animation class applied.",
+      "file": "src-electron/renderer/src/components/chat/AgentRunBlock.vue",
+      "lines": "9-13"
+    },
+    {
+      "id": "TC-3",
+      "name": "AgentRunBlock footer 字段",
+      "acRef": "AC-1",
+      "status": "pass",
+      "method": "code-review",
+      "evidence": "AgentRunBlock.vue footer (lines 51-61): three spans: (1) stepCount = sections.filter(s => s.type !== 'text').length (line 119-121); (2) formattedElapsed via formatTime(elapsedMs) (line 148-175, elapsedMs computed from thinking+toolCalls timestamps, live timer during streaming); (3) standaloneToolCount = toolCalls.filter(tc => standalone.has(tc.toolName)).length (line 123-128).",
+      "file": "src-electron/renderer/src/components/chat/AgentRunBlock.vue",
+      "lines": "51-61, 119-148"
+    },
+    {
+      "id": "TC-4",
+      "name": "Text block 渲染",
+      "acRef": "AC-2",
+      "status": "pass",
+      "method": "code-review",
+      "evidence": "AgentRunBlock.vue lines 25-36: v-else-if='section.type === \"text\" && message.content', class='msg__body select-text py-1 leading-[1.6] text-fg text-xs'. Content rendered via useMarkdownRender composable → renderedContent → v-html. Includes streaming cursor (animated blink span) when isStreaming.",
+      "file": "src-electron/renderer/src/components/chat/AgentRunBlock.vue",
+      "lines": "25-36"
+    },
+    {
+      "id": "TC-5",
+      "name": "Write toolCall 独立卡片",
+      "acRef": "AC-2",
+      "status": "pass",
+      "method": "code-review",
+      "evidence": "write in default standaloneTools (settings.ts line 19: ref<string[]>(['write', 'edit'])). message-layout.ts isMergeBlock returns false for write toolCall → grouped as type='standalone'. AgentRunBlock.vue line 39: <StandaloneToolCard :tool-call='section.toolCall'>. StandaloneToolCard.vue displays toolName, resolvedPath (via toolPath extracting file_path), statusLabel badge, elapsedDisplay.",
+      "file": "src-electron/renderer/src/components/chat/StandaloneToolCard.vue + src-electron/renderer/src/lib/message-layout.ts",
+      "lines": "StandaloneToolCard 9-30, message-layout 66-68, settings 19"
+    },
+    {
+      "id": "TC-6",
+      "name": "Edit toolCall 独立卡片",
+      "acRef": "AC-2",
+      "status": "pass",
+      "method": "code-review",
+      "evidence": "edit in default standaloneTools (settings.ts line 19). Same rendering path as write: isMergeBlock returns false → type='standalone' → StandaloneToolCard. Identical treatment: toolName, path, status badge, elapsed time.",
+      "file": "src-electron/renderer/src/stores/settings.ts + src-electron/renderer/src/components/chat/StandaloneToolCard.vue",
+      "lines": "settings.ts 19"
+    },
+    {
+      "id": "TC-7",
+      "name": "自定义工具独立卡片",
+      "acRef": "AC-2",
+      "status": "pass",
+      "method": "code-review",
+      "evidence": "message-layout.ts line 82-88: toolCall not in ALL_PI_TOOLS → isCustom=true → section type='customTool'. AgentRunBlock.vue line 43-45: v-else-if='section.type === \"customTool\" && section.toolCall' renders <StandaloneToolCard :tool-call='section.toolCall'>. ToolCall resolved at line 99-104: message.toolCalls.find(tc => tc.id === block.refId).",
+      "file": "src-electron/renderer/src/lib/message-layout.ts + src-electron/renderer/src/components/chat/AgentRunBlock.vue",
+      "lines": "message-layout 82-88, AgentRunBlock 43-45, 99-104"
+    },
+    {
+      "id": "TC-8",
+      "name": "MergeBlock chip 统计",
+      "acRef": "AC-3",
+      "status": "pass",
+      "method": "code-review",
+      "evidence": "MergeBlock.vue chips computed (lines 93-114): iterates blocks, counts thinkingCount + groups toolCalls by toolName via Map. Output: [{variant:'thinking', label:'思考', count:N}, {variant:'tool', label:'toolName', count:N}]. Template lines 19-25 renders each as span with class merge-chip--{variant}. For 3 thinking + 5 read + 2 grep → '思考 ×3 · read ×5 · grep ×2'.",
+      "file": "src-electron/renderer/src/components/chat/MergeBlock.vue",
+      "lines": "93-114, 19-25"
+    },
+    {
+      "id": "TC-9",
+      "name": "MergeBlock 展开/折叠",
+      "acRef": "AC-3",
+      "status": "pass",
+      "method": "code-review",
+      "evidence": "MergeBlock.vue line 17: <div class='merge-bar' @click='toggleExpand'>. Lines 68-71: const expanded = ref(false); function toggleExpand() { expanded.value = !expanded.value }. Line 34: v-show='expanded' on merge-blocks div. Chevron SVG (lines 26-32) rotates via class 'merge-bar__chevron--open' (line 259: transform: rotate(180deg)).",
+      "file": "src-electron/renderer/src/components/chat/MergeBlock.vue",
+      "lines": "17, 34, 68-71, 259"
+    },
+    {
+      "id": "TC-10",
+      "name": "MergeBlock streaming - thinking 状态",
+      "acRef": "AC-4",
+      "status": "pass",
+      "method": "code-review",
+      "evidence": "MergeBlock.vue streamStatusText computed (lines 133-136): checks lastThinking.endTime === undefined → returns '思考中...'. Pulse dot (line 6: <span class='merge-stream__pulse'>) with @keyframes merge-pulse (lines 278-280: opacity 1→0.4→1, scale 1→0.7→1, 2s ease-in-out infinite). streamElapsed (lines 156-161) via useLiveTimer(200) updates every 200ms.",
+      "file": "src-electron/renderer/src/components/chat/MergeBlock.vue",
+      "lines": "6, 133-136, 156-161, 278-280"
+    },
+    {
+      "id": "TC-11",
+      "name": "MergeBlock streaming - tool running 状态",
+      "acRef": "AC-4",
+      "status": "pass",
+      "method": "code-review",
+      "evidence": "MergeBlock.vue streamStatusText (lines 138-144): finds toolCalls.find(tc => tc.status === 'running') → returns `${tc.toolName} ${toolPath(tc.input)}`. toolPath (compact-utils lines 32-46) extracts path/file_path/command from tc.input. Format matches spec 'read src/main.ts'.",
+      "file": "src-electron/renderer/src/components/chat/MergeBlock.vue + src-electron/renderer/src/lib/compact-utils.ts",
+      "lines": "MergeBlock 138-144, compact-utils 32-46"
+    },
+    {
+      "id": "TC-12",
+      "name": "分组 - 合并+text+合并 (AC-5 场景A)",
+      "acRef": "AC-5",
+      "status": "pass",
+      "method": "vitest",
+      "evidence": "vitest run message-layout.test.ts TC-12 passed. Input: contentBlocks=[thk, tc-read, tc-bash, text, thk, tc-read, thk, tc-grep], standalone={write,edit}. Output: sectionTypes=['merge','text','merge']. blockIds(sections[0])=[thk1.id, tcRead1.id, tcBash.id]. blockIds(sections[2])=[thk2.id, tcRead2.id, thk3.id, tcGrep.id].",
+      "command": "npx vitest run src-electron/renderer/src/lib/__tests__/message-layout.test.ts",
+      "lines": "test TC-12 (1ms)"
+    },
+    {
+      "id": "TC-13",
+      "name": "分组 - edit 独立展示 (AC-5 场景B)",
+      "acRef": "AC-5",
+      "status": "pass",
+      "method": "vitest",
+      "evidence": "vitest run message-layout.test.ts TC-13 passed. Input: contentBlocks=[thk, text, edit, text], standalone={write,edit}. Output: sectionTypes=['merge','text','standalone']. sections[0].blocks=[thk1], sections[2].blocks=[editTc].",
+      "command": "npx vitest run src-electron/renderer/src/lib/__tests__/message-layout.test.ts",
+      "lines": "test TC-13 (0ms)"
+    },
+    {
+      "id": "TC-14",
+      "name": "分组 - 混合含 standalone + customTool (AC-5 场景C)",
+      "acRef": "AC-5",
+      "status": "pass",
+      "method": "vitest",
+      "evidence": "vitest run message-layout.test.ts TC-14 passed. Input: contentBlocks=[thk, tc-read, write, thk, tc-bash, text, subagent, text], standalone={write,edit}. Output: sectionTypes=['merge','standalone','merge','text','customTool']. sections[0]=[thk1,tcRead], sections[1]=[write], sections[2]=[thk2,tcBash], sections[3]=text, sections[4]=[subagent].",
+      "command": "npx vitest run src-electron/renderer/src/lib/__tests__/message-layout.test.ts",
+      "lines": "test TC-14 (0ms)"
+    },
+    {
+      "id": "TC-15",
+      "name": "分组 - standaloneTools 变更影响 (AC-5 场景D)",
+      "acRef": "AC-5",
+      "status": "pass",
+      "method": "vitest",
+      "evidence": "vitest run message-layout.test.ts TC-15 passed (2 assertions). Test 1: standalone={write,edit,bash} + [thk, tc-bash] → ['merge','standalone']. Test 2: standalone={write,edit} + [thk, tc-bash] → ['merge']. Confirms bash classification reactive to standaloneTools set.",
+      "command": "npx vitest run src-electron/renderer/src/lib/__tests__/message-layout.test.ts",
+      "lines": "test TC-15 (2 cases)"
+    },
+    {
+      "id": "TC-16",
+      "name": "主题 - light 模式",
+      "acRef": "AC-6",
+      "status": "pass",
+      "method": "code-review",
+      "evidence": "All three components use CSS variables exclusively for colors: var(--accent), var(--border), var(--bg), var(--fg), var(--muted), var(--success), var(--danger), var(--surface). Only non-var color: rgba(255,255,255,0.3) in run-sweep keyframes (translucent overlay on var(--accent) base) — acceptable animation technique, not theme-dependent. color-mix(in oklch, var(--x) 12%, transparent) used for chip backgrounds.",
+      "file": "AgentRunBlock.vue + MergeBlock.vue + StandaloneToolCard.vue",
+      "lines": "all scoped styles"
+    },
+    {
+      "id": "TC-17",
+      "name": "主题 - dark 模式",
+      "acRef": "AC-6",
+      "status": "pass",
+      "method": "code-review",
+      "evidence": "Same evidence as TC-16. All colors resolved via CSS variables which adapt through [data-theme] selectors in style.css. No hardcoded light-only colors. color-mix() with oklch works in both light and dark. rgba(255,255,255,0.3) sweep overlay is equally valid on dark accent backgrounds.",
+      "file": "AgentRunBlock.vue + MergeBlock.vue + StandaloneToolCard.vue",
+      "lines": "all scoped styles"
+    }
+  ],
+  "buildValidation": {
+    "vitest_unit": {
+      "command": "npx vitest run src-electron/renderer/src/lib/__tests__/message-layout.test.ts",
+      "result": "pass",
+      "evidence": "Test Files: 1 passed (1), Tests: 10 passed (10), Duration: 96ms"
+    },
+    "vue_tsc": {
+      "command": "cd src-electron/renderer && npx vue-tsc --noEmit",
+      "result": "pass",
+      "evidence": "no output (0 errors)"
+    },
+    "vite_build": {
+      "command": "cd src-electron/renderer && npx vite build",
+      "result": "pass",
+      "evidence": "✓ built in 1.38s"
+    }
+  },
+  "notes": [
+    "Core scope covers TC-1 to TC-17 (AC-1 through AC-6). TC-18/19 also verified by vitest but documented in v7-core.",
+    "TC-12 to TC-15 (grouping) verified via vitest unit tests with deterministic assertions matching spec AC-5.",
+    "TC-1 to TC-11 (visual/UI) verified via code review of AgentRunBlock.vue, MergeBlock.vue, StandaloneToolCard.vue, message-layout.ts against spec AC-1 to AC-5.",
+    "TC-16/TC-17 (theme) verified via grep for hardcoded colors — only rgba(255,255,255,0.3) in sweep animation overlay, all other colors via CSS variables.",
+    "TC-20/21/22 (Settings UI interaction) require runtime interaction, not executable in static analysis.",
+    "All build gates pass: vue-tsc=0 errors, vite build=success, vitest=10/10 pass."
+  ]
+}
