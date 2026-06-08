@@ -25,6 +25,10 @@ interface ToolInputWithPath {
   path?: unknown
   file_path?: unknown
   command?: unknown
+  /** subagent/extension 任务描述 */
+  task?: unknown
+  /** 子 agent 名称（如 'general-purpose'） */
+  agent?: unknown
 }
 
 /** 从 tool call input 中提取短路径表示 */
@@ -33,6 +37,14 @@ export function toolPath(input: unknown, maxLen = PATH_MAX_LEN): string {
     const obj: unknown = typeof input === 'string' ? JSON.parse(input) : input
     if (obj && typeof obj === 'object') {
       const rec = obj as ToolInputWithPath
+
+      // Subagent / extension: show task description
+      if (typeof rec.task === 'string' && rec.task) {
+        const prefix = typeof rec.agent === 'string' ? `${rec.agent}: ` : ''
+        const text = prefix + rec.task
+        return text.length > maxLen ? text.slice(0, maxLen) + '...' : text
+      }
+
       const p = rec.path ?? rec.file_path ?? rec.command
       if (typeof p === 'string' && p) return p
     }
@@ -40,5 +52,5 @@ export function toolPath(input: unknown, maxLen = PATH_MAX_LEN): string {
   } catch (e) {
     console.warn('[compact-utils] toolPath parse error:', e)
   }
-  return String(input ?? '').slice(0, maxLen)
+  return ''
 }

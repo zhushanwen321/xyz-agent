@@ -5,7 +5,7 @@
     <button class="tool-toggle" @click="toggleExpand">
       <!-- Status indicator -->
       <span v-if="isRunning" class="tool-toggle__spinner" />
-      <svg v-else :class="['tool-toggle__chevron', { 'tool-toggle__chevron--collapsed': !expanded }]" xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+      <svg v-else :class="['tool-toggle__chevron', { 'tool-toggle__chevron--collapsed': !effectiveExpanded }]" xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
 
       <!-- Tool name -->
       <span class="tool-toggle__name">{{ toolCall.toolName }}</span>
@@ -26,7 +26,7 @@
     </div>
 
     <!-- Body (expandable) -->
-    <div v-if="expanded" class="tool-body">
+    <div v-if="effectiveExpanded" class="tool-body">
       <component v-if="rendererComp" :is="rendererComp" :tool-call="toolCall" />
       <DefaultToolRenderer v-else :tool-call="toolCall" />
     </div>
@@ -42,11 +42,15 @@ import { useSettingsStore } from '../../stores/settings'
 
 const props = defineProps<{
   toolCall: ToolCall
+  forceExpanded?: boolean
 }>()
 const settingsStore = useSettingsStore()
 
 const expanded = ref(settingsStore.autoExpandToolCalls)
 const rendererComp = shallowRef<Component | null>(null)
+
+/** MergeBlock can force-expand inner ToolCallCards */
+const effectiveExpanded = computed(() => props.forceExpanded ?? expanded.value)
 
 const TIMER_UPDATE_INTERVAL_MS = 100
 const AUTO_EXPAND_DELAY_MS = 80

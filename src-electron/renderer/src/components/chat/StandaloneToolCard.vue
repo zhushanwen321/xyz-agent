@@ -3,8 +3,9 @@
     <!-- Header row: clickable toggle -->
     <!-- eslint-disable-next-line taste/no-native-html-elements -- custom flex layout requires button -->
     <button class="standalone-tool__hdr" @click="expanded = !expanded">
-      <!-- Left dot -->
-      <span :class="['standalone-tool__dot', `standalone-tool__dot--${toolCall.status}`]" />
+      <!-- Left icon -->
+      <svg v-if="isCustomTool" class="standalone-tool__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg>
+      <span v-else :class="['standalone-tool__dot', `standalone-tool__dot--${toolCall.status}`]" />
 
       <!-- Tool name -->
       <span class="standalone-tool__name">{{ toolCall.toolName }}</span>
@@ -38,6 +39,11 @@ import type { ToolCall } from '@xyz-agent/shared'
 const props = defineProps<{
   toolCall: ToolCall
 }>()
+
+const isCustomTool = computed(() => {
+  const builtin = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls']
+  return !builtin.includes(props.toolCall.toolName)
+})
 
 const expanded = ref(false)
 
@@ -118,7 +124,7 @@ const elapsedDisplay = computed(() => {
   color: var(--fg);
 }
 
-/* ── Dot ── */
+/* ── Dot (builtin tools) ── */
 .standalone-tool__dot {
   width: 4px;
   height: 4px;
@@ -133,6 +139,14 @@ const elapsedDisplay = computed(() => {
 }
 .standalone-tool__dot--error {
   background: var(--danger);
+}
+
+/* ── Icon (custom tools / subagents) ── */
+.standalone-tool__icon {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  color: var(--accent);
 }
 
 /* ── Name ── */

@@ -36,10 +36,12 @@
           :text="resolveThinkingContent(block.refId)"
           :start-time="resolveThinking(block.refId)?.startTime"
           :end-time="resolveThinking(block.refId)?.endTime"
+          :force-expanded="expanded"
         />
         <ToolCallCard
           v-else-if="block.type === 'toolCall' && resolveToolCall(block.refId)"
           :tool-call="resolveToolCall(block.refId)!"
+          :force-expanded="expanded"
         />
       </template>
     </div>
@@ -218,12 +220,14 @@ const streamElapsed = computed(() => {
   user-select: none;
 }
 .merge-chip--thinking {
-  background: color-mix(in oklch, var(--accent) 12%, transparent);
+  background: color-mix(in oklch, var(--accent) 20%, transparent);
   color: var(--accent);
+  font-weight: 500;
 }
 .merge-chip--tool {
-  background: color-mix(in oklch, var(--success) 12%, transparent);
+  background: color-mix(in oklch, var(--success) 20%, transparent);
   color: var(--success);
+  font-weight: 500;
 }
 
 .merge-bar__chevron {
