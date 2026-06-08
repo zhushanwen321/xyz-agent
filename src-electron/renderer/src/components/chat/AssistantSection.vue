@@ -28,6 +28,9 @@ const dotClass = computed(() => {
     thinking: 'asst-section__dot--thinking',
     toolCall: 'asst-section__dot--tool',
     text: 'asst-section__dot--text',
+    merge: 'asst-section__dot--tool',
+    standalone: 'asst-section__dot--tool',
+    customTool: 'asst-section__dot--tool',
   }
   return map[props.type]
 })

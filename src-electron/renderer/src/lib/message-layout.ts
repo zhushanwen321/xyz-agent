@@ -52,7 +52,7 @@ export function groupIntoTurns(msgs: ChatMessage[]): Turn[] {
 
 // ── Section grouping ───────────────────────────────────────
 
-export type SectionType = 'thinking' | 'toolCall' | 'text'
+export type SectionType = 'merge' | 'text' | 'standalone' | 'customTool' | 'thinking' | 'toolCall'
 
 export interface AssistantSection {
   type: SectionType
@@ -67,15 +67,66 @@ export interface AssistantSection {
  * - 有 contentBlocks：按相邻同类型合并
  * - 无 contentBlocks（历史消息）：从 thinking → toolCalls → content 构造 sections
  */
-export function groupIntoSections(msg: Message): AssistantSection[] {
+export function groupIntoSections(msg: Message, standaloneTools?: Set<string>): AssistantSection[] {
   if (msg.contentBlocks?.length) {
-    return groupByContentBlocks(msg)
+    return standaloneTools
+      ? groupByContentBlocks(msg, standaloneTools)
+      : groupByContentBlocksLegacy(msg)
   }
   return groupByLegacyFields(msg)
 }
 
-/** 有序 contentBlocks → sections（相邻同类型合并） */
-function groupByContentBlocks(msg: Message): AssistantSection[] {
+// ── Block-type classification ───────────────────────────────
+
+/** All pi built-in tool names */
+export const ALL_PI_TOOLS = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'] as const
+
+/** Check if a block should be merged into a MergeBlock */
+function isMergeBlock(block: ContentBlock, msg: Message, standaloneTools: Set<string>): boolean {
+  if (block.type === 'thinking') return true
+  if (block.type === 'toolCall') {
+    const tc = msg.toolCalls?.find(t => t.id === block.refId)
+    // Not in standaloneTools AND is a built-in tool → merge; custom tools → always standalone
+    return tc ? (ALL_PI_TOOLS as readonly string[]).includes(tc.toolName) && !standaloneTools.has(tc.toolName) : false
+  }
+  return false
+}
+
+/** New grouping: classify by block type and standaloneTools setting */
+function groupByContentBlocks(msg: Message, standaloneTools: Set<string>): AssistantSection[] {
+  const sections: AssistantSection[] = []
+  let mergeBlocks: ContentBlock[] = []
+
+  function flushMerge() {
+    if (mergeBlocks.length > 0) {
+      sections.push({ type: 'merge', blocks: mergeBlocks })
+      mergeBlocks = []
+    }
+  }
+
+  for (const block of msg.contentBlocks!) {
+    if (isMergeBlock(block, msg, standaloneTools)) {
+      mergeBlocks.push(block)
+    } else {
+      flushMerge()
+      if (block.type === 'text') {
+        // Skip empty text blocks
+        if (!msg.content) continue
+        sections.push({ type: 'text', blocks: [block] })
+      } else if (block.type === 'toolCall') {
+        const tc = msg.toolCalls?.find(t => t.id === block.refId)
+        const isCustom = tc ? !(ALL_PI_TOOLS as readonly string[]).includes(tc.toolName) : false
+        sections.push({ type: isCustom ? 'customTool' : 'standalone', blocks: [block] })
+      }
+    }
+  }
+
+  flushMerge()
+  return sections
+}
+
+/** Legacy grouping: adjacent same-type merge (compactStreaming=false path) */
+function groupByContentBlocksLegacy(msg: Message): AssistantSection[] {
   const sections: AssistantSection[] = []
   let current: AssistantSection | null = null
 

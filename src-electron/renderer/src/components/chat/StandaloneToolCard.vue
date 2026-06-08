@@ -1,0 +1,219 @@
+<template>
+  <div class="standalone-tool" :class="[`standalone-tool--${toolCall.status}`]">
+    <!-- Header row: clickable toggle -->
+    <!-- eslint-disable-next-line taste/no-native-html-elements -- custom flex layout requires button -->
+    <button class="standalone-tool__hdr" @click="expanded = !expanded">
+      <!-- Left dot -->
+      <span :class="['standalone-tool__dot', `standalone-tool__dot--${toolCall.status}`]" />
+
+      <!-- Tool name -->
+      <span class="standalone-tool__name">{{ toolCall.toolName }}</span>
+
+      <!-- File path / command -->
+      <span v-if="resolvedPath" class="standalone-tool__path">{{ resolvedPath }}</span>
+
+      <!-- Status badge -->
+      <span :class="['standalone-tool__badge', `standalone-tool__badge--${toolCall.status}`]">
+        {{ statusLabel }}
+      </span>
+
+      <!-- Elapsed time -->
+      <span v-if="elapsedDisplay" class="standalone-tool__time">{{ elapsedDisplay }}</span>
+    </button>
+
+    <!-- Expandable body: delegate to ToolCallCard -->
+    <div v-if="expanded" class="standalone-tool__body">
+      <ToolCallCard :tool-call="toolCall" />
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import ToolCallCard from './ToolCallCard.vue'
+import { formatTime, toolPath } from '@/lib/compact-utils'
+import type { ToolCall } from '@xyz-agent/shared'
+
+const props = withDefaults(defineProps<{
+  toolCall: ToolCall
+  isCustomTool?: boolean
+}>(), {
+  isCustomTool: false,
+})
+
+const expanded = ref(false)
+
+// ── Elapsed time reactive counter ──
+const TIMER_UPDATE_INTERVAL_MS = 100
+
+const now = ref(Date.now())
+let timerInterval: ReturnType<typeof setInterval> | undefined
+
+function startTimer() {
+  now.value = Date.now()
+  timerInterval = setInterval(() => { now.value = Date.now() }, TIMER_UPDATE_INTERVAL_MS)
+}
+
+function stopTimer() {
+  if (timerInterval !== undefined) {
+    clearInterval(timerInterval)
+    timerInterval = undefined
+  }
+}
+
+onMounted(() => {
+  if (props.toolCall.status === 'running') startTimer()
+})
+
+onUnmounted(stopTimer)
+
+watch(() => props.toolCall.status, (status) => {
+  if (status === 'running') {
+    startTimer()
+  } else {
+    stopTimer()
+    now.value = props.toolCall.endTime ?? Date.now()
+  }
+})
+
+// ── Path extraction ──
+const resolvedPath = computed(() => {
+  const raw = toolPath(props.toolCall.input)
+  if (!raw || raw === 'undefined') return ''
+  return raw.length > 50 ? raw.slice(0, 50) + '...' : raw
+})
+
+// ── Status label ──
+const statusLabel = computed(() => {
+  switch (props.toolCall.status) {
+    case 'running': return 'running'
+    case 'completed': return 'done'
+    case 'error': return 'error'
+    default: return ''
+  }
+})
+
+// ── Elapsed display ──
+const elapsedMs = computed(() => {
+  const start = props.toolCall.startTime
+  if (!start) return 0
+  if (props.toolCall.endTime) return Math.max(0, props.toolCall.endTime - start)
+  if (props.toolCall.status === 'running') return Math.max(0, now.value - start)
+  return 0
+})
+
+const elapsedDisplay = computed(() => {
+  const ms = elapsedMs.value
+  if (ms <= 0) return ''
+  return formatTime(ms)
+})
+</script>
+
+<style scoped>
+.standalone-tool {
+  display: flex;
+  flex-direction: column;
+  border-left: 2px solid var(--success);
+  margin-bottom: 4px;
+  font-size: 11px;
+}
+
+/* Status-specific border color */
+.standalone-tool--running {
+  border-left-color: var(--accent);
+}
+.standalone-tool--error {
+  border-left-color: var(--danger);
+}
+
+/* ── Header ── */
+.standalone-tool__hdr {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0 3px 8px;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  text-align: left;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
+  width: 100%;
+}
+.standalone-tool__hdr:hover {
+  color: var(--fg);
+}
+
+/* ── Dot ── */
+.standalone-tool__dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.standalone-tool__dot--completed {
+  background: var(--success);
+}
+.standalone-tool__dot--running {
+  background: var(--accent);
+}
+.standalone-tool__dot--error {
+  background: var(--danger);
+}
+
+/* ── Name ── */
+.standalone-tool__name {
+  font-weight: 600;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+/* ── Path ── */
+.standalone-tool__path {
+  color: var(--muted);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Status badge ── */
+.standalone-tool__badge {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 1px 5px;
+  border-radius: 100px;
+  flex-shrink: 0;
+  user-select: none;
+}
+.standalone-tool__badge--completed {
+  background: color-mix(in oklch, var(--success) 14%, transparent);
+  color: var(--success);
+}
+.standalone-tool__badge--running {
+  background: color-mix(in oklch, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+.standalone-tool__badge--error {
+  background: color-mix(in oklch, var(--danger) 14%, transparent);
+  color: var(--danger);
+}
+
+/* ── Time ── */
+.standalone-tool__time {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted-dim, var(--muted));
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+/* ── Expandable body ── */
+.standalone-tool__body {
+  padding: 4px 0 2px 13px;
+}
+</style>
