@@ -2,11 +2,7 @@
 phase: dev
 verdict: pass
 absorbed: false
-topic: "2026-06-08-agent-run-block-refactor"
-harness_issues:
-  - "5 步审查的 BLR 应该最先执行（它的 MF 会影响其他审查的判断），但实际是并行 dispatch。建议 BLR 独立先行，其他 4 步等 BLR pass 后再并行"
-  - "taste review 的 must_fix 标准偏高——将 DRY 问题（如 3 处 resolver 函数重复、10 行模板重复）标为 must_fix，但提取组件的接口成本可能超过重复成本。建议 taste review 区分'功能正确性 must_fix'和'代码质量 should-fix'"
-  - "gate check 的 YAML 解析器不能容忍 markdown 内容中的反引号和加粗符号——审查文件必须用 --- 分隔 YAML frontmatter 和 markdown 正文。subagent 产出的 review 文件经常缺少正确的 frontmatter，gate 直接报 parse error 而不是提示缺少 frontmatter"
+topic: agent-run-block-refactor
 ---
 
 # Dev Phase Retrospect
