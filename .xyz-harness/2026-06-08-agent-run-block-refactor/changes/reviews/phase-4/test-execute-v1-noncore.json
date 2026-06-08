@@ -1,0 +1,136 @@
+{
+  "version": "v1-noncore",
+  "workflow": "test-fix-loop",
+  "phase": 4,
+  "scope": "non-core",
+  "timestamp": "2026-06-08T15:48:00+08:00",
+  "summary": {
+    "total": 7,
+    "passed": 7,
+    "failed": 0,
+    "skipped": 0,
+    "fixed": 0
+  },
+  "methodology": {
+    "execution": [
+      "vitest run for legacy/compat grouping logic (TC-18, TC-19)",
+      "vue-tsc --noEmit for type validation",
+      "vite build for production bundle validation",
+      "code review of CSS for theme assertions (TC-16, TC-17)",
+      "code review of Settings UI + store for config assertions (TC-20, TC-21, TC-22)"
+    ]
+  },
+  "cases": [
+    {
+      "id": "TC-16",
+      "name": "主题 - light 模式",
+      "acRef": "AC-6",
+      "status": "pass",
+      "method": "code-review",
+      "evidence": "AgentRunBlock.vue: all colors use CSS vars (--accent, --border, --muted, --fg). MergeBlock.vue: 18 var(--) references, 0 hardcoded hex colors. StandaloneToolCard.vue: 20 var(--) references, 0 hardcoded hex. Only non-var: rgba(255,255,255,0.3) in AgentRunBlock sweep gradient — transparent white overlay for shimmer effect, works identically in light/dark because it's a semi-transparent overlay on var(--accent). All oklch uses reference CSS vars (e.g. color-mix(in oklch, var(--accent) 12%, transparent)). No hardcoded theme-specific colors found.",
+      "files": [
+        "src-electron/renderer/src/components/chat/AgentRunBlock.vue",
+        "src-electron/renderer/src/components/chat/MergeBlock.vue",
+        "src-electron/renderer/src/components/chat/StandaloneToolCard.vue"
+      ]
+    },
+    {
+      "id": "TC-17",
+      "name": "主题 - dark 模式",
+      "acRef": "AC-6",
+      "status": "pass",
+      "method": "code-review",
+      "evidence": "Same analysis as TC-16. All component styles exclusively use CSS custom properties (--accent, --border, --bg, --surface, --fg, --muted, --muted-dim, --success, --danger, --font-mono, --accent-light) which are defined at :root / [data-theme] level. Theme switching via settingsStore.applyTheme() sets data-theme attribute on documentElement, causing CSS var cascade change. No component-level color overrides. Dark mode correctness is implicit: same CSS vars resolve to dark theme values.",
+      "files": [
+        "src-electron/renderer/src/stores/settings.ts (applyTheme: lines 24-30)",
+        "src-electron/renderer/src/components/chat/AgentRunBlock.vue",
+        "src-electron/renderer/src/components/chat/MergeBlock.vue",
+        "src-electron/renderer/src/components/chat/StandaloneToolCard.vue"
+      ]
+    },
+    {
+      "id": "TC-18",
+      "name": "旧消息兼容 - 无 contentBlocks",
+      "acRef": "AC-7",
+      "status": "pass",
+      "method": "vitest",
+      "evidence": "vitest run message-layout.test.ts:TC-18 — 2 tests passed (0ms each). Test 1: legacy message with thinking+toolCalls+content but no contentBlocks field → groupIntoSections(msg, undefined) returns ['thinking','toolCall','text'] via groupByLegacyFields. Test 2: legacy message with only content → returns ['text']. Code path: message-layout.ts line 71-76, when msg.contentBlocks?.length is falsy, calls groupByLegacyFields(msg) which constructs sections from msg.thinking → msg.toolCalls → msg.content.",
+      "command": "npx vitest run src-electron/renderer/src/lib/__tests__/message-layout.test.ts",
+      "testCases": ["legacy message with thinking/toolCalls/content", "legacy message with only content"]
+    },
+    {
+      "id": "TC-19",
+      "name": "compactStreaming=false 不受影响",
+      "acRef": "AC-7",
+      "status": "pass",
+      "method": "vitest+code-review",
+      "evidence": "vitest: TC-19 — 2 tests passed (0ms each). Test 1: standaloneTools=undefined → groupByContentBlocksLegacy merges adjacent same-type blocks: [thk,thk,tc-read] → ['thinking','toolCall']. Test 2: empty Set → all built-in tools merge into MergeBlock. Code review: AssistantContent.vue line 68: useCompact = computed(() => settingsStore.compactStreaming). When false, template uses v-else-if='sections.length' branch (lines 8-52) with AssistantSection/ThinkingBlock/ToolCallCard components. AgentRunBlock is never rendered. Normal section mode is completely unaffected.",
+      "command": "npx vitest run src-electron/renderer/src/lib/__tests__/message-layout.test.ts",
+      "files": [
+        "src-electron/renderer/src/components/chat/AssistantContent.vue (lines 5-6, 8-52)",
+        "src-electron/renderer/src/lib/message-layout.ts (lines 71-76, 132-149)"
+      ]
+    },
+    {
+      "id": "TC-20",
+      "name": "Settings - standaloneTools checkbox 默认值",
+      "acRef": "AC-8",
+      "status": "pass",
+      "method": "vitest+code-review",
+      "evidence": "ALL_PI_TOOLS constant test: vitest confirms exactly 7 tools ['bash','edit','find','grep','ls','read','write']. SystemPane.vue lines 106-116: v-for='tool in ALL_PI_TOOLS' renders 7 Toggle checkboxes. Default: settings.ts line 22: standaloneTools = ref<string[]>(['write', 'edit']). Toggle :checked='settingsStore.standaloneTools.includes(tool)' — write and edit are checked by default. Checkboxes are inside <template v-if='settingsStore.compactStreaming'> block (line 99), only visible when compact mode is enabled.",
+      "files": [
+        "src-electron/renderer/src/stores/settings.ts (line 22)",
+        "src-electron/renderer/src/components/settings/SystemPane.vue (lines 99-116)",
+        "src-electron/renderer/src/lib/message-layout.ts (line 82)"
+      ]
+    },
+    {
+      "id": "TC-21",
+      "name": "Settings - 修改立即生效",
+      "acRef": "AC-8",
+      "status": "pass",
+      "method": "code-review",
+      "evidence": "Reactivity chain: (1) SystemPane.vue toggleStandaloneTool(tool, checked) mutates settingsStore.standaloneTools (reactive ref). (2) AgentRunBlock.vue line 102: standaloneToolsSet = computed(() => new Set(settingsStore.standaloneTools)) — re-evaluates when store value changes. (3) rawSections = computed(() => groupIntoSections(msg, standaloneToolsSet.value)) — re-groups when Set changes. (4) sections computed re-derives. TC-15 vitest test already proved grouping changes with standaloneTools set: adding 'bash' moves it from MergeBlock to StandaloneBlock. Vue reactivity ensures changes propagate to template immediately without page reload.",
+      "files": [
+        "src-electron/renderer/src/components/settings/SystemPane.vue (toggleStandaloneTool: lines 59-67)",
+        "src-electron/renderer/src/stores/settings.ts (standaloneTools: line 22)",
+        "src-electron/renderer/src/components/chat/AgentRunBlock.vue (standaloneToolsSet: line 102, rawSections: line 110)"
+      ]
+    },
+    {
+      "id": "TC-22",
+      "name": "Settings - 持久化",
+      "acRef": "AC-8",
+      "status": "pass",
+      "method": "code-review",
+      "evidence": "settings.ts line 60: persist config { key: 'xyz-settings', pick: ['theme', 'themePreset', 'locale', 'defaultModel', 'autoExpandThinking', 'autoExpandToolCalls', 'compactStreaming', 'standaloneTools'] }. 'standaloneTools' is explicitly in the pick array. Pinia persist plugin serializes to localStorage on mutation, deserializes on store init. App restart → store init → localStorage read → standaloneTools restored to previous value. Compact streaming toggle is also persisted.",
+      "files": [
+        "src-electron/renderer/src/stores/settings.ts (line 60)"
+      ]
+    }
+  ],
+  "buildValidation": {
+    "vue_tsc": {
+      "command": "cd src-electron/renderer && npx vue-tsc --noEmit",
+      "result": "pass",
+      "evidence": "no output (0 errors)"
+    },
+    "vite_build": {
+      "command": "cd src-electron/renderer && npx vite build",
+      "result": "pass",
+      "evidence": "✓ built in 1.44s"
+    },
+    "vitest_all": {
+      "command": "npx vitest run src-electron/renderer/src/lib/__tests__/message-layout.test.ts --reporter=verbose",
+      "result": "pass",
+      "evidence": "10 tests passed (10/10) in 113ms, including TC-18 (2 tests), TC-19 (2 tests), ALL_PI_TOOLS (1 test)"
+    }
+  },
+  "notes": [
+    "Non-core scope covers TC-16 to TC-22 (AC-6, AC-7, AC-8) — theme, backward compat, Settings.",
+    "TC-16/17 (theme): verified by exhaustive grep of all 3 compact components — 0 hardcoded hex/hsl colors, 38+ CSS var references total. Only rgba(255,255,255,0.3) in sweep gradient is acceptable (transparent white overlay for shimmer).",
+    "TC-18/19 (compat): verified by vitest (4 tests total) + code review of branching logic in message-layout.ts and conditional rendering in AssistantContent.vue.",
+    "TC-20/21/22 (Settings): verified by code review of SystemPane.vue checkboxes, settings.ts default+persist, and Vue reactivity chain from store → computed → template.",
+    "All build gates pass: vue-tsc=0 errors, vite build=success in 1.44s, vitest=10/10 pass."
+  ]
+}

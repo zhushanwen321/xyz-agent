@@ -1,0 +1,83 @@
+{
+  "phase": "test",
+  "verdict": "pass",
+  "framework": "manual + vue-tsc + vite build + eslint",
+  "execution_date": "2026-06-08",
+  "automated": {
+    "typecheck": {
+      "command": "cd src-electron/renderer && npx vue-tsc --noEmit",
+      "result": "pass",
+      "errors": 0
+    },
+    "build": {
+      "command": "cd src-electron/renderer && npx vite build",
+      "result": "pass",
+      "duration_ms": 1360
+    },
+    "lint": {
+      "command": "npm run lint",
+      "result": "pass",
+      "errors": 0,
+      "warnings": 7,
+      "new_warnings": 3
+    }
+  },
+  "e2e_scenarios": [
+    {
+      "id": "E2E-1",
+      "description": "AgentRunBlock 容器渲染",
+      "status": "verified_by_review",
+      "evidence": "BLR v2 确认 StreamingMessage→MessageBubble→AssistantContent→AgentRunBlock 路径完整"
+    },
+    {
+      "id": "E2E-2",
+      "description": "ContentBlock 独立渲染",
+      "status": "verified_by_review",
+      "evidence": "integration review 确认 EnrichedSection 预解析 + StandaloneToolCard props 匹配"
+    },
+    {
+      "id": "E2E-3",
+      "description": "MergeBlock 折叠展开",
+      "status": "verified_by_review",
+      "evidence": "BLR v2 确认 expand/collapse 逻辑和 chip bar 渲染正确"
+    },
+    {
+      "id": "E2E-4",
+      "description": "MergeBlock Streaming 实时状态",
+      "status": "verified_by_review",
+      "evidence": "robustness v2 确认 watch(isStreaming) timer lifecycle 正确"
+    },
+    {
+      "id": "E2E-5",
+      "description": "分组正确性（4 场景）",
+      "status": "verified_by_review",
+      "evidence": "BLR v2 逐场景验证 AC-5 的 4 组时序全部通过"
+    },
+    {
+      "id": "E2E-6",
+      "description": "主题兼容",
+      "status": "verified_by_review",
+      "evidence": "standards review 确认所有颜色使用 CSS 变量，无硬编码颜色"
+    },
+    {
+      "id": "E2E-7",
+      "description": "旧消息兼容",
+      "status": "verified_by_review",
+      "evidence": "integration review 确认 compactStreaming=false 走 groupByContentBlocksLegacy，完全隔离"
+    },
+    {
+      "id": "E2E-8",
+      "description": "Settings standaloneTools 配置",
+      "status": "verified_by_review",
+      "evidence": "BLR v2 确认 persist 链路 + integration review 确认 computed 链即时响应"
+    }
+  ],
+  "manual_verification_required": [
+    "启动 Electron 应用，触发 Agent 执行，视觉验证 AgentRunBlock 容器渲染效果",
+    "切换 light/dark/dim 主题验证颜色适配",
+    "Settings 页面勾选/取消 standaloneTools 验证即时重排"
+  ],
+  "review_based_verification": {
+    "note": "本项目无 E2E 测试框架（Electron 桌面应用）。E2E 场景通过 5 步专项审查（BLR/standards/taste/robustness/integration）的代码审查替代验证。手动验证项需在合入前由开发者在 dev 模式下确认。"
+  }
+}
