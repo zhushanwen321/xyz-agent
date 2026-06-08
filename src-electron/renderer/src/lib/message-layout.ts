@@ -63,9 +63,8 @@ export interface AssistantSection {
 /**
  * 将单条 assistant message 的内容按类型分组。
  *
- * 统一处理有/无 contentBlocks 两种情况：
- * - 有 contentBlocks：按相邻同类型合并
- * - 无 contentBlocks（历史消息）：从 thinking → toolCalls → content 构造 sections
+ * 统一处理有/无 contentBlocks 两种情况，无论哪种路径
+ * 都返回相同的 section type：'merge' | 'text' | 'standalone' | 'customTool'。
  */
 export function groupIntoSections(msg: Message, standaloneTools?: Set<string>): AssistantSection[] {
   if (msg.contentBlocks?.length) {
@@ -73,7 +72,7 @@ export function groupIntoSections(msg: Message, standaloneTools?: Set<string>): 
       ? groupByContentBlocks(msg, standaloneTools)
       : groupByContentBlocksLegacy(msg)
   }
-  return groupByLegacyFields(msg)
+  return groupByLegacyFields(msg, standaloneTools)
 }
 
 // ── Block-type classification ───────────────────────────────
@@ -149,29 +148,54 @@ function groupByContentBlocksLegacy(msg: Message): AssistantSection[] {
   return sections
 }
 
-/** 无 contentBlocks → 从 thinking/toolCalls/content 构造 */
-function groupByLegacyFields(msg: Message): AssistantSection[] {
+/** 无 contentBlocks → 从 thinking/toolCalls/content 构造，返回 merge/standalone/customTool/text */
+function groupByLegacyFields(msg: Message, standaloneTools?: Set<string>): AssistantSection[] {
   const sections: AssistantSection[] = []
+  const tools = standaloneTools ?? new Set<string>()
+
+  // Collect merge-able items (thinking + non-standalone built-in toolCalls)
+  const mergeBlocks: ContentBlock[] = []
 
   if (msg.thinking?.length) {
-    sections.push({
-      type: 'thinking',
-      blocks: msg.thinking.map(b => ({ type: 'thinking' as const, refId: b.id })),
-    })
+    for (const b of msg.thinking) {
+      mergeBlocks.push({ type: 'thinking', refId: b.id })
+    }
   }
 
   if (msg.toolCalls?.length) {
-    sections.push({
-      type: 'toolCall',
-      blocks: msg.toolCalls.map(tc => ({ type: 'toolCall' as const, refId: tc.id })),
-    })
+    for (const tc of msg.toolCalls) {
+      const isBuiltin = (ALL_PI_TOOLS as readonly string[]).includes(tc.toolName)
+      const isStandalone = tools.has(tc.toolName)
+      const isCustom = !isBuiltin
+
+      if (isCustom) {
+        // Flush merge buffer before standalone
+        if (mergeBlocks.length > 0) {
+          sections.push({ type: 'merge', blocks: [...mergeBlocks] })
+          mergeBlocks.length = 0
+        }
+        sections.push({ type: 'customTool', blocks: [{ type: 'toolCall', refId: tc.id }] })
+      } else if (isStandalone) {
+        // Flush merge buffer before standalone
+        if (mergeBlocks.length > 0) {
+          sections.push({ type: 'merge', blocks: [...mergeBlocks] })
+          mergeBlocks.length = 0
+        }
+        sections.push({ type: 'standalone', blocks: [{ type: 'toolCall', refId: tc.id }] })
+      } else {
+        // Built-in, not standalone → merge
+        mergeBlocks.push({ type: 'toolCall', refId: tc.id })
+      }
+    }
+  }
+
+  // Flush remaining merge items
+  if (mergeBlocks.length > 0) {
+    sections.push({ type: 'merge', blocks: mergeBlocks })
   }
 
   if (msg.content) {
-    sections.push({
-      type: 'text',
-      blocks: [{ type: 'text' as const, refId: 'text' }],
-    })
+    sections.push({ type: 'text', blocks: [{ type: 'text', refId: 'text' }] })
   }
 
   return sections

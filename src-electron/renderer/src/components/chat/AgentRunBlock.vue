@@ -1,5 +1,5 @@
 <template>
-  <div class="agent-run-block rounded-sm border border-border">
+  <div class="agent-run-block rounded-md border border-border bg-surface/50">
     <!-- 3px status bar -->
     <div
       :class="[
@@ -52,11 +52,13 @@
     <!-- Footer: steps · time · file count -->
     <div class="run-footer flex items-center gap-2 border-t border-border px-3 py-1.5 text-xs text-muted">
       <span>{{ stepCount }} 步</span>
-      <span>·</span>
-      <span>{{ formattedElapsed }}</span>
+      <template v-if="formattedElapsed">
+        <span>·</span>
+        <span>{{ formattedElapsed }}</span>
+      </template>
       <template v-if="standaloneToolCount > 0">
         <span>·</span>
-        <span>{{ standaloneToolCount }} 次工具操作</span>
+        <span>{{ standaloneToolCount }} 文件修改</span>
       </template>
     </div>
   </div>
@@ -174,7 +176,10 @@ const elapsedMs = computed(() => {
   return endTimes.reduce((a, b) => a > b ? a : b, endTimes[0]) - startTimes.reduce((a, b) => a < b ? a : b, startTimes[0])
 })
 
-const formattedElapsed = computed(() => formatTime(elapsedMs.value))
+const formattedElapsed = computed(() => {
+  const ms = elapsedMs.value
+  return ms > 0 ? formatTime(ms) : ''
+})
 </script>
 
 <style scoped>
@@ -188,6 +193,12 @@ const formattedElapsed = computed(() => formatTime(elapsedMs.value))
   );
   background-size: 200% 100%;
   animation: run-sweep 1.5s ease-in-out infinite;
+}
+
+/* Complete: subtle accent-tinted bar */
+.run-status-bar:not(.run-status-bar--streaming) {
+  background: var(--accent);
+  opacity: 0.3;
 }
 
 @keyframes run-sweep {
