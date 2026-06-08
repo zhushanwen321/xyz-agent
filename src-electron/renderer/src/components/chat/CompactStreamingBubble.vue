@@ -1,13 +1,15 @@
 <template>
-  <div class="stream-compact" :class="{ 'stream-compact--expanded': expanded }" @click="expanded = !expanded">
-    <span class="stream-compact__pulse" />
-    <span class="stream-compact__status">{{ statusText }}</span>
-    <span v-if="elapsedDisplay" class="stream-compact__time">{{ elapsedDisplay }}</span>
-    <svg class="stream-compact__chevron" :class="{ 'stream-compact__chevron--open': expanded }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
-  </div>
-  <!-- Expanded full message -->
-  <div v-if="expanded" class="stream-compact__full">
-    <MessageBubble :message="message" :is-streaming="true" />
+  <div class="stream-compact-wrapper">
+    <div class="stream-compact" :class="{ 'stream-compact--expanded': expanded }" @click="expanded = !expanded">
+      <span class="stream-compact__pulse" />
+      <span class="stream-compact__status">{{ statusText }}</span>
+      <span v-if="elapsedDisplay" class="stream-compact__time">{{ elapsedDisplay }}</span>
+      <svg class="stream-compact__chevron" :class="{ 'stream-compact__chevron--open': expanded }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+    </div>
+    <!-- Expanded full message -->
+    <div v-if="expanded" class="stream-compact__full">
+      <MessageBubble :message="message" :is-streaming="true" />
+    </div>
   </div>
 </template>
 
