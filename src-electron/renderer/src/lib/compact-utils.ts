@@ -4,13 +4,12 @@
 
 // ── Time formatting ──
 
-const DECISECOND_MS = 100
 const MS_PER_SECOND = 1000
 const SECONDS_PER_MINUTE = 60
 
 /** 格式化毫秒耗时为人类可读字符串 */
 export function formatTime(ms: number): string {
-  if (ms < MS_PER_SECOND) return `${(ms / DECISECOND_MS).toFixed(1)}s`
+  if (ms < MS_PER_SECOND) return `${(ms / MS_PER_SECOND).toFixed(1)}s`
   const s = ms / MS_PER_SECOND
   if (s < SECONDS_PER_MINUTE) return `${s.toFixed(1)}s`
   const m = Math.floor(s / SECONDS_PER_MINUTE)
