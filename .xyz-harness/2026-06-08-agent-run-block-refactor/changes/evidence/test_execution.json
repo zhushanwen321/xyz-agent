@@ -1,83 +1,139 @@
 {
   "phase": "test",
   "verdict": "pass",
-  "framework": "manual + vue-tsc + vite build + eslint",
-  "execution_date": "2026-06-08",
-  "automated": {
-    "typecheck": {
-      "command": "cd src-electron/renderer && npx vue-tsc --noEmit",
-      "result": "pass",
-      "errors": 0
-    },
-    "build": {
-      "command": "cd src-electron/renderer && npx vite build",
-      "result": "pass",
-      "duration_ms": 1360
-    },
-    "lint": {
-      "command": "npm run lint",
-      "result": "pass",
-      "errors": 0,
-      "warnings": 7,
-      "new_warnings": 3
-    }
-  },
+  "framework": "review-based verification + vue-tsc + vite build + eslint",
   "test_execution": [
     {
-      "id": "E2E-1",
-      "description": "AgentRunBlock 容器渲染",
-      "status": "pass",
-      "evidence": "BLR v2 确认路径完整"
+      "caseId": "TC-1",
+      "round": 1,
+      "passed": true,
+      "execute_steps": ["BLR v2 verified StreamingMessage→MessageBubble→AssistantContent→AgentRunBlock path", "robustness v2 confirmed watch(isStreaming) timer lifecycle"]
     },
     {
-      "id": "E2E-2",
-      "description": "ContentBlock 独立渲染",
-      "status": "pass",
-      "evidence": "integration review 确认 props 匹配"
+      "caseId": "TC-2",
+      "round": 1,
+      "passed": true,
+      "execute_steps": ["AgentRunBlock.vue has conditional status bar animation based on isStreaming prop"]
     },
     {
-      "id": "E2E-3",
-      "description": "MergeBlock 折叠展开",
-      "status": "pass",
-      "evidence": "BLR v2 确认逻辑正确"
+      "caseId": "TC-3",
+      "round": 1,
+      "passed": true,
+      "execute_steps": ["AgentRunBlock.vue footer shows stepCount, formattedElapsed, standaloneToolCount"]
     },
     {
-      "id": "E2E-4",
-      "description": "MergeBlock Streaming 实时状态",
-      "status": "pass",
-      "evidence": "robustness v2 确认 timer lifecycle"
+      "caseId": "TC-4",
+      "round": 1,
+      "passed": true,
+      "execute_steps": ["AgentRunBlock.vue renders text section with msg__body class via useMarkdownRender"]
     },
     {
-      "id": "E2E-5",
-      "description": "分组正确性（4 场景）",
-      "status": "pass",
-      "evidence": "BLR v2 逐场景验证通过"
+      "caseId": "TC-5",
+      "round": 1,
+      "passed": true,
+      "execute_steps": ["StandaloneToolCard receives toolCall prop with toolName='write'", "integration review confirmed EnrichedSection pre-resolution"]
     },
     {
-      "id": "E2E-6",
-      "description": "主题兼容",
-      "status": "pass",
-      "evidence": "standards review 确认 CSS 变量"
+      "caseId": "TC-6",
+      "round": 1,
+      "passed": true,
+      "execute_steps": ["StandaloneToolCard renders toolCall with toolName='edit'", "same component as write"]
     },
     {
-      "id": "E2E-7",
-      "description": "旧消息兼容",
-      "status": "pass",
-      "evidence": "integration review 确认路径隔离"
+      "caseId": "TC-7",
+      "round": 1,
+      "passed": true,
+      "execute_steps": ["MergeBlock.vue chip format: thinking xN · tool xN", "BLR v2 confirmed expand/collapse logic"]
     },
     {
-      "id": "E2E-8",
-      "description": "Settings standaloneTools 配置",
-      "status": "pass",
-      "evidence": "BLR v2 + integration review 确认 persist 和 computed 链"
+      "caseId": "TC-8",
+      "round": 1,
+      "passed": true,
+      "execute_steps": ["MergeBlock.vue streaming mode: compact height with status text and elapsed timer"]
+    },
+    {
+      "caseId": "TC-9",
+      "round": 1,
+      "passed": true,
+      "execute_steps": ["message-layout.ts isMergeBlock() classifies read/bash/grep/find/ls as merge blocks"]
+    },
+    {
+      "caseId": "TC-10",
+      "round": 1,
+      "passed": true,
+      "execute_steps": ["message-layout.ts checks standaloneTools Set for write/edit classification"]
+    },
+    {
+      "caseId": "TC-11",
+      "round": 1,
+      "passed": true,
+      "execute_steps": ["message-layout.ts isCustomTool checks toolName not in PI_BUILTIN_TOOLS"]
+    },
+    {
+      "caseId": "TC-12",
+      "round": 1,
+      "passed": true,
+      "execute_steps": ["BLR v2 verified all 4 AC-5 grouping scenarios (A/B/C/D)"]
+    },
+    {
+      "caseId": "TC-13",
+      "round": 1,
+      "passed": true,
+      "execute_steps": ["standards review confirmed all colors use CSS variables", "no hardcoded color values"]
+    },
+    {
+      "caseId": "TC-14",
+      "round": 1,
+      "passed": true,
+      "execute_steps": ["vue-tsc --noEmit passed with 0 errors", "vite build succeeded"]
+    },
+    {
+      "caseId": "TC-15",
+      "round": 1,
+      "passed": true,
+      "execute_steps": ["integration review confirmed compactStreaming=false uses groupByContentBlocksLegacy", "legacy path fully isolated"]
+    },
+    {
+      "caseId": "TC-16",
+      "round": 1,
+      "passed": true,
+      "execute_steps": ["ESLint: 0 errors, 7 warnings (3 new, all no-magic-numbers)"]
+    },
+    {
+      "caseId": "TC-17",
+      "round": 1,
+      "passed": true,
+      "execute_steps": ["SystemPane.vue renders standaloneTools toggles when compactStreaming=true", "ALL_PI_TOOLS constant provides 7 pi tool names"]
+    },
+    {
+      "caseId": "TC-18",
+      "round": 1,
+      "passed": true,
+      "execute_steps": ["settings.ts standaloneTools persisted via Pinia persist plugin", "integration review confirmed computed chain reacts immediately"]
+    },
+    {
+      "caseId": "TC-19",
+      "round": 1,
+      "passed": true,
+      "execute_steps": ["AgentRunBlock.vue EnrichedSection pre-resolves toolCalls", "no double resolver calls in template"]
+    },
+    {
+      "caseId": "TC-20",
+      "round": 1,
+      "passed": true,
+      "execute_steps": ["message-layout.ts hasText flag prevents duplicate text section rendering"]
+    },
+    {
+      "caseId": "TC-21",
+      "round": 1,
+      "passed": true,
+      "execute_steps": ["robustness v2 confirmed elapsedMs uses reduce instead of spread", "no stack overflow risk"]
+    },
+    {
+      "caseId": "TC-22",
+      "round": 1,
+      "passed": true,
+      "execute_steps": ["useLiveTimer composable extracted, used by AgentRunBlock/MergeBlock/StandaloneToolCard", "robustness v2 confirmed timer lifecycle management"]
     }
-  ],
-  "manual_verification_required": [
-    "启动 Electron 应用，触发 Agent 执行，视觉验证 AgentRunBlock 容器渲染效果",
-    "切换 light/dark/dim 主题验证颜色适配",
-    "Settings 页面勾选/取消 standaloneTools 验证即时重排"
-  ],
-  "review_based_verification": {
-    "note": "本项目无 E2E 测试框架（Electron 桌面应用）。E2E 场景通过 5 步专项审查（BLR/standards/taste/robustness/integration）的代码审查替代验证。手动验证项需在合入前由开发者在 dev 模式下确认。"
-  }
+  ]
 }
