@@ -47,7 +47,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import type { ContentBlock, Message, ThinkingBlock as ThinkingBlockType, ToolCall } from '@xyz-agent/shared'
 import ThinkingBlock from './ThinkingBlock.vue'
 import ToolCallCard from './ToolCallCard.vue'
@@ -125,11 +125,12 @@ const chips = computed<ChipInfo[]>(() => {
 
 const TEXT_PREVIEW_MAX = 60
 
-const { now, start: startTimer } = useLiveTimer(200)
+const { now, start: startTimer, stop: stopTimer } = useLiveTimer(200)
 
-onMounted(() => {
-  if (props.isStreaming) startTimer()
-})
+watch(() => props.isStreaming, (streaming) => {
+  if (streaming) startTimer()
+  else stopTimer()
+}, { immediate: true })
 
 const streamStatusText = computed(() => {
   const msg = props.message

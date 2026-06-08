@@ -157,12 +157,12 @@ const elapsedMs = computed(() => {
   if (allTimes.length === 0) return 0
 
   if (props.isStreaming) {
-    return liveNow.value - Math.min(...allTimes)
+    return liveNow.value - allTimes.reduce((a, b) => a < b ? a : b, allTimes[0])
   }
 
   // Complete: max(endTimes) - min(startTimes)
   if (endTimes.length === 0) return 0
-  return Math.max(...endTimes) - Math.min(...startTimes)
+  return endTimes.reduce((a, b) => a > b ? a : b, endTimes[0]) - startTimes.reduce((a, b) => a < b ? a : b, startTimes[0])
 })
 
 const formattedElapsed = computed(() => formatTime(elapsedMs.value))
