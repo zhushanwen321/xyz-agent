@@ -198,6 +198,7 @@ export class SidecarServer implements IMessageBroker {
         case 'extension.installDir':
         case 'extension.installGit':
         case 'extension.finishInstall':
+        case 'extension.cancelInstall':
           return this.handleExtensionMessage(msg, ws)
         // ── Plugin messages ───────────────────────────────────────────
         case 'plugin.list':
@@ -403,10 +404,7 @@ export class SidecarServer implements IMessageBroker {
           const result = await this.extensionService.installLocalDirectory(sourcePath)
           return this.send(ws, { type: 'extension.discovered', id: msg.id, payload: { tempDir: result.tempDir, candidates: result.candidates } })
         } catch (e) {
-          // Duck-type check: ExtensionInstallError from extension-service.ts has .code and .hint
-          // We use property check instead of instanceof to avoid breaking when the module is mocked
-          const errObj = e && typeof e === 'object' && 'code' in e ? e as { code: string; hint?: string } : null
-          return this.send(ws, { type: 'extension.installError', id: msg.id, payload: { code: errObj?.code ?? 'install_failed', message: e instanceof Error ? e.message : String(e), hint: errObj?.hint } })
+          return this.send(ws, { type: 'extension.installError', id: msg.id, payload: this.extractExtensionError(e) })
         }
       }
       case 'extension.installGit': {
@@ -418,8 +416,7 @@ export class SidecarServer implements IMessageBroker {
           const result = await this.extensionService.installGitRepository(url)
           return this.send(ws, { type: 'extension.discovered', id: msg.id, payload: { tempDir: result.tempDir, candidates: result.candidates } })
         } catch (e) {
-          const errObj = e && typeof e === 'object' && 'code' in e ? e as { code: string; hint?: string } : null
-          return this.send(ws, { type: 'extension.installError', id: msg.id, payload: { code: errObj?.code ?? 'install_failed', message: e instanceof Error ? e.message : String(e), hint: errObj?.hint } })
+          return this.send(ws, { type: 'extension.installError', id: msg.id, payload: this.extractExtensionError(e) })
         }
       }
       case 'extension.finishInstall': {
@@ -432,8 +429,19 @@ export class SidecarServer implements IMessageBroker {
           const extensions = await this.extensionService.scanExtensions()
           return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions } })
         } catch (e) {
-          const errObj = e && typeof e === 'object' && 'code' in e ? e as { code: string; hint?: string } : null
-          return this.send(ws, { type: 'extension.installError', id: msg.id, payload: { code: errObj?.code ?? 'install_failed', message: e instanceof Error ? e.message : String(e), hint: errObj?.hint } })
+          return this.send(ws, { type: 'extension.installError', id: msg.id, payload: this.extractExtensionError(e) })
+        }
+      }
+      case 'extension.cancelInstall': {
+        if (!this.extensionService) {
+          return this.sendError(ws, 'handler_error', 'Extension service not available', msg.id)
+        }
+        try {
+          const { tempDir } = msg.payload as { tempDir: string }
+          await this.extensionService.cancelInstall(tempDir)
+          return this.send(ws, { type: 'extension.installCancelled', id: msg.id, payload: {} })
+        } catch (e) {
+          return this.sendError(ws, 'cancel_failed', e instanceof Error ? e.message : String(e), msg.id)
         }
       }
     }
@@ -458,6 +466,21 @@ export class SidecarServer implements IMessageBroker {
         this.sendError(ws, 'session.compact_failed', 'Failed to restore session for compact: ' + (e instanceof Error ? e.message : String(e)), msg.id, compactId)
       })
     } else { runCompact() }
+  }
+
+  // ── Extension error helper ────────────────────────────────────
+
+  /**
+   * Extract duck-typed ExtensionInstallError fields from unknown catch value.
+   * Uses property check instead of instanceof to work with mocked modules.
+   */
+  private extractExtensionError(e: unknown): { code: string; message: string; hint?: string } {
+    const errObj = e && typeof e === 'object' && 'code' in e ? e as { code: string; hint?: string } : null
+    return {
+      code: errObj?.code ?? 'install_failed',
+      message: e instanceof Error ? e.message : String(e),
+      hint: errObj?.hint,
+    }
   }
 
   // ── IMessageBroker ──────────────────────────────────────────────

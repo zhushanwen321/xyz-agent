@@ -16,7 +16,7 @@ export type ClientMessageType =
   | 'tool.approve' | 'tool.deny' | 'tool.always_allow'
   | 'extension.ui_response' | 'extension.toggle' | 'extension.list'
   | 'extension.install' | 'extension.uninstall'
-  | 'extension.installDir' | 'extension.installGit' | 'extension.finishInstall'
+  | 'extension.installDir' | 'extension.installGit' | 'extension.finishInstall' | 'extension.cancelInstall'
   | 'ping'
   | 'session.tree-data' | 'session.tree-navigate' | 'session.tree-fork' | 'session.tree-clone' | 'session.tree-capability'
   | 'plugin.list' | 'plugin.toggle'
@@ -87,6 +87,7 @@ export interface ClientMessageMap {
   'extension.installDir': { path: string }
   'extension.installGit': { url: string }
   'extension.finishInstall': { tempDir: string; selected: string[] }
+  'extension.cancelInstall': { tempDir: string }
   'plugin.list': Record<string, never>
   'plugin.toggle': { pluginId: string; enabled: boolean; trustLevel?: 'trusted' | 'sandbox' }
   'plugin.install': { packageSpec: string }
@@ -145,6 +146,7 @@ export type ClientMessage =
   | { type: 'extension.installDir'; id?: string; payload: ClientMessageMap['extension.installDir'] }
   | { type: 'extension.installGit'; id?: string; payload: ClientMessageMap['extension.installGit'] }
   | { type: 'extension.finishInstall'; id?: string; payload: ClientMessageMap['extension.finishInstall'] }
+  | { type: 'extension.cancelInstall'; id?: string; payload: ClientMessageMap['extension.cancelInstall'] }
   | { type: 'plugin.list'; id?: string; payload: Record<string, never> }
   | { type: 'plugin.toggle'; id?: string; payload: ClientMessageMap['plugin.toggle'] }
   | { type: 'plugin.install'; id?: string; payload: ClientMessageMap['plugin.install'] }
@@ -183,7 +185,7 @@ export type ServerMessageType =
   | 'session.thinkingLevelSet'
   | 'pong' | 'error'
   | 'extension.ui_request' | 'extension.ui_timeout' | 'extension.error'
-  | 'extension.discovered' | 'extension.installProgress' | 'extension.installError'
+  | 'extension.discovered' | 'extension.installProgress' | 'extension.installError' | 'extension.installCancelled'
   | 'message.tool_call_update' | 'config.extensions'
   | 'session.commands'
   | 'session.tree-data' | 'session.tree-navigate-result' | 'session.tree-fork-result' | 'session.tree-clone-result' | 'session.tree-capability'

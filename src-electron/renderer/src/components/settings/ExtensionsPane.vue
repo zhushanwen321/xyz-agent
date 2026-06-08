@@ -58,6 +58,10 @@ function onDiscovered(msg: ServerMessage) {
 }
 
 function onInstallError(msg: ServerMessage) {
+  // Only handle extension-related errors to avoid swallowing unrelated errors
+  const msgType = (msg as { type?: string }).type
+  if (msgType !== 'extension.installError' && msgType !== 'error') return
+
   const payload = msg.payload as { code?: string; message?: string; hint?: string }
   installError.value = payload.message ?? 'Install failed'
   installHint.value = payload.hint ?? ''
@@ -75,7 +79,7 @@ function handleToggle(payload: { name: string; enabled: boolean }) {
 }
 
 function handleInstall() {
-  const source = installSource.value.trim()
+  let source = installSource.value.trim()
   if (!source) return
   installing.value = true
   installError.value = ''
@@ -88,7 +92,10 @@ function handleInstall() {
     installPhase.value = 'discovering'
     send({ type: 'extension.installGit', payload: { url: source } })
   } else {
-    // npm — existing direct flow
+    // npm — auto-prepend npm: prefix if missing
+    if (!source.startsWith('npm:')) {
+      source = `npm:${source}`
+    }
     installPhase.value = 'idle'
     send({ type: 'extension.install', payload: { source } })
   }
@@ -104,6 +111,10 @@ function confirmInstallSelected() {
 }
 
 function cancelInstallSelection() {
+  // Notify backend to clean up temp dir
+  if (discoveryTempDir.value) {
+    send({ type: 'extension.cancelInstall', payload: { tempDir: discoveryTempDir.value } })
+  }
   installPhase.value = 'idle'
   discoveredCandidates.value = []
   discoveryTempDir.value = ''
@@ -127,6 +138,13 @@ function doUninstall() {
   if (!uninstallTarget.value) return
   send({ type: 'extension.uninstall', payload: { name: uninstallTarget.value.name } })
   uninstallTarget.value = null
+}
+
+function onTabChange(tab: 'npm' | 'local' | 'git') {
+  installTab.value = tab
+  installSource.value = ''
+  installError.value = ''
+  installHint.value = ''
 }
 
 function installButtonLabel(): string {
@@ -185,7 +203,7 @@ onUnmounted(() => {
             :key="tab.key"
             :variant="installTab === tab.key ? 'outline' : 'ghost'"
             size="sm"
-            @click="installTab = tab.key"
+            @click="onTabChange(tab.key)"
           >
             {{ tab.label }}
           </Button>
