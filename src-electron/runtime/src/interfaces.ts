@@ -114,6 +114,10 @@ export interface ISessionService {
   setSendMessageHook(hook: (sessionId: string, content: string) => Promise<{ blocked: boolean; reason?: string } | null>): void
   /** Set thinking level for a session's pi subprocess */
   setThinkingLevel(sessionId: string, level: string): Promise<void>
+  /** Steer an actively generating session */
+  steerMessage(sessionId: string, content: string): Promise<void>
+  /** Queue a follow-up message for a session */
+  followUpMessage(sessionId: string, content: string): Promise<void>
 }
 
 // ── IConfigService ────────────────────────────────────────────────
@@ -156,6 +160,7 @@ export interface IExtensionService {
   installLocalDirectory(sourcePath: string): Promise<{ tempDir: string; candidates: import('@xyz-agent/shared').ExtensionInfo[] }>
   installGitRepository(url: string): Promise<{ tempDir: string; candidates: import('@xyz-agent/shared').ExtensionInfo[] }>
   finishInstall(tempDir: string, selected: string[]): Promise<void>
+  cancelInstall(tempDir: string): Promise<void>
 }
 
 // ── IModelService ─────────────────────────────────────────────────
