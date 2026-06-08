@@ -10,11 +10,12 @@
   <template v-else>
     <div class="merge-bar" @click="toggleExpand">
       <span class="merge-bar__label">过程</span>
-      <div class="merge-bar__chips" @click.stop>
+      <div class="merge-bar__chips">
         <span
           v-for="(chip, ci) in chips"
           :key="ci"
-          :class="['merge-chip', `merge-chip--${chip.variant}`]"
+          :class="['merge-chip', `merge-chip--${chip.variant}`, { 'merge-chip--active': activeChipFilter === chip.label }]"
+          @click.stop="toggleChipFilter(chip.label)"
         >
           {{ chip.label }} ×{{ chip.count }}
         </span>
@@ -30,7 +31,7 @@
 
     <!-- Expanded blocks -->
     <div v-show="expanded" class="merge-blocks">
-      <template v-for="block in blocks" :key="block.refId">
+      <template v-for="block in filteredBlocks" :key="block.refId">
         <ThinkingBlock
           v-if="block.type === 'thinking'"
           :text="resolveThinkingContent(block.refId)"
@@ -75,9 +76,17 @@ const props = defineProps<{
 // ── Expand state (complete mode) ──
 
 const expanded = ref(false)
+const activeChipFilter = ref<string | null>(null)
 
 function toggleExpand() {
   expanded.value = !expanded.value
+  if (!expanded.value) activeChipFilter.value = null
+}
+
+function toggleChipFilter(label: string) {
+  // Click chip: expand if not expanded, then toggle filter
+  if (!expanded.value) expanded.value = true
+  activeChipFilter.value = activeChipFilter.value === label ? null : label
 }
 
 // ── Data resolvers ──
@@ -93,6 +102,19 @@ function resolveThinkingContent(refId: string): string {
 function resolveToolCall(refId: string): ToolCall | undefined {
   return props.message.toolCalls?.find(tc => tc.id === refId)
 }
+
+// ── Expanded block filtering ──
+
+const filteredBlocks = computed(() => {
+  if (!activeChipFilter.value) return props.blocks
+  const filter = activeChipFilter.value
+  return props.blocks.filter(b => {
+    if (filter === '思考') return b.type === 'thinking'
+    // Tool chip: filter by toolName
+    const tc = b.type === 'toolCall' ? resolveToolCall(b.refId) : undefined
+    return tc?.toolName === filter
+  })
+})
 
 // ── Chip summary (complete mode) ──
 
@@ -227,6 +249,10 @@ const streamElapsed = computed(() => {
   color: var(--success);
   font-weight: 500;
 }
+.merge-chip--active {
+  outline: 1px solid currentColor;
+  outline-offset: 1px;
+}
 
 .merge-bar__chevron {
   width: 12px;
@@ -244,6 +270,11 @@ const streamElapsed = computed(() => {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  margin-top: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
 }
 
 /* ── Streaming mode: compact single-line ── */
