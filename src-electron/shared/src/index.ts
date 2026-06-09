@@ -32,4 +32,4 @@ export type {
   PanelLeaf, SplitNode, PanelTree, WindowState,
 } from './panel'
 export * from './extension'
-export { BASE_PORT, DEV_PORT_OFFSET, MAX_PORT } from './constants'
+export { BASE_PORT, DEV_PORT_OFFSET, MAX_PORT, ENV_WHITELIST_PREFIXES } from './constants'

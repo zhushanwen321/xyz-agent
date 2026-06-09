@@ -247,11 +247,6 @@ function handleExtensionUIRequest(event: PiEvent, ctx: HandlerContext): HandlerR
     return { type: 'extension:setEditorText', payload: { sessionId: sid, text: String(event.text ?? '') } }
   }
 
-  // setTitle → extension:setTitle
-  if (method === 'setTitle') {
-    return { type: 'extension:setTitle', payload: { sessionId: sid, title: String(event.title ?? '') } }
-  }
-
   // bridge:* → internal callback only
   if (method?.startsWith('bridge:')) {
     const requestId = String(event.id ?? '')

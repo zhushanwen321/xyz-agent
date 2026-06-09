@@ -550,7 +550,7 @@ describe('SidecarServer: extension message routing', () => {
 
       const msg = await responsePromise
       expect(msg.type).toBe('extension.installError')
-      expect(msg.payload.message).toContain('invalid temp directory')
+      expect((msg.payload as { message?: string }).message).toContain('invalid temp directory')
     })
   })
 
