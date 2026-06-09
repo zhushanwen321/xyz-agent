@@ -83,7 +83,7 @@ function toggleStandaloneTool(tool: string, checked: boolean) {
   <div class="max-w-[860px]">
     <!-- Section: 语言与外观 -->
     <div class="border border-border rounded-sm overflow-hidden mb-3">
-      <div class="flex items-center py-[9px] px-4 bg-[var(--section-bg)] min-h-[42px]">
+      <div class="flex items-center py-2.5 px-4 bg-[var(--section-bg)] min-h-[42px]">
         <span class="text-[13px] font-semibold">{{ t('settings.languageAndAppearance') }}</span>
       </div>
       <div>
@@ -104,7 +104,7 @@ function toggleStandaloneTool(tool: string, checked: boolean) {
 
     <!-- Section: 聊天显示 -->
     <div class="border border-border rounded-sm overflow-hidden mb-3">
-      <div class="flex items-center py-[9px] px-4 bg-[var(--section-bg)] min-h-[42px]">
+      <div class="flex items-center py-2.5 px-4 bg-[var(--section-bg)] min-h-[42px]">
         <span class="text-[13px] font-semibold">聊天显示</span>
       </div>
       <div>
@@ -152,7 +152,7 @@ function toggleStandaloneTool(tool: string, checked: boolean) {
 
     <!-- Section: 配色主题 -->
     <div class="border border-border rounded-sm overflow-hidden mb-3">
-      <div class="flex items-center py-[9px] px-4 bg-[var(--section-bg)] min-h-[42px]">
+      <div class="flex items-center py-2.5 px-4 bg-[var(--section-bg)] min-h-[42px]">
         <span class="text-[13px] font-semibold">{{ t('settings.colorTheme') }}</span>
       </div>
       <div class="py-3 px-4">
@@ -162,7 +162,7 @@ function toggleStandaloneTool(tool: string, checked: boolean) {
             v-for="p in mutedPalettes"
             :key="p.id"
             variant="ghost"
-            class="flex items-center gap-2 py-[6px] px-3 rounded-sm border cursor-pointer transition-all duration-150 font-body text-fg"
+            class="flex items-center gap-2 py-1.5 px-3 rounded-sm border cursor-pointer transition-all duration-150 font-body text-fg"
             :class="currentPalette === p.id ? 'border-[var(--accent)] bg-[var(--accent-light)] ring-1 ring-[var(--accent)]' : 'border-border bg-surface hover:border-muted hover:bg-[var(--accent-light)]'"
             @click="selectPalette(p.id)"
           >
@@ -177,7 +177,7 @@ function toggleStandaloneTool(tool: string, checked: boolean) {
             v-for="p in colorfulPalettes"
             :key="p.id"
             variant="ghost"
-            class="flex items-center gap-2 py-[6px] px-3 rounded-sm border cursor-pointer transition-all duration-150 font-body text-fg"
+            class="flex items-center gap-2 py-1.5 px-3 rounded-sm border cursor-pointer transition-all duration-150 font-body text-fg"
             :class="currentPalette === p.id ? 'border-[var(--accent)] bg-[var(--accent-light)] ring-1 ring-[var(--accent)]' : 'border-border bg-surface hover:border-muted hover:bg-[var(--accent-light)]'"
             @click="selectPalette(p.id)"
           >

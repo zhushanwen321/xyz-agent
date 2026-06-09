@@ -198,7 +198,7 @@ onUnmounted(() => {
     <!-- Install area -->
     <div class="border border-border rounded-sm overflow-hidden mb-3">
       <div
-        class="flex items-center justify-between py-[10px] px-4 bg-[var(--section-bg)] border-b border-border min-h-[42px] cursor-pointer hover:bg-[var(--hover-bg)]"
+        class="flex items-center justify-between py-2.5 px-4 bg-[var(--section-bg)] border-b border-border min-h-[42px] cursor-pointer hover:bg-[var(--hover-bg)]"
         @click="showInstall = !showInstall"
       >
         <span class="text-[13px] font-semibold">Install Extension</span>
@@ -254,7 +254,7 @@ onUnmounted(() => {
 
     <!-- Discovery: candidate selection -->
     <div v-if="installPhase === 'selecting'" class="border border-border rounded-sm overflow-hidden mb-3">
-      <div class="flex items-center justify-between py-[10px] px-4 bg-[var(--section-bg)] border-b border-border min-h-[42px]">
+      <div class="flex items-center justify-between py-2.5 px-4 bg-[var(--section-bg)] border-b border-border min-h-[42px]">
         <span class="text-[13px] font-semibold">Found {{ discoveredCandidates.length }} extension(s)</span>
       </div>
       <div>
@@ -282,7 +282,7 @@ onUnmounted(() => {
           <div class="flex-1 min-w-0">
             <div class="text-[13px] font-semibold flex items-center gap-2">
               {{ candidate.name }}
-              <span class="text-[10px] font-semibold py-[1px] px-1.5 rounded-sm bg-[var(--accent-light)] text-[var(--accent)]">{{ candidate.version }}</span>
+              <span class="text-[10px] font-semibold py-px px-1.5 rounded-sm bg-[var(--accent-light)] text-[var(--accent)]">{{ candidate.version }}</span>
             </div>
             <div class="text-[11px] text-muted mt-px line-clamp-1">{{ candidate.description }}</div>
           </div>
@@ -323,9 +323,9 @@ onUnmounted(() => {
 
     <!-- Extension list -->
     <div v-if="extensions.length > 0" class="border border-border rounded-sm overflow-hidden mb-3">
-      <div class="flex items-center justify-between py-[10px] px-4 bg-[var(--section-bg)] border-b border-border min-h-[42px]">
+      <div class="flex items-center justify-between py-2.5 px-4 bg-[var(--section-bg)] border-b border-border min-h-[42px]">
         <span class="text-[13px] font-semibold">{{ t('settings.installedExtensions') }}</span>
-        <span class="text-[10px] text-muted font-medium bg-[var(--hover-bg)] py-[2px] px-[6px] rounded-sm">{{ extensions.length }}</span>
+        <span class="text-[10px] text-muted font-medium bg-[var(--hover-bg)] py-0.5 px-1.5 rounded-sm">{{ extensions.length }}</span>
       </div>
       <div>
         <ExtensionSection

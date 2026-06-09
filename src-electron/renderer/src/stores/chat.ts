@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { reactive, computed } from 'vue'
-import type { Message, ToolCall } from '@xyz-agent/shared'
+import type { Message } from '@xyz-agent/shared'
 import { createSystemNotification } from '../lib/system-notification'
 
 // SystemNotification: local system notification (not from API)
@@ -224,35 +224,6 @@ export const useChatStore = defineStore('chat', () => {
     getSessionState(sessionId).isLoadingHistory = v
   }
 
-  function appendThinkingDelta(delta: string, sessionId: string) {
-    const s = getSessionState(sessionId)
-    if (s.streamingMessage) {
-      const current = (s.streamingMessage as unknown as Record<string, unknown>).thinkingContent ?? ''
-      s.streamingMessage = {
-        ...s.streamingMessage,
-        thinkingContent: current + delta,
-      } as Message
-    }
-  }
-
-  function addStreamingToolCall(tc: ToolCall, sessionId: string) {
-    const s = getSessionState(sessionId)
-    if (s.streamingMessage) {
-      const calls = [...((s.streamingMessage as unknown as Record<string, unknown>).toolCalls as ToolCall[] ?? []), tc]
-      s.streamingMessage = { ...s.streamingMessage, toolCalls: calls } as Message
-    }
-  }
-
-  function updateStreamingToolCall(id: string, output: string, sessionId: string) {
-    const s = getSessionState(sessionId)
-    if (s.streamingMessage) {
-      const calls = ((s.streamingMessage as unknown as Record<string, unknown>).toolCalls as ToolCall[] ?? []).map(
-        (tc) => tc.id === id ? { ...tc, output, status: 'completed' as const } : tc,
-      )
-      s.streamingMessage = { ...s.streamingMessage, toolCalls: calls } as Message
-    }
-  }
-
   function addPendingApproval(pending: PendingApproval, sessionId: string) {
     const s = getSessionState(sessionId)
     s.pendingApprovals = [...s.pendingApprovals, pending]
@@ -367,8 +338,7 @@ export const useChatStore = defineStore('chat', () => {
     // 消息操作
     addMessage, setStreaming, appendToStreaming,
     completeStreaming, setGenerating, clearMessages,
-    replaceMessages, appendThinkingDelta, addStreamingToolCall,
-    updateStreamingToolCall, addPendingApproval, removePendingApproval,
+    replaceMessages, addPendingApproval, removePendingApproval,
 
     // 状态
     updateContextInfo, setError, switchAgent,

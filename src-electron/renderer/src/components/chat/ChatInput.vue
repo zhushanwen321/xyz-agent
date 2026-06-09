@@ -171,14 +171,11 @@ const sendMode = computed<SendMode>(() => {
 })
 
 function onModeSwitch({ mode }: { mode: SendMode }) {
-  // If user explicitly selected the auto-detected mode, clear override
-  const autoDetect: SendMode = isCtrlPressed.value
-    ? 'steer'
-    : props.isStreaming
-      ? 'queue'
-      : isAltPressed.value
-        ? 'queue'
-        : 'send'
+  // Snapshot auto-detect at click time, not live modifier state
+  // (modifier keys may still be held during click)
+  const autoDetect: SendMode = props.isStreaming
+    ? 'queue'
+    : 'send'
   manualMode.value = mode === autoDetect ? null : mode
 }
 

@@ -205,6 +205,9 @@ export class ExtensionService {
    * 安装 npm 包 → 写 settings.json packages[] → 返回。
    * 验证 npm 包是否为有效的 pi extension。
    * 失败时抛出 ExtensionInstallError，含 code 和 hint。
+   *
+   * 注意：不支持并发安装 — 多个同时 installExtension 调用可能在
+   * settings.json 上产生 read-modify-write 竞态。当前设计为串行调用。
    */
   async installExtension(source: string): Promise<void> {
     if (!source.startsWith('npm:')) {
@@ -310,11 +313,7 @@ export class ExtensionService {
         if (disabled.length > 0) {
           writeFileSync(disabledPath, JSON.stringify({ disabled }, null, INDENT_SPACES), 'utf-8')
         } else {
-          try {
-            renameSync(disabledPath, disabledPath + '.bak')
-          } catch (e) {
-            log.debug(`[extension-service] failed to backup disabled-packages.json: ${e instanceof Error ? e.message : String(e)}`)
-          }
+          rmSync(disabledPath)
         }
       } catch (e) {
         log.debug(`[extension-service] failed to update disabled-packages.json for uninstall: ${e instanceof Error ? e.message : String(e)}`)
@@ -362,9 +361,9 @@ export class ExtensionService {
       writeFileSync(disabledPath, JSON.stringify({ disabled }, null, INDENT_SPACES), 'utf-8')
     } else if (existsSync(disabledPath)) {
       try {
-        renameSync(disabledPath, disabledPath + '.bak')
+        rmSync(disabledPath)
       } catch (e) {
-        log.debug(`[extension-service] failed to backup disabled-packages.json: ${e instanceof Error ? e.message : String(e)}`)
+        log.debug(`[extension-service] failed to remove disabled-packages.json: ${e instanceof Error ? e.message : String(e)}`)
       }
     }
   }

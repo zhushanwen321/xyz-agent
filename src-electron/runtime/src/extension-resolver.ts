@@ -13,7 +13,7 @@
  * disabled-packages.json 控制启用/禁用状态。
  */
 import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { join, dirname, basename } from 'node:path'
 import { getPiAgentDir } from './pi-config-bridge.js'
 
 const log = {
@@ -241,7 +241,8 @@ export class ExtensionResolver {
       } catch {
         continue
       }
-      const extName = this.normalizeExtName(extPath.split('/').pop() ?? extPath)
+      if (!this.isValidPiExtension(extPath)) continue
+      const extName = this.normalizeExtName(basename(extPath))
       result.set(extName, extPath)
     }
 
@@ -336,6 +337,7 @@ export class ExtensionResolver {
         } catch {
           continue
         }
+        if (!this.isValidPiExtension(entryPath)) continue
         result.set(this.normalizeExtName(entry), entryPath)
       }
       log.debug(`[extension-resolver] ${label}: found ${result.size} extensions in ${dir}`)

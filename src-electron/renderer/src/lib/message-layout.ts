@@ -152,7 +152,7 @@ function groupByContentBlocksLegacy(msg: Message): AssistantSection[] {
       current.blocks.push(block)
     } else {
       if (current) sections.push(current)
-      current = { type: block.type as SectionType, blocks: [block] }
+      current = { type: block.type as NormalSectionType, blocks: [block] }
     }
   }
 

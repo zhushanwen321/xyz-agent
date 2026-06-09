@@ -61,7 +61,7 @@
     :data-timestamp="message.timestamp ?? ''"
     class="self-stretch relative group/msg"
   >
-    <div class="text-[10px] font-semibold uppercase tracking-[0.04em] leading-[1.4] mb-[3px] text-right text-muted">
+    <div class="text-[10px] font-semibold uppercase tracking-[0.04em] leading-[1.4] mb-0.5 text-right text-muted">
       <span
         v-if="message.sendMode && message.sendMode !== 'send'"
         :class="['inline-flex items-center px-1 py-0 rounded-sm text-[9px] font-medium mr-1', chipClass]"

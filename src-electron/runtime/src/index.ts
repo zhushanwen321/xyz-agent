@@ -58,9 +58,9 @@ async function main(): Promise<void> {
   const extensionService = new ExtensionService({ projectRoot: effectiveRoot })
   const treeService = new TreeService(pm)
 
-  // pluginService declared before sessionService but assigned after —
-  // the adapter factory closure reads pluginService at session creation time,
-  // by which point pluginService is already initialized.
+  // pluginService/configService/modelService: declared before sessionService but assigned after.
+  // The adapter factory closures read them at session creation time (deferred),
+  // by which point all services are already initialized (runtime is single-threaded).
   // eslint-disable-next-line prefer-const
   let pluginService: PluginService | undefined
 
