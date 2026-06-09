@@ -855,6 +855,8 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 }
 
 @container panel (max-width: 480px) {
+  /* 480px: minimum usable width for input area (mode switcher + queue + input).
+     Below this threshold, hide shortcut hints and switch to compact queue layout. */
   .mode-shortcut-hint { display: none; }
   .queue-full { display: none; }
   .queue-compact { display: flex; }

@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { app, BrowserWindow, protocol, net } from 'electron'
 import { RuntimeManager } from './runtime-manager.js'
 import { WindowManager, initialWindowState } from './window-manager.js'
@@ -116,6 +116,12 @@ app.whenReady().then(async () => {
   // 注册 local-file:// 协议，用于渲染进程加载本地文件（如图片）
   protocol.handle('local-file', (request) => {
     const filePath = decodeURIComponent(new URL(request.url).pathname)
+    // Restrict to safe directories: project cwd, config dir, home, temp
+    const allowedPrefixes = [app.getAppPath(), getConfigDir(), homedir(), tmpdir()]
+    const resolved = path.resolve(filePath)
+    if (!allowedPrefixes.some(p => resolved.startsWith(p))) {
+      return new Response('Forbidden', { status: 403 })
+    }
     return net.fetch(`file://${filePath}`)
   })
 

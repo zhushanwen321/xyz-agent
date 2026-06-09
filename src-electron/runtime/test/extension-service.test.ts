@@ -58,6 +58,7 @@ describe('ExtensionService', () => {
       expect(askUser!.source).toBe('user-installed')
       expect(askUser!.enabled).toBe(true)
       expect(askUser!.version).toBe('0.1.0')
+      expect(askUser!.dirName).toBe('pi-ask-user')
     })
 
     it('marks disabled extensions as not enabled', async () => {

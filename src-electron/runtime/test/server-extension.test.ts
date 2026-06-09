@@ -247,7 +247,10 @@ describe('SidecarServer: extension message routing', () => {
         },
       }))
 
-      await new Promise((r) => setTimeout(r, 200))
+      // Wait for server to process the message
+      await vi.waitFor(() => {
+        expect(sessionService.getRpcClient).toHaveBeenCalledWith('sess-1')
+      })
 
       expect(sessionService.getRpcClient).toHaveBeenCalledWith('sess-1')
       expect(mockSendCommand).toHaveBeenCalledWith(
@@ -272,7 +275,13 @@ describe('SidecarServer: extension message routing', () => {
         },
       }))
 
-      await new Promise((r) => setTimeout(r, 200))
+      // Wait for server to process the message
+      await vi.waitFor(() => {
+        expect(mockSendCommand).toHaveBeenCalledWith(
+          'extension_ui_response',
+          expect.objectContaining({ id: 'req-2' }),
+        )
+      })
 
       expect(mockSendCommand).toHaveBeenCalledWith(
         'extension_ui_response',
@@ -296,7 +305,13 @@ describe('SidecarServer: extension message routing', () => {
         },
       }))
 
-      await new Promise((r) => setTimeout(r, 200))
+      // Wait for server to process the message
+      await vi.waitFor(() => {
+        expect(mockSendCommand).toHaveBeenCalledWith(
+          'extension_ui_response',
+          expect.objectContaining({ id: 'req-3' }),
+        )
+      })
 
       expect(mockSendCommand).toHaveBeenCalledWith(
         'extension_ui_response',

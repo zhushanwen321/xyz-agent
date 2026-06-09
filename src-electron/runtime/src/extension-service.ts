@@ -408,7 +408,7 @@ export class ExtensionService {
 
     // Copy source to temp, clean up on failure
     try {
-      cpSync(absPath, tempDir, { recursive: true })
+      cpSync(checkPath, tempDir, { recursive: true })
       const candidates = this.discoverExtensions(tempDir)
       return { tempDir, candidates }
     } catch (err) {
@@ -453,7 +453,7 @@ export class ExtensionService {
     // If package.json exists, run npm install
     if (existsSync(join(tempDir, 'package.json'))) {
       try {
-        execFileSync('npm', ['install', '--omit=peer'], {
+        execFileSync('npm', ['install', '--omit=peer', '--ignore-scripts'], {
           cwd: tempDir,
           stdio: 'pipe',
           timeout: NPM_INSTALL_TIMEOUT,
@@ -475,6 +475,8 @@ export class ExtensionService {
    * Cleans up temp dir after copying.
    * @param selected - Array of dirName values (filesystem basenames) from discovered candidates.
    *   NOT npm package names — scoped packages have dirName = basename(dir).
+   *   NOTE: Two scoped packages with same leaf name (e.g. @foo/bar and @baz/bar) will
+   *   collide since both resolve to dirName='bar'. This is an accepted limitation.
    */
   async finishInstall(tempDir: string, selected: string[]): Promise<void> {
     // Validate tempDir is within settingsDir/tmp
