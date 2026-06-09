@@ -16,6 +16,10 @@ export interface Turn {
   key: string
   /** turn 内的消息列表 */
   messages: ChatMessage[]
+  /** Pre-computed first assistant message ID in this turn */
+  _firstAssistantId?: string
+  /** Pre-computed last assistant message ID in this turn */
+  _lastAssistantId?: string
 }
 
 /**

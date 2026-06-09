@@ -5,8 +5,12 @@ export type {
   ExtensionUIRequestPayload, ExtensionUIResponsePayload,
   ExtensionErrorPayload, ToolCallUpdatePayload, ExtensionInfo,
   ExtensionDiscoveredPayload, ExtensionInstallErrorPayload,
-  StopReason, toProtocolSendMode,
+  StopReason,
   StatusBarItem, StatusSetUpdatePayload, PluginStatusBarUpdatePayload,
+  UISendMode, ProtocolSendMode,
+} from './protocol'
+export {
+  toProtocolSendMode,
 } from './protocol'
 export type {
   MessageRole, MessageStatus, ToolCallStatus,

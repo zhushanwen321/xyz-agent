@@ -188,7 +188,7 @@ import { useTree } from '../../composables/useTree'
 import { useTreeStore } from '../../stores/tree'
 import { useChatScroll } from '../../composables/useChatScroll'
 import { useBatchSelect } from '../../composables/useBatchSelect'
-import { groupIntoTurns } from '../../lib/message-layout'
+import { groupIntoTurns, type Turn } from '../../lib/message-layout'
 import type { BranchTab } from '../../stores/tree'
 
 export interface AgentOption {
@@ -295,8 +295,8 @@ function getTurnGroups(viewMessages: ChatMessage[]) {
     const msgs = turn.messages
     for (const m of msgs) {
       if (!isSystemNotification(m) && m.role === 'assistant') {
-        ;(turn as Record<string, unknown>)._firstAssistantId ??= m.id
-        ;(turn as Record<string, unknown>)._lastAssistantId = m.id
+        turn._firstAssistantId ??= m.id
+        turn._lastAssistantId = m.id
       }
     }
   }
@@ -304,15 +304,15 @@ function getTurnGroups(viewMessages: ChatMessage[]) {
 }
 
 /** 是否显示“助手”标签：Turn 内第一个 assistant 消息 */
-function isFirstAssistant(group: { messages: ChatMessage[] }, msg: ChatMessage): boolean {
+function isFirstAssistant(group: Turn, msg: ChatMessage): boolean {
   if (isSystemNotification(msg) || msg.role !== 'assistant') return false
-  return (group as Record<string, unknown>)._firstAssistantId === msg.id
+  return group._firstAssistantId === msg.id
 }
 
 /** 是否是 Turn 内最后一个 assistant 消息（决定 action bar 显示） */
-function isLastAssistantInTurn(group: { messages: ChatMessage[] }, msg: ChatMessage): boolean {
+function isLastAssistantInTurn(group: Turn, msg: ChatMessage): boolean {
   if (isSystemNotification(msg) || msg.role !== 'assistant') return false
-  return (group as Record<string, unknown>)._lastAssistantId === msg.id
+  return group._lastAssistantId === msg.id
 }
 
 const branchTabsMap = computed<Map<string, BranchTab[]>>(() => {

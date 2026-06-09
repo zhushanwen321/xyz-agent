@@ -55,7 +55,7 @@
         :session-id="sessionId"
         :is-streaming="isStreaming"
         :can-send="canSend"
-        @select-model="(id: string) => emit('select-model', { modelId: id })"
+        @select-model="emit('select-model', $event)"
         @select-thinking-level="(l: string) => emit('send-command', { type: 'session.setThinkingLevel', payload: { sessionId, level: l } })"
         @send="handleSend"
         @cancel="emit('cancel')"
