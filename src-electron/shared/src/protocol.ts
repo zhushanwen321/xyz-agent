@@ -16,6 +16,7 @@ export type ClientMessageType =
   | 'tool.approve' | 'tool.deny' | 'tool.always_allow'
   | 'extension.ui_response' | 'extension.toggle' | 'extension.list'
   | 'extension.install' | 'extension.uninstall'
+  | 'extension.installDir' | 'extension.installGit' | 'extension.finishInstall' | 'extension.cancelInstall'
   | 'ping'
   | 'session.tree-data' | 'session.tree-navigate' | 'session.tree-fork' | 'session.tree-clone' | 'session.tree-capability'
   | 'plugin.list' | 'plugin.toggle'
@@ -83,6 +84,10 @@ export interface ClientMessageMap {
   'extension.list': Record<string, never>
   'extension.install': { source: string }
   'extension.uninstall': { name: string }
+  'extension.installDir': { path: string }
+  'extension.installGit': { url: string }
+  'extension.finishInstall': { tempDir: string; selected: string[] }
+  'extension.cancelInstall': { tempDir: string }
   'plugin.list': Record<string, never>
   'plugin.toggle': { pluginId: string; enabled: boolean; trustLevel?: 'trusted' | 'sandbox' }
   'plugin.install': { packageSpec: string }
@@ -138,6 +143,10 @@ export type ClientMessage =
   | { type: 'extension.list'; id?: string; payload: ClientMessageMap['extension.list'] }
   | { type: 'extension.install'; id?: string; payload: ClientMessageMap['extension.install'] }
   | { type: 'extension.uninstall'; id?: string; payload: ClientMessageMap['extension.uninstall'] }
+  | { type: 'extension.installDir'; id?: string; payload: ClientMessageMap['extension.installDir'] }
+  | { type: 'extension.installGit'; id?: string; payload: ClientMessageMap['extension.installGit'] }
+  | { type: 'extension.finishInstall'; id?: string; payload: ClientMessageMap['extension.finishInstall'] }
+  | { type: 'extension.cancelInstall'; id?: string; payload: ClientMessageMap['extension.cancelInstall'] }
   | { type: 'plugin.list'; id?: string; payload: Record<string, never> }
   | { type: 'plugin.toggle'; id?: string; payload: ClientMessageMap['plugin.toggle'] }
   | { type: 'plugin.install'; id?: string; payload: ClientMessageMap['plugin.install'] }
@@ -176,6 +185,7 @@ export type ServerMessageType =
   | 'session.thinkingLevelSet'
   | 'pong' | 'error'
   | 'extension.ui_request' | 'extension.ui_timeout' | 'extension.error'
+  | 'extension.discovered' | 'extension.installError' | 'extension.installCancelled'
   | 'message.tool_call_update' | 'config.extensions'
   | 'session.commands'
   | 'session.tree-data' | 'session.tree-navigate-result' | 'session.tree-fork-result' | 'session.tree-clone-result' | 'session.tree-capability'
@@ -185,7 +195,7 @@ export type ServerMessageType =
   | 'plugin:statusSetUpdate'
   | 'plugin:uiRequest'
   | 'extension:widget' | 'extension:status'
-  | 'extension:setEditorText' | 'extension:setTitle'
+  | 'extension:setEditorText'
   | 'message.bashExecution' | 'message.compactionSummary' | 'message.branchSummary'
   | 'message.auto_retry_start' | 'message.auto_retry_end' | 'message.queue_update'
   | 'message.stream_error'
@@ -237,11 +247,26 @@ export interface ToolCallUpdatePayload {
 
 export interface ExtensionInfo {
   name: string
+  /** Filesystem directory basename (may differ from npm package name for scoped packages) */
+  dirName: string
   version: string
   description: string
   path: string
   enabled: boolean
   source: 'built-in' | 'user-installed'
+}
+
+// ── Extension install flow payload interfaces ──────────────────
+
+export interface ExtensionDiscoveredPayload {
+  tempDir: string
+  candidates: ExtensionInfo[]
+}
+
+export interface ExtensionInstallErrorPayload {
+  code: string
+  message: string
+  hint?: string
 }
 
 // ── Plugin payload interfaces ───────────────────────────────────
@@ -319,4 +344,20 @@ export interface PluginMessageDecorationPayload {
 export interface PluginConfigPayload {
   pluginId: string
   config: Record<string, unknown>
+}
+
+// ── StopReason / SendMode helpers ─────────────────────────────
+
+/** Possible reasons a stream completed */
+export type StopReason = 'complete' | 'aborted' | 'error' | 'length' | 'tool_use'
+
+/** UI-facing send mode values */
+export type UISendMode = 'send' | 'steer' | 'queue'
+
+/** Protocol-level send mode values (queue → follow-up) */
+export type ProtocolSendMode = 'send' | 'steer' | 'follow-up'
+
+/** UI send mode → protocol send mode mapping */
+export function toProtocolSendMode(mode: UISendMode): ProtocolSendMode {
+  return mode === 'queue' ? 'follow-up' : mode
 }

@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '../../stores/settings'
 import { Select, Button, Toggle } from '../../design-system'
+import { ALL_PI_TOOLS } from '../../lib/message-layout'
 import { setLocale, getLocale, type Locale } from '../../i18n'
 import type { ThemePreset } from '@xyz-agent/shared'
 
@@ -65,13 +66,24 @@ const currentPalette = computed(() => settingsStore.themePreset)
 function selectPalette(id: ThemePreset) {
   settingsStore.setThemePreset(id)
 }
+
+function toggleStandaloneTool(tool: string, checked: boolean) {
+  const tools = [...settingsStore.standaloneTools]
+  if (checked) {
+    if (!tools.includes(tool)) tools.push(tool)
+  } else {
+    const idx = tools.indexOf(tool)
+    if (idx >= 0) tools.splice(idx, 1)
+  }
+  settingsStore.standaloneTools = tools
+}
 </script>
 
 <template>
   <div class="max-w-[860px]">
     <!-- Section: 语言与外观 -->
     <div class="border border-border rounded-sm overflow-hidden mb-3">
-      <div class="flex items-center py-[9px] px-4 bg-[var(--section-bg)] min-h-[42px]">
+      <div class="flex items-center py-2.5 px-4 bg-[var(--section-bg)] min-h-[42px]">
         <span class="text-[13px] font-semibold">{{ t('settings.languageAndAppearance') }}</span>
       </div>
       <div>
@@ -92,7 +104,7 @@ function selectPalette(id: ThemePreset) {
 
     <!-- Section: 聊天显示 -->
     <div class="border border-border rounded-sm overflow-hidden mb-3">
-      <div class="flex items-center py-[9px] px-4 bg-[var(--section-bg)] min-h-[42px]">
+      <div class="flex items-center py-2.5 px-4 bg-[var(--section-bg)] min-h-[42px]">
         <span class="text-[13px] font-semibold">聊天显示</span>
       </div>
       <div>
@@ -110,12 +122,37 @@ function selectPalette(id: ThemePreset) {
           </div>
           <Toggle :checked="settingsStore.autoExpandToolCalls" @update:checked="settingsStore.autoExpandToolCalls = $event" />
         </div>
+        <div class="flex items-center justify-between gap-4 py-2.5 px-4">
+          <div>
+            <span class="text-xs font-medium">折叠 Agent 操作过程</span>
+            <span class="text-[10px] text-muted ml-1.5">将 Thinking/ToolCall 合并为摘要标签</span>
+          </div>
+          <Toggle :checked="settingsStore.compactStreaming" @update:checked="settingsStore.compactStreaming = $event" />
+        </div>
+        <!-- Standalone tools: only visible when compactStreaming is on -->
+        <template v-if="settingsStore.compactStreaming">
+          <div class="flex items-center justify-between gap-4 py-2.5 px-4">
+            <div>
+              <span class="text-xs font-medium">独立展示工具</span>
+              <span class="text-[10px] text-muted ml-1.5">在 AgentRunBlock 中作为独立卡片展示的工具</span>
+            </div>
+          </div>
+          <div class="flex flex-wrap gap-x-4 gap-y-1 px-4 pb-2">
+            <div v-for="tool in ALL_PI_TOOLS" :key="tool" class="flex items-center gap-1.5 cursor-pointer text-[11px] text-muted">
+              <Toggle
+                :checked="settingsStore.standaloneTools.includes(tool)"
+                @update:checked="toggleStandaloneTool(tool, $event)"
+              />
+              <span class="font-mono">{{ tool }}</span>
+            </div>
+          </div>
+        </template>
       </div>
     </div>
 
     <!-- Section: 配色主题 -->
     <div class="border border-border rounded-sm overflow-hidden mb-3">
-      <div class="flex items-center py-[9px] px-4 bg-[var(--section-bg)] min-h-[42px]">
+      <div class="flex items-center py-2.5 px-4 bg-[var(--section-bg)] min-h-[42px]">
         <span class="text-[13px] font-semibold">{{ t('settings.colorTheme') }}</span>
       </div>
       <div class="py-3 px-4">
@@ -125,7 +162,7 @@ function selectPalette(id: ThemePreset) {
             v-for="p in mutedPalettes"
             :key="p.id"
             variant="ghost"
-            class="flex items-center gap-2 py-[6px] px-3 rounded-sm border cursor-pointer transition-all duration-150 font-body text-fg"
+            class="flex items-center gap-2 py-1.5 px-3 rounded-sm border cursor-pointer transition-all duration-150 font-body text-fg"
             :class="currentPalette === p.id ? 'border-[var(--accent)] bg-[var(--accent-light)] ring-1 ring-[var(--accent)]' : 'border-border bg-surface hover:border-muted hover:bg-[var(--accent-light)]'"
             @click="selectPalette(p.id)"
           >
@@ -140,7 +177,7 @@ function selectPalette(id: ThemePreset) {
             v-for="p in colorfulPalettes"
             :key="p.id"
             variant="ghost"
-            class="flex items-center gap-2 py-[6px] px-3 rounded-sm border cursor-pointer transition-all duration-150 font-body text-fg"
+            class="flex items-center gap-2 py-1.5 px-3 rounded-sm border cursor-pointer transition-all duration-150 font-body text-fg"
             :class="currentPalette === p.id ? 'border-[var(--accent)] bg-[var(--accent-light)] ring-1 ring-[var(--accent)]' : 'border-border bg-surface hover:border-muted hover:bg-[var(--accent-light)]'"
             @click="selectPalette(p.id)"
           >

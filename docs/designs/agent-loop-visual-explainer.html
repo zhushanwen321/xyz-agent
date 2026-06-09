@@ -1,0 +1,955 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Loop &amp; 消息可视化</title>
+<style>
+:root {
+  --bg: #0f1117;
+  --surface: #181a20;
+  --surface2: #1e2028;
+  --border: #2a2d38;
+  --text: #e2e4ea;
+  --muted: #6b7084;
+  --accent: #7c8cff;
+  --accent-dim: rgba(124,140,255,0.12);
+  --thinking: #f0b866;
+  --thinking-dim: rgba(240,184,102,0.12);
+  --tool: #5ccba0;
+  --tool-dim: rgba(92,203,160,0.12);
+  --text-color: #c8cce0;
+  --text-dim: rgba(200,204,224,0.12);
+  --agent: #ff7eb3;
+  --agent-dim: rgba(255,126,179,0.12);
+  --error: #ff6b6b;
+  --error-dim: rgba(255,107,107,0.12);
+  --user: #64b5f6;
+  --user-dim: rgba(100,181,246,0.12);
+  --font-mono: 'SF Mono', 'Fira Code', 'JetBrains Mono', monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 40px;
+}
+h1 { font-size: 22px; font-weight: 700; margin-bottom: 8px; color: var(--accent); }
+h2 { font-size: 17px; font-weight: 600; margin: 40px 0 16px; color: var(--text); border-left: 3px solid var(--accent); padding-left: 12px; }
+h3 { font-size: 14px; font-weight: 600; margin: 20px 0 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+p { color: var(--muted); margin-bottom: 12px; max-width: 860px; }
+.subtitle { font-size: 14px; color: var(--muted); margin-bottom: 30px; }
+
+/* ── Tab navigation ── */
+.tabs { display: flex; gap: 2px; margin-bottom: 24px; background: var(--surface); border-radius: 8px; padding: 3px; width: fit-content; }
+.tab { padding: 8px 20px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; color: var(--muted); transition: all 0.15s; }
+.tab:hover { color: var(--text); background: var(--surface2); }
+.tab.active { color: var(--text); background: var(--accent); color: #fff; }
+.panel { display: none; }
+.panel.active { display: block; }
+
+/* ── Common box styles ── */
+.box {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 12px;
+  background: var(--surface);
+}
+.box-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.dot {
+  width: 6px; height: 6px; border-radius: 50%; display: inline-block; flex-shrink: 0;
+}
+.dot-thinking { background: var(--thinking); }
+.dot-tool { background: var(--tool); }
+.dot-text { background: var(--text-color); }
+.dot-accent { background: var(--accent); }
+.dot-agent { background: var(--agent); }
+.dot-user { background: var(--user); }
+.dot-error { background: var(--error); }
+
+/* ── Timeline ── */
+.timeline {
+  position: relative;
+  padding-left: 24px;
+}
+.timeline::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--border);
+}
+.tl-item {
+  position: relative;
+  margin-bottom: 4px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.2s;
+}
+.tl-item::before {
+  content: '';
+  position: absolute;
+  left: -20px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 2px solid;
+  background: var(--bg);
+  z-index: 1;
+}
+.tl-item.tl-thinking { background: var(--thinking-dim); }
+.tl-item.tl-thinking::before { border-color: var(--thinking); }
+.tl-item.tl-tool { background: var(--tool-dim); }
+.tl-item.tl-tool::before { border-color: var(--tool); }
+.tl-item.tl-text { background: var(--text-dim); }
+.tl-item.tl-text::before { border-color: var(--text-color); }
+.tl-item.tl-agent { background: var(--agent-dim); }
+.tl-item.tl-agent::before { border-color: var(--agent); }
+.tl-item.tl-user { background: var(--user-dim); }
+.tl-item.tl-user::before { border-color: var(--user); }
+.tl-item.tl-lifecycle { background: var(--accent-dim); }
+.tl-item.tl-lifecycle::before { border-color: var(--accent); background: var(--accent); }
+.tl-item.tl-result { background: var(--tool-dim); }
+.tl-item.tl-result::before { border-color: var(--tool); background: var(--tool); }
+.tl-tag {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  min-width: 50px;
+  text-align: right;
+  flex-shrink: 0;
+}
+.tl-thinking .tl-tag { color: var(--thinking); }
+.tl-tool .tl-tag { color: var(--tool); }
+.tl-text .tl-tag { color: var(--text-color); }
+.tl-agent .tl-tag { color: var(--agent); }
+.tl-user .tl-tag { color: var(--user); }
+.tl-lifecycle .tl-tag { color: var(--accent); }
+.tl-result .tl-tag { color: var(--tool); }
+.tl-detail { color: var(--muted); font-size: 11px; }
+
+/* ── Bracket annotations ── */
+.bracket-group {
+  position: relative;
+  margin: 8px 0 8px 16px;
+  padding: 12px 12px 12px 20px;
+  border-left: 3px solid;
+  border-radius: 0 8px 8px 0;
+}
+.bracket-label {
+  position: absolute;
+  left: -16px;
+  top: 0;
+  writing-mode: vertical-lr;
+  transform: rotate(180deg);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 6px 4px;
+  border-radius: 4px 4px 0 0;
+}
+.bg-agent-loop { border-color: var(--agent); background: var(--agent-dim); }
+.bg-agent-loop .bracket-label { color: var(--agent); }
+.bg-turn { border-color: var(--accent); background: var(--accent-dim); }
+.bg-turn .bracket-label { color: var(--accent); }
+.bg-stream { border-color: var(--thinking); background: var(--thinking-dim); }
+.bg-stream .bracket-label { color: var(--thinking); }
+.bg-tool-exec { border-color: var(--tool); background: var(--tool-dim); }
+.bg-tool-exec .bracket-label { color: var(--tool); }
+
+/* ── Component tree ── */
+.ctree { font-family: var(--font-mono); font-size: 12px; line-height: 2; }
+.ctree .node {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: default;
+}
+.ctree .node:hover { filter: brightness(1.2); }
+.ctree .indent { display: inline-block; width: 24px; border-left: 1px dashed var(--border); margin-left: 12px; padding-left: 12px; }
+.node-vue { background: var(--accent-dim); color: var(--accent); }
+.node-pi { background: var(--agent-dim); color: var(--agent); }
+.node-data { background: var(--tool-dim); color: var(--tool); }
+
+/* ── Mapping table ── */
+.map-table { border-collapse: collapse; width: 100%; max-width: 860px; }
+.map-table th { text-align: left; padding: 8px 12px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); border-bottom: 1px solid var(--border); }
+.map-table td { padding: 8px 12px; border-bottom: 1px solid var(--border); font-family: var(--font-mono); font-size: 11.5px; vertical-align: top; }
+.map-table tr:hover td { background: var(--surface2); }
+.map-table .arrow { color: var(--accent); font-size: 14px; }
+
+/* ── Flow diagram ── */
+.flow-row {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+.flow-col {
+  flex: 1;
+  min-width: 0;
+  padding: 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+.flow-arrow {
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+  font-size: 16px;
+  flex-shrink: 0;
+  padding: 0 4px;
+}
+.fc-pi { background: var(--agent-dim); color: var(--agent); }
+.fc-adapter { background: var(--accent-dim); color: var(--accent); }
+.fc-usechat { background: var(--tool-dim); color: var(--tool); }
+.fc-store { background: var(--thinking-dim); color: var(--thinking); }
+.fc-render { background: var(--text-dim); color: var(--text-color); }
+.fc-user { background: var(--user-dim); color: var(--user); }
+
+/* ── Compact vs Expected ── */
+.cmp-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 6px;
+  padding: 8px 12px;
+  border-radius: 6px;
+}
+.cmp-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  width: 60px;
+  flex-shrink: 0;
+}
+.cmp-chip {
+  padding: 4px 10px;
+  border-radius: 100px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+.chip-p { background: var(--accent-dim); color: var(--accent); }
+.chip-o { background: var(--text-dim); color: var(--text-color); }
+
+.legend { display: flex; gap: 16px; margin: 12px 0; flex-wrap: wrap; }
+.legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.legend-swatch { width: 12px; height: 12px; border-radius: 3px; }
+
+.note {
+  background: var(--surface2);
+  border-left: 3px solid var(--error);
+  padding: 12px 16px;
+  border-radius: 0 6px 6px 0;
+  margin: 16px 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.note strong { color: var(--error); }
+
+.highlight-box {
+  background: var(--accent-dim);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 16px;
+  margin: 16px 0;
+}
+
+/* ── ContentBlocks visualization ── */
+.cb-row {
+  display: flex;
+  gap: 2px;
+  margin: 8px 0;
+}
+.cb-block {
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  text-align: center;
+  min-width: 40px;
+}
+.cb-thinking { background: var(--thinking-dim); color: var(--thinking); border: 1px solid var(--thinking); }
+.cb-tool { background: var(--tool-dim); color: var(--tool); border: 1px solid var(--tool); }
+.cb-text { background: var(--text-dim); color: var(--text-color); border: 1px solid var(--text-color); }
+.cb-missing { background: var(--error-dim); color: var(--error); border: 1px dashed var(--error); opacity: 0.7; }
+
+.section-divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 32px 0;
+}
+</style>
+</head>
+<body>
+
+<h1>Agent Loop & 消息流可视化</h1>
+<p class="subtitle">pi 内部 agent loop 的事件序列 → xyz-agent 前端组件的映射关系</p>
+
+<div class="tabs">
+  <div class="tab active" onclick="showTab('tab1')">1. Agent Loop 事件序列</div>
+  <div class="tab" onclick="showTab('tab2')">2. contentBlocks 构建</div>
+  <div class="tab" onclick="showTab('tab3')">3. 前端组件层级</div>
+  <div class="tab" onclick="showTab('tab4')">4. 端到端映射</div>
+  <div class="tab" onclick="showTab('tab5')">5. 折叠分组问题</div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<!-- TAB 1: Agent Loop 事件序列 -->
+<!-- ════════════════════════════════════════════════════════════════ -->
+<div id="tab1" class="panel active">
+
+<h2>pi Agent Loop 三层嵌套结构</h2>
+
+<p>
+  pi 的 <code>agent-loop.ts</code> 包含三层循环，每层有明确的职责边界。
+  事件从内到外冒泡，经过 <code>agent-session.ts</code> 转发给 RPC 客户端。
+</p>
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-swatch" style="background:var(--agent)"></div> Agent Run (一次 prompt 调用)</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:var(--accent)"></div> Turn (一轮 LLM 调用 + 工具执行)</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:var(--thinking)"></div> Stream (一次 LLM 流式响应)</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:var(--tool)"></div> Tool Execution</div>
+</div>
+
+<div class="bracket-group bg-agent-loop">
+  <div class="bracket-label">AGENT RUN</div>
+  <p style="margin-bottom:8px;color:var(--agent);font-weight:600;font-size:12px;">
+    _runAgentPrompt() → agent.prompt() → runAgentLoop()
+  </p>
+  <p style="margin-bottom:12px;font-size:12px;">
+    一次用户 prompt 触发一个 Agent Run。包含一个或多个 Turn。结束时发出 <code>agent_end</code>。
+  </p>
+
+  <div class="timeline">
+    <div class="tl-item tl-lifecycle"><span class="tl-tag">emit</span> agent_start</div>
+    <div class="tl-item tl-lifecycle"><span class="tl-tag">emit</span> turn_start</div>
+    <div class="tl-item tl-user"><span class="tl-tag">emit</span> message_start { role: 'user', content: '...' }</div>
+    <div class="tl-item tl-user"><span class="tl-tag">emit</span> message_end</div>
+  </div>
+
+  <div class="bracket-group bg-turn" style="margin-top:12px;">
+    <div class="bracket-label">TURN 1</div>
+    <p style="margin-bottom:8px;color:var(--accent);font-weight:600;font-size:12px;">
+      while (hasMoreToolCalls) → streamAssistantResponse() → executeToolCalls()
+    </p>
+    <p style="margin-bottom:12px;font-size:12px;">
+      每个 Turn = 一次 LLM 流式调用 + 工具执行。如果 LLM 输出了 toolUse，执行完工具后 <code>hasMoreToolCalls = true</code>，
+      进入下一轮 Turn（再次调 LLM）。
+    </p>
+
+    <div class="bracket-group bg-stream">
+      <div class="bracket-label">STREAM</div>
+      <p style="margin-bottom:8px;color:var(--thinking);font-weight:600;font-size:12px;">
+        streamAssistantResponse() → 单次 LLM API 调用
+      </p>
+
+      <div class="timeline">
+        <div class="tl-item tl-agent"><span class="tl-tag">emit</span> message_start { role: 'assistant' }</div>
+        <div class="tl-item tl-thinking"><span class="tl-tag">emit</span> message_update { thinking_start }</div>
+        <div class="tl-item tl-thinking"><span class="tl-tag">emit</span> message_update { thinking_delta: "Let me..." }</div>
+        <div class="tl-item tl-thinking"><span class="tl-tag">emit</span> message_update { thinking_end }</div>
+        <div class="tl-item tl-tool"><span class="tl-tag">emit</span> message_update { toolcall_start: "read" }</div>
+        <div class="tl-item tl-tool"><span class="tl-tag">emit</span> message_update { toolcall_delta }</div>
+        <div class="tl-item tl-tool"><span class="tl-tag">emit</span> message_update { toolcall_end }</div>
+        <div class="tl-item tl-tool"><span class="tl-tag">emit</span> message_update { toolcall_start: "edit" }</div>
+        <div class="tl-item tl-tool"><span class="tl-tag">emit</span> message_update { toolcall_end }</div>
+        <div class="tl-item tl-text"><span class="tl-tag">emit</span> message_update { text_delta: "I've modified..." }</div>
+        <div class="tl-item tl-text"><span class="tl-tag">emit</span> message_update { text_delta: "the file..." }</div>
+        <div class="tl-item tl-agent"><span class="tl-tag">emit</span> message_end { stopReason: 'tool_use' | 'end_turn' }</div>
+      </div>
+    </div>
+
+    <p style="margin:12px 0 8px;font-size:12px;color:var(--accent);">如果 stopReason === 'tool_use'，执行工具：</p>
+
+    <div class="bracket-group bg-tool-exec">
+      <div class="bracket-label">TOOL EXEC</div>
+      <div class="timeline">
+        <div class="tl-item tl-tool"><span class="tl-tag">emit</span> tool_execution_start { toolCallId, toolName: 'read' }</div>
+        <div class="tl-item tl-result"><span class="tl-tag">emit</span> tool_execution_end { toolCallId, output: '...' }</div>
+        <div class="tl-item tl-tool"><span class="tl-tag">emit</span> tool_execution_start { toolCallId, toolName: 'edit' }</div>
+        <div class="tl-item tl-result"><span class="tl-tag">emit</span> tool_execution_end { toolCallId, output: '...' }</div>
+        <div class="tl-item tl-lifecycle"><span class="tl-tag">emit</span> message_start { role: 'tool_result' }</div>
+        <div class="tl-item tl-lifecycle"><span class="tl-tag">emit</span> message_end</div>
+      </div>
+    </div>
+
+    <div class="timeline" style="margin-top:8px;">
+      <div class="tl-item tl-lifecycle"><span class="tl-tag">emit</span> turn_end</div>
+    </div>
+  </div>
+
+  <p style="margin:12px 0 8px;font-size:12px;color:var(--accent);">hasMoreToolCalls = true → 继续内层 while → Turn 2</p>
+
+  <div class="bracket-group bg-turn">
+    <div class="bracket-label">TURN 2</div>
+
+    <div class="bracket-group bg-stream">
+      <div class="bracket-label">STREAM</div>
+      <div class="timeline">
+        <div class="tl-item tl-agent"><span class="tl-tag">emit</span> message_start { role: 'assistant' }</div>
+        <div class="tl-item tl-thinking"><span class="tl-tag">emit</span> message_update { thinking_start }</div>
+        <div class="tl-item tl-thinking"><span class="tl-tag">emit</span> message_update { thinking_end }</div>
+        <div class="tl-item tl-text"><span class="tl-tag">emit</span> message_update { text_delta: "Done!" }</div>
+        <div class="tl-item tl-agent"><span class="tl-tag">emit</span> message_end { stopReason: 'end_turn' }</div>
+      </div>
+    </div>
+
+    <div class="timeline" style="margin-top:8px;">
+      <div class="tl-item tl-lifecycle"><span class="tl-tag">emit</span> turn_end</div>
+    </div>
+  </div>
+
+  <p style="margin:12px 0 8px;font-size:12px;color:var(--accent);">stopReason === 'end_turn' → 无 tool calls → 退出内层 while</p>
+  <p style="margin:0 0 8px;font-size:12px;color:var(--accent);">检查 followUpQueue → 空 → 退出外层 while</p>
+
+  <div class="timeline" style="margin-top:8px;">
+    <div class="tl-item tl-lifecycle"><span class="tl-tag">emit</span> agent_end</div>
+  </div>
+</div>
+
+<div class="note">
+  <strong>关键认知：</strong>
+  <code>message_start/message_end</code> 是 AgentMessage 级别的（LLM 的一个"回复"），
+  不是 xyz-agent 前端的一个 Message。pi 的一个 Agent Run 可能产生多个 assistant AgentMessage（多个 Turn），
+  但 xyz-agent 前端会把<strong>整个 Agent Run</strong> 映射为<strong>一个</strong> streaming Message。
+</div>
+
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<!-- TAB 2: contentBlocks 构建 -->
+<!-- ════════════════════════════════════════════════════════════════ -->
+<div id="tab2" class="panel">
+
+<h2>contentBlocks 如何构建：useChat.ts 中的注册逻辑</h2>
+
+<p>
+  xyz-agent 将 pi 的 <strong>整个 Agent Run</strong>（可能包含多个 Turn、多次 streamAssistantResponse）
+  合并为前端的一个 streaming Message。contentBlocks 记录这个 Message 内部各 block 的<strong>到达顺序</strong>。
+</p>
+
+<h3>事件处理函数与 contentBlock 注册</h3>
+
+<div class="box" style="max-width:860px;">
+  <table class="map-table">
+    <tr>
+      <th>useChat handler</th>
+      <th>触发条件</th>
+      <th>contentBlock 操作</th>
+    </tr>
+    <tr>
+      <td style="color:var(--thinking)">onThinkingStart</td>
+      <td>thinking_start 事件</td>
+      <td><span style="color:var(--thinking)">push { type: 'thinking', refId }</span><br>
+        <span style="color:var(--muted)">仅当上一个 thinking 已 collapsed 时才创建新 block</span></td>
+    </tr>
+    <tr>
+      <td style="color:var(--tool)">onToolCallStart</td>
+      <td>tool_execution_start 事件</td>
+      <td><span style="color:var(--tool)">push { type: 'toolCall', refId: tcId }</span></td>
+    </tr>
+    <tr>
+      <td style="color:var(--text-color)">onTextDelta</td>
+      <td>text_delta 事件</td>
+      <td><span style="color:var(--text-color)">push { type: 'text', refId: 'text' }</span><br>
+        <span style="color:var(--error)">⚠️ 仅首次！之后所有 text_delta 只追加 message.content，不再注册新 block</span></td>
+    </tr>
+  </table>
+</div>
+
+<h3>场景演示：TCC O TC TC O 的实际事件序列</h3>
+
+<p>假设 pi 的一个 Agent Run 内部产生了这样的时序（可能跨多个 Turn）：</p>
+
+<div class="timeline" style="margin:16px 0;">
+  <div class="tl-item tl-thinking"><span class="tl-tag">pi</span> thinking_start</div>
+  <div class="tl-item tl-thinking"><span class="tl-tag">pi</span> thinking_delta × N</div>
+  <div class="tl-item tl-thinking"><span class="tl-tag">pi</span> thinking_end</div>
+  <div class="tl-item tl-tool"><span class="tl-tag">pi</span> toolcall_start (read)</div>
+  <div class="tl-item tl-tool"><span class="tl-tag">pi</span> toolcall_end (read)</div>
+  <div class="tl-item tl-tool"><span class="tl-tag">pi</span> toolcall_start (edit)</div>
+  <div class="tl-item tl-tool"><span class="tl-tag">pi</span> toolcall_end (edit)</div>
+  <div class="tl-item tl-tool"><span class="tl-tag">→</span> tool_execution_start (read) <span class="tl-detail">→ 执行</span></div>
+  <div class="tl-item tl-tool"><span class="tl-tag">→</span> tool_execution_end (read)</div>
+  <div class="tl-item tl-tool"><span class="tl-tag">→</span> tool_execution_start (edit) <span class="tl-detail">→ 执行</span></div>
+  <div class="tl-item tl-tool"><span class="tl-tag">→</span> tool_execution_end (edit)</div>
+  <div class="tl-item tl-text"><span class="tl-tag">pi</span> text_delta "I've read and edited..."</div>
+  <div class="tl-item tl-agent"><span class="tl-tag">pi</span> message_end { stopReason: 'tool_use' }</div>
+  <div style="color:var(--accent);font-size:11px;text-align:center;padding:4px 0;">── Turn 2 开始 ──</div>
+  <div class="tl-item tl-thinking"><span class="tl-tag">pi</span> thinking_start</div>
+  <div class="tl-item tl-thinking"><span class="tl-tag">pi</span> thinking_end</div>
+  <div class="tl-item tl-tool"><span class="tl-tag">pi</span> toolcall_start (write)</div>
+  <div class="tl-item tl-tool"><span class="tl-tag">pi</span> toolcall_end (write)</div>
+  <div class="tl-item tl-tool"><span class="tl-tag">→</span> tool_execution_start (write)</div>
+  <div class="tl-item tl-tool"><span class="tl-tag">→</span> tool_execution_end (write)</div>
+  <div class="tl-item tl-thinking"><span class="tl-tag">pi</span> thinking_start</div>
+  <div class="tl-item tl-thinking"><span class="tl-tag">pi</span> thinking_end</div>
+  <div class="tl-item tl-tool"><span class="tl-tag">pi</span> toolcall_start (bash)</div>
+  <div class="tl-item tl-tool"><span class="tl-tag">pi</span> toolcall_end (bash)</div>
+  <div class="tl-item tl-tool"><span class="tl-tag">→</span> tool_execution_start (bash)</div>
+  <div class="tl-item tl-tool"><span class="tl-tag">→</span> tool_execution_end (bash)</div>
+  <div class="tl-item tl-text"><span class="tl-tag">pi</span> text_delta "All done!"</div>
+  <div class="tl-item tl-agent"><span class="tl-tag">pi</span> message_end { stopReason: 'end_turn' }</div>
+  <div class="tl-item tl-lifecycle"><span class="tl-tag">pi</span> agent_end</div>
+</div>
+
+<h3>前端 contentBlocks 结果</h3>
+
+<p>xyz-agent 的 useChat 按到达顺序注册，只注册一次 text：</p>
+
+<div class="cb-row">
+  <div class="cb-block cb-thinking">thk-1<br><small>thinking</small></div>
+  <div class="cb-block cb-tool">tc-1<br><small>read</small></div>
+  <div class="cb-block cb-tool">tc-2<br><small>edit</small></div>
+  <div class="cb-block cb-text">text<br><small>①首次</small></div>
+  <div class="cb-block cb-thinking">thk-2<br><small>thinking</small></div>
+  <div class="cb-block cb-tool">tc-3<br><small>write</small></div>
+  <div class="cb-block cb-thinking">thk-3<br><small>thinking</small></div>
+  <div class="cb-block cb-tool">tc-4<br><small>bash</small></div>
+  <div class="cb-block cb-missing">???<br><small>无 text block!</small></div>
+</div>
+
+<div class="note">
+  <strong>问题：</strong>
+  第二段 text_delta "All done!" 到达时，<code>onTextDelta</code> 检查发现已有 text block，跳过注册。
+  "All done!" 被追加到 <code>message.content</code>（和第一段混在一起），<strong>位置信息丢失</strong>。
+  最后的红色虚线块不存在于 contentBlocks 中。
+</div>
+
+<h3>message.content 的实际内容</h3>
+
+<div class="box" style="max-width:860px;">
+  <code style="color:var(--text-color);word-break:break-all;font-size:12px;">
+    "I've read and edited...All done!"
+  </code>
+  <p style="margin-top:8px;font-size:12px;">
+    两段文字<strong>拼接为一个字符串</strong>，无法知道 "All done!" 前面插入了哪些 thinking/tool。
+  </p>
+</div>
+
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<!-- TAB 3: 前端组件层级 -->
+<!-- ════════════════════════════════════════════════════════════════ -->
+<div id="tab3" class="panel">
+
+<h2>前端组件渲染树</h2>
+
+<p>从 ChatPanel 到叶子组件的层级关系，以及各层职责。</p>
+
+<div class="box" style="max-width:860px;">
+  <div class="ctree">
+    <div><span class="node node-vue">ChatPanel</span> <span style="color:var(--muted)">← WS 事件入口，管理 streamingMessage</span></div>
+    <div class="indent">
+      <div><span class="node node-vue">MessageList</span> <span style="color:var(--muted)">← v-for messages（已完成的消息）</span></div>
+      <div class="indent">
+        <div><span class="node node-vue">MessageBubble</span> <span style="color:var(--muted)">← 单条消息容器（角色判定、操作菜单）</span></div>
+        <div class="indent">
+          <div><span class="node node-vue">AssistantContent</span> <span style="color:var(--muted)">← section 编排（compact/normal 模式切换）</span></div>
+          <div class="indent">
+            <div style="color:var(--muted);margin-bottom:4px;">── Compact mode (compactStreaming=true && !isStreaming) ──</div>
+            <div><span class="node node-vue">CompactSummaryBar</span> <span style="color:var(--muted)">← 折叠过程条（thinking/tool 按类型分 chip）</span></div>
+            <div class="indent">
+              <div><span class="node node-vue">ThinkingBlock</span> <span style="color:var(--muted)">← 展开后的思考内容</span></div>
+              <div><span class="node node-vue">ToolCallCard</span> <span style="color:var(--muted)">← 展开后的工具调用卡片</span></div>
+            </div>
+            <div style="margin-top:4px;">└ <span style="color:var(--text-color)">text content（markdown 渲染）</span></div>
+            <div style="color:var(--muted);margin:8px 0 4px;">── Normal mode ──</div>
+            <div><span class="node node-vue">AssistantSection</span> <span style="color:var(--muted)">← section 容器（左边框 + label）</span></div>
+            <div class="indent">
+              <div><span class="node node-vue">ThinkingBlock</span></div>
+              <div><span class="node node-vue">ToolCallCard</span></div>
+              <div style="color:var(--text-color)">text content（markdown）</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="indent" style="margin-top:8px;">
+      <div style="color:var(--muted);margin-bottom:4px;">── Streaming 消息（与 MessageList 平级）──</div>
+      <div><span class="node node-vue">CompactStreamingBubble</span> <span style="color:var(--muted)">← 流式折叠气泡（compact 模式）</span></div>
+      <div class="indent">
+        <div><span class="node node-vue">MessageBubble</span> → <span class="node node-vue">AssistantContent</span> <span style="color:var(--muted)">（展开时复用）</span></div>
+      </div>
+      <div><span class="node node-vue">StreamingMessage</span> <span style="color:var(--muted)">← 流式消息（normal 模式）</span></div>
+      <div class="indent">
+        <div><span class="node node-vue">MessageBubble</span> → <span class="node node-vue">AssistantContent</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3>关键数据流向</h3>
+
+<div style="max-width:860px;">
+  <div class="flow-row">
+    <div class="flow-col fc-pi">pi subprocess<br><small>agent-loop.ts</small></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-col fc-pi">RPC stdout<br><small>JSON lines</small></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-col fc-adapter">EventAdapter<br><small>event-adapter.ts</small></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-col fc-adapter">WS ServerMessage<br><small>@xyz-agent/shared</small></div>
+  </div>
+  <div class="flow-row">
+    <div class="flow-col fc-adapter">WS ServerMessage</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-col fc-usechat">useChat handlers<br><small>onThinkingStart/End<br>onToolCallStart/End<br>onTextDelta</small></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-col fc-store">chat store<br><small>streamingMessage<br>contentBlocks[]<br>thinking[]<br>toolCalls[]</small></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-col fc-render">AssistantContent<br><small>groupIntoSections()</small></div>
+  </div>
+</div>
+
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<!-- TAB 4: 端到端映射 -->
+<!-- ════════════════════════════════════════════════════════════════ -->
+<div id="tab4" class="panel">
+
+<h2>pi 事件 → WS 消息 → 前端 handler → 数据结构</h2>
+
+<div class="box" style="max-width:900px;overflow-x:auto;">
+  <table class="map-table">
+    <tr>
+      <th>pi agent-loop 事件</th>
+      <th></th>
+      <th>EventAdapter WS 消息</th>
+      <th></th>
+      <th>useChat handler</th>
+      <th></th>
+      <th>数据变更</th>
+    </tr>
+    <tr>
+      <td><span style="color:var(--agent)">agent_start</span></td>
+      <td class="arrow">→</td>
+      <td style="color:var(--muted)"><em>NULL（不转发）</em></td>
+      <td></td>
+      <td style="color:var(--muted)">—</td>
+      <td></td>
+      <td style="color:var(--muted)">—</td>
+    </tr>
+    <tr>
+      <td><span style="color:var(--agent)">message_start</span><br>{ role: 'assistant' }</td>
+      <td class="arrow">→</td>
+      <td style="color:var(--muted)"><em>NULL（不转发）</em></td>
+      <td></td>
+      <td style="color:var(--muted)">—</td>
+      <td></td>
+      <td style="color:var(--muted)">—</td>
+    </tr>
+    <tr>
+      <td><span style="color:var(--thinking)">message_update</span><br>{ thinking_start }</td>
+      <td class="arrow">→</td>
+      <td><span style="color:var(--thinking)">message.thinking_start</span></td>
+      <td class="arrow">→</td>
+      <td><span style="color:var(--thinking)">onThinkingStart</span></td>
+      <td class="arrow">→</td>
+      <td>contentBlocks.push(thinking)<br>thinking.push(new block)</td>
+    </tr>
+    <tr>
+      <td><span style="color:var(--thinking)">message_update</span><br>{ thinking_delta }</td>
+      <td class="arrow">→</td>
+      <td><span style="color:var(--thinking)">message.thinking_delta</span></td>
+      <td class="arrow">→</td>
+      <td><span style="color:var(--thinking)">onThinkingDelta</span></td>
+      <td class="arrow">→</td>
+      <td>thinking[last].content += delta</td>
+    </tr>
+    <tr>
+      <td><span style="color:var(--thinking)">message_update</span><br>{ thinking_end }</td>
+      <td class="arrow">→</td>
+      <td><span style="color:var(--thinking)">message.thinking_end</span></td>
+      <td class="arrow">→</td>
+      <td><span style="color:var(--thinking)">onThinkingEnd</span></td>
+      <td class="arrow">→</td>
+      <td>thinking[last].collapsed = true</td>
+    </tr>
+    <tr>
+      <td><span style="color:var(--tool)">message_update</span><br>{ toolcall_start }</td>
+      <td class="arrow">→</td>
+      <td style="color:var(--muted)"><em>NULL（toolcall_start 不转发）</em></td>
+      <td></td>
+      <td style="color:var(--muted)">—</td>
+      <td></td>
+      <td style="color:var(--muted)">—</td>
+    </tr>
+    <tr>
+      <td><span style="color:var(--tool)">tool_execution_start</span></td>
+      <td class="arrow">→</td>
+      <td><span style="color:var(--tool)">message.tool_call_start</span></td>
+      <td class="arrow">→</td>
+      <td><span style="color:var(--tool)">onToolCallStart</span></td>
+      <td class="arrow">→</td>
+      <td>contentBlocks.push(toolCall)<br>toolCalls.push(new tc)</td>
+    </tr>
+    <tr>
+      <td><span style="color:var(--tool)">tool_execution_end</span></td>
+      <td class="arrow">→</td>
+      <td><span style="color:var(--tool)">message.tool_call_end</span></td>
+      <td class="arrow">→</td>
+      <td><span style="color:var(--tool)">onToolCallEnd</span></td>
+      <td class="arrow">→</td>
+      <td>toolCalls[i].status = 'completed'</td>
+    </tr>
+    <tr>
+      <td><span style="color:var(--text-color)">message_update</span><br>{ text_delta }</td>
+      <td class="arrow">→</td>
+      <td><span style="color:var(--text-color)">message.text_delta</span></td>
+      <td class="arrow">→</td>
+      <td><span style="color:var(--text-color)">onTextDelta</span></td>
+      <td class="arrow">→</td>
+      <td>contentBlocks.push(text) <strong style="color:var(--error)">仅首次!</strong><br>message.content += delta</td>
+    </tr>
+    <tr>
+      <td><span style="color:var(--agent)">message_end</span></td>
+      <td class="arrow">→</td>
+      <td style="color:var(--muted)"><em>NULL（不转发）</em></td>
+      <td></td>
+      <td style="color:var(--muted)">—</td>
+      <td></td>
+      <td style="color:var(--muted)">—</td>
+    </tr>
+    <tr>
+      <td><span style="color:var(--agent)">agent_end</span></td>
+      <td class="arrow">→</td>
+      <td><span style="color:var(--accent)">message.complete</span></td>
+      <td class="arrow">→</td>
+      <td><span style="color:var(--accent)">onComplete</span></td>
+      <td class="arrow">→</td>
+      <td>streamingMessage → messages[]<br>status = 'complete'</td>
+    </tr>
+  </table>
+</div>
+
+<div class="note">
+  <strong>重要：</strong>
+  pi 的 <code>toolcall_start</code>（LLM 输出 tool_use block）和 <code>tool_execution_start</code>（实际执行工具）是两个不同事件。
+  xyz-agent 只关心执行阶段，所以 EventAdapter 只转发 <code>tool_execution_start/end</code>。
+  <code>toolcall_start/end</code> 被 EventAdapter 忽略。
+</div>
+
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<!-- TAB 5: 折叠分组问题 -->
+<!-- ════════════════════════════════════════════════════════════════ -->
+<div id="tab5" class="panel">
+
+<h2>折叠分组问题：当前行为 vs 期望行为</h2>
+
+<p>以 <code>TCC O TC TC O</code> 为例，分析当前 groupByContentBlocks 的分组逻辑和期望改进方向。</p>
+
+<h3>contentBlocks 数组（实际）</h3>
+
+<div class="cb-row">
+  <div class="cb-block cb-thinking">thk-1</div>
+  <div class="cb-block cb-tool">tc-1</div>
+  <div class="cb-block cb-tool">tc-2</div>
+  <div class="cb-block cb-text">text ①</div>
+  <div class="cb-block cb-thinking">thk-2</div>
+  <div class="cb-block cb-tool">tc-3</div>
+  <div class="cb-block cb-thinking">thk-3</div>
+  <div class="cb-block cb-tool">tc-4</div>
+</div>
+<p style="font-size:12px;color:var(--muted);margin-top:4px;">
+  注意：第二段 text "All done!" 没有对应的 contentBlock，所有文字都合并到了 message.content 中。
+</p>
+
+<h3>当前 groupByContentBlocks：按相邻同类型分 section</h3>
+
+<div class="box" style="max-width:860px;">
+  <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;">
+    <div style="padding:6px 12px;border-radius:4px;background:var(--thinking-dim);border-left:3px solid var(--thinking);font-size:11px;font-family:var(--font-mono);">
+      Section: thinking<br>[thk-1]
+    </div>
+    <div style="padding:6px 12px;border-radius:4px;background:var(--tool-dim);border-left:3px solid var(--tool);font-size:11px;font-family:var(--font-mono);">
+      Section: toolCall<br>[tc-1, tc-2]
+    </div>
+    <div style="padding:6px 12px;border-radius:4px;background:var(--text-dim);border-left:3px solid var(--text-color);font-size:11px;font-family:var(--font-mono);">
+      Section: text<br>[content 全文]
+    </div>
+    <div style="padding:6px 12px;border-radius:4px;background:var(--thinking-dim);border-left:3px solid var(--thinking);font-size:11px;font-family:var(--font-mono);">
+      Section: thinking<br>[thk-2]
+    </div>
+    <div style="padding:6px 12px;border-radius:4px;background:var(--tool-dim);border-left:3px solid var(--tool);font-size:11px;font-family:var(--font-mono);">
+      Section: toolCall<br>[tc-3]
+    </div>
+    <div style="padding:6px 12px;border-radius:4px;background:var(--thinking-dim);border-left:3px solid var(--thinking);font-size:11px;font-family:var(--font-mono);">
+      Section: thinking<br>[thk-3]
+    </div>
+    <div style="padding:6px 12px;border-radius:4px;background:var(--tool-dim);border-left:3px solid var(--tool);font-size:11px;font-family:var(--font-mono);">
+      Section: toolCall<br>[tc-4]
+    </div>
+  </div>
+</div>
+
+<p style="font-size:12px;">渲染结果（6 个独立 section + 1 个 text）：</p>
+
+<div class="cmp-row" style="background:var(--surface2);">
+  <div class="cmp-label">当前</div>
+  <div class="cmp-chip chip-p">P (thk-1)</div>
+  <div class="cmp-chip chip-p">P (tc-1,2)</div>
+  <div class="cmp-chip chip-o">O (全文)</div>
+  <div class="cmp-chip chip-p">P (thk-2)</div>
+  <div class="cmp-chip chip-p">P (tc-3)</div>
+  <div class="cmp-chip chip-p">P (thk-3)</div>
+  <div class="cmp-chip chip-p">P (tc-4)</div>
+</div>
+
+<h3>Compact 模式渲染（CompactSummaryBar）</h3>
+
+<p style="font-size:12px;">CompactSummaryBar 不用 sections，它直接从 message.thinking/toolCalls 构造 chips：</p>
+
+<div style="display:flex;gap:4px;flex-wrap:wrap;margin:8px 0;">
+  <div style="padding:4px 10px;border-radius:100px;background:var(--thinking-dim);color:var(--thinking);font-size:11px;font-family:var(--font-mono);">
+    思考 (1)
+  </div>
+  <div style="padding:4px 10px;border-radius:100px;background:var(--tool-dim);color:var(--tool);font-size:11px;font-family:var(--font-mono);">
+    read (1)
+  </div>
+  <div style="padding:4px 10px;border-radius:100px;background:var(--tool-dim);color:var(--tool);font-size:11px;font-family:var(--font-mono);">
+    edit (1)
+  </div>
+  <div style="padding:4px 10px;border-radius:100px;background:var(--tool-dim);color:var(--tool);font-size:11px;font-family:var(--font-mono);">
+    write (1)
+  </div>
+  <div style="padding:4px 10px;border-radius:100px;background:var(--tool-dim);color:var(--tool);font-size:11px;font-family:var(--font-mono);">
+    bash (1)
+  </div>
+</div>
+
+<p style="font-size:12px;">
+  CompactSummaryBar 完全不关心 contentBlocks 中的顺序和位置。它从 <code>message.thinking[]</code> 和
+  <code>message.toolCalls[]</code> 扁平构造 chip 列表（按 toolName 分组），
+  丢失了"哪些 thinking/tool 在 text 前面、哪些在后面"的位置信息。
+</p>
+
+<hr class="section-divider">
+
+<h2>期望行为</h2>
+
+<p>以 text 为分割线，text 之间的所有 thinking + toolCall 合并为一个 "过程" 块。</p>
+
+<h3>方案 A：不改数据模型（立即可行）</h3>
+
+<p>由于当前只有一个 text block，分组结果为：</p>
+
+<div class="cmp-row" style="background:var(--surface2);">
+  <div class="cmp-label">方案A</div>
+  <div class="cmp-chip chip-p">P [thk-1, tc-1, tc-2]</div>
+  <div class="cmp-chip chip-o">O (全文)</div>
+  <div class="cmp-chip chip-p">P [thk-2, tc-3, thk-3, tc-4]</div>
+</div>
+
+<p style="font-size:12px;">
+  text 之前的所有 T/C 合为一组，text 之后的所有 T/C 合为一组。
+  改动范围：只需改 <code>groupByContentBlocks</code> 的分组算法 + CompactSummaryBar 支持多组渲染。
+</p>
+
+<h3>方案 B：改数据模型（完整方案）</h3>
+
+<p>支持多段 text，每段 text 独立记录位置：</p>
+
+<div class="cmp-row" style="background:var(--surface2);">
+  <div class="cmp-label">方案B</div>
+  <div class="cmp-chip chip-p">P [thk-1, tc-1, tc-2]</div>
+  <div class="cmp-chip chip-o">O "I've read..."</div>
+  <div class="cmp-chip chip-p">P [thk-2, tc-3, thk-3, tc-4]</div>
+  <div class="cmp-chip chip-o">O "All done!"</div>
+</div>
+
+<p style="font-size:12px;">
+  需要改动的模块：
+</p>
+
+<div class="box" style="max-width:860px;">
+  <table class="map-table">
+    <tr><th>模块</th><th>改动</th></tr>
+    <tr>
+      <td><code>shared/message.ts</code></td>
+      <td>Message.content 从 string 改为支持分段存储（如 <code>textSegments: { refId, content }[]</code>）</td>
+    </tr>
+    <tr>
+      <td><code>useChat.ts → onTextDelta</code></td>
+      <td>text 被打断后恢复时，创建新的 text contentBlock + 新的 text segment</td>
+    </tr>
+    <tr>
+      <td><code>message-layout.ts</code></td>
+      <td>以 text block 为分隔线分组（thinking + toolCall 合为 mixed group）</td>
+    </tr>
+    <tr>
+      <td><code>AssistantContent.vue</code></td>
+      <td>多段 text + 多个 CompactSummaryBar 交替渲染</td>
+    </tr>
+    <tr>
+      <td><code>CompactSummaryBar.vue</code></td>
+      <td>接受指定范围内的 thinking/toolCalls，而非全量</td>
+    </tr>
+    <tr>
+      <td><code>历史消息加载</code></td>
+      <td>从 session 文件恢复时重建多段 text</td>
+    </tr>
+  </table>
+</div>
+
+<div class="highlight-box">
+  <p style="font-size:13px;margin:0;">
+    <strong>建议路径：</strong>先做方案 A（快速验证分组逻辑的正确性和视觉效果），
+    确认交互满意后，再做方案 B（支持多段 text）。方案 A 的分组算法改动可以被方案 B 复用。
+  </p>
+</div>
+
+</div>
+
+<script>
+function showTab(id) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  event.target.classList.add('active');
+}
+</script>
+
+</body>
+</html>

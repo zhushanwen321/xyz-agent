@@ -1,9 +1,26 @@
 import { computed } from 'vue'
 import { connect, disconnect, getState } from '../lib/ws-client'
+import { BASE_PORT, DEV_PORT_OFFSET } from '@xyz-agent/shared'
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting'
 
-const DEFAULT_PORT = 3210
+/** 获取实际的 fallback 端口（考虑 dev 模式的端口偏移） */
+async function resolveFallbackPort(): Promise<number> {
+  try {
+    if (window.electronAPI) {
+      const offset = await window.electronAPI.getRuntimePortOffset()
+      return BASE_PORT + offset
+    }
+  // eslint-disable-next-line taste/no-silent-catch
+  } catch {
+    // IPC 不可用（极端边界）
+  }
+  // DEV 环境下 runtime 在 BASE_PORT+100，不能 fallback 到 prod 端口
+  if (import.meta.env.DEV) {
+    return BASE_PORT + DEV_PORT_OFFSET
+  }
+  return BASE_PORT
+}
 
 const STATUS_TEXT: Record<ConnectionStatus, string> = {
   disconnected: 'Disconnected',
@@ -26,7 +43,7 @@ export function useConnection() {
     if (initialised) {
       // HMR 后重连——connect() 内部有去重逻辑
       if (import.meta.env.VITE_MOCK !== 'true') {
-        const port = DEFAULT_PORT
+        const port = await resolveFallbackPort()
         connect('ws://localhost:' + port)
       }
       return
@@ -37,8 +54,6 @@ export function useConnection() {
       connect('mock://localhost')
       return
     }
-
-    const port = DEFAULT_PORT
 
     try {
       // Electron IPC: 监听 runtime 端口事件
@@ -60,16 +75,20 @@ export function useConnection() {
         // eslint-disable-next-line taste/no-silent-catch
         } catch (e) {
           console.error('[useConnection] runtime port not ready:', e)
-          // Fallback: 继续使用默认端口连接
         }
+
+        // Runtime 尚未启动时，用偏移后的端口做 fallback（避免连到 prod runtime）
+        const fallbackPort = await resolveFallbackPort()
+        connect('ws://localhost:' + fallbackPort)
+        return
       }
     // eslint-disable-next-line taste/no-silent-catch
     } catch (e) {
-      console.error('[useConnection] Electron API unavailable, using default port:', e)
-      // Fallback: 继续使用默认端口连接
+      console.error('[useConnection] Electron API unavailable:', e)
     }
 
-    connect('ws://localhost:' + port)
+    // 没有 Electron API（Web 模式），用 base port
+    connect('ws://localhost:' + BASE_PORT)
   }
 
   function teardown(): void {

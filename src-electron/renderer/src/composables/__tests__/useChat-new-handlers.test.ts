@@ -245,20 +245,17 @@ describe('Task 4 — handler routing (FR-8, FR-9)', () => {
     expect(store.getSessionState('s1').thinkingLevel).toBe('high')
   })
 
-  it('onExtensionSetTitle calls window.electronAPI.setTitle', () => {
+  it('onExtensionSetTitle — handler removed (setTitle not implemented in preload)', () => {
+    // setTitle was never implemented in preload.ts; the handler and protocol type
+    // have been removed. The event is no longer registered.
     const setTitle = vi.fn()
     ;(window as unknown as { electronAPI: { setTitle: typeof setTitle } }).electronAPI = { setTitle }
 
-    invokeHandler('extension:setTitle', makeMsg('extension:setTitle', { title: 'Win' }))
-
-    expect(setTitle).toHaveBeenCalledWith('Win')
-  })
-
-  it('onExtensionSetTitle tolerates missing electronAPI (optional chaining)', () => {
-    delete (window as unknown as { electronAPI?: unknown }).electronAPI
+    // extension:setTitle is no longer in the handler map — invokeHandler throws
     expect(() => {
-      invokeHandler('extension:setTitle', makeMsg('extension:setTitle', { title: 'X' }))
-    }).not.toThrow()
+      invokeHandler('extension:setTitle', makeMsg('extension:setTitle', { title: 'Win' }))
+    }).toThrow(/No handler captured/)
+    expect(setTitle).not.toHaveBeenCalled()
   })
 
   it('onStreamError adds an alert system message', () => {

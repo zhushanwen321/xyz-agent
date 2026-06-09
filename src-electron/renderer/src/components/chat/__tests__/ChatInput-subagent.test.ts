@@ -1,3 +1,6 @@
+/* eslint-disable */
+// @vitest-environment jsdom
+// Run with: npx vitest run --config src-electron/renderer/vitest.config.ts src-electron/renderer/src/components/chat/__tests__/ChatInput-subagent.test.ts
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
@@ -37,7 +40,9 @@ vi.mock('../../../stores/provider', () => ({
 vi.mock('../../../stores/chat', () => ({
   useChatStore: () => ({
   sessions: new Map(),
-  getSessionState: () => ({ contextUsage: 0 }),
+  getSessionState: () => ({ contextUsage: 0, isGenerating: false }),
+  getPendingText: () => '',
+  setPendingText: () => {},
   }),
 }))
 

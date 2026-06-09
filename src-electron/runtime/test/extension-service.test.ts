@@ -1,24 +1,27 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, mkdtempSync, symlinkSync } from 'node:fs'
 import { join } from 'node:path'
-import { ExtensionService } from '../src/extension-service.js'
+import { tmpdir, homedir } from 'node:os'
+import { ExtensionService, ExtensionInstallError } from '../src/extension-service.js'
 
-import { execSync } from 'node:child_process'
+import { execSync, execFileSync } from 'node:child_process'
 
 vi.mock('node:child_process', () => ({
   execSync: vi.fn(() => ''),
+  execFileSync: vi.fn(() => ''),
 }))
 
 const mockedExecSync = vi.mocked(execSync)
+const mockedExecFileSync = vi.mocked(execFileSync)
 
 describe('ExtensionService', () => {
   let service: ExtensionService
-  const testSettingsDir = '/tmp/xyz-agent-test/extensions'
+  let testSettingsDir: string
 
   beforeEach(() => {
     vi.clearAllMocks()
     // Create test directory structure
-    mkdirSync(testSettingsDir, { recursive: true })
+    testSettingsDir = mkdtempSync(join(tmpdir(), 'ext-service-test-'))
     writeFileSync(join(testSettingsDir, 'settings.json'), JSON.stringify({
       packages: ['npm:pi-ask-user'],
     }), 'utf-8')
@@ -50,40 +53,31 @@ describe('ExtensionService', () => {
   describe('scanExtensions', () => {
     it('returns extensions from all resolver sources', async () => {
       const extensions = await service.scanExtensions()
-      // Should find pi-ask-user from settings
       const askUser = extensions.find(e => e.name === 'pi-ask-user')
       expect(askUser).toBeDefined()
       expect(askUser!.source).toBe('user-installed')
       expect(askUser!.enabled).toBe(true)
       expect(askUser!.version).toBe('0.1.0')
+      expect(askUser!.dirName).toBe('pi-ask-user')
     })
 
     it('marks disabled extensions as not enabled', async () => {
-      // Create disabled-packages.json
       writeFileSync(join(testSettingsDir, 'disabled-packages.json'), JSON.stringify({
         disabled: ['npm:pi-ask-user'],
       }), 'utf-8')
 
       const extensions = await service.scanExtensions()
       const askUser = extensions.find(e => e.name === 'pi-ask-user')
-      // pi-ask-user may not exist in test environment (depends on npm dependencies)
       if (askUser) {
         expect(askUser.enabled).toBe(false)
-      } else {
-        // eslint-disable-next-line no-console
-        console.log('[test] pi-ask-user not found in test environment, skipping disabled assertion')
       }
     })
 
     it('returns empty array when no extensions found', async () => {
-      // Clear settings packages
       writeFileSync(join(testSettingsDir, 'settings.json'), JSON.stringify({}), 'utf-8')
-      // Remove the fake npm package
       rmSync(join(testSettingsDir, 'npm'), { recursive: true, force: true })
 
       const extensions = await service.scanExtensions()
-      // Should still have built-in extensions from npm dependencies
-      // but the settings source should be empty
       expect(Array.isArray(extensions)).toBe(true)
     })
   })
@@ -91,7 +85,6 @@ describe('ExtensionService', () => {
   describe('getExtensionPaths', () => {
     it('returns paths of enabled extensions', async () => {
       const paths = await service.getExtensionPaths()
-      // Should include the settings extension path
       expect(paths.some(p => p.includes('pi-ask-user'))).toBe(true)
     })
 
@@ -111,10 +104,7 @@ describe('ExtensionService', () => {
     })
 
     it('throws when package is not a valid pi extension', async () => {
-      mockedExecSync.mockImplementation(() => '')
-      // Remove the pi-ask-user package to simulate install of something that doesn't match
-      // The execSync mock already returns success, so we need the validation to fail
-      // by making the installed dir not have a valid pi extension
+      mockedExecFileSync.mockImplementation(() => '')
       const npmDir = join(testSettingsDir, 'npm', 'node_modules', 'invalid-pkg')
       mkdirSync(npmDir, { recursive: true })
       writeFileSync(join(npmDir, 'package.json'), JSON.stringify({
@@ -129,7 +119,6 @@ describe('ExtensionService', () => {
 
   describe('uninstallExtension', () => {
     it('removes from settings.json', async () => {
-      // First install
       const npmDir = join(testSettingsDir, 'npm', 'node_modules', 'test-pkg')
       mkdirSync(npmDir, { recursive: true })
       writeFileSync(join(npmDir, 'package.json'), JSON.stringify({
@@ -138,17 +127,15 @@ describe('ExtensionService', () => {
         peerDependencies: { '@mariozechner/pi-coding-agent': '*' },
       }), 'utf-8')
 
-      // Add to settings
       const settingsPath = join(testSettingsDir, 'settings.json')
       const raw = readFileSync(settingsPath, 'utf-8')
       const settings = JSON.parse(raw)
       settings.packages = [...(settings.packages || []), 'npm:test-pkg']
       writeFileSync(settingsPath, JSON.stringify(settings), 'utf-8')
 
-      mockedExecSync.mockImplementation(() => '')
+      mockedExecFileSync.mockImplementation(() => '')
       await service.uninstallExtension('test-pkg')
 
-      // Verify removed from settings
       const updatedRaw = readFileSync(settingsPath, 'utf-8')
       const updatedSettings = JSON.parse(updatedRaw)
       expect(updatedSettings.packages).not.toContain('npm:test-pkg')
@@ -167,14 +154,338 @@ describe('ExtensionService', () => {
     })
 
     it('toggles disabled extension back to enabled', async () => {
-      // First disable
       await service.toggleExtension('pi-ask-user', false)
-      // Then enable
       await service.toggleExtension('pi-ask-user', true)
 
       const disabledPath = join(testSettingsDir, 'disabled-packages.json')
-      // File should be deleted when disabled list becomes empty
       expect(existsSync(disabledPath)).toBe(false)
+    })
+  })
+
+  // ── Task 3: ExtensionInstallError and error classification ────
+
+  describe('ExtensionInstallError', () => {
+    it('has code, message, and optional hint', () => {
+      const err = new ExtensionInstallError('not_found', 'Package not found', 'Check the package name')
+      expect(err.code).toBe('not_found')
+      expect(err.message).toBe('Package not found')
+      expect(err.hint).toBe('Check the package name')
+      expect(err).toBeInstanceOf(Error)
+      expect(err).toBeInstanceOf(ExtensionInstallError)
+    })
+
+    it('works without hint', () => {
+      const err = new ExtensionInstallError('network', 'Connection timeout')
+      expect(err.code).toBe('network')
+      expect(err.hint).toBeUndefined()
+    })
+  })
+
+  describe('installExtension error classification', () => {
+    it('classifies 404 errors as not_found', async () => {
+      mockedExecFileSync.mockImplementation(() => {
+        throw new Error('npm install failed: npm ERR! 404 Not Found - GET https://registry.npmjs.org/nonexistent-pkg')
+      })
+
+      try {
+        await service.installExtension('npm:nonexistent-pkg')
+        expect.unreachable('Should have thrown')
+      } catch (e) {
+        expect(e).toBeInstanceOf(ExtensionInstallError)
+        expect((e as ExtensionInstallError).code).toBe('not_found')
+      }
+    })
+
+    it('classifies E404 errors as not_found', async () => {
+      mockedExecFileSync.mockImplementation(() => {
+        throw new Error('npm ERR! E404 Package not found')
+      })
+
+      try {
+        await service.installExtension('npm:e404-pkg')
+        expect.unreachable('Should have thrown')
+      } catch (e) {
+        expect(e).toBeInstanceOf(ExtensionInstallError)
+        expect((e as ExtensionInstallError).code).toBe('not_found')
+      }
+    })
+
+    it('classifies other npm errors as network', async () => {
+      mockedExecFileSync.mockImplementation(() => {
+        throw new Error('npm ERR! ETIMEOUT request timeout')
+      })
+
+      try {
+        await service.installExtension('npm:timeout-pkg')
+        expect.unreachable('Should have thrown')
+      } catch (e) {
+        expect(e).toBeInstanceOf(ExtensionInstallError)
+        expect((e as ExtensionInstallError).code).toBe('network')
+      }
+    })
+
+    it('classifies invalid pi extension as not_extension', async () => {
+      mockedExecFileSync.mockImplementation(() => '')
+      const npmDir = join(testSettingsDir, 'npm', 'node_modules', 'lodash')
+      mkdirSync(npmDir, { recursive: true })
+      writeFileSync(join(npmDir, 'package.json'), JSON.stringify({
+        name: 'lodash',
+        version: '4.17.21',
+      }), 'utf-8')
+
+      try {
+        await service.installExtension('npm:lodash')
+        expect.unreachable('Should have thrown')
+      } catch (e) {
+        expect(e).toBeInstanceOf(ExtensionInstallError)
+        expect((e as ExtensionInstallError).code).toBe('not_extension')
+      }
+    })
+  })
+
+  // ── Task 4: installLocalDirectory, installGitRepository, finishInstall ──
+
+  describe('installLocalDirectory', () => {
+    it('throws for non-existent path', async () => {
+      await expect(service.installLocalDirectory('/nonexistent/path'))
+        .rejects.toThrow('does not exist')
+    })
+
+    it('throws for non-directory path', async () => {
+      const filePath = join(testSettingsDir, 'some-file.txt')
+      writeFileSync(filePath, 'hello', 'utf-8')
+
+      await expect(service.installLocalDirectory(filePath))
+        .rejects.toThrow('not a directory')
+    })
+
+    it('discovers extensions from a local directory with single pi extension', async () => {
+      const sourceDir = join(testSettingsDir, 'source-ext')
+      const extDir = join(sourceDir, 'my-pi-ext')
+      mkdirSync(extDir, { recursive: true })
+      writeFileSync(join(extDir, 'package.json'), JSON.stringify({
+        name: 'pi-my-ext',
+        version: '1.0.0',
+        description: 'A test extension',
+        keywords: ['pi-package'],
+      }), 'utf-8')
+
+      const result = await service.installLocalDirectory(sourceDir)
+
+      try {
+        expect(result.tempDir).toContain('ext-scan-')
+        expect(result.candidates).toHaveLength(1)
+        expect(result.candidates[0].name).toBe('pi-my-ext')
+        expect(result.candidates[0].version).toBe('1.0.0')
+      } finally {
+        try { rmSync(result.tempDir, { recursive: true, force: true }) } catch { /* ignore */ }
+      }
+    })
+
+    it('discovers extensions from a directory that IS a pi extension itself', async () => {
+      const sourceDir = join(testSettingsDir, 'source-ext-single')
+      mkdirSync(sourceDir, { recursive: true })
+      writeFileSync(join(sourceDir, 'package.json'), JSON.stringify({
+        name: 'pi-direct-ext',
+        version: '2.0.0',
+        description: 'Direct extension',
+        pi: { type: 'extension' },
+      }), 'utf-8')
+
+      const result = await service.installLocalDirectory(sourceDir)
+
+      try {
+        expect(result.candidates).toHaveLength(1)
+        expect(result.candidates[0].name).toBe('pi-direct-ext')
+      } finally {
+        try { rmSync(result.tempDir, { recursive: true, force: true }) } catch { /* ignore */ }
+      }
+    })
+
+    it('returns empty candidates when no valid extensions found', async () => {
+      const sourceDir = join(testSettingsDir, 'source-empty')
+      mkdirSync(sourceDir, { recursive: true })
+
+      const result = await service.installLocalDirectory(sourceDir)
+
+      try {
+        expect(result.candidates).toHaveLength(0)
+      } finally {
+        try { rmSync(result.tempDir, { recursive: true, force: true }) } catch { /* ignore */ }
+      }
+    })
+  })
+
+  describe('installGitRepository', () => {
+    it('throws when git clone fails', async () => {
+      mockedExecFileSync.mockImplementation(() => {
+        throw new Error('git clone failed: repository not found')
+      })
+
+      await expect(service.installGitRepository('https://github.com/nonexistent/repo.git'))
+        .rejects.toThrow('git clone failed')
+    })
+
+    it('discovers extensions from a cloned git repo', async () => {
+      // Mock: when git clone is called via execFileSync, create the extension structure in the target dir
+      mockedExecFileSync.mockImplementation((_cmd: string, args?: readonly string[]) => {
+        if (args?.[0] === 'clone') {
+          // git clone args: ['clone', '--depth', '1', url, targetDir]
+          const targetDir = args[4] ?? ''
+          if (targetDir) {
+            mkdirSync(targetDir, { recursive: true })
+            const extDir = join(targetDir, 'packages', 'pi-cloned-ext')
+            mkdirSync(extDir, { recursive: true })
+            writeFileSync(join(extDir, 'package.json'), JSON.stringify({
+              name: 'pi-cloned-ext',
+              version: '0.5.0',
+              description: 'A cloned extension',
+              keywords: ['pi-package'],
+            }), 'utf-8')
+          }
+        }
+        return ''
+      })
+
+      const result = await service.installGitRepository('https://github.com/user/pi-ext-repo.git')
+
+      expect(result.tempDir).toContain('ext-scan-')
+      expect(result.candidates.length).toBeGreaterThanOrEqual(1)
+      expect(result.candidates.some(c => c.name === 'pi-cloned-ext')).toBe(true)
+
+      // Cleanup
+      try { rmSync(result.tempDir, { recursive: true, force: true }) } catch { /* ignore */ }
+    })
+  })
+
+  describe('finishInstall', () => {
+    it('copies selected extensions to extensions dir and cleans up temp', async () => {
+      const tempDir = join(testSettingsDir, 'tmp', 'ext-scan-test-finish')
+      const extA = join(tempDir, 'ext-a')
+      const extB = join(tempDir, 'ext-b')
+      mkdirSync(extA, { recursive: true })
+      mkdirSync(extB, { recursive: true })
+      writeFileSync(join(extA, 'package.json'), JSON.stringify({
+        name: 'pi-ext-a', version: '1.0.0', description: 'A', keywords: ['pi-package'],
+      }), 'utf-8')
+      writeFileSync(join(extB, 'package.json'), JSON.stringify({
+        name: 'pi-ext-b', version: '1.0.0', description: 'B', keywords: ['pi-package'],
+      }), 'utf-8')
+
+      await service.finishInstall(tempDir, ['ext-a', 'ext-b'])
+
+      const extensionsDir = join(testSettingsDir, 'extensions')
+      expect(existsSync(join(extensionsDir, 'ext-a', 'package.json'))).toBe(true)
+      expect(existsSync(join(extensionsDir, 'ext-b', 'package.json'))).toBe(true)
+      expect(existsSync(tempDir)).toBe(false)
+    })
+
+    it('only installs selected extensions, not all', async () => {
+      const tempDir = join(testSettingsDir, 'tmp', 'ext-scan-test-partial')
+      const extA = join(tempDir, 'ext-a')
+      const extB = join(tempDir, 'ext-b')
+      mkdirSync(extA, { recursive: true })
+      mkdirSync(extB, { recursive: true })
+      writeFileSync(join(extA, 'package.json'), JSON.stringify({
+        name: 'pi-ext-a', version: '1.0.0', description: 'A', keywords: ['pi-package'],
+      }), 'utf-8')
+      writeFileSync(join(extB, 'package.json'), JSON.stringify({
+        name: 'pi-ext-b', version: '1.0.0', description: 'B', keywords: ['pi-package'],
+      }), 'utf-8')
+
+      await service.finishInstall(tempDir, ['ext-a'])
+
+      const extensionsDir = join(testSettingsDir, 'extensions')
+      expect(existsSync(join(extensionsDir, 'ext-a'))).toBe(true)
+      expect(existsSync(join(extensionsDir, 'ext-b'))).toBe(false)
+    })
+
+    it('throws when selected extension does not exist in temp dir', async () => {
+      const tempDir = join(testSettingsDir, 'tmp', 'ext-scan-test-missing')
+      mkdirSync(tempDir, { recursive: true })
+
+      await expect(service.finishInstall(tempDir, ['nonexistent']))
+        .rejects.toThrow('not found in')
+    })
+
+    it('rejects symlink extension in temp dir', async () => {
+      const tempDir = join(testSettingsDir, 'tmp', 'ext-scan-test-symlink')
+      mkdirSync(tempDir, { recursive: true })
+      // Create a symlink pointing to a real dir outside tempDir
+      const targetDir = join(testSettingsDir, 'symlink-target')
+      mkdirSync(targetDir, { recursive: true })
+      writeFileSync(join(targetDir, 'package.json'), '{}', 'utf-8')
+      symlinkSync(targetDir, join(tempDir, 'evil-link'))
+
+      await expect(service.finishInstall(tempDir, ['evil-link']))
+        .rejects.toThrow('symlink')
+    })
+  })
+
+  describe('cancelInstall', () => {
+    it('cleans up valid temp directory', async () => {
+      const tempDir = join(testSettingsDir, 'tmp', 'ext-scan-test-cancel')
+      mkdirSync(tempDir, { recursive: true })
+      writeFileSync(join(tempDir, 'marker.txt'), 'test', 'utf-8')
+
+      await service.cancelInstall(tempDir)
+
+      expect(existsSync(tempDir)).toBe(false)
+    })
+
+    it('throws for path outside allowedPrefixes', async () => {
+      await expect(service.cancelInstall('/tmp/outside-xyz'))
+        .rejects.toThrow()
+    })
+
+    it('handles non-existent temp dir gracefully', async () => {
+      const tempDir = join(testSettingsDir, 'tmp', 'ext-scan-nonexistent-cancel')
+      // Should not throw — rmSync force:true is idempotent
+      await expect(service.cancelInstall(tempDir)).resolves.toBeUndefined()
+    })
+  })
+
+  describe('installGitRepository URL validation', () => {
+    it('rejects http:// URLs (SSRF prevention)', async () => {
+      await expect(service.installGitRepository('http://169.254.169.254/latest/meta-data/'))
+        .rejects.toThrow('Invalid Git URL')
+    })
+
+    it('rejects git:// URLs', async () => {
+      await expect(service.installGitRepository('git://github.com/user/repo.git'))
+        .rejects.toThrow('Invalid Git URL')
+    })
+
+    it('rejects ftp:// URLs', async () => {
+      await expect(service.installGitRepository('ftp://example.com/repo'))
+        .rejects.toThrow('Invalid Git URL')
+    })
+
+    it('accepts https:// URLs', async () => {
+      mockedExecFileSync.mockImplementation(() => {
+        throw new Error('git clone failed: test')
+      })
+      // Should fail with git clone error, not URL validation error
+      await expect(service.installGitRepository('https://github.com/user/repo.git'))
+        .rejects.toThrow('git clone failed')
+    })
+  })
+
+  describe('installLocalDirectory path security', () => {
+    it('rejects paths outside home and tmp', async () => {
+      await expect(service.installLocalDirectory('/etc/passwd'))
+        .rejects.toThrow('not a directory')
+    })
+
+    it('rejects non-directory paths under home', async () => {
+      const filePath = join(homedir(), 'xyz-agent-test-file-' + Date.now())
+      writeFileSync(filePath, 'test', 'utf-8')
+      try {
+        await expect(service.installLocalDirectory(filePath))
+          .rejects.toThrow('not a directory')
+      } finally {
+        try { rmSync(filePath, { force: true }) } catch { /* ignore */ }
+      }
     })
   })
 })

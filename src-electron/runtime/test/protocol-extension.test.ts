@@ -7,6 +7,8 @@ import type {
   ExtensionErrorPayload,
   ToolCallUpdatePayload,
   ExtensionInfo,
+  ExtensionDiscoveredPayload,
+  ExtensionInstallErrorPayload,
 } from '@xyz-agent/shared'
 
 /**
@@ -229,6 +231,7 @@ describe('Protocol: extension types', () => {
   it('ExtensionInfo has correct shape', () => {
     const info: ExtensionInfo = {
       name: 'my-extension',
+      dirName: 'my-extension',
       version: '1.0.0',
       description: 'A test extension',
       path: '/path/to/ext',
@@ -241,6 +244,7 @@ describe('Protocol: extension types', () => {
 
     const userInfo: ExtensionInfo = {
       name: 'user-ext',
+      dirName: 'user-ext',
       version: '0.1.0',
       description: '',
       path: '/other/path',
@@ -248,5 +252,85 @@ describe('Protocol: extension types', () => {
       source: 'user-installed',
     }
     expect(userInfo.source).toBe('user-installed')
+  })
+
+  // ── New install flow types (Task 2) ──────────────────────────────
+
+  describe('extension install flow messages', () => {
+    it('ClientMessage accepts extension.installDir type', () => {
+      const msg: ClientMessage = {
+        type: 'extension.installDir',
+        payload: { path: '/path/to/local/dir' },
+      }
+      expect(msg.type).toBe('extension.installDir')
+      expect((msg.payload as { path: string }).path).toBe('/path/to/local/dir')
+    })
+
+    it('ClientMessage accepts extension.installGit type', () => {
+      const msg: ClientMessage = {
+        type: 'extension.installGit',
+        payload: { url: 'https://github.com/user/repo.git' },
+      }
+      expect(msg.type).toBe('extension.installGit')
+      expect((msg.payload as { url: string }).url).toBe('https://github.com/user/repo.git')
+    })
+
+    it('ClientMessage accepts extension.finishInstall type', () => {
+      const msg: ClientMessage = {
+        type: 'extension.finishInstall',
+        payload: { tempDir: '/tmp/ext-scan-123', selected: ['ext-a', 'ext-b'] },
+      }
+      expect(msg.type).toBe('extension.finishInstall')
+      const p = msg.payload as { tempDir: string; selected: string[] }
+      expect(p.tempDir).toBe('/tmp/ext-scan-123')
+      expect(p.selected).toEqual(['ext-a', 'ext-b'])
+    })
+
+    it('ServerMessage accepts extension.discovered type', () => {
+      const msg: ServerMessage = {
+        type: 'extension.discovered',
+        payload: {
+          tempDir: '/tmp/ext-scan-123',
+          candidates: [
+            { name: 'ext-a', version: '1.0.0', description: 'Test', path: '/tmp/a', enabled: true, source: 'built-in' as const },
+          ],
+        },
+      }
+      expect(msg.type).toBe('extension.discovered')
+    })
+
+    it('ServerMessage accepts extension.installError type', () => {
+      const msg: ServerMessage = {
+        type: 'extension.installError',
+        payload: { code: 'not_found', message: 'Package not found' },
+      }
+      expect(msg.type).toBe('extension.installError')
+    })
+
+    it('ExtensionDiscoveredPayload has correct shape', () => {
+      const payload: ExtensionDiscoveredPayload = {
+        tempDir: '/tmp/ext-scan-123',
+        candidates: [
+          { name: 'ext-a', dirName: 'ext-a', version: '1.0.0', description: 'Test', path: '/tmp/a', enabled: true, source: 'built-in' },
+        ],
+      }
+      expect(payload.tempDir).toBe('/tmp/ext-scan-123')
+      expect(payload.candidates).toHaveLength(1)
+    })
+
+    it('ExtensionInstallErrorPayload has required and optional fields', () => {
+      const minimal: ExtensionInstallErrorPayload = {
+        code: 'network',
+        message: 'Connection timeout',
+      }
+      expect(minimal.hint).toBeUndefined()
+
+      const withHint: ExtensionInstallErrorPayload = {
+        code: 'not_found',
+        message: 'Package not found',
+        hint: 'Check the package name and registry',
+      }
+      expect(withHint.hint).toBe('Check the package name and registry')
+    })
   })
 })

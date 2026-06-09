@@ -60,25 +60,35 @@ export function convertPiHistory(raw: (PiHistoryMessage | PiHistoryToolResult)[]
     let textContent = ''
     const thinking: ThinkingBlock[] = []
     const toolCalls: ToolCall[] = []
+    const contentBlocks: import('@xyz-agent/shared').ContentBlock[] = []
 
     for (const part of parts) {
       if (part.type === 'text') {
         textContent += part.text ?? ''
       } else if (part.type === 'thinking') {
+        const thkId = crypto.randomUUID()
         thinking.push({
-          id: crypto.randomUUID(),
+          id: thkId,
           content: part.thinking ?? '',
           collapsed: true,
         })
+        contentBlocks.push({ type: 'thinking', refId: thkId })
       } else if (part.type === 'toolCall' || part.type === 'tool_use') {
+        const tcId = part.id ?? crypto.randomUUID()
         toolCalls.push({
-          id: part.id ?? crypto.randomUUID(),
+          id: tcId,
           toolName: part.name ?? '',
           input: part.arguments ?? {},
           status: 'completed',
           startTime: m.timestamp ?? Date.now(),
         })
+        contentBlocks.push({ type: 'toolCall', refId: tcId })
       }
+    }
+
+    // Add text block once after loop (if any text was accumulated)
+    if (textContent) {
+      contentBlocks.unshift({ type: 'text', refId: 'text' })
     }
 
     const msg: Message = {
@@ -88,6 +98,7 @@ export function convertPiHistory(raw: (PiHistoryMessage | PiHistoryToolResult)[]
       status: 'complete',
       ...(thinking.length > 0 && { thinking }),
       ...(toolCalls.length > 0 && { toolCalls }),
+      ...(contentBlocks.length > 0 && { contentBlocks }),
       // Extract usage from pi assistant messages (input/output token counts)
       ...(() => {
         if (m.role !== 'assistant') return {}

@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Chip Demo — Individual Blocks</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:oklch(97% 0.018 70);color:oklch(22% 0.02 50);font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;font-size:13px;padding:40px;display:flex;flex-direction:column;align-items:center}
+.wrap{width:100%;max-width:680px}
+.msg{background:oklch(99% 0.008 70);border:1px solid oklch(90% 0.014 70);border-radius:4px;padding:16px}
+h2{font-size:16px;margin-bottom:4px}
+.desc{font-size:12px;color:oklch(50% 0.018 50);margin-bottom:16px;line-height:1.5}
+.msg-role{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:oklch(50% 0.018 50);margin-bottom:10px}
+
+/* Chip row */
+.chips{display:flex;align-items:center;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:100px;font-size:11px;font-family:monospace;cursor:pointer;border:1px solid transparent;transition:all 0.12s;user-select:none}
+.chip--t{background:color-mix(in oklch,oklch(64% 0.13 28) 12%,transparent);color:oklch(64% 0.13 28)}
+.chip--tc{background:color-mix(in oklch,oklch(70% 0.18 145) 12%,transparent);color:oklch(60% 0.16 145)}
+.chip--on{box-shadow:0 0 0 1px oklch(64% 0.13 28);background:color-mix(in oklch,oklch(64% 0.13 28) 20%,transparent)!important}
+.chip__dot{width:5px;height:5px;border-radius:50%}
+.chip__dot--t{background:oklch(64% 0.13 28)}
+.chip__dot--tc{background:oklch(70% 0.18 145)}
+
+/* Block container: shows all items for a tool type */
+.block-group{display:none;flex-direction:column;gap:2px;margin-bottom:10px}
+.block-group.shown{display:flex}
+
+/* Individual operation block */
+.op{display:flex;flex-direction:column;padding:3px 0 3px 12px;border-left:2px solid oklch(90% 0.014 70);cursor:pointer;transition:background 0.1s}
+.op:hover{background:color-mix(in oklch,oklch(64% 0.13 28) 6%,transparent)}
+.op__hdr{display:flex;align-items:center;gap:6px;font-size:11px;color:oklch(50% 0.018 50);pointer-events:none}
+.op__dot{width:4px;height:4px;border-radius:50%;flex-shrink:0}
+.op__dot--t{background:oklch(64% 0.13 28)}
+.op__dot--tc{background:oklch(70% 0.18 145)}
+.op__nm{font-weight:500;color:oklch(64% 0.13 28);flex-shrink:0}
+.op__nm--tc{color:oklch(60% 0.16 145)}
+.op__path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.op__time{font-family:monospace;font-size:10px;color:oklch(65% 0.012 50);flex-shrink:0}
+
+/* Expandable body */
+.op__body{display:none;margin:4px 0 2px 13px;padding:8px 10px;background:oklch(97% 0.018 70);border:1px solid oklch(90% 0.014 70);border-radius:3px;font-family:monospace;font-size:11px;line-height:1.6;color:oklch(50% 0.018 50);white-space:pre-wrap}
+.op__body.shown{display:block}
+.op__body-label{font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:oklch(65% 0.012 50);margin-bottom:4px;pointer-events:none}
+
+/* Expand All */
+.btn{display:inline-block;padding:4px 12px;border:1px solid oklch(90% 0.014 70);border-radius:4px;font-size:11px;cursor:pointer;background:oklch(97% 0.018 70)}
+.btn:hover{border-color:oklch(64% 0.13 28)}
+
+code{font-family:monospace;font-size:11px;background:oklch(92% 0.04 28);padding:1px 5px;border-radius:2px}
+hr{border:none;border-top:1px solid oklch(90% 0.014 70);margin:20px 0}
+.foot{font-size:11px;color:oklch(50% 0.018 50);line-height:1.8}
+.foot kbd{font-family:monospace;font-size:10px;background:oklch(90% 0.014 70);padding:1px 6px;border-radius:2px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h2>三层交互：chip 过滤 → 单行汇总 → 点击展开详情</h2>
+<p class="desc">
+  <code>[read 85 文件]</code> → 展示 85 条独立的 read 行，每条一行路径<br>
+  <code>点击某一行</code> → 展开该文件读取的完整内容<br>
+  <code>展开全部</code> → 一键展开所有
+</p>
+
+<div class="msg" id="msg1">
+  <div class="msg-role">助手 · 全面代码检查</div>
+
+  <!-- Chips -->
+  <div class="chips">
+    <span class="chip chip--t" data-group="thinking"><span class="chip__dot chip__dot--t"></span>思考 5.6s</span>
+    <span class="chip chip--tc" data-group="read"><span class="chip__dot chip__dot--tc"></span>read 85 文件</span>
+    <span class="chip chip--tc" data-group="grep"><span class="chip__dot chip__dot--tc"></span>grep 23 搜索</span>
+    <span class="chip chip--tc" data-group="bash"><span class="chip__dot chip__dot--tc"></span>bash 6 执行</span>
+    <span class="chip chip--tc" data-group="write"><span class="chip__dot chip__dot--tc"></span>write 3 文件</span>
+    <span class="chip chip--tc" data-group="edit"><span class="chip__dot chip__dot--tc"></span>edit 12 文件</span>
+  </div>
+
+  <!-- Block Groups (one per tool type) -->
+  <div id="groups">
+
+    <!-- ── Thinking ── -->
+    <div class="block-group" data-group="thinking">
+      <div class="op">
+        <div class="op__hdr"><span class="op__dot op__dot--t"></span><span class="op__nm">Thinking</span><span class="op__path">分析整体项目结构</span><span class="op__time">· 5.6s</span></div>
+        <div class="op__body"><div class="op__body-label">思考过程</div>先分析项目整体结构，检测到 src/ 目录下 200+ 个 TypeScript 文件。需要关注：1) 模块间耦合度 2) 未使用的导出 3) any 类型滥用。按模块分组扫描，先检查核心模块的依赖关系...</div>
+      </div>
+    </div>
+
+    <!-- ── Read (85 files — showing first 8) ── -->
+    <div class="block-group" data-group="read">
+      <div class="op"><div class="op__hdr"><span class="op__dot op__dot--tc"></span><span class="op__nm op__nm--tc">read</span><span class="op__path">src/auth/interfaces.ts</span><span class="op__time">0.8s</span></div>
+        <div class="op__body"><div class="op__body-label">文件内容 (interfaces.ts — 前 30 行)</div>export interface IAuthResponse {\n  success: boolean\n  token?: string\n  user?: IUser\n}\nexport interface ITokenPayload {\n  sub: string\n  exp: number\n  iat: number\n}\nexport interface IAuthModule {\n  login(): Promise&lt;IAuthResponse&gt;\n  logout(): Promise&lt;void&gt;\n  refresh(): Promise&lt;IAuthResponse&gt;\n}</div></div>
+      <div class="op"><div class="op__hdr"><span class="op__dot op__dot--tc"></span><span class="op__nm op__nm--tc">read</span><span class="op__path">src/auth/errors.ts</span><span class="op__time">0.6s</span></div>
+        <div class="op__body"><div class="op__body-label">文件内容 (errors.ts)</div>export class AuthError extends Error {\n  constructor(code: AuthErrorCode, message: string) {\n    super(message)\n    this.code = code\n  }\n}\nexport enum AuthErrorCode {\n  INVALID_TOKEN = 'INVALID_TOKEN',\n  SESSION_EXPIRED = 'SESSION_EXPIRED',\n  UNAUTHORIZED = 'UNAUTHORIZED',\n}</div></div>
+      <div class="op"><div class="op__hdr"><span class="op__dot op__dot--tc"></span><span class="op__nm op__nm--tc">read</span><span class="op__path">src/auth/session.ts</span><span class="op__time">0.5s</span></div>
+        <div class="op__body"><div class="op__body-label">文件内容 (session.ts — 摘要)</div>class SessionManager — 管理 session 生命周期\n- createSession(userId: string): Session\n- getSession(id: string): Session | null\n- destroySession(id: string): void\n发现: Session 逻辑与 User 类耦合</div></div>
+      <div class="op"><div class="op__hdr"><span class="op__dot op__dot--tc"></span><span class="op__nm op__nm--tc">read</span><span class="op__path">src/auth/provider.ts</span><span class="op__time">0.4s</span></div>
+        <div class="op__body"><div class="op__body-label">文件内容 (provider.ts)</div>AuthProvider 组件: 提供认证上下文\n- 使用 React Context + useReducer\n- 暴露 login/logout/refresh 方法\n- 存储 token 到 localStorage</div></div>
+      <div class="op"><div class="op__hdr"><span class="op__dot op__dot--tc"></span><span class="op__nm op__nm--tc">read</span><span class="op__path">src/auth/middleware.ts</span><span class="op__time">0.4s</span></div>
+        <div class="op__body"><div class="op__body-label">文件内容 (middleware.ts)</div>export function authMiddleware(router: Router) {\n  router.use('/api/*', async (ctx, next) => {\n    const token = ctx.headers.authorization\n    if (!token) return ctx.throw(401)\n    // validate...\n  })\n}</div></div>
+      <div class="op"><div class="op__hdr"><span class="op__dot op__dot--tc"></span><span class="op__nm op__nm--tc">read</span><span class="op__path">src/renderer/App.vue</span><span class="op__time">0.7s</span></div>
+        <div class="op__body"><div class="op__body-label">文件内容 (App.vue — 前 20 行)</div>&lt;template&gt;\n  &lt;div id="app"&gt;\n    &lt;ChatPanel /&gt;\n    &lt;Sidebar /&gt;\n  &lt;/div&gt;\n&lt;/template&gt;\n\n&lt;script setup lang="ts"&gt;\nimport ChatPanel from './components/ChatPanel.vue'\nimport Sidebar from './components/Sidebar.vue'\n// 注意: any 类型在 ChatPanel 中使用\n&lt;/script&gt;</div></div>
+      <div class="op"><div class="op__hdr"><span class="op__dot op__dot--tc"></span><span class="op__nm op__nm--tc">read</span><span class="op__path">src/renderer/stores/chat.ts</span><span class="op__time">0.9s</span></div>
+        <div class="op__body"><div class="op__body-label">文件内容 (chat.ts — 部分)</div>// useChatStore:\n// streamingMessage: 使用了较多 any 类型\n// 建议: 用具体类型 Message | SystemNotification 替代</div></div>
+      <div class="op"><div class="op__hdr"><span class="op__dot op__dot--tc"></span><span class="op__nm op__nm--tc">read</span><span class="op__path">src/shared/message.ts</span><span class="op__time">0.3s</span></div>
+        <div class="op__body"><div class="op__body-label">文件内容 (message.ts)</div>export interface Message {\n  id: string\n  role: 'user' | 'assistant' | 'system'\n  content: string\n  toolCalls?: ToolCall[]\n  thinking?: ThinkingBlock[]\n}</div></div>
+      <!-- footer for read group -->
+      <div style="font-size:10px;font-family:monospace;color:oklch(65% 0.012 50);padding:2px 0 2px 12px;border-left:2px solid transparent">… 还有 77 个文件（为演示展示前 8 个）</div>
+    </div>
+
+    <!-- ── Grep (23 searches) ── -->
+    <div class="block-group" data-group="grep">
+      <div class="op"><div class="op__hdr"><span class="op__dot op__dot--tc"></span><span class="op__nm op__nm--tc">grep</span><span class="op__path">"any" src/**/*.ts</span><span class="op__time">1.2s</span></div>
+        <div class="op__body"><div class="op__body-label">搜索结果</div>47 matches across 25 files\nsrc/renderer/stores/chat.ts:12 处 any\nsrc/renderer/composables/useChat.ts:8 处 any\nsrc/auth/session.ts:3 处 any</div></div>
+      <div class="op"><div class="op__hdr"><span class="op__dot op__dot--tc"></span><span class="op__nm op__nm--tc">grep</span><span class="op__path">"unused import" src/**/*.ts</span><span class="op__time">0.8s</span></div>
+        <div class="op__body"><div class="op__body-label">搜索结果</div>23 unused imports found\n建议运行: npx ts-prune</div></div>
+      <div class="op"><div class="op__hdr"><span class="op__dot op__dot--tc"></span><span class="op__nm op__nm--tc">grep</span><span class="op__path">"AuthError" src/**/*.ts</span><span class="op__time">0.5s</span></div>
+        <div class="op__body"><div class="op__body-label">搜索结果</div>12 matches across 5 files\n重复定义: errors.ts + auth/types.ts 各定义一次</div></div>
+      <div style="font-size:10px;font-family:monospace;color:oklch(65% 0.012 50);padding:2px 0 2px 12px;border-left:2px solid transparent">… 还有 20 个搜索（为演示展示前 3 个）</div>
+    </div>
+
+    <!-- ── Bash (6 executions) ── -->
+    <div class="block-group" data-group="bash">
+      <div class="op"><div class="op__hdr"><span class="op__dot op__dot--tc"></span><span class="op__nm op__nm--tc">bash</span><span class="op__path">npx tsc --noEmit</span><span class="op__time">1.8s</span></div>
+        <div class="op__body"><div class="op__body-label">输出</div>Found 3 errors:\n- src/auth/session.ts(45,3): Type 'any' is not assignable\n- src/auth/provider.ts(22,5): Property 'xxx' does not exist\n- src/renderer/chat.ts(89,12): Parameter 'x' implicitly has 'any' type</div></div>
+      <div class="op"><div class="op__hdr"><span class="op__dot op__dot--tc"></span><span class="op__nm op__nm--tc">bash</span><span class="op__path">npx eslint src/</span><span class="op__time">2.1s</span></div>
+        <div class="op__body"><div class="op__body-label">输出</div>47 warnings (0 errors)\n- no-unused-vars: 23 处\n- no-explicit-any: 15 处\n- @typescript-eslint/no-unused-vars: 9 处</div></div>
+      <div class="op"><div class="op__hdr"><span class="op__dot op__dot--tc"></span><span class="op__nm op__nm--tc">bash</span><span class="op__path">npx prettier --check src/</span><span class="op__time">0.9s</span></div>
+        <div class="op__body"><div class="op__body-label">输出</div>12 files unformatted\n- src/auth/*.ts: 4 files\n- src/renderer/*.vue: 5 files\n- src/shared/*.ts: 3 files</div></div>
+    </div>
+
+    <!-- ── Write (3 files) ── -->
+    <div class="block-group" data-group="write">
+      <div class="op"><div class="op__hdr"><span class="op__dot op__dot--tc"></span><span class="op__nm op__nm--tc">write</span><span class="op__path">code-quality-report.md</span><span class="op__time">0.8s</span></div>
+        <div class="op__body"><div class="op__body-label">生成的内容 (摘要)</div># 代码质量报告\n\n## 概述\n- 扫描文件: 200+\n- 发现问题: 87 处\n- 已修复: 52 处\n\n## 主要问题\n1. any 类型滥用 (47 处)\n2. 未使用的 import (23 处)\n3. 重复定义 (2 处)</div></div>
+      <div class="op"><div class="op__hdr"><span class="op__dot op__dot--tc"></span><span class="op__nm op__nm--tc">write</span><span class="op__path">fix-suggestions.json</span><span class="op__time">0.6s</span></div>
+        <div class="op__body"><div class="op__body-label">生成的内容</div>{\n  "summary": "自动修复建议",\n  "suggestions": [\n    { "file": "src/auth/errors.ts", "action": "删除重复定义" },\n    { "file": "src/auth/session.ts", "action": "修复 any 类型" }\n  ]\n}</div></div>
+      <div class="op"><div class="op__hdr"><span class="op__dot op__dot--tc"></span><span class="op__nm op__nm--tc">write</span><span class="op__path">todo-list.md</span><span class="op__time">0.4s</span></div>
+        <div class="op__body"><div class="op__body-label">生成的内容</div># TODO\n- [ ] 修复 auth 模块 Session 耦合\n- [ ] 合并 AuthError 重复定义\n- [ ] 修复 25 处 any 类型</div></div>
+    </div>
+
+    <!-- ── Edit (12 files) ── -->
+    <div class="block-group" data-group="edit">
+      <div class="op"><div class="op__hdr"><span class="op__dot op__dot--tc"></span><span class="op__nm op__nm--tc">edit</span><span class="op__path">src/auth/errors.ts</span><span class="op__time">1.2s</span></div>
+        <div class="op__body"><div class="op__body-label">修改内容</div>- 删除 auth/types.ts 中的重复 AuthError 定义\n- 统一使用 errors.ts 中的 AuthError 类\n- 新增 AuthErrorCode 枚举</div></div>
+      <div class="op"><div class="op__hdr"><span class="op__dot op__dot--tc"></span><span class="op__nm op__nm--tc">edit</span><span class="op__path">src/auth/interfaces.ts</span><span class="op__time">0.9s</span></div>
+        <div class="op__body"><div class="op__body-label">修改内容</div>- 删除 3 个未使用的导出\n- 合并 IAuthResponse 和 ITokenPayload 接口\n- 新增 IAuthModule 聚合接口</div></div>
+      <div class="op"><div class="op__hdr"><span class="op__dot op__dot--tc"></span><span class="op__nm op__nm--tc">edit</span><span class="op__path">src/renderer/stores/chat.ts</span><span class="op__time">1.5s</span></div>
+        <div class="op__body"><div class="op__body-label">修改内容</div>- 替换 12 处 any 为具体类型\n- ChatMessage → Message | SystemNotification\n- 补充类型守卫函数</div></div>
+      <div style="font-size:10px;font-family:monospace;color:oklch(65% 0.012 50);padding:2px 0 2px 12px;border-left:2px solid transparent">… 还有 9 个文件（为演示展示前 3 个）</div>
+    </div>
+
+  </div><!-- /groups -->
+
+  <div style="display:flex;gap:6px;margin-top:4px">
+    <span class="btn" id="expandAllBtn">展开全部</span>
+    <span class="btn" id="collapseAllBtn">收起全部</span>
+  </div>
+</div>
+
+<hr>
+<div class="foot">
+<strong>交互模式</strong><br>
+<kbd>点击 chip</kbd> → 过滤显示该类型的所有操作（如 85 条 read 行）<br>
+<kbd>点击某一行</kbd> → 展开该操作的完整内容（文件内容、搜索结果等）<br>
+<kbd>再点同一行</kbd> → 收起<br>
+<kbd>再点同一 chip</kbd> → 收起整个组<br>
+chip 之间是 and 关系——可以同时显示多个类型
+</div>
+
+<script>
+(function() {
+  var groups = document.querySelectorAll('.block-group');
+
+  // Chip click → toggle block group
+  document.querySelectorAll('.chip').forEach(function(chip) {
+    chip.addEventListener('click', function(e) {
+      e.stopPropagation();
+      var name = this.getAttribute('data-group');
+      var group = document.querySelector('.block-group[data-group="' + name + '"]');
+      if (!group) return;
+      group.classList.toggle('shown');
+      this.classList.toggle('chip--on');
+      // Also collapse all expanded bodies in this group
+      group.querySelectorAll('.op__body.shown').forEach(function(b) { b.classList.remove('shown'); });
+    });
+  });
+
+  // Op click → toggle body
+  document.querySelectorAll('.op').forEach(function(op) {
+    op.addEventListener('click', function(e) {
+      e.stopPropagation();
+      var body = this.querySelector('.op__body');
+      if (body) body.classList.toggle('shown');
+    });
+  });
+
+  // Expand All
+  document.getElementById('expandAllBtn').addEventListener('click', function() {
+    groups.forEach(function(g) { g.classList.add('shown'); });
+    document.querySelectorAll('.chip').forEach(function(c) { c.classList.add('chip--on'); });
+  });
+
+  // Collapse All
+  document.getElementById('collapseAllBtn').addEventListener('click', function() {
+    groups.forEach(function(g) { g.classList.remove('shown'); });
+    document.querySelectorAll('.chip').forEach(function(c) { c.classList.remove('chip--on'); });
+    document.querySelectorAll('.op__body.shown').forEach(function(b) { b.classList.remove('shown'); });
+  });
+})();
+</script>
+</body>
+</html>

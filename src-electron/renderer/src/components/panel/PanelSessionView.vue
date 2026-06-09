@@ -39,6 +39,7 @@ import { useTree } from '../../composables/useTree'
 import { useToolApproval } from '../../composables/useToolApproval'
 import { useModel } from '../../composables/useModel'
 import { useExtensionWidget } from '../../composables/useExtensionWidget'
+import { toProtocolSendMode } from '@xyz-agent/shared'
 import { on, off } from '../../lib/event-bus'
 import type { ServerMessage, ClientMessage, ExtensionWidgetPayload } from '@xyz-agent/shared'
 import type { PendingToolCall } from '../chat/ApprovalCard.vue'
@@ -113,6 +114,7 @@ function handleSend(payload: { content: string; skillName?: string; subagent?: {
     status: 'complete',
     timestamp: Date.now(),
     ...(payload.skillName ? { skillName: payload.skillName } : {}),
+    ...(payload.sendMode && payload.sendMode !== 'send' ? { sendMode: toProtocolSendMode(payload.sendMode as import('@xyz-agent/shared').UISendMode) } : {}),
   }, sid)
 
   const mode = payload.sendMode ?? 'send'
@@ -157,7 +159,8 @@ function handleCancel() {
   abort()
 }
 
-function handleSelectModel(modelId: string) {
+function handleSelectModel(payload: { modelId: string }) {
+  const { modelId } = payload
   const model = providerStore.models.find(m => m.id === modelId)
   if (!model) return
   const provider = providerStore.providers.find(p => p.id === model.providerId)
@@ -187,7 +190,11 @@ function handleOpenDrawer(_tab: string) {
 }
 
 function handleClosePane() {
-  panelStore.closeEmptyPanel(props.panelId)
+  if (panelStore.panelCount > 1) {
+    panelStore.closeEmptyPanel(props.panelId)
+  } else {
+    panelStore.unbindSession(props.panelId)
+  }
 }
 
 function handleSwitchAgent(agentId: string) {
@@ -197,7 +204,9 @@ function handleSwitchAgent(agentId: string) {
 // --- Global event handlers (not yet fully session-partitioned) ---
 
 function handleToolApprovalRequest(msg: { payload: PendingToolCall }) {
-  // TODO Phase 1C: filter by sessionId once server sends it
+  // TODO Phase 1C: Server does not yet send sessionId in tool_call_pending payloads.
+  // Once it does, filter by sessionId to prevent cross-panel tool approval in multi-panel mode.
+  // Current risk: single-panel setups are unaffected; multi-panel may show approval in wrong panel.
   pendingApproval.value = msg.payload
 }
 

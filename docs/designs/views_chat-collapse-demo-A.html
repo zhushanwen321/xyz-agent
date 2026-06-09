@@ -1,0 +1,751 @@
+<!--
+  Demo A: Phase-Aware Minimal Stream
+  - Streaming: compact rolling bubble
+  - Completed: auto-expand, but thinking/toolCall sections are visually MINIMIZED
+  - Thinking/toolCalls: thin muted line with just duration + name, text is hero
+-->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Demo A — Phase-Aware Minimal Stream</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: oklch(97% 0.018 70);
+    --surface: oklch(99% 0.008 70);
+    --fg: oklch(22% 0.02 50);
+    --muted: oklch(50% 0.018 50);
+    --muted-dim: oklch(65% 0.012 50);
+    --border: oklch(90% 0.014 70);
+    --accent: oklch(64% 0.13 28);
+    --accent-light: oklch(92% 0.04 28);
+    --success: oklch(70% 0.18 145);
+    --success-light: oklch(95% 0.06 145);
+    --warning: oklch(78% 0.15 85);
+    --danger: oklch(62% 0.2 25);
+    --user-bubble-bg: var(--accent-light);
+    --user-bubble-border: transparent;
+    --msg-assistant-bg: var(--surface);
+    --font-body: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+    --radius: 4px;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-body);
+    font-size: 13px;
+    line-height: 1.6;
+    padding: 40px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .demo-header {
+    width: 100%;
+    max-width: 720px;
+    margin-bottom: 32px;
+  }
+  .demo-header h1 {
+    font-size: 20px;
+    font-weight: 600;
+    margin-bottom: 4px;
+    letter-spacing: -0.01em;
+  }
+  .demo-header p {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .demo-header .badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    background: var(--accent-light);
+    color: var(--accent);
+    padding: 2px 8px;
+    border-radius: 100px;
+    margin-bottom: 8px;
+  }
+
+  .chat-area {
+    width: 100%;
+    max-width: 720px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  /* ── Turn Group ── */
+  .turn-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  /* ── Message Bubble ── */
+  .msg { width: 100%; }
+
+  .msg-role {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .msg-role .time {
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: normal;
+    opacity: 0.6;
+  }
+
+  .msg-body {
+    padding: 10px 14px;
+    border-radius: var(--radius);
+    line-height: 1.7;
+  }
+
+  .msg-body a { color: var(--accent); }
+
+  /* ── User Message ── */
+  .msg--user .msg-body {
+    background: var(--user-bubble-bg);
+    border: 1px solid var(--user-bubble-border);
+    border-bottom-right-radius: 2px;
+  }
+
+  /* ── Assistant Message ── */
+  .msg--asst { }
+  .msg--asst .msg-body {
+    background: var(--msg-assistant-bg);
+    border: 1px solid var(--border);
+  }
+
+  /* ── Text Content ── */
+  .text-content {
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--fg);
+  }
+  .text-content p { margin-bottom: 8px; }
+  .text-content p:last-child { margin-bottom: 0; }
+
+  .text-content code {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    background: var(--accent-light);
+    padding: 1px 5px;
+    border-radius: 2px;
+  }
+
+  /* ── Mini Status Line (replaces ThinkingBlock/ToolCallCard) ── */
+  .mini-status {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin: 6px 0 6px 0;
+    padding-left: 12px;
+    border-left: 2px solid var(--border);
+  }
+
+  .mini-status__item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 4px;
+    border-radius: 2px;
+    cursor: pointer;
+    transition: background 0.12s;
+    font-size: 11px;
+    line-height: 1.4;
+    color: var(--muted);
+  }
+  .mini-status__item:hover {
+    background: var(--accent-light);
+    color: var(--fg);
+  }
+
+  .mini-status__dot {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .mini-status__dot--thinking { background: var(--accent); }
+  .mini-status__dot--tool { background: var(--success); }
+
+  .mini-status__name {
+    font-weight: 500;
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+  .mini-status__name--tool {
+    color: var(--success);
+  }
+
+  .mini-status__path {
+    color: var(--muted);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+  }
+
+  .mini-status__time {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--muted-dim);
+    flex-shrink: 0;
+  }
+
+  .mini-status__expand-icon {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+    opacity: 0;
+    transition: opacity 0.12s;
+    color: var(--muted-dim);
+  }
+  .mini-status__item:hover .mini-status__expand-icon {
+    opacity: 0.6;
+  }
+
+  /* ── Mini Status — Collapsed variant (for completed) ── */
+  .mini-status--collapsed .mini-status__item {
+    opacity: 0.55;
+  }
+  .mini-status--collapsed .mini-status__item:hover {
+    opacity: 1;
+  }
+
+  /* ── Streaming Compact Bubble ── */
+  .stream-compact {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    cursor: pointer;
+    transition: all 0.15s;
+    margin-bottom: 4px;
+  }
+  .stream-compact:hover {
+    border-color: var(--accent);
+    background: var(--accent-light);
+  }
+
+  .stream-compact__pulse {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: pulse 2s ease-in-out infinite;
+    flex-shrink: 0;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(0.7); }
+  }
+
+  .stream-compact__label {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+
+  .stream-compact__status {
+    font-size: 11px;
+    color: var(--muted);
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .stream-compact__time {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--muted-dim);
+    flex-shrink: 0;
+  }
+
+  .stream-compact__chevron {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+    color: var(--muted-dim);
+    transition: transform 0.15s;
+  }
+
+  /* ── Thinking Indicator (pre-first-token) ── */
+  .thinking-indicator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+  .thinking-indicator__dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: pulse 2s ease-in-out infinite;
+  }
+  .thinking-indicator__text {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  /* ── Expanded Details Panel ── */
+  .expanded-detail {
+    margin: 4px 0 8px 12px;
+    padding: 8px 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    display: none;
+  }
+  .expanded-detail--visible {
+    display: block;
+  }
+  .expanded-detail__label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .expanded-detail__content {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--muted);
+    white-space: pre-wrap;
+  }
+
+  /* ── Spacing ── */
+  .mt-1 { margin-top: 4px; }
+  .mt-2 { margin-top: 8px; }
+  .mb-1 { margin-bottom: 4px; }
+  .mb-2 { margin-bottom: 8px; }
+
+  /* ── Toggle Switch ── */
+  .settings-demo {
+    width: 100%;
+    max-width: 720px;
+    margin-bottom: 28px;
+    padding: 14px 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+  .settings-demo__title {
+    font-size: 12px;
+    font-weight: 600;
+    margin-bottom: 10px;
+  }
+  .settings-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 0;
+  }
+  .settings-row + .settings-row {
+    border-top: 1px solid var(--border);
+  }
+  .settings-row__label {
+    font-size: 12px;
+  }
+  .settings-row__desc {
+    font-size: 10px;
+    color: var(--muted);
+  }
+  .toggle {
+    width: 34px;
+    height: 20px;
+    border-radius: 10px;
+    background: var(--border);
+    cursor: pointer;
+    position: relative;
+    transition: background 0.15s;
+    flex-shrink: 0;
+  }
+  .toggle--on {
+    background: var(--accent);
+  }
+  .toggle::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: white;
+    transition: transform 0.15s;
+  }
+  .toggle--on::after {
+    transform: translateX(14px);
+  }
+
+  /* ── Demo nav ── */
+  .demo-nav {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 24px;
+    width: 100%;
+    max-width: 720px;
+  }
+  .demo-nav a {
+    padding: 6px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    text-decoration: none;
+    font-size: 12px;
+    color: var(--muted);
+    transition: all 0.12s;
+  }
+  .demo-nav a:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .demo-nav a.active {
+    background: var(--accent-light);
+    border-color: var(--accent);
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  /* ── Summary badge (replaces expanded detail) ── */
+  .summary-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    color: var(--muted-dim);
+    font-family: var(--font-mono);
+    padding: 1px 6px;
+    background: var(--bg);
+    border-radius: 3px;
+    cursor: pointer;
+    transition: all 0.12s;
+  }
+  .summary-badge:hover {
+    color: var(--fg);
+    background: var(--accent-light);
+  }
+
+  hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 4px 0;
+  }
+
+  /* Demo scenario label */
+  .demo-scenario {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted-dim);
+    margin: 20px 0 6px 0;
+    padding: 4px 0;
+    border-bottom: 1px dashed var(--border);
+  }
+</style>
+</head>
+<body>
+
+<div class="demo-nav">
+  <a href="views_chat-collapse-demo-A.html" class="active">Demo A · Phase-Aware</a>
+  <a href="views_chat-collapse-demo-B.html">Demo B · Summary Chip (v2)</a>
+  <a href="views_chat-collapse-demo-C.html">Demo C · Flat Tag Stream</a>
+</div>
+
+<div class="demo-header">
+  <span class="badge">Demo A</span>
+  <h1>Phase-Aware Minimal Stream</h1>
+  <p>Streaming 中只展示一行动态状态条；完成后自动展开——但 thinking 和 toolCall 以极简的静默线条展示，仅显示名称和耗时。文字内容始终保持突出。</p>
+</div>
+
+<div class="settings-demo">
+  <div class="settings-demo__title">Streaming 折叠设置</div>
+  <div class="settings-row">
+    <div>
+      <div class="settings-row__label">折叠 Agent 操作过程</div>
+      <div class="settings-row__desc">Streaming 中只显示单行状态；完成后自动展开简化视图</div>
+    </div>
+    <div class="toggle toggle--on" onclick="this.classList.toggle('toggle--on')"></div>
+  </div>
+</div>
+
+<div class="chat-area">
+
+  <!-- ── Scenario 1: Streaming in progress ── -->
+  <div class="demo-scenario">▶ Streaming 进行中</div>
+
+  <div class="turn-group">
+    <div class="msg msg--user">
+      <div class="msg-role">用户 <span class="time">14:23</span></div>
+      <div class="msg-body">
+        <div class="text-content">帮我重构 auth 模块的接口定义，统一错误处理</div>
+      </div>
+    </div>
+
+    <div class="msg msg--asst">
+      <div class="msg-role">助手 <span class="time">14:23</span></div>
+      <div class="msg-body">
+        <!-- Streaming: compact bubble -->
+        <div class="stream-compact" onclick="this.nextElementSibling.classList.toggle('expanded-detail--visible')">
+          <span class="stream-compact__pulse"></span>
+          <span class="stream-compact__label">思考中</span>
+          <span class="stream-compact__status">分析 auth 模块结构...</span>
+          <span class="stream-compact__time">2.3s</span>
+          <svg class="stream-compact__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+        </div>
+        <div class="expanded-detail">
+          <div class="expanded-detail__label">Thinking 过程</div>
+          <div class="expanded-detail__content">
+            让我先分析 auth 模块的结构...
+            目前的接口分布在三个文件中，需要统一。
+            IAuthResponse、ITokenPayload、ISession 需要聚合。
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Scenario 2: Completed (auto-expanded minimal view) ── -->
+  <div class="demo-scenario">▶ 已完成（自动展开极简视图）</div>
+
+  <div class="turn-group">
+    <div class="msg msg--user">
+      <div class="msg-role">用户 <span class="time">14:20</span></div>
+      <div class="msg-body">
+        <div class="text-content">分析 src/auth/ 目录下的代码结构</div>
+      </div>
+    </div>
+
+    <div class="msg msg--asst">
+      <div class="msg-role">助手 <span class="time">14:20</span></div>
+      <div class="msg-body">
+        <!-- Mini status lines — visible but low-weight -->
+        <div class="mini-status">
+          <div class="mini-status__item" onclick="this.nextElementSibling.classList.toggle('expanded-detail--visible')">
+            <span class="mini-status__dot mini-status__dot--thinking"></span>
+            <span class="mini-status__name">Thinking</span>
+            <span class="mini-status__time">· 3.2s</span>
+            <span class="mini-status__expand-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            </span>
+          </div>
+          <div class="expanded-detail">
+            <div class="expanded-detail__content">
+              分析 auth 模块结构。发现接口分布在 3 个文件中，需要合并。
+              错误类重复（AuthError、AuthException）。Session 耦合在 User 类中。
+            </div>
+          </div>
+          <div class="mini-status__item" onclick="this.nextElementSibling.classList.toggle('expanded-detail--visible')">
+            <span class="mini-status__dot mini-status__dot--tool"></span>
+            <span class="mini-status__name mini-status__name--tool">read</span>
+            <span class="mini-status__path">src/auth/interfaces.ts</span>
+            <span class="mini-status__time">800ms</span>
+            <span class="mini-status__expand-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            </span>
+          </div>
+          <div class="expanded-detail">
+            <div class="expanded-detail__label">Tool Output</div>
+            <div class="expanded-detail__content">
+              Found: IAuthResponse, ITokenPayload, IAuthModule.
+              Total: 4 exports, 2 types, 1 interface needs deprecation.
+            </div>
+          </div>
+          <div class="mini-status__item" onclick="this.nextElementSibling.classList.toggle('expanded-detail--visible')">
+            <span class="mini-status__dot mini-status__dot--tool"></span>
+            <span class="mini-status__name mini-status__name--tool">grep</span>
+            <span class="mini-status__path">"AuthError|authError" src/**/*.ts</span>
+            <span class="mini-status__time">450ms</span>
+            <span class="mini-status__expand-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            </span>
+          </div>
+          <div class="expanded-detail">
+            <div class="expanded-detail__content">
+              12 matches across 5 files. AuthError defined in 2 locations.
+            </div>
+          </div>
+        </div>
+
+        <!-- Text content — always prominent -->
+        <div class="text-content mt-1">
+          <p>分析结果：auth 模块目前存在 <strong>3 个主要问题</strong>：</p>
+          <ol style="margin-left: 16px;">
+            <li><strong>接口散落</strong> — <code>IAuthResponse</code>、<code>ITokenPayload</code>、<code>IAuthModule</code> 分布在三个文件中</li>
+            <li><strong>错误类重复</strong> — <code>AuthError</code> 在 <code>errors.ts</code> 和 <code>auth/types.ts</code> 中各定义了一次</li>
+            <li><strong>Session 耦合</strong> — Session 管理逻辑嵌入在 User 类中，应抽离</li>
+          </ol>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Scenario 3: Long session (multi-turn) ── -->
+  <div class="demo-scenario">▶ 长对话回顾（多轮完成消息）—— 可快速扫视</div>
+
+  <div class="turn-group">
+    <div class="msg msg--user">
+      <div class="msg-role">用户 <span class="time">14:15</span></div>
+      <div class="msg-body">
+        <div class="text-content">帮我重构 auth 模块</div>
+      </div>
+    </div>
+    <div class="msg msg--asst">
+      <div class="msg-role">助手 <span class="time">14:15</span></div>
+      <div class="msg-body">
+        <div class="mini-status">
+          <div class="mini-status__item">
+            <span class="mini-status__dot mini-status__dot--thinking"></span>
+            <span class="mini-status__name">Thinking</span>
+            <span class="mini-status__time">· 4.1s</span>
+          </div>
+          <div class="mini-status__item">
+            <span class="mini-status__dot mini-status__dot--tool"></span>
+            <span class="mini-status__name mini-status__name--tool">read</span>
+            <span class="mini-status__path">src/auth/interfaces.ts</span>
+            <span class="mini-status__time">0.6s</span>
+          </div>
+        </div>
+        <div class="text-content mt-1">
+          <p>好的，我来分解这个任务。需要重构接口定义、错误处理、Session 管理等。先分析现有结构。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="turn-group">
+    <div class="msg msg--user">
+      <div class="msg-role">用户 <span class="time">14:16</span></div>
+      <div class="msg-body">
+        <div class="text-content">继续，先把接口定义统一了</div>
+      </div>
+    </div>
+    <div class="msg msg--asst">
+      <div class="msg-role">助手 <span class="time">14:16</span></div>
+      <div class="msg-body">
+        <div class="mini-status">
+          <div class="mini-status__item">
+            <span class="mini-status__dot mini-status__dot--thinking"></span>
+            <span class="mini-status__name">Thinking</span>
+            <span class="mini-status__time">· 1.8s</span>
+          </div>
+          <div class="mini-status__item">
+            <span class="mini-status__dot mini-status__dot--tool"></span>
+            <span class="mini-status__name mini-status__name--tool">edit</span>
+            <span class="mini-status__path">src/auth/interfaces.ts</span>
+            <span class="mini-status__time">0.9s</span>
+          </div>
+          <div class="mini-status__item">
+            <span class="mini-status__dot mini-status__dot--tool"></span>
+            <span class="mini-status__name mini-status__name--tool">edit</span>
+            <span class="mini-status__path">src/auth/types.ts</span>
+            <span class="mini-status__time">0.7s</span>
+          </div>
+        </div>
+        <div class="text-content mt-1">
+          <p>已完成接口统一：</p>
+          <ul style="margin-left: 16px;">
+            <li>合并 <code>IAuthResponse</code>、<code>ITokenPayload</code> 到 <code>interfaces.ts</code></li>
+            <li>新增 <code>IAuthModule</code> 聚合接口</li>
+            <li>删除 <code>types.ts</code> 中的重复定义</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="turn-group">
+    <div class="msg msg--user">
+      <div class="msg-role">用户 <span class="time">14:18</span></div>
+      <div class="msg-body">
+        <div class="text-content">错误处理也统一一下</div>
+      </div>
+    </div>
+    <div class="msg msg--asst">
+      <div class="msg-role">助手 <span class="time">14:18</span></div>
+      <div class="msg-body">
+        <div class="mini-status">
+          <div class="mini-status__item">
+            <span class="mini-status__dot mini-status__dot--thinking"></span>
+            <span class="mini-status__name">Thinking</span>
+            <span class="mini-status__time">· 2.5s</span>
+          </div>
+          <div class="mini-status__item">
+            <span class="mini-status__dot mini-status__dot--tool"></span>
+            <span class="mini-status__name mini-status__name--tool">read</span>
+            <span class="mini-status__path">src/auth/errors.ts</span>
+            <span class="mini-status__time">0.5s</span>
+          </div>
+          <div class="mini-status__item">
+            <span class="mini-status__dot mini-status__dot--tool"></span>
+            <span class="mini-status__name mini-status__name--tool">edit</span>
+            <span class="mini-status__path">src/auth/errors.ts</span>
+            <span class="mini-status__time">1.2s</span>
+          </div>
+        </div>
+        <div class="text-content mt-1">
+          <p>错误处理已统一。重构了 <code>AuthError</code> 类层，删除重复定义，新增错误码枚举。</p>
+          <p>现在所有 auth 模块错误通过 <code>AuthErrorCode</code> 枚举 + <code>AuthException</code> 类统一处理。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Hover state demo ── -->
+  <div class="demo-scenario">▶ Hover 状态（鼠标悬停可展开详情）</div>
+  <div class="msg msg--asst">
+    <div class="msg-role">助手 <span class="time">14:20</span></div>
+    <div class="msg-body">
+      <div class="mini-status">
+        <div class="mini-status__item" style="cursor:pointer;">
+          <span class="mini-status__dot mini-status__dot--tool"></span>
+          <span class="mini-status__name mini-status__name--tool">edit</span>
+          <span class="mini-status__path">src/auth/session.ts</span>
+          <span class="mini-status__time">1.1s</span>
+          <span class="mini-status__expand-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+          </span>
+        </div>
+      </div>
+      <div class="text-content mt-1">
+        <p>Session 模块已从 User 类解耦。</p>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

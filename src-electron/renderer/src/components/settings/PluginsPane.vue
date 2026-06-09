@@ -294,7 +294,7 @@ watch(() => store.installedPlugins.length, () => {
       </svg>
       <div class="text-[13px] text-muted mb-1">No plugins installed</div>
       <div class="text-[11px] text-muted">
-        Place plugins in <span class="font-mono">~/.xyz-agent/plugins/</span> to auto-discover
+        Place plugins in the <span class="font-mono">plugins/</span> directory to auto-discover
       </div>
     </div>
 
@@ -308,7 +308,7 @@ watch(() => store.installedPlugins.length, () => {
 
     <!-- Install hint -->
     <div class="text-[11px] text-muted mt-3 px-1">
-      Manual install: place plugins in ~/.xyz-agent/plugins/ directory
+      Manual install: place plugins in the application data directory's <span class="font-mono">plugins/</span> folder
     </div>
 
     <!-- Uninstall confirm dialog -->

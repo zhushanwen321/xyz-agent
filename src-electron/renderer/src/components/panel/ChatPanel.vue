@@ -36,7 +36,7 @@
               <path d="M16 24H26" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
             </svg>
             <h2 class="m-0 text-lg font-semibold leading-tight text-fg">开始新对话</h2>
-            <p class="m-0 text-sm leading-relaxed text-muted text-center">向 AI 助手发送消息，开始一段新的对话</p>
+            <p class="m-0 text-sm leading-relaxed text-muted text-center">向 AI 助手发送消息,开始一段新的对话</p>
           </div>
 
           <template v-else>
@@ -69,6 +69,8 @@
                       :branch-tabs="branchTabsMap.get(msg.id) ?? []"
                       :selectable="batchMode"
                       :selected="selectedIds.has(msg.id)"
+                      :show-label="isFirstAssistant(group, msg)"
+                      :is-last-assistant="isLastAssistantInTurn(group, msg)"
                       @toggle-select="toggleSelect(msg.id)"
                       @navigate="onNavigate"
                       @open-skill="openSkillDrawer"
@@ -186,7 +188,7 @@ import { useTree } from '../../composables/useTree'
 import { useTreeStore } from '../../stores/tree'
 import { useChatScroll } from '../../composables/useChatScroll'
 import { useBatchSelect } from '../../composables/useBatchSelect'
-import { groupIntoTurns } from '../../lib/message-layout'
+import { groupIntoTurns, type Turn } from '../../lib/message-layout'
 import type { BranchTab } from '../../stores/tree'
 
 export interface AgentOption {
@@ -236,7 +238,7 @@ const props = withDefaults(
 const emit = defineEmits<{
   send: [payload: { content: string; skillName?: string }]
   cancel: []
-  'select-model': [modelId: string]
+  'select-model': [payload: { modelId: string }]
   approve: [toolCallId: string]
   deny: [payload: { toolCallId: string; reason?: string }]
   'always-allow': [toolName: string]
@@ -266,6 +268,7 @@ const {
   () => props.messages.length,
   () => props.streamingMessage?.content,
   () => props.isLoadingHistory,
+  () => props.isStreaming,
 )
 
 // ── Batch selection (extracted composable) ──
@@ -286,7 +289,30 @@ const tree = useTree()
 const treeStore = useTreeStore()
 
 function getTurnGroups(viewMessages: ChatMessage[]) {
-  return groupIntoTurns(viewMessages)
+  const turns = groupIntoTurns(viewMessages)
+  // Pre-compute first/last assistant IDs per turn to avoid O(n²) per-message lookups
+  for (const turn of turns) {
+    const msgs = turn.messages
+    for (const m of msgs) {
+      if (!isSystemNotification(m) && m.role === 'assistant') {
+        turn._firstAssistantId ??= m.id
+        turn._lastAssistantId = m.id
+      }
+    }
+  }
+  return turns
+}
+
+/** 是否显示“助手”标签：Turn 内第一个 assistant 消息 */
+function isFirstAssistant(group: Turn, msg: ChatMessage): boolean {
+  if (isSystemNotification(msg) || msg.role !== 'assistant') return false
+  return group._firstAssistantId === msg.id
+}
+
+/** 是否是 Turn 内最后一个 assistant 消息（决定 action bar 显示） */
+function isLastAssistantInTurn(group: Turn, msg: ChatMessage): boolean {
+  if (isSystemNotification(msg) || msg.role !== 'assistant') return false
+  return group._lastAssistantId === msg.id
 }
 
 const branchTabsMap = computed<Map<string, BranchTab[]>>(() => {
@@ -301,7 +327,8 @@ const branchTabsMap = computed<Map<string, BranchTab[]>>(() => {
   return map
 })
 
-function onNavigate(targetId: string) {
+function onNavigate(payload: { targetEntryId: string }) {
+  const { targetEntryId: targetId } = payload
   if (props.sessionId) {
     tree.navigate(props.sessionId, targetId)
   }

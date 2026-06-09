@@ -413,23 +413,4 @@ describe('EventAdapter: new event translations (FR-1~FR-6)', () => {
   })
 
   // ════════════════════════════════════════════════════════════════════
-  // FR-6: extension_ui_request setTitle
-  // ════════════════════════════════════════════════════════════════════
-
-  describe('FR-6: extension_ui_request — setTitle', () => {
-    it('translates setTitle to extension:setTitle', async () => {
-      dispatchOne(adapter, {
-        type: 'extension_ui_request',
-        method: 'setTitle',
-        title: 'My Window',
-      })
-      await flushAsync()
-
-      expect(sent).toHaveLength(1)
-      expect(sent[0].type).toBe('extension:setTitle')
-      expect(sent[0].payload).toMatchObject({
-        title: 'My Window',
-      })
-    })
-  })
 })

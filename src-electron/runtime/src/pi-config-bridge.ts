@@ -30,21 +30,37 @@ import { parseSessionHeader, extractSessionName } from './session-file-utils.js'
 // Re-export session file utilities for backward compatibility
 export { ensureSessionFile, persistSessionName } from './session-file-utils.js'
 
-// ── 路径常量 ─────────────────────────────────────────────────────
+// ── 路径函数（env-var-aware，支持实例隔离）──────────────────────
+// 所有路径从 XYZ_AGENT_DATA_DIR 推导。未设置时回退 ~/.xyz-agent/
 
-const CONFIG_DIR = join(homedir(), '.xyz-agent')
-const PI_ROOT = join(CONFIG_DIR, 'pi')
-const PI_AGENT_DIR = join(PI_ROOT, 'agent')
-const MODELS_PATH = join(PI_AGENT_DIR, 'models.json')
-const SETTINGS_PATH = join(PI_AGENT_DIR, 'settings.json')
-const SESSIONS_DIR = join(PI_ROOT, 'sessions')
-const AGENTS_DIR = join(PI_AGENT_DIR, 'agents')
+function getConfigDir_(): string {
+  return process.env.XYZ_AGENT_DATA_DIR ?? join(homedir(), '.xyz-agent')
+}
 
-// ── 旧路径常量（用于迁移）─────────────────────────────────────────
-const OLD_MODELS_PATH = join(CONFIG_DIR, 'models.json')
-const OLD_SETTINGS_PATH = join(CONFIG_DIR, 'settings.json')
-const OLD_SESSIONS_DIR = join(CONFIG_DIR, 'sessions')
-const OLD_AGENTS_DIR = join(CONFIG_DIR, 'agents')
+function getPiRoot_(): string {
+  return join(getConfigDir_(), 'pi')
+}
+
+function getPiAgentDir_(): string {
+  return join(getPiRoot_(), 'agent')
+}
+
+function getModelsPath_(): string {
+  return join(getPiAgentDir_(), 'models.json')
+}
+
+function getSettingsPath_(): string {
+  return join(getPiAgentDir_(), 'settings.json')
+}
+
+function getSessionsDir_(): string {
+  return join(getPiRoot_(), 'sessions')
+}
+
+function getAgentsDir_(): string {
+  return join(getPiAgentDir_(), 'agents')
+}
+
 
 const JSON_INDENT = 2
 
@@ -53,32 +69,46 @@ const JSON_INDENT = 2
  * 幂等：如果新路径已存在文件，跳过迁移。
  */
 function migrateToPiSubdir(): void {
+  const piAgentDir = getPiAgentDir_()
+  const sessionsDir = getSessionsDir_()
+  const agentsDir = getAgentsDir_()
+  const configDir = getConfigDir_()
+
+  // 旧路径：迁移用
+  const oldModelsPath = join(configDir, 'models.json')
+  const oldSettingsPath = join(configDir, 'settings.json')
+  const oldSessionsDir = join(configDir, 'sessions')
+  const oldAgentsDir = join(configDir, 'agents')
+
   // 确保新目录存在
-  mkdirSync(PI_AGENT_DIR, { recursive: true })
-  mkdirSync(SESSIONS_DIR, { recursive: true })
-  mkdirSync(AGENTS_DIR, { recursive: true })
+  mkdirSync(piAgentDir, { recursive: true })
+  mkdirSync(sessionsDir, { recursive: true })
+  mkdirSync(agentsDir, { recursive: true })
+
+  const modelsPath = getModelsPath_()
+  const settingsPath = getSettingsPath_()
 
   // 迁移 models.json
-  if (existsSync(OLD_MODELS_PATH) && !existsSync(MODELS_PATH)) {
-    renameSync(OLD_MODELS_PATH, MODELS_PATH)
+  if (existsSync(oldModelsPath) && !existsSync(modelsPath)) {
+    renameSync(oldModelsPath, modelsPath)
     console.log('[config-bridge] migrated models.json → pi/agent/models.json')
   }
 
   // 迁移 settings.json
-  if (existsSync(OLD_SETTINGS_PATH) && !existsSync(SETTINGS_PATH)) {
-    renameSync(OLD_SETTINGS_PATH, SETTINGS_PATH)
+  if (existsSync(oldSettingsPath) && !existsSync(settingsPath)) {
+    renameSync(oldSettingsPath, settingsPath)
     console.log('[config-bridge] migrated settings.json → pi/agent/settings.json')
   }
 
   // 迁移 sessions/ 目录下的文件
-  if (existsSync(OLD_SESSIONS_DIR)) {
+  if (existsSync(oldSessionsDir)) {
     try {
-      const entries = readdirSync(OLD_SESSIONS_DIR)
+      const entries = readdirSync(oldSessionsDir)
       if (entries.length > 0) {
         let migrated = 0
         for (const entry of entries) {
-          const oldPath = join(OLD_SESSIONS_DIR, entry)
-          const newPath = join(SESSIONS_DIR, entry)
+          const oldPath = join(oldSessionsDir, entry)
+          const newPath = join(sessionsDir, entry)
           if (!existsSync(newPath)) {
             renameSync(oldPath, newPath)
             migrated++
@@ -87,32 +117,31 @@ function migrateToPiSubdir(): void {
         if (migrated > 0) {
           console.log(`[config-bridge] migrated ${migrated} session files → pi/sessions/`)
         }
-        // 如果旧目录已空，尝试删除
         try {
-          const remaining = readdirSync(OLD_SESSIONS_DIR)
+          const remaining = readdirSync(oldSessionsDir)
           if (remaining.length === 0) {
-            rmdirSync(OLD_SESSIONS_DIR)
+            rmdirSync(oldSessionsDir)
           }
-          // eslint-disable-next-line taste/no-silent-catch -- migration: failure to remove old dir must not block startup
+        // eslint-disable-next-line taste/no-silent-catch -- migration cleanup: error logged, non-critical
         } catch (e) {
           console.warn('[config-bridge] failed to remove old sessions dir:', e instanceof Error ? e.message : e)
         }
       }
-      // eslint-disable-next-line taste/no-silent-catch -- migration: failure to migrate sessions must not block startup
+      // eslint-disable-next-line taste/no-silent-catch -- migration: error logged, non-critical
     } catch (e) {
       console.warn('[config-bridge] failed to migrate sessions dir:', e instanceof Error ? e.message : e)
     }
   }
 
   // 迁移 agents/ 目录下的文件
-  if (existsSync(OLD_AGENTS_DIR)) {
+  if (existsSync(oldAgentsDir)) {
     try {
-      const entries = readdirSync(OLD_AGENTS_DIR)
+      const entries = readdirSync(oldAgentsDir)
       if (entries.length > 0) {
         let migrated = 0
         for (const entry of entries) {
-          const oldPath = join(OLD_AGENTS_DIR, entry)
-          const newPath = join(AGENTS_DIR, entry)
+          const oldPath = join(oldAgentsDir, entry)
+          const newPath = join(agentsDir, entry)
           if (!existsSync(newPath)) {
             renameSync(oldPath, newPath)
             migrated++
@@ -121,34 +150,33 @@ function migrateToPiSubdir(): void {
         if (migrated > 0) {
           console.log(`[config-bridge] migrated ${migrated} agent files → pi/agent/agents/`)
         }
-        // 如果旧目录已空，尝试删除
         try {
-          const remaining = readdirSync(OLD_AGENTS_DIR)
+          const remaining = readdirSync(oldAgentsDir)
           if (remaining.length === 0) {
-            rmdirSync(OLD_AGENTS_DIR)
+            rmdirSync(oldAgentsDir)
           }
-          // eslint-disable-next-line taste/no-silent-catch -- migration: failure to remove old dir must not block startup
+        // eslint-disable-next-line taste/no-silent-catch -- migration cleanup: error logged, non-critical
         } catch (e) {
           console.warn('[config-bridge] failed to remove old agents dir:', e instanceof Error ? e.message : e)
         }
       }
-      // eslint-disable-next-line taste/no-silent-catch -- migration: failure to migrate agents must not block startup
+      // eslint-disable-next-line taste/no-silent-catch -- migration: error logged, non-critical
     } catch (e) {
       console.warn('[config-bridge] failed to migrate agents dir:', e instanceof Error ? e.message : e)
     }
   }
 
-  // 打包模式：从 bundled 资源同步 extensions 和 skills 到 xyz-pi agent 目录
+  // 打包模式：从 bundled 资源同步
   if (process.env.XYZ_AGENT_PACKAGED === '1') {
     const bundledAgentDir = join(process.cwd(), 'pi', 'agent')
     for (const subDir of ['extensions', 'skills'] as const) {
       const src = join(bundledAgentDir, subDir)
-      const dest = join(PI_AGENT_DIR, subDir)
+      const dest = join(piAgentDir, subDir)
       if (existsSync(src) && !existsSync(dest)) {
         try {
           cpSync(src, dest, { recursive: true })
           console.log(`[config-bridge] synced bundled ${subDir} → ${dest}`)
-          // eslint-disable-next-line taste/no-silent-catch -- bundled sync: failure must not block startup
+        // eslint-disable-next-line taste/no-silent-catch -- bundled sync: error logged, non-critical
         } catch (e) {
           console.error(`[config-bridge] failed to sync bundled ${subDir}:`, e)
         }
@@ -257,9 +285,9 @@ function writeJsonFile(filePath: string, data: unknown): void {
 
 export function readModels(): PiModelsConfig {
   if (!isExpired(modelsCache)) return modelsCache!.data
-  const data = readJsonFile<PiModelsConfig>(MODELS_PATH, { providers: {} })
+  const data = readJsonFile<PiModelsConfig>(getModelsPath_(), { providers: {} })
   if (!data || typeof data !== 'object' || typeof data.providers !== 'object') {
-    console.warn(`[config-bridge] ${MODELS_PATH} schema 不匹配，使用 fallback`)
+    console.warn(`[config-bridge] ${getModelsPath_()} schema 不匹配，使用 fallback`)
     return { providers: {} }
   }
   modelsCache = { data, timestamp: Date.now() }
@@ -267,7 +295,7 @@ export function readModels(): PiModelsConfig {
 }
 
 export function writeModels(config: PiModelsConfig): void {
-  writeJsonFile(MODELS_PATH, config)
+  writeJsonFile(getModelsPath_(), config)
   modelsCache = { data: JSON.parse(JSON.stringify(config)), timestamp: Date.now() }
 }
 
@@ -313,9 +341,9 @@ export function getApiKeyForProvider(providerId: string): string | undefined {
 
 export function readSettings(): PiSettings {
   if (!isExpired(settingsCache)) return settingsCache!.data
-  const data = readJsonFile<PiSettings>(SETTINGS_PATH, {})
+  const data = readJsonFile<PiSettings>(getSettingsPath_(), {})
   if (!data || typeof data !== 'object') {
-    console.warn(`[config-bridge] ${SETTINGS_PATH} schema 不匹配，使用 fallback`)
+    console.warn(`[config-bridge] ${getSettingsPath_()} schema 不匹配，使用 fallback`)
     return {}
   }
   settingsCache = { data, timestamp: Date.now() }
@@ -323,7 +351,7 @@ export function readSettings(): PiSettings {
 }
 
 export function writeSettings(settings: PiSettings): void {
-  writeJsonFile(SETTINGS_PATH, settings)
+  writeJsonFile(getSettingsPath_(), settings)
   settingsCache = { data: JSON.parse(JSON.stringify(settings)), timestamp: Date.now() }
 }
 
@@ -397,15 +425,15 @@ export function removeSkillPath(path: string): void {
 // ── Agent 管理（读写 ~/.xyz-agent/agents/ 目录）───────────────────
 
 export function getAgentsDir(): string {
-  return AGENTS_DIR
+  return getAgentsDir_()
 }
 
 export function listAgentFiles(): Array<{ name: string; path: string; content: string }> {
-  if (!existsSync(AGENTS_DIR)) return []
+  if (!existsSync(getAgentsDir_())) return []
   const results: Array<{ name: string; path: string; content: string }> = []
-  const files = readdirSync(AGENTS_DIR).filter(f => f.endsWith('.md'))
+  const files = readdirSync(getAgentsDir_()).filter(f => f.endsWith('.md'))
   for (const file of files) {
-    const filePath = join(AGENTS_DIR, file)
+    const filePath = join(getAgentsDir_(), file)
     try {
       const content = readFileSync(filePath, 'utf-8')
       results.push({ name: file.replace(/\.md$/, ''), path: filePath, content })
@@ -418,15 +446,17 @@ export function listAgentFiles(): Array<{ name: string; path: string; content: s
 }
 
 export function writeAgentFile(name: string, content: string): void {
-  if (!existsSync(AGENTS_DIR)) mkdirSync(AGENTS_DIR, { recursive: true })
+  const agentsDir = getAgentsDir_()
+  if (!existsSync(agentsDir)) mkdirSync(agentsDir, { recursive: true })
   const fileName = name.endsWith('.md') ? name : `${name}.md`
-  const filePath = join(AGENTS_DIR, fileName)
+  const filePath = join(agentsDir, fileName)
   atomicWrite(filePath, content)
 }
 
 export function deleteAgentFile(name: string): boolean {
+  const agentsDir = getAgentsDir_()
   const fileName = name.endsWith('.md') ? name : `${name}.md`
-  const filePath = join(AGENTS_DIR, fileName)
+  const filePath = join(agentsDir, fileName)
   if (!existsSync(filePath)) return false
   try {
     unlinkSync(filePath)
@@ -439,10 +469,11 @@ export function deleteAgentFile(name: string): boolean {
 // ── Session 相关 ─────────────────────────────────────────────────
 
 export function getSessionsDir(): string {
-  if (!existsSync(SESSIONS_DIR)) {
-    mkdirSync(SESSIONS_DIR, { recursive: true })
+  const dir = getSessionsDir_()
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
   }
-  return SESSIONS_DIR
+  return dir
 }
 
 /**
@@ -458,7 +489,7 @@ export function scanPiSessions(): Array<{
   lastModified: number
   size: number
 }> {
-  if (!existsSync(SESSIONS_DIR)) return []
+  if (!existsSync(getSessionsDir_())) return []
 
   const results: Array<{
     id: string
@@ -472,10 +503,11 @@ export function scanPiSessions(): Array<{
 
   // pi 的 sessions 目录结构: sessions/<cwd-hash-dir>/*.jsonl
   // 也可能是 flat 的 *.jsonl（兼容两种）
-  const entries = readdirSync(SESSIONS_DIR)
+  const sessionsDir = getSessionsDir_()
+  const entries = readdirSync(sessionsDir)
 
   for (const entry of entries) {
-    const entryPath = join(SESSIONS_DIR, entry)
+    const entryPath = join(sessionsDir, entry)
     let stat
     try {
       stat = statSync(entryPath)
@@ -554,18 +586,18 @@ export function refreshSettings(): void {
 }
 
 export function getConfigDir(): string {
-  return CONFIG_DIR
+  return getConfigDir_()
 }
 
 /** xyz-pi agent 目录：~/.xyz-agent/pi/agent/ */
 export function getPiAgentDir(): string {
-  return PI_AGENT_DIR
+  return getPiAgentDir_()
 }
 
 export function getModelsPath(): string {
-  return MODELS_PATH
+  return getModelsPath_()
 }
 
 export function getSettingsPath(): string {
-  return SETTINGS_PATH
+  return getSettingsPath_()
 }

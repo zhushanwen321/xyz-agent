@@ -13,7 +13,8 @@
  * disabled-packages.json 控制启用/禁用状态。
  */
 import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { join, dirname, basename } from 'node:path'
+import { getPiAgentDir } from './pi-config-bridge.js'
 
 const log = {
   info: (...args: unknown[]) => console.log('[extension-resolver]', ...args),
@@ -142,8 +143,7 @@ export class ExtensionResolver {
    */
   scanSettingsExtensions(): ExtensionMap {
     const result: ExtensionMap = new Map()
-    const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? ''
-    const settingsDir = this.options.settingsDir ?? (homeDir ? join(homeDir, '.xyz-agent', 'pi', 'agent') : '')
+    const settingsDir = this.options.settingsDir ?? getPiAgentDir()
     const settingsPath = join(settingsDir, 'settings.json')
     if (!existsSync(settingsPath)) return result
 
@@ -221,10 +221,7 @@ export class ExtensionResolver {
    */
   scanThirdPartyExtensions(): ExtensionMap {
     const result: ExtensionMap = new Map()
-    const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? ''
-    if (!homeDir) return result
-
-    const thirdPartyDir = join(homeDir, '.xyz-agent', 'pi', 'agent', 'extensions')
+    const thirdPartyDir = join(getPiAgentDir(), 'extensions')
     if (!existsSync(thirdPartyDir)) return result
 
     this.scanDirectory(thirdPartyDir, result, 'third-party')
@@ -244,7 +241,8 @@ export class ExtensionResolver {
       } catch {
         continue
       }
-      const extName = this.normalizeExtName(extPath.split('/').pop() ?? extPath)
+      if (!this.isValidPiExtension(extPath)) continue
+      const extName = this.normalizeExtName(basename(extPath))
       result.set(extName, extPath)
     }
 
@@ -272,7 +270,7 @@ export class ExtensionResolver {
     return merged
   }
 
-  // ── Private helpers ──────────────────────────────────────────────
+  // ── Public helpers ──────────────────────────────────────────────
 
   /**
    * 验证包是否为有效的 pi extension。
@@ -307,12 +305,32 @@ export class ExtensionResolver {
 
   /**
    * 规范化 extension name 用于去重。
-   * - 去掉 npm scope: @zhushanwen/pi-goal → pi-goal
-   * - 去掉 pi- 前缀: pi-goal → goal, pi-subagents → subagents
+   * 保留 scope，仅去掉 pi- 前缀：
+   * - @zhushanwen/pi-goal → @zhushanwen/goal
+   * - pi-subagents → subagents
+   * - @scope/subagents → @scope/subagents
+   *
+   * NOTE: Behavioral change from old version — scope is now preserved.
+   * Old: @zhushanwen/pi-goal → goal (scope stripped)
+   * New: @zhushanwen/pi-goal → @zhushanwen/goal (scope kept)
+   * This allows scoped and unscoped packages with the same base name
+   * to coexist without dedup collision.
+   */
+  /** Normalize extension name: keep scope, strip pi- prefix.
+   *  e.g. "@zhushanwen/pi-goal" → "@zhushanwen/goal", "pi-goal" → "goal"
+   *
+   *  BREAKING CHANGE NOTE: versions prior to this change stripped the scope
+   *  ("@zhushanwen/pi-goal" → "goal"). Existing disabled-packages.json entries
+   *  may use the old format. If users report extensions re-enabling after upgrade,
+   *  check disabled-packages.json for stale keys and run a one-time migration.
    */
   private normalizeExtName(name: string): string {
-    const unscoped = name.replace(/^@[^/]+\//, '')
-    return unscoped.replace(/^pi-/, '')
+    const parts = name.split('/')
+    const last = parts[parts.length - 1].replace(/^pi-/, '')
+    if (parts.length > 1) {
+      return parts.slice(0, -1).join('/') + '/' + last
+    }
+    return last
   }
 
   /** 扫描目录下的子目录，跳过 shared/ */
@@ -327,6 +345,7 @@ export class ExtensionResolver {
         } catch {
           continue
         }
+        if (!this.isValidPiExtension(entryPath)) continue
         result.set(this.normalizeExtName(entry), entryPath)
       }
       log.debug(`[extension-resolver] ${label}: found ${result.size} extensions in ${dir}`)

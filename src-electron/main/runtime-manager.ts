@@ -4,15 +4,16 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { app } from 'electron'
 import { homedir } from 'node:os'
+import { BASE_PORT, MAX_PORT as MAX_PORT_CONST, ENV_WHITELIST_PREFIXES } from '@xyz-agent/shared'
 
-/** 子进程允许继承的环境变量前缀白名单 */
-const ENV_WHITELIST_PREFIXES = ['PATH', 'HOME', 'USER', 'LANG', 'TERM', 'NODE_', 'NVM_', 'ELECTRON_', 'XYZ_', 'XDG_', 'APPDATA', 'LOCALAPPDATA', 'PROGRAMFILES', 'SYSTEMROOT', 'TEMP', 'TMP']
+/** 子进程允许继承的环境变量前缀白名单 — extends shared list with ELECTRON_ for main process */
+const ENV_WHITELIST = [...ENV_WHITELIST_PREFIXES, 'ELECTRON_']
 
 /** 构建最小权限的环境变量：只继承白名单前缀 + 额外指定变量 */
 function buildSafeEnv(extras: Record<string, string | undefined>): Record<string, string> {
   const safe: Record<string, string> = {}
   for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined && ENV_WHITELIST_PREFIXES.some(prefix => key.startsWith(prefix) || key === prefix)) {
+    if (value !== undefined && ENV_WHITELIST.some(prefix => key.startsWith(prefix) || key === prefix)) {
       safe[key] = value
     }
   }
@@ -31,10 +32,11 @@ export class RuntimeManager {
   private _port: number | null = null
 
   // 端口/重试常量
-  // eslint-disable-next-line no-magic-numbers
-  private static readonly PORT_START = 3210
-  // eslint-disable-next-line no-magic-numbers
-  private static readonly PORT_END = 3220
+  // 端口范围可通过 XYZ_AGENT_PORT_OFFSET 偏移（dev 模式 +100 → 3310-3320）
+  private static readonly BASE_PORT_START = BASE_PORT
+  // eslint-disable-next-line no-magic-numbers -- port range size: 10 consecutive ports
+  private static readonly BASE_PORT_END = BASE_PORT + 10
+  private static readonly MAX_PORT = MAX_PORT_CONST
   // eslint-disable-next-line no-magic-numbers
   private static readonly KILL_WAIT_MS = 200
   // eslint-disable-next-line no-magic-numbers
@@ -115,12 +117,31 @@ export class RuntimeManager {
     }
   }
 
+  /** 端口偏移量（供 IPC handler 读取） */
+  get portOffset(): number { return this.getPortOffset() }
+
+  /** 获取端口偏移（默认 0，dev 模式 +100），clamp 到 [0, 65535-BASE_PORT_START] */
+  private getPortOffset(): number {
+    const raw = parseInt(process.env.XYZ_AGENT_PORT_OFFSET ?? '0', 10) || 0
+    return Math.max(0, Math.min(raw, RuntimeManager.MAX_PORT - RuntimeManager.BASE_PORT_START))
+  }
+
+  /** 获取动态端口范围的起止 */
+  private getPortRange(): { start: number; end: number } {
+    const offset = this.getPortOffset()
+    return {
+      start: RuntimeManager.BASE_PORT_START + offset,
+      end: RuntimeManager.BASE_PORT_END + offset,
+    }
+  }
+
   /**
-   * 在 3210-3220 范围内寻找可用端口。
+   * 在动态端口范围内寻找可用端口（默认 3210-3220，dev 3310-3320）。
    * 如果被占用则尝试 kill stale process，等 300ms 后重试。
    */
   private async findAvailablePort(): Promise<number> {
-    for (let port = RuntimeManager.PORT_START; port <= RuntimeManager.PORT_END; port++) {
+    const { start, end } = this.getPortRange()
+    for (let port = start; port <= end; port++) {
       const inUse = await this.isPortInUse(port)
       if (!inUse) return port
 
@@ -131,7 +152,7 @@ export class RuntimeManager {
       const stillInUse = await this.isPortInUse(port)
       if (!stillInUse) return port
     }
-    throw new Error('No available port in range 3210-3220')
+    throw new Error(`No available port in range ${start}-${end}`)
   }
 
   private isPortInUse(port: number, timeoutMs = RuntimeManager.CONNECT_TIMEOUT_MS): Promise<boolean> {
@@ -148,12 +169,12 @@ export class RuntimeManager {
     })
   }
 
-  /** 将端口写入 ~/.xyz-agent/runtime.port，供 cold-start 场景发现 */
+  /** 将端口写入 \$XYZ_AGENT_DATA_DIR/runtime.port（默认 ~/.xyz-agent/runtime.port） */
   private writePortFile(port: number): void {
     try {
-      const dir = path.join(homedir(), '.xyz-agent')
-      mkdirSync(dir, { recursive: true })
-      writeFileSync(path.join(dir, 'runtime.port'), String(port))
+      const dataDir = process.env.XYZ_AGENT_DATA_DIR ?? path.join(homedir(), '.xyz-agent')
+      mkdirSync(dataDir, { recursive: true })
+      writeFileSync(path.join(dataDir, 'runtime.port'), String(port))
     // eslint-disable-next-line taste/no-silent-catch -- 端口文件非关键，失败不阻塞主流程
     } catch (err) {
       console.error('[runtime] Failed to write port file:', err)
@@ -236,6 +257,9 @@ export class RuntimeManager {
       env: buildSafeEnv({
         ELECTRON_RUN_AS_NODE: app.isPackaged ? '1' : undefined,
         XYZ_AGENT_PACKAGED: app.isPackaged ? '1' : undefined,
+        // 透传实例隔离 env var，使 runtime 子进程使用隔离的数据目录
+        XYZ_AGENT_DATA_DIR: process.env.XYZ_AGENT_DATA_DIR,
+        XYZ_AGENT_PORT_OFFSET: process.env.XYZ_AGENT_PORT_OFFSET,
       }),
     }
     this.child = spawn(cmd, args, spawnOptions)

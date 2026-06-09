@@ -1,3 +1,5 @@
+/* eslint max-lines: ["warn", {"max": 600, "skipBlankLines": true, "skipComments": true}] */
+
 /**
  * SidecarServer — pure Transport layer.
  * Routes ClientMessages to Service instances and pushes
@@ -9,8 +11,10 @@ import { WebSocketServer, WebSocket, type WebSocket as WsType } from 'ws'
 import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
 import type { ISessionService, IConfigService, IModelService, IMessageBroker, IExtensionService, IPluginService } from './interfaces.js'
 import { ExtensionTimeoutManager } from './extension-timeout-manager.js'
+import { ExtensionInstallError } from './extension-service.js'
 import { BridgeHandler } from './bridge-handler.js'
 import { SettingsMessageHandler } from './settings-message-handler.js'
+import { getPiAgentDir } from './pi-config-bridge.js'
 import { PluginMessageHandler } from './plugin-message-handler.js'
 import { TreeMessageHandler } from './tree-message-handler.js'
 
@@ -31,7 +35,7 @@ export class SidecarServer implements IMessageBroker {
   private configService!: IConfigService
   private modelService!: IModelService
   private treeService!: import('./services/tree-service.js').TreeService
-  private extensionService!: IExtensionService
+  private extensionService?: IExtensionService
   private pluginService!: IPluginService
 
   // ── Extension UI request timeout tracking ───────────────────────
@@ -192,6 +196,10 @@ export class SidecarServer implements IMessageBroker {
         case 'extension.toggle':
         case 'extension.install':
         case 'extension.uninstall':
+        case 'extension.installDir':
+        case 'extension.installGit':
+        case 'extension.finishInstall':
+        case 'extension.cancelInstall':
           return this.handleExtensionMessage(msg, ws)
         // ── Plugin messages ───────────────────────────────────────────
         case 'plugin.list':
@@ -296,35 +304,23 @@ export class SidecarServer implements IMessageBroker {
       }
       case 'message.steer': {
         const steerSid = msg.payload.sessionId
-        // steer: abort best-effort, session may not be actively generating
-        // abort is best-effort; steer must proceed to sendMessage
         try {
-          await this.sessionService.abort(steerSid)
-          // eslint-disable-next-line taste/no-silent-catch -- best-effort abort, failure must not block steer
-        } catch (e) {
-          console.warn('[runtime] steer abort: session not active or abort failed:', e instanceof Error ? e.message : String(e))
-        }
-        // RACE CONDITION NOTE: pi's abort is async — the subprocess may still be
-        // processing when sendMessage arrives. Pi internally queues the new message
-        // and applies it after the current turn completes, so this is safe in practice.
-        try {
-          await this.sessionService.sendMessage(steerSid, msg.payload.content)
-          return this.send(ws, { type: 'message.status', id: msg.id, payload: { sessionId: steerSid, status: 'sent' } })
+          await this.sessionService.steerMessage(steerSid, msg.payload.content)
+          return this.send(ws, { type: 'message.status', id: msg.id, payload: { sessionId: steerSid, status: 'steered' } })
         } catch (e) {
           const errMsg = e instanceof Error ? e.message : String(e)
-          console.error('[runtime] message.steer sendMessage failed:', errMsg)
+          console.error('[runtime] message.steer failed:', errMsg)
           return this.send(ws, { type: 'message.error', id: msg.id, payload: { sessionId: steerSid, message: errMsg } })
         }
       }
       case 'message.follow_up': {
-        // Queue message without interrupting — just send, pi will queue internally
         const followSid = msg.payload.sessionId
         try {
-          await this.sessionService.sendMessage(followSid, msg.payload.content)
+          await this.sessionService.followUpMessage(followSid, msg.payload.content)
           return this.send(ws, { type: 'message.status', id: msg.id, payload: { sessionId: followSid, status: 'queued' } })
         } catch (e) {
           const errMsg = e instanceof Error ? e.message : String(e)
-          console.error('[runtime] message.follow_up sendMessage failed:', errMsg)
+          console.error('[runtime] message.follow_up failed:', errMsg)
           return this.send(ws, { type: 'message.error', id: msg.id, payload: { sessionId: followSid, message: errMsg } })
         }
       }
@@ -333,7 +329,7 @@ export class SidecarServer implements IMessageBroker {
     }
   }
 
-  /** Handle session.tree-* messages */
+  /** Handle extension.* messages */
   private async handleExtensionMessage(msg: ClientMessage, ws: WsType): Promise<void> {
     switch (msg.type) {
       case 'extension.ui_response': {
@@ -380,8 +376,11 @@ export class SidecarServer implements IMessageBroker {
         try {
           await this.extensionService.installExtension(msg.payload.source)
         } catch (e) {
-          const errMsg = e instanceof Error ? e.message : String(e)
-          return this.sendError(ws, 'install_failed', errMsg, msg.id)
+          return this.send(ws, {
+            type: 'extension.installError',
+            id: msg.id,
+            payload: this.extractExtensionError(e),
+          })
         }
         const installed = await this.extensionService.scanExtensions()
         return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions: installed } })
@@ -398,6 +397,68 @@ export class SidecarServer implements IMessageBroker {
         }
         const uninstalled = await this.extensionService.scanExtensions()
         return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions: uninstalled } })
+      }
+      // ── Local directory / Git / finish install ────────────────────
+      case 'extension.installDir': {
+        if (!this.extensionService) {
+          return this.sendError(ws, 'handler_error', 'Extension service not available', msg.id)
+        }
+        try {
+          const { path: sourcePath } = msg.payload as { path: string }
+          if (typeof sourcePath !== 'string' || sourcePath.length === 0) {
+            return this.sendError(ws, 'invalid_payload', 'extension.installDir requires a non-empty "path" string', msg.id)
+          }
+          const result = await this.extensionService.installLocalDirectory(sourcePath)
+          return this.send(ws, { type: 'extension.discovered', id: msg.id, payload: { tempDir: result.tempDir, candidates: result.candidates } })
+        } catch (e) {
+          return this.send(ws, { type: 'extension.installError', id: msg.id, payload: this.extractExtensionError(e) })
+        }
+      }
+      case 'extension.installGit': {
+        if (!this.extensionService) {
+          return this.sendError(ws, 'handler_error', 'Extension service not available', msg.id)
+        }
+        try {
+          const { url } = msg.payload as { url: string }
+          if (typeof url !== 'string' || url.length === 0) {
+            return this.sendError(ws, 'invalid_payload', 'extension.installGit requires a non-empty "url" string', msg.id)
+          }
+          const result = await this.extensionService.installGitRepository(url)
+          return this.send(ws, { type: 'extension.discovered', id: msg.id, payload: { tempDir: result.tempDir, candidates: result.candidates } })
+        } catch (e) {
+          return this.send(ws, { type: 'extension.installError', id: msg.id, payload: this.extractExtensionError(e) })
+        }
+      }
+      case 'extension.finishInstall': {
+        if (!this.extensionService) {
+          return this.sendError(ws, 'handler_error', 'Extension service not available', msg.id)
+        }
+        try {
+          const { tempDir, selected } = msg.payload as { tempDir: string; selected: string[] }
+          if (typeof tempDir !== 'string' || !Array.isArray(selected)) {
+            return this.sendError(ws, 'invalid_payload', 'extension.finishInstall requires tempDir (string) and selected (string[])', msg.id)
+          }
+          await this.extensionService.finishInstall(tempDir, selected)
+          const extensions = await this.extensionService.scanExtensions()
+          return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions } })
+        } catch (e) {
+          return this.send(ws, { type: 'extension.installError', id: msg.id, payload: this.extractExtensionError(e) })
+        }
+      }
+      case 'extension.cancelInstall': {
+        if (!this.extensionService) {
+          return this.sendError(ws, 'handler_error', 'Extension service not available', msg.id)
+        }
+        try {
+          const { tempDir } = msg.payload as { tempDir: string }
+          if (typeof tempDir !== 'string' || tempDir.length === 0) {
+            return this.sendError(ws, 'invalid_payload', 'extension.cancelInstall requires a non-empty "tempDir" string', msg.id)
+          }
+          await this.extensionService.cancelInstall(tempDir)
+          return this.send(ws, { type: 'extension.installCancelled', id: msg.id, payload: {} })
+        } catch (e) {
+          return this.send(ws, { type: 'extension.installError', id: msg.id, payload: this.extractExtensionError(e) })
+        }
       }
     }
   }
@@ -421,6 +482,19 @@ export class SidecarServer implements IMessageBroker {
         this.sendError(ws, 'session.compact_failed', 'Failed to restore session for compact: ' + (e instanceof Error ? e.message : String(e)), msg.id, compactId)
       })
     } else { runCompact() }
+  }
+
+  // ── Extension error helper ────────────────────────────────────
+
+  /**
+   * Extract ExtensionInstallError fields from unknown catch value.
+   * Primary: instanceof check. Fallback: branded property check (handles cross-bundle scenarios).
+   */
+  private extractExtensionError(e: unknown): { code: string; message: string; hint?: string } {
+    if (e instanceof ExtensionInstallError) {
+      return { code: e.code, message: e.message, hint: e.hint }
+    }
+    return { code: 'install_failed', message: e instanceof Error ? e.message : String(e) }
   }
 
   // ── IMessageBroker ──────────────────────────────────────────────
@@ -516,6 +590,9 @@ export class SidecarServer implements IMessageBroker {
       normalize(resolve(homeDir, '.agents/skills')),
       normalize(resolve(homeDir, '.pi/agent/skills')),
       normalize(resolve(homeDir, '.pi/agent/npm')),
+      // xyz-agent 实例的 skill/extension 路径（支持 XYZ_AGENT_DATA_DIR 隔离）
+      normalize(resolve(getPiAgentDir(), 'skills')),
+      normalize(resolve(getPiAgentDir(), 'npm')),
     ]
     // Only allow paths *inside* whitelisted directories, not the directory itself
     if (!allowedPrefixes.some(prefix => absPath.startsWith(prefix + '/'))) {

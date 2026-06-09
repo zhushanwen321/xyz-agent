@@ -9,6 +9,7 @@ import type {
   ExtensionErrorPayload, ToolCallUpdatePayload,
 } from '@xyz-agent/shared'
 import { createSystemNotification } from '../lib/system-notification'
+import type { StopReason } from '@xyz-agent/shared'
 
 const RADIX_36 = 36
 const SUBSTRING_START = 2
@@ -172,7 +173,8 @@ function createGlobalHandlers() {
     if (usage?.totalTokens) {
       store.setTokenUsage(usage.totalTokens, sid)
     }
-    store.completeStream(sid)
+    const stopReason = msg.payload.stopReason as StopReason | undefined
+    store.completeStream({ stopReason }, sid)
   }
 
   function onError(msg: ServerMessage) {
@@ -325,16 +327,6 @@ function createGlobalHandlers() {
     store.setThinkingLevel(level, sid)
   }
 
-  /**
-   * extension:setTitle → call window.electronAPI.setTitle. Uses
-   * optional chaining to tolerate missing API (browser/dev mode).
-   */
-  function onExtensionSetTitle(msg: ServerMessage) {
-    const title = (msg.payload as { title?: string }).title
-    if (title === undefined) return
-    window.electronAPI?.setTitle(title)
-  }
-
   /** message.stream_error → add an alert system notification */
   function onStreamError(msg: ServerMessage) {
     const sid = getSid(msg)
@@ -366,7 +358,6 @@ function createGlobalHandlers() {
     ['message.queue_update', onQueueUpdate],
     ['session.renamed', onSessionRenamed],
     ['session.thinkingLevelSet', onThinkingLevelSet],
-    ['extension:setTitle', onExtensionSetTitle],
     ['message.stream_error', onStreamError],
   ])
 }
@@ -425,7 +416,7 @@ export function useChat(sessionId?: Ref<string>) {
     if (!sid) return
     send({ type: 'message.abort', payload: { sessionId: sid } })
     // 立即完成当前流，不等后端确认
-    store.completeStream(sid)
+    store.completeStream({ stopReason: 'aborted' }, sid)
     // 插入系统消息提示用户操作已终止
     store.addMessage({
       ...createSystemNotification('info', '操作已被用户终止'),

@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { reactive, computed } from 'vue'
-import type { Message, ToolCall } from '@xyz-agent/shared'
+import type { Message } from '@xyz-agent/shared'
 import { createSystemNotification } from '../lib/system-notification'
 
 // SystemNotification: local system notification (not from API)
@@ -76,6 +76,8 @@ export interface ChatSessionState {
   thinkingLevel?: string
   /** Response model id for this session (FR-8, set by future event) */
   responseModel?: string
+  /** Pending input text not yet submitted (persists across view switches) */
+  pendingText?: string
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -164,7 +166,7 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  function completeStreaming(opts: { keepGenerating?: boolean } | undefined, sessionId: string) {
+  function completeStreaming(opts: { keepGenerating?: boolean; stopReason?: string } | undefined, sessionId: string) {
     const s = getSessionState(sessionId)
     if (s.streamingMessage) {
       const completedAt = Date.now()
@@ -180,6 +182,11 @@ export const useChatStore = defineStore('chat', () => {
             ? { ...th, endTime: th.endTime ?? completedAt }
             : { ...th, collapsed: true, endTime: th.endTime ?? completedAt }
         ),
+      }
+      // DESIGN: only 'aborted' sets isInterrupted. Other stopReasons (complete/error/length/tool_use)
+      // represent normal termination and don't need visual interruption markers.
+      if (opts?.stopReason === 'aborted') {
+        cleaned.isInterrupted = true
       }
       s.completedMessages = [...s.completedMessages, cleaned]
       s.streamingMessage = null
@@ -217,35 +224,6 @@ export const useChatStore = defineStore('chat', () => {
 
   function setLoadingHistory(v: boolean, sessionId: string) {
     getSessionState(sessionId).isLoadingHistory = v
-  }
-
-  function appendThinkingDelta(delta: string, sessionId: string) {
-    const s = getSessionState(sessionId)
-    if (s.streamingMessage) {
-      const current = (s.streamingMessage as unknown as Record<string, unknown>).thinkingContent ?? ''
-      s.streamingMessage = {
-        ...s.streamingMessage,
-        thinkingContent: current + delta,
-      } as Message
-    }
-  }
-
-  function addStreamingToolCall(tc: ToolCall, sessionId: string) {
-    const s = getSessionState(sessionId)
-    if (s.streamingMessage) {
-      const calls = [...((s.streamingMessage as unknown as Record<string, unknown>).toolCalls as ToolCall[] ?? []), tc]
-      s.streamingMessage = { ...s.streamingMessage, toolCalls: calls } as Message
-    }
-  }
-
-  function updateStreamingToolCall(id: string, output: string, sessionId: string) {
-    const s = getSessionState(sessionId)
-    if (s.streamingMessage) {
-      const calls = ((s.streamingMessage as unknown as Record<string, unknown>).toolCalls as ToolCall[] ?? []).map(
-        (tc) => tc.id === id ? { ...tc, output, status: 'completed' as const } : tc,
-      )
-      s.streamingMessage = { ...s.streamingMessage, toolCalls: calls } as Message
-    }
   }
 
   function addPendingApproval(pending: PendingApproval, sessionId: string) {
@@ -318,11 +296,21 @@ export const useChatStore = defineStore('chat', () => {
     getSessionState(sessionId).responseModel = model
   }
 
+  /** Set pending input text (persists across view switches). */
+  function setPendingText(text: string | undefined, sessionId: string) {
+    getSessionState(sessionId).pendingText = text
+  }
+
+  /** Get pending input text for a session. */
+  function getPendingText(sessionId: string): string {
+    return getSessionState(sessionId).pendingText ?? ''
+  }
+
   // ── 流式消息高层生命周期方法（已内联到 useChat handlers，仅保留 completeStream / abortStream） ──
 
   /** 完成流式消息，自动重置 isGenerating */
-  function completeStream(sid: string) {
-    completeStreaming({}, sid)
+  function completeStream(opts: { stopReason?: string }, sid: string) {
+    completeStreaming(opts ?? undefined, sid)
   }
 
   /** 终止流式消息（统一封装 reset 三步 + 可选错误通知） */
@@ -352,8 +340,7 @@ export const useChatStore = defineStore('chat', () => {
     // 消息操作
     addMessage, setStreaming, appendToStreaming,
     completeStreaming, setGenerating, clearMessages,
-    replaceMessages, appendThinkingDelta, addStreamingToolCall,
-    updateStreamingToolCall, addPendingApproval, removePendingApproval,
+    replaceMessages, addPendingApproval, removePendingApproval,
 
     // 状态
     updateContextInfo, setError, switchAgent,
@@ -363,6 +350,8 @@ export const useChatStore = defineStore('chat', () => {
     // TUI Bridge Phase 0 setters (FR-8, FR-9)
     setPendingEditorText, setAutoRetryState, setQueueState,
     setThinkingLevel, setResponseModel,
+    // Pending text
+    setPendingText, getPendingText,
 
     // 流式消息方法
     completeStream, abortStream,

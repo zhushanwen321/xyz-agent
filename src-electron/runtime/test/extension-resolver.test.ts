@@ -7,11 +7,14 @@ vi.mock('node:fs', () => ({
   readdirSync: vi.fn(),
   statSync: vi.fn(),
   readFileSync: vi.fn(),
+  mkdirSync: vi.fn(),
+  renameSync: vi.fn(),
 }))
 
 vi.mock('node:path', () => ({
   join: vi.fn((...args: string[]) => args.join('/')),
   dirname: vi.fn((p: string) => p.split('/').slice(0, -1).join('/')),
+  basename: vi.fn((p: string) => p.split('/').pop() ?? ''),
 }))
 
 import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs'
@@ -24,6 +27,12 @@ const mockedReadFileSync = vi.mocked(readFileSync)
 function mockDir(dirPath: string, entries: string[] = ['ext-a', 'ext-b', 'shared']): void {
   mockedExistsSync.mockImplementation((p: unknown) => {
     if (typeof p !== 'string') return false
+    // Allow package.json checks for entries (but not 'shared')
+    if (p.endsWith('/package.json')) {
+      const parent = p.replace(/\/package\.json$/, '')
+      const name = parent.split('/').pop() ?? ''
+      return name !== 'shared' && entries.includes(name)
+    }
     return p === dirPath || p.startsWith(dirPath + '/')
   })
   mockedReaddirSync.mockImplementation(((p: unknown) => {
@@ -40,6 +49,18 @@ function mockDir(dirPath: string, entries: string[] = ['ext-a', 'ext-b', 'shared
     }
     return { isDirectory: () => true } as import('node:fs').Stats
   })
+  // Mock readFileSync to return valid pi extension package.json for entries
+  mockedReadFileSync.mockImplementation((p: unknown) => {
+    if (typeof p !== 'string') throw new Error('not found')
+    if (p.endsWith('/package.json')) {
+      const parent = p.replace(/\/package\.json$/, '')
+      const name = parent.split('/').pop() ?? ''
+      if (entries.includes(name) && name !== 'shared') {
+        return JSON.stringify({ name, keywords: ['pi-package'] })
+      }
+    }
+    throw new Error('not found')
+  })
 }
 
 describe('ExtensionResolver', () => {
@@ -48,6 +69,43 @@ describe('ExtensionResolver', () => {
   beforeEach(() => {
     resolver = new ExtensionResolver()
     vi.clearAllMocks()
+  })
+
+  describe('normalizeExtName', () => {
+    it('removes pi- prefix from unscoped name', () => {
+      // @ts-expect-error — testing private method
+      expect(resolver.normalizeExtName('pi-subagents')).toBe('subagents')
+    })
+
+    it('preserves scope and removes pi- prefix', () => {
+      // @ts-expect-error — testing private method
+      expect(resolver.normalizeExtName('@zhushanwen/pi-goal')).toBe('@zhushanwen/goal')
+    })
+
+    it('preserves non-pi scope intact', () => {
+      // @ts-expect-error — testing private method
+      expect(resolver.normalizeExtName('@scope/subagents')).toBe('@scope/subagents')
+    })
+
+    it('handles scoped name without pi- prefix', () => {
+      // @ts-expect-error — testing private method
+      expect(resolver.normalizeExtName('@scope/my-ext')).toBe('@scope/my-ext')
+    })
+
+    it('handles name without pi- prefix', () => {
+      // @ts-expect-error — testing private method
+      expect(resolver.normalizeExtName('my-ext')).toBe('my-ext')
+    })
+
+    it('prevents dedup collision between different scopes', () => {
+      // @ts-expect-error — testing private method
+      const name1 = resolver.normalizeExtName('@scope1/pi-goal')
+      // @ts-expect-error — testing private method
+      const name2 = resolver.normalizeExtName('@scope2/pi-goal')
+      expect(name1).not.toBe(name2)
+      expect(name1).toBe('@scope1/goal')
+      expect(name2).toBe('@scope2/goal')
+    })
   })
 
   describe('scanNpmExtensions', () => {
@@ -222,8 +280,20 @@ describe('ExtensionResolver', () => {
 
   describe('scanUserExtensions', () => {
     it('scans user-provided extension paths', () => {
-      mockedExistsSync.mockReturnValue(true)
+      mockedExistsSync.mockImplementation((p: unknown) => {
+        if (typeof p !== 'string') return false
+        if (p.endsWith('/package.json')) return true
+        return true
+      })
       mockedStatSync.mockImplementation(() => ({ isDirectory: () => true } as import('node:fs').Stats))
+      mockedReadFileSync.mockImplementation((p: unknown) => {
+        if (typeof p !== 'string') throw new Error('not found')
+        if (p.endsWith('/package.json')) {
+          const name = p.replace(/\/package\.json$/, '').split('/').pop() ?? ''
+          return JSON.stringify({ name, keywords: ['pi-package'] })
+        }
+        throw new Error('not found')
+      })
 
       const result = resolver.scanUserExtensions(['/custom/ext-a', '/custom/ext-b'])
       expect(result.size).toBe(2)
@@ -232,8 +302,20 @@ describe('ExtensionResolver', () => {
     })
 
     it('skips non-existent paths', () => {
-      mockedExistsSync.mockImplementation((p: unknown) => typeof p === 'string' && p === '/custom/ext-a')
+      mockedExistsSync.mockImplementation((p: unknown) => {
+        if (typeof p !== 'string') return false
+        if (p === '/custom/ext-a') return true
+        if (p === '/custom/ext-a/package.json') return true
+        return false
+      })
       mockedStatSync.mockImplementation(() => ({ isDirectory: () => true } as import('node:fs').Stats))
+      mockedReadFileSync.mockImplementation((p: unknown) => {
+        if (typeof p !== 'string') throw new Error('not found')
+        if (p === '/custom/ext-a/package.json') {
+          return JSON.stringify({ name: 'ext-a', keywords: ['pi-package'] })
+        }
+        throw new Error('not found')
+      })
 
       const result = resolver.scanUserExtensions(['/custom/ext-a', '/custom/nonexistent'])
       expect(result.size).toBe(1)
@@ -339,6 +421,8 @@ describe('ExtensionResolver', () => {
         if (p === '/project/package.json') return true
         // npm package - pi-goal exists
         if (p === '/project/node_modules/@zhushanwen/pi-goal/package.json') return true
+        // bundled/third-party/user extension package.json
+        if (p.endsWith('/package.json') && (p.includes(bundledDir) || p.includes('extensions/') || p === '/custom/my-ext/package.json')) return true
         // disabled-packages.json doesn't exist
         if (p === `${settingsDir}/disabled-packages.json`) return false
         return false
@@ -369,6 +453,13 @@ describe('ExtensionResolver', () => {
         if (p === '/project/package.json') {
           return JSON.stringify({ dependencies: {} })
         }
+        // package.json for bundled/third-party/user extensions
+        if (p.endsWith('/package.json')) {
+          const name = p.replace(/\/package\.json$/, '').split('/').pop() ?? ''
+          if (['ext-a', 'ext-c', 'my-ext'].includes(name)) {
+            return JSON.stringify({ name, keywords: ['pi-package'] })
+          }
+        }
         throw new Error('not found')
       })
 
@@ -394,6 +485,7 @@ describe('ExtensionResolver', () => {
         if (typeof p !== 'string') return false
         if (p === thirdPartyDir) return true
         if (p === '/project/package.json') return true
+        if (p === `${thirdPartyDir}/ext-c/package.json`) return true
         return false
       })
 
@@ -405,8 +497,12 @@ describe('ExtensionResolver', () => {
       mockedStatSync.mockImplementation(() => ({ isDirectory: () => true } as import('node:fs').Stats))
 
       mockedReadFileSync.mockImplementation((p: unknown) => {
-        if (typeof p === 'string' && p === '/project/package.json') {
+        if (typeof p !== 'string') throw new Error('not found')
+        if (p === '/project/package.json') {
           return JSON.stringify({ dependencies: {} })
+        }
+        if (p === `${thirdPartyDir}/ext-c/package.json`) {
+          return JSON.stringify({ name: 'ext-c', keywords: ['pi-package'] })
         }
         throw new Error('not found')
       })

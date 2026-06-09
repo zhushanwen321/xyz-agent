@@ -4,8 +4,7 @@
  * 从 PluginService 提取 sessionData 的 flush、定时器等操作。
  */
 
-import { join } from 'node:path'
-import { homedir } from 'node:os'
+import { getConfigDir } from '../../pi-config-bridge.js'
 import { persistSessionData } from './plugin-storage.js'
 
 const FLUSH_INTERVAL_MS = 5_000
@@ -32,7 +31,7 @@ export async function flushSessionData(
 
     // 异步持久化；失败时恢复 dirty
     try {
-      await persistSessionData(join(homedir(), '.xyz-agent'), sessionId, cache)
+      await persistSessionData(getConfigDir(), sessionId, cache)
     } catch (err: unknown) {
       console.warn(`[plugin-service] sessionData flush failed for ${sessionId}:`, err instanceof Error ? err.message : String(err))
       // 恢复 dirty 标记
@@ -56,7 +55,7 @@ export async function flushSessionDataForSession(
   if (!cache) return
 
   try {
-    await persistSessionData(join(homedir(), '.xyz-agent'), sessionId, cache)
+    await persistSessionData(getConfigDir(), sessionId, cache)
     dirtyKeys.clear()
     // eslint-disable-next-line taste/no-silent-catch -- sessionData flush failure: log and keep existing data
   } catch (err: unknown) {

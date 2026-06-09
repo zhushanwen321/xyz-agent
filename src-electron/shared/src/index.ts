@@ -4,7 +4,13 @@ export type {
   ServerMessageType, ServerMessage,
   ExtensionUIRequestPayload, ExtensionUIResponsePayload,
   ExtensionErrorPayload, ToolCallUpdatePayload, ExtensionInfo,
+  ExtensionDiscoveredPayload, ExtensionInstallErrorPayload,
+  StopReason,
   StatusBarItem, StatusSetUpdatePayload, PluginStatusBarUpdatePayload,
+  UISendMode, ProtocolSendMode,
+} from './protocol'
+export {
+  toProtocolSendMode,
 } from './protocol'
 export type {
   MessageRole, MessageStatus, ToolCallStatus,
@@ -26,3 +32,4 @@ export type {
   PanelLeaf, SplitNode, PanelTree, WindowState,
 } from './panel'
 export * from './extension'
+export { BASE_PORT, DEV_PORT_OFFSET, MAX_PORT, ENV_WHITELIST_PREFIXES } from './constants'

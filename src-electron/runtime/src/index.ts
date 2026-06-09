@@ -4,6 +4,8 @@ import { TreeService } from './services/tree-service.js'
 import { ConfigService } from './services/config-service.js'
 import { ModelService } from './services/model-service.js'
 
+import { BASE_PORT, MAX_PORT } from '@xyz-agent/shared'
+
 const MAX_PERCENT = 100
 import { ProcessManager } from './process-manager.js'
 import { EventAdapter } from './event-adapter.js'
@@ -15,7 +17,8 @@ import type { NavigateInterceptor } from './navigate-interceptor.js'
 function parseArgs(): { port: number; projectRoot?: string } {
   // eslint-disable-next-line no-magic-numbers -- argv[0] is node, argv[1] is script
   const args = process.argv.slice(2)
-  let port = 3210
+  const portOffset = Math.max(0, Math.min(parseInt(process.env.XYZ_AGENT_PORT_OFFSET ?? '0', 10) || 0, MAX_PORT - BASE_PORT))
+  let port = BASE_PORT + portOffset
   let projectRoot: string | undefined
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--port' && i + 1 < args.length) {
@@ -55,9 +58,9 @@ async function main(): Promise<void> {
   const extensionService = new ExtensionService({ projectRoot: effectiveRoot })
   const treeService = new TreeService(pm)
 
-  // pluginService declared before sessionService but assigned after —
-  // the adapter factory closure reads pluginService at session creation time,
-  // by which point pluginService is already initialized.
+  // pluginService/configService/modelService: declared before sessionService but assigned after.
+  // The adapter factory closures read them at session creation time (deferred),
+  // by which point all services are already initialized (runtime is single-threaded).
   // eslint-disable-next-line prefer-const
   let pluginService: PluginService | undefined
 

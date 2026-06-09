@@ -1,18 +1,74 @@
 <template>
-  <div
-    :class="[
-      'flex items-center h-5 px-3.5 text-[11px] font-mono select-none transition-colors duration-150',
-      modeClass,
-    ]"
-  >
-    <span class="font-medium">{{ modeLabel }}</span>
-    <span class="mx-1 opacity-40">·</span>
-    <span class="opacity-70">{{ modeHint }}</span>
+  <div class="relative" ref="containerRef">
+    <!-- eslint-disable-next-line taste/no-native-html-elements -- custom mode switcher trigger, xyz-ui Button cannot replicate h-5/text-[11px]/font-mono inline layout -->
+    <button
+      type="button"
+      :class="[
+        'flex items-center h-5 px-2.5 text-[11px] font-mono select-none transition-colors duration-150 gap-1.5 rounded-sm',
+        modeClass,
+        open ? 'bg-[var(--surface-hover)]' : 'hover:bg-[var(--surface-hover)]',
+      ]"
+      :aria-haspopup="'listbox'"
+      :aria-expanded="open"
+      @click="toggle"
+    >
+      <span class="font-medium">{{ modeLabel }}</span>
+      <span class="mode-shortcut-hint opacity-50">{{ modeHint }}</span>
+      <!-- chevron -->
+      <svg
+        class="w-3 h-3 opacity-40 transition-transform duration-150"
+        :class="{ 'rotate-180': open }"
+        viewBox="0 0 12 12"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.5"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path d="M3 4.5L6 7.5L9 4.5" />
+      </svg>
+    </button>
+
+    <!-- Popover -->
+    <Transition name="mode-popover">
+      <div
+        v-if="open"
+        class="mode-popover-panel absolute bottom-full left-0 mb-1 min-w-[140px] rounded-sm border shadow-lg"
+        role="listbox"
+        :aria-activedescendant="`mode-option-${mode}`"
+      >
+        <!-- eslint-disable-next-line taste/no-native-html-elements -- custom mode option items, xyz-ui Button cannot replicate h-7/text-[11px]/font-mono inline layout -->
+        <button
+          v-for="item in modes"
+          :key="item.value"
+          type="button"
+          :id="`mode-option-${item.value}`"
+          role="option"
+          :aria-selected="item.value === mode"
+          :class="[
+            'flex items-center justify-between w-full h-7 px-2.5 text-[11px] font-mono transition-colors duration-100',
+            item.value === mode ? item.activeClass : 'text-[var(--text)]',
+            'hover:bg-[var(--surface-hover)]',
+          ]"
+          @click="selectMode(item.value)"
+        >
+          <span class="flex items-center gap-1.5">
+            <span
+              v-if="item.value === mode"
+              class="text-[8px] leading-none"
+            >&#9679;</span>
+            <span v-else class="w-[8px] inline-block" />
+            <span class="font-medium" :data-i18n="item.i18n">{{ item.label }}</span>
+          </span>
+          <span class="mode-shortcut-hint opacity-50">{{ item.shortcut }}</span>
+        </button>
+      </div>
+    </Transition>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 
 export type SendMode = 'send' | 'steer' | 'queue'
 
@@ -20,27 +76,93 @@ const props = defineProps<{
   mode: SendMode
 }>()
 
+const emit = defineEmits<{
+  (e: 'update:mode', payload: { mode: SendMode }): void
+}>()
+
+const containerRef = ref<HTMLElement | null>(null)
+const open = ref(false)
+
+const isMac = navigator.userAgent.includes('Mac')
+
+interface ModeItem {
+  value: SendMode
+  label: string
+  shortcut: string
+  activeClass: string
+  i18n: string
+}
+
+const modes: ModeItem[] = [
+  { value: 'send', label: 'Send', shortcut: isMac ? 'Enter' : 'Enter', activeClass: 'text-muted', i18n: 'mode.send' },
+  { value: 'steer', label: 'Steer', shortcut: isMac ? 'Cmd+Enter' : 'Ctrl+Enter', activeClass: 'text-accent', i18n: 'mode.steer' },
+  { value: 'queue', label: 'Follow-up', shortcut: isMac ? 'Opt+Enter' : 'Alt+Enter', activeClass: 'text-warning', i18n: 'mode.followup' },
+]
+
 const modeLabel = computed(() => {
-  switch (props.mode) {
-    case 'steer': return 'Steer'
-    case 'queue': return 'Queue'
-    default: return 'Send'
-  }
+  const item = modes.find(m => m.value === props.mode)
+  return item?.label ?? 'Send'
 })
 
 const modeHint = computed(() => {
-  switch (props.mode) {
-    case 'steer': return 'AI 处理中，消息将中断流程'
-    case 'queue': return 'Alt+Enter 排队'
-    default: return 'Enter 发送'
-  }
+  const item = modes.find(m => m.value === props.mode)
+  return item?.shortcut ?? 'Enter'
 })
 
 const modeClass = computed(() => {
-  switch (props.mode) {
-    case 'steer': return 'text-accent'
-    case 'queue': return 'text-warning'
-    default: return 'text-muted'
+  const item = modes.find(m => m.value === props.mode)
+  return item?.activeClass ?? 'text-muted'
+})
+
+function toggle() {
+  open.value = !open.value
+}
+
+function selectMode(value: SendMode) {
+  emit('update:mode', { mode: value })
+  open.value = false
+}
+
+function onClickOutside(e: MouseEvent) {
+  if (!containerRef.value) return
+  if (!containerRef.value.contains(e.target as Node)) {
+    open.value = false
   }
+}
+
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && open.value) {
+    open.value = false
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('mousedown', onClickOutside, true)
+  document.addEventListener('keydown', onKeydown, true)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('mousedown', onClickOutside, true)
+  document.removeEventListener('keydown', onKeydown, true)
 })
 </script>
+
+<style scoped>
+.mode-popover-panel {
+  background: var(--surface);
+  border-color: var(--border);
+  box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.15));
+  /* W3: semantic z-index — popover layer, below modal-backdrop */
+  z-index: 100;
+}
+
+.mode-popover-enter-active,
+.mode-popover-leave-active {
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+.mode-popover-enter-from,
+.mode-popover-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
+}
+</style>

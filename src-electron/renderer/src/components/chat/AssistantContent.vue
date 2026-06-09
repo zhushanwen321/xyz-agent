@@ -3,7 +3,15 @@
   从 MessageBubble 中提取，职责清晰：只管 assistant 内容的 sections 编排。
 -->
 <template>
-  <template v-if="sections.length">
+  <!-- ── Compact mode: AgentRunBlock ── -->
+  <AgentRunBlock
+    v-if="useCompact"
+    :message="message"
+    :is-streaming="!!isStreaming"
+  />
+
+  <!-- ── Normal section mode ── -->
+  <template v-else-if="sections.length">
     <AssistantSection
       v-for="(section, si) in sections"
       :key="si"
@@ -42,7 +50,7 @@
         >
           <!-- eslint-disable-next-line vue/no-v-html -->
           <span v-html="renderedContent"></span>
-          <span v-if="isStreaming" class="inline-block w-0.5 h-[1.1em] bg-accent rounded-sm align-text-bottom animate-blink motion-reduce:opacity-60 motion-reduce:animate-none"></span>
+          <span v-if="isStreaming" class="streaming-cursor animate-blink motion-reduce:opacity-60 motion-reduce:animate-none"></span>
         </div>
       </template>
     </AssistantSection>
@@ -58,7 +66,7 @@
     >
       <!-- eslint-disable-next-line vue/no-v-html -->
       <span v-html="renderedContent"></span>
-      <span v-if="isStreaming" class="inline-block w-0.5 h-[1.1em] bg-accent rounded-sm align-text-bottom animate-blink motion-reduce:opacity-60 motion-reduce:animate-none"></span>
+      <span v-if="isStreaming" class="streaming-cursor animate-blink motion-reduce:opacity-60 motion-reduce:animate-none"></span>
     </div>
   </div>
 </template>
@@ -70,6 +78,8 @@ import type { AssistantSection as Section } from '../../lib/message-layout'
 import { groupIntoSections } from '../../lib/message-layout'
 import { useMarkdownRender } from '../../composables/useMarkdownRender'
 import { useMarkdownBodyClick } from '../../composables/useMarkdownBodyClick'
+import { useSettingsStore } from '../../stores/settings'
+import AgentRunBlock from './AgentRunBlock.vue'
 import ThinkingBlock from './ThinkingBlock.vue'
 import ToolCallCard from './ToolCallCard.vue'
 import AssistantSection from './AssistantSection.vue'
@@ -78,6 +88,9 @@ const props = defineProps<{
   message: Message
   isStreaming?: boolean
 }>()
+
+const settingsStore = useSettingsStore()
+const useCompact = computed(() => settingsStore.compactStreaming)
 
 // ── Section grouping ──
 

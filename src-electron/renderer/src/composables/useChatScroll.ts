@@ -32,6 +32,7 @@ export function useChatScroll(
   messagesLength: () => number,
   streamingContent: () => string | undefined,
   isLoadingHistory: () => boolean,
+  isGenerating?: () => boolean,
 ) {
   const userAtBottom = ref(true)
   const scrollTop = ref(0)
@@ -96,7 +97,8 @@ export function useChatScroll(
   }
 
   function scrollToMessage(messageId: string) {
-    const el = chatMsgsRef()?.querySelector(`[data-entry-id="${messageId}"]`) as HTMLElement | null
+    const el = (chatMsgsRef()?.querySelector(`[data-message-id="${messageId}"]`)
+      ?? chatMsgsRef()?.querySelector(`[data-entry-id="${messageId}"]`)) as HTMLElement | null
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }
@@ -116,6 +118,24 @@ export function useChatScroll(
       })
     },
   )
+
+  // Force scroll to bottom when a message is sent (isGenerating false → true).
+  // This ensures the newly sent user message is always visible, even if the user
+  // had scrolled up before typing. The user's explicit send action implies intent
+  // to see the result, so we bypass the userAtBottom guard.
+  if (isGenerating) {
+    watch(
+      () => isGenerating(),
+      (newVal, oldVal) => {
+        if (newVal && !oldVal && !isLoadingHistory()) {
+          nextTick(() => {
+            const el = chatMsgsRef()
+            if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'instant' })
+          })
+        }
+      },
+    )
+  }
 
   // Session switch or history load complete → force scroll to bottom
   watch(

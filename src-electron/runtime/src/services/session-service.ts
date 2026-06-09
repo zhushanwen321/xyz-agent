@@ -269,6 +269,18 @@ export class SessionService implements ISessionService {
     await client.abort()
   }
 
+  async steerMessage(sessionId: string, content: string): Promise<void> {
+    const client = this.pm.getClient(sessionId)
+    if (!client) throw new Error(`[session-service] steer: session ${sessionId} not active`)
+    await client.steer(content)
+  }
+
+  async followUpMessage(sessionId: string, content: string): Promise<void> {
+    const client = this.pm.getClient(sessionId)
+    if (!client) throw new Error(`[session-service] followUp: session ${sessionId} not active`)
+    await client.followUp(content)
+  }
+
   // ── Model switching ────────────────────────────────────────────
 
   async switchModel(sessionId: string, provider: string, modelId: string): Promise<string> {

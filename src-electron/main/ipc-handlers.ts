@@ -61,6 +61,10 @@ export function registerIpcHandlers(deps: {
     return runtimeManager.port
   })
 
+  ipcMain.handle('get-runtime-port-offset', (): number => {
+    return runtimeManager.portOffset
+  })
+
   // ── 窗口管理 ─────────────────────────────────────────────────────
   ipcMain.handle('create-window', async (_event, options?: { sessionId?: string }) => {
     const windowId = windowManager.generateId()

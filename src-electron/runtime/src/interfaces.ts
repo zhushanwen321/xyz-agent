@@ -38,6 +38,8 @@ export interface IRpcClient {
   kill(): Promise<void>
   start(): Promise<void>
   setThinkingLevel(level: string): Promise<unknown>
+  steer(content: string): Promise<unknown>
+  followUp(content: string): Promise<unknown>
 }
 
 // ── IProcessManager ───────────────────────────────────────────────
@@ -112,6 +114,10 @@ export interface ISessionService {
   setSendMessageHook(hook: (sessionId: string, content: string) => Promise<{ blocked: boolean; reason?: string } | null>): void
   /** Set thinking level for a session's pi subprocess */
   setThinkingLevel(sessionId: string, level: string): Promise<void>
+  /** Steer an actively generating session */
+  steerMessage(sessionId: string, content: string): Promise<void>
+  /** Queue a follow-up message for a session */
+  followUpMessage(sessionId: string, content: string): Promise<void>
 }
 
 // ── IConfigService ────────────────────────────────────────────────
@@ -151,6 +157,10 @@ export interface IExtensionService {
   getExtensionPaths(): Promise<string[]>
   installExtension(source: string): Promise<void>
   uninstallExtension(name: string): Promise<void>
+  installLocalDirectory(sourcePath: string): Promise<{ tempDir: string; candidates: import('@xyz-agent/shared').ExtensionInfo[] }>
+  installGitRepository(url: string): Promise<{ tempDir: string; candidates: import('@xyz-agent/shared').ExtensionInfo[] }>
+  finishInstall(tempDir: string, selected: string[]): Promise<void>
+  cancelInstall(tempDir: string): Promise<void>
 }
 
 // ── IModelService ─────────────────────────────────────────────────

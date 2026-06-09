@@ -1,0 +1,1254 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AgentRunBlock 交互 Demo</title>
+<style>
+:root {
+  --bg: #0c0d12;
+  --surface: #14151c;
+  --surface2: #1a1c25;
+  --surface3: #22242f;
+  --border: #2a2d3a;
+  --border-light: #353848;
+  --text: #e2e4ea;
+  --text-secondary: #9da2b8;
+  --muted: #6b7084;
+  --muted-dim: #4a4e60;
+  --accent: #7c8cff;
+  --accent-dim: rgba(124,140,255,0.10);
+  --accent-mid: rgba(124,140,255,0.20);
+  --thinking: #f0b866;
+  --thinking-dim: rgba(240,184,102,0.10);
+  --tool: #5ccba0;
+  --tool-dim: rgba(92,203,160,0.10);
+  --tool-mid: rgba(92,203,160,0.20);
+  --write: #64b5f6;
+  --write-dim: rgba(100,181,246,0.10);
+  --subagent: #ce93d8;
+  --subagent-dim: rgba(206,147,216,0.10);
+  --error: #ff6b6b;
+  --error-dim: rgba(255,107,107,0.10);
+  --user: #64b5f6;
+  --user-dim: rgba(100,181,246,0.10);
+  --font-mono: 'SF Mono', 'Fira Code', 'JetBrains Mono', Menlo, monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --radius: 6px;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* ── Layout ── */
+.app {
+  display: flex;
+  height: 100vh;
+}
+.sidebar {
+  width: 280px;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  padding: 20px;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+.main {
+  flex: 1;
+  overflow-y: auto;
+  padding: 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+.sidebar h3 {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+.sidebar p {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+  line-height: 1.6;
+}
+
+/* ── Controls ── */
+.ctrl-group { margin-bottom: 16px; }
+.ctrl-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted-dim);
+  margin-bottom: 6px;
+}
+.ctrl-btn {
+  display: block;
+  width: 100%;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface2);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  margin-bottom: 4px;
+  transition: all 0.12s;
+  font-family: var(--font-sans);
+}
+.ctrl-btn:hover { border-color: var(--accent); color: var(--text); background: var(--accent-dim); }
+.ctrl-btn.active { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+
+/* ── Legend ── */
+.legend {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 16px 0;
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+/* ── Chat panel ── */
+.chat-panel {
+  max-width: 680px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ── User message ── */
+.user-msg {
+  padding: 10px 14px;
+  background: var(--user-dim);
+  border-radius: var(--radius);
+  border: 1px solid rgba(100,181,246,0.15);
+  color: var(--text);
+  font-size: 13px;
+  align-self: flex-end;
+  max-width: 85%;
+}
+
+/* ══════════════════════════════════════════════════════════════════ */
+/* AgentRunBlock */
+/* ══════════════════════════════════════════════════════════════════ */
+.agent-run {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* ── Top bar: streaming indicator ── */
+.run-bar {
+  height: 3px;
+  position: relative;
+  overflow: hidden;
+  background: var(--surface2);
+}
+.run-bar--streaming {
+  background: var(--surface2);
+}
+.run-bar--streaming::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 40%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: sweep 1.5s ease-in-out infinite;
+}
+.run-bar--complete {
+  background: var(--accent-dim);
+}
+.run-bar--error {
+  background: var(--error-dim);
+}
+@keyframes sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
+}
+
+/* ── Run body ── */
+.run-body {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ══════════════════════════════════════════════════════════════════ */
+/* MergeBlock — collapsed chip bar */
+/* ══════════════════════════════════════════════════════════════════ */
+.merge-block {
+  border-radius: var(--radius);
+  overflow: hidden;
+  transition: all 0.2s;
+}
+
+/* ── Streaming compact view ── */
+.merge-streaming {
+  height: 28px;
+  overflow: hidden;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  position: relative;
+}
+.merge-streaming__inner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  height: 28px;
+  animation: scrollUp 3s linear infinite;
+}
+.merge-streaming__pulse {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulse 1.5s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.3; transform: scale(0.6); }
+}
+.merge-streaming__text {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.merge-streaming__time {
+  font-size: 10px;
+  color: var(--muted-dim);
+  font-family: var(--font-mono);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+@keyframes scrollUp {
+  0%, 80% { transform: translateY(0); }
+  90%, 100% { transform: translateY(-28px); }
+}
+
+/* ── Completed chip bar ── */
+.merge-chips {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: all 0.12s;
+  user-select: none;
+}
+.merge-chips:hover {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+.merge-chips__label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted-dim);
+  margin-right: 4px;
+  flex-shrink: 0;
+}
+.merge-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  border-radius: 100px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.1s;
+}
+.merge-chip--thinking {
+  background: var(--thinking-dim);
+  color: var(--thinking);
+}
+.merge-chip--tool {
+  background: var(--tool-dim);
+  color: var(--tool);
+}
+.merge-chip__count {
+  font-size: 9px;
+  opacity: 0.7;
+}
+.merge-chip__dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+}
+.merge-chip__dot--thinking { background: var(--thinking); }
+.merge-chip__dot--tool { background: var(--tool); }
+.merge-chips__chevron {
+  margin-left: auto;
+  width: 12px;
+  height: 12px;
+  color: var(--muted-dim);
+  transition: transform 0.15s;
+  flex-shrink: 0;
+}
+.merge-chips__chevron--open {
+  transform: rotate(180deg);
+}
+
+/* ── MergeBlock expanded detail ── */
+.merge-detail {
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 var(--radius) var(--radius);
+  background: var(--surface);
+}
+.merge-item {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 10px 4px 22px;
+  border-left: 2px solid var(--border);
+  margin-left: 12px;
+  position: relative;
+}
+.merge-item:hover {
+  background: var(--accent-dim);
+}
+.merge-item--thinking { border-left-color: var(--thinking); }
+.merge-item--tool { border-left-color: var(--tool); }
+.merge-item__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.merge-item__dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.merge-item__dot--thinking { background: var(--thinking); }
+.merge-item__dot--tool { background: var(--tool); }
+.merge-item__name {
+  font-weight: 600;
+}
+.merge-item__name--thinking { color: var(--thinking); }
+.merge-item__name--tool { color: var(--tool); }
+.merge-item__path {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.merge-item__time {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted-dim);
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.merge-item__body {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  padding: 4px 8px;
+  background: var(--surface2);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  max-height: 80px;
+  overflow-y: auto;
+  line-height: 1.4;
+  word-break: break-all;
+}
+
+/* ══════════════════════════════════════════════════════════════════ */
+/* ContentBlock — standalone text */
+/* ══════════════════════════════════════════════════════════════════ */
+.content-text {
+  padding: 6px 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.65;
+}
+.content-text code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--surface3);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.content-text strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* ══════════════════════════════════════════════════════════════════ */
+/* ContentBlock — standalone write tool */
+/* ══════════════════════════════════════════════════════════════════ */
+.content-write {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface2);
+  overflow: hidden;
+  transition: all 0.12s;
+}
+.content-write:hover {
+  border-color: var(--write);
+}
+.write-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.write-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+.write-icon svg {
+  width: 100%;
+  height: 100%;
+}
+.write-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--write);
+}
+.write-path {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.write-meta {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted-dim);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.write-badge {
+  padding: 1px 6px;
+  border-radius: 100px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.write-badge--changed {
+  background: var(--tool-dim);
+  color: var(--tool);
+}
+.write-badge--new {
+  background: var(--write-dim);
+  color: var(--write);
+}
+.write-chevron {
+  width: 12px;
+  height: 12px;
+  color: var(--muted-dim);
+  transition: transform 0.15s;
+  flex-shrink: 0;
+}
+.write-chevron--open {
+  transform: rotate(180deg);
+}
+.write-body {
+  border-top: 1px solid var(--border);
+  padding: 8px 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  max-height: 120px;
+  overflow-y: auto;
+}
+.write-diff {
+  white-space: pre;
+}
+.write-diff .diff-add { color: var(--tool); }
+.write-diff .diff-del { color: var(--error); }
+.write-diff .diff-ctx { color: var(--muted-dim); }
+
+/* ══════════════════════════════════════════════════════════════════ */
+/* ContentBlock — standalone subagent */
+/* ══════════════════════════════════════════════════════════════════ */
+.content-subagent {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface2);
+  overflow: hidden;
+  transition: all 0.12s;
+}
+.content-subagent:hover {
+  border-color: var(--subagent);
+}
+.subagent-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.subagent-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--subagent);
+}
+.subagent-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--subagent);
+}
+.subagent-task {
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.subagent-status {
+  padding: 1px 6px;
+  border-radius: 100px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.subagent-status--running {
+  background: var(--accent-dim);
+  color: var(--accent);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+.subagent-status--done {
+  background: var(--tool-dim);
+  color: var(--tool);
+}
+.subagent-chevron {
+  width: 12px;
+  height: 12px;
+  color: var(--muted-dim);
+  transition: transform 0.15s;
+  flex-shrink: 0;
+}
+.subagent-chevron--open {
+  transform: rotate(180deg);
+}
+.subagent-body {
+  border-top: 1px solid var(--border);
+  padding: 8px 12px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+/* ══════════════════════════════════════════════════════════════════ */
+/* Duration bar (footer) */
+/* ══════════════════════════════════════════════════════════════════ */
+.run-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 14px 8px;
+  font-size: 10px;
+  color: var(--muted-dim);
+  font-family: var(--font-mono);
+}
+
+/* ── Section label ── */
+.section-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 16px 0 8px;
+  padding-left: 2px;
+}
+
+/* ── Annotation ── */
+.annotation {
+  margin: 16px 0;
+  padding: 12px 16px;
+  background: var(--surface2);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+.annotation strong { color: var(--text); }
+.annotation em { font-style: normal; color: var(--accent); }
+.annotation code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: var(--surface3);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- ── Sidebar ── -->
+  <div class="sidebar">
+    <h3>AgentRunBlock 交互 Demo</h3>
+    <p>展示三层结构：AgentRunBlock → ContentBlock / MergeBlock → 展开细节</p>
+
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background:var(--thinking)"></div>Thinking（合并）</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--tool)"></div>工具调用 read/edit/bash（合并）</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--write)"></div>write 工具（独立展示）</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--subagent)"></div>subagent 工具（独立展示）</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--text)"></div>文本输出（独立展示）</div>
+    </div>
+
+    <h3>场景切换</h3>
+    <div class="ctrl-group">
+      <div class="ctrl-label">场景</div>
+      <button class="ctrl-btn active" onclick="switchScene('complete')">完整 Agent Run（已完成）</button>
+      <button class="ctrl-btn" onclick="switchScene('streaming')">流式中（MergeBlock 滚动）</button>
+      <button class="ctrl-btn" onclick="switchScene('multi-write')">多文件修改</button>
+      <button class="ctrl-btn" onclick="switchScene('subagent')">含 subagent 调用</button>
+    </div>
+
+    <h3>展开控制</h3>
+    <div class="ctrl-group">
+      <div class="ctrl-label">MergeBlock</div>
+      <button class="ctrl-btn" onclick="toggleAllMerge()">全部展开/折叠</button>
+    </div>
+    <div class="ctrl-group">
+      <div class="ctrl-label">Write Block</div>
+      <button class="ctrl-btn" onclick="toggleAllWrite()">全部展开/折叠</button>
+    </div>
+
+    <h3>分组规则</h3>
+    <p>
+      <strong>合并到 MergeBlock</strong>：thinking、read、edit、bash、grep、find、ls<br><br>
+      <strong>独立 ContentBlock</strong>：text 输出、write（文件修改）、subagent（子代理）<br><br>
+      连续的合并类 block 归入同一个 MergeBlock，遇到独立类 block 时切断。
+    </p>
+  </div>
+
+  <!-- ── Main chat area ── -->
+  <div class="main">
+    <div class="chat-panel">
+
+      <!-- User message -->
+      <div class="user-msg">帮我重构 auth 模块，把 token 管理抽成独立服务</div>
+
+      <!-- ════════════════════════════════════════════════════ -->
+      <!-- Scene: Complete Agent Run -->
+      <!-- ════════════════════════════════════════════════════ -->
+      <div id="scene-complete" class="agent-run">
+        <div class="run-bar run-bar--complete"></div>
+        <div class="run-body">
+
+          <!-- MergeBlock 1: T + read + edit -->
+          <div class="merge-block" data-merge>
+            <div class="merge-chips" onclick="toggleMerge(this)">
+              <span class="merge-chips__label">过程</span>
+              <div class="merge-chip merge-chip--thinking">
+                <span class="merge-chip__dot merge-chip__dot--thinking"></span>
+                思考
+              </div>
+              <div class="merge-chip merge-chip--tool">
+                <span class="merge-chip__dot merge-chip__dot--tool"></span>
+                read <span class="merge-chip__count">×2</span>
+              </div>
+              <div class="merge-chip merge-chip--tool">
+                <span class="merge-chip__dot merge-chip__dot--tool"></span>
+                edit <span class="merge-chip__count">×1</span>
+              </div>
+              <svg class="merge-chips__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            </div>
+            <div class="merge-detail" style="display:none;">
+              <div class="merge-item merge-item--thinking">
+                <div class="merge-item__header">
+                  <span class="merge-item__dot merge-item__dot--thinking"></span>
+                  <span class="merge-item__name merge-item__name--thinking">思考</span>
+                  <span class="merge-item__time">2.1s</span>
+                </div>
+                <div class="merge-item__body">用户要求重构 auth 模块，把 token 管理抽成独立服务。先看看现有的 auth 模块结构...</div>
+              </div>
+              <div class="merge-item merge-item--tool">
+                <div class="merge-item__header">
+                  <span class="merge-item__dot merge-item__dot--tool"></span>
+                  <span class="merge-item__name merge-item__name--tool">read</span>
+                  <span class="merge-item__path">src/auth/index.ts</span>
+                  <span class="merge-item__time">0.3s</span>
+                </div>
+              </div>
+              <div class="merge-item merge-item--tool">
+                <div class="merge-item__header">
+                  <span class="merge-item__dot merge-item__dot--tool"></span>
+                  <span class="merge-item__name merge-item__name--tool">read</span>
+                  <span class="merge-item__path">src/auth/token.ts</span>
+                  <span class="merge-item__time">0.2s</span>
+                </div>
+              </div>
+              <div class="merge-item merge-item--tool">
+                <div class="merge-item__header">
+                  <span class="merge-item__dot merge-item__dot--tool"></span>
+                  <span class="merge-item__name merge-item__name--tool">edit</span>
+                  <span class="merge-item__path">src/auth/index.ts</span>
+                  <span class="merge-item__time">0.4s</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ContentBlock: text -->
+          <div class="content-text">
+            分析完现有代码后，我计划这样重构：<br><br>
+            1. 将 <code>TokenManager</code> 从 <code>auth/index.ts</code> 抽出<br>
+            2. 创建 <code>auth/token-service.ts</code> 作为独立服务<br>
+            3. 原 auth 模块通过依赖注入使用新服务<br><br>
+            开始实施：
+          </div>
+
+          <!-- MergeBlock 2: T + write triggers standalone -->
+          <!-- MergeBlock thinking only, then write is standalone -->
+          <div class="merge-block" data-merge>
+            <div class="merge-chips" onclick="toggleMerge(this)">
+              <span class="merge-chips__label">过程</span>
+              <div class="merge-chip merge-chip--thinking">
+                <span class="merge-chip__dot merge-chip__dot--thinking"></span>
+                思考
+              </div>
+              <div class="merge-chip merge-chip--tool">
+                <span class="merge-chip__dot merge-chip__dot--tool"></span>
+                bash
+              </div>
+              <svg class="merge-chips__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            </div>
+            <div class="merge-detail" style="display:none;">
+              <div class="merge-item merge-item--thinking">
+                <div class="merge-item__header">
+                  <span class="merge-item__dot merge-item__dot--thinking"></span>
+                  <span class="merge-item__name merge-item__name--thinking">思考</span>
+                  <span class="merge-item__time">1.4s</span>
+                </div>
+                <div class="merge-item__body">现在创建新文件 token-service.ts，把 TokenManager 的逻辑迁移过去...</div>
+              </div>
+              <div class="merge-item merge-item--tool">
+                <div class="merge-item__header">
+                  <span class="merge-item__dot merge-item__dot--tool"></span>
+                  <span class="merge-item__name merge-item__name--tool">bash</span>
+                  <span class="merge-item__path">mkdir -p src/auth/services</span>
+                  <span class="merge-item__time">0.1s</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ContentBlock: write (standalone!) -->
+          <div class="content-write" data-write>
+            <div class="write-header" onclick="toggleWrite(this)">
+              <div class="write-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="var(--write)" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+              </div>
+              <span class="write-name">write</span>
+              <span class="write-path">src/auth/token-service.ts</span>
+              <span class="write-meta">
+                <span class="write-badge write-badge--new">新文件</span>
+                48 行
+              </span>
+              <svg class="write-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            </div>
+            <div class="write-body" style="display:none;">
+              <div class="write-diff"><span class="diff-add">+ </span><span class="diff-ctx">export class TokenService {</span>
+<span class="diff-add">+ </span><span class="diff-ctx">  private tokens: Map&lt;string, Token&gt; = new Map()</span>
+<span class="diff-add">+ </span>
+<span class="diff-add">+ </span><span class="diff-ctx">  async validate(token: string): Promise&lt;boolean&gt; {</span>
+<span class="diff-add">+ </span><span class="diff-ctx">    ...</span>
+<span class="diff-add">+ </span><span class="diff-ctx">  }</span>
+<span class="diff-add">+ </span><span class="diff-ctx">}</span></div>
+            </div>
+          </div>
+
+          <!-- ContentBlock: write (standalone!) -->
+          <div class="content-write" data-write>
+            <div class="write-header" onclick="toggleWrite(this)">
+              <div class="write-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="var(--write)" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+              </div>
+              <span class="write-name">write</span>
+              <span class="write-path">src/auth/index.ts</span>
+              <span class="write-meta">
+                <span class="write-badge write-badge--changed">修改</span>
+                +12 / -31
+              </span>
+              <svg class="write-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            </div>
+            <div class="write-body" style="display:none;">
+              <div class="write-diff"><span class="diff-del">- </span><span class="diff-ctx">import { TokenManager } from './token'</span>
+<span class="diff-del">- </span><span class="diff-ctx">class AuthModule {</span>
+<span class="diff-del">- </span><span class="diff-ctx">  private tokenManager = new TokenManager()</span>
+<span class="diff-add">+ </span><span class="diff-ctx">import { TokenService } from './token-service'</span>
+<span class="diff-add">+ </span><span class="diff-ctx">class AuthModule {</span>
+<span class="diff-add">+ </span><span class="diff-ctx">  constructor(private tokenService: TokenService) {}</span></div>
+            </div>
+          </div>
+
+          <!-- MergeBlock 3: T + bash (verification) -->
+          <div class="merge-block" data-merge>
+            <div class="merge-chips" onclick="toggleMerge(this)">
+              <span class="merge-chips__label">过程</span>
+              <div class="merge-chip merge-chip--thinking">
+                <span class="merge-chip__dot merge-chip__dot--thinking"></span>
+                思考
+              </div>
+              <div class="merge-chip merge-chip--tool">
+                <span class="merge-chip__dot merge-chip__dot--tool"></span>
+                bash
+              </div>
+              <svg class="merge-chips__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            </div>
+            <div class="merge-detail" style="display:none;">
+              <div class="merge-item merge-item--thinking">
+                <div class="merge-item__header">
+                  <span class="merge-item__dot merge-item__dot--thinking"></span>
+                  <span class="merge-item__name merge-item__name--thinking">思考</span>
+                  <span class="merge-item__time">0.8s</span>
+                </div>
+                <div class="merge-item__body">运行类型检查确认重构没有破坏接口...</div>
+              </div>
+              <div class="merge-item merge-item--tool">
+                <div class="merge-item__header">
+                  <span class="merge-item__dot merge-item__dot--tool"></span>
+                  <span class="merge-item__name merge-item__name--tool">bash</span>
+                  <span class="merge-item__path">npx tsc --noEmit</span>
+                  <span class="merge-item__time">3.2s</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ContentBlock: final text -->
+          <div class="content-text">
+            重构完成。主要变更：<br><br>
+            <strong>新增</strong> <code>src/auth/token-service.ts</code> — TokenService 独立服务，负责 token 的签发、验证、刷新<br><br>
+            <strong>修改</strong> <code>src/auth/index.ts</code> — 移除内联 TokenManager，通过依赖注入使用 TokenService<br><br>
+            类型检查通过，无破坏性变更。下一步可以考虑添加单元测试。
+          </div>
+
+        </div>
+        <div class="run-footer">
+          <span>3 步 · 12.4s</span>
+          <span>2 文件修改</span>
+        </div>
+      </div>
+
+      <!-- ════════════════════════════════════════════════════ -->
+      <!-- Scene: Streaming -->
+      <!-- ════════════════════════════════════════════════════ -->
+      <div id="scene-streaming" class="agent-run" style="display:none;">
+        <div class="run-bar run-bar--streaming"></div>
+        <div class="run-body">
+
+          <!-- MergeBlock streaming -->
+          <div class="merge-streaming">
+            <div class="merge-streaming__inner">
+              <span class="merge-streaming__pulse"></span>
+              <span class="merge-streaming__text">read src/auth/index.ts · 120 lines</span>
+              <span class="merge-streaming__time">3.2s</span>
+            </div>
+          </div>
+
+          <!-- Another streaming merge block (after text would arrive) -->
+          <div class="merge-streaming" style="margin-top:2px;">
+            <div class="merge-streaming__inner">
+              <span class="merge-streaming__pulse"></span>
+              <span class="merge-streaming__text">思考中...</span>
+              <span class="merge-streaming__time">1.1s</span>
+            </div>
+          </div>
+
+        </div>
+        <div class="run-footer">
+          <span>进行中 · 4.3s</span>
+        </div>
+      </div>
+
+      <!-- ════════════════════════════════════════════════════ -->
+      <!-- Scene: Multi-write -->
+      <!-- ════════════════════════════════════════════════════ -->
+      <div id="scene-multi-write" class="agent-run" style="display:none;">
+        <div class="run-bar run-bar--complete"></div>
+        <div class="run-body">
+
+          <div class="merge-block" data-merge>
+            <div class="merge-chips" onclick="toggleMerge(this)">
+              <span class="merge-chips__label">过程</span>
+              <div class="merge-chip merge-chip--thinking">
+                <span class="merge-chip__dot merge-chip__dot--thinking"></span>
+                思考 <span class="merge-chip__count">×3</span>
+              </div>
+              <div class="merge-chip merge-chip--tool">
+                <span class="merge-chip__dot merge-chip__dot--tool"></span>
+                read <span class="merge-chip__count">×5</span>
+              </div>
+              <div class="merge-chip merge-chip--tool">
+                <span class="merge-chip__dot merge-chip__dot--tool"></span>
+                grep <span class="merge-chip__count">×2</span>
+              </div>
+              <svg class="merge-chips__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            </div>
+            <div class="merge-detail" style="display:none;">
+              <div class="merge-item merge-item--thinking">
+                <div class="merge-item__header">
+                  <span class="merge-item__dot merge-item__dot--thinking"></span>
+                  <span class="merge-item__name merge-item__name--thinking">思考</span>
+                  <span class="merge-item__time">2.1s</span>
+                </div>
+              </div>
+              <div class="merge-item merge-item--tool">
+                <div class="merge-item__header">
+                  <span class="merge-item__dot merge-item__dot--tool"></span>
+                  <span class="merge-item__name merge-item__name--tool">read</span>
+                  <span class="merge-item__path">src/auth/index.ts</span>
+                  <span class="merge-item__time">0.3s</span>
+                </div>
+              </div>
+              <div class="merge-item merge-item--tool">
+                <div class="merge-item__header">
+                  <span class="merge-item__dot merge-item__dot--tool"></span>
+                  <span class="merge-item__name merge-item__name--tool">read</span>
+                  <span class="merge-item__path">src/auth/token.ts</span>
+                  <span class="merge-item__time">0.2s</span>
+                </div>
+              </div>
+              <div class="merge-item merge-item--thinking">
+                <div class="merge-item__header">
+                  <span class="merge-item__dot merge-item__dot--thinking"></span>
+                  <span class="merge-item__name merge-item__name--thinking">思考</span>
+                  <span class="merge-item__time">1.8s</span>
+                </div>
+              </div>
+              <div class="merge-item merge-item--tool">
+                <div class="merge-item__header">
+                  <span class="merge-item__dot merge-item__dot--tool"></span>
+                  <span class="merge-item__name merge-item__name--tool">grep</span>
+                  <span class="merge-item__path">"TokenManager" src/</span>
+                  <span class="merge-item__time">0.5s</span>
+                </div>
+              </div>
+              <div class="merge-item merge-item--tool">
+                <div class="merge-item__header">
+                  <span class="merge-item__dot merge-item__dot--tool"></span>
+                  <span class="merge-item__name merge-item__name--tool">read</span>
+                  <span class="merge-item__path">src/api/middleware.ts</span>
+                  <span class="merge-item__time">0.2s</span>
+                </div>
+              </div>
+              <div class="merge-item merge-item--thinking">
+                <div class="merge-item__header">
+                  <span class="merge-item__dot merge-item__dot--thinking"></span>
+                  <span class="merge-item__name merge-item__name--thinking">思考</span>
+                  <span class="merge-item__time">1.2s</span>
+                </div>
+              </div>
+              <div class="merge-item merge-item--tool">
+                <div class="merge-item__header">
+                  <span class="merge-item__dot merge-item__dot--tool"></span>
+                  <span class="merge-item__name merge-item__name--tool">read</span>
+                  <span class="merge-item__path">src/utils/jwt.ts</span>
+                  <span class="merge-item__time">0.2s</span>
+                </div>
+              </div>
+              <div class="merge-item merge-item--tool">
+                <div class="merge-item__header">
+                  <span class="merge-item__dot merge-item__dot--tool"></span>
+                  <span class="merge-item__name merge-item__name--tool">read</span>
+                  <span class="merge-item__path">src/config.ts</span>
+                  <span class="merge-item__time">0.1s</span>
+                </div>
+              </div>
+              <div class="merge-item merge-item--tool">
+                <div class="merge-item__header">
+                  <span class="merge-item__dot merge-item__dot--tool"></span>
+                  <span class="merge-item__name merge-item__name--tool">grep</span>
+                  <span class="merge-item__path">"import.*auth" src/</span>
+                  <span class="merge-item__time">0.4s</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ContentBlock: text -->
+          <div class="content-text">
+            分析完成，需要修改 4 个文件。开始重构：
+          </div>
+
+          <!-- 4 write blocks in sequence -->
+          <div class="content-write" data-write>
+            <div class="write-header" onclick="toggleWrite(this)">
+              <div class="write-icon"><svg viewBox="0 0 24 24" fill="none" stroke="var(--write)" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></div>
+              <span class="write-name">write</span>
+              <span class="write-path">src/auth/token-service.ts</span>
+              <span class="write-meta"><span class="write-badge write-badge--new">新文件</span> 62 行</span>
+              <svg class="write-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            </div>
+          </div>
+
+          <div class="content-write" data-write>
+            <div class="write-header" onclick="toggleWrite(this)">
+              <div class="write-icon"><svg viewBox="0 0 24 24" fill="none" stroke="var(--write)" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></div>
+              <span class="write-name">write</span>
+              <span class="write-path">src/auth/index.ts</span>
+              <span class="write-meta"><span class="write-badge write-badge--changed">修改</span> +12/-31</span>
+              <svg class="write-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            </div>
+          </div>
+
+          <div class="content-write" data-write>
+            <div class="write-header" onclick="toggleWrite(this)">
+              <div class="write-icon"><svg viewBox="0 0 24 24" fill="none" stroke="var(--write)" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></div>
+              <span class="write-name">write</span>
+              <span class="write-path">src/api/middleware.ts</span>
+              <span class="write-meta"><span class="write-badge write-badge--changed">修改</span> +5/-8</span>
+              <svg class="write-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            </div>
+          </div>
+
+          <div class="content-write" data-write>
+            <div class="write-header" onclick="toggleWrite(this)">
+              <div class="write-icon"><svg viewBox="0 0 24 24" fill="none" stroke="var(--write)" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></div>
+              <span class="write-name">write</span>
+              <span class="write-path">src/config.ts</span>
+              <span class="write-meta"><span class="write-badge write-badge--changed">修改</span> +3/-1</span>
+              <svg class="write-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            </div>
+          </div>
+
+          <!-- MergeBlock: verification -->
+          <div class="merge-block" data-merge>
+            <div class="merge-chips" onclick="toggleMerge(this)">
+              <span class="merge-chips__label">过程</span>
+              <div class="merge-chip merge-chip--tool">
+                <span class="merge-chip__dot merge-chip__dot--tool"></span>
+                bash
+              </div>
+              <svg class="merge-chips__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            </div>
+          </div>
+
+          <!-- Final text -->
+          <div class="content-text">
+            重构完成，共修改 <strong>4 个文件</strong>，类型检查全部通过。
+          </div>
+
+        </div>
+        <div class="run-footer">
+          <span>5 步 · 24.1s</span>
+          <span>4 文件修改</span>
+        </div>
+      </div>
+
+      <!-- ════════════════════════════════════════════════════ -->
+      <!-- Scene: Subagent -->
+      <!-- ════════════════════════════════════════════════════ -->
+      <div id="scene-subagent" class="agent-run" style="display:none;">
+        <div class="run-bar run-bar--complete"></div>
+        <div class="run-body">
+
+          <div class="merge-block" data-merge>
+            <div class="merge-chips" onclick="toggleMerge(this)">
+              <span class="merge-chips__label">过程</span>
+              <div class="merge-chip merge-chip--thinking">
+                <span class="merge-chip__dot merge-chip__dot--thinking"></span>
+                思考
+              </div>
+              <div class="merge-chip merge-chip--tool">
+                <span class="merge-chip__dot merge-chip__dot--tool"></span>
+                read
+              </div>
+              <svg class="merge-chips__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            </div>
+          </div>
+
+          <!-- ContentBlock: subagent (standalone!) -->
+          <div class="content-subagent" data-write>
+            <div class="subagent-header" onclick="toggleSubagent(this)">
+              <svg class="subagent-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              <span class="subagent-name">code-analysis</span>
+              <span class="subagent-task">分析 auth 模块的依赖关系并生成迁移计划</span>
+              <span class="subagent-status subagent-status--done">完成</span>
+              <svg class="subagent-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            </div>
+            <div class="subagent-body" style="display:none;">
+              <p style="margin-bottom:6px;">子代理执行了以下操作：</p>
+              <div style="font-family:var(--font-mono);font-size:11px;color:var(--muted);padding:6px 8px;background:var(--surface3);border-radius:4px;">
+                1. grep "import.*auth" — 找到 12 个依赖点<br>
+                2. read auth/index.ts — 分析导出接口<br>
+                3. 分析依赖图 — 确认 3 个模块需要同步修改
+              </div>
+            </div>
+          </div>
+
+          <div class="merge-block" data-merge>
+            <div class="merge-chips" onclick="toggleMerge(this)">
+              <span class="merge-chips__label">过程</span>
+              <div class="merge-chip merge-chip--thinking">
+                <span class="merge-chip__dot merge-chip__dot--thinking"></span>
+                思考
+              </div>
+              <div class="merge-chip merge-chip--tool">
+                <span class="merge-chip__dot merge-chip__dot--tool"></span>
+                edit <span class="merge-chip__count">×3</span>
+              </div>
+              <svg class="merge-chips__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            </div>
+          </div>
+
+          <div class="content-text">
+            根据子代理的依赖分析，已完成 3 个模块的同步修改。<br><br>
+            TokenService 已独立为 <code>src/auth/token-service.ts</code>，
+            所有依赖模块（api/middleware、config、auth/index）均已更新导入路径。
+          </div>
+
+        </div>
+        <div class="run-footer">
+          <span>3 步 · 18.6s</span>
+          <span>含 1 次子代理调用</span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Annotations below chat -->
+    <div class="annotation">
+      <strong>数据流映射</strong><br>
+      pi <code>agent_start</code> → 创建 AgentRunBlock → pi <code>agent_end</code> → 标记完成<br>
+      pi <code>message_update {thinking/toolcall}</code> → 归入当前 MergeBlock<br>
+      pi <code>message_update {text_delta}</code> → 创建独立 text ContentBlock<br>
+      pi <code>tool_execution_start {toolName:"write"}</code> → 创建独立 write ContentBlock<br>
+      pi <code>tool_execution_start {toolName:"subagent"}</code> → 创建独立 subagent ContentBlock<br>
+      <em>不依赖 turn 边界</em>，纯按 block 类型决定合并/独立。
+    </div>
+  </div>
+</div>
+
+<script>
+function switchScene(id) {
+  document.querySelectorAll('.ctrl-btn').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+  document.querySelectorAll('[id^="scene-"]').forEach(s => s.style.display = 'none');
+  document.getElementById('scene-' + id).style.display = '';
+}
+
+function toggleMerge(el) {
+  const detail = el.nextElementSibling;
+  const chevron = el.querySelector('.merge-chips__chevron');
+  if (detail.style.display === 'none') {
+    detail.style.display = '';
+    chevron.classList.add('merge-chips__chevron--open');
+  } else {
+    detail.style.display = 'none';
+    chevron.classList.remove('merge-chips__chevron--open');
+  }
+}
+
+function toggleWrite(el) {
+  const body = el.nextElementSibling;
+  const chevron = el.querySelector('.write-chevron');
+  if (!body) return;
+  if (body.style.display === 'none') {
+    body.style.display = '';
+    chevron.classList.add('write-chevron--open');
+  } else {
+    body.style.display = 'none';
+    chevron.classList.remove('write-chevron--open');
+  }
+}
+
+function toggleSubagent(el) {
+  const body = el.nextElementSibling;
+  const chevron = el.querySelector('.subagent-chevron');
+  if (!body) return;
+  if (body.style.display === 'none') {
+    body.style.display = '';
+    chevron.classList.add('subagent-chevron--open');
+  } else {
+    body.style.display = 'none';
+    chevron.classList.remove('subagent-chevron--open');
+  }
+}
+
+function toggleAllMerge() {
+  const details = document.querySelectorAll('.merge-detail');
+  const chevrons = document.querySelectorAll('.merge-chips__chevron');
+  const anyOpen = Array.from(details).some(d => d.style.display !== 'none');
+  details.forEach(d => d.style.display = anyOpen ? 'none' : '');
+  chevrons.forEach(c => {
+    if (anyOpen) c.classList.remove('merge-chips__chevron--open');
+    else c.classList.add('merge-chips__chevron--open');
+  });
+}
+
+function toggleAllWrite() {
+  const bodies = document.querySelectorAll('.write-body');
+  const chevrons = document.querySelectorAll('.write-chevron');
+  const anyOpen = Array.from(bodies).some(b => b.style.display !== 'none');
+  bodies.forEach(b => b.style.display = anyOpen ? 'none' : '');
+  chevrons.forEach(c => {
+    if (anyOpen) c.classList.remove('write-chevron--open');
+    else c.classList.add('write-chevron--open');
+  });
+}
+</script>
+
+</body>
+</html>

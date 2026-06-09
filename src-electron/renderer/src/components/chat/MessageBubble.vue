@@ -6,16 +6,27 @@
     :data-entry-id="entryId"
     :data-timestamp="message.timestamp ?? ''"
     class="self-start w-full relative group/msg"
+    :class="{ 'interrupted-msg': message.isInterrupted }"
   >
-    <div class="text-[10px] font-semibold uppercase tracking-[0.04em] leading-[1.4] mb-1 text-muted">
+    <div v-if="showLabel" class="text-[10px] font-semibold uppercase tracking-[0.04em] leading-[1.4] mb-1 text-muted">
       助手
-      <span v-if="message.timestamp" class="font-normal normal-case tracking-normal text-[10px] opacity-60 ml-1.5">{{ formatTime(message.timestamp) }}</span>
     </div>
 
     <AssistantContent :message="message" :is-streaming="isStreaming" />
 
-    <!-- Inline actions + Branch indicator -->
-    <div class="flex items-center gap-1 mt-1">
+    <!-- Interrupted marker -->
+    <div
+      v-if="message.isInterrupted"
+      class="flex items-center gap-2 mt-2 text-[10px] text-muted"
+    >
+      <span class="flex-1 h-px border-t border-border" />
+      <span data-i18n="interrupted">已中断</span>
+      <span class="flex-1 h-px border-t border-border" />
+    </div>
+
+    <!-- Inline actions + Branch indicator (only on last assistant in turn) -->
+    <div v-if="isLastAssistant" class="flex items-center gap-1 mt-1">
+      <span v-if="message.timestamp" class="font-normal normal-case tracking-normal text-[10px] opacity-60 mr-2">{{ formatTimestamp(message.timestamp) }}</span>
       <div class="msg-actions" :class="{ 'msg-actions--active': showActionMenu }">
         <!-- eslint-disable-next-line taste/no-native-html-elements -- inline action buttons need custom hover/opacity transitions not supported by xyz-ui Button -->
         <button class="msg-action-btn" title="复制" @click="handleCopy">
@@ -50,8 +61,12 @@
     :data-timestamp="message.timestamp ?? ''"
     class="self-stretch relative group/msg"
   >
-    <div class="text-[10px] font-semibold uppercase tracking-[0.04em] leading-[1.4] mb-[3px] text-right text-muted">
-      <span v-if="message.timestamp" class="font-normal normal-case tracking-normal text-[10px] opacity-60 mr-1.5">{{ formatTime(message.timestamp) }}</span>
+    <div class="text-[10px] font-semibold uppercase tracking-[0.04em] leading-[1.4] mb-0.5 text-right text-muted">
+      <span
+        v-if="message.sendMode && message.sendMode !== 'send'"
+        :class="['inline-flex items-center px-1 py-0 rounded-sm text-[9px] font-medium mr-1', chipClass]"
+      >{{ chipLabel }}</span>
+      <span v-if="message.timestamp" class="font-normal normal-case tracking-normal text-[10px] opacity-60 mr-1.5">{{ formatTimestamp(message.timestamp) }}</span>
       用户
     </div>
     <!-- User bubble: skill-link embedded inline when skill is present -->
@@ -154,24 +169,47 @@ const props = withDefaults(defineProps<{
   selectable?: boolean
   selected?: boolean
   branchTabs?: BranchTab[]
-  skillDrawerOpen?: boolean}>(), {
+  skillDrawerOpen?: boolean
+  showLabel?: boolean
+  isLastAssistant?: boolean
+}>(), {
   entryId: '',
   sessionId: '',
   siblingCount: 0,
   selectable: false,
   selected: false,
   branchTabs: () => [],
-  skillDrawerOpen: false,})
+  skillDrawerOpen: false,
+  showLabel: true,
+  isLastAssistant: true,
+})
 
 const emit = defineEmits<{
   'open-skill': [payload: { name: string; location?: string }]
-  navigate: [targetEntryId: string]
+  navigate: [payload: { targetEntryId: string }]
   'toggle-select': []
 }>()
 
 // ── Action menu state ──
 const showActionMenu = ref(false)
 const actionMenuAnchor = ref<DOMRect | null>(null)
+
+// ── Send mode chip ──
+const chipClass = computed(() => {
+  switch (props.message.sendMode) {
+    case 'steer': return 'chip-steer'
+    case 'follow-up': return 'chip-follow-up'
+    default: return ''
+  }
+})
+
+const chipLabel = computed(() => {
+  switch (props.message.sendMode) {
+    case 'steer': return 'steer'
+    case 'follow-up': return 'follow-up'
+    default: return ''
+  }
+})
 
 // ── Skill display logic ──
 // For real-time messages: content has "/skill:xxx" prefix
@@ -230,10 +268,13 @@ function handleFork() {
   }
 }
 
-// ── ContentBlocks 查找辅助 ──
+// ── Timestamp formatting (HH:MM from epoch ms) ──
+// NOTE: compact-utils.formatTime formats *duration* (ms → "1m 30s"),
+// this formats *timestamps* (epoch ms → "14:30"). Different semantics, different names.
 
-function formatTime(ts: number): string {
-  const PAD_WIDTH = 2
+const PAD_WIDTH = 2
+
+function formatTimestamp(ts: number): string {
   const d = new Date(ts)
   const h = d.getHours().toString().padStart(PAD_WIDTH, '0')
   const m = d.getMinutes().toString().padStart(PAD_WIDTH, '0')
@@ -258,6 +299,13 @@ const { handleBodyClick } = useMarkdownBodyClick()
 <style scoped>
 /* msg__body 内的元素由 v-html 渲染，无法用 Tailwind 类作用于动态内容 */
 /* 所有样式已移至 style.css，如在此处添加样式请确保 style.css 同步更新 */
+
+/* Interrupted messages: dim text instead of global opacity to keep interactive elements usable */
+.interrupted-msg {
+  color: var(--muted);
+  text-decoration: line-through;
+  text-decoration-color: var(--border);
+}
 
 /* Inline action bar: appears on hover */
 .msg-actions {
@@ -373,5 +421,15 @@ const { handleBodyClick } = useMarkdownBodyClick()
 .msg-user-bubble {
   background: var(--user-bubble-bg);
   border: 1px solid var(--user-bubble-border);
+}
+
+/* W11 fix: color-mix instead of Tailwind opacity on CSS vars */
+.chip-steer {
+  background: color-mix(in oklch, var(--warning) 15%, transparent);
+  color: var(--warning);
+}
+.chip-follow-up {
+  background: color-mix(in oklch, var(--accent) 15%, transparent);
+  color: var(--accent);
 }
 </style>

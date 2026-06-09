@@ -1,12 +1,17 @@
 <template>
-  <div class="relative mx-auto mb-3 shrink-0 max-w-[960px] w-full px-6" data-chat-input>
+  <div class="panel-input-area relative mx-auto mb-3 shrink-0 max-w-[960px] w-full px-6" data-chat-input>
+    <GlobalLoadingBar :is-generating="isGenerating" />
+    <QueueComponent :queue-state="queueState" />
     <SlashMenu
       :visible="slashVisible"
       :commands="filteredCommands"
       @close="closeSlashMenu"
       @select="handleSlashSelect"
     />
-    <SendModeStatusBar :mode="sendMode" />
+    <SendModeStatusBar
+      :mode="sendMode"
+      @update:mode="onModeSwitch"
+    />
     <div
       ref="containerRef"
       :class="[
@@ -50,7 +55,7 @@
         :session-id="sessionId"
         :is-streaming="isStreaming"
         :can-send="canSend"
-        @select-model="(id: string) => emit('select-model', id)"
+        @select-model="emit('select-model', $event)"
         @select-thinking-level="(l: string) => emit('send-command', { type: 'session.setThinkingLevel', payload: { sessionId, level: l } })"
         @send="handleSend"
         @cancel="emit('cancel')"
@@ -63,6 +68,7 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useChatStore } from '../../stores/chat'
 import { useProviderStore } from '../../stores/provider'
 import { Textarea } from '../../design-system'
 import { consumePendingEditorText } from '../../composables/useTree'
@@ -71,6 +77,8 @@ import SlashMenu from './SlashMenu.vue'
 import InputToolbar from './InputToolbar.vue'
 import SessionStrip from './SessionStrip.vue'
 import SendModeStatusBar from './SendModeStatusBar.vue'
+import GlobalLoadingBar from './GlobalLoadingBar.vue'
+import QueueComponent from './QueueComponent.vue'
 import type { SendMode } from './SendModeStatusBar.vue'
 import {
   useSlashCommands,
@@ -87,13 +95,19 @@ const props = defineProps<{
 const emit = defineEmits<{
   send: [payload: { content: string; skillName?: string; subagent?: { agent: string; task: string }; sendMode?: 'send' | 'steer' | 'queue' }]
   cancel: []
-  'select-model': [modelId: string]
+  'select-model': [payload: { modelId: string }]
   'send-command': [payload: { type: string; payload: Record<string, unknown> }]
   'local-action': [payload: { action: string; data?: unknown }]
 }>()
 
 const { t } = useI18n()
+const chatStore = useChatStore()
 const providerStore = useProviderStore()
+
+// ── Per-session reactive state from store ──
+const sessionState = computed(() => chatStore.getSessionState(props.sessionId))
+const isGenerating = computed(() => sessionState.value.isGenerating)
+const queueState = computed(() => sessionState.value.queueState)
 const {
   mergeSkillCommands,
   filterCommands,
@@ -104,23 +118,35 @@ const {
 initDefaultCommands()
 initNativeCommands()
 
-const text = ref('')
-const isComposing = ref(false)
-const activeCommand = ref<SlashCommand | null>(null)
-const isAltPressed = ref(false)
-
-// Navigate 到 user message 后预填输入框
-watch(() => props.sessionId, () => {
-  nextTick(() => {
-    const editorText = consumePendingEditorText(props.sessionId)
-    if (editorText) text.value = editorText
-  })
-})
+// ── Pending text: persisted per session ──
+const storeText = computed(() => chatStore.getPendingText(props.sessionId))
+const text = ref(storeText.value || '')
+onUnmounted(() => { chatStore.setPendingText(text.value || undefined, props.sessionId) })
 onMounted(() => {
+  text.value = storeText.value || ''
   const editorText = consumePendingEditorText(props.sessionId)
   if (editorText) text.value = editorText
 })
-// 同 session 内 navigate 时 sessionId 不变，需要事件驱动
+// Sync to store on each change
+watch(text, (val) => { chatStore.setPendingText(val || undefined, props.sessionId) })
+
+const isComposing = ref(false)
+const activeCommand = ref<SlashCommand | null>(null)
+const isAltPressed = ref(false)
+const isCtrlPressed = ref(false)
+
+watch(() => props.sessionId, (newSid, oldSid) => {
+  if (newSid !== oldSid) {
+    manualMode.value = null // reset send mode override on session switch
+    if (oldSid) chatStore.setPendingText(text.value || undefined, oldSid)
+    text.value = chatStore.getPendingText(newSid)
+    nextTick(() => {
+      const editorText = consumePendingEditorText(newSid)
+      if (editorText) text.value = editorText
+    })
+  }
+})
+// Same-session navigate: event-driven
 const unsubEditorText = on('editor-text-pending', () => {
   nextTick(() => {
     const editorText = consumePendingEditorText(props.sessionId)
@@ -129,23 +155,42 @@ const unsubEditorText = on('editor-text-pending', () => {
 })
 onUnmounted(() => { unsubEditorText?.() })
 
-// ── Send Mode ────────────────────────────────────────────────────
+// ── Send Mode ──
+const manualMode = ref<SendMode | null>(null)
+
 const sendMode = computed<SendMode>(() => {
-  if (props.isStreaming && isAltPressed.value) return 'queue'
-  if (props.isStreaming) return 'steer'
+  // Manual override from Mode Switcher click
+  if (manualMode.value) return manualMode.value
+  // Ctrl/Cmd+Enter forces steer (interrupt AI)
+  if (isCtrlPressed.value) return 'steer'
+  // When AI is streaming, auto-queue instead of steering
+  if (props.isStreaming) return 'queue'
+  // Alt+Enter always queues
   if (isAltPressed.value) return 'queue'
   return 'send'
 })
 
-// ── Alt key detection ─────────────────────────────────────────────
+function onModeSwitch({ mode }: { mode: SendMode }) {
+  // Snapshot auto-detect at click time, not live modifier state
+  // (modifier keys may still be held during click)
+  const autoDetect: SendMode = props.isStreaming
+    ? 'queue'
+    : 'send'
+  manualMode.value = mode === autoDetect ? null : mode
+}
+
+// ── Modifier key detection ──
 function onGlobalKeyDown(e: KeyboardEvent) {
   if (e.key === 'Alt') isAltPressed.value = true
+  if (e.key === 'Control' || e.key === 'Meta') isCtrlPressed.value = true
 }
 function onGlobalKeyUp(e: KeyboardEvent) {
   if (e.key === 'Alt') isAltPressed.value = false
+  if (e.key === 'Control' || e.key === 'Meta') isCtrlPressed.value = false
 }
 function onWindowBlur() {
   isAltPressed.value = false
+  isCtrlPressed.value = false
 }
 onMounted(() => {
   document.addEventListener('keydown', onGlobalKeyDown)
@@ -158,12 +203,9 @@ onUnmounted(() => {
   window.removeEventListener('blur', onWindowBlur)
 })
 
-// activeCommand 存在时动态展示 skill 专属提示，否则用默认 placeholder
 const placeholder = computed(() => {
   if (activeCommand.value?.action.type === 'skill') {
-    return activeCommand.value.argumentHint
-      ? '编辑参数后发送…'
-      : '输入附加文本…'
+    return activeCommand.value.argumentHint ? '编辑参数后发送…' : '输入附加文本…'
   }
   return t('chat.inputPlaceholder')
 })
@@ -207,24 +249,14 @@ const filteredCommands = computed(() =>
 )
 
 watch(text, (val) => {
-  if (activeCommand.value) return  // Don't reopen slash menu when a command is active
-  if (val.startsWith('/')) {
-    slashVisible.value = true
-    slashFilter.value = val.slice(1)
-  } else {
-    slashVisible.value = false
-    slashFilter.value = ''
-  }
+  if (activeCommand.value) return
+  if (val.startsWith('/')) { slashVisible.value = true; slashFilter.value = val.slice(1) }
+  else { slashVisible.value = false; slashFilter.value = '' }
 })
 
-function closeSlashMenu() {
-  slashVisible.value = false
-}
+function closeSlashMenu() { slashVisible.value = false }
 
-function clearCommand() {
-  activeCommand.value = null
-  text.value = ''
-}
+function clearCommand() { activeCommand.value = null; text.value = '' }
 
 // 构建 CommandContext，供 local 类型命令使用
 function buildCommandContext(): CommandContext {
@@ -238,24 +270,17 @@ function buildCommandContext(): CommandContext {
 function handleSlashSelect(cmd: SlashCommand) {
   text.value = ''
   slashVisible.value = false
-  // protocol 和 local 类型命令直接执行，不需要标签确认步骤
-  // native 类型也直接执行（以 /commandName 形式发送给 pi）
   if (cmd.action.type === 'protocol' || cmd.action.type === 'local' || cmd.action.type === 'native') {
     activeCommand.value = cmd
     handleSend()
-    // 执行后聚焦 textarea，确保后续输入正常
-    nextTick(() => {
-      const ta = containerRef.value?.querySelector<HTMLTextAreaElement>('textarea')
-      ta?.focus()
-    })
+    nextTick(() => containerRef.value?.querySelector<HTMLTextAreaElement>('textarea')?.focus())
   } else {
     activeCommand.value = cmd
     if (cmd.action.type === 'agent') {
       text.value = ''
       nextTick(() => {
         slashVisible.value = false
-        const ta = containerRef.value?.querySelector<HTMLTextAreaElement>('textarea')
-        ta?.focus()
+        containerRef.value?.querySelector<HTMLTextAreaElement>('textarea')?.focus()
       })
     } else if (cmd.action.type === 'skill' && cmd.argumentHint) {
       text.value = cmd.argumentHint
@@ -265,41 +290,26 @@ function handleSlashSelect(cmd: SlashCommand) {
 
 function handleSend() {
   if (!canSend.value) return
-
   const trimmed = text.value.trim()
 
   if (activeCommand.value) {
     const cmd = activeCommand.value
     switch (cmd.action.type) {
-      case 'local':
-        cmd.action.handler(buildCommandContext())
-        break
-      case 'protocol':
-        emit('send-command', {
-          type: cmd.action.messageType,
-          payload: { sessionId: props.sessionId },
-        })
-        break
+      case 'local': cmd.action.handler(buildCommandContext()); break
+      case 'protocol': emit('send-command', { type: cmd.action.messageType, payload: { sessionId: props.sessionId } }); break
       case 'skill': {
         const prefix = `/skill:${cmd.name}`
-        const content = trimmed ? `${prefix} ${trimmed}` : prefix
-        emit('send', { content, skillName: cmd.name })
+        emit('send', { content: trimmed ? `${prefix} ${trimmed}` : prefix, skillName: cmd.name })
         break
       }
       case 'agent': {
         const agentName = cmd.action.agentName
-        // Strip /agent:<name> prefix only from the start of the string
         const taskContent = trimmed.startsWith(`/agent:${agentName}`)
-          ? trimmed.slice(`/agent:${agentName}`.length).trim()
-          : trimmed
+          ? trimmed.slice(`/agent:${agentName}`.length).trim() : trimmed
         emit('send', { content: trimmed || '', subagent: { agent: agentName, task: taskContent } })
         break
       }
-      case 'extension': {
-        const content = `/${cmd.action.commandName} ${trimmed}`.trim()
-        emit('send', { content })
-        break
-      }
+      case 'extension': emit('send', { content: `/${cmd.action.commandName} ${trimmed}`.trim() }); break
       case 'native': {
         const content = trimmed ? `/${cmd.action.commandName} ${trimmed}` : `/${cmd.action.commandName}`
         emit('send', { content })
@@ -308,9 +318,12 @@ function handleSend() {
     }
     clearCommand()
   } else {
-    emit('send', { content: trimmed, sendMode: sendMode.value })
+    const payload = { content: trimmed, sendMode: sendMode.value }
+    emit('send', payload)
+    manualMode.value = null
+    isCtrlPressed.value = false
+    isAltPressed.value = false
   }
-
   text.value = ''
   slashVisible.value = false
   nextTick(resizeTextarea)
@@ -322,16 +335,15 @@ function onKeyDown(e: KeyboardEvent) {
     return
   }
 
-  if (e.key === 'Enter' && !e.shiftKey && !isComposing.value) {
+  // Bypass isComposing for modifier-key combos (macOS dead-key workaround)
+  if (e.key === 'Enter' && !e.shiftKey && (!isComposing.value || e.altKey || e.ctrlKey || e.metaKey)) {
     e.preventDefault()
     if (slashVisible.value) return // SlashMenu 处理 Enter
     handleSend()
   }
 }
 
-function onCompositionEnd() {
-  isComposing.value = false
-}
+function onCompositionEnd() { isComposing.value = false }
 
 const TEXTAREA_MAX_HEIGHT = 140
 

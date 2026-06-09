@@ -1,9 +1,16 @@
 import path from 'node:path'
+import { homedir, tmpdir } from 'node:os'
 import { app, BrowserWindow, protocol, net } from 'electron'
+import { DEV_PORT_OFFSET } from '@xyz-agent/shared'
 import { RuntimeManager } from './runtime-manager.js'
 import { WindowManager, initialWindowState } from './window-manager.js'
 import { registerShortcuts, unregisterShortcuts } from './shortcuts.js'
 import { registerIpcHandlers } from './ipc-handlers.js'
+
+/** Mirror of runtime's getConfigDir — reads XYZ_AGENT_DATA_DIR with fallback to ~/.xyz-agent/ */
+function getConfigDir(): string {
+  return process.env.XYZ_AGENT_DATA_DIR ?? path.join(homedir(), '.xyz-agent')
+}
 
 // EPIPE 兜底：concurrently / 终端关闭后 pipe 断开，console 写入会触发 uncaught exception
 process.stdout.on('error', (err: NodeJS.ErrnoException) => {
@@ -15,6 +22,17 @@ process.stderr.on('error', (err: NodeJS.ErrnoException) => {
 
 // ── 路径 & 模式 ──────────────────────────────────────────────────
 const isDev = !app.isPackaged
+
+// Dev 模式：自动隔离数据目录和端口，防止与 prod 实例冲突
+if (isDev) {
+  process.env.XYZ_AGENT_DATA_DIR = process.env.XYZ_AGENT_DATA_DIR
+    ?? path.join(homedir(), '.xyz-agent-dev')
+  process.env.XYZ_AGENT_PORT_OFFSET = process.env.XYZ_AGENT_PORT_OFFSET ?? String(DEV_PORT_OFFSET)
+  console.log(
+    '[main] dev mode: isolated data dir =', process.env.XYZ_AGENT_DATA_DIR,
+    ', port offset =', process.env.XYZ_AGENT_PORT_OFFSET,
+  )
+}
 
 const VITE_DEV_URL = 'http://localhost:1420'
 
@@ -104,7 +122,17 @@ app.whenReady().then(async () => {
   // 注册 local-file:// 协议，用于渲染进程加载本地文件（如图片）
   protocol.handle('local-file', (request) => {
     const filePath = decodeURIComponent(new URL(request.url).pathname)
-    return net.fetch(`file://${filePath}`)
+    // Restrict to safe directories: project cwd, config dir, home, temp
+    // Append path.sep to prevent prefix false-positives (e.g. /Users/foo matching /Users/foobar)
+    const sep = path.sep
+    const allowedPrefixes = [app.getAppPath(), getConfigDir(), homedir(), tmpdir()]
+      .map(p => p.endsWith(sep) ? p : p + sep)
+    const resolved = path.resolve(filePath)
+    // Reject if not under any allowed prefix (check both with and without trailing sep for exact match)
+    if (!allowedPrefixes.some(p => resolved.startsWith(p)) && !allowedPrefixes.some(p => resolved + sep === p)) {
+      return new Response('Forbidden', { status: 403 })
+    }
+    return net.fetch(`file://${resolved}`)
   })
 
   mainWindow = await createWindow({ windowId: 'win-1' })
