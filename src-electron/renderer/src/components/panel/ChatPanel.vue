@@ -238,7 +238,7 @@ const props = withDefaults(
 const emit = defineEmits<{
   send: [payload: { content: string; skillName?: string }]
   cancel: []
-  'select-model': [modelId: string]
+  'select-model': [payload: { modelId: string }]
   approve: [toolCallId: string]
   deny: [payload: { toolCallId: string; reason?: string }]
   'always-allow': [toolName: string]
@@ -323,7 +323,8 @@ const branchTabsMap = computed<Map<string, BranchTab[]>>(() => {
   return map
 })
 
-function onNavigate(targetId: string) {
+function onNavigate(payload: { targetEntryId: string }) {
+  const { targetEntryId: targetId } = payload
   if (props.sessionId) {
     tree.navigate(props.sessionId, targetId)
   }

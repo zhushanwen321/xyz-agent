@@ -195,7 +195,7 @@ export type ServerMessageType =
   | 'plugin:statusSetUpdate'
   | 'plugin:uiRequest'
   | 'extension:widget' | 'extension:status'
-  | 'extension:setEditorText' | 'extension:setTitle'
+  | 'extension:setEditorText'
   | 'message.bashExecution' | 'message.compactionSummary' | 'message.branchSummary'
   | 'message.auto_retry_start' | 'message.auto_retry_end' | 'message.queue_update'
   | 'message.stream_error'
@@ -349,7 +349,7 @@ export interface PluginConfigPayload {
 // ── StopReason / SendMode helpers ─────────────────────────────
 
 /** Possible reasons a stream completed */
-export type StopReason = 'complete' | 'aborted' | 'error' | 'length' | 'tool_use' | string
+export type StopReason = 'complete' | 'aborted' | 'error' | 'length' | 'tool_use'
 
 /** UI send mode → protocol send mode mapping */
 export function toProtocolSendMode(mode: string): string {

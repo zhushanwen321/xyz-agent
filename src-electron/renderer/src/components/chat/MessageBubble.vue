@@ -6,7 +6,7 @@
     :data-entry-id="entryId"
     :data-timestamp="message.timestamp ?? ''"
     class="self-start w-full relative group/msg"
-    :class="{ 'opacity-65': message.isInterrupted }"
+    :class="{ 'interrupted-msg': message.isInterrupted }"
   >
     <div v-if="showLabel" class="text-[10px] font-semibold uppercase tracking-[0.04em] leading-[1.4] mb-1 text-muted">
       助手
@@ -186,7 +186,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   'open-skill': [payload: { name: string; location?: string }]
-  navigate: [targetEntryId: string]
+  navigate: [payload: { targetEntryId: string }]
   'toggle-select': []
 }>()
 
@@ -296,6 +296,13 @@ const { handleBodyClick } = useMarkdownBodyClick()
 <style scoped>
 /* msg__body 内的元素由 v-html 渲染，无法用 Tailwind 类作用于动态内容 */
 /* 所有样式已移至 style.css，如在此处添加样式请确保 style.css 同步更新 */
+
+/* Interrupted messages: dim text instead of global opacity to keep interactive elements usable */
+.interrupted-msg {
+  color: var(--muted);
+  text-decoration: line-through;
+  text-decoration-color: var(--border);
+}
 
 /* Inline action bar: appears on hover */
 .msg-actions {

@@ -430,7 +430,7 @@ export class ExtensionService {
     const tempDir = mkdtempSync(join(tmpParent, DISCOVERY_TEMP_PREFIX))
 
     // Validate Git URL format
-    const ALLOWED_GIT_PREFIXES = ['https://', 'http://', 'git://', 'ssh://', 'git@']
+    const ALLOWED_GIT_PREFIXES = ['https://', 'ssh://', 'git@'] as const
     if (!ALLOWED_GIT_PREFIXES.some(p => url.startsWith(p))) {
       throw new Error(`Invalid Git URL: ${url}. Must start with one of: ${ALLOWED_GIT_PREFIXES.join(', ')}`)
     }
@@ -497,9 +497,20 @@ export class ExtensionService {
     }
 
     // Pre-validate all source directories exist before copying
+    // Use lstatSync to reject symlinks — tempDir entries created by git clone
+    // should be regular directories, not symlinks pointing outside tempDir.
     for (const dirName of selected) {
       const srcDir = join(tempDir, dirName)
-      if (!existsSync(srcDir) || !statSync(srcDir).isDirectory()) {
+      let st: ReturnType<typeof lstatSync>
+      try {
+        st = lstatSync(srcDir)
+      } catch {
+        throw new Error(`Extension "${dirName}" not found in temporary directory`)
+      }
+      if (st.isSymbolicLink()) {
+        throw new Error(`Extension "${dirName}" is a symlink — rejected for security`)
+      }
+      if (!st.isDirectory()) {
         throw new Error(`Extension "${dirName}" not found in temporary directory`)
       }
     }

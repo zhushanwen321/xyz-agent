@@ -58,7 +58,7 @@ const props = withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{
-  navigate: [targetEntryId: string]
+  navigate: [payload: { targetEntryId: string }]
 }>()
 
 const dropdownOpen = ref(false)
@@ -83,7 +83,7 @@ function toggleDropdown() {
 
 function onSelectBranch(tab: BranchTab) {
   dropdownOpen.value = false
-  emit('navigate', tab.targetId)
+  emit('navigate', { targetEntryId: tab.targetId })
 }
 </script>
 

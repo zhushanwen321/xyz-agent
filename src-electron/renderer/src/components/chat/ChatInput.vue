@@ -55,7 +55,7 @@
         :session-id="sessionId"
         :is-streaming="isStreaming"
         :can-send="canSend"
-        @select-model="(id: string) => emit('select-model', id)"
+        @select-model="(id: string) => emit('select-model', { modelId: id })"
         @select-thinking-level="(l: string) => emit('send-command', { type: 'session.setThinkingLevel', payload: { sessionId, level: l } })"
         @send="handleSend"
         @cancel="emit('cancel')"
@@ -95,7 +95,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   send: [payload: { content: string; skillName?: string; subagent?: { agent: string; task: string }; sendMode?: 'send' | 'steer' | 'queue' }]
   cancel: []
-  'select-model': [modelId: string]
+  'select-model': [payload: { modelId: string }]
   'send-command': [payload: { type: string; payload: Record<string, unknown> }]
   'local-action': [payload: { action: string; data?: unknown }]
 }>()

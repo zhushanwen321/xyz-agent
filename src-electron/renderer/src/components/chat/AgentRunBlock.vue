@@ -44,7 +44,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Message } from '@xyz-agent/shared'
-import { groupIntoSections } from '../../lib/message-layout'
+import { groupIntoSections, type SectionType } from '../../lib/message-layout'
 import { useSettingsStore } from '../../stores/settings'
 import { useMarkdownRender } from '../../composables/useMarkdownRender'
 import { useMarkdownBodyClick } from '../../composables/useMarkdownBodyClick'
@@ -61,10 +61,6 @@ const settingsStore = useSettingsStore()
 // ── Standalone tools set ──
 
 const standaloneToolsSet = computed(() => new Set(settingsStore.standaloneTools))
-
-// ── Section grouping with pre-resolved toolCalls ──
-
-import type { SectionType } from '../../lib/message-layout'
 
 interface EnrichedSection {
   type: SectionType

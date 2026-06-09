@@ -6,6 +6,11 @@ import { WindowManager, initialWindowState } from './window-manager.js'
 import { registerShortcuts, unregisterShortcuts } from './shortcuts.js'
 import { registerIpcHandlers } from './ipc-handlers.js'
 
+/** Mirror of runtime's getConfigDir — reads XYZ_AGENT_DATA_DIR with fallback to ~/.xyz-agent/ */
+function getConfigDir(): string {
+  return process.env.XYZ_AGENT_DATA_DIR ?? path.join(homedir(), '.xyz-agent')
+}
+
 // EPIPE 兜底：concurrently / 终端关闭后 pipe 断开，console 写入会触发 uncaught exception
 process.stdout.on('error', (err: NodeJS.ErrnoException) => {
   if (err.code === 'EPIPE') process.stdout.destroy()
@@ -117,12 +122,16 @@ app.whenReady().then(async () => {
   protocol.handle('local-file', (request) => {
     const filePath = decodeURIComponent(new URL(request.url).pathname)
     // Restrict to safe directories: project cwd, config dir, home, temp
+    // Append path.sep to prevent prefix false-positives (e.g. /Users/foo matching /Users/foobar)
+    const sep = path.sep
     const allowedPrefixes = [app.getAppPath(), getConfigDir(), homedir(), tmpdir()]
+      .map(p => p.endsWith(sep) ? p : p + sep)
     const resolved = path.resolve(filePath)
-    if (!allowedPrefixes.some(p => resolved.startsWith(p))) {
+    // Reject if not under any allowed prefix (check both with and without trailing sep for exact match)
+    if (!allowedPrefixes.some(p => resolved.startsWith(p)) && !allowedPrefixes.some(p => resolved + sep === p)) {
       return new Response('Forbidden', { status: 403 })
     }
-    return net.fetch(`file://${filePath}`)
+    return net.fetch(`file://${resolved}`)
   })
 
   mainWindow = await createWindow({ windowId: 'win-1' })

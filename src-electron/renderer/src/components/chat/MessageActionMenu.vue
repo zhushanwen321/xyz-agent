@@ -52,7 +52,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: []
-  navigate: [targetEntryId: string]
+  navigate: [payload: { targetEntryId: string }]
 }>()
 
 const { cloneSession } = useTree()
@@ -99,7 +99,7 @@ async function handleCopyPlain() {
 }
 
 function handleNavigate() {
-  emit('navigate', props.entryId)
+  emit('navigate', { targetEntryId: props.entryId })
   emit('close')
 }
 

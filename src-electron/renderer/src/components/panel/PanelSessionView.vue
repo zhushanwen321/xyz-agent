@@ -159,7 +159,8 @@ function handleCancel() {
   abort()
 }
 
-function handleSelectModel(modelId: string) {
+function handleSelectModel(payload: { modelId: string }) {
+  const { modelId } = payload
   const model = providerStore.models.find(m => m.id === modelId)
   if (!model) return
   const provider = providerStore.providers.find(p => p.id === model.providerId)

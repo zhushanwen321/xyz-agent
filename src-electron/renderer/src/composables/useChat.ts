@@ -327,16 +327,6 @@ function createGlobalHandlers() {
     store.setThinkingLevel(level, sid)
   }
 
-  /**
-   * extension:setTitle → call window.electronAPI.setTitle. Uses
-   * optional chaining to tolerate missing API (browser/dev mode).
-   */
-  function onExtensionSetTitle(msg: ServerMessage) {
-    const title = (msg.payload as { title?: string }).title
-    if (title === undefined) return
-    window.electronAPI?.setTitle(title)
-  }
-
   /** message.stream_error → add an alert system notification */
   function onStreamError(msg: ServerMessage) {
     const sid = getSid(msg)
@@ -368,7 +358,6 @@ function createGlobalHandlers() {
     ['message.queue_update', onQueueUpdate],
     ['session.renamed', onSessionRenamed],
     ['session.thinkingLevelSet', onThinkingLevelSet],
-    ['extension:setTitle', onExtensionSetTitle],
     ['message.stream_error', onStreamError],
   ])
 }

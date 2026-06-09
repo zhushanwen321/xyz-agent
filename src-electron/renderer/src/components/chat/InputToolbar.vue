@@ -16,7 +16,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  'select-model': [modelId: string]
+  'select-model': [payload: { modelId: string }]
   'select-thinking-level': [level: string]
   send: []
   cancel: []
@@ -185,7 +185,7 @@ onBeforeUnmount(() => {
        on narrow panels, add min-width:0/shrink to the flex-right items instead. -->
   <div class="flex items-center gap-1 px-2 pb-1.5">
     <!-- Model Picker -->
-    <ModelPicker :current-model="currentModel" @select="(id: string) => emit('select-model', id)" />
+    <ModelPicker :current-model="currentModel" @select="(id: string) => emit('select-model', { modelId: id })" />
 
     <!-- Thinking Level Picker -->
     <div v-if="showThinkingPicker" ref="thinkingRef" class="relative">

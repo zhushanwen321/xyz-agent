@@ -34,13 +34,12 @@ import { ref, computed, watch } from 'vue'
 import ToolCallCard from './ToolCallCard.vue'
 import { formatTime, toolPath } from '@/lib/compact-utils'
 import { useLiveTimer } from '../../composables/useLiveTimer'
+import { ALL_PI_TOOLS } from '../../lib/message-layout'
 import type { ToolCall } from '@xyz-agent/shared'
 
 const props = defineProps<{
   toolCall: ToolCall
 }>()
-
-import { ALL_PI_TOOLS } from '../../lib/message-layout'
 
 const isCustomTool = computed(() => !ALL_PI_TOOLS.includes(props.toolCall.toolName as typeof ALL_PI_TOOLS[number]))
 

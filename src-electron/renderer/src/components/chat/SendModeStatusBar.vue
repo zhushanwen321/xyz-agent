@@ -151,7 +151,7 @@ onBeforeUnmount(() => {
 .mode-popover-panel {
   background: var(--surface);
   border-color: var(--border);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.15));
   /* W3: semantic z-index — popover layer, below modal-backdrop */
   z-index: 100;
 }
