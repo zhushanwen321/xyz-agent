@@ -17,6 +17,7 @@
  * 5. 清理临时目录
  */
 import { execFileSync } from 'node:child_process'
+import { installPackage, uninstallPackage, installDependencies, NpmInstallError } from './npm-installer.js'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, readdirSync, statSync, lstatSync, realpathSync, cpSync, rmSync, mkdtempSync } from 'node:fs'
 import { join, resolve, basename } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
@@ -228,15 +229,14 @@ export class ExtensionService {
       writeFileSync(pkgJsonPath, JSON.stringify({ private: true }), 'utf-8')
     }
 
-    // 执行 npm install
+    const nodeModulesDir = join(npmDir, 'node_modules')
+
+    // 执行 npm install（纯 Node.js，不依赖 npm CLI）
     try {
-      execFileSync('npm', ['install', pkgName, '--prefix', npmDir, '--omit=peer'], {
-        stdio: 'pipe',
-        timeout: NPM_INSTALL_TIMEOUT,
-      })
+      await installPackage(pkgName, nodeModulesDir, { timeout: NPM_INSTALL_TIMEOUT })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      const code = this.classifyNpmError(msg)
+      const code = e instanceof NpmInstallError ? (e.code === 'extract' ? 'network' as const : e.code) : this.classifyNpmError(msg)
       throw new ExtensionInstallError(
         code,
         `npm install failed: ${msg}`,
@@ -249,9 +249,9 @@ export class ExtensionService {
     if (!existsSync(pkgInstallDir) || !this.resolver.isValidPiExtension(pkgInstallDir)) {
       // 回滚
       try {
-        execFileSync('npm', ['uninstall', pkgName, '--prefix', npmDir], { stdio: 'pipe', timeout: NPM_UNINSTALL_TIMEOUT })
+        await uninstallPackage(pkgName, nodeModulesDir)
       } catch (e) {
-        log.warn(`[extension-service] rollback npm uninstall failed for ${pkgName}: ${e instanceof Error ? e.message : String(e)}`)
+        log.warn(`[extension-service] rollback uninstall failed for ${pkgName}: ${e instanceof Error ? e.message : String(e)}`)
       }
       throw new ExtensionInstallError(
         'not_extension',
@@ -322,11 +322,11 @@ export class ExtensionService {
       }
     }
 
-    // npm uninstall
-    const npmDir = join(this.settingsDir, 'npm')
+    // Remove from node_modules (pure Node.js, no npm CLI needed)
+    const nodeModulesDir = join(npmDir, 'node_modules')
     if (existsSync(npmDir)) {
       try {
-        execFileSync('npm', ['uninstall', name, '--prefix', npmDir], { stdio: 'pipe', timeout: NPM_UNINSTALL_TIMEOUT })
+        await uninstallPackage(name, nodeModulesDir)
       } catch (e) {
         log.warn(`[extension-service] npm uninstall warning for ${name}: ${e instanceof Error ? e.message : String(e)}`)
       }
@@ -459,14 +459,10 @@ export class ExtensionService {
       throw new Error(`git clone failed: ${msg}`)
     }
 
-    // If package.json exists, run npm install
+    // If package.json exists, install dependencies (pure Node.js, no npm CLI needed)
     if (existsSync(join(tempDir, 'package.json'))) {
       try {
-        execFileSync('npm', ['install', '--omit=peer', '--ignore-scripts'], {
-          cwd: tempDir,
-          stdio: 'pipe',
-          timeout: NPM_INSTALL_TIMEOUT,
-        })
+        await installDependencies(tempDir)
       } catch (e) {
         log.warn(`[extension-service] npm install in git repo failed: ${e instanceof Error ? e.message : String(e)}`)
         // Non-fatal — some repos don't need deps to discover extensions

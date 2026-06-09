@@ -17,7 +17,8 @@
   },
   "dependencies": {
     "@zhushanwen/pi-goal": "^0.1.4",
-    "@zhushanwen/pi-todo": "^0.1.4"
+    "@zhushanwen/pi-todo": "^0.1.4",
+    "tar": "^7.5.16"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
