@@ -190,6 +190,14 @@ export const useChatStore = defineStore('chat', () => {
       }
       s.completedMessages = [...s.completedMessages, cleaned]
       s.streamingMessage = null
+    } else if (opts?.stopReason === 'error') {
+      // pi 返回错误但没有发送任何流式内容（如 Connection error）
+      // 插入一条可见的错误通知，避免前端静默吞错
+      s.completedMessages = [...s.completedMessages, {
+        ...createSystemNotification('alert', '模型请求失败', '请检查 API Key、网络连接和 baseUrl 配置'),
+        content: '模型请求失败',
+        status: 'error',
+      }]
     }
     if (!opts?.keepGenerating) {
       s.isGenerating = false
