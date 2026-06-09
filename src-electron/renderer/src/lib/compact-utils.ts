@@ -6,9 +6,11 @@
 
 const MS_PER_SECOND = 1000
 const SECONDS_PER_MINUTE = 60
+const MS_MIN_DISPLAY = 100 // Below this, show "<0.1s" to avoid "0.0s" noise
 
 /** 格式化毫秒耗时为人类可读字符串 */
 export function formatTime(ms: number): string {
+  if (ms < MS_MIN_DISPLAY) return '<0.1s'
   if (ms < MS_PER_SECOND) return `${(ms / MS_PER_SECOND).toFixed(1)}s`
   const s = ms / MS_PER_SECOND
   if (s < SECONDS_PER_MINUTE) return `${s.toFixed(1)}s`

@@ -68,7 +68,7 @@ function toggleCollapse(key: string) {
           </div>
         </div>
         <!-- Collapse button at bottom -->
-        <div class="flex justify-center px-2 py-[3px] border-t border-border shrink-0 bg-surface">
+        <div class="flex justify-center px-2 py-0.5 border-t border-border shrink-0 bg-surface">
           <!-- eslint-disable-next-line taste/no-native-html-elements -- compact icon button, xyz-ui Button doesn't pass through title -->
           <button
             class="inline-flex items-center gap-1 text-[10px] font-mono text-muted hover:text-fg cursor-pointer bg-transparent border-none transition-colors duration-150"
@@ -87,7 +87,7 @@ function toggleCollapse(key: string) {
     <!-- Collapsed widget expand buttons — sit between widget panels and ChatInput -->
     <div
       v-if="collapsedWidgets.length > 0"
-      class="flex items-center gap-1 px-2 py-[3px] border border-border bg-surface transition-all duration-200"
+      class="flex items-center gap-1 px-2 py-0.5 border border-border bg-surface transition-all duration-200"
       :class="{
         'rounded-sm': expandedWidgets.length === 0,
         '-mt-px border-t-0': expandedWidgets.length > 0,

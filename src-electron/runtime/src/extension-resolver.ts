@@ -316,6 +316,14 @@ export class ExtensionResolver {
    * This allows scoped and unscoped packages with the same base name
    * to coexist without dedup collision.
    */
+  /** Normalize extension name: keep scope, strip pi- prefix.
+   *  e.g. "@zhushanwen/pi-goal" → "@zhushanwen/goal", "pi-goal" → "goal"
+   *
+   *  BREAKING CHANGE NOTE: versions prior to this change stripped the scope
+   *  ("@zhushanwen/pi-goal" → "goal"). Existing disabled-packages.json entries
+   *  may use the old format. If users report extensions re-enabling after upgrade,
+   *  check disabled-packages.json for stale keys and run a one-time migration.
+   */
   private normalizeExtName(name: string): string {
     const parts = name.split('/')
     const last = parts[parts.length - 1].replace(/^pi-/, '')

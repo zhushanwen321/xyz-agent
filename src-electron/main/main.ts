@@ -1,6 +1,7 @@
 import path from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 import { app, BrowserWindow, protocol, net } from 'electron'
+import { DEV_PORT_OFFSET } from '@xyz-agent/shared'
 import { RuntimeManager } from './runtime-manager.js'
 import { WindowManager, initialWindowState } from './window-manager.js'
 import { registerShortcuts, unregisterShortcuts } from './shortcuts.js'
@@ -26,7 +27,7 @@ const isDev = !app.isPackaged
 if (isDev) {
   process.env.XYZ_AGENT_DATA_DIR = process.env.XYZ_AGENT_DATA_DIR
     ?? path.join(homedir(), '.xyz-agent-dev')
-  process.env.XYZ_AGENT_PORT_OFFSET = process.env.XYZ_AGENT_PORT_OFFSET ?? '100'
+  process.env.XYZ_AGENT_PORT_OFFSET = process.env.XYZ_AGENT_PORT_OFFSET ?? String(DEV_PORT_OFFSET)
   console.log(
     '[main] dev mode: isolated data dir =', process.env.XYZ_AGENT_DATA_DIR,
     ', port offset =', process.env.XYZ_AGENT_PORT_OFFSET,

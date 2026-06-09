@@ -4,6 +4,18 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Shared streaming cursor class ─────────────────────────── */
+/* Reused by AssistantContent.vue and AgentRunBlock.vue.
+   Kept in style.css (not scoped) to avoid duplicating the class string. */
+.streaming-cursor {
+  display: inline-block;
+  width: 0.125rem;
+  height: 1.1em;
+  background-color: var(--accent);
+  border-radius: 1px;
+  vertical-align: text-bottom;
+}
+
 /* ============================================================
    xyz-agent Design System — Warm & Soft
    AI Agent Workbench · Desktop GUI Prototype
@@ -854,9 +866,17 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
   container-name: panel;
 }
 
+/* --panel-compact-width: threshold for compact/wide input layout switch.
+   Both max-width and min-width rules must use this value consistently. */
+.panel-input-area {
+  --panel-compact-width: 480px;
+}
+
 @container panel (max-width: 480px) {
   /* 480px: minimum usable width for input area (mode switcher + queue + input).
-     Below this threshold, hide shortcut hints and switch to compact queue layout. */
+     Below this threshold, hide shortcut hints and switch to compact queue layout.
+     NOTE: CSS custom properties cannot be used in @container condition syntax
+     in current browsers, so 480px is hardcoded here. Update min-width to match. */
   .mode-shortcut-hint { display: none; }
   .queue-full { display: none; }
   .queue-compact { display: flex; }

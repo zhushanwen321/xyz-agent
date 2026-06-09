@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, mkdtempSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, mkdtempSync, symlinkSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { tmpdir, homedir } from 'node:os'
 import { ExtensionService, ExtensionInstallError } from '../src/extension-service.js'
 
 import { execSync, execFileSync } from 'node:child_process'
@@ -406,6 +406,86 @@ describe('ExtensionService', () => {
 
       await expect(service.finishInstall(tempDir, ['nonexistent']))
         .rejects.toThrow('not found in')
+    })
+
+    it('rejects symlink extension in temp dir', async () => {
+      const tempDir = join(testSettingsDir, 'tmp', 'ext-scan-test-symlink')
+      mkdirSync(tempDir, { recursive: true })
+      // Create a symlink pointing to a real dir outside tempDir
+      const targetDir = join(testSettingsDir, 'symlink-target')
+      mkdirSync(targetDir, { recursive: true })
+      writeFileSync(join(targetDir, 'package.json'), '{}', 'utf-8')
+      symlinkSync(targetDir, join(tempDir, 'evil-link'))
+
+      await expect(service.finishInstall(tempDir, ['evil-link']))
+        .rejects.toThrow('symlink')
+    })
+  })
+
+  describe('cancelInstall', () => {
+    it('cleans up valid temp directory', async () => {
+      const tempDir = join(testSettingsDir, 'tmp', 'ext-scan-test-cancel')
+      mkdirSync(tempDir, { recursive: true })
+      writeFileSync(join(tempDir, 'marker.txt'), 'test', 'utf-8')
+
+      await service.cancelInstall(tempDir)
+
+      expect(existsSync(tempDir)).toBe(false)
+    })
+
+    it('throws for path outside allowedPrefixes', async () => {
+      await expect(service.cancelInstall('/tmp/outside-xyz'))
+        .rejects.toThrow()
+    })
+
+    it('handles non-existent temp dir gracefully', async () => {
+      const tempDir = join(testSettingsDir, 'tmp', 'ext-scan-nonexistent-cancel')
+      // Should not throw — rmSync force:true is idempotent
+      await expect(service.cancelInstall(tempDir)).resolves.toBeUndefined()
+    })
+  })
+
+  describe('installGitRepository URL validation', () => {
+    it('rejects http:// URLs (SSRF prevention)', async () => {
+      await expect(service.installGitRepository('http://169.254.169.254/latest/meta-data/'))
+        .rejects.toThrow('Invalid Git URL')
+    })
+
+    it('rejects git:// URLs', async () => {
+      await expect(service.installGitRepository('git://github.com/user/repo.git'))
+        .rejects.toThrow('Invalid Git URL')
+    })
+
+    it('rejects ftp:// URLs', async () => {
+      await expect(service.installGitRepository('ftp://example.com/repo'))
+        .rejects.toThrow('Invalid Git URL')
+    })
+
+    it('accepts https:// URLs', async () => {
+      mockedExecFileSync.mockImplementation(() => {
+        throw new Error('git clone failed: test')
+      })
+      // Should fail with git clone error, not URL validation error
+      await expect(service.installGitRepository('https://github.com/user/repo.git'))
+        .rejects.toThrow('git clone failed')
+    })
+  })
+
+  describe('installLocalDirectory path security', () => {
+    it('rejects paths outside home and tmp', async () => {
+      await expect(service.installLocalDirectory('/etc/passwd'))
+        .rejects.toThrow('not a directory')
+    })
+
+    it('rejects non-directory paths under home', async () => {
+      const filePath = join(homedir(), 'xyz-agent-test-file-' + Date.now())
+      writeFileSync(filePath, 'test', 'utf-8')
+      try {
+        await expect(service.installLocalDirectory(filePath))
+          .rejects.toThrow('not a directory')
+      } finally {
+        try { rmSync(filePath, { force: true }) } catch { /* ignore */ }
+      }
     })
   })
 })

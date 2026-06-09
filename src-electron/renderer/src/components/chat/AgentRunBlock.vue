@@ -22,7 +22,7 @@
         <span v-html="renderedContent" />
         <span
           v-if="isStreaming"
-          class="inline-block w-0.5 h-[1.1em] bg-accent rounded-sm align-text-bottom animate-blink motion-reduce:opacity-60 motion-reduce:animate-none"
+          class="streaming-cursor animate-blink motion-reduce:opacity-60 motion-reduce:animate-none"
         />
       </div>
 

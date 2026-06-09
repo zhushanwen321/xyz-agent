@@ -1,4 +1,7 @@
 <template>
+  <!-- DESIGN: Two sibling elements both use v-if="hasItems" and are always in the DOM together.
+       CSS container queries (style.css) control which one is visible based on panel width.
+       This is intentional — NOT a bug. -->
   <!-- Wide panel (≥481px): full header + list -->
   <div v-if="hasItems" class="queue-full">
     <div class="max-w-[960px] mx-auto px-6">

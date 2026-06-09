@@ -50,7 +50,7 @@
         >
           <!-- eslint-disable-next-line vue/no-v-html -->
           <span v-html="renderedContent"></span>
-          <span v-if="isStreaming" class="inline-block w-0.5 h-[1.1em] bg-accent rounded-sm align-text-bottom animate-blink motion-reduce:opacity-60 motion-reduce:animate-none"></span>
+          <span v-if="isStreaming" class="streaming-cursor animate-blink motion-reduce:opacity-60 motion-reduce:animate-none"></span>
         </div>
       </template>
     </AssistantSection>
@@ -66,7 +66,7 @@
     >
       <!-- eslint-disable-next-line vue/no-v-html -->
       <span v-html="renderedContent"></span>
-      <span v-if="isStreaming" class="inline-block w-0.5 h-[1.1em] bg-accent rounded-sm align-text-bottom animate-blink motion-reduce:opacity-60 motion-reduce:animate-none"></span>
+      <span v-if="isStreaming" class="streaming-cursor animate-blink motion-reduce:opacity-60 motion-reduce:animate-none"></span>
     </div>
   </div>
 </template>

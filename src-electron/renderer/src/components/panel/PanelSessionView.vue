@@ -204,7 +204,9 @@ function handleSwitchAgent(agentId: string) {
 // --- Global event handlers (not yet fully session-partitioned) ---
 
 function handleToolApprovalRequest(msg: { payload: PendingToolCall }) {
-  // TODO Phase 1C: filter by sessionId once server sends it
+  // TODO Phase 1C: Server does not yet send sessionId in tool_call_pending payloads.
+  // Once it does, filter by sessionId to prevent cross-panel tool approval in multi-panel mode.
+  // Current risk: single-panel setups are unaffected; multi-panel may show approval in wrong panel.
   pendingApproval.value = msg.payload
 }
 

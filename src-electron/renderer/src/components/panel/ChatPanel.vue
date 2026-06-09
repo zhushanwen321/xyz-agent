@@ -36,7 +36,7 @@
               <path d="M16 24H26" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
             </svg>
             <h2 class="m-0 text-lg font-semibold leading-tight text-fg">开始新对话</h2>
-            <p class="m-0 text-sm leading-relaxed text-muted text-center">向 AI 助手发送消息，开始一段新的对话</p>
+            <p class="m-0 text-sm leading-relaxed text-muted text-center">向 AI 助手发送消息,开始一段新的对话</p>
           </div>
 
           <template v-else>
@@ -289,26 +289,30 @@ const tree = useTree()
 const treeStore = useTreeStore()
 
 function getTurnGroups(viewMessages: ChatMessage[]) {
-  return groupIntoTurns(viewMessages)
+  const turns = groupIntoTurns(viewMessages)
+  // Pre-compute first/last assistant IDs per turn to avoid O(n²) per-message lookups
+  for (const turn of turns) {
+    const msgs = turn.messages
+    for (const m of msgs) {
+      if (!isSystemNotification(m) && m.role === 'assistant') {
+        ;(turn as Record<string, unknown>)._firstAssistantId ??= m.id
+        ;(turn as Record<string, unknown>)._lastAssistantId = m.id
+      }
+    }
+  }
+  return turns
 }
 
-/** 是否显示"助手"标签：Turn 内第一个 assistant 消息 */
+/** 是否显示“助手”标签：Turn 内第一个 assistant 消息 */
 function isFirstAssistant(group: { messages: ChatMessage[] }, msg: ChatMessage): boolean {
   if (isSystemNotification(msg) || msg.role !== 'assistant') return false
-  for (const m of group.messages) {
-    if (!isSystemNotification(m) && m.role === 'assistant') return m.id === msg.id
-  }
-  return false
+  return (group as Record<string, unknown>)._firstAssistantId === msg.id
 }
 
 /** 是否是 Turn 内最后一个 assistant 消息（决定 action bar 显示） */
 function isLastAssistantInTurn(group: { messages: ChatMessage[] }, msg: ChatMessage): boolean {
   if (isSystemNotification(msg) || msg.role !== 'assistant') return false
-  for (let i = group.messages.length - 1; i >= 0; i--) {
-    const m = group.messages[i]
-    if (!isSystemNotification(m) && m.role === 'assistant') return m.id === msg.id
-  }
-  return false
+  return (group as Record<string, unknown>)._lastAssistantId === msg.id
 }
 
 const branchTabsMap = computed<Map<string, BranchTab[]>>(() => {

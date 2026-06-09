@@ -25,8 +25,8 @@ export function inferSourceType(path: string): ScanSourceType {
   // 检查路径中是否包含 /.<name>/ 或 \<name>\ 的目录段
   const segments = path.split(sep)
   for (const seg of segments) {
-    // 匹配 .xyz-agent*（如 .xyz-agent-dev、.xyz-agent-v2 等自定义目录名）
-    if (seg.startsWith('.xyz-agent')) return 'pi'
+    // 匹配 .xyz-agent 及其变体（如 .xyz-agent-dev、.xyz-agent-v2），但不匹配 .xyz-agentator 等非预期名称
+    if (seg === '.xyz-agent' || seg.startsWith('.xyz-agent-')) return 'pi'
     if (seg === '.pi') return 'pi'
     if (seg === '.claude') return 'claude'
     if (seg === '.agents') return 'agents'
