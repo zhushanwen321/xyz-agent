@@ -4,14 +4,31 @@ import { join } from 'node:path'
 import { tmpdir, homedir } from 'node:os'
 import { ExtensionService, ExtensionInstallError } from '../src/extension-service.js'
 
-import { execSync, execFileSync } from 'node:child_process'
+import { installPackage, uninstallPackage, NpmInstallError } from '../src/npm-installer.js'
+import { execFileSync } from 'node:child_process'
 
+vi.mock('../src/npm-installer.js', () => ({
+  installPackage: vi.fn(),
+  uninstallPackage: vi.fn(),
+  installDependencies: vi.fn(),
+  NpmInstallError: class extends Error {
+    code: 'not_found' | 'network' | 'extract'
+    constructor(code: 'not_found' | 'network' | 'extract', message: string) {
+      super(message)
+      this.code = code
+      this.name = 'NpmInstallError'
+    }
+  },
+}))
+
+// git clone still uses execFileSync
 vi.mock('node:child_process', () => ({
   execSync: vi.fn(() => ''),
   execFileSync: vi.fn(() => ''),
 }))
 
-const mockedExecSync = vi.mocked(execSync)
+const mockedInstallPackage = vi.mocked(installPackage)
+const mockedUninstallPackage = vi.mocked(uninstallPackage)
 const mockedExecFileSync = vi.mocked(execFileSync)
 
 describe('ExtensionService', () => {
@@ -104,14 +121,15 @@ describe('ExtensionService', () => {
     })
 
     it('throws when package is not a valid pi extension', async () => {
-      mockedExecFileSync.mockImplementation(() => '')
-      const npmDir = join(testSettingsDir, 'npm', 'node_modules', 'invalid-pkg')
-      mkdirSync(npmDir, { recursive: true })
-      writeFileSync(join(npmDir, 'package.json'), JSON.stringify({
+      // installPackage succeeds but the installed package lacks pi manifest fields
+      mockedInstallPackage.mockResolvedValue(undefined)
+      mockedUninstallPackage.mockResolvedValue(undefined)
+      const pkgDir = join(testSettingsDir, 'npm', 'node_modules', 'invalid-pkg')
+      mkdirSync(pkgDir, { recursive: true })
+      writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({
         name: 'invalid-pkg',
         version: '1.0.0',
       }), 'utf-8')
-      expect(existsSync(join(npmDir, 'package.json'))).toBe(true)
 
       await expect(service.installExtension('npm:invalid-pkg')).rejects.toThrow('not a valid pi extension')
     })
@@ -119,9 +137,9 @@ describe('ExtensionService', () => {
 
   describe('uninstallExtension', () => {
     it('removes from settings.json', async () => {
-      const npmDir = join(testSettingsDir, 'npm', 'node_modules', 'test-pkg')
-      mkdirSync(npmDir, { recursive: true })
-      writeFileSync(join(npmDir, 'package.json'), JSON.stringify({
+      const pkgDir = join(testSettingsDir, 'npm', 'node_modules', 'test-pkg')
+      mkdirSync(pkgDir, { recursive: true })
+      writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({
         name: 'test-pkg', version: '0.1.0', description: '',
         keywords: ['pi-package'],
         peerDependencies: { '@mariozechner/pi-coding-agent': '*' },
@@ -133,7 +151,7 @@ describe('ExtensionService', () => {
       settings.packages = [...(settings.packages || []), 'npm:test-pkg']
       writeFileSync(settingsPath, JSON.stringify(settings), 'utf-8')
 
-      mockedExecFileSync.mockImplementation(() => '')
+      mockedUninstallPackage.mockResolvedValue(undefined)
       await service.uninstallExtension('test-pkg')
 
       const updatedRaw = readFileSync(settingsPath, 'utf-8')
@@ -183,9 +201,7 @@ describe('ExtensionService', () => {
 
   describe('installExtension error classification', () => {
     it('classifies 404 errors as not_found', async () => {
-      mockedExecFileSync.mockImplementation(() => {
-        throw new Error('npm install failed: npm ERR! 404 Not Found - GET https://registry.npmjs.org/nonexistent-pkg')
-      })
+      mockedInstallPackage.mockRejectedValue(new NpmInstallError('not_found', 'Package not found (404)'))
 
       try {
         await service.installExtension('npm:nonexistent-pkg')
@@ -197,9 +213,7 @@ describe('ExtensionService', () => {
     })
 
     it('classifies E404 errors as not_found', async () => {
-      mockedExecFileSync.mockImplementation(() => {
-        throw new Error('npm ERR! E404 Package not found')
-      })
+      mockedInstallPackage.mockRejectedValue(new Error('npm ERR! E404 Package not found'))
 
       try {
         await service.installExtension('npm:e404-pkg')
@@ -211,9 +225,7 @@ describe('ExtensionService', () => {
     })
 
     it('classifies other npm errors as network', async () => {
-      mockedExecFileSync.mockImplementation(() => {
-        throw new Error('npm ERR! ETIMEOUT request timeout')
-      })
+      mockedInstallPackage.mockRejectedValue(new NpmInstallError('network', 'Connection timeout'))
 
       try {
         await service.installExtension('npm:timeout-pkg')
@@ -225,10 +237,11 @@ describe('ExtensionService', () => {
     })
 
     it('classifies invalid pi extension as not_extension', async () => {
-      mockedExecFileSync.mockImplementation(() => '')
-      const npmDir = join(testSettingsDir, 'npm', 'node_modules', 'lodash')
-      mkdirSync(npmDir, { recursive: true })
-      writeFileSync(join(npmDir, 'package.json'), JSON.stringify({
+      mockedInstallPackage.mockResolvedValue(undefined)
+      mockedUninstallPackage.mockResolvedValue(undefined)
+      const pkgDir = join(testSettingsDir, 'npm', 'node_modules', 'lodash')
+      mkdirSync(pkgDir, { recursive: true })
+      writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({
         name: 'lodash',
         version: '4.17.21',
       }), 'utf-8')
