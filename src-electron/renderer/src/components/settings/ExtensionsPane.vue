@@ -39,9 +39,9 @@ function startInstallTimeout() {
 function clearInstallTimeout() { clearTimeout(installTimeout) }
 
 const installTabs = [
-  { key: 'npm' as const, label: 'npm' },
-  { key: 'local' as const, label: 'Local Dir' },
-  { key: 'git' as const, label: 'Git URL' },
+  { key: 'npm' as const, label: 'npm', placeholder: 'npm:pi-ask-user', hint: 'Enter an npm package name. The npm: prefix is optional.' },
+  { key: 'local' as const, label: 'Local Dir', placeholder: '/path/to/extension/directory', hint: 'Path to a local directory containing pi extension(s).' },
+  { key: 'git' as const, label: 'Git URL', placeholder: 'https://github.com/user/repo.git', hint: 'Git repository URL containing pi extension(s).' },
 ]
 
 // ── Message handlers ────────────────────────────────────────────
@@ -224,71 +224,25 @@ onUnmounted(() => {
           </Button>
         </div>
 
-        <!-- npm tab -->
-        <template v-if="installTab === 'npm'">
-          <div class="flex items-center gap-2">
-            <Input
-              v-model="installSource"
-              type="text"
-              placeholder="npm:pi-ask-user"
-              class="flex-1"
-              @keydown.enter="handleInstall"
-            />
-            <Button
-              variant="primary"
-              size="sm"
-              :disabled="installing || !installSource.trim()"
-              @click="handleInstall"
-            >{{ installButtonLabel() }}</Button>
-          </div>
-          <div class="text-[10px] text-muted mt-1.5">
-            Enter an npm package name. The <span class="font-mono">npm:</span> prefix is optional.
-          </div>
-        </template>
-
-        <!-- Local Dir tab -->
-        <template v-else-if="installTab === 'local'">
-          <div class="flex items-center gap-2">
-            <Input
-              v-model="installSource"
-              type="text"
-              placeholder="/path/to/extension/directory"
-              class="flex-1"
-              @keydown.enter="handleInstall"
-            />
-            <Button
-              variant="primary"
-              size="sm"
-              :disabled="installing || !installSource.trim()"
-              @click="handleInstall"
-            >{{ installButtonLabel() }}</Button>
-          </div>
-          <div class="text-[10px] text-muted mt-1.5">
-            Path to a local directory containing pi extension(s).
-          </div>
-        </template>
-
-        <!-- Git URL tab -->
-        <template v-else>
-          <div class="flex items-center gap-2">
-            <Input
-              v-model="installSource"
-              type="text"
-              placeholder="https://github.com/user/repo.git"
-              class="flex-1"
-              @keydown.enter="handleInstall"
-            />
-            <Button
-              variant="primary"
-              size="sm"
-              :disabled="installing || !installSource.trim()"
-              @click="handleInstall"
-            >{{ installButtonLabel() }}</Button>
-          </div>
-          <div class="text-[10px] text-muted mt-1.5">
-            Git repository URL containing pi extension(s).
-          </div>
-        </template>
+        <!-- Install input (unified for all tabs) -->
+        <div class="flex items-center gap-2">
+          <Input
+            v-model="installSource"
+            type="text"
+            :placeholder="installTabs.find(t => t.key === installTab)?.placeholder ?? ''"
+            class="flex-1"
+            @keydown.enter="handleInstall"
+          />
+          <Button
+            variant="primary"
+            size="sm"
+            :disabled="installing || !installSource.trim()"
+            @click="handleInstall"
+          >{{ installButtonLabel() }}</Button>
+        </div>
+        <div class="text-[10px] text-muted mt-1.5">
+          {{ installTabs.find(t => t.key === installTab)?.hint }}
+        </div>
 
         <!-- Error display with hint -->
         <div v-if="installError" class="mt-1.5">

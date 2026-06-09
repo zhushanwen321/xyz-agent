@@ -106,9 +106,12 @@ function resolveToolCall(refId: string): ToolCall | undefined {
 const filteredBlocks = computed(() => {
   if (!activeChipFilter.value) return props.blocks
   const filter = activeChipFilter.value
+  // Find the chip to determine filter strategy by variant
+  const chip = chips.value.find(c => c.label === filter)
+  if (!chip) return props.blocks
   return props.blocks.filter(b => {
-    if (filter === '思考') return b.type === 'thinking'
-    // Tool chip: filter by toolName
+    if (chip.variant === 'thinking') return b.type === 'thinking'
+    // Tool chip: filter by toolName (chip.label === toolName)
     const tc = b.type === 'toolCall' ? resolveToolCall(b.refId) : undefined
     return tc?.toolName === filter
   })
