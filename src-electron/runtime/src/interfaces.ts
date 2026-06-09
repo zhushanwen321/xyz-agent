@@ -125,6 +125,7 @@ export interface ISessionService {
 /** Provider / Skill / Agent CRUD and tool permissions. */
 export interface IConfigService {
   listProviders(): ProviderInfo[]
+  getDefaultModel(): { provider: string; modelId: string } | null
   setProvider(providerId: string, data: {
     name?: string
     type?: string

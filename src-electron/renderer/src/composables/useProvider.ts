@@ -1,5 +1,6 @@
 import { onMounted, onUnmounted, getCurrentInstance } from 'vue'
 import { useProviderStore } from '../stores/provider'
+import { useSettingsStore } from '../stores/settings'
 import { on, off } from '../lib/event-bus'
 import { send } from '../lib/ws-client'
 import type { ServerMessage, ProviderInfo, ModelInfo, SkillInfo, AgentInfo, ScannedSkillInfo, ScannedAgentInfo, SetProviderData } from '@xyz-agent/shared'
@@ -23,6 +24,7 @@ function unregisterGlobalListeners() {
 
 export function useProvider() {
   const store = useProviderStore()
+  const settingsStore = useSettingsStore()
 
   function onProviders(msg: ServerMessage) {
     const payload = msg.payload as { providers?: ProviderInfo[] }
@@ -65,10 +67,18 @@ export function useProvider() {
     // server broadcasts updated agent list via config.agents
   }
 
+  function onDefaults(msg: ServerMessage) {
+    const payload = msg.payload as { defaultModel?: string }
+    if (payload.defaultModel && !settingsStore.defaultModel) {
+      settingsStore.defaultModel = payload.defaultModel
+    }
+  }
+
   const handlers: Record<string, (msg: ServerMessage) => void> = {
     'config.providers': onProviders,
     'config.providerUpdated': onProviders,
     'model.list': onModels,
+    'config.defaults': onDefaults,
     'config.skills': onSkills,
     'config.agents': onAgents,
     'config.scannedSkills': onScannedSkills,

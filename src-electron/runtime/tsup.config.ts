@@ -23,7 +23,7 @@ export default defineConfig({
   // 规则：新增 npm 依赖时必须加入此列表，否则 asar.unpacked 运行时找不到
   // 检查：scripts/validate-runtime-bundle.sh（pre-commit 自动触发）
   // ══════════════════════════════════════════════════════════════
-  noExternal: ['ws', 'semver', 'fast-glob'],
+  noExternal: ['ws', 'semver', 'fast-glob', 'tar'],
   // platform: 'node' 已自动处理所有 node:* 内置模块，无需手动 external
   external: [],
   splitting: false,

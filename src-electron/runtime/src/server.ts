@@ -145,6 +145,13 @@ export class SidecarServer implements IMessageBroker {
     // eslint-disable-next-line taste/no-silent-catch -- init: best-effort, single failure must not block others
     } catch (e) { console.error('[runtime] sendInitialState: config.providers/model.list failed:', e) }
     try {
+      const defaultModel = this.configService.getDefaultModel()
+      if (defaultModel) {
+        this.send(ws, { type: 'config.defaults', id: this.nextPushId(), payload: { defaultModel: `${defaultModel.provider}/${defaultModel.modelId}` } })
+      }
+    // eslint-disable-next-line taste/no-silent-catch -- init: best-effort, single failure must not block others
+    } catch (e) { console.error('[runtime] sendInitialState: config.defaults failed:', e) }
+    try {
       const skills = this.configService.loadSkills(this.projectRoot)
       this.send(ws, { type: 'config.skills', id: this.nextPushId(), payload: { skills } })
     // eslint-disable-next-line taste/no-silent-catch -- init: best-effort, single failure must not block others

@@ -177,7 +177,7 @@ export type ServerMessageType =
   | 'message.tool_call_start' | 'message.tool_call_end' | 'message.tool_call_pending'
   | 'message.complete' | 'message.error' | 'message.status'
   | 'context.update'
-  | 'config.providers' | 'config.providerUpdated' | 'config.discoveredModels'
+  | 'config.providers' | 'config.providerUpdated' | 'config.discoveredModels' | 'config.defaults'
   | 'config.scannedSkills' | 'config.skillUpdated' | 'config.skillDeleted'
   | 'config.scannedAgents' | 'config.agentUpdated' | 'config.agentDeleted'
   | 'config.skills' | 'config.agents'

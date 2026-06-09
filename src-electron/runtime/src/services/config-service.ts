@@ -86,6 +86,10 @@ export class ConfigService implements IConfigService {
 
   // ── Provider CRUD ──────────────────────────────────────────────
 
+  getDefaultModel(): { provider: string; modelId: string } | null {
+    return piBridge.getDefaultModel()
+  }
+
   listProviders(): ProviderInfo[] {
     const models = piBridge.readModels()
     // eslint-disable-next-line taste/no-unsafe-object-entries -- providers is a known schema Record<string, PiProviderConfig>, not arbitrary user input
