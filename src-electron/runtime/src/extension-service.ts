@@ -235,7 +235,7 @@ export class ExtensionService {
       await installPackage(pkgName, nodeModulesDir, { timeout: NPM_INSTALL_TIMEOUT })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      const code = e instanceof NpmInstallError ? (e.code === 'extract' ? 'network' as const : e.code) : this.classifyNpmError(msg)
+      const code = e instanceof NpmInstallError ? (e.code === 'extract' || e.code === 'integrity' ? 'network' as const : e.code) : this.classifyNpmError(msg)
       throw new ExtensionInstallError(
         code,
         `npm install failed: ${msg}`,

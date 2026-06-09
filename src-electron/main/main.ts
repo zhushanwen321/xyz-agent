@@ -30,7 +30,7 @@ if (isDev) {
   process.env.XYZ_AGENT_PORT_OFFSET = process.env.XYZ_AGENT_PORT_OFFSET ?? String(DEV_PORT_OFFSET)
   // 隔离 Electron userData，防止与 prod 实例共享 Chromium 存储（LevelDB LOCK 竞争、
   // localStorage/Session Storage/Preferences 互相覆盖等）
-  app.setPath('userData', path.join(homedir(), '.xyz-agent-electron-dev'))
+  app.setPath('userData', path.join(homedir(), '.xyz-agent-dev', 'electron'))
   console.log(
     '[main] dev mode: isolated data dir =', process.env.XYZ_AGENT_DATA_DIR,
     ', port offset =', process.env.XYZ_AGENT_PORT_OFFSET,

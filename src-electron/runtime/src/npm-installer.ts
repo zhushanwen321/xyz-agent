@@ -7,11 +7,12 @@
  * 原理：npm registry API 获取元数据 + HTTP 下载 tarball + tar 解压 +
  * 递归依赖安装（flat node_modules 布局）。
  */
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, renameSync } from 'node:fs'
 import { join } from 'node:path'
 import http from 'node:http'
 import https from 'node:https'
 import { createGunzip } from 'node:zlib'
+import crypto from 'node:crypto'
 import semver from 'semver'
 import { extract as tarExtract } from 'tar'
 
@@ -45,12 +46,69 @@ export interface NpmInstallOptions {
 }
 
 export class NpmInstallError extends Error {
-  readonly code: 'not_found' | 'network' | 'extract'
+  readonly code: 'not_found' | 'network' | 'extract' | 'integrity'
 
-  constructor(code: 'not_found' | 'network' | 'extract', message: string) {
+  constructor(code: 'not_found' | 'network' | 'extract' | 'integrity', message: string) {
     super(message)
     this.name = 'NpmInstallError'
     this.code = code
+  }
+}
+
+// ── SSRF 防护 ────────────────────────────────────────────────
+
+/** 内网 / 特殊用途 IP 段，禁止 HTTP 请求访问 */
+const PRIVATE_IP_RANGES = [
+  /^0\./,                        // 0.0.0.0/8
+  /^10\./,                       // 10.0.0.0/8
+  /^127\./,                      // 127.0.0.0/8
+  /^169\.254\./,                 // 169.254.0.0/16 (link-local)
+  /^172\.(1[6-9]|2\d|3[01])\./, // 172.16.0.0/12
+  /^192\.0\.2\./,                // 192.0.2.0/24 (TEST-NET-1)
+  /^192\.168\./,                 // 192.168.0.0/16
+  /^198\.51\.100\./,             // 198.51.100.0/24 (TEST-NET-2)
+  /^203\.0\.113\./,              // 203.0.113.0/24 (TEST-NET-3)
+  /^22[4-9]\./,                  // 224.0.0.0/4 (multicast)
+  /^23[0-9]\./,                  // 239.0.0.0/8 (multicast)
+  /^24[0-9]\./,                  // 240.0.0.0/4 (reserved)
+  /^25[0-5]\./,                  // 255.0.0.0/8 (broadcast)
+]
+
+function isPrivateIp(ip: string): boolean {
+  return PRIVATE_IP_RANGES.some(re => re.test(ip))
+}
+
+/** 校验 URL host 不是内网地址，防止 SSRF */
+function validateUrlHost(urlStr: string): void {
+  let parsed: URL
+  try {
+    parsed = new URL(urlStr)
+  } catch {
+    throw new NpmInstallError('network', `Invalid URL: ${urlStr}`)
+  }
+
+  // 只允许 https（registry 和 tarball 都走 HTTPS）
+  if (parsed.protocol !== 'https:') {
+    throw new NpmInstallError('network', `Blocked non-HTTPS URL: ${urlStr}`)
+  }
+
+  const hostname = parsed.hostname
+
+  // IPv6 loopback / link-local
+  if (hostname.startsWith('[')) {
+    const bare = hostname.replace(/^\[|\]$/g, '')
+    if (bare === '::1' || bare.startsWith('fe80:') || bare.startsWith('fc00:') || bare.startsWith('fd')) {
+      throw new NpmInstallError('network', `Blocked private IP in URL: ${urlStr}`)
+    }
+    return
+  }
+
+  // 纯域名（含字母）— 不做 IP 检查，由 DNS + HTTPS 保障
+  if (/[a-zA-Z]/.test(hostname)) return
+
+  // 纯 IP 地址
+  if (isPrivateIp(hostname)) {
+    throw new NpmInstallError('network', `Blocked private IP in URL: ${urlStr}`)
   }
 }
 
@@ -80,7 +138,7 @@ function httpGet(url: string, timeout?: number): Promise<http.IncomingMessage> {
   })
 }
 
-/** 跟随 HTTP 重定向（最多 MAX_REDIRECTS 次） */
+/** 跟随 HTTP 重定向（最多 MAX_REDIRECTS 次），带 SSRF 校验 */
 async function followRedirects(
   res: http.IncomingMessage,
   timeout?: number,
@@ -96,6 +154,8 @@ async function followRedirects(
     if (!location) {
       throw new NpmInstallError('network', `Redirect ${status} with no Location header`)
     }
+    // SSRF: 校验重定向目标
+    validateUrlHost(location)
     const next = await httpGet(location, timeout)
     return followRedirects(next, timeout, remaining - 1)
   }
@@ -169,55 +229,141 @@ function resolveVersion(metadata: PackageMetadata, range?: string): string {
   return metadata['dist-tags'].latest
 }
 
+// ── 完整性校验 ────────────────────────────────────────────────
+
+/** 校验 tarball 的 SRI integrity 或 shasum */
+function verifyIntegrity(
+  buffer: Buffer,
+  dist: { integrity?: string; shasum?: string },
+  packageName: string,
+): void {
+  if (dist.integrity) {
+    // SRI 格式: "sha512-<base64>" 或 "sha384-<base64>"
+    const match = dist.integrity.match(/^(\w+)-([a-zA-Z0-9+/=]+)$/)
+    if (match) {
+      const [, algo, expectedBase64] = match
+      if (crypto.getHashes().includes(algo)) {
+        const hash = crypto.createHash(algo).update(buffer).digest('base64')
+        if (hash !== expectedBase64) {
+          throw new NpmInstallError(
+            'integrity',
+            `Integrity check failed for ${packageName}: expected ${dist.integrity}, got ${algo}-${hash}`,
+          )
+        }
+      }
+    }
+  } else if (dist.shasum) {
+    // shasum 是 hex 编码的 SHA-1
+    const hash = crypto.createHash('sha1').update(buffer).digest('hex')
+    if (hash !== dist.shasum) {
+      throw new NpmInstallError(
+        'integrity',
+        `Shasum check failed for ${packageName}: expected ${dist.shasum}, got ${hash}`,
+      )
+    }
+  }
+  // 两者都没有时不校验（极少数老旧包可能缺失）
+}
+
 // ── Tarball 下载 + 解压 ──────────────────────────────────────
 
 async function downloadAndExtract(
   tarballUrl: string,
   targetDir: string,
+  dist: { integrity?: string; shasum?: string },
+  packageName: string,
   timeout?: number,
 ): Promise<void> {
-  // 清理旧目录，避免残留文件
-  if (existsSync(targetDir)) {
-    rmSync(targetDir, { recursive: true, force: true })
+  // SSRF: 校验 tarball URL
+  validateUrlHost(tarballUrl)
+
+  // 原子下载：先解压到 .tmp 目录，成功后 rename 到目标位置
+  const tmpDir = `${targetDir}.tmp`
+  // 清理残留的 .tmp 目录
+  if (existsSync(tmpDir)) {
+    rmSync(tmpDir, { recursive: true, force: true })
   }
-  mkdirSync(targetDir, { recursive: true })
+  mkdirSync(tmpDir, { recursive: true })
 
   const res = await httpGet(tarballUrl, timeout)
   const final = await followRedirects(res, timeout)
 
   if (final.statusCode !== HTTP_OK) {
+    rmSync(tmpDir, { recursive: true, force: true })
     throw new NpmInstallError('network', `Tarball download failed: HTTP ${final.statusCode}`)
   }
 
-  return new Promise<void>((resolve, reject) => {
-    const gunzip = createGunzip()
-    const extract = tarExtract({ cwd: targetDir, strip: 1 })
+  // 如果有 integrity/shasum，先完整下载到 buffer 校验，再解压
+  const needsIntegrityCheck = Boolean(dist.integrity || dist.shasum)
 
-    gunzip.on('error', (err) => {
-      reject(new NpmInstallError('extract', `Gunzip failed: ${err.message}`))
-    })
-    extract.on('error', (err) => {
-      reject(new NpmInstallError('extract', `Tar extract failed: ${err.message}`))
-    })
-    extract.on('finish', resolve)
+  try {
+    if (needsIntegrityCheck) {
+      // 下载到内存，校验完整性，再写入 tmp 目录
+      const buffer = await new Promise<Buffer>((resolve, reject) => {
+        const chunks: Buffer[] = []
+        final.on('data', (chunk: Buffer) => { chunks.push(chunk) })
+        final.on('end', () => { resolve(Buffer.concat(chunks)) })
+        final.on('error', reject)
+      })
+      verifyIntegrity(buffer, dist, packageName)
 
-    final.pipe(gunzip).pipe(extract as unknown as NodeJS.WritableStream)
-  })
+      // 校验通过，解压到 tmp 目录
+      await new Promise<void>((resolve, reject) => {
+        const gunzip = createGunzip()
+        const extract = tarExtract({ cwd: tmpDir, strip: 1 })
+        gunzip.on('error', (err) => {
+          reject(new NpmInstallError('extract', `Gunzip failed: ${err.message}`))
+        })
+        extract.on('error', (err) => {
+          reject(new NpmInstallError('extract', `Tar extract failed: ${err.message}`))
+        })
+        extract.on('finish', resolve)
+        gunzip.write(buffer)
+        gunzip.end()
+        gunzip.pipe(extract as unknown as NodeJS.WritableStream)
+      })
+    } else {
+      // 无 integrity 信息，直接流式解压
+      await new Promise<void>((resolve, reject) => {
+        const gunzip = createGunzip()
+        const extract = tarExtract({ cwd: tmpDir, strip: 1 })
+        gunzip.on('error', (err) => {
+          reject(new NpmInstallError('extract', `Gunzip failed: ${err.message}`))
+        })
+        extract.on('error', (err) => {
+          reject(new NpmInstallError('extract', `Tar extract failed: ${err.message}`))
+        })
+        extract.on('finish', resolve)
+        final.pipe(gunzip).pipe(extract as unknown as NodeJS.WritableStream)
+      })
+    }
+
+    // 解压成功，原子替换目标目录
+    if (existsSync(targetDir)) {
+      rmSync(targetDir, { recursive: true, force: true })
+    }
+    renameSync(tmpDir, targetDir)
+  } catch (e) {
+    // 清理失败的 tmp 目录
+    if (existsSync(tmpDir)) {
+      rmSync(tmpDir, { recursive: true, force: true })
+    }
+    throw e
+  }
 }
 
-// ── 公开 API ──────────────────────────────────────────────────
+// ── 内部递归安装 ──────────────────────────────────────────────
 
 /**
- * 安装 npm 包及其依赖到 node_modules 目录。
- * 使用 flat node_modules 布局（类似 npm v3+）。
+ * 递归安装 npm 包及其依赖。
+ * 内部函数，installed 集合在递归调用间共享。
  */
-export async function installPackage(
+async function installPackageRecursive(
   spec: string,
   nodeModulesDir: string,
-  options?: NpmInstallOptions,
-  _installed?: Set<string>,
+  options: NpmInstallOptions | undefined,
+  installed: Set<string>,
 ): Promise<void> {
-  const installed = _installed ?? new Set()
   const { name, range } = parseSpec(spec)
 
   if (installed.has(name)) return
@@ -236,14 +382,14 @@ export async function installPackage(
   // 目标目录（scoped 包需创建 @scope/ 子目录）
   const pkgDir = join(nodeModulesDir, name)
 
-  // 下载 + 解压
-  await downloadAndExtract(manifest.dist.tarball, pkgDir, options?.timeout)
+  // 下载 + 解压（原子操作）
+  await downloadAndExtract(manifest.dist.tarball, pkgDir, manifest.dist, name, options?.timeout)
 
   // 递归安装 dependencies（仅生产依赖，跳过 peer/dev/optional）
   const deps = manifest.dependencies ?? {}
   for (const [depName, depRange] of Object.entries(deps)) {
     try {
-      await installPackage(`${depName}@${depRange}`, nodeModulesDir, options, installed)
+      await installPackageRecursive(`${depName}@${depRange}`, nodeModulesDir, options, installed)
     } catch (e) { // eslint-disable-line taste/no-silent-catch
       // 传递依赖安装失败不阻塞主包。仅记录错误继续安装其他依赖。
       console.warn(
@@ -252,6 +398,20 @@ export async function installPackage(
       )
     }
   }
+}
+
+// ── 公开 API ──────────────────────────────────────────────────
+
+/**
+ * 安装 npm 包及其依赖到 node_modules 目录。
+ * 使用 flat node_modules 布局（类似 npm v3+）。
+ */
+export async function installPackage(
+  spec: string,
+  nodeModulesDir: string,
+  options?: NpmInstallOptions,
+): Promise<void> {
+  return installPackageRecursive(spec, nodeModulesDir, options, new Set())
 }
 
 /**
@@ -288,7 +448,7 @@ export async function installDependencies(
 
   for (const [depName, depRange] of Object.entries(deps)) {
     try {
-      await installPackage(`${depName}@${depRange}`, nodeModulesDir, options, installed)
+      await installPackageRecursive(`${depName}@${depRange}`, nodeModulesDir, options, installed)
     } catch (e) { // eslint-disable-line taste/no-silent-catch
       // 传递依赖安装失败不阻塞主包。仅记录错误继续安装其他依赖。
       console.warn(

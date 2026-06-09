@@ -12,8 +12,8 @@ vi.mock('../src/npm-installer.js', () => ({
   uninstallPackage: vi.fn(),
   installDependencies: vi.fn(),
   NpmInstallError: class extends Error {
-    code: 'not_found' | 'network' | 'extract'
-    constructor(code: 'not_found' | 'network' | 'extract', message: string) {
+    code: 'not_found' | 'network' | 'extract' | 'integrity'
+    constructor(code: 'not_found' | 'network' | 'extract' | 'integrity', message: string) {
       super(message)
       this.code = code
       this.name = 'NpmInstallError'
