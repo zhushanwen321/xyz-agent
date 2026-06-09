@@ -35,7 +35,7 @@ export class SidecarServer implements IMessageBroker {
   private configService!: IConfigService
   private modelService!: IModelService
   private treeService!: import('./services/tree-service.js').TreeService
-  private extensionService!: IExtensionService
+  private extensionService?: IExtensionService
   private pluginService!: IPluginService
 
   // ── Extension UI request timeout tracking ───────────────────────

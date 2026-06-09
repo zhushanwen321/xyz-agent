@@ -231,6 +231,7 @@ describe('Protocol: extension types', () => {
   it('ExtensionInfo has correct shape', () => {
     const info: ExtensionInfo = {
       name: 'my-extension',
+      dirName: 'my-extension',
       version: '1.0.0',
       description: 'A test extension',
       path: '/path/to/ext',
@@ -243,6 +244,7 @@ describe('Protocol: extension types', () => {
 
     const userInfo: ExtensionInfo = {
       name: 'user-ext',
+      dirName: 'user-ext',
       version: '0.1.0',
       description: '',
       path: '/other/path',

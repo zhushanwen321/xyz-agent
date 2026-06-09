@@ -153,7 +153,7 @@ export class ExtensionService {
 
       // 判断 source：路径在 settings packages[] 中则为 user-installed
       const sourceKey = `npm:${name}`
-      const isUserInstalled = packages.some(p => p === `npm:${name}` || p === sourceKey)
+      const isUserInstalled = packages.includes(sourceKey)
       const isDisabled = disabledSet.has(sourceKey)
 
       extensions.push({
@@ -181,8 +181,16 @@ export class ExtensionService {
 
     // 过滤禁用项
     const filtered = result.extensionDirs.filter(dir => {
-      const dirName = basename(dir)
-      return !disabledSet.has(`npm:${dirName}`)
+      // Use package.json name (not basename) for scoped package support
+      let pkgName = basename(dir)
+      try {
+        const raw = readFileSync(join(dir, 'package.json'), 'utf-8')
+        const pkg = JSON.parse(raw) as { name?: string }
+        if (pkg.name) pkgName = pkg.name
+      } catch {
+        log.debug(`[extension-service] getExtensionPaths: failed to read package.json in ${dir}`)
+      }
+      return !disabledSet.has(`npm:${pkgName}`)
     })
 
     // 追加文件型 extension
