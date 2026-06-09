@@ -138,13 +138,13 @@ function toggleStandaloneTool(tool: string, checked: boolean) {
             </div>
           </div>
           <div class="flex flex-wrap gap-x-4 gap-y-1 px-4 pb-2">
-            <label v-for="tool in ALL_PI_TOOLS" :key="tool" class="flex items-center gap-1.5 cursor-pointer text-[11px] text-muted">
+            <div v-for="tool in ALL_PI_TOOLS" :key="tool" class="flex items-center gap-1.5 cursor-pointer text-[11px] text-muted">
               <Toggle
                 :checked="settingsStore.standaloneTools.includes(tool)"
                 @update:checked="toggleStandaloneTool(tool, $event)"
               />
               <span class="font-mono">{{ tool }}</span>
-            </label>
+            </div>
           </div>
         </template>
       </div>

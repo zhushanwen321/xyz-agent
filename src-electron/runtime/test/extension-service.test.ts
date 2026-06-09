@@ -271,13 +271,14 @@ describe('ExtensionService', () => {
 
       const result = await service.installLocalDirectory(sourceDir)
 
-      expect(result.tempDir).toContain('ext-scan-')
-      expect(result.candidates).toHaveLength(1)
-      expect(result.candidates[0].name).toBe('pi-my-ext')
-      expect(result.candidates[0].version).toBe('1.0.0')
-
-      // Cleanup
-      try { rmSync(result.tempDir, { recursive: true, force: true }) } catch { /* ignore */ }
+      try {
+        expect(result.tempDir).toContain('ext-scan-')
+        expect(result.candidates).toHaveLength(1)
+        expect(result.candidates[0].name).toBe('pi-my-ext')
+        expect(result.candidates[0].version).toBe('1.0.0')
+      } finally {
+        try { rmSync(result.tempDir, { recursive: true, force: true }) } catch { /* ignore */ }
+      }
     })
 
     it('discovers extensions from a directory that IS a pi extension itself', async () => {
@@ -292,11 +293,12 @@ describe('ExtensionService', () => {
 
       const result = await service.installLocalDirectory(sourceDir)
 
-      expect(result.candidates).toHaveLength(1)
-      expect(result.candidates[0].name).toBe('pi-direct-ext')
-
-      // Cleanup
-      try { rmSync(result.tempDir, { recursive: true, force: true }) } catch { /* ignore */ }
+      try {
+        expect(result.candidates).toHaveLength(1)
+        expect(result.candidates[0].name).toBe('pi-direct-ext')
+      } finally {
+        try { rmSync(result.tempDir, { recursive: true, force: true }) } catch { /* ignore */ }
+      }
     })
 
     it('returns empty candidates when no valid extensions found', async () => {
@@ -305,10 +307,11 @@ describe('ExtensionService', () => {
 
       const result = await service.installLocalDirectory(sourceDir)
 
-      expect(result.candidates).toHaveLength(0)
-
-      // Cleanup
-      try { rmSync(result.tempDir, { recursive: true, force: true }) } catch { /* ignore */ }
+      try {
+        expect(result.candidates).toHaveLength(0)
+      } finally {
+        try { rmSync(result.tempDir, { recursive: true, force: true }) } catch { /* ignore */ }
+      }
     })
   })
 
@@ -326,7 +329,7 @@ describe('ExtensionService', () => {
       // Mock: when git clone is called via execFileSync, create the extension structure in the target dir
       mockedExecFileSync.mockImplementation((_cmd: string, args?: readonly string[]) => {
         if (args?.[0] === 'clone') {
-          // args = ['clone', '--depth', '1', url, tempDir]
+          // git clone args: ['clone', '--depth', '1', url, targetDir]
           const targetDir = args[4] ?? ''
           if (targetDir) {
             mkdirSync(targetDir, { recursive: true })

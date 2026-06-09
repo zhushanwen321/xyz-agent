@@ -345,3 +345,13 @@ export interface PluginConfigPayload {
   pluginId: string
   config: Record<string, unknown>
 }
+
+// ── StopReason / SendMode helpers ─────────────────────────────
+
+/** Possible reasons a stream completed */
+export type StopReason = 'complete' | 'aborted' | 'error' | 'length' | 'tool_use' | string
+
+/** UI send mode → protocol send mode mapping */
+export function toProtocolSendMode(mode: string): string {
+  return mode === 'queue' ? 'follow-up' : mode
+}

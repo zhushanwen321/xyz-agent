@@ -22,7 +22,7 @@ const installTab = ref<'npm' | 'local' | 'git'>('npm')
 const discoveredCandidates = ref<ExtensionInfo[]>([])
 const discoveryTempDir = ref('')
 const selectedCandidates = ref<string[]>([])
-const installPhase = ref<'idle' | 'discovering' | 'selecting' | 'installing' | 'done'>('idle')
+const installPhase = ref<'idle' | 'discovering' | 'selecting' | 'installing'>('idle')
 const INSTALL_TIMEOUT_MS = 60_000
 let installTimeout: ReturnType<typeof setTimeout> | undefined
 

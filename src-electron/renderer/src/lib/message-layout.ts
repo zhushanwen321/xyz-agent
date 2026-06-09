@@ -137,6 +137,10 @@ function groupByContentBlocks(msg: Message, standaloneTools: Set<string>): Assis
 
 /** Legacy grouping: adjacent same-type merge (compactStreaming=false path) */
 function groupByContentBlocksLegacy(msg: Message): AssistantSection[] {
+  // NOTE: contentBlock types 'merge', 'standalone', 'customTool' only appear in compact mode.
+  // This legacy path only produces 'thinking', 'toolCall', 'text' sections.
+  // If future code accidentally passes compact types here, they would be rendered
+  // as unknown sections — consider adding a fallback if that becomes a concern.
   const sections: AssistantSection[] = []
   let current: AssistantSection | null = null
 

@@ -5,6 +5,7 @@ export type {
   ExtensionUIRequestPayload, ExtensionUIResponsePayload,
   ExtensionErrorPayload, ToolCallUpdatePayload, ExtensionInfo,
   ExtensionDiscoveredPayload, ExtensionInstallErrorPayload,
+  StopReason, toProtocolSendMode,
   StatusBarItem, StatusSetUpdatePayload, PluginStatusBarUpdatePayload,
 } from './protocol'
 export type {

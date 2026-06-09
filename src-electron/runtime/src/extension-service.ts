@@ -17,7 +17,7 @@
  * 5. 清理临时目录
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, readdirSync, statSync, lstatSync, cpSync, rmSync, mkdtempSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, readdirSync, statSync, lstatSync, realpathSync, cpSync, rmSync, mkdtempSync } from 'node:fs'
 import { join, resolve, basename } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 import type { ExtensionInfo } from '@xyz-agent/shared'
@@ -374,15 +374,20 @@ export class ExtensionService {
       throw new Error(`Source path does not exist: ${absPath}`)
     }
 
+    // Use lstatSync to detect symlinks — resolve real target for path whitelist
+    const st = lstatSync(absPath)
+    const checkPath = st.isSymbolicLink() ? resolve(realpathSync(absPath)) : absPath
+
     if (!statSync(absPath).isDirectory()) {
       throw new Error(`Source path is not a directory: ${absPath}`)
     }
 
     // Restrict source path to safe directories (home or os.tmpdir())
+    // Check resolved path to prevent symlink bypass
     const homeDir = homedir()
-    const isUnderHome = absPath.startsWith(homeDir + '/') || absPath === homeDir
+    const isUnderHome = checkPath.startsWith(homeDir + '/') || checkPath === homeDir
     const sysTmpDir = tmpdir()
-    const isUnderTmp = absPath.startsWith(sysTmpDir + '/') || absPath === sysTmpDir
+    const isUnderTmp = checkPath.startsWith(sysTmpDir + '/') || checkPath === sysTmpDir
     if (!isUnderHome && !isUnderTmp) {
       throw new Error(`Source path must be under home directory or /tmp`)
     }
@@ -496,6 +501,8 @@ export class ExtensionService {
     for (const dirName of selected) {
       const srcDir = join(tempDir, dirName)
       const destDir = join(extensionsDir, dirName)
+      // Remove old version first to prevent residual files from previous installs
+      rmSync(destDir, { recursive: true, force: true })
       cpSync(srcDir, destDir, { recursive: true })
     }
 

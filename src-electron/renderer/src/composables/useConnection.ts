@@ -59,7 +59,7 @@ export function useConnection() {
       // Electron IPC: 监听 runtime 端口事件
       if (window.electronAPI) {
         removeRuntimePortListener = window.electronAPI.onRuntimePort((newPort) => {
-          if (newPort) {
+          if (newPort && state.value !== 'disconnected') {
             disconnect()
             connect('ws://localhost:' + newPort)
           }

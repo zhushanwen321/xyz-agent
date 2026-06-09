@@ -324,6 +324,8 @@ function handleSend() {
     const payload = { content: trimmed, sendMode: sendMode.value }
     emit('send', payload)
     manualMode.value = null
+    isCtrlPressed.value = false
+    isAltPressed.value = false
   }
   text.value = ''
   slashVisible.value = false

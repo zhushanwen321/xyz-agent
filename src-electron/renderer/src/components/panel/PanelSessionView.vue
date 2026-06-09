@@ -39,6 +39,7 @@ import { useTree } from '../../composables/useTree'
 import { useToolApproval } from '../../composables/useToolApproval'
 import { useModel } from '../../composables/useModel'
 import { useExtensionWidget } from '../../composables/useExtensionWidget'
+import { toProtocolSendMode } from '@xyz-agent/shared'
 import { on, off } from '../../lib/event-bus'
 import type { ServerMessage, ClientMessage, ExtensionWidgetPayload } from '@xyz-agent/shared'
 import type { PendingToolCall } from '../chat/ApprovalCard.vue'
@@ -113,7 +114,7 @@ function handleSend(payload: { content: string; skillName?: string; subagent?: {
     status: 'complete',
     timestamp: Date.now(),
     ...(payload.skillName ? { skillName: payload.skillName } : {}),
-    ...(payload.sendMode && payload.sendMode !== 'send' ? { sendMode: payload.sendMode === 'queue' ? 'follow-up' as const : payload.sendMode } : {}),
+    ...(payload.sendMode && payload.sendMode !== 'send' ? { sendMode: toProtocolSendMode(payload.sendMode) } : {}),
   }, sid)
 
   const mode = payload.sendMode ?? 'send'

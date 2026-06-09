@@ -33,7 +33,6 @@
     <Transition name="mode-popover">
       <div
         v-if="open"
-        ref="popoverRef"
         class="mode-popover-panel absolute bottom-full left-0 mb-1 min-w-[140px] rounded-sm border shadow-lg"
         role="listbox"
         :aria-activedescendant="`mode-option-${mode}`"

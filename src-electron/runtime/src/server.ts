@@ -405,6 +405,9 @@ export class SidecarServer implements IMessageBroker {
         }
         try {
           const { path: sourcePath } = msg.payload as { path: string }
+          if (typeof sourcePath !== 'string' || sourcePath.length === 0) {
+            return this.sendError(ws, 'invalid_payload', 'extension.installDir requires a non-empty "path" string', msg.id)
+          }
           const result = await this.extensionService.installLocalDirectory(sourcePath)
           return this.send(ws, { type: 'extension.discovered', id: msg.id, payload: { tempDir: result.tempDir, candidates: result.candidates } })
         } catch (e) {
@@ -417,6 +420,9 @@ export class SidecarServer implements IMessageBroker {
         }
         try {
           const { url } = msg.payload as { url: string }
+          if (typeof url !== 'string' || url.length === 0) {
+            return this.sendError(ws, 'invalid_payload', 'extension.installGit requires a non-empty "url" string', msg.id)
+          }
           const result = await this.extensionService.installGitRepository(url)
           return this.send(ws, { type: 'extension.discovered', id: msg.id, payload: { tempDir: result.tempDir, candidates: result.candidates } })
         } catch (e) {
@@ -429,6 +435,9 @@ export class SidecarServer implements IMessageBroker {
         }
         try {
           const { tempDir, selected } = msg.payload as { tempDir: string; selected: string[] }
+          if (typeof tempDir !== 'string' || !Array.isArray(selected)) {
+            return this.sendError(ws, 'invalid_payload', 'extension.finishInstall requires tempDir (string) and selected (string[])', msg.id)
+          }
           await this.extensionService.finishInstall(tempDir, selected)
           const extensions = await this.extensionService.scanExtensions()
           return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions } })
@@ -442,6 +451,9 @@ export class SidecarServer implements IMessageBroker {
         }
         try {
           const { tempDir } = msg.payload as { tempDir: string }
+          if (typeof tempDir !== 'string' || tempDir.length === 0) {
+            return this.sendError(ws, 'invalid_payload', 'extension.cancelInstall requires a non-empty "tempDir" string', msg.id)
+          }
           await this.extensionService.cancelInstall(tempDir)
           return this.send(ws, { type: 'extension.installCancelled', id: msg.id, payload: {} })
         } catch (e) {

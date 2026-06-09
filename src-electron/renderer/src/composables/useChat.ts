@@ -9,6 +9,7 @@ import type {
   ExtensionErrorPayload, ToolCallUpdatePayload,
 } from '@xyz-agent/shared'
 import { createSystemNotification } from '../lib/system-notification'
+import type { StopReason } from '@xyz-agent/shared'
 
 const RADIX_36 = 36
 const SUBSTRING_START = 2
@@ -172,7 +173,7 @@ function createGlobalHandlers() {
     if (usage?.totalTokens) {
       store.setTokenUsage(usage.totalTokens, sid)
     }
-    const stopReason = msg.payload.stopReason as string | undefined
+    const stopReason = msg.payload.stopReason as StopReason | undefined
     store.completeStream({ stopReason }, sid)
   }
 
