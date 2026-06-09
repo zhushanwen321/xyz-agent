@@ -20,6 +20,12 @@ import { extract as tarExtract } from 'tar'
 const DEFAULT_REGISTRY = 'https://registry.npmjs.org'
 const DEFAULT_TIMEOUT = 60_000
 const MAX_REDIRECTS = 5
+// HTTP status codes used in response handling
+const HTTP_OK = 200
+const HTTP_NOT_FOUND = 404
+const HTTP_REDIRECT_LOW = 301
+const HTTP_REDIRECT_HIGH = 308
+const HTTP_NOT_MODIFIED = 304
 
 // ── 类型 ──────────────────────────────────────────────────────
 
@@ -81,7 +87,7 @@ async function followRedirects(
   remaining = MAX_REDIRECTS,
 ): Promise<http.IncomingMessage> {
   const status = res.statusCode ?? 0
-  if (status >= 301 && status <= 308 && status !== 304) {
+  if (status >= HTTP_REDIRECT_LOW && status <= HTTP_REDIRECT_HIGH && status !== HTTP_NOT_MODIFIED) {
     if (remaining <= 0) {
       throw new NpmInstallError('network', 'Too many redirects')
     }
@@ -100,10 +106,10 @@ async function fetchJson<T>(url: string, timeout?: number): Promise<T> {
   const res = await httpGet(url, timeout)
   const final = await followRedirects(res, timeout)
 
-  if (final.statusCode === 404) {
-    throw new NpmInstallError('not_found', `Package not found (404)`)
+  if (final.statusCode === HTTP_NOT_FOUND) {
+    throw new NpmInstallError('not_found', `Package not found (${HTTP_NOT_FOUND})`)
   }
-  if (final.statusCode !== 200) {
+  if (final.statusCode !== HTTP_OK) {
     throw new NpmInstallError('network', `HTTP ${final.statusCode}`)
   }
 
@@ -179,7 +185,7 @@ async function downloadAndExtract(
   const res = await httpGet(tarballUrl, timeout)
   const final = await followRedirects(res, timeout)
 
-  if (final.statusCode !== 200) {
+  if (final.statusCode !== HTTP_OK) {
     throw new NpmInstallError('network', `Tarball download failed: HTTP ${final.statusCode}`)
   }
 
@@ -238,8 +244,8 @@ export async function installPackage(
   for (const [depName, depRange] of Object.entries(deps)) {
     try {
       await installPackage(`${depName}@${depRange}`, nodeModulesDir, options, installed)
-    } catch (e) {
-      // 传递依赖安装失败不阻塞主包，记录警告继续
+    } catch (e) { // eslint-disable-line taste/no-silent-catch
+      // 传递依赖安装失败不阻塞主包。仅记录错误继续安装其他依赖。
       console.warn(
         `[npm-installer] Failed to install dependency ${depName}@${depRange}:`,
         e instanceof Error ? e.message : String(e),
@@ -283,7 +289,8 @@ export async function installDependencies(
   for (const [depName, depRange] of Object.entries(deps)) {
     try {
       await installPackage(`${depName}@${depRange}`, nodeModulesDir, options, installed)
-    } catch (e) {
+    } catch (e) { // eslint-disable-line taste/no-silent-catch
+      // 传递依赖安装失败不阻塞主包。仅记录错误继续安装其他依赖。
       console.warn(
         `[npm-installer] Failed to install dependency ${depName}:`,
         e instanceof Error ? e.message : String(e),
