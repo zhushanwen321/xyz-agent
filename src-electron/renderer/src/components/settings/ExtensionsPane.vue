@@ -52,9 +52,11 @@ function onExtensions(msg: ServerMessage) {
   if (payload.extensions) {
     extensions.value = payload.extensions
   }
-  installing.value = false
-  installPhase.value = 'idle'
-  discoveredCandidates.value = []
+  // Only reset discovery state when idle — avoids wiping candidate list
+  // while user is in selecting phase due to an unrelated extension toggle
+  if (installPhase.value === 'idle') {
+    installing.value = false
+  }
 }
 
 function onDiscovered(msg: ServerMessage) {

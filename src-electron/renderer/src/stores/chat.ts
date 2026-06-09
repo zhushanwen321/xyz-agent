@@ -183,6 +183,8 @@ export const useChatStore = defineStore('chat', () => {
             : { ...th, collapsed: true, endTime: th.endTime ?? completedAt }
         ),
       }
+      // DESIGN: only 'aborted' sets isInterrupted. Other stopReasons (complete/error/length/tool_use)
+      // represent normal termination and don't need visual interruption markers.
       if (opts?.stopReason === 'aborted') {
         cleaned.isInterrupted = true
       }

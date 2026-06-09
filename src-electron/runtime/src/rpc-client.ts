@@ -1,15 +1,16 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { getDefaultModel, getSessionsDir, getPiAgentDir } from './pi-config-bridge.js'
+import { ENV_WHITELIST_PREFIXES } from '@xyz-agent/shared'
 
-/** 子进程允许继承的环境变量前缀白名单 */
-const ENV_WHITELIST_PREFIXES = ['PATH', 'HOME', 'USER', 'LANG', 'TERM', 'NODE_', 'NVM_', 'XYZ_', 'XDG_', 'APPDATA', 'LOCALAPPDATA', 'PROGRAMFILES', 'SYSTEMROOT', 'TEMP', 'TMP']
+/** 子进程允许继承的环境变量前缀白名单 — uses shared list */
+const ENV_WHITELIST = ENV_WHITELIST_PREFIXES
 
 /** 构建最小权限的环境变量：只继承白名单前缀 + 额外指定变量 */
 function buildSafeEnv(extras: Record<string, string | undefined>): Record<string, string> {
   const safe: Record<string, string> = {}
   for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined && ENV_WHITELIST_PREFIXES.some(prefix => key.startsWith(prefix) || key === prefix)) {
+    if (value !== undefined && ENV_WHITELIST.some(prefix => key.startsWith(prefix) || key === prefix)) {
       safe[key] = value
     }
   }

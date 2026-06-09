@@ -19,6 +19,8 @@ export function useLiveTimer(intervalMs = DEFAULT_INTERVAL_MS) {
     if (timer !== undefined) { clearInterval(timer); timer = undefined }
   }
 
+  // CONSTRAINT: onBeforeUnmount only works when called during Vue component setup().
+  // If used outside setup (e.g. plain .ts utility), caller must manually call stop().
   onBeforeUnmount(stop)
 
   return { now, start, stop }

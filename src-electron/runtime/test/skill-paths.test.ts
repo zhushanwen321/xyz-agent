@@ -73,6 +73,11 @@ vi.mock('../src/trash.js', () => ({
   trash: vi.fn(),
 }))
 
+// Mock @xyz-agent/shared — provide constants needed by rpc-client
+vi.mock('@xyz-agent/shared', () => ({
+  ENV_WHITELIST_PREFIXES: ['PATH', 'HOME', 'USER', 'LANG', 'TERM', 'NODE_', 'NVM_', 'XYZ_', 'XDG_', 'APPDATA', 'LOCALAPPDATA', 'PROGRAMFILES', 'SYSTEMROOT', 'TEMP', 'TMP'],
+}))
+
 // Mock node:os — keep all real exports, override homedir
 vi.mock('node:os', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:os')>()

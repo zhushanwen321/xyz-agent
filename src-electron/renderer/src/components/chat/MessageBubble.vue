@@ -19,14 +19,14 @@
       v-if="message.isInterrupted"
       class="flex items-center gap-2 mt-2 text-[10px] text-muted"
     >
-      <span class="flex-1 h-px bg-muted/30" />
+      <span class="flex-1 h-px border-t border-border" />
       <span data-i18n="interrupted">已中断</span>
-      <span class="flex-1 h-px bg-muted/30" />
+      <span class="flex-1 h-px border-t border-border" />
     </div>
 
     <!-- Inline actions + Branch indicator (only on last assistant in turn) -->
     <div v-if="isLastAssistant" class="flex items-center gap-1 mt-1">
-      <span v-if="message.timestamp" class="font-normal normal-case tracking-normal text-[10px] opacity-60 mr-2">{{ formatTime(message.timestamp) }}</span>
+      <span v-if="message.timestamp" class="font-normal normal-case tracking-normal text-[10px] opacity-60 mr-2">{{ formatTimestamp(message.timestamp) }}</span>
       <div class="msg-actions" :class="{ 'msg-actions--active': showActionMenu }">
         <!-- eslint-disable-next-line taste/no-native-html-elements -- inline action buttons need custom hover/opacity transitions not supported by xyz-ui Button -->
         <button class="msg-action-btn" title="复制" @click="handleCopy">
@@ -66,7 +66,7 @@
         v-if="message.sendMode && message.sendMode !== 'send'"
         :class="['inline-flex items-center px-1 py-0 rounded-sm text-[9px] font-medium mr-1', chipClass]"
       >{{ chipLabel }}</span>
-      <span v-if="message.timestamp" class="font-normal normal-case tracking-normal text-[10px] opacity-60 mr-1.5">{{ formatTime(message.timestamp) }}</span>
+      <span v-if="message.timestamp" class="font-normal normal-case tracking-normal text-[10px] opacity-60 mr-1.5">{{ formatTimestamp(message.timestamp) }}</span>
       用户
     </div>
     <!-- User bubble: skill-link embedded inline when skill is present -->
@@ -268,10 +268,13 @@ function handleFork() {
   }
 }
 
-// ── ContentBlocks 查找辅助 ──
+// ── Timestamp formatting (HH:MM from epoch ms) ──
+// NOTE: compact-utils.formatTime formats *duration* (ms → "1m 30s"),
+// this formats *timestamps* (epoch ms → "14:30"). Different semantics, different names.
 
-function formatTime(ts: number): string {
-  const PAD_WIDTH = 2
+const PAD_WIDTH = 2
+
+function formatTimestamp(ts: number): string {
   const d = new Date(ts)
   const h = d.getHours().toString().padStart(PAD_WIDTH, '0')
   const m = d.getMinutes().toString().padStart(PAD_WIDTH, '0')

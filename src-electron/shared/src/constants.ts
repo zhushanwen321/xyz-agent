@@ -14,3 +14,10 @@ export const DEV_PORT_OFFSET = 100 as const
 /** Maximum valid port number */
 // eslint-disable-next-line no-magic-numbers
 export const MAX_PORT = 65535 as const
+
+/** Environment variable prefixes allowed to pass to child processes */
+export const ENV_WHITELIST_PREFIXES: readonly string[] = [
+  'PATH', 'HOME', 'USER', 'LANG', 'TERM',
+  'NODE_', 'NVM_', 'XYZ_', 'XDG_',
+  'APPDATA', 'LOCALAPPDATA', 'PROGRAMFILES', 'SYSTEMROOT', 'TEMP', 'TMP',
+]

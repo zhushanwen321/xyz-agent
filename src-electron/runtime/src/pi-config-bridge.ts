@@ -469,10 +469,11 @@ export function deleteAgentFile(name: string): boolean {
 // ── Session 相关 ─────────────────────────────────────────────────
 
 export function getSessionsDir(): string {
-  if (!existsSync(getSessionsDir_())) {
-    mkdirSync(getSessionsDir_(), { recursive: true })
+  const dir = getSessionsDir_()
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
   }
-  return getSessionsDir_()
+  return dir
 }
 
 /**
@@ -502,10 +503,11 @@ export function scanPiSessions(): Array<{
 
   // pi 的 sessions 目录结构: sessions/<cwd-hash-dir>/*.jsonl
   // 也可能是 flat 的 *.jsonl（兼容两种）
-  const entries = readdirSync(getSessionsDir_())
+  const sessionsDir = getSessionsDir_()
+  const entries = readdirSync(sessionsDir)
 
   for (const entry of entries) {
-    const entryPath = join(getSessionsDir_(), entry)
+    const entryPath = join(sessionsDir, entry)
     let stat
     try {
       stat = statSync(entryPath)

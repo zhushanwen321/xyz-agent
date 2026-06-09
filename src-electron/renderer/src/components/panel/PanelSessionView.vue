@@ -114,7 +114,7 @@ function handleSend(payload: { content: string; skillName?: string; subagent?: {
     status: 'complete',
     timestamp: Date.now(),
     ...(payload.skillName ? { skillName: payload.skillName } : {}),
-    ...(payload.sendMode && payload.sendMode !== 'send' ? { sendMode: toProtocolSendMode(payload.sendMode) } : {}),
+    ...(payload.sendMode && payload.sendMode !== 'send' ? { sendMode: toProtocolSendMode(payload.sendMode as import('@xyz-agent/shared').UISendMode) } : {}),
   }, sid)
 
   const mode = payload.sendMode ?? 'send'

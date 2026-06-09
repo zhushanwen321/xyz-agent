@@ -40,6 +40,7 @@ const GIT_CLONE_TIMEOUT = 120_000
 const DISCOVERY_TEMP_PREFIX = 'ext-scan-'
 // eslint-disable-next-line no-magic-numbers
 const ORPHAN_TEMP_MAX_AGE_MS = 24 * 60 * 60 * 1000 // 24 hours
+const ALLOWED_GIT_PREFIXES = ['https://', 'ssh://', 'git@'] as const
 
 /** 获取 xyz-agent 的 agent 配置目录 */
 function getSettingsDir(): string {
@@ -100,7 +101,8 @@ export class ExtensionService {
     }
 
     // Cleanup orphaned temp directories from previous crashes (>24h old)
-    this.cleanupOrphanedTempDirs()
+    // Defer to next tick to avoid blocking constructor
+    setTimeout(() => this.cleanupOrphanedTempDirs(), 0)
   }
 
   private cleanupOrphanedTempDirs(): void {
@@ -385,7 +387,12 @@ export class ExtensionService {
     const st = lstatSync(absPath)
     const checkPath = st.isSymbolicLink() ? resolve(realpathSync(absPath)) : absPath
 
-    if (!statSync(absPath).isDirectory()) {
+    // Reuse stat result — for symlinks, statSync gives target's type
+    if (!st.isDirectory() && !st.isSymbolicLink()) {
+      throw new Error(`Source path is not a directory: ${absPath}`)
+    }
+    // For symlinks, verify the target is also a directory
+    if (st.isSymbolicLink() && !statSync(checkPath).isDirectory()) {
       throw new Error(`Source path is not a directory: ${absPath}`)
     }
 
@@ -430,7 +437,9 @@ export class ExtensionService {
     const tempDir = mkdtempSync(join(tmpParent, DISCOVERY_TEMP_PREFIX))
 
     // Validate Git URL format
-    const ALLOWED_GIT_PREFIXES = ['https://', 'ssh://', 'git@'] as const
+    if (!ALLOWED_GIT_PREFIXES.some(p => url.startsWith(p))) {
+      throw new Error(`Invalid Git URL: ${url}. Must start with one of: ${ALLOWED_GIT_PREFIXES.join(', ')}`)
+    }
     if (!ALLOWED_GIT_PREFIXES.some(p => url.startsWith(p))) {
       throw new Error(`Invalid Git URL: ${url}. Must start with one of: ${ALLOWED_GIT_PREFIXES.join(', ')}`)
     }
@@ -464,10 +473,14 @@ export class ExtensionService {
       }
     }
 
-    // Discover extensions
-    const candidates = this.discoverExtensions(tempDir)
-
-    return { tempDir, candidates }
+    // Discover extensions — wrap in try-catch to clean up tempDir on unexpected errors
+    try {
+      const candidates = this.discoverExtensions(tempDir)
+      return { tempDir, candidates }
+    } catch (err) {
+      try { rmSync(tempDir, { recursive: true, force: true }) } catch (e) { log.debug('cleanup failed:', e instanceof Error ? e.message : String(e)) }
+      throw err
+    }
   }
 
   /**

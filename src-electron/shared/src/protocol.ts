@@ -351,7 +351,13 @@ export interface PluginConfigPayload {
 /** Possible reasons a stream completed */
 export type StopReason = 'complete' | 'aborted' | 'error' | 'length' | 'tool_use'
 
+/** UI-facing send mode values */
+export type UISendMode = 'send' | 'steer' | 'queue'
+
+/** Protocol-level send mode values (queue → follow-up) */
+export type ProtocolSendMode = 'send' | 'steer' | 'follow-up'
+
 /** UI send mode → protocol send mode mapping */
-export function toProtocolSendMode(mode: string): string {
+export function toProtocolSendMode(mode: UISendMode): ProtocolSendMode {
   return mode === 'queue' ? 'follow-up' : mode
 }
