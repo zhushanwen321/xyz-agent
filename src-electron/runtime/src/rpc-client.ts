@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process'
+import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { getDefaultModel, getSessionsDir, getPiAgentDir } from './pi-config-bridge.js'
 import { ENV_WHITELIST_PREFIXES } from '@xyz-agent/shared'
