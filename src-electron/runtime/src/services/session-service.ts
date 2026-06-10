@@ -432,14 +432,12 @@ export class SessionService implements ISessionService {
       this.sessions.delete(sessionId)
     }
 
-    // session 记录的 cwd 可能已被删除（如 worktree 清理后），降级到用户 home
-    // 同时 patch session 文件首行的 cwd，使 pi 的 switch_session 不会因 cwd 不存在而失败
-    let sessionCwd = target.cwd
-    if (!existsSync(sessionCwd)) {
-      console.warn(`[session-service] session cwd does not exist: ${sessionCwd}, falling back to home directory`)
-      sessionCwd = homedir()
-      patchSessionCwd(target.filePath, sessionCwd)
-    }
+    // session cwd 可能已被删除（如 worktree 清理后），降级到 home + patch session 文件
+    const sessionCwd = existsSync(target.cwd) ? target.cwd : (() => {
+      console.warn(`[session-service] session cwd does not exist: ${target.cwd}, falling back to home`)
+      patchSessionCwd(target.filePath, homedir())
+      return homedir()
+    })()
 
     const id = sessionId
     // Collect extension paths: built-in + user-installed + file-type
