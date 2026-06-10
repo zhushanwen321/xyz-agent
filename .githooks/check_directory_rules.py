@@ -44,8 +44,22 @@ def check_forbidden_dirs(staged_files):
     return errors
 
 
-def check_symlinks():
-    """检查项目中的 symlink 是否指向外部绝对路径"""
+def check_symlinks(staged_files):
+    """检查项目中的 symlink 是否指向外部绝对路径。
+
+    只在 staged files 中包含 symlink 时触发全项目扫描。
+    symlink 的增删可能影响非 staged 的目录结构（如创建中间 symlink 目录），
+    所以只要检测到 symlink 变更就做全量检查。
+    """
+    # 快速路径：如果没有 symlink 相关的 staged 文件变更，跳过全项目扫描
+    has_symlink_change = False
+    for f in staged_files:
+        full = os.path.join(os.getcwd(), f)
+        if os.path.islink(full):
+            has_symlink_change = True
+            break
+    if not has_symlink_change:
+        return []
     errors = []
     project_root = os.getcwd()
 
@@ -68,8 +82,10 @@ def check_symlinks():
                     continue
 
                 # 绝对路径指向项目外部 → 禁止
-                abs_target = os.path.abspath(full_path)
-                if not abs_target.startswith(project_root):
+                # 必须用 os.path.realpath 解析 symlink 目标的真实路径
+                # os.path.abspath 只返回 symlink 自身路径，永远在 project_root 内，导致漏检
+                resolved_target = os.path.realpath(full_path)
+                if not resolved_target.startswith(project_root):
                     errors.append(
                         f"禁止外部绝对路径 symlink: {rel_path} -> {target}\n"
                         f"  打包后目标路径不存在，会导致运行时资源缺失"
@@ -83,7 +99,7 @@ def main():
 
     staged_files = get_staged_files()
     errors.extend(check_forbidden_dirs(staged_files))
-    errors.extend(check_symlinks())
+    errors.extend(check_symlinks(staged_files))
 
     if errors:
         print("\033[0;31m[ERROR] 目录规范检查失败:\033[0m")

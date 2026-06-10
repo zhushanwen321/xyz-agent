@@ -133,33 +133,30 @@ describe('ExtensionResolver', () => {
   })
 
   describe('scanSettingsExtensions', () => {
+    const settingsDir = '/home/user/.xyz-agent/pi/agent'
+
+    beforeEach(() => {
+      resolver = new ExtensionResolver({ settingsDir })
+    })
+
     it('reads settings.json packages and resolves valid extensions', () => {
-      const home = '/home/user'
-      const settingsDir = `${home}/.xyz-agent/pi/agent`
       const settingsPath = `${settingsDir}/settings.json`
       const pkgDir = `${settingsDir}/npm/node_modules/pi-ask-user`
-
-      vi.stubEnv('HOME', home)
 
       mockedExistsSync.mockImplementation((p: unknown) => {
         if (typeof p !== 'string') return false
         if (p === settingsPath) return true
-        // pi-ask-user directory exists
         if (p === pkgDir) return true
-        // pi-ask-user package.json (valid pi extension)
         if (p === `${pkgDir}/package.json`) return true
-        // disabled-packages.json doesn't exist
         if (p === `${settingsDir}/disabled-packages.json`) return false
         return false
       })
 
       mockedReadFileSync.mockImplementation((p: unknown) => {
         if (typeof p !== 'string') throw new Error('not found')
-        // settings.json with one package
         if (p === settingsPath) {
           return JSON.stringify({ packages: ['npm:pi-ask-user'] })
         }
-        // pi-ask-user package.json (valid pi extension)
         if (p === `${pkgDir}/package.json`) {
           return JSON.stringify({
             name: 'pi-ask-user',
@@ -170,17 +167,12 @@ describe('ExtensionResolver', () => {
         throw new Error('not found')
       })
 
-      const result = new ExtensionResolver({ settingsDir }).scanSettingsExtensions()
+      const result = resolver.scanSettingsExtensions()
       expect(result.size).toBe(1)
       expect(result.get('ask-user')).toBe(pkgDir)
     })
 
     it('skips disabled packages', () => {
-      const home = '/home/user'
-      const settingsDir = `${home}/.xyz-agent/pi/agent`
-
-      vi.stubEnv('HOME', home)
-
       mockedExistsSync.mockImplementation((p: unknown) => {
         if (typeof p !== 'string') return false
         if (p === `${settingsDir}/settings.json`) return true
@@ -199,16 +191,12 @@ describe('ExtensionResolver', () => {
         throw new Error('not found')
       })
 
-      const result = new ExtensionResolver({ settingsDir }).scanSettingsExtensions()
+      const result = resolver.scanSettingsExtensions()
       expect(result.size).toBe(0)
     })
 
     it('skips invalid pi extensions', () => {
-      const home = '/home/user'
-      const settingsDir = `${home}/.xyz-agent/pi/agent`
       const pkgDir = `${settingsDir}/npm/node_modules/not-a-pi-ext`
-
-      vi.stubEnv('HOME', home)
 
       mockedExistsSync.mockImplementation((p: unknown) => {
         if (typeof p !== 'string') return false
@@ -224,12 +212,12 @@ describe('ExtensionResolver', () => {
           return JSON.stringify({ packages: ['npm:not-a-pi-ext'] })
         }
         if (p === `${pkgDir}/package.json`) {
-          return JSON.stringify({ name: 'not-a-pi-ext' }) // no pi-package keyword, no pi-coding-agent peerDep
+          return JSON.stringify({ name: 'not-a-pi-ext' })
         }
         throw new Error('not found')
       })
 
-      const result = new ExtensionResolver({ settingsDir }).scanSettingsExtensions()
+      const result = resolver.scanSettingsExtensions()
       expect(result.size).toBe(0)
     })
 
@@ -266,11 +254,16 @@ describe('ExtensionResolver', () => {
   })
 
   describe('scanThirdPartyExtensions', () => {
+    const thirdPartyDir = '/test/third-party-extensions'
+
+    beforeEach(() => {
+      resolver = new ExtensionResolver({ thirdPartyDir })
+    })
+
     it('scans third-party extensions directory', () => {
-      const thirdPartyDir = '/test/third-party-extensions'
       mockDir(thirdPartyDir)
 
-      const result = new ExtensionResolver({ thirdPartyDir }).scanThirdPartyExtensions()
+      const result = resolver.scanThirdPartyExtensions()
       expect(result.size).toBe(2)
       expect(result.has('ext-a')).toBe(true)
       expect(result.has('ext-b')).toBe(true)
@@ -462,8 +455,8 @@ describe('ExtensionResolver', () => {
         throw new Error('not found')
       })
 
-      const testResolver = new ExtensionResolver({ settingsDir, thirdPartyDir: `${settingsDir}/extensions` })
-      const result = testResolver.resolve('/project', false, ['/custom/my-ext'])
+      resolver = new ExtensionResolver({ settingsDir, thirdPartyDir: `${settingsDir}/extensions` })
+      const result = resolver.resolve('/project', false, ['/custom/my-ext'])
 
       // bundled ext-a
       expect(result.extensionDirs.some(d => d === bundledDir + '/ext-a')).toBe(true)
@@ -507,8 +500,8 @@ describe('ExtensionResolver', () => {
         throw new Error('not found')
       })
 
-      const testResolver = new ExtensionResolver({ thirdPartyDir })
-      const result = testResolver.resolve('/project', true, [])
+      resolver = new ExtensionResolver({ thirdPartyDir })
+      const result = resolver.resolve('/project', true, [])
       expect(result.extensionDirs.length).toBe(1)
       expect(result.extensionDirs[0]).toBe(`${thirdPartyDir}/ext-c`)
     })

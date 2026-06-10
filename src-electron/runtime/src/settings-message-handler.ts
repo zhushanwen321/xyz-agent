@@ -18,6 +18,7 @@ export interface SettingsHandlerContext {
   projectRoot: string
   send(ws: unknown, msg: ServerMessage): void
   sendError(ws: unknown, code: string, message: string, id?: string, sessionId?: string): void
+  broadcast(msg: ServerMessage): void
   broadcastProviderList(): void
   broadcastSkillList(): void
   broadcastAgentList(): void
@@ -94,7 +95,7 @@ export class SettingsMessageHandler {
         this.ctx.configService.setDefaultModel(provider, modelId)
         // Broadcast updated default to all connected clients
         const pushId = `push_${Date.now()}_${Math.random().toString(PUSH_ID_RADIX).slice(PUSH_ID_SLICE_START, PUSH_ID_SLICE_END)}`
-        this.ctx.send(ws, { type: 'config.defaults', id: pushId, payload: { defaultModel: `${provider}/${modelId}` } })
+        this.ctx.broadcast({ type: 'config.defaults', id: pushId, payload: { defaultModel: `${provider}/${modelId}` } })
         this.ctx.send(ws, { type: 'model.switched', id: msg.id, payload: { sessionId, provider, modelId } })
         return true
       }

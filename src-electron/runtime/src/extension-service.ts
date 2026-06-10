@@ -19,11 +19,12 @@
 import { execFileSync } from 'node:child_process'
 import { installPackage, uninstallPackage, installDependencies, NpmInstallError } from './npm-installer.js'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, readdirSync, statSync, lstatSync, realpathSync, cpSync, rmSync, mkdtempSync } from 'node:fs'
-import { join, resolve, basename, relative, isAbsolute } from 'node:path'
+import { join, resolve, basename } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 import type { ExtensionInfo } from '@xyz-agent/shared'
 import { ExtensionResolver } from './extension-resolver.js'
 import { getPiAgentDir } from './pi-config-bridge.js'
+import { isStrictlyUnder, isUnderOrEqual } from './utils/path-utils.js'
 
 const log = {
   info: (...args: unknown[]) => console.log('[extension-service]', ...args),
@@ -42,17 +43,7 @@ const DISCOVERY_TEMP_PREFIX = 'ext-scan-'
 const ORPHAN_TEMP_MAX_AGE_MS = 24 * 60 * 60 * 1000 // 24 hours
 const ALLOWED_GIT_PREFIXES = ['https://', 'ssh://', 'git@'] as const
 
-/** Cross-platform check: is `child` strictly under `parent` (not equal)? Uses path.relative() to avoid separator issues. */
-function isStrictlyUnder(parent: string, child: string): boolean {
-  const rel = relative(resolve(parent), resolve(child))
-  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)
-}
 
-/** Cross-platform check: is `child` under or equal to `parent`? Uses path.relative() to avoid separator issues. */
-function isUnderOrEqual(parent: string, child: string): boolean {
-  const rel = relative(resolve(parent), resolve(child))
-  return !rel.startsWith('..') && !isAbsolute(rel)
-}
 
 /** 获取 xyz-agent 的 agent 配置目录 */
 function getSettingsDir(): string {

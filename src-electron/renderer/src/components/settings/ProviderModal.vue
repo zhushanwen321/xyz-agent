@@ -284,6 +284,12 @@ function applyThinkingStrategy(model: ModalModel, strategy: ThinkingStrategy) {
 const editingModelId = ref<string | null>(null)
 const editingCtxValue = ref('')
 
+function updateModelCtx(modelId: string, value: string | number) {
+  editingCtxValue.value = String(value)
+  const model = modalModels.value.find(m => m.id === modelId)
+  if (model) model.contextWindow = Number(value) || 0
+}
+
 function toggleModelEdit(modelId: string) {
   if (editingModelId.value === modelId) {
     editingModelId.value = null
@@ -435,7 +441,7 @@ onUnmounted(() => {
                   :model-value="editingCtxValue"
                   :options="ctxOptions"
                   class="!w-[72px] !h-[22px] !text-[10px]"
-                  @update:model-value="(v: string | number) => { editingCtxValue = String(v); model.contextWindow = Number(v) || 0 }"
+                  @update:model-value="(v: string | number) => updateModelCtx(model.id, v)"
                 />
               </div>
               <div class="col-remove">

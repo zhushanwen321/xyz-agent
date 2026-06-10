@@ -5,7 +5,7 @@
  * 从 pi-config-bridge.ts 提取以控制文件行数。
  */
 
-import { existsSync, readFileSync, mkdirSync, openSync, writeSync, closeSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, mkdirSync, openSync, writeSync, closeSync, writeFileSync, renameSync } from 'node:fs'
 import { dirname } from 'node:path'
 
 // ── 类型定义 ─────────────────────────────────────────────────
@@ -152,7 +152,10 @@ export function patchSessionCwd(filePath: string, newCwd: string): boolean {
     if (header.type !== 'session') return false
     header.cwd = newCwd
     lines[0] = JSON.stringify(header)
-    writeFileSync(filePath, lines.join('\n'), 'utf-8')
+    // 原子写入：tmpfile + rename，防止与 pi 的 _persist() 并发写导致数据丢失
+    const tmpPath = filePath + '.tmp'
+    writeFileSync(tmpPath, lines.join('\n'), 'utf-8')
+    renameSync(tmpPath, filePath)
     console.log(`[session-file-utils] patched session cwd: ${filePath} -> ${newCwd}`)
     return true
   // eslint-disable-next-line taste/no-silent-catch -- file patch: failure must not crash restoreSession

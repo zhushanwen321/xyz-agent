@@ -107,8 +107,14 @@ export class RpcClient {
 
     // Bundled pi (Bun 编译的单文件二进制) 启动时从 cwd 查找 package.json。
     // 如果 cwd 是用户项目目录（如 ~/my-project），pi 找不到 package.json 会 ENOENT。
-    // 修复：spawn cwd 设为 pi 二进制所在目录（包含 package.json），
-    // 用户的 cwd 通过 RPC 协议传递，不需要作为 spawn cwd。
+    // spawn cwd 必须设为 pi 二进制所在目录（包含 package.json）。
+    //
+    // Trade-off：pi 进程的 process.cwd() 将是 pi 二进制目录而非用户项目目录。
+    // 这在 RPC 模式下可接受：
+    //   - session 的 cwd 由 session-service 在 ensureSessionFile() 中正确写入 session 文件头
+    //   - pi 的 bash 工具使用 session header 中的 cwd，而非 process.cwd()
+    //   - xyz-agent UI 层维护了正确的 cwd，restoreSession 也有 cwd fallback 逻辑
+    // 如果未来 pi 支持 --cwd CLI 参数，应改用该参数传递用户项目目录。
     const spawnCwd = piCmd !== 'pi'
       ? join(piCmd, '..')
       : (this.options.cwd ?? process.cwd())
