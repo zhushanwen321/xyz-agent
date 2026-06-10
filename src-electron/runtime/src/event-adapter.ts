@@ -181,7 +181,7 @@ async function handleToolExecutionEnd(event: PiEvent, ctx: HandlerContext): Prom
   }
 }
 
-/** agent_end — extract stop reason, usage, responseModel, diagnostics */
+/** agent_end — extract stop reason, usage, responseModel, diagnostics, errorMessage */
 function handleAgentEnd(event: PiEvent, ctx: HandlerContext): HandlerResult {
   const sid = ctx.sessionId
   const messages = event.messages as Array<Record<string, unknown>> | undefined
@@ -191,6 +191,7 @@ function handleAgentEnd(event: PiEvent, ctx: HandlerContext): HandlerResult {
     { input: number; output: number; totalTokens?: number; cacheRead?: number; cacheWrite?: number } | undefined
   const responseModel = lastMsg?.responseModel as string | undefined
   const diagnostics = lastMsg?.diagnostics as Record<string, unknown> | undefined
+  const errorMessage = (rawReason === 'error' || rawReason === 'tool_use') ? lastMsg?.errorMessage as string | undefined : undefined
 
   if (usage?.input) {
     ctx.options?.onContextUpdate?.(sid, { inputTokens: usage.input, totalTokens: usage.totalTokens ?? 0 })
@@ -207,6 +208,7 @@ function handleAgentEnd(event: PiEvent, ctx: HandlerContext): HandlerResult {
         : undefined,
       responseModel,
       diagnostics,
+      errorMessage,
     },
   }
 }

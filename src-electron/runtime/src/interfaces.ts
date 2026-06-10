@@ -134,8 +134,8 @@ export interface IConfigService {
     baseUrl?: string
     models?: Array<string | { id: string; name?: string; contextWindow?: number }>
     enabled?: boolean
-  }): void
-  deleteProvider(providerId: string): boolean
+  }): { newDefault?: { provider: string; modelId: string } }
+  deleteProvider(providerId: string): { removed: boolean; newDefault?: { provider: string; modelId: string } }
   getProvider(providerId: string): { apiKey?: string; name?: string; type?: string; baseUrl?: string; models?: unknown[]; enabled?: boolean } | undefined
   updateToolPermissions(permissions: Record<string, string>): void
   loadSkills(projectRoot: string): SkillInfo[]

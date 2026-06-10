@@ -127,7 +127,7 @@ export class ConfigService implements IConfigService {
     baseUrl?: string
     models?: Array<string | { id: string; name?: string; contextWindow?: number; thinkingLevelMap?: Record<string, string | null> }>
     enabled?: boolean
-  }): void {
+  }): { newDefault?: { provider: string; modelId: string } } {
     const existing = piBridge.getProviderConfig(providerId) ?? {}
     const merged = { ...existing }
     if (data.apiKey !== undefined) merged.apiKey = data.apiKey as string
@@ -152,10 +152,10 @@ export class ConfigService implements IConfigService {
         return model as unknown as PiModelDefinition
       })
     }
-    piBridge.upsertProvider(providerId, merged)
+    return piBridge.upsertProvider(providerId, merged)
   }
 
-  deleteProvider(providerId: string): boolean {
+  deleteProvider(providerId: string): { removed: boolean; newDefault?: { provider: string; modelId: string } } {
     return piBridge.removeProvider(providerId)
   }
 

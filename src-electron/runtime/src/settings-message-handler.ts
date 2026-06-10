@@ -31,15 +31,31 @@ export class SettingsMessageHandler {
         return true
       case 'config.setProvider': {
         const { providerId, ...data } = msg.payload
-        this.ctx.configService.setProvider(providerId, data as Parameters<IConfigService['setProvider']>[1])
+        const setResult = this.ctx.configService.setProvider(providerId, data as Parameters<IConfigService['setProvider']>[1])
         this.ctx.send(ws, { type: 'config.providerUpdated', id: msg.id, payload: { providerId } })
         this.ctx.broadcastProviderList()
+        // 如果 fallback 修正了 defaultModel，广播到所有 panel
+        if (setResult.newDefault) {
+          this.ctx.broadcast({
+            type: 'config.defaults',
+            id: this.ctx.nextPushId(),
+            payload: { defaultModel: `${setResult.newDefault.provider}/${setResult.newDefault.modelId}`, source: 'provider-updated' as const },
+          })
+        }
         return true
       }
       case 'config.deleteProvider': {
-        this.ctx.configService.deleteProvider(msg.payload.providerId)
+        const delResult = this.ctx.configService.deleteProvider(msg.payload.providerId)
         this.ctx.send(ws, { type: 'config.providerUpdated', id: msg.id, payload: { providerId: msg.payload.providerId, deleted: true } })
         this.ctx.broadcastProviderList()
+        // 如果 fallback 修正了 defaultModel，广播到所有 panel
+        if (delResult.newDefault) {
+          this.ctx.broadcast({
+            type: 'config.defaults',
+            id: this.ctx.nextPushId(),
+            payload: { defaultModel: `${delResult.newDefault.provider}/${delResult.newDefault.modelId}`, source: 'provider-deleted' as const },
+          })
+        }
         return true
       }
       case 'config.setToolPermissions':

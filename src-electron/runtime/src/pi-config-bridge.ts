@@ -309,18 +309,80 @@ export function getProviderConfig(providerId: string): PiProviderConfig | undefi
   return config ? JSON.parse(JSON.stringify(config)) : undefined
 }
 
-export function upsertProvider(providerId: string, config: PiProviderConfig): void {
+/**
+ * 更新 provider 配置并同步校验 defaultModel。
+ * 全程同步（无 await），避免竞态窗口。
+ */
+export function upsertProvider(providerId: string, config: PiProviderConfig): {
+  newDefault?: { provider: string; modelId: string }
+} {
   const models: PiModelsConfig = JSON.parse(JSON.stringify(readModels()))
   models.providers[providerId] = config
   writeModels(models)
+
+  // 同步校验 defaultModel
+  const settings: PiSettings = JSON.parse(JSON.stringify(readSettings()))
+  if (settings.defaultProvider === providerId) {
+    const newModelList = config.models ?? []
+    if (newModelList.length === 0) {
+      // 新 models 列表为空 → 清空 default
+      delete settings.defaultProvider
+      delete settings.defaultModel
+      writeSettings(settings)
+      const { result } = findValidDefaultModel()
+      if (result) {
+        const fixed: PiSettings = JSON.parse(JSON.stringify(readSettings()))
+        fixed.defaultProvider = result.provider
+        fixed.defaultModel = result.modelId
+        writeSettings(fixed)
+        return { newDefault: result }
+      }
+      return {}
+    }
+    const currentModelId = settings.defaultModel
+    if (currentModelId && !newModelList.find(m => m.id === currentModelId)) {
+      // defaultModel 不在新列表中 → fallback 到第一个 model
+      const fallback = newModelList[0]
+      settings.defaultModel = fallback.id
+      writeSettings(settings)
+      console.warn(`[config-bridge] defaultModel "${currentModelId}" no longer in provider "${providerId}", falling back to "${fallback.id}"`)
+      return { newDefault: { provider: providerId, modelId: fallback.id } }
+    }
+  }
+  return {}
 }
 
-export function removeProvider(providerId: string): boolean {
+/**
+ * 删除 provider 并同步清理 defaultProvider/defaultModel。
+ * 全程同步（无 await），避免竞态窗口。
+ */
+export function removeProvider(providerId: string): {
+  removed: boolean
+  newDefault?: { provider: string; modelId: string }
+} {
   const models: PiModelsConfig = JSON.parse(JSON.stringify(readModels()))
-  if (!(providerId in models.providers)) return false
+  if (!(providerId in models.providers)) return { removed: false }
   delete models.providers[providerId]
   writeModels(models)
-  return true
+
+  // 同步清理 settings.json 中的 defaultProvider/defaultModel
+  const settings: PiSettings = JSON.parse(JSON.stringify(readSettings()))
+  if (settings.defaultProvider === providerId) {
+    // 清空旧值，重新查找 fallback
+    delete settings.defaultProvider
+    delete settings.defaultModel
+    writeSettings(settings)
+    // findValidDefaultModel 读刚写入的 settings（无 defaultProvider），返回 fallback
+    const { result } = findValidDefaultModel()
+    if (result) {
+      const fixed: PiSettings = JSON.parse(JSON.stringify(readSettings()))
+      fixed.defaultProvider = result.provider
+      fixed.defaultModel = result.modelId
+      writeSettings(fixed)
+      return { removed: true, newDefault: result }
+    }
+  }
+  return { removed: true }
 }
 
 export function getAllModels(): Array<PiModelDefinition & { providerId: string }> {
@@ -356,19 +418,58 @@ export function writeSettings(settings: PiSettings): void {
   settingsCache = { data: JSON.parse(JSON.stringify(settings)), timestamp: Date.now() }
 }
 
-export function getDefaultModel(): { provider: string; modelId: string } | null {
+/**
+ * 纯校验：检查 settings.json 的 defaultProvider/defaultModel 在 models.json 中是否有效。
+ * 无副作用，不修改任何文件。
+ */
+export function findValidDefaultModel(): {
+  result: { provider: string; modelId: string } | null
+  wasFixed: boolean
+} {
   const settings = readSettings()
-  if (!settings.defaultProvider || !settings.defaultModel) {
-    // fallback: 取 models.json 里第一个 provider 的第一个 model
-    const models = readModels()
-    for (const [providerId, providerConfig] of Object.entries(models.providers)) {
-      if (providerConfig.models && providerConfig.models.length > 0) {
-        return { provider: providerId, modelId: providerConfig.models[0].id }
+  const models = readModels()
+  const { defaultProvider, defaultModel } = settings
+
+  // 尝试匹配 settings 中配置的 default
+  if (defaultProvider && defaultModel) {
+    const providerConfig = models.providers[defaultProvider]
+    if (providerConfig?.models?.length) {
+      const found = providerConfig.models.find(m => m.id === defaultModel)
+      if (found) {
+        return { result: { provider: defaultProvider, modelId: defaultModel }, wasFixed: false }
       }
+      // provider 存在但 model 不存在 → fallback 到该 provider 的第一个 model
+      console.warn(`[config-bridge] defaultModel "${defaultModel}" not found in provider "${defaultProvider}", falling back to "${providerConfig.models[0].id}"`)
+      return { result: { provider: defaultProvider, modelId: providerConfig.models[0].id }, wasFixed: true }
     }
-    return null
+    // provider 不存在
+    console.warn(`[config-bridge] defaultProvider "${defaultProvider}" not found in models.json`)
   }
-  return { provider: settings.defaultProvider, modelId: settings.defaultModel }
+
+  // fallback: 取第一个有 model 的 provider
+  for (const [providerId, providerConfig] of Object.entries(models.providers)) {
+    if (providerConfig.models && providerConfig.models.length > 0) {
+      return { result: { provider: providerId, modelId: providerConfig.models[0].id }, wasFixed: true }
+    }
+  }
+  return { result: null, wasFixed: false }
+}
+
+/**
+ * 获取默认模型，带有效性校验和自动修复。
+ * 如果 settings.json 中的值无效，自动修正并持久化。
+ */
+export function getDefaultModel(): { provider: string; modelId: string } | null {
+  const { result, wasFixed } = findValidDefaultModel()
+  if (wasFixed && result) {
+    // 自动修正 settings.json
+    const settings: PiSettings = JSON.parse(JSON.stringify(readSettings()))
+    settings.defaultProvider = result.provider
+    settings.defaultModel = result.modelId
+    writeSettings(settings)
+    console.log(`[config-bridge] auto-fixed defaultModel: ${result.provider}/${result.modelId}`)
+  }
+  return result
 }
 
 export function setDefaultModel(provider: string, modelId: string): void {

@@ -63,7 +63,7 @@ vi.mock('../src/services/config-service.js', () => ({
   ConfigService: class MockConfigService {
     listProviders = vi.fn().mockReturnValue([])
     setProvider = vi.fn()
-    deleteProvider = vi.fn().mockReturnValue(true)
+    deleteProvider = vi.fn().mockReturnValue({ removed: true })
     getProvider = vi.fn().mockReturnValue(undefined)
     updateToolPermissions = vi.fn()
     loadSkills = vi.fn().mockReturnValue([])
