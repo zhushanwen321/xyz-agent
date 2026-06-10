@@ -1,14 +1,14 @@
 ---
-name: draft-release
+name: prerelease-test
 description: >-
-  Use when creating a pre-release test build to verify Electron artifacts
-  (DMG/EXE/AppImage) locally before official release. Triggers: "发测试版",
-  "draft release", "构建测试 DMG", "pre-release test", "生成测试包",
-  "beta release", "创建测试版". Only for xyz-agent project.
+  Use when you need to test Electron build artifacts (DMG/EXE/AppImage)
+  locally before an official release, or when the user says "发测试版",
+  "构建测试 DMG", "生成测试包", "pre-release test", "beta release",
+  "draft release", "测版". Only for xyz-agent project.
   Not for official releases — use merge skill instead.
 ---
 
-# draft-release
+# prerelease-test
 
 ## 概述
 
@@ -17,7 +17,7 @@ description: >-
 
 ## 核心流程
 
-1. 确认在 main 分支，工作区干净
+1. 确认工作区干净（可在 main 或开发分支运行）
 2. 从最新正式 release 计算 beta 版本（自动递增序号）
 3. 临时 bump 版本号 + commit + tag + push → 触发 CI
 4. 轮询 CI 直到 Release 创建完成
@@ -72,7 +72,7 @@ AI 必须等待用户明确确认后再输入 `yes`。
 
 - **Q: 测试版是否影响正式发布？**
   不影响。版本校验（`scripts/check-version-bump.sh`）只比较正式 release，
-  忽略所有 prerelease 和 draft。
+  忽略所有 prerelease（测试版）。
 
 ---
 

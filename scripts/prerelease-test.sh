@@ -30,8 +30,7 @@ log "=== 阶段 1/6: 前置检查 ==="
 
 BRANCH=$(git -C "$WS_ROOT" branch --show-current)
 if [ "$BRANCH" != "main" ]; then
-  err "必须在 main 分支上运行，当前: $BRANCH"
-  exit 1
+  warn "当前在 ${BRANCH} 分支（非 main），产物将包含此分支的未合并改动"
 fi
 
 if ! git -C "$WS_ROOT" diff-index --quiet HEAD --; then
@@ -44,7 +43,7 @@ if ! gh auth status &>/dev/null; then
   exit 1
 fi
 
-log "前置检查通过: main 分支, 工作区干净, gh 已认证"
+log "前置检查通过: ${BRANCH} 分支, 工作区干净, gh 已认证"
 
 # ── 阶段 2/6: 计算 beta 版本号 ──
 log "=== 阶段 2/6: 计算 beta 版本号 ==="
