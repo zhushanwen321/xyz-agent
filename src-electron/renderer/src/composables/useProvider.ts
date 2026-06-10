@@ -69,7 +69,7 @@ export function useProvider() {
 
   function onDefaults(msg: ServerMessage) {
     const payload = msg.payload as { defaultModel?: string }
-    if (payload.defaultModel && !settingsStore.defaultModel) {
+    if (payload.defaultModel) {
       settingsStore.defaultModel = payload.defaultModel
     }
   }

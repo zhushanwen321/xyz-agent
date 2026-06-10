@@ -90,12 +90,16 @@ export class ConfigService implements IConfigService {
     return piBridge.getDefaultModel()
   }
 
+  setDefaultModel(provider: string, modelId: string): void {
+    piBridge.setDefaultModel(provider, modelId)
+  }
+
   listProviders(): ProviderInfo[] {
     const models = piBridge.readModels()
     // eslint-disable-next-line taste/no-unsafe-object-entries -- providers is a known schema Record<string, PiProviderConfig>, not arbitrary user input
     return Object.entries(models.providers).map(([id, config]) => ({
       id,
-      name: id,
+      name: config.name || id,
       baseUrl: config.baseUrl,
       apiKeySet: !!config.apiKey,
       status: config.apiKey ? 'connected' as const : 'not_configured' as const,
@@ -129,6 +133,7 @@ export class ConfigService implements IConfigService {
     if (data.apiKey !== undefined) merged.apiKey = data.apiKey as string
     if (data.baseUrl !== undefined) merged.baseUrl = data.baseUrl as string
     if (data.type !== undefined) merged.api = mapTypeToApi(data.type as string)
+    if (data.name !== undefined) merged.name = data.name as string
     if (data.models !== undefined) {
       const rawModels = data.models as Array<Record<string, unknown>>
       const existingModels = (existing.models ?? []) as PiModelDefinition[]
@@ -147,7 +152,6 @@ export class ConfigService implements IConfigService {
         return model as unknown as PiModelDefinition
       })
     }
-    // name and enabled are not part of PiProviderConfig; pi uses providerId as name
     piBridge.upsertProvider(providerId, merged)
   }
 

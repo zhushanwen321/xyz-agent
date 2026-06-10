@@ -6,6 +6,10 @@ import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
 import type { IConfigService, ISessionService, IModelService } from './interfaces.js'
 
+const PUSH_ID_RADIX = 36
+const PUSH_ID_SLICE_START = 2
+const PUSH_ID_SLICE_END = 6
+
 /** Interface for server methods needed by this handler */
 export interface SettingsHandlerContext {
   configService: IConfigService
@@ -86,6 +90,11 @@ export class SettingsMessageHandler {
         const { sessionId, provider, modelId } = msg.payload
         console.log(`[runtime] model.switch: sessionId=${sessionId}, provider=${provider}, modelId=${modelId}`)
         await this.ctx.sessionService.switchModel(sessionId, provider, modelId)
+        // Persist as default model for new sessions
+        this.ctx.configService.setDefaultModel(provider, modelId)
+        // Broadcast updated default to all connected clients
+        const pushId = `push_${Date.now()}_${Math.random().toString(PUSH_ID_RADIX).slice(PUSH_ID_SLICE_START, PUSH_ID_SLICE_END)}`
+        this.ctx.send(ws, { type: 'config.defaults', id: pushId, payload: { defaultModel: `${provider}/${modelId}` } })
         this.ctx.send(ws, { type: 'model.switched', id: msg.id, payload: { sessionId, provider, modelId } })
         return true
       }

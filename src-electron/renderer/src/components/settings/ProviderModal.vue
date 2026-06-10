@@ -282,9 +282,16 @@ function applyThinkingStrategy(model: ModalModel, strategy: ThinkingStrategy) {
 }
 
 const editingModelId = ref<string | null>(null)
+const editingCtxValue = ref('')
 
 function toggleModelEdit(modelId: string) {
-  editingModelId.value = editingModelId.value === modelId ? null : modelId
+  if (editingModelId.value === modelId) {
+    editingModelId.value = null
+  } else {
+    editingModelId.value = modelId
+    const model = modalModels.value.find(m => m.id === modelId)
+    editingCtxValue.value = model ? String(model.contextWindow ?? 0) : '0'
+  }
 }
 
 function pickStrategy(model: ModalModel, strategy: ThinkingStrategy) {
@@ -421,7 +428,16 @@ onUnmounted(() => {
                   }]"
                 >{{ STRATEGY_LABELS[getStrategyFromMap(model.thinkingLevelMap)] }}</span>
               </div>
-              <span class="col-ctx">{{ formatCtx(model.contextWindow) }}</span>
+              <!-- Context window: static when not editing, select when editing -->
+              <span v-if="editingModelId !== model.id" class="col-ctx">{{ formatCtx(model.contextWindow) }}</span>
+              <div v-else class="col-ctx-edit" @click.stop>
+                <Select
+                  :model-value="editingCtxValue"
+                  :options="ctxOptions"
+                  class="!w-[72px] !h-[22px] !text-[10px]"
+                  @update:model-value="(v: string | number) => { editingCtxValue = String(v); model.contextWindow = Number(v) || 0 }"
+                />
+              </div>
               <div class="col-remove">
                 <Button variant="ghost" size="sm" class="hover:!text-[var(--danger)] hover:!bg-[var(--danger-light)]" @click.stop="removeModel(idx)">
                   <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 1l8 8M9 1L1 9" /></svg>
@@ -499,6 +515,14 @@ onUnmounted(() => {
   font-size: 11px;
   color: var(--muted);
   padding-right: 8px;
+}
+.col-ctx-edit {
+  width: 80px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 4px;
 }
 .col-remove {
   width: 28px;

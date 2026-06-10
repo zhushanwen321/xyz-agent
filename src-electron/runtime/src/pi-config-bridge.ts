@@ -206,6 +206,7 @@ export interface PiModelDefinition {
 }
 
 export interface PiProviderConfig {
+  name?: string
   baseUrl?: string
   apiKey?: string
   api?: string
