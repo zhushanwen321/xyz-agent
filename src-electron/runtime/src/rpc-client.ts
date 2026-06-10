@@ -104,10 +104,18 @@ export class RpcClient {
 
     const piCmd = this.options.piCommand ?? 'pi'
 
-    console.log('[rpc] spawning pi:', piCmd, args.join(' '))
+    // Bundled pi (Bun 编译的单文件二进制) 启动时从 cwd 查找 package.json。
+    // 如果 cwd 是用户项目目录（如 ~/my-project），pi 找不到 package.json 会 ENOENT。
+    // 修复：spawn cwd 设为 pi 二进制所在目录（包含 package.json），
+    // 用户的 cwd 通过 RPC 协议传递，不需要作为 spawn cwd。
+    const spawnCwd = piCmd !== 'pi'
+      ? join(piCmd, '..')
+      : (this.options.cwd ?? process.cwd())
+
+    console.log('[rpc] spawning pi:', piCmd, args.join(' '), 'cwd:', spawnCwd)
 
     this.proc = spawn(piCmd, args, {
-      cwd: this.options.cwd ?? process.cwd(),
+      cwd: spawnCwd,
       env,
       stdio: ['pipe', 'pipe', 'pipe'],
     })

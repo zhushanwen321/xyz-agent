@@ -281,6 +281,150 @@ SKIP_ALL_CHECKS=1 git commit            # 跳过所有（仅紧急情况）
 - **Sidecar 通信**: WebSocket，前端通过 `ws-client.ts` + `event-bus.ts` 消息分发
 - **Electron IPC**: 主进程通过 preload 暴露 `window.electronAPI`，渲染进程不直接使用 `ipcRenderer`
 
+## 问题排查
+
+项目没有文件日志系统，所有日志通过 console 输出。以下是各层的日志获取方式。
+
+### 日志获取
+
+| 层级 | 开发模式 | 打包模式 |
+|------|---------|---------|
+| **Electron 主进程** | 终端直接看 | 终端启动 `/Applications/xyz-agent.app/Contents/MacOS/xyz-agent` 或 `log show --process xyz-agent` |
+| **Runtime (Sidecar)** | 终端 `[runtime:out]` / `[runtime:err]` 前缀 | 同主进程，stdout/stderr 转发到主进程 console |
+| **pi 子进程** | 终端 pi 自身输出 | pi 日志目录 `~/.xyz-agent/pi/agent/logs/` |
+| **前端 DevTools** | Cmd+Option+I 打开 | 同左 |
+
+**打包模式启动应用获取完整日志**：
+
+```bash
+# 方法 1：终端启动（推荐，直接看到所有 console 输出）
+/Applications/xyz-agent.app/Contents/MacOS/xyz-agent
+
+# 方法 2：macOS 系统日志（过滤 xyz-agent 和 runtime 子进程）
+log stream --predicate 'process == "xyz-agent"' --level debug
+
+# 方法 3：Console.app → 搜索 xyz-agent
+```
+
+### 关键诊断路径
+
+**打包后应用结构** (`/Applications/xyz-agent.app/Contents/Resources/`)：
+
+```
+Resources/
+├── app.asar.unpacked/dist/runtime/   # runtime bundle（必须在 unpacked 目录）
+│   ├── index.cjs                      # runtime 入口
+│   └── plugin-bootstrap.cjs           # plugin Worker 入口
+├── pi/                                # bundled pi 二进制 + agent 资源
+│   ├── pi-darwin-arm64                # pi 可执行文件
+│   ├── agent/                         # agent skills/extensions
+│   └── assets/                        # agent 资源文件
+├── node_modules/@zhushanwen/          # builtin pi extensions
+│   ├── pi-goal/
+│   ├── pi-todo/
+│   └── ...
+└── xyz-agent-extension.js            # xyz-agent 定制 pi extension
+```
+
+**数据目录** (`~/.xyz-agent/`)：
+
+```
+~/.xyz-agent/
+├── config.json           # 运行时配置（API key 等）
+├── config.toml           # pi 配置
+├── runtime.port          # runtime 端口号（文本文件）
+├── session-data/         # session 持久化数据
+├── pi/agent/logs/        # pi 日志
+└── plugins/              # 插件数据
+```
+
+**开发模式差异**：数据目录 `~/.xyz-agent-dev/`，端口 +100（3310-3320），Electron userData 隔离。
+
+### 常见问题排查清单
+
+#### 1. pi 启动失败："Failed to start bundled pi process"
+
+```bash
+# 检查 pi 二进制是否存在
+ls -la /Applications/xyz-agent.app/Contents/Resources/pi/pi-darwin-*
+
+# 检查 pi 二进制是否可执行
+file /Applications/xyz-agent.app/Contents/Resources/pi/pi-darwin-arm64
+chmod +x /Applications/xyz-agent.app/Contents/Resources/pi/pi-darwin-arm64  # 如果权限丢失
+
+# 检查是否架构不匹配（Intel Mac 上只有 arm64 二进制）
+uname -m  # arm64 还是 x86_64
+
+# 终端启动看完整错误
+/Applications/xyz-agent.app/Contents/MacOS/xyz-agent
+```
+
+常见原因：
+- pi 二进制缺失（打包时 `extraResources` 配置错误或 `resources/pi/` 内容不完整）
+- 权限丢失（`chmod +x`）
+- 架构不匹配（Intel Mac 安装了 arm64-only DMG）
+- symlink 问题（`resources/pi/` 中有指向外部绝对路径的 symlink，打包后目标不存在）
+
+#### 2. Runtime 启动失败："Runtime bundle not found" 或 "Runtime health check timed out"
+
+```bash
+# 检查 runtime bundle 是否存在于 unpacked 目录
+ls -la /Applications/xyz-agent.app/Contents/Resources/app.asar.unpacked/dist/runtime/
+
+# 手动启动 runtime 做冒烟测试
+XYZ_AGENT_PACKAGED=1 ELECTRON_RUN_AS_NODE=1 \
+  /Applications/xyz-agent.app/Contents/MacOS/xyz-agent \
+  /Applications/xyz-agent.app/Contents/Resources/app.asar.unpacked/dist/runtime/index.cjs \
+  --port=9999
+# 然后 curl http://localhost:9999/health
+```
+
+常见原因：
+- `asarUnpack` 失效（`files` 排除了 `dist/runtime`，导致无文件可 unpack）
+- `tsup.config.ts` 的 `noExternal` 缺少新依赖，运行时 `Cannot find module`
+- 端口范围 3210-3220 全部被占用
+
+#### 3. 端口冲突
+
+```bash
+# 检查 runtime 端口
+cat ~/.xyz-agent/runtime.port
+
+# 检查端口占用
+lsof -i :3210 -P | grep LISTEN
+
+# 清理残留进程
+lsof -i :3210-3220 -P | grep LISTEN | awk '{print $2}' | sort -u
+```
+
+#### 4. Builtin Extension 缺失
+
+```bash
+# 检查打包产物中的 builtin extensions
+ls /Applications/xyz-agent.app/Contents/Resources/node_modules/@zhushanwen/
+
+# 检查根 package.json 中 @zhushanwen/pi-* 依赖是否完整
+grep '@zhushanwen/pi' package.json
+```
+
+#### 5. Dev 模式 Vite 不更新
+
+```bash
+# 确认 1420 端口属于当前 worktree
+lsof -i :1420 -P | grep node
+# 检查进程 cwd 是否指向当前 worktree 的 renderer 目录
+```
+
+### 环境变量速查
+
+| 变量 | 用途 | 生产默认值 | 开发默认值 |
+|------|------|-----------|------------|
+| `XYZ_AGENT_DATA_DIR` | 数据目录 | `~/.xyz-agent` | `~/.xyz-agent-dev` |
+| `XYZ_AGENT_PORT_OFFSET` | 端口偏移 | `0` | `100` |
+| `XYZ_AGENT_PACKAGED` | 打包标记 | `1` | 未设置 |
+| `ELECTRON_RUN_AS_NODE` | Node 模式 | `1`（runtime 子进程） | 未设置 |
+| `VITE_MOCK=true` | Mock 模式 | — | 可选 |
+
 ### 1. xyz-agent 数据目录与 pi 数据目录完全隔离
 
 xyz-agent 的数据目录（`~/.xyz-agent/`）与 pi 的数据目录（`~/.pi/agent/`）必须完全隔离。不得读写 pi 的 extension/skill/config 目录，不得复用 pi 的包管理命令管理 xyz-agent 的 extension。两边的 extension 列表、配置、安装状态互不影响。Extension 通过 `--extension` CLI 参数在 pi 启动时注入路径，pi 原生 loader 加载。
