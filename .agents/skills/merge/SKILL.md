@@ -7,14 +7,14 @@ description: >-
 
 # merge
 
-执行 8 阶段合并发布流程，最终通过 GitHub Release 交付 Electron 产物（DMG/EXE/AppImage）。
+执行 9 阶段合并发布流程，最终通过 GitHub Release 交付 Electron 产物（DMG/EXE/AppImage）。
 
 ## 前置条件
 
 - feature 分支有已创建的 PR
 - GitHub CLI 已认证
 
-## 8 阶段流程
+## 9 阶段流程
 
 ### 阶段 0: 初始化
 
@@ -68,17 +68,34 @@ bash ~/.agents/skills/merge-worktree/stages/3-post-merge-ci.sh
 
 等待 main 分支 CI 通过。
 
-### 阶段 4: 版本 bump + 发布
+### [MANDATORY] 阶段 3.5: 版本校验
 
-执行全局脚本：
+在 bump 版本之前，必须确认代码版本与最新正式 release 一致。
+此校验防止版本号被跳过（例如从 v0.4.6 直接跳到 v0.4.8）。
 
 ```bash
-bash ~/.agents/skills/merge-worktree/stages/4-publish.sh
+cd $WS_ROOT/main
+bash scripts/check-version-bump.sh
 ```
 
-全局脚本会自动：
-- 检测项目 `scripts/publish.sh` 存在则委托
-- 否则自行 `npm version patch` + tag + push
+- **Exit 0（通过）**：代码版本 == 最新正式 release，可以安全 bump
+- **Exit 1（失败）**：版本不匹配，会输出期望版本和实际版本
+
+失败时需要检查：
+1. 是否有 prerelease（`-beta.N`）占用了目标版本号？清理后重试
+2. 是否已经手动 bump 过版本？执行 `npm version <latest_release_version> --no-git-tag-version` 回退
+3. 可能是之前的 pre-release 测试未还原？运行 `cd $WS_ROOT/main && git reset --hard github/main` 重置
+
+### 阶段 4: 版本 bump + 发布
+
+```bash
+cd $WS_ROOT/main
+# 执行版本 bump（patch/minor/major），例如:
+npm version patch -m "chore: bump version to %s"
+cd src-electron && npm version patch -m "chore: bump version to %s" && cd ..
+git push github HEAD
+git push github "v$(node -p "require('./package.json').version")"
+```
 
 **Electron 特化说明**：
 - Release CI（`release.yml`）由 tag push 触发
@@ -137,16 +154,17 @@ bash ~/.agents/skills/merge-worktree/stages/7-cleanup.sh
 
 收到合并指令后立即创建 todo：
 
-| # | 文本 | 阶段脚本 |
-|---|------|---------|
-| 1 | 初始化环境（0-init） | `stages/0-init.sh` |
-| 2 | 本地验证（1-local-check） | `stages/1-local-check.sh` |
-| 3 | PR CI + 合并（2-pr-merge） | `stages/2-pr-merge.sh` |
-| 4 | Post-merge CI（3-post-merge-ci） | `stages/3-post-merge-ci.sh` |
-| 5 | 版本 bump + 发布（4-publish） | `stages/4-publish.sh` |
-| 6 | 创建 Release（5-release） | `stages/5-release.sh` |
-| 7 | ⚠️ 确认交付物（6-verify） | `stages/6-verify.sh` |
-| 8 | 清理 worktree（7-cleanup） | `stages/7-cleanup.sh` |
+| # | 文本 | 命令 |
+|---|------|------|
+| 1 | 初始化环境（阶段 0） | |
+| 2 | 本地验证（阶段 1） | |
+| 3 | PR CI + 合并（阶段 2） | |
+| 4 | Post-merge CI（阶段 3） | |
+| 5 | ⚠️ 版本校验（阶段 3.5） | `bash scripts/check-version-bump.sh` |
+| 6 | 版本 bump + 发布（阶段 4） | |
+| 7 | 创建 Release（阶段 5） | |
+| 8 | ⚠️ 确认交付物（阶段 6） | |
+| 9 | 清理 worktree（阶段 7） | |
 
 ### 2. 执行约束
 

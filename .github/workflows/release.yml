@@ -242,13 +242,14 @@ jobs:
             } >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Create Draft Release
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.changelog.outputs.version }}
           name: xyz-agent v${{ steps.changelog.outputs.version }}
           body: ${{ steps.changelog.outputs.body }}
-          draft: true
+          draft: false
+          prerelease: ${{ contains(github.ref, '-') }}
           files: release-artifacts/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
