@@ -387,6 +387,32 @@ else
 fi
 
 # ============================================================================
+# 目录规范检查（禁止 demos/impeccable 目录 + 禁止外部 symlink）
+# ============================================================================
+
+DIRECTORY_RULES_CHECKER=".githooks/check_directory_rules.py"
+
+if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_DIRECTORY_RULES_CHECK" != "1" ]; then
+    echo -e "${BLUE}[INFO] 运行目录规范检查..."
+
+    if [ ! -f "$DIRECTORY_RULES_CHECKER" ]; then
+        echo -e "${YELLOW}[WARN] 找不到检查脚本 $DIRECTORY_RULES_CHECKER${NC}"
+    else
+        python3 "$DIRECTORY_RULES_CHECKER"
+        EXIT_CODE=$?
+
+        if [ $EXIT_CODE -eq 2 ]; then
+            echo ""
+            echo -e "${RED}[ERROR] 目录规范检查失败${NC}"
+            echo -e "${YELLOW}[INFO] 设置 SKIP_DIRECTORY_RULES_CHECK=1 跳过检查${NC}"
+            exit 1
+        fi
+    fi
+else
+    echo -e "${YELLOW}[SKIP] 目录规范检查已跳过${NC}"
+fi
+
+# ============================================================================
 # 全部通过
 # ============================================================================
 
@@ -432,6 +458,7 @@ echo -e "  ${GREEN}[+]${NC} Sidecar session 隔离检查"
 echo -e "  ${GREEN}[+]${NC} CSS tokens 检查"
 echo -e "  ${GREEN}[+]${NC} ENV_WHITELIST_PREFIXES 同步检查"
 echo -e "  ${GREEN}[+]${NC} 路径白名单动态化检查"
+echo -e "  ${GREEN}[+]${NC} 目录规范检查（禁止 demos/impeccable + 外部 symlink）"
 echo -e "  ${GREEN}[+]${NC} Runtime Bundle 验证（依赖打包 + CJS 兼容 + 健康检查）"
 echo -e "  ${GREEN}[+]${NC} 打包配置预检查（asarUnpack/files 一致性 + symlink 检查）"
 echo ""

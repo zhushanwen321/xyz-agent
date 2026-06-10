@@ -1,6 +1,6 @@
 # Turn 分组 + Section 缩进重构 Plan
 
-基于 `docs/impeccable/chat-area-design-decisions.md` 方案 B（Turn 分组 + 细分割线）。
+基于 `docs/designs/chat-area-design-decisions.md` 方案 B（Turn 分组 + 细分割线）。
 
 ## 1. 影响分析
 

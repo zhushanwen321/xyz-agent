@@ -27,9 +27,7 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Sidecar 的 AI Agent 桌面工作
 - [暗色主题选项 demo](docs/templates/dark-theme-options.html) — 5 种彩色 accent 方案对比
 - [朴素锐利主题 demo](docs/templates/muted-sharp-themes.html) — 5 种低饱和/无彩色方案对比
 
-**UI Demo 目录**: `docs/designs/` — 所有 UI 设计 demo（HTML 文件），按 `views_<模块>.html` 命名
-  - 聊天界面: [views_chat.html](docs/designs/views_chat.html) — 含 SlashMenu、skill 标签、消息气泡三种状态
-  - Settings Skills: [views_settings-skills.html](docs/designs/views_settings-skills.html)
+**UI Demo 目录**: `docs/designs/` — 所有 UI 设计 demo（HTML 文件）和设计决策文档（MD 文件）。禁止在项目根目录或其他位置创建 `demos/`、`impeccable/` 等目录
 
 **外部项目源码**:
 - **xyz-pi（fork 版本）**: [zhushanwen321/pi](https://github.com/zhushanwen321/pi) — 基于 [pi](https://github.com/nicepkg/pi-coding-agent) 的 fork，增加了 session tree 透出（`leafId` in `get_state`）等定制功能
@@ -237,6 +235,13 @@ lsof -i :1420 -P | grep node
 SKIP_RUNTIME_BUNDLE_CHECK=1 git commit   # 跳过 runtime bundle 验证
 SKIP_ALL_CHECKS=1 git commit            # 跳过所有（仅紧急情况）
 ```
+
+### 13. 目录规范（违反必出 bug）
+
+- **禁止创建 `demos/` 或 `impeccable/` 目录** — 所有 UI demo、HTML 设计稿统一放 `docs/designs/`，按 `views_<模块>.html` 或 `<主题>.html` 命名。pre-commit hook 自动检查
+- **禁止 symlink 指向外部绝对路径** — 项目内 symlink 白名单仅允许 `../` 相对路径（指向同 workspace 内的兄弟 worktree）。外部绝对路径 symlink 打包后目标不存在，导致运行时资源缺失。pre-commit hook 自动检查
+- **`.xyz-harness/` 目录必须提交且不能删除** — 该目录存放所有 spec/plan 的历史设计文档（按 `YYYY-MM-DD-<slug>/` 命名），是项目决策追溯的重要依据。禁止 `git rm -r .xyz-harness/` 或将其加入 `.gitignore`
+- **`DESIGN.md` 必须保留在项目根目录** — 产品设计系统的核心定义文件（颜色、字体、间距、品牌调性）。随需求演进必须同步更新，禁止过时
 
 ## 前端编码规范
 
@@ -451,4 +456,5 @@ SKIP_FRONTEND_LINT=1 git commit    # 跳过 ESLint
 SKIP_CODE_RULES_CHECK=1 git commit # 跳过 vue_rules_checker
 SKIP_ENV_WHITELIST_CHECK=1 git commit   # 跳过 ENV 白名单同步检查
 SKIP_PATH_WHITELIST_CHECK=1 git commit   # 跳过路径白名单动态化检查
+SKIP_DIRECTORY_RULES_CHECK=1 git commit  # 跳过目录规范检查（禁止 demos/impeccable + 外部 symlink）
 ```
