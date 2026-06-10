@@ -3,9 +3,17 @@ import { ref, watch, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Button, Input, Select } from '../../design-system'
 import type { ProviderInfo, ModelInfo } from '@xyz-agent/shared'
-// TagPill removed — tags no longer used
 import { useProvider } from '../../composables/useProvider'
 import { on as onEvent, off as offEvent } from '../../lib/event-bus'
+import {
+  useModelEditor,
+  formatCtx,
+  ctxOptions,
+  THINKING_PRESETS,
+  STRATEGY_LABELS,
+  getStrategyFromMap,
+} from '../../composables/useModelEditor'
+import type { ModalModel } from '../../composables/useModelEditor'
 
 interface Props {
   visible: boolean
@@ -26,14 +34,6 @@ const emit = defineEmits<{
 
 // ─── Form state ─────────────────────────────────────────────────
 
-interface ModalModel {
-  id: string
-  name: string
-  contextWindow: number
-  enabled?: boolean
-  thinkingLevelMap?: Record<string, string | null>
-}
-
 interface ModalFormData {
   name: string
   type: string
@@ -44,9 +44,6 @@ interface ModalFormData {
 }
 
 const { t } = useI18n()
-
-const CTX_1M = 1_000_000
-const CTX_1K = 1000
 
 const formName = ref('')
 const formType = ref('openai-completions')
@@ -62,21 +59,6 @@ const discoverStatus = ref<'idle' | 'loading' | 'error' | 'empty' | 'success'>('
 const discoverMessage = ref('')
 const addModelName = ref('')
 const addModelCtx = ref('200K')
-
-const ctxOptions = [
-  { label: '128K', value: '128000' },
-  { label: '200K', value: '200000' },
-  { label: '256K', value: '256000' },
-  { label: '1M', value: '1000000' },
-]
-
-function formatCtx(v: string | number | undefined): string {
-  if (v == null || v === '--') return '--'
-  const n = typeof v === 'string' ? parseInt(v, 10) : v
-  if (Number.isNaN(n) || n <= 0) return '--'
-  if (n >= CTX_1M) return `${(n / CTX_1M).toFixed(n % CTX_1M === 0 ? 0 : 1)}M`
-  return `${Math.round(n / CTX_1K)}K`
-}
 
 const typeOptions = [
   { label: 'Anthropic', value: 'anthropic-messages' },
@@ -254,63 +236,24 @@ function handleSave() {
   })
 }
 
-// ─── Thinking strategy presets ────────────────────────────────
+// ─── Model editor (extracted to composable) ──────────────────────
 
-type ThinkingStrategy = 'all-levels' | 'on-off' | 'high-max'
-
-const THINKING_PRESETS: Record<ThinkingStrategy, Record<string, string | null> | undefined> = {
-  'all-levels': undefined,
-  'on-off': { minimal: null, low: null, medium: null, high: null, xhigh: 'xhigh' },
-  'high-max': { off: null, minimal: null, low: null, medium: null, high: 'high', xhigh: 'max' },
-}
-
-const STRATEGY_LABELS: Record<ThinkingStrategy, string> = {
-  'all-levels': 'All Levels',
-  'on-off': 'On / Off',
-  'high-max': 'high / max',
-}
-
-function getStrategyFromMap(map?: Record<string, string | null>): ThinkingStrategy {
-  if (!map) return 'all-levels'
-  if (map.xhigh === 'max') return 'high-max'
-  return 'on-off'
-}
-
-function applyThinkingStrategy(model: ModalModel, strategy: ThinkingStrategy) {
-  const preset = THINKING_PRESETS[strategy]
-  model.thinkingLevelMap = preset ? structuredClone(preset) : undefined
-}
-
-const editingModelId = ref<string | null>(null)
-const editingCtxValue = ref('')
-
-function updateModelCtx(modelId: string, value: string | number) {
-  editingCtxValue.value = String(value)
-  const model = modalModels.value.find(m => m.id === modelId)
-  if (model) model.contextWindow = Number(value) || 0
-}
-
-function toggleModelEdit(modelId: string) {
-  if (editingModelId.value === modelId) {
-    editingModelId.value = null
-  } else {
-    editingModelId.value = modelId
-    const model = modalModels.value.find(m => m.id === modelId)
-    editingCtxValue.value = model ? String(model.contextWindow ?? 0) : '0'
-  }
-}
-
-function pickStrategy(model: ModalModel, strategy: ThinkingStrategy) {
-  applyThinkingStrategy(model, strategy)
-  editingModelId.value = null
-}
+const {
+  editingModelId,
+  editingCtxValue,
+  updateModelCtx,
+  toggleModelEdit,
+  getCtxOptionsForModel,
+  pickStrategy,
+  resetEditing,
+} = useModelEditor(modalModels)
 
 function handleKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
     e.preventDefault()
     e.stopPropagation()
     if (editingModelId.value) {
-      editingModelId.value = null
+      resetEditing()
       return
     }
     emit('close')
@@ -321,7 +264,7 @@ watch(() => props.visible, (v) => {
   if (v) document.addEventListener('keydown', handleKeydown)
   else {
     document.removeEventListener('keydown', handleKeydown)
-    editingModelId.value = null
+    resetEditing()
     cleanupDiscover()
   }
 })
@@ -437,10 +380,11 @@ onUnmounted(() => {
               <!-- Context window: static when not editing, select when editing -->
               <span v-if="editingModelId !== model.id" class="col-ctx">{{ formatCtx(model.contextWindow) }}</span>
               <div v-else class="col-ctx-edit" @click.stop>
+                <!-- @click.stop prevents toggling edit mode while using Select -->
                 <Select
                   :model-value="editingCtxValue"
-                  :options="ctxOptions"
-                  class="!w-[72px] !h-[22px] !text-[10px]"
+                  :options="getCtxOptionsForModel(model)"
+                  class="ctx-select"
                   @update:model-value="(v: string | number) => updateModelCtx(model.id, v)"
                 />
               </div>
@@ -458,7 +402,7 @@ onUnmounted(() => {
               class="flex-1"
               @keydown.enter="addModel"
             />
-            <span class="badge badge--binary" style="width:56px;font-size:9px">On / Off</span>
+            <span class="badge badge--binary badge--compact">On / Off</span>
             <Select
               v-model="addModelCtx"
               :options="ctxOptions"
@@ -530,6 +474,12 @@ onUnmounted(() => {
   justify-content: flex-end;
   padding-right: 4px;
 }
+/* Inline select matching badge dimensions (72px × badge height, 10px font) */
+.col-ctx-edit :deep(.ctx-select) {
+  width: 72px !important;
+  height: 22px !important;
+  font-size: 10px !important;
+}
 .col-remove {
   width: 28px;
   flex-shrink: 0;
@@ -558,6 +508,7 @@ onUnmounted(() => {
 .badge--binary:hover { opacity: 0.8; }
 .badge--highmax { background: var(--accent-light); color: var(--accent); }
 .badge--highmax:hover { opacity: 0.8; }
+.badge--compact { width: 56px; font-size: 9px; }
 
 /* Inline pills (hidden by default, shown when editing) */
 .strategy-pills {

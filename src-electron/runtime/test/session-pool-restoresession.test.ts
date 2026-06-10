@@ -246,4 +246,23 @@ describe('SessionService.restoreSession', () => {
   // restoreSession does NOT catch switch_session errors — they propagate
   await expect(service.restoreSession(id)).rejects.toThrow('switch failed')
   })
+
+  // ── CWD fallback ─────────────────────────────────────────────
+
+  it('should fall back to home dir when session cwd does not exist', async () => {
+  const id = 'cwd-fallback-id'
+  // Use a path that is guaranteed not to exist
+  const nonexistentCwd = '/tmp/xyz-agent-test-cwd-nonexistent-' + Date.now()
+  addScannedSession(id, nonexistentCwd)
+  createSessionMock.mockResolvedValue(makeMockClient())
+
+  await service.restoreSession(id)
+
+  // createSession should be called with homedir() as cwd, not the nonexistent path
+  expect(createSessionMock).toHaveBeenCalledWith(
+    id,
+    expect.not.stringContaining('nonexistent'),
+    expect.objectContaining({ skillPaths: expect.any(Array) }),
+  )
+  })
 })

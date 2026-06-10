@@ -68,7 +68,12 @@ export function useProvider() {
   }
 
   function onDefaults(msg: ServerMessage) {
-    const payload = msg.payload as { defaultModel?: string }
+    const payload = msg.payload as { defaultModel?: string; source?: string }
+    // 服务端为准：model.switch 持久化并广播新默认模型，所有 panel 必须同步。
+    // sendInitialState 也会发送 config.defaults（无 source），这是初始状态同步。
+    // source='model-switch' 来自用户主动切换，无条件覆盖。
+    // 无 source 的广播来自 sendInitialState（连接时的状态同步），同样无条件接受。
+    // 两者都是合法的服务端真相来源，不需要旧逻辑 “仅 unset 时写入” 的保护。
     if (payload.defaultModel) {
       settingsStore.defaultModel = payload.defaultModel
     }

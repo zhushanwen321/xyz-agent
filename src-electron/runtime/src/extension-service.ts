@@ -43,8 +43,6 @@ const DISCOVERY_TEMP_PREFIX = 'ext-scan-'
 const ORPHAN_TEMP_MAX_AGE_MS = 24 * 60 * 60 * 1000 // 24 hours
 const ALLOWED_GIT_PREFIXES = ['https://', 'ssh://', 'git@'] as const
 
-
-
 /** 获取 xyz-agent 的 agent 配置目录 */
 function getSettingsDir(): string {
   return getPiAgentDir()
@@ -92,7 +90,10 @@ export class ExtensionService {
 
   constructor(options?: ExtensionServiceOptions) {
     this.settingsDir = options?.settingsDir ?? getSettingsDir()
-    this.resolver = new ExtensionResolver({ settingsDir: this.settingsDir })
+    this.resolver = new ExtensionResolver({
+      settingsDir: this.settingsDir,
+      thirdPartyDir: join(this.settingsDir, 'extensions'),
+    })
     this.projectRoot = options?.projectRoot ?? process.cwd()
     this.packaged = options?.packaged ?? (process.env.XYZ_AGENT_PACKAGED === '1')
 
@@ -438,9 +439,6 @@ export class ExtensionService {
     const tempDir = mkdtempSync(join(tmpParent, DISCOVERY_TEMP_PREFIX))
 
     // Validate Git URL format
-    if (!ALLOWED_GIT_PREFIXES.some(p => url.startsWith(p))) {
-      throw new Error(`Invalid Git URL: ${url}. Must start with one of: ${ALLOWED_GIT_PREFIXES.join(', ')}`)
-    }
     if (!ALLOWED_GIT_PREFIXES.some(p => url.startsWith(p))) {
       throw new Error(`Invalid Git URL: ${url}. Must start with one of: ${ALLOWED_GIT_PREFIXES.join(', ')}`)
     }
