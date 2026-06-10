@@ -170,7 +170,7 @@ describe('ExtensionResolver', () => {
         throw new Error('not found')
       })
 
-      const result = resolver.scanSettingsExtensions()
+      const result = new ExtensionResolver({ settingsDir }).scanSettingsExtensions()
       expect(result.size).toBe(1)
       expect(result.get('ask-user')).toBe(pkgDir)
     })
@@ -199,7 +199,7 @@ describe('ExtensionResolver', () => {
         throw new Error('not found')
       })
 
-      const result = resolver.scanSettingsExtensions()
+      const result = new ExtensionResolver({ settingsDir }).scanSettingsExtensions()
       expect(result.size).toBe(0)
     })
 
@@ -229,7 +229,7 @@ describe('ExtensionResolver', () => {
         throw new Error('not found')
       })
 
-      const result = resolver.scanSettingsExtensions()
+      const result = new ExtensionResolver({ settingsDir }).scanSettingsExtensions()
       expect(result.size).toBe(0)
     })
 
@@ -266,12 +266,11 @@ describe('ExtensionResolver', () => {
   })
 
   describe('scanThirdPartyExtensions', () => {
-    it('scans ~/.xyz-agent/pi/agent/extensions/', () => {
-      const home = process.env.HOME ?? '/home/user'
-      const thirdPartyDir = `${home}/.xyz-agent/pi/agent/extensions`
+    it('scans third-party extensions directory', () => {
+      const thirdPartyDir = '/test/third-party-extensions'
       mockDir(thirdPartyDir)
 
-      const result = resolver.scanThirdPartyExtensions()
+      const result = new ExtensionResolver({ thirdPartyDir }).scanThirdPartyExtensions()
       expect(result.size).toBe(2)
       expect(result.has('ext-a')).toBe(true)
       expect(result.has('ext-b')).toBe(true)
@@ -463,7 +462,8 @@ describe('ExtensionResolver', () => {
         throw new Error('not found')
       })
 
-      const result = resolver.resolve('/project', false, ['/custom/my-ext'])
+      const testResolver = new ExtensionResolver({ settingsDir, thirdPartyDir: `${settingsDir}/extensions` })
+      const result = testResolver.resolve('/project', false, ['/custom/my-ext'])
 
       // bundled ext-a
       expect(result.extensionDirs.some(d => d === bundledDir + '/ext-a')).toBe(true)
@@ -507,7 +507,8 @@ describe('ExtensionResolver', () => {
         throw new Error('not found')
       })
 
-      const result = resolver.resolve('/project', true, [])
+      const testResolver = new ExtensionResolver({ thirdPartyDir })
+      const result = testResolver.resolve('/project', true, [])
       expect(result.extensionDirs.length).toBe(1)
       expect(result.extensionDirs[0]).toBe(`${thirdPartyDir}/ext-c`)
     })

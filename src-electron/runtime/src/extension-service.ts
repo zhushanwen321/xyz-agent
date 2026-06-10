@@ -19,7 +19,7 @@
 import { execFileSync } from 'node:child_process'
 import { installPackage, uninstallPackage, installDependencies, NpmInstallError } from './npm-installer.js'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, readdirSync, statSync, lstatSync, realpathSync, cpSync, rmSync, mkdtempSync } from 'node:fs'
-import { join, resolve, basename } from 'node:path'
+import { join, resolve, basename, relative, isAbsolute } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 import type { ExtensionInfo } from '@xyz-agent/shared'
 import { ExtensionResolver } from './extension-resolver.js'
@@ -41,6 +41,18 @@ const DISCOVERY_TEMP_PREFIX = 'ext-scan-'
 // eslint-disable-next-line no-magic-numbers
 const ORPHAN_TEMP_MAX_AGE_MS = 24 * 60 * 60 * 1000 // 24 hours
 const ALLOWED_GIT_PREFIXES = ['https://', 'ssh://', 'git@'] as const
+
+/** Cross-platform check: is `child` strictly under `parent` (not equal)? Uses path.relative() to avoid separator issues. */
+function isStrictlyUnder(parent: string, child: string): boolean {
+  const rel = relative(resolve(parent), resolve(child))
+  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)
+}
+
+/** Cross-platform check: is `child` under or equal to `parent`? Uses path.relative() to avoid separator issues. */
+function isUnderOrEqual(parent: string, child: string): boolean {
+  const rel = relative(resolve(parent), resolve(child))
+  return !rel.startsWith('..') && !isAbsolute(rel)
+}
 
 /** 获取 xyz-agent 的 agent 配置目录 */
 function getSettingsDir(): string {
@@ -399,10 +411,8 @@ export class ExtensionService {
     // Restrict source path to safe directories (home or os.tmpdir())
     // Check resolved path to prevent symlink bypass
     const homeDir = homedir()
-    const isUnderHome = checkPath.startsWith(homeDir + '/') || checkPath === homeDir
     const sysTmpDir = tmpdir()
-    const isUnderTmp = checkPath.startsWith(sysTmpDir + '/') || checkPath === sysTmpDir
-    if (!isUnderHome && !isUnderTmp) {
+    if (!isUnderOrEqual(homeDir, checkPath) && !isUnderOrEqual(sysTmpDir, checkPath)) {
       throw new Error(`Source path must be under home directory or /tmp`)
     }
 
@@ -491,7 +501,7 @@ export class ExtensionService {
     // Validate tempDir is within settingsDir/tmp
     const resolvedTemp = resolve(tempDir)
     const allowedTmpPrefix = resolve(this.settingsDir, 'tmp')
-    if (!resolvedTemp.startsWith(allowedTmpPrefix + '/')) {
+    if (!isStrictlyUnder(allowedTmpPrefix, resolvedTemp)) {
       throw new Error(`Invalid temp directory: ${tempDir}`)
     }
 
@@ -549,7 +559,7 @@ export class ExtensionService {
   async cancelInstall(tempDir: string): Promise<void> {
     const resolvedTemp = resolve(tempDir)
     const allowedTmpPrefix = resolve(this.settingsDir, 'tmp')
-    if (!resolvedTemp.startsWith(allowedTmpPrefix + '/')) {
+    if (!isStrictlyUnder(allowedTmpPrefix, resolvedTemp)) {
       throw new Error(`Invalid temp directory: ${tempDir}`)
     }
 

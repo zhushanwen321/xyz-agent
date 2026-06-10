@@ -28,7 +28,7 @@ import { atomicWrite } from './scanner-base.js'
 import { parseSessionHeader, extractSessionName } from './session-file-utils.js'
 
 // Re-export session file utilities for backward compatibility
-export { ensureSessionFile, persistSessionName } from './session-file-utils.js'
+export { ensureSessionFile, persistSessionName, patchSessionCwd } from './session-file-utils.js'
 
 // ── 路径函数（env-var-aware，支持实例隔离）──────────────────────
 // 所有路径从 XYZ_AGENT_DATA_DIR 推导。未设置时回退 ~/.xyz-agent/

@@ -6,6 +6,7 @@
  */
 import { basename, resolve } from 'node:path'
 import { existsSync } from 'node:fs'
+import { homedir } from 'node:os'
 import type {
   SessionSummary,
   SessionGroup,
@@ -18,7 +19,7 @@ import type { IExtensionService } from '../interfaces.js'
 import type { PiMessage } from '../rpc-client.js'
 import { convertPiHistory } from '../message-converter.js'
 import type { PiHistoryMessage } from '../types.js'
-import { getDefaultModel, scanPiSessions, refreshAll, getPiAgentDir, persistSessionName, ensureSessionFile } from '../pi-config-bridge.js'
+import { getDefaultModel, scanPiSessions, refreshAll, getPiAgentDir, persistSessionName, ensureSessionFile, patchSessionCwd } from '../pi-config-bridge.js'
 import * as piBridge from '../pi-config-bridge.js'
 import { trash } from '../trash.js'
 import { NavigateInterceptor } from '../navigate-interceptor.js'
@@ -430,11 +431,21 @@ export class SessionService implements ISessionService {
       await this.pm.destroySession(sessionId).catch(() => {})
       this.sessions.delete(sessionId)
     }
+
+    // session 记录的 cwd 可能已被删除（如 worktree 清理后），降级到用户 home
+    // 同时 patch session 文件首行的 cwd，使 pi 的 switch_session 不会因 cwd 不存在而失败
+    let sessionCwd = target.cwd
+    if (!existsSync(sessionCwd)) {
+      console.warn(`[session-service] session cwd does not exist: ${sessionCwd}, falling back to home directory`)
+      sessionCwd = homedir()
+      patchSessionCwd(target.filePath, sessionCwd)
+    }
+
     const id = sessionId
     // Collect extension paths: built-in + user-installed + file-type
     const allExtPaths = await this.getExtensionPaths()
-    const client = await this.pm.createSession(id, target.cwd, {
-      skillPaths: this.getSkillPaths(target.cwd),
+    const client = await this.pm.createSession(id, sessionCwd, {
+      skillPaths: this.getSkillPaths(sessionCwd),
       extensionPaths: allExtPaths,
     })
 
@@ -447,7 +458,7 @@ export class SessionService implements ISessionService {
     }
 
     const session = await this.initializeManagedSession(
-      id, client, target.cwd, target.name ?? basename(target.cwd), target.filePath,
+      id, client, sessionCwd, target.name ?? basename(sessionCwd), target.filePath,
     )
     return this.toSummary(session)
   }
