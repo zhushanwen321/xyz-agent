@@ -161,7 +161,8 @@ export class RuntimeManager {
       }
 
       // 端口被占用，尝试 kill stale
-      console.log(`[runtime] Port ${port} in use, cleaning up stale process`)
+      console.warn(`[runtime] Port ${port} in use, cleaning up stale process (may kill non-agent services if name matches)`)
+
       this.killStaleProcessOnPort(port)
       cleanedAny = true
       await this.sleep(RuntimeManager.PORT_RETRY_MS)
@@ -317,6 +318,12 @@ export class RuntimeManager {
       }
       const child = this.child
       const childPid = child.pid!
+      if (!childPid || isNaN(childPid)) {
+        this.child = null
+        this._port = null
+        resolve()
+        return
+      }
       let resolved = false
 
       // 在发 SIGTERM 之前记录所有后代 PID
@@ -326,16 +333,18 @@ export class RuntimeManager {
       const done = () => {
         if (resolved) return
         resolved = true
-        // 杀掉残留的后代进程（pi 等）
+        // 杀掉残留的后代进程（pi 等），同步完成后再 resolve
+        // 避免异步 setTimeout 在 resolve 后误杀 PID 复用的新进程
         for (const pid of descendantPids) {
           try { process.kill(pid, 'SIGTERM') } catch { /* 可能已随 runtime 退出 */ }
         }
-        // 短暂等待后补 SIGKILL
-        setTimeout(() => {
-          for (const pid of descendantPids) {
-            try { process.kill(pid, 'SIGKILL') } catch { /* 可能已退出 */ }
-          }
-        }, RuntimeManager.KILL_WAIT_MS)
+        // 同步等待后补 SIGKILL
+        try {
+          execSync(`sleep ${RuntimeManager.KILL_WAIT_MS / 1000}`, { stdio: 'ignore' })
+        } catch { /* sleep 失败不影响 */ }
+        for (const pid of descendantPids) {
+          try { process.kill(pid, 'SIGKILL') } catch { /* 可能已退出 */ }
+        }
         this.child = null
         this._port = null
         resolve()
@@ -370,6 +379,7 @@ export class RuntimeManager {
    * 递归获取指定 PID 的所有后代进程 PID（广度优先，返回按代排列：子→孙→...）。
    */
   private getDescendantPids(parentPid: number): number[] {
+    if (!parentPid || isNaN(parentPid)) return []
     const result: number[] = []
     const queue = [parentPid]
     while (queue.length > 0) {
