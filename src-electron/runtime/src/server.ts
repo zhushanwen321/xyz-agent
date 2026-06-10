@@ -115,7 +115,14 @@ export class SidecarServer implements IMessageBroker {
       try {
         const msg: ClientMessage = JSON.parse(data.toString())
         this.resetHeartbeat(ws)
-        this.handleMessage(msg, ws)
+        // handleMessage 是 async，必须 await 防止 unhandled rejection 导致进程崩溃
+        this.handleMessage(msg, ws).catch((err) => {
+          console.error('[runtime] unhandled error in handleMessage:', err)
+          // 兜底通知客户端，防止消息黑洞
+          try {
+            this.sendError(ws, 'handler_error', err instanceof Error ? err.message : String(err), msg.id)
+          } catch { /* ws 可能已关闭 */ }
+        })
       } catch { this.sendError(ws, 'parse_error', 'Invalid JSON') }
     })
     ws.on('close', () => {

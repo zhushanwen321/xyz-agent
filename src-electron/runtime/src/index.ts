@@ -143,6 +143,14 @@ async function main(): Promise<void> {
   process.on('SIGINT', () => shutdown('SIGINT'))
   process.on('SIGTERM', () => shutdown('SIGTERM'))
 
+  // [HISTORICAL] unhandledRejection 兜底：防止 async 异常逃逸导致 Node.js 进程崩溃。
+  // 之前 server.ts 的 ws.on('message') 回调中没有 await handleMessage()，
+  // 导致 async 错误变成 unhandled rejection，Node.js 16+ 默认行为是终止进程。
+  // 虽然 server.ts 已修复（加了 .catch），这里作为最后防线保留。
+  process.on('unhandledRejection', (reason) => {
+    console.error('[runtime] *** UNHANDLED REJECTION *** (should not happen):', reason)
+  })
+
   await server.start()
   console.log('[runtime] ready')
 
