@@ -54,8 +54,12 @@ export class RuntimeManager {
     return this._port
   }
 
-  /** 只 kill 已知的 agent 相关进程名 */
-  private static readonly SAFE_KILL_NAMES = /^(:?node|pi|tsx|electron|bash|sh|zsh)$/i
+  /**
+   * 安全 kill 白名单：匹配路径分隔符后的 basename。
+   * macOS `ps -o comm=` 可能返回完整路径（如 `/Applications/xyz-agent.app/Contents/MacOS/xyz-agent`），
+   * 所以匹配 `/` 或 `\` 或行首之后的 basename。
+   */
+  private static readonly SAFE_KILL_NAMES = /(?:^|[\/\\])(?:node|pi|tsx|electron|xyz-agent|bash|sh|zsh)$/i
 
   /**
    * 用 lsof 查找占用端口的进程并 kill。
@@ -102,7 +106,10 @@ export class RuntimeManager {
     }
   }
 
-  /** 检查进程名是否在安全 kill 列表中 */
+  /**
+   * 检查进程名是否在安全 kill 列表中。
+   * 正则匹配路径分隔符后的 basename，兼容 macOS 返回完整路径或 basename。
+   */
   private isSafeToKill(pid: number): boolean {
     try {
       const name = execSync(`ps -p ${pid} -o comm= 2>/dev/null || true`, {
@@ -110,7 +117,7 @@ export class RuntimeManager {
         shell: '/bin/bash',
         stdio: ['pipe', 'pipe', 'pipe'],
       }).trim()
-      // ps comm 返回进程名（不含路径），如 "node", "pi", "bash"
+      if (!name) return false
       return RuntimeManager.SAFE_KILL_NAMES.test(name)
     } catch {
       return false
@@ -138,15 +145,25 @@ export class RuntimeManager {
   /**
    * 在动态端口范围内寻找可用端口（默认 3210-3220，dev 3310-3320）。
    * 如果被占用则尝试 kill stale process，等 300ms 后重试。
+   *
+   * 合并了之前的 cleanupStaleProcessesInRange 逻辑：扫描时遇占用端口直接 kill，
+   * 避免两次遍历整个端口范围的延迟。
    */
   private async findAvailablePort(): Promise<number> {
     const { start, end } = this.getPortRange()
+    let cleanedAny = false
     for (let port = start; port <= end; port++) {
       const inUse = await this.isPortInUse(port)
-      if (!inUse) return port
+      if (!inUse) {
+        // 如果之前清理了其他端口，这里多等一下让 kill 生效
+        if (cleanedAny) await this.sleep(RuntimeManager.PORT_RETRY_MS)
+        return port
+      }
 
       // 端口被占用，尝试 kill stale
+      console.log(`[runtime] Port ${port} in use, cleaning up stale process`)
       this.killStaleProcessOnPort(port)
+      cleanedAny = true
       await this.sleep(RuntimeManager.PORT_RETRY_MS)
 
       const stillInUse = await this.isPortInUse(port)
@@ -289,7 +306,7 @@ export class RuntimeManager {
     return port
   }
 
-  /** 停止 runtime 子进程，等待退出或超时 */
+  /** 停止 runtime 子进程及其子进程树（包括 pi），等待退出或超时 */
   stop(timeoutMs = RuntimeManager.STOP_TIMEOUT_MS): Promise<void> {
     return new Promise((resolve) => {
       if (!this.child || this.child.killed) {
@@ -299,27 +316,81 @@ export class RuntimeManager {
         return
       }
       const child = this.child
+      const childPid = child.pid!
       let resolved = false
+
+      // 在发 SIGTERM 之前记录所有后代 PID
+      // （runtime 退出后 pi 的 PPID 变为 1，pgrep -P 查不到）
+      const descendantPids = this.getDescendantPids(childPid)
+
       const done = () => {
         if (resolved) return
         resolved = true
+        // 杀掉残留的后代进程（pi 等）
+        for (const pid of descendantPids) {
+          try { process.kill(pid, 'SIGTERM') } catch { /* 可能已随 runtime 退出 */ }
+        }
+        // 短暂等待后补 SIGKILL
+        setTimeout(() => {
+          for (const pid of descendantPids) {
+            try { process.kill(pid, 'SIGKILL') } catch { /* 可能已退出 */ }
+          }
+        }, RuntimeManager.KILL_WAIT_MS)
         this.child = null
         this._port = null
         resolve()
       }
       child.once('exit', done)
       child.kill('SIGTERM')
-      // 超时后强制 SIGKILL
+      // 超时后强制 SIGKILL（先杀整棵进程树）
       setTimeout(() => {
         child.removeListener('exit', done)
-        if (!child.killed) {
-          try { child.kill('SIGKILL') }
-          // eslint-disable-next-line taste/no-silent-catch -- 进程可能已退出
-          catch { /* ignore */ }
-        }
+        // 强制杀进程树：runtime + 所有子进程
+        this.killProcessTree(childPid, descendantPids)
         done()
       }, timeoutMs)
     })
+  }
+
+  /**
+   * 强制杀掉整棵进程树（父进程 + 所有后代）。
+   * 用于 stop() 超时后的强制清理。
+   */
+  private killProcessTree(rootPid: number, precomputedDescendants?: number[]): void {
+    const pids = precomputedDescendants ?? this.getDescendantPids(rootPid)
+    // 先杀后代（倒序：孙→子）
+    for (const pid of pids.reverse()) {
+      try { process.kill(pid, 'SIGKILL') } catch { /* 可能已退出 */ }
+    }
+    // 再杀根进程
+    try { process.kill(rootPid, 'SIGKILL') } catch { /* 可能已退出 */ }
+  }
+
+  /**
+   * 递归获取指定 PID 的所有后代进程 PID（广度优先，返回按代排列：子→孙→...）。
+   */
+  private getDescendantPids(parentPid: number): number[] {
+    const result: number[] = []
+    const queue = [parentPid]
+    while (queue.length > 0) {
+      const pid = queue.shift()!
+      try {
+        const output = execSync(`pgrep -P ${pid} 2>/dev/null || true`, {
+          encoding: 'utf-8',
+          shell: '/bin/bash',
+          stdio: ['pipe', 'pipe', 'pipe'],
+        }).trim()
+        if (output) {
+          const childPids = output.split('\n').map(Number).filter(n => !isNaN(n) && n > 0)
+          result.push(...childPids)
+          queue.push(...childPids)
+        }
+      } catch (e) {
+        // pgrep 失败（进程已退出），非关键
+        console.warn(`[runtime] getDescendantPids failed for PID ${pid}:`, e instanceof Error ? e.message : String(e))
+      }
+    }
+    return result
   }
 
   private sleep(ms: number): Promise<void> {
