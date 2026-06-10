@@ -487,7 +487,7 @@ describe('ExtensionService', () => {
   describe('installLocalDirectory path security', () => {
     it('rejects paths outside home and tmp', async () => {
       await expect(service.installLocalDirectory('/etc/passwd'))
-        .rejects.toThrow('not a directory')
+        .rejects.toThrow(/not a directory|does not exist/)
     })
 
     it('rejects non-directory paths under home', async () => {

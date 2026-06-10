@@ -24,6 +24,7 @@ import { homedir, tmpdir } from 'node:os'
 import type { ExtensionInfo } from '@xyz-agent/shared'
 import { ExtensionResolver } from './extension-resolver.js'
 import { getPiAgentDir } from './pi-config-bridge.js'
+import { isStrictlyUnder, isUnderOrEqual } from './utils/path-utils.js'
 
 const log = {
   info: (...args: unknown[]) => console.log('[extension-service]', ...args),
@@ -89,7 +90,10 @@ export class ExtensionService {
 
   constructor(options?: ExtensionServiceOptions) {
     this.settingsDir = options?.settingsDir ?? getSettingsDir()
-    this.resolver = new ExtensionResolver({ settingsDir: this.settingsDir })
+    this.resolver = new ExtensionResolver({
+      settingsDir: this.settingsDir,
+      thirdPartyDir: join(this.settingsDir, 'extensions'),
+    })
     this.projectRoot = options?.projectRoot ?? process.cwd()
     this.packaged = options?.packaged ?? (process.env.XYZ_AGENT_PACKAGED === '1')
 
@@ -399,10 +403,8 @@ export class ExtensionService {
     // Restrict source path to safe directories (home or os.tmpdir())
     // Check resolved path to prevent symlink bypass
     const homeDir = homedir()
-    const isUnderHome = checkPath.startsWith(homeDir + '/') || checkPath === homeDir
     const sysTmpDir = tmpdir()
-    const isUnderTmp = checkPath.startsWith(sysTmpDir + '/') || checkPath === sysTmpDir
-    if (!isUnderHome && !isUnderTmp) {
+    if (!isUnderOrEqual(homeDir, checkPath) && !isUnderOrEqual(sysTmpDir, checkPath)) {
       throw new Error(`Source path must be under home directory or /tmp`)
     }
 
@@ -437,9 +439,6 @@ export class ExtensionService {
     const tempDir = mkdtempSync(join(tmpParent, DISCOVERY_TEMP_PREFIX))
 
     // Validate Git URL format
-    if (!ALLOWED_GIT_PREFIXES.some(p => url.startsWith(p))) {
-      throw new Error(`Invalid Git URL: ${url}. Must start with one of: ${ALLOWED_GIT_PREFIXES.join(', ')}`)
-    }
     if (!ALLOWED_GIT_PREFIXES.some(p => url.startsWith(p))) {
       throw new Error(`Invalid Git URL: ${url}. Must start with one of: ${ALLOWED_GIT_PREFIXES.join(', ')}`)
     }
@@ -491,7 +490,7 @@ export class ExtensionService {
     // Validate tempDir is within settingsDir/tmp
     const resolvedTemp = resolve(tempDir)
     const allowedTmpPrefix = resolve(this.settingsDir, 'tmp')
-    if (!resolvedTemp.startsWith(allowedTmpPrefix + '/')) {
+    if (!isStrictlyUnder(allowedTmpPrefix, resolvedTemp)) {
       throw new Error(`Invalid temp directory: ${tempDir}`)
     }
 
@@ -549,7 +548,7 @@ export class ExtensionService {
   async cancelInstall(tempDir: string): Promise<void> {
     const resolvedTemp = resolve(tempDir)
     const allowedTmpPrefix = resolve(this.settingsDir, 'tmp')
-    if (!resolvedTemp.startsWith(allowedTmpPrefix + '/')) {
+    if (!isStrictlyUnder(allowedTmpPrefix, resolvedTemp)) {
       throw new Error(`Invalid temp directory: ${tempDir}`)
     }
 

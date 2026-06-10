@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { tmpdir } from 'node:os'
 import type { WebSocket } from 'ws'
 
 /**
@@ -33,6 +34,7 @@ vi.mock('../src/pi-config-bridge.js', () => ({
   readSettings: () => ({}),
   scanPiSessions: () => mockScannedSessions,
   refreshAll: () => {},
+  patchSessionCwd: () => true,
 }))
 
 vi.mock('../src/trash.js', () => ({
@@ -93,7 +95,7 @@ import { SessionService } from '../src/services/session-service.js'
 import type { IMessageBroker, IEventAdapter } from '../src/interfaces.js'
 
 /** Minimal scanned session fixture */
-function addScannedSession(id: string, cwd = '/tmp/test-project') {
+function addScannedSession(id: string, cwd = tmpdir()) {
   const entry = { id, filePath: `/fake/sessions/${id}.jsonl`, cwd, name: null, lastModified: Date.now(), timestamp: new Date().toISOString(), size: 0 }
   mockScannedSessions.push(entry)
   return entry
@@ -167,7 +169,7 @@ describe('SessionService.restoreSession', () => {
   // ProcessManager.createSession was called with the original id
   expect(createSessionMock).toHaveBeenCalledWith(
     originalId,
-    '/tmp/test-project',
+    tmpdir(),
     expect.objectContaining({ skillPaths: expect.any(Array) }),
   )
   })
@@ -243,5 +245,24 @@ describe('SessionService.restoreSession', () => {
 
   // restoreSession does NOT catch switch_session errors — they propagate
   await expect(service.restoreSession(id)).rejects.toThrow('switch failed')
+  })
+
+  // ── CWD fallback ─────────────────────────────────────────────
+
+  it('should fall back to home dir when session cwd does not exist', async () => {
+  const id = 'cwd-fallback-id'
+  // Use a path that is guaranteed not to exist
+  const nonexistentCwd = '/tmp/xyz-agent-test-cwd-nonexistent-' + Date.now()
+  addScannedSession(id, nonexistentCwd)
+  createSessionMock.mockResolvedValue(makeMockClient())
+
+  await service.restoreSession(id)
+
+  // createSession should be called with homedir() as cwd, not the nonexistent path
+  expect(createSessionMock).toHaveBeenCalledWith(
+    id,
+    expect.not.stringContaining('nonexistent'),
+    expect.objectContaining({ skillPaths: expect.any(Array) }),
+  )
   })
 })

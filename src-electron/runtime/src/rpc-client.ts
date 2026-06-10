@@ -1,4 +1,6 @@
+import { existsSync, realpathSync } from 'node:fs'
 import { spawn, type ChildProcess } from 'node:child_process'
+import { join, isAbsolute } from 'node:path'
 import { createInterface } from 'node:readline'
 import { getDefaultModel, getSessionsDir, getPiAgentDir } from './pi-config-bridge.js'
 import { ENV_WHITELIST_PREFIXES } from '@xyz-agent/shared'
@@ -104,10 +106,33 @@ export class RpcClient {
 
     const piCmd = this.options.piCommand ?? 'pi'
 
-    console.log('[rpc] spawning pi:', piCmd, args.join(' '))
+    // Bundled pi (Bun 编译的单文件二进制) 启动时从 cwd 查找 package.json。
+    // 如果 cwd 是用户项目目录（如 ~/my-project），pi 找不到 package.json 会 ENOENT。
+    // spawn cwd 必须设为 pi 二进制所在目录（包含 package.json）。
+    //
+    // Trade-off：pi 进程的 process.cwd() 将是 pi 二进制目录而非用户项目目录。
+    // 这在 RPC 模式下可接受：
+    //   - session 的 cwd 由 session-service 在 ensureSessionFile() 中正确写入 session 文件头
+    //   - pi 的 bash 工具使用 session header 中的 cwd，而非 process.cwd()
+    //   - xyz-agent UI 层维护了正确的 cwd，restoreSession 也有 cwd fallback 逻辑
+    // 如果未来 pi 支持 --cwd CLI 参数，应改用该参数传递用户项目目录。
+    // bundled pi：绝对路径且位于 resources/pi/ 目录下，cwd 设为 pi 二进制所在目录
+    // 系统 pi（bare command 如 'pi'）：cwd 由调用方决定（options.cwd 或 process.cwd）
+    // realpathSync 解析 symlink（如 /usr/local/bin/pi → 实际二进制路径），
+    // 确保计算出的 cwd 包含 package.json。
+    const isBundledPi = piCmd !== 'pi' && isAbsolute(piCmd)
+    let spawnCwd: string
+    if (isBundledPi) {
+      const resolvedPiCmd = existsSync(piCmd) ? realpathSync(piCmd) : piCmd
+      spawnCwd = join(resolvedPiCmd, '..')
+    } else {
+      spawnCwd = this.options.cwd ?? process.cwd()
+    }
+
+    console.log('[rpc] spawning pi:', piCmd, args.join(' '), 'cwd:', spawnCwd)
 
     this.proc = spawn(piCmd, args, {
-      cwd: this.options.cwd ?? process.cwd(),
+      cwd: spawnCwd,
       env,
       stdio: ['pipe', 'pipe', 'pipe'],
     })

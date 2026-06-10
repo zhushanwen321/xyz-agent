@@ -126,6 +126,7 @@ export interface ISessionService {
 export interface IConfigService {
   listProviders(): ProviderInfo[]
   getDefaultModel(): { provider: string; modelId: string } | null
+  setDefaultModel(provider: string, modelId: string): void
   setProvider(providerId: string, data: {
     name?: string
     type?: string

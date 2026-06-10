@@ -12,8 +12,10 @@ export interface SettingsHandlerContext {
   sessionService: ISessionService
   modelService: IModelService
   projectRoot: string
+  nextPushId(): string
   send(ws: unknown, msg: ServerMessage): void
   sendError(ws: unknown, code: string, message: string, id?: string, sessionId?: string): void
+  broadcast(msg: ServerMessage): void
   broadcastProviderList(): void
   broadcastSkillList(): void
   broadcastAgentList(): void
@@ -86,6 +88,14 @@ export class SettingsMessageHandler {
         const { sessionId, provider, modelId } = msg.payload
         console.log(`[runtime] model.switch: sessionId=${sessionId}, provider=${provider}, modelId=${modelId}`)
         await this.ctx.sessionService.switchModel(sessionId, provider, modelId)
+        // Persist + broadcast 持久化默认模型。失败不影响已完成的 switchModel，
+        // 但必须确保 model.switched response 始终发出，否则前端卡在 loading。
+        try {
+          this.ctx.configService.setDefaultModel(provider, modelId)
+          this.ctx.broadcast({ type: 'config.defaults', id: this.ctx.nextPushId(), payload: { defaultModel: `${provider}/${modelId}`, source: 'model-switch' as const } })
+        } catch (persistErr) {
+          console.error('[runtime] failed to persist default model:', persistErr)
+        }
         this.ctx.send(ws, { type: 'model.switched', id: msg.id, payload: { sessionId, provider, modelId } })
         return true
       }

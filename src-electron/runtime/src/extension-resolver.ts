@@ -44,6 +44,8 @@ export interface ResolverOptions {
   npmResolvePaths?: string[]
   /** 用户 settings 目录，默认 ~/.xyz-agent/pi/agent */
   settingsDir?: string
+  /** 第三方 extensions 目录，默认 ~/.xyz-agent/pi/agent/extensions */
+  thirdPartyDir?: string
 }
 
 export class ExtensionResolver {
@@ -221,7 +223,7 @@ export class ExtensionResolver {
    */
   scanThirdPartyExtensions(): ExtensionMap {
     const result: ExtensionMap = new Map()
-    const thirdPartyDir = join(getPiAgentDir(), 'extensions')
+    const thirdPartyDir = this.options.thirdPartyDir ?? join(getPiAgentDir(), 'extensions')
     if (!existsSync(thirdPartyDir)) return result
 
     this.scanDirectory(thirdPartyDir, result, 'third-party')

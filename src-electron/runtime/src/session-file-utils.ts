@@ -5,7 +5,7 @@
  * 从 pi-config-bridge.ts 提取以控制文件行数。
  */
 
-import { existsSync, readFileSync, mkdirSync, openSync, writeSync, closeSync } from 'node:fs'
+import { existsSync, readFileSync, statSync, mkdirSync, openSync, writeSync, closeSync, writeFileSync, renameSync } from 'node:fs'
 import { dirname } from 'node:path'
 
 // ── 类型定义 ─────────────────────────────────────────────────
@@ -135,5 +135,50 @@ export function persistSessionName(filePath: string, name: string, id?: string, 
   // eslint-disable-next-line taste/no-silent-catch -- file append: failure to write must not crash caller
   } catch (e) {
     console.error(`[config-bridge] persistSessionName: failed to write: ${filePath}`, e)
+  }
+}
+
+/**
+ * Patch session 文件首行的 cwd 字段。用于 session 的原始 cwd 已不存在时，
+ * 将 cwd 更新为 fallback 值，使 pi 的 switch_session 不会因 cwd 不存在而失败。
+ * 只修改首行（session header），不影响后续 entry。
+ *
+ * ⚠️ PRECONDITION: 必须在 pi session 启动（createSession）之前调用。
+ * pi 的 _persist() 会在 assistant 消息到达后异步写入 session 文件，
+ * 如果 pi 已启动，patchSessionCwd 与 _persist() 之间存在写写竞态。
+ * 当前调用链 restoreSession → patchSessionCwd → createSession 保证了时序安全。
+ *
+ * @throws 此函数不抛异常（catch-all），但调用方必须保证在 pi 进程启动前调用。
+ *         如果 pi 已启动，其 _persist() flush 可能与本次写操作并发，导致数据静默丢失。
+ */
+export function patchSessionCwd(filePath: string, newCwd: string): boolean {
+  try {
+    // 防御性检查：如果文件最近被修改过，可能存在并发写入者（如 pi 的 _persist()）
+    try {
+      const stat = statSync(filePath)
+      const ageMs = Date.now() - stat.mtimeMs
+      if (ageMs < 1000) {
+        console.warn(`[session-file-utils] patchSessionCwd: file modified ${ageMs}ms ago, possible concurrent writer — data loss risk`)
+      }
+    } catch { /* stat failed is not fatal */ }
+
+    const content = readFileSync(filePath, 'utf-8')
+    const lines = content.split('\n')
+    if (!lines[0]) return false
+    const header = JSON.parse(lines[0])
+    if (header.type !== 'session') return false
+    header.cwd = newCwd
+    lines[0] = JSON.stringify(header)
+    // 原子写入：tmpfile + rename，防止与 pi 的 _persist() 并发写导致数据丢失。
+    // 使用唯一 tmp 后缀防止并发 restoreSession 对同一文件的 TOCTOU 风险。
+    const tmpPath = `${filePath}.patch-tmp-${Date.now()}`
+    writeFileSync(tmpPath, lines.join('\n'), 'utf-8')
+    renameSync(tmpPath, filePath)
+    console.log(`[session-file-utils] patched session cwd: ${filePath} -> ${newCwd}`)
+    return true
+  // eslint-disable-next-line taste/no-silent-catch -- file patch: failure must not crash restoreSession
+  } catch (e) {
+    console.error(`[session-file-utils] failed to patch session cwd: ${filePath}`, e)
+    return false
   }
 }

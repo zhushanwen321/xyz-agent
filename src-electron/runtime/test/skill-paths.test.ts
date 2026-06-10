@@ -53,10 +53,11 @@ vi.mock('../src/pi-config-bridge.js', () => ({
   readSettings: () => ({}),
   scanPiSessions: () => mockScannedSessions,
   refreshAll: () => {},
+  patchSessionCwd: () => true,
 }))
 
 // Mock fs.existsSync to control path validation
-const existingPaths = new Set<string>()
+const existingPaths = new Set<string>([path.normalize('/project')])
 vi.mock('node:fs', () => ({
   existsSync: (p: string) => existingPaths.has(path.normalize(p)),
   mkdirSync: vi.fn(),
