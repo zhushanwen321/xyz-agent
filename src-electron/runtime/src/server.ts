@@ -11,12 +11,13 @@ import { WebSocketServer, WebSocket, type WebSocket as WsType } from 'ws'
 import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
 import type { ISessionService, IConfigService, IModelService, IMessageBroker, IExtensionService, IPluginService } from './interfaces.js'
 import { ExtensionTimeoutManager } from './extension-timeout-manager.js'
-import { ExtensionInstallError } from './extension-service.js'
 import { BridgeHandler } from './bridge-handler.js'
 import { SettingsMessageHandler } from './settings-message-handler.js'
-import { getPiAgentDir } from './pi-config-bridge.js'
+import { SessionMessageHandler } from './session-message-handler.js'
+import { ExtensionMessageHandler } from './extension-message-handler.js'
 import { PluginMessageHandler } from './plugin-message-handler.js'
 import { TreeMessageHandler } from './tree-message-handler.js'
+import { getPiAgentDir } from './pi-config-bridge.js'
 
 const HTTP_OK = 200
 const HTTP_NOT_FOUND = 404
@@ -38,10 +39,12 @@ export class SidecarServer implements IMessageBroker {
   private extensionService?: IExtensionService
   private pluginService!: IPluginService
 
-  // ── Extension UI request timeout tracking ───────────────────────
+  // ── Message handlers (extracted) ────────────────────────────────
   private extensionTimeoutMgr = new ExtensionTimeoutManager()
   private bridgeHandler = new BridgeHandler(null)
   private settingsHandler = new SettingsMessageHandler(this as unknown as import('./settings-message-handler.js').SettingsHandlerContext)
+  private sessionHandler = new SessionMessageHandler(this as unknown as import('./session-message-handler.js').SessionHandlerContext)
+  private extensionHandler = new ExtensionMessageHandler(this as unknown as import('./extension-message-handler.js').ExtensionHandlerContext)
   private pluginMessageHandler = new PluginMessageHandler(this as unknown as import('./plugin-message-handler.js').PluginHandlerContext)
   private treeMessageHandler = new TreeMessageHandler(this as unknown as import('./tree-message-handler.js').TreeHandlerContext)
 
@@ -115,10 +118,8 @@ export class SidecarServer implements IMessageBroker {
       try {
         const msg: ClientMessage = JSON.parse(data.toString())
         this.resetHeartbeat(ws)
-        // handleMessage 是 async，必须 await 防止 unhandled rejection 导致进程崩溃
         this.handleMessage(msg, ws).catch((err) => {
           console.error('[runtime] unhandled error in handleMessage:', err)
-          // 兜底通知客户端，防止消息黑洞
           try {
             this.sendError(ws, 'handler_error', err instanceof Error ? err.message : String(err), msg.id)
           } catch { /* ws 可能已关闭 */ }
@@ -138,7 +139,6 @@ export class SidecarServer implements IMessageBroker {
   }
 
   private sendInitialState(ws: WsType): void {
-    // 每个 init 消息独立 try-catch：单个失败不阻塞后续
     try {
       const groups = this.sessionService.listPersistedSessions()
       this.send(ws, { type: 'session.list', id: this.nextPushId(), payload: { groups } })
@@ -196,15 +196,15 @@ export class SidecarServer implements IMessageBroker {
         case 'message.abort':
         case 'message.steer':
         case 'message.follow_up':
-          return this.handleSessionMessage(msg, ws)
-        case 'session.compact': return this.handleSessionCompact(msg, ws)
+          return this.sessionHandler.handleSessionMessage(msg, ws)
+        case 'session.compact':
+          return this.sessionHandler.handleSessionCompact(msg, ws)
         case 'session.tree-data':
         case 'session.tree-navigate':
         case 'session.tree-fork':
         case 'session.tree-capability':
         case 'session.tree-clone':
           return this.treeMessageHandler.handleTreeMessage(msg, ws)
-        // ── Extension messages ──────────────────────────────────────────
         case 'extension.ui_response':
         case 'extension.list':
         case 'extension.toggle':
@@ -214,8 +214,7 @@ export class SidecarServer implements IMessageBroker {
         case 'extension.installGit':
         case 'extension.finishInstall':
         case 'extension.cancelInstall':
-          return this.handleExtensionMessage(msg, ws)
-        // ── Plugin messages ───────────────────────────────────────────
+          return this.extensionHandler.handleExtensionMessage(msg, ws)
         case 'plugin.list':
         case 'plugin.toggle':
         case 'plugin.uninstall':
@@ -227,8 +226,6 @@ export class SidecarServer implements IMessageBroker {
         case 'plugin.install':
         case 'plugin.uiResponse':
           return this.pluginMessageHandler.handlePluginMessage(msg, ws)
-
-        // ── File read (for skill content expansion) ───────────────────
         case 'file.read':
           return this.handleFileRead(msg, ws)
         default:
@@ -242,273 +239,6 @@ export class SidecarServer implements IMessageBroker {
       const sessionId = ('sessionId' in msg.payload ? msg.payload.sessionId : undefined) as string | undefined
       this.sendError(ws, 'handler_error', message, msg.id, sessionId)
     }
-  }
-
-  /** Handle session.* and message.* messages */
-  private async handleSessionMessage(msg: ClientMessage, ws: WsType): Promise<void> {
-    switch (msg.type) {
-      case 'session.create': {
-        const session = await this.sessionService.create(msg.payload.cwd, msg.payload.label)
-        this.send(ws, { type: 'session.created', id: msg.id, payload: { session } })
-        return this.broadcastSessionList()
-      }
-      case 'session.delete': {
-        const delSid = msg.payload.sessionId
-        this.extensionTimeoutMgr.clearForSession(delSid)
-        await this.sessionService.delete(delSid)
-        this.send(ws, { type: 'session.deleted', id: msg.id, payload: { sessionId: delSid } })
-        return this.broadcastSessionList()
-      }
-      case 'session.list':
-        return this.send(ws, { type: 'session.list', id: msg.id, payload: { groups: this.sessionService.listPersistedSessions() } })
-      case 'session.switch': {
-        const switchId = msg.payload.sessionId
-        const summary = this.sessionService.getSummary(switchId)
-        if (summary) {
-          try {
-            const messages = await this.sessionService.getHistory(switchId)
-            this.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: switchId, session: summary, messages } })
-          } catch (e) {
-            console.error('[runtime] failed to load history for switch:', e)
-            this.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: switchId, session: summary, messages: [] } })
-          }
-        } else {
-          try {
-            const restored = await this.sessionService.restoreSession(switchId)
-            const messages = await this.sessionService.getHistory(switchId)
-            this.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: switchId, session: restored, messages } })
-          } catch (e) {
-            const errMsg = e instanceof Error ? e.message : String(e)
-            const isENOENT = errMsg.includes('ENOENT')
-            const userMsg = isENOENT
-              ? `Session file missing — the session was not saved properly. Error: ${errMsg}`
-              : `Session ${switchId} not found or restore failed`
-            console.error('[runtime] session.switch auto-restore failed:', errMsg)
-            this.sendError(ws, isENOENT ? 'file_not_found' : 'not_found', userMsg, msg.id, switchId)
-          }
-        }
-        return
-      }
-      case 'session.history': {
-        const messages = await this.sessionService.getHistory(msg.payload.sessionId)
-        return this.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: msg.payload.sessionId, messages } })
-      }
-      case 'session.clear': {
-        await this.sessionService.clear(msg.payload.sessionId)
-        return this.send(ws, { type: 'session.deleted', id: msg.id, payload: { sessionId: msg.payload.sessionId } })
-      }
-      case 'session.restore': {
-        const session = await this.sessionService.restoreSession(msg.payload.sessionId)
-        this.send(ws, { type: 'session.restored', id: msg.id, payload: { session } })
-        return this.broadcastSessionList()
-      }
-      case 'session.rename': {
-        await this.sessionService.renameSession(msg.payload.sessionId, msg.payload.name)
-        this.send(ws, { type: 'session.renamed', id: msg.id, payload: { sessionId: msg.payload.sessionId, name: msg.payload.name } })
-        return this.broadcastSessionList()
-      }
-      case 'message.send': {
-        const { sessionId, content, subagent } = msg.payload
-        if (subagent) {
-          await this.sessionService.sendSubagentMessage(sessionId, subagent.agent, subagent.task, content)
-        } else {
-          await this.sessionService.sendMessage(sessionId, content)
-        }
-        return this.send(ws, { type: 'message.status', id: msg.id, payload: { sessionId, status: 'sent' } })
-      }
-      case 'message.steer': {
-        const steerSid = msg.payload.sessionId
-        try {
-          await this.sessionService.steerMessage(steerSid, msg.payload.content)
-          return this.send(ws, { type: 'message.status', id: msg.id, payload: { sessionId: steerSid, status: 'steered' } })
-        } catch (e) {
-          const errMsg = e instanceof Error ? e.message : String(e)
-          console.error('[runtime] message.steer failed:', errMsg)
-          return this.send(ws, { type: 'message.error', id: msg.id, payload: { sessionId: steerSid, message: errMsg } })
-        }
-      }
-      case 'message.follow_up': {
-        const followSid = msg.payload.sessionId
-        try {
-          await this.sessionService.followUpMessage(followSid, msg.payload.content)
-          return this.send(ws, { type: 'message.status', id: msg.id, payload: { sessionId: followSid, status: 'queued' } })
-        } catch (e) {
-          const errMsg = e instanceof Error ? e.message : String(e)
-          console.error('[runtime] message.follow_up failed:', errMsg)
-          return this.send(ws, { type: 'message.error', id: msg.id, payload: { sessionId: followSid, message: errMsg } })
-        }
-      }
-      case 'message.abort':
-        return await this.sessionService.abort(msg.payload.sessionId)
-    }
-  }
-
-  /** Handle extension.* messages */
-  private async handleExtensionMessage(msg: ClientMessage, ws: WsType): Promise<void> {
-    switch (msg.type) {
-      case 'extension.ui_response': {
-        const { sessionId: extSid, requestId, result: extResult } = msg.payload
-
-        if (this.extensionTimeoutMgr.isBridgeRequest(requestId)) {
-          this.extensionTimeoutMgr.removeBridgeRequest(requestId)
-          return
-        }
-
-        const client = this.sessionService.getRpcClient(extSid)
-        if (!client) {
-          this.extensionTimeoutMgr.clearTimeout(requestId)
-          return this.sendError(ws, 'handler_error', `No active session for extension response: ${extSid}`, msg.id, extSid)
-        }
-        await client.sendCommand('extension_ui_response', { id: requestId, response: extResult ?? null })
-        // Only clear timeout after successful sendCommand — if it throws, timeout callback will handle it
-        this.extensionTimeoutMgr.clearTimeout(requestId)
-        return
-      }
-      case 'extension.list': {
-        if (!this.extensionService) {
-          return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions: [] } })
-        }
-        const extensions = await this.extensionService.scanExtensions()
-        return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions } })
-      }
-      case 'extension.toggle': {
-        if (!this.extensionService) {
-          return this.sendError(ws, 'handler_error', 'Extension service not available', msg.id)
-        }
-        try {
-          await this.extensionService.toggleExtension(msg.payload.name, msg.payload.enabled)
-          const extensions = await this.extensionService.scanExtensions()
-          return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions } })
-        } catch (e) {
-          return this.sendError(ws, 'toggle_failed', e instanceof Error ? e.message : String(e), msg.id)
-        }
-      }
-      case 'extension.install': {
-        if (!this.extensionService) {
-          return this.sendError(ws, 'handler_error', 'Extension service not available', msg.id)
-        }
-        try {
-          await this.extensionService.installExtension(msg.payload.source)
-        } catch (e) {
-          return this.send(ws, {
-            type: 'extension.installError',
-            id: msg.id,
-            payload: this.extractExtensionError(e),
-          })
-        }
-        const installed = await this.extensionService.scanExtensions()
-        return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions: installed } })
-      }
-      case 'extension.uninstall': {
-        if (!this.extensionService) {
-          return this.sendError(ws, 'handler_error', 'Extension service not available', msg.id)
-        }
-        try {
-          await this.extensionService.uninstallExtension(msg.payload.name)
-        } catch (e) {
-          const errMsg = e instanceof Error ? e.message : String(e)
-          return this.sendError(ws, 'uninstall_failed', errMsg, msg.id)
-        }
-        const uninstalled = await this.extensionService.scanExtensions()
-        return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions: uninstalled } })
-      }
-      // ── Local directory / Git / finish install ────────────────────
-      case 'extension.installDir': {
-        if (!this.extensionService) {
-          return this.sendError(ws, 'handler_error', 'Extension service not available', msg.id)
-        }
-        try {
-          const { path: sourcePath } = msg.payload as { path: string }
-          if (typeof sourcePath !== 'string' || sourcePath.length === 0) {
-            return this.sendError(ws, 'invalid_payload', 'extension.installDir requires a non-empty "path" string', msg.id)
-          }
-          const result = await this.extensionService.installLocalDirectory(sourcePath)
-          return this.send(ws, { type: 'extension.discovered', id: msg.id, payload: { tempDir: result.tempDir, candidates: result.candidates } })
-        } catch (e) {
-          return this.send(ws, { type: 'extension.installError', id: msg.id, payload: this.extractExtensionError(e) })
-        }
-      }
-      case 'extension.installGit': {
-        if (!this.extensionService) {
-          return this.sendError(ws, 'handler_error', 'Extension service not available', msg.id)
-        }
-        try {
-          const { url } = msg.payload as { url: string }
-          if (typeof url !== 'string' || url.length === 0) {
-            return this.sendError(ws, 'invalid_payload', 'extension.installGit requires a non-empty "url" string', msg.id)
-          }
-          const result = await this.extensionService.installGitRepository(url)
-          return this.send(ws, { type: 'extension.discovered', id: msg.id, payload: { tempDir: result.tempDir, candidates: result.candidates } })
-        } catch (e) {
-          return this.send(ws, { type: 'extension.installError', id: msg.id, payload: this.extractExtensionError(e) })
-        }
-      }
-      case 'extension.finishInstall': {
-        if (!this.extensionService) {
-          return this.sendError(ws, 'handler_error', 'Extension service not available', msg.id)
-        }
-        try {
-          const { tempDir, selected } = msg.payload as { tempDir: string; selected: string[] }
-          if (typeof tempDir !== 'string' || !Array.isArray(selected)) {
-            return this.sendError(ws, 'invalid_payload', 'extension.finishInstall requires tempDir (string) and selected (string[])', msg.id)
-          }
-          await this.extensionService.finishInstall(tempDir, selected)
-          const extensions = await this.extensionService.scanExtensions()
-          return this.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions } })
-        } catch (e) {
-          return this.send(ws, { type: 'extension.installError', id: msg.id, payload: this.extractExtensionError(e) })
-        }
-      }
-      case 'extension.cancelInstall': {
-        if (!this.extensionService) {
-          return this.sendError(ws, 'handler_error', 'Extension service not available', msg.id)
-        }
-        try {
-          const { tempDir } = msg.payload as { tempDir: string }
-          if (typeof tempDir !== 'string' || tempDir.length === 0) {
-            return this.sendError(ws, 'invalid_payload', 'extension.cancelInstall requires a non-empty "tempDir" string', msg.id)
-          }
-          await this.extensionService.cancelInstall(tempDir)
-          return this.send(ws, { type: 'extension.installCancelled', id: msg.id, payload: {} })
-        } catch (e) {
-          return this.send(ws, { type: 'extension.installError', id: msg.id, payload: this.extractExtensionError(e) })
-        }
-      }
-    }
-  }
-  private handleSessionCompact(msg: Extract<ClientMessage, { type: 'session.compact' }>, ws: WsType): void {
-    const compactId = msg.payload.sessionId
-    const startTime = Date.now()
-    console.log('[server] session.compact: sessionId=' + compactId)
-    const runCompact = async () => {
-      // eslint-disable-next-line taste/no-silent-catch -- compact: error already logged, caller informed via broadcast
-      try { await this.sessionService.compact(compactId) } catch (e) {
-        console.error('[server] session.compact: failed, sessionId=' + compactId + ', error=' + (e instanceof Error ? e.message : String(e)))
-      }
-      console.log('[server] session.compact: completed, sessionId=' + compactId + ', elapsed=' + (Date.now() - startTime) + 'ms')
-    }
-    if (!this.sessionService.hasActiveSession(compactId)) {
-      this.sessionService.restoreSession(compactId).then(() => {
-        console.log('[server] session.compact: auto-restored, sessionId=' + compactId)
-        runCompact()
-      }).catch((e) => {
-        console.error('[server] session.compact: auto-restore failed, sessionId=' + compactId)
-        this.sendError(ws, 'session.compact_failed', 'Failed to restore session for compact: ' + (e instanceof Error ? e.message : String(e)), msg.id, compactId)
-      })
-    } else { runCompact() }
-  }
-
-  // ── Extension error helper ────────────────────────────────────
-
-  /**
-   * Extract ExtensionInstallError fields from unknown catch value.
-   * Primary: instanceof check. Fallback: branded property check (handles cross-bundle scenarios).
-   */
-  private extractExtensionError(e: unknown): { code: string; message: string; hint?: string } {
-    if (e instanceof ExtensionInstallError) {
-      return { code: e.code, message: e.message, hint: e.hint }
-    }
-    return { code: 'install_failed', message: e instanceof Error ? e.message : String(e) }
   }
 
   // ── IMessageBroker ──────────────────────────────────────────────
@@ -544,9 +274,6 @@ export class SidecarServer implements IMessageBroker {
   private broadcastAgentList(): void {
     this.broadcast({ type: 'config.agents', id: this.nextPushId(), payload: { agents: this.configService.loadAgents(this.projectRoot) } })
   }
-
-  // ── Extension timeout management ─────────────────────────────────
-
 
   // ── Extension timeout delegation ─────────────────────────────────
 
@@ -596,7 +323,6 @@ export class SidecarServer implements IMessageBroker {
       this.send(ws, { type: 'file.read:error', id: msg.id, payload: { error: 'Missing or invalid path' } })
       return
     }
-    // Normalize separators to '/' for consistent prefix matching across platforms
     const normalize = (p: string) => p.split(/[/\\]/).join('/')
     const absPath = normalize(resolve(filePath))
     const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? ''
@@ -604,11 +330,9 @@ export class SidecarServer implements IMessageBroker {
       normalize(resolve(homeDir, '.agents/skills')),
       normalize(resolve(homeDir, '.pi/agent/skills')),
       normalize(resolve(homeDir, '.pi/agent/npm')),
-      // xyz-agent 实例的 skill/extension 路径（支持 XYZ_AGENT_DATA_DIR 隔离）
       normalize(resolve(getPiAgentDir(), 'skills')),
       normalize(resolve(getPiAgentDir(), 'npm')),
     ]
-    // Only allow paths *inside* whitelisted directories, not the directory itself
     if (!allowedPrefixes.some(prefix => absPath.startsWith(prefix + '/'))) {
       this.send(ws, { type: 'file.read:error', id: msg.id, payload: { error: 'Path outside allowed skill directories', path: filePath } })
       return
