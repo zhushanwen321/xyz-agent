@@ -68,15 +68,6 @@ export class SessionMessageHandler {
         const messages = await this.ctx.sessionService.getHistory(msg.payload.sessionId)
         return this.ctx.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: msg.payload.sessionId, messages } })
       }
-      case 'session.clear': {
-        await this.ctx.sessionService.clear(msg.payload.sessionId)
-        return this.ctx.send(ws, { type: 'session.deleted', id: msg.id, payload: { sessionId: msg.payload.sessionId } })
-      }
-      case 'session.restore': {
-        const session = await this.ctx.sessionService.restoreSession(msg.payload.sessionId)
-        this.ctx.send(ws, { type: 'session.restored', id: msg.id, payload: { session } })
-        return this.ctx.broadcastSessionList()
-      }
       case 'session.rename': {
         await this.ctx.sessionService.renameSession(msg.payload.sessionId, msg.payload.name)
         this.ctx.send(ws, { type: 'session.renamed', id: msg.id, payload: { sessionId: msg.payload.sessionId, name: msg.payload.name } })
@@ -118,23 +109,23 @@ export class SessionMessageHandler {
     }
   }
 
-  handleSessionCompact(msg: Extract<ClientMessage, { type: 'session.compact' }>, ws: WsType): void {
+  async handleSessionCompact(msg: Extract<ClientMessage, { type: 'session.compact' }>, ws: WsType): Promise<void> {
     const compactId = msg.payload.sessionId
     const startTime = Date.now()
     console.log('[server] session.compact: sessionId=' + compactId)
-    const runCompact = async () => {
+    try {
+      await this.ctx.sessionService.ensureActive(compactId)
+      console.log('[server] session.compact: session ensured active, sessionId=' + compactId)
       // eslint-disable-next-line taste/no-silent-catch -- compact: error already logged, caller informed via broadcast
-      try { await this.ctx.sessionService.compact(compactId) } catch (e) {
+      try {
+        await this.ctx.sessionService.compact(compactId)
+      } catch (e) {
         console.error('[server] session.compact: failed, sessionId=' + compactId + ', error=' + (e instanceof Error ? e.message : String(e)))
       }
       console.log('[server] session.compact: completed, sessionId=' + compactId + ', elapsed=' + (Date.now() - startTime) + 'ms')
-    }
-    this.ctx.sessionService.ensureActive(compactId).then(() => {
-      console.log('[server] session.compact: session ensured active, sessionId=' + compactId)
-      return runCompact()
-    }).catch((e) => {
+    } catch (e) {
       console.error('[server] session.compact: ensureActive failed, sessionId=' + compactId)
       this.ctx.sendError(ws, 'session.compact_failed', 'Failed to restore session for compact: ' + (e instanceof Error ? e.message : String(e)), msg.id, compactId)
-    })
+    }
   }
 }

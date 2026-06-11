@@ -189,8 +189,6 @@ export class SidecarServer implements IMessageBroker {
         case 'session.list':
         case 'session.switch':
         case 'session.history':
-        case 'session.clear':
-        case 'session.restore':
         case 'session.rename':
         case 'message.send':
         case 'message.abort':

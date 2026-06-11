@@ -115,10 +115,13 @@ export class TreeService {
       console.warn('Failed to read editorText for navigate entry:', e)
     }
 
-    // Prevent navigate result from leaking to UI
+    // Prevent navigate result from leaking to UI + collect result for validation
     const managed = this.sessions.get(sessionId)
+    let navigateResult: { newLeafId?: string; cancelled?: boolean } | undefined
     if (managed) {
-      managed.interceptor.setResolver(() => {})
+      managed.interceptor.setResolver((result: unknown) => {
+        navigateResult = result as { newLeafId?: string; cancelled?: boolean } | undefined
+      })
     }
 
     // 发送 navigate 命令，5s 超时保护（spec AC3）
@@ -137,7 +140,12 @@ export class TreeService {
       return { success: false, error: isTimeout ? 'Navigate timeout' : msg }
     }
 
-    return { success: true, newLeafId: targetEntryId, editorText }
+    // Validate navigate actually executed (pi extension may silently fail)
+    if (navigateResult?.cancelled) {
+      return { success: false, error: 'Navigate was cancelled by pi extension' }
+    }
+    const actualLeafId = navigateResult?.newLeafId ?? targetEntryId
+    return { success: true, newLeafId: actualLeafId, editorText }
   }
 
   /** Get session file path from pi's get_state. */
@@ -153,10 +161,8 @@ export class TreeService {
     if (!client) throw new Error(`Session ${sessionId} not found`)
 
     try {
-      const result = await client.sendCommand('clone') as PiMessage
-      if (result.success === false) {
-        return { success: false, error: result.error ?? 'Clone failed' }
-      }
+      await client.sendCommand('clone') as PiMessage
+      // sendCommand already rejects on success===false, so resolve means success
 
       const stateResp = await client.sendCommand('get_state') as PiMessage
       const stateData = stateResp.data ?? stateResp.payload
@@ -166,7 +172,9 @@ export class TreeService {
         return { success: false, error: 'Clone succeeded but could not get new session ID' }
       }
 
-      return { success: true, newSessionId }
+      const sessionFile = stateData?.sessionFile as string | undefined
+
+      return { success: true, newSessionId, sessionFile }
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : String(e) }
     }
@@ -178,10 +186,8 @@ export class TreeService {
     if (!client) throw new Error(`Session ${sessionId} not found`)
 
     try {
-      const result = await client.sendCommand('fork', { entryId }) as PiMessage
-      if (result.success === false) {
-        return { success: false, error: result.error ?? 'Fork failed' }
-      }
+      await client.sendCommand('fork', { entryId }) as PiMessage
+      // sendCommand already rejects on success===false, so resolve means success
 
       const stateResp = await client.sendCommand('get_state') as PiMessage
       const stateData = stateResp.data ?? stateResp.payload

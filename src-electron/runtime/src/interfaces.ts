@@ -97,7 +97,6 @@ export interface ISessionService {
   abort(sessionId: string): Promise<void>
   switchModel(sessionId: string, provider: string, modelId: string): Promise<string>
   compact(sessionId: string): Promise<void>
-  clear(sessionId: string): Promise<void>
   getHistory(sessionId: string): Promise<Message[]>
   restoreSession(sessionId: string): Promise<SessionSummary>
   /** Fork 后重新绑定 session（更新 runtime 和 process manager 的 key） */

@@ -6,7 +6,7 @@ import type { SkillInfo, AgentInfo } from './provider'
 
 export type ClientMessageType =
   | 'session.create' | 'session.delete' | 'session.list' | 'session.switch' | 'session.history'
-  | 'session.compact' | 'session.clear' | 'session.restore' | 'session.rename'
+  | 'session.compact' | 'session.rename'
   | 'message.send' | 'message.abort' | 'message.steer' | 'message.follow_up'
   | 'config.getProviders' | 'config.setProvider' | 'config.deleteProvider' | 'config.setToolPermissions'
   | 'config.discoverModels'
@@ -50,8 +50,6 @@ export interface ClientMessageMap {
   'session.switch': { sessionId: string }
   'session.history': { sessionId: string }
   'session.compact': { sessionId: string }
-  'session.clear': { sessionId: string }
-  'session.restore': { sessionId: string }
   'session.rename': { sessionId: string; name: string }
   'message.send': { sessionId: string; content: string; subagent?: { agent: string; task: string } }
   'message.abort': { sessionId: string }
@@ -109,8 +107,6 @@ export type ClientMessage =
   | { type: 'session.switch'; id?: string; payload: ClientMessageMap['session.switch'] }
   | { type: 'session.history'; id?: string; payload: ClientMessageMap['session.history'] }
   | { type: 'session.compact'; id?: string; payload: ClientMessageMap['session.compact'] }
-  | { type: 'session.clear'; id?: string; payload: ClientMessageMap['session.clear'] }
-  | { type: 'session.restore'; id?: string; payload: ClientMessageMap['session.restore'] }
   | { type: 'session.rename'; id?: string; payload: ClientMessageMap['session.rename'] }
   | { type: 'message.send'; id?: string; payload: ClientMessageMap['message.send'] }
   | { type: 'message.abort'; id?: string; payload: ClientMessageMap['message.abort'] }
@@ -171,7 +167,7 @@ export type SpecificClientMessage<T extends ClientMessageType> = Extract<ClientM
 
 export type ServerMessageType =
   | 'session.created' | 'session.deleted' | 'session.list' | 'session.history'
-  | 'session.compacting' | 'session.compacted' | 'session.restored' | 'session.renamed'
+  | 'session.compacting' | 'session.compacted' | 'session.renamed'
   | 'message.message_start' | 'message.text_delta' | 'message.thinking_delta'
   | 'message.thinking_start' | 'message.thinking_end'
   | 'message.tool_call_start' | 'message.tool_call_end' | 'message.tool_call_pending'

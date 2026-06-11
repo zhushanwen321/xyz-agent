@@ -224,7 +224,12 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
         await deps.sessionService.switchModel(active.id, provider, modelId)
       }
     },
-    getThinkingLevel: () => 'high',
+    getThinkingLevel: () => {
+      if (!deps.sessionService) return 'off'
+      const groups = deps.sessionService.listPersistedSessions()
+      const active = groups.flatMap(g => g.sessions).find(s => s.status === 'active')
+      return active?.thinkingLevel ?? 'off'
+    },
     setThinkingLevel: async (level: string) => {
       if (!deps.sessionService) return
       const groups = deps.sessionService.listPersistedSessions()

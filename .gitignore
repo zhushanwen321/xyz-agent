@@ -37,3 +37,4 @@ src-electron/resources/pi/agent/*
 
 # Electron binary cache (immutable, shared across worktrees)
 .electron-dist/
+.agents/skills/code-link/scripts/__pycache__/

@@ -202,9 +202,18 @@ export class ProcessManager {
   async destroySession(sessionId: string): Promise<void> {
     const proc = this.processes.get(sessionId)
     if (!proc) return
+    // Remove from maps first to prevent exitCallback from triggering,
+    // but keep a reference so we can kill after removal.
+    // kill() is guaranteed to resolve (SIGTERM → 2s → SIGKILL).
     this.processes.delete(sessionId)
     this.clientToId.delete(proc.client)
-    await proc.client.kill()
+    try {
+      await proc.client.kill()
+    } catch (e) {
+      // kill()内部已有 SIGTERM→SIGKILL 兜底，这里 catch 是防御性措施
+      // 如果 kill 确实失败了，进程可能成为孤儿——记录 warn 以便排查
+      console.warn(`[process-manager] kill failed for session ${sessionId}:`, e instanceof Error ? e.message : String(e))
+    }
   }
 
   /**

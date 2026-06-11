@@ -247,7 +247,53 @@ export class SessionService implements ISessionService {
     const encoded = Buffer.from(payload, 'utf-8').toString('base64')
     const marker = `<!-- xyz-agent-force-subagent:${encoded} -->`
     const promptText = content || `Execute task using agent '${agent}'`
-    await this.sendMessage(sessionId, `${marker}\n${promptText}`)
+
+    // Hook 审核用户原始输入，marker 仅在发送给 pi 时注入
+    try {
+      if (this.sendMessageHook) {
+        const hookResult = await this.sendMessageHook(sessionId, promptText)
+        if (hookResult?.blocked) {
+          this.broker.broadcast({
+            type: 'message.error',
+            payload: { sessionId, message: hookResult.reason ?? 'Message blocked by plugin hook' },
+          })
+          return
+        }
+      }
+    } catch (e) {
+      console.error('[session-service] sendSubagentMessage hook error:', e)
+      this.broker.broadcast({
+        type: 'message.error',
+        payload: { sessionId, message: 'Plugin hook error: ' + (e instanceof Error ? e.message : String(e)) },
+      })
+      return
+    }
+
+    // ensureActive + prompt 带上 marker
+    let client: IRpcClient
+    try {
+      client = await this.ensureActive(sessionId)
+    } catch (e) {
+      const errMsg = `Failed to restore session: ${e instanceof Error ? e.message : String(e)}`
+      console.error(`[session-service] ${errMsg}`)
+      throw e
+    }
+
+    const activeSession = this.findSessionByClient(client)
+    if (activeSession) {
+      activeSession.lastActiveAt = Date.now()
+      activeSession.isGenerating = true
+    }
+    console.log(`[session-service] sendSubagentMessage: sessionId=${sessionId}`)
+    try {
+      await client.prompt(`${marker}\n${promptText}`)
+      console.log(`[session-service] subagent prompt acknowledged: sessionId=${sessionId}`)
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : String(e)
+      console.error(`[session-service] subagent prompt failed: sessionId=${sessionId}`, errMsg)
+      if (activeSession) activeSession.isGenerating = false
+      this.broker.broadcast({ type: 'message.error', payload: { sessionId, message: errMsg } })
+    }
   }
 
   private findSessionByClient(client: IRpcClient): ManagedSession | undefined {
@@ -280,12 +326,19 @@ export class SessionService implements ISessionService {
 
     if (!session) return sessionId
 
-    session.modelId = `${provider}/${modelId}`
+    const newModelId = `${provider}/${modelId}`
     const client = this.pm.getClient(sessionId)
     if (client) {
-      await client.setModel(provider, modelId)
+      try {
+        await client.setModel(provider, modelId)
+      } catch (e) {
+        console.error(`[session-service] switchModel RPC failed: sessionId=${sessionId}, model=${newModelId}`, e)
+        throw e
+      }
     }
 
+    // RPC 成功后才更新缓存
+    session.modelId = newModelId
     return sessionId
   }
 
@@ -362,15 +415,6 @@ export class SessionService implements ISessionService {
       type: 'session.compacted',
       payload: { sessionId, status: 'compacted' },
     })
-  }
-
-  async clear(sessionId: string): Promise<void> {
-    const client = this.pm.getClient(sessionId)
-    if (!client) throw new Error(`Session ${sessionId} not found`)
-    const session = this.sessions.get(sessionId)
-    if (!session) throw new Error(`Session ${sessionId} not found`)
-    await client.clear()
-    session.lastActiveAt = Date.now()
   }
 
   // ── History ────────────────────────────────────────────────────

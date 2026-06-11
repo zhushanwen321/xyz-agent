@@ -98,9 +98,6 @@ export function mockSend(msg: ClientMessage): void {
         respond('session.compacted', { sessionId: msg.payload.sessionId, status: 'compacted' })
       }, 500)
       break
-    case 'session.clear':
-      respond('session.history', { sessionId: msg.payload.sessionId, messages: [] })
-      break
     case 'message.send':
       handleMockMessageSend(msg)
       break

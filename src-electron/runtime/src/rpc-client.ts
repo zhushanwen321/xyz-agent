@@ -147,9 +147,14 @@ export class RpcClient {
     proc.on('exit', (code) => {
       this._exited = true
       console.log(`[rpc] process exited with code ${code}`)
-      this.rejectAll(new Error(`pi process exited with code ${code}${this.formatStderrSuffix()}`))
-      if (this.exitCallback && !this._killing) {
-        this.exitCallback(code)
+      // Only reject pending requests on unexpected exits.
+      // Normal kill flow (_killing=true) handles cleanup in destroySession,
+      // so rejectAll here would fire redundant message.error broadcasts.
+      if (!this._killing) {
+        this.rejectAll(new Error(`pi process exited with code ${code}${this.formatStderrSuffix()}`))
+        if (this.exitCallback) {
+          this.exitCallback(code)
+        }
       }
     })
 

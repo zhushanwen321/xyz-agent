@@ -209,12 +209,6 @@ export const useChatStore = defineStore('chat', () => {
     getSessionState(sessionId).isGenerating = v
   }
 
-  function clearMessages(sessionId: string) {
-    const s = getSessionState(sessionId)
-    s.completedMessages = []
-    s.streamingMessage = null
-  }
-
   function replaceMessages(msgs: ChatMessage[], sessionId: string) {
     const s = getSessionState(sessionId)
     s.completedMessages = msgs
@@ -348,7 +342,7 @@ export const useChatStore = defineStore('chat', () => {
 
     // 消息操作
     addMessage, setStreaming, appendToStreaming,
-    completeStreaming, setGenerating, clearMessages,
+    completeStreaming, setGenerating,
     replaceMessages, addPendingApproval, removePendingApproval,
 
     // 状态
