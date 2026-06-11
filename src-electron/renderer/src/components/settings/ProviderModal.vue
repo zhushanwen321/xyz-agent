@@ -264,19 +264,22 @@ function handleSave() {
     const success = payload.success as boolean
 
     if (success) {
-      // Validation passed — refresh models from response and save
+      // Validation passed — only merge newly discovered models,
+      // preserve user's manual additions/deletions.
       const models = payload.models as Array<{ id: string; name: string; contextWindow?: number }>
       if (models.length > 0) {
-        modalModels.value = models.map(m => {
-          const existing = modalModels.value.find(em => em.id === m.id)
-          return {
-            id: m.id,
-            name: m.name,
-            contextWindow: m.contextWindow ?? 0,
-            enabled: existing?.enabled ?? true,
-            thinkingLevelMap: existing?.thinkingLevelMap ?? structuredClone(THINKING_PRESETS['on-off']),
+        const existingIds = new Set(modalModels.value.map(m => m.id))
+        for (const m of models) {
+          if (!existingIds.has(m.id)) {
+            modalModels.value.push({
+              id: m.id,
+              name: m.name,
+              contextWindow: m.contextWindow ?? 0,
+              enabled: true,
+              thinkingLevelMap: structuredClone(THINKING_PRESETS['on-off']),
+            })
           }
-        })
+        }
       }
       emitSave()
     } else {
