@@ -327,10 +327,10 @@ describe('PluginService.sessionDataCache', () => {
     const sessionData = new Map<string, unknown>()
     sessionData.set('key1', 'value1')
     sessionData.set('key2', 42);
-    (service as any).sessionDataCache.set('session-1', sessionData)
+    (service as any).sessionDataStore.getCache().set('session-1', sessionData)
 
     // 读取
-    const retrieved = (service as any).sessionDataCache.get('session-1')
+    const retrieved = (service as any).sessionDataStore.getCache().get('session-1')
     expect(retrieved).toBeDefined()
     expect(retrieved!.get('key1')).toBe('value1')
     expect(retrieved!.get('key2')).toBe(42)
@@ -343,13 +343,13 @@ describe('PluginService.sessionDataCache', () => {
 
     const data1 = new Map<string, unknown>()
     data1.set('msg', 'hello');
-    (service as any).sessionDataCache.set('session-a', data1)
+    (service as any).sessionDataStore.getCache().set('session-a', data1)
 
     const data2 = new Map<string, unknown>()
     data2.set('msg', 'world');
-    (service as any).sessionDataCache.set('session-b', data2)
+    (service as any).sessionDataStore.getCache().set('session-b', data2)
 
-    expect((service as any).sessionDataCache.get('session-a')!.get('msg')).toBe('hello')
-    expect((service as any).sessionDataCache.get('session-b')!.get('msg')).toBe('world')
+    expect((service as any).sessionDataStore.getCache().get('session-a')!.get('msg')).toBe('hello')
+    expect((service as any).sessionDataStore.getCache().get('session-b')!.get('msg')).toBe('world')
   })
 })

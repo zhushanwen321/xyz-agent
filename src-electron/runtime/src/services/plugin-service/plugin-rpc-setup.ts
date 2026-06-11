@@ -9,6 +9,7 @@ import type { StatusBarItem } from '@xyz-agent/shared'
 import type { PluginRpcServer } from './plugin-rpc-server.js'
 import type { PluginStorage } from './plugin-storage.js'
 import type { StatusBarItemOptions, IPluginServiceDeps } from './plugin-types.js'
+import type { SessionDataStore } from './session-data-store.js'
 import { registerToolRpcHandlers } from './tool-api.js'
 import { registerHookRpcHandlers } from './hook-api.js'
 import { registerSessionRpcHandlers } from './api/session-api.js'
@@ -34,9 +35,7 @@ export interface RpcSetupContext {
   handleUiRequest: (method: string, params: Record<string, unknown>, pluginId: string) => Promise<unknown>
   syncToolsToBridge: () => Promise<void>
   getDescriptor: (pluginId: string) => import('./plugin-types.js').PluginDescriptor | undefined
-  sessionDataCache: Map<string, Map<string, unknown>>
-  sessionDataDirty: Map<string, Set<string>>
-  sessionDataSize: Map<string, number>
+  sessionDataStore: SessionDataStore
 }
 
 export function registerAllRpcMethods(ctx: RpcSetupContext): void {
@@ -153,9 +152,9 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
 
   // ── SessionData RPC handlers ─────────────────────────────
   registerSessionDataRpcHandlers(rpcServer, {
-    getCache: () => ctx.sessionDataCache,
-    getDirty: () => ctx.sessionDataDirty,
-    getSizeTracker: () => ctx.sessionDataSize,
+    getCache: () => ctx.sessionDataStore.getCache(),
+    getDirty: () => ctx.sessionDataStore.getDirty(),
+    getSizeTracker: () => ctx.sessionDataStore.getSizeTracker(),
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     appendEntry: async (_sessionId: string, _key: string, _value: unknown) => {
       // bridge:append_entry 保留接口兼容，set handler 不再直接调用
@@ -208,7 +207,7 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
       const active = groups.flatMap(g => g.sessions).find(s => s.status === 'active')
       return active?.modelId ?? ''
     },
-    setModel: (model: string) => {
+    setModel: async (model: string) => {
       if (!deps.sessionService) return
       const groups = deps.sessionService.listPersistedSessions()
       const active = groups.flatMap(g => g.sessions).find(s => s.status === 'active')
@@ -217,10 +216,26 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
       if (parts.length < MIN_MODEL_PARTS) return
       const provider = parts[0]
       const modelId = parts.slice(1).join('/')
-      void deps.sessionService.switchModel(active.id, provider, modelId)
+      // Unified entry: persist + broadcast included
+      if (deps.modelService) {
+        await deps.modelService.switchModel(active.id, provider, modelId)
+      } else {
+        // Fallback: session-only (no persist/broadcast)
+        await deps.sessionService.switchModel(active.id, provider, modelId)
+      }
     },
     getThinkingLevel: () => 'high',
-    setThinkingLevel: () => {},
+    setThinkingLevel: async (level: string) => {
+      if (!deps.sessionService) return
+      const groups = deps.sessionService.listPersistedSessions()
+      const active = groups.flatMap(g => g.sessions).find(s => s.status === 'active')
+      if (!active) return
+      if (deps.modelService) {
+        await deps.modelService.setThinkingLevel(active.id, level)
+      } else {
+        await deps.sessionService.setThinkingLevel(active.id, level)
+      }
+    },
     getActiveTools: () => {
       return Array.from(toolRegistry.values()).map(e => e.schema.name)
     },

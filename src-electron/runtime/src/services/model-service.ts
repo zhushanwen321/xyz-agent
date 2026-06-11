@@ -1,14 +1,66 @@
 /**
- * ModelService — model aggregation and API discovery.
+ * ModelService — model aggregation, API discovery, and model/thinking-level orchestration.
  *
- * Extracted from server.ts aggregateModels() and discoverModelsFromApi().
+ * The unified business entry for switchModel and setThinkingLevel.
+ * All callers (frontend WS handler, plugin RPC) must go through this
+ * service to ensure consistent side-effects (persist, broadcast).
  */
 import type { ProviderInfo, ModelInfo } from '@xyz-agent/shared'
-import type { IModelService } from '../interfaces.js'
+import type { IModelService, ISessionService, IConfigService, IMessageBroker } from '../interfaces.js'
 
 const API_FETCH_TIMEOUT_MS = 10_000
 
 export class ModelService implements IModelService {
+  private sessionService!: ISessionService
+  private configService!: IConfigService
+  private broker!: IMessageBroker
+  private nextPushId: () => string
+
+  constructor(pushIdFactory?: () => string) {
+    this.nextPushId = pushIdFactory ?? (() => `push_${Date.now()}`)
+  }
+
+  /** Wire runtime dependencies (called after all services are constructed). */
+  setServices(session: ISessionService, config: IConfigService, broker: IMessageBroker): void {
+    this.sessionService = session
+    this.configService = config
+    this.broker = broker
+  }
+
+  /**
+   * Unified switchModel entry point.
+   *
+   * Orchestrates: pi RPC → persist default → broadcast to all panels.
+   * Persist failure is logged but does not block the response.
+   */
+  async switchModel(sessionId: string, provider: string, modelId: string): Promise<void> {
+    // 1. Tell pi subprocess to switch model
+    await this.sessionService.switchModel(sessionId, provider, modelId)
+
+    // 2. Persist default model (best-effort)
+    try {
+      this.configService.setDefaultModel(provider, modelId)
+    } catch (persistErr) {
+      console.error('[ModelService] failed to persist default model:', persistErr)
+    }
+
+    // 3. Broadcast to all frontend panels
+    this.broker.broadcast({
+      type: 'config.defaults',
+      id: this.nextPushId(),
+      payload: { defaultModel: `${provider}/${modelId}`, source: 'model-switch' as const },
+    })
+  }
+
+  /**
+   * Unified setThinkingLevel entry point.
+   *
+   * Delegates to SessionService (pi RPC). Thinking level is per-session
+   * runtime state — no persistence needed.
+   */
+  async setThinkingLevel(sessionId: string, level: string): Promise<void> {
+    await this.sessionService.setThinkingLevel(sessionId, level)
+  }
   aggregateModels(providers: ProviderInfo[]): ModelInfo[] {
     return providers.flatMap(p =>
       p.models.map(m => ({

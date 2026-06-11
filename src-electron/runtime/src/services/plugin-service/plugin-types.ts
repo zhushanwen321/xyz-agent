@@ -433,6 +433,7 @@ export interface HookBlockedResult extends HookResult {
 export interface IPluginServiceDeps {
   sessionService?: ISessionService
   configService?: IConfigService
+  modelService?: import('../../interfaces.js').IModelService
   broadcastFn?: (type: string, payload: unknown) => void
 }
 

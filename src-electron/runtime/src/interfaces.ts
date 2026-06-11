@@ -167,7 +167,7 @@ export interface IExtensionService {
 
 // ── IModelService ─────────────────────────────────────────────────
 
-/** Model aggregation and API discovery. */
+/** Model aggregation, API discovery, and model/thinking-level orchestration. */
 export interface IModelService {
   aggregateModels(providers: ProviderInfo[]): ModelInfo[]
   discoverModelsFromApi(
@@ -175,6 +175,12 @@ export interface IModelService {
     apiKey?: string,
     providerType?: string,
   ): Promise<Array<{ id: string; name: string; contextWindow?: number }>>
+
+  /** Switch model with full side-effects: pi RPC + persist default + broadcast. */
+  switchModel(sessionId: string, provider: string, modelId: string): Promise<void>
+
+  /** Set thinking level for a session's pi subprocess. */
+  setThinkingLevel(sessionId: string, level: string): Promise<void>
 }
 
 // ── IPluginService ────────────────────────────────────────────────

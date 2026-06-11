@@ -6,6 +6,7 @@ import type { IMessageBroker } from '../../interfaces.js'
 import { PluginRegistry } from './plugin-registry.js'
 import { PluginStorage } from './plugin-storage.js'
 import { SessionDataStore } from './session-data-store.js'
+import { getConfigDir } from '../../pi-config-bridge.js'
 import { PluginRpcServer } from './plugin-rpc-server.js'
 import { PluginHost } from './plugin-host.js'
 import { PluginActivator } from './plugin-activator.js'
@@ -48,6 +49,15 @@ export class PluginService implements IPluginService {
 
   /** 注入的外部依赖 */
   private deps: IPluginServiceDeps
+
+  /** 当前活跃的 UI 请求 ID（串行排队） */
+  private activeUiRequest: string | null = null
+
+  /** 等待中的 UI 请求队列 */
+  private uiRequestQueue: Array<{ params: Record<string, unknown>; resolve: (v: unknown) => void }> = []
+
+  /** 等待前端响应的 UI 请求 */
+  private pendingUiRequests = new Map<string, { resolve: (v: unknown) => void; timer: ReturnType<typeof setTimeout> }>()
 
   constructor(registry: PluginRegistry, broker: IMessageBroker, deps?: IPluginServiceDeps) {
     this.registry = registry

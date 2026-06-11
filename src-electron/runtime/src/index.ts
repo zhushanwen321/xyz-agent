@@ -66,6 +66,7 @@ async function main(): Promise<void> {
   const pluginRegistry = new PluginRegistry(effectiveRoot)
   const pluginService = new PluginService(pluginRegistry, server, {
     configService,
+    modelService,
     broadcastFn: (type, payload) => server.broadcast({ type: type as 'session.list', id: `push_${Date.now()}`, payload } as import('@xyz-agent/shared').ServerMessage),
   })
 
@@ -125,6 +126,7 @@ async function main(): Promise<void> {
 
   // ── Phase 3: wire cross-service runtime deps ──
   pluginService.setSessionService(sessionService)
+  modelService.setServices(sessionService, configService, server)
   server.setServices(sessionService, configService, modelService, treeService, extensionService, pluginService)
 
   // Graceful shutdown on signals
