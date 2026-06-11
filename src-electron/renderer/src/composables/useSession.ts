@@ -24,6 +24,10 @@ function createGlobalHandlers() {
     const groups = payload.groups
     const all = groups.flatMap(g => g.sessions)
     sessionStore.setSessions(all)
+    // Sync thinkingLevel from server summaries into per-session chat state
+    for (const s of all) {
+      if (s.thinkingLevel) chatStore.setThinkingLevel(s.thinkingLevel, s.id)
+    }
   }
 
   function onSessionCreated(msg: ServerMessage) {
@@ -57,6 +61,7 @@ function createGlobalHandlers() {
     // ID 统一后 old === new 是常态，直接更新即可
     if (oldSessionId === newSessionId) {
       sessionStore.addSession(summary)
+      if (summary.thinkingLevel) chatStore.setThinkingLevel(summary.thinkingLevel, summary.id)
       return
     }
     // ID 不一致时的完整迁移（理论上不再发生，但防御保留）

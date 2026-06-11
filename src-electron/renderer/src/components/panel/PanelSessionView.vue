@@ -103,7 +103,7 @@ function handleSend(payload: { content: string; skillName?: string; subagent?: {
   if (!sid) return
   chatStore.setError(null, sid)
   // Sync thinking level to pi before sending message
-  const level = settingsStore.currentThinkingLevel
+  const level = chatStore.getSessionState(sid)?.thinkingLevel
   if (level) {
     send({ type: 'session.setThinkingLevel', payload: { sessionId: sid, level } })
   }
