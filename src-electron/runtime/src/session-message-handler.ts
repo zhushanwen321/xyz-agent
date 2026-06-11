@@ -48,9 +48,10 @@ export class SessionMessageHandler {
           }
         } else {
           try {
-            const restored = await this.ctx.sessionService.restoreSession(switchId)
+            await this.ctx.sessionService.ensureActive(switchId)
+            const restored = this.ctx.sessionService.getSummary(switchId)
             const messages = await this.ctx.sessionService.getHistory(switchId)
-            this.ctx.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: switchId, session: restored, messages } })
+            this.ctx.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: switchId, session: restored!, messages } })
           } catch (e) {
             const errMsg = e instanceof Error ? e.message : String(e)
             const isENOENT = errMsg.includes('ENOENT')
@@ -128,14 +129,12 @@ export class SessionMessageHandler {
       }
       console.log('[server] session.compact: completed, sessionId=' + compactId + ', elapsed=' + (Date.now() - startTime) + 'ms')
     }
-    if (!this.ctx.sessionService.hasActiveSession(compactId)) {
-      this.ctx.sessionService.restoreSession(compactId).then(() => {
-        console.log('[server] session.compact: auto-restored, sessionId=' + compactId)
-        runCompact()
-      }).catch((e) => {
-        console.error('[server] session.compact: auto-restore failed, sessionId=' + compactId)
-        this.ctx.sendError(ws, 'session.compact_failed', 'Failed to restore session for compact: ' + (e instanceof Error ? e.message : String(e)), msg.id, compactId)
-      })
-    } else { runCompact() }
+    this.ctx.sessionService.ensureActive(compactId).then(() => {
+      console.log('[server] session.compact: session ensured active, sessionId=' + compactId)
+      return runCompact()
+    }).catch((e) => {
+      console.error('[server] session.compact: ensureActive failed, sessionId=' + compactId)
+      this.ctx.sendError(ws, 'session.compact_failed', 'Failed to restore session for compact: ' + (e instanceof Error ? e.message : String(e)), msg.id, compactId)
+    })
   }
 }

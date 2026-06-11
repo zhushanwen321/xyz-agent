@@ -9,6 +9,7 @@ export interface SessionSummary {
   status: SessionStatus
   lastActiveAt: number
   modelId: string
+  thinkingLevel?: string
   tokenCount: number
 }
 

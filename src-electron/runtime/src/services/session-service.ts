@@ -24,7 +24,7 @@ import * as piBridge from '../pi-config-bridge.js'
 import { trash } from '../trash.js'
 import { NavigateInterceptor } from '../navigate-interceptor.js'
 import { TreeService } from './tree-service.js'
-import { readGitInfo } from './git-info.js'
+import { readGitInfo, pruneGitInfoCache } from './git-info.js'
 import { getHistoryFromFile } from './session-history.js'
 
 /** SendMessage hook 类型：在消息发送前触发，可阻止发送 */
@@ -42,6 +42,7 @@ interface ManagedSession {
   lastActiveAt: number
   tokenCount: number
   isGenerating: boolean
+  thinkingLevel?: string
   adapter: IEventAdapter
   interceptor: NavigateInterceptor
   unsubUsageListener: (() => void) | null
@@ -213,24 +214,14 @@ export class SessionService implements ISessionService {
       return
     }
 
-    let client = this.pm.getClient(sessionId)
-
-    if (!client) {
-      console.log(`[session-service] sendMessage: session ${sessionId} not active, restoring...`)
-      if (this.restoringSessions.has(sessionId)) return
-      this.restoringSessions.add(sessionId)
-      try {
-        await this.restoreSession(sessionId)
-        client = this.pm.getClient(sessionId)
-        if (!client) throw new Error('Restore succeeded but client not available')
-      } catch (e) {
-        const errMsg = `Failed to restore session: ${e instanceof Error ? e.message : String(e)}`
-        console.error(`[session-service] ${errMsg}`)
-        // 不在这里广播 message.error，让 server.ts 的外层 catch 统一发送 handler_error
-        throw e
-      } finally {
-        this.restoringSessions.delete(sessionId)
-      }
+    let client: IRpcClient
+    try {
+      client = await this.ensureActive(sessionId)
+    } catch (e) {
+      const errMsg = `Failed to restore session: ${e instanceof Error ? e.message : String(e)}`
+      console.error(`[session-service] ${errMsg}`)
+      // 不在这里广播 message.error，让 server.ts 的外层 catch 统一发送 handler_error
+      throw e
     }
 
     const activeSession = this.findSessionByClient(client)
@@ -299,6 +290,8 @@ export class SessionService implements ISessionService {
   }
 
   async setThinkingLevel(sessionId: string, level: string): Promise<void> {
+    const session = this.sessions.get(sessionId)
+    if (session) session.thinkingLevel = level
     const client = this.pm.getClient(sessionId)
     if (client) {
       await client.setThinkingLevel(level)
@@ -311,6 +304,31 @@ export class SessionService implements ISessionService {
 
   getRpcClient(sessionId: string): IRpcClient | undefined {
     return this.pm.getClient(sessionId)
+  }
+
+  /**
+   * Ensure a session is active. If not, auto-restore it.
+   * Centralizes the "check active → restore if needed" pattern used by
+   * sendMessage, session.switch, and compact.
+   */
+  async ensureActive(sessionId: string): Promise<IRpcClient> {
+    const existing = this.pm.getClient(sessionId)
+    if (existing) return existing
+
+    // Dedup: if another call is already restoring this session, bail out
+    if (this.restoringSessions.has(sessionId)) {
+      throw new Error(`Session ${sessionId} is already being restored`)
+    }
+    this.restoringSessions.add(sessionId)
+    try {
+      console.log(`[session-service] ensureActive: restoring ${sessionId}...`)
+      await this.restoreSession(sessionId)
+      const client = this.pm.getClient(sessionId)
+      if (!client) throw new Error('Restore succeeded but client not available')
+      return client
+    } finally {
+      this.restoringSessions.delete(sessionId)
+    }
   }
 
   // ── Compact & Clear ────────────────────────────────────────────
@@ -413,7 +431,15 @@ export class SessionService implements ISessionService {
       .filter(s => !activeFilePaths.has(s.filePath))
       .map(s => this.scannedToSummary(s))
 
-    return [...active, ...persisted].sort((a, b) => b.lastActiveAt - a.lastActiveAt)
+    const result = [...active, ...persisted].sort((a, b) => b.lastActiveAt - a.lastActiveAt)
+    this.pruneGitCache(result)
+    return result
+  }
+
+  /** Prune git-info cache entries for cwds no longer represented in any session. */
+  private pruneGitCache(allSummaries: SessionSummary[]): void {
+    const cwds = new Set(allSummaries.map(s => s.cwd))
+    pruneGitInfoCache(cwds)
   }
 
   /** 从持久化文件恢复 session */
@@ -539,6 +565,7 @@ export class SessionService implements ISessionService {
       status: s.isGenerating ? ('active' as SessionStatus) : ('idle' as SessionStatus),
       lastActiveAt: s.lastActiveAt,
       modelId: s.modelId,
+      thinkingLevel: s.thinkingLevel,
       tokenCount: s.tokenCount,
     }
   }
