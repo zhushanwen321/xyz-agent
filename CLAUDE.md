@@ -286,7 +286,47 @@ SKIP_ALL_CHECKS=1 git commit            # 跳过所有（仅紧急情况）
 - **Sidecar 通信**: WebSocket，前端通过 `ws-client.ts` + `event-bus.ts` 消息分发
 - **Electron IPC**: 主进程通过 preload 暴露 `window.electronAPI`，渲染进程不直接使用 `ipcRenderer`
 
-## 问题排查
+## 发布与 CI 验证 [HISTORICAL]
+
+每次 push tag 触发 CI（release workflow）构建 Electron 产物后，**必须等待 CI 完成并验证产物存在**。多次发生 AI push 后直接宣布"已完成"，实际 CI 构建失败或产物缺失而无人察觉。
+
+### [MANDATORY] 必须遵守的规则
+
+**错误做法（禁止）：**
+```
+# 坏 — push 后直接结束
+npm version patch && git push github HEAD --tags
+echo "已推送，CI 会构建"
+# ← AI 在此结束，不检查 CI 结果
+```
+
+**正确做法：**
+```
+# 好 — push 后必须验证
+npm version patch && git push github HEAD --tags
+bash scripts/verify-ci-release.sh "v$(node -p "require('./package.json').version")"
+# ← 脚本会轮询 CI 直到完成，验证 dmg/exe/AppImage 存在
+# ← exit 0 = 通过，exit 非 0 = 失败（AI 必须修复直到 exit 0）
+```
+
+### 适用场景
+
+| 操作 | 验证命令 |
+|------|---------|
+| 预发布测试 | `scripts/prerelease-test.sh` 内置自动验证 |
+| 正式发布（merge） | `bash scripts/verify-ci-release.sh v<version>` |
+| 手动 push tag | `bash scripts/verify-ci-release.sh <tagname>` |
+
+### 验证失败时的处理
+
+脚本 exit 非 0 意味着：
+1. CI workflow 未完成或失败 → 打开 CI 链接排查
+2. Release 未创建 → 检查 release.yml 是否正常触发
+3. 产物缺失 → 检查对应平台构建日志
+
+**禁止行为**：说"CI 可能还在跑"或"应该没问题"后结束。必须等脚本 exit 0。
+
+
 
 详细的问题排查指南（日志获取、诊断路径、常见问题清单、环境变量速查）见 [docs/troubleshooting.md](docs/troubleshooting.md)。
 
