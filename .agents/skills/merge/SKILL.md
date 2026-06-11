@@ -95,6 +95,11 @@ npm version patch -m "chore: bump version to %s"
 cd src-electron && npm version patch -m "chore: bump version to %s" && cd ..
 git push github HEAD
 git push github "v$(node -p "require('./package.json').version")"
+
+# [MANDATORY] 等待 CI 完成并验证产物
+# 此命令会轮询 CI 直到完成，验证 dmg/exe/AppImage 全部存在
+# exit 非 0 则必须修复直到通过
+bash scripts/verify-ci-release.sh "v$(node -p "require('./package.json').version")"
 ```
 
 **Electron 特化说明**：
@@ -115,23 +120,16 @@ bash ~/.agents/skills/merge-worktree/stages/5-release.sh
 ⚠️ **不可跳过**。这是阶段 7 的硬性前置条件。
 
 ```bash
-bash ~/.agents/skills/merge-worktree/stages/6-verify.sh
+cd $WS_ROOT/main
+bash scripts/verify-ci-release.sh "v$(node -p "require('./package.json').version")"
 ```
 
-手动补充验证 Electron 产物完整性：
+脚本会自动：
+- 轮询 CI workflow 直到完成
+- 等待 GitHub Release 创建
+- 验证所有平台产物（dmg + exe + AppImage）完整性
 
-```bash
-# 获取版本号
-TAG="v$(node -p "require('./package.json').version")"
-
-# 查看所有 assets
-ASSETS=$(gh release view "$TAG" --json assets --jq '.assets[].name')
-
-# 验证各平台产物
-echo "$ASSETS" | grep -q "\.dmg$" && echo "macOS .dmg OK" || echo "MISSING .dmg"
-echo "$ASSETS" | grep -q "\.exe$" && echo "Windows .exe OK" || echo "MISSING .exe"
-echo "$ASSETS" | grep -q "AppImage" && echo "Linux AppImage OK" || echo "MISSING AppImage"
-```
+**exit 0 前不得进入阶段 7。** exit 非 0 必须修复。
 
 可选的本地验证脚本（项目根目录 `scripts/` 下）：
 
@@ -161,9 +159,9 @@ bash ~/.agents/skills/merge-worktree/stages/7-cleanup.sh
 | 3 | PR CI + 合并（阶段 2） | |
 | 4 | Post-merge CI（阶段 3） | |
 | 5 | ⚠️ 版本校验（阶段 3.5） | `bash scripts/check-version-bump.sh` |
-| 6 | 版本 bump + 发布（阶段 4） | |
+| 6 | 版本 bump + 发布（阶段 4） | `bash scripts/verify-ci-release.sh ...` (在 push 后调用) |
 | 7 | 创建 Release（阶段 5） | |
-| 8 | ⚠️ 确认交付物（阶段 6） | |
+| 8 | ⚠️ 确认交付物（阶段 6） | `bash scripts/verify-ci-release.sh ...` |
 | 9 | 清理 worktree（阶段 7） | |
 
 ### 2. 执行约束
