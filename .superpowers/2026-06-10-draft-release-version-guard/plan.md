@@ -17,7 +17,7 @@
 | 修改 | `.github/workflows/release.yml` | prerelease 根据 tag 内容动态判断 |
 | 新建 | `scripts/check-version-bump.sh` | 版本号校验：当前代码版本必须 == 最新正式 release |
 | 新建 | `scripts/prerelease-test.sh` | 预发布测试编排：bump → CI → verify → revert |
-| 新建 | `.agents/skills/draft-release/SKILL.md` | 预发布测试 skill |
+| 新建 | `.agents/skills/prerelease-test/SKILL.md` | 预发布测试 skill |
 | 修改 | `.agents/skills/merge/SKILL.md` | 阶段 4 前插入版本校验步骤 |
 
 ---
@@ -336,9 +336,9 @@ fi
 
 ---
 
-### 任务 4: 创建 `.agents/skills/draft-release/SKILL.md`
+### 任务 4: 创建 `.agents/skills/prerelease-test/SKILL.md`
 
-**文件：** `.agents/skills/draft-release/SKILL.md`
+**文件：** `.agents/skills/prerelease-test/SKILL.md`
 
 **触发条件：** 用户说"发测试版"、"draft release"、"pre-release test"、"构建 DMG 测试"、"生成测试包"等。
 
@@ -349,7 +349,7 @@ fi
 
 ```markdown
 ---
-name: draft-release
+name: prerelease-test
 description: >-
   Use when creating a pre-release test build to verify Electron artifacts
   (DMG/EXE/AppImage) locally before official release. Triggers: "发测试版",
@@ -357,7 +357,7 @@ description: >-
   "beta release". Not for official releases — use merge skill instead.
 ---
 
-# draft-release
+# prerelease-test
 
 ## 概述
 
@@ -492,7 +492,7 @@ bash scripts/check-version-bump.sh
 
 4. **SKILL.md YAML frontmatter 验证：**
    ```bash
-   python3 scripts/validate-skill-yaml.py .agents/skills/draft-release/SKILL.md
+   python3 scripts/validate-skill-yaml.py .agents/skills/prerelease-test/SKILL.md
    ```
 
 5. **review merge SKILL.md 修改：**

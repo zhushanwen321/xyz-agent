@@ -15,6 +15,7 @@ log()  { echo -e "${GREEN}[PRERELEASE]${NC} $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 err()  { echo -e "${RED}[ERROR]${NC} $*"; }
 
+# 手动恢复函数（CI 超时或异常时手动调用）
 cleanup_on_failure() {
   warn "清理 beta tag 和 release..."
   cd "$WS_ROOT"
@@ -30,8 +31,7 @@ log "=== 阶段 1/6: 前置检查 ==="
 
 BRANCH=$(git -C "$WS_ROOT" branch --show-current)
 if [ "$BRANCH" != "main" ]; then
-  err "必须在 main 分支上运行，当前: $BRANCH"
-  exit 1
+  warn "当前在 ${BRANCH} 分支（非 main），产物将包含此分支的未合并改动"
 fi
 
 if ! git -C "$WS_ROOT" diff-index --quiet HEAD --; then
@@ -44,7 +44,7 @@ if ! gh auth status &>/dev/null; then
   exit 1
 fi
 
-log "前置检查通过: main 分支, 工作区干净, gh 已认证"
+log "前置检查通过: ${BRANCH} 分支, 工作区干净, gh 已认证"
 
 # ── 阶段 2/6: 计算 beta 版本号 ──
 log "=== 阶段 2/6: 计算 beta 版本号 ==="
@@ -114,25 +114,11 @@ log "Tag ${BETA_TAG} 已推送，CI 开始构建..."
 log "=== 阶段 4/6: 等待 CI 完成（超时: ${CI_TIMEOUT_MINS} 分钟）==="
 
 MAX_POLLS=$((CI_TIMEOUT_MINS * 60 / POLL_INTERVAL))
-CI_FAILED=0
 
 for i in $(seq 1 "$MAX_POLLS"); do
-  # 轮询 release 是否存在（CI 最后一步会创建）
-  if gh release view "$BETA_TAG" --repo "$REPO" --json isDraft --jq '.isDraft' &>/dev/null; then
+  # 轮询 release 是否存在（CI 最后一步会创建 release）
+  if gh release view "$BETA_TAG" --repo "$REPO" &>/dev/null; then
     log "Release ${BETA_TAG} 已创建，CI 构建完成"
-    break
-  fi
-
-  # 检查是否有 workflow run 失败
-  FAILED_RUN=$(gh run list --repo "$REPO" --workflow Release --limit 5 \
-    --json headBranch,conclusion,databaseId \
-    | jq -r ".[] | select(.headBranch == \"${BETA_TAG}\" and .conclusion == \"failure\") | .databaseId" \
-    | head -1) || true
-
-  if [ -n "$FAILED_RUN" ]; then
-    err "CI 构建失败！"
-    err "详情: https://github.com/${REPO}/actions/runs/${FAILED_RUN}"
-    CI_FAILED=1
     break
   fi
 
@@ -140,13 +126,8 @@ for i in $(seq 1 "$MAX_POLLS"); do
   sleep "$POLL_INTERVAL"
 done
 
-if [ "$CI_FAILED" -eq 1 ]; then
-  cleanup_on_failure
-  exit 1
-fi
-
 # 检查是否超时
-if ! gh release view "$BETA_TAG" --repo "$REPO" --json isDraft --jq '.isDraft' &>/dev/null; then
+if ! gh release view "$BETA_TAG" --repo "$REPO" &>/dev/null; then
   err "CI 超时（${CI_TIMEOUT_MINS} 分钟），请手动检查"
   warn "https://github.com/${REPO}/actions"
   exit 1
