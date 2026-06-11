@@ -209,9 +209,8 @@ export class ProcessManager {
     this.clientToId.delete(proc.client)
     try {
       await proc.client.kill()
+    // eslint-disable-next-line taste/no-silent-catch -- kill() has internal SIGTERM→SIGKILL fallback; orphan risk logged
     } catch (e) {
-      // kill()内部已有 SIGTERM→SIGKILL 兜底，这里 catch 是防御性措施
-      // 如果 kill 确实失败了，进程可能成为孤儿——记录 warn 以便排查
       console.warn(`[process-manager] kill failed for session ${sessionId}:`, e instanceof Error ? e.message : String(e))
     }
   }

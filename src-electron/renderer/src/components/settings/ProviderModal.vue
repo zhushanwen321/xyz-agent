@@ -1,4 +1,5 @@
 <script setup lang="ts">
+/* eslint-disable max-lines */
 import { ref, watch, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Button, Input, Select } from '../../design-system'

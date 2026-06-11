@@ -233,7 +233,7 @@ export function writeSettings(settings: PiSettings): void {
 export function findValidDefaultModel(): {
   result: { provider: string; modelId: string } | null
   wasFixed: boolean
-} {
+} { // eslint-disable-line indent -- standard TS function signature with multi-line return type
   const settings = readSettings()
   const models = readModels()
   const { defaultProvider, defaultModel } = settings

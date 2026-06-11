@@ -40,6 +40,7 @@ export class ModelService implements IModelService {
     // 2. Persist default model (best-effort)
     try {
       this.configService.setDefaultModel(provider, modelId)
+    // eslint-disable-next-line taste/no-silent-catch -- best-effort persist; model switch already succeeded in pi
     } catch (persistErr) {
       console.error('[ModelService] failed to persist default model:', persistErr)
     }

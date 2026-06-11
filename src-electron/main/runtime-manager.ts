@@ -39,6 +39,8 @@ export class RuntimeManager {
   private static readonly MAX_PORT = MAX_PORT_CONST
   // eslint-disable-next-line no-magic-numbers
   private static readonly KILL_WAIT_MS = 200
+  // eslint-disable-next-line no-magic-numbers -- ms-to-sec conversion factor
+  private static readonly MS_PER_SEC = 1000
   // eslint-disable-next-line no-magic-numbers
   private static readonly PORT_RETRY_MS = 300
   // eslint-disable-next-line no-magic-numbers
@@ -336,13 +338,16 @@ export class RuntimeManager {
         // 杀掉残留的后代进程（pi 等），同步完成后再 resolve
         // 避免异步 setTimeout 在 resolve 后误杀 PID 复用的新进程
         for (const pid of descendantPids) {
+          // eslint-disable-next-line taste/no-silent-catch -- process may have already exited
           try { process.kill(pid, 'SIGTERM') } catch { /* 可能已随 runtime 退出 */ }
         }
         // 同步等待后补 SIGKILL
         try {
-          execSync(`sleep ${RuntimeManager.KILL_WAIT_MS / 1000}`, { stdio: 'ignore' })
+          execSync(`sleep ${RuntimeManager.KILL_WAIT_MS / RuntimeManager.MS_PER_SEC}`, { stdio: 'ignore' })
+        // eslint-disable-next-line taste/no-silent-catch -- sleep failure is non-critical
         } catch { /* sleep 失败不影响 */ }
         for (const pid of descendantPids) {
+          // eslint-disable-next-line taste/no-silent-catch -- process may have already exited
           try { process.kill(pid, 'SIGKILL') } catch { /* 可能已退出 */ }
         }
         this.child = null
@@ -369,9 +374,11 @@ export class RuntimeManager {
     const pids = precomputedDescendants ?? this.getDescendantPids(rootPid)
     // 先杀后代（倒序：孙→子）
     for (const pid of pids.reverse()) {
+      // eslint-disable-next-line taste/no-silent-catch -- process may have already exited
       try { process.kill(pid, 'SIGKILL') } catch { /* 可能已退出 */ }
     }
     // 再杀根进程
+    // eslint-disable-next-line taste/no-silent-catch -- process may have already exited
     try { process.kill(rootPid, 'SIGKILL') } catch { /* 可能已退出 */ }
   }
 
@@ -406,6 +413,7 @@ export class RuntimeManager {
           result.push(...childPids)
           queue.push(...childPids)
         }
+      // eslint-disable-next-line taste/no-silent-catch -- pgrep failure is non-critical, process already exited
       } catch (e) {
         // pgrep 失败（进程已退出），非关键
         console.warn(`[runtime] getDescendantPids failed for PID ${pid}:`, e instanceof Error ? e.message : String(e))

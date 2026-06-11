@@ -8,6 +8,7 @@ export interface GitInfo {
 }
 
 const GIT_TIMEOUT_MS = 2000
+// eslint-disable-next-line no-magic-numbers -- 5 minutes = 5 * 60 * 1000ms, self-documenting with comment
 const CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes
 
 const gitInfoCache = new Map<string, { info: GitInfo | undefined; ts: number }>()

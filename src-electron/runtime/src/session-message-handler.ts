@@ -116,9 +116,9 @@ export class SessionMessageHandler {
     try {
       await this.ctx.sessionService.ensureActive(compactId)
       console.log('[server] session.compact: session ensured active, sessionId=' + compactId)
-      // eslint-disable-next-line taste/no-silent-catch -- compact: error already logged, caller informed via broadcast
       try {
         await this.ctx.sessionService.compact(compactId)
+      // eslint-disable-next-line taste/no-silent-catch -- compact: error logged + caller informed via broadcast
       } catch (e) {
         console.error('[server] session.compact: failed, sessionId=' + compactId + ', error=' + (e instanceof Error ? e.message : String(e)))
       }

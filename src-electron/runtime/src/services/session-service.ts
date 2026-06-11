@@ -1,3 +1,4 @@
+/* eslint-disable max-lines */
 /**
  * SessionService — extracted from session-pool.ts.
  *

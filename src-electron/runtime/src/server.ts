@@ -122,6 +122,7 @@ export class SidecarServer implements IMessageBroker {
           console.error('[runtime] unhandled error in handleMessage:', err)
           try {
             this.sendError(ws, 'handler_error', err instanceof Error ? err.message : String(err), msg.id)
+          // eslint-disable-next-line taste/no-silent-catch -- ws may have already closed
           } catch { /* ws 可能已关闭 */ }
         })
       } catch { this.sendError(ws, 'parse_error', 'Invalid JSON') }

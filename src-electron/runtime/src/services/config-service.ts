@@ -192,6 +192,7 @@ export class ConfigService implements IConfigService {
     try {
       const cd = piBridge.getConfigDir()
       if (!existsSync(cd)) mkdirSync(cd, { recursive: true })
+      // eslint-disable-next-line no-magic-numbers -- standard JSON indent
       atomicWrite(ConfigService.appConfigPath(), JSON.stringify(config, null, 2))
     // eslint-disable-next-line taste/no-silent-catch -- intentional: save failure is best-effort
     } catch (e) {
