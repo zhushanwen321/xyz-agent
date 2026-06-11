@@ -1,5 +1,5 @@
 #!/bin/bash
-# 预发布测试：创建 -beta.N 版本触发 CI，验证产物，还原代码
+# 预发布测试：创建 -beta 版本触发 CI，验证产物，还原代码
 # Usage: bash scripts/prerelease-test.sh
 set -euo pipefail
 
@@ -74,22 +74,22 @@ IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_VER"
 NEXT_PATCH=$((PATCH + 1))
 BASE_NEXT="${MAJOR}.${MINOR}.${NEXT_PATCH}"
 
-# 2d. 检测已有 beta 版本，递增序号
+# 2d. 使用固定 -beta 后缀，清理旧的 beta release/tag
+BETA_TAG="v${BASE_NEXT}-beta"
+
 EXISTING_BETA=$(gh release list --repo "$REPO" --limit 100 \
   --json tagName,isPrerelease \
-  | jq -r --arg prefix "v${BASE_NEXT}-beta." \
-    '.[] | select(.isPrerelease == true) | .tagName | select(startswith($prefix))' \
-  | sort -V | tail -1)
+  | jq -r --arg tag "$BETA_TAG" \
+    '.[] | select(.isPrerelease == true) | .tagName | select(. == $tag)')
 
 if [ -n "$EXISTING_BETA" ]; then
-  LAST_NUM=$(echo "$EXISTING_BETA" | sed 's/.*-beta\.//')
-  BETA_NUM=$((LAST_NUM + 1))
-else
-  BETA_NUM=1
+  log "清理旧的 beta release: ${BETA_TAG}"
+  gh release delete "$BETA_TAG" --repo "$REPO" --yes 2>/dev/null || true
+  git push "$GITHUB_REMOTE" --delete "$BETA_TAG" 2>/dev/null || true
+  git tag -d "$BETA_TAG" 2>/dev/null || true
 fi
 
-BETA_VERSION="${BASE_NEXT}-beta.${BETA_NUM}"
-BETA_TAG="v${BETA_VERSION}"
+BETA_VERSION="${BASE_NEXT}-beta"
 ORIGINAL_VERSION="$CURRENT_VER"
 log "beta 版本: ${BETA_TAG}"
 
