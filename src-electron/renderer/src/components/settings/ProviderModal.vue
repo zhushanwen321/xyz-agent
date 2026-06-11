@@ -114,7 +114,7 @@ function addModel() {
   const name = addModelName.value.trim()
   if (!name) return
   modalModels.value.push({
-    id: `new-${Date.now()}`,
+    id: name,
     name,
     contextWindow: Number(addModelCtx.value) || DEFAULT_NEW_MODEL_CTX,
     thinkingLevelMap: structuredClone(THINKING_PRESETS['on-off']),
