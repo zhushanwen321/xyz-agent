@@ -225,7 +225,79 @@ function handleDiscover() {
   )
 }
 
+const isSaving = ref(false)
+
 function handleSave() {
+  if (isSaving.value) return
+
+  const type = formType.value
+  const baseUrl = formUrl.value.trim()
+  const key = formKey.value.trim()
+  const keyIsMask = key === '••••••••'
+
+  // Skip validation for providers without HTTP API (ollama without base URL)
+  const needsValidation = baseUrl && (type !== 'ollama' || baseUrl !== '')
+  if (!needsValidation) {
+    emitSave()
+    return
+  }
+
+  // Validate provider by discovering models
+  isSaving.value = true
+  discoverStatus.value = 'loading'
+  discoverMessage.value = ''
+
+  cleanupDiscover()
+
+  const saveTimer = setTimeout(() => {
+    cleanupDiscover()
+    isSaving.value = false
+    discoverStatus.value = 'error'
+    discoverMessage.value = t('settings.discoveryTimeoutHint')
+  }, DISCOVER_TIMEOUT_MS)
+
+  const saveHandler = (msg: unknown) => {
+    clearTimeout(saveTimer)
+    offEvent('config.discoveredModels', saveHandler)
+
+    const payload = (msg as { payload: Record<string, unknown> }).payload
+    const success = payload.success as boolean
+
+    if (success) {
+      // Validation passed — refresh models from response and save
+      const models = payload.models as Array<{ id: string; name: string; contextWindow?: number }>
+      if (models.length > 0) {
+        modalModels.value = models.map(m => {
+          const existing = modalModels.value.find(em => em.id === m.id)
+          return {
+            id: m.id,
+            name: m.name,
+            contextWindow: m.contextWindow ?? 0,
+            enabled: existing?.enabled ?? true,
+            thinkingLevelMap: existing?.thinkingLevelMap ?? structuredClone(THINKING_PRESETS['on-off']),
+          }
+        })
+      }
+      emitSave()
+    } else {
+      const error = payload.error as string | undefined
+      discoverStatus.value = 'error'
+      discoverMessage.value = error || t('settings.discoveryFailedHint')
+    }
+    isSaving.value = false
+  }
+  onEvent('config.discoveredModels', saveHandler)
+
+  const { discoverModels } = useProvider()
+  discoverModels(
+    baseUrl,
+    keyIsMask ? undefined : key || undefined,
+    type,
+    props.provider?.id || undefined,
+  )
+}
+
+function emitSave() {
   emit('save', {
     name: formName.value,
     type: formType.value,
@@ -422,7 +494,7 @@ onUnmounted(() => {
           {{ t('settings.testConnection') }}
         </Button>
         <Button variant="outline" @click="$emit('close')">{{ t('common.cancel') }}</Button>
-        <Button variant="primary" @click="handleSave">{{ t('common.save') }}</Button>
+        <Button variant="primary" :disabled="isSaving" @click="handleSave">{{ isSaving ? t('common.saving') : t('common.save') }}</Button>
       </div>
     </div>
   </div>
