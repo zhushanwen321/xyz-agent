@@ -26,14 +26,14 @@ const confirmDelete = ref(false)
 
 const renameBtn: Record<string, ((e: Event) => void) | string | undefined> = {
   type: 'button',
-  class: 'inline-flex items-center justify-center w-[22px] h-[22px] rounded-xs text-muted cursor-pointer shrink-0 opacity-0 transition-all duration-150 ease-ease group-hover:opacity-100 hover:bg-accent-light hover:text-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 bg-transparent border-none',
+  class: 'inline-flex items-center justify-center w-[22px] h-[22px] rounded-xs text-muted cursor-pointer shrink-0 hover:bg-accent-light hover:text-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 bg-transparent border-none',
   title: 'Rename',
   onClick: (e: Event) => startRename(e as MouseEvent),
   onKeydown: (e: Event) => { if ((e as KeyboardEvent).key === 'Enter') startRename(e as MouseEvent) },
 }
 const deleteBtn: Record<string, ((e: Event) => void) | string | undefined> = {
   type: 'button',
-  class: 'inline-flex items-center justify-center w-[22px] h-[22px] rounded-xs text-muted cursor-pointer shrink-0 opacity-0 transition-all duration-150 ease-ease group-hover:opacity-100 hover:bg-accent-light hover:text-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 bg-transparent border-none',
+  class: 'inline-flex items-center justify-center w-[22px] h-[22px] rounded-xs text-muted cursor-pointer shrink-0 hover:bg-accent-light hover:text-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 bg-transparent border-none',
   title: 'Delete',
   onClick: (e: Event) => startDelete(e as MouseEvent),
   onKeydown: (e: Event) => { if ((e as KeyboardEvent).key === 'Enter') startDelete(e as MouseEvent) },
@@ -149,24 +149,27 @@ const HOURS_PER_DAY = 24
         <span v-if="(session.doneCount ?? 0) > 0" class="inline-flex items-center justify-center min-w-[14px] h-[14px] rounded-full text-[9px] font-bold text-white shrink-0 bg-success">{{ session.doneCount }}</span>
         <span v-if="(session.alertCount ?? 0) > 0" class="inline-flex items-center justify-center min-w-[14px] h-[14px] rounded-full text-[9px] font-bold text-white shrink-0 bg-danger">{{ session.alertCount }}</span>
       </span>
-      <!-- Right: time + actions -->
-      <span class="flex items-center gap-0.5 shrink-0 ml-auto">
-        <span class="text-[11px] text-muted whitespace-nowrap">{{ relativeTime }}</span>
-        <!-- Rename button -->
-        <button v-bind="renameBtn">
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 1.5a2.121 2.121 0 013 3L5 14l-4 1 1-4z"/></svg>
-        </button>
-        <!-- Delete button -->
-        <button
-          v-if="!confirmDelete"
-          v-bind="deleteBtn"
-        >
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h12M5.33 4V2.67a1.33 1.33 0 011.34-1.34h2.66a1.33 1.33 0 011.34 1.34V4m2 0v9.33a1.33 1.33 0 01-1.34 1.34H4.67a1.33 1.33 0 01-1.34-1.34V4h9.34z"/></svg>
-        </button>
-        <button
-          v-else
-          v-bind="confirmDelBtn"
-        >confirm</button>
+      <!-- Right: time (hover 时被按钮覆盖) -->
+      <span class="relative shrink-0 ml-auto">
+        <span class="text-[11px] text-muted whitespace-nowrap group-hover:invisible">{{ relativeTime }}</span>
+        <!-- Hover actions: absolute 覆盖时间区域 -->
+        <span class="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+          <!-- Rename button -->
+          <button v-bind="renameBtn">
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 1.5a2.121 2.121 0 013 3L5 14l-4 1 1-4z"/></svg>
+          </button>
+          <!-- Delete button -->
+          <button
+            v-if="!confirmDelete"
+            v-bind="deleteBtn"
+          >
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h12M5.33 4V2.67a1.33 1.33 0 011.34-1.34h2.66a1.33 1.33 0 011.34 1.34V4m2 0v9.33a1.33 1.33 0 01-1.34 1.34H4.67a1.33 1.33 0 01-1.34-1.34V4h9.34z"/></svg>
+          </button>
+          <button
+            v-else
+            v-bind="confirmDelBtn"
+          >confirm</button>
+        </span>
       </span>
     </template>
   </div>
