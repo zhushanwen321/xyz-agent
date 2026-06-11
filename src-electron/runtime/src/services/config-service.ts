@@ -1,12 +1,13 @@
 /**
- * ConfigService — facade for Provider/Skill/Agent CRUD.
+ * ConfigService — facade for Provider/Skill/Agent/Preferences CRUD.
  *
  * Delegates Provider CRUD to pi-config-bridge (reads/writes pi's native
  * models.json), Skill discovery to pi's skill paths + skill-scanner,
- * Agent discovery to pi's agents/ directory, and tool permissions to
- * config-store.
+ * Agent discovery to pi's agents/ directory.
+ * Tool permissions are persisted to ~/.xyz-agent/config.json (xyz-agent own config).
  */
-import { dirname } from 'node:path'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 
 import type {
   ProviderInfo,
@@ -18,7 +19,7 @@ import type {
 import type { IConfigService } from '../interfaces.js'
 import * as piBridge from '../pi-config-bridge.js'
 import type { PiModelDefinition } from '../pi-config-bridge.js'
-import { updateToolPermissions } from '../config-store.js'
+import { atomicWrite } from '../scanner-base.js'
 import { scanSkills, loadSkillFromDir } from '../skill-scanner.js'
 import { scanAgents } from '../agent-scanner.js'
 
@@ -163,10 +164,45 @@ export class ConfigService implements IConfigService {
     return piBridge.getProviderConfig(providerId)
   }
 
-  // ── Tool permissions ───────────────────────────────────────────
+  // ── Tool permissions (persisted to ~/.xyz-agent/config.json) ───
+
+  private static appConfigPath(): string {
+    return join(piBridge.getConfigDir(), 'config.json')
+  }
+
+  private static loadAppConfig(): { toolPermissions?: Record<string, string> } {
+    try {
+      const cp = ConfigService.appConfigPath()
+      if (existsSync(cp)) {
+        const raw = readFileSync(cp, 'utf-8')
+        const parsed = JSON.parse(raw)
+        if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+          return { ...(parsed.toolPermissions && typeof parsed.toolPermissions === 'object' ? { toolPermissions: parsed.toolPermissions } : {}) }
+        }
+        console.error('[config-service] config.json is not a valid object, ignoring')
+      }
+    // eslint-disable-next-line taste/no-silent-catch -- intentional: config file missing/corrupt is handled by fallback
+    } catch (e) {
+      console.error('[config-service] load config.json error:', e)
+    }
+    return {}
+  }
+
+  private static saveAppConfig(config: { toolPermissions?: Record<string, string> }): void {
+    try {
+      const cd = piBridge.getConfigDir()
+      if (!existsSync(cd)) mkdirSync(cd, { recursive: true })
+      atomicWrite(ConfigService.appConfigPath(), JSON.stringify(config, null, 2))
+    // eslint-disable-next-line taste/no-silent-catch -- intentional: save failure is best-effort
+    } catch (e) {
+      console.error('[config-service] save config.json error:', e)
+    }
+  }
 
   updateToolPermissions(permissions: Record<string, string>): void {
-    updateToolPermissions(permissions)
+    const config = ConfigService.loadAppConfig()
+    config.toolPermissions = permissions
+    ConfigService.saveAppConfig(config)
   }
 
   // ── Skill CRUD ─────────────────────────────────────────────────
