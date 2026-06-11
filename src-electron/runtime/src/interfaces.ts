@@ -26,7 +26,6 @@ export interface IRpcClient {
   prompt(content: string): Promise<unknown>
   abort(): Promise<unknown>
   setModel(provider: string, modelId: string): Promise<unknown>
-  getAvailableModels(): Promise<unknown>
   getHistory(): Promise<unknown>
   compact(): Promise<unknown>
   clear(): Promise<unknown>
@@ -107,6 +106,14 @@ export interface ISessionService {
   getSummary(sessionId: string): SessionSummary | undefined
   /** Get the underlying RpcClient for direct command sending (e.g., extension responses). */
   getRpcClient(sessionId: string): IRpcClient | undefined
+
+  /**
+   * Ensure a session is active (has a running pi process). If not, auto-restore it.
+   * @returns The active RpcClient
+   * @throws if restore fails or session not found
+   */
+  ensureActive(sessionId: string): Promise<IRpcClient>
+
   listPersistedSessions(): SessionGroup[]
   destroyAll(): Promise<void>
 

@@ -341,10 +341,6 @@ export class RpcClient {
     return this.sendCommand('set_thinking_level', { level })
   }
 
-  getAvailableModels(): Promise<PiMessage> {
-    return this.sendCommand('get_available_models')
-  }
-
   getHistory(): Promise<PiMessage> {
     return this.sendCommand('get_messages')
   }

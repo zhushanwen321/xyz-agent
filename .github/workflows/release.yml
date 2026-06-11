@@ -26,8 +26,10 @@ jobs:
         include:
           - os: macos-latest
             platform: mac
-          - os: windows-latest
-            platform: win
+          # TODO(Windows): runtime-manager 进程管理依赖 Unix 命令（pgrep/lsof/ps/SIGTERM），
+          # Windows 上 stop() 无法清理 pi 子进程。等 platform 层抽象完成后再启用。
+          # - os: windows-latest
+          #   platform: win
           - os: ubuntu-latest
             platform: linux
 
@@ -129,17 +131,6 @@ jobs:
             exit 1
           fi
           echo 'Runtime smoke test passed'
-
-      - name: Runtime smoke test (Windows)
-        if: matrix.platform == 'win'
-        shell: bash
-        run: |
-          RUNTIME="src-electron/dist/builder-output/win-unpacked/resources/app.asar.unpacked/dist/runtime/index.cjs"
-          if [ ! -f "$RUNTIME" ]; then
-            echo '::error::Runtime bundle not found in app.asar.unpacked'
-            exit 1
-          fi
-          echo 'Runtime bundle exists in unpacked directory'
 
       - name: Runtime smoke test (Linux)
         if: matrix.platform == 'linux'

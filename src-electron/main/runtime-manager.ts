@@ -375,8 +375,19 @@ export class RuntimeManager {
     try { process.kill(rootPid, 'SIGKILL') } catch { /* 可能已退出 */ }
   }
 
+  // TODO(Windows): 进程管理全部使用 Unix 命令（pgrep/lsof/ps/SIGTERM/SIGKILL/bin/bash），
+  // Windows 上不工作。需要时抽象 platform 层：
+  //   - pgrep -P → wmic process where ParentProcessId
+  //   - lsof → netstat -ano + findstr
+  //   - ps → tasklist
+  //   - SIGTERM/SIGKILL → taskkill /T /F /PID
+  //   - execSync('sleep') → Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+  // 详见 https://github.com/zhushanwen321/xyz-agent/issues/<TBD>
+
   /**
    * 递归获取指定 PID 的所有后代进程 PID（广度优先，返回按代排列：子→孙→...）。
+   *
+   * 仅支持 macOS/Linux（依赖 pgrep -P）。
    */
   private getDescendantPids(parentPid: number): number[] {
     if (!parentPid || isNaN(parentPid)) return []

@@ -231,32 +231,6 @@ export class ProcessManager {
     await Promise.allSettled(ids.map(id => this.destroySession(id)))
   }
 
-  /**
-   * Validate that a provider configuration works by spawning a
-   * temporary pi process and attempting to list models.
-   */
-  async validateProvider(
-    providerId: string,
-    apiKey: string,
-    baseUrl?: string,
-  ): Promise<boolean> {
-    const env: Record<string, string> = {}
-    const prefix = providerId.toUpperCase().replace(/-/g, '_')
-    env[`${prefix}_API_KEY`] = apiKey
-    if (baseUrl) env[`${prefix}_BASE_URL`] = baseUrl
-
-    const client = new RpcClient({ env })
-    try {
-      await client.start()
-      const result = await client.getAvailableModels()
-      return result.type !== 'error'
-    } catch {
-      return false
-    } finally {
-      await client.kill()
-    }
-  }
-
   /** Check if the subprocess for a session is still running. */
   isAlive(sessionId: string): boolean {
     const proc = this.processes.get(sessionId)
