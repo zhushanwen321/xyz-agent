@@ -264,23 +264,9 @@ function handleSave() {
     const success = payload.success as boolean
 
     if (success) {
-      // Validation passed — only merge newly discovered models,
-      // preserve user's manual additions/deletions.
-      const models = payload.models as Array<{ id: string; name: string; contextWindow?: number }>
-      if (models.length > 0) {
-        const existingIds = new Set(modalModels.value.map(m => m.id))
-        for (const m of models) {
-          if (!existingIds.has(m.id)) {
-            modalModels.value.push({
-              id: m.id,
-              name: m.name,
-              contextWindow: m.contextWindow ?? 0,
-              enabled: true,
-              thinkingLevelMap: structuredClone(THINKING_PRESETS['on-off']),
-            })
-          }
-        }
-      }
+      // Validation passed — do NOT merge discovered models here.
+      // The save path uses discover only to verify connectivity;
+      // merging would undo user's manual deletions.
       emitSave()
     } else {
       const error = payload.error as string | undefined
