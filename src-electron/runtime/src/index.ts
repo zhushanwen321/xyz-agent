@@ -54,75 +54,77 @@ async function main(): Promise<void> {
   // Transport layer
   const server = new SidecarServer(port, projectRoot)
 
-  // Service layer (DI)
+  // ── Phase 1: create all service instances (no cross-service deps at construction time) ──
   const extensionService = new ExtensionService({ projectRoot: effectiveRoot })
   const treeService = new TreeService(pm)
+  const configService = new ConfigService(effectiveRoot)
+  const modelService = new ModelService()
 
-  // pluginService/configService/modelService: declared before sessionService but assigned after.
-  // The adapter factory closures read them at session creation time (deferred),
-  // by which point all services are already initialized (runtime is single-threaded).
-  // eslint-disable-next-line prefer-const
-  let pluginService: PluginService | undefined
+  // ── Phase 2: create services that reference other services via closures / deps ──
+  // PluginService.deps are all optional and only used at runtime (initialize / event handling),
+  // so sessionService can be wired in after construction.
+  const pluginRegistry = new PluginRegistry(effectiveRoot)
+  const pluginService = new PluginService(pluginRegistry, server, {
+    configService,
+    broadcastFn: (type, payload) => server.broadcast({ type: type as 'session.list', id: `push_${Date.now()}`, payload } as import('@xyz-agent/shared').ServerMessage),
+  })
+
+  // adapterFactory closure captures pluginService / configService / modelService by reference.
+  // All three are already assigned above — no temporal coupling.
+  // Note: onContextUpdate also references `sessionService` (assigned below) as a self-reference —
+  // the adapter queries its owning session's data. createAdapter is only called at session
+  // creation time, so sessionService is always set by then.
+  const createAdapter = (sessionId: string, interceptor: NavigateInterceptor) => new EventAdapter(sessionId, interceptor.send, {
+    onExtensionUIRequest: (requestId, sid, method) => {
+      server.registerExtensionTimeout(sid, requestId, method)
+    },
+    onBridgeUIRequest: (requestId, sid, method, data) => {
+      server.handleBridgeRequest(sid, requestId, method, data)
+    },
+    onStatusSetUpdate: (payload) => {
+      server.handleStatusSetUpdate(payload)
+    },
+    onContextUpdate: (sid, ctxData) => {
+      const providers = configService.listProviders()
+      const models = modelService.aggregateModels(providers)
+      const session = sessionService.getSummary(sid)
+      if (!session) return
+      const modelRef = session.modelId ?? ''
+      const sepIdx = modelRef.indexOf('/')
+      const model = sepIdx >= 0
+        ? models.find(m => m.providerId === modelRef.slice(0, sepIdx) && m.id === modelRef.slice(sepIdx + 1))
+        : undefined
+      const contextWindow = model?.contextWindow
+      const inputTokens = ctxData.inputTokens
+      if (!inputTokens || inputTokens === 0) return
+      const usagePercent = contextWindow
+        ? Math.min(Math.round((inputTokens / contextWindow) * MAX_PERCENT), MAX_PERCENT)
+        : 0
+      server.broadcast({
+        type: 'context.update',
+        id: `ctx_${Date.now()}`,
+        payload: { sessionId: sid, usagePercent, inputTokens, contextLimit: contextWindow ?? 0 },
+      })
+    },
+    onHookExecute: (hookType, context) => pluginService.executeHooks(hookType, {
+      pluginId: '',
+      hookType: hookType as import('./services/plugin-service/plugin-types.js').HookType,
+      data: { ...context, sessionId },
+      timestamp: Date.now(),
+    }),
+  })
 
   const sessionService = new SessionService(
     pm,
-    server,  // IMessageBroker
-    (sessionId: string, interceptor: NavigateInterceptor) => new EventAdapter(sessionId, interceptor.send, {
-      onExtensionUIRequest: (requestId, sid, method) => {
-        server.registerExtensionTimeout(sid, requestId, method)
-      },
-      onBridgeUIRequest: (requestId, sid, method, data) => {
-        server.handleBridgeRequest(sid, requestId, method, data)
-      },
-      onStatusSetUpdate: (payload) => {
-        server.handleStatusSetUpdate(payload)
-      },
-      onContextUpdate: (sid, ctxData) => {
-        // Look up current model's contextWindow from session model info
-        const providers = configService.listProviders()
-        const models = modelService.aggregateModels(providers)
-        const session = sessionService.getSummary(sid)
-        if (!session) return
-        const modelRef = session.modelId ?? ''
-        const sepIdx = modelRef.indexOf('/')
-        const model = sepIdx >= 0
-          ? models.find(m => m.providerId === modelRef.slice(0, sepIdx) && m.id === modelRef.slice(sepIdx + 1))
-          : undefined
-        const contextWindow = model?.contextWindow
-        const inputTokens = ctxData.inputTokens
-        if (!inputTokens || inputTokens === 0) return
-        const usagePercent = contextWindow
-          ? Math.min(Math.round((inputTokens / contextWindow) * MAX_PERCENT), MAX_PERCENT)
-          : 0
-        server.broadcast({
-          type: 'context.update',
-          id: `ctx_${Date.now()}`,
-          payload: { sessionId: sid, usagePercent, inputTokens, contextLimit: contextWindow ?? 0 },
-        })
-      },
-      onHookExecute: pluginService!
-        ? (hookType, context) => pluginService!.executeHooks(hookType, {
-          pluginId: '',
-          hookType: hookType as import('./services/plugin-service/plugin-types.js').HookType,
-          data: { ...context, sessionId },
-          timestamp: Date.now(),
-        })
-        : undefined,
-    }),
+    server,
+    createAdapter,
     effectiveRoot,
     treeService,
     extensionService,
   )
-  const configService = new ConfigService(effectiveRoot)
-  const modelService = new ModelService()
 
-  // Wire services into server
-  const pluginRegistry = new PluginRegistry(effectiveRoot)
-  pluginService = new PluginService(pluginRegistry, server, {
-    sessionService,
-    configService,
-    broadcastFn: (type, payload) => server.broadcast({ type: type as 'session.list', id: `push_${Date.now()}`, payload } as import('@xyz-agent/shared').ServerMessage),
-  })
+  // ── Phase 3: wire cross-service runtime deps ──
+  pluginService.setSessionService(sessionService)
   server.setServices(sessionService, configService, modelService, treeService, extensionService, pluginService)
 
   // Graceful shutdown on signals
