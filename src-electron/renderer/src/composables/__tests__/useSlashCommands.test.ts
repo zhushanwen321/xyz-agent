@@ -72,18 +72,20 @@ describe('useSlashCommands — agent command support', () => {
   })
 
   it('should deduplicate when agent name matches builtin or skill name', () => {
+  // 'clear' is no longer a builtin (removed in 83f43a99 when session.clear
+  // protocol was dropped) — use 'compact' instead which is still builtin
   const skills: SkillInfo[] = [
-    makeSkill({ id: 's1', name: 'clear', description: 'Skill clear', enabled: true }),
+    makeSkill({ id: 's1', name: 'compact', description: 'Skill compact', enabled: true }),
   ]
   const agents: AgentInfo[] = [
-    makeAgent({ id: 'a1', name: 'clear', description: 'Agent clear', enabled: true }),
+    makeAgent({ id: 'a1', name: 'compact', description: 'Agent compact', enabled: true }),
   ]
 
   const result = slash.mergeSkillCommands(skills, agents)
-  const clearCmds = result.filter(c => c.name === 'clear')
+  const compactCmds = result.filter(c => c.name === 'compact')
 
-  expect(clearCmds.length).toBe(1)
-  expect(clearCmds[0].source).toBe('builtin')
+  expect(compactCmds.length).toBe(1)
+  expect(compactCmds[0].source).toBe('builtin')
   })
 
   it('should sort all commands from all three sources alphabetically', () => {
