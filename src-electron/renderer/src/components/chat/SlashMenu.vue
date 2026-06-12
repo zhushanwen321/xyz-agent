@@ -2,7 +2,7 @@
   <div
     v-if="visible && mergedCommands.length > 0"
     ref="menuRef"
-    class="absolute top-[28px] left-[24px] right-[24px] bg-surface border border-border rounded-none shadow-md max-h-[calc(28px*5)] overflow-y-auto z-20"
+    class="absolute bottom-full left-[24px] right-[24px] bg-surface border border-border rounded-none shadow-md max-h-[calc(28px*5)] overflow-y-auto z-20"
   >
     <div>
       <Button
