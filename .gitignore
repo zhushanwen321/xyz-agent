@@ -37,3 +37,5 @@ src-electron/resources/pi/agent/*
 
 # Electron binary cache (immutable, shared across worktrees)
 .electron-dist/
+**/__pycache__/
+*.pyc

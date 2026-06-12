@@ -103,7 +103,7 @@ function handleSend(payload: { content: string; skillName?: string; subagent?: {
   if (!sid) return
   chatStore.setError(null, sid)
   // Sync thinking level to pi before sending message
-  const level = settingsStore.currentThinkingLevel
+  const level = chatStore.getSessionState(sid)?.thinkingLevel
   if (level) {
     send({ type: 'session.setThinkingLevel', payload: { sessionId: sid, level } })
   }
@@ -142,9 +142,7 @@ function handleLocalAction(payload: { action: string; data?: unknown }) {
   const sid = props.sessionId
   if (!sid) return
 
-  if (payload.action === 'clear') {
-    chatStore.clearMessages(sid)
-  } else if (payload.action === 'help') {
+  if (payload.action === 'help') {
     const commands = payload.data as Array<{ name: string; description: string; source: string }> ?? []
     const lines = commands.map(c => `  /${c.name} — ${c.description} [${c.source === 'builtin' ? 'CMD' : 'SK'}]`)
     chatStore.addMessage({
@@ -225,7 +223,6 @@ function handleCompactionState(msg: ServerMessage, value: boolean) {
   const sid = (msg.payload as { sessionId?: string }).sessionId
   if (!sid) return
   // 使用 Pinia store 中的 sessionId（同步更新），而非 props.sessionId（异步更新）
-  // 解决 session.restore → session.compacting 时序问题
   const currentSid = panelStore.panels.find(p => p.id === props.panelId)?.sessionId
   if (!currentSid || sid !== currentSid) return
   chatStore.setCompacting(value, sid)

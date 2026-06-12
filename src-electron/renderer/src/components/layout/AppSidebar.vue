@@ -178,6 +178,13 @@ const isCollapsed = computed(() => sidebarStore.collapsed)
   /* Non-fullscreen: left padding for traffic lights */
   padding: 8px 14px 4px 78px;
   position: relative;
+  -webkit-app-region: drag;
+}
+/* Interactive elements inside row1 must not trigger window drag */
+.sidebar-row1 button,
+.sidebar-row1 .ctrl-btn,
+.sidebar-row1 .sidebar-nav {
+  -webkit-app-region: no-drag;
 }
 
 .sidebar-row2 {

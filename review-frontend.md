@@ -1,0 +1,1 @@
+旧代码: `settingsStore.currentThinkingLevel` — 这是一个全局设置，从不包含 `'off'`。新代码: `chatStore.getSessionState(sid)?.thinkingLevel`，它来自 `onSessionList`，其值可以是 `'off'`。因此，新代码会在 `level` 为 `'off'`（truthy）时发送 `setThinkingLevel('off')`。

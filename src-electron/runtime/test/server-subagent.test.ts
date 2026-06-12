@@ -51,7 +51,7 @@ vi.mock('../src/services/config-service.js', () => ({
   ConfigService: class MockConfigService {
     listProviders = vi.fn().mockReturnValue([])
     setProvider = vi.fn()
-    deleteProvider = vi.fn().mockReturnValue(true)
+    deleteProvider = vi.fn().mockReturnValue({ removed: true })
     getProvider = vi.fn().mockReturnValue(undefined)
     updateToolPermissions = vi.fn()
     loadSkills = vi.fn().mockReturnValue([])
@@ -91,12 +91,6 @@ vi.mock('../src/event-adapter.js', () => ({
     attach = vi.fn()
     detach = vi.fn()
   },
-}))
-
-vi.mock('../src/config-store.js', () => ({
-  updateToolPermissions: vi.fn(),
-  getProvider: vi.fn().mockReturnValue(undefined),
-  getDefaultModel: vi.fn().mockReturnValue('test/model'),
 }))
 
 vi.mock('../src/skill-scanner.js', () => ({

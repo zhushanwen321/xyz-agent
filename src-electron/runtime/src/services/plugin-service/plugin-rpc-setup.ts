@@ -9,6 +9,7 @@ import type { StatusBarItem } from '@xyz-agent/shared'
 import type { PluginRpcServer } from './plugin-rpc-server.js'
 import type { PluginStorage } from './plugin-storage.js'
 import type { StatusBarItemOptions, IPluginServiceDeps } from './plugin-types.js'
+import type { SessionDataStore } from './session-data-store.js'
 import { registerToolRpcHandlers } from './tool-api.js'
 import { registerHookRpcHandlers } from './hook-api.js'
 import { registerSessionRpcHandlers } from './api/session-api.js'
@@ -17,11 +18,44 @@ import { registerSessionDataRpcHandlers } from './api/session-data-api.js'
 import { registerUiRpcHandlers } from './api/ui-api.js'
 import { registerAgentRpcHandlers } from './api/agent-api.js'
 import { registerWorkspaceRpcHandlers } from './api/workspace-api.js'
+import type { SessionSummary } from '../../../../shared/src/session.js'
 import type { ToolEntry } from './plugin-types.js'
 
 const MAX_FIND_FILES_RESULTS = 1000
 const DEFAULT_STATUS_BAR_PRIORITY = 100
 const MIN_MODEL_PARTS = 2
+
+// Lightweight cache for active session lookup (avoid full disk scan per RPC call)
+let _activeSessionCache: { sessionId: string; ts: number } | null = null
+// eslint-disable-next-line no-magic-numbers -- 2 seconds TTL for active session cache
+const ACTIVE_SESSION_CACHE_TTL_MS = 2 * 1000
+
+function findActiveSession(deps: IPluginServiceDeps): SessionSummary | undefined {
+  if (!deps.sessionService) return undefined
+  const now = Date.now()
+  if (_activeSessionCache && (now - _activeSessionCache.ts) < ACTIVE_SESSION_CACHE_TTL_MS) {
+    // Cache hit — look up session summary by cached ID (no full disk scan)
+    const cached = _activeSessionCache
+    const summary = deps.sessionService.getSummary(cached.sessionId)
+    if (summary) return summary
+    // Cached session no longer valid — fall through to full scan
+    _activeSessionCache = null
+  }
+  // Cache miss or expired — do the full scan
+  const groups = deps.sessionService.listPersistedSessions()
+  const active = groups.flatMap(g => g.sessions).find(s => s.status === 'active')
+  if (active) {
+    _activeSessionCache = { sessionId: active.id, ts: now }
+  } else {
+    _activeSessionCache = null
+  }
+  return active
+}
+
+/** Test helper: clear the active session cache between tests */
+export function clearActiveSessionCache(): void {
+  _activeSessionCache = null
+}
 
 export interface RpcSetupContext {
   rpcServer: PluginRpcServer
@@ -34,9 +68,7 @@ export interface RpcSetupContext {
   handleUiRequest: (method: string, params: Record<string, unknown>, pluginId: string) => Promise<unknown>
   syncToolsToBridge: () => Promise<void>
   getDescriptor: (pluginId: string) => import('./plugin-types.js').PluginDescriptor | undefined
-  sessionDataCache: Map<string, Map<string, unknown>>
-  sessionDataDirty: Map<string, Set<string>>
-  sessionDataSize: Map<string, number>
+  sessionDataStore: SessionDataStore
 }
 
 export function registerAllRpcMethods(ctx: RpcSetupContext): void {
@@ -118,10 +150,7 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
       return { id: s.id, label: s.label, cwd: s.cwd, status: s.status, createdAt: 0, lastActiveAt: s.lastActiveAt }
     },
     getActiveSession: () => {
-      if (!deps.sessionService) return undefined
-      const groups = deps.sessionService.listPersistedSessions()
-      const allSessions = groups.flatMap(g => g.sessions)
-      const active = allSessions.find(s => s.status === 'active')
+      const active = findActiveSession(deps)
       if (!active) return undefined
       return { id: active.id, label: active.label, cwd: active.cwd, status: active.status, createdAt: 0, lastActiveAt: active.lastActiveAt }
     },
@@ -153,9 +182,9 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
 
   // ── SessionData RPC handlers ─────────────────────────────
   registerSessionDataRpcHandlers(rpcServer, {
-    getCache: () => ctx.sessionDataCache,
-    getDirty: () => ctx.sessionDataDirty,
-    getSizeTracker: () => ctx.sessionDataSize,
+    getCache: () => ctx.sessionDataStore.getCache(),
+    getDirty: () => ctx.sessionDataStore.getDirty(),
+    getSizeTracker: () => ctx.sessionDataStore.getSizeTracker(),
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     appendEntry: async (_sessionId: string, _key: string, _value: unknown) => {
       // bridge:append_entry 保留接口兼容，set handler 不再直接调用
@@ -204,23 +233,40 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
   registerAgentRpcHandlers(rpcServer, {
     getModel: () => {
       if (!deps.sessionService) return ''
-      const groups = deps.sessionService.listPersistedSessions()
-      const active = groups.flatMap(g => g.sessions).find(s => s.status === 'active')
+      const active = findActiveSession(deps)
       return active?.modelId ?? ''
     },
-    setModel: (model: string) => {
+    setModel: async (model: string) => {
       if (!deps.sessionService) return
-      const groups = deps.sessionService.listPersistedSessions()
-      const active = groups.flatMap(g => g.sessions).find(s => s.status === 'active')
+      const active = findActiveSession(deps)
       if (!active) return
       const parts = model.split('/')
       if (parts.length < MIN_MODEL_PARTS) return
       const provider = parts[0]
       const modelId = parts.slice(1).join('/')
-      void deps.sessionService.switchModel(active.id, provider, modelId)
+      // Unified entry: persist + broadcast included
+      if (deps.modelService) {
+        await deps.modelService.switchModel(active.id, provider, modelId)
+      } else {
+        // Fallback: session-only (no persist/broadcast)
+        await deps.sessionService.switchModel(active.id, provider, modelId)
+      }
     },
-    getThinkingLevel: () => 'high',
-    setThinkingLevel: () => {},
+    getThinkingLevel: () => {
+      if (!deps.sessionService) return 'off'
+      const active = findActiveSession(deps)
+      return active?.thinkingLevel ?? 'off'
+    },
+    setThinkingLevel: async (level: string) => {
+      if (!deps.sessionService) return
+      const active = findActiveSession(deps)
+      if (!active) return
+      if (deps.modelService) {
+        await deps.modelService.setThinkingLevel(active.id, level)
+      } else {
+        await deps.sessionService.setThinkingLevel(active.id, level)
+      }
+    },
     getActiveTools: () => {
       return Array.from(toolRegistry.values()).map(e => e.schema.name)
     },

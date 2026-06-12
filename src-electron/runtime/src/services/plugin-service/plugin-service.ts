@@ -1,20 +1,19 @@
 import { PluginPermissionChecker as PermissionChecker } from './plugin-permission.js'
 import type { PluginDescriptor, ToolEntry, HookEntry, HookContext, HookResult, BridgeToolExecuteRequest, BridgeToolExecuteResponse, BridgeInterceptResponse, ToolRegistration, IPluginServiceDeps } from './plugin-types.js'
 import type { StatusBarItem } from '@xyz-agent/shared'
-import type { IPluginService } from '../../interfaces.js'
+import type { IPluginService, ISessionService } from '../../interfaces.js'
 import type { IMessageBroker } from '../../interfaces.js'
 import { PluginRegistry } from './plugin-registry.js'
-import { PluginStorage, loadSessionData, deleteSessionData } from './plugin-storage.js'
+import { PluginStorage } from './plugin-storage.js'
+import { SessionDataStore } from './session-data-store.js'
 import { getConfigDir } from '../../pi-config-bridge.js'
-import { flushSessionData, flushSessionDataForSession, startFlushTimer, stopFlushTimer } from './session-data-flush.js'
 import { PluginRpcServer } from './plugin-rpc-server.js'
 import { PluginHost } from './plugin-host.js'
 import { PluginActivator } from './plugin-activator.js'
 import { registerAllRpcMethods } from './plugin-rpc-setup.js'
 import { PluginInstaller, type InstallResult } from './plugin-installer.js'
 import { handleBridgeToolExecute, handleBridgeEvent, handleBridgeIntercept } from './bridge-interop.js'
-import { join } from 'node:path'
-import { readdir } from 'node:fs/promises'
+
 
 const COMMAND_EXECUTE_TIMEOUT_MS = 10_000
 const HOOK_HANDLER_TIMEOUT_MS = 5_000
@@ -42,18 +41,8 @@ export class PluginService implements IPluginService {
   /** Status bar items registry，key 为 `${pluginId}:${id}` */
   private statusBarItems = new Map<string, StatusBarItem>()
 
-  /** Session 数据缓存，key 为 sessionId */
-  /** SessionData 内存缓存，sessionId → key → value */
-  private sessionDataCache = new Map<string, Map<string, unknown>>()
-
-  /** Dirty 跟踪：sessionId → 已修改但未 flush 的 key 集合 */
-  private sessionDataDirty = new Map<string, Set<string>>()
-
-  /** Size 跟踪：sessionId → 当前字节数 */
-  private sessionDataSize = new Map<string, number>()
-
-  /** 定时 flush 计时器 */
-  private sessionDataFlushTimer: ReturnType<typeof setInterval> | null = null
+  /** SessionData 内存缓存 + flush + 持久化编排 */
+  private readonly sessionDataStore = new SessionDataStore()
 
   /** npm 安装器 */
   private installer: PluginInstaller
@@ -69,16 +58,6 @@ export class PluginService implements IPluginService {
 
   /** 等待前端响应的 UI 请求 */
   private pendingUiRequests = new Map<string, { resolve: (v: unknown) => void; timer: ReturnType<typeof setTimeout> }>()
-
-  /** 清理指定 session 的数据缓存、dirty 跟踪和 size 记录 */
-  clearSessionData(sessionId: string): void {
-    this.sessionDataCache.delete(sessionId)
-    this.sessionDataDirty.delete(sessionId)
-    this.sessionDataSize.delete(sessionId)
-
-    // Also delete from disk
-    void deleteSessionData(getConfigDir(), sessionId).catch(() => {})
-  }
 
   constructor(registry: PluginRegistry, broker: IMessageBroker, deps?: IPluginServiceDeps) {
     this.registry = registry
@@ -99,6 +78,11 @@ export class PluginService implements IPluginService {
         }
       },
     })
+  }
+
+  /** Wire sessionService after construction (breaks circular dependency at creation time) */
+  setSessionService(sessionService: ISessionService): void {
+    this.deps.sessionService = sessionService
   }
 
   async initialize(): Promise<void> {
@@ -176,25 +160,10 @@ export class PluginService implements IPluginService {
     this.broadcastPluginList()
 
     // 8. 启动 sessionData flush 定时器
-    this.startFlushTimer()
+    this.sessionDataStore.startFlushTimer()
 
     // 8b. Restore sessionData from disk
-    try {
-      const sessionDataDir = join(getConfigDir(), 'session-data')
-      const files = await readdir(sessionDataDir)
-      for (const file of files) {
-        if (file.endsWith('.json')) {
-          const sessionId = file.replace('.json', '')
-          const data = await loadSessionData(getConfigDir(), sessionId)
-          if (data.size > 0) {
-            this.sessionDataCache.set(sessionId, data)
-          }
-        }
-      }
-    // eslint-disable-next-line taste/no-silent-catch -- sessionData restore: directory may not exist initially
-    } catch {
-      // Directory doesn't exist yet, that's fine
-    }
+    await this.sessionDataStore.restoreFromDisk()
 
     // 9. 为 external 已激活插件启动 hot-reload 监听
     for (const desc of this.registry.getAllDescriptors()) {
@@ -375,7 +344,7 @@ export class PluginService implements IPluginService {
 
   async shutdown(): Promise<void> {
     if (!this.initialized) return
-    this.stopFlushTimer()
+    this.sessionDataStore.stopFlushTimer()
     this.activator.stopAllWatchers()
     await this.activator.deactivateAll(this.host)
     await this.storage.flushAll()
@@ -396,9 +365,7 @@ export class PluginService implements IPluginService {
       handleUiRequest: (method, params, pluginId) => this.handleUiRequest(method, params, pluginId),
       syncToolsToBridge: () => this.syncToolsToBridge(),
       getDescriptor: (pluginId) => this.registry.getDescriptor(pluginId),
-      sessionDataCache: this.sessionDataCache,
-      sessionDataDirty: this.sessionDataDirty,
-      sessionDataSize: this.sessionDataSize,
+      sessionDataStore: this.sessionDataStore,
     })
   }
 
@@ -516,22 +483,17 @@ export class PluginService implements IPluginService {
 
   /** 将所有 dirty sessionData 批量 flush（由定时器调用） */
   async flushSessionData(): Promise<void> {
-    await flushSessionData(this.sessionDataDirty, this.sessionDataCache)
+    await this.sessionDataStore.flushAll()
   }
 
   /** flush 指定 session 的 dirty 数据（deactivate/关闭时调用） */
   async flushSessionDataForSession(sessionId: string): Promise<void> {
-    await flushSessionDataForSession(sessionId, this.sessionDataDirty, this.sessionDataCache)
+    await this.sessionDataStore.flushSession(sessionId)
   }
 
-  /** 启动 sessionData 定时 flush（每 5s） */
-  private startFlushTimer(): void {
-    this.sessionDataFlushTimer = startFlushTimer(this.sessionDataDirty, this.sessionDataCache)
-  }
-
-  /** 停止 sessionData 定时 flush */
-  private stopFlushTimer(): void {
-    this.sessionDataFlushTimer = stopFlushTimer(this.sessionDataFlushTimer)
+  /** 清理指定 session 的数据缓存、dirty 跟踪和 size 记录 */
+  clearSessionData(sessionId: string): void {
+    this.sessionDataStore.clearSession(sessionId)
   }
 
   /**

@@ -3,6 +3,7 @@ export default {
     send: 'Send',
     cancel: 'Cancel',
     save: 'Save',
+    saving: 'Saving...',
     delete: 'Delete',
     edit: 'Edit',
     close: 'Close',

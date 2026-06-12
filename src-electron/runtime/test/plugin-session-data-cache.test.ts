@@ -15,6 +15,7 @@ import { PluginRpcServer } from '../src/services/plugin-service/plugin-rpc-serve
 import { PluginRpcErrorCodes } from '../src/services/plugin-service/plugin-types.js'
 import type { RpcResponse } from '../src/services/plugin-service/plugin-types.js'
 import { PluginService } from '../src/services/plugin-service/plugin-service.js'
+import { SessionDataStore } from '../src/services/plugin-service/session-data-store.js'
 import type { IMessageBroker } from '../src/interfaces.js'
 
 // ── Helpers ────────────────────────────────────────────────────
@@ -41,15 +42,10 @@ function createCapturingPort() {
 /** Access PluginService internals for test setup */
 function serviceInternals(service: PluginService) {
   return service as unknown as {
-    sessionDataCache: Map<string, Map<string, unknown>>
-    sessionDataDirty: Map<string, Set<string>>
-    sessionDataSize: Map<string, number>
-    sessionDataFlushTimer: ReturnType<typeof setInterval> | null
+    sessionDataStore: SessionDataStore
     flushSessionData(): Promise<void>
     flushSessionDataForSession(sessionId: string): Promise<void>
     clearSessionData(sessionId: string): void
-    startFlushTimer(): void
-    stopFlushTimer(): void
   }
 }
 
@@ -249,21 +245,26 @@ describe('SessionData Flush (PluginService)', () => {
     internals_ = serviceInternals(service)
   })
 
+  // Safety net: ensure fake timers are restored even if a test fails mid-way
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   // ── TC-4-05: Deactivate flush ────────────────────────────────
   it('flushSessionDataForSession clears dirty entries', async () => {
     // Set up dirty data
-    internals_.sessionDataCache.set('s1', new Map([['k1', 'v1']]))
-    internals_.sessionDataDirty.set('s1', new Set(['k1']))
-    internals_.sessionDataSize.set('s1', 10)
+    internals_.sessionDataStore.getCache().set('s1', new Map([['k1', 'v1']]))
+    internals_.sessionDataStore.getDirty().set('s1', new Set(['k1']))
+    internals_.sessionDataStore.getSizeTracker().set('s1', 10)
 
     // Flush for session
     await internals_.flushSessionDataForSession('s1')
 
     // Dirty should be cleared
-    expect(internals_.sessionDataDirty.get('s1')?.size ?? 0).toBe(0)
+    expect(internals_.sessionDataStore.getDirty().get('s1')?.size ?? 0).toBe(0)
 
     // Cache should still have the data
-    expect(internals_.sessionDataCache.get('s1')?.get('k1')).toBe('v1')
+    expect(internals_.sessionDataStore.getCache().get('s1')?.get('k1')).toBe('v1')
   })
 
   // ── TC-4-05b: Flush non-existent session is no-op ────────────
@@ -277,20 +278,20 @@ describe('SessionData Flush (PluginService)', () => {
     vi.useFakeTimers()
 
     // Set up dirty data
-    internals_.sessionDataCache.set('s1', new Map([['k1', 'v1']]))
-    internals_.sessionDataDirty.set('s1', new Set(['k1']))
-    internals_.sessionDataSize.set('s1', 10)
+    internals_.sessionDataStore.getCache().set('s1', new Map([['k1', 'v1']]))
+    internals_.sessionDataStore.getDirty().set('s1', new Set(['k1']))
+    internals_.sessionDataStore.getSizeTracker().set('s1', 10)
 
     // Start timer
-    internals_.startFlushTimer()
+    internals_.sessionDataStore.startFlushTimer()
 
     // Advance 5s
     await vi.advanceTimersByTimeAsync(5_000)
 
     // Dirty should be cleared by flush
-    expect(internals_.sessionDataDirty.get('s1')?.size ?? 0).toBe(0)
+    expect(internals_.sessionDataStore.getDirty().get('s1')?.size ?? 0).toBe(0)
 
-    internals_.stopFlushTimer()
+    internals_.sessionDataStore.stopFlushTimer()
     vi.useRealTimers()
   })
 
@@ -298,35 +299,35 @@ describe('SessionData Flush (PluginService)', () => {
   it('timer flush: does not fire before 5s', async () => {
     vi.useFakeTimers()
 
-    internals_.sessionDataCache.set('s1', new Map([['k1', 'v1']]))
-    internals_.sessionDataDirty.set('s1', new Set(['k1']))
+    internals_.sessionDataStore.getCache().set('s1', new Map([['k1', 'v1']]))
+    internals_.sessionDataStore.getDirty().set('s1', new Set(['k1']))
 
-    internals_.startFlushTimer()
+    internals_.sessionDataStore.startFlushTimer()
 
     // Advance 4s — not enough
     await vi.advanceTimersByTimeAsync(4_000)
 
     // Dirty should NOT be cleared yet
-    expect(internals_.sessionDataDirty.get('s1')?.size).toBe(1)
+    expect(internals_.sessionDataStore.getDirty().get('s1')?.size).toBe(1)
 
-    internals_.stopFlushTimer()
+    internals_.sessionDataStore.stopFlushTimer()
     vi.useRealTimers()
   })
 
   // ── TC-4-07b: Clear session ───────────────────────────────────
   it('clearSessionData clears cache, dirty, and size', () => {
     // Set up data
-    internals_.sessionDataCache.set('s1', new Map([['k1', 'v1']]))
-    internals_.sessionDataDirty.set('s1', new Set(['k1']))
-    internals_.sessionDataSize.set('s1', 10)
+    internals_.sessionDataStore.getCache().set('s1', new Map([['k1', 'v1']]))
+    internals_.sessionDataStore.getDirty().set('s1', new Set(['k1']))
+    internals_.sessionDataStore.getSizeTracker().set('s1', 10)
 
     // Clear
     internals_.clearSessionData('s1')
 
     // All should be gone
-    expect(internals_.sessionDataCache.has('s1')).toBe(false)
-    expect(internals_.sessionDataDirty.has('s1')).toBe(false)
-    expect(internals_.sessionDataSize.has('s1')).toBe(false)
+    expect(internals_.sessionDataStore.getCache().has('s1')).toBe(false)
+    expect(internals_.sessionDataStore.getDirty().has('s1')).toBe(false)
+    expect(internals_.sessionDataStore.getSizeTracker().has('s1')).toBe(false)
   })
 
   // ── TC-4-07c: Clear non-existent session is no-op ─────────────
@@ -336,36 +337,36 @@ describe('SessionData Flush (PluginService)', () => {
 
   // ── flushSessionData iterates all sessions ────────────────────
   it('flushSessionData flushes all dirty sessions', async () => {
-    internals_.sessionDataCache.set('s1', new Map([['k1', 'v1']]))
-    internals_.sessionDataDirty.set('s1', new Set(['k1']))
-    internals_.sessionDataSize.set('s1', 10)
+    internals_.sessionDataStore.getCache().set('s1', new Map([['k1', 'v1']]))
+    internals_.sessionDataStore.getDirty().set('s1', new Set(['k1']))
+    internals_.sessionDataStore.getSizeTracker().set('s1', 10)
 
-    internals_.sessionDataCache.set('s2', new Map([['k2', 'v2']]))
-    internals_.sessionDataDirty.set('s2', new Set(['k2']))
-    internals_.sessionDataSize.set('s2', 20)
+    internals_.sessionDataStore.getCache().set('s2', new Map([['k2', 'v2']]))
+    internals_.sessionDataStore.getDirty().set('s2', new Set(['k2']))
+    internals_.sessionDataStore.getSizeTracker().set('s2', 20)
 
     await internals_.flushSessionData()
 
-    expect(internals_.sessionDataDirty.get('s1')?.size ?? 0).toBe(0)
-    expect(internals_.sessionDataDirty.get('s2')?.size ?? 0).toBe(0)
+    expect(internals_.sessionDataStore.getDirty().get('s1')?.size ?? 0).toBe(0)
+    expect(internals_.sessionDataStore.getDirty().get('s2')?.size ?? 0).toBe(0)
   })
 
   // ── stopFlushTimer clears the timer ──────────────────────────
   it('stopFlushTimer clears the interval', async () => {
     vi.useFakeTimers()
 
-    internals_.sessionDataCache.set('s1', new Map([['k1', 'v1']]))
-    internals_.sessionDataDirty.set('s1', new Set(['k1']))
+    internals_.sessionDataStore.getCache().set('s1', new Map([['k1', 'v1']]))
+    internals_.sessionDataStore.getDirty().set('s1', new Set(['k1']))
 
-    internals_.startFlushTimer()
-    internals_.stopFlushTimer()
+    internals_.sessionDataStore.startFlushTimer()
+    internals_.sessionDataStore.stopFlushTimer()
 
     // Timer should be null
-    expect(internals_.sessionDataFlushTimer).toBeNull()
+    expect(internals_.sessionDataStore.isFlushTimerRunning()).toBe(false)
 
     // Advance 10s — flush should NOT happen (timer stopped)
     await vi.advanceTimersByTimeAsync(10_000)
-    expect(internals_.sessionDataDirty.get('s1')?.size).toBe(1)
+    expect(internals_.sessionDataStore.getDirty().get('s1')?.size).toBe(1)
 
     vi.useRealTimers()
   })

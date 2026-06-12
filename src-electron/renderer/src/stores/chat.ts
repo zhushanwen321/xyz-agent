@@ -166,7 +166,7 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  function completeStreaming(opts: { keepGenerating?: boolean; stopReason?: string } | undefined, sessionId: string) {
+  function completeStreaming(opts: { keepGenerating?: boolean; stopReason?: string; errorMessage?: string } | undefined, sessionId: string) {
     const s = getSessionState(sessionId)
     if (s.streamingMessage) {
       const completedAt = Date.now()
@@ -193,9 +193,12 @@ export const useChatStore = defineStore('chat', () => {
     } else if (opts?.stopReason === 'error') {
       // pi 返回错误但没有发送任何流式内容（如 Connection error）
       // 插入一条可见的错误通知，避免前端静默吞错
+      // 显式清空 streamingMessage（理论上已是 null，确保任何状态不一致时也能重置）
+      s.streamingMessage = null
+      const errorDetail = opts?.errorMessage || '请求失败，请检查模型配置'
       s.completedMessages = [...s.completedMessages, {
-        ...createSystemNotification('alert', '模型请求失败', '请检查 API Key、网络连接和 baseUrl 配置'),
-        content: '模型请求失败',
+        ...createSystemNotification('alert', errorDetail),
+        content: errorDetail,
         status: 'error',
       }]
     }
@@ -206,12 +209,6 @@ export const useChatStore = defineStore('chat', () => {
 
   function setGenerating(v: boolean, sessionId: string) {
     getSessionState(sessionId).isGenerating = v
-  }
-
-  function clearMessages(sessionId: string) {
-    const s = getSessionState(sessionId)
-    s.completedMessages = []
-    s.streamingMessage = null
   }
 
   function replaceMessages(msgs: ChatMessage[], sessionId: string) {
@@ -317,7 +314,7 @@ export const useChatStore = defineStore('chat', () => {
   // ── 流式消息高层生命周期方法（已内联到 useChat handlers，仅保留 completeStream / abortStream） ──
 
   /** 完成流式消息，自动重置 isGenerating */
-  function completeStream(opts: { stopReason?: string }, sid: string) {
+  function completeStream(opts: { stopReason?: string; errorMessage?: string }, sid: string) {
     completeStreaming(opts ?? undefined, sid)
   }
 
@@ -347,7 +344,7 @@ export const useChatStore = defineStore('chat', () => {
 
     // 消息操作
     addMessage, setStreaming, appendToStreaming,
-    completeStreaming, setGenerating, clearMessages,
+    completeStreaming, setGenerating,
     replaceMessages, addPendingApproval, removePendingApproval,
 
     // 状态

@@ -91,19 +91,19 @@ function getThinkingDisplayLabel(level: string): string {
   return level
 }
 
-const currentThinkingLevel = computed(() => settingsStore.currentThinkingLevel)
+const currentThinkingLevel = computed(() => chatStore.getSessionState(props.sessionId)?.thinkingLevel ?? 'off')
 const thinkingOpen = ref(false)
 const thinkingRef = ref<HTMLElement | null>(null)
 
 function initThinkingLevel() {
   if (thinkingLevels.value.length === 0) return
-  if (thinkingLevels.value.includes(settingsStore.currentThinkingLevel as typeof ALL_THINKING_LEVELS[number])) return
+  const current = chatStore.getSessionState(props.sessionId)?.thinkingLevel
+  if (current && thinkingLevels.value.includes(current as typeof ALL_THINKING_LEVELS[number])) return
   // On/off (2 levels with off): default to 'on'
-  if (thinkingLevels.value.length === BINARY_LEVEL_COUNT && thinkingLevels.value.includes('off')) {
-    settingsStore.currentThinkingLevel = thinkingLevels.value.find(l => l !== 'off') as typeof ALL_THINKING_LEVELS[number]
-  } else {
-    settingsStore.currentThinkingLevel = thinkingLevels.value[0] as typeof ALL_THINKING_LEVELS[number]
-  }
+  const fallback = thinkingLevels.value.length === BINARY_LEVEL_COUNT && thinkingLevels.value.includes('off')
+    ? thinkingLevels.value.find(l => l !== 'off')!
+    : thinkingLevels.value[0]
+  chatStore.setThinkingLevel(fallback, props.sessionId)
 }
 initThinkingLevel()
 
@@ -123,7 +123,7 @@ function getBarCount(): number {
 }
 
 function pickThinking(level: string) {
-  settingsStore.currentThinkingLevel = level
+  chatStore.setThinkingLevel(level, props.sessionId)
   thinkingOpen.value = false
   emit('select-thinking-level', level)
 }

@@ -105,9 +105,10 @@ describe('useSlashCommands.mergeSkillCommands — boundary paths', () => {
   })
 
   it('should deduplicate 100 agents when some share names with builtins', () => {
-  // clear, compact, help are builtins
+  // compact, help are the only builtins (clear was removed in 83f43a99
+  // when session.clear protocol was dropped)
   const agents: AgentInfo[] = [
-    ...Array.from({ length: 97 }, (_, i) =>
+    ...Array.from({ length: 98 }, (_, i) =>
     makeAgent({
       id: `agent-${i}`,
       name: `unique-agent-${i}`,
@@ -115,21 +116,17 @@ describe('useSlashCommands.mergeSkillCommands — boundary paths', () => {
       enabled: true,
     }),
     ),
-    // These 3 collide with builtin names — "clear", "compact", "help"
-    makeAgent({ id: 'a-clear', name: 'clear', description: 'Agent clear', enabled: true }),
+    // These 2 collide with builtin names — "compact", "help"
     makeAgent({ id: 'a-compact', name: 'compact', description: 'Agent compact', enabled: true }),
     makeAgent({ id: 'a-help', name: 'help', description: 'Agent help', enabled: true }),
   ]
 
   const result = slash.mergeSkillCommands([], agents)
 
-  const clearCmds = result.filter(c => c.name === 'clear')
   const compactCmds = result.filter(c => c.name === 'compact')
   const helpCmds = result.filter(c => c.name === 'help')
 
   // Dedup keeps first occurrence (builtin wins since merged first)
-  expect(clearCmds).toHaveLength(1)
-  expect(clearCmds[0].source).toBe('builtin')
   expect(compactCmds).toHaveLength(1)
   expect(compactCmds[0].source).toBe('builtin')
   expect(helpCmds).toHaveLength(1)
@@ -177,9 +174,9 @@ describe('useSlashCommands.mergeSkillCommands — boundary paths', () => {
   it('should not crash when agents is undefined', () => {
   const result = slash.mergeSkillCommands([], undefined as unknown as AgentInfo[])
 
-  // Should only have builtins
+  // Should only have builtins (compact, help — clear removed in 83f43a99)
   const builtinCmds = result.filter(c => c.source === 'builtin')
-  expect(builtinCmds.length).toBeGreaterThanOrEqual(3)
+  expect(builtinCmds.length).toBeGreaterThanOrEqual(2)
   // No agent commands
   expect(result.every(c => c.source !== 'agent')).toBe(true)
   })
@@ -187,7 +184,7 @@ describe('useSlashCommands.mergeSkillCommands — boundary paths', () => {
   it('should not crash when agents is null', () => {
   const result = slash.mergeSkillCommands([], null as unknown as AgentInfo[])
 
-  expect(result.filter(c => c.source === 'builtin').length).toBeGreaterThanOrEqual(3)
+  expect(result.filter(c => c.source === 'builtin').length).toBeGreaterThanOrEqual(2)
   expect(result.every(c => c.source !== 'agent')).toBe(true)
   })
 

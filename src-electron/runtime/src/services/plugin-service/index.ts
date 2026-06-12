@@ -1,6 +1,7 @@
 export { PluginService } from './plugin-service.js'
 export { PluginRegistry } from './plugin-registry.js'
 export { PluginStorage } from './plugin-storage.js'
+export { SessionDataStore } from './session-data-store.js'
 export { PluginRpcServer } from './plugin-rpc-server.js'
 export { PluginRpcClient } from './plugin-rpc-client.js'
 export { PluginHost } from './plugin-host.js'

@@ -53,7 +53,6 @@ vi.mock('../../../stores/chat', () => ({
   addMessage: (msg: unknown) => { addedMessages.push(msg) },
   ensureSession: vi.fn(),
   switchAgent: vi.fn(),
-  clearMessages: vi.fn(),
   setGenerating: vi.fn(),
   setStreaming: vi.fn(),
   completeStreaming: vi.fn(),

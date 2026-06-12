@@ -174,7 +174,8 @@ function createGlobalHandlers() {
       store.setTokenUsage(usage.totalTokens, sid)
     }
     const stopReason = msg.payload.stopReason as StopReason | undefined
-    store.completeStream({ stopReason }, sid)
+    const errorMessage = msg.payload.errorMessage as string | undefined
+    store.completeStream({ stopReason, errorMessage }, sid)
   }
 
   function onError(msg: ServerMessage) {

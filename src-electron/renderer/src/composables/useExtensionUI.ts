@@ -8,8 +8,30 @@ import type { ExtensionUIRequestPayload, ServerMessage } from '@xyz-agent/shared
 const activeRequest = ref<ExtensionUIRequestPayload | null>(null)
 let listenersRegistered = false
 
+const LEVEL_TO_TOAST_TYPE: Record<string, 'info' | 'warning' | 'danger'> = {
+  info: 'info',
+  warn: 'warning',
+  error: 'danger',
+}
+
 function onUIRequest(msg: ServerMessage) {
-  activeRequest.value = msg.payload as unknown as ExtensionUIRequestPayload
+  const payload = msg.payload as unknown as ExtensionUIRequestPayload
+
+  // notify 是 fire-and-forget（pi 不等回复），走 toast 展示
+  if (payload.method === 'notify') {
+    const toastType = LEVEL_TO_TOAST_TYPE[payload.level ?? 'info'] ?? 'info'
+    const SID_PREFIX_LEN = 8
+    const sid = payload.sessionId
+    const titleSuffix = sid ? ` [${sid.slice(0, SID_PREFIX_LEN)}]` : ''
+    emitEventBus('toast:show', {
+      type: toastType,
+      title: `${payload.title ?? '通知'}${titleSuffix}`,
+      description: payload.message,
+    })
+    return
+  }
+
+  activeRequest.value = payload
 }
 
 function onPluginUIRequest(msg: ServerMessage) {

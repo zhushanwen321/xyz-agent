@@ -14,6 +14,7 @@ export default [
       'src-electron/preload/preload.js',
       'vendor/**',
       'src-electron/resources/pi/**',
+      '.pi/**',
     ],
   },
 ];

@@ -294,6 +294,15 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
   flex-shrink: 0;
   font-size: 12px;
   position: relative;
+  -webkit-app-region: drag;
+}
+.panel-bar button,
+.panel-bar .anchor-dropdown,
+.panel-bar .breadcrumb,
+.panel-bar .tree-trigger,
+.panel-bar .batch-select-trigger,
+.panel-bar .panel-notifs {
+  -webkit-app-region: no-drag;
 }
 .panel-bar--safe-zone {
   padding-left: 78px;

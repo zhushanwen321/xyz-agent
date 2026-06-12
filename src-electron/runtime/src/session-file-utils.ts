@@ -157,9 +157,11 @@ export function patchSessionCwd(filePath: string, newCwd: string): boolean {
     try {
       const stat = statSync(filePath)
       const ageMs = Date.now() - stat.mtimeMs
+      // eslint-disable-next-line no-magic-numbers -- 1s threshold: file modified within last second = concurrent write risk
       if (ageMs < 1000) {
         console.warn(`[session-file-utils] patchSessionCwd: file modified ${ageMs}ms ago, possible concurrent writer — data loss risk`)
       }
+    // eslint-disable-next-line taste/no-silent-catch -- stat failure is non-fatal for cwd patching
     } catch { /* stat failed is not fatal */ }
 
     const content = readFileSync(filePath, 'utf-8')
@@ -176,7 +178,6 @@ export function patchSessionCwd(filePath: string, newCwd: string): boolean {
     renameSync(tmpPath, filePath)
     console.log(`[session-file-utils] patched session cwd: ${filePath} -> ${newCwd}`)
     return true
-  // eslint-disable-next-line taste/no-silent-catch -- file patch: failure must not crash restoreSession
   } catch (e) {
     console.error(`[session-file-utils] failed to patch session cwd: ${filePath}`, e)
     return false

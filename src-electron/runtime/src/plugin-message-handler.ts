@@ -8,8 +8,8 @@ import type { IPluginService } from './interfaces.js'
 
 export interface PluginHandlerContext {
   pluginService: IPluginService | null
-  send(ws: unknown, msg: ServerMessage): void
-  sendError(ws: unknown, code: string, message: string, id?: string, sessionId?: string): void
+  send(ws: WsType, msg: ServerMessage): void
+  sendError(ws: WsType, code: string, message: string, id?: string, sessionId?: string): void
 }
 
 export class PluginMessageHandler {

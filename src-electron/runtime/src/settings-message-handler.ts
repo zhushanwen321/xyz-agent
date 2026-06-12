@@ -13,8 +13,8 @@ export interface SettingsHandlerContext {
   modelService: IModelService
   projectRoot: string
   nextPushId(): string
-  send(ws: unknown, msg: ServerMessage): void
-  sendError(ws: unknown, code: string, message: string, id?: string, sessionId?: string): void
+  send(ws: WsType, msg: ServerMessage): void
+  sendError(ws: WsType, code: string, message: string, id?: string, sessionId?: string): void
   broadcast(msg: ServerMessage): void
   broadcastProviderList(): void
   broadcastSkillList(): void
@@ -31,15 +31,31 @@ export class SettingsMessageHandler {
         return true
       case 'config.setProvider': {
         const { providerId, ...data } = msg.payload
-        this.ctx.configService.setProvider(providerId, data as Parameters<IConfigService['setProvider']>[1])
+        const setResult = this.ctx.configService.setProvider(providerId, data as Parameters<IConfigService['setProvider']>[1])
         this.ctx.send(ws, { type: 'config.providerUpdated', id: msg.id, payload: { providerId } })
         this.ctx.broadcastProviderList()
+        // 如果 fallback 修正了 defaultModel，广播到所有 panel
+        if (setResult.newDefault) {
+          this.ctx.broadcast({
+            type: 'config.defaults',
+            id: this.ctx.nextPushId(),
+            payload: { defaultModel: `${setResult.newDefault.provider}/${setResult.newDefault.modelId}`, source: 'provider-updated' as const },
+          })
+        }
         return true
       }
       case 'config.deleteProvider': {
-        this.ctx.configService.deleteProvider(msg.payload.providerId)
+        const delResult = this.ctx.configService.deleteProvider(msg.payload.providerId)
         this.ctx.send(ws, { type: 'config.providerUpdated', id: msg.id, payload: { providerId: msg.payload.providerId, deleted: true } })
         this.ctx.broadcastProviderList()
+        // 如果 fallback 修正了 defaultModel，广播到所有 panel
+        if (delResult.newDefault) {
+          this.ctx.broadcast({
+            type: 'config.defaults',
+            id: this.ctx.nextPushId(),
+            payload: { defaultModel: `${delResult.newDefault.provider}/${delResult.newDefault.modelId}`, source: 'provider-deleted' as const },
+          })
+        }
         return true
       }
       case 'config.setToolPermissions':
@@ -87,21 +103,13 @@ export class SettingsMessageHandler {
       case 'model.switch': {
         const { sessionId, provider, modelId } = msg.payload
         console.log(`[runtime] model.switch: sessionId=${sessionId}, provider=${provider}, modelId=${modelId}`)
-        await this.ctx.sessionService.switchModel(sessionId, provider, modelId)
-        // Persist + broadcast 持久化默认模型。失败不影响已完成的 switchModel，
-        // 但必须确保 model.switched response 始终发出，否则前端卡在 loading。
-        try {
-          this.ctx.configService.setDefaultModel(provider, modelId)
-          this.ctx.broadcast({ type: 'config.defaults', id: this.ctx.nextPushId(), payload: { defaultModel: `${provider}/${modelId}`, source: 'model-switch' as const } })
-        } catch (persistErr) {
-          console.error('[runtime] failed to persist default model:', persistErr)
-        }
+        await this.ctx.modelService.switchModel(sessionId, provider, modelId)
         this.ctx.send(ws, { type: 'model.switched', id: msg.id, payload: { sessionId, provider, modelId } })
         return true
       }
       case 'session.setThinkingLevel': {
         const { sessionId: sid, level } = msg.payload
-        await this.ctx.sessionService.setThinkingLevel(sid as string, level as string)
+        await this.ctx.modelService.setThinkingLevel(sid as string, level as string)
         this.ctx.send(ws, { type: 'session.thinkingLevelSet', id: msg.id, payload: { sessionId: sid, level } })
         return true
       }

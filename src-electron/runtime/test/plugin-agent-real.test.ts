@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { PluginService } from '../src/services/plugin-service/plugin-service.js'
 import { PluginRegistry } from '../src/services/plugin-service/plugin-registry.js'
+import { clearActiveSessionCache } from '../src/services/plugin-service/plugin-rpc-setup.js'
 import type { IMessageBroker, ISessionService } from '../src/interfaces.js'
 import type { IPluginServiceDeps } from '../src/services/plugin-service/plugin-types.js'
 import type { SessionSummary, SessionGroup } from '@xyz-agent/shared'
@@ -39,7 +40,6 @@ function createMockSessionService(sessions: SessionSummary[] = []): ISessionServ
     sendSubagentMessage: vi.fn().mockResolvedValue(undefined),
     abort: vi.fn().mockResolvedValue(undefined),
     compact: vi.fn().mockResolvedValue(undefined),
-    clear: vi.fn().mockResolvedValue(undefined),
     getHistory: vi.fn().mockResolvedValue([]),
     restoreSession: vi.fn().mockResolvedValue(undefined),
     rebindAfterFork: vi.fn().mockResolvedValue(undefined),
@@ -76,6 +76,7 @@ async function callMethod(service: PluginService, method: string, params: Record
 describe('Agent RPC Handlers — real implementation', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    clearActiveSessionCache()
   })
 
   it('getModel returns active session modelId', async () => {
@@ -122,11 +123,37 @@ describe('Agent RPC Handlers — real implementation', () => {
     expect(sessionService.switchModel).not.toHaveBeenCalled()
   })
 
-  it('getThinkingLevel returns "high" (default)', async () => {
+  it('getThinkingLevel returns "off" when no active session', async () => {
     const service = createService(createMockSessionService())
 
     const level = await callMethod(service, 'plugin.agent.getThinkingLevel', {})
+    expect(level).toBe('off')
+  })
+
+  it('getThinkingLevel returns active session thinkingLevel', async () => {
+    const session: SessionSummary = {
+      id: 's1', label: 'S1', cwd: '/work', status: 'active',
+      lastActiveAt: Date.now(), modelId: 'provider/x', tokenCount: 0,
+      thinkingLevel: 'high',
+    }
+    const sessionService = createMockSessionService([session])
+    const service = createService(sessionService)
+
+    const level = await callMethod(service, 'plugin.agent.getThinkingLevel', {})
     expect(level).toBe('high')
+  })
+
+  it('getThinkingLevel returns "off" when active session has undefined thinkingLevel', async () => {
+    const session: SessionSummary = {
+      id: 's1', label: 'S1', cwd: '/work', status: 'active',
+      lastActiveAt: Date.now(), modelId: 'provider/x', tokenCount: 0,
+      thinkingLevel: undefined,
+    }
+    const sessionService = createMockSessionService([session])
+    const service = createService(sessionService)
+
+    const level = await callMethod(service, 'plugin.agent.getThinkingLevel', {})
+    expect(level).toBe('off')
   })
 
   it('setThinkingLevel is silently accepted', async () => {

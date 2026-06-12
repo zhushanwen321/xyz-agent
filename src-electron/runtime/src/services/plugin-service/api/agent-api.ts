@@ -13,7 +13,7 @@
  * 返回 PERMISSION_DENIED（权限检查由 PluginService dispatch 层完成）。
  *
  * Phase 2 中 get/set 模型和思考级别为 stub 实现（返回/接受假数据）。
- * Phase 3 中对接 IRpcClient（pi 的 setModel / getAvailableModels 等）。
+ * Phase 3 中对接 IRpcClient（pi 的 setModel 等）。
  */
 
 import type { PluginRpcServer } from '../plugin-rpc-server.js'

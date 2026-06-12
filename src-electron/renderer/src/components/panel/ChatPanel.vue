@@ -82,7 +82,7 @@
             </template>
 
             <!-- Thinking indicator: waiting for first token -->
-            <div v-if="isStreaming && !streamingMessage" class="self-start w-full p-3 px-4 bg-surface border border-border rounded-none leading-relaxed text-sm">
+            <div v-if="isStreaming && !streamingMessage" class="self-start w-full p-3 px-4 bg-surface border border-border rounded-sm leading-relaxed text-sm">
               <div class="text-[10px] font-semibold uppercase tracking-[0.04em] leading-[1.4] mb-[3px] text-muted">助手</div>
               <div class="flex items-center gap-2">
                 <span class="inline-block w-1.5 h-1.5 rounded-full bg-accent shrink-0 animate-thinking-pulse motion-reduce:opacity-60 motion-reduce:animate-none"></span>

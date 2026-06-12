@@ -26,7 +26,6 @@ export interface IRpcClient {
   prompt(content: string): Promise<unknown>
   abort(): Promise<unknown>
   setModel(provider: string, modelId: string): Promise<unknown>
-  getAvailableModels(): Promise<unknown>
   getHistory(): Promise<unknown>
   compact(): Promise<unknown>
   clear(): Promise<unknown>
@@ -98,7 +97,6 @@ export interface ISessionService {
   abort(sessionId: string): Promise<void>
   switchModel(sessionId: string, provider: string, modelId: string): Promise<string>
   compact(sessionId: string): Promise<void>
-  clear(sessionId: string): Promise<void>
   getHistory(sessionId: string): Promise<Message[]>
   restoreSession(sessionId: string): Promise<SessionSummary>
   /** Fork 后重新绑定 session（更新 runtime 和 process manager 的 key） */
@@ -107,6 +105,14 @@ export interface ISessionService {
   getSummary(sessionId: string): SessionSummary | undefined
   /** Get the underlying RpcClient for direct command sending (e.g., extension responses). */
   getRpcClient(sessionId: string): IRpcClient | undefined
+
+  /**
+   * Ensure a session is active (has a running pi process). If not, auto-restore it.
+   * @returns The active RpcClient
+   * @throws if restore fails or session not found
+   */
+  ensureActive(sessionId: string): Promise<IRpcClient>
+
   listPersistedSessions(): SessionGroup[]
   destroyAll(): Promise<void>
 
@@ -134,8 +140,8 @@ export interface IConfigService {
     baseUrl?: string
     models?: Array<string | { id: string; name?: string; contextWindow?: number }>
     enabled?: boolean
-  }): void
-  deleteProvider(providerId: string): boolean
+  }): { newDefault?: { provider: string; modelId: string } }
+  deleteProvider(providerId: string): { removed: boolean; newDefault?: { provider: string; modelId: string } }
   getProvider(providerId: string): { apiKey?: string; name?: string; type?: string; baseUrl?: string; models?: unknown[]; enabled?: boolean } | undefined
   updateToolPermissions(permissions: Record<string, string>): void
   loadSkills(projectRoot: string): SkillInfo[]
@@ -167,7 +173,7 @@ export interface IExtensionService {
 
 // ── IModelService ─────────────────────────────────────────────────
 
-/** Model aggregation and API discovery. */
+/** Model aggregation, API discovery, and model/thinking-level orchestration. */
 export interface IModelService {
   aggregateModels(providers: ProviderInfo[]): ModelInfo[]
   discoverModelsFromApi(
@@ -175,6 +181,12 @@ export interface IModelService {
     apiKey?: string,
     providerType?: string,
   ): Promise<Array<{ id: string; name: string; contextWindow?: number }>>
+
+  /** Switch model with full side-effects: pi RPC + persist default + broadcast. */
+  switchModel(sessionId: string, provider: string, modelId: string): Promise<void>
+
+  /** Set thinking level for a session's pi subprocess. */
+  setThinkingLevel(sessionId: string, level: string): Promise<void>
 }
 
 // ── IPluginService ────────────────────────────────────────────────

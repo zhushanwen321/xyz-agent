@@ -53,7 +53,6 @@ function createMockSessionService(sessions: SessionSummary[] = []): ISessionServ
     abort: vi.fn().mockResolvedValue(undefined),
     switchModel: vi.fn().mockResolvedValue('provider/model-a'),
     compact: vi.fn().mockResolvedValue(undefined),
-    clear: vi.fn().mockResolvedValue(undefined),
     getHistory: vi.fn().mockResolvedValue([]),
     restoreSession: vi.fn().mockResolvedValue(createSessionSummary()),
     rebindAfterFork: vi.fn().mockResolvedValue(undefined),

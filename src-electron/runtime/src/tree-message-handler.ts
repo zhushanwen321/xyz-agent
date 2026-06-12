@@ -10,7 +10,7 @@ import type { TreeService } from './services/tree-service.js'
 export interface TreeHandlerContext {
   sessionService: ISessionService
   treeService: TreeService
-  send(ws: unknown, msg: ServerMessage): void
+  send(ws: WsType, msg: ServerMessage): void
   broadcastSessionList(): void
 }
 
@@ -99,9 +99,10 @@ export class TreeMessageHandler {
       case 'session.tree-clone': {
         try {
           const originalLabel = this.ctx.sessionService.getSummary(sid)?.label ?? 'session'
+          const newLabel = originalLabel + '-clone'
           const result = await this.ctx.treeService.cloneSession(sid)
           if (result.success && result.newSessionId) {
-            await this.ctx.sessionService.renameSession(result.newSessionId, originalLabel + '-clone')
+            await this.ctx.sessionService.rebindAfterFork(sid, result.newSessionId, newLabel, result.sessionFile)
             this.ctx.broadcastSessionList()
           }
           return this.ctx.send(ws, { type: 'session.tree-clone-result', id: msg.id, payload: { sessionId: sid, ...result } })

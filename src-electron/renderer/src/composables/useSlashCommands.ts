@@ -28,7 +28,7 @@ export interface CommandContext {
   /** 执行时获取完整命令列表（help 命令延迟读取） */
   getAllCommands: () => SlashCommand[]
   /** 本地操作回调，由调用方注入 */
-  onLocalAction: (action: 'clear' | 'help', data?: unknown) => void
+  onLocalAction: (action: 'help', data?: unknown) => void
 }
 
 // ── 单例状态 ────────────────────────────────────────────────────
@@ -86,20 +86,10 @@ export function useSlashCommands() {
     return commands.filter(cmd => cmd.name.toLowerCase().includes(lower))
   }
 
-  /** 注册 3 个内置命令（幂等） */
+  /** 注册 2 个内置命令（幂等） */
   function initDefaultCommands() {
     if (defaultsInitialized) return
     defaultsInitialized = true
-
-    registerBuiltin({
-      name: 'clear',
-      description: '清空当前对话',
-      source: 'builtin',
-      action: {
-        type: 'local',
-        handler: (ctx) => ctx.onLocalAction('clear'),
-      },
-    })
 
     registerBuiltin({
       name: 'compact',
