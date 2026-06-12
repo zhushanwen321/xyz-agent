@@ -7,7 +7,6 @@
  *   TC-14: AC-5 场景C — 混合含 standalone + customTool
  *   TC-15: AC-5 场景D — standaloneTools 变更影响
  *   TC-18: AC-7 — 旧消息兼容（无 contentBlocks）
- *   TC-19: AC-7 — compactStreaming=false 不受影响
  */
 
 import { describe, it, expect, beforeEach } from 'vitest'
@@ -221,7 +220,7 @@ describe('TC-15: AC-5 场景D — standaloneTools 变更影响', () => {
 // ── TC-18: 旧消息兼容 - 无 contentBlocks ────────────────────
 
 describe('TC-18: AC-7 — 旧消息兼容 (无 contentBlocks)', () => {
-  it('legacy message with thinking/toolCalls/content goes through groupByLegacyFields', () => {
+  it('legacy message with thinking/toolCalls/content merges into merge+text', () => {
     const thk = makeThinking('legacy thinking')
     const tc = makeToolCall('read')
     const msg: Message = {
@@ -234,13 +233,12 @@ describe('TC-18: AC-7 — 旧消息兼容 (无 contentBlocks)', () => {
       // no contentBlocks
       timestamp: Date.now(),
     }
-    // Pass undefined for standaloneTools to force legacy path
-    const sections = groupIntoSections(msg, undefined)
+    // Unified path: thinking + read (built-in, not standalone) → merge, then text
+    const sections = groupIntoSections(msg, new Set(['write', 'edit']))
 
-    expect(sectionTypes(sections)).toEqual(['thinking', 'toolCall', 'text'])
-    expect(sections[0].blocks).toHaveLength(1)
-    expect(sections[1].blocks).toHaveLength(1)
-    expect(sections[2].type).toBe('text')
+    expect(sectionTypes(sections)).toEqual(['merge', 'text'])
+    expect(sections[0].blocks).toHaveLength(2) // thinking + toolCall
+    expect(sections[1].type).toBe('text')
   })
 
   it('legacy message with only content', () => {
@@ -251,52 +249,8 @@ describe('TC-18: AC-7 — 旧消息兼容 (无 contentBlocks)', () => {
       status: 'complete',
       timestamp: Date.now(),
     }
-    const sections = groupIntoSections(msg, undefined)
-    expect(sectionTypes(sections)).toEqual(['text'])
-  })
-})
-
-// ── TC-19: compactStreaming=false 不受影响 ─────────────────
-
-describe('TC-19: AC-7 — compactStreaming=false (无 standaloneTools)', () => {
-  it('adjacent same-type merge when standaloneTools is undefined', () => {
-    const thk1 = makeThinking('a')
-    const thk2 = makeThinking('b')
-    const tcRead = makeToolCall('read')
-
-    const blocks: ContentBlock[] = [
-      { type: 'thinking', refId: thk1.id },
-      { type: 'thinking', refId: thk2.id },
-      { type: 'toolCall', refId: tcRead.id },
-    ]
-    const msg = makeMessage(blocks, [tcRead], { thinking: [thk1, thk2] })
-
-    // No standaloneTools → legacy path (groupByContentBlocksLegacy)
-    const sections = groupIntoSections(msg, undefined)
-
-    // Legacy: adjacent same-type merge
-    expect(sectionTypes(sections)).toEqual(['thinking', 'toolCall'])
-    expect(sections[0].blocks).toHaveLength(2)
-    expect(sections[1].blocks).toHaveLength(1)
-  })
-
-  it('adjacent same-type merge when standaloneTools is empty Set', () => {
-    // When compactStreaming=false, caller passes undefined (NOT an empty Set)
-    // This test confirms that an empty Set is treated as legacy-grouping path? No —
-    // groupByContentBlocks treats empty Set as "no tools are standalone", so
-    // all pi-built-in tool calls merge. But non-pi tools still go standalone.
-    const thk1 = makeThinking('a')
-    const tcRead = makeToolCall('read')
-
-    const blocks: ContentBlock[] = [
-      { type: 'thinking', refId: thk1.id },
-      { type: 'toolCall', refId: tcRead.id },
-    ]
-    const msg = makeMessage(blocks, [tcRead], { thinking: [thk1] })
-
     const sections = groupIntoSections(msg, new Set())
-    // tc-read is built-in + not in empty Set → merge block
-    expect(sectionTypes(sections)).toEqual(['merge'])
+    expect(sectionTypes(sections)).toEqual(['text'])
   })
 })
 
@@ -312,13 +266,13 @@ describe('ALL_PI_TOOLS constant', () => {
 describe('Edge cases', () => {
   it('empty contentBlocks with no content returns empty sections', () => {
     const msg = makeMessage([], [], {})
-    const sections = groupIntoSections(msg, undefined)
+    const sections = groupIntoSections(msg, new Set())
     expect(sections).toHaveLength(0)
   })
 
   it('empty contentBlocks with content returns text section', () => {
     const msg = makeMessage([], [], { content: 'hello world' })
-    const sections = groupIntoSections(msg, undefined)
+    const sections = groupIntoSections(msg, new Set())
     expect(sectionTypes(sections)).toEqual(['text'])
   })
 
@@ -336,21 +290,23 @@ describe('Edge cases', () => {
       { type: 'text', refId: 't1', text: 'hello' },
     ]
     const msg = makeMessage(blocks, [], { content: 'hello world' })
-    const sections = groupIntoSections(msg, undefined)
+    const sections = groupIntoSections(msg, new Set())
     expect(sectionTypes(sections)).toEqual(['text'])
     expect(sections[0].blocks).toHaveLength(1)
   })
 
-  it('normal mode produces single text section from msg.content', () => {
-    // In normal mode (standaloneTools=undefined), legacy path ignores contentBlocks
-    // and produces a single text section based on msg.content
+  it('empty Set merges all built-in tools into merge', () => {
+    const thk1 = makeThinking('a')
+    const tcRead = makeToolCall('read')
+
     const blocks: ContentBlock[] = [
-      { type: 'text', refId: 't1', text: 'first' },
-      { type: 'text', refId: 't2', text: 'second' },
+      { type: 'thinking', refId: thk1.id },
+      { type: 'toolCall', refId: tcRead.id },
     ]
-    const msg = makeMessage(blocks, [], { content: 'content' })
-    const sections = groupIntoSections(msg, undefined)
-    expect(sectionTypes(sections)).toEqual(['text'])
-    expect(sections).toHaveLength(1)
+    const msg = makeMessage(blocks, [tcRead], { thinking: [thk1] })
+
+    // tc-read is built-in + not in empty Set → merge block
+    const sections = groupIntoSections(msg, new Set())
+    expect(sectionTypes(sections)).toEqual(['merge'])
   })
 })

@@ -3,7 +3,7 @@
  *
  * 两层分组：
  * 1. Turn 级：flat messages → turns（user 开始新 turn，assistant/system 追加）
- * 2. Section 级：单条 assistant message → sections（thinking/toolCall/text 按类型合并）
+ * 2. Section 级：单条 assistant message → sections（thinking/toolCall 合并为 merge，text/standalone/customTool 独立）
  */
 
 import type { ContentBlock, Message } from '@xyz-agent/shared'
@@ -56,13 +56,7 @@ export function groupIntoTurns(msgs: ChatMessage[]): Turn[] {
 
 // ── Section grouping ───────────────────────────────────────
 
-export type SectionType = 'merge' | 'text' | 'standalone' | 'customTool' | 'thinking' | 'toolCall'
-
-/** Compact mode section types (AgentRunBlock) */
-export type CompactSectionType = 'merge' | 'text' | 'standalone' | 'customTool'
-
-/** Normal mode section types (AssistantContent) */
-export type NormalSectionType = 'thinking' | 'toolCall' | 'text'
+export type SectionType = 'merge' | 'text' | 'standalone' | 'customTool'
 
 export interface AssistantSection {
   type: SectionType
@@ -76,13 +70,11 @@ export interface AssistantSection {
  * 统一处理有/无 contentBlocks 两种情况，无论哪种路径
  * 都返回相同的 section type：'merge' | 'text' | 'standalone' | 'customTool'。
  */
-export function groupIntoSections(msg: Message, standaloneTools?: Set<string>): AssistantSection[] {
+export function groupIntoSections(msg: Message, standaloneTools: Set<string>): AssistantSection[] {
   if (msg.contentBlocks?.length) {
-    return standaloneTools
-      ? groupByContentBlocks(msg, standaloneTools)
-      : groupByContentBlocksLegacy(msg)
+    return groupByContentBlocks(msg, standaloneTools)
   }
-  return groupByLegacyFields(msg, standaloneTools)
+  return groupByFallbackFields(msg, standaloneTools)
 }
 
 // ── Block-type classification ───────────────────────────────
@@ -103,7 +95,7 @@ function isMergeBlock(block: ContentBlock, msg: Message, standaloneTools: Set<st
   return false
 }
 
-/** New grouping: classify by block type and standaloneTools setting */
+/** Grouping: classify by block type and standaloneTools setting */
 function groupByContentBlocks(msg: Message, standaloneTools: Set<string>): AssistantSection[] {
   const sections: AssistantSection[] = []
   let mergeBlocks: ContentBlock[] = []
@@ -139,100 +131,30 @@ function groupByContentBlocks(msg: Message, standaloneTools: Set<string>): Assis
   return sections
 }
 
-/** Legacy grouping: adjacent same-type merge (compactStreaming=false path) */
-function groupByContentBlocksLegacy(msg: Message): AssistantSection[] {
-  // NOTE: contentBlock types 'merge', 'standalone', 'customTool' only appear in compact mode.
-  // This legacy path only produces 'thinking', 'toolCall', 'text' sections.
-  // If future code accidentally passes compact types here, they would be rendered
-  // as unknown sections — consider adding a fallback if that becomes a concern.
-  const sections: AssistantSection[] = []
-  let current: AssistantSection | null = null
-
-  for (const block of msg.contentBlocks!) {
-    // text block 但无实际内容 → 跳过
-    if (block.type === 'text' && !msg.content) continue
-
-    if (current && current.type === block.type) {
-      current.blocks.push(block)
-    } else {
-      if (current) sections.push(current)
-      current = { type: block.type as NormalSectionType, blocks: [block] }
-    }
-  }
-
-  if (current) sections.push(current)
-  return sections
-}
-
 /**
- * 无 contentBlocks → 从 thinking/toolCalls/content 构造。
- *
- * - standaloneTools 未传入（normal 模式）→ 返回 thinking/toolCall/text（旧版展开行为）
- * - standaloneTools 已传入（compact 模式）→ 返回 merge/standalone/customTool/text
+ * 无 contentBlocks → 从 thinking/toolCalls/content 构造虚拟 blocks，
+ * 然后复用 groupByContentBlocks 统一分组。
  */
-function groupByLegacyFields(msg: Message, standaloneTools?: Set<string>): AssistantSection[] {
-  // Normal 模式（standaloneTools 未传入）：保持旧版 thinking/toolCall/text 分类
-  if (!standaloneTools) {
-    const sections: AssistantSection[] = []
-    if (msg.thinking?.length) {
-      sections.push({
-        type: 'thinking',
-        blocks: msg.thinking.map(b => ({ type: 'thinking' as const, refId: b.id })),
-      })
-    }
-    if (msg.toolCalls?.length) {
-      sections.push({
-        type: 'toolCall',
-        blocks: msg.toolCalls.map(tc => ({ type: 'toolCall' as const, refId: tc.id })),
-      })
-    }
-    if (msg.content) {
-      sections.push({ type: 'text', blocks: [{ type: 'text', refId: 'text' }] })
-    }
-    return sections
-  }
-
-  // Compact 模式：按 standaloneTools 设置分类
-  const sections: AssistantSection[] = []
-  const mergeBlocks: ContentBlock[] = []
+function groupByFallbackFields(msg: Message, standaloneTools: Set<string>): AssistantSection[] {
+  const blocks: ContentBlock[] = []
 
   if (msg.thinking?.length) {
     for (const b of msg.thinking) {
-      mergeBlocks.push({ type: 'thinking', refId: b.id })
+      blocks.push({ type: 'thinking', refId: b.id })
     }
   }
 
   if (msg.toolCalls?.length) {
     for (const tc of msg.toolCalls) {
-      const isBuiltin = (ALL_PI_TOOLS as readonly string[]).includes(tc.toolName)
-      const isStandalone = standaloneTools.has(tc.toolName)
-      const isCustom = !isBuiltin
-
-      if (isCustom) {
-        if (mergeBlocks.length > 0) {
-          sections.push({ type: 'merge', blocks: [...mergeBlocks] })
-          mergeBlocks.length = 0
-        }
-        sections.push({ type: 'customTool', blocks: [{ type: 'toolCall', refId: tc.id }] })
-      } else if (isStandalone) {
-        if (mergeBlocks.length > 0) {
-          sections.push({ type: 'merge', blocks: [...mergeBlocks] })
-          mergeBlocks.length = 0
-        }
-        sections.push({ type: 'standalone', blocks: [{ type: 'toolCall', refId: tc.id }] })
-      } else {
-        mergeBlocks.push({ type: 'toolCall', refId: tc.id })
-      }
+      blocks.push({ type: 'toolCall', refId: tc.id })
     }
   }
 
-  if (mergeBlocks.length > 0) {
-    sections.push({ type: 'merge', blocks: mergeBlocks })
-  }
-
   if (msg.content) {
-    sections.push({ type: 'text', blocks: [{ type: 'text', refId: 'text' }] })
+    blocks.push({ type: 'text', refId: 'text' })
   }
 
-  return sections
+  // Construct a virtual message with synthetic contentBlocks
+  const virtualMsg = { ...msg, contentBlocks: blocks }
+  return groupByContentBlocks(virtualMsg, standaloneTools)
 }
