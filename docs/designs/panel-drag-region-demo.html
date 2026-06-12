@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PanelBar Drag Region Demo</title>
+<style>
+  :root {
+    --bg: oklch(97% 0.010 75);
+    --surface: oklch(99% 0.006 75);
+    --fg: oklch(22% 0.012 75);
+    --muted: oklch(50% 0.010 75);
+    --border: oklch(90% 0.008 75);
+    --accent: oklch(55% 0.08 195);
+    --accent-light: oklch(93% 0.03 195);
+    --danger: oklch(55% 0.12 25);
+    --radius: 1px;
+    --font-body: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: var(--font-body);
+    background: oklch(20% 0.005 75);
+    color: var(--fg);
+    padding: 40px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 32px;
+    min-height: 100vh;
+  }
+
+  h1 { font-size: 18px; font-weight: 600; color: oklch(90% 0.01 75); letter-spacing: -0.02em; }
+  .subtitle { font-size: 13px; color: oklch(60% 0.01 75); margin-top: 4px; }
+
+  /* ── 模拟窗口 ── */
+  .mock-window {
+    width: 800px;
+    background: var(--bg);
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.4);
+  }
+
+  /* ── 当前状态（无 drag） ── */
+  .section-label {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: oklch(60% 0.01 75);
+    margin-top: 24px;
+    text-align: center;
+  }
+
+  .mock-sidebar {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    min-height: 300px;
+  }
+
+  /* Sidebar */
+  .sidebar {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+  }
+  .sidebar-header {
+    padding: 6px 14px 8px 78px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    height: 40px;
+    border-bottom: 1px solid var(--border);
+  }
+  .sidebar-brand { font-size: 11px; font-weight: 600; color: var(--muted); }
+  .sidebar-body { padding: 8px; flex: 1; }
+  .sidebar-item {
+    padding: 6px 10px;
+    border-radius: 1px;
+    font-size: 12px;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .sidebar-item.active { background: var(--accent-light); color: var(--accent); }
+
+  /* Traffic lights */
+  .traffic-lights {
+    position: absolute;
+    top: 10px;
+    left: 14px;
+    display: flex;
+    gap: 8px;
+    z-index: 10;
+  }
+  .tl-dot {
+    width: 12px; height: 12px;
+    border-radius: 50%;
+  }
+  .tl-close { background: #FF5F57; }
+  .tl-min { background: #FEBC2E; }
+  .tl-max { background: #28C840; }
+
+  /* Content area */
+  .content-area {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: hidden;
+    position: relative;
+    background: var(--bg);
+  }
+
+  /* PanelBar */
+  .panel-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 14px;
+    height: 40px;
+    flex-shrink: 0;
+    font-size: 12px;
+    position: relative;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* ── Drag overlay 层 ── */
+  .drag-overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 100;
+  }
+
+  /* Drag region 高亮 */
+  .drag-highlight {
+    position: absolute;
+    background: rgba(56, 189, 248, 0.15);
+    border: 1.5px dashed rgba(56, 189, 248, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .drag-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: rgba(56, 189, 248, 0.9);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 2px 6px;
+    background: rgba(56, 189, 248, 0.1);
+    border-radius: 2px;
+  }
+
+  /* No-drag region 高亮 */
+  .nodrag-highlight {
+    position: absolute;
+    background: rgba(251, 146, 60, 0.12);
+    border: 1.5px dashed rgba(251, 146, 60, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .nodrag-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: rgba(251, 146, 60, 0.85);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 2px 6px;
+    background: rgba(251, 146, 60, 0.1);
+    border-radius: 2px;
+  }
+
+  /* PanelBar 子元素 */
+  .anchor-dropdown {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border-radius: 1px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent);
+    background: var(--accent-light);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .anchor-dropdown svg { width: 12px; height: 12px; }
+
+  .breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--muted);
+    overflow: hidden;
+    white-space: nowrap;
+    min-width: 0;
+  }
+  .breadcrumb__sep { color: var(--border); }
+  .breadcrumb__dir { color: var(--fg); font-weight: 500; }
+  .breadcrumb__branch {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    margin-left: 6px;
+    padding: 0 5px;
+    height: 16px;
+    border-radius: 1px;
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--accent);
+    background: var(--accent-light);
+  }
+  .breadcrumb__branch svg { width: 12px; height: 12px; }
+
+  .icon-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 20px;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    border-radius: 1px;
+    transition: all 0.15s ease;
+  }
+  .icon-btn svg { width: 14px; height: 14px; }
+
+  .spacer { flex: 1; }
+
+  .chat-area {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  /* ── 图例 ── */
+  .legend {
+    display: flex;
+    gap: 24px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: oklch(75% 0.01 75);
+  }
+  .legend-swatch {
+    width: 28px;
+    height: 16px;
+    border-radius: 2px;
+  }
+  .legend-drag { background: rgba(56, 189, 248, 0.15); border: 1.5px dashed rgba(56, 189, 248, 0.6); }
+  .legend-nodrag { background: rgba(251, 146, 60, 0.12); border: 1.5px dashed rgba(251, 146, 60, 0.5); }
+  .legend-none { background: rgba(255,255,255,0.03); border: 1.5px solid rgba(255,255,255,0.1); }
+
+  /* ── 两种模式切换 ── */
+  .mode-switch {
+    display: flex;
+    gap: 2px;
+    background: oklch(25% 0.005 75);
+    border-radius: 4px;
+    padding: 2px;
+  }
+  .mode-btn {
+    padding: 6px 16px;
+    border: none;
+    background: transparent;
+    color: oklch(60% 0.01 75);
+    font-size: 13px;
+    font-family: var(--font-body);
+    cursor: pointer;
+    border-radius: 3px;
+    transition: all 0.15s;
+  }
+  .mode-btn.active {
+    background: oklch(35% 0.01 75);
+    color: oklch(95% 0.01 75);
+  }
+  .mode-btn:hover:not(.active) {
+    color: oklch(80% 0.01 75);
+  }
+
+  /* ── 说明文字 ── */
+  .explanation {
+    max-width: 700px;
+    font-size: 13px;
+    line-height: 1.7;
+    color: oklch(65% 0.01 75);
+    text-align: center;
+  }
+  .explanation code {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    background: oklch(30% 0.01 75);
+    padding: 1px 5px;
+    border-radius: 2px;
+    color: oklch(80% 0.02 195);
+  }
+
+  /* ── collapsed sidebar mode ── */
+  .mock-window--sidebar-collapsed .mock-sidebar {
+    grid-template-columns: 0px 1fr;
+  }
+  .mock-window--sidebar-collapsed .sidebar {
+    display: none;
+  }
+  .mock-window--sidebar-collapsed .content-area {
+    position: relative;
+  }
+  .mock-window--sidebar-collapsed .panel-bar {
+    padding-left: 78px;
+  }
+  .mock-window--sidebar-collapsed .traffic-lights-container {
+    display: block;
+  }
+
+  .traffic-lights-container {
+    display: none;
+  }
+
+  /* ── 当前问题标注 ── */
+  .problem-note {
+    background: rgba(251, 146, 60, 0.08);
+    border: 1px solid rgba(251, 146, 60, 0.2);
+    border-radius: 4px;
+    padding: 12px 16px;
+    font-size: 12px;
+    color: rgba(251, 146, 60, 0.9);
+    max-width: 700px;
+    line-height: 1.6;
+  }
+  .problem-note strong { font-weight: 600; }
+
+  .fixed-note {
+    background: rgba(56, 189, 248, 0.08);
+    border: 1px solid rgba(56, 189, 248, 0.2);
+    border-radius: 4px;
+    padding: 12px 16px;
+    font-size: 12px;
+    color: rgba(56, 189, 248, 0.9);
+    max-width: 700px;
+    line-height: 1.6;
+  }
+  .fixed-note strong { font-weight: 600; }
+
+  /* window frame top border */
+  .window-top-border {
+    height: 1px;
+    background: oklch(85% 0.008 75);
+  }
+  /* 1px native drag strip */
+  .native-strip {
+    height: 2px;
+    background: rgba(148, 163, 184, 0.3);
+    position: relative;
+  }
+  .native-strip::after {
+    content: 'macOS 原生拖拽区 ≈2px（极难点击）';
+    position: absolute;
+    left: 50%;
+    top: 8px;
+    transform: translateX(-50%);
+    font-size: 9px;
+    color: rgba(148, 163, 184, 0.5);
+    white-space: nowrap;
+  }
+
+  .hide { display: none !important; }
+</style>
+</head>
+<body>
+
+<h1>PanelBar Drag Region 分析</h1>
+<p class="subtitle">当前状态 vs 修复后对比 · 可交互切换</p>
+
+<!-- 图例 -->
+<div class="legend">
+  <div class="legend-item">
+    <div class="legend-swatch legend-drag"></div>
+    <span>可拖拽窗口 (<code>-webkit-app-region: drag</code>)</span>
+  </div>
+  <div class="legend-item">
+    <div class="legend-swatch legend-nodrag"></div>
+    <span>不可拖拽 — 交互元素 (<code>no-drag</code>)</span>
+  </div>
+  <div class="legend-item">
+    <div class="legend-swatch legend-none"></div>
+    <span>无 drag 声明</span>
+  </div>
+</div>
+
+<!-- 模式切换 -->
+<div class="mode-switch">
+  <button class="mode-btn active" onclick="showMode('current')">当前状态（无法拖拽）</button>
+  <button class="mode-btn" onclick="showMode('fixed')">修复后（可拖拽）</button>
+</div>
+
+<!-- 问题说明 -->
+<div class="problem-note" id="note-current">
+  <strong>问题：</strong>使用 <code>titleBarStyle: 'hiddenInset'</code> 后，macOS 原生拖拽区域仅剩窗口顶部 ≈2px 的边框。
+  PanelBar (40px) 占据了全部可点击区域，但未声明 <code>-webkit-app-region: drag</code>，
+  导致鼠标事件被 PanelBar 内部元素消费，无法传递给窗口管理器。<strong>整条 PanelBar 都拖不动窗口。</strong>
+</div>
+<div class="fixed-note hide" id="note-fixed">
+  <strong>修复：</strong>PanelBar 整体加 <code>-webkit-app-region: drag</code>，所有交互元素（按钮、下拉、面包屑）加 <code>-webkit-app-region: no-drag</code>。
+  蓝色区域即可拖拽移动窗口，橙色区域保持正常交互。
+</div>
+
+<!-- ═══ 模拟窗口 ═══ -->
+<div class="mock-window" id="mock-window">
+  <div class="window-top-border"></div>
+
+  <!-- 两种 overlay -->
+  <div class="drag-overlay" id="overlay-current">
+    <!-- 整个 PanelBar 标红：全部不可拖 -->
+  </div>
+  <div class="drag-overlay hide" id="overlay-fixed">
+    <!-- drag / no-drag 区域用不同颜色标注 -->
+  </div>
+
+  <div class="mock-sidebar">
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <span class="sidebar-brand">xyz-agent</span>
+      </div>
+      <div class="sidebar-body">
+        <div class="sidebar-item active">主线对话</div>
+        <div class="sidebar-item">fix-046-problems</div>
+        <div class="sidebar-item">feature/sidebar</div>
+      </div>
+    </div>
+
+    <!-- Content -->
+    <div class="content-area">
+      <!-- Traffic lights (sidebar collapsed 时显示) -->
+      <div class="traffic-lights-container" style="position:absolute;top:0;left:0;z-index:10;padding-top:12px;padding-left:14px;">
+        <div class="traffic-lights" style="position:static;">
+          <div class="tl-dot tl-close"></div>
+          <div class="tl-dot tl-min"></div>
+          <div class="tl-dot tl-max"></div>
+        </div>
+      </div>
+
+      <!-- PanelBar -->
+      <div class="panel-bar" id="panel-bar">
+        <div class="anchor-dropdown" id="el-dropdown">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6.5"/><path d="M8 5.5v5M5.5 8h5"/></svg>
+          Claude
+        </div>
+
+        <span class="breadcrumb" id="el-breadcrumb">
+          <span class="breadcrumb__sep">/</span>
+          <span class="breadcrumb__dir">xyz-agent-workspace</span>
+          <span class="breadcrumb__sep">/</span>
+          <span class="breadcrumb__dir">fix-046</span>
+          <span class="breadcrumb__branch">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/></svg>
+            fix-046-problems
+          </span>
+        </span>
+
+        <span class="spacer"></span>
+
+        <button class="icon-btn" id="el-tree" title="Session tree">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/></svg>
+        </button>
+
+        <button class="icon-btn" id="el-batch" title="批量选择">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 11 12 14 22 4"/><path d="M19 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V9a2 2 0 012-2h7"/></svg>
+        </button>
+
+        <button class="icon-btn" id="el-close" title="关闭面板">
+          <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="3" y1="3" x2="9" y2="9"/><line x1="9" y1="3" x2="3" y2="9"/></svg>
+        </button>
+      </div>
+
+      <!-- Chat area placeholder -->
+      <div class="chat-area">
+        <span>Chat content area</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Sidebar collapsed toggle -->
+<div style="display:flex;gap:8px;align-items:center;">
+  <button class="mode-btn" style="background:oklch(30% 0.01 75);color:oklch(80% 0.01 75);padding:6px 14px;border:1px solid oklch(40% 0.01 75);border-radius:3px;font-size:12px;" onclick="toggleSidebar()">
+    Toggle Sidebar Collapsed
+  </button>
+</div>
+
+<!-- 代码参考 -->
+<div style="max-width:700px;width:100%;">
+  <pre style="background:oklch(25% 0.005 75);border-radius:6px;padding:16px;font-size:11px;line-height:1.6;color:oklch(75% 0.01 75);overflow-x:auto;font-family:var(--font-mono);"><span style="color:oklch(65% 0.01 75);">/* PanelBar.vue — 修复后 */</span>
+
+<span style="color:oklch(65% 0.15 145);">.panel-bar</span> {
+  <span style="color:rgba(56,189,248,0.9);">-webkit-app-region: drag;</span>  <span style="color:oklch(55% 0.01 75);">/* 整条可拖 */</span>
+}
+
+<span style="color:oklch(65% 0.15 145);">.panel-bar button,
+.panel-bar .anchor-dropdown,
+.panel-bar .breadcrumb</span> {
+  <span style="color:rgba(251,146,60,0.9);">-webkit-app-region: no-drag;</span>  <span style="color:oklch(55% 0.01 75);">/* 交互元素豁免 */</span>
+}</pre>
+</div>
+
+<script>
+  const mockWindow = document.getElementById('mock-window');
+  const overlayCurrent = document.getElementById('overlay-current');
+  const overlayFixed = document.getElementById('overlay-fixed');
+  const noteCurrent = document.getElementById('note-current');
+  const noteFixed = document.getElementById('note-fixed');
+
+  let currentMode = 'current';
+  let sidebarCollapsed = false;
+
+  function showMode(mode) {
+    currentMode = mode;
+    document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+    event.target.classList.add('active');
+
+    if (mode === 'current') {
+      overlayCurrent.classList.remove('hide');
+      overlayFixed.classList.add('hide');
+      noteCurrent.classList.remove('hide');
+      noteFixed.classList.add('hide');
+    } else {
+      overlayCurrent.classList.add('hide');
+      overlayFixed.classList.remove('hide');
+      noteFixed.classList.remove('hide');
+      noteCurrent.classList.add('hide');
+    }
+    drawOverlays();
+  }
+
+  function toggleSidebar() {
+    sidebarCollapsed = !sidebarCollapsed;
+    mockWindow.classList.toggle('mock-window--sidebar-collapsed', sidebarCollapsed);
+    // Redraw after layout change
+    requestAnimationFrame(() => requestAnimationFrame(drawOverlays));
+  }
+
+  function drawOverlays() {
+    const panelBar = document.getElementById('panel-bar');
+    const barRect = panelBar.getBoundingClientRect();
+    const winRect = mockWindow.getBoundingClientRect();
+    const offsetX = barRect.left - winRect.left;
+    const offsetY = barRect.top - winRect.top;
+
+    // ── Current: 全部不可拖 ──
+    overlayCurrent.innerHTML = `
+      <div class="nodrag-highlight" style="
+        left:${offsetX}px; top:${offsetY}px;
+        width:${barRect.width}px; height:${barRect.height}px;
+      ">
+        <span class="nodrag-label">全部无法拖拽窗口</span>
+      </div>
+    `;
+
+    if (!sidebarCollapsed) {
+      // sidebar header 区域也是死区
+      const sidebar = mockWindow.querySelector('.sidebar-header');
+      if (sidebar) {
+        const sRect = sidebar.getBoundingClientRect();
+        const sOffX = sRect.left - winRect.left;
+        const sOffY = sRect.top - winRect.top;
+        overlayCurrent.innerHTML += `
+          <div class="nodrag-highlight" style="
+            left:${sOffX}px; top:${sOffY}px;
+            width:${sRect.width}px; height:${sRect.height}px;
+          ">
+            <span class="nodrag-label">Sidebar header 同样无法拖</span>
+          </div>
+        `;
+      }
+    }
+
+    // ── Fixed: drag + no-drag 分区 ──
+    if (currentMode === 'fixed') {
+      // 整条 panel-bar 是 drag
+      let html = `
+        <div class="drag-highlight" style="
+          left:${offsetX}px; top:${offsetY}px;
+          width:${barRect.width}px; height:${barRect.height}px;
+        ">
+        </div>
+      `;
+
+      // 每个 no-drag 元素覆盖
+      const noDragEls = ['el-dropdown', 'el-breadcrumb', 'el-tree', 'el-batch', 'el-close'];
+      noDragEls.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const r = el.getBoundingClientRect();
+        const ex = r.left - winRect.left;
+        const ey = r.top - winRect.top;
+        // 稍微扩大点击区域
+        const pad = 2;
+        html += `
+          <div class="nodrag-highlight" style="
+            left:${ex - pad}px; top:${ey - pad}px;
+            width:${r.width + pad * 2}px; height:${r.height + pad * 2}px;
+            border-radius:2px;
+          ">
+          </div>
+        `;
+      });
+
+      // Sidebar header 也标注为 drag
+      if (!sidebarCollapsed) {
+        const sidebar = mockWindow.querySelector('.sidebar-header');
+        if (sidebar) {
+          const sRect = sidebar.getBoundingClientRect();
+          const sOffX = sRect.left - winRect.left;
+          const sOffY = sRect.top - winRect.top;
+          html += `
+            <div class="drag-highlight" style="
+              left:${sOffX}px; top:${sOffY}px;
+              width:${sRect.width}px; height:${sRect.height}px;
+            ">
+              <span class="drag-label">可拖拽</span>
+            </div>
+          `;
+        }
+      }
+
+      overlayFixed.innerHTML = html;
+    }
+  }
+
+  // 初始绘制 & resize 时重绘
+  window.addEventListener('load', () => requestAnimationFrame(drawOverlays));
+  window.addEventListener('resize', () => requestAnimationFrame(drawOverlays));
+</script>
+
+</body>
+</html>

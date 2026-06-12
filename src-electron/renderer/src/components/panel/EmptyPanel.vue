@@ -1,5 +1,8 @@
 <template>
-  <div class="flex-1 flex items-center justify-center min-w-0 min-h-0 p-10 px-6">
+  <div class="flex-1 flex flex-col min-w-0 min-h-0">
+    <!-- Drag header: mirrors PanelBar height for window dragging -->
+    <div class="empty-panel-header" :class="{ 'empty-panel-header--safe-zone': needsSafeZone }" />
+    <div class="flex-1 flex items-center justify-center min-w-0 min-h-0 p-10 px-6">
     <div class="flex flex-col items-center max-w-[360px] w-full">
       <svg class="text-muted opacity-50 mb-5" width="56" height="56" viewBox="0 0 56 56" fill="none" xmlns="http://www.w3.org/2000/svg">
         <rect x="4" y="4" width="48" height="48" rx="12" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
@@ -47,6 +50,8 @@ import { useI18n } from 'vue-i18n'
 import { useSessionStore } from '../../stores/session'
 import { usePanelStore } from '../../stores/panel'
 import { useChatStore } from '../../stores/chat'
+import { useSidebarStore } from '../../stores/sidebar'
+import { useLayoutStore } from '../../stores/layout'
 import { useSession } from '../../composables/useSession'
 
 const { t } = useI18n()
@@ -58,7 +63,19 @@ const props = defineProps<{
 const sessionStore = useSessionStore()
 const panelStore = usePanelStore()
 const chatStore = useChatStore()
+const sidebarStore = useSidebarStore()
+const layoutStore = useLayoutStore()
 const { createSession: doCreateSession, switchSession: doSwitchSession } = useSession()
+
+/**
+ * Same safe-zone logic as PanelBar: sidebar collapsed + non-fullscreen + leftmost panel.
+ * When true, the drag header reserves 78px left padding for traffic lights.
+ */
+const needsSafeZone = computed(() => {
+  if (!sidebarStore.collapsed || layoutStore.isFullscreen) return false
+  if (panelStore.panelCount <= 1) return true
+  return panelStore.isLeftmostPanel(props.panelId)
+})
 
 // Track session creation to bind new session to this pane
 const isCreating = ref(false)
@@ -109,4 +126,16 @@ watch(() => sessionStore.sessions.length, (newLen) => {
   }
 })
 </script>
+
+<style scoped>
+.empty-panel-header {
+  height: 40px;
+  flex-shrink: 0;
+  -webkit-app-region: drag;
+  border-bottom: 1px solid var(--border);
+}
+.empty-panel-header--safe-zone {
+  padding-left: 78px;
+}
+</style>
 

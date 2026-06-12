@@ -243,6 +243,16 @@ SKIP_ALL_CHECKS=1 git commit            # 跳过所有（仅紧急情况）
 - **`.xyz-harness/` 目录必须提交且不能删除** — 该目录存放所有 spec/plan 的历史设计文档（按 `YYYY-MM-DD-<slug>/` 命名），是项目决策追溯的重要依据。禁止 `git rm -r .xyz-harness/` 或将其加入 `.gitignore`
 - **`DESIGN.md` 必须保留在项目根目录** — 产品设计系统的核心定义文件（颜色、字体、间距、品牌调性）。随需求演进必须同步更新，禁止过时
 
+## 测试规范 [HISTORICAL]
+
+1. **测试框架用 vitest，禁止 `node:test`**：`src-electron/runtime/` 子项目使用 vitest（配置在 `src-electron/runtime/vitest.config.ts`，依赖 `vitest@^4.1.6`，test script 为 `vitest run`）。所有测试文件必须从 `vitest` 导入 `describe/it/expect/vi/beforeEach` 等，禁止从 `node:test` 导入。vitest 不识别 `node:test` 格式的测试，会导致 "No test suite found" 错误。
+
+2. **运行测试命令**: `npx vitest run <test-file>`，不是 `tsx --test`。虽然 `tsx --test` 能正常运行（不会卡住），但它跑的是 node:test 原生 runner，不支持 vitest 的 mock（`vi.fn()`/`vi.useFakeTimers()`）和配置（vitest.config.ts）。项目 CI 和开发流程都用 vitest。
+
+3. **测试超时**: vitest 单个测试默认 5s 超时。涉及 setTimeout/timer 的测试必须使用 `vi.useFakeTimers()` + `vi.advanceTimersByTime()` 而不是真实等待，避免超时失败。
+
+4. **subagent task prompt 必须明确测试框架**: 派遣编码 subagent 时，task prompt 中必须写明 "测试框架使用 vitest（从 vitest 导入 describe/it/expect/vi），运行命令 npx vitest run，禁止 node:test 和 tsx --test"。
+
 ## 前端编码规范
 
 **权威标准文档**: `~/Code/xyz-ui/CONVENTIONS.md`
