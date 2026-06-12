@@ -79,7 +79,7 @@ export function useProviderValidation() {
           onSuccess?.(models)
         } else {
           discoverStatus.value = 'empty'
-          discoverMessage.value = t('settings.discoveryEmptyHint')
+          discoverMessage.value = t('settings.noModelsFoundHint')
         }
       } else {
         discoverStatus.value = 'error'

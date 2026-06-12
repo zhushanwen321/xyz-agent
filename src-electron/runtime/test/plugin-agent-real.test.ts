@@ -5,7 +5,7 @@
  * getActiveTools→toolRegistry schemas、getThinkingLevel 默认值。
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { PluginService } from '../src/services/plugin-service/plugin-service.js'
 import { PluginRegistry } from '../src/services/plugin-service/plugin-registry.js'
 import { clearActiveSessionCache } from '../src/services/plugin-service/plugin-rpc-setup.js'

@@ -170,14 +170,14 @@ export class ConfigService implements IConfigService {
     return join(piBridge.getConfigDir(), 'config.json')
   }
 
-  private static loadAppConfig(): { toolPermissions?: Record<string, string> } {
+  private static loadAppConfig(): Record<string, unknown> {
     try {
       const cp = ConfigService.appConfigPath()
       if (existsSync(cp)) {
         const raw = readFileSync(cp, 'utf-8')
         const parsed = JSON.parse(raw)
         if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-          return { ...(parsed.toolPermissions && typeof parsed.toolPermissions === 'object' ? { toolPermissions: parsed.toolPermissions } : {}) }
+          return parsed as Record<string, unknown>
         }
         console.error('[config-service] config.json is not a valid object, ignoring')
       }
@@ -188,7 +188,7 @@ export class ConfigService implements IConfigService {
     return {}
   }
 
-  private static saveAppConfig(config: { toolPermissions?: Record<string, string> }): void {
+  private static saveAppConfig(config: Record<string, unknown>): void {
     try {
       const cd = piBridge.getConfigDir()
       if (!existsSync(cd)) mkdirSync(cd, { recursive: true })
@@ -202,7 +202,7 @@ export class ConfigService implements IConfigService {
 
   updateToolPermissions(permissions: Record<string, string>): void {
     const config = ConfigService.loadAppConfig()
-    config.toolPermissions = permissions
+    config['toolPermissions'] = permissions
     ConfigService.saveAppConfig(config)
   }
 

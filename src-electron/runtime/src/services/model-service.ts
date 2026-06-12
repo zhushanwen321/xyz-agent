@@ -73,6 +73,7 @@ export class ModelService implements IModelService {
     this.ensureInitialized()
     await this.sessionService.setThinkingLevel(sessionId, level)
   }
+
   aggregateModels(providers: ProviderInfo[]): ModelInfo[] {
     return providers.flatMap(p =>
       p.models.map(m => ({

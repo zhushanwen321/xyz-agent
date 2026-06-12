@@ -26,13 +26,6 @@ vi.mock('node:child_process', () => ({
   },
 }))
 
-// Mock config-store — only toolPermissions remains; getDefaultModel moved to pi-config-bridge
-vi.mock('../src/config-store.js', () => ({
-  loadToolPermissions: () => ({ autoApprove: [], deny: [] }),
-  saveToolPermissions: vi.fn(),
-  getDefaultTemperature: () => undefined,
-}))
-
 // Mock pi-config-bridge — the central config module
 const mockSkillPaths: string[] = []
 const mockScannedSessions: Array<{

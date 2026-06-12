@@ -90,12 +90,6 @@ vi.mock('../src/process-manager.js', () => ({
 
 // EventAdapter 使用真实实例 — 不 mock
 
-vi.mock('../src/config-store.js', () => ({
-  updateToolPermissions: vi.fn(),
-  getProvider: vi.fn().mockReturnValue(undefined),
-  getDefaultModel: vi.fn().mockReturnValue('test/model'),
-}))
-
 vi.mock('../src/skill-scanner.js', () => ({
   scanSkills: vi.fn().mockReturnValue([]),
 }))

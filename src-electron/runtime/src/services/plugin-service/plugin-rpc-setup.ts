@@ -18,6 +18,7 @@ import { registerSessionDataRpcHandlers } from './api/session-data-api.js'
 import { registerUiRpcHandlers } from './api/ui-api.js'
 import { registerAgentRpcHandlers } from './api/agent-api.js'
 import { registerWorkspaceRpcHandlers } from './api/workspace-api.js'
+import type { SessionSummary } from '../../../../shared/src/session.js'
 import type { ToolEntry } from './plugin-types.js'
 
 const MAX_FIND_FILES_RESULTS = 1000
@@ -29,7 +30,7 @@ let _activeSessionCache: { sessionId: string; ts: number } | null = null
 // eslint-disable-next-line no-magic-numbers -- 2 seconds TTL for active session cache
 const ACTIVE_SESSION_CACHE_TTL_MS = 2 * 1000
 
-function findActiveSession(deps: IPluginServiceDeps): { id: string; thinkingLevel?: string; modelId?: string } | undefined {
+function findActiveSession(deps: IPluginServiceDeps): SessionSummary | undefined {
   if (!deps.sessionService) return undefined
   const now = Date.now()
   if (_activeSessionCache && (now - _activeSessionCache.ts) < ACTIVE_SESSION_CACHE_TTL_MS) {
@@ -149,10 +150,7 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
       return { id: s.id, label: s.label, cwd: s.cwd, status: s.status, createdAt: 0, lastActiveAt: s.lastActiveAt }
     },
     getActiveSession: () => {
-      if (!deps.sessionService) return undefined
-      const groups = deps.sessionService.listPersistedSessions()
-      const allSessions = groups.flatMap(g => g.sessions)
-      const active = allSessions.find(s => s.status === 'active')
+      const active = findActiveSession(deps)
       if (!active) return undefined
       return { id: active.id, label: active.label, cwd: active.cwd, status: active.status, createdAt: 0, lastActiveAt: active.lastActiveAt }
     },

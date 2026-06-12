@@ -41,6 +41,7 @@
         {{ t('panel.newConversation') }}
       </button>
     </div>
+    </div>
   </div>
 </template>
 

@@ -82,6 +82,12 @@ export class SessionDataStore {
           const data = await loadSessionData(getConfigDir(), sessionId)
           if (data.size > 0) {
             this.cache.set(sessionId, data)
+            // Restore size tracker so capacity checks account for persisted data
+            let totalBytes = 0
+            for (const v of data.values()) {
+              totalBytes += JSON.stringify(v).length
+            }
+            this.size.set(sessionId, totalBytes)
           }
         }
       }

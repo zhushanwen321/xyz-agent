@@ -41,13 +41,6 @@ vi.mock('../src/trash.js', () => ({
   trash: vi.fn(),
 }))
 
-// ── Mock config-store ───────────────────────────────────────────
-
-vi.mock('../src/config-store.js', () => ({
-  getDefaultModel: vi.fn().mockReturnValue('test-provider/test-model'),
-  loadSkills: vi.fn().mockReturnValue([]),
-}))
-
 // ── Mock EventAdapter ───────────────────────────────────────────
 
 const attachMock = vi.fn()
