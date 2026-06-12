@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest'
 import path from 'node:path'
 
 // ── Mocks ──────────────────────────────────────────────────────────
@@ -121,6 +121,17 @@ async function createSessionService() {
 // ── Tests ──────────────────────────────────────────────────────────
 
 describe('skillPaths passing chain', () => {
+  let savedPackaged: string | undefined
+
+  beforeAll(() => {
+    savedPackaged = process.env.XYZ_AGENT_PACKAGED
+    delete process.env.XYZ_AGENT_PACKAGED
+  })
+
+  afterAll(() => {
+    if (savedPackaged !== undefined) process.env.XYZ_AGENT_PACKAGED = savedPackaged
+  })
+
   beforeEach(() => {
     resetMocks()
   })
