@@ -21,7 +21,7 @@ function onUIRequest(msg: ServerMessage) {
   if (payload.method === 'notify') {
     const toastType = LEVEL_TO_TOAST_TYPE[payload.level ?? 'info'] ?? 'info'
     const SID_PREFIX_LEN = 8
-    const sid = (payload as Record<string, unknown>).sessionId as string | undefined
+    const sid = payload.sessionId
     const titleSuffix = sid ? ` [${sid.slice(0, SID_PREFIX_LEN)}]` : ''
     emitEventBus('toast:show', {
       type: toastType,
