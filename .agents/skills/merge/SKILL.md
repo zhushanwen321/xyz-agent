@@ -174,6 +174,12 @@ bash ~/.agents/skills/merge-worktree/stages/7-cleanup.sh
 
 每个阶段独立执行。失败后修复重跑同一阶段即可。
 
+## [HISTORICAL] 禁止跳过检查
+
+所有 githooks 和自动化检查（lint、ruff、脚本检查、pre-commit hook、CI 检查等）报告的问题，**必须正面修复**。绝不允许通过 `SKIP_*` 环境变量、`--no-verify`、`eslint-disable`、`# noqa` 等方式绕过或静默。检查不通过 = 流程中止，唯一的出路是修复代码让检查通过。
+
+此规则来源于多次事故：跳过检查掩盖了真实 bug，上线后才发现问题，修复成本远高于当时正面解决。
+
 ## 项目特化
 
 - **交付方式**：GitHub Release + Electron 产物（DMG/EXE/AppImage）
@@ -186,5 +192,6 @@ bash ~/.agents/skills/merge-worktree/stages/7-cleanup.sh
 
 | 标记 | 含义 | 修改约束 |
 |------|------|----------|
+| `[HISTORICAL]` | 历史经验总结的规则。来自实际事故和教训，经验证有效后固化为规则 | **不允许删除或削弱**。修改时只能在原有基础上补充，不能降低要求 |
 | `[MANDATORY]` | 流程强制要求。不遵守会导致流程失败或产生严重后果 | 必须严格遵守 |
 | `[OPTIONAL]` | 可选步骤。可根据实际情况决定是否执行 | 可根据项目需求调整 |
