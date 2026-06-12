@@ -74,23 +74,19 @@ IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_VER"
 NEXT_PATCH=$((PATCH + 1))
 BASE_NEXT="${MAJOR}.${MINOR}.${NEXT_PATCH}"
 
-# 2d. 使用固定 -beta 后缀，清理旧的 beta release/tag
-BETA_TAG="v${BASE_NEXT}-beta"
-
-EXISTING_BETA=$(gh release list --repo "$REPO" --limit 100 \
-  --json tagName,isPrerelease \
-  | jq -r --arg tag "$BETA_TAG" \
-    '.[] | select(.isPrerelease == true) | .tagName | select(. == $tag)')
-
-if [ -n "$EXISTING_BETA" ]; then
-  log "清理旧的 beta release: ${BETA_TAG}"
-  gh release delete "$BETA_TAG" --repo "$REPO" --yes 2>/dev/null || true
-  git push "$GITHUB_REMOTE" --delete "$BETA_TAG" 2>/dev/null || true
-  git tag -d "$BETA_TAG" 2>/dev/null || true
-fi
-
+# 2d. 清理旧 beta release/tag，使用固定 -beta 后缀
 BETA_VERSION="${BASE_NEXT}-beta"
+BETA_TAG="v${BETA_VERSION}"
 ORIGINAL_VERSION="$CURRENT_VER"
+
+# 清理已有的同名 beta release 和 tag
+if gh release view "$BETA_TAG" --repo "$REPO" &>/dev/null; then
+  log "清理旧 beta release: ${BETA_TAG}"
+  gh release delete "$BETA_TAG" --repo "$REPO" --yes 2>/dev/null || true
+fi
+git push "$GITHUB_REMOTE" --delete "$BETA_TAG" 2>/dev/null || true
+git tag -d "$BETA_TAG" 2>/dev/null || true
+
 log "beta 版本: ${BETA_TAG}"
 
 # ── 阶段 3/6: Bump + Push ──
