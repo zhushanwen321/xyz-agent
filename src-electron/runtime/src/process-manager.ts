@@ -211,7 +211,7 @@ export class ProcessManager {
       await proc.client.kill()
     // eslint-disable-next-line taste/no-silent-catch -- kill() has internal SIGTERM→SIGKILL fallback; orphan risk logged
     } catch (e) {
-      console.warn(`[process-manager] kill failed for session ${sessionId}:`, e instanceof Error ? e.message : String(e))
+      console.warn(`[process-manager] [PROCESS-LEAK-RISK] kill failed for session ${sessionId}:`, e instanceof Error ? e.message : String(e))
     }
   }
 

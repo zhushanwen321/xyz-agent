@@ -10,16 +10,20 @@ export interface GitInfo {
 const GIT_TIMEOUT_MS = 2000
 // eslint-disable-next-line no-magic-numbers -- 5 minutes = 5 * 60 * 1000ms, self-documenting with comment
 const CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes
+const CACHE_MAX_SIZE = 500
 
 const gitInfoCache = new Map<string, { info: GitInfo | undefined; ts: number }>()
 
 /**
- * Invalidate cache entries whose cwd no longer exists on disk.
- * Called after session list refresh to prune stale entries.
+ * Invalidate cache entries whose cwd no longer exists on disk,
+ * and evict expired entries (TTL exceeded).
  */
 export function pruneGitInfoCache(existingCwds: Set<string>): void {
+  const now = Date.now()
   for (const key of gitInfoCache.keys()) {
-    if (!existingCwds.has(key)) gitInfoCache.delete(key)
+    if (!existingCwds.has(key) || (now - (gitInfoCache.get(key)?.ts ?? 0)) >= CACHE_TTL_MS) {
+      gitInfoCache.delete(key)
+    }
   }
 }
 
@@ -34,6 +38,16 @@ export function readGitInfo(cwd: string): GitInfo | undefined {
   const now = Date.now()
   const cached = gitInfoCache.get(cwd)
   if (cached && (now - cached.ts) < CACHE_TTL_MS) return cached.info
+
+  // Evict oldest entries if cache is at capacity
+  if (gitInfoCache.size >= CACHE_MAX_SIZE) {
+    let oldestKey: string | null = null
+    let oldestTs = Infinity
+    for (const [key, val] of gitInfoCache) {
+      if (val.ts < oldestTs) { oldestTs = val.ts; oldestKey = key }
+    }
+    if (oldestKey) gitInfoCache.delete(oldestKey)
+  }
 
   const info = readGitInfoUncached(cwd)
   gitInfoCache.set(cwd, { info, ts: now })

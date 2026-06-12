@@ -22,9 +22,18 @@ export class ModelService implements IModelService {
 
   /** Wire runtime dependencies (called after all services are constructed). */
   setServices(session: ISessionService, config: IConfigService, broker: IMessageBroker): void {
+    if (!session || !config || !broker) {
+      throw new Error('ModelService.setServices: all dependencies are required')
+    }
     this.sessionService = session
     this.configService = config
     this.broker = broker
+  }
+
+  private ensureInitialized(): void {
+    if (!this.sessionService || !this.configService || !this.broker) {
+      throw new Error('ModelService not initialized — call setServices() first')
+    }
   }
 
   /**
@@ -34,6 +43,7 @@ export class ModelService implements IModelService {
    * Persist failure is logged but does not block the response.
    */
   async switchModel(sessionId: string, provider: string, modelId: string): Promise<void> {
+    this.ensureInitialized()
     // 1. Tell pi subprocess to switch model
     await this.sessionService.switchModel(sessionId, provider, modelId)
 
@@ -60,6 +70,7 @@ export class ModelService implements IModelService {
    * runtime state — no persistence needed.
    */
   async setThinkingLevel(sessionId: string, level: string): Promise<void> {
+    this.ensureInitialized()
     await this.sessionService.setThinkingLevel(sessionId, level)
   }
   aggregateModels(providers: ProviderInfo[]): ModelInfo[] {

@@ -133,6 +133,8 @@ watch(() => sessionStore.sessions.length, (newLen) => {
   flex-shrink: 0;
   -webkit-app-region: drag;
   border-bottom: 1px solid var(--border);
+  /* Empty header for window dragging only — if interactive elements are added here,
+     they must have -webkit-app-region: no-drag (see PanelBar.vue for reference) */
 }
 .empty-panel-header--safe-zone {
   padding-left: 78px;

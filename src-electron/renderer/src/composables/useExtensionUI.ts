@@ -20,9 +20,11 @@ function onUIRequest(msg: ServerMessage) {
   // notify 是 fire-and-forget（pi 不等回复），走 toast 展示
   if (payload.method === 'notify') {
     const toastType = LEVEL_TO_TOAST_TYPE[payload.level ?? 'info'] ?? 'info'
+    // eslint-disable-next-line no-magic-numbers -- 8 chars: short session ID prefix for toast disambiguation
+    const titleSuffix = sessionId ? ` [${sessionId.slice(0, 8)}]` : ''
     emitEventBus('toast:show', {
       type: toastType,
-      title: payload.title ?? '通知',
+      title: `${payload.title ?? '通知'}${titleSuffix}`,
       description: payload.message,
     })
     return

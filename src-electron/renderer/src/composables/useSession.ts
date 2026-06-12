@@ -24,8 +24,9 @@ function createGlobalHandlers() {
     const all = groups.flatMap(g => g.sessions)
     sessionStore.setSessions(all)
     // Sync thinkingLevel from server summaries into per-session chat state
+    // undefined thinkingLevel means 'off' — ensure frontend clears stale values
     for (const s of all) {
-      if (s.thinkingLevel) chatStore.setThinkingLevel(s.thinkingLevel, s.id)
+      chatStore.setThinkingLevel(s.thinkingLevel ?? 'off', s.id)
     }
   }
 

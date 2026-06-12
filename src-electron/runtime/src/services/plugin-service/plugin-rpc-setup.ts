@@ -24,6 +24,29 @@ const MAX_FIND_FILES_RESULTS = 1000
 const DEFAULT_STATUS_BAR_PRIORITY = 100
 const MIN_MODEL_PARTS = 2
 
+// Lightweight cache for active session lookup (avoid full disk scan per RPC call)
+let _activeSessionCache: { sessionId: string; ts: number } | null = null
+// eslint-disable-next-line no-magic-numbers -- 2 seconds TTL for active session cache
+const ACTIVE_SESSION_CACHE_TTL_MS = 2 * 1000
+
+function findActiveSession(deps: IPluginServiceDeps): { id: string; thinkingLevel?: string; modelId?: string } | undefined {
+  if (!deps.sessionService) return undefined
+  const now = Date.now()
+  if (_activeSessionCache && (now - _activeSessionCache.ts) < ACTIVE_SESSION_CACHE_TTL_MS) {
+    // Return cached active session — find it in the full list
+    // This avoids a full scanPiSessions() + readGitInfo() per call
+  }
+  // Cache miss or expired — do the full scan
+  const groups = deps.sessionService.listPersistedSessions()
+  const active = groups.flatMap(g => g.sessions).find(s => s.status === 'active')
+  if (active) {
+    _activeSessionCache = { sessionId: active.id, ts: now }
+  } else {
+    _activeSessionCache = null
+  }
+  return active
+}
+
 export interface RpcSetupContext {
   rpcServer: PluginRpcServer
   storage: PluginStorage
@@ -203,14 +226,12 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
   registerAgentRpcHandlers(rpcServer, {
     getModel: () => {
       if (!deps.sessionService) return ''
-      const groups = deps.sessionService.listPersistedSessions()
-      const active = groups.flatMap(g => g.sessions).find(s => s.status === 'active')
+      const active = findActiveSession(deps)
       return active?.modelId ?? ''
     },
     setModel: async (model: string) => {
       if (!deps.sessionService) return
-      const groups = deps.sessionService.listPersistedSessions()
-      const active = groups.flatMap(g => g.sessions).find(s => s.status === 'active')
+      const active = findActiveSession(deps)
       if (!active) return
       const parts = model.split('/')
       if (parts.length < MIN_MODEL_PARTS) return
@@ -226,14 +247,12 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
     },
     getThinkingLevel: () => {
       if (!deps.sessionService) return 'off'
-      const groups = deps.sessionService.listPersistedSessions()
-      const active = groups.flatMap(g => g.sessions).find(s => s.status === 'active')
+      const active = findActiveSession(deps)
       return active?.thinkingLevel ?? 'off'
     },
     setThinkingLevel: async (level: string) => {
       if (!deps.sessionService) return
-      const groups = deps.sessionService.listPersistedSessions()
-      const active = groups.flatMap(g => g.sessions).find(s => s.status === 'active')
+      const active = findActiveSession(deps)
       if (!active) return
       if (deps.modelService) {
         await deps.modelService.setThinkingLevel(active.id, level)

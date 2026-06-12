@@ -52,9 +52,6 @@ class EntryResolver(ABC):
     """入口点发现抽象基类。"""
 
     @abstractmethod
-    def discover_all(self, project: str) -> list[EntryPoint]:
-        """扫描项目，发现所有入口点。"""
-
     @abstractmethod
     def discover_all(self, project: str) -> list[EntryPoint]:
         """扫描项目，发现所有入口点。"""

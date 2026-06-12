@@ -50,8 +50,11 @@ export class SessionMessageHandler {
           try {
             await this.ctx.sessionService.ensureActive(switchId)
             const restored = this.ctx.sessionService.getSummary(switchId)
+            if (!restored) {
+              throw new Error(`Session ${switchId} restored but summary unavailable`)
+            }
             const messages = await this.ctx.sessionService.getHistory(switchId)
-            this.ctx.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: switchId, session: restored!, messages } })
+            this.ctx.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: switchId, session: restored, messages } })
           } catch (e) {
             const errMsg = e instanceof Error ? e.message : String(e)
             const isENOENT = errMsg.includes('ENOENT')

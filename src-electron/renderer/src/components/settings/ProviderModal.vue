@@ -1,11 +1,9 @@
 <script setup lang="ts">
-/* eslint-disable max-lines */
 import { ref, watch, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Button, Input, Select } from '../../design-system'
 import type { ProviderInfo, ModelInfo } from '@xyz-agent/shared'
-import { useProvider } from '../../composables/useProvider'
-import { on as onEvent, off as offEvent } from '../../lib/event-bus'
+import { useProviderValidation } from '../../composables/useProviderValidation'
 import {
   useModelEditor,
   formatCtx,
@@ -56,8 +54,6 @@ const modalModels = ref<ModalModel[]>([])
 // ─── Auto-discover state ────────────────────────────────────────
 
 const DEFAULT_NEW_MODEL_CTX = 200_000
-const discoverStatus = ref<'idle' | 'loading' | 'error' | 'empty' | 'success'>('idle')
-const discoverMessage = ref('')
 const addModelName = ref('')
 const addModelCtx = ref('200K')
 
@@ -65,6 +61,17 @@ const typeOptions = [
   { label: 'Anthropic', value: 'anthropic-messages' },
   { label: 'OpenAI Compatible', value: 'openai-completions' },
 ]
+
+// ─── Provider validation composable ─────────────────────────────
+
+const {
+  discoverStatus,
+  discoverMessage,
+  isSaving,
+  discover,
+  validateAndSave,
+  cleanup: cleanupDiscover,
+} = useProviderValidation()
 
 // ─── Watch provider changes ─────────────────────────────────────
 
@@ -96,13 +103,13 @@ watch(() => props.visible, (v) => {
   }
 })
 
-watch(formType, (t) => {
+watch(formType, (type) => {
   if (formUrl.value) return
   const defaults: Record<string, string> = {
     'anthropic-messages': 'https://api.anthropic.com',
     'openai-completions': '',
   }
-  formUrl.value = defaults[t] ?? ''
+  formUrl.value = defaults[type] ?? ''
 })
 
 // ─── Actions ────────────────────────────────────────────────────
@@ -131,40 +138,18 @@ function handleTest() {
   emit('test', { url: formUrl.value, key: formKey.value })
 }
 
-// ─── Auto-discover ─────────────────────────────────────────────
-
-// 监听自动发现结果的回调引用，用于卸载时清理
-let discoverHandler: ((msg: unknown) => void) | null = null
-
-const DISCOVER_TIMEOUT_MS = 15_000
-let discoverTimer: ReturnType<typeof setTimeout> | null = null
-
-function cleanupDiscover() {
-  if (discoverHandler) {
-    offEvent('config.discoveredModels', discoverHandler)
-    discoverHandler = null
-  }
-  if (discoverTimer) {
-    clearTimeout(discoverTimer)
-    discoverTimer = null
-  }
-}
+// ─── Auto-discover (delegated to composable) ────────────────────
 
 function handleDiscover() {
-  discoverStatus.value = 'loading'
-  discoverMessage.value = ''
-
   const type = formType.value
   const baseUrl = formUrl.value.trim()
 
-  // 前置校验：Base URL
   if (!baseUrl) {
     discoverStatus.value = 'error'
     discoverMessage.value = t('settings.baseUrlHint')
     return
   }
 
-  // 前置校验：API Key（本地模型除外，编辑模式下掩码视为已有 key）
   const key = formKey.value.trim()
   const isNewProvider = !props.provider
   const keyIsMask = key === '••••••••'
@@ -174,59 +159,26 @@ function handleDiscover() {
     return
   }
 
-  // 清理旧监听和超时
-  cleanupDiscover()
-
-  // 超时保护
-  discoverTimer = setTimeout(() => {
-    cleanupDiscover()
-    discoverStatus.value = 'error'
-    discoverMessage.value = t('settings.discoveryTimeoutHint')
-  }, DISCOVER_TIMEOUT_MS)
-
-  // 注册一次性监听
-  discoverHandler = (msg: unknown) => {
-    cleanupDiscover()
-
-    const payload = (msg as { payload: Record<string, unknown> }).payload
-    const models = payload.models as Array<{ id: string; name: string; contextWindow?: number }>
-    const success = payload.success as boolean
-    const error = payload.error as string | undefined
-
-    if (success && models.length > 0) {
+  discover(
+    baseUrl,
+    keyIsMask ? undefined : key || undefined,
+    type,
+    props.provider?.id || undefined,
+    // onSuccess: merge discovered models into form state
+    (models) => {
       modalModels.value = models.map(m => {
         const existing = modalModels.value.find(em => em.id === m.id)
         return {
           id: m.id,
-          name: m.name,
+          name: m.name ?? m.id,
           contextWindow: m.contextWindow ?? 0,
           enabled: existing?.enabled ?? true,
           thinkingLevelMap: existing?.thinkingLevelMap ?? structuredClone(THINKING_PRESETS['on-off']),
         }
       })
-      discoverStatus.value = 'success'
-      discoverMessage.value = t('settings.foundModels', { n: models.length })
-    } else if (success && models.length === 0) {
-      discoverStatus.value = 'empty'
-      discoverMessage.value = t('settings.noModelsFoundHint')
-    } else {
-      discoverStatus.value = 'error'
-      discoverMessage.value = error || t('settings.discoveryFailedHint')
-    }
-  }
-  onEvent('config.discoveredModels', discoverHandler)
-
-  // 通过 composable 发起发现请求
-  const { discoverModels } = useProvider()
-  discoverModels(
-    baseUrl,
-    keyIsMask ? undefined : key || undefined,
-    type,
-    props.provider?.id || undefined,
+    },
   )
 }
-
-const isSaving = ref(false)
 
 function handleSave() {
   if (isSaving.value) return
@@ -236,54 +188,19 @@ function handleSave() {
   const key = formKey.value.trim()
   const keyIsMask = key === '••••••••'
 
-  // Skip validation for providers without HTTP API (ollama without base URL)
+  // Skip validation for providers without HTTP API
   const needsValidation = baseUrl && (type !== 'ollama' || baseUrl !== '')
   if (!needsValidation) {
     emitSave()
     return
   }
 
-  // Validate provider by discovering models
-  isSaving.value = true
-  discoverStatus.value = 'loading'
-  discoverMessage.value = ''
-
-  cleanupDiscover()
-
-  const saveTimer = setTimeout(() => {
-    cleanupDiscover()
-    isSaving.value = false
-    discoverStatus.value = 'error'
-    discoverMessage.value = t('settings.discoveryTimeoutHint')
-  }, DISCOVER_TIMEOUT_MS)
-
-  const saveHandler = (msg: unknown) => {
-    clearTimeout(saveTimer)
-    offEvent('config.discoveredModels', saveHandler)
-
-    const payload = (msg as { payload: Record<string, unknown> }).payload
-    const success = payload.success as boolean
-
-    if (success) {
-      // Validation passed — do NOT merge discovered models here.
-      // The save path uses discover only to verify connectivity;
-      // merging would undo user's manual deletions.
-      emitSave()
-    } else {
-      const error = payload.error as string | undefined
-      discoverStatus.value = 'error'
-      discoverMessage.value = error || t('settings.discoveryFailedHint')
-    }
-    isSaving.value = false
-  }
-  onEvent('config.discoveredModels', saveHandler)
-
-  const { discoverModels } = useProvider()
-  discoverModels(
+  validateAndSave(
     baseUrl,
     keyIsMask ? undefined : key || undefined,
     type,
     props.provider?.id || undefined,
+    emitSave,
   )
 }
 

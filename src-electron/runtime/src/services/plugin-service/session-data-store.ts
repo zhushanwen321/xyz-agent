@@ -28,6 +28,9 @@ export class SessionDataStore {
   private flushTimer: ReturnType<typeof setInterval> | null = null
 
   // ── Cache 暴露（供 session-data-api RPC 直接操作） ──────────
+  // NOTE: 返回可变 Map 引用供 session-data-api 直接操作（set/delete）。
+  // 生命周期管理（flush/clear/restore）通过本类方法控制。
+  // 如需加校验拦截（如 size 上限），需将操作收拢到 mutation 方法中。
 
   getCache(): Map<string, Map<string, unknown>> {
     return this.cache

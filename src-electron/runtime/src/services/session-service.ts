@@ -249,6 +249,17 @@ export class SessionService implements ISessionService {
     const marker = `<!-- xyz-agent-force-subagent:${encoded} -->`
     const promptText = content || `Execute task using agent '${agent}'`
 
+    // Ensure session is active first (consistent with sendMessage execution order),
+    // then run hook check against the active session.
+    let client: IRpcClient
+    try {
+      client = await this.ensureActive(sessionId)
+    } catch (e) {
+      const errMsg = `Failed to restore session: ${e instanceof Error ? e.message : String(e)}`
+      console.error(`[session-service] ${errMsg}`)
+      throw e
+    }
+
     // Hook 审核用户原始输入，marker 仅在发送给 pi 时注入
     try {
       if (this.sendMessageHook) {
@@ -268,16 +279,6 @@ export class SessionService implements ISessionService {
         payload: { sessionId, message: 'Plugin hook error: ' + (e instanceof Error ? e.message : String(e)) },
       })
       return
-    }
-
-    // ensureActive + prompt 带上 marker
-    let client: IRpcClient
-    try {
-      client = await this.ensureActive(sessionId)
-    } catch (e) {
-      const errMsg = `Failed to restore session: ${e instanceof Error ? e.message : String(e)}`
-      console.error(`[session-service] ${errMsg}`)
-      throw e
     }
 
     const activeSession = this.findSessionByClient(client)

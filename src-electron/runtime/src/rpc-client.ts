@@ -107,6 +107,7 @@ export class RpcClient {
     // Bun 编译的 bundled pi 用 process.execPath 定位资源（package.json、themes 等），
     // 不依赖 process.cwd() 查找 package.json。因此 spawn cwd 可以安全地设为用户项目目录。
     // 这样 pi 的初始 session、system prompt、CLAUDE.md 查找、bash 工具都基于正确的 cwd。
+    // Verified: xyz-pi 0.75.5-xyz-0.1 uses process.execPath for resource resolution.
     const spawnCwd = this.options.cwd ?? process.cwd()
 
     console.log('[rpc] spawning pi:', piCmd, args.join(' '), 'cwd:', spawnCwd)
@@ -128,8 +129,8 @@ export class RpcClient {
       this._exited = true
       console.log(`[rpc] process exited with code ${code}`)
       // Only reject pending requests on unexpected exits.
-      // Normal kill flow (_killing=true) handles cleanup in destroySession,
-      // so rejectAll here would fire redundant message.error broadcasts.
+      // For normal kill flow (_killing=true), rejectAll is called in kill()
+      // via a separate safety net to avoid leaving callers hanging until CMD_TIMEOUT_MS.
       if (!this._killing) {
         this.rejectAll(new Error(`pi process exited with code ${code}${this.formatStderrSuffix()}`))
         if (this.exitCallback) {
@@ -374,6 +375,10 @@ export class RpcClient {
 
       proc.on('exit', () => {
         clearTimeout(killTimer)
+        // Safety net: clean up any pending requests that weren't rejected
+        // by the unexpected-exit handler (because _killing=true skips it).
+        // Without this, callers await until their own CMD_TIMEOUT_MS (60s).
+        this.rejectAll(new Error('pi process killed'))
         done()
       })
 

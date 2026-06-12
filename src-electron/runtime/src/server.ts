@@ -326,9 +326,8 @@ export class SidecarServer implements IMessageBroker {
     const absPath = normalize(resolve(filePath))
     const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? ''
     const allowedPrefixes = [
+      // ~/.agents/skills is a global skill directory (not affected by XYZ_AGENT_DATA_DIR)
       normalize(resolve(homeDir, '.agents/skills')),
-      normalize(resolve(homeDir, '.pi/agent/skills')),
-      normalize(resolve(homeDir, '.pi/agent/npm')),
       normalize(resolve(getPiAgentDir(), 'skills')),
       normalize(resolve(getPiAgentDir(), 'npm')),
     ]
