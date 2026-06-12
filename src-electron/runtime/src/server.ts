@@ -242,16 +242,15 @@ export class SidecarServer implements IMessageBroker {
 
   // ── IMessageBroker ──────────────────────────────────────────────
 
-  send(ws: unknown, msg: ServerMessage): void {
-    const typed = ws as WsType
-    if (typed.readyState === WS_OPEN) typed.send(JSON.stringify(msg))
+  send(ws: WsType, msg: ServerMessage): void {
+    if (ws.readyState === WS_OPEN) ws.send(JSON.stringify(msg))
   }
 
   broadcast(msg: ServerMessage): void {
     for (const ws of this.clients) this.send(ws, msg)
   }
 
-  sendError(ws: unknown, code: string, message: string, id?: string, sessionId?: string): void {
+  sendError(ws: WsType, code: string, message: string, id?: string, sessionId?: string): void {
     const payload: Record<string, unknown> = { code, message }
     if (sessionId) payload.sessionId = sessionId
     this.send(ws, { type: 'error', id, payload })

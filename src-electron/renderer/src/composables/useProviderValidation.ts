@@ -17,6 +17,7 @@ const DISCOVER_TIMEOUT_MS = 15_000
  */
 export function useProviderValidation() {
   const { t } = useI18n()
+  const { discoverModels } = useProvider()
 
   const discoverStatus = ref<'idle' | 'loading' | 'error' | 'empty' | 'success'>('idle')
   const discoverMessage = ref('')
@@ -87,7 +88,6 @@ export function useProviderValidation() {
     }
     onEvent('config.discoveredModels', discoverHandler)
 
-    const { discoverModels } = useProvider()
     discoverModels(baseUrl, key, type, providerId)
   }
 
@@ -131,7 +131,6 @@ export function useProviderValidation() {
     }
     onEvent('config.discoveredModels', saveHandler)
 
-    const { discoverModels } = useProvider()
     discoverModels(baseUrl, key, type, providerId)
   }
 

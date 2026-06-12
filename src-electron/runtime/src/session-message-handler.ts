@@ -10,8 +10,8 @@ import type { ISessionService } from './interfaces.js'
 export interface SessionHandlerContext {
   sessionService: ISessionService
   nextPushId(): string
-  send(ws: unknown, msg: ServerMessage): void
-  sendError(ws: unknown, code: string, message: string, id?: string, sessionId?: string): void
+  send(ws: WsType, msg: ServerMessage): void
+  sendError(ws: WsType, code: string, message: string, id?: string, sessionId?: string): void
   broadcastSessionList(): void
   clearExtensionTimeoutsForSession(sessionId: string): void
 }

@@ -98,6 +98,8 @@ export class SessionDataStore {
     this.size.delete(sessionId)
 
     // Also delete from disk
-    void deleteSessionData(getConfigDir(), sessionId).catch(() => {})
+    void deleteSessionData(getConfigDir(), sessionId).catch((e) => {
+      console.warn(`[session-data-store] failed to delete session data file for ${sessionId}:`, e instanceof Error ? e.message : String(e))
+    })
   }
 }

@@ -13,8 +13,8 @@ export interface ExtensionHandlerContext {
   sessionService: ISessionService
   extensionService: IExtensionService | undefined
   extensionTimeoutMgr: ExtensionTimeoutManager
-  send(ws: unknown, msg: ServerMessage): void
-  sendError(ws: unknown, code: string, message: string, id?: string, sessionId?: string): void
+  send(ws: WsType, msg: ServerMessage): void
+  sendError(ws: WsType, code: string, message: string, id?: string, sessionId?: string): void
 }
 
 export class ExtensionMessageHandler {

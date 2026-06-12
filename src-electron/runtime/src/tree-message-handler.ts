@@ -10,7 +10,7 @@ import type { TreeService } from './services/tree-service.js'
 export interface TreeHandlerContext {
   sessionService: ISessionService
   treeService: TreeService
-  send(ws: unknown, msg: ServerMessage): void
+  send(ws: WsType, msg: ServerMessage): void
   broadcastSessionList(): void
 }
 

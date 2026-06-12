@@ -33,8 +33,12 @@ function findActiveSession(deps: IPluginServiceDeps): { id: string; thinkingLeve
   if (!deps.sessionService) return undefined
   const now = Date.now()
   if (_activeSessionCache && (now - _activeSessionCache.ts) < ACTIVE_SESSION_CACHE_TTL_MS) {
-    // Return cached active session — find it in the full list
-    // This avoids a full scanPiSessions() + readGitInfo() per call
+    // Cache hit — look up session summary by cached ID (no full disk scan)
+    const cached = _activeSessionCache
+    const summary = deps.sessionService.getSummary(cached.sessionId)
+    if (summary) return summary
+    // Cached session no longer valid — fall through to full scan
+    _activeSessionCache = null
   }
   // Cache miss or expired — do the full scan
   const groups = deps.sessionService.listPersistedSessions()
@@ -45,6 +49,11 @@ function findActiveSession(deps: IPluginServiceDeps): { id: string; thinkingLeve
     _activeSessionCache = null
   }
   return active
+}
+
+/** Test helper: clear the active session cache between tests */
+export function clearActiveSessionCache(): void {
+  _activeSessionCache = null
 }
 
 export interface RpcSetupContext {

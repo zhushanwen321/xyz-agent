@@ -5,9 +5,10 @@
  * getActiveTools→toolRegistry schemas、getThinkingLevel 默认值。
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { PluginService } from '../src/services/plugin-service/plugin-service.js'
 import { PluginRegistry } from '../src/services/plugin-service/plugin-registry.js'
+import { clearActiveSessionCache } from '../src/services/plugin-service/plugin-rpc-setup.js'
 import type { IMessageBroker, ISessionService } from '../src/interfaces.js'
 import type { IPluginServiceDeps } from '../src/services/plugin-service/plugin-types.js'
 import type { SessionSummary, SessionGroup } from '@xyz-agent/shared'
@@ -75,6 +76,7 @@ async function callMethod(service: PluginService, method: string, params: Record
 describe('Agent RPC Handlers — real implementation', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    clearActiveSessionCache()
   })
 
   it('getModel returns active session modelId', async () => {

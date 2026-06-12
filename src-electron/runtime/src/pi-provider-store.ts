@@ -135,34 +135,33 @@ export function upsertProvider(providerId: string, config: PiProviderConfig): {
 
   // 同步校验 defaultModel：单次 readSettings → 计算 → 单次 writeSettings
   const settings: PiSettings = JSON.parse(JSON.stringify(readSettings()))
-  if (settings.defaultProvider === providerId) {
-    const newModelList = config.models ?? []
-    if (newModelList.length === 0) {
-      delete settings.defaultProvider
-      delete settings.defaultModel
-    } else {
-      const currentModelId = settings.defaultModel
-      if (currentModelId && !newModelList.find(m => m.id === currentModelId)) {
-        const fallback = newModelList[0]
-        settings.defaultModel = fallback.id
-        console.warn(`[provider-store] defaultModel "${currentModelId}" no longer in provider "${providerId}", falling back to "${fallback.id}"`)
+  if (settings.defaultProvider !== providerId) return {}
+
+  const newModelList = config.models ?? []
+  if (newModelList.length === 0) {
+    delete settings.defaultProvider
+    delete settings.defaultModel
+    // Try finding a valid default from other providers (inline findValidDefaultModel logic)
+    for (const [pid, pcfg] of Object.entries(models.providers)) {
+      if (pcfg.models && pcfg.models.length > 0) {
+        settings.defaultProvider = pid
+        settings.defaultModel = pcfg.models[0].id
+        break
       }
-      writeSettings(settings)
-      return { newDefault: { provider: providerId, modelId: settings.defaultModel! } }
     }
-    // Provider had 0 models — try finding a valid default from other providers
     writeSettings(settings)
-    const { result } = findValidDefaultModel()
-    if (result) {
-      const fixed: PiSettings = JSON.parse(JSON.stringify(readSettings()))
-      fixed.defaultProvider = result.provider
-      fixed.defaultModel = result.modelId
-      writeSettings(fixed)
-      return { newDefault: result }
-    }
-    return {}
+    return settings.defaultProvider
+      ? { newDefault: { provider: settings.defaultProvider, modelId: settings.defaultModel! } }
+      : {}
   }
-  return {}
+
+  const currentModelId = settings.defaultModel
+  if (currentModelId && !newModelList.find(m => m.id === currentModelId)) {
+    settings.defaultModel = newModelList[0].id
+    console.warn(`[provider-store] defaultModel "${currentModelId}" no longer in provider "${providerId}", falling back to "${newModelList[0].id}"`)
+  }
+  writeSettings(settings)
+  return { newDefault: { provider: providerId, modelId: settings.defaultModel! } }
 }
 
 /**
@@ -182,18 +181,18 @@ export function removeProvider(providerId: string): {
   if (settings.defaultProvider === providerId) {
     delete settings.defaultProvider
     delete settings.defaultModel
-    // Single write: first set without default, then findValid and write final
-    writeSettings(settings)
-    const { result } = findValidDefaultModel()
-    if (result) {
-      const fixed: PiSettings = JSON.parse(JSON.stringify(readSettings()))
-      fixed.defaultProvider = result.provider
-      fixed.defaultModel = result.modelId
-      writeSettings(fixed)
-      return { removed: true, newDefault: result }
+    // Inline findValidDefaultModel: scan remaining providers for a fallback
+    for (const [pid, pcfg] of Object.entries(models.providers)) {
+      if (pcfg.models && pcfg.models.length > 0) {
+        settings.defaultProvider = pid
+        settings.defaultModel = pcfg.models[0].id
+        break
+      }
     }
-  } else {
-    // No default affected — skip settings write entirely
+    writeSettings(settings)
+    return settings.defaultProvider
+      ? { removed: true, newDefault: { provider: settings.defaultProvider, modelId: settings.defaultModel! } }
+      : { removed: true }
   }
   return { removed: true }
 }

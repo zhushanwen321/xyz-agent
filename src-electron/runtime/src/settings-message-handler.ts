@@ -13,8 +13,8 @@ export interface SettingsHandlerContext {
   modelService: IModelService
   projectRoot: string
   nextPushId(): string
-  send(ws: unknown, msg: ServerMessage): void
-  sendError(ws: unknown, code: string, message: string, id?: string, sessionId?: string): void
+  send(ws: WsType, msg: ServerMessage): void
+  sendError(ws: WsType, code: string, message: string, id?: string, sessionId?: string): void
   broadcast(msg: ServerMessage): void
   broadcastProviderList(): void
   broadcastSkillList(): void
