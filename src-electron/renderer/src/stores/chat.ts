@@ -193,6 +193,8 @@ export const useChatStore = defineStore('chat', () => {
     } else if (opts?.stopReason === 'error') {
       // pi 返回错误但没有发送任何流式内容（如 Connection error）
       // 插入一条可见的错误通知，避免前端静默吞错
+      // 显式清空 streamingMessage（理论上已是 null，确保任何状态不一致时也能重置）
+      s.streamingMessage = null
       const errorDetail = opts?.errorMessage || '请求失败，请检查模型配置'
       s.completedMessages = [...s.completedMessages, {
         ...createSystemNotification('alert', errorDetail),

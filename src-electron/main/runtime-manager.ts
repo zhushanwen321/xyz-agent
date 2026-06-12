@@ -389,7 +389,7 @@ export class RuntimeManager {
   //   - ps → tasklist
   //   - SIGTERM/SIGKILL → taskkill /T /F /PID
   //   - execSync('sleep') → Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
-  // 详见 https://github.com/zhushanwen321/xyz-agent/issues/<TBD>
+  // 详见 https://github.com/zhushanwen321/xyz-agent/issues/TBD-windows-support (not planned for v0.x)
 
   /**
    * 递归获取指定 PID 的所有后代进程 PID（广度优先，返回按代排列：子→孙→...）。

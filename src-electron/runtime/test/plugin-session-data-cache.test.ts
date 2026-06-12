@@ -245,6 +245,11 @@ describe('SessionData Flush (PluginService)', () => {
     internals_ = serviceInternals(service)
   })
 
+  // Safety net: ensure fake timers are restored even if a test fails mid-way
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   // ── TC-4-05: Deactivate flush ────────────────────────────────
   it('flushSessionDataForSession clears dirty entries', async () => {
     // Set up dirty data
@@ -357,7 +362,7 @@ describe('SessionData Flush (PluginService)', () => {
     internals_.sessionDataStore.stopFlushTimer()
 
     // Timer should be null
-    expect((internals_.sessionDataStore as unknown as { flushTimer: ReturnType<typeof setInterval> | null }).flushTimer).toBeNull()
+    expect(internals_.sessionDataStore.isFlushTimerRunning()).toBe(false)
 
     // Advance 10s — flush should NOT happen (timer stopped)
     await vi.advanceTimersByTimeAsync(10_000)

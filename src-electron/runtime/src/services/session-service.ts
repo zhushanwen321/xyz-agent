@@ -1,4 +1,6 @@
 /* eslint-disable max-lines */
+// TODO: Extract message-related logic (sendMessage, sendSubagentMessage, switchModel, setThinkingLevel)
+// into a dedicated MessageService to reduce session-service responsibilities.
 /**
  * SessionService — extracted from session-pool.ts.
  *

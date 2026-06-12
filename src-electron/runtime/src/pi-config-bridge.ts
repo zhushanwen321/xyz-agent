@@ -142,9 +142,7 @@ export function scanPiSessions(): Array<{
 
 // ── Agent 管理 ────────────────────────────────────────────────
 
-export function getAgentsDir_(): string {
-  return getAgentsDir()
-}
+export { getAgentsDir } from './pi-paths.js'
 export function listAgentFiles(): Array<{ name: string; path: string; content: string }> {
   if (!existsSync(getAgentsDir())) return []
   const results: Array<{ name: string; path: string; content: string }> = []

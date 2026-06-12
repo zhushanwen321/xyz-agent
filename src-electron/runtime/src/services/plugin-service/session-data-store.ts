@@ -56,6 +56,11 @@ export class SessionDataStore {
     this.flushTimer = stopFlushTimer(this.flushTimer)
   }
 
+  /** Test helper: check if flush timer is active */
+  isFlushTimerRunning(): boolean {
+    return this.flushTimer !== null
+  }
+
   /** 将所有 dirty 数据批量 flush */
   async flushAll(): Promise<void> {
     await flushSessionData(this.dirty, this.cache)

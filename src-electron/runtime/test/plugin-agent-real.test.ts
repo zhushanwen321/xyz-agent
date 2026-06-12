@@ -141,6 +141,19 @@ describe('Agent RPC Handlers — real implementation', () => {
     expect(level).toBe('high')
   })
 
+  it('getThinkingLevel returns "off" when active session has undefined thinkingLevel', async () => {
+    const session: SessionSummary = {
+      id: 's1', label: 'S1', cwd: '/work', status: 'active',
+      lastActiveAt: Date.now(), modelId: 'provider/x', tokenCount: 0,
+      thinkingLevel: undefined,
+    }
+    const sessionService = createMockSessionService([session])
+    const service = createService(sessionService)
+
+    const level = await callMethod(service, 'plugin.agent.getThinkingLevel', {})
+    expect(level).toBe('off')
+  })
+
   it('setThinkingLevel is silently accepted', async () => {
     const service = createService(createMockSessionService())
 

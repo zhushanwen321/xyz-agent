@@ -35,8 +35,10 @@ class IPCResolver(EntryResolver):
         return results
 
     def _find_handler_name(self, source: str, pos: int) -> str:
-        before = source[:pos].rstrip()
-        m = re.search(r"(\w+)\s*=\s*$", before.split("\n")[-1])
+        # Handler is the second argument after the channel string
+        after = source[pos:]
+        # Skip past the channel string and closing quote/paren
+        m = re.search(r"[',\"`]\s*,\s*(\w+)", after)
         if m:
             return m.group(1)
         return ""
