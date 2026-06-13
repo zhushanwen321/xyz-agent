@@ -90,11 +90,26 @@ bash scripts/check-version-bump.sh
 
 ```bash
 cd $WS_ROOT/main
-# 执行版本 bump（patch/minor/major），例如:
-npm version patch -m "chore: bump version to %s"
-cd src-electron && npm version patch -m "chore: bump version to %s" && cd ..
+
+# ⚠️ 必须使用 --no-git-tag-version：两个 package.json 的变更必须在同一个
+#    commit 中，否则第二次 npm version 因 tag 已存在而失败，导致 src-electron
+#    的版本号未提交，CI 从 src-electron/package.json 读取到旧版本号。
+
+# 1. 纯修改文件，不创建 commit 和 tag
+npm version patch --no-git-tag-version
+cd src-electron && npm version patch --no-git-tag-version && cd ..
+
+# 2. 原子提交：两个 package.json 在同一个 commit
+VERSION=$(node -p "require('./package.json').version")
+git add package.json src-electron/package.json
+git commit -m "chore: bump version to ${VERSION}"
+
+# 3. 手动打 tag，确保指向包含两个文件变更的 commit
+git tag "v${VERSION}"
+
+# 4. 推送 commit + tag
 git push github HEAD
-git push github "v$(node -p "require('./package.json').version")"
+git push github "v${VERSION}"
 
 # [MANDATORY] 等待 CI 完成并验证产物
 # 此命令会轮询 CI 直到完成，验证 dmg/exe/AppImage 全部存在
