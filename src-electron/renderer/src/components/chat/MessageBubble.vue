@@ -5,7 +5,7 @@
     data-role="assistant"
     :data-entry-id="entryId"
     :data-timestamp="message.timestamp ?? ''"
-    class="self-start w-full relative group/msg p-3 px-4 bg-surface border border-border rounded-sm"
+    class="self-start w-full relative group/msg"
     :class="{ 'interrupted-msg': message.isInterrupted }"
   >
     <div v-if="showLabel" class="text-[10px] font-semibold uppercase tracking-[0.04em] leading-[1.4] mb-1 text-muted">
