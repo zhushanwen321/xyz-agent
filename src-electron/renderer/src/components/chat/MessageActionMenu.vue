@@ -37,7 +37,7 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import type { Message } from '@xyz-agent/shared'
 import { collectMessageContent } from '../../lib/collectMessageContent'
 import { copyWithToast } from '../../lib/clipboard'
-import { emit as emitEvent } from '../../lib/event-bus'
+import { useToastStore } from '../../stores/toast'
 import { useTree } from '../../composables/useTree'
 
 const props = defineProps<{
@@ -56,6 +56,7 @@ const emit = defineEmits<{
 }>()
 
 const { cloneSession } = useTree()
+const toastStore = useToastStore()
 
 const menuRef = ref<HTMLElement | null>(null)
 
@@ -85,7 +86,7 @@ async function handleCopyPlain() {
   const el = getMessageEl()
   if (!el) {
     console.warn('[MessageActionMenu] message element not found for entryId:', props.entryId)
-    emitEvent('toast:show', {
+    toastStore.show({
       type: 'danger',
       title: '无法复制',
       description: '消息已不在视图中',

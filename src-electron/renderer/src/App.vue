@@ -44,12 +44,12 @@
     <!-- Extension UI Dialog -->
     <ExtensionUIDialog />
     <!-- Custom Toast -->
-    <ToastContainer :toasts="toasts" @dismiss="dismissToast" />
+    <ToastContainer :toasts="toastStore.toasts" @dismiss="toastStore.dismiss" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted } from 'vue'
+import { watch, onMounted, onUnmounted } from 'vue'
 import { useSettingsStore } from './stores/settings'
 import { usePanelStore } from './stores/panel'
 import { useSessionStore } from './stores/session'
@@ -58,12 +58,11 @@ import { useNavigationStore } from './stores/navigation'
 import { useSidebarStore } from './stores/sidebar'
 import { useLayoutStore } from './stores/layout'
 import { useConnection } from './composables/useConnection'
-import { getState as getWsState } from './api'
-import { on as onEventBus, off as offEventBus } from './lib/event-bus'
+import { api, getState as getWsState } from './api'
 import type { ServerMessage } from '@xyz-agent/shared'
 import { useProvider } from './composables/useProvider'
 import { useSession } from './composables/useSession'
-import type { ToastItem } from './components/toast/ToastContainer.vue'
+import { useToastStore } from './stores/toast'
 import AppSidebar from './components/layout/AppSidebar.vue'
 import AppStatusbar from './components/layout/AppStatusbar.vue'
 import SettingsView from './components/layout/SettingsView.vue'
@@ -107,9 +106,7 @@ watch(
   },
 )
 
-const toasts = ref<ToastItem[]>([])
-const TOAST_DURATION_MS = 4_000
-const TOAST_LONG_DURATION_MS = 8_000
+const toastStore = useToastStore()
 const WS_DISCONNECT_WARN_DELAY_MS = 10_000
 
 let wsDisconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -118,14 +115,12 @@ const wsStateUnwatch = watch(wsState, (newState) => {
   if (newState === 'disconnected' || newState === 'reconnecting') {
     if (!wsDisconnectTimer) {
       wsDisconnectTimer = setTimeout(() => {
-        const id = crypto.randomUUID()
-        toasts.value.push({
-          id,
+        toastStore.show({
           type: 'warning',
           title: '连接已断开',
           description: 'Runtime 连接已断开，正在尝试重新连接…',
+          long: true,
         })
-        setTimeout(() => dismissToast(id), TOAST_LONG_DURATION_MS)
       }, WS_DISCONNECT_WARN_DELAY_MS)
     }
   } else if (newState === 'connected') {
@@ -136,9 +131,6 @@ const wsStateUnwatch = watch(wsState, (newState) => {
   }
 })
 const ipcCleanupFns: Array<() => void> = []
-let extTimeoutUnregister: (() => void) | null = null
-let errorUnregister: (() => void) | null = null
-let toastUnregister: (() => void) | null = null
 
 let isCreatingFromSidebar = false
 let prevSessionCount = 0
@@ -155,14 +147,11 @@ function handleKeydown(e: KeyboardEvent) {
       e.preventDefault()
       const dir = e.shiftKey ? 'vertical' : 'horizontal'
       if (!panelStore.splitPanel(panelStore.focusedPanelId, dir)) {
-        const id = crypto.randomUUID()
-        toasts.value.push({
-          id,
+        toastStore.show({
           type: 'warning',
           title: '已达面板数量上限',
           description: '最多支持 4 个面板，请先关闭空闲面板后再拆分。',
         })
-        setTimeout(() => dismissToast(id), TOAST_DURATION_MS)
       }
       break
   }
@@ -184,19 +173,13 @@ async function createSession() {
 
 function handleGlobalError(msg: ServerMessage) {
   if (!msg.payload.sessionId) {
-    const id = crypto.randomUUID()
-    toasts.value.push({
-      id,
+    toastStore.show({
       type: 'danger',
       title: '操作失败',
       description: (msg.payload.message as string) ?? '未知错误',
+      long: true,
     })
-    setTimeout(() => dismissToast(id), TOAST_LONG_DURATION_MS)
   }
-}
-
-function dismissToast(id: string) {
-  toasts.value = toasts.value.filter(t => t.id !== id)
 }
 
 onMounted(async () => {
@@ -283,14 +266,12 @@ onMounted(async () => {
 
   if (window.electronAPI?.onRuntimeError) {
     ipcCleanupFns.push(window.electronAPI.onRuntimeError((error) => {
-      const id = crypto.randomUUID()
-      toasts.value.push({
-        id,
+      toastStore.show({
         type: 'danger',
         title: 'Runtime 启动失败',
         description: error.message,
+        long: true,
       })
-      setTimeout(() => dismissToast(id), TOAST_LONG_DURATION_MS)
     }))
   }
 
@@ -303,12 +284,11 @@ onMounted(async () => {
         disconnectTimer = setTimeout(() => {
           disconnectTimer = null
           if (wsWatchState.value !== 'connected' && !disconnectToastId) {
-            disconnectToastId = crypto.randomUUID()
-            toasts.value.push({
-              id: disconnectToastId,
+            disconnectToastId = toastStore.show({
               type: 'warning',
               title: '连接断开',
               description: '正在尝试重新连接 Runtime 服务…',
+              persistent: true,
             })
           }
         }, WS_DISCONNECT_WARN_DELAY_MS)
@@ -319,37 +299,13 @@ onMounted(async () => {
         disconnectTimer = null
       }
       if (disconnectToastId) {
-        dismissToast(disconnectToastId)
+        toastStore.dismiss(disconnectToastId)
         disconnectToastId = null
       }
     }
   })
 
-  // extension UI timeout → toast
-  extTimeoutUnregister = onEventBus('extension.ui_timed_out', (payload: { extensionName: string }) => {
-    const id = crypto.randomUUID()
-    toasts.value.push({
-      id,
-      type: 'warning',
-      title: 'Extension 请求超时',
-      description: `${payload.extensionName} 的 UI 请求已超时`,
-    })
-    setTimeout(() => dismissToast(id), TOAST_DURATION_MS)
-  })
-
-  // toast:show → generic toast (clipboard, MessageActionMenu errors, etc.)
-  toastUnregister = onEventBus('toast:show', (payload: { type: 'success' | 'warning' | 'danger' | 'info'; title: string; description?: string }) => {
-    const id = crypto.randomUUID()
-    toasts.value.push({
-      id,
-      type: payload.type,
-      title: payload.title,
-      description: payload.description,
-    })
-    setTimeout(() => dismissToast(id), TOAST_DURATION_MS)
-  })
-
-  errorUnregister = onEventBus('error', handleGlobalError)
+  ipcCleanupFns.push(api.events.on('error', handleGlobalError))
 
   // macOS fullscreen state → toggle .is-fullscreen class on root element AND sync to layout store
   if (window.electronAPI?.onFullscreenChanged) {
@@ -360,10 +316,6 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  offEventBus('error', handleGlobalError)
-  extTimeoutUnregister?.()
-  errorUnregister?.()
-  toastUnregister?.()
   document.removeEventListener('keydown', handleKeydown)
   wsStateUnwatch()
   if (wsDisconnectTimer) clearTimeout(wsDisconnectTimer)

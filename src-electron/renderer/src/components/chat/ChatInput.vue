@@ -71,8 +71,7 @@ import { useI18n } from 'vue-i18n'
 import { useChatStore } from '../../stores/chat'
 import { useProviderStore } from '../../stores/provider'
 import { Textarea } from '../../design-system'
-import { consumePendingEditorText } from '../../composables/useTree'
-import { on } from '../../lib/event-bus'
+import { consumePendingEditorText, getPendingEditorVersion } from '../../composables/useTree'
 import SlashMenu from './SlashMenu.vue'
 import InputToolbar from './InputToolbar.vue'
 import SessionStrip from './SessionStrip.vue'
@@ -146,14 +145,13 @@ watch(() => props.sessionId, (newSid, oldSid) => {
     })
   }
 })
-// Same-session navigate: event-driven
-const unsubEditorText = on('editor-text-pending', () => {
+// Same-session navigate: watch pending editor text version (替代 event-bus)
+watch(getPendingEditorVersion, () => {
   nextTick(() => {
     const editorText = consumePendingEditorText(props.sessionId)
     if (editorText) text.value = editorText
   })
 })
-onUnmounted(() => { unsubEditorText?.() })
 
 // ── Send Mode ──
 const manualMode = ref<SendMode | null>(null)

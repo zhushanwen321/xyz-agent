@@ -1,6 +1,6 @@
 import { useTreeStore } from '../stores/tree'
 import { api } from '../api'
-import { emit } from '../lib/event-bus'
+import { ref } from 'vue'
 import type { ServerMessage, ServerMessageType } from '@xyz-agent/shared'
 
 // ── 常量 ────────────────────────────────────────────────────────
@@ -11,10 +11,17 @@ const TREE_FETCH_TIMEOUT_MS = 10_000
 /** Navigate 后的 editorText，按 session 存储，避免 split mode 交叉污染 */
 const pendingEditorTexts = new Map<string, string>()
 
+/** pending editor text 的变更版本号：每次 set 自增，供 ChatInput watch 响应（替代 event-bus 通知） */
+const pendingEditorVersion = ref(0)
+
 export function consumePendingEditorText(sessionId: string): string | null {
   const text = pendingEditorTexts.get(sessionId) ?? null
   pendingEditorTexts.delete(sessionId)
   return text
+}
+
+export function getPendingEditorVersion() {
+  return pendingEditorVersion
 }
 
 // ── 全局事件处理器 ────────────────────────────────────────────────
@@ -67,7 +74,7 @@ function createGlobalHandlers() {
     const editorText = msg.payload.editorText as string | undefined
     if (editorText) {
       pendingEditorTexts.set(sid, editorText)
-      emit('editor-text-pending')
+      pendingEditorVersion.value++
     }
   }
 

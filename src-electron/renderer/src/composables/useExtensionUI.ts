@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import { emit as emitEventBus } from '../lib/event-bus'
+import { useToastStore } from '../stores/toast'
 import { api } from '../api'
 import type { ExtensionUIRequestPayload, ServerMessage } from '@xyz-agent/shared'
 
@@ -23,7 +23,7 @@ function onUIRequest(msg: ServerMessage) {
     const SID_PREFIX_LEN = 8
     const sid = payload.sessionId
     const titleSuffix = sid ? ` [${sid.slice(0, SID_PREFIX_LEN)}]` : ''
-    emitEventBus('toast:show', {
+    useToastStore().show({
       type: toastType,
       title: `${payload.title ?? '通知'}${titleSuffix}`,
       description: payload.message,
@@ -46,8 +46,11 @@ function onUITimeout(_msg: ServerMessage) {
   if (!activeRequest.value) return
   const extName = activeRequest.value.title ?? 'Extension'
   activeRequest.value = null
-  // toast 通过 App.vue 全局 toast 显示，这里用 event-bus 通知
-  emitEventBus('extension.ui_timed_out', { extensionName: extName })
+  useToastStore().show({
+    type: 'warning',
+    title: 'Extension 请求超时',
+    description: `${extName} 的 UI 请求已超时`,
+  })
 }
 
 function registerListeners() {

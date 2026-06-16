@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { setActivePinia, createPinia } from 'pinia'
 import { copyWithToast } from '../clipboard'
 
 describe('copyWithToast', () => {
   beforeEach(() => {
+    setActivePinia(createPinia())
     vi.stubGlobal('navigator', {
       clipboard: {
         writeText: vi.fn().mockResolvedValue(undefined),
