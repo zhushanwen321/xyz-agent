@@ -1,11 +1,11 @@
 /**
  * Session tree message handler for session.tree-* message types.
- * Extracted from SidecarServer to reduce file size.
+ * Extracted from RuntimeServer to reduce file size.
  */
 import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
-import type { ISessionService } from './interfaces.js'
-import type { TreeService } from './services/tree-service.js'
+import type { ISessionService } from '../interfaces.js'
+import type { TreeService } from '../services/tree-service.js'
 
 export interface TreeHandlerContext {
   sessionService: ISessionService

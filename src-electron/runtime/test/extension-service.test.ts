@@ -2,12 +2,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, mkdtempSync, symlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir, homedir } from 'node:os'
-import { ExtensionService, ExtensionInstallError } from '../src/extension-service.js'
+import { ExtensionService, ExtensionInstallError } from '../src/services/extension-service.js'
 
-import { installPackage, uninstallPackage, NpmInstallError } from '../src/npm-installer.js'
+import { installPackage, uninstallPackage, NpmInstallError } from '../src/infra/npm-installer.js'
 import { execFileSync } from 'node:child_process'
 
-vi.mock('../src/npm-installer.js', () => ({
+vi.mock('../src/infra/npm-installer.js', () => ({
   installPackage: vi.fn(),
   uninstallPackage: vi.fn(),
   installDependencies: vi.fn(),

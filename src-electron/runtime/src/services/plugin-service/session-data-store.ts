@@ -10,7 +10,7 @@
 
 import { join } from 'node:path'
 import { readdir } from 'node:fs/promises'
-import { getConfigDir } from '../../pi-config-bridge.js'
+import { getConfigDir } from '../../adapters/pi-config-bridge.js'
 import { loadSessionData, deleteSessionData } from './plugin-storage.js'
 import { flushSessionData, flushSessionDataForSession, startFlushTimer, stopFlushTimer } from './session-data-flush.js'
 

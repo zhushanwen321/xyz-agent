@@ -1,7 +1,7 @@
 /* eslint max-lines: ["warn", {"max": 600, "skipBlankLines": true, "skipComments": true}] */
 
 /**
- * SidecarServer — pure Transport layer.
+ * RuntimeServer — 纯路由 + 连接管理 + 广播；业务逻辑在 services，经 handler 调用。
  * Routes ClientMessages to Service instances and pushes
  * ServerMessages back to TUI clients via WebSocket.
  */
@@ -9,15 +9,15 @@ import { createServer, type Server as HttpServer } from 'node:http'
 import { resolve } from 'node:path'
 import { WebSocketServer, WebSocket, type WebSocket as WsType } from 'ws'
 import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
-import type { ISessionService, IConfigService, IModelService, IMessageBroker, IExtensionService, IPluginService } from './interfaces.js'
-import { ExtensionTimeoutManager } from './extension-timeout-manager.js'
+import type { ISessionService, IConfigService, IModelService, IMessageBroker, IExtensionService, IPluginService } from '../interfaces.js'
+import { ExtensionTimeoutManager } from '../services/extension-timeout-manager.js'
 import { BridgeHandler } from './bridge-handler.js'
 import { SettingsMessageHandler } from './settings-message-handler.js'
 import { SessionMessageHandler } from './session-message-handler.js'
 import { ExtensionMessageHandler } from './extension-message-handler.js'
 import { PluginMessageHandler } from './plugin-message-handler.js'
 import { TreeMessageHandler } from './tree-message-handler.js'
-import { getPiAgentDir } from './pi-config-bridge.js'
+import { getPiAgentDir } from '../adapters/pi-config-bridge.js'
 
 const HTTP_OK = 200
 const HTTP_NOT_FOUND = 404
@@ -25,7 +25,7 @@ const MAX_WS_CLOSE_CODE = 4000
 const WS_OPEN = WebSocket.OPEN
 const HEARTBEAT_TIMEOUT_MS = 45_000
 
-export class SidecarServer implements IMessageBroker {
+export class RuntimeServer implements IMessageBroker {
   private httpServer: HttpServer
   private wss: WebSocketServer
   private clients = new Set<WsType>()
@@ -35,7 +35,7 @@ export class SidecarServer implements IMessageBroker {
   private sessionService!: ISessionService
   private configService!: IConfigService
   private modelService!: IModelService
-  private treeService!: import('./services/tree-service.js').TreeService
+  private treeService!: import('../services/tree-service.js').TreeService
   private extensionService?: IExtensionService
   private pluginService!: IPluginService
 
@@ -48,7 +48,7 @@ export class SidecarServer implements IMessageBroker {
   private pluginMessageHandler = new PluginMessageHandler(this as unknown as import('./plugin-message-handler.js').PluginHandlerContext)
   private treeMessageHandler = new TreeMessageHandler(this as unknown as import('./tree-message-handler.js').TreeHandlerContext)
 
-  setServices(session: ISessionService, config: IConfigService, model: IModelService, tree: import('./services/tree-service.js').TreeService, extension?: IExtensionService, plugin?: IPluginService): void {
+  setServices(session: ISessionService, config: IConfigService, model: IModelService, tree: import('../services/tree-service.js').TreeService, extension?: IExtensionService, plugin?: IPluginService): void {
     this.sessionService = session
     this.configService = config
     this.modelService = model

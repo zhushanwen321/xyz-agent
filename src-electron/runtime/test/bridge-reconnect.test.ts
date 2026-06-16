@@ -94,7 +94,7 @@ vi.mock('../src/services/plugin-service/plugin-service.js', () => ({
   }
 }))
 
-vi.mock('../src/process-manager.js', () => ({
+vi.mock('../src/infra/process-manager.js', () => ({
   ProcessManager: class MockProcessManager {
     createSession = vi.fn()
     destroySession = vi.fn().mockResolvedValue(undefined)
@@ -107,22 +107,22 @@ vi.mock('../src/process-manager.js', () => ({
   },
 }))
 
-vi.mock('../src/event-adapter.js', () => ({
+vi.mock('../src/adapters/event-adapter.js', () => ({
   EventAdapter: class MockEventAdapter {
     attach = vi.fn()
     detach = vi.fn()
   },
 }))
 
-vi.mock('../src/skill-scanner.js', () => ({
+vi.mock('../src/infra/skill-scanner.js', () => ({
   scanSkills: vi.fn().mockReturnValue([]),
 }))
 
-vi.mock('../src/agent-scanner.js', () => ({
+vi.mock('../src/infra/agent-scanner.js', () => ({
   scanAgents: vi.fn().mockReturnValue([]),
 }))
 
-vi.mock('../src/pi-config-bridge.js', () => ({
+vi.mock('../src/adapters/pi-config-bridge.js', () => ({
   getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
   getSkillPaths: () => [],
   getSessionsDir: () => '/mock/sessions',
@@ -132,7 +132,7 @@ vi.mock('../src/pi-config-bridge.js', () => ({
   refreshAll: () => {},
 }))
 
-vi.mock('../src/extension-service.js', () => {
+vi.mock('../src/services/extension-service.js', () => {
   return {
     ExtensionService: class MockExtensionService {
       scanExtensions = vi.fn().mockResolvedValue([])
@@ -143,11 +143,11 @@ vi.mock('../src/extension-service.js', () => {
   }
 })
 
-vi.mock('../src/trash.js', () => ({
+vi.mock('../src/infra/trash.js', () => ({
   trash: vi.fn(),
 }))
 
-import { SidecarServer } from '../src/server.js'
+import { RuntimeServer } from '../src/transport/server.js'
 import { SessionService } from '../src/services/session-service.js'
 import { PluginService } from '../src/services/plugin-service/plugin-service.js'
 
@@ -163,7 +163,7 @@ const NEW_TOOLS_AFTER_RESTART = [
 // ── Tests ────────────────────────────────────────────────────────
 
 describe('Bridge reconnect lifecycle', () => {
-  let server: SidecarServer
+  let server: RuntimeServer
 
   beforeEach(() => {
     vi.useFakeTimers()
@@ -172,7 +172,7 @@ describe('Bridge reconnect lifecycle', () => {
     mockHandleBridgeToolExecute.mockClear()
     mockHandleBridgeIntercept.mockClear()
     mockRpcClient = createMockRpcClient()
-    server = new SidecarServer(0, '/tmp/test-project')
+    server = new RuntimeServer(0, '/tmp/test-project')
     const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
     const pluginService = new PluginService({} as never, server)
     server.setServices(
@@ -342,7 +342,7 @@ describe('Bridge reconnect lifecycle', () => {
     })
 
     it('returns error when plugin service is not available', async () => {
-      const serverWithoutPlugin = new SidecarServer(0, '/tmp/test-project')
+      const serverWithoutPlugin = new RuntimeServer(0, '/tmp/test-project')
       const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
       // No plugin service set
       serverWithoutPlugin.setServices(sessionService, {} as never, {} as never, {} as never, {} as never)
@@ -494,7 +494,7 @@ describe('Bridge reconnect lifecycle', () => {
     })
 
     it('returns empty intercept when plugin service is not available', async () => {
-      const serverWithoutPlugin = new SidecarServer(0, '/tmp/test-project')
+      const serverWithoutPlugin = new RuntimeServer(0, '/tmp/test-project')
       const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
       serverWithoutPlugin.setServices(sessionService, {} as never, {} as never, {} as never, {} as never)
 

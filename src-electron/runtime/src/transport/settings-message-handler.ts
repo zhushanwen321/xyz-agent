@@ -1,10 +1,10 @@
 /**
  * Settings and model configuration message handler mixin.
- * Extracted from SidecarServer to reduce file size.
+ * Extracted from RuntimeServer to reduce file size.
  */
 import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
-import type { IConfigService, ISessionService, IModelService } from './interfaces.js'
+import type { IConfigService, ISessionService, IModelService } from '../interfaces.js'
 
 /** Interface for server methods needed by this handler */
 export interface SettingsHandlerContext {

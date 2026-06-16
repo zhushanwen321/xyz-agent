@@ -7,10 +7,10 @@
  */
 
 import type { IProcessManager, IRpcClient } from '../interfaces.js'
-import type { PiMessage } from '../rpc-client.js'
+import type { PiMessage } from '../infra/rpc-client.js'
 import type { TreeData, NavigateResult, ForkResult } from '../types.js'
-import { buildTreeFromFile, countBranches, extractFullText } from '../session-tree-reader.js'
-import { NavigateInterceptor } from '../navigate-interceptor.js'
+import { buildTreeFromFile, countBranches, extractFullText } from '../adapters/session-tree-reader.js'
+import { NavigateInterceptor } from '../adapters/navigate-interceptor.js'
 
 interface TreeManagedSession {
   interceptor: NavigateInterceptor

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { EventAdapter, type WsSender, type EventAdapterOptions } from '../src/event-adapter.js'
+import { EventAdapter, type WsSender, type EventAdapterOptions } from '../src/adapters/event-adapter.js'
 import type { ServerMessage } from '@xyz-agent/shared'
-import type { PiMessage } from '../src/rpc-client.js'
+import type { PiMessage } from '../src/infra/rpc-client.js'
 
 /**
  * Statusline feature tests (TC-1-01 ~ TC-4-03, TC-8-01 partial)

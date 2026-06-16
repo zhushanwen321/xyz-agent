@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createInterface } from 'node:readline'
-import { getDefaultModel, getSessionsDir, getPiAgentDir } from './pi-config-bridge.js'
+import { getDefaultModel, getSessionsDir, getPiAgentDir } from '../adapters/pi-config-bridge.js'
 import { ENV_WHITELIST_PREFIXES } from '@xyz-agent/shared'
 
 /** 子进程允许继承的环境变量前缀白名单 — uses shared list */

@@ -25,7 +25,7 @@ const mockScannedSessions: Array<{
   size: number
 }> = []
 
-vi.mock('../src/pi-config-bridge.js', () => ({
+vi.mock('../src/adapters/pi-config-bridge.js', () => ({
   getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
   getSkillPaths: () => [],
   getSessionsDir: () => '/mock/sessions',
@@ -37,7 +37,7 @@ vi.mock('../src/pi-config-bridge.js', () => ({
   patchSessionCwd: () => true,
 }))
 
-vi.mock('../src/trash.js', () => ({
+vi.mock('../src/infra/trash.js', () => ({
   trash: vi.fn(),
 }))
 
@@ -46,7 +46,7 @@ vi.mock('../src/trash.js', () => ({
 const attachMock = vi.fn()
 const detachMock = vi.fn()
 
-vi.mock('../src/event-adapter.js', () => ({
+vi.mock('../src/adapters/event-adapter.js', () => ({
   EventAdapter: class MockEventAdapter {
   private _sid: string
   private _send: (msg: unknown) => void
@@ -69,7 +69,7 @@ vi.mock('../src/event-adapter.js', () => ({
 const createSessionMock = vi.fn()
 const onSessionExitMock = vi.fn()
 
-vi.mock('../src/process-manager.js', () => ({
+vi.mock('../src/infra/process-manager.js', () => ({
   ProcessManager: class MockProcessManager {
   createSession = createSessionMock
   getClient = vi.fn()

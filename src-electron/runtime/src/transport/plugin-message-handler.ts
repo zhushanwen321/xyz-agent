@@ -1,10 +1,10 @@
 /**
  * Plugin message handler for plugin.* message types.
- * Extracted from SidecarServer to reduce file size.
+ * Extracted from RuntimeServer to reduce file size.
  */
 import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
-import type { IPluginService } from './interfaces.js'
+import type { IPluginService } from '../interfaces.js'
 
 export interface PluginHandlerContext {
   pluginService: IPluginService | null

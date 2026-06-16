@@ -3,7 +3,7 @@ import { mkdir, readdir, readFile, rm, rename } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { promisify } from 'node:util'
-import { getConfigDir } from '../../pi-config-bridge.js'
+import { getConfigDir } from '../../adapters/pi-config-bridge.js'
 
 const execFileAsync = promisify(execFile)
 

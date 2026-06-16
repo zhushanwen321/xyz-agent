@@ -67,7 +67,7 @@ vi.mock('../src/services/model-service.js', () => ({
   },
 }))
 
-vi.mock('../src/process-manager.js', () => ({
+vi.mock('../src/infra/process-manager.js', () => ({
   ProcessManager: class MockProcessManager {
     createSession = vi.fn()
     destroySession = vi.fn().mockResolvedValue(undefined)
@@ -80,22 +80,22 @@ vi.mock('../src/process-manager.js', () => ({
   },
 }))
 
-vi.mock('../src/event-adapter.js', () => ({
+vi.mock('../src/adapters/event-adapter.js', () => ({
   EventAdapter: class MockEventAdapter {
     attach = vi.fn()
     detach = vi.fn()
   },
 }))
 
-vi.mock('../src/skill-scanner.js', () => ({
+vi.mock('../src/infra/skill-scanner.js', () => ({
   scanSkills: vi.fn().mockReturnValue([]),
 }))
 
-vi.mock('../src/agent-scanner.js', () => ({
+vi.mock('../src/infra/agent-scanner.js', () => ({
   scanAgents: vi.fn().mockReturnValue([]),
 }))
 
-vi.mock('../src/pi-config-bridge.js', () => ({
+vi.mock('../src/adapters/pi-config-bridge.js', () => ({
   getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
   getSkillPaths: () => [],
   getSessionsDir: () => '/mock/sessions',
@@ -121,8 +121,8 @@ const mockFinishInstall = vi.fn().mockResolvedValue(undefined)
 const mockInstallExtension = vi.fn().mockResolvedValue(undefined)
 const mockCancelInstall = vi.fn().mockResolvedValue(undefined)
 
-vi.mock('../src/extension-service.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../src/extension-service.js')>()
+vi.mock('../src/services/extension-service.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/services/extension-service.js')>()
   return {
     ...actual,
     ExtensionService: class MockExtensionService {
@@ -139,15 +139,15 @@ vi.mock('../src/extension-service.js', async (importOriginal) => {
   }
 })
 
-vi.mock('../src/trash.js', () => ({
+vi.mock('../src/infra/trash.js', () => ({
   trash: vi.fn(),
 }))
 
-import { SidecarServer } from '../src/server.js'
+import { RuntimeServer } from '../src/transport/server.js'
 import { SessionService } from '../src/services/session-service.js'
 import { ConfigService } from '../src/services/config-service.js'
 import { ModelService } from '../src/services/model-service.js'
-import { ExtensionService } from '../src/extension-service.js'
+import { ExtensionService } from '../src/services/extension-service.js'
 
 function getFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -186,8 +186,8 @@ function waitForMessage(ws: WebSocket, type: string, timeout = 2000): Promise<Re
 
 // ── Tests with real timers (basic routing) ────────────────────────
 
-describe('SidecarServer: extension message routing', () => {
-  let server: SidecarServer
+describe('RuntimeServer: extension message routing', () => {
+  let server: RuntimeServer
   let port: number
   let ws: WebSocket
   let sessionService: SessionService
@@ -198,7 +198,7 @@ describe('SidecarServer: extension message routing', () => {
     mockInstallGitRepository.mockClear()
     mockFinishInstall.mockClear()
     port = await getFreePort()
-    server = new SidecarServer(port, '/tmp/test-project')
+    server = new RuntimeServer(port, '/tmp/test-project')
     sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
     server.setServices(
       sessionService,
@@ -591,14 +591,14 @@ describe('SidecarServer: extension message routing', () => {
 
 // ── Tests with fake timers (timeout mechanism) ────────────────────
 
-describe('SidecarServer: extension timeout mechanism', () => {
-  let server: SidecarServer
+describe('RuntimeServer: extension timeout mechanism', () => {
+  let server: RuntimeServer
   let sessionService: SessionService
 
   beforeEach(() => {
     vi.useFakeTimers()
     mockSendCommand.mockClear()
-    server = new SidecarServer(0, '/tmp/test-project')
+    server = new RuntimeServer(0, '/tmp/test-project')
     sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
     server.setServices(
       sessionService,

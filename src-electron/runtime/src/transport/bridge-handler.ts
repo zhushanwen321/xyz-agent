@@ -2,8 +2,8 @@
  * Bridge request handler for extension UI requests that bypass the frontend.
  * Routes to PluginService and sends extension_ui_response back to pi RPC.
  */
-import type { IRpcClient } from './interfaces.js'
-import type { IPluginService } from './interfaces.js'
+import type { IRpcClient } from '../interfaces.js'
+import type { IPluginService } from '../interfaces.js'
 
 export class BridgeHandler {
   constructor(private readonly pluginService: IPluginService | null) {}

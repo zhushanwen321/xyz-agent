@@ -1,12 +1,12 @@
 /**
  * Extension message handler for extension.* message types.
- * Extracted from SidecarServer to reduce file size.
+ * Extracted from RuntimeServer to reduce file size.
  */
 import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
-import type { ISessionService, IExtensionService } from './interfaces.js'
-import type { ExtensionTimeoutManager } from './extension-timeout-manager.js'
-import { ExtensionInstallError } from './extension-service.js'
+import type { ISessionService, IExtensionService } from '../interfaces.js'
+import type { ExtensionTimeoutManager } from '../services/extension-timeout-manager.js'
+import { ExtensionInstallError } from '../services/extension-service.js'
 
 /** Interface for server methods needed by this handler */
 export interface ExtensionHandlerContext {

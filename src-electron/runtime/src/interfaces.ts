@@ -17,7 +17,7 @@ import type {
   ScannedSkillInfo,
   ScannedAgentInfo,
 } from '@xyz-agent/shared'
-import type { PiEventListener } from './rpc-client.js'
+import type { PiEventListener } from './infra/rpc-client.js'
 
 // ── IRpcClient ────────────────────────────────────────────────────
 
