@@ -2,7 +2,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { on, off } from '../../lib/event-bus'
-import { send } from '../../lib/ws-client'
+import { api } from '../../api'
 import { Button, Dialog, Input } from '../../design-system'
 import type { ServerMessage, ExtensionInfo } from '@xyz-agent/shared'
 import ExtensionSection from './ExtensionSection.vue'
@@ -91,7 +91,7 @@ function handleToggle(payload: { name: string; enabled: boolean }) {
   const { name, enabled } = payload
   const target = extensions.value.find(ext => ext.name === name)
   if (target) target.enabled = enabled
-  send({ type: 'extension.toggle', payload: { name, enabled } })
+  api.extension.toggle({ name, enabled })
 }
 
 function handleInstall() {
@@ -103,11 +103,11 @@ function handleInstall() {
 
   if (installTab.value === 'local') {
     installPhase.value = 'discovering'
-    send({ type: 'extension.installDir', payload: { path: source } })
+    api.extension.installDir({ path: source })
     startInstallTimeout()
   } else if (installTab.value === 'git') {
     installPhase.value = 'discovering'
-    send({ type: 'extension.installGit', payload: { url: source } })
+    api.extension.installGit({ url: source })
     startInstallTimeout()
   } else {
     // npm — auto-prepend npm: prefix if missing
@@ -115,24 +115,21 @@ function handleInstall() {
       source = `npm:${source}`
     }
     installPhase.value = 'idle'
-    send({ type: 'extension.install', payload: { source } })
+    api.extension.install({ source })
   }
 }
 
 function confirmInstallSelected() {
   if (selectedCandidates.value.length === 0 || !discoveryTempDir.value) return
   installPhase.value = 'installing'
-  send({
-    type: 'extension.finishInstall',
-    payload: { tempDir: discoveryTempDir.value, selected: selectedCandidates.value },
-  })
+  api.extension.finishInstall({ tempDir: discoveryTempDir.value, selected: selectedCandidates.value })
   startInstallTimeout()
 }
 
 function cancelInstallSelection() {
   // Notify backend to clean up temp dir
   if (discoveryTempDir.value) {
-    send({ type: 'extension.cancelInstall', payload: { tempDir: discoveryTempDir.value } })
+    api.extension.cancelInstall({ tempDir: discoveryTempDir.value })
   }
   installPhase.value = 'idle'
   discoveredCandidates.value = []
@@ -155,7 +152,7 @@ function confirmUninstall(ext: ExtensionInfo) {
 
 function doUninstall() {
   if (!uninstallTarget.value) return
-  send({ type: 'extension.uninstall', payload: { name: uninstallTarget.value.name } })
+  api.extension.uninstall({ name: uninstallTarget.value.name })
   uninstallTarget.value = null
 }
 
@@ -179,7 +176,7 @@ onMounted(() => {
   on('config.extensions', onExtensions)
   on('extension.discovered', onDiscovered)
   on('extension.installError', onInstallError)
-  send({ type: 'extension.list', payload: {} })
+  api.extension.list()
 })
 
 onUnmounted(() => {

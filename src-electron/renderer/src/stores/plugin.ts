@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, reactive, computed } from 'vue'
-import { send } from '../lib/ws-client'
+import { api } from '../api'
 import type {
   PluginViewModel,
   PluginStatusItem,
@@ -115,7 +115,7 @@ export const usePluginStore = defineStore('plugin', () => {
   function fetchPlugins() {
     loading.value = true
     error.value = null
-    send({ type: 'plugin.list', payload: {} })
+    api.plugin.list()
   }
 
   /**
@@ -131,53 +131,35 @@ export const usePluginStore = defineStore('plugin', () => {
     updatePluginField(id, { enabled, status: enabled ? 'active' : 'inactive' })
     pluginStatuses.set(id, enabled ? 'active' : 'inactive')
 
-    send({
-      type: 'plugin.toggle',
-      payload: { pluginId: id, enabled },
-    })
+    api.plugin.toggle({ pluginId: id, enabled })
   }
 
   function uninstallPlugin(id: string) {
     const plugin = installedPlugins.value.find(p => p.pluginId === id)
     if (!plugin || plugin.source === 'built-in') return
 
-    send({ type: 'plugin.uninstall', payload: { pluginId: id } })
+    api.plugin.uninstall({ pluginId: id })
   }
 
   function approvePermissions(id: string, permissions: string[]) {
-    send({
-      type: 'plugin.approvePermissions',
-      payload: { pluginId: id, permissions },
-    })
+    api.plugin.approvePermissions({ pluginId: id, permissions })
     permissionRequests.delete(id)
   }
 
   function revokePermissions(id: string) {
-    send({
-      type: 'plugin.revokePermissions',
-      payload: { pluginId: id },
-    })
+    api.plugin.revokePermissions({ pluginId: id })
   }
 
   function executeCommand(pluginId: string, commandId: string, args?: Record<string, unknown>) {
-    send({
-      type: 'plugin.executeCommand',
-      payload: { pluginId, commandId, ...(args && { args }) },
-    })
+    api.plugin.executeCommand({ pluginId, commandId, ...(args && { args }) })
   }
 
   function getConfig(pluginId: string, key?: string) {
-    send({
-      type: 'plugin.config.get',
-      payload: { pluginId, ...(key !== undefined && { key }) },
-    })
+    api.plugin.configGet({ pluginId, ...(key !== undefined && { key }) })
   }
 
   function setConfig(pluginId: string, key: string, value: unknown) {
-    send({
-      type: 'plugin.config.set',
-      payload: { pluginId, key, value },
-    })
+    api.plugin.configSet({ pluginId, key, value })
   }
 
   // ── Actions: event handlers (called by usePlugin composable) ─

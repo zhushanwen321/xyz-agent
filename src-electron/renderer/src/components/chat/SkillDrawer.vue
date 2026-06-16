@@ -22,12 +22,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onBeforeUnmount } from 'vue'
+import { ref, watch } from 'vue'
 import { renderLightweight, renderFull } from '../../lib/markdown'
 import { useSettingsStore } from '../../stores/settings'
-import { send } from '../../lib/ws-client'
-import { on, off } from '../../lib/event-bus'
-import type { ServerMessage } from '@xyz-agent/shared'
+import { api } from '../../api'
 
 const props = defineProps<{
   visible: boolean
@@ -43,52 +41,36 @@ defineEmits<{
 const settings = useSettingsStore()
 const loading = ref(false)
 const renderedContent = ref('')
-let requestId = ''
 
-function handleResult(msg: ServerMessage) {
-  if (msg.id !== requestId) return
-  const payload = msg.payload as { content?: string; error?: string }
-  if (payload.error) {
-    renderedContent.value = '<p class="skill-drawer__empty">加载失败: ' + payload.error + '</p>'
-  } else if (payload.content) {
-    const theme = settings.theme === 'dark' ? 'dark' : settings.theme === 'light' ? 'light'
-      : window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-    renderFull(payload.content, theme, { codeTheme: theme }).then(html => {
-      renderedContent.value = html
-    }).catch(() => {
-      renderedContent.value = renderLightweight(payload.content!)
-    })
-  }
-  loading.value = false
-}
-
-// Single watch: register listeners BEFORE sending request, cleanup on hide/unmount
-// Uses immediate: true so that when visible starts as true (panel restore),
-// listeners are registered before any result arrives.
+// readFile 经 api 走 id 匹配的 pending，直接 await 结果（替代手动 requestId + 事件监听）
 watch(() => props.visible, async (vis) => {
-  // Always cleanup previous listeners first
-  off('file.read:result', handleResult)
-  off('file.read:error', handleResult)
-
   if (!vis) return
-
-  // Register listeners BEFORE sending request (ensures no race)
-  on('file.read:result', handleResult)
-  on('file.read:error', handleResult)
 
   if (!props.skillLocation) {
     renderedContent.value = '<p class="skill-drawer__empty">无 Skill 内容可显示</p>'
     return
   }
   loading.value = true
-  requestId = `skill-dr-${Date.now()}`
-  send({ type: 'file.read', id: requestId, payload: { path: props.skillLocation } })
+  try {
+    const result = await api.system.readFile({ path: props.skillLocation }) as { content?: string; error?: string }
+    if (result.error) {
+      renderedContent.value = '<p class="skill-drawer__empty">加载失败: ' + result.error + '</p>'
+    } else if (result.content) {
+      const content = result.content
+      const theme = settings.theme === 'dark' ? 'dark' : settings.theme === 'light' ? 'light'
+        : window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+      renderFull(content, theme, { codeTheme: theme }).then(html => {
+        renderedContent.value = html
+      }).catch(() => {
+        renderedContent.value = renderLightweight(content)
+      })
+    }
+  } catch (e) {
+    renderedContent.value = '<p class="skill-drawer__empty">加载失败: ' + (e instanceof Error ? e.message : '未知错误') + '</p>'
+  } finally {
+    loading.value = false
+  }
 }, { immediate: true })
-
-onBeforeUnmount(() => {
-  off('file.read:result', handleResult)
-  off('file.read:error', handleResult)
-})
 </script>
 
 <style scoped>

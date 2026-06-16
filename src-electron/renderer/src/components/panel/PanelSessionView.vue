@@ -46,7 +46,7 @@ import type { PendingToolCall } from '../chat/ApprovalCard.vue'
 import type { AgentOption, AgentView } from './ChatPanel.vue'
 import ChatPanel from './ChatPanel.vue'
 import { createSystemNotification } from '../../lib/system-notification'
-import { send } from '../../lib/ws-client' // 仅用于 handleSendCommand 的动态消息路由
+import { api } from '../../api'
 
 const props = defineProps<{
   panelId: string
@@ -105,7 +105,7 @@ function handleSend(payload: { content: string; skillName?: string; subagent?: {
   // Sync thinking level to pi before sending message
   const level = chatStore.getSessionState(sid)?.thinkingLevel
   if (level) {
-    send({ type: 'session.setThinkingLevel', payload: { sessionId: sid, level } })
+    api.session.setThinkingLevel({ sessionId: sid, level })
   }
   chatStore.addMessage({
     id: crypto.randomUUID(),
@@ -121,10 +121,10 @@ function handleSend(payload: { content: string; skillName?: string; subagent?: {
   if (mode === 'steer') {
     // Steer: runtime handles abort+send atomically in message.steer handler
     chatStore.setGenerating(true, sid)
-    send({ type: 'message.steer', payload: { sessionId: sid, content: payload.content } })
+    api.chat.steer({ sessionId: sid, content: payload.content })
   } else if (mode === 'queue') {
     // Queue: send via message.follow_up without interrupting
-    send({ type: 'message.follow_up', payload: { sessionId: sid, content: payload.content } })
+    api.chat.followUp({ sessionId: sid, content: payload.content })
   } else {
     sendMessage(payload.content, payload.subagent)
   }
@@ -135,7 +135,7 @@ function handleSendCommand(payload: { type: string; payload: Record<string, unkn
   if (!sid) return
   // 动态路由：slash command 的通用消息转发，需绕过 discriminated union 收窄
   const msg = { type: payload.type, payload: { ...payload.payload, sessionId: sid } } as ClientMessage
-  send(msg)
+  api.command(msg)
 }
 
 function handleLocalAction(payload: { action: string; data?: unknown }) {
