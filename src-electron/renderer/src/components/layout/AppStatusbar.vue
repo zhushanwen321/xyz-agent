@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { usePluginStore } from '../../stores/plugin'
-import { getState } from '../../lib/ws-client'
+import { getState } from '../../api'
 import { useI18n } from 'vue-i18n'
 import type { PluginStatusItem } from '../../types/plugin'
 

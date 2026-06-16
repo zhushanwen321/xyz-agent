@@ -1,5 +1,6 @@
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { connect, disconnect, getState } from '../lib/ws-client'
+import { api } from '../api'
 import { BASE_PORT, DEV_PORT_OFFSET } from '@xyz-agent/shared'
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting'
@@ -49,6 +50,12 @@ export function useConnection() {
       return
     }
     initialised = true
+
+    // G5: 重连成功（reconnecting→connected）通知 features 层收尾 isGenerating 的 session。
+    // effects 层不碰 store，只透出信号（依赖图决策 A）。
+    watch(getState(), (n, o) => {
+      if (n === 'connected' && o === 'reconnecting') api.events._notifyConnectionRestored()
+    })
 
     if (import.meta.env.VITE_MOCK === 'true') {
       connect('mock://localhost')

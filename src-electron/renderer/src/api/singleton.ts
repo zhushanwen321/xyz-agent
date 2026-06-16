@@ -19,3 +19,9 @@ const transport = import.meta.env.VITE_MOCK === 'true'
   : createEventBusTransport()
 
 export const api = createApiClient({ transport })
+
+/**
+ * 连接状态 ref（re-export 自 ws-client）：App/AppStatusbar 读传输层连接状态。
+ * 过渡期 re-export 合理——SA6 收口 getState 直调，后续 ws 直连 api 后由 transport 内化。
+ */
+export { getState } from '../lib/ws-client'

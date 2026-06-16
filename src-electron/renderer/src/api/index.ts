@@ -69,3 +69,4 @@ export function createApiClient(opts: { transport: Transport }): ApiClient {
 // 全局单例 re-export：composable / store / 组件统一 `import { api } from '@/api'`。
 // 循环依赖安全：createApiClient 是函数声明（hoisted），singleton.ts 求值时已可用。
 export { api } from './singleton'
+export { getState } from './singleton'

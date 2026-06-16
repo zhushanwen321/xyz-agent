@@ -43,11 +43,12 @@ export function connect(url: string): void {
     if (gen !== wsGeneration) return  // 旧 WS 的残余回调，忽略
     state.value = 'connected'
     reconnectAttempts = 0
-    console.log('[ws] connected, flushing ' + messageQueue.length + ' queued messages')
-    for (const msg of messageQueue) {
-      ws?.send(JSON.stringify(msg))
+    // G5: runtime 重启后旧 session-scoped 消息无意义，清空队列不重发。
+    // 心跳由独立定时器发送，不受影响。
+    if (messageQueue.length > 0) {
+      console.log('[ws] connected, dropping ' + messageQueue.length + ' queued messages (runtime restart)')
+      messageQueue = []
     }
-    messageQueue = []
     startHeartbeat()
   }
 

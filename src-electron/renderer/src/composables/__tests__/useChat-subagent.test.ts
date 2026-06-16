@@ -1,118 +1,226 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ref } from 'vue'
+import { setActivePinia, createPinia } from 'pinia'
+import type { ChatSessionState } from '../../stores/chat'
 
 /**
- * T2 测试：sendMessage 的 subagent 参数传递
+ * SA6 测试：useChat 迁移到 api.events / api.chat 后的行为。
  *
- * 当前 sendMessage 签名是 (content: string)，不接收 subagent 参数。
- * 目标签名：(content: string, subagent?: { agent: string; task: string })
- *
- * 当 subagent 被传入时，WS payload 必须包含 subagent 字段。
- * 当 subagent 未传入时，行为与现有完全一致（backward compat）。
+ * - sendMessage：调 api.chat.send（不再 ws send），payload 形状含 sessionId/content/subagent?
+ * - __test_registerGlobalHandlers：订阅 23 个全局事件 + 1 个 G5 onConnectionRestored
+ * - G5：onConnectionRestored 回调收尾所有 isGenerating 的 session
  */
+
+// ── hoisted 单例 mock（vi.mock 提升后在 factory 内引用）──────────────
+
+const {
+  mockChatStore,
+  mockSessionStore,
+  chatSend,
+  chatAbort,
+  eventsOn,
+  onConnRestored,
+} = vi.hoisted(() => {
+  // chatStore 单例：G5 回调与 sendMessage 共用同一实例，chatSessions 可塞数据
+  const mockChatStore = {
+    chatSessions: new Map<string, ChatSessionState>(),
+    setGenerating: vi.fn(),
+    setError: vi.fn(),
+    getSessionState: vi.fn(() => ({ streamingMessage: null, isGenerating: false })),
+    setStreaming: vi.fn(),
+    completeStreaming: vi.fn(),
+    completeStream: vi.fn(),
+    addMessage: vi.fn(),
+    updateContextInfo: vi.fn(),
+  }
+  return {
+    mockChatStore,
+    mockSessionStore: { currentSessionId: 'session-default' },
+    chatSend: vi.fn<() => Promise<unknown>>(),
+    chatAbort: vi.fn<() => Promise<unknown>>(),
+    eventsOn: vi.fn<() => () => void>(),
+    onConnRestored: vi.fn<() => () => void>(),
+  }
+})
 
 // ── Mock 依赖 ──────────────────────────────────────────────────────
 
-const sentMessages: unknown[] = []
-
-vi.mock('../../lib/ws-client', () => ({
-  send: (msg: unknown) => { sentMessages.push(msg) },
-}))
-
-vi.mock('../../lib/event-bus', () => ({
-  on: vi.fn(),
-  off: vi.fn(),
+vi.mock('../../api', () => ({
+  api: {
+    events: {
+      on: eventsOn,
+      onConnectionRestored: onConnRestored,
+      _dispatch: vi.fn(),
+      _notifyConnectionRestored: vi.fn(),
+    },
+    chat: {
+      send: chatSend,
+      abort: chatAbort,
+      steer: vi.fn(),
+      followUp: vi.fn(),
+    },
+  },
 }))
 
 vi.mock('../../stores/chat', () => ({
-  useChatStore: () => ({
-  setGenerating: vi.fn(),
-  setError: vi.fn(),
-  getSessionState: vi.fn(() => ({ streamingMessage: null })),
-  setStreaming: vi.fn(),
-  completeStreaming: vi.fn(),
-  addMessage: vi.fn(),
-  updateContextInfo: vi.fn(),
-  }),
+  useChatStore: () => mockChatStore,
 }))
 
 vi.mock('../../stores/session', () => ({
-  useSessionStore: () => ({
-  currentSessionId: 'session-default',
-  }),
+  useSessionStore: () => mockSessionStore,
 }))
 
 // 在 mock 之后导入被测模块
-import { useChat } from '../useChat'
+import { useChat, __test_registerGlobalHandlers } from '../useChat'
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  mockChatStore.chatSessions.clear()
+  // clearAllMocks 清掉返回值实现，重设
+  chatSend.mockResolvedValue(undefined)
+  chatAbort.mockResolvedValue(undefined)
+  eventsOn.mockReturnValue(() => {})
+  onConnRestored.mockReturnValue(() => {})
+})
 
 describe('useChat.sendMessage — subagent parameter', () => {
-  beforeEach(() => {
-  sentMessages.length = 0
-  })
+  it('should include subagent field in payload when sendMessage is called with subagent', () => {
+    const { sendMessage } = useChat(ref('session-1'))
 
-  it('should include subagent field in WS payload when sendMessage is called with subagent', () => {
-  const { sendMessage } = useChat(ref('session-1'))
+    sendMessage('hello', { agent: 'code-review', task: 'review src/foo.ts' })
 
-  sendMessage('hello', { agent: 'code-review', task: 'review src/foo.ts' })
-
-  expect(sentMessages).toHaveLength(1)
-  const msg = sentMessages[0] as { type: string; payload: Record<string, unknown> }
-  expect(msg.type).toBe('message.send')
-  expect(msg.payload.sessionId).toBe('session-1')
-  expect(msg.payload.content).toBe('hello')
-  expect(msg.payload.subagent).toEqual({
-    agent: 'code-review',
-    task: 'review src/foo.ts',
-  })
+    expect(chatSend).toHaveBeenCalledTimes(1)
+    expect(chatSend).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      content: 'hello',
+      subagent: { agent: 'code-review', task: 'review src/foo.ts' },
+    })
   })
 
   it('should NOT include subagent field when sendMessage is called without subagent', () => {
-  const { sendMessage } = useChat(ref('session-2'))
+    const { sendMessage } = useChat(ref('session-2'))
 
-  sendMessage('plain message')
+    sendMessage('plain message')
 
-  expect(sentMessages).toHaveLength(1)
-  const msg = sentMessages[0] as { type: string; payload: Record<string, unknown> }
-  expect(msg.type).toBe('message.send')
-  expect(msg.payload.sessionId).toBe('session-2')
-  expect(msg.payload.content).toBe('plain message')
-  // subagent 字段不应存在
-  expect(msg.payload).not.toHaveProperty('subagent')
+    expect(chatSend).toHaveBeenCalledTimes(1)
+    expect(chatSend).toHaveBeenCalledWith({
+      sessionId: 'session-2',
+      content: 'plain message',
+    })
   })
 
   it('should pass agent name and task correctly in subagent field', () => {
-  const { sendMessage } = useChat(ref('session-3'))
+    const { sendMessage } = useChat(ref('session-3'))
 
-  sendMessage('do something', { agent: 'bug-fixer', task: 'fix null pointer in bar()' })
+    sendMessage('do something', { agent: 'bug-fixer', task: 'fix null pointer in bar()' })
 
-  expect(sentMessages).toHaveLength(1)
-  const msg = sentMessages[0] as { type: string; payload: Record<string, unknown> }
-  const subagent = msg.payload.subagent as { agent: string; task: string }
-  expect(subagent.agent).toBe('bug-fixer')
-  expect(subagent.task).toBe('fix null pointer in bar()')
+    const payload = chatSend.mock.calls[0][0] as { subagent: { agent: string; task: string } }
+    expect(payload.subagent.agent).toBe('bug-fixer')
+    expect(payload.subagent.task).toBe('fix null pointer in bar()')
   })
 
-  it('should maintain backward compat: same WS payload shape as before when no subagent', () => {
-  const { sendMessage } = useChat(ref('session-4'))
+  it('should maintain backward compat: same payload shape as before when no subagent', () => {
+    const { sendMessage } = useChat(ref('session-4'))
 
-  sendMessage('backward compat')
+    sendMessage('backward compat')
 
-  expect(sentMessages).toHaveLength(1)
-  const msg = sentMessages[0] as { type: string; payload: Record<string, unknown> }
-
-  // 精确匹配 payload keys — 不应该多出 subagent 之类的额外字段
-  const payloadKeys = Object.keys(msg.payload).sort()
-  expect(payloadKeys).toEqual(['content', 'sessionId'])
+    const payload = chatSend.mock.calls[0][0] as Record<string, unknown>
+    // 精确匹配 payload keys — 不应该多出 subagent 之类的额外字段
+    expect(Object.keys(payload).sort()).toEqual(['content', 'sessionId'])
   })
 
   it('should handle undefined subagent same as omitted subagent', () => {
-  const { sendMessage } = useChat(ref('session-5'))
+    const { sendMessage } = useChat(ref('session-5'))
 
-  sendMessage('msg with undefined', undefined)
+    sendMessage('msg with undefined', undefined)
 
-  expect(sentMessages).toHaveLength(1)
-  const msg = sentMessages[0] as { type: string; payload: Record<string, unknown> }
-  // undefined subagent 等同于不传，不应在 payload 中出现
-  expect(msg.payload).not.toHaveProperty('subagent')
+    const payload = chatSend.mock.calls[0][0] as Record<string, unknown>
+    expect(payload).not.toHaveProperty('subagent')
+  })
+})
+
+describe('useChat.abort', () => {
+  it('calls api.chat.abort with sessionId and completes stream locally', () => {
+    const { abort } = useChat(ref('session-abort'))
+
+    abort()
+
+    expect(chatAbort).toHaveBeenCalledTimes(1)
+    expect(chatAbort).toHaveBeenCalledWith({ sessionId: 'session-abort' })
+    // 本地立即收尾 + 系统消息（不等后端确认）
+    expect(mockChatStore.completeStream).toHaveBeenCalledWith({ stopReason: 'aborted' }, 'session-abort')
+    expect(mockChatStore.addMessage).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('__test_registerGlobalHandlers — 全局事件订阅', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  it('订阅 23 个全局事件 + 1 个 G5 onConnectionRestored', () => {
+    eventsOn.mockClear()
+    onConnRestored.mockClear()
+    eventsOn.mockReturnValue(() => {})
+    onConnRestored.mockReturnValue(() => {})
+
+    __test_registerGlobalHandlers()
+
+    // 23 个 ServerMessage 事件订阅
+    expect(eventsOn).toHaveBeenCalledTimes(23)
+    // 1 个重连收尾订阅
+    expect(onConnRestored).toHaveBeenCalledTimes(1)
+  })
+
+  it('重复调用先取消旧订阅再重注（off 被调，再注册）', () => {
+    const off = vi.fn()
+    eventsOn.mockReturnValue(off)
+    onConnRestored.mockReturnValue(off)
+
+    __test_registerGlobalHandlers()
+    __test_registerGlobalHandlers()
+
+    // 第二次注册前取消全部旧订阅（23 + 1 = 24 个 off）
+    expect(off).toHaveBeenCalledTimes(24)
+  })
+})
+
+describe('G5 — onConnectionRestored 收尾 isGenerating 的 session', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  it('重连后收尾所有 isGenerating=true 的 session（setError + completeStream error）', () => {
+    __test_registerGlobalHandlers()
+
+    mockChatStore.chatSessions.set('s-active', { isGenerating: true } as ChatSessionState)
+    mockChatStore.chatSessions.set('s-idle', { isGenerating: false } as ChatSessionState)
+
+    const cb = onConnRestored.mock.calls[0][0] as () => void
+    cb()
+
+    expect(mockChatStore.setError).toHaveBeenCalledWith('连接已重置', 's-active')
+    expect(mockChatStore.completeStream).toHaveBeenCalledWith(
+      { stopReason: 'error', errorMessage: '连接已重置' },
+      's-active',
+    )
+    // 非 generating 的 session 不被收尾
+    expect(mockChatStore.setError).not.toHaveBeenCalledWith('连接已重置', 's-idle')
+    expect(mockChatStore.completeStream).not.toHaveBeenCalledWith(
+      expect.anything(),
+      's-idle',
+    )
+  })
+
+  it('无 isGenerating session 时重连不触发收尾', () => {
+    __test_registerGlobalHandlers()
+
+    mockChatStore.chatSessions.set('s-idle', { isGenerating: false } as ChatSessionState)
+
+    const cb = onConnRestored.mock.calls[0][0] as () => void
+    cb()
+
+    expect(mockChatStore.setError).not.toHaveBeenCalled()
+    expect(mockChatStore.completeStream).not.toHaveBeenCalled()
   })
 })

@@ -1,8 +1,7 @@
 import { useChatStore } from '../stores/chat'
 import { useSessionStore } from '../stores/session'
 import { getActivePinia } from 'pinia'
-import { send } from '../lib/ws-client'
-import { on, off } from '../lib/event-bus'
+import { api } from '../api'
 import { type Ref, unref } from 'vue'
 import type {
   ServerMessage, ServerMessageType, ToolCall, ContentBlock,
@@ -363,17 +362,30 @@ function createGlobalHandlers() {
   ])
 }
 
-// Module-level variable: holds the map of (event type → handler) created by createGlobalHandlers().
-// Declared before createGlobalHandlers for readability — the function references this variable,
-// but since registerGlobalListeners is called via queueMicrotask, the declaration is hoisted.
+// Module-level: (event type → handler) map + 订阅取消函数列表。
+// createGlobalHandlers 返回 23 个全局事件 handler；registerGlobalListeners 经 api.events.on 订阅，
+// 收集取消函数到 globalOffs，供 __test_registerGlobalHandlers 重注前取消旧订阅。
 let globalEventMap: Map<ServerMessageType, (msg: ServerMessage) => void> | null = null
+let globalOffs: Array<() => void> = []
 
 function registerGlobalListeners() {
   if (globalEventMap) return // 已注册
   globalEventMap = createGlobalHandlers()
+  const store = useChatStore()
+  globalOffs = []
   for (const [evt, handler] of globalEventMap) {
-    on(evt, handler)
+    globalOffs.push(api.events.on(evt, handler))
   }
+  // G5: runtime 重连后旧 session 的流已断，收尾所有 isGenerating 的 session。
+  // features 层（useChat）授权碰 store；events 只 emit 信号不碰 store（依赖图决策 A）。
+  globalOffs.push(api.events.onConnectionRestored(() => {
+    for (const [sid, s] of store.chatSessions) {
+      if (s.isGenerating) {
+        store.setError('连接已重置', sid)
+        store.completeStream({ stopReason: 'error', errorMessage: '连接已重置' }, sid)
+      }
+    }
+  }))
 }
 
 // unregisterGlobalListeners: removed — listeners registered at module load, never unregistered
@@ -408,14 +420,16 @@ export function useChat(sessionId?: Ref<string>) {
     }
     store.setGenerating(true, sid)
     store.setError(null, sid)
-    const payload = { sessionId: sid, content, ...(subagent && { subagent }) }
-    send({ type: 'message.send', payload })
+    // fire-and-forget：原 ws send 无返回值，保持语义；catch 防 unhandled rejection
+    api.chat.send({ sessionId: sid, content, ...(subagent && { subagent }) })
+      .catch((e) => console.error('[useChat] message.send failed:', e))
   }
 
   function abort() {
     const sid = resolveSessionId()
     if (!sid) return
-    send({ type: 'message.abort', payload: { sessionId: sid } })
+    api.chat.abort({ sessionId: sid })
+      .catch((e) => console.error('[useChat] message.abort failed:', e))
     // 立即完成当前流，不等后端确认
     store.completeStream({ stopReason: 'aborted' }, sid)
     // 插入系统消息提示用户操作已终止
@@ -456,14 +470,9 @@ queueMicrotask(safeRegisterGlobalListeners)
  */
 export function __test_registerGlobalHandlers(): void {
   if (!getActivePinia()) return
-  // Cleanup old handlers before re-registering
-  if (globalEventMap) {
-    for (const [evt, handler] of globalEventMap) {
-      off(evt, handler)
-    }
-  }
-  globalEventMap = createGlobalHandlers()
-  for (const [evt, handler] of globalEventMap) {
-    on(evt, handler)
-  }
+  // 取消旧订阅再重注（测试每次重建 handler）
+  for (const off of globalOffs) off()
+  globalOffs = []
+  globalEventMap = null
+  registerGlobalListeners()
 }

@@ -27,7 +27,11 @@ import type { ServerMessage } from '@xyz-agent/shared'
 // ── Mock event-bus (capture handlers) ─────────────────────────────
 
 type EventHandler = (msg: ServerMessage) => void
-const capturedHandlers = new Map<string, EventHandler>()
+const { capturedHandlers } = vi.hoisted(() => ({
+  // event-bus.on 的 handler 捕获表：用 hoisted 避免 vi.mock factory 在 import 阶段
+  // 执行时（useChat → api → transport → on）触发 TDZ。mock factory 可安全引用。
+  capturedHandlers: new Map<string, EventHandler>(),
+}))
 
 vi.mock('../../lib/event-bus', () => ({
   on: (event: string, handler: EventHandler) => {
@@ -40,6 +44,20 @@ vi.mock('../../lib/event-bus', () => ({
 
 vi.mock('../../lib/ws-client', () => ({
   send: vi.fn(),
+  getState: vi.fn(() => ({ value: 'connected' })),
+}))
+
+// api singleton 会被 useChat 间接拉入；mock 掉避免真 transport + ws 依赖
+vi.mock('../../api', () => ({
+  api: {
+    events: {
+      on: (event: string, handler: EventHandler) => { capturedHandlers.set(event, handler); return () => {} },
+      onConnectionRestored: vi.fn(() => () => {}),
+      _dispatch: vi.fn(),
+      _notifyConnectionRestored: vi.fn(),
+    },
+    chat: { send: vi.fn(() => Promise.resolve()), abort: vi.fn(() => Promise.resolve()), steer: vi.fn(), followUp: vi.fn() },
+  },
 }))
 
 // ── Mock session store (mutable sessions for rename test) ─────────
