@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { on, off } from '../../lib/event-bus'
 import { api } from '../../api'
 import { Button, Dialog, Input } from '../../design-system'
 import type { ServerMessage, ExtensionInfo } from '@xyz-agent/shared'
@@ -172,18 +171,21 @@ function installButtonLabel(): string {
 
 // ── Lifecycle ───────────────────────────────────────────────────
 
+let eventOffs: Array<() => void> = []
+
 onMounted(() => {
-  on('config.extensions', onExtensions)
-  on('extension.discovered', onDiscovered)
-  on('extension.installError', onInstallError)
+  eventOffs = [
+    api.events.on('config.extensions', onExtensions),
+    api.events.on('extension.discovered', onDiscovered),
+    api.events.on('extension.installError', onInstallError),
+  ]
   api.extension.list()
 })
 
 onUnmounted(() => {
   clearInstallTimeout()
-  off('config.extensions', onExtensions)
-  off('extension.discovered', onDiscovered)
-  off('extension.installError', onInstallError)
+  eventOffs.forEach(off => off())
+  eventOffs = []
 })
 </script>
 

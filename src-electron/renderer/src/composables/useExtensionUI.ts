@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import { on, emit as emitEventBus } from '../lib/event-bus'
+import { emit as emitEventBus } from '../lib/event-bus'
 import { api } from '../api'
 import type { ExtensionUIRequestPayload, ServerMessage } from '@xyz-agent/shared'
 
@@ -53,9 +53,9 @@ function onUITimeout(_msg: ServerMessage) {
 function registerListeners() {
   if (listenersRegistered) return
   listenersRegistered = true
-  on('extension.ui_request', onUIRequest)
-  on('extension.ui_timeout', onUITimeout)
-  on('plugin:uiRequest', onPluginUIRequest)
+  api.events.on('extension.ui_request', onUIRequest)
+  api.events.on('extension.ui_timeout', onUITimeout)
+  api.events.on('plugin:uiRequest', onPluginUIRequest)
 }
 
 // 模块加载时注册监听

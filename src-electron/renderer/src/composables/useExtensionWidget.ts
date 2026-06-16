@@ -1,7 +1,7 @@
 import { ref } from 'vue'
-import { on } from '../lib/event-bus'
+import { api } from '../api'
 import { EXTENSION_EVENTS } from '@xyz-agent/shared'
-import type { ExtensionWidgetPayload, ExtensionStatusPayload } from '@xyz-agent/shared'
+import type { ServerMessage, ExtensionWidgetPayload, ExtensionStatusPayload } from '@xyz-agent/shared'
 
 // Module-level singleton state (shared across components in split mode)
 const widgets = ref<Map<string, ExtensionWidgetPayload>>(new Map())
@@ -11,8 +11,8 @@ const statuses = ref<Map<string, ExtensionStatusPayload>>(new Map())
 // 必须保持 listeners 持久化以捕获所有事件
 let listenersRegistered = false
 
-function onWidget(msg: { payload: ExtensionWidgetPayload }) {
-  const p = msg.payload
+function onWidget(msg: ServerMessage) {
+  const p = msg.payload as unknown as ExtensionWidgetPayload
   if (!p?.sessionId || !p?.widgetKey) return
   const key = `${p.sessionId}:${p.widgetKey}`
   if (p.lines.length === 0) {
@@ -24,8 +24,8 @@ function onWidget(msg: { payload: ExtensionWidgetPayload }) {
   }
 }
 
-function onStatus(msg: { payload: ExtensionStatusPayload }) {
-  const p = msg.payload
+function onStatus(msg: ServerMessage) {
+  const p = msg.payload as unknown as ExtensionStatusPayload
   if (!p?.sessionId || !p?.statusKey) return
   const key = `${p.sessionId}:${p.statusKey}`
   if (!p.text) {
@@ -40,8 +40,8 @@ function onStatus(msg: { payload: ExtensionStatusPayload }) {
 function ensureListeners() {
   if (listenersRegistered) return
   listenersRegistered = true
-  on(EXTENSION_EVENTS.WIDGET, onWidget)
-  on(EXTENSION_EVENTS.STATUS, onStatus)
+  api.events.on(EXTENSION_EVENTS.WIDGET, onWidget)
+  api.events.on(EXTENSION_EVENTS.STATUS, onStatus)
 }
 
 export function useExtensionWidget() {

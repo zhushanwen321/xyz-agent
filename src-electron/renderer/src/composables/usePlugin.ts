@@ -1,8 +1,8 @@
 import { onMounted, onUnmounted } from 'vue'
 import { getActivePinia } from 'pinia'
-import { on, off } from '../lib/event-bus'
+import { api } from '../api'
 import { usePluginStore } from '../stores/plugin'
-import type { ServerMessage } from '@xyz-agent/shared'
+import type { ServerMessage, ServerMessageType } from '@xyz-agent/shared'
 import type {
   PluginViewModel,
   PluginStatusItem,
@@ -11,86 +11,87 @@ import type {
 
 // ── Global event handler creation ──────────────────────────────
 
-function createPluginHandlers(): Record<string, (msg: ServerMessage) => void> {
+function createPluginHandlers(): Map<ServerMessageType, (msg: ServerMessage) => void> {
   const store = usePluginStore()
 
-  return {
+  return new Map<ServerMessageType, (msg: ServerMessage) => void>([
     /** Full plugin list refresh (response to plugin.list / plugin.toggle / plugin.uninstall) */
-    'config.plugins': (msg: ServerMessage) => {
+    ['config.plugins', (msg: ServerMessage) => {
       const payload = msg.payload as { plugins?: PluginViewModel[] }
       if (payload.plugins) {
         store.setPlugins(payload.plugins)
       }
-    },
+    }],
 
     /** Single plugin status change push */
-    'plugin:statusChange': (msg: ServerMessage) => {
+    ['plugin:statusChange', (msg: ServerMessage) => {
       const { pluginId, newStatus } = msg.payload as { pluginId: string; newStatus: string }
       store.setStatusChange(pluginId, newStatus)
-    },
+    }],
 
     /** Plugin crashed */
-    'plugin:crashed': (msg: ServerMessage) => {
+    ['plugin:crashed', (msg: ServerMessage) => {
       const { pluginId, error } = msg.payload as { pluginId: string; error: string }
       store.setCrashed(pluginId, error)
-    },
+    }],
 
     /** Plugin notification */
-    'plugin:notification': (msg: ServerMessage) => {
+    ['plugin:notification', (msg: ServerMessage) => {
       const n = msg.payload as { pluginId: string; level: 'info' | 'warning' | 'error'; message: string }
       store.addNotification(n)
-    },
+    }],
 
     /** Permission request */
-    'plugin:permissionRequest': (msg: ServerMessage) => {
+    ['plugin:permissionRequest', (msg: ServerMessage) => {
       const { pluginId, permissions } = msg.payload as { pluginId: string; permissions: string[] }
       store.setPermissionRequest(pluginId, permissions)
-    },
+    }],
 
     /** Status bar items update */
-    'plugin:statusBarUpdate': (msg: ServerMessage) => {
+    ['plugin:statusBarUpdate', (msg: ServerMessage) => {
       const { items } = msg.payload as { items: PluginStatusItem[] }
       store.setStatusBarItems(items)
-    },
+    }],
 
-    /** Message decoration */
-    'plugin:messageDecoration': (msg: ServerMessage) => {
+    /** Message decorations */
+    ['plugin:messageDecoration', (msg: ServerMessage) => {
       const { messageId, decorations } = msg.payload as {
         messageId: string
         decorations: PluginMessageDecoration[]
       }
       store.setMessageDecorations(messageId, decorations)
-    },
+    }],
 
     /** Plugin config response */
-    'plugin:config': (msg: ServerMessage) => {
+    ['plugin:config', (msg: ServerMessage) => {
       const { pluginId, config } = msg.payload as {
         pluginId: string
         config: Record<string, unknown>
       }
       store.setPluginConfig(pluginId, config)
-    },
-  }
+    }],
+  ])
 }
 
 // ── Global listener lifecycle (refCount pattern) ───────────────
 
-let globalPluginHandlers: Record<string, (msg: ServerMessage) => void> | null = null
+let globalPluginHandlers: Map<ServerMessageType, (msg: ServerMessage) => void> | null = null
+let globalOffs: Array<() => void> = []
 let _refCount = 0
 
 function registerGlobalListeners() {
   if (globalPluginHandlers) return
   globalPluginHandlers = createPluginHandlers()
-  for (const [evt, handler] of Object.entries(globalPluginHandlers)) {
-    on(evt, handler)
+  globalOffs = []
+  for (const [evt, handler] of globalPluginHandlers) {
+    globalOffs.push(api.events.on(evt, handler))
   }
 }
 
 function unregisterGlobalListeners() {
   if (!globalPluginHandlers) return
-  for (const [evt, handler] of Object.entries(globalPluginHandlers)) {
-    off(evt, handler)
-  }
+  for (const off of globalOffs) off()
+  globalOffs = []
   globalPluginHandlers = null
 }
 

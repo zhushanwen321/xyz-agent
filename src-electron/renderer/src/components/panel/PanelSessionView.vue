@@ -40,7 +40,6 @@ import { useToolApproval } from '../../composables/useToolApproval'
 import { useModel } from '../../composables/useModel'
 import { useExtensionWidget } from '../../composables/useExtensionWidget'
 import { toProtocolSendMode } from '@xyz-agent/shared'
-import { on, off } from '../../lib/event-bus'
 import type { ServerMessage, ClientMessage, ExtensionWidgetPayload } from '@xyz-agent/shared'
 import type { PendingToolCall } from '../chat/ApprovalCard.vue'
 import type { AgentOption, AgentView } from './ChatPanel.vue'
@@ -201,11 +200,11 @@ function handleSwitchAgent(agentId: string) {
 
 // --- Global event handlers (not yet fully session-partitioned) ---
 
-function handleToolApprovalRequest(msg: { payload: PendingToolCall }) {
+function handleToolApprovalRequest(msg: ServerMessage) {
   // TODO Phase 1C: Server does not yet send sessionId in tool_call_pending payloads.
   // Once it does, filter by sessionId to prevent cross-panel tool approval in multi-panel mode.
   // Current risk: single-panel setups are unaffected; multi-panel may show approval in wrong panel.
-  pendingApproval.value = msg.payload
+  pendingApproval.value = msg.payload as unknown as PendingToolCall
 }
 
 function handleErrorMessage(msg: ServerMessage) {
@@ -260,22 +259,24 @@ function handleCompacted(msg: ServerMessage) {
 const onCompacting = (msg: ServerMessage) => handleCompactionState(msg, true)
 const onCompacted = (msg: ServerMessage) => handleCompacted(msg)
 
+let eventOffs: Array<() => void> = []
+
 onMounted(() => {
   chatStore.ensureSession(props.sessionId)
   // 预加载 tree 数据，避免首次打开 tree 面板时的延迟
   const { fetchTree, requestCapability } = useTree()
   fetchTree(props.sessionId)
   requestCapability(props.sessionId)
-  on('message.tool_call_pending', handleToolApprovalRequest)
-  on('error', handleErrorMessage)
-  on('session.compacting', onCompacting)
-  on('session.compacted', onCompacted)
+  eventOffs = [
+    api.events.on('message.tool_call_pending', handleToolApprovalRequest),
+    api.events.on('error', handleErrorMessage),
+    api.events.on('session.compacting', onCompacting),
+    api.events.on('session.compacted', onCompacted),
+  ]
 })
 
 onUnmounted(() => {
-  off('message.tool_call_pending', handleToolApprovalRequest)
-  off('error', handleErrorMessage)
-  off('session.compacting', onCompacting)
-  off('session.compacted', onCompacted)
+  eventOffs.forEach(off => off())
+  eventOffs = []
 })
 </script>

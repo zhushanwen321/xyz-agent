@@ -3,8 +3,7 @@ import { useSessionStore } from '../stores/session'
 import { useChatStore } from '../stores/chat'
 import { useTreeStore } from '../stores/tree'
 import { api } from '../api'
-import { on, off } from '../lib/event-bus'
-import type { ServerMessage, SessionSummary, Message } from '@xyz-agent/shared'
+import type { ServerMessage, ServerMessageType, SessionSummary, Message } from '@xyz-agent/shared'
 
 // ── 全局事件处理器（ref-counted，解决多组件重复注册问题）───
 // useSession 被 App.vue + AppSidebar.vue + EmptyPanel.vue 分别调用，
@@ -12,7 +11,8 @@ import type { ServerMessage, SessionSummary, Message } from '@xyz-agent/shared'
 // 导致 addSession 添加多条相同 session → duplicate key 错误。
 
 let globalListenerRefCount = 0
-let globalEventMap: Record<string, (msg: ServerMessage) => void> | null = null
+let globalEventMap: Map<ServerMessageType, (msg: ServerMessage) => void> | null = null
+let globalOffs: Array<() => void> = []
 
 function createGlobalHandlers() {
   const sessionStore = useSessionStore()
@@ -59,27 +59,27 @@ function createGlobalHandlers() {
     chatStore.replaceMessages(messages, sessionId)
   }
 
-  return {
-    'session.list': onSessionList,
-    'session.created': onSessionCreated,
-    'session.deleted': onSessionDeleted,
-    'session.history': onSessionHistory,
-  } as Record<string, (msg: ServerMessage) => void>
+  return new Map<ServerMessageType, (msg: ServerMessage) => void>([
+    ['session.list', onSessionList],
+    ['session.created', onSessionCreated],
+    ['session.deleted', onSessionDeleted],
+    ['session.history', onSessionHistory],
+  ])
 }
 
 function registerGlobalListeners() {
   if (globalEventMap) return
   globalEventMap = createGlobalHandlers()
-  for (const [evt, handler] of Object.entries(globalEventMap)) {
-    on(evt, handler)
+  globalOffs = []
+  for (const [evt, handler] of globalEventMap) {
+    globalOffs.push(api.events.on(evt, handler))
   }
 }
 
 function unregisterGlobalListeners() {
   if (!globalEventMap) return
-  for (const [evt, handler] of Object.entries(globalEventMap)) {
-    off(evt, handler)
-  }
+  for (const off of globalOffs) off()
+  globalOffs = []
   globalEventMap = null
 }
 

@@ -1,24 +1,26 @@
 import { onMounted, onUnmounted, getCurrentInstance } from 'vue'
 import { useProviderStore } from '../stores/provider'
 import { useSettingsStore } from '../stores/settings'
-import { on, off } from '../lib/event-bus'
 import { api } from '../api'
-import type { ServerMessage, ProviderInfo, ModelInfo, SkillInfo, AgentInfo, ScannedSkillInfo, ScannedAgentInfo, SetProviderData } from '@xyz-agent/shared'
+import type { ServerMessage, ServerMessageType, ProviderInfo, ModelInfo, SkillInfo, AgentInfo, ScannedSkillInfo, ScannedAgentInfo, SetProviderData } from '@xyz-agent/shared'
 
 // ── 全局事件处理器（ref-counted，解决多组件重复注册问题）───
 
 let globalListenerRefCount = 0
-let globalEventMap: Record<string, (msg: ServerMessage) => void> | null = null
+let globalEventMap: Map<ServerMessageType, (msg: ServerMessage) => void> | null = null
+let globalOffs: Array<() => void> = []
 
-function registerGlobalListeners(handlers: Record<string, (msg: ServerMessage) => void>) {
+function registerGlobalListeners(handlers: Map<ServerMessageType, (msg: ServerMessage) => void>) {
   if (globalEventMap) return
   globalEventMap = handlers
-  for (const [evt, fn] of Object.entries(handlers)) on(evt, fn)
+  globalOffs = []
+  for (const [evt, fn] of handlers) globalOffs.push(api.events.on(evt, fn))
 }
 
 function unregisterGlobalListeners() {
   if (!globalEventMap) return
-  for (const [evt, fn] of Object.entries(globalEventMap)) off(evt, fn)
+  for (const off of globalOffs) off()
+  globalOffs = []
   globalEventMap = null
 }
 
@@ -79,20 +81,20 @@ export function useProvider() {
     }
   }
 
-  const handlers: Record<string, (msg: ServerMessage) => void> = {
-    'config.providers': onProviders,
-    'config.providerUpdated': onProviders,
-    'model.list': onModels,
-    'config.defaults': onDefaults,
-    'config.skills': onSkills,
-    'config.agents': onAgents,
-    'config.scannedSkills': onScannedSkills,
-    'config.scannedAgents': onScannedAgents,
-    'config.skillUpdated': onSkillUpdated,
-    'config.skillDeleted': onSkills,
-    'config.agentUpdated': onAgentUpdated,
-    'config.agentDeleted': onAgents,
-  }
+  const handlers = new Map<ServerMessageType, (msg: ServerMessage) => void>([
+    ['config.providers', onProviders],
+    ['config.providerUpdated', onProviders],
+    ['model.list', onModels],
+    ['config.defaults', onDefaults],
+    ['config.skills', onSkills],
+    ['config.agents', onAgents],
+    ['config.scannedSkills', onScannedSkills],
+    ['config.scannedAgents', onScannedAgents],
+    ['config.skillUpdated', onSkillUpdated],
+    ['config.skillDeleted', onSkills],
+    ['config.agentUpdated', onAgentUpdated],
+    ['config.agentDeleted', onAgents],
+  ])
 
   // 全局事件 listener 生命周期：第一个组件 mounted 时注册，最后一个 unmounted 时注销
   if (getCurrentInstance()) {

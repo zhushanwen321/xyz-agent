@@ -1,7 +1,7 @@
 import { useTreeStore } from '../stores/tree'
 import { api } from '../api'
-import { on, emit } from '../lib/event-bus'
-import type { ServerMessage } from '@xyz-agent/shared'
+import { emit } from '../lib/event-bus'
+import type { ServerMessage, ServerMessageType } from '@xyz-agent/shared'
 
 // ── 常量 ────────────────────────────────────────────────────────
 const TREE_FETCH_TIMEOUT_MS = 10_000
@@ -115,22 +115,22 @@ function createGlobalHandlers() {
     store.setNavigateCapable(sid, navigateCapable)
   }
 
-  return {
-    'session.tree-data': onTreeData,
-    'session.tree-navigate-result': onTreeNavigateResult,
-    'session.tree-fork-result': onTreeForkResult,
-    'session.tree-clone-result': onTreeCloneResult,
-    'session.tree-capability': onTreeCapability,
-  } as Record<string, (msg: ServerMessage) => void>
+  return new Map<ServerMessageType, (msg: ServerMessage) => void>([
+    ['session.tree-data', onTreeData],
+    ['session.tree-navigate-result', onTreeNavigateResult],
+    ['session.tree-fork-result', onTreeForkResult],
+    ['session.tree-clone-result', onTreeCloneResult],
+    ['session.tree-capability', onTreeCapability],
+  ])
 }
 
-let globalEventMap: Record<string, (msg: ServerMessage) => void> | null = null
+let globalEventMap: Map<ServerMessageType, (msg: ServerMessage) => void> | null = null
 
 function registerGlobalListeners() {
   if (globalEventMap) return
   globalEventMap = createGlobalHandlers()
-  for (const [evt, handler] of Object.entries(globalEventMap)) {
-    on(evt, handler)
+  for (const [evt, handler] of globalEventMap) {
+    api.events.on(evt, handler)
   }
 }
 

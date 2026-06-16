@@ -1,6 +1,7 @@
 import { ref, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { on as onEvent, off as offEvent } from '../lib/event-bus'
+import type { ServerMessage } from '@xyz-agent/shared'
+import { api } from '../api'
 import { useProvider } from './useProvider'
 
 const DISCOVER_TIMEOUT_MS = 15_000
@@ -23,20 +24,20 @@ export function useProviderValidation() {
   const discoverMessage = ref('')
   const isSaving = ref(false)
 
-  // Module-level listener references for cleanup
-  let discoverHandler: ((msg: unknown) => void) | null = null
-  let saveHandler: ((msg: unknown) => void) | null = null
+  // 取消函数（api.events.on 返回），cleanup 时调用
+  let discoverOff: (() => void) | null = null
+  let saveOff: (() => void) | null = null
   let discoverTimer: ReturnType<typeof setTimeout> | null = null
   let saveTimer: ReturnType<typeof setTimeout> | null = null
 
   function cleanup() {
-    if (discoverHandler) {
-      offEvent('config.discoveredModels', discoverHandler)
-      discoverHandler = null
+    if (discoverOff) {
+      discoverOff()
+      discoverOff = null
     }
-    if (saveHandler) {
-      offEvent('config.discoveredModels', saveHandler)
-      saveHandler = null
+    if (saveOff) {
+      saveOff()
+      saveOff = null
     }
     if (discoverTimer) {
       clearTimeout(discoverTimer)
@@ -67,7 +68,7 @@ export function useProviderValidation() {
       discoverMessage.value = t('settings.discoveryTimeoutHint')
     }, DISCOVER_TIMEOUT_MS)
 
-    discoverHandler = (msg: unknown) => {
+    const discoverHandler = (msg: unknown) => {
       cleanup()
       const payload = (msg as { payload: Record<string, unknown> }).payload
       const success = payload.success as boolean
@@ -86,7 +87,7 @@ export function useProviderValidation() {
         discoverMessage.value = (payload.error as string) || t('settings.discoveryFailedHint')
       }
     }
-    onEvent('config.discoveredModels', discoverHandler)
+    discoverOff = api.events.on('config.discoveredModels', discoverHandler as (m: ServerMessage) => void)
 
     discoverModels(baseUrl, key, type, providerId)
   }
@@ -114,7 +115,7 @@ export function useProviderValidation() {
       discoverMessage.value = t('settings.discoveryTimeoutHint')
     }, DISCOVER_TIMEOUT_MS)
 
-    saveHandler = (msg: unknown) => {
+    const saveHandler = (msg: unknown) => {
       cleanup()
       const payload = (msg as { payload: Record<string, unknown> }).payload
       const success = payload.success as boolean
@@ -129,7 +130,7 @@ export function useProviderValidation() {
       }
       isSaving.value = false
     }
-    onEvent('config.discoveredModels', saveHandler)
+    saveOff = api.events.on('config.discoveredModels', saveHandler as (m: ServerMessage) => void)
 
     discoverModels(baseUrl, key, type, providerId)
   }
