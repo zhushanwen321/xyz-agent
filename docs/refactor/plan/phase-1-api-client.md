@@ -63,7 +63,11 @@ renderer/src/api/
 ### 3. `events.ts`：G6 生命周期 + G5 路由层收尾 + D6b 路由
 
 - **G6 reconcile useChat 全局单例**：useChat 现状是模块级全局单例注册（`globalEventMap` 幂等 + 永不注销）。**保持全局单例模式**（23 个事件是全局聊天流，非每组件实例），但收口到 `api.events`：`useChat` 改为订阅 `api.events.on(type, handler)` 而非直 `event-bus.on`。G6 的 refCount 多实例去重**只适用于组件级 on（如 PanelSessionView 自身订阅）**，不适用于 useChat 全局流——文档标注区分。
-- **G5 路由层收尾**（决策 A）：`useConnection`（effects 层）**不碰 store**，重连成功只 emit `api.events.emit('connection.restored')`；`events.ts` 订阅该信号，对所有 `isGenerating=true` 的 session 调 `markSessionError(sid, '连接已重置')`。路由层（events.ts）本就允许碰 store，不违反 R2。
+- **G5 收尾链路**（决策 A，符合 design.md R2/§4.1 依赖图——features 是唯一同时碰 api+store 的层）：
+  - `useConnection`（effects 层，不碰 store）重连成功 → `api.events.emit('connection.restored')`
+  - `events.ts`（api 层）只提供 emit/on 机制 + D6b 丢弃逻辑（无 sessionId → warn，不碰 store）
+  - `useChat`（**features 层**，授权碰 store）订阅 `connection.restored` → 遍历 `isGenerating=true` 的 session 调 `markSessionError(sid, '连接已重置')`
+  - **events.ts 不直接调 markSessionError**（避免 api 层碰 store，违反依赖图）
 - **ws-client messageQueue 清空**（G5 决策 A 配套）：重连 `onopen` 时**清空 session-scoped 队列**（不重发给重启后的 runtime）；保留系统级消息（如纯查询）的队列或全部清空——执行时定，原则是「runtime 重启后旧 session 消息无意义」。
 - **D6b**：session-scoped 消息无 `payload.sessionId` → 丢弃 + dev warn。
 
@@ -115,4 +119,4 @@ renderer/src/api/
 | useChat 23 事件迁移遗漏 | 最后做；逐事件对照 :339-362 清单；手测覆盖 |
 | mock 998 行重写估工不足 | 单列 task 6；data.ts 可复用降低工作量 |
 | messageQueue 清空误伤系统消息 | 区分 session-scoped（清）vs 系统级（留）；测试覆盖 |
-| G5 重连收尾在路由层，useConnection 需 emit 信号 | events.ts 订阅 connection.restored；单测 |
+| G5 重连收尾跨 useConnection/effects/api/useChat 三层 | events.ts 只 emit 信号；useChat(features) 订阅后调 markSessionError；单测三层联动 |

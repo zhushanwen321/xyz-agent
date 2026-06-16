@@ -75,6 +75,8 @@ class SessionService implements ISessionService {
 
 **模型选择理由**：sessions Map 单写者（Facade）+ 子模块经 Facade 引用只读/委托。避免 Map 多处持有导致状态不一致。子模块不直接持有 sessions，只持有 Facade 的受限视图（暴露 needed 方法）。
 
+**防循环 import（plan-review-round-2 C-4）**：受限视图用 **interface 解耦**——定义 `ISessionServiceInternal`（暴露 initializeManagedSession/detachSession/toSummary/findScannedSession/getSkillPaths/getExtensionPaths 给子模块），子模块依赖此接口而非 Facade 具体类。Facade implements 该接口。这样子模块→接口→Facade 单向，Facade 委托子模块单向，**无模块级循环 import**。运行期的「Facade 调子模块方法、子模块经接口回调 Facade helper」是调用环非依赖环，TS 编译不报。
+
 ### pm.onSessionExit 回调归属（v1.1）
 
 构造函数（:78）注册的 exit 回调横跨 lifecycle（sessions.delete）/ tree（unregisterSession）/ scanner（listPersistedSessions）/ broker（broadcast）。**归属 Facade**：回调留在 SessionService 构造函数，调用各子模块的方法（`this.lifecycle.onExit(sid)` / `this.treeService.unregisterSession(sid)` / `this.scanner.invalidate(sid)`）。不拆到单一子模块（它需协调多方）。
@@ -140,7 +142,7 @@ private async sendPrompt(sessionId, content, hookContent?: string) {
 
 | 风险 | 应对 |
 |------|------|
-| 共享 helper 跨模块调用导致循环（子模块→Facade→子模块） | 子模块经 Facade **受限视图**调用；单向 lifecycle/dispatcher/scanner→Facade，Facade 委托回去无环 |
+| 共享 helper 跨模块调用导致循环（子模块→Facade→子模块） | 受限视图用 `ISessionServiceInternal` 接口解耦；子模块依赖接口非具体类；单向 lifecycle/dispatcher/scanner→接口→Facade |
 | this 绑定丢失 | 子模块方法用箭头函数属性或在 Facade 委托时 bind；测试覆盖 |
 | onSessionExit 拆分后协调遗漏 | 回调留 Facade 构造函数；测试覆盖 exit 后 sessions/tree/scanner/broker 一致 |
 | sessions Map 多处持有导致不一致 | 单写者模型（Facade 唯一持有）；子模块只读经 Facade |

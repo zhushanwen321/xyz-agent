@@ -44,7 +44,9 @@
 
 ### 3. M3 · window-manager 改最小投影
 
-- `WindowState` 去掉 `panelTree` 字段，保留 `focusedPanelId` + 改 `sessionIds: Set<string>`。
+> **plan-review-round-2 发现**（降认知负担）：`window-manager.ts:108` 的 `initialWindowState` **已有 `sessionIds: []` 字段**（与 panelTree 并存）。M3 实际只需「查询改用 sessionIds + 删 panelTree 字段」，比从零加字段更轻。
+
+- `WindowState` 去掉 `panelTree` 字段，保留 `focusedPanelId` + `sessionIds`（已存在，改用）。
 - `findSessionBySessionId` 从「递归遍历 panelTree」改为「查 sessionIds」。
 - `updateWindowState` 入参从「完整 panelTree」改为「sessionIds + focusedPanelId」。
 - **渲染进程侧配套**：`stores/window.ts` 的 `syncPaneState` 改为只推 `sessionIds`（从 panelTree 提取）+ `focusedPanelId`，不推完整树。
@@ -58,7 +60,7 @@
 
 - [ ] vitest 全绿（window-manager + main 编排）。
 - [ ] 手测：多窗口、跨窗口 session 查找（`findSessionWindow`）、split panel 后 sessionIds 同步。
-- [ ] `window-manager.ts` 无 panelTree 递归遍历（`rg "panelTree" main/` 清零）。
+- [ ] **全仓 panelTree 清零**：`rg "panelTree" src-electron/main/ src-electron/renderer/src/`（Main + 前端两侧）在 window-manager / stores/window.ts / stores/panel.ts 的使用点全部改完。
 - [ ] `npm run build` + `npm run dev` 正常。
 - [ ] runtime spawn 幂等：activate 时不重复 spawn（测试覆盖）。
 
@@ -73,7 +75,7 @@
 | M3 改 Main 持有状态，跨窗口 session 查找回归 | 先写测试覆盖 findSessionBySessionId；手测多窗口 |
 | IPC 协议 payload 改动需前后端同步 | shared/protocol.ts 改 + renderer window store 配套；同 commit |
 | activate 重复 spawn 破坏幂等 | start() 幂等已就绪；测试覆盖 activate 场景 |
-| Main 失去完整 tree 后某些功能依赖它 | 核对 `rg "panelTree" main/` 全部使用点；当前仅 findSessionBySessionId |
+| Main 失去完整 tree 后某些功能依赖它 | 核对全仓 `rg "panelTree" src-electron/` 使用点（Main + 前端 stores/window.ts、stores/panel.ts）；当前仅 findSessionBySessionId |
 
 ## 备注
 

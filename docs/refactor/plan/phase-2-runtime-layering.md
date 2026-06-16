@@ -19,22 +19,27 @@
 | `transport/` | `server.ts`、`bridge-handler.ts`、`session-message-handler.ts`、`extension-message-handler.ts`、`plugin-message-handler.ts`、`settings-message-handler.ts`、`tree-message-handler.ts` |
 | `adapters/`（防腐层，NEW） | `event-adapter.ts`、`message-converter.ts`、`navigate-interceptor.ts`、`pi-config-bridge.ts`、`pi-paths.ts`、`pi-provider-store.ts`、`session-file-utils.ts`、`session-tree-reader.ts` |
 | `infra/` | `rpc-client.ts`、`process-manager.ts`、`npm-installer.ts`、`extension-resolver.ts`、`scanner-base.ts`、`skill-scanner.ts`、`agent-scanner.ts` |
-| `services/`（已存在，保持） | `extension-service.ts`、`extension-timeout-manager.ts` + 现有 session/config/model/tree + `plugin-service/` |
+| `services/`（需补迁 2 个） | **`extension-service.ts`、`extension-timeout-manager.ts`（现处根目录，需 `git mv` 进 services/）** + 已在 services/ 的 session/config/model/tree（含 git-info.ts / session-history.ts）+ `plugin-service/` |
 | 根（保持） | `index.ts`、`interfaces.ts`、`types.ts` |
-| 待定 | `trash.ts`（工具函数，归 `infra/` 或 `utils/`） |
+| 待定 | `trash.ts`、`utils/path-utils.ts`（工具函数，归 `infra/` 或 `utils/`）；`plugins/demo/`（demo 插件，不动） |
 
 ## 改动清单（有序 task）
 
-### 1. 建目录 + git mv（每个文件独立或小批）
+### 1. 建目录 + git mv（按分类表，正确命令）
 
 ```bash
 cd src-electron/runtime/src
 mkdir -p transport adapters infra
-git mv server.ts transport/
-git mv *-message-handler.ts bridge-handler.ts transport/
-git mv event-adapter.ts message-converter.ts navigate-interceptor.ts transport/  # 误——这些是 adapters
+# → transport/
+git mv server.ts bridge-handler.ts session-message-handler.ts extension-message-handler.ts plugin-message-handler.ts settings-message-handler.ts tree-message-handler.ts transport/
+# → adapters/
+git mv event-adapter.ts message-converter.ts navigate-interceptor.ts pi-config-bridge.ts pi-paths.ts pi-provider-store.ts session-file-utils.ts session-tree-reader.ts adapters/
+# → infra/
+git mv rpc-client.ts process-manager.ts npm-installer.ts extension-resolver.ts scanner-base.ts skill-scanner.ts agent-scanner.ts infra/
+# → services/（从根目录补迁 2 个）
+git mv extension-service.ts extension-timeout-manager.ts services/
 ```
-> 注意：按上表分类 mv，handlers → transport，event-adapter/message-converter 等 → adapters，rpc-client/process-manager 等 → infra。
+> **不要**把 adapters 文件误 mv 进 transport（event-adapter/message-converter 等是防腐层，非 transport）。按上表分类。
 
 ### 2. 修正所有 import 路径
 
@@ -48,12 +53,19 @@ git mv event-adapter.ts message-converter.ts navigate-interceptor.ts transport/ 
 - 修正注释「pure Transport layer」与实现不符 → 改为「纯路由 + 连接管理 + 广播；业务逻辑在 services，经 handler 调用」。
 - 全仓搜索 `SidecarServer` 引用更新（`index.ts`、测试）。
 
-### 4. ⚠️ 同步 tsup.config.ts（CLAUDE.md #12，违反必出 bug）
+### 4. tsup.config.ts（bundle 模式，entry 零改动）
 
-- `src-electron/runtime/tsup.config.ts`：`entry` 数组更新新路径（含 `transport/server.ts` 等）。
-- `noExternal`：若新增 dependencies 需追加（本阶段应无新增依赖）。
-- `src-electron/electron-builder.yml`：确认 `files` 仍含 `dist/runtime/**/*`、`asarUnpack: dist/runtime/**/*` 不变。
-- **关键**：tsup 改动与目录 mv **必须同 commit**，逐个验证。
+**现状核对**（plan-review-round-2）：`runtime/tsup.config.ts` 用 `bundle: true`，仅 2 个 entry：
+```ts
+entry: {
+  index: 'src/index.ts',                              // ← 主 bundle，server.ts 等都被 bundle 进 index.cjs
+  'plugin-bootstrap': 'src/services/plugin-service/plugin-bootstrap.ts'  // ← Worker 入口，在切片内不迁移
+}
+```
+- **server.ts / handlers / adapters / infra 都不是独立 entry**——经 `index.ts` import 链打包进 `index.cjs`。目录 mv 后 `index.ts` 的 import 路径自动跟随，**entry 数组零改动**（仍 `index` + `plugin-bootstrap`）。
+- `noExternal: ['ws','semver','fast-glob','tar']`：本阶段无新增 npm 依赖，不动。
+- `electron-builder.yml`：`files` 含 `dist/runtime/**/*`、`asarUnpack` 同路径（已核对不受影响）。
+- **本阶段 tsup / electron-builder 实际零改动**。CLAUDE.md #12 的风险点在「目录迁移后 import 链断裂」，靠 `npm run build` + `validate-runtime-bundle.sh` 暴露，不需改 tsup 配置。
 
 ### 5.（可选）T1 路由表声明式
 

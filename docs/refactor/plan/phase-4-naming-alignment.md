@@ -14,7 +14,7 @@
 
 | # | 旧名 | 新名 | 范围 |
 |---|------|------|------|
-| R1 | sidecar（目录/变量） | runtime | 已大部分完成，扫残留 |
+| R1 | sidecar（目录/变量） | runtime | `SidecarServer → RuntimeServer` 阶段2已做；残留扫描见下清单 |
 | R2 | Pane | Panel | 组件名、类型名、store |
 | R3 | SystemChatMessage | SystemNotification | 类型 + 使用处 |
 | R4 | Drawer | SideInspector | 组件 + 引用 |
@@ -42,3 +42,11 @@
 ## 备注
 
 R1（sidecar→runtime）的 `SidecarServer → RuntimeServer` 在阶段 2 已完成。本阶段聚焦 R2–R5（前端命名）。可与阶段 5 并行。
+
+### R1 残留点清单（17 处，阶段 2 未清的 sidecar 注释/引用）
+
+- 5 个 handler 文件头注释「Extracted from SidecarServer」（session/settings/extension/plugin/tree-message-handler）
+- `shared/protocol.ts:1,166` 注释「Client → Sidecar」/「Sidecar → Client」
+- `runtime/src/process-manager.ts:21`、`plugin-service/plugin-types.ts:7` 注释
+- `renderer/src/stores/plugin.ts:16`、`runtime/tsup.config.ts:35` 注释
+- 执行：`rg -ni 'sidecar' src-electron/ renderer/ 2>/dev/null`（排除合法的 runtime 目录名）逐个订正为 runtime/TransportServer
