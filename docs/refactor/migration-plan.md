@@ -28,11 +28,12 @@
 | 0 | 文档与认知 | 0 | 0（仅文档） | [phase-0-documentation.md](plan/phase-0-documentation.md) |
 | 1 | 前端 API Client 层 | 低 | 中 | [phase-1-api-client.md](plan/phase-1-api-client.md) |
 | 2 | Runtime 目录分层 | 低 | 中 | [phase-2-runtime-layering.md](plan/phase-2-runtime-layering.md) |
+| 2.5 | Main 进程重构（M1/M3） | 中 | 中 | [phase-2.5-main-process.md](plan/phase-2.5-main-process.md) |
 | 3 | 拆 session-service 巨石 | 中 | 中 | [phase-3-split-session-service.md](plan/phase-3-split-session-service.md) |
 | 4 | 命名对齐 | 低 | 小 | [phase-4-naming-alignment.md](plan/phase-4-naming-alignment.md) |
 | 5 | 防护加固 | 低 | 小 | [phase-5-guardrails.md](plan/phase-5-guardrails.md) |
 
-**建议顺序**：0 → 1 → 2 → 3 → 4 → 5。1 与 2 可并行。
+**建议顺序**：0 → 1 → 2 → 2.5 → 3 → 4 → 5。1 与 2 可并行；3 与 2.5 可并行（不同进程）。
 
 ---
 
@@ -49,15 +50,17 @@
 
 | 决策 | 落地阶段 |
 |------|---------|
-| D1 双通道/启动时序 | 阶段 0（文档）+ 阶段 5（集成测试） |
-| D2 双真相源/单实例语义（G1） | 阶段 0（文档）；Main 原子 claim 随 session 迁移功能迭代 |
+| D1 双通道/启动时序 | 阶段 0（文档，**按代码现状写**：createWindow 先于 spawn）+ 阶段 5（集成测试） |
+| D2 双真相源/单实例语义（G1） | 阶段 0（文档）；Main 原子 claim 超出本重构 scope（标注） |
 | D3 API Client | 阶段 1 |
 | D4 Runtime 四层 | 阶段 2 |
 | D5 双维度模型 | 阶段 0（认知） |
-| D6a 错误流 / D6b 路由 | 阶段 1 |
+| D6a 错误流 / D6b 路由 / G5 重连收尾 | 阶段 1（G5 决策 A：路由层收尾 + 清队列） |
 | D6c 服务解耦 | 已订正，事件总线为可选演进（不在必做项） |
-| D7 命名债 | 阶段 2（SidecarServer）+ 阶段 4（R1–R5） |
+| D7 命名债 | 阶段 2（SidecarServer + 17 处注释）+ 阶段 4（R2–R5） |
 | D8 mock / D9 协议复用 | 阶段 1 |
 | G3–G6 API Client 细则 | 阶段 1 |
 | G7 回滚 | 全局铁律 |
 | T2 拆 session-service | 阶段 3 |
+| **M1 spawn 去重** | **阶段 2.5** |
+| **M3 window-manager 不存完整 tree** | **阶段 2.5** |

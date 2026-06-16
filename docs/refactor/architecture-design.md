@@ -48,17 +48,19 @@
 **通道边界规则**（决定一个能力走哪条通道）：
 > 一个能力走 **IPC** 当且仅当它需要 Main 的特权访问（原生窗口/进程/OS）。其余一律走 **WS**。
 
-**启动时序契约**（必须显式文档化、并由集成测试守护）：
+**启动时序契约**（必须显式文档化、并由集成测试守护）。
+> ⚠️ **订正（plan-review-round-1）**：原版写「spawn 先于 createWindow」，与代码现状相反。实际 `main.ts:142 createWindow` **先于** `:154 runtimeManager.start()`（窗口先出来，runtime 后台异步启动）。以下按代码现状写，**不改代码**：
 ```
 1. Main 启动
-2. RuntimeManager spawn Runtime 子进程（端口探测 BASE_PORT..+10）
-3. Main 创建 BrowserWindow（渲染进程）
+2. Main 创建 BrowserWindow（渲染进程立即可见）
+3. RuntimeManager spawn Runtime 子进程（后台，端口探测 BASE_PORT..+10）
 4. 渲染进程启动 → useConnection.init()
 5. 渲染进程注册 onRuntimePort 监听器（用于 Runtime 重启后重连）
 6. 渲染进程 IPC getRuntimePort() → 取得已知端口 → connect WS(port)
 7. WS 连通 → 业务就绪
 8. （运行期）Runtime 重启 → Main 经 onRuntimePort 推新端口 → 渲染进程重连
 ```
+> M1（main.ts spawn 去重，见 phase-2.5）会抽 `startAndNotify(win)`，但**不改这个先后顺序**（先窗口后 runtime 是有意的 UX 决策）。
 
 ### 理由
 - 端口发现链路是「runtime 崩溃自愈」「多窗口端口隔离」「热重启」的前提，当前完全隐式，重构时是第一踩坑点。
@@ -915,7 +917,8 @@ index.ts (组合根，线性构造)
 | R3 store 不互 import | Renderer | 中 | 低 | 阶段 1 |
 | R1 展示/容器组件边界 | Renderer | 中 | 低 | 阶段 2 |
 | M2 runtime-manager 子职责 | Main | 中 | 低 | 阶段 0（文档） |
-| M3 Main 不存完整 tree | Main | 中 | 中 | 阶段 3 |
+| M3 Main 不存完整 tree | Main | 中 | 中 | 阶段 2.5（plan-review 订正：原标阶段3，实际归 Main 进程重构） |
+| M1 main.ts spawn 去重 | Main | 中 | 中 | 阶段 2.5 |
 | T2 拆 session-service | Runtime | 高 | 中 | 阶段 3 |
 | T6 组合根（事件总线已降级） | Runtime | 低（已订正） | 低 | 不在必做项 |
 | T1 路由表声明式 | Runtime | 低 | 低 | 阶段 2 |

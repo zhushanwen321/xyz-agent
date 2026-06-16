@@ -81,4 +81,5 @@ git mv event-adapter.ts message-converter.ts navigate-interceptor.ts transport/ 
 |------|------|
 | tsup entry 漏更新 → `Cannot find module` | mv 后立即跑 `validate-runtime-bundle.sh`；逐文件核对 entry |
 | import 路径漏改 → 编译失败 | `npm run build` 即可暴露；rg 全仓扫描被移文件名 |
-| Worker 入口 `plugin-bootstrap` 路径 | 确认 tsup entry 仍含 `plugin-bootstrap.ts`（CLAUDE.md #12） |
+| Worker 入口 `plugin-bootstrap` 路径 | tsup entry 仍含 `plugin-bootstrap.ts`（在 plugin-service/ 切片内不迁移）；validate-runtime-bundle.sh 验证 |
+| extension-service/timeout-manager 漏迁 | 已补入 task 1；mv 后检查 index.ts:12/server.ts:13/extension-message-handler.ts:8-9 的 import |

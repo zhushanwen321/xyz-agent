@@ -19,14 +19,13 @@
 
 ### 5.2 启动时序契约集成测试（D1）
 
-- 测试 8 步时序：Main spawn → createWindow → getRuntimePort → connect WS。
-- 模拟 Runtime 重启 → onRuntimePort 推新端口 → 渲染进程重连（G5 收尾）。
+- 测试 8 步时序（**按 phase-0 订正后的真实顺序**：createWindow 先于 spawn）。
+- 模拟 Runtime 重启 → onRuntimePort 推新端口 → 渲染进程重连（G5 收尾，见 phase-1 task 3）。
 
-### 5.3 pre-commit：禁止 composable 直 import ws-client
+### 5.3 pre-commit：禁止 send 直调 ws-client（扫全 renderer）
 
-- 阶段 1 完成后才有意义（否则误报）。
-- 脚本扫描 `renderer/src/composables/**/*.ts`，除 `useConnection`（传输层合法）外禁止 `from '../lib/ws-client'`。
-- 加入 `.githooks/` 或 taste-lint 规则。
+- 脚本扫描 **`renderer/src/**/*.ts` + `*.vue`**（**非仅 composables/**），除 useConnection（传输层合法）+ api/transport.ts（封装层）外，禁止 `from '.../lib/ws-client'` 的 send 直调。
+- **覆盖 phase-1 迁移范围**：含 stores/plugin.ts + 4 个组件（ExtensionsPane/PanelSessionView/SkillDrawer/AppStatusbar），否则这些文件的 send 直调永不被拦（plan-review-round-1 发现）。
 
 ### 5.4 pre-commit：禁止跨 service 具体类循环 import（可选）
 

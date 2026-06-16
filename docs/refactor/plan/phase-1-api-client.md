@@ -1,27 +1,44 @@
 # 阶段 1 · 前端 API Client 层（最高收益，独立可验证）
 
 > 上游：[migration-plan.md](../migration-plan.md) · 关联决策：D3 / D6a / D6b / D8 / D9 / G3–G6 · spec：design.md §D3、§4.1 R4
+> **v1.1 修订**（plan-review-round-1）：扩迁移范围（不止 7 composable）、mock 按重写估工、useChat 23 事件 + G6 reconcile、G5 改路由层收尾、修正消息数、Runtime id 回填已就绪。
 
 ## 目标
 
-新建 `renderer/src/api/`，统一 WS+IPC 门面，命令(Promise)+事件(订阅)混合。迁移 7 个 composable 的 `send()` 直调，错误流收口，mock 下沉。
+新建 `renderer/src/api/`，统一 WS+IPC 门面，命令(Promise)+事件(订阅)混合。迁移**所有** send 直调方（composable + store + 组件），错误流收口，mock 下沉。
 
 ## 前置依赖
 
-阶段 0（文档基线）。无 Runtime 侧强改动（id 回填是向后兼容增强）。
+阶段 0（文档基线）。Runtime 侧 id 回填**已就绪**（见下），仅需前端发 id。
 
 ## 现状（已核对）
 
-7 个 composable 直 `import { send }`，消息类型分布：
-- **useChat**：`message.send`、`message.abort`
-- **useSession**：`session.create/delete/rename/list/history/compact/switch`
-- **useModel**：`model.list`、`model.switch`
-- **useProvider**（最多，11 个）：`config.getProviders/setProvider/deleteProvider/discoverModels/scanSkills/setSkill/deleteSkill/scanAgents/setAgent/deleteAgent`
-- **useTree**：`session.list/history/switch`
-- **useExtensionUI**：2 个 extension 相关
-- **useToolApproval**：`tool.approve/deny/always_allow`
+### send 直调方（不止 7 composable，共 ~10 文件）
 
-`send()` 返回 void（fire-and-forget）；`ClientMessage.id` 可选但几乎无人用。
+| 类型 | 文件 | send 处数 | 消息类型 |
+|------|------|----------|---------|
+| composable | useChat | 2 | message.send/abort |
+| composable | useSession | 6 | session.create/delete/rename/list/history/compact |
+| composable | useModel | 3 | model.list/switch + **session.setThinkingLevel** |
+| composable | useProvider | 11 | config.getProviders/setProvider/deleteProvider/discoverModels/scanSkills/setSkill/deleteSkill/scanAgents/setAgent/deleteAgent |
+| composable | useTree | 8 | session.list/history/switch + **tree-capability/clone/data/fork/navigate**（5 个 tree.*） |
+| composable | useExtensionUI | 2 | extension.ui_response + **plugin.uiResponse**（跨 extension/plugin 两 domain） |
+| composable | useToolApproval | 3 | tool.approve/deny/always_allow |
+| **store** | **stores/plugin.ts** | **9** | plugin.list/uninstall/config.get/set/approvePermissions/revokePermissions…（**store 直 send，正是要消灭的反模式**） |
+| **组件** | **settings/ExtensionsPane.vue** | 8 | extension.* |
+| **组件** | **panel/PanelSessionView.vue** | 4 | session.setThinkingLevel/message.steer/follow_up/动态 |
+| **组件** | **chat/SkillDrawer.vue** | 1 | file.read（**已用 `id: requestId`**，唯一已带 id 的调用方） |
+| **组件** | **layout/AppStatusbar.vue** | 若干 | （迁移时一并扫） |
+
+### useChat 事件订阅现状（23 个事件，全局单例模式）
+
+`useChat.ts:339-362` 用模块级 `createGlobalHandlers()` 返回 `Map<ServerMessageType, handler>`（23 项），`registerGlobalListeners()`（:371）在模块加载时经 `queueMicrotask` 注册一次，**永不注销**（:374 注释）：
+
+`message.message_start / text_delta / thinking_start / thinking_delta / thinking_end / tool_call_start / tool_call_end / tool_call_update / complete / error / status / bashExecution / compactionSummary / branchSummary / auto_retry_start / auto_retry_end / queue_update / stream_error` + `extension.error` + `extension:setEditorText` + `context.update` + `session.renamed` + `session.thinkingLevelSet`。
+
+### Runtime 侧 id 回填（已就绪）
+
+5 个 handler 共 85 处已回填请求 `id`（session-handler 15、tree 14、extension 28、plugin 13、settings 15）；`pong`/`file.read:result`/`sendError` 均回填。**task 4 无需改 Runtime，仅需前端 pending.ts 发 id。**
 
 ## 改动清单（有序 task）
 
@@ -29,80 +46,73 @@
 
 ```
 renderer/src/api/
-├── index.ts        # createApiClient({ ws, ipc, mock }) → 统一 api 对象（组合根）
+├── index.ts        # createApiClient({ ws, ipc, mock }) → 统一 api 对象
 ├── transport.ts    # 抹平 ws send/recv 与 ipc invoke 差异
 ├── pending.ts      # id→Promise 关联表（command 实现）
-├── events.ts       # 事件订阅 on/off，背后是 event-bus
-├── domains/        # typed 方法（复用 protocol.ts union，D9）
-│   ├── session.ts  chat.ts  config.ts  model.ts  tree.ts  extension.ts  plugin.ts
-│   └── system.ts   # api.window.* / api.dialog.* / api.shortcut.*（走 IPC）
-└── mock/           # 同接口假实现，VITE_MOCK 时注入（D8）
+├── events.ts       # 事件订阅 + session 路由第 2 层 + 重连收尾（G5）
+├── domains/        # session.ts chat.ts config.ts model.ts tree.ts extension.ts plugin.ts system.ts
+└── mock/           # 同接口假实现（D8，重写非搬迁）
 ```
 
-### 2. `pending.ts` 实现 command + G4 超时善后
+### 2. `pending.ts`：command + G4 超时善后
 
-- `command<T>(msg): Promise<T>`：生成 `id`（crypto.randomUUID）→ 存入 `pending` Map → `ws.send({...msg, id})` → 返回 Promise。
-- **G4 超时**：默认 30s（可配置），超时 → `reject(new ApiTimeoutError(msg))` + 从 pending 删 id。
-- **迟到响应**：Runtime 迟到响应到达时 pending 无该 id → 静默丢弃。
-- **错误分类**：`ApiTimeoutError` / `ApiDisconnectError`（WS 断连，pending 全 reject）/ 业务错误（Runtime error payload）。
-- **断连处理**：ws 断开事件 → 遍历 pending 全 reject `ApiDisconnectError`。
+- `command<T>(msg): Promise<T>`：发 `{...msg, id: crypto.randomUUID()}`，存 pending Map，返回 Promise。
+- **G4**：30s 超时 reject `ApiTimeoutError` + 删 id；迟到响应（pending 无 id）丢弃；WS 断连时 pending 全 reject `ApiDisconnectError`。
+- **command 与 messageQueue 交互**：断连期 command 不入队（队列只收 fire-and-forget 的 event 类 send）；入队超时由 pending 的 30s 计时器统一管，与队列重发解耦。
 
-### 3. `events.ts` 实现 G6 生命周期
+### 3. `events.ts`：G6 生命周期 + G5 路由层收尾 + D6b 路由
 
-- `on(type, handler): unsubscribe`。
-- **继承 CLAUDE.md #2 refCount**：组件多实例（split mode）下，同 type+handler 用模块级 refCount 合并，防重复注册。`unsubscribe` 时 refCount 归零才真正移除。
+- **G6 reconcile useChat 全局单例**：useChat 现状是模块级全局单例注册（`globalEventMap` 幂等 + 永不注销）。**保持全局单例模式**（23 个事件是全局聊天流，非每组件实例），但收口到 `api.events`：`useChat` 改为订阅 `api.events.on(type, handler)` 而非直 `event-bus.on`。G6 的 refCount 多实例去重**只适用于组件级 on（如 PanelSessionView 自身订阅）**，不适用于 useChat 全局流——文档标注区分。
+- **G5 路由层收尾**（决策 A）：`useConnection`（effects 层）**不碰 store**，重连成功只 emit `api.events.emit('connection.restored')`；`events.ts` 订阅该信号，对所有 `isGenerating=true` 的 session 调 `markSessionError(sid, '连接已重置')`。路由层（events.ts）本就允许碰 store，不违反 R2。
+- **ws-client messageQueue 清空**（G5 决策 A 配套）：重连 `onopen` 时**清空 session-scoped 队列**（不重发给重启后的 runtime）；保留系统级消息（如纯查询）的队列或全部清空——执行时定，原则是「runtime 重启后旧 session 消息无意义」。
+- **D6b**：session-scoped 消息无 `payload.sessionId` → 丢弃 + dev warn。
 
-### 4. Runtime 侧：直接响应回填 id（向后兼容）
+### 4. 迁移所有 send 直调方（灰度并存）
 
-- 在 `server.ts` / handler 中，**直接响应**（非广播）消息回填请求 `id`。
-- 广播 / 纯 push（`context.update`、`plugin:statusChange`、`message.text_delta`）**不回填**。
-- 消息路由表（T1 声明式）可顺手做，但非本阶段必须。
+顺序（由简到繁，每步独立 commit 可验证）：
+1. useToolApproval（3 tool.*）
+2. useModel（3，含 setThinkingLevel）
+3. useSession（6）
+4. useTree（8，含 5 tree.*）
+5. useExtensionUI（2，跨 extension/plugin）
+6. useProvider（11 config.*，量最大）
+7. **stores/plugin.ts**（9，store 反模式优先消灭）
+8. **3 组件**（ExtensionsPane 8 / PanelSessionView 4 / SkillDrawer 1 / AppStatusbar）
+9. **useChat 最后**（message.send 触发即流 + 迁移 23 个事件订阅到 api.events）
 
-### 5. 迁移 7 个 composable（灰度并存）
+每步：`send({type,payload})` → `await api.xxx.yyy(payload)`，删 ws-client import。
 
-顺序建议（由简到繁，每步独立可验证）：
-1. useToolApproval（3 个 tool.* 命令，纯请求/响应）
-2. useModel（2 个命令）
-3. useSession（7 个命令）
-4. useTree（3 个命令）
-5. useExtensionUI（2 个）
-6. useProvider（11 个 config.*，量最大但模式一致）
-7. useChat（`message.send` 触发即流 + `message.abort`；**最后做**，因涉及流式事件订阅 `api.events.on('message.text_delta'...)`）
+### 5. D6a 错误流收口 + G3 优先级
 
-每步：把 `send({type, payload})` → `await api.xxx.yyy(payload)`，删除该 composable 对 `ws-client` 的 `send` import。
+- `chatStore.markSessionError(sid, err)`：唯一错误入口。
+- **G3**：有 sessionId 的错误（`stream_error`）路由到 store 分区后调 markSessionError；D6b 丢弃只针对无 sessionId 的。
 
-### 6. D6a 错误流收口 + G3 优先级
+### 6. D8 Mock 重写（非搬迁，估工大）
 
-- `chatStore.markSessionError(sid, err)`：唯一错误入口，内含 `isGenerating=false` + `streamingMessage=null` + push 系统通知。
-- **G3**：有 sessionId 的错误消息（如 `stream_error`）路由到 store 分区后调 `markSessionError`；D6b 丢弃规则只针对「session-scoped 但无 sessionId」的消息。
+现状 `mock/mock-ws.ts`（273 行）+ `mock/data.ts`（725 行）= **998 行**，机制是「传输层拦截 connect/send + 直推 event-bus + 改 store」。下沉到 api 层需**重写**为「实现同一 `api` 接口，返回预制 Promise / emit 预制事件」。
 
-### 7. G5 重连期收尾
-
-- `useConnection` 重连成功回调：对所有 `isGenerating=true` 的 session 调 `markSessionError(sid, '连接已重置')`。不续传（runtime 重启上下文已丢）。
-- 重连失败：退避上限后报错，不自动重试到死循环。
-
-### 8. D8 Mock 下沉
-
-- `VITE_MOCK` 从 `ws-client.ts` 移到 `createApiClient({ mock })`。
-- mock 实现同一 `api` 接口，返回预制 Promise / emit 预制事件（业务语义，非协议字节）。
+- VITE_MOCK 检查点在 **2 处**：`ws-client.ts:24/100/117` + **`useConnection.ts:45,53`**（connect 路径分支），都要迁。
+- mock/data.ts（725 行预制数据）可复用，仅改消费方式。
 
 ## 验证标准
 
-- [ ] `npm run dev` 全功能正常（发消息/切模型/插件/配置/树导航）。
-- [ ] `VITE_MOCK=true npm run dev` mock 模式可跑。
+- [ ] `npm run dev` 全功能正常。
+- [ ] `VITE_MOCK=true npm run dev` mock 可跑。
 - [ ] 双主题无回归。
-- [ ] `rg "from '../lib/ws-client'" renderer/src/composables/` 仅剩 useConnection（传输层合法），其余 7 个已清零。
-- [ ] API Client 单测：command 超时、事件订阅/取消（refCount）、session 路由第 2 层丢弃。
+- [ ] **`rg "from.*ws-client" renderer/src/`** 扫**全 renderer**（非仅 composables/）：仅剩 useConnection（传输层合法）+ api/transport.ts（封装层）。store/components/composables 的 send 直调清零。
+- [ ] API Client 单测：command 超时、事件订阅/取消、session 路由第 2 层丢弃、重连收尾（G5）。
+- [ ] useChat 23 事件迁移后行为不变（手测 streaming/abort/thinking/toolCall）。
 - [ ] `npm run lint` 通过。
 
 ## 回滚
 
-单阶段 commit。灰度并存设计保证：revert 后恢复 composable 直 send + ws-client mock。**禁止只迁一半 composable 就合并**（中间态混用）。
+单阶段 commit。灰度并存保证 revert 后恢复直 send。**禁止只迁一半就合并**。
 
 ## 风险
 
 | 风险 | 应对 |
 |------|------|
-| id 回填与现有 fire-and-forget 不兼容 | 向后兼容：广播/push 不回填；仅直接响应回填。未带 id 的请求仍按旧逻辑跑 |
-| useChat 流式迁移遗漏事件订阅 | 最后做；迁完手测 streaming + abort |
-| refCount 逻辑错导致事件翻倍/丢失 | 单测覆盖多实例订阅/取消场景 |
+| useChat 23 事件迁移遗漏 | 最后做；逐事件对照 :339-362 清单；手测覆盖 |
+| mock 998 行重写估工不足 | 单列 task 6；data.ts 可复用降低工作量 |
+| messageQueue 清空误伤系统消息 | 区分 session-scoped（清）vs 系统级（留）；测试覆盖 |
+| G5 重连收尾在路由层，useConnection 需 emit 信号 | events.ts 订阅 connection.restored；单测 |
