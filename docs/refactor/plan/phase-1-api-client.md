@@ -108,6 +108,41 @@ renderer/src/api/
   - `context`：update / get
   - 以上对照 `shared/protocol.ts` 消息类型，逐个在 mock api 实现中返回预制 Promise / emit 预制 ServerMessage。
 
+## 执行拆分（Subagent 分配）
+
+改动清单的 6 个 task 映射到 **6 个 subagent**，分 4 轮执行（串行链 → 3 路并行 → 收尾）。依赖图：
+
+```
+SA1 (传输+命令核心) → SA2 (事件路由+domains) → ┬ SA3 (mock 重写)        ┐
+                                                 ├ SA4 (composable 迁移)  → SA6 (useChat+错误流+集成)
+                                                 └ SA5 (store+组件迁移)   ┘
+```
+
+每个 SA 独立 commit、可单独 revert。SA1/SA2 串行（SA2 依赖 SA1 的 pending 公开接口）；SA3/SA4/SA5 并行（均只依赖 SA2 定义的 api 接口）；SA6 收尾（依赖前三者完成）。
+
+| SA | 对应 task | 目标 | 文件 | 依赖 | 行数估算 |
+|----|----------|------|------|------|---------|
+| **SA1** | task1+2(传输/命令) | api 传输层 + command 机制（含 G4 超时/断连 reject） | 新建 `api/transport.ts`、`api/pending.ts`、`api/index.ts`(骨架) | ws-client.ts、event-bus.ts | ~350 |
+| **SA2** | task1+3(事件/domains) | 消息路由分发 + 8 个 domain 实现 + createApiClient 补全 | 新建 `api/events.ts`、`api/domains/{session,chat,config,model,tree,extension,plugin,system}.ts`、补全 `api/index.ts` | **SA1**（pending 公开接口：`resolveResponse`/`rejectAll`） | ~450 |
+| **SA3** | task6 | D8 mock 重写为 api 同接口实现 | 新建 `api/mock/`（复用 `mock/data.ts` 725 行预制数据） | **SA2**（domains 接口） | ~600（复用后） |
+| **SA4** | task4 | 迁移 6 个 composable 的 send→api | 改 `composables/{useToolApproval,useModel,useSession,useExtensionUI,useTree,useProvider}.ts` | **SA2** | ~660 改动 |
+| **SA5** | task4 | 迁移 store + 4 组件的 send→api + 清零 send import | 改 `stores/plugin.ts`、`components/{settings/ExtensionsPane,panel/PanelSessionView,chat/SkillDrawer,layout/AppStatusbar}.vue` | **SA2** | ~1100 改动 |
+| **SA6** | task5+收尾 | useChat 23 事件迁移 + D6a 错误流收口 + G3 + ws-client G5 清队列 + 全量集成验证 | 改 `composables/useChat.ts`、`composables/useConnection.ts`(emit 信号)、`lib/ws-client.ts`(清队列) | **SA3+SA4+SA5** | ~470 改动 |
+
+### SA 间关键契约（SA1 必须先定）
+
+- `pending.ts` 暴露：`command<T>(msg): Promise<T>`、`resolveResponse(id, payload)`、`rejectAll(reason)`、`clearBySessionId(sid)`（G5 重连清理用）。
+- `transport.ts` 暴露：`send(msg)`、`onMessage(handler)`、`onClose(handler)`（events/pending 订阅）。
+- `index.ts` 的 `createApiClient({ transport, mock? })` 返回 `{ command, events, ...domains }`——SA1 先不挂 domains，SA2 补全。
+
+### 每个 SA 的验收（commit 前）
+
+- SA1：单测 pending（超时/断连 reject/迟到丢弃）；`command` 发出带 `id` 的消息。
+- SA2：单测 events（订阅/取消、D6b 无 sessionId 丢弃、G5 emit 信号）；domains 覆盖 protocol 消息类型（见现状表）。
+- SA3：`VITE_MOCK=true npm run dev` mock 主流程跑通（覆盖最小集，见 task6）。
+- SA4/SA5：改的文件 `send(` 清零；`npm run dev` 对应功能正常；`npm run lint` 过。
+- SA6：useChat 23 事件手测（streaming/abort/thinking/toolCall）；`rg "from.*ws-client" renderer/src/` 仅剩 useConnection+api/transport.ts；`npm run dev` 全功能 + `VITE_MOCK=true` 均正常。
+
 ## 验证标准
 
 - [ ] `npm run dev` 全功能正常。
