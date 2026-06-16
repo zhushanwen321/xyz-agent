@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import { on, emit as emitEventBus } from '../lib/event-bus'
-import { send } from '../lib/ws-client'
+import { api } from '../api'
 import type { ExtensionUIRequestPayload, ServerMessage } from '@xyz-agent/shared'
 
 // ── 模块级单例 ──────────────────────────────────────────────
@@ -68,16 +68,10 @@ export function useExtensionUI() {
     const source = activeRequest.value?.source
     if (source === 'plugin') {
       // Plugin UI response — no sessionId needed
-      send({
-        type: 'plugin.uiResponse',
-        payload: { requestId, result },
-      })
+      api.plugin.uiResponse({ requestId, result })
     } else {
       // Extension UI response — existing behavior
-      send({
-        type: 'extension.ui_response',
-        payload: { sessionId, requestId, result },
-      })
+      api.extension.uiResponse({ sessionId, requestId, result })
     }
     activeRequest.value = null
   }

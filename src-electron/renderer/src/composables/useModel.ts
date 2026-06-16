@@ -1,14 +1,14 @@
-import { send } from '../lib/ws-client'
+import { api } from '../api'
 
 export function useModel() {
   function listModels() {
-    send({ type: 'model.list', payload: {} })
+    api.model.list()
   }
   function switchModel(sessionId: string, provider: string, modelId: string) {
-    send({ type: 'model.switch', payload: { sessionId, provider, modelId } })
+    api.model.switch({ sessionId, provider, modelId })
   }
   function switchThinkingLevel(sessionId: string, level: string) {
-    send({ type: 'session.setThinkingLevel', payload: { sessionId, level } })
+    api.session.setThinkingLevel({ sessionId, level })
   }
   return { listModels, switchModel, switchThinkingLevel }
 }

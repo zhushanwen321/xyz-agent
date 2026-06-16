@@ -2,7 +2,7 @@ import { onMounted, onUnmounted, getCurrentInstance } from 'vue'
 import { useSessionStore } from '../stores/session'
 import { useChatStore } from '../stores/chat'
 import { useTreeStore } from '../stores/tree'
-import { send } from '../lib/ws-client'
+import { api } from '../api'
 import { on, off } from '../lib/event-bus'
 import type { ServerMessage, SessionSummary, Message } from '@xyz-agent/shared'
 
@@ -88,15 +88,15 @@ export function useSession() {
   const chatStore = useChatStore()
 
   function loadSessions() {
-    send({ type: 'session.list', payload: {} })
+    api.session.list()
   }
 
   function createSession(cwd: string, label?: string) {
-    send({ type: 'session.create', payload: { cwd, label } })
+    api.session.create({ cwd, label })
   }
 
   function deleteSession(sessionId: string) {
-    send({ type: 'session.delete', payload: { sessionId } })
+    api.session.delete({ sessionId })
   }
 
   function switchSession(sessionId: string) {
@@ -107,17 +107,17 @@ export function useSession() {
     // 对非活跃 session 从磁盘文件读取。更可靠的路径——
     // session.switch 会因 session 在内存 Map 中（驻留但 pi 进程已退出）
     // 而跳过 auto-restore，导致 RPC 调用到死进程返回空历史。
-    send({ type: 'session.history', payload: { sessionId } })
+    api.session.history({ sessionId })
   }
 
   function compactSession(sessionId?: string) {
     const sid = sessionId ?? sessionStore.currentSessionId
     if (!sid) return
-    send({ type: 'session.compact', payload: { sessionId: sid } })
+    api.session.compact({ sessionId: sid })
   }
 
   function renameSession(sessionId: string, newName: string) {
-    send({ type: 'session.rename', payload: { sessionId, name: newName } })
+    api.session.rename({ sessionId, name: newName })
   }
 
   // 全局事件 listener 生命周期：第一个组件 mounted 时注册，最后一个 unmounted 时注销

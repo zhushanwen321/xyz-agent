@@ -2,7 +2,7 @@ import { onMounted, onUnmounted, getCurrentInstance } from 'vue'
 import { useProviderStore } from '../stores/provider'
 import { useSettingsStore } from '../stores/settings'
 import { on, off } from '../lib/event-bus'
-import { send } from '../lib/ws-client'
+import { api } from '../api'
 import type { ServerMessage, ProviderInfo, ModelInfo, SkillInfo, AgentInfo, ScannedSkillInfo, ScannedAgentInfo, SetProviderData } from '@xyz-agent/shared'
 
 // ── 全局事件处理器（ref-counted，解决多组件重复注册问题）───
@@ -112,45 +112,45 @@ export function useProvider() {
   }
 
   function loadProviders() {
-    send({ type: 'config.getProviders', payload: {} })
+    api.config.getProviders()
   }
 
   function setProvider(providerId: string, data: SetProviderData = {}) {
-    send({ type: 'config.setProvider', payload: { providerId, ...data } })
+    api.config.setProvider({ providerId, ...data })
   }
 
   function deleteProvider(providerId: string) {
-    send({ type: 'config.deleteProvider', payload: { providerId } })
+    api.config.deleteProvider({ providerId })
   }
 
   function discoverModels(baseUrl: string, apiKey?: string, providerType?: string, providerId?: string) {
-    send({ type: 'config.discoverModels', payload: { baseUrl, ...(apiKey && { apiKey }), ...(providerType && { providerType }), ...(providerId && { providerId }) } })
+    api.config.discoverModels({ baseUrl, ...(apiKey && { apiKey }), ...(providerType && { providerType }), ...(providerId && { providerId }) })
   }
 
   function scanSkills(sources: string[]) {
     store.isScanningSkills = true
-    send({ type: 'config.scanSkills', payload: { sources } })
+    api.config.scanSkills({ sources })
   }
 
   function setSkill(skill: SkillInfo) {
-    send({ type: 'config.setSkill', payload: { skill } })
+    api.config.setSkill({ skill })
   }
 
   function deleteSkill(skillId: string) {
-    send({ type: 'config.deleteSkill', payload: { skillId } })
+    api.config.deleteSkill({ skillId })
   }
 
   function scanAgents(sources: string[]) {
     store.isScanningAgents = true
-    send({ type: 'config.scanAgents', payload: { sources } })
+    api.config.scanAgents({ sources })
   }
 
   function setAgent(agent: AgentInfo) {
-    send({ type: 'config.setAgent', payload: { agent } })
+    api.config.setAgent({ agent })
   }
 
   function deleteAgent(agentId: string) {
-    send({ type: 'config.deleteAgent', payload: { agentId } })
+    api.config.deleteAgent({ agentId })
   }
 
   function toggleSkill(skillId: string) {

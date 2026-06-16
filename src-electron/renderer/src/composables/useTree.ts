@@ -1,5 +1,5 @@
 import { useTreeStore } from '../stores/tree'
-import { send } from '../lib/ws-client'
+import { api } from '../api'
 import { on, emit } from '../lib/event-bus'
 import type { ServerMessage } from '@xyz-agent/shared'
 
@@ -61,8 +61,8 @@ function createGlobalHandlers() {
     if (newLeafId) {
       store.setLeafId(sid, newLeafId)
     }
-    send({ type: 'session.history', payload: { sessionId: sid } })
-    send({ type: 'session.tree-data', payload: { sessionId: sid } })
+    api.session.history({ sessionId: sid })
+    api.tree.data({ sessionId: sid })
     // 预填 editorText（navigate 到 user message 时的原始文本）
     const editorText = msg.payload.editorText as string | undefined
     if (editorText) {
@@ -86,8 +86,8 @@ function createGlobalHandlers() {
     store.setPanelOpen(sid, false)
     const newSessionId = msg.payload.newSessionId as string | undefined
     if (newSessionId) {
-      send({ type: 'session.list', payload: {} })
-      send({ type: 'session.switch', payload: { sessionId: newSessionId } })
+      api.session.list()
+      api.session.switch({ sessionId: newSessionId })
     }
   }
 
@@ -103,8 +103,8 @@ function createGlobalHandlers() {
     // Clone 成功：刷新 session 列表 + 自动切换到新 session
     const newSessionId = msg.payload.newSessionId as string | undefined
     if (newSessionId) {
-      send({ type: 'session.list', payload: {} })
-      send({ type: 'session.switch', payload: { sessionId: newSessionId } })
+      api.session.list()
+      api.session.switch({ sessionId: newSessionId })
     }
   }
 
@@ -147,7 +147,7 @@ export function useTree() {
 
   function fetchTree(sessionId: string) {
     store.setLoading(sessionId, true)
-    send({ type: 'session.tree-data', payload: { sessionId } })
+    api.tree.data({ sessionId })
     // 超时保护：10s 内未收到 tree-data 响应则重置 loading，避免 UI 永久卡死
     setTimeout(() => {
       const state = store.getSessionState(sessionId)
@@ -160,20 +160,20 @@ export function useTree() {
 
   function navigate(sessionId: string, targetEntryId: string) {
     store.setLoading(sessionId, true)
-    send({ type: 'session.tree-navigate', payload: { sessionId, targetEntryId } })
+    api.tree.navigate({ sessionId, targetEntryId })
   }
 
   function fork(sessionId: string, entryId: string) {
     store.setLoading(sessionId, true)
-    send({ type: 'session.tree-fork', payload: { sessionId, entryId } })
+    api.tree.fork({ sessionId, entryId })
   }
 
   function requestCapability(sessionId: string) {
-    send({ type: 'session.tree-capability', payload: { sessionId } })
+    api.tree.capability({ sessionId })
   }
 
   function cloneSession(sessionId: string) {
-    send({ type: 'session.tree-clone', payload: { sessionId } })
+    api.tree.clone({ sessionId })
   }
 
   return { fetchTree, navigate, fork, requestCapability, cloneSession }
