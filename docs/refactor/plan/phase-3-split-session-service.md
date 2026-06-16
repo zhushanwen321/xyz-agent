@@ -32,7 +32,7 @@
 | getHistory | 369 | **Facade**（经 rpc-client + adapter，轻） |
 | hasActiveSession | 358 | **Facade**（进程绑定，查 sessions） |
 | getRpcClient | 362 | **Facade**（进程绑定） |
-| ensureActive | 364 | **Facade**（进程绑定，被多模块用） |
+| ensureActive | 371 | **Facade**（进程绑定，被多模块用） |
 | listPersistedSessions | 98 | scanner |
 | getSummary | 560 | **Facade**（**v1.1 补**，查 sessions，被 PluginService 用） |
 | destroyAll | 567 | **Facade**（**v1.1 补**，遍历 sessions，生命周期终结） |
@@ -75,7 +75,7 @@ class SessionService implements ISessionService {
 
 **模型选择理由**：sessions Map 单写者（Facade）+ 子模块经 Facade 引用只读/委托。避免 Map 多处持有导致状态不一致。子模块不直接持有 sessions，只持有 Facade 的受限视图（暴露 needed 方法）。
 
-**防循环 import（plan-review-round-2 C-4）**：受限视图用 **interface 解耦**——定义 `ISessionServiceInternal`（暴露 initializeManagedSession/detachSession/toSummary/findScannedSession/getSkillPaths/getExtensionPaths 给子模块），子模块依赖此接口而非 Facade 具体类。Facade implements 该接口。这样子模块→接口→Facade 单向，Facade 委托子模块单向，**无模块级循环 import**。运行期的「Facade 调子模块方法、子模块经接口回调 Facade helper」是调用环非依赖环，TS 编译不报。
+**防循环 import（plan-review-round-2 C-4 + round-3 P2）**：受限视图用 **interface 解耦**——定义 `ISessionServiceInternal`（暴露 initializeManagedSession/detachSession/toSummary/findScannedSession/getSkillPaths/getExtensionPaths 给子模块），**interface 必须放 `interfaces.ts`（独立文件）**，子模块 `import type { ISessionServiceInternal } from '../interfaces.js'` 而非从 session-service.ts 引。Facade implements 该接口。这样子模块→接口→Facade 单向，Facade 委托子模块单向，**无模块级循环 import**（若 interface 放 session-service.ts 同文件，子模块 import Facade 文件会重新引入模块环）。运行期的「Facade 调子模块方法、子模块经接口回调 Facade helper」是调用环非依赖环，TS 编译不报。
 
 ### pm.onSessionExit 回调归属（v1.1）
 

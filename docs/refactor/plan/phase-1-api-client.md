@@ -97,6 +97,16 @@ renderer/src/api/
 
 - VITE_MOCK 检查点在 **2 处**：`ws-client.ts:24/100/117` + **`useConnection.ts:45,53`**（connect 路径分支），都要迁。
 - mock/data.ts（725 行预制数据）可复用，仅改消费方式。
+- **Mock 必须覆盖的 api 方法最小集**（plan-review-round-3 P3，保证 `VITE_MOCK=true` 能跑通主流程）：
+  - `session`：create / list / switch / abort / fork / rename / delete / destroyAll
+  - `message`：send / stream（text_delta 流式返回预制消息）/ compaction / retry
+  - `config`：getProviders / getConfig
+  - `model`：list / switch
+  - `tree`：get / setExpanded / setActive
+  - `extension`：list / invoke
+  - `plugin`：list / invoke / uiResponse
+  - `context`：update / get
+  - 以上对照 `shared/protocol.ts` 消息类型，逐个在 mock api 实现中返回预制 Promise / emit 预制 ServerMessage。
 
 ## 验证标准
 

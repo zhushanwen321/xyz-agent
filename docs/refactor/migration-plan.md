@@ -28,7 +28,7 @@
 | 0 | 文档与认知 | 0 | 0（仅文档） | [phase-0-documentation.md](plan/phase-0-documentation.md) |
 | 1 | 前端 API Client 层 | 低 | 中 | [phase-1-api-client.md](plan/phase-1-api-client.md) |
 | 2 | Runtime 目录分层 | 低 | 中 | [phase-2-runtime-layering.md](plan/phase-2-runtime-layering.md) |
-| 2.5 | Main 进程重构（M1/M3） | 中 | 中 | [phase-2.5-main-process.md](plan/phase-2.5-main-process.md) |
+| 2.5 | Main 进程重构（M1 spawn 去重） | 中 | 低 | [phase-2.5-main-process.md](plan/phase-2.5-main-process.md)（M3 已降级为文档化） |
 | 3 | 拆 session-service 巨石 | 中 | 中 | [phase-3-split-session-service.md](plan/phase-3-split-session-service.md) |
 | 4 | 命名对齐 | 低 | 小 | [phase-4-naming-alignment.md](plan/phase-4-naming-alignment.md) |
 | 5 | 防护加固 | 低 | 小 | [phase-5-guardrails.md](plan/phase-5-guardrails.md) |
@@ -63,4 +63,4 @@
 | G7 回滚 | 全局铁律 |
 | T2 拆 session-service | 阶段 3 |
 | **M1 spawn 去重** | **阶段 2.5** |
-| **M3 window-manager 不存完整 tree** | **阶段 2.5** |
+| **M3 window-manager 不存完整 tree** | **阶段 0（仅文档化，已降级）**——plan-review-round-3：改 Set 丢 paneId 契约 + 风险弱 + spec 已定低优 |

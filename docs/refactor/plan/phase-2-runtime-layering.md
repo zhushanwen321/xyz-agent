@@ -6,6 +6,8 @@
 
 把 `runtime/src/` 29 个平铺文件按 4 层归位（transport/services/adapters/infra），防腐层从 infra 独立；`SidecarServer` 重命名。**纯 `git mv` + import 路径修正**，无逻辑改动。
 
+> ⚠️ **防腐现状说明**（plan-review-round-3 P5）：adapters 归位是**方向**，但现状防腐不彻底——`session-service.ts` 仍 `import type { PiMessage }` 并处理 `PiHistoryMessage`，pi 类型已泄漏到 service 层。**本阶段只做文件归位，不消除类型耦合**（彻底防腐化属后续 scope）。执行者须知：mv 后 service 层仍有 pi 类型耦合。
+
 ## 前置依赖
 
 无强依赖（可与阶段 1 并行，不同进程）。
