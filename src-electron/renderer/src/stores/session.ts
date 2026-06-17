@@ -22,7 +22,10 @@ export const useSessionStore = defineStore('session', () => {
   )
 
   function setSessions(list: SessionSummary[]) { sessions.value = list }
-  function addSession(s: SessionSummary) { sessions.value = [s, ...sessions.value] }
+  function addSession(s: SessionSummary) {
+    if (sessions.value.some(x => x.id === s.id)) return
+    sessions.value = [s, ...sessions.value]
+  }
   function removeSession(id: string) { sessions.value = sessions.value.filter(s => s.id !== id) }
   function switchSession(id: string) { currentSessionId.value = id }
 

@@ -91,15 +91,19 @@ export function useSession() {
     api.session.list()
   }
 
-  function createSession(cwd: string, label?: string) {
-    api.session.create({ cwd, label })
+  // 命令响应被 pending.ts 的 id-matched resolver 消费，不会到达 events._dispatch，
+  // 因此不能依赖 session.created 事件处理，必须用返回值直接入 store。
+  async function createSession(cwd: string, label?: string) {
+    const res = (await api.session.create({ cwd, label })) as { session: SessionSummary }
+    sessionStore.addSession(res.session)
+    sessionStore.switchSession(res.session.id)
   }
 
   function deleteSession(sessionId: string) {
     api.session.delete({ sessionId })
   }
 
-  function switchSession(sessionId: string) {
+  async function switchSession(sessionId: string) {
     sessionStore.switchSession(sessionId)
     chatStore.ensureSession(sessionId)
     chatStore.setLoadingHistory(true, sessionId)
@@ -107,7 +111,10 @@ export function useSession() {
     // 对非活跃 session 从磁盘文件读取。更可靠的路径——
     // session.switch 会因 session 在内存 Map 中（驻留但 pi 进程已退出）
     // 而跳过 auto-restore，导致 RPC 调用到死进程返回空历史。
-    api.session.history({ sessionId })
+    // 命令响应被 pending.ts 按 id 结算（不经过 events._dispatch），
+    // 必须用返回值直接入 store，否则 onSessionHistory 永不触发。
+    const res = (await api.session.history({ sessionId })) as { sessionId: string; messages: Message[] }
+    chatStore.replaceMessages(res.messages, sessionId)
   }
 
   function compactSession(sessionId?: string) {
