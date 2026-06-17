@@ -55,6 +55,25 @@ describe('createEvents — D6b 无 sessionId 丢弃', () => {
     expect(textHandler).toHaveBeenCalledTimes(1)
     expect(configHandler).toHaveBeenCalledTimes(1)
   })
+
+  // 用 spec/plan 点名的两个类型钉死 D6b 契约：session.created（带 sessionId 字段但空）丢弃、
+  // pong（根本无 sessionId 字段）放行。防止未来重构 _dispatch 时这两类回归（phase-5 guardrails 5.1）。
+  it('session.created 空 sid 丢弃；pong 无 sessionId 字段放行（同一 _dispatch 规则）', () => {
+    const events = createEvents()
+    const createdHandler = vi.fn()
+    const pongHandler = vi.fn()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    events.on('session.created', createdHandler)
+    events.on('pong', pongHandler)
+
+    events._dispatch(msg('session.created', { sessionId: '' }))
+    events._dispatch(msg('pong', {}))
+
+    expect(createdHandler).not.toHaveBeenCalled()
+    expect(pongHandler).toHaveBeenCalledTimes(1)
+    expect(warn).toHaveBeenCalledTimes(1)
+    warn.mockRestore()
+  })
 })
 
 describe('createEvents — 重连收尾信号 (G5)', () => {
