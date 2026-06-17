@@ -158,11 +158,7 @@ function handleKeydown(e: KeyboardEvent) {
 }
 
 async function createSession() {
-  if (!window.electronAPI?.pickDirectory) {
-    console.warn('[createSession] pickDirectory API not available')
-    return
-  }
-  const result = await window.electronAPI.pickDirectory({ title: '选择项目目录' })
+  const result = await api.dialog.pickDirectory({ title: '选择项目目录' })
   if (result.canceled || !result.path) return
 
   const label = sessionStore.generateSessionLabel(result.path)
@@ -232,48 +228,42 @@ onMounted(async () => {
     { deep: true },
   )
 
-  if (window.electronAPI?.onWindowListUpdated) {
-    ipcCleanupFns.push(window.electronAPI.onWindowListUpdated(() => {
-      windowStore.refreshFromIPC()
-    }))
-  }
+  ipcCleanupFns.push(api.window.onListUpdated(() => {
+    windowStore.refreshFromIPC()
+  }))
 
-  if (window.electronAPI) {
-    ipcCleanupFns.push(window.electronAPI.onShortcut((type) => {
-      switch (type) {
-        case 'standard':
-        case 'focus':
-          panelStore.mergeToSingle()
-          if (navStore.currentView !== 'chat') {
-            const sid = panelStore.focusedPanel?.sessionId ?? ''
-            if (sid) navStore.push({ view: 'chat', sessionId: sid })
-          }
-          break
-        case 'split':
-          panelStore.splitPanel(panelStore.focusedPanelId, 'horizontal')
-          break
-        case 'overview':
-          settingsStore.togglePanelGrid()
-          break
-        case 'settings':
-          toggleSettings()
-          break
-      }
-    }))
-  }
+  ipcCleanupFns.push(api.system.onShortcut((type) => {
+    switch (type) {
+      case 'standard':
+      case 'focus':
+        panelStore.mergeToSingle()
+        if (navStore.currentView !== 'chat') {
+          const sid = panelStore.focusedPanel?.sessionId ?? ''
+          if (sid) navStore.push({ view: 'chat', sessionId: sid })
+        }
+        break
+      case 'split':
+        panelStore.splitPanel(panelStore.focusedPanelId, 'horizontal')
+        break
+      case 'overview':
+        settingsStore.togglePanelGrid()
+        break
+      case 'settings':
+        toggleSettings()
+        break
+    }
+  }))
 
   document.addEventListener('keydown', handleKeydown)
 
-  if (window.electronAPI?.onRuntimeError) {
-    ipcCleanupFns.push(window.electronAPI.onRuntimeError((error) => {
-      toastStore.show({
-        type: 'danger',
-        title: 'Runtime 启动失败',
-        description: error.message,
-        long: true,
-      })
-    }))
-  }
+  ipcCleanupFns.push(api.runtimePort.onError((error) => {
+    toastStore.show({
+      type: 'danger',
+      title: 'Runtime 启动失败',
+      description: error.message,
+      long: true,
+    })
+  }))
 
   let disconnectToastId: string | null = null
   let disconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -308,11 +298,9 @@ onMounted(async () => {
   ipcCleanupFns.push(api.events.on('error', handleGlobalError))
 
   // macOS fullscreen state → toggle .is-fullscreen class on root element AND sync to layout store
-  if (window.electronAPI?.onFullscreenChanged) {
-    ipcCleanupFns.push(window.electronAPI.onFullscreenChanged(({ isFullscreen }) => {
-      layoutStore.setFullscreen(isFullscreen)
-    }))
-  }
+  ipcCleanupFns.push(api.system.onFullscreenChanged(({ isFullscreen }) => {
+    layoutStore.setFullscreen(isFullscreen)
+  }))
 })
 
 onUnmounted(() => {

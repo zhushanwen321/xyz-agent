@@ -8,8 +8,8 @@ export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 're
 /** 获取实际的 fallback 端口（考虑 dev 模式的端口偏移） */
 async function resolveFallbackPort(): Promise<number> {
   try {
-    if (window.electronAPI) {
-      const offset = await window.electronAPI.getRuntimePortOffset()
+    const offset = await api.runtimePort.getPortOffset()
+    if (offset !== undefined) {
       return BASE_PORT + offset
     }
   // eslint-disable-next-line taste/no-silent-catch
@@ -63,32 +63,31 @@ export function useConnection() {
     }
 
     try {
-      // Electron IPC: 监听 runtime 端口事件
-      if (window.electronAPI) {
-        removeRuntimePortListener = window.electronAPI.onRuntimePort((newPort) => {
-          if (newPort && state.value !== 'disconnected') {
-            disconnect()
-            connect('ws://localhost:' + newPort)
-          }
-        })
-
-        // 尝试从主进程获取已知端口
-        try {
-          const knownPort = await window.electronAPI.getRuntimePort()
-          if (knownPort) {
-            connect('ws://localhost:' + knownPort)
-            return
-          }
-        // eslint-disable-next-line taste/no-silent-catch
-        } catch (e) {
-          console.error('[useConnection] runtime port not ready:', e)
+      // Electron IPC: 监听 runtime 端口事件（D1 启动时序契约）。
+      // api.runtimePort 经 IpcTransport 注入；ipc 为 undefined（web/mock）时降级。
+      removeRuntimePortListener = api.runtimePort.onPort((newPort) => {
+        if (newPort && state.value !== 'disconnected') {
+          disconnect()
+          connect('ws://localhost:' + newPort)
         }
+      })
 
-        // Runtime 尚未启动时，用偏移后的端口做 fallback（避免连到 prod runtime）
-        const fallbackPort = await resolveFallbackPort()
-        connect('ws://localhost:' + fallbackPort)
-        return
+      // 尝试从主进程获取已知端口
+      try {
+        const knownPort = await api.runtimePort.getPort()
+        if (knownPort) {
+          connect('ws://localhost:' + knownPort)
+          return
+        }
+      // eslint-disable-next-line taste/no-silent-catch
+      } catch (e) {
+        console.error('[useConnection] runtime port not ready:', e)
       }
+
+      // Runtime 尚未启动时，用偏移后的端口做 fallback（避免连到 prod runtime）
+      const fallbackPort = await resolveFallbackPort()
+      connect('ws://localhost:' + fallbackPort)
+      return
     // eslint-disable-next-line taste/no-silent-catch
     } catch (e) {
       console.error('[useConnection] Electron API unavailable:', e)

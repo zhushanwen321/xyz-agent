@@ -33,7 +33,7 @@ defineEmits<{
 const renamingSessionId = ref<string | null>(null)
 
 // hiddenInset 模式下 traffic lights 始终存在（非全屏）；全屏时无 traffic lights
-// Source of truth: useLayoutStore, kept in sync via window.electronAPI.onFullscreenChanged
+// Source of truth: useLayoutStore, kept in sync via api.system.onFullscreenChanged
 const isFullscreen = computed(() => layoutStore.isFullscreen)
 
 function dirname(cwd: string): string {

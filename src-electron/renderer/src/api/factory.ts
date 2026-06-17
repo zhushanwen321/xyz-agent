@@ -8,6 +8,7 @@
  */
 import type { ClientMessage } from '@xyz-agent/shared'
 import type { Transport } from './transport'
+import type { IpcTransport } from './ipc-transport'
 import { createPending } from './pending'
 import { createEvents } from './events'
 import type { EventApi } from './events'
@@ -19,6 +20,9 @@ import { treeApi } from './domains/tree'
 import { extensionApi } from './domains/extension'
 import { pluginApi } from './domains/plugin'
 import { systemApi } from './domains/system'
+import { windowApi } from './domains/window'
+import { dialogApi } from './domains/dialog'
+import { runtimePortApi } from './domains/runtime-port'
 import type { SessionDomain } from './domains/session'
 import type { ChatDomain } from './domains/chat'
 import type { ConfigDomain } from './domains/config'
@@ -27,6 +31,9 @@ import type { TreeDomain } from './domains/tree'
 import type { ExtensionDomain } from './domains/extension'
 import type { PluginDomain } from './domains/plugin'
 import type { SystemDomain } from './domains/system'
+import type { WindowDomain } from './domains/window'
+import type { DialogDomain } from './domains/dialog'
+import type { RuntimePortDomain } from './domains/runtime-port'
 
 export interface ApiClient {
   transport: Transport
@@ -42,9 +49,15 @@ export interface ApiClient {
   extension: ExtensionDomain
   plugin: PluginDomain
   system: SystemDomain
+  /** M2 Window Manager IPC（design.md D1/R4 统一门面）。 */
+  window: WindowDomain
+  /** M3 OS Gateway IPC：对话框 + 外链。 */
+  dialog: DialogDomain
+  /** M1 Process Supervisor IPC：runtime 端口发现 + 重连。 */
+  runtimePort: RuntimePortDomain
 }
 
-export function createApiClient(opts: { transport: Transport }): ApiClient {
+export function createApiClient(opts: { transport: Transport; ipc?: IpcTransport }): ApiClient {
   const pending = createPending({ send: (m) => opts.transport.send(m) })
   const events = createEvents()
 
@@ -70,6 +83,10 @@ export function createApiClient(opts: { transport: Transport }): ApiClient {
     tree: treeApi(cmd),
     extension: extensionApi(cmd),
     plugin: pluginApi(cmd),
-    system: systemApi(cmd),
+    system: systemApi(cmd, opts.ipc),
+    window: windowApi(opts.ipc ?? { ipc: undefined }),
+    dialog: dialogApi(opts.ipc ?? { ipc: undefined }),
+    runtimePort: runtimePortApi(opts.ipc ?? { ipc: undefined }),
   }
 }
+

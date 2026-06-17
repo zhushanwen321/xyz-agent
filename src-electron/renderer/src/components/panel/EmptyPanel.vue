@@ -54,6 +54,7 @@ import { useChatStore } from '../../stores/chat'
 import { useSidebarStore } from '../../stores/sidebar'
 import { useLayoutStore } from '../../stores/layout'
 import { useSession } from '../../composables/useSession'
+import { api } from '@/api'
 
 const { t } = useI18n()
 
@@ -98,22 +99,15 @@ function handleSelectSession(sessionId: string) {
 function handleCreateSession() {
   isCreating.value = true
   prevSessionCount.value = sessionStore.sessions.length
-  // Use Electron directory picker
-  if (window.electronAPI?.pickDirectory) {
-    window.electronAPI.pickDirectory({ title: t('panel.selectProjectDir') }).then((result) => {
-      if (result.canceled || !result.path) {
-        isCreating.value = false
-        return
-      }
-      const label = sessionStore.generateSessionLabel(result.path)
-      doCreateSession(result.path, label)
-    })
-  } else {
-    // Fallback for non-Electron environments
-    const cwd = sessionStore.currentSession?.cwd || '/Users/zhushanwen/Code/xyz-agent'
-    const label = sessionStore.generateSessionLabel(cwd)
-    doCreateSession(cwd, label)
-  }
+  // api.dialog.pickDirectory 经 IPC 取原生目录选择器；web/mock 环境返回 canceled。
+  api.dialog.pickDirectory({ title: t('panel.selectProjectDir') }).then((result) => {
+    if (result.canceled || !result.path) {
+      isCreating.value = false
+      return
+    }
+    const label = sessionStore.generateSessionLabel(result.path)
+    doCreateSession(result.path, label)
+  })
 }
 
 // When a new session appears after creation, bind it to this pane

@@ -3,6 +3,8 @@
  * Handles code-copy, code-expand, and external link clicks via event delegation.
  * Used by both AssistantContent.vue and MessageBubble.vue.
  */
+import { api } from '@/api'
+
 const COPY_FEEDBACK_MS = 1500
 
 export function useMarkdownBodyClick() {
@@ -14,7 +16,7 @@ export function useMarkdownBodyClick() {
       const href = anchor.href
       if (href && /^https?:\/\//i.test(href)) {
         e.preventDefault()
-        window.electronAPI?.openExternal(href)
+        api.dialog.openExternal(href)
       }
       return
     }

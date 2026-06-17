@@ -1,41 +1,38 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { WindowState, PanelTree } from '@xyz-agent/shared'
+import { api } from '@/api'
 
 export const useWindowStore = defineStore('window', () => {
   const windows = ref<WindowState[]>([])
   const currentWindowId = ref<string>('')
 
   function refreshFromIPC() {
-    if (window.electronAPI?.getWindows) {
-      window.electronAPI.getWindows().then((wins) => {
-        windows.value = wins as unknown as WindowState[]
-      }).catch(() => {
-        // ignore
-      })
-    }
+    api.window.list().then((wins) => {
+      if (wins) windows.value = wins
+    }).catch(() => {
+      // ignore
+    })
   }
 
   async function createWindow(sessionId?: string) {
-    if (!window.electronAPI?.createWindow) return
-    const result = await window.electronAPI.createWindow(sessionId)
+    const result = await api.window.create(sessionId)
     refreshFromIPC()
     return result
   }
 
   function focusWindow(windowId: string) {
-    window.electronAPI?.focusWindow?.(windowId)
+    api.window.focus(windowId)
   }
 
   /** 检查指定 session 是否已在其他窗口打开 */
   async function findSessionWindow(sessionId: string): Promise<{ windowId: string } | null> {
-    if (!window.electronAPI?.findSessionWindow) return null
-    return window.electronAPI.findSessionWindow(sessionId)
+    return api.window.findSession(sessionId)
   }
 
   function updateWindowState(state: Partial<WindowState>) {
     if (!currentWindowId.value) return
-    window.electronAPI?.updateWindowState?.(currentWindowId.value, state)
+    api.window.updateState(currentWindowId.value, state)
   }
 
   /** Sync local pane tree to main process */

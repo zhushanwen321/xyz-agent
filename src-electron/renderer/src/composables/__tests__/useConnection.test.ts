@@ -29,9 +29,24 @@ vi.mock('../../lib/ws-client', async () => {
   }
 })
 
-vi.mock('../../api', () => ({
-  api: { events: { _notifyConnectionRestored: notify } },
-}))
+vi.mock('../../api', () => {
+  // runtimePort 经 window.electronAPI 读取（模拟真实 singleton 经 IpcTransport 绑定）。
+  // 测试在 beforeAll 注入 window.electronAPI 后，runtimePort 方法才能取到值。
+  const ipc = () => (window as unknown as { electronAPI?: unknown }).electronAPI as
+    | { onRuntimePort?: Function; getRuntimePort?: Function; getRuntimePortOffset?: Function }
+    | undefined
+  return {
+    api: {
+      events: { _notifyConnectionRestored: notify },
+      runtimePort: {
+        getPort: () => ipc()?.getRuntimePort?.(),
+        getPortOffset: () => ipc()?.getRuntimePortOffset?.(),
+        onPort: (cb: (port: number) => void) => ipc()?.onRuntimePort?.(cb) ?? (() => {}),
+        onError: () => () => {},
+      },
+    },
+  }
+})
 
 let onRuntimePortCb: ((port: number) => void) | null = null
 

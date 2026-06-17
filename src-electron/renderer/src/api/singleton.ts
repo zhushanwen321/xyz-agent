@@ -1,6 +1,7 @@
 import { createApiClient } from './factory'
 import { createEventBusTransport } from './transport'
 import { createMockTransport } from './mock'
+import { createIpcTransport } from './ipc-transport'
 
 /**
  * 全局 API 单例。
@@ -18,7 +19,12 @@ const transport = import.meta.env.VITE_MOCK === 'true'
   ? createMockTransport()
   : createEventBusTransport()
 
-export const api = createApiClient({ transport })
+export const api = createApiClient({
+  transport,
+  // 绑定 preload 注入的 electronAPI（web/mock 环境下为 undefined，domain 方法优雅降级）。
+  // design.md R4：API Client 是 WS + IPC 的统一门面，IPC 经 IpcTransport 注入。
+  ipc: createIpcTransport(window.electronAPI),
+})
 
 /**
  * 连接状态 ref（re-export 自 ws-client）：App/AppStatusbar 读传输层连接状态。
