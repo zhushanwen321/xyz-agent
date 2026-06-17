@@ -139,7 +139,7 @@ import PanelSessionView from '../PanelSessionView.vue'
 function mountPanel(overrides: { sessionId?: string; panelId?: string } = {}) {
   return mount(PanelSessionView, {
   props: {
-    panelId: overrides.panelId ?? 'pane-1',
+    panelId: overrides.panelId ?? 'panel-1',
     sessionId: overrides.sessionId ?? 'session-1',
   },
   global: {

@@ -1,7 +1,7 @@
 <template>
   <!-- Pane leaf node -->
   <div
-    v-if="node.type === 'pane'"
+    v-if="node.type === 'panel'"
     :class="['flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden bg-bg', node.id === focusedPanelId ? '' : '']"    
     @mousedown="panelStore.navigateToPanel(node.id)"
   >

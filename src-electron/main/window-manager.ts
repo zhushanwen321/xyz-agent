@@ -98,7 +98,9 @@ const MAX_PANE_DEPTH = 16
 
 function containsSession(node: PanelTree, sessionId: string, depth = 0): boolean {
   if (depth > MAX_PANE_DEPTH) return false
-  if (node.type === 'pane') return node.sessionId === sessionId
+  // 兼容旧值 'pane'：panelTree 经 IPC 双向传输，过渡期防御旧版本窗口混入。
+  // 无磁盘持久化，确认无旧值后可移除 'pane' 分支。
+  if (node.type === 'panel' || node.type === 'pane') return node.sessionId === sessionId
   // eslint-disable-next-line no-magic-numbers -- binary tree always has 2 children max
   if (!node.children || node.children.length < 2) return false
   return containsSession(node.children[0], sessionId, depth + 1) || containsSession(node.children[1], sessionId, depth + 1)
@@ -108,11 +110,11 @@ export function initialWindowState(windowId: string): WindowState {
   return {
     windowId,
     panelTree: {
-      type: 'pane',
-      id: `pane-${windowId}`,
+      type: 'panel',
+      id: `panel-${windowId}`,
       sessionId: null,
     },
-    focusedPanelId: `pane-${windowId}`,
+    focusedPanelId: `panel-${windowId}`,
     sessionIds: [],
   }
 }

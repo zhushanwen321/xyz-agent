@@ -18,7 +18,7 @@ export interface ElectronAPI {
   /** 创建新窗口，可选携带 sessionId 迁移 */
   createWindow(sessionId?: string): Promise<{ windowId: string }>
   /** 获取所有窗口状态列表 */
-  getWindows(): Promise<Array<{ windowId: string; focusedPaneId: string; sessionIds: string[] }>>
+  getWindows(): Promise<import('@xyz-agent/shared').WindowState[]>
   /** 聚焦指定窗口 */
   focusWindow(windowId: string): Promise<void>
   /** 查找指定 session 所在的窗口，返回 { windowId } 或 null */

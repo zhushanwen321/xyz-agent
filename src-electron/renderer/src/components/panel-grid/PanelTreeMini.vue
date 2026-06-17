@@ -1,6 +1,6 @@
 <template>
   <div
-    v-if="node.type === 'pane'"
+    v-if="node.type === 'panel'"
     class="flex items-center justify-center h-full text-[11px] text-muted py-1 px-[6px] text-center overflow-hidden whitespace-nowrap text-ellipsis"
   >
     {{ node.sessionId || '空面板' }}

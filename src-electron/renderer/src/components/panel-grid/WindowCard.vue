@@ -35,7 +35,7 @@ defineEmits<{
 }>()
 
 function countPanels(node: PanelTree): number {
-  if (node.type === 'pane') return 1
+  if (node.type === 'panel') return 1
   return countPanels(node.children[0]) + countPanels(node.children[1])
 }
 
