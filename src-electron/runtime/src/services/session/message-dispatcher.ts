@@ -53,25 +53,7 @@ export class MessageDispatcher {
     buildPrompt: () => string,
   ): Promise<void> {
     // ── BeforeSend hook ──
-    try {
-      if (this.sendMessageHook) {
-        const hookResult = await this.sendMessageHook(sessionId, hookContent)
-        if (hookResult?.blocked) {
-          this.broker.broadcast({
-            type: 'message.error',
-            payload: { sessionId, message: hookResult.reason ?? 'Message blocked by plugin hook' },
-          })
-          return
-        }
-      }
-    } catch (e) {
-      console.error('[message-dispatcher] sendMessage hook error:', e)
-      this.broker.broadcast({
-        type: 'message.error',
-        payload: { sessionId, message: 'Plugin hook error: ' + (e instanceof Error ? e.message : String(e)) },
-      })
-      return
-    }
+    if ((await this.runBeforeSendHook(sessionId, hookContent)).blocked) return
 
     // ── ensureActive(必要时 restore)──
     let client: IRpcClient
@@ -90,16 +72,44 @@ export class MessageDispatcher {
       activeSession.lastActiveAt = Date.now()
       activeSession.isGenerating = true
     }
+    // ── 发送 prompt + 错误广播 ──
     const promptText = buildPrompt()
-    console.log(`[message-dispatcher] sendPrompt: sessionId=${sessionId}`)
     try {
       await client.prompt(promptText)
-      console.log(`[message-dispatcher] prompt acknowledged: sessionId=${sessionId}`)
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : String(e)
       console.error(`[message-dispatcher] prompt failed: sessionId=${sessionId}`, errMsg)
       if (activeSession) activeSession.isGenerating = false
       this.broker.broadcast({ type: 'message.error', payload: { sessionId, message: errMsg } })
+    }
+  }
+
+  /**
+   * 运行 BeforeSend hook：返回 { blocked: true } 时调用方应中止发送。
+   * 统一处理 hook 拦截（blocked）与 hook 自身异常（广播 message.error 后视作 blocked）。
+   */
+  private async runBeforeSendHook(
+    sessionId: string,
+    hookContent: string,
+  ): Promise<{ blocked: boolean }> {
+    if (!this.sendMessageHook) return { blocked: false }
+    try {
+      const hookResult = await this.sendMessageHook(sessionId, hookContent)
+      if (hookResult?.blocked) {
+        this.broker.broadcast({
+          type: 'message.error',
+          payload: { sessionId, message: hookResult.reason ?? 'Message blocked by plugin hook' },
+        })
+        return { blocked: true }
+      }
+      return { blocked: false }
+    } catch (e) {
+      console.error('[message-dispatcher] sendMessage hook error:', e)
+      this.broker.broadcast({
+        type: 'message.error',
+        payload: { sessionId, message: 'Plugin hook error: ' + (e instanceof Error ? e.message : String(e)) },
+      })
+      return { blocked: true }
     }
   }
 

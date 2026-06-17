@@ -32,6 +32,14 @@ export class SessionLifecycle {
     private readonly treeService: { unregisterSession: (sessionId: string) => void },
   ) {}
 
+  /**
+   * 静默销毁 session 进程：吞掉 destroy 自身的异常（用于错误清理路径，
+   * 避免清理失败掩盖原始错误）。调用方的控制流不变。
+   */
+  private async safeDestroy(id: string): Promise<void> {
+    await this.pm.destroySession(id).catch(() => {})
+  }
+
   async create(cwd?: string, label?: string): Promise<SessionSummary> {
     const tempId = crypto.randomUUID()
     const sessionCwd = cwd ?? process.cwd()
@@ -56,12 +64,12 @@ export class SessionLifecycle {
       piSessionId = (stateData?.sessionId as string) ?? ''
       sessionFilePath = stateData?.sessionFile as string | undefined
     } catch (e) {
-      await this.pm.destroySession(tempId).catch(() => {})
+      await this.safeDestroy(tempId)
       throw new Error(`Failed to get session state from pi: ${e instanceof Error ? e.message : e}`)
     }
 
     if (!piSessionId) {
-      await this.pm.destroySession(tempId).catch(() => {})
+      await this.safeDestroy(tempId)
       throw new Error('pi did not return a session ID')
     }
 
@@ -133,7 +141,7 @@ export class SessionLifecycle {
     const existing = this.svc.getSession(sessionId)
     if (existing) {
       this.svc.detachSession(sessionId)
-      await this.pm.destroySession(sessionId).catch(() => {})
+      await this.safeDestroy(sessionId)
       this.svc.removeSessionEntry(sessionId)
     }
 
@@ -155,7 +163,7 @@ export class SessionLifecycle {
       await client.sendCommand('switch_session', { sessionPath: target.filePath })
     } catch (e) {
       // switch_session 失败时清理已创建的资源,避免子进程/监听器泄漏
-      await this.pm.destroySession(id).catch(() => {})
+      await this.safeDestroy(id)
       throw e
     }
 
