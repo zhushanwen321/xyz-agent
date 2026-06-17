@@ -2,7 +2,7 @@ import { type ChildProcess, spawn, execSync } from 'node:child_process'
 import { createConnection } from 'node:net'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { app } from 'electron'
+import { app, BrowserWindow } from 'electron'
 import { homedir } from 'node:os'
 import { BASE_PORT, MAX_PORT as MAX_PORT_CONST, ENV_WHITELIST_PREFIXES } from '@xyz-agent/shared'
 
@@ -307,6 +307,21 @@ export class RuntimeManager {
 
     console.log(`[runtime] Ready on port ${port}`)
     return port
+  }
+
+  /**
+   * 启动 runtime 并通知渲染进程端口；失败时发 runtime-error。
+   * 消除 main.ts whenReady/activate 两处的重复编排。
+   * 幂等：内部 start() 先 stop() 再 spawn，activate 重启时复用此语义。
+   */
+  async startAndNotify(win: BrowserWindow): Promise<void> {
+    try {
+      const port = await this.start()
+      win.webContents.send('runtime-port', port)
+    } catch (err) {
+      console.error('[main] Failed to start runtime, notifying renderer:', err)
+      win.webContents.send('runtime-error', { message: (err as Error).message })
+    }
   }
 
   /** 停止 runtime 子进程及其子进程树（包括 pi），等待退出或超时 */

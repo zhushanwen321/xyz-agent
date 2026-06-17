@@ -146,18 +146,11 @@ app.whenReady().then(async () => {
   // 1. 注册全局快捷键
   registerShortcuts(mainWindow)
 
-  // 2. 启动 runtime（mock 模式跳过）
+  // 2. 启动 runtime 并通知端口（mock 模式跳过）
   if (process.env.XYZ_MOCK === '1') {
     console.log('[main] Mock mode — skipping runtime start')
   } else {
-    try {
-      const port = await runtimeManager.start()
-      // 3. 通知渲染进程 runtime 端口
-      mainWindow.webContents.send('runtime-port', port)
-    } catch (err) {
-      console.error('[main] Failed to start runtime, notifying renderer:', err)
-      mainWindow.webContents.send('runtime-error', { message: (err as Error).message })
-    }
+    await runtimeManager.startAndNotify(mainWindow)
   }
 })
 
@@ -181,13 +174,7 @@ app.on('activate', async () => {
 
     // 确保 runtime 可用（可能被 window-all-closed 或之前异常停止）
     if (process.env.XYZ_MOCK !== '1') {
-      try {
-        const port = await runtimeManager.start()
-        mainWindow.webContents.send('runtime-port', port)
-      } catch (err) {
-        console.error('[main] Failed to restart runtime on activate:', err)
-        mainWindow.webContents.send('runtime-error', { message: (err as Error).message })
-      }
+      await runtimeManager.startAndNotify(mainWindow)
     }
   }
 })
