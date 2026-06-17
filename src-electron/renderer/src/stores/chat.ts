@@ -332,6 +332,17 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  /** 标记 session 终止性错误并重置生成状态（单一错误入口，D6a / CLAUDE.md #3）。
+   *  用于终止性错误（stream_error / message.error / G5 重连）：重置 isGenerating + streamingMessage + error，
+   *  可选追加 alert 消息。非终止性错误（extension.error）不调用此方法。 */
+  function markSessionError(sid: string, err: string, msg?: ChatMessage) {
+    const s = getSessionState(sid)
+    s.isGenerating = false
+    s.streamingMessage = null
+    s.error = err
+    if (msg) s.completedMessages = [...s.completedMessages, msg]
+  }
+
   return {
     // State
     chatSessions,
@@ -359,6 +370,6 @@ export const useChatStore = defineStore('chat', () => {
     setPendingText, getPendingText,
 
     // 流式消息方法
-    completeStream, abortStream,
+    completeStream, abortStream, markSessionError,
   }
 })

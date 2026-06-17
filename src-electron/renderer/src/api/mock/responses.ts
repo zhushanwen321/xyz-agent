@@ -149,7 +149,10 @@ export function getMockResponse(msg: ClientMessage): ServerMessage[] {
     case 'message.send': {
       const { sessionId, content } = msg.payload
       return [
-        reply(msg, 'message.message_start', { sessionId }),
+        // 命令响应 message.status（带 id，pending 结算）；与 runtime session-message-handler 对齐
+        reply(msg, 'message.status', { sessionId, status: 'sent' }),
+        // 流式事件（无 id，走 events 广播，onMessage 路由触发 onMessageStart）
+        evt('message.message_start', { sessionId }),
         evt('message.thinking_start', { sessionId }),
         evt('message.thinking_delta', { sessionId, delta: '分析用户请求...' }),
         evt('message.thinking_end', { sessionId, content: '分析用户请求...' }),
@@ -164,7 +167,8 @@ export function getMockResponse(msg: ClientMessage): ServerMessage[] {
       return [reply(msg, 'message.complete', { sessionId: msg.payload.sessionId, stopReason: 'aborted' })]
     case 'message.steer':
     case 'message.follow_up':
-      return [reply(msg, 'message.message_start', { sessionId: msg.payload.sessionId })]
+      // 与 runtime session-message-handler 对齐：steer→status:steered, follow_up→status:queued（带 id 命令响应）
+      return [reply(msg, 'message.status', { sessionId: msg.payload.sessionId, status: msg.type === 'message.steer' ? 'steered' : 'queued' })]
 
     // ── config ──
     case 'config.getProviders':

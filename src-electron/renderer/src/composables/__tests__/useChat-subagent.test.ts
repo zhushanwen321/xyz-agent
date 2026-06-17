@@ -26,6 +26,7 @@ const {
     chatSessions: new Map<string, ChatSessionState>(),
     setGenerating: vi.fn(),
     setError: vi.fn(),
+    markSessionError: vi.fn(),
     getSessionState: vi.fn(() => ({ streamingMessage: null, isGenerating: false })),
     setStreaming: vi.fn(),
     completeStreaming: vi.fn(),
@@ -190,7 +191,7 @@ describe('G5 — onConnectionRestored 收尾 isGenerating 的 session', () => {
     setActivePinia(createPinia())
   })
 
-  it('重连后收尾所有 isGenerating=true 的 session（setError + completeStream error）', () => {
+  it('重连后收尾所有 isGenerating=true 的 session（统一调 markSessionError）', () => {
     __test_registerGlobalHandlers()
 
     mockChatStore.chatSessions.set('s-active', { isGenerating: true } as ChatSessionState)
@@ -199,17 +200,10 @@ describe('G5 — onConnectionRestored 收尾 isGenerating 的 session', () => {
     const cb = onConnRestored.mock.calls[0][0] as () => void
     cb()
 
-    expect(mockChatStore.setError).toHaveBeenCalledWith('连接已重置', 's-active')
-    expect(mockChatStore.completeStream).toHaveBeenCalledWith(
-      { stopReason: 'error', errorMessage: '连接已重置' },
-      's-active',
-    )
+    // 终止性错误单一入口：重置 isGenerating + streamingMessage + error（D6a / CLAUDE.md #3）
+    expect(mockChatStore.markSessionError).toHaveBeenCalledWith('s-active', '连接已重置')
     // 非 generating 的 session 不被收尾
-    expect(mockChatStore.setError).not.toHaveBeenCalledWith('连接已重置', 's-idle')
-    expect(mockChatStore.completeStream).not.toHaveBeenCalledWith(
-      expect.anything(),
-      's-idle',
-    )
+    expect(mockChatStore.markSessionError).not.toHaveBeenCalledWith('s-idle', '连接已重置')
   })
 
   it('无 isGenerating session 时重连不触发收尾', () => {
@@ -220,7 +214,6 @@ describe('G5 — onConnectionRestored 收尾 isGenerating 的 session', () => {
     const cb = onConnRestored.mock.calls[0][0] as () => void
     cb()
 
-    expect(mockChatStore.setError).not.toHaveBeenCalled()
-    expect(mockChatStore.completeStream).not.toHaveBeenCalled()
+    expect(mockChatStore.markSessionError).not.toHaveBeenCalled()
   })
 })

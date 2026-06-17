@@ -181,7 +181,7 @@ function createGlobalHandlers() {
     const sid = getSid(msg)
     if (!sid) return
     const errMsg = (msg.payload as { message?: string }).message ?? 'Unknown error'
-    store.abortStream(sid, errMsg)
+    store.markSessionError(sid, errMsg)
   }
 
   function onContextUpdate(msg: ServerMessage) {
@@ -195,6 +195,7 @@ function createGlobalHandlers() {
     void _msg
   }
 
+  // 非终止性错误：仅提示，不重置生成流（与 stream_error 区分，D6a / CLAUDE.md #3）
   function onExtensionError(msg: ServerMessage) {
     const sid = getSid(msg)
     if (!sid) return
@@ -327,12 +328,12 @@ function createGlobalHandlers() {
     store.setThinkingLevel(level, sid)
   }
 
-  /** message.stream_error → add an alert system notification */
+  /** message.stream_error → 终止性错误：重置生成状态 + 插入 alert（D6a / CLAUDE.md #3） */
   function onStreamError(msg: ServerMessage) {
     const sid = getSid(msg)
     if (!sid) return
     const content = (msg.payload as { content?: string }).content ?? 'Stream error'
-    store.addMessage(createSystemNotification('alert', content), sid)
+    store.markSessionError(sid, content, createSystemNotification('alert', content))
   }
 
   return new Map<ServerMessageType, (msg: ServerMessage) => void>([
@@ -381,8 +382,7 @@ function registerGlobalListeners() {
   globalOffs.push(api.events.onConnectionRestored(() => {
     for (const [sid, s] of store.chatSessions) {
       if (s.isGenerating) {
-        store.setError('连接已重置', sid)
-        store.completeStream({ stopReason: 'error', errorMessage: '连接已重置' }, sid)
+        store.markSessionError(sid, '连接已重置')
       }
     }
   }))

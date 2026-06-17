@@ -51,7 +51,7 @@ describe('createMockTransport — 命令响应回填 id', () => {
 })
 
 describe('createMockTransport — message.send 流式序列', () => {
-  it('首条 message_start 带 id 立即发；text_delta / complete 无 id 延迟发', () => {
+  it('首条 message.status 带 id 立即发（命令响应）；message_start/text_delta/complete 无 id 延迟发', () => {
     vi.useFakeTimers()
     try {
       const t = createMockTransport()
@@ -60,16 +60,18 @@ describe('createMockTransport — message.send 流式序列', () => {
 
       t.send({ type: 'message.send', id: 'req-4', payload: { sessionId: 's1', content: 'hello world' } })
 
-      // 首条立即：message_start 带 id（让 pending 结算）
+      // 首条立即：message.status 带 id（命令响应，让 pending 结算）
       expect(received).toHaveLength(1)
-      expect(received[0].type).toBe('message.message_start')
+      expect(received[0].type).toBe('message.status')
       expect(received[0].id).toBe('req-4')
       expect(received[0].payload.sessionId).toBe('s1')
+      expect(received[0].payload.status).toBe('sent')
 
       // 推进时间收齐流式后续
       vi.advanceTimersByTime(500)
 
       const types = received.map((m) => m.type)
+      expect(types).toContain('message.message_start')
       expect(types).toContain('message.thinking_start')
       expect(types).toContain('message.thinking_delta')
       expect(types).toContain('message.thinking_end')
@@ -77,6 +79,8 @@ describe('createMockTransport — message.send 流式序列', () => {
       expect(types).toContain('message.complete')
 
       // 流式事件无 id（走 events 路径，不应误触发 pending 结算）
+      const start = received.find((m) => m.type === 'message.message_start')
+      expect(start?.id).toBeUndefined()
       const delta = received.find((m) => m.type === 'message.text_delta')
       expect(delta?.id).toBeUndefined()
       const complete = received.find((m) => m.type === 'message.complete')

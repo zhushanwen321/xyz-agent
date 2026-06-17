@@ -8,7 +8,7 @@ import { getMockResponse } from './responses'
  *
  * - 命令响应：回填请求 id（responses.ts 的 reply() 已处理）→ pending 结算。
  * - 事件：无 id → events 路径。
- * - message.send 的流式：首条（message_start 带 id）立即发，其余 setTimeout 链发，
+ * - message.send 的流式：首条（message.status 带 id，命令响应）立即发，其余 setTimeout 链发，
  *   模拟真实打字机效果；测试用 fake timers 推进。
  *
  * 选 A 装配（不碰 ws-client 的 isMock 分支）：mock transport 独立工作，
@@ -38,7 +38,7 @@ export function createMockTransport(): Transport {
       if (responses.length === 0) return
 
       if (msg.type === 'message.send') {
-        // 首条立即（message_start 带 id → pending 结算），其余延迟发模拟流式
+        // 首条立即（message.status 带 id → pending 结算），其余延迟发模拟流式
         emit(responses[0])
         let delay = 0
         for (let i = 1; i < responses.length; i++) {
