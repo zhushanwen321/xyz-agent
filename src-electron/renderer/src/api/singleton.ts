@@ -1,4 +1,4 @@
-import { createApiClient } from './index'
+import { createApiClient } from './factory'
 import { createEventBusTransport } from './transport'
 import { createMockTransport } from './mock'
 

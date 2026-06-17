@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import type { ClientMessage, ServerMessage, ServerMessageType } from '@xyz-agent/shared'
 import { createEvents } from '../events'
-import { createApiClient } from '../index'
+import { createApiClient } from '../factory'
 import type { Transport } from '../transport'
 
 const msg = (
