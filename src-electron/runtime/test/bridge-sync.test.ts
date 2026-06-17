@@ -13,7 +13,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 const mockSendCommand = vi.fn().mockResolvedValue({ success: true })
 
-vi.mock('../src/services/session-service.js', () => {
+vi.mock('../src/services/session/session-service.js', () => {
   return {
     SessionService: class MockSessionService {
       sendMessage = vi.fn().mockResolvedValue(undefined)
@@ -129,7 +129,7 @@ vi.mock('../src/infra/trash.js', () => ({
 }))
 
 import { RuntimeServer } from '../src/transport/server.js'
-import { SessionService } from '../src/services/session-service.js'
+import { SessionService } from '../src/services/session/session-service.js'
 import { PluginService } from '../src/services/plugin-service/plugin-service.js'
 
 // ── EventAdapter unit tests (using vi.importActual to bypass mock) ──

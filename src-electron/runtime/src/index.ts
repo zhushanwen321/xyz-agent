@@ -1,5 +1,5 @@
 import { RuntimeServer } from './transport/server.js'
-import { SessionService } from './services/session-service.js'
+import { SessionService } from './services/session/session-service.js'
 import { TreeService } from './services/tree-service.js'
 import { ConfigService } from './services/config-service.js'
 import { ModelService } from './services/model-service.js'

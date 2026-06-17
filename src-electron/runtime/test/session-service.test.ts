@@ -98,7 +98,7 @@ vi.mock('../src/adapters/navigate-interceptor.js', () => ({
 
 // ── Mock 之后再 import 被测对象 ─────────────────────────────────────
 
-import { SessionService } from '../src/services/session-service.js'
+import { SessionService } from '../src/services/session/session-service.js'
 
 // ── Mock client / 依赖工厂 ─────────────────────────────────────────
 

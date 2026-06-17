@@ -24,7 +24,7 @@ const sendSubagentMessageMock = vi.fn().mockImplementation(
   },
 )
 
-vi.mock('../src/services/session-service.js', () => {
+vi.mock('../src/services/session/session-service.js', () => {
   return {
   SessionService: class MockSessionService {
     sendMessage = sendMessageMock
@@ -116,7 +116,7 @@ vi.mock('../src/infra/trash.js', () => ({
 }))
 
 import { RuntimeServer } from '../src/transport/server.js'
-import { SessionService } from '../src/services/session-service.js'
+import { SessionService } from '../src/services/session/session-service.js'
 import { ConfigService } from '../src/services/config-service.js'
 import { ModelService } from '../src/services/model-service.js'
 

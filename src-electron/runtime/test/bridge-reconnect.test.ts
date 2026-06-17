@@ -36,7 +36,7 @@ const mockGetToolSchemas = vi.fn()
 const mockHandleBridgeToolExecute = vi.fn()
 const mockHandleBridgeIntercept = vi.fn()
 
-vi.mock('../src/services/session-service.js', () => {
+vi.mock('../src/services/session/session-service.js', () => {
   return {
     SessionService: class MockSessionService {
       sendMessage = vi.fn().mockResolvedValue(undefined)
@@ -148,7 +148,7 @@ vi.mock('../src/infra/trash.js', () => ({
 }))
 
 import { RuntimeServer } from '../src/transport/server.js'
-import { SessionService } from '../src/services/session-service.js'
+import { SessionService } from '../src/services/session/session-service.js'
 import { PluginService } from '../src/services/plugin-service/plugin-service.js'
 
 const SESSION_ID = 'reconnect-session'

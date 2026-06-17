@@ -22,7 +22,7 @@ import type { ServerMessage } from '@xyz-agent/shared'
 
 const mockSendCommand = vi.fn().mockResolvedValue({ success: true })
 
-vi.mock('../src/services/session-service.js', () => {
+vi.mock('../src/services/session/session-service.js', () => {
   return {
     SessionService: class MockSessionService {
       sendMessage = vi.fn().mockResolvedValue(undefined)
@@ -116,7 +116,7 @@ vi.mock('../src/infra/trash.js', () => ({
 
 import { RuntimeServer } from '../src/transport/server.js'
 import { EventAdapter } from '../src/adapters/event-adapter.js'
-import { SessionService } from '../src/services/session-service.js'
+import { SessionService } from '../src/services/session/session-service.js'
 import { ConfigService } from '../src/services/config-service.js'
 import { ModelService } from '../src/services/model-service.js'
 

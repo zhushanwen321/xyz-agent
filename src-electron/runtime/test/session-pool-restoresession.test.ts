@@ -84,7 +84,7 @@ vi.mock('../src/infra/process-manager.js', () => ({
 
 // ── Import after mocks ──────────────────────────────────────────
 
-import { SessionService } from '../src/services/session-service.js'
+import { SessionService } from '../src/services/session/session-service.js'
 import type { IMessageBroker, IEventAdapter } from '../src/interfaces.js'
 
 /** Minimal scanned session fixture */

@@ -14,7 +14,7 @@ import { WebSocket } from 'ws'
 
 const mockSendCommand = vi.fn().mockResolvedValue({ success: true })
 
-vi.mock('../src/services/session-service.js', () => {
+vi.mock('../src/services/session/session-service.js', () => {
   return {
     SessionService: class MockSessionService {
       sendMessage = vi.fn().mockResolvedValue(undefined)
@@ -144,7 +144,7 @@ vi.mock('../src/infra/trash.js', () => ({
 }))
 
 import { RuntimeServer } from '../src/transport/server.js'
-import { SessionService } from '../src/services/session-service.js'
+import { SessionService } from '../src/services/session/session-service.js'
 import { ConfigService } from '../src/services/config-service.js'
 import { ModelService } from '../src/services/model-service.js'
 import { ExtensionService } from '../src/services/extension-service.js'

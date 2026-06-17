@@ -18,6 +18,7 @@ import type {
   ScannedAgentInfo,
 } from '@xyz-agent/shared'
 import type { PiEventListener } from './infra/rpc-client.js'
+import type { IManagedSessionView, ScannedSession } from './services/session/types.js'
 
 // ── IRpcClient ────────────────────────────────────────────────────
 
@@ -124,6 +125,53 @@ export interface ISessionService {
   steerMessage(sessionId: string, content: string): Promise<void>
   /** Queue a follow-up message for a session */
   followUpMessage(sessionId: string, content: string): Promise<void>
+}
+
+// ── ISessionServiceInternal ───────────────────────────────────────
+
+/**
+ * Facade 暴露给 session/ 子模块(lifecycle / dispatcher / scanner)的内部协议。
+ *
+ * 放在 interfaces.ts(独立文件)而非 session-service.ts,是为了打断模块级循环:
+ * 子模块 `import type { ISessionServiceInternal } from '../../interfaces.js'`,
+ * Facade `implements` 此接口 —— 子模块 → 接口 → Facade 单向,无 import 环。
+ * (运行期 Facade 调子模块、子模块经接口回调 Facade 是调用环,非依赖环。)
+ *
+ * sessions Map 单写者:Facade 唯一持有,子模块只经此接口拿到元素引用做字段更新,
+ * 不直接 new / 持有 Map。
+ */
+export interface ISessionServiceInternal {
+  // ── lifecycle 使用的共享 helper ──
+  /** 初始化 ManagedSession 并写入 sessions Map,返回子模块可见视图。 */
+  initializeManagedSession(id: string, client: IRpcClient, cwd: string, label: string, sessionFilePath?: string): Promise<IManagedSessionView>
+  /** Detach adapter + 退订 usage listener(按 id 查 Map)。 */
+  detachSession(sessionId: string): void
+  /** 将 ManagedSession 转为对外 SessionSummary(含 git 信息)。 */
+  toSummary(s: IManagedSessionView): SessionSummary
+  /** 从 scanPiSessions 结果中按 id 查找持久化 session。 */
+  findScannedSession(sessionId: string): ScannedSession | undefined
+  /** 收集有效的 skill 路径(pi-config-bridge + 存在性过滤)。 */
+  getSkillPaths(cwd: string): string[]
+  /** 收集有效的 extension 路径(经 ExtensionService)。 */
+  getExtensionPaths(): Promise<string[]>
+
+  // ── dispatcher 使用 ──
+  /** 确保会话活跃,必要时自动 restore。 */
+  ensureActive(sessionId: string): Promise<IRpcClient>
+  /** 按 RPC client 反查 managed session(更新 lastActiveAt / isGenerating 用)。 */
+  getSessionByClient(client: IRpcClient): IManagedSessionView | undefined
+
+  // ── lifecycle 使用(Map 单写者:查/删经 Facade)──
+  /** 只读查 Map,返回 managed session 视图(active 判定 + 字段读改)。 */
+  getSession(sessionId: string): IManagedSessionView | undefined
+  /** 从 Map 删除条目(仅删条目,不 detach adapter / 不 destroy 进程)。 */
+  removeSessionEntry(sessionId: string): void
+
+  // ── scanner 使用 ──
+  /** 当前活跃会话的 summary 列表(已含 git 信息)。 */
+  getActiveSummaries(): SessionSummary[]
+  /** 当前活跃会话占用的 session 文件路径集合(去重用)。 */
+  getActiveFilePaths(): Set<string>
 }
 
 // ── IConfigService ────────────────────────────────────────────────
