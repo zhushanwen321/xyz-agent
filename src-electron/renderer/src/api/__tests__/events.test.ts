@@ -148,3 +148,56 @@ describe('createApiClient — 命令/事件分流集成', () => {
     expect(listHandler).toHaveBeenCalledTimes(1)
   })
 })
+
+// ── G6 onOwned refCount 防重复订阅（CLAUDE.md #2）─────────────────
+describe('onOwned — G6 refCount 去重', () => {
+  it('同 ownerKey 二次 onOwned 不重复订阅：emit 时 handler 只调 1 次', () => {
+    const events = createEvents()
+    const handlerA = vi.fn()
+    const handlerB = vi.fn() // 模拟 split mode 下第二个 PanelSessionView 实例的 handler
+    const msg = { type: 'error', payload: { sessionId: 's1', message: 'x' } } as ServerMessage
+
+    const offA = events.onOwned('error', handlerA, 'PanelSessionView')
+    // 第二个实例：同 ownerKey，不同 handler 引用
+    const offB = events.onOwned('error', handlerB, 'PanelSessionView')
+
+    events._dispatch(msg)
+    // 只首个 handler 被调（set.add 只发生 1 次），第二个实例的 handler 不入 Set
+    expect(handlerA).toHaveBeenCalledTimes(1)
+    expect(handlerB).not.toHaveBeenCalled()
+    offA()
+  })
+
+  it('refCount 归零才真正移除：先 off 一个实例，emit 仍触发；全 off 后不再触发', () => {
+    const events = createEvents()
+    const handler = vi.fn()
+    const msg = { type: 'error', payload: { sessionId: 's1', message: 'x' } } as ServerMessage
+
+    const off1 = events.onOwned('error', handler, 'PanelSessionView')
+    const off2 = events.onOwned('error', handler, 'PanelSessionView')
+
+    off1() // count 2→1，仍订阅中
+    events._dispatch(msg)
+    expect(handler).toHaveBeenCalledTimes(1)
+
+    off2() // count 1→0，真正移除
+    handler.mockClear()
+    events._dispatch(msg)
+    expect(handler).not.toHaveBeenCalled()
+  })
+
+  it('不同 ownerKey 各自独立计数：互不影响', () => {
+    const events = createEvents()
+    const handler1 = vi.fn()
+    const handler2 = vi.fn()
+    const msg = { type: 'error', payload: { sessionId: 's1', message: 'x' } } as ServerMessage
+
+    events.onOwned('error', handler1, 'PanelSessionView')
+    events.onOwned('error', handler2, 'ExtensionsPane')
+
+    events._dispatch(msg)
+    // 两个不同 ownerKey → 两份独立订阅，各调 1 次
+    expect(handler1).toHaveBeenCalledTimes(1)
+    expect(handler2).toHaveBeenCalledTimes(1)
+  })
+})

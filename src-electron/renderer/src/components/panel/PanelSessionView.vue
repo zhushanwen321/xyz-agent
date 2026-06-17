@@ -268,10 +268,13 @@ onMounted(() => {
   fetchTree(props.sessionId)
   requestCapability(props.sessionId)
   eventOffs = [
-    api.events.on('message.tool_call_pending', handleToolApprovalRequest),
-    api.events.on('error', handleErrorMessage),
-    api.events.on('session.compacting', onCompacting),
-    api.events.on('session.compacted', onCompacted),
+    // G6 refCount：split mode 下多个 PanelSessionView 实例并存，用 onOwned + 组件名去重，
+    // 避免「事件处理翻倍」（每实例 handler 是不同引用，裸 Set 不去重）。
+    // handler 内仍按 props.sessionId 过滤，处理各自消息。
+    api.events.onOwned('message.tool_call_pending', handleToolApprovalRequest, 'PanelSessionView'),
+    api.events.onOwned('error', handleErrorMessage, 'PanelSessionView'),
+    api.events.onOwned('session.compacting', onCompacting, 'PanelSessionView'),
+    api.events.onOwned('session.compacted', onCompacted, 'PanelSessionView'),
   ]
 })
 
