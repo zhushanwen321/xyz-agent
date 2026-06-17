@@ -13,7 +13,7 @@ const MAX_NOTIFICATIONS = 50
 export const usePluginStore = defineStore('plugin', () => {
   // ── State ────────────────────────────────────────────────────
 
-  /** Full plugin list received from sidecar (config.plugins response) */
+  /** Full plugin list received from runtime (config.plugins response) */
   const installedPlugins = ref<PluginViewModel[]>([])
 
   /** Fast status lookup: pluginId → status string */

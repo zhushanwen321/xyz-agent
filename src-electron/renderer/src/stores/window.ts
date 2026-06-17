@@ -28,7 +28,7 @@ export const useWindowStore = defineStore('window', () => {
   }
 
   /** 检查指定 session 是否已在其他窗口打开 */
-  async function findSessionWindow(sessionId: string): Promise<{ windowId: string; paneId: string } | null> {
+  async function findSessionWindow(sessionId: string): Promise<{ windowId: string } | null> {
     if (!window.electronAPI?.findSessionWindow) return null
     return window.electronAPI.findSessionWindow(sessionId)
   }

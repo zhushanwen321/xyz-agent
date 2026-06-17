@@ -123,7 +123,7 @@ const ChatPanelStub = {
   'agentViews', 'messages', 'streamingMessage', 'isStreaming',
   'pendingApproval', 'doneCount', 'alertCount', 'isCompacting',
   ],
-  emits: ['send', 'cancel', 'select-model', 'approve', 'deny', 'always-allow', 'open-drawer', 'close-pane', 'switch-agent', 'send-command', 'local-action'],
+  emits: ['send', 'cancel', 'select-model', 'approve', 'deny', 'always-allow', 'open-inspector', 'close-pane', 'switch-agent', 'send-command', 'local-action'],
   template: `
   <div data-chat-panel-stub>
     <button data-send-btn @click="$emit('send', sendPayload)">Send</button>

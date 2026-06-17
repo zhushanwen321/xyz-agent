@@ -21,8 +21,8 @@ export interface ElectronAPI {
   getWindows(): Promise<Array<{ windowId: string; focusedPaneId: string; sessionIds: string[] }>>
   /** 聚焦指定窗口 */
   focusWindow(windowId: string): Promise<void>
-  /** 查找指定 session 所在的窗口，返回 { windowId, paneId } 或 null */
-  findSessionWindow(sessionId: string): Promise<{ windowId: string; paneId: string } | null>
+  /** 查找指定 session 所在的窗口，返回 { windowId } 或 null */
+  findSessionWindow(sessionId: string): Promise<{ windowId: string } | null>
   /** 更新指定窗口状态 */
   updateWindowState(windowId: string, state: Record<string, unknown>): Promise<void>
   /** 监听窗口创建事件，返回取消监听函数 */

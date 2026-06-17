@@ -4,7 +4,7 @@ import type { ISessionService, IConfigService } from '../../interfaces.js'
  * 插件系统内部类型定义
  *
  * 这些类型仅用于 runtime（主进程/Worker）内部的插件管理，
- * 不出现在前端↔sidecar 的共享协议中。
+ * 不出现在前端↔runtime 的共享协议中。
  */
 
 // ── Manifest 类型（解析自 package.json 的 xyzAgent 字段）──────────

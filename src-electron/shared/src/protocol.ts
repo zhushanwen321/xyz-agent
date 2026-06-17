@@ -1,4 +1,4 @@
-// Client → Sidecar message types
+// Client → Runtime message types
 
 import type { SkillInfo, AgentInfo } from './provider'
 
@@ -163,7 +163,7 @@ export type ExtractPayload<T extends ClientMessageType> = T extends keyof Client
 /** 构造特定 type 的 ClientMessage */
 export type SpecificClientMessage<T extends ClientMessageType> = Extract<ClientMessage, { type: T }>
 
-// ── Sidecar → Client message types（保持不变）──────────────────
+// ── Runtime → Client message types（保持不变）──────────────────
 
 export type ServerMessageType =
   | 'session.created' | 'session.deleted' | 'session.list' | 'session.history'

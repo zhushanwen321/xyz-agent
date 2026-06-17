@@ -18,7 +18,7 @@ function findPiExecutable(): string {
       ? `pi-windows-${arch}.exe`
       : `pi-${platform}-${arch}`
 
-    // Sidecar's cwd = process.resourcesPath (set by runtime-manager.ts)
+    // Runtime's cwd = process.resourcesPath (set by runtime-manager.ts)
     const bundledPi = join(process.cwd(), 'pi', binaryName)
 
     if (!existsSync(bundledPi)) {

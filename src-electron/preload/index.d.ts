@@ -10,7 +10,7 @@ export interface ElectronAPI {
   createWindow(sessionId?: string): Promise<{ windowId: string }>
   getWindows(): Promise<import('@xyz-agent/shared').WindowState[]>
   focusWindow(windowId: string): Promise<void>
-  findSessionWindow(sessionId: string): Promise<{ windowId: string; paneId: string } | null>
+  findSessionWindow(sessionId: string): Promise<{ windowId: string } | null>
   updateWindowState(windowId: string, state: Record<string, unknown>): Promise<void>
   onWindowCreated(callback: (windowId: string) => void): () => void
   onWindowClosed(callback: (windowId: string) => void): () => void

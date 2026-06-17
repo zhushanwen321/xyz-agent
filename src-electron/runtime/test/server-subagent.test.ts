@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { WebSocket } from 'ws'
 
 /**
- * Tests for T3: Sidecar manual trigger handling (subagent field in message.send).
+ * Tests for T3: Runtime manual trigger handling (subagent field in message.send).
  *
  * These tests verify that when `msg.payload.subagent` is present with
  * `{ agent: string; task: string }`, the runtime constructs an XML structured

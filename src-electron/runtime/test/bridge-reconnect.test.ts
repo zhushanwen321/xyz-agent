@@ -1,7 +1,7 @@
 /**
  * Bridge Reconnect Tests.
  *
- * Tests the bridge connection lifecycle between pi (extension) and sidecar (runtime).
+ * Tests the bridge connection lifecycle between pi (extension) and runtime.
  * The bridge is the pi RPC connection through which extension_ui_request messages
  * with 'bridge:' method prefix are routed.
  *
@@ -152,7 +152,7 @@ import { SessionService } from '../src/services/session/session-service.js'
 import { PluginService } from '../src/services/plugin-service/plugin-service.js'
 
 const SESSION_ID = 'reconnect-session'
-const SIDECAR_RESTART_TOOLS = [
+const RUNTIME_RESTART_TOOLS = [
   { name: 'hello', description: 'Says hello', parameters: { type: 'object', properties: {} } },
 ]
 const NEW_TOOLS_AFTER_RESTART = [
@@ -203,7 +203,7 @@ describe('Bridge reconnect lifecycle', () => {
 
     it('succeeds when RPC client becomes available (reconnected)', async () => {
       mockRpcClient = createMockRpcClient()
-      mockGetToolSchemas.mockReturnValue(SIDECAR_RESTART_TOOLS)
+      mockGetToolSchemas.mockReturnValue(RUNTIME_RESTART_TOOLS)
       mockSendCommand.mockClear()
 
       await server.handleBridgeRequest(SESSION_ID, 'req-2', 'bridge:sync', {})
@@ -215,7 +215,7 @@ describe('Bridge reconnect lifecycle', () => {
         id: 'req-2',
         response: expect.objectContaining({
           success: true,
-          tools: SIDECAR_RESTART_TOOLS,
+          tools: RUNTIME_RESTART_TOOLS,
         }),
       })
     })
@@ -243,16 +243,16 @@ describe('Bridge reconnect lifecycle', () => {
     })
   })
 
-  // ── Scenario 2: Sidecar restart → auto-reconnect ──────────────
+  // ── Scenario 2: Runtime restart → auto-reconnect ─────────────
 
-  describe('Sidecar restart → auto-reconnect', () => {
-    it('re-registers tools after sidecar restart via bridge:sync', async () => {
+  describe('Runtime restart → auto-reconnect', () => {
+    it('re-registers tools after runtime restart via bridge:sync', async () => {
       // Initial registration
-      mockGetToolSchemas.mockReturnValue(SIDECAR_RESTART_TOOLS)
+      mockGetToolSchemas.mockReturnValue(RUNTIME_RESTART_TOOLS)
       await server.handleBridgeRequest(SESSION_ID, 'req-init', 'bridge:sync', {})
       expect(mockSendCommand).toHaveBeenCalledTimes(1)
 
-      // Simulate sidecar restart: clear tool schemas, then re-register
+      // Simulate runtime restart: clear tool schemas, then re-register
       mockGetToolSchemas.mockReturnValue(NEW_TOOLS_AFTER_RESTART)
       mockSendCommand.mockClear()
 
@@ -415,7 +415,7 @@ describe('Bridge reconnect lifecycle', () => {
 
     it('pi restart: new RPC client re-syncs tools', async () => {
       mockRpcClient = createMockRpcClient()
-      mockGetToolSchemas.mockReturnValue(SIDECAR_RESTART_TOOLS)
+      mockGetToolSchemas.mockReturnValue(RUNTIME_RESTART_TOOLS)
       mockSendCommand.mockClear()
 
       await server.handleBridgeRequest(SESSION_ID, 'req-restore', 'bridge:sync', {})
@@ -428,7 +428,7 @@ describe('Bridge reconnect lifecycle', () => {
 
     it('pi crash + restart: full lifecycle with tool execute after restart', async () => {
       // 1. pi is running, tools synced
-      mockGetToolSchemas.mockReturnValue(SIDECAR_RESTART_TOOLS)
+      mockGetToolSchemas.mockReturnValue(RUNTIME_RESTART_TOOLS)
       await server.handleBridgeRequest(SESSION_ID, 'req-s1', 'bridge:sync', {})
       expect(mockSendCommand).toHaveBeenCalledTimes(1)
 

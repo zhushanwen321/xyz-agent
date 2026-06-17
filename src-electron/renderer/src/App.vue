@@ -14,7 +14,7 @@
         :focused-panel-id="panelStore.focusedPanelId"
       />
       <!-- Drawers -->
-      <DrawerOverlay :visible="settingsStore.inspectorOpen" @close="settingsStore.closeInspector()" />
+      <SideInspectorOverlay :visible="settingsStore.inspectorOpen" @close="settingsStore.closeInspector()" />
       <InspectorRight
         v-if="settingsStore.inspectorSide === 'right'"
         :open="settingsStore.inspectorOpen"
@@ -67,7 +67,7 @@ import AppSidebar from './components/layout/AppSidebar.vue'
 import AppStatusbar from './components/layout/AppStatusbar.vue'
 import SettingsView from './components/layout/SettingsView.vue'
 import PanelTreeRenderer from './components/panel/PanelTreeRenderer.vue'
-import DrawerOverlay from './components/panel/DrawerOverlay.vue'
+import SideInspectorOverlay from './components/panel/SideInspectorOverlay.vue'
 import InspectorRight from './components/side-inspector/InspectorRight.vue'
 import InspectorLeft from './components/side-inspector/InspectorLeft.vue'
 import PanelGrid from './components/panel-grid/PanelGrid.vue'
