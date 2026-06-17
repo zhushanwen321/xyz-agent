@@ -337,6 +337,33 @@ else
 fi
 
 # ============================================================================
+# runtime services 循环依赖检查（D6c 防护）
+# ============================================================================
+
+SERVICE_CYCLE_CHECKER=".githooks/check_no_service_cycle.py"
+
+if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_NO_SERVICE_CYCLE_CHECK" != "1" ]; then
+    echo -e "${BLUE}[INFO] 运行 runtime services 循环依赖检查...${NC}"
+
+    if [ ! -f "$SERVICE_CYCLE_CHECKER" ]; then
+        echo -e "${YELLOW}[WARN] 找不到检查脚本 $SERVICE_CYCLE_CHECKER${NC}"
+    else
+        python3 "$SERVICE_CYCLE_CHECKER"
+        EXIT_CODE=$?
+
+        if [ $EXIT_CODE -eq 2 ]; then
+            echo ""
+            echo -e "${RED}[ERROR] runtime services 循环依赖检查失败（D6c）${NC}"
+            echo -e "${YELLOW}[INFO] service 间不得具体类循环 import，改用接口/事件解耦${NC}"
+            echo -e "${YELLOW}[INFO] 设置 SKIP_NO_SERVICE_CYCLE_CHECK=1 跳过检查${NC}"
+            exit 1
+        fi
+    fi
+else
+    echo -e "${YELLOW}[SKIP] runtime services 循环依赖检查已跳过${NC}"
+fi
+
+# ============================================================================
 # Runtime Bundle 验证（runtime 源码有变更时触发）
 # ============================================================================
 
@@ -459,6 +486,7 @@ echo -e "  ${YELLOW}SKIP_PREFLIGHT_CHECK=1${NC}       - 跳过打包配置预检
 echo -e "  ${YELLOW}SKIP_ENV_WHITELIST_CHECK=1${NC}   - 跳过 ENV 白名单同步检查"
 echo -e "  ${YELLOW}SKIP_PATH_WHITELIST_CHECK=1${NC}   - 跳过路径白名单动态化检查"
 echo -e "  ${YELLOW}SKIP_WS_SEND_CHECK=1${NC}         - 跳过 ws-client send 直调检查"
+echo -e "  ${YELLOW}SKIP_NO_SERVICE_CYCLE_CHECK=1${NC} - 跳过 services 循环依赖检查"
 echo ""
 
 exit 0
@@ -488,6 +516,7 @@ echo -e "  ${GREEN}[+]${NC} ENV_WHITELIST_PREFIXES 同步检查"
 echo -e "  ${GREEN}[+]${NC} 路径白名单动态化检查"
 echo -e "  ${GREEN}[+]${NC} 目录规范检查（禁止 demos/impeccable + 外部 symlink）"
 echo -e "  ${GREEN}[+]${NC} ws-client send 直调检查（D3 统一门面）"
+echo -e "  ${GREEN}[+]${NC} runtime services 循环依赖检查（D6c 防护）"
 echo -e "  ${GREEN}[+]${NC} Runtime Bundle 验证（依赖打包 + CJS 兼容 + 健康检查）"
 echo -e "  ${GREEN}[+]${NC} 打包配置预检查（asarUnpack/files 一致性 + symlink 检查）"
 echo ""
