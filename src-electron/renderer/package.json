@@ -37,7 +37,7 @@
     "@types/jsdom": "^28.0.3",
     "@types/markdown-it": "^14.1.2",
     "@types/markdown-it-footnote": "^3.0.4",
-    "@vitejs/plugin-vue": "^5",
+    "@vitejs/plugin-vue": "^6",
     "@vue/test-utils": "^2.4.10",
     "autoprefixer": "^10",
     "happy-dom": "^20.9.0",
