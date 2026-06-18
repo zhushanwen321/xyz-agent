@@ -1,7 +1,7 @@
 import type {
   PiHistoryMessage,
   PiHistoryToolResult,
-} from '../types.js'
+} from '../infra/pi/pi-protocol.js'
 import type { Message, ThinkingBlock, ToolCall } from '@xyz-agent/shared'
 
 /**

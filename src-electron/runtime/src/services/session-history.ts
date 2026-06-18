@@ -6,7 +6,7 @@
 
 import { readFile } from 'node:fs/promises'
 import { convertPiHistory } from '../adapters/message-converter.js'
-import type { PiHistoryMessage } from '../types.js'
+import type { PiHistoryMessage } from '../infra/pi/pi-protocol.js'
 import { scanPiSessions } from '../adapters/pi-config-bridge.js'
 
 interface ScannedSession {
