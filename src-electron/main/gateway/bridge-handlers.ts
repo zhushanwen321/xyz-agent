@@ -13,7 +13,9 @@
  * 依赖方向：bridge-handlers → electron(ipcMain) + interfaces
  */
 import { ipcMain, BrowserWindow } from 'electron'
+import type { WindowState } from '@xyz-agent/shared'
 import type { IpcHandlerDeps } from '../interfaces.js'
+import { initialWindowState } from '../window/panel-tree-utils.js'
 
 /**
  * 注册桥接 IPC handler（runtime port / 窗口管理系列）。
@@ -21,9 +23,40 @@ import type { IpcHandlerDeps } from '../interfaces.js'
  * @param deps 注入的依赖（runtime/windowManager/createWindow）
  */
 export function registerBridgeHandlers(deps: IpcHandlerDeps): void {
-  void deps
-  void ipcMain; void BrowserWindow
-  throw new Error('not implemented: registerBridgeHandlers')
+  // ── runtime 端口（只读 supervisor 状态）─────────────────────────
+  ipcMain.handle('get-runtime-port', () => deps.runtime.port)
+  ipcMain.handle('get-runtime-port-offset', () => deps.runtime.portOffset)
+
+  // ── 窗口管理 ─────────────────────────────────────────────────────
+  ipcMain.handle('create-window', async (_event, options?: { sessionId?: string }) => {
+    const windowId = deps.windowManager.generateId()
+    const win = await deps.createWindow({ windowId, sessionId: options?.sessionId })
+    deps.windowManager.register(windowId, win, initialWindowState(windowId))
+    // 通知所有已存在窗口：窗口列表变化
+    broadcastWindowList()
+    return { windowId }
+  })
+
+  ipcMain.handle('get-windows', () => {
+    return deps.windowManager.getAll()
+  })
+
+  ipcMain.handle('focus-window', (_event, windowId: string) => {
+    deps.windowManager.focus(windowId)
+  })
+
+  ipcMain.handle('update-window-state', (_event, windowId: string, state: Partial<WindowState>) => {
+    deps.windowManager.updateState(windowId, state)
+  })
+
+  ipcMain.handle('find-session-window', (_event, sessionId: string) => {
+    return deps.windowManager.findSessionBySessionId(sessionId)
+  })
+
+  // 窗口列表变化回调：create/close 时触发广播
+  deps.windowManager.setOnWindowListChanged(() => {
+    broadcastWindowList()
+  })
 }
 
 /**
@@ -31,6 +64,10 @@ export function registerBridgeHandlers(deps: IpcHandlerDeps): void {
  * 在 createWindow / window close 时触发。
  */
 export function broadcastWindowList(): void {
-  void BrowserWindow
-  throw new Error('not implemented: broadcastWindowList')
+  const allWindows = BrowserWindow.getAllWindows()
+  for (const win of allWindows) {
+    if (!win.isDestroyed()) {
+      win.webContents.send('window-list-updated')
+    }
+  }
 }

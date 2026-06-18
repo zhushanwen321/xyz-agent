@@ -7,11 +7,13 @@
  * [HISTORICAL] 不变量：
  * - openExternal 必须校验 http/https 协议（防 file:// / javascript: 等危险协议）
  * - 路径类校验用 path.resolve 规范化 + 前缀匹配（防 ../ 穿越）
+ *   追加 path.sep 后缀防止前缀误判（/Users/foo 匹配到 /Users/foobar）
  *
  * 这是纯函数文件——签名即设计，不深化骨架。
  *
- * 依赖方向：无下游（纯函数）
+ * 依赖方向：无下游（纯函数，type-only import node:path）
  */
+import path from 'node:path'
 
 /**
  * 校验 URL 是否允许 openExternal。
@@ -21,19 +23,23 @@
  * @returns true=安全可打开 / false=危险协议
  */
 export function isValidExternalUrl(url: string): boolean {
-  void url
-  throw new Error('not implemented: isValidExternalUrl')
+  return /^https?:\/\//i.test(url)
 }
 
 /**
  * 校验路径是否在允许的前缀目录内（防目录穿越）。
  * 用于 local-file:// 协议 handler。
  *
+ * 两次匹配：resolved.startsWith(prefix) 或精确等于（resolved + sep === prefix）。
+ *
  * @param filePath 待校验路径
- * @param allowedPrefixes 允许的根目录列表
+ * @param allowedPrefixes 允许的根目录列表（调用方负责追加 path.sep 后缀）
  * @returns true=在白名单内 / false=越界
  */
 export function isPathInAllowedPrefixes(filePath: string, allowedPrefixes: readonly string[]): boolean {
-  void filePath; void allowedPrefixes
-  throw new Error('not implemented: isPathInAllowedPrefixes')
+  const sep = path.sep
+  const resolved = path.resolve(filePath)
+  // 前缀匹配（allowedPrefixes 已带 trailing sep）+ 精确匹配（resolved 本身就是允许目录）
+  return allowedPrefixes.some(p => resolved.startsWith(p))
+    || allowedPrefixes.some(p => resolved + sep === p)
 }
