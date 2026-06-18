@@ -1,5 +1,10 @@
 # xyz-agent 完整架构设计
 
+> ⚠️ **部分被取代**：本文 §D4「Runtime 四层（transport/services/adapters/infra）」已被
+> [runtime-three-layer-design.md](runtime-three-layer-design.md) 取代（Runtime 三层 + ports 依赖倒置）。
+> D4 的 transport/services 部分仍有效；adapters 独立成层的设计被放弃（实证 adapters 名存实亡）。
+> 其余 D1–D3、D5–D9 不受影响。
+
 **版本**: 1.0 · **日期**: 2026-06-16 · **分支**: refactor-architecture-design
 **输入**: [架构评审问题记录](review-issues.md)（9 个盲点/细化点 D1–D9）
 **方法**: 逐点决策 → 汇总为完整架构 → 距离评估与迁移路线
@@ -202,6 +207,10 @@ api.dialog.pickDirectory(...)  // → IPC
 ---
 
 ## D4. Runtime 内部分层细化（infra / adapters / services）
+
+> 🔴 **已被取代**：本节的「adapters 独立成层」设计已被 [runtime-three-layer-design.md](runtime-three-layer-design.md)（三层 + ports 依赖倒置）取代。
+> 原因：实证 adapters 名存实亡（pi-config-bridge 是 re-export 杂物间）、PiXxx 类型泄漏 service、infra 反依赖 adapters。
+> 详见新设计的「第一部分 · 决策」。本节保留作为历史决策记录。
 
 ### 问题回顾
 原架构把 `rpc-client / process-manager / pi-config-bridge / npm-installer` 归入 `infra/`，但漏了 `event-adapter.ts`、`message-converter.ts`——它们是**防腐层**（翻译 pi 格式），不是基础设施（管连接）。

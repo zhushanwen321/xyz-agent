@@ -14,6 +14,7 @@
   - [全局架构图](architecture/design.md#21-全局架构图)
   - [分层规则与依赖矩阵](architecture/design.md#22-分层规则与依赖矩阵)
   - [双维度模型（水平层 × 纵向上下文）](architecture/design.md#23-双维度模型水平层--纵向上下文)
+- [Runtime 三层架构设计](architecture/runtime-three-layer-design.md) — 取代 D4 的 Runtime 四层（adapters 合并入 infra + ports 依赖倒置）
 - [架构评审问题记录](architecture/review-issues.md) — 9 个盲点 D1–D9 的来源与验证
 - [领域术语表](architecture/context.md) — Session / Panel / Runtime 等核心概念定义
 
