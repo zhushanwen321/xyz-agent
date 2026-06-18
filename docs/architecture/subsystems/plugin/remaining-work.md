@@ -108,7 +108,7 @@
 - `PluginRegistry.scan()` 已解析 `contributes` 到 `PluginDescriptor`
 - 缺失：前端消费 `contributes` 的渲染机制——`PluginSlot` 组件、`StatusBarItem` 渲染、`SettingsSection` 渲染等
 
-设计参考：`docs/plugin/design-part2.md` 的 "Extension Points" 章节。
+设计参考：`design-part2.md` 的 "Extension Points" 章节。
 
 #### OS-2: npm install 集成
 
@@ -146,7 +146,7 @@ CLI 工具生成插件项目骨架（package.json + manifest + index.ts + 测试
 
 ## 五、设计文档中已规划但未开始的功能
 
-参考 `docs/plugin/design-part1.md` 和 `docs/plugin/design-part2.md`：
+参考 `design-part1.md` 和 `design-part2.md`：
 
 | # | 功能 | 设计文档位置 | 当前状态 |
 |---|------|-------------|---------|

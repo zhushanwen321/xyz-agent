@@ -50,13 +50,13 @@
 
 ## 相关 ADR
 
-- [ADR-0007](../adr/0007-git-submodule-for-extensions-and-skills.md) — Git submodule 管理 extensions/skills
-- [ADR-0008](../adr/0008-extension-bridge-for-navigate-tree.md) — Extension bridge navigate tree
-- [ADR-0009](../adr/0009-xyz-agent-data-dir-isolation-from-pi.md) — xyz-agent 数据目录与 pi 隔离
-- [ADR-0010](../adr/0010-extension-ui-independent-channel.md) — Extension UI 独立 channel
-- [ADR-0011](../adr/0011-bundled-extensions-direct-copy.md) — 内置 extension 直接复制
-- [ADR-0012](../adr/0012-pi-bridge-extension-for-plugin-proxy.md) — Pi bridge extension 代理插件
-- [ADR-0013](../adr/0013-session-data-over-pi-append-entry.md) — Session data over pi append entry
+- [ADR-0007](../../adr/0007-git-submodule-for-extensions-and-skills.md) — Git submodule 管理 extensions/skills
+- [ADR-0008](../../adr/0008-extension-bridge-for-navigate-tree.md) — Extension bridge navigate tree
+- [ADR-0009](../../adr/0009-xyz-agent-data-dir-isolation-from-pi.md) — xyz-agent 数据目录与 pi 隔离
+- [ADR-0010](../../adr/0010-extension-ui-independent-channel.md) — Extension UI 独立 channel
+- [ADR-0011](../../adr/0011-bundled-extensions-direct-copy.md) — 内置 extension 直接复制
+- [ADR-0012](../../adr/0012-pi-bridge-extension-for-plugin-proxy.md) — Pi bridge extension 代理插件
+- [ADR-0013](../../adr/0013-session-data-over-pi-append-entry.md) — Session data over pi append entry
 
 ## 建议执行顺序
 

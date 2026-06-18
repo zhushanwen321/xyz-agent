@@ -1,7 +1,7 @@
 # xyz-agent 架构重构 · 迁移执行计划（索引）
 
 **版本**: 1.1 · **日期**: 2026-06-16 · **分支**: refactor-architecture-design
-**上游 spec**: [architecture-design.md](architecture-design.md)（D1–D9 + G1–G7）
+**上游 spec**: [design.md](design.md)（D1–D9 + G1–G7）
 **核对依据**: [changes/tracing-round-1.md](changes/tracing-round-1.md)
 
 > 本文件是**索引与全局约束**。各阶段细节见 `plan/` 子文档。

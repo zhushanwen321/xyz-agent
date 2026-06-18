@@ -22,7 +22,7 @@
 | 1 | D1 八步时序与代码相反 | ✅ | design.md §D1 订正框「按代码现状写：createWindow 先于 spawn」；phase-0 task 1 明确「不改代码」并要求同步修正 spec |
 | 2 | M1 spawn 去重无承接 | ✅ | 决策映射表「M1 → 阶段 2.5」；phase-2.5 task 2 抽 `startAndNotify(win)` |
 | 3 | M3 window-manager 不存 tree 无承接 | ✅ | 决策映射表「M3 → 阶段 2.5」；phase-2.5 task 3 去 panelTree、改 sessionIds |
-| 4 | task 2 commit 未列 terminology-alignment-plan.md | ⚠️ | phase-0 task 2 清单仍只列 architecture-design/review-issues/tracing-round-1/migration-plan/plan/，**仍未含 terminology-alignment-plan.md**，phase-4 R1–R5 依赖它 |
+| 4 | task 2 commit 未列 terminology.md | ⚠️ | phase-0 task 2 清单仍只列 design/review-issues/tracing-round-1/migration-plan/plan/，**仍未含 terminology.md**，phase-4 R1–R5 依赖它 |
 | 5 | 验证无法捕获时序相反 | ✅ | 时序已订正（#1），验证现与代码一致 |
 
 ### Phase 1（12 项）
@@ -125,7 +125,7 @@ phase-2 task 3 只改 server.ts，phase-4 R1「扫残留」无清单。protocol.
 6. phase-1 明确 events.ts 碰 store 的层级，或改由 features 层订阅收尾（B-2）
 7. phase-2.5 补全仓 panelTree 扫描（含前端）+ 注明 sessionIds 已存在（C-5）
 8. phase-4 R1 补 sidecar 残留点清单（A-#31/C-7）
-9. phase-0 task 2 commit 清单补 terminology-alignment-plan.md（A-#4）
+9. phase-0 task 2 commit 清单补 terminology.md（A-#4）
 
 ### 🟢 可不改
 git-info/session-history 未入盘点、utils/demo 未标注、handler import 联动、注释残留分散、compact/getRpcCommand 行号笔误

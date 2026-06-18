@@ -278,7 +278,7 @@ SKIP_ALL_CHECKS=1 git commit            # 跳过所有（仅紧急情况）
     - 左右 split panel 时，只有最左侧 panel 的 PanelBar 需要 safe-zone，右侧 panel 不受影响
     - 全屏模式下无 traffic lights，不需要额外 padding
     - 新增或修改任何窗口顶部区域 UI 时，必须在非全屏 + 全屏两种模式下验证
-    - 设计决策记录：[ADR 0016](docs/adr/0016-macos-traffic-light-safe-zone.md)，[交互式 demo](docs/designs/sidebar-collapse-fix.html)
+    - 设计决策记录：[ADR 0016](docs/architecture/adr/0016-macos-traffic-light-safe-zone.md)，[交互式 demo](docs/designs/sidebar-collapse-fix.html)
 
 ### 自动化检查
 

@@ -1,6 +1,6 @@
 # D1–D9 事实核对(Round 1)
 
-> **核对覆盖范围**:`docs/refactor/architecture-review-issues.md`(D1–D9 盲点)与 `docs/refactor/architecture-design.md`(第一部分决策 + 第四部分 R/M/T 细化)中**所有可验证的代码事实声明**,均已逐条核对。D1–D9 **全部覆盖**,无遗漏决策。
+> **核对覆盖范围**:[review-issues.md](review-issues.md)(D1–D9 盲点)与 [design.md](design.md)(第一部分决策 + 第四部分 R/M/T 细化)中**所有可验证的代码事实声明**,均已逐条核对。D1–D9 **全部覆盖**,无遗漏决策。
 >
 > **核对方法**:对每条声明用 grep + read 独立取证,标注三态(✅属实 / ❌失实 / ⚠️部分属实)。所有证据给出 `文件:行号`。D6c(循环依赖)按任务要求**独立重新验证**,不采信任何预设结论。
 >

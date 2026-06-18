@@ -1,7 +1,7 @@
 # Phase 2 + 2.5 架构审查报告
 
 **审查对象**:commit `1fc919c1`(runtime 分层)+ `29b0622a`(main spawn 去重)
-**审查依据**:architecture-design.md D4/D7/M1/M2/M3 + phase-2/2.5 plan + round-2/3 既知问题
+**审查依据**:design.md D4/D7/M1/M2/M3 + phase-2/2.5 plan + round-2/3 既知问题
 **方法**:只读核对(import grep / tsc / 产物验证),不改代码
 
 ---

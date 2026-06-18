@@ -20,7 +20,7 @@
 | 决策覆盖 | D1 八步启动时序与实际代码顺序相反，phase 0 会固化错误契约 | 🔴 | design.md D1 时序写「step 2 spawn → step 3 createWindow」（spawn 先），但 `main/main.ts:142` `createWindow` **先于** `:154` `runtimeManager.start()`。phase 0 task 1 照抄 design.md 八步写入 CLAUDE.md，会把一个代码违反的契约写进规范。tracing-round-1 已标⚠️，但 phase 0 既未安排「改文档匹配代码」也未安排「改代码匹配文档」 |
 | 决策覆盖 | M1（main.ts spawn 去重）代码改动无任何阶段承接 | 🔴 | design.md M1 + table 4.4 标「建议阶段 0」，但 phase 0 明确「0 代码改动」。`main.ts:142-156`（whenReady）与 `:177-188`（activate）的 `createWindow + runtimeManager.start() + webContents.send('runtime-port')` 三行重复，design.md 建议抽成 `runtimeManager.startAndNotify(win)`。该代码去重无任何 code phase 认领 |
 | 决策覆盖 | M3（window-manager 不存完整 tree）代码改动无任何阶段承接 | 🔴 | design.md M3 + table 4.4 标「建议阶段 3」，建议 Main 只存 `sessionIds: Set`。但 phase 3 全部内容是 Runtime session-service 拆分，零 Main 改动。`main/window-manager.ts:89` `findPaneBySessionId(state.panelTree, ...)` + `:100-105` 递归遍历完整 PanelTree。M3 代码改动掉缝（table 4.4 与 phase 3 实际内容不符） |
-| 改动完整性 | task 2「设计基线 commit」未列 `terminology-alignment-plan.md` | 🟢 | phase 4 引用此文件作为 R1–R5 来源，phase 0 task 2 的 commit 清单未含它。若该文件未 commit，phase 4 无依据 |
+| 改动完整性 | task 2「设计基线 commit」未列 `terminology.md` | 🟢 | phase 4 引用此文件作为 R1–R5 来源，phase 0 task 2 的 commit 清单未含它。若该文件未 commit，phase 4 无依据 |
 | 验证完整性 | 验证「能说清 8 步时序」无法捕获时序与代码相反的问题 | 🟡 | 验证标准只查文档自洽，不查文档与代码一致。phase 5 的启动时序集成测试会基于错误契约编写 |
 
 ### Phase 1（前端 API Client）

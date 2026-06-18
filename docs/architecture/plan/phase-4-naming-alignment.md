@@ -1,10 +1,10 @@
 # 阶段 4 · 命名对齐（引用既有计划）
 
-> 上游：[migration-plan.md](../migration-plan.md) · 关联决策：D7 · 既有计划：[terminology-alignment-plan.md](../terminology-alignment-plan.md)
+> 上游：[migration-plan.md](../migration-plan.md) · 关联决策：D7 · 既有计划：[terminology.md](../terminology.md)
 
 ## 目标
 
-执行既有 `terminology-alignment-plan.md` 的 R1–R5 命名债清理，消除认知债务。
+执行既有 `terminology.md` 的 R1–R5 命名债清理，消除认知债务。
 
 ## 前置依赖
 
@@ -20,7 +20,7 @@
 | R4 | Drawer | SideInspector | 组件 + 引用 |
 | R5 | Overview | PanelGrid | 组件 + 引用 |
 
-详见 `terminology-alignment-plan.md` 的逐项执行步骤。
+详见 `terminology.md` 的逐项执行步骤。
 
 ## 改动原则（design.md D7）
 

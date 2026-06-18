@@ -1,6 +1,6 @@
 # Phase 1 架构审查报告(API Client 重构)
 
-> 审查日期:2026-06-17 · 分支:refactor-architecture-design · 范围:commit e280a3c6→327598ae · 依据:architecture-design.md(D3/G3-G6/D6a/D6b/D8/D9)+ phase-1-api-client.md
+> 审查日期:2026-06-17 · 分支:refactor-architecture-design · 范围:commit e280a3c6→327598ae · 依据:design.md(D3/G3-G6/D6a/D6b/D8/D9)+ phase-1-api-client.md
 > 方法:只读 grep/read 取证,每条论断附 `文件:行号`。
 
 ## 1. 审查范围
