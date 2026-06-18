@@ -1,192 +1,117 @@
+/**
+ * Main 进程入口（纯编排脚本）。
+ *
+ * 对应 spec §4.2 M1「应用生命周期编排」。重构后 main.ts 只做两件事：
+ *   ① 注册子系统（构造 MainContext + registerIpcHandlers）
+ *   ② 串联 Electron 生命周期事件（whenReady / window-all-closed / activate / before-quit）
+ *
+ * 所有具体能力委托给 M2/M3/M4/M5。全局状态下沉到 MainContext（替代散落的 let）。
+ *
+ * [HISTORICAL] 不变量（必须在实现中守护）：
+ *
+ * 1. EPIPE 兜底：concurrently/终端关闭后 pipe 断开，console 写入触发 uncaught exception
+ *    → process.stdout/stderr.on('error', EPIPE → destroy())
+ *
+ * 2. Dev 模式隔离：
+ *    - XYZ_AGENT_DATA_DIR ?? ~/.xyz-agent-dev
+ *    - XYZ_AGENT_PORT_OFFSET ?? DEV_PORT_OFFSET
+ *    - app.setPath('userData', 隔离目录)  ← 防 Chromium LevelDB LOCK 竞争
+ *
+ * 3. local-file:// 协议路径白名单（app.getAppPath/getConfigDir/homedir/tmpdir + path.sep 后缀）
+ *
+ * 4. Runtime 启动时序（D1 决策）：createWindow 先于 spawn runtime
+ *    - whenReady: createWindow → register → registerShortcuts → runtime.startAndNotify
+ *    - activate: 同上（window-all-closed 在 macOS 不 stop runtime，activate 复用）
+ *
+ * 5. before-quit 二段式：event.preventDefault() → stop runtime → app.quit()
+ *    （isQuitting flag 防第二次进入死循环）
+ *
+ * 6. window-all-closed：macOS 不 quit（activate 会复用 runtime），其他平台 stop+quit
+ *
+ * 生命周期时序：
+ * ```
+ *   app.whenReady:
+ *     1. protocol.handle('local-file', 路径白名单校验)
+ *     2. mainWindow = createWindow({windowId:'win-1'})
+ *     3. windowManager.register('win-1', mainWindow, initialWindowState)
+ *     4. shortcutRegistry.registerGlobal(mainWindow)
+ *     5. if !mock: runtime.startAndNotify(mainWindow)
+ *
+ *   app.window-all-closed:
+ *     - darwin: 保留（不 quit，activate 复用 runtime）
+ *     - 其他:   runtime.stop() → shortcuts.unregisterAll() → app.quit()
+ *
+ *   app.activate (darwin):
+ *     - 若无窗口: 重复 whenReady 的 2-5 步
+ *
+ *   app.before-quit:
+ *     - if isQuitting: 放行
+ *     - else: preventDefault → runtime.stop().finally(unregisterAll + quit)
+ * ```
+ *
+ * 依赖方向：main.ts → context + interfaces + gateway + window-factory + 三个 Facade 实现
+ */
 import path from 'node:path'
 import { homedir, tmpdir } from 'node:os'
-import { app, BrowserWindow, protocol, net } from 'electron'
+import { app, protocol, net } from 'electron'
 import { DEV_PORT_OFFSET } from '@xyz-agent/shared'
-import { RuntimeManager } from './runtime-manager.js'
-import { WindowManager, initialWindowState } from './window-manager.js'
-import { registerShortcuts, unregisterShortcuts } from './shortcuts.js'
-import { registerIpcHandlers } from './ipc-handlers.js'
+import { createMainContext } from './context.js'
+import type { MainContext } from './interfaces.js'
+import { RuntimeSupervisor } from './supervisor/runtime-supervisor.js'
+import { WindowManager } from './window/window-manager.js'
+import { ShortcutRegistry } from './shortcuts/shortcut-registry.js'
+import { registerIpcHandlers } from './gateway/ipc-handlers.js'
 
-/** Mirror of runtime's getConfigDir — reads XYZ_AGENT_DATA_DIR with fallback to ~/.xyz-agent/ */
-function getConfigDir(): string {
-  return process.env.XYZ_AGENT_DATA_DIR ?? path.join(homedir(), '.xyz-agent')
-}
-
-// EPIPE 兜底：concurrently / 终端关闭后 pipe 断开，console 写入会触发 uncaught exception
-process.stdout.on('error', (err: NodeJS.ErrnoException) => {
+// ── EPIPE 兜底 ───────────────────────────────────────────────────
+// concurrently/终端关闭后 pipe 断开，console 写入触发 uncaught exception
+process.stdout?.on?.('error', (err: NodeJS.ErrnoException) => {
   if (err.code === 'EPIPE') process.stdout.destroy()
 })
-process.stderr.on('error', (err: NodeJS.ErrnoException) => {
+process.stderr?.on?.('error', (err: NodeJS.ErrnoException) => {
   if (err.code === 'EPIPE') process.stderr.destroy()
 })
 
 // ── 路径 & 模式 ──────────────────────────────────────────────────
 const isDev = !app.isPackaged
 
+/** Mirror of runtime's getConfigDir — reads XYZ_AGENT_DATA_DIR with fallback to ~/.xyz-agent/ */
+function getConfigDir(): string {
+  return process.env.XYZ_AGENT_DATA_DIR ?? path.join(homedir(), '.xyz-agent')
+}
+
 // Dev 模式：自动隔离数据目录和端口，防止与 prod 实例冲突
 if (isDev) {
   process.env.XYZ_AGENT_DATA_DIR = process.env.XYZ_AGENT_DATA_DIR
     ?? path.join(homedir(), '.xyz-agent-dev')
   process.env.XYZ_AGENT_PORT_OFFSET = process.env.XYZ_AGENT_PORT_OFFSET ?? String(DEV_PORT_OFFSET)
-  // 隔离 Electron userData，防止与 prod 实例共享 Chromium 存储（LevelDB LOCK 竞争、
-  // localStorage/Session Storage/Preferences 互相覆盖等）
+  // 隔离 Electron userData，防止与 prod 实例共享 Chromium 存储（LevelDB LOCK 竞争）
   app.setPath('userData', path.join(homedir(), '.xyz-agent-dev', 'electron'))
-  console.log(
-    '[main] dev mode: isolated data dir =', process.env.XYZ_AGENT_DATA_DIR,
-    ', port offset =', process.env.XYZ_AGENT_PORT_OFFSET,
-    ', userData =', app.getPath('userData'),
-  )
 }
 
-const VITE_DEV_URL = 'http://localhost:1420'
+// ── 全局状态容器 ─────────────────────────────────────────────────
+let ctx: MainContext | null = null // eslint-disable-line prefer-const -- P5 填充时在 whenReady 中赋值
 
-/**
- * 等待 Vite dev server 就绪（轮询直到连接成功）
- * 解决 concurrently 下 Electron 比 Vite 先启动导致白屏的问题
- */
-const VITE_READY_TIMEOUT_MS = 30_000
-const VITE_POLL_INTERVAL_MS = 300
+// ── App 生命周期编排 ─────────────────────────────────────────────
 
-async function waitForVite(url: string, timeoutMs = VITE_READY_TIMEOUT_MS): Promise<void> {
-  const start = Date.now()
-  while (Date.now() - start < timeoutMs) {
-    try {
-      const res = await fetch(url)
-      if (res.ok) return
-    // eslint-disable-next-line taste/no-silent-catch -- Vite dev server not yet ready, retry expected
-    } catch {
-      // Vite 还没启动，继续等待
-    }
-    await new Promise((r) => setTimeout(r, VITE_POLL_INTERVAL_MS))
-  }
-  throw new Error(`Vite dev server at ${url} did not become ready within ${timeoutMs}ms`)
-}
-
-function getProductionIndexPath(): string {
-  return path.join(app.getAppPath(), 'renderer/dist/index.html')
-}
-
-// ── 全局状态 ─────────────────────────────────────────────────────
-let mainWindow: BrowserWindow | null = null
-let settingsWindow: BrowserWindow | null = null
-const runtimeManager = new RuntimeManager()
-const windowManager = new WindowManager()
-
-// ── 窗口工厂 ─────────────────────────────────────────────────────
-async function createWindow(options?: { windowId?: string; sessionId?: string }): Promise<BrowserWindow> {
-  const windowId = options?.windowId ?? windowManager.generateId()
-
-  const win = new BrowserWindow({
-    width: 1200,
-    height: 800,
-    minWidth: 800,
-    minHeight: 600,
-    show: false,
-    title: 'xyz-agent',
-    titleBarStyle: 'hiddenInset',
-    webPreferences: {
-      preload: path.join(app.getAppPath(), 'dist/preload/preload.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  })
-
-  win.once('ready-to-show', () => {
-    win.show()
-  })
-
-  if (isDev) {
-    const params = new URLSearchParams({ windowId })
-    if (options?.sessionId) params.set('sessionId', options.sessionId)
-    await waitForVite(VITE_DEV_URL)
-    win.loadURL(`${VITE_DEV_URL}?${params.toString()}`)
-    win.webContents.openDevTools()
-  } else {
-    const query: Record<string, string> = { windowId }
-    if (options?.sessionId) query.sessionId = options.sessionId
-    win.loadFile(getProductionIndexPath(), { query })
-  }
-
-  return win
-}
-
-// ── 注册 IPC ─────────────────────────────────────────────────────
-registerIpcHandlers({
-  getMainWindow: () => mainWindow,
-  getSettingsWindow: () => settingsWindow,
-  setSettingsWindow: (win) => { settingsWindow = win },
-  runtimeManager,
-  isDev,
-  createWindow,
-  windowManager,
-})
-
-// ── App 生命周期 ─────────────────────────────────────────────────
 app.whenReady().then(async () => {
-  // 注册 local-file:// 协议，用于渲染进程加载本地文件（如图片）
-  protocol.handle('local-file', (request) => {
-    const filePath = decodeURIComponent(new URL(request.url).pathname)
-    // Restrict to safe directories: project cwd, config dir, home, temp
-    // Append path.sep to prevent prefix false-positives (e.g. /Users/foo matching /Users/foobar)
-    const sep = path.sep
-    const allowedPrefixes = [app.getAppPath(), getConfigDir(), homedir(), tmpdir()]
-      .map(p => p.endsWith(sep) ? p : p + sep)
-    const resolved = path.resolve(filePath)
-    // Reject if not under any allowed prefix (check both with and without trailing sep for exact match)
-    if (!allowedPrefixes.some(p => resolved.startsWith(p)) && !allowedPrefixes.some(p => resolved + sep === p)) {
-      return new Response('Forbidden', { status: 403 })
-    }
-    return net.fetch(`file://${resolved}`)
-  })
-
-  mainWindow = await createWindow({ windowId: 'win-1' })
-  mainWindow.on('closed', () => { mainWindow = null })
-  windowManager.register('win-1', mainWindow, initialWindowState('win-1'))
-
-  // 1. 注册全局快捷键
-  registerShortcuts(mainWindow)
-
-  // 2. 启动 runtime 并通知端口（mock 模式跳过）
-  if (process.env.XYZ_MOCK === '1') {
-    console.log('[main] Mock mode — skipping runtime start')
-  } else {
-    await runtimeManager.startAndNotify(mainWindow)
-  }
+  void ctx; void getConfigDir; void homedir; void tmpdir
+  void protocol; void net; void path
+  void createMainContext; void RuntimeSupervisor; void WindowManager; void ShortcutRegistry
+  void registerIpcHandlers
+  void DEV_PORT_OFFSET
+  throw new Error('not implemented: app.whenReady orchestration')
 })
 
-// 主窗口关闭时停止 runtime 并注销快捷键
 app.on('window-all-closed', () => {
-  // macOS 保留 runtime：activate 会复用它，避免不必要的重启
-  if (process.platform !== 'darwin') {
-    runtimeManager.stop()
-    unregisterShortcuts()
-    app.quit()
-  }
+  throw new Error('not implemented: app.window-all-closed')
 })
 
-// macOS: 点击 dock 图标时重建窗口
 app.on('activate', async () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    mainWindow = await createWindow({ windowId: 'win-1' })
-    mainWindow.on('closed', () => { mainWindow = null })
-    windowManager.register('win-1', mainWindow, initialWindowState('win-1'))
-    registerShortcuts(mainWindow)
-
-    // 确保 runtime 可用（可能被 window-all-closed 或之前异常停止）
-    if (process.env.XYZ_MOCK !== '1') {
-      await runtimeManager.startAndNotify(mainWindow)
-    }
-  }
+  throw new Error('not implemented: app.activate')
 })
 
-// 应用退出前清理：确保 runtime 进程完全退出再 quit
-let isQuitting = false
+let isQuitting = false // eslint-disable-line prefer-const -- P5 填充时在 before-quit 中置 true
 app.on('before-quit', (event) => {
-  if (isQuitting) return // 第二次进入（app.quit() 触发），放行
-  isQuitting = true
-  event.preventDefault()
-  runtimeManager.stop().finally(() => {
-    unregisterShortcuts()
-    app.quit()
-  })
+  void isQuitting; void event
+  throw new Error('not implemented: app.before-quit')
 })
