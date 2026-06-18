@@ -12,7 +12,8 @@
  *
  * 依赖方向：window-factory → electron + main/interfaces（type-only）
  */
-import type { BrowserWindow } from 'electron'
+import path from 'node:path'
+import { app, BrowserWindow } from 'electron'
 import type { WindowOptions } from '../interfaces.js'
 
 /** Dev 模式 Vite URL */
@@ -33,8 +34,18 @@ export const VITE_POLL_INTERVAL_MS = 300
  * @throws 超时抛 Error
  */
 export async function waitForVite(url: string, timeoutMs = VITE_READY_TIMEOUT_MS): Promise<void> {
-  void url; void timeoutMs
-  throw new Error('not implemented: waitForVite')
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const res = await fetch(url)
+      if (res.ok) return
+    // eslint-disable-next-line taste/no-silent-catch -- Vite dev server not yet ready, retry expected
+    } catch {
+      // Vite 还没启动，继续等待
+    }
+    await new Promise((r) => setTimeout(r, VITE_POLL_INTERVAL_MS))
+  }
+  throw new Error(`Vite dev server at ${url} did not become ready within ${timeoutMs}ms`)
 }
 
 /**
@@ -43,12 +54,44 @@ export async function waitForVite(url: string, timeoutMs = VITE_READY_TIMEOUT_MS
  * @param options.windowId 指定窗口 id（不传由调用方生成）
  * @param options.sessionId 可选，携带 session 迁移
  * @param deps.isDev 是否开发模式
- * @param deps.windowManager windowManager 引用（用于查重/分配 id）
+ * @param deps.generateId windowManager 引用（用于分配 id）
  */
 export async function createWindow(
   options: WindowOptions | undefined,
   deps: { isDev: boolean; generateId: () => string },
 ): Promise<{ win: BrowserWindow; windowId: string }> {
-  void options; void deps
-  throw new Error('not implemented: createWindow')
+  const windowId = options?.windowId ?? deps.generateId()
+
+  const win = new BrowserWindow({
+    width: 1200,
+    height: 800,
+    minWidth: 800,
+    minHeight: 600,
+    show: false,
+    title: 'xyz-agent',
+    titleBarStyle: 'hiddenInset',
+    webPreferences: {
+      preload: path.join(app.getAppPath(), 'dist/preload/preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  })
+
+  win.once('ready-to-show', () => {
+    win.show()
+  })
+
+  if (deps.isDev) {
+    const params = new URLSearchParams({ windowId })
+    if (options?.sessionId) params.set('sessionId', options.sessionId)
+    await waitForVite(VITE_DEV_URL)
+    win.loadURL(`${VITE_DEV_URL}?${params.toString()}`)
+    win.webContents.openDevTools()
+  } else {
+    const query: Record<string, string> = { windowId }
+    if (options?.sessionId) query.sessionId = options.sessionId
+    win.loadFile(path.join(app.getAppPath(), 'renderer/dist/index.html'), { query })
+  }
+
+  return { win, windowId }
 }

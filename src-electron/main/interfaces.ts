@@ -92,7 +92,7 @@ export interface IWindowManager {
  * 对应 spec §4.2 M5：区分全局快捷键与窗口快捷键。
  *
  * [HISTORICAL] 不变量：
- * - globalShortcut.register 对已占用的组合会静默失败 → 注册前判断是否已注册
+ * - globalShortcut.register 对已占用的组合会静默失败 → 注册前判断 globalShortcut.isRegistered（去重）
  * - 全局快捷键注册一次且不绑窗口；窗口快捷键随窗口生灭
  * - unregisterAll 必须幂等
  */

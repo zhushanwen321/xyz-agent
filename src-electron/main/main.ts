@@ -53,12 +53,14 @@
  */
 import path from 'node:path'
 import { homedir, tmpdir } from 'node:os'
-import { app, protocol, net } from 'electron'
+import { app, protocol, net, BrowserWindow } from 'electron'
 import { DEV_PORT_OFFSET } from '@xyz-agent/shared'
 import { createMainContext } from './context.js'
 import type { MainContext } from './interfaces.js'
 import { RuntimeSupervisor } from './supervisor/runtime-supervisor.js'
 import { WindowManager } from './window/window-manager.js'
+import { initialWindowState } from './window/panel-tree-utils.js'
+import { createWindow } from './window/window-factory.js'
 import { ShortcutRegistry } from './shortcuts/shortcut-registry.js'
 import { registerIpcHandlers } from './gateway/ipc-handlers.js'
 
@@ -89,29 +91,95 @@ if (isDev) {
 }
 
 // ── 全局状态容器 ─────────────────────────────────────────────────
-let ctx: MainContext | null = null // eslint-disable-line prefer-const -- P5 填充时在 whenReady 中赋值
+// 构造三个 Facade + MainContext（替代旧代码散落的 let mainWindow / let settingsWindow）
+const runtime = new RuntimeSupervisor()
+const windows = new WindowManager()
+const shortcuts = new ShortcutRegistry()
+const ctx: MainContext = createMainContext({ runtime, windows, shortcuts, isDev })
+
+/** createWindow 适配器：把 ctx.windows.generateId 注入 window-factory */
+const createWindowFn = (options?: { windowId?: string; sessionId?: string }) =>
+  createWindow(options, { isDev, generateId: () => ctx.windows.generateId() })
+    .then(({ win }) => win)
+
+// ── 注册 IPC ─────────────────────────────────────────────────────
+registerIpcHandlers({
+  getMainWindow: () => ctx.mainWindow,
+  getSettingsWindow: () => ctx.settingsWindow,
+  setSettingsWindow: (win) => { ctx.settingsWindow = win },
+  runtime: ctx.runtime,
+  isDev,
+  createWindow: createWindowFn,
+  windowManager: ctx.windows,
+})
 
 // ── App 生命周期编排 ─────────────────────────────────────────────
 
+/**
+ * 初始化主窗口 + 快捷键 + runtime（mock 模式跳过 runtime）。
+ * whenReady 和 activate 共用此逻辑（消除重复）。
+ */
+async function bootstrapMainWindow(): Promise<void> {
+  const win = await createWindowFn({ windowId: 'win-1' })
+  win.on('closed', () => { ctx.mainWindow = null })
+  ctx.mainWindow = win
+  ctx.windows.register('win-1', win, initialWindowState('win-1'))
+
+  // 注册全局快捷键
+  shortcuts.registerGlobal(win)
+
+  // 启动 runtime（mock 模式跳过）
+  if (process.env.XYZ_MOCK === '1') {
+    console.log('[main] Mock mode — skipping runtime start')
+  } else {
+    await ctx.runtime.startAndNotify(win)
+  }
+}
+
 app.whenReady().then(async () => {
-  void ctx; void getConfigDir; void homedir; void tmpdir
-  void protocol; void net; void path
-  void createMainContext; void RuntimeSupervisor; void WindowManager; void ShortcutRegistry
-  void registerIpcHandlers
-  void DEV_PORT_OFFSET
-  throw new Error('not implemented: app.whenReady orchestration')
+  // 注册 local-file:// 协议，用于渲染进程加载本地文件（如图片）
+  protocol.handle('local-file', (request) => {
+    const filePath = decodeURIComponent(new URL(request.url).pathname)
+    // Restrict to safe directories: project cwd, config dir, home, temp
+    // Append path.sep to prevent prefix false-positives (e.g. /Users/foo matching /Users/foobar)
+    const sep = path.sep
+    const allowedPrefixes = [app.getAppPath(), getConfigDir(), homedir(), tmpdir()]
+      .map(p => p.endsWith(sep) ? p : p + sep)
+    const resolved = path.resolve(filePath)
+    // Reject if not under any allowed prefix (check both with and without trailing sep for exact match)
+    if (!allowedPrefixes.some(p => resolved.startsWith(p)) && !allowedPrefixes.some(p => resolved + sep === p)) {
+      return new Response('Forbidden', { status: 403 })
+    }
+    return net.fetch(`file://${resolved}`)
+  })
+
+  await bootstrapMainWindow()
 })
 
 app.on('window-all-closed', () => {
-  throw new Error('not implemented: app.window-all-closed')
+  // macOS 保留 runtime：activate 会复用它，避免不必要的重启
+  if (process.platform !== 'darwin') {
+    void ctx.runtime.stop()
+    shortcuts.unregisterAll()
+    app.quit()
+  }
 })
 
+// macOS: 点击 dock 图标时重建窗口
 app.on('activate', async () => {
-  throw new Error('not implemented: app.activate')
+  if (BrowserWindow.getAllWindows().length === 0) {
+    await bootstrapMainWindow()
+  }
 })
 
-let isQuitting = false // eslint-disable-line prefer-const -- P5 填充时在 before-quit 中置 true
+let isQuitting = false
+// 应用退出前清理：确保 sidecar 进程完全退出再 quit
 app.on('before-quit', (event) => {
-  void isQuitting; void event
-  throw new Error('not implemented: app.before-quit')
+  if (isQuitting) return // 第二次进入（app.quit() 触发），放行
+  isQuitting = true
+  event.preventDefault()
+  ctx.runtime.stop().finally(() => {
+    shortcuts.unregisterAll()
+    app.quit()
+  })
 })

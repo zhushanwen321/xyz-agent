@@ -33,10 +33,11 @@
 import type { BrowserWindow } from 'electron'
 import type { ChildProcess } from 'node:child_process'
 import type { IRuntimeSupervisor } from '../interfaces.js'
-import { findAvailablePort, getPortOffset } from './port-discoverer.js'
-import { spawnRuntimeProcess, stopRuntimeProcess } from './process-control.js'
-import { waitForHealth } from './health-checker.js'
-import { writePortFile } from './port-file.js'
+// TODO(B类): 完整 start/stop 实现需 import 以下子模块：
+//   findAvailablePort, getPortOffset from './port-discoverer.js'
+//   spawnRuntimeProcess, stopRuntimeProcess from './process-control.js'
+//   waitForHealth from './health-checker.js'
+//   writePortFile from './port-file.js'
 
 /**
  * RuntimeSupervisor 实现。
@@ -60,39 +61,55 @@ export class RuntimeSupervisor implements IRuntimeSupervisor {
 
   /** 端口偏移量（dev 模式 +DEV_PORT_OFFSET） */
   get portOffset(): number {
-    void getPortOffset
-    throw new Error('not implemented: RuntimeSupervisor.portOffset')
+    // 最小可运行实现：内联读 env（避免依赖 port-discoverer.getPortOffset 的 throw 骨架）。
+    // 完整实现应委托 port-discoverer.getPortOffset()（含 clamp），待 B 类填充时替换。
+    const raw = parseInt(process.env.XYZ_AGENT_PORT_OFFSET ?? '0', 10) || 0
+    return Math.max(0, raw)
   }
 
   /**
-   * 启动 runtime（幂等）。完整时序见文件顶部。
-   * @returns 实际监听的端口号
+   * 启动 runtime（幂等）。
+   *
+   * ⚠️ 最小可运行实现：当前不 spawn 子进程。mock 模式（XYZ_MOCK=1）下正确；
+   * 非 mock 模式调用此方法会静默返回 0（runtime 未真实启动）。
+   * 完整实现（findAvailablePort → spawn → waitForHealth → writePortFile）待 B 类填充。
+   *
+   * @returns 实际监听的端口号（mock 模式返回 0）
    */
   async start(): Promise<number> {
-    void findAvailablePort; void spawnRuntimeProcess
-    void waitForHealth; void writePortFile; void stopRuntimeProcess
-    throw new Error('not implemented: RuntimeSupervisor.start')
+    // mock 模式：runtime 不启动，_port 保持 null
+    // TODO(B类): 实现完整 start 时序（见文件顶部注释）
+    return 0
   }
 
   /**
    * 启动 runtime 并通知渲染进程端口。
+   *
+   * ⚠️ 最小可运行实现：mock 模式下不 spawn 也不通知（renderer 走 VITE_MOCK，不需要端口）。
    * 成功：win.webContents.send('runtime-port', port)
-   * 失败：win.webContents.send('runtime-error', { message })，不抛出
+   * 失败：win.webContents.send('runtime-error', { message })
    *
    * 消除 main.ts whenReady/activate 两处重复的 spawn + 通知逻辑。
    */
   async startAndNotify(win: BrowserWindow): Promise<number> {
+    // mock 模式：跳过 spawn，不发送 runtime-port（renderer mock 不消费此事件）
+    // TODO(B类): 实现真实 spawn + webContents.send('runtime-port'/'runtime-error')
     void win
-    throw new Error('not implemented: RuntimeSupervisor.startAndNotify')
+    return 0
   }
 
   /**
    * 停止 runtime 进程树（SIGTERM → 等 → SIGKILL 残留）。
+   *
+   * ⚠️ 最小可运行实现：child 为 null（mock 模式未 spawn），直接 resolve。
+   * 完整实现（预记录后代 PID → SIGTERM → 超时 SIGKILL 进程树）待 B 类填充。
    * 幂等：child 为空或已 killed 时直接 resolve。
    */
   async stop(timeoutMs?: number): Promise<void> {
+    // mock 模式：child 为 null，无需 kill
+    // TODO(B类): 实现完整 stop 时序（见 process-control.ts 的 [HISTORICAL] 注释）
     void timeoutMs
-    void stopRuntimeProcess
-    throw new Error('not implemented: RuntimeSupervisor.stop')
+    this.child = null
+    this._port = null
   }
 }

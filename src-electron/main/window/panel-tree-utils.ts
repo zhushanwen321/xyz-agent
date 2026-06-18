@@ -23,8 +23,11 @@ export const MAX_PANEL_DEPTH = 16
  * @returns 命中的 panel id，或 null
  */
 export function findPanelBySessionId(node: PanelTree, sessionId: string, depth = 0): string | null {
-  void node; void sessionId; void depth
-  throw new Error('not implemented: findPanelBySessionId')
+  if (depth > MAX_PANEL_DEPTH) return null
+  // [HISTORICAL] W4：判别 key 是 'panel'（非 'pane'）。叶子匹配 sessionId，分叉递归双子节点。
+  if (node.type === 'panel') return node.sessionId === sessionId ? node.id : null
+  return findPanelBySessionId(node.children[0], sessionId, depth + 1)
+    ?? findPanelBySessionId(node.children[1], sessionId, depth + 1)
 }
 
 /**
@@ -33,6 +36,16 @@ export function findPanelBySessionId(node: PanelTree, sessionId: string, depth =
  * @param windowId 窗口 id（用于生成 panel id）
  */
 export function initialWindowState(windowId: string): WindowState {
-  void windowId
-  throw new Error('not implemented: initialWindowState')
+  // [HISTORICAL] W4：panel id 前缀 'panel-'（非 'pane-'）。
+  const panelId = `panel-${windowId}`
+  return {
+    windowId,
+    panelTree: {
+      type: 'panel',
+      id: panelId,
+      sessionId: null,
+    },
+    focusedPanelId: panelId,
+    sessionIds: [],
+  }
 }
