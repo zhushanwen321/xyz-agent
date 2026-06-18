@@ -48,15 +48,21 @@ export const SAFE_KILL_NAMES = /(?:^|[\/\\])(?:node|pi|tsx|electron|xyz-agent|ba
  * 读 process.env.XYZ_AGENT_PORT_OFFSET。
  */
 export function getPortOffset(): number {
-  void BASE_PORT; void MAX_PORT; void DEV_PORT_OFFSET
-  throw new Error('not implemented: getPortOffset')
+  const raw = parseInt(process.env.XYZ_AGENT_PORT_OFFSET ?? '0', 10) || 0
+  // DEV_PORT_OFFSET 是 dev 模式惯用偏移（+100 → 3310-3320），实际偏移仍读 env。
+  void DEV_PORT_OFFSET
+  return Math.max(0, Math.min(raw, MAX_PORT - BASE_PORT))
 }
 
 /**
  * 获取动态端口范围的起止：[BASE_PORT + offset, BASE_PORT + offset + PORT_RANGE_SIZE]。
  */
 export function getPortRange(): { start: number; end: number } {
-  throw new Error('not implemented: getPortRange')
+  const offset = getPortOffset()
+  return {
+    start: BASE_PORT + offset,
+    end: BASE_PORT + offset + PORT_RANGE_SIZE,
+  }
 }
 
 /**
@@ -67,10 +73,18 @@ export function getPortRange(): { start: number; end: number } {
  * @returns true=可安全 kill / false=不在白名单或查询失败
  */
 export function isSafeToKill(pid: number): boolean {
-  void pid
-  void SAFE_KILL_NAMES
-  void execSync
-  throw new Error('not implemented: isSafeToKill')
+  try {
+    const name = execSync(`ps -p ${pid} -o comm= 2>/dev/null || true`, {
+      encoding: 'utf-8',
+      shell: '/bin/bash',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim()
+    if (!name) return false
+    return SAFE_KILL_NAMES.test(name)
+  } catch {
+    // ps 查询失败（进程已退出）非关键，按「不可安全 kill」处理
+    return false
+  }
 }
 
 /**

@@ -22,8 +22,12 @@ import { homedir } from 'node:os'
  * @param port runtime 监听端口
  */
 export function writePortFile(port: number): void {
-  void port
-  // 引用 node 模块仅为满足未来实现的 import shape，当前骨架不使用
-  void mkdirSync; void writeFileSync; void path; void homedir
-  throw new Error('not implemented: writePortFile')
+  try {
+    const dataDir = process.env.XYZ_AGENT_DATA_DIR ?? path.join(homedir(), '.xyz-agent')
+    mkdirSync(dataDir, { recursive: true })
+    writeFileSync(path.join(dataDir, 'runtime.port'), String(port))
+  // eslint-disable-next-line taste/no-silent-catch -- 端口文件非关键路径，写失败仅记录不阻塞
+  } catch (err) {
+    console.error('[runtime] Failed to write port file:', err)
+  }
 }

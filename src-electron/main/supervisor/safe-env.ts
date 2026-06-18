@@ -23,6 +23,14 @@ export const ENV_WHITELIST: readonly string[] = [...ENV_WHITELIST_PREFIXES, 'ELE
  * @returns 精简后的 env 对象
  */
 export function buildSafeEnv(extras: Record<string, string | undefined>): Record<string, string> {
-  void extras
-  throw new Error('not implemented: buildSafeEnv')
+  const safe: Record<string, string> = {}
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined && ENV_WHITELIST.some(prefix => key.startsWith(prefix) || key === prefix)) {
+      safe[key] = value
+    }
+  }
+  for (const [key, value] of Object.entries(extras)) {
+    if (value !== undefined) safe[key] = value
+  }
+  return safe
 }
