@@ -1,7 +1,7 @@
 /**
  * MainContext：Main 进程全局状态容器。
  *
- * 持有 runtime/windows/shortcuts 三个 Facade + mainWindow/settingsWindow 引用。
+ * 持有 runtime/windows/shortcuts 三个 Facade + mainWindow 引用。
  * main.ts 构造后注入给 gateway，gateway 经接口访问，不反向引用具体类。
  *
  * 依赖方向：main.ts → context.ts → interfaces.ts（type-only）
@@ -15,7 +15,7 @@ import type { MainContext, IRuntimeSupervisor, IWindowManager, IShortcutRegistry
  * 构造 MainContext。
  *
  * 三个子系统 Facade 由各自模块构造后传入，context 只负责聚合持有。
- * mainWindow/settingsWindow 初始为 null，由 main.ts 在生命周期事件中赋值。
+ * mainWindow 初始为 null，由 main.ts 在生命周期事件中赋值。
  *
  * @param params.subsystems 已构造好的三个 Facade 实例
  * @param params.isDev 是否开发模式
@@ -27,9 +27,8 @@ export function createMainContext(params: {
   isDev: boolean
 }): MainContext {
   const { runtime, windows, shortcuts, isDev } = params
-  // mainWindow / settingsWindow 为可变引用，闭包持有；通过返回对象的 getter/setter 访问
+  // mainWindow 为可变引用，闭包持有；通过返回对象的 getter/setter 访问
   let mainWindow: BrowserWindow | null = null
-  let settingsWindow: BrowserWindow | null = null
 
   return {
     runtime,
@@ -41,12 +40,6 @@ export function createMainContext(params: {
     },
     set mainWindow(win: BrowserWindow | null) {
       mainWindow = win
-    },
-    get settingsWindow(): BrowserWindow | null {
-      return settingsWindow
-    },
-    set settingsWindow(win: BrowserWindow | null) {
-      settingsWindow = win
     },
   }
 }

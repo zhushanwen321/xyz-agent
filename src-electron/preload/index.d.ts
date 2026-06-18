@@ -2,7 +2,6 @@ export interface ElectronAPI {
   onRuntimePort(callback: (port: number) => void): () => void
   onRuntimeError(callback: (error: { message: string }) => void): () => void
   onShortcut(callback: (type: string) => void): () => void
-  openSettingsWindow(): void
   getRuntimePort(): Promise<number>
   /** 获取 runtime 端口偏移（dev 模式 +100，prod 模式 0） */
   getRuntimePortOffset(): Promise<number>

@@ -27,7 +27,6 @@ const { switchSession, deleteSession, renameSession } = useSession()
 defineEmits<{
   create: []
   'toggle-panel-grid': []
-  'toggle-settings': []
 }>()
 
 const renamingSessionId = ref<string | null>(null)
@@ -69,7 +68,6 @@ function handleSessionClick(sessionId: string) {
   navStore.push({ view: 'chat', sessionId })
 }
 
-const isSettingsActive = computed(() => navStore.currentView === 'settings')
 const isCollapsed = computed(() => sidebarStore.collapsed)
 </script>
 
@@ -89,13 +87,6 @@ const isCollapsed = computed(() => sidebarStore.collapsed)
               <rect x="9" y="1" width="6" height="6" rx="1"/>
               <rect x="1" y="9" width="6" height="6" rx="1"/>
               <rect x="9" y="9" width="6" height="6" rx="1"/>
-            </svg>
-          </button>
-          <!-- eslint-disable-next-line taste/no-native-html-elements -- ctrl-btn has custom gradient+transition styles in <style scoped>, consistent with adjacent native buttons -->
-          <button class="ctrl-btn" :class="{ active: isSettingsActive }" :title="t('header.settings') + ' (Cmd+,)'" @click="$emit('toggle-settings')">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <circle cx="12" cy="12" r="3"/>
-              <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 008.58 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 8.58a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
             </svg>
           </button>
           <Button variant="ghost" size="icon" class="ctrl-btn" title="Back" @click="navStore.back()" :disabled="!navStore.canGoBack">

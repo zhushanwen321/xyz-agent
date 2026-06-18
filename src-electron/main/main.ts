@@ -105,8 +105,6 @@ const createWindowFn = (options?: { windowId?: string; sessionId?: string }) =>
 // ── 注册 IPC ─────────────────────────────────────────────────────
 registerIpcHandlers({
   getMainWindow: () => ctx.mainWindow,
-  getSettingsWindow: () => ctx.settingsWindow,
-  setSettingsWindow: (win) => { ctx.settingsWindow = win },
   runtime: ctx.runtime,
   isDev,
   createWindow: createWindowFn,

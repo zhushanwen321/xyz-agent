@@ -124,8 +124,6 @@ export interface MainContext {
   readonly shortcuts: IShortcutRegistry
   /** 主窗口（可能被关闭后置 null，activate 时重建） */
   mainWindow: BrowserWindow | null
-  /** 设置窗口（独立 BrowserWindow，单例） */
-  settingsWindow: BrowserWindow | null
   /** 是否为开发模式（!app.isPackaged） */
   readonly isDev: boolean
 }
@@ -150,13 +148,9 @@ export interface WindowOptions {
 export interface IpcHandlerDeps {
   /** 读取主窗口（供 privileged handler 发送事件） */
   getMainWindow: () => BrowserWindow | null
-  /** 读取设置窗口 */
-  getSettingsWindow: () => BrowserWindow | null
-  /** 设置设置窗口引用 */
-  setSettingsWindow: (win: BrowserWindow | null) => void
   /** Runtime 监管者（桥接 handler 读 port/portOffset） */
   runtime: IRuntimeSupervisor
-  /** 是否开发模式（决定设置窗口加载 URL） */
+  /** 是否开发模式（决定 createWindow 加载 URL） */
   isDev: boolean
   /** 窗口工厂（privileged handler 创建窗口） */
   createWindow: CreateWindowFn

@@ -6,7 +6,7 @@
  *
  * [HISTORICAL] 不变量：
  * - globalShortcut.register 对已占用的组合静默失败 → 注册前判断 globalShortcut.isRegistered（去重）
- * - 当前 3 个快捷键（CommandOrControl+1/3/,）都是全局的，通过 win.webContents.send('shortcut', type) 转发
+ * - 当前 2 个快捷键（CommandOrControl+1/3）都是全局的，通过 win.webContents.send('shortcut', type) 转发
  * - unregisterAll 幂等
  *
  * 依赖方向：shortcut-registry → electron(globalShortcut/BrowserWindow) + interfaces
@@ -15,13 +15,12 @@ import { BrowserWindow, globalShortcut } from 'electron'
 import type { IShortcutRegistry } from '../interfaces.js'
 
 /** 快捷键类型（对应 renderer 监听的 type 字段） */
-type ShortcutType = 'standard' | 'focus' | 'settings'
+type ShortcutType = 'standard' | 'focus'
 
 /** 快捷键映射表：accelerator → type */
 const SHORTCUTS: Record<string, ShortcutType> = {
   'CommandOrControl+1': 'standard',
   'CommandOrControl+3': 'focus',
-  'CommandOrControl+,': 'settings',
 }
 
 /**

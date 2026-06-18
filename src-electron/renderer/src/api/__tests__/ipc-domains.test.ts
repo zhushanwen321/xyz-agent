@@ -12,7 +12,6 @@ function mockIpc(overrides: Partial<ElectronAPI> = {}): ElectronAPI {
     onRuntimePort: vi.fn(() => () => {}),
     onRuntimeError: vi.fn(() => () => {}),
     onShortcut: vi.fn(() => () => {}),
-    openSettingsWindow: vi.fn(),
     getRuntimePort: vi.fn(() => Promise.resolve(7456)),
     getRuntimePortOffset: vi.fn(() => Promise.resolve(100)),
     createWindow: vi.fn(() => Promise.resolve({ windowId: 'w-2' })),
@@ -118,9 +117,6 @@ describe('IpcTransport + IPC domains — 转发与降级', () => {
       const cb = vi.fn()
       s.onShortcut(cb)
       expect(ipc.onShortcut).toHaveBeenCalledWith(cb)
-
-      s.openSettingsWindow()
-      expect(ipc.openSettingsWindow).toHaveBeenCalled()
     })
   })
 })

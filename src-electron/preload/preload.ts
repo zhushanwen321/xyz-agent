@@ -8,8 +8,6 @@ export interface ElectronAPI {
   onRuntimeError(callback: (error: { message: string }) => void): () => void
   /** 监听快捷键事件（替代 @tauri-apps/api/event 的 listen('shortcut')） */
   onShortcut(callback: (type: string) => void): () => void
-  /** 打开设置窗口 */
-  openSettingsWindow(): void
   /** 获取 runtime 端口 */
   getRuntimePort(): Promise<number>
   /** 获取 runtime 端口偏移（dev 模式 +100） */
@@ -55,7 +53,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('shortcut', handler)
     return () => ipcRenderer.removeListener('shortcut', handler)
   },
-  openSettingsWindow: () => ipcRenderer.send('open-settings-window'),
   getRuntimePort: () => ipcRenderer.invoke('get-runtime-port'),
   getRuntimePortOffset: () => ipcRenderer.invoke('get-runtime-port-offset'),
 

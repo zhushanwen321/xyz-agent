@@ -6,12 +6,7 @@ export interface ChatEntry {
   sessionId: string
 }
 
-export interface SettingsEntry {
-  view: 'settings'
-  activeTab: string
-}
-
-export type NavEntry = ChatEntry | SettingsEntry
+export type NavEntry = ChatEntry
 
 const MAX_ENTRIES = 50
 
@@ -23,10 +18,6 @@ export const useNavigationStore = defineStore('navigation', () => {
     () => (pointer.value >= 0 && pointer.value < entries.value.length)
       ? entries.value[pointer.value]
       : null,
-  )
-
-  const currentView = computed<'chat' | 'settings'>(
-    () => currentEntry.value?.view ?? 'chat',
   )
 
   const canGoBack = computed(() => pointer.value > 0)
@@ -63,35 +54,15 @@ export const useNavigationStore = defineStore('navigation', () => {
     if (canGoForward.value) pointer.value += 1
   }
 
-  // Replace entire object so Vue reactivity detects the change
-  function updateCurrentTab(activeTab: string) {
-    const entry = currentEntry.value
-    if (entry?.view === 'settings') {
-      entries.value[pointer.value] = { view: 'settings', activeTab }
-    }
-  }
-
-  function getLastSettingsTab(): string {
-    for (let i = entries.value.length - 1; i >= 0; i--) {
-      if (entries.value[i].view === 'settings') {
-        return (entries.value[i] as { view: 'settings'; activeTab: string }).activeTab
-      }
-    }
-    return 'providers'
-  }
-
   return {
     entries,
     pointer,
     currentEntry,
-    currentView,
     canGoBack,
     canGoForward,
     push,
     back,
     forward,
     reset,
-    updateCurrentTab,
-    getLastSettingsTab,
   }
 })

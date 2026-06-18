@@ -4,12 +4,10 @@
     <AppSidebar
       @create="createSession"
       @toggle-panel-grid="settingsStore.togglePanelGrid()"
-      @toggle-settings="toggleSettings()"
     />
     <!-- Content area -->
     <main class="content-area">
-      <SettingsView v-if="navStore.currentView === 'settings'" />
-      <PanelTreeRenderer v-else
+      <PanelTreeRenderer
         :node="panelStore.tree"
         :focused-panel-id="panelStore.focusedPanelId"
       />
@@ -65,7 +63,6 @@ import { useSession } from './composables/useSession'
 import { useToastStore } from './stores/toast'
 import AppSidebar from './components/layout/AppSidebar.vue'
 import AppStatusbar from './components/layout/AppStatusbar.vue'
-import SettingsView from './components/layout/SettingsView.vue'
 import PanelTreeRenderer from './components/panel/PanelTreeRenderer.vue'
 import SideInspectorOverlay from './components/panel/SideInspectorOverlay.vue'
 import InspectorRight from './components/side-inspector/InspectorRight.vue'
@@ -86,15 +83,6 @@ const navStore = useNavigationStore()
 const sidebarStore = useSidebarStore()
 const layoutStore = useLayoutStore()
 
-
-// Unified settings toggle — used by sidebar emit and IPC shortcut
-function toggleSettings() {
-  if (navStore.currentView === 'settings') {
-    if (navStore.canGoBack) { navStore.back() } else { navStore.reset() }
-  } else {
-    navStore.push({ view: 'settings', activeTab: navStore.getLastSettingsTab() })
-  }
-}
 
 // Sync panel focus when navigation changes to a different chat session
 watch(
@@ -237,19 +225,12 @@ onMounted(async () => {
       case 'standard':
       case 'focus':
         panelStore.mergeToSingle()
-        if (navStore.currentView !== 'chat') {
-          const sid = panelStore.focusedPanel?.sessionId ?? ''
-          if (sid) navStore.push({ view: 'chat', sessionId: sid })
-        }
         break
       case 'split':
         panelStore.splitPanel(panelStore.focusedPanelId, 'horizontal')
         break
       case 'overview':
         settingsStore.togglePanelGrid()
-        break
-      case 'settings':
-        toggleSettings()
         break
     }
   }))
