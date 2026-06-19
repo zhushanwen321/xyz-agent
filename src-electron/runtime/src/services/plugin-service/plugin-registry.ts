@@ -1,6 +1,6 @@
 import { readFile, readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import { getConfigDir } from '../../adapters/pi-config-bridge.js'
+import { getConfigDir } from '../../infra/pi/pi-config-bridge.js'
 import type { XyzAgentPackageJson, PluginDescriptor, PluginState, PluginContributes, PluginSource } from './plugin-types.js'
 import { checkPluginCompatibility } from './plugin-version-checker.js'
 

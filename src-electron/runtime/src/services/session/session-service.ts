@@ -17,11 +17,11 @@ import type {
   ISessionService, ISessionServiceInternal, IProcessManager, IMessageBroker,
   IEventAdapter, IRpcClient, IExtensionService,
 } from '../../interfaces.js'
-import type { PiMessage } from '../../infra/rpc-client.js'
-import { convertPiHistory } from '../../adapters/message-converter.js'
+import type { PiMessage } from '../../infra/pi/rpc-client.js'
+import { convertPiHistory } from '../../infra/pi/message-converter.js'
 import type { PiHistoryMessage } from '../../infra/pi/pi-protocol.js'
-import { getDefaultModel, scanPiSessions, getSkillPaths as getPiSkillPaths } from '../../adapters/pi-config-bridge.js'
-import { NavigateInterceptor } from '../../adapters/navigate-interceptor.js'
+import { getDefaultModel, scanPiSessions, getSkillPaths as getPiSkillPaths } from '../../infra/pi/pi-config-bridge.js'
+import { NavigateInterceptor } from '../../infra/pi/navigate-interceptor.js'
 import { TreeService } from '../tree-service.js'
 import { readGitInfo } from '../git-info.js'
 import { getHistoryFromFile } from '../session-history.js'

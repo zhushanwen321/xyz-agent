@@ -1,6 +1,6 @@
 import type { ServerMessage, ServerMessageType } from '@xyz-agent/shared'
 import { EXTENSION_EVENTS } from '@xyz-agent/shared'
-import type { PiEventListener } from '../infra/rpc-client.js'
+import type { PiEventListener } from './rpc-client.js'
 
 export type WsSender = (msg: ServerMessage) => void
 
@@ -51,7 +51,7 @@ export interface EventAdapterOptions {
   /** Called after agent_end with usage data for context window tracking. */
   onContextUpdate?: (sessionId: string, data: { inputTokens: number; totalTokens: number }) => void
   /** Called by EventAdapter to execute plugin hooks on tool/message events. */
-  onHookExecute?: (hookType: string, context: Record<string, unknown>) => Promise<import('../services/plugin-service/plugin-types.js').HookResult>
+  onHookExecute?: (hookType: string, context: Record<string, unknown>) => Promise<import('../../services/plugin-service/plugin-types.js').HookResult>
 }
 
 // ── Sub-handler types ──────────────────────────────────────────────

@@ -7,12 +7,12 @@ import { ModelService } from './services/model-service.js'
 import { BASE_PORT, MAX_PORT } from '@xyz-agent/shared'
 
 const MAX_PERCENT = 100
-import { ProcessManager } from './infra/process-manager.js'
-import { EventAdapter } from './adapters/event-adapter.js'
+import { ProcessManager } from './infra/pi/process-manager.js'
+import { EventAdapter } from './infra/pi/event-adapter.js'
 import { ExtensionService } from './services/extension-service.js'
 import { PluginRegistry } from './services/plugin-service/plugin-registry.js'
 import { PluginService } from './services/plugin-service/plugin-service.js'
-import type { NavigateInterceptor } from './adapters/navigate-interceptor.js'
+import type { NavigateInterceptor } from './infra/pi/navigate-interceptor.js'
 
 function parseArgs(): { port: number; projectRoot?: string } {
   // eslint-disable-next-line no-magic-numbers -- argv[0] is node, argv[1] is script

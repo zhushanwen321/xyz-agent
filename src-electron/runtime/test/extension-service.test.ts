@@ -4,10 +4,10 @@ import { join } from 'node:path'
 import { tmpdir, homedir } from 'node:os'
 import { ExtensionService, ExtensionInstallError } from '../src/services/extension-service.js'
 
-import { installPackage, uninstallPackage, NpmInstallError } from '../src/infra/npm-installer.js'
+import { installPackage, uninstallPackage, NpmInstallError } from '../src/infra/installers/npm-installer.js'
 import { execFileSync } from 'node:child_process'
 
-vi.mock('../src/infra/npm-installer.js', () => ({
+vi.mock('../src/infra/installers/npm-installer.js', () => ({
   installPackage: vi.fn(),
   uninstallPackage: vi.fn(),
   installDependencies: vi.fn(),

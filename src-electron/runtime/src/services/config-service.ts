@@ -17,11 +17,11 @@ import type {
   ScannedAgentInfo,
 } from '@xyz-agent/shared'
 import type { IConfigService } from '../interfaces.js'
-import * as piBridge from '../adapters/pi-config-bridge.js'
-import type { PiModelDefinition } from '../adapters/pi-config-bridge.js'
-import { atomicWrite } from '../infra/scanner-base.js'
-import { scanSkills, loadSkillFromDir } from '../infra/skill-scanner.js'
-import { scanAgents } from '../infra/agent-scanner.js'
+import * as piBridge from '../infra/pi/pi-config-bridge.js'
+import type { PiModelDefinition } from '../infra/pi/pi-config-bridge.js'
+import { atomicWrite } from '../infra/scanners/scanner-base.js'
+import { scanSkills, loadSkillFromDir } from '../infra/scanners/skill-scanner.js'
+import { scanAgents } from '../infra/scanners/agent-scanner.js'
 
 // ── Helpers ─────────────────────────────────────────────────────
 

@@ -15,15 +15,15 @@ import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import type { SessionSummary } from '@xyz-agent/shared'
 import type { IProcessManager, ISessionServiceInternal } from '../../interfaces.js'
-import type { PiMessage } from '../../infra/rpc-client.js'
+import type { PiMessage } from '../../infra/pi/rpc-client.js'
 import {
   getDefaultModel,
   refreshAll,
   persistSessionName,
   ensureSessionFile,
   patchSessionCwd,
-} from '../../adapters/pi-config-bridge.js'
-import { trash } from '../../infra/trash.js'
+} from '../../infra/pi/pi-config-bridge.js'
+import { trash } from '../../infra/system/trash.js'
 
 export class SessionLifecycle {
   constructor(

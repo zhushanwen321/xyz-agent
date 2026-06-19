@@ -5,9 +5,9 @@
  */
 
 import { readFile } from 'node:fs/promises'
-import { convertPiHistory } from '../adapters/message-converter.js'
+import { convertPiHistory } from '../infra/pi/message-converter.js'
 import type { PiHistoryMessage } from '../infra/pi/pi-protocol.js'
-import { scanPiSessions } from '../adapters/pi-config-bridge.js'
+import { scanPiSessions } from '../infra/pi/pi-config-bridge.js'
 
 interface ScannedSession {
   id: string

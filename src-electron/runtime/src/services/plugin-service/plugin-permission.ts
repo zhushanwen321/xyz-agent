@@ -13,7 +13,7 @@
 import type { PluginRegistry } from './plugin-registry.js'
 import { PermissionStorage } from './plugin-permission-storage.js'
 import { join } from 'node:path'
-import { getConfigDir } from '../../adapters/pi-config-bridge.js'
+import { getConfigDir } from '../../infra/pi/pi-config-bridge.js'
 
 export class PluginPermissionChecker {
   private registry: PluginRegistry

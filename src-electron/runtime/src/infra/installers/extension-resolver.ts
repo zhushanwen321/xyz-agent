@@ -14,7 +14,7 @@
  */
 import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs'
 import { join, dirname, basename } from 'node:path'
-import { getPiAgentDir } from '../adapters/pi-config-bridge.js'
+import { getPiAgentDir } from '../pi/pi-paths.js'
 
 const log = {
   info: (...args: unknown[]) => console.log('[extension-resolver]', ...args),

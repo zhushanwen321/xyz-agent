@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { convertPiHistory } from '../src/adapters/message-converter.js'
+import { convertPiHistory } from '../src/infra/pi/message-converter.js'
 import type { PiHistoryMessage, PiHistoryToolResult } from '../src/infra/pi/pi-protocol.js'
 
 describe('convertPiHistory', () => {

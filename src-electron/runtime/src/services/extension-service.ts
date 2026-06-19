@@ -17,13 +17,13 @@
  * 5. 清理临时目录
  */
 import { execFileSync } from 'node:child_process'
-import { installPackage, uninstallPackage, installDependencies, NpmInstallError } from '../infra/npm-installer.js'
+import { installPackage, uninstallPackage, installDependencies, NpmInstallError } from '../infra/installers/npm-installer.js'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, readdirSync, statSync, lstatSync, realpathSync, cpSync, rmSync, mkdtempSync } from 'node:fs'
 import { join, resolve, basename } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 import type { ExtensionInfo } from '@xyz-agent/shared'
-import { ExtensionResolver } from '../infra/extension-resolver.js'
-import { getPiAgentDir } from '../adapters/pi-config-bridge.js'
+import { ExtensionResolver } from '../infra/installers/extension-resolver.js'
+import { getPiAgentDir } from '../infra/pi/pi-config-bridge.js'
 import { isStrictlyUnder, isUnderOrEqual } from '../utils/path-utils.js'
 
 const log = {

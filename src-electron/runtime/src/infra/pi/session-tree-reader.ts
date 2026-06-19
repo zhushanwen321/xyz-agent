@@ -12,7 +12,7 @@
  */
 
 import { readFile } from 'node:fs/promises'
-import type { TreeNode } from '../types.js'
+import type { TreeNode } from '../../types.js'
 
 // ── Content block shapes from pi JSONL ─────────────────────────────
 

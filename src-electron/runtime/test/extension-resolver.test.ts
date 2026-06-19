@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { ExtensionResolver } from '../src/infra/extension-resolver.js'
-import type { SourceMap } from '../src/infra/extension-resolver.js'
+import { ExtensionResolver } from '../src/infra/installers/extension-resolver.js'
+import type { SourceMap } from '../src/infra/installers/extension-resolver.js'
 
 vi.mock('node:fs', () => ({
   existsSync: vi.fn(),

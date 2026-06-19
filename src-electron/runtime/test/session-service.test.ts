@@ -33,7 +33,7 @@ import type {
   IExtensionService,
 } from '../src/interfaces.js'
 import type { SessionSummary, SessionGroup, Message, ServerMessage } from '@xyz-agent/shared'
-import type { PiEventListener } from '../src/infra/rpc-client.js'
+import type { PiEventListener } from '../src/infra/pi/rpc-client.js'
 
 // ── vi.hoisted：在 vi.mock 工厂执行前就绪的 mock 句柄 ───────────────
 
@@ -63,7 +63,7 @@ const mocks = vi.hoisted(() => ({
 
 const { mockScannedSessions } = mocks
 
-vi.mock('../src/adapters/pi-config-bridge.js', () => ({
+vi.mock('../src/infra/pi/pi-config-bridge.js', () => ({
   getDefaultModel: () => mocks.defaultModel.value,
   getSkillPaths: () => [],
   getSessionsDir: () => '/mock/sessions',
@@ -77,8 +77,8 @@ vi.mock('../src/adapters/pi-config-bridge.js', () => ({
   patchSessionCwd: mocks.patchSessionCwdMock,
 }))
 
-vi.mock('../src/infra/trash.js', () => ({ trash: mocks.trashMock }))
-vi.mock('../src/adapters/message-converter.js', () => ({ convertPiHistory: mocks.convertPiHistoryMock }))
+vi.mock('../src/infra/system/trash.js', () => ({ trash: mocks.trashMock }))
+vi.mock('../src/infra/pi/message-converter.js', () => ({ convertPiHistory: mocks.convertPiHistoryMock }))
 vi.mock('../src/services/session-history.js', () => ({ getHistoryFromFile: mocks.getHistoryFromFileMock }))
 
 vi.mock('../src/services/git-info.js', () => ({
@@ -87,7 +87,7 @@ vi.mock('../src/services/git-info.js', () => ({
 }))
 
 // NavigateInterceptor 被 session-service 直接 new，mock 成最小实现
-vi.mock('../src/adapters/navigate-interceptor.js', () => ({
+vi.mock('../src/infra/pi/navigate-interceptor.js', () => ({
   NavigateInterceptor: class MockNavigateInterceptor {
     readonly send = vi.fn()
     setResolver = vi.fn()

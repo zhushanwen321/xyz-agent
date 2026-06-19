@@ -4,7 +4,7 @@
  * 从 PluginService 提取 sessionData 的 flush、定时器等操作。
  */
 
-import { getConfigDir } from '../../adapters/pi-config-bridge.js'
+import { getConfigDir } from '../../infra/pi/pi-config-bridge.js'
 import { persistSessionData } from './plugin-storage.js'
 
 const FLUSH_INTERVAL_MS = 5_000

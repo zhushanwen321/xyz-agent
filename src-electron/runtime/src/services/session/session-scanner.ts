@@ -11,7 +11,7 @@
 import { basename } from 'node:path'
 import type { SessionSummary, SessionGroup, SessionStatus } from '@xyz-agent/shared'
 import type { ISessionServiceInternal } from '../../interfaces.js'
-import { scanPiSessions } from '../../adapters/pi-config-bridge.js'
+import { scanPiSessions } from '../../infra/pi/pi-config-bridge.js'
 import { readGitInfo, pruneGitInfoCache } from '../git-info.js'
 import type { ScannedSession } from './types.js'
 

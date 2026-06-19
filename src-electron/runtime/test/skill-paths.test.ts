@@ -37,7 +37,7 @@ const mockScannedSessions: Array<{
   lastModified: number
   size: number
 }> = []
-vi.mock('../src/adapters/pi-config-bridge.js', () => ({
+vi.mock('../src/infra/pi/pi-config-bridge.js', () => ({
   getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
   getSkillPaths: () => mockSkillPaths,
   getSessionsDir: () => '/mock/home/.xyz-agent/sessions',
@@ -63,7 +63,7 @@ vi.mock('node:fs', () => ({
 }))
 
 // Mock trash
-vi.mock('../src/infra/trash.js', () => ({
+vi.mock('../src/infra/system/trash.js', () => ({
   trash: vi.fn(),
 }))
 
@@ -82,7 +82,7 @@ vi.mock('node:os', async (importOriginal) => {
 })
 
 // Mock event-adapter for SessionService
-vi.mock('../src/adapters/event-adapter.js', () => ({
+vi.mock('../src/infra/pi/event-adapter.js', () => ({
   EventAdapter: class MockEventAdapter {
     attach = vi.fn()
     detach = vi.fn()
@@ -111,7 +111,7 @@ function resetMocks(): void {
 
 /** Create a SessionService with mocked deps */
 async function createSessionService() {
-  const { ProcessManager } = await import('../src/infra/process-manager.js')
+  const { ProcessManager } = await import('../src/infra/pi/process-manager.js')
   const { SessionService } = await import('../src/services/session/session-service.js')
   const pm = new ProcessManager()
   const noopBroker = { send: vi.fn(), broadcast: vi.fn(), sendError: vi.fn() }
@@ -137,7 +137,7 @@ describe('skillPaths passing chain', () => {
   })
 
   it('RpcClient passes --skill args for each skillPath', async () => {
-    const { RpcClient } = await import('../src/infra/rpc-client.js')
+    const { RpcClient } = await import('../src/infra/pi/rpc-client.js')
 
     const client = new RpcClient({
       cwd: '/project',
@@ -152,7 +152,7 @@ describe('skillPaths passing chain', () => {
   })
 
   it('RpcClient omits --skill when skillPaths is empty', async () => {
-    const { RpcClient } = await import('../src/infra/rpc-client.js')
+    const { RpcClient } = await import('../src/infra/pi/rpc-client.js')
 
     const client = new RpcClient({ cwd: '/project', skillPaths: [] })
 
@@ -164,7 +164,7 @@ describe('skillPaths passing chain', () => {
   })
 
   it('RpcClient omits --skill when skillPaths is undefined', async () => {
-    const { RpcClient } = await import('../src/infra/rpc-client.js')
+    const { RpcClient } = await import('../src/infra/pi/rpc-client.js')
 
     const client = new RpcClient({ cwd: '/project' })
 

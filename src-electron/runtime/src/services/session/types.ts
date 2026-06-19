@@ -10,7 +10,7 @@
  * 子模块经 ISessionServiceInternal 只看到 IManagedSessionView,
  * 但拿到的是 ManagedSession 实例,可读写字段(lastActiveAt / isGenerating)。
  */
-import type { scanPiSessions } from '../../adapters/pi-config-bridge.js'
+import type { scanPiSessions } from '../../infra/pi/pi-config-bridge.js'
 
 /** SendMessage hook:消息发送前触发,可阻止发送。 */
 export type SendMessageHook = (sessionId: string, content: string) => Promise<{ blocked: boolean; reason?: string } | null>

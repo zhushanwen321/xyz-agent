@@ -75,7 +75,7 @@ vi.mock('../src/services/model-service.js', () => ({
   },
 }))
 
-vi.mock('../src/infra/process-manager.js', () => ({
+vi.mock('../src/infra/pi/process-manager.js', () => ({
   ProcessManager: class MockProcessManager {
     createSession = vi.fn()
     destroySession = vi.fn().mockResolvedValue(undefined)
@@ -90,15 +90,15 @@ vi.mock('../src/infra/process-manager.js', () => ({
 
 // EventAdapter 使用真实实例 — 不 mock
 
-vi.mock('../src/infra/skill-scanner.js', () => ({
+vi.mock('../src/infra/scanners/skill-scanner.js', () => ({
   scanSkills: vi.fn().mockReturnValue([]),
 }))
 
-vi.mock('../src/infra/agent-scanner.js', () => ({
+vi.mock('../src/infra/scanners/agent-scanner.js', () => ({
   scanAgents: vi.fn().mockReturnValue([]),
 }))
 
-vi.mock('../src/adapters/pi-config-bridge.js', () => ({
+vi.mock('../src/infra/pi/pi-config-bridge.js', () => ({
   getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
   getSkillPaths: () => [],
   getSessionsDir: () => '/mock/sessions',
@@ -108,14 +108,14 @@ vi.mock('../src/adapters/pi-config-bridge.js', () => ({
   refreshAll: () => {},
 }))
 
-vi.mock('../src/infra/trash.js', () => ({
+vi.mock('../src/infra/system/trash.js', () => ({
   trash: vi.fn(),
 }))
 
 // ── Imports (mock 之后) ───────────────────────────────────────────
 
 import { RuntimeServer } from '../src/transport/server.js'
-import { EventAdapter } from '../src/adapters/event-adapter.js'
+import { EventAdapter } from '../src/infra/pi/event-adapter.js'
 import { SessionService } from '../src/services/session/session-service.js'
 import { ConfigService } from '../src/services/config-service.js'
 import { ModelService } from '../src/services/model-service.js'

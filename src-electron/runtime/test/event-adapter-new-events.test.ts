@@ -18,9 +18,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { EventAdapter, type WsSender } from '../src/adapters/event-adapter.js'
+import { EventAdapter, type WsSender } from '../src/infra/pi/event-adapter.js'
 import type { ServerMessage } from '@xyz-agent/shared'
-import type { PiMessage } from '../src/infra/rpc-client.js'
+import type { PiMessage } from '../src/infra/pi/rpc-client.js'
 
 /** Pi extension events carry extra fields not in PiMessage, so we widen for tests */
 type PiTestEvent = PiMessage & Record<string, unknown>

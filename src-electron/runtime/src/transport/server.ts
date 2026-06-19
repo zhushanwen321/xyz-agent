@@ -17,7 +17,7 @@ import { SessionMessageHandler } from './session-message-handler.js'
 import { ExtensionMessageHandler } from './extension-message-handler.js'
 import { PluginMessageHandler } from './plugin-message-handler.js'
 import { TreeMessageHandler } from './tree-message-handler.js'
-import { getPiAgentDir } from '../adapters/pi-config-bridge.js'
+import { getPiAgentDir } from '../infra/pi/pi-config-bridge.js'
 
 const HTTP_OK = 200
 const HTTP_NOT_FOUND = 404

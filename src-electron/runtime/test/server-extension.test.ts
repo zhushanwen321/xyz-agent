@@ -67,7 +67,7 @@ vi.mock('../src/services/model-service.js', () => ({
   },
 }))
 
-vi.mock('../src/infra/process-manager.js', () => ({
+vi.mock('../src/infra/pi/process-manager.js', () => ({
   ProcessManager: class MockProcessManager {
     createSession = vi.fn()
     destroySession = vi.fn().mockResolvedValue(undefined)
@@ -80,22 +80,22 @@ vi.mock('../src/infra/process-manager.js', () => ({
   },
 }))
 
-vi.mock('../src/adapters/event-adapter.js', () => ({
+vi.mock('../src/infra/pi/event-adapter.js', () => ({
   EventAdapter: class MockEventAdapter {
     attach = vi.fn()
     detach = vi.fn()
   },
 }))
 
-vi.mock('../src/infra/skill-scanner.js', () => ({
+vi.mock('../src/infra/scanners/skill-scanner.js', () => ({
   scanSkills: vi.fn().mockReturnValue([]),
 }))
 
-vi.mock('../src/infra/agent-scanner.js', () => ({
+vi.mock('../src/infra/scanners/agent-scanner.js', () => ({
   scanAgents: vi.fn().mockReturnValue([]),
 }))
 
-vi.mock('../src/adapters/pi-config-bridge.js', () => ({
+vi.mock('../src/infra/pi/pi-config-bridge.js', () => ({
   getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
   getSkillPaths: () => [],
   getSessionsDir: () => '/mock/sessions',
@@ -139,7 +139,7 @@ vi.mock('../src/services/extension-service.js', async (importOriginal) => {
   }
 })
 
-vi.mock('../src/infra/trash.js', () => ({
+vi.mock('../src/infra/system/trash.js', () => ({
   trash: vi.fn(),
 }))
 

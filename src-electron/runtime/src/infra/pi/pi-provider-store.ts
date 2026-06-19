@@ -9,7 +9,7 @@
 
 import { existsSync, readFileSync, readdirSync, mkdirSync, renameSync, rmdirSync, cpSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { atomicWrite } from '../infra/scanner-base.js'
+import { atomicWrite } from '../scanners/scanner-base.js'
 import { getConfigDir, getModelsPath, getSettingsPath, getPiAgentDir, getSessionsDir, getAgentsDir } from './pi-paths.js'
 
 // ── 类型定义（对齐 pi models.json / settings.json 的 schema）────

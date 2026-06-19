@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseSkillMd } from '../src/infra/skill-scanner.js'
+import { parseSkillMd } from '../src/infra/scanners/skill-scanner.js'
 
 describe('parseSkillMd argumentHint extraction', () => {
   it('extracts argument-hint from frontmatter', () => {
