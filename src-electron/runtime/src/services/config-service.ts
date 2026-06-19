@@ -17,7 +17,7 @@ import type {
   ScannedAgentInfo,
 } from '@xyz-agent/shared'
 import type { IConfigService } from '../interfaces.js'
-import type { IConfigStore, ConfigModelDefinition } from './ports.js'
+import type { IConfigStore, ConfigModelDefinition } from './ports/config.js'
 import { atomicWrite } from '../utils/fs-utils.js'
 import { scanSkills, loadSkillFromDir } from './scanners/skill-scanner.js'
 import { scanAgents } from './scanners/agent-scanner.js'

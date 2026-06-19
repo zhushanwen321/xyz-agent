@@ -7,7 +7,7 @@
  *
  * 兼容两种鉴权：anthropic（x-api-key + anthropic-version）、openai-compatible（Bearer）。
  */
-import type { IModelSource, DiscoveredModelMeta } from '../services/ports.js'
+import type { IModelSource, DiscoveredModelMeta } from '../services/ports/model.js'
 
 const API_FETCH_TIMEOUT_MS = 10_000
 

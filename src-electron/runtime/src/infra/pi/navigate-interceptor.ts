@@ -13,7 +13,7 @@
  */
 
 import type { ServerMessage } from '@xyz-agent/shared'
-import type { INavigateInterceptor, INavigateInterceptorFactory } from '../../services/ports.js'
+import type { INavigateInterceptor, INavigateInterceptorFactory } from '../../services/ports/tree.js'
 
 export type WsSender = (msg: ServerMessage) => void
 

@@ -1,6 +1,6 @@
 import type { ServerMessage, ServerMessageType } from '@xyz-agent/shared'
 import { EXTENSION_EVENTS } from '@xyz-agent/shared'
-import type { PiEventListener } from '../../services/ports.js'
+import type { PiEventListener } from '../../services/ports/pi-engine.js'
 
 export type WsSender = (msg: ServerMessage) => void
 

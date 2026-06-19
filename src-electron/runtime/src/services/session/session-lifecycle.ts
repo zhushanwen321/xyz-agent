@@ -15,7 +15,8 @@ import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import type { SessionSummary } from '@xyz-agent/shared'
 import type { IProcessManager, ISessionServiceInternal } from '../../interfaces.js'
-import type { IConfigStore, ISessionStore } from '../ports.js'
+import type { IConfigStore } from '../ports/config.js'
+import type { ISessionStore } from '../ports/session.js'
 
 export class SessionLifecycle {
   constructor(

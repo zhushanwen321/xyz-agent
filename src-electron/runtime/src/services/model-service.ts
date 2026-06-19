@@ -10,7 +10,7 @@
  */
 import type { ProviderInfo, ModelInfo } from '@xyz-agent/shared'
 import type { IModelService, ISessionService, IConfigService, IMessageBroker } from '../interfaces.js'
-import type { IModelSource } from './ports.js'
+import type { IModelSource } from './ports/model.js'
 
 export class ModelService implements IModelService {
   private sessionService!: ISessionService

@@ -17,7 +17,7 @@ import type {
   ScannedSkillInfo,
   ScannedAgentInfo,
 } from '@xyz-agent/shared'
-import type { PiEventListener } from './services/ports.js'
+import type { PiEventListener } from './services/ports/pi-engine.js'
 import type { IManagedSessionView, ScannedSession } from './services/session/types.js'
 
 // ── IRpcClient ────────────────────────────────────────────────────

@@ -9,7 +9,7 @@
  * installDependencies）；git clone 从 extension-service.ts 迁入（R3c2）。
  */
 import { execFileSync } from 'node:child_process'
-import type { IInstaller } from '../../services/ports.js'
+import type { IInstaller } from '../../services/ports/installer.js'
 import {
   installPackage,
   uninstallPackage,

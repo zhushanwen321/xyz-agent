@@ -11,7 +11,7 @@
 import { basename } from 'node:path'
 import type { SessionSummary, SessionGroup, SessionStatus } from '@xyz-agent/shared'
 import type { ISessionServiceInternal } from '../../interfaces.js'
-import type { ISessionStore } from '../ports.js'
+import type { ISessionStore } from '../ports/session.js'
 import { readGitInfo, pruneGitInfoCache } from '../git-info.js'
 import type { ScannedSession } from './types.js'
 

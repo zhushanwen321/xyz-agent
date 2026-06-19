@@ -6,7 +6,7 @@
  * ensureSessionFile/patchSessionCwd）+ message-converter 的 convertPiHistory +
  * system/trash。service 经此 port 访问这些 session 域操作，不直接 import 各 infra 模块。
  */
-import type { ISessionStore, ScannedSessionMeta } from '../../services/ports.js'
+import type { ISessionStore, ScannedSessionMeta } from '../../services/ports/session.js'
 import type { Message } from '@xyz-agent/shared'
 import {
   scanPiSessions,

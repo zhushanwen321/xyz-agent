@@ -3,7 +3,7 @@ import { createInterface } from 'node:readline'
 import { getSessionsDir, getPiAgentDir } from './pi-paths.js'
 import { getDefaultModel } from './pi-provider-store.js'
 import { ENV_WHITELIST_PREFIXES } from '@xyz-agent/shared'
-import type { IPiEngine } from '../../services/ports.js'
+import type { IPiEngine } from '../../services/ports/pi-engine.js'
 
 /** 子进程允许继承的环境变量前缀白名单 — uses shared list */
 const ENV_WHITELIST = ENV_WHITELIST_PREFIXES

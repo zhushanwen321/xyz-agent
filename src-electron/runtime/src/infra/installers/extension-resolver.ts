@@ -15,7 +15,7 @@
 import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs'
 import { join, dirname, basename } from 'node:path'
 import { getPiAgentDir } from '../pi/pi-paths.js'
-import type { IExtensionResolver, ExtensionPaths } from '../../services/ports.js'
+import type { IExtensionResolver, ExtensionPaths } from '../../services/ports/installer.js'
 
 // re-export ExtensionPaths 供历史 import 此文件的消费者使用（类型归属 ports）
 export type { ExtensionPaths }

@@ -5,7 +5,7 @@
  * TreeService 经此 port 解析 pi JSONL 树，不直接 import session-tree-reader。
  * RawEntry 内部类型（pi JSONL 结构）只在此处出现；service 见 TreeRawEntry（port 视图）。
  */
-import type { ITreeReader, BuildTreeResult, TreeRawEntry } from '../../services/ports.js'
+import type { ITreeReader, BuildTreeResult, TreeRawEntry } from '../../services/ports/tree.js'
 import type { TreeNode } from '../../types.js'
 import { buildTreeFromFile as buildTreeFromFileRaw, countBranches as countBranchesRaw, extractFullText as extractFullTextRaw } from './session-tree-reader.js'
 

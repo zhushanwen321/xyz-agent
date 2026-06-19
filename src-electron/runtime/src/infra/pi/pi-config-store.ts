@@ -12,7 +12,7 @@ import type {
   IConfigStore,
   ConfigProviderConfig,
   ConfigModelsConfig,
-} from '../../services/ports.js'
+} from '../../services/ports/config.js'
 import * as piBridge from './pi-config-bridge.js'
 
 // ── Helpers ─────────────────────────────────────────────────────

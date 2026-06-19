@@ -10,7 +10,7 @@
  * 子模块经 ISessionServiceInternal 只看到 IManagedSessionView,
  * 但拿到的是 ManagedSession 实例,可读写字段(lastActiveAt / isGenerating)。
  */
-import type { ScannedSessionMeta } from '../ports.js'
+import type { ScannedSessionMeta } from '../ports/session.js'
 
 /** SendMessage hook:消息发送前触发,可阻止发送。 */
 export type SendMessageHook = (sessionId: string, content: string) => Promise<{ blocked: boolean; reason?: string } | null>

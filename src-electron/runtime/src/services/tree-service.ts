@@ -8,7 +8,7 @@
 
 import type { IProcessManager, IRpcClient } from '../interfaces.js'
 import type { TreeData, NavigateResult, ForkResult } from '../types.js'
-import type { ITreeReader, INavigateInterceptor } from './ports.js'
+import type { ITreeReader, INavigateInterceptor } from './ports/tree.js'
 
 /** pi get_state 响应结构（动态 JSON，逃生断言）。 */
 interface PiStateResponse {

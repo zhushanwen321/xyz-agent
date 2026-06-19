@@ -7,7 +7,7 @@
  */
 
 import { readFile } from 'node:fs/promises'
-import type { ISessionStore } from './ports.js'
+import type { ISessionStore } from './ports/session.js'
 
 /**
  * 从 .jsonl session 文件读取消息历史。

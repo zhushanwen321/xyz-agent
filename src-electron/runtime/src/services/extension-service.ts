@@ -20,7 +20,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, readdir
 import { join, resolve, basename } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 import type { ExtensionInfo } from '@xyz-agent/shared'
-import type { IInstaller, IExtensionResolver } from './ports.js'
+import type { IInstaller, IExtensionResolver } from './ports/installer.js'
 import { isStrictlyUnder, isUnderOrEqual } from '../utils/path-utils.js'
 
 const log = {
