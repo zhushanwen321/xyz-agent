@@ -15,6 +15,7 @@ import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import type { SessionSummary } from '@xyz-agent/shared'
 import type { IProcessManager, ISessionServiceInternal } from '../../interfaces.js'
+import { readPiState } from '../ports/pi-engine.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore } from '../ports/session.js'
 
@@ -54,8 +55,7 @@ export class SessionLifecycle {
     let piSessionId: string
     let sessionFilePath: string | undefined
     try {
-      const stateResp = await client.sendCommand('get_state') as { data?: Record<string, unknown>; payload?: Record<string, unknown> }
-      const stateData = stateResp.data ?? stateResp.payload
+      const stateData = await readPiState(client)
       piSessionId = (stateData?.sessionId as string) ?? ''
       sessionFilePath = stateData?.sessionFile as string | undefined
     } catch (e) {

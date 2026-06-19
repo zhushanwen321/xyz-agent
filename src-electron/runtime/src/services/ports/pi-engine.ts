@@ -110,6 +110,37 @@ export interface IProcessManager {
   destroyAll(): Promise<void>
 }
 
+// ── pi RPC 响应解析 helpers（D16 收口）──────────────────────────
+//
+// pi 的 RPC 响应兼容两种字段位置（`data` 或 `payload`），历史上每处调用都重复
+// `resp.data ?? resp.payload` + `as PiStateResponse`。以下 helper 收敛该样板。
+
+/** pi RPC 响应的通用形状（data 或 payload 二选一承载结果）。 */
+export interface PiRpcResponse {
+  data?: Record<string, unknown>
+  payload?: Record<string, unknown>
+}
+
+/** pi get_state 响应结构（动态 JSON，逃生断言）。 */
+export interface PiStateResponse extends PiRpcResponse {}
+
+/**
+ * 从 pi RPC 响应取归一化的结果对象（兼容 data/payload 两位置）。
+ * 用于 get_state/get_commands 等返回单层对象的命令。
+ */
+export function readRpcData(resp: PiRpcResponse): Record<string, unknown> | undefined {
+  return resp.data ?? resp.payload
+}
+
+/**
+ * 发 get_state 并返回归一化后的 state 对象（兼容 data/payload）。
+ * 消除 tree-service / session-lifecycle 中重复的
+ * `await client.sendCommand('get_state') as PiStateResponse; resp.data ?? resp.payload`。
+ */
+export async function readPiState(client: IPiEngine): Promise<Record<string, unknown> | undefined> {
+  return readRpcData(await client.sendCommand('get_state') as PiStateResponse)
+}
+
 /**
  * 兼容别名：IRpcClient === IPiEngine。
  *

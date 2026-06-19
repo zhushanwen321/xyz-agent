@@ -7,14 +7,9 @@
  */
 
 import type { IProcessManager, IPiEngine } from './ports/pi-engine.js'
+import { readPiState } from './ports/pi-engine.js'
 import type { TreeData, NavigateResult, ForkResult } from '../types.js'
 import type { ITreeReader, INavigateInterceptor } from './ports/tree.js'
-
-/** pi get_state 响应结构（动态 JSON，逃生断言）。 */
-interface PiStateResponse {
-  data?: Record<string, unknown>
-  payload?: Record<string, unknown>
-}
 
 interface TreeManagedSession {
   interceptor: INavigateInterceptor
@@ -67,8 +62,7 @@ export class TreeService {
     const client = this.pm.getClient(sessionId)
     if (!client) throw new Error(`Session ${sessionId} not found`)
 
-    const stateResp = await client.sendCommand('get_state') as PiStateResponse
-    const stateData = stateResp.data ?? stateResp.payload
+    const stateData = await readPiState(client)
     let leafId = (stateData?.leafId as string | null) ?? null
     const sessionFile = stateData?.sessionFile as string | undefined
 
@@ -157,8 +151,7 @@ export class TreeService {
 
   /** Get session file path from pi's get_state. */
   private async getSessionFile(client: IPiEngine): Promise<string | undefined> {
-    const stateResp = await client.sendCommand('get_state') as PiStateResponse
-    const stateData = stateResp.data ?? stateResp.payload
+    const stateData = await readPiState(client)
     return stateData?.sessionFile as string | undefined
   }
 
@@ -171,8 +164,7 @@ export class TreeService {
       await client.sendCommand('clone')
       // sendCommand already rejects on success===false, so resolve means success
 
-      const stateResp = await client.sendCommand('get_state') as PiStateResponse
-      const stateData = stateResp.data ?? stateResp.payload
+      const stateData = await readPiState(client)
       const newSessionId = stateData?.sessionId as string | undefined
 
       if (!newSessionId) {
@@ -196,8 +188,7 @@ export class TreeService {
       await client.sendCommand('fork', { entryId })
       // sendCommand already rejects on success===false, so resolve means success
 
-      const stateResp = await client.sendCommand('get_state') as PiStateResponse
-      const stateData = stateResp.data ?? stateResp.payload
+      const stateData = await readPiState(client)
       const newSessionId = stateData?.sessionId as string | undefined
 
       if (!newSessionId) {

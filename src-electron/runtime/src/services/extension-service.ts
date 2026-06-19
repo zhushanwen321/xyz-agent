@@ -16,7 +16,7 @@
  * 4. finishInstall() 复制选中到 extensions/ 目录
  * 5. 清理临时目录
  */
-import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, readdirSync, statSync, lstatSync, realpathSync, cpSync, rmSync, mkdtempSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, lstatSync, realpathSync, cpSync, rmSync, mkdtempSync } from 'node:fs'
 import { join, resolve, basename } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 import type { ExtensionInfo } from '@xyz-agent/shared'

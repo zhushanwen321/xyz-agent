@@ -336,6 +336,42 @@ export function refreshAll(): void {
 // ── 迁移 ─────────────────────────────────────────────────────
 
 /**
+ * 把 oldDir 的内容逐项迁移到 newDir（跳过 newDir 中已存在的同名项），
+ * 迁移后若 oldDir 为空则删除。幂等。
+ *
+ * 抽自 migrateToPiSubdir 的 sessions/agents 两段近乎逐行相同的目录迁移块（D4）。
+ */
+function migrateDirContents(oldDir: string, newDir: string, label: string): void {
+  if (!existsSync(oldDir)) return
+  try {
+    const entries = readdirSync(oldDir)
+    if (entries.length > 0) {
+      let migrated = 0
+      for (const entry of entries) {
+        const newPath = join(newDir, entry)
+        if (!existsSync(newPath)) {
+          renameSync(join(oldDir, entry), newPath)
+          migrated++
+        }
+      }
+      if (migrated > 0) {
+        console.log(`[provider-store] migrated ${migrated} ${label}`)
+      }
+      try {
+        const remaining = readdirSync(oldDir)
+        if (remaining.length === 0) rmdirSync(oldDir)
+      // eslint-disable-next-line taste/no-silent-catch -- migration cleanup: error logged, non-critical
+      } catch (e) {
+        console.warn(`[provider-store] failed to remove old ${label} dir:`, e instanceof Error ? e.message : e)
+      }
+    }
+  // eslint-disable-next-line taste/no-silent-catch -- migration: error logged, non-critical
+  } catch (e) {
+    console.warn(`[provider-store] failed to migrate ${label} dir:`, e instanceof Error ? e.message : e)
+  }
+}
+
+/**
  * 首次加载时执行一次性迁移：将旧路径下的文件移动到新的 xyz-pi 目录结构。
  * 幂等：如果新路径已存在文件，跳过迁移。
  */
@@ -367,65 +403,8 @@ export function migrateToPiSubdir(): void {
     console.log('[provider-store] migrated settings.json → pi/agent/settings.json')
   }
 
-  if (existsSync(oldSessionsDir)) {
-    try {
-      const entries = readdirSync(oldSessionsDir)
-      if (entries.length > 0) {
-        let migrated = 0
-        for (const entry of entries) {
-          const oldPath = join(oldSessionsDir, entry)
-          const newPath = join(sessionsDir, entry)
-          if (!existsSync(newPath)) {
-            renameSync(oldPath, newPath)
-            migrated++
-          }
-        }
-        if (migrated > 0) {
-          console.log(`[provider-store] migrated ${migrated} session files → pi/sessions/`)
-        }
-        try {
-          const remaining = readdirSync(oldSessionsDir)
-          if (remaining.length === 0) rmdirSync(oldSessionsDir)
-        // eslint-disable-next-line taste/no-silent-catch -- migration cleanup: error logged, non-critical
-        } catch (e) {
-          console.warn('[provider-store] failed to remove old sessions dir:', e instanceof Error ? e.message : e)
-        }
-      }
-    // eslint-disable-next-line taste/no-silent-catch -- migration: error logged, non-critical
-    } catch (e) {
-      console.warn('[provider-store] failed to migrate sessions dir:', e instanceof Error ? e.message : e)
-    }
-  }
-
-  if (existsSync(oldAgentsDir)) {
-    try {
-      const entries = readdirSync(oldAgentsDir)
-      if (entries.length > 0) {
-        let migrated = 0
-        for (const entry of entries) {
-          const oldPath = join(oldAgentsDir, entry)
-          const newPath = join(agentsDir, entry)
-          if (!existsSync(newPath)) {
-            renameSync(oldPath, newPath)
-            migrated++
-          }
-        }
-        if (migrated > 0) {
-          console.log(`[provider-store] migrated ${migrated} agent files → pi/agent/agents/`)
-        }
-        try {
-          const remaining = readdirSync(oldAgentsDir)
-          if (remaining.length === 0) rmdirSync(oldAgentsDir)
-        // eslint-disable-next-line taste/no-silent-catch -- migration cleanup: error logged, non-critical
-        } catch (e) {
-          console.warn('[provider-store] failed to remove old agents dir:', e instanceof Error ? e.message : e)
-        }
-      }
-    // eslint-disable-next-line taste/no-silent-catch -- migration: error logged, non-critical
-    } catch (e) {
-      console.warn('[provider-store] failed to migrate agents dir:', e instanceof Error ? e.message : e)
-    }
-  }
+  migrateDirContents(oldSessionsDir, sessionsDir, 'session files → pi/sessions/')
+  migrateDirContents(oldAgentsDir, agentsDir, 'agent files → pi/agent/agents/')
 
   // 打包模式：从 bundled 资源同步
   if (process.env.XYZ_AGENT_PACKAGED === '1') {

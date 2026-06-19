@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ScannedSkillInfo } from '@xyz-agent/shared'
 import { expandHome, inferSourceType } from './scanner-base.js'
+import { extractFrontmatter } from '../../utils/frontmatter.js'
 
 const DESCRIPTION_MAX_LENGTH = 200
 const TRIGGER_MIN_LENGTH = 2
@@ -9,38 +10,22 @@ const TRIGGER_MAX_LENGTH = 40
 const BYTES_1KB = 1024
 const BYTES_1MB = BYTES_1KB * BYTES_1KB
 
-// 手写的 YAML frontmatter 解析，仅支持简单的 key: value 格式
-// 不支持嵌套对象、引号内冒号、多行数组等复杂 YAML 场景
+// skill 的 frontmatter 字段（description / argument-hint）用引号包裹语法（"..." / '...' / 裸值），
+// 与 agent 的多行 `>-`/`|` 语法不同，故 description/argumentHint 解析留在本文件；
+// 只抽 frontmatter 分割骨架（D1）。
 export function parseSkillMd(content: string): { description: string; triggers: string[]; argumentHint?: string } {
+  const { frontmatter, bodyStartLine } = extractFrontmatter(content)
   const lines = content.split('\n')
   let description = ''
   const triggers: string[] = []
 
-  // 提取 YAML frontmatter 内容
-  const frontmatterLines: string[] = []
-  let inFrontmatter = false
-  let frontmatterEnd = 0
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].trim() === '---') {
-      if (!inFrontmatter) {
-        inFrontmatter = true
-        continue
-      } else {
-        frontmatterEnd = i + 1
-        break
-      }
-    }
-    if (inFrontmatter) frontmatterLines.push(lines[i])
-  }
-
   // 从 frontmatter 中提取 description 字段（支持 "..." / '...' / 裸值）
-  const fmDescMatch = frontmatterLines
-    .join('\n')
+  const fmDescMatch = frontmatter
     .match(/^description:\s*(?:"([^"]+)"|'([^']+)'|(.+?))\s*$/m)
   const fmDesc = fmDescMatch?.[1] ?? fmDescMatch?.[2] ?? fmDescMatch?.[3]?.trim()
 
   // 正文 description：frontmatter 后第一个非标题、非空行
-  for (let i = frontmatterEnd; i < lines.length; i++) {
+  for (let i = bodyStartLine; i < lines.length; i++) {
     const line = lines[i].trim()
     if (!line) continue
     if (line.startsWith('#')) continue
@@ -49,7 +34,7 @@ export function parseSkillMd(content: string): { description: string; triggers: 
   }
 
   // 从 frontmatter 中提取 argument-hint 字段（支持 "..." / '...' / 裸值）
-  const hintRaw = frontmatterLines.join('\n')
+  const hintRaw = frontmatter
     .match(/^argument-hint:\s*(?:"([^"]+)"|'([^']+)'|(.+?))\s*$/m)
   const argumentHint = hintRaw?.[1] ?? hintRaw?.[2] ?? hintRaw?.[3]?.trim()
 

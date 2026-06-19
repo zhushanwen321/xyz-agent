@@ -3,7 +3,8 @@ import { createInterface } from 'node:readline'
 import { getSessionsDir, getPiAgentDir } from './pi-paths.js'
 import { getDefaultModel } from './pi-provider-store.js'
 import { ENV_WHITELIST_PREFIXES } from '@xyz-agent/shared'
-import type { IPiEngine } from '../../services/ports/pi-engine.js'
+import type { IPiEngine, PiRpcResponse } from '../../services/ports/pi-engine.js'
+import { readRpcData } from '../../services/ports/pi-engine.js'
 
 /** 子进程允许继承的环境变量前缀白名单 — uses shared list */
 const ENV_WHITELIST = ENV_WHITELIST_PREFIXES
@@ -346,8 +347,7 @@ export class RpcClient implements IPiEngine {
   }
 
   async getCommands(): Promise<Array<{ name: string; description?: string; source: string }>> {
-    const resp = await this.sendCommand('get_commands')
-    const data = resp.data ?? resp.payload
+    const data = readRpcData(await this.sendCommand('get_commands') as PiRpcResponse)
     return (data?.commands as Array<{ name: string; description?: string; source: string }>) ?? []
   }
 

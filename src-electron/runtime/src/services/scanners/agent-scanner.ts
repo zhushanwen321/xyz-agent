@@ -2,56 +2,20 @@ import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ScannedAgentInfo } from '@xyz-agent/shared'
 import { expandHome, inferSourceType } from './scanner-base.js'
+import { extractFrontmatter, extractDescription } from '../../utils/frontmatter.js'
 
 const DESCRIPTION_MAX_LENGTH = 200
 
-// 手写的 YAML frontmatter 解析，仅支持简单的 key: value 和多行 > 格式
-// 不支持嵌套对象、引号内冒号、多行数组等复杂 YAML 场景
+// 从 frontmatter 提取 description + tools，正文 fallback 取第一个非标题非空行。
+// frontmatter 分割 + 多行 description 解析走通用 helper（D1），tools 是 agent 专属字段 inline 提取。
 function parseAgentMd(content: string): { description: string; tools: string[] } {
-  const lines = content.split('\n')
-  const tools: string[] = []
+  const { frontmatter, body, bodyStartLine } = extractFrontmatter(content)
 
-  // 提取 YAML frontmatter 内容
-  const frontmatterLines: string[] = []
-  let inFrontmatter = false
-  let frontmatterEnd = 0
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].trim() === '---') {
-      if (!inFrontmatter) {
-        inFrontmatter = true
-        continue
-      } else {
-        frontmatterEnd = i + 1
-        break
-      }
-    }
-    if (inFrontmatter) frontmatterLines.push(lines[i])
-  }
-
-  const fmText = frontmatterLines.join('\n')
-
-  // 从 frontmatter 提取 description（支持多行 > 或 |，含 chomping indicator -/+）
-  let description = ''
-  const fmDescMatch = fmText.match(/^description:\s*[>\|][-+]?\s*$/m)
-  if (fmDescMatch) {
-    // 多行 description（> 或 | 格式）：取后续缩进行
-    const startIdx = fmText.indexOf(fmDescMatch[0]) + fmDescMatch[0].length
-    const remaining = fmText.slice(startIdx)
-    const multilineParts: string[] = []
-    for (const line of remaining.split('\n')) {
-      if (line && !line.startsWith(' ') && !line.startsWith('\t')) break
-      multilineParts.push(line.trim())
-    }
-    description = multilineParts.join(' ').trim().slice(0, DESCRIPTION_MAX_LENGTH)
-  } else {
-    // 单行描述；用 [>\|]? 避免被 `description: >-` 的 `-` 错配为描述内容
-    const singleLine = fmText.match(/^description:\s*[>\|]?(.+?)\s*$/m)?.[1]?.trim()
-    if (singleLine) description = singleLine.slice(0, DESCRIPTION_MAX_LENGTH)
-  }
-
-  // 正文 fallback
+  // description：优先 frontmatter（支持多行 > 或 |），否则正文 fallback
+  let description = extractDescription(frontmatter).slice(0, DESCRIPTION_MAX_LENGTH)
   if (!description) {
-    for (let i = frontmatterEnd; i < lines.length; i++) {
+    const lines = content.split('\n')
+    for (let i = bodyStartLine; i < lines.length; i++) {
       const line = lines[i].trim()
       if (!line) continue
       if (line.startsWith('#')) continue
@@ -60,14 +24,18 @@ function parseAgentMd(content: string): { description: string; tools: string[] }
     }
   }
 
-  // 从 frontmatter 提取 tools
-  const toolsMatch = fmText.match(/^tools:\s*(.+)$/m)?.[1]
+  // tools 是 agent 专属字段（逗号分隔），inline 提取
+  const tools: string[] = []
+  const toolsMatch = frontmatter.match(/^tools:\s*(.+)$/m)?.[1]
   if (toolsMatch) {
     for (const t of toolsMatch.split(',')) {
       const trimmed = t.trim()
       if (trimmed) tools.push(trimmed)
     }
   }
+
+  // body 暂未直接使用（正文 fallback 走 bodyStartLine 重切，保持与原实现逐行一致）
+  void body
 
   return { description, tools }
 }

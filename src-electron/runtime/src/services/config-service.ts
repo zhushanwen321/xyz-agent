@@ -19,6 +19,7 @@ import type {
 import type { IConfigService } from '../interfaces.js'
 import type { IConfigStore, ConfigModelDefinition } from './ports/config.js'
 import { atomicWrite } from '../utils/fs-utils.js'
+import { extractFrontmatter, extractDescription } from '../utils/frontmatter.js'
 import { scanSkills, loadSkillFromDir } from './scanners/skill-scanner.js'
 import { scanAgents } from './scanners/agent-scanner.js'
 
@@ -26,37 +27,13 @@ import { scanAgents } from './scanners/agent-scanner.js'
 
 /** Extract name and description from agent markdown frontmatter. */
 function parseAgentMd(content: string): { name: string; description: string } {
-  const lines = content.split('\n')
-  let inFrontmatter = false
-  const frontmatterLines: string[] = []
-  for (const line of lines) {
-    if (line.trim() === '---') {
-      if (!inFrontmatter) { inFrontmatter = true; continue }
-      else break
-    }
-    if (inFrontmatter) frontmatterLines.push(line)
-  }
+  const { frontmatter } = extractFrontmatter(content)
+  // name 是简单单行键值，inline 提取（不进通用 helper——name 是 agent 专属字段）
   let name = ''
-  let description = ''
-  const fmText = frontmatterLines.join('\n')
-  for (const fl of frontmatterLines) {
+  for (const fl of frontmatter.split('\n')) {
     if (fl.startsWith('name:')) name = fl.slice('name:'.length).trim()
   }
-  // 支持 YAML 多行 description（>- 或 | 格式，含 chomping indicator -/+）
-  const fmDescMatch = fmText.match(/^description:\s*[>\|][-+]?\s*$/m)
-  if (fmDescMatch) {
-    const startIdx = fmText.indexOf(fmDescMatch[0]) + fmDescMatch[0].length
-    const remaining = fmText.slice(startIdx)
-    const multilineParts: string[] = []
-    for (const line of remaining.split('\n')) {
-      if (line && !line.startsWith(' ') && !line.startsWith('\t')) break
-      multilineParts.push(line.trim())
-    }
-    description = multilineParts.join(' ').trim()
-  } else {
-    const singleLine = fmText.match(/^description:\s*[>\|]?(.+?)\s*$/m)?.[1]?.trim()
-    if (singleLine) description = singleLine
-  }
+  const description = extractDescription(frontmatter)
   return { name, description }
 }
 

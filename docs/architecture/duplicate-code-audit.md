@@ -8,7 +8,14 @@
 
 ## 🔴 严重（高置信度真重复）
 
-### D1. 两套独立的 YAML frontmatter 解析器（`parseAgentMd` / `parseSkillMd`）
+### D1. 两套独立的 YAML frontmatter 解析器（`parseAgentMd` / `parseSkillMd`）✅ 已解决（2026-06-19）
+
+> **解决记录**：抽 `utils/frontmatter.ts`，分两层。
+> - `extractFrontmatter(content)`：通用 `---` 分割骨架（返回 frontmatter 文本 + body + bodyStartLine）。3 处共用。
+> - `extractDescription(fmText)`：多行 `>-`/`|`（含 chomping indicator）解析——config-service.parseAgentMd 和 agent-scanner.parseAgentMd 共用。
+> - skill-scanner 的 description/argumentHint 用**引号包裹语法**（`"..."`/`'...'`/裸值），与 agent 的多行语法不同，故留在 skill-scanner，只共用分割骨架。
+> - 各调用方仍负责自己特有的字段提取（name / tools / triggers / argumentHint）——不强行合并成一个「parse everything」大函数。
+> - tsc clean + 657/657 测试通过（skill-scanner.test.ts 的 10 个 parseSkillMd 用例全部覆盖引号/裸值/多行场景）。
 
 三个文件各有一份**手写 YAML frontmatter 提取**，逻辑高度重叠：
 
@@ -58,7 +65,11 @@
 
 ---
 
-### D4. `migrateToPiSubdir` 中 sessions 和 agents 迁移近乎复制
+### D4. `migrateToPiSubdir` 中 sessions 和 agents 迁移近乎复制 ✅ 已解决（2026-06-19）
+
+> **解决记录**：抽私有 helper `migrateDirContents(oldDir, newDir, label)` 到 pi-provider-store.ts。
+> 两段（sessions 30 行 + agents 30 行）各换成一行调用：`migrateDirContents(oldSessionsDir, sessionsDir, 'session files → pi/sessions/')`。
+> helper 封装：existsSync 守卫 → readdirSync 逐项 renameSync（跳过已存在）→ 空则 rmdirSync → 两层 taste/no-silent-catch 容错。消约 60 行重复。tsc clean + 657/657 测试通过。
 
 `infra/pi/pi-provider-store.ts:382-440`：
 
@@ -195,7 +206,15 @@ createXxxApi(rpcClient, pluginId)         // Worker 侧：return { yyy: (...) =>
 
 ---
 
-### D16. `get_state` 响应解析：`resp.data ?? resp.payload` + `as` 取字段（6 处）
+### D16. `get_state` 响应解析：`resp.data ?? resp.payload` + `as` 取字段（6 处）✅ 已解决（2026-06-19）
+
+> **解决记录**：在 `services/ports/pi-engine.ts` 加权威类型 + helper。
+> - `PiStateResponse` / `PiRpcResponse` 接口（消除 tree-service 本地定义 + session-lifecycle 内联字面量两份重复）。
+> - `readPiState(client)`：发 get_state 并返回归一化 data（兼容 data/payload）。
+> - `readRpcData(resp)`：通用 `data ?? payload` 取值（供未来其他命令复用）。
+> - tree-service 4 处 + session-lifecycle 1 处改用 `readPiState`，删本地 PiStateResponse 接口。
+> - rpc-client.ts:get_commands（第 6 处）改用 `readRpcData`。注：rpc-client 已 `implements IPiEngine` 而 import ports/pi-engine.ts（port 接口本就该被 infra 适配器 import，这是六边形架构的正常方向，非反向依赖）。
+> - tsc clean + 657/657 测试通过。
 
 pi RPC 响应兼容两种字段位置（`data` 或 `payload`），解析样板重复：
 
@@ -350,7 +369,12 @@ plugin-rpc-server.ts:162 for (const pending of this.pendingInvokes.values()) { c
 
 ---
 
-### D27. `writeFileSync(tmpPath) + renameSync` 在 extension-service 重复 4 处
+### D27. `writeFileSync(tmpPath) + renameSync` 在 extension-service 重复 4 处 ✅ 已解决（2026-06-19）
+
+> **解决记录**：本项的核心问题（settings.json/disabled-packages.json 的非原子写 + 写法不一）**已被 P0-1（D17）解决**——全部读写收到 `IExtensionSettings` port + `pi-settings-store`（原子写 + 异步互斥）。
+> - 残留仅 `extension-service.ts:235` 一处 `writeFileSync(npm/package.json)` 写 `{ private: true }` 脚手架：判定**刻意非原子**（一次性、内容常量、`existsSync` 守卫、非配置文件）。
+> - 清理：删除 P0-1 后不再使用的 `renameSync` import。
+> - tsc clean + 657/657 测试通过。
 
 `services/extension-service.ts`：
 - `:227` 写 package.json（非原子，无 tmp）
@@ -385,12 +409,12 @@ plugin-rpc-server.ts:162 for (const pending of this.pendingInvokes.values()) { c
 | **P0** | ~~D24 IRpcClient vs IPiEngine 接口双份~~ ✅ | port 定义重复 | 合并到 ports/pi-engine.ts，IPiEngine 吸收生命周期方法，删 IPiProcess，interfaces.ts 留 @deprecated 别名 |
 | **P1** | D3 两套 npm 安装（形式相似，业务不同） | 能复用的是下载原语 | PluginInstaller 复用 npm-installer 的下载/校验原语，非整体合并 |
 | **P1** | D15/D25 RPC 超时三件套（5 处） | 跨层同构结构 | 抽 `createPendingTracker` 放 `utils/async/`，5 处统一 |
-| **P1** | D1 parseAgentMd/parseSkillMd | 真重复，跨 scanner+config | 抽公共 frontmatter 解析 helper（infra 或 utils） |
+| **P1** | ~~D1 parseAgentMd/parseSkillMd~~ ✅ | 真重复，跨 scanner+config | 抽 `utils/frontmatter.ts`（extractFrontmatter + extractDescription），3 处共用骨架 |
 | **P1** | D6/D21 scanner 主循环 + isDirectory 守卫 | 形式相似 | 抽 `scanSubdirs` 遍历骨架 |
 | **P1** | D7 三个 store/adapter 薄委托 | 形式相似，可质疑 | 评估「自由函数→port adapter」是否过度封装 |
-| **P1** | D16 get_state 解析（6 处） | 真重复 | 抽 `readPiState(client)`，session/tree 共用 |
-| **P1** | D4 migrateToPiSubdir 两段 | 真重复 | 抽 `migrateDirEntries` |
-| **P1** | D27 extension-service 写操作风格不一 | 强化 D2 + 潜在 bug | 统一 atomicWrite，修 disabled 非原子写 |
+| **P1** | ~~D16 get_state 解析（6 处）~~ ✅ | 真重复 | 抽 `readPiState`/`readRpcData` 到 ports/pi-engine.ts，全部 6 处共用（含 rpc-client:get_commands） |
+| **P1** | ~~D4 migrateToPiSubdir 两段~~ ✅ | 真重复 | 抽 `migrateDirContents(oldDir,newDir,label)` 私有 helper，两段各换一行 |
+| **P1** | ~~D27 extension-service 写操作风格不一~~ ✅ | 强化 D2 + 潜在 bug | P0-1 已把 settings/disabled 写全部走 port（原子）；残留仅 npm/package.json 一次性脚手架写入（判定刻意非原子）；清无用 import |
 | **P2** | D2 atomicWrite | 真重复，已有官方实现 | 5 处改用 `atomicWrite`，统一 tmp 命名 |
 | **P2** | D14 `errMsg(e)` 提取 | 真重复，50+ 处横切 | 抽 utils 工具函数，统一 `:e` vs `:String(e)` |
 | **P2** | D20 ENOENT 3 写法 | 不一致 | 抽 `isEnoent(e)`，消灭字符串匹配写法 |
