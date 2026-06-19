@@ -14,9 +14,10 @@ import { resolve } from 'node:path'
 import { existsSync } from 'node:fs'
 import type { SessionSummary, SessionGroup, SessionStatus, Message } from '@xyz-agent/shared'
 import type {
-  ISessionService, ISessionServiceInternal, IProcessManager, IMessageBroker,
-  IEventAdapter, IRpcClient, IExtensionService,
+  ISessionService, ISessionServiceInternal, IMessageBroker,
+  IEventAdapter, IExtensionService,
 } from '../../interfaces.js'
+import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
 import { TreeService } from '../tree-service.js'
 import { readGitInfo } from '../git-info.js'
 import { getHistoryFromFile } from '../session-history.js'
@@ -124,10 +125,10 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   }
 
   hasActiveSession(sessionId: string): boolean { return this.pm.hasClient(sessionId) }
-  getRpcClient(sessionId: string): IRpcClient | undefined { return this.pm.getClient(sessionId) }
+  getRpcClient(sessionId: string): IPiEngine | undefined { return this.pm.getClient(sessionId) }
 
   /** 确保会话活跃;不存在则自动 restore。并发 restore 时去重拒绝。 */
-  async ensureActive(sessionId: string): Promise<IRpcClient> {
+  async ensureActive(sessionId: string): Promise<IPiEngine> {
     const existing = this.pm.getClient(sessionId)
     if (existing) return existing
     if (this.restoringSessions.has(sessionId)) {
@@ -221,7 +222,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   getSession(sessionId: string): IManagedSessionView | undefined { return this.sessions.get(sessionId) }
   removeSessionEntry(sessionId: string): void { this.sessions.delete(sessionId) }
 
-  getSessionByClient(client: IRpcClient): IManagedSessionView | undefined {
+  getSessionByClient(client: IPiEngine): IManagedSessionView | undefined {
     const id = this.pm.getSessionIdByClient(client)
     return id ? this.sessions.get(id) : undefined
   }
@@ -247,7 +248,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
 
   /** 初始化 ManagedSession:建 interceptor/adapter、注册监听、入 Map、查 commands。 */
   async initializeManagedSession(
-    id: string, client: IRpcClient, cwd: string, label: string, sessionFilePath?: string,
+    id: string, client: IPiEngine, cwd: string, label: string, sessionFilePath?: string,
   ): Promise<IManagedSessionView> {
     const interceptor = this.navigateFactory.createNavigateInterceptor((msg) => this.broker.broadcast(msg))
     const adapter = this.adapterFactory(id, interceptor)
@@ -269,7 +270,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   // ── 私有协作者 ────────────────────────────────────────────────
 
   /** Attach agent_end listener:track token usage + isGenerating。 */
-  private attachUsageListener(id: string, client: IRpcClient): () => void {
+  private attachUsageListener(id: string, client: IPiEngine): () => void {
     return client.onEvent((event) => {
       const e = event as Record<string, unknown>
       if (e.type === 'agent_end') {
@@ -285,7 +286,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   }
 
   /** Query pi extension commands + register navigate capability。失败不阻塞 session。 */
-  private async fetchAndBroadcastCommands(id: string, client: IRpcClient, interceptor: INavigateInterceptor): Promise<void> {
+  private async fetchAndBroadcastCommands(id: string, client: IPiEngine, interceptor: INavigateInterceptor): Promise<void> {
     try {
       const commands = await client.getCommands() as Array<{ name: string; description?: string; source: string }>
       console.log(`[session-service] getCommands returned ${commands.length} commands:`, commands.map(c => c.name))

@@ -11,7 +11,8 @@
  * 依赖经构造注入:svc(Facade 内部协议,访问 sessions/共享 helper)、
  * pm(getClient / 进程操作)、broker(broadcast)。
  */
-import type { IRpcClient, IMessageBroker, IProcessManager, ISessionServiceInternal } from '../../interfaces.js'
+import type { IMessageBroker, ISessionServiceInternal } from '../../interfaces.js'
+import type { IPiEngine, IProcessManager } from '../ports/pi-engine.js'
 import type { SendMessageHook } from './types.js'
 
 export class MessageDispatcher {
@@ -56,7 +57,7 @@ export class MessageDispatcher {
     if ((await this.runBeforeSendHook(sessionId, hookContent)).blocked) return
 
     // ── ensureActive(必要时 restore)──
-    let client: IRpcClient
+    let client: IPiEngine
     try {
       client = await this.svc.ensureActive(sessionId)
     } catch (e) {

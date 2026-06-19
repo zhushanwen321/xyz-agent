@@ -26,14 +26,12 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 
 import type {
-  IProcessManager,
   IMessageBroker,
   IEventAdapter,
-  IRpcClient,
   IExtensionService,
 } from '../src/interfaces.js'
+import type { IProcessManager, IPiEngine, PiEventListener } from '../src/services/ports/pi-engine.js'
 import type { SessionSummary, SessionGroup, Message, ServerMessage } from '@xyz-agent/shared'
-import type { PiEventListener } from '../src/infra/pi/rpc-client.js'
 
 // ── vi.hoisted：在 vi.mock 工厂执行前就绪的 mock 句柄 ───────────────
 
@@ -115,12 +113,12 @@ import { NavigateInterceptorFactory } from '../src/infra/pi/navigate-interceptor
 
 // ── Mock client / 依赖工厂 ─────────────────────────────────────────
 
-// sendCommand 的完整签名（与 IRpcClient.sendCommand 对齐），复用于多处 mock。
+// sendCommand 的完整签名（与 IPiEngine.sendCommand 对齐），复用于多处 mock。
 type SendCommandFn = (type: string, params?: Record<string, unknown>, timeout?: number) => Promise<unknown>
 
 /**
- * IRpcClient 的最小可断言 mock。
- * 每个方法用 MockInstance<具体签名>，保证 MockClient 可结构赋给 IRpcClient，
+ * IPiEngine 的最小可断言 mock。
+ * 每个方法用 MockInstance<具体签名>，保证 MockClient 可结构赋给 IPiEngine，
  * 同时允许测试直接访问 client.xxx.mock.calls。
  */
 interface MockClient {
@@ -283,7 +281,7 @@ function createSetup(): Setup {
       getCommands: vi.fn<() => Promise<unknown>>().mockResolvedValue(opts.commands ?? []),
     })
     // 让 createSession mock 本次返回该 client
-    vi.mocked(pm.createSession).mockResolvedValueOnce(client as unknown as IRpcClient)
+    vi.mocked(pm.createSession).mockResolvedValueOnce(client as unknown as IPiEngine)
     clientMap.set(piSid, client)
     await service.create(opts.cwd ?? tmpdir(), opts.label ?? 'seed')
     return { id: piSid, client }
@@ -520,7 +518,7 @@ describe('SessionService · lifecycle', () => {
       const stateless = makeMockClient({
         sendCommand: vi.fn<SendCommandFn>().mockResolvedValue({ data: {} }),
       })
-      vi.mocked(setup.pm.createSession).mockResolvedValueOnce(stateless as unknown as IRpcClient)
+      vi.mocked(setup.pm.createSession).mockResolvedValueOnce(stateless as unknown as IPiEngine)
       await expect(setup.service.create(tmpdir())).rejects.toThrow('did not return a session ID')
       expect(setup.pm.destroySession).toHaveBeenCalledTimes(1)
     })
@@ -594,7 +592,7 @@ describe('SessionService · lifecycle', () => {
         lastModified: Date.now(), timestamp: new Date().toISOString(), size: 0,
       })
       const client = makeMockClient()
-      vi.mocked(setup.pm.createSession).mockResolvedValueOnce(client as unknown as IRpcClient)
+      vi.mocked(setup.pm.createSession).mockResolvedValueOnce(client as unknown as IPiEngine)
       const summary = await setup.service.restoreSession('persist-1')
       expect(summary.id).toBe('persist-1')
       expect(client.sendCommand).toHaveBeenCalledWith('switch_session', { sessionPath: '/fake/persist-1.jsonl' })
@@ -621,7 +619,7 @@ describe('SessionService · lifecycle', () => {
       const client = makeMockClient({
         sendCommand: vi.fn<SendCommandFn>().mockRejectedValue(new Error('switch failed')),
       })
-      vi.mocked(setup.pm.createSession).mockResolvedValueOnce(client as unknown as IRpcClient)
+      vi.mocked(setup.pm.createSession).mockResolvedValueOnce(client as unknown as IPiEngine)
       await expect(setup.service.restoreSession('persist-3')).rejects.toThrow('switch failed')
       expect(setup.pm.destroySession).toHaveBeenCalledWith('persist-3')
     })
@@ -726,7 +724,7 @@ describe('SessionService · Facade', () => {
       const client = makeMockClient()
       // mockResolvedValueOnce 会绕过 createSession 默认实现（后者负责写 clientMap），
       // 因此手动把 client 关联进 clientMap，让 ensureActive 末尾的 getClient 能取到。
-      vi.mocked(setup.pm.createSession).mockResolvedValueOnce(client as unknown as IRpcClient)
+      vi.mocked(setup.pm.createSession).mockResolvedValueOnce(client as unknown as IPiEngine)
       setup.clientMap.set('persist-ens', client)
       const got = await setup.service.ensureActive('persist-ens')
       expect(got).toBe(client)
@@ -901,7 +899,7 @@ describe('SessionService · onSessionExit callback', () => {
     const client = makeMockClient({
       sendCommand: vi.fn<SendCommandFn>().mockResolvedValue({ data: { sessionId: piSid, sessionFile: `/fake/${piSid}.jsonl` } }),
     })
-    vi.mocked(localSetup.pm.createSession).mockResolvedValueOnce(client as unknown as IRpcClient)
+    vi.mocked(localSetup.pm.createSession).mockResolvedValueOnce(client as unknown as IPiEngine)
     localSetup.clientMap.set(piSid, client)
     await localService.create(tmpdir(), 'l')
     expect(attachSpy).toHaveBeenCalledTimes(1)

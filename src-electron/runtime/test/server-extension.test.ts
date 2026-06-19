@@ -154,6 +154,7 @@ import { ModelService } from '../src/services/model-service.js'
 import { ExtensionService } from '../src/services/extension-service.js'
 import { NpmGitInstaller } from '../src/infra/installers/npm-git-installer.js'
 import { ExtensionResolver } from '../src/infra/installers/extension-resolver.js'
+import { PiExtensionSettings } from '../src/infra/pi/pi-extension-settings.js'
 
 function getFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -215,6 +216,7 @@ describe('RuntimeServer: extension message routing', () => {
         settingsDir: new PiConfigStore().getPiAgentDir(),
         installer: new NpmGitInstaller(),
         resolver: new ExtensionResolver({ settingsDir: new PiConfigStore().getPiAgentDir() }),
+        extensionSettings: new PiExtensionSettings(new PiConfigStore().getPiAgentDir()),
       }),
     )
     await server.start()
@@ -619,6 +621,7 @@ describe('RuntimeServer: extension timeout mechanism', () => {
         settingsDir: new PiConfigStore().getPiAgentDir(),
         installer: new NpmGitInstaller(),
         resolver: new ExtensionResolver({ settingsDir: new PiConfigStore().getPiAgentDir() }),
+        extensionSettings: new PiExtensionSettings(new PiConfigStore().getPiAgentDir()),
       }),
     )
   })

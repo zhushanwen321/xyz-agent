@@ -6,7 +6,7 @@
  * coordination) from session lifecycle management.
  */
 
-import type { IProcessManager, IRpcClient } from '../interfaces.js'
+import type { IProcessManager, IPiEngine } from './ports/pi-engine.js'
 import type { TreeData, NavigateResult, ForkResult } from '../types.js'
 import type { ITreeReader, INavigateInterceptor } from './ports/tree.js'
 
@@ -156,7 +156,7 @@ export class TreeService {
   }
 
   /** Get session file path from pi's get_state. */
-  private async getSessionFile(client: IRpcClient): Promise<string | undefined> {
+  private async getSessionFile(client: IPiEngine): Promise<string | undefined> {
     const stateResp = await client.sendCommand('get_state') as PiStateResponse
     const stateData = stateResp.data ?? stateResp.payload
     return stateData?.sessionFile as string | undefined

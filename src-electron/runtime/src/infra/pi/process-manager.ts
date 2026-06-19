@@ -3,6 +3,7 @@ import { homedir } from 'node:os'
 import { delimiter as pathDelimiter, join } from 'node:path'
 import { execSync } from 'node:child_process'
 import { RpcClient, type RpcClientOptions } from './rpc-client.js'
+import type { IProcessManager } from '../../services/ports/pi-engine.js'
 
 // Find pi executable path (cross-platform). Search order:
 // 1. PATH (which/where pi)
@@ -106,7 +107,7 @@ interface ManagedProcess {
  * Manages pi subprocess lifecycles. Each session gets its own
  * isolated pi process spawned via `pi --mode rpc`.
  */
-export class ProcessManager {
+export class ProcessManager implements IProcessManager {
   private processes = new Map<string, ManagedProcess>()
   private clientToId = new Map<RpcClient, string>()
   private exitCallbacks = new Set<(sessionId: string, code: number | null) => void>()

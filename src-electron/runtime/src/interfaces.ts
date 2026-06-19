@@ -17,52 +17,25 @@ import type {
   ScannedSkillInfo,
   ScannedAgentInfo,
 } from '@xyz-agent/shared'
-import type { PiEventListener } from './services/ports/pi-engine.js'
+import type { IPiEngine, PiEventListener } from './services/ports/pi-engine.js'
 import type { IManagedSessionView, ScannedSession } from './services/session/types.js'
 
-// ── IRpcClient ────────────────────────────────────────────────────
-
-/** pi subprocess RPC client — high-level command API. */
-export interface IRpcClient {
-  prompt(content: string): Promise<unknown>
-  abort(): Promise<unknown>
-  setModel(provider: string, modelId: string): Promise<unknown>
-  getHistory(): Promise<unknown>
-  compact(): Promise<unknown>
-  clear(): Promise<unknown>
-  sendCommand(type: string, params?: Record<string, unknown>, timeout?: number): Promise<unknown>
-  getCommands(): Promise<unknown>
-  onEvent(listener: PiEventListener): () => void
-  onExit(callback: (code: number | null) => void): void
-  readonly exited: boolean
-  kill(): Promise<void>
-  start(): Promise<void>
-  setThinkingLevel(level: string): Promise<unknown>
-  steer(content: string): Promise<unknown>
-  followUp(content: string): Promise<unknown>
-}
-
-// ── IProcessManager ───────────────────────────────────────────────
-
-/** pi subprocess lifecycle manager. */
-export interface IProcessManager {
-  createSession(sessionId: string, cwd: string, options?: {
-    cwd?: string
-    provider?: string
-    model?: string
-    env?: Record<string, string>
-    skillPaths?: string[]
-    extensionPaths?: string[]
-    piCommand?: string
-  }): Promise<IRpcClient>
-  destroySession(sessionId: string): Promise<void>
-  getClient(sessionId: string): IRpcClient | undefined
-  getSessionIdByClient(client: IRpcClient): string | undefined
-  hasClient(sessionId: string): boolean
-  rekey(oldId: string, newId: string): void
-  onSessionExit(callback: (sessionId: string, code: number | null) => void): void
-  destroyAll(): Promise<void>
-}
+/**
+ * pi 引擎 / 进程池 port 的权威定义在 services/ports/pi-engine.ts（D24 收口）。
+ *
+ * 历史上 IRpcClient（engine 的重复定义）与 IProcessManager 都在本文件，
+ * 现已迁移到 ports/。此处仅 re-export，保留 interfaces.ts 作为「跨服务 facade
+ * 契约」入口的同时，避免下游大量 import 改动一次性断裂。新代码请直接从
+ * services/ports/pi-engine.js 导入。
+ *
+ * @deprecated 从 services/ports/pi-engine.js 导入 IPiEngine / IProcessManager。
+ */
+export type { IPiEngine, IProcessManager } from './services/ports/pi-engine.js'
+/**
+ * IRpcClient 是 IPiEngine 的兼容别名（D24 合并遗留）。
+ * @deprecated 改用 IPiEngine（见 services/ports/pi-engine.js）。
+ */
+export type IRpcClient = IPiEngine
 
 // ── IMessageBroker ────────────────────────────────────────────────
 

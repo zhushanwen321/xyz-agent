@@ -13,6 +13,7 @@ import { PiSessionStore } from './infra/pi/session-store.js'
 import { ModelApiDiscoverer } from './infra/model-api-discoverer.js'
 import { NpmGitInstaller } from './infra/installers/npm-git-installer.js'
 import { ExtensionResolver } from './infra/installers/extension-resolver.js'
+import { PiExtensionSettings } from './infra/pi/pi-extension-settings.js'
 import { EventAdapter } from './infra/pi/event-adapter.js'
 import { NavigateInterceptorFactory } from './infra/pi/navigate-interceptor.js'
 import { SessionTreeReaderAdapter } from './infra/pi/session-tree-reader-adapter.js'
@@ -71,11 +72,15 @@ async function main(): Promise<void> {
     settingsDir: configStore.getPiAgentDir(),
     thirdPartyDir: join(configStore.getPiAgentDir(), 'extensions'),
   })
+  // IExtensionSettings port 的 infra 实现：经 pi-settings-store 统一读写 settings.json（D17）。
+  // 构造时对齐 settings 路径到 pi agent 目录，保证 model 域与 extension 域读写同一文件。
+  const extensionSettings = new PiExtensionSettings(configStore.getPiAgentDir())
   const extensionService = new ExtensionService({
     settingsDir: configStore.getPiAgentDir(),
     projectRoot: effectiveRoot,
     installer: extensionInstaller,
     resolver: extensionResolver,
+    extensionSettings,
   })
   const treeService = new TreeService(pm, new SessionTreeReaderAdapter())
   const configService = new ConfigService(effectiveRoot, configStore)

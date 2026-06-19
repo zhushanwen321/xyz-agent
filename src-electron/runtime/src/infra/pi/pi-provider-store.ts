@@ -11,6 +11,14 @@ import { existsSync, readFileSync, readdirSync, mkdirSync, renameSync, rmdirSync
 import { dirname, join } from 'node:path'
 import { atomicWrite } from '../../utils/fs-utils.js'
 import { getConfigDir, getModelsPath, getSettingsPath, getPiAgentDir, getSessionsDir, getAgentsDir } from './pi-paths.js'
+// settings.json 的唯一读写层（D17 收口）：readSettings/writeSettings/PiSettings/缓存/原子写
+// 都收敛到 pi-settings-store，model 域（本文件）与 extension 域共享同一所有者 + 缓存。
+import {
+  readSettings,
+  writeSettings,
+  invalidateSettingsCache,
+  type PiSettings,
+} from './pi-settings-store.js'
 
 // ── 类型定义（对齐 pi models.json / settings.json 的 schema）────
 
@@ -44,18 +52,11 @@ export interface PiModelsConfig {
   providers: Record<string, PiProviderConfig>
 }
 
-export interface PiSettings {
-  defaultProvider?: string
-  defaultModel?: string
-  defaultThinkingLevel?: string
-  enabledModels?: string[]
-  hideThinkingBlock?: boolean
-  skills?: string[]
-  extensions?: string[]
-  [key: string]: unknown
-}
+export type { PiSettings } from './pi-settings-store.js'
 
 // ── 缓存 ─────────────────────────────────────────────────────
+// 注：settings.json 的缓存 + readSettings/writeSettings 收敛到 pi-settings-store（D17）。
+// 此处仅保留 models.json 的缓存。
 
 const CACHE_TTL_MS = 3_000
 
@@ -65,7 +66,6 @@ interface CacheEntry<T> {
 }
 
 let modelsCache: CacheEntry<PiModelsConfig> | null = null
-let settingsCache: CacheEntry<PiSettings> | null = null
 
 function isExpired(entry: { timestamp: number } | null): boolean {
   return !entry || Date.now() - entry.timestamp > CACHE_TTL_MS
@@ -213,22 +213,9 @@ export function getApiKeyForProvider(providerId: string): string | undefined {
 }
 
 // ── Settings.json 操作 ───────────────────────────────────────
-
-export function readSettings(): PiSettings {
-  if (!isExpired(settingsCache)) return settingsCache!.data
-  const data = readJsonFile<PiSettings>(getSettingsPath(), {})
-  if (!data || typeof data !== 'object') {
-    console.warn(`[provider-store] ${getSettingsPath()} schema 不匹配，使用 fallback`)
-    return {}
-  }
-  settingsCache = { data, timestamp: Date.now() }
-  return data
-}
-
-export function writeSettings(settings: PiSettings): void {
-  writeJsonFile(getSettingsPath(), settings)
-  settingsCache = { data: JSON.parse(JSON.stringify(settings)), timestamp: Date.now() }
-}
+// readSettings/writeSettings 的实现收敛到 pi-settings-store（D17 唯一读写层）。
+// 本文件 re-export 以保持对 pi-config-bridge 的现有导出契约不变。
+export { readSettings, writeSettings, updateSettingsSync } from './pi-settings-store.js'
 
 /**
  * 纯校验：检查 defaultProvider/defaultModel 在 models.json 中是否有效。
@@ -337,7 +324,8 @@ export function refreshModels(): void {
 }
 
 export function refreshSettings(): void {
-  settingsCache = null
+  // settings.json 缓存归属 pi-settings-store（D17），这里委托失效。
+  invalidateSettingsCache()
 }
 
 export function refreshAll(): void {

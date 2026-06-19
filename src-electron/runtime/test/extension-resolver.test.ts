@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ExtensionResolver } from '../src/infra/installers/extension-resolver.js'
 import type { SourceMap } from '../src/infra/installers/extension-resolver.js'
+import { setSettingsPath, invalidateSettingsCache } from '../src/infra/pi/pi-settings-store.js'
 
 vi.mock('node:fs', () => ({
   existsSync: vi.fn(),
@@ -137,6 +138,9 @@ describe('ExtensionResolver', () => {
 
     beforeEach(() => {
       resolver = new ExtensionResolver({ settingsDir })
+      // 对齐 pi-settings-store 的读取路径到测试 settingsDir（scanSettingsExtensions 经 store 读 settings.json，D17）。
+      setSettingsPath(`${settingsDir}/settings.json`)
+      invalidateSettingsCache()
     })
 
     it('reads settings.json packages and resolves valid extensions', () => {
@@ -398,6 +402,9 @@ describe('ExtensionResolver', () => {
       const settingsPath = `${settingsDir}/settings.json`
 
       vi.stubEnv('HOME', home)
+      // 对齐 pi-settings-store 路径（scanSettingsExtensions 经 store 读 settings.json，D17）。
+      setSettingsPath(settingsPath)
+      invalidateSettingsCache()
 
       mockedExistsSync.mockImplementation((p: unknown) => {
         if (typeof p !== 'string') return false

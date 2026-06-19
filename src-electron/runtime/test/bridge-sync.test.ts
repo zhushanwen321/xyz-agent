@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
  *
  * Test strategy:
  * - EventAdapter bridge detection: unit test the translate method for bridge: methods
- * - Server bridge routing: test handleBridgeRequest directly with mock IRpcClient
+ * - Server bridge routing: test handleBridgeRequest directly with mock IPiEngine
  * - Extension timeout bridge tracking: test registerExtensionTimeout for bridge: methods
  */
 

@@ -5,6 +5,7 @@ import { tmpdir, homedir } from 'node:os'
 import { ExtensionService, ExtensionInstallError } from '../src/services/extension-service.js'
 import { NpmGitInstaller } from '../src/infra/installers/npm-git-installer.js'
 import { ExtensionResolver } from '../src/infra/installers/extension-resolver.js'
+import { PiExtensionSettings } from '../src/infra/pi/pi-extension-settings.js'
 
 import { installPackage, uninstallPackage, NpmInstallError } from '../src/infra/installers/npm-installer.js'
 import { execFileSync } from 'node:child_process'
@@ -64,6 +65,9 @@ describe('ExtensionService', () => {
       projectRoot: process.cwd(),
       installer: new NpmGitInstaller(),
       resolver: new ExtensionResolver({ settingsDir: testSettingsDir, thirdPartyDir: join(testSettingsDir, 'extensions') }),
+      // IExtensionSettings port：经 pi-settings-store 统一读写 settings.json（D17）。
+      // 构造时把 store 路径对齐到 testSettingsDir，使 model 域与 extension 域在测试中读写同一文件。
+      extensionSettings: new PiExtensionSettings(testSettingsDir),
     })
   })
 

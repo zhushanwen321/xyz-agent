@@ -21,6 +21,7 @@ import { join, resolve, basename } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 import type { ExtensionInfo } from '@xyz-agent/shared'
 import type { IInstaller, IExtensionResolver } from './ports/installer.js'
+import type { IExtensionSettings } from './ports/extension-settings.js'
 import { isStrictlyUnder, isUnderOrEqual } from '../utils/path-utils.js'
 
 const log = {
@@ -73,12 +74,18 @@ export interface ExtensionServiceOptions {
   installer: IInstaller
   /** 扩展解析器 port，由 index.ts 注入 */
   resolver: IExtensionResolver
+  /**
+   * 扩展配置 port（settings.json packages[] + disabled-packages.json），由 index.ts 注入。
+   * 经此 port 读写 settings.json，不再直接 readFileSync/writeFileSync（D17 收口）。
+   */
+  extensionSettings: IExtensionSettings
 }
 
 export class ExtensionService {
   private readonly settingsDir: string
   private readonly installer: IInstaller
   private readonly resolver: IExtensionResolver
+  private readonly extSettings: IExtensionSettings
   private readonly projectRoot: string
   private readonly packaged: boolean
 
@@ -89,6 +96,7 @@ export class ExtensionService {
     this.settingsDir = options.settingsDir
     this.installer = options.installer
     this.resolver = options.resolver
+    this.extSettings = options.extensionSettings
     this.projectRoot = options.projectRoot ?? process.cwd()
     this.packaged = options.packaged ?? (process.env.XYZ_AGENT_PACKAGED === '1')
 
@@ -207,8 +215,8 @@ export class ExtensionService {
    * 验证 npm 包是否为有效的 pi extension。
    * 失败时抛出 ExtensionInstallError，含 code 和 hint。
    *
-   * 注意：不支持并发安装 — 多个同时 installExtension 调用可能在
-   * settings.json 上产生 read-modify-write 竞态。当前设计为串行调用。
+   * settings.json 的 RMW 经 IExtensionSettings → pi-settings-store 的异步互斥队列串行化，
+   * 杜绝并发安装的 read-modify-write 竞态（D17 收口）。
    */
   async installExtension(source: string): Promise<void> {
     if (!source.startsWith('npm:')) {
@@ -262,68 +270,23 @@ export class ExtensionService {
       )
     }
 
-    // 写入 settings.json
-    const settingsPath = join(this.settingsDir, 'settings.json')
-    let settings: { packages?: string[] } = {}
-    try {
-      if (existsSync(settingsPath)) {
-        settings = JSON.parse(readFileSync(settingsPath, 'utf-8'))
-      }
-    } catch (e) {
-      log.debug(`[extension-service] failed to read settings.json for install: ${e instanceof Error ? e.message : String(e)}`)
-    }
-
-    const packages = settings.packages ?? []
-    if (!packages.includes(source)) {
-      packages.push(source)
-    }
-    settings.packages = packages
-
-    // 原子写入
-    const tmpPath = settingsPath + '.tmp'
-    writeFileSync(tmpPath, JSON.stringify(settings, null, INDENT_SPACES), 'utf-8')
-    renameSync(tmpPath, settingsPath)
+    // 写入 settings.json packages[]（经 IExtensionSettings port → pi-settings-store 互斥 RMW）
+    await this.extSettings.addPackage(source)
   }
 
   /**
    * 从 settings.json packages[] 移除 → 清理 disabled-packages.json → npm uninstall。
+   * settings 写经 IExtensionSettings port（pi-settings-store 互斥 RMW），disabled 同 port 管理。
    */
   async uninstallExtension(name: string): Promise<void> {
     const npmDir = join(this.settingsDir, 'npm')
     const source = `npm:${name}`
-    const settingsPath = join(this.settingsDir, 'settings.json')
 
-    // 从 settings packages[] 移除
-    if (existsSync(settingsPath)) {
-      try {
-        const raw = readFileSync(settingsPath, 'utf-8')
-        const settings = JSON.parse(raw) as { packages?: string[] }
-        const packages = (settings.packages ?? []).filter(p => p !== source)
-        settings.packages = packages
-        const tmpPath = settingsPath + '.tmp'
-        writeFileSync(tmpPath, JSON.stringify(settings, null, INDENT_SPACES), 'utf-8')
-        renameSync(tmpPath, settingsPath)
-      } catch (e) {
-        log.warn(`[extension-service] failed to update settings.json for uninstall: ${e}`)
-      }
-    }
+    // 从 settings packages[] 移除（经 port → pi-settings-store 互斥 RMW）
+    await this.extSettings.removePackage(source)
 
-    // 从 disabled-packages.json 清理
-    const disabledPath = join(this.settingsDir, 'disabled-packages.json')
-    if (existsSync(disabledPath)) {
-      try {
-        const raw = readFileSync(disabledPath, 'utf-8')
-        const data = JSON.parse(raw) as { disabled?: string[] }
-        const disabled = (data.disabled ?? []).filter(d => d !== source)
-        if (disabled.length > 0) {
-          writeFileSync(disabledPath, JSON.stringify({ disabled }, null, INDENT_SPACES), 'utf-8')
-        } else {
-          rmSync(disabledPath)
-        }
-      } catch (e) {
-        log.debug(`[extension-service] failed to update disabled-packages.json for uninstall: ${e instanceof Error ? e.message : String(e)}`)
-      }
-    }
+    // 从 disabled-packages.json 清理（经 port）
+    await this.extSettings.removeDisabled(source)
 
     // Remove from node_modules (经 IInstaller port)
     const nodeModulesDir = join(npmDir, 'node_modules')
@@ -338,39 +301,11 @@ export class ExtensionService {
 
   /**
    * 切换某个包的启用/禁用。
-   * 通过 disabled-packages.json 实现。
+   * 经 IExtensionSettings port 操作 disabled-packages.json。
    */
   async toggleExtension(name: string, enabled: boolean): Promise<void> {
     const source = `npm:${name}`
-    const disabledPath = join(this.settingsDir, 'disabled-packages.json')
-
-    let disabled: string[] = []
-    if (existsSync(disabledPath)) {
-      try {
-        const raw = readFileSync(disabledPath, 'utf-8')
-        disabled = (JSON.parse(raw) as { disabled?: string[] }).disabled ?? []
-      } catch (e) {
-        log.debug(`[extension-service] failed to read disabled-packages.json for toggle: ${e instanceof Error ? e.message : String(e)}`)
-      }
-    }
-
-    if (enabled) {
-      disabled = disabled.filter(d => d !== source)
-    } else {
-      if (!disabled.includes(source)) {
-        disabled.push(source)
-      }
-    }
-
-    if (disabled.length > 0) {
-      writeFileSync(disabledPath, JSON.stringify({ disabled }, null, INDENT_SPACES), 'utf-8')
-    } else if (existsSync(disabledPath)) {
-      try {
-        rmSync(disabledPath)
-      } catch (e) {
-        log.debug(`[extension-service] failed to remove disabled-packages.json: ${e instanceof Error ? e.message : String(e)}`)
-      }
-    }
+    await this.extSettings.setEnabled(source, enabled)
   }
 
   // ── Local / Git install methods ────────────────────────────────
@@ -557,29 +492,12 @@ export class ExtensionService {
 
   // ── 内部方法 ──────────────────────────────────────────────────
 
-  /** 读取 settings.json 的 packages[] 和 disabled-packages.json */
+  /** 读取 settings.json 的 packages[] 和 disabled-packages.json（经 IExtensionSettings port）。 */
   private readSettingsState(): { packages: string[]; disabled: string[] } {
-    const settingsPath = join(this.settingsDir, 'settings.json')
-    let packages: string[] = []
-    try {
-      if (existsSync(settingsPath)) {
-        packages = (JSON.parse(readFileSync(settingsPath, 'utf-8')) as { packages?: string[] }).packages ?? []
-      }
-    } catch (e) {
-      log.debug(`[extension-service] failed to read settings.json packages: ${e instanceof Error ? e.message : String(e)}`)
+    return {
+      packages: this.extSettings.getPackages(),
+      disabled: this.extSettings.getDisabled(),
     }
-
-    const disabledPath = join(this.settingsDir, 'disabled-packages.json')
-    let disabled: string[] = []
-    try {
-      if (existsSync(disabledPath)) {
-        disabled = (JSON.parse(readFileSync(disabledPath, 'utf-8')) as { disabled?: string[] }).disabled ?? []
-      }
-    } catch (e) {
-      log.debug(`[extension-service] failed to read disabled-packages.json: ${e instanceof Error ? e.message : String(e)}`)
-    }
-
-    return { packages, disabled }
   }
 
   /** Classify npm error message into error code */

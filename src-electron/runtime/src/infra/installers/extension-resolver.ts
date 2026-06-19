@@ -15,6 +15,7 @@
 import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs'
 import { join, dirname, basename } from 'node:path'
 import { getPiAgentDir } from '../pi/pi-paths.js'
+import { readSettings } from '../pi/pi-settings-store.js'
 import type { IExtensionResolver, ExtensionPaths } from '../../services/ports/installer.js'
 
 // re-export ExtensionPaths 供历史 import 此文件的消费者使用（类型归属 ports）
@@ -142,29 +143,20 @@ export class ExtensionResolver implements IExtensionResolver {
 
   /**
    * 扫描 user-installed extensions。
-   * 读取 ~/.xyz-agent/pi/agent/settings.json 的 packages[]，
+   * 读取 settings.json 的 packages[]（经 pi-settings-store 统一读写层，D17），
    * 过滤 disabled-packages.json 中的禁用项，
-   * 定位 npm/ 目录下的扩展。
+   * 定位 npm/目录下的扩展。
    */
   scanSettingsExtensions(): ExtensionMap {
     const result: ExtensionMap = new Map()
     const settingsDir = this.options.settingsDir ?? getPiAgentDir()
-    const settingsPath = join(settingsDir, 'settings.json')
-    if (!existsSync(settingsPath)) return result
 
-    // 读取 disabled-packages.json
+    // 读取 disabled-packages.json（xyz-agent 自己的文件，独立读）
     const disabled = this.readDisabledPackages(settingsDir)
 
-    // 读取 packages[]
-    let packages: string[]
-    try {
-      const raw = readFileSync(settingsPath, 'utf-8')
-      const settings = JSON.parse(raw) as { packages?: string[] }
-      packages = settings.packages ?? []
-    } catch {
-      log.warn(`[extension-resolver] failed to parse ${settingsPath}`)
-      return result
-    }
+    // 读取 packages[]（经 pi-settings-store 单一所有者；测试经 setSettingsPath 对齐 settingsDir）
+    const settings = readSettings()
+    const packages: string[] = settings.packages ?? []
 
     for (const source of packages) {
       if (!source.startsWith('npm:')) continue
