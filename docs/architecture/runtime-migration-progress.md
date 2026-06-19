@@ -28,7 +28,7 @@
 | R3e1 | `0e25e194` | ✅ | ISessionStore + session 家族解耦 |
 | R3e2 | `e8b1a7ed` | ✅ | ITreeReader/INavigateInterceptor + tree/session 解耦 |
 | R4 | `a9780d16` | ✅ | handler 构造移入 setServices()，消除 `as unknown as` 强转 |
-| R5 | `<this-commit>` | ✅ | 收尾验证 + 消除 transport→infra 最后依赖（getPiAgentDir） |
+| R5 | `a3ab22bd` | ✅ | 收尾验证 + 消除 transport→infra 最后依赖（getPiAgentDir） |
 
 **R3 实际拆成 7 个子阶段**（原设计是单一 R3）。审查发现「让所有 service 一次上 ports」是大爆炸式重构，违反单一目标原则，故按 service 域逐个解耦。
 
