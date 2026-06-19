@@ -15,7 +15,8 @@
   - [分层规则与依赖矩阵](architecture/design.md#22-分层规则与依赖矩阵)
   - [双维度模型（水平层 × 纵向上下文）](architecture/design.md#23-双维度模型水平层--纵向上下文)
 - [Runtime 三层架构设计](architecture/runtime-three-layer-design.md) — 取代 D4 的 Runtime 四层（adapters 合并入 infra + ports 依赖倒置）
-- [Runtime 迁移执行记录](architecture/runtime-migration-progress.md) — R0–R3e2 已完成（11 commit）+ R4/R5 待办 + ports 清单
+- [Runtime 模块架构图](architecture/runtime-module-map.md) — R9 后快照：分层骨架 + 各层内部模块 + 依赖铁律
+- [Runtime 迁移执行记录](architecture/runtime-migration-progress.md) — R0–R9 已完成（17 commit）+ ports 清单 + SessionService 评估
 - [架构评审问题记录](architecture/review-issues.md) — 9 个盲点 D1–D9 的来源与验证
 - [领域术语表](architecture/context.md) — Session / Panel / Runtime 等核心概念定义
 
