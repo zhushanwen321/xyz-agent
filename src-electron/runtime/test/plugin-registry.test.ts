@@ -39,7 +39,7 @@ describe('PluginRegistry', () => {
     await mkdir(pluginDir, { recursive: true })
     await cp(join(FIXTURES_DIR, 'hello-world'), pluginDir, { recursive: true })
 
-    const registry = new PluginRegistry(tmpDir)
+    const registry = new PluginRegistry(tmpDir, tmpDir)
     const descriptors = await registry.scan()
 
     expect(descriptors.length >= 1).toBeTruthy()
@@ -65,7 +65,7 @@ describe('PluginRegistry', () => {
       'utf-8',
     )
 
-    const registry = new PluginRegistry(join(tmpDir, 'scan-no-agent'))
+    const registry = new PluginRegistry(join(tmpDir, 'scan-no-agent'), join(tmpDir, 'scan-no-agent'))
     const descriptors = await registry.scan()
     const found = descriptors.find(d => d.pluginId === 'no-agent')
     expect(found).toBe(undefined)
@@ -90,7 +90,7 @@ describe('PluginRegistry', () => {
       },
     })
 
-    const registry = new PluginRegistry(tmpDir)
+    const registry = new PluginRegistry(tmpDir, tmpDir)
     await registry.scan()
     const desc = registry.getDescriptor('infer-test')!
 
@@ -106,7 +106,7 @@ describe('PluginRegistry', () => {
 
   // ── TC-1-04: cacheDescriptors / getDescriptor / getAllDescriptors ─
   it('TC-1-04: cacheDescriptors / getDescriptor / getAllDescriptors', async () => {
-    const registry = new PluginRegistry(tmpDir)
+    const registry = new PluginRegistry(tmpDir, tmpDir)
 
     const descA = {
       pluginId: 'plugin-a',
@@ -156,7 +156,7 @@ describe('PluginRegistry', () => {
   // ── TC-1-05: reload() re-scans ────────────────────────────────
   it('TC-1-05: reload() re-scans', async () => {
     // 先扫描，此时应包含 hello-world
-    const registry = new PluginRegistry(tmpDir)
+    const registry = new PluginRegistry(tmpDir, tmpDir)
     const first = await registry.scan()
     expect(first.some(d => d.pluginId === 'hello-world')).toBeTruthy()
 

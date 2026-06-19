@@ -51,7 +51,7 @@ function createMockSessionService(sessions: SessionSummary[] = []): ISessionServ
 
 function createService(sessionService?: ISessionService): PluginService {
   const broker = createMockBroker()
-  const registry = new PluginRegistry('/tmp/fake-project')
+  const registry = new PluginRegistry('/tmp/fake-project', '/tmp/fake-project')
   const deps: IPluginServiceDeps = {
     sessionService,
   }
@@ -188,7 +188,7 @@ describe('Agent RPC Handlers — real implementation', () => {
 
   it('falls back to stub when sessionService is undefined', async () => {
     const broker = createMockBroker()
-    const registry = new PluginRegistry('/tmp/fake-project')
+    const registry = new PluginRegistry('/tmp/fake-project', '/tmp/fake-project')
     const service = new PluginService(registry, broker)
 
     const model = await callMethod(service, 'plugin.agent.getModel', {})

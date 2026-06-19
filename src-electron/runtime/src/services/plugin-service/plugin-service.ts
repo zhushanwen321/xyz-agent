@@ -6,13 +6,14 @@ import type { IMessageBroker } from '../../interfaces.js'
 import { PluginRegistry } from './plugin-registry.js'
 import { PluginStorage } from './plugin-storage.js'
 import { SessionDataStore } from './session-data-store.js'
-import { getConfigDir } from '../../infra/pi/pi-config-bridge.js'
 import { PluginRpcServer } from './plugin-rpc-server.js'
 import { PluginHost } from './plugin-host.js'
 import { PluginActivator } from './plugin-activator.js'
 import { registerAllRpcMethods } from './plugin-rpc-setup.js'
 import { PluginInstaller, type InstallResult } from './plugin-installer.js'
 import { handleBridgeToolExecute, handleBridgeEvent, handleBridgeIntercept } from './bridge-interop.js'
+import { PermissionStorage } from './plugin-permission-storage.js'
+import { join } from 'node:path'
 
 
 const COMMAND_EXECUTE_TIMEOUT_MS = 10_000
@@ -42,13 +43,16 @@ export class PluginService implements IPluginService {
   private statusBarItems = new Map<string, StatusBarItem>()
 
   /** SessionData 内存缓存 + flush + 持久化编排 */
-  private readonly sessionDataStore = new SessionDataStore()
+  private readonly sessionDataStore: SessionDataStore
 
   /** npm 安装器 */
   private installer: PluginInstaller
 
   /** 注入的外部依赖 */
   private deps: IPluginServiceDeps
+
+  /** xyz-agent 配置根（~/.xyz-agent/），plugin/session-data 持久化根。组合根注入。 */
+  private readonly configDir: string
 
   /** 当前活跃的 UI 请求 ID（串行排队） */
   private activeUiRequest: string | null = null
@@ -63,11 +67,18 @@ export class PluginService implements IPluginService {
     this.registry = registry
     this.broker = broker
     this.deps = deps ?? {}
+    // configDir 注入：plugin 切片经此拿配置根（~/.xyz-agent/），不再直连 infra（design.md
+    // T5 切片自治，路径来源走组合根）。生产由 index.ts 注入；缺省回退 process.cwd() 仅供
+    // 单测（不触发磁盘 IO），生产缺失会在首次 persist 时失败暴露。
+    const configDir = this.deps.configDir ?? process.cwd()
+    this.configDir = configDir
+    const pluginsDir = join(configDir, 'plugins')
     this.storage = new PluginStorage()
     this.rpcServer = new PluginRpcServer()
     this.host = new PluginHost(this.rpcServer)
-    this.installer = new PluginInstaller()
-    this.permissionChecker = new PermissionChecker(registry)
+    this.installer = new PluginInstaller(pluginsDir)
+    this.sessionDataStore = new SessionDataStore(configDir)
+    this.permissionChecker = new PermissionChecker(registry, new PermissionStorage(pluginsDir))
     this.activator = new PluginActivator({
       permissionChecker: this.permissionChecker,
       onPermissionRequest: (payload) => {
@@ -93,8 +104,7 @@ export class PluginService implements IPluginService {
     this.activator.registerDescriptors(descriptors)
 
     // 2. 初始化存储
-    const baseDir = getConfigDir()
-    await this.storage.init(baseDir, process.cwd())
+    await this.storage.init(this.configDir, process.cwd())
 
     // 3. 注册 RPC 方法
     this.registerRpcMethods()

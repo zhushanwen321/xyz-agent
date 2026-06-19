@@ -84,10 +84,12 @@ async function main(): Promise<void> {
   // ── Phase 2: create services that reference other services via closures / deps ──
   // PluginService.deps are all optional and only used at runtime (initialize / event handling),
   // so sessionService can be wired in after construction.
-  const pluginRegistry = new PluginRegistry(effectiveRoot)
+  const configDir = configService.getConfigDir()
+  const pluginRegistry = new PluginRegistry(effectiveRoot, configDir)
   const pluginService = new PluginService(pluginRegistry, server, {
     configService,
     modelService,
+    configDir,
     broadcastFn: (type, payload) => server.broadcast({ type: type as 'session.list', id: `push_${Date.now()}`, payload } as import('@xyz-agent/shared').ServerMessage),
   })
 

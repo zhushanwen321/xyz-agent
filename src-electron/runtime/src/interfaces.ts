@@ -204,6 +204,8 @@ export interface IConfigService {
   scanAgents(sources: string[], existingIds: Set<string>): ScannedAgentInfo[]
   /** pi agent 配置目录（settings.json/agents/skills 所在地）。 */
   getPiAgentDir(): string
+  /** xyz-agent 配置根目录（~/.xyz-agent/，plugins/session-data 所在地）。 */
+  getConfigDir(): string
 }
 
 // ── IExtensionService ──────────────────────────────────────────────

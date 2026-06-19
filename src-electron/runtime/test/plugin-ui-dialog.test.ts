@@ -30,7 +30,7 @@ function createService(broker?: ReturnType<typeof createMockBroker>): {
   broker: ReturnType<typeof createMockBroker>
 } {
   const b = broker ?? createMockBroker()
-  const registry = new PluginRegistry('/tmp/fake-project')
+  const registry = new PluginRegistry('/tmp/fake-project', '/tmp/fake-project')
   const deps: IPluginServiceDeps = {
     broadcastFn: (type, payload) => b.broadcast({ type, payload } as never),
   }

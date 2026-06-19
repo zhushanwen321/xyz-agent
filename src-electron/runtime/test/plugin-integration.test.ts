@@ -33,7 +33,7 @@ beforeAll(async () => {
   await mkdir(pluginDir, { recursive: true })
   await cp(join(FIXTURES_DIR, 'hello-world'), pluginDir, { recursive: true })
 
-  registry = new PluginRegistry(tmpDir)
+  registry = new PluginRegistry(tmpDir, tmpDir)
   storage = new PluginStorage()
   rpcServer = new PluginRpcServer()
   activator = new PluginActivator()

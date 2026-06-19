@@ -10,7 +10,6 @@
 
 import { join } from 'node:path'
 import { readdir } from 'node:fs/promises'
-import { getConfigDir } from '../../infra/pi/pi-config-bridge.js'
 import { loadSessionData, deleteSessionData } from './plugin-storage.js'
 import { flushSessionData, flushSessionDataForSession, startFlushTimer, stopFlushTimer } from './session-data-flush.js'
 
@@ -26,6 +25,14 @@ export class SessionDataStore {
 
   /** 定时 flush 计时器 */
   private flushTimer: ReturnType<typeof setInterval> | null = null
+
+  /** 配置根目录（session-data 持久化用），由组合根注入，不再直连 infra。 */
+  private readonly configDir: string
+
+  /** @param configDir xyz-agent 配置根（~/.xyz-agent/），session-data 持久化目录的父。 */
+  constructor(configDir: string) {
+    this.configDir = configDir
+  }
 
   // ── Cache 暴露（供 session-data-api RPC 直接操作） ──────────
   // NOTE: 返回可变 Map 引用供 session-data-api 直接操作（set/delete）。
@@ -48,7 +55,7 @@ export class SessionDataStore {
 
   /** 启动定时 flush（每 5s） */
   startFlushTimer(): void {
-    this.flushTimer = startFlushTimer(this.dirty, this.cache)
+    this.flushTimer = startFlushTimer(this.dirty, this.cache, this.configDir)
   }
 
   /** 停止定时 flush */
@@ -63,23 +70,23 @@ export class SessionDataStore {
 
   /** 将所有 dirty 数据批量 flush */
   async flushAll(): Promise<void> {
-    await flushSessionData(this.dirty, this.cache)
+    await flushSessionData(this.dirty, this.cache, this.configDir)
   }
 
   /** flush 指定 session 的 dirty 数据 */
   async flushSession(sessionId: string): Promise<void> {
-    await flushSessionDataForSession(sessionId, this.dirty, this.cache)
+    await flushSessionDataForSession(sessionId, this.dirty, this.cache, this.configDir)
   }
 
   /** 从磁盘恢复所有 sessionData（initialize 时调用） */
   async restoreFromDisk(): Promise<void> {
     try {
-      const sessionDataDir = join(getConfigDir(), 'session-data')
+      const sessionDataDir = join(this.configDir, 'session-data')
       const files = await readdir(sessionDataDir)
       for (const file of files) {
         if (file.endsWith('.json')) {
           const sessionId = file.replace('.json', '')
-          const data = await loadSessionData(getConfigDir(), sessionId)
+          const data = await loadSessionData(this.configDir, sessionId)
           if (data.size > 0) {
             this.cache.set(sessionId, data)
             // Restore size tracker so capacity checks account for persisted data
@@ -104,7 +111,7 @@ export class SessionDataStore {
     this.size.delete(sessionId)
 
     // Also delete from disk
-    void deleteSessionData(getConfigDir(), sessionId).catch((e) => {
+    void deleteSessionData(this.configDir, sessionId).catch((e) => {
       console.warn(`[session-data-store] failed to delete session data file for ${sessionId}:`, e instanceof Error ? e.message : String(e))
     })
   }

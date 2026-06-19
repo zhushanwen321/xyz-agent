@@ -63,7 +63,7 @@ describe('Task 3: PermissionChecker', () => {
       const registry = createMockRegistry([
         makeDescriptor({ pluginId: 'trusted-1', trustLevel: 'trusted', source: 'built-in' }),
       ])
-      const checker = new PluginPermissionChecker(registry)
+      const checker = new PluginPermissionChecker(registry, new PermissionStorage(tmpDir))
 
       expect(checker.check('trusted-1', 'tools.register')).toBe(true)
       expect(checker.check('trusted-1', 'hooks.register')).toBe(true)
@@ -74,7 +74,7 @@ describe('Task 3: PermissionChecker', () => {
       const registry = createMockRegistry([
         makeDescriptor({ pluginId: 'trusted-2', trustLevel: 'trusted' }),
       ])
-      const checker = new PluginPermissionChecker(registry)
+      const checker = new PluginPermissionChecker(registry, new PermissionStorage(tmpDir))
 
       // 即使没 grant，trusted 也能通过
       expect(checker.check('trusted-2', 'tools.register')).toBe(true)
@@ -86,7 +86,7 @@ describe('Task 3: PermissionChecker', () => {
       const registry = createMockRegistry([
         makeDescriptor({ pluginId: 'sandbox-1', trustLevel: 'sandbox' }),
       ])
-      const checker = new PluginPermissionChecker(registry)
+      const checker = new PluginPermissionChecker(registry, new PermissionStorage(tmpDir))
 
       expect(checker.check('sandbox-1', 'tools.register')).toBe(false)
     })
@@ -95,7 +95,7 @@ describe('Task 3: PermissionChecker', () => {
       const registry = createMockRegistry([
         makeDescriptor({ pluginId: 'sandbox-2', trustLevel: 'sandbox' }),
       ])
-      const checker = new PluginPermissionChecker(registry)
+      const checker = new PluginPermissionChecker(registry, new PermissionStorage(tmpDir))
 
       checker.grant('sandbox-2', ['tools.register', 'hooks.register'])
       expect(checker.check('sandbox-2', 'tools.register')).toBe(true)
@@ -106,7 +106,7 @@ describe('Task 3: PermissionChecker', () => {
       const registry = createMockRegistry([
         makeDescriptor({ pluginId: 'sandbox-3', trustLevel: 'sandbox' }),
       ])
-      const checker = new PluginPermissionChecker(registry)
+      const checker = new PluginPermissionChecker(registry, new PermissionStorage(tmpDir))
 
       checker.grant('sandbox-3', ['tools.register'])
       expect(checker.check('sandbox-3', 'tools.register')).toBe(true)
@@ -117,7 +117,7 @@ describe('Task 3: PermissionChecker', () => {
       const registry = createMockRegistry([
         makeDescriptor({ pluginId: 'sandbox-4', trustLevel: 'sandbox' }),
       ])
-      const checker = new PluginPermissionChecker(registry)
+      const checker = new PluginPermissionChecker(registry, new PermissionStorage(tmpDir))
 
       checker.grant('sandbox-4', ['tools.register'])
       expect(checker.check('sandbox-4', 'tools.register')).toBe(true)
@@ -128,7 +128,7 @@ describe('Task 3: PermissionChecker', () => {
 
     it('revoke() on unknown pluginId is no-op', () => {
       const registry = createMockRegistry([])
-      const checker = new PluginPermissionChecker(registry)
+      const checker = new PluginPermissionChecker(registry, new PermissionStorage(tmpDir))
 
       // 不应抛异常
       checker.revoke('nonexistent')
@@ -136,7 +136,7 @@ describe('Task 3: PermissionChecker', () => {
 
     it('check() returns false for unknown pluginId', () => {
       const registry = createMockRegistry([])
-      const checker = new PluginPermissionChecker(registry)
+      const checker = new PluginPermissionChecker(registry, new PermissionStorage(tmpDir))
 
       expect(checker.check('nonexistent', 'tools.register')).toBe(false)
     })
@@ -145,7 +145,7 @@ describe('Task 3: PermissionChecker', () => {
       const registry = createMockRegistry([
         makeDescriptor({ pluginId: 'sandbox-5', trustLevel: 'sandbox' }),
       ])
-      const checker = new PluginPermissionChecker(registry)
+      const checker = new PluginPermissionChecker(registry, new PermissionStorage(tmpDir))
 
       checker.grant('sandbox-5', ['tools.register'])
       checker.grant('sandbox-5', ['hooks.register'])

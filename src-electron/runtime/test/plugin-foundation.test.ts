@@ -218,7 +218,7 @@ describe('Task 1: Plugin Types + Built-in Scan + Registry', () => {
 
   describe('PluginRegistry built-in scan', () => {
     it('scan() includes built-in path resources/plugins/', async () => {
-      const registry = new PluginRegistry(tmpDir)
+      const registry = new PluginRegistry(tmpDir, tmpDir)
       // 获取 scan 的目录列表——通过创建 built-in 插件验证
       const builtInDir = join(tmpDir, 'resources', 'plugins', 'core-tool')
       await mkdir(builtInDir, { recursive: true })
@@ -261,7 +261,7 @@ describe('Task 1: Plugin Types + Built-in Scan + Registry', () => {
         'utf-8',
       )
 
-      const registry = new PluginRegistry(tmpDir)
+      const registry = new PluginRegistry(tmpDir, tmpDir)
       const descriptors = await registry.scan()
       const ext = descriptors.find(d => d.pluginId === 'ext-plugin')!
       expect(ext).toBeTruthy()

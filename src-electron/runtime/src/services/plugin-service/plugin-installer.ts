@@ -3,7 +3,6 @@ import { mkdir, readdir, readFile, rm, rename } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { promisify } from 'node:util'
-import { getConfigDir } from '../../infra/pi/pi-config-bridge.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -27,8 +26,9 @@ export interface InstallResult {
 export class PluginInstaller {
   private pluginsDir: string
 
-  constructor(pluginsDir?: string) {
-    this.pluginsDir = pluginsDir ?? join(getConfigDir(), 'plugins')
+  /** @param pluginsDir 插件安装目录，由组合根注入（不再直连 infra 取默认值）。 */
+  constructor(pluginsDir: string) {
+    this.pluginsDir = pluginsDir
   }
 
   async install(packageSpecifier: string): Promise<InstallResult> {

@@ -2,9 +2,9 @@
  * SessionData 刷写工具
  *
  * 从 PluginService 提取 sessionData 的 flush、定时器等操作。
+ * configDir 由调用方注入（SessionDataStore），不再直连 infra。
  */
 
-import { getConfigDir } from '../../infra/pi/pi-config-bridge.js'
 import { persistSessionData } from './plugin-storage.js'
 
 const FLUSH_INTERVAL_MS = 5_000
@@ -13,6 +13,7 @@ const FLUSH_INTERVAL_MS = 5_000
 export async function flushSessionData(
   sessionDataDirty: Map<string, Set<string>>,
   sessionDataCache: Map<string, Map<string, unknown>>,
+  configDir: string,
 ): Promise<void> {
   for (const [sessionId, dirtyKeys] of sessionDataDirty) {
     if (dirtyKeys.size === 0) continue
@@ -31,7 +32,7 @@ export async function flushSessionData(
 
     // 异步持久化；失败时恢复 dirty
     try {
-      await persistSessionData(getConfigDir(), sessionId, cache)
+      await persistSessionData(configDir, sessionId, cache)
     } catch (err: unknown) {
       console.warn(`[plugin-service] sessionData flush failed for ${sessionId}:`, err instanceof Error ? err.message : String(err))
       // 恢复 dirty 标记
@@ -47,6 +48,7 @@ export async function flushSessionDataForSession(
   sessionId: string,
   sessionDataDirty: Map<string, Set<string>>,
   sessionDataCache: Map<string, Map<string, unknown>>,
+  configDir: string,
 ): Promise<void> {
   const dirtyKeys = sessionDataDirty.get(sessionId)
   if (!dirtyKeys || dirtyKeys.size === 0) return
@@ -55,7 +57,7 @@ export async function flushSessionDataForSession(
   if (!cache) return
 
   try {
-    await persistSessionData(getConfigDir(), sessionId, cache)
+    await persistSessionData(configDir, sessionId, cache)
     dirtyKeys.clear()
     // eslint-disable-next-line taste/no-silent-catch -- sessionData flush failure: log and keep existing data
   } catch (err: unknown) {
@@ -67,9 +69,10 @@ export async function flushSessionDataForSession(
 export function startFlushTimer(
   sessionDataDirty: Map<string, Set<string>>,
   sessionDataCache: Map<string, Map<string, unknown>>,
+  configDir: string,
 ): ReturnType<typeof setInterval> {
   return setInterval(() => {
-    flushSessionData(sessionDataDirty, sessionDataCache).catch((err: unknown) => {
+    flushSessionData(sessionDataDirty, sessionDataCache, configDir).catch((err: unknown) => {
       console.error('[plugin-service] sessionData flush error:', err)
     })
   }, FLUSH_INTERVAL_MS)

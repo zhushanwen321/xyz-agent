@@ -159,6 +159,10 @@ export class ConfigService implements IConfigService {
     return this.configStore.getPiAgentDir()
   }
 
+  getConfigDir(): string {
+    return this.configStore.getConfigDir()
+  }
+
   private appConfigPath(): string {
     return join(this.configStore.getConfigDir(), 'config.json')
   }

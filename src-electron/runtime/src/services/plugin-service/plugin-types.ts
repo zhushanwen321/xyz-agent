@@ -435,6 +435,8 @@ export interface IPluginServiceDeps {
   configService?: IConfigService
   modelService?: import('../../interfaces.js').IModelService
   broadcastFn?: (type: string, payload: unknown) => void
+  /** xyz-agent 配置根目录（~/.xyz-agent/）。注入后 plugin 切片不再直连 infra 取路径。 */
+  configDir?: string
 }
 
 /** 插件向后端请求前端 UI 弹窗 */
