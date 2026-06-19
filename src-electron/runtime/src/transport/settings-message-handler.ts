@@ -6,16 +6,15 @@ import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
 import type { IConfigService, ISessionService, IModelService } from '../interfaces.js'
 import { toErrorMessage } from '../utils/errors.js'
+import type { MessageHandlerContext } from './message-context.js'
 
 /** Interface for server methods needed by this handler */
-export interface SettingsHandlerContext {
+export interface SettingsHandlerContext extends MessageHandlerContext {
   configService: IConfigService
   sessionService: ISessionService
   modelService: IModelService
   projectRoot: string
   nextPushId(): string
-  send(ws: WsType, msg: ServerMessage): void
-  sendError(ws: WsType, code: string, message: string, id?: string, sessionId?: string): void
   broadcast(msg: ServerMessage): void
   broadcastProviderList(): void
   broadcastSkillList(): void

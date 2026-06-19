@@ -3,19 +3,18 @@
  * Extracted from RuntimeServer to reduce file size.
  */
 import type { WebSocket as WsType } from 'ws'
-import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
+import type { ClientMessage } from '@xyz-agent/shared'
 import type { ISessionService, IExtensionService } from '../interfaces.js'
 import type { ExtensionTimeoutManager } from '../services/extension-timeout-manager.js'
 import { ExtensionInstallError } from '../services/extension-service.js'
 import { toErrorMessage } from '../utils/errors.js'
+import type { MessageHandlerContext } from './message-context.js'
 
 /** Interface for server methods needed by this handler */
-export interface ExtensionHandlerContext {
+export interface ExtensionHandlerContext extends MessageHandlerContext {
   sessionService: ISessionService
   extensionService: IExtensionService | undefined
   extensionTimeoutMgr: ExtensionTimeoutManager
-  send(ws: WsType, msg: ServerMessage): void
-  sendError(ws: WsType, code: string, message: string, id?: string, sessionId?: string): void
 }
 
 export class ExtensionMessageHandler {

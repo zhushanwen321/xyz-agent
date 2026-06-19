@@ -197,6 +197,11 @@ export type WorkerToHostMessage =
 
 // ── 通用类型 ─────────────────────────────────────────────────────
 
+// D28: Disposable 与 plugin-sdk/src/types.ts 的定义重复。理论上应提升到
+// @xyz-agent/shared 作 single source of truth，但 SDK 通过 sync-types.sh 从本文件
+// 自动生成、且刻意保持零依赖（第三方插件作者无需装整个 monorepo）。若改 re-export
+// 会让 sync 后的 SDK 引入 @xyz-agent/shared 依赖，破坏独立性。故保留独立定义——
+// 这是有意的跨包契约重复，sync 脚本是它的「真相源」。
 export interface Disposable {
   dispose(): void
 }

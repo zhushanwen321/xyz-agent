@@ -6,13 +6,12 @@ import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
 import type { ISessionService } from '../interfaces.js'
 import { toErrorMessage, isEnoent } from '../utils/errors.js'
+import type { MessageHandlerContext } from './message-context.js'
 
 /** Interface for server methods needed by this handler */
-export interface SessionHandlerContext {
+export interface SessionHandlerContext extends MessageHandlerContext {
   sessionService: ISessionService
   nextPushId(): string
-  send(ws: WsType, msg: ServerMessage): void
-  sendError(ws: WsType, code: string, message: string, id?: string, sessionId?: string): void
   broadcastSessionList(): void
   clearExtensionTimeoutsForSession(sessionId: string): void
 }

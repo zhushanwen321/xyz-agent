@@ -5,11 +5,10 @@
 import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
 import type { IPluginService } from '../interfaces.js'
+import type { MessageHandlerContext } from './message-context.js'
 
-export interface PluginHandlerContext {
+export interface PluginHandlerContext extends MessageHandlerContext {
   pluginService: IPluginService | null
-  send(ws: WsType, msg: ServerMessage): void
-  sendError(ws: WsType, code: string, message: string, id?: string, sessionId?: string): void
 }
 
 export class PluginMessageHandler {
