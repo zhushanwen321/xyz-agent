@@ -27,7 +27,7 @@
 | R3d | `efe19d0f` | ✅ | convertPiHistory unknown[] + PiHistoryMessage 清除 |
 | R3e1 | `0e25e194` | ✅ | ISessionStore + session 家族解耦 |
 | R3e2 | `e8b1a7ed` | ✅ | ITreeReader/INavigateInterceptor + tree/session 解耦 |
-| R4 | `<this-commit>` | ✅ | handler 构造移入 setServices()，消除 `as unknown as` 强转 |
+| R4 | `a9780d16` | ✅ | handler 构造移入 setServices()，消除 `as unknown as` 强转 |
 | R5 | — | ⏳ | 收尾验证（rg 全净 + 全量回归）|
 
 **R3 实际拆成 7 个子阶段**（原设计是单一 R3）。审查发现「让所有 service 一次上 ports」是大爆炸式重构，违反单一目标原则，故按 service 域逐个解耦。
