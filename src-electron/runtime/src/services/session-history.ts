@@ -6,7 +6,6 @@
 
 import { readFile } from 'node:fs/promises'
 import { convertPiHistory } from '../infra/pi/message-converter.js'
-import type { PiHistoryMessage } from '../infra/pi/pi-protocol.js'
 import { scanPiSessions } from '../infra/pi/pi-config-bridge.js'
 
 interface ScannedSession {
@@ -39,13 +38,13 @@ export async function getHistoryFromFile(sessionId: string): Promise<import('@xy
     throw e
   }
   const lines = content.split('\n').filter(l => l.trim())
-  const piMessages: PiHistoryMessage[] = []
+  const piMessages: unknown[] = []
 
   for (const line of lines) {
     try {
       const entry = JSON.parse(line)
       if (entry.type === 'message' && entry.message) {
-        piMessages.push(entry.message as PiHistoryMessage)
+        piMessages.push(entry.message)
       }
     } catch {
       void 0

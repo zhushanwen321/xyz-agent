@@ -18,7 +18,6 @@ import type {
   IEventAdapter, IRpcClient, IExtensionService,
 } from '../../interfaces.js'
 import { convertPiHistory } from '../../infra/pi/message-converter.js'
-import type { PiHistoryMessage } from '../../infra/pi/pi-protocol.js'
 import { getDefaultModel, scanPiSessions, getSkillPaths as getPiSkillPaths } from '../../infra/pi/pi-config-bridge.js'
 import { NavigateInterceptor } from '../../infra/pi/navigate-interceptor.js'
 import { TreeService } from '../tree-service.js'
@@ -147,7 +146,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     const client = this.pm.getClient(sessionId)
     if (client) {
       try {
-        const result = await client.getHistory() as { data?: { messages?: PiHistoryMessage[] }; payload?: { messages?: PiHistoryMessage[] } }
+        const result = await client.getHistory() as { data?: { messages?: unknown[] }; payload?: { messages?: unknown[] } }
         const data = result.data
         const raw = data?.messages ?? (result.payload?.messages) ?? []
         if (raw.length > 0) return convertPiHistory(raw)

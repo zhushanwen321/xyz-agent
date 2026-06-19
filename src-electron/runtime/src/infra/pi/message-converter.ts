@@ -23,12 +23,16 @@ function parseSkillBlock(text: string): { skillName: string; skillLocation?: str
 /**
  * Convert pi message list into frontend Message[], merging toolResult
  * entries into their parent assistant message's matching toolCall.
+ *
+ * 签名收 unknown[]：pi 的历史结构（PiHistoryMessage/PiHistoryToolResult）是 pi 协议类型，
+ * 只在此 infra 文件内部断言，不暴露给 service。service 传 RPC/文件读到的原始 JSON 即可。
  */
-export function convertPiHistory(raw: (PiHistoryMessage | PiHistoryToolResult)[]): Message[] {
+export function convertPiHistory(raw: unknown[]): Message[] {
   const result: Message[] = []
   let lastAssistantWithToolCalls = -1
 
-  for (const m of raw) {
+  for (const item of raw) {
+    const m = item as PiHistoryMessage | PiHistoryToolResult
     if (m.role === 'toolResult') {
       const toolResult = m as PiHistoryToolResult
       // Merge tool result into the last assistant message's matching toolCall
