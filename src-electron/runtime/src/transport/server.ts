@@ -17,7 +17,6 @@ import { SessionMessageHandler } from './session-message-handler.js'
 import { ExtensionMessageHandler } from './extension-message-handler.js'
 import { PluginMessageHandler } from './plugin-message-handler.js'
 import { TreeMessageHandler } from './tree-message-handler.js'
-import { getPiAgentDir } from '../infra/pi/pi-config-bridge.js'
 
 const HTTP_OK = 200
 const HTTP_NOT_FOUND = 404
@@ -372,8 +371,8 @@ export class RuntimeServer implements IMessageBroker {
     const allowedPrefixes = [
       // ~/.agents/skills is a global skill directory (not affected by XYZ_AGENT_DATA_DIR)
       normalize(resolve(homeDir, '.agents/skills')),
-      normalize(resolve(getPiAgentDir(), 'skills')),
-      normalize(resolve(getPiAgentDir(), 'npm')),
+      normalize(resolve(this.configService.getPiAgentDir(), 'skills')),
+      normalize(resolve(this.configService.getPiAgentDir(), 'npm')),
     ]
     if (!allowedPrefixes.some(prefix => absPath.startsWith(prefix + '/'))) {
       this.send(ws, { type: 'file.read:error', id: msg.id, payload: { error: 'Path outside allowed skill directories', path: filePath } })

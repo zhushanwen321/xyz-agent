@@ -202,6 +202,8 @@ export interface IConfigService {
   deleteAgent(agentId: string): void
   scanSkills(sources: string[], existingIds: Set<string>): ScannedSkillInfo[]
   scanAgents(sources: string[], existingIds: Set<string>): ScannedAgentInfo[]
+  /** pi agent 配置目录（settings.json/agents/skills 所在地）。 */
+  getPiAgentDir(): string
 }
 
 // ── IExtensionService ──────────────────────────────────────────────

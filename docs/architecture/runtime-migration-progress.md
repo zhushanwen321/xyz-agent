@@ -2,7 +2,7 @@
 
 **日期**: 2026-06-19 · **分支**: refactor-architecture-design
 **关联设计**: [runtime-three-layer-design.md](runtime-three-layer-design.md)（方案 C：端口-适配器）
-**状态**: R0–R4 已完成（12 个 commit）；R5 待执行
+**状态**: R0–R5 已完成（三层迁移完结）
 
 ---
 
@@ -28,7 +28,7 @@
 | R3e1 | `0e25e194` | ✅ | ISessionStore + session 家族解耦 |
 | R3e2 | `e8b1a7ed` | ✅ | ITreeReader/INavigateInterceptor + tree/session 解耦 |
 | R4 | `a9780d16` | ✅ | handler 构造移入 setServices()，消除 `as unknown as` 强转 |
-| R5 | — | ⏳ | 收尾验证（rg 全净 + 全量回归）|
+| R5 | `<this-commit>` | ✅ | 收尾验证 + 消除 transport→infra 最后依赖（getPiAgentDir） |
 
 **R3 实际拆成 7 个子阶段**（原设计是单一 R3）。审查发现「让所有 service 一次上 ports」是大爆炸式重构，违反单一目标原则，故按 service 域逐个解耦。
 
@@ -149,9 +149,37 @@ infra/      → 实现 ports（9 个实现类）
 
 ---
 
-## 待办：R5 · 收尾验证
+## R5 · 收尾验证 ✅
 
-- `rg "Pi[A-Z]" services/ transport/` → 应为空（PiXxx 不泄漏）
-- `rg "from '.*infra/" services/` → 应为空（除 2 个例外）
-- 全量 vitest + build:runtime + 手测 WS 消息流
-- 更新 design.md 标注三层迁移完成
+### R5 审查：计划判据修正
+
+跑真实 rg 后发现原 R5 计划判据有两个缺陷，先修正再验证：
+
+**缺陷 1 — Pi* 搜索词过宽**：`rg "Pi[A-Z]" services/` 会命中 `PiMessage`/`IPiEngine`/`PiEventListener`/`scanPiSessions` 等合法条目（ports.ts 有意定义的端口契约、plugin-service 的扩展协议回调）。"Pi* 应空"判据本身错误。**修正**：目标精确化为「services/transport 不 import `pi-protocol.ts`（类型源头），也不出现 pi 内部协议**类型**（PiProviderConfig/PiModelDefinition/PiHistoryMessage）」。端口接口名（IPiEngine/PiMessage）是契约，保留。
+
+**缺陷 2 — 遗漏 transport→infra 的真实泄漏**：原计划只查 services，但 `transport/server.ts` 直接 import `getPiAgentDir`（file.read handler 用）——transport 应只依赖 services。这是 R3 覆盖 config-service 时漏掉的 transport 侧。**修复**：`IConfigService.getPiAgentDir()`（IConfigStore 已有同名方法），server.ts 经 configService 访问。
+
+### R5 验证结果（修正判据后）
+
+```
+[A] transport/ → infra 直接 import        → ✓ EMPTY（零依赖）
+[B] services/ → infra 直接 import          → 2 组已记录例外（plugin 6×getConfigDir 黑盒
+                                              + config-service 3×scanners 通用 fs），无新增
+[C] services/transport → pi-protocol.ts   → ✓ EMPTY
+[D] services 内 pi 协议类型               → ✓ 仅注释/文档字符串命中，无真实类型使用
+```
+
+全量回归：tsc 0 / eslint 0 / tsup build (779KB) / vitest 658/658（53 files）全绿。
+
+---
+
+## 迁移完结
+
+三层架构（transport → services ← infra）落地完成。R0–R5 共 13 个 commit，每阶段审计→修复→执行循环，审查产出（R2 反向依赖、R3b PiMessage 误判、R5 判据修正）均被采纳并修正了原计划。
+
+**2 个有意保留的例外**（架构决策，非遗漏）：
+1. plugin-service `getConfigDir` ×6 — 设计约定的黑盒豁免
+2. config-service scanners — 通用 fs 扫描器，非 pi 协议，移出超范围
+
+后续若要消除例外 1，需先把 plugin-service 整体纳入 ports 改造（独立的较大重构，不在本次范围）。
+

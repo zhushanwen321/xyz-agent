@@ -155,6 +155,10 @@ export class ConfigService implements IConfigService {
 
   // ── Tool permissions (persisted to ~/.xyz-agent/config.json) ───
 
+  getPiAgentDir(): string {
+    return this.configStore.getPiAgentDir()
+  }
+
   private appConfigPath(): string {
     return join(this.configStore.getConfigDir(), 'config.json')
   }
