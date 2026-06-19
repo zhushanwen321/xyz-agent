@@ -90,11 +90,11 @@ vi.mock('../src/infra/pi/process-manager.js', () => ({
 
 // EventAdapter 使用真实实例 — 不 mock
 
-vi.mock('../src/infra/scanners/skill-scanner.js', () => ({
+vi.mock('../src/services/scanners/skill-scanner.js', () => ({
   scanSkills: vi.fn().mockReturnValue([]),
 }))
 
-vi.mock('../src/infra/scanners/agent-scanner.js', () => ({
+vi.mock('../src/services/scanners/agent-scanner.js', () => ({
   scanAgents: vi.fn().mockReturnValue([]),
 }))
 

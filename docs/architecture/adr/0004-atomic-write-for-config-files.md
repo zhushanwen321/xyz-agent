@@ -43,4 +43,4 @@ function atomicWrite(filePath: string, data: string): void {
 
 - 会在目标目录临时创建 `.tmp` 文件（通常 <1ms 就 rename 完成，用户不可见）
 - 不解决并发读写问题（两个进程同时写入同一文件仍可能冲突），但 xyz-agent 是单进程，不存在此问题
-- `atomicWrite` 放在 scanner-base.ts 不太直觉（scanner-base 是扫描相关的），后续可移到独立的 fs-utils.ts
+- ~~`atomicWrite` 放在 scanner-base.ts 不太直觉（scanner-base 是扫描相关的），后续可移到独立的 fs-utils.ts~~ **已执行（R6）**：`atomicWrite` 迁至 `src/utils/fs-utils.ts`。该函数被 infra（pi-config-bridge/pi-provider-store）和 services（config-service）共用，无业务语义，归跨层共享叶子层 `utils/`。scanner 家族（skill/agent-scanner + expandHome/inferSourceType）同时迁至 `src/services/scanners/`（纯 fs 实现，只被 config-service 引用，非外部系统连接器，放 infra 违反 T4 铁律）。

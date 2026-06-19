@@ -18,9 +18,9 @@ import type {
 } from '@xyz-agent/shared'
 import type { IConfigService } from '../interfaces.js'
 import type { IConfigStore, ConfigModelDefinition } from './ports.js'
-import { atomicWrite } from '../infra/scanners/scanner-base.js'
-import { scanSkills, loadSkillFromDir } from '../infra/scanners/skill-scanner.js'
-import { scanAgents } from '../infra/scanners/agent-scanner.js'
+import { atomicWrite } from '../utils/fs-utils.js'
+import { scanSkills, loadSkillFromDir } from './scanners/skill-scanner.js'
+import { scanAgents } from './scanners/agent-scanner.js'
 
 // ── Helpers ─────────────────────────────────────────────────────
 

@@ -93,11 +93,11 @@ vi.mock('../src/infra/pi/event-adapter.js', () => ({
   },
 }))
 
-vi.mock('../src/infra/scanners/skill-scanner.js', () => ({
+vi.mock('../src/services/scanners/skill-scanner.js', () => ({
   scanSkills: vi.fn().mockReturnValue([]),
 }))
 
-vi.mock('../src/infra/scanners/agent-scanner.js', () => ({
+vi.mock('../src/services/scanners/agent-scanner.js', () => ({
   scanAgents: vi.fn().mockReturnValue([]),
 }))
 

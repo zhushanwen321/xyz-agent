@@ -1,5 +1,4 @@
 import { join } from 'node:path'
-import { writeFileSync, renameSync } from 'node:fs'
 import { homedir } from 'node:os'
 import type { ScanSourceType } from '@xyz-agent/shared'
 
@@ -8,15 +7,8 @@ export function expandHome(p: string): string {
   return p.startsWith('~') ? join(homedir(), p.slice(1)) : p
 }
 
-/**
- * Atomic file write: write to a temp file first, then rename.
- * Prevents corrupt data if the process crashes mid-write.
- */
-export function atomicWrite(filePath: string, data: string): void {
-  const tmpPath = filePath + '.tmp'
-  writeFileSync(tmpPath, data, 'utf-8')
-  renameSync(tmpPath, filePath)
-}
+// atomicWrite 已迁至跨层共享层 utils/fs-utils.ts（ADR 0004）：该函数被 infra 和
+// services 共用，无业务语义，不属于任一业务层。scanner 自身用不到它。
 
 /** Infer scan source type from the path's directory conventions. */
 export function inferSourceType(path: string): ScanSourceType {

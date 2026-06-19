@@ -12,7 +12,7 @@
 
 import { existsSync, readFileSync, readdirSync, mkdirSync, statSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
-import { atomicWrite } from '../scanners/scanner-base.js'
+import { atomicWrite } from '../../utils/fs-utils.js'
 import { parseSessionHeader, extractSessionName } from './session-file-utils.js'
 import { getSessionsDir as getSessionsDirRaw, getAgentsDir } from './pi-paths.js'
 
