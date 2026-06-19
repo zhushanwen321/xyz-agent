@@ -108,4 +108,8 @@ export class PiConfigStore implements IConfigStore {
   getConfigDir(): string {
     return piBridge.getConfigDir()
   }
+
+  getPiAgentDir(): string {
+    return piBridge.getPiAgentDir()
+  }
 }

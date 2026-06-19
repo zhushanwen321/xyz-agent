@@ -99,6 +99,8 @@ vi.mock('../src/infra/pi/pi-config-bridge.js', () => ({
   getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
   getSkillPaths: () => [],
   getSessionsDir: () => '/mock/sessions',
+  getConfigDir: () => '/mock/config',
+  getPiAgentDir: () => '/mock/agent',
   readModels: () => ({ providers: {} }),
   readSettings: () => ({}),
   scanPiSessions: () => [],
@@ -147,8 +149,11 @@ import { RuntimeServer } from '../src/transport/server.js'
 import { SessionService } from '../src/services/session/session-service.js'
 import { ConfigService } from '../src/services/config-service.js'
 import { PiConfigStore } from '../src/infra/pi/pi-config-store.js'
+import { ModelApiDiscoverer } from '../src/infra/model-api-discoverer.js'
 import { ModelService } from '../src/services/model-service.js'
 import { ExtensionService } from '../src/services/extension-service.js'
+import { NpmGitInstaller } from '../src/infra/installers/npm-git-installer.js'
+import { ExtensionResolver } from '../src/infra/installers/extension-resolver.js'
 
 function getFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -204,9 +209,13 @@ describe('RuntimeServer: extension message routing', () => {
     server.setServices(
       sessionService,
       new ConfigService('/tmp', new PiConfigStore()),
-      new ModelService(),
+      new ModelService(new ModelApiDiscoverer()),
       {} as never,
-      new ExtensionService(),
+      new ExtensionService({
+        settingsDir: new PiConfigStore().getPiAgentDir(),
+        installer: new NpmGitInstaller(),
+        resolver: new ExtensionResolver({ settingsDir: new PiConfigStore().getPiAgentDir() }),
+      }),
     )
     await server.start()
   })
@@ -604,9 +613,13 @@ describe('RuntimeServer: extension timeout mechanism', () => {
     server.setServices(
       sessionService,
       new ConfigService('/tmp', new PiConfigStore()),
-      new ModelService(),
+      new ModelService(new ModelApiDiscoverer()),
       {} as never,
-      new ExtensionService(),
+      new ExtensionService({
+        settingsDir: new PiConfigStore().getPiAgentDir(),
+        installer: new NpmGitInstaller(),
+        resolver: new ExtensionResolver({ settingsDir: new PiConfigStore().getPiAgentDir() }),
+      }),
     )
   })
 

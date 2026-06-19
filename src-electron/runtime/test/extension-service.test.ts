@@ -3,6 +3,8 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, mkdtempSync
 import { join } from 'node:path'
 import { tmpdir, homedir } from 'node:os'
 import { ExtensionService, ExtensionInstallError } from '../src/services/extension-service.js'
+import { NpmGitInstaller } from '../src/infra/installers/npm-git-installer.js'
+import { ExtensionResolver } from '../src/infra/installers/extension-resolver.js'
 
 import { installPackage, uninstallPackage, NpmInstallError } from '../src/infra/installers/npm-installer.js'
 import { execFileSync } from 'node:child_process'
@@ -57,7 +59,12 @@ describe('ExtensionService', () => {
     // Create settings.json in the npm directory for --prefix install
     writeFileSync(join(testSettingsDir, 'npm', 'package.json'), JSON.stringify({ private: true }), 'utf-8')
 
-    service = new ExtensionService({ settingsDir: testSettingsDir, projectRoot: process.cwd() })
+    service = new ExtensionService({
+      settingsDir: testSettingsDir,
+      projectRoot: process.cwd(),
+      installer: new NpmGitInstaller(),
+      resolver: new ExtensionResolver({ settingsDir: testSettingsDir, thirdPartyDir: join(testSettingsDir, 'extensions') }),
+    })
   })
 
   afterEach(() => {

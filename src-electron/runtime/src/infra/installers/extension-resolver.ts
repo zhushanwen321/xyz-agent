@@ -15,6 +15,10 @@
 import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs'
 import { join, dirname, basename } from 'node:path'
 import { getPiAgentDir } from '../pi/pi-paths.js'
+import type { IExtensionResolver, ExtensionPaths } from '../../services/ports.js'
+
+// re-export ExtensionPaths 供历史 import 此文件的消费者使用（类型归属 ports）
+export type { ExtensionPaths }
 
 const log = {
   info: (...args: unknown[]) => console.log('[extension-resolver]', ...args),
@@ -30,9 +34,8 @@ type SourceName = (typeof PRIORITY_ORDER)[number]
 /** 扫描结果：extension name → 目录绝对路径 */
 type ExtensionMap = Map<string, string>
 
-export interface ExtensionPaths {
-  extensionDirs: string[]
-}
+// ExtensionPaths 定义在 services/ports.ts（依赖倒置：infra 实现接口，类型归属 service 契约）。
+// 文件顶部已 re-export，此处不再重复。
 
 export interface SourceMap {
   source: SourceName
@@ -48,7 +51,7 @@ export interface ResolverOptions {
   thirdPartyDir?: string
 }
 
-export class ExtensionResolver {
+export class ExtensionResolver implements IExtensionResolver {
   constructor(private readonly options: ResolverOptions = {}) {}
 
   /**

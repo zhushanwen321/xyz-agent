@@ -16,14 +16,11 @@
  * 4. finishInstall() 复制选中到 extensions/ 目录
  * 5. 清理临时目录
  */
-import { execFileSync } from 'node:child_process'
-import { installPackage, uninstallPackage, installDependencies, NpmInstallError } from '../infra/installers/npm-installer.js'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, readdirSync, statSync, lstatSync, realpathSync, cpSync, rmSync, mkdtempSync } from 'node:fs'
 import { join, resolve, basename } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 import type { ExtensionInfo } from '@xyz-agent/shared'
-import { ExtensionResolver } from '../infra/installers/extension-resolver.js'
-import { getPiAgentDir } from '../infra/pi/pi-config-bridge.js'
+import type { IInstaller, IExtensionResolver } from './ports.js'
 import { isStrictlyUnder, isUnderOrEqual } from '../utils/path-utils.js'
 
 const log = {
@@ -42,11 +39,6 @@ const DISCOVERY_TEMP_PREFIX = 'ext-scan-'
 // eslint-disable-next-line no-magic-numbers
 const ORPHAN_TEMP_MAX_AGE_MS = 24 * 60 * 60 * 1000 // 24 hours
 const ALLOWED_GIT_PREFIXES = ['https://', 'ssh://', 'git@'] as const
-
-/** 获取 xyz-agent 的 agent 配置目录 */
-function getSettingsDir(): string {
-  return getPiAgentDir()
-}
 
 // ── Error classes ─────────────────────────────────────────────────
 
@@ -71,31 +63,34 @@ export class ExtensionInstallError extends Error {
 }
 
 export interface ExtensionServiceOptions {
-  /** Agent 配置目录（默认 ~/.xyz-agent/pi/agent） */
-  settingsDir?: string
+  /** Agent 配置目录（~/.xyz-agent/pi/agent，由 index.ts 经 configStore 注入） */
+  settingsDir: string
   /** 项目根目录（用于 resolver npm 扫描） */
   projectRoot?: string
   /** 是否打包模式 */
   packaged?: boolean
+  /** 安装器 port（npm + git），由 index.ts 注入 */
+  installer: IInstaller
+  /** 扩展解析器 port，由 index.ts 注入 */
+  resolver: IExtensionResolver
 }
 
 export class ExtensionService {
   private readonly settingsDir: string
-  private readonly resolver: ExtensionResolver
+  private readonly installer: IInstaller
+  private readonly resolver: IExtensionResolver
   private readonly projectRoot: string
   private readonly packaged: boolean
 
   /** 文件型 extension 路径（如 xyz-agent-extension.js），打包/开发模式不同 */
   private extensionFilePath: string
 
-  constructor(options?: ExtensionServiceOptions) {
-    this.settingsDir = options?.settingsDir ?? getSettingsDir()
-    this.resolver = new ExtensionResolver({
-      settingsDir: this.settingsDir,
-      thirdPartyDir: join(this.settingsDir, 'extensions'),
-    })
-    this.projectRoot = options?.projectRoot ?? process.cwd()
-    this.packaged = options?.packaged ?? (process.env.XYZ_AGENT_PACKAGED === '1')
+  constructor(options: ExtensionServiceOptions) {
+    this.settingsDir = options.settingsDir
+    this.installer = options.installer
+    this.resolver = options.resolver
+    this.projectRoot = options.projectRoot ?? process.cwd()
+    this.packaged = options.packaged ?? (process.env.XYZ_AGENT_PACKAGED === '1')
 
     // 文件型 extension 路径
     if (this.packaged) {
@@ -234,12 +229,16 @@ export class ExtensionService {
 
     const nodeModulesDir = join(npmDir, 'node_modules')
 
-    // 执行 npm install（纯 Node.js，不依赖 npm CLI）
+    // 执行 npm install（经 IInstaller port，infra 实现）
     try {
-      await installPackage(pkgName, nodeModulesDir, { timeout: NPM_INSTALL_TIMEOUT })
+      await this.installer.installNpm(pkgName, nodeModulesDir, { timeout: NPM_INSTALL_TIMEOUT })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      const code = e instanceof NpmInstallError ? (e.code === 'extract' || e.code === 'integrity' ? 'network' as const : e.code) : this.classifyNpmError(msg)
+      // NpmInstallError 带 code 字段；结构化读取，不 instanceof 具体类（依赖倒置）
+      const errCode = (e as { code?: string }).code
+      const code = errCode === 'extract' || errCode === 'integrity'
+        ? 'network' as const
+        : errCode ?? this.classifyNpmError(msg)
       throw new ExtensionInstallError(
         code,
         `npm install failed: ${msg}`,
@@ -252,7 +251,7 @@ export class ExtensionService {
     if (!existsSync(pkgInstallDir) || !this.resolver.isValidPiExtension(pkgInstallDir)) {
       // 回滚
       try {
-        await uninstallPackage(pkgName, nodeModulesDir)
+        await this.installer.uninstallNpm(pkgName, nodeModulesDir)
       } catch (e) {
         log.warn(`[extension-service] rollback uninstall failed for ${pkgName}: ${e instanceof Error ? e.message : String(e)}`)
       }
@@ -326,11 +325,11 @@ export class ExtensionService {
       }
     }
 
-    // Remove from node_modules (pure Node.js, no npm CLI needed)
+    // Remove from node_modules (经 IInstaller port)
     const nodeModulesDir = join(npmDir, 'node_modules')
     if (existsSync(npmDir)) {
       try {
-        await uninstallPackage(name, nodeModulesDir)
+        await this.installer.uninstallNpm(name, nodeModulesDir)
       } catch (e) {
         log.warn(`[extension-service] npm uninstall warning for ${name}: ${e instanceof Error ? e.message : String(e)}`)
       }
@@ -443,12 +442,9 @@ export class ExtensionService {
       throw new Error(`Invalid Git URL: ${url}. Must start with one of: ${ALLOWED_GIT_PREFIXES.join(', ')}`)
     }
 
-    // Git clone — use execFileSync to prevent command injection
+    // Git clone — 经 IInstaller port（infra spawn git，execFileSync 防 command injection）
     try {
-      execFileSync('git', ['clone', '--depth', '1', url, tempDir], {
-        stdio: 'pipe',
-        timeout: GIT_CLONE_TIMEOUT,
-      })
+      await this.installer.installGit(url, tempDir, GIT_CLONE_TIMEOUT)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       // Cleanup temp dir on failure
@@ -458,10 +454,10 @@ export class ExtensionService {
       throw new Error(`git clone failed: ${msg}`)
     }
 
-    // If package.json exists, install dependencies (pure Node.js, no npm CLI needed)
+    // If package.json exists, install dependencies (经 IInstaller port)
     if (existsSync(join(tempDir, 'package.json'))) {
       try {
-        await installDependencies(tempDir)
+        await this.installer.installDeps(tempDir)
       } catch (e) {
         log.warn(`[extension-service] npm install in git repo failed: ${e instanceof Error ? e.message : String(e)}`)
         // Non-fatal — some repos don't need deps to discover extensions

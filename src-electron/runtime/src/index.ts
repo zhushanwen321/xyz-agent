@@ -10,7 +10,10 @@ const MAX_PERCENT = 100
 import { ProcessManager } from './infra/pi/process-manager.js'
 import { PiConfigStore } from './infra/pi/pi-config-store.js'
 import { ModelApiDiscoverer } from './infra/model-api-discoverer.js'
+import { NpmGitInstaller } from './infra/installers/npm-git-installer.js'
+import { ExtensionResolver } from './infra/installers/extension-resolver.js'
 import { EventAdapter } from './infra/pi/event-adapter.js'
+import { join } from 'node:path'
 import { ExtensionService } from './services/extension-service.js'
 import { PluginRegistry } from './services/plugin-service/plugin-registry.js'
 import { PluginService } from './services/plugin-service/plugin-service.js'
@@ -59,7 +62,17 @@ async function main(): Promise<void> {
   // ── Phase 1: create all service instances (no cross-service deps at construction time) ──
   const configStore = new PiConfigStore()
   const modelSource = new ModelApiDiscoverer()
-  const extensionService = new ExtensionService({ projectRoot: effectiveRoot })
+  const extensionInstaller = new NpmGitInstaller()
+  const extensionResolver = new ExtensionResolver({
+    settingsDir: configStore.getPiAgentDir(),
+    thirdPartyDir: join(configStore.getPiAgentDir(), 'extensions'),
+  })
+  const extensionService = new ExtensionService({
+    settingsDir: configStore.getPiAgentDir(),
+    projectRoot: effectiveRoot,
+    installer: extensionInstaller,
+    resolver: extensionResolver,
+  })
   const treeService = new TreeService(pm)
   const configService = new ConfigService(effectiveRoot, configStore)
   const modelService = new ModelService(modelSource)

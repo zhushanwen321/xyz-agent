@@ -96,6 +96,8 @@ export interface IConfigStore {
 
   // ── 配置目录 ──
   getConfigDir(): string
+  /** pi agent 配置目录（~/.xyz-agent/pi/agent，settings.json/agents/extensions 所在地）。 */
+  getPiAgentDir(): string
 }
 
 // ── R3b: IPiEngine / IPiProcess（已落地）─────────────────────────
@@ -180,7 +182,43 @@ export interface IModelSource {
   discoverFromApi(baseUrl: string, apiKey?: string, providerType?: string): Promise<DiscoveredModelMeta[]>
 }
 
-// ── R3c2 骨架签名（service 侧尚未接入）──────────────────────────
-// 🔨 IInstaller          — 安装器（npm install/uninstall/installDeps + git clone）。
-// 🔨 IExtensionResolver  — 扩展路径发现 + 解析。
-// 与 R3a 同理，空接口会触发 no-empty-object-type，方法确定后再声明。
+// ── R3c2: IInstaller / IExtensionResolver（已落地）──────────────
+
+/** npm/git 安装操作返回的错误（infra 的 NpmInstallError 实现此形状）。 */
+export interface InstallerError {
+  code: 'not_found' | 'network' | 'extract' | 'integrity'
+  message: string
+}
+
+/** ExtensionResolver.resolve 返回的路径集合。 */
+export interface ExtensionPaths {
+  extensionDirs: string[]
+}
+
+/**
+ * 安装器 port —— npm install/uninstall/installDeps + git clone。
+ * 这些都是外部系统调用（npm registry HTTPS、git 子进程），归属 infra。
+ * ExtensionService 经此 port 执行安装/卸载，不直接 spawn git 或调 npm-installer。
+ */
+export interface IInstaller {
+  /** npm install 一个包到指定 node_modules 目录。失败抛 InstallerError 形状的错误。 */
+  installNpm(pkgName: string, nodeModulesDir: string, opts?: { timeout?: number }): Promise<void>
+  /** npm uninstall 一个包。 */
+  uninstallNpm(name: string, nodeModulesDir: string): Promise<void>
+  /** 在指定目录执行 npm install（装 dependencies，用于 git clone 后的仓库）。 */
+  installDeps(dir: string): Promise<void>
+  /** git clone --depth 1 一个仓库到目标目录。失败抛 Error。 */
+  installGit(url: string, destDir: string, timeout?: number): Promise<void>
+}
+
+/**
+ * 扩展解析器 port —— 发现 + 校验。
+ * ExtensionResolver（infra/installers/）实现。ExtensionService 经此 port 做扩展路径解析，
+ * 不直接持有 ExtensionResolver 具体类。
+ */
+export interface IExtensionResolver {
+  /** 按优先级解析所有 extension 路径（bundled/third-party/settings/user/npm 去重）。 */
+  resolve(projectRoot: string, packaged: boolean, userExtPaths: string[]): ExtensionPaths
+  /** 校验目录是否为有效的 pi extension。 */
+  isValidPiExtension(pkgDir: string): boolean
+}

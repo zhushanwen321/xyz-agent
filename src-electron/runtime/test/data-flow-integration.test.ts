@@ -119,6 +119,7 @@ import { EventAdapter } from '../src/infra/pi/event-adapter.js'
 import { SessionService } from '../src/services/session/session-service.js'
 import { ConfigService } from '../src/services/config-service.js'
 import { PiConfigStore } from '../src/infra/pi/pi-config-store.js'
+import { ModelApiDiscoverer } from '../src/infra/model-api-discoverer.js'
 import { ModelService } from '../src/services/model-service.js'
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -207,7 +208,7 @@ async function createWSFixture(extensionService?: object): Promise<WSFixture> {
   server.setServices(
     sessionService,
     new ConfigService('/tmp', new PiConfigStore()),
-    new ModelService(),
+    new ModelService(new ModelApiDiscoverer()),
     {} as never,
     extensionService as never | undefined,
   )
@@ -439,7 +440,7 @@ describe('DF-1: Extension UI 超时路径', () => {
     server.setServices(
       sessionService,
       new ConfigService('/tmp', new PiConfigStore()),
-      new ModelService(),
+      new ModelService(new ModelApiDiscoverer()),
       {} as never,
     )
 
@@ -517,7 +518,7 @@ describe('DF-1: session 删除清理超时', () => {
     server.setServices(
       sessionService,
       new ConfigService('/tmp', new PiConfigStore()),
-      new ModelService(),
+      new ModelService(new ModelApiDiscoverer()),
       {} as never,
     )
 
@@ -689,7 +690,7 @@ describe('DF-4: Extension 列表管理', () => {
     server.setServices(
       sessionService,
       new ConfigService('/tmp', new PiConfigStore()),
-      new ModelService(),
+      new ModelService(new ModelApiDiscoverer()),
       {} as never,
       mockExtensionService as never,
     )
@@ -734,7 +735,7 @@ describe('DF-4: Extension 列表管理', () => {
     const port2 = await getFreePort()
     const server2 = new RuntimeServer(port2, '/tmp/test-project')
     const sessionService2 = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
-    server2.setServices(sessionService2, new ConfigService('/tmp', new PiConfigStore()), new ModelService(), {} as never)
+    server2.setServices(sessionService2, new ConfigService('/tmp', new PiConfigStore()), new ModelService(new ModelApiDiscoverer()), {} as never)
     await server2.start()
     const ws2 = await connectClient(port2)
 
@@ -788,7 +789,7 @@ describe('DF-5: Extension 启用/禁用', () => {
     server.setServices(
       sessionService,
       new ConfigService('/tmp', new PiConfigStore()),
-      new ModelService(),
+      new ModelService(new ModelApiDiscoverer()),
       {} as never,
       mockExtensionService as never,
     )
@@ -829,7 +830,7 @@ describe('DF-5: Extension 启用/禁用', () => {
     const port2 = await getFreePort()
     const server2 = new RuntimeServer(port2, '/tmp/test-project')
     const sessionService2 = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
-    server2.setServices(sessionService2, new ConfigService('/tmp', new PiConfigStore()), new ModelService(), {} as never)
+    server2.setServices(sessionService2, new ConfigService('/tmp', new PiConfigStore()), new ModelService(new ModelApiDiscoverer()), {} as never)
     await server2.start()
     const ws2 = await connectClient(port2)
 
