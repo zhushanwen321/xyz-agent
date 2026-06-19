@@ -1,6 +1,6 @@
 import type { ServerMessage, ServerMessageType } from '@xyz-agent/shared'
 import { EXTENSION_EVENTS } from '@xyz-agent/shared'
-import type { PiEventListener } from './rpc-client.js'
+import type { PiEventListener } from '../../services/ports.js'
 
 export type WsSender = (msg: ServerMessage) => void
 

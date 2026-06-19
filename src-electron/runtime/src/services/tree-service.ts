@@ -7,10 +7,15 @@
  */
 
 import type { IProcessManager, IRpcClient } from '../interfaces.js'
-import type { PiMessage } from '../infra/pi/rpc-client.js'
 import type { TreeData, NavigateResult, ForkResult } from '../types.js'
 import { buildTreeFromFile, countBranches, extractFullText } from '../infra/pi/session-tree-reader.js'
 import { NavigateInterceptor } from '../infra/pi/navigate-interceptor.js'
+
+/** pi get_state 响应结构（动态 JSON，逃生断言）。 */
+interface PiStateResponse {
+  data?: Record<string, unknown>
+  payload?: Record<string, unknown>
+}
 
 interface TreeManagedSession {
   interceptor: NavigateInterceptor
@@ -60,7 +65,7 @@ export class TreeService {
     const client = this.pm.getClient(sessionId)
     if (!client) throw new Error(`Session ${sessionId} not found`)
 
-    const stateResp = await client.sendCommand('get_state') as PiMessage
+    const stateResp = await client.sendCommand('get_state') as PiStateResponse
     const stateData = stateResp.data ?? stateResp.payload
     let leafId = (stateData?.leafId as string | null) ?? null
     const sessionFile = stateData?.sessionFile as string | undefined
@@ -150,7 +155,7 @@ export class TreeService {
 
   /** Get session file path from pi's get_state. */
   private async getSessionFile(client: IRpcClient): Promise<string | undefined> {
-    const stateResp = await client.sendCommand('get_state') as PiMessage
+    const stateResp = await client.sendCommand('get_state') as PiStateResponse
     const stateData = stateResp.data ?? stateResp.payload
     return stateData?.sessionFile as string | undefined
   }
@@ -161,10 +166,10 @@ export class TreeService {
     if (!client) throw new Error(`Session ${sessionId} not found`)
 
     try {
-      await client.sendCommand('clone') as PiMessage
+      await client.sendCommand('clone')
       // sendCommand already rejects on success===false, so resolve means success
 
-      const stateResp = await client.sendCommand('get_state') as PiMessage
+      const stateResp = await client.sendCommand('get_state') as PiStateResponse
       const stateData = stateResp.data ?? stateResp.payload
       const newSessionId = stateData?.sessionId as string | undefined
 
@@ -186,10 +191,10 @@ export class TreeService {
     if (!client) throw new Error(`Session ${sessionId} not found`)
 
     try {
-      await client.sendCommand('fork', { entryId }) as PiMessage
+      await client.sendCommand('fork', { entryId })
       // sendCommand already rejects on success===false, so resolve means success
 
-      const stateResp = await client.sendCommand('get_state') as PiMessage
+      const stateResp = await client.sendCommand('get_state') as PiStateResponse
       const stateData = stateResp.data ?? stateResp.payload
       const newSessionId = stateData?.sessionId as string | undefined
 

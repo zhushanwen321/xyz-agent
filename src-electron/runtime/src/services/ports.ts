@@ -98,18 +98,67 @@ export interface IConfigStore {
   getConfigDir(): string
 }
 
-// ── 以下接口为 R3b/R3c 骨架签名（service 侧尚未接入）──────────────
-// 空接口会触发 @typescript-eslint/no-empty-object-type，故 R3b/R3c 的接口在
-// 方法签名确定后再声明。各 port 的职责与覆盖范围记录于此，供后续阶段实现：
-//
-// 🔨 R3b: IPiEngine   — pi 引擎交互（每 session 一个实例）。
-//                       service 经此发 prompt/abort/steer，不再直接持有 rpc-client。
-//                       方法：prompt/abort/steer/followUp/compact/setModel/getHistory/getCommands。
-// 🔨 R3b: IPiProcess  — pi 进程池（session↔pi 绑定）。
-//                       方法：createSession/destroySession/getClient/hasClient/onExit。
-// 🔨 R3b: IPiEvents   — pi 事件流（翻译后内部事件 PiTranslatedEvent，非 PiEvent）。
-//                       方法：onEvent(listener) → 返回 unsubscribe。
-// 🔨 R3c: IModelSource — 模型发现（HTTP 探测 + 聚合）。
-//                       方法：aggregateModels/discoverFromApi。
-// 🔨 R3c: IInstaller   — 安装器（npm/git）。
-//                       方法：installNpm/installGit。
+// ── R3b: IPiEngine / IPiProcess（已落地）─────────────────────────
+
+/**
+ * pi 任意 JSON 响应的逃生类型。
+ *
+ * pi 的 sendCommand 响应结构是动态的（get_state/fork/getHistory 各不相同），
+ * 无法用单一精确类型描述。services 用 `as PiMessage` 后再 `as` 具体结构——
+ * 这是「类型系统对 pi 动态响应认输」的诚实标注，不是协议泄露。
+ *
+ * 定义在 ports 而非 infra/rpc-client，让 services 从 ports 引用，不碰 rpc-client。
+ */
+export type PiMessage = unknown
+
+/** pi 事件监听器：接收原始 pi 事件（动态 JSON），由 EventAdapter 翻译成 ServerMessage。 */
+export type PiEventListener = (event: PiMessage) => void
+
+/** pi 扩展命令描述（getCommands 返回项）。 */
+export interface PiCommandInfo {
+  name: string
+  description?: string
+  source: string
+}
+
+/** pi 进程退出回调。 */
+export type PiExitCallback = (sessionId: string, code: number | null) => void
+
+/**
+ * pi 引擎 port —— 每个 session 对应一个实例（RpcClient 实现）。
+ * services 经此与 pi 交互，不直接持有 RpcClient 具体类。
+ *
+ * sendCommand 是逃生方法：返回 PiMessage(unknown)，调用方自行 as 具体结构。
+ * 这是刻意的——pi 的命令响应结构动态，精确化收益低且要跟 pi 改。
+ */
+export interface IPiEngine {
+  prompt(content: string): Promise<PiMessage>
+  abort(): Promise<PiMessage>
+  steer(content: string): Promise<PiMessage>
+  followUp(content: string): Promise<PiMessage>
+  setModel(provider: string, modelId: string): Promise<PiMessage>
+  setThinkingLevel(level: string): Promise<PiMessage>
+  getHistory(): Promise<PiMessage>
+  getCommands(): Promise<PiCommandInfo[]>
+  /** 逃生方法：发送任意 pi 命令，返回动态响应。调用方自行 as 具体结构。 */
+  sendCommand(type: string, params?: Record<string, unknown>, timeout?: number): Promise<PiMessage>
+  /** 订阅 pi 事件流。返回 unsubscribe。事件由 EventAdapter 翻译，service 一般不直接处理。 */
+  onEvent(listener: PiEventListener): () => void
+}
+
+/**
+ * pi 进程池 port —— session↔pi 绑定（ProcessManager 实现）。
+ * services 经此管理 session 的 pi 进程，getClient 返回 IPiEngine 而非 RpcClient。
+ */
+export interface IPiProcess {
+  createSession(sessionId: string, cwd: string, options?: unknown): Promise<IPiEngine>
+  destroySession(sessionId: string): Promise<void>
+  getClient(sessionId: string): IPiEngine | undefined
+  hasClient(sessionId: string): boolean
+  onSessionExit(callback: PiExitCallback): () => void
+}
+
+// ── R3c 骨架签名（service 侧尚未接入）──────────────────────────
+// 🔨 IModelSource — 模型发现（HTTP 探测 + 聚合）。方法：aggregateModels/discoverFromApi。
+// 🔨 IInstaller   — 安装器（npm/git）。方法：installNpm/installGit。
+// 与 R3a 同理，空接口会触发 no-empty-object-type，方法确定后再声明。

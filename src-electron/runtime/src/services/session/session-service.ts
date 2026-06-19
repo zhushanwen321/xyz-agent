@@ -17,7 +17,6 @@ import type {
   ISessionService, ISessionServiceInternal, IProcessManager, IMessageBroker,
   IEventAdapter, IRpcClient, IExtensionService,
 } from '../../interfaces.js'
-import type { PiMessage } from '../../infra/pi/rpc-client.js'
 import { convertPiHistory } from '../../infra/pi/message-converter.js'
 import type { PiHistoryMessage } from '../../infra/pi/pi-protocol.js'
 import { getDefaultModel, scanPiSessions, getSkillPaths as getPiSkillPaths } from '../../infra/pi/pi-config-bridge.js'
@@ -148,9 +147,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     const client = this.pm.getClient(sessionId)
     if (client) {
       try {
-        const result = await client.getHistory() as PiMessage
-        const data = result.data as { messages?: PiHistoryMessage[] } | undefined
-        const raw = data?.messages ?? (result.payload?.messages as PiHistoryMessage[] | undefined) ?? []
+        const result = await client.getHistory() as { data?: { messages?: PiHistoryMessage[] }; payload?: { messages?: PiHistoryMessage[] } }
+        const data = result.data
+        const raw = data?.messages ?? (result.payload?.messages) ?? []
         if (raw.length > 0) return convertPiHistory(raw)
         // RPC 返回空时,仅闲置 session fallback 到磁盘(生成中磁盘可能未持久化最新消息)
         const session = this.sessions.get(sessionId)
@@ -270,11 +269,13 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   /** Attach agent_end listener:track token usage + isGenerating。 */
   private attachUsageListener(id: string, client: IRpcClient): () => void {
     return client.onEvent((event) => {
-      if (event.type === 'agent_end') {
+      const e = event as Record<string, unknown>
+      if (e.type === 'agent_end') {
         const s = this.sessions.get(id)
         if (!s) return
         s.isGenerating = false
-        const usage = event.payload?.usage as
+        const payload = e.payload as Record<string, unknown> | undefined
+        const usage = payload?.usage as
           { outputTokens?: number; inputTokens?: number; totalTokens?: number } | undefined
         if (usage) s.tokenCount = (usage.totalTokens ?? usage.outputTokens ?? 0) as number
       }

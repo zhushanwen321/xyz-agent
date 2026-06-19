@@ -3,6 +3,7 @@ import { createInterface } from 'node:readline'
 import { getSessionsDir, getPiAgentDir } from './pi-paths.js'
 import { getDefaultModel } from './pi-provider-store.js'
 import { ENV_WHITELIST_PREFIXES } from '@xyz-agent/shared'
+import type { IPiEngine } from '../../services/ports.js'
 
 /** 子进程允许继承的环境变量前缀白名单 — uses shared list */
 const ENV_WHITELIST = ENV_WHITELIST_PREFIXES
@@ -57,7 +58,7 @@ const STARTUP_DELAY_MS = 100
 const STDERR_BUFFER_MAX_LINES = 50
 const STDERR_TAIL_LINES = 10
 
-export class RpcClient {
+export class RpcClient implements IPiEngine {
   private proc: ChildProcess | null = null
   private pending = new Map<string, {
     resolve: (msg: PiMessage) => void
