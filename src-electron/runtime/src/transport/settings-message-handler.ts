@@ -5,6 +5,7 @@
 import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
 import type { IConfigService, ISessionService, IModelService } from '../interfaces.js'
+import { toErrorMessage } from '../utils/errors.js'
 
 /** Interface for server methods needed by this handler */
 export interface SettingsHandlerContext {
@@ -128,7 +129,7 @@ export class SettingsMessageHandler {
     this.ctx.modelService.discoverModelsFromApi(baseUrl, resolvedApiKey, providerType)
       .then((models) => { this.ctx.send(ws, { type: 'config.discoveredModels', id: msg.id, payload: { models, success: true } }) })
       .catch((e: unknown) => {
-        const raw = e instanceof Error ? e.message : String(e)
+        const raw = toErrorMessage(e)
         const message = raw.includes('ByteString') ? '请求失败：Base URL 或 API Key 包含 HTTP 不支持的字符'
           : raw.includes('fetch failed') ? `连接失败：无法访问 ${baseUrl}/v1/models` : raw
         this.ctx.send(ws, { type: 'config.discoveredModels', id: msg.id, payload: { models: [], success: false, error: message } })

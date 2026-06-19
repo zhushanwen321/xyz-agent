@@ -14,6 +14,7 @@
 import type { IMessageBroker, ISessionServiceInternal } from '../../interfaces.js'
 import type { IPiEngine, IProcessManager } from '../ports/pi-engine.js'
 import type { SendMessageHook } from './types.js'
+import { toErrorMessage } from '../../utils/errors.js'
 
 export class MessageDispatcher {
   private sendMessageHook: SendMessageHook | null = null
@@ -61,7 +62,7 @@ export class MessageDispatcher {
     try {
       client = await this.svc.ensureActive(sessionId)
     } catch (e) {
-      const errMsg = `Failed to restore session: ${e instanceof Error ? e.message : String(e)}`
+      const errMsg = `Failed to restore session: ${toErrorMessage(e)}`
       console.error(`[message-dispatcher] ${errMsg}`)
       // 不在这里广播 message.error,让 server.ts 的外层 catch 统一发送 handler_error
       throw e
@@ -78,7 +79,7 @@ export class MessageDispatcher {
     try {
       await client.prompt(promptText)
     } catch (e) {
-      const errMsg = e instanceof Error ? e.message : String(e)
+      const errMsg = toErrorMessage(e)
       console.error(`[message-dispatcher] prompt failed: sessionId=${sessionId}`, errMsg)
       if (activeSession) activeSession.isGenerating = false
       this.broker.broadcast({ type: 'message.error', payload: { sessionId, message: errMsg } })
@@ -108,7 +109,7 @@ export class MessageDispatcher {
       console.error('[message-dispatcher] sendMessage hook error:', e)
       this.broker.broadcast({
         type: 'message.error',
-        payload: { sessionId, message: 'Plugin hook error: ' + (e instanceof Error ? e.message : String(e)) },
+        payload: { sessionId, message: 'Plugin hook error: ' + (toErrorMessage(e)) },
       })
       return { blocked: true }
     }
@@ -149,7 +150,7 @@ export class MessageDispatcher {
       await client.compact()
       console.log('[message-dispatcher] compact: complete, sessionId=' + sessionId + ', elapsed=' + (Date.now() - startTime) + 'ms')
     } catch (e) {
-      const errMsg = e instanceof Error ? e.message : String(e)
+      const errMsg = toErrorMessage(e)
       console.error('[message-dispatcher] compact: failed, sessionId=' + sessionId + ', error=' + errMsg + ', elapsed=' + (Date.now() - startTime) + 'ms')
       this.broker.broadcast({
         type: 'session.compacted',

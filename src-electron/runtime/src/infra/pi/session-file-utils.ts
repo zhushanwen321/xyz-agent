@@ -5,7 +5,8 @@
  * 从 pi-config-bridge.ts 提取以控制文件行数。
  */
 
-import { existsSync, readFileSync, statSync, mkdirSync, openSync, writeSync, closeSync, writeFileSync, renameSync } from 'node:fs'
+import { existsSync, readFileSync, statSync, mkdirSync, openSync, writeSync, closeSync } from 'node:fs'
+import { atomicWrite } from '../../utils/fs-utils.js'
 import { dirname } from 'node:path'
 
 // ── 类型定义 ─────────────────────────────────────────────────
@@ -173,9 +174,7 @@ export function patchSessionCwd(filePath: string, newCwd: string): boolean {
     lines[0] = JSON.stringify(header)
     // 原子写入：tmpfile + rename，防止与 pi 的 _persist() 并发写导致数据丢失。
     // 使用唯一 tmp 后缀防止并发 restoreSession 对同一文件的 TOCTOU 风险。
-    const tmpPath = `${filePath}.patch-tmp-${Date.now()}`
-    writeFileSync(tmpPath, lines.join('\n'), 'utf-8')
-    renameSync(tmpPath, filePath)
+    atomicWrite(filePath, lines.join('\n'), `patch-${Date.now()}`)
     console.log(`[session-file-utils] patched session cwd: ${filePath} -> ${newCwd}`)
     return true
   } catch (e) {

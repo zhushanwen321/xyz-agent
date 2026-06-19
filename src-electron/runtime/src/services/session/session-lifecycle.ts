@@ -18,6 +18,7 @@ import type { IProcessManager, ISessionServiceInternal } from '../../interfaces.
 import { readPiState } from '../ports/pi-engine.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore } from '../ports/session.js'
+import { toErrorMessage } from '../../utils/errors.js'
 
 export class SessionLifecycle {
   constructor(
@@ -60,7 +61,7 @@ export class SessionLifecycle {
       sessionFilePath = stateData?.sessionFile as string | undefined
     } catch (e) {
       await this.safeDestroy(tempId)
-      throw new Error(`Failed to get session state from pi: ${e instanceof Error ? e.message : e}`)
+      throw new Error(`Failed to get session state from pi: ${toErrorMessage(e)}`)
     }
 
     if (!piSessionId) {

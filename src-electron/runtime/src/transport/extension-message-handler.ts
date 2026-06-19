@@ -7,6 +7,7 @@ import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
 import type { ISessionService, IExtensionService } from '../interfaces.js'
 import type { ExtensionTimeoutManager } from '../services/extension-timeout-manager.js'
 import { ExtensionInstallError } from '../services/extension-service.js'
+import { toErrorMessage } from '../utils/errors.js'
 
 /** Interface for server methods needed by this handler */
 export interface ExtensionHandlerContext {
@@ -55,7 +56,7 @@ export class ExtensionMessageHandler {
           const extensions = await this.ctx.extensionService.scanExtensions()
           return this.ctx.send(ws, { type: 'config.extensions', id: msg.id, payload: { extensions } })
         } catch (e) {
-          return this.ctx.sendError(ws, 'toggle_failed', e instanceof Error ? e.message : String(e), msg.id)
+          return this.ctx.sendError(ws, 'toggle_failed', toErrorMessage(e), msg.id)
         }
       }
       case 'extension.install': {
@@ -81,7 +82,7 @@ export class ExtensionMessageHandler {
         try {
           await this.ctx.extensionService.uninstallExtension(msg.payload.name)
         } catch (e) {
-          const errMsg = e instanceof Error ? e.message : String(e)
+          const errMsg = toErrorMessage(e)
           return this.ctx.sendError(ws, 'uninstall_failed', errMsg, msg.id)
         }
         const uninstalled = await this.ctx.extensionService.scanExtensions()
@@ -160,6 +161,6 @@ export class ExtensionMessageHandler {
     if (e instanceof ExtensionInstallError) {
       return { code: e.code, message: e.message, hint: e.hint }
     }
-    return { code: 'install_failed', message: e instanceof Error ? e.message : String(e) }
+    return { code: 'install_failed', message: toErrorMessage(e) }
   }
 }

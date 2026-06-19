@@ -10,6 +10,7 @@ import type { IProcessManager, IPiEngine } from './ports/pi-engine.js'
 import { readPiState } from './ports/pi-engine.js'
 import type { TreeData, NavigateResult, ForkResult } from '../types.js'
 import type { ITreeReader, INavigateInterceptor } from './ports/tree.js'
+import { toErrorMessage } from '../utils/errors.js'
 
 interface TreeManagedSession {
   interceptor: INavigateInterceptor
@@ -67,7 +68,7 @@ export class TreeService {
     const sessionFile = stateData?.sessionFile as string | undefined
 
     if (!sessionFile) {
-      return { sessionId, tree: [], leafId, branchCount: 0, navigateCapable: this.navigateCapableMap.get(sessionId) ?? false }
+      return { sessionId, tree: [], leafId, branchCount: 0, navigateCapable: this.isNavigateCapable(sessionId) }
     }
 
     const { rootNodes, lastEntryId } = await this.treeReader.buildTreeFromFile(sessionFile)
@@ -83,7 +84,7 @@ export class TreeService {
       tree: rootNodes,
       leafId,
       branchCount,
-      navigateCapable: this.navigateCapableMap.get(sessionId) ?? false,
+      navigateCapable: this.isNavigateCapable(sessionId),
     }
   }
 
@@ -92,7 +93,7 @@ export class TreeService {
     const client = this.pm.getClient(sessionId)
     if (!client) throw new Error(`Session ${sessionId} not found`)
 
-    if (!this.navigateCapableMap.get(sessionId)) {
+    if (!this.isNavigateCapable(sessionId)) {
       return { success: false, error: 'Navigate extension not available' }
     }
 
@@ -136,7 +137,7 @@ export class TreeService {
       ])
     } catch (e) {
       managed?.interceptor.clearResolver()
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = toErrorMessage(e)
       const isTimeout = msg.includes('timeout')
       return { success: false, error: isTimeout ? 'Navigate timeout' : msg }
     }
@@ -157,49 +158,41 @@ export class TreeService {
 
   /** Clone the current session (snapshot at current leaf). */
   async cloneSession(sessionId: string): Promise<ForkResult> {
-    const client = this.pm.getClient(sessionId)
-    if (!client) throw new Error(`Session ${sessionId} not found`)
-
-    try {
-      await client.sendCommand('clone')
-      // sendCommand already rejects on success===false, so resolve means success
-
-      const stateData = await readPiState(client)
-      const newSessionId = stateData?.sessionId as string | undefined
-
-      if (!newSessionId) {
-        return { success: false, error: 'Clone succeeded but could not get new session ID' }
-      }
-
-      const sessionFile = stateData?.sessionFile as string | undefined
-
-      return { success: true, newSessionId, sessionFile }
-    } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : String(e) }
-    }
+    return this.forkOrClone(sessionId, 'clone', {}, 'Clone')
   }
 
   /** Fork a new session from a specific entry. */
   async forkFromEntry(sessionId: string, entryId: string): Promise<ForkResult> {
+    return this.forkOrClone(sessionId, 'fork', { entryId }, 'Fork')
+  }
+
+  /**
+   * clone / fork 共享实现（D9）：发命令 → 读 state → 提取 newSessionId/sessionFile。
+   * 两个公开方法仅命令名/参数/错误标签不同，逻辑完全一致。
+   * sendCommand 在 success===false 时已 reject，所以走到 readPiState 即代表命令成功。
+   */
+  private async forkOrClone(
+    sessionId: string,
+    command: 'clone' | 'fork',
+    params: Record<string, unknown>,
+    label: string,
+  ): Promise<ForkResult> {
     const client = this.pm.getClient(sessionId)
     if (!client) throw new Error(`Session ${sessionId} not found`)
 
     try {
-      await client.sendCommand('fork', { entryId })
-      // sendCommand already rejects on success===false, so resolve means success
-
+      await client.sendCommand(command, params)
       const stateData = await readPiState(client)
       const newSessionId = stateData?.sessionId as string | undefined
 
       if (!newSessionId) {
-        return { success: false, error: 'Fork succeeded but could not get new session ID' }
+        return { success: false, error: `${label} succeeded but could not get new session ID` }
       }
 
       const sessionFile = stateData?.sessionFile as string | undefined
-
       return { success: true, newSessionId, sessionFile }
     } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : String(e) }
+      return { success: false, error: toErrorMessage(e) }
     }
   }
 }

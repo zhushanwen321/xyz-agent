@@ -32,6 +32,7 @@ import { createSessionDataApi } from './api/session-data-api.js'
 import { createUiApi } from './api/ui-api.js'
 import { createAgentApi } from './api/agent-api.js'
 import { createWorkspaceApi } from './api/workspace-api.js'
+import { toErrorMessage } from '../../utils/errors.js'
 
 const rpcClient = new PluginRpcClient()
 const loadedModules = new Map<string, PluginModule>()
@@ -148,7 +149,7 @@ async function handleIncomingRequest(request: RpcRequest): Promise<void> {
       })
       postRpcResponse(request.id, result, undefined)
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = toErrorMessage(e)
       postRpcResponse(request.id, undefined, {
         code: PluginRpcErrorCodes.INTERNAL_ERROR,
         message: `Tool execution error: ${msg}`,

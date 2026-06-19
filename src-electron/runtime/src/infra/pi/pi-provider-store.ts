@@ -10,6 +10,8 @@
 import { existsSync, readFileSync, readdirSync, mkdirSync, renameSync, rmdirSync, cpSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { atomicWrite } from '../../utils/fs-utils.js'
+import { toErrorMessage, isEnoent } from '../../utils/errors.js'
+import { isPackaged } from '../../utils/runtime-env.js'
 import { getConfigDir, getModelsPath, getSettingsPath, getPiAgentDir, getSessionsDir, getAgentsDir } from './pi-paths.js'
 // settings.json 的唯一读写层（D17 收口）：readSettings/writeSettings/PiSettings/缓存/原子写
 // 都收敛到 pi-settings-store，model 域（本文件）与 extension 域共享同一所有者 + 缓存。
@@ -80,8 +82,7 @@ function readJsonFile<T>(filePath: string, fallback: T): T {
     const raw = readFileSync(filePath, 'utf-8')
     return JSON.parse(raw) as T
   } catch (err: unknown) {
-    const code = (err as NodeJS.ErrnoException).code
-    if (code !== 'ENOENT') {
+    if (!isEnoent(err)) {
       console.warn(`[provider-store] 读取 ${filePath} 失败:`, err)
     }
     return fallback
@@ -123,6 +124,23 @@ export function getProviderConfig(providerId: string): PiProviderConfig | undefi
 }
 
 /**
+ * 扫描 providers，返回第一个含 model 的 provider 及其第一个 model id（D10）。
+ *
+ * upsertProvider / removeProvider 在 default 失效时各内联了一遍同样的「找第一个有
+ * models 的 provider」循环。返回 undefined 表示无可用 provider。
+ */
+function pickFirstModelProvider(
+  providers: Record<string, PiProviderConfig>,
+): { provider: string; modelId: string } | undefined {
+  for (const [pid, pcfg] of Object.entries(providers)) {
+    if (pcfg.models && pcfg.models.length > 0) {
+      return { provider: pid, modelId: pcfg.models[0].id }
+    }
+  }
+  return undefined
+}
+
+/**
  * 更新 provider 配置并同步校验 defaultModel。
  * 全程同步（无 await），避免竞态窗口。
  */
@@ -141,13 +159,11 @@ export function upsertProvider(providerId: string, config: PiProviderConfig): {
   if (newModelList.length === 0) {
     delete settings.defaultProvider
     delete settings.defaultModel
-    // Try finding a valid default from other providers (inline findValidDefaultModel logic)
-    for (const [pid, pcfg] of Object.entries(models.providers)) {
-      if (pcfg.models && pcfg.models.length > 0) {
-        settings.defaultProvider = pid
-        settings.defaultModel = pcfg.models[0].id
-        break
-      }
+    // Try finding a valid default from other providers
+    const fallback = pickFirstModelProvider(models.providers)
+    if (fallback) {
+      settings.defaultProvider = fallback.provider
+      settings.defaultModel = fallback.modelId
     }
     writeSettings(settings)
     return settings.defaultProvider
@@ -181,13 +197,11 @@ export function removeProvider(providerId: string): {
   if (settings.defaultProvider === providerId) {
     delete settings.defaultProvider
     delete settings.defaultModel
-    // Inline findValidDefaultModel: scan remaining providers for a fallback
-    for (const [pid, pcfg] of Object.entries(models.providers)) {
-      if (pcfg.models && pcfg.models.length > 0) {
-        settings.defaultProvider = pid
-        settings.defaultModel = pcfg.models[0].id
-        break
-      }
+    // Scan remaining providers for a fallback default
+    const fallback = pickFirstModelProvider(models.providers)
+    if (fallback) {
+      settings.defaultProvider = fallback.provider
+      settings.defaultModel = fallback.modelId
     }
     writeSettings(settings)
     return settings.defaultProvider
@@ -362,12 +376,12 @@ function migrateDirContents(oldDir: string, newDir: string, label: string): void
         if (remaining.length === 0) rmdirSync(oldDir)
       // eslint-disable-next-line taste/no-silent-catch -- migration cleanup: error logged, non-critical
       } catch (e) {
-        console.warn(`[provider-store] failed to remove old ${label} dir:`, e instanceof Error ? e.message : e)
+        console.warn(`[provider-store] failed to remove old ${label} dir:`, toErrorMessage(e))
       }
     }
   // eslint-disable-next-line taste/no-silent-catch -- migration: error logged, non-critical
   } catch (e) {
-    console.warn(`[provider-store] failed to migrate ${label} dir:`, e instanceof Error ? e.message : e)
+    console.warn(`[provider-store] failed to migrate ${label} dir:`, toErrorMessage(e))
   }
 }
 
@@ -407,7 +421,7 @@ export function migrateToPiSubdir(): void {
   migrateDirContents(oldAgentsDir, agentsDir, 'agent files → pi/agent/agents/')
 
   // 打包模式：从 bundled 资源同步
-  if (process.env.XYZ_AGENT_PACKAGED === '1') {
+  if (isPackaged()) {
     const bundledAgentDir = join(process.cwd(), 'pi', 'agent')
     for (const subDir of ['extensions', 'skills'] as const) {
       const src = join(bundledAgentDir, subDir)

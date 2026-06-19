@@ -4,6 +4,7 @@
  */
 import type { IPiEngine } from '../services/ports/pi-engine.js'
 import type { IPluginService } from '../interfaces.js'
+import { toErrorMessage } from '../utils/errors.js'
 
 export class BridgeHandler {
   constructor(private readonly pluginService: IPluginService | null) {}
@@ -80,7 +81,7 @@ export class BridgeHandler {
         await client.sendCommand('extension_ui_response', { id: requestId, response: { error: String(e) } })
         // eslint-disable-next-line taste/no-silent-catch
       } catch (sendErr) {
-        console.error(`[bridge-handler] failed to send error response to pi: ${sendErr instanceof Error ? sendErr.message : String(sendErr)}`)
+        console.error(`[bridge-handler] failed to send error response to pi: ${toErrorMessage(sendErr)}`)
         // Cannot propagate further — both pi and frontend channels exhausted
       }
     }

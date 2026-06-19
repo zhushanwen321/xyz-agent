@@ -23,6 +23,7 @@
 import { existsSync, readFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { atomicWrite } from '../../utils/fs-utils.js'
+import { isEnoent } from '../../utils/errors.js'
 import { getSettingsPath } from './pi-paths.js'
 
 /**
@@ -94,8 +95,7 @@ function readSettingsFromDisk(): PiSettings {
     const raw = readFileSync(settingsFilePath, 'utf-8')
     return JSON.parse(raw) as PiSettings
   } catch (err: unknown) {
-    const code = (err as NodeJS.ErrnoException).code
-    if (code !== 'ENOENT') {
+    if (!isEnoent(err)) {
       console.warn(`[pi-settings-store] 读取 ${settingsFilePath} 失败:`, err)
     }
     return {}

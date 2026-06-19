@@ -15,6 +15,7 @@ import { createGunzip } from 'node:zlib'
 import crypto from 'node:crypto'
 import semver from 'semver'
 import { extract as tarExtract } from 'tar'
+import { toErrorMessage } from '../../utils/errors.js'
 
 // ── 常量 ──────────────────────────────────────────────────────
 
@@ -267,6 +268,35 @@ function verifyIntegrity(
 
 // ── Tarball 下载 + 解压 ──────────────────────────────────────
 
+/**
+ * gunzip + tar 解压到 tmpDir（D26）。
+ *
+ * `feedGunzip` 由调用方提供，决定如何把数据喂给 gunzip：
+ * - integrity 路径：先 buffer 化并校验，再 `gunzip.write(buffer); gunzip.end()`
+ * - 流式路径：`final.pipe(gunzip)`
+ *
+ * 错误处理（gunzip/extract 失败 → NpmInstallError('extract')）与 finish 解析对所有
+ * 调用方一致，原本在 downloadAndExtract 内重复两遍。
+ */
+function extractTarStream(
+  tmpDir: string,
+  feedGunzip: (gunzip: NodeJS.WritableStream) => void,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const gunzip = createGunzip()
+    const extract = tarExtract({ cwd: tmpDir, strip: 1 })
+    gunzip.on('error', (err) => {
+      reject(new NpmInstallError('extract', `Gunzip failed: ${err.message}`))
+    })
+    extract.on('error', (err) => {
+      reject(new NpmInstallError('extract', `Tar extract failed: ${err.message}`))
+    })
+    extract.on('finish', resolve)
+    feedGunzip(gunzip)
+    gunzip.pipe(extract as unknown as NodeJS.WritableStream)
+  })
+}
+
 async function downloadAndExtract(
   tarballUrl: string,
   targetDir: string,
@@ -307,34 +337,15 @@ async function downloadAndExtract(
       })
       verifyIntegrity(buffer, dist, packageName)
 
-      // 校验通过，解压到 tmp 目录
-      await new Promise<void>((resolve, reject) => {
-        const gunzip = createGunzip()
-        const extract = tarExtract({ cwd: tmpDir, strip: 1 })
-        gunzip.on('error', (err) => {
-          reject(new NpmInstallError('extract', `Gunzip failed: ${err.message}`))
-        })
-        extract.on('error', (err) => {
-          reject(new NpmInstallError('extract', `Tar extract failed: ${err.message}`))
-        })
-        extract.on('finish', resolve)
+      // 校验通过，解压到 tmp 目录（feed buffer 给 gunzip）
+      await extractTarStream(tmpDir, (gunzip) => {
         gunzip.write(buffer)
         gunzip.end()
-        gunzip.pipe(extract as unknown as NodeJS.WritableStream)
       })
     } else {
-      // 无 integrity 信息，直接流式解压
-      await new Promise<void>((resolve, reject) => {
-        const gunzip = createGunzip()
-        const extract = tarExtract({ cwd: tmpDir, strip: 1 })
-        gunzip.on('error', (err) => {
-          reject(new NpmInstallError('extract', `Gunzip failed: ${err.message}`))
-        })
-        extract.on('error', (err) => {
-          reject(new NpmInstallError('extract', `Tar extract failed: ${err.message}`))
-        })
-        extract.on('finish', resolve)
-        final.pipe(gunzip).pipe(extract as unknown as NodeJS.WritableStream)
+      // 无 integrity 信息，直接流式解压（pipe 下载流给 gunzip）
+      await extractTarStream(tmpDir, (gunzip) => {
+        final.pipe(gunzip)
       })
     }
 
@@ -394,7 +405,7 @@ async function installPackageRecursive(
       // 传递依赖安装失败不阻塞主包。仅记录错误继续安装其他依赖。
       console.warn(
         `[npm-installer] Failed to install dependency ${depName}@${depRange}:`,
-        e instanceof Error ? e.message : String(e),
+        toErrorMessage(e),
       )
     }
   }
@@ -453,7 +464,7 @@ export async function installDependencies(
       // 传递依赖安装失败不阻塞主包。仅记录错误继续安装其他依赖。
       console.warn(
         `[npm-installer] Failed to install dependency ${depName}:`,
-        e instanceof Error ? e.message : String(e),
+        toErrorMessage(e),
       )
     }
   }

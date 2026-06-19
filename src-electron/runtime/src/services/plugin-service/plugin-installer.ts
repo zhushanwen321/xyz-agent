@@ -3,6 +3,7 @@ import { mkdir, readdir, readFile, rm, rename } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { promisify } from 'node:util'
+import { toErrorMessage } from '../../utils/errors.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -72,7 +73,7 @@ export class PluginInstaller {
 
       return { success: true, pluginId: pluginName, path: targetDir }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
+      const message = toErrorMessage(err)
       return { success: false, error: message }
     } finally {
       await rm(tmpDir, { recursive: true, force: true }).catch(() => {})

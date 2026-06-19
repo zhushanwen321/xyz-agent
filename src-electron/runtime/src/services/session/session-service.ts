@@ -10,7 +10,6 @@
  *
  * onSessionExit 回调留构造函数:协调 lifecycle/scanner/broker 多方,不归属任一子模块。
  */
-import { resolve } from 'node:path'
 import { existsSync } from 'node:fs'
 import type { SessionSummary, SessionGroup, SessionStatus, Message } from '@xyz-agent/shared'
 import type {
@@ -28,6 +27,8 @@ import type { IManagedSessionView, ScannedSession, SendMessageHook } from './typ
 import { SessionLifecycle } from './session-lifecycle.js'
 import { MessageDispatcher } from './message-dispatcher.js'
 import { SessionScanner } from './session-scanner.js'
+import { toErrorMessage } from '../../utils/errors.js'
+import { isPackaged, getExtensionFilePath } from '../../utils/runtime-env.js'
 
 /** Facade 内部完整 session:子模块可见视图 + 运行时句柄(adapter/interceptor/listener)。 */
 interface ManagedSession extends IManagedSessionView {
@@ -56,9 +57,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     private readonly navigateFactory: INavigateInterceptorFactory,
   ) {
     // 打包模式:extension 在 Resources 根;开发模式:在 repo root(src-electron/ 父目录)
-    this.extensionPath = process.env.XYZ_AGENT_PACKAGED === '1'
-      ? resolve(process.cwd(), 'xyz-agent-extension.js')
-      : resolve(resolve(this.projectRoot, '..'), 'xyz-agent-extension.js')
+    this.extensionPath = getExtensionFilePath(this.projectRoot, isPackaged())
 
     // 子模块注入 this(Facade 半构造时仅存引用,其方法在 Facade 完全构造后才被调用)
     this.lifecycle = new SessionLifecycle(this, this.pm, this.treeService, this.configStore, this.sessionStore)
@@ -162,7 +161,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
         }
         return []
       } catch (e) {
-        console.warn(`[session-service] getHistory via RPC failed: ${e instanceof Error ? e.message : e}, falling back to file read`)
+        console.warn(`[session-service] getHistory via RPC failed: ${toErrorMessage(e)}, falling back to file read`)
         return await getHistoryFromFile(sessionId, this.sessionStore)
       }
     }

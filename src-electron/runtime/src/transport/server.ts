@@ -17,6 +17,7 @@ import { SessionMessageHandler } from './session-message-handler.js'
 import { ExtensionMessageHandler } from './extension-message-handler.js'
 import { PluginMessageHandler } from './plugin-message-handler.js'
 import { TreeMessageHandler } from './tree-message-handler.js'
+import { toErrorMessage } from '../utils/errors.js'
 
 const HTTP_OK = 200
 const HTTP_NOT_FOUND = 404
@@ -165,7 +166,7 @@ export class RuntimeServer implements IMessageBroker {
         this.handleMessage(msg, ws).catch((err) => {
           console.error('[runtime] unhandled error in handleMessage:', err)
           try {
-            this.sendError(ws, 'handler_error', err instanceof Error ? err.message : String(err), msg.id)
+            this.sendError(ws, 'handler_error', toErrorMessage(err), msg.id)
           // eslint-disable-next-line taste/no-silent-catch -- ws may have already closed
           } catch { /* ws 可能已关闭 */ }
         })
@@ -278,7 +279,7 @@ export class RuntimeServer implements IMessageBroker {
           }
       }
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e)
+      const message = toErrorMessage(e)
       const sessionId = ('sessionId' in msg.payload ? msg.payload.sessionId : undefined) as string | undefined
       this.sendError(ws, 'handler_error', message, msg.id, sessionId)
     }
@@ -383,7 +384,7 @@ export class RuntimeServer implements IMessageBroker {
       const content = await fs.readFile(filePath, 'utf-8')
       this.send(ws, { type: 'file.read:result', id: msg.id, payload: { content, path: filePath } })
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e)
+      const message = toErrorMessage(e)
       this.send(ws, { type: 'file.read:error', id: msg.id, payload: { error: message, path: filePath } })
     }
   }

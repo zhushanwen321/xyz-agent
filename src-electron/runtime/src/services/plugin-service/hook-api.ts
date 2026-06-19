@@ -23,6 +23,7 @@ import type {
   PiEventCallback,
   Disposable,
 } from './plugin-types.js'
+import { toErrorMessage } from '../../utils/errors.js'
 
 /** Hook 注册服务依赖（主线程侧） */
 export interface HookService {
@@ -152,11 +153,11 @@ export function createHookApi(
             result,
           })
           .catch((e: unknown) => {
-            console.error('[hook-api] hook invoke result delivery failed:', e instanceof Error ? e.message : String(e))
+            console.error('[hook-api] hook invoke result delivery failed:', toErrorMessage(e))
           })
       })
       .catch((e: unknown) => {
-        console.error('[hook-api] hook handler error:', e instanceof Error ? e.message : String(e))
+        console.error('[hook-api] hook handler error:', toErrorMessage(e))
       })
   })
 
@@ -184,7 +185,7 @@ export function createHookApi(
         rpcClient
           .request('plugin.hooks.unregister', { pluginId, hookType, handlerId })
           .catch((e: unknown) => {
-            console.error('[hook-api] hook unregister failed:', e instanceof Error ? e.message : String(e))
+            console.error('[hook-api] hook unregister failed:', toErrorMessage(e))
           })
       },
     }

@@ -8,6 +8,7 @@
 import type { RpcRequest, RpcResponse, RpcNotification } from './plugin-types.js'
 import { PluginRpcErrorCodes } from './plugin-types.js'
 import { PendingTracker } from '../../utils/async/pending-tracker.js'
+import { toErrorMessage } from '../../utils/errors.js'
 
 export type RpcMethodHandler = (params: Record<string, unknown>) => Promise<unknown>
 
@@ -132,7 +133,7 @@ export class PluginRpcServer {
       const result = await handler(message.params)
       worker.postMessage({ type: 'rpc', response: this.makeSuccessResponse(message.id, result) })
     } catch (e: unknown) {
-      const errorMessage = e instanceof Error ? e.message : String(e)
+      const errorMessage = toErrorMessage(e)
       const code = (e as { code?: number })?.code ?? PluginRpcErrorCodes.INTERNAL_ERROR
       worker.postMessage({ type: 'rpc', response: this.makeErrorResponse(message.id, code, errorMessage) })
     }

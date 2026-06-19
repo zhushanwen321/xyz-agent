@@ -8,11 +8,13 @@
  * 与 model 域（pi-provider-store）共享同一队列，杜绝跨域竞态（D17）。
  */
 
-import { existsSync, readFileSync, writeFileSync, rmSync, mkdirSync, renameSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync, mkdirSync } from 'node:fs'
+import { atomicWrite } from '../../utils/fs-utils.js'
 import { dirname, join } from 'node:path'
 import type { IExtensionSettings } from '../../services/ports/extension-settings.js'
 import { updateSettings, readSettings, invalidateSettingsCache, setSettingsPath } from './pi-settings-store.js'
 import { getPiAgentDir } from './pi-paths.js'
+import { toErrorMessage } from '../../utils/errors.js'
 
 const INDENT_SPACES = 2
 const DISABLED_FILE = 'disabled-packages.json'
@@ -33,7 +35,7 @@ function readDisabledArray(disabledPath: string): string[] {
     const raw = readFileSync(disabledPath, 'utf-8')
     return (JSON.parse(raw) as { disabled?: string[] }).disabled ?? []
   } catch (e) {
-    log.warn(`failed to parse ${disabledPath}: ${e instanceof Error ? e.message : String(e)}`)
+    log.warn(`failed to parse ${disabledPath}: ${toErrorMessage(e)}`)
     return []
   }
 }
@@ -43,15 +45,12 @@ function writeDisabledArray(disabledPath: string, disabled: string[]): void {
   if (disabled.length > 0) {
     const dir = dirname(disabledPath)
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-    const tmpPath = disabledPath + '.tmp'
-    writeFileSync(tmpPath, JSON.stringify({ disabled }, null, INDENT_SPACES), 'utf-8')
-    // renameSync 提供原子替换（与 extension-service 原有写法一致）
-    renameSync(tmpPath, disabledPath)
+    atomicWrite(disabledPath, JSON.stringify({ disabled }, null, INDENT_SPACES))
   } else if (existsSync(disabledPath)) {
     try {
       rmSync(disabledPath)
     } catch (e) {
-      log.warn(`failed to remove ${disabledPath}: ${e instanceof Error ? e.message : String(e)}`)
+      log.warn(`failed to remove ${disabledPath}: ${toErrorMessage(e)}`)
     }
   }
 }

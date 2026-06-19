@@ -5,6 +5,7 @@
 import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
 import type { ISessionService } from '../interfaces.js'
+import { toErrorMessage, isEnoent } from '../utils/errors.js'
 
 /** Interface for server methods needed by this handler */
 export interface SessionHandlerContext {
@@ -56,8 +57,8 @@ export class SessionMessageHandler {
             const messages = await this.ctx.sessionService.getHistory(switchId)
             this.ctx.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: switchId, session: restored, messages } })
           } catch (e) {
-            const errMsg = e instanceof Error ? e.message : String(e)
-            const isENOENT = errMsg.includes('ENOENT')
+            const errMsg = toErrorMessage(e)
+            const isENOENT = isEnoent(e)
             const userMsg = isENOENT
               ? `Session file missing — the session was not saved properly. Error: ${errMsg}`
               : `Session ${switchId} not found or restore failed`
@@ -91,7 +92,7 @@ export class SessionMessageHandler {
           await this.ctx.sessionService.steerMessage(steerSid, msg.payload.content)
           return this.ctx.send(ws, { type: 'message.status', id: msg.id, payload: { sessionId: steerSid, status: 'steered' } })
         } catch (e) {
-          const errMsg = e instanceof Error ? e.message : String(e)
+          const errMsg = toErrorMessage(e)
           console.error('[runtime] message.steer failed:', errMsg)
           return this.ctx.send(ws, { type: 'message.error', id: msg.id, payload: { sessionId: steerSid, message: errMsg } })
         }
@@ -102,7 +103,7 @@ export class SessionMessageHandler {
           await this.ctx.sessionService.followUpMessage(followSid, msg.payload.content)
           return this.ctx.send(ws, { type: 'message.status', id: msg.id, payload: { sessionId: followSid, status: 'queued' } })
         } catch (e) {
-          const errMsg = e instanceof Error ? e.message : String(e)
+          const errMsg = toErrorMessage(e)
           console.error('[runtime] message.follow_up failed:', errMsg)
           return this.ctx.send(ws, { type: 'message.error', id: msg.id, payload: { sessionId: followSid, message: errMsg } })
         }
@@ -123,12 +124,12 @@ export class SessionMessageHandler {
         await this.ctx.sessionService.compact(compactId)
       // eslint-disable-next-line taste/no-silent-catch -- compact: error logged + caller informed via broadcast
       } catch (e) {
-        console.error('[server] session.compact: failed, sessionId=' + compactId + ', error=' + (e instanceof Error ? e.message : String(e)))
+        console.error('[server] session.compact: failed, sessionId=' + compactId + ', error=' + (toErrorMessage(e)))
       }
       console.log('[server] session.compact: completed, sessionId=' + compactId + ', elapsed=' + (Date.now() - startTime) + 'ms')
     } catch (e) {
       console.error('[server] session.compact: ensureActive failed, sessionId=' + compactId)
-      this.ctx.sendError(ws, 'session.compact_failed', 'Failed to restore session for compact: ' + (e instanceof Error ? e.message : String(e)), msg.id, compactId)
+      this.ctx.sendError(ws, 'session.compact_failed', 'Failed to restore session for compact: ' + (toErrorMessage(e)), msg.id, compactId)
     }
   }
 }

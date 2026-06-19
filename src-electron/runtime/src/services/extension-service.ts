@@ -23,6 +23,8 @@ import type { ExtensionInfo } from '@xyz-agent/shared'
 import type { IInstaller, IExtensionResolver } from './ports/installer.js'
 import type { IExtensionSettings } from './ports/extension-settings.js'
 import { isStrictlyUnder, isUnderOrEqual } from '../utils/path-utils.js'
+import { toErrorMessage } from '../utils/errors.js'
+import { isPackaged, getExtensionFilePath } from '../utils/runtime-env.js'
 
 const log = {
   info: (...args: unknown[]) => console.log('[extension-service]', ...args),
@@ -98,14 +100,10 @@ export class ExtensionService {
     this.resolver = options.resolver
     this.extSettings = options.extensionSettings
     this.projectRoot = options.projectRoot ?? process.cwd()
-    this.packaged = options.packaged ?? (process.env.XYZ_AGENT_PACKAGED === '1')
+    this.packaged = options.packaged ?? isPackaged()
 
     // 文件型 extension 路径
-    if (this.packaged) {
-      this.extensionFilePath = resolve(process.cwd(), 'xyz-agent-extension.js')
-    } else {
-      this.extensionFilePath = resolve(this.projectRoot, '..', 'xyz-agent-extension.js')
-    }
+    this.extensionFilePath = getExtensionFilePath(this.projectRoot, this.packaged)
 
     // Cleanup orphaned temp directories from previous crashes (>24h old)
     // Defer to next tick to avoid blocking constructor
@@ -127,9 +125,9 @@ export class ExtensionService {
             rmSync(fullPath, { recursive: true, force: true })
             log.info(`cleaned orphaned temp dir: ${fullPath}`)
           }
-        } catch (e) { log.debug(`failed to check temp dir ${fullPath}: ${e instanceof Error ? e.message : String(e)}`) }
+        } catch (e) { log.debug(`failed to check temp dir ${fullPath}: ${toErrorMessage(e)}`) }
       }
-    } catch (e) { log.debug(`failed to cleanup orphaned temp dirs: ${e instanceof Error ? e.message : String(e)}`) }
+    } catch (e) { log.debug(`failed to cleanup orphaned temp dirs: ${toErrorMessage(e)}`) }
   }
 
   /**
@@ -157,7 +155,7 @@ export class ExtensionService {
         version = pkg.version ?? ''
         description = pkg.description ?? ''
       } catch (e) {
-        log.debug(`[extension-service] failed to read package.json at ${pkgJsonPath}: ${e instanceof Error ? e.message : String(e)}`)
+        log.debug(`[extension-service] failed to read package.json at ${pkgJsonPath}: ${toErrorMessage(e)}`)
       }
 
       // 判断 source：路径在 settings packages[] 中则为 user-installed
@@ -241,7 +239,7 @@ export class ExtensionService {
     try {
       await this.installer.installNpm(pkgName, nodeModulesDir, { timeout: NPM_INSTALL_TIMEOUT })
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = toErrorMessage(e)
       // NpmInstallError 带 code 字段；结构化读取，不 instanceof 具体类（依赖倒置）
       const errCode = (e as { code?: string }).code
       const code = errCode === 'extract' || errCode === 'integrity'
@@ -261,7 +259,7 @@ export class ExtensionService {
       try {
         await this.installer.uninstallNpm(pkgName, nodeModulesDir)
       } catch (e) {
-        log.warn(`[extension-service] rollback uninstall failed for ${pkgName}: ${e instanceof Error ? e.message : String(e)}`)
+        log.warn(`[extension-service] rollback uninstall failed for ${pkgName}: ${toErrorMessage(e)}`)
       }
       throw new ExtensionInstallError(
         'not_extension',
@@ -294,7 +292,7 @@ export class ExtensionService {
       try {
         await this.installer.uninstallNpm(name, nodeModulesDir)
       } catch (e) {
-        log.warn(`[extension-service] npm uninstall warning for ${name}: ${e instanceof Error ? e.message : String(e)}`)
+        log.warn(`[extension-service] npm uninstall warning for ${name}: ${toErrorMessage(e)}`)
       }
     }
   }
@@ -381,7 +379,7 @@ export class ExtensionService {
     try {
       await this.installer.installGit(url, tempDir, GIT_CLONE_TIMEOUT)
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = toErrorMessage(e)
       // Cleanup temp dir on failure
       try { rmSync(tempDir, { recursive: true, force: true }) } catch (cleanupErr) {
         log.warn('[extension-service] failed to cleanup temp dir:', cleanupErr)
@@ -394,7 +392,7 @@ export class ExtensionService {
       try {
         await this.installer.installDeps(tempDir)
       } catch (e) {
-        log.warn(`[extension-service] npm install in git repo failed: ${e instanceof Error ? e.message : String(e)}`)
+        log.warn(`[extension-service] npm install in git repo failed: ${toErrorMessage(e)}`)
         // Non-fatal — some repos don't need deps to discover extensions
       }
     }
@@ -404,7 +402,7 @@ export class ExtensionService {
       const candidates = this.discoverExtensions(tempDir)
       return { tempDir, candidates }
     } catch (err) {
-      try { rmSync(tempDir, { recursive: true, force: true }) } catch (e) { log.debug('cleanup failed:', e instanceof Error ? e.message : String(e)) }
+      try { rmSync(tempDir, { recursive: true, force: true }) } catch (e) { log.debug('cleanup failed:', toErrorMessage(e)) }
       throw err
     }
   }
@@ -469,7 +467,7 @@ export class ExtensionService {
     try {
       rmSync(tempDir, { recursive: true, force: true })
     } catch (e) {
-      log.warn(`[extension-service] failed to cleanup temp dir ${tempDir}: ${e instanceof Error ? e.message : String(e)}`)
+      log.warn(`[extension-service] failed to cleanup temp dir ${tempDir}: ${toErrorMessage(e)}`)
     }
   }
 
@@ -486,7 +484,7 @@ export class ExtensionService {
     try {
       rmSync(tempDir, { recursive: true, force: true })
     } catch (e) {
-      log.warn(`[extension-service] failed to cleanup temp dir on cancel ${tempDir}: ${e instanceof Error ? e.message : String(e)}`)
+      log.warn(`[extension-service] failed to cleanup temp dir on cancel ${tempDir}: ${toErrorMessage(e)}`)
     }
   }
 
@@ -569,7 +567,7 @@ export class ExtensionService {
         }
       }
     } catch (e) {
-      log.warn(`[extension-service] failed to scan directory ${dir}: ${e instanceof Error ? e.message : String(e)}`)
+      log.warn(`[extension-service] failed to scan directory ${dir}: ${toErrorMessage(e)}`)
     }
 
     return candidates

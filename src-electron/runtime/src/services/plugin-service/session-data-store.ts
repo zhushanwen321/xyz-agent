@@ -12,6 +12,7 @@ import { join } from 'node:path'
 import { readdir } from 'node:fs/promises'
 import { loadSessionData, deleteSessionData } from './plugin-storage.js'
 import { flushSessionData, flushSessionDataForSession, startFlushTimer, stopFlushTimer } from './session-data-flush.js'
+import { toErrorMessage } from '../../utils/errors.js'
 
 export class SessionDataStore {
   /** 内存缓存，sessionId → key → value */
@@ -112,7 +113,7 @@ export class SessionDataStore {
 
     // Also delete from disk
     void deleteSessionData(this.configDir, sessionId).catch((e) => {
-      console.warn(`[session-data-store] failed to delete session data file for ${sessionId}:`, e instanceof Error ? e.message : String(e))
+      console.warn(`[session-data-store] failed to delete session data file for ${sessionId}:`, toErrorMessage(e))
     })
   }
 }

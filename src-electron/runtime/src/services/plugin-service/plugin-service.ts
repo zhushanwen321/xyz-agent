@@ -14,14 +14,12 @@ import { PluginInstaller, type InstallResult } from './plugin-installer.js'
 import { handleBridgeToolExecute, handleBridgeEvent, handleBridgeIntercept } from './bridge-interop.js'
 import { PermissionStorage } from './plugin-permission-storage.js'
 import { join } from 'node:path'
+import { toErrorMessage } from '../../utils/errors.js'
+import { randomSuffix } from '../../utils/ids.js'
 
 
 const COMMAND_EXECUTE_TIMEOUT_MS = 10_000
 const HOOK_HANDLER_TIMEOUT_MS = 5_000
-function randomSuffix(): string {
-  // eslint-disable-next-line no-magic-numbers
-  return Math.random().toString(36).slice(2)
-}
 
 export class PluginService implements IPluginService {
   private registry: PluginRegistry
@@ -255,7 +253,7 @@ export class PluginService implements IPluginService {
       }
     // eslint-disable-next-line taste/no-silent-catch -- toggle: failure returns plugin list for UI rollback
     } catch (err: unknown) {
-      console.error(`[plugin-service] togglePlugin(${pluginId}, ${enabled}) failed:`, err instanceof Error ? err.message : String(err))
+      console.error(`[plugin-service] togglePlugin(${pluginId}, ${enabled}) failed:`, toErrorMessage(err))
       // 激活/停用失败仍然返回当前插件列表（允许前端回滚 UI）
     }
 
@@ -439,7 +437,7 @@ export class PluginService implements IPluginService {
         // 超时或错误 → 视为放行（不阻止链路）
         console.warn(
           `[plugin-service] hook handler ${entry.handlerId} failed/timed out:`,
-          err instanceof Error ? err.message : String(err),
+          toErrorMessage(err),
         )
       }
     }

@@ -4,6 +4,8 @@ import { delimiter as pathDelimiter, join } from 'node:path'
 import { execSync } from 'node:child_process'
 import { RpcClient, type RpcClientOptions } from './rpc-client.js'
 import type { IProcessManager } from '../../services/ports/pi-engine.js'
+import { toErrorMessage } from '../../utils/errors.js'
+import { isPackaged } from '../../utils/runtime-env.js'
 
 // Find pi executable path (cross-platform). Search order:
 // 1. PATH (which/where pi)
@@ -11,7 +13,7 @@ import type { IProcessManager } from '../../services/ports/pi-engine.js'
 // 3. Common locations
 function findPiExecutable(): string {
   // Packaged mode: use bundled pi binary from resources
-  if (process.env.XYZ_AGENT_PACKAGED === '1') {
+  if (isPackaged()) {
     const platform = process.platform  // 'darwin' | 'win32' | 'linux'
     const arch = process.arch          // 'arm64' | 'x64'
 
@@ -158,9 +160,11 @@ export class ProcessManager implements IProcessManager {
     try {
       await client.start()
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = toErrorMessage(e)
+      // 刻意用字符串匹配（非 isEnoent）：这里要同时捕获 spawn ENOENT 与子进程 spawn
+      // 失败两类错误（后者不一定是带 .code 的 errno），D20 的结构化 isEnoent 不适用。
       if (msg.includes('spawn') || msg.includes('ENOENT')) {
-        if (process.env.XYZ_AGENT_PACKAGED === '1') {
+        if (isPackaged()) {
           throw new Error(
             `Failed to start bundled pi process. The application installation may be corrupted. `
             + `Attempted binary: ${piPath}. Original error: ${msg}`,
@@ -212,7 +216,7 @@ export class ProcessManager implements IProcessManager {
       await proc.client.kill()
     // eslint-disable-next-line taste/no-silent-catch -- kill() has internal SIGTERM→SIGKILL fallback; orphan risk logged
     } catch (e) {
-      console.warn(`[process-manager] [PROCESS-LEAK-RISK] kill failed for session ${sessionId}:`, e instanceof Error ? e.message : String(e))
+      console.warn(`[process-manager] [PROCESS-LEAK-RISK] kill failed for session ${sessionId}:`, toErrorMessage(e))
     }
   }
 

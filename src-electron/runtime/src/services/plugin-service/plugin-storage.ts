@@ -1,6 +1,9 @@
-import { mkdir, readFile, writeFile, rename, unlink } from 'node:fs/promises'
+import { mkdir, readFile, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
+import { toErrorMessage, isEnoent } from '../../utils/errors.js'
+import { randomSuffix } from '../../utils/ids.js'
+import { atomicWriteAsync } from '../../utils/fs-utils.js'
 
 // eslint-disable-next-line no-magic-numbers
 const MB = 1024 * 1024 // 1,048,576 bytes
@@ -11,10 +14,6 @@ const FLUSH_DEBOUNCE_MS = 500
 const JSON_FORMAT_INDENT = 2
 const HASH_SLICE_LENGTH = 12
 
-function randomSuffix(): string {
-  // eslint-disable-next-line no-magic-numbers
-  return Math.random().toString(36).slice(2)
-}
 
 interface CacheEntry {
   data: Map<string, unknown>
@@ -153,9 +152,8 @@ export class PluginStorage {
       }
     } catch (e: unknown) {
       // 文件不存在（首次访问）或 JSON 解析失败 → 空 Map 是正确回退
-      const isEnoent = e instanceof Error && 'code' in e && (e as NodeJS.ErrnoException).code === 'ENOENT'
-      if (!isEnoent) {
-        console.warn(`[plugin-storage] failed to load ${filePath}:`, e instanceof Error ? e.message : String(e))
+      if (!isEnoent(e)) {
+        console.warn(`[plugin-storage] failed to load ${filePath}:`, toErrorMessage(e))
       }
     }
 
@@ -191,10 +189,8 @@ export class PluginStorage {
     const obj: Record<string, unknown> = {}
     for (const [k, v] of Array.from(cache.data)) obj[k] = v
     const content = JSON.stringify(obj, null, JSON_FORMAT_INDENT)
-    // 原子写入: temp + rename
-    const tmpPath = filePath + '.tmp'
-    await writeFile(tmpPath, content, 'utf-8')
-    await rename(tmpPath, filePath)
+    // 原子写入: temp + rename（atomicWriteAsync）
+    await atomicWriteAsync(filePath, content)
   }
 
   private getFilePath(
@@ -244,9 +240,8 @@ export async function persistSessionData(
   const dir = join(baseDir, 'session-data')
   await mkdir(dir, { recursive: true })
   const filePath = join(dir, `${sessionId}.json`)
-  const tmpPath = `${filePath}.tmp_${Date.now()}_${randomSuffix()}`
-  await writeFile(tmpPath, content, 'utf-8')
-  await rename(tmpPath, filePath)
+  // 并发 flush 可能交叉，用唯一 tmp 后缀避免互相覆盖 tmp（atomicWriteAsync uniqueSuffix）
+  await atomicWriteAsync(filePath, content, `${Date.now()}_${randomSuffix()}`)
 }
 
 /**
@@ -265,7 +260,7 @@ export async function loadSessionData(
   } catch (e: unknown) {
     const isEnoent = e instanceof Error && 'code' in e && (e as NodeJS.ErrnoException).code === 'ENOENT'
     if (!isEnoent) {
-      console.warn(`[plugin-storage] loadSessionData failed for ${sessionId}:`, e instanceof Error ? e.message : String(e))
+      console.warn(`[plugin-storage] loadSessionData failed for ${sessionId}:`, toErrorMessage(e))
     }
     return new Map()
   }
@@ -284,7 +279,7 @@ export async function deleteSessionData(
   } catch (e: unknown) {
     const isEnoent = e instanceof Error && 'code' in e && (e as NodeJS.ErrnoException).code === 'ENOENT'
     if (!isEnoent) {
-      console.warn(`[plugin-storage] deleteSessionData failed for ${sessionId}:`, e instanceof Error ? e.message : String(e))
+      console.warn(`[plugin-storage] deleteSessionData failed for ${sessionId}:`, toErrorMessage(e))
     }
   }
 }

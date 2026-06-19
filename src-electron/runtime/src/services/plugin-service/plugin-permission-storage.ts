@@ -5,8 +5,9 @@
  * 使用 atomic write（先写 .tmp 再 rename）确保数据完整性。
  */
 
-import { readFile, writeFile, rename, mkdir } from 'node:fs/promises'
+import { readFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
+import { atomicWriteAsync } from '../../utils/fs-utils.js'
 
 const PERMISSIONS_FILE = 'permissions.json'
 
@@ -52,7 +53,6 @@ export class PermissionStorage {
   async save(data: Map<string, string[]>): Promise<void> {
     await mkdir(this.dir, { recursive: true })
     const filePath = join(this.dir, PERMISSIONS_FILE)
-    const tmpPath = filePath + '.tmp'
 
     const obj: Record<string, string[]> = {}
     for (const [k, v] of data) {
@@ -61,7 +61,6 @@ export class PermissionStorage {
 
     const JSON_INDENT = 2
     const content = JSON.stringify(obj, null, JSON_INDENT)
-    await writeFile(tmpPath, content, 'utf-8')
-    await rename(tmpPath, filePath)
+    await atomicWriteAsync(filePath, content)
   }
 }

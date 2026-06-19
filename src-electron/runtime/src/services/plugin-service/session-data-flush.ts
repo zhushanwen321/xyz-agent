@@ -6,6 +6,7 @@
  */
 
 import { persistSessionData } from './plugin-storage.js'
+import { toErrorMessage } from '../../utils/errors.js'
 
 const FLUSH_INTERVAL_MS = 5_000
 
@@ -34,7 +35,7 @@ export async function flushSessionData(
     try {
       await persistSessionData(configDir, sessionId, cache)
     } catch (err: unknown) {
-      console.warn(`[plugin-service] sessionData flush failed for ${sessionId}:`, err instanceof Error ? err.message : String(err))
+      console.warn(`[plugin-service] sessionData flush failed for ${sessionId}:`, toErrorMessage(err))
       // 恢复 dirty 标记
       for (const key of dirtySnapshot.keys()) {
         dirtyKeys.add(key)
@@ -61,7 +62,7 @@ export async function flushSessionDataForSession(
     dirtyKeys.clear()
     // eslint-disable-next-line taste/no-silent-catch -- sessionData flush failure: log and keep existing data
   } catch (err: unknown) {
-    console.warn(`[plugin-service] sessionData flush failed for ${sessionId}:`, err instanceof Error ? err.message : String(err))
+    console.warn(`[plugin-service] sessionData flush failed for ${sessionId}:`, toErrorMessage(err))
   }
 }
 

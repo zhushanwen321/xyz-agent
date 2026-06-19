@@ -1,6 +1,7 @@
 import type { ServerMessage, ServerMessageType } from '@xyz-agent/shared'
 import { EXTENSION_EVENTS } from '@xyz-agent/shared'
 import type { PiEventListener } from '../../services/ports/pi-engine.js'
+import { toErrorMessage } from '../../utils/errors.js'
 
 export type WsSender = (msg: ServerMessage) => void
 
@@ -118,7 +119,7 @@ async function handleToolExecutionStart(event: PiEvent, ctx: HandlerContext): Pr
       }
     // eslint-disable-next-line taste/no-silent-catch
     } catch (e) {
-      console.debug(`[event-adapter] hook tool_execution_start error: ${e instanceof Error ? e.message : String(e)}`)
+      console.debug(`[event-adapter] hook tool_execution_start error: ${toErrorMessage(e)}`)
     }
   }
 
@@ -169,7 +170,7 @@ async function handleToolExecutionEnd(event: PiEvent, ctx: HandlerContext): Prom
       if (hookResult.transformedData !== undefined) output = hookResult.transformedData as string
     // eslint-disable-next-line taste/no-silent-catch
     } catch (e) {
-      console.debug(`[event-adapter] hook tool_execution_end error: ${e instanceof Error ? e.message : String(e)}`)
+      console.debug(`[event-adapter] hook tool_execution_end error: ${toErrorMessage(e)}`)
     }
   }
 
