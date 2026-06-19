@@ -1,7 +1,7 @@
 /**
  * ConfigService — facade for Provider/Skill/Agent/Preferences CRUD.
  *
- * Delegates Provider CRUD to pi-config-bridge (reads/writes pi's native
+ * Delegates Provider CRUD to IConfigStore (injected port; impl wraps pi's
  * models.json), Skill discovery to pi's skill paths + skill-scanner,
  * Agent discovery to pi's agents/ directory.
  * Tool permissions are persisted to ~/.xyz-agent/config.json (xyz-agent own config).
@@ -17,26 +17,12 @@ import type {
   ScannedAgentInfo,
 } from '@xyz-agent/shared'
 import type { IConfigService } from '../interfaces.js'
-import * as piBridge from '../infra/pi/pi-config-bridge.js'
-import type { PiModelDefinition } from '../infra/pi/pi-config-bridge.js'
+import type { IConfigStore, ConfigModelDefinition } from './ports.js'
 import { atomicWrite } from '../infra/scanners/scanner-base.js'
 import { scanSkills, loadSkillFromDir } from '../infra/scanners/skill-scanner.js'
 import { scanAgents } from '../infra/scanners/agent-scanner.js'
 
 // ── Helpers ─────────────────────────────────────────────────────
-
-/** Map xyz-agent provider type strings to pi's api identifiers. */
-function mapTypeToApi(type: string): string {
-  const map: Record<string, string> = {
-    anthropic: 'anthropic-messages',
-    openai: 'openai-completions',
-    'openai-compatible': 'openai-completions',
-    google: 'openai-completions',
-    deepseek: 'openai-completions',
-    ollama: 'openai-completions',
-  }
-  return map[type] ?? type
-}
 
 /** Extract name and description from agent markdown frontmatter. */
 function parseAgentMd(content: string): { name: string; description: string } {
@@ -83,20 +69,23 @@ function isValidThinkingLevelMap(v: unknown): v is Record<string, string | null>
 // ── Service ─────────────────────────────────────────────────────
 
 export class ConfigService implements IConfigService {
-  constructor(private projectRoot: string) {}
+  constructor(
+    private projectRoot: string,
+    private configStore: IConfigStore,
+  ) {}
 
   // ── Provider CRUD ──────────────────────────────────────────────
 
   getDefaultModel(): { provider: string; modelId: string } | null {
-    return piBridge.getDefaultModel()
+    return this.configStore.getDefaultModel()
   }
 
   setDefaultModel(provider: string, modelId: string): void {
-    piBridge.setDefaultModel(provider, modelId)
+    this.configStore.setDefaultModel(provider, modelId)
   }
 
   listProviders(): ProviderInfo[] {
-    const models = piBridge.readModels()
+    const models = this.configStore.readModels()
     // eslint-disable-next-line taste/no-unsafe-object-entries -- providers is a known schema Record<string, PiProviderConfig>, not arbitrary user input
     return Object.entries(models.providers).map(([id, config]) => ({
       id,
@@ -129,18 +118,18 @@ export class ConfigService implements IConfigService {
     models?: Array<string | { id: string; name?: string; contextWindow?: number; thinkingLevelMap?: Record<string, string | null> }>
     enabled?: boolean
   }): { newDefault?: { provider: string; modelId: string } } {
-    const existing = piBridge.getProviderConfig(providerId) ?? {}
+    const existing = this.configStore.getProviderConfig(providerId) ?? {}
     const merged = { ...existing }
     if (data.apiKey !== undefined) merged.apiKey = data.apiKey as string
     if (data.baseUrl !== undefined) merged.baseUrl = data.baseUrl as string
-    if (data.type !== undefined) merged.api = mapTypeToApi(data.type as string)
+    if (data.type !== undefined) merged.api = this.configStore.applyTypeTranslation(data.type as string)
     if (data.name !== undefined) merged.name = data.name as string
     if (data.models !== undefined) {
       const rawModels = data.models as Array<Record<string, unknown>>
-      const existingModels = (existing.models ?? []) as PiModelDefinition[]
+      const existingModels = (existing.models ?? []) as ConfigModelDefinition[]
       merged.models = rawModels.map(m => {
         const id = String(m.id ?? '')
-        const base = existingModels.find(em => em.id === id) ?? {} as Partial<PiModelDefinition>
+        const base = existingModels.find(em => em.id === id) ?? {} as Partial<ConfigModelDefinition>
         const model: Record<string, unknown> = { ...base, id }
         if (m.name) model.name = String(m.name)
         if (typeof m.contextWindow === 'number') model.contextWindow = m.contextWindow
@@ -150,29 +139,29 @@ export class ConfigService implements IConfigService {
           // buildMap() returned undefined (all passthrough) → remove from model
           delete model.thinkingLevelMap
         }
-        return model as unknown as PiModelDefinition
+        return model as unknown as ConfigModelDefinition
       })
     }
-    return piBridge.upsertProvider(providerId, merged)
+    return this.configStore.upsertProvider(providerId, merged)
   }
 
   deleteProvider(providerId: string): { removed: boolean; newDefault?: { provider: string; modelId: string } } {
-    return piBridge.removeProvider(providerId)
+    return this.configStore.removeProvider(providerId)
   }
 
   getProvider(providerId: string): { apiKey?: string; name?: string; type?: string; baseUrl?: string; models?: unknown[]; enabled?: boolean } | undefined {
-    return piBridge.getProviderConfig(providerId)
+    return this.configStore.getProviderConfig(providerId)
   }
 
   // ── Tool permissions (persisted to ~/.xyz-agent/config.json) ───
 
-  private static appConfigPath(): string {
-    return join(piBridge.getConfigDir(), 'config.json')
+  private appConfigPath(): string {
+    return join(this.configStore.getConfigDir(), 'config.json')
   }
 
-  private static loadAppConfig(): Record<string, unknown> {
+  private loadAppConfig(): Record<string, unknown> {
     try {
-      const cp = ConfigService.appConfigPath()
+      const cp = this.appConfigPath()
       if (existsSync(cp)) {
         const raw = readFileSync(cp, 'utf-8')
         const parsed = JSON.parse(raw)
@@ -188,12 +177,12 @@ export class ConfigService implements IConfigService {
     return {}
   }
 
-  private static saveAppConfig(config: Record<string, unknown>): void {
+  private saveAppConfig(config: Record<string, unknown>): void {
     try {
-      const cd = piBridge.getConfigDir()
+      const cd = this.configStore.getConfigDir()
       if (!existsSync(cd)) mkdirSync(cd, { recursive: true })
       // eslint-disable-next-line no-magic-numbers -- standard JSON indent
-      atomicWrite(ConfigService.appConfigPath(), JSON.stringify(config, null, 2))
+      atomicWrite(this.appConfigPath(), JSON.stringify(config, null, 2))
     // eslint-disable-next-line taste/no-silent-catch -- intentional: save failure is best-effort
     } catch (e) {
       console.error('[config-service] save config.json error:', e)
@@ -201,16 +190,16 @@ export class ConfigService implements IConfigService {
   }
 
   updateToolPermissions(permissions: Record<string, string>): void {
-    const config = ConfigService.loadAppConfig()
+    const config = this.loadAppConfig()
     config['toolPermissions'] = permissions
-    ConfigService.saveAppConfig(config)
+    this.saveAppConfig(config)
   }
 
   // ── Skill CRUD ─────────────────────────────────────────────────
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- interface requires projectRoot param
   loadSkills(_projectRoot: string): SkillInfo[] {
-    const skillPaths = piBridge.getSkillPaths()
+    const skillPaths = this.configStore.getSkillPaths()
     const results: SkillInfo[] = []
     for (const path of skillPaths) {
       const scanned = loadSkillFromDir(path)
@@ -243,7 +232,7 @@ export class ConfigService implements IConfigService {
   upsertSkill(skill: SkillInfo): void {
     if (skill.sourcePath) {
       const dir = dirname(skill.sourcePath)
-      piBridge.addSkillPath(dir)
+      this.configStore.addSkillPath(dir)
     }
   }
 
@@ -253,7 +242,7 @@ export class ConfigService implements IConfigService {
     const skill = skills.find(s => s.id === skillId)
     if (skill?.sourcePath) {
       const dir = dirname(skill.sourcePath)
-      piBridge.removeSkillPath(dir)
+      this.configStore.removeSkillPath(dir)
     }
   }
 
@@ -261,7 +250,7 @@ export class ConfigService implements IConfigService {
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- interface requires projectRoot param
   loadAgents(_projectRoot: string): AgentInfo[] {
-    const files = piBridge.listAgentFiles()
+    const files = this.configStore.listAgentFiles()
     return files.map(f => {
       const { name, description } = parseAgentMd(f.content)
       return {
@@ -287,13 +276,13 @@ export class ConfigService implements IConfigService {
   /** Write agent content to a .md file in pi's agents directory. */
   upsertAgent(agent: AgentInfo): void {
     if (agent.content) {
-      piBridge.writeAgentFile(agent.name || agent.id, agent.content)
+      this.configStore.writeAgentFile(agent.name || agent.id, agent.content)
     }
   }
 
   /** Delete an agent .md file from pi's agents directory. */
   deleteAgent(agentId: string): void {
-    piBridge.deleteAgentFile(agentId)
+    this.configStore.deleteAgentFile(agentId)
   }
 
   // ── Scanning ───────────────────────────────────────────────────

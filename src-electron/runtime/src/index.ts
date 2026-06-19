@@ -8,6 +8,7 @@ import { BASE_PORT, MAX_PORT } from '@xyz-agent/shared'
 
 const MAX_PERCENT = 100
 import { ProcessManager } from './infra/pi/process-manager.js'
+import { PiConfigStore } from './infra/pi/pi-config-store.js'
 import { EventAdapter } from './infra/pi/event-adapter.js'
 import { ExtensionService } from './services/extension-service.js'
 import { PluginRegistry } from './services/plugin-service/plugin-registry.js'
@@ -55,9 +56,10 @@ async function main(): Promise<void> {
   const server = new RuntimeServer(port, projectRoot)
 
   // ── Phase 1: create all service instances (no cross-service deps at construction time) ──
+  const configStore = new PiConfigStore()
   const extensionService = new ExtensionService({ projectRoot: effectiveRoot })
   const treeService = new TreeService(pm)
-  const configService = new ConfigService(effectiveRoot)
+  const configService = new ConfigService(effectiveRoot, configStore)
   const modelService = new ModelService()
 
   // ── Phase 2: create services that reference other services via closures / deps ──

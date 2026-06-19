@@ -146,6 +146,7 @@ vi.mock('../src/infra/system/trash.js', () => ({
 import { RuntimeServer } from '../src/transport/server.js'
 import { SessionService } from '../src/services/session/session-service.js'
 import { ConfigService } from '../src/services/config-service.js'
+import { PiConfigStore } from '../src/infra/pi/pi-config-store.js'
 import { ModelService } from '../src/services/model-service.js'
 import { ExtensionService } from '../src/services/extension-service.js'
 
@@ -202,7 +203,7 @@ describe('RuntimeServer: extension message routing', () => {
     sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
     server.setServices(
       sessionService,
-      new ConfigService('/tmp'),
+      new ConfigService('/tmp', new PiConfigStore()),
       new ModelService(),
       {} as never,
       new ExtensionService(),
@@ -602,7 +603,7 @@ describe('RuntimeServer: extension timeout mechanism', () => {
     sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
     server.setServices(
       sessionService,
-      new ConfigService('/tmp'),
+      new ConfigService('/tmp', new PiConfigStore()),
       new ModelService(),
       {} as never,
       new ExtensionService(),
