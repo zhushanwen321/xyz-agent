@@ -11,12 +11,15 @@
 import { basename } from 'node:path'
 import type { SessionSummary, SessionGroup, SessionStatus } from '@xyz-agent/shared'
 import type { ISessionServiceInternal } from '../../interfaces.js'
-import { scanPiSessions } from '../../infra/pi/pi-config-bridge.js'
+import type { ISessionStore } from '../ports.js'
 import { readGitInfo, pruneGitInfoCache } from '../git-info.js'
 import type { ScannedSession } from './types.js'
 
 export class SessionScanner {
-  constructor(private readonly svc: ISessionServiceInternal) {}
+  constructor(
+    private readonly svc: ISessionServiceInternal,
+    private readonly sessionStore: ISessionStore,
+  ) {}
 
   listPersistedSessions(): SessionGroup[] {
     return this.listGrouped()
@@ -37,7 +40,7 @@ export class SessionScanner {
     const active = this.svc.getActiveSummaries()
     const activeFilePaths = this.svc.getActiveFilePaths()
 
-    const persisted = scanPiSessions()
+    const persisted = this.sessionStore.scanSessions()
       .filter(s => !activeFilePaths.has(s.filePath))
       .map(s => this.scannedToSummary(s))
 

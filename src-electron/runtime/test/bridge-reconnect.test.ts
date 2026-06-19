@@ -173,7 +173,7 @@ describe('Bridge reconnect lifecycle', () => {
     mockHandleBridgeIntercept.mockClear()
     mockRpcClient = createMockRpcClient()
     server = new RuntimeServer(0, '/tmp/test-project')
-    const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
+    const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never)
     const pluginService = new PluginService({} as never, server)
     server.setServices(
       sessionService,
@@ -343,7 +343,7 @@ describe('Bridge reconnect lifecycle', () => {
 
     it('returns error when plugin service is not available', async () => {
       const serverWithoutPlugin = new RuntimeServer(0, '/tmp/test-project')
-      const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
+      const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never)
       // No plugin service set
       serverWithoutPlugin.setServices(sessionService, {} as never, {} as never, {} as never, {} as never)
 
@@ -495,7 +495,7 @@ describe('Bridge reconnect lifecycle', () => {
 
     it('returns empty intercept when plugin service is not available', async () => {
       const serverWithoutPlugin = new RuntimeServer(0, '/tmp/test-project')
-      const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
+      const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never)
       serverWithoutPlugin.setServices(sessionService, {} as never, {} as never, {} as never, {} as never)
 
       mockSendCommand.mockClear()

@@ -15,20 +15,15 @@ import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import type { SessionSummary } from '@xyz-agent/shared'
 import type { IProcessManager, ISessionServiceInternal } from '../../interfaces.js'
-import {
-  getDefaultModel,
-  refreshAll,
-  persistSessionName,
-  ensureSessionFile,
-  patchSessionCwd,
-} from '../../infra/pi/pi-config-bridge.js'
-import { trash } from '../../infra/system/trash.js'
+import type { IConfigStore, ISessionStore } from '../ports.js'
 
 export class SessionLifecycle {
   constructor(
     private readonly svc: ISessionServiceInternal,
     private readonly pm: IProcessManager,
     private readonly treeService: { unregisterSession: (sessionId: string) => void },
+    private readonly configStore: IConfigStore,
+    private readonly sessionStore: ISessionStore,
   ) {}
 
   /**
@@ -44,7 +39,7 @@ export class SessionLifecycle {
     const sessionCwd = cwd ?? process.cwd()
 
     // 启动 pi 前检查 model 配置,避免 pi 因无 model 直接 exit(1)
-    if (!getDefaultModel()) {
+    if (!this.configStore.getDefaultModel()) {
       throw new Error('No model configured. Please configure a provider and model in Settings before starting a session.')
     }
 
@@ -85,10 +80,10 @@ export class SessionLifecycle {
     // pi 延迟写入:session 文件在首次 assistant 消息前可能不存在。
     // 主动创建最小文件确保 scanPiSessions 能找到该 session。
     if (sessionFilePath) {
-      ensureSessionFile(sessionFilePath, id, sessionCwd, label)
+      this.sessionStore.ensureSessionFile(sessionFilePath, id, sessionCwd, label)
     }
 
-    refreshAll()
+    this.sessionStore.refreshAll()
     return this.svc.toSummary(session)
   }
 
@@ -98,17 +93,17 @@ export class SessionLifecycle {
       session.label = newName
       // 活跃 session:写入 sessionFilePath 使重启后保留
       if (session.sessionFilePath) {
-        persistSessionName(session.sessionFilePath, newName, session.id, session.cwd)
+        this.sessionStore.persistSessionName(session.sessionFilePath, newName, session.id, session.cwd)
       }
     } else {
       // 非 active session:从磁盘查找 jsonl 文件并写入
       const target = this.svc.findScannedSession(sessionId)
       if (target) {
-        persistSessionName(target.filePath, newName, target.id, target.cwd)
+        this.sessionStore.persistSessionName(target.filePath, newName, target.id, target.cwd)
       }
     }
 
-    refreshAll()
+    this.sessionStore.refreshAll()
   }
 
   async delete(sessionId: string): Promise<void> {
@@ -119,14 +114,14 @@ export class SessionLifecycle {
       this.svc.removeSessionEntry(sessionId)
       this.treeService.unregisterSession(sessionId)
       if (session.sessionFilePath && existsSync(session.sessionFilePath)) {
-        await trash(session.sessionFilePath)
+        await this.sessionStore.trash(session.sessionFilePath)
       }
     } else {
       const target = this.svc.findScannedSession(sessionId)
       if (!target) throw new Error(`Session ${sessionId} not found`)
-      if (existsSync(target.filePath)) await trash(target.filePath)
+      if (existsSync(target.filePath)) await this.sessionStore.trash(target.filePath)
     }
-    refreshAll()
+    this.sessionStore.refreshAll()
   }
 
   /** 从持久化文件恢复 session。 */
@@ -134,7 +129,7 @@ export class SessionLifecycle {
     const target = this.svc.findScannedSession(sessionId)
     if (!target) throw new Error(`Persisted session ${sessionId} not found`)
 
-    if (!getDefaultModel()) {
+    if (!this.configStore.getDefaultModel()) {
       throw new Error('No model configured. Please configure a provider and model in Settings before restoring a session.')
     }
     const existing = this.svc.getSession(sessionId)
@@ -147,7 +142,7 @@ export class SessionLifecycle {
     // session cwd 可能已被删除(如 worktree 清理后),降级到 home + patch session 文件
     const sessionCwd = existsSync(target.cwd) ? target.cwd : (() => {
       console.warn(`[session-lifecycle] session cwd does not exist: ${target.cwd}, falling back to home`)
-      patchSessionCwd(target.filePath, homedir())
+      this.sessionStore.patchSessionCwd(target.filePath, homedir())
       return homedir()
     })()
 

@@ -99,6 +99,8 @@ vi.mock('../src/infra/pi/navigate-interceptor.js', () => ({
 // ── Mock 之后再 import 被测对象 ─────────────────────────────────────
 
 import { SessionService } from '../src/services/session/session-service.js'
+import { PiConfigStore } from '../src/infra/pi/pi-config-store.js'
+import { PiSessionStore } from '../src/infra/pi/session-store.js'
 
 // ── Mock client / 依赖工厂 ─────────────────────────────────────────
 
@@ -247,6 +249,8 @@ function createSetup(): Setup {
     '/tmp',
     treeService as never,
     extensionService,
+    new PiConfigStore(),
+    new PiSessionStore(),
   )
 
   const mountClient = (sessionId: string, client?: MockClient): MockClient => {
@@ -750,7 +754,7 @@ describe('SessionService · Facade', () => {
       client.getHistory.mockResolvedValueOnce({ data: { messages: [] } })
       mocks.getHistoryFromFileMock.mockResolvedValueOnce([{ role: 'user', content: 'f' } as unknown as Message])
       const result = await setup.service.getHistory(id)
-      expect(mocks.getHistoryFromFileMock).toHaveBeenCalledWith(id)
+      expect(mocks.getHistoryFromFileMock).toHaveBeenCalledWith(id, expect.anything())
       expect(result.length).toBe(1)
     })
 
@@ -769,13 +773,13 @@ describe('SessionService · Facade', () => {
       client.getHistory.mockRejectedValueOnce(new Error('rpc boom'))
       mocks.getHistoryFromFileMock.mockResolvedValueOnce([])
       await setup.service.getHistory(id)
-      expect(mocks.getHistoryFromFileMock).toHaveBeenCalledWith(id)
+      expect(mocks.getHistoryFromFileMock).toHaveBeenCalledWith(id, expect.anything())
     })
 
     it('reads from file directly when no active client', async () => {
       mocks.getHistoryFromFileMock.mockResolvedValueOnce([])
       await setup.service.getHistory('no-client')
-      expect(mocks.getHistoryFromFileMock).toHaveBeenCalledWith('no-client')
+      expect(mocks.getHistoryFromFileMock).toHaveBeenCalledWith('no-client', expect.anything())
     })
   })
 
@@ -877,6 +881,8 @@ describe('SessionService · onSessionExit callback', () => {
       '/tmp',
       localSetup.treeService as never,
       localSetup.extensionService,
+      new PiConfigStore(),
+      new PiSessionStore(),
     )
     const piSid = 'pi-detach-1'
     const client = makeMockClient({

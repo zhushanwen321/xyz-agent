@@ -205,7 +205,7 @@ describe('RuntimeServer: extension message routing', () => {
     mockFinishInstall.mockClear()
     port = await getFreePort()
     server = new RuntimeServer(port, '/tmp/test-project')
-    sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
+    sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never)
     server.setServices(
       sessionService,
       new ConfigService('/tmp', new PiConfigStore()),
@@ -609,7 +609,7 @@ describe('RuntimeServer: extension timeout mechanism', () => {
     vi.useFakeTimers()
     mockSendCommand.mockClear()
     server = new RuntimeServer(0, '/tmp/test-project')
-    sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
+    sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never)
     server.setServices(
       sessionService,
       new ConfigService('/tmp', new PiConfigStore()),

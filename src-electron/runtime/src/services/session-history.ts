@@ -2,27 +2,19 @@
  * Session 文件历史读取工具
  *
  * 从 .jsonl session 文件解析消息历史。
+ * 经 ISessionStore port 访问 scanSessions（发现）+ convertHistory（翻译），
+ * 不直接 import infra。
  */
 
 import { readFile } from 'node:fs/promises'
-import { convertPiHistory } from '../infra/pi/message-converter.js'
-import { scanPiSessions } from '../infra/pi/pi-config-bridge.js'
-
-interface ScannedSession {
-  id: string
-  filePath: string
-}
-
-function findScannedSession(sessionId: string): ScannedSession | undefined {
-  return scanPiSessions().find(s => s.id === sessionId)
-}
+import type { ISessionStore } from './ports.js'
 
 /**
  * 从 .jsonl session 文件读取消息历史。
  * 文件不存在或为空时返回空数组。
  */
-export async function getHistoryFromFile(sessionId: string): Promise<import('@xyz-agent/shared').Message[]> {
-  const target = findScannedSession(sessionId)
+export async function getHistoryFromFile(sessionId: string, sessionStore: ISessionStore): Promise<import('@xyz-agent/shared').Message[]> {
+  const target = sessionStore.scanSessions().find(s => s.id === sessionId)
   if (!target) return []
 
   let content: string
@@ -51,5 +43,5 @@ export async function getHistoryFromFile(sessionId: string): Promise<import('@xy
     }
   }
 
-  return convertPiHistory(piMessages)
+  return sessionStore.convertHistory(piMessages)
 }

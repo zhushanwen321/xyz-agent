@@ -9,6 +9,7 @@ import { BASE_PORT, MAX_PORT } from '@xyz-agent/shared'
 const MAX_PERCENT = 100
 import { ProcessManager } from './infra/pi/process-manager.js'
 import { PiConfigStore } from './infra/pi/pi-config-store.js'
+import { PiSessionStore } from './infra/pi/session-store.js'
 import { ModelApiDiscoverer } from './infra/model-api-discoverer.js'
 import { NpmGitInstaller } from './infra/installers/npm-git-installer.js'
 import { ExtensionResolver } from './infra/installers/extension-resolver.js'
@@ -61,6 +62,7 @@ async function main(): Promise<void> {
 
   // ── Phase 1: create all service instances (no cross-service deps at construction time) ──
   const configStore = new PiConfigStore()
+  const sessionStore = new PiSessionStore()
   const modelSource = new ModelApiDiscoverer()
   const extensionInstaller = new NpmGitInstaller()
   const extensionResolver = new ExtensionResolver({
@@ -139,6 +141,8 @@ async function main(): Promise<void> {
     effectiveRoot,
     treeService,
     extensionService,
+    configStore,
+    sessionStore,
   )
 
   // ── Phase 3: wire cross-service runtime deps ──

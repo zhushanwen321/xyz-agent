@@ -17,12 +17,11 @@ import type {
   ISessionService, ISessionServiceInternal, IProcessManager, IMessageBroker,
   IEventAdapter, IRpcClient, IExtensionService,
 } from '../../interfaces.js'
-import { convertPiHistory } from '../../infra/pi/message-converter.js'
-import { getDefaultModel, scanPiSessions, getSkillPaths as getPiSkillPaths } from '../../infra/pi/pi-config-bridge.js'
 import { NavigateInterceptor } from '../../infra/pi/navigate-interceptor.js'
 import { TreeService } from '../tree-service.js'
 import { readGitInfo } from '../git-info.js'
 import { getHistoryFromFile } from '../session-history.js'
+import type { IConfigStore, ISessionStore } from '../ports.js'
 import type { IManagedSessionView, ScannedSession, SendMessageHook } from './types.js'
 import { SessionLifecycle } from './session-lifecycle.js'
 import { MessageDispatcher } from './message-dispatcher.js'
@@ -50,6 +49,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     private readonly projectRoot: string,
     private readonly treeService: TreeService,
     private readonly extensionService: IExtensionService,
+    private readonly configStore: IConfigStore,
+    private readonly sessionStore: ISessionStore,
   ) {
     // 打包模式:extension 在 Resources 根;开发模式:在 repo root(src-electron/ 父目录)
     this.extensionPath = process.env.XYZ_AGENT_PACKAGED === '1'
@@ -57,9 +58,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       : resolve(resolve(this.projectRoot, '..'), 'xyz-agent-extension.js')
 
     // 子模块注入 this(Facade 半构造时仅存引用,其方法在 Facade 完全构造后才被调用)
-    this.lifecycle = new SessionLifecycle(this, this.pm, this.treeService)
+    this.lifecycle = new SessionLifecycle(this, this.pm, this.treeService, this.configStore, this.sessionStore)
     this.dispatcher = new MessageDispatcher(this, this.pm, this.broker)
-    this.scanner = new SessionScanner(this)
+    this.scanner = new SessionScanner(this, this.sessionStore)
 
     // 进程崩溃清理:协调 adapter detach / Map 删 / tree 注销 / 列表刷新 / error 广播
     this.pm.onSessionExit((sessionId, code) => {
@@ -149,20 +150,20 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
         const result = await client.getHistory() as { data?: { messages?: unknown[] }; payload?: { messages?: unknown[] } }
         const data = result.data
         const raw = data?.messages ?? (result.payload?.messages) ?? []
-        if (raw.length > 0) return convertPiHistory(raw)
+        if (raw.length > 0) return this.sessionStore.convertHistory(raw)
         // RPC 返回空时,仅闲置 session fallback 到磁盘(生成中磁盘可能未持久化最新消息)
         const session = this.sessions.get(sessionId)
         if (session && !session.isGenerating) {
           console.warn(`[session-service] getHistory via RPC returned empty for idle session ${sessionId}, falling back to file read`)
-          return await getHistoryFromFile(sessionId)
+          return await getHistoryFromFile(sessionId, this.sessionStore)
         }
         return []
       } catch (e) {
         console.warn(`[session-service] getHistory via RPC failed: ${e instanceof Error ? e.message : e}, falling back to file read`)
-        return await getHistoryFromFile(sessionId)
+        return await getHistoryFromFile(sessionId, this.sessionStore)
       }
     }
-    return await getHistoryFromFile(sessionId)
+    return await getHistoryFromFile(sessionId, this.sessionStore)
   }
 
   getSummary(sessionId: string): SessionSummary | undefined {
@@ -184,7 +185,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- interface requires cwd param
   getSkillPaths(_cwd: string): string[] {
-    return getPiSkillPaths().filter((p) => {
+    return this.configStore.getSkillPaths().filter((p) => {
       if (existsSync(p)) return true
       console.warn(`[session-service] skill path not found, skipping: ${p}`)
       return false
@@ -201,7 +202,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   }
 
   findScannedSession(sessionId: string): ScannedSession | undefined {
-    return scanPiSessions().find(s => s.id === sessionId)
+    return this.sessionStore.scanSessions().find(s => s.id === sessionId)
   }
 
   toSummary(s: IManagedSessionView): SessionSummary {
@@ -250,7 +251,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     const adapter = this.adapterFactory(id, interceptor)
     adapter.attach(client)
     const unsubUsage = this.attachUsageListener(id, client)
-    const modelRef = getDefaultModel()
+    const modelRef = this.configStore.getDefaultModel()
     const session: ManagedSession = {
       id, cwd, label,
       modelId: modelRef ? `${modelRef.provider}/${modelRef.modelId}` : '',

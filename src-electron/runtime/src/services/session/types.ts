@@ -10,13 +10,13 @@
  * 子模块经 ISessionServiceInternal 只看到 IManagedSessionView,
  * 但拿到的是 ManagedSession 实例,可读写字段(lastActiveAt / isGenerating)。
  */
-import type { scanPiSessions } from '../../infra/pi/pi-config-bridge.js'
+import type { ScannedSessionMeta } from '../ports.js'
 
 /** SendMessage hook:消息发送前触发,可阻止发送。 */
 export type SendMessageHook = (sessionId: string, content: string) => Promise<{ blocked: boolean; reason?: string } | null>
 
-/** pi-config-bridge.scanPiSessions 返回的元素类型。 */
-export type ScannedSession = Awaited<ReturnType<typeof scanPiSessions>>[number]
+/** scanPiSessions 返回的元素类型（经 ISessionStore.scanSessions）。 */
+export type ScannedSession = ScannedSessionMeta
 
 /**
  * ManagedSession 的子模块可见视图(不含运行时句柄)。
