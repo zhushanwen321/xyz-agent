@@ -7,6 +7,7 @@
 
 import type { RpcRequest, RpcResponse, RpcNotification } from './plugin-types.js'
 import { PluginRpcErrorCodes } from './plugin-types.js'
+import { PendingTracker } from '../../utils/async/pending-tracker.js'
 
 export type RpcMethodHandler = (params: Record<string, unknown>) => Promise<unknown>
 
@@ -18,19 +19,13 @@ export interface WorkerPort {
   postMessage(message: unknown): void
 }
 
-/** Pending outgoing invoke entry */
-interface PendingInvoke {
-  resolve: (value: unknown) => void
-  reject: (reason: unknown) => void
-  timer: ReturnType<typeof setTimeout>
-}
-
 export class PluginRpcServer {
   private methods = new Map<string, RpcMethodHandler>()
   private workers = new Map<string, WorkerPort>()
   private permissionCheck: PermissionCheckFn | null = null
   private nextRequestId = 1
-  private pendingInvokes = new Map<number, PendingInvoke>()
+  // D15/D25: 主动 invoke 的回复登记表收编为 PendingTracker。
+  private pendingInvokes = new PendingTracker<number, unknown>()
 
   /** 设置权限检查钩子，dispatch 前调用 */
   setPermissionChecker(checker: PermissionCheckFn): void {
@@ -87,18 +82,12 @@ export class PluginRpcServer {
     }
 
     const id = this.nextRequestId++
+    const promise = this.pendingInvokes.register(id, timeoutMs, new Error('RPC timeout'))
 
-    return new Promise<unknown>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pendingInvokes.delete(id)
-        reject(new Error('RPC timeout'))
-      }, timeoutMs)
+    const request: RpcRequest = { jsonrpc: '2.0', id, method, params }
+    worker.postMessage({ type: 'rpc', request })
 
-      this.pendingInvokes.set(id, { resolve, reject, timer })
-
-      const request: RpcRequest = { jsonrpc: '2.0', id, method, params }
-      worker.postMessage({ type: 'rpc', request })
-    })
+    return promise
   }
 
   /**
@@ -109,18 +98,10 @@ export class PluginRpcServer {
    * 如果不匹配（属于 Worker 主动发起的请求），返回 false。
    */
   handleResponse(response: import('./plugin-types.js').RpcResponse): boolean {
-    const pending = this.pendingInvokes.get(response.id)
-    if (!pending) return false
-
-    clearTimeout(pending.timer)
-    this.pendingInvokes.delete(response.id)
-
     if ('error' in response) {
-      pending.reject(new Error(response.error.message))
-    } else {
-      pending.resolve(response.result)
+      return this.pendingInvokes.reject(response.id, new Error(response.error.message))
     }
-    return true
+    return this.pendingInvokes.resolve(response.id, response.result)
   }
 
   /**
@@ -158,12 +139,7 @@ export class PluginRpcServer {
   }
 
   dispose(): void {
-    // Reject all pending invokes
-    for (const pending of this.pendingInvokes.values()) {
-      clearTimeout(pending.timer)
-      pending.reject(new Error('RPC server disposed'))
-    }
-    this.pendingInvokes.clear()
+    this.pendingInvokes.rejectAll(new Error('RPC server disposed'))
     this.methods.clear()
     this.workers.clear()
   }

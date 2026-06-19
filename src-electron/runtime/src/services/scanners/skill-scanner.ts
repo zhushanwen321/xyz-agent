@@ -1,7 +1,7 @@
-import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs'
+import { readFileSync, statSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ScannedSkillInfo } from '@xyz-agent/shared'
-import { expandHome, inferSourceType } from './scanner-base.js'
+import { expandHome, inferSourceType, forEachScannedDir } from './scanner-base.js'
 import { extractFrontmatter } from '../../utils/frontmatter.js'
 
 const DESCRIPTION_MAX_LENGTH = 200
@@ -96,56 +96,36 @@ export function loadSkillFromDir(rawDirPath: string): ScannedSkillInfo | null {
 export function scanSkills(sources: string[], existingSkillIds: Set<string>): ScannedSkillInfo[] {
   const results: ScannedSkillInfo[] = []
 
-  for (const rawSource of sources) {
-    const source = expandHome(rawSource)
-    const sourceType = inferSourceType(rawSource)
+  forEachScannedDir(sources, (dirPath, name, sourceType) => {
+    const skillMdPath = join(dirPath, 'SKILL.md')
 
-    if (!existsSync(source)) continue
-    let names
+    if (!existsSync(skillMdPath)) return
+
     try {
-      names = readdirSync(source)
-    } catch {
-      continue
+      const content = readFileSync(skillMdPath, 'utf-8')
+      const { description, triggers, argumentHint } = parseSkillMd(content)
+      const stat = statSync(skillMdPath)
+      const id = `${sourceType}-${name}`
+      const alreadyImported = existingSkillIds.has(id)
+
+      results.push({
+        id,
+        name: name,
+        description,
+        sourceType,
+        sourcePath: skillMdPath,
+        triggers,
+        argumentHint,
+        content,
+        fileSize: formatFileSize(stat.size),
+        tools: [],
+        alreadyImported,
+      })
+    // eslint-disable-next-line taste/no-silent-catch -- intentional: skip unreadable skills, continue scanning
+    } catch (e) {
+      console.error(`[skill-scanner] error reading ${dirPath}:`, e)
     }
-
-    for (const name of names) {
-      const dirPath = join(source, name)
-      // statSync 跟随符号链接，正确处理 symlinked skill 目录
-      try {
-        if (!statSync(dirPath).isDirectory()) continue
-      } catch {
-        continue
-      }
-      const skillMdPath = join(dirPath, 'SKILL.md')
-
-      if (!existsSync(skillMdPath)) continue
-
-      try {
-        const content = readFileSync(skillMdPath, 'utf-8')
-        const { description, triggers, argumentHint } = parseSkillMd(content)
-        const stat = statSync(skillMdPath)
-        const id = `${sourceType}-${name}`
-        const alreadyImported = existingSkillIds.has(id)
-
-        results.push({
-          id,
-          name: name,
-          description,
-          sourceType,
-          sourcePath: skillMdPath,
-          triggers,
-          argumentHint,
-          content,
-          fileSize: formatFileSize(stat.size),
-          tools: [],
-          alreadyImported,
-        })
-      // eslint-disable-next-line taste/no-silent-catch -- intentional: skip unreadable skills, continue scanning
-      } catch (e) {
-        console.error(`[skill-scanner] error reading ${dirPath}:`, e)
-      }
-    }
-  }
+  })
 
   return results
 }

@@ -1,7 +1,7 @@
-import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ScannedAgentInfo } from '@xyz-agent/shared'
-import { expandHome, inferSourceType } from './scanner-base.js'
+import { forEachScannedDir } from './scanner-base.js'
 import { extractFrontmatter, extractDescription } from '../../utils/frontmatter.js'
 
 const DESCRIPTION_MAX_LENGTH = 200
@@ -43,65 +43,44 @@ function parseAgentMd(content: string): { description: string; tools: string[] }
 export function scanAgents(sources: string[], existingAgentIds: Set<string>): ScannedAgentInfo[] {
   const results: ScannedAgentInfo[] = []
 
-  for (const rawSource of sources) {
-    const source = expandHome(rawSource)
-    const sourceType = inferSourceType(rawSource)
+  forEachScannedDir(sources, (dirPath, entryName, sourceType) => {
+    // 查找主配置文件：优先 agent.md，备选目录名.md 或 SKILL.md
+    const candidates = ['agent.md', `${entryName}.md`, 'SKILL.md']
+    let configPath: string | null = null
+    let content = ''
 
-    if (!existsSync(source)) continue
-    let entries
+    for (const c of candidates) {
+      const p = join(dirPath, c)
+      if (existsSync(p)) {
+        configPath = p
+        try { content = readFileSync(p, 'utf-8') } catch { return }
+        break
+      }
+    }
+
+    if (!configPath) return
+
     try {
-      entries = readdirSync(source, { withFileTypes: true })
-    } catch {
-      continue
+      const { description, tools } = parseAgentMd(content)
+      const id = `${sourceType}-${entryName}`
+      const alreadyImported = existingAgentIds.has(id)
+
+      results.push({
+        id,
+        name: entryName,
+        description,
+        sourceType,
+        sourcePath: configPath,
+        content,
+        icon: entryName.charAt(0).toUpperCase(),
+        tools,
+        alreadyImported,
+      })
+    // eslint-disable-next-line taste/no-silent-catch -- intentional: skip unreadable agents, continue scanning
+    } catch (e) {
+      console.error(`[agent-scanner] error reading ${dirPath}:`, e)
     }
-
-    for (const entry of entries) {
-      const dirPath = join(source, entry.name)
-      // statSync 跟随符号链接，正确处理 symlinked agent 目录
-      try {
-        if (!statSync(dirPath).isDirectory()) continue
-      } catch {
-        continue
-      }
-
-      // 查找主配置文件：优先 agent.md，备选目录名.md 或 SKILL.md
-      const candidates = ['agent.md', `${entry.name}.md`, 'SKILL.md']
-      let configPath: string | null = null
-      let content = ''
-
-      for (const c of candidates) {
-        const p = join(dirPath, c)
-        if (existsSync(p)) {
-          configPath = p
-          try { content = readFileSync(p, 'utf-8') } catch { continue }
-          break
-        }
-      }
-
-      if (!configPath) continue
-
-      try {
-        const { description, tools } = parseAgentMd(content)
-        const id = `${sourceType}-${entry.name}`
-        const alreadyImported = existingAgentIds.has(id)
-
-        results.push({
-          id,
-          name: entry.name,
-          description,
-          sourceType,
-          sourcePath: configPath,
-          content,
-          icon: entry.name.charAt(0).toUpperCase(),
-          tools,
-          alreadyImported,
-        })
-      // eslint-disable-next-line taste/no-silent-catch -- intentional: skip unreadable agents, continue scanning
-      } catch (e) {
-        console.error(`[agent-scanner] error reading ${dirPath}:`, e)
-      }
-    }
-  }
+  })
 
   return results
 }
