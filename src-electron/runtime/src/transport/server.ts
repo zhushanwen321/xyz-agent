@@ -40,13 +40,16 @@ export class RuntimeServer implements IMessageBroker {
   private pluginService!: IPluginService
 
   // ── Message handlers (extracted) ────────────────────────────────
+  // Constructed in setServices() — not at field-init time — so `this` is fully
+  // initialized and each handler receives an explicit context object rather than
+  // the `as unknown as XxxHandlerContext` cast the field-initializer needed.
   private extensionTimeoutMgr = new ExtensionTimeoutManager()
-  private bridgeHandler = new BridgeHandler(null)
-  private settingsHandler = new SettingsMessageHandler(this as unknown as import('./settings-message-handler.js').SettingsHandlerContext)
-  private sessionHandler = new SessionMessageHandler(this as unknown as import('./session-message-handler.js').SessionHandlerContext)
-  private extensionHandler = new ExtensionMessageHandler(this as unknown as import('./extension-message-handler.js').ExtensionHandlerContext)
-  private pluginMessageHandler = new PluginMessageHandler(this as unknown as import('./plugin-message-handler.js').PluginHandlerContext)
-  private treeMessageHandler = new TreeMessageHandler(this as unknown as import('./tree-message-handler.js').TreeHandlerContext)
+  private bridgeHandler!: BridgeHandler
+  private settingsHandler!: SettingsMessageHandler
+  private sessionHandler!: SessionMessageHandler
+  private extensionHandler!: ExtensionMessageHandler
+  private pluginMessageHandler!: PluginMessageHandler
+  private treeMessageHandler!: TreeMessageHandler
 
   setServices(session: ISessionService, config: IConfigService, model: IModelService, tree: import('../services/tree-service.js').TreeService, extension?: IExtensionService, plugin?: IPluginService): void {
     this.sessionService = session
@@ -54,10 +57,52 @@ export class RuntimeServer implements IMessageBroker {
     this.modelService = model
     this.treeService = tree
     if (extension) this.extensionService = extension
-    if (plugin) {
-      this.pluginService = plugin
-      this.bridgeHandler = new BridgeHandler(plugin)
-    }
+    if (plugin) this.pluginService = plugin
+
+    // ── Assemble handlers with explicit context objects ──────────────
+    // Each object literal is structurally checked against its HandlerContext
+    // interface at the call site — no `as unknown as`, no relying on private
+    // members being visible across class boundaries.
+    this.bridgeHandler = new BridgeHandler(this.pluginService ?? null)
+    this.settingsHandler = new SettingsMessageHandler({
+      configService: this.configService,
+      sessionService: this.sessionService,
+      modelService: this.modelService,
+      projectRoot: this.projectRoot,
+      nextPushId: () => this.nextPushId(),
+      send: (ws, msg) => this.send(ws, msg),
+      sendError: (ws, code, message, id, sessionId) => this.sendError(ws, code, message, id, sessionId),
+      broadcast: (msg) => this.broadcast(msg),
+      broadcastProviderList: () => this.broadcastProviderList(),
+      broadcastSkillList: () => this.broadcastSkillList(),
+      broadcastAgentList: () => this.broadcastAgentList(),
+    })
+    this.sessionHandler = new SessionMessageHandler({
+      sessionService: this.sessionService,
+      nextPushId: () => this.nextPushId(),
+      send: (ws, msg) => this.send(ws, msg),
+      sendError: (ws, code, message, id, sessionId) => this.sendError(ws, code, message, id, sessionId),
+      broadcastSessionList: () => this.broadcastSessionList(),
+      clearExtensionTimeoutsForSession: (sessionId) => this.clearExtensionTimeoutsForSession(sessionId),
+    })
+    this.extensionHandler = new ExtensionMessageHandler({
+      sessionService: this.sessionService,
+      extensionService: this.extensionService,
+      extensionTimeoutMgr: this.extensionTimeoutMgr,
+      send: (ws, msg) => this.send(ws, msg),
+      sendError: (ws, code, message, id, sessionId) => this.sendError(ws, code, message, id, sessionId),
+    })
+    this.pluginMessageHandler = new PluginMessageHandler({
+      pluginService: this.pluginService ?? null,
+      send: (ws, msg) => this.send(ws, msg),
+      sendError: (ws, code, message, id, sessionId) => this.sendError(ws, code, message, id, sessionId),
+    })
+    this.treeMessageHandler = new TreeMessageHandler({
+      sessionService: this.sessionService,
+      treeService: this.treeService,
+      send: (ws, msg) => this.send(ws, msg),
+      broadcastSessionList: () => this.broadcastSessionList(),
+    })
   }
 
   constructor(private port: number, projectRoot?: string) {

@@ -2,7 +2,7 @@
 
 **日期**: 2026-06-19 · **分支**: refactor-architecture-design
 **关联设计**: [runtime-three-layer-design.md](runtime-three-layer-design.md)（方案 C：端口-适配器）
-**状态**: R0–R3e2 已完成（11 个 commit）；R4、R5 待执行
+**状态**: R0–R4 已完成（12 个 commit）；R5 待执行
 
 ---
 
@@ -27,7 +27,7 @@
 | R3d | `efe19d0f` | ✅ | convertPiHistory unknown[] + PiHistoryMessage 清除 |
 | R3e1 | `0e25e194` | ✅ | ISessionStore + session 家族解耦 |
 | R3e2 | `e8b1a7ed` | ✅ | ITreeReader/INavigateInterceptor + tree/session 解耦 |
-| R4 | — | ⏳ | transport 清理（handler 构造时序 + 声明式路由）|
+| R4 | `<this-commit>` | ✅ | handler 构造移入 setServices()，消除 `as unknown as` 强转 |
 | R5 | — | ⏳ | 收尾验证（rg 全净 + 全量回归）|
 
 **R3 实际拆成 7 个子阶段**（原设计是单一 R3）。审查发现「让所有 service 一次上 ports」是大爆炸式重构，违反单一目标原则，故按 service 域逐个解耦。
@@ -131,12 +131,23 @@ infra/      → 实现 ports（9 个实现类）
 
 ---
 
-## 待办：R4 · transport 清理（低风险）
+## R4 · transport 清理 ✅
 
-**目标**：transport 层的 2 个粗糙处。
+### R4a · handler 构造时序修正 ✅
 
-1. **handler 在 server 构造期强转**：server.ts 构造函数里实例化 handler 用 `this as unknown as XxxHandlerContext` 强转（handler 依赖 server 方法，但 server 还没构造完）。改为 `setServices()` 之后才构造 handler。
-2. **路由仍是 switch**（37-case）：改声明式 map（type → handler）。低优，非阻塞。
+**问题**：`server.ts` 的 6 个 handler 在字段初始化期构造，用了 `this as unknown as XxxHandlerContext` 双重断言。
+
+**审查根因**：双重断言不只是时序问题——TS 在跨类边界不暴露 `private` 成员，`RuntimeServer` 的 `nextPushId`/`broadcastSessionList` 等是 private，结构上不满足 context 接口，所以被迫用 `as unknown as`（TS 版 `any`）。
+
+**修复**：handler 字段改 `!` 确定赋值断言，构造挪到 `setServices()` 末尾。每个 handler 收到**显式 context 对象字面量**，在调用点结构化校验，不再依赖跨类可见性。`bridgeHandler` 也从初始化器（`new BridgeHandler(null)`）挪入 setServices，统一时序。
+
+**不变量验证**：所有 6 个测试文件 + index.ts 都是 `new → setServices() → start()` 序列，消息只在 `start()` 后流动，所以 setServices 内构造 handler 是安全的（handleConnection/handleMessage 不会在 setServices 前触发）。
+
+### R4b · switch→map 路由（有意不做）
+
+37-case switch 改声明式 map 是纯风格切换——不改依赖方向、不改可测试性、不改性能。在 Ponytail/YAGNI 下保持 switch。该改动属"引诱性重构"（看起来更现代但无架构收益），列为有意跳过。
+
+---
 
 ## 待办：R5 · 收尾验证
 
