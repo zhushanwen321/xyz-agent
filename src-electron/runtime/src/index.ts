@@ -14,11 +14,13 @@ import { ModelApiDiscoverer } from './infra/model-api-discoverer.js'
 import { NpmGitInstaller } from './infra/installers/npm-git-installer.js'
 import { ExtensionResolver } from './infra/installers/extension-resolver.js'
 import { EventAdapter } from './infra/pi/event-adapter.js'
+import { NavigateInterceptorFactory } from './infra/pi/navigate-interceptor.js'
+import { SessionTreeReaderAdapter } from './infra/pi/session-tree-reader-adapter.js'
 import { join } from 'node:path'
+import type { INavigateInterceptor } from './services/ports.js'
 import { ExtensionService } from './services/extension-service.js'
 import { PluginRegistry } from './services/plugin-service/plugin-registry.js'
 import { PluginService } from './services/plugin-service/plugin-service.js'
-import type { NavigateInterceptor } from './infra/pi/navigate-interceptor.js'
 
 function parseArgs(): { port: number; projectRoot?: string } {
   // eslint-disable-next-line no-magic-numbers -- argv[0] is node, argv[1] is script
@@ -75,7 +77,7 @@ async function main(): Promise<void> {
     installer: extensionInstaller,
     resolver: extensionResolver,
   })
-  const treeService = new TreeService(pm)
+  const treeService = new TreeService(pm, new SessionTreeReaderAdapter())
   const configService = new ConfigService(effectiveRoot, configStore)
   const modelService = new ModelService(modelSource)
 
@@ -94,7 +96,7 @@ async function main(): Promise<void> {
   // Note: onContextUpdate also references `sessionService` (assigned below) as a self-reference —
   // the adapter queries its owning session's data. createAdapter is only called at session
   // creation time, so sessionService is always set by then.
-  const createAdapter = (sessionId: string, interceptor: NavigateInterceptor) => new EventAdapter(sessionId, interceptor.send, {
+  const createAdapter = (sessionId: string, interceptor: INavigateInterceptor) => new EventAdapter(sessionId, interceptor.send, {
     onExtensionUIRequest: (requestId, sid, method) => {
       server.registerExtensionTimeout(sid, requestId, method)
     },
@@ -143,6 +145,7 @@ async function main(): Promise<void> {
     extensionService,
     configStore,
     sessionStore,
+    new NavigateInterceptorFactory(),
   )
 
   // ── Phase 3: wire cross-service runtime deps ──

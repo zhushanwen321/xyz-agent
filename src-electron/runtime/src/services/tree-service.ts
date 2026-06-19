@@ -8,8 +8,7 @@
 
 import type { IProcessManager, IRpcClient } from '../interfaces.js'
 import type { TreeData, NavigateResult, ForkResult } from '../types.js'
-import { buildTreeFromFile, countBranches, extractFullText } from '../infra/pi/session-tree-reader.js'
-import { NavigateInterceptor } from '../infra/pi/navigate-interceptor.js'
+import type { ITreeReader, INavigateInterceptor } from './ports.js'
 
 /** pi get_state 响应结构（动态 JSON，逃生断言）。 */
 interface PiStateResponse {
@@ -18,7 +17,7 @@ interface PiStateResponse {
 }
 
 interface TreeManagedSession {
-  interceptor: NavigateInterceptor
+  interceptor: INavigateInterceptor
   unsubPiEvents: (() => void) | null
 }
 
@@ -26,10 +25,13 @@ export class TreeService {
   private sessions = new Map<string, TreeManagedSession>()
   private navigateCapableMap = new Map<string, boolean>()
 
-  constructor(private pm: IProcessManager) {}
+  constructor(
+    private pm: IProcessManager,
+    private treeReader: ITreeReader,
+  ) {}
 
   /** Register a session's interceptor (called during session creation). */
-  registerSession(sessionId: string, interceptor: NavigateInterceptor): void {
+  registerSession(sessionId: string, interceptor: INavigateInterceptor): void {
     const client = this.pm.getClient(sessionId)
     let unsubPiEvents: (() => void) | null = null
     if (client) {
@@ -74,8 +76,8 @@ export class TreeService {
       return { sessionId, tree: [], leafId, branchCount: 0, navigateCapable: this.navigateCapableMap.get(sessionId) ?? false }
     }
 
-    const { rootNodes, lastEntryId } = await buildTreeFromFile(sessionFile)
-    const branchCount = countBranches(rootNodes)
+    const { rootNodes, lastEntryId } = await this.treeReader.buildTreeFromFile(sessionFile)
+    const branchCount = this.treeReader.countBranches(rootNodes)
 
     // Fallback: 如果 get_state 仍然没返回 leafId（旧版 pi），用 tree 最后一个 entry 近似
     if (!leafId) {
@@ -105,14 +107,14 @@ export class TreeService {
     try {
       const sessionFile = await this.getSessionFile(client)
       if (sessionFile) {
-        const { byId, rawEntries } = await buildTreeFromFile(sessionFile)
+        const { byId, rawEntries } = await this.treeReader.buildTreeFromFile(sessionFile)
         if (!byId.has(targetEntryId)) {
           return { success: false, error: `Entry ${targetEntryId} not found in session tree` }
         }
         const targetNode = byId.get(targetEntryId)!
         if (targetNode.role === 'user') {
           const raw = rawEntries.get(targetEntryId)
-          if (raw) editorText = extractFullText(raw)
+          if (raw) editorText = this.treeReader.extractFullText(raw)
         }
       }
     // eslint-disable-next-line taste/no-silent-catch -- navigate: failure to read editor text is non-critical, continue with available content

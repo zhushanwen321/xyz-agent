@@ -17,11 +17,10 @@ import type {
   ISessionService, ISessionServiceInternal, IProcessManager, IMessageBroker,
   IEventAdapter, IRpcClient, IExtensionService,
 } from '../../interfaces.js'
-import { NavigateInterceptor } from '../../infra/pi/navigate-interceptor.js'
 import { TreeService } from '../tree-service.js'
 import { readGitInfo } from '../git-info.js'
 import { getHistoryFromFile } from '../session-history.js'
-import type { IConfigStore, ISessionStore } from '../ports.js'
+import type { IConfigStore, ISessionStore, INavigateInterceptor, INavigateInterceptorFactory } from '../ports.js'
 import type { IManagedSessionView, ScannedSession, SendMessageHook } from './types.js'
 import { SessionLifecycle } from './session-lifecycle.js'
 import { MessageDispatcher } from './message-dispatcher.js'
@@ -30,7 +29,7 @@ import { SessionScanner } from './session-scanner.js'
 /** Facade 内部完整 session:子模块可见视图 + 运行时句柄(adapter/interceptor/listener)。 */
 interface ManagedSession extends IManagedSessionView {
   adapter: IEventAdapter
-  interceptor: NavigateInterceptor
+  interceptor: INavigateInterceptor
   unsubUsageListener: (() => void) | null
 }
 
@@ -45,12 +44,13 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   constructor(
     private readonly pm: IProcessManager,
     private readonly broker: IMessageBroker,
-    private readonly adapterFactory: (sessionId: string, interceptor: NavigateInterceptor) => IEventAdapter,
+    private readonly adapterFactory: (sessionId: string, interceptor: INavigateInterceptor) => IEventAdapter,
     private readonly projectRoot: string,
     private readonly treeService: TreeService,
     private readonly extensionService: IExtensionService,
     private readonly configStore: IConfigStore,
     private readonly sessionStore: ISessionStore,
+    private readonly navigateFactory: INavigateInterceptorFactory,
   ) {
     // 打包模式:extension 在 Resources 根;开发模式:在 repo root(src-electron/ 父目录)
     this.extensionPath = process.env.XYZ_AGENT_PACKAGED === '1'
@@ -247,7 +247,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   async initializeManagedSession(
     id: string, client: IRpcClient, cwd: string, label: string, sessionFilePath?: string,
   ): Promise<IManagedSessionView> {
-    const interceptor = new NavigateInterceptor((msg) => this.broker.broadcast(msg))
+    const interceptor = this.navigateFactory.createNavigateInterceptor((msg) => this.broker.broadcast(msg))
     const adapter = this.adapterFactory(id, interceptor)
     adapter.attach(client)
     const unsubUsage = this.attachUsageListener(id, client)
@@ -283,7 +283,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   }
 
   /** Query pi extension commands + register navigate capability。失败不阻塞 session。 */
-  private async fetchAndBroadcastCommands(id: string, client: IRpcClient, interceptor: NavigateInterceptor): Promise<void> {
+  private async fetchAndBroadcastCommands(id: string, client: IRpcClient, interceptor: INavigateInterceptor): Promise<void> {
     try {
       const commands = await client.getCommands() as Array<{ name: string; description?: string; source: string }>
       console.log(`[session-service] getCommands returned ${commands.length} commands:`, commands.map(c => c.name))

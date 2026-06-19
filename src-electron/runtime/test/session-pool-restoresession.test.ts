@@ -87,6 +87,7 @@ vi.mock('../src/infra/pi/process-manager.js', () => ({
 import { SessionService } from '../src/services/session/session-service.js'
 import { PiConfigStore } from '../src/infra/pi/pi-config-store.js'
 import { PiSessionStore } from '../src/infra/pi/session-store.js'
+import { NavigateInterceptorFactory } from '../src/infra/pi/navigate-interceptor.js'
 import type { IMessageBroker, IEventAdapter } from '../src/interfaces.js'
 
 /** Minimal scanned session fixture */
@@ -139,6 +140,7 @@ function createService(): SessionService {
     { getExtensionPaths: vi.fn().mockResolvedValue([]) } as never,
     new PiConfigStore(),
     new PiSessionStore(),
+    new NavigateInterceptorFactory(),
   )
 }
 

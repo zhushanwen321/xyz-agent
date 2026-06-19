@@ -13,12 +13,13 @@
  */
 
 import type { ServerMessage } from '@xyz-agent/shared'
+import type { INavigateInterceptor, INavigateInterceptorFactory } from '../../services/ports.js'
 
 export type WsSender = (msg: ServerMessage) => void
 
 const NAVIGATE_CUSTOM_TYPE = 'xyz-navigate-result'
 
-export class NavigateInterceptor {
+export class NavigateInterceptor implements INavigateInterceptor {
   private resolveFn: ((data: unknown) => void) | null = null
   private pending = false
 
@@ -72,5 +73,14 @@ export class NavigateInterceptor {
     }
 
     this.downstream(msg)
+  }
+}
+
+/**
+ * INavigateInterceptorFactory 实现 —— service 经此创建拦截器，不直接 new NavigateInterceptor。
+ */
+export class NavigateInterceptorFactory implements INavigateInterceptorFactory {
+  createNavigateInterceptor(downstream: WsSender): INavigateInterceptor {
+    return new NavigateInterceptor(downstream)
   }
 }

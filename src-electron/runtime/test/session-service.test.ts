@@ -86,13 +86,23 @@ vi.mock('../src/services/git-info.js', () => ({
   pruneGitInfoCache: vi.fn(),
 }))
 
-// NavigateInterceptor 被 session-service 直接 new，mock 成最小实现
+// NavigateInterceptor 经 factory 创建，mock 成最小实现
 vi.mock('../src/infra/pi/navigate-interceptor.js', () => ({
   NavigateInterceptor: class MockNavigateInterceptor {
     readonly send = vi.fn()
     setResolver = vi.fn()
     clearResolver = vi.fn()
     onMessageEnd = vi.fn()
+  },
+  NavigateInterceptorFactory: class MockNavigateInterceptorFactory {
+    createNavigateInterceptor() {
+      return new (class MockNavigateInterceptor {
+        readonly send = vi.fn()
+        setResolver = vi.fn()
+        clearResolver = vi.fn()
+        onMessageEnd = vi.fn()
+      })()
+    }
   },
 }))
 
@@ -101,6 +111,7 @@ vi.mock('../src/infra/pi/navigate-interceptor.js', () => ({
 import { SessionService } from '../src/services/session/session-service.js'
 import { PiConfigStore } from '../src/infra/pi/pi-config-store.js'
 import { PiSessionStore } from '../src/infra/pi/session-store.js'
+import { NavigateInterceptorFactory } from '../src/infra/pi/navigate-interceptor.js'
 
 // ── Mock client / 依赖工厂 ─────────────────────────────────────────
 
@@ -251,6 +262,7 @@ function createSetup(): Setup {
     extensionService,
     new PiConfigStore(),
     new PiSessionStore(),
+    new NavigateInterceptorFactory(),
   )
 
   const mountClient = (sessionId: string, client?: MockClient): MockClient => {
@@ -883,6 +895,7 @@ describe('SessionService · onSessionExit callback', () => {
       localSetup.extensionService,
       new PiConfigStore(),
       new PiSessionStore(),
+      new NavigateInterceptorFactory(),
     )
     const piSid = 'pi-detach-1'
     const client = makeMockClient({
