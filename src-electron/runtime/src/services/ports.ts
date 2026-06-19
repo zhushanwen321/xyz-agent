@@ -158,7 +158,29 @@ export interface IPiProcess {
   onSessionExit(callback: PiExitCallback): () => void
 }
 
-// ── R3c 骨架签名（service 侧尚未接入）──────────────────────────
-// 🔨 IModelSource — 模型发现（HTTP 探测 + 聚合）。方法：aggregateModels/discoverFromApi。
-// 🔨 IInstaller   — 安装器（npm/git）。方法：installNpm/installGit。
+// ── R3c1: IModelSource（已落地）──────────────────────────────────
+
+/** discoverFromApi 返回的模型元信息。 */
+export interface DiscoveredModelMeta {
+  id: string
+  name: string
+  contextWindow?: number
+}
+
+/**
+ * 模型发现 port —— 经 HTTP 探测 LLM API 获取可用模型列表。
+ * ModelService 的 aggregateModels 是纯数据转换（ProviderInfo[]→ModelInfo[]），
+ * 属业务逻辑留 service；discoverFromApi 是外部 HTTP 调用，经此 port 注入。
+ */
+export interface IModelSource {
+  /**
+   * 探测 LLM API 的 /v1/models 端点，返回模型列表。
+   * 兼容 anthropic（x-api-key）与 openai-compatible（Bearer）两种鉴权。
+   */
+  discoverFromApi(baseUrl: string, apiKey?: string, providerType?: string): Promise<DiscoveredModelMeta[]>
+}
+
+// ── R3c2 骨架签名（service 侧尚未接入）──────────────────────────
+// 🔨 IInstaller          — 安装器（npm install/uninstall/installDeps + git clone）。
+// 🔨 IExtensionResolver  — 扩展路径发现 + 解析。
 // 与 R3a 同理，空接口会触发 no-empty-object-type，方法确定后再声明。
