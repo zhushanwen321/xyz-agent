@@ -47,7 +47,7 @@
 
 ---
 
-### D3. 两套 npm 安装实现（形式相似，业务不同）
+### D3. 两套 npm 安装实现（形式相似，业务不同）→ 移走去重清单（security 议题，2026-06-19）
 
 > ⚠️ **判定修正（2026-06-19）**：初判为「真重复 + 架构债」有误。经查证，两套服务的是**两个不同业务对象**，非同一件事的两份实现。
 
@@ -116,7 +116,7 @@ createXxxApi(rpcClient, pluginId)         // Worker 侧：return { yyy: (...) =>
 
 ---
 
-### D7. 多个 store/adapter 类是「聚合 infra 自由函数 + 逐方法薄委托」
+### D7. 多个 store/adapter 类是「聚合 infra 自由函数 + 逐方法薄委托」→ 归 P3 不动（正确分层，2026-06-19）
 
 三个是同一模式：
 
@@ -208,7 +208,7 @@ createXxxApi(rpcClient, pluginId)         // Worker 侧：return { yyy: (...) =>
 
 ---
 
-### D15. RPC / 请求超时三件套：`pending Map<number|string, {resolve, reject, timer}>` + `setTimeout` + `clearTimeout`
+### D15. RPC / 请求超时三件套：`pending Map<number|string, {resolve, reject, timer}>` + `setTimeout` + `clearTimeout` ✅ 部分解决（2/6 收编，2026-06-19，R12）
 
 5 处各自实现同一结构：
 
