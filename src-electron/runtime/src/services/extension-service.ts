@@ -35,7 +35,6 @@ const log = {
 }
 
 const NPM_PREFIX_LENGTH = 4 // "npm:" 前缀长度
-const INDENT_SPACES = 2
 const NPM_INSTALL_TIMEOUT = 60_000
 const GIT_CLONE_TIMEOUT = 120_000
 const DISCOVERY_TEMP_PREFIX = 'ext-scan-'

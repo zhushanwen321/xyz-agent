@@ -19,7 +19,6 @@ import {
   readSettings,
   updateSettingsSync,
   invalidateSettingsCache,
-  type PiSettings,
 } from './pi-settings-store.js'
 
 // ── 类型定义（对齐 pi models.json / settings.json 的 schema）────

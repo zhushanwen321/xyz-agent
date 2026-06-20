@@ -15,12 +15,15 @@ import { readdirSync, existsSync, readFileSync, mkdirSync, rmSync } from 'node:f
 import { atomicWrite } from '../../utils/fs-utils.js'
 import { WriteBackCache } from '../../utils/json-store.js'
 import { errorWithCode } from '../../utils/errors.js'
+import { PluginRpcErrorCodes } from './plugin-types.js'
 
 // eslint-disable-next-line no-magic-numbers
 const MB = 1024 * 1024
 // eslint-disable-next-line no-magic-numbers
 const DEFAULT_MAX_SESSION_DATA_BYTES = 10 * MB
 const FLUSH_DEBOUNCE_MS = 500
+/** 全量 flush 周期：补充 per-write debounce，兜底未触发 debounce 的脏分区。 */
+const FLUSH_INTERVAL_MS = 5_000
 /** H1: session-data 持久化子目录名（configDir 下）。提常量消除 4 处魔法串重复。 */
 const SESSION_DATA_DIRNAME = 'session-data'
 
@@ -40,7 +43,7 @@ export class SessionDataStore {
   constructor(
     configDir: string,
     maxSizeBytes: number = DEFAULT_MAX_SESSION_DATA_BYTES,
-    storageFullCode: number = -32040,
+    storageFullCode: number = PluginRpcErrorCodes.STORAGE_FULL,
   ) {
     this.configDir = configDir
     this.cache = new WriteBackCache<string, string, unknown>(
@@ -78,12 +81,12 @@ export class SessionDataStore {
 
   // ── 生命周期 ─────────────────────────────────────────────
 
-  /** 启动定时 flush（每 5s 全量 flush，补充 per-write debounce） */
+  /** 启动定时 flush（全量周期 flush，补充 per-write debounce） */
   startFlushTimer(): void {
     if (this.flushTimer) return
     this.flushTimer = setInterval(() => {
       this.cache.flushAll()
-    }, 5_000)
+    }, FLUSH_INTERVAL_MS)
   }
 
   /** 停止定时 flush */

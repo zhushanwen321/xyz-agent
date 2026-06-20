@@ -129,8 +129,9 @@ export class JsonStore<T> {
   private deleteFile(): void {
     try {
       rmSync(this.path, { force: true })
-    } catch {
-      // 忽略——writeEmpty:'delete' 是尽力而为
+    // eslint-disable-next-line taste/no-silent-catch -- writeEmpty:'delete' 是尽力清理，失败不阻断主流程（同 trash.ts 约定）
+    } catch (e) {
+      console.debug(`[json-store] delete failed: ${this.path}:`, e instanceof Error ? e.message : e)
     }
   }
 }

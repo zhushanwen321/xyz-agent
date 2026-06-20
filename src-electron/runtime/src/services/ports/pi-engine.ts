@@ -122,7 +122,7 @@ export interface PiRpcResponse {
 }
 
 /** pi get_state 响应结构（动态 JSON，逃生断言）。 */
-export interface PiStateResponse extends PiRpcResponse {}
+export type PiStateResponse = PiRpcResponse
 
 /**
  * 从 pi RPC 响应取归一化的结果对象（兼容 data/payload 两位置）。
