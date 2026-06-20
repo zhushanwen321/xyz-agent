@@ -35,6 +35,13 @@ export interface ElectronAPI {
   openExternal(url: string): Promise<void>
   /** 监听 macOS 全屏状态变化 */
   onFullscreenChanged(callback: (payload: { isFullscreen: boolean }) => void): () => void
+  // ── 窗口控制（win/linux 自绘圆点点击）─────────────────────────
+  /** 最小化当前窗口 */
+  windowMinimize(): Promise<void>
+  /** 最大化/还原切换 */
+  windowToggleMaximize(): Promise<void>
+  /** 关闭当前窗口 */
+  windowClose(): Promise<void>
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -84,4 +91,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('fullscreen-changed', handler)
     return () => ipcRenderer.removeListener('fullscreen-changed', handler)
   },
+  // ── 窗口控制（win/linux 自绘圆点点击）─────────────────────────
+  windowMinimize: () => ipcRenderer.invoke('window-minimize'),
+  windowToggleMaximize: () => ipcRenderer.invoke('window-toggle-maximize'),
+  windowClose: () => ipcRenderer.invoke('window-close'),
 } satisfies ElectronAPI)

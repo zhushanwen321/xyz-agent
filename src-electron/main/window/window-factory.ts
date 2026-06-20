@@ -69,7 +69,11 @@ export async function createWindow(
     minHeight: 600,
     show: false,
     title: 'xyz-agent',
-    titleBarStyle: 'hiddenInset',
+    // 跨平台窗口装饰（shell spec §五方案 X）
+    // mac：hiddenInset 让系统画红黄绿浮 sidebar 左上；win/linux：frame:false 应用自绘圆点 mimic mac
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hiddenInset' as const }
+      : { frame: false }),
     webPreferences: {
       preload: path.join(app.getAppPath(), 'dist/preload/preload.cjs'),
       contextIsolation: true,

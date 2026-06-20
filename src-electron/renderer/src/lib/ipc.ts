@@ -2,7 +2,8 @@
  * IPC 桥接 —— 封装 preload 注入的 window.electronAPI。
  *
  * web/mock 环境（无 preload）electronAPI 为 undefined，方法优雅降级。
- * 连接骨架阶段只封装端口发现相关的 4 个方法。
+ * 这是 renderer 对 electronAPI 的唯一适配点（spec §4 R1）：端口发现 +
+ * 全屏态监听 + 窗口控制（mac/win/linux traffic light 相关）。
  *
  * 依赖方向：无下游（读全局 window.electronAPI，类型经 declare global 自动可用）
  */
@@ -28,4 +29,24 @@ export function onRuntimePort(cb: (port: number) => void): () => void {
 /** 监听 runtime 启动失败事件，返回取消函数 */
 export function onRuntimeError(cb: (error: { message: string }) => void): () => void {
   return api?.onRuntimeError(cb) ?? (() => {})
+}
+
+/** 监听窗口全屏态变化（mac enter/leave-full-screen，main 已发 IPC），返回取消函数 */
+export function onFullscreenChanged(cb: (isFullscreen: boolean) => void): () => void {
+  return api?.onFullscreenChanged(({ isFullscreen }) => cb(isFullscreen)) ?? (() => {})
+}
+
+/** win/linux 自绘 traffic light 点击：最小化窗口（mac 系统圆点不走此处） */
+export function windowMinimize(): Promise<void> {
+  return api?.windowMinimize() ?? Promise.resolve()
+}
+
+/** win/linux 自绘 traffic light 点击：切换最大化（mac 系统圆点不走此处） */
+export function windowToggleMaximize(): Promise<void> {
+  return api?.windowToggleMaximize() ?? Promise.resolve()
+}
+
+/** win/linux 自绘 traffic light 点击：关闭窗口（mac 系统圆点不走此处） */
+export function windowClose(): Promise<void> {
+  return api?.windowClose() ?? Promise.resolve()
 }

@@ -18,6 +18,10 @@ export interface ElectronAPI {
   openExternal(url: string): Promise<void>
   /** 监听 macOS 全屏状态变化 */
   onFullscreenChanged(callback: (payload: { isFullscreen: boolean }) => void): () => void
+  // ── 窗口控制（win/linux 自绘圆点点击）─────────────────────────
+  windowMinimize(): Promise<void>
+  windowToggleMaximize(): Promise<void>
+  windowClose(): Promise<void>
 }
 
 declare global {

@@ -13,5 +13,10 @@ export const useSidebarStore = defineStore('sidebar', () => {
   const activeTab = ref<SidebarTab>('sessions')
   const collapsed = ref(false)
 
-  return { activeTab, collapsed }
+  /** 切换折叠态（app-nav-controls 收起按钮 + 未来 ⌘B 调用） */
+  function toggleCollapsed(): void {
+    collapsed.value = !collapsed.value
+  }
+
+  return { activeTab, collapsed, toggleCollapsed }
 })

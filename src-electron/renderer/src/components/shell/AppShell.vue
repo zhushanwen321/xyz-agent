@@ -13,10 +13,14 @@
 <script setup lang="ts">
 import { useEventListener } from '@vueuse/core'
 import { useNavigationStore } from '@/stores/navigation'
+import { usePlatformChrome } from '@/composables/effects/usePlatformChrome'
 import AsideRegion from './AsideRegion.vue'
 import MainPanel from './MainPanel.vue'
 
 const navigation = useNavigationStore()
+
+// 平台 + 全屏态同步到 <html>（data-platform / data-fullscreen），驱动 traffic-light / app-nav-controls 两态。
+usePlatformChrome()
 
 // ⌘[/⌘] 导航历史快捷键（shell spec §八.5 G3-003）。
 // mac ⌘ / win·linux Ctrl，跨平台统一；canBack/canForward 为 false 时静默不触发。
