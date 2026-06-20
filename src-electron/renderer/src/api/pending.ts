@@ -2,7 +2,9 @@
  * Pending 请求映射 —— 命令 id（crypto.randomUUID）→ Promise。
  *
  * 依赖方向：无下游（被 api/domains 调用）。
- * 骨架阶段：签名完整，体 throw。
+ *
+ * 注：将 ServerMessage(id) 路由到 pending.resolve 的 dispatcher 由 features 层
+ * （useChat/useSidebar）在订阅 transport.on 时串联，本层只提供注册表。
  */
 
 /** 注册中的 pending 请求 */
@@ -11,22 +13,35 @@ export interface PendingRequest<T = unknown> {
   reject: (error: unknown) => void
 }
 
+const pendingMap = new Map<string, PendingRequest>()
+
 /** 生成新命令 id（crypto.randomUUID） */
 export function create(): string {
-  throw new Error('not implemented')
+  return crypto.randomUUID()
 }
 
 /** 注册 pending 请求，返回与之关联的 Promise */
 export function register<T>(id: string): Promise<T> {
-  throw new Error(`not implemented: register(${id})`)
+  return new Promise<T>((resolve, reject) => {
+    pendingMap.set(id, {
+      resolve: resolve as (value: unknown) => void,
+      reject,
+    })
+  })
 }
 
-/** 按 id resolve pending 请求 */
+/** 按 id resolve pending 请求（id 不存在时 no-op，防重复/过期响应） */
 export function resolve<T>(id: string, value: T): void {
-  throw new Error(`not implemented: resolve(${id}, ${typeof value})`)
+  const req = pendingMap.get(id)
+  if (!req) return
+  pendingMap.delete(id)
+  req.resolve(value)
 }
 
-/** 按 id reject pending 请求 */
+/** 按 id reject pending 请求（id 不存在时 no-op） */
 export function reject(id: string, error: unknown): void {
-  throw new Error(`not implemented: reject(${id}, ${String(error)})`)
+  const req = pendingMap.get(id)
+  if (!req) return
+  pendingMap.delete(id)
+  req.reject(error)
 }
