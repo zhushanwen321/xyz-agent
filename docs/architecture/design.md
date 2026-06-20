@@ -765,6 +765,8 @@ main/
 
 #### M2 · Process Supervisor（runtime-manager.ts）—— 需明确 4 个子职责
 
+> **已落地（2026-06）**：本节细化规则已实现为 `main/supervisor/` 子系统——`runtime-supervisor.ts`（编排）+ `port-discoverer.ts`（端口探测）+ `health-checker.ts`（健康检查）+ `process-control.ts`（进程 spawn/kill）+ `port-file.ts`（端口持久化）+ `safe-env.ts`。4 个子职责已物理拆分为独立模块，不再揉在一个类。以下「现状」描述为重构前状态，保留作决策记录。
+
 **现状**：runtime-manager.ts 把 4 件事揉在一个类：端口探测、进程 spawn/kill、健康检查、端口文件读写。
 
 **细化规则**：逻辑上分 4 个子职责（可仍在一个文件，但方法边界清晰）：
