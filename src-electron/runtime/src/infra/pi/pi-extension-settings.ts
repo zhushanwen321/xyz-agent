@@ -6,53 +6,30 @@
  *
  * 🔒 settings.json 的 RMW 经 pi-settings-store.updateSettingsSync（sync，单线程不交错），
  * 与 model 域（pi-provider-store）共享同一读写层，杜绝跨域竞态（D17）。
+ *
+ * P0-1：disabled-packages.json 的读写收敛到 JsonStore（shouldDeleteWhen 实现空则删）。
  */
 
-import { existsSync, readFileSync, rmSync, mkdirSync } from 'node:fs'
-import { atomicWrite } from '../../utils/fs-utils.js'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
+import { JsonStore } from '../../utils/json-store.js'
 import type { IExtensionSettings } from '../../services/ports/extension-settings.js'
 import { updateSettingsSync, readSettings, invalidateSettingsCache, setSettingsPath } from './pi-settings-store.js'
 import { getPiAgentDir } from './pi-paths.js'
-import { toErrorMessage } from '../../utils/errors.js'
 
-const INDENT_SPACES = 2
 const DISABLED_FILE = 'disabled-packages.json'
 
-const log = {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  debug: (..._args: unknown[]) => { /* no-op in production */ },
-  warn: (...args: unknown[]) => console.warn('[pi-extension-settings]', ...args),
-}
+type DisabledRecord = { disabled: string[] }
 
 /**
- * 读 disabled-packages.json，返回 disabled 数组。文件不存在/解析失败返回 []。
- * 纯同步读，无缓存（调用频率低：仅 scanExtensions / toggle）。
+ * disabled-packages.json 存储：read-through（ENOENT 容错）+ atomicWrite。
+ * 空数组时删文件（shouldDeleteWhen），与原 writeDisabledArray 行为一致。
+ * 不带 TTL 缓存（调用频率低：仅 scanExtensions / toggle，每次触盘与原行为一致）。
  */
-function readDisabledArray(disabledPath: string): string[] {
-  if (!existsSync(disabledPath)) return []
-  try {
-    const raw = readFileSync(disabledPath, 'utf-8')
-    return (JSON.parse(raw) as { disabled?: string[] }).disabled ?? []
-  } catch (e) {
-    log.warn(`failed to parse ${disabledPath}: ${toErrorMessage(e)}`)
-    return []
-  }
-}
-
-/** 原子写 disabled-packages.json（tmp + rename）。空数组则删文件。 */
-function writeDisabledArray(disabledPath: string, disabled: string[]): void {
-  if (disabled.length > 0) {
-    const dir = dirname(disabledPath)
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-    atomicWrite(disabledPath, JSON.stringify({ disabled }, null, INDENT_SPACES))
-  } else if (existsSync(disabledPath)) {
-    try {
-      rmSync(disabledPath)
-    } catch (e) {
-      log.warn(`failed to remove ${disabledPath}: ${toErrorMessage(e)}`)
-    }
-  }
+function createDisabledStore(path: string): JsonStore<DisabledRecord> {
+  return new JsonStore<DisabledRecord>(path, { disabled: [] }, {
+    ttlMs: 0,
+    shouldDeleteWhen: (v) => v.disabled.length === 0,
+  })
 }
 
 /**
@@ -62,11 +39,11 @@ function writeDisabledArray(disabledPath: string, disabled: string[]): void {
  */
 export class PiExtensionSettings implements IExtensionSettings {
   private readonly settingsDir: string
-  private readonly disabledPath: string
+  private readonly disabledStore: JsonStore<DisabledRecord>
 
   constructor(settingsDir: string = getPiAgentDir()) {
     this.settingsDir = settingsDir
-    this.disabledPath = join(settingsDir, DISABLED_FILE)
+    this.disabledStore = createDisabledStore(join(settingsDir, DISABLED_FILE))
     // 让 pi-settings-store 指向同一 settingsDir 的 settings.json，保证 model 域与
     // extension 域在测试（注入临时目录）和生产（getPiAgentDir）都读写同一文件（D17 单一所有者）。
     setSettingsPath(join(settingsDir, 'settings.json'))
@@ -104,22 +81,22 @@ export class PiExtensionSettings implements IExtensionSettings {
   // ── disabled-packages.json ──
 
   getDisabled(): string[] {
-    return readDisabledArray(this.disabledPath)
+    return this.disabledStore.read().disabled
   }
 
   async setEnabled(source: string, enabled: boolean): Promise<void> {
-    const disabled = readDisabledArray(this.disabledPath)
+    const current = this.disabledStore.read().disabled
     let next: string[]
     if (enabled) {
-      next = disabled.filter(d => d !== source)
+      next = current.filter(d => d !== source)
     } else {
-      next = disabled.includes(source) ? disabled : [...disabled, source]
+      next = current.includes(source) ? current : [...current, source]
     }
-    writeDisabledArray(this.disabledPath, next)
+    this.disabledStore.write({ disabled: next })
   }
 
   async removeDisabled(source: string): Promise<void> {
-    const disabled = readDisabledArray(this.disabledPath).filter(d => d !== source)
-    writeDisabledArray(this.disabledPath, disabled)
+    const next = this.disabledStore.read().disabled.filter(d => d !== source)
+    this.disabledStore.write({ disabled: next })
   }
 }
