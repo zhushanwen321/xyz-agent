@@ -93,3 +93,13 @@ priority: ★★
 - 存在工作区级横跨 header（#8）= FAIL（核心原则）。
 - 5 zone 顺序错（#11）= FAIL。
 - PASS 后进 [va-05-p4-panel-content.md](va-05-p4-panel-content.md)。
+
+## ⚠️ 已知阻塞 bug（W05 验收时发现，P3 优先修）
+
+**PanelContainer watch 死锁 → sidebar 点 session 不载入 panel**
+
+- 现象：`selectSession(id)` 设了 `session.activeId`，但 `panel.leaf.sessionId` 永远 `null`——空态时 `Workspace` 不渲染 `PanelContainer`，其 `watch(session.activeId)→panel.loadSession` 未注册，形成「不渲染→不监听→不载入→继续不渲染」死循环。
+- 影响：#1（单 session 默认态）实际无法自动达成（需手动 `panel.loadSession`）；阻塞 W10/W12/W16。
+- 根因：`loadSession` 触发点挂在条件渲染子组件的 watch 上。
+- 修复方向：把 `selectSession→loadSession` 编排上移到始终挂载的层（`useSidebar.selectSession` 内直接调 `panel.loadSession`，不依赖 PanelContainer watch）。
+- 详情：[w05-p1-shell-misc.md 验收结果](waves/w05-p1-shell-misc.md#验收结果2026-06-20)

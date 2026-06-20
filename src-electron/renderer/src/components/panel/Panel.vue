@@ -8,13 +8,16 @@
     点击 panel body 切 active（主从焦点，非按钮区域）。
   -->
   <section
-    class="panel relative flex min-w-0 flex-1 flex-col overflow-hidden"
-    :class="{ 'panel--active': active, 'panel--standby': !active && isDual }"
+    class="relative flex min-w-0 flex-1 flex-col overflow-hidden transition-[background-color,opacity,box-shadow] duration-[var(--duration)] ease-[var(--ease)]"
+    :class="panelStateClass"
     @mousedown="onPanelMouseDown"
   >
+    <!-- 左侧焦点竖条（双 panel active，workspace/spec.md 四层激活之一。原 ::before 改 div 避免 scoped 伪元素） -->
+    <div v-if="active && isDual" class="absolute left-0 top-0 bottom-0 z-[6] w-[2px] bg-accent" />
     <PanelHeader
       :session-label="sessionLabel"
       :session-dir="sessionDir"
+      :git-branch="gitBranch"
       :status="status"
       :active="active"
       :is-dual="isDual"
@@ -41,6 +44,7 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { MessageSquare } from '@lucide/vue'
 import type { DerivedStatus } from '@/types'
 import PanelHeader from './PanelHeader.vue'
@@ -74,38 +78,15 @@ function onPanelMouseDown(e: MouseEvent): void {
   if ((e.target as HTMLElement).closest('button')) return
   emit('activate', props.panelId)
 }
-</script>
 
-<style scoped>
-/* 四层激活标识（workspace/spec.md）：
-   - 单 panel：无标识，正常显示（opacity 1，无 ring）
-   - 双 panel active：左 2px accent 竖条 + inset accent-ring + bg-elevated 浮起 + opacity 1
-   - 双 panel standby：opacity 0.5，hover 回升 0.78 */
-.panel {
-  transition: background var(--duration) var(--ease),
-              opacity var(--duration) var(--ease),
-              box-shadow var(--duration) var(--ease);
-}
-.panel--standby {
-  opacity: 0.5;
-}
-.panel--standby:hover {
-  opacity: 0.78;
-}
-.panel--active {
-  background: var(--surface-hover);
-  opacity: 1;
-  box-shadow: inset 0 0 0 1px rgba(79, 142, 247, 0.3);
-}
-/* 左侧焦点竖条（独立层 ::before，避免被 ring 盖住） */
-.panel--active::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: var(--accent);
-  z-index: 6;
-}
-</style>
+/** 四层激活标识（workspace/spec.md）：单 panel 无标识；双 active = bg-elevated + inset accent-ring + opacity 1；双 standby = opacity 0.5 hover 回升 0.78 */
+const panelStateClass = computed(() => {
+  if (props.active && props.isDual) {
+    return 'bg-surface-hover opacity-100 shadow-[inset_0_0_0_1px_var(--accent-ring)]'
+  }
+  if (!props.active && props.isDual) {
+    return 'opacity-50 hover:opacity-[0.78]'
+  }
+  return ''
+})
+</script>
