@@ -3,7 +3,7 @@
  * Extracted from RuntimeServer to reduce file size.
  */
 import type { WebSocket as WsType } from 'ws'
-import type { ClientMessage } from '@xyz-agent/shared'
+import type { ClientMessage, ClientMessageType } from '@xyz-agent/shared'
 import type { ISessionService, IExtensionService } from '../interfaces.js'
 import type { ExtensionTimeoutManager } from '../services/extension-timeout-manager.js'
 import { ExtensionInstallError } from '../services/extension-service.js'
@@ -19,6 +19,12 @@ export interface ExtensionHandlerContext extends MessageHandlerContext {
 
 export class ExtensionMessageHandler {
   constructor(private ctx: ExtensionHandlerContext) {}
+
+  /** D1: 本 handler 认领的 ClientMessageType 清单。 */
+  readonly handles: ClientMessageType[] = [
+    'extension.ui_response', 'extension.list', 'extension.toggle', 'extension.install', 'extension.uninstall',
+    'extension.installDir', 'extension.installGit', 'extension.finishInstall', 'extension.cancelInstall',
+  ]
 
   /**
    * D3: service-not-available 前置守卫（此前 7 处同形 inline）。

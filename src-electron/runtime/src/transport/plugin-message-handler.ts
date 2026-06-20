@@ -3,7 +3,7 @@
  * Extracted from RuntimeServer to reduce file size.
  */
 import type { WebSocket as WsType } from 'ws'
-import type { ClientMessage } from '@xyz-agent/shared'
+import type { ClientMessage, ClientMessageType } from '@xyz-agent/shared'
 import type { IPluginService } from '../interfaces.js'
 import type { MessageHandlerContext } from './message-context.js'
 
@@ -13,6 +13,12 @@ export interface PluginHandlerContext extends MessageHandlerContext {
 
 export class PluginMessageHandler {
   constructor(private ctx: PluginHandlerContext) {}
+
+  /** D1: 本 handler 认领的 ClientMessageType 清单。 */
+  readonly handles: ClientMessageType[] = [
+    'plugin.list', 'plugin.toggle', 'plugin.uninstall', 'plugin.approvePermissions', 'plugin.revokePermissions',
+    'plugin.executeCommand', 'plugin.config.get', 'plugin.config.set', 'plugin.install', 'plugin.uiResponse',
+  ]
 
   async handlePluginMessage(msg: ClientMessage, ws: WsType): Promise<void> {
     // D3: service-not-available 前置守卫（与 extension 的 requireExt 同形）。

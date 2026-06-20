@@ -8,7 +8,7 @@
 import { createServer, type Server as HttpServer } from 'node:http'
 import { resolve } from 'node:path'
 import { WebSocketServer, WebSocket, type WebSocket as WsType } from 'ws'
-import type { ClientMessage, ServerMessage, ServerMessageType } from '@xyz-agent/shared'
+import type { ClientMessage, ClientMessageType, ServerMessage, ServerMessageType } from '@xyz-agent/shared'
 import type { ISessionService, IConfigService, IModelService, IMessageBroker, IExtensionService, IPluginService } from '../interfaces.js'
 import { ExtensionTimeoutManager } from '../services/extension-timeout-manager.js'
 import { BridgeHandler } from './bridge-handler.js'
@@ -51,6 +51,15 @@ export class RuntimeServer implements IMessageBroker {
   private extensionHandler!: ExtensionMessageHandler
   private pluginMessageHandler!: PluginMessageHandler
   private treeMessageHandler!: TreeMessageHandler
+
+  /**
+   * D1: 中央分发表。此前是 55 行 switch，每个 case 纯转发、零逻辑。
+   * 改成 Map<ClientMessageType, (msg,ws)=>Promise<unknown>> 后：
+   * - 加新消息类型只改一个 handler 的 handles 清单，不碰路由（开闭原则）。
+   * - ping/file.read 走内联（无对应 handler），settings 走兜底（return false 表示未认领）。
+   * 注意：handler 内部的 switch 保留——它们提供编译期类型收窄 + 含真实领域逻辑。
+   */
+  private routes!: Map<ClientMessageType, (msg: ClientMessage, ws: WsType) => Promise<unknown> | unknown>
 
   setServices(session: ISessionService, config: IConfigService, model: IModelService, tree: import('../services/tree-service.js').TreeService, extension?: IExtensionService, plugin?: IPluginService): void {
     this.sessionService = session
@@ -109,6 +118,18 @@ export class RuntimeServer implements IMessageBroker {
       treeService: this.treeService,
       broadcastSessionList: () => this.broadcastSessionList(),
     })
+
+    // ── Build the central dispatch table (D1) ───────────────────────
+    // ping/file.read 内联（无对应 handler）；settings 走兜底（见 handleMessage）。
+    this.routes = new Map([
+      ['ping', (msg, ws) => this.reply(ws, msg.id, 'pong', {})],
+      ['file.read', (msg, ws) => this.handleFileRead(msg, ws)],
+      ['session.compact', (msg, ws) => this.sessionHandler.handleSessionCompact(msg as Extract<ClientMessage, { type: 'session.compact' }>, ws)],
+      ...this.sessionHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => this.sessionHandler.handleSessionMessage(msg, ws)] as const),
+      ...this.treeMessageHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => this.treeMessageHandler.handleTreeMessage(msg, ws)] as const),
+      ...this.extensionHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => this.extensionHandler.handleExtensionMessage(msg, ws)] as const),
+      ...this.pluginMessageHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => this.pluginMessageHandler.handlePluginMessage(msg, ws)] as const),
+    ] as Array<[ClientMessageType, (msg: ClientMessage, ws: WsType) => Promise<unknown> | unknown]>)
   }
 
   constructor(private port: number, projectRoot?: string) {
@@ -233,56 +254,15 @@ export class RuntimeServer implements IMessageBroker {
 
   private async handleMessage(msg: ClientMessage, ws: WsType): Promise<void> {
     try {
-      switch (msg.type) {
-        case 'ping':
-          return this.send(ws, { type: 'pong', id: msg.id, payload: {} })
-        case 'session.create':
-        case 'session.delete':
-        case 'session.list':
-        case 'session.switch':
-        case 'session.history':
-        case 'session.rename':
-        case 'message.send':
-        case 'message.abort':
-        case 'message.steer':
-        case 'message.follow_up':
-          return this.sessionHandler.handleSessionMessage(msg, ws)
-        case 'session.compact':
-          return this.sessionHandler.handleSessionCompact(msg, ws)
-        case 'session.tree-data':
-        case 'session.tree-navigate':
-        case 'session.tree-fork':
-        case 'session.tree-capability':
-        case 'session.tree-clone':
-          return this.treeMessageHandler.handleTreeMessage(msg, ws)
-        case 'extension.ui_response':
-        case 'extension.list':
-        case 'extension.toggle':
-        case 'extension.install':
-        case 'extension.uninstall':
-        case 'extension.installDir':
-        case 'extension.installGit':
-        case 'extension.finishInstall':
-        case 'extension.cancelInstall':
-          return this.extensionHandler.handleExtensionMessage(msg, ws)
-        case 'plugin.list':
-        case 'plugin.toggle':
-        case 'plugin.uninstall':
-        case 'plugin.approvePermissions':
-        case 'plugin.revokePermissions':
-        case 'plugin.executeCommand':
-        case 'plugin.config.get':
-        case 'plugin.config.set':
-        case 'plugin.install':
-        case 'plugin.uiResponse':
-          return this.pluginMessageHandler.handlePluginMessage(msg, ws)
-        case 'file.read':
-          return this.handleFileRead(msg, ws)
-        default:
-          if (!await this.settingsHandler.handleSettingsMessage(msg, ws)) {
-            const rawMsg = msg as { type: string; payload?: { sessionId?: string } }
-            this.sendError(ws, 'unknown_type', `Unknown message type: ${rawMsg.type}`, msg.id, rawMsg.payload?.sessionId)
-          }
+      const route = this.routes.get(msg.type)
+      if (route) {
+        await route(msg, ws)
+        return
+      }
+      // Settings 是兜底 handler：它内部 switch 命中返回 true，未命中返回 false（→ unknown_type）。
+      if (!await this.settingsHandler.handleSettingsMessage(msg, ws)) {
+        const rawMsg = msg as { type: string; payload?: { sessionId?: string } }
+        this.sendError(ws, 'unknown_type', `Unknown message type: ${rawMsg.type}`, msg.id, rawMsg.payload?.sessionId)
       }
     } catch (e) {
       const message = toErrorMessage(e)

@@ -3,7 +3,7 @@
  * Extracted from RuntimeServer to reduce file size.
  */
 import type { WebSocket as WsType } from 'ws'
-import type { ClientMessage } from '@xyz-agent/shared'
+import type { ClientMessage, ClientMessageType } from '@xyz-agent/shared'
 import type { ISessionService } from '../interfaces.js'
 import type { TreeService } from '../services/tree-service.js'
 import type { MessageHandlerContext } from './message-context.js'
@@ -17,6 +17,11 @@ export interface TreeHandlerContext extends MessageHandlerContext {
 
 export class TreeMessageHandler {
   constructor(private ctx: TreeHandlerContext) {}
+
+  /** D1: 本 handler 认领的 ClientMessageType 清单。 */
+  readonly handles: ClientMessageType[] = [
+    'session.tree-data', 'session.tree-navigate', 'session.tree-fork', 'session.tree-capability', 'session.tree-clone',
+  ]
 
   async handleTreeMessage(msg: ClientMessage, ws: WsType): Promise<void> {
     const payload = msg.payload as { sessionId?: string; targetEntryId?: string; entryId?: string }
