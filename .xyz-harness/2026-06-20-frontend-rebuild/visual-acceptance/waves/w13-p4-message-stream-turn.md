@@ -7,6 +7,8 @@ est: 10min
 va_ref: VA-05 A3-A5,A9
 ---
 
+> 结果: ✅ PASS (2026-06-20, minimax-m3)
+
 # W13 · P4 MessageStream 回合折叠 + auto-scroll
 
 > 1 个复杂 case：回合默认折叠 + pill 计数 + 展开真实时序 + auto-scroll 基础。机制验收。
