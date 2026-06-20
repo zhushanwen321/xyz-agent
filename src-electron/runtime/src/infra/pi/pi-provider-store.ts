@@ -7,11 +7,11 @@
  * 不包含：路径解析（pi-paths）、session 扫描（pi-config-bridge）、agent 管理（pi-config-bridge）
  */
 
-import { existsSync, readFileSync, readdirSync, mkdirSync, renameSync, rmdirSync, cpSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { atomicWrite } from '../../utils/fs-utils.js'
-import { toErrorMessage, isEnoent } from '../../utils/errors.js'
+import { existsSync, readdirSync, mkdirSync, renameSync, rmdirSync, cpSync } from 'node:fs'
+import { join } from 'node:path'
+import { toErrorMessage } from '../../utils/errors.js'
 import { isPackaged } from '../../utils/runtime-env.js'
+import { JsonStore } from '../../utils/json-store.js'
 import { getConfigDir, getModelsPath, getSettingsPath, getPiAgentDir, getSessionsDir, getAgentsDir } from './pi-paths.js'
 // settings.json 的唯一读写层（D17 收口）：readSettings/writeSettings/PiSettings/缓存/原子写
 // 都收敛到 pi-settings-store，model 域（本文件）与 extension 域共享同一所有者 + 缓存。
@@ -58,60 +58,47 @@ export type { PiSettings } from './pi-settings-store.js'
 
 // ── 缓存 ─────────────────────────────────────────────────────
 // 注：settings.json 的缓存 + readSettings/writeSettings 收敛到 pi-settings-store（D17）。
-// 此处仅保留 models.json 的缓存。
+// 此处 models.json 的 read-through 缓存 + 原子读写收敛到 JsonStore（P0-1）。
 
-const CACHE_TTL_MS = 3_000
+/**
+ * models.json 路径。生产用 getModelsPath()（= ~/.xyz-agent/pi/agent/models.json）。
+ * 测试可经 setModelsPath() 指向临时目录，与 setSettingsPath 对称。
+ */
+let modelsFilePath: string = getModelsPath()
 
-interface CacheEntry<T> {
-  data: T
-  timestamp: number
+/** models.json 存储：read-through（TTL 缓存 + ENOENT 容错）+ atomicWrite。 */
+let modelsStore = createModelsStore(modelsFilePath)
+
+function createModelsStore(path: string): JsonStore<PiModelsConfig> {
+  return new JsonStore<PiModelsConfig>(path, { providers: {} }, {
+    ttlMs: 3_000,
+    deserialize: (raw): PiModelsConfig => {
+      if (!raw || typeof raw !== 'object' || typeof (raw as PiModelsConfig).providers !== 'object') {
+        console.warn(`[provider-store] ${path} schema 不匹配，使用 fallback`)
+        return { providers: {} }
+      }
+      return raw as PiModelsConfig
+    },
+  })
 }
 
-let modelsCache: CacheEntry<PiModelsConfig> | null = null
-
-function isExpired(entry: { timestamp: number } | null): boolean {
-  return !entry || Date.now() - entry.timestamp > CACHE_TTL_MS
-}
-
-// ── 原子读写 ─────────────────────────────────────────────────
-
-const JSON_INDENT = 2
-
-function readJsonFile<T>(filePath: string, fallback: T): T {
-  try {
-    const raw = readFileSync(filePath, 'utf-8')
-    return JSON.parse(raw) as T
-  } catch (err: unknown) {
-    if (!isEnoent(err)) {
-      console.warn(`[provider-store] 读取 ${filePath} 失败:`, err)
-    }
-    return fallback
-  }
-}
-
-function writeJsonFile(filePath: string, data: unknown): void {
-  const dir = dirname(filePath)
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-  const json = JSON.stringify(data, null, JSON_INDENT) + '\n'
-  atomicWrite(filePath, json)
+/**
+ * 覆盖 models.json 路径（仅测试用）。生产不应调用。
+ * 重建 store 实例并清空缓存，确保后续读拿到新路径的文件。
+ */
+export function setModelsPath(path: string): void {
+  modelsFilePath = path
+  modelsStore = createModelsStore(path)
 }
 
 // ── Models.json 操作 ──────────────────────────────────────────
 
 export function readModels(): PiModelsConfig {
-  if (!isExpired(modelsCache)) return modelsCache!.data
-  const data = readJsonFile<PiModelsConfig>(getModelsPath(), { providers: {} })
-  if (!data || typeof data !== 'object' || typeof data.providers !== 'object') {
-    console.warn(`[provider-store] ${getModelsPath()} schema 不匹配，使用 fallback`)
-    return { providers: {} }
-  }
-  modelsCache = { data, timestamp: Date.now() }
-  return data
+  return modelsStore.read()
 }
 
 export function writeModels(config: PiModelsConfig): void {
-  writeJsonFile(getModelsPath(), config)
-  modelsCache = { data: JSON.parse(JSON.stringify(config)), timestamp: Date.now() }
+  modelsStore.write(config)
 }
 
 export function getProviderNames(): string[] {
@@ -334,7 +321,7 @@ export function removeSkillPath(path: string): void {
 // ── 缓存控制 ─────────────────────────────────────────────────
 
 export function refreshModels(): void {
-  modelsCache = null
+  modelsStore.invalidate()
 }
 
 export function refreshSettings(): void {
