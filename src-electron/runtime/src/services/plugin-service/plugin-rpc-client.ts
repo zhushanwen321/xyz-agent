@@ -9,6 +9,7 @@
 import type { RpcResponse, RpcNotification, RpcRequest } from './plugin-types.js'
 import { PluginRpcErrorCodes } from './plugin-types.js'
 import { PendingTracker } from '../../utils/async/pending-tracker.js'
+import { errorWithCode } from '../../utils/errors.js'
 
 const DEFAULT_TIMEOUT_MS = 30_000
 
@@ -96,7 +97,8 @@ export class PluginRpcClient {
   handleResponse(response: RpcResponse): void {
     if ('error' in response) {
       // reply-error：code 来自响应，由调用方构造 error 后交给 tracker 拒绝。
-      this.pending.reject(response.id, Object.assign(new Error(response.error.message), { code: response.error.code }))
+      // reply-error：code 来自响应，由调用方构造 error 后交给 tracker 拒绝。
+      this.pending.reject(response.id, errorWithCode(response.error.message, response.error.code))
     } else {
       this.pending.resolve(response.id, response.result)
     }

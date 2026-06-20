@@ -39,3 +39,16 @@ export function isEnoent(e: unknown): boolean {
 export function isNotFound(e: unknown): boolean {
   return e instanceof Error && e.message.includes('not found')
 }
+
+/**
+ * 构造带 `.code` 属性的 Error（C10）。
+ *
+ * 统一此前两套写法：`Object.assign(new Error(msg), { code })`（rpc-client）
+ * vs `(err as {}).code = code`（plugin-sandbox / session-data-store）。
+ * code 可以是 string（'PERMISSION_DENIED' / RPC error code）或 number（JSON-RPC -32xxx）。
+ */
+export function errorWithCode(message: string, code: string | number): Error & { code: string | number } {
+  const err = new Error(message) as Error & { code: string | number }
+  err.code = code
+  return err
+}

@@ -14,6 +14,7 @@ import { join } from 'node:path'
 import { readdirSync, existsSync, readFileSync, mkdirSync, rmSync } from 'node:fs'
 import { atomicWrite } from '../../utils/fs-utils.js'
 import { WriteBackCache } from '../../utils/json-store.js'
+import { errorWithCode } from '../../utils/errors.js'
 
 // eslint-disable-next-line no-magic-numbers
 const MB = 1024 * 1024
@@ -51,9 +52,7 @@ export class SessionDataStore {
       // 容量检查：单 session 总量超限抛错（错误码由调用方经 storageFullCode 注入，避免叶子层硬编码 RPC 码）
       (_sessionId, _key, _value, partitionSize) => {
         if (partitionSize > maxSizeBytes) {
-          const err = new Error(`Session data storage full (${partitionSize} > ${maxSizeBytes} bytes)`)
-          ;(err as { code?: number }).code = storageFullCode
-          throw err
+          throw errorWithCode(`Session data storage full (${partitionSize} > ${maxSizeBytes} bytes)`, storageFullCode)
         }
       },
     )
