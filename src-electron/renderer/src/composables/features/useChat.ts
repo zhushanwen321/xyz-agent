@@ -21,8 +21,12 @@ export function useChat() {
   const session = useSessionStore()
 
   /**
-   * 发送消息：appendUser → setStreaming → api.send + streamSubscribe → appendAssistantChunk。
+   * 发送消息：appendUser → (S5 sending 窗口) → api.send + streamSubscribe
+   *          → 首个 chunk 到达才 setStreaming(true)（S6 streaming）→ appendAssistantChunk。
    * streamSubscribe 的 handler 在 api 层已按 sessionId 路由（events.on 第二层隔离）。
+   *
+   * S5 窗口（spec §composer）：不立即 setStreaming(true)，等首个 assistant chunk 才转 S6，
+   * 让 composer 发送位 spinner 在请求发出→流式开始之间可见。
    */
   async function send(text: string): Promise<void> {
     const sid = session.activeId
@@ -31,9 +35,13 @@ export function useChat() {
     if (!trimmed || chat.isStreaming) return
 
     chat.appendUser(sid, trimmed)
-    chat.setStreaming(true)
 
+    let streamingStarted = false
     const unsub = chatApi.streamSubscribe(sid, (msg) => {
+      if (!streamingStarted) {
+        streamingStarted = true
+        chat.setStreaming(true)
+      }
       chat.appendAssistantChunk(sid, msg)
     })
 

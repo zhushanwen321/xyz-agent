@@ -5,8 +5,11 @@
       S1 空（无输入）→ S2 输入中（有内容，中性 ring）→ S5 发送中（spinner，禁用）
       → S6 停止（AI 工作中，发 send 的反向 = 调 abort）→ 回 S1。
     DEFERRED（按 spec §8.5 Round3 统一 hide，不留 disabled 占位）：
-      S3（@/#// 命令浮层 G2-002）、S4（附件 G2-002）、S7-S9（steer/双队列/失败 G-019）、
-      + 添加按钮 / 上下文 / 模型 / 思考 工具条浮层。
+      S3（@/#// 命令浮层 G2-002）、S4（附件 G2-002）、S7-S9（steer/双队列/失败 G-019）。
+    工具条元素（panel/spec §composer line 51 列 5 元素）属 v1 视觉范围，但交互深度按 DEFERRED：
+      - +添加入口 hide（触发的 S3/S4 浮层 G2-002 DEFERRED → 按 G3-002 hide 规则，不留无反应按钮）
+      - 上下文/模型/thinking-level：v1 展示型 span（容量§2a/模型§2b/思考§2c popover DEFERRED，
+        mock 无数据源/模型表/思考切换后端），纯文字信息，非 button。
     steer 提交 DEFERRED（G-019）：draft 的 S6 accent 呼吸 ring 是 steer 信号，
     v1 不实现 steer 故 S6 用中性 ring（避免误导不存在的功能）。
     abort 流转 DEFERRED（G-025）：按钮调 api.chat.abort，实际中断逻辑留联调。
@@ -22,23 +25,22 @@
         @keydown="onKeydown"
       />
 
-      <!-- 工具条：发送/停止（+ 添加 / @ / # / 命令浮层 G2-002 DEFERRED，按 spec §8.5 Round3 hide，不留 disabled 占位） -->
+      <!-- 工具条（panel/spec §composer line 51）：上下文/模型/thinking-level 展示型 + 发送位三态。 -->
       <div class="composer-bar flex flex-wrap items-center justify-end gap-0.5 px-2.5 pb-2">
-        <!-- 发送位：S1 禁用透明文字 / S2 激活 accent / S5 spinner / S6 停止 -->
+        <!-- 上下文容量（展示型，mock 无 token 计数源，显 0·0% 占位；容量 popover §2a DEFERRED） -->
+        <span class="inline-flex items-center gap-[5px] px-2 py-1.5 text-[11.5px] text-subtle">
+          <span class="tabular-nums">0</span>
+          <span class="block size-[3px] rounded-full bg-[var(--subtle)] opacity-50"></span>
+          <span>0%</span>
+        </span>
+        <!-- 模型（展示型，切换 popover §2b DEFERRED） -->
+        <span class="px-2 py-1.5 text-[11.5px] text-subtle">sonnet-4.5</span>
+        <!-- thinking-level（展示型，切换 §2c DEFERRED；draft 默认最高） -->
+        <span class="px-2 py-1.5 text-[11.5px] text-subtle">思考 最高</span>
+
+        <!-- 发送位三态：S6 streaming→stop / S5 sending→spinner / S1·S2 idle→send -->
         <Button
-          v-if="!isStreaming"
-          variant="default"
-          size="icon"
-          class="send-btn ml-1.5 size-[30px] rounded-md"
-          :disabled="!canSend"
-          :title="canSend ? '发送 · ⏎' : '输入内容后发送'"
-          @click="onSend"
-        >
-          <Loader2 v-if="isSending" class="size-4 animate-spin" />
-          <ArrowRight v-else class="size-[15px]" />
-        </Button>
-        <Button
-          v-else
+          v-if="isStreaming"
           variant="ghost"
           size="icon"
           class="stop-btn ml-1.5 size-[30px] rounded-md bg-surface-hover text-muted hover:bg-[rgba(239,68,68,0.15)] hover:text-danger"
@@ -46,6 +48,24 @@
           @click="onAbort"
         >
           <Square class="size-[13px]" />
+        </Button>
+        <div
+          v-else-if="isSending"
+          class="ml-1.5 grid size-[30px] place-items-center rounded-md bg-[var(--accent)] text-white"
+          title="发送中…"
+        >
+          <Loader2 class="size-4 animate-spin" />
+        </div>
+        <Button
+          v-else
+          variant="default"
+          size="icon"
+          class="ml-1.5 size-[30px] rounded-md bg-[var(--accent)] text-white transition-colors enabled:hover:bg-[var(--accent-hover)] disabled:bg-transparent disabled:text-[var(--subtle)] disabled:opacity-50"
+          :disabled="!canSend"
+          :title="canSend ? '发送 · ⏎' : '输入内容后发送'"
+          @click="onSend"
+        >
+          <ArrowRight class="size-[15px]" />
         </Button>
       </div>
     </div>
@@ -56,7 +76,7 @@
         AI 正在工作中 · 按「停止」中断
       </span>
       <span v-else>
-        <kbd class="kbd">⏎</kbd> 发送 · <kbd class="kbd">⇧⏎</kbd> 换行
+        <kbd class="rounded-sm border border-[var(--border)] bg-[var(--surface-hover)] px-1 py-px">⏎</kbd> 发送 · <kbd class="rounded-sm border border-[var(--border)] bg-[var(--surface-hover)] px-1 py-px">⇧⏎</kbd> 换行
       </span>
     </div>
   </div>
@@ -93,8 +113,9 @@ const canSend = computed(() => hasInput.value && !isStreaming.value && !isSendin
  * 呼吸 ring 会暗示一个不存在的功能（误导）。v1 S6 与 S2 同用中性 ring。
  */
 const boxClass = computed(() => ({
-  'box-focus': hasInput.value || isStreaming.value,
-  'box-disabled': isSending.value,
+  // S2/S6 聚焦中性 ring（draft .composer-box.focus）。S6 不用 accent 呼吸 ring（steer G-019 DEFERRED）。
+  'border-[var(--border-strong)] shadow-[0_0_0_2px_rgba(255,255,255,0.04)]': hasInput.value || isStreaming.value,
+  'opacity-[0.55]': isSending.value,
 }))
 
 const placeholder = computed(() =>
@@ -132,33 +153,3 @@ function onKeydown(e: KeyboardEvent): void {
 // sessionId 占位：未来 panel-scoped composer 多实例隔离（v1 单 composer 跟 active session）
 void props
 </script>
-
-<style scoped>
-/* composer-box 聚焦态（draft .composer-box.focus / .focus.steer / .disabled） */
-.box-focus {
-  border-color: var(--border-strong);
-  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.04);
-}
-.box-disabled { opacity: 0.55; }
-
-/* send-btn：激活 accent 实色，禁用透明文字（draft .c-send / :disabled） */
-.send-btn {
-  background: var(--accent);
-  color: #fff;
-  transition: background var(--duration) var(--ease);
-}
-.send-btn:hover:not(:disabled) { background: var(--accent-hover); }
-.send-btn:disabled {
-  background: transparent;
-  color: var(--subtle);
-  opacity: 0.5;
-}
-
-/* kbd（draft .composer-hint .kbd） */
-.kbd {
-  background: var(--surface-hover);
-  border: 1px solid var(--border);
-  padding: 1px 4px;
-  border-radius: 3px;
-}
-</style>
