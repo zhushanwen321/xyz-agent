@@ -1,5 +1,7 @@
 # 术语对齐重构计划
 
+> **状态（2026-06-20 更新）**：R1–R3 已全部落地（sidecar→runtime、Pane→Panel、SystemChatMessage 清除）；R4/R5 已被 v3 重构推翻（见各节过时标注）。本文保留作重命名决策的**执行记录与文件清单**，不再作为活跃计划。
+
 **目标**: 将代码命名与 [context.md](context.md) 领域术语统一。项目未上线，改动成本低。
 
 **前置条件**: 当前 worktree 分支干净，无未提交变更。
@@ -8,7 +10,9 @@
 
 ## 重构清单
 
-### R1: sidecar → runtime
+### R1: sidecar → runtime  ✅ 已完成（2026-06）
+
+**验证**：`src-electron/runtime/`、workspace 名 `@xyz-agent/runtime`、runtime 进程生命周期由 `src-electron/main/supervisor/runtime-supervisor.ts` 管理（+ port-discoverer / health-checker / process-control，拆分为 supervisor 子系统）。
 
 **范围**: 目录、workspace、import 路径、变量名
 
@@ -20,9 +24,9 @@
 | workspace 名 | `@xyz-agent/sidecar` → `@xyz-agent/runtime` |
 | `src-electron/package.json` | `"@xyz-agent/sidecar"` → `"@xyz-agent/runtime"` |
 | `package.json`（根） | workspace 路径引用 |
-| `src-electron/main/sidecar-manager.ts` | → `runtime-manager.ts`，内部 class 重命名 |
-| `src-electron/main/main.ts` | import sidecar-manager → runtime-manager |
-| `src-electron/main/ipc-handlers.ts` | import 更新 |
+| `src-electron/main/sidecar-manager.ts` | → 拆分为 `main/supervisor/` 子系统（runtime-supervisor + port-discoverer + health-checker + process-control） |
+| `src-electron/main/main.ts` | import sidecar-manager → 从 `supervisor/runtime-supervisor` 导入 |
+| `src-electron/main/ipc-handlers.ts` | → `gateway/ipc-handlers.ts`（随 M3 拆分） |
 | `src-electron/tsconfig.json` | paths/reference 更新 |
 | `src-electron/vite.config.main.ts` | 如有 sidecar 引用 |
 | 所有 import `sidecar/` | → `runtime/` |
@@ -30,13 +34,15 @@
 
 **执行步骤**:
 1. `git mv src-electron/sidecar src-electron/runtime`
-2. `git mv src-electron/main/sidecar-manager.ts src-electron/main/runtime-manager.ts`
+2. `sidecar-manager.ts` 拆分为 `main/supervisor/` 子系统（runtime-supervisor + port-discoverer + health-checker + process-control + safe-env）
 3. 批量替换 workspace 名和 import 路径
 4. `npm run build` + `npm run dev` 验证
 
 ---
 
-### R2: Pane → Panel
+### R2: Pane → Panel  ✅ 已完成（2026-06）
+
+**验证**：`shared/src/panel.ts`、`stores/panel.ts`、`usePanelStore`、`PanelLeaf`（5 个文件、16 处引用，`PaneLeaf` 已为 0）。
 
 **范围**: 共享类型、前端 stores、组件
 
@@ -68,7 +74,9 @@
 
 ---
 
-### R3: SystemChatMessage → SystemNotification
+### R3: SystemChatMessage → SystemNotification  ✅ 已完成（2026-06）
+
+**验证**：`SystemChatMessage` 与 chat store 的 `Message(role='system')` 均已清除（前端消息模型范围 grep 为 0）；plugin agentAPI 的 `sendMessage({role:'user'|'system'})` 是独立的插件消息契约（`runtime/src/services/plugin-service/`），不在本次重命名范围内。v3 重构后聊天流内联系统通知暂未重新落地（见 [context.md](context.md) SystemNotification 条目）。
 
 **范围**: chat store、UI 组件
 

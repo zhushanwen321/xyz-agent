@@ -1,5 +1,8 @@
 # 未实现功能规划
 
+> ⚠️ **已过时（2026-06-20）**：本清单基于 2026-05-17 状态。v3 重建后部分项已落地或调整，路径中的 `sidecar/` 已重命名为 `runtime/`。最新规划见 [feature-map/2026-06-20.md §四](../feature-map/2026-06-20.md)。保留作历史参考。
+
+
 基于 2026-05-17 项目实际状态，从"日常使用的 coding agent 工具"视角重新梳理。
 
 > **最高优先级的 4 项功能已移至 [features-top-priority.md](./features-top-priority.md)**：

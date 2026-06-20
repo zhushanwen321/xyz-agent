@@ -18,17 +18,29 @@
 - [Runtime 模块架构图](architecture/runtime-module-map.md) — R9 后快照：分层骨架 + 各层内部模块 + 依赖铁律
 - [Runtime 迁移执行记录](architecture/runtime-migration-progress.md) — R0–R9 已完成（17 commit）+ ports 清单 + SessionService 评估
 - [架构评审问题记录](architecture/review-issues.md) — 9 个盲点 D1–D9 的来源与验证
-- [领域术语表](architecture/context.md) — Session / Panel / Runtime 等核心概念定义
+- [领域术语表](architecture/context.md) — Session / Panel / Runtime 等 + v3 UI 结构术语（Sidebar/Workspace/Panel 5 zone/Overview/Search Modal）
+
+## v3 视觉与交互层
+
+前端视觉层于 2026-06 完成 v3 重建（冷蓝暗色，W01–W20 视觉验收全部 PASS）。设计 SSOT 与规范：
+
+- [v3 UI 设计稿](../designs/v3-demo/README.md) — L0–L4 递归骨架 spec + 22 个 draft（shell/sidebar/workspace/panel/overview/settings/overlays/flow-2/flow-3）
+- [设计 Tokens（v3 SSOT）](../designs/design-tokens.md) — 冷蓝暗色原子值（色/字/距/影/动效），ADR-0018 确立
+- [设计系统原语层（v3）](../designs/design-system.md) — 组件原语如何使用 tokens
+- v3 视觉/交互 ADR 0018–0022（见下）
 
 ## 架构决策（ADR）
 
-[ADR 目录](architecture/adr/) — 共 18 条。重要的几条：
+[ADR 目录](architecture/adr/) — 共 23 条（0001–0023）。重要的几条：
 
 - [ADR-0005 Bun 编译二进制 vs npm 包](architecture/adr/0005-bun-binary-over-npm-package.md)
 - [ADR-0009 xyz-agent 数据目录与 pi 完全隔离](architecture/adr/0009-xyz-agent-data-dir-isolation-from-pi.md)
 - [ADR-0011 内置 extension 直接复制（supersede ADR-0007）](architecture/adr/0011-bundled-extensions-direct-copy.md)
 - [ADR-0015 Event-bus 类型加固](architecture/adr/0015-event-bus-typed-severmessagetype.md)
 - [ADR-0016 macOS Traffic Light Safe Zone](architecture/adr/0016-macos-traffic-light-safe-zone.md)
+- [ADR-0018 视觉方向收敛到冷蓝暗色](architecture/adr/0018-visual-direction.md)（推翻旧 Warm & Soft 设计系统）
+- [ADR-0021 默认主题方向（暗色冷蓝）](architecture/adr/0021-default-theme-direction.md)
+- [ADR-0022 Overview 入口落点与覆盖范围](architecture/adr/0022-overview-entry-coverage.md)
 
 ## 子系统架构
 

@@ -14,7 +14,7 @@ docs/architecture/
 ├── context.md           # 领域术语表（Session/Panel/Runtime 等）
 ├── plan/                # 迁移各阶段细节
 ├── changes/             # 阶段评审记录
-├── adr/                 # 架构决策记录（0001-0017 系统/运行时 · 0018-0022 v3 视觉/交互）
+├── adr/                 # 架构决策记录（0001-0017 系统/运行时 · 0018-0022 v3 视觉/交互 · 0023 statusline 封装）
 ├── subsystems/          # 子系统架构（如 plugin/）
 ├── research/            # 架构调研（非 UI 调研）
 └── history/             # 历史版本归档（被 supersede 的旧架构）

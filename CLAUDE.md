@@ -2,20 +2,20 @@
 
 ## 项目概述
 
-xyz-agent 是基于 Electron + Vue 3 + Node.js Sidecar 的 AI Agent 桌面工作台。架构：
+xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作台。架构：
 
-- **Electron 主进程** (`src-electron/main/`): 窗口管理、sidecar 进程生命周期、快捷键
+- **Electron 主进程** (`src-electron/main/`): 窗口管理、runtime 子进程生命周期、快捷键
 - **Preload** (`src-electron/preload/`): 安全桥接，暴露 `electronAPI` 给渲染进程
-- **前端渲染进程** (`src-electron/renderer/src/`): Vue 3 + TypeScript + Pinia + Tailwind CSS v3 + xyz-ui 组件库
-- **Sidecar** (`src-electron/sidecar/src/`): Node.js WebSocket 服务，通过子进程 RPC 与 pi 通信
-- **共享类型** (`src-electron/shared/src/`): 前端与 sidecar 之间的 TypeScript 类型定义
+- **前端渲染进程** (`src-electron/renderer/src/`): Vue 3 + TypeScript + Pinia + Tailwind CSS v3 + xyz-ui 组件库（v3 冷蓝暗色设计系统）
+- **Runtime** (`src-electron/runtime/src/`): Node.js WebSocket 服务（三层架构 transport/services/infra），通过子进程 RPC 与 pi 通信
+- **共享类型** (`src-electron/shared/src/`): 前端与 runtime 之间的 TypeScript 类型定义
 
 **完整编码规范**: [docs/standards.md](docs/standards.md)
 
 **功能开发地图**: [docs/feature-map/](docs/feature-map/) — 长期功能规划、现状盘点、待开发阶段、关键决策点、完整资料链接
   - 每次启动新 Phase 前更新地图，确认当前阶段和优先级
   - 构建能力地图和架构图时，从该目录获取全貌
-  - 最新版本: [2026-05-19.md](docs/feature-map/2026-05-19.md)
+  - 最新版本: [2026-06-20.md](docs/feature-map/2026-06-20.md)（v3 重建后）；旧版 [2026-05-19.md](docs/feature-map/2026-05-19.md) 保留作重构前状态快照
 
 **规范与设计文档**:
 - [完整编码规范](docs/standards.md) — 组件使用、样式规则、TypeScript 约束
@@ -97,7 +97,7 @@ pi 的 `SessionManager._persist()` 在收到第一个 **assistant** 消息之前
 
 ### 7. Session 隔离：所有消息必须带 sessionId
 
-所有 sidecar → 前端的消息，如果涉及特定 session，`payload` 必须包含 `sessionId`。前端靠 `payload.sessionId` 路由到正确的 panel/store 分区。**缺失 `sessionId` 的消息应被忽略**，否则会广播到所有 panel。
+所有 runtime → 前端的消息，如果涉及特定 session，`payload` 必须包含 `sessionId`。前端靠 `payload.sessionId` 路由到正确的 panel/store 分区。**缺失 `sessionId` 的消息应被忽略**，否则会广播到所有 panel。
 
 三层隔离机制：
 
@@ -107,7 +107,7 @@ pi 的 `SessionManager._persist()` 在收到第一个 **assistant** 消息之前
 | useChat 全局路由 | 事件处理器从 `msg.payload.sessionId` 提取 sid，路由到 store 分区 | `composables/useChat.ts` |
 | PaneSessionView 过滤 | 组件级事件监听（error、compacted 等）严格按 `props.sessionId` 过滤 | `PaneSessionView.vue` |
 
-Sidecar 侧：`server.ts` 的 `sendError` 必须传入 `sessionId`（外层 catch 从原始消息 `msg.payload.sessionId` 提取）。不带 `sessionId` 的 error 会被前端所有 panel 忽略。
+Runtime 侧：`server.ts` 的 `sendError` 必须传入 `sessionId`（外层 catch 从原始消息 `msg.payload.sessionId` 提取）。不带 `sessionId` 的 error 会被前端所有 panel 忽略。
 
 ### 8. Worktree 创建必须走 `git-cwt`
 
@@ -182,7 +182,7 @@ lsof -i :1420 -P | grep node
 ### 12. Electron 打包约束（违反必出 bug）
 
 #### tsup 配置 (`src-electron/runtime/tsup.config.ts`)
-- `platform: 'node'` + `target: 'node20'` — 自动处理所有 Node 内置模块 external，匹配 Electron 33 内置 Node 版本
+- `platform: 'node'` + `target` 匹配当前 Electron 内置 Node 版本（见 `src-electron/runtime/tsup.config.ts`，Electron 42 → Node 24）— 自动处理所有 Node 内置模块 external
 - `noExternal` 必须覆盖 **所有** runtime `dependencies` — 新增 npm 依赖时必须同步追加，否则 `asar.unpacked` 运行时 `Cannot find module`
 - **Worker 入口必须独立打包**：`plugin-bootstrap.ts` 是 Worker Thread 入口，tsup `entry` 必须包含它，输出为 `plugin-bootstrap.cjs`，与 `index.cjs` 同目录。禁止只打包 `index.ts` 一个 entry
 - 禁止在 runtime 源码中使用 `import.meta.url` 或 `fileURLToPath(import.meta.url)` — tsup CJS bundle 将 `import.meta` 替换为 `var import_meta = {}`，`import_meta.url` 始终为 `undefined`。禁止用 `globalThis.__dirname` — CJS 中 `__dirname` 是模块局部变量，不在 `globalThis` 上。正确做法：用 `typeof __dirname !== 'undefined' ? __dirname : undefined` 直接检查 CJS 模块变量，tsup/esbuild 会原样保留到 CJS 输出
@@ -196,7 +196,7 @@ lsof -i :1420 -P | grep node
 - `resources/pi/` 中**禁止存在指向外部绝对路径的 symlink**。electron-builder 的 `extraResources` 复制时保留 symlink，用户机器上目标路径不存在会导致 pi 运行时资源缺失
 - 构建前必须 dereference：`cp -RL` 替代 `cp -R`，或脚本中显式将 symlink 替换为真实目录拷贝
 
-#### 子进程启动 (`src-electron/main/runtime-manager.ts`)
+#### 子进程启动 (`src-electron/main/supervisor/runtime-supervisor.ts`)
 - 必须用 `process.execPath` + `ELECTRON_RUN_AS_NODE=1` 启动 runtime，不能用 `node` 路径
 - 打包后路径必须用 `process.resourcesPath/app.asar.unpacked/...`，不能用 `app.getAppPath()`（返回 asar 虚拟路径）
 
@@ -298,8 +298,8 @@ SKIP_ALL_CHECKS=1 git commit            # 跳过所有（仅紧急情况）
 
 - **视图切换**: 状态驱动（settingsStore.currentView），不用 vue-router
 - **Mock 模式**: `VITE_MOCK=true` 环境变量控制，在 ws-client 层拦截
-- **共享类型**: `src-electron/shared/src/` 通过 npm workspace 在前端和 sidecar 间共享
-- **Sidecar 通信**: WebSocket，前端通过 `ws-client.ts` + `event-bus.ts` 消息分发
+- **共享类型**: `src-electron/shared/src/` 通过 npm workspace 在前端和 runtime 间共享
+- **Runtime 通信**: WebSocket，前端通过 `ws-client.ts` + `event-bus.ts` 消息分发
 - **Electron IPC**: 主进程通过 preload 暴露 `window.electronAPI`，渲染进程不直接使用 `ipcRenderer`
 
 ## 发布与 CI 验证 [HISTORICAL]

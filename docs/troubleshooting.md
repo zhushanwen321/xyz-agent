@@ -7,7 +7,7 @@
 | 层级 | 开发模式 | 打包模式 |
 |------|---------|---------|
 | **Electron 主进程** | 终端直接看 | 终端启动 `/Applications/xyz-agent.app/Contents/MacOS/xyz-agent` 或 `log show --process xyz-agent` |
-| **Runtime (Sidecar)** | 终端 `[runtime:out]` / `[runtime:err]` 前缀 | 同主进程，stdout/stderr 转发到主进程 console |
+| **Runtime（原 Sidecar）** | 终端 `[runtime:out]` / `[runtime:err]` 前缀 | 同主进程，stdout/stderr 转发到主进程 console |
 | **pi 子进程** | 终端 pi 自身输出 | pi 日志目录 `~/.xyz-agent/pi/agent/logs/` |
 | **前端 DevTools** | Cmd+Option+I 打开 | 同左 |
 
