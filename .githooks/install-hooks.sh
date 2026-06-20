@@ -47,13 +47,8 @@ cat > "$GIT_HOOKS_DIR/pre-commit" << 'HOOK_EOF'
 #!/bin/bash
 # Git pre-commit hook: 代码质量检查
 #
-# 环境变量（跳过特定检查）：
-#   SKIP_ALL_CHECKS=1         - 跳过所有检查
-#   SKIP_FRONTEND_LINT=1      - 跳过前端 ESLint
-#   SKIP_TYPE_CHECK=1         - 跳过 vue-tsc 类型检查
-#   SKIP_CODE_RULES_CHECK=1   - 跳过自定义代码规范检查
-#   SKIP_CSS_TOKEN_SSOT_CHECK=1 - 跳过 style.css vs design-tokens.md 一致性
-#   SKIP_RENDERER_DEPS_CHECK=1  - 跳过 renderer import vs package.json 完整性
+# 原则：无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。
+# SKIP_* 环境变量仅为经明确批准的紧急逃生口，不应作为常规手段。
 
 set -e
 
@@ -189,7 +184,7 @@ if [ "$SKIP_CODE_RULES_CHECK" != "1" ]; then
             if [ $EXIT_CODE -eq 2 ]; then
                 echo ""
                 echo -e "${RED}[ERROR] 代码规范检查失败${NC}"
-                echo -e "${YELLOW}[INFO] 设置 SKIP_CODE_RULES_CHECK=1 跳过检查${NC}"
+                echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
                 exit 1
             fi
             echo -e "${GREEN}[OK] 代码规范检查通过${NC}"
@@ -221,7 +216,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_SIDECAR_SESSION_CHECK" != "1" ]; th
             if [ $EXIT_CODE -eq 2 ]; then
                 echo ""
                 echo -e "${RED}[ERROR] Sidecar session 隔离检查失败${NC}"
-                echo -e "${YELLOW}[INFO] 设置 SKIP_SIDECAR_SESSION_CHECK=1 跳过检查${NC}"
+                echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
                 exit 1
             fi
         fi
@@ -252,7 +247,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_CSS_TOKENS_CHECK" != "1" ]; then
             if [ $EXIT_CODE -eq 2 ]; then
                 echo ""
                 echo -e "${RED}[ERROR] CSS tokens 检查失败${NC}"
-                echo -e "${YELLOW}[INFO] 设置 SKIP_CSS_TOKENS_CHECK=1 跳过检查${NC}"
+                echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
                 exit 1
             fi
         fi
@@ -283,7 +278,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_CSS_TOKEN_SSOT_CHECK" != "1" ]; the
             if [ $EXIT_CODE -eq 2 ]; then
                 echo ""
                 echo -e "${RED}[ERROR] CSS token SSOT 检查失败：style.css 含 design-tokens.md 未收录的 token${NC}"
-                echo -e "${YELLOW}[INFO] 设置 SKIP_CSS_TOKEN_SSOT_CHECK=1 跳过检查${NC}"
+                echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
                 exit 1
             fi
         fi
@@ -313,7 +308,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_RENDERER_DEPS_CHECK" != "1" ]; then
             if [ $EXIT_CODE -eq 2 ]; then
                 echo ""
                 echo -e "${RED}[ERROR] Renderer 依赖完整性检查失败：存在 import 了但 package.json 未声明的包${NC}"
-                echo -e "${YELLOW}[INFO] 设置 SKIP_RENDERER_DEPS_CHECK=1 跳过检查${NC}"
+                echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
                 exit 1
             fi
         fi
@@ -341,7 +336,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_ENV_WHITELIST_CHECK" != "1" ]; then
             echo ""
             echo -e "${RED}[ERROR] ENV_WHITELIST_PREFIXES SSOT 检查失败${NC}"
             echo -e "${YELLOW}[INFO] 定义点应在 shared/constants.ts，main/runtime 只能 import${NC}"
-            echo -e "${YELLOW}[INFO] 设置 SKIP_ENV_WHITELIST_CHECK=1 跳过检查${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
             exit 1
         fi
     fi
@@ -368,7 +363,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_PATH_WHITELIST_CHECK" != "1" ]; the
             echo ""
             echo -e "${RED}[ERROR] 路径白名单动态化检查失败${NC}"
             echo -e "${YELLOW}[INFO] 路径白名单必须使用 getConfigDir()/getPiAgentDir() 动态生成${NC}"
-            echo -e "${YELLOW}[INFO] 设置 SKIP_PATH_WHITELIST_CHECK=1 跳过检查${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
             exit 1
         fi
     fi
@@ -395,7 +390,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_WS_SEND_CHECK" != "1" ]; then
             echo ""
             echo -e "${RED}[ERROR] ws-client send 直调检查失败${NC}"
             echo -e "${YELLOW}[INFO] renderer 禁止直调 ws-client.send，统一走 api client${NC}"
-            echo -e "${YELLOW}[INFO] 设置 SKIP_WS_SEND_CHECK=1 跳过检查${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
             exit 1
         fi
     fi
@@ -422,7 +417,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_NO_SERVICE_CYCLE_CHECK" != "1" ]; t
             echo ""
             echo -e "${RED}[ERROR] runtime services 循环依赖检查失败（D6c）${NC}"
             echo -e "${YELLOW}[INFO] service 间不得具体类循环 import，改用接口/事件解耦${NC}"
-            echo -e "${YELLOW}[INFO] 设置 SKIP_NO_SERVICE_CYCLE_CHECK=1 跳过检查${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
             exit 1
         fi
     fi
@@ -453,7 +448,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_RUNTIME_BUNDLE_CHECK" != "1" ]; the
         if [ $EXIT_CODE -ne 0 ]; then
             echo ""
             echo -e "${RED}[ERROR] Runtime Bundle 验证失败${NC}"
-            echo -e "${YELLOW}[INFO] 设置 SKIP_RUNTIME_BUNDLE_CHECK=1 跳过检查${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
             exit 1
         fi
     else
@@ -485,7 +480,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_PREFLIGHT_CHECK" != "1" ]; then
         if [ $EXIT_CODE -ne 0 ]; then
             echo ""
             echo -e "${RED}[ERROR] 打包配置预检查失败${NC}"
-            echo -e "${YELLOW}[INFO] 设置 SKIP_PREFLIGHT_CHECK=1 跳过检查${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
             exit 1
         fi
 
@@ -525,7 +520,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_DIRECTORY_RULES_CHECK" != "1" ]; th
         if [ $EXIT_CODE -eq 2 ]; then
             echo ""
             echo -e "${RED}[ERROR] 目录规范检查失败${NC}"
-            echo -e "${YELLOW}[INFO] 设置 SKIP_DIRECTORY_RULES_CHECK=1 跳过检查${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
             exit 1
         fi
     fi
@@ -541,21 +536,7 @@ print_section "[所有检查通过]"
 
 echo -e "${GREEN}代码质量检查全部通过！${NC}"
 echo ""
-echo -e "${CYAN}提示: 跳过检查的环境变量:${NC}"
-echo -e "  ${YELLOW}SKIP_ALL_CHECKS=1${NC}          - 跳过所有"
-echo -e "  ${YELLOW}SKIP_FRONTEND_LINT=1${NC}      - 跳过 ESLint"
-echo -e "  ${YELLOW}SKIP_TYPE_CHECK=1${NC}          - 跳过 vue-tsc"
-echo -e "  ${YELLOW}SKIP_CODE_RULES_CHECK=1${NC}   - 跳过代码规范"
-echo -e "  ${YELLOW}SKIP_SIDECAR_SESSION_CHECK=1${NC} - 跳过 session 隔离"
-echo -e "  ${YELLOW}SKIP_CSS_TOKENS_CHECK=1${NC}      - 跳过 CSS tokens"
-echo -e "  ${YELLOW}SKIP_CSS_TOKEN_SSOT_CHECK=1${NC}  - 跳过 CSS token SSOT 一致性"
-echo -e "  ${YELLOW}SKIP_RENDERER_DEPS_CHECK=1${NC}   - 跳过 renderer 依赖完整性"
-echo -e "  ${YELLOW}SKIP_RUNTIME_BUNDLE_CHECK=1${NC}  - 跳过 runtime bundle 验证"
-echo -e "  ${YELLOW}SKIP_PREFLIGHT_CHECK=1${NC}       - 跳过打包配置预检查"
-echo -e "  ${YELLOW}SKIP_ENV_WHITELIST_CHECK=1${NC}   - 跳过 ENV 白名单 SSOT 检查"
-echo -e "  ${YELLOW}SKIP_PATH_WHITELIST_CHECK=1${NC}   - 跳过路径白名单动态化检查"
-echo -e "  ${YELLOW}SKIP_WS_SEND_CHECK=1${NC}         - 跳过 ws-client send 直调检查"
-echo -e "  ${YELLOW}SKIP_NO_SERVICE_CYCLE_CHECK=1${NC} - 跳过 services 循环依赖检查"
+echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
 echo ""
 
 exit 0

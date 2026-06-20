@@ -89,7 +89,8 @@ def main() -> int:
     print(f"{YELLOW}修复方式：{NC}")
     print(f"  将上述 token 补入 {DESIGN_TOKENS} 对应章节（含 值/用途/来源），")
     print(f"  或从 style.css 移除（若为临时/调试变量）。")
-    print(f"  跳过检查：SKIP_CSS_TOKEN_SSOT_CHECK=1 git commit")
+    print()
+    print(f"\033[0;31m[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。\033[0m")
     return 2
 
 

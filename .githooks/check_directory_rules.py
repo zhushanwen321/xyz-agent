@@ -106,7 +106,7 @@ def main():
         for err in errors:
             print(f"  - {err}")
         print()
-        print("\033[0;33m[INFO] 设置 SKIP_DIRECTORY_RULES_CHECK=1 跳过检查\033[0m")
+        print("\033[0;31m[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。\033[0m")
         sys.exit(2)
 
     print("\033[0;32m[OK] 目录规范检查通过\033[0m")

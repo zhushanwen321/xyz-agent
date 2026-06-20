@@ -89,7 +89,8 @@ def main() -> int:
         for e in errors:
             print(e)
         print()
-        print(f'跳过检查：SKIP_ENV_WHITELIST_CHECK=1 git commit')
+        print()
+        print('\033[0;31m[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。\033[0m')
         return 2
 
     print(f'[OK] {CONST_NAME} SSOT 单一性检查通过（定义点：shared/src/constants.ts）')

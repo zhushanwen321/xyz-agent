@@ -136,7 +136,8 @@ def main() -> int:
     print(f"{YELLOW}修复方式：{NC}")
     print(f"  cd src-electron/renderer && npm install <缺失的包>")
     print(f"  （shadcn-vue add 生成的组件常漏 class-variance-authority / reka-ui 等）")
-    print(f"  跳过检查：SKIP_RENDERER_DEPS_CHECK=1 git commit")
+    print()
+    print(f"\033[0;31m[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。\033[0m")
     return 2
 
 

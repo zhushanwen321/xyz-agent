@@ -101,7 +101,8 @@ def main() -> int:
         print("        改用 api.window.* / api.dialog.* / api.runtimePort.* / api.system.*")
         print("\n".join(ipc_errors))
     if ws_errors or ipc_errors:
-        print("\n[INFO] 设置 SKIP_WS_SEND_CHECK=1 跳过检查")
+        print()
+        print("\033[0;31m[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。\033[0m")
         return 2
     print("[OK] ws-client send + electronAPI 直调检查通过（仅白名单文件合法）")
     return 0
