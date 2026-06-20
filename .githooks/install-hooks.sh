@@ -113,7 +113,7 @@ if [ -n "$FRONTEND_FILES" ]; then
             fi
 
             # 自动添加修复后的文件
-            FIXED_FILES=$(git diff --name-only --diff-filter=M | grep "^src-electron/renderer/src/" || true)
+            FIXED_FILES=$(git diff --cached --name-only --diff-filter=M | grep "^src-electron/renderer/src/" || true)
             if [ -n "$FIXED_FILES" ]; then
                 echo -e "${BLUE}[INFO] ESLint 自动修复了以下文件:${NC}"
                 echo "$FIXED_FILES" | sed 's/^/  - /'
