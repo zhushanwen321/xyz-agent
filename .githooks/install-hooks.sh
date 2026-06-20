@@ -102,7 +102,7 @@ if [ -n "$FRONTEND_FILES" ]; then
             npx eslint --fix $ESLINT_FILES 2>/dev/null || true
 
             # 重新检查
-            ESLINT_OUTPUT=$(npx eslint --max-warnings=0 $ESLINT_FILES 2>&1)
+            ESLINT_OUTPUT=$(npx eslint --max-warnings=0 --no-warn-ignored $ESLINT_FILES 2>&1)
             ESLINT_EXIT_CODE=$?
 
             if [ $ESLINT_EXIT_CODE -ne 0 ]; then
