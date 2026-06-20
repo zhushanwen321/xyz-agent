@@ -211,43 +211,58 @@ export class RuntimeServer implements IMessageBroker {
     })
   }
 
+  /**
+   * D7: sendInitialState 改 descriptor 驱动。
+   * 此前 6 段同构 best-effort try/catch（eslint-disable 注释也复制了 6 次）。
+   * 现在每段是一个 { label, run } descriptor，共享 try/catch 包装器只写一次。
+   * run 内含 load + 条件 + send，领域差异保留在各自 descriptor。
+   */
   private sendInitialState(ws: WsType): void {
-    try {
-      const groups = this.sessionService.listPersistedSessions()
-      this.send(ws, { type: 'session.list', id: this.nextPushId(), payload: { groups } })
-    // eslint-disable-next-line taste/no-silent-catch -- init: best-effort, single failure must not block others
-    } catch (e) { console.error('[runtime] sendInitialState: session.list failed:', e) }
-    try {
-      const providers = this.configService.listProviders()
-      this.send(ws, { type: 'config.providers', id: this.nextPushId(), payload: { providers } })
-      const models = this.modelService.aggregateModels(providers)
-      this.send(ws, { type: 'model.list', id: this.nextPushId(), payload: { models } })
-    // eslint-disable-next-line taste/no-silent-catch -- init: best-effort, single failure must not block others
-    } catch (e) { console.error('[runtime] sendInitialState: config.providers/model.list failed:', e) }
-    try {
-      const defaultModel = this.configService.getDefaultModel()
-      if (defaultModel) {
-        this.send(ws, { type: 'config.defaults', id: this.nextPushId(), payload: { defaultModel: `${defaultModel.provider}/${defaultModel.modelId}` } })
-      }
-    // eslint-disable-next-line taste/no-silent-catch -- init: best-effort, single failure must not block others
-    } catch (e) { console.error('[runtime] sendInitialState: config.defaults failed:', e) }
-    try {
-      const skills = this.configService.loadSkills(this.projectRoot)
-      this.send(ws, { type: 'config.skills', id: this.nextPushId(), payload: { skills } })
-    // eslint-disable-next-line taste/no-silent-catch -- init: best-effort, single failure must not block others
-    } catch (e) { console.error('[runtime] sendInitialState: config.skills failed:', e) }
-    try {
-      const agents = this.configService.loadAgents(this.projectRoot)
-      this.send(ws, { type: 'config.agents', id: this.nextPushId(), payload: { agents } })
-    // eslint-disable-next-line taste/no-silent-catch -- init: best-effort, single failure must not block others
-    } catch (e) { console.error('[runtime] sendInitialState: config.agents failed:', e) }
-    try {
-      if (this.pluginService) {
-        const plugins = this.pluginService.getDiscoveredPlugins()
-        this.send(ws, { type: 'config.plugins', id: this.nextPushId(), payload: { plugins } })
-      }
-    // eslint-disable-next-line taste/no-silent-catch -- init: best-effort, single failure must not block others
-    } catch (e) { console.error('[runtime] sendInitialState: config.plugins failed:', e) }
+    const steps: Array<{ label: string; run: () => void }> = [
+      {
+        label: 'session.list',
+        run: () => this.send(ws, { type: 'session.list', id: this.nextPushId(), payload: { groups: this.sessionService.listPersistedSessions() } }),
+      },
+      {
+        label: 'config.providers/model.list',
+        run: () => {
+          const providers = this.configService.listProviders()
+          this.send(ws, { type: 'config.providers', id: this.nextPushId(), payload: { providers } })
+          this.send(ws, { type: 'model.list', id: this.nextPushId(), payload: { models: this.modelService.aggregateModels(providers) } })
+        },
+      },
+      {
+        label: 'config.defaults',
+        run: () => {
+          const defaultModel = this.configService.getDefaultModel()
+          if (defaultModel) {
+            this.send(ws, { type: 'config.defaults', id: this.nextPushId(), payload: { defaultModel: `${defaultModel.provider}/${defaultModel.modelId}` } })
+          }
+        },
+      },
+      {
+        label: 'config.skills',
+        run: () => this.send(ws, { type: 'config.skills', id: this.nextPushId(), payload: { skills: this.configService.loadSkills(this.projectRoot) } }),
+      },
+      {
+        label: 'config.agents',
+        run: () => this.send(ws, { type: 'config.agents', id: this.nextPushId(), payload: { agents: this.configService.loadAgents(this.projectRoot) } }),
+      },
+      {
+        label: 'config.plugins',
+        run: () => {
+          if (this.pluginService) {
+            this.send(ws, { type: 'config.plugins', id: this.nextPushId(), payload: { plugins: this.pluginService.getDiscoveredPlugins() } })
+          }
+        },
+      },
+    ]
+    for (const step of steps) {
+      try {
+        step.run()
+      // eslint-disable-next-line taste/no-silent-catch -- init: best-effort, single failure must not block others
+      } catch (e) { console.error(`[runtime] sendInitialState: ${step.label} failed:`, e) }
+    }
   }
 
   // ── Message routing ───────────────────────────────────────────

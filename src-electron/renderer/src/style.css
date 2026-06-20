@@ -3,32 +3,13 @@
 @tailwind utilities;
 
 /* ============================================================
-   xyz-agent Design Tokens — Warm & Soft
-   最小连接骨架版：只保留 token + 基础重置，业务样式后续随组件加回
+   xyz-agent Design Tokens · v3 重建中
+   ────────────────────────────────────────────────────────────
+   Warm & Soft 旧 token 已清除（ADR-0001 推翻）。
+   冷蓝暗色 token 待 P0 基础对齐阶段，按 design-tokens.md 填充：
+     源文件（sandbox，待归位）：docs/designs/v3-demo 同级 design-tokens.md
+     目标：本 :root + tailwind.config.ts 对齐 ADR-0001 冷蓝暗色（#4f8ef7 / #0d0d0f / Inter）
    ============================================================ */
-
-:root {
-  --bg: oklch(97% 0.010 75);
-  --surface: oklch(99% 0.006 75);
-  --fg: oklch(22% 0.012 75);
-  --muted: oklch(50% 0.010 75);
-  --border: oklch(90% 0.008 75);
-  --accent: oklch(55% 0.08 195);
-  --accent-light: oklch(93% 0.03 195);
-  --success: oklch(62% 0.10 145);
-  --success-light: oklch(95% 0.04 145);
-  --warning: oklch(75% 0.10 85);
-  --warning-light: oklch(95% 0.04 85);
-  --danger: oklch(55% 0.12 25);
-  --danger-light: oklch(93% 0.04 25);
-  --hover-bg: oklch(96% 0.01 70);
-  --font-display: 'Tiempos Headline', 'Newsreader', 'Iowan Old Style', Georgia, serif;
-  --font-body: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
-  --radius: 1px;
-  --ease: cubic-bezier(0.4, 0, 0.2, 1);
-  --shadow-sm: 0 2px 12px rgba(0, 0, 0, 0.08);
-}
 
 /* ── 基础重置 ─────────────────────────────────────────────── */
 * {
@@ -37,17 +18,16 @@
   box-sizing: border-box;
 }
 
-html, body, #app {
+html,
+body,
+#app {
   height: 100%;
 }
 
 body {
-  background: var(--bg);
-  color: var(--fg);
-  font-family: var(--font-body);
-  font-size: 14px;
-  line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
+  /* 重建期中性底色；P0 替换为 var(--bg-base) 冷蓝暗色 */
+  background: #0d0d0f;
   overflow: hidden;
   user-select: none;
+  -webkit-font-smoothing: antialiased;
 }
