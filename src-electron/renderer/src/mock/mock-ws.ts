@@ -1,3 +1,4 @@
+/* eslint-disable no-magic-numbers */
 /**
  * Mock WebSocket —— VITE_MOCK=true 时替代真实 WS 连接。
  *

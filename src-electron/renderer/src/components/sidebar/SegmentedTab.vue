@@ -31,7 +31,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Component } from 'vue'
-import { MessageSquare, File } from 'lucide-vue-next'
+import { MessageSquare, File } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { SidebarTab } from '@/stores/sidebar'

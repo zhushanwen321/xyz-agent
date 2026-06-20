@@ -49,7 +49,7 @@
 </template>
 
 <script setup lang="ts">
-import { MessageSquare, ArrowRight } from 'lucide-vue-next'
+import { MessageSquare, ArrowRight } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import type { DerivedStatus } from '@/types'
 import PanelHeader from './PanelHeader.vue'

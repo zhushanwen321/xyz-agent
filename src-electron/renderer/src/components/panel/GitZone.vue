@@ -31,7 +31,7 @@
 </template>
 
 <script setup lang="ts">
-import { GitBranch } from 'lucide-vue-next'
+import { GitBranch } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 
 defineProps<{

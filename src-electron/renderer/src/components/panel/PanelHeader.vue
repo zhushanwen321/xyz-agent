@@ -51,7 +51,7 @@
 <script setup lang="ts">
 /* eslint-disable no-magic-numbers */
 import { computed } from 'vue'
-import { Folder, Columns2, X } from 'lucide-vue-next'
+import { Folder, Columns2, X } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import type { DerivedStatus } from '@/types'
 

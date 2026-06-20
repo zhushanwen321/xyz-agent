@@ -91,7 +91,7 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
 import { useEventListener } from '@vueuse/core'
-import { Plus, LayoutGrid } from 'lucide-vue-next'
+import { Plus, LayoutGrid } from '@lucide/vue'
 import { session as sessionApi } from '@/api'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
