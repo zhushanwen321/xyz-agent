@@ -2,9 +2,10 @@
  * 安全环境变量构建（最小权限原则）。
  *
  * [HISTORICAL] 不变量（CLAUDE.md 规则：路径/ENV 白名单动态化）：
- * - ENV_WHITELIST 基于 shared 的 ENV_WHITELIST_PREFIXES，main 进程额外允许 ELECTRON_ 前缀
- * - runtime-manager.ts 和 rpc-client.ts 各有一份白名单，rpc-client 必须是 runtime-manager 的子集
- * - Pre-commit check_env_whitelist_sync.py 会 diff 两份白名单
+ * - ENV_WHITELIST 基于 shared 的 ENV_WHITELIST_PREFIXES（SSOT 在 shared/constants.ts），
+ *   main 进程额外允许 ELECTRON_ 前缀
+ * - safe-env.ts（主进程）= [...SSOT, 'ELECTRON_']；rpc-client.ts（子进程）= SSOT 全集
+ * - Pre-commit check_env_whitelist_sync.py 验证 SSOT 单一性（定义只在 shared）
  *
  * 依赖方向：safe-env → shared（type-only + 运行时常量）
  */

@@ -358,11 +358,15 @@ xyz-agent 的数据目录（`~/.xyz-agent/`）与 pi 的数据目录（`~/.pi/ag
 
 **Pre-commit 自动检查**：`check_path_whitelist.py` 会扫描含 `allowedPrefixes` 的文件，验证是否使用了动态路径函数。
 
-### 3. ENV_WHITELIST_PREFIXES 保持同步
+### 3. ENV_WHITELIST_PREFIXES SSOT 单一性
 
-`runtime-manager.ts` 和 `rpc-client.ts` 各有一份 `ENV_WHITELIST_PREFIXES`。runtime-manager 可以有额外前缀（如 `ELECTRON_`），但 rpc-client 的前缀必须是 runtime-manager 的子集。新增前缀时同时更新两处。
+`ENV_WHITELIST_PREFIXES` 的定义只允许在 `src-electron/shared/src/constants.ts`（单一权威源）。main/ 和 runtime/ 层禁止本地定义，只能 `import` 自 shared：
+- `main/supervisor/safe-env.ts`：`[...ENV_WHITELIST_PREFIXES, 'ELECTRON_']`（主进程特权，可扩展）
+- `runtime/src/infra/pi/rpc-client.ts`：`= ENV_WHITELIST_PREFIXES`（子进程用全集，不加额外）
 
-**Pre-commit 自动检查**：`check_env_whitelist_sync.py` 会 diff 两份白名单，检测不一致。
+[历史] 旧规则曾要求 runtime-manager.ts 和 rpc-client.ts 「各有一份常量并 diff 同步」。commit 863f0704 收敛到 shared SSOT 后，「两处不同步」物理不可能，检查改为 SSOT 单一性防护。
+
+**Pre-commit 自动检查**：`check_env_whitelist_sync.py` 验证 `const ENV_WHITELIST_PREFIXES` 定义只出现在 shared/constants.ts，检测 SSOT 退化（未来有人在 main/runtime 本地重新定义）。
 
 ## 跳过检查
 
