@@ -1,5 +1,10 @@
 import type { Config } from 'tailwindcss'
 
+/**
+ * xyz-agent Tailwind 配置 · v3 冷蓝暗色（ADR-0018）
+ * 色值映射到 style.css 的 CSS 变量（SSOT: docs/designs/design-tokens.md）。
+ * shadcn-vue 装机会在此基础上扩展，此处只落 design-tokens 对齐项。
+ */
 export default {
   content: ['./src/**/*.{vue,ts,tsx}'],
   darkMode: 'class',
@@ -7,96 +12,41 @@ export default {
     extend: {
       colors: {
         bg: 'var(--bg)',
-        surface: 'var(--surface)',
+        surface: {
+          DEFAULT: 'var(--surface)',
+          hover: 'var(--surface-hover)',
+        },
         fg: 'var(--fg)',
         muted: 'var(--muted)',
+        subtle: 'var(--subtle)',
         border: 'var(--border)',
+        'border-strong': 'var(--border-strong)',
         accent: {
           DEFAULT: 'var(--accent)',
-          light: 'var(--accent-light)',
+          hover: 'var(--accent-hover)',
+          soft: 'var(--accent-soft)',
         },
-        success: {
-          DEFAULT: 'var(--success)',
-          light: 'var(--success-light)',
-        },
-        warning: {
-          DEFAULT: 'var(--warning)',
-          light: 'var(--warning-light)',
-        },
-        danger: {
-          DEFAULT: 'var(--danger)',
-          light: 'var(--danger-light)',
-        },
-        agent: {
-          DEFAULT: 'var(--agent)',
-          light: 'var(--agent-light)',
-        },
-        // Keep shadcn aliases but update variable refs
-        primary: { DEFAULT: 'var(--accent)', foreground: '#fff' },
-        destructive: { DEFAULT: 'var(--danger)', foreground: '#fff' },
-        background: 'var(--bg)',
-        foreground: 'var(--fg)',
-        ring: 'var(--accent)',
-        input: 'var(--border)',
-        'level-safe': 'var(--level-safe-bg)',
-        'level-caution': 'var(--level-caution-bg)',
-        'level-danger': 'var(--level-danger-bg)',
+        success: 'var(--success)',
+        warning: 'var(--warning)',
+        danger: 'var(--danger)',
+        info: 'var(--info)',
+        // reasoning 紫（draft-message-stream 思考块 / composer 思考等级专属色相）
+        reasoning: 'var(--reasoning)',
       },
       fontFamily: {
-        display: ['Tiempos Headline', 'Newsreader', 'Iowan Old Style', 'Georgia', 'serif'],
-        body: ['-apple-system', 'BlinkMacSystemFont', 'system-ui', 'sans-serif'],
+        sans: ['Inter', 'SF Pro Display', 'PingFang SC', 'system-ui', 'sans-serif'],
         mono: ['JetBrains Mono', 'IBM Plex Mono', 'ui-monospace', 'Menlo', 'monospace'],
       },
       borderRadius: {
-        DEFAULT: '1px',
-        sm: '1px',
-        xs: '1px',
-        md: '2px',
-        lg: '2px',
-        bubble: 'var(--radius-bubble)',
+        sm: '3px',
+        DEFAULT: '8px',
+        md: '8px',
+        lg: '12px',
       },
       boxShadow: {
-        xs: 'var(--shadow-xs)',
-        sm: 'var(--shadow-sm)',
-        md: 'var(--shadow-md)',
-        lg: 'var(--shadow-lg)',
-        xl: 'var(--shadow-xl)',
-      },
-      spacing: {
-        sidebar: '240px',
-        header: '48px',
-        statusbar: '32px',
-        drawer: '380px',
-      },
-      transitionTimingFunction: {
-        ease: 'var(--ease)',
-      },
-      keyframes: {
-        'pulse-dot': {
-          '0%, 100%': { transform: 'scale(1)' },
-          '50%': { transform: 'scale(1.15)' },
-        },
-        blink: {
-          '50%': { opacity: '0' },
-        },
-        spin: {
-          to: { transform: 'rotate(360deg)' },
-        },
-        'thinking-pulse': {
-          '0%, 100%': { opacity: '1', transform: 'scale(1)' },
-          '50%': { opacity: '0.3', transform: 'scale(0.85)' },
-        },
-        'pulse-bar': {
-          '0%, 100%': { opacity: '1' },
-          '50%': { opacity: '0.3' },
-        },
-      },
-      animation: {
-        'pulse-dot': 'pulse-dot 2s infinite',
-        blink: 'blink 1s step-end infinite',
-        spin: 'spin 0.6s linear infinite',
-        'thinking-pulse': 'thinking-pulse 1.4s ease-in-out infinite',
-        'pulse-bar': 'pulse-bar 1s ease-in-out infinite',
+        1: 'var(--shadow-1)',
+        2: 'var(--shadow-2)',
+        glow: 'var(--shadow-glow)',
       },
     },
   },

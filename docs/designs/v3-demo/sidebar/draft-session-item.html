@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>会话项 · Session Item · sidebar session-item</title>
+<style>
+  /* token 引自 design-tokens.md（冷蓝暗色 SSOT）；原语引自 design-system.md */
+  :root{
+    --bg:#0d0d0f; --surface:#151519; --surface-2:#1b1b20; --surface-hover:#1f1f26;
+    --fg:#f0f0f5; --muted:#8a8a95; --subtle:#5a5a65;
+    --border:rgba(255,255,255,0.06); --border-strong:rgba(255,255,255,0.12);
+    --accent:#4f8ef7; --accent-hover:#6ba3ff; --accent-soft:rgba(79,142,247,0.12);
+    --success:#22c55e; --warning:#f5a524; --danger:#ef4444; --info:#38bdf8;
+    --radius-sm:3px; --radius:8px; --radius-lg:12px;
+    --shadow-2:0 8px 24px rgba(0,0,0,0.4);
+    --ease:cubic-bezier(0.4,0,0.2,1); --duration-fast:120ms; --duration:200ms;
+    --font-sans:Inter,'SF Pro Display','PingFang SC',system-ui,sans-serif;
+    --font-mono:'JetBrains Mono','IBM Plex Mono',ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--fg);font:14px/1.6 var(--font-sans);
+    -webkit-font-smoothing:antialiased;padding:32px 40px 80px;max-width:1280px;margin:0 auto}
+  h1{font-size:26px;font-weight:650;letter-spacing:-0.01em;margin-bottom:6px}
+  h2{font-size:18px;font-weight:600;margin:48px 0 4px;letter-spacing:-0.01em;display:flex;align-items:center;gap:10px}
+  h2 .num{font:600 12px/1 var(--font-mono);color:var(--accent);
+    background:var(--accent-soft);padding:4px 8px;border-radius:var(--radius-sm);letter-spacing:0.05em}
+  h3{font-size:14px;font-weight:600;margin:24px 0 8px}
+  .lede{color:var(--muted);font-size:13px;margin-bottom:8px;max-width:760px}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+  .meta span{font:500 11px/1 var(--font-mono);color:var(--muted);
+    background:var(--surface);border:1px solid var(--border);padding:5px 9px;border-radius:999px}
+  .meta b{color:var(--fg);font-weight:600}
+  hr{border:0;border-top:1px solid var(--border);margin:40px 0}
+  code{font:12px/1.4 var(--font-mono);background:var(--surface-2);padding:2px 6px;border-radius:var(--radius-sm);color:var(--accent)}
+  .two-col{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:14px;align-items:start}
+  @media(max-width:880px){.two-col{grid-template-columns:1fr}}
+  .note{font:12px/1.6 var(--font-mono);color:var(--muted);background:var(--surface);
+    border:1px solid var(--border);border-left:2px solid var(--accent);
+    border-radius:var(--radius-sm);padding:9px 11px;margin-top:0}
+  .note b{color:var(--fg)}
+
+  /* 状态圆点 · design-system Status Dot（状态色填充，7px） */
+  .dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex:none;position:relative}
+  .dot-running{background:var(--accent)}
+  .dot-waiting{background:var(--warning)}
+  .dot-done{background:var(--success)}
+  .dot-stopped{background:var(--subtle)}
+  .dot-error{background:var(--danger)}
+  .dot.pulse::after{content:"";position:absolute;inset:-3px;border-radius:50%}
+  .dot-running.pulse::after{color:rgba(79,142,247,0.55);animation:pulse-ring 1.8s var(--ease) infinite}
+  .dot-waiting.pulse::after{color:rgba(245,165,36,0.55);animation:pulse-ring 1.8s var(--ease) infinite}
+  @keyframes pulse-ring{0%{box-shadow:0 0 0 0 currentColor;opacity:.8}70%{box-shadow:0 0 0 6px transparent;opacity:0}100%{opacity:0}}
+  .dot-row{display:flex;flex-wrap:wrap;gap:24px;align-items:center;margin-top:14px}
+  .dot-cell{display:flex;align-items:center;gap:9px;font:12px/1 var(--font-mono);color:var(--muted)}
+  .dot-cell .lbl{color:var(--fg)}
+
+  /* sidebar 列表区模拟（容器见 draft-five-states，此处只画原子） */
+  .sb-mock{width:300px;background:transparent;border:1px dashed var(--border-strong);
+    border-radius:var(--radius-lg);padding:8px;display:flex;flex-direction:column;gap:2px}
+  .sb-mock .head{font:500 10px/1 var(--font-mono);color:var(--subtle);letter-spacing:0.08em;
+    text-transform:uppercase;padding:6px 8px 8px;display:flex;justify-content:space-between}
+  .sb-mock .head b{color:var(--muted);font-weight:500}
+
+  /* Session Item · design-system Card-Inline 变体 */
+  .si{position:relative;display:flex;align-items:flex-start;gap:10px;padding:9px 10px;
+    border-radius:var(--radius);cursor:pointer;transition:background var(--duration-fast) var(--ease)}
+  .si:hover{background:var(--surface-hover)}
+  .si-dot{margin-top:5px}
+  .si-main{flex:1;min-width:0}
+  .si-title{font-size:13px;font-weight:550;color:var(--fg);line-height:1.35;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .si-sub{display:flex;align-items:center;gap:6px;margin-top:3px;font:11px/1 var(--font-mono);color:var(--muted)}
+  .branch{color:var(--accent);background:var(--accent-soft);padding:2px 6px;border-radius:var(--radius-sm);
+    font-size:10px;letter-spacing:0.02em;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .si-time{color:var(--subtle);white-space:nowrap}
+  .si-actions{display:flex;gap:2px;opacity:0;transition:opacity var(--duration-fast) var(--ease);align-self:center}
+  .si:hover .si-actions,.si.demo-hover .si-actions{opacity:1}
+  .si:hover .si-time,.si.demo-hover .si-time{display:none}
+  .si.demo-hover{background:var(--surface-hover)}
+  .icon-btn{width:24px;height:24px;display:grid;place-items:center;border:0;background:transparent;
+    color:var(--muted);border-radius:var(--radius-sm);cursor:pointer}
+  .icon-btn:hover{background:var(--surface-2);color:var(--fg)}
+  .icon-btn svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.5}
+  .icon-btn.danger:hover{color:var(--danger)}
+
+  /* 徽标 · design-system Badge */
+  .badge{min-width:16px;height:16px;padding:0 5px;border-radius:999px;font:600 10px/16px var(--font-mono);
+    text-align:center;color:#fff;flex:none}
+  .badge-unread{background:var(--accent)}
+  .badge-agent{background:var(--success);display:inline-flex;align-items:center;gap:4px;padding:0 6px}
+  .badge-agent::before{content:"";width:5px;height:5px;border-radius:50%;background:#fff;animation:blink 1.4s infinite}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
+  .si-end{display:flex;align-items:center;gap:6px;align-self:center}
+
+  /* 激活态 · design-system Card-Active（inset accent ring + surface-2，不改盒模型）
+     裁决：handoff 原设想"左竖条+bg-elevated"，但 design-system §2 已将"左色条+亮底"列为反模式（AI slop）。
+     激活走 inset ring，与 panel/workspace 选中态一致。左竖条弃用——若 workspace/draft-dual-panel
+     仍用左竖条需统一到此（待核，见 §末裁决表）。 */
+  .si.active{background:var(--surface-2);box-shadow:inset 0 0 0 1px var(--accent)}
+  .si.active .si-title{color:var(--fg)}
+
+  /* 右键菜单 · design-system Card-Elevated（浮层 +shadow-2） */
+  .ctx-wrap{position:relative;margin-top:14px}
+  .ctx{position:absolute;left:52px;top:38px;width:208px;background:var(--surface-2);
+    border:1px solid var(--border-strong);border-radius:var(--radius);box-shadow:var(--shadow-2);padding:5px;z-index:5}
+  .ctx-i{display:flex;align-items:center;gap:10px;padding:7px 9px;border-radius:var(--radius-sm);
+    font-size:13px;color:var(--fg);cursor:pointer}
+  .ctx-i:hover{background:var(--surface-hover)}
+  .ctx-i svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.5;color:var(--muted)}
+  .ctx-i:hover svg{color:var(--fg)}
+  .ctx-i .kbd{margin-left:auto;font:11px/1 var(--font-mono);color:var(--subtle)}
+  .ctx-i.danger{color:var(--danger)}
+  .ctx-i.danger svg{color:var(--danger)}
+  .ctx-sep{height:1px;background:var(--border);margin:4px 2px}
+
+  /* 折叠子会话 */
+  .sub-toggle{display:flex;align-items:center;gap:6px;font:11px/1 var(--font-mono);color:var(--subtle);
+    padding:6px 8px 2px;cursor:pointer;user-select:none}
+  .sub-toggle svg{width:10px;height:10px;fill:none;stroke:currentColor;stroke-width:2;transition:transform var(--duration-fast) var(--ease)}
+  .sub-toggle.open svg{transform:rotate(90deg)}
+  .sub-list{padding-left:18px;display:flex;flex-direction:column;gap:1px}
+  .sub-list .si{padding:7px 10px}
+  .sub-list .si-title{font-size:12px}
+
+  /* 边缘态 */
+  .rename-inline{flex:1;font:13px/1.4 var(--font-sans);color:var(--fg);background:var(--bg);
+    border:1px solid var(--accent);border-radius:var(--radius-sm);padding:5px 7px;outline:none;min-width:0}
+  .del-confirm{display:flex;align-items:center;gap:8px;padding:8px 10px;background:rgba(239,68,68,0.08);
+    border:1px solid rgba(239,68,68,0.25);border-radius:var(--radius);font-size:12px;color:var(--danger)}
+  .del-confirm .yes{margin-left:auto;border:0;background:var(--danger);color:#fff;
+    padding:5px 11px;border-radius:var(--radius-sm);font:600 11px/1 var(--font-sans);cursor:pointer}
+  .del-confirm .no{background:transparent;color:var(--muted);border:1px solid var(--border);
+    padding:5px 11px;border-radius:var(--radius-sm);font:500 11px/1 var(--font-sans);cursor:pointer}
+</style>
+</head>
+<body>
+  <h1>会话项 · Session Item</h1>
+  <p class="lede">Session List 内一行 = 状态点 + 标题 + 分支 pill + 目录·时间小字。L2 原子单元，复用于 sidebar Session List 与 overview 鸟瞰卡片。本叶只画单个会话项的全部状态与交互，不画整个 Sidebar 容器（容器见 <code>draft-five-states.html</code>）。</p>
+  <div class="meta">
+    <span>层级 <b>L2 Module</b></span>
+    <span>规范 <b>sidebar/spec.md · 会话项信息结构</b></span>
+    <span>原语 <b>Card-Inline / Card-Active / Status Dot / Badge / Pill</b></span>
+    <span>术语 <b>architecture §1 Session Item</b></span>
+  </div>
+
+  <h2><span class="num">§1</span>状态圆点 · 5 态</h2>
+  <p class="lede">与 panel-header 状态圆点一致（design-system Status Dot：状态色填充，7px）。running / waiting 两态带脉冲环。命名以 <code>sidebar/spec.md</code> §会话项为准。</p>
+  <div class="dot-row">
+    <div class="dot-cell"><span class="dot dot-running pulse"></span><span class="lbl">running</span> 进行中</div>
+    <div class="dot-cell"><span class="dot dot-waiting pulse"></span><span class="lbl">waiting</span> 等输入/审批</div>
+    <div class="dot-cell"><span class="dot dot-done"></span><span class="lbl">done</span> 完成</div>
+    <div class="dot-cell"><span class="dot dot-stopped"></span><span class="lbl">stopped</span> 用户停</div>
+    <div class="dot-cell"><span class="dot dot-error"></span><span class="lbl">error</span> 出错</div>
+  </div>
+  <div class="note"><b>裁决</b>：handoff 列 4 态（running/idle/done/error），<code>sidebar/spec.md</code> §会话项列 5 态。以 spec.md 为准——补 <code>waiting</code>（带脉冲，等用户审批 steer）与 <code>stopped</code>（用户主动停，区别于 error 异常停）。颜色映射：进行中=accent 蓝、等待=warning 黄、完成=success 绿、停止=subtle 灰、出错=danger 红。</div>
+
+  <h2><span class="num">§2</span>默认态 · 信息结构</h2>
+  <p class="lede">状态点 + 标题（13px/550，超长省略）+ 分支 pill（mono + accent-soft）+ 时间（11px subtle）。单行基准高度 ~44px。</p>
+  <div class="two-col">
+    <div class="sb-mock">
+      <div class="head"><span>会话</span><b>3</b></div>
+      <div class="si">
+        <span class="dot dot-running pulse si-dot"></span>
+        <div class="si-main">
+          <div class="si-title">重构 Sidebar 多视图容器</div>
+          <div class="si-sub"><span class="branch">feat/sidebar-split</span><span class="si-time">2 分钟前</span></div>
+        </div>
+      </div>
+      <div class="si">
+        <span class="dot dot-done si-dot"></span>
+        <div class="si-main">
+          <div class="si-title">修复 composer 发送态抖动</div>
+          <div class="si-sub"><span class="branch">fix/composer-jitter</span><span class="si-time">1 小时前</span></div>
+        </div>
+      </div>
+      <div class="si">
+        <span class="dot dot-error si-dot"></span>
+        <div class="si-main">
+          <div class="si-title">接入 Diff 审查抽屉</div>
+          <div class="si-sub"><span class="branch">feat/diff-drawer</span><span class="si-time">昨天</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="note">hover 前<b>时间常驻</b>，hover 后隐去让位给操作钮（§3）——同一位置不并存，避免单行信息过载。分支 pill 用 <code>max-width:140px</code> + ellipsis，长分支名不撑破容器。</div>
+  </div>
+
+  <h2><span class="num">§3</span>hover 态 · 操作浮现</h2>
+  <p class="lede">鼠标悬停：时间隐去，右侧浮现 2 个方形 ghost 操作钮（重命名 / 删除）。hover 底色 <code>--surface-hover</code>。</p>
+  <div class="two-col">
+    <div class="sb-mock">
+      <div class="head"><span>会话</span><b>1</b></div>
+      <div class="si demo-hover">
+        <span class="dot dot-waiting pulse si-dot"></span>
+        <div class="si-main">
+          <div class="si-title">等待审批 steer 方案</div>
+          <div class="si-sub"><span class="branch">exp/steer-v2</span></div>
+        </div>
+        <div class="si-actions">
+          <button class="icon-btn" title="重命名"><svg viewBox="0 0 24 24"><path d="M4 20h4L18.5 9.5a2.12 2.12 0 0 0-3-3L5 17v3z"/></svg></button>
+          <button class="icon-btn danger" title="删除"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m2 0v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V7"/></svg></button>
+        </div>
+      </div>
+    </div>
+    <div class="note">2 个操作钮（重命名/删除）是 <code>sidebar/spec.md</code> 遗留里的当前定稿。「置顶/归档」是否补待观察——见 §6 右键菜单已含归档，hover 栏保持精简 2 项。</div>
+  </div>
+
+  <h2><span class="num">§4</span>激活态 · Card-Active（当前载入 workspace）</h2>
+  <p class="lede">当前载入 workspace 双 Panel 的会话 = 激活。走 design-system Card-Active：<code>surface-2</code> 底 + <code>inset 1px accent ring</code>（不改盒模型、不抖动）。</p>
+  <div class="two-col">
+    <div class="sb-mock">
+      <div class="head"><span>会话</span><b>3</b></div>
+      <div class="si active">
+        <span class="dot dot-running pulse si-dot"></span>
+        <div class="si-main">
+          <div class="si-title">重构 Sidebar 多视图容器</div>
+          <div class="si-sub"><span class="branch">feat/sidebar-split</span><span class="si-time">2 分钟前</span></div>
+        </div>
+      </div>
+      <div class="si">
+        <span class="dot dot-done si-dot"></span>
+        <div class="si-main">
+          <div class="si-title">修复 composer 发送态抖动</div>
+          <div class="si-sub"><span class="branch">fix/composer-jitter</span><span class="si-time">1 小时前</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="note"><b>裁决</b>：handoff 写"左竖条+bg-elevated"，design-system §2 把"左色条+亮底"列为反模式。激活走 inset ring。<b>与 workspace 呼应</b>：workspace 双 Panel 激活标识若也是 inset ring 则一致；若 workspace 现仍用左竖条，需统一到此方案（待核 dual-panel 现状）。</div>
+  </div>
+
+  <h2><span class="num">§5</span>徽标 · 未读 / 后台 agent 活动</h2>
+  <p class="lede">未读 = accent 计数角标；后台 agent 活动 = success 点 + 计数（agent 在跑、用户不在该会话）。</p>
+  <div class="two-col">
+    <div class="sb-mock">
+      <div class="head"><span>会话</span><b>3</b></div>
+      <div class="si">
+        <span class="dot dot-done si-dot"></span>
+        <div class="si-main">
+          <div class="si-title">修复 composer 发送态抖动</div>
+          <div class="si-sub"><span class="branch">fix/composer-jitter</span><span class="si-time">1 小时前</span></div>
+        </div>
+        <div class="si-end"><span class="badge badge-unread">3</span></div>
+      </div>
+      <div class="si">
+        <span class="dot dot-running si-dot"></span>
+        <div class="si-main">
+          <div class="si-title">后台重构 auth 模块</div>
+          <div class="si-sub"><span class="branch">refactor/auth</span><span class="si-time">运行中</span></div>
+        </div>
+        <div class="si-end"><span class="badge badge-agent">2</span></div>
+      </div>
+    </div>
+    <div class="note">未读角标 = 用户切走后有新消息；后台 agent 徽标 = 该会话的子 agent 仍在跑（对应 flow-3 多 agent 编排）。两者语义不同，颜色区分（accent vs success），不混用。徽标与时间共存于 <code>.si-end</code>，hover 时若操作钮浮现则徽标让位。</div>
+  </div>
+
+  <h2><span class="num">§6</span>右键菜单 · 5 项操作</h2>
+  <p class="lede">右键会话项 → 浮层菜单：重命名 / 复制 / 删除（带二次确认）/ 归档 / 在新 Panel 打开。Card-Elevated 浮层 + <code>shadow-2</code>。</p>
+  <div class="ctx-wrap">
+    <div class="sb-mock" style="width:300px">
+      <div class="head"><span>会话</span><b>1</b></div>
+      <div class="si active">
+        <span class="dot dot-running pulse si-dot"></span>
+        <div class="si-main">
+          <div class="si-title">重构 Sidebar 多视图容器</div>
+          <div class="si-sub"><span class="branch">feat/sidebar-split</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="ctx">
+      <div class="ctx-i"><svg viewBox="0 0 24 24"><path d="M4 20h4L18.5 9.5a2.12 2.12 0 0 0-3-3L5 17v3z"/></svg>重命名<span class="kbd">F2</span></div>
+      <div class="ctx-i"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="1.5"/><path d="M5 15V5a1 1 0 0 1 1-1h10"/></svg>复制<span class="kbd">⌘D</span></div>
+      <div class="ctx-i"><svg viewBox="0 0 24 24"><path d="M3 7l9 6 9-6M3 7v10a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V7"/></svg>归档<span class="kbd">E</span></div>
+      <div class="ctx-sep"></div>
+      <div class="ctx-i"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="14" rx="1.5"/><path d="M12 4v14M3 11h18"/></svg>在新 Panel 打开<span class="kbd">⌘⇧O</span></div>
+      <div class="ctx-sep"></div>
+      <div class="ctx-i danger"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m2 0v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V7"/></svg>删除<span class="kbd">⌫</span></div>
+    </div>
+  </div>
+  <div class="note" style="margin-top:14px">删除走二次确认（§8），不直接删。「在新 Panel 打开」= workspace 开第二个 Panel 并行载入该会话（与 <code>workspace/draft-dual-panel.html</code> 联动）。快捷键标注为预期映射，最终值待快捷键总表裁决。</div>
+
+  <h2><span class="num">§7</span>折叠子会话 / 分支节点</h2>
+  <p class="lede">同一 base 分支派生多个子会话时，折叠成树。展开后子项缩进 18px、字号降一档。</p>
+  <div class="sb-mock">
+    <div class="head"><span>会话</span><b>5</b></div>
+    <div class="si">
+      <span class="dot dot-done si-dot"></span>
+      <div class="si-main">
+        <div class="si-title">Diff 审查流程</div>
+        <div class="si-sub"><span class="branch">feat/diff-drawer</span><span class="si-time">昨天</span></div>
+      </div>
+    </div>
+    <div class="sub-toggle open">
+      <svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>2 个子会话 · main
+    </div>
+    <div class="sub-list">
+      <div class="si">
+        <span class="dot dot-running pulse si-dot"></span>
+        <div class="si-main">
+          <div class="si-title">分屏 diff 视图</div>
+          <div class="si-sub"><span class="branch">feat/split-diff</span><span class="si-time">进行中</span></div>
+        </div>
+      </div>
+      <div class="si">
+        <span class="dot dot-stopped si-dot"></span>
+        <div class="si-main">
+          <div class="si-title">二进制文件预览</div>
+          <div class="si-sub"><span class="branch">exp/binary-preview</span><span class="si-time">已停</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="note" style="margin-top:14px">分支结构来自 git worktree 或显式派生。子项复用同一 <code>.si</code> 原子，仅缩进 + 字号降档——不另造组件。<b>嵌套 &gt;3 层</b>的横向省略策略见 <code>sidebar/spec.md</code> 边缘态（待定）。</div>
+
+  <h2><span class="num">§8</span>边缘态</h2>
+  <p class="lede">超长标题省略 / 重命名内联 / 删除二次确认。</p>
+  <div class="two-col">
+    <div class="sb-mock">
+      <div class="head"><span>边缘</span><b>3</b></div>
+      <div class="si">
+        <span class="dot dot-done si-dot"></span>
+        <div class="si-main">
+          <div class="si-title">把 Sidebar Search Modal 从会话列表卡 D 剥离迁移到 overlays 独立 Overlay 并补 spec</div>
+          <div class="si-sub"><span class="branch">refactor/search-overlay-extraction</span></div>
+        </div>
+      </div>
+      <div class="si">
+        <span class="dot dot-done si-dot"></span>
+        <input class="rename-inline" value="修复 composer 发送态抖动" />
+      </div>
+    </div>
+    <div>
+      <div class="del-confirm">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 9v4M12 17h.01M10.3 4.3a2 2 0 0 1 3.4 0l8 13.5A2 2 0 0 1 20 21H4a2 2 0 0 1-1.7-3.2z"/></svg>
+        删除「修复 composer 发送态抖动」？此操作不可撤销。
+        <button class="no">取消</button><button class="yes">删除</button>
+      </div>
+      <div class="note" style="margin-top:14px">超长标题：单行 ellipsis，不折行（保持行高一致）。重命名：原位替换为 input，focus ring = accent，Enter 保存 / Esc 取消。删除：行内红底确认条，不弹 modal（轻量）。</div>
+    </div>
+  </div>
+
+  <hr>
+  <div class="note"><b>验收对照（handoff §6 P0）</b>：<br>
+  ✅ 4 状态圆点齐全 → 实际做到 <b>5 态</b>（裁决补 waiting/stopped，§1）<br>
+  ✅ 激活态与 workspace 激活标识呼应 → inset ring（裁决弃左竖条，§4，待核 dual-panel 统一）<br>
+  ✅ 右键菜单完整 → 5 项（§6）<br>
+  ✅ 冷蓝 token 一致 + 无废弃术语（无 session panel / aside-region 等旧词）<br>
+  <br><b>遗留</b>：① 激活态 inset ring 与 workspace/draft-dual-panel 现用激活标识的对齐待核；② hover 操作是否补「置顶」待观察；③ 快捷键映射值待总表裁决。</div>
+</body>
+</html>

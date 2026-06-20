@@ -22,7 +22,7 @@ import type { ServerMessage } from '@xyz-agent/shared'
 
 const mockSendCommand = vi.fn().mockResolvedValue({ success: true })
 
-vi.mock('../src/services/session-service.js', () => {
+vi.mock('../src/services/session/session-service.js', () => {
   return {
     SessionService: class MockSessionService {
       sendMessage = vi.fn().mockResolvedValue(undefined)
@@ -75,7 +75,7 @@ vi.mock('../src/services/model-service.js', () => ({
   },
 }))
 
-vi.mock('../src/process-manager.js', () => ({
+vi.mock('../src/infra/pi/process-manager.js', () => ({
   ProcessManager: class MockProcessManager {
     createSession = vi.fn()
     destroySession = vi.fn().mockResolvedValue(undefined)
@@ -90,15 +90,15 @@ vi.mock('../src/process-manager.js', () => ({
 
 // EventAdapter 使用真实实例 — 不 mock
 
-vi.mock('../src/skill-scanner.js', () => ({
+vi.mock('../src/services/scanners/skill-scanner.js', () => ({
   scanSkills: vi.fn().mockReturnValue([]),
 }))
 
-vi.mock('../src/agent-scanner.js', () => ({
+vi.mock('../src/services/scanners/agent-scanner.js', () => ({
   scanAgents: vi.fn().mockReturnValue([]),
 }))
 
-vi.mock('../src/pi-config-bridge.js', () => ({
+vi.mock('../src/infra/pi/pi-config-bridge.js', () => ({
   getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
   getSkillPaths: () => [],
   getSessionsDir: () => '/mock/sessions',
@@ -108,16 +108,18 @@ vi.mock('../src/pi-config-bridge.js', () => ({
   refreshAll: () => {},
 }))
 
-vi.mock('../src/trash.js', () => ({
+vi.mock('../src/infra/system/trash.js', () => ({
   trash: vi.fn(),
 }))
 
 // ── Imports (mock 之后) ───────────────────────────────────────────
 
-import { SidecarServer } from '../src/server.js'
-import { EventAdapter } from '../src/event-adapter.js'
-import { SessionService } from '../src/services/session-service.js'
+import { RuntimeServer } from '../src/transport/server.js'
+import { EventAdapter } from '../src/infra/pi/event-adapter.js'
+import { SessionService } from '../src/services/session/session-service.js'
 import { ConfigService } from '../src/services/config-service.js'
+import { PiConfigStore } from '../src/infra/pi/pi-config-store.js'
+import { ModelApiDiscoverer } from '../src/infra/model-api-discoverer.js'
 import { ModelService } from '../src/services/model-service.js'
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -187,7 +189,7 @@ function createMockRpcClient() {
 
 /** 创建 WS 连接的完整 server fixture (真实 timers) */
 interface WSFixture {
-  server: SidecarServer
+  server: RuntimeServer
   sessionService: SessionService
   ws: WebSocket
   port: number
@@ -200,13 +202,13 @@ interface WSFixture {
 
 async function createWSFixture(extensionService?: object): Promise<WSFixture> {
   const port = await getFreePort()
-  const server = new SidecarServer(port, '/tmp/test-project')
-  const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
+  const server = new RuntimeServer(port, '/tmp/test-project')
+  const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never, {} as never)
 
   server.setServices(
     sessionService,
-    new ConfigService('/tmp'),
-    new ModelService(),
+    new ConfigService('/tmp', new PiConfigStore()),
+    new ModelService(new ModelApiDiscoverer()),
     {} as never,
     extensionService as never | undefined,
   )
@@ -427,18 +429,18 @@ describe('DF-1: Extension UI 请求-响应 (EventAdapter → Server → RpcClien
 // ── DF-1 超时路径 (fake timers, 不启动 server) ────────────────────
 
 describe('DF-1: Extension UI 超时路径', () => {
-  let server: SidecarServer
+  let server: RuntimeServer
   let sessionService: SessionService
 
   beforeEach(() => {
     vi.useFakeTimers()
     mockSendCommand.mockClear()
-    server = new SidecarServer(0, '/tmp/test-project')
-    sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
+    server = new RuntimeServer(0, '/tmp/test-project')
+    sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never, {} as never)
     server.setServices(
       sessionService,
-      new ConfigService('/tmp'),
-      new ModelService(),
+      new ConfigService('/tmp', new PiConfigStore()),
+      new ModelService(new ModelApiDiscoverer()),
       {} as never,
     )
 
@@ -505,18 +507,18 @@ describe('DF-1: Extension UI 超时路径', () => {
 // ── DF-1 session 删除清理超时 (fake timers) ───────────────────────
 
 describe('DF-1: session 删除清理超时', () => {
-  let server: SidecarServer
+  let server: RuntimeServer
   let sessionService: SessionService
 
   beforeEach(() => {
     vi.useFakeTimers()
     mockSendCommand.mockClear()
-    server = new SidecarServer(0, '/tmp/test-project')
-    sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
+    server = new RuntimeServer(0, '/tmp/test-project')
+    sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never, {} as never)
     server.setServices(
       sessionService,
-      new ConfigService('/tmp'),
-      new ModelService(),
+      new ConfigService('/tmp', new PiConfigStore()),
+      new ModelService(new ModelApiDiscoverer()),
       {} as never,
     )
 
@@ -658,7 +660,7 @@ describe('DF-3: 工具进度更新 (EventAdapter → server broadcast)', () => {
 // ══════════════════════════════════════════════════════════════════
 
 describe('DF-4: Extension 列表管理', () => {
-  let server: SidecarServer
+  let server: RuntimeServer
   let ws: WebSocket
   let mockExtensionService: {
     scanExtensions: ReturnType<typeof vi.fn>
@@ -672,8 +674,8 @@ describe('DF-4: Extension 列表管理', () => {
     mockSendCommand.mockClear()
 
     const port = await getFreePort()
-    server = new SidecarServer(port, '/tmp/test-project')
-    const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
+    server = new RuntimeServer(port, '/tmp/test-project')
+    const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never, {} as never)
 
     mockExtensionService = {
       scanExtensions: vi.fn().mockResolvedValue([
@@ -687,8 +689,8 @@ describe('DF-4: Extension 列表管理', () => {
 
     server.setServices(
       sessionService,
-      new ConfigService('/tmp'),
-      new ModelService(),
+      new ConfigService('/tmp', new PiConfigStore()),
+      new ModelService(new ModelApiDiscoverer()),
       {} as never,
       mockExtensionService as never,
     )
@@ -731,9 +733,9 @@ describe('DF-4: Extension 列表管理', () => {
 
   it('ExtensionService 为 null → 返回空列表', async () => {
     const port2 = await getFreePort()
-    const server2 = new SidecarServer(port2, '/tmp/test-project')
-    const sessionService2 = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
-    server2.setServices(sessionService2, new ConfigService('/tmp'), new ModelService(), {} as never)
+    const server2 = new RuntimeServer(port2, '/tmp/test-project')
+    const sessionService2 = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never, {} as never)
+    server2.setServices(sessionService2, new ConfigService('/tmp', new PiConfigStore()), new ModelService(new ModelApiDiscoverer()), {} as never)
     await server2.start()
     const ws2 = await connectClient(port2)
 
@@ -758,7 +760,7 @@ describe('DF-4: Extension 列表管理', () => {
 // ══════════════════════════════════════════════════════════════════
 
 describe('DF-5: Extension 启用/禁用', () => {
-  let server: SidecarServer
+  let server: RuntimeServer
   let ws: WebSocket
   let mockExtensionService: {
     scanExtensions: ReturnType<typeof vi.fn>
@@ -772,8 +774,8 @@ describe('DF-5: Extension 启用/禁用', () => {
     mockSendCommand.mockClear()
 
     const port = await getFreePort()
-    server = new SidecarServer(port, '/tmp/test-project')
-    const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
+    server = new RuntimeServer(port, '/tmp/test-project')
+    const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never, {} as never)
 
     mockExtensionService = {
       scanExtensions: vi.fn().mockResolvedValue([
@@ -786,8 +788,8 @@ describe('DF-5: Extension 启用/禁用', () => {
 
     server.setServices(
       sessionService,
-      new ConfigService('/tmp'),
-      new ModelService(),
+      new ConfigService('/tmp', new PiConfigStore()),
+      new ModelService(new ModelApiDiscoverer()),
       {} as never,
       mockExtensionService as never,
     )
@@ -826,9 +828,9 @@ describe('DF-5: Extension 启用/禁用', () => {
 
   it('ExtensionService 为 null → 返回 error', async () => {
     const port2 = await getFreePort()
-    const server2 = new SidecarServer(port2, '/tmp/test-project')
-    const sessionService2 = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
-    server2.setServices(sessionService2, new ConfigService('/tmp'), new ModelService(), {} as never)
+    const server2 = new RuntimeServer(port2, '/tmp/test-project')
+    const sessionService2 = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never, {} as never)
+    server2.setServices(sessionService2, new ConfigService('/tmp', new PiConfigStore()), new ModelService(new ModelApiDiscoverer()), {} as never)
     await server2.start()
     const ws2 = await connectClient(port2)
 

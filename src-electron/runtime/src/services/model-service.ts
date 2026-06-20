@@ -4,11 +4,13 @@
  * The unified business entry for switchModel and setThinkingLevel.
  * All callers (frontend WS handler, plugin RPC) must go through this
  * service to ensure consistent side-effects (persist, broadcast).
+ *
+ * aggregateModels is pure data transformation (stays here). discoverFromApi is
+ * external HTTP — delegated to IModelSource (injected, infra implements).
  */
 import type { ProviderInfo, ModelInfo } from '@xyz-agent/shared'
 import type { IModelService, ISessionService, IConfigService, IMessageBroker } from '../interfaces.js'
-
-const API_FETCH_TIMEOUT_MS = 10_000
+import type { IModelSource } from './ports/model.js'
 
 export class ModelService implements IModelService {
   private sessionService!: ISessionService
@@ -16,7 +18,10 @@ export class ModelService implements IModelService {
   private broker!: IMessageBroker
   private nextPushId: () => string
 
-  constructor(pushIdFactory?: () => string) {
+  constructor(
+    private readonly modelSource: IModelSource,
+    pushIdFactory?: () => string,
+  ) {
     this.nextPushId = pushIdFactory ?? (() => `push_${Date.now()}`)
   }
 
@@ -97,42 +102,6 @@ export class ModelService implements IModelService {
     apiKey?: string,
     providerType?: string,
   ): Promise<Array<{ id: string; name: string; contextWindow?: number }>> {
-    const base = baseUrl.replace(/\/+$/, '')
-    let url: string
-    const headers: Record<string, string> = {}
-
-    if (providerType === 'anthropic' || providerType === 'anthropic-messages') {
-      url = `${base}/v1/models`
-      if (apiKey) {
-        headers['x-api-key'] = apiKey
-        headers['anthropic-version'] = '2023-06-01'
-      }
-    } else {
-      url = base.endsWith('/v1') ? `${base}/models` : `${base}/v1/models`
-      if (apiKey) {
-        headers['Authorization'] = `Bearer ${apiKey}`
-      }
-    }
-
-    const res = await fetch(url, { headers, signal: AbortSignal.timeout(API_FETCH_TIMEOUT_MS) })
-    if (!res.ok) {
-      const body = await res.text().catch(() => '')
-      throw new Error(`API 返回 ${res.status}: ${body || res.statusText}`)
-    }
-
-    const data = await res.json() as Record<string, unknown>
-
-    const modelList = Array.isArray(data.data)
-      ? data.data as Array<Record<string, unknown>>
-      : Array.isArray(data.models)
-        ? data.models as Array<Record<string, unknown>>
-        : []
-
-    return modelList
-      .filter(m => typeof m.id === 'string')
-      .map(m => ({
-        id: m.id as string,
-        name: (m.name ?? m.id) as string,
-      }))
+    return this.modelSource.discoverFromApi(baseUrl, apiKey, providerType)
   }
 }

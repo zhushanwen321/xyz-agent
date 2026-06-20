@@ -8,6 +8,8 @@
  * 同时替换 process.env 为空 Proxy，防止环境变量泄露。
  */
 
+import { errorWithCode } from '../../utils/errors.js'
+
 /** 被阻止的 Node.js 内置模块列表 */
 export const BLOCKED_BUILTINS: readonly string[] = [
   'fs',
@@ -48,9 +50,7 @@ export function createRequireInterceptor(pluginDir: string): (request: string, r
       if (resolvedPath) {
         const normalizedResolved = resolvedPath.startsWith('/') ? resolvedPath : ''
         if (!normalizedResolved.startsWith(normalizedPluginDir)) {
-          const err = new Error(`Sandbox: require('${request}') resolves outside plugin directory`)
-          ;(err as unknown as Record<string, unknown>).code = 'PERMISSION_DENIED'
-          throw err
+          throw errorWithCode(`Sandbox: require('${request}') resolves outside plugin directory`, 'PERMISSION_DENIED')
         }
       }
       return resolvedPath ?? request
@@ -58,9 +58,7 @@ export function createRequireInterceptor(pluginDir: string): (request: string, r
 
     // npm 包名 / 内置模块：检查 blocklist
     if (BLOCKED_BUILTINS.includes(request)) {
-      const err = new Error(`Sandbox: require('${request}') is blocked`)
-      ;(err as unknown as Record<string, unknown>).code = 'PERMISSION_DENIED'
-      throw err
+      throw errorWithCode(`Sandbox: require('${request}') is blocked`, 'PERMISSION_DENIED')
     }
 
     return request

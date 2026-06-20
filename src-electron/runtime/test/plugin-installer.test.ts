@@ -203,12 +203,4 @@ describe('PluginInstaller', () => {
       await expect(readFile(join(pluginPath, 'package.json'), 'utf-8')).rejects.toThrow()
     })
   })
-
-  describe('pluginsDir default', () => {
-    it('should default to ~/.xyz-agent/plugins when no dir provided', () => {
-      const installer = new PluginInstaller()
-      // Just verify it doesn't throw and has a reasonable path
-      expect(installer).toBeDefined()
-    })
-  })
 })

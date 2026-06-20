@@ -32,7 +32,7 @@ export default defineConfig({
   define: {
     'process.env.XYZ_AGENT_VERSION': JSON.stringify(pkg.version),
   },
-  // 打包后验证：检查产物存在 + 体积合理（不执行模块，避免启动 sidecar）
+  // 打包后验证：检查产物存在 + 体积合理（不执行模块，避免启动 runtime）
   onSuccess: async () => {
     const { existsSync, statSync } = await import('node:fs')
     const path = await import('node:path')

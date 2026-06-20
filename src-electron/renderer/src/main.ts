@@ -1,16 +1,11 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
-import piniaPluginPersistedstate from 'pinia-plugin-persistedstate'
+import '@fontsource-variable/inter' // Inter 字体（design-tokens SSOT，ADR-0018）—— npm 包随 bundle 打包，离线可用
 import i18n from './i18n'
-import { registerBuiltinToolRenderers } from './lib/register-tool-renderers'
 import App from './App.vue'
 import './style.css'
 
-const pinia = createPinia()
-pinia.use(piniaPluginPersistedstate)
-
 const app = createApp(App)
-app.use(pinia)
+app.use(createPinia())
 app.use(i18n)
-registerBuiltinToolRenderers()
 app.mount('#app')

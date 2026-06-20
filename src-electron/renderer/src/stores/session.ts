@@ -1,56 +1,33 @@
+/**
+ * Session store —— session 列表 + D6 派生 status。
+ *
+ * 依赖方向：无（stores 间禁止互相 import；跨 store 协调由 composables/features 做）。
+ * 骨架阶段：state/getter 合法初始值，action throw。
+ * derivedStatus 骨架返回 computed(() => 'waiting')（合法默认，不 throw 以保响应式）。
+ */
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
-import type { SessionSummary, SessionGroup } from '@xyz-agent/shared'
+import { computed, ref } from 'vue'
+import type { ComputedRef } from 'vue'
+import type { SessionSummary } from '@xyz-agent/shared'
+import type { DerivedStatus } from '@/types'
 
 export const useSessionStore = defineStore('session', () => {
-  const sessions = ref<SessionSummary[]>([])
-  const currentSessionId = ref<string | null>(null)
+  const list = ref<SessionSummary[]>([])
+  const activeId = ref<string | null>(null)
 
-  const groupedSessions = computed<SessionGroup[]>(() => {
-    const groups = new Map<string, SessionSummary[]>()
-    for (const s of sessions.value) {
-      const g = groups.get(s.cwd) || []
-      g.push(s)
-      groups.set(s.cwd, g)
-    }
-    return Array.from(groups.entries())
-      .map(([cwd, sessions]) => ({ cwd, sessions }))
-  })
-
-  const currentSession = computed(() =>
-    sessions.value.find(s => s.id === currentSessionId.value) || null
+  const active = computed<SessionSummary | null>(
+    () => list.value.find((s) => s.id === activeId.value) ?? null,
   )
 
-  function setSessions(list: SessionSummary[]) { sessions.value = list }
-  function addSession(s: SessionSummary) { sessions.value = [s, ...sessions.value] }
-  function removeSession(id: string) { sessions.value = sessions.value.filter(s => s.id !== id) }
-  function switchSession(id: string) { currentSessionId.value = id }
-
-  /** Rename a session by id. No-op if session not found. */
-  function renameSession(id: string, label: string) {
-    const idx = sessions.value.findIndex(s => s.id === id)
-    if (idx >= 0) {
-      sessions.value[idx] = { ...sessions.value[idx], label }
-    }
+  /**
+   * 派生 session 5 态（D6：从 message/tool 状态派生）。
+   * 骨架阶段返回合法默认 'waiting'，实现阶段填派生逻辑。
+   */
+  function derivedStatus(id: string): ComputedRef<DerivedStatus> {
+    // ponytail: 骨架默认 'waiting'，实现阶段从 message/tool 状态派生（D6）
+    void id
+    return computed(() => 'waiting' as DerivedStatus)
   }
 
-  const PAD_LENGTH = 2
-
-  /** Generate a unique label like "new-session-01" for a given cwd */
-  function generateSessionLabel(cwd: string): string {
-    const existing = sessions.value
-      .filter(s => s.cwd === cwd)
-      .map(s => s.label)
-    let n = 1
-    while (existing.includes(`new-session-${String(n).padStart(PAD_LENGTH, '0')}`)) {
-      n++
-    }
-    return `new-session-${String(n).padStart(PAD_LENGTH, '0')}`
-  }
-
-  return {
-    sessions, currentSessionId, groupedSessions, currentSession,
-    setSessions, addSession, removeSession, switchSession, renameSession,
-    generateSessionLabel,
-  }
+  return { list, activeId, active, derivedStatus }
 })

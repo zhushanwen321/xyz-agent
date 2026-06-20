@@ -24,6 +24,7 @@ import { registerConfigRpcHandlers, createConfigApi } from '../src/services/plug
 import type { ConfigHandlers } from '../src/services/plugin-service/api/config-api.js'
 import { registerSessionDataRpcHandlers, createSessionDataApi } from '../src/services/plugin-service/api/session-data-api.js'
 import type { SessionDataHandlers } from '../src/services/plugin-service/api/session-data-api.js'
+import { SessionDataStore } from '../src/services/plugin-service/session-data-store.js'
 import { registerUiRpcHandlers, createUiApi } from '../src/services/plugin-service/api/ui-api.js'
 import type { UiHandlers } from '../src/services/plugin-service/api/ui-api.js'
 import { registerAgentRpcHandlers, createAgentApi } from '../src/services/plugin-service/api/agent-api.js'
@@ -320,25 +321,17 @@ describe('Config API — createConfigApi (Worker side)', () => {
 describe('SessionData API — registerSessionDataRpcHandlers', () => {
   let rpc: PluginRpcServer
   let port: ReturnType<typeof createMockPort>
-  const cache = new Map<string, Map<string, unknown>>()
-  const dirty = new Map<string, Set<string>>()
-  const sizeTracker = new Map<string, number>()
-  let bridgeCalls: Array<{ sessionId: string; key: string; value: unknown }> = []
+  let store: SessionDataStore
 
   beforeEach(() => {
     rpc = new PluginRpcServer()
-    cache.clear()
-    dirty.clear()
-    sizeTracker.clear()
-    bridgeCalls = []
+    store = new SessionDataStore('')
 
     const deps: SessionDataHandlers = {
-      getCache: () => cache,
-      getDirty: () => dirty,
-      getSizeTracker: () => sizeTracker,
-      appendEntry: async (sessionId: string, key: string, value: unknown) => {
-        bridgeCalls.push({ sessionId, key, value })
-      },
+      get: (sid, key) => store.get(sid, key),
+      set: (sid, key, val) => store.set(sid, key, val),
+      delete: (sid, key) => store.delete(sid, key),
+      keys: (sid) => store.keys(sid),
     }
 
     registerSessionDataRpcHandlers(rpc, deps)
@@ -346,7 +339,7 @@ describe('SessionData API — registerSessionDataRpcHandlers', () => {
     rpc.registerWorker('w1', port)
   })
 
-  it('plugin.sessionData.set → updates cache and calls bridge', async () => {
+  it('plugin.sessionData.set → updates cache', async () => {
     await rpc.dispatch('w1', {
       jsonrpc: '2.0', id: 1, method: 'plugin.sessionData.set',
       params: { sessionId: 's1', key: 'goal-state', value: { active: true } },
@@ -355,22 +348,12 @@ describe('SessionData API — registerSessionDataRpcHandlers', () => {
     assert.ok('result' in resp)
 
     // 验证缓存
-    assert.strictEqual(cache.size, 1)
-    const s1cache = cache.get('s1')
-    assert.ok(s1cache)
-    assert.deepStrictEqual(s1cache.get('goal-state'), { active: true })
-
-    // 验证 dirty tracking（set handler 不再调用 appendEntry，改为 dirty tracking）
-    const dirtyKeys = dirty.get('s1')
-    assert.ok(dirtyKeys)
-    assert.ok(dirtyKeys.has('goal-state'))
+    assert.deepStrictEqual(store.get('s1', 'goal-state'), { active: true })
   })
 
   it('plugin.sessionData.get → reads from cache', async () => {
     // 预先填充缓存
-    const s1cache = new Map<string, unknown>()
-    s1cache.set('goal-state', { active: true })
-    cache.set('s1', s1cache)
+    store.set('s1', 'goal-state', { active: true })
 
     await rpc.dispatch('w1', {
       jsonrpc: '2.0', id: 2, method: 'plugin.sessionData.get',
@@ -390,9 +373,7 @@ describe('SessionData API — registerSessionDataRpcHandlers', () => {
   })
 
   it('plugin.sessionData.get → undefined for missing key', async () => {
-    const s1cache = new Map<string, unknown>()
-    s1cache.set('other', 'val')
-    cache.set('s1', s1cache)
+    store.set('s1', 'other', 'val')
 
     await rpc.dispatch('w1', {
       jsonrpc: '2.0', id: 4, method: 'plugin.sessionData.get',
@@ -403,24 +384,18 @@ describe('SessionData API — registerSessionDataRpcHandlers', () => {
   })
 
   it('plugin.sessionData.delete → removes from cache', async () => {
-    const s1cache = new Map<string, unknown>()
-    s1cache.set('goal-state', 'data')
-    cache.set('s1', s1cache)
+    store.set('s1', 'goal-state', 'data')
 
     await rpc.dispatch('w1', {
       jsonrpc: '2.0', id: 5, method: 'plugin.sessionData.delete',
       params: { sessionId: 's1', key: 'goal-state' },
     })
-    assert.strictEqual(s1cache.size, 0)
-    // 空 session cache 会被清除
-    assert.strictEqual(cache.size, 0)
+    assert.strictEqual(store.get('s1', 'goal-state'), undefined)
   })
 
   it('plugin.sessionData.keys → returns all keys', async () => {
-    const s1cache = new Map<string, unknown>()
-    s1cache.set('k1', 'v1')
-    s1cache.set('k2', 'v2')
-    cache.set('s1', s1cache)
+    store.set('s1', 'k1', 'v1')
+    store.set('s1', 'k2', 'v2')
 
     await rpc.dispatch('w1', {
       jsonrpc: '2.0', id: 6, method: 'plugin.sessionData.keys',

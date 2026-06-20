@@ -7,6 +7,7 @@
 import type { HookContext, HookResult, BridgeToolExecuteRequest, BridgeToolExecuteResponse, BridgeInterceptResponse, HookType, ToolEntry } from './plugin-types.js'
 import type { PluginHost } from './plugin-host.js'
 import type { PluginRpcServer } from './plugin-rpc-server.js'
+import { toErrorMessage } from '../../utils/errors.js'
 
 const TOOL_EXECUTE_TIMEOUT_MS = 30_000
 
@@ -45,7 +46,7 @@ export async function handleBridgeToolExecute(
     if (err instanceof Error && err.message.includes('RPC timeout')) {
       return { content: 'Plugin tool execution timed out', isError: true }
     }
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = toErrorMessage(err)
     return { content: `Plugin tool execution failed: ${msg}`, isError: true }
   }
 }

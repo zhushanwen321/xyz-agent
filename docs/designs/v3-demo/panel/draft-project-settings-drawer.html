@@ -1,0 +1,673 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Project Settings Drawer · 只读生效视图 · draft</title>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-gear" viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M19.4 13.5a1 1 0 0 1 .4-1.3l1.2-.7-1.6-2.8-1.4.4a1 1 0 0 1-1.1-.4l-.8-1.2a1 1 0 0 0-.9-.5h-1.4a1 1 0 0 0-.9.5l-.8 1.2a1 1 0 0 1-1.1.4l-1.4-.4-1.6 2.8 1.2.7a1 1 0 0 1 .4 1.3l-.2 1a1 1 0 0 1-.4 1.3l-1.2.7 1.6 2.8 1.4-.4a1 1 0 0 1 1.1.4l.8 1.2a1 1 0 0 0 .9.5h1.4a1 1 0 0 0 .9-.5l.8-1.2a1 1 0 0 1 1.1-.4l1.4.4 1.6-2.8-1.2-.7a1 1 0 0 1-.4-1.3z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M21 21l-4.3-4.3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+  <symbol id="i-agent" viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="12" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M12 7V3M12 3h-2M12 3h2M8.5 13h.01M15.5 13h.01M9 16h6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-skill" viewBox="0 0 24 24"><path d="M12 3l2.2 5.3L20 10l-5.8 1.7L12 17l-2.2-5.3L4 10l5.8-1.7z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
+  <symbol id="i-empty" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M9 12h6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M12 11v5M12 8h.01" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+</svg>
+<style>
+  :root{
+    --bg:#0d0d0f; --surface:#151519; --surface-2:#1b1b20; --surface-hover:#1f1f26;
+    --fg:#f0f0f5; --muted:#8a8a95; --subtle:#5a5a65;
+    --border:rgba(255,255,255,0.06); --border-strong:rgba(255,255,255,0.12);
+    --accent:#4f8ef7; --accent-hover:#6ba3ff; --accent-soft:rgba(79,142,247,0.12);
+    --success:#22c55e; --warning:#f5a524; --danger:#ef4444; --info:#38bdf8;
+    --pi:#c084fc;
+    --radius-sm:3px; --radius:8px; --radius-lg:12px;
+    --shadow-2:0 8px 24px rgba(0,0,0,0.4); --shadow-drawer:0 0 60px rgba(0,0,0,0.5);
+    --ease:cubic-bezier(0.4,0,0.2,1); --duration-fast:120ms; --duration:200ms; --duration-slow:280ms;
+    --font-sans:Inter,'SF Pro Display','PingFang SC',system-ui,sans-serif;
+    --font-mono:'JetBrains Mono','IBM Plex Mono',ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--fg);font:14px/1.6 var(--font-sans);
+    -webkit-font-smoothing:antialiased;padding:32px 40px 120px;max-width:1080px;margin:0 auto}
+  h1{font-size:26px;font-weight:650;letter-spacing:-0.01em;margin-bottom:6px}
+  h2{font-size:18px;font-weight:600;margin:46px 0 4px;letter-spacing:-0.01em;display:flex;align-items:center;gap:10px}
+  h2 .num{font:600 12px/1 var(--font-mono);color:var(--accent);
+    background:var(--accent-soft);padding:4px 8px;border-radius:var(--radius-sm);letter-spacing:0.05em}
+  .lede{color:var(--muted);font-size:13px;margin-bottom:8px;max-width:880px}
+  .lede b{color:var(--fg)}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+  .meta span{font:500 11px/1 var(--font-mono);color:var(--muted);
+    background:var(--surface);border:1px solid var(--border);padding:5px 9px;border-radius:999px}
+  .meta b{color:var(--fg);font-weight:600}
+  code{font:12px/1.4 var(--font-mono);background:var(--surface-2);padding:2px 6px;border-radius:var(--radius-sm);color:var(--accent)}
+  .note{font:12px/1.6 var(--font-mono);color:var(--muted);background:var(--surface);
+    border:1px solid var(--border);border-left:2px solid var(--accent);
+    border-radius:var(--radius-sm);padding:9px 11px;margin-top:14px}
+  .note b{color:var(--fg)}
+
+  /* ===== 触发上下文 · header-mock（对齐 draft-breadcrumb-popovers） ===== */
+  .showcase{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;margin-top:14px}
+  .sc-cap{font:600 11px/1 var(--font-mono);color:var(--subtle);letter-spacing:0.06em;text-transform:uppercase;
+    padding:10px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
+  .sc-cap .tag{font:600 10px/1 var(--font-mono);color:var(--accent);background:var(--accent-soft);padding:3px 7px;border-radius:var(--radius-sm)}
+  .header-mock{display:flex;align-items:center;gap:14px;padding:11px 14px;background:var(--bg);min-height:44px}
+  .h-tools{display:flex;align-items:center;gap:10px;flex:none}
+  .traffic-light{display:flex;gap:6px}
+  .traffic-light span{width:11px;height:11px;border-radius:50%}
+  .traffic-light .red{background:#ff5f57}.traffic-light .yellow{background:#febc2e}.traffic-light .green{background:#28c840}
+  .h-nav{display:flex;gap:7px;color:var(--subtle);font-size:14px}
+  .breadcrumb{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted)}
+  .breadcrumb .crumb{padding:2px 5px;border-radius:3px}
+  .breadcrumb .crumb.static{cursor:default}
+  .breadcrumb .crumb.branch{font:10px/1 var(--font-mono);color:var(--accent);background:var(--accent-soft);padding:3px 7px;border-radius:var(--radius-sm);display:inline-flex;align-items:center;gap:4px}
+  .breadcrumb .sep{color:var(--subtle)}
+  .header-actions{margin-left:auto;display:flex;align-items:center;gap:6px}
+  .gear-btn{display:inline-flex;align-items:center;gap:6px;background:transparent;border:1px solid var(--border);
+    color:var(--muted);padding:5px 10px 5px 8px;border-radius:var(--radius);cursor:pointer;
+    font:600 11px/1 var(--font-sans);transition:color var(--duration-fast) var(--ease),background var(--duration-fast) var(--ease),border-color var(--duration-fast) var(--ease)}
+  .gear-btn:hover{color:var(--fg);background:var(--surface-hover);border-color:var(--border-strong)}
+  .gear-btn svg{width:14px;height:14px}
+  .gear-btn.has-agents{color:var(--accent);border-color:rgba(79,142,247,0.35);background:var(--accent-soft)}
+  .gear-btn.has-agents:hover{background:rgba(79,142,247,0.2)}
+  .gear-btn .od{font:600 10px/1 var(--font-mono);background:var(--accent);color:#fff;padding:2px 5px;border-radius:999px;margin-left:2px}
+  .sc-anno{padding:10px 14px 14px;border-top:1px solid var(--border);font:12px/1.6 var(--font-mono);color:var(--muted)}
+  .sc-anno b{color:var(--fg)}
+
+  .btn{display:inline-flex;align-items:center;gap:6px;background:transparent;border:1px solid var(--border-strong);
+    color:var(--fg);padding:7px 12px;border-radius:var(--radius);font:600 12px/1 var(--font-sans);cursor:pointer;
+    transition:background var(--duration-fast) var(--ease),border-color var(--duration-fast) var(--ease)}
+  .btn:hover{background:var(--surface-hover)}
+  .btn svg{width:13px;height:13px}
+  .btn.ghost{border-color:transparent;color:var(--muted)}
+  .btn.ghost:hover{color:var(--fg);background:var(--surface-hover)}
+  .btn.sm{padding:5px 10px;font-size:11px}
+  .pill{font:500 11px/1 var(--font-mono);color:var(--muted);background:var(--surface-2);
+    border:1px solid var(--border);padding:4px 8px;border-radius:999px;display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+  .pill.acc{color:var(--accent);background:var(--accent-soft);border-color:rgba(79,142,247,0.3)}
+  .pill.ok{color:var(--success);background:rgba(34,197,94,0.12);border-color:rgba(34,197,94,0.25)}
+  .pill.warn{color:var(--warning);background:rgba(245,165,36,0.1);border-color:rgba(245,165,36,0.25)}
+  .pill.info{color:var(--info);background:rgba(56,189,248,0.1);border-color:rgba(56,189,248,0.25)}
+  .pill.piinstall{color:var(--pi);background:rgba(192,132,252,0.12);border-color:rgba(192,132,252,0.3)}
+  .pill.ovr{color:var(--accent);background:var(--accent-soft);border-color:rgba(79,142,247,0.35)}
+
+  .dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex:none}
+  .dot-ok{background:var(--success)}.dot-idle{background:var(--subtle)}
+
+  /* ===== 工具栏：搜索 ===== */
+  .search-wrap{position:relative;margin:4px 0 12px}
+  .search-wrap .search-ic{position:absolute;left:11px;top:50%;transform:translateY(-50%);width:14px;height:14px;color:var(--subtle);pointer-events:none}
+  .search-field{background:var(--surface-2);border:1px solid var(--border);color:var(--fg);padding:8px 10px 8px 32px;
+    border-radius:var(--radius);font:13px/1.4 var(--font-sans);outline:none;width:100%;
+    transition:border-color var(--duration-fast) var(--ease),box-shadow var(--duration-fast) var(--ease)}
+  .search-field:focus{border-color:rgba(79,142,247,0.5);box-shadow:inset 0 0 0 1px rgba(79,142,247,0.4)}
+  .search-field::-webkit-search-cancel-button{display:none}
+
+  /* ===== 来源 badge 链（多源覆盖可视化） ===== */
+  .e-srcs{display:flex;flex-wrap:wrap;gap:4px;margin-top:5px}
+  .sb{font:500 10px/1 var(--font-mono);color:var(--muted);background:var(--surface-2);
+    border:1px solid var(--border);padding:3px 7px;border-radius:999px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+  .sb.win{color:var(--accent);border-color:var(--accent);background:var(--accent-soft);font-weight:600}
+
+  /* ===== Tab 切换（Agent / Skill） ===== */
+  .tab-bar{display:flex;gap:2px;padding:3px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);margin:0 0 10px}
+  .res-tab{flex:1;display:inline-flex;align-items:center;justify-content:center;gap:6px;background:transparent;border:0;color:var(--muted);
+    padding:7px 10px;border-radius:calc(var(--radius) - 2px);cursor:pointer;font:600 12px/1 var(--font-sans);
+    transition:background var(--duration-fast) var(--ease),color var(--duration-fast) var(--ease)}
+  .res-tab:hover{color:var(--fg)}
+  .res-tab.on{background:var(--surface);color:var(--fg);box-shadow:0 1px 2px rgba(0,0,0,0.08)}
+  .res-tab svg{width:13px;height:13px}
+  .res-tab .tc{font:500 10px/1 var(--font-mono);color:var(--subtle)}
+  .res-tab.on .tc{color:var(--accent)}
+  .res-panel{display:none}
+  .res-panel.on{display:block}
+
+  /* ===== Entity List（只读） ===== */
+  .sgroup{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-lg);padding:2px 12px;margin-bottom:6px}
+  .entity{border-bottom:1px solid var(--border)}
+  .entity:last-child{border-bottom:0}
+  .entity.hidden{display:none}
+  .e-head{display:flex;align-items:center;gap:9px;padding:9px 0;cursor:pointer}
+  .e-name{font-size:12px;font-weight:600;color:var(--fg);display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .e-sub{font:500 11px/1.4 var(--font-mono);color:var(--subtle);margin-top:2px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+  .e-chev{width:13px;height:13px;color:var(--subtle);transition:transform var(--duration) var(--ease);flex:none;margin-left:2px}
+  .entity.open .e-chev{transform:rotate(180deg)}
+  .e-mid{flex:1;min-width:0}
+  .e-config{display:none;padding:4px 0 11px;border-top:1px solid var(--border);margin-top:2px}
+  .entity.open .e-config{display:block}
+  .meta-grid{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;padding:9px 0 2px}
+  .meta-grid dt{font:500 11px/1.4 var(--font-mono);color:var(--subtle);white-space:nowrap}
+  .meta-grid dd{font:12px/1.4 var(--font-mono);color:var(--fg);word-break:break-all}
+  .empty{display:none;flex-direction:column;align-items:center;gap:9px;padding:36px 16px;text-align:center}
+  .empty.on{display:flex}
+  .empty svg{width:28px;height:28px;color:var(--subtle)}
+  .empty .em-txt{font-size:12px;color:var(--muted)}
+
+  /* ===== 抽屉 ===== */
+  .drawer-mask{position:fixed;inset:0;background:rgba(7,7,9,0.55);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);
+    opacity:0;pointer-events:none;transition:opacity var(--duration-slow) var(--ease);z-index:90}
+  .drawer-mask.on{opacity:1;pointer-events:auto}
+  .drawer{position:fixed;top:0;right:0;bottom:0;width:min(480px,94vw);background:var(--surface);
+    border-left:1px solid var(--border-strong);box-shadow:var(--shadow-drawer);
+    transform:translateX(100%);transition:transform var(--duration-slow) var(--ease);
+    z-index:91;display:flex;flex-direction:column}
+  .drawer.on{transform:translateX(0)}
+  .drawer-head{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--border);flex:none}
+  .drawer-head .dh-ic{width:28px;height:28px;border-radius:var(--radius);background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;flex:none}
+  .drawer-head .dh-ic svg{width:15px;height:15px}
+  .dh-title{font-size:14px;font-weight:650;color:var(--fg);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .dh-proj{font:500 11px/1 var(--font-mono);color:var(--accent);background:var(--accent-soft);border:1px solid rgba(79,142,247,0.3);padding:4px 8px;border-radius:999px;display:inline-flex;align-items:center;gap:5px}
+  .dh-proj svg{width:11px;height:11px}
+  .dh-x{margin-left:auto}
+  .drawer-body{flex:1;overflow:auto;padding:14px 16px}
+  .drawer-foot{display:flex;align-items:center;gap:10px;padding:11px 16px;border-top:1px solid var(--border);background:var(--surface-2);flex:none}
+  .drawer-foot .ft-hint{font:500 11px/1.4 var(--font-mono);color:var(--subtle);margin-right:auto}
+  .drawer-foot .ft-hint b{color:var(--muted)}
+
+  .dh2{font-size:13px;font-weight:650;color:var(--fg);margin:14px 0 4px;display:flex;align-items:center;gap:7px}
+  .dh2:first-of-type{margin-top:0}
+  .dh2 svg{width:14px;height:14px;color:var(--accent)}
+  .dh2 .pill{margin-left:2px}
+  .dh-lede{font:12px/1.5 var(--font-mono);color:var(--muted);margin:0 0 10px}
+  .dh-lede b{color:var(--fg)}
+</style>
+</head>
+<body>
+  <h1>Project Settings Drawer · 只读生效视图</h1>
+  <p class="lede">项目级资源入口（决策 <code>panel_header_gear</code>）。从 <b>Panel header 齿轮</b>唤起右侧抽屉，跟着当前 session 的项目走。<b>只读视图</b>：展示当前项目实际生效的 agent / skill，<b>顶部 Tab 切换 Agent / Skill 视图</b>；每个资源按发现来源排序展示 badge，最优先标<b>生效</b>，同名时<b>项目维度覆盖全局</b>——强制目录 &gt; 可选目录，可选内靠前覆盖靠后（ADR-0020 §1.1）。<b>无配置控件</b>——加载路径在<b>全局 Settings</b> 统一勾选（决策 <code>global_configures_project</code>）。</p>
+  <div class="meta">
+    <span>入口 <b>Panel header 齿轮</b></span>
+    <span>性质 <b>只读生效视图</b></span>
+    <span>分组 <b>全局维度 · 项目维度</b></span>
+    <span>覆盖 <b>同名项目覆盖全局</b></span>
+    <span>配置 <b>在全局 Settings</b></span>
+  </div>
+
+  <!-- ============ §1 触发上下文 ============ -->
+  <h2><span class="num">01</span> 触发上下文 · header 齿轮</h2>
+  <p class="lede">breadcrumb 三段保持<b>静态文本</b>（对齐 <code>panel/draft-breadcrumb-popovers.html</code>），齿轮作为<b>独立按钮</b>落在 header 右侧。当前项目存在项目维度资源或覆盖时，齿轮高亮 + 角标 = 项目维度生效条数。</p>
+
+  <div class="showcase">
+    <div class="sc-cap"><span class="tag">A</span> 主区 header · 齿轮入口（breadcrumb 右侧）</div>
+    <div class="header-mock">
+      <div class="h-tools">
+        <div class="traffic-light"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+        <div class="h-nav"><span>‹</span><span>›</span></div>
+      </div>
+      <span class="breadcrumb">
+        <span class="crumb static">refactor-arch</span>
+        <span class="sep">▸</span>
+        <span class="crumb static">架构重构</span>
+        <span class="sep">▸</span>
+        <span class="crumb branch">main</span>
+      </span>
+      <div class="header-actions">
+        <button class="gear-btn has-agents" id="gearBtn" type="button" title="项目设置 · refactor-arch">
+          <svg><use href="#i-gear"/></svg>项目设置<span class="od" id="gearBadge">7</span>
+        </button>
+      </div>
+    </div>
+    <div class="sc-anno"><b>点击齿轮</b>（或 <code>⌘,</code>）打开抽屉。角标 <code>7</code> = 当前项目项目维度生效 7 项（4 agent + 3 skill，其中 agent <code>code-reviewer</code>、skill <code>drawio-skill</code> 覆盖了同名全局项）。<b>breadcrumb 不变</b>——齿轮是「看这个项目生效了什么」的动作锚点。</div>
+  </div>
+
+  <!-- ============ §2 抽屉结构说明 ============ -->
+  <h2><span class="num">02</span> 抽屉结构</h2>
+  <p class="lede">右侧 480px 抽屉，遮罩 + blur。头（标题 + 项目 pill + 关闭）→ 体（滚动：顶部 Tab 切换 Agent / Skill，entity 按 badge 链标生效来源）→ 底（只读说明）。下方即抽屉打开态。</p>
+
+  <div class="note"><b>视图语义</b> · 抽屉<b>不存任何配置</b>，仅展示当前项目实际加载的资源：每个资源按发现来源排序展示 badge：<b>最优先的标生效</b>（强制目录 &gt; 可选目录，可选内靠前覆盖靠后，agent / skill 统一，ADR-0020 §1.1），其余为被覆盖的同名来源。全局来源 = 全局加载路径（强制 <code>~/.xyz-agent</code> + 可选 <code>~/.pi</code> · <code>~/.claude</code> · <code>~/.agents</code> + pi-install skill）；项目来源 = 项目加载路径（强制 <code>.xyz-agent</code> + 可选 <code>.agents</code>）——同名时项目来源的 badge 排在前并标<b>生效</b>，全局同名来源显示为被覆盖。要改加载哪些目录，去<b>全局 Settings</b>（agent / skill 两页，决策 <code>global_configures_project</code>）。agent 目录变更受 AgentRegistry 单例约束（<b>会话启动时生效，切项目需重开</b>，ADR-0020 §5 ui_limit），skill 不受此约束。</div>
+
+  <!-- ============ 抽屉本体（默认 open） ============ -->
+  <div class="drawer-mask on" id="drawerMask"></div>
+  <aside class="drawer on" id="drawer" role="dialog" aria-label="项目设置 · refactor-arch">
+    <div class="drawer-head">
+      <div class="dh-ic"><svg><use href="#i-gear"/></svg></div>
+      <div class="dh-title">
+        生效资源
+        <span class="dh-proj"><svg><use href="#i-folder"/></svg>refactor-arch</span>
+      </div>
+      <button class="btn ghost sm dh-x" id="drawerClose" type="button" title="关闭 (Esc)"><svg><use href="#i-x"/></svg></button>
+    </div>
+
+    <div class="drawer-body">
+      <p class="dh-lede">本项目实际生效的 agent / skill。<b>每个资源按发现来源排序展示 badge</b>——最优先的放最前并标<b>生效</b>，其余为被覆盖的同名来源（强制目录 &gt; 可选目录，可选内靠前覆盖靠后，agent / skill 统一，ADR-0020 §1.1）。加载路径在<b>全局 Settings</b> 配置。</p>
+
+      <!-- 搜索（只读过滤当前视图） -->
+      <div class="search-wrap">
+        <svg class="search-ic"><use href="#i-search"/></svg>
+        <input class="search-field" type="search" id="resSearch" placeholder="搜索当前视图的 agent / skill…" />
+      </div>
+
+      <!-- Tab 切换 -->
+      <div class="tab-bar">
+        <button class="res-tab on" type="button" data-tab="agent"><svg><use href="#i-agent"/></svg>Agent <span class="tc">9 生效</span></button>
+        <button class="res-tab" type="button" data-tab="skill"><svg><use href="#i-skill"/></svg>Skill <span class="tc">10 生效</span></button>
+      </div>
+
+      <div class="res-panel on" data-panel="agent">
+        <div class="sgroup">
+        <div class="entity" data-src="project">
+          <div class="e-head">
+            <span class="dot dot-ok"></span>
+            <div class="e-mid">
+              <div class="e-name">code-reviewer</div>
+              <div class="e-srcs">
+                <span class="sb win">.agents/agents · 生效</span>
+                <span class="sb">~/.pi/agent/agents</span>
+              </div>
+              <div class="e-sub">本仓库审查规则覆盖全局 · 偏向架构重构安全</div>
+            </div>
+            <svg class="e-chev"><use href="#i-chev"/></svg>
+          </div>
+          <div class="e-config">
+            <dl class="meta-grid">
+              <dt>生效来源</dt><dd><b>.agents/agents/code-reviewer.md</b></dd>
+              <dt>被覆盖</dt><dd>~/.pi/agent/agents/code-reviewer.md · 可选内项目 <code>.agents/agents</code> 靠前胜出（ADR-0020 §1.1）</dd>
+            </dl>
+          </div>
+        </div>
+        <div class="entity" data-src="global">
+          <div class="e-head">
+            <span class="dot dot-ok"></span>
+            <div class="e-mid">
+              <div class="e-name">researcher</div>
+              <div class="e-srcs">
+                <span class="sb win">~/.pi · 生效</span>
+              </div>
+              <div class="e-sub">Autonomous researcher · 搜索 / 评估 / 合成研究简报</div>
+            </div>
+            <svg class="e-chev"><use href="#i-chev"/></svg>
+          </div>
+          <div class="e-config">
+            <dl class="meta-grid">
+              <dt>来源</dt><dd>~/.pi/agent/agents/researcher.md</dd>
+            </dl>
+          </div>
+        </div>
+        <div class="entity" data-src="global">
+          <div class="e-head">
+            <span class="dot dot-ok"></span>
+            <div class="e-mid">
+              <div class="e-name">worker</div>
+              <div class="e-srcs">
+                <span class="sb win">~/.pi · 生效</span>
+              </div>
+              <div class="e-sub">Implementation agent · 常规任务与 oracle 交接执行</div>
+            </div>
+            <svg class="e-chev"><use href="#i-chev"/></svg>
+          </div>
+          <div class="e-config">
+            <dl class="meta-grid">
+              <dt>来源</dt><dd>~/.pi/agent/agents/worker.md</dd>
+            </dl>
+          </div>
+        </div>
+        <div class="entity" data-src="global">
+          <div class="e-head">
+            <span class="dot dot-ok"></span>
+            <div class="e-mid">
+              <div class="e-name">planner</div>
+              <div class="e-srcs">
+                <span class="sb win">~/.claude · 生效</span>
+              </div>
+              <div class="e-sub">从上下文与需求生成实施计划</div>
+            </div>
+            <svg class="e-chev"><use href="#i-chev"/></svg>
+          </div>
+          <div class="e-config">
+            <dl class="meta-grid">
+              <dt>来源</dt><dd>~/.claude/agents/planner.md</dd>
+            </dl>
+          </div>
+        </div>
+        <div class="entity" data-src="global">
+          <div class="e-head">
+            <span class="dot dot-ok"></span>
+            <div class="e-mid">
+              <div class="e-name">scout</div>
+              <div class="e-srcs">
+                <span class="sb win">~/.claude · 生效</span>
+              </div>
+              <div class="e-sub">快速代码侦察 · 返回压缩上下文交接</div>
+            </div>
+            <svg class="e-chev"><use href="#i-chev"/></svg>
+          </div>
+          <div class="e-config">
+            <dl class="meta-grid">
+              <dt>来源</dt><dd>~/.claude/agents/scout.md</dd>
+            </dl>
+          </div>
+        </div>
+        <div class="entity" data-src="global">
+          <div class="e-head">
+            <span class="dot dot-ok"></span>
+            <div class="e-mid">
+              <div class="e-name">oracle</div>
+              <div class="e-srcs">
+                <span class="sb win">~/.agents · 生效</span>
+              </div>
+              <div class="e-sub">高上下文决策一致性 oracle · 防止状态漂移</div>
+            </div>
+            <svg class="e-chev"><use href="#i-chev"/></svg>
+          </div>
+          <div class="e-config">
+            <dl class="meta-grid">
+              <dt>来源</dt><dd>~/.agents/agents/oracle.md</dd>
+            </dl>
+          </div>
+        </div>
+        <div class="entity" data-src="project">
+          <div class="e-head">
+            <span class="dot dot-ok"></span>
+            <div class="e-mid">
+              <div class="e-name">api-migration-helper</div>
+              <div class="e-srcs">
+                <span class="sb win">.agents/agents · 生效</span>
+              </div>
+              <div class="e-sub">本仓库 API 迁移助手（项目专用）</div>
+            </div>
+            <svg class="e-chev"><use href="#i-chev"/></svg>
+          </div>
+          <div class="e-config">
+            <dl class="meta-grid">
+              <dt>来源</dt><dd>.agents/agents/api-migration-helper.md</dd>
+            </dl>
+          </div>
+        </div>
+        <div class="entity" data-src="project">
+          <div class="e-head">
+            <span class="dot dot-ok"></span>
+            <div class="e-mid">
+              <div class="e-name">refactor-audit</div>
+              <div class="e-srcs">
+                <span class="sb win">.xyz-agent/agents · 生效</span>
+              </div>
+              <div class="e-sub">本仓库重构审计 · 强制项目目录</div>
+            </div>
+            <svg class="e-chev"><use href="#i-chev"/></svg>
+          </div>
+          <div class="e-config">
+            <dl class="meta-grid">
+              <dt>来源</dt><dd>.xyz-agent/agents/refactor-audit.md · 强制目录</dd>
+            </dl>
+          </div>
+        </div>
+        <div class="entity" data-src="project">
+          <div class="e-head">
+            <span class="dot dot-ok"></span>
+            <div class="e-mid">
+              <div class="e-name">db-seed-runner</div>
+              <div class="e-srcs">
+                <span class="sb win">.xyz-agent/agents · 生效</span>
+              </div>
+              <div class="e-sub">本仓库数据库 seed 执行 · 强制项目目录</div>
+            </div>
+            <svg class="e-chev"><use href="#i-chev"/></svg>
+          </div>
+          <div class="e-config">
+            <dl class="meta-grid">
+              <dt>来源</dt><dd>.xyz-agent/agents/db-seed-runner.md · 强制目录</dd>
+            </dl>
+          </div>
+        </div>
+        </div>
+      </div>
+
+      <div class="res-panel" data-panel="skill">
+        <div class="sgroup">
+        <div class="entity" data-src="global">
+          <div class="e-head">
+            <span class="dot dot-ok"></span>
+            <div class="e-mid">
+              <div class="e-name">fallow</div>
+              <div class="e-srcs">
+                <span class="sb win">~/.pi · 生效</span>
+              </div>
+              <div class="e-sub">JS/TS 代码健康分析 · 质量 / 风险 / 清理机会</div>
+            </div>
+            <svg class="e-chev"><use href="#i-chev"/></svg>
+          </div>
+          <div class="e-config">
+            <dl class="meta-grid">
+              <dt>来源</dt><dd>~/.pi/agent/skills/fallow/</dd>
+            </dl>
+          </div>
+        </div>
+        <div class="entity" data-src="global">
+          <div class="e-head">
+            <span class="dot dot-ok"></span>
+            <div class="e-mid">
+              <div class="e-name">tavily-web-search</div>
+              <div class="e-srcs">
+                <span class="sb win">~/.agents · 生效</span>
+              </div>
+              <div class="e-sub">网络搜索 · URL 内容提取 · YouTube 字幕</div>
+            </div>
+            <svg class="e-chev"><use href="#i-chev"/></svg>
+          </div>
+          <div class="e-config">
+            <dl class="meta-grid">
+              <dt>来源</dt><dd>~/.agents/skills/tavily-web-search/</dd>
+            </dl>
+          </div>
+        </div>
+        <div class="entity" data-src="global">
+          <div class="e-head">
+            <span class="dot dot-ok"></span>
+            <div class="e-mid">
+              <div class="e-name">diagnose</div>
+              <div class="e-srcs">
+                <span class="sb win">~/.agents · 生效</span>
+              </div>
+              <div class="e-sub">bug 诊断入口 · 坏了 / 报错 / 性能回退时加载</div>
+            </div>
+            <svg class="e-chev"><use href="#i-chev"/></svg>
+          </div>
+          <div class="e-config">
+            <dl class="meta-grid">
+              <dt>来源</dt><dd>~/.agents/skills/diagnose/</dd>
+            </dl>
+          </div>
+        </div>
+        <div class="entity" data-src="project">
+          <div class="e-head">
+            <span class="dot dot-ok"></span>
+            <div class="e-mid">
+              <div class="e-name">drawio-skill</div>
+              <div class="e-srcs">
+                <span class="sb win">.agents/skills · 生效</span>
+                <span class="sb">~/.agents/skills</span>
+              </div>
+              <div class="e-sub">覆盖全局 drawio-skill · 本仓库特定模板与品牌色板</div>
+            </div>
+            <svg class="e-chev"><use href="#i-chev"/></svg>
+          </div>
+          <div class="e-config">
+            <dl class="meta-grid">
+              <dt>生效来源</dt><dd><b>.agents/skills/drawio-skill/</b></dd>
+              <dt>被覆盖</dt><dd>~/.agents/skills/drawio-skill/ · 可选内项目 <code>.agents/skills</code> 靠前胜出（ADR-0020 §1.1）</dd>
+            </dl>
+          </div>
+        </div>
+        <div class="entity" data-src="global">
+          <div class="e-head">
+            <span class="dot dot-ok"></span>
+            <div class="e-mid">
+              <div class="e-name">frontend-design</div>
+              <div class="e-srcs">
+                <span class="sb win">~/.agents · 生效</span>
+              </div>
+              <div class="e-sub">生产级前端界面生成 · 避开通用 AI 审美</div>
+            </div>
+            <svg class="e-chev"><use href="#i-chev"/></svg>
+          </div>
+          <div class="e-config">
+            <dl class="meta-grid">
+              <dt>来源</dt><dd>~/.agents/skills/frontend-design/</dd>
+            </dl>
+          </div>
+        </div>
+        <div class="entity" data-src="global">
+          <div class="e-head">
+            <span class="dot dot-ok"></span>
+            <div class="e-mid">
+              <div class="e-name">spec-reviewer</div>
+              <div class="e-srcs">
+                <span class="sb win">~/.claude · 生效</span>
+              </div>
+              <div class="e-sub">审查 spec / 计划完整性 · 发现覆盖缺口</div>
+            </div>
+            <svg class="e-chev"><use href="#i-chev"/></svg>
+          </div>
+          <div class="e-config">
+            <dl class="meta-grid">
+              <dt>来源</dt><dd>~/.claude/skills/spec-reviewer/</dd>
+            </dl>
+          </div>
+        </div>
+        <div class="entity" data-src="global">
+          <div class="e-head">
+            <span class="dot dot-ok"></span>
+            <div class="e-mid">
+              <div class="e-name">visual-explainer</div>
+              <div class="e-srcs">
+                <span class="sb win">pi-install · 生效</span>
+              </div>
+              <div class="e-sub">自包含 HTML 可视化解释页 · 来源 A（settings.json）</div>
+            </div>
+            <svg class="e-chev"><use href="#i-chev"/></svg>
+          </div>
+          <div class="e-config">
+            <dl class="meta-grid">
+              <dt>来源</dt><dd>pi install · settings.json enabledSkills</dd>
+            </dl>
+          </div>
+        </div>
+        <div class="entity" data-src="global">
+          <div class="e-head">
+            <span class="dot dot-ok"></span>
+            <div class="e-mid">
+              <div class="e-name">evolve</div>
+              <div class="e-srcs">
+                <span class="sb win">pi-install · 生效</span>
+              </div>
+              <div class="e-sub">会话使用数据分析 · 生成进化建议</div>
+            </div>
+            <svg class="e-chev"><use href="#i-chev"/></svg>
+          </div>
+          <div class="e-config">
+            <dl class="meta-grid">
+              <dt>来源</dt><dd>pi install · settings.json enabledSkills</dd>
+            </dl>
+          </div>
+        </div>
+        <div class="entity" data-src="project">
+          <div class="e-head">
+            <span class="dot dot-ok"></span>
+            <div class="e-mid">
+              <div class="e-name">api-conventions</div>
+              <div class="e-srcs">
+                <span class="sb win">.agents/skills · 生效</span>
+              </div>
+              <div class="e-sub">本仓库 API 命名 / 错误码约定（项目专用）</div>
+            </div>
+            <svg class="e-chev"><use href="#i-chev"/></svg>
+          </div>
+          <div class="e-config">
+            <dl class="meta-grid">
+              <dt>来源</dt><dd>.agents/skills/api-conventions/</dd>
+            </dl>
+          </div>
+        </div>
+        <div class="entity" data-src="project">
+          <div class="e-head">
+            <span class="dot dot-ok"></span>
+            <div class="e-mid">
+              <div class="e-name">perf-trace</div>
+              <div class="e-srcs">
+                <span class="sb win">.xyz-agent/skills · 生效</span>
+              </div>
+              <div class="e-sub">本仓库性能 trace 解读 · 强制项目目录</div>
+            </div>
+            <svg class="e-chev"><use href="#i-chev"/></svg>
+          </div>
+          <div class="e-config">
+            <dl class="meta-grid">
+              <dt>来源</dt><dd>.xyz-agent/skills/perf-trace/ · 强制目录</dd>
+            </dl>
+          </div>
+        </div>
+        </div>
+      </div>
+
+      <div class="empty" id="resEmpty">
+        <svg><use href="#i-empty"/></svg>
+        <div class="em-txt">没有匹配的生效资源</div>
+      </div>
+    </div>
+
+    <div class="drawer-foot">
+      <span class="ft-hint">只读生效视图 · 加载路径在<b>全局 Settings</b> 配置</span>
+      <span class="pill info"><svg style="width:11px;height:11px"><use href="#i-info"/></svg>agent 目录变更需重开会话</span>
+    </div>
+  </aside>
+
+<script>
+(function(){
+  var $ = function(s,ctx){return (ctx||document).querySelectorAll(s);};
+
+  // ---- 抽屉开关 ----
+  var drawer = document.getElementById('drawer');
+  var mask = document.getElementById('drawerMask');
+  function openDrawer(){drawer.classList.add('on');mask.classList.add('on');}
+  function closeDrawer(){drawer.classList.remove('on');mask.classList.remove('on');}
+  document.getElementById('gearBtn').addEventListener('click', openDrawer);
+  document.getElementById('drawerClose').addEventListener('click', closeDrawer);
+  mask.addEventListener('click', closeDrawer);
+  window.addEventListener('keydown', function(e){
+    if(e.key === 'Escape' && drawer.classList.contains('on')) closeDrawer();
+  });
+
+  // ---- 实体展开 ----
+  $('.e-head').forEach(function(h){
+    h.addEventListener('click', function(){ h.closest('.entity').classList.toggle('open'); });
+  });
+
+  // ---- Tab 切换（Agent / Skill）----
+  var tabs = $('.res-tab');
+  var panels = $('.res-panel');
+  tabs.forEach(function(t){
+    t.addEventListener('click', function(){
+      var name = t.getAttribute('data-tab');
+      tabs.forEach(function(x){ x.classList.toggle('on', x === t); });
+      panels.forEach(function(p){ p.classList.toggle('on', p.getAttribute('data-panel') === name); });
+      applyFilter();
+    });
+  });
+
+  // ---- 搜索：只读过滤当前激活 panel ----
+  var searchInput = document.getElementById('resSearch');
+  function activePanel(){ return document.querySelector('.res-panel.on'); }
+  function applyFilter(){
+    var q = searchInput.value.trim().toLowerCase();
+    var panel = activePanel();
+    var list = panel ? panel.querySelectorAll('.entity') : [];
+    var visible = 0;
+    list.forEach(function(en){
+      var name = (en.querySelector('.e-name')||{textContent:''}).textContent.toLowerCase();
+      var sub  = (en.querySelector('.e-sub')||{textContent:''}).textContent.toLowerCase();
+      var show = !q || name.indexOf(q) >= 0 || sub.indexOf(q) >= 0;
+      en.classList.toggle('hidden', !show);
+      if(show) visible++;
+    });
+    var sg = panel ? panel.querySelector('.sgroup') : null;
+    if(sg) sg.style.display = visible > 0 ? '' : 'none';
+    document.getElementById('resEmpty').classList.toggle('on', visible === 0);
+  }
+  searchInput.addEventListener('input', applyFilter);
+  applyFilter();
+})();
+</script>
+</body>
+</html>

@@ -86,33 +86,21 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
     getDescriptor: ctx.getDescriptor,
   })
 
-  // Storage RPC methods — global scope
-  rpcServer.registerMethod('plugin.storage.global.get', async (params) => {
-    return storage.get(params.pluginId as string, params.key as string)
-  })
-  rpcServer.registerMethod('plugin.storage.global.set', async (params) => {
-    await storage.set(params.pluginId as string, params.key as string, params.value)
-  })
-  rpcServer.registerMethod('plugin.storage.global.delete', async (params) => {
-    await storage.delete(params.pluginId as string, params.key as string)
-  })
-  rpcServer.registerMethod('plugin.storage.global.keys', async (params) => {
-    return storage.keys(params.pluginId as string)
-  })
-
-  // Storage RPC methods — workspace scope
-  rpcServer.registerMethod('plugin.storage.workspace.get', async (params) => {
-    return storage.get(params.pluginId as string, params.key as string, 'workspace')
-  })
-  rpcServer.registerMethod('plugin.storage.workspace.set', async (params) => {
-    await storage.set(params.pluginId as string, params.key as string, params.value, 'workspace')
-  })
-  rpcServer.registerMethod('plugin.storage.workspace.delete', async (params) => {
-    await storage.delete(params.pluginId as string, params.key as string, 'workspace')
-  })
-  rpcServer.registerMethod('plugin.storage.workspace.keys', async (params) => {
-    return storage.keys(params.pluginId as string, 'workspace')
-  })
+  // Storage RPC methods — global + workspace scope（storage 已 sync，handler 保持 async 守 RPC 约定）
+  for (const scope of ['global', 'workspace'] as const) {
+    rpcServer.registerMethod(`plugin.storage.${scope}.get`, async (params) => {
+      return storage.get(params.pluginId as string, params.key as string, scope)
+    })
+    rpcServer.registerMethod(`plugin.storage.${scope}.set`, async (params) => {
+      storage.set(params.pluginId as string, params.key as string, params.value, scope)
+    })
+    rpcServer.registerMethod(`plugin.storage.${scope}.delete`, async (params) => {
+      storage.delete(params.pluginId as string, params.key as string, scope)
+    })
+    rpcServer.registerMethod(`plugin.storage.${scope}.keys`, async (params) => {
+      return storage.keys(params.pluginId as string, scope)
+    })
+  }
 
   // Notify RPC method
   rpcServer.registerMethod('plugin.notify', async (params) => {
@@ -166,29 +154,26 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
       return storage.get(pluginId, `config:${key}`)
     },
     getAll: async (pluginId: string) => {
-      const allKeys = await storage.keys(pluginId)
+      const allKeys = storage.keys(pluginId)
       const configKeys = allKeys.filter(k => k.startsWith('config:'))
       const result: Record<string, unknown> = {}
       for (const key of configKeys) {
         const rawKey = key.replace('config:', '')
-        result[rawKey] = await storage.get(pluginId, key)
+        result[rawKey] = storage.get(pluginId, key)
       }
       return result
     },
     set: async (pluginId: string, key: string, value: unknown) => {
-      await storage.set(pluginId, `config:${key}`, value)
+      storage.set(pluginId, `config:${key}`, value)
     },
   })
 
   // ── SessionData RPC handlers ─────────────────────────────
   registerSessionDataRpcHandlers(rpcServer, {
-    getCache: () => ctx.sessionDataStore.getCache(),
-    getDirty: () => ctx.sessionDataStore.getDirty(),
-    getSizeTracker: () => ctx.sessionDataStore.getSizeTracker(),
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    appendEntry: async (_sessionId: string, _key: string, _value: unknown) => {
-      // bridge:append_entry 保留接口兼容，set handler 不再直接调用
-    },
+    get: (sessionId, key) => ctx.sessionDataStore.get(sessionId, key),
+    set: (sessionId, key, value) => ctx.sessionDataStore.set(sessionId, key, value),
+    delete: (sessionId, key) => ctx.sessionDataStore.delete(sessionId, key),
+    keys: (sessionId) => ctx.sessionDataStore.keys(sessionId),
   })
 
   // ── UI RPC handlers ─────────────────────────────────────

@@ -1,7 +1,7 @@
 /**
  * Bridge Reconnect Tests.
  *
- * Tests the bridge connection lifecycle between pi (extension) and sidecar (runtime).
+ * Tests the bridge connection lifecycle between pi (extension) and runtime.
  * The bridge is the pi RPC connection through which extension_ui_request messages
  * with 'bridge:' method prefix are routed.
  *
@@ -36,7 +36,7 @@ const mockGetToolSchemas = vi.fn()
 const mockHandleBridgeToolExecute = vi.fn()
 const mockHandleBridgeIntercept = vi.fn()
 
-vi.mock('../src/services/session-service.js', () => {
+vi.mock('../src/services/session/session-service.js', () => {
   return {
     SessionService: class MockSessionService {
       sendMessage = vi.fn().mockResolvedValue(undefined)
@@ -94,7 +94,7 @@ vi.mock('../src/services/plugin-service/plugin-service.js', () => ({
   }
 }))
 
-vi.mock('../src/process-manager.js', () => ({
+vi.mock('../src/infra/pi/process-manager.js', () => ({
   ProcessManager: class MockProcessManager {
     createSession = vi.fn()
     destroySession = vi.fn().mockResolvedValue(undefined)
@@ -107,22 +107,22 @@ vi.mock('../src/process-manager.js', () => ({
   },
 }))
 
-vi.mock('../src/event-adapter.js', () => ({
+vi.mock('../src/infra/pi/event-adapter.js', () => ({
   EventAdapter: class MockEventAdapter {
     attach = vi.fn()
     detach = vi.fn()
   },
 }))
 
-vi.mock('../src/skill-scanner.js', () => ({
+vi.mock('../src/services/scanners/skill-scanner.js', () => ({
   scanSkills: vi.fn().mockReturnValue([]),
 }))
 
-vi.mock('../src/agent-scanner.js', () => ({
+vi.mock('../src/services/scanners/agent-scanner.js', () => ({
   scanAgents: vi.fn().mockReturnValue([]),
 }))
 
-vi.mock('../src/pi-config-bridge.js', () => ({
+vi.mock('../src/infra/pi/pi-config-bridge.js', () => ({
   getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
   getSkillPaths: () => [],
   getSessionsDir: () => '/mock/sessions',
@@ -132,7 +132,7 @@ vi.mock('../src/pi-config-bridge.js', () => ({
   refreshAll: () => {},
 }))
 
-vi.mock('../src/extension-service.js', () => {
+vi.mock('../src/services/extension-service.js', () => {
   return {
     ExtensionService: class MockExtensionService {
       scanExtensions = vi.fn().mockResolvedValue([])
@@ -143,16 +143,16 @@ vi.mock('../src/extension-service.js', () => {
   }
 })
 
-vi.mock('../src/trash.js', () => ({
+vi.mock('../src/infra/system/trash.js', () => ({
   trash: vi.fn(),
 }))
 
-import { SidecarServer } from '../src/server.js'
-import { SessionService } from '../src/services/session-service.js'
+import { RuntimeServer } from '../src/transport/server.js'
+import { SessionService } from '../src/services/session/session-service.js'
 import { PluginService } from '../src/services/plugin-service/plugin-service.js'
 
 const SESSION_ID = 'reconnect-session'
-const SIDECAR_RESTART_TOOLS = [
+const RUNTIME_RESTART_TOOLS = [
   { name: 'hello', description: 'Says hello', parameters: { type: 'object', properties: {} } },
 ]
 const NEW_TOOLS_AFTER_RESTART = [
@@ -163,7 +163,7 @@ const NEW_TOOLS_AFTER_RESTART = [
 // ── Tests ────────────────────────────────────────────────────────
 
 describe('Bridge reconnect lifecycle', () => {
-  let server: SidecarServer
+  let server: RuntimeServer
 
   beforeEach(() => {
     vi.useFakeTimers()
@@ -172,8 +172,8 @@ describe('Bridge reconnect lifecycle', () => {
     mockHandleBridgeToolExecute.mockClear()
     mockHandleBridgeIntercept.mockClear()
     mockRpcClient = createMockRpcClient()
-    server = new SidecarServer(0, '/tmp/test-project')
-    const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
+    server = new RuntimeServer(0, '/tmp/test-project')
+    const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never, {} as never)
     const pluginService = new PluginService({} as never, server)
     server.setServices(
       sessionService,
@@ -203,7 +203,7 @@ describe('Bridge reconnect lifecycle', () => {
 
     it('succeeds when RPC client becomes available (reconnected)', async () => {
       mockRpcClient = createMockRpcClient()
-      mockGetToolSchemas.mockReturnValue(SIDECAR_RESTART_TOOLS)
+      mockGetToolSchemas.mockReturnValue(RUNTIME_RESTART_TOOLS)
       mockSendCommand.mockClear()
 
       await server.handleBridgeRequest(SESSION_ID, 'req-2', 'bridge:sync', {})
@@ -215,7 +215,7 @@ describe('Bridge reconnect lifecycle', () => {
         id: 'req-2',
         response: expect.objectContaining({
           success: true,
-          tools: SIDECAR_RESTART_TOOLS,
+          tools: RUNTIME_RESTART_TOOLS,
         }),
       })
     })
@@ -243,16 +243,16 @@ describe('Bridge reconnect lifecycle', () => {
     })
   })
 
-  // ── Scenario 2: Sidecar restart → auto-reconnect ──────────────
+  // ── Scenario 2: Runtime restart → auto-reconnect ─────────────
 
-  describe('Sidecar restart → auto-reconnect', () => {
-    it('re-registers tools after sidecar restart via bridge:sync', async () => {
+  describe('Runtime restart → auto-reconnect', () => {
+    it('re-registers tools after runtime restart via bridge:sync', async () => {
       // Initial registration
-      mockGetToolSchemas.mockReturnValue(SIDECAR_RESTART_TOOLS)
+      mockGetToolSchemas.mockReturnValue(RUNTIME_RESTART_TOOLS)
       await server.handleBridgeRequest(SESSION_ID, 'req-init', 'bridge:sync', {})
       expect(mockSendCommand).toHaveBeenCalledTimes(1)
 
-      // Simulate sidecar restart: clear tool schemas, then re-register
+      // Simulate runtime restart: clear tool schemas, then re-register
       mockGetToolSchemas.mockReturnValue(NEW_TOOLS_AFTER_RESTART)
       mockSendCommand.mockClear()
 
@@ -342,8 +342,8 @@ describe('Bridge reconnect lifecycle', () => {
     })
 
     it('returns error when plugin service is not available', async () => {
-      const serverWithoutPlugin = new SidecarServer(0, '/tmp/test-project')
-      const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
+      const serverWithoutPlugin = new RuntimeServer(0, '/tmp/test-project')
+      const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never, {} as never)
       // No plugin service set
       serverWithoutPlugin.setServices(sessionService, {} as never, {} as never, {} as never, {} as never)
 
@@ -415,7 +415,7 @@ describe('Bridge reconnect lifecycle', () => {
 
     it('pi restart: new RPC client re-syncs tools', async () => {
       mockRpcClient = createMockRpcClient()
-      mockGetToolSchemas.mockReturnValue(SIDECAR_RESTART_TOOLS)
+      mockGetToolSchemas.mockReturnValue(RUNTIME_RESTART_TOOLS)
       mockSendCommand.mockClear()
 
       await server.handleBridgeRequest(SESSION_ID, 'req-restore', 'bridge:sync', {})
@@ -428,7 +428,7 @@ describe('Bridge reconnect lifecycle', () => {
 
     it('pi crash + restart: full lifecycle with tool execute after restart', async () => {
       // 1. pi is running, tools synced
-      mockGetToolSchemas.mockReturnValue(SIDECAR_RESTART_TOOLS)
+      mockGetToolSchemas.mockReturnValue(RUNTIME_RESTART_TOOLS)
       await server.handleBridgeRequest(SESSION_ID, 'req-s1', 'bridge:sync', {})
       expect(mockSendCommand).toHaveBeenCalledTimes(1)
 
@@ -494,8 +494,8 @@ describe('Bridge reconnect lifecycle', () => {
     })
 
     it('returns empty intercept when plugin service is not available', async () => {
-      const serverWithoutPlugin = new SidecarServer(0, '/tmp/test-project')
-      const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never)
+      const serverWithoutPlugin = new RuntimeServer(0, '/tmp/test-project')
+      const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, {} as never, {} as never)
       serverWithoutPlugin.setServices(sessionService, {} as never, {} as never, {} as never, {} as never)
 
       mockSendCommand.mockClear()

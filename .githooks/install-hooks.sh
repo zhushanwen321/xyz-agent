@@ -24,8 +24,12 @@ echo -e "${BLUE}======================================${NC}"
 echo ""
 
 # Handle both regular repo (.git dir) and worktree (.git file)
+# [HISTORICAL] bare repo + worktree 模式下，git 读 hook 从 commondir（即 .bare/）的 hooks，
+# 不是 per-worktree 的 git-dir。曾用 --git-dir 导致 hook 写到 worktree 局部目录，git 根本不读，
+# 整个项目的 pre-commit 静默失效（2026-06-20 v3 重建审查发现）。改用 --git-common-dir。
 if [ -f "$PROJECT_ROOT/.git" ]; then
-    GIT_DIR=$(git -C "$PROJECT_ROOT" rev-parse --git-dir)
+    # worktree 模式（.git 是文件）→ 用 commondir（bare repo 根），所有 worktree 共享 hook
+    GIT_DIR=$(git -C "$PROJECT_ROOT" rev-parse --git-common-dir)
     GIT_HOOKS_DIR="$GIT_DIR/hooks"
 elif [ -d "$PROJECT_ROOT/.git" ]; then
     GIT_HOOKS_DIR="$PROJECT_ROOT/.git/hooks"
@@ -48,6 +52,8 @@ cat > "$GIT_HOOKS_DIR/pre-commit" << 'HOOK_EOF'
 #   SKIP_FRONTEND_LINT=1      - 跳过前端 ESLint
 #   SKIP_TYPE_CHECK=1         - 跳过 vue-tsc 类型检查
 #   SKIP_CODE_RULES_CHECK=1   - 跳过自定义代码规范检查
+#   SKIP_CSS_TOKEN_SSOT_CHECK=1 - 跳过 style.css vs design-tokens.md 一致性
+#   SKIP_RENDERER_DEPS_CHECK=1  - 跳过 renderer import vs package.json 完整性
 
 set -e
 
@@ -256,13 +262,74 @@ else
 fi
 
 # ============================================================================
-# ENV_WHITELIST_PREFIXES 同步检查
+# CSS token SSOT 一致性检查（style.css vs design-tokens.md）
+# ============================================================================
+
+CSS_SSOT_CHECKER=".githooks/check_css_token_ssot.py"
+CSS_SSOT_FILES="src-electron/renderer/src/style.css docs/designs/design-tokens.md"
+
+if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_CSS_TOKEN_SSOT_CHECK" != "1" ]; then
+    # 仅当 style.css 或 design-tokens.md 变更时才检查
+    SSOT_CHANGED=$(echo "$STAGED_FILES" | grep -E "^src-electron/renderer/src/style\.css$|^docs/designs/design-tokens\.md$" || true)
+    if [ -n "$SSOT_CHANGED" ]; then
+        echo -e "${BLUE}[INFO] 运行 CSS token SSOT 一致性检查...${NC}"
+
+        if [ ! -f "$CSS_SSOT_CHECKER" ]; then
+            echo -e "${YELLOW}[WARN] 找不到检查脚本 $CSS_SSOT_CHECKER${NC}"
+        else
+            python3 "$CSS_SSOT_CHECKER"
+            EXIT_CODE=$?
+
+            if [ $EXIT_CODE -eq 2 ]; then
+                echo ""
+                echo -e "${RED}[ERROR] CSS token SSOT 检查失败：style.css 含 design-tokens.md 未收录的 token${NC}"
+                echo -e "${YELLOW}[INFO] 设置 SKIP_CSS_TOKEN_SSOT_CHECK=1 跳过检查${NC}"
+                exit 1
+            fi
+        fi
+    fi
+else
+    echo -e "${YELLOW}[SKIP] CSS token SSOT 检查已跳过${NC}"
+fi
+
+# ============================================================================
+# Renderer 依赖完整性检查（import vs package.json）
+# ============================================================================
+
+RENDERER_DEPS_CHECKER=".githooks/check_renderer_deps.py"
+
+if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_RENDERER_DEPS_CHECK" != "1" ]; then
+    # 仅当 renderer src 或 package.json 变更时才检查
+    DEPS_CHANGED=$(echo "$STAGED_FILES" | grep -E "^src-electron/renderer/(src/.*\.(ts|vue|tsx)|package\.json)$" || true)
+    if [ -n "$DEPS_CHANGED" ]; then
+        echo -e "${BLUE}[INFO] 运行 Renderer 依赖完整性检查...${NC}"
+
+        if [ ! -f "$RENDERER_DEPS_CHECKER" ]; then
+            echo -e "${YELLOW}[WARN] 找不到检查脚本 $RENDERER_DEPS_CHECKER${NC}"
+        else
+            python3 "$RENDERER_DEPS_CHECKER"
+            EXIT_CODE=$?
+
+            if [ $EXIT_CODE -eq 2 ]; then
+                echo ""
+                echo -e "${RED}[ERROR] Renderer 依赖完整性检查失败：存在 import 了但 package.json 未声明的包${NC}"
+                echo -e "${YELLOW}[INFO] 设置 SKIP_RENDERER_DEPS_CHECK=1 跳过检查${NC}"
+                exit 1
+            fi
+        fi
+    fi
+else
+    echo -e "${YELLOW}[SKIP] Renderer 依赖完整性检查已跳过${NC}"
+fi
+
+# ============================================================================
+# ENV_WHITELIST_PREFIXES SSOT 单一性检查
 # ============================================================================
 
 ENV_WHITELIST_CHECKER=".githooks/check_env_whitelist_sync.py"
 
 if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_ENV_WHITELIST_CHECK" != "1" ]; then
-    echo -e "${BLUE}[INFO] 运行 ENV_WHITELIST_PREFIXES 同步检查..."
+    echo -e "${BLUE}[INFO] 运行 ENV_WHITELIST_PREFIXES SSOT 检查..."
 
     if [ ! -f "$ENV_WHITELIST_CHECKER" ]; then
         echo -e "${YELLOW}[WARN] 找不到检查脚本 $ENV_WHITELIST_CHECKER${NC}"
@@ -272,14 +339,14 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_ENV_WHITELIST_CHECK" != "1" ]; then
 
         if [ $EXIT_CODE -eq 2 ]; then
             echo ""
-            echo -e "${RED}[ERROR] ENV_WHITELIST_PREFIXES 同步检查失败${NC}"
-            echo -e "${YELLOW}[INFO] runtime-manager.ts 和 rpc-client.ts 的白名单前缀必须保持同步${NC}"
+            echo -e "${RED}[ERROR] ENV_WHITELIST_PREFIXES SSOT 检查失败${NC}"
+            echo -e "${YELLOW}[INFO] 定义点应在 shared/constants.ts，main/runtime 只能 import${NC}"
             echo -e "${YELLOW}[INFO] 设置 SKIP_ENV_WHITELIST_CHECK=1 跳过检查${NC}"
             exit 1
         fi
     fi
 else
-    echo -e "${YELLOW}[SKIP] ENV_WHITELIST_PREFIXES 同步检查已跳过${NC}"
+    echo -e "${YELLOW}[SKIP] ENV_WHITELIST_PREFIXES SSOT 检查已跳过${NC}"
 fi
 
 # ============================================================================
@@ -307,6 +374,60 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_PATH_WHITELIST_CHECK" != "1" ]; the
     fi
 else
     echo -e "${YELLOW}[SKIP] 路径白名单动态化检查已跳过${NC}"
+fi
+
+# ============================================================================
+# ws-client send 直调检查（D3 统一门面）
+# ============================================================================
+
+WS_SEND_CHECKER=".githooks/check_no_direct_ws_send.py"
+
+if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_WS_SEND_CHECK" != "1" ]; then
+    echo -e "${BLUE}[INFO] 运行 ws-client send 直调检查...${NC}"
+
+    if [ ! -f "$WS_SEND_CHECKER" ]; then
+        echo -e "${YELLOW}[WARN] 找不到检查脚本 $WS_SEND_CHECKER${NC}"
+    else
+        python3 "$WS_SEND_CHECKER"
+        EXIT_CODE=$?
+
+        if [ $EXIT_CODE -eq 2 ]; then
+            echo ""
+            echo -e "${RED}[ERROR] ws-client send 直调检查失败${NC}"
+            echo -e "${YELLOW}[INFO] renderer 禁止直调 ws-client.send，统一走 api client${NC}"
+            echo -e "${YELLOW}[INFO] 设置 SKIP_WS_SEND_CHECK=1 跳过检查${NC}"
+            exit 1
+        fi
+    fi
+else
+    echo -e "${YELLOW}[SKIP] ws-client send 直调检查已跳过${NC}"
+fi
+
+# ============================================================================
+# runtime services 循环依赖检查（D6c 防护）
+# ============================================================================
+
+SERVICE_CYCLE_CHECKER=".githooks/check_no_service_cycle.py"
+
+if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_NO_SERVICE_CYCLE_CHECK" != "1" ]; then
+    echo -e "${BLUE}[INFO] 运行 runtime services 循环依赖检查...${NC}"
+
+    if [ ! -f "$SERVICE_CYCLE_CHECKER" ]; then
+        echo -e "${YELLOW}[WARN] 找不到检查脚本 $SERVICE_CYCLE_CHECKER${NC}"
+    else
+        python3 "$SERVICE_CYCLE_CHECKER"
+        EXIT_CODE=$?
+
+        if [ $EXIT_CODE -eq 2 ]; then
+            echo ""
+            echo -e "${RED}[ERROR] runtime services 循环依赖检查失败（D6c）${NC}"
+            echo -e "${YELLOW}[INFO] service 间不得具体类循环 import，改用接口/事件解耦${NC}"
+            echo -e "${YELLOW}[INFO] 设置 SKIP_NO_SERVICE_CYCLE_CHECK=1 跳过检查${NC}"
+            exit 1
+        fi
+    fi
+else
+    echo -e "${YELLOW}[SKIP] runtime services 循环依赖检查已跳过${NC}"
 fi
 
 # ============================================================================
@@ -427,10 +548,14 @@ echo -e "  ${YELLOW}SKIP_TYPE_CHECK=1${NC}          - 跳过 vue-tsc"
 echo -e "  ${YELLOW}SKIP_CODE_RULES_CHECK=1${NC}   - 跳过代码规范"
 echo -e "  ${YELLOW}SKIP_SIDECAR_SESSION_CHECK=1${NC} - 跳过 session 隔离"
 echo -e "  ${YELLOW}SKIP_CSS_TOKENS_CHECK=1${NC}      - 跳过 CSS tokens"
+echo -e "  ${YELLOW}SKIP_CSS_TOKEN_SSOT_CHECK=1${NC}  - 跳过 CSS token SSOT 一致性"
+echo -e "  ${YELLOW}SKIP_RENDERER_DEPS_CHECK=1${NC}   - 跳过 renderer 依赖完整性"
 echo -e "  ${YELLOW}SKIP_RUNTIME_BUNDLE_CHECK=1${NC}  - 跳过 runtime bundle 验证"
 echo -e "  ${YELLOW}SKIP_PREFLIGHT_CHECK=1${NC}       - 跳过打包配置预检查"
-echo -e "  ${YELLOW}SKIP_ENV_WHITELIST_CHECK=1${NC}   - 跳过 ENV 白名单同步检查"
+echo -e "  ${YELLOW}SKIP_ENV_WHITELIST_CHECK=1${NC}   - 跳过 ENV 白名单 SSOT 检查"
 echo -e "  ${YELLOW}SKIP_PATH_WHITELIST_CHECK=1${NC}   - 跳过路径白名单动态化检查"
+echo -e "  ${YELLOW}SKIP_WS_SEND_CHECK=1${NC}         - 跳过 ws-client send 直调检查"
+echo -e "  ${YELLOW}SKIP_NO_SERVICE_CYCLE_CHECK=1${NC} - 跳过 services 循环依赖检查"
 echo ""
 
 exit 0
@@ -456,9 +581,11 @@ echo -e "  ${GREEN}[+]${NC} vue-tsc 类型检查（全量，与 CI 等价）"
 echo -e "  ${GREEN}[+]${NC} Vue 组件规范检查（禁止原生 HTML、Emoji、自定义 CSS）"
 echo -e "  ${GREEN}[+]${NC} Sidecar session 隔离检查"
 echo -e "  ${GREEN}[+]${NC} CSS tokens 检查"
-echo -e "  ${GREEN}[+]${NC} ENV_WHITELIST_PREFIXES 同步检查"
+echo -e "  ${GREEN}[+]${NC} ENV_WHITELIST_PREFIXES SSOT 单一性检查"
 echo -e "  ${GREEN}[+]${NC} 路径白名单动态化检查"
 echo -e "  ${GREEN}[+]${NC} 目录规范检查（禁止 demos/impeccable + 外部 symlink）"
+echo -e "  ${GREEN}[+]${NC} ws-client send 直调检查（D3 统一门面）"
+echo -e "  ${GREEN}[+]${NC} runtime services 循环依赖检查（D6c 防护）"
 echo -e "  ${GREEN}[+]${NC} Runtime Bundle 验证（依赖打包 + CJS 兼容 + 健康检查）"
 echo -e "  ${GREEN}[+]${NC} 打包配置预检查（asarUnpack/files 一致性 + symlink 检查）"
 echo ""

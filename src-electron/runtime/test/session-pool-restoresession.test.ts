@@ -25,7 +25,7 @@ const mockScannedSessions: Array<{
   size: number
 }> = []
 
-vi.mock('../src/pi-config-bridge.js', () => ({
+vi.mock('../src/infra/pi/pi-config-bridge.js', () => ({
   getDefaultModel: () => ({ provider: 'test', modelId: 'provider-model' }),
   getSkillPaths: () => [],
   getSessionsDir: () => '/mock/sessions',
@@ -37,7 +37,7 @@ vi.mock('../src/pi-config-bridge.js', () => ({
   patchSessionCwd: () => true,
 }))
 
-vi.mock('../src/trash.js', () => ({
+vi.mock('../src/infra/system/trash.js', () => ({
   trash: vi.fn(),
 }))
 
@@ -46,7 +46,7 @@ vi.mock('../src/trash.js', () => ({
 const attachMock = vi.fn()
 const detachMock = vi.fn()
 
-vi.mock('../src/event-adapter.js', () => ({
+vi.mock('../src/infra/pi/event-adapter.js', () => ({
   EventAdapter: class MockEventAdapter {
   private _sid: string
   private _send: (msg: unknown) => void
@@ -69,7 +69,7 @@ vi.mock('../src/event-adapter.js', () => ({
 const createSessionMock = vi.fn()
 const onSessionExitMock = vi.fn()
 
-vi.mock('../src/process-manager.js', () => ({
+vi.mock('../src/infra/pi/process-manager.js', () => ({
   ProcessManager: class MockProcessManager {
   createSession = createSessionMock
   getClient = vi.fn()
@@ -84,7 +84,10 @@ vi.mock('../src/process-manager.js', () => ({
 
 // ── Import after mocks ──────────────────────────────────────────
 
-import { SessionService } from '../src/services/session-service.js'
+import { SessionService } from '../src/services/session/session-service.js'
+import { PiConfigStore } from '../src/infra/pi/pi-config-store.js'
+import { PiSessionStore } from '../src/infra/pi/session-store.js'
+import { NavigateInterceptorFactory } from '../src/infra/pi/navigate-interceptor.js'
 import type { IMessageBroker, IEventAdapter } from '../src/interfaces.js'
 
 /** Minimal scanned session fixture */
@@ -135,6 +138,9 @@ function createService(): SessionService {
     '/tmp',
     {} as never,
     { getExtensionPaths: vi.fn().mockResolvedValue([]) } as never,
+    new PiConfigStore(),
+    new PiSessionStore(),
+    new NavigateInterceptorFactory(),
   )
 }
 

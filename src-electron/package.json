@@ -14,9 +14,16 @@
     "runtime",
     "shared"
   ],
+  "overrides": {
+    "esbuild": "^0.28.1",
+    "tsup": {
+      "esbuild": "^0.28.1"
+    }
+  },
   "main": "dist/main/main.cjs",
   "scripts": {
     "dev": "node scripts/electron-ensure.mjs && concurrently \"npm run dev:vite\" \"npm run dev:electron\"",
+    "dev:mock": "node scripts/electron-ensure.mjs && VITE_MOCK=true XYZ_MOCK=1 concurrently \"npm run dev:vite\" \"npm run dev:electron\"",
     "dev:vite": "npm -w @xyz-agent/frontend run dev",
     "dev:electron": "npm run build:main && npm run build:preload && electron . --remote-debugging-port=9222",
     "build:runtime": "npm -w @xyz-agent/runtime run build",
@@ -33,7 +40,7 @@
     "pi-subagents": "^0.27.0"
   },
   "devDependencies": {
-    "concurrently": "^9.2.1",
+    "concurrently": "^10.0.3",
     "electron": "42.3.3",
     "electron-builder": "^26.8.1",
     "tsx": "^4",

@@ -58,7 +58,7 @@ jobs:
 
       - name: Install electron-builder dependencies
         working-directory: src-electron
-        run: npm install
+        run: npm ci
 
       - name: Bump version (workflow_dispatch)
         if: github.event_name == 'workflow_dispatch' && inputs.version != ''

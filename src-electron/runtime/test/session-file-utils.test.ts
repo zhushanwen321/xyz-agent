@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { patchSessionCwd } from '../src/session-file-utils.js'
+import { patchSessionCwd } from '../src/infra/pi/session-file-utils.js'
 import { mkdtempSync, writeFileSync, rmSync, existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'

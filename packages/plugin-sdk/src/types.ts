@@ -3,7 +3,7 @@
  * 插件系统内部类型定义
  *
  * 这些类型仅用于 runtime（主进程/Worker）内部的插件管理，
- * 不出现在前端↔sidecar 的共享协议中。
+ * 不出现在前端↔runtime 的共享协议中。
  */
 
 // ── Manifest 类型（解析自 package.json 的 xyzAgent 字段）──────────
@@ -52,6 +52,8 @@ export interface PluginDescriptor {
   source: PluginSource
   /** 该插件依赖的其他插件 ID 列表 */
   extensionDependencies: string[]
+  /** 版本不兼容时的错误描述 */
+  compatibilityError?: string
 }
 
 export interface PluginContributes {
@@ -194,6 +196,11 @@ export type WorkerToHostMessage =
 
 // ── 通用类型 ─────────────────────────────────────────────────────
 
+// D28: Disposable 与 plugin-sdk/src/types.ts 的定义重复。理论上应提升到
+// @xyz-agent/shared 作 single source of truth，但 SDK 通过 sync-types.sh 从本文件
+// 自动生成、且刻意保持零依赖（第三方插件作者无需装整个 monorepo）。若改 re-export
+// 会让 sync 后的 SDK 引入 @xyz-agent/shared 依赖，破坏独立性。故保留独立定义——
+// 这是有意的跨包契约重复，sync 脚本是它的「真相源」。
 export interface Disposable {
   dispose(): void
 }
@@ -309,6 +316,15 @@ export interface ToolEntry {
 
 // ── Phase 2: Hook 注册表条目 ──────────────────────────────────────────
 
+/** Status bar item options for plugin API */
+export interface StatusBarItemOptions {
+  tooltip?: string
+  commandId?: string
+  priority?: number
+  scope?: 'per-session' | 'global'
+  sessionId?: string
+}
+
 /** Hook 注册表中存储的条目（主线程侧） */
 export interface HookEntry {
   pluginId: string
@@ -356,7 +372,7 @@ export interface Phase2AgentAPI extends Phase1AgentAPI {
     showConfirm(title: string, message: string): Promise<boolean>
     showInput(title: string, defaultValue?: string): Promise<string | undefined>
     notify(level: 'info' | 'warn' | 'error', message: string): Promise<void>
-    updateStatusBarItem(id: string, text: string): Promise<void>
+    updateStatusBarItem(id: string, text: string, options?: StatusBarItemOptions): Promise<void>
   }
   readonly agent: {
     setModel(model: string): Promise<void>
@@ -421,7 +437,10 @@ export interface HookBlockedResult extends HookResult {
 export interface IPluginServiceDeps {
   sessionService?: unknown
   configService?: unknown
+  modelService?: import('../../interfaces.js').IModelService
   broadcastFn?: (type: string, payload: unknown) => void
+  /** xyz-agent 配置根目录（~/.xyz-agent/）。注入后 plugin 切片不再直连 infra 取路径。 */
+  configDir?: string
 }
 
 /** 插件向后端请求前端 UI 弹窗 */

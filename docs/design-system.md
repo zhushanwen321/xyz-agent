@@ -1,6 +1,9 @@
-# Design System — xyz-agent
+> ⚠️ **DEPRECATED by [ADR-0018](../architecture/adr/0018-visual-direction.md)** (2026-06-18).
+> 旧 Warm 设计规范已被推翻。真身见 [designs/design-tokens.md](designs/design-tokens.md) + [designs/design-system.md](designs/design-system.md)。本文件保留作历史参考。
 
-全局设计规范，所有 UI 组件必须遵循。定义于 `src/assets/main.css` 的 `@theme` 中。
+# Design System — xyz-agent (DEPRECATED · Warm)
+
+~~全局设计规范，所有 UI 组件必须遵循。~~定义于 `src/assets/main.css` 的 `@theme` 中。
 
 ## 1. 色彩体系
 

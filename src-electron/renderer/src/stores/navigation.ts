@@ -1,97 +1,56 @@
+/**
+ * Navigation store —— 导航历史栈（D1：状态驱动路由，无 vue-router）。
+ *
+ * 模式参考 main worktree navigation.ts：entries[] + pointer + back/forward +
+ * 分支截断（splice pointer+1）+ MAX_ENTRIES=50 上限（超限丢最早）。
+ * 扩展：加 'overview' 第三 view（chat/overview/settings）。
+ *
+ * 依赖方向：无（stores 间禁止互相 import）。
+ * 骨架阶段：state/getter 合法初始值，action throw。
+ */
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
+import type { NavEntry } from '@/types'
 
-export interface ChatEntry {
-  view: 'chat'
-  sessionId: string
-}
-
-export interface SettingsEntry {
-  view: 'settings'
-  activeTab: string
-}
-
-export type NavEntry = ChatEntry | SettingsEntry
-
-const MAX_ENTRIES = 50
+/** 历史栈容量上限（D1） */
+export const MAX_ENTRIES = 50
 
 export const useNavigationStore = defineStore('navigation', () => {
   const entries = ref<NavEntry[]>([])
   const pointer = ref(-1)
 
-  const currentEntry = computed<NavEntry | null>(
+  /** 空栈时返回合法默认 entry（view:'chat'，无 sessionId），消费方无需判空 */
+  const current = computed<NavEntry>(
     () => (pointer.value >= 0 && pointer.value < entries.value.length)
       ? entries.value[pointer.value]
-      : null,
+      : { view: 'chat' },
   )
 
-  const currentView = computed<'chat' | 'settings'>(
-    () => currentEntry.value?.view ?? 'chat',
-  )
+  const canBack = computed(() => pointer.value > 0)
+  const canForward = computed(() => pointer.value < entries.value.length - 1)
 
-  const canGoBack = computed(() => pointer.value > 0)
-  const canGoForward = computed(() => pointer.value < entries.value.length - 1)
-
-  function push(entry: NavEntry) {
-    // Truncate any forward branch before pushing
-    if (pointer.value >= 0 && pointer.value < entries.value.length - 1) {
+  /**
+   * 入栈：pointer+1 之后的 entry 全丢弃（分支截断），push 新 entry；
+   * 超 MAX_ENTRIES 丢最早（push 一次最多超 1 个，单次 shift 即可）。
+   */
+  function push(entry: NavEntry): void {
+    if (pointer.value < entries.value.length - 1) {
       entries.value.splice(pointer.value + 1)
     }
     entries.value.push(entry)
-
-    // Evict oldest when exceeding capacity
     if (entries.value.length > MAX_ENTRIES) {
       entries.value.shift()
     }
-
     pointer.value = entries.value.length - 1
   }
 
-  function back() {
-    if (pointer.value > 0) {
-      pointer.value -= 1
-    }
+  function back(): void {
+    if (pointer.value > 0) pointer.value -= 1
   }
 
-  /** Clear entire stack, return to default chat view */
-  function reset() {
-    entries.value = []
-    pointer.value = -1
+  function forward(): void {
+    if (pointer.value < entries.value.length - 1) pointer.value += 1
   }
 
-  function forward() {
-    if (canGoForward.value) pointer.value += 1
-  }
-
-  // Replace entire object so Vue reactivity detects the change
-  function updateCurrentTab(activeTab: string) {
-    const entry = currentEntry.value
-    if (entry?.view === 'settings') {
-      entries.value[pointer.value] = { view: 'settings', activeTab }
-    }
-  }
-
-  function getLastSettingsTab(): string {
-    for (let i = entries.value.length - 1; i >= 0; i--) {
-      if (entries.value[i].view === 'settings') {
-        return (entries.value[i] as { view: 'settings'; activeTab: string }).activeTab
-      }
-    }
-    return 'providers'
-  }
-
-  return {
-    entries,
-    pointer,
-    currentEntry,
-    currentView,
-    canGoBack,
-    canGoForward,
-    push,
-    back,
-    forward,
-    reset,
-    updateCurrentTab,
-    getLastSettingsTab,
-  }
+  return { entries, pointer, current, canBack, canForward, push, back, forward }
 })
