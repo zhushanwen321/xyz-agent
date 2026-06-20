@@ -170,13 +170,10 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
 
   // ── SessionData RPC handlers ─────────────────────────────
   registerSessionDataRpcHandlers(rpcServer, {
-    getCache: () => ctx.sessionDataStore.getCache(),
-    getDirty: () => ctx.sessionDataStore.getDirty(),
-    getSizeTracker: () => ctx.sessionDataStore.getSizeTracker(),
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    appendEntry: async (_sessionId: string, _key: string, _value: unknown) => {
-      // bridge:append_entry 保留接口兼容，set handler 不再直接调用
-    },
+    get: (sessionId, key) => ctx.sessionDataStore.get(sessionId, key),
+    set: (sessionId, key, value) => ctx.sessionDataStore.set(sessionId, key, value),
+    delete: (sessionId, key) => ctx.sessionDataStore.delete(sessionId, key),
+    keys: (sessionId) => ctx.sessionDataStore.keys(sessionId),
   })
 
   // ── UI RPC handlers ─────────────────────────────────────

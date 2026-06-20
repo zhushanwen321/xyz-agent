@@ -170,8 +170,8 @@ export class PluginService implements IPluginService {
     // 8. 启动 sessionData flush 定时器
     this.sessionDataStore.startFlushTimer()
 
-    // 8b. Restore sessionData from disk
-    await this.sessionDataStore.restoreFromDisk()
+    // 8b. Restore sessionData from disk（WriteBackCache lazy load，扫描目录预热分区）
+    this.sessionDataStore.restoreFromDisk()
 
     // 9. 为 external 已激活插件启动 hot-reload 监听
     for (const desc of this.registry.getAllDescriptors()) {
@@ -491,12 +491,12 @@ export class PluginService implements IPluginService {
 
   /** 将所有 dirty sessionData 批量 flush（由定时器调用） */
   async flushSessionData(): Promise<void> {
-    await this.sessionDataStore.flushAll()
+    this.sessionDataStore.flushAll()
   }
 
   /** flush 指定 session 的 dirty 数据（deactivate/关闭时调用） */
   async flushSessionDataForSession(sessionId: string): Promise<void> {
-    await this.sessionDataStore.flushSession(sessionId)
+    this.sessionDataStore.flushSession(sessionId)
   }
 
   /** 清理指定 session 的数据缓存、dirty 跟踪和 size 记录 */
