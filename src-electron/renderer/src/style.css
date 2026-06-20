@@ -8,7 +8,7 @@
    SSOT: docs/designs/design-tokens.md
    暗色为真默认（ADR-0021-B 裁决）。亮色变体待 settingsStore 接入，
    design-tokens 仅给出部分亮色值，未给全前不臆造落地。
-   命名遵循 SSOT：--fg/--muted/--subtle/--border（非旧 --text*/--divider，
+   命名遵循 SSOT：--fg/--muted/--subtle/--border（非旧 --text* / --divider，
    ADR-0018 已裁决归一，见 design-tokens.md「已知裂缝」）。
    ============================================================ */
 

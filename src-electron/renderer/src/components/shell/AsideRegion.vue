@@ -2,16 +2,17 @@
   <!--
     展示组件 · 透明布局槽。
     无 background，继承 app-shell 的 bg-bg，视觉上与窗口底色融合（spec §一）。
-    sidebar 内容由 Wave 3 注入默认 slot。
+    Wave 3：在此挂载 Sidebar 容器（FG3），padding-top:52px 安全区让出 traffic light。
   -->
   <aside class="aside-region flex flex-shrink-0 flex-col">
-    <slot />
+    <Sidebar />
   </aside>
 </template>
 
 <script setup lang="ts">
 // 纯展示：无 props / 无 store 依赖。
 // 尺寸值放 scoped style（Tailwind 无 pt-13/w-50 精确类，escape hatch）。
+import Sidebar from '@/components/sidebar/Sidebar.vue'
 </script>
 
 <style scoped>
