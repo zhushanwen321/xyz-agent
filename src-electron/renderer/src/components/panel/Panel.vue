@@ -22,6 +22,7 @@
       :active="active"
       :is-dual="isDual"
       @split="emit('split')"
+      @new-session="emit('new-session')"
       @close="emit('close')"
     />
 
@@ -67,6 +68,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   activate: [panelId: string]
   split: []
+  'new-session': []
   close: []
   diff: []
 }>()

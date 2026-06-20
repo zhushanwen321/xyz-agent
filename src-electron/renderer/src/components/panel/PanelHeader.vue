@@ -50,7 +50,8 @@
     </nav>
 
     <div class="ml-auto flex items-center gap-0.5 [-webkit-app-region:no-drag]">
-      <!-- split：单 panel 显（开第二会话）；双 panel 时隐藏（不允许多于 2） -->
+      <!-- split/新建会话 同槽位互斥（panel/spec.md 状态与交互）：
+           单 panel 显「分屏」（开第二会话）；双 panel 显「新建会话」（替换待机侧为新 session 并聚焦） -->
       <Button
         v-if="!isDual"
         variant="ghost"
@@ -61,7 +62,19 @@
       >
         <Columns2 class="size-[15px]" />
       </Button>
-      <!-- 关闭（×）：双 panel → 关闭该侧回单。单 panel 关闭主会话确认流 G-013 DEFERRED，v1 不显 -->
+      <Button
+        v-else
+        variant="ghost"
+        size="icon"
+        class="size-[26px] rounded-md text-muted hover:bg-surface-hover hover:text-fg [-webkit-app-region:no-drag]"
+        title="新建会话 · 替换待机侧"
+        @click="emit('newSession')"
+      >
+        <Plus class="size-[15px]" />
+      </Button>
+      <!-- 关闭（×）：独立按钮（与 split 槽位分离）。双 panel → 关闭该侧回单；
+           单 panel 关闭确认流 G-013 DEFERRED，v1 不显。
+           三点更多 ⋯（G2-005 rename 等）全 DEFERRED，按 G3-002 hide 规则不显示 -->
       <Button
         v-if="isDual"
         variant="ghost"
@@ -79,7 +92,7 @@
 <script setup lang="ts">
 /* eslint-disable no-magic-numbers */
 import { computed } from 'vue'
-import { Folder, Columns2, X, ChevronRight } from '@lucide/vue'
+import { Folder, Columns2, X, ChevronRight, Plus } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import type { DerivedStatus } from '@/types'
 
@@ -94,6 +107,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   split: []
+  newSession: []
   close: []
 }>()
 

@@ -7,6 +7,8 @@ est: 6min
 va_ref: VA-04 #8-12
 ---
 
+> 结果: ✅ PASS (2026-06-20, W11 修复: header 槽位互斥 + 新建会话替换待机侧)
+
 # W11 · P3 Panel 骨架（单一 header + 5 zone 排列）
 
 > 3 个简单 case：单一 header 结构 + 5 zone 排列 + split 槽位互斥。DOM 结构核对。

@@ -91,11 +91,19 @@ export function useSidebar() {
    * 选择 session：push 导航栈（view:chat + sessionId）+ switchSession api + 更新 activeId + 载入 panel。
    * 首次进入该 session 时拉取历史注入 chat store（UC-2 切换可见块类型，G2-006）。
    * switchSession 失败（mock id 不存在）抛错，UI 层捕获；不更新 activeId。
+   *
+   * opts.panelId：强制载入指定 panel（而非默认的 active/sync 路径），用于「新建会话替换待机侧」——
+   * 载入待机 panel 并 setActive 聚焦，active 侧 session 不动（panel/spec.md 状态与交互）。
    */
-  async function selectSession(id: string): Promise<void> {
+  async function selectSession(id: string, opts?: { panelId?: string }): Promise<void> {
     await sessionApi.switchSession(id)
     session.activeId = id
-    syncSessionToPanel(id)
+    if (opts?.panelId) {
+      panel.loadSession(opts.panelId, id)
+      panel.setActive(opts.panelId)
+    } else {
+      syncSessionToPanel(id)
+    }
     navigation.push({ view: 'chat', sessionId: id })
     // 历史回填：features 层跨 api+stores，是 hydrate 的正确编排点
     if (!chat.isHydrated(id)) {
@@ -113,6 +121,18 @@ export function useSidebar() {
     session.list = [...session.list, created]
     await selectSession(created.id)
     return created.id
+  }
+
+  /**
+   * 新建会话到待机侧（双 panel，panel/spec.md「替换待机侧为新 session 并聚焦」）：
+   * 复用 newSession 的 create 流程，但通过 selectSession(panelId) 把新 session 载入非 active panel
+   * 并聚焦——active 侧 session 保持不变。单 panel 时回退到 newSession（载入唯一 panel）。
+   */
+  async function newSessionToStandby(): Promise<void> {
+    const created = await sessionApi.create()
+    session.list = [...session.list, created]
+    const standby = panel.panels.find((p) => p.id !== panel.activePanelId)
+    await selectSession(created.id, standby ? { panelId: standby.id } : undefined)
   }
 
   /** 进入 Overview：push view:'overview'（ADR-0022，sidebar 持久，main 被覆盖） */
@@ -181,6 +201,7 @@ export function useSidebar() {
   return {
     selectSession,
     newSession,
+    newSessionToStandby,
     goOverview,
     loadSessions,
     toggleCollapse,

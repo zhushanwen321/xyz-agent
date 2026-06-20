@@ -23,6 +23,7 @@
       :is-dual="panel.isDual"
       @activate="panel.setActive"
       @split="onSplit"
+      @new-session="onNewSession"
       @close="onClose(leaf.id)"
       @diff="onDiff"
     />
@@ -38,7 +39,7 @@ import Panel from '@/components/panel/Panel.vue'
 
 const panel = usePanelStore()
 const session = useSessionStore()
-const { derivedStatus } = useSidebar()
+const { derivedStatus, newSessionToStandby } = useSidebar()
 
 // sidebar 选 session → panel 载入的编排在 useSidebar.selectSession（主路径）
 // 与 AppShell watch(navigation.pointer)（⌘[/⌘] 同步），不在此组件 watch：
@@ -59,6 +60,14 @@ function statusOf(leaf: PanelLeaf) {
 
 function onSplit(): void {
   panel.split()
+}
+
+/**
+ * 新建会话（双 panel）：替换待机侧为新 session 并聚焦，active 侧 session 不动
+ * （panel/spec.md 状态与交互）。编排在 useSidebar.newSessionToStandby。
+ */
+function onNewSession(): void {
+  void newSessionToStandby()
 }
 function onClose(panelId: string): void {
   panel.close(panelId)
