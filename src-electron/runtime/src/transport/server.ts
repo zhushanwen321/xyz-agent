@@ -8,7 +8,7 @@
 import { createServer, type Server as HttpServer } from 'node:http'
 import { resolve } from 'node:path'
 import { WebSocketServer, WebSocket, type WebSocket as WsType } from 'ws'
-import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
+import type { ClientMessage, ServerMessage, ServerMessageType } from '@xyz-agent/shared'
 import type { ISessionService, IConfigService, IModelService, IMessageBroker, IExtensionService, IPluginService } from '../interfaces.js'
 import { ExtensionTimeoutManager } from '../services/extension-timeout-manager.js'
 import { BridgeHandler } from './bridge-handler.js'
@@ -17,6 +17,7 @@ import { SessionMessageHandler } from './session-message-handler.js'
 import { ExtensionMessageHandler } from './extension-message-handler.js'
 import { PluginMessageHandler } from './plugin-message-handler.js'
 import { TreeMessageHandler } from './tree-message-handler.js'
+import type { MessageHandlerContext } from './message-context.js'
 import { toErrorMessage } from '../utils/errors.js'
 
 const HTTP_OK = 200
@@ -63,44 +64,49 @@ export class RuntimeServer implements IMessageBroker {
     // Each object literal is structurally checked against its HandlerContext
     // interface at the call site — no `as unknown as`, no relying on private
     // members being visible across class boundaries.
+    //
+    // `messaging` 是 MessageHandlerContext 的共享实现（D7：send/sendError/reply 三方法
+    // 逐字相同，此前在 4 个 context 对象里复制了 4 份）。每个 handler 的 context 由
+    // `...messaging` 铺底 + 各自的领域依赖组成。
     this.bridgeHandler = new BridgeHandler(this.pluginService ?? null)
+    const messaging: MessageHandlerContext = {
+      send: (ws, msg) => this.send(ws, msg),
+      sendError: (ws, code, message, id, sessionId) => this.sendError(ws, code, message, id, sessionId),
+      reply: (ws, id, type, payload) => this.reply(ws, id, type, payload),
+    }
     this.settingsHandler = new SettingsMessageHandler({
+      ...messaging,
       configService: this.configService,
       sessionService: this.sessionService,
       modelService: this.modelService,
       projectRoot: this.projectRoot,
       nextPushId: () => this.nextPushId(),
-      send: (ws, msg) => this.send(ws, msg),
-      sendError: (ws, code, message, id, sessionId) => this.sendError(ws, code, message, id, sessionId),
       broadcast: (msg) => this.broadcast(msg),
       broadcastProviderList: () => this.broadcastProviderList(),
       broadcastSkillList: () => this.broadcastSkillList(),
       broadcastAgentList: () => this.broadcastAgentList(),
     })
     this.sessionHandler = new SessionMessageHandler({
+      ...messaging,
       sessionService: this.sessionService,
       nextPushId: () => this.nextPushId(),
-      send: (ws, msg) => this.send(ws, msg),
-      sendError: (ws, code, message, id, sessionId) => this.sendError(ws, code, message, id, sessionId),
       broadcastSessionList: () => this.broadcastSessionList(),
       clearExtensionTimeoutsForSession: (sessionId) => this.clearExtensionTimeoutsForSession(sessionId),
     })
     this.extensionHandler = new ExtensionMessageHandler({
+      ...messaging,
       sessionService: this.sessionService,
       extensionService: this.extensionService,
       extensionTimeoutMgr: this.extensionTimeoutMgr,
-      send: (ws, msg) => this.send(ws, msg),
-      sendError: (ws, code, message, id, sessionId) => this.sendError(ws, code, message, id, sessionId),
     })
     this.pluginMessageHandler = new PluginMessageHandler({
+      ...messaging,
       pluginService: this.pluginService ?? null,
-      send: (ws, msg) => this.send(ws, msg),
-      sendError: (ws, code, message, id, sessionId) => this.sendError(ws, code, message, id, sessionId),
     })
     this.treeMessageHandler = new TreeMessageHandler({
+      ...messaging,
       sessionService: this.sessionService,
       treeService: this.treeService,
-      send: (ws, msg) => this.send(ws, msg),
       broadcastSessionList: () => this.broadcastSessionList(),
     })
   }
@@ -299,6 +305,11 @@ export class RuntimeServer implements IMessageBroker {
     const payload: Record<string, unknown> = { code, message }
     if (sessionId) payload.sessionId = sessionId
     this.send(ws, { type: 'error', id, payload })
+  }
+
+  /** D2 reply 惯用法：发送带请求 id 的回复，消灭 46 处 `send(ws,{type,id:msg.id,payload})` 样板。 */
+  reply(ws: WsType, id: string | undefined, type: ServerMessageType, payload: Record<string, unknown>): void {
+    this.send(ws, { type, id, payload })
   }
 
   // ── Broadcast helpers ──────────────────────────────────────────

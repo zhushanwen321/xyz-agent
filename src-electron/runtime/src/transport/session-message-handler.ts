@@ -3,7 +3,7 @@
  * Extracted from RuntimeServer to reduce file size.
  */
 import type { WebSocket as WsType } from 'ws'
-import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
+import type { ClientMessage } from '@xyz-agent/shared'
 import type { ISessionService } from '../interfaces.js'
 import { toErrorMessage, isEnoent } from '../utils/errors.js'
 import type { MessageHandlerContext } from './message-context.js'
@@ -23,28 +23,28 @@ export class SessionMessageHandler {
     switch (msg.type) {
       case 'session.create': {
         const session = await this.ctx.sessionService.create(msg.payload.cwd, msg.payload.label)
-        this.ctx.send(ws, { type: 'session.created', id: msg.id, payload: { session } })
+        this.ctx.reply(ws, msg.id, 'session.created', { session })
         return this.ctx.broadcastSessionList()
       }
       case 'session.delete': {
         const delSid = msg.payload.sessionId
         this.ctx.clearExtensionTimeoutsForSession(delSid)
         await this.ctx.sessionService.delete(delSid)
-        this.ctx.send(ws, { type: 'session.deleted', id: msg.id, payload: { sessionId: delSid } })
+        this.ctx.reply(ws, msg.id, 'session.deleted', { sessionId: delSid })
         return this.ctx.broadcastSessionList()
       }
       case 'session.list':
-        return this.ctx.send(ws, { type: 'session.list', id: msg.id, payload: { groups: this.ctx.sessionService.listPersistedSessions() } })
+        return this.ctx.reply(ws, msg.id, 'session.list', { groups: this.ctx.sessionService.listPersistedSessions() })
       case 'session.switch': {
         const switchId = msg.payload.sessionId
         const summary = this.ctx.sessionService.getSummary(switchId)
         if (summary) {
           try {
             const messages = await this.ctx.sessionService.getHistory(switchId)
-            this.ctx.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: switchId, session: summary, messages } })
+            this.ctx.reply(ws, msg.id, 'session.history', { sessionId: switchId, session: summary, messages })
           } catch (e) {
             console.error('[runtime] failed to load history for switch:', e)
-            this.ctx.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: switchId, session: summary, messages: [] } })
+            this.ctx.reply(ws, msg.id, 'session.history', { sessionId: switchId, session: summary, messages: [] })
           }
         } else {
           try {
@@ -54,7 +54,7 @@ export class SessionMessageHandler {
               throw new Error(`Session ${switchId} restored but summary unavailable`)
             }
             const messages = await this.ctx.sessionService.getHistory(switchId)
-            this.ctx.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: switchId, session: restored, messages } })
+            this.ctx.reply(ws, msg.id, 'session.history', { sessionId: switchId, session: restored, messages })
           } catch (e) {
             const errMsg = toErrorMessage(e)
             const isENOENT = isEnoent(e)
@@ -69,11 +69,11 @@ export class SessionMessageHandler {
       }
       case 'session.history': {
         const messages = await this.ctx.sessionService.getHistory(msg.payload.sessionId)
-        return this.ctx.send(ws, { type: 'session.history', id: msg.id, payload: { sessionId: msg.payload.sessionId, messages } })
+        return this.ctx.reply(ws, msg.id, 'session.history', { sessionId: msg.payload.sessionId, messages })
       }
       case 'session.rename': {
         await this.ctx.sessionService.renameSession(msg.payload.sessionId, msg.payload.name)
-        this.ctx.send(ws, { type: 'session.renamed', id: msg.id, payload: { sessionId: msg.payload.sessionId, name: msg.payload.name } })
+        this.ctx.reply(ws, msg.id, 'session.renamed', { sessionId: msg.payload.sessionId, name: msg.payload.name })
         return this.ctx.broadcastSessionList()
       }
       case 'message.send': {
@@ -83,28 +83,28 @@ export class SessionMessageHandler {
         } else {
           await this.ctx.sessionService.sendMessage(sessionId, content)
         }
-        return this.ctx.send(ws, { type: 'message.status', id: msg.id, payload: { sessionId, status: 'sent' } })
+        return this.ctx.reply(ws, msg.id, 'message.status', { sessionId, status: 'sent' })
       }
       case 'message.steer': {
         const steerSid = msg.payload.sessionId
         try {
           await this.ctx.sessionService.steerMessage(steerSid, msg.payload.content)
-          return this.ctx.send(ws, { type: 'message.status', id: msg.id, payload: { sessionId: steerSid, status: 'steered' } })
+          return this.ctx.reply(ws, msg.id, 'message.status', { sessionId: steerSid, status: 'steered' })
         } catch (e) {
           const errMsg = toErrorMessage(e)
           console.error('[runtime] message.steer failed:', errMsg)
-          return this.ctx.send(ws, { type: 'message.error', id: msg.id, payload: { sessionId: steerSid, message: errMsg } })
+          return this.ctx.reply(ws, msg.id, 'message.error', { sessionId: steerSid, message: errMsg })
         }
       }
       case 'message.follow_up': {
         const followSid = msg.payload.sessionId
         try {
           await this.ctx.sessionService.followUpMessage(followSid, msg.payload.content)
-          return this.ctx.send(ws, { type: 'message.status', id: msg.id, payload: { sessionId: followSid, status: 'queued' } })
+          return this.ctx.reply(ws, msg.id, 'message.status', { sessionId: followSid, status: 'queued' })
         } catch (e) {
           const errMsg = toErrorMessage(e)
           console.error('[runtime] message.follow_up failed:', errMsg)
-          return this.ctx.send(ws, { type: 'message.error', id: msg.id, payload: { sessionId: followSid, message: errMsg } })
+          return this.ctx.reply(ws, msg.id, 'message.error', { sessionId: followSid, message: errMsg })
         }
       }
       case 'message.abort':

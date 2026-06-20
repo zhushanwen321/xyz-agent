@@ -116,21 +116,34 @@ export class MessageDispatcher {
   }
 
   async abort(sessionId: string): Promise<void> {
-    const client = this.pm.getClient(sessionId)
-    if (!client) throw new Error(`Session ${sessionId} not found`)
+    const client = this.getClientOrThrow(sessionId, 'abort')
     await client.abort()
   }
 
   async steerMessage(sessionId: string, content: string): Promise<void> {
-    const client = this.pm.getClient(sessionId)
-    if (!client) throw new Error(`[message-dispatcher] steer: session ${sessionId} not active`)
+    const client = this.getClientOrThrow(sessionId, 'steer')
     await client.steer(content)
   }
 
   async followUpMessage(sessionId: string, content: string): Promise<void> {
-    const client = this.pm.getClient(sessionId)
-    if (!client) throw new Error(`[message-dispatcher] followUp: session ${sessionId} not active`)
+    const client = this.getClientOrThrow(sessionId, 'followUp')
     await client.followUp(content)
+  }
+
+  /**
+   * D8: abort/steer/followUp 共享的「getClient → 空抛」骨架（此前 3 处逐行平行，只差方法名）。
+   * @param op 调用方方法名，仅用于构造诊断串。
+   */
+  private getClientOrThrow(sessionId: string, op: 'abort' | 'steer' | 'followUp'): IPiEngine {
+    const client = this.pm.getClient(sessionId)
+    if (!client) {
+      // abort 的历史报错串是 "Session X not found"（无前缀），steer/followUp 带 [message-dispatcher] 前缀。
+      // 保持原样以免破坏依赖报错文本的测试。
+      throw op === 'abort'
+        ? new Error(`Session ${sessionId} not found`)
+        : new Error(`[message-dispatcher] ${op}: session ${sessionId} not active`)
+    }
+    return client
   }
 
   async compact(sessionId: string): Promise<void> {
