@@ -20,6 +20,8 @@ const MB = 1024 * 1024
 // eslint-disable-next-line no-magic-numbers
 const DEFAULT_MAX_SESSION_DATA_BYTES = 10 * MB
 const FLUSH_DEBOUNCE_MS = 500
+/** H1: session-data 持久化子目录名（configDir 下）。提常量消除 4 处魔法串重复。 */
+const SESSION_DATA_DIRNAME = 'session-data'
 
 export class SessionDataStore {
   /** write-back 缓存：分区键 = sessionId，内键 = key，值 = unknown */
@@ -111,7 +113,7 @@ export class SessionDataStore {
   /** 从磁盘恢复所有 sessionData（initialize 时调用） */
   restoreFromDisk(): void {
     try {
-      const sessionDataDir = join(this.configDir, 'session-data')
+      const sessionDataDir = join(this.configDir, SESSION_DATA_DIRNAME)
       if (!existsSync(sessionDataDir)) return
       const files = readdirSync(sessionDataDir)
       for (const file of files) {
@@ -132,7 +134,7 @@ export class SessionDataStore {
   clearSession(sessionId: string): void {
     this.cache.onExternalChange(sessionId)
     // 同步删除磁盘文件：避免删除后 lazy load 把文件内容又读回内存。
-    const filePath = join(this.configDir, 'session-data', `${sessionId}.json`)
+    const filePath = join(this.configDir, SESSION_DATA_DIRNAME, `${sessionId}.json`)
     try {
       rmSync(filePath, { force: true })
     // eslint-disable-next-line taste/no-silent-catch -- clearSession: file may not exist
@@ -150,7 +152,7 @@ export class SessionDataStore {
   // ── Private（WriteBackCache backing 回调） ──────────────────
 
   private loadPartitionSync(sessionId: string): Map<string, unknown> {
-    const filePath = join(this.configDir, 'session-data', `${sessionId}.json`)
+    const filePath = join(this.configDir, SESSION_DATA_DIRNAME, `${sessionId}.json`)
     try {
       const raw = readFileSync(filePath, 'utf-8')
       const parsed = JSON.parse(raw) as Record<string, unknown>
@@ -163,7 +165,7 @@ export class SessionDataStore {
   private persistPartition(sessionId: string, data: Map<string, unknown>): void {
     // sync atomicWrite（与 PluginStorage 一致）。容量检查在 onSet 已拦截，
     // 此处不再重复校验。flush 前会 clearTimeout，同一分区无并发写，固定 .tmp 名安全。
-    const dir = join(this.configDir, 'session-data')
+    const dir = join(this.configDir, SESSION_DATA_DIRNAME)
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
     const filePath = join(dir, `${sessionId}.json`)
     const content = JSON.stringify(Object.fromEntries(data))

@@ -71,7 +71,8 @@ export function ensureSessionFile(filePath: string, id: string, cwd: string, lab
   if (existsSync(filePath)) return
 
   const dir = dirname(filePath)
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  // G3: mkdirSync({recursive:true}) 本就幂等，无需 existsSync 守卫。
+  mkdirSync(dir, { recursive: true })
 
   const header = JSON.stringify({
     type: 'session',
@@ -110,7 +111,8 @@ export function persistSessionName(filePath: string, name: string, id?: string, 
     // 文件不存在时，写完整 header + name 确保 scanPiSessions 能找到
     // （空 session 重命名场景：pi 延迟写入导致文件未创建）
     const dir = dirname(filePath)
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+    // G3: mkdirSync({recursive:true}) 本就幂等，无需 existsSync 守卫。
+    mkdirSync(dir, { recursive: true })
     const timestamp = new Date().toISOString()
     const entries = []
     if (id && cwd) {

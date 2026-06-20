@@ -245,10 +245,9 @@ export function findValidDefaultModel(): {
     console.warn(`[provider-store] defaultProvider "${defaultProvider}" not found in models.json`)
   }
 
-  for (const [providerId, providerConfig] of Object.entries(models.providers)) {
-    if (providerConfig.models && providerConfig.models.length > 0) {
-      return { result: { provider: providerId, modelId: providerConfig.models[0].id }, wasFixed: true }
-    }
+  const fallback = pickFirstModelProvider(models.providers)
+  if (fallback) {
+    return { result: { provider: fallback.provider, modelId: fallback.modelId }, wasFixed: true }
   }
   return { result: null, wasFixed: false }
 }
