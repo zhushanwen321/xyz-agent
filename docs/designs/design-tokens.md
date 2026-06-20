@@ -93,3 +93,29 @@
 - [ ] 落地到 `style.css :root` + `tailwind.config.ts`（见 ADR-0018 修复清单）
 - [x] ~~裁决 impl 变量归一~~（已裁决 ADR-0021-B/选项②，2026-06-20）
 - [ ] 真身落地：① `settingsStore` 初值改 `dark/cold-blue` ② CSS `--section-bg`/`--divider`/`--accent-light` 迁移到 SSOT 名（见 ADR-0021）
+
+## shadcn 命名映射（2026-06-20 收尾）
+
+本地 `components/ui/`（shadcn-vue copy）+ xyz-ui 依赖 shadcn 命名约定（`--primary`/`--secondary`/`--destructive` 等），与本文件 v3 命名（`--accent`/`--surface`/`--danger`）存在 gap，导致 default Button 背景透明（W18）。修复：**别名映射**，不引入新色值，不改 SSOT 原子值。
+
+落地两层：`style.css :root`（CSS 变量）+ `tailwind.config.ts theme.extend.colors`（utility 映射，shadcn class 如 `bg-primary` 经此生成）。
+
+映射表（shadcn → v3）：
+
+| shadcn token | → v3 | 说明 |
+|---|---|---|
+| `--primary` / `--primary-foreground` | `--accent` / `--fg` | default Button 底=主色蓝 |
+| `--secondary` / `--secondary-foreground` | `--surface` / `--fg` | secondary Button 底=面板色 |
+| `--destructive` / `--destructive-foreground` | `--danger` / `--fg` | destructive Button 底=危险红 |
+| `--muted-foreground` | `--muted` | shadcn 次级文字（-foreground 后缀）|
+| `--accent-foreground` | `--fg` | ghost hover 配字 |
+| `--background` / `--foreground` | `--bg` / `--fg` | 画布/主文字 |
+| `--popover` / `--popover-foreground` | `--surface` / `--fg` | 弹层面板 |
+| `--input` | `--border` | input 边框 |
+| `--ring` | `--accent` | focus ring（主色）|
+
+**已知命名冲突（维持 v3，不覆盖）**：
+- `--accent`：v3=主色蓝（强调/品牌，19 处业务代码 + tailwind config 锁定）；shadcn=hover 软底（中性）。语义相反，维持 v3 主色蓝（W01 零回归）。副作用：ghost/outline Button 的 `hover:bg-accent` hover 成主色蓝（既有状态，非本修复引入）。
+- `--muted`：v3=次级文字色（#8a8a95）；shadcn=背景色。维持 v3。副作用：`bg-muted`（仅 `DropdownMenuSeparator` 1px 分隔线用）渲染为 v3 灰——视觉正确。
+
+两项冲突是 shadcn 命名与 v3 命名的根本不兼容，纯 token 别名无法消除；维持 v3 语义保证 W01 零回归，副作用可接受。若未来要 ghost hover 中性化，需在 button variant 改用 `hover:bg-surface-hover`（改组件，非 token 层）。

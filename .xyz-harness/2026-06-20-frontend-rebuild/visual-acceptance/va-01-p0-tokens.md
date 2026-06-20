@@ -86,3 +86,32 @@ priority: ★★★
 - 色值以 design-tokens.md 为准（draft HTML 色值差异忽略，spec G-008）。
 - 暗色闪烁（#9）= FAIL（ADR-0021 强制无闪烁）。
 - PASS 后进 [va-02-p1-shell.md](va-02-p1-shell.md)。
+
+## 补充：xyz-ui token 映射（2026-06-20 收尾）
+
+**问题（W18）**：default Button（variant=default）背景透明。根因：shadcn 命名空间 token（`--primary`/`--secondary`/`--destructive` 等）在 v3 design-tokens（用 `--accent`/`--surface`/`--danger` 命名）中完全未定义，且 `tailwind.config.ts` 未映射 shadcn 颜色 utility → `bg-primary` 等 Tailwind 类不生成，Button cva 的 class 全部失效。
+
+**修复（最小映射，不重构 token 体系）**：
+1. `style.css :root`：补 13 个 shadcn 别名变量，值引用 v3 既有变量（零新色值）
+2. `tailwind.config.ts`：补 shadcn 颜色 utility 映射（primary/secondary/destructive/popover/background/foreground/input/ring/muted-foreground + accent.foreground），让 `bg-primary` 等类生成
+
+**命名冲突处理（维持 v3，不破 W01）**：
+- `--accent`（v3 主色蓝 vs shadcn hover 软底）：维持主色蓝，ghost hover 沿用蓝（既有状态）
+- `--muted`（v3 文字色 vs shadcn 背景色）：维持文字色，`bg-muted` 仅用于 1px 分隔线（视觉正确）
+
+详见 `design-tokens.md`「shadcn 命名映射」节。
+
+**验证（CDP :9222，VITE_MOCK=true，临时元素 probe 法）**：
+- `bg-primary` → `rgb(79,142,247)` = #4f8ef7（accent 蓝，**非透明**）✅
+- `text-primary-foreground` → `rgb(240,240,245)` = #f0f0f5（白）✅
+- `bg-secondary` → `rgb(21,21,25)` = #151519（surface）✅
+- `bg-destructive` → `rgb(239,68,68)` = #ef4444（danger）✅
+- `bg-background` / `text-foreground` / `text-muted-foreground` / `border-input` 全部映射正确 ✅
+- `--accent` 维持 #4f8ef7（W01 零回归）✅
+
+注：probe 法用 default Button 精确 class（`bg-primary text-primary-foreground`，与 button cva default variant 完全相同）验证，等效真实 Button 实例渲染。
+
+**改动文件**：
+- `src-electron/renderer/src/style.css`（:root +13 别名）
+- `src-electron/renderer/tailwind.config.ts`（colors +9 utility 映射 + accent.foreground）
+- `docs/designs/design-tokens.md`（补「shadcn 命名映射」节，SSOT 值不变）

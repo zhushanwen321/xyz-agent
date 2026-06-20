@@ -70,6 +70,31 @@
   --duration-fast: 120ms;
   --duration: 200ms;
   --duration-slow: 320ms;
+
+  /* ── shadcn-vue 命名空间别名 ────────────────────────────
+     xyz-ui / 本地 components/ui（shadcn copy）依赖 shadcn 命名约定
+     （--primary/--secondary/--destructive 等），v3 用 --accent/--surface
+     体系。此处把 shadcn 别名映射到 v3 等价语义，不引入新色值。
+     —— 不覆盖既有 v3 token，只补 shadcn 需要的新名。见 design-tokens.md
+     「shadcn 命名映射」节。
+     已知语义分歧（维持 v3，不破 W01）：
+       • --accent：v3=主色蓝 / shadcn=hover 软底 → 维持主色蓝，
+         ghost·outline 的 hover:bg-accent 沿用主色蓝（既有状态）
+       • --muted：v3=次级文字色 / shadcn=背景色 → 维持文字色 */
+  --primary: var(--accent);            /* default Button 底 = 主色蓝 */
+  --primary-foreground: var(--fg);     /* 蓝底白字 */
+  --secondary: var(--surface);         /* secondary Button 底 */
+  --secondary-foreground: var(--fg);
+  --destructive: var(--danger);        /* destructive Button 底 */
+  --destructive-foreground: var(--fg);
+  --muted-foreground: var(--muted);     /* shadcn 次级文字（-foreground 后缀）*/
+  --accent-foreground: var(--fg);      /* ghost hover 蓝底配字 */
+  --background: var(--bg);             /* bg-background / ring-offset-background */
+  --foreground: var(--fg);             /* text-foreground */
+  --popover: var(--surface);           /* bg-popover */
+  --popover-foreground: var(--fg);
+  --input: var(--border);              /* border-input */
+  --ring: var(--accent);               /* ring-ring（focus，主色）*/
 }
 
 /* ============================================================
