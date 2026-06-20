@@ -14,6 +14,12 @@
 
 set -e
 
+# 检查失败原则提示（合并进 cleanup EXIT trap，避免覆盖）
+__check_principle() {
+  [ $? -ne 0 ] && echo "[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。" >&2
+  return 0
+}
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -156,6 +162,7 @@ done
 # 启动 runtime，等待 ready，发送 health check，清理
 RUNTIME_PID=""
 cleanup() {
+    __check_principle
     if [ -n "$RUNTIME_PID" ] && kill -0 "$RUNTIME_PID" 2>/dev/null; then
         kill "$RUNTIME_PID" 2>/dev/null || true
         wait "$RUNTIME_PID" 2>/dev/null || true

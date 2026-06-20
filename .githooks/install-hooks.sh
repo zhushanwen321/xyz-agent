@@ -108,6 +108,7 @@ if [ -n "$FRONTEND_FILES" ]; then
             if [ $ESLINT_EXIT_CODE -ne 0 ]; then
                 echo -e "${RED}[ERROR] ESLint 检查失败:${NC}"
                 echo "$ESLINT_OUTPUT"
+                echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
                 exit 1
             fi
 
@@ -144,6 +145,7 @@ if [ -n "$FRONTEND_FILES" ]; then
             if ! (cd src-electron/renderer && npx vue-tsc --noEmit 2>&1); then
                 echo ""
                 echo -e "${RED}[ERROR] vue-tsc 类型检查失败${NC}"
+                echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
                 exit 1
             fi
 
@@ -439,6 +441,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_RUNTIME_BUNDLE_CHECK" != "1" ]; the
 
         if [ ! -f "$RUNTIME_BUNDLE_CHECKER" ]; then
             echo -e "${RED}[ERROR] 找不到验证脚本: $RUNTIME_BUNDLE_CHECKER${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
             exit 1
         fi
 
@@ -471,6 +474,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_PREFLIGHT_CHECK" != "1" ]; then
 
         if [ ! -f "$PREFLIGHT_CHECKER" ]; then
             echo -e "${RED}[ERROR] 找不到验证脚本: $PREFLIGHT_CHECKER${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
             exit 1
         fi
 
@@ -492,6 +496,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_PREFLIGHT_CHECK" != "1" ]; then
             if [ $? -ne 0 ]; then
                 echo -e "${RED}[ERROR] Runtime bundle 验证失败（可能需要重新 build）${NC}"
                 echo -e "${YELLOW}[FIX] cd src-electron/runtime && npm run build，然后重新 commit${NC}"
+                echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
                 exit 1
             fi
         fi
