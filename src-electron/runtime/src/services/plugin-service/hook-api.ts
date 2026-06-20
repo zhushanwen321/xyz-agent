@@ -24,6 +24,7 @@ import type {
   Disposable,
 } from './plugin-types.js'
 import { toErrorMessage } from '../../utils/errors.js'
+import { registerHandler, dispatchHandler } from './handler-registry.js'
 
 /** Hook 注册服务依赖（主线程侧） */
 export interface HookService {
@@ -139,26 +140,25 @@ export function createHookApi(
 } {
   const handlers = new Map<string, StoredHandler>()
 
-  // 注册 invoke 通知处理器（主线程回调 Worker 中的 hook handler）
+  // 注册 invoke 通知处理器（主线程回调 Worker 中的 hook handler）（C8: dispatchHandler 统一派发骨架）
   rpcClient.onNotification('plugin.hooks.invoke', (params: unknown) => {
     const p = params as { handlerId: string; context: unknown }
-    const stored = handlers.get(p.handlerId)
-    if (!stored) return
-
-    Promise.resolve(stored.invoke(p.context))
-      .then((result) => {
-        rpcClient
-          .request('plugin.hooks.invoke.result', {
-            handlerId: p.handlerId,
-            result,
-          })
-          .catch((e: unknown) => {
-            console.error('[hook-api] hook invoke result delivery failed:', toErrorMessage(e))
-          })
-      })
-      .catch((e: unknown) => {
-        console.error('[hook-api] hook handler error:', toErrorMessage(e))
-      })
+    dispatchHandler(handlers, p, stored => {
+      Promise.resolve(stored.invoke(p.context))
+        .then((result) => {
+          rpcClient
+            .request('plugin.hooks.invoke.result', {
+              handlerId: p.handlerId,
+              result,
+            })
+            .catch((e: unknown) => {
+              console.error('[hook-api] hook invoke result delivery failed:', toErrorMessage(e))
+            })
+        })
+        .catch((e: unknown) => {
+          console.error('[hook-api] hook handler error:', toErrorMessage(e))
+        })
+    })
   })
 
   /**
@@ -171,7 +171,6 @@ export function createHookApi(
     invoke: (context: unknown) => Promise<unknown>,
   ): Promise<Disposable> {
     const handlerId = `hook_${pluginId}_${++hookCounter}`
-    handlers.set(handlerId, { invoke, original: handler })
 
     await rpcClient.request('plugin.hooks.register', {
       pluginId,
@@ -179,16 +178,13 @@ export function createHookApi(
       handlerId,
     })
 
-    return {
-      dispose: () => {
-        handlers.delete(handlerId)
-        rpcClient
-          .request('plugin.hooks.unregister', { pluginId, hookType, handlerId })
-          .catch((e: unknown) => {
-            console.error('[hook-api] hook unregister failed:', toErrorMessage(e))
-          })
-      },
-    }
+    return registerHandler(handlers, handlerId, { invoke, original: handler }, () => {
+      rpcClient
+        .request('plugin.hooks.unregister', { pluginId, hookType, handlerId })
+        .catch((e: unknown) => {
+          console.error('[hook-api] hook unregister failed:', toErrorMessage(e))
+        })
+    })
   }
 
   return {
