@@ -19,6 +19,7 @@
 | `--accent` | `#4f8ef7` | 主色/链接/聚焦 | C 原始 |
 | `--accent-hover` | `#6ba3ff` | 主色悬停 | 补全 |
 | `--accent-soft` | `rgba(79,142,247,0.12)` | 主色背景填充 | 补全 |
+| `--accent-ring` | `rgba(79,142,247,0.30)` | 选中态内描边（Card-Active `inset 0 0 0 1px`）| workspace/spec.md（draft 间 0.30/0.45/0.50 不一，以 spec 为准）|
 
 ## 状态色（继承 D 的结构，色相对齐冷蓝体系）
 

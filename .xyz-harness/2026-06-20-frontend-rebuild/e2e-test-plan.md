@@ -19,7 +19,9 @@ spec: .xyz-harness/2026-06-20-frontend-rebuild/spec.md
 | L3 api/mock 契约 | api/transport 注入、domains 返回镜像 shared 全字段、mockConnect 4 态机不变量 | vitest | D7 mock 契约、D2 mock 优先 |
 | L4 视觉验收 | draft HTML 像素对齐（P1-P6 每 phase） | **人工**为主，Playwright 可选（v1 不强制） | §4 每 phase 验收基准 |
 
-**严格 v1 边界**：只测 §8.5 v1 in-scope；§9 DEFERRED 项（tool 审批/steer/重命名确认/⌘K/settings 三模式/S3-S4/S7-S9/auto-scroll 高级/auto-scroll 暂停/⌘B 第3态等）**不测**。
+> **L4 已细化**：拆成 8 个按 phase 编号的 VA 文件，见 [`visual-acceptance/`](visual-acceptance/va-00-index.md) 子目录。每个 VA 文件自包含（spec/plan/draft/代码绝对路径 + 对照表 + 执行步骤 + FAIL 规则），AI 读单个文件即可开始对照。下文 §2/§4 的 TS-2~TS-5 / TS-7 视觉部分以 VA 文件为准。
+
+**严格 v1 边界**：只测 §8.5 v1 in-scope；§9 DEFERRED 项（tool 审批/steer/重命名确认/⌘K/settings 三模式/S3-S4/S7-S9/auto-scroll 高级/auto-scroll 暂停/⌘B 第3态等）**不测**（VA 文件中用 🔇 标记，并额外验「入口是否已 hide」）。
 
 ## 2. Test Scenarios（场景 → 验收映射）
 
@@ -45,4 +47,15 @@ spec: .xyz-harness/2026-06-20-frontend-rebuild/spec.md
 
 ## 4. 每 phase 验收触发
 
-P0-P6 每 phase 结束跑对应 TS + L4 人工视觉对照，产出可运行增量后才进下一 phase。TS-7（整体验收）在 P5 完成后首次全量跑，之后每 phase 回归。
+P0-P6 每 phase 结束跑对应 TS + **对应 VA 文件**（[`visual-acceptance/va-0N-*.md`](visual-acceptance/va-00-index.md)）人工视觉对照，产出可运行增量后才进下一 phase。VA 文件与 phase 映射：
+
+| Phase | VA 文件 | Wave |
+|-------|--------|------|
+| P0 | va-01-p0-tokens.md | 1 |
+| P1 | va-02-p1-shell.md | 2 |
+| P2 | va-03-p2-sidebar.md | 3 |
+| P3 | va-04-p3-workspace-panel.md | 3 |
+| P4 | va-05-p4-panel-content.md | 4 |
+| P6 | va-06/07/08（overview/settings/overlays）| 5 |
+
+TS-7（整体验收）在 P5 完成后首次全量跑，之后每 phase 回归。
