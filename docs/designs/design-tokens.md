@@ -28,6 +28,7 @@
 | `--warning` | `#f5a524` | 警告 | 补全 |
 | `--danger` | `#ef4444` | 错误/危险 | 补全 |
 | `--info` | `#38bdf8` | 信息/提示 | 补全 |
+| `--reasoning` | `#a78bfa` | 思考块色相（draft-message-stream §4 + composer 思考等级） | 补全（v3 重建 Wave 1） |
 
 ## 字体
 

@@ -16,7 +16,11 @@ import { getRuntimePort } from '@/lib/ipc'
 /** mock 模式自举 url（ws-client 内部按 isMock 走 mockConnect，url 仅占位） */
 const MOCK_URL = 'mock://bootstrap'
 
-/** 建立 WS 连接（mock 模式 200ms 直进 connected）。幂等：ws-client 已处理重入。 */
+/** 连接超时（ms）—— real 模式 runtime 不可达时避免 Promise 永挂 */
+const CONNECT_TIMEOUT = 10_000
+
+/** 建立 WS 连接（mock 模式 200ms 直进 connected）。幂等：ws-client 已处理重入。
+ *  @throws 超过 CONNECT_TIMEOUT 仍未连接（联调阶段对齐用） */
 export async function connect(): Promise<void> {
   const url = import.meta.env.VITE_MOCK === 'true'
     ? MOCK_URL
@@ -35,13 +39,19 @@ export function on(handler: (msg: ServerMessage) => void): () => void {
   return wsClient.onMessage(handler)
 }
 
-/** 等待 ws-client 进入 connected（mock 200ms；real 取决于 runtime；无超时，由调用方保证） */
+/** 等待 ws-client 进入 connected（mock 200ms；real 取决于 runtime）。
+ *  超时防 Promise 永挂，错误场景有界。 */
 function waitForConnected(): Promise<void> {
   const connState = wsClient.getState()
   if (connState.value === 'connected') return Promise.resolve()
-  return new Promise<void>((resolve) => {
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      stop()
+      reject(new Error(`transport: 连接超时（${CONNECT_TIMEOUT}ms，状态=${connState.value}）`))
+    }, CONNECT_TIMEOUT)
     const stop = watch(connState, (s) => {
       if (s === 'connected') {
+        clearTimeout(timer)
         stop()
         resolve()
       }

@@ -24,8 +24,12 @@ echo -e "${BLUE}======================================${NC}"
 echo ""
 
 # Handle both regular repo (.git dir) and worktree (.git file)
+# [HISTORICAL] bare repo + worktree 模式下，git 读 hook 从 commondir（即 .bare/）的 hooks，
+# 不是 per-worktree 的 git-dir。曾用 --git-dir 导致 hook 写到 worktree 局部目录，git 根本不读，
+# 整个项目的 pre-commit 静默失效（2026-06-20 v3 重建审查发现）。改用 --git-common-dir。
 if [ -f "$PROJECT_ROOT/.git" ]; then
-    GIT_DIR=$(git -C "$PROJECT_ROOT" rev-parse --git-dir)
+    # worktree 模式（.git 是文件）→ 用 commondir（bare repo 根），所有 worktree 共享 hook
+    GIT_DIR=$(git -C "$PROJECT_ROOT" rev-parse --git-common-dir)
     GIT_HOOKS_DIR="$GIT_DIR/hooks"
 elif [ -d "$PROJECT_ROOT/.git" ]; then
     GIT_HOOKS_DIR="$PROJECT_ROOT/.git/hooks"
@@ -48,6 +52,8 @@ cat > "$GIT_HOOKS_DIR/pre-commit" << 'HOOK_EOF'
 #   SKIP_FRONTEND_LINT=1      - 跳过前端 ESLint
 #   SKIP_TYPE_CHECK=1         - 跳过 vue-tsc 类型检查
 #   SKIP_CODE_RULES_CHECK=1   - 跳过自定义代码规范检查
+#   SKIP_CSS_TOKEN_SSOT_CHECK=1 - 跳过 style.css vs design-tokens.md 一致性
+#   SKIP_RENDERER_DEPS_CHECK=1  - 跳过 renderer import vs package.json 完整性
 
 set -e
 
@@ -253,6 +259,67 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_CSS_TOKENS_CHECK" != "1" ]; then
     fi
 else
     echo -e "${YELLOW}[SKIP] CSS tokens 检查已跳过${NC}"
+fi
+
+# ============================================================================
+# CSS token SSOT 一致性检查（style.css vs design-tokens.md）
+# ============================================================================
+
+CSS_SSOT_CHECKER=".githooks/check_css_token_ssot.py"
+CSS_SSOT_FILES="src-electron/renderer/src/style.css docs/designs/design-tokens.md"
+
+if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_CSS_TOKEN_SSOT_CHECK" != "1" ]; then
+    # 仅当 style.css 或 design-tokens.md 变更时才检查
+    SSOT_CHANGED=$(echo "$STAGED_FILES" | grep -E "^src-electron/renderer/src/style\.css$|^docs/designs/design-tokens\.md$" || true)
+    if [ -n "$SSOT_CHANGED" ]; then
+        echo -e "${BLUE}[INFO] 运行 CSS token SSOT 一致性检查...${NC}"
+
+        if [ ! -f "$CSS_SSOT_CHECKER" ]; then
+            echo -e "${YELLOW}[WARN] 找不到检查脚本 $CSS_SSOT_CHECKER${NC}"
+        else
+            python3 "$CSS_SSOT_CHECKER"
+            EXIT_CODE=$?
+
+            if [ $EXIT_CODE -eq 2 ]; then
+                echo ""
+                echo -e "${RED}[ERROR] CSS token SSOT 检查失败：style.css 含 design-tokens.md 未收录的 token${NC}"
+                echo -e "${YELLOW}[INFO] 设置 SKIP_CSS_TOKEN_SSOT_CHECK=1 跳过检查${NC}"
+                exit 1
+            fi
+        fi
+    fi
+else
+    echo -e "${YELLOW}[SKIP] CSS token SSOT 检查已跳过${NC}"
+fi
+
+# ============================================================================
+# Renderer 依赖完整性检查（import vs package.json）
+# ============================================================================
+
+RENDERER_DEPS_CHECKER=".githooks/check_renderer_deps.py"
+
+if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_RENDERER_DEPS_CHECK" != "1" ]; then
+    # 仅当 renderer src 或 package.json 变更时才检查
+    DEPS_CHANGED=$(echo "$STAGED_FILES" | grep -E "^src-electron/renderer/(src/.*\.(ts|vue|tsx)|package\.json)$" || true)
+    if [ -n "$DEPS_CHANGED" ]; then
+        echo -e "${BLUE}[INFO] 运行 Renderer 依赖完整性检查...${NC}"
+
+        if [ ! -f "$RENDERER_DEPS_CHECKER" ]; then
+            echo -e "${YELLOW}[WARN] 找不到检查脚本 $RENDERER_DEPS_CHECKER${NC}"
+        else
+            python3 "$RENDERER_DEPS_CHECKER"
+            EXIT_CODE=$?
+
+            if [ $EXIT_CODE -eq 2 ]; then
+                echo ""
+                echo -e "${RED}[ERROR] Renderer 依赖完整性检查失败：存在 import 了但 package.json 未声明的包${NC}"
+                echo -e "${YELLOW}[INFO] 设置 SKIP_RENDERER_DEPS_CHECK=1 跳过检查${NC}"
+                exit 1
+            fi
+        fi
+    fi
+else
+    echo -e "${YELLOW}[SKIP] Renderer 依赖完整性检查已跳过${NC}"
 fi
 
 # ============================================================================
@@ -481,6 +548,8 @@ echo -e "  ${YELLOW}SKIP_TYPE_CHECK=1${NC}          - 跳过 vue-tsc"
 echo -e "  ${YELLOW}SKIP_CODE_RULES_CHECK=1${NC}   - 跳过代码规范"
 echo -e "  ${YELLOW}SKIP_SIDECAR_SESSION_CHECK=1${NC} - 跳过 session 隔离"
 echo -e "  ${YELLOW}SKIP_CSS_TOKENS_CHECK=1${NC}      - 跳过 CSS tokens"
+echo -e "  ${YELLOW}SKIP_CSS_TOKEN_SSOT_CHECK=1${NC}  - 跳过 CSS token SSOT 一致性"
+echo -e "  ${YELLOW}SKIP_RENDERER_DEPS_CHECK=1${NC}   - 跳过 renderer 依赖完整性"
 echo -e "  ${YELLOW}SKIP_RUNTIME_BUNDLE_CHECK=1${NC}  - 跳过 runtime bundle 验证"
 echo -e "  ${YELLOW}SKIP_PREFLIGHT_CHECK=1${NC}       - 跳过打包配置预检查"
 echo -e "  ${YELLOW}SKIP_ENV_WHITELIST_CHECK=1${NC}   - 跳过 ENV 白名单同步检查"
