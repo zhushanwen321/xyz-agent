@@ -65,7 +65,7 @@ function createMockSessionService(sessions: SessionSummary[] = []): ISessionServ
 /** Create PluginService with injected deps */
 function createService(sessionService?: ISessionService): PluginService {
   const broker = createMockBroker()
-  const registry = new PluginRegistry('/tmp/fake-project')
+  const registry = new PluginRegistry('/tmp/fake-project', '/tmp/fake-project')
   const deps: IPluginServiceDeps = {
     sessionService,
   }
@@ -177,7 +177,7 @@ describe('Session RPC Handlers — real sessionService calls', () => {
 
   it('falls back to stub when sessionService is undefined', async () => {
     const broker = createMockBroker()
-    const registry = new PluginRegistry('/tmp/fake-project')
+    const registry = new PluginRegistry('/tmp/fake-project', '/tmp/fake-project')
     // No deps → sessionService is undefined
     const service = new PluginService(registry, broker)
 

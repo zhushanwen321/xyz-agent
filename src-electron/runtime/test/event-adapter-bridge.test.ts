@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { EventAdapter, type EventAdapterOptions } from '../src/event-adapter.js'
+import { EventAdapter, type EventAdapterOptions } from '../src/infra/pi/event-adapter.js'
 import type { ServerMessage } from '@xyz-agent/shared'
 
 function createAdapter(options?: EventAdapterOptions): {

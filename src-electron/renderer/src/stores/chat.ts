@@ -1,364 +1,210 @@
+/**
+ * Chat store —— messages（按 sessionId 分区）+ isStreaming。
+ *
+ * 依赖方向：无（stores 间禁止互相 import）。
+ *
+ * 响应式策略：messages 是 Map<sessionId, Message[]>，所有变更走「取出 → 新数组 → set」
+ * 的不可变更新，确保 Vue 对 Map 的集合响应性可靠触发（避免就地突变 plain 数组元素
+ * 不触发响应性的陷阱）。
+ *
+ * 块类型覆盖（spec §9 G2-006 契约 + draft-message-stream §4 7 类块）：
+ * - text（message_start/text_delta/complete）—— 主流式路径
+ * - thinking（thinking_start/thinking_delta/thinking_end）—— 折进 trace
+ * - tool_call（tool_call_start/tool_call_end）—— 折进 trace，失败整块红框
+ * - error（message.error / message.complete stopReason:error）—— 挂最后 assistant 块
+ * 历史 fixture（含 summary 收尾 text / 预置 tool_call）由 hydrate 注入，不走流式。
+ */
 import { defineStore } from 'pinia'
-import { reactive, computed } from 'vue'
-import type { Message } from '@xyz-agent/shared'
-import { createSystemNotification } from '../lib/system-notification'
-
-// SystemNotification: local system notification (not from API)
-export interface SystemNotification {
-  id: string
-  role: 'system'
-  status?: string
-  content?: string
-  notificationType?: 'done' | 'alert' | 'info' | 'warning'
-  notificationTitle?: string
-  notificationDescription?: string
-  notificationAction?: string
-  timestamp: number
-}
-
-export type ChatMessage = Message | SystemNotification
-
-/** 类型守卫：判断 ChatMessage 是否为 SystemNotification */
-export function isSystemNotification(msg: ChatMessage): msg is SystemNotification {
-  return 'notificationType' in msg || 'notificationTitle' in msg
-}
-
-// ── Types ──────────────────────────────────────────────────────────
-
-export interface PendingApproval {
-  toolCallId: string
-  toolName: string
-  input: Record<string, unknown>
-  dangerLevel: 'safe' | 'caution' | 'danger'
-  createdAt: number
-}
-
-/** Auto-retry state surfaced by the backend (FR-8) */
-export interface AutoRetryState {
-  active: boolean
-  attempt: number
-  maxAttempts: number
-  delayMs: number
-  errorMessage?: string
-}
-
-/** Message queue surfaced by the backend (FR-8): steering + follow-up lists */
-export interface QueueState {
-  steering: string[]
-  followUp: string[]
-}
-
-/** Per-session chat state partition */
-export interface ChatSessionState {
-  completedMessages: ChatMessage[]
-  streamingMessage: Message | null
-  isGenerating: boolean
-  isLoadingHistory: boolean
-  error: string | null
-  agentViews: Record<string, Message[]>
-  activeAgentId: string
-  pendingApprovals: PendingApproval[]
-  contextUsagePercent: number
-  contextInputTokens: number
-  contextLimit: number
-  tokenUsage: number
-  doneCount: number
-  alertCount: number
-  isCompacting: boolean
-  // ── TUI Bridge Phase 0 (FR-8, FR-9) ───────────────────────
-  /** Pending text to seed the editor (extension:setEditorText) */
-  pendingEditorText?: string
-  /** Active auto-retry state (message.auto_retry_start / _end) */
-  autoRetryState?: AutoRetryState
-  /** Queued steering + follow-up messages (message.queue_update) */
-  queueState?: QueueState
-  /** Thinking level set for this session (session.thinkingLevelSet) */
-  thinkingLevel?: string
-  /** Response model id for this session (FR-8, set by future event) */
-  responseModel?: string
-  /** Pending input text not yet submitted (persists across view switches) */
-  pendingText?: string
-}
-
-// ── Helpers ────────────────────────────────────────────────────────
-
-// ── Magic number constants ────────────────────────────────────
-const PERCENT_MAX = 100
-const PERCENT_SCALE = 1000
-const PERCENT_PRECISION = 10
-
-function createSessionState(): ChatSessionState {
-  return {
-    completedMessages: [],
-    streamingMessage: null,
-    isGenerating: false,
-    isLoadingHistory: false,
-    error: null,
-    agentViews: {},
-    activeAgentId: 'main',
-    pendingApprovals: [],
-    contextUsagePercent: 0,
-    contextInputTokens: 0,
-    contextLimit: 100_000,
-    tokenUsage: 0,
-    doneCount: 0,
-    alertCount: 0,
-    isCompacting: false,
-  }
-}
-
-// ── Store ──────────────────────────────────────────────────────────
+import { ref } from 'vue'
+import type { Message, ServerMessage, ToolCall } from '@xyz-agent/shared'
 
 export const useChatStore = defineStore('chat', () => {
-  // 唯一数据源：按 sessionId 分区
-  const chatSessions = reactive(new Map<string, ChatSessionState>())
+  /** 按 sessionId 分区的消息表（UC-2 隔离） */
+  const messages = ref<Map<string, Message[]>>(new Map())
+  /** 已 hydrate 的 session（避免切换时重复注入历史） */
+  const hydrated = ref<Set<string>>(new Set())
+  const isStreaming = ref(false)
 
-  // ── Session 管理 ────────────────────────────────────────────
+  /** 取指定 session 的消息数组（空时返回空数组，不写入 Map） */
+  function getMessages(sessionId: string): Message[] {
+    return messages.value.get(sessionId) ?? []
+  }
+
+  /** 是否已加载历史（用于决定是否调 api.chat.getHistory） */
+  function isHydrated(sessionId: string): boolean {
+    return hydrated.value.has(sessionId)
+  }
 
   /**
-   * 获取指定 session 的状态分区。如果不存在则自动创建。
-   *
-   * 无条件创建是有意为之：
-   * - 组件 mount 时 ensureSession 依赖此行为确保 state 就绪
-   * - WS 事件可能先于 session 注册到达（延迟消息、重连后重放），
-   *   此时自动创建空 state 容纳事件，避免消息丢失
-   * - removeSession 用于显式清理不再需要的 session
+   * 注入历史消息（首次进入 session 时由 useChat 调用）。
+   * 不可变 set：深拷贝 fixture 避免外部突变污染源数据，标记 hydrated。
    */
-  function getSessionState(sessionId: string): ChatSessionState {
-    if (!chatSessions.has(sessionId)) {
-      chatSessions.set(sessionId, createSessionState())
-    }
-    return chatSessions.get(sessionId)!
+  function hydrate(sessionId: string, history: Message[]): void {
+    if (hydrated.value.has(sessionId)) return
+    const cloned = history.map((m) => ({ ...m }))
+    messages.value.set(sessionId, cloned)
+    hydrated.value = new Set(hydrated.value).add(sessionId)
   }
 
-  function ensureSession(sessionId: string): void {
-    getSessionState(sessionId)
-  }
-
-  function removeSession(sessionId: string): void {
-    chatSessions.delete(sessionId)
-  }
-
-  // ── Store 级 computed（跨 session 聚合）────────────────────
-
-  const allAgentOptions = computed(() => [
-    { id: 'main', label: '主线对话', color: 'var(--success)' },
-  ])
-
-  // ── 消息操作（全部要求显式 sessionId）──────────────────────
-
-  function addMessage(msg: ChatMessage, sessionId: string) {
-    const s = getSessionState(sessionId)
-    s.completedMessages = [...s.completedMessages, msg]
-  }
-
-  function setStreaming(msg: Message | null, sessionId: string) {
-    getSessionState(sessionId).streamingMessage = msg
-  }
-
-  function appendToStreaming(delta: string, sessionId: string) {
-    const s = getSessionState(sessionId)
-    if (s.streamingMessage) {
-      s.streamingMessage = {
-        ...s.streamingMessage,
-        content: s.streamingMessage.content + delta,
-      }
-    }
-  }
-
-  function completeStreaming(opts: { keepGenerating?: boolean; stopReason?: string; errorMessage?: string } | undefined, sessionId: string) {
-    const s = getSessionState(sessionId)
-    if (s.streamingMessage) {
-      const completedAt = Date.now()
-      // 收尾：标记未完成的 tool calls 为 completed，折叠未结束的 thinking blocks
-      const cleaned: Message = {
-        ...s.streamingMessage,
+  /** 追加 user 消息（构造完整 Message，立即 complete） */
+  function appendUser(sessionId: string, text: string): void {
+    const prev = messages.value.get(sessionId) ?? []
+    messages.value.set(sessionId, [
+      ...prev,
+      {
+        id: `u-${crypto.randomUUID()}`,
+        role: 'user',
+        content: text,
         status: 'complete',
-        toolCalls: s.streamingMessage.toolCalls?.map(tc =>
-          tc.status === 'running' ? { ...tc, status: 'completed' as const, endTime: tc.endTime ?? completedAt } : tc
-        ),
-        thinking: s.streamingMessage.thinking?.map(th =>
-          th.collapsed
-            ? { ...th, endTime: th.endTime ?? completedAt }
-            : { ...th, collapsed: true, endTime: th.endTime ?? completedAt }
-        ),
-      }
-      // DESIGN: only 'aborted' sets isInterrupted. Other stopReasons (complete/error/length/tool_use)
-      // represent normal termination and don't need visual interruption markers.
-      if (opts?.stopReason === 'aborted') {
-        cleaned.isInterrupted = true
-      }
-      s.completedMessages = [...s.completedMessages, cleaned]
-      s.streamingMessage = null
-    } else if (opts?.stopReason === 'error') {
-      // pi 返回错误但没有发送任何流式内容（如 Connection error）
-      // 插入一条可见的错误通知，避免前端静默吞错
-      // 显式清空 streamingMessage（理论上已是 null，确保任何状态不一致时也能重置）
-      s.streamingMessage = null
-      const errorDetail = opts?.errorMessage || '请求失败，请检查模型配置'
-      s.completedMessages = [...s.completedMessages, {
-        ...createSystemNotification('alert', errorDetail),
-        content: errorDetail,
-        status: 'error',
-      }]
-    }
-    if (!opts?.keepGenerating) {
-      s.isGenerating = false
-    }
+        timestamp: Date.now(),
+      },
+    ])
   }
 
-  function setGenerating(v: boolean, sessionId: string) {
-    getSessionState(sessionId).isGenerating = v
-  }
-
-  function replaceMessages(msgs: ChatMessage[], sessionId: string) {
-    const s = getSessionState(sessionId)
-    s.completedMessages = msgs
-    s.isLoadingHistory = false
-    // Restore context/token data from the latest assistant message with usage
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      const msg = msgs[i]
-      if (!isSystemNotification(msg) && msg.role === 'assistant' && msg.usage) {
-        s.contextInputTokens = msg.usage.inputTokens
-        s.tokenUsage = msg.usage.inputTokens + msg.usage.outputTokens
-        s.contextUsagePercent = Math.min(PERCENT_MAX, Math.round((s.contextInputTokens / s.contextLimit) * PERCENT_SCALE) / PERCENT_PRECISION)
+  /**
+   * 按 ServerMessage.type 追加 assistant 流式 chunk（text/thinking/tool_call/error）。
+   * - message.message_start → 新建 streaming assistant message
+   * - message.text_delta → 文本追加到最后一条 assistant message
+   * - message.thinking_* → thinking 块管理
+   * - message.tool_call_* → toolCall 块管理
+   * - message.complete → 标记 complete（stopReason:error → status:error）
+   * - message.error → 标记 error
+   */
+  function appendAssistantChunk(sessionId: string, msg: ServerMessage): void {
+    const prev = messages.value.get(sessionId) ?? []
+    switch (msg.type) {
+      case 'message.message_start': {
+        const messageId = readString(msg.payload, 'messageId') ?? `a-${crypto.randomUUID()}`
+        messages.value.set(sessionId, [
+          ...prev,
+          {
+            id: messageId,
+            role: 'assistant',
+            content: '',
+            status: 'streaming',
+            timestamp: Date.now(),
+          },
+        ])
         break
       }
+      case 'message.text_delta': {
+        const idx = findLastAssistantIndex(prev)
+        if (idx < 0) return
+        const delta = readString(msg.payload, 'delta') ?? ''
+        const next = [...prev]
+        next[idx] = { ...next[idx], content: next[idx].content + delta }
+        messages.value.set(sessionId, next)
+        break
+      }
+      case 'message.thinking_start': {
+        const idx = findLastAssistantIndex(prev)
+        if (idx < 0) return
+        const blockId = readString(msg.payload, 'thinkingId') ?? `th-${crypto.randomUUID()}`
+        const next = [...prev]
+        const thinking = [...(next[idx].thinking ?? []), { id: blockId, content: '', collapsed: true }]
+        next[idx] = { ...next[idx], thinking }
+        messages.value.set(sessionId, next)
+        break
+      }
+      case 'message.thinking_delta': {
+        const idx = findLastAssistantIndex(prev)
+        if (idx < 0) return
+        const delta = readString(msg.payload, 'delta') ?? ''
+        const next = [...prev]
+        const thinking = [...(next[idx].thinking ?? [])]
+        const last = thinking[thinking.length - 1]
+        if (last) thinking[thinking.length - 1] = { ...last, content: last.content + delta }
+        next[idx] = { ...next[idx], thinking }
+        messages.value.set(sessionId, next)
+        break
+      }
+      case 'message.tool_call_start': {
+        const idx = findLastAssistantIndex(prev)
+        if (idx < 0) return
+        const callId = readString(msg.payload, 'toolCallId') ?? `tc-${crypto.randomUUID()}`
+        const toolName = readString(msg.payload, 'toolName') ?? 'tool'
+        const call: ToolCall = {
+          id: callId,
+          toolName,
+          input: msg.payload.input ?? {},
+          status: 'running',
+          startTime: Date.now(),
+        }
+        const next = [...prev]
+        const toolCalls = [...(next[idx].toolCalls ?? []), call]
+        next[idx] = { ...next[idx], toolCalls }
+        messages.value.set(sessionId, next)
+        break
+      }
+      case 'message.tool_call_end': {
+        const idx = findLastAssistantIndex(prev)
+        if (idx < 0) return
+        const callId = readString(msg.payload, 'toolCallId')
+        const next = [...prev]
+        const toolCalls = (next[idx].toolCalls ?? []).map((c) =>
+          c.id === callId
+            ? {
+              ...c,
+              output: readString(msg.payload, 'output') ?? c.output,
+              status: (readString(msg.payload, 'status') as ToolCall['status']) ?? 'completed',
+              endTime: Date.now(),
+            }
+            : c,
+        )
+        next[idx] = { ...next[idx], toolCalls }
+        messages.value.set(sessionId, next)
+        break
+      }
+      case 'message.complete': {
+        const idx = findLastAssistantIndex(prev)
+        if (idx < 0) return
+        const last = prev[idx]
+        if (last.status !== 'streaming') return
+        const stopReason = readString(msg.payload, 'stopReason')
+        const next = [...prev]
+        next[idx] = { ...last, status: stopReason === 'error' ? 'error' : 'complete' }
+        messages.value.set(sessionId, next)
+        break
+      }
+      case 'message.error': {
+        const idx = findLastAssistantIndex(prev)
+        if (idx < 0) return
+        const next = [...prev]
+        next[idx] = { ...next[idx], status: 'error' }
+        messages.value.set(sessionId, next)
+        break
+      }
+      default:
+        return
     }
   }
 
-  function setLoadingHistory(v: boolean, sessionId: string) {
-    getSessionState(sessionId).isLoadingHistory = v
-  }
-
-  function addPendingApproval(pending: PendingApproval, sessionId: string) {
-    const s = getSessionState(sessionId)
-    s.pendingApprovals = [...s.pendingApprovals, pending]
-  }
-
-  function removePendingApproval(toolCallId: string, sessionId: string) {
-    const s = getSessionState(sessionId)
-    s.pendingApprovals = s.pendingApprovals.filter(p => p.toolCallId !== toolCallId)
-  }
-
-  // ── 状态 / 上下文 ──────────────────────────────────────────
-
-  function updateContextInfo(usagePercent: number, inputTokens: number, ctxLimit: number, sessionId: string) {
-    const s = getSessionState(sessionId)
-    s.contextUsagePercent = usagePercent
-    s.contextInputTokens = inputTokens
-    s.contextLimit = ctxLimit
-  }
-
-  function setError(err: string | null, sessionId: string) {
-    getSessionState(sessionId).error = err
-  }
-
-  function switchAgent(agentId: string, sessionId: string) {
-    getSessionState(sessionId).activeAgentId = agentId
-  }
-
-  function setTokenUsage(usage: number, sessionId: string) {
-    getSessionState(sessionId).tokenUsage = usage
-  }
-
-  function setDoneCount(n: number, sessionId: string) {
-    getSessionState(sessionId).doneCount = n
-  }
-
-  function setAlertCount(n: number, sessionId: string) {
-    getSessionState(sessionId).alertCount = n
-  }
-
-  function setCompacting(v: boolean, sessionId: string) {
-    getSessionState(sessionId).isCompacting = v
-  }
-
-  // ── TUI Bridge Phase 0 setters (FR-8, FR-9) ─────────────────
-
-  /** Set pending editor text (extension:setEditorText). Undefined clears. */
-  function setPendingEditorText(text: string | undefined, sessionId: string) {
-    getSessionState(sessionId).pendingEditorText = text
-  }
-
-  /** Set auto-retry state (message.auto_retry_start / _end). */
-  function setAutoRetryState(state: AutoRetryState | undefined, sessionId: string) {
-    getSessionState(sessionId).autoRetryState = state
-  }
-
-  /** Set queue state (message.queue_update). */
-  function setQueueState(state: QueueState | undefined, sessionId: string) {
-    getSessionState(sessionId).queueState = state
-  }
-
-  /** Set thinking level (session.thinkingLevelSet). */
-  function setThinkingLevel(level: string | undefined, sessionId: string) {
-    getSessionState(sessionId).thinkingLevel = level
-  }
-
-  /** Set response model id for the session (FR-8). */
-  function setResponseModel(model: string | undefined, sessionId: string) {
-    getSessionState(sessionId).responseModel = model
-  }
-
-  /** Set pending input text (persists across view switches). */
-  function setPendingText(text: string | undefined, sessionId: string) {
-    getSessionState(sessionId).pendingText = text
-  }
-
-  /** Get pending input text for a session. */
-  function getPendingText(sessionId: string): string {
-    return getSessionState(sessionId).pendingText ?? ''
-  }
-
-  // ── 流式消息高层生命周期方法（已内联到 useChat handlers，仅保留 completeStream / abortStream） ──
-
-  /** 完成流式消息，自动重置 isGenerating */
-  function completeStream(opts: { stopReason?: string; errorMessage?: string }, sid: string) {
-    completeStreaming(opts ?? undefined, sid)
-  }
-
-  /** 终止流式消息（统一封装 reset 三步 + 可选错误通知） */
-  function abortStream(sid: string, errorMsg?: string) {
-    setGenerating(false, sid)
-    setStreaming(null, sid)
-    setError(null, sid)
-    if (errorMsg) {
-      addMessage({
-        ...createSystemNotification('alert', errorMsg),
-        content: errorMsg,
-        status: 'error',
-      }, sid)
-    }
+  function setStreaming(value: boolean): void {
+    isStreaming.value = value
   }
 
   return {
-    // State
-    chatSessions,
-
-    // Session 管理
-    getSessionState, ensureSession, removeSession,
-
-    // Store 级 computed
-    allAgentOptions,
-
-    // 消息操作
-    addMessage, setStreaming, appendToStreaming,
-    completeStreaming, setGenerating,
-    replaceMessages, addPendingApproval, removePendingApproval,
-
-    // 状态
-    updateContextInfo, setError, switchAgent,
-    setTokenUsage, setDoneCount, setAlertCount, setCompacting,
-    setLoadingHistory,
-
-    // TUI Bridge Phase 0 setters (FR-8, FR-9)
-    setPendingEditorText, setAutoRetryState, setQueueState,
-    setThinkingLevel, setResponseModel,
-    // Pending text
-    setPendingText, getPendingText,
-
-    // 流式消息方法
-    completeStream, abortStream,
+    messages,
+    isStreaming,
+    getMessages,
+    isHydrated,
+    hydrate,
+    appendUser,
+    appendAssistantChunk,
+    setStreaming,
   }
 })
+
+/** 从后往前找最后一条 assistant message 的下标 */
+function findLastAssistantIndex(list: Message[]): number {
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    if (list[i].role === 'assistant') return i
+  }
+  return -1
+}
+
+/** 安全读取 payload 字符串字段（payload 是 Record<string, unknown>） */
+function readString(payload: Record<string, unknown>, key: string): string | undefined {
+  const v = payload[key]
+  return typeof v === 'string' ? v : undefined
+}

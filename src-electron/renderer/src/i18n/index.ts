@@ -16,7 +16,7 @@ const i18n = createI18n({
   },
 })
 
-export function setLocale(locale: Locale) {
+export function setLocale(locale: Locale): void {
   i18n.global.locale.value = locale
   localStorage.setItem('xyz-agent-locale', locale)
 }

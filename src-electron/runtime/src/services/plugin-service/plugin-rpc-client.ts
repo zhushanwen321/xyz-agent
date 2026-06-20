@@ -8,6 +8,9 @@
 
 import type { RpcResponse, RpcNotification, RpcRequest } from './plugin-types.js'
 import { PluginRpcErrorCodes } from './plugin-types.js'
+import { PendingTracker } from '../../utils/async/pending-tracker.js'
+import { errorWithCode } from '../../utils/errors.js'
+import { getOrCreate } from '../../utils/collections.js'
 
 const DEFAULT_TIMEOUT_MS = 30_000
 
@@ -16,15 +19,10 @@ export interface ClientPort {
   postMessage(message: unknown): void
 }
 
-interface PendingEntry {
-  resolve: (value: unknown) => void
-  reject: (reason: unknown) => void
-  timer: ReturnType<typeof setTimeout>
-}
-
 export class PluginRpcClient {
   private nextId = 1
-  private pending = new Map<number, PendingEntry>()
+  // D15/D25: 请求/回复登记表收编为 PendingTracker（超时 reject 带 .code）。
+  private pending = new PendingTracker<number, unknown>()
   private notificationHandlers = new Map<string, Set<(params: unknown) => void>>()
   private port: ClientPort | null = null
 
@@ -40,30 +38,30 @@ export class PluginRpcClient {
    * `{ type: 'rpc', jsonrpc: '2.0', id, method, params }`
    */
   request(method: string, params: Record<string, unknown>, timeoutMs: number = DEFAULT_TIMEOUT_MS): Promise<unknown> {
-    return new Promise((resolve, reject) => {
-      if (!this.port) {
-        reject(new Error('RPC client not attached'))
-        return
-      }
+    if (!this.port) {
+      return Promise.reject(new Error('RPC client not attached'))
+    }
 
-      const id = this.nextId++
-      const timer = setTimeout(() => {
-        this.pending.delete(id)
-        reject(Object.assign(new Error(`RPC timeout: ${method}`), { code: PluginRpcErrorCodes.RPC_TIMEOUT }))
-      }, timeoutMs)
+    const id = this.nextId++
+    const timeoutError = Object.assign(
+      new Error(`RPC timeout: ${method}`),
+      { code: PluginRpcErrorCodes.RPC_TIMEOUT },
+    )
 
-      this.pending.set(id, { resolve, reject, timer })
+    // 先登记 pending（含超时 timer），再 postMessage。
+    const promise = this.pending.register(id, timeoutMs, timeoutError)
 
-      // WorkerToHostMessage: { type: 'rpc' } & RpcRequest
-      const message: RpcRequest & { type: 'rpc' } = {
-        type: 'rpc',
-        jsonrpc: '2.0',
-        id,
-        method,
-        params,
-      }
-      this.port.postMessage(message)
-    })
+    // WorkerToHostMessage: { type: 'rpc' } & RpcRequest
+    const message: RpcRequest & { type: 'rpc' } = {
+      type: 'rpc',
+      jsonrpc: '2.0',
+      id,
+      method,
+      params,
+    }
+    this.port.postMessage(message)
+
+    return promise
   }
 
   /** 发送通知（无 id，不期望响应） */
@@ -84,11 +82,7 @@ export class PluginRpcClient {
    * 主线程通过 HostToWorkerMessage.rpc.notification 发送通知。
    */
   onNotification(method: string, handler: (params: unknown) => void): () => void {
-    let handlers = this.notificationHandlers.get(method)
-    if (!handlers) {
-      handlers = new Set()
-      this.notificationHandlers.set(method, handlers)
-    }
+    const handlers = getOrCreate(this.notificationHandlers, method, () => new Set())
     handlers.add(handler)
     return () => {
       handlers!.delete(handler)
@@ -98,16 +92,12 @@ export class PluginRpcClient {
 
   /** 处理来自主线程的 RPC 响应（PluginHost 从 HostToWorkerMessage 中提取后调用） */
   handleResponse(response: RpcResponse): void {
-    const entry = this.pending.get(response.id)
-    if (!entry) return
-
-    clearTimeout(entry.timer)
-    this.pending.delete(response.id)
-
     if ('error' in response) {
-      entry.reject(Object.assign(new Error(response.error.message), { code: response.error.code }))
+      // reply-error：code 来自响应，由调用方构造 error 后交给 tracker 拒绝。
+      // reply-error：code 来自响应，由调用方构造 error 后交给 tracker 拒绝。
+      this.pending.reject(response.id, errorWithCode(response.error.message, response.error.code))
     } else {
-      entry.resolve(response.result)
+      this.pending.resolve(response.id, response.result)
     }
   }
 
@@ -122,11 +112,7 @@ export class PluginRpcClient {
   }
 
   dispose(): void {
-    for (const entry of this.pending.values()) {
-      clearTimeout(entry.timer)
-      entry.reject(new Error('RPC client disposed'))
-    }
-    this.pending.clear()
+    this.pending.rejectAll(new Error('RPC client disposed'))
     this.notificationHandlers.clear()
     this.port = null
   }

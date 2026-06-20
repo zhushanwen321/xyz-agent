@@ -1,5 +1,5 @@
 export interface PanelLeaf {
-  type: 'pane'
+  type: 'panel'
   id: string
   sessionId: string | null
 }

@@ -17,51 +17,25 @@ import type {
   ScannedSkillInfo,
   ScannedAgentInfo,
 } from '@xyz-agent/shared'
-import type { PiEventListener } from './rpc-client.js'
+import type { IPiEngine, PiEventListener } from './services/ports/pi-engine.js'
+import type { IManagedSessionView, ScannedSession } from './services/session/types.js'
 
-// ── IRpcClient ────────────────────────────────────────────────────
-
-/** pi subprocess RPC client — high-level command API. */
-export interface IRpcClient {
-  prompt(content: string): Promise<unknown>
-  abort(): Promise<unknown>
-  setModel(provider: string, modelId: string): Promise<unknown>
-  getHistory(): Promise<unknown>
-  compact(): Promise<unknown>
-  clear(): Promise<unknown>
-  sendCommand(type: string, params?: Record<string, unknown>, timeout?: number): Promise<unknown>
-  getCommands(): Promise<unknown>
-  onEvent(listener: PiEventListener): () => void
-  onExit(callback: (code: number | null) => void): void
-  readonly exited: boolean
-  kill(): Promise<void>
-  start(): Promise<void>
-  setThinkingLevel(level: string): Promise<unknown>
-  steer(content: string): Promise<unknown>
-  followUp(content: string): Promise<unknown>
-}
-
-// ── IProcessManager ───────────────────────────────────────────────
-
-/** pi subprocess lifecycle manager. */
-export interface IProcessManager {
-  createSession(sessionId: string, cwd: string, options?: {
-    cwd?: string
-    provider?: string
-    model?: string
-    env?: Record<string, string>
-    skillPaths?: string[]
-    extensionPaths?: string[]
-    piCommand?: string
-  }): Promise<IRpcClient>
-  destroySession(sessionId: string): Promise<void>
-  getClient(sessionId: string): IRpcClient | undefined
-  getSessionIdByClient(client: IRpcClient): string | undefined
-  hasClient(sessionId: string): boolean
-  rekey(oldId: string, newId: string): void
-  onSessionExit(callback: (sessionId: string, code: number | null) => void): void
-  destroyAll(): Promise<void>
-}
+/**
+ * pi 引擎 / 进程池 port 的权威定义在 services/ports/pi-engine.ts（D24 收口）。
+ *
+ * 历史上 IRpcClient（engine 的重复定义）与 IProcessManager 都在本文件，
+ * 现已迁移到 ports/。此处仅 re-export，保留 interfaces.ts 作为「跨服务 facade
+ * 契约」入口的同时，避免下游大量 import 改动一次性断裂。新代码请直接从
+ * services/ports/pi-engine.js 导入。
+ *
+ * @deprecated 从 services/ports/pi-engine.js 导入 IPiEngine / IProcessManager。
+ */
+export type { IPiEngine, IProcessManager } from './services/ports/pi-engine.js'
+/**
+ * IRpcClient 是 IPiEngine 的兼容别名（D24 合并遗留）。
+ * @deprecated 改用 IPiEngine（见 services/ports/pi-engine.js）。
+ */
+export type IRpcClient = IPiEngine
 
 // ── IMessageBroker ────────────────────────────────────────────────
 
@@ -74,7 +48,8 @@ export interface IProcessManager {
 export interface IMessageBroker {
   send(ws: unknown, msg: ServerMessage): void
   broadcast(msg: ServerMessage): void
-  sendError(ws: unknown, code: string, message: string, id?: string, sessionId?: string): void
+  /** D10/P0-B: 第 5 参数从 sessionId(string) 改为 details(ErrorDetails)，sessionId 进 details.sessionId。 */
+  sendError(ws: unknown, code: string, message: string, id?: string, details?: { sessionId?: string; [key: string]: unknown }): void
 }
 
 // ── IEventAdapter ─────────────────────────────────────────────────
@@ -126,6 +101,53 @@ export interface ISessionService {
   followUpMessage(sessionId: string, content: string): Promise<void>
 }
 
+// ── ISessionServiceInternal ───────────────────────────────────────
+
+/**
+ * Facade 暴露给 session/ 子模块(lifecycle / dispatcher / scanner)的内部协议。
+ *
+ * 放在 interfaces.ts(独立文件)而非 session-service.ts,是为了打断模块级循环:
+ * 子模块 `import type { ISessionServiceInternal } from '../../interfaces.js'`,
+ * Facade `implements` 此接口 —— 子模块 → 接口 → Facade 单向,无 import 环。
+ * (运行期 Facade 调子模块、子模块经接口回调 Facade 是调用环,非依赖环。)
+ *
+ * sessions Map 单写者:Facade 唯一持有,子模块只经此接口拿到元素引用做字段更新,
+ * 不直接 new / 持有 Map。
+ */
+export interface ISessionServiceInternal {
+  // ── lifecycle 使用的共享 helper ──
+  /** 初始化 ManagedSession 并写入 sessions Map,返回子模块可见视图。 */
+  initializeManagedSession(id: string, client: IRpcClient, cwd: string, label: string, sessionFilePath?: string): Promise<IManagedSessionView>
+  /** Detach adapter + 退订 usage listener(按 id 查 Map)。 */
+  detachSession(sessionId: string): void
+  /** 将 ManagedSession 转为对外 SessionSummary(含 git 信息)。 */
+  toSummary(s: IManagedSessionView): SessionSummary
+  /** 从 scanPiSessions 结果中按 id 查找持久化 session。 */
+  findScannedSession(sessionId: string): ScannedSession | undefined
+  /** 收集有效的 skill 路径(pi-config-bridge + 存在性过滤)。 */
+  getSkillPaths(cwd: string): string[]
+  /** 收集有效的 extension 路径(经 ExtensionService)。 */
+  getExtensionPaths(): Promise<string[]>
+
+  // ── dispatcher 使用 ──
+  /** 确保会话活跃,必要时自动 restore。 */
+  ensureActive(sessionId: string): Promise<IRpcClient>
+  /** 按 RPC client 反查 managed session(更新 lastActiveAt / isGenerating 用)。 */
+  getSessionByClient(client: IRpcClient): IManagedSessionView | undefined
+
+  // ── lifecycle 使用(Map 单写者:查/删经 Facade)──
+  /** 只读查 Map,返回 managed session 视图(active 判定 + 字段读改)。 */
+  getSession(sessionId: string): IManagedSessionView | undefined
+  /** 从 Map 删除条目(仅删条目,不 detach adapter / 不 destroy 进程)。 */
+  removeSessionEntry(sessionId: string): void
+
+  // ── scanner 使用 ──
+  /** 当前活跃会话的 summary 列表(已含 git 信息)。 */
+  getActiveSummaries(): SessionSummary[]
+  /** 当前活跃会话占用的 session 文件路径集合(去重用)。 */
+  getActiveFilePaths(): Set<string>
+}
+
 // ── IConfigService ────────────────────────────────────────────────
 
 /** Provider / Skill / Agent CRUD and tool permissions. */
@@ -154,6 +176,10 @@ export interface IConfigService {
   deleteAgent(agentId: string): void
   scanSkills(sources: string[], existingIds: Set<string>): ScannedSkillInfo[]
   scanAgents(sources: string[], existingIds: Set<string>): ScannedAgentInfo[]
+  /** pi agent 配置目录（settings.json/agents/skills 所在地）。 */
+  getPiAgentDir(): string
+  /** xyz-agent 配置根目录（~/.xyz-agent/，plugins/session-data 所在地）。 */
+  getConfigDir(): string
 }
 
 // ── IExtensionService ──────────────────────────────────────────────

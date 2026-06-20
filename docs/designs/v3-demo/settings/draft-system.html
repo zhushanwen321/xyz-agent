@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark" data-palette="cold-blue">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Settings · System · draft-system</title>
+<!-- SVG symbol 图标（design-system §6：stroke 1.5 / currentColor，禁 emoji 作功能图标） -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-sys" viewBox="0 0 24 24"><path d="M12 2.5a2 2 0 0 1 1.9 1.4l.5 1.6a7.5 7.5 0 0 1 1.5.9l1.6-.5a2 2 0 0 1 2.4 1l.9 1.6a2 2 0 0 1-.5 2.5l-1.3 1a7.6 7.6 0 0 1 0 1.8l1.3 1a2 2 0 0 1 .5 2.5l-.9 1.6a2 2 0 0 1-2.4 1l-1.6-.5a7.5 7.5 0 0 1-1.5.9l-.5 1.6a2 2 0 0 1-1.9 1.4h-.4a2 2 0 0 1-1.9-1.4l-.5-1.6a7.5 7.5 0 0 1-1.5-.9l-1.6.5a2 2 0 0 1-2.4-1l-.9-1.6a2 2 0 0 1 .5-2.5l1.3-1a7.6 7.6 0 0 1 0-1.8l-1.3-1a2 2 0 0 1-.5-2.5l.9-1.6a2 2 0 0 1 2.4-1l1.6.5a7.5 7.5 0 0 1 1.5-.9l.5-1.6A2 2 0 0 1 11.8 2.5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-palette" viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 0 0 18c1.2 0 2-.9 2-2 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.1 0-.9.7-1.7 1.7-1.7H16a5 5 0 0 0 5-5c0-3.9-4-7-9-7z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="7.5" cy="11" r="1.1" fill="currentColor"/><circle cx="12" cy="8" r="1.1" fill="currentColor"/><circle cx="16.5" cy="11" r="1.1" fill="currentColor"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M11 11l8 8M16 16l2-2M14 18l2-2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l5 5L20 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
+  <symbol id="i-auto" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M12 3v18" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor" opacity="0.9"/></symbol>
+  <symbol id="i-provider" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="7" cy="7" r="0.9" fill="currentColor"/><circle cx="7" cy="17" r="0.9" fill="currentColor"/></symbol>
+  <symbol id="i-skill" viewBox="0 0 24 24"><path d="M12 3l2.2 5.3L20 10l-5.8 1.7L12 17l-2.2-5.3L4 10l5.8-1.7z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
+  <symbol id="i-agent" viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="12" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="9" cy="13" r="1.2" fill="currentColor"/><circle cx="15" cy="13" r="1.2" fill="currentColor"/><path d="M12 3v4M8 19v2M16 19v2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-ext" viewBox="0 0 24 24"><path d="M9 3v6M15 3v6M9 15v6M15 15v6M3 9h6M3 15h6M15 9h6M15 15h6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="9" y="9" width="6" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-system" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="16" cy="7" r="2.2" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="17" r="2.2" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+</svg>
+<style>
+  /* ============================================================
+     TOKEN 体系（核心：data-theme + data-palette 属性驱动整套色）
+     —— 对齐真身 settings.ts applyTheme()/setThemePreset()
+     impl 用 --section-bg / --divider / --accent-light（design-tokens.md 无），
+     本 draft 按 handoff §13 决议①：做成 design-tokens 别名（统一源头），
+     其中 --accent-light 用 color-mix 派生 → 10 palette 各只覆盖 --accent 即可。
+     ============================================================ */
+  :root, html[data-theme="dark"]{
+    --bg:#0d0d0f; --surface:#151519; --surface-2:#1b1b20; --surface-hover:#1f1f26;
+    --fg:#f0f0f5; --muted:#8a8a95; --subtle:#5a5a65;
+    --border:rgba(255,255,255,0.06); --border-strong:rgba(255,255,255,0.12);
+    --accent:#4f8ef7; --accent-hover:#6ba3ff;
+    --success:#22c55e; --warning:#f5a524; --danger:#ef4444; --info:#38bdf8;
+    /* impl token 别名（§13 裂缝决议①） */
+    --section-bg:var(--surface);          /* = design-tokens --surface */
+    --divider:var(--border);              /* = design-tokens --border */
+    --accent-light:color-mix(in oklch,var(--accent) 15%,transparent);  /* 派生，跟 --accent 走 */
+    --accent-soft:color-mix(in oklch,var(--accent) 13%,transparent);
+    --radius-sm:3px; --radius:8px; --radius-lg:12px;
+    --shadow-2:0 8px 24px rgba(0,0,0,0.4);
+    --ease:cubic-bezier(0.4,0,0.2,1); --duration-fast:120ms; --duration:200ms;
+    --font-sans:Inter,'SF Pro Display','PingFang SC',system-ui,sans-serif;
+    --font-mono:'JetBrains Mono','IBM Plex Mono',ui-monospace,Menlo,monospace;
+  }
+  html[data-theme="light"]{
+    --bg:#f8f9fb; --surface:#ffffff; --surface-2:#f1f3f6; --surface-hover:#e9ecef;
+    --fg:#0d0d0f; --muted:#5a5a65; --subtle:#8a8a95;
+    --border:rgba(0,0,0,0.08); --border-strong:rgba(0,0,0,0.14);
+    /* --accent 由 data-palette 决定，不在此覆盖；亮色对比度校准见 design-tokens「待办」 */
+  }
+  /* 11 palette：只覆盖 --accent，--accent-light/soft 经 color-mix 自动跟随
+     cold-blue = 品牌主色（design-tokens.md --accent #4f8ef7，zcode 冷蓝暗色方向），
+     本 draft 默认；真身代码默认仍是 neutral（见 §5 决议④） */
+  html[data-palette="cold-blue"]{ --accent:#4f8ef7; }
+  html[data-palette="warm-teal"]{ --accent:oklch(55% 0.08 195); }
+  html[data-palette="cold-teal"]{ --accent:oklch(62% 0.10 190); }
+  html[data-palette="neutral"]{    --accent:oklch(40% 0 0); }
+  html[data-palette="sharp"]{      --accent:oklch(10% 0 0); }
+  html[data-palette="warm-neutral"]{ --accent:oklch(45% 0.04 80); }
+  html[data-palette="terracotta"]{ --accent:oklch(64% 0.13 28); }
+  html[data-palette="rose"]{       --accent:oklch(65% 0.14 350); }
+  html[data-palette="amber"]{      --accent:oklch(67% 0.15 65); }
+  html[data-palette="blue"]{       --accent:oklch(62% 0.15 250); }
+  html[data-palette="violet"]{     --accent:oklch(62% 0.15 280); }
+
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:var(--bg);color:var(--fg);transition:background var(--duration) var(--ease),color var(--duration) var(--ease)}
+  body{font:14px/1.6 var(--font-sans);-webkit-font-smoothing:antialiased;padding:32px 40px 80px;max-width:1280px;margin:0 auto}
+  h1{font-size:26px;font-weight:650;letter-spacing:-0.01em;margin-bottom:6px}
+  h2{font-size:18px;font-weight:600;margin:48px 0 4px;letter-spacing:-0.01em;display:flex;align-items:center;gap:10px}
+  h2 .num{font:600 12px/1 var(--font-mono);color:var(--accent);background:var(--accent-soft);padding:4px 8px;border-radius:var(--radius-sm);letter-spacing:0.05em;transition:color var(--duration) var(--ease),background var(--duration) var(--ease)}
+  .lede{color:var(--muted);font-size:13px;margin-bottom:8px;max-width:880px}
+  .lede b{color:var(--fg)}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+  .meta span{font:500 11px/1 var(--font-mono);color:var(--muted);background:var(--surface);border:1px solid var(--border);padding:5px 9px;border-radius:999px}
+  .meta b{color:var(--fg);font-weight:600}
+  code{font:12px/1.4 var(--font-mono);background:var(--surface-2);padding:2px 6px;border-radius:var(--radius-sm);color:var(--accent);transition:color var(--duration) var(--ease)}
+  .note{font:12px/1.6 var(--font-mono);color:var(--muted);background:var(--surface);border:1px solid var(--border);border-left:2px solid var(--accent);border-radius:var(--radius-sm);padding:9px 11px;margin-top:14px;transition:border-left-color var(--duration) var(--ease)}
+  .note b{color:var(--fg)}
+  .warn{font:12px/1.6 var(--font-mono);color:var(--warning);background:rgba(245,165,36,0.08);border:1px solid rgba(245,165,36,0.25);border-left:2px solid var(--warning);border-radius:var(--radius-sm);padding:9px 11px;margin-top:14px}
+  .warn b{color:var(--warning)}
+
+  /* ============ 控件原语（复用 settings-shell / extension draft） ============ */
+  .sw{position:relative;width:34px;height:20px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border-strong);cursor:pointer;transition:background var(--duration-fast) var(--ease),border-color var(--duration-fast) var(--ease);flex:none}
+  .sw::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--muted);transition:transform var(--duration) var(--ease),background var(--duration) var(--ease)}
+  .sw.on{background:var(--accent);border-color:var(--accent)}
+  .sw.on::after{transform:translateX(14px);background:#fff}
+  .sw.sm{width:28px;height:16px}.sw.sm::after{width:10px;height:10px;top:2px}
+  .sw.sm.on::after{transform:translateX(12px)}
+  .field{background:var(--surface-2);border:1px solid var(--border);color:var(--fg);padding:7px 10px;border-radius:var(--radius);font:13px/1 var(--font-sans);outline:none;width:100%;transition:border-color var(--duration-fast) var(--ease)}
+  .btn{display:inline-flex;align-items:center;gap:6px;background:transparent;border:1px solid var(--border-strong);color:var(--fg);padding:7px 12px;border-radius:var(--radius);font:600 12px/1 var(--font-sans);cursor:pointer;transition:background var(--duration-fast) var(--ease),border-color var(--duration-fast) var(--ease)}
+  .btn:hover{background:var(--surface-hover)}
+  .btn svg{width:13px;height:13px}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.primary:hover{background:var(--accent-hover);filter:brightness(1.08)}
+  .pill{font:500 11px/1 var(--font-mono);color:var(--muted);background:var(--surface-2);border:1px solid var(--border);padding:4px 8px;border-radius:999px;display:inline-flex;align-items:center;gap:5px}
+  .pill.acc{color:var(--accent);background:var(--accent-soft);border-color:color-mix(in oklch,var(--accent) 30%,transparent);transition:color var(--duration) var(--ease),background var(--duration) var(--ease),border-color var(--duration) var(--ease)}
+
+  /* select（原生美化，对齐 design-system Select） */
+  .sel{appearance:none;-webkit-appearance:none;background:var(--surface-2) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238a8a95' stroke-width='2'><path d='M6 9l6 6 6-6' stroke-linecap='round' stroke-linejoin='round'/></svg>") no-repeat right 9px center;border:1px solid var(--border);color:var(--fg);padding:7px 28px 7px 10px;border-radius:var(--radius);font:13px/1 var(--font-sans);outline:none;width:100%;max-width:200px;cursor:pointer;transition:border-color var(--duration-fast) var(--ease)}
+  .sel:focus{border-color:color-mix(in oklch,var(--accent) 55%,var(--border));box-shadow:0 0 0 3px var(--accent-soft)}
+  .sel option{background:var(--surface);color:var(--fg)}
+
+  /* ============ Stage 演示框 ============ */
+  .stages{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px;margin-top:14px}
+  .stage-box{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;display:flex;flex-direction:column;transition:background var(--duration) var(--ease),border-color var(--duration) var(--ease)}
+  .stage-head{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--surface)}
+  .stage-tag{font:600 10px/1 var(--font-mono);color:var(--accent);letter-spacing:0.06em;text-transform:uppercase;background:var(--accent-soft);border:1px solid color-mix(in oklch,var(--accent) 30%,transparent);padding:4px 7px;border-radius:var(--radius-sm)}
+  .stage-tag.ok{color:var(--success);background:rgba(34,197,94,0.12);border-color:rgba(34,197,94,0.25)}
+  .stage-name{font-size:13px;font-weight:600;color:var(--fg)}
+  .stage-when{font:500 11px/1.4 var(--font-mono);color:var(--subtle);margin-left:auto;text-align:right}
+  .stage-body{padding:16px;flex:1;display:flex;flex-direction:column;gap:12px}
+  .stage-note{font:11px/1.5 var(--font-mono);color:var(--muted);padding:8px 10px;background:var(--bg);border-radius:var(--radius);border:1px dashed var(--border)}
+  .stage-note b{color:var(--fg)}
+
+  /* ============ ★ §1 Live Preview 片段（palette/theme 换色可见） ============ */
+  .live-card{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:18px;display:flex;flex-direction:column;gap:14px;transition:background var(--duration) var(--ease),border-color var(--duration) var(--ease)}
+  .live-title{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:650;color:var(--fg)}
+  .live-title svg{width:16px;height:16px;color:var(--accent);transition:color var(--duration) var(--ease)}
+  .live-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .live-ring{flex:1;min-width:160px;background:var(--bg);border:1px solid color-mix(in oklch,var(--accent) 55%,var(--border));box-shadow:0 0 0 3px var(--accent-soft);border-radius:var(--radius);padding:8px 11px;font:12px/1 var(--font-mono);color:var(--muted);transition:border-color var(--duration) var(--ease),box-shadow var(--duration) var(--ease)}
+  .live-cur{display:inline-block;font:600 11px/1 var(--font-mono);color:var(--accent);transition:color var(--duration) var(--ease)}
+
+  /* ============ ★ §2 SystemPane 还原（Setting Card + Setting Row，真身结构） ============ */
+  .pane-wrap{max-width:860px}
+  .card{border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;margin-bottom:12px;background:var(--surface);transition:background var(--duration) var(--ease),border-color var(--duration) var(--ease)}
+  .card-h{display:flex;align-items:center;gap:8px;padding:10px 16px;background:var(--section-bg);min-height:42px;border-bottom:1px solid var(--divider)}
+  .card-h .ttl{font-size:13px;font-weight:600;color:var(--fg)}
+  .card-h svg{width:15px;height:15px;color:var(--accent);transition:color var(--duration) var(--ease)}
+  .row{display:flex;align-items:center;gap:16px;padding:10px 16px;border-bottom:1px solid var(--divider)}
+  .row:last-child{border-bottom:0}
+  .row .lbl{font-size:12px;font-weight:500;color:var(--fg);min-width:76px}
+  .row .hint{font-size:10px;color:var(--muted);margin-left:6px}
+  .row .ctrl{flex:1;max-width:200px}
+  .row.between{justify-content:space-between}
+  .row.between .ctrl{max-width:none}
+
+  /* palette swatch（真身 Button ghost + 选中态） */
+  .pal-group{font:600 11px/1 var(--font-sans);text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);margin:0 0 8px}
+  .pal-grid{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+  .pal-grid:last-child{margin-bottom:0}
+  .pal{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--surface);cursor:pointer;transition:all var(--duration-fast) var(--ease);font:500 12px/1 var(--font-sans);color:var(--fg)}
+  .pal:hover{border-color:var(--muted);background:var(--accent-light)}
+  .pal.on{border-color:var(--accent);background:var(--accent-light);box-shadow:0 0 0 1px var(--accent)}
+  .pal .sw-dot{width:16px;height:16px;border-radius:50%;flex:none;border:1px solid rgba(0,0,0,0.15)}
+
+  /* ★ applied 反馈：theme/palette/locale 变更时 live-ring 短暂 pop，让"已应用"可见（非仅静默换色） */
+  .live-ring.applied{animation:ring-pop 0.6s var(--ease)}
+  @keyframes ring-pop{0%{box-shadow:0 0 0 3px var(--accent-soft)}35%{box-shadow:0 0 0 7px var(--accent-soft),0 0 0 1px var(--accent)}100%{box-shadow:0 0 0 3px var(--accent-soft)}}
+  .live-cur.applied{animation:cur-pop 0.6s var(--ease)}
+  @keyframes cur-pop{0%{transform:scale(1)}40%{transform:scale(1.18)}100%{transform:scale(1)}}
+
+  /* ★ 只读快捷键列表（决议①：先以只读列表呈现，可编辑 capture 留后续） */
+  .kbd-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:9px 16px;border-bottom:1px solid var(--divider)}
+  .kbd-row:last-child{border-bottom:0}
+  .kbd-row .k-lbl{font-size:12px;color:var(--fg)}
+  .kbd-row .k-desc{font-size:10px;color:var(--muted);margin-left:6px}
+  .kbd-grp{display:inline-flex;gap:4px;align-items:center}
+  .kbd{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:24px;padding:0 7px;border-radius:6px;border:1px solid var(--border-strong);background:var(--surface-2);font:600 11px/1 var(--font-mono);color:var(--fg);box-shadow:0 1px 0 var(--border-strong)}
+  .kbd-plus{font:500 11px/1 var(--font-mono);color:var(--muted)}
+
+
+  /* 保存状态 pill（settings-shell 公共横切：debounce 800ms） */
+  .save-pill{position:fixed;top:18px;right:20px;display:inline-flex;align-items:center;gap:6px;background:var(--surface-2);border:1px solid var(--border-strong);color:var(--muted);padding:6px 12px;border-radius:999px;font:500 11px/1 var(--font-mono);z-index:50;transition:opacity var(--duration) var(--ease),color var(--duration) var(--ease);opacity:0.85}
+  .save-pill.saving{color:var(--accent)}
+  .save-pill.saved{color:var(--success)}
+  .save-pill .spin{width:11px;height:11px;display:none}
+  .save-pill.saving .spin{display:block;animation:sp 0.8s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+
+  /* 字段表 */
+  .tbl{width:100%;border-collapse:collapse;font-size:12px}
+  .tbl th,.tbl td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+  .tbl th{font:600 11px/1 var(--font-mono);color:var(--subtle);text-transform:uppercase;letter-spacing:0.05em}
+  .tbl td code{font-size:11px}
+  .tbl tr:hover td{background:var(--surface)}
+  .tbl .mn{font-weight:600;color:var(--fg)}
+  .tbl .req{color:var(--accent);font-weight:600}
+  .tbl .sw-cell{width:26px;height:26px;border-radius:50%;border:1px solid rgba(0,0,0,0.15);display:inline-block}
+/* ===== settings modal 形态（对齐 draft-provider） ===== */
+.stage{position:relative;height:640px;border-radius:var(--radius-lg);overflow:hidden;border:1px solid var(--border-strong);background:var(--bg);margin-top:14px}
+.ghost{position:absolute;inset:0;padding:16px;display:flex;gap:10px}
+.ghost-side{width:44px;background:var(--surface);border-radius:var(--radius-sm);flex:none}
+.ghost-main{flex:1;display:flex;flex-direction:column;gap:9px;padding-top:12px}
+.ghost-row{background:var(--surface);border-radius:8px;height:28px;width:60%}
+.ghost-row.r{align-self:flex-end;width:46%;background:var(--surface-2)}
+.ghost-row.s{height:20px;width:34%}
+.ghost-comp{margin-top:auto;background:var(--surface-2);border-radius:var(--radius);height:30px}
+.backdrop{position:absolute;inset:0;background:rgba(7,7,9,0.55);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+.modal{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:min(960px,96%);height:min(600px,94%);background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--radius-lg);box-shadow:0 24px 70px rgba(0,0,0,0.55);display:flex;flex-direction:column;overflow:hidden}
+.modal-head{display:flex;align-items:center;gap:10px;padding:11px 14px;background:var(--surface);border-bottom:1px solid var(--border);flex:none}
+.modal-title{font-size:14px;font-weight:650;color:var(--fg)}
+.modal-close{display:grid;place-items:center;width:28px;height:28px;border:0;border-radius:var(--radius-sm);background:transparent;color:var(--muted);cursor:pointer;flex:none}
+.modal-close:hover{color:var(--fg);background:var(--surface-hover)}
+.modal-close svg{width:15px;height:15px}
+.save{display:flex;align-items:center;gap:6px;font:500 12px/1 var(--font-mono);color:var(--subtle);padding:6px 10px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);margin-left:auto}
+.save svg{width:13px;height:13px}
+.save.saved{color:var(--success)}
+.ov-body{display:flex;flex:1;min-height:0}
+.ov-nav{width:188px;flex:none;background:var(--surface);border-right:1px solid var(--border);padding:12px 8px;overflow:auto}
+.nav-item{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:var(--radius);cursor:pointer;color:var(--muted);font:500 13px/1 var(--font-sans)}
+.nav-item:hover{color:var(--fg);background:var(--surface-hover)}
+.nav-item svg{width:17px;height:17px;flex:none}
+.nav-item.on{color:var(--fg);background:var(--surface-2);box-shadow:inset 0 0 0 1px rgba(79,142,247,0.45)}
+.nav-item .ct{margin-left:auto;font:500 10px/1 var(--font-mono);color:var(--subtle);background:var(--surface);padding:2px 6px;border-radius:999px}
+.ov-detail{flex:1;min-width:0;overflow:auto;padding:22px 26px 32px}
+.ph{display:flex;align-items:flex-start;gap:12px;margin-bottom:18px}
+.ph-text{flex:1;min-width:0}
+.ph-title{font-size:19px;font-weight:650;letter-spacing:-0.01em;color:var(--fg)}
+.ph-desc{color:var(--muted);font-size:12.5px;margin-top:2px;max-width:540px}
+</style>
+</head>
+<body>
+  <!-- 保存状态 pill（settings-shell 公共横切；改任意控件 → debounce 800ms → 已保存） -->
+  <div class="save-pill saved" id="savePill"><svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.22-8.56"/></svg><span id="saveTxt">已保存</span></div>
+
+  <h1>System · 外观与基础设置</h1>
+  <p class="lede">System 菜单（左导航第 5 项）per-menu 细化稿。5 菜单里最轻量的一个——<b>全枚举与开关，无强校验、无空态、无实体列表</b>。主用 <b>模式 B · Setting Card</b>（三块分组）+ <b>模式 A · Setting Row</b>。字段、默认值、布局、交互<b>逐字对齐真身</b> <code>~/Code/xyz-agent-workspace/main</code>：<code>SystemPane.vue</code> + <code>stores/settings.ts</code> + <code>shared/settings.ts</code>（ThemeMode/ThemePreset）。<b>核心看点</b>：配色不是改一个 CSS 变量，而是改 <code>&lt;html&gt;</code> 的 <code>data-theme</code>+<code>data-palette</code> 属性——本页所有 accent 色随你切换实时变化。</p>
+  <div class="meta">
+    <span>模式 <b>B · Card + A · Row</b></span>
+    <span>2 块 <b>语言外观 / 配色主题</b></span>
+    <span>真身默认 <b>theme=light · preset=neutral</b> · 本 draft 演示默认 <b>cold-blue</b>（品牌主色）</span>
+    <span>对齐 <b>handoff-system.md</b></span>
+  </div>
+
+  <!-- ======================= §1 主题切换机制（showpiece） ======================= -->
+  <h2><span class="num">§1</span>核心 · 主题切换机制（属性驱动，非 JS 逐变量赋值）</h2>
+  <p class="lede">真身 <code>applyTheme()</code> 做两件事：给 <code>&lt;html&gt;</code> 写 <code>data-theme</code>（<code>system</code>→<code>matchMedia('(prefers-color-scheme: dark)')</code> 解析）+ <code>data-palette</code>，再双写 localStorage（<code>xyz-agent-theme</code> / <code>xyz-agent-palette</code>）。<b>不改 JS 变量</b>——CSS 属性选择器 <code>html[data-palette="terracotta"]{ --accent: … }</code> 自动重算整套 token。下方控件就是真身那两个 select + swatch，<b>切一下，本页所有 accent（标题徽章 / 按钮 / 选中环 / code）实时换色</b>。</p>
+
+  <div class="live-card">
+    <div class="live-title"><svg><use href="#i-palette"/></svg>实时换色预览 · 当前 <span class="live-cur" id="liveCur">theme=dark · palette=cold-blue</span></div>
+    <div class="live-row">
+      <div class="live-ring">data-theme / data-palette 驱动 · 这个 ring 用 var(--accent) 描边 + var(--accent-soft) 光晕</div>
+      <button class="btn primary"><svg><use href="#i-check"/></svg>Primary 按钮</button>
+      <span class="pill acc">accent pill</span>
+      <span class="sw on"></span>
+    </div>
+    <div class="live-row" style="gap:16px;align-items:flex-end">
+      <label style="font:500 11px/1.4 var(--font-mono);color:var(--muted);display:flex;flex-direction:column;gap:5px">
+        外观模式（applyTheme）
+        <select class="sel" id="demoTheme">
+          <option value="light">浅色 Light</option>
+          <option value="dark" selected>深色 Dark</option>
+          <option value="system">跟随系统 System</option>
+        </select>
+      </label>
+      <span style="font:10px/1.4 var(--font-mono);color:var(--subtle);max-width:230px">select 改 → <code>applyTheme()</code>：写 data-theme + data-palette + 双 localStorage。system 跟随 prefers-color-scheme。</span>
+    </div>
+  </div>
+  <div class="note"><b>双持久化原因</b>：主题必须在 <b>pinia hydrate 之前</b>就 apply（否则首帧闪烁），故 applyTheme 直写 localStorage 独立通道，与 pinia persist(<code>xyz-settings</code>) 并存。旧值迁移 <code>warm→warm-teal</code> / <code>claude→terracotta</code>（migratePalette，applyTheme 内回写 store）。</div>
+
+  <!-- ======================= §2 SystemPane 还原（三块 Card） ======================= -->
+  <h2><span class="num">§2</span>产品形态 · settings modal · System 默认态</h2>
+  <p class="lede">容器 <code>max-w-[860px]</code>，两块顺序固定：<b>语言与外观 → 配色主题</b>。每块 <code>border + rounded-sm + mb-3</code>，卡头 <code>--section-bg</code> + 42px 高。下方是真身 SystemPane.vue 的 1:1 还原（真身另含「聊天显示」块，本 draft 按决议移除，见 §4），<b>可交互</b>。</p>
+
+  <div class="stage" id="stage">
+    <div class="ghost">
+      <div class="ghost-side"></div>
+      <div class="ghost-main"><div class="ghost-row s"></div><div class="ghost-row"></div><div class="ghost-row r"></div><div class="ghost-row"></div><div class="ghost-comp"></div></div>
+    </div>
+    <div class="backdrop"></div>
+    <div class="modal">
+      <div class="modal-head">
+        <span class="modal-title">设置</span>
+        <span class="save saved"><svg><use href="#i-check"/></svg><span>已保存</span></span>
+        <button class="modal-close" aria-label="关闭"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+      </div>
+      <div class="ov-body">
+        <nav class="ov-nav">
+          <div class="nav-item"><svg><use href="#i-provider"/></svg>Provider<span class="ct">4</span></div>
+          <div class="nav-item"><svg><use href="#i-skill"/></svg>Skill<span class="ct">8</span></div>
+          <div class="nav-item"><svg><use href="#i-agent"/></svg>Agent</div>
+          <div class="nav-item"><svg><use href="#i-ext"/></svg>Extension<span class="ct">3</span></div>
+          <div class="nav-item on"><svg><use href="#i-system"/></svg>System</div>
+        </nav>
+        <div class="ov-detail">
+          <div class="ph">
+            <div class="ph-text">
+              <div class="ph-title">System</div>
+              <div class="ph-desc">外观模式 + 配色主题。属性驱动（data-theme / data-palette），切一下整套 token 实时变化。</div>
+            </div>
+          </div>
+
+  <div class="pane-wrap" style="margin-top:14px">
+
+    <!-- 卡 1：语言与外观 -->
+    <div class="card">
+      <div class="card-h"><svg><use href="#i-globe"/></svg><span class="ttl">语言与外观</span></div>
+      <div class="row">
+        <span class="lbl">语言</span>
+        <div class="ctrl"><select class="sel" id="selLocale">
+          <option value="zh-CN" selected>简体中文</option>
+          <option value="en-US">English (US)</option>
+        </select></div>
+        <span class="hint" style="flex:1">语言名永远母语显示，不经 i18n</span>
+      </div>
+      <div class="row">
+        <span class="lbl">外观模式</span>
+        <div class="ctrl"><select class="sel" id="selTheme">
+          <option value="light">浅色</option>
+          <option value="dark" selected>深色</option>
+          <option value="system">跟随系统</option>
+        </select></div>
+        <span class="hint" style="flex:1">label 走 i18n（themeLight/Dark/System）</span>
+      </div>
+    </div>
+
+    <!-- 卡 2：配色主题（原卡3，删聊天显示后上移） -->
+    <div class="card">
+      <div class="card-h"><svg><use href="#i-palette"/></svg><span class="ttl">配色主题</span></div>
+      <div style="padding:12px 16px">
+        <div class="pal-group">Muted</div>
+        <div class="pal-grid" data-group="muted"><!-- JS 注入 5 个 --></div>
+        <div class="pal-group">Colorful</div>
+        <div class="pal-grid" data-group="colorful"><!-- JS 注入 6 个（含 cold-blue） --></div>
+      </div>
+    </div>
+
+    <!-- 卡 3：快捷键（决议① 只读列表先行，可编辑 capture + 冲突检测留后续） -->
+    <div class="card">
+      <div class="card-h"><svg><use href="#i-key"/></svg><span class="ttl">快捷键</span></div>
+      <div class="kbd-row"><span><span class="k-lbl">打开设置</span></span><span class="kbd-grp"><kbd class="kbd">⌘</kbd><span class="kbd-plus">+</span><kbd class="kbd">,</kbd></span></div>
+      <div class="kbd-row"><span><span class="k-lbl">命令面板 / 搜索</span><span class="k-desc">跨菜单搜设置项</span></span><span class="kbd-grp"><kbd class="kbd">⌘</kbd><span class="kbd-plus">+</span><kbd class="kbd">K</kbd></span></div>
+      <div class="kbd-row"><span><span class="k-lbl">关闭弹窗 / 返回</span></span><span class="kbd-grp"><kbd class="kbd">Esc</kbd></span></div>
+      <div class="kbd-row"><span><span class="k-lbl">上一条 / 下一条会话</span></span><span class="kbd-grp"><kbd class="kbd">←</kbd><span class="kbd-plus">/</span><kbd class="kbd">→</kbd></span></div>
+      <div class="kbd-row"><span><span class="k-lbl">新建会话</span></span><span class="kbd-grp"><kbd class="kbd">⌘</kbd><span class="kbd-plus">+</span><kbd class="kbd">N</kbd></span></div>
+      <div class="kbd-row"><span><span class="k-lbl">切换侧栏</span></span><span class="kbd-grp"><kbd class="kbd">⌘</kbd><span class="kbd-plus">+</span><kbd class="kbd">B</kbd></span></div>
+    </div>
+
+  </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="note"><b>选中态</b>（真身 class）：<code>border-[--accent] bg-[--accent-light] ring-1 ring-[--accent]</code>；未选 <code>border-border bg-surface</code>，hover <code>bg-[--accent-light]</code>。点 swatch → <code>setThemePreset(id)</code>：<b>只改 data-palette，不改 theme</b>（故浅/深不受影响）。</div>
+
+  <!-- ======================= §3 字段模型 + palette 精确值（原§4，删聊天显示后重编号） ======================= -->
+  <h2><span class="num">§3</span>字段模型 + palette 精确值</h2>
+  <p class="lede">字段源自 <code>stores/settings.ts</code>（ref 初值即默认）+ <code>shared/settings.ts</code> 类型。palette 值抄自 SystemPane.vue 的 <code>palettes</code> 数组（swatch 即 oklch 字面量）。<b>cold-blue</b> 为本 draft 新增（品牌主色 <code>#4f8ef7</code>，design-tokens.md 定义），非真身 10 palette 之一。</p>
+
+  <div class="stages" style="grid-template-columns:1.1fr 1fr">
+    <div class="stage-box">
+      <div class="stage-head"><span class="stage-tag">settingsStore</span><span class="stage-name">字段 + 默认值</span></div>
+      <div class="stage-body" style="padding:0">
+        <table class="tbl" style="margin:0">
+          <thead><tr><th>字段</th><th>类型</th><th>默认</th></tr></thead>
+          <tbody>
+            <tr><td class="mn"><code>locale</code></td><td><code>string</code></td><td><code>'zh-CN'</code></td></tr>
+            <tr><td class="mn"><code>theme</code></td><td><code>ThemeMode</code></td><td><code>'light'</code> <span class="req">★</span></td></tr>
+            <tr><td class="mn"><code>themePreset</code></td><td><code>ThemePreset</code></td><td><code>'neutral'</code> <span class="req">★</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="stage-box">
+      <div class="stage-head"><span class="stage-tag">ThemePreset</span><span class="stage-name">类型域（真身 10 + draft cold-blue）</span></div>
+      <div class="stage-body" style="padding:0">
+        <table class="tbl" style="margin:0">
+          <thead><tr><th></th><th>preset</th><th>swatch oklch</th></tr></thead>
+          <tbody>
+            <tr><td><span class="sw-cell" style="background:#4f8ef7"></span></td><td class="mn"><code>cold-blue</code> <span class="req">★默认</span></td><td><code>#4f8ef7</code>（品牌·design-tokens）</td></tr>
+            <tr><td><span class="sw-cell" style="background:oklch(55% 0.08 195)"></span></td><td class="mn"><code>warm-teal</code></td><td><code>55% 0.08 195</code></td></tr>
+            <tr><td><span class="sw-cell" style="background:oklch(62% 0.10 190)"></span></td><td class="mn"><code>cold-teal</code></td><td><code>62% 0.10 190</code></td></tr>
+            <tr><td><span class="sw-cell" style="background:oklch(40% 0 0)"></span></td><td class="mn"><code>neutral</code></td><td><code>40% 0 0</code></td></tr>
+            <tr><td><span class="sw-cell" style="background:oklch(10% 0 0)"></span></td><td class="mn"><code>sharp</code></td><td><code>10% 0 0</code></td></tr>
+            <tr><td><span class="sw-cell" style="background:oklch(45% 0.04 80)"></span></td><td class="mn"><code>warm-neutral</code></td><td><code>45% 0.04 80</code></td></tr>
+            <tr><td><span class="sw-cell" style="background:oklch(64% 0.13 28)"></span></td><td class="mn"><code>terracotta</code></td><td><code>64% 0.13 28</code></td></tr>
+            <tr><td><span class="sw-cell" style="background:oklch(65% 0.14 350)"></span></td><td class="mn"><code>rose</code></td><td><code>65% 0.14 350</code></td></tr>
+            <tr><td><span class="sw-cell" style="background:oklch(67% 0.15 65)"></span></td><td class="mn"><code>amber</code></td><td><code>67% 0.15 65</code></td></tr>
+            <tr><td><span class="sw-cell" style="background:oklch(62% 0.15 250)"></span></td><td class="mn"><code>blue</code></td><td><code>62% 0.15 250</code></td></tr>
+            <tr><td><span class="sw-cell" style="background:oklch(62% 0.15 280)"></span></td><td class="mn"><code>violet</code></td><td><code>62% 0.15 280</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="warn"><b>token 命名裂缝（handoff §13）决议①</b>：impl 的 <code>--section-bg</code> / <code>--divider</code> / <code>--accent-light</code> 在 design-tokens.md 缺失。本 draft 将三者做成 design-tokens 的<b>别名</b>：<code>--section-bg:var(--surface)</code>、<code>--divider:var(--border)</code>、<code>--accent-light:color-mix(in oklch,var(--accent) 15%,transparent)</code>（派生）。→ 建议把这三行补进 design-tokens.md，统一源头；<b>禁止各 draft 自造第三套</b>。<br><b>副作用收益</b>：<code>--accent-light</code> 派生后，10 个 palette 各只需覆盖一个 <code>--accent</code>，soft 变体自动跟随（见本文件 <code>html[data-palette="…"]</code> 块）。</div>
+
+  <!-- ======================= §5 待裁决 + 验收 ======================= -->
+  <h2><span class="num">§4</span>★待裁决（3 项决议 + ④ 已执行演示增强）+ 验收</h2>
+  <p class="lede">真身 SystemPane 是「语言 + 外观模式 + 聊天显示 + 配色主题」；<b>本 draft 按决议移除「聊天显示」整块</b>（autoExpandThinking / autoExpandToolCalls / compactStreaming / standaloneTools 四字段，真身仍保留）。<code>draft-settings-shell.html</code> 的 System 占位区画过「字号(紧凑/舒适/宽松) + 关于(版本/检查更新)」——与真身<b>不符</b>。三项是否超出真身新增，<b>需你拍板</b>：</p>
+  <div class="note">
+  ① <b>关于区</b>（版本 / 检查更新）— <b>倾向新增</b>（最小化：版本号 + 检查更新按钮）。shell draft 已铺垫、属「应用自身」语义、成本低。<br>
+  ② <b>快捷键 capture</b> — <b>倾向先不做可编辑版</b>。capture + 冲突检测 + reset-to-default 是独立工作量；若要做，先以<b>只读列表</b>（⌘, / ⌘K / Esc / ←→）呈现，可编辑 capture 留后续。<br>
+  ③ <b>字号档</b>（shell 占位遗留）— <b>倾向不做</b>，真身无此字段。<br>
+  ④ <b>draft 默认 palette = cold-blue</b>（品牌主色，非真身 10 palette 之一）— <b>已执行</b>：本 draft 初始 <code>data-palette="cold-blue"</code> + 选中 cold-blue swatch，使预览直接呈现项目实际主色冷蓝。真身代码默认 <code>themePreset='neutral'</code> <b>不改</b>（§4 字段表保留真身默认，加 ★ 标注）。若要让真身也默认冷蓝，需新增 <code>cold-blue</code> 到 SystemPane.vue <code>palettes[]</code> + 改 <code>settings.ts</code> 初值。<br>
+  → <b>本稿默认按真身实现（不含①②③）</b>；④ 为已执行的演示增强。
+  </div>
+
+  <div class="note"><b>验收对照（handoff-system.md §12 P0）</b>：<br>
+  ✅ 语言 select 即时切 i18n（不重开 modal，zh-CN/en-US 两项母语显示）<br>
+  ✅ 外观模式三态（light/dark/system）经 <code>data-theme</code> apply；system 跟随 prefers-color-scheme<br>
+  ✅ 11 swatch（Muted 5 + Colorful 6，含 draft 新增 cold-blue 品牌默认），oklch/hex 色块 + label，选中态 <code>accent ring + accent-light 底</code>清晰<br>
+  ✅ palette 切换经 <code>data-palette</code> 属性驱动，<b>非 JS 逐变量赋值</b><br>
+  ✅ 「聊天显示」整块已按决议移除（真身仍保留 4 字段，draft 不展示）<br>
+  ✅ 真身默认值正确：theme=light / preset=neutral（★draft 演示态 preset=cold-blue）<br>
+  ✅ 无字号档、无关于区漂移（除非 §4 决议新增）<br><br>
+  <b>关联</b>：<code>draft-settings-shell.html</code>（modal 骨架 + 公共横切）· <code>handoff-system.md</code>（14 节细化）· <code>design-system.md</code>（Card/Setting Row 原语）· <code>design-tokens.md</code>（见 §13 裂缝决议）</div>
+
+  <script>
+  (function(){
+    var html=document.documentElement, body=document.body;
+
+    /* ===== 真身镜像状态（settingsStore 字段子集 + 真实默认值） =====
+       注：真身 theme 默认 'light'；本 demo 页为与设计文档其余 draft 保持暗色一致，
+       初始置 'dark'（见 §2 字段表 ★ 标注的真实默认）。*/
+    var state={
+      locale:'zh-CN',
+      theme:'dark',
+      themePreset:'cold-blue'  // draft 演示默认（品牌主色）；真身代码默认 'neutral'（见 §4 决议④）
+    };
+
+    /* 真身数据：SystemPane.vue palettes[] */
+    var PALETTES=[
+      {id:'cold-blue',label:'Cold Blue · 品牌',swatch:'#4f8ef7',group:'colorful'},  // draft 新增（design-tokens 主色），非真身 10 palette
+      {id:'warm-teal',label:'Warm Teal',swatch:'oklch(55% 0.08 195)',group:'muted'},
+      {id:'cold-teal',label:'Cold Teal',swatch:'oklch(62% 0.10 190)',group:'muted'},
+      {id:'neutral',label:'Neutral',swatch:'oklch(40% 0 0)',group:'muted'},
+      {id:'sharp',label:'Sharp',swatch:'oklch(10% 0 0)',group:'muted'},
+      {id:'warm-neutral',label:'Warm Neutral',swatch:'oklch(45% 0.04 80)',group:'muted'},
+      {id:'terracotta',label:'Terracotta',swatch:'oklch(64% 0.13 28)',group:'colorful'},
+      {id:'rose',label:'Rose',swatch:'oklch(65% 0.14 350)',group:'colorful'},
+      {id:'amber',label:'Amber',swatch:'oklch(67% 0.15 65)',group:'colorful'},
+      {id:'blue',label:'Blue',swatch:'oklch(62% 0.15 250)',group:'colorful'},
+      {id:'violet',label:'Violet',swatch:'oklch(62% 0.15 280)',group:'colorful'}
+    ];
+
+    /* ===== 真身方法复刻 ===== */
+    function applyTheme(){
+      var resolved = state.theme==='system'
+        ? (window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light')
+        : state.theme;
+      html.setAttribute('data-theme',resolved);
+      html.setAttribute('data-palette',state.themePreset);
+      // 真身另写 localStorage['xyz-agent-theme']/['xyz-agent-palette']（双持久化，首帧无闪烁）
+    }
+    function setThemePreset(p){ state.themePreset=p; html.setAttribute('data-palette',p); }  // 只改 data-palette，不动 theme
+
+    /* ===== 保存状态 pill（settings-shell 公共横切：debounce 800ms） ===== */
+    var pill=document.getElementById('savePill'),pillTxt=document.getElementById('saveTxt'),pillTimer=null;
+    function markSaving(){
+      pill.className='save-pill saving';pillTxt.textContent='保存中…';
+      clearTimeout(pillTimer);pillTimer=setTimeout(function(){
+        pill.className='save-pill saved';pillTxt.textContent='已保存';
+      },800);
+    }
+
+    function paintLive(){
+      var resolved = state.theme==='system'
+        ? (window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light') : state.theme;
+      document.getElementById('liveCur').textContent='theme='+resolved+' · palette='+state.themePreset;
+    }
+
+    /* ★ applied 反馈：每次 theme/palette/locale 变更，live-ring + live-cur 短暂 pop，
+       让"已应用"可见——此前仅静默换色，反馈偏薄（与兄弟稿相比）。init 不触发（只在 change/click 里调）。*/
+    var ring=document.querySelector('.live-ring'),curEl=document.getElementById('liveCur'),flashT=null;
+    function flashApplied(){
+      if(!ring)return;
+      ring.classList.remove('applied');if(curEl)curEl.classList.remove('applied');
+      void ring.offsetWidth;  // reflow 重启动画
+      ring.classList.add('applied');if(curEl)curEl.classList.add('applied');
+      clearTimeout(flashT);flashT=setTimeout(function(){ring.classList.remove('applied');if(curEl)curEl.classList.remove('applied');},620);
+    }
+
+    /* ===== 渲染 palette swatch（卡 3） ===== */
+    function renderPalettes(){
+      ['muted','colorful'].forEach(function(g){
+        var grid=body.querySelector('.pal-grid[data-group="'+g+'"]');
+        if(!grid)return;
+        grid.innerHTML='';
+        PALETTES.filter(function(p){return p.group===g}).forEach(function(p){
+          var b=document.createElement('button');
+          b.type='button';b.className='pal'+(state.themePreset===p.id?' on':'');
+          b.dataset.pal=p.id;
+          b.innerHTML='<span class="sw-dot" style="background:'+p.swatch+'"></span><span>'+p.label+'</span>';
+          grid.appendChild(b);
+        });
+      });
+    }
+
+    /* ===== 事件接线 ===== */
+    // 主题（§1 live + §2 卡1）→ applyTheme
+    function bindTheme(sel){
+      var el=document.getElementById(sel);if(!el)return;
+      el.value=state.theme;
+      el.addEventListener('change',function(){
+        state.theme=this.value;applyTheme();paintLive();markSaving();flashApplied();
+        // 两个 theme select 同步
+        var other=document.getElementById(sel==='demoTheme'?'selTheme':'demoTheme');
+        if(other)other.value=state.theme;
+      });
+    }
+    bindTheme('demoTheme');bindTheme('selTheme');
+
+    // 语言 select → setLocale + settingsStore.locale（demo：更新指示 + 提示即时切换）
+    var selLocale=document.getElementById('selLocale');
+    selLocale.value=state.locale;
+    selLocale.addEventListener('change',function(){
+      state.locale=this.value;markSaving();
+      // 真身：setLocale(locale) → i18n 即时切换（自带持久化）+ settingsStore.locale=locale
+      pillTxt.textContent='setLocale('+state.locale+') → i18n 即时切换';
+      flashApplied();
+    });
+
+    // palette swatch → setThemePreset（只改 data-palette）
+    body.addEventListener('click',function(e){
+      var p=e.target.closest('.pal');if(!p)return;
+      setThemePreset(p.dataset.pal);
+      Array.prototype.forEach.call(body.querySelectorAll('.pal'),function(x){
+        x.classList.toggle('on',x.dataset.pal===state.themePreset);
+      });
+      paintLive();markSaving();flashApplied();
+    });
+
+    /* ===== 初始化 ===== */
+    renderPalettes();applyTheme();paintLive();
+    // 跟随系统变化（若 theme==='system'）
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',function(){
+      if(state.theme==='system'){applyTheme();paintLive();}
+    });
+  })();
+  </script>
+</body>
+</html>

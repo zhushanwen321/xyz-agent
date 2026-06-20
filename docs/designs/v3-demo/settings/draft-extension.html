@@ -1,0 +1,729 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Settings · Extension · draft-extension</title>
+<!-- SVG symbol 图标（design-system §6：stroke 1.5 / currentColor，禁 emoji 作功能图标） -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-ext" viewBox="0 0 24 24"><path d="M9 3v6M15 3v6M9 15v6M15 15v6M3 9h6M3 15h6M15 9h6M15 15h6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="9" y="9" width="6" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l5 5L20 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M21 21l-4.3-4.3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+  <symbol id="i-package" viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M3.27 6.96 12 12l8.73-5.04M12 22.08V12" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-git" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.4" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="6" cy="18" r="2.4" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="18" cy="12" r="2.4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 8.4v7.2M8.4 6h6a3 3 0 0 1 3 3" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7M21 3v6h-6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-empty" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M9 12h6M12 9v6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.7 3.86a2 2 0 0 0-3.4 0z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M12 9v4M12 17h.01" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+  <symbol id="i-provider" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="7" cy="7" r="0.9" fill="currentColor"/><circle cx="7" cy="17" r="0.9" fill="currentColor"/></symbol>
+  <symbol id="i-skill" viewBox="0 0 24 24"><path d="M12 3l2.2 5.3L20 10l-5.8 1.7L12 17l-2.2-5.3L4 10l5.8-1.7z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
+  <symbol id="i-agent" viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="12" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="9" cy="13" r="1.2" fill="currentColor"/><circle cx="15" cy="13" r="1.2" fill="currentColor"/><path d="M12 3v4M8 19v2M16 19v2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-system" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="16" cy="7" r="2.2" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="17" r="2.2" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+</svg>
+<style>
+  :root{
+    --bg:#0d0d0f; --surface:#151519; --surface-2:#1b1b20; --surface-hover:#1f1f26;
+    --fg:#f0f0f5; --muted:#8a8a95; --subtle:#5a5a65;
+    --border:rgba(255,255,255,0.06); --border-strong:rgba(255,255,255,0.12);
+    --accent:#4f8ef7; --accent-hover:#6ba3ff; --accent-soft:rgba(79,142,247,0.12);
+    --success:#22c55e; --warning:#f5a524; --danger:#ef4444; --info:#38bdf8;
+    --radius-sm:3px; --radius:8px; --radius-lg:12px;
+    --shadow-2:0 8px 24px rgba(0,0,0,0.4);
+    --ease:cubic-bezier(0.4,0,0.2,1); --duration-fast:120ms; --duration:200ms;
+    --font-sans:Inter,'SF Pro Display','PingFang SC',system-ui,sans-serif;
+    --font-mono:'JetBrains Mono','IBM Plex Mono',ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--fg);font:14px/1.6 var(--font-sans);
+    -webkit-font-smoothing:antialiased;padding:32px 40px 80px;max-width:1280px;margin:0 auto}
+  h1{font-size:26px;font-weight:650;letter-spacing:-0.01em;margin-bottom:6px}
+  h2{font-size:18px;font-weight:600;margin:48px 0 4px;letter-spacing:-0.01em;display:flex;align-items:center;gap:10px}
+  h2 .num{font:600 12px/1 var(--font-mono);color:var(--accent);
+    background:var(--accent-soft);padding:4px 8px;border-radius:var(--radius-sm);letter-spacing:0.05em}
+  .lede{color:var(--muted);font-size:13px;margin-bottom:8px;max-width:880px}
+  .lede b{color:var(--fg)}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+  .meta span{font:500 11px/1 var(--font-mono);color:var(--muted);
+    background:var(--surface);border:1px solid var(--border);padding:5px 9px;border-radius:999px}
+  .meta b{color:var(--fg);font-weight:600}
+  code{font:12px/1.4 var(--font-mono);background:var(--surface-2);padding:2px 6px;border-radius:var(--radius-sm);color:var(--accent)}
+  .note{font:12px/1.6 var(--font-mono);color:var(--muted);background:var(--surface);
+    border:1px solid var(--border);border-left:2px solid var(--accent);
+    border-radius:var(--radius-sm);padding:9px 11px;margin-top:14px}
+  .note b{color:var(--fg)}
+  .warn{font:12px/1.6 var(--font-mono);color:var(--warning);background:rgba(245,165,36,0.08);
+    border:1px solid rgba(245,165,36,0.25);border-left:2px solid var(--warning);
+    border-radius:var(--radius-sm);padding:9px 11px;margin-top:14px}
+  .warn b{color:var(--warning)}
+
+  /* ============ 控件原语（复用 settings-shell，design-system §3/§4/§5 派生） ============ */
+  .sw{position:relative;width:34px;height:20px;border-radius:999px;background:var(--surface-2);
+    border:1px solid var(--border-strong);cursor:pointer;transition:background var(--duration-fast) var(--ease),border-color var(--duration-fast) var(--ease);flex:none}
+  .sw::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;
+    background:var(--muted);transition:transform var(--duration) var(--ease),background var(--duration) var(--ease)}
+  .sw.on{background:var(--accent);border-color:var(--accent)}
+  .sw.on::after{transform:translateX(14px);background:#fff}
+  .sw.disabled{opacity:0.4;cursor:not-allowed}
+  .field{background:var(--surface-2);border:1px solid var(--border);color:var(--fg);padding:7px 10px;
+    border-radius:var(--radius);font:13px/1 var(--font-mono);outline:none;width:100%;transition:border-color var(--duration-fast) var(--ease)}
+  .field:focus{border-color:rgba(79,142,247,0.5);box-shadow:inset 0 0 0 1px rgba(79,142,247,0.4)}
+  .field::placeholder{color:var(--subtle)}
+  .btn{display:inline-flex;align-items:center;gap:6px;background:transparent;border:1px solid var(--border-strong);
+    color:var(--fg);padding:7px 12px;border-radius:var(--radius);font:600 12px/1 var(--font-sans);cursor:pointer;transition:background var(--duration-fast) var(--ease),border-color var(--duration-fast) var(--ease),opacity var(--duration-fast) var(--ease)}
+  .btn:hover{background:var(--surface-hover)}
+  .btn svg{width:13px;height:13px}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.primary:hover{background:var(--accent-hover)}
+  .btn.danger{color:var(--danger);border-color:rgba(239,68,68,0.3)}
+  .btn.danger:hover{background:rgba(239,68,68,0.1)}
+  .btn.sm{padding:5px 10px;font-size:11px}
+  .btn:disabled{opacity:0.4;cursor:not-allowed;pointer-events:none}
+
+  /* 标签族（design-system §5） */
+  .dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex:none}
+  .dot-ok{background:var(--success)} .dot-warn{background:var(--warning)}
+  .dot-err{background:var(--danger)} .dot-idle{background:var(--subtle)}
+  .pill{font:500 11px/1 var(--font-mono);color:var(--muted);background:var(--surface-2);
+    border:1px solid var(--border);padding:4px 8px;border-radius:999px;display:inline-flex;align-items:center;gap:5px}
+  .pill.acc{color:var(--accent);background:var(--accent-soft);border-color:rgba(79,142,247,0.3)}
+  .pill.ok{color:var(--success);background:rgba(34,197,94,0.12);border-color:rgba(34,197,94,0.25)}
+  .pill.err{color:var(--danger);background:rgba(239,68,68,0.1);border-color:rgba(239,68,68,0.25)}
+  .pill.warn{color:var(--warning);background:rgba(245,165,36,0.1);border-color:rgba(245,165,36,0.25)}
+
+  /* ============ Stage 演示框（对齐 draft-five-states / draft-composer-states 节奏） ============ */
+  .stages{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px;margin-top:14px}
+  .stage-box{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;display:flex;flex-direction:column}
+  .stage-head{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--surface)}
+  .stage-tag{font:600 10px/1 var(--font-mono);color:var(--accent);letter-spacing:0.06em;text-transform:uppercase;
+    background:var(--accent-soft);border:1px solid rgba(79,142,247,0.3);padding:4px 7px;border-radius:var(--radius-sm)}
+  .stage-tag.err{color:var(--danger);background:rgba(239,68,68,0.1);border-color:rgba(239,68,68,0.25)}
+  .stage-tag.warn{color:var(--warning);background:rgba(245,165,36,0.1);border-color:rgba(245,165,36,0.25)}
+  .stage-tag.ok{color:var(--success);background:rgba(34,197,94,0.12);border-color:rgba(34,197,94,0.25)}
+  .stage-name{font-size:13px;font-weight:600;color:var(--fg)}
+  .stage-when{font:500 11px/1.4 var(--font-mono);color:var(--subtle);margin-left:auto;text-align:right}
+  .stage-body{padding:14px;flex:1;display:flex;flex-direction:column;gap:10px}
+  .stage-note{font:11px/1.5 var(--font-mono);color:var(--muted);padding:8px 10px;background:var(--bg);border-radius:var(--radius);border:1px dashed var(--border)}
+  .stage-note b{color:var(--fg)}
+
+  /* ============ 安装区原语 ============ */
+  /* 可折叠 card 头 */
+  .collapsible{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius)}
+  .coll-head{display:flex;align-items:center;gap:8px;padding:9px 12px;cursor:pointer;min-height:38px;
+    transition:background var(--duration-fast) var(--ease)}
+  .coll-head:hover{background:var(--surface-hover)}
+  .coll-head .title{font-size:13px;font-weight:600;color:var(--fg);display:flex;align-items:center;gap:7px}
+  .coll-head .title svg{width:14px;height:14px;color:var(--accent)}
+  .coll-head .chev{margin-left:auto;width:14px;height:14px;color:var(--muted);transition:transform var(--duration) var(--ease)}
+  .collapsible.open .coll-head .chev{transform:rotate(180deg)}
+  .coll-body{display:none;padding:12px;border-top:1px solid var(--border)}
+  .collapsible.open .coll-body{display:block}
+  /* tab bar（npm / Local Dir / Git URL） */
+  .tabs{display:inline-flex;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:2px;gap:2px}
+  .tab{display:inline-flex;align-items:center;gap:6px;background:transparent;border:0;color:var(--muted);
+    font:500 12px/1 var(--font-sans);padding:6px 11px;border-radius:var(--radius-sm);cursor:pointer;
+    transition:color var(--duration-fast) var(--ease),background var(--duration-fast) var(--ease)}
+  .tab svg{width:13px;height:13px}
+  .tab:hover{color:var(--fg)}
+  .tab.on{color:#fff;background:var(--accent)}
+  /* install 一行：input + Install 按钮 */
+  .install-bar{display:flex;gap:8px;align-items:stretch}
+  .install-bar .field{flex:1}
+  .install-hint{font:11px/1.4 var(--font-sans);color:var(--muted)}
+  .install-hint code{font-size:10px}
+  /* 候选行（checkbox 多选） */
+  .cand-list{display:flex;flex-direction:column;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+  .cand{display:flex;align-items:center;gap:10px;padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--border);
+    transition:background var(--duration-fast) var(--ease)}
+  .cand:last-child{border-bottom:0}
+  .cand:hover{background:var(--surface-hover)}
+  .ckbox{width:15px;height:15px;border-radius:var(--radius-sm);border:1.5px solid var(--border-strong);flex:none;
+    display:grid;place-items:center;transition:background var(--duration-fast) var(--ease),border-color var(--duration-fast) var(--ease)}
+  .cand.on .ckbox{background:var(--accent);border-color:var(--accent)}
+  .ckbox svg{width:9px;height:9px;color:#fff;opacity:0;transition:opacity var(--duration-fast) var(--ease)}
+  .cand.on .ckbox svg{opacity:1}
+  .cand-main{flex:1;min-width:0}
+  .cand-name{font-size:13px;font-weight:600;color:var(--fg);display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+  .cand-desc{font-size:11px;color:var(--muted);margin-top:2px;line-clamp:1;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden;display:-webkit-box}
+  .cand-foot{display:flex;justify-content:flex-end;gap:8px;padding:9px 12px;border-top:1px solid var(--border);background:var(--surface-2)}
+  /* 进度态（scanning / cloning / installing） */
+  .prog{display:flex;align-items:center;justify-content:center;gap:9px;padding:18px 12px;background:var(--surface-2);
+    border:1px solid var(--border);border-radius:var(--radius)}
+  .prog .spin{width:15px;height:15px;color:var(--accent);animation:sp 0.8s linear infinite;flex:none}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .prog .txt{font:500 12px/1 var(--font-sans);color:var(--muted)}
+  .prog .txt b{color:var(--fg);font-weight:600}
+  /* 错误块（inline，不用 modal toast） */
+  .err-block{display:flex;gap:9px;padding:10px 12px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.25);
+    border-radius:var(--radius)}
+  .err-block svg{width:15px;height:15px;color:var(--danger);flex:none;margin-top:1px}
+  .err-msg{font:500 12px/1.4 var(--font-sans);color:var(--danger)}
+  .err-hint{font:italic 11px/1.4 var(--font-sans);color:var(--muted);margin-top:3px}
+
+  /* ============ Entity List（模式 C，复用 settings-shell class） ============ */
+  .sgroup{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:4px 14px;margin-bottom:16px}
+  .sgroup-title{font-size:13px;font-weight:650;color:var(--fg);padding:12px 0 4px;display:flex;align-items:center;gap:8px}
+  .sgroup-title svg{width:15px;height:15px;color:var(--accent)}
+  .sgroup-desc{font-size:12px;color:var(--muted);padding-bottom:6px}
+  .entity{border-bottom:1px solid var(--border)}
+  .entity:last-child{border-bottom:0}
+  .entity.disabled{opacity:0.5}
+  .e-head{display:flex;align-items:center;gap:10px;padding:11px 0;cursor:pointer}
+  .e-name{font-size:13px;font-weight:600;color:var(--fg);display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+  .e-sub{font:500 11px/1 var(--font-mono);color:var(--subtle)}
+  .e-chev{width:15px;height:15px;color:var(--subtle);transition:transform var(--duration) var(--ease);flex:none;margin-left:4px}
+  .entity.open .e-chev{transform:rotate(180deg)}
+  .e-config{display:none;padding:2px 0 14px;border-top:1px solid var(--border);margin-top:2px}
+  .entity.open .e-config{display:block}
+  .e-actions{display:flex;gap:6px;margin-left:auto;align-items:center}
+  /* 展开后的元信息网格（name/version/path/tools） */
+  .meta-grid{display:grid;grid-template-columns:auto 1fr;gap:5px 14px;padding:10px 0 4px}
+  .meta-grid dt{font:500 11px/1.4 var(--font-mono);color:var(--subtle);white-space:nowrap}
+  .meta-grid dd{font:12px/1.4 var(--font-mono);color:var(--fg);word-break:break-all}
+  .meta-grid dd .tl{display:flex;flex-wrap:wrap;gap:4px}
+
+  /* 空状态（design-system §7：图标 + 一句说明 + Primary 入口） */
+  .empty{display:flex;flex-direction:column;align-items:center;gap:10px;padding:40px 20px;text-align:center;
+    border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface)}
+  .empty svg{width:30px;height:30px;color:var(--subtle)}
+  .empty .em-txt{font-size:13px;color:var(--muted)}
+
+  /* ============ 卸载确认 Dialog ============ */
+  .dialog-mask{position:fixed;inset:0;background:rgba(7,7,9,0.6);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+    display:none;align-items:center;justify-content:center;z-index:100;opacity:0;transition:opacity var(--duration) var(--ease)}
+  .dialog-mask.on{display:flex;opacity:1}
+  .dialog{width:min(420px,92%);background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--radius-lg);
+    box-shadow:0 24px 70px rgba(0,0,0,0.55);overflow:hidden;transform:translateY(-6px);transition:transform var(--duration) var(--ease)}
+  .dialog-mask.on .dialog{transform:translateY(0)}
+  .dialog-head{display:flex;align-items:center;gap:9px;padding:14px 16px;border-bottom:1px solid var(--border)}
+  .dialog-head svg{width:17px;height:17px;color:var(--danger)}
+  .dialog-title{font-size:14px;font-weight:650;color:var(--fg)}
+  .dialog-body{padding:14px 16px;font-size:13px;color:var(--muted);line-height:1.6}
+  .dialog-body b{color:var(--fg)}
+  .dialog-body code{font-size:12px}
+  .dialog-foot{display:flex;justify-content:flex-end;gap:8px;padding:12px 16px;border-top:1px solid var(--border);background:var(--surface-2)}
+
+  /* 字段表 */
+  .tbl{width:100%;border-collapse:collapse;margin-top:12px;font-size:12px}
+  .tbl th,.tbl td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+  .tbl th{font:600 11px/1 var(--font-mono);color:var(--subtle);text-transform:uppercase;letter-spacing:0.05em}
+  .tbl td code{font-size:11px}
+  .tbl tr:hover td{background:var(--surface)}
+  .tbl .mn{font-weight:600;color:var(--fg)}
+  .tbl .req{color:var(--accent);font-weight:600}
+/* ===== settings modal 形态（对齐 draft-provider） ===== */
+.stage{position:relative;height:640px;border-radius:var(--radius-lg);overflow:hidden;border:1px solid var(--border-strong);background:var(--bg);margin-top:14px}
+.ghost{position:absolute;inset:0;padding:16px;display:flex;gap:10px}
+.ghost-side{width:44px;background:var(--surface);border-radius:var(--radius-sm);flex:none}
+.ghost-main{flex:1;display:flex;flex-direction:column;gap:9px;padding-top:12px}
+.ghost-row{background:var(--surface);border-radius:8px;height:28px;width:60%}
+.ghost-row.r{align-self:flex-end;width:46%;background:var(--surface-2)}
+.ghost-row.s{height:20px;width:34%}
+.ghost-comp{margin-top:auto;background:var(--surface-2);border-radius:var(--radius);height:30px}
+.backdrop{position:absolute;inset:0;background:rgba(7,7,9,0.55);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+.modal{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:min(960px,96%);height:min(600px,94%);background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--radius-lg);box-shadow:0 24px 70px rgba(0,0,0,0.55);display:flex;flex-direction:column;overflow:hidden}
+.modal-head{display:flex;align-items:center;gap:10px;padding:11px 14px;background:var(--surface);border-bottom:1px solid var(--border);flex:none}
+.modal-title{font-size:14px;font-weight:650;color:var(--fg)}
+.modal-close{display:grid;place-items:center;width:28px;height:28px;border:0;border-radius:var(--radius-sm);background:transparent;color:var(--muted);cursor:pointer;flex:none}
+.modal-close:hover{color:var(--fg);background:var(--surface-hover)}
+.modal-close svg{width:15px;height:15px}
+.save{display:flex;align-items:center;gap:6px;font:500 12px/1 var(--font-mono);color:var(--subtle);padding:6px 10px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);margin-left:auto}
+.save svg{width:13px;height:13px}
+.save.saved{color:var(--success)}
+.ov-body{display:flex;flex:1;min-height:0}
+.ov-nav{width:188px;flex:none;background:var(--surface);border-right:1px solid var(--border);padding:12px 8px;overflow:auto}
+.nav-item{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:var(--radius);cursor:pointer;color:var(--muted);font:500 13px/1 var(--font-sans)}
+.nav-item:hover{color:var(--fg);background:var(--surface-hover)}
+.nav-item svg{width:17px;height:17px;flex:none}
+.nav-item.on{color:var(--fg);background:var(--surface-2);box-shadow:inset 0 0 0 1px rgba(79,142,247,0.45)}
+.nav-item .ct{margin-left:auto;font:500 10px/1 var(--font-mono);color:var(--subtle);background:var(--surface);padding:2px 6px;border-radius:999px}
+.ov-detail{flex:1;min-width:0;overflow:auto;padding:22px 26px 32px}
+.ph{display:flex;align-items:flex-start;gap:12px;margin-bottom:18px}
+.ph-text{flex:1;min-width:0}
+.ph-title{font-size:19px;font-weight:650;letter-spacing:-0.01em;color:var(--fg)}
+.ph-desc{color:var(--muted);font-size:12.5px;margin-top:2px;max-width:540px}
+</style>
+</head>
+<body>
+  <h1>Extension · MCP 扩展安装与管理</h1>
+  <p class="lede">Extension 菜单（左导航第 4 项）per-menu 细化稿。主用 <b>模式 C · Entity List</b>（已安装扩展）+ <b>安装工作流</b>（三 tab 来源 + 发现候选多选 + 60s 超时）。字段与交互源自 <code>~/Code/xyz-agent-workspace/main/.../settings/ExtensionsPane.vue</code> + <code>ExtensionSection.vue</code>；本稿聚焦 Extension 自身的状态机，复用 <code>draft-settings-shell.html</code> 的 token + 组件原语。</p>
+  <div class="meta">
+    <span>模式 <b>C · Entity List + 安装区</b></span>
+    <span>来源 <b>npm / Local Dir / Git URL</b></span>
+    <span>工作流 <b>discover → select → install</b></span>
+    <span>超时 <b>60s</b></span>
+    <span>卸载 <b>确认 Dialog</b></span>
+    <span>对齐 <b>handoff-extension.md</b></span>
+  </div>
+
+  <h2><span class="num">§0</span>产品形态 · settings modal · Extension 默认态</h2>
+  <p class="lede">下方舞台 = settings modal 特写 Extension 默认列表态。<b>已安装扩展</b>每行一个实体 + 状态点（MCP 连接）+ 来源 pill + 启用开关；built-in 开关 disabled。<b>安装入口</b>点「安装扩展」展开三 tab（npm/Local/Git）工作流（详见 §1 状态机）。卸载走确认 Dialog（§3）。</p>
+
+  <div class="stage" id="stage">
+    <div class="ghost">
+      <div class="ghost-side"></div>
+      <div class="ghost-main"><div class="ghost-row s"></div><div class="ghost-row"></div><div class="ghost-row r"></div><div class="ghost-row"></div><div class="ghost-comp"></div></div>
+    </div>
+    <div class="backdrop"></div>
+    <div class="modal">
+      <div class="modal-head">
+        <span class="modal-title">设置</span>
+        <span class="save saved"><svg><use href="#i-check"/></svg><span>已保存</span></span>
+        <button class="modal-close" aria-label="关闭"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+      </div>
+      <div class="ov-body">
+        <nav class="ov-nav">
+          <div class="nav-item"><svg><use href="#i-provider"/></svg>Provider<span class="ct">4</span></div>
+          <div class="nav-item"><svg><use href="#i-skill"/></svg>Skill<span class="ct">8</span></div>
+          <div class="nav-item"><svg><use href="#i-agent"/></svg>Agent</div>
+          <div class="nav-item on"><svg><use href="#i-ext"/></svg>Extension<span class="ct">3</span></div>
+          <div class="nav-item"><svg><use href="#i-system"/></svg>System</div>
+        </nav>
+        <div class="ov-detail">
+          <div class="ph">
+            <div class="ph-text">
+              <div class="ph-title">Extension</div>
+              <div class="ph-desc">安装与管理 MCP 扩展。npm / 本地路径 / Git URL 三种来源，后端发现 + 真实安装，60s 超时。</div>
+            </div>
+            <button class="btn" style="background:var(--accent);border-color:var(--accent);color:#fff"><svg><use href="#i-plus"/></svg>安装扩展</button>
+          </div>
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);margin-top:14px">
+            <div style="display:flex;align-items:center;gap:8px;padding:13px 16px 9px;border-bottom:1px solid var(--border)">
+              <span class="sgroup-title"><svg><use href="#i-ext"/></svg>已安装扩展</span>
+              <span class="pill">3</span>
+            </div>
+            <div style="padding:0 16px">
+              <div class="entity"><div class="e-head"><span class="dot dot-ok"></span><span class="e-name">pi-ask-user</span><span class="pill acc">0.4.2</span><span class="pill">npm</span><span class="sw on" style="margin-left:auto"></span></div></div>
+              <div class="entity"><div class="e-head"><span class="dot dot-ok"></span><span class="e-name">filesystem</span><span class="pill">built-in</span><span class="sw on" style="margin-left:auto;opacity:.5"></span></div></div>
+              <div class="entity"><div class="e-head"><span class="dot dot-warn"></span><span class="e-name">pi-deploy-hook</span><span class="pill acc">0.1.0</span><span class="pill">git</span><span class="sw" style="margin-left:auto"></span></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================= §1 安装工作流状态机 ======================= -->
+  <h2><span class="num">§1</span>核心 · 安装工作流状态机</h2>
+  <p class="lede">Extension 与 Skill 最大差异：<b>Skill 扫描本地目录</b>，Extension 走 <b>npm / 路径 / git 三种来源</b> + 后端发现 + 真实安装。三阶段：<code>discovering</code>（扫描/克隆）→ <code>selecting</code>（候选多选，仅 local/git）→ <code>installing</code>。npm 直装无 select 阶段。全程 <b>60s 超时</b>兜底。下方每卡一个态，可交互。</p>
+
+  <div class="stages">
+
+    <!-- Stage A · 安装区（idle · 三 tab） -->
+    <div class="stage-box">
+      <div class="stage-head"><span class="stage-tag">A · idle</span><span class="stage-name">安装区（三 tab）</span><span class="stage-when">入口：折叠头展开</span></div>
+      <div class="stage-body">
+        <div class="collapsible open" data-stage="A">
+          <div class="coll-head"><span class="title"><svg><use href="#i-plus"/></svg>安装扩展</span><svg class="chev"><use href="#i-chev"/></svg></div>
+          <div class="coll-body">
+            <div class="tabs" data-tabs="A">
+              <button class="tab on" data-tab="npm"><svg><use href="#i-package"/></svg>npm</button>
+              <button class="tab" data-tab="local"><svg><use href="#i-folder"/></svg>Local Dir</button>
+              <button class="tab" data-tab="git"><svg><use href="#i-git"/></svg>Git URL</button>
+            </div>
+            <div class="install-bar" style="margin-top:10px">
+              <input class="field" data-install-input="A" placeholder="npm:pi-ask-user" />
+              <button class="btn primary sm" data-install-btn="A">Install</button>
+            </div>
+            <div class="install-hint" data-install-hint="A">输入 npm 包名。<code>npm:</code> 前缀可省略，缺省自动补全。</div>
+          </div>
+        </div>
+        <div class="stage-note">tab 切换 → 清空 input + 换 placeholder/hint；input 空 → Install <b>disabled</b>。npm 直装（无 select），local/git 走发现。</div>
+      </div>
+    </div>
+
+    <!-- Stage B · 发现中（discovering） -->
+    <div class="stage-box">
+      <div class="stage-head"><span class="stage-tag warn">B · discovering</span><span class="stage-name">发现中</span><span class="stage-when">local/git Install 后</span></div>
+      <div class="stage-body">
+        <div class="prog">
+          <svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.22-8.56"/></svg>
+          <span class="txt" data-prog-txt><b>正在克隆仓库…</b> · Git URL</span>
+        </div>
+        <div class="stage-note">git = <code>Cloning repository…</code>（<code>extension.installGit</code>）；local = <code>Scanning directory…</code>（<code>extension.installDir</code>）。60s 未返回 → 转 Stage E 超时。</div>
+      </div>
+    </div>
+
+    <!-- Stage C · 候选多选（selecting） -->
+    <div class="stage-box">
+      <div class="stage-head"><span class="stage-tag">C · selecting</span><span class="stage-name">候选多选</span><span class="stage-when">discovered 返回 ≥1</span></div>
+      <div class="stage-body">
+        <div style="font:600 12px/1 var(--font-sans);color:var(--fg);margin-bottom:-4px">发现 3 个扩展</div>
+        <div class="cand-list" data-cand-list>
+          <div class="cand on"><div class="ckbox"><svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 5l2.5 2.5L8 3"/></svg></div>
+            <div class="cand-main"><div class="cand-name">pi-ask-user<span class="pill acc">0.4.2</span></div><div class="cand-desc">交互式用户提问工具，支持结构化回答。</div></div>
+          </div>
+          <div class="cand on"><div class="ckbox"><svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 5l2.5 2.5L8 3"/></svg></div>
+            <div class="cand-main"><div class="cand-name">pi-media-gen<span class="pill acc">1.2.0</span></div><div class="cand-desc">图片/视频/音频生成，走 daemon 调度。</div></div>
+          </div>
+          <div class="cand"><div class="ckbox"><svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 5l2.5 2.5L8 3"/></svg></div>
+            <div class="cand-main"><div class="cand-name">pi-deploy-hook<span class="pill acc">0.1.0</span></div><div class="cand-desc">部署后 webhook 通知（实验性）。</div></div>
+          </div>
+          <div class="cand-foot">
+            <button class="btn sm" data-cancel-select>取消</button>
+            <button class="btn primary sm" data-install-selected>安装选中 (2)</button>
+          </div>
+        </div>
+        <div class="stage-note">默认全选；点行 toggle；按钮计数随选中数变。<code>取消</code> → <code>extension.cancelInstall</code>（清理 tempDir）。</div>
+      </div>
+    </div>
+
+    <!-- Stage D · 安装中（installing） -->
+    <div class="stage-box">
+      <div class="stage-head"><span class="stage-tag">D · installing</span><span class="stage-name">安装中</span><span class="stage-when">finishInstall 后</span></div>
+      <div class="stage-body">
+        <div class="prog">
+          <svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.22-8.56"/></svg>
+          <span class="txt"><b>正在安装选中的扩展…</b></span>
+        </div>
+        <div class="stage-note"><code>extension.finishInstall</code>（tempDir + selected）。完成后后端推 <code>config.extensions</code> 刷新列表 → 回 idle。</div>
+      </div>
+    </div>
+
+    <!-- Stage E · 错误（含 60s 超时） -->
+    <div class="stage-box">
+      <div class="stage-head"><span class="stage-tag err">E · error</span><span class="stage-name">错误 + 60s 超时</span><span class="stage-when">installError / 超时</span></div>
+      <div class="stage-body">
+        <div class="collapsible open">
+          <div class="coll-head"><span class="title"><svg><use href="#i-plus"/></svg>安装扩展</span><svg class="chev"><use href="#i-chev"/></svg></div>
+          <div class="coll-body">
+            <div class="install-bar">
+              <input class="field" value="https://github.com/bad/repo.git" />
+              <button class="btn primary sm">Install</button>
+            </div>
+            <div class="err-block" style="margin-top:10px">
+              <svg viewBox="0 0 24 24"><path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.7 3.86a2 2 0 0 0-3.4 0z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M12 9v4M12 17h.01" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+              <div>
+                <div class="err-msg">Operation timed out after 60 seconds</div>
+                <div class="err-hint">后端 60s 未返回。检查网络/仓库可达性后重试。</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="stage-note"><b>inline 错误</b>（红字 message + 斜体 hint），不用 modal toast。后端 <code>extension.installError</code> 返 <code>{code,message,hint}</code>。</div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="warn"><b>发现结果空子态</b>（discovered 返回 0 候选）：inline 错误「No pi extensions found in the provided source.」+ 回 idle。不单列卡，复用 Stage E 的 err-block 样式。</div>
+
+  <!-- ======================= §2 已安装列表 · Entity List（模式 C） ======================= -->
+  <h2><span class="num">§2</span>已安装列表 · Entity List（模式 C）</h2>
+  <p class="lede">安装区下方常驻。每行一实体：<b>启用开关 + 名称 + 版本 pill + 来源 pill + 工具计数 + 卸载按钮（仅 user-installed）+ 展开配置</b>。三种行变体：<code>built-in</code>（不可关/不可卸）、<code>user-installed · 已连接</code>（可关可卸）、<code>user-installed · 断开</code>（重连入口）。点行展开 MetaGrid。</p>
+
+  <div class="stages" style="grid-template-columns:1.4fr 1fr">
+
+    <!-- 默认列表态（3 种行变体） -->
+    <div class="stage-box">
+      <div class="stage-head"><span class="stage-tag ok">列表态</span><span class="stage-name">3 种行变体</span><span class="stage-when">config.extensions 返回</span></div>
+      <div class="stage-body">
+        <div class="sgroup" style="margin:0">
+          <div class="sgroup-title"><svg><use href="#i-ext"/></svg>已安装扩展 <span class="pill" style="margin-left:4px">3</span></div>
+
+          <!-- built-in：不可关、不可卸 -->
+          <div class="entity" data-name="filesystem">
+            <div class="e-head">
+              <span class="sw on disabled" role="switch" aria-checked="true" title="内置扩展不可关闭"></span>
+              <span class="dot dot-ok"></span>
+              <span class="e-name">filesystem<span class="pill acc">0.3.1</span><span class="pill">built-in</span></span>
+              <span class="e-sub">12 tools</span>
+              <svg class="e-chev"><use href="#i-chev"/></svg>
+            </div>
+            <div class="e-config">
+              <dl class="meta-grid">
+                <dt>name</dt><dd>filesystem</dd>
+                <dt>version</dt><dd>0.3.1</dd>
+                <dt>source</dt><dd>built-in（不可卸载/不可关闭）</dd>
+                <dt>path</dt><dd>/app/resources/builtin/filesystem</dd>
+                <dt>tools</dt><dd><span class="tl"><span class="pill">read_file</span><span class="pill">write_file</span><span class="pill">list_dir</span><span class="pill">+9</span></span></dd>
+              </dl>
+            </div>
+          </div>
+
+          <!-- user-installed · 已连接：可关、可卸 -->
+          <div class="entity" data-name="tavily">
+            <div class="e-head">
+              <span class="sw on" role="switch" aria-checked="true"></span>
+              <span class="dot dot-ok"></span>
+              <span class="e-name">tavily<span class="pill acc">2.1.0</span><span class="pill">user-installed</span></span>
+              <span class="e-sub">4 tools</span>
+              <span class="e-actions">
+                <button class="btn danger sm" data-uninstall="tavily"><svg><use href="#i-trash"/></svg>卸载</button>
+              </span>
+              <svg class="e-chev"><use href="#i-chev"/></svg>
+            </div>
+            <div class="e-config">
+              <dl class="meta-grid">
+                <dt>name</dt><dd>tavily</dd>
+                <dt>version</dt><dd>2.1.0</dd>
+                <dt>source</dt><dd>user-installed（npm）</dd>
+                <dt>path</dt><dd>~/.xyz-agent/extensions/tavily</dd>
+                <dt>tools</dt><dd><span class="tl"><span class="pill">web_search</span><span class="pill">fetch_url</span><span class="pill">+2</span></span></dd>
+              </dl>
+            </div>
+          </div>
+
+          <!-- user-installed · 断开：重连入口 -->
+          <div class="entity disabled" data-name="git">
+            <div class="e-head">
+              <span class="sw" role="switch" aria-checked="false"></span>
+              <span class="dot dot-err"></span>
+              <span class="e-name">git<span class="pill acc">1.0.2</span><span class="pill err">断开</span></span>
+              <span class="e-sub">8 tools</span>
+              <span class="e-actions">
+                <button class="btn sm" data-reconnect="git"><svg><use href="#i-refresh"/></svg>重连</button>
+                <button class="btn danger sm" data-uninstall="git"><svg><use href="#i-trash"/></svg>卸载</button>
+              </span>
+              <svg class="e-chev"><use href="#i-chev"/></svg>
+            </div>
+            <div class="e-config">
+              <div class="err-block" style="margin:8px 0">
+                <svg viewBox="0 0 24 24"><path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.7 3.86a2 2 0 0 0-3.4 0z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M12 9v4M12 17h.01" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                <div><div class="err-msg">进程退出码 1</div><div class="err-hint">stdio 通道意外关闭。查看日志或重连。</div></div>
+              </div>
+              <dl class="meta-grid">
+                <dt>name</dt><dd>git</dd>
+                <dt>version</dt><dd>1.0.2</dd>
+                <dt>source</dt><dd>user-installed（git）</dd>
+                <dt>path</dt><dd>~/.xyz-agent/extensions/git</dd>
+              </dl>
+            </div>
+          </div>
+        </div>
+        <div class="stage-note">点行展开 MetaGrid；点 <b>卸载</b> 触发 §3 确认 Dialog；点 <b>重连</b> 演示 toast。built-in 的 toggle <b>disabled</b>。</div>
+      </div>
+    </div>
+
+    <!-- 空状态 -->
+    <div class="stage-box">
+      <div class="stage-head"><span class="stage-tag">空状态</span><span class="stage-name">无扩展</span><span class="stage-when">extensions.length === 0</span></div>
+      <div class="stage-body">
+        <div class="empty">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M9 12h6M12 9v6" stroke-linecap="round"/></svg>
+          <div class="em-txt">还没有已安装的扩展<br><span style="color:var(--subtle);font-size:12px">从上方「安装扩展」添加 npm 包 / 本地目录 / Git 仓库</span></div>
+          <button class="btn primary sm" style="margin-top:4px"><svg><use href="#i-plus"/></svg>安装扩展</button>
+        </div>
+        <div class="stage-note"><b>三要素</b>（design-system §7）：图标（subtle）+ 一句说明 + 一个 Primary 入口。禁纯「暂无数据」。</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ======================= §3 卸载确认 Dialog ======================= -->
+  <h2><span class="num">§3</span>卸载确认 Dialog</h2>
+  <p class="lede">卸载是<b>破坏性操作</b>（移除包 + 配置），必须走确认 Dialog 防误删。点上方 §2 列表里任意「卸载」按钮触发本 Dialog（真实可弹）。</p>
+  <div class="stages">
+    <div class="stage-box">
+      <div class="stage-head"><span class="stage-tag err">确认弹窗</span><span class="stage-name">Uninstall {name}?</span><span class="stage-when">点卸载按钮触发</span></div>
+      <div class="stage-body">
+        <div style="display:flex;gap:8px;align-items:center;padding:4px 0">
+          <button class="btn danger sm" data-uninstall-demo="tavily"><svg><use href="#i-trash"/></svg>点此模拟卸载 tavily</button>
+          <span style="font:11px/1 var(--font-mono);color:var(--subtle)">或回 §2 点任意卸载按钮</span>
+        </div>
+        <div class="stage-note"><code>Cancel</code> → 关闭；<code>Uninstall</code>（danger）→ <code>extension.uninstall</code>。标题带具体 name 避免误删同名歧义。</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================= §4 行解剖 + 字段表 + 事件清单 ======================= -->
+  <h2><span class="num">§4</span>Entity 行解剖 + ExtensionInfo 字段</h2>
+  <p class="lede">模式 C 单行的部位语义 + 后端数据模型 + WebSocket 事件清单（源自 <code>ExtensionsPane.vue</code>）。</p>
+
+  <div class="modes" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:14px">
+    <div class="stage-box">
+      <div class="stage-head"><span class="stage-tag">ExtensionInfo</span><span class="stage-name">数据模型字段</span></div>
+      <div class="stage-body" style="padding:0">
+        <table class="tbl" style="margin:0">
+          <thead><tr><th>字段</th><th>类型</th><th>用途</th></tr></thead>
+          <tbody>
+            <tr><td class="mn"><code>name</code></td><td><code>string</code></td><td>扩展名（主键）<span class="req">*</span></td></tr>
+            <tr><td class="mn"><code>version</code></td><td><code>string</code></td><td>版本 pill</td></tr>
+            <tr><td class="mn"><code>description</code></td><td><code>string</code></td><td>单行描述（line-clamp 1）</td></tr>
+            <tr><td class="mn"><code>enabled</code></td><td><code>boolean</code></td><td>启用开关态 <span class="req">*</span></td></tr>
+            <tr><td class="mn"><code>dirName</code></td><td><code>string</code></td><td>目录名（候选选择主键）<span class="req">*</span></td></tr>
+            <tr><td class="mn"><code>tools</code></td><td><code>string[]?</code></td><td>工具列表（展开显示）</td></tr>
+            <tr><td class="mn"><code>source</code></td><td><code>string</code></td><td><code>built-in</code> / <code>user-installed</code></td></tr>
+            <tr><td class="mn"><code>path</code></td><td><code>string</code></td><td>安装路径（展开显示）</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="stage-box">
+      <div class="stage-head"><span class="stage-tag">WS 事件</span><span class="stage-name">交互事件清单</span></div>
+      <div class="stage-body" style="padding:0">
+        <table class="tbl" style="margin:0">
+          <thead><tr><th>事件</th><th>方向</th><th>触发</th></tr></thead>
+          <tbody>
+            <tr><td class="mn"><code>extension.list</code></td><td>→</td><td>挂载时拉列表</td></tr>
+            <tr><td class="mn"><code>config.extensions</code></td><td>←</td><td>列表回推（含刷新）</td></tr>
+            <tr><td class="mn"><code>extension.install</code></td><td>→</td><td>npm 直装</td></tr>
+            <tr><td class="mn"><code>extension.installDir</code></td><td>→</td><td>local 发现</td></tr>
+            <tr><td class="mn"><code>extension.installGit</code></td><td>→</td><td>git 克隆+发现</td></tr>
+            <tr><td class="mn"><code>extension.discovered</code></td><td>←</td><td>候选回推（tempDir+candidates）</td></tr>
+            <tr><td class="mn"><code>extension.finishInstall</code></td><td>→</td><td>安装选中（tempDir+selected）</td></tr>
+            <tr><td class="mn"><code>extension.cancelInstall</code></td><td>→</td><td>取消（清理 tempDir）</td></tr>
+            <tr><td class="mn"><code>extension.toggle</code></td><td>→</td><td>启用/禁用切换</td></tr>
+            <tr><td class="mn"><code>extension.uninstall</code></td><td>→</td><td>卸载（Dialog 确认后）</td></tr>
+            <tr><td class="mn"><code>extension.installError</code></td><td>←</td><td>错误（code+message+hint）</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================= §5 决策记录 ======================= -->
+  <h2><span class="num">§5</span>决策记录 · Plugins 归属</h2>
+  <p class="lede"><b>已决策：① 保留 Plugins 独立菜单</b>（2026-06-19，用户裁决）。Extension 不集成 per-item config——维持「安装/启用/卸载」三动作，MetaGrid 只读。</p>
+  <div class="note"><b>决策理由</b>：Plugins 有独立的 per-item 配置表单（<code>PluginSettingsForm.vue</code>），与 Extension 的「远程安装 + 启用开关」职责不同。折叠进 Extension 需给 <code>ExtensionInfo</code> 加 <code>configSchema</code> 字段 + 展开态配置表单，过度耦合。Plugins 菜单作为第 6 项独立保留，本次不在 settings draft 队列内（用户单独实现）。</div>
+  <div class="note"><b>被否选项</b>：② 折叠进 Extension（需加 configSchema，耦合过重）；③ 折叠进 Skill（语义不符——Skill 本地扫描、Extension 远程安装）。</div>
+
+  <div class="note"><b>验收对照（handoff-extension.md §7 P0）</b>：<br>
+  ✅ 三 tab 安装来源都能触发工作流，进度态文案正确（§1 Stage A/B/D + 按钮文案 Cloning/Scanning/Installing）<br>
+  ✅ 候选多选 → 「安装选中 (N)」按选中数启用（§1 Stage C，可点行 toggle 看计数变化）<br>
+  ✅ 60s 超时有反馈（§1 Stage E，inline 错误）<br>
+  ✅ 卸载走确认 Dialog（§3，点 §2 卸载按钮真实弹窗）<br>
+  ✅ 启用开关即时生效（§2 toggle，<code>extension.toggle</code>；built-in disabled）<br>
+  <br><b>关联</b>：<code>draft-settings-shell.html</code>（公共特质 + 5 菜单占位）· <code>handoff-extension.md</code> · <code>design-system.md §2/§5</code>（Card/Pill 族）· <code>form-validation.md</code>（inline 错误规范）</div>
+
+  <!-- 卸载确认 Dialog（全局，§3 触发） -->
+  <div class="dialog-mask" id="uninstallMask">
+    <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dlgTitle">
+      <div class="dialog-head"><svg viewBox="0 0 24 24"><path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.7 3.86a2 2 0 0 0-3.4 0z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M12 9v4M12 17h.01" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span class="dialog-title" id="dlgTitle">卸载 tavily?</span></div>
+      <div class="dialog-body">确定要卸载 <b id="dlgName">tavily</b> 吗？这将移除扩展包及其配置，不可撤销。<br><span style="color:var(--subtle);font-size:12px">触发 <code>extension.uninstall</code></span></div>
+      <div class="dialog-foot">
+        <button class="btn sm" id="dlgCancel">取消</button>
+        <button class="btn danger sm" id="dlgOk"><svg><use href="#i-trash"/></svg>卸载</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 全局 toast（演示反馈） -->
+  <div id="toast" style="position:fixed;bottom:24px;left:50%;transform:translate(-50%,12px);background:var(--surface-2);border:1px solid var(--border-strong);color:var(--fg);padding:9px 14px;border-radius:var(--radius);font:500 12px/1 var(--font-sans);box-shadow:var(--shadow-2);opacity:0;pointer-events:none;transition:opacity var(--duration) var(--ease),transform var(--duration) var(--ease);z-index:120;white-space:nowrap"></div>
+
+  <script>
+  (function(){
+    var body=document.body;
+
+    // ---- toast ----
+    var toastEl=document.getElementById('toast'),toastTimer=null;
+    function toast(msg){
+      toastEl.textContent=msg;toastEl.style.opacity='1';toastEl.style.transform='translate(-50%,0)';
+      clearTimeout(toastTimer);toastTimer=setTimeout(function(){toastEl.style.opacity='0';toastEl.style.transform='translate(-50%,12px)'},1600);
+    }
+
+    // ---- 1. collapsible 折叠（安装区） ----
+    body.addEventListener('click',function(e){
+      var h=e.target.closest('.coll-head');if(!h)return;
+      if(e.target.closest('.btn,.tab,.field'))return;
+      h.parentElement.classList.toggle('open');
+    });
+
+    // ---- 2. tab 切换（npm/local/git） ----
+    var TAB_CFG={
+      npm:{placeholder:'npm:pi-ask-user',hint:'输入 npm 包名。<code>npm:</code> 前缀可省略，缺省自动补全。'},
+      local:{placeholder:'/path/to/extension/directory',hint:'本地目录路径，含一个或多个 pi extension。后端发现候选后进入多选。'},
+      git:{placeholder:'https://github.com/user/repo.git',hint:'Git 仓库 URL。后端克隆 + 发现候选后进入多选。'}
+    };
+    var TAB_LABEL={npm:'npm',local:'Local Dir',git:'Git URL'};
+    body.addEventListener('click',function(e){
+      var t=e.target.closest('.tab');if(!t)return;
+      var bar=t.closest('.tabs');if(!bar)return;
+      Array.prototype.forEach.call(bar.querySelectorAll('.tab'),function(x){x.classList.remove('on')});
+      t.classList.add('on');
+      var key=t.dataset.tab,cfg=TAB_CFG[key];
+      var scope=bar.closest('.coll-body')||bar.closest('.stage-body')||bar.parentElement;
+      var inp=scope.querySelector('[data-install-input]'),btn=scope.querySelector('[data-install-btn]'),hint=scope.querySelector('[data-install-hint]');
+      if(inp){inp.placeholder=cfg.placeholder;inp.value='';}
+      if(hint)hint.innerHTML=cfg.hint;
+      if(btn){btn.textContent='Install';btn.disabled=true;}
+    });
+
+    // ---- 3. install input → 按钮 disabled ----
+    body.addEventListener('input',function(e){
+      var inp=e.target.closest('[data-install-input]');if(!inp)return;
+      var scope=inp.closest('.coll-body')||inp.parentElement;
+      var btn=scope.querySelector('[data-install-btn]');
+      if(btn){btn.disabled=!inp.value.trim();}
+    });
+    // 初始 disabled（Stage A 的 input 空）
+    Array.prototype.forEach.call(document.querySelectorAll('[data-install-btn]'),function(b){
+      var inp=(b.closest('.coll-body')||b.parentElement).querySelector('[data-install-input]');
+      if(inp)b.disabled=!inp.value.trim();
+    });
+
+    // ---- 4. install 按钮 click（演示反馈） ----
+    body.addEventListener('click',function(e){
+      var b=e.target.closest('[data-install-btn]');if(!b||b.disabled)return;
+      var bar=b.closest('.stage-body')?b.closest('.stage-body').querySelector('.tabs'):b.closest('.coll-body').querySelector('.tabs');
+      var cur=bar.querySelector('.tab.on');var key=cur?cur.dataset.tab:'npm';
+      var ev=key==='npm'?'extension.install':(key==='local'?'extension.installDir':'extension.installGit');
+      toast('演示：触发 '+ev+' → 进入 '+(key==='npm'?'直装':'discovering')+' 态');
+    });
+
+    // ---- 5. 候选多选（checkbox toggle + 计数） ----
+    body.addEventListener('click',function(e){
+      var c=e.target.closest('.cand');if(!c)return;
+      c.classList.toggle('on');
+      var list=c.closest('[data-cand-list]');
+      if(!list)return;
+      var n=list.querySelectorAll('.cand.on').length;
+      var btn=list.querySelector('[data-install-selected]');
+      if(btn){btn.textContent='安装选中 ('+n+')';btn.disabled=n===0;}
+    });
+    // 取消/安装选中 按钮
+    body.addEventListener('click',function(e){
+      if(e.target.closest('[data-cancel-select]')){toast('演示：extension.cancelInstall（清理 tempDir）→ 回 idle');}
+      var ins=e.target.closest('[data-install-selected]');
+      if(ins&&!ins.disabled){toast('演示：extension.finishInstall → 进入 installing 态');}
+    });
+
+    // ---- 6. toggle 开关（built-in disabled 不响应） ----
+    body.addEventListener('click',function(e){
+      var sw=e.target.closest('.sw');if(!sw)return;
+      if(sw.classList.contains('disabled'))return;
+      e.stopPropagation();
+      sw.classList.toggle('on');sw.setAttribute('aria-checked',sw.classList.contains('on'));
+      var ent=sw.closest('.entity');
+      if(ent){ent.classList.toggle('disabled',!sw.classList.contains('on'));}
+      toast('演示：extension.toggle · '+(sw.classList.contains('on')?'启用':'禁用'));
+    });
+
+    // ---- 7. entity 展开（点 e-head；点 sw/btn 不展开） ----
+    body.addEventListener('click',function(e){
+      if(e.target.closest('.sw,.btn'))return;
+      var head=e.target.closest('.e-head');if(!head)return;
+      head.parentElement.classList.toggle('open');
+    });
+
+    // ---- 8. 重连按钮 ----
+    body.addEventListener('click',function(e){
+      var r=e.target.closest('[data-reconnect]');if(!r)return;
+      toast('演示：重连 '+r.dataset.reconnect+'（重启 MCP 进程）');
+    });
+
+    // ---- 9. 卸载 Dialog ----
+    var mask=document.getElementById('uninstallMask'),dlgName=document.getElementById('dlgName'),dlgTitle=document.getElementById('dlgTitle');
+    function openUninstall(name){
+      dlgName.textContent=name;dlgTitle.textContent='卸载 '+name+'?';
+      mask.classList.add('on');
+    }
+    function closeUninstall(){mask.classList.remove('on');}
+    body.addEventListener('click',function(e){
+      var u=e.target.closest('[data-uninstall],[data-uninstall-demo]');if(!u)return;
+      var name=u.dataset.uninstall||u.dataset.uninstallDemo;
+      openUninstall(name);
+    });
+    document.getElementById('dlgCancel').addEventListener('click',closeUninstall);
+    document.getElementById('dlgOk').addEventListener('click',function(){
+      var name=dlgName.textContent;closeUninstall();toast('演示：extension.uninstall · '+name+' 已卸载');
+    });
+    mask.addEventListener('click',function(e){if(e.target===mask)closeUninstall();});
+    document.addEventListener('keydown',function(e){if(e.key==='Escape'&&mask.classList.contains('on'))closeUninstall();});
+  })();
+  </script>
+</body>
+</html>

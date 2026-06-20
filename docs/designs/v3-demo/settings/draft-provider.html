@@ -1,0 +1,886 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Provider · 模型供应商配置 · settings provider</title>
+<!-- SVG symbol 图标（design-system §6：stroke 1.5 / currentColor，禁 emoji 作功能图标） -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M21 21l-4.3-4.3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l5 5L20 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-provider" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="7" cy="7" r="0.9" fill="currentColor"/><circle cx="7" cy="17" r="0.9" fill="currentColor"/></symbol>
+  <symbol id="i-skill" viewBox="0 0 24 24"><path d="M12 3l2.2 5.3L20 10l-5.8 1.7L12 17l-2.2-5.3L4 10l5.8-1.7z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
+  <symbol id="i-agent" viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="12" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="9" cy="13" r="1.2" fill="currentColor"/><circle cx="15" cy="13" r="1.2" fill="currentColor"/><path d="M12 3v4M8 19v2M16 19v2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-ext" viewBox="0 0 24 24"><path d="M9 3v6M15 3v6M9 15v6M15 15v6M3 9h6M3 15h6M15 9h6M15 15h6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="9" y="9" width="6" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-system" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="16" cy="7" r="2.2" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="17" r="2.2" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M11 11l8 8M16 16l2-2M19 19l2-2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6 7l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M4 12a8 8 0 0114-5.3L20 9M20 4v5h-5M20 12a8 8 0 01-14 5.3L4 15M4 20v-5h5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="2.6" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 3v6M15 3v6M7 9h10v3a5 5 0 01-10 0V9zM12 17v4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9a2 2 0 00-3-3L5 17v3z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+</svg>
+<style>
+  :root{
+    --bg:#0d0d0f; --surface:#151519; --surface-2:#1b1b20; --surface-hover:#1f1f26;
+    --fg:#f0f0f5; --muted:#8a8a95; --subtle:#5a5a65;
+    --border:rgba(255,255,255,0.06); --border-strong:rgba(255,255,255,0.12);
+    --accent:#4f8ef7; --accent-hover:#6ba3ff; --accent-soft:rgba(79,142,247,0.12);
+    --success:#22c55e; --warning:#f5a524; --danger:#ef4444; --info:#38bdf8;
+    --radius-sm:3px; --radius:8px; --radius-lg:12px;
+    --shadow-2:0 8px 24px rgba(0,0,0,0.4);
+    --ease:cubic-bezier(0.4,0,0.2,1); --duration-fast:120ms; --duration:200ms;
+    --font-sans:Inter,'SF Pro Display','PingFang SC',system-ui,sans-serif;
+    --font-mono:'JetBrains Mono','IBM Plex Mono',ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--fg);font:14px/1.6 var(--font-sans);
+    -webkit-font-smoothing:antialiased;padding:32px 40px 80px;max-width:1280px;margin:0 auto}
+  h1{font-size:26px;font-weight:650;letter-spacing:-0.01em;margin-bottom:6px}
+  h2{font-size:18px;font-weight:600;margin:48px 0 4px;letter-spacing:-0.01em;display:flex;align-items:center;gap:10px}
+  h2 .num{font:600 12px/1 var(--font-mono);color:var(--accent);
+    background:var(--accent-soft);padding:4px 8px;border-radius:var(--radius-sm);letter-spacing:0.05em}
+  h3{font-size:14px;font-weight:600;margin:22px 0 6px;color:var(--fg)}
+  .lede{color:var(--muted);font-size:13px;margin-bottom:8px;max-width:880px}
+  .lede b{color:var(--fg)}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+  .meta span{font:500 11px/1 var(--font-mono);color:var(--muted);
+    background:var(--surface);border:1px solid var(--border);padding:5px 9px;border-radius:999px}
+  .meta b{color:var(--fg);font-weight:600}
+  hr{border:0;border-top:1px solid var(--border);margin:40px 0}
+  code{font:12px/1.4 var(--font-mono);background:var(--surface-2);padding:2px 6px;border-radius:var(--radius-sm);color:var(--accent)}
+  .note{font:12px/1.6 var(--font-mono);color:var(--muted);background:var(--surface);
+    border:1px solid var(--border);border-left:2px solid var(--accent);
+    border-radius:var(--radius-sm);padding:9px 11px;margin-top:14px}
+  .note b{color:var(--fg)}
+  .note.warn{border-left-color:var(--warning)}
+  .tbl{width:100%;border-collapse:collapse;margin-top:12px;font-size:12px}
+  .tbl th,.tbl td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+  .tbl th{font:600 11px/1 var(--font-mono);color:var(--subtle);text-transform:uppercase;letter-spacing:0.05em}
+  .tbl td code{font-size:11px}
+  .tbl tr:hover td{background:var(--surface)}
+  .tbl .mn{font-weight:600;color:var(--fg)}
+  .two-col{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:14px;align-items:start}
+  @media(max-width:900px){.two-col{grid-template-columns:1fr}}
+
+  /* ============ Settings Modal 舞台（shell §1 同构，仅 Provider 落地页特写） ============ */
+  .stage{position:relative;height:640px;border-radius:var(--radius-lg);overflow:hidden;border:1px solid var(--border-strong);background:var(--bg);margin-top:14px}
+  .ghost{position:absolute;inset:0;padding:16px;display:flex;gap:10px}
+  .ghost-side{width:44px;background:var(--surface);border-radius:var(--radius-sm);flex:none}
+  .ghost-main{flex:1;display:flex;flex-direction:column;gap:9px;padding-top:12px}
+  .ghost-row{background:var(--surface);border-radius:8px;height:28px;width:60%}
+  .ghost-row.r{align-self:flex-end;width:46%;background:var(--surface-2)}
+  .ghost-row.s{height:20px;width:34%}
+  .ghost-comp{margin-top:auto;background:var(--surface-2);border-radius:var(--radius);height:30px}
+  .backdrop{position:absolute;inset:0;background:rgba(7,7,9,0.55);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+  .modal{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:min(960px,96%);height:min(600px,94%);
+    background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--radius-lg);
+    box-shadow:0 24px 70px rgba(0,0,0,0.55);display:flex;flex-direction:column;overflow:hidden}
+  .modal-head{display:flex;align-items:center;gap:10px;padding:11px 14px;background:var(--surface);border-bottom:1px solid var(--border);flex:none}
+  .modal-title{font-size:14px;font-weight:650;color:var(--fg)}
+  .modal-close{display:grid;place-items:center;width:28px;height:28px;border:0;border-radius:var(--radius-sm);background:transparent;color:var(--muted);cursor:pointer;transition:color var(--duration-fast) var(--ease),background var(--duration-fast) var(--ease);flex:none}
+  .modal-close:hover{color:var(--fg);background:var(--surface-hover)}
+  .modal-close svg{width:15px;height:15px}
+  .save{display:flex;align-items:center;gap:6px;font:500 12px/1 var(--font-mono);color:var(--subtle);
+    padding:6px 10px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);transition:color var(--duration) var(--ease);margin-left:auto}
+  .save svg{width:13px;height:13px}
+  .save.saving{color:var(--accent)}
+  .save.saved{color:var(--success)}
+  .save .spin{animation:sp 0.8s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .ov-body{display:flex;flex:1;min-height:0}
+  .ov-nav{width:188px;flex:none;background:var(--surface);border-right:1px solid var(--border);padding:12px 8px;overflow:auto}
+  .nav-item{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:var(--radius);
+    cursor:pointer;color:var(--muted);font:500 13px/1 var(--font-sans);transition:color var(--duration-fast) var(--ease),background var(--duration-fast) var(--ease)}
+  .nav-item:hover{color:var(--fg);background:var(--surface-hover)}
+  .nav-item svg{width:17px;height:17px;flex:none}
+  .nav-item.on{color:var(--fg);background:var(--surface-2);box-shadow:inset 0 0 0 1px rgba(79,142,247,0.45)}
+  .nav-item .ct{margin-left:auto;font:500 10px/1 var(--font-mono);color:var(--subtle);background:var(--surface);padding:2px 6px;border-radius:999px}
+  .ov-detail{flex:1;min-width:0;overflow:auto;padding:22px 26px 32px}
+
+  /* page-header + 实体列表 + 行 + 卡（shell 模式 A/B/C 同构） */
+  .ph{display:flex;align-items:flex-start;gap:12px;margin-bottom:18px}
+  .ph-text{flex:1;min-width:0}
+  .ph-title{font-size:19px;font-weight:650;letter-spacing:-0.01em;color:var(--fg)}
+  .ph-desc{color:var(--muted);font-size:12.5px;margin-top:2px;max-width:540px}
+  .sgroup{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);margin-bottom:14px}
+  .sgroup-h{display:flex;align-items:center;gap:8px;padding:13px 16px 9px}
+  .sgroup-title{font-size:13px;font-weight:650;color:var(--fg);display:flex;align-items:center;gap:8px}
+  .sgroup-title svg{width:15px;height:15px;color:var(--accent)}
+  .sgroup-body{padding:0 16px 8px}
+  .sgroup-desc{font-size:12px;color:var(--muted);padding:0 16px 8px}
+  /* 紧凑单行凭据行（供应商维度）—— label inline 左侧，控件右侧，少量 help。旧 .row 双行结构已废弃。 */
+  .crow{display:flex;align-items:center;gap:12px;padding:7px 0;border-bottom:1px solid var(--border);min-height:34px}
+  .crow:last-child{border-bottom:0}
+  .crow .clabel{font:600 12px/1 var(--font-sans);color:var(--muted);flex:none;width:76px;letter-spacing:0.01em}
+  .crow .cval{flex:1;min-width:0;display:flex;align-items:center;gap:8px}
+  .crow .cval .field,.crow .cval .sel{max-width:340px}
+  .crow .chint{font:500 11px/1.3 var(--font-sans);color:var(--subtle);flex:none;white-space:nowrap}
+  .crow .cctrl{margin-left:auto;display:flex;align-items:center;gap:8px;flex:none}
+  .entity{border-bottom:1px solid var(--border)}
+  .entity:last-child{border-bottom:0}
+  .e-head{display:flex;align-items:center;gap:10px;padding:11px 0;cursor:pointer}
+  .e-name{font-size:13px;font-weight:600;color:var(--fg)}
+  .e-sub{font:500 11px/1 var(--font-mono);color:var(--subtle)}
+  .e-chev{width:16px;height:16px;color:var(--subtle);transition:transform var(--duration) var(--ease);flex:none}
+  .entity.open .e-chev{transform:rotate(180deg)}
+  .e-config{display:none;padding:2px 0 14px}
+  .entity.open .e-config{display:block}
+  /* ============ 供应商内分区：凭据区（供应商维度）+ 模型表格区（模型维度）============ */
+  .e-zone{margin-top:12px;padding-top:12px;border-top:1px solid var(--border)}
+  .e-zone:first-child{margin-top:0;padding-top:0;border-top:0}
+  .e-zone-h{display:flex;align-items:center;gap:8px;margin:0 0 2px}
+  .e-zone-h .zt{font:600 10.5px/1 var(--font-mono);color:var(--muted);text-transform:uppercase;letter-spacing:0.08em}
+  .e-zone-h .zsub{font-size:11px;color:var(--subtle)}
+  .e-zone-h .zct{margin-left:auto;font:500 10.5px/1 var(--font-mono);color:var(--subtle)}
+  /* ============ 模型表格（模型维度）—— 列对齐是核心 ============ */
+  .mtable{width:100%;border-collapse:collapse;font-size:12.5px;table-layout:fixed}
+  .mtable th,.mtable td{padding:8px 6px;border-bottom:1px solid var(--border);vertical-align:middle;white-space:nowrap;text-align:right}
+  .mtable tr:last-child td{border-bottom:0}
+  .mtable th{font:600 10px/1 var(--font-mono);color:var(--subtle);text-transform:uppercase;letter-spacing:0.06em;padding-bottom:6px}
+  .mtable .col-name{width:34%}
+  .mtable th.col-name,.mtable td.col-name{text-align:left;padding-left:0}
+  .mtable td.col-name{font:500 12.5px/1 var(--font-mono);color:var(--fg);overflow:hidden;text-overflow:ellipsis}
+  .mtable td.num{font-variant-numeric:tabular-nums;color:var(--fg)}
+  .mtable td.col-think{width:13%}
+  .mtable th.col-def,.mtable td.col-def{width:22%;padding-right:0;text-align:right}
+  .mtable .rea-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--info);box-shadow:0 0 0 3px rgba(56,189,248,0.14)}
+  .mtable .rea-none{color:var(--border-strong)}
+  .e-actions{display:flex;gap:6px;margin-left:auto;padding-left:8px}
+
+  /* ============ 控件原语（design-system §3-§5 派生，禁自造） ============ */
+  .sw{position:relative;width:34px;height:20px;border-radius:999px;background:var(--surface-2);
+    border:1px solid var(--border-strong);cursor:pointer;transition:background var(--duration-fast) var(--ease),border-color var(--duration-fast) var(--ease);flex:none}
+  .sw::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;
+    background:var(--muted);transition:transform var(--duration) var(--ease),background var(--duration) var(--ease)}
+  .sw.on{background:var(--accent);border-color:var(--accent)}
+  .sw.on::after{transform:translateX(14px);background:#fff}
+  .field{background:var(--surface-2);border:1px solid var(--border);color:var(--fg);padding:7px 10px;
+    border-radius:var(--radius);font:13px/1 var(--font-mono);outline:none;width:100%;transition:border-color var(--duration-fast) var(--ease)}
+  .field:focus{border-color:rgba(79,142,247,0.5);box-shadow:inset 0 0 0 1px rgba(79,142,247,0.4)}
+  .field.err{border-color:rgba(239,68,68,0.55);box-shadow:inset 0 0 0 1px rgba(239,68,68,0.4)}
+  .field-wrap{position:relative;display:flex;align-items:center;gap:8px}
+  .field-wrap .field{padding-right:36px}
+  .eye{position:absolute;right:8px;background:transparent;border:0;color:var(--subtle);cursor:pointer;padding:2px;border-radius:var(--radius-sm)}
+  .eye:hover{color:var(--fg)}
+  .eye svg{width:15px;height:15px;display:block}
+  .sel{background:var(--surface-2);border:1px solid var(--border);color:var(--fg);padding:7px 28px 7px 10px;
+    border-radius:var(--radius);font:500 13px/1 var(--font-sans);outline:none;cursor:pointer;appearance:none;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M6 9l6 6 6-6' fill='none' stroke='%238a8a95' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+    background-repeat:no-repeat;background-position:right 8px center;background-size:14px}
+  .sel:focus{border-color:rgba(79,142,247,0.5);box-shadow:inset 0 0 0 1px rgba(79,142,247,0.4)}
+  .btn{display:inline-flex;align-items:center;gap:6px;background:transparent;border:1px solid var(--border-strong);
+    color:var(--fg);padding:7px 12px;border-radius:var(--radius);font:600 12px/1 var(--font-sans);cursor:pointer;transition:background var(--duration-fast) var(--ease),border-color var(--duration-fast) var(--ease)}
+  .btn:hover{background:var(--surface-hover)}
+  .btn svg{width:13px;height:13px}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.primary:hover{background:var(--accent-hover)}
+  .btn.danger{color:var(--danger);border-color:rgba(239,68,68,0.3)}
+  .btn.danger:hover{background:rgba(239,68,68,0.1)}
+  .btn.sm{padding:5px 10px;font-size:11px}
+  .btn.gh{border-color:transparent;color:var(--muted)}
+  .btn.gh:hover{color:var(--fg);background:var(--surface-hover)}
+  .btn:disabled{opacity:0.45;cursor:not-allowed}
+  .dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex:none}
+  .dot-ok{background:var(--success)} .dot-warn{background:var(--warning)}
+  .dot-err{background:var(--danger)} .dot-idle{background:var(--subtle)}
+  .pill{font:500 11px/1 var(--font-mono);color:var(--muted);background:var(--surface-2);
+    border:1px solid var(--border);padding:4px 8px;border-radius:999px;display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+  .pill.acc{color:var(--accent);background:var(--accent-soft);border-color:rgba(79,142,247,0.3)}
+  .pill.ok{color:var(--success);background:rgba(34,197,94,0.12);border-color:rgba(34,197,94,0.25)}
+  .pill.err{color:var(--danger);background:rgba(239,68,68,0.1);border-color:rgba(239,68,68,0.25)}
+  .pill.warn{color:var(--warning);background:rgba(245,165,36,0.12);border-color:rgba(245,165,36,0.25)}
+  .pill.info{color:var(--info);background:rgba(56,189,248,0.12);border-color:rgba(56,189,248,0.25)}
+
+  /* ============ Provider 专属增量 ============ */
+  /* 字段级校验消息（对齐 form-validation：内联红字紧跟输入框下） */
+  .fmsg{font:500 11px/1.4 var(--font-sans);color:var(--danger);margin-top:5px;display:none}
+  .fmsg.on{display:block}
+  .fmsg.ok{color:var(--success)}
+
+  /* 连接测试结果行 / 发现结果行（inline status，不上 modal toast） */
+  .result{display:flex;align-items:center;gap:8px;font:500 12px/1.4 var(--font-sans);padding:8px 10px;
+    border-radius:var(--radius);margin-top:8px;display:none}
+  .result.on{display:flex}
+  .result.loading{color:var(--accent);background:var(--accent-soft)}
+  .result.ok{color:var(--success);background:rgba(34,197,94,0.1)}
+  .result.err{color:var(--danger);background:rgba(239,68,68,0.08)}
+  .result.empty{color:var(--muted);background:var(--surface-2)}
+  .result svg{width:14px;height:14px;flex:none}
+  .result .spin{animation:sp 0.8s linear infinite}
+
+  /* 模型行：name(mono) + reasoning + ctx + thinking 策略 + cost + toggle */
+  .mrow{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)}
+  .mrow:last-child{border-bottom:0}
+  .mrow:hover{background:var(--surface-2);margin:0 -10px;padding:9px 10px;border-radius:var(--radius)}
+  .mname{font:500 12.5px/1 var(--font-mono);color:var(--fg);min-width:0}
+  .mname .sub{color:var(--subtle);font-weight:400}
+  .mctx{font:500 11px/1 var(--font-mono);color:var(--muted);background:var(--surface-2);padding:3px 7px;border-radius:var(--radius-sm)}
+  .mcost{font:500 10.5px/1 var(--font-mono);color:var(--subtle)}
+  .mcost b{color:var(--muted);font-weight:500}
+  .mtoggle{margin-left:auto}
+
+  /* thinkingLevelMap 三档：静态 pill（列表态）+ 分段（编辑态） */
+  .tpill{font:600 10px/1 var(--font-mono);padding:3px 7px;border-radius:var(--radius-sm);
+    border:1px solid var(--border);letter-spacing:0.04em;cursor:pointer;white-space:nowrap;transition:opacity var(--duration-fast) var(--ease)}
+  .tpill:hover{opacity:0.8}
+  /* 三档色编：all-levels=info(全档最丰富) · high-max=accent(产品主推) · on-off=neutral(二值最简) */
+  .tpill.all{color:var(--info);background:rgba(56,189,248,0.12);border-color:rgba(56,189,248,0.28)}
+  .tpill.high{color:var(--accent);background:var(--accent-soft);border-color:rgba(79,142,247,0.3)}
+  .tpill.binary{color:var(--muted);background:var(--surface-2);border-color:var(--border)}
+  .tseg{display:inline-flex;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:2px}
+  .tseg button{background:transparent;border:0;color:var(--muted);font:600 10px/1 var(--font-mono);
+    padding:5px 9px;border-radius:var(--radius-sm);cursor:pointer;transition:color var(--duration-fast) var(--ease),background var(--duration-fast) var(--ease)}
+  .tseg button:hover{color:var(--fg)}
+  .tseg button.on.all{color:var(--info);background:rgba(56,189,248,0.18)}
+  .tseg button.on.high{color:#fff;background:var(--accent)}
+  .tseg button.on.binary{color:var(--fg);background:var(--surface-hover)}
+  /* 模型 thinking 就地编辑（列表态）：pill 可点 → 变分段 → 外部点击收起 */
+  .mtable td.col-think.editing{background:var(--surface-2);border-radius:var(--radius-sm);padding-left:4px}
+  .mtable .tseg{padding:2px}
+
+  /* reasoning 标记（模型支持思考能力，非 thinking 策略） */
+  .rea{font:600 10px/1 var(--font-mono);color:var(--info);background:rgba(56,189,248,0.1);
+    border:1px solid rgba(56,189,248,0.22);padding:3px 6px;border-radius:var(--radius-sm)}
+
+  /* 空状态（design-system §7：图标 + 说明 + Primary 入口） */
+  .empty{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
+    padding:40px 20px;gap:10px}
+  .empty .ring{width:46px;height:46px;border-radius:50%;border:1.5px dashed var(--border-strong);
+    display:grid;place-items:center;color:var(--subtle)}
+  .empty .ring svg{width:20px;height:20px}
+  .empty .t{font-size:14px;font-weight:600;color:var(--fg)}
+  .empty .d{font-size:12.5px;color:var(--muted);max-width:320px}
+
+  /* 嵌套 edit/add modal（modal 之上的 modal） */
+  .pmodal-mask{position:absolute;inset:0;background:rgba(5,5,7,0.6);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);
+    display:none;align-items:center;justify-content:center;z-index:40}
+  .pmodal-mask.on{display:flex}
+  .pmodal{width:min(520px,92%);max-height:88%;background:var(--surface);border:1px solid var(--border-strong);
+    border-radius:var(--radius-lg);box-shadow:0 30px 80px rgba(0,0,0,0.6);display:flex;flex-direction:column;overflow:hidden}
+  .pmodal-h{display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid var(--border)}
+  .pmodal-h .t{font-size:14px;font-weight:650;color:var(--fg)}
+  .pmodal-b{padding:16px;overflow:auto}
+  .pmodal-f{display:flex;align-items:center;gap:8px;padding:12px 16px;border-top:1px solid var(--border);background:var(--surface)}
+  .pmodal-f .spacer{flex:1}
+  .field-grp{margin-bottom:13px}
+  .field-grp label{display:block;font-size:12px;font-weight:600;color:var(--fg);margin-bottom:5px}
+  .field-grp label .opt{color:var(--subtle);font-weight:400;margin-left:5px}
+  .field-grp .hint{font-size:11.5px;color:var(--muted);margin-top:5px}
+
+  /* 删除确认 */
+  .confirm{background:var(--surface-2);border:1px solid var(--border-strong);border-radius:var(--radius);
+    padding:12px 14px;margin-top:10px;display:none}
+  .confirm.on{display:block}
+  .confirm .ct{font-size:12.5px;color:var(--fg);margin-bottom:4px}
+  .confirm .ds{font-size:11.5px;color:var(--muted);margin-bottom:10px}
+  .confirm .acts{display:flex;gap:8px;justify-content:flex-end}
+
+  /* 画廊框（文档区状态展示） */
+  .gal{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px 16px;margin-top:10px}
+  .gal-row{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+  .gal-cell{display:flex;flex-direction:column;gap:6px;min-width:0}
+  .gal-cell .cap{font:500 10px/1 var(--font-mono);color:var(--subtle);text-transform:uppercase;letter-spacing:0.05em}
+</style>
+</head>
+<body>
+  <h1>Provider · 模型供应商配置</h1>
+  <p class="lede">settings 落地页（左导航第 1 项，默认进）。配置 AI 模型供应商、API 凭据、模型清单与每模型的 <b>thinking 策略</b>。本稿细化 <code>handoff-provider.md</code> 全部交互：Entity 列表（模式 C）+ 展开行（模式 A）+ 嵌套编辑 Modal + 模型行三档 thinking + 连接测试/自动发现状态机 + key 加密显隐 + 字段校验。视觉与控件原语与 <code>draft-settings-shell.html</code> 完全同构（冷蓝暗色 SSOT）。</p>
+  <div class="meta">
+    <span>规范 <b>settings/spec.md</b></span>
+    <span>handoff <b>handoff-provider.md</b></span>
+    <span>数据模型 <b>shared/src/provider.ts · ProviderInfo/ModelInfo</b></span>
+    <span>原语 <b>Entity List / Setting Row / Modal / Toggle / Segmented / Status Dot</b></span>
+    <span>校验 <b>~/.claude/rules/form-validation.md（字段级 FormMessage）</b></span>
+    <span>视觉 <b>ADR-0018 冷蓝暗色（非 PRODUCT.md 暖色，已推翻）</b></span>
+  </div>
+
+  <h2><span class="num">§1</span>交互舞台 · settings modal · Provider 落地页</h2>
+  <p class="lede">下方舞台 = settings modal 特写 Provider。<b>点 entity head 右侧「设为默认供应商」</b>全局互斥（暖 accent pill）；<b>点 entity 展开</b>看两个分区：凭据与连接（key/连接）+ 模型清单表格（名称左、其余右对齐）；<b>点模型行最右「设为默认」</b>设全局默认模型（冷 info pill，跨所有 provider 互斥）；<b>点 thinking pill</b>就地切分段；<b>点「测试连接」</b>跑状态机（loading→ok+模型数）；<b>点「自动发现」</b>拉模型清单；<b>点「+ 添加供应商」</b>或 entity 的 ✎ 打开嵌套编辑 Modal（含字段校验、ollama 免 key、thinking 三档分段）；<b>点 🗑 删除</b>弹确认；<b>改任意控件</b>触发右上自动保存 pill。底部「空状态」开关可切到无 provider 引导态。</p>
+
+  <div class="stage" id="stage">
+    <div class="ghost">
+      <div class="ghost-side"></div>
+      <div class="ghost-main"><div class="ghost-row s"></div><div class="ghost-row"></div><div class="ghost-row r"></div><div class="ghost-row"></div><div class="ghost-comp"></div></div>
+    </div>
+    <div class="backdrop"></div>
+
+    <div class="modal">
+      <div class="modal-head">
+        <span class="modal-title">设置</span>
+        <span class="save saved" id="save"><svg id="saveIco"><use href="#i-check"/></svg><span id="saveTxt">已保存</span></span>
+        <button class="modal-close" aria-label="关闭"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+      </div>
+      <div class="ov-body">
+        <nav class="ov-nav">
+          <div class="nav-item on"><svg><use href="#i-provider"/></svg>Provider<span class="ct">4</span></div>
+          <div class="nav-item"><svg><use href="#i-skill"/></svg>Skill<span class="ct">8</span></div>
+          <div class="nav-item"><svg><use href="#i-agent"/></svg>Agent</div>
+          <div class="nav-item"><svg><use href="#i-ext"/></svg>Extension<span class="ct">3</span></div>
+          <div class="nav-item"><svg><use href="#i-system"/></svg>System</div>
+        </nav>
+
+        <div class="ov-detail" id="detail">
+          <!-- page-header -->
+          <div class="ph">
+            <div class="ph-text">
+              <div class="ph-title">Provider</div>
+              <div class="ph-desc">配置 AI 模型供应商与 API 凭据。Key 本地加密存储，不出本机。</div>
+            </div>
+            <button class="btn primary sm" id="btnAdd"><svg><use href="#i-plus"/></svg>添加供应商</button>
+          </div>
+
+          <!-- 空状态（默认隐藏） -->
+          <div class="sgroup" id="emptyCard" style="display:none">
+            <div class="empty">
+              <div class="ring"><svg><use href="#i-provider"/></svg></div>
+              <div class="t">还没有供应商</div>
+              <div class="d">添加第一个供应商，连接 AI 模型开始对话。支持 Anthropic / OpenAI / Google / Ollama 等。</div>
+              <button class="btn primary sm" onclick="openPmodal('add')"><svg><use href="#i-plus"/></svg>添加第一个供应商</button>
+            </div>
+          </div>
+
+          <!-- 实体列表（模式 C） -->
+          <div class="sgroup" id="listCard">
+            <div class="sgroup-h"><span class="sgroup-title"><svg><use href="#i-provider"/></svg>已配置供应商</span>
+              <span class="pill">模式 C · Entity List</span>
+              <label class="pill" style="margin-left:auto;cursor:pointer"><input type="checkbox" id="toggleEmpty" style="margin-right:4px;accent-color:var(--accent)">演示空状态</label>
+            </div>
+            <div class="sgroup-desc">状态点 = 最近一次连接测试结果；点行展开凭据与模型。</div>
+            <div class="sgroup-body" id="entityList"><!-- entity 由 JS 渲染 --></div>
+          </div>
+
+          <!-- 默认 Provider 入口在实体 head 右侧（全局互斥按钮）；凭据区不放默认操作；故障转移不实现（见 §8 ⑥）-->
+        </div>
+      </div>
+    </div>
+
+    <!-- 嵌套 编辑/添加 Modal -->
+    <div class="pmodal-mask" id="pmodalMask">
+      <div class="pmodal" role="dialog" aria-modal="true">
+        <div class="pmodal-h">
+          <span class="t" id="pmodalTitle">编辑供应商</span>
+          <button class="modal-close" style="margin-left:auto" onclick="closePmodal()" aria-label="关闭"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+        </div>
+        <div class="pmodal-b">
+          <div class="field-grp">
+            <label>名称</label>
+            <input class="field" id="fName" value="Anthropic" />
+          </div>
+          <div class="field-grp">
+            <label>类型 <span class="opt">决定 baseUrl 默认值与是否需要 API Key</span></label>
+            <select class="sel" id="fType" style="width:100%">
+              <option value="anthropic">Anthropic Messages · api.anthropic.com</option>
+              <option value="openai">OpenAI Compatible</option>
+              <option value="google">Google Gemini</option>
+              <option value="ollama">Ollama · 本地（无需 Key）</option>
+              <option value="custom">自定义</option>
+            </select>
+          </div>
+          <div class="field-grp">
+            <label>Base URL</label>
+            <input class="field" id="fUrl" value="https://api.anthropic.com" />
+            <div class="fmsg" id="fmsgUrl">请填写 Base URL</div>
+          </div>
+          <div class="field-grp" id="keyGrp">
+            <label>API Key <span class="opt">仅本地加密存储，传输时由代理转发，不出本机</span></label>
+            <div class="field-wrap">
+              <input class="field" id="fKey" type="password" placeholder="sk-ant-..." value="sk-ant-9f3a••••••••••••••2c" />
+              <button class="eye" onclick="toggleKeyEye(this)" title="显示/隐藏"><svg><use href="#i-eye"/></svg></button>
+            </div>
+            <div class="fmsg" id="fmsgKey">请填写 API Key（Ollama 类型除外）</div>
+          </div>
+
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+            <button class="btn sm" id="btnTest"><svg><use href="#i-plug"/></svg>测试连接</button>
+            <button class="btn sm" id="btnDisc"><svg><use href="#i-refresh"/></svg>自动发现模型</button>
+          </div>
+          <div class="result" id="connResult"></div>
+          <div class="result" id="discResult"></div>
+
+          <div class="field-grp" style="margin-top:14px;margin-bottom:0">
+            <label>模型清单 <span class="opt">点行进入编辑态，切换 thinking 策略分段</span></label>
+            <div id="pmodalModels" style="border-top:1px solid var(--border);margin-top:4px"></div>
+            <button class="btn gh sm" style="margin-top:8px" onclick="addManualModel()"><svg><use href="#i-plus"/></svg>手动添加模型</button>
+          </div>
+        </div>
+        <div class="pmodal-f">
+          <button class="btn danger sm" id="btnDel" onclick="askDelete()"><svg><use href="#i-trash"/></svg>删除</button>
+          <span class="spacer"></span>
+          <button class="btn sm" onclick="closePmodal()">取消</button>
+          <button class="btn primary sm" onclick="saveProvider()">保存</button>
+          <div class="confirm" id="delConfirm">
+            <div class="ct">删除 <b id="delName">Anthropic</b>？</div>
+            <div class="ds">将移除其下所有模型配置。此操作不可撤销。</div>
+            <div class="acts"><button class="btn sm" onclick="hideDelete()">取消</button><button class="btn danger sm" onclick="confirmDelete()">确认删除</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="note"><b>舞台说明</b>：真实集成时此 modal 由 ⌘, / 顶栏齿轮挂载为 <code>position:fixed</code> 居中浮层；本稿为文档内 640px 舞台演示，交互全可点。Ollama 类型切到时 API Key 字段降级为可选（免 key），Base URL 默认 <code>http://localhost:11434</code>——这是「ollama 除外」校验例外的视觉落点。</div>
+
+  <h2><span class="num">§2</span>列表行解剖 · Entity Row（模式 C）</h2>
+  <p class="lede">每行一供应商。状态点反映 <code>ProviderInfo.status</code>（<code>connected</code> / <code>not_configured</code> / <code>error</code>），与 <code>apiKeySet</code> 联动。点行展开凭据配置（模式 A），点开关仅切 <code>enabled</code> 不展开。</p>
+  <div class="gal">
+    <div class="sgroup-body" style="padding:0">
+      <div class="entity open"><div class="e-head"><span class="dot dot-ok"></span><span class="e-name">Anthropic</span><span class="pill acc">默认供应商</span><span class="pill">anthropic-messages</span><span class="e-sub">3 模型</span><span class="sw on e-toggle" role="switch" aria-checked="true"></span><svg class="e-chev"><use href="#i-chev"/></svg></div></div>
+      <div class="entity"><div class="e-head"><span class="dot dot-ok"></span><span class="e-name">Ollama (本地)</span><span class="pill">ollama</span><span class="e-sub">2 模型</span><span class="sw on e-toggle" role="switch" aria-checked="true"></span><svg class="e-chev"><use href="#i-chev"/></svg></div></div>
+      <div class="entity"><div class="e-head"><span class="dot dot-idle"></span><span class="e-name">Google</span><span class="pill warn">未配置</span><span class="e-sub">1 模型</span><span class="sw e-toggle" role="switch" aria-checked="false"></span><svg class="e-chev"><use href="#i-chev"/></svg></div></div>
+      <div class="entity"><div class="e-head"><span class="dot dot-err"></span><span class="e-name">自建网关</span><span class="pill err">连接异常</span><span class="e-sub">5 模型</span><span class="sw e-toggle" role="switch" aria-checked="false"></span><svg class="e-chev"><use href="#i-chev"/></svg></div></div>
+    </div>
+  </div>
+  <table class="tbl">
+    <thead><tr><th>状态点</th><th>status</th><th>apiKeySet</th><th>含义 · 行为</th></tr></thead>
+    <tbody>
+      <tr><td><span class="dot dot-ok"></span> 绿</td><td><code>connected</code></td><td>任意</td><td class="mn">已通过连接测试。Ollama 即使 <code>apiKeySet=false</code> 也属此类（本地免 key）。</td></tr>
+      <tr><td><span class="dot dot-idle"></span> 灰</td><td><code>not_configured</code></td><td><code>false</code></td><td>未填凭据。展开行降级为「添加凭据」CTA，不显示 key/url 编辑态。</td></tr>
+      <tr><td><span class="dot dot-err"></span> 红</td><td><code>error</code></td><td>—</td><td>测试失败 / 网关不可达。展开行连接区显示错误码 + 重试。</td></tr>
+    </tbody>
+  </table>
+  <div class="note"><b>默认 Provider 入口（全局）</b>：高频全局操作，<b>上移到实体 head 右侧</b>——未默认时显「设为默认供应商」按钮（<code>i-check</code> 图标），<code>isDefault=true</code> 时显 <code>pill acc「默认供应商」</code>。<b>全局互斥</b>：点其一即清除其余所有 provider 的默认标记（<code>setDefault()</code>）。底部「默认与轮询」卡已移除，故障转移不实现（§8 ⑥）。</div>
+  <div class="note"><b>默认模型入口（全局唯一）</b>：跨所有 provider 互斥，<b>入口在模型表格行最右列</b>——未默认时显「设为默认」按钮，<code>isDefaultModel=true</code> 时显 <code>pill info「默认模型」</code>。<b>视觉隔离</b>：默认供应商走 head 暖 <code>--accent</code>、默认模型走行内冷 <code>--info</code>，<b>颜色 + 位置双重区分</b>，杜绝语义撞车（曾因文案「设为默认」省「供应商」被误读为模型）。<b>全局互斥</b>：设其一即清除所有 provider 下所有模型的默认标记（<code>setDefaultModel()</code>）。<b>P0</b>：两个默认不可视觉混淆。</div>
+
+  <h2><span class="num">§3</span>连接测试 · 4 态状态机</h2>
+  <p class="lede">点「测试连接」触发。结果走 <b>inline status</b>（行内 result 行），<b>不弹 modal 级 toast</b>（对齐 form-validation：表单级错误用 inline，非阻断）。状态点 + 行尾 help 同步更新。</p>
+  <div class="gal">
+    <div class="gal-row">
+      <div class="gal-cell"><span class="cap">idle</span><div class="result" style="display:none"></div><span class="pill">未测试</span></div>
+      <div class="gal-cell"><span class="cap">loading</span><div class="result on loading"><svg><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="40" stroke-linecap="round" class="spin"/></svg>测试中…</div></div>
+      <div class="gal-cell"><span class="cap">ok</span><div class="result on ok"><svg><use href="#i-check"/></svg>连接成功 · 找到 <b>6</b> 个模型</div></div>
+      <div class="gal-cell"><span class="cap">err</span><div class="result on err"><svg viewBox="0 0 24 24"><path d="M12 8v5M12 16.5v.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>401 Unauthorized · 检查 API Key</div></div>
+    </div>
+  </div>
+  <div class="note">ok 态必须带「找到 N 个模型」计数（验收 §7）——这是连接与模型清单之间的桥：测试成功隐含可发现模型数。<b>真实集成</b>：调 <code>config-service</code> 的 test-connection，按 provider api 类型（anthropic-messages / openai-completions / ollama）走不同探活路径。</div>
+
+  <h2><span class="num">§4</span>自动发现 · 5 态状态机</h2>
+  <p class="lede">点「自动发现模型」调供应商 <code>/models</code> 端点拉清单，合并进模型列表（去重 by id）。与连接测试独立的第二条 inline result 行，互不覆盖。</p>
+  <div class="gal">
+    <div class="gal-row">
+      <div class="gal-cell"><span class="cap">loading</span><div class="result on loading"><svg><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="40" stroke-linecap="round" class="spin"/></svg>发现中…</div></div>
+      <div class="gal-cell"><span class="cap">success</span><div class="result on ok"><svg><use href="#i-check"/></svg>已发现 3 个新模型，已合并</div></div>
+      <div class="gal-cell"><span class="cap">empty</span><div class="result on empty">未找到模型 · 检查 API Key 与网络</div></div>
+      <div class="gal-cell"><span class="cap">error</span><div class="result on err"><svg viewBox="0 0 24 24"><path d="M12 8v5M12 16.5v.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>网络超时 · 重试</div></div>
+      <div class="gal-cell"><span class="cap">no-key (google)</span><div class="result on empty">未找到模型 · 检查 API Key 与网络</div></div>
+    </div>
+  </div>
+  <div class="note">empty 与 error 视觉区分（灰 vs 红）但文案都指向「下一步」：empty 提示检查 Key/网络，error 带具体错误码。<b>合并策略</b>：已存在 id 跳过，新 id 追加且默认 <code>thinking=on-off</code>、<code>enabled=true</code>，用户再逐模型调档。</div>
+
+  <h2><span class="num">§5</span>模型行 + thinkingLevelMap 三档 ★核心特异点</h2>
+  <p class="lede">模型行是 Provider 与别菜单拉开差异的地方。<code>thinkingLevelMap: Record&lt;string, string|null&gt;</code> 描述该模型支持哪些思考档位，归为三种策略。<b>列表态</b>用色编 pill 一眼区分，<b>编辑态</b>点行变分段控件可切。这是 handoff §4 的核心交互。</p>
+  <h3>三档色编与语义</h3>
+  <table class="tbl">
+    <thead><tr><th>策略 key</th><th>静态 pill</th><th>分段（编辑态）</th><th>语义（支持档位）</th><th>色编</th></tr></thead>
+    <tbody>
+      <tr><td class="mn"><code>all-levels</code></td><td><span class="tpill all">全档</span></td><td><div class="tseg"><button class="on all">全档</button><button class="high">高/顶</button><button class="binary">开关</button></div></td>
+        <td>off / low / medium / high / xhigh 全支持</td><td><code>--info</code> 青 · 最丰富</td></tr>
+      <tr><td class="mn"><code>high-max</code></td><td><span class="tpill high">高/顶</span></td><td><div class="tseg"><button class="all">全档</button><button class="on high">高/顶</button><button class="binary">开关</button></div></td>
+        <td>仅 high / max（顶配推理模型）</td><td><code>--accent</code> 蓝 · 产品主推</td></tr>
+      <tr><td class="mn"><code>on-off</code></td><td><span class="tpill binary">开关</span></td><td><div class="tseg"><button class="all">全档</button><button class="high">高/顶</button><button class="on binary">开关</button></div></td>
+        <td>二值开关（非推理或轻量模型）</td><td><code>--muted</code> 中性 · 最简</td></tr>
+    </tbody>
+  </table>
+  <div class="note warn"><b>色编裁决</b>：handoff 原文「binary=agent 色、highmax=accent」。本稿将 high-max 绑 <code>--accent</code>（产品主推配置，与默认 thinking=medium 呼应）；binary 用 <code>--muted</code> 中性（二值最简，不抢视觉）；all-levels 用 <code>--info</code> 青（全档最丰富，与 reasoning 标记同色系但 pill/rea 形态不同可区分）。如产品要 binary 也带色，改 <code>.tpill.binary</code> token 即可，色编规则集中在 CSS 一处。</div>
+  <h3>模型表格完整结构（4 列对齐）</h3>
+  <div class="gal">
+    <div style="padding:8px 0">
+      <table class="mtable">
+        <thead><tr><th class="col-name">模型</th><th>推理</th><th>上下文</th><th class="col-think">thinking</th><th class="col-def">默认</th></tr></thead>
+        <tbody>
+          <tr><td class="col-name">claude-sonnet-4-5</td><td><span class="rea-dot" title="支持推理"></span></td><td class="num">200K</td><td class="col-think"><span class="tpill high">高/顶</span></td><td class="col-def"><span class="pill info">默认模型</span></td></tr>
+          <tr><td class="col-name">gpt-4o</td><td><span class="rea-none">—</span></td><td class="num">128K</td><td class="col-think"><span class="tpill binary">开关</span></td><td class="col-def"><button class="btn gh sm">设为默认</button></td></tr>
+          <tr><td class="col-name">llama3.1</td><td><span class="rea-none">—</span></td><td class="num">128K</td><td class="col-think"><span class="tpill binary">开关</span></td><td class="col-def"><button class="btn gh sm">设为默认</button></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="note"><b>列对齐规则</b>：模型名称列<b>左对齐</b>（mono 等宽），推理 / 上下文 / thinking 三列<b>内容及表头全部右对齐</b>，数字用 <code>font-variant-numeric:tabular-nums</code> → 同列字符等宽，<b>垂直对齐自动达成</b>（无需手调列宽）。reasoning 用实心点标记（● info 色，无则 —），比 pill 省列宽。<b>供应商维度 vs 模型维度</b>已用两个 <code>.e-zone</code> 分区显式隔开（凭据与连接 / 模型清单），用户一眼分清「在配供应商」还是「在配模型」。cost 未纳入表格列（handoff 待裁决②），表格聚焦于模型能力维度。<b>thinking 就地编辑</b>：列表态点 <code>tpill</code> 即变为 <code>tseg</code> 分段（全档/高顶/开关），切换后自动收起回 pill，无需进 modal（<code>editThinkInline()</code> / <code>pickThink()</code>，外部点击收起）。模型名 / 推理 / 上下文保持只读（发现来的数据，不手改）。<b>默认模型列</b>：第 5 列 <code>col-def</code> 右对齐，未默认显「设为默认」按钮 / 已默认显 <code>pill info「默认模型」</code>，<code>setDefaultModel()</code> 全局互斥。</div>
+
+  <h2><span class="num">§6</span>API Key 显隐 + 字段校验</h2>
+  <p class="lede">对齐 <code>~/.claude/rules/form-validation.md</code>：<b>字段级</b>用 FormMessage（输入框下红字），<b>表单级</b>错误（连接/发现）走 inline status（§3/§4）。禁用 toast 替代字段校验。</p>
+  <div class="two-col">
+    <div class="gal">
+      <h3 style="margin-top:0">显隐交互（password + 👁）</h3>
+      <div class="field-wrap"><input class="field" type="password" value="sk-ant-9f3a••••••••••••••2c" id="demoKey" /><button class="eye" onclick="var f=document.getElementById('demoKey');f.type=f.type==='password'?'text':'password'" title="显示/隐藏"><svg><use href="#i-eye"/></svg></button></div>
+      <div class="hint" style="font-size:11.5px;color:var(--muted);margin-top:6px">已设 key 显 <code>••••</code>；点 👁 切明文。<b>真实加密属后端</b>（config-service），本菜单只演示显隐。</div>
+      <h3>Ollama 例外</h3>
+      <div class="field-grp" style="opacity:0.55;margin-bottom:0"><label>API Key <span class="opt" style="color:var(--subtle);font-weight:400;margin-left:5px">Ollama 本地，无需 Key</span></label><span class="pill">无需 Key</span></div>
+      <div class="hint" style="font-size:11.5px;color:var(--muted);margin-top:6px">类型切到 Ollama → Key 字段降级（灰显 + 提示），校验放行。<code>baseUrl</code> 仍必填（默认 <code>http://localhost:11434</code>）。</div>
+    </div>
+    <div class="gal">
+      <h3 style="margin-top:0">字段级 FormMessage（缺项 / 非法）</h3>
+      <label style="display:block;font-size:12px;font-weight:600;margin-bottom:5px">Base URL</label>
+      <input class="field err" value="" placeholder="https://api.anthropic.com" />
+      <div class="fmsg on">请填写 Base URL</div>
+      <label style="display:block;font-size:12px;font-weight:600;margin:12px 0 5px">API Key</label>
+      <input class="field err" value="sk-short" />
+      <div class="fmsg on">Key 格式不合法（预期 sk-ant-… / sk-proj-… 前缀）</div>
+      <div class="hint" style="font-size:11.5px;color:var(--muted);margin-top:8px">输入即清错（<code>.err</code> class 移除 + fmsg 收起）；仅保存/测试时触发校验，不实时打扰。</div>
+    </div>
+  </div>
+
+  <h2><span class="num">§7</span>删除确认 + 全状态枚举</h2>
+  <p class="lede">删除走 modal 内 inline 确认条（不另开 dialog），点「删除」展开，二次「确认删除」才执行。取消/保存/点 mask 都收起。</p>
+  <div class="gal">
+    <div class="confirm on" style="margin-top:0"><div class="ct">删除 <b>OpenAI</b>？</div><div class="ds">将移除其下 12 个模型配置。此操作不可撤销。</div><div class="acts"><button class="btn sm">取消</button><button class="btn danger sm">确认删除</button></div></div>
+  </div>
+  <h3>Provider 菜单全状态枚举</h3>
+  <table class="tbl">
+    <thead><tr><th>状态</th><th>触发</th><th>视觉</th><th>出口</th></tr></thead>
+    <tbody>
+      <tr><td class="mn">空（无 provider）</td><td>首次进入 / 全删</td><td>虚线圆 + 引导 + Primary「添加第一个供应商」</td><td>→ 添加 Modal</td></tr>
+      <tr><td class="mn">列表（默认）</td><td>≥1 provider</td><td>Entity List + head「设为默认」按钮 / 默认 pill</td><td>展开 / 编辑 / 添加</td></tr>
+      <tr><td class="mn">测试中 / ok / err</td><td>点「测试连接」</td><td>inline result 行 + help 文案同步</td><td>§3</td></tr>
+      <tr><td class="mn">发现中 / 成功 / 空 / 错</td><td>点「自动发现」</td><td>第二条 inline result 行</td><td>§4</td></tr>
+      <tr><td class="mn">编辑/添加 Modal</td><td>点 ✎ / 「添加」</td><td>嵌套 modal + 字段校验 + 模型分段</td><td>保存 / 取消</td></tr>
+      <tr><td class="mn">删除确认</td><td>Modal 内点 🗑</td><td>inline 确认条</td><td>二次确认 / 取消</td></tr>
+    </tbody>
+  </table>
+
+  <h2><span class="num">§8</span>验收对照 · P0 + 待裁决</h2>
+  <div class="note">
+  <b>验收 P0（handoff §7）</b>：<br>
+  ✅ API key 加密显隐（password + 👁 toggle，已设显 <code>••••</code>，§6）<br>
+  ✅ 测试连接可见反馈（ok/err + 模型数，§3）<br>
+  ✅ 模型 thinking 三档可选且色编正确（全档/高顶/开关），列表态点 pill 就地切分段（§5）<br>
+  ✅ 默认 provider 入口可见（head 右侧「设为默认」按钮 / <code>pill acc「默认」</code>，全局互斥，§2）<br>
+  ✅ key 字段不外泄（真实加密属 config-service 后端，本菜单只演示显隐，§6）<br>
+  <br><b>对齐检查</b>：<br>
+  ✅ 视觉 = ADR-0018 冷蓝暗色（token 照搬 design-tokens.md，非 PRODUCT.md 暖色）<br>
+  ✅ 控件原语全从 design-system 派生（Entity/Row/Card/Toggle/Segmented/Pill/Dot），无自造变体<br>
+  ✅ 校验分层 = form-validation 规范（字段级 FormMessage / 表单级 inline status，无 toast 替代）<br>
+  ✅ 数据模型 = <code>shared/src/provider.ts</code>（ProviderInfo.status 三值 / ModelInfo.thinkingLevelMap / cost 四字段）<br>
+  </div>
+  <div class="note warn">
+  <b>待裁决 / 空缺</b>：<br>
+  ① <b>thinking 三档色编</b>——handoff 原文「binary=agent 色」未定义「agent 色」token，本稿裁决 binary=<code>--muted</code>、high-max=<code>--accent</code>、all-levels=<code>--info</code>。如产品要 binary 也带语义色，集中改 <code>.tpill.binary</code> / <code>.tseg button.on.binary</code> 一处。<br>
+  ② <b>cost 字段来源</b>——<code>ModelInfo.cost{input,output,cacheRead,cacheWrite}</code> 四字段。本稿表格已移除 cost 列（只保留 4 列：模型/推理/上下文/thinking，聚焦模型能力维度），cost 留待「发现后用户手填」，进不进表格待定。<br>
+  ③ <b>headers / authHeader</b>——<code>ProviderInfo</code> 支持自定义 headers 与 authHeader 开关，本稿未给 UI（低频高级项），可在编辑 Modal 加「高级」折叠区。<br>
+  ④ <b>modelOverrides</b>——pi-provider-store 的 <code>modelOverrides</code>（每模型参数覆盖）未给 UI，同③归高级区。<br>
+  ⑤ <b>真实集成出口</b>：test-connection / discover-models / CRUD 走 <code>config-service</code> + <code>model-service</code>；key 加密存储走 <code>pi-provider-store</code>。<br>
+  ⑥ <b>故障转移不实现</b>——用户明确不做。默认 Provider 走 head 按钮（<code>setDefault()</code> 全局互斥），凭据区不再放默认操作，底部「默认与轮询」卡已移除。<br>
+  ⑦ <b>默认模型 = 全局唯一</b>——用户裁决：跨所有 provider 互斥，入口在模型表格行右侧「设为默认」按钮。<b>后端缺口</b>：<code>ProviderInfo</code> / <code>ModelInfo</code>（<code>shared/src/provider.ts</code>）当前<b>无 <code>isDefault</code> / <code>isDefaultModel</code> 字段</b>，本稿 UI 层先行（<code>PROVIDERS[].isDefault</code> + <code>models[].isDefaultModel</code>），真实集成需后端补字段并落地全局单例存储。<br>
+  </div>
+  <div class="note"><b>关联交付</b>：modal 骨架与公共横切（搜索/自动保存/退出恢复）见 <code>draft-settings-shell.html</code>；其余 4 菜单（Skill / Agent / Extension / System）见同目录 <code>handoff-*.md</code>，按优先级 Agent → Provider(本稿) → Skill → Extension → System 细化。</div>
+
+  <script>
+  /* ============================================================
+     Provider 舞台交互：entity 展开 / toggle / 测试连接 / 自动发现
+     / key 显隐 / 编辑 modal / thinking 三档 / 删除确认 / 自动保存
+     数据模型对齐 shared/src/provider.ts
+     ============================================================ */
+  (function(){
+    // ---- 数据（真实结构 ProviderInfo / ModelInfo）----
+    // thinkingLevelMap 三档：all-levels(全档) | high-max(高/顶) | on-off(开关)
+    var PROVIDERS=[
+      {id:'anthropic',name:'Anthropic',api:'anthropic-messages',baseUrl:'https://api.anthropic.com',apiKeySet:true,status:'connected',enabled:true,isDefault:true,
+       conn:{when:'2 分钟前',latency:240,found:6},
+       models:[
+         {id:'claude-sonnet-4-5',reasoning:true,ctx:200000,think:'high-max',cost:{i:3,o:15},isDefaultModel:true},
+         {id:'claude-opus-4-1',reasoning:true,ctx:200000,think:'all-levels',cost:{i:15,o:75}},
+         {id:'claude-haiku-4',reasoning:false,ctx:200000,think:'on-off',cost:{i:1,o:5}}
+       ]},
+      {id:'openai',name:'OpenAI',api:'openai-completions',baseUrl:'https://api.openai.com/v1',apiKeySet:true,status:'connected',enabled:true,
+       conn:{when:'5 分钟前',latency:180,found:12},
+       models:[
+         {id:'gpt-4o',reasoning:false,ctx:128000,think:'on-off',cost:{i:2.5,o:10}},
+         {id:'o3',reasoning:true,ctx:200000,think:'high-max',cost:{i:2,o:8}}
+       ]},
+      {id:'ollama',name:'Ollama (本地)',api:'ollama',baseUrl:'http://localhost:11434',apiKeySet:false,status:'connected',enabled:true,noKey:true,
+       conn:{when:'刚刚',latency:8,found:2},
+       models:[
+         {id:'llama3.1',reasoning:false,ctx:128000,think:'on-off',cost:{i:0,o:0}},
+         {id:'qwen2.5-coder',reasoning:false,ctx:32768,think:'on-off',cost:{i:0,o:0}}
+       ]},
+      {id:'google',name:'Google',api:'google',baseUrl:'https://generativelanguage.googleapis.com',apiKeySet:false,status:'not_configured',enabled:false,
+       conn:null,
+       models:[{id:'gemini-2.5-pro',reasoning:true,ctx:1000000,think:'high-max',cost:{i:1.25,o:5}}]}
+    ];
+
+    var THINK={ 'all-levels':{cls:'all',short:'全档',long:'all-levels'},
+                'high-max':{cls:'high',short:'高/顶',long:'high-max'},
+                'on-off':{cls:'binary',short:'开关',long:'on-off'} };
+    function ctxFmt(n){return n>=1000?(n/1000)+'K':n;}
+    function statusDot(p){return p.status==='connected'?'dot-ok':(p.status==='error'?'dot-err':'dot-idle');}
+    function statusPill(p){
+      if(p.status==='connected')return '<span class="pill ok">已连接</span>';
+      if(p.status==='error')return '<span class="pill err">连接异常</span>';
+      return '<span class="pill warn">未配置</span>';
+    }
+
+    // ---- 渲染实体列表 ----
+    var listEl=document.getElementById('entityList');
+    function renderList(){
+      listEl.innerHTML=PROVIDERS.map(function(p,i){
+        var prev=document.querySelector('.entity[data-idx="'+i+'"]');
+        var open=(prev&&prev.classList.contains('open'))?' open':((i===0)?' open':'');
+        var apiPill='<span class="pill">'+p.api+'</span>';
+        var mc='<span class="e-sub">'+p.models.length+' 模型</span>';
+        var tog='<span class="sw'+(p.enabled?' on':'')+' e-toggle" data-save role="switch" aria-checked="'+p.enabled+'"></span>';
+        var defCtrl=p.isDefault?'<span class="pill acc" title="全局默认供应商">默认供应商</span>':'<button class="btn gh sm" onclick="event.stopPropagation();setDefault('+i+')" title="设为默认供应商（全局唯一）"><svg><use href="#i-check"/></svg>设为默认供应商</button>';
+        var editBtn='<button class="btn gh sm" onclick="event.stopPropagation();openPmodal(\'edit\','+i+')" title="编辑供应商"><svg><use href="#i-edit"/></svg></button>';
+        var actions='<span class="e-actions">'+defCtrl+editBtn+tog+'</span>';
+        var head='<div class="e-head" data-toggle="'+i+'"><span class="dot '+statusDot(p)+'"></span><span class="e-name">'+p.name+'</span>'+apiPill+mc+actions+'<svg class="e-chev"><use href="#i-chev"/></svg></div>';
+        var cfg=renderEntityConfig(p,i);
+        return '<div class="entity'+open+'" data-idx="'+i+'">'+head+'<div class="e-config">'+cfg+'</div></div>';
+      }).join('');
+    }
+    function renderEntityConfig(p,i){
+      if(p.status==='not_configured'){
+        return '<div class="e-zone"><div class="e-zone-h"><span class="zt">凭据与连接</span><span class="zsub">供应商维度</span></div><div class="crow"><span class="clabel">凭据</span><span class="cval"><span class="chint">尚未配置，配置 Key 后可设为默认 Provider。</span></span><span class="cctrl"><button class="btn primary sm" onclick="openPmodal(\'edit\','+i+')"><svg><use href="#i-key"/></svg>添加凭据</button></span></div></div>';
+      }
+      // —— 凭据与连接（供应商维度）—— 单行紧凑：label inline 左 + 控件右 + 少量 help。默认 Provider 已上移 head。
+      var keyDisp=p.apiKeySet?'<input class="field" type="password" value="sk-••••••••••••••••" readonly data-save/>':'<input class="field" placeholder="未设置" readonly/>';
+      var keyCtrl=p.noKey?'<span class="pill">无需 Key</span>':'<div class="field-wrap">'+keyDisp+'<button class="eye" onclick="toggleKeyEye(this)" title="显示/隐藏"><svg><use href="#i-eye"/></svg></button></div>';
+      var keyRow='<div class="crow"><span class="clabel">API Key</span><span class="cval">'+keyCtrl+'</span><span class="chint">'+(p.noKey?'本地模型':'仅本地存储')+'</span></div>';
+      var urlRow='<div class="crow"><span class="clabel">Base URL</span><span class="cval"><input class="field" value="'+p.baseUrl+'" data-save/></span></div>';
+      // 「默认模型」为全局唯一（跨 provider 互斥），入口在模型表格行最右列，不在凭据区重复。
+      var connTxt=p.conn?'最近测试 '+p.conn.when+' · 延迟 '+p.conn.latency+'ms · '+p.conn.found+' 个模型':'未测试';
+      var connRow='<div class="crow"><span class="clabel">连接</span><span class="cval"><span class="chint" id="connHelp-'+i+'">'+connTxt+'</span></span><span class="cctrl"><button class="btn sm" onclick="runTest('+i+')"><svg><use href="#i-plug"/></svg>测试连接</button></span></div>';
+      var credZone='<div class="e-zone"><div class="e-zone-h"><span class="zt">凭据与连接</span><span class="zsub">供应商维度</span></div>'+keyRow+urlRow+connRow+'</div>';
+      // —— 模型清单（模型维度）—— 表格化 + thinking 可就地编辑（点 pill → 分段切换，不用进 modal）
+      var mtable='<div class="e-zone"><div class="e-zone-h"><span class="zt">模型清单</span><span class="zsub">模型维度 · 点 thinking 可就地切</span><span class="zct">'+p.models.length+' 个</span></div>'+
+        '<table class="mtable"><thead><tr><th class="col-name">模型</th><th>推理</th><th>上下文</th><th class="col-think">thinking</th><th class="col-def">默认</th></tr></thead><tbody>'+
+        p.models.map(function(m,mi){return modelRowStatic(m,i,mi)}).join('')+'</tbody></table></div>';
+      return credZone+mtable;
+    }
+    function modelRowStatic(m,pIdx,mIdx){
+      var rea=m.reasoning?'<span class="rea-dot" title="支持推理"></span>':'<span class="rea-none">—</span>';
+      var tp=THINK[m.think];
+      var tpill='<span class="tpill '+tp.cls+'" title="点击切换 thinking 策略：'+tp.long+'" onclick="event.stopPropagation();editThinkInline('+pIdx+','+mIdx+')">'+tp.short+'</span>';
+      var def=m.isDefaultModel?'<span class="pill info" title="全局默认模型">默认模型</span>':'<button class="btn gh sm" onclick="event.stopPropagation();setDefaultModel('+pIdx+','+mIdx+')" title="设为全局默认模型">设为默认</button>';
+      return '<tr><td class="col-name">'+m.id+'</td><td>'+rea+'</td><td class="num">'+ctxFmt(m.ctx)+'</td><td class="col-think" data-think="'+pIdx+'-'+mIdx+'">'+tpill+'</td><td class="col-def">'+def+'</td></tr>';
+    }
+    renderList();
+
+    // ---- 交互：entity 展开 / toggle ----
+    listEl.addEventListener('click',function(e){
+      if(e.target.closest('.sw')){return;} // 开关单独处理
+      var head=e.target.closest('.e-head');if(!head)return;
+      var ent=head.parentElement;
+      ent.classList.toggle('open');
+    });
+    // toggle 开关
+    document.addEventListener('click',function(e){
+      var sw=e.target.closest('.sw[data-save],.sw.e-toggle');if(!sw)return;
+      sw.classList.toggle('on');sw.setAttribute('aria-checked',sw.classList.contains('on'));
+      markSaving();
+    });
+
+    // ---- 自动保存 pill ----
+    var saveEl=document.getElementById('save'),saveTxt=document.getElementById('saveTxt'),saveIco=document.getElementById('saveIco'),saveTimer=null;
+    function markSaving(){
+      saveEl.className='save saving';saveTxt.textContent='保存中…';
+      saveIco.innerHTML='<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="40" stroke-linecap="round" class="spin"/>';
+      clearTimeout(saveTimer);saveTimer=setTimeout(function(){saveEl.className='save saved';saveTxt.textContent='已保存';saveIco.innerHTML='<use href="#i-check"/>';},800);
+    }
+    document.getElementById('detail').addEventListener('change',function(e){if(e.target.matches('[data-save],.sel,.field'))markSaving()});
+    document.getElementById('detail').addEventListener('input',function(e){if(e.target.matches('.field[data-save]'))markSaving()});
+
+    // ---- 测试连接（实体展开内按钮）----
+    window.runTest=function(idx){
+      var help=document.getElementById('connHelp-'+idx);
+      if(help){help.innerHTML='<span style="color:var(--accent)">测试中…</span>';}
+      setTimeout(function(){
+        var p=PROVIDERS[idx];
+        if(help){help.textContent='最近测试 刚刚 · 延迟 '+(120+Math.floor(Math.random()*200))+'ms · 找到 '+p.models.length+' 个模型';}
+        markSaving();
+      },1100);
+    };
+
+    // ---- 默认 Provider（全局互斥：设一个清其余）----
+    window.setDefault=function(idx){
+      PROVIDERS.forEach(function(p,i){p.isDefault=(i===idx);});
+      renderList();markSaving();
+    };
+    // ---- 默认模型（全局唯一，跨所有 provider 互斥）----
+    window.setDefaultModel=function(pIdx,mIdx){
+      PROVIDERS.forEach(function(p){p.models.forEach(function(m){m.isDefaultModel=false;});});
+      PROVIDERS[pIdx].models[mIdx].isDefaultModel=true;
+      renderList();markSaving();
+    };
+
+    // ---- 模型 thinking 就地编辑（列表态）：pill → 分段 → 外部点击收起 ----
+    var THINK_KEYS=['all-levels','high-max','on-off'];
+    function thinkTd(pIdx,mIdx){return document.querySelector('.mtable td.col-think[data-think="'+pIdx+'-'+mIdx+'"]');}
+    function collapseThink(pIdx,mIdx){
+      var td=thinkTd(pIdx,mIdx);if(!td)return;
+      var m=PROVIDERS[pIdx].models[mIdx];var tp=THINK[m.think];
+      td.classList.remove('editing');
+      td.innerHTML='<span class="tpill '+tp.cls+'" title="点击切换 thinking 策略：'+tp.long+'" onclick="event.stopPropagation();editThinkInline('+pIdx+','+mIdx+')">'+tp.short+'</span>';
+    }
+    window.editThinkInline=function(pIdx,mIdx){
+      var td=thinkTd(pIdx,mIdx);if(!td||td.classList.contains('editing'))return;
+      var m=PROVIDERS[pIdx].models[mIdx];
+      var html='<div class="tseg">';
+      THINK_KEYS.forEach(function(k){
+        var t=THINK[k];var on=(m.think===k)?' on':'';
+        html+='<button class="'+on+' '+t.cls+'" onclick="event.stopPropagation();pickThink('+pIdx+','+mIdx+',\''+k+'\')" title="'+t.long+'">'+t.short+'</button>';
+      });
+      html+='</div>';
+      td.classList.add('editing');td.innerHTML=html;
+    };
+    window.pickThink=function(pIdx,mIdx,k){
+      PROVIDERS[pIdx].models[mIdx].think=k;
+      collapseThink(pIdx,mIdx);markSaving();
+    };
+    // 外部点击收起正在编辑的 thinking 分段
+    document.addEventListener('click',function(e){
+      var td=e.target.closest('.mtable td.col-think.editing');
+      if(td)return; // 点在分段内，交给 pickThink
+      var editing=document.querySelector('.mtable td.col-think.editing');
+      if(!editing)return;
+      var key=editing.getAttribute('data-think');if(!key)return;
+      var parts=key.split('-');collapseThink(+parts[0],+parts[1]);
+    });
+
+    // ---- 空状态切换 ----
+    document.getElementById('toggleEmpty').addEventListener('change',function(e){
+      var on=e.target.checked;
+      document.getElementById('listCard').style.display=on?'none':'';
+      document.getElementById('emptyCard').style.display=on?'':'none';
+    });
+
+    // ---- key 显隐（实体展开 + modal）----
+    window.toggleKeyEye=function(btn){
+      var f=btn.parentElement.querySelector('.field');
+      if(!f)return;
+      f.type=f.type==='password'?'text':'password';
+    };
+
+    // ============================================================
+    // 嵌套 编辑/添加 Modal
+    // ============================================================
+    var mask=document.getElementById('pmodalMask');
+    var fType=document.getElementById('fType'),fUrl=document.getElementById('fUrl'),fName=document.getElementById('fName');
+    var TYPE_URL={anthropic:'https://api.anthropic.com',openai:'https://api.openai.com/v1',google:'https://generativelanguage.googleapis.com',ollama:'http://localhost:11434',custom:''};
+    var editIdx=null;
+    window.openPmodal=function(mode,idx){
+      editIdx=(mode==='edit'&&typeof idx==='number')?idx:null;
+      document.getElementById('pmodalTitle').textContent=mode==='add'?'添加供应商':('编辑 · '+PROVIDERS[idx].name);
+      var p=mode==='add'?{name:'',api:'anthropic-messages',baseUrl:TYPE_URL.anthropic,models:[]}:PROVIDERS[idx];
+      fName.value=p.name||('新供应商');
+      // 类型映射回 select
+      var tKey=p.api==='anthropic-messages'?'anthropic':(p.api==='openai-completions'?'openai':(p.api==='ollama'?'ollama':(p.api==='google'?'google':'custom')));
+      fType.value=tKey;
+      fUrl.value=p.baseUrl;
+      document.getElementById('btnDel').style.display=mode==='add'?'none':'';
+      renderPmodalModels(p.models);
+      clearResults();
+      syncKeyType();
+      mask.classList.add('on');
+    };
+    window.closePmodal=function(){mask.classList.remove('on');document.getElementById('delConfirm').classList.remove('on');};
+    function clearResults(){document.getElementById('connResult').className='result';document.getElementById('discResult').className='result';}
+
+    // 类型切换 → baseUrl 默认 + key 可选性
+    fType.addEventListener('change',function(){
+      var t=fType.value;
+      if(TYPE_URL[t]&&t!=='custom'){fUrl.value=TYPE_URL[t];}
+      syncKeyType();
+      markSaving();
+    });
+    function syncKeyType(){
+      var ollama=fType.value==='ollama';
+      var keyGrp=document.getElementById('keyGrp');
+      keyGrp.style.opacity=ollama?'0.55':'1';
+      var lbl=keyGrp.querySelector('label .opt');
+      if(lbl)lbl.textContent=ollama?'Ollama 本地，无需 Key':'仅本地加密存储，传输时由代理转发，不出本机';
+    }
+    // modal 内 key 显隐：已由 HTML onclick="toggleKeyEye(this)" 处理，不重复绑定（双绑会两次切换→无变化）
+
+    // ---- modal 内模型行（编辑态：thinking 分段可切）----
+    var pmodalModels=PROVIDERS[0].models.slice();
+    function renderPmodalModels(ms){
+      pmodalModels=ms.slice();
+      var el=document.getElementById('pmodalModels');
+      if(!ms.length){el.innerHTML='<div style="padding:10px 0;color:var(--muted);font-size:12px">无模型。点「自动发现」拉取，或「手动添加模型」。</div>';return;}
+      el.innerHTML=ms.map(function(m,i){
+        var rea=m.reasoning?'<span class="rea">reasoning</span>':'';
+        var seg='<div class="tseg" data-mi="'+i+'">'+
+          '<button class="'+(m.think==='all-levels'?'on all':'')+'" data-v="all-levels">全档</button>'+
+          '<button class="'+(m.think==='high-max'?'on high':'')+'" data-v="high-max">高/顶</button>'+
+          '<button class="'+(m.think==='on-off'?'on binary':'')+'" data-v="on-off">开关</button></div>';
+        var cost=(m.cost&&(m.cost.i||m.cost.o))?'<span class="mcost"><b>in</b> $'+m.cost.i+' · <b>out</b> $'+m.cost.o+'</span>':'';
+        return '<div class="mrow"><span class="mname">'+m.id+'</span>'+rea+'<span class="mctx">'+ctxFmt(m.ctx)+'</span>'+seg+'<span class="mtoggle"><span class="sw on" role="switch" aria-checked="true"></span></span>'+cost+'</div>';
+      }).join('');
+    }
+    document.getElementById('pmodalModels').addEventListener('click',function(e){
+      var b=e.target.closest('.tseg button');if(!b)return;
+      var seg=b.parentElement;var mi=+seg.dataset.mi;
+      Array.prototype.forEach.call(seg.querySelectorAll('button'),function(x){
+        x.className='';var v=x.dataset.v;x.classList.add(v==='all-levels'?'all':(v==='high-max'?'high':'binary'));});
+      b.classList.add('on');
+      pmodalModels[mi].think=b.dataset.v;markSaving();
+    });
+    window.addManualModel=function(){
+      pmodalModels.push({id:'new-model-'+(pmodalModels.length+1),reasoning:false,ctx:128000,think:'on-off',cost:{i:0,o:0}});
+      renderPmodalModels(pmodalModels);markSaving();
+    };
+
+    // ---- modal 内测试连接 / 自动发现（inline status 机）----
+    document.getElementById('btnTest').addEventListener('click',function(){
+      // 校验：非 ollama 需 url + key
+      if(!validateForm())return;
+      var r=document.getElementById('connResult');
+      r.className='result on loading';r.innerHTML='<svg><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="40" stroke-linecap="round" class="spin"/></svg>测试中…';
+      setTimeout(function(){
+        var found=pmodalModels.length|| (fType.value==='ollama'?2:6);
+        r.className='result on ok';r.innerHTML='<svg><use href="#i-check"/></svg>连接成功 · 找到 <b>'+found+'</b> 个模型';
+      },1100);
+    });
+    document.getElementById('btnDisc').addEventListener('click',function(){
+      var r=document.getElementById('discResult');
+      r.className='result on loading';r.innerHTML='<svg><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="40" stroke-linecap="round" class="spin"/></svg>发现中…';
+      setTimeout(function(){
+        // 演示：ollama 发现 2 个；google 无 key → 空；其余发现 3 个新模型
+        if(fType.value==='google'&&!document.getElementById('fKey').value){
+          r.className='result on empty';r.innerHTML='未找到模型 · 检查 API Key 与网络';
+        }else if(fType.value==='ollama'){
+          r.className='result on ok';r.innerHTML='<svg><use href="#i-check"/></svg>已发现 2 个本地模型，已合并';
+        }else{
+          r.className='result on ok';r.innerHTML='<svg><use href="#i-check"/></svg>已发现 3 个新模型，已合并';
+        }
+      },1300);
+    });
+
+    // ---- 字段校验（form-validation：字段级 FormMessage）----
+    function validateForm(){
+      var ok=true;var ollama=fType.value==='ollama';
+      var url=document.getElementById('fUrl'),fmsgUrl=document.getElementById('fmsgUrl');
+      var key=document.getElementById('fKey'),fmsgKey=document.getElementById('fmsgKey');
+      if(!url.value.trim()){url.classList.add('err');fmsgUrl.classList.add('on');ok=false;}
+      else{url.classList.remove('err');fmsgUrl.classList.remove('on');}
+      if(!ollama&&!key.value.trim()){key.classList.add('err');fmsgKey.classList.add('on');ok=false;}
+      else{key.classList.remove('err');fmsgKey.classList.remove('on');}
+      return ok;
+    }
+    fUrl.addEventListener('input',function(){this.classList.remove('err');document.getElementById('fmsgUrl').classList.remove('on');});
+    document.getElementById('fKey').addEventListener('input',function(){this.classList.remove('err');document.getElementById('fmsgKey').classList.remove('on');});
+
+    window.saveProvider=function(){
+      if(!validateForm())return;
+      closePmodal();markSaving();
+      // 演示：写回列表首项的 models（真实集成走 config-service）
+      if(editIdx!==null){PROVIDERS[editIdx].models=pmodalModels.slice();renderList();}
+    };
+
+    // ---- 删除确认 ----
+    window.askDelete=function(){document.getElementById('delConfirm').classList.add('on');document.getElementById('delName').textContent=fName.value||'该供应商';};
+    window.hideDelete=function(){document.getElementById('delConfirm').classList.remove('on');};
+    window.confirmDelete=function(){
+      if(editIdx!==null){PROVIDERS.splice(editIdx,1);renderList();}
+      closePmodal();markSaving();
+    };
+
+    // 添加按钮
+    document.getElementById('btnAdd').addEventListener('click',function(){openPmodal('add');});
+    // 点 mask 关闭
+    mask.addEventListener('click',function(e){if(e.target===mask)closePmodal();});
+  })();
+  </script>
+</body>
+</html>

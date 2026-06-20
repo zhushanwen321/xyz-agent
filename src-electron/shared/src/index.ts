@@ -4,7 +4,7 @@ export type {
   ServerMessageType, ServerMessage,
   ExtensionUIRequestPayload, ExtensionUIResponsePayload,
   ExtensionErrorPayload, ToolCallUpdatePayload, ExtensionInfo,
-  ExtensionDiscoveredPayload, ExtensionInstallErrorPayload,
+  ExtensionDiscoveredPayload,
   StopReason,
   StatusBarItem, StatusSetUpdatePayload, PluginStatusBarUpdatePayload,
   UISendMode, ProtocolSendMode,

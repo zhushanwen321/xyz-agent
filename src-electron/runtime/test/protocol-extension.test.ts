@@ -8,7 +8,6 @@ import type {
   ToolCallUpdatePayload,
   ExtensionInfo,
   ExtensionDiscoveredPayload,
-  ExtensionInstallErrorPayload,
 } from '@xyz-agent/shared'
 
 /**
@@ -299,12 +298,15 @@ describe('Protocol: extension types', () => {
       expect(msg.type).toBe('extension.discovered')
     })
 
-    it('ServerMessage accepts extension.installError type', () => {
+    // D10/P0-B: extension.installError type 已删除，install 失败现在走统一 error envelope。
+    it('ServerMessage rejects removed extension.installError type (now error envelope)', () => {
+      // error envelope 承载 install 失败，hint 进 details。
       const msg: ServerMessage = {
-        type: 'extension.installError',
-        payload: { code: 'not_found', message: 'Package not found' },
+        type: 'error',
+        payload: { code: 'not_found', message: 'Package not found', details: { hint: 'Check the package name' } },
       }
-      expect(msg.type).toBe('extension.installError')
+      expect(msg.type).toBe('error')
+      expect(msg.payload.details).toEqual({ hint: 'Check the package name' })
     })
 
     it('ExtensionDiscoveredPayload has correct shape', () => {
@@ -316,21 +318,6 @@ describe('Protocol: extension types', () => {
       }
       expect(payload.tempDir).toBe('/tmp/ext-scan-123')
       expect(payload.candidates).toHaveLength(1)
-    })
-
-    it('ExtensionInstallErrorPayload has required and optional fields', () => {
-      const minimal: ExtensionInstallErrorPayload = {
-        code: 'network',
-        message: 'Connection timeout',
-      }
-      expect(minimal.hint).toBeUndefined()
-
-      const withHint: ExtensionInstallErrorPayload = {
-        code: 'not_found',
-        message: 'Package not found',
-        hint: 'Check the package name and registry',
-      }
-      expect(withHint.hint).toBe('Check the package name and registry')
     })
   })
 })

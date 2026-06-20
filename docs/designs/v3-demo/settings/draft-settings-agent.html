@@ -1,0 +1,671 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Settings · Agent · draft-settings-agent</title>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-agent" viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="12" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M12 7V3M12 3h-2M12 3h2M8.5 13h.01M15.5 13h.01M9 16h6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l5 5L20 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7M21 3v6h-6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M21 21l-4.3-4.3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M14 4l6 6M4 20l1-4L17 4a2 2 0 0 1 3 3L8 19l-4 1z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-empty" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M9 12h6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.7 3.86a2 2 0 0 0-3.4 0z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M12 9v4M12 17h.01" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-provider" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="7" cy="7" r="0.9" fill="currentColor"/><circle cx="7" cy="17" r="0.9" fill="currentColor"/></symbol>
+  <symbol id="i-skill" viewBox="0 0 24 24"><path d="M12 3l2.2 5.3L20 10l-5.8 1.7L12 17l-2.2-5.3L4 10l5.8-1.7z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
+  <symbol id="i-ext" viewBox="0 0 24 24"><path d="M9 3v6M15 3v6M9 15v6M15 15v6M3 9h6M3 15h6M15 9h6M15 15h6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="9" y="9" width="6" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-system" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="16" cy="7" r="2.2" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="17" r="2.2" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+</svg>
+<style>
+  :root{
+    --bg:#0d0d0f; --surface:#151519; --surface-2:#1b1b20; --surface-hover:#1f1f26;
+    --fg:#f0f0f5; --muted:#8a8a95; --subtle:#5a5a65;
+    --border:rgba(255,255,255,0.06); --border-strong:rgba(255,255,255,0.12);
+    --accent:#4f8ef7; --accent-hover:#6ba3ff; --accent-soft:rgba(79,142,247,0.12);
+    --success:#22c55e; --warning:#f5a524; --danger:#ef4444;
+    --radius-sm:3px; --radius:8px; --radius-lg:12px;
+    --shadow-2:0 8px 24px rgba(0,0,0,0.4);
+    --ease:cubic-bezier(0.4,0,0.2,1); --duration-fast:120ms; --duration:200ms;
+    --font-sans:Inter,'SF Pro Display','PingFang SC',system-ui,sans-serif;
+    --font-mono:'JetBrains Mono','IBM Plex Mono',ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--fg);font:14px/1.6 var(--font-sans);
+    -webkit-font-smoothing:antialiased;padding:32px 40px 80px;max-width:1280px;margin:0 auto}
+  h1{font-size:26px;font-weight:650;letter-spacing:-0.01em;margin-bottom:6px}
+  h2{font-size:18px;font-weight:600;margin:46px 0 4px;letter-spacing:-0.01em;display:flex;align-items:center;gap:10px}
+  h2 .num{font:600 12px/1 var(--font-mono);color:var(--accent);
+    background:var(--accent-soft);padding:4px 8px;border-radius:var(--radius-sm);letter-spacing:0.05em}
+  h2 .h2-actions{margin-left:auto;display:flex;gap:8px;align-items:center}
+  .lede{color:var(--muted);font-size:13px;margin-bottom:8px;max-width:880px}
+  .lede b{color:var(--fg)}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+  .meta span{font:500 11px/1 var(--font-mono);color:var(--muted);
+    background:var(--surface);border:1px solid var(--border);padding:5px 9px;border-radius:999px}
+  .meta b{color:var(--fg);font-weight:600}
+  code{font:12px/1.4 var(--font-mono);background:var(--surface-2);padding:2px 6px;border-radius:var(--radius-sm);color:var(--accent)}
+  .note{font:12px/1.6 var(--font-mono);color:var(--muted);background:var(--surface);
+    border:1px solid var(--border);border-left:2px solid var(--accent);
+    border-radius:var(--radius-sm);padding:9px 11px;margin-top:16px}
+  .note b{color:var(--fg)}
+
+  /* ===== 控件原语 ===== */
+  .sw{position:relative;width:34px;height:20px;border-radius:999px;background:var(--surface-2);
+    border:1px solid var(--border-strong);cursor:pointer;transition:background var(--duration-fast) var(--ease),border-color var(--duration-fast) var(--ease);flex:none}
+  .sw::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;
+    background:var(--muted);transition:transform var(--duration) var(--ease),background var(--duration) var(--ease)}
+  .sw.on{background:var(--accent);border-color:var(--accent)}
+  .sw.on::after{transform:translateX(14px);background:#fff}
+  .sw.disabled{opacity:0.4;cursor:not-allowed}
+  .field{background:var(--surface-2);border:1px solid var(--border);color:var(--fg);padding:8px 10px;
+    border-radius:var(--radius);font:13px/1.4 var(--font-mono);outline:none;width:100%;transition:border-color var(--duration-fast) var(--ease),box-shadow var(--duration-fast) var(--ease)}
+  .field:focus{border-color:rgba(79,142,247,0.5);box-shadow:inset 0 0 0 1px rgba(79,142,247,0.4)}
+  .field::placeholder{color:var(--subtle)}
+  .field.err{border-color:rgba(239,68,68,0.6);box-shadow:inset 0 0 0 1px rgba(239,68,68,0.4)}
+  textarea.field{resize:vertical;min-height:96px;line-height:1.6}
+  .fmsg{font:500 11px/1.4 var(--font-mono);color:var(--danger);margin-top:5px;display:none}
+  .fmsg.show{display:block}
+  .btn{display:inline-flex;align-items:center;gap:6px;background:transparent;border:1px solid var(--border-strong);
+    color:var(--fg);padding:7px 12px;border-radius:var(--radius);font:600 12px/1 var(--font-sans);cursor:pointer;transition:background var(--duration-fast) var(--ease),border-color var(--duration-fast) var(--ease),opacity var(--duration-fast) var(--ease)}
+  .btn:hover{background:var(--surface-hover)}
+  .btn svg{width:13px;height:13px}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.primary:hover{background:var(--accent-hover)}
+  .btn.ghost{border-color:transparent;color:var(--muted)}
+  .btn.ghost:hover{color:var(--fg);background:var(--surface-hover)}
+  .btn.sm{padding:5px 10px;font-size:11px}
+  .btn:disabled{opacity:0.4;cursor:not-allowed;pointer-events:none}
+
+  .dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex:none}
+  .dot-ok{background:var(--success)} .dot-idle{background:var(--subtle)}
+  .pill{font:500 11px/1 var(--font-mono);color:var(--muted);background:var(--surface-2);
+    border:1px solid var(--border);padding:4px 8px;border-radius:999px;display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+  .pill.acc{color:var(--accent);background:var(--accent-soft);border-color:rgba(79,142,247,0.3)}
+  .pill.ok{color:var(--success);background:rgba(34,197,94,0.12);border-color:rgba(34,197,94,0.25)}
+  .pill.warn{color:var(--warning);background:rgba(245,165,36,0.1);border-color:rgba(245,165,36,0.25)}
+
+  /* ===== 层 A · 来源目录折叠（discovery.json agentDirs 管道层）===== */
+  .layer-a{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);margin:10px 0 16px;overflow:hidden}
+  .la-head{display:flex;align-items:center;gap:9px;padding:11px 14px;cursor:pointer;list-style:none;font:600 12px/1 var(--font-sans);color:var(--fg);user-select:none}
+  .la-head::-webkit-details-marker{display:none}
+  .la-chev{width:13px;height:13px;color:var(--subtle);transition:transform var(--duration) var(--ease)}
+  .layer-a[open] .la-chev{transform:rotate(180deg)}
+  .la-ic{width:14px;height:14px;color:var(--muted)}
+  .la-title{display:flex;align-items:center;gap:7px}
+  .la-badge{font:600 10px/1 var(--font-mono);color:var(--subtle);background:var(--surface-2);border:1px solid var(--border);padding:3px 6px;border-radius:999px;letter-spacing:0.04em}
+  .la-summary{margin-left:6px;font:500 11px/1.4 var(--font-mono);color:var(--muted)}
+  .la-body{padding:2px 14px 11px;border-top:1px solid var(--border)}
+  .la-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)}
+  .la-row:last-of-type{border-bottom:0}
+  .la-row-main{flex:1;min-width:0;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .la-path{font:500 12px/1.4 var(--font-mono);color:var(--fg);word-break:break-all}
+  .la-row.info{background:var(--accent-soft);border-radius:var(--radius);padding:8px 10px;margin:4px 0;border-bottom:0}
+  .la-info{flex:1;font:500 11px/1.5 var(--font-mono);color:var(--accent);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .la-info .sub{color:var(--muted)}
+  .la-add-row{display:flex;gap:7px;padding:10px 0 2px}
+  .la-grp-label{font:600 10px/1 var(--font-mono);color:var(--subtle);text-transform:uppercase;letter-spacing:.08em;margin:10px 0 2px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .la-grp-label .grp-hint{font-weight:500;color:var(--muted);text-transform:none;letter-spacing:0}
+  .la-grp.sortable{display:contents}
+  .la-row.locked{opacity:.62}
+  .la-row.locked .la-path{color:var(--muted)}
+  .la-row.opt{cursor:grab;transition:box-shadow var(--duration) var(--ease)}
+  .la-row.opt:active{cursor:grabbing}
+  .la-row.opt.dragging{opacity:.35}
+  .la-row.opt.dragover{box-shadow:0 -2px 0 0 var(--accent)}
+  .la-handle{color:var(--subtle);cursor:grab;font-size:14px;line-height:1;user-select:none;flex-shrink:0;padding:0 2px}
+  .la-row.opt:hover .la-handle{color:var(--accent)}
+  .e-srcs{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+  .sb{font:500 10px/1.25 var(--font-mono);color:var(--muted);background:var(--surface-2);border:1px solid var(--border);padding:3px 6px;border-radius:4px;display:inline-flex;align-items:center;gap:4px}
+  .sb.win{color:var(--accent);border-color:var(--accent);background:var(--accent-soft);font-weight:600}
+  .sb-dot{width:5px;height:5px;border-radius:50%;background:currentColor;flex-shrink:0}
+  .la-add-row .field{flex:1}
+  .la-group-title{font:600 11px/1 var(--font-sans);color:var(--muted);letter-spacing:0.02em;margin:14px 0 2px;padding-top:10px;border-top:1px dashed var(--border)}
+  .la-group-title:first-child{margin-top:0;border-top:0;padding-top:0}
+  .la-group-sub{font:500 10px/1 var(--font-mono);color:var(--subtle);margin-left:6px}
+
+  /* ===== 工具栏：搜索 + 来源 tab ===== */
+  .agent-toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:12px 0 14px}
+  .search-wrap{position:relative;flex:1;min-width:220px;max-width:340px}
+  .search-wrap .search-ic{position:absolute;left:11px;top:50%;transform:translateY(-50%);width:14px;height:14px;color:var(--subtle);pointer-events:none}
+  .search-field{background:var(--surface-2);border:1px solid var(--border);color:var(--fg);padding:8px 10px 8px 32px;
+    border-radius:var(--radius);font:13px/1.4 var(--font-sans);outline:none;width:100%;
+    transition:border-color var(--duration-fast) var(--ease),box-shadow var(--duration-fast) var(--ease)}
+  .search-field:focus{border-color:rgba(79,142,247,0.5);box-shadow:inset 0 0 0 1px rgba(79,142,247,0.4)}
+  .search-field::-webkit-search-cancel-button{display:none}
+  .src-tabs{display:flex;gap:4px;flex-wrap:wrap}
+  .src-tab{font:500 12px/1 var(--font-sans);color:var(--muted);background:var(--bg);border:1px solid var(--border);
+    padding:7px 12px;border-radius:999px;cursor:pointer;
+    transition:color var(--duration-fast) var(--ease),background var(--duration-fast) var(--ease),border-color var(--duration-fast) var(--ease)}
+  .src-tab:hover{color:var(--fg);background:var(--surface-hover)}
+  .src-tab.on{color:#fff;background:var(--accent);border-color:var(--accent)}
+  .src-tab .cnt{opacity:0.7;margin-left:5px;font:500 11px/1 var(--font-mono)}
+
+  /* ===== Entity List ===== */
+  .sgroup{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:4px 14px;margin-bottom:16px}
+  .sgroup-title{font-size:13px;font-weight:650;color:var(--fg);padding:12px 0 4px;display:flex;align-items:center;gap:8px}
+  .sgroup-title svg{width:15px;height:15px;color:var(--accent)}
+  .entity{border-bottom:1px solid var(--border)}
+  .entity:last-child{border-bottom:0}
+  .entity.hidden{display:none}
+  .e-head{display:flex;align-items:center;gap:10px;padding:12px 0;cursor:pointer}
+  .e-name{font-size:13px;font-weight:600;color:var(--fg);display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+  .e-sub{font:500 11px/1.4 var(--font-mono);color:var(--subtle);margin-top:2px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+  .e-chev{width:15px;height:15px;color:var(--subtle);transition:transform var(--duration) var(--ease);flex:none;margin-left:4px}
+  .entity.open .e-chev{transform:rotate(180deg)}
+  .e-mid{flex:1;min-width:0}
+  .e-config{display:none;padding:6px 0 14px;border-top:1px solid var(--border);margin-top:2px}
+  .entity.open .e-config{display:block}
+  .e-actions{display:flex;gap:6px;align-items:center}
+  .meta-grid{display:grid;grid-template-columns:auto 1fr;gap:5px 14px;padding:10px 0 4px}
+  .meta-grid dt{font:500 11px/1.4 var(--font-mono);color:var(--subtle);white-space:nowrap}
+  .meta-grid dd{font:12px/1.4 var(--font-mono);color:var(--fg);word-break:break-all}
+  .meta-grid dd .tl{display:flex;flex-wrap:wrap;gap:4px}
+  .empty{display:none;flex-direction:column;align-items:center;gap:10px;padding:44px 20px;text-align:center}
+  .empty.on{display:flex}
+  .empty svg{width:30px;height:30px;color:var(--subtle)}
+  .empty .em-txt{font-size:13px;color:var(--muted)}
+
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--surface);
+    border:1px solid var(--border-strong);border-left:2px solid var(--danger);border-radius:var(--radius);
+    padding:10px 14px;font:500 12px/1.4 var(--font-sans);color:var(--fg);box-shadow:var(--shadow-2);
+    opacity:0;pointer-events:none;transition:opacity var(--duration) var(--ease),transform var(--duration) var(--ease);z-index:200;display:flex;align-items:center;gap:8px}
+  .toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+  .toast svg{width:14px;height:14px;color:var(--danger)}
+  .toast.ok{border-left-color:var(--success)}
+  .toast.ok svg{color:var(--success)}
+/* ===== settings modal 形态（对齐 draft-provider） ===== */
+.stage{position:relative;height:640px;border-radius:var(--radius-lg);overflow:hidden;border:1px solid var(--border-strong);background:var(--bg);margin-top:14px}
+.ghost{position:absolute;inset:0;padding:16px;display:flex;gap:10px}
+.ghost-side{width:44px;background:var(--surface);border-radius:var(--radius-sm);flex:none}
+.ghost-main{flex:1;display:flex;flex-direction:column;gap:9px;padding-top:12px}
+.ghost-row{background:var(--surface);border-radius:8px;height:28px;width:60%}
+.ghost-row.r{align-self:flex-end;width:46%;background:var(--surface-2)}
+.ghost-row.s{height:20px;width:34%}
+.ghost-comp{margin-top:auto;background:var(--surface-2);border-radius:var(--radius);height:30px}
+.backdrop{position:absolute;inset:0;background:rgba(7,7,9,0.55);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+.modal{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:min(960px,96%);height:min(600px,94%);background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--radius-lg);box-shadow:0 24px 70px rgba(0,0,0,0.55);display:flex;flex-direction:column;overflow:hidden}
+.modal-head{display:flex;align-items:center;gap:10px;padding:11px 14px;background:var(--surface);border-bottom:1px solid var(--border);flex:none}
+.modal-title{font-size:14px;font-weight:650;color:var(--fg)}
+.modal-close{display:grid;place-items:center;width:28px;height:28px;border:0;border-radius:var(--radius-sm);background:transparent;color:var(--muted);cursor:pointer;flex:none}
+.modal-close:hover{color:var(--fg);background:var(--surface-hover)}
+.modal-close svg{width:15px;height:15px}
+.save{display:flex;align-items:center;gap:6px;font:500 12px/1 var(--font-mono);color:var(--subtle);padding:6px 10px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);margin-left:auto}
+.save svg{width:13px;height:13px}
+.save.saved{color:var(--success)}
+.ov-body{display:flex;flex:1;min-height:0}
+.ov-nav{width:188px;flex:none;background:var(--surface);border-right:1px solid var(--border);padding:12px 8px;overflow:auto}
+.nav-item{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:var(--radius);cursor:pointer;color:var(--muted);font:500 13px/1 var(--font-sans)}
+.nav-item:hover{color:var(--fg);background:var(--surface-hover)}
+.nav-item svg{width:17px;height:17px;flex:none}
+.nav-item.on{color:var(--fg);background:var(--surface-2);box-shadow:inset 0 0 0 1px rgba(79,142,247,0.45)}
+.nav-item .ct{margin-left:auto;font:500 10px/1 var(--font-mono);color:var(--subtle);background:var(--surface);padding:2px 6px;border-radius:999px}
+.ov-detail{flex:1;min-width:0;overflow:auto;padding:22px 26px 32px}
+.ph{display:flex;align-items:flex-start;gap:12px;margin-bottom:18px}
+.ph-text{flex:1;min-width:0}
+.ph-title{font-size:19px;font-weight:650;letter-spacing:-0.01em;color:var(--fg)}
+.ph-desc{color:var(--muted);font-size:12.5px;margin-top:2px;max-width:540px}
+</style>
+</head>
+<body>
+  <h1>Agent · 加载路径与 subagent 预览</h1>
+  <p class="lede">Agent 菜单（左导航第 3 项）per-menu 细化稿。<b>配置面 + 只读预览</b>——层 A 勾选要加载的目录（全局来源 + 项目来源，写 <code>discovery.json</code> 的 <code>agentDirs</code>）；层 B 预览扫到的 subagent，<b>只读不可改</b>（目录在=启用，无文件级开关，见 ADR-0020 §5）。项目维度也在此配（相对项目根的约定路径），所有项目按此加载。生效结果在<b>项目设置抽屉</b>只读查看（<code>panel/draft-project-settings-drawer.html</code>）。</p>
+  <div class="meta">
+    <span>配置 <b>加载路径勾选</b></span>
+    <span>预览 <b>只读 · 不可改</b></span>
+    <span>来源 <b>Pi · Claude · Agents</b></span>
+    <span>项目维度 <b>同在此配</b></span>
+  </div>
+
+  <!-- ============ §1 subagent 管理 ============ -->
+  <h2>
+    <span class="num">01</span> subagent 预览
+  </h2>
+  <p class="lede">下方列表<b>只读预览</b>当前勾选目录扫到的 subagent。<b>层 A</b> 加载路径——<b>强制目录</b>（<code>~/.xyz-agent/agents</code> 全局 · <code>.xyz-agent/agents</code> 项目）由 xyz-agent 运行时硬编码、<b>不可关·最高优先</b>；<b>可选目录</b>（<code>~/.pi</code> · <code>~/.claude</code> · <code>~/.agents</code> · <code>.agents</code>）可勾选、<b>可拖排序</b>（靠前覆盖靠后），写 <code>discovery.json</code> 的 <code>agentDirs</code>（ADR-0020 §1.1）。无文件级开关，同名多来源时列表合并显示、来源 badge 第一个标「生效」。搜索 + 来源 tab 仅预览过滤。</p>
+
+  <div class="stage" id="stage">
+    <div class="ghost">
+      <div class="ghost-side"></div>
+      <div class="ghost-main"><div class="ghost-row s"></div><div class="ghost-row"></div><div class="ghost-row r"></div><div class="ghost-row"></div><div class="ghost-comp"></div></div>
+    </div>
+    <div class="backdrop"></div>
+    <div class="modal">
+      <div class="modal-head">
+        <span class="modal-title">设置</span>
+        <span class="save saved"><svg><use href="#i-check"/></svg><span>已保存</span></span>
+        <button class="modal-close" aria-label="关闭"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+      </div>
+      <div class="ov-body">
+        <nav class="ov-nav">
+          <div class="nav-item"><svg><use href="#i-provider"/></svg>Provider<span class="ct">4</span></div>
+          <div class="nav-item"><svg><use href="#i-skill"/></svg>Skill<span class="ct">8</span></div>
+          <div class="nav-item on"><svg><use href="#i-agent"/></svg>Agent</div>
+          <div class="nav-item"><svg><use href="#i-ext"/></svg>Extension<span class="ct">3</span></div>
+          <div class="nav-item"><svg><use href="#i-system"/></svg>System</div>
+        </nav>
+        <div class="ov-detail">
+          <div class="ph">
+            <div class="ph-text">
+              <div class="ph-title">Agent</div>
+              <div class="ph-desc">勾选加载路径，预览扫到的 subagent。行为契约写在 agent.md 文件内容，不在 UI 编辑。</div>
+            </div>
+          </div>
+
+  <!-- 层 A · 来源目录折叠（agentDirs 管道） -->
+  <details class="layer-a" id="layerA">
+    <summary class="la-head">
+      <svg class="la-chev"><use href="#i-chev"/></svg>
+      <svg class="la-ic"><use href="#i-folder"/></svg>
+      <span class="la-title">加载路径 <span class="la-badge">层 A · 唯一配置面</span></span>
+      <span class="la-summary">2 强制 · 4 可选（可拖排序）· 写 <code>agentDirs</code></span>
+    </summary>
+    <div class="la-body">
+      <div class="la-grp-label">强制 · xyz-agent 运行时 <span class="grp-hint">不可关 · 不可拖 · 最高优先（ADR-0020 §1.1 层 1-2）</span></div>
+      <div class="la-row locked">
+        <div class="la-row-main"><span class="la-path">~/.xyz-agent/agents/</span><span class="pill">强制·全局</span></div>
+        <span class="pill">置顶</span>
+      </div>
+      <div class="la-row locked">
+        <div class="la-row-main"><span class="la-path">.xyz-agent/agents/</span><span class="pill">强制·项目</span><span class="la-group-sub">覆盖全局</span></div>
+        <span class="pill">置顶</span>
+      </div>
+      <div class="la-grp-label">可选 · 拖动排序 <span class="grp-hint">靠前覆盖靠后（§1.1 层 3）· 写 agentDirs</span></div>
+      <div class="la-grp sortable" id="optDirs">
+        <div class="la-row opt" draggable="true">
+          <span class="la-handle">⠿</span>
+          <div class="la-row-main"><span class="la-path">~/.pi/agent/agents/</span><span class="pill acc">标准·Pi</span></div>
+          <span class="sw on" data-dir-sw></span>
+        </div>
+        <div class="la-row opt" draggable="true">
+          <span class="la-handle">⠿</span>
+          <div class="la-row-main"><span class="la-path">~/.claude/agents/</span><span class="pill acc">标准·Claude</span></div>
+          <span class="sw on" data-dir-sw></span>
+        </div>
+        <div class="la-row opt" draggable="true">
+          <span class="la-handle">⠿</span>
+          <div class="la-row-main"><span class="la-path">~/.agents/agents/</span><span class="pill">标准·Agents</span></div>
+          <span class="sw on" data-dir-sw></span>
+        </div>
+        <div class="la-row opt" draggable="true">
+          <span class="la-handle">⠿</span>
+          <div class="la-row-main"><span class="la-path">.agents/agents/</span><span class="pill acc">项目·Agents</span><span class="la-group-sub">含祖先目录</span></div>
+          <span class="sw on" data-dir-sw></span>
+        </div>
+      </div>
+      <div class="la-row info">
+        <div class="la-info">
+          <svg style="width:13px;height:13px"><use href="#i-alert"/></svg>
+          <span><b>覆盖顺序</b>（ADR-0020 §1.1）：强制目录 &gt; 可选目录；可选内<b>靠前覆盖靠后</b>——拖动 ⠿ 调整 <code>agentDirs</code> 数组顺序。同名 agent 在下方列表合并显示，来源 badge 第一个标「生效」</span>
+          <span class="sub">agent <code>.md</code> 仅主进程 AgentRegistry 扫描，会话启动时生效（§5 ui_limit）</span>
+        </div>
+      </div>
+      <div class="la-add-row">
+        <input class="field" type="text" id="laAddInput" placeholder="添加自定义目录（~ 开头=全局，否则相对项目根）" />
+        <button class="btn sm" id="laAddBtn" type="button"><svg><use href="#i-plus"/></svg>添加目录</button>
+      </div>
+    </div>
+  </details>
+
+  <!-- 工具栏：搜索 + 来源 tab -->
+  <div class="agent-toolbar">
+    <div class="search-wrap">
+      <svg class="search-ic"><use href="#i-search"/></svg>
+      <input class="search-field" type="search" id="agentSearch" placeholder="搜索 subagent 名称或描述…" />
+    </div>
+    <div class="src-tabs" id="srcTabs">
+      <button class="src-tab on" type="button" data-src="all">全部 <span class="cnt">11</span></button>
+      <button class="src-tab" type="button" data-src="pi">全局·Pi <span class="cnt">5</span></button>
+      <button class="src-tab" type="button" data-src="claude">全局·Claude <span class="cnt">3</span></button>
+      <button class="src-tab" type="button" data-src="agents">全局·Agents <span class="cnt">3</span></button>
+    </div>
+  </div>
+
+  <!-- 实体列表（自动加载） -->
+  <div class="sgroup">
+    <div class="sgroup-title"><svg><use href="#i-agent"/></svg>subagent <span class="pill ok" id="cntPill">11 项已加载</span></div>
+
+    <div class="entity" data-src="pi">
+      <div class="e-head">
+        <span class="dot dot-ok"></span>
+        <div class="e-mid">
+          <div class="e-name">code-reviewer</div>
+          <div class="e-srcs">
+            <span class="sb win"><span class="sb-dot"></span>.agents/agents · 生效</span>
+            <span class="sb">~/.pi/agent/agents</span>
+          </div>
+          <div class="e-sub">通用代码审查专家 · 读取 git diff 发现潜在 bug 与性能问题</div>
+        </div>
+        <div class="e-actions">
+          <svg class="e-chev"><use href="#i-chev"/></svg>
+        </div>
+      </div>
+      <div class="e-config">
+        <dl class="meta-grid">
+          <dt>name</dt><dd>code-reviewer</dd>
+          <dt>来源路径</dt><dd><b>.agents/agents/code-reviewer.md</b>（生效）· ~/.pi/agent/agents/code-reviewer.md</dd>
+          <dt>modelStrategy</dt><dd>auto</dd>
+          <dt>tools</dt><dd><span class="tl"><span class="pill">Read</span><span class="pill">Grep</span><span class="pill">Glob</span></span></dd>
+          <dt>覆盖</dt><dd>项目 <code>.agents/agents</code> 靠前，覆盖全局 <code>~/.pi/agent/agents</code> 同名（ADR-0020 §1.1）</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="entity" data-src="pi">
+      <div class="e-head">
+        <span class="dot dot-ok"></span>
+        <div class="e-mid">
+          <div class="e-name">researcher <span class="pill acc">全局·Pi</span></div>
+          <div class="e-sub">Autonomous researcher · 搜索、评估并合成聚焦的研究简报</div>
+        </div>
+        <div class="e-actions">
+          <svg class="e-chev"><use href="#i-chev"/></svg>
+        </div>
+      </div>
+      <div class="e-config">
+        <dl class="meta-grid">
+          <dt>name</dt><dd>researcher</dd>
+          <dt>来源路径</dt><dd>~/.pi/agent/agents/researcher.md</dd>
+          <dt>tools</dt><dd><span class="tl"><span class="pill">WebFetch</span><span class="pill">Read</span></span></dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="entity" data-src="pi">
+      <div class="e-head">
+        <span class="dot dot-ok"></span>
+        <div class="e-mid">
+          <div class="e-name">worker <span class="pill acc">全局·Pi</span></div>
+          <div class="e-sub">Implementation agent · 常规任务与已批准的 oracle 交接执行</div>
+        </div>
+        <div class="e-actions">
+          <svg class="e-chev"><use href="#i-chev"/></svg>
+        </div>
+      </div>
+      <div class="e-config">
+        <dl class="meta-grid">
+          <dt>name</dt><dd>worker</dd>
+          <dt>来源路径</dt><dd>~/.pi/agent/agents/worker.md</dd>
+          <dt>tools</dt><dd><span class="tl"><span class="pill">Read</span><span class="pill">Write</span><span class="pill">Edit</span><span class="pill">Bash</span></span></dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="entity" data-src="pi">
+      <div class="e-head">
+        <span class="dot dot-ok"></span>
+        <div class="e-mid">
+          <div class="e-name">rebase-conflict-resolver <span class="pill acc">全局·Pi</span></div>
+          <div class="e-sub">Git rebase 冲突解决专家 · 自动解决冲突并标注难判项</div>
+        </div>
+        <div class="e-actions">
+          <svg class="e-chev"><use href="#i-chev"/></svg>
+        </div>
+      </div>
+      <div class="e-config">
+        <dl class="meta-grid">
+          <dt>name</dt><dd>rebase-conflict-resolver</dd>
+          <dt>来源路径</dt><dd>~/.pi/agent/agents/rebase-conflict-resolver.md</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="entity" data-src="pi">
+      <div class="e-head">
+        <span class="dot dot-ok"></span>
+        <div class="e-mid">
+          <div class="e-name">bug-fixer <span class="pill acc">全局·Pi</span></div>
+          <div class="e-sub">按修复清单最小变更编辑代码 · 不做审查与架构决策</div>
+        </div>
+        <div class="e-actions">
+          <svg class="e-chev"><use href="#i-chev"/></svg>
+        </div>
+      </div>
+      <div class="e-config">
+        <dl class="meta-grid">
+          <dt>name</dt><dd>bug-fixer</dd>
+          <dt>来源路径</dt><dd>~/.pi/agent/agents/bug-fixer.md</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="entity" data-src="claude">
+      <div class="e-head">
+        <span class="dot dot-ok"></span>
+        <div class="e-mid">
+          <div class="e-name">planner <span class="pill acc">全局·Claude</span></div>
+          <div class="e-sub">Creates implementation plans from context and requirements</div>
+        </div>
+        <div class="e-actions">
+          <svg class="e-chev"><use href="#i-chev"/></svg>
+        </div>
+      </div>
+      <div class="e-config">
+        <dl class="meta-grid">
+          <dt>name</dt><dd>planner</dd>
+          <dt>来源路径</dt><dd>~/.claude/agents/planner.md</dd>
+          <dt>tools</dt><dd><span class="tl"><span class="pill">Read</span><span class="pill">Grep</span></span></dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="entity" data-src="claude">
+      <div class="e-head">
+        <span class="dot dot-ok"></span>
+        <div class="e-mid">
+          <div class="e-name">scout <span class="pill acc">全局·Claude</span></div>
+          <div class="e-sub">Fast codebase recon · 返回压缩后的 context 供交接</div>
+        </div>
+        <div class="e-actions">
+          <svg class="e-chev"><use href="#i-chev"/></svg>
+        </div>
+      </div>
+      <div class="e-config">
+        <dl class="meta-grid">
+          <dt>name</dt><dd>scout</dd>
+          <dt>来源路径</dt><dd>~/.claude/agents/scout.md</dd>
+          <dt>tools</dt><dd><span class="tl"><span class="pill">Read</span><span class="pill">Glob</span><span class="pill">Grep</span></span></dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="entity" data-src="claude">
+      <div class="e-head">
+        <span class="dot dot-ok"></span>
+        <div class="e-mid">
+          <div class="e-name">context-builder <span class="pill acc">全局·Claude</span></div>
+          <div class="e-sub">分析需求与代码库 · 生成 context 与 meta-prompt</div>
+        </div>
+        <div class="e-actions">
+          <svg class="e-chev"><use href="#i-chev"/></svg>
+        </div>
+      </div>
+      <div class="e-config">
+        <dl class="meta-grid">
+          <dt>name</dt><dd>context-builder</dd>
+          <dt>来源路径</dt><dd>~/.claude/agents/context-builder.md</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="entity" data-src="agents">
+      <div class="e-head">
+        <span class="dot dot-ok"></span>
+        <div class="e-mid">
+          <div class="e-name">oracle <span class="pill acc">全局·Agents</span></div>
+          <div class="e-sub">Decision-consistency oracle · 保护继承状态、防止漂移</div>
+        </div>
+        <div class="e-actions">
+          <svg class="e-chev"><use href="#i-chev"/></svg>
+        </div>
+      </div>
+      <div class="e-config">
+        <dl class="meta-grid">
+          <dt>name</dt><dd>oracle</dd>
+          <dt>来源路径</dt><dd>~/.agents/agents/oracle.md</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="entity" data-src="agents">
+      <div class="e-head">
+        <span class="dot dot-ok"></span>
+        <div class="e-mid">
+          <div class="e-name">rust-taste-check <span class="pill acc">全局·Agents</span></div>
+          <div class="e-sub">Rust 代码品味审查 · 原则 / 偏好 / 反模式三级</div>
+        </div>
+        <div class="e-actions">
+          <svg class="e-chev"><use href="#i-chev"/></svg>
+        </div>
+      </div>
+      <div class="e-config">
+        <dl class="meta-grid">
+          <dt>name</dt><dd>rust-taste-check</dd>
+          <dt>来源路径</dt><dd>~/.agents/agents/rust-taste-check.md</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="entity" data-src="agents">
+      <div class="e-head">
+        <span class="dot dot-ok"></span>
+        <div class="e-mid">
+          <div class="e-name">ts-taste-check <span class="pill acc">全局·Agents</span></div>
+          <div class="e-sub">TS / Vue 代码品味审查 · 原则 / 偏好 / 反模式三级</div>
+        </div>
+        <div class="e-actions">
+          <svg class="e-chev"><use href="#i-chev"/></svg>
+        </div>
+      </div>
+      <div class="e-config">
+        <dl class="meta-grid">
+          <dt>来源路径</dt><dd>~/.agents/agents/ts-taste-check.md</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="empty" id="agentEmpty">
+      <svg><use href="#i-empty"/></svg>
+      <div class="em-txt">没有匹配的 subagent</div>
+    </div>
+  </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="note"><b>设计说明</b> · 本页是 Agent 的<b>唯一配置面</b>：层 A 勾选加载路径（全局 + 项目，决策 <code>global_configures_project</code>），层 B 只读预览扫到的 subagent——<b>无文件级开关、无 CRUD</b>（目录在=启用，见 ADR-0020 §5）。要细粒度控制单个 agent，去目录里移除文件或用 pi 的命令。项目维度同样在此配（相对路径约定）。生效结果（哪些全局/项目 agent 实际加载、有无覆盖）在<b>项目设置抽屉</b>只读查看。</div>
+
+  <div class="note"><b>验收对照（handoff-agent.md §8 P0）</b>：<br>
+    ① 层 A 强制目录灰显置顶、不可关不可拖 · ② 可选目录可勾选可拖排序，结果写 <code>agentDirs</code> · ③ 层 B 计数正确，多源 badge 链第一个标「生效」 · ④ 被覆盖来源展示路径 + 覆盖原因（强制&gt;可选·项目&gt;全局·靠前&gt;靠后） · ⑤ 改 <code>agentDirs</code> 后提示「需重开会话生效」（ADR-0020 §5）
+  </div>
+
+  <div class="toast" id="toast"><svg><use href="#i-alert"/></svg><span id="toastTxt">已保存</span></div>
+
+<script>
+(function(){
+  var $ = function(s,c){return (c||document).querySelectorAll(s);};
+
+  // ---- 层 A 目录开关（push/remove agentDirs）----
+  $('[data-dir-sw]').forEach(function(sw){
+    sw.addEventListener('click', function(){
+      sw.classList.toggle('on');
+      showToast(sw.classList.contains('on') ? '目录已加入 agentDirs' : '目录已移出 agentDirs（下次会话生效）', true);
+    });
+  });
+
+  // ---- 可选目录拖动排序（靠前覆盖靠后，ADR-0020 §1.1）----
+  var sortBox = document.getElementById('optDirs');
+  var dragEl = null;
+  function bindDrag(row){
+    row.addEventListener('dragstart', function(e){ dragEl = row; row.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; });
+    row.addEventListener('dragend', function(){ row.classList.remove('dragging'); sortBox.querySelectorAll('.dragover').forEach(function(r){ r.classList.remove('dragover'); }); });
+    row.addEventListener('dragover', function(e){ e.preventDefault(); if(dragEl && row !== dragEl) row.classList.add('dragover'); });
+    row.addEventListener('dragleave', function(){ row.classList.remove('dragover'); });
+    row.addEventListener('drop', function(e){ e.preventDefault(); if(dragEl && row !== dragEl){ sortBox.insertBefore(dragEl, row); row.classList.remove('dragover'); showToast('已调整顺序：靠前的覆盖靠后的', true); } });
+  }
+  if(sortBox) sortBox.querySelectorAll('.la-row.opt').forEach(bindDrag);
+  document.getElementById('laAddBtn').addEventListener('click', function(){
+    var inp = document.getElementById('laAddInput');
+    var v = inp.value.trim();
+    if(!v){ inp.classList.add('err'); return; }
+    inp.classList.remove('err');
+    var optBox = document.getElementById('optDirs');
+    var row = document.createElement('div');
+    row.className = 'la-row opt';
+    row.setAttribute('draggable', 'true');
+    row.innerHTML = '<span class="la-handle">⠿</span><div class="la-row-main"><span class="la-path">'+v.replace(/</g,'&lt;')+'</span><span class="pill info">自定义</span></div><span class="sw on" data-dir-sw></span>';
+    optBox.appendChild(row);
+    row.querySelector('[data-dir-sw]').addEventListener('click', function(){ this.classList.toggle('on'); });
+    bindDrag(row);
+    inp.value=''; showToast('已添加自定义目录到 agentDirs（可拖排序）', true);
+  });
+
+  // ---- 实体展开 ----
+  $('.e-head').forEach(function(h){
+    h.addEventListener('click', function(e){
+      if(e.target.closest('.e-actions')) return;
+      h.closest('.entity').classList.toggle('open');
+    });
+  });
+
+  // ---- 来源 tab + 搜索：前端过滤 ----
+  var searchInput = document.getElementById('agentSearch');
+  var entities = $('.sgroup .entity');
+  var activeSrc = 'all';
+
+  function applyFilter(){
+    var q = searchInput.value.trim().toLowerCase();
+    var visible = 0;
+    entities.forEach(function(en){
+      var name = (en.querySelector('.e-name')||{textContent:''}).textContent.toLowerCase();
+      var sub = (en.querySelector('.e-sub')||{textContent:''}).textContent.toLowerCase();
+      var src = en.dataset.src;
+      var matchQ = !q || name.indexOf(q) >= 0 || sub.indexOf(q) >= 0;
+      var matchSrc = activeSrc === 'all' || src === activeSrc;
+      var show = matchQ && matchSrc;
+      en.classList.toggle('hidden', !show);
+      if(show) visible++;
+    });
+    document.getElementById('agentEmpty').classList.toggle('on', visible === 0);
+  }
+
+  $('.src-tab').forEach(function(t){
+    t.addEventListener('click', function(){
+      $('.src-tab').forEach(function(x){x.classList.remove('on');});
+      t.classList.add('on');
+      activeSrc = t.dataset.src;
+      applyFilter();
+    });
+  });
+  searchInput.addEventListener('input', applyFilter);
+
+  // ---- 计数：只读预览，目录在=全开 ----
+  function refreshCounts(){
+    var pill = document.getElementById('cntPill');
+    if(pill) pill.textContent = entities.length + ' 项已加载';
+  }
+
+  // ---- toast ----
+  var toast = document.getElementById('toast');
+  var toastTxt = document.getElementById('toastTxt');
+  var toastTO;
+  function showToast(msg, ok){
+    toastTxt.textContent = msg;
+    toast.classList.toggle('ok', !!ok);
+    toast.querySelector('svg use').setAttribute('href', ok ? '#i-check' : '#i-alert');
+    toast.classList.add('on');
+    clearTimeout(toastTO);
+    toastTO = setTimeout(function(){toast.classList.remove('on');}, 2600);
+  }
+
+  refreshCounts();
+  applyFilter();
+})();
+</script>
+</body>
+</html>

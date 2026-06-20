@@ -1,208 +1,131 @@
+/**
+ * Panel store —— PanelTree + activePanelId（P3：单/双 panel 主从）。
+ *
+ * 依赖方向：无（stores 间禁止互相 import；session 关联由 features 层编排）。
+ *
+ * 状态机（workspace/spec.md）：默认单 panel 撑满 → split 成双 panel（主从）→ close 回单。
+ * split 单 session 场景（新建/选择器/禁用）属 G-023 DEFERRED，v1 仅支持把已有 session
+ * 载入单 panel；双 panel 的第二 session 来源待联调。但状态机本身（单↔双切换）v1 落地。
+ */
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
-import type { PanelTree, PanelLeaf, SplitNode } from '@xyz-agent/shared'
+import { computed, ref } from 'vue'
+import type { PanelLeaf, PanelTree, SplitNode } from '@xyz-agent/shared'
 
-// --- 辅助函数 ---
-
-function flattenTree(node: PanelTree): PanelLeaf[] {
-  if (node.type === 'pane') return [node]
-  return [...flattenTree(node.children[0]), ...flattenTree(node.children[1])]
+/** 初始单 panel 根节点（v1 默认单 panel） */
+export const ROOT_PANEL_ID = 'panel-root'
+const initialLayout: PanelTree = {
+  type: 'panel',
+  id: ROOT_PANEL_ID,
+  sessionId: null,
 }
 
-/**
- * 在树中查找 targetId 的父 SplitNode 及孩子索引。
- * 若 targetId 是根节点（唯一 panel）则返回 null。
- */
-function findParent(root: PanelTree, targetId: string): { parent: SplitNode, index: 0 | 1 } | null {
-  if (root.type === 'pane') return null
-  for (let i = 0 as 0 | 1; i <= 1; i++) {
-    const child = root.children[i]
-    if (child.type === 'pane' && child.id === targetId) return { parent: root, index: i }
-    if (child.type === 'split') {
-      const found = findParent(child, targetId)
-      if (found) return found
-    }
-  }
-  return null
-}
-
-/**
- * 不可变替换：在 tree 中找到 id === targetId 的节点，替换为 replacement。
- * 递归创建新对象，未受影响的分支保持原引用。
- */
-function replaceInTree(root: PanelTree, targetId: string, replacement: PanelTree): PanelTree {
-  if (root.type === 'pane') return root.id === targetId ? replacement : root
-  if (root.id === targetId) return replacement
-  return {
-    ...root,
-    children: [
-      replaceInTree(root.children[0], targetId, replacement),
-      replaceInTree(root.children[1], targetId, replacement),
-    ],
-  }
-}
-
-/**
- * 按 SplitNode.id 更新 ratio，clamp 到 [0.1, 0.9]。
- */
-function updateRatioInTree(root: PanelTree, nodeId: string, ratio: number): PanelTree {
-  if (root.type === 'pane') return root
-  if (root.id === nodeId) return { ...root, ratio: clampRatio(ratio) }
-  return {
-    ...root,
-    children: [
-      updateRatioInTree(root.children[0], nodeId, ratio),
-      updateRatioInTree(root.children[1], nodeId, ratio),
-    ],
-  }
-}
-
-const RATIO_MIN = 0.1
-const RATIO_MAX = 0.9
-
-function clampRatio(v: number): number {
-  return Math.max(RATIO_MIN, Math.min(RATIO_MAX, v))
-}
-
-// --- Store ---
+/** split 默认比例（双 panel 各占一半，workspace/spec.md 主从等宽） */
+const DEFAULT_RATIO = 0.5
 
 export const usePanelStore = defineStore('panel', () => {
-  const defaultPanel: PanelLeaf = { type: 'pane', id: crypto.randomUUID(), sessionId: null }
-  const tree = ref<PanelTree>(defaultPanel)
-  const focusedPanelId = ref<string>(defaultPanel.id)
+  const layout = ref<PanelTree>(initialLayout)
+  const activePanelId = ref<string>(ROOT_PANEL_ID)
 
-  // --- Getters ---
+  /** 当前是否双 panel（layout 为 split 节点） */
+  const isDual = computed(() => layout.value.type === 'split')
 
-  const panels = computed(() => flattenTree(tree.value))
-  const panelCount = computed(() => panels.value.length)
-  const focusedPanel = computed(() => panels.value.find(p => p.id === focusedPanelId.value))
-  const MAX_PANELS = 4
-  const canSplit = computed(() => panelCount.value < MAX_PANELS)
+  /** 收集所有 panel 叶子节点（单 panel 返回 1 个，双返回 2 个） */
+  const panels = computed<PanelLeaf[]>(() => collectLeaves(layout.value))
 
-  // --- Actions ---
+  /** 找到承载指定 session 的 panel 叶子（无则 null） */
+  function findPanelBySession(sessionId: string): PanelLeaf | null {
+    return panels.value.find((p) => p.sessionId === sessionId) ?? null
+  }
 
-  function splitPanel(panelId: string, direction: 'horizontal' | 'vertical'): boolean {
-    if (!canSplit.value) return false
+  /** 把 session 载入 active panel（单 panel 默认载入根节点） */
+  function loadSession(panelId: string, sessionId: string): void {
+    layout.value = updateLeaf(layout.value, panelId, (leaf) => ({ ...leaf, sessionId }))
+  }
 
-    const existingPanel = panels.value.find(p => p.id === panelId)
-    if (!existingPanel) return false
+  /** 设为 active panel（主从焦点切换，workspace/spec.md 四层激活标识联动） */
+  function setActive(panelId: string): void {
+    if (panels.value.some((p) => p.id === panelId)) {
+      activePanelId.value = panelId
+    }
+  }
 
-    const newPanel: PanelLeaf = { type: 'pane', id: crypto.randomUUID(), sessionId: null }
-    const splitNode: SplitNode = {
+  /**
+   * Split 成双 panel：当前单 panel → horizontal split（左右主从）。
+   * 原单 panel 保留为左侧（active），右侧新建空 panel（standby）。
+   * G-023 DEFERRED：第二 session 的具体来源（新建/选择）待联调，这里只立结构。
+   */
+  function split(): void {
+    if (layout.value.type !== 'panel') return
+    const left = layout.value
+    const right: PanelLeaf = {
+      type: 'panel',
+      id: `panel-${crypto.randomUUID()}`,
+      sessionId: null,
+    }
+    const node: SplitNode = {
       type: 'split',
-      id: crypto.randomUUID(),
-      direction,
-      children: [existingPanel, newPanel],
-      ratio: 0.5,
+      id: `split-${crypto.randomUUID()}`,
+      direction: 'horizontal',
+      children: [left, right],
+      ratio: DEFAULT_RATIO,
     }
-
-    tree.value = replaceInTree(tree.value, panelId, splitNode)
-    focusedPanelId.value = newPanel.id
-    return true
-  }
-
-  function unbindSession(panelId: string): void {
-    const panel = panels.value.find(p => p.id === panelId)
-    if (!panel || panel.sessionId === null) return
-    const updated: PanelLeaf = { ...panel, sessionId: null }
-    tree.value = replaceInTree(tree.value, panelId, updated)
-  }
-
-  function closeEmptyPanel(panelId: string): void {
-    if (panelCount.value <= 1) return
-
-    const parent = findParent(tree.value, panelId)
-    if (!parent) return
-
-    const siblingIndex = parent.index === 0 ? 1 : 0
-    const sibling = parent.parent.children[siblingIndex]
-
-    // 用兄弟节点替换父 SplitNode
-    tree.value = replaceInTree(tree.value, parent.parent.id, sibling)
-
-    // 若被关闭的是焦点 panel，聚焦到兄弟节点的第一个后代 panel
-    if (focusedPanelId.value === panelId) {
-      const siblingPanels = flattenTree(sibling)
-      focusedPanelId.value = siblingPanels[0].id
-    }
-  }
-
-  function bindSession(panelId: string, sessionId: string): void {
-    const panel = panels.value.find(p => p.id === panelId)
-    if (!panel) return
-    const updated: PanelLeaf = { ...panel, sessionId }
-    tree.value = replaceInTree(tree.value, panelId, updated)
-    focusedPanelId.value = panelId
-  }
-
-  function updateRatio(nodeId: string, ratio: number): void {
-    tree.value = updateRatioInTree(tree.value, nodeId, ratio)
-  }
-
-  function navigateToPanel(panelId: string): void {
-    focusedPanelId.value = panelId
-  }
-
-  function navigateNext(): void {
-    const idx = panels.value.findIndex(p => p.id === focusedPanelId.value)
-    if (idx === -1) return
-    const nextIdx = (idx + 1) % panelCount.value
-    focusedPanelId.value = panels.value[nextIdx].id
-  }
-
-  function navigatePrev(): void {
-    const idx = panels.value.findIndex(p => p.id === focusedPanelId.value)
-    if (idx === -1) return
-    const prevIdx = (idx - 1 + panelCount.value) % panelCount.value
-    focusedPanelId.value = panels.value[prevIdx].id
-  }
-
-  function mergeToSingle(): void {
-    // 保留当前聚焦 panel 的 sessionId，若无聚焦则取第一个 panel 的
-    const sessionId = focusedPanel.value?.sessionId ?? panels.value[0]?.sessionId ?? null
-    const newPanel: PanelLeaf = { type: 'pane', id: crypto.randomUUID(), sessionId }
-    tree.value = newPanel
-    focusedPanelId.value = newPanel.id
+    layout.value = node
+    activePanelId.value = left.id
   }
 
   /**
-   * 给定 panelId，判断它是否是 tree 中最左侧的叶子节点。
-   * 用于 macOS traffic light safe-zone 判断。
+   * 关闭 panel 回单：双 panel → 关闭指定侧，保留另一侧为单 panel。
+   * 单 panel 关闭主会话需确认流（G-013 DEFERRED），v1 不处理。
    */
-  function isLeftmostPanel(panelId: string): boolean {
-    function findLeftmost(node: PanelTree): PanelLeaf {
-      if (node.type === 'pane') return node
-      return findLeftmost(node.children[0])
-    }
-    return findLeftmost(tree.value).id === panelId
-  }
-
-  /**
-   * 在当前焦点 panel 中打开 session：
-   * 1. 已在当前 window 的某个 panel 中 → 导航到该 panel
-   * 2. 否则直接在焦点 panel 中替换 sessionId
-   */
-  function openSessionSmart(sessionId: string): boolean {
-    // 1. 已在当前 window 的某个 panel 中
-    const existingPanel = panels.value.find(p => p.sessionId === sessionId)
-    if (existingPanel) {
-      navigateToPanel(existingPanel.id)
-      return true
-    }
-
-    // 2. 在焦点 panel 中替换 session
-    bindSession(focusedPanelId.value, sessionId)
-    return true
+  function close(panelId: string): void {
+    if (layout.value.type !== 'split') return
+    const [a, b] = layout.value.children
+    const kept = a.id === panelId ? b : a
+    layout.value = kept
+    activePanelId.value = kept.id
   }
 
   return {
-    // state
-    tree, focusedPanelId,
-    // getters
-    panels, panelCount, focusedPanel, canSplit,
-    // actions
-    splitPanel, unbindSession, closeEmptyPanel, bindSession,
-    updateRatio, navigateToPanel, navigateNext, navigatePrev, mergeToSingle,
-    openSessionSmart, isLeftmostPanel,
+    layout,
+    activePanelId,
+    isDual,
+    panels,
+    findPanelBySession,
+    loadSession,
+    setActive,
+    split,
+    close,
   }
 })
+
+/** 深度优先收集所有 panel 叶子（split → 左右子树） */
+function collectLeaves(node: PanelTree): PanelLeaf[] {
+  if (node.type === 'panel') return [node]
+  return [...collectLeaves(node.children[0]), ...collectLeaves(node.children[1])]
+}
+
+/** 不可变更新指定 id 的叶子节点（递归重建树，保证 Vue 响应式触发） */
+function updateLeaf(
+  node: PanelTree,
+  panelId: string,
+  updater: (leaf: PanelLeaf) => PanelLeaf,
+): PanelTree {
+  return rewriteLeaf(node, panelId, updater)
+}
+
+function rewriteLeaf(
+  node: PanelTree,
+  panelId: string,
+  updater: (leaf: PanelLeaf) => PanelLeaf,
+): PanelTree {
+  if (node.type === 'panel') {
+    return node.id === panelId ? updater(node) : node
+  }
+  return {
+    ...node,
+    children: [
+      rewriteLeaf(node.children[0], panelId, updater),
+      rewriteLeaf(node.children[1], panelId, updater),
+    ],
+  }
+}

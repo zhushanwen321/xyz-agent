@@ -2,12 +2,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, mkdtempSync, symlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir, homedir } from 'node:os'
-import { ExtensionService, ExtensionInstallError } from '../src/extension-service.js'
+import { ExtensionService, ExtensionInstallError } from '../src/services/extension-service.js'
+import { NpmGitInstaller } from '../src/infra/installers/npm-git-installer.js'
+import { ExtensionResolver } from '../src/infra/installers/extension-resolver.js'
+import { PiExtensionSettings } from '../src/infra/pi/pi-extension-settings.js'
 
-import { installPackage, uninstallPackage, NpmInstallError } from '../src/npm-installer.js'
+import { installPackage, uninstallPackage, NpmInstallError } from '../src/infra/installers/npm-installer.js'
 import { execFileSync } from 'node:child_process'
 
-vi.mock('../src/npm-installer.js', () => ({
+vi.mock('../src/infra/installers/npm-installer.js', () => ({
   installPackage: vi.fn(),
   uninstallPackage: vi.fn(),
   installDependencies: vi.fn(),
@@ -57,7 +60,15 @@ describe('ExtensionService', () => {
     // Create settings.json in the npm directory for --prefix install
     writeFileSync(join(testSettingsDir, 'npm', 'package.json'), JSON.stringify({ private: true }), 'utf-8')
 
-    service = new ExtensionService({ settingsDir: testSettingsDir, projectRoot: process.cwd() })
+    service = new ExtensionService({
+      settingsDir: testSettingsDir,
+      projectRoot: process.cwd(),
+      installer: new NpmGitInstaller(),
+      resolver: new ExtensionResolver({ settingsDir: testSettingsDir, thirdPartyDir: join(testSettingsDir, 'extensions') }),
+      // IExtensionSettings port：经 pi-settings-store 统一读写 settings.json（D17）。
+      // 构造时把 store 路径对齐到 testSettingsDir，使 model 域与 extension 域在测试中读写同一文件。
+      extensionSettings: new PiExtensionSettings(testSettingsDir),
+    })
   })
 
   afterEach(() => {

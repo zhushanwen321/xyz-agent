@@ -33,16 +33,16 @@ beforeAll(async () => {
   await mkdir(pluginDir, { recursive: true })
   await cp(join(FIXTURES_DIR, 'hello-world'), pluginDir, { recursive: true })
 
-  registry = new PluginRegistry(tmpDir)
+  registry = new PluginRegistry(tmpDir, tmpDir)
   storage = new PluginStorage()
   rpcServer = new PluginRpcServer()
   activator = new PluginActivator()
 
-  await storage.init(tmpDir, tmpDir)
+  storage.init(tmpDir, tmpDir)
 })
 
 afterAll(async () => {
-  await storage.flushAll()
+  storage.flushAll()
   await rm(tmpDir, { recursive: true, force: true })
 })
 
@@ -98,10 +98,10 @@ describe('Plugin Integration', () => {
       return storage.get(params.pluginId as string, params.key as string)
     })
     rpcServer.registerMethod('plugin.storage.global.set', async (params) => {
-      await storage.set(params.pluginId as string, params.key as string, params.value)
+      storage.set(params.pluginId as string, params.key as string, params.value)
     })
     rpcServer.registerMethod('plugin.storage.global.delete', async (params) => {
-      await storage.delete(params.pluginId as string, params.key as string)
+      storage.delete(params.pluginId as string, params.key as string)
     })
     rpcServer.registerMethod('plugin.storage.global.keys', async (params) => {
       return storage.keys(params.pluginId as string)
@@ -139,7 +139,7 @@ describe('Plugin Integration', () => {
     }
     const setMethod = async (pluginId: string, key: string, value: unknown) => {
       const handler = async (params: Record<string, unknown>) => {
-        await storage.set(params.pluginId as string, params.key as string, params.value)
+        storage.set(params.pluginId as string, params.key as string, params.value)
       }
       await handler({ pluginId, key, value })
     }
@@ -147,7 +147,7 @@ describe('Plugin Integration', () => {
     // 写入
     await setMethod('rpc-test', 'count', 42)
     await setMethod('rpc-test', 'label', 'hello')
-    await storage.flush('rpc-test')
+    storage.flush('rpc-test')
 
     // 读取
     const count = await getMethod('rpc-test', 'count')

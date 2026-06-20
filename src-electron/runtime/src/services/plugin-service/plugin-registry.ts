@@ -1,6 +1,5 @@
 import { readFile, readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import { getConfigDir } from '../../pi-config-bridge.js'
 import type { XyzAgentPackageJson, PluginDescriptor, PluginState, PluginContributes, PluginSource } from './plugin-types.js'
 import { checkPluginCompatibility } from './plugin-version-checker.js'
 
@@ -9,20 +8,24 @@ import { checkPluginCompatibility } from './plugin-version-checker.js'
  * 产成 PluginDescriptor 缓存在内存。
  *
  * 扫描目录优先级：
- *   1. ~/.xyz-agent/plugins/        （全局插件）
+ *   1. <configDir>/plugins/        （全局插件，configDir 由组合根注入）
  *   2. <projectRoot>/.xyz-agent/plugins/  （项目级插件）
  */
 export class PluginRegistry {
   private cache = new Map<string, PluginDescriptor>()
   private projectRoot: string
+  private pluginsConfigDir: string
 
-  constructor(projectRoot: string) {
+  /** @param projectRoot 项目根（项目级插件扫描用）
+   *  @param pluginsConfigDir 全局配置根（~/.xyz-agent/，全局插件扫描用），由组合根注入。 */
+  constructor(projectRoot: string, pluginsConfigDir: string) {
     this.projectRoot = projectRoot
+    this.pluginsConfigDir = pluginsConfigDir
   }
 
   async scan(): Promise<PluginDescriptor[]> {
     const dirs: Array<{ path: string; source: PluginSource }> = [
-      { path: join(getConfigDir(), 'plugins'), source: 'external' },
+      { path: join(this.pluginsConfigDir, 'plugins'), source: 'external' },
       { path: join(this.projectRoot, '.xyz-agent', 'plugins'), source: 'external' },
       { path: join(this.projectRoot, 'resources', 'plugins'), source: 'built-in' },
     ]

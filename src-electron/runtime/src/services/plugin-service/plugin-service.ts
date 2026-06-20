@@ -6,21 +6,20 @@ import type { IMessageBroker } from '../../interfaces.js'
 import { PluginRegistry } from './plugin-registry.js'
 import { PluginStorage } from './plugin-storage.js'
 import { SessionDataStore } from './session-data-store.js'
-import { getConfigDir } from '../../pi-config-bridge.js'
 import { PluginRpcServer } from './plugin-rpc-server.js'
 import { PluginHost } from './plugin-host.js'
 import { PluginActivator } from './plugin-activator.js'
 import { registerAllRpcMethods } from './plugin-rpc-setup.js'
 import { PluginInstaller, type InstallResult } from './plugin-installer.js'
 import { handleBridgeToolExecute, handleBridgeEvent, handleBridgeIntercept } from './bridge-interop.js'
+import { PermissionStorage } from './plugin-permission-storage.js'
+import { join } from 'node:path'
+import { toErrorMessage } from '../../utils/errors.js'
+import { randomSuffix } from '../../utils/ids.js'
 
 
 const COMMAND_EXECUTE_TIMEOUT_MS = 10_000
 const HOOK_HANDLER_TIMEOUT_MS = 5_000
-function randomSuffix(): string {
-  // eslint-disable-next-line no-magic-numbers
-  return Math.random().toString(36).slice(2)
-}
 
 export class PluginService implements IPluginService {
   private registry: PluginRegistry
@@ -42,13 +41,16 @@ export class PluginService implements IPluginService {
   private statusBarItems = new Map<string, StatusBarItem>()
 
   /** SessionData 内存缓存 + flush + 持久化编排 */
-  private readonly sessionDataStore = new SessionDataStore()
+  private readonly sessionDataStore: SessionDataStore
 
   /** npm 安装器 */
   private installer: PluginInstaller
 
   /** 注入的外部依赖 */
   private deps: IPluginServiceDeps
+
+  /** xyz-agent 配置根（~/.xyz-agent/），plugin/session-data 持久化根。组合根注入。 */
+  private readonly configDir: string
 
   /** 当前活跃的 UI 请求 ID（串行排队） */
   private activeUiRequest: string | null = null
@@ -63,11 +65,18 @@ export class PluginService implements IPluginService {
     this.registry = registry
     this.broker = broker
     this.deps = deps ?? {}
+    // configDir 注入：plugin 切片经此拿配置根（~/.xyz-agent/），不再直连 infra（design.md
+    // T5 切片自治，路径来源走组合根）。生产由 index.ts 注入；缺省回退 process.cwd() 仅供
+    // 单测（不触发磁盘 IO），生产缺失会在首次 persist 时失败暴露。
+    const configDir = this.deps.configDir ?? process.cwd()
+    this.configDir = configDir
+    const pluginsDir = join(configDir, 'plugins')
     this.storage = new PluginStorage()
     this.rpcServer = new PluginRpcServer()
     this.host = new PluginHost(this.rpcServer)
-    this.installer = new PluginInstaller()
-    this.permissionChecker = new PermissionChecker(registry)
+    this.installer = new PluginInstaller(pluginsDir)
+    this.sessionDataStore = new SessionDataStore(configDir)
+    this.permissionChecker = new PermissionChecker(registry, new PermissionStorage(pluginsDir))
     this.activator = new PluginActivator({
       permissionChecker: this.permissionChecker,
       onPermissionRequest: (payload) => {
@@ -93,8 +102,7 @@ export class PluginService implements IPluginService {
     this.activator.registerDescriptors(descriptors)
 
     // 2. 初始化存储
-    const baseDir = getConfigDir()
-    await this.storage.init(baseDir, process.cwd())
+    this.storage.init(this.configDir, process.cwd())
 
     // 3. 注册 RPC 方法
     this.registerRpcMethods()
@@ -162,8 +170,8 @@ export class PluginService implements IPluginService {
     // 8. 启动 sessionData flush 定时器
     this.sessionDataStore.startFlushTimer()
 
-    // 8b. Restore sessionData from disk
-    await this.sessionDataStore.restoreFromDisk()
+    // 8b. Restore sessionData from disk（WriteBackCache lazy load，扫描目录预热分区）
+    this.sessionDataStore.restoreFromDisk()
 
     // 9. 为 external 已激活插件启动 hot-reload 监听
     for (const desc of this.registry.getAllDescriptors()) {
@@ -245,7 +253,7 @@ export class PluginService implements IPluginService {
       }
     // eslint-disable-next-line taste/no-silent-catch -- toggle: failure returns plugin list for UI rollback
     } catch (err: unknown) {
-      console.error(`[plugin-service] togglePlugin(${pluginId}, ${enabled}) failed:`, err instanceof Error ? err.message : String(err))
+      console.error(`[plugin-service] togglePlugin(${pluginId}, ${enabled}) failed:`, toErrorMessage(err))
       // 激活/停用失败仍然返回当前插件列表（允许前端回滚 UI）
     }
 
@@ -326,12 +334,12 @@ export class PluginService implements IPluginService {
   async getPluginConfig(pluginId: string, key?: string): Promise<unknown> {
     if (key === undefined || key === '__all__') {
       // Return all config
-      const allKeys = await this.storage.keys(pluginId)
+      const allKeys = this.storage.keys(pluginId)
       const configKeys = allKeys.filter(k => k.startsWith('config:'))
       const result: Record<string, unknown> = {}
       for (const configKey of configKeys) {
         const rawKey = configKey.replace('config:', '')
-        result[rawKey] = await this.storage.get(pluginId, configKey)
+        result[rawKey] = this.storage.get(pluginId, configKey)
       }
       return result
     }
@@ -339,7 +347,7 @@ export class PluginService implements IPluginService {
   }
 
   async setPluginConfig(pluginId: string, key: string, value: unknown): Promise<void> {
-    await this.storage.set(pluginId, `config:${key}`, value)
+    this.storage.set(pluginId, `config:${key}`, value)
   }
 
   async shutdown(): Promise<void> {
@@ -347,7 +355,7 @@ export class PluginService implements IPluginService {
     this.sessionDataStore.stopFlushTimer()
     this.activator.stopAllWatchers()
     await this.activator.deactivateAll(this.host)
-    await this.storage.flushAll()
+    this.storage.flushAll()
     await this.host.shutdown()
     this.rpcServer.dispose()
     this.initialized = false
@@ -429,7 +437,7 @@ export class PluginService implements IPluginService {
         // 超时或错误 → 视为放行（不阻止链路）
         console.warn(
           `[plugin-service] hook handler ${entry.handlerId} failed/timed out:`,
-          err instanceof Error ? err.message : String(err),
+          toErrorMessage(err),
         )
       }
     }
@@ -483,12 +491,12 @@ export class PluginService implements IPluginService {
 
   /** 将所有 dirty sessionData 批量 flush（由定时器调用） */
   async flushSessionData(): Promise<void> {
-    await this.sessionDataStore.flushAll()
+    this.sessionDataStore.flushAll()
   }
 
   /** flush 指定 session 的 dirty 数据（deactivate/关闭时调用） */
   async flushSessionDataForSession(sessionId: string): Promise<void> {
-    await this.sessionDataStore.flushSession(sessionId)
+    this.sessionDataStore.flushSession(sessionId)
   }
 
   /** 清理指定 session 的数据缓存、dirty 跟踪和 size 记录 */

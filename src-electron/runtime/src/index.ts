@@ -1,5 +1,5 @@
-import { SidecarServer } from './server.js'
-import { SessionService } from './services/session-service.js'
+import { RuntimeServer } from './transport/server.js'
+import { SessionService } from './services/session/session-service.js'
 import { TreeService } from './services/tree-service.js'
 import { ConfigService } from './services/config-service.js'
 import { ModelService } from './services/model-service.js'
@@ -7,12 +7,21 @@ import { ModelService } from './services/model-service.js'
 import { BASE_PORT, MAX_PORT } from '@xyz-agent/shared'
 
 const MAX_PERCENT = 100
-import { ProcessManager } from './process-manager.js'
-import { EventAdapter } from './event-adapter.js'
-import { ExtensionService } from './extension-service.js'
+import { ProcessManager } from './infra/pi/process-manager.js'
+import { PiConfigStore } from './infra/pi/pi-config-store.js'
+import { PiSessionStore } from './infra/pi/session-store.js'
+import { ModelApiDiscoverer } from './infra/model-api-discoverer.js'
+import { NpmGitInstaller } from './infra/installers/npm-git-installer.js'
+import { ExtensionResolver } from './infra/installers/extension-resolver.js'
+import { PiExtensionSettings } from './infra/pi/pi-extension-settings.js'
+import { EventAdapter } from './infra/pi/event-adapter.js'
+import { NavigateInterceptorFactory } from './infra/pi/navigate-interceptor.js'
+import { SessionTreeReaderAdapter } from './infra/pi/session-tree-reader-adapter.js'
+import { join } from 'node:path'
+import type { INavigateInterceptor } from './services/ports/tree.js'
+import { ExtensionService } from './services/extension-service.js'
 import { PluginRegistry } from './services/plugin-service/plugin-registry.js'
 import { PluginService } from './services/plugin-service/plugin-service.js'
-import type { NavigateInterceptor } from './navigate-interceptor.js'
 
 function parseArgs(): { port: number; projectRoot?: string } {
   // eslint-disable-next-line no-magic-numbers -- argv[0] is node, argv[1] is script
@@ -52,21 +61,40 @@ async function main(): Promise<void> {
   const pm = new ProcessManager()
 
   // Transport layer
-  const server = new SidecarServer(port, projectRoot)
+  const server = new RuntimeServer(port, projectRoot)
 
   // ── Phase 1: create all service instances (no cross-service deps at construction time) ──
-  const extensionService = new ExtensionService({ projectRoot: effectiveRoot })
-  const treeService = new TreeService(pm)
-  const configService = new ConfigService(effectiveRoot)
-  const modelService = new ModelService()
+  const configStore = new PiConfigStore()
+  const sessionStore = new PiSessionStore()
+  const modelSource = new ModelApiDiscoverer()
+  const extensionInstaller = new NpmGitInstaller()
+  const extensionResolver = new ExtensionResolver({
+    settingsDir: configStore.getPiAgentDir(),
+    thirdPartyDir: join(configStore.getPiAgentDir(), 'extensions'),
+  })
+  // IExtensionSettings port 的 infra 实现：经 pi-settings-store 统一读写 settings.json（D17）。
+  // 构造时对齐 settings 路径到 pi agent 目录，保证 model 域与 extension 域读写同一文件。
+  const extensionSettings = new PiExtensionSettings(configStore.getPiAgentDir())
+  const extensionService = new ExtensionService({
+    settingsDir: configStore.getPiAgentDir(),
+    projectRoot: effectiveRoot,
+    installer: extensionInstaller,
+    resolver: extensionResolver,
+    extensionSettings,
+  })
+  const treeService = new TreeService(pm, new SessionTreeReaderAdapter())
+  const configService = new ConfigService(effectiveRoot, configStore)
+  const modelService = new ModelService(modelSource)
 
   // ── Phase 2: create services that reference other services via closures / deps ──
   // PluginService.deps are all optional and only used at runtime (initialize / event handling),
   // so sessionService can be wired in after construction.
-  const pluginRegistry = new PluginRegistry(effectiveRoot)
+  const configDir = configService.getConfigDir()
+  const pluginRegistry = new PluginRegistry(effectiveRoot, configDir)
   const pluginService = new PluginService(pluginRegistry, server, {
     configService,
     modelService,
+    configDir,
     broadcastFn: (type, payload) => server.broadcast({ type: type as 'session.list', id: `push_${Date.now()}`, payload } as import('@xyz-agent/shared').ServerMessage),
   })
 
@@ -75,7 +103,7 @@ async function main(): Promise<void> {
   // Note: onContextUpdate also references `sessionService` (assigned below) as a self-reference —
   // the adapter queries its owning session's data. createAdapter is only called at session
   // creation time, so sessionService is always set by then.
-  const createAdapter = (sessionId: string, interceptor: NavigateInterceptor) => new EventAdapter(sessionId, interceptor.send, {
+  const createAdapter = (sessionId: string, interceptor: INavigateInterceptor) => new EventAdapter(sessionId, interceptor.send, {
     onExtensionUIRequest: (requestId, sid, method) => {
       server.registerExtensionTimeout(sid, requestId, method)
     },
@@ -122,6 +150,9 @@ async function main(): Promise<void> {
     effectiveRoot,
     treeService,
     extensionService,
+    configStore,
+    sessionStore,
+    new NavigateInterceptorFactory(),
   )
 
   // ── Phase 3: wire cross-service runtime deps ──

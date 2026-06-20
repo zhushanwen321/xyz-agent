@@ -1,0 +1,559 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Overview · 入口与覆盖（sidebar 触发 · 覆盖 workspace）</title>
+<style>
+  :root{
+    --bg-base:#0d0d0f; --bg-panel:#151519; --bg-elevated:#1b1b20; --bg-hover:#232328;
+    --accent:#4f8ef7; --accent-hover:#6ba3ff; --accent-soft:rgba(79,142,247,0.12);
+    --accent-ring:rgba(79,142,247,0.5);
+    --text-primary:#f0f0f5; --text-secondary:#8a8a95; --text-tertiary:#5a5a65;
+    --border:rgba(255,255,255,0.06); --border-strong:rgba(255,255,255,0.12);
+    --success:#22c55e; --warning:#f5a524; --danger:#ef4444; --info:#38bdf8;
+    --tl-red:#fc6155; --tl-yellow:#fdb40a; --tl-green:#34c84a;
+    --ease:cubic-bezier(0.4,0,0.2,1);
+    --duration-fast:120ms; --duration:200ms; --duration-slow:320ms;
+    --font-sans:Inter,-apple-system,BlinkMacSystemFont,'PingFang SC',system-ui,sans-serif;
+    --font-mono:'JetBrains Mono','IBM Plex Mono',ui-monospace,Menlo,monospace;
+    --radius-sm:3px; --radius:8px; --radius-lg:12px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:var(--bg-base);color:var(--text-primary);
+    font:13px/1.5 var(--font-sans);-webkit-font-smoothing:antialiased;min-height:100vh}
+  body{padding:32px 40px 80px;max-width:1480px;margin:0 auto}
+  .page-head h1{font-size:22px;font-weight:650;letter-spacing:-0.01em;margin-bottom:6px}
+  .page-head .sub{color:var(--text-secondary);font-size:13px;max-width:920px}
+  .page-head .sub b{color:var(--accent)}
+  .page-head .meta{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;
+    font:11px/1 var(--font-mono)}
+  .page-head .meta span{padding:4px 8px;border-radius:4px;border:1px solid var(--border-strong);
+    color:var(--text-secondary)}
+  .page-head .meta b{color:var(--accent)}
+  .callout{margin:16px 0;padding:11px 14px;background:rgba(79,142,247,0.08);
+    border-left:3px solid var(--accent);border-radius:0 6px 6px 0;
+    font-size:12.5px;color:var(--text-secondary)}
+  .callout b{color:var(--accent)}
+  .callout code{font-family:var(--font-mono);color:var(--accent);
+    background:rgba(79,142,247,0.1);padding:1px 5px;border-radius:3px;font-size:11.5px}
+
+  /* 舞台：左 window · 右 legend */
+  .stage{display:grid;grid-template-columns:1fr 320px;gap:24px;align-items:start}
+
+  .window-mock{position:relative;background:var(--bg-base);border-radius:10px;
+    overflow:hidden;box-shadow:0 20px 50px rgba(0,0,0,0.5),0 0 0 1px rgba(255,255,255,0.05)}
+  .traffic-light{position:absolute;left:20px;top:20px;display:flex;gap:8px;z-index:10}
+  .traffic-light .dot{width:12px;height:12px;border-radius:50%;border:0.5px solid rgba(0,0,0,0.25)}
+  .dot-red{background:var(--tl-red)} .dot-yellow{background:var(--tl-yellow)} .dot-green{background:var(--tl-green)}
+  .app-title{position:absolute;left:50%;top:19px;transform:translateX(-50%);
+    font:11px/1 var(--font-mono);color:var(--text-tertiary);letter-spacing:0.08em;z-index:10}
+
+  .app-shell{display:flex;height:680px;padding:12px;gap:12px}
+
+  /* ===== Sidebar（draft-five-states 卡 A 基底，新增 Overview 入口按钮） ===== */
+  .sb{width:210px;flex-shrink:0;display:flex;flex-direction:column;
+    padding-top:52px;padding-left:2px}
+  .a-logo{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;padding:0 8px 14px}
+  .a-logo .a-mark{width:22px;height:22px;border-radius:6px;background:var(--accent);
+    display:grid;place-items:center;color:#fff;font-size:11px;font-weight:700;flex-shrink:0}
+
+  .a-nav{display:flex;flex-direction:column;gap:1px;padding:0 4px}
+  .a-item{display:flex;align-items:center;gap:9px;font-size:12px;color:var(--text-secondary);
+    padding:6px 8px;border-radius:6px;cursor:pointer;
+    transition:background var(--duration-fast) var(--ease),color var(--duration-fast) var(--ease)}
+  .a-item:hover{background:var(--bg-hover);color:var(--text-primary)}
+  .a-item:hover .a-ico{color:var(--text-secondary)}
+  .a-item.active{background:var(--bg-hover);color:var(--text-primary)}
+  .a-item.active .a-ico{color:var(--accent)}
+  .a-item .a-ico{width:15px;height:15px;display:grid;place-items:center;
+    color:var(--text-tertiary);flex-shrink:0;transition:color var(--duration-fast) var(--ease)}
+  .a-item .a-ico svg{width:15px;height:15px;stroke:currentColor;fill:none;
+    stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+  .a-item .a-label{flex:1}
+  .a-item .a-kbd{margin-left:auto;font:10px/1 var(--font-mono);color:var(--text-tertiary);
+    background:var(--bg-elevated);border:1px solid var(--border-strong);border-radius:3px;padding:2px 5px}
+
+  /* ★ Overview 入口按钮 —— L1 Region 入口（非 sidebar 子视图），带 session 计数角标 */
+  .ov-entry{display:flex;align-items:center;gap:9px;font-size:12px;color:var(--text-secondary);
+    padding:7px 8px;border-radius:6px;cursor:pointer;margin-top:1px;
+    border:1px solid transparent;
+    transition:background var(--duration-fast) var(--ease),color var(--duration-fast) var(--ease),border-color var(--duration-fast) var(--ease)}
+  .ov-entry:hover{background:var(--bg-hover);color:var(--text-primary);border-color:var(--border-strong)}
+  .ov-entry:hover .a-ico{color:var(--text-secondary)}
+  .ov-entry .a-ico{width:15px;height:15px;display:grid;place-items:center;
+    color:var(--text-tertiary);flex-shrink:0;transition:color var(--duration-fast) var(--ease)}
+  .ov-entry .a-ico svg{width:15px;height:15px;stroke:currentColor;fill:none;
+    stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+  .ov-entry .a-label{flex:1;font-weight:550;color:var(--text-primary)}
+  /* 计数角标：让用户不进即知 session 规模 */
+  .ov-entry .count{min-width:20px;height:18px;padding:0 6px;border-radius:999px;
+    display:grid;place-items:center;font:600 10px/1 var(--font-mono);
+    background:var(--bg-elevated);color:var(--text-secondary);border:1px solid var(--border-strong)}
+  .ov-entry .a-kbd{font:10px/1 var(--font-mono);color:var(--text-tertiary);
+    background:var(--bg-elevated);border:1px solid var(--border-strong);border-radius:3px;padding:2px 5px}
+  /* 激活态（overview 已覆盖 workspace）：accent 填充 + 计数角标转 accent */
+  .ov-entry.active{background:var(--accent-soft);color:var(--accent);border-color:rgba(79,142,247,0.32)}
+  .ov-entry.active .a-label{color:var(--accent)}
+  .ov-entry.active .a-ico{color:var(--accent)}
+  .ov-entry.active .count{background:var(--accent);color:#fff;border-color:transparent}
+
+  .a-sep{height:1px;background:var(--border);margin:8px 10px}
+
+  /* segmented tab —— sidebar 自身子视图（会话|文件），与 Overview 入口分层 */
+  .sb-tabs{display:flex;gap:2px;padding:0 4px 4px}
+  .sb-tab{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;
+    font-size:11.5px;color:var(--text-secondary);background:transparent;
+    border:1px solid transparent;padding:5px 8px;border-radius:5px;cursor:pointer;
+    transition:background var(--duration-fast) var(--ease),color var(--duration-fast) var(--ease)}
+  .sb-tab .t-ico{width:13px;height:13px;display:grid;place-items:center;color:var(--text-tertiary)}
+  .sb-tab .t-ico svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:1.4;stroke-linejoin:round}
+  .sb-tab .t-count{font:10px/1 var(--font-mono);color:var(--text-tertiary);opacity:0.7}
+  .sb-tab:hover{background:var(--bg-hover);color:var(--text-primary)}
+  .sb-tab.active{background:var(--accent-soft);color:var(--accent);border-color:rgba(79,142,247,0.28)}
+  .sb-tab.active .t-ico{color:var(--accent)}
+
+  .a-sessions{flex:1;overflow-y:auto;padding:0 4px;display:flex;flex-direction:column;gap:2px}
+  .a-sessions::-webkit-scrollbar{width:6px}
+  .a-sessions::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:3px}
+  .a-group-head{display:flex;align-items:center;gap:5px;
+    font:10px/1 var(--font-mono);color:var(--text-tertiary);text-transform:uppercase;
+    letter-spacing:0.06em;padding:12px 8px 5px}
+  .a-group-head .count{margin-left:auto;color:var(--text-tertiary)}
+  .a-session{position:relative;display:grid;grid-template-columns:14px 1fr auto;gap:8px;
+    align-items:start;padding:7px 8px;border-radius:6px;cursor:pointer;
+    transition:background var(--duration-fast) var(--ease)}
+  .a-session:hover{background:var(--bg-hover)}
+  .a-session.active{background:var(--accent-soft)}
+  .a-session.active::before{content:'';position:absolute;left:0;top:6px;bottom:6px;
+    width:2px;background:var(--accent);border-radius:2px}
+  .a-dot{width:8px;height:8px;border-radius:50%;margin-top:4px;flex-shrink:0}
+  .a-dot.running{background:var(--accent);animation:pulse-a 2s var(--ease) infinite}
+  .a-dot.waiting{background:var(--warning);animation:pulse-w 2s var(--ease) infinite}
+  .a-dot.done{background:var(--success)}
+  .a-dot.error{background:var(--danger)}
+  .a-dot.stopped{background:var(--text-tertiary);opacity:0.5}
+  @keyframes pulse-a{0%{box-shadow:0 0 0 0 rgba(79,142,247,0.5)}70%{box-shadow:0 0 0 5px rgba(79,142,247,0)}100%{box-shadow:0 0 0 0 rgba(79,142,247,0)}}
+  @keyframes pulse-w{0%{box-shadow:0 0 0 0 rgba(245,165,36,0.5)}70%{box-shadow:0 0 0 5px rgba(245,165,36,0)}100%{box-shadow:0 0 0 0 rgba(245,165,36,0)}}
+  .a-session-main{min-width:0}
+  .a-session-title{font-size:12.5px;color:var(--text-primary);white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis;line-height:1.35}
+  .a-session.active .a-session-title{color:var(--accent)}
+  .a-session-path{margin-top:2px;font:10.5px/1.3 var(--font-mono);color:var(--text-tertiary);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .a-session-path .branch{color:var(--accent)}
+  .a-session-time{font:10px/1.35 var(--font-mono);color:var(--text-tertiary);flex-shrink:0;padding-top:2px}
+
+  .a-footer{margin-top:auto;padding-top:6px}
+  .a-user{display:flex;align-items:center;gap:8px;padding:8px;border-radius:6px;
+    font-size:12px;color:var(--text-secondary);cursor:pointer;
+    transition:background var(--duration-fast) var(--ease)}
+  .a-user:hover{background:var(--bg-hover)}
+  .a-user .a-ava{width:20px;height:20px;border-radius:50%;
+    background:linear-gradient(135deg,var(--accent),var(--info));flex-shrink:0}
+
+  /* ===== Main（Workspace / Overview 共用此区，互斥覆盖） ===== */
+  .main-panel{flex:1;min-width:0;background:var(--bg-panel);border:1px solid var(--border);
+    border-radius:12px;display:flex;flex-direction:column;overflow:hidden;position:relative;
+    transition:box-shadow var(--duration) var(--ease)}
+  /* overview 激活时：main 整区 accent ring，明示「Overview Region 覆盖此区」 */
+  .main-panel.is-overview{box-shadow:inset 0 0 0 1.5px var(--accent-ring)}
+  .main-header{height:42px;flex-shrink:0;display:flex;align-items:center;gap:6px;
+    padding:0 12px;border-bottom:1px solid var(--border);background:var(--bg-panel)}
+  .main-header .ov-tag{display:none;align-items:center;gap:6px;font-size:12px;font-weight:600;
+    color:var(--accent)}
+  .main-header .ov-tag svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.6}
+  .main-panel.is-overview .breadcrumb{display:none}
+  .main-panel.is-overview .ov-tag{display:flex}
+  .breadcrumb{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-secondary)}
+  .breadcrumb .crumb.branch{font:10px/1 var(--font-mono);color:var(--accent);
+    background:var(--accent-soft);padding:2px 6px;border-radius:3px}
+  .breadcrumb .sep{color:var(--text-tertiary)}
+  .main-header .exit{margin-left:auto;display:none;align-items:center;gap:5px;
+    padding:5px 10px;border-radius:6px;background:var(--bg-elevated);border:1px solid var(--border-strong);
+    color:var(--text-secondary);font-size:11px;cursor:pointer;
+    transition:background var(--duration-fast) var(--ease),color var(--duration-fast) var(--ease)}
+  .main-header .exit:hover{background:var(--bg-hover);color:var(--text-primary)}
+  .main-header .exit svg{width:12px;height:12px;stroke:currentColor;fill:none;stroke-width:1.6}
+  .main-panel.is-overview .exit{display:flex}
+
+  .main-body{flex:1;position:relative;overflow:hidden}
+
+  /* Workspace 占位（chat 双 panel ghost）—— overview 激活时隐藏 */
+  .ws{position:absolute;inset:0;padding:14px;display:flex;gap:10px;
+    transition:opacity var(--duration) var(--ease)}
+  .ws.hide{opacity:0;pointer-events:none}
+  .ws .panel{flex:1;background:rgba(255,255,255,0.02);border:1px solid var(--border);
+    border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:7px}
+  .ws .panel .ph{height:24px;width:60%;border-radius:3px;background:rgba(255,255,255,0.05)}
+  .ws .panel .ln{height:7px;border-radius:2px;background:rgba(255,255,255,0.04)}
+  .ws .panel .ln.w90{width:90%} .ws .panel .ln.w70{width:70%} .ws .panel .ln.w50{width:50%}
+  .ws .panel .comp{margin-top:auto;height:30px;border-radius:6px;background:var(--bg-elevated);border:1px solid var(--border)}
+  .ws .panel.dim{opacity:0.45}
+
+  /* Overview 覆盖层（卡片网格）—— 覆盖 workspace，sidebar 持久 */
+  .ov-cover{position:absolute;inset:0;opacity:0;pointer-events:none;
+    transition:opacity var(--duration) var(--ease);
+    display:flex;flex-direction:column;gap:10px;padding:14px}
+  .ov-cover.show{opacity:1;pointer-events:auto}
+  /* 工具栏 */
+  .ov-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .ov-bar .gl{font:500 10px/1 var(--font-mono);color:var(--text-tertiary);
+    letter-spacing:0.08em;text-transform:uppercase}
+  .chip{font:500 11px/1 var(--font-mono);color:var(--text-secondary);
+    background:var(--bg-elevated);border:1px solid var(--border);padding:4px 9px;
+    border-radius:999px;cursor:pointer;display:flex;align-items:center;gap:5px}
+  .chip:hover{color:var(--text-primary);border-color:var(--border-strong)}
+  .chip.on{color:var(--accent);background:var(--accent-soft);border-color:rgba(79,142,247,0.35)}
+  .chip .cd{width:6px;height:6px;border-radius:50%}
+  .ov-bar .sort{margin-left:auto;font:500 11px/1 var(--font-mono);color:var(--text-tertiary)}
+  /* 卡片网格 */
+  .ov-grid{flex:1;display:grid;grid-template-columns:repeat(3,1fr);gap:10px;overflow-y:auto;
+    align-content:start;padding-right:2px}
+  .ov-grid::-webkit-scrollbar{width:6px}
+  .ov-grid::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:3px}
+  .ov-card{background:var(--bg-elevated);border:1px solid var(--border);border-radius:8px;
+    padding:11px 12px;display:flex;flex-direction:column;gap:8px;cursor:pointer;position:relative;
+    transition:background var(--duration-fast) var(--ease),border-color var(--duration-fast) var(--ease)}
+  .ov-card:hover{background:var(--bg-hover);border-color:var(--border-strong)}
+  .ov-card.active{background:var(--bg-elevated);border-color:transparent;
+    box-shadow:inset 0 0 0 1px var(--accent)}
+  .c-head{display:flex;align-items:center;gap:7px}
+  .c-head .sd{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+  .c-title{font-size:12.5px;font-weight:600;color:var(--text-primary);flex:1;min-width:0;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .branch{color:var(--accent);background:var(--accent-soft);padding:2px 6px;
+    border-radius:3px;font:500 10px/1 var(--font-mono);max-width:90px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0}
+  .c-sum{font-size:11px;color:var(--text-secondary);line-height:1.45;
+    overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  /* 后台 agent 进度聚合（flow-3 联动，Overview 唯一增量） */
+  .agents{background:var(--bg-base);border:1px solid var(--border);border-radius:3px;
+    padding:6px 7px;display:flex;flex-direction:column;gap:4px}
+  .arow{display:flex;align-items:center;gap:6px;font:10px/1 var(--font-mono);color:var(--text-tertiary)}
+  .arow .nm{color:var(--text-secondary);width:64px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .bar2{flex:1;height:3px;background:var(--bg-hover);border-radius:2px;overflow:hidden}
+  .bar2 i{display:block;height:100%;border-radius:2px}
+  .c-meta{display:flex;gap:10px;font:10px/1 var(--font-mono);color:var(--text-tertiary);
+    margin-top:auto;padding-top:7px;border-top:1px solid var(--border)}
+  .c-meta .add{color:var(--success)} .c-meta .del{color:var(--danger)}
+  .c-meta .c-time{margin-left:auto}
+  .cbadge{position:absolute;top:10px;right:11px;min-width:15px;height:15px;padding:0 4px;
+    border-radius:999px;font:600 9px/15px var(--font-mono);text-align:center;color:#fff}
+  .cbadge.unread{background:var(--accent)} .cbadge.err{background:var(--danger)}
+
+  /* ===== 右侧 legend ===== */
+  .legend{display:flex;flex-direction:column;gap:12px}
+  .lcard{background:var(--bg-panel);border:1px solid var(--border);border-radius:8px;padding:14px}
+  .lcard h3{font-size:11px;font-weight:600;color:var(--accent);letter-spacing:0.14em;
+    text-transform:uppercase;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+  .lcard h3 .num{width:16px;height:16px;border-radius:50%;background:var(--accent);
+    color:#0d0d0f;font:600 10px/16px var(--font-mono);text-align:center}
+  .lrow{display:flex;gap:8px;padding:5px 0;font-size:12px;border-bottom:1px solid var(--border)}
+  .lrow:last-child{border-bottom:0}
+  .lrow .k{color:var(--text-tertiary);width:54px;flex-shrink:0;
+    font-family:var(--font-mono);font-size:10px;letter-spacing:0.04em}
+  .lrow .v{color:var(--text-primary)}
+  .lrow .v b{color:var(--accent);font-weight:600}
+  .rel-tbl{width:100%;border-collapse:collapse;font-size:11px}
+  .rel-tbl td{padding:6px 4px;border-bottom:1px solid var(--border);vertical-align:top}
+  .rel-tbl td.c{color:var(--text-primary);font-weight:550;width:42%}
+  .rel-tbl td.r{color:var(--text-secondary)}
+  .rel-tbl tr:last-child td{border-bottom:0}
+  .resolved{background:rgba(79,142,247,0.06);border:1px solid rgba(79,142,247,0.25)}
+  .resolved h3{color:var(--accent)}
+  .resolved .vs{font:11px/1.6 var(--font-mono);color:var(--text-secondary);margin-top:8px}
+  .resolved .vs .old{color:var(--text-tertiary);text-decoration:line-through}
+  .resolved .vs .new{color:var(--accent);font-weight:600}
+
+  .foot-note{margin-top:22px;padding:14px 16px;background:rgba(245,165,36,0.06);
+    border:1px solid rgba(245,165,36,0.2);border-radius:8px;font-size:12.5px;color:var(--text-secondary)}
+  .foot-note b{color:var(--warning)}
+  .foot-note code{font-family:var(--font-mono);color:var(--accent);
+    background:rgba(79,142,247,0.08);padding:1px 5px;border-radius:3px;font-size:11.5px}
+  .hint-bar{margin-top:14px;font:11px/1 var(--font-mono);color:var(--text-tertiary);
+    letter-spacing:0.06em;text-align:center}
+  .hint-bar b{color:var(--accent)}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-new" viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></symbol>
+    <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.2"/><path d="M10.3 10.3 13.2 13.2"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="9" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="2.5" y="9" width="4.5" height="4.5" rx="1"/><rect x="9" y="9" width="4.5" height="4.5" rx="1"/></symbol>
+    <symbol id="i-sessions" viewBox="0 0 16 16"><path d="M2.5 4h11M2.5 8h11M2.5 12h7"/></symbol>
+    <symbol id="i-files" viewBox="0 0 16 16"><path d="M2.5 4.4a1 1 0 0 1 1-1h3.1l1.3 1.3h5.6a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V4.4z"/></symbol>
+    <symbol id="i-back" viewBox="0 0 16 16"><path d="M10 3.5L5.5 8 10 12.5"/></symbol>
+    <symbol id="i-doc" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/></symbol>
+  </defs>
+</svg>
+
+<div class="page-head">
+  <h1>Overview · 入口与覆盖</h1>
+  <div class="sub">
+    以 <code>sidebar/draft-five-states</code> 卡 A 为 sidebar 基底，<b>新增「Overview」入口按钮</b>。点击后 Overview
+    <b>覆盖整个 workspace（main）区</b>，sidebar 持久不变。这同时<b>裁决了</b>之前的触发落点冲突：
+    入口在 sidebar，不在 workspace 顶栏。
+  </div>
+  <div class="meta">
+    <span>触发 <b>sidebar Overview 按钮</b></span>
+    <span>覆盖 <b>workspace / main 区</b></span>
+    <span>sidebar <b>持久</b></span>
+    <span>快捷键 <b>⌘⇧O</b></span>
+    <span>退出 <b>点卡片 / Esc</b></span>
+  </div>
+</div>
+
+<div class="callout">
+  <b>本次决策（裁决触发冲突）：</b>「Overview」入口按钮位于 sidebar 主操作区，带 session 计数角标（不进即知规模）。
+  它<b>不是</b> segmented tab（会话|文件）的第三项——那是 sidebar <b>自家子视图</b>的切换；Overview 是 L1 Region 入口，
+  与之分层。点击后 Overview 网格覆盖整个 main 区（accent ring 标明 Region 边界），sidebar 与计数角标保持可见，便于随时切回。
+</div>
+
+<div class="stage">
+  <!-- ===== 左：交互式 window ===== -->
+  <div class="window-mock">
+    <div class="traffic-light"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
+    <div class="app-title">xyz-agent · shell (L0)</div>
+
+    <div class="app-shell">
+      <!-- Sidebar（five-states 卡 A 基底） -->
+      <div class="sb" id="sb">
+        <div class="a-logo"><div class="a-mark">x</div>xyz-agent</div>
+        <div class="a-nav">
+          <div class="a-item"><span class="a-ico"><svg><use href="#i-new"/></svg></span><span class="a-label">新建任务</span><span class="a-kbd">⌘N</span></div>
+          <div class="a-item"><span class="a-ico"><svg><use href="#i-search"/></svg></span><span class="a-label">搜索</span><span class="a-kbd">⌘K</span></div>
+        </div>
+        <div class="a-sep"></div>
+
+        <!-- ★ Overview 入口按钮 -->
+        <div style="padding:0 4px">
+          <div class="ov-entry" id="ov-btn">
+            <span class="a-ico"><svg><use href="#i-grid"/></svg></span>
+            <span class="a-label">Overview</span>
+            <span class="count">12</span>
+            <span class="a-kbd">⌘⇧O</span>
+          </div>
+        </div>
+        <div class="a-sep"></div>
+
+        <div class="sb-tabs">
+          <div class="sb-tab active"><span class="t-ico"><svg><use href="#i-sessions"/></svg></span>会话<span class="t-count">12</span></div>
+          <div class="sb-tab"><span class="t-ico"><svg><use href="#i-files"/></svg></span>文件<span class="t-count">5</span></div>
+        </div>
+
+        <div class="a-sessions">
+          <div class="a-group-head"><span>今天</span><span class="count">4</span></div>
+          <div class="a-session active">
+            <span class="a-dot running"></span>
+            <div class="a-session-main">
+              <div class="a-session-title">重构 Sidebar 多视图容器</div>
+              <div class="a-session-path">refactor-arch<span> · </span><span class="branch">feat/sidebar-split</span></div>
+            </div>
+            <span class="a-session-time">2m</span>
+          </div>
+          <div class="a-session">
+            <span class="a-dot waiting"></span>
+            <div class="a-session-main">
+              <div class="a-session-title">等待审批 steer 方案</div>
+              <div class="a-session-path">refactor-arch<span> · </span><span class="branch">exp/steer-v2</span></div>
+            </div>
+            <span class="a-session-time">5m</span>
+          </div>
+          <div class="a-session">
+            <span class="a-dot running"></span>
+            <div class="a-session-main">
+              <div class="a-session-title">后台重构 auth 模块</div>
+              <div class="a-session-path">refactor-arch<span> · </span><span class="branch">refactor/auth</span></div>
+            </div>
+            <span class="a-session-time">23m</span>
+          </div>
+          <div class="a-session">
+            <span class="a-dot done"></span>
+            <div class="a-session-main">
+              <div class="a-session-title">修复 composer 抖动</div>
+              <div class="a-session-path">refactor-arch<span> · </span><span class="branch">fix/jitter</span></div>
+            </div>
+            <span class="a-session-time">1h</span>
+          </div>
+          <div class="a-group-head"><span>更早</span><span class="count">8</span></div>
+        </div>
+
+        <div class="a-footer">
+          <div class="a-user"><div class="a-ava"></div><span>Zzzzswszz</span></div>
+        </div>
+      </div>
+
+      <!-- Main（Workspace / Overview 互斥覆盖） -->
+      <div class="main-panel" id="main">
+        <div class="main-header">
+          <span class="breadcrumb" id="crumb">
+            <span class="crumb">refactor-arch</span><span class="sep">▸</span>
+            <span class="crumb">重构 Sidebar</span><span class="sep">▸</span>
+            <span class="crumb branch">feat/sidebar-split</span>
+          </span>
+          <span class="ov-tag"><svg viewBox="0 0 16 16"><use href="#i-grid"/></svg>Overview · 多会话鸟瞰</span>
+          <div class="exit" id="exit-btn"><svg viewBox="0 0 16 16"><use href="#i-back"/></svg>返回 Workspace <span style="opacity:.6">Esc</span></div>
+        </div>
+
+        <div class="main-body">
+          <!-- Workspace 占位（chat 双 panel ghost） -->
+          <div class="ws" id="ws">
+            <div class="panel">
+              <div class="ph"></div>
+              <div class="ln w90"></div><div class="ln w70"></div><div class="ln w90"></div>
+              <div class="ln w50"></div><div class="ln w70"></div>
+              <div class="comp"></div>
+            </div>
+            <div class="panel dim">
+              <div class="ph" style="width:45%"></div>
+              <div class="ln w70"></div><div class="ln w50"></div>
+              <div class="comp"></div>
+            </div>
+          </div>
+
+          <!-- Overview 覆盖层 -->
+          <div class="ov-cover" id="ov-cover">
+            <div class="ov-bar">
+              <span class="gl">状态</span>
+              <span class="chip on"><span class="cd" style="background:var(--accent)"></span>running</span>
+              <span class="chip on"><span class="cd" style="background:var(--warning)"></span>waiting</span>
+              <span class="chip"><span class="cd" style="background:var(--success)"></span>done</span>
+              <span class="chip"><span class="cd" style="background:var(--danger)"></span>error</span>
+              <span class="sort">排序 · 最近活动 ▾</span>
+            </div>
+            <div class="ov-grid" id="ov-grid">
+              <div class="ov-card active" data-session>
+                <div class="c-head"><span class="sd" style="background:var(--accent)"></span><span class="c-title">重构 Sidebar 多视图容器</span><span class="branch">feat/sidebar</span></div>
+                <div class="c-sum">已拆出 SessionItem/FileView 原子，容器四态收口。正校正状态点 5 态映射。</div>
+                <div class="agents">
+                  <div class="arow"><span class="nm">researcher</span><span class="bar2"><i style="width:62%;background:var(--accent)"></i></span></div>
+                  <div class="arow"><span class="nm">worker-a</span><span class="bar2"><i style="width:88%;background:var(--success)"></i></span></div>
+                </div>
+                <div class="c-meta"><span class="add">+168</span><span class="del">-31</span><span>12 回合</span><span class="c-time">2m</span></div>
+              </div>
+              <div class="ov-card" data-session>
+                <div class="c-head"><span class="sd" style="background:var(--warning)"></span><span class="c-title">等待审批 steer 方案</span><span class="branch">exp/steer</span></div>
+                <div class="c-sum">子 agent 给了两个重构路径，等你选 A（inset ring）还是 B（左竖条）。</div>
+                <div class="c-meta"><span class="add">+42</span><span>8 回合</span><span class="c-time">5m</span></div>
+                <div class="cbadge unread">2</div>
+              </div>
+              <div class="ov-card" data-session>
+                <div class="c-head"><span class="sd" style="background:var(--accent)"></span><span class="c-title">后台重构 auth 模块</span><span class="branch">refactor/auth</span></div>
+                <div class="c-sum">3 个子 agent 并行拆分 OAuth/Session/Token，主 agent 等汇总。</div>
+                <div class="agents">
+                  <div class="arow"><span class="nm">auth-oauth</span><span class="bar2"><i style="width:45%;background:var(--accent)"></i></span></div>
+                  <div class="arow"><span class="nm">auth-sess</span><span class="bar2"><i style="width:71%;background:var(--accent)"></i></span></div>
+                  <div class="arow"><span class="nm">auth-token</span><span class="bar2"><i style="width:30%;background:var(--warning)"></i></span></div>
+                </div>
+                <div class="c-meta"><span class="add">+312</span><span class="del">-88</span><span>23m</span></div>
+              </div>
+              <div class="ov-card" data-session>
+                <div class="c-head"><span class="sd" style="background:var(--success)"></span><span class="c-title">修复 composer 发送态抖动</span><span class="branch">fix/jitter</span></div>
+                <div class="c-sum">focus ring 与 loading spinner 叠加导致 1px 抖动，改 inset ring 解决。</div>
+                <div class="c-meta"><span class="add">+24</span><span class="del">-9</span><span>5 回合</span><span class="c-time">1h</span></div>
+              </div>
+              <div class="ov-card" data-session>
+                <div class="c-head"><span class="sd" style="background:var(--danger)"></span><span class="c-title">接入 Diff 审查抽屉</span><span class="branch">feat/diff</span></div>
+                <div class="c-sum">子 agent 合并遇 conflict，mergeLock 标 U。需手动解决后重试。</div>
+                <div class="c-meta"><span class="add">+91</span><span class="del">-44</span><span>14 回合</span><span class="c-time">昨天</span></div>
+                <div class="cbadge err">!</div>
+              </div>
+              <div class="ov-card" data-session>
+                <div class="c-head"><span class="sd" style="background:var(--text-tertiary);opacity:.5"></span><span class="c-title">二进制文件预览探索</span><span class="branch">exp/binary</span></div>
+                <div class="c-sum">尝试 hex 视图预览二进制 diff，验证后放弃（超范围）。已停。</div>
+                <div class="c-meta"><span class="add">+15</span><span>3 回合</span><span class="c-time">已停</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 右：legend 标注 ===== -->
+  <div class="legend">
+    <div class="lcard">
+      <h3><span class="num">1</span>入口落点</h3>
+      <div class="lrow"><span class="k">位置</span><span class="v">sidebar <b>Overview 按钮</b></span></div>
+      <div class="lrow"><span class="k">非</span><span class="v">不在 workspace 顶栏 / 不在 segmented tab</span></div>
+      <div class="lrow"><span class="k">角标</span><span class="v">session 计数，不进即知规模</span></div>
+      <div class="lrow"><span class="k">快捷</span><span class="v"><b>⌘⇧O</b></span></div>
+    </div>
+
+    <div class="lcard">
+      <h3><span class="num">2</span>覆盖范围</h3>
+      <div class="lrow"><span class="k">覆盖</span><span class="v">整个 <b>main（workspace）</b>区</span></div>
+      <div class="lrow"><span class="k">sidebar</span><span class="v"><b>持久不变</b></span></div>
+      <div class="lrow"><span class="k">退出</span><span class="v">点卡片载入 session / Esc</span></div>
+      <div class="lrow"><span class="k">边界</span><span class="v">激活时 main 显 accent ring</span></div>
+    </div>
+
+    <div class="lcard resolved">
+      <h3><span class="num">✓</span>冲突已裁决</h3>
+      <div style="font-size:12px;color:var(--text-secondary);line-height:1.6">
+        之前三份文档对「在哪触发」说法不一，本次按用户决策收口：
+      </div>
+      <div class="vs">
+        <span class="old">overview/spec: workspace 顶栏按钮</span><br>
+        <span class="old">ui-skeleton: shell 级 view 切换</span><br>
+        <span class="old">workspace/spec: （沉默）</span><br>
+        <span class="new">→ sidebar Overview 按钮 + 覆盖 main</span>
+      </div>
+    </div>
+
+    <div class="lcard">
+      <h3><span class="num">3</span>关联组件</h3>
+      <table class="rel-tbl">
+        <tr><td class="c">Session List</td><td class="r">同批 session 的<b>导航视图</b>，非 overview 复制</td></tr>
+        <tr><td class="c">Session Item</td><td class="r">卡片 = 它的鸟瞰放大版</td></tr>
+        <tr><td class="c">flow-3</td><td class="r">多 agent 进度条 — 唯一增量</td></tr>
+        <tr><td class="c">Workspace</td><td class="r">被覆盖对象 / 退出后载入点</td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="hint-bar">点击左侧 sidebar 的 <b>Overview</b> 按钮（或卡片）体验覆盖 · <b>Esc</b> 返回</div>
+
+<div class="foot-note">
+  <b>分工约束不变：</b> 禁止让 Overview 退化成放大版 Session List。Session List = 紧凑单列、导航切换、常驻 sidebar；
+  Overview = 网格密集、统筹监控、按需进入、多 agent 进度聚合（卡片内进度块是其相对 List 的<b>唯一</b>信息增量）。
+  入口放在 sidebar 主操作区，与 segmented tab（会话|文件，sidebar 自房子视图）<b>分层</b>——前者是 L1 Region 入口，后者是容器内子视图切换。
+</div>
+
+<script>
+  (function(){
+    var btn=document.getElementById('ov-btn');
+    var main=document.getElementById('main');
+    var ws=document.getElementById('ws');
+    var cover=document.getElementById('ov-cover');
+    var exit=document.getElementById('exit-btn');
+    var cards=document.querySelectorAll('[data-session]');
+    var active=false;
+    function setOverview(on){
+      active=on;
+      btn.classList.toggle('active',on);
+      main.classList.toggle('is-overview',on);
+      cover.classList.toggle('show',on);
+      ws.classList.toggle('hide',on);
+    }
+    btn.addEventListener('click',function(){setOverview(!active);});
+    exit.addEventListener('click',function(){setOverview(false);});
+    cards.forEach(function(c){
+      c.addEventListener('click',function(){
+        // 点卡片 = 载入该 session，退出 overview
+        cards.forEach(function(x){x.classList.remove('active');});
+        c.classList.add('active');
+        setOverview(false);
+      });
+    });
+    document.addEventListener('keydown',function(e){
+      if(e.key==='Escape'&&active){e.preventDefault();setOverview(false);}
+    });
+  })();
+</script>
+</body>
+</html>

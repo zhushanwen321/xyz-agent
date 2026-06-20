@@ -13,7 +13,7 @@ product
 - Agent 自动拆分为多个 SubAgent 并行执行
 - 用户需要监控各 SubAgent 的执行状态、查看已完成的结果、回应需要确认的告警
 - 在分屏模式下同时查看主线对话和某个 SubAgent 的详细执行过程
-- 通过 Mission Control 快速切换不同 Session 的任务总览
+- 通过 Overview 快速鸟瞰不同 Session 的任务总览
 
 ## Product Purpose
 
@@ -28,21 +28,23 @@ xyz-agent 是一个 AI Agent 桌面工作台。与 Claude Code、Pi 等工具类
 
 ## Brand Personality
 
-**Warm & Soft · 有温度的 AI 工作台**
+**冷蓝暗色 · 开发者工作台**
 
-三个关键词：温润、克制、可信。
+> 视觉方向由 [ADR-0018](docs/architecture/adr/0018-visual-direction.md) 裁决（2026-06-18）：推翻早期 Warm & Soft 定位，收敛到 zcode-demo 冷蓝暗色。原子值 SSOT 见 [docs/designs/design-tokens.md](docs/designs/design-tokens.md)。
 
-- **温润**：不是冰冷的开发者工具。暖色调底色、柔和圆角、衬线体品牌标识，让长时间使用不疲劳。
-- **克制**：一个 accent 颜色（赤陶色），不超过每屏 2 处。不堆砌装饰，每个元素都有明确的功能目的。
-- **可信**：状态反馈即时且准确。运行中的 SubAgent 有实时圆点脉冲，完成的任务有清晰的完成标记，需要确认的告警有明显的视觉层级。
+三个关键词：冷静、精准、可靠。
 
-参考感受：Stripe pre-2020 的精致感、Mercury 的克制、Substack 的温暖。不是 openhanako 的日式书卷气（纸质纹理、方正印章），而是更现代的"温暖极简"。
+- **冷静**：纯黑画布（`#0d0d0f`）+ 冷蓝 accent（`#4f8ef7`），贴近 Cursor / VS Code / Linear 的开发者工具直觉。Inter 字体、无衬线、tech-utility 取向。暗色为真默认（[ADR-0021](docs/architecture/adr/0021-default-theme-direction.md)）。
+- **精准**：信息密度高但层次分明。三层视觉语义——base 平铺 / sidebar 透明融合 / main float 浮起——靠 background/border/radius/shadow 表达，不靠装饰堆砌。强调走 Card-Active 的 inset ring，禁止左色条。
+- **可靠**：状态反馈即时且准确。运行中的 SubAgent 有实时圆点脉冲，完成的任务有清晰的完成标记，需要确认的告警有明显的视觉层级。SubAgent 并行可视化是核心差异化。
+
+参考感受：Cursor 的冷峻高效、Linear 的精准克制、VS Code 的开发者熟悉感。不是 ChatGPT Web 的极简聊天，不是传统 SaaS 仪表盘的浮夸。
 
 ## Anti-references
 
 - **不是传统 SaaS 仪表盘**：拒绝 big-number hero metrics、渐变文字、玻璃拟态卡片
 - **不是 ChatGPT/Claude Web UI 的极简聊天**：我们需要展示 SubAgent 并行状态和任务树，不是单线对话
-- **不是终端/IDE 的暗色硬核风格**：暗色主题可以存在，但不是默认；整体氛围不应该是"黑底绿字"的极客感
+- **不是"黑底绿字"的粗糙极客感**：暗色是默认且优先打磨方向，但区别于终端绿字、高对比硬核 IDE——追求冷蓝精致的暗色，非刺眼粗糙的极客感
 - **不是 openhanako 的日式书卷气**：参考其暖色调和低对比度方向，但摒弃纸质纹理、方正印章感、0.5px hairline 边框
 - **不是 AI slop**：如果有人看界面能直接说"AI 做的"，就失败了。拒绝默认卡片网格、侧边彩色条纹、模态框作为第一选择
 
@@ -58,7 +60,7 @@ xyz-agent 是一个 AI Agent 桌面工作台。与 Claude Code、Pi 等工具类
    每个面板 + 它的抽屉是一个完整单元。左面板开右抽屉，右面板开左抽屉，抽屉只展示本面板的任务树。
 
 4. **长时间使用不疲劳**
-   这是最高优先级。OKLch 暖色调、低对比度、充足的留白、柔和的状态过渡、无刺眼元素。每天 6 小时以上使用后，用户不应该感到视觉疲劳。
+   这是高优先级。冷蓝暗色底（低亮度画布减少屏幕发光）、充足的留白、柔和的状态过渡（`--duration` 200ms）、无刺眼元素。暗色优先正是为此选择。每天 6 小时以上使用后，用户不应该感到视觉疲劳。
 
 5. **状态即信任**
    每个 SubAgent 的状态变化都必须在 100ms 内反映在 UI 上。运行中、已完成、等待确认、已终止——每种状态都有独特且一致的视觉表达。

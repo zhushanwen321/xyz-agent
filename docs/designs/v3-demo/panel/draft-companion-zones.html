@@ -1,0 +1,859 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Panel · companion-zones（progress-zone 三态 + git-zone 四态细化）</title>
+<style>
+  :root {
+    /* zcode 冷蓝 token —— 以 ../../design-tokens.md 为准（状态色 soft 为本稿按 design-system pill 惯例补全） */
+    --bg-base: #0d0d0f;
+    --bg-panel: #151519;
+    --bg-elevated: #1c1c20;
+    --bg-hover: #232328;
+    --bg-input: #101013;
+    --accent: #4f8ef7;
+    --accent-hover: #6ba3ff;
+    --accent-soft: rgba(79,142,247,0.14);
+    --accent-ring: rgba(79,142,247,0.30);
+    --accent-glow: rgba(79,142,247,0.25);
+    --fg: #f0f0f5;
+    --text-primary: #e8e8ea;
+    --text-secondary: #8a8a95;
+    --text-tertiary: #5a5a65;
+    --border: rgba(255,255,255,0.07);
+    --border-strong: rgba(255,255,255,0.14);
+    --success: #34d399;
+    --success-soft: rgba(52,211,153,0.14);
+    --danger: #f87171;
+    --danger-soft: rgba(248,113,113,0.12);
+    --diff-add: rgba(52,211,153,0.16);
+    --diff-add-fg: #34d399;
+    --diff-del: rgba(248,113,113,0.14);
+    --diff-del-fg: #f87171;
+    --radius-sm: 3px;
+    --radius: 8px;
+    --radius-lg: 12px;
+    --shadow-float: 0 8px 24px rgba(0,0,0,0.4);
+    --ease: cubic-bezier(0.4, 0, 0.2, 1);
+    --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+    --dur: 220ms;
+    --dur-slow: 320ms;
+    --font-sans: Inter, 'SF Pro Display', 'PingFang SC', system-ui, -apple-system, sans-serif;
+    --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    background: var(--bg-base);
+    color: var(--text-primary);
+    font: 13px/1.55 var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  body { padding: 28px 32px 80px; }
+
+  /* ===== 页面骨架（spec sheet，非产品） ===== */
+  .sheet { max-width: 1240px; margin: 0 auto; }
+  .sheet-head { margin-bottom: 28px; }
+  .crumbs {
+    font: 11px/1 var(--font-mono); color: var(--text-tertiary);
+    letter-spacing: 0.04em; margin-bottom: 10px;
+  }
+  .crumbs b { color: var(--accent); font-weight: 600; }
+  .sheet-head h1 {
+    font: 600 22px/1.3 var(--font-sans); color: var(--text-primary);
+    margin-bottom: 8px; letter-spacing: -0.01em;
+  }
+  .sheet-head p { color: var(--text-secondary); max-width: 78ch; font-size: 13px; }
+
+  .section { margin-top: 38px; }
+  .section-title {
+    display: flex; align-items: baseline; gap: 10px;
+    margin-bottom: 16px;
+  }
+  .section-title h2 {
+    font: 600 15px/1 var(--font-sans); color: var(--text-primary);
+  }
+  .section-title .st-tag {
+    font: 10px/1 var(--font-mono); color: var(--accent);
+    background: var(--accent-soft); padding: 4px 8px; border-radius: 999px;
+    letter-spacing: 0.04em;
+  }
+  .section-title .st-sub {
+    font: 12px/1 var(--font-sans); color: var(--text-tertiary);
+  }
+  .grid-3 {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px;
+  }
+  .grid-4 {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px;
+  }
+  @media (max-width: 1100px) { .grid-3, .grid-4 { grid-template-columns: repeat(2, 1fr); } }
+
+  /* 单态展示卡 —— 左上角态名 + 舞台 + 设计要点 */
+  .show-case {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    display: flex; flex-direction: column;
+  }
+  .sc-label {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .sc-num {
+    font: 10px/1 var(--font-mono); color: var(--text-tertiary);
+    background: rgba(255,255,255,0.04); padding: 3px 6px; border-radius: var(--radius-sm);
+  }
+  .sc-name { font: 600 12.5px/1 var(--font-sans); color: var(--text-primary); }
+  .sc-state { margin-left: auto; }
+  .sc-stage {
+    /* 舞台：模拟 panel 内的 composer band 上下文（不画完整 panel，仅放 zone + 虚化 composer 提示） */
+    padding: 14px;
+    background: var(--bg-elevated);
+    box-shadow: inset 0 0 0 1px var(--accent-ring); /* 模拟 active panel */
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .sc-stage .composer-ghost {
+    /* 活态里 composer 是真实的；静态栅格里用 ghost 占位表明 zone 的位置关系 */
+    height: 40px; border-radius: var(--radius-lg);
+    border: 1px dashed var(--border-strong);
+    display: grid; place-items: center;
+    font: 11px/1 var(--font-mono); color: var(--text-tertiary);
+  }
+  .sc-stage.top .composer-ghost { order: 2; }      /* progress 在 composer 上方：ghost 在下 */
+  .sc-stage.bot .composer-ghost { order: -1; }      /* git 在 composer 下方：ghost 在上 */
+  .sc-note {
+    padding: 9px 12px;
+    font: 11.5px/1.5 var(--font-sans); color: var(--text-secondary);
+    border-top: 1px solid var(--border);
+    background: rgba(255,255,255,0.015);
+  }
+  .sc-note b { color: var(--text-primary); font-weight: 600; }
+
+  /* ============================================================
+     progress-zone —— 纯只读展示，不可点击
+     （继承 dual-panel 验证过的容器语言；无 toggle、无 detail 入口）
+     ============================================================ */
+  .progress-zone {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+  }
+  .progress-zone.empty { display: none; }           /* 空态：无任务时整区隐藏 */
+  /* 完成态自动收起（状态驱动，非用户点击）：body 隐藏，inline 单行条显示 */
+  .progress-zone.collapsed .pz-body { display: none; }
+  .progress-zone.collapsed .pz-inline { display: flex; }
+  .pz-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px;
+    font: 12px/1 var(--font-sans);
+  }
+  .pz-title { font-weight: 600; color: var(--text-primary); font-size: 12.5px; }
+  .pz-step { font: 11px/1 var(--font-mono); color: var(--text-tertiary); }
+  .pz-inline {
+    display: none; align-items: center; gap: 10px;
+    padding: 0 12px 9px;
+  }
+  .pz-inline .bar { flex: 1; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.06); overflow: hidden; }
+  .pz-inline .bar i {
+    display: block; height: 100%; border-radius: 2px;
+    background: linear-gradient(90deg, var(--accent), var(--accent-hover));
+  }
+  .pz-inline .now { font: 11px/1 var(--font-sans); color: var(--text-secondary); white-space: nowrap; }
+  .pz-inline .pct { font: 11px/1 var(--font-mono); color: var(--text-tertiary); min-width: 30px; text-align: right; }
+  .pz-body { padding: 0 12px 11px; }
+  .pz-summary {
+    height: 5px; border-radius: 3px;
+    background: rgba(255,255,255,0.06); overflow: hidden;
+    margin-bottom: 10px; position: relative;
+  }
+  .pz-summary i {
+    display: block; height: 100%; border-radius: 3px;
+    background: linear-gradient(90deg, var(--accent), var(--accent-hover));
+    transition: width var(--dur-slow) var(--ease-out);
+  }
+  .pz-summary i.done-fill { background: var(--success); }
+  .pz-todos { display: flex; flex-direction: column; gap: 3px; }
+  .pz-todo {
+    display: flex; align-items: center; gap: 8px;
+    font: 12px/1.4 var(--font-sans); color: var(--text-secondary);
+    padding: 3px 0;
+  }
+  .pz-todo .mark {
+    width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0;
+    display: grid; place-items: center;
+    font-size: 9px; font-weight: 700;
+  }
+  .pz-todo .mark svg { width: 9px; height: 9px; }
+  .pz-todo.done { color: var(--text-tertiary); }
+  .pz-todo.done .mark { background: var(--success); color: #06251a; }
+  .pz-todo.done .label-t { text-decoration: line-through; text-decoration-color: var(--text-tertiary); }
+  .pz-todo.active { color: var(--text-primary); }
+  .pz-todo.active .mark { background: var(--accent); color: #fff; }
+  .pz-todo.pending .mark { border: 1px solid var(--border-strong); }
+  .pz-todo .pct-tag { margin-left: auto; font: 10px/1 var(--font-mono); color: var(--text-tertiary); }
+
+  /* status-dot（design-system §5：极简状态点，6–8px 圆点状态色） */
+  .status-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--text-tertiary); flex-shrink: 0;
+  }
+  .status-dot.running { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); animation: pulse-blue 1.8s var(--ease) infinite; }
+  .status-dot.idle { background: var(--text-tertiary); }
+  .status-dot.done { background: var(--success); }
+  @keyframes pulse-blue {
+    0%, 100% { box-shadow: 0 0 0 3px var(--accent-soft); }
+    50% { box-shadow: 0 0 0 6px rgba(79,142,247,0.06); }
+  }
+
+  /* ============================================================
+     git-zone —— 单行带，左分支/状态 + 右操作
+     ============================================================ */
+  .git-zone {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    display: flex; align-items: center; gap: 10px;
+    padding: 0 8px 0 12px;
+    height: 38px;
+    position: relative;
+    transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+  }
+  .git-zone.conflict {
+    background: linear-gradient(90deg, var(--danger-soft), var(--bg-input) 40%);
+    border-color: rgba(248,113,113,0.30);
+    padding-left: 16px;
+  }
+  .git-zone.conflict::before {
+    content: ''; position: absolute; left: 0; top: 6px; bottom: 6px;
+    width: 3px; border-radius: 0 2px 2px 0; background: var(--danger);
+  }
+  .gz-branch {
+    font: 11px/1 var(--font-mono); color: var(--accent);
+    display: inline-flex; align-items: center; gap: 5px;
+  }
+  .gz-branch svg { width: 13px; height: 13px; }
+  .gz-sep { width: 1px; height: 16px; background: var(--border); }
+  /* Pill（design-system §5：状态/分类标签，圆角 999 soft 底 mono 字） */
+  .gz-pill {
+    font: 11px/1 var(--font-mono);
+    padding: 4px 8px; border-radius: 999px;
+    display: inline-flex; align-items: center; gap: 5px;
+  }
+  .gz-pill svg { width: 11px; height: 11px; }
+  .gz-pill.clean { color: var(--success); background: var(--success-soft); }
+  .gz-pill.staged { color: var(--success); background: var(--success-soft); }
+  .gz-pill.conflict { color: var(--danger); background: var(--danger-soft); }
+  .gz-stats { font: 11px/1 var(--font-mono); color: var(--text-secondary); display: inline-flex; align-items: center; gap: 8px; }
+  .gz-stats .add { color: var(--success); }
+  .gz-stats .del { color: var(--danger); }
+  .gz-stats .files { color: var(--text-tertiary); }
+  .gz-actions { margin-left: auto; display: flex; gap: 4px; }
+  .gz-btn {
+    border: 1px solid var(--border-strong); background: transparent;
+    color: var(--text-secondary); cursor: pointer;
+    font: 11px/1 var(--font-sans);
+    padding: 5px 10px; border-radius: var(--radius-sm);
+    display: inline-flex; align-items: center; gap: 5px;
+    transition: all var(--dur) var(--ease);
+  }
+  .gz-btn svg { width: 12px; height: 12px; }
+  .gz-btn:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--text-tertiary); }
+  .gz-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .gz-btn:disabled:hover { background: transparent; color: var(--text-secondary); border-color: var(--border-strong); }
+  .gz-btn.primary { background: var(--accent-soft); color: var(--accent); border-color: rgba(79,142,247,0.28); }
+  .gz-btn.primary:hover { background: rgba(79,142,247,0.22); color: var(--accent-hover); }
+  .gz-btn.danger { background: var(--danger-soft); color: var(--danger); border-color: rgba(248,113,113,0.28); }
+  .gz-btn.danger:hover { background: rgba(248,113,113,0.20); }
+  /* detail 类按钮（Diff / 解决冲突）—— 点击进入 Detail Pane，真身归 draft-detail-pane */
+  .gz-btn.detail { cursor: pointer; }
+
+  /* ============================================================
+     composer（活态用，与两 zone 共享上下带）
+     ============================================================ */
+  .composer { padding: 0; }
+  .composer-box {
+    background: var(--bg-input); border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  }
+  .composer-box:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+  }
+  .composer textarea {
+    width: 100%; resize: none; border: 0; outline: 0; background: transparent;
+    color: var(--text-primary); font: 13px/1.55 var(--font-sans);
+    padding: 11px 13px 4px; max-height: 120px; min-height: 40px;
+  }
+  .composer textarea::placeholder { color: var(--text-tertiary); }
+  .composer-bar { display: flex; align-items: center; gap: 6px; padding: 0 8px 8px 10px; }
+  .c-tool {
+    width: 26px; height: 26px; border-radius: var(--radius-sm);
+    border: 0; background: transparent; color: var(--text-tertiary); cursor: pointer;
+    display: grid; place-items: center;
+    transition: all var(--dur) var(--ease);
+  }
+  .c-tool:hover { background: var(--bg-hover); color: var(--text-secondary); }
+  .c-tool svg { width: 15px; height: 15px; }
+  .c-model {
+    font: 11px/1 var(--font-mono); color: var(--text-secondary);
+    background: var(--bg-elevated); border: 1px solid var(--border);
+    padding: 4px 8px; border-radius: var(--radius-sm); cursor: pointer;
+  }
+  .c-send {
+    margin-left: auto; width: 30px; height: 30px; border-radius: var(--radius);
+    border: 0; background: var(--accent); color: #fff; cursor: pointer;
+    display: grid; place-items: center;
+    transition: background var(--dur) var(--ease);
+  }
+  .c-send:hover { background: var(--accent-hover); }
+  .c-send svg { width: 15px; height: 15px; }
+
+  /* ===== §3 活态演示舞台 ===== */
+  .live-wrap {
+    display: grid; grid-template-columns: 1fr 300px; gap: 16px;
+    align-items: start;
+  }
+  @media (max-width: 900px) { .live-wrap { grid-template-columns: 1fr; } }
+  .live-stage {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: inset 0 0 0 1px var(--accent-ring); /* active panel 感 */
+    padding: 16px;
+    position: relative;
+    min-height: 420px;
+    overflow: hidden;
+  }
+  .live-stage .stage-hint {
+    font: 11px/1 var(--font-mono); color: var(--text-tertiary);
+    letter-spacing: 0.04em; margin-bottom: 12px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .live-stage .stage-hint::before {
+    content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+  }
+  /* composer band：三 zone 紧凑成带，统一左右边距，垂直窄间距 */
+  .composer-band { display: flex; flex-direction: column; gap: 6px; max-width: 560px; }
+
+  /* ===== 探索控制条（非产品，设计验证用） ===== */
+  .explore {
+    background: var(--bg-panel); border: 1px solid var(--border);
+    border-radius: var(--radius-lg); padding: 12px;
+    position: sticky; top: 16px;
+  }
+  .explore .ex-title {
+    font: 10px/1 var(--font-mono); color: var(--accent);
+    letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 12px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .explore .ex-title::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  .ex-row { margin-bottom: 12px; }
+  .ex-row:last-child { margin-bottom: 0; }
+  .ex-row .lbl { font: 11px/1 var(--font-mono); color: var(--text-tertiary); margin-bottom: 6px; display: block; }
+  .ex-seg { display: flex; gap: 2px; background: var(--bg-input); border-radius: var(--radius-sm); padding: 2px; }
+  .ex-seg button {
+    flex: 1; border: 0; background: transparent; cursor: pointer;
+    font: 11px/1 var(--font-sans); color: var(--text-secondary);
+    padding: 6px 4px; border-radius: var(--radius-sm);
+    transition: all var(--dur) var(--ease);
+  }
+  .ex-seg button.on { background: var(--accent); color: #fff; }
+  .ex-seg button:not(.on):hover { background: var(--bg-hover); color: var(--text-primary); }
+  .ex-note {
+    font: 10.5px/1.5 var(--font-mono); color: var(--text-tertiary);
+    margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border);
+  }
+
+  /* ===== §4 裁决注记 ===== */
+  .rulings {
+    display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px;
+  }
+  @media (max-width: 900px) { .rulings { grid-template-columns: 1fr; } }
+  .ruling {
+    background: var(--bg-panel); border: 1px solid var(--border);
+    border-left: 2px solid var(--accent);
+    border-radius: var(--radius); padding: 13px 15px;
+  }
+  .ruling .r-q { font: 600 12.5px/1.4 var(--font-sans); color: var(--text-primary); margin-bottom: 6px; }
+  .ruling .r-a { font: 12px/1.6 var(--font-sans); color: var(--text-secondary); }
+  .ruling .r-a b { color: var(--accent); font-weight: 600; }
+  .ruling .r-tag {
+    font: 10px/1 var(--font-mono); color: var(--text-tertiary);
+    margin-top: 8px; display: inline-block;
+  }
+  .checklist {
+    margin-top: 16px; background: var(--bg-panel);
+    border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 13px 15px;
+  }
+  .checklist h3 { font: 600 12px/1 var(--font-sans); color: var(--text-primary); margin-bottom: 9px; }
+  .checklist ul { list-style: none; display: flex; flex-direction: column; gap: 5px; }
+  .checklist li {
+    font: 11.5px/1.4 var(--font-sans); color: var(--text-secondary);
+    display: flex; align-items: flex-start; gap: 8px;
+  }
+  .checklist li svg { width: 13px; height: 13px; color: var(--success); flex-shrink: 0; margin-top: 1px; }
+</style>
+</head>
+<body>
+
+<!-- SVG symbol 库（design-system §6：统一 symbol + use，禁止 emoji 功能图标） -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-branch" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7M8.5 6.5C14 8 14 14 15.5 16"/></symbol>
+  <symbol id="i-clean" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-stage" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></symbol>
+  <symbol id="i-diff" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M6 12h12M10 18h4"/></symbol>
+  <symbol id="i-conflict" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 2 20h20L12 3z"/><path d="M12 9v4M12 17h.01"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 14 0M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-attach" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m21 11-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L16 6"/></symbol>
+  <symbol id="i-at" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/></symbol>
+</svg>
+
+<div class="sheet">
+
+  <header class="sheet-head">
+    <div class="crumbs">panel / <b>companion-zones</b> · L2 Module · Panel 内 ③ progress-zone + ⑤ git-zone</div>
+    <h1>companion-zones · progress + git 状态细化</h1>
+    <p>composer 上下两条伴生 zone 的状态机。progress-zone <b>三态纯只读</b>（待办 / 进行 / 完成，不可点击——它是 agent 执行进度的反馈展示，用户不在此干预）。git-zone 四态（干净 / 已暂存 / 有 diff / 冲突），其中查看类操作（Diff / 解决冲突）点击<b>统一进入 Detail Pane</b>，其真身归 draft-detail-pane 设计，本稿不画 detail 内容。两 zone 与 composer 共享同一条视觉带——统一卡片语言、紧凑垂直间距，各自独立成卡。</p>
+  </header>
+
+  <!-- ============ §1 progress-zone 三态 ============ -->
+  <section class="section">
+    <div class="section-title">
+      <h2>progress-zone · 三态</h2>
+      <span class="st-tag">composer 上方</span>
+      <span class="st-sub">纯只读 · 不可点击 · 无任务时整区隐藏</span>
+    </div>
+    <div class="grid-3">
+
+      <!-- ① 待办 -->
+      <div class="show-case">
+        <div class="sc-label"><span class="sc-num">①</span><span class="sc-name">待办</span><span class="sc-state status-dot idle"></span></div>
+        <div class="sc-stage top">
+          <div class="progress-zone">
+            <div class="pz-head">
+              <span class="status-dot idle"></span>
+              <span class="pz-title">重构 auth 模块</span>
+              <span class="pz-step">待开始 · 0/5 步</span>
+            </div>
+            <div class="pz-body">
+              <div class="pz-summary"><i style="width:0%"></i></div>
+              <div class="pz-todos">
+                <div class="pz-todo pending"><span class="mark"></span><span class="label-t">抽离 UserRepository</span><span class="pct-tag">待开始</span></div>
+                <div class="pz-todo pending"><span class="mark"></span><span class="label-t">拆分 TokenValidator</span><span class="pct-tag">待开始</span></div>
+                <div class="pz-todo pending"><span class="mark"></span><span class="label-t">重构 token 验证逻辑</span><span class="pct-tag">待开始</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="composer-ghost">← composer 在此下方</div>
+        </div>
+        <div class="sc-note"><b>灰点 idle</b> · bar 0% · todos 全空圈 pending。任务清单已建，agent 待命。展开显示，无折叠按钮。</div>
+      </div>
+
+      <!-- ② 进行 -->
+      <div class="show-case">
+        <div class="sc-label"><span class="sc-num">②</span><span class="sc-name">进行</span><span class="sc-state status-dot running"></span></div>
+        <div class="sc-stage top">
+          <div class="progress-zone">
+            <div class="pz-head">
+              <span class="status-dot running"></span>
+              <span class="pz-title">重构 auth 模块</span>
+              <span class="pz-step">第 3/5 步</span>
+            </div>
+            <div class="pz-body">
+              <div class="pz-summary"><i style="width:60%"></i></div>
+              <div class="pz-todos">
+                <div class="pz-todo done"><span class="mark"><svg><use href="#i-check"/></svg></span><span class="label-t">抽离 UserRepository</span><span class="pct-tag">完成</span></div>
+                <div class="pz-todo active"><span class="mark"></span><span class="label-t">重构 token 验证逻辑</span><span class="pct-tag">60%</span></div>
+                <div class="pz-todo pending"><span class="mark"></span><span class="label-t">更新所有调用方</span><span class="pct-tag">待开始</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="composer-ghost">← composer 在此下方</div>
+        </div>
+        <div class="sc-note"><b>蓝点 + pulse</b> · bar 渐变填充 · 一个 active 蓝实心点。展开显示 todos，整区不可点击。</div>
+      </div>
+
+      <!-- ③ 完成 -->
+      <div class="show-case">
+        <div class="sc-label"><span class="sc-num">③</span><span class="sc-name">完成</span><span class="sc-state status-dot done"></span></div>
+        <div class="sc-stage top">
+          <div class="progress-zone collapsed">
+            <div class="pz-head">
+              <span class="status-dot done"></span>
+              <span class="pz-title">重构 auth 模块</span>
+              <span class="pz-step">已完成 · 5/5 步</span>
+            </div>
+            <div class="pz-inline">
+              <span class="now">全部完成</span>
+              <div class="bar"><i style="width:100%; background:var(--success)"></i></div>
+              <span class="pct" style="color:var(--success)">100%</span>
+            </div>
+            <div class="pz-body">
+              <div class="pz-summary"><i class="done-fill" style="width:100%"></i></div>
+              <div class="pz-todos">
+                <div class="pz-todo done"><span class="mark"><svg><use href="#i-check"/></svg></span><span class="label-t">抽离 UserRepository</span><span class="pct-tag">完成</span></div>
+                <div class="pz-todo done"><span class="mark"><svg><use href="#i-check"/></svg></span><span class="label-t">跑全量测试</span><span class="pct-tag">完成</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="composer-ghost">← composer 在此下方</div>
+        </div>
+        <div class="sc-note"><b>绿点</b> · bar 100% 绿。<b>状态自动收起</b>为单行完成横幅（非用户点击折叠），减少占地。整区仍不可点击。</div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ §2 git-zone 四态 ============ -->
+  <section class="section">
+    <div class="section-title">
+      <h2>git-zone · 四态</h2>
+      <span class="st-tag">composer 下方</span>
+      <span class="st-sub">干净时压缩为单行，隐藏暂存/提交；Diff/解决冲突 → Detail Pane</span>
+    </div>
+    <div class="grid-4">
+
+      <!-- ① 干净 -->
+      <div class="show-case">
+        <div class="sc-label"><span class="sc-num">①</span><span class="sc-name">干净</span></div>
+        <div class="sc-stage bot">
+          <div class="composer-ghost">composer 在此上方 →</div>
+          <div class="git-zone">
+            <span class="gz-branch"><svg><use href="#i-branch"/></svg>feat/dual-panel</span>
+            <span class="gz-sep"></span>
+            <span class="gz-pill clean"><svg><use href="#i-clean"/></svg>工作区干净</span>
+            <div class="gz-actions">
+              <button class="gz-btn" disabled><svg><use href="#i-diff"/></svg>Diff</button>
+            </div>
+          </div>
+        </div>
+        <div class="sc-note"><b>绿 clean pill</b> · 无 stats · Diff 禁用。空态明确，不显示「暂存/提交」噪音。</div>
+      </div>
+
+      <!-- ② 已暂存 -->
+      <div class="show-case">
+        <div class="sc-label"><span class="sc-num">②</span><span class="sc-name">已暂存</span></div>
+        <div class="sc-stage bot">
+          <div class="composer-ghost">composer 在此上方 →</div>
+          <div class="git-zone">
+            <span class="gz-branch"><svg><use href="#i-branch"/></svg>feat/dual-panel</span>
+            <span class="gz-sep"></span>
+            <span class="gz-pill staged"><svg><use href="#i-stage"/></svg>已暂存 3 文件</span>
+            <span class="gz-stats"><span class="add">+67</span><span class="del">−8</span></span>
+            <div class="gz-actions">
+              <button class="gz-btn">取消暂存</button>
+              <button class="gz-btn primary">提交</button>
+              <button class="gz-btn detail" title="进入 Detail Pane"><svg><use href="#i-diff"/></svg>Diff</button>
+            </div>
+          </div>
+        </div>
+        <div class="sc-note"><b>绿 staged pill + 文件数</b> · 提交 primary 可用 · 取消暂存 secondary。Diff 点击 → Detail Pane。</div>
+      </div>
+
+      <!-- ③ 有 diff -->
+      <div class="show-case">
+        <div class="sc-label"><span class="sc-num">③</span><span class="sc-name">有 diff</span></div>
+        <div class="sc-stage bot">
+          <div class="composer-ghost">composer 在此上方 →</div>
+          <div class="git-zone">
+            <span class="gz-branch"><svg><use href="#i-branch"/></svg>feat/dual-panel</span>
+            <span class="gz-sep"></span>
+            <span class="gz-stats"><span class="add">+67</span><span class="del">−8</span><span class="files">· 3 文件</span></span>
+            <div class="gz-actions">
+              <button class="gz-btn"><svg><use href="#i-stage"/></svg>暂存</button>
+              <button class="gz-btn primary">提交</button>
+              <button class="gz-btn detail" title="进入 Detail Pane"><svg><use href="#i-diff"/></svg>Diff</button>
+            </div>
+          </div>
+        </div>
+        <div class="sc-note"><b>裸 stats（无 pill）</b> · 改动未 add · 提交仍可用（-a 语义）。Diff 点击 → Detail Pane。</div>
+      </div>
+
+      <!-- ④ 冲突 -->
+      <div class="show-case">
+        <div class="sc-label"><span class="sc-num">④</span><span class="sc-name">冲突</span></div>
+        <div class="sc-stage bot">
+          <div class="composer-ghost">composer 在此上方 →</div>
+          <div class="git-zone conflict">
+            <span class="gz-branch"><svg><use href="#i-branch"/></svg>feat/dual-panel</span>
+            <span class="gz-sep"></span>
+            <span class="gz-pill conflict"><svg><use href="#i-conflict"/></svg>2 文件冲突</span>
+            <span class="gz-stats"><span class="del">auth/service.ts</span></span>
+            <div class="gz-actions">
+              <button class="gz-btn danger detail" title="进入 Detail Pane"><svg><use href="#i-conflict"/></svg>解决冲突</button>
+            </div>
+          </div>
+        </div>
+        <div class="sc-note"><b>红 conflict pill + 左 danger 竖条 + danger soft 渐隐底</b>。只一个主操作「解决冲突」点击 → Detail Pane。不整片染红。</div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ §3 活态演示 ============ -->
+  <section class="section">
+    <div class="section-title">
+      <h2>活态演示 · composer band 联动</h2>
+      <span class="st-tag">视觉连贯验证</span>
+      <span class="st-sub">三 zone 同带 · progress 只读 · git 查看类 → Detail Pane</span>
+    </div>
+
+    <div class="live-wrap">
+      <div class="live-stage">
+        <div class="stage-hint">Panel · active（左 2px accent 竖条 + inset ring）</div>
+
+        <div class="composer-band">
+          <!-- progress-zone（动态 · 纯只读，无点击） -->
+          <div class="progress-zone" id="live-pz">
+            <div class="pz-head">
+              <span class="status-dot" id="pz-dot"></span>
+              <span class="pz-title">重构 auth 模块</span>
+              <span class="pz-step" id="pz-step">第 3/5 步</span>
+            </div>
+            <div class="pz-inline">
+              <span class="now" id="pz-now">重构 token 验证逻辑</span>
+              <div class="bar"><i id="pz-bar-inline" style="width:60%"></i></div>
+              <span class="pct" id="pz-pct-inline">60%</span>
+            </div>
+            <div class="pz-body" id="pz-body"></div>
+          </div>
+
+          <!-- composer（活态真实，非 ghost） -->
+          <div class="composer">
+            <div class="composer-box">
+              <textarea rows="1" placeholder="继续描述需求，或 @ 引用文件…"></textarea>
+              <div class="composer-bar">
+                <button class="c-tool" title="附件"><svg><use href="#i-attach"/></svg></button>
+                <button class="c-tool" title="@ 引用"><svg><use href="#i-at"/></svg></button>
+                <span class="c-model">sonnet-4.5</span>
+                <button class="c-send" title="发送"><svg><use href="#i-arrow"/></svg></button>
+              </div>
+            </div>
+          </div>
+
+          <!-- git-zone（动态） -->
+          <div class="git-zone" id="live-gz">
+            <span class="gz-branch"><svg><use href="#i-branch"/></svg>feat/dual-panel</span>
+            <span class="gz-sep" id="gz-sep"></span>
+            <span id="gz-mid"></span>
+            <div class="gz-actions" id="gz-actions"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 探索控制条（非产品，设计验证用） -->
+      <div class="explore">
+        <div class="ex-title">设计探索 · 状态切换</div>
+        <div class="ex-row">
+          <span class="lbl">progress（只读）</span>
+          <div class="ex-seg" id="seg-prog">
+            <button data-v="todo">待办</button>
+            <button data-v="running" class="on">进行</button>
+            <button data-v="done">完成</button>
+          </div>
+        </div>
+        <div class="ex-row">
+          <span class="lbl">git</span>
+          <div class="ex-seg" id="seg-git">
+            <button data-v="clean">干净</button>
+            <button data-v="staged">已暂存</button>
+            <button data-v="diff" class="on">有 diff</button>
+            <button data-v="conflict">冲突</button>
+          </div>
+        </div>
+        <div class="ex-note">progress 是 agent 执行进度的只读反馈，整区不可点击、无 detail 入口。git 的 Diff / 解决冲突点击后进入 Detail Pane（本稿不画 detail 内容，真身归 draft-detail-pane）。完成态 progress 自动收起为单行横幅，非用户触发。</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ §4 裁决注记 + 验收 ============ -->
+  <section class="section">
+    <div class="section-title">
+      <h2>设计裁决 · 开放项收口</h2>
+      <span class="st-tag">handoff 标注的待决项</span>
+    </div>
+    <div class="rulings">
+      <div class="ruling">
+        <div class="r-q">progress-zone 是否可点击 / 有阻塞态？</div>
+        <div class="r-a"><b>纯只读，不可点击，无阻塞态</b>。progress 是 agent 执行进度的反馈展示，用户不在此干预；agent 需要裁决时走对话/澄清，不挂在 progress-zone 上。状态仅三态（待办 / 进行 / 完成），<b>完成态自动收起</b>为单行横幅（状态驱动，非用户点击折叠）。整区不提供任何 detail 入口。</div>
+        <span class="r-tag">裁决 · 纯只读三态</span>
+      </div>
+      <div class="ruling">
+        <div class="r-q">查看类点击（Diff / 解决冲突）去哪？</div>
+        <div class="r-a"><b>统一进入 Detail Pane</b>。不画 Side Drawer Detail 抽屉，不复活已删的 Process Panel。本稿只保留按钮入口（Diff / 解决冲突），点击行为标注「→ Detail Pane」，<b>真身归 draft-detail-pane 设计</b>。git 操作类按钮（暂存 / 提交 / 取消暂存）仍在 zone 内就地完成，不进 detail。</div>
+        <span class="r-tag">裁决 · 详情归 Detail Pane</span>
+      </div>
+      <div class="ruling">
+        <div class="r-q">进度条粒度？</div>
+        <div class="r-a"><b>双层</b>：summary bar（5px 总进度，进行=蓝渐变 / 完成=绿）+ todo 列表（每项独立 pct-tag + mark 状态）。完成态自动收起为内联单行条（文案 + 4px bar + 百分比），节省垂直空间。</div>
+        <span class="r-tag">裁决 · 双层粒度</span>
+      </div>
+      <div class="ruling">
+        <div class="r-q">git 冲突态视觉？</div>
+        <div class="r-a"><b>左 3px danger 竖条 + 右渐隐 danger soft 底 + 红 conflict pill</b>。只保留一个主操作「解决冲突」（danger 色）→ Detail Pane。不整片染红、不堆多个按钮，冲突的「需手动介入」语义靠 pill + 竖条即可一眼识别。</div>
+        <span class="r-tag">裁决 · 克制强调</span>
+      </div>
+      <div class="ruling">
+        <div class="r-q">与 composer 的视觉连贯怎么做？</div>
+        <div class="r-a"><b>统一带 + 独立卡片</b>。三 zone 共享卡片语言（同 bg-input / border / radius-lg / 左右边距），垂直 6px 紧凑成「带」；但各自独立成卡——因 composer 有独立 focus ring、progress/git 有独立状态变化，合并容器会让 focus 与状态语义打架。active panel 时三者边框统一获得 subtle 强化。</div>
+        <span class="r-tag">裁决 · 统一带独立卡</span>
+      </div>
+    </div>
+
+    <div class="checklist">
+      <h3>验收 P0 自检（对 handoff §6）</h3>
+      <ul>
+        <li><svg><use href="#i-check"/></svg>progress 三态（待办 / 进行 / 完成）+ git 四态（干净 / 已暂存 / 有 diff / 冲突）全画</li>
+        <li><svg><use href="#i-check"/></svg>progress-zone 纯只读：无阻塞态、无 toggle、无 detail 入口、不可点击</li>
+        <li><svg><use href="#i-check"/></svg>两 zone 与 composer 视觉连贯：统一卡片语言 + 紧凑成带，不割裂</li>
+        <li><svg><use href="#i-check"/></svg>空态明确：progress 无任务整区隐藏；git 干净压缩单行（隐藏暂存/提交）</li>
+        <li><svg><use href="#i-check"/></svg>查看类点击（Diff / 解决冲突）统一进 Detail Pane，不画 drawer、不出现 Process Panel 旧概念</li>
+        <li><svg><use href="#i-check"/></svg>冷蓝 token 一致（继承 design-tokens.md，状态色 soft 按 design-system pill 惯例补全）</li>
+        <li><svg><use href="#i-check"/></svg>无废弃术语（Panel / progress-zone / git-zone / Detail Pane，无 ChatView / Process Panel / Side Drawer）</li>
+      </ul>
+    </div>
+  </section>
+
+</div>
+
+<script>
+(function () {
+  // ---- SVG 复用辅助 ----
+  function u(id) { return '<svg><use href="#' + id + '"/></svg>'; }
+  var CHECK = u('i-check');
+
+  // ---- progress 数据：每态的 step / now / pct / bar 色 / todos（三态，无 blocked） ----
+  var PROG = {
+    todo: {
+      dot: 'idle', step: '待开始 · 0/5 步', now: '等待开始', pct: '0%', bar: 0, barCls: '',
+      todos: [
+        ['pending', '抽离 UserRepository', '待开始'],
+        ['pending', '拆分 TokenValidator', '待开始'],
+        ['pending', '重构 token 验证逻辑', '待开始']
+      ]
+    },
+    running: {
+      dot: 'running', step: '第 3/5 步', now: '重构 token 验证逻辑', pct: '60%', bar: 60, barCls: '',
+      todos: [
+        ['done', '抽离 UserRepository', '完成'],
+        ['active', '重构 token 验证逻辑', '60%'],
+        ['pending', '更新所有调用方', '待开始']
+      ]
+    },
+    done: {
+      dot: 'done', step: '已完成 · 5/5 步', now: '全部完成', pct: '100%', bar: 100, barCls: 'done-fill',
+      todos: [
+        ['done', '抽离 UserRepository', '完成'],
+        ['done', '重构 token 验证逻辑', '完成'],
+        ['done', '跑全量测试', '完成']
+      ]
+    }
+  };
+
+  // ---- git 数据：每态的中间内容 + 操作 ----
+  function gzPill(cls, icon, text) {
+    return '<span class="gz-pill ' + cls + '">' + u(icon) + text + '</span>';
+  }
+  function gzStats(add, del, files) {
+    return '<span class="gz-stats"><span class="add">+' + add + '</span><span class="del">−' + del + '</span>' +
+      (files ? '<span class="files">· ' + files + '</span>' : '') + '</span>';
+  }
+  function gzBtn(cls, icon, text, attrs) {
+    return '<button class="gz-btn ' + cls + '" ' + (attrs || '') + '>' + (icon ? u(icon) : '') + text + '</button>';
+  }
+  // detail 类按钮（Diff / 解决冲突）—— title 标注行为，点击入口归 Detail Pane
+  var DETAIL_TITLE = ' title="进入 Detail Pane（真身归 draft-detail-pane）"';
+  var GIT = {
+    clean: {
+      mid: gzPill('clean', 'i-clean', '工作区干净'),
+      actions: gzBtn('', 'i-diff', 'Diff', 'disabled')
+    },
+    staged: {
+      mid: gzPill('staged', 'i-stage', '已暂存 3 文件') + gzStats(67, 8, ''),
+      actions: gzBtn('', '', '取消暂存') + gzBtn('primary', '', '提交') + gzBtn('detail', 'i-diff', 'Diff', DETAIL_TITLE)
+    },
+    diff: {
+      mid: gzStats(67, 8, '3 文件'),
+      actions: gzBtn('', 'i-stage', '暂存') + gzBtn('primary', '', '提交') + gzBtn('detail', 'i-diff', 'Diff', DETAIL_TITLE)
+    },
+    conflict: {
+      conflictCls: true,
+      mid: gzPill('conflict', 'i-conflict', '2 文件冲突') +
+           '<span class="gz-stats"><span class="del">auth/service.ts</span></span>',
+      actions: gzBtn('danger detail', 'i-conflict', '解决冲突', DETAIL_TITLE)
+    }
+  };
+
+  // ---- state（progress 只读，仅 git 可切；无 drawer 状态） ----
+  var state = { prog: 'running', git: 'diff' };
+
+  function renderProg() {
+    var p = PROG[state.prog];
+    var pz = document.getElementById('live-pz');
+    document.getElementById('pz-dot').className = 'status-dot ' + p.dot;
+    document.getElementById('pz-step').textContent = p.step;
+    document.getElementById('pz-now').textContent = p.now;
+    document.getElementById('pz-pct-inline').textContent = p.pct;
+    if (state.prog === 'done') {
+      document.getElementById('pz-pct-inline').style.color = 'var(--success)';
+      document.getElementById('pz-bar-inline').style.background = 'var(--success)';
+    } else {
+      document.getElementById('pz-pct-inline').style.color = 'var(--text-tertiary)';
+      document.getElementById('pz-bar-inline').style.background = 'linear-gradient(90deg, var(--accent), var(--accent-hover))';
+    }
+    document.getElementById('pz-bar-inline').style.width = p.bar + '%';
+
+    var todosHtml = p.todos.map(function (t) {
+      var st = t[0], label = t[1], pct = t[2];
+      var mark = st === 'done' ? CHECK : '';
+      return '<div class="pz-todo ' + st + '"><span class="mark">' + mark + '</span>' +
+             '<span class="label-t">' + label + '</span><span class="pct-tag">' + pct + '</span></div>';
+    }).join('');
+
+    document.getElementById('pz-body').innerHTML =
+      '<div class="pz-summary"><i class="' + p.barCls + '" style="width:' + p.bar + '%"></i></div>' +
+      '<div class="pz-todos">' + todosHtml + '</div>';
+
+    // 完成态自动收起（状态驱动，非用户点击）
+    pz.classList.toggle('collapsed', state.prog === 'done');
+  }
+
+  function renderGit() {
+    var g = GIT[state.git];
+    var gz = document.getElementById('live-gz');
+    gz.classList.toggle('conflict', !!g.conflictCls);
+    document.getElementById('gz-mid').innerHTML = g.mid;
+    document.getElementById('gz-actions').innerHTML = g.actions;
+  }
+
+  function bindSeg(id, key) {
+    var seg = document.getElementById(id);
+    seg.addEventListener('click', function (e) {
+      var btn = e.target.closest('button');
+      if (!btn) return;
+      seg.querySelectorAll('button').forEach(function (b) { b.classList.remove('on'); });
+      btn.classList.add('on');
+      state[key] = btn.dataset.v;
+      renderProg();
+      renderGit();
+    });
+  }
+
+  bindSeg('seg-prog', 'prog');
+  bindSeg('seg-git', 'git');
+
+  renderProg();
+  renderGit();
+})();
+</script>
+
+</body>
+</html>

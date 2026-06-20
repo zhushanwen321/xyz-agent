@@ -13,6 +13,7 @@
 import type { PluginRpcServer } from '../plugin-rpc-server.js'
 import type { PluginRpcClient } from '../plugin-rpc-client.js'
 import type { SessionInfo, Disposable } from '../plugin-types.js'
+import { registerHandler, dispatchHandler } from '../handler-registry.js'
 
 /** Session 服务依赖（主线程侧） */
 export interface SessionHandlers {
@@ -65,21 +66,15 @@ export function createSessionApi(
   const createHandlers = new Map<string, (session: SessionInfo) => void>()
   const destroyHandlers = new Map<string, (session: SessionInfo) => void>()
 
-  // 监听主线程广播的 session 创建/销毁通知
+  // 监听主线程广播的 session 创建/销毁通知（C8: dispatchHandler 统一 onNotification 派发骨架）
   rpcClient.onNotification('plugin.sessions.didCreate', (params: unknown) => {
     const p = params as { handlerId: string; session: SessionInfo }
-    const handler = createHandlers.get(p.handlerId)
-    if (handler) {
-      handler(p.session)
-    }
+    dispatchHandler(createHandlers, p, h => h(p.session))
   })
 
   rpcClient.onNotification('plugin.sessions.didDestroy', (params: unknown) => {
     const p = params as { handlerId: string; session: SessionInfo }
-    const handler = destroyHandlers.get(p.handlerId)
-    if (handler) {
-      handler(p.session)
-    }
+    dispatchHandler(destroyHandlers, p, h => h(p.session))
   })
 
   return {
@@ -97,26 +92,18 @@ export function createSessionApi(
 
     onDidCreateSession: (handler: (session: SessionInfo) => void): Disposable => {
       const handlerId = `session_create_${pluginId}_${++sessionCounter}`
-      createHandlers.set(handlerId, handler)
       rpcClient.request('plugin.sessions.registerCreate', { pluginId, handlerId }).catch(() => {})
-      return {
-        dispose: () => {
-          createHandlers.delete(handlerId)
-          rpcClient.request('plugin.sessions.unregisterCreate', { handlerId }).catch(() => {})
-        },
-      }
+      return registerHandler(createHandlers, handlerId, handler, () => {
+        rpcClient.request('plugin.sessions.unregisterCreate', { handlerId }).catch(() => {})
+      })
     },
 
     onDidDestroySession: (handler: (session: SessionInfo) => void): Disposable => {
       const handlerId = `session_destroy_${pluginId}_${++sessionCounter}`
-      destroyHandlers.set(handlerId, handler)
       rpcClient.request('plugin.sessions.registerDestroy', { pluginId, handlerId }).catch(() => {})
-      return {
-        dispose: () => {
-          destroyHandlers.delete(handlerId)
-          rpcClient.request('plugin.sessions.unregisterDestroy', { handlerId }).catch(() => {})
-        },
-      }
+      return registerHandler(destroyHandlers, handlerId, handler, () => {
+        rpcClient.request('plugin.sessions.unregisterDestroy', { handlerId }).catch(() => {})
+      })
     },
   }
 }

@@ -1,0 +1,827 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>搜索浮层 · ⌘K 全局命令/搜索 Overlay</title>
+<style>
+  :root {
+    /* zcode 冷蓝 token —— design-tokens.md 单一源 */
+    --bg-base: #0d0d0f;
+    --bg-panel: #151519;
+    --bg-elevated: #1b1b20;
+    --bg-hover: #232328;
+    --accent: #4f8ef7;
+    --accent-hover: #6ba3ff;
+    --accent-soft: rgba(79,142,247,0.12);
+    --accent-ring: rgba(79,142,247,0.45);
+    --text-primary: #f0f0f5;
+    --text-secondary: #8a8a95;
+    --text-tertiary: #5a5a65;
+    --border: rgba(255,255,255,0.06);
+    --border-strong: rgba(255,255,255,0.12);
+    --success: #22c55e;
+    --warning: #f5a524;
+    --danger: #ef4444;
+    --info: #38bdf8;
+    --ease: cubic-bezier(0.4, 0, 0.2, 1);
+    --duration-fast: 120ms; --duration: 200ms; --duration-slow: 320ms;
+    --radius-sm: 3px; --radius: 8px; --radius-lg: 12px;
+    /* 设计探索标注色（非产品色） */
+    --anno-accent: rgba(79,142,247,0.9);
+    --anno-bg: rgba(79,142,247,0.08);
+    --anno-warn: rgba(245,165,36,0.9);
+    --anno-warn-bg: rgba(245,165,36,0.08);
+    --anno-muted: rgba(138,138,149,0.9);
+  }
+  /* 图标 symbol 默认描边化 —— symbol 内 path/circle 不带 fill/stroke 属性时，
+     SVG 默认 fill:black 会让所有图标变成黑色实心。
+     本文件 class 直接打在 <svg> 上（<svg class="a-ico">），故用 svg.<class>
+     直接命中 svg 本身；fill/stroke 是 inherited 属性，会穿透 <use> 的 shadow
+     树作用到 symbol 内的 path/circle。color 由各容器类的 color 提供。 */
+  svg.a-ico, svg.sm-ico, svg.si-ico, svg.ss-ico, svg.st-ico {
+    fill: none; stroke: currentColor;
+    stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    background: var(--bg-base);
+    color: var(--text-primary);
+    font: 13px/1.5 Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  body { padding: 32px 40px 120px; max-width: 1280px; margin: 0 auto; }
+
+  /* ===== 页头 / callout / 分节标题（与兄弟 draft 一致） ===== */
+  .page-head { margin-bottom: 24px; }
+  .page-head h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; margin-bottom: 6px; }
+  .page-head .sub { color: var(--text-secondary); font-size: 13px; max-width: 900px; }
+  .page-head .sub b { color: var(--accent); }
+  .page-head .meta { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; font: 11px/1 ui-monospace, Menlo, monospace; }
+  .page-head .meta span { padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border-strong); color: var(--text-secondary); }
+  .page-head .meta b { color: var(--accent); }
+
+  .callout { margin: 18px 0; padding: 12px 14px; border-radius: 0 6px 6px 0; font-size: 12.5px; color: var(--text-secondary); line-height: 1.65; }
+  .callout.warn { background: var(--anno-warn-bg); border-left: 3px solid var(--anno-warn); }
+  .callout.warn b { color: var(--warning); }
+  .callout.accent { background: var(--anno-bg); border-left: 3px solid var(--anno-accent); }
+  .callout.accent b { color: var(--accent); }
+  .callout code, .note-list code, td.code code { font-family: ui-monospace, Menlo, monospace; color: var(--accent); background: rgba(79,142,247,0.08); padding: 1px 5px; border-radius: 3px; font-size: 11.5px; }
+
+  .section-title { margin: 40px 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--border-strong); font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
+  .section-title .num { font: 11px/1 ui-monospace, Menlo, monospace; background: var(--accent); color: #fff; padding: 3px 7px; border-radius: 3px; }
+  .section-title .hint { margin-left: auto; font-weight: 400; font-size: 12px; color: var(--text-secondary); }
+
+  /* ===== 通用窗口 mockup（承载 modal 浮层的应用底景） ===== */
+  .window-mock { position: relative; background: var(--bg-base); border-radius: 10px; overflow: hidden; box-shadow: 0 24px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.05); }
+  .app-shell { display: flex; height: 220px; padding: 12px; gap: 12px; }
+  .aside-region { width: 190px; flex-shrink: 0; display: flex; flex-direction: column; padding-top: 14px; }
+  .a-logo { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; padding: 0 8px 12px; }
+  .a-logo .a-mark { width: 20px; height: 20px; border-radius: 5px; background: var(--accent); display: grid; place-items: center; color: #fff; font-size: 10px; font-weight: 700; }
+  .a-nav { display: flex; flex-direction: column; gap: 2px; padding: 0 4px; }
+  .a-item { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary); padding: 5px 8px; border-radius: 6px; }
+  .a-item .a-kbd { margin-left: auto; font: 10px/1 ui-monospace, Menlo, monospace; color: var(--text-tertiary); background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: 3px; padding: 2px 5px; }
+  .a-item .a-ico { width: 14px; height: 14px; color: var(--text-tertiary); }
+  .main-panel { flex: 1; min-width: 0; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 0 0 1px rgba(0,0,0,0.2), 0 8px 24px rgba(0,0,0,0.3); display: flex; flex-direction: column; overflow: hidden; }
+  .main-body { flex: 1; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+  .main-body .line { height: 7px; border-radius: 2px; background: rgba(255,255,255,0.04); }
+  .main-body .line.w90 { width: 90%; } .main-body .line.w60 { width: 60%; }
+
+  /* 应用窗口内被 modal 遮罩盖住的视觉：加个 class 表示「已唤起」 */
+  .window-mock.aroused .app-shell { filter: blur(2px) brightness(0.7); transition: filter var(--duration-slow) var(--ease); }
+
+  /* 标注（设计探索） */
+  .anno { position: absolute; font: 10px/1.2 ui-monospace, Menlo, monospace; padding: 3px 6px; border-radius: 3px; pointer-events: none; z-index: 6; white-space: nowrap; }
+  .anno.accent { color: var(--anno-accent); background: var(--anno-bg); border: 1px solid var(--anno-accent); }
+  .anno.warn { color: var(--anno-warn); background: var(--anno-warn-bg); border: 1px solid var(--anno-warn); }
+  .anno.muted { color: var(--anno-muted); background: rgba(138,138,149,0.08); border: 1px solid var(--anno-muted); }
+
+  /* ============================================================
+     ★ 搜索浮层本体 —— 全局 Overlay，z-index 最高
+     ============================================================ */
+  .sm-overlay {
+    position: fixed; inset: 0;
+    background: rgba(8,9,13,0.55);
+    backdrop-filter: blur(7px);
+    -webkit-backdrop-filter: blur(7px);
+    z-index: 1000;
+    display: none;                 /* 默认隐藏；.open 才显 */
+    align-items: flex-start; justify-content: center;
+    padding-top: 15vh;
+    animation: smFade var(--duration) var(--ease);
+  }
+  .sm-overlay.open { display: flex; }
+  @keyframes smFade { from { opacity: 0; } to { opacity: 1; } }
+
+  /* 静态展示用：浮层嵌在 window-mock 内（非 fixed） */
+  .sm-static .sm-overlay { position: absolute; inset: 0; padding-top: 44px; z-index: 5; display: flex; }
+  .sm-static.aroused .app-shell { filter: blur(2px) brightness(0.7); }
+
+  .search-modal {
+    width: 620px; max-width: calc(100vw - 64px);
+    background: var(--bg-panel);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 0 0 1px rgba(0,0,0,0.3), 0 20px 60px rgba(0,0,0,0.6), 0 0 80px rgba(79,142,247,0.06);
+    overflow: hidden;
+    animation: smPop var(--duration-slow) var(--ease);
+  }
+  @keyframes smPop { from { transform: translateY(-8px) scale(0.985); opacity: 0; } to { transform: none; opacity: 1; } }
+
+  /* 输入区 */
+  .sm-input-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .sm-input-row .sm-ico { width: 18px; height: 18px; color: var(--text-secondary); flex-shrink: 0; }
+  .sm-input-row input {
+    flex: 1; min-width: 0;
+    background: transparent; border: 0; outline: none;
+    color: var(--text-primary);
+    font: 15px/1.4 var(--font-sans, Inter), -apple-system, system-ui, sans-serif;
+    letter-spacing: -0.005em;
+  }
+  .sm-input-row input::placeholder { color: var(--text-tertiary); }
+  .sm-esc { font: 11px/1 ui-monospace, Menlo, monospace; color: var(--text-tertiary); background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: 4px; padding: 4px 7px; flex-shrink: 0; }
+
+  /* 类型过滤条（Tab 切换） */
+  .sm-scopes { display: flex; gap: 4px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  .sm-scope {
+    font: 11px/1 ui-monospace, Menlo, monospace;
+    color: var(--text-secondary);
+    background: transparent; border: 1px solid transparent;
+    border-radius: 999px; padding: 5px 10px; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px;
+    transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
+  }
+  .sm-scope .sc-n { color: var(--text-tertiary); font-size: 10px; }
+  .sm-scope:hover { background: var(--bg-hover); color: var(--text-primary); }
+  .sm-scope.on { background: var(--accent-soft); color: var(--accent); border-color: rgba(79,142,247,0.3); }
+  .sm-scope.on .sc-n { color: var(--accent); }
+
+  /* 结果区 */
+  .sm-results { max-height: 380px; overflow-y: auto; padding: 6px 0 2px; }
+  .sm-results::-webkit-scrollbar { width: 8px; }
+  .sm-results::-webkit-scrollbar-thumb { background: var(--bg-hover); border-radius: 4px; }
+  .sm-group { padding: 4px 0; }
+  .sm-group-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 16px 4px;
+    font: 10px/1 ui-monospace, Menlo, monospace;
+    color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.08em;
+  }
+  .sm-group-head .gh-n { color: var(--text-tertiary); margin-left: auto; }
+
+  .sm-item {
+    display: flex; align-items: center; gap: 11px;
+    padding: 9px 16px;
+    cursor: pointer;
+    border-radius: 0;
+    position: relative;
+  }
+  .sm-item .si-ico { width: 16px; height: 16px; color: var(--text-secondary); flex-shrink: 0; }
+  .sm-item .si-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .sm-item .si-title { font-size: 13.5px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sm-item .si-sub { font: 11px/1.3 ui-monospace, Menlo, monospace; color: var(--text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sm-item .si-right { font: 11px/1 ui-monospace, Menlo, monospace; color: var(--text-tertiary); flex-shrink: 0; display: flex; gap: 6px; align-items: center; }
+  .sm-item .si-right .si-pill { background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: 4px; padding: 2px 6px; }
+
+  /* 选中态：Card-Active 的 inset accent ring（design-system §2，非左色条） */
+  .sm-item.sel { background: var(--bg-hover); }
+  .sm-item.sel::after { content: ''; position: absolute; inset: 4px 6px; border: 1px solid var(--accent-ring); border-radius: var(--radius); pointer-events: none; }
+  .sm-item.sel .si-ico { color: var(--accent); }
+
+  /* 匹配高亮 */
+  mark.hl { background: transparent; color: var(--accent); font-weight: 600; }
+
+  /* 底栏键盘提示 */
+  .sm-foot { display: flex; align-items: center; gap: 14px; padding: 10px 16px; border-top: 1px solid var(--border); font: 11px/1 ui-monospace, Menlo, monospace; color: var(--text-tertiary); flex-wrap: wrap; }
+  .sm-foot .fk { display: inline-flex; align-items: center; gap: 5px; }
+  .sm-foot kbd { background: var(--bg-elevated); border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: 4px; padding: 2px 6px; color: var(--text-secondary); font-family: inherit; }
+
+  /* 空结果 / 加载态 */
+  .sm-state { padding: 38px 24px; text-align: center; color: var(--text-secondary); }
+  .sm-state .ss-ico { width: 30px; height: 30px; color: var(--text-tertiary); margin-bottom: 12px; }
+  .sm-state .ss-title { font-size: 14px; color: var(--text-primary); margin-bottom: 4px; }
+  .sm-state .ss-hint { font-size: 12px; color: var(--text-tertiary); }
+  .sm-state .ss-sugg { margin-top: 14px; display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; }
+  .sm-state .ss-sugg .sx { font: 11px/1 ui-monospace, Menlo, monospace; color: var(--accent); background: var(--accent-soft); border: 1px solid rgba(79,142,247,0.25); border-radius: 999px; padding: 5px 10px; cursor: pointer; }
+  .spinner { width: 22px; height: 22px; border: 2px solid var(--border-strong); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 12px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* 确认反馈（Enter 后短暂出现） */
+  .sm-toast { position: fixed; bottom: 32px; left: 50%; transform: translateX(-50%); background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: 8px; padding: 10px 16px; font-size: 13px; color: var(--text-primary); box-shadow: 0 12px 32px rgba(0,0,0,0.5); z-index: 1100; display: flex; align-items: center; gap: 9px; }
+  .sm-toast .st-ico { width: 16px; height: 16px; color: var(--success); }
+  .sm-toast .st-sub { color: var(--text-tertiary); font: 11px/1 ui-monospace, Menlo, monospace; }
+
+  /* 唤起引导条（互动演示卡） */
+  .try-bar { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: var(--bg-elevated); border: 1px dashed var(--anno-accent); border-radius: var(--radius); margin-bottom: 14px; font-size: 13px; color: var(--text-secondary); }
+  .try-bar b { color: var(--accent); }
+  .try-bar .kbd-big { font: 13px/1 ui-monospace, Menlo, monospace; color: var(--text-primary); background: var(--bg-base); border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: 5px; padding: 6px 10px; }
+  .try-bar button { margin-left: auto; background: var(--accent); color: #fff; border: 0; border-radius: var(--radius); padding: 7px 14px; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+  .try-bar button:hover { background: var(--accent-hover); }
+
+  /* 状态画廊（五态静态对照） */
+  .gallery { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+  .gcard .gc-cap { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font: 11px/1 ui-monospace, Menlo, monospace; color: var(--text-secondary); }
+  .gcard .gc-cap .tag { padding: 3px 7px; border-radius: 3px; font-weight: 600; }
+  .tag-a { background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent); }
+  .tag-m { background: rgba(138,138,149,0.12); color: var(--text-secondary); border: 1px solid var(--text-tertiary); }
+  .gcard .window-mock { height: 360px; }
+  /* 画廊内浮层缩窄 */
+  .gcard .search-modal { width: 360px; }
+  .gcard .sm-results { max-height: 240px; }
+
+  /* 解剖图 */
+  .anatomy { background: var(--bg-panel); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); padding: 28px 24px 20px; position: relative; }
+  .anatomy .sm-item { padding: 11px 16px; }
+  .anatomy .lbl { position: absolute; font: 10px/1.2 ui-monospace, Menlo, monospace; padding: 3px 6px; border-radius: 3px; white-space: nowrap; }
+  .anatomy .lbl.accent { color: var(--anno-accent); background: var(--anno-bg); border: 1px solid var(--anno-accent); }
+  .anatomy .lbl.warn { color: var(--anno-warn); background: var(--anno-warn-bg); border: 1px solid var(--anno-warn); }
+
+  /* 表格 */
+  .kb-table, .cmp-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .kb-table th, .kb-table td, .cmp-table th, .cmp-table td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .kb-table th, .cmp-table th { font: 11px/1 ui-monospace, Menlo, monospace; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 500; }
+  .kb-table td.k { font-family: ui-monospace, Menlo, monospace; color: var(--accent); white-space: nowrap; }
+  .kb-table td.k kbd { background: var(--bg-elevated); border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: 4px; padding: 2px 6px; color: var(--text-secondary); font-family: inherit; }
+  .cmp-table td code { font-family: ui-monospace, Menlo, monospace; color: var(--accent); background: rgba(79,142,247,0.08); padding: 1px 5px; border-radius: 3px; font-size: 11.5px; }
+  .cmp-table tr.head td { background: var(--bg-elevated); font-weight: 600; color: var(--text-primary); }
+
+  .note-list { font-size: 12.5px; color: var(--text-secondary); line-height: 1.75; padding-left: 18px; }
+  .note-list li { margin-bottom: 5px; }
+  .note-list b { color: var(--text-primary); }
+</style>
+</head>
+<body>
+
+<!-- ===== SVG 符号（复用 sidebar 词汇 + 新增 4 枚） ===== -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.2"/><path d="M10.3 10.3 13.2 13.2"/></symbol>
+    <symbol id="i-files" viewBox="0 0 16 16"><path d="M2.5 4.4a1 1 0 0 1 1-1h3.1l1.3 1.3h5.6a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V4.4z"/></symbol>
+    <symbol id="i-doc" viewBox="0 0 16 16"><path d="M3.5 2h5l3 3v9h-8z"/><path d="M8.5 2v3h3"/></symbol>
+    <symbol id="i-sessions" viewBox="0 0 16 16"><path d="M2.5 4h11M2.5 8h11M2.5 12h7"/></symbol>
+    <symbol id="i-new" viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></symbol>
+    <!-- 新增 4 枚 -->
+    <symbol id="i-cmd" viewBox="0 0 16 16"><path d="M5 4l-3 4 3 4M11 4l3 4-3 4"/></symbol>
+    <symbol id="i-sym" viewBox="0 0 16 16"><path d="M5.5 4C3.5 4 3 5.5 3 8s.5 4 2.5 4M10.5 4c2 0 2.5 1.5 2.5 4s-.5 4-2.5 4"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3l2 1.5"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 16 16"><path d="M3 8h9M8.5 4.5L12 8l-3.5 3.5"/></symbol>
+    <symbol id="i-empty" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.2"/><path d="M10.3 10.3 13.2 13.2M5 7h4"/></symbol>
+    <symbol id="i-check" viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-6.5"/></symbol>
+  </defs>
+</svg>
+
+<div class="page-head">
+  <h1>搜索浮层 Search Modal · ⌘K 全局命令/搜索 Overlay</h1>
+  <div class="sub">
+    <b>⌘K（mac）/ Ctrl+K（win/linux）</b> 唤起的<b>全局 Overlay</b>：模糊背景 + 居中浮层，浮在 Sidebar / Workspace 之上，是独立 Overlay 组件，
+    <b>不归属 Sidebar 容器</b>（术语裁决见 architecture-and-terminology §1）。跨<b>命令 / 文件 / 符号 / 会话</b>四类检索，结果分组展示，全程键盘可达。
+  </div>
+  <div class="meta">
+    <span>层级 <b>L0 Overlay · z-index 1000</b></span>
+    <span>唤起 <b>⌘K / Ctrl+K · Esc 关闭</b></span>
+    <span>四类 <b>命令 / 文件 / 符号 / 会话</b></span>
+    <span>键盘 <b>↑↓ · Enter · Tab · Esc</b></span>
+    <span>来源 <b>从 sidebar 卡 D 移出</b></span>
+    <span>token <b>zcode 冷蓝</b></span>
+  </div>
+</div>
+
+<div class="callout accent">
+  <b>归属裁决：</b> 原 sidebar 五态里的「搜索 modal」按 <code>architecture-and-terminology §1</code> 判为<b>独立 Overlay</b>——模糊背景浮在 Sidebar<b>之上</b>，不占用 Sidebar 容器盒。
+  本稿从 <code>sidebar/draft-five-states.html</code> 卡 D 迁出，成为 <code>overlays/</code> 单元的第一个 draft。Sidebar 仅保留「搜索」<b>触发入口</b>（nav 项点按 / ⌘K）。
+</div>
+
+<div class="callout warn">
+  <b>P0 严格区分两条搜索（本稿 §6 专节论证）：</b>
+  ① <b>搜索浮层（⌘K）</b> = <b>全局</b>，跨命令/文件/符号/会话 + 跨项目，模糊匹配，跳转到任意 Region；② <b>File View 树内搜索</b> = <b>当前 active session 改动文件</b>的<b>树过滤</b>，内联在 Sidebar，仅收窄树、不弹层。二者<b>入口、范围、形态、结果</b>全不同，不可混用。
+</div>
+
+<!-- ============ §1 拓扑 + 唤起 ============ -->
+<div class="section-title"><span class="num">1</span> 拓扑 · 全局 Overlay 浮于所有 Region 之上<span class="hint">⌘K 唤起 · 模糊背景遮罩 · 居中浮层</span></div>
+
+<div class="window-mock sm-static aroused" id="topoMock" style="height:360px;">
+  <span class="anno muted" style="left:12px; bottom:10px;">window-mock · bg-base 平铺</span>
+  <div class="app-shell">
+    <div class="aside-region">
+      <div class="a-logo"><div class="a-mark">x</div>xyz-agent</div>
+      <div class="a-nav">
+        <div class="a-item"><svg class="a-ico"><use href="#i-new"/></svg>新建任务<span class="a-kbd">⌘N</span></div>
+        <div class="a-item"><svg class="a-ico"><use href="#i-search"/></svg>搜索<span class="a-kbd">⌘K</span></div>
+      </div>
+    </div>
+    <div class="main-panel">
+      <span class="anno warn" style="top:6px; right:8px;">被遮罩盖住 · blur+brightness 退后</span>
+      <div class="main-body">
+        <div class="line w90"></div><div class="line w60"></div>
+      </div>
+    </div>
+  </div>
+  <!-- 浮层（静态嵌在 mock 内） -->
+  <div class="sm-overlay open">
+    <div class="search-modal" style="position:relative; width:440px;">
+      <span class="anno accent" style="top:-22px; right:0;">z-index 1000 · 浮于所有 Region</span>
+      <div class="sm-input-row">
+        <svg class="sm-ico"><use href="#i-search"/></svg>
+        <input value="auth" readonly />
+        <span class="sm-esc">Esc</span>
+      </div>
+      <div class="sm-results">
+        <div class="sm-group">
+          <div class="sm-group-head">文件 <span class="gh-n">2</span></div>
+          <div class="sm-item sel">
+            <svg class="si-ico"><use href="#i-doc"/></svg>
+            <div class="si-main"><span class="si-title"><mark class="hl">auth</mark>/session.ts</span><span class="si-sub">refactor-arch/src/auth</span></div>
+            <span class="si-right"><span class="si-pill">↵ 打开</span></span>
+          </div>
+        </div>
+      </div>
+      <div class="sm-foot">
+        <span class="fk"><kbd>↑</kbd><kbd>↓</kbd> 导航</span>
+        <span class="fk"><kbd>↵</kbd> 确认</span>
+        <span class="fk"><kbd>Tab</kbd> 切类</span>
+        <span class="fk"><kbd>Esc</kbd> 关闭</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="callout">
+  <b>视觉层次：</b> 浮层本体用 <code>bg-panel #151519</code> + <code>border-strong</code> + <code>shadow-2</code> 浮起，遮罩用 <code>rgba(8,9,13,0.55)</code> + <code>backdrop-filter:blur(7px)</code>——背景应用退后（blur + brightness 0.7），焦点完全在浮层。
+  浮层 <code>width:620px</code>、<code>padding-top:15vh</code>，居中偏上（接近视线落点，符合 ⌘K 类浮层惯例）。
+</div>
+
+<!-- ============ §2 互动演示（flourish） ============ -->
+<div class="section-title"><span class="num">2</span> 互动演示 · 按 ⌘K / Ctrl+K 亲测<span class="hint">真实键盘导航 + 匹配高亮 + Tab 切类 + 五态</span></div>
+
+<div class="try-bar">
+  <span>在本页面按</span>
+  <span class="kbd-big" id="tryKbd">⌘K</span>
+  <span>唤起浮层（或点右侧按钮）。试输入 <b>auth</b> / <b>session</b> / <b>git</b>，用 <b>↑↓</b> 移动、<b>Tab</b> 切类、<b>Esc</b> 关闭。</span>
+  <button type="button" id="openBtn">唤起浮层</button>
+</div>
+
+<div class="window-mock" id="demoStage" style="height:200px;">
+  <div class="app-shell">
+    <div class="aside-region">
+      <div class="a-logo"><div class="a-mark">x</div>xyz-agent</div>
+      <div class="a-nav">
+        <div class="a-item"><svg class="a-ico"><use href="#i-new"/></svg>新建<span class="a-kbd">⌘N</span></div>
+        <div class="a-item"><svg class="a-ico"><use href="#i-search"/></svg>搜索<span class="a-kbd">⌘K</span></div>
+      </div>
+    </div>
+    <div class="main-panel">
+      <div class="main-body">
+        <div class="line w90"></div><div class="line w60"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 真实浮层（fixed，挂在 body 上） -->
+<div class="sm-overlay" id="liveModal" role="dialog" aria-modal="true" aria-label="搜索浮层">
+  <div class="search-modal">
+    <div class="sm-input-row">
+      <svg class="sm-ico"><use href="#i-search"/></svg>
+      <input id="smInput" type="text" placeholder="搜索命令、文件、符号、会话…" autocomplete="off" spellcheck="false" />
+      <span class="sm-esc">Esc</span>
+    </div>
+    <div class="sm-scopes" id="smScopes">
+      <button type="button" class="sm-scope on" data-scope="all">全部 <span class="sc-n" id="n-all">0</span></button>
+      <button type="button" class="sm-scope" data-scope="command">命令 <span class="sc-n" id="n-command">0</span></button>
+      <button type="button" class="sm-scope" data-scope="file">文件 <span class="sc-n" id="n-file">0</span></button>
+      <button type="button" class="sm-scope" data-scope="symbol">符号 <span class="sc-n" id="n-symbol">0</span></button>
+      <button type="button" class="sm-scope" data-scope="session">会话 <span class="sc-n" id="n-session">0</span></button>
+    </div>
+    <div class="sm-results" id="smResults"></div>
+    <div class="sm-foot">
+      <span class="fk"><kbd>↑</kbd><kbd>↓</kbd> 导航</span>
+      <span class="fk"><kbd>↵</kbd> 确认</span>
+      <span class="fk"><kbd>Tab</kbd> 切类</span>
+      <span class="fk"><kbd>Esc</kbd> 关闭</span>
+      <span class="fk" style="margin-left:auto;"><kbd>⌘K</kbd> 再按关闭</span>
+    </div>
+  </div>
+</div>
+
+<!-- ============ §3 五态对照（静态画廊） ============ -->
+<div class="section-title"><span class="num">3</span> 五态对照 · 静态画廊<span class="hint">默认recents / 查询分组 / 类型过滤 / 空结果 / 加载</span></div>
+<div class="gallery">
+
+  <div class="gcard">
+    <div class="gc-cap"><span class="tag tag-a">A</span> 默认态 · 空查询 · 最近项 + 建议命令</div>
+    <div class="window-mock sm-static aroused">
+      <div class="app-shell"><div class="aside-region"><div class="a-logo"><div class="a-mark">x</div>xyz</div></div><div class="main-panel"><div class="main-body"><div class="line w90"></div></div></div></div>
+      <div class="sm-overlay open"><div class="search-modal">
+        <div class="sm-input-row"><svg class="sm-ico"><use href="#i-search"/></svg><input placeholder="搜索命令、文件、符号、会话…" /><span class="sm-esc">Esc</span></div>
+        <div class="sm-results">
+          <div class="sm-group"><div class="sm-group-head">最近 <span class="gh-n">3</span></div>
+            <div class="sm-item sel"><svg class="si-ico"><use href="#i-doc"/></svg><div class="si-main"><span class="si-title">auth/session.ts</span><span class="si-sub">refactor-arch/src/auth</span></div><span class="si-right"><svg class="si-ico" style="width:13px"><use href="#i-clock"/></svg></span></div>
+            <div class="sm-item"><svg class="si-ico"><use href="#i-sessions"/></svg><div class="si-main"><span class="si-title">Auth 重构 · token 轮转</span><span class="si-sub">refactor-arch · main</span></div><span class="si-right"><svg class="si-ico" style="width:13px"><use href="#i-clock"/></svg></span></div>
+            <div class="sm-item"><svg class="si-ico"><use href="#i-cmd"/></svg><div class="si-main"><span class="si-title">切换分支</span><span class="si-sub">git checkout</span></div><span class="si-right"><svg class="si-ico" style="width:13px"><use href="#i-clock"/></svg></span></div>
+          </div>
+        </div>
+      </div></div>
+    </div>
+  </div>
+
+  <div class="gcard">
+    <div class="gc-cap"><span class="tag tag-a">B</span> 查询态 · 分组结果 + 匹配高亮</div>
+    <div class="window-mock sm-static aroused">
+      <div class="app-shell"><div class="aside-region"><div class="a-logo"><div class="a-mark">x</div>xyz</div></div><div class="main-panel"><div class="main-body"><div class="line w90"></div></div></div></div>
+      <div class="sm-overlay open"><div class="search-modal">
+        <div class="sm-input-row"><svg class="sm-ico"><use href="#i-search"/></svg><input value="auth" /><span class="sm-esc">Esc</span></div>
+        <div class="sm-results">
+          <div class="sm-group"><div class="sm-group-head">文件 <span class="gh-n">2</span></div>
+            <div class="sm-item sel"><svg class="si-ico"><use href="#i-doc"/></svg><div class="si-main"><span class="si-title"><mark class="hl">auth</mark>/session.ts</span><span class="si-sub">src/<mark class="hl">auth</mark></span></div></div>
+            <div class="sm-item"><svg class="si-ico"><use href="#i-doc"/></svg><div class="si-main"><span class="si-title">use-<mark class="hl">auth</mark>.ts</span><span class="si-sub">composables</span></div></div>
+          </div>
+          <div class="sm-group"><div class="sm-group-head">符号 <span class="gh-n">1</span></div>
+            <div class="sm-item"><svg class="si-ico"><use href="#i-sym"/></svg><div class="si-main"><span class="si-title"><mark class="hl">Auth</mark>Token</span><span class="si-sub">auth/token.ts:8</span></div></div>
+          </div>
+        </div>
+      </div></div>
+    </div>
+  </div>
+
+  <div class="gcard">
+    <div class="gc-cap"><span class="tag tag-m">C</span> 类型过滤 · Tab 切到「文件」单类</div>
+    <div class="window-mock sm-static aroused">
+      <div class="app-shell"><div class="aside-region"><div class="a-logo"><div class="a-mark">x</div>xyz</div></div><div class="main-panel"><div class="main-body"><div class="line w90"></div></div></div></div>
+      <div class="sm-overlay open"><div class="search-modal">
+        <div class="sm-input-row"><svg class="sm-ico"><use href="#i-search"/></svg><input value="session" /><span class="sm-esc">Esc</span></div>
+        <div class="sm-scopes">
+          <span class="sm-scope">全部</span>
+          <span class="sm-scope">命令</span>
+          <span class="sm-scope on">文件 <span class="sc-n">1</span></span>
+          <span class="sm-scope">符号</span>
+          <span class="sm-scope">会话</span>
+        </div>
+        <div class="sm-results">
+          <div class="sm-group"><div class="sm-group-head">文件 <span class="gh-n">1</span></div>
+            <div class="sm-item sel"><svg class="si-ico"><use href="#i-doc"/></svg><div class="si-main"><span class="si-title">auth/<mark class="hl">session</mark>.ts</span><span class="si-sub">src/auth</span></div></div>
+          </div>
+        </div>
+      </div></div>
+    </div>
+  </div>
+
+  <div class="gcard">
+    <div class="gc-cap"><span class="tag tag-m">D</span> 空结果 · 无匹配 + 建议</div>
+    <div class="window-mock sm-static aroused">
+      <div class="app-shell"><div class="aside-region"><div class="a-logo"><div class="a-mark">x</div>xyz</div></div><div class="main-panel"><div class="main-body"><div class="line w90"></div></div></div></div>
+      <div class="sm-overlay open"><div class="search-modal">
+        <div class="sm-input-row"><svg class="sm-ico"><use href="#i-search"/></svg><input value="zzzz" /><span class="sm-esc">Esc</span></div>
+        <div class="sm-state">
+          <svg class="ss-ico"><use href="#i-empty"/></svg>
+          <div class="ss-title">未找到「zzzz」的相关结果</div>
+          <div class="ss-hint">换个关键词，或切换类型重试</div>
+          <div class="ss-sugg"><span class="sx">auth</span><span class="sx">session</span><span class="sx">git</span></div>
+        </div>
+      </div></div>
+    </div>
+  </div>
+
+  <div class="gcard" style="grid-column: 1 / -1;">
+    <div class="gc-cap"><span class="tag tag-m">E</span> 加载态 · debounce 检索中（行内 spinner）</div>
+    <div class="window-mock sm-static aroused" style="height:300px;">
+      <div class="app-shell"><div class="aside-region"><div class="a-logo"><div class="a-mark">x</div>xyz</div></div><div class="main-panel"><div class="main-body"><div class="line w90"></div></div></div></div>
+      <div class="sm-overlay open"><div class="search-modal" style="width:420px;">
+        <div class="sm-input-row"><svg class="sm-ico"><use href="#i-search"/></svg><input value="refactor" /><span class="sm-esc">Esc</span></div>
+        <div class="sm-state">
+          <div class="spinner"></div>
+          <div class="ss-title">正在检索…</div>
+          <div class="ss-hint">索引查询 + 符号解析中（&lt;200ms 通常不显此态）</div>
+        </div>
+      </div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ §4 单项解剖 ============ -->
+<div class="section-title"><span class="num">4</span> 单项解剖 · 四类图标 + 标题高亮 + 路径元 + 右侧动作<span class="hint">design-system §2 Card-Inline 取向</span></div>
+
+<div class="anatomy">
+  <div class="sm-item sel" style="max-width:560px;">
+    <svg class="si-ico"><use href="#i-doc"/></svg>
+    <div class="si-main">
+      <span class="si-title">auth/<mark class="hl">session</mark>.ts</span>
+      <span class="si-sub">refactor-arch/src/auth</span>
+    </div>
+    <span class="si-right">
+      <span class="si-pill">↵ 打开</span>
+    </span>
+  </div>
+  <span class="lbl accent" style="top:8px; left:32px;">类型图标（16×16 · currentColor）</span>
+  <span class="lbl accent" style="top:30px; left:60px;">标题 · 匹配高亮 mark.hl</span>
+  <span class="lbl accent" style="bottom:14px; left:60px;">副标题 · mono 路径/行号</span>
+  <span class="lbl warn" style="top:18px; right:18px;">右侧动作 pill（Enter 预览）</span>
+  <span class="lbl warn" style="bottom:14px; right:24px;">选中：inset accent ring（非左色条）</span>
+</div>
+
+<table class="kb-table" style="margin-top:16px;">
+  <thead><tr><th>类型</th><th>图标</th><th>标题</th><th>副标题</th><th>跳转目标</th></tr></thead>
+  <tbody>
+    <tr><td>命令 Command</td><td><svg class="si-ico" style="width:14px;display:inline-block;vertical-align:middle"><use href="#i-cmd"/></svg></td><td>动作名（如「切换分支」）</td><td>触发方式 / 快捷键</td><td>执行命令（不导航）</td></tr>
+    <tr><td>文件 File</td><td><svg class="si-ico" style="width:14px;display:inline-block;vertical-align:middle"><use href="#i-doc"/></svg></td><td>相对路径 + 文件名</td><td>项目 / 目录</td><td>Workspace 打开文件</td></tr>
+    <tr><td>符号 Symbol</td><td><svg class="si-ico" style="width:14px;display:inline-block;vertical-align:middle"><use href="#i-sym"/></svg></td><td>符号名（函数/类/类型）</td><td>文件:行号</td><td>Workspace 定位到行</td></tr>
+    <tr><td>会话 Session</td><td><svg class="si-ico" style="width:14px;display:inline-block;vertical-align:middle"><use href="#i-sessions"/></svg></td><td>会话标题</td><td>项目 · 分支 · 时间</td><td>切到该会话（可进 Overview）</td></tr>
+  </tbody>
+</table>
+
+<!-- ============ §5 键盘导航矩阵 ============ -->
+<div class="section-title"><span class="num">5</span> 键盘导航矩阵<span class="hint">全程键盘可达 · ↑↓ 跨组扁平化</span></div>
+<table class="kb-table">
+  <thead><tr><th>键</th><th>行为</th><th>边界 / 备注</th></tr></thead>
+  <tbody>
+    <tr><td class="k"><kbd>⌘K</kbd> / <kbd>Ctrl+K</kbd></td><td>唤起 / 再按关闭（toggle）</td><td>全局监听；输入框聚焦时也生效</td></tr>
+    <tr><td class="k"><kbd>Esc</kbd></td><td>关闭浮层</td><td>有查询时首次 Esc 清空查询，二次关闭（待定，本稿先采「直接关闭」）</td></tr>
+    <tr><td class="k"><kbd>↑</kbd> <kbd>↓</kbd></td><td>上下移动选中项</td><td><b>跨组扁平化</b>：选中从某组末尾 ↓ 直接到下一组首项；到顶/底循环</td></tr>
+    <tr><td class="k"><kbd>Enter</kbd></td><td>确认当前选中项</td><td>命令→执行；文件/符号→ Workspace 跳转；会话→切换</td></tr>
+    <tr><td class="k"><kbd>Tab</kbd></td><td>循环切换类型过滤</td><td>全部→命令→文件→符号→会话→全部；Shift+Tab 反向</td></tr>
+    <tr><td class="k"><kbd>⌘1</kbd>…<kbd>⌘5</kbd></td><td>直达某类型（待定）</td><td>与 OS / 其它面板快捷键冲突待核</td></tr>
+  </tbody>
+</table>
+
+<!-- ============ §6 与 File View 搜索的严格区分（P0） ============ -->
+<div class="section-title"><span class="num">6</span> 严格区分 · 搜索浮层 vs File View 树内搜索<span class="hint">P0 验收项 · 入口/范围/形态/结果全不同</span></div>
+<table class="cmp-table">
+  <thead><tr><th>维度</th><th>搜索浮层（⌘K）</th><th>File View 树内搜索</th></tr></thead>
+  <tbody>
+    <tr class="head"><td>归属</td><td>L0 Overlay（独立组件）</td><td>Sidebar 容器内·File View 子视图的一部分</td></tr>
+    <tr><td>入口</td><td><code>⌘K</code> / Ctrl+K / Sidebar「搜索」nav 项</td><td>File View 顶部的内联过滤输入框</td></tr>
+    <tr><td>范围</td><td><b>全局·跨项目</b>：命令 + 文件 + 符号 + 会话</td><td><b>当前 active session</b> 的改动文件树</td></tr>
+    <tr><td>形态</td><td>模糊背景 + 居中浮层（模态）</td><td>内联，无浮层（收窄树本身）</td></tr>
+    <tr><td>结果</td><td>分组列表 + 跳转到任意 Region</td><td>原树按查询过滤（保留层级缩进）</td></tr>
+    <tr><td>匹配</td><td>模糊 + 子串高亮</td><td>子串过滤（树节点命中保留，未命中折叠）</td></tr>
+    <tr><td>关闭</td><td>Esc / 再按 ⌘K / 点遮罩</td><td>清空输入框即恢复全树</td></tr>
+  </tbody>
+</table>
+<div class="callout">
+  <b>为何必须分两条：</b> 模糊全局检索（找「我上次那个 auth 的会话在哪」）与当前会话改动文件收窄（「这次改动里有没有动到 token.ts」）是<b>两个心智任务</b>。
+  合并会导致：模态打断当前编辑流、或树过滤无法跨项目/跨类型。保留两条独立路径，各自最短。
+</div>
+
+<!-- ============ §7 实现要点 ============ -->
+<div class="section-title"><span class="num">7</span> 实现要点 · 对接真实代码<span class="hint">z-index / 快捷键 / 数据源 / 无障碍</span></div>
+<ul class="note-list">
+  <li><b>z-index</b>：浮层 <code>z-index:1000</code>，遮罩同层；确认 toast <code>1100</code>。高于 Sidebar / Workspace / Workspace 顶栏，低于系统 traffic-light（OS 绘制）。</li>
+  <li><b>唤起</b>：renderer 全局监听 <code>keydown</code>，mac 用 <code>Meta</code>、win/linux 用 <code>Ctrl</code>，<code>preventDefault</code> 拦截浏览器默认。打开即 <code>focus()</code> 输入框、光标置末尾。</li>
+  <li><b>数据源</b>：命令来自注册表（与 Sidebar nav 共享 <code>⌘N/⌘K</code> 注册）；文件/符号来自项目索引（LSP / ripgrep 后端）；会话来自本地会话库。查询走 <code>debounce(120ms)</code>，索引查询 &lt;200ms 不显加载态（避免闪烁）。</li>
+  <li><b>选中态</b>：用 design-system §2 的 <b>Card-Active inset ring</b>（<code>box-shadow: inset 0 0 0 1px accent-ring</code> 或伪元素 ring），<b>禁用左色条</b>（AI slop 反模式）。↑↓ 移动时 <code>scrollIntoView</code> 的最近替代：用 <code>scrollIntoViewIfNeeded</code> 或手动 <code>offsetTop</code> 计算（避免 OD 预览嵌套 iframe 的滚动冲突）。</li>
+  <li><b>匹配高亮</b>：后端返回命中区间数组，前端渲染为 <code>&lt;mark class="hl"&gt;</code>（<code>color:accent</code>，不加背景，避免打断阅读节奏）。</li>
+  <li><b>无障碍</b>：<code>role="dialog"</code> + <code>aria-modal="true"</code>；打开时 trap focus 在浮层内，关闭后焦点还给触发元素（Sidebar「搜索」nav 项或当前 active 区）。结果列表用 <code>role="listbox"</code>，项 <code>role="option" aria-selected</code>。</li>
+  <li><b>性能</b>：结果虚拟化仅在单类 &gt;200 项时启用（默认全量渲染，简单优先）；分组头 sticky 便于长列表定位。</li>
+  <li><b>跳转契约</b>：文件/符号 → Workspace 打开并定位；会话 → 切换 active session（可带 <code>?focus=overview</code> 进概览）；命令 → 直接执行（危险命令如「终止任务」二次确认，复用 Flow-3 确认请求机制）。</li>
+</ul>
+
+<div class="callout warn">
+  <b>遗留待裁决：</b>
+  ① Esc 首次清空查询 / 二次关闭 vs 直接关闭——本稿先采「直接关闭」（更短路径），待实机验证误触率；
+  ② <code>⌘1…⌘5</code> 直达类型与 OS 冲突待核；
+  ③ 跨项目检索的范围切换（当前项目 / 全部项目）是否进 scopes 条，还是独立开关；
+  ④ 最近项（recents）的持久化策略与上限（建议每类 5 条，共 20）。
+</div>
+
+<script>
+/* ============ §2 互动演示：真实可用的 ⌘K 浮层 ============ */
+(function () {
+  var isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+  document.getElementById('tryKbd').textContent = isMac ? '⌘K' : 'Ctrl+K';
+
+  // 模拟数据集（真实数据来自命令注册表 / 项目索引 / 会话库）
+  var DATA = {
+    command: [
+      { t: '新建任务', s: '创建一个新会话 · ⌘N' },
+      { t: '切换分支', s: 'git checkout' },
+      { t: '收起侧栏', s: 'toggle sidebar · ⌘B' },
+      { t: '打开概览', s: 'Mission Control' },
+      { t: '终止任务', s: '停止当前会话' },
+      { t: '提交并推送', s: 'git commit && push' }
+    ],
+    file: [
+      { t: 'auth/session.ts', s: 'refactor-arch/src/auth' },
+      { t: 'auth/token.ts', s: 'refactor-arch/src/auth' },
+      { t: 'use-auth.ts', s: 'refactor-arch/src/composables' },
+      { t: 'session-store.ts', s: 'refactor-arch/src/stores' },
+      { t: 'workspace/dual-panel.vue', s: 'refactor-arch/src/views' }
+    ],
+    symbol: [
+      { t: 'authenticate()', s: 'auth/session.ts:42' },
+      { t: 'AuthToken', s: 'auth/token.ts:8' },
+      { t: 'SessionStore', s: 'session-store.ts:12' },
+      { t: 'useAuth()', s: 'use-auth.ts:4' }
+    ],
+    session: [
+      { t: 'Auth 重构 · token 轮转', s: 'refactor-arch · main · 14:32' },
+      { t: '搜索浮层设计', s: 'refactor-arch · feat-search' },
+      { t: 'Workspace 双 Panel', s: 'agent-skeleton · main' },
+      { t: 'git 工作流打磨', s: 'feat-gitflow · dev' }
+    ]
+  };
+  var ICON = { command: 'i-cmd', file: 'i-doc', symbol: 'i-sym', session: 'i-sessions' };
+  var LABEL = { command: '命令', file: '文件', symbol: '符号', session: '会话' };
+  var TYPES = ['command', 'file', 'symbol', 'session'];
+  var RECENTS = [
+    { type: 'file', t: 'auth/session.ts', s: 'refactor-arch/src/auth' },
+    { type: 'session', t: 'Auth 重构 · token 轮转', s: 'refactor-arch · main' },
+    { type: 'command', t: '切换分支', s: 'git checkout' },
+    { type: 'symbol', t: 'AuthToken', s: 'auth/token.ts:8' }
+  ];
+
+  var overlay = document.getElementById('liveModal');
+  var input = document.getElementById('smInput');
+  var resultsEl = document.getElementById('smResults');
+  var stage = document.getElementById('demoStage');
+  var openBtn = document.getElementById('openBtn');
+  var scope = 'all';
+  var flat = [];      // 当前可见项扁平化（供键盘导航）
+  var selIdx = 0;
+  var open = false;
+
+  function openModal() {
+    open = true; overlay.classList.add('open'); stage.classList.add('aroused');
+    scope = 'all'; input.value = '';
+    paintScopes(); render(); setTimeout(function () { input.focus(); }, 30);
+  }
+  function closeModal() {
+    open = false; overlay.classList.remove('open'); stage.classList.remove('aroused');
+    hideToast();
+  }
+
+  function escapeHtml(s) { return s.replace(/[&<>]/g, function (c) { return c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;'; }); }
+  function highlight(text, q) {
+    if (!q) return escapeHtml(text);
+    var lower = text.toLowerCase(), ql = q.toLowerCase(), out = '', i = 0;
+    while (i < text.length) {
+      var at = lower.indexOf(ql, i);
+      if (at < 0) { out += escapeHtml(text.slice(i)); break; }
+      out += escapeHtml(text.slice(i, at));
+      out += '<mark class="hl">' + escapeHtml(text.slice(at, at + q.length)) + '</mark>';
+      i = at + q.length;
+    }
+    return out;
+  }
+
+  function render() {
+    var q = input.value.trim();
+    var counts = { all: 0, command: 0, file: 0, symbol: 0, session: 0 };
+
+    // 空查询 → recents + 建议命令
+    if (!q) {
+      flat = RECENTS.slice();
+      counts.all = flat.length;
+      TYPES.forEach(function (k) { counts[k] = DATA[k].length; }); // 计数仍显示全量
+      var html = '<div class="sm-group"><div class="sm-group-head">最近 <span class="gh-n">' + flat.length + '</span></div>';
+      flat.forEach(function (it, i) {
+        html += itemHtml(it, i, q, false);
+      });
+      html += '</div>';
+      html += '<div class="sm-group"><div class="sm-group-head">建议命令</div>';
+      DATA.command.slice(0, 3).forEach(function (c) {
+        var idx = flat.length; flat.push({ type: 'command', t: c.t, s: c.s });
+        html += itemHtml({ type: 'command', t: c.t, s: c.s }, idx, q, false);
+      });
+      html += '</div>';
+      resultsEl.innerHTML = html;
+      selIdx = 0; paintSel(); updateCounts(counts); return;
+    }
+
+    // 有查询 → 按类型过滤 + 分组
+    var groups = {};
+    TYPES.forEach(function (k) {
+      if (scope !== 'all' && scope !== k) return;
+      var hits = DATA[k].filter(function (it) {
+        return it.t.toLowerCase().indexOf(q.toLowerCase()) >= 0 || it.s.toLowerCase().indexOf(q.toLowerCase()) >= 0;
+      });
+      if (hits.length) groups[k] = hits;
+      counts[k] = hits.length;
+      counts.all += hits.length;
+    });
+
+    if (counts.all === 0) {
+      flat = [];
+      resultsEl.innerHTML =
+        '<div class="sm-state">' +
+        '<svg class="ss-ico"><use href="#i-empty"/></svg>' +
+        '<div class="ss-title">未找到「' + escapeHtml(q) + '」的相关结果</div>' +
+        '<div class="ss-hint">换个关键词，或切换类型重试</div>' +
+        '<div class="ss-sugg"><span class="sx">auth</span><span class="sx">session</span><span class="sx">git</span></div>' +
+        '</div>';
+      updateCounts(counts); return;
+    }
+
+    flat = [];
+    var html = '';
+    Object.keys(groups).forEach(function (k) {
+      html += '<div class="sm-group"><div class="sm-group-head">' + LABEL[k] + ' <span class="gh-n">' + groups[k].length + '</span></div>';
+      groups[k].forEach(function (it) {
+        var idx = flat.length; flat.push({ type: k, t: it.t, s: it.s });
+        html += itemHtml({ type: k, t: it.t, s: it.s }, idx, q, true);
+      });
+      html += '</div>';
+    });
+    resultsEl.innerHTML = html;
+    selIdx = 0; paintSel(); updateCounts(counts);
+  }
+
+  function itemHtml(it, idx, q, withRight) {
+    var right = withRight ? '<span class="si-right"><span class="si-pill">↵ ' + (it.type === 'command' ? '执行' : it.type === 'session' ? '切换' : '打开') + '</span></span>' : '<span class="si-right"><svg class="si-ico" style="width:13px"><use href="#i-clock"/></svg></span>';
+    return '<div class="sm-item" data-idx="' + idx + '" data-type="' + it.type + '">' +
+      '<svg class="si-ico"><use href="#' + ICON[it.type] + '"/></svg>' +
+      '<div class="si-main"><span class="si-title">' + highlight(it.t, q) + '</span>' +
+      '<span class="si-sub">' + highlight(it.s, q) + '</span></div>' + right + '</div>';
+  }
+
+  function paintSel() {
+    var items = resultsEl.querySelectorAll('.sm-item');
+    items.forEach(function (el, i) {
+      el.classList.toggle('sel', parseInt(el.dataset.idx, 10) === selIdx);
+    });
+    var sel = resultsEl.querySelector('.sm-item.sel');
+    if (sel && sel.scrollIntoViewIfNeeded) sel.scrollIntoViewIfNeeded(false);
+    else if (sel) { /* fallback：不主动滚动，避免 iframe 冲突 */ }
+  }
+
+  function paintScopes() {
+    overlay.querySelectorAll('.sm-scope').forEach(function (b) {
+      b.classList.toggle('on', b.dataset.scope === scope);
+    });
+  }
+  function updateCounts(c) {
+    document.getElementById('n-all').textContent = c.all;
+    TYPES.forEach(function (k) { document.getElementById('n-' + k).textContent = c[k]; });
+  }
+
+  function moveSel(delta) {
+    if (!flat.length) return;
+    selIdx = (selIdx + delta + flat.length) % flat.length;
+    paintSel();
+  }
+  function cycleScope(dir) {
+    var order = ['all'].concat(TYPES);
+    var i = order.indexOf(scope);
+    scope = order[(i + dir + order.length) % order.length];
+    paintScopes(); render();
+  }
+  function confirmSel() {
+    if (!flat.length) return;
+    var it = flat[selIdx];
+    var verb = it.type === 'command' ? '执行' : it.type === 'session' ? '切换到会话' : '打开';
+    showToast(verb + '：' + it.t, it.s);
+    closeModal();
+  }
+
+  // toast 反馈
+  var toastTimer;
+  function showToast(title, sub) {
+    hideToast();
+    var t = document.createElement('div');
+    t.className = 'sm-toast';
+    t.innerHTML = '<svg class="st-ico"><use href="#i-check"/></svg><div><div>' + escapeHtml(title) + '</div>' + (sub ? '<div class="st-sub">' + escapeHtml(sub) + '</div>' : '') + '</div>';
+    document.body.appendChild(t);
+    toastTimer = setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); }, 2200);
+  }
+  function hideToast() {
+    if (toastTimer) { clearTimeout(toastTimer); toastTimer = null; }
+    var ex = document.querySelector('.sm-toast'); if (ex && ex.parentNode) ex.parentNode.removeChild(ex);
+  }
+
+  // ===== 事件绑定 =====
+  document.addEventListener('keydown', function (e) {
+    var meta = isMac ? e.metaKey : e.ctrlKey;
+    if (meta && (e.key === 'k' || e.key === 'K')) {
+      e.preventDefault();
+      open ? closeModal() : openModal();
+      return;
+    }
+    if (!open) return;
+    if (e.key === 'Escape') { e.preventDefault(); closeModal(); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); moveSel(1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); moveSel(-1); }
+    else if (e.key === 'Enter') { e.preventDefault(); confirmSel(); }
+    else if (e.key === 'Tab') { e.preventDefault(); cycleScope(e.shiftKey ? -1 : 1); }
+  });
+
+  openBtn.addEventListener('click', openModal);
+  overlay.addEventListener('click', function (e) { if (e.target === overlay) closeModal(); });
+  input.addEventListener('input', render);
+  resultsEl.addEventListener('mouseover', function (e) {
+    var el = e.target.closest('.sm-item'); if (!el) return;
+    selIdx = parseInt(el.dataset.idx, 10); paintSel();
+  });
+  resultsEl.addEventListener('click', function (e) {
+    var el = e.target.closest('.sm-item'); if (!el) return;
+    selIdx = parseInt(el.dataset.idx, 10); confirmSel();
+  });
+  overlay.querySelectorAll('.sm-scope').forEach(function (b) {
+    b.addEventListener('click', function () { scope = b.dataset.scope; paintScopes(); render(); input.focus(); });
+  });
+})();
+</script>
+
+</body>
+</html>

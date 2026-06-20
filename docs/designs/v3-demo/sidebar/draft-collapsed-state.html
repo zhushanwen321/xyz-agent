@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sidebar 折叠态深化 · Header 接管 chrome + 面板分割 + 全屏差异</title>
+<style>
+  :root {
+    --bg-base: #0d0d0f; --bg-panel: #151519; --bg-elevated: #1b1b20; --bg-hover: #232328;
+    --accent: #4f8ef7; --accent-soft: rgba(79,142,247,0.12);
+    --text-primary: #f0f0f5; --text-secondary: #8a8a95; --text-tertiary: #5a5a65;
+    --border: rgba(255,255,255,0.06); --border-strong: rgba(255,255,255,0.12);
+    --tl-red: #fc6155; --tl-yellow: #fdb40a; --tl-green: #34c84a;
+    --ease: cubic-bezier(0.4, 0, 0.2, 1);
+    --duration-fast: 120ms; --duration: 200ms; --duration-slow: 320ms;
+    --anno-accent: rgba(79,142,247,0.9); --anno-bg: rgba(79,142,247,0.08);
+    --anno-warn: rgba(245,165,36,0.9); --anno-warn-bg: rgba(245,165,36,0.08);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--bg-base); color: var(--text-primary); font: 13px/1.5 Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  body { padding: 32px 40px 96px; max-width: 1440px; margin: 0 auto; }
+
+  .page-head { margin-bottom: 24px; }
+  .page-head h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; margin-bottom: 6px; }
+  .page-head .sub { color: var(--text-secondary); font-size: 13px; max-width: 920px; }
+  .page-head .sub b { color: var(--accent); }
+  .page-head .meta { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; font: 11px/1 ui-monospace, Menlo, monospace; }
+  .page-head .meta span { padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border-strong); color: var(--text-secondary); }
+  .page-head .meta b { color: var(--accent); }
+
+  .callout { margin: 18px 0; padding: 11px 14px; background: var(--anno-warn-bg); border-left: 3px solid var(--anno-warn); border-radius: 0 6px 6px 0; font-size: 12.5px; color: var(--text-secondary); }
+  .callout b { color: var(--warning); }
+  .callout.accent { background: var(--anno-bg); border-left-color: var(--anno-accent); }
+  .callout.accent b { color: var(--accent); }
+  .callout code { font-family: ui-monospace, Menlo, monospace; color: var(--accent); background: rgba(79,142,247,0.1); padding: 1px 5px; border-radius: 3px; font-size: 11.5px; }
+  .callout ul { margin: 6px 0 0; padding-left: 18px; line-height: 1.7; }
+
+  .section-title { margin: 36px 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--border-strong); font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
+  .section-title .num { font: 11px/1 ui-monospace, Menlo, monospace; background: var(--accent); color: #fff; padding: 3px 7px; border-radius: 3px; }
+  .section-title .hint { margin-left: auto; font-weight: 400; font-size: 12px; color: var(--text-secondary); }
+
+  .gallery { display: flex; gap: 24px; overflow-x: auto; padding: 8px 4px 20px; scroll-snap-type: x proximity; align-items: flex-start; }
+  .gallery::-webkit-scrollbar { height: 10px; }
+  .gallery::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 5px; }
+
+  .card { flex-shrink: 0; scroll-snap-align: start; }
+  .card-cap { margin-bottom: 10px; display: flex; align-items: center; gap: 8px; font: 11px/1.3 ui-monospace, Menlo, monospace; color: var(--text-secondary); min-height: 30px; max-width: 560px; }
+  .card-cap .tag { padding: 3px 7px; border-radius: 3px; font-weight: 600; white-space: nowrap; flex-shrink: 0; }
+  .tag-a { background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent); }
+  .tag-b { background: rgba(56,189,248,0.12); color: #38bdf8; border: 1px solid #38bdf8; }
+  .tag-c { background: rgba(138,138,149,0.12); color: var(--text-secondary); border: 1px solid var(--text-tertiary); }
+  .tag-d { background: rgba(245,165,36,0.12); color: #f5a524; border: 1px solid #f5a524; }
+
+  .window-mock { position: relative; background: var(--bg-base); border-radius: 10px; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.05); }
+  .app-shell { display: flex; height: 480px; padding: 12px; gap: 12px; }
+  .app-shell.split { height: 440px; }
+
+  /* Sidebar 状态 */
+  .sb { width: 200px; flex-shrink: 0; transition: width var(--duration-slow) var(--ease), opacity var(--duration-slow) var(--ease); }
+  .sb.hidden { width: 0; opacity: 0; overflow: hidden; }
+  .sb-inner { width: 200px; display: flex; flex-direction: column; padding-top: 52px; padding-left: 2px; height: 100%; }
+  .a-logo { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; padding: 0 8px 14px; }
+  .a-logo .a-mark { width: 22px; height: 22px; border-radius: 6px; background: var(--accent); display: grid; place-items: center; color: #fff; font-size: 11px; font-weight: 700; flex-shrink: 0; }
+  .a-placeholder { flex: 1; padding: 8px; font: 11px/1.4 ui-monospace, Menlo, monospace; color: var(--text-tertiary); }
+
+  /* Main panel + header */
+  .main-panel { flex: 1; min-width: 0; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 0 0 1px rgba(0,0,0,0.2); display: flex; flex-direction: column; overflow: hidden; }
+  .main-header { height: 42px; flex-shrink: 0; display: flex; align-items: center; gap: 6px; padding: 0 12px; border-bottom: 1px solid var(--border); }
+  .main-header.split-2 { background: var(--bg-panel); }
+
+  /* Header 内 chrome 三件套：traffic-light + h-nav */
+  .h-tools { display: flex; align-items: center; gap: 10px; flex-shrink: 0; margin-right: 6px; }
+  .h-nav { display: flex; align-items: center; gap: 2px; }
+  .traffic-light { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+  .traffic-light .dot { width: 12px; height: 12px; border-radius: 50%; border: 0.5px solid rgba(0,0,0,0.25); }
+  .dot-red { background: var(--tl-red); } .dot-yellow { background: var(--tl-yellow); } .dot-green { background: var(--tl-green); }
+
+  .h-btn { position: relative; width: 26px; height: 26px; border-radius: 6px; display: grid; place-items: center; color: var(--text-secondary); cursor: pointer; transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease); }
+  .h-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+  .h-btn .ico { font-size: 13px; line-height: 1; }
+  .h-btn .tip { position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); background: var(--bg-elevated); border: 1px solid var(--border-strong); color: var(--text-primary); font-size: 10.5px; line-height: 1; padding: 4px 7px; border-radius: 4px; white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity var(--duration-fast) var(--ease); z-index: 20; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+  .h-btn:hover .tip { opacity: 1; }
+  .h-btn .tip b { color: var(--accent); margin-left: 6px; font-family: ui-monospace, Menlo, monospace; }
+
+  .breadcrumb { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; flex: 1; min-width: 0; }
+  .breadcrumb .crumb { padding: 2px 4px; border-radius: 3px; transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease); }
+  .breadcrumb .crumb.static { cursor: default; }
+  .breadcrumb .crumb.static:hover { background: transparent; color: var(--text-secondary); }
+  .breadcrumb .crumb.branch { font: 10px/1 ui-monospace, Menlo, monospace; color: var(--accent); background: var(--accent-soft); padding: 2px 6px; }
+  .breadcrumb .crumb.branch:hover { background: rgba(79,142,247,0.22); cursor: pointer; }
+  .breadcrumb .sep { color: var(--text-tertiary); }
+
+  .main-body { flex: 1; padding: 14px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .main-body .line { height: 7px; border-radius: 2px; background: rgba(255,255,255,0.04); }
+  .main-body .line.w90 { width: 90%; } .main-body .line.w70 { width: 70%; } .main-body .line.w50 { width: 50%; }
+  .main-body .line.w60 { width: 60%; } .main-body .line.w80 { width: 80%; }
+
+  /* 面板分割视觉强调 */
+  .split-seam { width: 1px; background: var(--border-strong); flex-shrink: 0; align-self: stretch; }
+
+  /* 左缘唤回条 */
+  .rail-restore { position: absolute; left: 0; top: 12px; bottom: 12px; width: 16px; z-index: 11; cursor: pointer; }
+  .rail-restore::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--border-strong); transition: background var(--duration-fast) var(--ease), width var(--duration-fast) var(--ease); }
+  .rail-restore:hover::before { background: var(--accent); width: 4px; }
+  .rail-restore .rail-btn { position: absolute; left: 10px; top: 50%; transform: translateY(-50%) translateX(-4px); width: 24px; height: 24px; border-radius: 6px; background: var(--bg-elevated); border: 1px solid var(--border-strong); display: grid; place-items: center; color: var(--text-secondary); opacity: 0; transition: opacity var(--duration-fast) var(--ease), transform var(--duration-fast) var(--ease); box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+  .rail-restore:hover .rail-btn { opacity: 1; transform: translateY(-50%) translateX(0); }
+  .rail-restore .rail-btn::before { content: '▤'; font-size: 13px; }
+
+  /* 唤回过渡态标注 */
+  .mid-frame-marker { position: absolute; top: 8px; right: 8px; background: var(--accent); color: #fff; font: 10px/1 ui-monospace, Menlo, monospace; padding: 3px 7px; border-radius: 3px; z-index: 20; }
+
+  /* 动画曲线示意图 */
+  .curve-grid { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 8px; padding: 18px; }
+  .curve-row { display: grid; grid-template-columns: 100px 1fr 80px; gap: 14px; align-items: center; padding: 8px 0; border-bottom: 1px dashed var(--border); }
+  .curve-row:last-child { border-bottom: none; }
+  .curve-label { font: 11px/1.3 ui-monospace, Menlo, monospace; color: var(--text-secondary); }
+  .curve-label b { color: var(--accent); }
+  .curve-track { position: relative; height: 28px; background: rgba(255,255,255,0.03); border-radius: 4px; overflow: hidden; }
+  .curve-fill { position: absolute; top: 0; bottom: 0; left: 0; background: linear-gradient(90deg, rgba(79,142,247,0.15), rgba(79,142,247,0.4)); border-right: 2px solid var(--accent); }
+  .curve-fill.warn { background: linear-gradient(90deg, rgba(245,165,36,0.15), rgba(245,165,36,0.4)); border-right-color: #f5a524; }
+  .curve-meta { font: 11px/1.3 ui-monospace, Menlo, monospace; color: var(--text-tertiary); text-align: right; }
+  .curve-meta b { color: var(--text-primary); }
+
+  .legend-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+  .legend-card { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  .legend-card h4 { font-size: 13px; font-weight: 600; margin-bottom: 12px; color: var(--text-primary); }
+  .legend-card .lc-sub { font: 11px/1 ui-monospace, Menlo, monospace; color: var(--text-tertiary); margin-bottom: 10px; }
+  .struct-block { background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: 6px; padding: 10px 12px; font: 11.5px/1.55 ui-monospace, Menlo, monospace; color: var(--text-secondary); }
+  .struct-block .k { color: var(--accent); }
+  .struct-block .v { color: var(--text-primary); }
+  .struct-block .c { color: var(--text-tertiary); }
+  .note-list { font-size: 12.5px; color: var(--text-secondary); line-height: 1.75; padding-left: 18px; }
+  .note-list li { margin-bottom: 3px; }
+  .note-list code { font-family: ui-monospace, Menlo, monospace; color: var(--accent); background: rgba(79,142,247,0.08); padding: 1px 5px; border-radius: 3px; font-size: 11.5px; }
+  .note-list b { color: var(--text-primary); }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-rail" viewBox="0 0 16 16"><rect x="2" y="3.5" width="8" height="9" rx="1"/><path d="M11 8h3.2M12.8 6.2L15 8l-2.2 1.8"/></symbol>
+    <symbol id="i-back" viewBox="0 0 16 16"><path d="M10 3.5L5.5 8 10 12.5"/></symbol>
+    <symbol id="i-fwd" viewBox="0 0 16 16"><path d="M6 3.5L10.5 8 6 12.5"/></symbol>
+  </defs>
+</svg>
+
+<div class="page-head">
+  <h1>Sidebar 折叠态深化 · Header 接管 chrome + 面板分割 + 全屏差异</h1>
+  <div class="sub">
+    本稿承接 <code>draft-five-states.html</code> C 卡的 4 态对比，<b>深挖 3 件事</b>：① chrome（traffic-light + 折叠 + ←/→）从全局 chrome 落入<b>第一个 panel header</b> 的触发条件与视觉细节；② 面板分割场景下<b>只有第一个 header 收到影响</b>；③ 全屏态下无 traffic-light 的差异处理。
+  </div>
+  <div class="meta">
+    <span>chrome 落入 <b>第一个 panel header</b></span>
+    <span>面包屑 <b>右移</b></span>
+    <span>面板分割 <b>仅 P1 受影响</b></span>
+    <span>全屏 <b>无 traffic-light</b></span>
+  </div>
+</div>
+
+<div class="callout accent">
+  <b>本稿与 five-states C 卡的关系：</b> C 卡只画了「收起即完全隐藏」的静态截图。本稿<b>不重复那个状态</b>，专攻其<b>未决细节</b>——
+  <ul>
+    <li><b>chrome 去向</b>：当 sidebar 折叠时，原本在 chrome bar 顶部的 [traffic-light + 折叠 + ←/→] 需要<b>重新落位</b>，因为 chrome bar 跟着 sidebar 一起消失</li>
+    <li><b>面板分割</b>：2 个 panel 共存时，chrome 应该落在哪个 header？<b>只 P1</b>（P1 ＝ 第一个 panel）—— 第二个 panel 保留自己的面包屑反映自己的会话上下文</li>
+    <li><b>全屏差异</b>：全屏下 OS 自动隐藏 traffic-light，所以 P1 header 的 chrome 区域<b>只有折叠 + ←/→</b>，traffic-light 位置自然留空</li>
+  </ul>
+</div>
+
+<!-- ========== 画廊：4 态 ========== -->
+<div class="gallery">
+
+  <!-- ===== 卡 A：折叠 + 非全屏 · chrome 落入 P1 header ===== -->
+  <div class="card">
+    <div class="card-cap"><span class="tag tag-a">A</span> 折叠 + 非全屏 · 单一 panel · traffic-light + 折叠/前后落入 <b>P1 header</b> · 面包屑右移</div>
+    <div class="window-mock">
+      <div class="app-shell">
+        <div class="sb hidden"><div class="sb-inner"></div></div>
+        <div class="main-panel">
+          <div class="main-header">
+            <div class="h-tools">
+              <div class="traffic-light">
+                <span class="dot dot-red"></span>
+                <span class="dot dot-yellow"></span>
+                <span class="dot dot-green"></span>
+              </div>
+              <div class="h-nav">
+                <div class="h-btn"><span class="ico">▥</span><span class="tip">收起侧栏 <b>⌘B</b></span></div>
+                <div class="h-btn"><span class="ico">←</span><span class="tip">后退 <b>⌘[</b></span></div>
+                <div class="h-btn"><span class="ico">→</span><span class="tip">前进 <b>⌘]</b></span></div>
+              </div>
+            </div>
+            <span class="breadcrumb"><span class="crumb static">refactor-arch</span><span class="sep">▸</span><span class="crumb static">Shell 层次修正</span><span class="sep">▸</span><span class="crumb branch">main</span></span>
+          </div>
+          <div class="main-body"><div class="line w90"></div><div class="line w70"></div><div class="line w50"></div></div>
+        </div>
+      </div>
+      <div class="rail-restore" title="展开侧栏 ⌘B"><div class="rail-btn"></div></div>
+    </div>
+  </div>
+
+  <!-- ===== 卡 B：折叠 + 全屏 · 无 traffic-light ===== -->
+  <div class="card">
+    <div class="card-cap"><span class="tag tag-b">B</span> 折叠 + 全屏 · 单一 panel · <b>无 traffic-light</b>（OS 隐藏）· 折叠/前后仍在 P1 header</div>
+    <div class="window-mock">
+      <div class="app-shell">
+        <div class="sb hidden"><div class="sb-inner"></div></div>
+        <div class="main-panel">
+          <div class="main-header">
+            <div class="h-tools">
+              <div class="h-nav">
+                <div class="h-btn"><span class="ico">▥</span><span class="tip">收起侧栏 <b>⌘B</b></span></div>
+                <div class="h-btn"><span class="ico">←</span><span class="tip">后退 <b>⌘[</b></span></div>
+                <div class="h-btn"><span class="ico">→</span><span class="tip">前进 <b>⌘]</b></span></div>
+              </div>
+            </div>
+            <span class="breadcrumb"><span class="crumb static">refactor-arch</span><span class="sep">▸</span><span class="crumb static">Shell 层次修正</span><span class="sep">▸</span><span class="crumb branch">main</span></span>
+          </div>
+          <div class="main-body"><div class="line w90"></div><div class="line w70"></div><div class="line w50"></div></div>
+        </div>
+      </div>
+      <div class="rail-restore"><div class="rail-btn"></div></div>
+    </div>
+  </div>
+
+  <!-- ===== 卡 C：折叠 + 面板分割 · 只有 P1 header 受影响 ===== -->
+  <div class="card">
+    <div class="card-cap"><span class="tag tag-c">C</span> 折叠 + 面板分割 · 2 个 panel · <b>只有 P1 header</b> 收到 chrome · P2 header 保持原状</div>
+    <div class="window-mock" style="width: 1080px;">
+      <div class="app-shell split">
+        <div class="sb hidden"><div class="sb-inner"></div></div>
+        <div class="main-panel">
+          <div class="main-header">
+            <div class="h-tools">
+              <div class="traffic-light">
+                <span class="dot dot-red"></span>
+                <span class="dot dot-yellow"></span>
+                <span class="dot dot-green"></span>
+              </div>
+              <div class="h-nav">
+                <div class="h-btn"><span class="ico">▥</span></div>
+                <div class="h-btn"><span class="ico">←</span></div>
+                <div class="h-btn"><span class="ico">→</span></div>
+              </div>
+            </div>
+            <span class="breadcrumb"><span class="crumb static">refactor-arch</span><span class="sep">▸</span><span class="crumb static">编辑器</span><span class="sep">▸</span><span class="crumb branch">main</span></span>
+          </div>
+          <div class="main-body"><div class="line w90"></div><div class="line w70"></div><div class="line w60"></div></div>
+        </div>
+        <div class="main-panel">
+          <div class="main-header">
+            <span class="breadcrumb"><span class="crumb static">refactor-arch</span><span class="sep">▸</span><span class="crumb static">Sidebar IA</span><span class="sep">▸</span><span class="crumb branch">main</span></span>
+          </div>
+          <div class="main-body"><div class="line w80"></div><div class="line w50"></div></div>
+        </div>
+      </div>
+      <div class="rail-restore"><div class="rail-btn"></div></div>
+    </div>
+  </div>
+
+  <!-- ===== 卡 D：唤回过渡中间帧 · t=160ms · 50% ===== -->
+  <div class="card">
+    <div class="card-cap"><span class="tag tag-d">D</span> 唤回过渡中间帧 · t=160ms · sidebar 滑入 50% · P1 header chrome 同步淡入</div>
+    <div class="window-mock">
+      <div class="app-shell">
+        <div class="sb" style="width:100px; opacity:0.5"><div class="sb-inner"><div class="a-logo"><div class="a-mark">x</div>xyz-agent</div><div class="a-placeholder">// 滑入中</div></div></div>
+        <div class="main-panel">
+          <div class="main-header" style="opacity:0.5">
+            <div class="h-tools">
+              <div class="traffic-light">
+                <span class="dot dot-red"></span>
+                <span class="dot dot-yellow"></span>
+                <span class="dot dot-green"></span>
+              </div>
+              <div class="h-nav">
+                <div class="h-btn"><span class="ico">▥</span></div>
+                <div class="h-btn"><span class="ico">←</span></div>
+                <div class="h-btn"><span class="ico">→</span></div>
+              </div>
+            </div>
+            <span class="breadcrumb"><span class="crumb static">refactor-arch</span><span class="sep">▸</span><span class="crumb static">Shell 层次修正</span><span class="sep">▸</span><span class="crumb branch">main</span></span>
+          </div>
+          <div class="main-body"><div class="line w90"></div><div class="line w70"></div></div>
+        </div>
+      </div>
+      <div class="mid-frame-marker">t=160ms · 50%</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ========== 说明区 ========== -->
+<div class="section-title"><span class="num">1</span> 唤回机制三路冗余 · 折叠态下语义重排<span class="hint">header 按钮 / 左缘 / 键盘 · 各司其职不冲突</span></div>
+<div class="legend-grid">
+  <div class="legend-card">
+    <h4>① P1 header 内 h-nav 按钮组 · 显性主入口</h4>
+    <div class="lc-sub">h-nav · 26×26×3 · 2px 间距 · ⌘B / ⌘[ / ⌘]</div>
+    <ul class="note-list">
+      <li><b>位置</b>：P1 header 最左（traffic-light 右侧 10px 间距）—— 折叠后它是用户<b>第一眼看到的 nav 入口</b></li>
+      <li><b>视觉</b>：三按钮等宽等高，<b>读作一组</b>，<b>位置最左</b>符合视觉起点</li>
+      <li><b>状态同步</b>：展开后此按钮变成「收起」图标（<code>▥</code>），与 sidebar 内「收起」nav 项互为镜像</li>
+    </ul>
+  </div>
+  <div class="legend-card">
+    <h4>② 左缘唤回条 · 隐性发现入口</h4>
+    <div class="lc-sub">rail-restore · 3px hairline · hover 加宽 + 浮出按钮</div>
+    <ul class="note-list">
+      <li><b>位置</b>：window-mock 最左缘，top:12px bottom:12px，纵向全长<b>覆盖原 sidebar 区域</b>—— 鼠标移到原 sidebar 位置即触发</li>
+      <li><b>静默态</b>：仅 3px hairline（<code>--border-strong</code>），不抢眼，<b>存在但不被注意</b></li>
+      <li><b>hover 态</b>：hairline 加宽到 4px 并变 <code>--accent</code>；右侧 12px 处浮出 24×24 圆形按钮</li>
+      <li><b>折叠态下的相对地位</b>：chrome 已在 P1 header，左缘条变成<b>次级兜底</b>—— 不是主路径，是给习惯用原 sidebar 位的用户的兜底</li>
+    </ul>
+  </div>
+  <div class="legend-card">
+    <h4>③ ⌘B 键盘 · 高速 / 离手路径</h4>
+    <div class="lc-sub">toggle · 无鼠标 · 与 ←/→ 一致节奏</div>
+    <ul class="note-list">
+      <li><b>行为</b>：toggle 双向（收起 ↔ 展开），无方向</li>
+      <li><b>可见性</b>：P1 header h-nav 第一个按钮 hover 显示 <code>⌘B</code> tooltip —— <b>新用户靠 tooltip 发现</b>，老用户直接按</li>
+      <li><b>win/linux</b>：用 <code>Ctrl+B</code>，tooltip 同步替换</li>
+      <li><b>与分支 popover 冲突</b>：⌘B 也用作分支 popover 触发 —— 与 sidebar 收起 toggle 同键，<b>优先级规约见 spec §二</b></li>
+    </ul>
+  </div>
+</div>
+
+<div class="section-title"><span class="num">2</span> Header 接管 · 触发条件与视觉细节<span class="hint">折叠 + 非全屏 · 第一个 panel header</span></div>
+<div class="callout accent">
+  <b>触发条件</b>：<code>sidebar 折叠 &amp;&amp; !全屏</code> —— 两条件都满足时，chrome 落入 P1 header。
+</div>
+<div class="struct-block" style="margin: 12px 0;">
+  <span class="c">// P1 header 内部布局（折叠 + 非全屏）</span><br>
+  <span class="k">.main-header</span> { display: flex; align-items: center; gap: 6px; height: 42px; padding: 0 12px; }<br>
+  <span class="c">├─</span> <span class="k">.h-tools</span> { display: flex; gap: 10px; flex-shrink: 0; }<br>
+  <span class="c">│　├─</span> <span class="k">.traffic-light</span> { <span class="v">3 dots · 12px · 8px gap</span> }  <span class="c">// 跨平台由应用自绘</span><br>
+  <span class="c">│　└─</span> <span class="k">.h-nav</span> { display: flex; gap: 2px; }<br>
+  <span class="c">│　　　├─</span> <span class="v">h-btn: 收起侧栏 (▥) · ⌘B</span><br>
+  <span class="c">│　　　├─</span> <span class="v">h-btn: 后退 (←) · ⌘[</span><br>
+  <span class="c">│　　　└─</span> <span class="v">h-btn: 前进 (→) · ⌘]</span><br>
+  <span class="c">└─</span> <span class="k">.breadcrumb</span> { flex: 1; }  <span class="c">// 原内容右移，flex 自动占满剩余</span>
+</div>
+<ul class="note-list">
+  <li><b>总宽度估算</b>：traffic-light (~52px) + 10px + h-nav (~82px) + 6px gap + breadcrumb = <b>~150px chrome 区</b>。若 breadcrumb 内容超长会自动 truncate（白空间省略号）</li>
+  <li><b>高度由谁决定</b>：42px header 由 h-nav 26px 按钮决定（加 8px 上下 padding）。traffic-light 12px 比 nav 按钮小，<b>视觉重心仍在按钮组</b></li>
+  <li><b>为什么 traffic-light 和 h-nav 之间 10px gap</b>：traffic-light 是 OS 控件，h-nav 是应用控件 —— 10px 间隙明确分组，避免被读作「一组按钮」</li>
+  <li><b>面包屑右移的实现</b>：不需要手动 padding-left —— flex:1 自动让 breadcrumb 占满剩余空间，左对齐到 h-tools 之后</li>
+  <li><b>跨平台</b>：win/linux 的「最小化 / 最大化 / 关闭」三按钮也由应用自绘（mimic mac），同样 12px + 8px gap；win 上 icon 风格不同（□ ✕ 等）但布局一致</li>
+  <li><b>win/linux 顺序</b>：右侧三按钮的顺序在 win/linux 是 <code>_ □ ✕</code>，与 mac 的 <code>● ● ●</code>（左侧）镜像；本稿按 mac 顺序画，win 版镜像即可</li>
+</ul>
+
+<div class="section-title"><span class="num">3</span> 面板分割 · 只有 P1 header 受影响<span class="hint">P2 保持原状 · 不复制 chrome</span></div>
+<div class="callout">
+  <ul>
+    <li><b>场景</b>：sidebar 折叠 + 2 个 panel 共存（panel split，详见 <code>workspace/spec.md</code>）</li>
+    <li><b>P1 header</b>：<b>收到 chrome</b> —— traffic-light + 折叠 + ←/→ + breadcrumb1（P1 自己的面包屑反映自己的会话上下文）</li>
+    <li><b>P2 header</b>：<b>保持原状</b> —— 只有 breadcrumb2，不重复 chrome</li>
+    <li><b>为什么不是两个 header 都有 chrome</b>：
+      <ul style="margin-top: 4px;">
+        <li><b>traffic-light 是 window-level</b>（关/最小化/最大化的是整个 window）—— 它属于<b>一个地方</b>，放在 P1 是「视觉起点 + 用户第一眼」的位置</li>
+        <li><b>折叠 / ←/→ 是 sidebar / window-level</b>，不是 per-panel —— 复制到 P2 会<b>冗余且误导</b>（用户不知道按哪个）</li>
+        <li><b>每个 panel 自己的 breadcrumb</b>是 per-panel 信息（反映 P1 / P2 各自的会话上下文），所以两个 panel 都有且应该都有</li>
+      </ul>
+    </li>
+    <li><b>视觉不对称</b>：P1 header 比 P2 header 宽（左侧多了 chrome 区域）—— 这是<b>预期且必要</b>的不对称，反映 chrome 的归属层级（window > panel）</li>
+    <li><b>3 个 panel 怎么办</b>：仍只 P1 有 chrome，P2 / P3 都没有 —— chrome 是 window 的属性，不是 panel 列表的属性</li>
+  </ul>
+</div>
+
+<div class="section-title"><span class="num">4</span> 全屏态差异 · 无 traffic-light<span class="hint">OS 自动隐藏 · h-nav 仍在</span></div>
+<div class="callout">
+  <ul>
+    <li><b>触发</b>：sidebar 折叠 + 全屏（mac：<code>⌃⌘F</code> / win：<code>F11</code>）</li>
+    <li><b>traffic-light 行为</b>：mac 自动隐藏（OS 行为，不是应用决定）；win/linux 上若应用自绘，也应隐藏（避免和 OS 任务栏冲突）</li>
+    <li><b>header 差异</b>：P1 header 的 <code>.h-tools</code> 区<b>只包含 .h-nav</b>（折叠 + ←/→），无 .traffic-light</li>
+    <li><b>视觉</b>：P1 header 左侧「少了」50px chrome 区，breadcrumb 整体左移 50px —— 视觉上是「更轻」的 header</li>
+    <li><b>布局稳定性</b>：header 高度仍 42px，flex 布局不变 —— breadcrumb 自然延伸，<b>无 jank</b></li>
+    <li><b>不需要占位符</b>：traffic-light 位置不留空白分隔（不是 toggle 显隐的 chip，是 OS 隐藏）—— 直接让 h-nav 紧贴左边</li>
+  </ul>
+</div>
+
+<div class="section-title"><span class="num">5</span> 动画时序 · 折叠 / 展开 / 唤回 / 全屏切换<span class="hint">320ms · --duration-slow · 多轨同步</span></div>
+<div class="curve-grid">
+  <div class="curve-row">
+    <span class="curve-label">sidebar <b>width</b></span>
+    <div class="curve-track"><div class="curve-fill" style="width: 100%"></div></div>
+    <span class="curve-meta"><b>0 ↔ 200px</b><br>320ms · ease</span>
+  </div>
+  <div class="curve-row">
+    <span class="curve-label">sidebar <b>opacity</b></span>
+    <div class="curve-track"><div class="curve-fill" style="width: 100%"></div></div>
+    <span class="curve-meta"><b>0 ↔ 1</b><br>320ms · ease（与 width 同步，避免「先有空白再填内容」）</span>
+  </div>
+  <div class="curve-row">
+    <span class="curve-label">main-panel <b>flex</b></span>
+    <div class="curve-track"><div class="curve-fill warn" style="width: 100%"></div></div>
+    <span class="curve-meta"><b>flex:1 自适应</b><br>无显式动画 · 由 gap 与 sidebar width 推导</span>
+  </div>
+  <div class="curve-row">
+    <span class="curve-label">P1 header <b>chrome</b></span>
+    <div class="curve-track"><div class="curve-fill" style="width: 0%"></div></div>
+    <span class="curve-meta"><b>已在 header</b><br>无位置动画 · 由 sidebar width 推导</span>
+  </div>
+  <div class="curve-row">
+    <span class="curve-label">全局 <b>traffic-light</b></span>
+    <div class="curve-track"><div class="curve-fill" style="width: 0%"></div></div>
+    <span class="curve-meta"><b>无（折叠后即在 header）</b><br>本稿场景不涉及</span>
+  </div>
+  <div class="curve-row">
+    <span class="curve-label">全屏 <b>enter/exit</b></span>
+    <div class="curve-track"><div class="curve-fill warn" style="width: 100%"></div></div>
+    <span class="curve-meta"><b>320ms</b><br>traffic-light opacity 0↔1 + breadcrumb 重排</span>
+  </div>
+</div>
+<ul class="note-list" style="margin-top:14px">
+  <li><b>折叠 / 展开的本质</b>：本稿主场景（toggle sidebar）只动 sidebar 自己的 <code>width</code> + <code>opacity</code>，320ms ease；main-panel 用 flex 自然收放 —— <b>「主变更」与「派生变更」分离</b></li>
+  <li><b>为什么 chrome 无位置动画</b>：chrome 不在 sidebar 里（它在 main-header 里），sidebar 收放时 chrome 跟着 main-panel 一起被 flex 推到右边，无显式动画需求</li>
+  <li><b>全屏切换是另一组动画</b>：traffic-light 元素被 remove / 重新挂载（不是 fade out，mac OS 行为），breadcrumb 立即重排（无 jank 因为 flex 自然）；win/linux 上若应用自绘，traffic-light opacity 0/1 + 320ms 同步</li>
+  <li><b>唤回过渡（card D）</b>：t=160ms 时 sidebar 50% 滑入 + main-header chrome 50% 不透明度 —— header chrome 跟随 main-panel 的不透明度，无独立动画</li>
+</ul>
+
+<div class="section-title"><span class="num">6</span> 状态保留 · 折叠 / 唤回不丢上下文<span class="hint">tab · active session · scroll · 视图节点 · chrome 状态</span></div>
+<ul class="note-list">
+  <li><b>tab 状态</b>：session list ↔ file view 切换记入 Sidebar 容器状态；折叠不影响，唤回后精确恢复</li>
+  <li><b>active session</b>：折叠时 active 项冻结；唤回后 session list 仍定位到该项（包括 scroll 位置）</li>
+  <li><b>main-panel 内容</b>：<b>折叠 ≠ 清屏</b>，main-panel 一直显示当前 session 的工作区</li>
+  <li><b>←/→ 导航栈</b>：与 sidebar 状态正交 —— 折叠时栈不丢，唤回后仍可 ←/→ 回退</li>
+  <li><b>chrome 状态</b>：折叠后 chrome 在 P1 header，<b>始终可见</b>（无 toggle 显隐）—— 不需要「记忆」chrome 状态</li>
+  <li><b>滚动位置</b>：sidebar 内的 session list / file tree 滚动位置不重置；main-panel 内的消息流 / composer 滚动位置不重置</li>
+</ul>
+
+<div class="callout">
+  <b>待验证 / 后续细化：</b>
+  <ul>
+    <li><b>左缘唤回条</b>：chrome 已在 P1 header 后，左缘条还是否必要？当前保留为「次级兜底」—— 是否降级为「右键菜单里藏」以减少视觉噪声？</li>
+    <li><b>P1/P2 header 视觉不对称</b>：P1 header 比 P2 header 宽（左侧 chrome 区域）—— 是否需要用一条 1px 分隔线在 panel 之间明确「这是两个独立 panel」？当前 panel border 已经隐含了</li>
+    <li><b>全屏下 traffic-light 位置</b>：mac OS 自动隐藏，但 win/linux 上若自绘需要明确「全屏时不绘制」—— 应用代码要带 <code>if (!fullscreen) renderTrafficLight()</code> 守卫</li>
+    <li><b>3+ panel 的 P1 chrome 归属</b>：当前设计是「P1 有，P2/P3 没有」。但 P1 的折叠按钮折叠的是 sidebar，不是 panel —— 语义上 P1 的 chrome 是 window-level，不是 P1 专属。这个「为什么是 P1 不是 P2」的解释需要写进 spec</li>
+    <li><b>win/linux tooltip</b>：当前是「展开侧栏」+「Ctrl+B」；是否需要单独加平台标注（mac icon ⌘ / win icon Ctrl）？</li>
+    <li><b>←/→ 导航栈深度上限</b>：5 / 10 / 无限？溢出策略（最旧淘汰 vs 禁用 ←）？本稿未决</li>
+  </ul>
+</div>
+
+</body>
+</html>

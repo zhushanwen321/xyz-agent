@@ -1,0 +1,831 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Detail Pane · 钻取详情（设计探索 v2）</title>
+<style>
+  :root {
+    /* zcode 冷蓝 token —— 对齐 dual-panel.html / design-tokens.md */
+    --bg-base:#0d0d0f; --bg-panel:#151519; --bg-elevated:#1c1c20; --bg-hover:#232328; --bg-input:#101013;
+    --accent:#4f8ef7; --accent-hover:#6ba3ff; --accent-soft:rgba(79,142,247,0.14);
+    --accent-ring:rgba(79,142,247,0.30); --accent-glow:rgba(79,142,247,0.25);
+    --fg:#f0f0f5; --text-primary:#e8e8ea; --text-secondary:#8a8a95; --text-tertiary:#5a5a65;
+    --border:rgba(255,255,255,0.07); --border-strong:rgba(255,255,255,0.14);
+    --success:#34d399; --warning:#fbbf24; --danger:#f87171; --info:#38bdf8; --reasoning:#a78bfa;
+    --diff-add:rgba(52,211,153,0.16); --diff-add-fg:#34d399;
+    --diff-del:rgba(248,113,113,0.14); --diff-del-fg:#f87171;
+    --radius-sm:3px; --radius:8px; --radius-lg:12px;
+    --shadow-panel:0 30px 80px rgba(0,0,0,0.5);
+    --shadow-float:0 8px 24px rgba(0,0,0,0.4), 0 0 0 1px var(--border-strong);
+    --ease:cubic-bezier(0.4,0,0.2,1); --ease-out:cubic-bezier(0.16,1,0.3,1);
+    --dur:220ms; --dur-slow:320ms;
+    --font-sans:Inter,'SF Pro Display','PingFang SC',system-ui,-apple-system,sans-serif;
+    --font-mono:'JetBrains Mono','IBM Plex Mono',ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:#060607;color:var(--text-primary);
+    font:13px/1.55 var(--font-sans);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center;padding:16px}
+
+  /* ===== window-mock（桌面窗口感，非产品） =====
+     布局：aside-region | main-panel | explore-region（explore 为独立列，不再浮层） */
+  .window-mock{width:min(1440px,100%);height:min(880px,calc(100vh - 32px));
+    background:var(--bg-base);border-radius:10px;box-shadow:var(--shadow-panel);overflow:hidden;position:relative;display:flex}
+  .traffic-light{position:absolute;top:20px;left:20px;display:flex;gap:8px;z-index:50}
+  .traffic-light span{width:12px;height:12px;border-radius:50%}
+  .tl-r{background:#ff5f57}.tl-y{background:#febc2e}.tl-g{background:#28c840}
+  .aside-region{width:56px;flex-shrink:0;padding-top:52px;display:flex;flex-direction:column;align-items:center;gap:6px}
+  .aside-icon{width:36px;height:36px;border-radius:var(--radius);display:grid;place-items:center;
+    color:var(--text-tertiary);cursor:pointer;transition:background var(--dur) var(--ease),color var(--dur) var(--ease)}
+  .aside-icon:hover{background:var(--bg-hover);color:var(--text-secondary)}
+  .aside-icon.active{background:var(--accent-soft);color:var(--accent)}
+  .aside-icon svg{width:18px;height:18px}
+  .aside-spacer{flex:1}
+
+  .main-panel{flex:1;min-width:0;margin:12px 8px 12px 12px;background:var(--bg-panel);
+    border:1px solid var(--border);border-radius:var(--radius-lg);display:flex;flex-direction:column;overflow:hidden;position:relative}
+  .h-btn{width:28px;height:28px;border-radius:var(--radius-sm);border:1px solid transparent;background:transparent;
+    color:var(--text-secondary);cursor:pointer;display:grid;place-items:center;transition:all var(--dur) var(--ease)}
+  .h-btn:hover{background:var(--bg-hover);color:var(--text-primary)}
+  .h-btn svg{width:15px;height:15px}
+
+  /* ===== workspace-body（单/双 panel + drawer 共用定位容器） =====
+     drawer 不再挂 panel 内，而是 workspace-body 的 absolute 子节点：
+       width:50%，根据关联方向贴左/贴右，覆盖对侧 panel。
+     关联 panel 永远保持完整可见（反向联动源块可整块看到）。 */
+  .workspace-body{flex:1;min-height:0;position:relative;display:flex;gap:1px;background:var(--border)}
+
+  /* Panel 激活标识——四层叠加（对齐 dual-panel） */
+  .panel{flex:1;min-width:0;background:var(--bg-panel);display:flex;flex-direction:column;
+    position:relative;overflow:hidden;opacity:0.5;
+    transition:background var(--dur) var(--ease),opacity var(--dur) var(--ease),box-shadow var(--dur) var(--ease),flex var(--dur) var(--ease)}
+  .panel:hover{opacity:0.78}
+  .panel.active{background:var(--bg-elevated);opacity:1;box-shadow:inset 0 0 0 1px var(--accent-ring)}
+  .panel::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;background:transparent;
+    transition:background var(--dur) var(--ease);z-index:6}
+  .panel.active::before{background:var(--accent)}
+  /* 单 session 且 drawer 打开时，关联 panel 收窄到 50%，留 50% 给 drawer 并排 */
+  .panel.half{flex:0 0 calc(50% - 1px)}
+
+  .panel-header{flex-shrink:0;height:38px;display:flex;align-items:center;gap:8px;
+    padding:0 14px 0 16px;border-bottom:1px solid var(--border)}
+  .panel-header .sess-name{font:12.5px/1 var(--font-sans);font-weight:600;color:var(--text-primary)}
+  .panel:not(.active) .sess-name{color:var(--text-secondary);font-weight:500}
+  .status-dot{width:7px;height:7px;border-radius:50%;background:var(--text-tertiary);flex-shrink:0}
+  .status-dot.running{background:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);animation:pulse 1.8s var(--ease) infinite}
+  .status-dot.idle{background:var(--text-tertiary)}
+  .status-dot.done{background:var(--success)}
+  @keyframes pulse{0%,100%{box-shadow:0 0 0 3px var(--accent-soft)}50%{box-shadow:0 0 0 6px rgba(79,142,247,0.06)}}
+  .panel-header .ph-close{margin-left:auto}
+  .panel-header .ph-close:hover{color:var(--danger);background:rgba(248,113,113,0.12)}
+
+  /* ---- message-stream（对齐 message-types 块样式） ---- */
+  .conversation{flex:1;min-height:0;overflow-y:auto;padding:16px 16px 8px;
+    display:flex;flex-direction:column;gap:12px}
+  .conversation::-webkit-scrollbar{width:8px}
+  .conversation::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:4px}
+  .conversation::-webkit-scrollbar-track{background:transparent}
+
+  .blk{background:var(--bg-panel);border:1px solid var(--border);border-radius:var(--radius);
+    padding:10px 12px;font-size:13px;position:relative;cursor:default}
+  .blk .who{font:600 11px/1 var(--font-mono);letter-spacing:0.04em;margin-bottom:6px;display:flex;align-items:center;gap:6px}
+  .blk .body{color:var(--fg);font-size:13px;line-height:1.55}
+  .dot{width:7px;height:7px;border-radius:50%;display:inline-block}
+
+  .blk-user{border-left:2px solid var(--text-tertiary);align-self:flex-end;max-width:80%}
+  .blk-user .who{color:var(--text-tertiary);justify-content:flex-end}
+  .blk-user .body{color:var(--text-secondary)}
+
+  .collapse{background:var(--bg-hover);border:1px dashed var(--border-strong);border-radius:var(--radius);
+    padding:8px 11px;display:flex;align-items:center;gap:10px;font-size:12px;color:var(--text-secondary);cursor:pointer}
+  .collapse:hover{border-color:var(--accent);color:var(--fg)}
+  .collapse .chev{color:var(--text-tertiary)}
+  .collapse .pills{display:flex;gap:6px;margin-left:auto}
+  .pill{font:500 10px/1 var(--font-mono);padding:3px 7px;border-radius:999px;letter-spacing:0.02em}
+  .pill-reasoning{color:var(--reasoning);background:rgba(167,139,250,0.12)}
+  .pill-tool{color:var(--info);background:rgba(56,189,248,0.12)}
+
+  .blk-summary{background:var(--accent-soft);border:1px solid rgba(79,142,247,0.3)}
+  .blk-summary .who{color:var(--accent)}
+  .blk-summary .who .dot{background:var(--accent);box-shadow:0 0 0 3px rgba(79,142,247,0.2)}
+  .blk-summary .next{margin-top:6px;font-size:12px;color:var(--text-secondary)}
+
+  /* ===== file-changes 块（★ ChangeSet Detail 触发源） ===== */
+  .blk-changes{background:var(--bg-elevated);border:1px solid var(--border-strong);cursor:pointer;
+    transition:border-color var(--dur) var(--ease),box-shadow var(--dur) var(--ease)}
+  .blk-changes .who{color:var(--success)}
+  .blk-changes .who .dot{background:var(--success)}
+  .blk-changes .who .hint{margin-left:auto;font:500 10px/1 var(--font-mono);color:var(--text-tertiary);
+    letter-spacing:0.04em;display:inline-flex;align-items:center;gap:4px}
+  .blk-changes:hover{border-color:var(--accent)}
+  .blk-changes:hover .who .hint{color:var(--accent)}
+  .blk-changes .who .hint svg{width:11px;height:11px}
+  /* 触发态高亮：Card-Active inset ring + glow（design-system 原语） */
+  .blk.source-active{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent-ring),0 0 0 3px var(--accent-glow)}
+  .blk.source-active .who .hint{color:var(--accent)}
+  .frow{display:flex;align-items:center;gap:8px;padding:5px 0;font:12px/1.4 var(--font-mono);border-bottom:1px dashed var(--border)}
+  .frow:last-child{border-bottom:0}
+  .frow .path{color:var(--fg);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .frow .stat{color:var(--text-tertiary);font-size:11px}
+  .frow .stat .add{color:var(--success)}.frow .stat .del{color:var(--danger)}
+  .badge{font-size:9px;padding:2px 5px;border-radius:3px;letter-spacing:0.04em;font-weight:600}
+  .b-add{color:var(--success);background:rgba(52,211,153,0.14)}
+  .b-mod{color:var(--warning);background:rgba(251,191,36,0.14)}
+  .b-del{color:var(--danger);background:rgba(248,113,113,0.14)}
+
+  /* ===== subagent 块（★ SubAgent Detail 触发源） ===== */
+  .blk-subagent{background:var(--bg-elevated);border:1px solid var(--border-strong);cursor:pointer;
+    transition:border-color var(--dur) var(--ease),box-shadow var(--dur) var(--ease)}
+  .blk-subagent .who{color:var(--reasoning)}
+  .blk-subagent .who .dot{background:var(--reasoning)}
+  .blk-subagent .who .hint{margin-left:auto;font:500 10px/1 var(--font-mono);color:var(--text-tertiary);
+    letter-spacing:0.04em;display:inline-flex;align-items:center;gap:4px}
+  .blk-subagent .who .hint svg{width:11px;height:11px}
+  .blk-subagent:hover{border-color:var(--accent)}
+  .blk-subagent:hover .who .hint{color:var(--accent)}
+  .sa-mini{display:flex;align-items:center;gap:10px;padding:4px 0}
+  .sa-mini .sa-task{flex:1;font-size:12.5px;color:var(--fg)}
+  .sa-mini .sa-task small{display:block;font:11px/1.4 var(--font-mono);color:var(--text-tertiary);margin-top:3px}
+  .sa-mini .sa-prog{display:flex;align-items:center;gap:6px;font:11px/1 var(--font-mono);color:var(--text-secondary)}
+  .sa-mini .sa-bar{width:54px;height:4px;border-radius:2px;background:rgba(255,255,255,0.08);overflow:hidden}
+  .sa-mini .sa-bar i{display:block;height:100%;background:var(--reasoning);border-radius:2px}
+
+  /* ---- composer / git-zone（简化，对齐 dual-panel） ---- */
+  .composer{flex-shrink:0;padding:8px 14px 0}
+  .composer-box{background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-lg);padding:9px 12px;
+    font:13px/1.55 var(--font-sans);color:var(--text-tertiary)}
+  .git-zone{flex-shrink:0;margin:8px 14px 12px;height:36px;background:var(--bg-input);border:1px solid var(--border);
+    border-radius:var(--radius);display:flex;align-items:center;gap:10px;padding:0 10px}
+  .gz-branch{font:11px/1 var(--font-mono);color:var(--accent);display:inline-flex;align-items:center;gap:5px}
+  .gz-branch svg{width:13px;height:13px}
+  .gz-stats{font:11px/1 var(--font-mono);color:var(--text-secondary)}
+  .gz-stats .add{color:var(--success)}.gz-stats .del{color:var(--danger)}
+  .gz-btn{margin-left:auto;border:1px solid var(--border-strong);background:transparent;color:var(--text-secondary);
+    cursor:pointer;font:11px/1 var(--font-sans);padding:5px 9px;border-radius:var(--radius-sm);display:inline-flex;align-items:center;gap:5px}
+  .gz-btn svg{width:12px;height:12px}
+  .gz-btn:hover{background:var(--bg-hover);color:var(--text-primary)}
+
+  /* ============================================================
+     detail-drawer —— 本稿主角（v2 形态）
+     裁决（推翻 v1 右浮 65%）：
+       Detail Pane 与关联 panel 各占一半，绝不重叠。
+       单 session：关联 panel 收窄到 50%，drawer 占右半并排。
+       双 session：关联 panel 保持 50%，drawer 覆盖对侧 standby panel（盖在其位置上）。
+     定位：workspace-body 的 absolute 子节点，width:50%，
+           关联左 panel → drawer 贴右；关联右 panel → drawer 贴左。
+     反向联动：关联 panel 不被遮挡，源块整块可见，高亮更清晰。
+     ============================================================ */
+  .detail-drawer{position:absolute;top:0;bottom:0;width:50%;
+    background:var(--bg-elevated);z-index:40;display:flex;flex-direction:column;
+    box-shadow:var(--shadow-float);
+    transition:transform var(--dur-slow) var(--ease-out)}
+  .detail-drawer.dir-right{right:0;left:auto;border-left:1px solid var(--border-strong)}
+  .detail-drawer.dir-right.closed{transform:translateX(100%)}
+  .detail-drawer.dir-left{left:0;right:auto;border-right:1px solid var(--border-strong)}
+  .detail-drawer.dir-left.closed{transform:translateX(-100%)}
+
+  /* ===== 统一 header 多 tab =====
+     tab = 文件名（每个含 Diff/预览 子视图）+ 子Agent。
+     点文件 tab → 显示该文件 diff；点子Agent tab → 显示执行情况。 */
+  .dd-head{flex-shrink:0;display:flex;flex-direction:column;border-bottom:1px solid var(--border)}
+  .dd-head-row{display:flex;align-items:center;gap:10px;padding:0 8px 0 14px;height:40px}
+  .dd-head .dd-title{font:600 12.5px/1 var(--font-sans);color:var(--text-primary);white-space:nowrap}
+  .dd-head .dd-meta{font:11px/1 var(--font-mono);color:var(--text-tertiary);letter-spacing:0.02em;white-space:nowrap}
+  .dd-head .dd-close{margin-left:auto}
+  .dd-tabs{flex-shrink:0;display:flex;align-items:stretch;padding:0 6px;gap:2px;overflow-x:auto}
+  .dd-tabs::-webkit-scrollbar{height:0}
+  .dd-tab{flex-shrink:0;font:11.5px/1 var(--font-mono);color:var(--text-secondary);padding:7px 10px;
+    cursor:pointer;border:0;background:transparent;border-radius:var(--radius-sm) var(--radius-sm) 0 0;
+    border-bottom:2px solid transparent;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;
+    transition:color var(--dur) var(--ease),background var(--dur) var(--ease),border-color var(--dur) var(--ease)}
+  .dd-tab:hover{color:var(--text-primary);background:var(--bg-hover)}
+  .dd-tab.active{color:var(--accent);border-bottom-color:var(--accent);background:var(--accent-soft)}
+  .dd-tab .tab-mk{width:6px;height:6px;border-radius:50%;background:currentColor;opacity:0.8}
+  .dd-tab .tab-mk.file{background:var(--success);opacity:1}
+  .dd-tab .tab-mk.sub{background:var(--reasoning);opacity:1}
+  .dd-tab .add{color:var(--success);font-size:10px}
+  .dd-tab .del{color:var(--danger);font-size:10px}
+  .dd-tab-sep{flex-shrink:0;width:1px;background:var(--border);margin:6px 4px;align-self:center}
+
+  /* Diff / 预览 子视图切换（文件 tab 内） */
+  .view-toggle{display:inline-flex;align-items:center;gap:2px;background:var(--bg-input);
+    border:1px solid var(--border);border-radius:var(--radius-sm);padding:2px}
+  .view-toggle button{border:0;background:transparent;cursor:pointer;font:10.5px/1 var(--font-sans);
+    color:var(--text-tertiary);padding:4px 8px;border-radius:2px;transition:all var(--dur) var(--ease)}
+  .view-toggle button.on{background:var(--bg-hover);color:var(--text-primary)}
+  .view-toggle button:not(.on):hover{color:var(--text-secondary)}
+
+  .dd-body{flex:1;min-height:0;overflow-y:auto}
+  .dd-body::-webkit-scrollbar{width:8px}
+  .dd-body::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:4px}
+  .dd-pane{display:none;padding:14px 16px 16px;flex-direction:column;gap:12px}
+  .dd-pane.active{display:flex}
+
+  /* ===== ChangeSet Detail pane（当前文件 diff） ===== */
+
+  .cs-diff{background:var(--bg-panel);border:1px solid var(--border);border-radius:var(--radius);
+    font:12px/1.6 var(--font-mono);overflow:hidden}
+  .cs-diff .cs-d-path{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);
+    font-size:11.5px;color:var(--text-secondary)}
+  .cs-diff .cs-d-path .badge{font-size:9px}
+  .cs-diff .cs-d-path .name{color:var(--fg)}
+  .cs-diff .cs-d-path .add{margin-left:auto;color:var(--success);font-size:11px}
+  .cs-diff .cs-d-path .del{color:var(--danger);font-size:11px}
+  .cs-diff-body{max-height:300px;overflow-y:auto}
+  .cs-diff-body::-webkit-scrollbar{width:8px}
+  .cs-diff-body::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:4px}
+  .dline{display:flex;padding:0 12px}
+  .dline .ln{width:30px;flex-shrink:0;color:var(--text-tertiary);text-align:right;padding-right:10px;user-select:none}
+  .dline.add{background:var(--diff-add)}.dline.add .ln{color:var(--diff-add-fg)}.dline.add .code{color:var(--diff-add-fg)}
+  .dline.del{background:var(--diff-del)}.dline.del .ln{color:var(--diff-del-fg)}.dline.del .code{color:var(--diff-del-fg)}
+  .dline .code{color:var(--text-primary);white-space:pre}
+
+  /* 预览视图占位（demo，未实现） */
+  .preview-stub{background:var(--bg-panel);border:1px solid var(--border);border-radius:var(--radius);
+    padding:32px 16px;display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center}
+  .preview-stub .ic{width:40px;height:40px;border-radius:var(--radius);background:var(--bg-input);
+    display:grid;place-items:center;color:var(--text-tertiary)}
+  .preview-stub .ic svg{width:20px;height:20px}
+  .preview-stub .t{font:600 12px/1 var(--font-sans);color:var(--text-secondary)}
+  .preview-stub .d{font:11.5px/1.5 var(--font-sans);color:var(--text-tertiary);max-width:280px}
+
+  .cs-foot{display:flex;gap:8px}
+  .cs-btn{flex:1;padding:8px 0;border-radius:var(--radius);font:12px/1 var(--font-sans);font-weight:500;cursor:pointer;
+    border:1px solid var(--border-strong);background:transparent;color:var(--text-secondary);transition:all var(--dur) var(--ease);
+    display:inline-flex;align-items:center;justify-content:center;gap:6px}
+  .cs-btn svg{width:13px;height:13px}
+  .cs-btn.ghost:hover{background:var(--bg-hover);color:var(--text-primary)}
+  .cs-btn.danger:hover{border-color:var(--danger);color:var(--danger)}
+
+  /* ===== SubAgent Detail pane ===== */
+  .sa-hero{background:var(--bg-panel);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px}
+  .sa-hero .sa-h-row{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+  .sa-hero .sa-h-tag{font:600 10px/1 var(--font-mono);color:var(--reasoning);background:rgba(167,139,250,0.14);
+    padding:4px 7px;border-radius:var(--radius-sm);letter-spacing:0.05em}
+  .sa-hero .sa-h-name{font:12.5px/1 var(--font-sans);color:var(--text-primary);font-weight:600}
+  .sa-hero .sa-h-status{margin-left:auto;font:11px/1 var(--font-mono);color:var(--info);display:inline-flex;align-items:center;gap:5px}
+  .sa-hero .sa-h-status .dot{background:var(--info);box-shadow:0 0 0 3px rgba(56,189,248,0.18);animation:pulse 1.8s var(--ease) infinite}
+  .sa-hero .sa-h-desc{font-size:12.5px;color:var(--text-secondary);line-height:1.55}
+  .sa-hero .sa-h-meta{display:flex;gap:14px;margin-top:10px;font:11px/1 var(--font-mono);color:var(--text-tertiary)}
+  .sa-hero .sa-h-meta b{color:var(--text-secondary);font-weight:500}
+
+  .sa-section{display:flex;flex-direction:column;gap:6px}
+  .sa-section .sa-s-title{font:600 10px/1 var(--font-mono);color:var(--text-tertiary);letter-spacing:0.08em;text-transform:uppercase}
+  .sa-steps{background:var(--bg-panel);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+  .sa-step{display:flex;align-items:center;gap:10px;padding:8px 12px;font:12px/1.4 var(--font-sans);color:var(--text-secondary);border-bottom:1px solid var(--border)}
+  .sa-step:last-child{border-bottom:0}
+  .sa-step .mk{width:14px;height:14px;border-radius:50%;flex-shrink:0;display:grid;place-items:center;font-size:9px;font-weight:700}
+  .sa-step.done{color:var(--text-tertiary)}.sa-step.done .mk{background:var(--success);color:#06251a}
+  .sa-step.done .lbl{text-decoration:line-through;text-decoration-color:var(--text-tertiary)}
+  .sa-step.active{color:var(--text-primary)}.sa-step.active .mk{background:var(--reasoning);color:#fff}
+  .sa-step.pending .mk{border:1px solid var(--border-strong)}
+  .sa-step .pct{margin-left:auto;font:10px/1 var(--font-mono);color:var(--text-tertiary)}
+
+  .sa-output{background:var(--bg-panel);border:1px solid var(--border);border-radius:var(--radius);padding:4px 12px}
+  .sa-out-row{display:flex;align-items:center;gap:8px;padding:6px 0;font:12px/1.4 var(--font-mono);border-bottom:1px dashed var(--border)}
+  .sa-out-row:last-child{border-bottom:0}
+  .sa-out-row .path{color:var(--fg);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .sa-out-row .stat .add{color:var(--success)}.sa-out-row .stat .del{color:var(--danger)}
+
+  .sa-stream{background:var(--bg-panel);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px}
+  .sa-stream .ss-head{display:flex;align-items:center;gap:8px;font:11px/1 var(--font-mono);color:var(--text-tertiary);margin-bottom:8px}
+  .sa-stream .ss-head .pill{margin-left:auto}
+  .sa-stream .ss-line{font:12px/1.5 var(--font-mono);color:var(--text-secondary);padding:2px 0}
+  .sa-stream .ss-line .t{color:var(--text-tertiary);margin-right:8px}
+
+  /* ===== 空态 pane ===== */
+  .dd-empty{flex:1;display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:40px;text-align:center}
+  .dd-empty.active{display:flex}
+  .dd-empty .ic{width:48px;height:48px;border-radius:var(--radius-lg);background:var(--bg-panel);border:1px solid var(--border);
+    display:grid;place-items:center;color:var(--text-tertiary)}
+  .dd-empty .ic svg{width:22px;height:22px}
+  .dd-empty .em-t{font:600 13px/1 var(--font-sans);color:var(--text-secondary)}
+  .dd-empty .em-d{font:12px/1.5 var(--font-sans);color:var(--text-tertiary);max-width:260px}
+
+  /* ===== 探索控制区（非产品，独立列） =====
+     v2：从 fixed 浮层改为 window-mock 内右侧独立 flex 列，
+         与 main-panel 平级，永不会盖住 Detail Pane。 */
+  .explore-region{width:248px;flex-shrink:0;margin:12px 12px 12px 8px;background:var(--bg-panel);
+    border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px;display:flex;flex-direction:column;gap:10px;overflow-y:auto}
+  .explore-region::-webkit-scrollbar{width:6px}
+  .explore-region::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:3px}
+  .explore-region .er-title{font:10px/1 var(--font-mono);color:var(--accent);letter-spacing:0.1em;text-transform:uppercase;
+    display:flex;align-items:center;gap:6px;margin-bottom:2px}
+  .explore-region .er-title::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--accent)}
+  .er-sub{font:11px/1.5 var(--font-sans);color:var(--text-tertiary);margin-top:-4px}
+  .er-row{display:flex;align-items:center;gap:8px}
+  .er-row .lbl{font:11px/1 var(--font-mono);color:var(--text-tertiary);width:48px;flex-shrink:0}
+  .er-seg{display:flex;gap:2px;background:var(--bg-input);border-radius:var(--radius-sm);padding:2px;flex:1}
+  .er-seg button{border:0;background:transparent;cursor:pointer;font:11px/1 var(--font-sans);color:var(--text-secondary);
+    padding:6px 4px;border-radius:2px;transition:all var(--dur) var(--ease);flex:1;text-align:center}
+  .er-seg button.on{background:var(--accent);color:#fff}
+  .er-seg button:not(.on):hover{background:var(--bg-hover);color:var(--text-primary)}
+  .er-row.disabled{opacity:0.4;pointer-events:none}
+  .er-note{font:10.5px/1.5 var(--font-mono);color:var(--text-tertiary);margin-top:auto;padding-top:10px;border-top:1px solid var(--border)}
+  .er-note b{color:var(--accent)}
+  .er-note .v2{color:var(--success);font-weight:600}
+</style>
+</head>
+<body>
+
+<div class="window-mock">
+
+  <div class="traffic-light"><span class="tl-r"></span><span class="tl-y"></span><span class="tl-g"></span></div>
+
+  <aside class="aside-region">
+    <div class="aside-icon active" title="会话">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+    </div>
+    <div class="aside-icon" title="搜索"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></div>
+    <div class="aside-icon" title="分支"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7M8.5 6.5C14 8 14 14 15.5 16"/></svg></div>
+    <div class="aside-spacer"></div>
+    <div class="aside-icon" title="设置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div>
+  </aside>
+
+  <div class="main-panel">
+
+    <div class="workspace-body" id="ws">
+
+      <!-- ============ Panel-1（默认 active） ============ -->
+      <section class="panel active" id="panel-1" data-panel="P1">
+        <div class="panel-header">
+          <span class="status-dot running"></span>
+          <span class="sess-name">重构 auth 模块</span>
+          <button class="h-btn ph-close" title="关闭会话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+        </div>
+
+        <div class="conversation" id="stream-1">
+          <div class="blk blk-user">
+            <div class="who"><span class="dot"></span>USER</div>
+            <div class="body">把 auth 模块拆成 service 和 repository 两层，token 验证逻辑单独抽出来，顺便跑一遍全量测试。</div>
+          </div>
+
+          <div class="collapse">
+            <span class="chev">▶</span>
+            <span>已工作 <b style="color:var(--fg)">3m 24s</b></span>
+            <span class="pills"><span class="pill pill-reasoning">5 reasoning</span><span class="pill pill-tool">12 tool</span></span>
+          </div>
+
+          <div class="blk blk-summary">
+            <div class="who"><span class="dot"></span>SUMMARY · stop 前总结</div>
+            <div class="body">已将 AuthService 拆为编排层，持久化下沉到 UserRepository，token 校验独立成 TokenValidator。全量测试由子 Agent 并行跑，未阻断主流程。</div>
+            <div class="next">下一步：等子 Agent 测试结果，若有失败再修。</div>
+          </div>
+
+          <!-- ★ 触发源：file-changes 块 → ChangeSet Detail -->
+          <div class="blk blk-changes" data-source="changeset">
+            <div class="who">
+              <span class="dot"></span>FILE CHANGES · 3 文件
+              <span class="hint">查看详情<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 6 6 6-6 6"/></svg></span>
+            </div>
+            <div class="frow"><span class="badge b-mod">M</span><span class="path">src/auth/AuthService.ts</span><span class="stat"><span class="add">+12</span> <span class="del">−8</span></span></div>
+            <div class="frow"><span class="badge b-add">A</span><span class="path">src/auth/TokenValidator.ts</span><span class="stat"><span class="add">+34</span></span></div>
+            <div class="frow"><span class="badge b-add">A</span><span class="path">src/auth/UserRepository.ts</span><span class="stat"><span class="add">+21</span></span></div>
+          </div>
+
+          <!-- ★ 触发源：subagent 块 → SubAgent Detail -->
+          <div class="blk blk-subagent" data-source="subagent">
+            <div class="who">
+              <span class="dot"></span>SUBAGENT · 并行任务
+              <span class="hint">查看详情<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 6 6 6-6 6"/></svg></span>
+            </div>
+            <div class="sa-mini">
+              <div class="sa-task">跑全量测试 · pytest tests/auth/<small>派生于回合 #3 · 独立上下文</small></div>
+              <div class="sa-prog">
+                <div class="sa-bar"><i style="width:72%"></i></div>
+                <span>18/25</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="composer"><div class="composer-box">继续描述需求，或 @ 引用文件…</div></div>
+        <div class="git-zone">
+          <span class="gz-branch"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7M8.5 6.5C14 8 14 14 15.5 16"/></svg>feat/split-auth</span>
+          <span class="gz-stats"><span class="add">+67</span> <span class="del">−8</span> · 3 文件</span>
+          <button class="gz-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M6 12h12M10 18h4"/></svg>Diff</button>
+        </div>
+      </section>
+
+      <!-- ============ Panel-2（standby） ============ -->
+      <section class="panel" id="panel-2" data-panel="P2">
+        <div class="panel-header">
+          <span class="status-dot idle"></span>
+          <span class="sess-name">修复登录闪退</span>
+          <button class="h-btn ph-close" title="关闭会话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+        </div>
+        <div class="conversation">
+          <div class="blk blk-user">
+            <div class="who"><span class="dot"></span>USER</div>
+            <div class="body">iOS 端登录后偶发闪退，怀疑 token 刷新时机。</div>
+          </div>
+          <div class="collapse">
+            <span class="chev">▶</span>
+            <span>待机 · 等待你的指令</span>
+            <span class="pills"></span>
+          </div>
+        </div>
+        <div class="composer"><div class="composer-box">在这个会话继续…</div></div>
+        <div class="git-zone">
+          <span class="gz-branch"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7M8.5 6.5C14 8 14 14 15.5 16"/></svg>feat/login-crash</span>
+          <span class="gz-stats" style="color:var(--success)">工作区干净</span>
+        </div>
+      </section>
+
+      <!-- ============ detail-drawer（workspace-body 级，覆盖对侧） ============ -->
+      <div class="detail-drawer dir-right closed" id="detail-drawer">
+        <div class="dd-head">
+          <div class="dd-head-row">
+            <span class="dd-title">钻取详情</span>
+            <span class="dd-meta" id="dd-meta">回合 #3 · 3 文件</span>
+            <button class="h-btn dd-close" id="dd-close" title="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+          </div>
+          <div class="dd-tabs" id="dd-tabs">
+            <!-- 文件 tab（点选切换 diff） -->
+            <span class="dd-tab active" data-kind="file" data-file="auth"><span class="tab-mk file"></span>AuthService.ts<span class="add">+12</span><span class="del">−8</span></span>
+            <span class="dd-tab" data-kind="file" data-file="token"><span class="tab-mk file"></span>TokenValidator.ts<span class="add">+34</span></span>
+            <span class="dd-tab" data-kind="file" data-file="repo"><span class="tab-mk file"></span>UserRepository.ts<span class="add">+21</span></span>
+            <span class="dd-tab-sep"></span>
+            <!-- 子Agent tab -->
+            <span class="dd-tab" data-kind="sub"><span class="tab-mk sub"></span>子Agent · 运行中</span>
+          </div>
+        </div>
+
+        <div class="dd-body">
+
+          <!-- ===== 文件 Detail pane（ChangeSet） ===== -->
+          <div class="dd-pane active" data-pane="changeset">
+            <!-- Diff / 预览 子视图切换 -->
+            <div style="display:flex;align-items:center;gap:10px">
+              <span style="font:600 10px/1 var(--font-mono);color:var(--text-tertiary);letter-spacing:0.08em;text-transform:uppercase">视图</span>
+              <div class="view-toggle" id="view-toggle">
+                <button data-view="diff" class="on">Diff</button>
+                <button data-view="preview">预览</button>
+              </div>
+              <span id="view-path" style="margin-left:auto;font:11px/1 var(--font-mono);color:var(--text-tertiary)"></span>
+            </div>
+
+            <!-- diff 视图 -->
+            <div class="cs-diff" id="cs-diff">
+              <div class="cs-d-path">
+                <span class="badge" id="cs-badge">M</span>
+                <span class="name" id="cs-name">src/auth/AuthService.ts</span>
+                <span class="add" id="cs-add">+12</span><span class="del" id="cs-del">−8</span>
+              </div>
+              <div class="cs-diff-body" id="cs-diff-body"></div>
+            </div>
+
+            <!-- 预览视图（占位，demo 未实现） -->
+            <div class="preview-stub" id="cs-preview" style="display:none">
+              <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M14 3v5h5M19 8v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7z"/><path d="M9 13h6M9 17h4"/></svg></div>
+              <div class="t">预览视图（待实现）</div>
+              <div class="d">这里将渲染文件最终态的只读高亮预览。当前 demo 仅提供 Diff 视图，预览在后续细化时补上。</div>
+            </div>
+
+            <div class="cs-foot">
+              <button class="cs-btn danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M10 11v6M14 11v6"/></svg>回退此回合</button>
+              <button class="cs-btn ghost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>复制 patch</button>
+              <button class="cs-btn ghost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3v5h5M19 8v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7z"/></svg>编辑器打开</button>
+            </div>
+          </div>
+
+          <!-- ===== 子Agent Detail pane ===== -->
+          <div class="dd-pane" data-pane="subagent">
+            <div class="sa-hero">
+              <div class="sa-h-row">
+                <span class="sa-h-tag">SUBAGENT</span>
+                <span class="sa-h-name">跑全量测试</span>
+                <span class="sa-h-status"><span class="dot"></span>运行中</span>
+              </div>
+              <div class="sa-h-desc">派生于回合 #3，独立上下文执行 pytest tests/auth/，不阻断主流程。完成后回传结果汇总。</div>
+              <div class="sa-h-meta">
+                <span>模型 <b>haiku</b></span>
+                <span>已运行 <b>1m 48s</b></span>
+                <span>上下文 <b>独立</b></span>
+              </div>
+            </div>
+
+            <div class="sa-section">
+              <span class="sa-s-title">执行进度 · 18/25</span>
+              <div class="sa-steps">
+                <div class="sa-step done"><span class="mk">✓</span><span class="lbl">加载测试环境</span><span class="pct">完成</span></div>
+                <div class="sa-step done"><span class="mk">✓</span><span class="lbl">tests/auth/login.test.ts</span><span class="pct">8/8 通过</span></div>
+                <div class="sa-step active"><span class="mk">●</span><span class="lbl">tests/auth/token.test.ts</span><span class="pct">7/10</span></div>
+                <div class="sa-step pending"><span class="mk"></span><span class="lbl">tests/auth/repo.test.ts</span><span class="pct">待开始</span></div>
+              </div>
+            </div>
+
+            <div class="sa-section">
+              <span class="sa-s-title">产出文件（暂存）</span>
+              <div class="sa-output">
+                <div class="sa-out-row"><span class="badge b-add">A</span><span class="path">test-results/auth-run.log</span><span class="stat"><span class="add">+128</span></span></div>
+                <div class="sa-out-row"><span class="badge b-add">A</span><span class="path">test-results/coverage.lcov</span><span class="stat"><span class="add">+342</span></span></div>
+              </div>
+            </div>
+
+            <div class="sa-section">
+              <span class="sa-s-title">子 Agent 消息流（折叠）</span>
+              <div class="sa-stream">
+                <div class="ss-head">SUBAGENT STREAM <span class="pill pill-tool">6 tool</span></div>
+                <div class="ss-line"><span class="t">00:12</span>$ pytest tests/auth/ -q</div>
+                <div class="ss-line"><span class="t">00:48</span>✓ login.test.ts 通过 8/8</div>
+                <div class="ss-line"><span class="t">01:30</span>token.test.ts 运行中 7/10…</div>
+              </div>
+            </div>
+
+            <div class="cs-foot">
+              <button class="cs-btn danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="4" height="4"/><rect x="14" y="6" width="4" height="4"/><rect x="6" y="14" width="4" height="4"/><rect x="14" y="14" width="4" height="4"/></svg>终止子 Agent</button>
+              <button class="cs-btn ghost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>导出日志</button>
+            </div>
+          </div>
+
+          <!-- ===== 空态 pane ===== -->
+          <div class="dd-empty" data-pane="empty">
+            <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 11H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-4M9 11V7a3 3 0 0 1 6 0v4M9 11h6"/></svg></div>
+            <div class="em-t">未选中详情</div>
+            <div class="em-d">点消息流里的 FILE CHANGES 或 SUBAGENT 块，或上方 tab，钻取单个文件 / 子 Agent 的详情。</div>
+          </div>
+
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ============ 探索控制区（独立列，非浮层） ============ -->
+  <aside class="explore-region">
+    <div class="er-title">设计探索 · Detail Pane v2</div>
+    <div class="er-sub">Detail 与关联 panel 各占一半；双 session 时 drawer 盖对侧。</div>
+
+    <div class="er-row" id="row-mode">
+      <span class="lbl">会话</span>
+      <div class="er-seg" id="seg-mode">
+        <button data-mode="single">单 session</button>
+        <button data-mode="dual" class="on">双 session</button>
+      </div>
+    </div>
+    <div class="er-row" id="row-active">
+      <span class="lbl">激活</span>
+      <div class="er-seg" id="seg-active">
+        <button data-active="P1" class="on">Panel-1</button>
+        <button data-active="P2">Panel-2</button>
+      </div>
+    </div>
+    <div class="er-row">
+      <span class="lbl">Detail</span>
+      <div class="er-seg" id="seg-detail">
+        <button data-detail="closed" class="on">关</button>
+        <button data-detail="changeset">变更集</button>
+        <button data-detail="subagent">子 Agent</button>
+      </div>
+    </div>
+
+    <div class="er-note">
+      点消息流里的 <b>FILE CHANGES</b> / <b>SUBAGENT</b> 块也能触发，并反向高亮源块（关联 panel 完整可见，联动更清晰）。<br><br>
+      <b>v2 形态裁决</b>：<span class="v2">各占一半不重叠</span><br>
+      · 单 session：关联 panel 收窄到 50%，drawer 占右半并排<br>
+      · 双 session：关联 panel 保持 50%，drawer 覆盖对侧 standby panel
+    </div>
+  </aside>
+
+</div>
+
+<script>
+(function () {
+  // state.detail: closed | changeset | subagent
+  // state.file:   auth | token | repo（changeset 下当前文件）
+  // state.view:   diff | preview（文件 tab 子视图）
+  var state = { mode:'dual', active:'P1', detail:'closed', file:'auth', view:'diff' };
+  var p1 = document.getElementById('panel-1');
+  var p2 = document.getElementById('panel-2');
+  var dd = document.getElementById('detail-drawer');
+  var rowActive = document.getElementById('row-active');
+  var ddMeta = document.getElementById('dd-meta');
+  var sources = document.querySelectorAll('[data-source]');
+  var tabs = document.querySelectorAll('.dd-tab');
+  var panes = document.querySelectorAll('.dd-pane');
+
+  var META = {
+    changeset: '回合 #3 · 3 文件',
+    subagent: '并行任务 · 运行中',
+    closed: '未选中'
+  };
+
+  // 文件 diff 数据 + meta（与 v1 一致）
+  var fileDiffs = {
+    auth: [
+      ['24','','export class AuthService {'],
+      ['25','del','  private db = new Database();'],
+      ['26','del','  async login(creds: Creds) {'],
+      ['27','del','    const user = await this.db.findUser(creds);'],
+      ['28','del','    if (!verifyToken(user.token)) throw new Error();'],
+      ['25','add','  constructor('],
+      ['26','add','    private repo: UserRepository,'],
+      ['27','add','    private tokens: TokenValidator,'],
+      ['28','add','  ) {}'],
+      ['30','','  async login(creds: Creds) {'],
+      ['31','add','    const user = await this.repo.findByCreds(creds);'],
+      ['32','add','    await this.tokens.validate(user.token);'],
+      ['33','','    return this.tokens.issue(user);']
+    ],
+    token: [
+      ['1','add','import { jwtVerify, SignJWT } from "jose";'],
+      ['3','add','export class TokenValidator {'],
+      ['4','add','  constructor(private secret: Uint8Array) {}'],
+      ['6','add','  async validate(token: string) {'],
+      ['7','add','    const { payload } = await jwtVerify(token, this.secret);'],
+      ['8','add','    if (payload.exp && Date.now() / 1000 > payload.exp)'],
+      ['9','add','      throw new Error("token expired");'],
+      ['10','add','    return payload;'],
+      ['11','add','  }'],
+      ['13','add','  async issue(user: User) {'],
+      ['14','add','    return new SignJWT({ sub: user.id })'],
+      ['15','add','      .setProtectedHeader({ alg: "HS256" })'],
+      ['16','add','      .setExpirationTime("2h").sign(this.secret);'],
+      ['17','add','  }'],
+      ['18','add','}']
+    ],
+    repo: [
+      ['1','add','export class UserRepository {'],
+      ['2','add','  constructor(private db: Database) {}'],
+      ['4','add','  async findByCreds(creds: Creds) {'],
+      ['5','add','    const row = await this.db.query('],
+      ['6','add','      "SELECT * FROM users WHERE email = ?", creds.email'],
+      ['7','add','    );'],
+      ['8','add','    if (!row) throw new Error("user not found");'],
+      ['9','add','    return row;'],
+      ['10','add','  }'],
+      ['12','add','  async save(user: User) {'],
+      ['13','add','    await this.db.execute("UPDATE users SET …", user);'],
+      ['14','add','  }'],
+      ['15','add','}']
+    ]
+  };
+  var fileMeta = {
+    auth:  { badge:'b-mod', name:'src/auth/AuthService.ts',    add:'+12', del:'−8' },
+    token: { badge:'b-add', name:'src/auth/TokenValidator.ts', add:'+34', del:'' },
+    repo:  { badge:'b-add', name:'src/auth/UserRepository.ts', add:'+21', del:'' }
+  };
+
+  function escapeHtml(s){return String(s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
+
+  function syncSeg(id, key) {
+    var seg = document.getElementById(id);
+    if (!seg) return;
+    seg.querySelectorAll('button').forEach(function (b) {
+      b.classList.toggle('on', b.dataset[key] === state[key]);
+    });
+  }
+
+  // 关联 panel 是否在左（P1）——决定 drawer 贴右还是贴左
+  function hostIsLeft() {
+    return state.active === 'P1';
+  }
+
+  function render() {
+    var open = state.detail !== 'closed';
+
+    // ---- 单/双 panel 显隐 ----
+    if (state.mode === 'single') {
+      p2.style.display = 'none';
+      rowActive.classList.add('disabled');
+    } else {
+      p2.style.display = '';
+      rowActive.classList.remove('disabled');
+    }
+    p1.classList.toggle('active', state.mode === 'single' ? true : state.active === 'P1');
+    p2.classList.toggle('active', state.active === 'P2' && state.mode === 'dual');
+
+    // ---- 关联 panel 收窄（仅单 session 且 drawer 打开）----
+    // 双 session 时关联 panel 本就 50%，无需收窄；drawer 覆盖对侧。
+    var hostPanel = (state.mode === 'single') ? p1 : (state.active === 'P1' ? p1 : p2);
+    p1.classList.remove('half');
+    p2.classList.remove('half');
+    if (open && state.mode === 'single') hostPanel.classList.add('half');
+
+    // ---- drawer 方向 + 开关 ----
+    dd.classList.remove('dir-right','dir-left','closed');
+    dd.classList.add(hostIsLeft() ? 'dir-right' : 'dir-left');
+    if (!open) dd.classList.add('closed');
+
+    // ---- header tab 高亮 ----
+    tabs.forEach(function (t) {
+      var on = false;
+      if (state.detail === 'changeset' && t.dataset.kind === 'file') on = (t.dataset.file === state.file);
+      else if (state.detail === 'subagent' && t.dataset.kind === 'sub') on = true;
+      t.classList.toggle('active', on);
+    });
+
+    // ---- pane 显示 ----
+    var pane = state.detail;
+    if (state.detail === 'closed') pane = 'empty';
+    panes.forEach(function (p) { p.classList.toggle('active', p.dataset.pane === pane); });
+    // dd-empty 是独立类（data-pane="empty"），单独 toggle 保持状态一致
+    var emptyEl = document.querySelector('.dd-empty');
+    if (emptyEl) emptyEl.classList.toggle('active', pane === 'empty');
+
+    // ---- 文件 diff 内容（changeset 时）----
+    if (state.detail === 'changeset') renderFile();
+
+    // ---- drawer meta ----
+    ddMeta.textContent = META[state.detail] || META.closed;
+
+    // ---- 反向联动：关联 panel 内的源块高亮 ----
+    sources.forEach(function (s) {
+      var inHost = s.closest('.panel') === hostPanel;
+      var hit = open && inHost && (s.dataset.source === state.detail);
+      s.classList.toggle('source-active', hit);
+    });
+  }
+
+  function renderFile() {
+    var m = fileMeta[state.file];
+    var badgeEl = document.getElementById('cs-badge');
+    badgeEl.textContent = m.badge === 'b-mod' ? 'M' : (m.badge === 'b-add' ? 'A' : 'D');
+    badgeEl.className = 'badge ' + m.badge;
+    document.getElementById('cs-name').textContent = m.name;
+    document.getElementById('cs-add').textContent = m.add;
+    document.getElementById('cs-del').textContent = m.del;
+    document.getElementById('view-path').textContent = m.name;
+
+    var body = document.getElementById('cs-diff-body');
+    var lines = fileDiffs[state.file] || [];
+    body.innerHTML = lines.map(function (l) {
+      var cls = l[1] ? ' class="dline ' + l[1] + '"' : ' class="dline"';
+      return '<div' + cls + '><span class="ln">' + l[0] + '</span><span class="code">' + escapeHtml(l[2]) + '</span></div>';
+    }).join('');
+
+    // diff / 预览 视图切换
+    document.getElementById('cs-diff').style.display = state.view === 'diff' ? '' : 'none';
+    document.getElementById('cs-preview').style.display = state.view === 'preview' ? '' : 'none';
+    document.querySelectorAll('#view-toggle button').forEach(function (b) {
+      b.classList.toggle('on', b.dataset.view === state.view);
+    });
+  }
+
+  // ---- 探索控制区 ----
+  function bindSeg(id, key) {
+    var seg = document.getElementById(id);
+    seg.addEventListener('click', function (e) {
+      var btn = e.target.closest('button'); if (!btn) return;
+      state[key] = btn.dataset[key];
+      syncSeg(id, key); render();
+    });
+  }
+  bindSeg('seg-mode','mode');
+  bindSeg('seg-active','active');
+  bindSeg('seg-detail','detail');
+
+  // ---- 源块点击：触发 drawer + 反向高亮（仅关联 panel）----
+  sources.forEach(function (s) {
+    s.addEventListener('click', function () {
+      if (!s.closest('.panel').classList.contains('active')) return;  // standby 不触发
+      state.detail = s.dataset.source;
+      if (state.detail === 'changeset') state.file = 'auth';  // 默认首个文件
+      syncSeg('seg-detail','detail'); render();
+    });
+  });
+
+  // ---- header tab 切换 ----
+  tabs.forEach(function (t) {
+    t.addEventListener('click', function () {
+      if (t.dataset.kind === 'file') {
+        state.detail = 'changeset'; state.file = t.dataset.file;
+      } else if (t.dataset.kind === 'sub') {
+        state.detail = 'subagent';
+      }
+      syncSeg('seg-detail','detail'); render();
+    });
+  });
+
+  // ---- Diff / 预览 子视图切换 ----
+  document.getElementById('view-toggle').addEventListener('click', function (e) {
+    var btn = e.target.closest('button'); if (!btn) return;
+    state.view = btn.dataset.view; renderFile();
+  });
+
+  // ---- 关闭 drawer ----
+  document.getElementById('dd-close').addEventListener('click', function () {
+    state.detail = 'closed'; syncSeg('seg-detail','detail'); render();
+  });
+
+  // ---- 点击 panel 切 active（双模式）----
+  [p1,p2].forEach(function (panel) {
+    panel.addEventListener('mousedown', function (e) {
+      if (state.mode !== 'dual') return;
+      if (e.target.closest('.detail-drawer')) return;
+      var which = panel.dataset.panel;
+      if (state.active !== which) {
+        // 切 panel 时若 drawer 开着，归到新关联 panel（覆盖其对侧）
+        state.active = which; syncSeg('seg-active','active'); render();
+      }
+    });
+  });
+
+  render();
+})();
+</script>
+
+</body>
+</html>

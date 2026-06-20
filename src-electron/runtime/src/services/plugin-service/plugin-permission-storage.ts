@@ -1,20 +1,37 @@
 /**
  * 插件权限持久化存储
  *
- * 负责读写 ~/.xyz-agent/plugins/permissions.json，
- * 使用 atomic write（先写 .tmp 再 rename）确保数据完整性。
+ * 负责读写 <dir>/permissions.json。底层用 JsonStore（read-through + ENOENT 容错
+ * + atomicWrite），对外保留 async load/save 签名以维持 PluginPermissionChecker /
+ * PluginService 的调用契约不变（async 方法内调 sync IO 合法，KB 级文件无感）。
  */
 
-import { readFile, writeFile, rename, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
+import { JsonStore } from '../../utils/json-store.js'
 
 const PERMISSIONS_FILE = 'permissions.json'
 
+type PermissionsRecord = Record<string, string[]>
+
 export class PermissionStorage {
-  private dir: string
+  private store: JsonStore<PermissionsRecord>
 
   constructor(dir: string) {
-    this.dir = dir
+    this.store = new JsonStore<PermissionsRecord>(
+      join(dir, PERMISSIONS_FILE),
+      {},
+      {
+        deserialize: (raw): PermissionsRecord => {
+          const obj: PermissionsRecord = {}
+          if (raw && typeof raw === 'object') {
+            for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+              if (Array.isArray(v)) obj[k] = v
+            }
+          }
+          return obj
+        },
+      },
+    )
   }
 
   /**
@@ -22,46 +39,18 @@ export class PermissionStorage {
    * 文件不存在或 JSON 损坏时返回空 Map。
    */
   async load(): Promise<Map<string, string[]>> {
-    const filePath = join(this.dir, PERMISSIONS_FILE)
-    let raw: string
-    try {
-      raw = await readFile(filePath, 'utf-8')
-    } catch {
-      return new Map()
-    }
-
-    try {
-      const obj = JSON.parse(raw) as Record<string, string[]>
-      const map = new Map<string, string[]>()
-      for (const [k, v] of Object.entries(obj)) {
-        if (Array.isArray(v)) {
-          map.set(k, v)
-        }
-      }
-      return map
-    } catch {
-      // JSON 损坏时返回空 Map
-      return new Map()
-    }
+    const record = this.store.read()
+    return new Map(Object.entries(record))
   }
 
   /**
    * 保存权限数据到磁盘（atomic write）。
-   * 先写入 .tmp 文件，再 rename 为目标文件。
    */
   async save(data: Map<string, string[]>): Promise<void> {
-    await mkdir(this.dir, { recursive: true })
-    const filePath = join(this.dir, PERMISSIONS_FILE)
-    const tmpPath = filePath + '.tmp'
-
-    const obj: Record<string, string[]> = {}
+    const record: PermissionsRecord = {}
     for (const [k, v] of data) {
-      obj[k] = v
+      record[k] = v
     }
-
-    const JSON_INDENT = 2
-    const content = JSON.stringify(obj, null, JSON_INDENT)
-    await writeFile(tmpPath, content, 'utf-8')
-    await rename(tmpPath, filePath)
+    this.store.write(record)
   }
 }

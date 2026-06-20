@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { EventAdapter, type WsSender, type EventAdapterOptions } from '../src/event-adapter.js'
+import { EventAdapter, type WsSender, type EventAdapterOptions } from '../src/infra/pi/event-adapter.js'
 import { PluginService } from '../src/services/plugin-service/plugin-service.js'
 import type { PluginRegistry } from '../src/services/plugin-service/plugin-registry.js'
 import type { HookResult, HookContext } from '../src/services/plugin-service/plugin-types.js'
 import type { ServerMessage } from '@xyz-agent/shared'
-import type { PiMessage } from '../src/rpc-client.js'
+import type { PiMessage } from '../src/infra/pi/rpc-client.js'
 
 /**
  * FR-8 Hook Bridge tests.

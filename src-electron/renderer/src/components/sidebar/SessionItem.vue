@@ -1,177 +1,100 @@
-<script setup lang="ts">
-import { ref, computed, nextTick } from 'vue'
-import type { SessionSummary } from '@xyz-agent/shared'
-import { useI18n } from 'vue-i18n'
-import { Input } from '../../design-system'
-
-const props = defineProps<{
-  session: SessionSummary & { doneCount?: number; alertCount?: number }
-  isActive: boolean
-  renaming?: boolean
-}>()
-
-const emit = defineEmits<{
-  click: []
-  rename: [sessionId: string]
-  'confirm-rename': [sessionId: string, newName: string]
-  'cancel-rename': []
-  delete: [sessionId: string]
-}>()
-
-const { t } = useI18n()
-
-const renameInput = ref<{ focus: () => void } | null>(null)
-const renameValue = ref('')
-const confirmDelete = ref(false)
-
-const renameBtn: Record<string, ((e: Event) => void) | string | undefined> = {
-  type: 'button',
-  class: 'inline-flex items-center justify-center w-[22px] h-[22px] rounded-xs text-muted cursor-pointer shrink-0 hover:bg-accent-light hover:text-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 bg-transparent border-none',
-  title: 'Rename',
-  onClick: (e: Event) => startRename(e as MouseEvent),
-  onKeydown: (e: Event) => { if ((e as KeyboardEvent).key === 'Enter') startRename(e as MouseEvent) },
-}
-const deleteBtn: Record<string, ((e: Event) => void) | string | undefined> = {
-  type: 'button',
-  class: 'inline-flex items-center justify-center w-[22px] h-[22px] rounded-xs text-muted cursor-pointer shrink-0 hover:bg-accent-light hover:text-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 bg-transparent border-none',
-  title: 'Delete',
-  onClick: (e: Event) => startDelete(e as MouseEvent),
-  onKeydown: (e: Event) => { if ((e as KeyboardEvent).key === 'Enter') startDelete(e as MouseEvent) },
-}
-const confirmDelBtn: Record<string, ((e: Event) => void) | string | undefined> = {
-  type: 'button',
-  class: 'inline-flex items-center justify-center px-2 h-[22px] rounded-xs text-[11px] font-semibold bg-danger text-white cursor-pointer shrink-0 hover:opacity-[0.88] focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 border-none',
-  onClick: (e: Event) => confirmDeleteAction(e as MouseEvent),
-  onKeydown: (e: Event) => { if ((e as KeyboardEvent).key === 'Enter') confirmDeleteAction(e as MouseEvent) },
-  onMouseleave: () => cancelDelete(),
-}
-
-const dotClass = computed(() => {
-  switch (props.session.status) {
-    case 'active': return 'w-[7px] h-[7px] rounded-full shrink-0 bg-success'
-    default: return 'w-[7px] h-[7px] rounded-full shrink-0 bg-border'
-  }
-})
-
-const hasNotif = computed(() =>
-  (props.session.doneCount ?? 0) > 0 || (props.session.alertCount ?? 0) > 0
-)
-
-const relativeTime = computed(() => {
-  const diff = Date.now() - props.session.lastActiveAt
-  const seconds = Math.floor(diff / MS_PER_SECOND)
-  if (seconds < SECONDS_PER_MINUTE) return t('sidebar.justNow')
-  const minutes = Math.floor(seconds / SECONDS_PER_MINUTE)
-  if (minutes < MINUTES_PER_HOUR) return t('sidebar.minutesAgo', { n: minutes })
-  const hours = Math.floor(minutes / MINUTES_PER_HOUR)
-  if (hours < HOURS_PER_DAY) return t('sidebar.hoursAgo', { n: hours })
-  const days = Math.floor(hours / HOURS_PER_DAY)
-  return t('sidebar.daysAgo', { n: days })
-})
-
-function startRename(e: MouseEvent) {
-  e.stopPropagation()
-  renameValue.value = props.session.label
-  emit('rename', props.session.id)
-  nextTick(() => {
-    renameInput.value?.focus()
-  })
-}
-
-function confirmRename() {
-  const name = renameValue.value.trim()
-  if (name && name !== props.session.label) {
-    // eslint-disable-next-line taste/no-multi-arg-emit
-    emit('confirm-rename', props.session.id, name)
-  } else {
-    emit('cancel-rename')
-  }
-}
-
-function cancelRename() {
-  emit('cancel-rename')
-}
-
-function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Enter') emit('click')
-}
-
-function startDelete(e: MouseEvent) {
-  e.stopPropagation()
-  confirmDelete.value = true
-}
-
-function confirmDeleteAction(e: MouseEvent) {
-  e.stopPropagation()
-  confirmDelete.value = false
-  emit('delete', props.session.id)
-}
-
-function cancelDelete() {
-  confirmDelete.value = false
-}
-
-const MS_PER_SECOND = 1000
-const SECONDS_PER_MINUTE = 60
-const MINUTES_PER_HOUR = 60
-const HOURS_PER_DAY = 24
-</script>
-
 <template>
+  <!--
+    展示组件 · 单会话项（draft-five-states §1）。
+    grid [dot] [main] [time]；active = accent-soft 背景 + 左侧 2px accent 竖条。
+    hover 操作（重命名/删除）属 DEFERRED（G2-005/G-013），按 hide 规则不渲染入口。
+    状态点 5 态（D6）：running/waiting 脉冲，done/stopped/error 静态。
+  -->
   <div
-    :class="[
-      'group flex items-center gap-2 py-[7px] pl-6 pr-3.5 cursor-pointer border-l-[3px] border-transparent select-none transition-colors duration-150 ease-ease hover:bg-accent-light focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 rounded-sm',
-      { 'border-l-0 bg-accent-light': isActive, 'font-semibold': hasNotif, 'pr-3.5': renaming }
-    ]"
-    role="button"
-    tabindex="0"
-    @click="!renaming && emit('click')"
-    @keydown="onKeydown"
+    class="session-item group relative grid cursor-pointer items-start gap-2 rounded-md px-2 py-[7px] transition-colors"
+    :class="active ? 'bg-accent-soft' : 'hover:bg-surface-hover'"
+    @click="emit('select', session.id)"
   >
-    <span :class="dotClass" />
-    <!-- Renaming mode: inline input -->
-    <template v-if="renaming">
-      <Input
-        ref="renameInput"
-        v-model="renameValue"
-        class="flex-1 text-[13px] leading-none bg-bg border border-accent rounded-xs py-[3px] px-[6px] h-auto outline-none text-fg"
-        @keydown.enter="confirmRename"
-        @keydown.escape="cancelRename"
-        @blur="confirmRename"
-        @click.stop
-      />
-    </template>
-    <!-- Normal mode: label + actions -->
-    <template v-else>
-      <!-- Left: name + badges -->
-      <span class="flex items-center gap-1 min-w-0 flex-1">
-        <span class="text-[13px] whitespace-nowrap overflow-hidden text-ellipsis">{{ session.label }}</span>
-        <span v-if="(session.doneCount ?? 0) > 0" class="inline-flex items-center justify-center min-w-[14px] h-[14px] rounded-full text-[9px] font-bold text-white shrink-0 bg-success">{{ session.doneCount }}</span>
-        <span v-if="(session.alertCount ?? 0) > 0" class="inline-flex items-center justify-center min-w-[14px] h-[14px] rounded-full text-[9px] font-bold text-white shrink-0 bg-danger">{{ session.alertCount }}</span>
-      </span>
-      <!-- Right: time (hover 时被按钮覆盖) -->
-      <span class="relative shrink-0 ml-auto">
-        <span class="text-[11px] text-muted whitespace-nowrap group-hover:invisible">{{ relativeTime }}</span>
-        <!-- Hover actions: absolute 覆盖时间区域 -->
-        <span class="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-          <!-- Rename button -->
-          <button v-bind="renameBtn">
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 1.5a2.121 2.121 0 013 3L5 14l-4 1 1-4z"/></svg>
-          </button>
-          <!-- Delete button -->
-          <button
-            v-if="!confirmDelete"
-            v-bind="deleteBtn"
-          >
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h12M5.33 4V2.67a1.33 1.33 0 011.34-1.34h2.66a1.33 1.33 0 011.34 1.34V4m2 0v9.33a1.33 1.33 0 01-1.34 1.34H4.67a1.33 1.33 0 01-1.34-1.34V4h9.34z"/></svg>
-          </button>
-          <button
-            v-else
-            v-bind="confirmDelBtn"
-          >confirm</button>
-        </span>
-      </span>
-    </template>
+    <span v-if="active" class="absolute bottom-1.5 left-0 top-1.5 w-0.5 rounded-sm bg-accent" />
+    <span class="status-dot" :class="dotClass" />
+    <div class="min-w-0">
+      <div
+        class="truncate text-[12.5px] leading-[1.35]"
+        :class="active ? 'text-accent' : 'text-fg'"
+      >
+        {{ session.label }}
+      </div>
+      <div class="mt-0.5 truncate font-mono text-[10.5px] leading-[1.3] text-subtle">
+        <span>{{ dirName }}</span>
+        <span v-if="session.gitBranch" class="opacity-60"> · </span>
+        <span v-if="session.gitBranch" class="text-accent">{{ session.gitBranch }}</span>
+      </div>
+    </div>
+    <span class="shrink-0 pt-0.5 font-mono text-[10px] leading-[1.35] text-subtle group-hover:invisible">
+      {{ timeLabel }}
+    </span>
   </div>
 </template>
 
+<script setup lang="ts">
+/**
+ * 状态点 class 映射（D6 五态）。
+ * running/waiting 带 pulse 动画（@keyframes 在 scoped style，Tailwind 无对应工具类）。
+ * done/stopped/error 静态语义色（design-tokens SSOT 色）。
+ */
+const props = defineProps<{
+  session: {
+    id: string
+    label: string
+    cwd: string
+    gitBranch?: string
+    lastActiveAt: number
+  }
+  active: boolean
+  status: 'running' | 'waiting' | 'done' | 'stopped' | 'error'
+}>()
+
+const emit = defineEmits<{
+  select: [sessionId: string]
+}>()
+
+const dotClass = computed(() => `status-dot--${props.status}`)
+
+/** 工作目录名（cwd 末段），长路径只显末段防溢出 */
+const dirName = computed(() => props.session.cwd.split('/').filter(Boolean).pop() ?? props.session.cwd)
+
+/** 时间格式化：复用 logic 层相对时间纯函数（与 SessionCard 同一信息原子） */
+const timeLabel = computed(() => formatRelativeTime(props.session.lastActiveAt))
+
+import { computed } from 'vue'
+import { formatRelativeTime } from '@/composables/logic/formatTime'
+</script>
+
+<style scoped>
+/* 状态点：8px 圆点，5 态语义色。running/waiting 带 pulse（box-shadow 扩散，draft 同款）。
+   色值走 CSS 变量（design-tokens SSOT），不硬编码。 */
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 4px;
+  flex-shrink: 0;
+}
+.status-dot--running {
+  background: var(--accent);
+  animation: pulse-accent 2s var(--ease) infinite;
+}
+.status-dot--waiting {
+  background: var(--warning);
+  animation: pulse-warn 2s var(--ease) infinite;
+}
+.status-dot--done { background: var(--success); }
+.status-dot--stopped { background: var(--subtle); opacity: 0.5; }
+.status-dot--error { background: var(--danger); }
+
+@keyframes pulse-accent {
+  0% { box-shadow: 0 0 0 0 rgba(79, 142, 247, 0.5); }
+  70% { box-shadow: 0 0 0 5px rgba(79, 142, 247, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(79, 142, 247, 0); }
+}
+@keyframes pulse-warn {
+  0% { box-shadow: 0 0 0 0 rgba(245, 165, 36, 0.5); }
+  70% { box-shadow: 0 0 0 5px rgba(245, 165, 36, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(245, 165, 36, 0); }
+}
+</style>
