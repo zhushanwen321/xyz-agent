@@ -36,7 +36,8 @@ task prompt 中必须包含：
    - Postbuild：`scripts/postbuild-validate.sh`
    - CI smoke test 是否覆盖
 7. **打包改动规范**：tsup/electron-builder/plugin-host/runtime 相关改动是否**逐个 commit**（禁止一个 commit 改多个打包子系统）。
-8. **输出审查报告**到 `output` 路径。
+8. **资源加载策略（ADR-0020）**：Agent/Skill 资源加载是否遵循 ADR-0020（`docs/architecture/adr/0020-resource-loading-strategy.md`）——bundled pi 资源禁止 fallback 到网络下载、extension/skill 路径是否经正确的资源解析（`extraResources` 拷贝而非 symlink，见步骤 4）。
+9. **输出审查报告**到 `output` 路径。
 
 ## 输出格式
 
@@ -60,7 +61,7 @@ must_fix: <数字>
 | MUST_FIX | tsup.config.ts | 25 | noExternal-missing | 新增依赖未加 noExternal | noExternal 数组追加该依赖 |
 ```
 
-类别包括：tsup-config / noExternal / worker-entry / cjs-compat / builder-files / asarUnpack / external-symlink / subprocess-launch / packaging-verification
+类别包括：tsup-config / noExternal / worker-entry / cjs-compat / builder-files / asarUnpack / external-symlink / subprocess-launch / packaging-verification / resource-loading
 
 优先级：MUST_FIX / SUGGESTION / INFO
 

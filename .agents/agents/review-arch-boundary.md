@@ -5,7 +5,12 @@ name: review-arch-boundary
 
 # 架构边界审查 Agent
 
-审查 `git diff main...HEAD` 中变更对 xyz-agent 分层架构边界的影响。xyz-agent 是 Electron + Vue3 + Node runtime 多层架构（main / preload / renderer / runtime / shared 五层；2026-06 完成 sidecar→runtime 重命名，见 `docs/architecture/terminology.md` R1），边界违规是 bug 高发区（参考项目 CLAUDE.md「关键规则」「架构约定」）。
+审查 `git diff main...HEAD` 中变更对 xyz-agent 分层架构边界的影响。架构分两部分：
+
+- **Electron 侧**：main / preload / renderer / shared 四层
+- **runtime（Agent Runtime）内部**：自 2026-06 重构为 **transport / services / infra** 三层（端口-适配器架构，旧 `adapters/` 已合并入 `infra/`；设计源 `docs/architecture/runtime-three-layer-design.md`）。依赖方向：`transport → services ← infra`（services 定义 ports 接口，infra 实现，无环）。
+
+术语以 `docs/architecture/terminology.md`（R1-R3 已落地：sidecar→runtime、Pane→Panel、SystemChatMessage 清除；R4/R5 被 v3 推翻）、`docs/architecture/context.md` 为准。边界违规是 bug 高发区（参考 CLAUDE.md「关键规则」「架构约定」）。
 
 ## 输入
 
@@ -17,28 +22,43 @@ task prompt 中必须包含：
 1. **获取变更范围**：`git diff main...HEAD --stat` + `git diff main...HEAD`。
 2. **Electron 分层边界**：变更是否违反分层职责：
    - renderer 进程是否直接使用 `ipcRenderer`（必须经 preload 的 `electronAPI`）
-   - main 进程是否混入业务逻辑（应只管窗口/runtime 进程生命周期）
-   - shared/src 类型是否被某一端私自重定义（应为前后端唯一类型源）
-3. **WS session 隔离（CLAUDE.md 关键规则 #7）**：
+   - main 进程是否混入业务逻辑（应只管窗口/runtime 进程生命周期；M2 Window Manager = `window/window-manager.ts`，M3 Process Supervisor = `supervisor/runtime-supervisor.ts` Facade + port-discoverer/health-checker/process-control/port-file/safe-env 子模块）
+   - shared/src 类型是否被某一端私自重定义（应为前后端唯一类型源，协议源 `shared/src/protocol.ts`）
+3. **runtime 三层边界（runtime-three-layer-design.md）**：
+   - **transport/**：纯路由（server.ts + router.ts + handlers/），不碰 node: 内置、不做业务决策
+   - **services/**：业务编排，**禁止 import infra**、**禁止出现 `Pi*` 类型**（应经 ports 接口访问外部能力）
+   - **infra/**：pi 适配（连接 + 翻译合并），**`Pi*` 类型仅在此层内部可见**，不知道 WS 协议和 session 业务语义
+   - 禁止新建 `adapters/` 目录（已合并入 infra）
+   - 过渡态：services 仍存在 `Pi*` 泄漏（tree-service/config-service/extension-service）是**已知技术债**（ports 依赖倒置 R3 进行中）→ 标 INFO/SUGGESTION，不标 MUST_FIX；但**新增**代码不应加重泄漏
+4. **WS session 隔离（CLAUDE.md 关键规则 #7）**：
    - 所有 runtime → renderer 消息的 `payload` 是否包含 `sessionId`
    - 缺失 `sessionId` 的消息会被所有 panel 忽略——检查新增的 WS 事件是否漏带
    - `server.ts` 的 `sendError` 是否传入了 `sessionId`
-4. **IPC / emit 规范（关键规则 #1 #2）**：
+5. **IPC / emit 规范（关键规则 #1 #2）**：
    - emit 是否只传单个 payload 对象（禁止 `emit('event', a, b)`）
    - event bus listener 是否用模块级 refCount 防重复注册（split mode 多实例场景）
-5. **数据目录隔离（#1 #2）**：
+6. **数据目录隔离（#1 #2）**：
    - 是否读写 `~/.pi/agent/`（禁止，必须只用 `~/.xyz-agent/`）
+   - Extension 数据目录 `~/.xyz-agent/extensions/`（pi extension 存储）vs Plugin 数据目录 `~/.xyz-agent/plugins/`（xyz-agent 插件存储）——两者均不得与 `~/.pi/` 混淆
    - 路径白名单（`allowedPrefixes`）是否硬编码 `~/.xyz-agent` 或 `~/.pi`——必须用 `getConfigDir()` / `getPiAgentDir()` 动态推导（dev 模式目录会变）
-6. **ENV_WHITELIST SSOT（#3）**：
+7. **ENV_WHITELIST SSOT（#3）**：
    - `ENV_WHITELIST_PREFIXES` 是否只在 `src-electron/shared/src/constants.ts` 定义
    - main/ 和 runtime/ 层是否本地重新定义（禁止，只能 import 扩展）
-7. **插件系统边界（CLAUDE.md 关键规则 #11、context.md「插件系统」）**：
+8. **Extension vs Plugin 概念区分（context.md 核心术语）**——两者是不同概念，禁止混用：
+   - **Extension**（pi extension）：运行在 **pi 子进程内**，用 `ExtensionAPI`，数据存 `~/.xyz-agent/extensions/`，由 `extension-service.ts` 管理
+   - **Plugin**（xyz-agent 插件）：运行在 **runtime 的 Worker Thread**，用 agentAPI（非 ExtensionAPI），数据存 `~/.xyz-agent/plugins/`，由 PluginService 管理
+   - **Pi Bridge Extension**：插件系统与 pi 引擎的**唯一适配层**（插件系统内部唯一感知 pi 的模块）——变更是否绕过 Bridge 直接访问 pi
+9. **插件系统边界（CLAUDE.md 关键规则 #11、context.md「Plugin」）**：
    - 前端 ↔ 插件系统通信是否经 WS → server → PluginService 路径（禁止前端直连 Worker）
    - WS 命名约定：Client→Server 用点号（`plugin.xxx`），Server→Client 用冒号 camelCase（`plugin:xxx`）
-   - 插件数据是否落在 `~/.xyz-agent/plugins/`（禁止读写 `~/.pi/`）
-   - Bridge 是否作为插件系统与 pi 引擎的唯一适配层（插件系统内部唯一感知 pi 的模块）
-8. **视图层术语（v3 拓扑）**：变更涉及前端时，视图组件应遵循 v3 拓扑（Sidebar / Workspace / 双 Panel / Overview / Search Modal）。旧术语（Drawer / Focus Mode 等）已过时——以 `docs/architecture/terminology.md` 标注的完成状态为准（R4/R5 已过时）。发现代码引用过时术语标 INFO。
-9. **输出审查报告**到 `output` 路径。
+   - sessionData（plugin per-session KV）是否走 Pi Bridge 的 `pi.appendEntry()` 持久化（区别于 PluginStorage 的 global/workspace scope JSON 文件）
+10. **视图层术语（v3 拓扑）**：变更涉及前端时，视图组件应遵循 v3 拓扑（设计源 `docs/designs/v3-demo/`）：
+    - L0/L1 结构：**Sidebar**（持久容器）/ **Workspace**（chat view 容器）/ **Overview**（L1 独立 Region，多会话鸟瞰）/ **Search Modal**（⌘K Overlay）
+    - **Panel 5 zone**：panel-header / message-stream / progress-zone / composer / git-zone
+    - **Side Drawer**（原 Side Inspector）：Panel 联动多 tab 抽屉（文件/终端/子Agent/浏览器），非运行时状态面板
+    - **Statusline**：Input Toolbar / Session Strip / Global Statusbar
+    - 旧术语（Drawer→SideInspector 中间态、Focus Mode、PanelGrid、Pane*、sidecar）已过时——以 terminology.md 为准（R4/R5 已被 v3 推翻）。发现代码引用过时术语标 INFO。
+11. **输出审查报告**到 `output` 路径。
 
 ## 输出格式
 
@@ -62,7 +82,7 @@ must_fix: <数字>
 | MUST_FIX | server.ts | 88 | session-isolation | 新增 WS 事件 payload 缺 sessionId | payload 加 sessionId 字段 |
 ```
 
-类别包括：layering / session-isolation / ipc-emit / data-dir-isolation / path-whitelist / env-whitelist-ssot / shared-type
+类别包括：electron-layering / runtime-three-layer / session-isolation / ipc-emit / data-dir-isolation / path-whitelist / env-whitelist-ssot / shared-type / extension-vs-plugin / v3-topology
 
 优先级：MUST_FIX / SUGGESTION / INFO
 
