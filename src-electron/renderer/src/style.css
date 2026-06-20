@@ -3,15 +3,75 @@
 @tailwind utilities;
 
 /* ============================================================
-   xyz-agent Design Tokens · v3 重建中
+   xyz-agent Design Tokens · v3 冷蓝暗色（ADR-0018）
    ────────────────────────────────────────────────────────────
-   Warm & Soft 旧 token 已清除（ADR-0001 推翻）。
-   冷蓝暗色 token 待 P0 基础对齐阶段，按 design-tokens.md 填充：
-     源文件（sandbox，待归位）：docs/designs/v3-demo 同级 design-tokens.md
-     目标：本 :root + tailwind.config.ts 对齐 ADR-0001 冷蓝暗色（#4f8ef7 / #0d0d0f / Inter）
+   SSOT: docs/designs/design-tokens.md
+   暗色为真默认（ADR-0021-B 裁决）。亮色变体待 settingsStore 接入，
+   design-tokens 仅给出部分亮色值，未给全前不臆造落地。
+   命名遵循 SSOT：--fg/--muted/--subtle/--border（非旧 --text*/--divider，
+   ADR-0018 已裁决归一，见 design-tokens.md「已知裂缝」）。
    ============================================================ */
 
-/* ── 基础重置 ─────────────────────────────────────────────── */
+:root {
+  /* ── 背景层级 ───────────────────────────────────────────── */
+  --bg: #0d0d0f;                /* 画布底层 */
+  --surface: #151519;           /* 面板/卡片 */
+  --surface-hover: #1b1b20;     /* 面板悬停 */
+
+  /* ── 文字 ───────────────────────────────────────────────── */
+  --fg: #f0f0f5;                /* 主文字 */
+  --muted: #8a8a95;             /* 次级文字 */
+  --subtle: #5a5a65;            /* 三级文字/占位 */
+
+  /* ── 边框/分隔 ─────────────────────────────────────────── */
+  --border: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.12);
+
+  /* ── 主色（冷蓝）───────────────────────────────────────── */
+  --accent: #4f8ef7;
+  --accent-hover: #6ba3ff;
+  --accent-soft: rgba(79, 142, 247, 0.12);
+
+  /* ── 状态色 ─────────────────────────────────────────────── */
+  --success: #22c55e;
+  --warning: #f5a524;
+  --danger: #ef4444;
+  --info: #38bdf8;
+
+  /* ── 字体 ───────────────────────────────────────────────── */
+  --font-sans: Inter, 'SF Pro Display', 'PingFang SC', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+
+  /* ── 圆角 ───────────────────────────────────────────────── */
+  --radius-sm: 3px;             /* 输入框/标签 */
+  --radius: 8px;                /* 按钮/卡片（默认）*/
+  --radius-lg: 12px;            /* 面板/弹层 */
+
+  /* ── 间距（4px 栅格）───────────────────────────────────── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* ── 阴影 ───────────────────────────────────────────────── */
+  --shadow-1: 0 0 0 1px rgba(0, 0, 0, 0.2);          /* 描边 */
+  --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.4);         /* 浮层 */
+  --shadow-glow: 0 0 0 3px rgba(79, 142, 247, 0.25); /* 聚焦环 */
+
+  /* ── 动效 ───────────────────────────────────────────────── */
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-fast: 120ms;
+  --duration: 200ms;
+  --duration-slow: 320ms;
+}
+
+/* ============================================================
+   基础重置（style.css 只放 token + base reset，组件样式走 Tailwind）
+   ============================================================ */
 * {
   margin: 0;
   padding: 0;
@@ -25,8 +85,9 @@ body,
 }
 
 body {
-  /* 重建期中性底色；P0 替换为 var(--bg-base) 冷蓝暗色 */
-  background: #0d0d0f;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
   overflow: hidden;
   user-select: none;
   -webkit-font-smoothing: antialiased;
