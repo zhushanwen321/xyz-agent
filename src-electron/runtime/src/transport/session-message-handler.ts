@@ -122,20 +122,17 @@ export class SessionMessageHandler {
 
   async handleSessionCompact(msg: Extract<ClientMessage, { type: 'session.compact' }>, ws: WsType): Promise<void> {
     const compactId = msg.payload.sessionId
-    const startTime = Date.now()
-    console.log('[server] session.compact: sessionId=' + compactId)
+    // D11: 耗时/启动/完成遥测由 message-dispatcher.compact 统一负责（含 session.compacting/compacted 广播）。
+    // 本 handler 只做 ensureActive + compact 的静默吞错（compact 失败非致命，dispatcher 已广播 error）。
     try {
       await this.ctx.sessionService.ensureActive(compactId)
-      console.log('[server] session.compact: session ensured active, sessionId=' + compactId)
       try {
         await this.ctx.sessionService.compact(compactId)
-      // eslint-disable-next-line taste/no-silent-catch -- compact: error logged + caller informed via broadcast
-      } catch (e) {
-        console.error('[server] session.compact: failed, sessionId=' + compactId + ', error=' + (toErrorMessage(e)))
+      // eslint-disable-next-line taste/no-silent-catch -- compact: error 已由 dispatcher 记录 + 广播
+      } catch {
+        // swallow — dispatcher.compact 已 console.error + 广播 session.compacted(error)
       }
-      console.log('[server] session.compact: completed, sessionId=' + compactId + ', elapsed=' + (Date.now() - startTime) + 'ms')
     } catch (e) {
-      console.error('[server] session.compact: ensureActive failed, sessionId=' + compactId)
       this.ctx.sendError(ws, 'session.compact_failed', 'Failed to restore session for compact: ' + (toErrorMessage(e)), msg.id, { sessionId: compactId })
     }
   }

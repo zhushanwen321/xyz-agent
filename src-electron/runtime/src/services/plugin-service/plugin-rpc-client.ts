@@ -10,6 +10,7 @@ import type { RpcResponse, RpcNotification, RpcRequest } from './plugin-types.js
 import { PluginRpcErrorCodes } from './plugin-types.js'
 import { PendingTracker } from '../../utils/async/pending-tracker.js'
 import { errorWithCode } from '../../utils/errors.js'
+import { getOrCreate } from '../../utils/collections.js'
 
 const DEFAULT_TIMEOUT_MS = 30_000
 
@@ -81,11 +82,7 @@ export class PluginRpcClient {
    * 主线程通过 HostToWorkerMessage.rpc.notification 发送通知。
    */
   onNotification(method: string, handler: (params: unknown) => void): () => void {
-    let handlers = this.notificationHandlers.get(method)
-    if (!handlers) {
-      handlers = new Set()
-      this.notificationHandlers.set(method, handlers)
-    }
+    const handlers = getOrCreate(this.notificationHandlers, method, () => new Set())
     handlers.add(handler)
     return () => {
       handlers!.delete(handler)
