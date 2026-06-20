@@ -83,6 +83,14 @@ export function useSidebar() {
     navigation.push({ view: 'overview' })
   }
 
+  /**
+   * 加载 session 列表（mock 优先，让 fixture 可见）。
+   * 铁律 1：api 调用只在此 features 层，组件不直接 import api。
+   */
+  async function loadSessions(): Promise<void> {
+    session.list = await sessionApi.list()
+  }
+
   /** 切换折叠态（C）。展开/折叠 toggle，spec §收起态。 */
   function toggleCollapse(): void {
     sidebar.collapsed = !sidebar.collapsed
@@ -103,6 +111,7 @@ export function useSidebar() {
     selectSession,
     newSession,
     goOverview,
+    loadSessions,
     toggleCollapse,
     derivedStatus,
   }

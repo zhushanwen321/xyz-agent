@@ -24,7 +24,7 @@
         >
           <Plus class="size-[15px] text-subtle transition-colors group-hover:text-muted" />
           <span class="flex-1 text-left">新建任务</span>
-          <kbd class="rounded-[3px] border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">⌘N</kbd>
+          <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">⌘N</kbd>
         </Button>
       </nav>
 
@@ -92,7 +92,6 @@
 import { computed, onMounted } from 'vue'
 import { useEventListener } from '@vueuse/core'
 import { Plus, LayoutGrid } from '@lucide/vue'
-import { session as sessionApi } from '@/api'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation'
@@ -105,7 +104,7 @@ import SessionList from './SessionList.vue'
 const navigation = useNavigationStore()
 const session = useSessionStore()
 const sidebar = useSidebarStore()
-const { selectSession, newSession, goOverview, derivedStatus } = useSidebar()
+const { selectSession, newSession, goOverview, loadSessions, derivedStatus } = useSidebar()
 
 /** 当前是否处于 Overview view（按钮转 accent 态，spec §Overview 入口） */
 const isOverviewActive = computed(() => navigation.current.view === 'overview')
@@ -123,10 +122,9 @@ async function onNewSession(): Promise<void> {
   await newSession()
 }
 
-/** 挂载时加载 session 列表（mock 优先，让 fixture 可见） */
-onMounted(async () => {
-  const list = await sessionApi.list()
-  session.list = list
+/** 挂载时加载 session 列表（铁律 1：通过 features 层 loadSessions 调 api） */
+onMounted(() => {
+  void loadSessions()
 })
 
 /** ⌘N 新建 session（shell spec §五 全局快捷键；⌘K/⌘⇧O DEFERRED 不绑） */

@@ -16,7 +16,7 @@
         <p class="text-[15px] font-medium text-fg">开始你的第一个任务</p>
         <p class="mt-1 text-[12px] text-muted">
           点击左侧「新建任务」或选择一个已有会话
-          <kbd class="ml-1 rounded-[3px] border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">⌘N</kbd>
+          <kbd class="ml-1 rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">⌘N</kbd>
         </p>
       </div>
     </div>
