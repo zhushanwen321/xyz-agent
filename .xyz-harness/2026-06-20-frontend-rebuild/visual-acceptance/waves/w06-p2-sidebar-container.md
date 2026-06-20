@@ -7,6 +7,8 @@ est: 12min
 va_ref: VA-03 #5-8,18-19
 ---
 
+> 结果: ✅ PASS (2026-06-20, W06 修复: sidebar activeTab 持久化)
+
 # W06 · P2 Sidebar 容器（四态 + segmented tab）
 
 > 1 个复杂 case：四态 A/B/C/D 切换 + tab 互斥 + 状态保持。多状态交互。
