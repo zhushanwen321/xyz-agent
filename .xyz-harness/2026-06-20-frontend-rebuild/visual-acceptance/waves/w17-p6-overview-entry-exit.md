@@ -6,6 +6,7 @@ deps: [W16]
 est: 10min
 va_ref: VA-06 #1-7
 ---
+> 结果: ✅ PASS (2026-06-20)
 
 # W17 · P6 Overview 进入/退出 + 覆盖关系
 

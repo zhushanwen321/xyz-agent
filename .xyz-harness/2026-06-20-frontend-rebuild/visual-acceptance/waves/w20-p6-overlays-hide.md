@@ -6,6 +6,7 @@ deps: [W16]
 est: 4min
 va_ref: VA-08 #1-2(+4-7若建)
 ---
+> 结果: ✅ PASS (2026-06-20)
 
 # W20 · P6 Overlays (⌘K) hide 入口检查
 
