@@ -73,7 +73,7 @@ class WriteBackCache<K, V> {                  // write-back，组合 JsonStore
 
 ---
 
-### P0-B. transport 层错误契约统一 ✅ 已完成（commit 待补）
+### P0-B. transport 层错误契约统一 ✅ 已完成（commit 514e7cb0）
 
 **吸收相似点**：D10（6 种错误 payload 形状）。
 
