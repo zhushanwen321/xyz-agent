@@ -30,7 +30,6 @@
 </template>
 
 <script setup lang="ts">
-import { watch } from 'vue'
 import type { PanelLeaf } from '@xyz-agent/shared'
 import { usePanelStore } from '@/stores/panel'
 import { useSessionStore } from '@/stores/session'
@@ -41,22 +40,9 @@ const panel = usePanelStore()
 const session = useSessionStore()
 const { derivedStatus } = useSidebar()
 
-/** sidebar 选 session → 自动载入 active panel（单 panel 默认根节点）。
- * 首次有 session 时也激活 panel（无 session 则 panel 空态）。
- */
-watch(
-  () => session.activeId,
-  (sid) => {
-    if (!sid) return
-    // session 已在某 panel 则只切焦点，否则载入当前 active panel
-    const existing = panel.findPanelBySession(sid)
-    if (existing) {
-      panel.setActive(existing.id)
-    } else {
-      panel.loadSession(panel.activePanelId, sid)
-    }
-  },
-)
+// sidebar 选 session → panel 载入的编排在 useSidebar.selectSession（主路径）
+// 与 AppShell watch(navigation.pointer)（⌘[/⌘] 同步），不在此组件 watch：
+// 避免空态不渲染→watch 不注册→loadSession 不触发的初始化时序死锁。
 
 function sessionLabelOf(leaf: PanelLeaf): string {
   return leaf.sessionId ? session.list.find((s) => s.id === leaf.sessionId)?.label ?? '' : ''

@@ -94,12 +94,15 @@ priority: ★★
 - 5 zone 顺序错（#11）= FAIL。
 - PASS 后进 [va-05-p4-panel-content.md](va-05-p4-panel-content.md)。
 
-## ⚠️ 已知阻塞 bug（W05 验收时发现，P3 优先修）
+## ✅ 已修复：PanelContainer watch 死锁（W05 发现，同日修复）
 
-**PanelContainer watch 死锁 → sidebar 点 session 不载入 panel**
+**原问题**：`selectSession(id)` 设了 `session.activeId`，但 `panel.leaf.sessionId` 永远 `null`——空态时 `Workspace` 不渲染 `PanelContainer`，其 `watch(session.activeId)→panel.loadSession` 未注册，形成「不渲染→不监听→不载入→继续不渲染」死循环。
 
-- 现象：`selectSession(id)` 设了 `session.activeId`，但 `panel.leaf.sessionId` 永远 `null`——空态时 `Workspace` 不渲染 `PanelContainer`，其 `watch(session.activeId)→panel.loadSession` 未注册，形成「不渲染→不监听→不载入→继续不渲染」死循环。
-- 影响：#1（单 session 默认态）实际无法自动达成（需手动 `panel.loadSession`）；阻塞 W10/W12/W16。
-- 根因：`loadSession` 触发点挂在条件渲染子组件的 watch 上。
-- 修复方向：把 `selectSession→loadSession` 编排上移到始终挂载的层（`useSidebar.selectSession` 内直接调 `panel.loadSession`，不依赖 PanelContainer watch）。
+**修复**（commit 见下）：把 `selectSession→loadSession` 编排上移到 features 层 `useSidebar`：
+- `useSidebar.selectSession` 内直接调新增的 `syncSessionToPanel(id)`（幂等：session 已在某 panel 则 setActive，否则 loadSession 到 active panel），不再依赖 PanelContainer 的条件渲染 watch。
+- `AppShell` 加 `watch(navigation.pointer)`：⌘[/⌘] 与 AppNavControls 后退/前进后，落在 `chat+sessionId` 条目时同步 `session.activeId` + `syncSessionToPanel`（spec §八.5「历史状态正确恢复」）。overview 条目不动 session（保留上次 chat 供回退）。
+- `PanelContainer` 删掉原 `watch(session.activeId)` 块。
+
+**验证**：CDP 刷新后空态 → sidebar 点击 s1/s2/s3 自动载入（breadcrumb 三段自动显示，无需手动 loadSession）；构造历史 s1→s2→overview→s3 后 ⌘[x2 回退到 s2 时 panel 跟随切换（leafSid=s2）、⌘]x2 前进回 s3（leafSid=s3）。死锁解除，W10/W12/W16 不再受阻。
+
 - 详情：[w05-p1-shell-misc.md 验收结果](waves/w05-p1-shell-misc.md#验收结果2026-06-20)

@@ -91,11 +91,11 @@ va_ref: VA-02 #13-16
 - `PanelHeader.vue` / `Panel.vue`：清掉既有 `<style scoped>`（vue_rules_checker 存量违规，no-skip 原则要求一并修）；status-dot 5 态色改 Tailwind `:class` 映射 + running 用内置 `animate-pulse`；Panel 4 层激活标识 `::before` 竖条改 `<div>`，box-shadow/opacity/transition 全 Tailwind。
 - drag 区：`header` 加 `[-webkit-app-region:drag]`，`nav` / 按钮 / 按钮容器加 `[-webkit-app-region:no-drag]`。
 
-### ⚠️ 发现 P3 阻塞 bug（非 W05 引入，记录待修）
+### ✅ P3 阻塞 bug 已修复（同日，见同 commit）
 
 **PanelContainer watch 死锁**：空态时 `Workspace` 不渲染 `PanelContainer`（因 `panel.leaf.sessionId=null`）→ `PanelContainer` 的 `watch(session.activeId)→loadSession` 未注册 → sidebar `selectSession` 设 `session.activeId` 后无人监听 → `loadSession` 永不触发 → `leaf.sessionId` 永远 null → breadcrumb 内容空、MessageStream 不渲染。
 
-- **影响**：sidebar 点击 session 后 main 区不自动载入（本 wave 靠手动 `panel.loadSession('panel-root','s1')` 才让 breadcrumb 显示三段内容）。将阻塞 W10（panel skeleton）、W12（message-stream）、W16（UC-2 flow）。
-- **根因**：`loadSession` 的触发点挂在条件渲染的子组件 watch 上，形成「不渲染→不监听→不载入→继续不渲染」死循环。
-- **修复方向（P3）**：把 `selectSession→loadSession` 的编排上移到始终挂载的层（Workspace setup 或 features 层 `useSidebar.selectSession` 内直接调 `panel.loadSession`），不依赖 PanelContainer 的 watch。
-- **归属**：P3 workspace/panel（va-04 / W10），非 P1 shell。W05 的 breadcrumb/drag/快捷键本身不受影响（结构、样式、导航栈均独立验证通过）。
+- **修复**：`useSidebar` 新增幂等的 `syncSessionToPanel(id)`（session 已在某 panel 则 setActive，否则 loadSession 到 active panel）；`selectSession` 直接调用，不再依赖条件渲染子组件 watch。`AppShell` 加 `watch(navigation.pointer)` 同步 ⌘[/⌘] 导航后的 session。
+- **验证**：CDP 刷新空态 → sidebar 点击 s1 自动载入（breadcrumb 三段自动显示）；⌘[x2 回退 s2、⌘]x2 前进 s3 时 panel 跟随切换。
+- **影响解除**：W10（panel skeleton）、W12（message-stream）、W16（UC-2 flow）不再受阻。
+- **详情**：[va-04 已修复段](../va-04-p3-workspace-panel.md)

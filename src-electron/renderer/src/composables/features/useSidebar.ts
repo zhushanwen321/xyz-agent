@@ -18,6 +18,7 @@ import type { ComputedRef } from 'vue'
 import { chat as chatApi, session as sessionApi } from '@/api'
 import { useChatStore } from '@/stores/chat'
 import { useNavigationStore } from '@/stores/navigation'
+import { usePanelStore } from '@/stores/panel'
 import { useSessionStore } from '@/stores/session'
 import { useSidebarStore } from '@/stores/sidebar'
 import type { DerivedStatus } from '@/types'
@@ -50,15 +51,34 @@ export function useSidebar() {
   const session = useSessionStore()
   const chat = useChatStore()
   const sidebar = useSidebarStore()
+  const panel = usePanelStore()
 
   /**
-   * 选择 session：push 导航栈（view:chat + sessionId）+ switchSession api + 更新 activeId。
+   * 同步 session 到 panel（sidebar 选 session 与 ⌘[/⌘] 导航共用）。
+   * session 已在某 panel 则只切焦点，否则载入 active panel（单 panel 默认根节点）。
+   * 幂等：同 sessionId 重复调用无副作用（findPanelBySession 命中→setActive，loadSession 同值不变）。
+   *
+   * 编排点在 features 层而非组件 watch——避免「空态时不渲染→watch 不注册→loadSession 不触发」
+   * 的初始化时序死锁（原 PanelContainer watch bug，W05 发现）。
+   */
+  function syncSessionToPanel(sessionId: string): void {
+    const existing = panel.findPanelBySession(sessionId)
+    if (existing) {
+      panel.setActive(existing.id)
+    } else {
+      panel.loadSession(panel.activePanelId, sessionId)
+    }
+  }
+
+  /**
+   * 选择 session：push 导航栈（view:chat + sessionId）+ switchSession api + 更新 activeId + 载入 panel。
    * 首次进入该 session 时拉取历史注入 chat store（UC-2 切换可见块类型，G2-006）。
    * switchSession 失败（mock id 不存在）抛错，UI 层捕获；不更新 activeId。
    */
   async function selectSession(id: string): Promise<void> {
     await sessionApi.switchSession(id)
     session.activeId = id
+    syncSessionToPanel(id)
     navigation.push({ view: 'chat', sessionId: id })
     // 历史回填：features 层跨 api+stores，是 hydrate 的正确编排点
     if (!chat.isHydrated(id)) {
@@ -134,6 +154,7 @@ export function useSidebar() {
     goOverview,
     loadSessions,
     toggleCollapse,
+    syncSessionToPanel,
     derivedStatus,
     sessionDigest,
   }
