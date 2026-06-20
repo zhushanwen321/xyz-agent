@@ -17,7 +17,7 @@
  * Extension 配置 port —— pi settings.json 的 packages[] + disabled-packages.json。
  *
  * 读操作同步（settings.json 经 pi-settings-store 的 3s 缓存，高频读不触盘）；
- * 写操作异步（经 pi-settings-store.updateSettings 的 RMW 队列串行化，async install 安全）。
+ * 写操作异步（经 pi-settings-store.updateSettingsSync 的 RMW，sync IO 单线程不交错；签名保持 async 守 port 契约）。
  */
 export interface IExtensionSettings {
   // ── settings.json packages[]（extension 安装清单）──

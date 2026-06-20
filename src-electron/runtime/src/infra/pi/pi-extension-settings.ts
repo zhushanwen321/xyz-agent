@@ -4,15 +4,15 @@
  * 实现 settings.json packages[]（经 pi-settings-store 统一读写层）+
  * disabled-packages.json（xyz-agent 自己的文件，独立原子读写）。
  *
- * 🔒 settings.json 的 RMW 经 pi-settings-store.updateSettings 串行化，
- * 与 model 域（pi-provider-store）共享同一队列，杜绝跨域竞态（D17）。
+ * 🔒 settings.json 的 RMW 经 pi-settings-store.updateSettingsSync（sync，单线程不交错），
+ * 与 model 域（pi-provider-store）共享同一读写层，杜绝跨域竞态（D17）。
  */
 
 import { existsSync, readFileSync, rmSync, mkdirSync } from 'node:fs'
 import { atomicWrite } from '../../utils/fs-utils.js'
 import { dirname, join } from 'node:path'
 import type { IExtensionSettings } from '../../services/ports/extension-settings.js'
-import { updateSettings, readSettings, invalidateSettingsCache, setSettingsPath } from './pi-settings-store.js'
+import { updateSettingsSync, readSettings, invalidateSettingsCache, setSettingsPath } from './pi-settings-store.js'
 import { getPiAgentDir } from './pi-paths.js'
 import { toErrorMessage } from '../../utils/errors.js'
 
@@ -84,8 +84,8 @@ export class PiExtensionSettings implements IExtensionSettings {
   }
 
   async addPackage(source: string): Promise<void> {
-    // RMW 经 pi-settings-store 队列串行化——async 调用也安全。
-    await updateSettings(s => {
+    // sync RMW（Node 单线程 + sync IO 天然不交错）。签名保持 async 守 IExtensionSettings port 契约。
+    updateSettingsSync(s => {
       const packages = s.packages ?? []
       if (!packages.includes(source)) {
         packages.push(source)
@@ -95,7 +95,7 @@ export class PiExtensionSettings implements IExtensionSettings {
   }
 
   async removePackage(source: string): Promise<void> {
-    await updateSettings(s => {
+    updateSettingsSync(s => {
       const packages = (s.packages ?? []).filter(p => p !== source)
       s.packages = packages
     })

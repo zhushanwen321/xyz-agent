@@ -13,11 +13,11 @@ import { toErrorMessage } from '../../utils/errors.js'
 import { isPackaged } from '../../utils/runtime-env.js'
 import { JsonStore } from '../../utils/json-store.js'
 import { getConfigDir, getModelsPath, getSettingsPath, getPiAgentDir, getSessionsDir, getAgentsDir } from './pi-paths.js'
-// settings.json 的唯一读写层（D17 收口）：readSettings/writeSettings/PiSettings/缓存/原子写
+// settings.json 的唯一读写层（D17 收口）：readSettings/updateSettingsSync/PiSettings/缓存/原子写
 // 都收敛到 pi-settings-store，model 域（本文件）与 extension 域共享同一所有者 + 缓存。
 import {
   readSettings,
-  writeSettings,
+  updateSettingsSync,
   invalidateSettingsCache,
   type PiSettings,
 } from './pi-settings-store.js'
@@ -138,33 +138,35 @@ export function upsertProvider(providerId: string, config: PiProviderConfig): {
   models.providers[providerId] = config
   writeModels(models)
 
-  // 同步校验 defaultModel：单次 readSettings → 计算 → 单次 writeSettings
-  const settings: PiSettings = JSON.parse(JSON.stringify(readSettings()))
-  if (settings.defaultProvider !== providerId) return {}
+  // 同步校验 defaultModel：经 updateSettingsSync 单次 RMW。
+  // 结果通过外层变量捕获（mutator 不返回值）。
+  let outcome: { newDefault?: { provider: string; modelId: string } } = {}
+  updateSettingsSync(s => {
+    if (s.defaultProvider !== providerId) { outcome = {}; return }
 
-  const newModelList = config.models ?? []
-  if (newModelList.length === 0) {
-    delete settings.defaultProvider
-    delete settings.defaultModel
-    // Try finding a valid default from other providers
-    const fallback = pickFirstModelProvider(models.providers)
-    if (fallback) {
-      settings.defaultProvider = fallback.provider
-      settings.defaultModel = fallback.modelId
+    const newModelList = config.models ?? []
+    if (newModelList.length === 0) {
+      delete s.defaultProvider
+      delete s.defaultModel
+      const fallback = pickFirstModelProvider(models.providers)
+      if (fallback) {
+        s.defaultProvider = fallback.provider
+        s.defaultModel = fallback.modelId
+      }
+      outcome = s.defaultProvider
+        ? { newDefault: { provider: s.defaultProvider, modelId: s.defaultModel! } }
+        : {}
+      return
     }
-    writeSettings(settings)
-    return settings.defaultProvider
-      ? { newDefault: { provider: settings.defaultProvider, modelId: settings.defaultModel! } }
-      : {}
-  }
 
-  const currentModelId = settings.defaultModel
-  if (currentModelId && !newModelList.find(m => m.id === currentModelId)) {
-    settings.defaultModel = newModelList[0].id
-    console.warn(`[provider-store] defaultModel "${currentModelId}" no longer in provider "${providerId}", falling back to "${newModelList[0].id}"`)
-  }
-  writeSettings(settings)
-  return { newDefault: { provider: providerId, modelId: settings.defaultModel! } }
+    const currentModelId = s.defaultModel
+    if (currentModelId && !newModelList.find(m => m.id === currentModelId)) {
+      s.defaultModel = newModelList[0].id
+      console.warn(`[provider-store] defaultModel "${currentModelId}" no longer in provider "${providerId}", falling back to "${newModelList[0].id}"`)
+    }
+    outcome = { newDefault: { provider: providerId, modelId: s.defaultModel! } }
+  })
+  return outcome
 }
 
 /**
@@ -180,22 +182,22 @@ export function removeProvider(providerId: string): {
   delete models.providers[providerId]
   writeModels(models)
 
-  const settings: PiSettings = JSON.parse(JSON.stringify(readSettings()))
-  if (settings.defaultProvider === providerId) {
-    delete settings.defaultProvider
-    delete settings.defaultModel
-    // Scan remaining providers for a fallback default
+  // 同步清理 defaultProvider/defaultModel：经 updateSettingsSync 单次 RMW。
+  let outcome: { removed: boolean; newDefault?: { provider: string; modelId: string } } = { removed: true }
+  updateSettingsSync(s => {
+    if (s.defaultProvider !== providerId) { outcome = { removed: true }; return }
+    delete s.defaultProvider
+    delete s.defaultModel
     const fallback = pickFirstModelProvider(models.providers)
     if (fallback) {
-      settings.defaultProvider = fallback.provider
-      settings.defaultModel = fallback.modelId
+      s.defaultProvider = fallback.provider
+      s.defaultModel = fallback.modelId
     }
-    writeSettings(settings)
-    return settings.defaultProvider
-      ? { removed: true, newDefault: { provider: settings.defaultProvider, modelId: settings.defaultModel! } }
+    outcome = s.defaultProvider
+      ? { removed: true, newDefault: { provider: s.defaultProvider, modelId: s.defaultModel! } }
       : { removed: true }
-  }
-  return { removed: true }
+  })
+  return outcome
 }
 
 export function getAllModels(): Array<PiModelDefinition & { providerId: string }> {
@@ -214,7 +216,7 @@ export function getApiKeyForProvider(providerId: string): string | undefined {
 }
 
 // ── Settings.json 操作 ───────────────────────────────────────
-// readSettings/writeSettings 的实现收敛到 pi-settings-store（D17 唯一读写层）。
+// readSettings/updateSettingsSync 的实现收敛到 pi-settings-store（D17 唯一读写层）。
 // 本文件 re-export 以保持对 pi-config-bridge 的现有导出契约不变。
 export { readSettings, writeSettings, updateSettingsSync } from './pi-settings-store.js'
 
@@ -257,20 +259,20 @@ export function findValidDefaultModel(): {
 export function getDefaultModel(): { provider: string; modelId: string } | null {
   const { result, wasFixed } = findValidDefaultModel()
   if (wasFixed && result) {
-    const settings: PiSettings = JSON.parse(JSON.stringify(readSettings()))
-    settings.defaultProvider = result.provider
-    settings.defaultModel = result.modelId
-    writeSettings(settings)
+    updateSettingsSync(s => {
+      s.defaultProvider = result.provider
+      s.defaultModel = result.modelId
+    })
     console.log(`[provider-store] auto-fixed defaultModel: ${result.provider}/${result.modelId}`)
   }
   return result
 }
 
 export function setDefaultModel(provider: string, modelId: string): void {
-  const settings: PiSettings = JSON.parse(JSON.stringify(readSettings()))
-  settings.defaultProvider = provider
-  settings.defaultModel = modelId
-  writeSettings(settings)
+  updateSettingsSync(s => {
+    s.defaultProvider = provider
+    s.defaultModel = modelId
+  })
 }
 
 export function getEnabledModels(): string[] {
@@ -278,9 +280,7 @@ export function getEnabledModels(): string[] {
 }
 
 export function setEnabledModels(patterns: string[]): void {
-  const settings: PiSettings = JSON.parse(JSON.stringify(readSettings()))
-  settings.enabledModels = patterns
-  writeSettings(settings)
+  updateSettingsSync(s => { s.enabledModels = patterns })
 }
 
 export function getDefaultThinkingLevel(): string {
@@ -288,9 +288,7 @@ export function getDefaultThinkingLevel(): string {
 }
 
 export function setDefaultThinkingLevel(level: string): void {
-  const settings: PiSettings = JSON.parse(JSON.stringify(readSettings()))
-  settings.defaultThinkingLevel = level
-  writeSettings(settings)
+  updateSettingsSync(s => { s.defaultThinkingLevel = level })
 }
 
 // ── Skill 路径管理（读写 settings.json 的 skills 字段）───────────
@@ -300,9 +298,7 @@ export function getSkillPaths(): string[] {
 }
 
 export function setSkillPaths(paths: string[]): void {
-  const settings: PiSettings = JSON.parse(JSON.stringify(readSettings()))
-  settings.skills = paths
-  writeSettings(settings)
+  updateSettingsSync(s => { s.skills = paths })
 }
 
 export function addSkillPath(path: string): void {
