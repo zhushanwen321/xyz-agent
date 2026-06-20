@@ -68,7 +68,7 @@ export class SessionMessageHandler {
               ? `Session file missing — the session was not saved properly. Error: ${errMsg}`
               : `Session ${switchId} not found or restore failed`
             console.error('[runtime] session.switch auto-restore failed:', errMsg)
-            this.ctx.sendError(ws, isENOENT ? 'file_not_found' : 'not_found', userMsg, msg.id, switchId)
+            this.ctx.sendError(ws, isENOENT ? 'file_not_found' : 'not_found', userMsg, msg.id, { sessionId: switchId })
           }
         }
         return
@@ -97,9 +97,10 @@ export class SessionMessageHandler {
           await this.ctx.sessionService.steerMessage(steerSid, msg.payload.content)
           return this.ctx.reply(ws, msg.id, 'message.status', { sessionId: steerSid, status: 'steered' })
         } catch (e) {
+          // D10/P0-B: 请求级失败走统一 error envelope（区别于 message-dispatcher 的流式 message.error 广播）。
           const errMsg = toErrorMessage(e)
           console.error('[runtime] message.steer failed:', errMsg)
-          return this.ctx.reply(ws, msg.id, 'message.error', { sessionId: steerSid, message: errMsg })
+          return this.ctx.sendError(ws, 'steer_failed', errMsg, msg.id, { sessionId: steerSid })
         }
       }
       case 'message.follow_up': {
@@ -108,9 +109,10 @@ export class SessionMessageHandler {
           await this.ctx.sessionService.followUpMessage(followSid, msg.payload.content)
           return this.ctx.reply(ws, msg.id, 'message.status', { sessionId: followSid, status: 'queued' })
         } catch (e) {
+          // D10/P0-B: 请求级失败走统一 error envelope（区别于 message-dispatcher 的流式 message.error 广播）。
           const errMsg = toErrorMessage(e)
           console.error('[runtime] message.follow_up failed:', errMsg)
-          return this.ctx.reply(ws, msg.id, 'message.error', { sessionId: followSid, message: errMsg })
+          return this.ctx.sendError(ws, 'follow_up_failed', errMsg, msg.id, { sessionId: followSid })
         }
       }
       case 'message.abort':
@@ -134,7 +136,7 @@ export class SessionMessageHandler {
       console.log('[server] session.compact: completed, sessionId=' + compactId + ', elapsed=' + (Date.now() - startTime) + 'ms')
     } catch (e) {
       console.error('[server] session.compact: ensureActive failed, sessionId=' + compactId)
-      this.ctx.sendError(ws, 'session.compact_failed', 'Failed to restore session for compact: ' + (toErrorMessage(e)), msg.id, compactId)
+      this.ctx.sendError(ws, 'session.compact_failed', 'Failed to restore session for compact: ' + (toErrorMessage(e)), msg.id, { sessionId: compactId })
     }
   }
 }

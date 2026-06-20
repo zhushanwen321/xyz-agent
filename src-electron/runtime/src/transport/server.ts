@@ -17,7 +17,7 @@ import { SessionMessageHandler } from './session-message-handler.js'
 import { ExtensionMessageHandler } from './extension-message-handler.js'
 import { PluginMessageHandler } from './plugin-message-handler.js'
 import { TreeMessageHandler } from './tree-message-handler.js'
-import type { MessageHandlerContext } from './message-context.js'
+import type { MessageHandlerContext, ErrorDetails } from './message-context.js'
 import { toErrorMessage } from '../utils/errors.js'
 
 const HTTP_OK = 200
@@ -80,7 +80,7 @@ export class RuntimeServer implements IMessageBroker {
     this.bridgeHandler = new BridgeHandler(this.pluginService ?? null)
     const messaging: MessageHandlerContext = {
       send: (ws, msg) => this.send(ws, msg),
-      sendError: (ws, code, message, id, sessionId) => this.sendError(ws, code, message, id, sessionId),
+      sendError: (ws, code, message, id, details) => this.sendError(ws, code, message, id, details),
       reply: (ws, id, type, payload) => this.reply(ws, id, type, payload),
     }
     this.settingsHandler = new SettingsMessageHandler({
@@ -262,12 +262,12 @@ export class RuntimeServer implements IMessageBroker {
       // Settings 是兜底 handler：它内部 switch 命中返回 true，未命中返回 false（→ unknown_type）。
       if (!await this.settingsHandler.handleSettingsMessage(msg, ws)) {
         const rawMsg = msg as { type: string; payload?: { sessionId?: string } }
-        this.sendError(ws, 'unknown_type', `Unknown message type: ${rawMsg.type}`, msg.id, rawMsg.payload?.sessionId)
+        this.sendError(ws, 'unknown_type', `Unknown message type: ${rawMsg.type}`, msg.id, { sessionId: rawMsg.payload?.sessionId })
       }
     } catch (e) {
       const message = toErrorMessage(e)
       const sessionId = ('sessionId' in msg.payload ? msg.payload.sessionId : undefined) as string | undefined
-      this.sendError(ws, 'handler_error', message, msg.id, sessionId)
+      this.sendError(ws, 'handler_error', message, msg.id, sessionId ? { sessionId } : undefined)
     }
   }
 
@@ -281,9 +281,19 @@ export class RuntimeServer implements IMessageBroker {
     for (const ws of this.clients) this.send(ws, msg)
   }
 
-  sendError(ws: WsType, code: string, message: string, id?: string, sessionId?: string): void {
+  /**
+   * 发送请求级操作失败的统一 error envelope（D10/P0-B）。
+   * @param details 可选扩展槽：sessionId / hint / path 等附加信息。
+   */
+  sendError(ws: WsType, code: string, message: string, id?: string, details?: ErrorDetails): void {
     const payload: Record<string, unknown> = { code, message }
-    if (sessionId) payload.sessionId = sessionId
+    if (details) {
+      if (details.sessionId) payload.sessionId = details.sessionId
+      // 其余扩展字段（hint/path/...）进 details 子对象，保持 envelope 顶层只有 code/message/sessionId。
+      const extras = { ...details }
+      delete extras.sessionId
+      if (Object.keys(extras).length > 0) payload.details = extras
+    }
     this.send(ws, { type: 'error', id, payload })
   }
 
@@ -354,7 +364,7 @@ export class RuntimeServer implements IMessageBroker {
   private async handleFileRead(msg: ClientMessage, ws: WsType): Promise<void> {
     const { path: filePath } = msg.payload as { path: string }
     if (!filePath || typeof filePath !== 'string') {
-      this.send(ws, { type: 'file.read:error', id: msg.id, payload: { error: 'Missing or invalid path' } })
+      this.sendError(ws, 'invalid_path', 'Missing or invalid path', msg.id)
       return
     }
     const normalize = (p: string) => p.split(/[/\\]/).join('/')
@@ -367,16 +377,15 @@ export class RuntimeServer implements IMessageBroker {
       normalize(resolve(this.configService.getPiAgentDir(), 'npm')),
     ]
     if (!allowedPrefixes.some(prefix => absPath.startsWith(prefix + '/'))) {
-      this.send(ws, { type: 'file.read:error', id: msg.id, payload: { error: 'Path outside allowed skill directories', path: filePath } })
+      this.sendError(ws, 'path_not_allowed', 'Path outside allowed skill directories', msg.id, { path: filePath })
       return
     }
     try {
       const fs = await import('fs/promises')
       const content = await fs.readFile(filePath, 'utf-8')
-      this.send(ws, { type: 'file.read:result', id: msg.id, payload: { content, path: filePath } })
+      this.reply(ws, msg.id, 'file.read:result', { content, path: filePath })
     } catch (e) {
-      const message = toErrorMessage(e)
-      this.send(ws, { type: 'file.read:error', id: msg.id, payload: { error: message, path: filePath } })
+      this.sendError(ws, 'file_read_failed', toErrorMessage(e), msg.id, { path: filePath })
     }
   }
 

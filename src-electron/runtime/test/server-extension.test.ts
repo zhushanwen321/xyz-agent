@@ -421,7 +421,7 @@ describe('RuntimeServer: extension message routing', () => {
       mockInstallLocalDirectory.mockRejectedValueOnce(new Error('Source path does not exist'))
       await connectClient()
 
-      const responsePromise = waitForMessage(ws, 'extension.installError')
+      const responsePromise = waitForMessage(ws, 'error')
 
       ws.send(JSON.stringify({
         type: 'extension.installDir',
@@ -467,7 +467,7 @@ describe('RuntimeServer: extension message routing', () => {
       mockInstallGitRepository.mockRejectedValueOnce(new Error('git clone failed: not found'))
       await connectClient()
 
-      const responsePromise = waitForMessage(ws, 'extension.installError')
+      const responsePromise = waitForMessage(ws, 'error')
 
       ws.send(JSON.stringify({
         type: 'extension.installGit',
@@ -507,7 +507,7 @@ describe('RuntimeServer: extension message routing', () => {
       mockInstallExtension.mockRejectedValueOnce(new Error('npm install failed: 404'))
       await connectClient()
 
-      const responsePromise = waitForMessage(ws, 'extension.installError')
+      const responsePromise = waitForMessage(ws, 'error')
 
       ws.send(JSON.stringify({
         type: 'extension.install',
@@ -546,7 +546,7 @@ describe('RuntimeServer: extension message routing', () => {
       mockCancelInstall.mockRejectedValueOnce(new Error('invalid temp directory'))
       await connectClient()
 
-      const responsePromise = waitForMessage(ws, 'extension.installError')
+      const responsePromise = waitForMessage(ws, 'error')
 
       ws.send(JSON.stringify({
         type: 'extension.cancelInstall',
@@ -555,7 +555,7 @@ describe('RuntimeServer: extension message routing', () => {
       }))
 
       const msg = await responsePromise
-      expect(msg.type).toBe('extension.installError')
+      expect(msg.type).toBe('error')
       expect((msg.payload as { message?: string }).message).toContain('invalid temp directory')
     })
   })
@@ -584,7 +584,7 @@ describe('RuntimeServer: extension message routing', () => {
       mockFinishInstall.mockRejectedValueOnce(new Error('not found in temp directory'))
       await connectClient()
 
-      const responsePromise = waitForMessage(ws, 'extension.installError')
+      const responsePromise = waitForMessage(ws, 'error')
 
       ws.send(JSON.stringify({
         type: 'extension.finishInstall',

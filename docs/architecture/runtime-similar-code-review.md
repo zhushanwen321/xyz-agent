@@ -7,8 +7,9 @@
 > - ✅ P0-A（存储抽象层 JsonStore + WriteBackCache）已完成——C0–C6，6 个 store 全部迁移
 > - ✅ P1-A（settings.json 单所有者收口）已完成——9 处 RMW 收口到 updateSettingsSync
 > - ✅ P1-B（storage global/workspace ×4×2 折叠）已完成——C5 顺手做
-> - ⬜ P0-B（transport 错误契约统一）待做
-> - ⬜ P1-C/D/E 待做
+> - ✅ P0-B（transport 错误契约统一）已完成——D2 reply/D3 requireExt/D8 getClientOrThrow/D9 TreeHandlerContext extends/D10 error envelope 三通道契约
+> - ✅ P1-C（transport 分发骨架重构）已完成——D1 中央 switch→dispatch Map + D2 reply + D3 requireExt + D8 getClientOrThrow + D9 TreeHandlerContext extends
+> - ⬜ P1-D/E 待做
 > 与 [`duplicate-code-audit.md`](./duplicate-code-audit.md)（D1–D28）的关系：
 > - 既有审计 D1–D28 多已标 ✅ 解决。本文件是**对未解决/新发现相似代码的第二轮审查**。
 > - 本文件不重复 D1–D28 的已解决项，仅在**与既有结论冲突或补充**处交叉引用并标注「修正 Dxx」。
@@ -72,7 +73,7 @@ class WriteBackCache<K, V> {                  // write-back，组合 JsonStore
 
 ---
 
-### P0-B. transport 层错误契约统一
+### P0-B. transport 层错误契约统一 ✅ 已完成（commit 待补）
 
 **吸收相似点**：D10（6 种错误 payload 形状）。
 
@@ -119,7 +120,7 @@ class WriteBackCache<K, V> {                  // write-back，组合 JsonStore
 
 ---
 
-### P1-C. transport 消息分发骨架重构
+### P1-C. transport 消息分发骨架重构 ✅ 已完成（commits 171a7132 + c7b7b2b0）
 
 **吸收相似点**：D1 switch 骨架（6 处）、D2 reply 惯用法（40+ 处）、D3 service 守卫（7+1 处）、D4 mutate→scan→reply、D5 try/catch→toErrorMessage、D8 getClient→空抛→op（3 处）、D9 DI 构造器 + TreeHandlerContext 没 extends。
 

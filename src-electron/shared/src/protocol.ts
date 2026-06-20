@@ -163,7 +163,7 @@ export type ExtractPayload<T extends ClientMessageType> = T extends keyof Client
 /** 构造特定 type 的 ClientMessage */
 export type SpecificClientMessage<T extends ClientMessageType> = Extract<ClientMessage, { type: T }>
 
-// ── Runtime → Client message types（保持不变）──────────────────
+// ── Runtime → Client message types ──────────────────────────────
 
 export type ServerMessageType =
   | 'session.created' | 'session.deleted' | 'session.list' | 'session.history'
@@ -181,7 +181,7 @@ export type ServerMessageType =
   | 'session.thinkingLevelSet'
   | 'pong' | 'error'
   | 'extension.ui_request' | 'extension.ui_timeout' | 'extension.error'
-  | 'extension.discovered' | 'extension.installError' | 'extension.installCancelled'
+  | 'extension.discovered' | 'extension.installCancelled'
   | 'message.tool_call_update' | 'config.extensions'
   | 'session.commands'
   | 'session.tree-data' | 'session.tree-navigate-result' | 'session.tree-fork-result' | 'session.tree-clone-result' | 'session.tree-capability'
@@ -195,13 +195,34 @@ export type ServerMessageType =
   | 'message.bashExecution' | 'message.compactionSummary' | 'message.branchSummary'
   | 'message.auto_retry_start' | 'message.auto_retry_end' | 'message.queue_update'
   | 'message.stream_error'
-  | 'file.read:result' | 'file.read:error'
+  | 'file.read:result'
 
 export interface ServerMessage {
   type: ServerMessageType
   id?: string
   payload: Record<string, unknown>
 }
+
+/**
+ * # 错误契约（D10/P0-B）
+ *
+ * 「告诉客户端操作失败」有三种语义通道，**不可混用**：
+ *
+ * 1. **请求级失败 → 统一 `error` envelope**（install / uninstall / toggle / file.read /
+ *    steer / followUp 等同步请求的失败回复）。客户端只需一处 catch：
+ *    `{ type:'error', id, payload:{ code, message, sessionId?, details? } }`。
+ *    扩展信息（hint / path 等）进 `details`，不再为每种失败造独立 *Error 子类型。
+ *
+ * 2. **流式异步推送失败 → `message.error`**（message-dispatcher 在 streaming 过程中广播，
+ *    非「请求回复」而是「server-push 通道」）。payload: `{ sessionId, message }`。
+ *
+ * 3. **部分成功的降级响应 → 内联 `success:false`**（tree 的 tree 部分可用 + 返回降级空数组；
+ *    config.discoveredModels 成功/失败共用同 type 用 `success` 字段区分）。**不是错误**，
+ *    是带错误信息的成功响应——保留各自 type，不并入 error envelope。
+ *
+ * 此前 6 种碎片化形状（extension.installError / file.read:error / ...）已统一：
+ * `extension.installError` 和 `file.read:error` type 已删除（客户端 0 消费者时合并）。
+ */
 
 // ── Extension payload interfaces ────────────────────────────────
 
@@ -259,11 +280,8 @@ export interface ExtensionDiscoveredPayload {
   candidates: ExtensionInfo[]
 }
 
-export interface ExtensionInstallErrorPayload {
-  code: string
-  message: string
-  hint?: string
-}
+// 注：ExtensionInstallErrorPayload 已删除（D10/P0-B）——install 失败现在走统一 error envelope，
+// hint 进 details.hint。见上方「错误契约」文档注释。
 
 // ── Plugin payload interfaces ───────────────────────────────────
 

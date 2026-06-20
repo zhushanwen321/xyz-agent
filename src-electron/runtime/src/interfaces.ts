@@ -48,7 +48,8 @@ export type IRpcClient = IPiEngine
 export interface IMessageBroker {
   send(ws: unknown, msg: ServerMessage): void
   broadcast(msg: ServerMessage): void
-  sendError(ws: unknown, code: string, message: string, id?: string, sessionId?: string): void
+  /** D10/P0-B: 第 5 参数从 sessionId(string) 改为 details(ErrorDetails)，sessionId 进 details.sessionId。 */
+  sendError(ws: unknown, code: string, message: string, id?: string, details?: { sessionId?: string; [key: string]: unknown }): void
 }
 
 // ── IEventAdapter ─────────────────────────────────────────────────

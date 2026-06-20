@@ -53,7 +53,7 @@ export class ExtensionMessageHandler {
         const client = this.ctx.sessionService.getRpcClient(extSid)
         if (!client) {
           this.ctx.extensionTimeoutMgr.clearTimeout(requestId)
-          return this.ctx.sendError(ws, 'handler_error', `No active session for extension response: ${extSid}`, msg.id, extSid)
+          return this.ctx.sendError(ws, 'handler_error', `No active session for extension response: ${extSid}`, msg.id, { sessionId: extSid })
         }
         await client.sendCommand('extension_ui_response', { id: requestId, response: extResult ?? null })
         this.ctx.extensionTimeoutMgr.clearTimeout(requestId)
@@ -83,7 +83,7 @@ export class ExtensionMessageHandler {
         try {
           await ext.installExtension(msg.payload.source)
         } catch (e) {
-          return this.ctx.reply(ws, msg.id, 'extension.installError', this.extractExtensionError(e))
+          return this.sendInstallError(ws, msg.id, e)
         }
         const installed = await ext.scanExtensions()
         return this.ctx.reply(ws, msg.id, 'config.extensions', { extensions: installed })
@@ -112,7 +112,7 @@ export class ExtensionMessageHandler {
           const result = await ext.installLocalDirectory(sourcePath)
           return this.ctx.reply(ws, msg.id, 'extension.discovered', { tempDir: result.tempDir, candidates: result.candidates })
         } catch (e) {
-          return this.ctx.reply(ws, msg.id, 'extension.installError', this.extractExtensionError(e))
+          return this.sendInstallError(ws, msg.id, e)
         }
       }
       case 'extension.installGit': {
@@ -126,7 +126,7 @@ export class ExtensionMessageHandler {
           const result = await ext.installGitRepository(url)
           return this.ctx.reply(ws, msg.id, 'extension.discovered', { tempDir: result.tempDir, candidates: result.candidates })
         } catch (e) {
-          return this.ctx.reply(ws, msg.id, 'extension.installError', this.extractExtensionError(e))
+          return this.sendInstallError(ws, msg.id, e)
         }
       }
       case 'extension.finishInstall': {
@@ -141,7 +141,7 @@ export class ExtensionMessageHandler {
           const extensions = await ext.scanExtensions()
           return this.ctx.reply(ws, msg.id, 'config.extensions', { extensions })
         } catch (e) {
-          return this.ctx.reply(ws, msg.id, 'extension.installError', this.extractExtensionError(e))
+          return this.sendInstallError(ws, msg.id, e)
         }
       }
       case 'extension.cancelInstall': {
@@ -155,20 +155,23 @@ export class ExtensionMessageHandler {
           await ext.cancelInstall(tempDir)
           return this.ctx.reply(ws, msg.id, 'extension.installCancelled', {})
         } catch (e) {
-          return this.ctx.reply(ws, msg.id, 'extension.installError', this.extractExtensionError(e))
+          return this.sendInstallError(ws, msg.id, e)
         }
       }
     }
   }
 
   /**
-   * Extract ExtensionInstallError fields from unknown catch value.
+   * install/Dir/Git/finish/cancel 失败的统一错误回复（D10/P0-B）。
+   * 此前 5 处各自 reply('extension.installError', extractExtensionError(e))；
+   * 现统一走 error envelope，hint 进 details.hint。
    * Primary: instanceof check. Fallback: branded property check (handles cross-bundle scenarios).
    */
-  private extractExtensionError(e: unknown): { code: string; message: string; hint?: string } {
+  private sendInstallError(ws: WsType, id: string | undefined, e: unknown): void {
     if (e instanceof ExtensionInstallError) {
-      return { code: e.code, message: e.message, hint: e.hint }
+      this.ctx.sendError(ws, e.code, e.message, id, e.hint ? { hint: e.hint } : undefined)
+    } else {
+      this.ctx.sendError(ws, 'install_failed', toErrorMessage(e), id)
     }
-    return { code: 'install_failed', message: toErrorMessage(e) }
   }
 }
