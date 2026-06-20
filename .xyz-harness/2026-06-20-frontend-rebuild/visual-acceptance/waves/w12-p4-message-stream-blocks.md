@@ -7,6 +7,8 @@ est: 12min
 va_ref: VA-05 A1-A2,A6-A8
 ---
 
+> 结果: ✅ PASS (2026-06-20, minimax-m3)
+
 # W12 · P4 MessageStream 块渲染（7 类 + 气泡 + 光标 + 红框）
 
 > 1 个复杂 case：7 类消息块渲染 + mock fixture 丰富度 + user 气泡 + 流式光标 + 失败红框。

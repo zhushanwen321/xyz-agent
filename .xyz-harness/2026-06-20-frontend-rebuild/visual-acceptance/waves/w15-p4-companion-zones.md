@@ -7,6 +7,8 @@ est: 5min
 va_ref: VA-05 C1-C6
 ---
 
+> 结果: ✅ PASS (2026-06-21, minimax-m3)
+
 # W15 · P4 Companion Zones（progress + git 位置 / 状态骨架）
 
 > 3 个简单 case：progress-zone / git-zone 位置 + 各自状态骨架。DOM + 视觉核对。
