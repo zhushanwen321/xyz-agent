@@ -2,6 +2,13 @@
 
 > 审查范围：`src-electron/runtime/src/`（排除 test/、node_modules/）
 > 审查日期：2026-06-20
+>
+> **进度（2026-06-20 更新）**：
+> - ✅ P0-A（存储抽象层 JsonStore + WriteBackCache）已完成——C0–C6，6 个 store 全部迁移
+> - ✅ P1-A（settings.json 单所有者收口）已完成——9 处 RMW 收口到 updateSettingsSync
+> - ✅ P1-B（storage global/workspace ×4×2 折叠）已完成——C5 顺手做
+> - ⬜ P0-B（transport 错误契约统一）待做
+> - ⬜ P1-C/D/E 待做
 > 与 [`duplicate-code-audit.md`](./duplicate-code-audit.md)（D1–D28）的关系：
 > - 既有审计 D1–D28 多已标 ✅ 解决。本文件是**对未解决/新发现相似代码的第二轮审查**。
 > - 本文件不重复 D1–D28 的已解决项，仅在**与既有结论冲突或补充**处交叉引用并标注「修正 Dxx」。

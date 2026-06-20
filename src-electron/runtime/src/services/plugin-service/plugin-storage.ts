@@ -1,10 +1,8 @@
-import { mkdir, readFile, unlink } from 'node:fs/promises'
 import { mkdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { createHash } from 'node:crypto'
-import { toErrorMessage, isEnoent } from '../../utils/errors.js'
-import { randomSuffix } from '../../utils/ids.js'
-import { atomicWrite, atomicWriteAsync } from '../../utils/fs-utils.js'
+import { isEnoent, toErrorMessage } from '../../utils/errors.js'
+import { atomicWrite } from '../../utils/fs-utils.js'
 import { WriteBackCache } from '../../utils/json-store.js'
 
 // eslint-disable-next-line no-magic-numbers
@@ -153,76 +151,5 @@ export class PluginStorage {
       pluginId,
       `workspace-${cwdHash}.json`,
     )
-  }
-}
-
-// ── SessionData 文件持久化（独立函数）────────────────────────────────
-
-// eslint-disable-next-line no-magic-numbers
-const SESSION_DATA_SIZE_LIMIT = 10 * MB // 10MB
-
-/**
- * 将 sessionData 持久化到磁盘（原子写入）。
- * @param baseDir - 存储基础目录
- * @param sessionId - session ID
- * @param data - 内存缓存 Map
- */
-export async function persistSessionData(
-  baseDir: string,
-  sessionId: string,
-  data: Map<string, unknown>,
-): Promise<void> {
-  const obj: Record<string, unknown> = Object.fromEntries(data)
-  const content = JSON.stringify(obj)
-
-  // 容量检查
-  if (Buffer.byteLength(content, 'utf-8') > SESSION_DATA_SIZE_LIMIT) {
-    throw new Error(`Session data exceeds 10MB limit for session ${sessionId}`)
-  }
-
-  const dir = join(baseDir, 'session-data')
-  await mkdir(dir, { recursive: true })
-  const filePath = join(dir, `${sessionId}.json`)
-  // 并发 flush 可能交叉，用唯一 tmp 后缀避免互相覆盖 tmp（atomicWriteAsync uniqueSuffix）
-  await atomicWriteAsync(filePath, content, `${Date.now()}_${randomSuffix()}`)
-}
-
-/**
- * 从磁盘加载 sessionData。
- * 文件不存在时返回空 Map。
- */
-export async function loadSessionData(
-  baseDir: string,
-  sessionId: string,
-): Promise<Map<string, unknown>> {
-  const filePath = join(baseDir, 'session-data', `${sessionId}.json`)
-  try {
-    const raw = await readFile(filePath, 'utf-8')
-    const parsed = JSON.parse(raw) as Record<string, unknown>
-    return new Map(Object.entries(parsed))
-  } catch (e: unknown) {
-    const isEnoent = e instanceof Error && 'code' in e && (e as NodeJS.ErrnoException).code === 'ENOENT'
-    if (!isEnoent) {
-      console.warn(`[plugin-storage] loadSessionData failed for ${sessionId}:`, toErrorMessage(e))
-    }
-    return new Map()
-  }
-}
-
-/**
- * 删除 sessionData 文件。ENOENT 静默忽略。
- */
-export async function deleteSessionData(
-  baseDir: string,
-  sessionId: string,
-): Promise<void> {
-  const filePath = join(baseDir, 'session-data', `${sessionId}.json`)
-  try {
-    await unlink(filePath)
-  } catch (e: unknown) {
-    const isEnoent = e instanceof Error && 'code' in e && (e as NodeJS.ErrnoException).code === 'ENOENT'
-    if (!isEnoent) {
-      console.warn(`[plugin-storage] deleteSessionData failed for ${sessionId}:`, toErrorMessage(e))
-    }
   }
 }

@@ -150,9 +150,6 @@ export class SessionDataStore {
   // ── Private（WriteBackCache backing 回调） ──────────────────
 
   private loadPartitionSync(sessionId: string): Map<string, unknown> {
-    // loadSessionData 是 async（readFile）；loadPartition 需要 sync。
-    // 用 readFileSync 同步读，与 PluginStorage.loadPartition 一致。
-    const { readFileSync } = require('node:fs')
     const filePath = join(this.configDir, 'session-data', `${sessionId}.json`)
     try {
       const raw = readFileSync(filePath, 'utf-8')
