@@ -102,7 +102,7 @@ export class PluginService implements IPluginService {
     this.activator.registerDescriptors(descriptors)
 
     // 2. 初始化存储
-    await this.storage.init(this.configDir, process.cwd())
+    this.storage.init(this.configDir, process.cwd())
 
     // 3. 注册 RPC 方法
     this.registerRpcMethods()
@@ -334,12 +334,12 @@ export class PluginService implements IPluginService {
   async getPluginConfig(pluginId: string, key?: string): Promise<unknown> {
     if (key === undefined || key === '__all__') {
       // Return all config
-      const allKeys = await this.storage.keys(pluginId)
+      const allKeys = this.storage.keys(pluginId)
       const configKeys = allKeys.filter(k => k.startsWith('config:'))
       const result: Record<string, unknown> = {}
       for (const configKey of configKeys) {
         const rawKey = configKey.replace('config:', '')
-        result[rawKey] = await this.storage.get(pluginId, configKey)
+        result[rawKey] = this.storage.get(pluginId, configKey)
       }
       return result
     }
@@ -347,7 +347,7 @@ export class PluginService implements IPluginService {
   }
 
   async setPluginConfig(pluginId: string, key: string, value: unknown): Promise<void> {
-    await this.storage.set(pluginId, `config:${key}`, value)
+    this.storage.set(pluginId, `config:${key}`, value)
   }
 
   async shutdown(): Promise<void> {
@@ -355,7 +355,7 @@ export class PluginService implements IPluginService {
     this.sessionDataStore.stopFlushTimer()
     this.activator.stopAllWatchers()
     await this.activator.deactivateAll(this.host)
-    await this.storage.flushAll()
+    this.storage.flushAll()
     await this.host.shutdown()
     this.rpcServer.dispose()
     this.initialized = false
