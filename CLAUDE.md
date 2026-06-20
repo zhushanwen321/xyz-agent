@@ -277,12 +277,14 @@ SKIP_ALL_CHECKS=1 git commit            # 跳过所有（仅紧急情况）
 8. **禁止硬编码颜色** — 用 CSS 变量（`var(--accent)`）或语义 Tailwind 类
 9. **禁止魔数间距** — 用标准 Tailwind scale，不用 `p-[17px]`
 10. **border-radius 遵循 v3 design-tokens**（`--radius-sm:3px` / `--radius:8px` / `--radius-lg:12px`）— `rounded-sm`(3px) 默认，`rounded-md`/`rounded-lg`(8/12px) 特殊场景。SSOT 见 [docs/designs/design-tokens.md](docs/designs/design-tokens.md)，裁决依据 ADR-0018（旧 Warm 时期的 1px/2px 规则已推翻）。详见 docs/standards.md §7.1
-11. **macOS traffic light safe zone** — 所有涉及窗口左上角区域的 UI 布局（PanelBar header、sidebar header 等），在非全屏模式下必须考虑 macOS 原生 traffic light 按钮（红黄绿，约 78px 宽、40px 高的矩形区域）的遮挡。具体要求：
-    - Sidebar collapsed + 非 fullscreen 时，最左侧 panel 的 header（PanelBar）需要 `padding-left: 78px` 避开 traffic lights
-    - 左右 split panel 时，只有最左侧 panel 的 PanelBar 需要 safe-zone，右侧 panel 不受影响
-    - 全屏模式下无 traffic lights，不需要额外 padding
-    - 新增或修改任何窗口顶部区域 UI 时，必须在非全屏 + 全屏两种模式下验证
-    - 设计决策记录：[ADR 0016](docs/architecture/adr/0016-macos-traffic-light-safe-zone.md)，[交互式 demo](docs/designs/sidebar-collapse-fix.html)
+11. **窗口顶部 traffic light 安全区（v3 shell 拓扑）** — v3 重建采用 zcode-demo 拓扑：base 平铺全屏 → sidebar 透明融合 → main 是唯一 float-panel 浮起。traffic light 靠 **aside-region 顶部留白**兼容，而非旧版 padding-left 避让。具体要求：
+    - `.aside-region` 恒定 `padding-top: 52px`（安全区 32 + 呼吸 20），**三平台统一，全屏也保留**（mac 全屏 hover 时系统下拉覆盖层会落进这块留白）
+    - `--tl-safe-width: 72px`（mac 三按钮宽）、`--tl-safe-height: 32px`
+    - app-nav-controls（收起侧栏/←/→）浮在 aside 安全区，非全屏 `left:90px`，全屏 `left:20px`（320ms 平移与 traffic-light opacity 同步）
+    - 全屏两态：非全屏（traffic light opacity 1，按钮 left:90px）/ 全屏（opacity 0，按钮左移）。**无第三态**，mac 全屏 hover 红黄绿由系统提供，应用不渲染
+    - win/linux 走 mimic_mac：自绘彩色圆点放左侧模拟 mac，三平台左上视觉统一
+    - 新增或修改任何窗口顶部区域 UI 时，必须读 [shell spec](docs/designs/v3-demo/shell/spec.md) 确认拓扑一致
+    - 设计决策记录：[ADR 0016](docs/architecture/adr/0016-macos-traffic-light-safe-zone.md)（旧版 padding-left 方案，**已推翻**）、[v3 shell spec](docs/designs/v3-demo/shell/spec.md)（现版 SSOT，2026-06-18 修正）
 
 ### 自动化检查
 
