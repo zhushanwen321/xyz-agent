@@ -7,6 +7,8 @@ est: 5min
 va_ref: VA-03 #1-4
 ---
 
+> 结果: ✅ PASS (2026-06-20, minimax-m3)
+
 # W07 · P2 Sidebar Overview 入口（分层）
 
 > 3 个简单 case：Overview 入口按钮位置 / 计数 / 激活态。DOM + 视觉核对。
