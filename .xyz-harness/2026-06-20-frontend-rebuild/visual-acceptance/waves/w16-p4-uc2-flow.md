@@ -7,6 +7,8 @@ est: 15min
 va_ref: VA-05 D3-D4 + 集成
 ---
 
+> 结果: ✅ PASS (2026-06-20, W16 修复: 流式状态机稳定性)
+
 # W16 · P4 UC-2 端到端集成 + DEFERRED hide
 
 > 1 个复杂 case：UC-2 全链路 smoke test + abort 基础 + Side Drawer/⌘B/Tool 审批 hide。**P4 收尾集成验收**。

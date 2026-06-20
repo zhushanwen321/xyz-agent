@@ -78,6 +78,12 @@ export async function createWindow(
       preload: path.join(app.getAppPath(), 'dist/preload/preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
+      // [HISTORICAL] W16 UC-2：renderer 后台化时 chromium background timer throttling
+      // 把 setTimeout 拉到 ~1s（50ms→980-1000ms 实测），mock 流式（70ms×N setTimeout 链）
+      // 被拖到 20s+，采样窗口内看不到完成。agent 工作台用户发消息后切窗口是核心场景，
+      // renderer 不应被节流（WS onmessage 事件驱动不受影响，但 setTimeout 基础设施会）。
+      // 与 VSCode/Cursor 一致：禁用 backgroundThrottling。
+      backgroundThrottling: false,
     },
   })
 
