@@ -7,6 +7,8 @@ est: 10min
 va_ref: VA-03 #9-11
 ---
 
+> 结果: ✅ PASS (2026-06-21, W08 修复: 补全 5 态派生 + mock + waiting 脉冲)
+
 # W08 · P2 SessionItem（5 状态点 + 信息结构 + hover）
 
 > 1 个复杂 case：D6 派生 5 状态点 + 信息结构 + hover 操作浮现。多状态 + 交互。

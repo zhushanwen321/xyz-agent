@@ -2,11 +2,13 @@
 /**
  * Mock fixture —— 最小但结构完整的预制数据（D7：严格镜像 shared 类型）。
  *
- * - 3 个 SessionSummary（active/idle 混合，含 git/worktree 字段证明全字段）
- * - s1 含多回合消息：user / assistant text(收尾 summary) / tool_call(成功+失败) / thinking，
- *   覆盖 G2-006 契约的所有块类型让 UC-2 可验收（回合折叠 pill 可验）
- * - s2 单回合纯文字（验证无折叠条 turn）
- * - s3 空会话（验证空态欢迎语）
+ * - 5 个 SessionSummary，覆盖 D6 派生 5 态（error/waiting/done/running/stopped 各一）
+ * - s1 多回合（error）：user / assistant text / tool_call(成功+失败) / thinking，
+ *   末条 assistant status:error → error 态；覆盖 G2-006 契约所有块类型让 UC-2 可验收（回合折叠 pill 可验）
+ * - s2 单回合（waiting）：末条 assistant 含 status:running 的 toolCall → waiting 脉冲
+ * - s3 空会话（done）：验证空态欢迎语
+ * - s4 流式中（running）：末条 assistant status:streaming → running 脉冲
+ * - s5 已中断（stopped）：末条 assistant isInterrupted → stopped 灰态
  * - S3/S4 相关块（@/#// 命令、附件）不造（G2-002 DEFERRED）
  * - fixtureMessages 供 getHistory 回填；mock 运行时 chat.send 另起流式，不复用历史
  *
@@ -34,12 +36,14 @@ export const fixtureSessions: SessionSummary[] = [
   },
   {
     id: 's2',
-    label: 'Tauri GUI 设计',
+    label: 'Lint 排查中',
     cwd: '/Users/zhushanwen/Code/xyz-agent',
-    status: 'idle',
-    lastActiveAt: NOW - DAY,
+    gitBranch: 'refactor-auth',
+    gitIsWorktree: true,
+    status: 'active',
+    lastActiveAt: NOW - 30 * MINUTE,
     modelId: 'claude-sonnet-4',
-    tokenCount: 3_100,
+    tokenCount: 5_400,
   },
   {
     id: 's3',
@@ -50,6 +54,26 @@ export const fixtureSessions: SessionSummary[] = [
     lastActiveAt: NOW - 5 * DAY,
     modelId: 'deepseek-v3',
     tokenCount: 8_700,
+  },
+  {
+    id: 's4',
+    label: 'Promise 代码评审',
+    cwd: '/Users/zhushanwen/Code/work-project',
+    status: 'active',
+    lastActiveAt: NOW - 4 * MINUTE,
+    modelId: 'claude-sonnet-4',
+    tokenCount: 820,
+  },
+  {
+    id: 's5',
+    label: '状态机重构（已废弃）',
+    cwd: '/Users/zhushanwen/Code/xyz-agent',
+    gitBranch: 'feat-fsm',
+    gitIsWorktree: true,
+    status: 'idle',
+    lastActiveAt: NOW - 60 * MINUTE,
+    modelId: 'claude-sonnet-4',
+    tokenCount: 2_400,
   },
 ]
 
@@ -125,7 +149,7 @@ export const fixtureMessages: Record<string, Message[]> = {
       id: 'a2',
       role: 'assistant',
       content: '提交时遇到文件锁，写入失败。请确认没有外部进程占用后重试。',
-      status: 'complete',
+      status: 'error',
       timestamp: NOW - 2 * MINUTE,
       toolCalls: [
         {
@@ -145,24 +169,68 @@ export const fixtureMessages: Record<string, Message[]> = {
     },
   ],
   s2: [
-    // ── 回合 1：纯文字回合（无工具无思考 → 无折叠条）──
+    // ── 回合 1：末条 assistant 含 status:running 的 toolCall → waiting 脉冲态 ──
     {
       id: 'u3',
       role: 'user',
-      content: 'zod 和 yup 选哪个？',
+      content: '跑一下 lint 看看还有没有问题',
       status: 'complete',
-      timestamp: NOW - DAY,
+      timestamp: NOW - 30 * MINUTE,
     },
     {
       id: 'a3',
       role: 'assistant',
-      content:
-        'zod 更适合：TS-first、与 vee-validate 官方集成（@vee-validate/zod）。yup 生态更老但类型推导弱。',
-      status: 'complete',
-      timestamp: NOW - DAY + MINUTE,
+      content: '',
+      status: 'streaming',
+      timestamp: NOW - 29 * MINUTE,
+      toolCalls: [
+        {
+          id: 'tc4',
+          toolName: 'bash',
+          input: { command: 'npm run lint' },
+          status: 'running',
+          startTime: NOW - 29 * MINUTE,
+        },
+      ],
+      contentBlocks: [{ type: 'toolCall', refId: 'tc4' }],
     },
   ],
   s3: [],
+  s4: [
+    // ── 回合 1：末条 assistant status:streaming（流式文本中）→ running 脉冲态 ──
+    {
+      id: 'u4',
+      role: 'user',
+      content: '解释一下 Promise.allSettled 和 Promise.all 的区别',
+      status: 'complete',
+      timestamp: NOW - 5 * MINUTE,
+    },
+    {
+      id: 'a4',
+      role: 'assistant',
+      content: 'Promise.allSettled 会等所有 promise 完成（不短路），每个返回 {status, value/reason}…',
+      status: 'streaming',
+      timestamp: NOW - 4 * MINUTE,
+    },
+  ],
+  s5: [
+    // ── 回合 1：末条 assistant isInterrupted（用户 abort）→ stopped 灰态 ──
+    {
+      id: 'u5',
+      role: 'user',
+      content: '把整个状态机重构一遍',
+      status: 'complete',
+      timestamp: NOW - 60 * MINUTE,
+    },
+    {
+      id: 'a5',
+      role: 'assistant',
+      content: '我先看一下现有的状态机实现，然后画一张状态转换图…',
+      status: 'complete',
+      isInterrupted: true,
+      timestamp: NOW - 59 * MINUTE,
+    },
+  ],
 }
 
 let createSeq = 0

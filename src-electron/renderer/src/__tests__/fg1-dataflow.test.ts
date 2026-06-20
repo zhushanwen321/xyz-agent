@@ -11,9 +11,9 @@ import { useChatStore } from '@/stores/chat'
 describe('FG1 mock + chat store 数据流', () => {
   beforeEach(() => setActivePinia(createPinia()))
 
-  it('session.list 返回 3 个 fixture 全字段', async () => {
+  it('session.list 返回 5 个 fixture 全字段', async () => {
     const list = await mockApi.session.list()
-    expect(list).toHaveLength(3)
+    expect(list).toHaveLength(5)
     expect(list[0].id).toBe('s1')
     expect(list[0].label).toBe('重构 auth 模块')
     expect(list[0].status).toBe('active')

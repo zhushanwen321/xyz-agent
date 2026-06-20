@@ -11,7 +11,7 @@
     @click="emit('select', session.id)"
   >
     <span v-if="active" class="absolute bottom-1.5 left-0 top-1.5 w-0.5 rounded-sm bg-accent" />
-    <span class="status-dot" :class="dotClass" />
+    <span class="mt-1 h-2 w-2 shrink-0 rounded-full" :class="dotClass" />
     <div class="min-w-0">
       <div
         class="truncate text-[12.5px] leading-[1.35]"
@@ -33,9 +33,9 @@
 
 <script setup lang="ts">
 /**
- * 状态点 class 映射（D6 五态）。
- * running/waiting 带 pulse 动画（@keyframes 在 scoped style，Tailwind 无对应工具类）。
- * done/stopped/error 静态语义色（design-tokens SSOT 色）。
+ * 状态点 class 映射（D6 五态，design-tokens SSOT 语义色）。
+ * running/waiting 用 Tailwind animate-pulse 呼吸（spec §会话项：两态均带脉冲）；
+ * done/stopped/error 静态色。无 scoped CSS，全 Tailwind 工具类。
  */
 const props = defineProps<{
   session: {
@@ -46,14 +46,23 @@ const props = defineProps<{
     lastActiveAt: number
   }
   active: boolean
-  status: 'running' | 'waiting' | 'done' | 'stopped' | 'error'
+  status: DerivedStatus
 }>()
 
 const emit = defineEmits<{
   select: [sessionId: string]
 }>()
 
-const dotClass = computed(() => `status-dot--${props.status}`)
+const dotClass = computed(() => {
+  const map: Record<DerivedStatus, string> = {
+    running: 'bg-accent animate-pulse',
+    waiting: 'bg-warning animate-pulse',
+    done: 'bg-success',
+    stopped: 'bg-subtle opacity-50',
+    error: 'bg-danger',
+  }
+  return map[props.status]
+})
 
 /** 工作目录名（cwd 末段），长路径只显末段防溢出 */
 const dirName = computed(() => props.session.cwd.split('/').filter(Boolean).pop() ?? props.session.cwd)
@@ -62,39 +71,6 @@ const dirName = computed(() => props.session.cwd.split('/').filter(Boolean).pop(
 const timeLabel = computed(() => formatRelativeTime(props.session.lastActiveAt))
 
 import { computed } from 'vue'
+import type { DerivedStatus } from '@/types'
 import { formatRelativeTime } from '@/composables/logic/formatTime'
 </script>
-
-<style scoped>
-/* 状态点：8px 圆点，5 态语义色。running/waiting 带 pulse（box-shadow 扩散，draft 同款）。
-   色值走 CSS 变量（design-tokens SSOT），不硬编码。 */
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  margin-top: 4px;
-  flex-shrink: 0;
-}
-.status-dot--running {
-  background: var(--accent);
-  animation: pulse-accent 2s var(--ease) infinite;
-}
-.status-dot--waiting {
-  background: var(--warning);
-  animation: pulse-warn 2s var(--ease) infinite;
-}
-.status-dot--done { background: var(--success); }
-.status-dot--stopped { background: var(--subtle); opacity: 0.5; }
-.status-dot--error { background: var(--danger); }
-
-@keyframes pulse-accent {
-  0% { box-shadow: 0 0 0 0 rgba(79, 142, 247, 0.5); }
-  70% { box-shadow: 0 0 0 5px rgba(79, 142, 247, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(79, 142, 247, 0); }
-}
-@keyframes pulse-warn {
-  0% { box-shadow: 0 0 0 0 rgba(245, 165, 36, 0.5); }
-  70% { box-shadow: 0 0 0 5px rgba(245, 165, 36, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(245, 165, 36, 0); }
-}
-</style>

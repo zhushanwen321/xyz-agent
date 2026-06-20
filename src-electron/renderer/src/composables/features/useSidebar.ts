@@ -23,26 +23,43 @@ import { useSessionStore } from '@/stores/session'
 import { useSidebarStore } from '@/stores/sidebar'
 import type { DerivedStatus } from '@/types'
 
-/** chat store 最后一条消息的 status 字段 → DerivedStatus 映射依据 */
+/**
+ * 派生信号 → DerivedStatus 映射依据（D6，spec §5 D6 + §会话项）。
+ * - toolCall.status 'running' → waiting（tool 执行中/待审批，agent 暂停）
+ * - isStreaming 或 Message.status 'streaming' → running（文本流式）
+ * - Message.status 'error' → error
+ * - Message.isInterrupted → stopped（用户 abort / 进程退出）
+ */
 const ERROR_STATUS = 'error'
 const STREAMING_STATUS = 'streaming'
+const TOOL_RUNNING = 'running'
 
 /**
  * 派生 session 5 态（D6）。
- * 优先级：isStreaming(running) > error > streaming(running) > done。
- * 空消息（无回合）→ done。waiting（tool 待审脉冲）等联调阶段补，v1 暂不派生。
+ * 优先级：waiting > running > error > stopped > done。
+ * waiting 优先于 running：turn 活跃期 tool 执行属 waiting（无文本流），spec 区分二者。
+ * 空消息（无回合）→ done。
+ *
+ * TODO 联调：waiting 真实信号待 pi tool_call_start/end 事件细化（待审 vs 执行中）；
+ *       stopped 真实信号待 abort/exit 事件。当前从 message 字段派生，mock 已可验收。
  */
 export function deriveStatus(
   sessionId: string,
   chat: ReturnType<typeof useChatStore>,
   isStreaming: boolean,
 ): DerivedStatus {
-  if (isStreaming) return 'running'
   const msgs = chat.getMessages(sessionId)
   const last = msgs[msgs.length - 1]
+  if (last?.role === 'assistant') {
+    const tools = last.toolCalls ?? []
+    if (tools.length > 0 && tools[tools.length - 1].status === TOOL_RUNNING) {
+      return 'waiting'
+    }
+  }
+  if (isStreaming || last?.status === STREAMING_STATUS) return 'running'
   if (!last) return 'done'
   if (last.status === ERROR_STATUS) return 'error'
-  if (last.status === STREAMING_STATUS) return 'running'
+  if (last.role === 'assistant' && last.isInterrupted) return 'stopped'
   return 'done'
 }
 
@@ -106,9 +123,22 @@ export function useSidebar() {
   /**
    * 加载 session 列表（mock 优先，让 fixture 可见）。
    * 铁律 1：api 调用只在此 features 层，组件不直接 import api。
+   *
+   * 同时预 hydrate 各 session 的 chat 历史，让 sidebar 状态点（D6）载入即可派生——
+   * 否则未访问的 session 在 chat store 为空，deriveStatus 全返回 done，5 态无法可见。
+   * isHydrated 守卫幂等，selectSession 的按需 hydrate 命中后变 no-op，不会重复载入。
+   * TODO 联调：真实 runtime 下全量预载历史有成本，应改为 WS 推送 status 或默认 done/idle + 按需 hydrate。
    */
   async function loadSessions(): Promise<void> {
-    session.list = await sessionApi.list()
+    const list = await sessionApi.list()
+    session.list = list
+    await Promise.allSettled(
+      list.map(async (s) => {
+        if (!chat.isHydrated(s.id)) {
+          chat.hydrate(s.id, await chatApi.getHistory(s.id))
+        }
+      }),
+    )
   }
 
   /** 切换折叠态（C）。展开/折叠 toggle，spec §收起态。 */
