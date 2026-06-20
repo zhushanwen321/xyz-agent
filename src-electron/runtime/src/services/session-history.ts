@@ -9,6 +9,7 @@
 import { readFile } from 'node:fs/promises'
 import type { ISessionStore } from './ports/session.js'
 import { isEnoent } from '../utils/errors.js'
+import { parseJsonl } from '../utils/jsonl.js'
 
 /**
  * 从 .jsonl session 文件读取消息历史。
@@ -29,19 +30,11 @@ export async function getHistoryFromFile(sessionId: string, sessionStore: ISessi
     }
     throw e
   }
-  const lines = content.split('\n').filter(l => l.trim())
-  const piMessages: unknown[] = []
-
-  for (const line of lines) {
-    try {
-      const entry = JSON.parse(line)
-      if (entry.type === 'message' && entry.message) {
-        piMessages.push(entry.message)
-      }
-    } catch {
-      void 0
-    }
-  }
+  // G2: parseJsonl 统一「逐行 parse + 跳畸形行」骨架，消费方只做领域过滤。
+  const piMessages = parseJsonl(content)
+    .filter((e): e is { type: string; message: unknown } =>
+      typeof e === 'object' && e !== null && (e as { type?: string }).type === 'message' && 'message' in e)
+    .map(e => e.message)
 
   return sessionStore.convertHistory(piMessages)
 }

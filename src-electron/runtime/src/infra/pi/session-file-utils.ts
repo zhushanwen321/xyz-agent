@@ -7,6 +7,7 @@
 
 import { existsSync, readFileSync, statSync, mkdirSync, openSync, writeSync, closeSync } from 'node:fs'
 import { atomicWrite } from '../../utils/fs-utils.js'
+import { parseJsonl } from '../../utils/jsonl.js'
 import { dirname } from 'node:path'
 
 // ── 类型定义 ─────────────────────────────────────────────────
@@ -39,18 +40,12 @@ export function parseSessionHeader(filePath: string): SessionHeader | null {
 export function extractSessionName(filePath: string): string | null {
   try {
     const content = readFileSync(filePath, 'utf-8')
-    const lines = content.split('\n')
-    // 倒序查找最后一条 session_info
-    for (let i = lines.length - 1; i >= 0; i--) {
-      if (!lines[i]) continue
-      try {
-        const entry = JSON.parse(lines[i])
-        if (entry.type === 'session_info' && entry.name) {
-          return entry.name as string
-        }
-        // eslint-disable-next-line taste/no-silent-catch -- parsing: skip malformed session line, continue parsing
-      } catch {
-        // skip malformed line
+    // G2: parseJsonl 统一「逐行 parse + 跳畸形行」骨架；倒序找最后一条 session_info。
+    const entries = parseJsonl(content)
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const entry = entries[i] as { type?: string; name?: string }
+      if (entry.type === 'session_info' && entry.name) {
+        return entry.name
       }
     }
     return null

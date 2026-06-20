@@ -7,6 +7,7 @@ import type { ClientMessage, ClientMessageType } from '@xyz-agent/shared'
 import type { ISessionService } from '../interfaces.js'
 import type { TreeService } from '../services/tree-service.js'
 import type { MessageHandlerContext } from './message-context.js'
+import { isNotFound } from '../utils/errors.js'
 
 /** D9: TreeHandlerContext 现在正确 extends MessageHandlerContext（此前自声明 send、未继承基接口）。 */
 export interface TreeHandlerContext extends MessageHandlerContext {
@@ -43,7 +44,7 @@ export class TreeMessageHandler {
           const treeData = await this.ctx.treeService.getTree(sid)
           return this.ctx.reply(ws, msg.id, 'session.tree-data', { ...treeData })
         } catch (e) {
-          if ((e instanceof Error && e.message.includes('not found')) || !this.ctx.sessionService.getSummary(sid)) {
+          if (isNotFound(e) || !this.ctx.sessionService.getSummary(sid)) {
             try {
               await this.ctx.sessionService.restoreSession(sid)
               const treeData = await this.ctx.treeService.getTree(sid)
@@ -65,7 +66,7 @@ export class TreeMessageHandler {
           const result = await this.ctx.treeService.navigateTree(sid, targetEntryId)
           return this.ctx.reply(ws, msg.id, 'session.tree-navigate-result', { sessionId: sid, ...result })
         } catch (e) {
-          if (e instanceof Error && e.message.includes('not found')) {
+          if (isNotFound(e)) {
             return this.ctx.reply(ws, msg.id, 'session.tree-navigate-result', { sessionId: sid, success: false, error: 'Session not active' })
           }
           throw e
@@ -86,7 +87,7 @@ export class TreeMessageHandler {
           }
           return this.ctx.reply(ws, msg.id, 'session.tree-fork-result', { sessionId: sid, ...result })
         } catch (e) {
-          if (e instanceof Error && e.message.includes('not found')) {
+          if (isNotFound(e)) {
             return this.ctx.reply(ws, msg.id, 'session.tree-fork-result', { sessionId: sid, success: false, error: 'Session not active' })
           }
           throw e
@@ -96,7 +97,7 @@ export class TreeMessageHandler {
         try {
           return this.ctx.reply(ws, msg.id, 'session.tree-capability', { sessionId: sid, navigateCapable: this.ctx.treeService.isNavigateCapable(sid) })
         } catch (e) {
-          if (e instanceof Error && e.message.includes('not found')) {
+          if (isNotFound(e)) {
             return this.ctx.reply(ws, msg.id, 'session.tree-capability', { sessionId: sid, navigateCapable: false })
           }
           throw e
@@ -113,7 +114,7 @@ export class TreeMessageHandler {
           }
           return this.ctx.reply(ws, msg.id, 'session.tree-clone-result', { sessionId: sid, ...result })
         } catch (e) {
-          if (e instanceof Error && e.message.includes('not found')) {
+          if (isNotFound(e)) {
             return this.ctx.reply(ws, msg.id, 'session.tree-clone-result', { sessionId: sid, success: false, error: 'Session not active' })
           }
           throw e

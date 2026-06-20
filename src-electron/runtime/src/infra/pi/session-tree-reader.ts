@@ -13,6 +13,7 @@
 
 import { readFile } from 'node:fs/promises'
 import type { TreeNode } from '../../types.js'
+import { parseJsonl } from '../../utils/jsonl.js'
 
 // ── Content block shapes from pi JSONL ─────────────────────────────
 
@@ -82,37 +83,23 @@ export async function buildTreeFromFile(filePath: string): Promise<BuildTreeResu
     // 文件可能不存在（pi 延迟写入：assistant 消息到达前不会 flush session 文件）
     return { byId: new Map(), rootNodes: [], labelsById: new Map(), lastEntryId: null, rawEntries: new Map() }
   }
-  const lines = raw.split('\n')
 
   const byId = new Map<string, TreeNode>()
   const labelsById = new Map<string, string>()
 
   // Two-pass: first collect labels, then build nodes.
   // This ensures labels are available when building nodes.
-  const entries: RawEntry[] = []
-
-  for (const line of lines) {
-    const trimmed = line.trim()
-    if (!trimmed) continue
-
-    let entry: RawEntry
-    try {
-      entry = JSON.parse(trimmed) as RawEntry
-    } catch {
-      // Skip malformed lines
-      continue
-    }
-
-    // Skip session header
-    if (entry.type === 'session') continue
-
-    // Collect label entries for the label map
-    if (entry.type === 'label' && entry.targetId && entry.label) {
-      labelsById.set(entry.targetId, entry.label)
-    }
-
-    entries.push(entry)
-  }
+  // G2: parseJsonl 统一「逐行 parse + 跳畸形行」骨架；session header 与 label 收集在此后过滤。
+  const entries: RawEntry[] = parseJsonl(raw)
+    .map(e => e as RawEntry)
+    .filter(e => {
+      if (e.type === 'session') return false // skip session header
+      // Collect label entries for the label map
+      if (e.type === 'label' && e.targetId && e.label) {
+        labelsById.set(e.targetId, e.label)
+      }
+      return true
+    })
 
   // Build TreeNode for each entry + 保留原始 entry map（用于提取完整文本）
   const rawEntries = new Map<string, RawEntry>()

@@ -1,10 +1,12 @@
 /**
- * 错误处理工具（D14 + D20）。
+ * 错误处理工具（D14 + D20 + D6）。
  *
  * - `toErrorMessage(e)`：统一 `e instanceof Error ? e.message : String(e)` 样板（D14，
  *   散落 57 处，含 `: e` 与 `: String(e)` 两种漂移）。
  * - `isEnoent(e)`：结构化 ENOENT 判定（D20，统一 `.code === 'ENOENT'` 与脆弱的
  *   `msg.includes('ENOENT')` 字符串匹配两种写法）。
+ * - `isNotFound(e)`：tree handler 的「not found」嗅探（D6，统一 5 处
+ *   `e.message.includes('not found')` 字符串匹配）。
  */
 
 /**
@@ -26,4 +28,14 @@ export function toErrorMessage(e: unknown): string {
 export function isEnoent(e: unknown): boolean {
   return typeof e === 'object' && e !== null
     && (e as NodeJS.ErrnoException).code === 'ENOENT'
+}
+
+/**
+ * 判断错误是否为「not found」类（tree handler 的 session-not-active 嗅探，D6）。
+ *
+ * 统一 tree-message-handler 5 处 `e instanceof Error && e.message.includes('not found')`
+ * 字符串匹配。TreeService 抛「not found」串表示 session 未激活，handler 据此降级回复。
+ */
+export function isNotFound(e: unknown): boolean {
+  return e instanceof Error && e.message.includes('not found')
 }
