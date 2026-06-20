@@ -20,7 +20,7 @@
         v-if="turn.hasFoldable"
         variant="ghost"
         size="sm"
-        class="turn-meta h-auto justify-start gap-2.5 rounded-none p-[5px_2px] font-sans text-[12.5px] font-medium"
+        class="turn-meta h-auto justify-start gap-2.5 rounded-none px-1 py-1 font-sans text-[12.5px] font-medium"
         :class="{ working: turn.isWorking }"
         :disabled="turn.isWorking"
         @click="expanded = !expanded"

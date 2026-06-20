@@ -4,9 +4,12 @@
     v1 主路径 4 态（spec §8.5）：
       S1 空（无输入）→ S2 输入中（有内容，中性 ring）→ S5 发送中（spinner，禁用）
       → S6 停止（AI 工作中，发 send 的反向 = 调 abort）→ 回 S1。
-    DEFERRED：S3（@/#// 命令浮层 G2-002）、S4（附件 G2-002）、S7-S9（steer/双队列/失败 G-019）。
+    DEFERRED（按 spec §8.5 Round3 统一 hide，不留 disabled 占位）：
+      S3（@/#// 命令浮层 G2-002）、S4（附件 G2-002）、S7-S9（steer/双队列/失败 G-019）、
+      + 添加按钮 / 上下文 / 模型 / 思考 工具条浮层。
+    steer 提交 DEFERRED（G-019）：draft 的 S6 accent 呼吸 ring 是 steer 信号，
+    v1 不实现 steer 故 S6 用中性 ring（避免误导不存在的功能）。
     abort 流转 DEFERRED（G-025）：按钮调 api.chat.abort，实际中断逻辑留联调。
-    S6 下 Enter 发 steer DEFERRED（v1 Enter 在 streaming 时禁用，避免无后端支持的半成品）。
   -->
   <div class="composer mx-3.5 pt-2.5">
     <div class="composer-box rounded-lg border bg-black/20" :class="boxClass">
@@ -19,20 +22,8 @@
         @keydown="onKeydown"
       />
 
-      <!-- 工具条：左 + 添加（hide 浮层 G2-002 DEFERRED，v1 仅占位禁用）；右 发送/停止 -->
-      <div class="composer-bar flex flex-wrap items-center gap-0.5 px-2.5 pb-2">
-        <Button
-          variant="ghost"
-          size="icon"
-          class="size-7 rounded-sm text-subtle hover:bg-surface-hover hover:text-muted"
-          disabled
-          title="添加内容（附件 / @ 引用 / 命令）— 待实现"
-        >
-          <Plus class="size-4" />
-        </Button>
-
-        <span class="ml-auto" />
-
+      <!-- 工具条：发送/停止（+ 添加 / @ / # / 命令浮层 G2-002 DEFERRED，按 spec §8.5 Round3 hide，不留 disabled 占位） -->
+      <div class="composer-bar flex flex-wrap items-center justify-end gap-0.5 px-2.5 pb-2">
         <!-- 发送位：S1 禁用透明文字 / S2 激活 accent / S5 spinner / S6 停止 -->
         <Button
           v-if="!isStreaming"
@@ -73,7 +64,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { ArrowRight, Loader2, Plus, Square } from '@lucide/vue'
+import { ArrowRight, Loader2, Square } from '@lucide/vue'
 import { storeToRefs } from 'pinia'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -96,16 +87,19 @@ const hasInput = computed(() => draft.value.trim().length > 0)
 /** 可发送：有输入且非 streaming 非 sending */
 const canSend = computed(() => hasInput.value && !isStreaming.value && !isSending.value)
 
-/** composer-box class（draft）：S2 中性聚焦 ring，S6 steer accent ring（呼吸） */
+/**
+ * composer-box class（draft）：S2/S6 中性聚焦 ring（border-strong）。
+ * draft 原设计 S6 用 accent 蓝 steer 呼吸 ring，但 steer 提交 DEFERRED（G-019），
+ * 呼吸 ring 会暗示一个不存在的功能（误导）。v1 S6 与 S2 同用中性 ring。
+ */
 const boxClass = computed(() => ({
-  'box-focus': hasInput.value && !isStreaming.value,
-  'box-steer': isStreaming.value,
+  'box-focus': hasInput.value || isStreaming.value,
   'box-disabled': isSending.value,
 }))
 
 const placeholder = computed(() =>
   isStreaming.value
-    ? '想补充什么？（steer / followup 待实现）…'
+    ? 'AI 正在工作中，按「停止」中断…'
     : '描述你想让 AI 做什么…',
 )
 
@@ -144,15 +138,6 @@ void props
 .box-focus {
   border-color: var(--border-strong);
   box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.04);
-}
-.box-steer {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(79, 142, 247, 0.25);
-  animation: steer-breathe 2.6s ease-in-out infinite;
-}
-@keyframes steer-breathe {
-  0%, 100% { box-shadow: 0 0 0 3px rgba(79, 142, 247, 0.22); }
-  50% { box-shadow: 0 0 0 4px rgba(79, 142, 247, 0.40); }
 }
 .box-disabled { opacity: 0.55; }
 
