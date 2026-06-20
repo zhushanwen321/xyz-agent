@@ -1,0 +1,574 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Settings · 配置覆盖 · settings-shell</title>
+<!-- SVG symbol 图标（design-system §6：stroke 1.5 / currentColor，禁 emoji 作功能图标） -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M21 21l-4.3-4.3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l5 5L20 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-provider" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="7" cy="7" r="0.9" fill="currentColor"/><circle cx="7" cy="17" r="0.9" fill="currentColor"/></symbol>
+  <symbol id="i-skill" viewBox="0 0 24 24"><path d="M12 3l2.2 5.3L20 10l-5.8 1.7L12 17l-2.2-5.3L4 10l5.8-1.7z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
+  <symbol id="i-agent" viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="12" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="9" cy="13" r="1.2" fill="currentColor"/><circle cx="15" cy="13" r="1.2" fill="currentColor"/><path d="M12 3v4M8 19v2M16 19v2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-ext" viewBox="0 0 24 24"><path d="M9 3v6M15 3v6M9 15v6M15 15v6M3 9h6M3 15h6M15 9h6M15 15h6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="9" y="9" width="6" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-system" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="16" cy="7" r="2.2" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="17" r="2.2" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M11 11l8 8M16 16l2-2M19 19l2-2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-extlink" viewBox="0 0 24 24"><path d="M14 5h5v5M19 5l-7 7M19 14v5H5V5h5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+</svg>
+<style>
+  :root{
+    --bg:#0d0d0f; --surface:#151519; --surface-2:#1b1b20; --surface-hover:#1f1f26;
+    --fg:#f0f0f5; --muted:#8a8a95; --subtle:#5a5a65;
+    --border:rgba(255,255,255,0.06); --border-strong:rgba(255,255,255,0.12);
+    --accent:#4f8ef7; --accent-hover:#6ba3ff; --accent-soft:rgba(79,142,247,0.12);
+    --success:#22c55e; --warning:#f5a524; --danger:#ef4444; --info:#38bdf8;
+    --radius-sm:3px; --radius:8px; --radius-lg:12px;
+    --shadow-2:0 8px 24px rgba(0,0,0,0.4);
+    --ease:cubic-bezier(0.4,0,0.2,1); --duration-fast:120ms; --duration:200ms;
+    --font-sans:Inter,'SF Pro Display','PingFang SC',system-ui,sans-serif;
+    --font-mono:'JetBrains Mono','IBM Plex Mono',ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--fg);font:14px/1.6 var(--font-sans);
+    -webkit-font-smoothing:antialiased;padding:32px 40px 80px;max-width:1280px;margin:0 auto}
+  h1{font-size:26px;font-weight:650;letter-spacing:-0.01em;margin-bottom:6px}
+  h2{font-size:18px;font-weight:600;margin:48px 0 4px;letter-spacing:-0.01em;display:flex;align-items:center;gap:10px}
+  h2 .num{font:600 12px/1 var(--font-mono);color:var(--accent);
+    background:var(--accent-soft);padding:4px 8px;border-radius:var(--radius-sm);letter-spacing:0.05em}
+  .lede{color:var(--muted);font-size:13px;margin-bottom:8px;max-width:860px}
+  .lede b{color:var(--fg)}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+  .meta span{font:500 11px/1 var(--font-mono);color:var(--muted);
+    background:var(--surface);border:1px solid var(--border);padding:5px 9px;border-radius:999px}
+  .meta b{color:var(--fg);font-weight:600}
+  hr{border:0;border-top:1px solid var(--border);margin:40px 0}
+  code{font:12px/1.4 var(--font-mono);background:var(--surface-2);padding:2px 6px;border-radius:var(--radius-sm);color:var(--accent)}
+  .note{font:12px/1.6 var(--font-mono);color:var(--muted);background:var(--surface);
+    border:1px solid var(--border);border-left:2px solid var(--accent);
+    border-radius:var(--radius-sm);padding:9px 11px;margin-top:14px}
+  .note b{color:var(--fg)}
+
+  /* ============ Settings Modal（居中 + 模糊背景） ============ */
+  .stage{position:relative;height:600px;border-radius:var(--radius-lg);overflow:hidden;border:1px solid var(--border-strong);background:var(--bg);margin-top:14px}
+  /* 背后的 workspace 幽灵（被 backdrop 模糊，仅作「modal 浮于工作区之上」的视觉提示） */
+  .ghost{position:absolute;inset:0;padding:16px;display:flex;gap:10px}
+  .ghost-side{width:44px;background:var(--surface);border-radius:var(--radius-sm);flex:none}
+  .ghost-main{flex:1;display:flex;flex-direction:column;gap:9px;padding-top:12px}
+  .ghost-row{background:var(--surface);border-radius:8px;height:28px;width:60%}
+  .ghost-row.r{align-self:flex-end;width:46%;background:var(--surface-2)}
+  .ghost-row.s{height:20px;width:34%}
+  .ghost-comp{margin-top:auto;background:var(--surface-2);border-radius:var(--radius);height:30px}
+  /* 模糊背景层 + 点击关闭 */
+  .backdrop{position:absolute;inset:0;background:rgba(7,7,9,0.55);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);cursor:pointer;transition:opacity var(--duration) var(--ease)}
+  /* modal 本体 */
+  .modal{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:min(900px,94%);height:min(540px,90%);
+    background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--radius-lg);
+    box-shadow:0 24px 70px rgba(0,0,0,0.55);display:flex;flex-direction:column;overflow:hidden}
+  .modal-head{display:flex;align-items:center;gap:10px;padding:11px 14px;background:var(--surface);border-bottom:1px solid var(--border);flex:none}
+  .modal-title{font-size:14px;font-weight:650;color:var(--fg)}
+  .modal-close{display:grid;place-items:center;width:28px;height:28px;border:0;border-radius:var(--radius-sm);background:transparent;color:var(--muted);cursor:pointer;transition:color var(--duration-fast) var(--ease),background var(--duration-fast) var(--ease);flex:none}
+  .modal-close:hover{color:var(--fg);background:var(--surface-hover)}
+  .modal-close svg{width:15px;height:15px}
+  .ov-toast{position:absolute;top:60px;left:50%;transform:translate(-50%,-8px);background:var(--surface-2);
+    border:1px solid var(--border-strong);color:var(--fg);padding:8px 14px;border-radius:var(--radius);
+    font:500 12px/1 var(--font-sans);box-shadow:var(--shadow-2);opacity:0;pointer-events:none;
+    transition:opacity var(--duration) var(--ease),transform var(--duration) var(--ease);z-index:60;white-space:nowrap}
+  .ov-toast.on{opacity:1;transform:translate(-50%,0)}
+  .ov-search{position:relative;margin-left:auto;width:240px}
+  /* closed 态：藏 modal+backdrop，显「重新打开」 */
+  .stage.closed .modal,.stage.closed .backdrop{opacity:0;pointer-events:none}
+  .reopen{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;opacity:0;pointer-events:none;transition:opacity var(--duration) var(--ease)}
+  .stage.closed .reopen{opacity:1;pointer-events:auto}
+  .reopen .hint{font:500 12px/1 var(--font-mono);color:var(--subtle)}
+  .ov-search input{width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--fg);
+    padding:7px 10px 7px 32px;border-radius:var(--radius);font:13px/1 var(--font-sans);outline:none;transition:border-color var(--duration-fast) var(--ease)}
+  .ov-search input:focus{border-color:rgba(79,142,247,0.5);box-shadow:inset 0 0 0 1px rgba(79,142,247,0.4)}
+  .ov-search input::placeholder{color:var(--subtle)}
+  .ov-search > svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);width:14px;height:14px;color:var(--subtle)}
+  .ov-search .kbd{position:absolute;right:8px;top:50%;transform:translateY(-50%);font:500 10px/1 var(--font-mono);color:var(--subtle);
+    background:var(--surface);border:1px solid var(--border);padding:3px 5px;border-radius:var(--radius-sm)}
+  /* 跨菜单搜索结果下拉 */
+  .sr{position:absolute;top:calc(100% + 4px);left:0;right:0;background:var(--surface-2);
+    border:1px solid var(--border-strong);border-radius:var(--radius);box-shadow:var(--shadow-2);
+    max-height:280px;overflow:auto;display:none;z-index:50}
+  .sr.on{display:block}
+  .sr .item{display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:pointer;font:13px/1.3 var(--font-sans);color:var(--fg)}
+  .sr .item:hover,.sr .item.focus{background:var(--surface-hover)}
+  .sr .item svg{width:14px;height:14px;color:var(--muted);flex:none}
+  .sr .item .tag{margin-left:auto;font:500 10px/1 var(--font-mono);color:var(--subtle)}
+  .sr .empty{padding:14px;text-align:center;color:var(--subtle);font:12px/1 var(--font-sans)}
+  /* 保存状态 pill */
+  .save{display:flex;align-items:center;gap:6px;font:500 12px/1 var(--font-mono);color:var(--subtle);
+    padding:6px 10px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);transition:color var(--duration) var(--ease)}
+  .save svg{width:13px;height:13px}
+  .save.saving{color:var(--accent)}
+  .save.saved{color:var(--success)}
+  .save .spin{animation:sp 0.8s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .reopen button{background:var(--accent);color:#fff;border:0;padding:8px 16px;border-radius:var(--radius);font:600 13px/1 var(--font-sans);cursor:pointer;transition:background var(--duration-fast) var(--ease)}
+  .reopen button:hover{background:var(--accent-hover)}
+
+  .ov-body{display:flex;flex:1;min-height:0}
+  /* 左导航 */
+  .ov-nav{width:212px;flex:none;background:var(--surface);border-right:1px solid var(--border);
+    padding:12px 8px;overflow:auto}
+  .nav-item{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:var(--radius);
+    cursor:pointer;color:var(--muted);font:500 13px/1 var(--font-sans);transition:color var(--duration-fast) var(--ease),background var(--duration-fast) var(--ease)}
+  .nav-item:hover{color:var(--fg);background:var(--surface-hover)}
+  .nav-item svg{width:17px;height:17px;flex:none}
+  .nav-item.on{color:var(--fg);background:var(--surface-2);box-shadow:inset 0 0 0 1px rgba(79,142,247,0.45)}
+  .nav-item .ct{margin-left:auto;font:500 10px/1 var(--font-mono);color:var(--subtle);background:var(--surface);padding:2px 6px;border-radius:999px}
+  /* 右详情 */
+  .ov-detail{flex:1;min-width:0;overflow:auto;padding:24px 30px 40px}
+  .panel{display:none}
+  .panel.on{display:block}
+  .ph{margin-bottom:20px}
+  .ph-title{font-size:20px;font-weight:650;letter-spacing:-0.01em;color:var(--fg)}
+  .ph-desc{color:var(--muted);font-size:13px;margin-top:3px}
+
+  /* ---- 模式 A · Setting Row ---- */
+  .row{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--border)}
+  .row:last-child{border-bottom:0}
+  .row-label{font-size:13px;font-weight:550;color:var(--fg)}
+  .row-help{font-size:12px;color:var(--muted);margin-top:3px;grid-column:1}
+  .row-ctrl{grid-row:1/span 2;align-self:center}
+  /* ---- 模式 B · Setting Card ---- */
+  .sgroup{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:6px 16px;margin-bottom:16px}
+  .sgroup-title{font-size:13px;font-weight:650;color:var(--fg);padding:13px 0 4px;display:flex;align-items:center;gap:8px}
+  .sgroup-title svg{width:15px;height:15px;color:var(--accent)}
+  .sgroup-desc{font-size:12px;color:var(--muted);padding-bottom:8px}
+  /* ---- 模式 C · Entity List ---- */
+  .entity{border-bottom:1px solid var(--border)}
+  .entity:last-child{border-bottom:0}
+  .e-head{display:flex;align-items:center;gap:10px;padding:11px 0;cursor:pointer}
+  .e-name{font-size:13px;font-weight:600;color:var(--fg)}
+  .e-sub{font:500 11px/1 var(--font-mono);color:var(--subtle)}
+  .e-pills{display:flex;gap:6px;align-items:center}
+  .e-toggle{margin-left:auto}
+  .e-chev{width:16px;height:16px;color:var(--subtle);transition:transform var(--duration) var(--ease);flex:none}
+  .entity.open .e-chev{transform:rotate(180deg)}
+  .e-config{display:none;padding:0 0 14px 0}
+  .entity.open .e-config{display:block}
+
+  /* ============ 控件原语（design-system §3/§4 派生） ============ */
+  .sw{position:relative;width:34px;height:20px;border-radius:999px;background:var(--surface-2);
+    border:1px solid var(--border-strong);cursor:pointer;transition:background var(--duration-fast) var(--ease),border-color var(--duration-fast) var(--ease);flex:none}
+  .sw::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;
+    background:var(--muted);transition:transform var(--duration) var(--ease),background var(--duration) var(--ease)}
+  .sw.on{background:var(--accent);border-color:var(--accent)}
+  .sw.on::after{transform:translateX(14px);background:#fff}
+  .field{background:var(--surface-2);border:1px solid var(--border);color:var(--fg);padding:7px 10px;
+    border-radius:var(--radius);font:13px/1 var(--font-mono);outline:none;width:100%;transition:border-color var(--duration-fast) var(--ease)}
+  .field:focus{border-color:rgba(79,142,247,0.5);box-shadow:inset 0 0 0 1px rgba(79,142,247,0.4)}
+  .field.mono{font-family:var(--font-mono)}
+  .field-wrap{position:relative;display:flex;align-items:center;gap:8px}
+  .field-wrap .field{padding-right:36px}
+  .eye{position:absolute;right:8px;background:transparent;border:0;color:var(--subtle);cursor:pointer;padding:2px;border-radius:var(--radius-sm)}
+  .eye:hover{color:var(--fg)}
+  .eye svg{width:15px;height:15px;display:block}
+  .sel{background:var(--surface-2);border:1px solid var(--border);color:var(--fg);padding:7px 28px 7px 10px;
+    border-radius:var(--radius);font:500 13px/1 var(--font-sans);outline:none;cursor:pointer;appearance:none;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M6 9l6 6 6-6' fill='none' stroke='%238a8a95' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+    background-repeat:no-repeat;background-position:right 8px center;background-size:14px}
+  .sel:focus{border-color:rgba(79,142,247,0.5);box-shadow:inset 0 0 0 1px rgba(79,142,247,0.4)}
+  /* 分段控件（thinking level 等） */
+  .seg{display:inline-flex;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:2px}
+  .seg button{background:transparent;border:0;color:var(--muted);font:500 12px/1 var(--font-mono);
+    padding:6px 11px;border-radius:var(--radius-sm);cursor:pointer;transition:color var(--duration-fast) var(--ease),background var(--duration-fast) var(--ease)}
+  .seg button:hover{color:var(--fg)}
+  .seg button.on{color:#fff;background:var(--accent)}
+  .btn{display:inline-flex;align-items:center;gap:6px;background:transparent;border:1px solid var(--border-strong);
+    color:var(--fg);padding:7px 12px;border-radius:var(--radius);font:600 12px/1 var(--font-sans);cursor:pointer;transition:background var(--duration-fast) var(--ease),border-color var(--duration-fast) var(--ease)}
+  .btn:hover{background:var(--surface-hover)}
+  .btn svg{width:13px;height:13px}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.primary:hover{background:var(--accent-hover)}
+  .btn.danger{color:var(--danger);border-color:rgba(239,68,68,0.3)}
+  .btn.danger:hover{background:rgba(239,68,68,0.1)}
+  .btn.sm{padding:5px 10px;font-size:11px}
+
+  /* ============ 标签族（design-system §5 强制区分） ============ */
+  .dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex:none}
+  .dot-ok{background:var(--success)} .dot-warn{background:var(--warning)}
+  .dot-err{background:var(--danger)} .dot-idle{background:var(--subtle)}
+  .pill{font:500 11px/1 var(--font-mono);color:var(--muted);background:var(--surface-2);
+    border:1px solid var(--border);padding:4px 8px;border-radius:999px;display:inline-flex;align-items:center;gap:5px}
+  .pill.acc{color:var(--accent);background:var(--accent-soft);border-color:rgba(79,142,247,0.3)}
+  .pill.ok{color:var(--success);background:rgba(34,197,94,0.12);border-color:rgba(34,197,94,0.25)}
+  .pill.err{color:var(--danger);background:rgba(239,68,68,0.1);border-color:rgba(239,68,68,0.25)}
+
+  /* §2 三模式孤立展示框 */
+  .modes{display:grid;grid-template-columns:1fr;gap:16px;margin-top:14px}
+  .mode-demo{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:0 16px}
+  .mode-tag{font:600 11px/1 var(--font-mono);color:var(--accent);letter-spacing:0.06em;text-transform:uppercase;
+    display:inline-flex;align-items:center;gap:6px;padding:4px 0}
+  .mode-tag .mk{font:600 10px/1 var(--font-mono);color:#fff;background:var(--accent);padding:3px 6px;border-radius:var(--radius-sm)}
+  .mode-note{font:12px/1.6 var(--font-mono);color:var(--muted);padding:6px 0 12px}
+
+  .tbl{width:100%;border-collapse:collapse;margin-top:12px;font-size:12px}
+  .tbl th,.tbl td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+  .tbl th{font:600 11px/1 var(--font-mono);color:var(--subtle);text-transform:uppercase;letter-spacing:0.05em}
+  .tbl td code{font-size:11px}
+  .tbl tr:hover td{background:var(--surface)}
+  .tbl .mn{font-weight:600;color:var(--fg)}
+</style>
+</head>
+<body>
+  <h1>Settings · 配置覆盖 · settings-shell</h1>
+  <p class="lede">居中 <b>modal + 模糊背景</b>，关闭恢复。取向 = <b>配置/表单交互</b>，区别于 Overview 的 <b>鸟瞰/监控</b>。本稿定义所有 settings 页面共享的「公共特质」——3 种布局模式 + 页面骨架 + 跨菜单搜索/自动保存横切；5 菜单只是这三种的组合差异。<b>Provider 为落地页</b>，演示三模式集成；其余 4 菜单给 header + 样例行，<b>per-menu handoff 已出</b>（见同目录 handoff-*.md），后续按优先级细化（Agent 最先，绑 PRODUCT）。</p>
+  <div class="meta">
+    <span>形态 <b>居中 modal + backdrop blur</b></span>
+    <span>规范 <b>settings/spec.md</b></span>
+    <span>handoff <b>provider / skill / agent / extension / system</b></span>
+    <span>原语 <b>Card / Setting Row / Entity List / Toggle / Pill / Status Dot</b></span>
+    <span>入口 <b>⌘, / 顶栏齿轮 · Esc/✕/点背景 关闭</b></span>
+    <span>分工 <b>≠ Overview（配置 vs 鸟瞰）</b></span>
+  </div>
+
+  <h2><span class="num">§1</span>Settings Modal · 可动演示</h2>
+  <p class="lede">下方舞台：背景是被模糊的 workspace 幽灵，前景是居中 modal（左导航 + 右详情）。<b>左导航切菜单</b>、<b>⌘K 跨菜单搜索</b>（点结果跳转）、<b>改任意控件触发自动保存 pill</b>、<b>点实体展开配置</b>、<b>点 ✕ / 点背景 / Esc 关闭</b>（关闭后可重开）——全部可交互。</p>
+  <div class="stage" id="stage">
+    <!-- 背后的 workspace 幽灵（被模糊） -->
+    <div class="ghost">
+      <div class="ghost-side"></div>
+      <div class="ghost-main">
+        <div class="ghost-row s"></div>
+        <div class="ghost-row"></div>
+        <div class="ghost-row r"></div>
+        <div class="ghost-row"></div>
+        <div class="ghost-comp"></div>
+      </div>
+    </div>
+    <!-- 模糊背景：点击关闭 -->
+    <div class="backdrop" id="backdrop"></div>
+    <!-- 重新打开入口（closed 态显示） -->
+    <div class="reopen"><button id="reopen">打开设置</button><span class="hint">⌘, · 或点击</span></div>
+    <div class="ov-toast" id="ovToast"></div>
+    <!-- modal 本体 -->
+    <div class="modal" id="modal">
+      <div class="modal-head">
+        <span class="modal-title">设置</span>
+        <div class="ov-search">
+          <svg><use href="#i-search"/></svg>
+          <input id="q" type="text" placeholder="搜索设置项…" autocomplete="off" />
+          <span class="kbd">⌘K</span>
+          <div class="sr" id="sr"></div>
+        </div>
+        <span class="save saved" id="save"><svg id="saveIco"><use href="#i-check"/></svg><span id="saveTxt">已保存</span></span>
+        <button class="modal-close" id="modalClose" aria-label="关闭"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+      </div>
+      <div class="ov-body">
+      <nav class="ov-nav" id="nav">
+        <div class="nav-item on" data-panel="provider"><svg><use href="#i-provider"/></svg>Provider<span class="ct">3</span></div>
+        <div class="nav-item" data-panel="skill"><svg><use href="#i-skill"/></svg>Skill<span class="ct">8</span></div>
+        <div class="nav-item" data-panel="agent"><svg><use href="#i-agent"/></svg>Agent</div>
+        <div class="nav-item" data-panel="extension"><svg><use href="#i-ext"/></svg>Extension<span class="ct">3</span></div>
+        <div class="nav-item" data-panel="system"><svg><use href="#i-system"/></svg>System</div>
+      </nav>
+      <div class="ov-detail" id="detail">
+
+        <!-- ============ Provider（落地页，三模式齐） ============ -->
+        <section class="panel on" data-panel="provider">
+          <div class="ph"><div class="ph-title">Provider</div><div class="ph-desc">配置 AI 模型供应商与 API 凭据。Key 本地加密存储，不出本机。</div></div>
+
+          <div class="sgroup">
+            <div class="sgroup-title"><svg><use href="#i-provider"/></svg>已配置供应商 <span class="pill" style="margin-left:6px">模式 C · Entity List</span></div>
+            <div class="sgroup-desc">点实体展开配置；状态点反映最近一次连接测试。</div>
+            <div class="entity open" data-name="OpenAI">
+              <div class="e-head"><span class="dot dot-ok"></span><span class="e-name">OpenAI</span><span class="pill acc">默认</span><span class="pill">gpt-4o</span><span class="e-sub">12 模型</span>
+                <span class="sw on e-toggle" role="switch" aria-checked="true"></span><svg class="e-chev"><use href="#i-chev"/></svg></div>
+              <div class="e-config">
+                <div class="row"><div><div class="row-label">API Key</div><div class="row-help">仅本地存储，传输时用代理转发。</div></div>
+                  <div class="row-ctrl" style="min-width:320px"><div class="field-wrap"><input class="field mono" type="password" value="sk-proj-9f3a••••••••••••••2c" data-search="OpenAI API Key"/><button class="eye" title="显示/隐藏"><svg viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="2.6" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></button></div></div></div>
+                <div class="row"><div><div class="row-label">默认模型</div><div class="row-help">影响新会话首选项。</div></div>
+                  <div class="row-ctrl"><select class="sel" data-search="默认模型"><option>gpt-4o</option><option>gpt-4o-mini</option><option>o3-mini</option></select></div></div>
+                <div class="row"><div><div class="row-label">连接</div><div class="row-help">最近测试 2 分钟前 · 延迟 240ms。</div></div>
+                  <div class="row-ctrl"><button class="btn sm"><svg><use href="#i-check"/></svg>测试连接</button></div></div>
+              </div>
+            </div>
+            <div class="entity" data-name="Anthropic">
+              <div class="e-head"><span class="dot dot-ok"></span><span class="e-name">Anthropic</span><span class="pill">claude-4.5-sonnet</span><span class="e-sub">6 模型</span>
+                <span class="sw on e-toggle" role="switch" aria-checked="true"></span><svg class="e-chev"><use href="#i-chev"/></svg></div>
+              <div class="e-config"><div style="color:var(--muted);font-size:12px;padding:4px 0">展开后同 OpenAI：API Key（加密）+ 默认模型 + 测试连接。</div></div>
+            </div>
+            <div class="entity" data-name="Google">
+              <div class="e-head"><span class="dot dot-idle"></span><span class="e-name">Google</span><span class="pill err">未配置</span><span class="e-sub">gemini-2.5-pro</span>
+                <span class="sw e-toggle" role="switch" aria-checked="false"></span><svg class="e-chev"><use href="#i-chev"/></svg></div>
+              <div class="e-config"><div style="display:flex;gap:8px;align-items:center;padding:4px 0"><button class="btn primary sm">添加凭据</button><span style="color:var(--muted);font-size:12px">配置后可参与默认轮询。</span></div></div>
+            </div>
+          </div>
+
+          <div class="sgroup">
+            <div class="sgroup-title">默认与轮询 <span class="pill" style="margin-left:6px">模式 A · Setting Row</span></div>
+            <div class="row"><div><div class="row-label">默认 Provider</div><div class="row-help">新建会话时首选；会话内可单独切换。</div></div>
+              <div class="row-ctrl"><select class="sel" data-search="默认 Provider"><option>OpenAI</option><option>Anthropic</option></select></div></div>
+            <div class="row"><div><div class="row-label">故障转移</div><div class="row-help">主 Provider 超时/限流时按序尝试备用。</div></div>
+              <div class="row-ctrl"><span class="sw on" role="switch" aria-checked="true"></span></div></div>
+          </div>
+        </section>
+
+        <!-- ============ Skill ============ -->
+        <section class="panel" data-panel="skill">
+          <div class="ph"><div class="ph-title">Skill</div><div class="ph-desc">管理可加载的技能模块。来源区分 builtin（内置）/ installed（安装）。</div></div>
+          <div class="sgroup">
+            <div class="sgroup-title"><svg><use href="#i-skill"/></svg>已加载技能 <span class="pill" style="margin-left:6px">模式 C</span></div>
+            <div class="entity" data-name="frontend-design"><div class="e-head"><span class="dot dot-ok"></span><span class="e-name">frontend-design</span><span class="pill acc">installed</span><span class="e-sub">v2.4</span><span class="sw on e-toggle"></span><svg class="e-chev"><use href="#i-chev"/></svg></div></div>
+            <div class="entity" data-name="writing-plans"><div class="e-head"><span class="dot dot-ok"></span><span class="e-name">writing-plans</span><span class="pill">builtin</span><span class="e-sub">v1.0</span><span class="sw on e-toggle"></span><svg class="e-chev"><use href="#i-chev"/></svg></div></div>
+            <div class="entity" data-name="code-trace"><div class="e-head"><span class="dot dot-idle"></span><span class="e-name">code-trace</span><span class="pill acc">installed</span><span class="e-sub">v0.9</span><span class="sw e-toggle"></span><svg class="e-chev"><use href="#i-chev"/></svg></div></div>
+          </div>
+          <div class="sgroup">
+            <div class="sgroup-title">加载行为 <span class="pill" style="margin-left:6px">模式 A</span></div>
+            <div class="row"><div><div class="row-label">自动激活匹配技能</div><div class="row-help">按 description 关键词命中自动加载。</div></div><div class="row-ctrl"><span class="sw on"></span></div></div>
+          </div>
+        </section>
+
+        <!-- ============ Agent（绑 PRODUCT 行为契约） ============ -->
+        <section class="panel" data-panel="agent">
+          <div class="ph"><div class="ph-title">Agent</div><div class="ph-desc">Agent 行为契约。对齐 <code>PRODUCT.md</code>：thinking level 默认值、自动批准边界、工具权限。</div></div>
+          <div class="sgroup">
+            <div class="sgroup-title">思考与执行 <span class="pill" style="margin-left:6px">模式 B · Card</span></div>
+            <div class="row"><div><div class="row-label" data-search="默认 Thinking Level">默认 Thinking Level</div><div class="row-help">新会话思考预算默认档；用户可逐回合覆盖。</div></div>
+              <div class="row-ctrl"><div class="seg" data-name="thinking"><button data-v="off">off</button><button data-v="low">low</button><button class="on" data-v="medium">medium</button><button data-v="high">high</button></div></div></div>
+            <div class="row"><div><div class="row-label" data-search="最大回合数">最大回合数</div><div class="row-help">单任务工具调用上限，防失控循环。</div></div>
+              <div class="row-ctrl"><input class="field" style="width:80px;text-align:center" value="40" data-search="最大回合数"/></div></div>
+          </div>
+          <div class="sgroup">
+            <div class="sgroup-title">自动批准边界 <span class="pill" style="margin-left:6px">模式 B</span></div>
+            <div class="sgroup-desc">勾选项 Agent 可不经确认执行；其余需人工 approve。</div>
+            <div class="row"><div><div class="row-label" data-search="读文件">读文件（只读）</div><div class="row-help">read / grep / glob 等。</div></div><div class="row-ctrl"><span class="sw on"></span></div></div>
+            <div class="row"><div><div class="row-label" data-search="写文件">写文件</div><div class="row-help">edit / write。建议保持手动。</div></div><div class="row-ctrl"><span class="sw"></span></div></div>
+            <div class="row"><div><div class="row-label" data-search="执行命令">执行命令</div><div class="row-help">bash。高危，默认关。</div></div><div class="row-ctrl"><span class="sw"></span></div></div>
+          </div>
+        </section>
+
+        <!-- ============ Extension ============ -->
+        <section class="panel" data-panel="extension">
+          <div class="ph"><div class="ph-title">Extension</div><div class="ph-desc">MCP 服务器与扩展。连接状态点 + 工具计数。</div></div>
+          <div class="sgroup">
+            <div class="sgroup-title"><svg><use href="#i-ext"/></svg>MCP 服务器 <span class="pill" style="margin-left:6px">模式 C</span></div>
+            <div class="entity" data-name="filesystem"><div class="e-head"><span class="dot dot-ok"></span><span class="e-name">filesystem</span><span class="pill ok">已连接</span><span class="e-sub">12 tools</span><span class="sw on e-toggle"></span><svg class="e-chev"><use href="#i-chev"/></svg></div></div>
+            <div class="entity" data-name="tavily"><div class="e-head"><span class="dot dot-ok"></span><span class="e-name">tavily</span><span class="pill ok">已连接</span><span class="e-sub">4 tools</span><span class="sw on e-toggle"></span><svg class="e-chev"><use href="#i-chev"/></svg></div></div>
+            <div class="entity" data-name="git"><div class="e-head"><span class="dot dot-err"></span><span class="e-name">git</span><span class="pill err">断开</span><span class="e-sub">8 tools</span><span class="sw e-toggle"></span><svg class="e-chev"><use href="#i-chev"/></svg></div>
+              <div class="e-config"><div style="display:flex;gap:8px;align-items:center;padding:4px 0"><button class="btn danger sm">重连</button><span style="color:var(--muted);font-size:12px">进程退出码 1 · 查看 stdio 日志</span></div></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ System ============ -->
+        <section class="panel" data-panel="system">
+          <div class="ph"><div class="ph-title">System</div><div class="ph-desc">外观、快捷键、通知、关于。</div></div>
+          <div class="sgroup">
+            <div class="sgroup-title">外观 <span class="pill" style="margin-left:6px">模式 B</span></div>
+            <div class="row"><div><div class="row-label" data-search="主题">主题</div></div><div class="row-ctrl"><select class="sel"><option>暗色（默认）</option><option>亮色（待校准）</option><option>跟随系统</option></select></div></div>
+            <div class="row"><div><div class="row-label" data-search="字号">字号</div></div><div class="row-ctrl"><select class="sel"><option>紧凑</option><option>舒适（默认）</option><option>宽松</option></select></div></div>
+          </div>
+          <div class="sgroup">
+            <div class="sgroup-title">关于</div>
+            <div class="row"><div><div class="row-label">版本</div><div class="row-help">zcode 0.3.0 · 冷蓝暗色体系。</div></div><div class="row-ctrl"><button class="btn sm">检查更新</button></div></div>
+          </div>
+        </section>
+
+      </div>
+    </div>
+    </div><!-- /modal -->
+  </div>
+  <div class="note"><b>modal 行为</b>：真实集成时由触发点（⌘, / 顶栏齿轮）挂载一个 <code>position:fixed</code> 居中 modal + 模糊背景层，z-index 高于 workspace；关闭（Esc / 点背景 / 点 ✕）卸载 modal，workspace 原状态不变。此处为文档内 600px 舞台演示——点 ✕ 或背景可关闭，点「打开设置」重开。</div>
+
+  <h2><span class="num">§2</span>公共特质 · 三种布局模式</h2>
+  <p class="lede">所有 settings 页面都是这三种的组合。控件原语全部从 <code>design-system.md</code> 派生（Toggle / Input / Select / Segmented / Pill / Status Dot），禁止各菜单自造变体。</p>
+  <div class="modes">
+    <div class="mode-demo">
+      <div class="mode-tag"><span class="mk">A</span>Setting Row · 标签左 + 控件右 + 下方帮助</div>
+      <div class="mode-note">单值配置的原子。80% 场景。控件右对齐，帮助文字换行解释「为什么」。</div>
+      <div class="row"><div><div class="row-label">通知</div><div class="row-help">任务完成/出错时系统通知。</div></div><div class="row-ctrl"><span class="sw on"></span></div></div>
+      <div class="row"><div><div class="row-label">语言</div><div class="row-help">界面与生成文案语言。</div></div><div class="row-ctrl"><select class="sel"><option>简体中文</option><option>English</option></select></div></div>
+    </div>
+    <div class="mode-demo">
+      <div class="mode-tag"><span class="mk">B</span>Setting Card · Card 包多个语义相关的 Row</div>
+      <div class="mode-note">复用 design-system Card 原语（<code>--surface</code> 底 + <code>--border</code>）。禁左竖条强调。</div>
+      <div class="sgroup" style="margin-bottom:6px">
+        <div class="sgroup-title">通知策略</div>
+        <div class="row"><div><div class="row-label">声音</div></div><div class="row-ctrl"><span class="sw on"></span></div></div>
+        <div class="row"><div><div class="row-label">角标计数</div></div><div class="row-ctrl"><span class="sw on"></span></div></div>
+      </div>
+    </div>
+    <div class="mode-demo">
+      <div class="mode-tag"><span class="mk">C</span>Entity List · 每行一实体 + 状态 + 操作 + 展开配置</div>
+      <div class="mode-note">Provider / Skill / Extension / Agent(subagent)。行内 = 名称 + 来源/版本 pill + 状态点 + 启用开关 + 展开配置。</div>
+      <div class="entity open"><div class="e-head"><span class="dot dot-ok"></span><span class="e-name">filesystem</span><span class="pill ok">已连接</span><span class="e-sub">12 tools</span><span class="sw on e-toggle"></span><svg class="e-chev"><use href="#i-chev"/></svg></div>
+        <div class="e-config"><div class="row"><div><div class="row-label">根目录</div></div><div class="row-ctrl"><input class="field mono" value="~/Code/xyz-agent"/></div></div></div></div>
+    </div>
+  </div>
+
+  <h2><span class="num">§3</span>公共横切 · 搜索 / 自动保存 / 退出</h2>
+  <p class="lede">所有 settings 页面共享这三项交互，不分菜单。</p>
+  <div class="modes">
+    <div class="mode-demo">
+      <div class="mode-tag">内置搜索 <span style="color:var(--muted);font-weight:500;text-transform:none;letter-spacing:0">⌘K 唤起 · 跨菜单</span></div>
+      <div class="mode-note">建一份 [label → panel] 平坦索引；输入即下拉匹配，每条带菜单 tag；点选切到该菜单并定位。无匹配显空状态。</div>
+      <div style="position:relative;max-width:340px;padding:6px 0 12px">
+        <div class="ov-search" style="position:relative;width:100%">
+          <svg><use href="#i-search"/></svg>
+          <input class="field" style="padding-left:32px" value="连接" readonly />
+          <span class="kbd">⌘K</span>
+        </div>
+        <div class="sr on" style="position:relative;margin-top:4px;box-shadow:none">
+          <div class="item"><svg><use href="#i-provider"/></svg><span>测试连接</span><span class="tag">Provider</span></div>
+          <div class="item"><svg><use href="#i-ext"/></svg><span>filesystem · 已连接</span><span class="tag">Extension</span></div>
+          <div class="item"><svg><use href="#i-ext"/></svg><span>git · 断开</span><span class="tag">Extension</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="mode-demo">
+      <div class="mode-tag">自动保存 <span style="color:var(--muted);font-weight:500;text-transform:none;letter-spacing:0">debounce 800ms · 无 Save 按钮</span></div>
+      <div class="mode-note">改任意控件 → pill「保存中…」→ 800ms 后「已保存」。三态：</div>
+      <div style="display:flex;gap:10px;align-items:center;padding:6px 0 12px;flex-wrap:wrap">
+        <span class="save saving"><svg><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="40" stroke-linecap="round" class="spin"/></svg>保存中…</span>
+        <span class="save saved"><svg><use href="#i-check"/></svg>已保存</span>
+        <span class="save"><svg><use href="#i-check"/></svg>已保存</span>
+        <span style="color:var(--subtle);font:500 11px/1 var(--font-mono)">← idle 用 subtle 色</span>
+      </div>
+    </div>
+    <div class="mode-demo">
+      <div class="mode-tag">退出恢复 <span style="color:var(--muted);font-weight:500;text-transform:none;letter-spacing:0">Esc / ⌘, / 完成</span></div>
+      <div class="mode-note">移除覆盖层，workspace 原状态不变（不记忆滚动之外的中间态）。三种入口等效。</div>
+    </div>
+  </div>
+
+  <h2><span class="num">§4</span>5 菜单差异速览</h2>
+  <p class="lede">每菜单只是 §2 三种模式的不同组合 + 各自的特异口子。骨架已为所有口子预留控件原语。</p>
+  <table class="tbl">
+    <thead><tr><th>菜单</th><th>主用模式</th><th>特异点（骨架预留口子）</th><th>优先级</th></tr></thead>
+    <tbody>
+      <tr><td class="mn">Provider</td><td><code>C 列表 + A 行</code></td><td>API key 加密显隐、连接测试按钮、模型下拉</td><td>中</td></tr>
+      <tr><td class="mn">Skill</td><td><code>C 列表 + A 行</code></td><td>来源标记(builtin/installed)、版本、独立配置 schema</td><td>中</td></tr>
+      <tr><td class="mn">Agent</td><td><code>A 行 + B 卡 + C(subagent)</code></td><td>★绑 <code>PRODUCT.md</code>：thinking level 默认值、自动批准边界、工具权限、系统提示词覆盖</td><td><span class="pill acc">最高</span></td></tr>
+      <tr><td class="mn">Extension</td><td><code>C 列表 + A 行</code></td><td>MCP 连接状态点、工具列表展开、重连</td><td>低</td></tr>
+      <tr><td class="mn">System</td><td><code>A 行 + B 卡</code></td><td>外观/快捷键/通知/关于；快捷键 capture 模式（按下即录）</td><td>低</td></tr>
+    </tbody>
+  </table>
+
+  <hr>
+  <div class="note"><b>验收对照（settings/spec.md §6 P0）</b>：<br>
+  ✅ modal 形态（§1 note：居中 modal + backdrop blur，关闭恢复）<br>
+  ✅ 三种模式可复用（§2），5 菜单仅组合差异（§4）<br>
+  ✅ 导航 ↔ 详情联动（§1 可动：点左导航切面板）<br>
+  ✅ 内置搜索跨菜单 + 自动保存状态可见（§3）<br>
+  ✅ 与 Overview 区分明确（Overview 全屏鸟瞰 / Settings 居中 modal 配置）<br>
+  ✅ 冷蓝 token 一致，禁左竖条（强调走 Card-Active inset ring / pill）<br>
+  <br><b>各菜单细节见 handoff-*.md</b>（provider/skill/agent/extension/system，字段与交互源自 <code>~/Code/xyz-agent-workspace/main</code> 现有实现）。<b>待办</b>：① 亮色变体 token 未校准（design-tokens 待办），本稿暗色优先；② per-menu draft 按 Agent → Provider → Skill → Extension → System 出；③ Provider 真实 key 加密存储链路属后端，本稿只演示显隐交互。</div>
+
+  <script>
+  (function(){
+    var nav=document.getElementById('nav'),detail=document.getElementById('detail');
+    var q=document.getElementById('q'),sr=document.getElementById('sr');
+    var save=document.getElementById('save'),saveTxt=document.getElementById('saveTxt'),saveIco=document.getElementById('saveIco');
+    var saveTimer=null;
+
+    // 导航联动
+    function switchPanel(name){
+      Array.prototype.forEach.call(nav.querySelectorAll('.nav-item'),function(it){
+        it.classList.toggle('on',it.dataset.panel===name)});
+      Array.prototype.forEach.call(detail.querySelectorAll('.panel'),function(p){
+        p.classList.toggle('on',p.dataset.panel===name)});
+      detail.scrollTop=0;
+    }
+    Array.prototype.forEach.call(nav.querySelectorAll('.nav-item'),function(it){
+      it.addEventListener('click',function(){switchPanel(it.dataset.panel)})});
+
+    // 自动保存 pill：改任意控件 → 保存中 → 已保存
+    function markSaving(){
+      save.className='save saving';saveTxt.textContent='保存中…';
+      saveIco.innerHTML='<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="40" stroke-linecap="round" class="spin"/>';
+      clearTimeout(saveTimer);
+      saveTimer=setTimeout(function(){
+        save.className='save saved';saveTxt.textContent='已保存';
+        saveIco.innerHTML='<use href="#i-check"/>';
+      },800);
+    }
+    detail.addEventListener('change',markSaving);
+    detail.addEventListener('input',function(e){if(e.target.classList.contains('field'))markSaving()});
+
+    // Toggle 开关
+    detail.addEventListener('click',function(e){
+      var sw=e.target.closest('.sw');if(!sw)return;
+      sw.classList.toggle('on');sw.setAttribute('aria-checked',sw.classList.contains('on'));
+      markSaving();
+    });
+    // Entity 展开
+    detail.addEventListener('click',function(e){
+      var head=e.target.closest('.e-head');if(!head)return;
+      if(e.target.closest('.sw'))return; // 点开关不展开
+      head.parentElement.classList.toggle('open');
+    });
+    // Segmented
+    detail.addEventListener('click',function(e){
+      var b=e.target.closest('.seg button');if(!b)return;
+      Array.prototype.forEach.call(b.parentElement.querySelectorAll('button'),function(x){x.classList.remove('on')});
+      b.classList.add('on');markSaving();
+    });
+    // API key 显隐
+    detail.addEventListener('click',function(e){
+      var eye=e.target.closest('.eye');if(!eye)return;
+      var f=eye.parentElement.querySelector('.field');
+      f.type=f.type==='password'?'text':'password';
+    });
+
+    // 跨菜单搜索：建索引（label/data-search 文本 + 所属 panel）
+    var index=[];
+    Array.prototype.forEach.call(detail.querySelectorAll('.row-label,.e-name'),function(el){
+      var key=(el.dataset.search||el.textContent).trim();if(!key)return;
+      var panel=el.closest('.panel').dataset.panel;
+      index.push({key:key,panel:panel});
+    });
+    var panelIco={provider:'#i-provider',skill:'#i-skill',agent:'#i-agent',extension:'#i-ext',system:'#i-system'};
+    var panelTag={provider:'Provider',skill:'Skill',agent:'Agent',extension:'Extension',system:'System'};
+    function renderResults(list){
+      if(!list.length){sr.innerHTML='<div class="empty">无匹配设置项</div>';sr.classList.add('on');return;}
+      sr.innerHTML=list.map(function(r){
+        return '<div class="item" data-panel="'+r.panel+'"><svg><use href="'+panelIco[r.panel]+'"/></svg><span>'+r.key+'</span><span class="tag">'+panelTag[r.panel]+'</span></div>';
+      }).join('');
+      sr.classList.add('on');
+    }
+    q.addEventListener('input',function(){
+      var v=q.value.trim().toLowerCase();
+      if(!v){sr.classList.remove('on');sr.innerHTML='';return;}
+      renderResults(index.filter(function(r){return r.key.toLowerCase().indexOf(v)>=0}).slice(0,8));
+    });
+    sr.addEventListener('click',function(e){
+      var it=e.target.closest('.item');if(!it)return;
+      switchPanel(it.dataset.panel);q.value='';sr.classList.remove('on');
+    });
+    q.addEventListener('keydown',function(e){
+      if(e.key==='Enter'){var f=sr.querySelector('.item');if(f){f.click();}}
+      if(e.key==='Escape'){q.value='';sr.classList.remove('on');q.blur();}
+    });
+    document.addEventListener('click',function(e){if(!e.target.closest('.ov-search'))sr.classList.remove('on')});
+    // ⌘K 唤起搜索
+    document.addEventListener('keydown',function(e){
+      if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();q.focus();q.select();return;}
+      // ⌘, 切换 settings modal
+      if((e.metaKey||e.ctrlKey)&&e.key===','){e.preventDefault();stage.classList.toggle('closed');return;}
+      // Escape 关闭：仅在非搜索框起源 + 搜索框为空时触发，避免清搜索词时误关闭
+      if(e.key==='Escape'&&e.target.closest&&!e.target.closest('.ov-search')&&!q.value){closeModal();}
+    });
+
+    // modal 关闭/打开（演示：真实集成卸载 modal；此处 toggle .closed 态 + toast 反馈）
+    var stage=document.getElementById('stage');
+    var toastEl=document.getElementById('ovToast'),toastTimer=null;
+    function toast(msg){
+      toastEl.textContent=msg;toastEl.classList.add('on');
+      clearTimeout(toastTimer);toastTimer=setTimeout(function(){toastEl.classList.remove('on')},1400);
+    }
+    function closeModal(){stage.classList.add('closed');toast('已关闭设置');}
+    function openModal(){stage.classList.remove('closed');}
+    document.getElementById('modalClose').addEventListener('click',closeModal);
+    document.getElementById('backdrop').addEventListener('click',closeModal);
+    document.getElementById('reopen').addEventListener('click',openModal);
+  })();
+  </script>
+</body>
+</html>

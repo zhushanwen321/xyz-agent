@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>UI 骨架 · L0 Shell（全屏分区空壳）</title>
+<style>
+  :root {
+    /* zcode 冷蓝 token —— 以 docs/design-tokens.md 为准 */
+    --bg-base: #0d0d0f;
+    --bg-panel: #161618;
+    --bg-elevated: #1c1c20;
+    --bg-hover: #232328;
+    --accent: #4f8ef7;
+    --accent-soft: rgba(79,142,247,0.14);
+    --text-primary: #e8e8ea;
+    --text-secondary: #8b8b92;
+    --text-tertiary: #5c5c63;
+    --border: rgba(255,255,255,0.07);
+    --border-strong: rgba(255,255,255,0.14);
+    --success: #34d399;
+    --warning: #fbbf24;
+    --danger: #f87171;
+    /* 骨架专用：区域标签色（非产品色，仅用于设计探索） */
+    --skeleton-region: rgba(79,142,247,0.06);
+    --skeleton-border: rgba(79,142,247,0.35);
+    --skeleton-label: #4f8ef7;
+    --skeleton-pending: #fbbf24;
+    --skeleton-done: #34d399;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%;
+    background: var(--bg-base);
+    color: var(--text-primary);
+    font: 13px/1.5 -apple-system, BlinkMacSystemFont, 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+
+  /* ===== 骨架页头（设计探索用，非产品） ===== */
+  .skeleton-meta {
+    position: fixed; top: 12px; right: 16px; z-index: 100;
+    background: rgba(28,28,32,0.92); backdrop-filter: blur(8px);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 12px; font: 11px/1.4 ui-monospace, Menlo, monospace;
+    color: var(--text-secondary); max-width: 320px;
+  }
+  .skeleton-meta b { color: var(--skeleton-label); }
+  .skeleton-meta .row { display: flex; justify-content: space-between; gap: 12px; margin: 2px 0; }
+  .skeleton-meta .legend { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
+  .skeleton-meta .dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+
+  /* ===== L0 Shell 全屏分区 ===== */
+  .app-shell {
+    display: flex;
+    height: 100vh;
+    width: 100vw;
+    padding: 12px;
+    gap: 12px;
+    overflow: hidden;
+  }
+
+  /* 区域通用：骨架块 = 虚线边框 + 标签条 + 占位内容 */
+  .region {
+    position: relative;
+    background: var(--skeleton-region);
+    border: 1px dashed var(--skeleton-border);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .region-label {
+    flex-shrink: 0;
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px;
+    background: rgba(79,142,247,0.10);
+    border-bottom: 1px dashed var(--skeleton-border);
+    font: 11px/1 ui-monospace, Menlo, monospace;
+    color: var(--skeleton-label);
+    letter-spacing: 0.04em;
+  }
+  .region-label .lvl { background: var(--accent); color: #fff; padding: 2px 5px; border-radius: 3px; font-weight: 600; }
+  .region-label .name { font-weight: 600; }
+  .region-label .role { color: var(--text-secondary); font-family: -apple-system, system-ui, sans-serif; letter-spacing: 0; }
+  .region-label .status { margin-left: auto; font-size: 10px; padding: 2px 6px; border-radius: 3px; }
+  .status-pending { background: rgba(251,191,36,0.15); color: var(--skeleton-pending); border: 1px solid rgba(251,191,36,0.3); }
+  .status-done { background: rgba(52,211,153,0.12); color: var(--skeleton-done); border: 1px solid rgba(52,211,153,0.3); }
+  .status-core { background: rgba(248,113,113,0.12); color: var(--danger); border: 1px solid rgba(248,113,113,0.3); }
+  .region-body { flex: 1; padding: 10px; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
+  .module-chip {
+    font: 11px/1.3 ui-monospace, Menlo, monospace;
+    color: var(--text-secondary);
+    padding: 4px 8px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+  }
+  .module-chip b { color: var(--text-primary); }
+  .module-chip .pending { color: var(--skeleton-pending); font-size: 10px; }
+  .module-chip .done { color: var(--skeleton-done); font-size: 10px; }
+
+  /* ===== 左 aside（持久导航） —— 三层语义之「② 透明融合」 ===== */
+  /* 覆盖 .region 的填色与虚线框：sidebar 无 background，继承 base。
+     三层层次靠标注层（ghost 标签 + 唯一边界 hairline）体现，而非全填色。 */
+  .aside-left {
+    width: 200px;                       /* spec.md §一：aside-region width 200px */
+    flex-shrink: 0;
+    background: transparent;            /* 覆盖 --skeleton-region —— 透明，继承 base */
+    border: none;                       /* 覆盖虚线框 */
+    border-right: 1px solid var(--border);  /* 唯一可见边界 hairline */
+    padding-top: 52px;                  /* traffic-light 安全区（三平台统一，spec §三） */
+  }
+  .aside-left .region-body { gap: 8px; }
+  /* 标注条 ghost 化：不填蓝、不抢眼，读作「标在 base 上」而非「一块 region」 */
+  .aside-left .region-label {
+    background: transparent;
+    border-bottom: 1px dashed var(--border-strong);
+    color: var(--text-secondary);
+  }
+  .aside-left .region-label .lvl {
+    background: transparent;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+  }
+  /* traffic-light 安全区占位：仅标注拓扑，不画真实按钮（那是 overlay-states 的职责） */
+  .tl-safezone {
+    position: absolute;
+    top: 16px; left: 20px; height: 28px;
+    display: flex; align-items: center;
+    font: 10px/1 ui-monospace, Menlo, monospace;
+    color: var(--text-tertiary);
+    letter-spacing: 0.04em;
+    border: 1px dashed rgba(255,255,255,0.12);
+    border-radius: 3px;
+    padding: 0 8px;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+
+  /* ===== main float-panel ===== */
+  .main-panel {
+    flex: 1; min-width: 0;
+    background: var(--bg-panel);
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.45), 0 2px 8px rgba(0,0,0,0.35);  /* 三层语义之「③ 浮起」—— 唯一带 shadow 的面板 */
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .chat-header { flex-shrink: 0; height: 42px; border-bottom: 1px solid var(--border); } /* spec.md §一：main-header 42px */
+  .chat-body { flex: 1; display: flex; gap: 12px; padding: 12px; min-height: 0; overflow: hidden; }
+  .msg-stream { flex: 1; min-width: 0; }
+  .composer-region { flex-shrink: 0; width: 100%; }
+  /* 三栏布局：消息流 + composer 垂直堆叠在左主区，抽屉在右 */
+  .chat-main-col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+  .right-drawer { flex-shrink: 0; width: 440px; }
+  .process-panel { flex-shrink: 0; height: 48px; margin-top: auto; }
+
+  /* ===== view 索引条（其他 view 切换提示） ===== */
+  .view-index {
+    flex-shrink: 0;
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px;
+    border-top: 1px solid var(--border);
+    background: var(--bg-elevated);
+    font: 11px/1 ui-monospace, Menlo, monospace;
+    color: var(--text-tertiary);
+  }
+  .view-index .v-chip {
+    padding: 3px 8px; border-radius: 4px;
+    border: 1px solid var(--border); color: var(--text-secondary);
+  }
+  .view-index .v-chip.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  .view-index .note { margin-left: auto; }
+
+  /* 联动连线提示（在 msg-stream 和 drawer 之间画箭头说明） */
+  .linkage-hint {
+    position: absolute;
+    font: 10px/1.2 ui-monospace, Menlo, monospace;
+    color: var(--warning);
+    background: rgba(251,191,36,0.08);
+    border: 1px dashed rgba(251,191,36,0.4);
+    padding: 2px 6px; border-radius: 3px;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+
+<div class="skeleton-meta">
+  <div class="row"><span>层级</span><b>L0 · App Shell</b></div>
+  <div class="row"><span>view</span><span>chat（主展示）</span></div>
+  <div class="row"><span>token</span><span>zcode 冷蓝 · 暗色优先</span></div>
+  <div class="legend">
+    <div><span class="dot" style="background:var(--skeleton-done)"></span>已 deepening（flow-2-cases）</div>
+    <div><span class="dot" style="background:var(--skeleton-pending)"></span>待 deepening</div>
+    <div><span class="dot" style="background:var(--danger)"></span>核心差异化（Flow 3，空白最多）</div>
+  </div>
+  <div class="legend">
+    <div style="color:var(--skeleton-label);font-weight:600">三层语义（命门）</div>
+    <div>① base 平铺 #0d0d0f</div>
+    <div>② sidebar 透明 · 继承 base（无 bg）</div>
+    <div>③ main 唯一 float-panel（border+radius+shadow）</div>
+  </div>
+</div>
+
+<div class="app-shell">
+
+  <!-- ========== 左 aside（L0 持久区） ========== -->
+  <aside class="region aside-left">
+    <div class="tl-safezone">traffic-light 安全区 52px（两态见 overlay-states）</div>
+    <div class="region-label">
+      <span class="lvl">L0</span>
+      <span class="name">左 aside</span>
+      <span class="role">持久导航 · 所有 view 共用 · <b style="color:var(--accent)">透明融合（继承 base，无 background）</b></span>
+      <span class="status status-pending">待 deepening</span>
+    </div>
+    <div class="region-body">
+      <span class="module-chip"><b>Brand Logo</b> · Z 图标 + 项目名</span>
+      <span class="module-chip"><b>主操作</b> · 新建任务 / 搜索 / 技能</span>
+      <span class="module-chip"><b>会话列表</b> · 项目分组 + 状态点 + 分支 pill <span class="pending">待</span></span>
+      <span class="module-chip"><b>项目区</b> · 当前项目 + 切换</span>
+      <span class="module-chip"><b>底部</b> · 模型设置入口 + 用户头像</span>
+    </div>
+  </aside>
+
+  <!-- ========== main float-panel（L0） ========== -->
+  <div class="main-panel">
+
+    <!-- L1 · Chat Header -->
+    <header class="region chat-header">
+      <div class="region-label" style="border-bottom:none; height:100%;">
+        <span class="lvl">L1</span>
+        <span class="name">Chat Header</span>
+        <span class="role">会话标题 · 模型 · 操作（分支/历史/导出/更多）</span>
+        <span class="status status-pending">待 deepening</span>
+      </div>
+    </header>
+
+    <!-- L1 · Chat Body（三栏 + 进程面板） -->
+    <div class="chat-body">
+
+      <!-- 左主列：消息流 + composer 垂直堆叠 -->
+      <div class="chat-main-col">
+
+        <!-- L1/L2 · 消息流区 -->
+        <section class="region msg-stream" style="flex:1; min-height:0;">
+          <div class="region-label">
+            <span class="lvl">L1</span>
+            <span class="name">消息流区</span>
+            <span class="role">用户与 agent 的对话流 · 含流式渲染</span>
+            <span class="status status-done">部分已做</span>
+          </div>
+          <div class="region-body" style="display:grid; grid-template-columns: 1fr 1fr; gap:6px; align-content:start;">
+            <span class="module-chip"><b>UserMessage</b> <span class="done">S1</span></span>
+            <span class="module-chip"><b>AssistantMessage</b> <span class="done">S2</span></span>
+            <span class="module-chip"><b>ReasoningBlock</b> <span class="done">S2</span></span>
+            <span class="module-chip"><b>ToolCallCard</b> <span class="done">S2</span></span>
+            <span class="module-chip"><b>ChangeSetCard</b> <span class="done">5态</span></span>
+            <span class="module-chip"><b>ConfirmRequest</b> <span class="pending">Flow3</span></span>
+            <span class="module-chip"><b>SubAgentNode</b> <span class="pending">Flow3 核心</span></span>
+            <span class="module-chip"><b>SystemNotice</b> <span class="pending">待</span></span>
+          </div>
+          <div class="linkage-hint" style="bottom:8px; right:8px;">→ 点 ChangeSet/SubAgent 联动右抽屉</div>
+        </section>
+
+        <!-- L1/L2 · Composer 区 -->
+        <section class="region composer-region" style="height:140px;">
+          <div class="region-label">
+            <span class="lvl">L1</span>
+            <span class="name">Composer 区</span>
+            <span class="role">输入 · @-mention · 附件 · 发送/停止</span>
+            <span class="status status-pending">待 deepening</span>
+          </div>
+          <div class="region-body" style="display:grid; grid-template-columns: repeat(3,1fr); gap:6px;">
+            <span class="module-chip"><b>输入框</b> 多行自动高</span>
+            <span class="module-chip"><b>@-mention 浮层</b> 文件/技能/agent</span>
+            <span class="module-chip"><b>附件</b> 图片/拖拽</span>
+            <span class="module-chip"><b>模型切换</b></span>
+            <span class="module-chip"><b>上下文指示</b> CLAUDE.md 注入</span>
+            <span class="module-chip"><b>发送/停止/中断</b></span>
+          </div>
+        </section>
+
+      </div>
+
+      <!-- L1/L2 · 右抽屉区（与消息流联动） -->
+      <aside class="region right-drawer">
+        <div class="region-label">
+          <span class="lvl">L1</span>
+          <span class="name">右抽屉区</span>
+          <span class="role">详情展开 · 与消息流联动</span>
+          <span class="status status-pending">待 deepening</span>
+        </div>
+        <div class="region-body" style="display:grid; grid-template-columns:1fr; gap:6px;">
+          <span class="module-chip"><b>Diff Tab</b> 文件 diff + Accept/Reject <span class="done">S4</span></span>
+          <span class="module-chip"><b>Browser Tab</b> agent 浏览器预览 <span class="pending">待</span></span>
+          <span class="module-chip"><b>Terminal Tab</b> agent 终端输出 <span class="pending">待</span></span>
+          <span class="module-chip"><b>ChangeSet Detail</b> 点变更集→展开 <span class="pending">待</span></span>
+          <span class="module-chip"><b>SubAgent Detail</b> 点节点→子树 <span class="pending">Flow3</span></span>
+        </div>
+        <div class="linkage-hint" style="bottom:8px; left:8px;">← 由消息流点击触发</div>
+      </aside>
+
+    </div>
+
+    <!-- L1/L2 · 进程面板（Flow 3 核心差异化） -->
+    <div style="padding: 0 12px 12px;">
+      <section class="region process-panel">
+        <div class="region-label" style="border-bottom:none; height:100%;">
+          <span class="lvl">L1</span>
+          <span class="name">进程面板</span>
+          <span class="role">SubAgent TaskTree · 并行/链式 · 请求回应 · steer · 终止</span>
+          <span class="status status-core">Flow 3 核心 · 空白最多</span>
+        </div>
+      </section>
+    </div>
+
+    <!-- view 索引条 -->
+    <div class="view-index">
+      <span>main view:</span>
+      <span class="v-chip active">chat</span>
+      <span class="v-chip">overview <span style="color:var(--skeleton-pending)">（Flow 5 · 待）</span></span>
+      <span class="v-chip">settings <span style="color:var(--text-tertiary)">（demo 已有）</span></span>
+      <span class="note">← 切换 view 时 main-panel 内容整体替换，左 aside 不变</span>
+    </div>
+
+  </div>
+
+</div>
+
+</body>
+</html>

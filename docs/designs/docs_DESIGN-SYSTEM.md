@@ -1,6 +1,9 @@
-# xyz-agent 设计系统
+> ⚠️ **DEPRECATED by [ADR-0018](../architecture/adr/0018-visual-direction.md)** (2026-06-18).
+> Warm & Soft 方向已推翻。真身见 [design-tokens.md](design-tokens.md) + [design-system.md](design-system.md)（冷蓝暗色）。
 
-**版本**: 1.0 | **更新日期**: 2026-05-07 | **方向**: Warm & Soft
+# xyz-agent 设计系统 (DEPRECATED · Warm & Soft)
+
+**版本**: 1.0 (已废弃) | **更新日期**: 2026-05-07 | **原方向**: Warm & Soft
 
 ---
 

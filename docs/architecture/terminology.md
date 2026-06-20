@@ -95,6 +95,8 @@
 
 ### R4: Drawer → SideInspector
 
+> ⚠️ **过时（v3 重构推翻，2026-06-20）**：v3 把该组件收敛为 **Side Drawer**（而非 SideInspector）。Side Drawer 是 Panel 联动的通用多 tab 抽屉（文件/终端/子Agent/浏览器），不限运行时状态。真身重建时直接用 `SideDrawer` 术语，跳过 `SideInspector` 中间态。详见 `docs/architecture/context.md` Side Drawer 条目 + `docs/designs/v3-demo/panel/spec.md`。
+
 **范围**: 组件文件名、settings store 中的 drawer 相关变量、事件名
 
 **涉及文件**:
@@ -116,7 +118,9 @@
 
 ### R5: Overview → PanelGrid
 
-**范围**: 组件文件名、settings store 中的 overview 相关变量
+> ⚠️ **过时（v3 重构推翻，2026-06-20）**：v3 把 Overview 升格为 **独立 L1 Region**（与 Sidebar/Workspace 并列），保留 `Overview` 术语；`PanelGrid` 概念废弃（窗口内最多双 Panel，不再需要缩略图网格，鸟瞰能力收敛到 Overview）。真身重建时用 `Overview`，组件目录 `components/overview/`。详见 [ADR-0022](adr/0022-overview-entry-coverage.md) + `docs/designs/v3-demo/overview/spec.md`。
+
+**范围**: ~~组件文件名、settings store 中的 overview 相关变量~~（方向反转，保留 overview）
 
 **涉及文件**:
 

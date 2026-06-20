@@ -19,8 +19,12 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Sidecar 的 AI Agent 桌面工作
 
 **规范与设计文档**:
 - [完整编码规范](docs/standards.md) — 组件使用、样式规则、TypeScript 约束
-- [设计系统](docs/design-system.md) — CSS 变量、颜色体系、排版规则
-- [设计系统详细参考](docs/designs/docs_DESIGN-SYSTEM.md) — 完整的设计 token、组件规范
+- [设计 Tokens（v3 SSOT）](docs/designs/design-tokens.md) — 冷蓝暗色原子值（色/字/距/影/动效），ADR-0018 确立
+- [设计系统原语层（v3）](docs/designs/design-system.md) — 组件原语如何使用 tokens
+- [v3 UI 设计稿](docs/designs/v3-demo/README.md) — L0-L4 递归骨架 spec + draft（shell/sidebar/workspace/panel/overview/settings/overlays/flow-2/flow-3）
+- [领域术语表](docs/architecture/context.md) — Session/Panel/Runtime/v3 UI 结构术语
+- ~~[旧设计系统](docs/design-system.md)~~ — Warm & Soft，已 DEPRECATED by ADR-0018
+- ~~[旧设计系统详细参考](docs/designs/docs_DESIGN-SYSTEM.md)~~ — Warm & Soft，已 DEPRECATED
 - [竞品 UI 分析](docs/templates/competitor-ui-analysis.md) — Claude Code / Codex 逐图拆解，7 条设计原则
 - [UI/UX 设计原则与参考](docs/templates/ui-design-principles-and-references.md) — 设计方法论 + 竞品案例 + 行动清单
 - [设计方向](docs/templates/design-direction.md) — 产品定位、主题策略、窗口架构、实施优先级
@@ -241,7 +245,7 @@ SKIP_ALL_CHECKS=1 git commit            # 跳过所有（仅紧急情况）
 - **禁止创建 `demos/` 或 `impeccable/` 目录** — 所有 UI demo、HTML 设计稿统一放 `docs/designs/`，按 `views_<模块>.html` 或 `<主题>.html` 命名。pre-commit hook 自动检查
 - **禁止 symlink 指向外部绝对路径** — 项目内 symlink 白名单仅允许 `../` 相对路径（指向同 workspace 内的兄弟 worktree）。外部绝对路径 symlink 打包后目标不存在，导致运行时资源缺失。pre-commit hook 自动检查
 - **`.xyz-harness/` 目录必须提交且不能删除** — 该目录存放所有 spec/plan 的历史设计文档（按 `YYYY-MM-DD-<slug>/` 命名），是项目决策追溯的重要依据。禁止 `git rm -r .xyz-harness/` 或将其加入 `.gitignore`
-- **`DESIGN.md` 必须保留在项目根目录** — 产品设计系统的核心定义文件（颜色、字体、间距、品牌调性）。随需求演进必须同步更新，禁止过时
+- **`DESIGN.md` 必须保留在项目根目录** — ~~产品设计系统的核心定义文件~~（已 DEPRECATED by ADR-0018，Warm & Soft 被推翻）。真身设计系统见 `docs/designs/design-tokens.md` + `docs/designs/design-system.md`（v3 冷蓝暗色）。文件保留作历史参考，不作为当前规范
 
 ## 测试规范 [HISTORICAL]
 
@@ -272,7 +276,7 @@ SKIP_ALL_CHECKS=1 git commit            # 跳过所有（仅紧急情况）
 7. **Promise.allSettled** — 独立数据源用 `allSettled`，不用 `all`
 8. **禁止硬编码颜色** — 用 CSS 变量（`var(--accent)`）或语义 Tailwind 类
 9. **禁止魔数间距** — 用标准 Tailwind scale，不用 `p-[17px]`
-10. **border-radius 默认 1px，特殊场景 2px** — 用 `rounded-sm`(1px) 为默认。`rounded-md`/`rounded-lg`(2px) 仅特殊场景。禁止其他值。详见 docs/standards.md §7.1
+10. **border-radius 遵循 v3 design-tokens**（`--radius-sm:3px` / `--radius:8px` / `--radius-lg:12px`）— `rounded-sm`(3px) 默认，`rounded-md`/`rounded-lg`(8/12px) 特殊场景。SSOT 见 [docs/designs/design-tokens.md](docs/designs/design-tokens.md)，裁决依据 ADR-0018（旧 Warm 时期的 1px/2px 规则已推翻）。详见 docs/standards.md §7.1
 11. **macOS traffic light safe zone** — 所有涉及窗口左上角区域的 UI 布局（PanelBar header、sidebar header 等），在非全屏模式下必须考虑 macOS 原生 traffic light 按钮（红黄绿，约 78px 宽、40px 高的矩形区域）的遮挡。具体要求：
     - Sidebar collapsed + 非 fullscreen 时，最左侧 panel 的 header（PanelBar）需要 `padding-left: 78px` 避开 traffic lights
     - 左右 split panel 时，只有最左侧 panel 的 PanelBar 需要 safe-zone，右侧 panel 不受影响

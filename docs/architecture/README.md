@@ -10,15 +10,17 @@ docs/architecture/
 ├── design.md            # 当前生效的完整架构设计
 ├── review-issues.md     # 架构评审问题记录（盲点 D1–D9）
 ├── migration-plan.md    # 重构迁移路线（索引）
-├── terminology.md       # 术语对齐计划（R1–R5）
+├── terminology.md       # 术语对齐计划（R1–R3 生效 · R4/R5 已被 v3 推翻标注过时）
 ├── context.md           # 领域术语表（Session/Panel/Runtime 等）
 ├── plan/                # 迁移各阶段细节
 ├── changes/             # 阶段评审记录
-├── adr/                 # 架构决策记录（0001-NNNN-xxx.md）
+├── adr/                 # 架构决策记录（0001-0017 系统/运行时 · 0018-0022 v3 视觉/交互）
 ├── subsystems/          # 子系统架构（如 plugin/）
 ├── research/            # 架构调研（非 UI 调研）
 └── history/             # 历史版本归档（被 supersede 的旧架构）
 ```
+
+> **v3 设计稿** 在 `docs/designs/v3-demo/`（L0-L4 递归骨架 spec + draft），基础件 `design-tokens.md` / `design-system.md` 在 `docs/designs/` 根。v3 视觉/交互 ADR（0018-0022）已归位到本目录 `adr/`。
 
 ## 三条核心规则
 
