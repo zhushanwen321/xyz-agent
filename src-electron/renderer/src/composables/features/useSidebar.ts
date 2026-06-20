@@ -107,6 +107,27 @@ export function useSidebar() {
     })
   }
 
+  /**
+   * 响应式派生指定 session 的鸟瞰摘要（Overview 卡片用）。
+   * - summary：末条 assistant 文本（content），无则空串（卡片不渲染摘要区）
+   * - turnCount：user 消息数（回合 = user + 其后 assistant 序列）
+   * 文件改动数无 mock 数据源（runtime file-changes 未联调），不臆造，卡片隐藏该指标。
+   */
+  function sessionDigest(id: string): ComputedRef<{ summary: string; turnCount: number }> {
+    return computed(() => {
+      const msgs = chat.getMessages(id)
+      let lastAssistant = ''
+      for (let i = msgs.length - 1; i >= 0; i -= 1) {
+        if (msgs[i].role === 'assistant') {
+          lastAssistant = msgs[i].content
+          break
+        }
+      }
+      const turnCount = msgs.filter((m) => m.role === 'user').length
+      return { summary: lastAssistant, turnCount }
+    })
+  }
+
   return {
     selectSession,
     newSession,
@@ -114,5 +135,6 @@ export function useSidebar() {
     loadSessions,
     toggleCollapse,
     derivedStatus,
+    sessionDigest,
   }
 }

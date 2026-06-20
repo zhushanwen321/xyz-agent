@@ -32,7 +32,6 @@
 </template>
 
 <script setup lang="ts">
-/* eslint-disable no-magic-numbers */
 /**
  * 状态点 class 映射（D6 五态）。
  * running/waiting 带 pulse 动画（@keyframes 在 scoped style，Tailwind 无对应工具类）。
@@ -59,27 +58,11 @@ const dotClass = computed(() => `status-dot--${props.status}`)
 /** 工作目录名（cwd 末段），长路径只显末段防溢出 */
 const dirName = computed(() => props.session.cwd.split('/').filter(Boolean).pop() ?? props.session.cwd)
 
-/** 时间格式化：今天 HH:MM，昨天「昨天」，更早「N天前」/「M月D日」 */
+/** 时间格式化：复用 logic 层相对时间纯函数（与 SessionCard 同一信息原子） */
 const timeLabel = computed(() => formatRelativeTime(props.session.lastActiveAt))
 
-function formatRelativeTime(ts: number): string {
-  const now = new Date()
-  const date = new Date(ts)
-  const sameDay = now.toDateString() === date.toDateString()
-  if (sameDay) {
-    const h = String(date.getHours()).padStart(2, '0')
-    const m = String(date.getMinutes()).padStart(2, '0')
-    return `${h}:${m}`
-  }
-  const yesterday = new Date(now)
-  yesterday.setDate(now.getDate() - 1)
-  if (yesterday.toDateString() === date.toDateString()) return '昨天'
-  const days = Math.floor((now.getTime() - ts) / 86_400_000)
-  if (days < 7) return `${days}天前`
-  return `${date.getMonth() + 1}月${date.getDate()}日`
-}
-
 import { computed } from 'vue'
+import { formatRelativeTime } from '@/composables/logic/formatTime'
 </script>
 
 <style scoped>
