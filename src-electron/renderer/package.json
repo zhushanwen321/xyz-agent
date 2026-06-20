@@ -13,6 +13,7 @@
   "dependencies": {
     "@lucide/vue": "^1.21.0",
     "@vueuse/core": "^11.3.0",
+    "class-variance-authority": "^0.7.0",
     "clsx": "^2",
     "pinia": "^3",
     "reka-ui": "^2.9.10",
