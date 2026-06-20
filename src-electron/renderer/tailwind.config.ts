@@ -30,6 +30,8 @@ export default {
         warning: 'var(--warning)',
         danger: 'var(--danger)',
         info: 'var(--info)',
+        // reasoning 紫（draft-message-stream 思考块 / composer 思考等级专属色相）
+        reasoning: 'var(--reasoning)',
       },
       fontFamily: {
         sans: ['Inter', 'SF Pro Display', 'PingFang SC', 'system-ui', 'sans-serif'],

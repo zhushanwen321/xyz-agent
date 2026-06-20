@@ -37,6 +37,8 @@
   --warning: #f5a524;
   --danger: #ef4444;
   --info: #38bdf8;
+  /* reasoning 紫：思考块色相（draft-message-stream §4 + composer 思考等级） */
+  --reasoning: #a78bfa;
 
   /* ── 字体 ───────────────────────────────────────────────── */
   --font-sans: Inter, 'SF Pro Display', 'PingFang SC', system-ui, sans-serif;

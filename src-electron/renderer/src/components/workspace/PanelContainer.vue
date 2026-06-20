@@ -14,6 +14,7 @@
       v-for="leaf in panel.panels"
       :key="leaf.id"
       :panel-id="leaf.id"
+      :session-id="leaf.sessionId"
       :session-label="sessionLabelOf(leaf)"
       :session-dir="sessionDirOf(leaf)"
       :git-branch="gitBranchOf(leaf)"

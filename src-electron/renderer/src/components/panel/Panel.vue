@@ -22,26 +22,18 @@
       @close="emit('close')"
     />
 
-    <!-- ② message-stream 占位（FG5 MessageStream.vue 替换） -->
-    <div class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4 text-center">
+    <!-- ② message-stream（FG5，7 块 + 回合折叠 + auto-scroll） -->
+    <MessageStream v-if="sessionId" :session-id="sessionId" />
+    <div v-else class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4 text-center">
       <MessageSquare class="size-6 text-subtle opacity-40" />
-      <p class="text-[12px] text-subtle opacity-70">
-        {{ sessionLabel ? '消息流待 FG5 实现' : '选择左侧会话开始' }}
-      </p>
+      <p class="text-[12px] text-subtle opacity-70">选择左侧会话开始</p>
     </div>
 
     <!-- ③ progress-zone（composer 上方） -->
     <ProgressZone :session-label="sessionLabel" />
 
-    <!-- ④ composer 占位（FG5 Composer.vue 替换） -->
-    <div v-if="sessionLabel" class="mx-3.5 flex-shrink-0">
-      <div class="flex items-center gap-2 rounded-lg border border-border bg-black/20 px-3 py-2.5">
-        <span class="text-[13px] text-subtle opacity-60">输入区待 FG5 实现…</span>
-        <Button variant="default" size="icon" class="ml-auto size-[30px] rounded-md bg-accent" disabled>
-          <ArrowRight class="size-[15px]" />
-        </Button>
-      </div>
-    </div>
+    <!-- ④ composer（FG5，S1/S2/S5/S6 主路径） -->
+    <Composer v-if="sessionId" :session-id="sessionId" class="flex-shrink-0" />
 
     <!-- ⑤ git-zone（composer 下方） -->
     <GitZone :git-branch="gitBranch" @diff="emit('diff')" />
@@ -49,15 +41,17 @@
 </template>
 
 <script setup lang="ts">
-import { MessageSquare, ArrowRight } from '@lucide/vue'
-import { Button } from '@/components/ui/button'
+import { MessageSquare } from '@lucide/vue'
 import type { DerivedStatus } from '@/types'
 import PanelHeader from './PanelHeader.vue'
 import ProgressZone from './ProgressZone.vue'
 import GitZone from './GitZone.vue'
+import MessageStream from './MessageStream.vue'
+import Composer from './Composer.vue'
 
 const props = defineProps<{
   panelId: string
+  sessionId: string | null
   sessionLabel: string
   sessionDir: string
   gitBranch?: string

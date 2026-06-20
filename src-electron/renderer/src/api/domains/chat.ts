@@ -7,10 +7,21 @@
  * 不臆造 StreamChunk。调用方在 handler 内过滤 message.text_delta 等事件。
  * 注：mock 模式下不走本域（api/index 切到 mock 门面）。
  */
-import type { ServerMessage } from '@xyz-agent/shared'
+import type { Message, ServerMessage } from '@xyz-agent/shared'
 import * as transport from '../transport'
 import * as pending from '../pending'
 import * as events from '../events'
+
+/**
+ * 拉取 session 历史（UC-2 切换 session 时回填 message-stream）。
+ * mock 模式返回 fixtureMessages；真 api 走 session.history。
+ */
+export function getHistory(sessionId: string): Promise<Message[]> {
+  const id = pending.create()
+  const result = pending.register<Message[]>(id)
+  transport.send({ type: 'session.history', id, payload: { sessionId } })
+  return result
+}
 
 /** 发送消息（mock 不模拟失败，D7） */
 export function send(sessionId: string, text: string): Promise<void> {

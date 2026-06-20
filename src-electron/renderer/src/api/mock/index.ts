@@ -9,8 +9,8 @@
  *
  * 依赖方向：无（不 import transport/events/pending，独立内存实现）。
  */
-import type { ServerMessage, SessionSummary } from '@xyz-agent/shared'
-import { createSession, fixtureSessions } from './data'
+import type { Message, ServerMessage, SessionSummary } from '@xyz-agent/shared'
+import { createSession, fixtureMessages, fixtureSessions } from './data'
 
 /** 流式时序（ms）—— 仅用于视觉演示节奏，不影响契约 */
 const TIMING = {
@@ -75,6 +75,12 @@ export const session = {
 }
 
 export const chat = {
+  /** 拉 session 历史（深拷贝 fixture，避免外部突变污染） */
+  async getHistory(sessionId: string): Promise<Message[]> {
+    await sleep(TIMING.ack)
+    return (fixtureMessages[sessionId] ?? []).map((m) => ({ ...m }))
+  },
+
   async send(sessionId: string, text: string): Promise<void> {
     cancelled.delete(sessionId)
     const messageId = nextId('m')

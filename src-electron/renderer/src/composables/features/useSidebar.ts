@@ -15,7 +15,7 @@
  */
 import { computed } from 'vue'
 import type { ComputedRef } from 'vue'
-import { session as sessionApi } from '@/api'
+import { chat as chatApi, session as sessionApi } from '@/api'
 import { useChatStore } from '@/stores/chat'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSessionStore } from '@/stores/session'
@@ -53,12 +53,18 @@ export function useSidebar() {
 
   /**
    * 选择 session：push 导航栈（view:chat + sessionId）+ switchSession api + 更新 activeId。
+   * 首次进入该 session 时拉取历史注入 chat store（UC-2 切换可见块类型，G2-006）。
    * switchSession 失败（mock id 不存在）抛错，UI 层捕获；不更新 activeId。
    */
   async function selectSession(id: string): Promise<void> {
     await sessionApi.switchSession(id)
     session.activeId = id
     navigation.push({ view: 'chat', sessionId: id })
+    // 历史回填：features 层跨 api+stores，是 hydrate 的正确编排点
+    if (!chat.isHydrated(id)) {
+      const history = await chatApi.getHistory(id)
+      chat.hydrate(id, history)
+    }
   }
 
   /**
