@@ -13,7 +13,7 @@ export default defineConfig({
   outDir: '../dist/runtime',
   format: ['cjs'],
   platform: 'node',  // 自动将所有 Node.js 内置模块标为 external
-  target: 'node20',   // 匹配 Electron 33 内置 Node 20.18.x
+  target: 'node24',   // 匹配 Electron 42.3.3 内置 Node 24.15.0（ELECTRON_RUN_AS_NODE 实测）
   bundle: true,
   clean: true,
   // ══════════════════════════════════════════════════════════════

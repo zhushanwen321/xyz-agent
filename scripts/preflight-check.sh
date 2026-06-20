@@ -186,6 +186,9 @@ if [ -f "$EB_YML" ]; then
 fi
 
 # ── 6. resources/pi symlink 检查 ───────────────────────────────────
+# 仅检查 git 跟踪的 symlink（会进产物，危险）。
+# .gitignore 忽略的 symlink 是 setup-worktree.sh 创建的 workspace 共享缓存
+# （指向 .pi-binary-cache/），不进 git，CI 由 prepare-pi-resources.sh 重新准备。
 echo ""
 echo -e "${BLUE}[6/9] resources/pi symlink check...${NC}"
 
@@ -193,6 +196,10 @@ PI_RES_DIR="$ELECTRON_DIR/resources/pi"
 SYMLINK_FOUND=false
 if [ -d "$PI_RES_DIR" ]; then
     while IFS= read -r link; do
+        # 跳过 .gitignore 忽略的 dev 缓存 symlink（不进 git，非打包风险）
+        if git check-ignore -q "$link" 2>/dev/null; then
+            continue
+        fi
         target=$(readlink "$link")
         echo -e "  ${RED}✗${NC} 发现 symlink: $(basename "$link") -> $target"
         SYMLINK_FOUND=true
