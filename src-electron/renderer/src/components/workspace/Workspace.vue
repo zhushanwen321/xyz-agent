@@ -9,28 +9,40 @@
     <PanelContainer v-if="hasSession" />
     <div
       v-else
-      class="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center"
+      class="flex flex-1 flex-col items-center justify-center gap-4 p-8 text-center"
     >
       <Sparkles class="size-8 text-accent opacity-70" />
       <div>
         <p class="text-[15px] font-medium text-fg">开始你的第一个任务</p>
         <p class="mt-1 text-[12px] text-muted">
-          点击左侧「新建任务」或选择一个已有会话
+          或按
           <kbd class="ml-1 rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">⌘N</kbd>
+          新建
         </p>
       </div>
+      <Button variant="default" size="sm" class="gap-1.5" @click="onNewSession">
+        <Plus class="size-[14px]" />
+        新建任务
+      </Button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Sparkles } from '@lucide/vue'
+import { Plus, Sparkles } from '@lucide/vue'
+import { Button } from '@/components/ui/button'
 import { useSessionStore } from '@/stores/session'
+import { useSidebar } from '@/composables/features/useSidebar'
 import PanelContainer from './PanelContainer.vue'
 
 const session = useSessionStore()
+const { newSession } = useSidebar()
 
 /** 是否有激活 session（决定渲染 panel 还是空态） */
 const hasSession = computed(() => session.activeId !== null)
+
+async function onNewSession(): Promise<void> {
+  await newSession()
+}
 </script>

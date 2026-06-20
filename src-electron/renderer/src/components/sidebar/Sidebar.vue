@@ -7,7 +7,10 @@
     DEFERRED 入口 hide：搜索（⌘K，G-022）、rename/删除（G-005/G-013）不渲染入口。
     v1 只渲染 tab 骨架 + 主路径（会话列表），File View 内容 G2-003 defer。
   -->
-  <div class="sidebar h-full" :class="{ 'sidebar--collapsed': sidebar.collapsed }">
+  <div
+    class="sidebar h-full transition-[width,opacity] duration-[var(--duration-slow)] ease-[var(--ease)]"
+    :class="{ 'w-0 opacity-0 overflow-hidden': sidebar.collapsed }"
+  >
     <div class="sidebar__inner flex h-full w-[200px] flex-col pl-0.5">
       <!-- Brand -->
       <div class="flex items-center gap-2 px-2 pb-3.5 text-[13px] font-semibold">
@@ -68,6 +71,7 @@
             :active-id="session.activeId"
             :status-of="statusOf"
             @select="onSelectSession"
+            @new-session="onNewSession"
           />
         </template>
         <template v-else>
@@ -127,26 +131,16 @@ onMounted(() => {
   void loadSessions()
 })
 
-/** ⌘N 新建 session（shell spec §五 全局快捷键；⌘K/⌘⇧O DEFERRED 不绑） */
+/** ⌘N 新建 session + ⌘B 折叠侧栏（shell spec §五/§⌘B 三态；v1 只做 toggle 前两态，G-033 第 3 态 DEFERRED） */
 useEventListener(window, 'keydown', (e: KeyboardEvent) => {
   const mod = e.metaKey || e.ctrlKey
   if (!mod) return
   if (e.key === 'n' || e.key === 'N') {
     e.preventDefault()
     void newSession()
+  } else if (e.key === 'b' || e.key === 'B') {
+    e.preventDefault()
+    sidebar.toggleCollapsed()
   }
 })
 </script>
-
-<style scoped>
-/* 折叠态 C：整体隐藏（width:0 + opacity:0 + overflow:hidden），320ms 同步过渡（spec §收起态）。
-   traffic light 安全区（padding-top:52px）在 AsideRegion，本组件不重复。 */
-.sidebar {
-  transition: width var(--duration-slow) var(--ease), opacity var(--duration-slow) var(--ease);
-}
-.sidebar--collapsed {
-  width: 0;
-  opacity: 0;
-  overflow: hidden;
-}
-</style>
