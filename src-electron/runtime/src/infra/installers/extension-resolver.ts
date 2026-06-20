@@ -16,6 +16,7 @@ import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs'
 import { join, dirname, basename } from 'node:path'
 import { getPiAgentDir } from '../pi/pi-paths.js'
 import { readSettings } from '../pi/pi-settings-store.js'
+import { readDisabledPackages as readDisabledPackagesFromStore } from '../pi/pi-extension-settings.js'
 import type { IExtensionResolver, ExtensionPaths } from '../../services/ports/installer.js'
 
 // re-export ExtensionPaths 供历史 import 此文件的消费者使用（类型归属 ports）
@@ -182,20 +183,11 @@ export class ExtensionResolver implements IExtensionResolver {
 
   /**
    * 读取 disabled-packages.json，返回禁用的 source 集合。
-   * 文件不存在时返回空集合。
+   * F6: 经 pi-extension-settings 的单一读取入口（与 PiExtensionSettings 同源 JsonStore，
+   * 杜绝同进程双读 split-brain）。文件不存在时返回空集合。
    */
   private readDisabledPackages(settingsDir: string): Set<string> {
-    const disabledPath = join(settingsDir, 'disabled-packages.json')
-    if (!existsSync(disabledPath)) return new Set()
-
-    try {
-      const raw = readFileSync(disabledPath, 'utf-8')
-      const data = JSON.parse(raw) as { disabled?: string[] }
-      return new Set(data.disabled ?? [])
-    } catch {
-      log.warn(`[extension-resolver] failed to parse ${disabledPath}`)
-      return new Set()
-    }
+    return new Set(readDisabledPackagesFromStore(settingsDir))
   }
 
   /**

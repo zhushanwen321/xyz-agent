@@ -33,6 +33,21 @@ function createDisabledStore(path: string): JsonStore<DisabledRecord> {
 }
 
 /**
+ * F6: disabled-packages.json 的单一读取入口。
+ *
+ * 此前 extension-resolver.readDisabledPackages 直接 readFileSync + JSON.parse，
+ * 与本模块的 JsonStore 读同一文件——同进程两读路径是 split-brain 风险。
+ * 现统一：所有读取方（PiExtensionSettings 实例 + resolver）都经此函数，
+ * 共享 JsonStore 的 ENOENT 容错 + 解析逻辑。
+ *
+ * @param settingsDir pi agent 配置目录（disabled-packages.json 所在地）
+ * @returns 禁用的 source 字符串数组（文件缺失/解析失败时返回 []）
+ */
+export function readDisabledPackages(settingsDir: string): string[] {
+  return createDisabledStore(join(settingsDir, DISABLED_FILE)).read().disabled
+}
+
+/**
  * IExtensionSettings 实现。
  * @param settingsDir pi agent 配置目录（~/.xyz-agent/pi/agent），settings.json + disabled-packages.json 所在地。
  *                    测试可注入临时目录；生产默认 getPiAgentDir()。
@@ -81,11 +96,12 @@ export class PiExtensionSettings implements IExtensionSettings {
   // ── disabled-packages.json ──
 
   getDisabled(): string[] {
-    return this.disabledStore.read().disabled
+    // F6: 经共享单一读取入口（与 extension-resolver 同源，杜绝 split-brain）。
+    return readDisabledPackages(this.settingsDir)
   }
 
   async setEnabled(source: string, enabled: boolean): Promise<void> {
-    const current = this.disabledStore.read().disabled
+    const current = readDisabledPackages(this.settingsDir)
     let next: string[]
     if (enabled) {
       next = current.filter(d => d !== source)
@@ -96,7 +112,7 @@ export class PiExtensionSettings implements IExtensionSettings {
   }
 
   async removeDisabled(source: string): Promise<void> {
-    const next = this.disabledStore.read().disabled.filter(d => d !== source)
+    const next = readDisabledPackages(this.settingsDir).filter(d => d !== source)
     this.disabledStore.write({ disabled: next })
   }
 }
