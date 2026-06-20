@@ -7,9 +7,11 @@
 > - ✅ P0-A（存储抽象层 JsonStore + WriteBackCache）已完成——C0–C6，6 个 store 全部迁移
 > - ✅ P1-A（settings.json 单所有者收口）已完成——9 处 RMW 收口到 updateSettingsSync
 > - ✅ P1-B（storage global/workspace ×4×2 折叠）已完成——C5 顺手做
-> - ✅ P0-B（transport 错误契约统一）已完成——D2 reply/D3 requireExt/D8 getClientOrThrow/D9 TreeHandlerContext extends/D10 error envelope 三通道契约
+> - ✅ P0-B（transport 错误契约统一）已完成——D10 三通道契约 + 3 种请求级失败统一 envelope
 > - ✅ P1-C（transport 分发骨架重构）已完成——D1 中央 switch→dispatch Map + D2 reply + D3 requireExt + D8 getClientOrThrow + D9 TreeHandlerContext extends
-> - ⬜ P1-D/E 待做
+> - ✅ P1-D（server.ts 内部结构化）已完成——sendInitialState descriptor 循环（D7）
+> - ✅ P1-E（plugin-service API，缩减版）已完成——LocalHandlerRegistry 收 C7+C8（不动 register/create 对偶骨架，尊重 D5）
+> - ✅ P2 全量已完成——见下方 P2 表各项状态（F3/E3 经评估为真差异/已完成，跳过并记录理由）
 > 与 [`duplicate-code-audit.md`](./duplicate-code-audit.md)（D1–D28）的关系：
 > - 既有审计 D1–D28 多已标 ✅ 解决。本文件是**对未解决/新发现相似代码的第二轮审查**。
 > - 本文件不重复 D1–D28 的已解决项，仅在**与既有结论冲突或补充**处交叉引用并标注「修正 Dxx」。
@@ -135,7 +137,7 @@ class WriteBackCache<K, V> {                  // write-back，组合 JsonStore
 
 ---
 
-### P1-D. server.ts 内部结构化
+### P1-D. server.ts 内部结构化 ✅ 已完成（commit 9f86bc67）
 
 **吸收相似点**：D7（context 字面量 4 份 / sendInitialState 6 段 / broadcast 3 个）。
 
@@ -146,7 +148,10 @@ class WriteBackCache<K, V> {                  // write-back，组合 JsonStore
 
 ---
 
-### P1-E. plugin-service API 声明式 RPC
+### P1-E. plugin-service API 声明式 RPC ✅ 已完成（缩减版，commit 25f1f568）
+
+> **执行决策**：不强行声明式 method 表（审计自己引用 D5「register/create 骨架本身别合并」，会丢类型）。
+> 改为只抽 `LocalHandlerRegistry`（handler-registry.ts）收 C7（Disposable 4 处）+ C8（onNotification dispatch 4 处）的 Map 管理样板。register/create 对偶骨架、params 解构、.then 丢弃均不动（样板危害小，强统一丢类型）。
 
 **吸收相似点**：C1（28 处 register）、C2（已被 P1-B 覆盖）、C3（25 处 client 代理）、C4/C5/C6（.then 丢弃 / null 默认 / 无参 eslint 不一致）、C7（Disposable 注册 3 处）、C8（onNotification dispatch 3 处）。
 
@@ -158,22 +163,24 @@ class WriteBackCache<K, V> {                  // write-back，组合 JsonStore
 
 ## P2 — 机械提取（按手法归类）
 
-| 手法 | 项（编号见下方相似点索引） | 动作 |
-|---|---|---|
-| **已有 helper 没用** | F7（pi-provider-store:259-263） | 改调已存在的 `pickFirstModelProvider`（:132）。注：既有 D10 已抽 helper 并改了 2 处，但 findValidDefaultModel 第 4 处仍内联——既有审计的遗漏 |
-| **已有 helper 没用 ｜ 修正既有 D20** | A6（plugin-storage:261,280） | 改用同文件第 4 行已 import 的 `isEnoent(e)`。D20 标 ✅ 但漏了这两处 |
-| **提小 helper** | C9 | `getOrCreate<K,V>(map, k, make)` 统一 4 处 Map get-or-create |
-| | C10 | 错误码注入统一成 `withCode(err, code)`，消灭 `Object.assign` vs `(e as{}).code=` 两套 |
-| | D6 | `isNotFound(e)` helper，消灭 tree 里 5 处 `e.message.includes('not found')` 字符串嗅探 |
-| | G2 | `parseJsonl(raw): unknown[]` 统一 3 处「跳过畸形行」内层 catch |
-| | G3 | 删 session-file-utils:73/112 多余的 `existsSync` 判断（`mkdirSync({recursive})` 本就幂等） |
-| | F3 | `walkDir(dir, {filter, visit})` 统一 6 处目录扫描骨架 |
-| | F4 | `tmpPathFor(path, suffix?)` 统一 atomicWrite 对里重复的 tmpPath 构造 |
-| **统一常量** | H1 | `'session-data'` 目录名提进 pi-paths（getSessionDataDir） |
-| | A2/A3 | `JSON_INDENT=2` 常量去重（P0-A 落地后自动消失） |
-| **两套写法选一** | E3 | RpcClient 9 个 sendCommand 包装改命令表 `Record<cmd, fields>` |
-| | D11 | compact 遥测两处（session-handler vs message-dispatcher）合一 |
-| **需追问再定** | F6 | disabled-packages.json 双读（pi-extension-settings 返 string[] vs extension-resolver 返 Set）——注释声明「刻意独立」，但同进程两模块读同一文件仍是 split-brain。倾向合并成单一 reader + 本地 Set 转换，**需确认独立性是否有真实理由** |
+> 状态汇总（2026-06-20）：除 F3/E3 经评估为真差异/已完成（跳过并记录理由）外，全部完成。
+
+| 手法 | 项 | 状态 | 动作 / 实际处理 |
+|---|---|---|---|
+| **已有 helper 没用** | F7 | ✅ commit 09f14d3e | findValidDefaultModel 改调 pickFirstModelProvider（既有 D10 漏的第 4 处） |
+| | A6 | ✅ P0-A 已完成 | plugin-storage 重写后 isEnoent 已正确使用（P0-A C5 落地） |
+| **提小 helper** | C9 | ✅ commit 5a892a44 | getOrCreate<K,V> 收 rpc-client 1 处（activator 图构建带「不要覆盖」语义注释，不强行收编；实际 2-3 处非审计估的 4 处） |
+| | C10 | ✅ commit 4ca9f966 | errorWithCode(msg, code) 统一 4 处错误码注入两套写法 |
+| | D6 | ✅ commit e7de2633 | isNotFound(e) 收 tree 5 处字符串嗅探 |
+| | G2 | ✅ commit e7de2633 | parseJsonl(raw) 收 3 处跳畸形行循环 |
+| | G3 | ✅ commit 09f14d3e | 删 session-file-utils 2 处多余 existsSync 守卫 |
+| | F3 | ⏭️ 跳过（已完成+真差异） | scanner 系已在 R12 抽 forEachScannedDir；剩余 infra 遍历循环带领域特定过滤（extension 校验/jsonl 过滤/迁移），强行 walkDir 是低价值抽象 |
+| | F4 | ⏭️ 跳过（已基本解决） | atomicWrite 已收口 fs-utils；仅剩同文件 2 函数间 2 行 tmpPath 微 dedupe，不值得抽 |
+| **统一常量** | H1 | ✅ commit 09f14d3e | SESSION_DATA_DIRNAME 常量收 session-data-store 4 处魔法串（不用 pi-paths 的 getSessionDataDir——本 store 经 DI 注入 configDir，常量是正确粒度） |
+| | A2/A3 | ✅ P0-A 自动消失 | JSON_INDENT 随 JsonStore 落地统一 |
+| **两套写法选一** | E3 | ⏭️ 跳过（真差异） | 10 个 sendCommand 包装是类型化 facade 方法（prompt(content)/setModel(p,m) 各有类型签名）；命令表会丢类型——同 D5「骨架别合并」 |
+| | D11 | ✅ commit 5a892a44 | session-handler 的 compact 耗时/日志删，由 message-dispatcher 统一遥测 |
+| **已追问确认** | F6 | ✅ commit 57e5ae10 | 合并成单一 reader：pi-extension-settings 导出 readDisabledPackages(settingsDir)（经 JsonStore），resolver 改调它，消除同进程双读 split-brain |
 
 ---
 
@@ -208,6 +215,8 @@ class WriteBackCache<K, V> {                  // write-back，组合 JsonStore
 ---
 
 ## 建议执行顺序
+
+> 全部 7 步已执行完毕（2026-06-20）。实际执行顺序与下方建议一致，F3/E3 经评估跳过（见 P2 表理由）。
 
 1. **P2 里「已有 helper 没用」+ 纯删除类先做**（F7、G3、A6）——零风险、独立 commit、热身。A6 顺带补既有 D20 的遗漏。
 2. **P0-A JsonStore（先 read-through）**——建立抽象，迁 4 个 read-through store。这是后面所有存储项的地基。
