@@ -13,10 +13,21 @@
  * - tool_call（tool_call_start/tool_call_end）—— 折进 trace，失败整块红框
  * - error（message.error / message.complete stopReason:error）—— 挂最后 assistant 块
  * 历史 fixture（含 summary 收尾 text / 预置 tool_call）由 hydrate 注入，不走流式。
+ *
+ * FileChanges 通道（flow-2，ADR-0024 + W11 WP-L3-11）：
+ * `message.file_changes` 事件由 runtime event-adapter 解析 pi 工具调用后推送
+ * （协议类型见 ADR-0024 D7，待 flow-2 实施时加入 ServerMessageType 联合）。
+ * 数据流处理骨架见 applyFileChanges()，类型契约已就绪（F2-1），逻辑 DEFERRED。
  */
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { Message, ServerMessage, ToolCall } from '@xyz-agent/shared'
+import type {
+  ChangeSetStatus,
+  FileChange,
+  Message,
+  ServerMessage,
+  ToolCall,
+} from '@xyz-agent/shared'
 
 export const useChatStore = defineStore('chat', () => {
   /** 按 sessionId 分区的消息表（UC-2 隔离） */
@@ -224,6 +235,31 @@ export const useChatStore = defineStore('chat', () => {
     isStreaming.value = value
   }
 
+  /**
+   * 处理 runtime 推送的文件变更帧（flow-2 FileChanges 通道，ADR-0024 D6/D7）。
+   *
+   * accumulating 帧（isFullSet=false）增量合并进目标 assistant message.fileChanges；
+   * ready 帧（isFullSet=true）用 git 对账后的全集替换（真值收口）。
+   * 同 filePath 合并、status 取最新。变更集卡 5 态状态机的审查态
+   * （partially-reviewed/resolved/superseded）由前端用户交互驱动，不经此函数。
+   *
+   * 骨架阶段（F2-3）：类型契约就绪，数据流逻辑 DEFERRED 到 flow-2 完整实施。
+   */
+  function applyFileChanges(
+    sessionId: string,
+    messageId: string,
+    changes: FileChange[],
+    changeSetStatus: ChangeSetStatus,
+    isFullSet: boolean,
+  ): void {
+    void sessionId
+    void messageId
+    void changes
+    void changeSetStatus
+    void isFullSet
+    throw new Error('applyFileChanges: not implemented (flow-2 FileChanges channel, ADR-0024)')
+  }
+
   return {
     messages,
     isStreaming,
@@ -233,6 +269,7 @@ export const useChatStore = defineStore('chat', () => {
     appendUser,
     appendAssistantChunk,
     setStreaming,
+    applyFileChanges,
   }
 })
 

@@ -15,6 +15,7 @@ export {
 export type {
   MessageRole, MessageStatus, ToolCallStatus,
   ToolCall, ThinkingBlock, ContentBlockType, ContentBlock, Usage, Message,
+  FileChangeStatus, FileChange, ChangeSetStatus, ReviewDecision,
 } from './message'
 export type {
   SessionStatus, SessionSummary, SessionGroup,
