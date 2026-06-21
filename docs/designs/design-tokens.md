@@ -10,7 +10,7 @@
 |-------|-----|------|------|
 | `--bg` | `#0d0d0f` | 画布底层 | C 原始 |
 | `--surface` | `#151519` | 面板/卡片 | C (`--panel`) |
-| `--surface-hover` | `#1b1b20` | 面板悬停 | C (`--panel-hover`) |
+| `--surface-hover` | `#1f1f26` | 面板悬停 | draft-session-item/composer-states.html `:root`（P1-1 修正：原误取 surface-2 值 #1b1b20） |
 | `--surface-2` | `#1b1b20` | 二级表面（Card-Elevated） | draft-composer-states.html `:root` |
 | `--bg-elevated` | `#1c1c20` | 浮起面板/激活面板底色 | draft-dual-panel.html `.panel.active` |
 | `--bg-input` | `#101013` | 输入区底色（Input/Textarea/Composer zone） | draft-companion-zones.html + draft-composer-states.html |

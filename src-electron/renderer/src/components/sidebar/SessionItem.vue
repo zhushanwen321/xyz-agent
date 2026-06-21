@@ -1,13 +1,13 @@
 <template>
   <!--
     展示组件 · 单会话项（draft-five-states §1）。
-    flex [dot] [main] [time]；active = accent-soft 背景 + inset accent-ring。
+    flex [dot] [main] [time]；active = surface-2 背景（Card-Active，design-system §2）+ inset accent-ring。
     hover 操作（重命名/删除）属 DEFERRED（G2-005/G-013），按 hide 规则不渲染入口。
     状态点 5 态（D6）：running/waiting 脉冲，done/stopped/error 静态。
   -->
   <div
     class="session-item group relative flex cursor-pointer items-start gap-2 rounded-md px-2 py-[7px] transition-colors"
-    :class="active ? 'bg-accent-soft ring-1 ring-inset ring-accent-ring' : 'hover:bg-surface-hover'"
+    :class="active ? 'bg-surface-2 ring-1 ring-inset ring-accent-ring' : 'hover:bg-surface-hover'"
     @click="emit('select', session.id)"
   >
     <span class="size-2 mt-1 shrink-0 rounded-full" :class="dotClass" />

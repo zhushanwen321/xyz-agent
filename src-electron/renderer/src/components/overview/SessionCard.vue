@@ -12,7 +12,7 @@
     class="session-card group flex cursor-pointer flex-col gap-2.5 rounded-lg border p-3.5 transition-colors"
     :class="
       active
-        ? 'border-transparent bg-surface-hover ring-1 ring-inset ring-accent'
+        ? 'border-transparent bg-surface-2 ring-1 ring-inset ring-accent'
         : 'border-border bg-surface hover:border-border-strong hover:bg-surface-hover'
     "
     @click="emit('open', session.id)"
