@@ -33,14 +33,18 @@
       <p class="text-[12px] text-subtle opacity-70">选择左侧会话开始</p>
     </div>
 
-    <!-- ③ progress-zone（composer 上方） -->
-    <ProgressZone :session-label="sessionLabel" />
+    <!-- ③④⑤ companion zones：progress / composer / git 垂直 6px 紧凑成「带」（draft-companion-zones §裁决）。
+         三 zone 共享卡片语言、各自独立成卡；统一容器管垂直间距，移除各自 margin。 -->
+    <div class="composer-band flex flex-shrink-0 flex-col gap-1.5">
+      <!-- ③ progress-zone（composer 上方） -->
+      <ProgressZone :session-label="sessionLabel" />
 
-    <!-- ④ composer（FG5，S1/S2/S5/S6 主路径） -->
-    <Composer v-if="sessionId" :session-id="sessionId" class="flex-shrink-0" />
+      <!-- ④ composer（FG5，S1/S2/S5/S6 主路径） -->
+      <Composer v-if="sessionId" :session-id="sessionId" />
 
-    <!-- ⑤ git-zone（composer 下方） -->
-    <GitZone :git-branch="gitBranch" @diff="emit('diff')" />
+      <!-- ⑤ git-zone（composer 下方） -->
+      <GitZone :git-branch="gitBranch" @diff="emit('diff')" />
+    </div>
   </section>
 </template>
 

@@ -8,7 +8,7 @@
   -->
   <div
     v-if="gitBranch"
-    class="mx-3.5 mb-3 flex h-[38px] flex-shrink-0 items-center gap-2.5 rounded-lg border border-border bg-bg-input px-3"
+    class="mx-3.5 flex h-[38px] flex-shrink-0 items-center gap-2.5 rounded-lg border border-border bg-bg-input px-3"
   >
     <span class="inline-flex max-w-[120px] items-center gap-1.5 font-mono text-[11px] text-accent">
       <GitBranch class="size-[13px] shrink-0" />

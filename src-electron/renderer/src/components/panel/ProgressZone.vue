@@ -11,7 +11,7 @@
   -->
   <div
     v-if="sessionLabel"
-    class="mx-3.5 mt-2.5 flex-shrink-0 overflow-hidden rounded-lg border border-border bg-bg-input"
+    class="mx-3.5 flex-shrink-0 overflow-hidden rounded-lg border border-border bg-bg-input"
   >
     <div class="flex items-center gap-2 py-2 pl-3 pr-2.5 text-[12px]">
       <span class="size-[7px] rounded-full bg-subtle" />

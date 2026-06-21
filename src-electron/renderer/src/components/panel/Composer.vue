@@ -7,7 +7,7 @@
       S3/S4（@/#// 附件浮层 G2-002）、S7-S9 双队列视图/失败回退/已排队多条。
     steer/followUp：isStreaming 时 ⏎ 追加 steer，Alt+⏎ 追加 followUp，都不打断当前回合。
   -->
-  <div class="composer mx-3.5 pt-2.5">
+  <div class="composer mx-3.5">
     <div class="composer-box rounded-lg border bg-bg-input" :class="boxClass">
       <!-- 输入区：Textarea 原语（no-native-html 规则） -->
       <Textarea
