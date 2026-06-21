@@ -1,0 +1,147 @@
+/**
+ * SettingsMessageHandler 单测 — 覆盖 config/model 分支路由 + 副作用广播（report #5）。
+ *
+ * 重点：
+ * - setProvider/deleteProvider 带 newDefault 时广播 config.defaults（有副作用分支，最该补）
+ * - discoverModels 三种错误翻译（ByteString / fetch failed / 原始）
+ * - 基础路由：getProviders / model.list / model.switch / scanSkills / tool.approve
+ *
+ * 运行：cd src-electron/runtime && npx vitest run test/settings-message-handler.test.ts
+ */
+import { describe, it, expect, vi } from 'vitest'
+import { SettingsMessageHandler } from '../src/transport/settings-message-handler.js'
+import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
+
+function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; deleteProvider?: ReturnType<typeof vi.fn>; discover?: ReturnType<typeof vi.fn>; aggregate?: ReturnType<typeof vi.fn> } = {}) {
+  const broadcasts: ServerMessage[] = []
+  const replies: { id: string; type: string; payload: Record<string, unknown> }[] = []
+  const configService = {
+    listProviders: vi.fn().mockReturnValue([{ id: 'p1' }]),
+    setProvider: overrides.setProvider ?? vi.fn().mockReturnValue({}),
+    deleteProvider: overrides.deleteProvider ?? vi.fn().mockReturnValue({}),
+    getProvider: vi.fn().mockReturnValue(undefined),
+    updateToolPermissions: vi.fn(),
+    loadSkills: vi.fn().mockReturnValue([]),
+    scanSkills: vi.fn().mockReturnValue([]),
+    upsertSkill: vi.fn(),
+    deleteSkill: vi.fn(),
+    loadAgents: vi.fn().mockReturnValue([]),
+    scanAgents: vi.fn().mockReturnValue([]),
+    upsertAgent: vi.fn(),
+    deleteAgent: vi.fn(),
+  }
+  const modelService = {
+    aggregateModels: overrides.aggregate ?? vi.fn().mockReturnValue([{ id: 'm1' }]),
+    switchModel: vi.fn().mockResolvedValue(undefined),
+    setThinkingLevel: vi.fn().mockResolvedValue(undefined),
+    discoverModelsFromApi: overrides.discover ?? vi.fn().mockResolvedValue([{ id: 'm1' }]),
+  }
+  const ctx = {
+    send: vi.fn(),
+    reply: vi.fn((_ws: unknown, id: string, type: string, payload: Record<string, unknown>) => replies.push({ id, type, payload })),
+    sendError: vi.fn(),
+    configService,
+    sessionService: {},
+    modelService,
+    projectRoot: '/proj',
+    nextPushId: vi.fn().mockReturnValue('p1'),
+    broadcast: vi.fn((m: ServerMessage) => broadcasts.push(m)),
+    broadcastProviderList: vi.fn(),
+    broadcastSkillList: vi.fn(),
+    broadcastAgentList: vi.fn(),
+  }
+  const handler = new SettingsMessageHandler(ctx as unknown as ConstructorParameters<typeof SettingsMessageHandler>[0])
+  return { ctx, replies, broadcasts, handler }
+}
+
+function msg(type: string, payload: Record<string, unknown>, id = 'm1'): ClientMessage {
+  return { type, id, payload } as unknown as ClientMessage
+}
+const WS = {} as never
+
+describe('SettingsMessageHandler', () => {
+  describe('provider 副作用广播（最该补）', () => {
+    it('setProvider 无 newDefault → 仅 reply + broadcastProviderList，不广播 config.defaults', async () => {
+      const { ctx, broadcasts, handler } = makeHandler({ setProvider: vi.fn().mockReturnValue({}) })
+      await handler.handleSettingsMessage(msg('config.setProvider', { providerId: 'p1', name: 'x' }), WS)
+      expect(ctx.broadcastProviderList).toHaveBeenCalledOnce()
+      expect(broadcasts.filter(b => b.type === 'config.defaults')).toHaveLength(0)
+    })
+
+    it('setProvider 有 newDefault → 广播 config.defaults (source=provider-updated)', async () => {
+      const { broadcasts, handler } = makeHandler({
+        setProvider: vi.fn().mockReturnValue({ newDefault: { provider: 'p1', modelId: 'm1' } }),
+      })
+      await handler.handleSettingsMessage(msg('config.setProvider', { providerId: 'p1', name: 'x' }), WS)
+      const d = broadcasts.find(b => b.type === 'config.defaults')
+      expect(d).toBeDefined()
+      expect(d?.payload).toMatchObject({ defaultModel: 'p1/m1', source: 'provider-updated' })
+    })
+
+    it('deleteProvider 有 newDefault → 广播 config.defaults (source=provider-deleted)', async () => {
+      const { broadcasts, handler } = makeHandler({
+        deleteProvider: vi.fn().mockReturnValue({ newDefault: { provider: 'p2', modelId: 'm2' } }),
+      })
+      await handler.handleSettingsMessage(msg('config.deleteProvider', { providerId: 'p1' }), WS)
+      const d = broadcasts.find(b => b.type === 'config.defaults')
+      expect(d?.payload).toMatchObject({ defaultModel: 'p2/m2', source: 'provider-deleted' })
+    })
+  })
+
+  describe('基础路由', () => {
+    it('config.getProviders → reply config.providers', async () => {
+      const { replies, handler } = makeHandler()
+      await handler.handleSettingsMessage(msg('config.getProviders', {}), WS)
+      expect(replies[0]).toMatchObject({ type: 'config.providers', payload: { providers: [{ id: 'p1' }] } })
+    })
+    it('model.list → aggregateModels + reply', async () => {
+      const { replies, handler } = makeHandler()
+      await handler.handleSettingsMessage(msg('model.list', {}), WS)
+      expect(replies[0]).toMatchObject({ type: 'model.list', payload: { models: [{ id: 'm1' }] } })
+    })
+    it('model.switch → switchModel 调用 + reply model.switched', async () => {
+      const { ctx, replies, handler } = makeHandler()
+      await handler.handleSettingsMessage(msg('model.switch', { sessionId: 's1', provider: 'p1', modelId: 'm1' }), WS)
+      expect(ctx.modelService.switchModel).toHaveBeenCalledWith('s1', 'p1', 'm1')
+      expect(replies[0]).toMatchObject({ type: 'model.switched' })
+    })
+    it('config.scanSkills → reply scannedSkills', async () => {
+      const { replies, handler } = makeHandler()
+      await handler.handleSettingsMessage(msg('config.scanSkills', { sources: ['/x'] }), WS)
+      expect(replies[0]).toMatchObject({ type: 'config.scannedSkills', payload: { success: true } })
+    })
+    it('tool.approve → no-op return true', async () => {
+      const { handler } = makeHandler()
+      const ok = await handler.handleSettingsMessage(msg('tool.approve', {}), WS)
+      expect(ok).toBe(true)
+    })
+  })
+
+  describe('discoverModels 错误翻译', () => {
+    it('成功 → reply discoveredModels success:true', async () => {
+      const { replies, handler } = makeHandler({ discover: vi.fn().mockResolvedValue([{ id: 'm1' }]) })
+      await handler.handleSettingsMessage(msg('config.discoverModels', { baseUrl: 'http://x', apiKey: 'k' }), WS)
+      await vi.waitFor(() => expect(replies.length).toBeGreaterThan(0))
+      expect(replies[0].payload).toMatchObject({ success: true, models: [{ id: 'm1' }] })
+    })
+    it('ByteString 错误 → 翻译为「不支持的字符」', async () => {
+      const { replies, handler } = makeHandler({ discover: vi.fn().mockRejectedValue(new Error('invalid ByteString')) })
+      await handler.handleSettingsMessage(msg('config.discoverModels', { baseUrl: 'http://x' }), WS)
+      await vi.waitFor(() => expect(replies.length).toBeGreaterThan(0))
+      expect(replies[0].payload.success).toBe(false)
+      expect(replies[0].payload.error).toContain('不支持的字符')
+    })
+    it('fetch failed → 翻译为「无法访问」', async () => {
+      const { replies, handler } = makeHandler({ discover: vi.fn().mockRejectedValue(new Error('fetch failed')) })
+      await handler.handleSettingsMessage(msg('config.discoverModels', { baseUrl: 'http://x' }), WS)
+      await vi.waitFor(() => expect(replies.length).toBeGreaterThan(0))
+      expect(replies[0].payload.error).toContain('无法访问')
+    })
+    it('其他错误 → 原始消息透传', async () => {
+      const { replies, handler } = makeHandler({ discover: vi.fn().mockRejectedValue(new Error('rate limited')) })
+      await handler.handleSettingsMessage(msg('config.discoverModels', { baseUrl: 'http://x' }), WS)
+      await vi.waitFor(() => expect(replies.length).toBeGreaterThan(0))
+      expect(replies[0].payload.error).toBe('rate limited')
+    })
+  })
+})

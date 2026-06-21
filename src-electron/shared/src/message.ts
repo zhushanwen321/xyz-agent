@@ -13,6 +13,8 @@ export interface ToolCall {
   progress?: number
   /** Extension tool_call_update 详细信息 */
   detail?: string | Record<string, unknown>
+  /** 实时流式失败（tool_execution_end isError）时的错误文本，与 status:'error' 同源 */
+  error?: string
   status: ToolCallStatus
   startTime: number
   endTime?: number

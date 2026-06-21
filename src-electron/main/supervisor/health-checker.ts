@@ -32,9 +32,17 @@ export const CONNECT_TIMEOUT_MS = 500
  * @returns true=端口在监听 / false=空闲或连接失败
  */
 export function isPortInUse(port: number, timeoutMs = CONNECT_TIMEOUT_MS): Promise<boolean> {
-  void port; void timeoutMs
-  void createConnection
-  throw new Error('not implemented: isPortInUse')
+  return new Promise((resolve) => {
+    const socket = createConnection({ port, host: '127.0.0.1' }, () => {
+      socket.destroy()
+      resolve(true)
+    })
+    socket.on('error', () => resolve(false))
+    socket.setTimeout(timeoutMs, () => {
+      socket.destroy()
+      resolve(false)
+    })
+  })
 }
 
 /**
@@ -44,6 +52,9 @@ export function isPortInUse(port: number, timeoutMs = CONNECT_TIMEOUT_MS): Promi
  * @throws 重试耗尽（HEALTH_RETRY_COUNT × HEALTH_INTERVAL_MS 后仍不监听）
  */
 export async function waitForHealth(port: number): Promise<void> {
-  void port
-  throw new Error('not implemented: waitForHealth')
+  for (let i = 0; i < HEALTH_RETRY_COUNT; i++) {
+    if (await isPortInUse(port)) return
+    await new Promise((resolve) => setTimeout(resolve, HEALTH_INTERVAL_MS))
+  }
+  throw new Error(`Runtime health check timed out on port ${port}`)
 }

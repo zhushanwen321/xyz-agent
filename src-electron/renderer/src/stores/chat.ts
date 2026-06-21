@@ -147,6 +147,7 @@ export const useChatStore = defineStore('chat', () => {
               ...c,
               output: readString(msg.payload, 'output') ?? c.output,
               status: (readString(msg.payload, 'status') as ToolCall['status']) ?? 'completed',
+              error: readString(msg.payload, 'error') ?? c.error,
               endTime: Date.now(),
             }
             : c,
@@ -166,12 +167,52 @@ export const useChatStore = defineStore('chat', () => {
         messages.value.set(sessionId, next)
         break
       }
+      case 'message.stream_error': {
+        // FR-5: streaming 错误（pi message_update{error}）。若无前置 assistant 流（prompt
+        // 级失败/流启动前即报错），合成 error 消息，避免错误内容丢失（违反规则 #3）。
+        const streamErrContent = readString(msg.payload, 'content') ?? ''
+        const sIdx = findLastAssistantIndex(prev)
+        if (sIdx < 0) {
+          messages.value.set(sessionId, [
+            ...prev,
+            { id: `a-${crypto.randomUUID()}`, role: 'assistant', content: streamErrContent, status: 'error', timestamp: Date.now() },
+          ])
+          break
+        }
+        const sNext = [...prev]
+        sNext[sIdx] = {
+          ...sNext[sIdx],
+          content: streamErrContent ? `${sNext[sIdx].content}${streamErrContent}` : sNext[sIdx].content,
+          status: 'error',
+        }
+        messages.value.set(sessionId, sNext)
+        break
+      }
       case 'message.error': {
+        // 规则 #3：错误必须重置 streaming 状态，避免单条气泡卡「生成中」。
+        // 两类场景：
+        // - 流中途错误（event-adapter error / 进程崩溃）：最后一条 assistant 仍
+        //   status:'streaming' → 转为 error 并并入 errorText（保留已生成的部分内容），
+        //   不新建气泡。这是 CLAUDE.md 规则 #3 防护的「UI 卡思考中」失败模式。
+        // - prompt 级失败 / 闲置 session 崩溃 / hook 拦截：无 streaming assistant
+        //   （或最后一条已 complete/error），新建独立 error 消息；不改写历史消息。
+        const errorText = readString(msg.payload, 'message') ?? 'Unknown error'
         const idx = findLastAssistantIndex(prev)
-        if (idx < 0) return
-        const next = [...prev]
-        next[idx] = { ...next[idx], status: 'error' }
-        messages.value.set(sessionId, next)
+        if (idx >= 0 && prev[idx].status === 'streaming') {
+          const last = prev[idx]
+          const next = [...prev]
+          next[idx] = {
+            ...last,
+            content: last.content ? `${last.content}\n\n${errorText}` : errorText,
+            status: 'error',
+          }
+          messages.value.set(sessionId, next)
+          break
+        }
+        messages.value.set(sessionId, [
+          ...prev,
+          { id: `a-${crypto.randomUUID()}`, role: 'assistant', content: errorText, status: 'error', timestamp: Date.now() },
+        ])
         break
       }
       default:

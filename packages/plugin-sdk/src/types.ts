@@ -437,7 +437,7 @@ export interface HookBlockedResult extends HookResult {
 export interface IPluginServiceDeps {
   sessionService?: unknown
   configService?: unknown
-  modelService?: import('../../interfaces.js').IModelService
+  modelService?: unknown
   broadcastFn?: (type: string, payload: unknown) => void
   /** xyz-agent 配置根目录（~/.xyz-agent/）。注入后 plugin 切片不再直连 infra 取路径。 */
   configDir?: string

@@ -12,7 +12,7 @@
  *
  * [HISTORICAL] 不变量：
  * - start() 幂等：已有活进程则复用，不重复 spawn
- *   （实现时若 this.child 非空且未 killed，直接返回 this._port）
+ *   （实现时若 child 非空且未退出 exitCode===null，直接返回 this._port）
  * - start 完整时序：findAvailablePort → spawn → waitForHealth → writePortFile
  * - startAndNotify 消除 main.ts whenReady/activate 重复：spawn 成功发 'runtime-port'，失败发 'runtime-error'
  *
@@ -33,11 +33,10 @@
 import type { BrowserWindow } from 'electron'
 import type { ChildProcess } from 'node:child_process'
 import type { IRuntimeSupervisor } from '../interfaces.js'
-// TODO(B类): 完整 start/stop 实现需 import 以下子模块：
-//   findAvailablePort, getPortOffset from './port-discoverer.js'
-//   spawnRuntimeProcess, stopRuntimeProcess from './process-control.js'
-//   waitForHealth from './health-checker.js'
-//   writePortFile from './port-file.js'
+import { findAvailablePort, getPortOffset } from './port-discoverer.js'
+import { spawnRuntimeProcess, stopRuntimeProcess } from './process-control.js'
+import { waitForHealth } from './health-checker.js'
+import { writePortFile } from './port-file.js'
 
 /**
  * RuntimeSupervisor 实现。
@@ -59,56 +58,74 @@ export class RuntimeSupervisor implements IRuntimeSupervisor {
     return this._port
   }
 
-  /** 端口偏移量（dev 模式 +DEV_PORT_OFFSET） */
+  /** 端口偏移量（dev 模式 +DEV_PORT_OFFSET），clamp 到合法范围 */
   get portOffset(): number {
-    // 最小可运行实现：内联读 env（避免依赖 port-discoverer.getPortOffset 的 throw 骨架）。
-    // 完整实现应委托 port-discoverer.getPortOffset()（含 clamp），待 B 类填充时替换。
-    const raw = parseInt(process.env.XYZ_AGENT_PORT_OFFSET ?? '0', 10) || 0
-    return Math.max(0, raw)
+    return getPortOffset()
   }
 
   /**
    * 启动 runtime（幂等）。
    *
-   * ⚠️ 最小可运行实现：当前不 spawn 子进程。mock 模式（XYZ_MOCK=1）下正确；
-   * 非 mock 模式调用此方法会静默返回 0（runtime 未真实启动）。
-   * 完整实现（findAvailablePort → spawn → waitForHealth → writePortFile）待 B 类填充。
+   * 时序：if child 活着 → 复用 → stop（清旧）→ findAvailablePort → spawn → waitForHealth → writePortFile。
    *
-   * @returns 实际监听的端口号（mock 模式返回 0）
+   * @returns 实际监听的端口号
    */
   async start(): Promise<number> {
-    // mock 模式：runtime 不启动，_port 保持 null
-    // TODO(B类): 实现完整 start 时序（见文件顶部注释）
-    return 0
+    // 幂等：已有活进程则复用，不重复 spawn
+    // [HISTORICAL] 用 exitCode===null 判活而非 !killed：自然崩溃时 killed 仍为 false，
+    // 仅 exitCode 由 null 变为退出码。避免崩溃后守卫误判存活、返回死端口（应用假死）。
+    if (this.child && this.child.exitCode === null && this._port !== null) {
+      return this._port
+    }
+    // 先停掉已有的，等待其真正退出
+    await this.stop()
+
+    const port = await findAvailablePort()
+    console.log(`[runtime] Starting on port ${port}`)
+    this.child = spawnRuntimeProcess(port, () => {
+      // [HISTORICAL] 子进程自然退出（崩溃）时清 child/port，恢复旧 runtime-manager 语义：
+      // 否则下次 start() 幂等守卫误判存活 → 返回死端口 → 前端 WS 永连不上 → 应用假死
+      this.child = null
+      this._port = null
+    })
+
+    await waitForHealth(port)
+    writePortFile(port)
+    this._port = port
+
+    console.log(`[runtime] Ready on port ${port}`)
+    return port
   }
 
   /**
    * 启动 runtime 并通知渲染进程端口。
    *
-   * ⚠️ 最小可运行实现：mock 模式下不 spawn 也不通知（renderer 走 VITE_MOCK，不需要端口）。
    * 成功：win.webContents.send('runtime-port', port)
-   * 失败：win.webContents.send('runtime-error', { message })
+   * 失败：win.webContents.send('runtime-error', { message })（不抛出）
    *
    * 消除 main.ts whenReady/activate 两处重复的 spawn + 通知逻辑。
    */
   async startAndNotify(win: BrowserWindow): Promise<number> {
-    // mock 模式：跳过 spawn，不发送 runtime-port（renderer mock 不消费此事件）
-    // TODO(B类): 实现真实 spawn + webContents.send('runtime-port'/'runtime-error')
-    void win
-    return 0
+    try {
+      const port = await this.start()
+      win.webContents.send('runtime-port', port)
+      return port
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      console.error(`[runtime] startAndNotify failed: ${message}`)
+      win.webContents.send('runtime-error', { message })
+      return 0
+    }
   }
 
   /**
    * 停止 runtime 进程树（SIGTERM → 等 → SIGKILL 残留）。
    *
-   * ⚠️ 最小可运行实现：child 为 null（mock 模式未 spawn），直接 resolve。
-   * 完整实现（预记录后代 PID → SIGTERM → 超时 SIGKILL 进程树）待 B 类填充。
+   * 时序见 process-control.ts 的 [HISTORICAL] 注释。关键：先预记录后代 PID 再 SIGTERM。
    * 幂等：child 为空或已 killed 时直接 resolve。
    */
   async stop(timeoutMs?: number): Promise<void> {
-    // mock 模式：child 为 null，无需 kill
-    // TODO(B类): 实现完整 stop 时序（见 process-control.ts 的 [HISTORICAL] 注释）
-    void timeoutMs
+    await stopRuntimeProcess(this.child, timeoutMs)
     this.child = null
     this._port = null
   }

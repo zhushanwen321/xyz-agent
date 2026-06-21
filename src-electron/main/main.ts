@@ -118,10 +118,13 @@ registerIpcHandlers({
  * whenReady 和 activate 共用此逻辑（消除重复）。
  */
 async function bootstrapMainWindow(): Promise<void> {
-  const win = await createWindowFn({ windowId: 'win-1' })
+  // bootstrap 也走 generateId() 并用返回值注册，避免与后续 renderer 调 create-window IPC
+  // 时 generateId() 首返值 'win-1' 冲突导致 Map 覆盖、跟踪条目丢失。
+  const windowId = ctx.windows.generateId()
+  const win = await createWindowFn({ windowId })
   win.on('closed', () => { ctx.mainWindow = null })
   ctx.mainWindow = win
-  ctx.windows.register('win-1', win, initialWindowState('win-1'))
+  ctx.windows.register(windowId, win, initialWindowState(windowId))
 
   // 注册全局快捷键
   shortcuts.registerGlobal(win)

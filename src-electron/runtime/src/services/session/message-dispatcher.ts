@@ -30,17 +30,22 @@ export class MessageDispatcher {
     this.sendMessageHook = hook
   }
 
-  async sendMessage(sessionId: string, content: string): Promise<void> {
-    await this.sendPrompt(sessionId, content, () => content)
+  /**
+   * 返回 { blocked: true } 表示消息被 BeforeSend hook 拦截（已广播 message.error 错误气泡），
+   * 调用方（session-message-handler）必须据此走 error envelope（带请求 id）让 renderer
+   * pending.reject，不得 reply success（round7 must-fix #3：避免「composer 清空 + 错误气泡」矛盾态）。
+   */
+  async sendMessage(sessionId: string, content: string): Promise<{ blocked: boolean }> {
+    return this.sendPrompt(sessionId, content, () => content)
   }
 
   /** 构造 subagent 隐藏标记并发送 prompt(hook 审核用户原文,marker 仅发给 pi)。 */
-  async sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string): Promise<void> {
+  async sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string): Promise<{ blocked: boolean }> {
     const payload = JSON.stringify({ agent, task })
     const encoded = Buffer.from(payload, 'utf-8').toString('base64')
     const marker = `<!-- xyz-agent-force-subagent:${encoded} -->`
     const promptText = content || `Execute task using agent '${agent}'`
-    await this.sendPrompt(sessionId, promptText, () => `${marker}\n${promptText}`)
+    return this.sendPrompt(sessionId, promptText, () => `${marker}\n${promptText}`)
   }
 
   /**
@@ -53,9 +58,12 @@ export class MessageDispatcher {
     sessionId: string,
     hookContent: string,
     buildPrompt: () => string,
-  ): Promise<void> {
+  ): Promise<{ blocked: boolean }> {
     // ── BeforeSend hook ──
-    if ((await this.runBeforeSendHook(sessionId, hookContent)).blocked) return
+    // blocked: 已广播 message.error（错误气泡），此处返回 {blocked:true} 让 handler 改发 error envelope。
+    if ((await this.runBeforeSendHook(sessionId, hookContent)).blocked) {
+      return { blocked: true }
+    }
 
     // ── ensureActive(必要时 restore)──
     let client: IPiEngine
@@ -83,7 +91,11 @@ export class MessageDispatcher {
       console.error(`[message-dispatcher] prompt failed: sessionId=${sessionId}`, errMsg)
       if (activeSession) activeSession.isGenerating = false
       this.broker.broadcast({ type: 'message.error', payload: { sessionId, message: errMsg } })
+      // 与 hook 拦截同等对待：已广播 message.error 气泡，返回 blocked 让 handler 走 error envelope（sendError），
+      // renderer pending.reject 触发 Composer 恢复草稿。否则 handler reply success → pending.resolve 误判发送成功。
+      return { blocked: true }
     }
+    return { blocked: false }
   }
 
   /**

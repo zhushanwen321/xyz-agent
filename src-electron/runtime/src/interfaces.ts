@@ -67,8 +67,8 @@ export interface ISessionService {
   create(cwd?: string, label?: string): Promise<SessionSummary>
   delete(sessionId: string): Promise<void>
   renameSession(sessionId: string, newName: string): Promise<void>
-  sendMessage(sessionId: string, content: string): Promise<void>
-  sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string): Promise<void>
+  sendMessage(sessionId: string, content: string): Promise<{ blocked: boolean }>
+  sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string): Promise<{ blocked: boolean }>
   abort(sessionId: string): Promise<void>
   switchModel(sessionId: string, provider: string, modelId: string): Promise<string>
   compact(sessionId: string): Promise<void>

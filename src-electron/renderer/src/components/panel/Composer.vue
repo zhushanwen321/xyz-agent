@@ -132,6 +132,10 @@ async function onSend(): Promise<void> {
   isSending.value = true
   try {
     await send(text)
+  } catch (e) {
+    // 发送失败（hook 拦截 / ensureActive 失败 / prompt 抛错 / WS 断连）恢复草稿，避免用户输入永久丢失。
+    draft.value = text
+    throw e
   } finally {
     isSending.value = false
   }

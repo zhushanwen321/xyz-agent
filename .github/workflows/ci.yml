@@ -87,6 +87,9 @@ jobs:
       - name: Test - renderer
         run: npm -w @xyz-agent/frontend run test -- --reporter=junit --outputFile=test-results.xml
 
+      - name: Test - main
+        run: cd src-electron && npm run test:main
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4

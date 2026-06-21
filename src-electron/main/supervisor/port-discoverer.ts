@@ -94,9 +94,42 @@ export function isSafeToKill(pid: number): boolean {
  * @param port 被占用的端口
  */
 export function killStaleProcessOnPort(port: number): void {
-  void port
-  void KILL_WAIT_MS
-  throw new Error('not implemented: killStaleProcessOnPort')
+  try {
+    // 注意：-sTCP:LISTEN 在 Linux 上不可用，用兼容方案
+    const output = execSync(`lsof -n -P -i :${port} 2>/dev/null | grep LISTEN | awk '{print $2}' || true`, {
+      encoding: 'utf-8',
+      shell: '/bin/bash',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    for (const line of output.trim().split('\n')) {
+      const pid = Number(line.trim())
+      if (!Number.isNaN(pid) && pid > 0) {
+        if (!isSafeToKill(pid)) {
+          console.warn(`[runtime] Port ${port} occupied by PID ${pid} but process name not in allowlist, skipping kill`)
+          continue
+        }
+        console.log(`[runtime] Killing stale process ${pid} on port ${port}`)
+        try {
+          process.kill(pid, 'SIGTERM')
+        // eslint-disable-next-line taste/no-silent-catch -- 进程可能已退出，非关键错误
+        } catch {
+          // 进程可能已退出，非关键错误
+        }
+        // 等待后补 SIGKILL
+        setTimeout(() => {
+          try {
+            process.kill(pid, 'SIGKILL')
+          // eslint-disable-next-line taste/no-silent-catch
+          } catch {
+            // 已经死了，非关键错误
+          }
+        }, KILL_WAIT_MS)
+      }
+    }
+  // eslint-disable-next-line taste/no-silent-catch -- lsof 没找到进程，正常情况
+  } catch {
+    // lsof 没找到进程，正常情况，无需处理
+  }
 }
 
 /**
@@ -107,7 +140,29 @@ export function killStaleProcessOnPort(port: number): void {
  * @throws 整个范围都被占用且无法清理
  */
 export async function findAvailablePort(): Promise<number> {
-  void PORT_RETRY_MS
-  void isPortInUse
-  throw new Error('not implemented: findAvailablePort')
+  const { start, end } = getPortRange()
+  let cleanedAny = false
+  for (let port = start; port <= end; port++) {
+    const inUse = await isPortInUse(port)
+    if (!inUse) {
+      // 如果之前清理了其他端口，这里多等一下让 kill 生效
+      if (cleanedAny) await sleep(PORT_RETRY_MS)
+      return port
+    }
+
+    // 端口被占用，尝试 kill stale
+    console.warn(`[runtime] Port ${port} in use, cleaning up stale process (may kill non-agent services if name matches)`)
+    killStaleProcessOnPort(port)
+    cleanedAny = true
+    await sleep(PORT_RETRY_MS)
+
+    const stillInUse = await isPortInUse(port)
+    if (!stillInUse) return port
+  }
+  throw new Error(`No available port in range ${start}-${end}`)
+}
+
+/** ms 延迟 helper（避免重复定义） */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }

@@ -12,8 +12,10 @@ import { buildTreeFromFile as buildTreeFromFileRaw, countBranches as countBranch
 export class SessionTreeReaderAdapter implements ITreeReader {
   async buildTreeFromFile(filePath: string): Promise<BuildTreeResult> {
     // session-tree-reader 的 BuildTreeResult.rawEntries 是内部 RawEntry 类型，
-    // 与 port 的 TreeRawEntry 结构同构，as 转换即可（字段一致）。
-    return buildTreeFromFileRaw(filePath) as unknown as BuildTreeResult
+    // 与 port 的 TreeRawEntry 结构同构，RawBuildTreeResult 可直接赋值给 port 的 BuildTreeResult。
+    // （原 `as unknown as BuildTreeResult` 把 Promise<T> 误断言为 T，仅因外层 async 隐式 await 才正常工作，
+    // 属语义错误的类型谎言 —— 删除后 tsc 通过。）
+    return buildTreeFromFileRaw(filePath)
   }
 
   countBranches(rootNodes: TreeNode[]): number {

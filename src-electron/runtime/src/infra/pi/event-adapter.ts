@@ -178,7 +178,17 @@ async function handleToolExecutionEnd(event: PiEvent, ctx: HandlerContext): Prom
 
   return {
     type: 'message.tool_call_end',
-    payload: { sessionId: sid, toolCallId, output, details, images, error: event.isError ? output : event.error },
+    payload: {
+      sessionId: sid,
+      toolCallId,
+      output,
+      details,
+      images,
+      // 与历史路径 convertPiHistory（tc.status='error'）保持一致：实时失败的 tool call
+      // 必须带 status:'error'，否则前端 Block.vue 的 isFailed 判定恒为 false（恒显示成功）。
+      status: event.isError ? 'error' : 'completed',
+      error: event.isError ? output : event.error,
+    },
   }
 }
 

@@ -84,10 +84,14 @@ export class SessionMessageHandler {
       }
       case 'message.send': {
         const { sessionId, content, subagent } = msg.payload
-        if (subagent) {
-          await this.ctx.sessionService.sendSubagentMessage(sessionId, subagent.agent, subagent.task, content)
-        } else {
-          await this.ctx.sessionService.sendMessage(sessionId, content)
+        const result = subagent
+          ? await this.ctx.sessionService.sendSubagentMessage(sessionId, subagent.agent, subagent.task, content)
+          : await this.ctx.sessionService.sendMessage(sessionId, content)
+        // D(round7-must-fix-3): hook 拦截时 dispatcher 已广播 message.error（错误气泡），
+        // 此处必须走 error envelope（带 msg.id）让 renderer pending.reject，不得 reply success。
+        // 否则 renderer 见 msg.id 且非 error → pending.resolve → composer 清空，与错误气泡矛盾。
+        if (result.blocked) {
+          return this.ctx.sendError(ws, 'message_blocked', 'Message blocked by plugin hook', msg.id, { sessionId })
         }
         return this.ctx.reply(ws, msg.id, 'message.status', { sessionId, status: 'sent' })
       }
@@ -115,25 +119,34 @@ export class SessionMessageHandler {
           return this.ctx.sendError(ws, 'follow_up_failed', errMsg, msg.id, { sessionId: followSid })
         }
       }
-      case 'message.abort':
-        return await this.ctx.sessionService.abort(msg.payload.sessionId)
+      case 'message.abort': {
+        // D(round5-must-fix-1): 必须回复 ack，否则 renderer pending.register(id) 的 Promise 永挂，pendingMap 泄漏无上限。
+        // 与 message.send/steer/follow_up 对称，走 message.status 回复。
+        const abortSid = msg.payload.sessionId
+        await this.ctx.sessionService.abort(abortSid)
+        return this.ctx.reply(ws, msg.id, 'message.status', { sessionId: abortSid, status: 'aborted' })
+      }
     }
   }
 
   async handleSessionCompact(msg: Extract<ClientMessage, { type: 'session.compact' }>, ws: WsType): Promise<void> {
     const compactId = msg.payload.sessionId
     // D11: 耗时/启动/完成遥测由 message-dispatcher.compact 统一负责（含 session.compacting/compacted 广播）。
-    // 本 handler 只做 ensureActive + compact 的静默吞错（compact 失败非致命，dispatcher 已广播 error）。
+    // D(round7-must-fix-4): 成功 / 失败 / ensureActive 失败 三条路径都必须携带 msg.id 回复，
+    // 否则 renderer pending.register(msg.id) 的 Promise 永挂、pendingMap 无上限泄漏（与 message.abort 同类 bug）。
+    // dispatcher.compact 的 session.compacted 广播走流式通道（无 id），不能替代请求级 ack。
     try {
       await this.ctx.sessionService.ensureActive(compactId)
-      try {
-        await this.ctx.sessionService.compact(compactId)
-      // eslint-disable-next-line taste/no-silent-catch -- compact: error 已由 dispatcher 记录 + 广播
-      } catch {
-        // swallow — dispatcher.compact 已 console.error + 广播 session.compacted(error)
-      }
     } catch (e) {
-      this.ctx.sendError(ws, 'session.compact_failed', 'Failed to restore session for compact: ' + (toErrorMessage(e)), msg.id, { sessionId: compactId })
+      return this.ctx.sendError(ws, 'compact_failed', 'Failed to restore session for compact: ' + (toErrorMessage(e)), msg.id, { sessionId: compactId })
     }
+    try {
+      await this.ctx.sessionService.compact(compactId)
+    } catch (e) {
+      // compact 失败：dispatcher.compact 已广播 session.compacted(error)（流式通知），此处补请求级 error envelope。
+      return this.ctx.sendError(ws, 'compact_failed', toErrorMessage(e), msg.id, { sessionId: compactId })
+    }
+    // compact 成功：dispatcher.compact 已广播 session.compacted（流式通知，无 id），此处补请求级 ack。
+    return this.ctx.reply(ws, msg.id, 'session.compacted', { sessionId: compactId, status: 'compacted' })
   }
 }

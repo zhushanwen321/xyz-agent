@@ -245,11 +245,9 @@ export class RpcClient implements IPiEngine {
 
       this.pending.set(id, {
         resolve: (msg) => {
-          // Check if the response indicates failure
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi response has dynamic shape
-          const resp = msg as any
-          if (resp.success === false) {
-            reject(new Error(resp.error ?? `RPC command "${type}" failed`))
+          // Check if the response indicates failure (PiMessage.success / .error 已声明类型)
+          if (msg.success === false) {
+            reject(new Error(msg.error ?? `RPC command "${type}" failed`))
           } else {
             resolve(msg)
           }

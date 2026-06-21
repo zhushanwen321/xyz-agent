@@ -70,15 +70,13 @@ export class PluginMessageHandler {
           const plugins = this.ctx.pluginService.getDiscoveredPlugins()
           this.ctx.reply(ws, msg.id, 'config.plugins', { plugins })
         } else {
-          this.ctx.sendError(ws, 'install_failed', (result as unknown as Record<string, unknown>).error as string ?? 'Install failed', msg.id)
+          this.ctx.sendError(ws, 'install_failed', result.error ?? 'Install failed', msg.id)
         }
         break
       }
       case 'plugin.uiResponse': {
-        const uiService = this.ctx.pluginService as unknown as { handleUiResponse(requestId: string, result: unknown): void }
-        if (uiService.handleUiResponse) {
-          uiService.handleUiResponse((msg.payload as { requestId: string; result: unknown }).requestId, (msg.payload as { requestId: string; result: unknown }).result)
-        }
+        // handleUiResponse 已在 IPluginService 接口声明（interfaces.ts）；顶部 guard 保证 pluginService 非空
+        this.ctx.pluginService?.handleUiResponse((msg.payload as { requestId: string; result: unknown }).requestId, (msg.payload as { requestId: string; result: unknown }).result)
         return this.ctx.reply(ws, msg.id, 'pong', {})
       }
     }

@@ -16,17 +16,55 @@ import { chat as chatApi } from '@/api'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
 
+/**
+ * 会话级流式订阅表（sessionId → 取消函数）。
+ *
+ * [HISTORICAL] 为什么不能 per-send 订阅：
+ *   原 send() 在 `await chatApi.send()` resolve 后于 finally 里 unsub。但服务端 message.send
+ *   在 pi ack（prompt 已接收，非生成完成）即回 message.status{sent}，rpc-client.prompt()
+ *   明确「resolves when pi acknowledges receipt (not when generation completes)」。
+ *   故 finally 在首个 chunk 到达前就拆订阅 → 流式事件全丢。
+ *   改为会话级长订阅：首次 send 时订阅一次，由 message_start/complete/error 驱动 streaming 状态，
+ *   不在 ack 时拆订阅。
+ */
+const streamSubscriptions = new Map<string, () => void>()
+
+/** 确保指定 session 已订阅流式事件（幂等：已订阅则 no-op）。 */
+function ensureStreamSubscription(
+  sid: string,
+  chat: ReturnType<typeof useChatStore>,
+): void {
+  if (streamSubscriptions.has(sid)) return
+  const unsub = chatApi.streamSubscribe(sid, (msg) => {
+    chat.appendAssistantChunk(sid, msg)
+    // 流式状态由事件驱动，不随 send() ack 翻转
+    switch (msg.type) {
+      case 'message.message_start':
+        chat.setStreaming(true)
+        break
+      case 'message.complete':
+      case 'message.error':
+      case 'message.stream_error':
+        // stream_error 也属终态：若 pi 发了 message_update{error} 后不再发 agent_end，
+        // 必须在此复位 isStreaming，否则 UI 卡在「思考中」（规则 #3/#7 防护的失败模式）。
+        chat.setStreaming(false)
+        break
+      default:
+        break
+    }
+  })
+  streamSubscriptions.set(sid, unsub)
+}
+
 export function useChat() {
   const chat = useChatStore()
   const session = useSessionStore()
 
   /**
-   * 发送消息：appendUser → (S5 sending 窗口) → api.send + streamSubscribe
-   *          → 首个 chunk 到达才 setStreaming(true)（S6 streaming）→ appendAssistantChunk。
-   * streamSubscribe 的 handler 在 api 层已按 sessionId 路由（events.on 第二层隔离）。
+   * 发送消息：appendUser → 确保会话级订阅 → api.send（ack 仅表示 pi 已接收）。
    *
-   * S5 窗口（spec §composer）：不立即 setStreaming(true)，等首个 assistant chunk 才转 S6，
-   * 让 composer 发送位 spinner 在请求发出→流式开始之间可见。
+   * 流式状态由会话级订阅的事件驱动（message_start→true，complete/error→false），
+   * 不依赖 send() 的 resolve 时机——避免 ack 早于首个 chunk 导致订阅被提前拆除。
    */
   async function send(text: string): Promise<void> {
     const sid = session.activeId
@@ -35,22 +73,9 @@ export function useChat() {
     if (!trimmed || chat.isStreaming) return
 
     chat.appendUser(sid, trimmed)
+    ensureStreamSubscription(sid, chat)
 
-    let streamingStarted = false
-    const unsub = chatApi.streamSubscribe(sid, (msg) => {
-      if (!streamingStarted) {
-        streamingStarted = true
-        chat.setStreaming(true)
-      }
-      chat.appendAssistantChunk(sid, msg)
-    })
-
-    try {
-      await chatApi.send(sid, trimmed)
-    } finally {
-      unsub()
-      chat.setStreaming(false)
-    }
+    await chatApi.send(sid, trimmed)
   }
 
   /** 中断当前回合（G-025 流转 DEFERRED：方法存在，实际中断留联调） */

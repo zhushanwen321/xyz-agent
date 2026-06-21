@@ -75,12 +75,12 @@ const PRIVATE_IP_RANGES = [
   /^25[0-5]\./,                  // 255.0.0.0/8 (broadcast)
 ]
 
-function isPrivateIp(ip: string): boolean {
+export function isPrivateIp(ip: string): boolean {
   return PRIVATE_IP_RANGES.some(re => re.test(ip))
 }
 
 /** 校验 URL host 不是内网地址，防止 SSRF */
-function validateUrlHost(urlStr: string): void {
+export function validateUrlHost(urlStr: string): void {
   let parsed: URL
   try {
     parsed = new URL(urlStr)

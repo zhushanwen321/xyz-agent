@@ -86,8 +86,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   async rebindAfterFork(oldSessionId: string, newSessionId: string, label: string, sessionFilePath?: string): Promise<void> {
     return this.lifecycle.rebindAfterFork(oldSessionId, newSessionId, label, sessionFilePath)
   }
-  async sendMessage(sessionId: string, content: string): Promise<void> { return this.dispatcher.sendMessage(sessionId, content) }
-  async sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string): Promise<void> {
+  async sendMessage(sessionId: string, content: string): Promise<{ blocked: boolean }> { return this.dispatcher.sendMessage(sessionId, content) }
+  async sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string): Promise<{ blocked: boolean }> {
     return this.dispatcher.sendSubagentMessage(sessionId, agent, task, content)
   }
   async abort(sessionId: string): Promise<void> { return this.dispatcher.abort(sessionId) }

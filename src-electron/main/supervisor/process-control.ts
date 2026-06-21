@@ -63,15 +63,90 @@ export const RUNTIME_ENTRY_FILE = 'index.cjs'
  * 打包：process.execPath + ELECTRON_RUN_AS_NODE=1 运行 unpacked 的 index.cjs
  * 开发：node + tsx 运行 runtime/src/index.ts
  *
+ * [HISTORICAL] onExit 回调：子进程自然退出（崩溃）时 supervisor 必须清 child/port，
+ * 否则幂等守卫误判存活、start() 返回死端口，前端 WS 永连不上（应用假死）。
+ * 旧 runtime-manager 的 child.on('exit') 会 this.child=null，重构拆出自由函数后由 onExit 传递。
+ *
  * @param port runtime 监听端口
+ * @param onExit 子进程退出回调（传入 code），supervisor 用它清理状态
  * @returns ChildProcess 实例（已绑定 stdout/stderr/exit 事件）
  * @throws runtime 入口文件不存在
  */
-export function spawnRuntimeProcess(port: number): ChildProcess {
-  void port
-  void spawn; void existsSync; void path; void app; void buildSafeEnv
-  void RUNTIME_ENTRY_FILE
-  throw new Error('not implemented: spawnRuntimeProcess')
+export function spawnRuntimeProcess(port: number, onExit?: (code: number | null) => void): ChildProcess {
+  // 根据打包状态选择 runtime 启动方式
+  const projectRoot = app.getAppPath()
+  let cmd: string
+  let args: string[]
+
+  if (app.isPackaged) {
+    // 生产环境：运行 asar unpack 后的预编译 JS
+    // asarUnpack 将 dist/runtime 解压到 app.asar.unpacked/
+    const runtimeDist = path.join(
+      process.resourcesPath,
+      'app.asar.unpacked',
+      'dist',
+      'runtime',
+      RUNTIME_ENTRY_FILE,
+    )
+    if (!existsSync(runtimeDist)) {
+      throw new Error(`Runtime bundle not found at ${runtimeDist}`)
+    }
+    cmd = process.execPath
+    args = [runtimeDist, `--port=${port}`]
+    console.log(`[runtime] ${cmd} ${runtimeDist} --port=${port}`)
+  } else {
+    // 开发环境：tsx 运行 TS 源码
+    const tsxPath = path.join(projectRoot, 'node_modules', '.bin', 'tsx')
+    const runtimeEntry = path.join(projectRoot, 'runtime', 'src', 'index.ts')
+
+    if (!existsSync(tsxPath)) {
+      throw new Error(`tsx not found at ${tsxPath}. Run: npm install`)
+    }
+    if (!existsSync(runtimeEntry)) {
+      throw new Error(`Runtime entry not found at ${runtimeEntry}`)
+    }
+
+    cmd = 'node'
+    args = [tsxPath, runtimeEntry, `--port=${port}`]
+    console.log(`[runtime] node ${tsxPath} ${runtimeEntry} --port=${port}`)
+  }
+
+  // 打包后 app.getAppPath() 返回 app.asar（虚拟路径），不能作为 cwd
+  const cwd = app.isPackaged ? process.resourcesPath : projectRoot
+  // eslint-disable-next-line no-magic-numbers -- TypeScript tuple index, not a business constant
+  const spawnOptions: Parameters<typeof spawn>[2] = {
+    stdio: ['pipe', 'pipe', 'pipe'],
+    cwd,
+    // 打包后用 ELECTRON_RUN_AS_NODE 让 Electron 二进制以纯 Node 运行 sidecar；
+    // 开发模式也显式设置 env 确保行为一致
+    env: buildSafeEnv({
+      ELECTRON_RUN_AS_NODE: app.isPackaged ? '1' : undefined,
+      XYZ_AGENT_PACKAGED: app.isPackaged ? '1' : undefined,
+      // 透传实例隔离 env var，使 runtime 子进程使用隔离的数据目录
+      XYZ_AGENT_DATA_DIR: process.env.XYZ_AGENT_DATA_DIR,
+      XYZ_AGENT_PORT_OFFSET: process.env.XYZ_AGENT_PORT_OFFSET,
+    }),
+  }
+  const child = spawn(cmd, args, spawnOptions)
+
+  child.on('error', (err) => {
+    console.error(`[runtime] Spawn error: ${err.message}`)
+  })
+
+  // runtime 日志转发：只用 console（dev 模式方便调试）
+  child.stdout?.on('data', (data: Buffer) => {
+    console.log(`[runtime:out] ${data.toString().trimEnd()}`)
+  })
+  child.stderr?.on('data', (data: Buffer) => {
+    console.error(`[runtime:err] ${data.toString().trimEnd()}`)
+  })
+  child.on('exit', (code) => {
+    console.log(`[runtime] Process exited with code ${code}`)
+    // 通知 supervisor 清理 child/port 状态（自然退出/崩溃路径）
+    onExit?.(code)
+  })
+
+  return child
 }
 
 /**
@@ -84,9 +159,28 @@ export function spawnRuntimeProcess(port: number): ChildProcess {
  * @returns 后代 PID 数组（不含 parentPid 本身）
  */
 export function getDescendantPids(parentPid: number): number[] {
-  void parentPid
-  void execSync
-  throw new Error('not implemented: getDescendantPids')
+  if (!parentPid || isNaN(parentPid)) return []
+  const result: number[] = []
+  const queue = [parentPid]
+  while (queue.length > 0) {
+    const pid = queue.shift()!
+    try {
+      const output = execSync(`pgrep -P ${pid} 2>/dev/null || true`, {
+        encoding: 'utf-8',
+        shell: '/bin/bash',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      }).trim()
+      if (output) {
+        const childPids = output.split('\n').map(Number).filter(n => !isNaN(n) && n > 0)
+        result.push(...childPids)
+        queue.push(...childPids)
+      }
+    // eslint-disable-next-line taste/no-silent-catch -- pgrep 失败（进程已退出）非关键
+    } catch (e) {
+      console.warn(`[runtime] getDescendantPids failed for PID ${pid}:`, e instanceof Error ? e.message : String(e))
+    }
+  }
+  return result
 }
 
 /**
@@ -99,9 +193,15 @@ export function getDescendantPids(parentPid: number): number[] {
  * @param precomputedDescendants 可选预计算的后代 PID（避免重复查询）
  */
 export function killProcessTree(rootPid: number, precomputedDescendants?: number[]): void {
-  void rootPid; void precomputedDescendants
-  void KILL_WAIT_MS
-  throw new Error('not implemented: killProcessTree')
+  const pids = precomputedDescendants ?? getDescendantPids(rootPid)
+  // 先杀后代（倒序：孙→子）
+  for (const pid of pids.reverse()) {
+    // eslint-disable-next-line taste/no-silent-catch -- process may have already exited
+    try { process.kill(pid, 'SIGKILL') } catch { /* 可能已退出 */ }
+  }
+  // 再杀根进程
+  // eslint-disable-next-line taste/no-silent-catch -- process may have already exited
+  try { process.kill(rootPid, 'SIGKILL') } catch { /* 可能已退出 */ }
 }
 
 /**
@@ -114,7 +214,50 @@ export function killProcessTree(rootPid: number, precomputedDescendants?: number
  * @returns 全部子进程退出后 resolve
  */
 export function stopRuntimeProcess(child: ChildProcess | null, timeoutMs = STOP_TIMEOUT_MS): Promise<void> {
-  void child; void timeoutMs
-  void MS_PER_SEC
-  throw new Error('not implemented: stopRuntimeProcess')
+  return new Promise((resolve) => {
+    if (!child || child.killed) {
+      resolve()
+      return
+    }
+    const childPid = child.pid
+    if (!childPid || isNaN(childPid)) {
+      resolve()
+      return
+    }
+    let resolved = false
+
+    // [HISTORICAL] 在发 SIGTERM 之前记录所有后代 PID
+    // （runtime 退出后 pi 的 PPID 变为 1，pgrep -P 查不到）
+    const descendantPids = getDescendantPids(childPid)
+
+    const done = () => {
+      if (resolved) return
+      resolved = true
+      // 杀掉残留的后代进程（pi 等），同步完成后再 resolve
+      // 避免异步 setTimeout 在 resolve 后误杀 PID 复用的新进程
+      for (const pid of descendantPids) {
+        // eslint-disable-next-line taste/no-silent-catch -- process may have already exited
+        try { process.kill(pid, 'SIGTERM') } catch { /* 可能已随 runtime 退出 */ }
+      }
+      // 同步等待后补 SIGKILL
+      try {
+        execSync(`sleep ${KILL_WAIT_MS / MS_PER_SEC}`, { stdio: 'ignore' })
+      // eslint-disable-next-line taste/no-silent-catch -- sleep failure is non-critical
+      } catch { /* sleep 失败不影响 */ }
+      for (const pid of descendantPids) {
+        // eslint-disable-next-line taste/no-silent-catch -- process may have already exited
+        try { process.kill(pid, 'SIGKILL') } catch { /* 可能已退出 */ }
+      }
+      resolve()
+    }
+    child.once('exit', done)
+    child.kill('SIGTERM')
+    // 超时后强制 SIGKILL（先杀整棵进程树）
+    setTimeout(() => {
+      child.removeListener('exit', done)
+      // 强制杀进程树：runtime + 所有子进程
+      killProcessTree(childPid, descendantPids)
+      done()
+    }, timeoutMs)
+  })
 }
