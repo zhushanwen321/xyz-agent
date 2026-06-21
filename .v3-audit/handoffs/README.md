@@ -41,5 +41,5 @@ Wave F2 (flow-2 数据契约) —— 独立，可任意时序
 
 - [x] Wave V — 产出 `.v3-audit/verify/phase-D-visual.md`（6/6 commit 兑现，1 P1 + 5 P2 偏差）
 - [x] Wave P1 — 产出 `.v3-audit/verify/phase-D-p1.md`（6 项完成，VLM 误判经像素裁决推翻）
-- [ ] Wave P2
+- [x] Wave P2 — 3 commit（message-stream output text 拆分 + reasoning 独立折叠 / dialog z-1000 + settings modal-head / companion-zones 6px gap）；P2-3/4 入口 DEFERRED 无法实机渲染，走类型+结构校验
 - [ ] Wave F2

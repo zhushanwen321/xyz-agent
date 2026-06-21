@@ -121,6 +121,24 @@ describe('FG5 groupTurns 回合分组', () => {
     expect(turns[0].user).toBeNull()
     expect(turns[0].assistants[0].id).toBe('a1')
   })
+
+  // P2-1（WP-L3-08）：steer 续轮产生多 assistant 同回合，
+  // Turn.vue 仅最后一条作收尾 summary，前序 content 折进 trace（isMidAssistant）。
+  it('多 assistant 同回合（steer 续轮）→ 前序归入，末条作收尾', () => {
+    const turns = groupTurns([
+      userMsg('u1', '改一下登录'),
+      assistantMsg('a1', '正在处理 schema…'), // steer 前的中间产出
+      assistantMsg('a2', '已将 AuthService.login 改为 async。'), // 收尾
+    ])
+    expect(turns).toHaveLength(1)
+    expect(turns[0].assistants).toHaveLength(2)
+    // Turn.vue 的 isMidAssistant(idx) = idx < length-1 → a1 是中间，a2 是收尾
+    const last = turns[0].assistants[turns[0].assistants.length - 1]
+    expect(last.id).toBe('a2')
+    expect(last.content).toBe('已将 AuthService.login 改为 async。')
+    // 收尾 summary 恒显（draft §4：收尾位固定不折叠）
+    expect(turns[0].assistants[0].content).toBe('正在处理 schema…')
+  })
 })
 
 describe('FG5 chat store 块类型扩展', () => {
