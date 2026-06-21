@@ -31,6 +31,22 @@ export function send(sessionId: string, text: string): Promise<void> {
   return result
 }
 
+/** 追加 steer（当前回合工具调用结束后、下次 LLM 调用前投递） */
+export function steer(sessionId: string, text: string): Promise<void> {
+  const id = pending.create()
+  const result = pending.register<void>(id)
+  transport.send({ type: 'message.steer', id, payload: { sessionId, content: text } })
+  return result
+}
+
+/** 追加 follow-up（当前回合结束后开新轮） */
+export function followUp(sessionId: string, text: string): Promise<void> {
+  const id = pending.create()
+  const result = pending.register<void>(id)
+  transport.send({ type: 'message.follow_up', id, payload: { sessionId, content: text } })
+  return result
+}
+
 /** 中断当前回合（DEFERRED 流转，§9 G-025） */
 export function abort(sessionId: string): Promise<void> {
   const id = pending.create()

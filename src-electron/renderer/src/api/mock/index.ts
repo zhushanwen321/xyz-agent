@@ -133,6 +133,20 @@ export const chat = {
     await sleep(TIMING.ack)
   },
 
+  /** steer：mock 下仅 ack，不模拟队列（pending 气泡渲染 DEFERRED） */
+  async steer(sessionId: string, text: string): Promise<void> {
+    await sleep(TIMING.ack)
+    void sessionId
+    void text
+  },
+
+  /** followUp：mock 下仅 ack */
+  async followUp(sessionId: string, text: string): Promise<void> {
+    await sleep(TIMING.ack)
+    void sessionId
+    void text
+  },
+
   streamSubscribe(
     sessionId: string,
     handler: (msg: ServerMessage) => void,

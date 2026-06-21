@@ -78,6 +78,37 @@ export function useChat() {
     await chatApi.send(sid, trimmed)
   }
 
+  /**
+   * 追加 steer：AI 执行中（isStreaming）时，把补充消息排入 steering 队列，
+   * 当前回合工具调用结束后、下次 LLM 调用前投递，不打断当前回合。
+   */
+  async function steer(text: string): Promise<void> {
+    const sid = session.activeId
+    if (!sid) return
+    const trimmed = text.trim()
+    if (!trimmed || !chat.isStreaming) return
+
+    await chatApi.steer(sid, trimmed)
+  }
+
+  /**
+   * 追加 follow-up：把消息排入 followUp 队列，当前回合结束后另起一轮处理。
+   * 非执行中按普通发送处理（避免 Alt+⏎ 死键）。
+   */
+  async function followUp(text: string): Promise<void> {
+    const sid = session.activeId
+    if (!sid) return
+    const trimmed = text.trim()
+    if (!trimmed) return
+
+    if (!chat.isStreaming) {
+      await send(trimmed)
+      return
+    }
+
+    await chatApi.followUp(sid, trimmed)
+  }
+
   /** 中断当前回合（G-025 流转 DEFERRED：方法存在，实际中断留联调） */
   async function abort(): Promise<void> {
     const sid = session.activeId
@@ -95,5 +126,5 @@ export function useChat() {
     chat.hydrate(sessionId, history)
   }
 
-  return { send, abort, hydrateHistory }
+  return { send, steer, followUp, abort, hydrateHistory }
 }
