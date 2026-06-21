@@ -1,19 +1,31 @@
 <template>
   <!--
     展示组件 · trace 块（message-stream 折叠区内的单个块）。
-    draft-message-stream §4：thinking(紫斜体) / tool_call(青色 mono)。
+    draft-message-stream §4：thinking(紫斜体) / tool_call(青色 mono) / 中间 output text(下划线行)。
     tool 失败：整块红框（danger 边 + 淡红底），错误是 tool 属性非 turn 属性。
+    thinking 长块支持独立再折叠（§4：「长块可单独再折叠」），点击 header toggle，受 collapsed 字段驱动。
     审批按钮 DEFERRED（G-018），v1 不渲染。
   -->
   <div class="trace-blk py-2" :class="blockClass">
-    <!-- thinking 块 -->
+    <!-- thinking 块：header 可点击 toggle，长 reasoning 独立再折叠（本地折叠态，由 collapsed prop 初始化） -->
     <div v-if="type === 'thinking'" class="trace-think">
-      <div class="mb-1 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.06em] text-reasoning">
+      <div
+        class="flex cursor-pointer select-none items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.06em] text-reasoning transition-colors hover:text-[var(--reasoning)]"
+        :title="thinkingCollapsed ? '展开推理' : '收起推理'"
+        @click="thinkingCollapsed = !thinkingCollapsed"
+      >
+        <ChevronRight class="size-2.5 transition-transform" :class="thinkingCollapsed ? '' : 'rotate-90'" />
         <Brain class="size-3" />
         <span>思考</span>
+        <span v-if="thinkingCollapsed" class="ml-0.5 truncate text-muted">· {{ previewText }}</span>
       </div>
-      <p class="italic leading-relaxed text-muted">{{ content }}</p>
+      <p v-if="!thinkingCollapsed" class="mt-1 italic leading-relaxed text-muted">{{ content }}</p>
     </div>
+
+    <!-- 中间产出 text 块（draft §4 Output Text 中间：折进执行流程，下划线行） -->
+    <p v-else-if="type === 'text'" class="border-b border-dashed border-border pb-2 text-[12.5px] leading-relaxed text-muted">
+      {{ content }}
+    </p>
 
     <!-- tool_call 块 -->
     <div v-else class="trace-tool">
@@ -33,24 +45,37 @@
         <Check v-if="!isFailed" class="mt-0.5 size-3 shrink-0 text-success" />
         <XCircle v-else class="mt-0.5 size-3 shrink-0 text-danger" />
         <span>{{ result }}</span>
-        <span v-if="isRunning" class="streaming-cursor" />
+        <span v-if="isRunning" class="ml-0.5 inline-block h-3.5 w-[7px] translate-y-[3px] rounded-[1px] bg-accent align-text-bottom animate-blink" />
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
-import { Brain, Check, Wrench, XCircle } from '@lucide/vue'
+import { computed, ref } from 'vue'
+import { Brain, ChevronRight, Check, Wrench, XCircle } from '@lucide/vue'
 import type { ToolCall } from '@xyz-agent/shared'
 
 const props = defineProps<{
-  type: 'thinking' | 'tool'
-  /** thinking 内容 */
+  type: 'thinking' | 'tool' | 'text'
+  /** thinking / text 内容 */
   content?: string
   /** tool_call 数据（type==='tool' 时必填） */
   tool?: ToolCall
+  /** thinking 块初始折叠态（来自 ThinkingBlock.collapsed，默认收起） */
+  collapsed?: boolean
 }>()
+
+/* ── thinking 独立折叠（draft §4「长块可单独再折叠」）：本地态，由 collapsed prop 初始化 ── */
+const thinkingCollapsed = ref(props.collapsed ?? true)
+
+/** 收起态的正文预览（截断，draft：收起时显一行摘要） */
+const PREVIEW_LIMIT = 60
+const previewText = computed(() => {
+  const c = props.content?.trim() ?? ''
+  if (c.length <= PREVIEW_LIMIT) return c
+  return `${c.slice(0, PREVIEW_LIMIT)}…`
+})
 
 const isFailed = computed(() => props.tool?.status === 'error')
 const isRunning = computed(() => props.tool?.status === 'running')
@@ -72,21 +97,3 @@ const blockClass = computed(() => {
   return 'my-1 rounded-lg border border-danger bg-[rgba(239,68,68,0.06)] px-3'
 })
 </script>
-
-<style scoped>
-/* 流式光标（draft .cursor） */
-.streaming-cursor {
-  display: inline-block;
-  width: 7px;
-  height: 14px;
-  margin-left: 2px;
-  vertical-align: text-bottom;
-  border-radius: 1px;
-  background: var(--accent);
-  animation: blink 1s step-end infinite;
-}
-@keyframes blink {
-  0%, 50% { opacity: 1; }
-  51%, 100% { opacity: 0; }
-}
-</style>

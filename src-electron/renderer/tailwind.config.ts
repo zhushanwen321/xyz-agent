@@ -89,11 +89,23 @@ export default {
           '0%, 100%': { 'box-shadow': '0 0 0 3px rgba(79, 142, 247, 0.22)' },
           '50%': { 'box-shadow': '0 0 0 4px rgba(79, 142, 247, 0.40)' },
         },
+        // message-stream working-dot 脉冲（turn-meta working 态，draft .working-dot）
+        'working-pulse': {
+          '0%, 100%': { opacity: '1', 'box-shadow': '0 0 0 0 rgba(79, 142, 247, 0.4)' },
+          '50%': { opacity: '0.55', 'box-shadow': '0 0 0 5px rgba(79, 142, 247, 0)' },
+        },
+        // 流式光标闪烁（turn-summary / trace-tool streaming）
+        blink: {
+          '0%, 50%': { opacity: '1' },
+          '51%, 100%': { opacity: '0' },
+        },
       },
       animation: {
         'pulse-accent': 'pulse-accent 2s var(--ease) infinite',
         'pulse-warn': 'pulse-warn 2s var(--ease) infinite',
         'steer-breathe': 'steer-breathe 2.6s ease-in-out infinite',
+        'working-pulse': 'working-pulse 1.4s ease-in-out infinite',
+        blink: 'blink 1s step-end infinite',
       },
     },
   },
