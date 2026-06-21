@@ -11,10 +11,15 @@ export default {
   theme: {
     extend: {
       colors: {
-        bg: 'var(--bg)',
+        bg: {
+          DEFAULT: 'var(--bg)',
+          elevated: 'var(--bg-elevated)',
+          input: 'var(--bg-input)',
+        },
         surface: {
           DEFAULT: 'var(--surface)',
           hover: 'var(--surface-hover)',
+          2: 'var(--surface-2)',
         },
         fg: 'var(--fg)',
         muted: 'var(--muted)',
@@ -25,6 +30,7 @@ export default {
           DEFAULT: 'var(--accent)',
           hover: 'var(--accent-hover)',
           soft: 'var(--accent-soft)',
+          ring: 'var(--accent-ring)', // inset 内描边（Card-Active/Input focus/SessionItem 激活）
           foreground: 'var(--accent-foreground)', // shadcn text-accent-foreground
         },
         success: 'var(--success)',
@@ -64,6 +70,24 @@ export default {
         1: 'var(--shadow-1)',
         2: 'var(--shadow-2)',
         glow: 'var(--shadow-glow)',
+      },
+      // 状态点脉冲（SessionItem / SessionCard 共享，running=accent / waiting=warning）。
+      // 原两组件各自 scoped 定义同一份 keyframes，收敛到 SSOT 避免漂移。
+      keyframes: {
+        'pulse-accent': {
+          '0%': { 'box-shadow': '0 0 0 0 rgba(79, 142, 247, 0.5)' },
+          '70%': { 'box-shadow': '0 0 0 5px rgba(79, 142, 247, 0)' },
+          '100%': { 'box-shadow': '0 0 0 0 rgba(79, 142, 247, 0)' },
+        },
+        'pulse-warn': {
+          '0%': { 'box-shadow': '0 0 0 0 rgba(245, 165, 36, 0.5)' },
+          '70%': { 'box-shadow': '0 0 0 5px rgba(245, 165, 36, 0)' },
+          '100%': { 'box-shadow': '0 0 0 0 rgba(245, 165, 36, 0)' },
+        },
+      },
+      animation: {
+        'pulse-accent': 'pulse-accent 2s var(--ease) infinite',
+        'pulse-warn': 'pulse-warn 2s var(--ease) infinite',
       },
     },
   },

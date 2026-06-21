@@ -11,6 +11,9 @@
 | `--bg` | `#0d0d0f` | 画布底层 | C 原始 |
 | `--surface` | `#151519` | 面板/卡片 | C (`--panel`) |
 | `--surface-hover` | `#1b1b20` | 面板悬停 | C (`--panel-hover`) |
+| `--surface-2` | `#1b1b20` | 二级表面（Card-Elevated） | draft-composer-states.html `:root` |
+| `--bg-elevated` | `#1c1c20` | 浮起面板/激活面板底色 | draft-dual-panel.html `.panel.active` |
+| `--bg-input` | `#101013` | 输入区底色（Input/Textarea/Composer zone） | draft-companion-zones.html + draft-composer-states.html |
 | `--fg` | `#f0f0f5` | 主文字 | C (`--text-primary`) |
 | `--muted` | `#8a8a95` | 次级文字 | C (`--text-secondary`) |
 | `--subtle` | `#5a5a65` | 三级文字/占位 | C (`--text-tertiary`) |
@@ -76,6 +79,9 @@
 |-------|-----|
 | `--bg` | `#f8f9fb` |
 | `--surface` | `#ffffff` |
+| `--surface-2` | 待设计确认 |
+| `--bg-elevated` | 待设计确认 |
+| `--bg-input` | 待设计确认 |
 | `--fg` | `#0d0d0f` |
 | `--muted` | `#5a5a65` |
 | `--border` | `rgba(0,0,0,0.08)` |
@@ -89,8 +95,8 @@
 ## 待办
 
 - [ ] 补全项（标注「补全」）经高保真视觉校准
-- [ ] 亮色变体打磨
-- [ ] 落地到 `style.css :root` + `tailwind.config.ts`（见 ADR-0018 修复清单）
+- [ ] 亮色变体打磨（含新增 `--surface-2` / `--bg-elevated` / `--bg-input` 亮色值）
+- [x] 落地到 `style.css :root` + `tailwind.config.ts`（见 ADR-0018 修复清单；新增 3 token 已于 T01 补齐）
 - [x] ~~裁决 impl 变量归一~~（已裁决 ADR-0021-B/选项②，2026-06-20）
 - [ ] 真身落地：① `settingsStore` 初值改 `dark/cold-blue` ② CSS `--section-bg`/`--divider`/`--accent-light` 迁移到 SSOT 名（见 ADR-0021）
 

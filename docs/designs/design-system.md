@@ -38,7 +38,7 @@ design-system.md   ← 原语：值如何拼成可复用部件（本文件）
 
 ## 4. 输入（Input / Textarea）
 
-背景 `--surface-2`，边框 `--border`，聚焦 `--accent` 1px ring（inset，同 Card-Active 手法）。placeholder `--subtle`。错误态 `--danger` 边框 + 下方错误文案。Composer 多行自动高，最小 56，shift+enter 换行。
+背景 `--surface-2`，边框 `--border`，聚焦 `--accent` 1px ring（inset，同 Card-Active 手法）。placeholder `--subtle`。错误态 `--danger` 边框 + 下方错误文案。Composer 多行自动高，最小 40，shift+enter 换行。Textarea 原语默认 min-height 40px，Composer 场景沿用；如需更大可 class 覆写。
 
 ## 5. 标签族（Pill / Chip / Badge / Status Dot）★强制区分
 

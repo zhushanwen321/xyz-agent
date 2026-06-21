@@ -17,6 +17,9 @@
   --bg: #0d0d0f;                /* 画布底层 */
   --surface: #151519;           /* 面板/卡片 */
   --surface-hover: #1b1b20;     /* 面板悬停 */
+  --surface-2: #1b1b20;         /* 二级表面（Card-Elevated / draft-composer-states） */
+  --bg-elevated: #1c1c20;       /* 浮起面板/激活面板底色（draft-dual-panel .panel.active） */
+  --bg-input: #101013;          /* 输入区底色（draft-companion-zones / composer） */
 
   /* ── 文字 ───────────────────────────────────────────────── */
   --fg: #f0f0f5;                /* 主文字 */
@@ -95,6 +98,33 @@
   --popover-foreground: var(--fg);
   --input: var(--border);              /* border-input */
   --ring: var(--accent);               /* ring-ring（focus，主色）*/
+}
+
+/* ============================================================
+   亮色主题槽位（data-theme 切换）
+   design-tokens.md 仅给出部分亮色值，未给全前不臆造落地。
+   settingsStore 接入后会切换 <html data-theme="light">。
+   ============================================================ */
+[data-theme="light"] {
+  /* ── 背景层级（design-tokens.md 已给值）──────────────────── */
+  --bg: #f8f9fb;
+  --surface: #ffffff;
+  /* --surface-hover / --surface-2 / --bg-elevated / --bg-input 待设计确认 */
+
+  /* ── 文字（design-tokens.md 已给值）──────────────────────── */
+  --fg: #0d0d0f;
+  --muted: #5a5a65;
+  /* --subtle 待设计确认 */
+
+  /* ── 边框/分隔（design-tokens.md 已给值）────────────────── */
+  --border: rgba(0, 0, 0, 0.08);
+  /* --border-strong 待设计确认 */
+
+  /* ── 主色（design-tokens.md 已给值）──────────────────────── */
+  --accent: #2563eb;
+  /* --accent-hover / --accent-soft / --accent-ring 待设计确认 */
+
+  /* ── 状态色 / 字体 / 圆角 / 间距 / 阴影 / 动效 等待设计确认 ─ */
 }
 
 /* ============================================================
