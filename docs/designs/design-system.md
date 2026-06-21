@@ -36,9 +36,13 @@ design-system.md   ← 原语：值如何拼成可复用部件（本文件）
 
 高度 32（dense）/ 36（默认）/ 44（移动命中区）。圆角 `--radius`。禁用 opacity 0.4 + not-allowed。
 
+> **focus ring 语境说明（P1-2 裁决）**：Button 用 shadcn 外环 + offset（`focus-visible:ring-2 ring-ring ring-offset-2`），与实色/透明底视觉分离，是 shadcn 惯例。本节**不要求** Button 改 inset ring——§4 的"聚焦 inset ring，同 Card-Active 手法"是 Input/Textarea 专属（容器型原语，inset 表达边界聚焦）。Button 是操作型原语，外环表达可点击焦点，两语境故意不同，不统一。
+
 ## 4. 输入（Input / Textarea）
 
 背景 `--surface-2`，边框 `--border`，聚焦 `--accent` 1px ring（inset，同 Card-Active 手法）。placeholder `--subtle`。错误态 `--danger` 边框 + 下方错误文案。Composer 多行自动高，最小 40，shift+enter 换行。Textarea 原语默认 min-height 40px，Composer 场景沿用；如需更大可 class 覆写。
+
+> **错误文案职责分层（P1-3 裁决）**：原子 Input/Textarea 只负责 `error?: boolean` 触发 `border-danger`（边框态）。"下方错误文案"归**表单层** FormMessage（shadcn 体系惯例），由包裹 Input 的 Form/FormItem 提供。项目当前无 `components/ui/form/` 表单层，待引入表单场景（如 Settings 校验）时补 FormMessage；在此之前 Input 仅暴露 `error` border 态，不自带文案 prop。
 
 ## 5. 标签族（Pill / Chip / Badge / Status Dot）★强制区分
 
