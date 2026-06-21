@@ -1,17 +1,16 @@
 <template>
   <!--
     展示组件 · 单会话项（draft-five-states §1）。
-    grid [dot] [main] [time]；active = accent-soft 背景 + 左侧 2px accent 竖条。
+    flex [dot] [main] [time]；active = accent-soft 背景 + inset accent-ring。
     hover 操作（重命名/删除）属 DEFERRED（G2-005/G-013），按 hide 规则不渲染入口。
     状态点 5 态（D6）：running/waiting 脉冲，done/stopped/error 静态。
   -->
   <div
-    class="session-item group relative grid cursor-pointer items-start gap-2 rounded-md px-2 py-[7px] transition-colors"
-    :class="active ? 'bg-accent-soft' : 'hover:bg-surface-hover'"
+    class="session-item group relative flex cursor-pointer items-start gap-2 rounded-md px-2 py-[7px] transition-colors"
+    :class="active ? 'bg-accent-soft ring-1 ring-inset ring-accent-ring' : 'hover:bg-surface-hover'"
     @click="emit('select', session.id)"
   >
-    <span v-if="active" class="absolute bottom-1.5 left-0 top-1.5 w-0.5 rounded-sm bg-accent" />
-    <span class="mt-1 h-2 w-2 shrink-0 rounded-full" :class="dotClass" />
+    <span class="size-2 mt-1 shrink-0 rounded-full" :class="dotClass" />
     <div class="min-w-0">
       <div
         class="truncate text-[12.5px] leading-[1.35]"
@@ -34,8 +33,8 @@
 <script setup lang="ts">
 /**
  * 状态点 class 映射（D6 五态，design-tokens SSOT 语义色）。
- * running/waiting 用 Tailwind animate-pulse 呼吸（spec §会话项：两态均带脉冲）；
- * done/stopped/error 静态色。无 scoped CSS，全 Tailwind 工具类。
+ * running/waiting 用同心环 pulse 动画（与 SessionCard 对齐）；
+ * done/stopped/error 静态色。
  */
 const props = defineProps<{
   session: {
@@ -53,16 +52,15 @@ const emit = defineEmits<{
   select: [sessionId: string]
 }>()
 
-const dotClass = computed(() => {
-  const map: Record<DerivedStatus, string> = {
-    running: 'bg-accent animate-pulse',
-    waiting: 'bg-warning animate-pulse',
-    done: 'bg-success',
-    stopped: 'bg-subtle opacity-50',
-    error: 'bg-danger',
-  }
-  return map[props.status]
-})
+/** 状态点语义类：背景色 + 脉冲动画。keyframes 收敛到 tailwind.config（与 SessionCard 共享 SSOT） */
+const DOT_CLASS: Record<DerivedStatus, string> = {
+  running: 'bg-accent animate-pulse-accent',
+  waiting: 'bg-warning animate-pulse-warn',
+  done: 'bg-success',
+  stopped: 'bg-subtle opacity-50',
+  error: 'bg-danger',
+}
+const dotClass = computed(() => DOT_CLASS[props.status])
 
 /** 工作目录名（cwd 末段），长路径只显末段防溢出 */
 const dirName = computed(() => props.session.cwd.split('/').filter(Boolean).pop() ?? props.session.cwd)
@@ -74,3 +72,4 @@ import { computed } from 'vue'
 import type { DerivedStatus } from '@/types'
 import { formatRelativeTime } from '@/composables/logic/formatTime'
 </script>
+

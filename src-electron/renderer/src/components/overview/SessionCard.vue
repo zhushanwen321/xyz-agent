@@ -19,7 +19,7 @@
   >
     <!-- 头部：状态点 + 标题 + 分支 pill -->
     <div class="flex items-center gap-2">
-      <span class="status-dot" :class="dotClass" />
+      <span class="size-2 mt-1 shrink-0 rounded-full" :class="dotClass" />
       <span class="min-w-0 flex-1 truncate text-[14px] font-semibold text-fg">
         {{ session.label }}
       </span>
@@ -84,7 +84,15 @@ const emit = defineEmits<{
   open: [sessionId: string]
 }>()
 
-const dotClass = computed(() => `status-dot--${props.status}`)
+/** 状态点语义类：背景色 + 脉冲动画。keyframes 收敛到 tailwind.config（与 SessionItem 共享 SSOT） */
+const DOT_CLASS: Record<DerivedStatus, string> = {
+  running: 'bg-accent animate-pulse-accent',
+  waiting: 'bg-warning animate-pulse-warn',
+  done: 'bg-success',
+  stopped: 'bg-subtle opacity-50',
+  error: 'bg-danger',
+}
+const dotClass = computed(() => DOT_CLASS[props.status])
 
 /** 是否渲染改动指标（任一计数 > 0） */
 const hasMetrics = computed(() => (props.addCount ?? 0) > 0 || (props.delCount ?? 0) > 0)
@@ -92,36 +100,3 @@ const hasMetrics = computed(() => (props.addCount ?? 0) > 0 || (props.delCount ?
 const timeLabel = computed(() => formatRelativeTime(props.session.lastActiveAt))
 </script>
 
-<style scoped>
-/* 状态点：8px 圆点，5 态语义色。running/waiting 带 pulse（box-shadow 扩散，draft 同款）。
-   色值走 CSS 变量（design-tokens SSOT），不硬编码。 */
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  margin-top: 4px;
-  flex-shrink: 0;
-}
-.status-dot--running {
-  background: var(--accent);
-  animation: pulse-accent 2s var(--ease) infinite;
-}
-.status-dot--waiting {
-  background: var(--warning);
-  animation: pulse-warn 2s var(--ease) infinite;
-}
-.status-dot--done { background: var(--success); }
-.status-dot--stopped { background: var(--subtle); opacity: 0.5; }
-.status-dot--error { background: var(--danger); }
-
-@keyframes pulse-accent {
-  0% { box-shadow: 0 0 0 0 rgba(79, 142, 247, 0.5); }
-  70% { box-shadow: 0 0 0 5px rgba(79, 142, 247, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(79, 142, 247, 0); }
-}
-@keyframes pulse-warn {
-  0% { box-shadow: 0 0 0 0 rgba(245, 165, 36, 0.5); }
-  70% { box-shadow: 0 0 0 5px rgba(245, 165, 36, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(245, 165, 36, 0); }
-}
-</style>

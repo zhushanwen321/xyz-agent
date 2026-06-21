@@ -84,7 +84,7 @@ function onPanelMouseDown(e: MouseEvent): void {
 /** 四层激活标识（workspace/spec.md）：单 panel 无标识；双 active = bg-elevated + inset accent-ring + opacity 1；双 standby = opacity 0.5 hover 回升 0.78 */
 const panelStateClass = computed(() => {
   if (props.active && props.isDual) {
-    return 'bg-surface-hover opacity-100 shadow-[inset_0_0_0_1px_var(--accent-ring)]'
+    return 'bg-bg-elevated opacity-100 shadow-[inset_0_0_0_1px_var(--accent-ring)]'
   }
   if (!props.active && props.isDual) {
     return 'opacity-50 hover:opacity-[0.78]'

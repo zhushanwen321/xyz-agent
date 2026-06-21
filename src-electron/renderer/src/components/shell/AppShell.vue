@@ -4,8 +4,9 @@
     base 平铺（bg-bg）+ aside 透明融合 + main float-panel 浮起。
     traffic light 安全区在 AsideRegion 内（padding-top:52px 恒定，spec §三）。
   -->
-  <div class="app-shell relative flex h-screen w-screen gap-3 bg-bg p-3">
+  <div class="app-shell relative flex h-screen w-screen gap-3 overflow-hidden rounded-[10px] bg-bg p-3">
     <AsideRegion />
+    <AppNavControls />
     <!-- 折叠态左缘唤回细条（sidebar spec §收起态「左缘细条 hover」三路唤回之一）。
          absolute 浮 app-shell 左缘（aside 折叠后 width:0+overflow-hidden 会切内含元素，放父层才可见）。
          hover 加宽 + 变 accent，click/Enter/Space toggleCollapsed 唤回。 -->
@@ -31,6 +32,7 @@ import { useNavigationStore } from '@/stores/navigation'
 import { useSessionStore } from '@/stores/session'
 import { usePlatformChrome } from '@/composables/effects/usePlatformChrome'
 import { useSidebar } from '@/composables/features/useSidebar'
+import AppNavControls from './AppNavControls.vue'
 import AsideRegion from './AsideRegion.vue'
 import MainPanel from './MainPanel.vue'
 import { useSidebarStore } from '@/stores/sidebar'
