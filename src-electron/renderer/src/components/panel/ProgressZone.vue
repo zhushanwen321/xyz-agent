@@ -3,6 +3,11 @@
     展示组件 · progress-zone（panel/spec.md zone ③，composer 上方）。
     FG4 骨架：可折叠容器空壳。展开态的 todo/goal 列表 + 进度条属 FG5（draft-companion-zones），
     v1 只立容器结构 + 标题行 + 收起态单行占位。无 session 时隐藏。
+
+    TODO(proxy): 当前用 v-if="sessionLabel" 判断显示，是 FG4 骨架期的 proxy——
+    设计要求"无任务时整区隐藏"（依据 hasTasks，非 sessionLabel）。但 FG4 无 runtime 进度
+    数据源（Flow3 DEFERRED），用 sessionLabel 做 proxy 避免无数据时 UI 空洞。
+    Flow3 落地后改 hasTasks 判断。
   -->
   <div
     v-if="sessionLabel"
