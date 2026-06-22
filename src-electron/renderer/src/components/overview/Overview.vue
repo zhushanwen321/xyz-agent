@@ -25,14 +25,14 @@
       >
         <Plus class="size-[15px] text-subtle" />
         <span>新建</span>
-        <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">⌘N</kbd>
+        <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">⌘ N</kbd>
       </Button>
     </header>
 
     <!-- 卡片网格：响应式 3/2/1 列（draft-overview §布局）。
          v1 用 CSS grid auto-fill + minmax 让列数随视口自适应，无需媒体查询断点。 -->
     <ScrollArea class="min-h-0 flex-1">
-      <div v-if="session.list.length" class="overview__grid pb-4">
+      <div v-if="session.list.length" class="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4 pb-4">
         <SessionCard
           v-for="s in session.list"
           :key="s.id"
@@ -109,13 +109,4 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
 })
 </script>
 
-<style scoped>
-/* 卡片网格：auto-fill + minmax(280px,1fr) 让列数随视口自适应
-   （draft：宽屏 4 列 / 笔记本 3 列 / 窄屏 2 列 / 移动 1 列）。
-   gap=16px（--space-4），靠间距与 surface 底区分，无分隔线。 */
-.overview__grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: var(--space-4);
-}
-</style>
+
