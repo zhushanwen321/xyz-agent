@@ -68,10 +68,10 @@
       <SegmentedTab
         v-model="sidebar.activeTab"
         :session-count="session.list.length"
-        :file-count="0"
+        :file-count="fileCount"
       />
 
-      <!-- 子视图区：会话列表（A）/ 文件视图（B，内容 G2-003 defer） -->
+      <!-- 子视图区：会话列表（A）/ 文件视图（B，mock 数据，runtime 联调见 ADR-0024） -->
       <div class="mt-1 min-h-0 flex-1">
         <template v-if="sidebar.activeTab === 'sessions'">
           <SessionList
@@ -85,9 +85,11 @@
           />
         </template>
         <template v-else>
-          <div class="flex h-full items-center justify-center px-4 text-center text-[11px] text-subtle opacity-60">
-            文件视图待联调<br><span class="font-mono text-[10px]">（G2-003 deferred）</span>
-          </div>
+          <FileView
+            :changes="fileChanges"
+            :session-label="currentSession?.label"
+            :branch="currentSession?.gitBranch"
+          />
         </template>
       </div>
 
@@ -118,6 +120,8 @@ import { useSidebarStore } from '@/stores/sidebar'
 import { useSidebar } from '@/composables/features/useSidebar'
 import SegmentedTab from './SegmentedTab.vue'
 import SessionList from './SessionList.vue'
+import FileView from './FileView.vue'
+import { fixtureFileChanges } from '@/api/mock/data'
 
 const navigation = useNavigationStore()
 const session = useSessionStore()
@@ -129,6 +133,17 @@ const searchOpen = ref(false)
 
 /** 当前是否处于 Overview view（按钮转 accent 态，spec §Overview 入口） */
 const isOverviewActive = computed(() => navigation.current.view === 'overview')
+
+/** 当前 active session（文件视图头部展示） */
+const currentSession = computed(() => session.active)
+
+/** 当前 active session 的改动文件（mock，runtime 联调见 ADR-0024） */
+const fileChanges = computed(() =>
+  session.activeId ? fixtureFileChanges[session.activeId] ?? [] : [],
+)
+
+/** 文件 tab 计数（当前 session 改动文件数，spec §tab 计数） */
+const fileCount = computed(() => fileChanges.value.length)
 
 /** 状态点派生（D6）：useSidebar 读 chat+session store 派生 5 态 */
 function statusOf(id: string) {
