@@ -46,18 +46,11 @@
           :style="dotStyle(opt.level)"
         />
         <span class="flex-1" :class="nameClass[opt.level]">{{ opt.label }} {{ opt.en }}</span>
-        <span class="font-mono text-[11px] text-subtle">{{ opt.desc }}</span>
         <Check
           class="size-[13px] text-reasoning transition-opacity"
           :class="level === opt.level ? 'opacity-100' : 'opacity-0'"
         />
       </Button>
-      <!-- note -->
-      <div
-        class="border-t border-border px-2.5 py-2 font-mono text-[11px] leading-relaxed text-subtle"
-      >
-        等级可用性取决于模型 · 更高级别更慢更贵
-      </div>
     </PopoverContent>
   </Popover>
 </template>

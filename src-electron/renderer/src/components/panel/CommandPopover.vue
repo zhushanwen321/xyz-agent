@@ -48,14 +48,6 @@
           <span class="ml-auto shrink-0 font-mono text-[10px] text-subtle">{{ item.kind }}</span>
         </Button>
       </div>
-      <!-- foot -->
-      <div class="flex items-center justify-between border-t border-border px-2.5 py-1.5 font-mono text-[10px] text-subtle">
-        <span class="flex items-center gap-1">
-          <kbd class="rounded-sm border border-border bg-surface px-1 py-px">↑↓</kbd>选
-          <kbd class="rounded-sm border border-border bg-surface px-1 py-px">⏎</kbd>插
-        </span>
-        <span :class="symbolClass">{{ symbol }}</span>
-      </div>
     </PopoverContent>
   </Popover>
 </template>

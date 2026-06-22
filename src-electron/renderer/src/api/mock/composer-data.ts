@@ -38,17 +38,16 @@ export interface MockThinkingLevel {
   level: ThinkingLevel
   label: string
   en: string
-  desc: string
   available: boolean
 }
 
 export const MOCK_THINKING_LEVELS: MockThinkingLevel[] = [
-  { level: 'off', label: '关', en: 'off', desc: '不思考', available: true },
-  { level: 'low', label: '低', en: 'low', desc: '轻量', available: true },
-  { level: 'medium', label: '中', en: 'medium', desc: '柔紫', available: true },
-  { level: 'high', label: '高', en: 'high', desc: '实色紫', available: true },
-  { level: 'xhigh', label: '极高', en: 'xhigh', desc: '紫 + 光晕', available: true },
-  { level: 'max', label: '最高', en: 'max', desc: '默认 · 实色块', available: true },
+  { level: 'off', label: '关', en: 'off', available: true },
+  { level: 'low', label: '低', en: 'low', available: true },
+  { level: 'medium', label: '中', en: 'medium', available: true },
+  { level: 'high', label: '高', en: 'high', available: true },
+  { level: 'xhigh', label: '极高', en: 'xhigh', available: true },
+  { level: 'max', label: '最高', en: 'max', available: true },
 ]
 
 // ── 3. 上下文容量统计（§2a） ────────────────────────────────────────────

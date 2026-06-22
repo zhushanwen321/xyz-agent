@@ -58,13 +58,6 @@
           >{{ stats.cacheHit }}%</span>
         </div>
       </div>
-      <!-- foot -->
-      <div
-        class="flex items-center justify-between border-t border-border px-2.5 py-1.5 font-mono text-[10px] text-subtle"
-      >
-        <span>切换模型会改变总量</span>
-        <kbd class="rounded-sm border border-border bg-surface px-1 text-muted">hover</kbd>
-      </div>
     </HoverCardContent>
   </HoverCard>
 </template>

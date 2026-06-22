@@ -59,15 +59,6 @@
         </div>
       </div>
 
-      <!-- foot -->
-      <div
-        class="flex justify-between border-t border-border px-2.5 py-1.5 font-mono text-[10px] text-subtle"
-      >
-        <span>选中即用于当前 session</span>
-        <kbd
-          class="rounded-sm border border-border bg-surface px-1 py-px text-subtle"
-        >click</kbd>
-      </div>
     </PopoverContent>
   </Popover>
 </template>

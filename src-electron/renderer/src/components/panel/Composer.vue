@@ -73,17 +73,6 @@
     </div>
     </CommandPopover>
 
-    <!-- hint（draft composer-hint） -->
-    <div class="px-1 pt-1.5 font-mono text-[10px] leading-tight text-subtle">
-      <span v-if="isStreaming">
-        <kbd class="rounded-sm border border-[var(--border)] bg-[var(--surface-hover)] px-1 py-px">⏎</kbd> 追加 steer ·
-        <kbd class="rounded-sm border border-[var(--border)] bg-[var(--surface-hover)] px-1 py-px">Alt + ⏎</kbd> 新轮 followup ·
-        <kbd class="rounded-sm border border-[var(--border)] bg-[var(--surface-hover)] px-1 py-px">⇧ + ⏎</kbd> 换行
-      </span>
-      <span v-else>
-        <kbd class="rounded-sm border border-[var(--border)] bg-[var(--surface-hover)] px-1 py-px">⏎</kbd> 发送 · <kbd class="rounded-sm border border-[var(--border)] bg-[var(--surface-hover)] px-1 py-px">⇧ + ⏎</kbd> 换行
-      </span>
-    </div>
   </div>
 </template>
 
