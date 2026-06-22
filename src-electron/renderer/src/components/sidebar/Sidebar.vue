@@ -4,8 +4,7 @@
     分层（自上而下）：Brand → 主操作 nav（新建 ⌘N / 搜索 ⌘K）→ Overview 入口按钮 →
     segmented tab（会话|文件）→ 子视图区 → 用户区。
     折叠态 C：整体隐藏（width:0 + opacity:0），spec §收起态。
-    DEFERRED 入口 hide：搜索（⌘K，G-022）、rename/删除（G-005/G-013）不渲染入口。
-    v1 只渲染 tab 骨架 + 主路径（会话列表），File View 内容 G2-003 defer。
+    File View 内容 G2-003 defer。
   -->
   <div
     class="sidebar h-full transition-[width,opacity] duration-[var(--duration-slow)] ease-[var(--ease)]"
@@ -18,7 +17,7 @@
         <span class="text-fg">xyz-agent</span>
       </div>
 
-      <!-- 主操作 nav：新建任务 ⌘N（搜索 ⌘K DEFERRED hide） -->
+      <!-- 主操作 nav：新建任务 ⌘N / 搜索 ⌘K -->
       <nav class="flex flex-col gap-px px-1">
         <Button
           variant="ghost"
@@ -28,6 +27,15 @@
           <Plus class="size-[15px] text-subtle transition-colors group-hover:text-muted" />
           <span class="flex-1 text-left">新建任务</span>
           <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">⌘ N</kbd>
+        </Button>
+        <Button
+          variant="ghost"
+          class="group h-auto justify-start gap-2.5 rounded-md px-2 py-1.5 text-[12px] text-muted hover:bg-surface-hover hover:text-fg"
+          @click="searchOpen = true"
+        >
+          <Search class="size-[15px] text-subtle transition-colors group-hover:text-muted" />
+          <span class="flex-1 text-left">搜索</span>
+          <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">⌘ K</kbd>
         </Button>
       </nav>
 
@@ -89,15 +97,19 @@
         </div>
       </div>
     </div>
+
+    <!-- 搜索浮层（⌘K 触发的全局 Overlay，spec §搜索浮层剥离） -->
+    <SearchModal v-model:open="searchOpen" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useEventListener } from '@vueuse/core'
-import { Plus, LayoutGrid } from '@lucide/vue'
+import { Plus, LayoutGrid, Search } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import SearchModal from '@/components/overlays/SearchModal.vue'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSessionStore } from '@/stores/session'
 import { useSidebarStore } from '@/stores/sidebar'
@@ -109,6 +121,9 @@ const navigation = useNavigationStore()
 const session = useSessionStore()
 const sidebar = useSidebarStore()
 const { selectSession, newSession, goOverview, loadSessions, derivedStatus } = useSidebar()
+
+/** 搜索浮层开关（⌘K / nav 搜索按钮触发，spec §搜索浮层） */
+const searchOpen = ref(false)
 
 /** 当前是否处于 Overview view（按钮转 accent 态，spec §Overview 入口） */
 const isOverviewActive = computed(() => navigation.current.view === 'overview')
@@ -138,6 +153,9 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
   if (e.key === 'n' || e.key === 'N') {
     e.preventDefault()
     void newSession()
+  } else if (e.key === 'k' || e.key === 'K') {
+    e.preventDefault()
+    searchOpen.value = true
   } else if (e.key === 'b' || e.key === 'B') {
     e.preventDefault()
     sidebar.toggleCollapsed()
