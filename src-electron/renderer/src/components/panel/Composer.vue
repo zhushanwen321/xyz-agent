@@ -8,24 +8,25 @@
     steer/followUp：isStreaming 时 ⏎ 追加 steer，Alt+⏎ 追加 followUp，都不打断当前回合。
   -->
   <div class="composer mx-3.5">
-    <div class="composer-box relative rounded-lg border bg-bg-input" :class="boxClass">
-      <!-- 命令浮层（§2d @/#//）：reka-ui Popover portal 到 body，键盘路由见 onKeydown -->
-      <CommandPopover
-        ref="commandPopoverRef"
-        v-model:open="cmdOpen"
-        :type="cmdType"
-        @select="onCmdSelect"
-      />
-      <!-- 已附上下文 chip 行（§2f，hover 出详情列表）。mock 演示始终显示，runtime 后按实际附件显隐 -->
-      <ContextChipsBar />
-      <!-- 输入区：contenteditable 富文本（draft §1/§2e，支持 slash chip 与 @/# mention 内联） -->
-      <ComposerInput
-        ref="inputRef"
-        :placeholder="placeholder"
-        :disabled="isSending"
-        @input="onInputChange"
-        @keydown="onKeydown"
-      />
+    <!-- 命令浮层（§2d @/#//）：anchor = composer-box（slot），reka-ui Popover portal body。
+         composer-box 内 focus 算 inside 不触发 dismiss，键盘路由见 onKeydown -->
+    <CommandPopover
+      ref="commandPopoverRef"
+      v-model:open="cmdOpen"
+      :type="cmdType"
+      @select="onCmdSelect"
+    >
+      <div class="composer-box relative rounded-lg border bg-bg-input" :class="boxClass">
+        <!-- 已附上下文 chip 行（§2f，hover 出详情列表）。mock 演示始终显示，runtime 后按实际附件显隐 -->
+        <ContextChipsBar />
+        <!-- 输入区：contenteditable 富文本（draft §1/§2e，支持 slash chip 与 @/# mention 内联） -->
+        <ComposerInput
+          ref="inputRef"
+          :placeholder="placeholder"
+          :disabled="isSending"
+          @input="onInputChange"
+          @keydown="onKeydown"
+        />
 
       <!-- 工具条（panel/spec §composer line 51）：上下文/模型/thinking-level 展示型 + 发送位三态。 -->
       <div class="composer-bar flex flex-wrap items-center justify-end gap-0.5 px-2.5 pb-2">
@@ -70,6 +71,7 @@
         </Button>
       </div>
     </div>
+    </CommandPopover>
 
     <!-- hint（draft composer-hint） -->
     <div class="px-1 pt-1.5 font-mono text-[10px] leading-tight text-subtle">

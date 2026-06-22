@@ -3,16 +3,18 @@
     命令浮层（draft-composer-states §2d：@ 引用 / # 文件 / / 命令 三路共享容器）。
     由 Composer 受控打开（v-model:open）。用 reka-ui Popover portal 到 body，
     不受 composer-box 父容器 overflow/stacking context 限制（修复 D5 定位 bug）。
-    PopoverAnchor 覆盖 composer-box，PopoverContent 相对它 side="top" 定位。
+    **anchor 是 slot 传入的 composer-box**：composer-box 内任何 focus 都算 inside，
+    不触发 onFocusOutside dismiss（修复 focus-outside 误关 bug）。
     键盘事件（↑↓ ⏎ Esc）由 Composer 在 ComposerInput keydown 时调 handleKeydown 路由进来。
   -->
   <Popover v-model:open="controlledOpen">
-    <!-- anchor：覆盖 composer-box 的虚拟元素，不占布局空间 -->
+    <!-- anchor：composer-box 本身（由调用方通过 slot 传入），DOM contains 成立 →
+         composer-box 内任何 focus 都算 inside，不触发 onFocusOutside dismiss -->
     <PopoverAnchor as-child>
-      <div class="pointer-events-none absolute inset-0" aria-hidden="true" />
+      <slot />
     </PopoverAnchor>
     <PopoverContent
-      v-if="items.length > 0"
+      v-if="open && items.length > 0"
       side="top"
       align="start"
       :side-offset="6"
