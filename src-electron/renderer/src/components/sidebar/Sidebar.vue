@@ -80,6 +80,8 @@
             :status-of="statusOf"
             @select="onSelectSession"
             @new-session="onNewSession"
+            @rename="onRenameSession"
+            @delete="onDeleteSession"
           />
         </template>
         <template v-else>
@@ -120,7 +122,7 @@ import SessionList from './SessionList.vue'
 const navigation = useNavigationStore()
 const session = useSessionStore()
 const sidebar = useSidebarStore()
-const { selectSession, newSession, goOverview, loadSessions, derivedStatus } = useSidebar()
+const { selectSession, newSession, goOverview, loadSessions, derivedStatus, renameSession, deleteSession } = useSidebar()
 
 /** 搜索浮层开关（⌘K / nav 搜索按钮触发，spec §搜索浮层） */
 const searchOpen = ref(false)
@@ -139,6 +141,20 @@ async function onSelectSession(id: string): Promise<void> {
 
 async function onNewSession(): Promise<void> {
   await newSession()
+}
+
+/** 重命名会话（v1 用原生 prompt，后续替换为项目 Dialog 组件） */
+async function onRenameSession(id: string): Promise<void> {
+  const current = session.list.find((s) => s.id === id)?.label ?? ''
+  const label = window.prompt('重命名会话', current)?.trim()
+  if (!label) return
+  await renameSession(id, label)
+}
+
+/** 删除会话（二次确认） */
+async function onDeleteSession(id: string): Promise<void> {
+  if (!window.confirm('确定删除此会话？此操作不可撤销。')) return
+  await deleteSession(id)
 }
 
 /** 挂载时加载 session 列表（铁律 1：通过 features 层 loadSessions 调 api） */

@@ -83,6 +83,21 @@ export const session = {
       throw new Error(`mock: session ${id} 不存在`)
     }
   },
+
+  async rename(sessionId: string, label: string): Promise<void> {
+    await sleep(TIMING.ack)
+    const target = fixtureSessions.find((s) => s.id === sessionId)
+    if (!target) throw new Error(`mock: session ${sessionId} 不存在`)
+    target.label = label
+  },
+
+  async remove(sessionId: string): Promise<void> {
+    await sleep(TIMING.ack)
+    const idx = fixtureSessions.findIndex((s) => s.id === sessionId)
+    if (idx === -1) throw new Error(`mock: session ${sessionId} 不存在`)
+    fixtureSessions.splice(idx, 1)
+    delete fixtureMessages[sessionId]
+  },
 }
 
 export const chat = {

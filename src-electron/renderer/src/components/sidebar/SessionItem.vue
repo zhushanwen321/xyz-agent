@@ -28,6 +28,27 @@
     <span class="shrink-0 pt-1 font-mono text-[10px] leading-[1.35] text-subtle group-hover:invisible">
       {{ timeLabel }}
     </span>
+    <!-- hover 操作按钮（重命名/删除），时间隐去后浮现（draft-five-states §1） -->
+    <div class="absolute right-2 top-1.5 hidden gap-1 group-hover:flex">
+      <Button
+        variant="ghost"
+        size="icon"
+        class="size-[22px] rounded-[5px] border border-border-strong bg-surface text-muted hover:bg-surface-hover hover:text-fg"
+        title="重命名"
+        @click.stop="emit('rename', session.id)"
+      >
+        <Pencil class="size-[13px]" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        class="size-[22px] rounded-[5px] border border-border-strong bg-surface text-muted hover:bg-surface-hover hover:text-danger"
+        title="删除"
+        @click.stop="emit('delete', session.id)"
+      >
+        <Trash2 class="size-[13px]" />
+      </Button>
+    </div>
   </div>
 </template>
 
@@ -51,6 +72,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   select: [sessionId: string]
+  rename: [sessionId: string]
+  delete: [sessionId: string]
 }>()
 
 /** 状态点语义类：背景色 + 脉冲动画。keyframes 收敛到 tailwind.config（与 SessionCard 共享 SSOT） */
@@ -70,6 +93,8 @@ const dirName = computed(() => props.session.cwd.split('/').filter(Boolean).pop(
 const timeLabel = computed(() => formatRelativeTime(props.session.lastActiveAt))
 
 import { computed } from 'vue'
+import { Pencil, Trash2 } from '@lucide/vue'
+import { Button } from '@/components/ui/button'
 import type { DerivedStatus } from '@/types'
 import { formatRelativeTime } from '@/composables/logic/formatTime'
 </script>

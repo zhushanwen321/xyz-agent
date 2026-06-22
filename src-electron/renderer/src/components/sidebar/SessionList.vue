@@ -13,6 +13,8 @@
         :active="s.id === activeId"
         :status="statusOf(s.id)"
         @select="emit('select', $event)"
+        @rename="emit('rename', $event)"
+        @delete="emit('delete', $event)"
       />
     </div>
     <div
@@ -50,6 +52,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   select: [sessionId: string]
+  rename: [sessionId: string]
+  delete: [sessionId: string]
   newSession: []
 }>()
 

@@ -135,6 +135,34 @@ export function useSidebar() {
     await selectSession(created.id, standby ? { panelId: standby.id } : undefined)
   }
 
+  /**
+   * 重命名 session（API + 乐观更新 store）。
+   * 编排点在 features 层：跨 api + store 的唯一合法层。
+   */
+  async function renameSession(id: string, label: string): Promise<void> {
+    await sessionApi.rename(id, label)
+    session.updateLabel(id, label)
+  }
+
+  /**
+   * 删除 session（API + 从列表移除）。
+   * 删除当前 active 时回退到列表首项（若无则停留空态）。
+   * chat store 中残留的消息分区不清理（无害，session 不可再选）。。
+   */
+  async function deleteSession(id: string): Promise<void> {
+    await sessionApi.remove(id)
+    const wasActive = session.activeId === id
+    session.removeFromList(id)
+    if (wasActive) {
+      const next = session.list[0]
+      if (next) {
+        await selectSession(next.id)
+      } else {
+        navigation.push({ view: 'chat' })
+      }
+    }
+  }
+
   /** 进入 Overview：push view:'overview'（ADR-0022，sidebar 持久，main 被覆盖） */
   function goOverview(): void {
     navigation.push({ view: 'overview' })
@@ -208,5 +236,7 @@ export function useSidebar() {
     syncSessionToPanel,
     derivedStatus,
     sessionDigest,
+    renameSession,
+    deleteSession,
   }
 }

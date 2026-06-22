@@ -34,3 +34,19 @@ export function switchSession(sessionId: string): Promise<void> {
   transport.send({ type: 'session.switch', id, payload: { sessionId } })
   return result
 }
+
+/** 重命名 session（label 更新） */
+export function rename(sessionId: string, label: string): Promise<void> {
+  const id = pending.create()
+  const result = pending.register<void>(id)
+  transport.send({ type: 'session.rename', id, payload: { sessionId, name: label } })
+  return result
+}
+
+/** 删除 session（从列表移除） */
+export function remove(sessionId: string): Promise<void> {
+  const id = pending.create()
+  const result = pending.register<void>(id)
+  transport.send({ type: 'session.delete', id, payload: { sessionId } })
+  return result
+}

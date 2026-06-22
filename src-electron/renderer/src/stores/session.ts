@@ -29,5 +29,19 @@ export const useSessionStore = defineStore('session', () => {
     return computed(() => 'waiting' as DerivedStatus)
   }
 
-  return { list, activeId, active, derivedStatus }
+  /** 更新 session label（乐观更新，rename 后调用） */
+  function updateLabel(id: string, label: string): void {
+    const target = list.value.find((s) => s.id === id)
+    if (target) target.label = label
+  }
+
+  /** 从列表移除 session；若移除的是 active，回退到列表首项 */
+  function removeFromList(id: string): void {
+    list.value = list.value.filter((s) => s.id !== id)
+    if (activeId.value === id) {
+      activeId.value = list.value[0]?.id ?? null
+    }
+  }
+
+  return { list, activeId, active, derivedStatus, updateLabel, removeFromList }
 })
