@@ -37,7 +37,7 @@
          三 zone 共享卡片语言、各自独立成卡；统一容器管垂直间距，移除各自 margin。 -->
     <div class="composer-band flex flex-shrink-0 flex-col gap-1.5">
       <!-- ③ progress-zone（composer 上方） -->
-      <ProgressZone :session-label="sessionLabel" />
+      <ProgressZone phase="running" />
 
       <!-- ④ composer（FG5，S1/S2/S5/S6 主路径） -->
       <Composer v-if="sessionId" :session-id="sessionId" />

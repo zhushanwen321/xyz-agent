@@ -8,54 +8,37 @@
     steer/followUp：isStreaming 时 ⏎ 追加 steer，Alt+⏎ 追加 followUp，都不打断当前回合。
   -->
   <div class="composer mx-3.5">
-    <div class="composer-box rounded-lg border bg-bg-input" :class="boxClass">
-      <!-- 输入区：Textarea 原语（no-native-html 规则） -->
-      <Textarea
-        v-model="draft"
+    <div class="composer-box relative rounded-lg border bg-bg-input" :class="boxClass">
+      <!-- 命令浮层（§2d @/#//）：就地在 composer-box 上方，键盘路由见 onKeydown -->
+      <CommandPopover
+        ref="commandPopoverRef"
+        :open="cmdOpen"
+        :type="cmdType"
+        @select="onCmdSelect"
+        @close="cmdOpen = false"
+      />
+      <!-- 已附上下文 chip 行（§2f，hover 出详情列表）。mock 演示始终显示，runtime 后按实际附件显隐 -->
+      <ContextChipsBar />
+      <!-- 输入区：contenteditable 富文本（draft §1/§2e，支持 slash chip 与 @/# mention 内联） -->
+      <ComposerInput
+        ref="inputRef"
         :placeholder="placeholder"
         :disabled="isSending"
-        class="composer-area min-h-[40px] max-h-[120px] resize-none border-0 bg-transparent px-3.5 pb-1 pt-[11px] text-[13px] leading-[1.55] text-fg outline-none ring-0 focus-visible:ring-0 focus-visible:ring-offset-0"
+        @input="onInputChange"
         @keydown="onKeydown"
       />
 
       <!-- 工具条（panel/spec §composer line 51）：上下文/模型/thinking-level 展示型 + 发送位三态。 -->
       <div class="composer-bar flex flex-wrap items-center justify-end gap-0.5 px-2.5 pb-2">
-        <!-- + 添加内容（左锚定，spec §1 ①） -->
-        <Button
-          variant="ghost"
-          size="icon"
-          class="size-[28px] shrink-0 rounded-sm text-subtle transition-colors hover:bg-surface-hover hover:text-muted"
-          title="添加内容"
-        >
-          <Plus class="size-4" />
-        </Button>
+        <!-- + 添加内容（左锚定，spec §1 ①，click 出 4 路浮层） -->
+        <AddMenuPopover @select="onAddSelect" />
         <span class="flex-1" />
         <!-- 上下文容量（spec §2a：hover 出容量 popover） -->
-        <Button
-          variant="ghost"
-          class="h-7 gap-[5px] rounded-sm px-2 text-[11.5px] text-subtle hover:text-muted"
-          title="上下文容量"
-        >
-          <span class="tabular-nums">0</span>
-          <span class="block size-[3px] rounded-full bg-[var(--subtle)] opacity-50"></span>
-          <span>0%</span>
-        </Button>
+        <ContextCapacityPopover />
         <!-- 模型（spec §2b：click 出模型切换 popover） -->
-        <Button
-          variant="ghost"
-          class="h-7 rounded-sm px-2 text-[11.5px] text-subtle/80 hover:text-muted"
-          title="模型选择"
-        >
-          sonnet-4.5
-        </Button>
+        <ModelSelectPopover @select="onModelSelect" />
         <!-- 思考等级（spec §2c：click 出 6 级 popover） -->
-        <Button
-          variant="ghost"
-          class="h-7 rounded-sm px-2 text-[11.5px] text-subtle/80 hover:text-muted"
-          title="思考等级"
-        >
-          思考 最高
-        </Button>
+        <ThinkingLevelPopover @select="onThinkingSelect" />
 
         <!-- 发送位三态：S6 streaming→stop / S5 sending→spinner / S1·S2 idle→send -->
         <Button
@@ -105,10 +88,16 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { ArrowRight, Loader2, Plus, Square } from '@lucide/vue'
+import { ArrowRight, Loader2, Square } from '@lucide/vue'
 import { storeToRefs } from 'pinia'
 import { Button } from '@/components/ui/button'
-import { Textarea } from '@/components/ui/textarea'
+import ComposerInput from './ComposerInput.vue'
+import AddMenuPopover from './AddMenuPopover.vue'
+import CommandPopover from './CommandPopover.vue'
+import ContextCapacityPopover from './ContextCapacityPopover.vue'
+import ModelSelectPopover from './ModelSelectPopover.vue'
+import ThinkingLevelPopover from './ThinkingLevelPopover.vue'
+import ContextChipsBar from './ContextChipsBar.vue'
 import { useChat } from '@/composables/features/useChat'
 import { useChatStore } from '@/stores/chat'
 
@@ -121,8 +110,62 @@ const { isStreaming } = storeToRefs(chatStore)
 const { send, steer, followUp, abort } = useChat()
 
 const draft = ref('')
+/** ComposerInput 实例 ref：清空/恢复草稿用 */
+const inputRef = ref<InstanceType<typeof ComposerInput> | null>(null)
+/** 命令浮层状态（§2d @/#//） */
+const cmdOpen = ref(false)
+const cmdType = ref<'mention' | 'file' | 'slash'>('mention')
+const commandPopoverRef = ref<InstanceType<typeof CommandPopover> | null>(null)
 /** 发送中（S5）：useChat.send 的 Promise 在途 */
 const isSending = ref(false)
+
+/** ComposerInput input 事件 → 维护 draft（纯文本，用于发送判断） */
+function onInputChange(text: string): void {
+  draft.value = text
+}
+
+/** 发送成功后清空输入区（DOM + draft） */
+function clearInput(): void {
+  draft.value = ''
+  inputRef.value?.clear()
+}
+
+/** 发送失败恢复草稿到输入区 */
+function restoreInput(text: string): void {
+  draft.value = text
+  inputRef.value?.setText(text)
+}
+
+/** + 菜单选择：打开对应命令浮层（§2d @/#//） */
+function onAddSelect(type: 'attach' | 'mention' | 'file' | 'slash'): void {
+  if (type === 'attach') return // TODO: 附件上传（未来功能）
+  // 打开命令浮层（输入区符号触发为后续增强）
+  inputRef.value?.saveSelection()
+  inputRef.value?.focus()
+  cmdType.value = type === 'mention' ? 'mention' : type === 'file' ? 'file' : 'slash'
+  cmdOpen.value = true
+}
+
+/** 命令浮层选中：插 slash chip / mention chip */
+function onCmdSelect(payload: { type: 'mention' | 'file' | 'slash'; name: string }): void {
+  cmdOpen.value = false
+  inputRef.value?.focus()
+  if (payload.type === 'slash') {
+    inputRef.value?.insertSlashChip(payload.name)
+  } else {
+    inputRef.value?.insertMentionChip(payload.type === 'mention' ? '@' : '#', payload.name)
+  }
+}
+
+/** 模型切换（mock 期组件自维护状态，此处预留 runtime 对接） */
+function onModelSelect(): void {
+  // TODO: 对接 runtime model 切换
+}
+
+/** 思考等级切换（mock 期组件自维护状态，此处预留 runtime 对接） */
+function onThinkingSelect(): void {
+  // TODO: 对接 runtime thinking level 切换
+}
 
 const hasInput = computed(() => draft.value.trim().length > 0)
 /** 可发送：有输入且非 streaming 非 sending */
@@ -152,13 +195,13 @@ const placeholder = computed(() =>
 async function onSend(): Promise<void> {
   if (!canSend.value) return
   const text = draft.value
-  draft.value = ''
+  clearInput()
   isSending.value = true
   try {
     await send(text)
   } catch (e) {
     // 发送失败（hook 拦截 / ensureActive 失败 / prompt 抛错 / WS 断连）恢复草稿，避免用户输入永久丢失。
-    draft.value = text
+    restoreInput(text)
     throw e
   } finally {
     isSending.value = false
@@ -181,11 +224,11 @@ async function onFollowUp(): Promise<void> {
 async function submit(text: string, sender: (t: string) => Promise<void>): Promise<void> {
   const trimmed = text.trim()
   if (!trimmed) return
-  draft.value = ''
+  clearInput()
   try {
     await sender(trimmed)
   } catch (e) {
-    draft.value = text
+    restoreInput(text)
     throw e
   }
 }
@@ -195,8 +238,9 @@ async function onAbort(): Promise<void> {
   await abort()
 }
 
-/** 键盘：⏎ 发送/steer，Alt+⏎ follow-up/发送，⇧⏎ 换行 */
+/** 键盘：⏎ 发送/steer，Alt+⏎ follow-up/发送，⇧⏎ 换行。命令浮层 open 时优先路由到浮层 */
 function onKeydown(e: KeyboardEvent): void {
+  if (cmdOpen.value && commandPopoverRef.value?.handleKeydown(e)) return
   if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return
   e.preventDefault()
   if (e.altKey) {
