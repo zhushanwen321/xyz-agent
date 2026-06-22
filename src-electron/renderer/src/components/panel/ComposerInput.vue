@@ -9,7 +9,7 @@
     ref="elRef"
     class="composer-input min-h-[40px] max-h-[120px] overflow-y-auto px-3.5 pb-1 pt-[11px] text-[13px] leading-[1.55] text-fg outline-none"
     :class="{ 'is-empty': isEmpty }"
-    :contenteditable="canEdit"
+    :contenteditable="!disabled"
     :data-placeholder="placeholder"
     role="textbox"
     aria-multiline="true"
@@ -28,7 +28,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 
-const props = withDefaults(
+withDefaults(
   defineProps<{
     placeholder?: string
     disabled?: boolean
@@ -46,8 +46,6 @@ const composing = ref(false)
 const isEmpty = ref(true)
 /** 保存的光标 Range：命令浮层打开会夺走焦点，选中后需恢复光标再插 chip */
 let savedRange: Range | null = null
-
-const canEdit = () => !props.disabled
 
 function getEl(): HTMLDivElement | null {
   return elRef.value
