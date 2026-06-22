@@ -68,8 +68,8 @@ function getText(): string {
   while (walker.nextNode()) {
     text += (walker.currentNode as Text).textContent ?? ''
   }
-  // nbsp（chip 后的分隔空格）转普通空格
-  return text.replace(/\u00A0/g, ' ')
+  // nbsp 转普通空格；零宽空格（chip 后的可定位锚点）过滤掉
+  return text.replace(/\u00A0/g, ' ').replace(/\u200B/g, '')
 }
 
 function syncEmpty(): void {
@@ -101,6 +101,11 @@ function onKeydown(e: KeyboardEvent): void {
     }
     // Enter（无 shift）：交给 Composer 决定发送/steer/followup
     emit('keydown', e)
+    return
+  }
+  // Backspace：光标紧跟 chip 时整体删 chip（§2e spec：backspace 一次删整块）
+  if (e.key === 'Backspace' && handleBackspaceOnChip()) {
+    e.preventDefault()
     return
   }
   emit('keydown', e)
@@ -141,6 +146,51 @@ function restoreSelection(): void {
 
 // ============ 富文本 chip（§2e slash / §2d mention） ============
 
+/** 判断节点是否是纯空白 spacer（nbsp/零宽空格/空文本节点） */
+function isSpacerNode(node: Node | null): boolean {
+  if (!node || node.nodeType !== Node.TEXT_NODE) return false
+  const t = node.textContent ?? ''
+  return t === '\u00A0' || t === '\u200B' || t === ''
+}
+
+/**
+ * Backspace 紧跟 chip 时整体删 chip（§2e：backspace 一次删整块）。
+ * 检测：光标前的节点是 chip（中间最多一个 spacer 文本节点）。
+ * 返回 true 表示已处理（调用方 preventDefault）。
+ */
+function handleBackspaceOnChip(): boolean {
+  const el = getEl()
+  if (!el) return false
+  const sel = window.getSelection()
+  if (!sel || !sel.isCollapsed || sel.rangeCount === 0) return false
+  if (!el.contains(sel.anchorNode)) return false
+  const range = sel.getRangeAt(0)
+  const container = range.startContainer
+  const offset = range.startOffset
+  let prev: Node | null = null
+  if (container.nodeType === Node.TEXT_NODE) {
+    const text = container.textContent ?? ''
+    if (offset === 0) {
+      prev = container.previousSibling
+    } else if (isSpacerNode(container) && offset === text.length) {
+      // 光标在 spacer 末尾：跳过 spacer 看前一个节点
+      prev = container.previousSibling
+    } else {
+      return false // 正常字符删除，交给浏览器
+    }
+  } else {
+    prev = container.childNodes[offset - 1] ?? null
+  }
+  if (prev && prev.nodeType === Node.ELEMENT_NODE) {
+    const ep = prev as HTMLElement
+    if (ep.classList.contains('slash-chip') || ep.classList.contains('mention-chip')) {
+      removeChipNode(ep)
+      return true
+    }
+  }
+  return false
+}
+
 /** 把光标定位到指定节点之后 */
 function placeCursorAfter(node: Node): void {
   const range = document.createRange()
@@ -151,11 +201,11 @@ function placeCursorAfter(node: Node): void {
   sel?.addRange(range)
 }
 
-/** 移除 chip + 相邻的分隔空格（nbsp） */
+/** 移除 chip + 相邻的 spacer（nbsp/零宽空格/空文本节点） */
 function removeChipNode(chip: Node): void {
-  const next = chip.nextSibling
-  if (next && next.nodeType === Node.TEXT_NODE && next.textContent === '\u00A0') {
-    next.parentNode?.removeChild(next)
+  const next = chip.nextSibling as Node | null
+  if (isSpacerNode(next)) {
+    next?.parentNode?.removeChild(next)
   }
   chip.parentNode?.removeChild(chip)
   onInput()
@@ -190,8 +240,8 @@ function insertSlashChip(command: string): void {
   chip.appendChild(makeXButton(chip))
   // chip 必须在输入流最前（slash 命令是操作模式前缀）
   el.insertBefore(chip, el.firstChild)
-  // chip 后补 nbsp 分隔，光标停其后
-  const spacer = document.createTextNode('\u00A0')
+  // chip 后补零宽空格（不可见但可定位光标，输入文字正常追加，getText 过滤）
+  const spacer = document.createTextNode('\u200B')
   chip.after(spacer)
   placeCursorAfter(spacer)
   onInput()
@@ -215,7 +265,7 @@ function insertMentionChip(type: '@' | '#', name: string): void {
     range.deleteContents()
     range.insertNode(chip)
   }
-  const spacer = document.createTextNode('\u00A0')
+  const spacer = document.createTextNode('\u200B')
   chip.after(spacer)
   placeCursorAfter(spacer)
   onInput()

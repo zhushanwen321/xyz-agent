@@ -9,13 +9,12 @@
   -->
   <div class="composer mx-3.5">
     <div class="composer-box relative rounded-lg border bg-bg-input" :class="boxClass">
-      <!-- 命令浮层（§2d @/#//）：就地在 composer-box 上方，键盘路由见 onKeydown -->
+      <!-- 命令浮层（§2d @/#//）：reka-ui Popover portal 到 body，键盘路由见 onKeydown -->
       <CommandPopover
         ref="commandPopoverRef"
-        :open="cmdOpen"
+        v-model:open="cmdOpen"
         :type="cmdType"
         @select="onCmdSelect"
-        @close="cmdOpen = false"
       />
       <!-- 已附上下文 chip 行（§2f，hover 出详情列表）。mock 演示始终显示，runtime 后按实际附件显隐 -->
       <ContextChipsBar />
