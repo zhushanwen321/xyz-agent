@@ -104,6 +104,18 @@
 
     <!-- 搜索浮层（⌘K 触发的全局 Overlay，spec §搜索浮层剥离） -->
     <SearchModal v-model:open="searchOpen" />
+
+    <RenameSessionDialog
+      v-model:open="renameOpen"
+      :session-id="targetSessionId"
+      @confirm="onConfirmRename"
+    />
+    <DeleteSessionDialog
+      v-model:open="deleteOpen"
+      :session-id="targetSessionId"
+      :session-label="targetSessionLabel"
+      @confirm="onConfirmDelete"
+    />
   </div>
 </template>
 
@@ -121,6 +133,8 @@ import { useSidebar } from '@/composables/features/useSidebar'
 import SegmentedTab from './SegmentedTab.vue'
 import SessionList from './SessionList.vue'
 import FileView from './FileView.vue'
+import RenameSessionDialog from './RenameSessionDialog.vue'
+import DeleteSessionDialog from './DeleteSessionDialog.vue'
 import { fixtureFileChanges } from '@/api/mock/data'
 
 const navigation = useNavigationStore()
@@ -130,6 +144,15 @@ const { selectSession, newSession, goOverview, loadSessions, derivedStatus, rena
 
 /** 搜索浮层开关（⌘K / nav 搜索按钮触发，spec §搜索浮层） */
 const searchOpen = ref(false)
+
+/** Dialog 状态 */
+const renameOpen = ref(false)
+const deleteOpen = ref(false)
+const targetSessionId = ref('')
+
+const targetSessionLabel = computed(() =>
+  session.list.find((s) => s.id === targetSessionId.value)?.label ?? '',
+)
 
 /** 当前是否处于 Overview view（按钮转 accent 态，spec §Overview 入口） */
 const isOverviewActive = computed(() => navigation.current.view === 'overview')
@@ -158,17 +181,21 @@ async function onNewSession(): Promise<void> {
   await newSession()
 }
 
-/** 重命名会话（v1 用原生 prompt，后续替换为项目 Dialog 组件） */
 async function onRenameSession(id: string): Promise<void> {
-  const current = session.list.find((s) => s.id === id)?.label ?? ''
-  const label = window.prompt('重命名会话', current)?.trim()
-  if (!label) return
-  await renameSession(id, label)
+  targetSessionId.value = id
+  renameOpen.value = true
 }
 
-/** 删除会话（二次确认） */
 async function onDeleteSession(id: string): Promise<void> {
-  if (!window.confirm('确定删除此会话？此操作不可撤销。')) return
+  targetSessionId.value = id
+  deleteOpen.value = true
+}
+
+async function onConfirmRename(payload: { sessionId: string; label: string }): Promise<void> {
+  await renameSession(payload.sessionId, payload.label)
+}
+
+async function onConfirmDelete(id: string): Promise<void> {
   await deleteSession(id)
 }
 

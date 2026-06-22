@@ -2,7 +2,6 @@
   <!--
     展示组件 · 单会话项（draft-five-states §1）。
     flex [dot] [main] [time]；active = surface-2 背景（Card-Active，design-system §2）+ inset accent-ring。
-    hover 操作（重命名/删除）属 DEFERRED（G2-005/G-013），按 hide 规则不渲染入口。
     状态点 5 态（D6）：running/waiting 脉冲，done/stopped/error 静态。
   -->
   <div
