@@ -11,7 +11,7 @@
     @click="emit('select', session.id)"
   >
     <span class="size-2 mt-1 shrink-0 rounded-full" :class="dotClass" />
-    <div class="min-w-0">
+    <div class="min-w-0 flex-1">
       <div
         class="truncate text-[12.5px] leading-[1.35]"
         :class="active ? 'text-accent' : 'text-fg'"
@@ -19,12 +19,13 @@
         {{ session.label }}
       </div>
       <div class="mt-0.5 truncate font-mono text-[10.5px] leading-[1.3] text-subtle">
-        <span>{{ dirName }}</span>
-        <span v-if="session.gitBranch" class="opacity-60"> · </span>
-        <span v-if="session.gitBranch" class="text-accent">{{ session.gitBranch }}</span>
+        {{ dirName }}
+      </div>
+      <div v-if="session.gitBranch" class="mt-0.5 truncate font-mono text-[10.5px] leading-[1.3] text-accent">
+        {{ session.gitBranch }}
       </div>
     </div>
-    <span class="shrink-0 pt-0.5 font-mono text-[10px] leading-[1.35] text-subtle group-hover:invisible">
+    <span class="shrink-0 pt-1 font-mono text-[10px] leading-[1.35] text-subtle group-hover:invisible">
       {{ timeLabel }}
     </span>
   </div>
