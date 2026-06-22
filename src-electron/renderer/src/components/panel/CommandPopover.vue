@@ -18,7 +18,9 @@
       side="top"
       align="start"
       :side-offset="6"
+      :collision-padding="8"
       class="w-[320px] overflow-hidden p-0"
+      @keydown="onContentKeydown"
     >
       <!-- filter header -->
       <div class="flex items-center gap-1.5 border-b border-border bg-white/[0.015] px-2.5 py-1.5 font-mono text-[11px] text-subtle">
@@ -59,7 +61,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, markRaw, ref, watch } from 'vue'
+import { computed, markRaw, onBeforeUnmount, ref, watch } from 'vue'
 import { Braces, FileText, Folder, Star, Terminal, Wrench } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
@@ -173,6 +175,28 @@ function handleKeydown(e: KeyboardEvent): boolean {
     return true
   }
   return false
+}
+
+/**
+ * PopoverContent 自身 keydown 监听：reka-ui 打开浮层后 auto-focus 到内容，
+ * 键盘事件直达 content 不经过 ComposerInput。这里直接调 handleKeydown 完成导航。
+ */
+function onContentKeydown(e: KeyboardEvent): void {
+  handleKeydown(e)
+}
+
+/**
+ * window keydown 监听（capture 阶段）：兜底保障，即使 reka-ui 把焦点抢到 content，
+ * 方向键/Enter/Esc 仍能被 handleKeydown 处理。仅在 open 时生效。
+ */
+function onWindowKeydown(e: KeyboardEvent): void {
+  if (!props.open) return
+  handleKeydown(e)
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('keydown', onWindowKeydown, true)
+  onBeforeUnmount(() => window.removeEventListener('keydown', onWindowKeydown, true))
 }
 
 // 浮层打开时重置高亮到第一项；type 切换也重置
