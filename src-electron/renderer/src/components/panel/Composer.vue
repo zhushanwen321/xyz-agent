@@ -14,32 +14,48 @@
         v-model="draft"
         :placeholder="placeholder"
         :disabled="isSending"
-        class="composer-area min-h-[40px] max-h-[120px] border-0 bg-transparent px-3.5 pb-1 pt-[11px] text-[13px] leading-[1.55] text-fg outline-none ring-0 focus-visible:ring-0 focus-visible:ring-offset-0"
+        class="composer-area min-h-[40px] max-h-[120px] resize-none border-0 bg-transparent px-3.5 pb-1 pt-[11px] text-[13px] leading-[1.55] text-fg outline-none ring-0 focus-visible:ring-0 focus-visible:ring-offset-0"
         @keydown="onKeydown"
       />
 
       <!-- 工具条（panel/spec §composer line 51）：上下文/模型/thinking-level 展示型 + 发送位三态。 -->
       <div class="composer-bar flex flex-wrap items-center justify-end gap-0.5 px-2.5 pb-2">
-        <!-- 上下文容量（展示型，mock 无 token 计数源，显 0·0% 占位；容量 popover §2a DEFERRED） -->
-        <span class="inline-flex items-center gap-[5px] px-2 py-1.5 text-[11.5px] text-subtle">
+        <!-- + 添加内容（左锚定，spec §1 ①） -->
+        <Button
+          variant="ghost"
+          size="icon"
+          class="size-[28px] shrink-0 rounded-sm text-subtle transition-colors hover:bg-surface-hover hover:text-muted"
+          title="添加内容"
+        >
+          <Plus class="size-4" />
+        </Button>
+        <span class="flex-1" />
+        <!-- 上下文容量（spec §2a：hover 出容量 popover） -->
+        <Button
+          variant="ghost"
+          class="h-7 gap-[5px] rounded-sm px-2 text-[11.5px] text-subtle hover:text-muted"
+          title="上下文容量"
+        >
           <span class="tabular-nums">0</span>
           <span class="block size-[3px] rounded-full bg-[var(--subtle)] opacity-50"></span>
           <span>0%</span>
-        </span>
-        <!-- 模型（展示型，切换 popover §2b DEFERRED） -->
-        <span
-          class="cursor-default select-none px-2 py-1.5 text-[11.5px] text-subtle/80"
-          title="模型选择功能开发中"
+        </Button>
+        <!-- 模型（spec §2b：click 出模型切换 popover） -->
+        <Button
+          variant="ghost"
+          class="h-7 rounded-sm px-2 text-[11.5px] text-subtle/80 hover:text-muted"
+          title="模型选择"
         >
           sonnet-4.5
-        </span>
-        <!-- thinking-level（展示型，切换 §2c DEFERRED；draft 默认最高） -->
-        <span
-          class="cursor-default select-none px-2 py-1.5 text-[11.5px] text-subtle/80"
-          title="思考等级切换功能开发中"
+        </Button>
+        <!-- 思考等级（spec §2c：click 出 6 级 popover） -->
+        <Button
+          variant="ghost"
+          class="h-7 rounded-sm px-2 text-[11.5px] text-subtle/80 hover:text-muted"
+          title="思考等级"
         >
           思考 最高
-        </span>
+        </Button>
 
         <!-- 发送位三态：S6 streaming→stop / S5 sending→spinner / S1·S2 idle→send -->
         <Button
@@ -77,11 +93,11 @@
     <div class="px-1 pt-1.5 font-mono text-[10px] leading-tight text-subtle">
       <span v-if="isStreaming">
         <kbd class="rounded-sm border border-[var(--border)] bg-[var(--surface-hover)] px-1 py-px">⏎</kbd> 追加 steer ·
-        <kbd class="rounded-sm border border-[var(--border)] bg-[var(--surface-hover)] px-1 py-px">Alt+⏎</kbd> 新轮 followup ·
-        <kbd class="rounded-sm border border-[var(--border)] bg-[var(--surface-hover)] px-1 py-px">⇧⏎</kbd> 换行
+        <kbd class="rounded-sm border border-[var(--border)] bg-[var(--surface-hover)] px-1 py-px">Alt + ⏎</kbd> 新轮 followup ·
+        <kbd class="rounded-sm border border-[var(--border)] bg-[var(--surface-hover)] px-1 py-px">⇧ + ⏎</kbd> 换行
       </span>
       <span v-else>
-        <kbd class="rounded-sm border border-[var(--border)] bg-[var(--surface-hover)] px-1 py-px">⏎</kbd> 发送 · <kbd class="rounded-sm border border-[var(--border)] bg-[var(--surface-hover)] px-1 py-px">⇧⏎</kbd> 换行
+        <kbd class="rounded-sm border border-[var(--border)] bg-[var(--surface-hover)] px-1 py-px">⏎</kbd> 发送 · <kbd class="rounded-sm border border-[var(--border)] bg-[var(--surface-hover)] px-1 py-px">⇧ + ⏎</kbd> 换行
       </span>
     </div>
   </div>
@@ -89,7 +105,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { ArrowRight, Loader2, Square } from '@lucide/vue'
+import { ArrowRight, Loader2, Plus, Square } from '@lucide/vue'
 import { storeToRefs } from 'pinia'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
