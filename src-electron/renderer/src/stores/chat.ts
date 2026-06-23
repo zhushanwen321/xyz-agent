@@ -29,16 +29,50 @@ import type {
   ToolCall,
 } from '@xyz-agent/shared'
 
+/**
+ * 自动重试运行态（W06-B）。auto_retry_start 设置，auto_retry_end 清空。
+ * 对应 event-adapter message.auto_retry_start payload（attempt/maxAttempts/delayMs/errorMessage）。
+ */
+export interface RetryState {
+  attempt?: number
+  maxAttempts?: number
+  delayMs?: number
+  errorMessage?: string
+}
+
+/**
+ * 消息队列运行态（W06-B）。auto_retry 与 steer/follow_up 排队无关；
+ * queue_update 反映 pi 队列里的 steering（steer 排队）和 followUp（follow-up 排队）。
+ */
+export interface QueueState {
+  steering?: string[]
+  followUp?: string[]
+}
+
 export const useChatStore = defineStore('chat', () => {
   /** 按 sessionId 分区的消息表（UC-2 隔离） */
   const messages = ref<Map<string, Message[]>>(new Map())
   /** 已 hydrate 的 session（避免切换时重复注入历史） */
   const hydrated = ref<Set<string>>(new Set())
   const isStreaming = ref(false)
+  /** 按 sessionId 分区的自动重试态（W06-B，auto_retry_start/end） */
+  const retryStates = ref<Map<string, RetryState>>(new Map())
+  /** 按 sessionId 分区的消息队列态（W06-B，queue_update） */
+  const queueStates = ref<Map<string, QueueState>>(new Map())
 
   /** 取指定 session 的消息数组（空时返回空数组，不写入 Map） */
   function getMessages(sessionId: string): Message[] {
     return messages.value.get(sessionId) ?? []
+  }
+
+  /** 取指定 session 的自动重试态（无则 undefined） */
+  function getRetryState(sessionId: string): RetryState | undefined {
+    return retryStates.value.get(sessionId)
+  }
+
+  /** 取指定 session 的消息队列态（无则 undefined） */
+  function getQueueState(sessionId: string): QueueState | undefined {
+    return queueStates.value.get(sessionId)
   }
 
   /** 是否已加载历史（用于决定是否调 api.chat.getHistory） */
@@ -225,6 +259,51 @@ export const useChatStore = defineStore('chat', () => {
         // W06 的 retry/queue 提示才需要驱动 UI 指示位。
         break
       }
+      case 'message.auto_retry_start': {
+        // W06-B：自动重试开始。写 retryStates[sessionId]（UI 据此显重试指示位）。
+        // payload（event-adapter）：{ attempt?, maxAttempts?, delayMs?, errorMessage? }。
+        const state: RetryState = {}
+        const attempt = readNumber(msg.payload, 'attempt')
+        if (attempt !== undefined) state.attempt = attempt
+        const maxAttempts = readNumber(msg.payload, 'maxAttempts')
+        if (maxAttempts !== undefined) state.maxAttempts = maxAttempts
+        const delayMs = readNumber(msg.payload, 'delayMs')
+        if (delayMs !== undefined) state.delayMs = delayMs
+        const errorMessage = readString(msg.payload, 'errorMessage')
+        if (errorMessage) state.errorMessage = errorMessage
+        retryStates.value = new Map(retryStates.value).set(sessionId, state)
+        break
+      }
+      case 'message.auto_retry_end': {
+        // W06-B：自动重试结束。清空 retryStates[sessionId]（success/finalError 可选）。
+        // 不可变 delete：新建 Map 保证响应式触发。
+        if (retryStates.value.has(sessionId)) {
+          const nextMap = new Map(retryStates.value)
+          nextMap.delete(sessionId)
+          retryStates.value = nextMap
+        }
+        break
+      }
+      case 'message.queue_update': {
+        // W06-B：消息队列更新。payload（event-adapter）：{ steering?, followUp? }。
+        // 存数组字段，UI 据此显排队气泡（steer/follow-up pending 提示）。
+        const state: QueueState = {}
+        const steering = readStringArray(msg.payload, 'steering')
+        if (steering) state.steering = steering
+        const followUp = readStringArray(msg.payload, 'followUp')
+        if (followUp) state.followUp = followUp
+        // 两字段都缺：清空该 session 的队列态（避免残留）
+        if (!state.steering && !state.followUp) {
+          if (queueStates.value.has(sessionId)) {
+            const nextMap = new Map(queueStates.value)
+            nextMap.delete(sessionId)
+            queueStates.value = nextMap
+          }
+        } else {
+          queueStates.value = new Map(queueStates.value).set(sessionId, state)
+        }
+        break
+      }
       case 'message.stream_error': {
         // FR-5: streaming 错误（pi message_update{error}）。若无前置 assistant 流（prompt
         // 级失败/流启动前即报错），合成 error 消息，避免错误内容丢失（违反规则 #3）。
@@ -323,7 +402,11 @@ export const useChatStore = defineStore('chat', () => {
   return {
     messages,
     isStreaming,
+    retryStates,
+    queueStates,
     getMessages,
+    getRetryState,
+    getQueueState,
     isHydrated,
     hydrate,
     appendUser,
@@ -386,4 +469,10 @@ function readUsage(payload: Record<string, unknown>): { inputTokens: number; out
 function readNumber(payload: Record<string, unknown>, key: string): number | undefined {
   const v = payload[key]
   return typeof v === 'number' && Number.isFinite(v) ? v : undefined
+}
+
+/** 读 payload 上的字符串数组字段（queue_update.steering/followUp） */
+function readStringArray(payload: Record<string, unknown>, key: string): string[] | undefined {
+  const v = payload[key]
+  return Array.isArray(v) && v.every((x) => typeof x === 'string') ? v : undefined
 }

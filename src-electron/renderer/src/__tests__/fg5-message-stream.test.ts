@@ -254,6 +254,49 @@ describe('FG5 chat store 块类型扩展', () => {
     expect(store.getMessages('sx')[0].status).toBe('streaming')
   })
 
+  // ── W06-B: store 级状态（retry/queue）───────────────────────────
+
+  it('auto_retry_start 设置 retryState，auto_retry_end 清空', () => {
+    const store = useChatStore()
+    expect(store.getRetryState('sx')).toBeUndefined()
+    store.appendAssistantChunk('sx', {
+      type: 'message.auto_retry_start',
+      payload: { sessionId: 'sx', attempt: 2, maxAttempts: 3, delayMs: 500, errorMessage: 'timeout' },
+    })
+    expect(store.getRetryState('sx')).toEqual({ attempt: 2, maxAttempts: 3, delayMs: 500, errorMessage: 'timeout' })
+    store.appendAssistantChunk('sx', {
+      type: 'message.auto_retry_end',
+      payload: { sessionId: 'sx', success: true, attempt: 2 },
+    })
+    expect(store.getRetryState('sx')).toBeUndefined()
+  })
+
+  it('queue_update 设置 queueState（steering/followUp）', () => {
+    const store = useChatStore()
+    expect(store.getQueueState('sx')).toBeUndefined()
+    store.appendAssistantChunk('sx', {
+      type: 'message.queue_update',
+      payload: { sessionId: 'sx', steering: ['再快一点'], followUp: ['下一步'] },
+    })
+    expect(store.getQueueState('sx')).toEqual({ steering: ['再快一点'], followUp: ['下一步'] })
+    // 两字段都缺 → 清空
+    store.appendAssistantChunk('sx', {
+      type: 'message.queue_update',
+      payload: { sessionId: 'sx' },
+    })
+    expect(store.getQueueState('sx')).toBeUndefined()
+  })
+
+  it('retry/queue 状态按 session 隔离（互不串扰）', () => {
+    const store = useChatStore()
+    store.appendAssistantChunk('sa', { type: 'message.auto_retry_start', payload: { sessionId: 'sa', attempt: 1 } })
+    store.appendAssistantChunk('sb', { type: 'message.queue_update', payload: { sessionId: 'sb', steering: ['x'] } })
+    expect(store.getRetryState('sa')?.attempt).toBe(1)
+    expect(store.getRetryState('sb')).toBeUndefined()
+    expect(store.getQueueState('sb')?.steering).toEqual(['x'])
+    expect(store.getQueueState('sa')).toBeUndefined()
+  })
+
   it('mock getHistory 返回 fixture 全字段（G2-006 契约）', async () => {
     const s1 = await mockApi.chat.getHistory('s1')
     expect(s1.length).toBeGreaterThanOrEqual(2)
