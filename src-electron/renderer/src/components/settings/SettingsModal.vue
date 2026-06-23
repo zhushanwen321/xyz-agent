@@ -76,7 +76,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { Settings, Sparkles, Bot, Blocks, SlidersHorizontal, X } from '@lucide/vue'
 import {
   Dialog,
@@ -88,7 +88,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { settings } from '@/api'
+import { settings, type SystemSettings } from '@/api'
 import type { ProviderInfo, SkillInfo, AgentInfo } from '@xyz-agent/shared'
 import ProviderPage from './ProviderPage.vue'
 import SkillPage from './SkillPage.vue'
@@ -96,18 +96,14 @@ import AgentPage from './AgentPage.vue'
 import ExtensionPage from './ExtensionPage.vue'
 import SystemPage from './SystemPage.vue'
 
+// ExtensionPage 模板用到 ext.tools（fixture FixtureExtension 有此字段）；
+// shared 的 ExtensionInfo 暂无 tools，real 订阅实装（第3项）时再统一，故本地保留此类型。
 interface ExtensionItem {
   name: string
   version: string
   description: string
   enabled: boolean
   tools: string[]
-}
-
-interface SystemSettings {
-  locale: 'zh-CN' | 'en-US'
-  theme: 'light' | 'dark' | 'system'
-  themePreset: string
 }
 
 const menus = [
@@ -124,28 +120,33 @@ const emit = defineEmits<{ 'update:open': [value: boolean] }>()
 const activeMenu = ref<(typeof menus)[number]['id']>('provider')
 const currentMenu = computed(() => menus.find((m) => m.id === activeMenu.value) ?? menus[0])
 
-// 数据状态
+// 数据状态（订阅驱动：组件挂载即注册，sendInitialState/广播推回数据）
 const providers = ref<ProviderInfo[]>([])
 const skills = ref<SkillInfo[]>([])
 const agents = ref<AgentInfo[]>([])
 const extensions = ref<ExtensionItem[]>([])
 const system = ref<SystemSettings>({ locale: 'zh-CN', theme: 'dark', themePreset: 'cold-blue' })
 
-// 打开时加载数据
-watch(() => props.open, async (isOpen) => {
+const unsubs: Array<() => void> = []
+
+onMounted(async () => {
+  // 订阅常驻：providers/skills/agents/extensions 由 sendInitialState + 变更广播驱动
+  unsubs.push(settings.onProviders((p) => { providers.value = p as ProviderInfo[] }))
+  unsubs.push(settings.onSkills((s) => { skills.value = s as SkillInfo[] }))
+  unsubs.push(settings.onAgents((a) => { agents.value = a as AgentInfo[] }))
+  unsubs.push(settings.onExtensions((e) => { extensions.value = e as ExtensionItem[] }))
+  // system 是纯前端偏好（localStorage），挂载时同步读
+  system.value = await settings.getSystem()
+})
+
+onBeforeUnmount(() => { unsubs.forEach((u) => u()) })
+
+// 打开时可选刷新 providers（拿最新）；skills/agents 靠订阅，不再主动拉
+watch(() => props.open, (isOpen) => {
   if (!isOpen) return
-  const [p, s, a, e, sys] = await Promise.allSettled([
-    settings.getProviders(),
-    settings.getSkills(),
-    settings.getAgents(),
-    settings.getExtensions(),
-    settings.getSystem(),
-  ])
-  if (p.status === 'fulfilled') providers.value = p.value
-  if (s.status === 'fulfilled') skills.value = s.value
-  if (a.status === 'fulfilled') agents.value = a.value
-  if (e.status === 'fulfilled') extensions.value = e.value
-  if (sys.status === 'fulfilled') system.value = sys.value
+  settings.listProviders()
+    .then((p) => { providers.value = p })
+    .catch(() => { /* 订阅会兜底 */ })
 })
 
 function getItemCount(id: string): number {

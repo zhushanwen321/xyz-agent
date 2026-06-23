@@ -9,17 +9,15 @@
  *
  * 依赖方向：无（不 import transport/events/pending，独立内存实现）。
  */
-import type { Message, ServerMessage, SessionSummary, ProviderInfo, SkillInfo, AgentInfo } from '@xyz-agent/shared'
+import type { Message, ServerMessage, SessionSummary } from '@xyz-agent/shared'
 import { createSession, fixtureMessages, fixtureSessions } from './data'
 import {
   fixtureProviders,
   fixtureSkills,
   fixtureAgents,
   fixtureExtensions,
-  fixtureSystem,
-  type FixtureExtension,
-  type FixtureSystemSettings,
 } from './settings-data'
+import { MOCK_MODELS, type MockModel } from './composer-data'
 
 /** 流式时序（ms）—— 仅用于视觉演示节奏，不影响契约 */
 const TIMING = {
@@ -187,36 +185,172 @@ export const chat = {
   },
 }
 
-/* ── Settings mock ── */
+/* ── 订阅工厂：订阅型 mock（onProviders/onSkills/...）共用 ── */
 
-export const settings = {
-  async getProviders(): Promise<ProviderInfo[]> {
+type GlobalHandler<T> = (data: T) => void
+
+/**
+ * mock 订阅工厂：注册后微任务触发一次初始值（模拟 sendInitialState 连接即推）。
+ * 请求型接口（listProviders / scan* / discoverModels）不依赖它，直接返 fixture。
+ */
+function makeMockSubscription<T>(initial: () => T) {
+  const handlers = new Set<GlobalHandler<T>>()
+  return {
+    subscribe(handler: GlobalHandler<T>): () => void {
+      handlers.add(handler)
+      // 微任务触发初始帧（模拟连接后推送；避免同步触发时组件未挂载完）
+      queueMicrotask(() => handler(initial()))
+      return () => {
+        handlers.delete(handler)
+      }
+    },
+  }
+}
+
+/* ── Config mock（请求 + 订阅 + 动作）── */
+
+// 订阅型 sub（注册即触发初始值）；请求型直接返 fixture 深拷贝
+const providersSub = makeMockSubscription(() =>
+  fixtureProviders.map((p) => ({ ...p, models: p.models.map((m) => ({ ...m })) })),
+)
+const skillsSub = makeMockSubscription(() => fixtureSkills.map((s) => ({ ...s })))
+const agentsSub = makeMockSubscription(() => fixtureAgents.map((a) => ({ ...a })))
+const defaultsSub = makeMockSubscription(() => 'Anthropic/claude-sonnet-4.5')
+
+export const config = {
+  // 请求型：直接返 fixture 深拷贝（不依赖 sub）
+  async listProviders() {
     await sleep(TIMING.ack)
     return fixtureProviders.map((p) => ({ ...p, models: p.models.map((m) => ({ ...m })) }))
   },
-
-  async getSkills(): Promise<SkillInfo[]> {
+  async scanSkills(_sources: string[]) {
     await sleep(TIMING.ack)
     return fixtureSkills.map((s) => ({ ...s }))
   },
-
-  async getAgents(): Promise<AgentInfo[]> {
+  async scanAgents(_sources: string[]) {
     await sleep(TIMING.ack)
     return fixtureAgents.map((a) => ({ ...a }))
   },
-
-  async getExtensions(): Promise<FixtureExtension[]> {
+  async discoverModels(_req: unknown) {
     await sleep(TIMING.ack)
-    return fixtureExtensions.map((e) => ({ ...e }))
+    return { success: true, models: [] }
   },
-
-  async getSystem(): Promise<FixtureSystemSettings> {
+  // 订阅型
+  onProviders: (h: GlobalHandler<unknown>) => providersSub.subscribe(h),
+  onSkills: (h: GlobalHandler<unknown>) => skillsSub.subscribe(h),
+  onAgents: (h: GlobalHandler<unknown>) => agentsSub.subscribe(h),
+  onDefaults: (h: GlobalHandler<unknown>) => defaultsSub.subscribe(h),
+  // 动作型（mock 仅 ack，状态变更不广播——real 模式由订阅推回）
+  async setProvider(_providerId: string, _data: unknown) {
     await sleep(TIMING.ack)
-    return { ...fixtureSystem }
   },
-
-  async updateSystem(patch: Partial<FixtureSystemSettings>): Promise<void> {
+  async deleteProvider(_providerId: string) {
     await sleep(TIMING.ack)
-    Object.assign(fixtureSystem, patch)
+  },
+  async setSkill(_skill: unknown) {
+    await sleep(TIMING.ack)
+  },
+  async deleteSkill(_skillId: string) {
+    await sleep(TIMING.ack)
+  },
+  async setAgent(_agent: unknown) {
+    await sleep(TIMING.ack)
+  },
+  async deleteAgent(_agentId: string) {
+    await sleep(TIMING.ack)
+  },
+}
+
+/* ── Model mock ── */
+
+function mockModelToInfo(m: MockModel): {
+  id: string
+  name: string
+  provider: string
+  providerColor?: string
+  tag?: string
+} {
+  return { id: m.id, name: m.name, provider: m.provider, providerColor: m.providerColor, tag: m.tag }
+}
+
+const modelsSub = makeMockSubscription(() => MOCK_MODELS.map(mockModelToInfo))
+
+export const model = {
+  onModels: (h: GlobalHandler<unknown>) => modelsSub.subscribe(h),
+  async switchModel(_sessionId: string, _provider: string, _modelId: string) {
+    await sleep(TIMING.ack)
+  },
+}
+
+/* ── Extension mock ── */
+
+const extensionsSub = makeMockSubscription(() => fixtureExtensions.map((e) => ({ ...e })))
+
+export const extension = {
+  onExtensions: (h: GlobalHandler<unknown>) => extensionsSub.subscribe(h),
+  async toggle(_name: string, _enabled: boolean) {
+    await sleep(TIMING.ack)
+  },
+}
+
+/* ── Plugin mock（订阅骨架，无 fixture；第3项真实集成补数据）── */
+
+const pluginsSub = makeMockSubscription((): unknown[] => [])
+
+export const plugin = {
+  onPlugins: (h: GlobalHandler<unknown>) => pluginsSub.subscribe(h),
+}
+
+/* ── Settings mock（对齐新契约：转发 config/extension 订阅 + localStorage 偏好）── */
+/* 必须在 config/extension 块之后（转发引用它们） */
+
+const SYSTEM_KEY = 'xyz-agent:system-settings'
+
+export const settings = {
+  // 订阅（转发到 mock sub）
+  onProviders: config.onProviders,
+  onSkills: config.onSkills,
+  onAgents: config.onAgents,
+  onExtensions: extension.onExtensions,
+  onDefaults: config.onDefaults,
+  // 请求
+  listProviders: config.listProviders,
+  // 动作
+  setProvider: config.setProvider,
+  // 纯前端偏好（localStorage，与 real 一致）
+  async getSystem(): Promise<{
+    locale: 'zh-CN' | 'en-US'
+    theme: 'light' | 'dark' | 'system'
+    themePreset: string
+  }> {
+    const raw = localStorage.getItem(SYSTEM_KEY)
+    let parsed: Record<string, unknown> = {}
+    if (raw) {
+      try {
+        parsed = JSON.parse(raw) as Record<string, unknown>
+      } catch {
+        // 数据损坏：显式回退到默认值（空对象 → 下行 spread 自动用默认兜底）
+        parsed = {}
+      }
+    }
+    return {
+      locale: 'zh-CN',
+      theme: 'dark',
+      themePreset: 'cold-blue',
+      ...parsed,
+    }
+  },
+  async updateSystem(patch: Record<string, unknown>): Promise<void> {
+    const raw = localStorage.getItem(SYSTEM_KEY)
+    let cur: Record<string, unknown> = {}
+    if (raw) {
+      try {
+        cur = JSON.parse(raw) as Record<string, unknown>
+      } catch {
+        // 数据损坏：显式回退到默认值（空对象 → 下行 spread 自动用 patch 兜底）
+        cur = {}
+      }
+    }
+    localStorage.setItem(SYSTEM_KEY, JSON.stringify({ ...cur, ...patch }))
   },
 }
