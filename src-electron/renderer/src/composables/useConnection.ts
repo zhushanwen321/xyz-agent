@@ -24,16 +24,17 @@ import * as events from '../api/events'
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting'
 
 /**
- * 入站消息分发器（features 层串联 transport→pending/events 的唯一桥）。 [HISTORICAL]
+ * 入站消息分发器（features 层串联 transport→pending/events 的唯一桥）。
  *
- * ws-client.onMessage 是单槽回调，零调用方时渲染层退化为「只写不读」：
- * pending.resolve/reject 永不触发 → await chatApi.send/getHistory/abort 永挂；
- * events.dispatch 永不触发 → streamSubscribe handler 永不触发。
- *
- * 本函数对每条入站 ServerMessage：
+ * 对每条入站 ServerMessage：
  *   1. 若 msg.id 命中 pending → resolve（普通响应）/ reject（error envelope）
- *   2. 按 payload.sessionId 派发到 events（触发 streamSubscribe handler）
- * 两者独立：一条 message.status 既 resolve send 的 pending，又安全地走 dispatch（store 无此 case→no-op）。
+ *   2. 按 payload.sessionId 是否存在分流：
+ *      - 有 sessionId → events.dispatchSession（session 通道，CLAUDE.md line 98 隔离）
+ *      - 无 sessionId → events.dispatchGlobal（global 通道，config.* 及 model.list 等广播）
+ *
+ * session 隔离规则不变：session 级消息仍按 sessionId 路由；新增的是全局通道，
+ * 承接 sendInitialState 推送的 7 条无 sessionId server-push（config.providers/model.list 等），
+ * 不再静默丢弃。两通道互不串扰。
  */
 function routeInbound(msg: ServerMessage): void {
   if (msg.id) {
@@ -45,7 +46,11 @@ function routeInbound(msg: ServerMessage): void {
     }
   }
   const sid = typeof msg.payload?.sessionId === 'string' ? msg.payload.sessionId : undefined
-  if (sid) events.dispatch(sid, msg)
+  if (sid) {
+    events.dispatchSession(sid, msg)
+  } else {
+    events.dispatchGlobal(msg)
+  }
 }
 
 let dispatcherInstalled = false
