@@ -1,20 +1,22 @@
 /**
  * MessageStream 回合分组纯逻辑（R2 logic 层，纯函数无副作用）。
  *
- * 数据模型：chat store 的 messages 是扁平 Message[]（user/assistant 交替）。
+ * 数据模型：chat store 的 messages 是扁平 Message[]（user/assistant/system 交替）。
  * 渲染模型（draft-message-stream §4）：一个「turn」= user 气泡 + 其后所有 assistant 块。
  * assistant 的 thinking/toolCalls 折进 trace，content 作收尾 summary。
+ * system 消息（bashExecution/compactionSummary/branchSummary，W07-C）作独立系统提示行，
+ * 按到达顺序穿插在 turns 之间，不归入任何 turn（不冒充 user/assistant）。
  *
  * 分组规则：
  * - 遇到 user 消息 → 开启新 turn，该 user 归入新 turn
  * - 遇到 assistant 消息 → 归入当前 turn（无当前 turn 则自启一个，兼容首条 assistant 边缘情况）
+ * - 遇到 system 消息 → 产出独立 SystemNotice 项（不并入 turn）
  * - streaming 中的 turn（最后一条 assistant status==='streaming'）→ working 态，默认展开 trace
  */
 import type { Message } from '@xyz-agent/shared'
 
 /** 一个渲染回合：起点 user + 其后的 assistant 消息序列 */
 export interface MessageTurn {
-  /** 回合序号（从 1 开始，用于折叠条显示） */
   index: number
   /** 起始 user 消息（边缘情况：首条是 assistant 时为 null） */
   user: Message | null
@@ -26,51 +28,81 @@ export interface MessageTurn {
   hasFoldable: boolean
 }
 
+/** 渲染项：turn（user+assistant 回合）或 system 提示行（独立穿插） */
+export type RenderItem =
+  | { kind: 'turn'; turn: MessageTurn }
+  | { kind: 'system'; message: Message }
+
+/** 一个渲染回合的稳定 key（turn 索引从 1 起；system 用 message.id） */
+export function renderKey(item: RenderItem): string {
+  return item.kind === 'turn' ? `t-${item.turn.index}` : `s-${item.message.id}`
+}
+
 /**
- * 把扁平 messages 按 turn 分组。
+ * 把扁平 messages 按 turn 分组，system 消息作独立项穿插。
  * 纯函数：相同输入产生相同输出，不依赖响应式。
  */
 export function groupTurns(messages: Message[]): MessageTurn[] {
-  const turns: MessageTurn[] = []
+  return toRenderItems(messages)
+    .filter((item): item is { kind: 'turn'; turn: MessageTurn } => item.kind === 'turn')
+    .map((item) => item.turn)
+}
+
+/**
+ * 把扁平 messages 转 RenderItem 列表（turn 与 system 提示行按到达顺序穿插）。
+ * MessageStream 据此渲染：turn→<Turn>，system→<SystemNotice>。
+ */
+export function toRenderItems(messages: Message[]): RenderItem[] {
+  const items: RenderItem[] = []
+  let turnSeq = 0
   let current: MessageTurn | null = null
 
   for (const msg of messages) {
     if (msg.role === 'user') {
       // 开启新 turn
+      turnSeq += 1
       current = {
-        index: turns.length + 1,
+        index: turnSeq,
         user: msg,
         assistants: [],
         isWorking: false,
         hasFoldable: false,
       }
-      turns.push(current)
+      items.push({ kind: 'turn', turn: current })
     } else if (msg.role === 'assistant') {
       // 归入当前 turn；无当前 turn 自启一个（首条 assistant 边缘情况）
       if (!current) {
+        turnSeq += 1
         current = {
-          index: turns.length + 1,
+          index: turnSeq,
           user: null,
           assistants: [],
           isWorking: false,
           hasFoldable: false,
         }
-        turns.push(current)
+        items.push({ kind: 'turn', turn: current })
       }
       current.assistants.push(msg)
+    } else if (msg.role === 'system') {
+      // system 提示行独立穿插（W07-C），不并入任何 turn
+      current = null
+      items.push({ kind: 'system', message: msg })
     }
   }
 
   // 回填 isWorking / hasFoldable（最后一条 turn 的 working 态）
-  turns.forEach((turn, i) => {
+  const turnItems = items.filter(
+    (item): item is { kind: 'turn'; turn: MessageTurn } => item.kind === 'turn',
+  )
+  turnItems.forEach(({ turn }, i) => {
     const last = turn.assistants[turn.assistants.length - 1]
-    turn.isWorking = i === turns.length - 1 && last?.status === 'streaming'
+    turn.isWorking = i === turnItems.length - 1 && last?.status === 'streaming'
     turn.hasFoldable = turn.assistants.some(
       (m) => (m.thinking?.length ?? 0) > 0 || (m.toolCalls?.length ?? 0) > 0,
     )
   })
 
-  return turns
+  return items
 }
 
 /** 统计 turn 内 thinking 块数（折叠条 badge） */

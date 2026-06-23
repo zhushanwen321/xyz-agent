@@ -7,16 +7,18 @@
     空 session 显示欢迎语（G2-004 空态收敛）。
   -->
   <div ref="scrollEl" class="message-stream flex min-h-0 flex-1 flex-col gap-[22px] overflow-y-auto px-5 py-[18px]">
-    <Turn
-      v-for="(turn, tIdx) in turns"
-      :key="turn.index"
-      :turn="turn"
-      :session-id="sessionId"
-      :can-edit="!!turn.user && tIdx === lastUserTurnIdx"
-    />
+    <template v-for="(item, idx) in renderItems" :key="renderKey(item)">
+      <Turn
+        v-if="item.kind === 'turn'"
+        :turn="item.turn"
+        :session-id="sessionId"
+        :can-edit="!!item.turn.user && idx === lastUserTurnIdx"
+      />
+      <SystemNotice v-else :message="item.message" />
+    </template>
 
     <!-- 空态欢迎语（G2-004） -->
-    <div v-if="turns.length === 0" class="m-auto flex flex-col items-center gap-2 text-center">
+    <div v-if="renderItems.length === 0" class="m-auto flex flex-col items-center gap-2 text-center">
       <Sparkles class="size-6 text-accent opacity-70" />
       <p class="text-[13px] text-muted">开始对话，或从左侧选择一个会话</p>
     </div>
@@ -28,8 +30,9 @@ import { computed, watch } from 'vue'
 import { Sparkles } from '@lucide/vue'
 import { useChatStore } from '@/stores/chat'
 import { useChatScroll } from '@/composables/effects/useChatScroll'
-import { groupTurns } from '@/composables/logic/messageTurns'
+import { toRenderItems, renderKey } from '@/composables/logic/messageTurns'
 import Turn from './message-stream/Turn.vue'
+import SystemNotice from './message-stream/SystemNotice.vue'
 
 const props = defineProps<{
   sessionId: string
@@ -44,15 +47,25 @@ const chat = useChatStore()
  */
 const currentMessages = computed(() => chat.messages.get(props.sessionId) ?? [])
 
-/** 扁平消息 → 回合分组（纯函数） */
-const turns = computed(() => groupTurns(currentMessages.value))
+/** 扁平消息 → 渲染项（turn + system 提示行穿插，纯函数） */
+const renderItems = computed(() => toRenderItems(currentMessages.value))
 
 /** 最后一个含 user 的 turn 的数组下标（只有它的 user 可编辑，避免编辑中间 user 丢失其后对话） */
 const lastUserTurnIdx = computed(() => {
-  for (let i = turns.value.length - 1; i >= 0; i -= 1) {
-    if (turns.value[i].user) return i
+  for (let i = renderItems.value.length - 1; i >= 0; i -= 1) {
+    const item = renderItems.value[i]
+    if (item.kind === 'turn' && item.turn.user) return i
   }
   return -1
+})
+
+/** 渲染项里最后一个 turn（streaming 滚动判定用） */
+const lastRenderTurn = computed(() => {
+  for (let i = renderItems.value.length - 1; i >= 0; i -= 1) {
+    const item = renderItems.value[i]
+    if (item.kind === 'turn') return item.turn
+  }
+  return null
 })
 
 /** auto-scroll：监听 messages 长度 + streaming 内容变化 → 滚到底 */
@@ -73,7 +86,7 @@ watch(
     return last?.content.length ?? 0
   },
   () => {
-    if (turns.value[turns.value.length - 1]?.isWorking) {
+    if (lastRenderTurn.value?.isWorking) {
       scrollToBottom('auto')
     }
   },

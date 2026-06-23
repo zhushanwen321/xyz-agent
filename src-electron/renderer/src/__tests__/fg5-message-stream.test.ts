@@ -12,6 +12,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import {
   groupTurns,
+  toRenderItems,
   countThinking,
   countToolCalls,
   hasFailedTool,
@@ -27,6 +28,9 @@ function userMsg(id: string, content: string): Message {
 }
 function assistantMsg(id: string, content: string, extra: Partial<Message> = {}): Message {
   return { id, role: 'assistant', content, status: 'complete', timestamp: NOW, ...extra }
+}
+function systemMsg(id: string, content: string, extra: Partial<Message> = {}): Message {
+  return { id, role: 'system', content, status: 'complete', timestamp: NOW, ...extra }
 }
 
 describe('FG5 groupTurns 回合分组', () => {
@@ -138,6 +142,31 @@ describe('FG5 groupTurns 回合分组', () => {
     expect(last.content).toBe('已将 AuthService.login 改为 async。')
     // 收尾 summary 恒显（draft §4：收尾位固定不折叠）
     expect(turns[0].assistants[0].content).toBe('正在处理 schema…')
+  })
+
+  // W07-C：system 消息（bashExecution/compaction/branch）作独立项穿插，不归入 turn
+  it('toRenderItems：system 消息穿插在 turn 之间，groupTurns 过滤掉 system', () => {
+    const items = toRenderItems([
+      userMsg('u1', 'q'),
+      assistantMsg('a1', 'r'),
+      systemMsg('s1', 'bash', { bashExecution: { command: 'ls', exitCode: 0 } }),
+      userMsg('u2', 'q2'),
+      assistantMsg('a2', 'r2'),
+    ])
+    // 顺序：turn(u1+a1) → system(s1) → turn(u2+a2)
+    expect(items.map((i) => i.kind)).toEqual(['turn', 'system', 'turn'])
+    const sysItem = items[1]
+    if (sysItem.kind !== 'system') throw new Error('expected system item')
+    expect(sysItem.message.bashExecution?.command).toBe('ls')
+    // groupTurns 过滤掉 system，只剩 2 个 turn
+    const turns = groupTurns([
+      userMsg('u1', 'q'),
+      assistantMsg('a1', 'r'),
+      systemMsg('s1', 'bash'),
+      userMsg('u2', 'q2'),
+      assistantMsg('a2', 'r2'),
+    ])
+    expect(turns).toHaveLength(2)
   })
 })
 
@@ -295,6 +324,42 @@ describe('FG5 chat store 块类型扩展', () => {
     expect(store.getRetryState('sb')).toBeUndefined()
     expect(store.getQueueState('sb')?.steering).toEqual(['x'])
     expect(store.getQueueState('sa')).toBeUndefined()
+  })
+
+  // ── W07-C: shared 类型扩展（bash/compaction/branch 作 system 提示行）──
+
+  it('bashExecution 作 system 消息追加（含 exitCode/truncated）', () => {
+    const store = useChatStore()
+    store.appendAssistantChunk('sx', {
+      type: 'message.bashExecution',
+      payload: { sessionId: 'sx', command: 'npm test', exitCode: 1, truncated: true, fullOutputPath: '/tmp/out' },
+    })
+    const msgs = store.getMessages('sx')
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0].role).toBe('system')
+    expect(msgs[0].bashExecution).toEqual({ command: 'npm test', exitCode: 1, truncated: true, fullOutputPath: '/tmp/out' })
+  })
+
+  it('compactionSummary 作 system 消息追加', () => {
+    const store = useChatStore()
+    store.appendAssistantChunk('sx', {
+      type: 'message.compactionSummary',
+      payload: { sessionId: 'sx', summary: '压缩完成', tokensBefore: 50000 },
+    })
+    const msg = store.getMessages('sx')[0]
+    expect(msg.role).toBe('system')
+    expect(msg.compactionSummary).toEqual({ summary: '压缩完成', tokensBefore: 50000 })
+  })
+
+  it('branchSummary 作 system 消息追加', () => {
+    const store = useChatStore()
+    store.appendAssistantChunk('sx', {
+      type: 'message.branchSummary',
+      payload: { sessionId: 'sx', summary: '新分支', fromId: 'msg-9' },
+    })
+    const msg = store.getMessages('sx')[0]
+    expect(msg.role).toBe('system')
+    expect(msg.branchSummary).toEqual({ summary: '新分支', fromId: 'msg-9' })
   })
 
   it('mock getHistory 返回 fixture 全字段（G2-006 契约）', async () => {

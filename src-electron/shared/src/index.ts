@@ -17,6 +17,7 @@ export type {
   MessageRole, MessageStatus, ToolCallStatus,
   ToolCall, ThinkingBlock, ContentBlockType, ContentBlock, Usage, Message,
   FileChangeStatus, FileChange, ChangeSetStatus, ReviewDecision,
+  BashExecution, CompactionSummary, BranchSummary,
 } from './message'
 export type {
   SessionStatus, SessionSummary, SessionGroup,
