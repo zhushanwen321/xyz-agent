@@ -291,6 +291,16 @@ SKIP_ALL_CHECKS=1 git commit            # 跳过所有（仅紧急情况）
 | taste-lint (ESLint) | no-native-html / no-emoji / prefer-v-model / no-hardcoded-colors / no-magic-spacing / no-silent-catch / prefer-allsettled / no-multi-arg-emit | `npm run lint` + pre-commit |
 | vue_rules_checker.py | 行数上限 / CSS 选择器 / Tab 缩进 / 原生元素 / Emoji / v-model | pre-commit |
 
+### Lint / Git Hooks 问题处理原则 [MANDATORY]
+
+**lint（ESLint / vue_rules_checker）或 githooks（pre-commit 的任何 check_*.py）检出的问题，必须全部正面修复，不得跳过。**
+
+- **不得以“非本次改动引入”为由跳过**：存量问题同样要修。携改动的 commit 触发了检查，检查出的所有问题都是本次提交的责任范围。
+- **不得用 `SKIP_*` 变量绕过**（`SKIP_FRONTEND_LINT` / `SKIP_CODE_RULES_CHECK` / `SKIP_ALL_CHECKS` 等）— 仅限线上故障热修复等紧急场景，且必须在 commit message 说明原因。
+- **不得仅“消除报错”而不解决根因**：例如把原生 `<button>` 改成 `<Button>` 是正面修复；但把检测规则改成“放过该写法”只有在确认规则误报时才可（且须在规则中加注释说明）。
+- **规则误报的唯一正当处理**：修正规则本身使其准确（如 reka-ui `SelectItem :value` 是选项值语义，应排除），并在规则文件加 `[HISTORICAL]` 注释记录原因。禁止用 `// eslint-disable-next-line` 局部静默。
+- pre-commit 每个检查失败分支已内置提示：“无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过”。
+
 
 ## 架构约定
 
@@ -367,6 +377,8 @@ xyz-agent 的数据目录（`~/.xyz-agent/`）与 pi 的数据目录（`~/.pi/ag
 **Pre-commit 自动检查**：`check_env_whitelist_sync.py` 验证 `const ENV_WHITELIST_PREFIXES` 定义只出现在 shared/constants.ts，检测 SSOT 退化（未来有人在 main/runtime 本地重新定义）。
 
 ## 跳过检查
+
+> **默认禁止跳过**（见上文「Lint / Git Hooks 问题处理原则 [MANDATORY]」）。以下变量仅供线上热修复等紧急场景，使用时必须在 commit message 说明原因。
 
 ```bash
 SKIP_ALL_CHECKS=1 git commit       # 跳过所有（仅紧急情况）

@@ -93,12 +93,17 @@
         </template>
       </div>
 
-      <!-- 用户区（footer） -->
-      <div class="mt-auto pt-1.5">
-        <div class="flex items-center gap-2 rounded-md px-2 py-2 text-[12px] text-muted transition-colors hover:bg-surface-hover">
-          <span class="size-5 shrink-0 rounded-full bg-gradient-to-br from-accent to-info" />
-          <span class="truncate text-fg">开发者</span>
-        </div>
+      <!-- 用户区（footer）· 齿轮图标打开 Settings（settings/spec.md §1） -->
+      <div class="mt-auto flex items-center gap-2 rounded-md px-2 py-2 text-[12px] text-muted">
+        <span class="size-5 shrink-0 rounded-full bg-gradient-to-br from-accent to-info" />
+        <span class="flex-1 truncate text-fg">开发者</span>
+        <button
+          class="grid size-6 shrink-0 place-items-center rounded-sm text-subtle transition-colors hover:bg-surface-hover hover:text-fg"
+          title="设置"
+          @click="openSettings()"
+        >
+          <Settings class="size-[14px]" />
+        </button>
       </div>
     </div>
 
@@ -120,9 +125,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, inject, onMounted, ref } from 'vue'
 import { useEventListener } from '@vueuse/core'
-import { Plus, LayoutGrid, Search } from '@lucide/vue'
+import { Plus, LayoutGrid, Search, Settings } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import SearchModal from '@/components/overlays/SearchModal.vue'
@@ -141,6 +146,7 @@ const navigation = useNavigationStore()
 const session = useSessionStore()
 const sidebar = useSidebarStore()
 const { selectSession, newSession, goOverview, loadSessions, derivedStatus, renameSession, deleteSession } = useSidebar()
+const openSettings = inject<() => void>('openSettings', () => {})
 
 /** 搜索浮层开关（⌘K / nav 搜索按钮触发，spec §搜索浮层） */
 const searchOpen = ref(false)

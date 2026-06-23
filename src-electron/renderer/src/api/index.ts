@@ -8,9 +8,11 @@
  */
 import * as realSession from './domains/session'
 import * as realChat from './domains/chat'
+import * as realSettings from './domains/settings'
 import * as mockApi from './mock'
 
 const isMock = import.meta.env.VITE_MOCK === 'true'
 
 export const session = isMock ? mockApi.session : realSession
 export const chat = isMock ? mockApi.chat : realChat
+export const settings = isMock ? mockApi.settings : realSettings

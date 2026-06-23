@@ -270,7 +270,14 @@ def check_vue_file(content: str, relative_path: str) -> tuple[int, list[str]]:
             if not stripped or stripped.startswith('<!--'):
                 continue
             if ':value=' in stripped and 'v-model' not in stripped:
-                if re.search(r'<[A-Z]\w+', stripped):
+                # 提取行内所有 PascalCase 开标签
+                tag_matches = re.findall(r'<([A-Z][A-Za-z0-9]*)', stripped)
+                # [HISTORICAL] 排除 Item/Option 后缀子组件：reka-ui 的 SelectItem /
+                # ComboboxItem / RadioGroupItem 等的 :value 是「该选项的值」语义，
+                # 由父级 Root 用 v-model 收集，子组件不支持 v-model，不应报警。
+                if tag_matches and all(re.search(r'(?:Item|Option)$', t) for t in tag_matches):
+                    continue
+                if tag_matches:
                     issues.append(f"  [第{i}行] 组件上使用 :value 绑定 — 请优先使用 v-model")
                     issues.append('    示例: <Input v-model="value" /> 而非 <Input :value="value" @input="handler" />')
                     exit_code = 2

@@ -22,11 +22,12 @@
       @keydown.space.prevent="sidebar.toggleCollapsed()"
     />
     <MainPanel />
+    <SettingsModal v-model:open="settingsOpen" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { watch } from 'vue'
+import { provide, ref, watch } from 'vue'
 import { useEventListener } from '@vueuse/core'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSessionStore } from '@/stores/session'
@@ -35,12 +36,17 @@ import { useSidebar } from '@/composables/features/useSidebar'
 import AppNavControls from './AppNavControls.vue'
 import AsideRegion from './AsideRegion.vue'
 import MainPanel from './MainPanel.vue'
+import SettingsModal from '@/components/settings/SettingsModal.vue'
 import { useSidebarStore } from '@/stores/sidebar'
 
 const navigation = useNavigationStore()
 const session = useSessionStore()
 const sidebar = useSidebarStore()
 const { syncSessionToPanel } = useSidebar()
+
+/** Settings modal 开关（⌘, / sidebar 用户区触发） */
+const settingsOpen = ref(false)
+provide('openSettings', () => { settingsOpen.value = true })
 
 // 平台 + 全屏态同步到 <html>（data-platform / data-fullscreen），驱动 traffic-light / app-nav-controls 两态。
 usePlatformChrome()
@@ -76,6 +82,10 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
       e.preventDefault()
       navigation.forward()
     }
+  } else if (e.key === ',') {
+    // ⌘, 打开 Settings（settings/spec.md §1）
+    e.preventDefault()
+    settingsOpen.value = true
   }
 })
 </script>

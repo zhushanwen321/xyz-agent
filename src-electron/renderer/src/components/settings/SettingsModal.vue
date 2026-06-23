@@ -1,13 +1,8 @@
 <template>
   <!--
-    容器组件 · Settings modal 骨架（settings/spec.md · 居中 modal + 模糊背景）。
-    取向 = 配置/表单交互，区别于 Overview 的鸟瞰（spec §1）。
-    形态：shadcn Dialog 居中浮层，浮于 workspace 之上；关闭恢复 workspace 原状态。
-
-    v1 范围（FG6 骨架）：modal 形态 + modal-head（标题 + 关闭按钮）+ 左导航（5 菜单占位）+ 右详情空壳。
-    DEFERRED（spec §9）：触发入口（Cmd+, / sidebar 头像，G3-002 hide，v1 不渲染触发按钮）；
-         三种布局模式（Setting Row/Card/Entity List）+ 5 菜单具体表单 + 自动保存 + 内置搜索。
-    本组件通过 v-model:open 受控；v1 无任何调用方渲染触发入口（待 G-021 联调阶段接入）。
+    容器组件 · Settings modal（settings/spec.md · 居中 modal + 模糊背景）。
+    数据来自 @/api/settings（mock: fixtureProviders/Skills/Agents/Extensions/System）。
+    5 菜单导航 + 右侧对应页面组件。
   -->
   <Dialog :open="open" @update:open="emit('update:open', $event)">
     <DialogContent
@@ -15,12 +10,10 @@
       hide-close
       class="flex max-w-[900px] flex-col gap-0 overflow-hidden p-0 sm:rounded-lg"
     >
-      <!-- modal-head：标题 + 内置搜索槽(DEFERRED) + 保存 pill 槽(DEFERRED) + 关闭按钮（spec §2 .modal-head） -->
+      <!-- modal-head -->
       <div class="modal-head flex h-[44px] flex-none items-center gap-2.5 border-b border-border px-3.5">
         <span class="text-[14px] font-semibold tracking-tight text-fg">设置</span>
-        <!-- 内置搜索 ⌘K（G-021 DEFERRED）：保留槽位，v1 不渲染输入框 -->
         <div class="ml-auto flex items-center gap-2">
-          <!-- 自动保存状态 pill（RC-01 DEFERRED）：保留槽位 -->
           <DialogClose
             class="grid size-7 place-items-center rounded-sm text-muted transition-colors hover:bg-surface-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             title="关闭（Esc）"
@@ -31,9 +24,9 @@
         </div>
       </div>
 
-      <!-- modal-body：左 nav + 右 detail（spec §2 .modal-body） -->
+      <!-- modal-body -->
       <div class="flex min-h-0 flex-1">
-        <!-- 左导航：5 菜单占位（选中态 inset ring，spec §ov-nav） -->
+        <!-- 左导航 -->
         <nav class="flex w-[200px] flex-shrink-0 flex-col gap-px border-r border-border bg-surface p-2">
           <Button
             v-for="item in menus"
@@ -49,27 +42,31 @@
           >
             <component :is="item.icon" class="size-[17px] flex-shrink-0" />
             <span>{{ item.label }}</span>
+            <span
+              v-if="getItemCount(item.id)"
+              class="ml-auto rounded-full bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle"
+            >{{ getItemCount(item.id) }}</span>
           </Button>
         </nav>
 
-        <!-- 右详情：page-header + 空壳占位（Setting Row/Card/Entity List DEFERRED） -->
+        <!-- 右详情 -->
         <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
           <div class="border-b border-border px-6 pb-4 pt-5">
             <h2 class="text-[20px] font-semibold tracking-tight text-fg">{{ currentMenu.label }}</h2>
             <p class="mt-0.5 text-[13px] text-muted">{{ currentMenu.desc }}</p>
           </div>
           <ScrollArea class="min-h-0 flex-1">
-            <div class="flex flex-col items-center justify-center gap-2 px-6 py-16 text-center">
-              <p class="text-[13px] text-muted">配置项待联调阶段实现</p>
-              <p class="font-mono text-[11px] text-subtle">
-                {{ currentMenu.id }} · 三模式（G3-002 DEFERRED）
-              </p>
+            <div class="px-6 py-4">
+              <ProviderPage v-if="activeMenu === 'provider'" :providers="providers" />
+              <SkillPage v-else-if="activeMenu === 'skill'" :skills="skills" />
+              <AgentPage v-else-if="activeMenu === 'agent'" :agents="agents" />
+              <ExtensionPage v-else-if="activeMenu === 'extension'" :extensions="extensions" />
+              <SystemPage v-else-if="activeMenu === 'system'" :system="system" @update="onSystemUpdate" />
             </div>
           </ScrollArea>
         </div>
       </div>
 
-      <!-- sr-only 标题/描述（Radix Dialog a11y 契约，视觉不显） -->
       <DialogHeader class="sr-only">
         <DialogTitle>设置</DialogTitle>
         <DialogDescription>配置 Provider / Skill / Agent / Extension / System</DialogDescription>
@@ -79,7 +76,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { Settings, Sparkles, Bot, Blocks, SlidersHorizontal, X } from '@lucide/vue'
 import {
   Dialog,
@@ -91,12 +88,28 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { settings } from '@/api'
+import type { ProviderInfo, SkillInfo, AgentInfo } from '@xyz-agent/shared'
+import ProviderPage from './ProviderPage.vue'
+import SkillPage from './SkillPage.vue'
+import AgentPage from './AgentPage.vue'
+import ExtensionPage from './ExtensionPage.vue'
+import SystemPage from './SystemPage.vue'
 
-/**
- * 5 菜单定义（settings/spec.md §4）。
- * 图标语义与 draft-settings-shell symbol 一致；选中态 inset accent ring（弃左竖条）。
- * 实体内容（Row/Card/Entity List）DEFERRED，v1 仅 nav 联动 + 详情空壳。
- */
+interface ExtensionItem {
+  name: string
+  version: string
+  description: string
+  enabled: boolean
+  tools: string[]
+}
+
+interface SystemSettings {
+  locale: 'zh-CN' | 'en-US'
+  theme: 'light' | 'dark' | 'system'
+  themePreset: string
+}
+
 const menus = [
   { id: 'provider', label: 'Provider', icon: Settings, desc: '配置模型供应商与 API Key' },
   { id: 'skill', label: 'Skill', icon: Sparkles, desc: '管理 Skill 加载路径与来源' },
@@ -111,5 +124,42 @@ const emit = defineEmits<{ 'update:open': [value: boolean] }>()
 const activeMenu = ref<(typeof menus)[number]['id']>('provider')
 const currentMenu = computed(() => menus.find((m) => m.id === activeMenu.value) ?? menus[0])
 
-void props
+// 数据状态
+const providers = ref<ProviderInfo[]>([])
+const skills = ref<SkillInfo[]>([])
+const agents = ref<AgentInfo[]>([])
+const extensions = ref<ExtensionItem[]>([])
+const system = ref<SystemSettings>({ locale: 'zh-CN', theme: 'dark', themePreset: 'cold-blue' })
+
+// 打开时加载数据
+watch(() => props.open, async (isOpen) => {
+  if (!isOpen) return
+  const [p, s, a, e, sys] = await Promise.allSettled([
+    settings.getProviders(),
+    settings.getSkills(),
+    settings.getAgents(),
+    settings.getExtensions(),
+    settings.getSystem(),
+  ])
+  if (p.status === 'fulfilled') providers.value = p.value
+  if (s.status === 'fulfilled') skills.value = s.value
+  if (a.status === 'fulfilled') agents.value = a.value
+  if (e.status === 'fulfilled') extensions.value = e.value
+  if (sys.status === 'fulfilled') system.value = sys.value
+})
+
+function getItemCount(id: string): number {
+  switch (id) {
+    case 'provider': return providers.value.length
+    case 'skill': return skills.value.length
+    case 'agent': return agents.value.length
+    case 'extension': return extensions.value.length
+    default: return 0
+  }
+}
+
+async function onSystemUpdate(patch: Record<string, unknown>) {
+  Object.assign(system.value, patch)
+  await settings.updateSystem(patch)
+}
 </script>

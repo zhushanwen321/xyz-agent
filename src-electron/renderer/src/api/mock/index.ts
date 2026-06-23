@@ -9,8 +9,17 @@
  *
  * 依赖方向：无（不 import transport/events/pending，独立内存实现）。
  */
-import type { Message, ServerMessage, SessionSummary } from '@xyz-agent/shared'
+import type { Message, ServerMessage, SessionSummary, ProviderInfo, SkillInfo, AgentInfo } from '@xyz-agent/shared'
 import { createSession, fixtureMessages, fixtureSessions } from './data'
+import {
+  fixtureProviders,
+  fixtureSkills,
+  fixtureAgents,
+  fixtureExtensions,
+  fixtureSystem,
+  type FixtureExtension,
+  type FixtureSystemSettings,
+} from './settings-data'
 
 /** 流式时序（ms）—— 仅用于视觉演示节奏，不影响契约 */
 const TIMING = {
@@ -175,5 +184,39 @@ export const chat = {
     return () => {
       streamHandlers.get(sessionId)?.delete(handler)
     }
+  },
+}
+
+/* ── Settings mock ── */
+
+export const settings = {
+  async getProviders(): Promise<ProviderInfo[]> {
+    await sleep(TIMING.ack)
+    return fixtureProviders.map((p) => ({ ...p, models: p.models.map((m) => ({ ...m })) }))
+  },
+
+  async getSkills(): Promise<SkillInfo[]> {
+    await sleep(TIMING.ack)
+    return fixtureSkills.map((s) => ({ ...s }))
+  },
+
+  async getAgents(): Promise<AgentInfo[]> {
+    await sleep(TIMING.ack)
+    return fixtureAgents.map((a) => ({ ...a }))
+  },
+
+  async getExtensions(): Promise<FixtureExtension[]> {
+    await sleep(TIMING.ack)
+    return fixtureExtensions.map((e) => ({ ...e }))
+  },
+
+  async getSystem(): Promise<FixtureSystemSettings> {
+    await sleep(TIMING.ack)
+    return { ...fixtureSystem }
+  },
+
+  async updateSystem(patch: Partial<FixtureSystemSettings>): Promise<void> {
+    await sleep(TIMING.ack)
+    Object.assign(fixtureSystem, patch)
   },
 }
