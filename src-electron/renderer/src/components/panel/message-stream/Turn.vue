@@ -1,23 +1,66 @@
 <template>
   <!--
     展示组件 · 回合（message-stream 单个 turn，draft-message-stream §1）。
-    结构：user 气泡（靠右）+ assistant 区。
-    assistant 区 = turn-meta（已工作按钮 / 工作中态）+ 折叠 trace（thinking/tool/中间 text）+ 收尾 summary text。
-    - 纯文字回合（无 thinking/tool）：无折叠条，summary 直接接气泡（draft 画廊 A）
-    - working 态（最后一条 assistant streaming）：脉冲点 + 实时计时，trace 默认展开
-    - trace 折叠由本地 expanded ref 控制（localStorage 记忆 G-031 DEFERRED，v1 仅 session 内）
+    结构：user 气泡（靠右，可编辑分叉）+ assistant 区。
+    assistant 区 = turn-meta（已工作按钮 / 工作中态）+ 折叠 trace（thinking/tool/中间 text）+ 收尾 summary。
+    - user 气泡下方 hover：复制（常驻）+ 编辑（仅 AI 停止，编辑=fork 新会话）
+    - 收尾 summary 下方 hover：复制 + 复制为 MD + fork（modal 确认后 clone+fork 到另一 panel）
 
-    Output Text 中间/收尾拆分（draft §4 规则表）：多 assistant 回合（如 steer 续轮）中，
-    非最后一条 assistant.content 折进 trace（中间产出），仅最后一条作收尾 summary 恒显。
-    单 assistant 内的中间 text 片段拆分依赖 contentBlocks 时序数据（runtime 尚未填充，DEFER flow-2）。
+    Output Text 中间/收尾拆分（draft §4）：多 assistant 回合，非最后一条 content 折进 trace，
+    仅最后一条作收尾 summary 恒显。
   -->
   <div class="flex flex-col gap-3.5">
-    <!-- user 气泡：靠右，surface-hover 底，右下尖角（draft .bubble-user），无标签行 -->
-    <div
-      v-if="turn.user"
-      class="self-end max-w-[76%] rounded-[14px_14px_4px_14px] border border-border-strong bg-surface-hover px-[13px] py-[9px] text-[13.5px] leading-[1.55] text-fg"
-    >
-      {{ turn.user.content }}
+    <!-- user 区：编辑态切 textarea，展示态气泡 + hover actions -->
+    <div v-if="turn.user" class="group/user flex flex-col items-end gap-1">
+      <!-- 编辑态：编辑后 fork 新会话 -->
+      <div
+        v-if="isEditingThisUser"
+        class="w-full max-w-[76%] rounded-[14px] border border-accent bg-bg-input p-2 shadow-[0_0_0_3px_rgba(79,142,247,0.18)]"
+      >
+        <Textarea v-model="draftText" class="min-h-[64px] border-0 bg-transparent px-1 text-[13.5px] leading-[1.55] focus-visible:ring-0" />
+        <div class="mt-1.5 flex items-center justify-between px-1">
+          <span class="text-[11px] text-subtle">编辑后将分叉为新会话</span>
+          <div class="flex gap-1.5">
+            <Button variant="ghost" size="sm" class="h-7" @click="cancelEdit">取消</Button>
+            <Button variant="default" size="sm" class="h-7 gap-1" :disabled="!draftText.trim()" @click="submitEdit">
+              <ArrowRight class="size-3.5" /> 发送
+            </Button>
+          </div>
+        </div>
+      </div>
+      <!-- 展示态气泡：右下尖角 -->
+      <div
+        v-else
+        class="max-w-[76%] rounded-[14px_14px_4px_14px] border border-border-strong bg-surface-hover px-[13px] py-[9px] text-[13.5px] leading-[1.55] text-fg"
+      >
+        {{ turn.user.content }}
+      </div>
+      <!-- hover actions：复制常驻 hover；编辑仅 AI 停止（isStreaming=false）时显示 -->
+      <div
+        v-if="!isEditingThisUser"
+        class="flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/user:opacity-100"
+      >
+        <Button
+          variant="ghost"
+          size="icon"
+          class="size-6 text-subtle hover:text-fg"
+          title="复制"
+          @click="copy(turn.user.content, userCopyKey)"
+        >
+          <Check v-if="copied === userCopyKey" class="size-3 text-success" />
+          <Copy v-else class="size-3" />
+        </Button>
+        <Button
+          v-if="!isStreaming"
+          variant="ghost"
+          size="icon"
+          class="size-6 text-subtle hover:text-fg"
+          title="编辑（分叉为新会话）"
+          @click="startEdit"
+        >
+          <Pencil class="size-3" />
+        </Button>
+      </div>
     </div>
 
     <!-- assistant 区：背景融为一体，透明无边框 -->
@@ -52,12 +95,7 @@
 
       <!-- 折叠 trace：working 或 expanded 时展开 -->
       <div v-if="showTrace" class="trace mt-1 mb-1 flex flex-col">
-        <!--
-          按 assistant 时序渲染 trace 块。
-          中间产出 text（非最后一条 assistant.content）折进 trace（draft §4 Output Text 中间）。
-        -->
         <template v-for="(assistant, aIdx) in turn.assistants" :key="assistant.id">
-          <!-- 该 assistant 的非收尾 content（仅多 assistant 时存在）折进 trace -->
           <Block
             v-if="isMidAssistant(aIdx) && assistant.content.trim()"
             type="text"
@@ -81,31 +119,85 @@
 
       <hr v-if="turn.hasFoldable || turn.assistants.length > 0" class="border-0 border-t border-border" />
 
-      <!-- 收尾 summary：仅最后一条 assistant.content（draft §4：收尾位固定不折叠） -->
-      <div v-if="summaryText" class="turn-summary pt-3 text-[13.5px] leading-7 text-fg">
+      <!-- 收尾 summary：仅最后一条 assistant.content，含 hover 复制/复制MD/fork -->
+      <div v-if="summaryText" class="turn-summary group/ai pt-3 text-[13.5px] leading-7 text-fg">
         <p>{{ summaryText }}</p>
         <span v-if="isStreamingText" class="streaming-cursor ml-0.5 inline-block h-3.5 w-[7px] translate-y-[3px] rounded-[1px] bg-accent align-text-bottom animate-blink" />
+        <!-- hover actions：复制 / 复制为 MD / fork（仅 AI 停止时） -->
+        <div
+          v-if="!isStreaming && lastAssistant"
+          class="mt-1.5 flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/ai:opacity-100"
+        >
+          <Button
+            variant="ghost"
+            size="icon"
+            class="size-6 text-subtle hover:text-fg"
+            title="复制"
+            @click="copy(summaryText, aiCopyKey)"
+          >
+            <Check v-if="copied === aiCopyKey" class="size-3 text-success" />
+            <Copy v-else class="size-3" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            class="relative size-6 text-subtle hover:text-fg"
+            title="复制为 Markdown"
+            @click="copy(assistantToMarkdown(lastAssistant), aiMdKey)"
+          >
+            <Check v-if="copied === aiMdKey" class="size-3 text-success" />
+            <Copy v-else class="size-3" />
+            <span class="absolute -right-0.5 -top-0.5 rounded-sm bg-accent px-[3px] text-[8px] font-bold leading-[10px] text-white">MD</span>
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            class="size-6 text-subtle hover:text-fg"
+            title="克隆并分叉到另一面板"
+            @click="openFork"
+          >
+            <GitFork class="size-3" />
+          </Button>
+        </div>
       </div>
     </div>
+
+    <!-- fork 确认弹窗（问题 6） -->
+    <ForkConfirmModal v-model:open="forkOpen" @confirm="onForkConfirm" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Brain, ChevronRight, Wrench } from '@lucide/vue'
+import { ArrowRight, Brain, Check, ChevronRight, Copy, GitFork, Pencil, Wrench } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
 import type { MessageTurn } from '@/composables/logic/messageTurns'
 import { countThinking, countToolCalls } from '@/composables/logic/messageTurns'
+import { assistantToMarkdown } from '@/composables/logic/messageFormat'
+import { useChatStore } from '@/stores/chat'
+import { useSidebar } from '@/composables/features/useSidebar'
 import Block from './Block.vue'
+import ForkConfirmModal from './ForkConfirmModal.vue'
 
 /** 时间格式化常量（elapsed 计算） */
 const MS_PER_SEC = 1000
 const SEC_PER_MIN = 60
 const SEC_PAD_WIDTH = 2
+/** 复制反馈持续时长 */
+const COPIED_FEEDBACK_MS = 1200
 
 const props = defineProps<{
   turn: MessageTurn
+  /** Turn 所在 session（fork 源，双 panel standby 场景不能依赖全局 activeId） */
+  sessionId: string
 }>()
+
+const chat = useChatStore()
+const { forkSession } = useSidebar()
+
+/** 全局流式态（当前活跃 session）：streaming 时禁编辑/fork */
+const isStreaming = computed(() => chat.isStreaming)
 
 const thinkCount = computed(() => countThinking(props.turn))
 const toolCount = computed(() => countToolCalls(props.turn))
@@ -114,9 +206,70 @@ const toolCount = computed(() => countToolCalls(props.turn))
 const expanded = ref(false)
 const showTrace = computed(() => props.turn.isWorking || expanded.value)
 
+/** 最后一条 assistant（收尾 summary + MD 复制 + fork 的目标消息） */
+const lastAssistant = computed(() => {
+  const as = props.turn.assistants
+  return as[as.length - 1] ?? null
+})
+
+/** 复制反馈：记录最近复制的 key，1.2s 后清除 */
+const copied = ref<string | null>(null)
+const userCopyKey = computed(() => `user-${props.turn.user?.id ?? props.turn.index}`)
+const aiCopyKey = computed(() => `ai-${props.turn.index}`)
+const aiMdKey = computed(() => `md-${props.turn.index}`)
+
+function copy(text: string, key: string): void {
+  navigator.clipboard.writeText(text).catch(() => {})
+  copied.value = key
+  setTimeout(() => {
+    if (copied.value === key) copied.value = null
+  }, COPIED_FEEDBACK_MS)
+}
+
+/* ── 编辑（= fork）：编辑 user 消息后 fork 新会话 ── */
+const editingUserId = ref<string | null>(null)
+const draftText = ref('')
+const isEditingThisUser = computed(
+  () => !!props.turn.user && editingUserId.value === props.turn.user.id,
+)
+
+function startEdit(): void {
+  if (!props.turn.user) return
+  editingUserId.value = props.turn.user.id
+  draftText.value = props.turn.user.content
+}
+
+function cancelEdit(): void {
+  editingUserId.value = null
+}
+
+async function submitEdit(): Promise<void> {
+  const user = props.turn.user
+  if (!user) return
+  const text = draftText.value.trim()
+  if (!text) return
+  editingUserId.value = null
+  // includeFrom=false：截取该 user 之前的 turn，丢弃该 user 及其后，用 newText 接续
+  await forkSession(props.sessionId, user.id, { includeFrom: false, newText: text })
+}
+
+/* ── fork modal：clone+fork 到另一 panel ── */
+const forkOpen = ref(false)
+
+function openFork(): void {
+  forkOpen.value = true
+}
+
+async function onForkConfirm(): Promise<void> {
+  forkOpen.value = false
+  const msg = lastAssistant.value
+  if (!msg) return
+  // includeFrom=true：保留到该 assistant（含）；openInStandby：打开另一 panel
+  await forkSession(props.sessionId, msg.id, { includeFrom: true, openInStandby: true })
+}
+
 /**
  * 收尾 summary：仅最后一条 assistant.content（draft §4：收尾位固定不折叠，作回合焦点）。
- * 多 assistant 回合（如 steer 续轮）的前序 content 折进 trace（见 isMidAssistant）。
  */
 const summaryText = computed(() => {
   const as = props.turn.assistants

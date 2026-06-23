@@ -16,6 +16,7 @@
 import { computed } from 'vue'
 import type { ComputedRef } from 'vue'
 import { chat as chatApi, session as sessionApi } from '@/api'
+import { useChat } from '@/composables/features/useChat'
 import { useChatStore } from '@/stores/chat'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePanelStore } from '@/stores/panel'
@@ -69,6 +70,7 @@ export function useSidebar() {
   const chat = useChatStore()
   const sidebar = useSidebarStore()
   const panel = usePanelStore()
+  const { send } = useChat()
 
   /**
    * 同步 session 到 panel（sidebar 选 session 与 ⌘[/⌘] 导航共用）。
@@ -163,6 +165,47 @@ export function useSidebar() {
     }
   }
 
+  /**
+   * Fork 会话：从指定源 session 截取历史到 fork 点，新建 session 并载入截断历史。
+   *
+   * 语义（问题 5/6）：
+   * - 编辑重发（user 消息 fork）：fromMessageId=user 消息、includeFrom=false →
+   *   保留该 user 之前的所有 turn，丢弃该 user 及其后，再用 newText 接续发送。
+   * - 克隆到某点（assistant 消息 fork）：fromMessageId=assistant 消息、includeFrom=true →
+   *   保留到该消息（含），openInStandby 打开另一 panel，不自动发送。
+   *
+   * srcSessionId 显式传入：Turn 可能在非 active 的 standby panel，fork 源必须是其所在 session，
+   * 不能用全局 activeId（否则双 panel standby fork 取错 session 的消息）。
+   *
+   * mock 可行：create() 返回新 session，hydrate 直接填 chat store（不走 getHistory 空覆盖）。
+   */
+  async function forkSession(
+    srcSessionId: string,
+    fromMessageId: string,
+    opts?: { includeFrom?: boolean; newText?: string; openInStandby?: boolean },
+  ): Promise<string> {
+    const msgs = chat.getMessages(srcSessionId)
+    const idx = msgs.findIndex((m) => m.id === fromMessageId)
+    const end = idx === -1 ? msgs.length : opts?.includeFrom ? idx + 1 : idx
+    // 深拷贝截断历史，避免与新 session 共享引用
+    const truncated = msgs.slice(0, end).map((m) => ({ ...m }))
+
+    const created = await sessionApi.create()
+    session.list = [...session.list, created]
+    chat.hydrate(created.id, truncated)
+
+    // 打开在另一 panel（单 panel 先 split 出 standby）
+    if (opts?.openInStandby && !panel.isDual) panel.split()
+    const standby = opts?.openInStandby
+      ? panel.panels.find((p) => p.id !== panel.activePanelId)
+      : undefined
+    await selectSession(created.id, standby ? { panelId: standby.id } : undefined)
+
+    // 编辑重发：send 走 activeId（selectSession 已设为 created.id）
+    if (opts?.newText) await send(opts.newText)
+    return created.id
+  }
+
   /** 进入 Overview：push view:'overview'（ADR-0022，sidebar 持久，main 被覆盖） */
   function goOverview(): void {
     navigation.push({ view: 'overview' })
@@ -238,5 +281,6 @@ export function useSidebar() {
     sessionDigest,
     renameSession,
     deleteSession,
+    forkSession,
   }
 }

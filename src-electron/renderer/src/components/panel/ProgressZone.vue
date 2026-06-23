@@ -1,34 +1,38 @@
 <template>
   <!--
     展示组件 · progress-zone（panel/spec.md zone ③，composer 上方）。
-    draft-companion-zones §1：三态纯只读（待办/进行/完成，不可点击）。
-    - idle: 灰点 + bar 0% + todos 全 pending
-    - running: 蓝点 pulse + bar 渐变 + 一个 active
-    - done: 绿点 + bar 100% + 自动收起为单行 inline
-    无任务时整区隐藏。
+    draft-companion-zones §1：三态纯只读（待办/进行/完成）。
+    head 可点击折叠（chevron 提示），折叠态隐藏 bar/todos。
     数据：mock/composer-data.ts MOCK_PROGRESS_STATES（runtime Flow3 落地后改真实数据源）。
-    演示三态：改 :phase prop（mock 期由父组件传入，非用户交互——zone 纯只读）。
   -->
   <div
     v-if="state"
     class="mx-3.5 flex-shrink-0 overflow-hidden rounded-lg border border-border bg-bg-input"
   >
-      <!-- head：状态点 + 标题 + 步骤 -->
-      <div class="flex items-center gap-2 px-3 py-2 text-[12px]">
-        <span
-          class="size-[7px] shrink-0 rounded-full"
-          :class="{
-            'bg-subtle': phase === 'idle',
-            'bg-accent animate-pulse-accent': phase === 'running',
-            'bg-success': phase === 'done',
-          }"
-        />
+    <!-- head：状态点 + 标题 + 步骤 + 折叠 chevron（点击 head toggle） -->
+    <div
+      class="flex cursor-pointer select-none items-center gap-2 px-3 py-2 text-[12px] transition-colors hover:bg-surface-hover"
+      :title="collapsed ? '展开' : '收起'"
+      @click="collapsed = !collapsed"
+    >
+      <span
+        class="size-[7px] shrink-0 rounded-full"
+        :class="{
+          'bg-subtle': phase === 'idle',
+          'bg-accent animate-pulse-accent': phase === 'running',
+          'bg-success': phase === 'done',
+        }"
+      />
       <span class="text-[12.5px] font-semibold text-fg">{{ state.title }}</span>
       <span class="font-mono text-[11px] text-subtle">{{ state.step }}</span>
+      <ChevronRight
+        class="ml-auto size-3 shrink-0 text-subtle transition-transform duration-[var(--duration)] ease-[var(--ease)]"
+        :class="collapsed ? '' : 'rotate-90'"
+      />
     </div>
 
     <!-- 完成态：自动收起为单行 inline（状态驱动，非用户折叠） -->
-    <div v-if="phase === 'done'" class="flex items-center gap-2.5 px-3 pb-2">
+    <div v-if="phase === 'done' && !collapsed" class="flex items-center gap-2.5 px-3 pb-2">
       <span class="text-[11px] text-muted">全部完成</span>
       <div class="h-1 flex-1 overflow-hidden rounded bg-white/[0.06]">
         <div class="h-full rounded bg-success" style="width: 100%" />
@@ -36,8 +40,8 @@
       <span class="min-w-[30px] text-right font-mono text-[11px] text-success">100%</span>
     </div>
 
-    <!-- 待办 / 进行：展开 todos -->
-    <div v-else class="px-3 pb-[11px]">
+    <!-- 待办 / 进行：展开 todos（折叠态隐藏） -->
+    <div v-else-if="!collapsed" class="px-3 pb-[11px]">
       <!-- summary bar -->
       <div class="relative mb-2.5 h-[5px] overflow-hidden rounded-[3px] bg-white/[0.06]">
         <div
@@ -80,8 +84,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
-import { Check } from '@lucide/vue'
+import { computed, ref } from 'vue'
+import { Check, ChevronRight } from '@lucide/vue'
 import { MOCK_PROGRESS_STATES, type MockProgressState, type TodoStatus } from '@/api/mock/composer-data'
 
 const props = withDefaults(
@@ -91,6 +95,9 @@ const props = withDefaults(
   }>(),
   { phase: 'running' },
 )
+
+/** head 折叠态（用户点击切换） */
+const collapsed = ref(false)
 
 const state = computed<MockProgressState | null>(() => MOCK_PROGRESS_STATES[props.phase] ?? null)
 

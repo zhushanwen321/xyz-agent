@@ -25,7 +25,6 @@
       @split="onSplit"
       @new-session="onNewSession"
       @close="onClose(leaf.id)"
-      @diff="onDiff"
     />
   </div>
 </template>
@@ -71,9 +70,6 @@ function onNewSession(): void {
 }
 function onClose(panelId: string): void {
   panel.close(panelId)
-}
-function onDiff(): void {
-  // diff 抽屉属 Side Drawer（G-023/G detail-pane），DEFERRED，v1 空实现
 }
 </script>
 

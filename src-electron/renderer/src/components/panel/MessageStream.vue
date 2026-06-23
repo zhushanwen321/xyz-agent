@@ -7,7 +7,7 @@
     空 session 显示欢迎语（G2-004 空态收敛）。
   -->
   <div ref="scrollEl" class="message-stream flex min-h-0 flex-1 flex-col gap-[22px] overflow-y-auto px-5 py-[18px]">
-    <Turn v-for="turn in turns" :key="turn.index" :turn="turn" />
+    <Turn v-for="turn in turns" :key="turn.index" :turn="turn" :session-id="sessionId" />
 
     <!-- 空态欢迎语（G2-004） -->
     <div v-if="turns.length === 0" class="m-auto flex flex-col items-center gap-2 text-center">
