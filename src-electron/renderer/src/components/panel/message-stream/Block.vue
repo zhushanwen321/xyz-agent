@@ -24,10 +24,10 @@
       <p v-if="!thinkingCollapsed" class="mt-1 text-[12px] italic leading-relaxed text-muted">{{ content }}</p>
     </div>
 
-    <!-- 中间产出 text 块（draft §4 Output Text 中间：折进执行流程，下划线行） -->
-    <p v-else-if="type === 'text'" class="border-b border-dashed border-border pb-2 text-[12.5px] leading-relaxed text-muted">
-      {{ content }}
-    </p>
+    <!-- 中间产出 text 块（draft §4 Output Text 中间：折进执行流程，下划线行，markdown 渲染） -->
+    <div v-else-if="type === 'text'" class="border-b border-dashed border-border pb-2 text-[12.5px] leading-relaxed text-muted">
+      <MarkdownRenderer :content="content ?? ''" />
+    </div>
 
     <!-- tool_call 块：默认收起，header 点击 toggle；running 强制展开 -->
     <div v-else class="trace-tool">
@@ -66,6 +66,7 @@
 import { computed, ref } from 'vue'
 import { Brain, ChevronRight, Check, Wrench, XCircle } from '@lucide/vue'
 import type { ToolCall } from '@xyz-agent/shared'
+import MarkdownRenderer from './MarkdownRenderer.vue'
 
 const props = defineProps<{
   type: 'thinking' | 'tool' | 'text'

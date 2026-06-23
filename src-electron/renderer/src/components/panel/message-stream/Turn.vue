@@ -28,12 +28,12 @@
           </div>
         </div>
       </div>
-      <!-- 展示态气泡：右下尖角 -->
+      <!-- 展示态气泡：右下尖角（user content 走 markdown 渲染） -->
       <div
         v-else
         class="max-w-[76%] rounded-[14px_14px_4px_14px] border border-border-strong bg-surface-hover px-[13px] py-[9px] text-[13.5px] leading-[1.55] text-fg"
       >
-        {{ turn.user.content }}
+        <MarkdownRenderer :content="turn.user.content" />
       </div>
       <!-- hover actions：复制常驻 hover；编辑仅 AI 停止（isStreaming=false）时显示 -->
       <div
@@ -119,9 +119,9 @@
 
       <hr v-if="turn.hasFoldable || turn.assistants.length > 0" class="border-0 border-t border-border" />
 
-      <!-- 收尾 summary：仅最后一条 assistant.content，含 hover 复制/复制MD/fork -->
+      <!-- 收尾 summary：仅最后一条 assistant.content，含 hover 复制/复制MD/fork（markdown 渲染） -->
       <div v-if="summaryText" class="turn-summary group/ai pt-3 text-[13.5px] leading-7 text-fg">
-        <p>{{ summaryText }}</p>
+        <MarkdownRenderer :content="summaryText" />
         <span v-if="isStreamingText" class="streaming-cursor ml-0.5 inline-block h-3.5 w-[7px] translate-y-[3px] rounded-[1px] bg-accent align-text-bottom animate-blink" />
         <!-- hover actions：复制 / 复制为 MD / fork（仅 AI 停止时） -->
         <div
@@ -181,6 +181,7 @@ import { useChatStore } from '@/stores/chat'
 import { useSidebar } from '@/composables/features/useSidebar'
 import Block from './Block.vue'
 import ForkConfirmModal from './ForkConfirmModal.vue'
+import MarkdownRenderer from './MarkdownRenderer.vue'
 
 /** 时间格式化常量（elapsed 计算） */
 const MS_PER_SEC = 1000
