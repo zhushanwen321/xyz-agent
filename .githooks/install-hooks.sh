@@ -263,11 +263,11 @@ fi
 # ============================================================================
 
 CSS_SSOT_CHECKER=".githooks/check_css_token_ssot.py"
-CSS_SSOT_FILES="src-electron/renderer/src/style.css docs/designs/design-tokens.md"
+CSS_SSOT_FILES="src-electron/renderer/src/style.css docs/page-design/design-tokens.md"
 
 if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_CSS_TOKEN_SSOT_CHECK" != "1" ]; then
     # 仅当 style.css 或 design-tokens.md 变更时才检查
-    SSOT_CHANGED=$(echo "$STAGED_FILES" | grep -E "^src-electron/renderer/src/style\.css$|^docs/designs/design-tokens\.md$" || true)
+    SSOT_CHANGED=$(echo "$STAGED_FILES" | grep -E "^src-electron/renderer/src/style\.css$|^docs/page-design/design-tokens\.md$" || true)
     if [ -n "$SSOT_CHANGED" ]; then
         echo -e "${BLUE}[INFO] 运行 CSS token SSOT 一致性检查...${NC}"
 

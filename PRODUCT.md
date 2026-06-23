@@ -30,7 +30,7 @@ xyz-agent 是一个 AI Agent 桌面工作台。与 Claude Code、Pi 等工具类
 
 **冷蓝暗色 · 开发者工作台**
 
-> 视觉方向由 [ADR-0018](docs/architecture/adr/0018-visual-direction.md) 裁决（2026-06-18）：推翻早期 Warm & Soft 定位，收敛到 zcode-demo 冷蓝暗色。原子值 SSOT 见 [docs/designs/design-tokens.md](docs/designs/design-tokens.md)。
+> 视觉方向由 [ADR-0018](docs/architecture/adr/0018-visual-direction.md) 裁决（2026-06-18）：推翻早期 Warm & Soft 定位，收敛到 zcode-demo 冷蓝暗色。原子值 SSOT 见 [docs/page-design/design-tokens.md](docs/page-design/design-tokens.md)。
 
 三个关键词：冷静、精准、可靠。
 

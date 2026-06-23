@@ -5,7 +5,7 @@
 /* ============================================================
    xyz-agent Design Tokens · v3 冷蓝暗色（ADR-0018）
    ────────────────────────────────────────────────────────────
-   SSOT: docs/designs/design-tokens.md
+   SSOT: docs/page-design/design-tokens.md
    暗色为真默认（ADR-0021-B 裁决）。亮色变体待 settingsStore 接入，
    design-tokens 仅给出部分亮色值，未给全前不臆造落地。
    命名遵循 SSOT：--fg/--muted/--subtle/--border（非旧 --text* / --divider，

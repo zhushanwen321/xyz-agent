@@ -228,7 +228,7 @@ src-electron/
 
 ### 7.1 Border-radius 约束（v3）
 
-> **v3 更新（ADR-0018，2026-06）**：旧 Warm & Soft 时期的「仅 1px/2px」锐利几何规则已**推翻**。v3 冷蓝暗色采用三档圆角，权威 SSOT 为 [design-tokens.md](../designs/design-tokens.md)。
+> **v3 更新（ADR-0018，2026-06）**：旧 Warm & Soft 时期的「仅 1px/2px」锐利几何规则已**推翻**。v3 冷蓝暗色采用三档圆角，权威 SSOT 为 [design-tokens.md](../page-design/design-tokens.md)。
 
 | 场景 | 使用值 | Tailwind class |
 |------|--------|----------------|

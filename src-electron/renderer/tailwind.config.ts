@@ -2,7 +2,7 @@ import type { Config } from 'tailwindcss'
 
 /**
  * xyz-agent Tailwind 配置 · v3 冷蓝暗色（ADR-0018）
- * 色值映射到 style.css 的 CSS 变量（SSOT: docs/designs/design-tokens.md）。
+ * 色值映射到 style.css 的 CSS 变量（SSOT: docs/page-design/design-tokens.md）。
  * shadcn-vue 装机会在此基础上扩展，此处只落 design-tokens 对齐项。
  */
 export default {

@@ -134,9 +134,9 @@ def discover_all(self, project: str) -> list[EntryPoint]:
 
 ### 15. `panel-drag-region-demo.html` 设计文档
 
-`[SUGGESTION] docs/designs/panel-drag-region-demo.html — 新增 653 行的 PanelBar drag region 交互式 demo`
+`[SUGGESTION] docs/page-design/panel-drag-region-demo.html — 新增 653 行的 PanelBar drag region 交互式 demo`
 
-**评价**：HTML demo 质量高，提供了当前状态 vs 修复后的可视化对比、sidebar collapsed 场景、图例说明、代码参考。放在 `docs/designs/` 符合项目目录规范。
+**评价**：HTML demo 质量高，提供了当前状态 vs 修复后的可视化对比、sidebar collapsed 场景、图例说明、代码参考。放在 `docs/page-design/` 符合项目目录规范。
 
 **建议**：可合并。
 

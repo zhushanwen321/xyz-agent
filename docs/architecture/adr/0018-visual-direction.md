@@ -4,7 +4,7 @@
 
 ## 决策
 
-以 `docs/designs/zcode-demo/`（冷蓝 `#4f8ef7`、纯黑 `#0d0d0f`、Inter、暗色）作为产品**唯一视觉标准 (single source of truth)**，默认主题基调为**暗色优先，亮色为备选**。
+以 `docs/page-design/zcode-demo/`（冷蓝 `#4f8ef7`、纯黑 `#0d0d0f`、Inter、暗色）作为产品**唯一视觉标准 (single source of truth)**，默认主题基调为**暗色优先，亮色为备选**。
 
 完整 token 见 `docs/design-tokens.md`（本 ADR 的规范附件，唯一可引用的色值/字体/圆角源）。
 
@@ -15,8 +15,8 @@
 | 代号 | 来源 | 方向 | 处置 |
 |------|------|------|------|
 | A · Warm Workbench | `DESIGN.md` + `PRODUCT.md` 品牌 | 暖奶油 + 赤陶 + serif + 亮色 | **归档** |
-| B · 终端/IDE | `docs/design-system.md` | 纯黑 + 绿 `#22c55e` + 1px 圆角 | **归档** |
-| C · zcode-demo | `docs/designs/zcode-demo/` | 纯黑 + 蓝 `#4f8ef7` + Inter + 暗色 | **✅ 升级为真身** |
+| B · 终端/IDE | ~~`docs/design-system.md`~~（已删除） | 纯黑 + 绿 `#22c55e` + 1px 圆角 | **归档** |
+| C · zcode-demo | `docs/page-design/zcode-demo/` | 纯黑 + 蓝 `#4f8ef7` + Inter + 暗色 | **✅ 升级为真身** |
 | D · 真实代码漂移 | `src-electron/.../style.css` + `tailwind.config.ts` | 暖底 + 青蓝 accent(195°) + serif + 1px | **改到对齐 C** |
 
 `PRODUCT.md` 原定的「温润赤陶 Warm Workbench」品牌方向**被本决策推翻**，需同步重写。
@@ -37,7 +37,7 @@
 ## 归档处置
 
 - **A (`DESIGN.md`)**：文件顶部加 `> ⚠️ DEPRECATED by ADR-0018 (2026-06-18). 真身见 docs/design-tokens.md`，保留作历史参考，从所有"当前规范"链接撤下。
-- **B (`docs/design-system.md`)**：同样加 DEPRECATED 标注并归档。
+- **B (`docs/design-system.md`，已删除)**：原 Warm & Soft 方案，ADR-0018 推翻后文件已清理。
 - **`PRODUCT.md`**：品牌章节（Warm & Soft 人格、赤陶、anti-references 中"不是冷色开发者工具"）需重写为冷蓝暗色开发者工具人格——**单独任务，不在此 ADR 范围**。
 
 ## D 的漂移修复清单（精确到行）

@@ -30,7 +30,7 @@ Sidebar collapsed 后有两个 UX 问题：
 
 ## Demo
 
-- [交互式 demo](../designs/sidebar-collapse-fix.html) — 包含 single panel / split panel / floating pill / combined 场景
+- [交互式 demo](../page-design/sidebar-collapse-fix.html) — 包含 single panel / split panel / floating pill / combined 场景
 
 ## Consequences
 

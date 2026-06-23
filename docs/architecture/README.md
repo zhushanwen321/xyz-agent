@@ -20,7 +20,7 @@ docs/architecture/
 └── history/             # 历史版本归档（被 supersede 的旧架构）
 ```
 
-> **v3 设计稿** 在 `docs/designs/v3-demo/`（L0-L4 递归骨架 spec + draft），基础件 `design-tokens.md` / `design-system.md` 在 `docs/designs/` 根。v3 视觉/交互 ADR（0018-0022）已归位到本目录 `adr/`。
+> **v3 设计稿** 在 `docs/page-design/v3/`（L0-L4 递归骨架 spec + draft），基础件 `design-tokens.md` / `design-system.md` 在 `docs/page-design/` 根。v3 视觉/交互 ADR（0018-0022）已归位到本目录 `adr/`。
 
 ## 三条核心规则
 
@@ -53,8 +53,8 @@ docs/architecture/
 
 | 属于本目录 | 不属于（留 docs/ 其他位置） |
 |-----------|---------------------------|
-| 系统分层 / 模块边界 / 依赖方向 | UI 设计稿（`docs/designs/`） |
-| 跨进程通信 / 数据流 | 设计规范（`docs/design-system.md`） |
+| 系统分层 / 模块边界 / 依赖方向 | UI 设计稿（`docs/page-design/`） |
+| 跨进程通信 / 数据流 | 设计规范（`docs/page-design/design-system.md`） |
 | 架构决策（ADR） | 编码规范（`docs/standards.md`） |
 | 子系统设计（plugin 等） | 功能规划（`docs/project/`、`docs/feature-map/`） |
 | 架构调研（打包/路径安全/RPC 通道） | UI 调研（TUI→GUI 映射等，留 `docs/research/`） |

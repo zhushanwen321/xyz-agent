@@ -80,7 +80,7 @@ npm run lint
 
 ## 核心功能（v3 UI）
 
-v3 前端于 2026-06 完成 L0–L4 递归骨架重建（W01–W20 视觉验收全部 PASS），冷蓝暗色设计系统（ADR-0018）。设计 SSOT 见 [docs/designs/v3-demo/](docs/designs/v3-demo/)，术语见 [领域术语表](docs/architecture/context.md#v3-ui-结构术语2026-06-重构)。
+v3 前端于 2026-06 完成 L0–L4 递归骨架重建（W01–W20 视觉验收全部 PASS），冷蓝暗色设计系统（ADR-0018）。设计 SSOT 见 [docs/page-design/v3/](docs/page-design/v3/)，术语见 [领域术语表](docs/architecture/context.md#v3-ui-结构术语2026-06-重构)。
 
 - **Sidebar（侧栏）** — 持久容器（非单列表），顶部 Logo + 主操作 → segmented tab（会话｜文件）互斥切换 → 子视图列表 → 底部设置/用户。透明融合于 base，支持折叠（⌘B）
 - **Workspace（工作区）** — 双 Panel 主从模式（单 Panel = 默认态，开第二 session 才 split）
@@ -193,7 +193,7 @@ xyz-agent/
 - **禁止原生 HTML 表单元素** — 必须使用 xyz-ui 组件
 - **禁止 Emoji** — 使用 SVG 或 lucide-vue-next
 - **样式三层结构** — design tokens（`:root`）→ Template class（Tailwind）→ `<style scoped>`（仅伪元素/后代选择器/transition）。**禁止 `@apply`，禁止在 `<style scoped>` 写组件样式**
-- **border-radius v3** — 三档：`rounded-sm`(3px) / `rounded`/`rounded-md`(8px) / `rounded-lg`(12px)（SSOT 见 [design-tokens.md](docs/designs/design-tokens.md)）
+- **border-radius v3** — 三档：`rounded-sm`(3px) / `rounded`/`rounded-md`(8px) / `rounded-lg`(12px)（SSOT 见 [design-tokens.md](docs/page-design/design-tokens.md)）
 - **emit 只传单个 payload 对象** — 禁止多参数 emit
 - **行数上限** — `<template>` ≤ 400 行, `<script setup>` ≤ 300 行
 - **禁止 `any`** — 用 `unknown` 或具体类型

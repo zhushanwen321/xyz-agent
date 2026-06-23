@@ -19,19 +19,17 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作
 
 **规范与设计文档**:
 - [完整编码规范](docs/standards.md) — 组件使用、样式规则、TypeScript 约束
-- [设计 Tokens（v3 SSOT）](docs/designs/design-tokens.md) — 冷蓝暗色原子值（色/字/距/影/动效），ADR-0018 确立
-- [设计系统原语层（v3）](docs/designs/design-system.md) — 组件原语如何使用 tokens
-- [v3 UI 设计稿](docs/designs/v3-demo/README.md) — L0-L4 递归骨架 spec + draft（shell/sidebar/workspace/panel/overview/settings/overlays/flow-2/flow-3）
+- [设计 Tokens（v3 SSOT）](docs/page-design/design-tokens.md) — 冷蓝暗色原子值（色/字/距/影/动效），ADR-0018 确立
+- [设计系统原语层（v3）](docs/page-design/design-system.md) — 组件原语如何使用 tokens
+- [v3 UI 设计稿](docs/page-design/v3/README.md) — L0-L4 递归骨架 spec + draft（shell/sidebar/workspace/panel/overview/settings/overlays/flow-2/flow-3）
 - [领域术语表](docs/architecture/context.md) — Session/Panel/Runtime/v3 UI 结构术语
-- ~~[旧设计系统](docs/design-system.md)~~ — Warm & Soft，已 DEPRECATED by ADR-0018
-- ~~[旧设计系统详细参考](docs/designs/docs_DESIGN-SYSTEM.md)~~ — Warm & Soft，已 DEPRECATED
 - [竞品 UI 分析](docs/templates/competitor-ui-analysis.md) — Claude Code / Codex 逐图拆解，7 条设计原则
 - [UI/UX 设计原则与参考](docs/templates/ui-design-principles-and-references.md) — 设计方法论 + 竞品案例 + 行动清单
 - [设计方向](docs/templates/design-direction.md) — 产品定位、主题策略、窗口架构、实施优先级
 - [暗色主题选项 demo](docs/templates/dark-theme-options.html) — 5 种彩色 accent 方案对比
 - [朴素锐利主题 demo](docs/templates/muted-sharp-themes.html) — 5 种低饱和/无彩色方案对比
 
-**UI Demo 目录**: `docs/designs/` — 所有 UI 设计 demo（HTML 文件）和设计决策文档（MD 文件）。禁止在项目根目录或其他位置创建 `demos/`、`impeccable/` 等目录
+**页面设计目录**: `docs/page-design/` — v3 设计 SSOT 与设计稿。结构：`design-tokens.md`（原子）+ `design-system.md`（原语）+ `v3/`（正式设计区，L0-L4 骨架）+ `zcode-demo/`（视觉原型）+ `archive/`（pre-v3 历史稿）。禁止在项目根目录或其他位置创建 `demos/`、`impeccable/` 等目录
 
 **外部项目源码**:
 - **xyz-pi（fork 版本）**: [zhushanwen321/pi](https://github.com/zhushanwen321/pi) — 基于 [pi](https://github.com/nicepkg/pi-coding-agent) 的 fork，增加了 session tree 透出（`leafId` in `get_state`）等定制功能
@@ -47,7 +45,7 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作
   - TUI 交互: `packages/coding-agent/src/modes/interactive/interactive-mode.ts`
 
 **Settings 模块设计文档**:
-- [Settings 视觉 demo](docs/designs/settings-final.html) — Section Groups 风格的最终 HTML demo
+- [Settings 视觉 demo](docs/page-design/archive/settings-final.html) — Section Groups 风格 HTML demo（pre-v3 历史稿）
 - [Settings spec](.xyz-harness/2026-05-12-settings-redesign/spec.md) — 需求规格（WS 协议、数据流、组件结构）
 - [Settings plan](.xyz-harness/2026-05-12-settings-redesign/plan.md) — 实现计划（12 个 Task）
 
@@ -242,10 +240,10 @@ SKIP_ALL_CHECKS=1 git commit            # 跳过所有（仅紧急情况）
 
 ### 13. 目录规范（违反必出 bug）
 
-- **禁止创建 `demos/` 或 `impeccable/` 目录** — 所有 UI demo、HTML 设计稿统一放 `docs/designs/`，按 `views_<模块>.html` 或 `<主题>.html` 命名。pre-commit hook 自动检查
+- **禁止创建 `demos/` 或 `impeccable/` 目录** — 页面设计稿统一放 `docs/page-design/`：v3 正式稿在 `v3/<模块>/draft-*.html`，历史探索稿在 `archive/`。pre-commit hook 自动检查
 - **禁止 symlink 指向外部绝对路径** — 项目内 symlink 白名单仅允许 `../` 相对路径（指向同 workspace 内的兄弟 worktree）。外部绝对路径 symlink 打包后目标不存在，导致运行时资源缺失。pre-commit hook 自动检查
 - **`.xyz-harness/` 目录必须提交且不能删除** — 该目录存放所有 spec/plan 的历史设计文档（按 `YYYY-MM-DD-<slug>/` 命名），是项目决策追溯的重要依据。禁止 `git rm -r .xyz-harness/` 或将其加入 `.gitignore`
-- **`DESIGN.md` 必须保留在项目根目录** — ~~产品设计系统的核心定义文件~~（已 DEPRECATED by ADR-0018，Warm & Soft 被推翻）。真身设计系统见 `docs/designs/design-tokens.md` + `docs/designs/design-system.md`（v3 冷蓝暗色）。文件保留作历史参考，不作为当前规范
+- **`DESIGN.md` 必须保留在项目根目录** — ~~产品设计系统的核心定义文件~~（已 DEPRECATED by ADR-0018，Warm & Soft 被推翻）。真身设计系统见 `docs/page-design/design-tokens.md` + `docs/page-design/design-system.md`（v3 冷蓝暗色）。文件保留作历史参考，不作为当前规范
 
 ## 测试规范 [HISTORICAL]
 
@@ -276,15 +274,15 @@ SKIP_ALL_CHECKS=1 git commit            # 跳过所有（仅紧急情况）
 7. **Promise.allSettled** — 独立数据源用 `allSettled`，不用 `all`
 8. **禁止硬编码颜色** — 用 CSS 变量（`var(--accent)`）或语义 Tailwind 类
 9. **禁止魔数间距** — 用标准 Tailwind scale，不用 `p-[17px]`
-10. **border-radius 遵循 v3 design-tokens**（`--radius-sm:3px` / `--radius:8px` / `--radius-lg:12px`）— `rounded-sm`(3px) 默认，`rounded-md`/`rounded-lg`(8/12px) 特殊场景。SSOT 见 [docs/designs/design-tokens.md](docs/designs/design-tokens.md)，裁决依据 ADR-0018（旧 Warm 时期的 1px/2px 规则已推翻）。详见 docs/standards.md §7.1
+10. **border-radius 遵循 v3 design-tokens**（`--radius-sm:3px` / `--radius:8px` / `--radius-lg:12px`）— `rounded-sm`(3px) 默认，`rounded-md`/`rounded-lg`(8/12px) 特殊场景。SSOT 见 [docs/page-design/design-tokens.md](docs/page-design/design-tokens.md)，裁决依据 ADR-0018（旧 Warm 时期的 1px/2px 规则已推翻）。详见 docs/standards.md §7.1
 11. **窗口顶部 traffic light 安全区（v3 shell 拓扑）** — v3 重建采用 zcode-demo 拓扑：base 平铺全屏 → sidebar 透明融合 → main 是唯一 float-panel 浮起。traffic light 靠 **aside-region 顶部留白**兼容，而非旧版 padding-left 避让。具体要求：
     - `.aside-region` 恒定 `padding-top: 52px`（安全区 32 + 呼吸 20），**三平台统一，全屏也保留**（mac 全屏 hover 时系统下拉覆盖层会落进这块留白）
     - `--tl-safe-width: 72px`（mac 三按钮宽）、`--tl-safe-height: 32px`
     - app-nav-controls（收起侧栏/←/→）浮在 aside 安全区，非全屏 `left:90px`，全屏 `left:20px`（320ms 平移与 traffic-light opacity 同步）
     - 全屏两态：非全屏（traffic light opacity 1，按钮 left:90px）/ 全屏（opacity 0，按钮左移）。**无第三态**，mac 全屏 hover 红黄绿由系统提供，应用不渲染
     - win/linux 走 mimic_mac：自绘彩色圆点放左侧模拟 mac，三平台左上视觉统一
-    - 新增或修改任何窗口顶部区域 UI 时，必须读 [shell spec](docs/designs/v3-demo/shell/spec.md) 确认拓扑一致
-    - 设计决策记录：[ADR 0016](docs/architecture/adr/0016-macos-traffic-light-safe-zone.md)（旧版 padding-left 方案，**已推翻**）、[v3 shell spec](docs/designs/v3-demo/shell/spec.md)（现版 SSOT，2026-06-18 修正）
+    - 新增或修改任何窗口顶部区域 UI 时，必须读 [shell spec](docs/page-design/v3/shell/spec.md) 确认拓扑一致
+    - 设计决策记录：[ADR 0016](docs/architecture/adr/0016-macos-traffic-light-safe-zone.md)（旧版 padding-left 方案，**已推翻**）、[v3 shell spec](docs/page-design/v3/shell/spec.md)（现版 SSOT，2026-06-18 修正）
 
 ### 自动化检查
 

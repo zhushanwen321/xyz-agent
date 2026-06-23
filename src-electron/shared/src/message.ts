@@ -45,7 +45,7 @@ export interface Usage {
 }
 
 // ── Flow-2 代码变更审查数据契约（FileChanges 通道）──────────────────
-// 依据：docs/designs/v3-demo/flow-2-code-review/spec.md（§S3 变更集聚合 + §状态机·变更集卡）
+// 依据：docs/page-design/v3/flow-2-code-review/spec.md（§S3 变更集聚合 + §状态机·变更集卡）
 //      .v3-audit/results/wave-W11-message-stream.md WP-L3-11（FileChanges 块缺失）
 //      .v3-audit/results/wave-W14-side-drawer.md WP-L3-34（ChangeSet Detail 依赖本通道）
 // 本契约只定义类型，runtime 解析方案见 ADR-0024，chat store 数据流由 flow-2 完整实施落地。

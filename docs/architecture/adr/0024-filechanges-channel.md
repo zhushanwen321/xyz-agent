@@ -1,7 +1,7 @@
 # ADR-0024: FileChanges 数据通道（runtime 解析方案）
 
 > **性质**：契约/设计先行，本文档不含代码实现。为 flow-2（代码变更审查，[ADR-0019](0019-core-user-flows.md)）启动铺数据地基。
-> **关联**：[ADR-0019 核心用户流](0019-core-user-flows.md)、`docs/designs/v3-demo/flow-2-code-review/spec.md`（flow-2 SSOT）、`.v3-audit/results/wave-W11-message-stream.md` WP-L3-11（FileChanges 块缺失）、`.v3-audit/results/wave-W14-side-drawer.md` WP-L3-34（ChangeSet Detail 依赖本通道）。
+> **关联**：[ADR-0019 核心用户流](0019-core-user-flows.md)、`docs/page-design/v3/flow-2-code-review/spec.md`（flow-2 SSOT）、`.v3-audit/results/wave-W11-message-stream.md` WP-L3-11（FileChanges 块缺失）、`.v3-audit/results/wave-W14-side-drawer.md` WP-L3-34（ChangeSet Detail 依赖本通道）。
 > **类型契约**：见 `src-electron/shared/src/message.ts` 的 `FileChange` / `ChangeSetStatus` / `ReviewDecision`（F2-1 已落地）。
 
 ## 上下文

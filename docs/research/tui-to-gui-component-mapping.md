@@ -2,7 +2,7 @@
 
 > 调研日期：2026-06-04
 > 审查修订：2026-06-04 v3（补充 extension_error 字段名 bug、CustomMessage display 过滤、message_update error/done 子类型遗漏）
-> Demo 页面：[tui-gui-component-mapping-demo.html](../designs/tui-gui-component-mapping-demo.html)
+> Demo 页面：[tui-gui-component-mapping-demo.html](../page-design/tui-gui-component-mapping-demo.html)
 
 ## 一、映射总表
 
