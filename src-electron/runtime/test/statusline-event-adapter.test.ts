@@ -121,8 +121,9 @@ describe('TC-1-02: setWidget bridges to extension:widget', () => {
 
     expect(sent).toHaveLength(1)
     expect(sent[0].type).toBe('extension:widget')
-    expect(sent[0].payload.widgetKey).toBe('widget-key')
-    expect(sent[0].payload.lines).toEqual(['line1'])
+    const widgetPayload = sent[0].payload as { widgetKey: string; lines: string[] }
+    expect(widgetPayload.widgetKey).toBe('widget-key')
+    expect(widgetPayload.lines).toEqual(['line1'])
     expect(onStatusSetUpdate).not.toHaveBeenCalled()
   })
 })

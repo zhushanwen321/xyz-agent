@@ -9,7 +9,10 @@
  *
  * 依赖方向：无（不 import transport/events/pending，独立内存实现）。
  */
-import type { Message, ServerMessage, SessionSummary } from '@xyz-agent/shared'
+import type {
+  Message, ModelInfo, ServerMessage, SessionSummary,
+  ProviderInfo, SkillInfo, AgentInfo, PluginInfo,
+} from '@xyz-agent/shared'
 import { createSession, fixtureMessages, fixtureSessions } from './data'
 import {
   fixtureProviders,
@@ -235,11 +238,11 @@ export const config = {
     await sleep(TIMING.ack)
     return { success: true, models: [] }
   },
-  // 订阅型
-  onProviders: (h: GlobalHandler<unknown>) => providersSub.subscribe(h),
-  onSkills: (h: GlobalHandler<unknown>) => skillsSub.subscribe(h),
-  onAgents: (h: GlobalHandler<unknown>) => agentsSub.subscribe(h),
-  onDefaults: (h: GlobalHandler<unknown>) => defaultsSub.subscribe(h),
+  // 订阅型（handler 类型与 real domains 对齐：facade 三元要求两侧同构）
+  onProviders: (h: (providers: ProviderInfo[]) => void) => providersSub.subscribe(h),
+  onSkills: (h: (skills: SkillInfo[]) => void) => skillsSub.subscribe(h),
+  onAgents: (h: (agents: AgentInfo[]) => void) => agentsSub.subscribe(h),
+  onDefaults: (h: (defaultModel: string) => void) => defaultsSub.subscribe(h),
   // 动作型（mock 仅 ack，状态变更不广播——real 模式由订阅推回）
   async setProvider(_providerId: string, _data: unknown) {
     await sleep(TIMING.ack)
@@ -262,27 +265,33 @@ export const config = {
 }
 
 /* ── Model mock ── */
-
-function mockModelToInfo(m: MockModel): {
-  id: string
-  name: string
-  provider: string
-  providerColor?: string
-  tag?: string
-} {
-  return { id: m.id, name: m.name, provider: m.provider, providerColor: m.providerColor, tag: m.tag }
+// ModelInfo 统一用 shared 形状（runtime aggregateModels 生产的 providerId/providerName 版）。
+// mock 的 MockModel.provider（展示名）同时作 providerId 与 providerName。
+// providerColor/tag 是纯 UI 关注点（runtime 不下发），由组件侧本地映射，不进 ModelInfo。
+function mockModelToInfo(m: MockModel): ModelInfo {
+  return {
+    id: m.id,
+    name: m.name,
+    providerId: m.provider,
+    providerName: m.provider,
+    reasoning: false,
+    enabled: true,
+  }
 }
 
 const modelsSub = makeMockSubscription(() => MOCK_MODELS.map(mockModelToInfo))
 
 export const model = {
-  onModels: (h: GlobalHandler<unknown>) => modelsSub.subscribe(h),
+  onModels: (h: (models: ModelInfo[]) => void) => modelsSub.subscribe(h),
   async switchModel(_sessionId: string, _provider: string, _modelId: string) {
     await sleep(TIMING.ack)
   },
 }
 
 /* ── Extension mock ── */
+// fixture 的 FixtureExtension 带 tools（ExtensionPage 模板依赖），与 shared ExtensionInfo
+// （dirName/path/source）结构不同。onExtensions 暂留宽类型，由 SettingsModal 用本地
+// ExtensionItem 桥接；tools/dirName/source 字段统一属 W08（Extension CRUD）。
 
 const extensionsSub = makeMockSubscription(() => fixtureExtensions.map((e) => ({ ...e })))
 
@@ -295,10 +304,10 @@ export const extension = {
 
 /* ── Plugin mock（订阅骨架，无 fixture；第3项真实集成补数据）── */
 
-const pluginsSub = makeMockSubscription((): unknown[] => [])
+const pluginsSub = makeMockSubscription((): PluginInfo[] => [])
 
 export const plugin = {
-  onPlugins: (h: GlobalHandler<unknown>) => pluginsSub.subscribe(h),
+  onPlugins: (h: (plugins: PluginInfo[]) => void) => pluginsSub.subscribe(h),
 }
 
 /* ── Settings mock（对齐新契约：转发 config/extension 订阅 + localStorage 偏好）── */

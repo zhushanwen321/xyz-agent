@@ -39,14 +39,19 @@ export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 're
 function routeInbound(msg: ServerMessage): void {
   if (msg.id) {
     if (msg.type === 'error') {
-      const message = typeof msg.payload?.message === 'string' ? msg.payload.message : 'request failed'
+      // type==='error' 已窄化 payload 为 error envelope（含 message）。窄断言取字段，避免联合上直接访问。
+      const message = typeof (msg.payload as { message?: string }).message === 'string'
+        ? (msg.payload as { message: string }).message
+        : 'request failed'
       pending.reject(msg.id, new Error(message))
     } else {
       pending.resolve(msg.id, msg.payload)
     }
   }
-  const sid = typeof msg.payload?.sessionId === 'string' ? msg.payload.sessionId : undefined
-  if (sid) {
+  // payload 跨多种 type：有的含 sessionId（session 通道），有的不含（global 通道）。
+  // 联合类型无法直接 .sessionId，窄断言为可选字段做路由判定（CLAUDE.md line 98 隔离规则不变）。
+  const sid = (msg.payload as { sessionId?: string }).sessionId
+  if (typeof sid === 'string' && sid) {
     events.dispatchSession(sid, msg)
   } else {
     events.dispatchGlobal(msg)

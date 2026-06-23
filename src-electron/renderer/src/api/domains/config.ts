@@ -57,25 +57,25 @@ export function discoverModels(req: {
 // ── 订阅-推送（sendInitialState 主动推 + 运行时广播）──
 export function onProviders(handler: (providers: ProviderInfo[]) => void): () => void {
   return events.onGlobalType('config.providers', (msg) => {
-    handler(msg.payload.providers as ProviderInfo[])
+    handler(msg.payload.providers)
   })
 }
 
 export function onSkills(handler: (skills: SkillInfo[]) => void): () => void {
   return events.onGlobalType('config.skills', (msg) => {
-    handler(msg.payload.skills as SkillInfo[])
+    handler(msg.payload.skills)
   })
 }
 
 export function onAgents(handler: (agents: AgentInfo[]) => void): () => void {
   return events.onGlobalType('config.agents', (msg) => {
-    handler(msg.payload.agents as AgentInfo[])
+    handler(msg.payload.agents)
   })
 }
 
 export function onDefaults(handler: (defaultModel: string) => void): () => void {
   return events.onGlobalType('config.defaults', (msg) => {
-    handler(msg.payload.defaultModel as string)
+    handler(msg.payload.defaultModel)
   })
 }
 

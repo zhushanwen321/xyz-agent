@@ -137,7 +137,7 @@ export const useChatStore = defineStore('chat', () => {
         const call: ToolCall = {
           id: callId,
           toolName,
-          input: msg.payload.input ?? {},
+          input: readRecord(msg.payload, 'input'),
           status: 'running',
           startTime: Date.now(),
         }
@@ -299,4 +299,12 @@ function findLastAssistantIndex(list: Message[]): number {
 function readString(payload: Record<string, unknown>, key: string): string | undefined {
   const v = payload[key]
   return typeof v === 'string' ? v : undefined
+}
+
+/** 读 payload 上的对象字段（tool_call_start.input 等），非对象时回退空对象。 */
+function readRecord(payload: Record<string, unknown>, key: string): Record<string, unknown> {
+  const v = payload[key]
+  return v && typeof v === 'object' && !Array.isArray(v)
+    ? v as Record<string, unknown>
+    : {}
 }

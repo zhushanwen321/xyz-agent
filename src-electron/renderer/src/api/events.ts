@@ -10,7 +10,7 @@
  *
  * 两通道互不串扰。routeInbound（useConnection）按 payload.sessionId 有无决定走哪条。
  */
-import type { ServerMessage } from '@xyz-agent/shared'
+import type { ServerMessage, ServerMessageType } from '@xyz-agent/shared'
 
 type MessageHandler = (msg: ServerMessage) => void
 
@@ -54,16 +54,28 @@ export function onGlobal(handler: MessageHandler): () => void {
   }
 }
 
-/** 订阅指定 type 的全局 ServerMessage，返回取消函数 */
-export function onGlobalType(type: string, handler: MessageHandler): () => void {
+/**
+ * 订阅指定 type 的全局 ServerMessage，返回取消函数。
+ *
+ * 泛型化：传入精确 type（如 'config.providers'）时，handler 内 msg 自动收窄为
+ * ServerMessage<'config.providers'>，msg.payload 即 `{ providers: ProviderInfo[] }`，
+ * 无需 `as` 断言。存储层仍是宽 MessageHandler（类型擦除），运行时按 type 路由。
+ */
+export function onGlobalType<T extends ServerMessageType>(
+  type: T,
+  handler: (msg: ServerMessage<T>) => void,
+): () => void {
+  // 存储层类型擦除：Set 只存「能处理任意 ServerMessage 的函数」，TS 不允许 (msg: Specific)→void
+  // 直接赋给 (msg: Wide)→void，故用 as 做受控擦除。运行时 dispatchGlobal 只会喂同 type 的 msg。
+  const erased = handler as MessageHandler
   let set = globalTypeHandlers.get(type)
   if (!set) {
     set = new Set()
     globalTypeHandlers.set(type, set)
   }
-  set.add(handler)
+  set.add(erased)
   return () => {
-    globalTypeHandlers.get(type)?.delete(handler)
+    globalTypeHandlers.get(type)?.delete(erased)
   }
 }
 

@@ -207,8 +207,9 @@ describe('EventAdapter: extension event translation', () => {
 
       expect(sent).toHaveLength(1)
       expect(sent[0].type).toBe('extension:status')
-      expect(sent[0].payload.statusKey).toBe('status-key')
-      expect(sent[0].payload.text).toBe('some status')
+      const statusPayload = sent[0].payload as { statusKey: string; text: string }
+      expect(statusPayload.statusKey).toBe('status-key')
+      expect(statusPayload.text).toBe('some status')
     })
 
     it('bridges setWidget to extension.widget WS event', async () => {
@@ -228,8 +229,9 @@ describe('EventAdapter: extension event translation', () => {
 
       expect(sent).toHaveLength(1)
       expect(sent[0].type).toBe('extension:widget')
-      expect(sent[0].payload.widgetKey).toBe('widget-key')
-      expect(sent[0].payload.lines).toEqual(['line1', 'line2'])
+      const widgetPayload = sent[0].payload as { widgetKey: string; lines: string[] }
+      expect(widgetPayload.widgetKey).toBe('widget-key')
+      expect(widgetPayload.lines).toEqual(['line1', 'line2'])
     })
   })
 

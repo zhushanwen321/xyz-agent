@@ -294,10 +294,10 @@ function createSetup(): Setup {
   }
 }
 
-/** 辅助：从 broadcast 调用里找指定 type 的消息。 */
-function findBroadcast(setup: Setup, type: string): ServerMessage | undefined {
+/** 辅助：从 broadcast 调用里找指定 type 的消息（按 type 收窄返回 payload 类型）。 */
+function findBroadcast<T extends ServerMessage['type']>(setup: Setup, type: T): ServerMessage<T> | undefined {
   for (const call of vi.mocked(setup.broker.broadcast).mock.calls) {
-    if (call[0].type === type) return call[0]
+    if (call[0].type === type) return call[0] as ServerMessage<T>
   }
   return undefined
 }

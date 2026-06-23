@@ -13,7 +13,7 @@ import * as events from '../events'
 
 export function onExtensions(handler: (extensions: ExtensionInfo[]) => void): () => void {
   return events.onGlobalType('config.extensions', (msg) => {
-    handler(msg.payload.extensions as ExtensionInfo[])
+    handler(msg.payload.extensions)
   })
 }
 

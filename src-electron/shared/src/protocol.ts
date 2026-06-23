@@ -1,6 +1,7 @@
 // Client → Runtime message types
 
-import type { SkillInfo, AgentInfo } from './provider'
+import type { ProviderInfo, SkillInfo, AgentInfo, ModelInfo } from './provider'
+import type { SessionGroup } from './session'
 
 // ── ClientMessageType（保持向后兼容）──────────────────────────
 
@@ -197,11 +198,72 @@ export type ServerMessageType =
   | 'message.stream_error'
   | 'file.read:result'
 
-export interface ServerMessage {
-  type: ServerMessageType
-  id?: string
-  payload: Record<string, unknown>
+/**
+ * # ServerMessageMap —— Runtime → Client payload 类型映射
+ *
+ * 与 ClientMessageMap 对称：每个 ServerMessageType 对应的 payload 类型。
+ * 消费侧（renderer events.onGlobalType / events.on）handler 内 payload 自动收窄，
+ * 不再需要 `as ProviderInfo[]` 等断言。
+ *
+ * 收录原则：
+ * - **已消费 + 已契约化**的类型 → 精确 payload（domain 订阅 + sendInitialState 推送的 7 条）。
+ * - **未消费 / 协议待定**的类型 → `Record<string, unknown>`（占位，待对应 wave 实装时收紧：
+ *   message.* 进 W05-W07，plugin:* / extension:* widget 等属后续 wave）。
+ *
+ * 收紧某条目时，runtime 构造点会同步得契约校验（若 payload 字段对不上，tsc 报错——这是 D5 的预期收益）。
+ */
+export interface ServerMessageMapBase {
+  // ── sendInitialState 推送 / domain 订阅（精确）──
+  'config.providers': { providers: ProviderInfo[] }
+  'config.skills': { skills: SkillInfo[] }
+  'config.agents': { agents: AgentInfo[] }
+  'config.defaults': { defaultModel: string }
+  'config.extensions': { extensions: ExtensionInfo[] }
+  'config.plugins': { plugins: PluginInfo[] }
+  'model.list': { models: ModelInfo[] }
+  'session.list': { groups: SessionGroup[] }
+
+  // ── 协议级 reply / push（精确）──
+  'pong': Record<string, never>
+  'error': { code: string; message: string; sessionId?: string; details?: Record<string, unknown> }
+  // 流式异步推送失败（server-push 通道，区别于请求级 error envelope；见错误契约文档）
+  'message.error': { sessionId: string; message: string }
+  // 扩展 UI 推送通道（EventAdapter 翻译 pi setWidget/setStatus，runtime 固定形状生产）
+  'extension:widget': { sessionId: string; widgetKey: string; lines: string[] }
+  'extension:status': { sessionId: string; statusKey: string; text: string }
 }
+
+/**
+ * Runtime → Client payload 类型映射（与 ClientMessageMap 对称）。
+ *
+ * 精确条目见 ServerMessageMapBase（已消费 + 已契约化的 type）；其余未消费 / 协议待定的
+ * type 走 `Record<string, unknown>` 占位，待对应 wave 实装时收紧：
+ * message.* 进 W05-W07，plugin:* / extension:* widget 等属后续 wave，session.commands /
+ * context.update 进 W04，tree-* 不做。
+ *
+ * 收紧某条目时，runtime 构造点会同步得契约校验（若 payload 字段对不上，tsc 报错——D5 的预期收益）。
+ */
+export type ServerMessageMap = ServerMessageMapBase & {
+  [K in Exclude<ServerMessageType, keyof ServerMessageMapBase>]: Record<string, unknown>
+}
+
+/**
+ * Runtime → Client 消息。泛型化后 payload 按 type 收窄（见 ServerMessageMap）。
+ *
+ * 构造侧（runtime server.ts 的 send/reply/broadcast）仍可传 `ServerMessage`（默认 T=ServerMessageType，
+ * payload 为联合）——存储/传输层不感知具体 type。消费侧 onGlobalType<T>/on<T> 收窄后才解构 payload。
+ */
+export interface ServerMessage<T extends ServerMessageType = ServerMessageType> {
+  type: T
+  id?: string
+  payload: ServerMessageMap[T]
+}
+
+/** 根据 type 提取对应的 server payload 类型 */
+export type ExtractServerPayload<T extends ServerMessageType> = ServerMessageMap[T]
+
+/** 构造特定 type 的 ServerMessage */
+export type SpecificServerMessage<T extends ServerMessageType> = ServerMessage<T>
 
 /**
  * # 错误契约（D10/P0-B）

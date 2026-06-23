@@ -131,9 +131,9 @@ const unsubs: Array<() => void> = []
 
 onMounted(async () => {
   // 订阅常驻：providers/skills/agents/extensions 由 sendInitialState + 变更广播驱动
-  unsubs.push(settings.onProviders((p) => { providers.value = p as ProviderInfo[] }))
-  unsubs.push(settings.onSkills((s) => { skills.value = s as SkillInfo[] }))
-  unsubs.push(settings.onAgents((a) => { agents.value = a as AgentInfo[] }))
+  unsubs.push(settings.onProviders((p) => { providers.value = p }))
+  unsubs.push(settings.onSkills((s) => { skills.value = s }))
+  unsubs.push(settings.onAgents((a) => { agents.value = a }))
   unsubs.push(settings.onExtensions((e) => { extensions.value = e as ExtensionItem[] }))
   // system 是纯前端偏好（localStorage），挂载时同步读
   system.value = await settings.getSystem()

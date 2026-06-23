@@ -11,6 +11,6 @@ import * as events from '../events'
 
 export function onPlugins(handler: (plugins: PluginInfo[]) => void): () => void {
   return events.onGlobalType('config.plugins', (msg) => {
-    handler(msg.payload.plugins as PluginInfo[])
+    handler(msg.payload.plugins)
   })
 }

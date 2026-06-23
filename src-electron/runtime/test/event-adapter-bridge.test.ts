@@ -56,8 +56,9 @@ describe('EventAdapter extension bridge', () => {
 
       await vi.waitFor(() => sent.length > 0)
 
-      expect(sent[0].payload.widgetKey).toBe('')
-      expect(sent[0].payload.lines).toEqual([])
+      const payload = sent[0].payload as { widgetKey: string; lines: string[] }
+      expect(payload.widgetKey).toBe('')
+      expect(payload.lines).toEqual([])
     })
 
     it('converts non-string lines to strings', async () => {
@@ -76,7 +77,7 @@ describe('EventAdapter extension bridge', () => {
 
       await vi.waitFor(() => sent.length > 0)
 
-      expect(sent[0].payload.lines).toEqual(['42', 'null', 'text'])
+      expect((sent[0].payload as { lines: string[] }).lines).toEqual(['42', 'null', 'text'])
     })
   })
 
@@ -132,8 +133,9 @@ describe('EventAdapter extension bridge', () => {
       await vi.waitFor(() => sent.length > 0)
 
       expect(sent[0].type).toBe('extension:status')
-      expect(sent[0].payload.statusKey).toBe('status')
-      expect(sent[0].payload.text).toBe('Done')
+      const statusPayload = sent[0].payload as { statusKey: string; text: string }
+      expect(statusPayload.statusKey).toBe('status')
+      expect(statusPayload.text).toBe('Done')
     })
   })
 })

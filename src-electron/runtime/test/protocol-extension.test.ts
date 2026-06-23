@@ -306,7 +306,7 @@ describe('Protocol: extension types', () => {
         payload: { code: 'not_found', message: 'Package not found', details: { hint: 'Check the package name' } },
       }
       expect(msg.type).toBe('error')
-      expect(msg.payload.details).toEqual({ hint: 'Check the package name' })
+      expect((msg.payload as { details?: Record<string, unknown> }).details).toEqual({ hint: 'Check the package name' })
     })
 
     it('ExtensionDiscoveredPayload has correct shape', () => {

@@ -27,7 +27,7 @@
           <div
             class="flex items-center gap-1.5 px-2.5 pb-1 pt-2 font-mono text-[10px] uppercase tracking-[0.08em] text-subtle"
           >
-            <!-- providerColor 是动态 inline style，唯一允许的 style 属性 -->
+            <!-- provider 颜色是纯 UI 关注点（runtime 不下发），按 providerId 本地映射；唯一允许的 inline style -->
             <span class="size-1.5 rounded-full" :style="{ background: group.color }" />
             {{ group.provider }}
           </div>
@@ -40,11 +40,6 @@
             @click="onSelect(model.id)"
           >
             <span class="flex-1 text-left">{{ model.name }}</span>
-            <span
-              v-if="model.tag"
-              class="rounded-full bg-surface-2 px-1.5 py-[3px] font-mono text-[9px] uppercase tracking-[0.04em] text-subtle"
-              :class="model.id === selected && 'bg-accent-soft text-accent'"
-            >{{ model.tag }}</span>
             <Check
               class="size-[13px] text-accent opacity-0"
               :class="model.id === selected && 'opacity-100'"
@@ -85,13 +80,26 @@ const selected = ref(props.selected ?? '')
 const query = ref('')
 const models = ref<ModelInfo[]>([])
 
+// provider → 品牌色映射（纯 UI 关注点：runtime ModelInfo 不下发颜色）。
+// 未命中的 provider 用中性灰兜底，保证 UI 不塌陷。
+const PROVIDER_COLORS: Record<string, string> = {
+  anthropic: '#d97757',
+  openai: '#10a37f',
+  google: '#4285f4',
+}
+const DEFAULT_PROVIDER_COLOR = '#94a3b8'
+
+function providerColor(providerId: string): string {
+  return PROVIDER_COLORS[providerId.toLowerCase()] ?? DEFAULT_PROVIDER_COLOR
+}
+
 // 外部 selected 变化时同步本地（单向：父 → 子）
 watch(() => props.selected, (v) => { if (v) selected.value = v })
 
 // 订阅模型列表（sendInitialState 推 model.list；组件挂载即得初始列表）
 let unsub: (() => void) | null = null
 onMounted(() => {
-  unsub = modelApi.onModels((list) => { models.value = list as ModelInfo[] })
+  unsub = modelApi.onModels((list) => { models.value = list })
 })
 onBeforeUnmount(() => { unsub?.() })
 
@@ -102,15 +110,17 @@ interface ModelGroup {
 }
 
 // 按 provider 分组 + 按 query 过滤（name 包含，大小写不敏感）。空分组不渲染。
+// shared.ModelInfo 用 providerId（分组键）/ providerName（展示），颜色本地映射。
 const groups = computed<ModelGroup[]>(() => {
   const q = query.value.trim().toLowerCase()
   const map = new Map<string, ModelGroup>()
   for (const m of models.value) {
     if (q && !m.name.toLowerCase().includes(q)) continue
-    let g = map.get(m.provider)
+    const key = m.providerId
+    let g = map.get(key)
     if (!g) {
-      g = { provider: m.provider, color: m.providerColor ?? '', models: [] }
-      map.set(m.provider, g)
+      g = { provider: m.providerName, color: providerColor(key), models: [] }
+      map.set(key, g)
     }
     g.models.push(m)
   }

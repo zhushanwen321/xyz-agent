@@ -1,7 +1,8 @@
 export type {
   ClientMessageType, ClientMessage, ClientMessageMap,
   ExtractPayload, SpecificClientMessage, SetProviderData,
-  ServerMessageType, ServerMessage,
+  ServerMessageType, ServerMessage, ServerMessageMap, ServerMessageMapBase,
+  ExtractServerPayload, SpecificServerMessage,
   ExtensionUIRequestPayload, ExtensionUIResponsePayload,
   ExtensionErrorPayload, ToolCallUpdatePayload, ExtensionInfo,
   ExtensionDiscoveredPayload,
