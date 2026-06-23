@@ -75,7 +75,7 @@
       <div class="mt-1 min-h-0 flex-1">
         <template v-if="sidebar.activeTab === 'sessions'">
           <SessionList
-            :sessions="session.list"
+            :groups="session.groups"
             :active-id="session.activeId"
             :status-of="statusOf"
             @select="onSelectSession"

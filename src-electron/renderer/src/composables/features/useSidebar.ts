@@ -118,7 +118,7 @@ export function useSidebar() {
    */
   async function newSession(): Promise<string> {
     const created = await sessionApi.create()
-    session.list = [...session.list, created]
+    session.appendSession(created)
     await selectSession(created.id)
     return created.id
   }
@@ -130,7 +130,7 @@ export function useSidebar() {
    */
   async function newSessionToStandby(): Promise<void> {
     const created = await sessionApi.create()
-    session.list = [...session.list, created]
+    session.appendSession(created)
     const standby = panel.panels.find((p) => p.id !== panel.activePanelId)
     await selectSession(created.id, standby ? { panelId: standby.id } : undefined)
   }
@@ -186,7 +186,7 @@ export function useSidebar() {
     const truncated = msgs.slice(0, end).map((m) => ({ ...m }))
 
     const created = await sessionApi.create()
-    session.list = [...session.list, created]
+    session.appendSession(created)
     chat.hydrate(created.id, truncated)
 
     // 打开在另一 panel（单 panel 先 split 出 standby）
@@ -208,16 +208,18 @@ export function useSidebar() {
    * 加载 session 列表（mock 优先，让 fixture 可见）。
    * 铁律 1：api 调用只在此 features 层，组件不直接 import api。
    *
-   * 同时预 hydrate 各 session 的 chat 历史，让 sidebar 状态点（D6）载入即可派生——
+   * sessionApi.list() 返 SessionGroup[]（按 cwd 分组，D7），setGroups 填入分组真源；
+   * 预 hydrate 各 session 的 chat 历史用 flatMap 展平（derivedStatus/sessionDigest 按 id 查找用扁平视图）。
    * 否则未访问的 session 在 chat store 为空，deriveStatus 全返回 done，5 态无法可见。
    * isHydrated 守卫幂等，selectSession 的按需 hydrate 命中后变 no-op，不会重复载入。
    * TODO 联调：真实 runtime 下全量预载历史有成本，应改为 WS 推送 status 或默认 done/idle + 按需 hydrate。
    */
   async function loadSessions(): Promise<void> {
-    const list = await sessionApi.list()
-    session.list = list
+    const groups = await sessionApi.list()
+    session.setGroups(groups)
+    const flat = groups.flatMap((g) => g.sessions)
     await Promise.allSettled(
-      list.map(async (s) => {
+      flat.map(async (s) => {
         if (!chat.isHydrated(s.id)) {
           chat.hydrate(s.id, await chatApi.getHistory(s.id))
         }

@@ -10,7 +10,7 @@
  * 依赖方向：无（不 import transport/events/pending，独立内存实现）。
  */
 import type {
-  Message, ModelInfo, ServerMessage, SessionSummary,
+  Message, ModelInfo, ServerMessage, SessionSummary, SessionGroup,
   ProviderInfo, SkillInfo, AgentInfo, PluginInfo,
 } from '@xyz-agent/shared'
 import { createSession, fixtureMessages, fixtureSessions } from './data'
@@ -74,10 +74,23 @@ function splitChunks(text: string): string[] {
 }
 
 export const session = {
-  async list(): Promise<SessionSummary[]> {
+  /**
+   * 按 cwd 分组返回（对齐后端 SessionGroup[]，D7）。
+   * runtime 的 session.list reply 是 `{ groups: SessionGroup[] }`，同构返分组结构。
+   * 同 cwd 的 session 归入一组，组内保持插入顺序（按 lastActiveAt 降序更贴近真实，
+   * 但 mock fixture 已手排，此处保持稳定顺序避免打乱既有的 5 态演示）。
+   */
+  async list(): Promise<SessionGroup[]> {
     await sleep(TIMING.ack)
     // 深拷贝：调用方突变不影响 fixture
-    return fixtureSessions.map((s) => ({ ...s }))
+    const snapshots = fixtureSessions.map((s) => ({ ...s }))
+    const byCwd = new Map<string, SessionSummary[]>()
+    for (const s of snapshots) {
+      const bucket = byCwd.get(s.cwd)
+      if (bucket) bucket.push(s)
+      else byCwd.set(s.cwd, [s])
+    }
+    return Array.from(byCwd, ([cwd, sessions]) => ({ cwd, sessions }))
   },
 
   async create(title?: string): Promise<SessionSummary> {

@@ -11,20 +11,28 @@ import { useChatStore } from '@/stores/chat'
 describe('FG1 mock + chat store 数据流', () => {
   beforeEach(() => setActivePinia(createPinia()))
 
-  it('session.list 返回 5 个 fixture 全字段', async () => {
-    const list = await mockApi.session.list()
-    expect(list).toHaveLength(5)
-    expect(list[0].id).toBe('s1')
-    expect(list[0].label).toBe('重构 auth 模块')
-    expect(list[0].status).toBe('active')
-    expect(typeof list[0].tokenCount).toBe('number')
-    expect(list[0].gitBranch).toBe('refactor-auth')
+  it('session.list 按 cwd 分组返回（D7，对齐后端 SessionGroup[]）', async () => {
+    const groups = await mockApi.session.list()
+    // fixture 有 2 个 cwd（xyz-agent / work-project），故 2 组、共 5 个 session
+    expect(groups.length).toBeGreaterThanOrEqual(2)
+    const flat = groups.flatMap((g) => g.sessions)
+    expect(flat).toHaveLength(5)
+    const s1 = flat.find((s) => s.id === 's1')!
+    expect(s1.label).toBe('重构 auth 模块')
+    expect(s1.status).toBe('active')
+    expect(typeof s1.tokenCount).toBe('number')
+    expect(s1.gitBranch).toBe('refactor-auth')
+    // 每组都有 cwd 且组内 session 的 cwd 一致
+    for (const g of groups) {
+      expect(g.cwd).toBeTruthy()
+      expect(g.sessions.every((s) => s.cwd === g.cwd)).toBe(true)
+    }
   })
 
   it('session.create 追加并返回新 session', async () => {
-    const before = (await mockApi.session.list()).length
+    const before = (await mockApi.session.list()).flatMap((g) => g.sessions).length
     const s = await mockApi.session.create('测试会话')
-    const after = (await mockApi.session.list()).length
+    const after = (await mockApi.session.list()).flatMap((g) => g.sessions).length
     expect(s.label).toBe('测试会话')
     expect(s.status).toBe('active')
     expect(after).toBe(before + 1)

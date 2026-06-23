@@ -7,16 +7,23 @@
  * 注：ServerMessage(id) → pending.resolve 的回灌由 features 层 dispatcher 串联（Wave 3）。
  *      mock 模式下不走本域（api/index 切到 mock 门面）。
  */
-import type { SessionSummary } from '@xyz-agent/shared'
+import type { SessionSummary, SessionGroup } from '@xyz-agent/shared'
 import * as transport from '../transport'
 import * as pending from '../pending'
 
-/** 列出所有 session（mock 返回全字段，D7） */
-export function list(): Promise<SessionSummary[]> {
+/**
+ * 列出所有 session，按 cwd 分组（对齐后端 SessionGroup[]，D7）。
+ *
+ * runtime 的 session.list reply payload 形状是 `{ groups: SessionGroup[] }`
+ * （session-message-handler.ts / server.ts:224 sendInitialState 同形）。
+ * useConnection 的 pending.resolve(msg.id, msg.payload) 把整个 payload 回灌，
+ * 故此处收到 `{ groups: [...] }`，需解包 `.groups` 返 `SessionGroup[]`。
+ */
+export async function list(): Promise<SessionGroup[]> {
   const id = pending.create()
-  const result = pending.register<SessionSummary[]>(id)
+  const result = pending.register<{ groups: SessionGroup[] }>(id)
   transport.send({ type: 'session.list', id, payload: {} })
-  return result
+  return (await result).groups
 }
 
 /** 创建新 session（可选默认标题） */

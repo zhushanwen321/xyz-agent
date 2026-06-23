@@ -8,11 +8,24 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import type { ComputedRef } from 'vue'
-import type { SessionSummary } from '@xyz-agent/shared'
+import type { SessionSummary, SessionGroup } from '@xyz-agent/shared'
 import type { DerivedStatus } from '@/types'
 
 export const useSessionStore = defineStore('session', () => {
-  const list = ref<SessionSummary[]>([])
+  /**
+   * 分组视图（按 cwd，对齐后端 SessionGroup[]，D7）。
+   * 由 useSidebar.loadSessions 从 sessionApi.list() 填入；SessionList 按此渲染组标题 + 组内项。
+   */
+  const groups = ref<SessionGroup[]>([])
+
+  /**
+   * 扁平索引（groups.flatMap 展平），供 derivedStatus/sessionDigest/active 等按 id 查找。
+   * 派生自 groups：单一真源（groups）→ 扁平视图（list），避免两处分别维护导致漂移。
+   */
+  const list = computed<SessionSummary[]>(() =>
+    groups.value.flatMap((g) => g.sessions),
+  )
+
   const activeId = ref<string | null>(null)
 
   const active = computed<SessionSummary | null>(
@@ -35,13 +48,33 @@ export const useSessionStore = defineStore('session', () => {
     if (target) target.label = label
   }
 
-  /** 从列表移除 session；若移除的是 active，回退到列表首项 */
+  /**
+   * 从分组移除 session；移空组时连同组移除（不留空组标题）。
+   * 若移除的是 active，回退到列表首项。
+   */
   function removeFromList(id: string): void {
-    list.value = list.value.filter((s) => s.id !== id)
+    groups.value = groups.value
+      .map((g) => ({ ...g, sessions: g.sessions.filter((s) => s.id !== id) }))
+      .filter((g) => g.sessions.length > 0)
     if (activeId.value === id) {
       activeId.value = list.value[0]?.id ?? null
     }
   }
 
-  return { list, activeId, active, derivedStatus, updateLabel, removeFromList }
+  /** 载入分组列表（useSidebar.loadSessions 调用，单一写入入口） */
+  function setGroups(next: SessionGroup[]): void {
+    groups.value = next
+  }
+
+  /** 追加单个新建 session（按 cwd 归组：命中已有组则入尾，否则新建组在末尾） */
+  function appendSession(s: SessionSummary): void {
+    const group = groups.value.find((g) => g.cwd === s.cwd)
+    if (group) {
+      group.sessions.push(s)
+    } else {
+      groups.value = [...groups.value, { cwd: s.cwd, sessions: [s] }]
+    }
+  }
+
+  return { groups, list, activeId, active, derivedStatus, setGroups, appendSession, updateLabel, removeFromList }
 })
