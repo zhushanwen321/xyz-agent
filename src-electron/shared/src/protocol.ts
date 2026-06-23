@@ -2,6 +2,7 @@
 
 import type { ProviderInfo, SkillInfo, AgentInfo, ModelInfo } from './provider'
 import type { SessionGroup } from './session'
+import type { FileChange, ChangeSetStatus } from './message'
 
 // ── ClientMessageType（保持向后兼容）──────────────────────────
 
@@ -196,6 +197,7 @@ export type ServerMessageType =
   | 'message.bashExecution' | 'message.compactionSummary' | 'message.branchSummary'
   | 'message.auto_retry_start' | 'message.auto_retry_end' | 'message.queue_update'
   | 'message.stream_error'
+  | 'message.file_changes'
   | 'file.read:result'
 
 /**
@@ -236,6 +238,16 @@ export interface ServerMessageMapBase {
   'session.commands': { sessionId: string; commands: Array<{ name: string; description?: string; source: string }> }
   // context.update：上下文用量（index.ts onContextUpdate 推；cacheHit/modelId 无来源，D9 保留 UI 占位）
   'context.update': { sessionId: string; usagePercent: number; inputTokens: number; contextLimit: number }
+  // FileChanges 通道（ADR-0024 D7）：runtime event-adapter 从 write/edit 工具提取 + git 对账。
+  // accumulating（isFullSet=false，每条 tool_end 增量）+ ready（isFullSet=true，agent_end git 对账全集）。
+  // partially-reviewed/resolved/superseded 审查态由前端驱动，不经 runtime 推送。
+  'message.file_changes': {
+    sessionId: string
+    messageId: string
+    fileChanges: FileChange[]
+    changeSetStatus: ChangeSetStatus
+    isFullSet: boolean
+  }
 }
 
 /**

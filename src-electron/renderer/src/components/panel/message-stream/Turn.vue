@@ -160,6 +160,14 @@
           </Button>
         </div>
       </div>
+
+      <!-- 变更集卡（W10，ADR-0024）：最后一条 assistant 有 fileChanges 时渲染 -->
+      <ChangeSetCard
+        v-if="changeSetFileChanges.length > 0"
+        class="mt-2"
+        :file-changes="changeSetFileChanges"
+        :status="changeSetStatus"
+      />
     </div>
 
     <!-- fork 确认弹窗（问题 6） -->
@@ -176,6 +184,7 @@ import { Textarea } from '@/components/ui/textarea'
 import type { MessageTurn } from '@/composables/logic/messageTurns'
 import { countThinking, countToolCalls } from '@/composables/logic/messageTurns'
 import { assistantToMarkdown } from '@/composables/logic/messageFormat'
+import ChangeSetCard from './ChangeSetCard.vue'
 import { useChat } from '@/composables/features/useChat'
 import { useChatStore } from '@/stores/chat'
 import { useSidebar } from '@/composables/features/useSidebar'
@@ -217,6 +226,14 @@ const showTrace = computed(() => props.turn.isWorking || expanded.value)
 const lastAssistant = computed(() => {
   const as = props.turn.assistants
   return as[as.length - 1] ?? null
+})
+
+/** 变更集卡（W10）：最后一条 assistant 的 fileChanges + store 里的变更集状态 */
+const changeSetFileChanges = computed(() => lastAssistant.value?.fileChanges ?? [])
+const changeSetStatus = computed(() => {
+  const msg = lastAssistant.value
+  if (!msg) return undefined
+  return chat.getChangeSetStatus(props.sessionId, msg.id)
 })
 
 /** 复制反馈：记录最近复制的 key，1.2s 后清除 */

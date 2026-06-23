@@ -377,4 +377,67 @@ describe('FG5 chat store 块类型扩展', () => {
     const s3 = await mockApi.chat.getHistory('s3')
     expect(s3).toEqual([])
   })
+
+  // ── W10: FileChanges 通道（applyFileChanges + message.file_changes case）──
+
+  it('message.file_changes accumulating 增量合并到 assistant message.fileChanges', () => {
+    const store = useChatStore()
+    store.appendAssistantChunk('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
+    // 第一条 write：新增文件
+    store.appendAssistantChunk('sx', {
+      type: 'message.file_changes',
+      payload: {
+        sessionId: 'sx', messageId: 'a1',
+        fileChanges: [{ filePath: 'src/a.ts', status: 'added', addLines: 10 }],
+        changeSetStatus: 'accumulating', isFullSet: false,
+      },
+    })
+    // 第二条 edit：修改既有文件
+    store.appendAssistantChunk('sx', {
+      type: 'message.file_changes',
+      payload: {
+        sessionId: 'sx', messageId: 'a1',
+        fileChanges: [{ filePath: 'src/b.ts', status: 'modified', addLines: 3, delLines: 1 }],
+        changeSetStatus: 'accumulating', isFullSet: false,
+      },
+    })
+    const msg = store.getMessages('sx')[0]
+    expect(msg.fileChanges).toHaveLength(2)
+    expect(store.getChangeSetStatus('sx', 'a1')).toBe('accumulating')
+  })
+
+  it('message.file_changes ready 全集替换（git 对账真值收口）', () => {
+    const store = useChatStore()
+    store.appendAssistantChunk('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
+    // accumulating 增量
+    store.appendAssistantChunk('sx', {
+      type: 'message.file_changes',
+      payload: {
+        sessionId: 'sx', messageId: 'a1',
+        fileChanges: [{ filePath: 'old.ts', status: 'modified' }],
+        changeSetStatus: 'accumulating', isFullSet: false,
+      },
+    })
+    // ready 全集替换（git 发现完全不同的文件集）
+    store.appendAssistantChunk('sx', {
+      type: 'message.file_changes',
+      payload: {
+        sessionId: 'sx', messageId: 'a1',
+        fileChanges: [{ filePath: 'new1.ts', status: 'added' }, { filePath: 'new2.ts', status: 'deleted' }],
+        changeSetStatus: 'ready', isFullSet: true,
+      },
+    })
+    const msg = store.getMessages('sx')[0]
+    expect(msg.fileChanges).toHaveLength(2)
+    expect(msg.fileChanges?.map((c) => c.filePath).sort()).toEqual(['new1.ts', 'new2.ts'])
+    expect(store.getChangeSetStatus('sx', 'a1')).toBe('ready')
+  })
+
+  it('setChangeSetStatus 驱动审查态（partially-reviewed/resolved）', () => {
+    const store = useChatStore()
+    store.setChangeSetStatus('sx', 'a1', 'partially-reviewed')
+    expect(store.getChangeSetStatus('sx', 'a1')).toBe('partially-reviewed')
+    store.setChangeSetStatus('sx', 'a1', 'resolved')
+    expect(store.getChangeSetStatus('sx', 'a1')).toBe('resolved')
+  })
 })

@@ -1,7 +1,11 @@
-import type { ServerMessage, ServerMessageType } from '@xyz-agent/shared'
+import type { ServerMessage, ServerMessageType, FileChange } from '@xyz-agent/shared'
 import { EXTENSION_EVENTS } from '@xyz-agent/shared'
 import type { PiEventListener } from '../../services/ports/pi-engine.js'
 import { toErrorMessage } from '../../utils/errors.js'
+import { existsSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { reconcileFileChanges, mergeWithIncremental } from './file-change-reconciler.js'
+import { randomUUID } from 'node:crypto'
 
 export type WsSender = (msg: ServerMessage) => void
 
@@ -53,6 +57,13 @@ export interface EventAdapterOptions {
   onContextUpdate?: (sessionId: string, data: { inputTokens: number; totalTokens: number }) => void
   /** Called by EventAdapter to execute plugin hooks on tool/message events. */
   onHookExecute?: (hookType: string, context: Record<string, unknown>) => Promise<import('../../services/plugin-service/plugin-types.js').HookResult>
+  /**
+   * pi session 工作目录（ADR-0024 D5）。用于：
+   * - write 工具 added/modified 判定（existsSync 探测需绝对路径）
+   * - agent_end git 对账（git status --porcelain 的 cwd）
+   * 缺省时跳过 git 对账，write 一律标 modified（方案 B 兜底）。
+   */
+  cwd?: string
 }
 
 // ── Sub-handler types ──────────────────────────────────────────────
@@ -65,6 +76,10 @@ interface HandlerContext {
   send: WsSender
   options: EventAdapterOptions | undefined
   hookCallback: EventAdapterOptions['onHookExecute'] | undefined
+  /** 当前 assistant message 的 id（message.message_start 设置，file_changes 挂载目标） */
+  currentMessageId: string | undefined
+  /** 本回合累计的 FileChange[]（write/edit 增量提取，agent_end git 对账用） */
+  accumulatedChanges: FileChange[]
 }
 
 // ── Sub-handlers ───────────────────────────────────────────────────
@@ -131,6 +146,113 @@ async function handleToolExecutionStart(event: PiEvent, ctx: HandlerContext): Pr
   }
 }
 
+// ── FileChange 提取（ADR-0024 D2/D3）──────────────────────────────
+
+/** 取工具参数 path（pi 契约权威参数名；file_path 作防御性 fallback，ADR-0024 D2） */
+function extractPath(args: Record<string, unknown> | undefined): string | undefined {
+  if (!args) return undefined
+  const p = args.path
+  if (typeof p === 'string' && p) return p
+  const fp = args.file_path
+  return typeof fp === 'string' && fp ? fp : undefined
+}
+
+/**
+ * write 工具：从 input.content 分行计 addLines；added/modified 需 existsSync 判定（D3 方案 A）。
+ * end 事件已代表 write 队列 flush 完成（withFileMutationQueue 串行），时序安全。
+ * cwd 缺省时一律标 modified（方案 B 兜底，交 git 对账纠正）。
+ */
+function extractWriteChange(args: Record<string, unknown> | undefined, cwd: string | undefined): FileChange | null {
+  const filePath = extractPath(args)
+  if (!filePath) return null
+  let status: FileChange['status'] = 'modified'
+  if (cwd) {
+    const abs = resolve(cwd, filePath)
+    status = existsSync(abs) ? 'modified' : 'added'
+  }
+  const content = typeof args?.content === 'string' ? args.content : ''
+  const addLines = content === '' ? 0 : content.split('\n').length
+  const change: FileChange = { filePath, status }
+  if (addLines > 0) change.addLines = addLines
+  return change
+}
+
+/**
+ * edit 工具：恒 modified（edit 只改既有文件）；行数从 result.details.patch（unified diff）解析。
+ * `+` 开头（非 `+++`）计 addLines，`-` 开头（非 `---`）计 delLines。
+ */
+function extractEditChange(
+  args: Record<string, unknown> | undefined,
+  details: Record<string, unknown> | undefined,
+): FileChange | null {
+  const filePath = extractPath(args)
+  if (!filePath) return null
+  const change: FileChange = { filePath, status: 'modified' }
+  const patch = details?.patch
+  if (typeof patch === 'string') {
+    let addLines = 0
+    let delLines = 0
+    for (const line of patch.split('\n')) {
+      if (line.startsWith('+++') || line.startsWith('---')) continue
+      if (line.startsWith('+')) addLines += 1
+      else if (line.startsWith('-')) delLines += 1
+    }
+    if (addLines > 0) change.addLines = addLines
+    if (delLines > 0) change.delLines = delLines
+  }
+  return change
+}
+
+/**
+ * 从已结束的工具调用提取 FileChange（write/edit 分派，bash 不解析 D4）。
+ * 返回 null 表示该工具无文件变更（read/grep/find/ls/bash 或无 path）。
+ */
+function extractFileChange(
+  toolName: string,
+  args: Record<string, unknown> | undefined,
+  details: Record<string, unknown> | undefined,
+  cwd: string | undefined,
+): FileChange | null {
+  if (toolName === 'write') return extractWriteChange(args, cwd)
+  if (toolName === 'edit') return extractEditChange(args, details)
+  return null
+}
+
+/** 推送 file_changes 帧（accumulating 增量，ADR-0024 D6） */
+function sendAccumulatingFileChanges(ctx: HandlerContext, change: FileChange): void {
+  ctx.accumulatedChanges.push(change)
+  if (!ctx.currentMessageId) return
+  ctx.send({
+    type: 'message.file_changes',
+    payload: {
+      sessionId: ctx.sessionId,
+      messageId: ctx.currentMessageId,
+      fileChanges: [change],
+      changeSetStatus: 'accumulating',
+      isFullSet: false,
+    },
+  })
+}
+
+/** 推送 file_changes 帧（ready 全集，agent_end git 对账后真值收口，ADR-0024 D5/D6） */
+function sendReadyFileChanges(ctx: HandlerContext): void {
+  if (!ctx.currentMessageId) return
+  const cwd = ctx.options?.cwd
+  const gitSet = cwd ? reconcileFileChanges(cwd) : null
+  const fullSet = mergeWithIncremental(gitSet, ctx.accumulatedChanges)
+  if (fullSet.length === 0) return
+  ctx.send({
+    type: 'message.file_changes',
+    payload: {
+      sessionId: ctx.sessionId,
+      messageId: ctx.currentMessageId,
+      fileChanges: fullSet,
+      changeSetStatus: 'ready',
+      isFullSet: true,
+    },
+  })
+}
+
 /** tool_execution_end — extract text + images, optional plugin hook */
 async function handleToolExecutionEnd(event: PiEvent, ctx: HandlerContext): Promise<ServerMessage | null> {
   const sid = ctx.sessionId
@@ -176,6 +298,15 @@ async function handleToolExecutionEnd(event: PiEvent, ctx: HandlerContext): Prom
 
   fireHook(ctx, 'tool_execution_end', { toolCallId, output, details, images })
 
+  // ADR-0024 D1/D2：从 write/edit 工具提取 FileChange，推送 accumulating 增量帧。
+  // bash 不解析（D4，交 agent_end git 对账）。失败的工具调用（isError）不提取。
+  if (!event.isError) {
+    const toolName = String(event.toolName ?? '')
+    const args = (event.args ?? event.input) as Record<string, unknown> | undefined
+    const change = extractFileChange(toolName, args, details, ctx.options?.cwd)
+    if (change) sendAccumulatingFileChanges(ctx, change)
+  }
+
   return {
     type: 'message.tool_call_end',
     payload: {
@@ -208,6 +339,11 @@ function handleAgentEnd(event: PiEvent, ctx: HandlerContext): HandlerResult {
     ctx.options?.onContextUpdate?.(sid, { inputTokens: usage.input, totalTokens: usage.totalTokens ?? 0 })
   }
   fireHook(ctx, 'agent_end', { stopReason: STOP_REASON_MAP[rawReason] ?? rawReason, usage })
+
+  // ADR-0024 D5/D6：agent_end 回合边界推送 ready 全集（git 对账真值收口）。
+  // 推送后清空本回合累计，为下一回合重新累计。
+  sendReadyFileChanges(ctx)
+  ctx.accumulatedChanges.length = 0
 
   return {
     type: 'message.complete',
@@ -296,7 +432,14 @@ function handleExtensionUIRequest(event: PiEvent, ctx: HandlerContext): HandlerR
 function handleMessageStart(event: PiEvent, ctx: HandlerContext): HandlerResult {
   const sid = ctx.sessionId
   const msg = event.message as Record<string, unknown> | undefined
-  if (!msg) return { type: 'message.message_start', payload: { sessionId: sid } }
+  if (!msg) {
+    // assistant turn 开始（无 role）。生成 messageId 供 file_changes 挂载，并跟踪到 ctx。
+    const messageId = `a-${randomUUID()}`
+    ctx.currentMessageId = messageId
+    // 原地清空（splice），保持实例数组引用不变（后续 tool_end 按 reference push）
+    ctx.accumulatedChanges.splice(0, ctx.accumulatedChanges.length)
+    return { type: 'message.message_start', payload: { sessionId: sid, messageId } }
+  }
 
   const role = msg.role as string | undefined
 
@@ -341,7 +484,11 @@ function handleMessageStart(event: PiEvent, ctx: HandlerContext): HandlerResult 
       },
     }
   }
-  return { type: 'message.message_start', payload: { sessionId: sid } }
+  // 兜底：assistant turn（有 msg 但无 role）—— 同样生成 messageId 供 file_changes 挂载。
+  const fallbackId = `a-${randomUUID()}`
+  ctx.currentMessageId = fallbackId
+  ctx.accumulatedChanges.splice(0, ctx.accumulatedChanges.length)
+  return { type: 'message.message_start', payload: { sessionId: sid, messageId: fallbackId } }
 }
 
 /** tool_execution_update — forward detail (string or object) */
@@ -463,6 +610,10 @@ const DISPATCHER = new Map<string, EventHandler>()
 
 export class EventAdapter {
   private unsub: (() => void) | null = null
+  /** 当前 assistant message 的 id（message_start 设置，file_changes 挂载目标，跨事件保持） */
+  private currentMessageId: string | undefined
+  /** 本回合累计的 FileChange[]（write/edit 增量提取，agent_end git 对账后清空） */
+  private accumulatedChanges: FileChange[] = []
 
   constructor(
     private sessionId: string,
@@ -507,13 +658,21 @@ export class EventAdapter {
     // Dispatch to registered handler
     const handler = DISPATCHER.get(eventType)
     if (handler) {
+      // ctx 直接持有实例字段引用：accumulatedChanges 数组按引用突变（push/length=0），
+      // currentMessageId 经 holder 对象桥接（handlers 写 holder.value，实例读 holder.value）。
       const ctx: HandlerContext = {
         sessionId: this.sessionId,
         send: this.send,
         options: this.options,
         hookCallback: this.options?.onHookExecute,
+        currentMessageId: this.currentMessageId,
+        accumulatedChanges: this.accumulatedChanges,
       }
-      return Promise.resolve(handler(event, ctx))
+      return Promise.resolve(handler(event, ctx)).then((result) => {
+        // 回写实例态（currentMessageId 可能在 message_start 被 handler 改写）
+        this.currentMessageId = ctx.currentMessageId
+        return result
+      })
     }
 
     console.warn('[EventAdapter] Unhandled pi event type:', eventType)

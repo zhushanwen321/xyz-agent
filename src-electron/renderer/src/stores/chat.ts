@@ -21,37 +21,16 @@
  */
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { Ref } from 'vue'
 import type {
-  BashExecution,
-  BranchSummary,
   ChangeSetStatus,
-  CompactionSummary,
   FileChange,
   Message,
   ServerMessage,
-  ToolCall,
 } from '@xyz-agent/shared'
-
-/**
- * 自动重试运行态（W06-B）。auto_retry_start 设置，auto_retry_end 清空。
- * 对应 event-adapter message.auto_retry_start payload（attempt/maxAttempts/delayMs/errorMessage）。
- */
-export interface RetryState {
-  attempt?: number
-  maxAttempts?: number
-  delayMs?: number
-  errorMessage?: string
-}
-
-/**
- * 消息队列运行态（W06-B）。auto_retry 与 steer/follow_up 排队无关；
- * queue_update 反映 pi 队列里的 steering（steer 排队）和 followUp（follow-up 排队）。
- */
-export interface QueueState {
-  steering?: string[]
-  followUp?: string[]
-}
+import { mergeFileChanges } from './chat-readers'
+import { applyChunk, findLastAssistantIndex } from './chat-chunk-processor'
+export type { RetryState, QueueState } from './chat-store-types'
+import type { RetryState, QueueState } from './chat-store-types'
 
 export const useChatStore = defineStore('chat', () => {
   /** 按 sessionId 分区的消息表（UC-2 隔离） */
@@ -63,6 +42,8 @@ export const useChatStore = defineStore('chat', () => {
   const retryStates = ref<Map<string, RetryState>>(new Map())
   /** 按 sessionId 分区的消息队列态（W06-B，queue_update） */
   const queueStates = ref<Map<string, QueueState>>(new Map())
+  /** 按 `${sessionId}:${messageId}` 分区的变更集状态（W10，ChangeSetCard 5 态） */
+  const changeSetStatuses = ref<Map<string, ChangeSetStatus>>(new Map())
 
   /** 取指定 session 的消息数组（空时返回空数组，不写入 Map） */
   function getMessages(sessionId: string): Message[] {
@@ -77,6 +58,16 @@ export const useChatStore = defineStore('chat', () => {
   /** 取指定 session 的消息队列态（无则 undefined） */
   function getQueueState(sessionId: string): QueueState | undefined {
     return queueStates.value.get(sessionId)
+  }
+
+  /** 取指定 message 的变更集状态（ChangeSetCard 渲染用，无则 undefined） */
+  function getChangeSetStatus(sessionId: string, messageId: string): ChangeSetStatus | undefined {
+    return changeSetStatuses.value.get(`${sessionId}:${messageId}`)
+  }
+
+  /** 设置变更集状态（用户 Accept/Reject 驱动 partially-reviewed/resolved/superseded） */
+  function setChangeSetStatus(sessionId: string, messageId: string, status: ChangeSetStatus): void {
+    changeSetStatuses.value = new Map(changeSetStatuses.value).set(`${sessionId}:${messageId}`, status)
   }
 
   /** 是否已加载历史（用于决定是否调 api.chat.getHistory） */
@@ -123,7 +114,7 @@ export const useChatStore = defineStore('chat', () => {
    */
   function appendAssistantChunk(sessionId: string, msg: ServerMessage): void {
     applyChunk(
-      { messages, retryStates, queueStates },
+      { messages, retryStates, queueStates, applyFileChanges },
       sessionId,
       msg,
     )
@@ -153,8 +144,6 @@ export const useChatStore = defineStore('chat', () => {
    * ready 帧（isFullSet=true）用 git 对账后的全集替换（真值收口）。
    * 同 filePath 合并、status 取最新。变更集卡 5 态状态机的审查态
    * （partially-reviewed/resolved/superseded）由前端用户交互驱动，不经此函数。
-   *
-   * 骨架阶段（F2-3）：类型契约就绪，数据流逻辑 DEFERRED 到 flow-2 完整实施。
    */
   function applyFileChanges(
     sessionId: string,
@@ -163,12 +152,26 @@ export const useChatStore = defineStore('chat', () => {
     changeSetStatus: ChangeSetStatus,
     isFullSet: boolean,
   ): void {
-    void sessionId
-    void messageId
-    void changes
-    void changeSetStatus
-    void isFullSet
-    throw new Error('applyFileChanges: not implemented (flow-2 FileChanges channel, ADR-0024)')
+    const prev = messages.value.get(sessionId) ?? []
+    if (prev.length === 0) return
+    const idx = prev.findIndex((m) => m.id === messageId)
+    // messageId 未命中时挂到最后一条 assistant message（防御：runtime/前端 id 偶发不一致）
+    const targetIdx = idx >= 0 ? idx : findLastAssistantIndex(prev)
+    if (targetIdx < 0) return
+
+    const target = prev[targetIdx]
+    // ready 全集直接替换（git 对账真值）；accumulating 增量合并（同 filePath 取最新 status/行数）
+    const merged = isFullSet
+      ? mergeFileChanges(changes, [])
+      : mergeFileChanges(changes, target.fileChanges ?? [])
+
+    const next = [...prev]
+    next[targetIdx] = { ...target, fileChanges: merged }
+    messages.value.set(sessionId, next)
+
+    // 记录变更集状态（供 ChangeSetCard 渲染 5 态）
+    const statusKey = `${sessionId}:${messageId}`
+    changeSetStatuses.value = new Map(changeSetStatuses.value).set(statusKey, changeSetStatus)
   }
 
   return {
@@ -176,9 +179,12 @@ export const useChatStore = defineStore('chat', () => {
     isStreaming,
     retryStates,
     queueStates,
+    changeSetStatuses,
     getMessages,
     getRetryState,
     getQueueState,
+    getChangeSetStatus,
+    setChangeSetStatus,
     isHydrated,
     hydrate,
     appendUser,
@@ -188,425 +194,3 @@ export const useChatStore = defineStore('chat', () => {
     applyFileChanges,
   }
 })
-
-/** 从后往前找最后一条 assistant message 的下标 */
-function findLastAssistantIndex(list: Message[]): number {
-  for (let i = list.length - 1; i >= 0; i -= 1) {
-    if (list[i].role === 'assistant') return i
-  }
-  return -1
-}
-
-/**
- * appendAssistantChunk 的可变状态上下文（store refs 传入，模块级函数据此更新）。
- * 提取到模块级以控制 setup 函数行数（eslint max-lines-per-function ≤300）。
- */
-interface ChunkContext {
-  messages: Ref<Map<string, Message[]>>
-  retryStates: Ref<Map<string, RetryState>>
-  queueStates: Ref<Map<string, QueueState>>
-}
-
-/**
- * 按 ServerMessage.type 追加/更新流式 chunk（从 store.appendAssistantChunk 提取）。
- * - message.message_start → 新建 streaming assistant message
- * - message.text_delta → 文本追加到最后一条 assistant message
- * - message.thinking_* → thinking 块管理
- * - message.tool_call_* → toolCall 块管理
- * - message.complete → 标记 complete（stopReason:error → status:error，W05 usage 回填）
- * - message.error / stream_error → 标记 error（规则 #3 防 UI 卡「生成中」）
- * - W05-A：thinking_end/tool_call_update/status/complete.usage
- * - W06-B：auto_retry_start/end（retryStates）、queue_update（queueStates）
- * - W07-C：bashExecution/compactionSummary/branchSummary（system 提示行）
- */
-function applyChunk(ctx: ChunkContext, sessionId: string, msg: ServerMessage): void {
-  const { messages, retryStates, queueStates } = ctx
-  const prev = messages.value.get(sessionId) ?? []
-  switch (msg.type) {
-    case 'message.message_start': {
-      const messageId = readString(msg.payload, 'messageId') ?? `a-${crypto.randomUUID()}`
-      messages.value.set(sessionId, [
-        ...prev,
-        {
-          id: messageId,
-          role: 'assistant',
-          content: '',
-          status: 'streaming',
-          timestamp: Date.now(),
-        },
-      ])
-      break
-    }
-    case 'message.text_delta': {
-      const idx = findLastAssistantIndex(prev)
-      if (idx < 0) return
-      const delta = readString(msg.payload, 'delta') ?? ''
-      const next = [...prev]
-      next[idx] = { ...next[idx], content: next[idx].content + delta }
-      messages.value.set(sessionId, next)
-      break
-    }
-    case 'message.thinking_start': {
-      const idx = findLastAssistantIndex(prev)
-      if (idx < 0) return
-      const blockId = readString(msg.payload, 'thinkingId') ?? `th-${crypto.randomUUID()}`
-      const next = [...prev]
-      const thinking = [...(next[idx].thinking ?? []), { id: blockId, content: '', collapsed: true, startTime: Date.now() }]
-      next[idx] = { ...next[idx], thinking }
-      messages.value.set(sessionId, next)
-      break
-    }
-    case 'message.thinking_end': {
-      // W05-A：给最后 ThinkingBlock 设 endTime（字段已存在 message.ts:30）。
-      // payload 仅 {sessionId}（event-adapter thinking_end 不带额外字段）。
-      const idx = findLastAssistantIndex(prev)
-      if (idx < 0) return
-      const thinking = prev[idx].thinking
-      if (!thinking || thinking.length === 0) return
-      const lastIdx = thinking.length - 1
-      const next = [...prev]
-      const nextThinking = [...thinking]
-      nextThinking[lastIdx] = { ...nextThinking[lastIdx], endTime: Date.now() }
-      next[idx] = { ...next[idx], thinking: nextThinking }
-      messages.value.set(sessionId, next)
-      break
-    }
-    case 'message.thinking_delta': {
-      const idx = findLastAssistantIndex(prev)
-      if (idx < 0) return
-      const delta = readString(msg.payload, 'delta') ?? ''
-      const next = [...prev]
-      const thinking = [...(next[idx].thinking ?? [])]
-      const last = thinking[thinking.length - 1]
-      if (last) thinking[thinking.length - 1] = { ...last, content: last.content + delta }
-      next[idx] = { ...next[idx], thinking }
-      messages.value.set(sessionId, next)
-      break
-    }
-    case 'message.tool_call_start': {
-      const idx = findLastAssistantIndex(prev)
-      if (idx < 0) return
-      const callId = readString(msg.payload, 'toolCallId') ?? `tc-${crypto.randomUUID()}`
-      const toolName = readString(msg.payload, 'toolName') ?? 'tool'
-      const call: ToolCall = {
-        id: callId,
-        toolName,
-        input: readRecord(msg.payload, 'input'),
-        status: 'running',
-        startTime: Date.now(),
-      }
-      const next = [...prev]
-      const toolCalls = [...(next[idx].toolCalls ?? []), call]
-      next[idx] = { ...next[idx], toolCalls }
-      messages.value.set(sessionId, next)
-      break
-    }
-    case 'message.tool_call_end': {
-      const idx = findLastAssistantIndex(prev)
-      if (idx < 0) return
-      const callId = readString(msg.payload, 'toolCallId')
-      const next = [...prev]
-      const toolCalls = (next[idx].toolCalls ?? []).map((c) =>
-        c.id === callId
-          ? {
-            ...c,
-            output: readString(msg.payload, 'output') ?? c.output,
-            status: (readString(msg.payload, 'status') as ToolCall['status']) ?? 'completed',
-            error: readString(msg.payload, 'error') ?? c.error,
-            endTime: Date.now(),
-          }
-          : c,
-      )
-      next[idx] = { ...next[idx], toolCalls }
-      messages.value.set(sessionId, next)
-      break
-    }
-    case 'message.tool_call_update': {
-      // W05-A：Extension 工具调用进度更新。event-adapter tool_execution_update
-      // 生产端只发 detail（string | object），消费对齐生产端（不臆造 progress）。
-      const idx = findLastAssistantIndex(prev)
-      if (idx < 0) return
-      const callId = readString(msg.payload, 'toolCallId')
-      if (!callId) return
-      const detail = readDetail(msg.payload, 'detail')
-      const next = [...prev]
-      const toolCalls = (next[idx].toolCalls ?? []).map((c) =>
-        c.id === callId ? { ...c, detail } : c,
-      )
-      next[idx] = { ...next[idx], toolCalls }
-      messages.value.set(sessionId, next)
-      break
-    }
-    case 'message.complete': {
-      const idx = findLastAssistantIndex(prev)
-      if (idx < 0) return
-      const last = prev[idx]
-      if (last.status !== 'streaming') return
-      const stopReason = readString(msg.payload, 'stopReason')
-      const next = [...prev]
-      // W05-A：消费 message.complete.usage（{inputTokens,outputTokens,totalTokens}）
-      // 回填 Message.usage（字段已存在 message.ts:99）。stopReason:error → status:error。
-      const usage = readUsage(msg.payload)
-      next[idx] = {
-        ...last,
-        status: stopReason === 'error' ? 'error' : 'complete',
-        ...(usage ? { usage } : {}),
-      }
-      messages.value.set(sessionId, next)
-      break
-    }
-    case 'message.status': {
-      // W05-A：运行时态推送（steer/aborted/sent/queued 等运行状态）。
-      // 区别于请求级 reply（send/steer/follow_up/abort 的 reply 已走 pending 通道，
-      // 不经 streamSubscribe）——此处是 pi status 事件经 event-adapter 直推。
-      // 当前最小化：仅接收记录，不改 Message.status（streaming/complete/error 是
-      // 消息生命周期，message.status 是运行过程态，两者正交）。
-      // W06 的 retry/queue 提示才需要驱动 UI 指示位。
-      break
-    }
-    case 'message.bashExecution': {
-      // W07-C：bash 执行记录。作 system 提示行渲染（非 user/assistant）。
-      // payload（event-adapter handleMessageStart bashExecution 分支）。
-      const exec = readBashExecution(msg.payload)
-      messages.value.set(sessionId, [
-        ...prev,
-        {
-          id: `b-${crypto.randomUUID()}`,
-          role: 'system',
-          content: exec.command ?? 'bash',
-          status: 'complete',
-          timestamp: exec.timestamp ?? Date.now(),
-          bashExecution: exec,
-        },
-      ])
-      break
-    }
-    case 'message.compactionSummary': {
-      // W07-C：上下文压缩摘要。作 system 提示行。
-      const summary = readCompactionSummary(msg.payload)
-      messages.value.set(sessionId, [
-        ...prev,
-        {
-          id: `c-${crypto.randomUUID()}`,
-          role: 'system',
-          content: summary.summary ?? '上下文已压缩',
-          status: 'complete',
-          timestamp: summary.timestamp ?? Date.now(),
-          compactionSummary: summary,
-        },
-      ])
-      break
-    }
-    case 'message.branchSummary': {
-      // W07-C：分支摘要。作 system 提示行。
-      const summary = readBranchSummary(msg.payload)
-      messages.value.set(sessionId, [
-        ...prev,
-        {
-          id: `br-${crypto.randomUUID()}`,
-          role: 'system',
-          content: summary.summary ?? '已分支',
-          status: 'complete',
-          timestamp: summary.timestamp ?? Date.now(),
-          branchSummary: summary,
-        },
-      ])
-      break
-    }
-    case 'message.auto_retry_start': {
-      // W06-B：自动重试开始。写 retryStates[sessionId]（UI 据此显重试指示位）。
-      // payload（event-adapter）：{ attempt?, maxAttempts?, delayMs?, errorMessage? }。
-      const state: RetryState = {}
-      const attempt = readNumber(msg.payload, 'attempt')
-      if (attempt !== undefined) state.attempt = attempt
-      const maxAttempts = readNumber(msg.payload, 'maxAttempts')
-      if (maxAttempts !== undefined) state.maxAttempts = maxAttempts
-      const delayMs = readNumber(msg.payload, 'delayMs')
-      if (delayMs !== undefined) state.delayMs = delayMs
-      const errorMessage = readString(msg.payload, 'errorMessage')
-      if (errorMessage) state.errorMessage = errorMessage
-      retryStates.value = new Map(retryStates.value).set(sessionId, state)
-      break
-    }
-    case 'message.auto_retry_end': {
-      // W06-B：自动重试结束。清空 retryStates[sessionId]（success/finalError 可选）。
-      // 不可变 delete：新建 Map 保证响应式触发。
-      if (retryStates.value.has(sessionId)) {
-        const nextMap = new Map(retryStates.value)
-        nextMap.delete(sessionId)
-        retryStates.value = nextMap
-      }
-      break
-    }
-    case 'message.queue_update': {
-      // W06-B：消息队列更新。payload（event-adapter）：{ steering?, followUp? }。
-      // 存数组字段，UI 据此显排队气泡（steer/follow-up pending 提示）。
-      const state: QueueState = {}
-      const steering = readStringArray(msg.payload, 'steering')
-      if (steering) state.steering = steering
-      const followUp = readStringArray(msg.payload, 'followUp')
-      if (followUp) state.followUp = followUp
-      // 两字段都缺：清空该 session 的队列态（避免残留）
-      if (!state.steering && !state.followUp) {
-        if (queueStates.value.has(sessionId)) {
-          const nextMap = new Map(queueStates.value)
-          nextMap.delete(sessionId)
-          queueStates.value = nextMap
-        }
-      } else {
-        queueStates.value = new Map(queueStates.value).set(sessionId, state)
-      }
-      break
-    }
-    case 'message.stream_error': {
-      // FR-5: streaming 错误（pi message_update{error}）。若无前置 assistant 流（prompt
-      // 级失败/流启动前即报错），合成 error 消息，避免错误内容丢失（违反规则 #3）。
-      const streamErrContent = readString(msg.payload, 'content') ?? ''
-      const sIdx = findLastAssistantIndex(prev)
-      if (sIdx < 0) {
-        messages.value.set(sessionId, [
-          ...prev,
-          { id: `a-${crypto.randomUUID()}`, role: 'assistant', content: streamErrContent, status: 'error', timestamp: Date.now() },
-        ])
-        break
-      }
-      const sNext = [...prev]
-      sNext[sIdx] = {
-        ...sNext[sIdx],
-        content: streamErrContent ? `${sNext[sIdx].content}${streamErrContent}` : sNext[sIdx].content,
-        status: 'error',
-      }
-      messages.value.set(sessionId, sNext)
-      break
-    }
-    case 'message.error': {
-      // 规则 #3：错误必须重置 streaming 状态，避免单条气泡卡「生成中」。
-      // 两类场景：
-      // - 流中途错误（event-adapter error / 进程崩溃）：最后一条 assistant 仍
-      //   status:'streaming' → 转为 error 并并入 errorText（保留已生成的部分内容），
-      //   不新建气泡。这是 CLAUDE.md 规则 #3 防护的「UI 卡思考中」失败模式。
-      // - prompt 级失败 / 闲置 session 崩溃 / hook 拦截：无 streaming assistant
-      //   （或最后一条已 complete/error），新建独立 error 消息；不改写历史消息。
-      const errorText = readString(msg.payload, 'message') ?? 'Unknown error'
-      const idx = findLastAssistantIndex(prev)
-      if (idx >= 0 && prev[idx].status === 'streaming') {
-        const last = prev[idx]
-        const next = [...prev]
-        next[idx] = {
-          ...last,
-          content: last.content ? `${last.content}\n\n${errorText}` : errorText,
-          status: 'error',
-        }
-        messages.value.set(sessionId, next)
-        break
-      }
-      messages.value.set(sessionId, [
-        ...prev,
-        { id: `a-${crypto.randomUUID()}`, role: 'assistant', content: errorText, status: 'error', timestamp: Date.now() },
-      ])
-      break
-    }
-    default:
-      return
-  }
-}
-
-/** 安全读取 payload 字符串字段（payload 是 Record<string, unknown>） */
-function readString(payload: Record<string, unknown>, key: string): string | undefined {
-  const v = payload[key]
-  return typeof v === 'string' ? v : undefined
-}
-
-/** 读 payload 上的对象字段（tool_call_start.input 等），非对象时回退空对象。 */
-function readRecord(payload: Record<string, unknown>, key: string): Record<string, unknown> {
-  const v = payload[key]
-  return v && typeof v === 'object' && !Array.isArray(v)
-    ? v as Record<string, unknown>
-    : {}
-}
-
-/**
- * 读 tool_call_update.detail。event-adapter 生产端 detail 可能是 string 或 object
- * （见 handleToolExecutionUpdate：partialResult 对象/字符串分支）。窄化到 ToolCall.detail 类型。
- */
-function readDetail(payload: Record<string, unknown>, key: string): string | Record<string, unknown> | undefined {
-  const v = payload[key]
-  if (v === null || v === undefined) return undefined
-  if (typeof v === 'string') return v
-  if (typeof v === 'object' && !Array.isArray(v)) return v as Record<string, unknown>
-  return undefined
-}
-
-/**
- * 读 message.complete.usage（event-adapter 生产端形状）。
- * payload.usage = { inputTokens, outputTokens, totalTokens }（见 event-adapter handleAgentEnd）。
- * shared.Usage 只需 { inputTokens, outputTokens }；totalTokens 舍弃（无字段承载）。
- */
-function readUsage(payload: Record<string, unknown>): { inputTokens: number; outputTokens: number } | undefined {
-  const u = readRecord(payload, 'usage')
-  if (Object.keys(u).length === 0) return undefined
-  const inputTokens = readNumber(u, 'inputTokens')
-  const outputTokens = readNumber(u, 'outputTokens')
-  if (inputTokens === undefined || outputTokens === undefined) return undefined
-  return { inputTokens, outputTokens }
-}
-
-/** 读 payload 上的数字字段 */
-function readNumber(payload: Record<string, unknown>, key: string): number | undefined {
-  const v = payload[key]
-  return typeof v === 'number' && Number.isFinite(v) ? v : undefined
-}
-
-/** 读 payload 上的字符串数组字段（queue_update.steering/followUp） */
-function readStringArray(payload: Record<string, unknown>, key: string): string[] | undefined {
-  const v = payload[key]
-  return Array.isArray(v) && v.every((x) => typeof x === 'string') ? v : undefined
-}
-
-/** 读 message.bashExecution payload（event-adapter handleMessageStart bashExecution 分支） */
-function readBashExecution(payload: Record<string, unknown>): BashExecution {
-  const exec: BashExecution = {}
-  const command = readString(payload, 'command')
-  if (command) exec.command = command
-  const output = readString(payload, 'output')
-  if (output) exec.output = output
-  const exitCode = readNumber(payload, 'exitCode')
-  if (exitCode !== undefined) exec.exitCode = exitCode
-  if (readBool(payload, 'cancelled')) exec.cancelled = true
-  if (readBool(payload, 'truncated')) exec.truncated = true
-  const fullOutputPath = readString(payload, 'fullOutputPath')
-  if (fullOutputPath) exec.fullOutputPath = fullOutputPath
-  const timestamp = readNumber(payload, 'timestamp')
-  if (timestamp !== undefined) exec.timestamp = timestamp
-  if (readBool(payload, 'excludeFromContext')) exec.excludeFromContext = true
-  return exec
-}
-
-/** 读 message.compactionSummary payload */
-function readCompactionSummary(payload: Record<string, unknown>): CompactionSummary {
-  const summary: CompactionSummary = {}
-  const s = readString(payload, 'summary')
-  if (s) summary.summary = s
-  const tokensBefore = readNumber(payload, 'tokensBefore')
-  if (tokensBefore !== undefined) summary.tokensBefore = tokensBefore
-  const timestamp = readNumber(payload, 'timestamp')
-  if (timestamp !== undefined) summary.timestamp = timestamp
-  return summary
-}
-
-/** 读 message.branchSummary payload */
-function readBranchSummary(payload: Record<string, unknown>): BranchSummary {
-  const summary: BranchSummary = {}
-  const s = readString(payload, 'summary')
-  if (s) summary.summary = s
-  const fromId = readString(payload, 'fromId')
-  if (fromId) summary.fromId = fromId
-  const timestamp = readNumber(payload, 'timestamp')
-  if (timestamp !== undefined) summary.timestamp = timestamp
-  return summary
-}
-
-/** 读 payload 上的布尔字段 */
-function readBool(payload: Record<string, unknown>, key: string): boolean {
-  return payload[key] === true
-}
