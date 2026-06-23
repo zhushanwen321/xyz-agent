@@ -34,6 +34,15 @@
       <div class="mb-2 flex items-center gap-2">
         <h3 class="text-[12px] font-medium text-fg">已发现的 Skill</h3>
         <span class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] text-subtle">{{ filteredSkills.length }}</span>
+        <Button
+          variant="secondary"
+          class="ml-1 gap-1.5 rounded-sm px-2 py-0.5 text-[11px] [&_svg]:size-3"
+          :disabled="scanning"
+          @click="onScan"
+        >
+          <RefreshCw v-if="scanning" class="animate-spin" />
+          {{ scanning ? '扫描中…' : '重新扫描' }}
+        </Button>
         <div class="ml-auto flex gap-0.5">
           <Button
             variant="ghost"
@@ -46,22 +55,57 @@
         </div>
       </div>
 
+      <p v-if="actionError" class="mb-2 text-[11px] text-danger">{{ actionError }}</p>
+
       <div v-if="!filteredSkills.length" class="py-8 text-center text-[12px] text-muted">未发现 Skill</div>
 
       <div v-for="sk in filteredSkills" :key="sk.id" class="flex items-center gap-2 rounded-md border border-border bg-bg px-3 py-2">
         <span class="flex-1 truncate text-[12px] font-medium text-fg">{{ sk.name }}</span>
         <span class="rounded-sm px-1.5 py-0.5 text-[10px]" :class="sourceBadgeClass(sk.source)">{{ sk.source }}</span>
+        <!-- 启用开关：调 config.setSkill 持久化 enabled -->
+        <Label class="relative inline-flex shrink-0 cursor-pointer" @click.stop>
+          <input type="checkbox" :checked="sk.enabled" class="peer sr-only" @change="onToggleEnabled(sk, ($event.target as HTMLInputElement).checked)" />
+          <div class="h-4 w-7 rounded-full bg-border-strong after:absolute after:left-[2px] after:top-[2px] after:h-3 after:w-3 after:rounded-full after:bg-white after:transition-all peer-checked:bg-accent peer-checked:after:translate-x-full" />
+        </Label>
         <span v-if="sk.enabled" class="rounded-sm bg-accent-soft px-1.5 py-0.5 text-[10px] text-accent">生效</span>
         <span class="max-w-[200px] truncate text-[11px] text-subtle" :title="sk.description">{{ sk.description }}</span>
+        <Button
+          variant="ghost"
+          class="size-5 shrink-0 rounded-sm p-0 text-subtle hover:bg-[rgba(239,68,68,0.12)] hover:text-danger [&_svg]:size-3"
+          title="删除 Skill"
+          @click.stop="deleteTarget = sk"
+        >
+          <Trash2 />
+        </Button>
       </div>
     </section>
+
+    <!-- 删除确认弹窗 -->
+    <Dialog :open="!!deleteTarget" @update:open="deleteTarget = null">
+      <DialogContent class="max-w-[360px]">
+        <DialogHeader>
+          <DialogTitle>删除 {{ deleteTarget?.name }}？</DialogTitle>
+          <DialogDescription>将从已发现清单移除。此操作不可撤销。</DialogDescription>
+        </DialogHeader>
+        <div class="flex justify-end gap-2 pt-4">
+          <Button variant="ghost" @click="deleteTarget = null">取消</Button>
+          <Button variant="danger" :disabled="deleting" @click="confirmDelete">
+            {{ deleting ? '删除中…' : '确认删除' }}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import type { SkillInfo } from '@xyz-agent/shared'
+import { RefreshCw, Trash2 } from '@lucide/vue'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { Label } from '@/components/ui/label'
+import type { SkillInfo } from '@xyz-agent/shared'
+import { config } from '@/api'
 
 const props = defineProps<{ skills: SkillInfo[] }>()
 
@@ -81,12 +125,56 @@ const sourceTabs = [
 ] as const
 
 const activeSource = ref<string>('all')
+const scanning = ref(false)
+const deleting = ref(false)
+const deleteTarget = ref<SkillInfo | null>(null)
+const actionError = ref('')
 
 const filteredSkills = computed(() =>
   activeSource.value === 'all'
     ? props.skills
     : props.skills.filter((s) => s.source === activeSource.value),
 )
+
+/** 重新扫描：config.scanSkills（请求-响应，结果经 onSkills 订阅推回持久态）。
+ * sources 取当前启用的可选目录 + 强制目录（简化：传可选目录路径）。 */
+async function onScan() {
+  scanning.value = true
+  actionError.value = ''
+  try {
+    await config.scanSkills(optionalDirs.filter((d) => d.enabled).map((d) => d.path))
+  } catch (e) {
+    actionError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    scanning.value = false
+  }
+}
+
+/** 启用开关 → config.setSkill（带 enabled，状态经 onSkills 订阅推回） */
+async function onToggleEnabled(sk: SkillInfo, enabled: boolean) {
+  actionError.value = ''
+  try {
+    await config.setSkill({ ...sk, enabled })
+  } catch (e) {
+    actionError.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+/** 确认删除 → config.deleteSkill（状态经 onSkills 订阅推回） */
+async function confirmDelete() {
+  const target = deleteTarget.value
+  if (!target) return
+  deleting.value = true
+  actionError.value = ''
+  try {
+    await config.deleteSkill(target.id)
+    deleteTarget.value = null
+  } catch (e) {
+    actionError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    deleting.value = false
+  }
+}
 
 function sourceBadgeClass(source: string): string {
   const map: Record<string, string> = {

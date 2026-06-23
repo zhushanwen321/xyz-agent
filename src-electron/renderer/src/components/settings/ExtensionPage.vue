@@ -48,9 +48,9 @@
             <span v-for="t in ext.tools" :key="t" class="rounded-sm bg-surface px-1 py-0.5 font-mono text-[10px] text-subtle">{{ t }}</span>
           </div>
         </div>
-        <!-- 启用开关 -->
-        <Label class="relative inline-flex shrink-0 cursor-pointer">
-          <input type="checkbox" :checked="ext.enabled" class="peer sr-only" />
+        <!-- 启用开关：调 extension.toggle 持久化 -->
+        <Label class="relative inline-flex shrink-0 cursor-pointer" @click.stop>
+          <input type="checkbox" :checked="ext.enabled" class="peer sr-only" @change="onToggle(ext, ($event.target as HTMLInputElement).checked)" />
           <div class="h-5 w-9 rounded-full bg-border-strong after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-all peer-checked:bg-accent peer-checked:after:translate-x-full" />
         </Label>
         <!-- 卸载按钮 -->
@@ -76,6 +76,7 @@
           <Button variant="ghost" @click="confirmTarget = ''">取消</Button>
           <Button variant="danger" @click="confirmTarget = ''">卸载</Button>
         </div>
+        <!-- 注：卸载属 install/uninstall 多步流，D10 推后，本轮仅 UI 占位 -->
       </DialogContent>
     </Dialog>
   </div>
@@ -88,6 +89,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { extension as extensionApi } from '@/api'
 
 interface ExtensionItem {
   name: string
@@ -108,6 +110,8 @@ const tabs = [
 const activeTab = ref<'npm' | 'dir' | 'git'>('npm')
 const installInput = ref('')
 const confirmTarget = ref('')
+/** 动作错误（toggle 失败时显示，非静默吞） */
+const actionError = ref('')
 
 const tabPlaceholder = computed(() => {
   const map: Record<string, string> = {
@@ -117,4 +121,15 @@ const tabPlaceholder = computed(() => {
   }
   return map[activeTab.value] ?? ''
 })
+
+/** 启用开关 → extension.toggle（状态经 onExtensions 订阅推回）。
+ * 失败记录错误供 UI 反馈；onExtensions 订阅未变 → 开关视觉态自动恢复。 */
+async function onToggle(ext: ExtensionItem, enabled: boolean) {
+  actionError.value = ''
+  try {
+    await extensionApi.toggle(ext.name, enabled)
+  } catch (e) {
+    actionError.value = e instanceof Error ? e.message : String(e)
+  }
+}
 </script>

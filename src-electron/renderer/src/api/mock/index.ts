@@ -300,14 +300,6 @@ export const config = {
     await sleep(TIMING.ack)
     return fixtureProviders.map((p) => ({ ...p, models: p.models.map((m) => ({ ...m })) }))
   },
-  async scanSkills(_sources: string[]) {
-    await sleep(TIMING.ack)
-    return fixtureSkills.map((s) => ({ ...s }))
-  },
-  async scanAgents(_sources: string[]) {
-    await sleep(TIMING.ack)
-    return fixtureAgents.map((a) => ({ ...a }))
-  },
   async discoverModels(req: {
     baseUrl: string
     apiKey?: string
@@ -347,17 +339,38 @@ export const config = {
     if (idx >= 0) fixtureProviders.splice(idx, 1)
     broadcastProviders()
   },
-  async setSkill(_skill: SkillInfo) {
+  async scanSkills(_sources: string[]) {
     await sleep(TIMING.ack)
+    // 扫描后广播当前 skills 快照（runtime scan 后会刷新 config.skills）
+    skillsSub.broadcast(fixtureSkills.map((s) => ({ ...s })))
   },
-  async deleteSkill(_skillId: string) {
+  async setSkill(skill: SkillInfo) {
     await sleep(TIMING.ack)
+    const idx = fixtureSkills.findIndex((s) => s.id === skill.id)
+    if (idx >= 0) fixtureSkills[idx] = { ...skill }
+    skillsSub.broadcast(fixtureSkills.map((s) => ({ ...s })))
   },
-  async setAgent(_agent: AgentInfo) {
+  async deleteSkill(skillId: string) {
     await sleep(TIMING.ack)
+    const idx = fixtureSkills.findIndex((s) => s.id === skillId)
+    if (idx >= 0) fixtureSkills.splice(idx, 1)
+    skillsSub.broadcast(fixtureSkills.map((s) => ({ ...s })))
   },
-  async deleteAgent(_agentId: string) {
+  async scanAgents(_sources: string[]) {
     await sleep(TIMING.ack)
+    agentsSub.broadcast(fixtureAgents.map((a) => ({ ...a })))
+  },
+  async setAgent(agent: AgentInfo) {
+    await sleep(TIMING.ack)
+    const idx = fixtureAgents.findIndex((a) => a.id === agent.id)
+    if (idx >= 0) fixtureAgents[idx] = { ...agent }
+    agentsSub.broadcast(fixtureAgents.map((a) => ({ ...a })))
+  },
+  async deleteAgent(agentId: string) {
+    await sleep(TIMING.ack)
+    const idx = fixtureAgents.findIndex((a) => a.id === agentId)
+    if (idx >= 0) fixtureAgents.splice(idx, 1)
+    agentsSub.broadcast(fixtureAgents.map((a) => ({ ...a })))
   },
 }
 
@@ -400,8 +413,12 @@ const extensionsSub = makeMockSubscription(() => fixtureExtensions.map((e) => ({
 
 export const extension = {
   onExtensions: (h: GlobalHandler<unknown>) => extensionsSub.subscribe(h),
-  async toggle(_name: string, _enabled: boolean) {
+  async toggle(name: string, enabled: boolean) {
     await sleep(TIMING.ack)
+    const target = fixtureExtensions.find((e) => e.name === name)
+    if (target) target.enabled = enabled
+    // 广播快照（模拟 runtime extension.toggle 后 onExtensions 推回）
+    extensionsSub.broadcast(fixtureExtensions.map((e) => ({ ...e })))
   },
 }
 
