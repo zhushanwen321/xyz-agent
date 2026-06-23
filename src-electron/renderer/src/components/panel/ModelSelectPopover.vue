@@ -64,36 +64,52 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { Check, ChevronDown } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { MOCK_MODELS, type MockModel } from '@/api/mock/composer-data'
+import { model as modelApi, type ModelInfo } from '@/api'
 
 const emit = defineEmits<{
   select: [modelId: string]
 }>()
 
+// 接收外部当前选中（Composer 传入），替代写死的 'claude-sonnet-4.5'
+const props = defineProps<{
+  selected?: string
+}>()
+
 const open = ref(false)
-const selected = ref('claude-sonnet-4.5')
+const selected = ref(props.selected ?? '')
 const query = ref('')
+const models = ref<ModelInfo[]>([])
+
+// 外部 selected 变化时同步本地（单向：父 → 子）
+watch(() => props.selected, (v) => { if (v) selected.value = v })
+
+// 订阅模型列表（sendInitialState 推 model.list；组件挂载即得初始列表）
+let unsub: (() => void) | null = null
+onMounted(() => {
+  unsub = modelApi.onModels((list) => { models.value = list as ModelInfo[] })
+})
+onBeforeUnmount(() => { unsub?.() })
 
 interface ModelGroup {
   provider: string
   color: string
-  models: MockModel[]
+  models: ModelInfo[]
 }
 
 // 按 provider 分组 + 按 query 过滤（name 包含，大小写不敏感）。空分组不渲染。
 const groups = computed<ModelGroup[]>(() => {
   const q = query.value.trim().toLowerCase()
   const map = new Map<string, ModelGroup>()
-  for (const m of MOCK_MODELS) {
+  for (const m of models.value) {
     if (q && !m.name.toLowerCase().includes(q)) continue
     let g = map.get(m.provider)
     if (!g) {
-      g = { provider: m.provider, color: m.providerColor, models: [] }
+      g = { provider: m.provider, color: m.providerColor ?? '', models: [] }
       map.set(m.provider, g)
     }
     g.models.push(m)
@@ -102,7 +118,7 @@ const groups = computed<ModelGroup[]>(() => {
 })
 
 const currentName = computed(
-  () => MOCK_MODELS.find((m) => m.id === selected.value)?.name ?? selected.value,
+  () => models.value.find((m) => m.id === selected.value)?.name ?? selected.value,
 )
 
 function onSelect(id: string): void {

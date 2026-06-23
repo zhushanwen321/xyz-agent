@@ -30,7 +30,7 @@
       </div>
       <!-- 6 级列表 -->
       <Button
-        v-for="opt in MOCK_THINKING_LEVELS"
+        v-for="opt in THINKING_LEVELS"
         :key="opt.level"
         variant="ghost"
         class="flex w-full items-center gap-2.5 rounded-none px-2.5 py-2 text-[13px] text-muted hover:bg-surface-hover"
@@ -61,11 +61,7 @@ import { computed, ref } from 'vue'
 import { Check, ChevronDown } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import {
-  MOCK_THINKING_LEVELS,
-  type MockThinkingLevel,
-  type ThinkingLevel,
-} from '@/api/mock/composer-data'
+import { THINKING_LEVELS, type ThinkingLevelOption, type ThinkingLevel } from './thinking-levels'
 
 const emit = defineEmits<{
   select: [level: ThinkingLevel]
@@ -76,7 +72,7 @@ const open = ref(false)
 const level = ref<ThinkingLevel>('max')
 
 const currentLabel = computed(
-  () => MOCK_THINKING_LEVELS.find((l) => l.level === level.value)?.label ?? '思考',
+  () => THINKING_LEVELS.find((l) => l.level === level.value)?.label ?? '思考',
 )
 
 // 触发器文字配色随等级（draft .c-text.think[data-lvl] 已定稿）
@@ -138,7 +134,7 @@ const nameClass: Record<ThinkingLevel, string> = {
   max: 'text-[#c9b6f5] font-semibold',
 }
 
-function onSelect(opt: MockThinkingLevel): void {
+function onSelect(opt: ThinkingLevelOption): void {
   if (!opt.available) return
   level.value = opt.level
   emit('select', opt.level)

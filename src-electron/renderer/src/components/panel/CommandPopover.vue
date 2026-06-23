@@ -57,14 +57,13 @@ import { computed, markRaw, onBeforeUnmount, ref, watch } from 'vue'
 import { Braces, FileText, Folder, Star, Terminal, Wrench } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
+import * as events from '@/api/events'
 import {
-  MOCK_FILES,
-  MOCK_MENTIONS,
-  MOCK_SLASH_COMMANDS,
-  type MockFileItem,
-  type MockMentionItem,
-  type MockSlashCommand,
-} from '@/api/mock/composer-data'
+  MENTION_CANDIDATES,
+  FILE_CANDIDATES,
+  type MentionCandidate,
+  type FileCandidate,
+} from './command-candidates'
 
 type CmdType = 'mention' | 'file' | 'slash'
 
@@ -86,10 +85,23 @@ const controlledOpen = computed({
 
 const activeIndex = ref(0)
 
+// slash 命令：初始用静态 fixture；订阅骨架等 session.commands payload 契约化（第4项 4e）后替换。
+// @ 引用 / # 文件是搜索能力（后端从零），保持常量，不订阅。
+const slashCommands = ref<Array<{ id: string; name: string; kind: string; icon: string }>>([
+  { id: 'cmd-commit', name: '/commit', kind: '提交', icon: 'terminal' },
+  { id: 'cmd-review', name: '/review', kind: '审查', icon: 'star' },
+  { id: 'cmd-fix', name: '/fix', kind: '修复', icon: 'wrench' },
+])
+
+// 订阅骨架：session.commands payload 结构未契约化，handler 暂留 TODO（静态 fallback 不变）。
+let unsubCommands: (() => void) | null = events.onGlobalType('session.commands', () => {
+  // TODO(第4项 4e): payload 结构契约化后解析 msg.payload.commands 填充 slashCommands
+})
+
 /** 统一候选项视图（三种数据源归一为 { id, name, kind, icon }） */
 const items = computed(() => {
   if (props.type === 'mention') {
-    return MOCK_MENTIONS.map((m: MockMentionItem) => ({
+    return MENTION_CANDIDATES.map((m: MentionCandidate) => ({
       id: m.id,
       name: m.name,
       kind: m.kind,
@@ -97,14 +109,14 @@ const items = computed(() => {
     }))
   }
   if (props.type === 'file') {
-    return MOCK_FILES.map((f: MockFileItem) => ({
+    return FILE_CANDIDATES.map((f: FileCandidate) => ({
       id: f.id,
       name: f.name,
       kind: f.kind,
       icon: f.kind === '目录' ? 'folder' : 'file',
     }))
   }
-  return MOCK_SLASH_COMMANDS.map((c: MockSlashCommand) => ({
+  return slashCommands.value.map((c) => ({
     id: c.id,
     name: c.name,
     kind: c.kind,
@@ -190,6 +202,9 @@ if (typeof window !== 'undefined') {
   window.addEventListener('keydown', onWindowKeydown, true)
   onBeforeUnmount(() => window.removeEventListener('keydown', onWindowKeydown, true))
 }
+
+// 取消 session.commands 订阅（组件卸载时）
+onBeforeUnmount(() => { unsubCommands?.() })
 
 // 浮层打开时重置高亮到第一项；type 切换也重置
 watch(

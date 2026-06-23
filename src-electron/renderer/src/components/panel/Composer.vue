@@ -36,7 +36,7 @@
         <!-- 上下文容量（spec §2a：hover 出容量 popover） -->
         <ContextCapacityPopover />
         <!-- 模型（spec §2b：click 出模型切换 popover） -->
-        <ModelSelectPopover @select="onModelSelect" />
+        <ModelSelectPopover :selected="currentModelId" @select="onModelSelect" />
         <!-- 思考等级（spec §2c：click 出 6 级 popover） -->
         <ThinkingLevelPopover @select="onThinkingSelect" />
 
@@ -100,6 +100,8 @@ const { isStreaming } = storeToRefs(chatStore)
 const { send, steer, followUp, abort } = useChat()
 
 const draft = ref('')
+/** 当前选中模型 id（占位，后续接 store/订阅 model.switched；runtime 切换属后续真实集成） */
+const currentModelId = ref('claude-sonnet-4.5')
 /** ComposerInput 实例 ref：清空/恢复草稿用 */
 const inputRef = ref<InstanceType<typeof ComposerInput> | null>(null)
 /** 命令浮层状态（§2d @/#//） */
@@ -147,9 +149,10 @@ function onCmdSelect(payload: { type: 'mention' | 'file' | 'slash'; name: string
   }
 }
 
-/** 模型切换（mock 期组件自维护状态，此处预留 runtime 对接） */
-function onModelSelect(): void {
-  // TODO: 对接 runtime model 切换
+/** 模型切换（占位更新本地 ref；真实 runtime 对接属后续真实集成） */
+function onModelSelect(modelId: string): void {
+  currentModelId.value = modelId
+  // TODO(后续): 对接 runtime model.switch
 }
 
 /** 思考等级切换（mock 期组件自维护状态，此处预留 runtime 对接） */

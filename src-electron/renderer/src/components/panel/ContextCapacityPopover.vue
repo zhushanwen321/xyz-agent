@@ -63,13 +63,36 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import { Button } from '@/components/ui/button'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { cn } from '@/lib/utils'
-import { MOCK_CONTEXT_STATS } from '@/api/mock/composer-data'
+import * as events from '@/api/events'
 
-const stats = MOCK_CONTEXT_STATS
+interface ContextStats {
+  used: number
+  total: number
+  percent: number
+  cacheHit: number
+  modelId: string
+}
+
+// 初始值用原 fixture 数值（context.update payload 未契约化，第4项 4e；订阅骨架先建）
+const stats = ref<ContextStats>({
+  used: 69000,
+  total: 1000000,
+  percent: 6.9,
+  cacheHit: 98.7,
+  modelId: 'claude-sonnet-4.5',
+})
+
+let unsubContext: (() => void) | null = null
+onMounted(() => {
+  unsubContext = events.onGlobalType('context.update', () => {
+    // TODO(第4项 4e): payload 结构契约化后解析 msg.payload 填充 stats
+  })
+})
+onBeforeUnmount(() => { unsubContext?.() })
 
 // 阈值常量（避免 magic number）
 const WAN_UNIT = 10_000
@@ -86,11 +109,11 @@ function formatWan(n: number): string {
   return `${wan.toFixed(1).replace(/\.0$/, '')}万`
 }
 
-const usedWan = computed(() => formatWan(stats.used))
-const totalWan = computed(() => formatWan(stats.total))
+const usedWan = computed(() => formatWan(stats.value.used))
+const totalWan = computed(() => formatWan(stats.value.total))
 
-const isHigh = computed(() => stats.percent > HIGH_THRESHOLD)
-const isDanger = computed(() => stats.percent > DANGER_THRESHOLD)
+const isHigh = computed(() => stats.value.percent > HIGH_THRESHOLD)
+const isDanger = computed(() => stats.value.percent > DANGER_THRESHOLD)
 
 const barClass = computed(() => {
   if (isDanger.value) return 'bg-danger'
@@ -99,6 +122,6 @@ const barClass = computed(() => {
 })
 
 const cacheHitClass = computed(() =>
-  stats.cacheHit < CACHE_LOW_THRESHOLD ? 'text-warning' : 'text-success',
+  stats.value.cacheHit < CACHE_LOW_THRESHOLD ? 'text-warning' : 'text-success',
 )
 </script>
