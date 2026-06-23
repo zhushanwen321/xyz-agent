@@ -212,6 +212,48 @@ describe('FG5 chat store 块类型扩展', () => {
     expect(store.getMessages('sx')[0].status).toBe('error')
   })
 
+  // ── W05-A: 4 个新 case（纯字段）─────────────────────────────────
+
+  it('thinking_end 给最后 ThinkingBlock 设 endTime', () => {
+    const store = useChatStore()
+    store.appendAssistantChunk('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
+    store.appendAssistantChunk('sx', { type: 'message.thinking_start', payload: { sessionId: 'sx', thinkingId: 'th1' } })
+    store.appendAssistantChunk('sx', { type: 'message.thinking_delta', payload: { sessionId: 'sx', delta: '推理' } })
+    expect(store.getMessages('sx')[0].thinking?.[0].endTime).toBeUndefined()
+    store.appendAssistantChunk('sx', { type: 'message.thinking_end', payload: { sessionId: 'sx' } })
+    expect(store.getMessages('sx')[0].thinking?.[0].endTime).toBeTypeOf('number')
+  })
+
+  it('tool_call_update 更新 ToolCall.detail（对齐生产端，只读 detail）', () => {
+    const store = useChatStore()
+    store.appendAssistantChunk('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
+    store.appendAssistantChunk('sx', { type: 'message.tool_call_start', payload: { sessionId: 'sx', toolCallId: 'tc1', toolName: 'bash' } })
+    // string detail
+    store.appendAssistantChunk('sx', { type: 'message.tool_call_update', payload: { sessionId: 'sx', toolCallId: 'tc1', detail: '执行中…' } })
+    expect(store.getMessages('sx')[0].toolCalls?.[0].detail).toBe('执行中…')
+    // object detail
+    store.appendAssistantChunk('sx', { type: 'message.tool_call_update', payload: { sessionId: 'sx', toolCallId: 'tc1', detail: { progress: 50 } } })
+    expect(store.getMessages('sx')[0].toolCalls?.[0].detail).toEqual({ progress: 50 })
+  })
+
+  it('complete.usage 回填 Message.usage（inputTokens/outputTokens）', () => {
+    const store = useChatStore()
+    store.appendAssistantChunk('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
+    store.appendAssistantChunk('sx', {
+      type: 'message.complete',
+      payload: { sessionId: 'sx', stopReason: 'complete', usage: { inputTokens: 120, outputTokens: 80, totalTokens: 200 } },
+    })
+    expect(store.getMessages('sx')[0].usage).toEqual({ inputTokens: 120, outputTokens: 80 })
+  })
+
+  it('message.status 接收不崩（运行态，不改 Message.status）', () => {
+    const store = useChatStore()
+    store.appendAssistantChunk('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
+    store.appendAssistantChunk('sx', { type: 'message.status', payload: { sessionId: 'sx', status: 'steered', detail: '已转向' } })
+    // status 仍是 streaming（message.status 是运行过程态，与 Message.status 正交）
+    expect(store.getMessages('sx')[0].status).toBe('streaming')
+  })
+
   it('mock getHistory 返回 fixture 全字段（G2-006 契约）', async () => {
     const s1 = await mockApi.chat.getHistory('s1')
     expect(s1.length).toBeGreaterThanOrEqual(2)

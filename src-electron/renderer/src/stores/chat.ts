@@ -112,8 +112,23 @@ export const useChatStore = defineStore('chat', () => {
         if (idx < 0) return
         const blockId = readString(msg.payload, 'thinkingId') ?? `th-${crypto.randomUUID()}`
         const next = [...prev]
-        const thinking = [...(next[idx].thinking ?? []), { id: blockId, content: '', collapsed: true }]
+        const thinking = [...(next[idx].thinking ?? []), { id: blockId, content: '', collapsed: true, startTime: Date.now() }]
         next[idx] = { ...next[idx], thinking }
+        messages.value.set(sessionId, next)
+        break
+      }
+      case 'message.thinking_end': {
+        // W05-A：给最后 ThinkingBlock 设 endTime（字段已存在 message.ts:30）。
+        // payload 仅 {sessionId}（event-adapter thinking_end 不带额外字段）。
+        const idx = findLastAssistantIndex(prev)
+        if (idx < 0) return
+        const thinking = prev[idx].thinking
+        if (!thinking || thinking.length === 0) return
+        const lastIdx = thinking.length - 1
+        const next = [...prev]
+        const nextThinking = [...thinking]
+        nextThinking[lastIdx] = { ...nextThinking[lastIdx], endTime: Date.now() }
+        next[idx] = { ...next[idx], thinking: nextThinking }
         messages.value.set(sessionId, next)
         break
       }
@@ -167,6 +182,22 @@ export const useChatStore = defineStore('chat', () => {
         messages.value.set(sessionId, next)
         break
       }
+      case 'message.tool_call_update': {
+        // W05-A：Extension 工具调用进度更新。event-adapter tool_execution_update
+        // 生产端只发 detail（string | object），消费对齐生产端（不臆造 progress）。
+        const idx = findLastAssistantIndex(prev)
+        if (idx < 0) return
+        const callId = readString(msg.payload, 'toolCallId')
+        if (!callId) return
+        const detail = readDetail(msg.payload, 'detail')
+        const next = [...prev]
+        const toolCalls = (next[idx].toolCalls ?? []).map((c) =>
+          c.id === callId ? { ...c, detail } : c,
+        )
+        next[idx] = { ...next[idx], toolCalls }
+        messages.value.set(sessionId, next)
+        break
+      }
       case 'message.complete': {
         const idx = findLastAssistantIndex(prev)
         if (idx < 0) return
@@ -174,8 +205,24 @@ export const useChatStore = defineStore('chat', () => {
         if (last.status !== 'streaming') return
         const stopReason = readString(msg.payload, 'stopReason')
         const next = [...prev]
-        next[idx] = { ...last, status: stopReason === 'error' ? 'error' : 'complete' }
+        // W05-A：消费 message.complete.usage（{inputTokens,outputTokens,totalTokens}）
+        // 回填 Message.usage（字段已存在 message.ts:99）。stopReason:error → status:error。
+        const usage = readUsage(msg.payload)
+        next[idx] = {
+          ...last,
+          status: stopReason === 'error' ? 'error' : 'complete',
+          ...(usage ? { usage } : {}),
+        }
         messages.value.set(sessionId, next)
+        break
+      }
+      case 'message.status': {
+        // W05-A：运行时态推送（steer/aborted/sent/queued 等运行状态）。
+        // 区别于请求级 reply（send/steer/follow_up/abort 的 reply 已走 pending 通道，
+        // 不经 streamSubscribe）——此处是 pi status 事件经 event-adapter 直推。
+        // 当前最小化：仅接收记录，不改 Message.status（streaming/complete/error 是
+        // 消息生命周期，message.status 是运行过程态，两者正交）。
+        // W06 的 retry/queue 提示才需要驱动 UI 指示位。
         break
       }
       case 'message.stream_error': {
@@ -307,4 +354,36 @@ function readRecord(payload: Record<string, unknown>, key: string): Record<strin
   return v && typeof v === 'object' && !Array.isArray(v)
     ? v as Record<string, unknown>
     : {}
+}
+
+/**
+ * 读 tool_call_update.detail。event-adapter 生产端 detail 可能是 string 或 object
+ * （见 handleToolExecutionUpdate：partialResult 对象/字符串分支）。窄化到 ToolCall.detail 类型。
+ */
+function readDetail(payload: Record<string, unknown>, key: string): string | Record<string, unknown> | undefined {
+  const v = payload[key]
+  if (v === null || v === undefined) return undefined
+  if (typeof v === 'string') return v
+  if (typeof v === 'object' && !Array.isArray(v)) return v as Record<string, unknown>
+  return undefined
+}
+
+/**
+ * 读 message.complete.usage（event-adapter 生产端形状）。
+ * payload.usage = { inputTokens, outputTokens, totalTokens }（见 event-adapter handleAgentEnd）。
+ * shared.Usage 只需 { inputTokens, outputTokens }；totalTokens 舍弃（无字段承载）。
+ */
+function readUsage(payload: Record<string, unknown>): { inputTokens: number; outputTokens: number } | undefined {
+  const u = readRecord(payload, 'usage')
+  if (Object.keys(u).length === 0) return undefined
+  const inputTokens = readNumber(u, 'inputTokens')
+  const outputTokens = readNumber(u, 'outputTokens')
+  if (inputTokens === undefined || outputTokens === undefined) return undefined
+  return { inputTokens, outputTokens }
+}
+
+/** 读 payload 上的数字字段 */
+function readNumber(payload: Record<string, unknown>, key: string): number | undefined {
+  const v = payload[key]
+  return typeof v === 'number' && Number.isFinite(v) ? v : undefined
 }
