@@ -57,7 +57,7 @@
 
 <script setup lang="ts">
 import type { CSSProperties } from 'vue'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { Check, ChevronDown } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -67,9 +67,24 @@ const emit = defineEmits<{
   select: [level: ThinkingLevel]
 }>()
 
+// 外部当前等级（Composer 从 SessionSummary.thinkingLevel 透传，string 类型）；
+// 值合法时映射到 ThinkingLevel，否则 fallback max。无则默认 max。
+const props = defineProps<{
+  level?: string
+}>()
+
 const open = ref(false)
-// 默认 max：开 composer 即最高思考强度（紫底按钮常驻提示）
-const level = ref<ThinkingLevel>('max')
+/** 传入的 level 是否为合法 ThinkingLevel 枚举值 */
+function isValidLevel(v: string): v is ThinkingLevel {
+  return THINKING_LEVELS.some((opt) => opt.level === v)
+}
+// 本地态初始化自 prop（合法则用，否则 fallback max）；prop 变化时同步
+const level = ref<ThinkingLevel>(
+  props.level && isValidLevel(props.level) ? props.level : 'max',
+)
+watch(() => props.level, (v) => {
+  if (v && isValidLevel(v)) level.value = v
+})
 
 const currentLabel = computed(
   () => THINKING_LEVELS.find((l) => l.level === level.value)?.label ?? '思考',

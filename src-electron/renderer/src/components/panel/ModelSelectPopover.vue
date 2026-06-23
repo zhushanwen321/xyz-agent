@@ -37,7 +37,7 @@
             variant="ghost"
             class="flex w-full items-center gap-2 rounded-none px-2.5 py-[7px] text-[13px] text-muted hover:bg-surface-hover hover:text-fg"
             :class="model.id === selected && 'bg-accent-soft text-accent hover:bg-accent-soft hover:text-accent'"
-            @click="onSelect(model.id)"
+            @click="onSelect(model.id, group.provider)"
           >
             <span class="flex-1 text-left">{{ model.name }}</span>
             <Check
@@ -67,7 +67,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { model as modelApi, type ModelInfo } from '@/api'
 
 const emit = defineEmits<{
-  select: [modelId: string]
+  select: [payload: { modelId: string; provider: string }]
 }>()
 
 // 接收外部当前选中（Composer 传入），替代写死的 'claude-sonnet-4.5'
@@ -104,6 +104,7 @@ onMounted(() => {
 onBeforeUnmount(() => { unsub?.() })
 
 interface ModelGroup {
+  providerId: string
   provider: string
   color: string
   models: ModelInfo[]
@@ -119,7 +120,7 @@ const groups = computed<ModelGroup[]>(() => {
     const key = m.providerId
     let g = map.get(key)
     if (!g) {
-      g = { provider: m.providerName, color: providerColor(key), models: [] }
+      g = { providerId: key, provider: m.providerName, color: providerColor(key), models: [] }
       map.set(key, g)
     }
     g.models.push(m)
@@ -131,9 +132,9 @@ const currentName = computed(
   () => models.value.find((m) => m.id === selected.value)?.name ?? selected.value,
 )
 
-function onSelect(id: string): void {
+function onSelect(id: string, provider: string): void {
   selected.value = id
   open.value = false
-  emit('select', id)
+  emit('select', { modelId: id, provider })
 }
 </script>

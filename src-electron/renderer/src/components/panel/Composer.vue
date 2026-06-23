@@ -14,6 +14,7 @@
       ref="commandPopoverRef"
       v-model:open="cmdOpen"
       :type="cmdType"
+      :session-id="sessionId"
       @select="onCmdSelect"
     >
       <div class="composer-box relative rounded-lg border bg-bg-input" :class="boxClass">
@@ -33,12 +34,12 @@
         <!-- + 添加内容（左锚定，spec §1 ①，click 出 4 路浮层） -->
         <AddMenuPopover @select="onAddSelect" />
         <span class="flex-1" />
-        <!-- 上下文容量（spec §2a：hover 出容量 popover） -->
-        <ContextCapacityPopover />
+        <!-- 上下文容量（spec §2a：hover 出容量 popover；session 通道订阅 context.update） -->
+        <ContextCapacityPopover :session-id="sessionId" />
         <!-- 模型（spec §2b：click 出模型切换 popover） -->
         <ModelSelectPopover :selected="currentModelId" @select="onModelSelect" />
-        <!-- 思考等级（spec §2c：click 出 6 级 popover） -->
-        <ThinkingLevelPopover @select="onThinkingSelect" />
+        <!-- 思考等级（spec §2c：click 出 6 级 popover；level 从 session 透传） -->
+        <ThinkingLevelPopover :level="currentThinkingLevel" @select="onThinkingSelect" />
 
         <!-- 发送位三态：S6 streaming→stop / S5 sending→spinner / S1·S2 idle→send -->
         <Button
@@ -90,14 +91,20 @@ import ThinkingLevelPopover from './ThinkingLevelPopover.vue'
 import ContextChipsBar from './ContextChipsBar.vue'
 import { useChat } from '@/composables/features/useChat'
 import { useChatStore } from '@/stores/chat'
+import { useSessionStore } from '@/stores/session'
+import { model as modelApi, session as sessionApi } from '@/api'
 
 const props = defineProps<{
   sessionId: string
 }>()
 
 const chatStore = useChatStore()
+const sessionStore = useSessionStore()
 const { isStreaming } = storeToRefs(chatStore)
 const { send, steer, followUp, abort } = useChat()
+
+/** 当前 session 的思考等级（从 SessionSummary.thinkingLevel 透传给 ThinkingLevelPopover） */
+const currentThinkingLevel = computed(() => sessionStore.active?.thinkingLevel)
 
 const draft = ref('')
 /** 当前选中模型 id（占位，后续接 store/订阅 model.switched；runtime 切换属后续真实集成） */
@@ -149,15 +156,15 @@ function onCmdSelect(payload: { type: 'mention' | 'file' | 'slash'; name: string
   }
 }
 
-/** 模型切换（占位更新本地 ref；真实 runtime 对接属后续真实集成） */
-function onModelSelect(modelId: string): void {
-  currentModelId.value = modelId
-  // TODO(后续): 对接 runtime model.switch
+/** 模型切换：调 runtime model.switch（sessionId + provider + modelId）；成功后回写本地 ref */
+async function onModelSelect(payload: { modelId: string; provider: string }): Promise<void> {
+  currentModelId.value = payload.modelId
+  await modelApi.switchModel(props.sessionId, payload.provider, payload.modelId)
 }
 
-/** 思考等级切换（mock 期组件自维护状态，此处预留 runtime 对接） */
-function onThinkingSelect(): void {
-  // TODO: 对接 runtime thinking level 切换
+/** 思考等级切换：调 runtime session.setThinkingLevel（成功后 session store 持久） */
+async function onThinkingSelect(level: string): Promise<void> {
+  await sessionApi.setThinkingLevel(props.sessionId, level)
 }
 
 const hasInput = computed(() => draft.value.trim().length > 0)
@@ -244,8 +251,5 @@ function onKeydown(e: KeyboardEvent): void {
     onSend()
   }
 }
-
-// sessionId 占位：未来 panel-scoped composer 多实例隔离（v1 单 composer 跟 active session）
-void props
 </script>
 

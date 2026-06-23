@@ -231,6 +231,11 @@ export interface ServerMessageMapBase {
   // 扩展 UI 推送通道（EventAdapter 翻译 pi setWidget/setStatus，runtime 固定形状生产）
   'extension:widget': { sessionId: string; widgetKey: string; lines: string[] }
   'extension:status': { sessionId: string; statusKey: string; text: string }
+  // session 通道推送（runtime session-service / index.ts 生产，W04 收紧）
+  // session.commands：pi 扩展命令列表（fetchAndBroadcastCommands 广播）
+  'session.commands': { sessionId: string; commands: Array<{ name: string; description?: string; source: string }> }
+  // context.update：上下文用量（index.ts onContextUpdate 推；cacheHit/modelId 无来源，D9 保留 UI 占位）
+  'context.update': { sessionId: string; usagePercent: number; inputTokens: number; contextLimit: number }
 }
 
 /**
@@ -238,8 +243,7 @@ export interface ServerMessageMapBase {
  *
  * 精确条目见 ServerMessageMapBase（已消费 + 已契约化的 type）；其余未消费 / 协议待定的
  * type 走 `Record<string, unknown>` 占位，待对应 wave 实装时收紧：
- * message.* 进 W05-W07，plugin:* / extension:* widget 等属后续 wave，session.commands /
- * context.update 进 W04，tree-* 不做。
+ * message.* 进 W05-W07，plugin:* / extension:* widget 等属后续 wave，tree-* 不做。
  *
  * 收紧某条目时，runtime 构造点会同步得契约校验（若 payload 字段对不上，tsc 报错——D5 的预期收益）。
  */

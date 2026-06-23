@@ -53,7 +53,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, markRaw, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, markRaw, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Braces, FileText, Folder, Star, Terminal, Wrench } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
@@ -70,6 +70,8 @@ type CmdType = 'mention' | 'file' | 'slash'
 const props = defineProps<{
   open: boolean
   type: CmdType
+  /** session 通道订阅键（D8：session.commands 带 sessionId，走 events.on(sessionId)） */
+  sessionId?: string
 }>()
 
 const emit = defineEmits<{
@@ -85,18 +87,44 @@ const controlledOpen = computed({
 
 const activeIndex = ref(0)
 
-// slash 命令：初始用静态 fixture；订阅骨架等 session.commands payload 契约化（第4项 4e）后替换。
+// slash 命令：runtime 推送的扩展命令（session.commands 通道）。无推送时为空（@/# 仍走常量）。
 // @ 引用 / # 文件是搜索能力（后端从零），保持常量，不订阅。
-const slashCommands = ref<Array<{ id: string; name: string; kind: string; icon: string }>>([
-  { id: 'cmd-commit', name: '/commit', kind: '提交', icon: 'terminal' },
-  { id: 'cmd-review', name: '/review', kind: '审查', icon: 'star' },
-  { id: 'cmd-fix', name: '/fix', kind: '修复', icon: 'wrench' },
-])
+const slashCommands = ref<Array<{ id: string; name: string; kind: string; icon: string }>>([])
 
-// 订阅骨架：session.commands payload 结构未契约化，handler 暂留 TODO（静态 fallback 不变）。
-let unsubCommands: (() => void) | null = events.onGlobalType('session.commands', () => {
-  // TODO(第4项 4e): payload 结构契约化后解析 msg.payload.commands 填充 slashCommands
-})
+/**
+ * 订阅 session.commands（D8：走 session 通道 events.on(sessionId)，非 onGlobalType）。
+ * payload 已契约化：{ commands: Array<{ name, description?, source }> }。
+ * 命令 kind 取 source（extension/skill 等），icon 按 source 推断。
+ * sessionId 变化时重订（Composer 切 session）。
+ */
+let unsubCommands: (() => void) | null = null
+function subscribeCommands(sid: string | undefined): void {
+  unsubCommands?.()
+  unsubCommands = null
+  if (!sid) return
+  unsubCommands = events.on(sid, (msg) => {
+    if (msg.type !== 'session.commands') return
+    // msg 经 type 守卫后 payload 仍为联合宽类型（events.on 非 onGlobalType，无 per-type 泛型收窄），
+    // 故窄断言取 commands（payload 已契约化，见 protocol.ts ServerMessageMap）
+    const cmds = (msg.payload as { commands: Array<{ name: string; description?: string; source: string }> }).commands
+    slashCommands.value = cmds.map((c: { name: string; source: string }) => ({
+      id: c.name,
+      name: c.name,
+      kind: c.source,
+      icon: iconForSource(c.source),
+    }))
+  })
+}
+onMounted(() => subscribeCommands(props.sessionId))
+onBeforeUnmount(() => unsubCommands?.())
+watch(() => props.sessionId, (sid) => subscribeCommands(sid))
+
+/** source → icon 映射（extension→terminal, skill→star, 默认 wrench） */
+function iconForSource(source: string): string {
+  if (source === 'extension') return 'terminal'
+  if (source === 'skill') return 'star'
+  return 'wrench'
+}
 
 /** 统一候选项视图（三种数据源归一为 { id, name, kind, icon }） */
 const items = computed(() => {
@@ -202,9 +230,6 @@ if (typeof window !== 'undefined') {
   window.addEventListener('keydown', onWindowKeydown, true)
   onBeforeUnmount(() => window.removeEventListener('keydown', onWindowKeydown, true))
 }
-
-// 取消 session.commands 订阅（组件卸载时）
-onBeforeUnmount(() => { unsubCommands?.() })
 
 // 浮层打开时重置高亮到第一项；type 切换也重置
 watch(

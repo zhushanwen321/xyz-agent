@@ -21,6 +21,48 @@ import {
   fixtureExtensions,
 } from './settings-data'
 import { MOCK_MODELS, type MockModel } from './composer-data'
+import * as events from '../events'
+
+/**
+ * Mock 模拟 runtime session 通道推送（dispatchSession）。
+ * 组件用 events.on(sessionId) 订阅 session.commands / context.update；
+ * mock 不走 transport，故在此桥接——直接 dispatchSession 模拟 server-push，
+ * 让组件订阅在 mock 模式下也能触发（mock/real 同构）。
+ */
+function pushSession(sessionId: string, msg: ServerMessage): void {
+  events.dispatchSession(sessionId, msg)
+}
+
+/** Mock 静态 slash 命令（模拟 pi getCommands 返回的扩展命令） */
+const MOCK_COMMANDS = [
+  { name: '/commit', description: '提交改动', source: 'extension' },
+  { name: '/review', description: '代码审查', source: 'extension' },
+  { name: '/fix', description: '修复问题', source: 'skill' },
+]
+
+/**
+ * 模拟 runtime 的 session 级 server-push（session.commands + context.update）。
+ * 在 switchSession（等价 runtime session 激活）后推，模拟 runtime fetchAndBroadcastCommands +
+ * onContextUpdate。延迟模拟异步推送节奏。
+ */
+function pushSessionState(sessionId: string): void {
+  const cmdTimer = setTimeout(() => {
+    pushSession(sessionId, {
+      type: 'session.commands',
+      id: `mock_cmd_${sessionId}`,
+      payload: { sessionId, commands: MOCK_COMMANDS },
+    })
+  }, TIMING.switchCmd)
+  timers.add(cmdTimer)
+  const ctxTimer = setTimeout(() => {
+    pushSession(sessionId, {
+      type: 'context.update',
+      id: `mock_ctx_${sessionId}`,
+      payload: { sessionId, usagePercent: 6.9, inputTokens: 69000, contextLimit: 1000000 },
+    })
+  }, TIMING.switchCmd)
+  timers.add(ctxTimer)
+}
 
 /** 流式时序（ms）—— 仅用于视觉演示节奏，不影响契约 */
 const TIMING = {
@@ -105,6 +147,8 @@ export const session = {
     if (!fixtureSessions.some((s) => s.id === id)) {
       throw new Error(`mock: session ${id} 不存在`)
     }
+    // 模拟 runtime session 激活后的 server-push（session.commands + context.update）
+    pushSessionState(id)
   },
 
   async rename(sessionId: string, label: string): Promise<void> {
@@ -120,6 +164,13 @@ export const session = {
     if (idx === -1) throw new Error(`mock: session ${sessionId} 不存在`)
     fixtureSessions.splice(idx, 1)
     delete fixtureMessages[sessionId]
+  },
+
+  /** 设置思考等级（mock：持久到 fixture session.thinkingLevel，runtime 确认属后续联调） */
+  async setThinkingLevel(sessionId: string, level: string): Promise<void> {
+    await sleep(TIMING.ack)
+    const target = fixtureSessions.find((s) => s.id === sessionId)
+    if (target) target.thinkingLevel = level
   },
 }
 

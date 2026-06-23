@@ -57,3 +57,14 @@ export function remove(sessionId: string): Promise<void> {
   transport.send({ type: 'session.delete', id, payload: { sessionId } })
   return result
 }
+
+/**
+ * 设置 session 的思考等级（动作；确认由 session.thinkingLevelSet reply 回灌 pending）。
+ * level 是前端 6 级枚举字符串（off/low/medium/high/xhigh/max，见 thinking-levels.ts）。
+ */
+export function setThinkingLevel(sessionId: string, level: string): Promise<void> {
+  const id = pending.create()
+  const result = pending.register<void>(id)
+  transport.send({ type: 'session.setThinkingLevel', id, payload: { sessionId, level } })
+  return result
+}

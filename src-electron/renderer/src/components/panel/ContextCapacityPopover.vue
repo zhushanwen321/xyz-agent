@@ -63,7 +63,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { Button } from '@/components/ui/button'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { cn } from '@/lib/utils'
@@ -77,7 +77,8 @@ interface ContextStats {
   modelId: string
 }
 
-// 初始值用原 fixture 数值（context.update payload 未契约化，第4项 4e；订阅骨架先建）
+// 初始值用原 fixture 数值（context.update 推送前显示，不塌陷）。
+// cacheHit / modelId 无 runtime 来源（D9）：保留静态占位，UI 不塌陷。
 const stats = ref<ContextStats>({
   used: 69000,
   total: 1000000,
@@ -86,13 +87,39 @@ const stats = ref<ContextStats>({
   modelId: 'claude-sonnet-4.5',
 })
 
+const props = defineProps<{
+  /** session 通道订阅键（D8：context.update 带 sessionId，走 events.on(sessionId)） */
+  sessionId?: string
+}>()
+
+/**
+ * 订阅 context.update（D8：session 通道）。
+ * 字段映射（D9）：used←inputTokens / total←contextLimit / percent←usagePercent。
+ * cacheHit / modelId 无来源，保持占位。sessionId 变化时重订。
+ */
 let unsubContext: (() => void) | null = null
-onMounted(() => {
-  unsubContext = events.onGlobalType('context.update', () => {
-    // TODO(第4项 4e): payload 结构契约化后解析 msg.payload 填充 stats
+function subscribeContext(sid: string | undefined): void {
+  unsubContext?.()
+  unsubContext = null
+  if (!sid) return
+  unsubContext = events.on(sid, (msg) => {
+    if (msg.type !== 'context.update') return
+    // msg 经 type 守卫后 payload 仍为联合宽类型（events.on 非 onGlobalType，无 per-type 泛型收窄），
+    // 故窄断言取字段（payload 已契约化，见 protocol.ts ServerMessageMap）
+    const { inputTokens, contextLimit, usagePercent } = msg.payload as {
+      sessionId: string; usagePercent: number; inputTokens: number; contextLimit: number
+    }
+    stats.value = {
+      ...stats.value,
+      used: inputTokens,
+      total: contextLimit,
+      percent: usagePercent,
+    }
   })
-})
-onBeforeUnmount(() => { unsubContext?.() })
+}
+onMounted(() => subscribeContext(props.sessionId))
+onBeforeUnmount(() => unsubContext?.())
+watch(() => props.sessionId, (sid) => subscribeContext(sid))
 
 // 阈值常量（避免 magic number）
 const WAN_UNIT = 10_000
