@@ -17,7 +17,7 @@
       >
         <ChevronRight class="size-2.5 transition-transform" :class="thinkingCollapsed ? '' : 'rotate-90'" />
         <Brain class="size-3" />
-        <span>思考</span>
+        <span class="whitespace-nowrap">思考</span>
         <span v-if="thinkingCollapsed" class="ml-0.5 truncate text-muted">· {{ previewText }}</span>
       </div>
       <!-- text-[12px] 对齐 tool 详情字号（曾用继承字号偏大） -->
@@ -39,7 +39,7 @@
       >
         <ChevronRight class="size-2.5 transition-transform" :class="toolExpanded ? 'rotate-90' : ''" />
         <Wrench class="size-3" />
-        <span>工具{{ isFailed ? ' · 失败' : isRunning ? ' · 进行中' : '' }}</span>
+        <span class="whitespace-nowrap">工具{{ isFailed ? ' · 失败' : isRunning ? ' · 进行中' : '' }}</span>
         <span class="normal-case tracking-normal">{{ toolName }}</span>
       </div>
       <template v-if="toolExpanded">

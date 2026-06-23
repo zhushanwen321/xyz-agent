@@ -19,7 +19,7 @@
       >
         <Textarea v-model="draftText" class="min-h-[64px] border-0 bg-transparent px-1 text-[13.5px] leading-[1.55] focus-visible:ring-0" />
         <div class="mt-1.5 flex items-center justify-between px-1">
-          <span class="text-[11px] text-subtle">编辑后将分叉为新会话</span>
+          <span class="text-[11px] text-subtle">编辑后替换并重新发送</span>
           <div class="flex gap-1.5">
             <Button variant="ghost" size="sm" class="h-7" @click="cancelEdit">取消</Button>
             <Button variant="default" size="sm" class="h-7 gap-1" :disabled="!draftText.trim()" @click="submitEdit">
@@ -51,11 +51,11 @@
           <Copy v-else class="size-3" />
         </Button>
         <Button
-          v-if="!isStreaming"
+          v-if="canEdit && !isStreaming"
           variant="ghost"
           size="icon"
           class="size-6 text-subtle hover:text-fg"
-          title="编辑（分叉为新会话）"
+          title="编辑（替换并重新发送）"
           @click="startEdit"
         >
           <Pencil class="size-3" />
@@ -169,12 +169,14 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { storeToRefs } from 'pinia'
 import { ArrowRight, Brain, Check, ChevronRight, Copy, GitFork, Pencil, Wrench } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import type { MessageTurn } from '@/composables/logic/messageTurns'
 import { countThinking, countToolCalls } from '@/composables/logic/messageTurns'
 import { assistantToMarkdown } from '@/composables/logic/messageFormat'
+import { useChat } from '@/composables/features/useChat'
 import { useChatStore } from '@/stores/chat'
 import { useSidebar } from '@/composables/features/useSidebar'
 import Block from './Block.vue'
@@ -191,13 +193,17 @@ const props = defineProps<{
   turn: MessageTurn
   /** Turn 所在 session（fork 源，双 panel standby 场景不能依赖全局 activeId） */
   sessionId: string
+  /** 该 user 是否可编辑（仅当前 session 最后一条 user，避免编辑中间 user 丢失其后对话） */
+  canEdit?: boolean
 }>()
 
 const chat = useChatStore()
+const { isStreaming } = storeToRefs(chat)
+const { editAndResend } = useChat()
 const { forkSession } = useSidebar()
 
 /** 全局流式态（当前活跃 session）：streaming 时禁编辑/fork */
-const isStreaming = computed(() => chat.isStreaming)
+// isStreaming 来自 storeToRefs（上）
 
 const thinkCount = computed(() => countThinking(props.turn))
 const toolCount = computed(() => countToolCalls(props.turn))
@@ -249,8 +255,8 @@ async function submitEdit(): Promise<void> {
   const text = draftText.value.trim()
   if (!text) return
   editingUserId.value = null
-  // includeFrom=false：截取该 user 之前的 turn，丢弃该 user 及其后，用 newText 接续
-  await forkSession(props.sessionId, user.id, { includeFrom: false, newText: text })
+  // 原地替换语义（非 fork）：截断该 user（含）及其后 → appendUser 新文本 → 重新发送
+  await editAndResend(props.sessionId, user.id, text)
 }
 
 /* ── fork modal：clone+fork 到另一 panel ── */

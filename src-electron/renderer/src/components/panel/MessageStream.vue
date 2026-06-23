@@ -7,7 +7,13 @@
     空 session 显示欢迎语（G2-004 空态收敛）。
   -->
   <div ref="scrollEl" class="message-stream flex min-h-0 flex-1 flex-col gap-[22px] overflow-y-auto px-5 py-[18px]">
-    <Turn v-for="turn in turns" :key="turn.index" :turn="turn" :session-id="sessionId" />
+    <Turn
+      v-for="(turn, tIdx) in turns"
+      :key="turn.index"
+      :turn="turn"
+      :session-id="sessionId"
+      :can-edit="!!turn.user && tIdx === lastUserTurnIdx"
+    />
 
     <!-- 空态欢迎语（G2-004） -->
     <div v-if="turns.length === 0" class="m-auto flex flex-col items-center gap-2 text-center">
@@ -40,6 +46,14 @@ const currentMessages = computed(() => chat.messages.get(props.sessionId) ?? [])
 
 /** 扁平消息 → 回合分组（纯函数） */
 const turns = computed(() => groupTurns(currentMessages.value))
+
+/** 最后一个含 user 的 turn 的数组下标（只有它的 user 可编辑，避免编辑中间 user 丢失其后对话） */
+const lastUserTurnIdx = computed(() => {
+  for (let i = turns.value.length - 1; i >= 0; i -= 1) {
+    if (turns.value[i].user) return i
+  }
+  return -1
+})
 
 /** auto-scroll：监听 messages 长度 + streaming 内容变化 → 滚到底 */
 const { scrollEl, scrollToBottom } = useChatScroll()

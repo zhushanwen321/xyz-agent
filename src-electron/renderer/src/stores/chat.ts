@@ -236,6 +236,19 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /**
+   * 截断指定 session 的消息：删除 messageId（含/不含）及其后所有消息。
+   * 编辑重发场景（原地替换 user 消息，非 fork）：truncate(含该 user) → appendUser(新文本) → send。
+   * 不可变 set（slice 新数组）保证响应式触发。
+   */
+  function truncateFrom(sessionId: string, messageId: string, inclusive: boolean): void {
+    const prev = messages.value.get(sessionId) ?? []
+    const idx = prev.findIndex((m) => m.id === messageId)
+    if (idx === -1) return
+    const end = inclusive ? idx : idx + 1
+    messages.value.set(sessionId, prev.slice(0, end))
+  }
+
+  /**
    * 处理 runtime 推送的文件变更帧（flow-2 FileChanges 通道，ADR-0024 D6/D7）。
    *
    * accumulating 帧（isFullSet=false）增量合并进目标 assistant message.fileChanges；
@@ -269,6 +282,7 @@ export const useChatStore = defineStore('chat', () => {
     appendUser,
     appendAssistantChunk,
     setStreaming,
+    truncateFrom,
     applyFileChanges,
   }
 })

@@ -16,7 +16,6 @@
 import { computed } from 'vue'
 import type { ComputedRef } from 'vue'
 import { chat as chatApi, session as sessionApi } from '@/api'
-import { useChat } from '@/composables/features/useChat'
 import { useChatStore } from '@/stores/chat'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePanelStore } from '@/stores/panel'
@@ -70,7 +69,6 @@ export function useSidebar() {
   const chat = useChatStore()
   const sidebar = useSidebarStore()
   const panel = usePanelStore()
-  const { send } = useChat()
 
   /**
    * 同步 session 到 panel（sidebar 选 session 与 ⌘[/⌘] 导航共用）。
@@ -166,23 +164,20 @@ export function useSidebar() {
   }
 
   /**
-   * Fork 会话：从指定源 session 截取历史到 fork 点，新建 session 并载入截断历史。
+   * Fork 会话：从指定源 session 截取历史到 fork 点，新建 session 并载入截断历史（纯 clone，不发送）。
    *
-   * 语义（问题 5/6）：
-   * - 编辑重发（user 消息 fork）：fromMessageId=user 消息、includeFrom=false →
-   *   保留该 user 之前的所有 turn，丢弃该 user 及其后，再用 newText 接续发送。
-   * - 克隆到某点（assistant 消息 fork）：fromMessageId=assistant 消息、includeFrom=true →
-   *   保留到该消息（含），openInStandby 打开另一 panel，不自动发送。
+   * 语义（问题 6 AI 收尾 fork）：includeFrom=true → 保留到该 assistant（含），
+   * openInStandby 打开另一 panel。原 session 不变。
    *
-   * srcSessionId 显式传入：Turn 可能在非 active 的 standby panel，fork 源必须是其所在 session，
-   * 不能用全局 activeId（否则双 panel standby fork 取错 session 的消息）。
+   * 注意：这是「复制到新 session」，与编辑（editAndResend，原地替换）不同。
    *
-   * mock 可行：create() 返回新 session，hydrate 直接填 chat store（不走 getHistory 空覆盖）。
+   * srcSessionId 显式传入：Turn 可能在非 active 的 standby panel，fork 源必须是其所在 session。
+   * mock 可行：create() 返回新 session，hydrate 直接填 chat store。
    */
   async function forkSession(
     srcSessionId: string,
     fromMessageId: string,
-    opts?: { includeFrom?: boolean; newText?: string; openInStandby?: boolean },
+    opts?: { includeFrom?: boolean; openInStandby?: boolean },
   ): Promise<string> {
     const msgs = chat.getMessages(srcSessionId)
     const idx = msgs.findIndex((m) => m.id === fromMessageId)
@@ -201,8 +196,6 @@ export function useSidebar() {
       : undefined
     await selectSession(created.id, standby ? { panelId: standby.id } : undefined)
 
-    // 编辑重发：send 走 activeId（selectSession 已设为 created.id）
-    if (opts?.newText) await send(opts.newText)
     return created.id
   }
 

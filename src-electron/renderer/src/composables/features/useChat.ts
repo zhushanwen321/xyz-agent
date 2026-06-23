@@ -117,6 +117,25 @@ export function useChat() {
   }
 
   /**
+   * 编辑 user 消息并重新发送（原地替换语义，非 fork）：
+   * 截断该 user 消息（含）及其后所有 → appendUser 新文本 → 走 send 流式。
+   *
+   * 与 fork 的区别：fork 复制到新 session 保留原 session；editAndResend 在当前 session
+   * 原地替换（删旧 user + 其后 assistant，重新发送）。UI 层用 canEdit 守卫仅最后一条 user 可编辑，
+   * 避免删除中间 user 导致其后对话丢失。
+   *
+   * 显式接收 sessionId：编辑可发生在非 active 的 standby panel，不能依赖全局 activeId。
+   */
+  async function editAndResend(sessionId: string, userMessageId: string, text: string): Promise<void> {
+    const trimmed = text.trim()
+    if (!trimmed || chat.isStreaming) return
+    chat.truncateFrom(sessionId, userMessageId, true)
+    chat.appendUser(sessionId, trimmed)
+    ensureStreamSubscription(sessionId, chat)
+    await chatApi.send(sessionId, trimmed)
+  }
+
+  /**
    * 拉取并注入历史（首次进入 session）。
    * 无历史（空 session）也标记 hydrated，避免反复请求。
    */
@@ -126,5 +145,5 @@ export function useChat() {
     chat.hydrate(sessionId, history)
   }
 
-  return { send, steer, followUp, abort, hydrateHistory }
+  return { send, steer, followUp, abort, editAndResend, hydrateHistory }
 }
