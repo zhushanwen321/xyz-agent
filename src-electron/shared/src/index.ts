@@ -6,7 +6,7 @@ export type {
   ExtensionErrorPayload, ToolCallUpdatePayload, ExtensionInfo,
   ExtensionDiscoveredPayload,
   StopReason,
-  StatusBarItem, StatusSetUpdatePayload, PluginStatusBarUpdatePayload,
+  StatusBarItem, StatusSetUpdatePayload, PluginStatusBarUpdatePayload, PluginInfo,
   UISendMode, ProtocolSendMode,
 } from './protocol'
 export {
