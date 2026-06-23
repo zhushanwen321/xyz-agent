@@ -11,7 +11,7 @@
  */
 import type {
   Message, ModelInfo, ServerMessage, SessionSummary, SessionGroup,
-  ProviderInfo, SkillInfo, AgentInfo, PluginInfo,
+  ProviderInfo, SkillInfo, AgentInfo, PluginInfo, SetProviderData,
 } from '@xyz-agent/shared'
 import { createSession, fixtureMessages, fixtureSessions } from './data'
 import {
@@ -259,6 +259,8 @@ type GlobalHandler<T> = (data: T) => void
 /**
  * mock 订阅工厂：注册后微任务触发一次初始值（模拟 sendInitialState 连接即推）。
  * 请求型接口（listProviders / scan* / discoverModels）不依赖它，直接返 fixture。
+ * broadcast() 模拟 runtime 动作后经订阅通道推回状态变更（real 模式由 sendInitialState/
+ * 广播驱动，mock 必须同构，否则组件订阅在 mock 模式下看不到动作结果）。
  */
 function makeMockSubscription<T>(initial: () => T) {
   const handlers = new Set<GlobalHandler<T>>()
@@ -270,6 +272,14 @@ function makeMockSubscription<T>(initial: () => T) {
       return () => {
         handlers.delete(handler)
       }
+    },
+    /** 向所有订阅者推送新值（模拟 runtime 广播状态变更） */
+    broadcast(value: T): void {
+      handlers.forEach((h) => h(value))
+    },
+    /** 取当前初始值快照（供 mock 动作读最新态） */
+    snapshot(): T {
+      return initial()
     },
   }
 }
@@ -298,34 +308,63 @@ export const config = {
     await sleep(TIMING.ack)
     return fixtureAgents.map((a) => ({ ...a }))
   },
-  async discoverModels(_req: unknown) {
+  async discoverModels(req: {
+    baseUrl: string
+    apiKey?: string
+    providerType?: string
+    providerId?: string
+  }) {
     await sleep(TIMING.ack)
-    return { success: true, models: [] }
+    void req
+    // mock：返回空模型集 + success（真实发现由 runtime discoverModelsFromApi 驱动）
+    return { success: true, models: [], error: undefined }
   },
   // 订阅型（handler 类型与 real domains 对齐：facade 三元要求两侧同构）
   onProviders: (h: (providers: ProviderInfo[]) => void) => providersSub.subscribe(h),
   onSkills: (h: (skills: SkillInfo[]) => void) => skillsSub.subscribe(h),
   onAgents: (h: (agents: AgentInfo[]) => void) => agentsSub.subscribe(h),
   onDefaults: (h: (defaultModel: string) => void) => defaultsSub.subscribe(h),
-  // 动作型（mock 仅 ack，状态变更不广播——real 模式由订阅推回）
-  async setProvider(_providerId: string, _data: unknown) {
+  // 动作型：mock 同构——更新 fixture 后经订阅广播推回（与 real sendInitialState/广播一致）
+  async setProvider(providerId: string, data: SetProviderData) {
     await sleep(TIMING.ack)
+    const target = fixtureProviders.find((p) => p.id === providerId)
+    if (target) {
+      // 合并透传字段（name/type/apiKey/baseUrl/models/enabled）
+      if (data.name !== undefined) target.name = data.name
+      if (data.type !== undefined) target.api = data.type
+      if (data.baseUrl !== undefined) target.baseUrl = data.baseUrl
+      if (data.enabled !== undefined) target.enabled = data.enabled
+      if (data.apiKey !== undefined) target.apiKeySet = data.apiKey.length > 0
+      if (data.models !== undefined) {
+        target.models = data.models.map((m) => (typeof m === 'string' ? { id: m } : { ...m, id: m.id }))
+      }
+    }
+    broadcastProviders()
   },
-  async deleteProvider(_providerId: string) {
+  async deleteProvider(providerId: string) {
     await sleep(TIMING.ack)
+    const idx = fixtureProviders.findIndex((p) => p.id === providerId)
+    if (idx >= 0) fixtureProviders.splice(idx, 1)
+    broadcastProviders()
   },
-  async setSkill(_skill: unknown) {
+  async setSkill(_skill: SkillInfo) {
     await sleep(TIMING.ack)
   },
   async deleteSkill(_skillId: string) {
     await sleep(TIMING.ack)
   },
-  async setAgent(_agent: unknown) {
+  async setAgent(_agent: AgentInfo) {
     await sleep(TIMING.ack)
   },
   async deleteAgent(_agentId: string) {
     await sleep(TIMING.ack)
   },
+}
+
+/** 向 providers 订阅者广播最新 fixture 快照（模拟 runtime 动作后广播） */
+function broadcastProviders(): void {
+  const snapshot = fixtureProviders.map((p) => ({ ...p, models: p.models.map((m) => ({ ...m })) }))
+  providersSub.broadcast(snapshot)
 }
 
 /* ── Model mock ── */

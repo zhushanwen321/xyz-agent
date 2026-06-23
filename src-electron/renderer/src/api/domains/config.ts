@@ -42,14 +42,21 @@ export function scanAgents(sources: string[]): Promise<AgentInfo[]> {
   return result
 }
 
+/** discoverModels 的响应载荷（config.discoveredModels reply，settings-message-handler） */
+export interface DiscoveredModelsResult {
+  models: Array<{ id: string; name?: string; contextWindow?: number }>
+  success: boolean
+  error?: string
+}
+
 export function discoverModels(req: {
   baseUrl: string
   apiKey?: string
   providerType?: string
   providerId?: string
-}): Promise<unknown> {
+}): Promise<DiscoveredModelsResult> {
   const id = pending.create()
-  const result = pending.register<unknown>(id)
+  const result = pending.register<DiscoveredModelsResult>(id)
   transport.send({ type: 'config.discoverModels', id, payload: req })
   return result
 }

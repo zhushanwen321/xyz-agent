@@ -245,9 +245,12 @@
 
       <!-- 底栏 -->
       <div class="flex items-center gap-2 border-t border-border px-5 py-3.5">
-        <span class="flex-1" />
+        <span v-if="actionError" class="flex-1 text-[12px] text-danger">{{ actionError }}</span>
+        <span v-else class="flex-1" />
         <Button variant="ghost" @click="emit('close')">取消</Button>
-        <Button @click="emit('close')">保存</Button>
+        <Button :disabled="saving" @click="onSave">
+          {{ saving ? '保存中…' : '保存' }}
+        </Button>
       </div>
     </DialogContent>
   </Dialog>
@@ -265,6 +268,7 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
 import type { ProviderInfo } from '@xyz-agent/shared'
+import { config } from '@/api'
 
 const props = defineProps<{ provider: ProviderInfo | null }>()
 const emit = defineEmits<{ close: [] }>()
@@ -304,10 +308,6 @@ const thinkingStrategies: Array<{ key: ThinkingStrategy; fullLabel: string }> = 
   { key: 'high-max', fullLabel: 'High / Max' },
 ]
 
-// mock 连接测试与发现的模拟延迟（ms）
-const MOCK_TEST_DELAY_MS = 800
-const MOCK_DISCOVER_DELAY_MS = 1000
-
 // ── State ──
 
 const showKey = ref(false)
@@ -317,6 +317,9 @@ const testResult = ref<'ok' | 'error' | null>(null)
 const discoverResult = ref('')
 const showAddModel = ref(false)
 const localModels = ref<LocalModel[]>([])
+const saving = ref(false)
+/** 动作错误（保存/测试/发现失败时显示在底栏，非静默吞） */
+const actionError = ref('')
 
 const form = reactive({ name: '', api: 'anthropic-messages', baseUrl: '', apiKey: '' })
 const newModel = reactive({ name: '', contextWindow: 200_000, inputType: 'text' as 'text' | 'image', thinking: 'on-off' as ThinkingStrategy })
@@ -341,24 +344,98 @@ watch(() => props.provider, (p) => {
     testResult.value = null
     discoverResult.value = ''
     showAddModel.value = false
+    actionError.value = ''
     localModels.value = p.models.map((m) => ({ ...m }))
   }
 })
 
+/**
+ * 测试连接：复用 discoverModels 探活（W08 决策——domain 无独立 testConnection 协议）。
+ * 成功（success:true）= 连接可达；失败显示错误。
+ */
 async function testConnection() {
   testing.value = true
   testResult.value = null
-  await new Promise((r) => setTimeout(r, MOCK_TEST_DELAY_MS))
-  testResult.value = props.provider?.status === 'connected' ? 'ok' : 'error'
-  testing.value = false
+  actionError.value = ''
+  try {
+    const res = await config.discoverModels({
+      baseUrl: form.baseUrl,
+      apiKey: form.apiKey || undefined,
+      providerType: form.api,
+      providerId: props.provider?.id,
+    })
+    testResult.value = res.success ? 'ok' : 'error'
+    if (!res.success && res.error) actionError.value = res.error
+  } catch (e) {
+    testResult.value = 'error'
+    actionError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    testing.value = false
+  }
 }
 
+/**
+ * 自动发现模型：调 config.discoverModels，成功后合并结果到 localModels。
+ * 运行时通过 discoverModelsFromApi 探活目标 baseUrl，返回可用模型清单。
+ */
 async function autoDiscover() {
   discovering.value = true
   discoverResult.value = ''
-  await new Promise((r) => setTimeout(r, MOCK_DISCOVER_DELAY_MS))
-  discoverResult.value = `已发现 ${localModels.value.length} 个模型，已合并`
-  discovering.value = false
+  actionError.value = ''
+  try {
+    const res = await config.discoverModels({
+      baseUrl: form.baseUrl,
+      apiKey: form.apiKey || undefined,
+      providerType: form.api,
+      providerId: props.provider?.id,
+    })
+    if (res.success) {
+      // 合并发现的模型（去重：已存在的 id 跳过）
+      const existing = new Set(localModels.value.map((m) => m.id))
+      const merged = res.models.filter((m) => !existing.has(m.id))
+      localModels.value.push(...merged.map((m) => ({
+        id: m.id,
+        name: m.name,
+        contextWindow: m.contextWindow,
+      })))
+      discoverResult.value = `已发现 ${res.models.length} 个模型，${merged.length > 0 ? `新增 ${merged.length} 个已合并` : '均已存在'}`
+    } else {
+      actionError.value = res.error ?? '发现失败'
+    }
+  } catch (e) {
+    actionError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    discovering.value = false
+  }
+}
+
+/**
+ * 保存：调 config.setProvider（新建用 providerId=form.name，编辑用原 id）。
+ * 状态经 onProviders 订阅推回（单一数据源，避免竞态）。
+ */
+async function onSave() {
+  saving.value = true
+  actionError.value = ''
+  const providerId = props.provider?.id ?? form.name
+  try {
+    await config.setProvider(providerId, {
+      name: form.name,
+      type: form.api,
+      baseUrl: form.baseUrl,
+      apiKey: form.apiKey || undefined,
+      models: localModels.value.map((m) => ({
+        id: m.id,
+        name: m.name,
+        contextWindow: m.contextWindow,
+        thinkingLevelMap: m.thinkingLevelMap,
+      })),
+    })
+    emit('close')
+  } catch (e) {
+    actionError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    saving.value = false
+  }
 }
 
 function toggleInput(m: LocalModel, type: 'text' | 'image') {

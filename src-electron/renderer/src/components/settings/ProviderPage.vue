@@ -32,9 +32,9 @@
       <div class="flex items-center gap-3 px-4 py-3">
         <span class="size-[7px] shrink-0 rounded-full" :class="statusDot(p.status)" />
 
-        <!-- 启用开关（名称左侧） -->
+        <!-- 启用开关（名称左侧）：调 config.setProvider 持久化 enabled -->
         <Label class="relative inline-flex shrink-0 cursor-pointer" @click.stop>
-          <input type="checkbox" :checked="p.enabled" class="peer sr-only" />
+          <input type="checkbox" :checked="p.enabled" class="peer sr-only" @change="onToggleEnabled(p, ($event.target as HTMLInputElement).checked)" />
           <div class="h-5 w-9 rounded-full bg-border-strong after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-all peer-checked:bg-accent peer-checked:after:translate-x-full" />
         </Label>
 
@@ -154,9 +154,12 @@
           <DialogTitle>删除 {{ deleteTarget?.name }}？</DialogTitle>
           <DialogDescription>将移除其下所有模型配置。此操作不可撤销。</DialogDescription>
         </DialogHeader>
+        <p v-if="actionError" class="pt-2 text-[12px] text-danger">{{ actionError }}</p>
         <div class="flex justify-end gap-2 pt-4">
           <Button variant="ghost" @click="deleteTarget = null">取消</Button>
-          <Button variant="danger" @click="deleteTarget = null">确认删除</Button>
+          <Button variant="danger" :disabled="deleting" @click="confirmDelete">
+            {{ deleting ? '删除中…' : '确认删除' }}
+          </Button>
         </div>
       </DialogContent>
     </Dialog>
@@ -171,6 +174,7 @@ import { Button } from '@/components/ui/button'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
 import { Label } from '@/components/ui/label'
 import type { ProviderInfo } from '@xyz-agent/shared'
+import { config } from '@/api'
 import ProviderEditModal from './ProviderEditModal.vue'
 
 defineProps<{ providers: ProviderInfo[] }>()
@@ -182,6 +186,11 @@ const CONTEXT_M = 1_000_000
 const expanded = ref(new Set<string>())
 const editingProvider = ref<ProviderInfo | null>(null)
 const deleteTarget = ref<ProviderInfo | null>(null)
+const deleting = ref(false)
+/** 动作错误（删除/启用失败时显示，非静默吞） */
+const actionError = ref('')
+// 默认供应商/模型：本轮无 setDefault 协议（config.setProvider 不含默认位），
+// 保留本地态（real 模式下 default 由 config.defaults 订阅驱动，待后续 wave 接入）。
 const defaultProviderId = ref('anthropic')
 const defaultModelId = ref('claude-sonnet-4')
 
@@ -190,6 +199,34 @@ function toggleExpand(id: string) {
   if (next.has(id)) next.delete(id)
   else next.add(id)
   expanded.value = next
+}
+
+/** 启用开关 → 持久化 enabled（config.setProvider 动作，状态经 onProviders 订阅推回）。
+ * 失败时记录错误供 UI 反馈；onProviders 订阅未变 → 开关视觉态自动恢复。 */
+async function onToggleEnabled(p: ProviderInfo, enabled: boolean) {
+  actionError.value = ''
+  try {
+    await config.setProvider(p.id, { enabled })
+  } catch (e) {
+    actionError.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+/** 确认删除 → config.deleteProvider（状态经 onProviders 订阅推回）。
+ * 失败时保留弹窗 + 显示错误，供用户重试/查看。 */
+async function confirmDelete() {
+  const target = deleteTarget.value
+  if (!target) return
+  deleting.value = true
+  actionError.value = ''
+  try {
+    await config.deleteProvider(target.id)
+    deleteTarget.value = null
+  } catch (e) {
+    actionError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    deleting.value = false
+  }
 }
 
 function setDefaultProvider(id: string) { defaultProviderId.value = id }
