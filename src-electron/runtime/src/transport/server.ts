@@ -10,6 +10,7 @@ import { resolve } from 'node:path'
 import { WebSocketServer, WebSocket, type WebSocket as WsType } from 'ws'
 import type { ClientMessage, ClientMessageType, ServerMessage, ServerMessageType } from '@xyz-agent/shared'
 import type { ISessionService, IConfigService, IModelService, IMessageBroker, IExtensionService, IPluginService } from '../interfaces.js'
+import type { GitService } from '../services/git-service.js'
 import { ExtensionTimeoutManager } from '../services/extension-timeout-manager.js'
 import { BridgeHandler } from './bridge-handler.js'
 import { SettingsMessageHandler } from './settings-message-handler.js'
@@ -17,6 +18,7 @@ import { SessionMessageHandler } from './session-message-handler.js'
 import { ExtensionMessageHandler } from './extension-message-handler.js'
 import { PluginMessageHandler } from './plugin-message-handler.js'
 import { TreeMessageHandler } from './tree-message-handler.js'
+import { GitMessageHandler } from './git-message-handler.js'
 import type { MessageHandlerContext, ErrorDetails } from './message-context.js'
 import { toErrorMessage } from '../utils/errors.js'
 
@@ -39,6 +41,7 @@ export class RuntimeServer implements IMessageBroker {
   private treeService!: import('../services/tree-service.js').TreeService
   private extensionService?: IExtensionService
   private pluginService!: IPluginService
+  private gitService?: GitService
 
   // ── Message handlers (extracted) ────────────────────────────────
   // Constructed in setServices() — not at field-init time — so `this` is fully
@@ -51,6 +54,7 @@ export class RuntimeServer implements IMessageBroker {
   private extensionHandler!: ExtensionMessageHandler
   private pluginMessageHandler!: PluginMessageHandler
   private treeMessageHandler!: TreeMessageHandler
+  private gitMessageHandler!: GitMessageHandler
 
   /**
    * D1: 中央分发表。此前是 55 行 switch，每个 case 纯转发、零逻辑。
@@ -61,7 +65,8 @@ export class RuntimeServer implements IMessageBroker {
    */
   private routes!: Map<ClientMessageType, (msg: ClientMessage, ws: WsType) => Promise<unknown> | unknown>
 
-  setServices(session: ISessionService, config: IConfigService, model: IModelService, tree: import('../services/tree-service.js').TreeService, extension?: IExtensionService, plugin?: IPluginService): void {
+  setServices(session: ISessionService, config: IConfigService, model: IModelService, tree: import('../services/tree-service.js').TreeService, extension?: IExtensionService, plugin?: IPluginService, git?: GitService): void {
+    this.gitService = git
     this.sessionService = session
     this.configService = config
     this.modelService = model
@@ -118,6 +123,13 @@ export class RuntimeServer implements IMessageBroker {
       treeService: this.treeService,
       broadcastSessionList: () => this.broadcastSessionList(),
     })
+    if (this.gitService) {
+      this.gitMessageHandler = new GitMessageHandler({
+        ...messaging,
+        sessionService: this.sessionService,
+        gitService: this.gitService,
+      })
+    }
 
     // ── Build the central dispatch table (D1) ───────────────────────
     // ping/file.read 内联（无对应 handler）；settings 走兜底（见 handleMessage）。
@@ -129,6 +141,7 @@ export class RuntimeServer implements IMessageBroker {
       ...this.treeMessageHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => this.treeMessageHandler.handleTreeMessage(msg, ws)] as const),
       ...this.extensionHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => this.extensionHandler.handleExtensionMessage(msg, ws)] as const),
       ...this.pluginMessageHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => this.pluginMessageHandler.handlePluginMessage(msg, ws)] as const),
+      ...(this.gitMessageHandler ? this.gitMessageHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => this.gitMessageHandler.handleGitMessage(msg, ws)] as const) : []),
     ] as Array<[ClientMessageType, (msg: ClientMessage, ws: WsType) => Promise<unknown> | unknown]>)
   }
 

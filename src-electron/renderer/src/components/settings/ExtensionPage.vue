@@ -1,6 +1,8 @@
 <template>
   <!--
-    Settings · Extension 菜单页（handoff-extension.md · 安装区 + Entity List + 卸载确认）。
+    Settings · Extension 菜单页（issues.md #5 方案 A · 安装多步流 + 内联候选展开 + 卸载确认）。
+    刷新机制：finishInstall/uninstall 后 runtime 推 config.extensions → onExtensions 订阅（SettingsModal 持有）
+    → extensions prop 流入本页，无需本页自建订阅。
   -->
   <div class="flex flex-col gap-4">
     <!-- 安装区 -->
@@ -20,11 +22,56 @@
           v-model="installInput"
           class="h-8 flex-1 text-[12px]"
           :placeholder="tabPlaceholder"
+          @keyup.enter="onInstall"
         />
         <Button
           class="h-8 shrink-0 rounded-sm px-3 text-[12px]"
-          :disabled="!installInput.trim()"
-        >安装</Button>
+          :disabled="!installInput.trim() || installing"
+          @click="onInstall"
+        >
+          <Loader2 v-if="installing" class="animate-spin" />
+          安装
+        </Button>
+      </div>
+      <!-- 错误反馈（非静默吞，CLAUDE.md 规则 #3） -->
+      <div v-if="actionError" class="flex items-center gap-1.5 border-t border-border px-3 py-1.5 text-[11px] text-danger">
+        <AlertCircle class="size-3.5 shrink-0" />
+        <span class="truncate">{{ actionError }}</span>
+      </div>
+    </section>
+
+    <!-- 候选内联展开（dir/git 多步第二步，§6.3 点3：安装区下方直接展开） -->
+    <section v-if="discovered" class="rounded-md border border-border bg-bg">
+      <div class="flex items-center justify-between border-b border-border px-3 py-2">
+        <h3 class="text-[12px] font-medium text-fg">发现 {{ discovered.candidates.length }} 个候选</h3>
+        <Button variant="ghost" class="h-auto px-2 py-0.5 text-[11px] text-subtle" @click="onCancelInstall">取消</Button>
+      </div>
+      <div v-if="!discovered.candidates.length" class="py-4 text-center text-[11px] text-muted">该来源未发现可安装的扩展</div>
+      <div v-else class="flex flex-col gap-0.5 p-2">
+        <Label
+          v-for="c in discovered.candidates"
+          :key="c.dirName"
+          class="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-surface"
+        >
+          <input type="checkbox" :checked="selected.has(c.dirName)" class="size-4 accent-[var(--accent)]"
+            @change="toggleCandidate(c.dirName)"
+          />
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-2">
+              <span class="truncate text-[12px] text-fg">{{ c.name }}</span>
+              <span class="rounded-sm bg-surface px-1 py-0.5 font-mono text-[10px] text-subtle">{{ c.dirName }}</span>
+              <span class="font-mono text-[10px] text-subtle">v{{ c.version }}</span>
+            </div>
+            <span class="truncate text-[11px] text-muted">{{ c.description }}</span>
+          </div>
+        </Label>
+      </div>
+      <div v-if="discovered.candidates.length" class="flex items-center justify-between gap-2 border-t border-border px-3 py-2">
+        <span class="text-[11px] text-subtle">已选 {{ selected.size }} / {{ discovered.candidates.length }}</span>
+        <Button size="dense" :disabled="selected.size === 0 || installing" @click="onFinishInstall">
+          <Loader2 v-if="installing" class="animate-spin" />
+          安装选中
+        </Button>
       </div>
     </section>
 
@@ -73,18 +120,21 @@
           <DialogDescription>此操作不可撤销，扩展将从本地移除。</DialogDescription>
         </DialogHeader>
         <div class="flex justify-end gap-2 pt-4">
-          <Button variant="ghost" @click="confirmTarget = ''">取消</Button>
-          <Button variant="danger" @click="confirmTarget = ''">卸载</Button>
+          <Button variant="ghost" :disabled="uninstalling" @click="confirmTarget = ''">取消</Button>
+          <Button variant="danger" :disabled="uninstalling" @click="onConfirmUninstall">
+            <Loader2 v-if="uninstalling" class="animate-spin" />
+            卸载
+          </Button>
         </div>
-        <!-- 注：卸载属 install/uninstall 多步流，D10 推后，本轮仅 UI 占位 -->
       </DialogContent>
     </Dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { Trash2 } from '@lucide/vue'
+import { computed, ref, watch } from 'vue'
+import { Trash2, Loader2, AlertCircle } from '@lucide/vue'
+import type { ExtensionDiscoveredPayload } from '@xyz-agent/shared'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -110,8 +160,16 @@ const tabs = [
 const activeTab = ref<'npm' | 'dir' | 'git'>('npm')
 const installInput = ref('')
 const confirmTarget = ref('')
-/** 动作错误（toggle 失败时显示，非静默吞） */
+/** 动作错误（install/toggle/uninstall 失败时显示，非静默吞） */
 const actionError = ref('')
+/** 安装中（install/discover/finish 共用 loading） */
+const installing = ref(false)
+/** 卸载中 */
+const uninstalling = ref(false)
+/** dir/git 安装发现的候选（多步第一步产物）；null 表示未进入候选选择阶段 */
+const discovered = ref<ExtensionDiscoveredPayload | null>(null)
+/** 候选多选（key = dirName，finishInstall 的 selected 语义） */
+const selected = ref<Set<string>>(new Set())
 
 const tabPlaceholder = computed(() => {
   const map: Record<string, string> = {
@@ -122,6 +180,12 @@ const tabPlaceholder = computed(() => {
   return map[activeTab.value] ?? ''
 })
 
+// 切换 tab 清空已发现候选（不同来源的候选不再适用）
+watch(activeTab, () => {
+  discovered.value = null
+  selected.value = new Set()
+})
+
 /** 启用开关 → extension.toggle（状态经 onExtensions 订阅推回）。
  * 失败记录错误供 UI 反馈；onExtensions 订阅未变 → 开关视觉态自动恢复。 */
 async function onToggle(ext: ExtensionItem, enabled: boolean) {
@@ -130,6 +194,94 @@ async function onToggle(ext: ExtensionItem, enabled: boolean) {
     await extensionApi.toggle(ext.name, enabled)
   } catch (e) {
     actionError.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+/** 安装入口：npm 单步直装；dir/git 多步（先发现候选，内联展开） */
+async function onInstall() {
+  const input = installInput.value.trim()
+  if (!input || installing.value) return
+  actionError.value = ''
+  installing.value = true
+  try {
+    if (activeTab.value === 'npm') {
+      await extensionApi.install(input)
+      installInput.value = ''
+    } else if (activeTab.value === 'dir') {
+      const result = await extensionApi.installDir(input)
+      setDiscovered(result)
+    } else {
+      const result = await extensionApi.installGitRepository(input)
+      setDiscovered(result)
+    }
+  } catch (e) {
+    actionError.value = e instanceof Error ? e.message : String(e)
+    discovered.value = null
+  } finally {
+    installing.value = false
+  }
+}
+
+/** 记录发现结果，默认全选（常见 UX：一次性装全部候选，用户可逐项取消） */
+function setDiscovered(result: ExtensionDiscoveredPayload) {
+  discovered.value = result
+  selected.value = new Set(result.candidates.map((c) => c.dirName))
+}
+
+/** 切换候选选中态（dirName 为 key） */
+function toggleCandidate(dirName: string) {
+  const next = new Set(selected.value)
+  if (next.has(dirName)) next.delete(dirName)
+  else next.add(dirName)
+  selected.value = next
+}
+
+/** 完成安装：把选中候选从 tempDir 装入 extensions/，runtime 推 config.extensions 刷新列表 */
+async function onFinishInstall() {
+  if (!discovered.value || selected.value.size === 0 || installing.value) return
+  actionError.value = ''
+  installing.value = true
+  const { tempDir } = discovered.value
+  const selectedNames = [...selected.value]
+  try {
+    await extensionApi.finishInstall(tempDir, selectedNames)
+    discovered.value = null
+    selected.value = new Set()
+    installInput.value = ''
+  } catch (e) {
+    actionError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    installing.value = false
+  }
+}
+
+/** 放弃安装：清理 tempDir，退出候选选择 */
+async function onCancelInstall() {
+  if (!discovered.value) return
+  const { tempDir } = discovered.value
+  discovered.value = null
+  selected.value = new Set()
+  try {
+    await extensionApi.cancelInstall(tempDir)
+  } catch (e) {
+    // tempDir 清理失败仅记录，不阻塞 UI（候选区已关闭）
+    actionError.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+/** 卸载确认 → extension.uninstall（runtime 推 config.extensions 刷新列表） */
+async function onConfirmUninstall() {
+  if (!confirmTarget.value || uninstalling.value) return
+  actionError.value = ''
+  uninstalling.value = true
+  const name = confirmTarget.value
+  try {
+    await extensionApi.uninstall(name)
+    confirmTarget.value = ''
+  } catch (e) {
+    actionError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    uninstalling.value = false
   }
 }
 </script>

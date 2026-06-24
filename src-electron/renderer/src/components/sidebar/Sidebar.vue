@@ -71,7 +71,7 @@
         :file-count="fileCount"
       />
 
-      <!-- 子视图区：会话列表（A）/ 文件视图（B，mock 数据，runtime 联调见 ADR-0024） -->
+      <!-- 子视图区：会话列表（A）/ 文件视图（B，聚合 chat store fileChanges） -->
       <div class="mt-1 min-h-0 flex-1">
         <template v-if="sidebar.activeTab === 'sessions'">
           <SessionList
@@ -140,11 +140,14 @@ import SessionList from './SessionList.vue'
 import FileView from './FileView.vue'
 import RenameSessionDialog from './RenameSessionDialog.vue'
 import DeleteSessionDialog from './DeleteSessionDialog.vue'
-import { fixtureFileChanges } from '@/api/mock/data'
+import { useChatStore } from '@/stores/chat'
+import { mergeFileChanges } from '@/stores/chat-readers'
+import type { FileChange } from '@xyz-agent/shared'
 
 const navigation = useNavigationStore()
 const session = useSessionStore()
 const sidebar = useSidebarStore()
+const chatStore = useChatStore()
 const { selectSession, newSession, goOverview, loadSessions, derivedStatus, renameSession, deleteSession } = useSidebar()
 const openSettings = inject<() => void>('openSettings', () => {})
 
@@ -166,10 +169,20 @@ const isOverviewActive = computed(() => navigation.current.view === 'overview')
 /** 当前 active session（文件视图头部展示） */
 const currentSession = computed(() => session.active)
 
-/** 当前 active session 的改动文件（mock，runtime 联调见 ADR-0024） */
-const fileChanges = computed(() =>
-  session.activeId ? fixtureFileChanges[session.activeId] ?? [] : [],
-)
+/**
+ * 当前 active session 的改动文件（#10）。
+ * 聚合 chat store 该 session 所有 assistant message 的 fileChanges，
+ * 同 filePath 取最新 status/行数（复用 mergeFileChanges 的按 path merge 语义）。
+ */
+const fileChanges = computed<FileChange[]>(() => {
+  const sid = session.activeId
+  if (!sid) return []
+  const all = chatStore
+    .getMessages(sid)
+    .filter((m) => m.role === 'assistant')
+    .flatMap((m) => m.fileChanges ?? [])
+  return mergeFileChanges(all, [])
+})
 
 /** 文件 tab 计数（当前 session 改动文件数，spec §tab 计数） */
 const fileCount = computed(() => fileChanges.value.length)

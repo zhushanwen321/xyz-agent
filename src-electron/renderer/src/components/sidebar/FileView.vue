@@ -2,8 +2,7 @@
   <!--
     展示组件 · 文件视图（子视图 B，draft-five-states §B）。
     树形目录 + 文件列表，按扩展名着色，M/A/D 状态标签。
-    数据来源：mock/data.ts 的 fixtureFileChanges（按 sessionId 索引）。
-    v1 仅 mock 视图，runtime file-changes 通道联调见 ADR-0024。
+    数据来源：props.changes（Sidebar 从 chat store 聚合 active session 的 fileChanges 传入）。
   -->
   <ScrollArea class="h-full">
     <div class="flex flex-col gap-0.5 px-1">

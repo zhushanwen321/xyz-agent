@@ -1,8 +1,7 @@
 <template>
   <!--
     容器组件 · Panel（panel/spec.md 5 zone 编排，承载一个 Session）。
-    自上而下：① panel-header → ② message-stream → ③ progress-zone → ④ composer。
-    git-zone（原 zone ⑤）已移除。
+    自上而下：① panel-header → ② message-stream → ③ progress-zone → ④ composer → ⑤ git-zone。
     激活标识（workspace/spec.md）：rounded-lg + ring-1 accent + bg-elevated 浮起；非激活 opacity 0.5。
     点击 panel body 切 active（主从焦点，非按钮区域）。
     [HISTORICAL] 原「左 2px 竖条 + inset box-shadow ring」双叠加导致激活 panel 左边 3px、其余边 1px，
@@ -33,13 +32,17 @@
       <p class="text-[12px] text-subtle opacity-70">选择左侧会话开始</p>
     </div>
 
-    <!-- ③④ companion zones：progress / composer 垂直 6px 紧凑成「带」。git-zone 已移除。 -->
+    <!-- ③④ companion zones：progress / composer 垂直 6px 紧凑成「带」。
+         git-zone（zone ⑤，FR-12）置于 composer 下方，与 progress/composer 共享视觉带。 -->
     <div class="composer-band flex flex-shrink-0 flex-col gap-1.5">
       <!-- ③ progress-zone（composer 上方） -->
       <ProgressZone phase="running" />
 
       <!-- ④ composer（FG5，S1/S2/S5/S6 主路径） -->
       <Composer v-if="sessionId" :session-id="sessionId" />
+
+      <!-- ⑤ git-zone（FR-12 加回，非 git 仓库时组件内部自隐藏） -->
+      <GitZone v-if="sessionId" :session-id="sessionId" />
     </div>
   </section>
 </template>
@@ -52,6 +55,7 @@ import PanelHeader from './PanelHeader.vue'
 import ProgressZone from './ProgressZone.vue'
 import MessageStream from './MessageStream.vue'
 import Composer from './Composer.vue'
+import GitZone from './GitZone.vue'
 
 const props = defineProps<{
   panelId: string

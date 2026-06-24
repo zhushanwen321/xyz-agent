@@ -22,6 +22,8 @@ import type { INavigateInterceptor } from './services/ports/tree.js'
 import { ExtensionService } from './services/extension-service.js'
 import { PluginRegistry } from './services/plugin-service/plugin-registry.js'
 import { PluginService } from './services/plugin-service/plugin-service.js'
+import { GitService } from './services/git-service.js'
+import { GitExecutor } from './infra/git-executor.js'
 
 function parseArgs(): { port: number; projectRoot?: string } {
   // eslint-disable-next-line no-magic-numbers -- argv[0] is node, argv[1] is script
@@ -157,8 +159,12 @@ async function main(): Promise<void> {
 
   // ── Phase 3: wire cross-service runtime deps ──
   pluginService.setSessionService(sessionService)
+  // GitService：composition root 注入 infra executor（数组参数防注入）+ sessionService（取 cwd）。
+  // 经 server.setServices 注入到 GitMessageHandler（git.* 路由）。
+  const gitService = new GitService({ sessionService, executor: new GitExecutor() })
+
   modelService.setServices(sessionService, configService, server)
-  server.setServices(sessionService, configService, modelService, treeService, extensionService, pluginService)
+  server.setServices(sessionService, configService, modelService, treeService, extensionService, pluginService, gitService)
 
   // Graceful shutdown on signals
   let shuttingDown = false

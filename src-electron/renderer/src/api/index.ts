@@ -18,6 +18,7 @@ import * as realModel from './domains/model'
 import * as realExtension from './domains/extension'
 import * as realPlugin from './domains/plugin'
 import * as realSettings from './domains/settings'
+import * as realGit from './domains/git'
 import * as mockApi from './mock'
 
 const isMock = import.meta.env.VITE_MOCK === 'true'
@@ -29,6 +30,7 @@ export const model = isMock ? mockApi.model : realModel
 export const extension = isMock ? mockApi.extension : realExtension
 export const plugin = isMock ? mockApi.plugin : realPlugin
 export const settings = isMock ? mockApi.settings : realSettings
+export const git = isMock ? mockApi.git : realGit
 
 // 类型 re-export（供组件 import 类型用）
 export type { ModelInfo } from './domains/model'

@@ -14,7 +14,7 @@
  *
  * 内存介质（D7）：reload 重置，不写文件。
  */
-import type { SessionSummary, Message, FileChange } from '@xyz-agent/shared'
+import type { SessionSummary, Message } from '@xyz-agent/shared'
 
 const HOUR = 3_600_000
 const DAY = 86_400_000
@@ -248,24 +248,4 @@ export function createSession(label?: string): SessionSummary {
     tokenCount: 0,
   }
   return session
-}
-
-/**
- * 按 sessionId 索引的文件改动 mock（sidebar 文件视图 draft-five-states §B）。
- * 用扁平 FileChange[]，组件内构建树。只有有改动的 session 造数据。
- */
-export const fixtureFileChanges: Record<string, FileChange[]> = {
-  s1: [
-    { filePath: 'src/auth/index.ts', status: 'modified' },
-    { filePath: 'src/auth/schema.ts', status: 'added' },
-    { filePath: 'src/components/Login.vue', status: 'modified' },
-    { filePath: 'package.json', status: 'modified' },
-  ],
-  s2: [
-    { filePath: '.eslintrc.cjs', status: 'modified' },
-  ],
-  s5: [
-    { filePath: 'src/fsm/state-machine.ts', status: 'modified' },
-    { filePath: 'src/fsm/transitions.ts', status: 'deleted' },
-  ],
 }

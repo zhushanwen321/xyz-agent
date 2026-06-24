@@ -517,6 +517,20 @@ export const model = {
 
 const extensionsSub = makeMockSubscription(() => fixtureExtensions.map((e) => ({ ...e })))
 
+/** 候选 → ExtensionInfo 形状（mock 模式补全 dirName/path/source，对齐 shared 契约） */
+function toCandidate(c: { name: string; version: string; description: string; enabled: boolean; tools: string[] }) {
+  return {
+    name: c.name,
+    dirName: c.name,
+    version: c.version,
+    description: c.description,
+    path: `/mock/tmp/${c.name}`,
+    enabled: c.enabled,
+    source: 'user-installed' as const,
+    tools: c.tools,
+  }
+}
+
 export const extension = {
   onExtensions: (h: GlobalHandler<unknown>) => extensionsSub.subscribe(h),
   async toggle(name: string, enabled: boolean) {
@@ -525,6 +539,37 @@ export const extension = {
     if (target) target.enabled = enabled
     // 广播快照（模拟 runtime extension.toggle 后 onExtensions 推回）
     extensionsSub.broadcast(fixtureExtensions.map((e) => ({ ...e })))
+  },
+  /** npm 直装（mock：把来源当作新扩展加入并广播刷新） */
+  async install(source: string) {
+    await sleep(TIMING.ack)
+    if (!fixtureExtensions.some((e) => e.name === source)) {
+      fixtureExtensions.push({ name: source, version: '0.0.0', description: `mock-installed: ${source}`, enabled: true, tools: [] })
+    }
+    extensionsSub.broadcast(fixtureExtensions.map((e) => ({ ...e })))
+  },
+  async uninstall(name: string) {
+    await sleep(TIMING.ack)
+    const idx = fixtureExtensions.findIndex((e) => e.name === name)
+    if (idx >= 0) fixtureExtensions.splice(idx, 1)
+    extensionsSub.broadcast(fixtureExtensions.map((e) => ({ ...e })))
+  },
+  /** dir/git 多步第一步：返回发现的候选（mock 把现有 fixture 当候选） */
+  async installDir(_path: string) {
+    await sleep(TIMING.ack)
+    return { tempDir: `/mock/tmp/${Date.now()}`, candidates: fixtureExtensions.map(toCandidate) }
+  },
+  async installGitRepository(_url: string) {
+    await sleep(TIMING.ack)
+    return { tempDir: `/mock/tmp/${Date.now()}`, candidates: fixtureExtensions.map(toCandidate) }
+  },
+  /** 多步第二步：选中即视为已装（mock 已在 fixture 中，仅广播刷新） */
+  async finishInstall(_tempDir: string, _selected: string[]) {
+    await sleep(TIMING.ack)
+    extensionsSub.broadcast(fixtureExtensions.map((e) => ({ ...e })))
+  },
+  async cancelInstall(_tempDir: string) {
+    await sleep(TIMING.ack)
   },
 }
 
