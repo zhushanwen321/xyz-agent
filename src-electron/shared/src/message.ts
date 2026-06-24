@@ -81,12 +81,14 @@ export interface BranchSummary {
 // 本契约只定义类型，runtime 解析方案见 ADR-0024，chat store 数据流由 flow-2 完整实施落地。
 
 /**
- * 单个文件的变更状态。映射 pi 工具语义 + git A/M/D：
+ * 单个文件的变更状态。映射 pi 工具语义 + git A/M/D/U：
  * - write 新建文件 → added；覆盖既有文件 → modified
  * - edit 永远 → modified
  * - bash 驱动的删除/移动 → deleted（需 git 对账判定，见 ADR-0024）
+ * - unmerged → git 冲突态（由 runtime git.status 推送，见 protocol.ts GitFileStatus；
+ *   file_changes 与 git.status 共用本枚举，FR-11/C15）
  */
-export type FileChangeStatus = 'added' | 'modified' | 'deleted'
+export type FileChangeStatus = 'added' | 'modified' | 'deleted' | 'unmerged'
 
 /**
  * 单个文件的变更记录。挂在 assistant message 上（见 Message.fileChanges）。

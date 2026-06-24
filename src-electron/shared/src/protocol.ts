@@ -28,6 +28,7 @@ export type ClientMessageType =
   | 'plugin.config.get' | 'plugin.config.set'
   | 'plugin.uiResponse'
   | 'file.read'
+  | 'git.status' | 'git.stage' | 'git.unstage' | 'git.commit'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -99,6 +100,10 @@ export interface ClientMessageMap {
   'plugin.config.set': { pluginId: string; key: string; value: unknown }
   'plugin.uiResponse': { requestId: string; result: unknown }
   'file.read': { path: string }
+  'git.status': { sessionId: string }
+  'git.stage': { sessionId: string; filePaths?: string[] }
+  'git.unstage': { sessionId: string; filePaths?: string[] }
+  'git.commit': { sessionId: string; message?: string }
 }
 
 export type ClientMessage =
@@ -156,6 +161,10 @@ export type ClientMessage =
   | { type: 'plugin.config.set'; id?: string; payload: ClientMessageMap['plugin.config.set'] }
   | { type: 'plugin.uiResponse'; id?: string; payload: ClientMessageMap['plugin.uiResponse'] }
   | { type: 'file.read'; id?: string; payload: ClientMessageMap['file.read'] }
+  | { type: 'git.status'; id?: string; payload: ClientMessageMap['git.status'] }
+  | { type: 'git.stage'; id?: string; payload: ClientMessageMap['git.stage'] }
+  | { type: 'git.unstage'; id?: string; payload: ClientMessageMap['git.unstage'] }
+  | { type: 'git.commit'; id?: string; payload: ClientMessageMap['git.commit'] }
 
 // ── 辅助类型 ────────────────────────────────────────────────────
 
@@ -172,7 +181,7 @@ export type ServerMessageType =
   | 'session.compacting' | 'session.compacted' | 'session.renamed'
   | 'message.message_start' | 'message.text_delta' | 'message.thinking_delta'
   | 'message.thinking_start' | 'message.thinking_end'
-  | 'message.tool_call_start' | 'message.tool_call_end' | 'message.tool_call_pending'
+  | 'message.tool_call_start' | 'message.tool_call_end'
   | 'message.complete' | 'message.error' | 'message.status'
   | 'context.update'
   | 'config.providers' | 'config.providerUpdated' | 'config.discoveredModels' | 'config.defaults'
@@ -199,6 +208,7 @@ export type ServerMessageType =
   | 'message.stream_error'
   | 'message.file_changes'
   | 'file.read:result'
+  | 'git.status:result'
 
 /**
  * # ServerMessageMap —— Runtime → Client payload 类型映射
@@ -248,6 +258,9 @@ export interface ServerMessageMapBase {
     changeSetStatus: ChangeSetStatus
     isFullSet: boolean
   }
+  // git.status:result：git.status 请求的同步 reply（Wave 1a git domain 经 pending.resolve 消费）。
+  // git.stage/unstage/commit 的 ack 复用既有 'message.status'（payload {sessionId, status}），非新增。
+  'git.status:result': GitStatusResult
 }
 
 /**
@@ -349,6 +362,9 @@ export interface ExtensionInfo {
   path: string
   enabled: boolean
   source: 'built-in' | 'user-installed'
+  /** Extension 暴露的工具名列表（MCP tools / pi extension tools）。可选：runtime 扫描到时填，
+   *  前端 ExtensionPage 据此渲染工具清单。可选而非必填——避免强制 runtime 生产侧同步改造。 */
+  tools?: string[]
 }
 
 // ── Extension install flow payload interfaces ──────────────────
@@ -356,6 +372,34 @@ export interface ExtensionInfo {
 export interface ExtensionDiscoveredPayload {
   tempDir: string
   candidates: ExtensionInfo[]
+}
+
+// ── Git payload interfaces（#1 git 全栈 / #12 契约地基）──────────────────────────
+// 依据 code-architecture.md §3.1/§3.6/§3.7/§3.8/§4.1/§4.2 + spec-w11.md FR-12/G-R2-01。
+// 本契约仅定义类型；runtime 实现（git-service / IGitExecutor / git-message-handler）属 Wave 1a。
+
+/** git.status 的返回结构（FR-12/G-R2-01）。cwd 非 git 仓库时 isRepo=false，其余字段为默认值。
+ *  用 type 别名而非 interface：ServerMessageMapBase 的 payload 需隐式索引签名才能赋给
+ *  chat-chunk-processor 的 Record<string, unknown> 读取器（interface 无隐式索引签名，会报 TS2345）。 */
+export type GitStatusResult = {
+  sessionId: string
+  isRepo: boolean
+  branch?: string
+  stagedCount: number
+  unstagedCount: number
+  stats: { add: number; del: number }
+  hasConflict: boolean
+  files: GitFileStatus[]
+}
+
+/** 单文件的 git 状态（git --porcelain 的 XY 码解析结果）。
+ *  status 由 xyCode 派生：U* → unmerged（冲突），?? → untracked，其余按 added/modified/deleted/renamed。
+ *  staged/unstaged 维度由 xyCode 的两列体现（X=staged，Y=unstaged），不进 status 枚举。 */
+export interface GitFileStatus {
+  path: string
+  /** 原始 git --porcelain 双列状态码（如 'A ', ' M', 'UU', '??', 'R '）。前端可据 xyCode[0]/xyCode[1] 细分暂存/工作区态。 */
+  xyCode: string
+  status: 'added' | 'modified' | 'deleted' | 'unmerged' | 'renamed' | 'untracked'
 }
 
 // 注：ExtensionInstallErrorPayload 已删除（D10/P0-B）——install 失败现在走统一 error envelope，

@@ -11,7 +11,8 @@ import type { PiMessage } from '../src/infra/pi/rpc-client.js'
  * 2. extension_ui_request with setStatus/setWidget → null (discarded)
  * 3. extension_error → extension.error ServerMessage
  * 4. tool_execution_update → message.tool_call_update ServerMessage
- * 5. Original mapping of confirm/select to message.tool_call_pending is REMOVED
+ * 5. Original mapping of confirm/select to a tool-call-pending message is REMOVED
+ *    (asserted positively: confirm/select produce ONLY extension.ui_request, no other types)
  * 6. All ServerMessages include sessionId
  */
 
@@ -150,7 +151,7 @@ describe('EventAdapter: extension event translation', () => {
       })
     })
 
-    it('does NOT produce message.tool_call_pending for confirm', async () => {
+    it('produces ONLY extension.ui_request for confirm (no tool-call-pending mapping)', async () => {
       adapter.attach({
         onEvent: (listener) => {
           listener(piEvent({
@@ -164,11 +165,11 @@ describe('EventAdapter: extension event translation', () => {
       })
       await flushAsync()
 
-      const toolCallPending = sent.find((m) => m.type === 'message.tool_call_pending')
-      expect(toolCallPending).toBeUndefined()
+      // 正向断言：confirm 只产出 extension.ui_request，不调染 tool-call 状态（旧 pending 映射已移除）
+      expect(sent.map((m) => m.type)).toEqual(['extension.ui_request'])
     })
 
-    it('does NOT produce message.tool_call_pending for select', async () => {
+    it('produces ONLY extension.ui_request for select (no tool-call-pending mapping)', async () => {
       adapter.attach({
         onEvent: (listener) => {
           listener(piEvent({
@@ -182,8 +183,7 @@ describe('EventAdapter: extension event translation', () => {
       })
       await flushAsync()
 
-      const toolCallPending = sent.find((m) => m.type === 'message.tool_call_pending')
-      expect(toolCallPending).toBeUndefined()
+      expect(sent.map((m) => m.type)).toEqual(['extension.ui_request'])
     })
   })
 

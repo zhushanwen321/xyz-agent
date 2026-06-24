@@ -92,15 +92,16 @@ const totalDel = computed(() =>
   props.fileChanges.reduce((sum, c) => sum + (c.delLines ?? 0), 0),
 )
 
-/** 单文件变更状态 badge（A/M/D） */
+/** 单文件变更状态 badge（A/M/D/U） */
 function changeLabel(status: FileChange['status']): string {
-  return { added: 'A', modified: 'M', deleted: 'D' }[status]
+  return { added: 'A', modified: 'M', deleted: 'D', unmerged: 'U' }[status]
 }
 function changeBadgeClass(status: FileChange['status']): string {
   return {
     added: 'bg-success/10 text-success',
     modified: 'bg-info/10 text-info',
     deleted: 'bg-danger/10 text-danger',
+    unmerged: 'bg-danger/20 text-danger ring-1 ring-danger/40',
   }[status]
 }
 </script>

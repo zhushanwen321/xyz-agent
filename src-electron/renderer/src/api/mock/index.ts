@@ -23,6 +23,9 @@ import {
 import { MOCK_MODELS, type MockModel } from './composer-data'
 import * as events from '../events'
 
+// mock/git.ts 的 git domain + fixtureGitStatus 透出（Wave 1a real git domain 落地后由 api/index 接线）
+export { git, fixtureGitStatus } from './git'
+
 /**
  * Mock 模拟 runtime session 通道推送（dispatchSession）。
  * 组件用 events.on(sessionId) 订阅 session.commands / context.update；
@@ -68,9 +71,13 @@ function pushSessionState(sessionId: string): void {
 const TIMING = {
   ack: 40, // 命令 ack
   startGap: 60, // message_start 前
-  chunk: 70, // 每个 text_delta 间隔
+  chunk: 70, // 每个 text/thinking delta 间隔
   done: 40, // complete 前
   switchCmd: 30,
+  thinkingGap: 50, // thinking 块各阶段间隔
+  toolGap: 90, // tool_call 各阶段间隔（进度感）
+  fileChangesGap: 120, // accumulating → ready 间隔
+  retryGap: 800, // auto_retry_start → end 间隔（让指示位可见）
 }
 
 /** mock 固定回复前缀（不模拟失败，D7） */
@@ -193,6 +200,63 @@ export const chat = {
       payload: { sessionId, messageId },
     })
 
+    // FR-1：auto_retry 演示（关键词触发，让 RetryIndicator 渲染可验证）。
+    // 默认不触发（不污染每条消息）；用户输入含 'retry' 时模拟一次瞬态失败→重试→恢复。
+    if (/retry/i.test(text)) {
+      if (cancelled.has(sessionId)) return
+      emit(sessionId, {
+        type: 'message.auto_retry_start',
+        payload: {
+          sessionId,
+          attempt: 1,
+          maxAttempts: 3,
+          delayMs: TIMING.retryGap,
+          errorMessage: 'upstream 503 (mock)',
+        },
+      })
+      await sleep(TIMING.retryGap)
+      if (cancelled.has(sessionId)) return
+      emit(sessionId, { type: 'message.auto_retry_end', payload: { sessionId } })
+    }
+
+    // thinking 块（thinking_start → delta×N → end）
+    if (cancelled.has(sessionId)) return
+    await sleep(TIMING.startGap)
+    const thinkingId = nextId('th')
+    emit(sessionId, {
+      type: 'message.thinking_start',
+      payload: { sessionId, thinkingId },
+    })
+    for (const chunk of splitChunks('让我分析一下这个请求……')) {
+      if (cancelled.has(sessionId)) return
+      await sleep(TIMING.chunk)
+      emit(sessionId, { type: 'message.thinking_delta', payload: { sessionId, delta: chunk } })
+    }
+    if (cancelled.has(sessionId)) return
+    emit(sessionId, { type: 'message.thinking_end', payload: { sessionId } })
+
+    // tool_call 块（start → update → end），证明 tool 卡渲染 + 进度更新
+    if (cancelled.has(sessionId)) return
+    await sleep(TIMING.toolGap)
+    const toolCallId = nextId('tc')
+    emit(sessionId, {
+      type: 'message.tool_call_start',
+      payload: { sessionId, toolCallId, toolName: 'read', input: { path: '/mock/file.ts' } },
+    })
+    await sleep(TIMING.toolGap)
+    if (cancelled.has(sessionId)) return
+    emit(sessionId, {
+      type: 'message.tool_call_update',
+      payload: { sessionId, toolCallId, detail: '读取 42 行' },
+    })
+    await sleep(TIMING.toolGap)
+    if (cancelled.has(sessionId)) return
+    emit(sessionId, {
+      type: 'message.tool_call_end',
+      payload: { sessionId, toolCallId, output: '…文件内容（mock）…', status: 'completed' },
+    })
+
+    // 文本流式
     for (const chunk of splitChunks(reply)) {
       if (cancelled.has(sessionId)) return
       await sleep(TIMING.chunk)
@@ -203,12 +267,49 @@ export const chat = {
       })
     }
 
+    // file_changes（accumulating → ready），证明 ChangeSetCard/FileView 渲染 + 跨帧合并
+    if (cancelled.has(sessionId)) return
+    await sleep(TIMING.fileChangesGap)
+    emit(sessionId, {
+      type: 'message.file_changes',
+      payload: {
+        sessionId,
+        messageId,
+        fileChanges: [
+          { filePath: 'src/mock-feature.ts', status: 'modified', addLines: 10, delLines: 2 },
+        ],
+        changeSetStatus: 'accumulating',
+        isFullSet: false,
+      },
+    })
+    await sleep(TIMING.fileChangesGap)
+    if (cancelled.has(sessionId)) return
+    emit(sessionId, {
+      type: 'message.file_changes',
+      payload: {
+        sessionId,
+        messageId,
+        fileChanges: [
+          { filePath: 'src/mock-feature.ts', status: 'modified', addLines: 10, delLines: 2 },
+          { filePath: 'src/new-file.ts', status: 'added', addLines: 24 },
+        ],
+        changeSetStatus: 'ready',
+        isFullSet: true,
+      },
+    })
+
+    // complete（含 usage，证明 W05-A usage 回填）
     if (cancelled.has(sessionId)) return
     await sleep(TIMING.done)
     emit(sessionId, {
       type: 'message.complete',
       id: messageId,
-      payload: { sessionId, messageId, stopReason: 'complete' },
+      payload: {
+        sessionId,
+        messageId,
+        stopReason: 'complete',
+        usage: { inputTokens: 1280, outputTokens: 642, totalTokens: 1922 },
+      },
     })
   },
 
@@ -222,18 +323,23 @@ export const chat = {
     await sleep(TIMING.ack)
   },
 
-  /** steer：mock 下仅 ack，不模拟队列（pending 气泡渲染 DEFERRED） */
+  /** steer：mock 下 ack 后推 queue_update（steering 排队），让 QueueBubble 渲染可验证（#13/W06-B）。
+   *  下次 message_start 到达时 store 侧清 queue（G-023，chat-chunk-processor 消费侧职责）。 */
   async steer(sessionId: string, text: string): Promise<void> {
     await sleep(TIMING.ack)
-    void sessionId
-    void text
+    emit(sessionId, {
+      type: 'message.queue_update',
+      payload: { sessionId, steering: [text] },
+    })
   },
 
-  /** followUp：mock 下仅 ack */
+  /** followUp：mock 下 ack 后推 queue_update（followUp 排队），让 QueueBubble 渲染可验证。 */
   async followUp(sessionId: string, text: string): Promise<void> {
     await sleep(TIMING.ack)
-    void sessionId
-    void text
+    emit(sessionId, {
+      type: 'message.queue_update',
+      payload: { sessionId, followUp: [text] },
+    })
   },
 
   streamSubscribe(

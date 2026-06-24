@@ -6,6 +6,7 @@ export type {
   ExtensionUIRequestPayload, ExtensionUIResponsePayload,
   ExtensionErrorPayload, ToolCallUpdatePayload, ExtensionInfo,
   ExtensionDiscoveredPayload,
+  GitStatusResult, GitFileStatus,
   StopReason,
   StatusBarItem, StatusSetUpdatePayload, PluginStatusBarUpdatePayload, PluginInfo,
   UISendMode, ProtocolSendMode,
