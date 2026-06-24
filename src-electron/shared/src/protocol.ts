@@ -244,6 +244,8 @@ export interface ServerMessageMapBase {
   'extension:widget': { sessionId: string; widgetKey: string; lines: string[] }
   'extension:status': { sessionId: string; statusKey: string; text: string }
   // session 通道推送（runtime session-service / index.ts 生产，W04 收紧）
+  'session.compacting': { sessionId: string }
+  'session.compacted': { sessionId: string; success?: boolean; error?: string }
   // session.commands：pi 扩展命令列表（fetchAndBroadcastCommands 广播）
   'session.commands': { sessionId: string; commands: Array<{ name: string; description?: string; source: string }> }
   // context.update：上下文用量（index.ts onContextUpdate 推；cacheHit/modelId 无来源，D9 保留 UI 占位）
@@ -261,6 +263,11 @@ export interface ServerMessageMapBase {
   // git.status:result：git.status 请求的同步 reply（Wave 1a git domain 经 pending.resolve 消费）。
   // git.stage/unstage/commit 的 ack 复用既有 'message.status'（payload {sessionId, status}），非新增。
   'git.status:result': GitStatusResult
+
+  // ── 消息流控制（W11+ 审查补充类型）──
+  'message.auto_retry_start': { sessionId: string; attempt: number; maxAttempts?: number; delayMs?: number; errorMessage?: string }
+  'message.auto_retry_end': { sessionId: string; success: boolean; attempt: number; finalError?: string }
+  'message.queue_update': { sessionId: string; steering?: string[]; followUp?: string[] }
 }
 
 /**

@@ -9,8 +9,8 @@
  * - git.unstage → gitService.unstage   → reply 'message.status' {status:'unstaged'}
  * - git.commit  → gitService.commit    → reply 'message.status' {status:'committed'}
  *
- * 错误：GitError / GitExecutorError → error envelope（D10/P0-B）。code 取自 GitError.code
- * 或 GitExecutorError.code（'git_unavailable'/'timeout'）；sessionId 透传 details。
+ * 错误：GitError → error envelope（D10/P0-B）。code 取自 GitError.code；
+ * sessionId 透传 details。GitExecutorError 已在 GitService.execSafe 中转为 GitError。
  */
 import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ClientMessageType } from '@xyz-agent/shared'
@@ -18,7 +18,6 @@ import type { MessageHandlerContext } from './message-context.js'
 import type { ISessionService } from '../interfaces.js'
 import type { GitService } from '../services/git-service.js'
 import { GitError } from '../services/git-service.js'
-import { GitExecutorError } from '../infra/git-executor.js'
 import { toErrorMessage } from '../utils/errors.js'
 
 /** Interface for server methods needed by this handler */
@@ -76,15 +75,12 @@ export class GitMessageHandler {
 
   /**
    * 统一 git 错误回复（D10/P0-B）。
-   * - GitError → 取其 code（session_not_found / path_not_allowed / git_conflict / commit_message_required / *_failed）
-   * - GitExecutorError → 'git_unavailable'（timeout 归并，前端统一降级）
+   * - GitError → 取其 code（session_not_found / path_not_allowed / git_conflict / commit_message_required / *_failed / git_unavailable / git_failed）
    * - 其它 → 'git_failed' + toErrorMessage
    */
   private sendGitError(ws: WsType, id: string | undefined, sessionId: string, e: unknown): void {
     if (e instanceof GitError) {
       this.ctx.sendError(ws, e.code, e.message, id, { sessionId })
-    } else if (e instanceof GitExecutorError) {
-      this.ctx.sendError(ws, 'git_unavailable', e.message, id, { sessionId })
     } else {
       this.ctx.sendError(ws, 'git_failed', toErrorMessage(e), id, { sessionId })
     }

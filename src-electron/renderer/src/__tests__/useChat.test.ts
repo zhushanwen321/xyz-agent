@@ -182,17 +182,16 @@ describe('useChat compact 状态机（#6）', () => {
     expect(chat.isCompacting('c-flow')).toBe(false)
   })
 
-  it('compact 失败（pending reject）→ 插入 system 错误提示，不抛出（不卡 UI，规则 #3）', async () => {
+  it('compact 失败（pending reject）→ toast 错误提示，不抛出（不卡 UI，M8 toast 方案）', async () => {
     const session = useSessionStore()
     session.activeId = 'c-err'
     const chat = useChatStore()
     apiMock.compact.mockRejectedValueOnce(new Error('Session not found'))
     const { compact } = useChat()
     await expect(compact()).resolves.toBeUndefined()
+    // M8: compact 错误走 toast 而非 appendSystemNotice，不再插入 system 消息
     const msgs = chat.getMessages('c-err')
-    expect(msgs).toHaveLength(1)
-    expect(msgs[0].role).toBe('system')
-    expect(msgs[0].content).toContain('压缩失败')
+    expect(msgs).toEqual([])
   })
 
   it('compact 守卫：无 active session 时早退', async () => {

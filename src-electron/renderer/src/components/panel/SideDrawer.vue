@@ -94,7 +94,7 @@ import type { Component } from 'vue'
 import { Terminal as TerminalIcon, Globe, Pin, PinOff, X } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import type { SideDrawerTab } from '@/composables/features/useSideDrawer'
-import * as extension from '@/api/domains/extension'
+import { extension } from '@/api'
 
 const props = defineProps<{
   isOpen: boolean
@@ -167,7 +167,7 @@ function mapWidgetKeyToTab(key: string): SideDrawerTab | null {
   if (k.includes('terminal') || k.includes('shell') || k.includes('console') || k.includes('bash')) {
     return 'terminal'
   }
-  if (k.includes('browser') || k.includes('preview') || k.includes('web')) {
+  if (k.includes('browser') || k === 'web' || k.startsWith('webview') || k.includes('preview')) {
     return 'browser'
   }
   return null
@@ -179,6 +179,7 @@ function subscribeWidget(sid: string): void {
   terminalLines.value = []
   browserLines.value = []
   unknownWidget.value = null
+  // 签名已与 real extension.ts OnWidgetHandler 对齐（mock 侧同步修复），facade 不再退化为 unknown
   unsubWidget = extension.onWidget(sid, (payload) => {
     const tab = mapWidgetKeyToTab(payload.widgetKey)
     if (tab === 'terminal') terminalLines.value = payload.lines

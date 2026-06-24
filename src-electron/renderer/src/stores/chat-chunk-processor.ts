@@ -72,6 +72,8 @@ export function applyChunk(ctx: ChunkContext, sessionId: string, msg: ServerMess
   const prev = messages.value.get(sessionId) ?? []
   switch (msg.type) {
     case 'message.message_start': {
+      // G-023: message_start 到达清除 QueueBubble（新回合已启动，排队消息已投递或过期）
+      queueStates.value.delete(sessionId)
       const messageId = readString(msg.payload, 'messageId') ?? `a-${crypto.randomUUID()}`
       messages.value.set(sessionId, [
         ...prev,

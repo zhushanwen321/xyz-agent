@@ -40,12 +40,12 @@ export function unstage(sessionId: string, filePaths?: string[]): Promise<void> 
 }
 
 /**
- * 提交。message 必填（runtime 在空 message 时返回 'commit_message_required' error）。
+ * 提交。message 可选（与 ClientMessageMap 一致；runtime 在空 message 时返回 'commit_message_required' error）。
  * 冲突态 → runtime 返回 'git_conflict' error（domain Promise reject）。
  */
-export function commit(sessionId: string, message: string): Promise<void> {
+export function commit(sessionId: string, message?: string): Promise<void> {
   const id = pending.create()
   const result = pending.register<void>(id)
-  transport.send({ type: 'git.commit', id, payload: { sessionId, message } })
+  transport.send({ type: 'git.commit', id, payload: { sessionId, message: message ?? '' } })
   return result
 }

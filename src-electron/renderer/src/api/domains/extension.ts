@@ -12,6 +12,7 @@
  * - onWidget：pi extension setWidget → runtime 推 extension:widget（payload {sessionId, widgetKey, lines}）
  *   runtime **每次推送全量 lines**（非增量、非分片，已 grep 确认 event-adapter.ts:383 setWidget），
  *   故无需分片重组；前端只做 1000 行截断（NFR「前端最多保留 1000 行」），保留最新尾部。
+ *   runtime 保证 widget 输出不会超过 1MB（全量推送，非分片）。
  *
  * 契约见 contract.md §2.5 / code-architecture.md §3.2/§4.3/§4.9。
  *
@@ -43,6 +44,8 @@ export function onWidget(sessionId: string, handler: OnWidgetHandler): () => voi
     if (msg.type !== 'extension:widget') return
     // events.on 无 per-type 泛型收窄（非 onGlobalType），payload 为联合宽类型，按契约窄断言取字段。
     const payload = msg.payload as ExtensionWidgetPayload
+    // 防御性校验：events.on 按 sessionId 路由，但 payload.sessionId 可能因 bug 不一致
+    if (payload.sessionId !== sessionId) return
     handler({
       sessionId: payload.sessionId,
       widgetKey: payload.widgetKey,
@@ -56,6 +59,8 @@ export function onStatus(sessionId: string, handler: OnStatusHandler): () => voi
   return events.on(sessionId, (msg) => {
     if (msg.type !== 'extension:status') return
     const payload = msg.payload as ExtensionStatusPayload
+    // 防御性校验：events.on 按 sessionId 路由，但 payload.sessionId 可能因 bug 不一致
+    if (payload.sessionId !== sessionId) return
     handler({
       sessionId: payload.sessionId,
       statusKey: payload.statusKey,

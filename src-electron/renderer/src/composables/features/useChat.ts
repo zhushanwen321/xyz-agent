@@ -15,6 +15,7 @@
 import { chat as chatApi } from '@/api'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
+import { useToast } from '@/composables/useToast'
 
 /**
  * 会话级流式订阅表（sessionId → 取消函数）。
@@ -139,7 +140,8 @@ export function useChat() {
       await chatApi.compact(sid)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      chat.appendSystemNotice(sid, `压缩失败：${msg}`)
+      const { error } = useToast()
+      error(`压缩失败：${msg}`)
     }
   }
 

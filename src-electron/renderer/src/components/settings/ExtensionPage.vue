@@ -52,10 +52,15 @@
           v-for="c in discovered.candidates"
           :key="c.dirName"
           class="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-surface"
+          @click="toggleCandidate(c.dirName)"
         >
-          <input type="checkbox" :checked="selected.has(c.dirName)" class="size-4 accent-[var(--accent)]"
-            @change="toggleCandidate(c.dirName)"
-          />
+          <!-- 自定义 checkbox 替代：xyz-ui 无 Checkbox 组件，用 div 模拟选中态（CLAUDE.md 禁止原生表单元素） -->
+          <div
+            class="flex size-4 shrink-0 items-center justify-center rounded-sm border transition-colors"
+            :class="selected.has(c.dirName) ? 'border-accent bg-accent' : 'border-border bg-transparent'"
+          >
+            <svg v-if="selected.has(c.dirName)" class="size-3 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+          </div>
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-2">
               <span class="truncate text-[12px] text-fg">{{ c.name }}</span>
@@ -264,8 +269,9 @@ async function onCancelInstall() {
   try {
     await extensionApi.cancelInstall(tempDir)
   } catch (e) {
-    // tempDir 清理失败仅记录，不阻塞 UI（候选区已关闭）
-    actionError.value = e instanceof Error ? e.message : String(e)
+    // tempDir 清理失败仅记录，不阻塞 UI（候选区已关闭）。临时文件可能未清理，需手动检查。
+    const baseMsg = e instanceof Error ? e.message : String(e)
+    actionError.value = `${baseMsg}（临时文件可能未清理）`
   }
 }
 

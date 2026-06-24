@@ -19,8 +19,10 @@
 import { resolve as resolvePath } from 'node:path'
 import type { GitStatusResult } from '@xyz-agent/shared'
 import type { ISessionService } from '../interfaces.js'
-import type { IGitExecutor } from './ports/git-executor.js'
+import type { GitCommand, GitExecutorResult, IGitExecutor } from './ports/git-executor.js'
+import { GitExecutorError } from '../infra/git-executor.js'
 import { isUnderOrEqual } from '../utils/path-utils.js'
+import { toErrorMessage } from '../utils/errors.js'
 import { parseGitStatus, deriveCounts, parseNumstat } from '../infra/git-status-parser.js'
 
 /** git 操作失败分类错误。handler 按 code 转 error envelope（D10/P0-B）。 */
@@ -89,7 +91,7 @@ export class GitService {
     }
 
     // status --porcelain=v1 -z -b：-z NUL 分隔（路径安全），-b 带 branch 头
-    const statusRes = await this.opts.executor.exec(cwd, 'status', ['--porcelain=v1', '-z', '-b'])
+    const statusRes = await this.execSafe(cwd, 'status', ['--porcelain=v1', '-z', '-b'])
     if (statusRes.exitCode !== 0) {
       // 非 git 仓库（git status 在非仓库返回 128 + "not a git repository"）
       return notRepoResult(sessionId)
@@ -100,7 +102,7 @@ export class GitService {
 
     // stats：tracked 改动行数（staged+unstaged vs HEAD）。无 HEAD（空仓库）时 diff 失败 → 0。
     let stats = { add: 0, del: 0 }
-    const diffRes = await this.opts.executor.exec(cwd, 'diff', ['--numstat', 'HEAD'])
+    const diffRes = await this.execSafe(cwd, 'diff', ['--numstat', 'HEAD'])
     if (diffRes.exitCode === 0) {
       stats = parseNumstat(diffRes.stdout)
     }
@@ -125,7 +127,7 @@ export class GitService {
     const cwd = this.requireCwd(sessionId)
     const paths = this.resolveFilePaths(cwd, filePaths)
     const args = paths.length > 0 ? ['--', ...paths] : ['-A']
-    const res = await this.opts.executor.exec(cwd, 'add', args)
+    const res = await this.execSafe(cwd, 'add', args)
     if (res.exitCode !== 0) {
       throw new GitError('stage_failed', res.stderr.trim() || 'git add 失败')
     }
@@ -138,7 +140,7 @@ export class GitService {
     const cwd = this.requireCwd(sessionId)
     const paths = this.resolveFilePaths(cwd, filePaths)
     const args = paths.length > 0 ? ['HEAD', '--', ...paths] : ['HEAD']
-    const res = await this.opts.executor.exec(cwd, 'reset', args)
+    const res = await this.execSafe(cwd, 'reset', args)
     if (res.exitCode !== 0) {
       throw new GitError('unstage_failed', res.stderr.trim() || 'git reset 失败')
     }
@@ -158,7 +160,7 @@ export class GitService {
     }
 
     // 先查冲突态：冲突时 git commit 会拒绝（exitCode 1），但显式判定给更清晰的错误码
-    const statusRes = await this.opts.executor.exec(cwd, 'status', ['--porcelain=v1', '-z'])
+    const statusRes = await this.execSafe(cwd, 'status', ['--porcelain=v1', '-z'])
     if (statusRes.exitCode === 0) {
       const { hasConflict } = deriveCounts(parseGitStatus(statusRes.stdout).files)
       if (hasConflict) {
@@ -166,7 +168,7 @@ export class GitService {
       }
     }
 
-    const res = await this.opts.executor.exec(cwd, 'commit', ['-m', msg])
+    const res = await this.execSafe(cwd, 'commit', ['-m', msg])
     if (res.exitCode !== 0) {
       const stderr = res.stderr.trim()
       // 兜底：commit 时刚产生冲突（race）或 nothing to commit
@@ -177,6 +179,21 @@ export class GitService {
         throw new GitError('git_conflict', stderr || '存在冲突，提交失败')
       }
       throw new GitError('commit_failed', stderr || 'git commit 失败')
+    }
+  }
+
+  /**
+   * 安全执行 git 命令，将 GitExecutorError（git 不可用/超时）和未知错误统一转为 GitError。
+   * 非零退出码原样返回（由各方法按 stderr/exitCode 语义判定失败类型）。
+   */
+  private async execSafe(cwd: string, command: GitCommand, args: string[] = []): Promise<GitExecutorResult> {
+    try {
+      return await this.opts.executor.exec(cwd, command, args)
+    } catch (e) {
+      if (e instanceof GitExecutorError) {
+        throw new GitError('git_unavailable', e.message)
+      }
+      throw new GitError('git_failed', toErrorMessage(e))
     }
   }
 

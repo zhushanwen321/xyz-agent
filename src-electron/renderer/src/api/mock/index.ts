@@ -12,6 +12,7 @@
 import type {
   Message, ModelInfo, ServerMessage, SessionSummary, SessionGroup,
   ProviderInfo, SkillInfo, AgentInfo, PluginInfo, SetProviderData,
+  ExtensionWidgetPayload, ExtensionStatusPayload,
 } from '@xyz-agent/shared'
 import { createSession, fixtureMessages, fixtureSessions } from './data'
 import {
@@ -85,7 +86,6 @@ const TIMING = {
 const CANNED_REPLY = '好的，我来处理这个请求。（mock 模拟回复）'
 
 const streamHandlers = new Map<string, Set<(msg: ServerMessage) => void>>()
-/** 已 abort 的 session：send 循环检查后提前返回 */
 /** 已 abort 的 session：send 循环检查后提前返回 */
 const cancelled = new Set<string>()
 /** 运行中的 setTimeout 句柄，resolve 后自动移除，避免 Set 无限增长 */
@@ -217,7 +217,7 @@ export const chat = {
       })
       await sleep(TIMING.retryGap)
       if (cancelled.has(sessionId)) return
-      emit(sessionId, { type: 'message.auto_retry_end', payload: { sessionId } })
+      emit(sessionId, { type: 'message.auto_retry_end', payload: { sessionId, success: true, attempt: 1 } })
     }
 
     // thinking 块（thinking_start → delta×N → end）
@@ -369,15 +369,8 @@ export const chat = {
 }
 
 /* ── 订阅工厂：订阅型 mock（onProviders/onSkills/...）共用 ── */
-
 type GlobalHandler<T> = (data: T) => void
-
-/**
- * mock 订阅工厂：注册后微任务触发一次初始值（模拟 sendInitialState 连接即推）。
- * 请求型接口（listProviders / scan* / discoverModels）不依赖它，直接返 fixture。
- * broadcast() 模拟 runtime 动作后经订阅通道推回状态变更（real 模式由 sendInitialState/
- * 广播驱动，mock 必须同构，否则组件订阅在 mock 模式下看不到动作结果）。
- */
+/** mock 订阅工厂：注册后微任务触发一次初始值（模拟 sendInitialState）；请求型直接返 fixture */
 function makeMockSubscription<T>(initial: () => T) {
   const handlers = new Set<GlobalHandler<T>>()
   return {
@@ -543,6 +536,10 @@ function toCandidate(c: { name: string; version: string; description: string; en
 
 export const extension = {
   onExtensions: (h: GlobalHandler<unknown>) => extensionsSub.subscribe(h),
+  /** mock stub：签名与 real extension.ts OnWidgetHandler 一致 */
+  onWidget(_sessionId: string, _handler: (payload: ExtensionWidgetPayload) => void): () => void { return () => {} },
+  /** mock stub：签名与 real extension.ts OnStatusHandler 一致 */
+  onStatus(_sessionId: string, _handler: (payload: ExtensionStatusPayload) => void): () => void { return () => {} },
   async toggle(name: string, enabled: boolean) {
     await sleep(TIMING.ack)
     const target = fixtureExtensions.find((e) => e.name === name)
@@ -608,11 +605,7 @@ export const settings = {
   // 动作
   setProvider: config.setProvider,
   // 纯前端偏好（localStorage，与 real 一致）
-  async getSystem(): Promise<{
-    locale: 'zh-CN' | 'en-US'
-    theme: 'light' | 'dark' | 'system'
-    themePreset: string
-  }> {
+  async getSystem(): Promise<{locale:'zh-CN'|'en-US',theme:'light'|'dark'|'system',themePreset:string}> {
     const raw = localStorage.getItem(SYSTEM_KEY)
     let parsed: Record<string, unknown> = {}
     if (raw) {
