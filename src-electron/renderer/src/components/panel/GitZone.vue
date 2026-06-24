@@ -9,7 +9,7 @@
   - clean:    staged/unstaged 均为 0（绿）
 
   数据源：api git.status（real 走 transport，mock 走 fixture）。刷新时机（G-R2-04）：
-  onMounted + stage/unstage/commit 操作后手动刷（非轮询）。
+  进入 session + agent_end 后 + stage/unstage/commit 操作后手动刷（非轮询）。
   非 git 仓库（isRepo=false）→ 隐藏整个 zone（G-R2-05）。
 
   commit message 用 xyz-ui Input（§6.3 点1，禁止原生 input）。
@@ -17,10 +17,22 @@
 <template>
   <section
     v-if="result?.isRepo"
-    class="flex flex-col gap-1.5 border-t border-border px-3 py-2 text-[12px]"
+    class="relative flex flex-col gap-1.5 overflow-hidden border-t border-border px-3 py-2 text-[12px]"
+    :class="result.hasConflict ? 'bg-danger/8' : ''"
   >
+    <!-- 冲突态 danger 竖条（FR-12 item 2，draft-companion-zones §2） -->
+    <div
+      v-if="result.hasConflict"
+      class="pointer-events-none absolute inset-y-0 left-0 w-0.5 bg-danger"
+      aria-hidden="true"
+    />
+    <!-- soft 渐隐底（FR-12 item 2） -->
+    <div
+      class="pointer-events-none absolute inset-x-0 top-0 h-2 bg-gradient-to-b from-[var(--bg)]/40 to-transparent"
+      aria-hidden="true"
+    />
     <!-- 头部：分支 + 四态 pill + stats -->
-    <div class="flex items-center gap-2">
+    <div class="relative flex items-center gap-2">
       <GitBranch class="size-3 shrink-0 text-subtle" />
       <span class="truncate font-mono text-[11px] text-subtle">{{ result.branch ?? 'detached' }}</span>
       <span
@@ -55,8 +67,8 @@
       </Button>
     </div>
 
-    <!-- 错误提示（操作失败 inline 回显，无 toast 系统） -->
-    <p v-if="error" class="rounded-sm bg-[rgba(239,68,68,0.1)] px-2 py-1 text-[11px] text-danger">{{ error }}</p>
+    <!-- 错误提示（操作失败 inline 回显） -->
+    <p v-if="error" class="rounded-sm bg-danger/12 px-2 py-1 text-[11px] text-danger">{{ error }}</p>
 
     <!-- 文件列表 -->
     <ul v-if="result.files.length" class="flex max-h-32 flex-col gap-0.5 overflow-y-auto">
@@ -107,12 +119,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onScopeDispose } from 'vue'
 import { GitBranch, RefreshCw, GitCompare, TriangleAlert } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { git as gitApi } from '@/api'
-import type { GitStatusResult, GitFileStatus } from '@xyz-agent/shared'
+import { on as onSessionEvent } from '@/api/events'
+import type { ServerMessage, GitStatusResult, GitFileStatus } from '@xyz-agent/shared'
 
 const props = defineProps<{ sessionId: string }>()
 
@@ -137,10 +150,10 @@ const state = computed<'conflict' | 'dirty' | 'staged' | 'clean'>(() => {
 
 const pillLabel = computed(() => ({ clean: 'Clean', staged: 'Staged', dirty: 'Dirty', conflict: 'Conflict' })[state.value])
 const pillClass = computed(() => ({
-  clean: 'bg-[rgba(34,197,94,0.12)] text-success',
-  staged: 'bg-[rgba(34,197,94,0.12)] text-success',
-  dirty: 'bg-[rgba(234,179,8,0.14)] text-warning',
-  conflict: 'bg-[rgba(239,68,68,0.14)] text-danger',
+  clean: 'bg-success/12 text-success',
+  staged: 'bg-success/12 text-success',
+  dirty: 'bg-warning/14 text-warning',
+  conflict: 'bg-danger/14 text-danger',
 }[state.value]))
 
 /** 可提交：非冲突 + 非空 message + 非 pending（runtime 要求非空 message） */
@@ -213,4 +226,17 @@ watch(() => props.sessionId, () => {
   error.value = ''
   refresh()
 }, { immediate: true })
+
+// agent_end 后刷新（G-R2-04/C14）：agent 改动文件后 git 状态变 stale，回合结束时重拉。
+// 订阅会话级 message.complete（agent 回合结束），随 sessionId 变化重建订阅，避免轮询/filesystem watch。
+let unsubComplete: (() => void) | null = null
+watch(() => props.sessionId, (sid) => {
+  unsubComplete?.()
+  unsubComplete = onSessionEvent(sid, (msg: ServerMessage) => {
+    if (msg.type === 'message.complete') {
+      refresh()
+    }
+  })
+}, { immediate: true })
+onScopeDispose(() => unsubComplete?.())
 </script>

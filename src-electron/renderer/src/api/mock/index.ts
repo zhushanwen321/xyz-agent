@@ -314,13 +314,16 @@ export const chat = {
     })
   },
 
-  /** compact（#6）：模拟 session.compact 生命周期（compacting → compacted + 摘要行） */
+  /**
+   * compact（#6）：模拟 session.compact 生命周期（compacting → compacted）。
+   * 不推 compactionSummary——那是 pi 自主压缩才推的 system 行，与用户主动 /compact 语义不同
+   * （§4.4：compactionSummary 走 message.compactionSummary，由 pi 驱动，mock 捆绑会造成语义混淆）。
+   */
   async compact(sessionId: string): Promise<void> {
     await sleep(TIMING.ack)
     emit(sessionId, { type: 'session.compacting', payload: { sessionId, status: 'compacting' } })
     await sleep(TIMING.fileChangesGap)
     emit(sessionId, { type: 'session.compacted', payload: { sessionId, status: 'compacted' } })
-    emit(sessionId, { type: 'message.compactionSummary', payload: { sessionId, summary: '上下文已压缩', tokensBefore: 48000 } })
   },
 
   async abort(sessionId: string): Promise<void> {

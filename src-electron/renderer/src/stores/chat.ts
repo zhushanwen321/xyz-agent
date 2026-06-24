@@ -140,8 +140,9 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /**
-   * 追加 system 提示行（compact 失败等元信息反馈，作 SystemNotice 渲染）。
+   * 追加 system 提示行（runtime 主动推送的元信息反馈，如 compactionSummary，作 SystemNotice 渲染）。
    * 与规则 #3 「错误作为消息插入聊天流」一致：不用顶部 banner。
+   * 注：compact 失败的错误反馈走 useChat.compact 的 toast（§4.4 异常路径），不走此方法。
    */
   function appendSystemNotice(sessionId: string, text: string): void {
     const prev = messages.value.get(sessionId) ?? []

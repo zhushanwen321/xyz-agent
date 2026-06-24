@@ -34,6 +34,14 @@
       <component :is="fileIcon" class="size-3.5 shrink-0" :class="fileIconColor" />
       <span class="flex-1 truncate font-mono text-[12px] text-fg">{{ node.name }}</span>
       <span
+        v-if="typeof node.addLines === 'number' || typeof node.delLines === 'number'"
+        class="font-mono text-[10px]"
+      >
+        <span v-if="node.addLines" class="text-success">+{{ node.addLines }}</span>
+        <span v-if="node.addLines && node.delLines" class="text-subtle"> </span>
+        <span v-if="node.delLines" class="text-danger">−{{ node.delLines }}</span>
+      </span>
+      <span
         v-if="node.change"
         class="rounded-sm px-1 py-0.5 font-mono text-[10px]"
         :class="changeBadgeClass"
@@ -53,6 +61,9 @@ interface TreeNode {
   type: 'file' | 'dir'
   children: TreeNode[]
   change?: FileChange['status']
+  /** +N/-N 行数（文件用，FR-10 §4.8 F8） */
+  addLines?: number
+  delLines?: number
   fileCount: number
 }
 
@@ -92,12 +103,13 @@ const fileIconColor = computed(() => {
   }
 })
 
-/** M/A/D 标签（modified 橙 / added 绿 / deleted 红，design-tokens 语义色） */
+/** M/A/D/U/R/? 标签（modified 橙 / added 绿 / deleted 红 / unmerged 红，design-tokens 语义色） */
 const changeBadgeClass = computed(() => {
   switch (props.node.change) {
     case 'modified': return 'bg-warning/12 text-warning'
     case 'added': return 'bg-success/12 text-success'
     case 'deleted': return 'bg-danger/12 text-danger'
+    case 'unmerged': return 'bg-danger/16 text-danger font-semibold'
     default: return ''
   }
 })
@@ -107,6 +119,7 @@ const changeLabel = computed(() => {
     case 'modified': return 'M'
     case 'added': return 'A'
     case 'deleted': return 'D'
+    case 'unmerged': return 'U'
     default: return ''
   }
 })

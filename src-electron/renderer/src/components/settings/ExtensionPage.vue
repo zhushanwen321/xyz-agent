@@ -100,11 +100,23 @@
             <span v-for="t in ext.tools" :key="t" class="rounded-sm bg-surface px-1 py-0.5 font-mono text-[10px] text-subtle">{{ t }}</span>
           </div>
         </div>
-        <!-- 启用开关：调 extension.toggle 持久化 -->
-        <Label class="relative inline-flex shrink-0 cursor-pointer" @click.stop>
-          <input type="checkbox" :checked="ext.enabled" class="peer sr-only" @change="onToggle(ext, ($event.target as HTMLInputElement).checked)" />
-          <div class="h-5 w-9 rounded-full bg-border-strong after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-all peer-checked:bg-accent peer-checked:after:translate-x-full" />
-        </Label>
+        <!-- 启用开关：xyz-ui 无 Switch 组件，用 div 模拟滑动开关（CLAUDE.md 禁止原生表单元素；与候选选择器一致的 div 方案） -->
+        <div
+          role="switch"
+          tabindex="0"
+          :aria-checked="ext.enabled"
+          class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          :class="ext.enabled ? 'bg-accent' : 'bg-border-strong'"
+          :title="ext.enabled ? '点击禁用' : '点击启用'"
+          @click.stop="onToggle(ext, !ext.enabled)"
+          @keydown.enter.prevent="onToggle(ext, !ext.enabled)"
+          @keydown.space.prevent="onToggle(ext, !ext.enabled)"
+        >
+          <span
+            class="pointer-events-none inline-block size-4 rounded-full bg-white transition-transform"
+            :class="ext.enabled ? 'translate-x-4' : 'translate-x-0.5'"
+          />
+        </div>
         <!-- 卸载按钮 -->
         <Button
           variant="ghost"

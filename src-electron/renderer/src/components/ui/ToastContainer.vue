@@ -8,12 +8,12 @@
       v-for="t in toasts"
       :key="t.id"
       class="pointer-events-auto flex items-center gap-2 rounded-lg border px-4 py-3 text-sm shadow-lg"
-      :class="t.type === 'error' ? 'border-red-500/30 bg-red-950/90 text-red-200' : 'border-white/10 bg-[var(--bg-surface)] text-[var(--text-primary)]'"
+      :class="t.type === 'error' ? 'border-border bg-surface text-danger' : 'border-border bg-surface text-fg'"
     >
       <!-- error icon: lucide alert-circle -->
       <svg
         v-if="t.type === 'error'"
-        class="mt-px h-4 w-4 shrink-0 text-red-400"
+        class="mt-px h-4 w-4 shrink-0 text-danger"
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"

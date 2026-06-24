@@ -288,7 +288,7 @@ graph LR
 **关联**: §4.9 F9
 
 ##### 文件影响
-- 修改（前端）: `api/domains/extension.ts`（onWidget 订阅 + 1MB 分片 + 1000 行截断）、`components/panel/SideDrawer.vue`（widget 渲染区）
+- 修改（前端）: `api/domains/extension.ts`（onWidget 订阅 + 1000 行截断）、`components/panel/SideDrawer.vue`（widget 渲染区）
 
 ##### Subagent 配置
 
@@ -299,7 +299,7 @@ graph LR
 
 ##### 验收标准
 - [ ] extension setWidget → extension:widget server-push → SideDrawer tab 更新
-- [ ] 1MB 分片重组 + 1000 行截断；未知 widgetKey fallback
+- [ ] 1000 行截断（runtime setWidget 全量推送，无需分片重组）；未知 widgetKey fallback
 
 #### Wave 3b: retry/queue UI 指示位（#13）
 

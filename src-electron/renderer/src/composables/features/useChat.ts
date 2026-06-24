@@ -128,9 +128,9 @@ export function useChat() {
   /**
    * 压缩上下文（#6）：确保会话级订阅（消费 session.compacting/compacted）→ 调 api.compact。
    *
-   * 错误反馈（规则 #3 精神）：session 不存在 / pi 错误 → sendError（pending reject）→
-   * 在此 catch，把错误作为 system 提示行插入聊天流，不卡 UI。compacting 态由
-   * session.compacted 广播复位（broadcast 必达：compacting 后无论成败都广播 compacted）。
+   * 错误反馈（§4.4 异常路径）：session 不存在 / pi 错误 → sendError（pending reject）→
+   * 在此 catch，以 toast 提示用户，不卡 UI（toast 非顶部 banner，不违反规则 #3）。compacting 态
+   * 由 session.compacted 广播复位（broadcast 必达：compacting 后无论成败都广播 compacted）。
    */
   async function compact(): Promise<void> {
     const sid = session.activeId

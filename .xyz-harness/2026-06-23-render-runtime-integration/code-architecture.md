@@ -341,7 +341,8 @@ interface GitFileStatus {
 // ExtensionInfo 扩展
 interface ExtensionInfo {
   // ...existing...
-  tools: string[]
+  // tools 可选：runtime 扫描到时填，未扫描/无 tools 的 extension 为 undefined，避免强制 runtime 同步改造
+  tools?: string[]
 }
 
 // message.ts 枚举扩展
@@ -986,7 +987,7 @@ pi extension setWidget → EventAdapter → extension:widget server-push → Web
 
 #### 关联
 - issues.md 方案: #11 方案 A + #9 方案 A
-- NFR 影响: 性能（1MB 分片 + 1000 行截断）、稳定性（断连提示）
+- NFR 影响: 性能（1000 行截断；runtime setWidget 全量推送非分片，前端无需分片重组，见 event-adapter.ts:383）、稳定性（断连提示）
 
 ### 4.10 F10: SideDrawer 容器打开/切换
 
@@ -1038,7 +1039,7 @@ sequenceDiagram
     participant FV as FileView.vue
     participant CCP as chat-chunk-processor
 
-    P->>P: ExtensionInfo.tools: string[]
+    P->>P: ExtensionInfo.tools?: string[] (可选，runtime 扫描到时填)
     M->>M: FileChangeStatus += 'unmerged'
 
     EP->>P: 读取 ExtensionInfo.tools
@@ -1049,7 +1050,7 @@ sequenceDiagram
 
 | 类型/字段 | 位置 | 变更 | 消费者 | Spec/Issue |
 |----------|------|------|--------|-----------|
-| ExtensionInfo.tools | shared/src/protocol.ts | 新增 `tools: string[]` | ExtensionPage.vue | #12 |
+| ExtensionInfo.tools | shared/src/protocol.ts | 新增 `tools?: string[]`（可选） | ExtensionPage.vue | #12 |
 | FileChangeStatus.unmerged | shared/src/message.ts | 新增枚举值 | FileView.vue, GitService | #10/#12 |
 
 > **[STALE] ToolCallStatus.pending 已移除**：runtime 不生产 message.tool_call_pending（审批链路 Out-of-scope），故本轮只补 ExtensionInfo.tools 和 FileChangeStatus.unmerged 两项。spec FR-2/G-002 待审批链路纳入 scope 时再处理。

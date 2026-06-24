@@ -94,7 +94,7 @@ shared/src/protocol.ts ExtensionInfo 补 **tools 字段**（dirName 已在 proto
 **后端 git.* 命令协议（新建）：**
 1. shared/src/protocol.ts：
    - ClientMessageType 加 `git.status` / `git.stage` / `git.unstage` / `git.commit`
-   - git.status payload `{ sessionId }`；git.stage `{ sessionId, filePaths?: string[] }`（空=git add -A）；git.unstage `{ sessionId, filePaths?: string[] }`；git.commit `{ sessionId, message?: string }`（可选，空用 git 默认）
+   - git.status payload `{ sessionId }`；git.stage `{ sessionId, filePaths?: string[] }`（空=git add -A）；git.unstage `{ sessionId, filePaths?: string[] }`；git.commit `{ sessionId, message?: string }`（协议可选；**实现要求非空**——git 默认空 message 会打开编辑器，子进程 execFileSync 下永久挂起，故 runtime 在空 message 时返回 'commit_message_required' error，GitZone UI 在 message 为空时禁用提交按钮）
    - ServerMessageType 加 `git.status:result`，payload `{ sessionId, isRepo: boolean, branch?, stagedCount, unstagedCount, stats: {add,del}, hasConflict, files: GitFileStatus[] }`（GitFileStatus = {path, xyCode, status: added|modified|deleted|unmerged|renamed|untracked}）
 2. runtime 新建 git-message-handler.ts（参考 extension-message-handler.ts 结构）：git.status → reconcileGitStatus(cwd)；git.stage/unstage/commit → IGitExecutor
 3. server.ts 路由注册 git.* 到 handler（routes Map:124-132）

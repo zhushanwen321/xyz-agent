@@ -55,6 +55,9 @@ interface TreeNode {
   type: 'file' | 'dir'
   children: TreeNode[]
   change?: FileChange['status']
+  /** +N/-N 行数（文件用，FR-10 §4.8 F8） */
+  addLines?: number
+  delLines?: number
   /** 直系文件数（目录用，展示在右侧） */
   fileCount: number
 }
@@ -89,6 +92,8 @@ function buildTree(changes: FileChange[]): TreeNode[] {
           type: 'file',
           children: [],
           change: fc.status,
+          addLines: fc.addLines,
+          delLines: fc.delLines,
           fileCount: 1,
         })
       } else {
