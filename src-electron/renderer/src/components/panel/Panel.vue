@@ -55,6 +55,7 @@
       :is-open="drawerOpen"
       :active-tab="drawerTab"
       :docked="drawerDocked"
+      :session-id="sessionId"
       @close="closeDrawer"
       @set-tab="setDrawerTab"
       @toggle-dock="toggleDrawerDock"

@@ -8,6 +8,10 @@
     steer/followUp：isStreaming 时 ⏎ 追加 steer，Alt+⏎ 追加 followUp，都不打断当前回合。
   -->
   <div class="composer mx-3.5">
+    <!-- retry/queue 指示位（spec C10，#13，composer 上方独立行）：
+         auto_retry_end / message_start 到达时 store 自动清 → state=undefined → 组件 v-if 消失 -->
+    <RetryIndicator :state="retryState" />
+    <QueueBubble :state="queueState" />
     <!-- 命令浮层（§2d @/#//）：anchor = composer-box（slot），reka-ui Popover portal body。
          composer-box 内 focus 算 inside 不触发 dismiss，键盘路由见 onKeydown -->
     <CommandPopover
@@ -96,6 +100,8 @@ import ContextCapacityPopover from './ContextCapacityPopover.vue'
 import ModelSelectPopover from './ModelSelectPopover.vue'
 import ThinkingLevelPopover from './ThinkingLevelPopover.vue'
 import ContextChipsBar from './ContextChipsBar.vue'
+import RetryIndicator from './RetryIndicator.vue'
+import QueueBubble from './QueueBubble.vue'
 import { useChat } from '@/composables/features/useChat'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
@@ -112,6 +118,9 @@ const { send, steer, followUp, abort, compact } = useChat()
 
 /** 当前 session 的思考等级（从 SessionSummary.thinkingLevel 透传给 ThinkingLevelPopover） */
 const currentThinkingLevel = computed(() => sessionStore.active?.thinkingLevel)
+/** #13 retry/queue 指示位数据源（store 由 W0/#8 维护，不可变 Map 更新触发响应） */
+const retryState = computed(() => chatStore.getRetryState(props.sessionId))
+const queueState = computed(() => chatStore.getQueueState(props.sessionId))
 
 const draft = ref('')
 /** 当前选中模型 id（占位，后续接 store/订阅 model.switched；runtime 切换属后续真实集成） */
