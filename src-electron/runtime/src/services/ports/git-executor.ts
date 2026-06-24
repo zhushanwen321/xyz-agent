@@ -41,5 +41,19 @@ export interface IGitExecutor {
   exec(cwd: string, command: GitCommand, args?: string[]): Promise<GitExecutorResult>
 }
 
+/**
+ * git 不可用 / 超时时抛出。属 port 契约的一部分（executor 的失败分类），
+ * 由 infra/git-executor.ts 在实现中 throw，GitService 捕获后按语义判定（getStatus 降级 / 写操作转 GitError）。
+ * 定义在 port 层，避免 services 直接 import infra 造成分层泄漏（D1）。
+ */
+export class GitExecutorError extends Error {
+  readonly code: 'git_unavailable' | 'timeout'
+  constructor(code: 'git_unavailable' | 'timeout', message: string) {
+    super(message)
+    this.name = 'GitExecutorError'
+    this.code = code
+  }
+}
+
 // ── 复用 shared 类型，供 GitService / parser 之间传递 ───────────────
 export type { GitFileStatus }

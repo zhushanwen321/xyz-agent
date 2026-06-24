@@ -11,6 +11,7 @@
  * 仅在 git 二进制不可用（ENOENT）或超时时抛 GitExecutorError，由 handler 转 'git_unavailable'。
  */
 import { execFileSync } from 'node:child_process'
+import { GitExecutorError } from '../services/ports/git-executor.js'
 import type { GitCommand, GitExecutorResult, IGitExecutor } from '../services/ports/git-executor.js'
 
 /** execFileSync 默认超时（ms）。大仓库 status/diff 也应在此内有界返回。 */
@@ -18,16 +19,6 @@ const GIT_TIMEOUT_MS = 8000
 /** stdout 最大缓冲（bytes）。超大 status/diff 输出兼底。 */
 // eslint-disable-next-line no-magic-numbers -- 10MB = 10 * 1024 * 1024 bytes
 const GIT_MAX_BUFFER_BYTES = 10 * 1024 * 1024
-
-/** git 不可用 / 超时时抛出，handler 转 'git_unavailable' 降级。 */
-export class GitExecutorError extends Error {
-  readonly code: 'git_unavailable' | 'timeout'
-  constructor(code: 'git_unavailable' | 'timeout', message: string) {
-    super(message)
-    this.name = 'GitExecutorError'
-    this.code = code
-  }
-}
 
 /**
  * Production adapter。数组参数经 execFileSync 执行，不经 shell。

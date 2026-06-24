@@ -20,7 +20,7 @@ import { resolve as resolvePath } from 'node:path'
 import type { GitStatusResult } from '@xyz-agent/shared'
 import type { ISessionService } from '../interfaces.js'
 import type { GitCommand, GitExecutorResult, IGitExecutor } from './ports/git-executor.js'
-import { GitExecutorError } from '../infra/git-executor.js'
+import { GitExecutorError } from './ports/git-executor.js'
 import { isUnderOrEqual } from '../utils/path-utils.js'
 import { toErrorMessage } from '../utils/errors.js'
 import { parseGitStatus, deriveCounts, parseNumstat } from '../infra/git-status-parser.js'
@@ -90,32 +90,41 @@ export class GitService {
       throw new GitError('session_not_found', `Session 不存在或无 cwd: ${sessionId}`)
     }
 
-    // status --porcelain=v1 -z -b：-z NUL 分隔（路径安全），-b 带 branch 头
-    const statusRes = await this.execSafe(cwd, 'status', ['--porcelain=v1', '-z', '-b'])
-    if (statusRes.exitCode !== 0) {
-      // 非 git 仓库（git status 在非仓库返回 128 + "not a git repository"）
-      return notRepoResult(sessionId)
-    }
+    try {
+      // status --porcelain=v1 -z -b：-z NUL 分隔（路径安全），-b 带 branch 头
+      const statusRes = await this.execSafe(cwd, 'status', ['--porcelain=v1', '-z', '-b'])
+      if (statusRes.exitCode !== 0) {
+        // 非 git 仓库（git status 在非仓库返回 128 + "not a git repository"）
+        return notRepoResult(sessionId)
+      }
 
-    const { branch, files } = parseGitStatus(statusRes.stdout)
-    const { stagedCount, unstagedCount, hasConflict } = deriveCounts(files)
+      const { branch, files } = parseGitStatus(statusRes.stdout)
+      const { stagedCount, unstagedCount, hasConflict } = deriveCounts(files)
 
-    // stats：tracked 改动行数（staged+unstaged vs HEAD）。无 HEAD（空仓库）时 diff 失败 → 0。
-    let stats = { add: 0, del: 0 }
-    const diffRes = await this.execSafe(cwd, 'diff', ['--numstat', 'HEAD'])
-    if (diffRes.exitCode === 0) {
-      stats = parseNumstat(diffRes.stdout)
-    }
+      // stats：tracked 改动行数（staged+unstaged vs HEAD）。无 HEAD（空仓库）时 diff 失败 → 0。
+      let stats = { add: 0, del: 0 }
+      const diffRes = await this.execSafe(cwd, 'diff', ['--numstat', 'HEAD'])
+      if (diffRes.exitCode === 0) {
+        stats = parseNumstat(diffRes.stdout)
+      }
 
-    return {
-      sessionId,
-      isRepo: true,
-      branch,
-      stagedCount,
-      unstagedCount,
-      stats,
-      hasConflict,
-      files,
+      return {
+        sessionId,
+        isRepo: true,
+        branch,
+        stagedCount,
+        unstagedCount,
+        stats,
+        hasConflict,
+        files,
+      }
+    } catch (e) {
+      // git 不可用 / 超时（git_unavailable）或未知底层错误（git_failed）→ 降级 isRepo:false（spec G-R2-05）。
+      // session_not_found 在上方已提前抛出，不会进到此 catch；写操作不走 getStatus，仍交 handler 发 error envelope。
+      if (e instanceof GitError && (e.code === 'git_unavailable' || e.code === 'git_failed')) {
+        return notRepoResult(sessionId)
+      }
+      throw e
     }
   }
 
