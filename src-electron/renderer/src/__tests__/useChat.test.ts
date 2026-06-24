@@ -32,6 +32,7 @@ const apiMock = vi.hoisted(() => {
     send: vi.fn(() => Promise.resolve()),
     getHistory: vi.fn(() => Promise.resolve([])),
     abort: vi.fn(() => Promise.resolve()),
+    compact: vi.fn(() => Promise.resolve()),
   }
 })
 
@@ -41,6 +42,7 @@ vi.mock('@/api', () => ({
     send: apiMock.send,
     getHistory: apiMock.getHistory,
     abort: apiMock.abort,
+    compact: apiMock.compact,
   },
   session: {},
 }))
@@ -155,5 +157,47 @@ describe('useChat 流式状态机', () => {
     expect(chat.isStreaming).toBe(true)
     await send('second')
     expect(apiMock.send).toHaveBeenCalledTimes(1) // 仅首次发送
+  })
+})
+
+describe('useChat compact 状态机（#6）', () => {
+  it('compact 调 chatApi.compact 且建立会话级订阅（消费 compacting/compacted）', async () => {
+    const session = useSessionStore()
+    session.activeId = 'c-sub'
+    const { compact } = useChat()
+    await compact()
+    expect(apiMock.compact).toHaveBeenCalledWith('c-sub')
+    expect(apiMock.streamSubscribe).toHaveBeenCalledTimes(1)
+  })
+
+  it('session.compacting → isCompacting=true；session.compacted → isCompacting=false', async () => {
+    const session = useSessionStore()
+    session.activeId = 'c-flow'
+    const chat = useChatStore()
+    const { compact } = useChat()
+    await compact()
+    emit({ type: 'session.compacting', payload: { sessionId: 'c-flow', status: 'compacting' } })
+    expect(chat.isCompacting('c-flow')).toBe(true)
+    emit({ type: 'session.compacted', payload: { sessionId: 'c-flow', status: 'compacted' } })
+    expect(chat.isCompacting('c-flow')).toBe(false)
+  })
+
+  it('compact 失败（pending reject）→ 插入 system 错误提示，不抛出（不卡 UI，规则 #3）', async () => {
+    const session = useSessionStore()
+    session.activeId = 'c-err'
+    const chat = useChatStore()
+    apiMock.compact.mockRejectedValueOnce(new Error('Session not found'))
+    const { compact } = useChat()
+    await expect(compact()).resolves.toBeUndefined()
+    const msgs = chat.getMessages('c-err')
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0].role).toBe('system')
+    expect(msgs[0].content).toContain('压缩失败')
+  })
+
+  it('compact 守卫：无 active session 时早退', async () => {
+    const { compact } = useChat()
+    await compact()
+    expect(apiMock.compact).not.toHaveBeenCalled()
   })
 })

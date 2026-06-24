@@ -49,6 +49,14 @@ function ensureStreamSubscription(
         // 必须在此复位 isStreaming，否则 UI 卡在「思考中」（规则 #3/#7 防护的失败模式）。
         chat.setStreaming(false)
         break
+      case 'session.compacting':
+        // #6：compact 生命周期开始（runtime server-push，走 session 通道）
+        chat.setCompacting(sid, true)
+        break
+      case 'session.compacted':
+        // #6：compact 生命周期结束（成功/失败均广播）。错误反馈走 compact() 的 catch，此处仅复位态。
+        chat.setCompacting(sid, false)
+        break
       default:
         break
     }
@@ -117,6 +125,25 @@ export function useChat() {
   }
 
   /**
+   * 压缩上下文（#6）：确保会话级订阅（消费 session.compacting/compacted）→ 调 api.compact。
+   *
+   * 错误反馈（规则 #3 精神）：session 不存在 / pi 错误 → sendError（pending reject）→
+   * 在此 catch，把错误作为 system 提示行插入聊天流，不卡 UI。compacting 态由
+   * session.compacted 广播复位（broadcast 必达：compacting 后无论成败都广播 compacted）。
+   */
+  async function compact(): Promise<void> {
+    const sid = session.activeId
+    if (!sid) return
+    ensureStreamSubscription(sid, chat)
+    try {
+      await chatApi.compact(sid)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      chat.appendSystemNotice(sid, `压缩失败：${msg}`)
+    }
+  }
+
+  /**
    * 编辑 user 消息并重新发送（原地替换语义，非 fork）：
    * 截断该 user 消息（含）及其后所有 → appendUser 新文本 → 走 send 流式。
    *
@@ -145,5 +172,5 @@ export function useChat() {
     chat.hydrate(sessionId, history)
   }
 
-  return { send, steer, followUp, abort, editAndResend, hydrateHistory }
+  return { send, steer, followUp, abort, compact, editAndResend, hydrateHistory }
 }

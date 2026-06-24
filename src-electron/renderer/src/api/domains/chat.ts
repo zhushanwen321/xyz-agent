@@ -47,6 +47,18 @@ export function followUp(sessionId: string, text: string): Promise<void> {
   return result
 }
 
+/**
+ * 压缩上下文（#6：触发 runtime session.compact）。
+ * runtime 生命周期推送：session.compacting（开始）→ session.compacted（完成/失败）。
+ * 这些广播走 session 通道，由 useChat 的会话级订阅消费，驱动 store 的 isCompacting 状态。
+ */
+export function compact(sessionId: string): Promise<void> {
+  const id = pending.create()
+  const result = pending.register<void>(id)
+  transport.send({ type: 'session.compact', id, payload: { sessionId } })
+  return result
+}
+
 /** 中断当前回合（DEFERRED 流转，§9 G-025） */
 export function abort(sessionId: string): Promise<void> {
   const id = pending.create()

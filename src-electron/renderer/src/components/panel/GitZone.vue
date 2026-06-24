@@ -31,6 +31,19 @@
         <span class="text-success">+{{ result.stats.add }}</span>
         <span class="text-danger">−{{ result.stats.del }}</span>
       </span>
+      <!-- Diff / 解决冲突按钮：git-zone Diff 按钮是 SideDrawer 的触发源（C9 / §4.10 F10）。
+           SideDrawer 不含 Diff tab（审批 Out-of-scope），点击打开默认 Terminal tab。
+           conflict 态用警示图标 + danger 色，非 conflict 用 diff 比较图标。 -->
+      <Button
+        variant="ghost"
+        class="size-6 shrink-0 rounded-sm p-0"
+        :class="result.hasConflict ? 'text-danger hover:text-danger' : 'text-subtle hover:text-fg'"
+        :title="result.hasConflict ? '解决冲突（侧栏）' : '在侧栏查看'"
+        @click="emit('open-side-drawer')"
+      >
+        <TriangleAlert v-if="result.hasConflict" class="size-3" />
+        <GitCompare v-else class="size-3" />
+      </Button>
       <Button
         variant="ghost"
         class="size-6 shrink-0 rounded-sm p-0 text-subtle hover:text-fg"
@@ -95,13 +108,18 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { GitBranch, RefreshCw } from '@lucide/vue'
+import { GitBranch, RefreshCw, GitCompare, TriangleAlert } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { git as gitApi } from '@/api'
 import type { GitStatusResult, GitFileStatus } from '@xyz-agent/shared'
 
 const props = defineProps<{ sessionId: string }>()
+
+/** SideDrawer 触发：git-zone Diff 按钮 emit，Panel 经 useSideDrawer 打开（§4.10 F10） */
+const emit = defineEmits<{
+  'open-side-drawer': []
+}>()
 
 const result = ref<GitStatusResult | null>(null)
 const pending = ref(false)

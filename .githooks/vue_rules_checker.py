@@ -53,6 +53,13 @@ STYLE_SCOPED_WHITELIST: list[str] = []
 # CSS 选择器检测正则
 RE_STYLE_SELECTOR = re.compile(r'^[.\w\-]+[\s,]*\{')
 
+# [HISTORICAL] Vue <Transition> 类选择器（.xxx-enter-active / .xxx-leave-to 等）
+# 是项目明确的 escape hatch（CLAUDE.md design-system：Tailwind 无法表达
+# enter-from/leave-to 同时变换的状态类）。检测到这类选择器时不算自定义样式。
+# 覆盖 enter/leave/appear 三组 × from/active/to 三阶段。命名见 Vue 官方文档
+# https://vuejs.org/guide/built-ins/transition.html#css-based-transitions
+RE_VUE_TRANSITION_CLASS = re.compile(r'-?(?:enter|leave|appear)-(?:from|active|to)\b')
+
 # Emoji Unicode 范围
 EMOJI_RANGES = [
     (0x1F600, 0x1F64F),   # emoticons
@@ -241,6 +248,11 @@ def check_vue_file(content: str, relative_path: str) -> tuple[int, list[str]]:
                 next_lines = '\n'.join(lines[i:min(i + 3, len(lines))])
                 if '@apply' in next_lines:
                     continue
+            # [HISTORICAL] Vue <Transition> 类（含逗号续行的选择器组）是合法
+            # escape hatch，不算自定义样式。回看 6 行（含当前）覆盖典型多行选择器组。
+            selector_group = '\n'.join(lines[max(0, i - 6):i])
+            if RE_VUE_TRANSITION_CLASS.search(selector_group):
+                continue
             issues.append(f"  [第{i}行] 禁止编写自定义 CSS（特殊动画除外）")
             issues.append("    请使用 Tailwind 工具类替代")
             exit_code = 2

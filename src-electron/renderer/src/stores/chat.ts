@@ -38,6 +38,8 @@ export const useChatStore = defineStore('chat', () => {
   /** 已 hydrate 的 session（避免切换时重复注入历史） */
   const hydrated = ref<Set<string>>(new Set())
   const isStreaming = ref(false)
+  /** 正在压缩的 session 集合（#6：session.compacting/compacted 驱动，按 session 隔离） */
+  const compactingSessions = ref<Set<string>>(new Set())
   /** 按 sessionId 分区的自动重试态（W06-B，auto_retry_start/end） */
   const retryStates = ref<Map<string, RetryState>>(new Map())
   /** 按 sessionId 分区的消息队列态（W06-B，queue_update） */
@@ -124,6 +126,37 @@ export const useChatStore = defineStore('chat', () => {
     isStreaming.value = value
   }
 
+  /** 指定 session 是否正在压缩上下文（#6） */
+  function isCompacting(sessionId: string): boolean {
+    return compactingSessions.value.has(sessionId)
+  }
+
+  /** 设置压缩态（session.compacting→true / session.compacted→false），不可变 set 保证响应性 */
+  function setCompacting(sessionId: string, value: boolean): void {
+    const next = new Set(compactingSessions.value)
+    if (value) next.add(sessionId)
+    else next.delete(sessionId)
+    compactingSessions.value = next
+  }
+
+  /**
+   * 追加 system 提示行（compact 失败等元信息反馈，作 SystemNotice 渲染）。
+   * 与规则 #3 「错误作为消息插入聊天流」一致：不用顶部 banner。
+   */
+  function appendSystemNotice(sessionId: string, text: string): void {
+    const prev = messages.value.get(sessionId) ?? []
+    messages.value.set(sessionId, [
+      ...prev,
+      {
+        id: `sys-${crypto.randomUUID()}`,
+        role: 'system',
+        content: text,
+        status: 'complete',
+        timestamp: Date.now(),
+      },
+    ])
+  }
+
   /**
    * 截断指定 session 的消息：删除 messageId（含/不含）及其后所有消息。
    * 编辑重发场景（原地替换 user 消息，非 fork）：truncate(含该 user) → appendUser(新文本) → send。
@@ -177,6 +210,7 @@ export const useChatStore = defineStore('chat', () => {
   return {
     messages,
     isStreaming,
+    compactingSessions,
     retryStates,
     queueStates,
     changeSetStatuses,
@@ -190,6 +224,9 @@ export const useChatStore = defineStore('chat', () => {
     appendUser,
     appendAssistantChunk,
     setStreaming,
+    isCompacting,
+    setCompacting,
+    appendSystemNotice,
     truncateFrom,
     applyFileChanges,
   }

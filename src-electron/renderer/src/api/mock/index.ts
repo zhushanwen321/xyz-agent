@@ -41,6 +41,7 @@ const MOCK_COMMANDS = [
   { name: '/commit', description: '提交改动', source: 'extension' },
   { name: '/review', description: '代码审查', source: 'extension' },
   { name: '/fix', description: '修复问题', source: 'skill' },
+  { name: '/compact', description: '压缩上下文', source: 'builtin' },
 ]
 
 /**
@@ -311,6 +312,15 @@ export const chat = {
         usage: { inputTokens: 1280, outputTokens: 642, totalTokens: 1922 },
       },
     })
+  },
+
+  /** compact（#6）：模拟 session.compact 生命周期（compacting → compacted + 摘要行） */
+  async compact(sessionId: string): Promise<void> {
+    await sleep(TIMING.ack)
+    emit(sessionId, { type: 'session.compacting', payload: { sessionId, status: 'compacting' } })
+    await sleep(TIMING.fileChangesGap)
+    emit(sessionId, { type: 'session.compacted', payload: { sessionId, status: 'compacted' } })
+    emit(sessionId, { type: 'message.compactionSummary', payload: { sessionId, summary: '上下文已压缩', tokensBefore: 48000 } })
   },
 
   async abort(sessionId: string): Promise<void> {

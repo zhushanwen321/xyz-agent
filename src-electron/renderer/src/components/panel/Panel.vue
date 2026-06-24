@@ -42,8 +42,23 @@
       <Composer v-if="sessionId" :session-id="sessionId" />
 
       <!-- ⑤ git-zone（FR-12 加回，非 git 仓库时组件内部自隐藏） -->
-      <GitZone v-if="sessionId" :session-id="sessionId" />
+      <GitZone
+        v-if="sessionId"
+        :session-id="sessionId"
+        @open-side-drawer="openDrawer"
+      />
     </div>
+
+    <!-- SideDrawer：右抽屉容器（§4.10 F10），固定挂本 Panel（panel/spec.md）。
+         状态控制下沉 useSideDrawer（§6.3 点5），Panel 仅作 slot 容器不持有 tab/dock 状态。 -->
+    <SideDrawer
+      :is-open="drawerOpen"
+      :active-tab="drawerTab"
+      :docked="drawerDocked"
+      @close="closeDrawer"
+      @set-tab="setDrawerTab"
+      @toggle-dock="toggleDrawerDock"
+    />
   </section>
 </template>
 
@@ -56,6 +71,8 @@ import ProgressZone from './ProgressZone.vue'
 import MessageStream from './MessageStream.vue'
 import Composer from './Composer.vue'
 import GitZone from './GitZone.vue'
+import SideDrawer from './SideDrawer.vue'
+import { useSideDrawer } from '@/composables/features/useSideDrawer'
 
 const props = defineProps<{
   panelId: string
@@ -74,6 +91,17 @@ const emit = defineEmits<{
   'new-session': []
   close: []
 }>()
+
+/** SideDrawer 控制（§6.3 点5 架构解耦）：open/dock/tab 状态下沉 composable，Panel 不直接持有 */
+const {
+  isOpen: drawerOpen,
+  activeTab: drawerTab,
+  docked: drawerDocked,
+  open: openDrawer,
+  close: closeDrawer,
+  setTab: setDrawerTab,
+  toggleDock: toggleDrawerDock,
+} = useSideDrawer()
 
 /** 点击 panel body 切 active（双 panel 主从焦点）；点 header 按钮不误切（按钮自身 stopPropagation） */
 function onPanelMouseDown(e: MouseEvent): void {

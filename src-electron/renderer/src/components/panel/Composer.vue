@@ -53,6 +53,13 @@
           <Square class="size-[13px]" />
         </Button>
         <div
+          v-else-if="isCompacting"
+          class="ml-1.5 grid size-[30px] place-items-center rounded-md bg-surface-hover text-muted"
+          title="压缩中…"
+        >
+          <Loader2 class="size-4 animate-spin" />
+        </div>
+        <div
           v-else-if="isSending"
           class="ml-1.5 grid size-[30px] place-items-center rounded-md bg-[var(--accent)] text-white"
           title="发送中…"
@@ -101,7 +108,7 @@ const props = defineProps<{
 const chatStore = useChatStore()
 const sessionStore = useSessionStore()
 const { isStreaming } = storeToRefs(chatStore)
-const { send, steer, followUp, abort } = useChat()
+const { send, steer, followUp, abort, compact } = useChat()
 
 /** 当前 session 的思考等级（从 SessionSummary.thinkingLevel 透传给 ThinkingLevelPopover） */
 const currentThinkingLevel = computed(() => sessionStore.active?.thinkingLevel)
@@ -117,6 +124,8 @@ const cmdType = ref<'mention' | 'file' | 'slash'>('mention')
 const commandPopoverRef = ref<InstanceType<typeof CommandPopover> | null>(null)
 /** 发送中（S5）：useChat.send 的 Promise 在途 */
 const isSending = ref(false)
+/** 当前 panel 的 session 是否正在压缩上下文（#6，per-session） */
+const isCompacting = computed(() => chatStore.isCompacting(props.sessionId))
 
 /** ComposerInput input 事件 → 维护 draft（纯文本，用于发送判断） */
 function onInputChange(text: string): void {
@@ -168,8 +177,8 @@ async function onThinkingSelect(level: string): Promise<void> {
 }
 
 const hasInput = computed(() => draft.value.trim().length > 0)
-/** 可发送：有输入且非 streaming 非 sending */
-const canSend = computed(() => hasInput.value && !isStreaming.value && !isSending.value)
+/** 可发送：有输入且非 streaming 非 sending 非 compacting */
+const canSend = computed(() => hasInput.value && !isStreaming.value && !isSending.value && !isCompacting.value)
 
 /**
  * composer-box class（draft）：
@@ -191,9 +200,19 @@ const placeholder = computed(() =>
     : '描述你想让 AI 做什么…',
 )
 
-/** 发送：S2 → S5（sending）→ S6（streaming）→ 完成回 S1 */
+/**
+ * 发送：S2 → S5（sending）→ S6（streaming）→ 完成回 S1。
+ * /compact slash chip 是操作型前缀：提交时走专用 compact RPC（#6），不走普通 send。
+ * 检测：slash chip 的命令名（如 '/compact'）会被 ComposerInput.getText 读入 draft，
+ * 故 draft 恰为 '/compact'（chip 单独存在，无附加文本）时判定为 compact 操作。
+ */
 async function onSend(): Promise<void> {
   if (!canSend.value) return
+  if (draft.value.trim() === '/compact') {
+    clearInput()
+    await compact()
+    return
+  }
   const text = draft.value
   clearInput()
   isSending.value = true

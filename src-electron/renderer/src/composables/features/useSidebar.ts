@@ -13,9 +13,11 @@
  * derivedStatus（D6）：session 5 态前端派生。本层能同时读 chat store 的消息分区 +
  * session store，是派生逻辑的正确落点（stores 互不 import，派生无法放在 store 内）。
  */
-import { computed } from 'vue'
+import { computed, onScopeDispose } from 'vue'
 import type { ComputedRef } from 'vue'
+import type { SessionGroup } from '@xyz-agent/shared'
 import { chat as chatApi, session as sessionApi } from '@/api'
+import * as events from '@/api/events'
 import { useChatStore } from '@/stores/chat'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePanelStore } from '@/stores/panel'
@@ -63,12 +65,45 @@ export function deriveStatus(
   return 'done'
 }
 
+// ── session.list server-push 订阅（#7 方案 A；CLAUDE.md 规则 #2 防重复注册）──
+// useSidebar 被 6+ 组件实例化（Sidebar/Turn/AppShell/PanelContainer/Workspace/Overview），
+// 若每实例各注册一次 onGlobalType，每次广播会触发 N 次相同 setGroups（事件处理翻倍）。
+// 模块级 refCount：首个实例注册，末个实例卸载时取消，中间实例共享同一监听。
+let sessionListSubCount = 0
+let sessionListUnsub: (() => void) | null = null
+
+function bindSessionListBroadcast(setGroups: (groups: SessionGroup[]) => void): void {
+  sessionListSubCount += 1
+  if (sessionListSubCount === 1) {
+    sessionListUnsub = events.onGlobalType('session.list', (msg) => setGroups(msg.payload.groups))
+  }
+}
+
+function unbindSessionListBroadcast(): void {
+  sessionListSubCount = Math.max(0, sessionListSubCount - 1)
+  if (sessionListSubCount === 0 && sessionListUnsub) {
+    sessionListUnsub()
+    sessionListUnsub = null
+  }
+}
+
 export function useSidebar() {
   const navigation = useNavigationStore()
   const session = useSessionStore()
   const chat = useChatStore()
   const sidebar = useSidebarStore()
   const panel = usePanelStore()
+
+  /**
+   * session.list server-push 订阅（#7 方案 A）。
+   * runtime 在 create/delete/rename 后 broadcastSessionList 推全量分组（server.ts:322），
+   * 这里 setGroups 更新列表——只换列表，不重载历史（history hydrate 仅 loadSessions/按需做）。
+   * 与 newSession/deleteSession/renameSession 的本地乐观更新互补：乐观更新让 UI 即时响应，
+   * 广播随后用 runtime 权威分组对齐（同一 store，重复写入幂等）。
+   * refCount + onScopeDispose：useSidebar 多实例只注册一次，随组件卸载自动收尾。
+   */
+  bindSessionListBroadcast(session.setGroups)
+  onScopeDispose(unbindSessionListBroadcast)
 
   /**
    * 同步 session 到 panel（sidebar 选 session 与 ⌘[/⌘] 导航共用）。
