@@ -107,7 +107,8 @@ graph LR
   #10[P1: FileView 数据源切换]:::investigating
   #9 --> #11[P1: widget 订阅]:::investigating
   #12[P2: 契约裂缝修复]:::investigating
-  #13[P3: retry/queue UI]:::fog
+  #13[P1: retry/queue UI]:::investigating
+  #18[P2: trash.ts 注入面]:::fog
 
   classDef resolved fill:#1a3a23,stroke:#4ade80,stroke-width:2px,color:#e8edf2
   classDef investigating fill:#3a331a,stroke:#facc15,stroke-width:2px,color:#e8edf2
@@ -122,7 +123,7 @@ graph LR
       </thead>
       <tbody>
         <tr>
-          <td>#1</td><td>git 全栈 — runtime git 命令 + frontend domain</td>
+          <td>#1</td><td>git 全栈 — runtime git 命令 + frontend domain<br><span style="color:var(--muted);font-size:12px;">DESIGN-IT-TWICE: async execFile（非阻塞）+ reconciler 迁移；C12 独立于 file_changes</span></td>
           <td class="p0">P0</td><td>无</td><td>Strong</td><td><span class="status resolved">resolved</span></td>
         </tr>
         <tr>
@@ -130,7 +131,7 @@ graph LR
           <td class="p0">P0</td><td>无</td><td>Strong</td><td><span class="status resolved">resolved</span></td>
         </tr>
         <tr>
-          <td>#3</td><td>GitZone 组件 — Panel zone ⑤</td>
+          <td>#3</td><td>GitZone 组件 — Panel zone ⑤<br><span style="color:var(--muted);font-size:12px;">C13 commit 输入框 + C14 刷新（进入/agent_end/操作后/refocus 双触发）+ 非轮询</span></td>
           <td class="p1">P1</td><td>#1</td><td>Strong</td><td><span class="status investigating">investigating</span></td>
         </tr>
         <tr>
@@ -170,17 +171,13 @@ graph LR
           <td class="p2">P2</td><td>无</td><td>Strong</td><td><span class="status investigating">investigating</span></td>
         </tr>
         <tr>
-          <td>#13</td><td>auto_retry / queue_update UI 指示位 ?</td>
-          <td class="p3">P3</td><td>#8</td><td>Speculative</td><td><span class="status fog">fog</span></td>
+          <td>#13</td><td>auto_retry / queue_update UI 指示位</td>
+          <td class="p1">P1</td><td>#8</td><td>Strong</td><td><span class="status investigating">investigating</span></td>
         </tr>
       </tbody>
     </table>
 
-    <p style="color:var(--muted);font-size:14px;margin-top:16px;">#13 不排入具体 Wave；W4 为预留占位，需 UI 形态确认后方可排期。</p>
-
-    <h2 style="margin-top:48px;">后续迭代（P3）
-      </tbody>
-    </table>
+    <p style="color:var(--muted);font-size:14px;margin-top:16px;">#13 [SURFACED] 冲突裁决：原 P3 迷雾，spec C10 形态已定，修订为 P1，排入 W2。</p>
 
     <h2 style="margin-top:48px;">后续迭代（P3）</h2>
     <table>
@@ -190,6 +187,7 @@ graph LR
         <tr><td>#15</td><td>session 项目分组 UI</td><td>非核心，列表可先平铺</td></tr>
         <tr><td>#16</td><td>ContextChipsBar / ProgressZone 真实数据</td><td>协议级缺口，后端无通道</td></tr>
         <tr><td>#17</td><td>@/# 搜索通道</td><td>协议级缺口，需整体设计</td></tr>
+        <tr><td>#18</td><td>trash.ts filePath 插值注入面（P2 安全债）<br><span style="color:var(--muted);font-size:12px;">review-issues-v2 红队 R3 发现；非 git 职责，建议本轮顺手修</span></td><td>非核心职责域外，但真注入面（filePath 可控）</td></tr>
       </tbody>
     </table>
   </div>

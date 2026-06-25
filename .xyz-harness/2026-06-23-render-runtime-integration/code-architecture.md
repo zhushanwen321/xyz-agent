@@ -106,7 +106,7 @@ src-electron/runtime/src/
 │   │   ├── event-adapter.ts       # pi event → ServerMessage
 │   │   ├── file-change-reconciler.ts # git status 解析
 │   │   └── ...
-│   ├── git-executor.ts            # execFileSync 实现（#1 新建）
+│   ├── git-executor.ts            # async execFile 实现（#1 重构）
 │   └── git-status-parser.ts       # 复用 reconciler 解析 git status（#1 新建）
 └── plugins/demo/                  # 内置 demo plugin（widget 来源）
 ```
@@ -388,7 +388,7 @@ sequenceDiagram
     activate GS
     GS->>GE: exec(cwd, 'status', ['--porcelain'])
     activate GE
-    GE->>Git: execFileSync('git', ['status','--porcelain'], {cwd, timeout:5000})
+    GE->>Git: execFile('git', ['status','--porcelain'], {cwd, timeout:5000})
     activate Git
     Git-->>GE: stdout
     deactivate Git
@@ -427,7 +427,7 @@ Panel.vue onMounted → GitZone.vue status() → transport.send('git.status') �
 #### 关联
 - requirements.md 用例: UC-1（开发联调）/ UC-2（git-zone 四态）
 - issues.md 方案: #1 方案 A + #3 方案 A + #9 方案 A
-- NFR 影响: 安全（execFileSync 数组参数）、性能（大仓库 status timeout）、稳定性（isRepo:false 降级）
+- NFR 影响: 安全（async execFile 数组参数）、性能（大仓库 status timeout）、稳定性（isRepo:false 降级）、并发（async 不阻塞多 session 事件循环）
 
 ### 4.2 F2: git.stage/unstage/commit 操作
 
@@ -453,7 +453,7 @@ sequenceDiagram
     GS->>GS: resolvePaths(cwd, filePaths) + whitelist check
     GS->>GE: exec(cwd, 'stage', ['add', '--', ...paths])
     activate GE
-    GE->>Git: execFileSync('git', ['add','--',path1,path2], {cwd})
+    GE->>Git: execFile('git', ['add','--',path1,path2], {cwd})
     activate Git
     Git-->>GE: exitCode 0
     deactivate Git
@@ -494,7 +494,7 @@ sequenceDiagram
         GS->>GS: throw SecurityError
         GH->>GH: sendError(ws, 'path_not_allowed', ...)
     else git CLI 未安装 / timeout
-        GE->>GE: execFileSync throw (ENOENT / TIMEOUT)
+        GE->>GE: execFile reject (ENOENT / TIMEOUT)（async 为 reject，非 throw）
         GE-->>GS: throw GitExecutorError
         GH->>GH: sendError(ws, 'git_unavailable', 'git 未安装或超时', id)
         GS->>GS: GitZone 降级显示「非 git 仓库」
@@ -1144,7 +1144,7 @@ graph LR
 
 | 检查项 | 命令 |
 |--------|------|
-| git 命令防注入 | `grep -rn "exec\|spawn" src-electron/runtime/src/infra/git-executor.ts \| grep -v "execFileSync"` → 无输出 |
+| git 命令防注入 | `grep -rn "execSync\|execFileSync\|spawnSync" src-electron/runtime/src/infra/git-executor.ts src-electron/runtime/src/infra/pi/file-change-reconciler.ts` → 无输出（DESIGN-IT-TWICE：git 相关 shell out 全用 async execFile 数组参数） |
 | events 无 as any | `grep -rn "as unknown as\|as any" src-electron/renderer/src/api/events.ts` → 无输出 |
 | chat store 无 pending 死代码 | `grep -n "message.tool_call_pending" src-electron/renderer/src/stores/chat-chunk-processor.ts` → **无输出**（[STALE] 移除，见 §3.9） |
 | ExtensionInfo 有 tools | `grep -n "tools:" src-electron/shared/src/protocol.ts` → 有输出 |

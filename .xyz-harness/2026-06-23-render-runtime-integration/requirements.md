@@ -21,6 +21,8 @@ stage: ①澄清需求（business clarity，不含系统实现）
 - **不碰什么：** Session Tree（属 Flow-3）、工具审批链路（含 Diff 代码审查审批）、Plugin 管理、SubAgent 编排、@/# 搜索、附件上传——沿用 waves.md D1-D10 边界。
 - **最大风险点：** git-zone 加回涉及「真实 git 状态」的新增能力，需与既有的 per-turn 文件变更（file_changes）明确区分语义，二者并行不互吞。
 
+> **⚠️ [STALE] 声明（2026-06-25 反哺对齐）**：F2「工具调用 pending 状态补全」与 §4 G1 路径中「修复 tool_call_pending 硬漏接」**失效**。runtime 不生产 `message.tool_call_pending`（tool 审批链路 Out-of-scope）。权威源：`spec-w11.md` [STALE] 声明 + `issues.md` #8 [STALE] + `code-architecture.md` §3.9 [STALE]。注意：F4「排队引导 pending 气泡」是 queue pending（steer/followUp 排队），不失效。
+
 ---
 
 ## 1. 业务目标（Business Goals）

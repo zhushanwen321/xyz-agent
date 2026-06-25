@@ -10,6 +10,9 @@ predecessor: waves.md（W01-W10 已全部完成，commit e05bbdf7→2584ed5f）
 > **输入：** 全景 gap 分析（5 路 Explore agent）+ W01-W10 落地核验（精准 grep）+ 5 轮澄清决策。
 > **性质：** W01-W10 是「类型地基 + 主路径对接」；本轮是「收尾闭环 + 盘活后端沉没成本 + Side Drawer 架构容器」。
 
+> **⚠️ [STALE] 声明（2026-06-25 反哺对齐）**：本 spec 中所有关于 `message.tool_call_pending` 与 `ToolCallStatus` 扩 `'pending'` 的内容（Background §1、In-scope #2、FR-2、G-001/G-002、Acceptance Criteria 对应行）**全部失效**。runtime 不生产 `tool_call_pending`（tool 审批链路 Out-of-scope，confirm/select→pending 映射已被有意移除，见 `event-adapter-extension.test.ts` 反向断言）。权威源：`issues.md` #8 [STALE] + `code-architecture.md` §3.9 [STALE]。待 tool 审批链路纳入 scope 时重新引入生产点。
+> **注意不失效**：FR-4「queue_update pending 气泡」是 queue pending（steer/followUp 排队），与 tool_call_pending 无关。
+
 ## Background
 
 W01-W10 已完成 ServerMessageMap 类型地基、session.list 分组、Markdown 渲染、Composer 4 接线、消息流 19 个 message.* case 的 store 接入、Settings 核心 CRUD、file_changes 全链路。
@@ -52,6 +55,8 @@ mock `send` 当前只发 message_start/text_delta/complete 三件套。补全套
 
 ### FR-2 tool_call_pending 修复
 chat-chunk-processor.ts:355 的 default 分支补 `case 'message.tool_call_pending'`，写入 ToolCall.status='pending'。
+
+> **[STALE] 本 FR 前提失效（2026-06-25 反哺对齐）**：runtime 不生产 `message.tool_call_pending`（tool 审批链路 Out-of-scope）。故不补 consume case、`ToolCallStatus` 不加 `'pending'` 枚举。权威源：`issues.md` #8 [STALE] + `code-architecture.md` §3.9 [STALE]。待 tool 审批链路纳入 scope 时重新引入生产点。（原内容作废，保留仅作历史记录。）
 
 ### FR-3 auto_retry UI 指示位
 Composer 上方独立行加 RetryIndicator（决策 C10/G-021，与 FR-4 同位），消费 `chat.getRetryState(sessionId)`，显示重试中 + attempt/maxAttempts。
