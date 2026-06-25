@@ -949,11 +949,23 @@ store 有 auto_retry/queue_update 数据，但无 UI 消费。需要在 Composer
 
 ## 后续迭代（P3 延后项）
 
-- **#14 [P3]**: Plugin 管理页面 — 后端 plugin.* 能力完整（10 接口），前端 0 出口。产品决策：只做 Extension 不做 Plugin？延后理由：C4 决策维持 deferred
-- **#15 [P3]**: session 项目分组 UI — 后端 listPersistedSessions 返回 SessionGroup[]，前端扁平化丢失分组。延后理由：非核心功能，列表可先平铺
-- **#16 [P3]**: ContextChipsBar / ProgressZone 真实数据 — 后端无通道（附件缺口 / pi 无 todo 概念）。延后理由：协议级缺口，需后端先建通道
-- **#17 [P3]**: @/# 搜索通道 — 后端搜索能力从零。延后理由：协议级缺口，需整体设计
-- **#18 [P2 安全债]**: trash.ts filePath 插值注入面 — `infra/system/trash.ts:13` 用 `execSync(\`trash "${filePath}"...\`)`（mac osascript 混合），filePath 经 shell 插值，是真实命令注入面（用户可控路径）。非 git 职责（归 system 模块），#1 不含。方案：迁移为 `spawn`/`execFile` 数组参数（filePath 不经 shell）。建议本轮顺手修（review-issues-v2 红队 R3 发现），不卡核心功能
+### #14 [P3]: Plugin 管理页面
+后端 plugin.* 能力完整（10 接口），前端 0 出口。产品决策：只做 Extension 不做 Plugin？延后理由：C4 决策维持 deferred
+
+### #15 [P3]: session 项目分组 UI
+后端 listPersistedSessions 返回 SessionGroup[]，前端扁平化丢失分组。延后理由：非核心功能，列表可先平铺
+
+### #16 [P3]: ContextChipsBar / ProgressZone 真实数据
+后端无通道（附件缺口 / pi 无 todo 概念）。延后理由：协议级缺口，需后端先建通道
+
+### #17 [P3]: @/# 搜索通道
+后端搜索能力从零。延后理由：协议级缺口，需整体设计
+
+### #18 [P2 安全债]: trash.ts filePath 插值注入面
+`infra/system/trash.ts:13` 用 `execSync(\`trash "${filePath}"...\`)`（mac osascript 混合），filePath 经 shell 插值，是真实命令注入面（用户可控路径）。非 git 职责（归 system 模块），#1 不含。方案：迁移为 `spawn`/`execFile` 数组参数（filePath 不经 shell）。建议本轮顺手修（review-issues-v2 红队 R3 发现），不卡核心功能。
+
+**验收标准**:
+- [ ] `infra/system/trash.ts` 无 `execSync`/`execFileSync` 字符串拼接形式（filePath 经数组参数传递，不经 shell）
 
 ---
 

@@ -23,7 +23,7 @@ downstream: code-architecture.md
 | #11 widget 订阅 | session 通道 | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
 | #12 契约裂缝 | 直接补字段 | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ |
 
-图例：✅ 无风险 / ⚠️ 有风险已缓解（含缓解方案与残余风险）/ ❌ 不可接受需回退 / — 不适用。可观测性列 ⚠️ 表示该 issue 引入了需要额外日志/指标/告警的风险，正文已给出具体方案。
+图例：✅ 无风险 / ⚠️ 有风险已缓解（含缓解方案与残余风险）/ [不可接受] 需回退重选方案（本轮矩阵无此类项）/ — 不适用。可观测性列 ⚠️ 表示该 issue 引入了需要额外日志/指标/告警的风险，正文已给出具体方案。
 
 ---
 
@@ -620,17 +620,55 @@ downstream: code-architecture.md
 
 #### 兼容性影响
 
-**风险**: 新增 `ExtensionInfo.tools` / `FileChangeStatus.unmerged` / `ToolCallStatus.pending` 可能影响旧版本打包产物。
+**风险**: 新增 `ExtensionInfo.tools` / `FileChangeStatus.unmerged` 可能影响旧版本打包产物。
 **缓解**:
 - shared/src/protocol.ts 是 source-of-truth，前后端同时升级。
 - 旧版本 runtime 不识别新枚举时，前端显示为未知状态（fallback）。
 - 不删除旧枚举值，只追加，保持向后兼容。
 **残余风险**: 旧版本运行时可能把未知枚举序列化为字符串。接受理由：不影响核心功能。监控方式：记录未知枚举值。
 
+> **[STALE] ToolCallStatus.pending 不补**：runtime 不生产 `message.tool_call_pending`（tool 审批链路 Out-of-scope，见 issues #8/#12 [STALE] + code-architecture §3.9）。补枚举值会消费一条永不到达的消息（死代码），故本兼容性影响不含 pending，待审批链路纳入 scope 时重新评估。
+
 #### 可观测性
 
 **日志**: 记录未知枚举值的出现。
 **残余风险**: 无。
+
+---
+
+## 缓解项回灌登记（Mitigation Rollback）
+
+> 每条缓解方案不能只留在本文档——必须落地为下游可执行项。未回灌的缓解 = 设计期发现风险却不修 = NFR 分析白做。
+> **「验收方式」决定下游落点：** 代码测试 → 生成 NFR-AC 进 ⑤ test-matrix；骨架约束 → 由 ⑤ 骨架 tsc gate 兜住；运维项 → 本表记录（纯监控/配置）。
+
+| 缓解项 | 来源 Issue# | 维度 | 回灌去向 | 落地为 | 验收方式 | 状态 |
+|--------|------------|------|---------|--------|---------|------|
+| execFile 数组参数防注入 | #1 | 安全 | ⑤骨架+test-matrix | `infra/git-executor.ts` 用 execFile 数组参数；NFR-AC（恶意 filePath 被拦截，返回 path_not_allowed；归属待⑤补 git UC） | 代码测试 | 待落 |
+| path 白名单（resolve 后校验在 workspace root 内）| #1 | 安全 | ⑤test-matrix | NFR-AC（越界 path throw SecurityError，code=path_not_allowed）| 代码测试 | 待落 |
+| git 命令白名单（仅 status/stage/unstage/commit）| #1 | 安全 | ⑤骨架 | IGitExecutor 命令枚举守卫 | 骨架约束 | 待落 |
+| 操作按钮 pending 期间 disabled guard | #1,#3 | 并发 | ⑤骨架 | GitZone.vue onStage/onCommit pending guard（对应 code-arch §4.2 时序图）| 骨架约束 | 待落 |
+| git 不可用降级 isRepo:false | #1 | 稳定性 | ⑤test-matrix | NFR-AC（非 git 仓库返回 isRepo:false，GitZone 隐藏）| 代码测试 | 待落 |
+| settings 订阅 5s timeout 错误态 | #2 | 稳定性 | ⑤test-matrix | NFR-AC（订阅超时显示「加载失败，请重试」非空白）| 代码测试 | 待落 |
+| Extension 安装源校验（npm/dir 路径/git URL 协议）| #5 | 安全 | ⑤骨架+test-matrix | installDir 校验路径在 workspace 内；installGit 限 https/ssh；NFR-AC（绝对路径 /etc/.. 被拒）| 代码测试 | 待落 |
+| 候选确认后 finishInstall（用户确认入口）| #5 | 安全 | ⑤骨架 | ExtensionPage 候选选择 UI（D-4 内联）| 骨架约束 | 待落 |
+| tempDir 残留定时清理（>1h）| #5 | 数据 | ⑤骨架 | 启动时清理任务（code-arch 实现层）| 骨架约束 | 待落 |
+| compact 备份保留策略（30天 / 1GB / 启动清理）| #6 | 数据 | ⑤骨架 | code-arch compact 备份清理实现（review-nfr P2 已要求）| 骨架约束 | 待落 |
+| compacting 状态 guard 防重复触发 | #6 | 并发 | ⑤骨架 | /compact compacting 期间禁用 | 骨架约束 | 待落 |
+| session.list 推送 debounce 300ms | #7 | 性能 | ⑤骨架 | useSidebar debounce 更新 | 骨架约束 | 待落 |
+| session.list 推送 >10 次/秒 warn | #7 | 可观测 | 运维项 | 推送频率监控阈值 | 运维项 | 待落 |
+| 未识别 message.* default 分支记录 | #8 | 可观测 | ⑤骨架 | chat-chunk-processor default 不抛异常、记未知类型 | 骨架约束 | 待落 |
+| fileChangesMap computed 增量合并 | #10 | 性能 | ⑤骨架 | chat store 提供聚合 computed（O(m) 增量）| 骨架约束 | 待落 |
+| widget payload 单条 <1MB 分片 | #11 | 性能 | ⑤骨架 | runtime 侧分片推送 | 骨架约束 | 待落 |
+| widget 前端 1000 行截断 + virtual scroll | #11 | 性能 | ⑤骨架 | SideDrawer Terminal tab 窗口化 | 骨架约束 | 待落 |
+| widget payload >1MB warn | #11 | 可观测 | 运维项 | payload 大小监控 | 运维项 | 待落 |
+| trash.ts filePath 插值迁移 execFile 数组 | #18 | 安全 | ③issue #18 | `infra/system/trash.ts` 数组参数（已在 issues.md #18 登记）| 代码测试 | 待落 |
+| git status 耗时 >1s warn | #1 | 可观测 | 运维项 | status 耗时监控 | 运维项 | 待落 |
+
+**回灌去向统计：** ⑤骨架约束 9 项 / ⑤test-matrix（代码测试）6 项 / ③issue 1 项（#18）/ 运维项 4 项。
+
+**回灌指针可验证性：**
+- ③ 指针（即时承诺）：#18 已在 issues.md `### #18` 标题下真实存在（issues.md:956），PHANTOM 检查通过。
+- ⑤ 指针（延期承诺）：⑤ code-arch 尚未产出，⑤ §6「来源 B：NFR 风险→用例映射表」将反向核对每条「代码测试」类缓解项有 ≥1 对应用例。
 
 ---
 
