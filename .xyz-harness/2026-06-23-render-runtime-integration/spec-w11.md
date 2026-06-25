@@ -54,10 +54,10 @@ mock `send` 当前只发 message_start/text_delta/complete 三件套。补全套
 chat-chunk-processor.ts:355 的 default 分支补 `case 'message.tool_call_pending'`，写入 ToolCall.status='pending'。
 
 ### FR-3 auto_retry UI 指示位
-Turn.vue 或 Composer 上方加 RetryIndicator，消费 `chat.getRetryState(sessionId)`，显示重试中 + attempt/maxAttempts。
+Composer 上方独立行加 RetryIndicator（决策 C10/G-021，与 FR-4 同位），消费 `chat.getRetryState(sessionId)`，显示重试中 + attempt/maxAttempts。
 
 ### FR-4 queue_update pending 气泡
-Composer 顶部或消息流加 pending 气泡，消费 `chat.getQueueState(sessionId)`，显示 steer/followUp 排队内容（靠右虚线脉冲，对齐 panel/spec.md:52）。
+Composer 上方独立行加 pending 气泡（决策 C10/G-021，与 FR-3 同位），消费 `chat.getQueueState(sessionId)`，显示 steer/followUp 排队内容（靠右虚线脉冲，对齐 panel/spec.md:52；message_start 到达时清 queue，见 G-023）。
 
 ### FR-5 Extension 安装/卸载
 extension.ts 补 6 个动作方法；ExtensionPage 的安装按钮接 handler，卸载确认接 uninstall；多步安装流（installDir/installGit→discovered 候选→finishInstall/cancelInstall）完整对接。
@@ -91,27 +91,13 @@ shared/src/protocol.ts ExtensionInfo 补 **tools 字段**（dirName 已在 proto
 3. 暂存/取消暂存按钮调 git.stage/git.unstage；提交按钮弹**简单 message 输入框**（可选 message，C-G-R2-02）调 git.commit；Diff/解决冲突按钮触发 SideDrawer 打开（Diff 审批内容排除，但按钮是触发源）
 4. git 数据源：调后端 git.status；**刷新时机（G-R2-04）**：进入 session 时 + agent_end 后 + stage/unstage/commit 操作后手动刷（非轮询，无 filesystem watch）
 
-**后端 git.* 命令协议（新建）：**
-1. shared/src/protocol.ts：
-   - ClientMessageType 加 `git.status` / `git.stage` / `git.unstage` / `git.commit`
-   - git.status payload `{ sessionId }`；git.stage `{ sessionId, filePaths?: string[] }`（空=git add -A）；git.unstage `{ sessionId, filePaths?: string[] }`；git.commit `{ sessionId, message?: string }`（协议可选；**实现要求非空**——git 默认空 message 会打开编辑器，子进程 execFileSync 下永久挂起，故 runtime 在空 message 时返回 'commit_message_required' error，GitZone UI 在 message 为空时禁用提交按钮）
-   - ServerMessageType 加 `git.status:result`，payload `{ sessionId, isRepo: boolean, branch?, stagedCount, unstagedCount, stats: {add,del}, hasConflict, files: GitFileStatus[] }`（GitFileStatus = {path, xyCode, status: added|modified|deleted|unmerged|renamed|untracked}）
-2. runtime 新建 git-message-handler.ts（参考 extension-message-handler.ts 结构）：git.status → reconcileGitStatus(cwd)；git.stage/unstage/commit → IGitExecutor
-3. server.ts 路由注册 git.* 到 handler（routes Map:124-132）
-4. **port 复用策略（G-R2-06 + H-R3-01）**：status **新建 git-status 适配函数**（复用 reconcileFileChanges 的 parseGitStatusPorcelain 解析基础 + 扩展 xyToStatus 加 U/staged 拆分 + 调 readGitInfo 取 branch + 另跑 git diff --numstat 取 stats，**非直接复用 reconcileFileChanges 返回值**——其 FileChange[] 缺 branch/isRepo/stagedCount/stats/hasConflict）；stage/unstage/commit 进新 `ports/git-executor.ts` IGitExecutor（spawn 封装）
-5. cwd 获取（G-R2-01）：`sessionService.getSession(sid)?.cwd`（session-service.ts:221）
-
-**安全约束（G-R2-05）：**
-- spawn 用 `execFileSync` 数组参数（非 shell，防注入，参考 npm-git-installer.ts:36）
-- commit message 经参数传递（不拼命令串）
-- 非 git 仓库：git.status 返回 `{ isRepo: false }`，前端隐藏 git-zone
-- git 未安装：同 isRepo:false 降级（readGitInfo 已有 undefined 返回）
-- 超时：spawn 设 timeout（参考 installer 的 timeout 模式）
-
-**冲突态处理：**
-- git.status 的 hasConflict=true 时 git-zone 显冲突态（红 pill + danger 竖条）
-- 冲突态 commit 必失败（git 拒绝 unmerged）→ error envelope code=`git_conflict`，前端回显
-- 解决冲突按钮 → SideDrawer（Diff 审批排除，但冲突文件列表可展示）
+**后端 git.* 命令（新建，实现详见 code-architecture §3.6-3.8 / §4.1-4.2 / §6.4）：**
+- 新增 4 个命令：git.status / git.stage / git.unstage / git.commit（payload 与 result 契约见 code-architecture §3.9 / §4.1）
+- 业务约束（spec 层只记语义，实现范式归 code-architecture）：
+  - commit message 非空（空 message 会让 git 打开编辑器致子进程挂起；前端空 message 时禁用提交按钮）
+  - 非 git 仓库或 git 未安装 → 降级返回 isRepo:false，前端隐藏 git-zone
+  - 命令执行需防注入 + 超时保护（spawn 安全范式见 code-architecture §4.2 / §6.4 验收 grep）
+  - 冲突态（hasConflict=true）git-zone 显冲突态（红 pill + danger 竖条）；冲突态 commit 必失败 → error code=git_conflict 前端回显；解决冲突入口 → SideDrawer（Diff 审批排除，冲突文件列表可展示）
 
 **修正 FR-11 矛盾（G-R2-03）：** FR-11 原「unmerged 由前端标注 runtime 不推」修正为「**runtime 推 unmerged**（git.status 的 hasConflict + files[].status=unmerged），前端据此渲染冲突态」。FileChangeStatus 补 unmerged 仍保留（file_changes 和 git.status 共用枚举）。
 
