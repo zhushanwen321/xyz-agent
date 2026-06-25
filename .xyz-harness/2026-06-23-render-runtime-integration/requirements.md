@@ -1,5 +1,6 @@
 ---
 verdict: pass
+mode: refactor
 topic: 前端 renderer ↔ runtime 后端集成（W11+ 第二轮：收尾闭环 + 后端能力对接 + Side Drawer 容器）
 predecessor: waves.md（W01-W10 已全部完成并提交）
 stage: ①澄清需求（business clarity，不含系统实现）
@@ -124,7 +125,7 @@ flowchart LR
 - **主流程**: 1. 进入会话时 git-zone 显示当前分支与状态（干净/已暂存/有改动/冲突） → 2. 可暂存/取消暂存 → 3. 提交时弹出可选 message 输入框 → 4. 提交完成，状态刷新
 - **替代流程**: AI 一回合结束后自动刷新；手动操作后刷新
 - **异常流程**: 非 git 仓库（git-zone 隐藏）；有冲突时提交被拒绝（回显）；git 未安装（降级隐藏）
-- **后置状态**: 工作目录的 git 状态如实反映；Diff/解决冲突入口触发右抽屉
+- **后置状态**: 工作目录的 git 状态如实反映；Diff/解决冲突按钮触发右抽屉 SideDrawer 打开（只读展示冲突文件，不做审批动作，见 §5 / C2-C3）
 - **关联目标**: G3
 
 ### UC-7: 多窗口/runtime 侧增删会话实时同步
@@ -243,7 +244,8 @@ Panel 自上而下 5 个固定 zone（设计稿 SSOT）：
 
 - **retry/queue 指示位（F3/F4）：** 放在 **composer 上方独立行**（对齐 panel/spec.md:52），不挤进消息流回合。
 - **git-zone 四态（F12）：** 干净（绿 pill）/ 已暂存（绿）/ 有改动（橙）/ 冲突（红 + danger 竖条）—— 分支显示 + stats（+N/-N）+ 状态 pill + soft 渐隐底。
-- **Side Drawer（F8）：** 从触发它的 Panel 浮起，固定挂该 Panel，不跨 Panel 覆盖；header 多 tab 容器（终端/浏览器/…）。
+- **Side Drawer（F8）：** 从触发它的 Panel 浮起，固定挂该 Panel，不跨 Panel 覆盖；header 多 tab 容器，tab 构成 = Terminal / Browser（+ 进度聚合），**不含 Diff 审批 tab**（Diff Accept/Reject 整块排除，见 §8 / C2）。
+- **git-zone Diff/解决冲突按钮 → SideDrawer：** 按钮是触发源（C9），但打开后 SideDrawer 内为**只读展示**（冲突文件列表可展示），**不做 Accept/Reject 审批动作**——容器保留、审批内容排除（C3）。
 - **文件视图（F10）：** 聚合当前会话所有回合改动成树，含行数 +N/-N + 冲突标注 + 过滤框（对齐 draft-file-view.html）。
 
 ### 交互流程
@@ -292,9 +294,8 @@ flowchart LR
 - 架构不变：renderer/runtime 分层，命令与推送走统一消息通道
 - mock 与真实门面同构：两侧能力签名一致（mock 模式必须能验证所有 UI）
 - 错误契约统一：请求级失败走统一错误封装
-- 每 wave 验证基线：类型检查 + 单测全绿 + git 干净后提交
-- 串行执行（不并行派 implementer，会冲突）
 - 技术约束（仅记录不展开）：renderer=Vue3/TS/Pinia/Tailwind；runtime=Node WS；git 读写须防注入（细节见下游）
+- 执行计划层约束（→ plan-w11.md）：每 wave 验证基线（类型检查 + 单测全绿 + git 干净后提交）；串行执行（不并行派 implementer，会冲突）
 
 ---
 
