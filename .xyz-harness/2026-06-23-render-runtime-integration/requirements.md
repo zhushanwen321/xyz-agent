@@ -40,7 +40,7 @@ stage: ①澄清需求（business clarity，不含系统实现）
 
 | 目标 | 路线 / 策略 | 对应用例 |
 |------|------------|---------|
-| G1 | 补全 mock 流式剧本（固定剧本）+ 接上 retry/queue 的 UI 指示位 + 修复 tool_call_pending 硬漏接 | UC-1, UC-4 |
+| G1 | 补全 mock 流式剧本（固定剧本）+ 接上 retry/queue 的 UI 指示位（原含「修复 tool_call_pending 硬漏接」，已 [STALE] 作废，见顶部声明） | UC-1, UC-4 |
 | G2 | Extension 安装/卸载多步流、用户主动触发压缩、widget 订阅 + Side Drawer 容器 | UC-2, UC-3, UC-5 |
 | G3 | git-zone 按设计稿加回 + 会话列表 server-push + 文件视图切真实改动聚合 | UC-6, UC-7, UC-8 |
 | G4 | 工具调用/文件变更/扩展信息三类枚举与字段契约对齐（技术契约，归下游） | （支撑性，无独立用例） |
@@ -208,7 +208,7 @@ flowchart LR
 | 编号 | 功能 | 对应用例 | 关联目标 | 备注 |
 |------|------|---------|---------|------|
 | F1 | mock 流式事件补全（固定剧本：思考/工具/文本/变更/系统通知/排队/重试） | UC-1, UC-4 | G1 | 让已实装渲染在 mock 可验证 |
-| F2 | 工具调用 pending 状态补全（修复硬漏接） | UC-1 | G1, G4 | 枚举裂缝 |
+| F2 | ~~工具调用 pending 状态补全（修复硬漏接）~~ **[STALE] 作废**（runtime 不生产 tool_call_pending，见顶部声明） | — | — | 枚举裂缝 |
 | F3 | 自动重试 UI 指示位 | UC-1 | G1 | 已入库未消费 |
 | F4 | 排队引导 pending 气泡（steer/followup） | UC-1 | G1 | 已入库未消费 |
 | F5 | Extension 安装/卸载多步流（npm/目录/git 三来源） | UC-2 | G2 | 后端就绪未接 |

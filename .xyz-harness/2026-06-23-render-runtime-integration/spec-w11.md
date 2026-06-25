@@ -18,7 +18,7 @@ predecessor: waves.md（W01-W10 已全部完成，commit e05bbdf7→2584ed5f）
 W01-W10 已完成 ServerMessageMap 类型地基、session.list 分组、Markdown 渲染、Composer 4 接线、消息流 19 个 message.* case 的 store 接入、Settings 核心 CRUD、file_changes 全链路。
 
 但全景扫描 + 核验发现仍有三类残留缺口：
-1. **收尾闭环**——store 已入库但无 UI 消费（retry/queue）、硬漏接（tool_call_pending）、mock 流式盲区（三件套导致已实装渲染在 mock 模式看不到实时效果）、确认事件未订阅（session.list server-push）。
+1. **收尾闭环**——store 已入库但无 UI 消费（retry/queue）、mock 流式盲区（三件套导致已实装渲染在 mock 模式看不到实时效果）、确认事件未订阅（session.list server-push）。（原列「硬漏接（tool_call_pending）」经查非缺口，见顶部 [STALE] 声明。）
 2. **后端就绪能力闲置**——Extension 安装/卸载（6 命令）、compact 压缩（命令+dispatcher+协议全齐）、Terminal/Browser widget（推送就绪 0 订阅）。
 3. **架构级容器缺失**——右抽屉 Side Drawer 零实现，阻塞 widget 呈现。
 
@@ -26,7 +26,7 @@ W01-W10 已完成 ServerMessageMap 类型地基、session.list 分组、Markdown
 
 ### In-scope（12 项）
 1. mock `send` 补全套流式事件（固定剧本）
-2. `message.tool_call_pending` store case 补全（硬漏接修复）+ ToolCallStatus 扩 'pending' 枚举
+2. ~~`message.tool_call_pending` store case 补全（硬漏接修复）+ ToolCallStatus 扩 'pending' 枚举~~ **[STALE] 作废**（runtime 不生产 tool_call_pending，见顶部声明 + FR-2 [STALE]）
 3. auto_retry UI 指示位（store 有数据，Turn.vue 未消费）→ Composer 上方独立行
 4. queue_update pending 气泡（store 有数据，无 UI 消费，违背 panel/spec.md:52）→ Composer 上方独立行
 5. Extension 安装/卸载流程对接（extension.ts 加 install/uninstall/installDir/installGit/finishInstall/cancelInstall，ExtensionPage 接按钮 + 候选选择 UI）
@@ -53,8 +53,8 @@ W01-W10 已完成 ServerMessageMap 类型地基、session.list 分组、Markdown
 ### FR-1 mock 流式事件补全
 mock `send` 当前只发 message_start/text_delta/complete 三件套。补全套固定剧本：发送后先 thinking_start→delta→end，再 text_delta 流式，中间穿插一个 tool_call_start→update→end，最后 file_changes（accumulating→ready），complete。另补 queue_update/auto_retry 的 mock 推送（steer/followUp 后推 queue_update）。让 #3/#4 的 UI 消费能在 mock 验证。
 
-### FR-2 tool_call_pending 修复
-chat-chunk-processor.ts:355 的 default 分支补 `case 'message.tool_call_pending'`，写入 ToolCall.status='pending'。
+### FR-2 tool_call_pending 修复 ~~[STALE 作废]~~
+~~chat-chunk-processor.ts:355 的 default 分支补 `case 'message.tool_call_pending'`，写入 ToolCall.status='pending'。~~
 
 > **[STALE] 本 FR 前提失效（2026-06-25 反哺对齐）**：runtime 不生产 `message.tool_call_pending`（tool 审批链路 Out-of-scope）。故不补 consume case、`ToolCallStatus` 不加 `'pending'` 枚举。权威源：`issues.md` #8 [STALE] + `code-architecture.md` §3.9 [STALE]。待 tool 审批链路纳入 scope 时重新引入生产点。（原内容作废，保留仅作历史记录。）
 
@@ -111,8 +111,8 @@ shared/src/protocol.ts ExtensionInfo 补 **tools 字段**（dirName 已在 proto
 追踪 subagent 发现 23 个 gap，处理如下：
 
 ### F 类已确认 + 主 agent 定方案（直接并入 spec）
-- G-001 ✅ ToolCallStatus 扩 'pending'（并入 FR-2/FR-11）
-- G-002 ✅ message.tool_call_pending payload 需契约化（执行时读 event-adapter 生产侧确认字段）
+- G-001 ✅ ~~ToolCallStatus 扩 'pending'（并入 FR-2/FR-11）~~ **[STALE] 作废**（pending 不补，见 FR-2 [STALE]）
+- G-002 ✅ ~~message.tool_call_pending payload 需契约化（执行时读 event-adapter 生产侧确认字段）~~ **[STALE] 作废**（同上）
 - G-003 ✅ install/uninstall 刷新靠 onExtensions 订阅（已有），reply 仅 ack
 - G-004 ✅ 三 tab→命令映射：npm=install(source)/dir=installDir(path)/git=installGit(url)
 - G-007 ✅ session.compacted 订阅过滤带 id 的 reply（只认无 id 广播）
@@ -151,7 +151,7 @@ shared/src/protocol.ts ExtensionInfo 补 **tools 字段**（dirName 已在 proto
 ## Acceptance Criteria
 
 - [ ] mock 模式发消息能看到 thinking 块 + tool_call 卡 + ChangeSetCard + 系统通知的实时流式效果（非只看静态 fixture）
-- [ ] `message.tool_call_pending` 有 store case（grep `case 'message.tool_call_pending'` 命中）+ ToolCallStatus 含 'pending'
+- [ ] ~~`message.tool_call_pending` 有 store case（grep `case 'message.tool_call_pending'` 命中）+ ToolCallStatus 含 'pending'~~ **[STALE] 作废**（runtime 不生产 tool_call_pending，见顶部声明 + issues #8 [STALE]）
 - [ ] steer/followUp 提交后 Composer 上方独立行显示 pending 气泡；auto_retry 时同位置显示重试指示位
 - [ ] Settings ExtensionPage 三 tab 安装（npm/dir/git）可用 + 候选选择 UI + 卸载确认（mock 模式可验证链路）
 - [ ] slash command 触发 compact，状态正确（compacting→compacted），与 compactionSummary system 行区分
