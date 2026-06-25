@@ -438,6 +438,56 @@ sequenceDiagram
 - 验证：`grep -rn "isGenerating = false" src-electron/renderer/src/stores/chat.ts` 有输出
 - 说明：任何错误路径都必须重置 isGenerating，否则 UI 卡死
 
+## 12. 行为契约保持清单（refactor 模式）
+
+> 对应追踪视角 6。以下登记的是「代码有但 requirements/spec 未显式约束」的**承重行为**——架构变更若无声改掉它们，系统会静默失效。
+> 2026-06-25 事后回填：W11+ 代码已全量落地，本节为「从实现反查隐性契约」的快照，用于后续重构的保护性边界。筛选标准：删/改后会静默失效（非纯 UI 细节、非派生公式）。
+> 处理列：本轮（已落地）一律标「保持」；如未来需变更/删除，须开独立 ticket（不得裹进架构 PR）。
+
+### 流式消息处理（stores/chat + chunk-processor + useChat）
+
+| BC | 行为 | 源码位置 | 处理 |
+|----|------|---------|------|
+| BC-1 | `isStreaming` 全局标志由 **composable**（useChat）在 {complete \| error \| stream_error} 三类终态事件复位，**store processor 只改 message.status 不碰 isStreaming**。终态事件集 `{complete, error, stream_error}` 是硬契约——漏掉 `stream_error` 会让 UI 永久卡「思考中」。 | `composables/features/useChat.ts:46-52` | 保持 |
+| BC-2 | 流式订阅是 **per-session 持久订阅**（module-level `streamSubscriptions: Map<sid, unsub>`，`ensureStreamSubscription` 只 set 不 delete），不是 per-send 订阅。历史教训：per-send 在 `send` 的 Promise resolve（pi ack，非完成）时取消，会丢全部 chunk。 | `useChat.ts:21-31,34-66` | 保持 |
+| BC-3 | `message_start` **隐式清空该 session 的 queueStates**（排队气泡是「回合有界」的），但**不清 retryStates**（重试是「事件有界」的，只对 `auto_retry_end` 响应）。两 Map 的生命周期不对称是设计契约，非疏漏。 | `stores/chat-chunk-processor.ts:74-89`（queue 删）vs `264-286`（retry 不在此删） | 保持 |
+| BC-4 | `thinking_end` 的 payload **不带 id**，匹配纯靠「最后一块 thinking block」位置定位。假设严格顺序投递、每 `thinking_start` 恰好一个 `thinking_end`。若未来允许并行/交错 thinking，会盖错 block 的 endTime。 | `chat-chunk-processor.ts:109-123` | 保持 |
+| BC-5 | tool_call 按 `toolCallId` 匹配。`tool_call_update` **缺 id 则整体丢弃**（`if (!callId) return`）；`tool_call_end` 缺 id 映射到 undefined 静默不匹配。两者对缺 id 的处理不对称，是刻意的。 | `chat-chunk-processor.ts:154-189` | 保持 |
+| BC-6 | `message.complete` 是幂等守卫：仅当最后一条 assistant status 恰为 `streaming` 时填充 status+usage，否则丢弃。完成是单调的，首终态赢。`stopReason` 被消费后**不持久化**到 message；`usage` 的 `totalTokens` 被**主动丢弃**（只留 input/output），partial usage（缺任一 token 数）整体丢弃。 | `chat-chunk-processor.ts:190-204`; `chat-readers.ts:61-70` | 保持 |
+| BC-7 | `file_changes` 的「按 path 合并」是 **last-write-wins**：同 path 取最新 status，仅 `addLines/delLines` 在新帧缺失时回退旧值。新增 FileChange 字段会被合并静默丢弃。「ready」帧（`isFullSet=true`）以 `[]` 为基线 = 真值对账，整体替换累积态。 | `stores/chat-readers.ts:136-149`; `chat.ts:196-200` | 保持 |
+| BC-8 | `applyFileChanges` 在 `messageId` 未命中时**回退挂到最后一条 assistant message**（防御 runtime/前端 id 偶发不一致），而非丢弃。删掉此回退 → id 不匹配时文件变更静默消失。 | `stores/chat.ts:191-194` | 保持 |
+| BC-9 | `message.status`（runtime 进程态）被**刻意不映射**到 `Message.status`（生命周期 streaming/complete/error）——两者正交。未来 implementer 「接上」会混淆两个正交状态机。 | `chat-chunk-processor.ts:208-215`（no-op 注释） | 保持 |
+
+### git-zone（domains/git + GitZone.vue + git-service + git-executor）
+
+| BC | 行为 | 源码位置 | 处理 |
+|----|------|---------|------|
+| BC-10 | 四态推导优先级 `conflict > dirty > staged > clean`（严格 if 链）。**staged+unstaged 共存 → 解析为 dirty**（dirty 遮蔽 staged），故 staged pill 仅在 `staged>0 && unstaged==0` 可达。 | `components/panel/GitZone.vue:143-149` | 保持 |
+| BC-11 | `git diff --numstat HEAD` 的 stats 基线是 **HEAD（staged+unstaged 合计 vs 最后提交）**，而 counts 来自 `--porcelain`——**untracked 文件计入 unstagedCount 但不计入 stats**。故「仅 untracked」时显 dirty pill + +0/-0。两者度量不同物。 | `services/git-service.ts:104-109`; `git-status-parser.ts:108-129` | 保持 |
+| BC-12 | `result===null`（首次拉取前）默认渲染 `clean`（绿 pill），无 loading 态——首帧瞬时显「Clean」再跳真值。 | `GitZone.vue:144` | 保持 |
+| BC-13 | **`[CONFLICT]` 自动刷新事件名漂移**：注释 + spec C14/G-R2-04 写「agent_end 后刷新」，代码实际订阅 `msg.type === 'message.complete'`。注释自洽（「agent 回合结束」），但 spec 术语与实现不一致。需用户决策：`message.complete` 与 `agent_end` 是否同一事件？若非同一，回合结束可能不刷新。 | `GitZone.vue:230,236` | `[CONFLICT]` 待决策 |
+| BC-14 | **`[CONFLICT]` git-info.ts 走并行 `execSync('git rev-parse ...')` 字符串拼接**，绕过 IGitExecutor 数组参数范式（§11 AC-3 要求的安全契约）。用于 session 列表的 branch/worktree badge（独立数据源，5min 缓存）。与 issues.md #18（trash.ts 同类迁移）同源问题。 | `services/git-info.ts:59` | `[CONFLICT]` → 独立 ticket（与 #18 合并） |
+| BC-15 | commit 前服务端**预跑一次 `git status --porcelain` 显式抛 `git_conflict`**（比让 `git commit` 自己拒绝的错误更清晰），引入 TOCTOU 窗口。 | `services/git-service.ts:171-178` | 保持 |
+| BC-16 | 非零 exit **不抛**，返回 `{exitCode, stdout, stderr}` 交由 service 语义分类；仅 ENOENT（git 未装）与 SIGTERM（超时）抛错。错误码全集：`session_not_found / path_not_allowed / stage_failed / unstage_failed / commit_message_required / nothing_to_commit / git_conflict / commit_failed / git_unavailable / git_failed / timeout`（requirements 仅命名 `git_conflict`）。 | `infra/git-executor.ts:41-57`; `git-service.ts` 全文 | 保持 |
+| BC-17 | `rev-parse` 在 GitCommand 白名单但 **GitService 从不调用**（死能力，ports/git-executor.ts:22）。 | `services/ports/git-executor.ts:22` | 保持（待清理） |
+
+### Extension 安装 / Compact / session.list
+
+| BC | 行为 | 源码位置 | 处理 |
+|----|------|---------|------|
+| BC-18 | Extension tempDir 孤儿清理：服务构造时 deferred 扫 `settingsDir/tmp/ext-scan-*`，删 **>24h** 的残留（崩溃恢复）。tempDir 落在 `settingsDir/tmp`（非 OS tmpdir）。 | `services/extension-service.ts:42,109-130,343-347` | 保持 |
+| BC-19 | Extension 安装四道安全校验（requirements 未提）：(a) 源路径限 `home \| os.tmpdir()`；(b) symlink 先 `realpathSync` 解析再校验；(c) git URL 限 `https:// \| ssh:// \| git@` 前缀；(d) finishInstall 校验 selected 项为纯 basename（禁 `/`、`\`、`..`）。 | `extension-service.ts:321-332,334-340,373-375,417-452` | 保持 |
+| BC-20 | Extension 列表刷新走**全局** `onGlobalType('config.extensions')` 订阅（SettingsModal 持有），非 ExtensionPage 自订阅；toggle 失败时靠该订阅重推权威 enabled 态自愈。 | `api/domains/extension.ts:78-82`; `ExtensionPage.vue:206-215` | 保持 |
+| BC-21 | **`message.abort` / `session.compact` / blocked `message.send` 必须以 `msg.id` reply 或 sendError**——否则 renderer 的 `pending.register(id)` Promise 永挂、pendingMap 无限泄漏（round7 修的 P0 类）。 | `transport/session-message-handler.ts:85-97,122-128,132-151` | 保持 |
+| BC-22 | blocked send：dispatcher **已先广播 `message.error`**（红气泡），handler 必须 sendError（非 reply-success）触发 pending.reject 恢复 composer 草稿——否则「输入框清空+红气泡」自相矛盾。 | `message-dispatcher.ts:62-99`; `session-message-handler.ts:85-97` | 保持 |
+| BC-23 | compact 双层 ack：dispatcher 在 streaming 通道广播 `session.compacting`→`session.compacted`（无 id），handler 另在 request 层 reply `session.compacted`（带 id）。**失败也广播 compacted（带 error 字段）** 保证 UI 必清「压缩中」态（broadcast 必达）。 | `message-dispatcher.ts:161-190`; `session-message-handler.ts:132-151` | 保持 |
+| BC-24 | compact **成功摘要系统行**来自独立的 pi 推送事件 `message.compactionSummary`，与用户触发的 compact RPC **解耦**；compact **失败**走 useChat 的 toast（非顶部 banner、不入消息流，刻意不违反 rule #3）。 | `event-adapter.ts:462-467`; `useChat.ts:135-146` | 保持 |
+| BC-25 | session.list 走**全局** `onGlobalType('session.list')`（无 sessionId 的广播）。`useSidebar` 被 6+ 组件实例化，靠 **module-level refCount** 保证 handler 恰好注册/注销一次（否则每次广播触发 N 次重复 setGroups）。 | `composables/features/useSidebar.ts:68-88,105-106` | 保持 |
+| BC-26 | session.list 广播触发源**超出增删**：session 进程退出（崩溃清理，额外广播 `message.error`）、tree fork/clone 也触发广播。 | `services/session-service.ts:68-77`; `transport/tree-message-handler.ts:86,113` | 保持 |
+| BC-27 | 「不重载历史」对**广播路径**成立（只 setGroups，不碰 chat store）；但**初始 mount 的 `loadSessions` 会全量预 hydrate 所有 session 历史**（`Promise.allSettled`，源码注释标注为已知技术债）。 | `useSidebar.ts:99-105`（广播）vs `252-263`（初始全量） | 保持（已知技术债） |
+
+> **`[CONFLICT]` 项处置说明**：BC-13（事件名漂移）、BC-14（git-info.ts execSync）需用户决策后才能从「保持」转「变更」。BC-14 与 issues.md #18 同源，建议合并为一张迁移 ticket。
+
 ## 下游衔接
 
 ### 喂给 Step 3（Issue 拆分）的部分
