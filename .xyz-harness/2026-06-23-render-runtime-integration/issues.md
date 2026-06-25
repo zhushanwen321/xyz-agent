@@ -967,6 +967,18 @@ store 有 auto_retry/queue_update 数据，但无 UI 消费。需要在 Composer
 **验收标准**:
 - [ ] `infra/system/trash.ts` 无 `execSync`/`execFileSync` 字符串拼接形式（filePath 经数组参数传递，不经 shell）
 
+### #19 [P3 架构清理]: git-info.ts 绕过 IGitExecutor 单一 seam
+`services/git-info.ts:59` 用 `execSync('git rev-parse --abbrev-ref HEAD')`（**静态字面量命令、无插值、无注入面**，5min 缓存），用于 session 列表的 branch/worktree badge。绕过 IGitExecutor 单一 git seam（§6.3 Port 清单 / issues #1「git CLI 执行的唯一 seam」）。与 #18 性质不同——#18 是真实注入面（P2 安全），本项无安全风险，仅为架构一致性债。
+
+来源：system-architecture §12 BC-14（行为契约审查发现）。
+
+**为何 P3 而非并 P2**：(1) 无命令注入面（字面量命令）；(2) `rev-parse` 已在 GitCommand 白名单（ports/git-executor.ts:22），迁移后复用现有 port；(3) 迁移需改 `readGitInfo` 签名（module 函数 → 注入 executor）+ 2 个同步调用方（`session-scanner.ts:59` / `session-service.ts:211`），非一行改动；(4) §11 AC-3 grep 当前不含 git-info.ts，因无注入面。
+
+**验收标准**:
+- [ ] `services/git-info.ts` 的 `readGitInfo` 经 IGitExecutor.exec(cwd, 'rev-parse', ['--abbrev-ref','HEAD']) 执行，无直接 `execSync`
+- [ ] `session-scanner.ts` / `session-service.ts` 调用方适配新签名（executor 注入）
+- [ ] 缓存语义保持（5min TTL + pruneGitInfoCache 不变）
+
 ---
 
 ## 依赖关系汇总

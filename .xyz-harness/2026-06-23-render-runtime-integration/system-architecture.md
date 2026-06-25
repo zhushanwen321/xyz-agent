@@ -465,8 +465,8 @@ sequenceDiagram
 | BC-10 | 四态推导优先级 `conflict > dirty > staged > clean`（严格 if 链）。**staged+unstaged 共存 → 解析为 dirty**（dirty 遮蔽 staged），故 staged pill 仅在 `staged>0 && unstaged==0` 可达。 | `components/panel/GitZone.vue:143-149` | 保持 |
 | BC-11 | `git diff --numstat HEAD` 的 stats 基线是 **HEAD（staged+unstaged 合计 vs 最后提交）**，而 counts 来自 `--porcelain`——**untracked 文件计入 unstagedCount 但不计入 stats**。故「仅 untracked」时显 dirty pill + +0/-0。两者度量不同物。 | `services/git-service.ts:104-109`; `git-status-parser.ts:108-129` | 保持 |
 | BC-12 | `result===null`（首次拉取前）默认渲染 `clean`（绿 pill），无 loading 态——首帧瞬时显「Clean」再跳真值。 | `GitZone.vue:144` | 保持 |
-| BC-13 | **`[CONFLICT]` 自动刷新事件名漂移**：注释 + spec C14/G-R2-04 写「agent_end 后刷新」，代码实际订阅 `msg.type === 'message.complete'`。注释自洽（「agent 回合结束」），但 spec 术语与实现不一致。需用户决策：`message.complete` 与 `agent_end` 是否同一事件？若非同一，回合结束可能不刷新。 | `GitZone.vue:230,236` | `[CONFLICT]` 待决策 |
-| BC-14 | **`[CONFLICT]` git-info.ts 走并行 `execSync('git rev-parse ...')` 字符串拼接**，绕过 IGitExecutor 数组参数范式（§11 AC-3 要求的安全契约）。用于 session 列表的 branch/worktree badge（独立数据源，5min 缓存）。与 issues.md #18（trash.ts 同类迁移）同源问题。 | `services/git-info.ts:59` | `[CONFLICT]` → 独立 ticket（与 #18 合并） |
+| BC-13 | **自动刷新事件名（已消歧，非冲突）**：spec C14/G-R2-04 写「agent_end 后刷新」，GitZone 代码订阅 `msg.type === 'message.complete'`。经查 `event-adapter.ts:327-360`，pi 协议事件 `agent_end` 由 adapter **1:1 映射为** ServerMessage `message.complete`（同一事件、两层命名：pi 层叫 agent_end、传输层叫 message.complete）。代码订阅 `message.complete` 正确，刷新在回合边界必触发。**处置**：保持代码；spec 术语补注「agent_end = message.complete 的 pi 层名」消歧（见下方 spec 修订）。 | `GitZone.vue:230,236`; 映射 `infra/pi/event-adapter.ts:327-360` | 保持（spec 消歧） |
+| BC-14 | **git-info.ts 走并行 `execSync('git rev-parse --abbrev-ref HEAD')`**（静态字面量命令、无插值、5min 缓存），绕过 IGitExecutor 单一 seam。与 issues.md #18（trash.ts `filePath` 插值，**真实注入面**）性质不同——git-info.ts **无注入风险**，仅为架构一致性债（rev-parse 已在 GitCommand 白名单，ports/git-executor.ts:22）。迁移需改 readGitInfo 签名（module 函数→注入 executor）+ 2 同步调用方（session-scanner/session-service）。**处置**：登记为独立 P3 架构清理 ticket（低于 #18 P2 安全债），不在本轮做；§11 AC-3 grep 范围维持现状（不含 git-info.ts，因无注入面）。 | `services/git-info.ts:59`; 调用方 `session/session-scanner.ts:59`、`session/session-service.ts:211` | 变更 → 独立 P3 ticket（架构清理，非安全） |
 | BC-15 | commit 前服务端**预跑一次 `git status --porcelain` 显式抛 `git_conflict`**（比让 `git commit` 自己拒绝的错误更清晰），引入 TOCTOU 窗口。 | `services/git-service.ts:171-178` | 保持 |
 | BC-16 | 非零 exit **不抛**，返回 `{exitCode, stdout, stderr}` 交由 service 语义分类；仅 ENOENT（git 未装）与 SIGTERM（超时）抛错。错误码全集：`session_not_found / path_not_allowed / stage_failed / unstage_failed / commit_message_required / nothing_to_commit / git_conflict / commit_failed / git_unavailable / git_failed / timeout`（requirements 仅命名 `git_conflict`）。 | `infra/git-executor.ts:41-57`; `git-service.ts` 全文 | 保持 |
 | BC-17 | `rev-parse` 在 GitCommand 白名单但 **GitService 从不调用**（死能力，ports/git-executor.ts:22）。 | `services/ports/git-executor.ts:22` | 保持（待清理） |
@@ -486,7 +486,9 @@ sequenceDiagram
 | BC-26 | session.list 广播触发源**超出增删**：session 进程退出（崩溃清理，额外广播 `message.error`）、tree fork/clone 也触发广播。 | `services/session-service.ts:68-77`; `transport/tree-message-handler.ts:86,113` | 保持 |
 | BC-27 | 「不重载历史」对**广播路径**成立（只 setGroups，不碰 chat store）；但**初始 mount 的 `loadSessions` 会全量预 hydrate 所有 session 历史**（`Promise.allSettled`，源码注释标注为已知技术债）。 | `useSidebar.ts:99-105`（广播）vs `252-263`（初始全量） | 保持（已知技术债） |
 
-> **`[CONFLICT]` 项处置说明**：BC-13（事件名漂移）、BC-14（git-info.ts execSync）需用户决策后才能从「保持」转「变更」。BC-14 与 issues.md #18 同源，建议合并为一张迁移 ticket。
+> **两项原 `[CONFLICT]` 处置结论（2026-06-25 已决）**：
+> - **BC-13（事件名漂移）= 非 bug**：经查 `event-adapter.ts:327-360`，pi 事件 `agent_end` 1:1 映射为传输层 `message.complete`，GitZone 订阅 `message.complete` 正确。spec C14/G-R2-04 已补「跨层命名注」消歧，代码不改。
+> - **BC-14（git-info.ts execSync）→ issues.md #19**：静态字面量命令、无注入面，定性为 P3 架构清理债（非安全），低于 #18（trash.ts 真实注入面）。§11 AC-3 grep 范围维持不含 git-info.ts。
 
 ## 下游衔接
 

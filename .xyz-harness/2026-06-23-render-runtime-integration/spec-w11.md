@@ -95,6 +95,7 @@ shared/src/protocol.ts ExtensionInfo 补 **tools 字段**（dirName 已在 proto
 2. 新建 GitZone.vue：四态展示（干净/已暂存/有 diff/冲突）—— 分支显示 + stats（+N/-N）+ 状态 pill（clean 绿/staged 绿/conflict 红）+ 冲突态 danger 竖条 + soft 渐隐底
 3. 暂存/取消暂存按钮调 git.stage/git.unstage；提交按钮弹**简单 message 输入框**（可选 message，C-G-R2-02）调 git.commit；Diff/解决冲突按钮触发 SideDrawer 打开（Diff 审批内容排除，但按钮是触发源）
 4. git 数据源：调后端 git.status；**刷新时机（G-R2-04）**：进入 session 时 + agent_end 后 + stage/unstage/commit 操作后手动刷（非轮询，无 filesystem watch）
+   > 注：`agent_end` 是 pi 协议层事件名；经 event-adapter 1:1 映射为传输层 ServerMessage `message.complete`（见 code-architecture §3.x）。renderer 订阅 `message.complete` 即等价于「agent_end 后刷新」。
 
 **后端 git.* 命令（新建，实现详见 code-architecture §3.6-3.8 / §4.1-4.2 / §6.4）：**
 - 新增 4 个命令：git.status / git.stage / git.unstage / git.commit（payload 与 result 契约见 code-architecture §3.9 / §4.1）
@@ -144,6 +145,7 @@ shared/src/protocol.ts ExtensionInfo 补 **tools 字段**（dirName 已在 proto
 - G-R2-02 ✅ commit message 前端弹输入框（C13）；stage 接 filePaths?（空=add -A）；冲突 commit 失败 code=git_conflict
 - G-R2-03 ✅ git-zone 独立真实 git（C12）；修正 FR-11 矛盾（C15：runtime 推 unmerged）
 - G-R2-04 ✅ 刷新时机：进入 session + agent_end + 操作后（C14，非轮询）
+  - **跨层命名注**：`agent_end`（pi 协议层）= `message.complete`（renderer 传输层），event-adapter 1:1 映射。GitZone 订阅 `message.complete` 正确。
 - G-R2-05 ✅ 安全：execFileSync 数组参数 + message 参数传递 + isRepo:false 降级 + timeout
 - G-R2-06 ✅ port 复用：status 复用 reconcileFileChanges（加 U），stage/unstage/commit 进新 IGitExecutor
 - G-R2-07 ✅ mock 同构：补 mock git.*（FR-12 执行时补 mock/index.ts git domain）
@@ -206,5 +208,5 @@ shared/src/protocol.ts ExtensionInfo 补 **tools 字段**（dirName 已在 proto
 | C11 | **git-zone** | **按设计稿加回（含后端建 git.* 命令）** | v3 SSOT 明确要求（panel/spec.md:30），前端重构错误移除 |
 | C12 | git-zone 数据源 | **独立真实 git status**（非 file_changes） | git-zone 显示全量 git 状态（含用户手改），file_changes 仅 agent 改动，语义不同 |
 | C13 | commit message | 前端弹输入框（可选 message） | 设计稿无 commit UI，但用户要可输入 |
-| C14 | git.status 刷新 | 进入 session + agent_end + 操作后（非轮询） | 无 filesystem watch，手动+事件触发 |
+| C14 | git.status 刷新 | 进入 session + agent_end + 操作后（非轮询） | 无 filesystem watch，手动+事件触发。`agent_end`=pi 层名，renderer 收为 `message.complete`（event-adapter 1:1 映射） |
 | C15 | unmerged 来源 | **runtime 推**（修正 FR-11 矛盾） | git.status 输出 hasConflict + files[].status=unmerged |
