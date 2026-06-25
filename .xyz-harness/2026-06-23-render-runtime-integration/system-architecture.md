@@ -21,10 +21,13 @@ downstream: issues.md
 
 ### 搭便车改造目标
 
-| 改造目标 | 动机 | 关联业务目标 |
-|---------|------|------------|
-| events 层加 onGlobalType 泛型收窄 | 现有 onGlobal 无类型收窄，handler 内 msg.payload 需 `as` 断言 | G2（所有订阅域需要类型安全） |
-| domain 层三类形态规范化 | contract.md 确立请求/订阅/动作三类范式，现有代码混用 | G1-G4（契约对齐基础） |
+> **状态列语义**：`候选` → `待⑤确认` → `已纳入`/`已回流`/`打回`（详见 deliverable-template §1）。
+> 本表状态为 2026-06-25 事后回填——W01-W18 已全量落地，故两项均按实际结果标 `已纳入`。
+
+| 改造目标 | 动机 | 关联业务目标 | 状态 | 落地证据 |
+|---------|------|------------|------|---------|
+| events 层加 onGlobalType 泛型收窄 | 现有 onGlobal 无类型收窄，handler 内 msg.payload 需 `as` 断言 | G2（所有订阅域需要类型安全） | 已纳入 | `api/events.ts:64 onGlobalType<T extends ServerMessageType>` 已实现 |
+| domain 层三类形态规范化 | contract.md 确立请求/订阅/动作三类范式，现有代码混用 | G1-G4（契约对齐基础） | 已纳入 | `api/domains/` 已拆分 8 个域文件（chat/config/extension/git/model/plugin/session/settings） |
 
 ## 2. 设计立场
 
