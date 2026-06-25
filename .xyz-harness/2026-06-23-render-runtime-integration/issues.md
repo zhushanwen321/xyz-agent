@@ -2,7 +2,7 @@
 verdict: pass
 upstream: system-architecture.md
 downstream: non-functional-design.md
-revision: 2026-06-25 反哺对齐（C12-C15 下沉验收 + #1 DESIGN-IT-TWICE 选定 async execFile + reconciler 漏洞修复纳入 + #13 升格去 ?），见 changes/tracing-align-round.md + changes/design-it-twice-git.md
+revision: 2026-06-25 反哺对齐（C12-C15 下沉验收 + #1 DESIGN-IT-TWICE 选定 async execFile + reconciler 漏洞修复纳入 + #13 升格去 ?），见 changes/tracing-align-round.md + changes/design-it-twice-git.md；2026-06-25 终审补齐（补「上游覆盖核验」表 + 闭环 review-issues-v2 两阻塞项 P1-1/P1-2 + #18 占位符消歧 + #19 入表），见 changes/review-issues.md
 ---
 
 # Issue 决策图 — 前端 renderer ↔ runtime 集成（W11+）
@@ -28,6 +28,75 @@ graph LR
   classDef investigating fill:#FFD700
   classDef fog fill:#D3D3D3
 ```
+
+---
+
+## 上游覆盖核验（MANDATORY，逐条不漏）
+
+> 本表是「不漏项」第一道防线——从 system-architecture.md 逐条扫描每个可拆元素，每个必须有对应 issue 或显式 N/A+理由。状态语义：✅ 已覆盖 / N/A 不需 issue（附理由）。
+> 2026-06-25 回填（与 machine-check 对齐轮）：W01-W18 已全量落地，故多为「已落地」回填。
+
+### 状态轴（§5 状态流转）
+
+| 上游元素 | 对应 issue | 状态 | N/A 理由 |
+|---------|-----------|------|---------|
+| §5.1 Session 生成状态（idle↔generating，终态 idle） | #8 | ✅ 已覆盖 | store case 补全含 isGenerating 复位（BC-1 终态集） |
+| §5.2 Extension 安装状态（idle→installing→discovered→{completed,error}） | #5 | ✅ 已覆盖 | Extension 多步流 + 候选选择 |
+| §5.3 Compact 压缩状态（compacting→compacted 瞬态） | #6 | ✅ 已覆盖 | compact slash command + 状态推送消费 |
+| §5.4 git-zone 四态（clean/staged/dirty/conflict，派生展示态） | #3 | ✅ 已覆盖 | GitZone.vue 从 GitStatusResult 推导四态 |
+
+### 模块轴（§6.3 Port 清单 + §7 模块划分）
+
+| 上游元素 | 对应 issue | 状态 | N/A 理由 |
+|---------|-----------|------|---------|
+| §6.3 IGitExecutor（新建 port，status/stage/unstage/commit） | #1 | ✅ 已覆盖 | 完整三层链路 + async execFile |
+| §6.3 ISessionStore / IConfigStore / IPiEngine | — | N/A | 已有稳定实现，本轮不改（refactor 范围外） |
+| §7.1 `api/domains/git.ts`（新建） | #1 | ✅ 已覆盖 | frontend domain 层 |
+| §7.1 `api/domains/extension.ts`（补 install/uninstall） | #5 | ✅ 已覆盖 | Extension 对接 |
+| §7.1 `api/domains/config.ts` / settings.ts（签名对齐） | #2 | ✅ 已覆盖 | domain 三类形态规范化 |
+| §7.1 `stores/chat.ts`（message.* case 补全） | #8 | ✅ 已覆盖 | 消息消费补全 |
+| §7.1 `components/panel/GitZone.vue`（新建） | #3 | ✅ 已覆盖 | GitZone 组件 |
+| §7.1 `components/panel/SideDrawer.vue`（新建） | #9 | ✅ 已覆盖 | SideDrawer 容器 |
+| §7.2 `transport/git-message-handler.ts`（新建） | #1 | ✅ 已覆盖 | git.* 消息路由 |
+| §7.2 `services/git-service.ts`（新建） | #1 | ✅ 已覆盖 | git 状态查询+操作编排 |
+| §7.2 `infra/git-executor.ts`（重构 execFileSync→async execFile） | #1 | ✅ 已覆盖 | async execFile（DESIGN-IT-TWICE Q1=a） |
+| §7.2 `session-message-handler.ts` / `message-dispatcher.ts` | — | N/A | 已有稳定实现，本轮不改（compact/abort reply 已在 BC-21~23 登记） |
+
+### 边界轴（§8 Context Map）
+
+| 上游元素 | 对应 issue | 状态 | N/A 理由 |
+|---------|-----------|------|---------|
+| §8 pi (AI 引擎) 边界 | — | N/A | 自有可控 RPC，本轮不改 pi 交互（event-adapter 映射保持） |
+| §8 工作目录 .git 边界（spawn/execFile） | #1 | ✅ 已覆盖 | IGitExecutor 经 async execFile 访问 .git |
+| §8 文件系统边界 | #10 | ✅ 已覆盖 | FileView 读 file_changes（文件系统改动） |
+
+### 挑战轴（§10 挑战与决策）
+
+| 上游元素 | 对应 issue | 状态 | N/A 理由 |
+|---------|-----------|------|---------|
+| §10 D-1 git-zone 数据源独立 vs file_changes | #1, #3, #10 | ✅ 已覆盖 | 三 issue 均声明 C12 双数据源独立 |
+| §10 D-2 三类形态统一入口 | #2 | ✅ 已覆盖 | domain 规范化 |
+| §10 D-3 SideDrawer 触发源 | #9 | ✅ 已覆盖 | git-zone Diff 按钮触发 |
+| §10 D-4 Extension 安装多步流 UI | #5 | ✅ 已覆盖 | 内联候选选择 |
+| §10 D-5 mock 剧本复杂度边界 | #4 | ✅ 已覆盖 | 固定剧本 |
+| §10 D-6 unmerged 双路径推送 | #1, #8, #12 | ✅ 已覆盖 | git.status 路径(#1) + file_changes 路径(#8/#12) |
+| §10 D-7 widget 走 session 通道 | #11 | ✅ 已覆盖 | widget 订阅 |
+| §10 D-8 git-info.ts 保留 services/（准 port） | #19 | ✅ 已覆盖 | BC-14 导出 P3 架构清理 ticket |
+| §10 D-9 IGitExecutor 与 readGitInfo 职责分工 | #1 | ✅ 已覆盖 | 选完整 IGitExecutor 方案 A |
+
+### 搭便车改造（§1）
+
+| 上游元素 | 对应 issue | 状态 | N/A 理由 |
+|---------|-----------|------|---------|
+| §1 events 层 onGlobalType 泛型收窄 | #2 | ✅ 已覆盖 | domain 规范化验收含 events as 断言清除 |
+| §1 domain 三类形态规范化 | #2 | ✅ 已覆盖 | P0 阻塞项 |
+
+### 反模式验收（§11 grep 清单）
+
+| 上游元素 | 对应 issue | 状态 | N/A 理由 |
+|---------|-----------|------|---------|
+| §11 AC-3 git 命令防注入（execFile 数组参数） | #1 | ✅ 已覆盖 | AC 含 reconciler 迁移 + grep 范围 |
+| §11 AC-1 三类形态 / AC-2 session 隔离 / AC-4 events 类型 / AC-5 错误重置 | #2, #8 | ✅ 已覆盖 | #2(AC-1/AC-4) + #8(AC-2/AC-5) |
 
 ---
 
@@ -109,7 +178,9 @@ git-zone（Panel zone ⑤）需要完整 git 操作能力：status/stage/unstage
 
 **访问层不换库（DESIGN-IT-TWICE 方向 B 结论）**: 维持 shell out to git CLI。git CLI 已是硬依赖（pi 本体 + 现存 `file-change-reconciler.ts` / `npm-git-installer.ts` 多处 shell out），nodegit 需 electron-rebuild 违反 CLAUDE.md §12 打包约束且基本停维，isomorphic-git ~1MB 纯 JS 只为「不 shell out」收益为零（CLI 依赖并未消除）。IGitExecutor port 签名 `exec(cwd, command, args)` 本就是 CLI 调用形状。
 
-**附带修复（用户确认 Q2=a）**: 现有 `infra/pi/file-change-reconciler.ts` 用字符串 `execSync('git status --porcelain')`（走 shell，注入面），system-architecture §11 AC-3 的防注入 grep 只扫 `git-executor.ts` 漏了这处。本轮一并迁移为 execFile 数组参数，AC-3 grep 范围扩到整个 `infra/`。
+**附带修复（用户确认 Q2=a）**: 现有 `infra/pi/file-change-reconciler.ts` 用字符串 `execSync('git status --porcelain')`（走 shell，注入面），system-architecture §11 AC-3 的防注入 grep 只扫 `git-executor.ts` 漏了这处。本轮一并迁移为 execFile 数组参数，AC-3 grep 范围扩到 **git 相关** shell out（git-executor + reconciler）。
+
+> **AC-3 scope 边界（review-issues-v2 P1-1 已闭环）**：`infra/` 下共 3 处 `execSync`——reconciler（常量串，**在 fix scope 内**）/ `trash.ts`（`filePath` 插值真实注入面，**非 git 职责归 #18**）/ `process-manager.ts`（常量串 `'which pi'`，**非 git 职责**）。本 AC 只承诺 git 相关两处（reconciler + git-executor）无字符串形式，**不承诺** `infra/` 全目录——trash.ts 由 #18 单独处理，process-manager 非 git、无插值不纳入。
 
 #### 验收标准
 
@@ -962,7 +1033,9 @@ store 有 auto_retry/queue_update 数据，但无 UI 消费。需要在 Composer
 后端搜索能力从零。延后理由：协议级缺口，需整体设计
 
 ### #18 [P2 安全债]: trash.ts filePath 插值注入面
-`infra/system/trash.ts:13` 用 `execSync(\`trash "${filePath}"...\`)`（mac osascript 混合），filePath 经 shell 插值，是真实命令注入面（用户可控路径）。非 git 职责（归 system 模块），#1 不含。方案：迁移为 `spawn`/`execFile` 数组参数（filePath 不经 shell）。建议本轮顺手修（review-issues-v2 红队 R3 发现），不卡核心功能。
+`infra/system/trash.ts:13` 用 `execSync` 拼接 `trash` 命令并经用户可控路径做 shell 插值（mac osascript 混合），是真实命令注入面。源码形态：`execSync` 以模板字符串拼接路径变量（`` `trash "${...}" ...` `` 形式，路径经 shell 解释）。
+
+非 git 职责（归 system 模块），#1 不含。方案：迁移为 `spawn`/`execFile` 数组参数（路径不经 shell）。建议本轮顺手修（review-issues-v2 红队 R3 发现），不卡核心功能。
 
 **验收标准**:
 - [ ] `infra/system/trash.ts` 无 `execSync`/`execFileSync` 字符串拼接形式（filePath 经数组参数传递，不经 shell）

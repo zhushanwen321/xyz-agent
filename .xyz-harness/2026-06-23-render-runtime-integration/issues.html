@@ -109,6 +109,7 @@ graph LR
   #12[P2: 契约裂缝修复]:::investigating
   #13[P1: retry/queue UI]:::investigating
   #18[P2: trash.ts 注入面]:::fog
+  #19[P3: git-info.ts 架构清理]:::fog
 
   classDef resolved fill:#1a3a23,stroke:#4ade80,stroke-width:2px,color:#e8edf2
   classDef investigating fill:#3a331a,stroke:#facc15,stroke-width:2px,color:#e8edf2
@@ -188,6 +189,7 @@ graph LR
         <tr><td>#16</td><td>ContextChipsBar / ProgressZone 真实数据</td><td>协议级缺口，后端无通道</td></tr>
         <tr><td>#17</td><td>@/# 搜索通道</td><td>协议级缺口，需整体设计</td></tr>
         <tr><td>#18</td><td>trash.ts filePath 插值注入面（P2 安全债）<br><span style="color:var(--muted);font-size:12px;">review-issues-v2 红队 R3 发现；非 git 职责，建议本轮顺手修</span></td><td>非核心职责域外，但真注入面（filePath 可控）</td></tr>
+        <tr><td>#19</td><td>git-info.ts 绕过 IGitExecutor 单一 seam（P3 架构清理）<br><span style="color:var(--muted);font-size:12px;">system-architecture §12 BC-14 导出；静态字面量命令、无注入面，仅架构一致性债</span></td><td>无安全风险，低于 #18（P2）；rev-parse 已在白名单，迁移需改 readGitInfo 签名+2 调用方</td></tr>
       </tbody>
     </table>
   </div>
