@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import DirSelectPopover from './DirSelectPopover.vue'
 import BranchSelectPopover from './BranchSelectPopover.vue'
+import CreateBranchModal from './CreateBranchModal.vue'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 
 const props = withDefaults(
@@ -69,6 +70,8 @@ const isBranchOpen = computed({
   get: () => flow.state.value === 'branch-popover',
   set: (v) => { if (!v) flow.closeOverlay(); else flow.openBranchPopover() },
 })
+/** 创建分支 modal 渲染绑定（#7）：state===branch-modal 时挂载 CreateBranchModal（Dialog teleport 到 body） */
+const isBranchModalOpen = computed(() => flow.state.value === 'branch-modal')
 
 function onDir(): void {
   flow.openDirPopover()
@@ -173,5 +176,8 @@ function onRetry(): void {
       <RefreshCw class="shrink-0" />
       重试加载历史
     </Button>
+
+    <!-- 创建分支 modal（#7）：BranchSelectPopover emit open-branch-modal → openBranchModal → state=branch-modal → 渲染。modal 内 Esc/提交失败留 modal（D-7）。 -->
+    <CreateBranchModal v-if="isBranchModalOpen" />
   </div>
 </template>
