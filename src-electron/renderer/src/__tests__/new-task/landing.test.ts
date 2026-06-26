@@ -1,0 +1,143 @@
+/**
+ * Landing 组件 + Panel landing 分支单测（#2，T1.6/T1.7/T1.8）。
+ *
+ * 覆盖：
+ * - T1.6 messageCount===0 && !isGenerating → 渲染 landing（Panel v-if 分支）
+ * - T1.7 messages 空但 isGenerating=true → 不渲染 landing（生成态优先）
+ * - T1.8 getHistory 失败 → landing 有重试按钮，点击 emit retry 不永久卡住
+ *
+ * mock 策略：
+ * - Landing 直挂载（presentational，props/emits），无 store 依赖。
+ * - Panel v-if 条件：mount Panel（子组件 stub）+ 真 pinia chat store，操控 messages/isStreaming。
+ *
+ * 运行：cd src-electron/renderer && npx vitest run src/__tests__/new-task/landing.test.ts
+ */
+import { describe, it, expect, beforeEach } from 'vitest'
+import { mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
+import Landing from '@/components/new-task/Landing.vue'
+import Panel from '@/components/panel/Panel.vue'
+import { useChatStore } from '@/stores/chat'
+import type { DerivedStatus } from '@/types'
+
+beforeEach(() => {
+  setActivePinia(createPinia())
+})
+
+const DONE = 'done' as DerivedStatus
+
+/** mount Panel 时 stub 掉所有重子组件，只验 landing v-if 分支 */
+const panelStubs = {
+  PanelHeader: { template: '<div />' },
+  ProgressZone: { template: '<div />' },
+  MessageStream: { template: '<div />' },
+  Composer: { template: '<div />' },
+  GitZone: { template: '<div />' },
+  SideDrawer: { template: '<div />' },
+}
+
+function mountPanel(overrides: Record<string, unknown> = {}) {
+  return mount(Panel, {
+    props: {
+      panelId: 'p1',
+      sessionId: 's1',
+      sessionLabel: 'label',
+      sessionDir: '/repo',
+      status: DONE,
+      active: true,
+      isDual: false,
+      ...overrides,
+    },
+    global: { stubs: panelStubs },
+  })
+}
+
+describe('Landing 渲染条件（Panel v-if 分支）', () => {
+  it('T1.6 messageCount===0 && !isGenerating → 渲染 landing', () => {
+    const chat = useChatStore()
+    chat.isStreaming = false // !isGenerating
+    // session 's1' 未 hydrate → getMessages 返回 [] → messageCount=0
+    const wrapper = mountPanel({ sessionId: 's1' })
+    expect(wrapper.findComponent(Landing).exists()).toBe(true)
+  })
+
+  it('T1.7 messages 空但 isGenerating=true → 不渲染 landing（生成态优先）', () => {
+    const chat = useChatStore()
+    chat.isStreaming = true // isGenerating
+    const wrapper = mountPanel({ sessionId: 's1' })
+    expect(wrapper.findComponent(Landing).exists()).toBe(false)
+  })
+
+  it('T1.6 有消息（messageCount>0）→ 不渲染 landing（走对话流）', () => {
+    const chat = useChatStore()
+    chat.isStreaming = false
+    chat.hydrate('s1', [
+      { id: 'm1', role: 'user', content: 'hi', status: 'complete', timestamp: 1 },
+    ])
+    const wrapper = mountPanel({ sessionId: 's1' })
+    expect(wrapper.findComponent(Landing).exists()).toBe(false)
+  })
+})
+
+describe('Landing 组件（presentational）', () => {
+  it('渲染问候语 + directory chip（T1.6 landing 内容）', () => {
+    const wrapper = mount(Landing, {
+      props: { sessionId: 's1', currentCwd: '/repo', gitBranch: 'main' },
+    })
+    expect(wrapper.text()).toContain('有什么想让我帮忙的吗')
+    expect(wrapper.find('[data-testid="chip-directory"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="chip-branch"]').exists()).toBe(true)
+  })
+
+  it('gitBranch 为空 → branch chip 隐藏（UC-7 非 git 目录，AC-2.2）', () => {
+    const wrapper = mount(Landing, {
+      props: { sessionId: 's1', currentCwd: '/plain' },
+    })
+    expect(wrapper.find('[data-testid="chip-branch"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="chip-directory"]').exists()).toBe(true)
+  })
+
+  it('currentCwd 为空（首次启动延迟 create）→ directory chip 显空态文案', () => {
+    const wrapper = mount(Landing, {
+      props: { sessionId: null, currentCwd: null },
+    })
+    const chip = wrapper.find('[data-testid="chip-directory"]')
+    expect(chip.exists()).toBe(true)
+    expect(chip.text()).toContain('选择目录')
+  })
+
+  it('点 directory chip → emit open-dir', async () => {
+    const wrapper = mount(Landing, {
+      props: { sessionId: 's1', currentCwd: '/repo', gitBranch: 'main' },
+    })
+    await wrapper.find('[data-testid="chip-directory"]').trigger('click')
+    expect(wrapper.emitted('open-dir')).toBeTruthy()
+  })
+
+  it('点 branch chip → emit open-branch', async () => {
+    const wrapper = mount(Landing, {
+      props: { sessionId: 's1', currentCwd: '/repo', gitBranch: 'main' },
+    })
+    await wrapper.find('[data-testid="chip-branch"]').trigger('click')
+    expect(wrapper.emitted('open-branch')).toBeTruthy()
+  })
+})
+
+describe('Landing getHistory 失败重试（T1.8）', () => {
+  it('historyError=true → 渲染重试按钮，点击 emit retry（不永久卡住）', async () => {
+    const wrapper = mount(Landing, {
+      props: { sessionId: 's1', currentCwd: '/repo', historyError: true },
+    })
+    const retry = wrapper.find('[data-testid="retry-history"]')
+    expect(retry.exists()).toBe(true)
+    await retry.trigger('click')
+    expect(wrapper.emitted('retry')).toBeTruthy()
+  })
+
+  it('historyError=false → 不渲染重试按钮', () => {
+    const wrapper = mount(Landing, {
+      props: { sessionId: 's1', currentCwd: '/repo', historyError: false },
+    })
+    expect(wrapper.find('[data-testid="retry-history"]').exists()).toBe(false)
+  })
+})

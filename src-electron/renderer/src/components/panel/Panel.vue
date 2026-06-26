@@ -25,8 +25,19 @@
       @close="emit('close')"
     />
 
-    <!-- ② message-stream（FG5，7 块 + 回合折叠 + auto-scroll） -->
-    <MessageStream v-if="sessionId" :session-id="sessionId" />
+    <!-- messageCount>0 → 对话流；messageCount===0 && !isGenerating → Landing 落地空态（#2）；
+         isGenerating 优先不渲染 Landing（AC-2.8）。 -->
+    <MessageStream v-if="sessionId && messageCount > 0" :session-id="sessionId" />
+    <Landing
+      v-else-if="!isGenerating"
+      :session-id="sessionId"
+      :current-cwd="sessionDir || undefined"
+      :git-branch="gitBranch"
+      :history-error="historyError"
+      @open-dir="onOpenDir"
+      @open-branch="onOpenBranch"
+      @retry="onRetryHistory"
+    />
     <div v-else class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4 text-center">
       <MessageSquare class="size-6 text-subtle opacity-40" />
       <p class="text-[12px] text-subtle opacity-70">选择左侧会话开始</p>
@@ -73,7 +84,11 @@ import MessageStream from './MessageStream.vue'
 import Composer from './Composer.vue'
 import GitZone from './GitZone.vue'
 import SideDrawer from './SideDrawer.vue'
+import Landing from '@/components/new-task/Landing.vue'
 import { useSideDrawer } from '@/composables/features/useSideDrawer'
+import { useChatStore } from '@/stores/chat'
+import { useSidebar } from '@/composables/features/useSidebar'
+import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 
 const props = defineProps<{
   panelId: string
@@ -110,6 +125,31 @@ function onPanelMouseDown(e: MouseEvent): void {
   // 按钮点击由 reka-ui/Button 内部处理，这里检查最近 button 祖先避免误切
   if ((e.target as HTMLElement).closest('button')) return
   emit('activate', props.panelId)
+}
+
+const chat = useChatStore()
+
+/** 当前 session 消息数（未 hydrate / 无 session → 0，landing 渲染判据 D-3） */
+const messageCount = computed(() =>
+  props.sessionId ? chat.getMessages(props.sessionId).length : 0,
+)
+/** 生成态优先：isStreaming 时不渲染 landing（AC-2.8） */
+const isGenerating = computed(() => chat.isStreaming)
+/** getHistory 失败态（landing 重试出口，AC-2.6） */
+const historyError = computed(() =>
+  props.sessionId ? chat.failedHistory.has(props.sessionId) : false,
+)
+
+/** Landing chip → NewTaskFlow popover（#3） */
+function onOpenDir(): void {
+  useNewTaskFlow().openDirPopover()
+}
+function onOpenBranch(): void {
+  useNewTaskFlow().openBranchPopover()
+}
+/** Landing 重试 → useSidebar.retryHistory（#2 AC-2.6） */
+function onRetryHistory(): void {
+  if (props.sessionId) void useSidebar().retryHistory(props.sessionId)
 }
 
 /** 激活标识（workspace/spec.md）：单 panel 无标识；双 active = bg-elevated + ring-1 accent + opacity 1；双 standby = opacity 0.5 hover 回升 0.78 */
