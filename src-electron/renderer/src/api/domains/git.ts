@@ -60,3 +60,14 @@ export function checkout(sessionId: string, name: string): Promise<void> {
   transport.send({ type: 'git.checkout', id, payload: { sessionId, name } })
   return result
 }
+
+/**
+ * 创建并检出分支（#7 创建分支 modal）。ack 复用 'message.status' {status:'branch_created'}。
+ * 分支名非法/已存在/超时→runtime GitError→Promise reject（调用方留 modal 显错，D-7）。
+ */
+export function createBranch(sessionId: string, name: string): Promise<void> {
+  const id = pending.create()
+  const result = pending.register<void>(id)
+  transport.send({ type: 'git.createBranch', id, payload: { sessionId, name } })
+  return result
+}

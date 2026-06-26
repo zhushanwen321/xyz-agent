@@ -13,6 +13,11 @@
  * 覆盖（选分支 #6）：
  * - T4.1 前端 selectBranch(name)→gitApi.checkout→state=landing
  * - T4.2 confirmDirtySwitch(name)→gitApi.checkout（留工作区，不 stash）→state=landing
+ * 覆盖（创建分支 #7）：
+ * - T6.1 前端 submitCreateBranch(name)→gitApi.createBranch→state=landing
+ * - T6.6 飞行中重复点击→in-flight 守卫 createBranch 只调一次
+ * - T6.7 飞行中 Esc→孤儿 promise 忽略不重复 transition 不回灌 chip
+ * - T6.3 前端 createBranch reject→留 branch-modal（D-7）错误向上抛
  *
  * 运行：cd src-electron/renderer && npx vitest run src/__tests__/new-task/flow-integration.test.ts
  */
@@ -27,6 +32,7 @@ const createCtrl = vi.hoisted(() => ({
 }))
 const gitCtrl = vi.hoisted(() => ({
   checkout: vi.fn<(sessionId: string, name: string) => Promise<void>>().mockResolvedValue(undefined),
+  createBranch: vi.fn<(sessionId: string, name: string) => Promise<void>>().mockResolvedValue(undefined),
 }))
 const pickCtrl = vi.hoisted(() => ({
   pickDirectory: vi.fn<() => Promise<{ canceled: boolean; path: string | null }>>(),
@@ -34,7 +40,7 @@ const pickCtrl = vi.hoisted(() => ({
 
 vi.mock('@/api', () => ({
   session: { create: createCtrl.create, remove: createCtrl.remove },
-  git: { checkout: gitCtrl.checkout },
+  git: { checkout: gitCtrl.checkout, createBranch: gitCtrl.createBranch },
 }))
 vi.mock('@/lib/ipc', () => ({ pickDirectory: pickCtrl.pickDirectory }))
 
@@ -47,6 +53,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   createCtrl.remove.mockResolvedValue(undefined)
   gitCtrl.checkout.mockResolvedValue(undefined)
+  gitCtrl.createBranch.mockResolvedValue(undefined)
 })
 
 function setGroups(sessions: SessionSummary[]): void {
@@ -256,5 +263,72 @@ describe('选分支链路（selectBranch / confirmDirtySwitch，#6）', () => {
     gitCtrl.checkout.mockRejectedValue(new Error('checkout conflict'))
     await expect(flow.selectBranch('feature/z')).rejects.toThrow('checkout conflict')
     expect(flow.state.value).toBe('branch-popover') // 留 popover 显错
+  })
+})
+
+describe('创建分支链路（submitCreateBranch，#7）', () => {
+  /** 进 branch-modal 态（复用：startFlow→landing→openBranchPopover→openBranchModal） */
+  async function toBranchModal(): Promise<void> {
+    setGroups([mkSession({ id: 'old', cwd: '/repo', gitBranch: 'main', lastActiveAt: 1 })])
+    const created = mkSession({ id: 'cur', cwd: '/repo', gitBranch: 'main' })
+    createCtrl.create.mockResolvedValue(created)
+    const flow = useNewTaskFlow()
+    await flow.startFlow()
+    const store = useSessionStore()
+    store.appendSession(created)
+    store.activeId = 'cur'
+    flow.openBranchPopover()
+    flow.openBranchModal()
+    expect(flow.state.value).toBe('branch-modal')
+  }
+
+  it('T6.1 submitCreateBranch(合法名)→gitApi.createBranch→state=landing', async () => {
+    await toBranchModal()
+    const flow = useNewTaskFlow()
+    await flow.submitCreateBranch('feat/new')
+    expect(gitCtrl.createBranch).toHaveBeenCalledWith('cur', 'feat/new')
+    expect(flow.state.value).toBe('landing')
+  })
+
+  it('T6.6 飞行中重复点击→in-flight 守卫，createBranch 只调一次', async () => {
+    await toBranchModal()
+    const flow = useNewTaskFlow()
+    let resolveCreate!: () => void
+    gitCtrl.createBranch.mockReturnValueOnce(
+      new Promise<void>((r) => {
+        resolveCreate = r
+      }),
+    )
+    const p1 = flow.submitCreateBranch('feat/a')
+    const p2 = flow.submitCreateBranch('feat/a') // 飞行中守卫→直接 return
+    resolveCreate()
+    await Promise.all([p1, p2])
+    expect(gitCtrl.createBranch).toHaveBeenCalledTimes(1)
+  })
+
+  it('T6.7 飞行中 Esc→孤儿 promise 忽略，不重复 transition 不回灌', async () => {
+    await toBranchModal()
+    const flow = useNewTaskFlow()
+    let resolveCreate!: () => void
+    gitCtrl.createBranch.mockReturnValueOnce(
+      new Promise<void>((r) => {
+        resolveCreate = r
+      }),
+    )
+    const p = flow.submitCreateBranch('feat/orphan') // 不 await，飞行中
+    flow.closeOverlay() // Esc→branch-modal→landing
+    expect(flow.state.value).toBe('landing')
+    resolveCreate() // 后台 promise resolve
+    await p
+    // 孤儿 promise 忽略：state 仍 landing（未重复 transition 抛错），不回灌
+    expect(flow.state.value).toBe('landing')
+  })
+
+  it('T6.3(前端) createBranch reject→留 branch-modal（D-7），错误向上抛', async () => {
+    await toBranchModal()
+    const flow = useNewTaskFlow()
+    gitCtrl.createBranch.mockRejectedValue(new Error('branch exists'))
+    await expect(flow.submitCreateBranch('feat/dup')).rejects.toThrow('branch exists')
+    expect(flow.state.value).toBe('branch-modal') // D-7 留 modal 可重试
   })
 })

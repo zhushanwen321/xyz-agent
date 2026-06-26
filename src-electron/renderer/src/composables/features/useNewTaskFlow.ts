@@ -69,6 +69,8 @@ const state: Ref<NewTaskFlowState> = ref('idle')
 const currentSession: Ref<SessionSummary | null> = ref(null)
 /** startFlow in-flight 标记（AC-1.5 幂等：双击并发只建 1 session） */
 const createInFlight = ref(false)
+/** submitCreateBranch in-flight 标记（AC-7.9 飞行中 disabled 防重复 + T6.6 composable 层守卫） */
+const branchCreateInFlight = ref(false)
 
 /**
  * 重置 NewTaskFlow 单实例状态回 idle（测试隔离 / 应用初始化用）。
@@ -78,6 +80,7 @@ export function resetNewTaskFlow(): void {
   state.value = 'idle'
   currentSession.value = null
   createInFlight.value = false
+  branchCreateInFlight.value = false
 }
 
 export function useNewTaskFlow() {
@@ -252,11 +255,26 @@ export function useNewTaskFlow() {
     transition('branch-modal')
   }
 
-  /** submitCreateBranch —— 创建并检出分支（§4.4）。Wave 3 #7 接入 gitApi.createBranch 后补全。 */
-  async function submitCreateBranch(_name: string): Promise<void> {
+  /**
+   * submitCreateBranch —— 创建并检出分支（§4.4，#7）。
+   *
+   * 数据流：branch-modal → gitApi.createBranch(sessionId,name) → 成功 transition('landing')。
+   * - 飞行中守卫（AC-7.9/T6.6）：branchCreateInFlight 标记，重复提交直接 return
+   * - 孤儿 promise 守卫（AC-7.9/T6.7）：Esc 已让 state 离开 branch-modal 后台 resolve → 忽略不 transition/不回灌
+   * - 失败留 modal（D-7/AC-7.3）：createBranch reject→错误向上抛（state 不变，组件 catch 显错可重试）
+   */
+  async function submitCreateBranch(name: string): Promise<void> {
     if (!currentSessionId.value) throw new Error('NewTaskFlow: 无绑定 session，无法创建分支')
-    // TODO(#7 Wave 3): 飞行中守卫 + gitApi.createBranch + 成功 transition('landing') / 失败留 modal（D-7）
-    throw new Error('submitCreateBranch: Wave 3 #7 未实现（gitApi.createBranch 待接入）')
+    if (branchCreateInFlight.value) return // T6.6 飞行中守卫
+    branchCreateInFlight.value = true
+    try {
+      await gitApi.createBranch(currentSessionId.value, name)
+      // T6.7 孤儿 promise 守卫：Esc 已切走→state≠branch-modal→忽略结果（不重复 transition、不回灌 chip）
+      if (state.value !== 'branch-modal') return
+      transition('landing') // branch-modal→landing（创建成功落回）
+    } finally {
+      branchCreateInFlight.value = false
+    }
   }
 
   /** 任意 overlay→landing（Esc/点外）。同一时刻只一层（AC-3.9）。 */
@@ -286,6 +304,7 @@ export function useNewTaskFlow() {
     currentCwd,
     gitInfo,
     isInflight: readonly(createInFlight),
+    isBranchCreating: readonly(branchCreateInFlight),
     isOverlay: computed(() => OVERLAY_STATES.has(state.value)),
     startFlow,
     openDirPopover,
