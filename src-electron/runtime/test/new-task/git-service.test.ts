@@ -14,7 +14,7 @@
  * 运行：cd src-electron/runtime && npx vitest run test/new-task/git-service.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { GitService, GitError } from '../../src/services/git-service.js'
+import { GitService, GitError, type GitServiceOptions } from '../../src/services/git-service.js'
 import { GitExecutorError } from '../../src/services/ports/git-executor.js'
 import type { IGitExecutor, GitExecutorResult } from '../../src/services/ports/git-executor.js'
 
@@ -23,7 +23,7 @@ const sessionService = { getSummary: vi.fn() }
 
 function svc(): GitService {
   return new GitService({
-    sessionService: sessionService as unknown as Parameters<typeof GitService>[0]['sessionService'],
+    sessionService: sessionService as unknown as GitServiceOptions['sessionService'],
     executor: executor as unknown as IGitExecutor,
   })
 }

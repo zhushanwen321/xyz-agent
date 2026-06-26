@@ -4,7 +4,7 @@
  * 🔒 三层架构：services 定义 port，infra/git-executor.ts 实现（execFileSync 数组参数）。
  * GitService 经此 port 执行 git 子命令，不直接 spawn/exec。
  *
- * **白名单 = GitCommand 联合类型本身**。exec 只接受这 6 个 git 子命令；
+ * **白名单 = GitCommand 联合类型本身**。exec 只接受这些 git 子命令；
  * 其余参数（路径/message）由 GitService 以数组元素传入，经 execFileSync 数组形式执行，
  * 不经 shell，杜绝命令注入（spec-w11 G-R2-05）。
  */
@@ -16,11 +16,12 @@ import type { GitFileStatus } from '@xyz-agent/shared'
  * - add / reset：暂存/取消暂存
  * - commit：提交
  * - checkout：切换分支（#6 `checkout <name>`）/ 创建并检出分支（#7 `checkout -b <name>`），共用白名单项
+ * - branch：只读列举分支（#6 选分支 popover 数据源，`branch --list --format`）
  *
  * 路径/message/分支名 作为 args 数组元素传入（如 ['--', 'src/a.ts']、['-m', 'msg']、['main']），
  * 由 GitService 保证语义正确，executor 只负责以数组形式交给 execFileSync。
  */
-export type GitCommand = 'status' | 'add' | 'reset' | 'commit' | 'diff' | 'rev-parse' | 'checkout'
+export type GitCommand = 'status' | 'add' | 'reset' | 'commit' | 'diff' | 'rev-parse' | 'checkout' | 'branch'
 
 /** IGitExecutor.exec 的返回。exitCode 非 0 时 GitService 按 stderr 判定失败类型。 */
 export interface GitExecutorResult {

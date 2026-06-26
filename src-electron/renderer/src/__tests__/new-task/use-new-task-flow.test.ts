@@ -226,4 +226,39 @@ describe('useNewTaskFlow 状态机', () => {
       expect(flow.state.value).toBe('branch-modal')
     })
   })
+
+  describe('Esc 排队（T4.8 / AC-6.7）', () => {
+    // 真实 execSync 阻塞无法在 vitest 复现（走手工 M 清单）。
+    // 前端可 mock 部分：branch-popover 态下 gitApi.status pending 期间触发 closeOverlay（Esc），
+    // pending resolve 后状态机已正确转移到 landing，不丢事件、不崩。
+    it('branch-popover 态 closeOverlay（Esc）→landing，异步 status 后续 resolve 不影响已定状态', async () => {
+      setGroups([gitSession({ id: 'git-s', cwd: '/repo' })])
+      useSessionStore().activeId = 'git-s'
+      const flow = useNewTaskFlow()
+      await flow.startFlow()
+      flow.openBranchPopover()
+      expect(flow.state.value).toBe('branch-popover')
+
+      // 模拟 status pending 期间用户按 Esc（closeOverlay 排队执行）
+      flow.closeOverlay()
+      expect(flow.state.value).toBe('landing')
+
+      // status 后续 resolve（模拟异步回灌）——状态已定，不应回跳
+      await Promise.resolve()
+      expect(flow.state.value).toBe('landing')
+    })
+
+    it('landing 态重复 closeOverlay→状态机守卫拦（非法转换抛错，UI 层应仅在 overlay 态绑 Esc）', async () => {
+      setGroups([gitSession({ id: 'git-s', cwd: '/repo' })])
+      useSessionStore().activeId = 'git-s'
+      const flow = useNewTaskFlow()
+      await flow.startFlow()
+      flow.openBranchPopover()
+      flow.closeOverlay() // branch-popover→landing（首次合法）
+      expect(flow.state.value).toBe('landing')
+      // landing→landing 是 no-op 非法转换，状态机严格守卫（UI 层 Esc 仅在 overlay 态绑 closeOverlay，不会触达）
+      expect(() => flow.closeOverlay()).toThrow('非法状态转换')
+      expect(flow.state.value).toBe('idle') // 守卫抛错后回 idle（AC-3.11）
+    })
+  })
 })
