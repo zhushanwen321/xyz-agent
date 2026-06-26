@@ -21,25 +21,27 @@ import * as pending from '../pending'
 import * as events from '../events'
 
 // ── 请求-响应 ──
-export function listProviders(): Promise<ProviderInfo[]> {
+// runtime 请求-响应 reply 均为命名 envelope（settings-message-handler.ts），
+// 此处统一解包对应字段，与 session.list 解包 `.groups` 同构。mock 门面有独立实现不受影响。
+export async function listProviders(): Promise<ProviderInfo[]> {
   const id = pending.create()
-  const result = pending.register<ProviderInfo[]>(id)
+  const result = pending.register<{ providers: ProviderInfo[] }>(id)
   transport.send({ type: 'config.getProviders', id, payload: {} })
-  return result
+  return (await result).providers
 }
 
-export function scanSkills(sources: string[]): Promise<SkillInfo[]> {
+export async function scanSkills(sources: string[]): Promise<SkillInfo[]> {
   const id = pending.create()
-  const result = pending.register<SkillInfo[]>(id)
+  const result = pending.register<{ skills: SkillInfo[]; success: boolean }>(id)
   transport.send({ type: 'config.scanSkills', id, payload: { sources } })
-  return result
+  return (await result).skills
 }
 
-export function scanAgents(sources: string[]): Promise<AgentInfo[]> {
+export async function scanAgents(sources: string[]): Promise<AgentInfo[]> {
   const id = pending.create()
-  const result = pending.register<AgentInfo[]>(id)
+  const result = pending.register<{ agents: AgentInfo[]; success: boolean }>(id)
   transport.send({ type: 'config.scanAgents', id, payload: { sources } })
-  return result
+  return (await result).agents
 }
 
 /** discoverModels 的响应载荷（config.discoveredModels reply，settings-message-handler） */

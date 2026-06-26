@@ -14,13 +14,14 @@ import * as events from '../events'
 
 /**
  * 拉取 session 历史（UC-2 切换 session 时回填 message-stream）。
- * mock 模式返回 fixtureMessages；真 api 走 session.history。
+ * runtime session.history reply envelope 是 `{ sessionId, messages }`（session-message-handler.ts:78），
+ * 解包 `.messages` 返 Message[]（mock 门面有独立实现，不受影响）。
  */
-export function getHistory(sessionId: string): Promise<Message[]> {
+export async function getHistory(sessionId: string): Promise<Message[]> {
   const id = pending.create()
-  const result = pending.register<Message[]>(id)
+  const result = pending.register<{ sessionId: string; messages: Message[] }>(id)
   transport.send({ type: 'session.history', id, payload: { sessionId } })
-  return result
+  return (await result).messages
 }
 
 /** 发送消息（mock 不模拟失败，D7） */

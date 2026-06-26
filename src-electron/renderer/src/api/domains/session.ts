@@ -26,12 +26,14 @@ export async function list(): Promise<SessionGroup[]> {
   return (await result).groups
 }
 
-/** 创建新 session（可选默认标题） */
-export function create(title?: string): Promise<SessionSummary> {
+/** 创建新 session（可选默认标题）。
+ *  runtime session.created reply envelope 是 `{ session }`（session-message-handler.ts:39），
+ *  与 list() 解包 `.groups` 同理，此处解包 `.session` 返 SessionSummary。 */
+export async function create(title?: string): Promise<SessionSummary> {
   const id = pending.create()
-  const result = pending.register<SessionSummary>(id)
+  const result = pending.register<{ session: SessionSummary }>(id)
   transport.send({ type: 'session.create', id, payload: { label: title } })
-  return result
+  return (await result).session
 }
 
 /** 切换到指定 session（id 无效时由 runtime/pending reject） */
