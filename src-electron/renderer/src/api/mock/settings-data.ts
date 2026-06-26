@@ -97,6 +97,20 @@ export const fixtureExtensions: FixtureExtension[] = [
   { name: 'memory', version: '0.6.0', description: 'Persistent memory store', enabled: false, tools: ['save_memory', 'search_memory'] },
 ]
 
+/** 候选 → ExtensionInfo 形状（mock 模式补全 dirName/path/source，对齐 shared 契约） */
+export function toCandidate(c: FixtureExtension) {
+  return {
+    name: c.name,
+    dirName: c.name,
+    version: c.version,
+    description: c.description,
+    path: `/mock/tmp/${c.name}`,
+    enabled: c.enabled,
+    source: 'user-installed' as const,
+    tools: c.tools,
+  }
+}
+
 /* ── System (应用偏好) ── */
 
 export interface FixtureSystemSettings {

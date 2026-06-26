@@ -9,6 +9,7 @@
  * 纯数据：不依赖 vue/runtime，无副作用。全部 named export，无 default export。
  * token 数用原始数值（如 69000），不用字符串。
  */
+import type { ModelInfo } from '@xyz-agent/shared'
 
 // ── 1. 模型列表（provider 分组，平铺单层） ──────────────────────────────
 export interface MockModel {
@@ -17,6 +18,20 @@ export interface MockModel {
   provider: string
   providerColor: string
   tag?: string
+}
+
+/** MockModel → shared ModelInfo（runtime aggregateModels 生产的 providerId/providerName 版）。
+ *  mock 的 MockModel.provider（展示名）同时作 providerId 与 providerName。
+ *  providerColor/tag 是纯 UI 关注点（runtime 不下发），由组件侧本地映射，不进 ModelInfo。 */
+export function mockModelToInfo(m: MockModel): ModelInfo {
+  return {
+    id: m.id,
+    name: m.name,
+    providerId: m.provider,
+    providerName: m.provider,
+    reasoning: false,
+    enabled: true,
+  }
 }
 
 export const MOCK_MODELS: MockModel[] = [

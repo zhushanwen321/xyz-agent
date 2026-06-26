@@ -84,6 +84,22 @@
           <p class="text-[11px] text-subtle opacity-50">{{ activeTabMeta.emptyHint }}</p>
         </div>
       </div>
+
+      <!-- extension status 底栏（对称于 onWidget 订阅）：按 statusKey 聚合最新 text。
+           无 status 推送时不占位，避免空态挤压内容区。 -->
+      <footer
+        v-if="statusEntries.length"
+        class="flex flex-col gap-0.5 border-t border-border px-2 py-1"
+      >
+        <div
+          v-for="entry in statusEntries"
+          :key="entry.statusKey"
+          class="flex items-center gap-1.5 font-mono text-[10.5px]"
+        >
+          <span class="text-subtle">{{ entry.statusKey }}</span>
+          <span class="truncate text-muted">{{ entry.text }}</span>
+        </div>
+      </footer>
     </aside>
   </Transition>
 </template>
@@ -174,11 +190,19 @@ function mapWidgetKeyToTab(key: string): SideDrawerTab | null {
 }
 
 let unsubWidget: (() => void) | null = null
+let unsubStatus: (() => void) | null = null
+
+/** extension status 缓冲：statusKey → 最新 text（runtime 推送全量替换，与 widget 同语义） */
+const statusMap = ref<Map<string, string>>(new Map())
+const statusEntries = computed(() =>
+  Array.from(statusMap.value.entries()).map(([statusKey, text]) => ({ statusKey, text })),
+)
 
 function subscribeWidget(sid: string): void {
   terminalLines.value = []
   browserLines.value = []
   unknownWidget.value = null
+  statusMap.value = new Map()
   // 签名已与 real extension.ts OnWidgetHandler 对齐（mock 侧同步修复），facade 不再退化为 unknown
   unsubWidget = extension.onWidget(sid, (payload) => {
     const tab = mapWidgetKeyToTab(payload.widgetKey)
@@ -186,19 +210,29 @@ function subscribeWidget(sid: string): void {
     else if (tab === 'browser') browserLines.value = payload.lines
     else unknownWidget.value = { key: payload.widgetKey, lines: payload.lines }
   })
+  // 对称订阅 extension:status（statusKey 维度聚合，同 key 覆盖）
+  unsubStatus = extension.onStatus(sid, (payload) => {
+    statusMap.value.set(payload.statusKey, payload.text)
+    statusMap.value = new Map(statusMap.value)
+  })
 }
 
 watch(
   () => props.sessionId,
   (sid) => {
     unsubWidget?.()
+    unsubStatus?.()
     unsubWidget = null
+    unsubStatus = null
     if (sid) subscribeWidget(sid)
   },
   { immediate: true },
 )
 
-onBeforeUnmount(() => unsubWidget?.())
+onBeforeUnmount(() => {
+  unsubWidget?.()
+  unsubStatus?.()
+})
 </script>
 
 <style scoped>

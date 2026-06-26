@@ -19,6 +19,16 @@
         <span v-if="branch" class="text-accent">{{ branch }}</span>
       </div>
 
+      <!-- 过滤框：实时按路径模糊匹配文件树 -->
+      <div class="relative px-2 pb-1.5">
+        <Search class="pointer-events-none absolute left-4 top-1/2 size-3 -translate-y-1/2 text-subtle" />
+        <Input
+          v-model="filterText"
+          class="h-6 pl-6 pr-2 text-[11px]"
+          placeholder="过滤文件..."
+        />
+      </div>
+
       <!-- 空态 -->
       <div
         v-if="fileCount === 0"
@@ -42,10 +52,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import type { FileChange } from '@xyz-agent/shared'
-import { FolderOpen } from '@lucide/vue'
+import { FolderOpen, Search } from '@lucide/vue'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Input } from '@/components/ui/input'
 import FileTreeRow from './FileTreeRow.vue'
 
 /** 树节点（内部类型，由扁平 FileChange[] 构建） */
@@ -68,10 +79,20 @@ const props = defineProps<{
   branch?: string
 }>()
 
-const fileCount = computed(() => props.changes.length)
+// 过滤框文本：按 filePath 模糊匹配，空串表示不过滤
+const filterText = ref('')
+
+// 过滤后的 changes（path.includes）。过滤命中数为 0 但有输入时，下方空态分支会处理。
+const filteredChanges = computed<FileChange[]>(() => {
+  const q = filterText.value.trim().toLowerCase()
+  if (!q) return props.changes
+  return props.changes.filter((c) => c.filePath.toLowerCase().includes(q))
+})
+
+const fileCount = computed(() => filteredChanges.value.length)
 
 /** 扁平 FileChange[] → 嵌套树。默认展开所有目录（改动文件少，全展开更直观）。 */
-const tree = computed<TreeNode[]>(() => buildTree(props.changes))
+const tree = computed<TreeNode[]>(() => buildTree(filteredChanges.value))
 
 function buildTree(changes: FileChange[]): TreeNode[] {
   const root: TreeNode[] = []

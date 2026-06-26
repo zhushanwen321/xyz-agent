@@ -10,18 +10,14 @@
  * 依赖方向：无（不 import transport/events/pending，独立内存实现）。
  */
 import type {
-  Message, ModelInfo, ServerMessage, SessionSummary, SessionGroup,
-  ProviderInfo, SkillInfo, AgentInfo, PluginInfo, SetProviderData,
-  ExtensionWidgetPayload, ExtensionStatusPayload,
+  Message, ModelInfo, ServerMessage, SessionSummary, SessionGroup, ProviderInfo,
+  SkillInfo, AgentInfo, PluginInfo, SetProviderData, ExtensionWidgetPayload, ExtensionStatusPayload,
 } from '@xyz-agent/shared'
 import { createSession, fixtureMessages, fixtureSessions } from './data'
-import {
-  fixtureProviders,
-  fixtureSkills,
-  fixtureAgents,
-  fixtureExtensions,
-} from './settings-data'
-import { MOCK_MODELS, type MockModel } from './composer-data'
+import { fixtureProviders, fixtureSkills, fixtureAgents, fixtureExtensions, toCandidate } from './settings-data'
+import { MOCK_MODELS, mockModelToInfo } from './composer-data'
+import { runSendStream, type Timing } from './run-send-stream'
+import { makeMockSubscription, type GlobalHandler } from './subscription'
 import * as events from '../events'
 
 // mock/git.ts 的 git domain + fixtureGitStatus 透出（Wave 1a real git domain 落地后由 api/index 接线）
@@ -29,12 +25,32 @@ export { git, fixtureGitStatus } from './git'
 
 /**
  * Mock 模拟 runtime session 通道推送（dispatchSession）。
- * 组件用 events.on(sessionId) 订阅 session.commands / context.update；
+ * 组件用 events.on(sessionId) 订阅 session.commands / context.update / extension:widget 等；
  * mock 不走 transport，故在此桥接——直接 dispatchSession 模拟 server-push，
  * 让组件订阅在 mock 模式下也能触发（mock/real 同构）。
  */
 function pushSession(sessionId: string, msg: ServerMessage): void {
   events.dispatchSession(sessionId, msg)
+}
+
+/** 按 cwd 聚合 fixtureSessions 为 SessionGroup[]（session.list reply 与 server-push 共用） */
+function buildGroups(): SessionGroup[] {
+  const snapshots = fixtureSessions.map((s) => ({ ...s }))
+  const byCwd = new Map<string, SessionSummary[]>()
+  for (const s of snapshots) {
+    const bucket = byCwd.get(s.cwd)
+    if (bucket) bucket.push(s)
+    else byCwd.set(s.cwd, [s])
+  }
+  return Array.from(byCwd, ([cwd, sessions]) => ({ cwd, sessions }))
+}
+
+/**
+ * 模拟 runtime broadcastSessionList（create/delete/rename 后推全量分组到 global 通道）。
+ * useSidebar 经 events.onGlobalType('session.list') 订阅（refCount 防重复），mock 直 dispatchGlobal。
+ */
+function pushSessionList(): void {
+  events.dispatchGlobal({ type: 'session.list', id: nextId('sl'), payload: { groups: buildGroups() } })
 }
 
 /** Mock 静态 slash 命令（模拟 pi getCommands 返回的扩展命令） */
@@ -70,7 +86,7 @@ function pushSessionState(sessionId: string): void {
 }
 
 /** 流式时序（ms）—— 仅用于视觉演示节奏，不影响契约 */
-const TIMING = {
+const TIMING: Timing = {
   ack: 40, // 命令 ack
   startGap: 60, // message_start 前
   chunk: 70, // 每个 text/thinking delta 间隔
@@ -81,9 +97,6 @@ const TIMING = {
   fileChangesGap: 120, // accumulating → ready 间隔
   retryGap: 800, // auto_retry_start → end 间隔（让指示位可见）
 }
-
-/** mock 固定回复前缀（不模拟失败，D7） */
-const CANNED_REPLY = '好的，我来处理这个请求。（mock 模拟回复）'
 
 const streamHandlers = new Map<string, Set<(msg: ServerMessage) => void>>()
 /** 已 abort 的 session：send 循环检查后提前返回 */
@@ -118,11 +131,6 @@ function sleep(ms: number): Promise<void> {
   })
 }
 
-/** 按字符/词切分，证明逐块推送 */
-function splitChunks(text: string): string[] {
-  return text.match(/[\u4e00-\u9fa5]|[A-Za-z]+|\s+|[^\sA-Za-z\u4e00-\u9fa5]/g) ?? [text]
-}
-
 export const session = {
   /**
    * 按 cwd 分组返回（对齐后端 SessionGroup[]，D7）。
@@ -132,21 +140,16 @@ export const session = {
    */
   async list(): Promise<SessionGroup[]> {
     await sleep(TIMING.ack)
-    // 深拷贝：调用方突变不影响 fixture
-    const snapshots = fixtureSessions.map((s) => ({ ...s }))
-    const byCwd = new Map<string, SessionSummary[]>()
-    for (const s of snapshots) {
-      const bucket = byCwd.get(s.cwd)
-      if (bucket) bucket.push(s)
-      else byCwd.set(s.cwd, [s])
-    }
-    return Array.from(byCwd, ([cwd, sessions]) => ({ cwd, sessions }))
+    // buildGroups 已深拷贝，调用方突变不影响 fixture
+    return buildGroups()
   },
 
   async create(title?: string): Promise<SessionSummary> {
     await sleep(TIMING.ack)
     const s = createSession(title)
     fixtureSessions.push(s)
+    // 模拟 runtime create 后 broadcastSessionList（server-push 全量分组）
+    pushSessionList()
     return { ...s }
   },
 
@@ -164,6 +167,8 @@ export const session = {
     const target = fixtureSessions.find((s) => s.id === sessionId)
     if (!target) throw new Error(`mock: session ${sessionId} 不存在`)
     target.label = label
+    // 模拟 runtime rename 后 broadcastSessionList
+    pushSessionList()
   },
 
   async remove(sessionId: string): Promise<void> {
@@ -172,6 +177,8 @@ export const session = {
     if (idx === -1) throw new Error(`mock: session ${sessionId} 不存在`)
     fixtureSessions.splice(idx, 1)
     delete fixtureMessages[sessionId]
+    // 模拟 runtime delete 后 broadcastSessionList
+    pushSessionList()
   },
 
   /** 设置思考等级（mock：持久到 fixture session.thinkingLevel，runtime 确认属后续联调） */
@@ -191,126 +198,17 @@ export const chat = {
 
   async send(sessionId: string, text: string): Promise<void> {
     cancelled.delete(sessionId)
-    const messageId = nextId('m')
-    const reply = `已处理："${text}"。\n${CANNED_REPLY}`
-
+    // ack 语义：仅模拟 pi 接收命令，立即 resolve；流式序列 fire-and-forget（不 await）。
+    // isStreaming 由 message_start/complete 事件驱动（useChat.ts），不受此处 resolve 时机影响，
+    // 故 Composer :disabled=isSending 不会全程 true，流式中可 steer/retry。
     await sleep(TIMING.ack)
-    emit(sessionId, {
-      type: 'message.message_start',
-      id: messageId,
-      payload: { sessionId, messageId },
-    })
-
-    // FR-1：auto_retry 演示（关键词触发，让 RetryIndicator 渲染可验证）。
-    // 默认不触发（不污染每条消息）；用户输入含 'retry' 时模拟一次瞬态失败→重试→恢复。
-    if (/retry/i.test(text)) {
-      if (cancelled.has(sessionId)) return
-      emit(sessionId, {
-        type: 'message.auto_retry_start',
-        payload: {
-          sessionId,
-          attempt: 1,
-          maxAttempts: 3,
-          delayMs: TIMING.retryGap,
-          errorMessage: 'upstream 503 (mock)',
-        },
-      })
-      await sleep(TIMING.retryGap)
-      if (cancelled.has(sessionId)) return
-      emit(sessionId, { type: 'message.auto_retry_end', payload: { sessionId, success: true, attempt: 1 } })
-    }
-
-    // thinking 块（thinking_start → delta×N → end）
-    if (cancelled.has(sessionId)) return
-    await sleep(TIMING.startGap)
-    const thinkingId = nextId('th')
-    emit(sessionId, {
-      type: 'message.thinking_start',
-      payload: { sessionId, thinkingId },
-    })
-    for (const chunk of splitChunks('让我分析一下这个请求……')) {
-      if (cancelled.has(sessionId)) return
-      await sleep(TIMING.chunk)
-      emit(sessionId, { type: 'message.thinking_delta', payload: { sessionId, delta: chunk } })
-    }
-    if (cancelled.has(sessionId)) return
-    emit(sessionId, { type: 'message.thinking_end', payload: { sessionId } })
-
-    // tool_call 块（start → update → end），证明 tool 卡渲染 + 进度更新
-    if (cancelled.has(sessionId)) return
-    await sleep(TIMING.toolGap)
-    const toolCallId = nextId('tc')
-    emit(sessionId, {
-      type: 'message.tool_call_start',
-      payload: { sessionId, toolCallId, toolName: 'read', input: { path: '/mock/file.ts' } },
-    })
-    await sleep(TIMING.toolGap)
-    if (cancelled.has(sessionId)) return
-    emit(sessionId, {
-      type: 'message.tool_call_update',
-      payload: { sessionId, toolCallId, detail: '读取 42 行' },
-    })
-    await sleep(TIMING.toolGap)
-    if (cancelled.has(sessionId)) return
-    emit(sessionId, {
-      type: 'message.tool_call_end',
-      payload: { sessionId, toolCallId, output: '…文件内容（mock）…', status: 'completed' },
-    })
-
-    // 文本流式
-    for (const chunk of splitChunks(reply)) {
-      if (cancelled.has(sessionId)) return
-      await sleep(TIMING.chunk)
-      emit(sessionId, {
-        type: 'message.text_delta',
-        id: messageId,
-        payload: { sessionId, messageId, delta: chunk },
-      })
-    }
-
-    // file_changes（accumulating → ready），证明 ChangeSetCard/FileView 渲染 + 跨帧合并
-    if (cancelled.has(sessionId)) return
-    await sleep(TIMING.fileChangesGap)
-    emit(sessionId, {
-      type: 'message.file_changes',
-      payload: {
-        sessionId,
-        messageId,
-        fileChanges: [
-          { filePath: 'src/mock-feature.ts', status: 'modified', addLines: 10, delLines: 2 },
-        ],
-        changeSetStatus: 'accumulating',
-        isFullSet: false,
-      },
-    })
-    await sleep(TIMING.fileChangesGap)
-    if (cancelled.has(sessionId)) return
-    emit(sessionId, {
-      type: 'message.file_changes',
-      payload: {
-        sessionId,
-        messageId,
-        fileChanges: [
-          { filePath: 'src/mock-feature.ts', status: 'modified', addLines: 10, delLines: 2 },
-          { filePath: 'src/new-file.ts', status: 'added', addLines: 24 },
-        ],
-        changeSetStatus: 'ready',
-        isFullSet: true,
-      },
-    })
-
-    // complete（含 usage，证明 W05-A usage 回填）
-    if (cancelled.has(sessionId)) return
-    await sleep(TIMING.done)
-    emit(sessionId, {
-      type: 'message.complete',
-      id: messageId,
-      payload: {
-        sessionId,
-        messageId,
-        stopReason: 'complete',
-        usage: { inputTokens: 1280, outputTokens: 642, totalTokens: 1922 },
-      },
+    void runSendStream(sessionId, text, {
+      nextId,
+      emit,
+      sleep,
+      pushSession,
+      isCancelled: (s) => cancelled.has(s),
+      TIMING,
     })
   },
 
@@ -355,10 +253,7 @@ export const chat = {
     })
   },
 
-  streamSubscribe(
-    sessionId: string,
-    handler: (msg: ServerMessage) => void,
-  ): () => void {
+  streamSubscribe(sessionId: string, handler: (msg: ServerMessage) => void): () => void {
     let set = streamHandlers.get(sessionId)
     if (!set) {
       set = new Set()
@@ -369,31 +264,6 @@ export const chat = {
       streamHandlers.get(sessionId)?.delete(handler)
     }
   },
-}
-
-/* ── 订阅工厂：订阅型 mock（onProviders/onSkills/...）共用 ── */
-type GlobalHandler<T> = (data: T) => void
-/** mock 订阅工厂：注册后微任务触发一次初始值（模拟 sendInitialState）；请求型直接返 fixture */
-function makeMockSubscription<T>(initial: () => T) {
-  const handlers = new Set<GlobalHandler<T>>()
-  return {
-    subscribe(handler: GlobalHandler<T>): () => void {
-      handlers.add(handler)
-      // 微任务触发初始帧（模拟连接后推送；避免同步触发时组件未挂载完）
-      queueMicrotask(() => handler(initial()))
-      return () => {
-        handlers.delete(handler)
-      }
-    },
-    /** 向所有订阅者推送新值（模拟 runtime 广播状态变更） */
-    broadcast(value: T): void {
-      handlers.forEach((h) => h(value))
-    },
-    /** 取当前初始值快照（供 mock 动作读最新态） */
-    snapshot(): T {
-      return initial()
-    },
-  }
 }
 
 /* ── Config mock（请求 + 订阅 + 动作）── */
@@ -412,12 +282,7 @@ export const config = {
     await sleep(TIMING.ack)
     return fixtureProviders.map((p) => ({ ...p, models: p.models.map((m) => ({ ...m })) }))
   },
-  async discoverModels(req: {
-    baseUrl: string
-    apiKey?: string
-    providerType?: string
-    providerId?: string
-  }) {
+  async discoverModels(req: { baseUrl: string; apiKey?: string; providerType?: string; providerId?: string }) {
     await sleep(TIMING.ack)
     void req
     // mock：返回空模型集 + success（真实发现由 runtime discoverModelsFromApi 驱动）
@@ -493,20 +358,6 @@ function broadcastProviders(): void {
 }
 
 /* ── Model mock ── */
-// ModelInfo 统一用 shared 形状（runtime aggregateModels 生产的 providerId/providerName 版）。
-// mock 的 MockModel.provider（展示名）同时作 providerId 与 providerName。
-// providerColor/tag 是纯 UI 关注点（runtime 不下发），由组件侧本地映射，不进 ModelInfo。
-function mockModelToInfo(m: MockModel): ModelInfo {
-  return {
-    id: m.id,
-    name: m.name,
-    providerId: m.provider,
-    providerName: m.provider,
-    reasoning: false,
-    enabled: true,
-  }
-}
-
 const modelsSub = makeMockSubscription(() => MOCK_MODELS.map(mockModelToInfo))
 
 export const model = {
@@ -523,26 +374,29 @@ export const model = {
 
 const extensionsSub = makeMockSubscription(() => fixtureExtensions.map((e) => ({ ...e })))
 
-/** 候选 → ExtensionInfo 形状（mock 模式补全 dirName/path/source，对齐 shared 契约） */
-function toCandidate(c: { name: string; version: string; description: string; enabled: boolean; tools: string[] }) {
-  return {
-    name: c.name,
-    dirName: c.name,
-    version: c.version,
-    description: c.description,
-    path: `/mock/tmp/${c.name}`,
-    enabled: c.enabled,
-    source: 'user-installed' as const,
-    tools: c.tools,
-  }
-}
-
 export const extension = {
   onExtensions: (h: GlobalHandler<unknown>) => extensionsSub.subscribe(h),
-  /** mock stub：签名与 real extension.ts OnWidgetHandler 一致 */
-  onWidget(_sessionId: string, _handler: (payload: ExtensionWidgetPayload) => void): () => void { return () => {} },
-  /** mock stub：签名与 real extension.ts OnStatusHandler 一致 */
-  onStatus(_sessionId: string, _handler: (payload: ExtensionStatusPayload) => void): () => void { return () => {} },
+  /**
+   * 订阅指定 session 的 extension:widget 推送（与 real extension.onWidget 同构）。
+   * 走 events.on(sessionId) session 通道；runSendStream 经 pushSession(dispatchSession) 推送。
+   */
+  onWidget(sessionId: string, handler: (payload: ExtensionWidgetPayload) => void): () => void {
+    return events.on(sessionId, (msg) => {
+      if (msg.type !== 'extension:widget') return
+      const payload = msg.payload as ExtensionWidgetPayload
+      if (payload.sessionId !== sessionId) return
+      handler(payload)
+    })
+  },
+  /** 订阅指定 session 的 extension:status 推送（与 real extension.onStatus 同构）。 */
+  onStatus(sessionId: string, handler: (payload: ExtensionStatusPayload) => void): () => void {
+    return events.on(sessionId, (msg) => {
+      if (msg.type !== 'extension:status') return
+      const payload = msg.payload as ExtensionStatusPayload
+      if (payload.sessionId !== sessionId) return
+      handler(payload)
+    })
+  },
   async toggle(name: string, enabled: boolean) {
     await sleep(TIMING.ack)
     const target = fixtureExtensions.find((e) => e.name === name)

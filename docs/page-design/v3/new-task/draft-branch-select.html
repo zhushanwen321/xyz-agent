@@ -1,0 +1,475 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>选择分支 · popover · new-task branch select</title>
+<style>
+  :root{
+    --bg:#0d0d0f; --surface:#151519; --surface-2:#1b1b20; --surface-hover:#1f1f26;
+    --bg-input:#101013; --bg-elevated:#1c1c20;
+    --fg:#f0f0f5; --muted:#8a8a95; --subtle:#5a5a65;
+    --border:rgba(255,255,255,0.06); --border-strong:rgba(255,255,255,0.12);
+    --accent:#4f8ef7; --accent-hover:#6ba3ff; --accent-soft:rgba(79,142,247,0.12);
+    --accent-ring:rgba(79,142,247,0.45);
+    --success:#22c55e; --warning:#f5a524; --danger:#ef4444; --info:#38bdf8; --reasoning:#a78bfa;
+    --radius-sm:3px; --radius:8px; --radius-lg:12px;
+    --shadow-2:0 8px 24px rgba(0,0,0,0.4);
+    --ease:cubic-bezier(0.4,0,0.2,1);
+    --duration-fast:120ms; --duration:200ms; --duration-slow:320ms;
+    --font-sans:Inter,'SF Pro Display','PingFang SC',system-ui,sans-serif;
+    --font-mono:'JetBrains Mono','IBM Plex Mono',ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--fg);font:14px/1.6 var(--font-sans);
+    -webkit-font-smoothing:antialiased;padding:32px 40px 80px;max-width:1280px;margin:0 auto}
+  h1{font-size:26px;font-weight:650;letter-spacing:-0.01em;margin-bottom:6px}
+  h2{font-size:18px;font-weight:600;margin:48px 0 4px;letter-spacing:-0.01em;display:flex;align-items:center;gap:10px}
+  h2 .num{font:600 12px/1 var(--font-mono);color:var(--accent);
+    background:var(--accent-soft);padding:4px 8px;border-radius:var(--radius-sm);letter-spacing:0.05em}
+  h3{font-size:14px;font-weight:600;margin:32px 0 8px;color:var(--fg);letter-spacing:0.01em}
+  .lede{color:var(--muted);font-size:13px;margin-bottom:8px;max-width:820px;line-height:1.65}
+  .lede b{color:var(--fg)}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+  .meta span{font:500 11px/1 var(--font-mono);color:var(--muted);
+    background:var(--surface);border:1px solid var(--border);padding:5px 9px;border-radius:999px;letter-spacing:0.02em}
+  .meta b{color:var(--fg);font-weight:600}
+  hr{border:0;border-top:1px solid var(--border);margin:40px 0}
+  code{font:12px/1.4 var(--font-mono);background:var(--surface-2);padding:2px 6px;border-radius:var(--radius-sm);color:var(--accent)}
+  .note{font:12px/1.6 var(--font-mono);color:var(--muted);background:var(--surface);
+    border:1px solid var(--border);border-left:2px solid var(--accent);
+    border-radius:var(--radius-sm);padding:9px 11px;margin-top:14px}
+  .note b{color:var(--fg)}
+  .note.warn{border-left-color:var(--warning)}
+  .note.warn b{color:var(--warning)}
+
+  /* ===== window-mock 拓扑（同源） ===== */
+  .window-mock{position:relative;background:var(--bg);border-radius:10px;overflow:hidden;
+    box-shadow:0 20px 50px rgba(0,0,0,0.5),0 0 0 1px rgba(255,255,255,0.05);margin-top:14px}
+  .traffic-light{position:absolute;left:20px;top:20px;display:flex;gap:8px;z-index:10}
+  .traffic-light .dot{width:12px;height:12px;border-radius:50%;border:0.5px solid rgba(0,0,0,0.25)}
+  .dot-red{background:#fc6155} .dot-yellow{background:#fdb40a} .dot-green{background:#34c84a}
+  .app-shell{display:flex;height:680px;padding:12px;gap:12px}
+  .aside-region{width:200px;flex-shrink:0;padding-top:52px;padding-left:2px;display:flex;flex-direction:column}
+  .a-logo{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;padding:0 8px 14px}
+  .a-logo .a-mark{width:22px;height:22px;border-radius:6px;background:var(--accent);
+    display:grid;place-items:center;color:#fff;font-size:11px;font-weight:700;flex-shrink:0}
+  .a-nav{display:flex;flex-direction:column;gap:1px;padding:0 4px}
+  .a-item{display:flex;align-items:center;gap:9px;font-size:12px;color:var(--muted);
+    padding:6px 8px;border-radius:6px;cursor:pointer}
+  .a-item.active{background:var(--surface-2);color:var(--fg);box-shadow:inset 0 0 0 1px var(--accent-ring)}
+  .a-item svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+  .main-panel{flex:1;min-width:0;background:var(--surface);border:1px solid var(--border);
+    border-radius:var(--radius-lg);display:flex;flex-direction:column;overflow:hidden;position:relative}
+  .landing{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    padding:32px 24px 64px;position:relative;overflow:hidden;background:var(--bg)}
+  .watermark{position:absolute;left:50%;top:50%;transform:translate(-50%,-65%);
+    font:600 220px/1 var(--font-sans);color:transparent;
+    -webkit-text-stroke:1px rgba(255,255,255,0.045);letter-spacing:-0.04em;user-select:none;pointer-events:none}
+  .greeting{font-size:22px;font-weight:650;letter-spacing:-0.01em;color:var(--fg);
+    margin:0 0 28px;text-align:center;position:relative;z-index:1}
+  .composer{width:100%;max-width:720px;position:relative;z-index:1;
+    background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden}
+  .composer.focus{border-color:var(--border-strong);box-shadow:0 0 0 3px rgba(255,255,255,0.04)}
+  .meta-row{display:flex;align-items:center;padding:10px 10px 0;gap:0}
+  .chip{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 9px;
+    background:transparent;border:1px solid transparent;border-radius:var(--radius);
+    color:var(--muted);font:500 12px/1 var(--font-sans);cursor:pointer;
+    max-width:200px}
+  .chip:hover{background:var(--surface-hover);color:var(--fg)}
+  .chip.open{background:var(--surface-2);color:var(--fg);box-shadow:inset 0 0 0 1px var(--accent-ring)}
+  .chip svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+  .chip .ch-name{max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:550}
+  .chip .ch-chev{color:var(--subtle);width:11px;height:11px}
+  .chip.branch-chip .ch-ic{color:var(--accent)}
+  .meta-sep{width:1px;height:18px;background:var(--border);margin:0 6px;flex-shrink:0}
+  .composer-area{min-height:80px;width:100%;border:0;outline:0;background:transparent;
+    color:var(--fg);font:14px/1.55 var(--font-sans);padding:14px 16px 8px}
+  .composer-area[data-placeholder]:empty:before{content:attr(data-placeholder);color:var(--subtle);pointer-events:none}
+  .tok-acc{color:var(--accent);font-weight:550}
+  .tok-cmd{color:var(--reasoning);font-weight:550}
+  .tok-skl{color:var(--success);font-weight:550}
+  .tok-ask{color:var(--info);font-weight:550}
+  .composer-bar{display:flex;align-items:center;gap:2px;padding:0 8px 8px 10px}
+  .c-insert{width:28px;height:28px;border:0;background:transparent;border-radius:var(--radius-sm);
+    color:var(--subtle);display:grid;place-items:center;cursor:pointer}
+  .c-insert:hover{background:var(--surface-hover)}
+  .c-insert svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5}
+  .perm{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 9px;
+    background:transparent;border:0;border-radius:var(--radius-sm);
+    color:var(--warning);font:500 12px/1 var(--font-sans);cursor:pointer}
+  .perm:hover{background:var(--surface-hover)}
+  .perm svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.5}
+  .perm .ch-chev{color:var(--warning);width:11px;height:11px;opacity:0.7}
+  .bar-spacer{flex:1}
+  .bar-sel{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 9px;
+    background:transparent;border:0;border-radius:var(--radius-sm);
+    color:var(--muted);font:500 12px/1 var(--font-sans);cursor:pointer}
+  .bar-sel:hover{background:var(--surface-hover);color:var(--fg)}
+  .bar-sel .dot-o{width:6px;height:6px;border-radius:50%;background:var(--muted)}
+  .bar-sel .brain{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.5;color:var(--muted)}
+  .bar-sel .ch-chev{color:var(--subtle);width:11px;height:11px}
+  .send{width:32px;height:32px;border:0;background:var(--surface-2);
+    border-radius:var(--radius);color:var(--muted);display:grid;place-items:center;cursor:pointer}
+  .send:hover{background:var(--surface-hover);color:var(--fg)}
+  .send svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2}
+
+  /* ===== Branch Popover（核心 demo · 比 directory 略宽） ===== */
+  .bs-popover{position:absolute;width:420px;background:var(--surface-2);
+    border:1px solid var(--border-strong);border-radius:var(--radius);
+    box-shadow:0 0 0 1px rgba(0,0,0,0.3),0 16px 48px rgba(0,0,0,0.6);
+    overflow:hidden;z-index:50}
+  .bs-popover{left:50%; transform:translateX(-50%); bottom:calc(100% - 10px)}
+  .bs-popover::after{content:"";position:absolute;left:50%;bottom:-5px;transform:translateX(-50%) rotate(45deg);
+    width:8px;height:8px;background:var(--surface-2);
+    border-right:1px solid var(--border-strong);border-bottom:1px solid var(--border-strong)}
+
+  .bs-search{display:flex;align-items:center;gap:9px;padding:11px 13px;
+    border-bottom:1px solid var(--border)}
+  .bs-search svg{width:15px;height:15px;color:var(--muted);flex-shrink:0;fill:none;stroke:currentColor;stroke-width:1.5}
+  .bs-search input{flex:1;min-width:0;background:transparent;border:0;outline:0;
+    color:var(--fg);font:13px/1.4 var(--font-sans)}
+  .bs-search input::placeholder{color:var(--subtle)}
+  .bs-search .esc{font:10px/1 var(--font-mono);color:var(--subtle);
+    background:var(--bg-elevated);border:1px solid var(--border-strong);border-radius:3px;padding:2px 5px}
+
+  .bs-list{max-height:300px;overflow-y:auto;padding:4px 0}
+  .bs-list::-webkit-scrollbar{width:6px}
+  .bs-list::-webkit-scrollbar-thumb{background:var(--surface);border-radius:3px}
+  .bs-group-label{padding:8px 13px 3px;display:flex;align-items:center;gap:6px;
+    font:500 10px/1 var(--font-mono);color:var(--subtle);
+    text-transform:uppercase;letter-spacing:0.08em}
+  .bs-group-label .gn{margin-left:auto;font-weight:400;letter-spacing:0.05em}
+
+  .bs-row{display:flex;align-items:flex-start;gap:9px;padding:8px 13px;cursor:pointer;
+    transition:background var(--duration-fast) var(--ease);position:relative}
+  .bs-row:hover{background:var(--surface-hover)}
+  .bs-row.sel{background:var(--surface-hover);box-shadow:inset 0 0 0 1px var(--accent-ring)}
+  .bs-row .bs-ic{width:15px;height:15px;color:var(--muted);flex-shrink:0;margin-top:2px;
+    fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+  .bs-row.sel .bs-ic{color:var(--accent)}
+  .bs-row .bs-name{flex:1;font-size:13px;color:var(--fg);font-weight:500;line-height:1.3;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .bs-row .bs-sub{font:11px/1.4 var(--font-mono);color:var(--subtle);
+    margin-top:3px;display:flex;align-items:center;gap:5px}
+  .bs-row .bs-sub .warn-dot{width:6px;height:6px;border-radius:50%;background:var(--warning);flex-shrink:0}
+  .bs-row .bs-sub .warn-txt{color:var(--warning);font-weight:500}
+  .bs-row .bs-check{width:14px;height:14px;color:var(--accent);flex-shrink:0;margin-top:2px;
+    fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+
+  .bs-sep{height:1px;background:var(--border);margin:4px 0}
+  .bs-action{color:var(--muted)}
+  .bs-action .bs-ic{color:var(--subtle)}
+  .bs-action:hover .bs-ic{color:var(--fg)}
+
+  /* inline 二次确认条（dirty 分支切走） */
+  .bs-confirm{margin:6px 9px 6px;padding:9px 11px;
+    background:rgba(245,165,36,0.08);border:1px solid rgba(245,165,36,0.3);
+    border-radius:var(--radius);font-size:12px;color:var(--fg);line-height:1.5;
+    display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+  .bs-confirm .bc-ic{width:14px;height:14px;color:var(--warning);flex-shrink:0;
+    fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .bs-confirm .bc-txt{flex:1;min-width:160px}
+  .bs-confirm .bc-txt b{color:var(--warning)}
+  .bs-confirm .bc-yes{background:var(--warning);color:#0d0d0f;border:0;
+    padding:5px 11px;border-radius:var(--radius-sm);font:600 11px/1 var(--font-sans);cursor:pointer}
+  .bs-confirm .bc-yes:hover{background:#ffb94a}
+  .bs-confirm .bc-no{background:transparent;color:var(--muted);border:1px solid var(--border);
+    padding:5px 11px;border-radius:var(--radius-sm);font:500 11px/1 var(--font-sans);cursor:pointer}
+  .bs-confirm .bc-no:hover{color:var(--fg);background:var(--surface-hover)}
+
+  .anno{position:absolute;font:500 10px/1.2 var(--font-mono);padding:3px 6px;border-radius:3px;
+    pointer-events:none;z-index:60;white-space:nowrap;letter-spacing:0.02em}
+  .anno.a{color:var(--accent);background:rgba(79,142,247,0.08);border:1px solid var(--accent)}
+  .anno.w{color:var(--warning);background:rgba(245,165,36,0.08);border:1px solid var(--warning)}
+  .anno.m{color:var(--muted);background:rgba(138,138,149,0.08);border:1px solid var(--muted)}
+
+  .flow-table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:14px}
+  .flow-table th,.flow-table td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+  .flow-table th{font:500 11px/1 var(--font-mono);color:var(--subtle);text-transform:uppercase;letter-spacing:0.05em;font-weight:500}
+  .flow-table td b{color:var(--fg)}
+  .flow-table .step{font:600 11px/1 var(--font-mono);color:var(--accent);background:var(--accent-soft);
+    padding:3px 7px;border-radius:3px;display:inline-block}
+</style>
+</head>
+<body>
+
+<!-- ===== 共享 SVG symbol ===== -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-folder" viewBox="0 0 16 16"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.6l1.3 1.3h5.1A1.5 1.5 0 0 1 14 5.8v5.7A1.5 1.5 0 0 1 12.5 13h-9A1.5 1.5 0 0 1 2 11.5V4.5z"/></symbol>
+    <symbol id="i-branch" viewBox="0 0 16 16"><circle cx="3.5" cy="3" r="1.5"/><circle cx="3.5" cy="13" r="1.5"/><path d="M3.5 4.5v7M3.5 8h4a3 3 0 0 0 3-3V3.5"/></symbol>
+    <symbol id="i-branch-plus" viewBox="0 0 16 16"><circle cx="3.5" cy="3" r="1.5"/><circle cx="3.5" cy="13" r="1.5"/><path d="M3.5 4.5v7M3.5 8h4a3 3 0 0 0 3-3V3.5"/><path d="M12 6v3M10.5 7.5h3"/></symbol>
+    <symbol id="i-graph" viewBox="0 0 16 16"><circle cx="3.5" cy="4" r="1.3"/><circle cx="3.5" cy="12" r="1.3"/><circle cx="9" cy="4" r="1.3"/><circle cx="12.5" cy="12" r="1.3"/><circle cx="12.5" cy="4" r="1.3"/><path d="M3.5 5.3v5.4M4.8 4h2.9M10.3 4h1M9 5.3l3 5.4M12.5 5.3v5.4"/></symbol>
+    <symbol id="i-warn" viewBox="0 0 16 16"><path d="M8 1.5l6.5 11h-13z"/><path d="M8 6v3M8 11h.01"/></symbol>
+    <symbol id="i-check" viewBox="0 0 16 16"><path d="M3 8.5l3 3 7-7"/></symbol>
+    <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.2"/><path d="M10.3 10.3 13.2 13.2"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 16 16"><path d="M4 6l4 4 4-4"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 16 16"><path d="M8 1.5l5.5 2v5c0 3-2.5 5.5-5.5 6-3-0.5-5.5-3-5.5-6v-5z"/></symbol>
+    <symbol id="i-brain" viewBox="0 0 16 16"><path d="M6 2.5a2 2 0 0 0-2 2 2 2 0 0 0-1 3.5A2 2 0 0 0 4 11a2 2 0 0 0 2 2 2 2 0 0 0 2-2M10 2.5a2 2 0 0 1 2 2 2 2 0 0 1 1 3.5A2 2 0 0 1 12 11a2 2 0 0 1-2 2 2 2 0 0 1-2-2M6 13V3.5M10 13V3.5"/></symbol>
+    <symbol id="i-send" viewBox="0 0 16 16"><path d="M8 13V3M4.5 6.5L8 3l3.5 3.5"/></symbol>
+    <symbol id="i-new" viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></symbol>
+  </defs>
+</svg>
+
+<h1>选择分支 · Branch Select popover</h1>
+<p class="lede">
+  composer 顶部 <b>branch chip</b> 被点开后，向上展开的 popover：搜索 + 当前仓库分支列表 + 「创建并检出新分支 / Git 图谱」动作。
+  比 directory popover 略宽（<b>420px</b>）以容纳长分支名，<b>dirty 分支</b>用 <code>--warning</code> 提示，切走弹 <b>inline 二次确认条</b>。
+</p>
+<div class="meta">
+  <span>层级 <b>L2 · composer 上方 popover</b></span>
+  <span>触发 <b>点 branch chip</b></span>
+  <span>形态 <b>向上锚定 · 420px 宽 · Card-Elevated</b></span>
+  <span>归属 <b>overlays 单元 · 局部 popover</b></span>
+  <span>数据源 <b>git 本地分支（git branch --list）</b></span>
+  <span>特殊 <b>dirty 分支 inline 二次确认</b></span>
+  <span>token <b>zcode 冷蓝</b></span>
+</div>
+
+<h2><span class="num">§1</span>Popover 默认态 · 搜索空 + 分支列表</h2>
+<p class="lede">用户点开 branch chip 后的<b>默认呈现</b>。焦点自动落到搜索框，列表显示当前仓库的所有本地分支（已按最新活动排序）。当前分支走 Card-Active 选中态 + 末尾 ✓。</p>
+
+<div class="window-mock">
+  <div class="traffic-light"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
+  <div class="app-shell">
+    <div class="aside-region">
+      <div class="a-logo"><div class="a-mark">x</div>xyz-agent</div>
+      <div class="a-nav">
+        <div class="a-item active"><svg viewBox="0 0 16 16"><use href="#i-new"/></svg>新建任务</div>
+        <div class="a-item"><svg viewBox="0 0 16 16"><use href="#i-search"/></svg>搜索</div>
+      </div>
+    </div>
+    <div class="main-panel">
+      <div class="landing">
+        <span class="watermark">xyz</span>
+        <h2 class="greeting">上午好呀，有什么想让我帮忙的吗</h2>
+
+        <div class="composer focus">
+          <div class="meta-row">
+            <button class="chip">
+              <svg viewBox="0 0 16 16" style="color:var(--accent)"><use href="#i-folder"/></svg>
+              <span class="ch-name">refactor-goal-extension</span>
+              <svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg>
+            </button>
+            <div class="meta-sep"></div>
+            <!-- branch chip 当前是 open 状态 -->
+            <button class="chip branch-chip open">
+              <svg viewBox="0 0 16 16"><use href="#i-branch"/></svg>
+              <span class="ch-name">refactor-goal-…</span>
+              <svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg>
+            </button>
+          </div>
+
+          <!-- Popover 锚定在 branch chip 上方 -->
+          <div class="bs-popover">
+            <span class="anno a" style="right:-12px; top:8px; transform:translateX(100%);">z-index 50 · Card-Elevated</span>
+            <span class="anno w" style="left:-12px; bottom:8px; transform:translateX(-100%);">dirty 分支切走 → inline 二次确认条</span>
+
+            <div class="bs-search">
+              <svg viewBox="0 0 16 16"><use href="#i-search"/></svg>
+              <input value="搜索分支" placeholder="搜索分支" readonly />
+              <span class="esc">Esc</span>
+            </div>
+
+            <div class="bs-list">
+              <div class="bs-group-label">分支 <span class="gn">4</span></div>
+              <!-- 当前分支：Card-Active inset ring + ✓ + dirty 提示 -->
+              <div class="bs-row sel">
+                <svg class="bs-ic" viewBox="0 0 16 16"><use href="#i-branch"/></svg>
+                <div style="flex:1;min-width:0">
+                  <div class="bs-name">refactor-goal-extension</div>
+                  <div class="bs-sub">
+                    <span class="warn-dot"></span>
+                    <span class="warn-txt">未提交的更改：2 个文件</span>
+                  </div>
+                </div>
+                <svg class="bs-check" viewBox="0 0 16 16"><use href="#i-check"/></svg>
+              </div>
+              <div class="bs-row">
+                <svg class="bs-ic" viewBox="0 0 16 16"><use href="#i-branch"/></svg>
+                <div style="flex:1;min-width:0">
+                  <div class="bs-name">refactor-coding-workflow-design</div>
+                  <div class="bs-sub" style="color:var(--subtle)">领先 main 12 提交</div>
+                </div>
+              </div>
+              <div class="bs-row">
+                <svg class="bs-ic" viewBox="0 0 16 16"><use href="#i-branch"/></svg>
+                <div style="flex:1;min-width:0">
+                  <div class="bs-name">feat-system-prompt-loader</div>
+                  <div class="bs-sub" style="color:var(--subtle)">领先 main 5 提交</div>
+                </div>
+              </div>
+              <div class="bs-row">
+                <svg class="bs-ic" viewBox="0 0 16 16"><use href="#i-branch"/></svg>
+                <div style="flex:1;min-width:0">
+                  <div class="bs-name">main</div>
+                  <div class="bs-sub" style="color:var(--subtle)">默认分支</div>
+                </div>
+              </div>
+
+              <div class="bs-sep"></div>
+
+              <div class="bs-row bs-action">
+                <svg class="bs-ic" viewBox="0 0 16 16"><use href="#i-branch-plus"/></svg>
+                <div style="flex:1;min-width:0"><div class="bs-name">创建并检出新分支...</div></div>
+                <span class="anno a" style="right:8px;">→ draft-directory-picker §2</span>
+              </div>
+              <div class="bs-row bs-action">
+                <svg class="bs-ic" viewBox="0 0 16 16"><use href="#i-graph"/></svg>
+                <div style="flex:1;min-width:0"><div class="bs-name">Git 图谱</div></div>
+                <span class="anno m" style="right:8px;">v1 stub</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="composer-area" data-placeholder="向 ZCode 提问…" contenteditable="true"></div>
+          <div class="composer-bar">
+            <button class="c-insert"><svg viewBox="0 0 16 16"><use href="#i-plus"/></svg></button>
+            <button class="perm"><svg viewBox="0 0 16 16"><use href="#i-shield"/></svg>完全访问<svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg></button>
+            <div class="bar-spacer"></div>
+            <button class="bar-sel"><span class="dot-o"></span>GLM-5.2<svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg></button>
+            <button class="bar-sel"><svg class="brain" viewBox="0 0 16 16"><use href="#i-brain"/></svg>最高<svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg></button>
+            <button class="send"><svg viewBox="0 0 16 16"><use href="#i-send"/></svg></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="note">
+  <b>关键约束</b>：① 选中态走 <b>Card-Active inset ring</b>（同 directory popover，与 sidebar / search modal 同源）；② <b>dirty 标记</b> 用 <code>--warning</code> 圆点 + 同色小字，<b>不画感叹号 icon</b>（与 danger 红错误态严格区分）；③ 「创建并检出新分支...」用 <b>branch-plus</b> 图标（branch + 加号），与普通 branch 区分；④ 动作项与列表项视觉一致（同 row 高），区分在图标语义。
+</div>
+
+<h2><span class="num">§2</span>边缘态 · dirty 分支切走 · inline 二次确认条</h2>
+<p class="lede">用户在 popover 内选到 <b>另一个 dirty 分支</b>，或当前 dirty 分支有 <b>2 个未提交文件</b>，popover 关闭前弹<b>行内确认条</b>。这是 v3「dirty 切走必须告知」的硬约束——v1 选「留在工作区」（不自动 stash，git 自然行为，不主动制造用户没要求的副作用）。</p>
+
+<div class="window-mock" style="height:520px">
+  <div class="traffic-light"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
+  <div class="app-shell">
+    <div class="aside-region"></div>
+    <div class="main-panel">
+      <div class="landing">
+        <span class="watermark">xyz</span>
+        <h2 class="greeting">上午好呀，有什么想让我帮忙的吗</h2>
+
+        <div class="composer focus">
+          <div class="meta-row">
+            <button class="chip"><svg viewBox="0 0 16 16" style="color:var(--accent)"><use href="#i-folder"/></svg><span class="ch-name">refactor-goal-extension</span><svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg></button>
+            <div class="meta-sep"></div>
+            <button class="chip branch-chip open"><svg viewBox="0 0 16 16"><use href="#i-branch"/></svg><span class="ch-name">refactor-goal-…</span><svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg></button>
+          </div>
+
+          <div class="bs-popover" style="position:relative;left:50%;top:30px;transform:translateX(-50%);bottom:auto">
+            <div class="bs-search"><svg viewBox="0 0 16 16"><use href="#i-search"/></svg><input value="搜索分支" placeholder="搜索分支" readonly /><span class="esc">Esc</span></div>
+
+            <!-- inline 二次确认条（关键交互） -->
+            <div class="bs-confirm">
+              <svg class="bc-ic" viewBox="0 0 16 16"><use href="#i-warn"/></svg>
+              <div class="bc-txt"><b>refactor-goal-extension</b> 有 2 个未提交更改，切走将保留在工作区（不自动 stash）</div>
+              <button class="bc-yes">切走</button>
+              <button class="bc-no">取消</button>
+            </div>
+
+            <div class="bs-list">
+              <div class="bs-group-label">分支 <span class="gn">4</span></div>
+              <!-- 当前 dirty 分支，焦点在该 row（被弹 confirm 后 ring 仍保留） -->
+              <div class="bs-row sel">
+                <svg class="bs-ic" viewBox="0 0 16 16"><use href="#i-branch"/></svg>
+                <div style="flex:1;min-width:0">
+                  <div class="bs-name">refactor-goal-extension</div>
+                  <div class="bs-sub"><span class="warn-dot"></span><span class="warn-txt">未提交的更改：2 个文件</span></div>
+                </div>
+                <svg class="bs-check" viewBox="0 0 16 16"><use href="#i-check"/></svg>
+              </div>
+              <div class="bs-row">
+                <svg class="bs-ic" viewBox="0 0 16 16"><use href="#i-branch"/></svg>
+                <div style="flex:1;min-width:0">
+                  <div class="bs-name">refactor-coding-workflow-design</div>
+                  <div class="bs-sub" style="color:var(--subtle)">领先 main 12 提交</div>
+                </div>
+              </div>
+              <div class="bs-row">
+                <svg class="bs-ic" viewBox="0 0 16 16"><use href="#i-branch"/></svg>
+                <div style="flex:1;min-width:0">
+                  <div class="bs-name">feat-system-prompt-loader</div>
+                  <div class="bs-sub" style="color:var(--subtle)">领先 main 5 提交</div>
+                </div>
+              </div>
+              <div class="bs-row">
+                <svg class="bs-ic" viewBox="0 0 16 16"><use href="#i-branch"/></svg>
+                <div style="flex:1;min-width:0">
+                  <div class="bs-name">main</div>
+                  <div class="bs-sub" style="color:var(--subtle)">默认分支</div>
+                </div>
+              </div>
+              <div class="bs-sep"></div>
+              <div class="bs-row bs-action">
+                <svg class="bs-ic" viewBox="0 0 16 16"><use href="#i-branch-plus"/></svg>
+                <div style="flex:1;min-width:0"><div class="bs-name">创建并检出新分支...</div></div>
+              </div>
+              <div class="bs-row bs-action">
+                <svg class="bs-ic" viewBox="0 0 16 16"><use href="#i-graph"/></svg>
+                <div style="flex:1;min-width:0"><div class="bs-name">Git 图谱</div></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="composer-area" data-placeholder="向 ZCode 提问…" contenteditable="true"></div>
+          <div class="composer-bar">
+            <button class="c-insert"><svg viewBox="0 0 16 16"><use href="#i-plus"/></svg></button>
+            <button class="perm"><svg viewBox="0 0 16 16"><use href="#i-shield"/></svg>完全访问<svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg></button>
+            <div class="bar-spacer"></div>
+            <button class="bar-sel"><span class="dot-o"></span>GLM-5.2<svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg></button>
+            <button class="bar-sel"><svg class="brain" viewBox="0 0 16 16"><use href="#i-brain"/></svg>最高<svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg></button>
+            <button class="send"><svg viewBox="0 0 16 16"><use href="#i-send"/></svg></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="note warn">
+  <b>为什么是 inline 而非 modal</b>：dirty 切走是 <b>「半不可逆」</b>——不弹 modal（modal 给「删除账号」那种不可逆用的），也不静默切走（容易让用户丢工作）。inline 确认条在 popover 内部就地弹出，<b>视觉重量介于 toast 和 modal 之间</b>，与 sidebar session-item 删除二次确认条同源（<code>sidebar/draft-session-item.html §8</code>）。两个按钮文案「切走 / 取消」都是动词开头（design-system §9）。
+</div>
+
+<h2><span class="num">§3</span>五态 · 节奏</h2>
+<table class="flow-table">
+  <thead><tr><th>状态</th><th>触发</th><th>行为</th></tr></thead>
+  <tbody>
+    <tr><td><span class="step">A</span> 打开 · 搜索空</td><td>点 branch chip</td><td>focus 搜索框，显示当前仓库所有本地分支（按最新活动排序）</td></tr>
+    <tr><td><span class="step">B</span> 输入 · 即时过滤</td><td>键入字符</td><td>无 debounce（即时），列表收缩到命中项</td></tr>
+    <tr><td><span class="step">C</span> 键盘导航</td><td><code>↑</code> <code>↓</code></td><td>扁平化跨组（分支 + 动作）</td></tr>
+    <tr><td><span class="step">D</span> 切到 dirty 分支</td><td>选中另一 dirty 分支</td><td>弹 inline 二次确认条；<b>不立即切</b>，等用户点「切走」</td></tr>
+    <tr><td><span class="step">E</span> 关闭</td><td>Esc / 点 chip 区域外 / 选中后确认</td><td>popover 收起，chip 更新为新值</td></tr>
+  </tbody>
+</table>
+
+<h2><span class="num">§4</span>键盘契约</h2>
+<table class="flow-table">
+  <thead><tr><th>键</th><th>行为</th><th>边界</th></tr></thead>
+  <tbody>
+    <tr><td><code>Esc</code></td><td>关闭 popover</td><td>有 inline 确认条时：先关确认条（再按 Esc 才关 popover）</td></tr>
+    <tr><td><code>↑</code> <code>↓</code></td><td>扁平化跨组移动</td><td>到顶 / 底循环</td></tr>
+    <tr><td><code>Enter</code></td><td>确认当前选中</td><td>分支 → 触发 dirty 检查 / 切分支；动作 → 触发动作</td></tr>
+    <tr><td><code>Tab</code></td><td>v1 不切组（仅一组）</td><td>v2 接多组（本地/远程）时启用</td></tr>
+  </tbody>
+</table>
+
+<h2><span class="num">§5</span>实现要点</h2>
+<ul style="font-size:13px;color:var(--muted);line-height:1.85;padding-left:18px">
+  <li><b>数据源</b>：<code>git branch --list</code>（本地分支） + <code>git status --porcelain</code>（dirty 检测）。v1 不接远程分支（<code>-r</code>），避免 v1 范围爆炸。</li>
+  <li><b>dirty 检测成本</b>：<code>git status --porcelain</code> 每次开 popover 跑一次（< 50ms），<b>不缓存</b>（cache 失效场景太多，git 状态是高频变化的状态）。</li>
+  <li><b>排序</b>：按 reflog 最新活动排序（<code>git reflog show --all</code>），不是按字母。当前分支永远置顶。</li>
+  <li><b>宽度 420px</b>：比 directory 略宽（<code>420 vs 380</code>），因为 <code>refactor-coding-workflow-design</code> 这类长分支名在 380 下会换行。统一宽度便于 popover 间切换的视觉稳定。</li>
+  <li><b>inline 确认条</b>：从 popover 列表<b>上方</b>插入，<b>不替换列表</b>——用户可继续浏览其他分支。点击「取消」关掉确认条回到「选另一 dirty」状态。</li>
+  <li><b>chip ↔ popover 状态联动</b>：与 directory popover 同源。chip <code>.open</code> 加 <code>--surface-2</code> 底 + <code>inset 1px accent ring</code>。</li>
+  <li><b>composer 焦点保持</b>：popover 打开/关闭不触发 composer blur，<b>用户可继续输入</b>。</li>
+  <li><b>权限边界</b>：本地分支切换是 git 操作，<b>需要工作目录权限</b>。如果当前 directory 权限是「沙箱」级别（<code>perm</code> 不是「完全访问」），dirty 切走按钮 disabled + 提示「当前权限不允许切分支」。v1 简化为仅支持「完全访问」模式。</li>
+</ul>
+
+</body>
+</html>

@@ -11,6 +11,21 @@ import { useChatStore } from '@/stores/chat'
 describe('FG1 mock + chat store 数据流', () => {
   beforeEach(() => setActivePinia(createPinia()))
 
+  /**
+   * 等待指定 session 的 message.complete 事件（mock send 为 ack-return 非阻塞，
+   * 流式序列 fire-and-forget，测试需显式等 complete 才能断言终态）。
+   */
+  function waitForComplete(sid: string): Promise<void> {
+    return new Promise((resolve) => {
+      const unsub = mockApi.chat.streamSubscribe(sid, (msg) => {
+        if (msg.type === 'message.complete') {
+          unsub()
+          resolve()
+        }
+      })
+    })
+  }
+
   it('session.list 按 cwd 分组返回（D7，对齐后端 SessionGroup[]）', async () => {
     const groups = await mockApi.session.list()
     // fixture 有 2 个 cwd（xyz-agent / work-project），故 2 组、共 5 个 session
@@ -46,7 +61,9 @@ describe('FG1 mock + chat store 数据流', () => {
   it('chat.send 模拟流式（start → deltas → complete）', async () => {
     const types: string[] = []
     const unsub = mockApi.chat.streamSubscribe('s-flow', (msg) => types.push(msg.type))
+    const done = waitForComplete('s-flow')
     await mockApi.chat.send('s-flow', 'hello')
+    await done
     expect(types[0]).toBe('message.message_start')
     expect(types[types.length - 1]).toBe('message.complete')
     expect(types.filter((t) => t === 'message.text_delta').length).toBeGreaterThan(0)
@@ -59,7 +76,9 @@ describe('FG1 mock + chat store 数据流', () => {
     const unsub = mockApi.chat.streamSubscribe('s1', (msg) =>
       store.appendAssistantChunk('s1', msg),
     )
+    const done = waitForComplete('s1')
     await mockApi.chat.send('s1', '帮我重构')
+    await done
     unsub()
 
     const msgs = store.getMessages('s1')
