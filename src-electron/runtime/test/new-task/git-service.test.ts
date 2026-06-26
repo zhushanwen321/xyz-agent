@@ -1,5 +1,5 @@
 /**
- * GitService.checkout + getStatus 分支列表单测（#6，T4.1/T4.5 + T4.3/T4.9 数据源）。
+ * GitService.checkout/createBranch + getStatus 分支列表单测（#6/#7，T4.1/T4.5/T6.1/T6.3/T6.4/T6.8 + T4.3/T4.9 数据源）。
  *
  * 覆盖：
  * - T4.1 干净分支：checkout → execSafe(cwd,'checkout',[name]) exit 0 → resolve
@@ -110,5 +110,55 @@ describe('GitService.getStatus 分支列表（#6 popover 数据源）', () => {
     expect(r.isRepo).toBe(true)
     expect(r.branch).toBe('main')
     expect(r.branches).toEqual([])
+  })
+})
+
+describe('GitService.createBranch (#7 创建并检出分支)', () => {
+  it('T6.1 合法名→execSafe(cwd,checkout,[-b,name]) exit 0→resolve', async () => {
+    executor.exec.mockResolvedValueOnce(res())
+    await expect(svc().createBranch('s1', 'feat/x')).resolves.toBeUndefined()
+    expect(executor.exec).toHaveBeenCalledWith('/repo', 'checkout', ['-b', 'feat/x'])
+  })
+
+  it('T6.3 E10 分支已存在→exitCode 非0→throw GitError(git_failed)', async () => {
+    executor.exec.mockResolvedValueOnce(
+      res({ exitCode: 128, stderr: "fatal: A branch named 'feat/x' already exists" }),
+    )
+    await expect(svc().createBranch('s1', 'feat/x')).rejects.toMatchObject({
+      name: 'GitError',
+      code: 'git_failed',
+    })
+    expect(executor.exec).toHaveBeenCalledWith('/repo', 'checkout', ['-b', 'feat/x'])
+  })
+
+  it('T6.4 E11 port 超时→GitExecutorError(timeout)→GitError(git_unavailable)', async () => {
+    executor.exec.mockRejectedValueOnce(new GitExecutorError('timeout', 'timed out'))
+    await expect(svc().createBranch('s1', 'feat/x')).rejects.toMatchObject({
+      name: 'GitError',
+      code: 'git_unavailable',
+    })
+  })
+
+  it('T6.8 NFR runtime 分支名二次校验：非法名在 exec 前被拒', async () => {
+    await expect(svc().createBranch('s1', 'bad name')).rejects.toMatchObject({
+      name: 'GitError',
+    })
+    expect(executor.exec).not.toHaveBeenCalled()
+  })
+
+  it('T6.8 非法名（含 ..）→拒绝，不触达 exec', async () => {
+    await expect(svc().createBranch('s1', 'feat..x')).rejects.toMatchObject({
+      name: 'GitError',
+    })
+    expect(executor.exec).not.toHaveBeenCalled()
+  })
+
+  it('session 不存在（cwd 空）→GitError(session_not_found)，不触达 exec', async () => {
+    sessionService.getSummary.mockReturnValue({ cwd: '' })
+    await expect(svc().createBranch('s1', 'feat/x')).rejects.toMatchObject({
+      name: 'GitError',
+      code: 'session_not_found',
+    })
+    expect(executor.exec).not.toHaveBeenCalled()
   })
 })

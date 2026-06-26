@@ -40,6 +40,13 @@ export interface GitServiceOptions {
   executor: IGitExecutor
 }
 
+/**
+ * 合法分支名规则（前端 + runtime 二次校验一致，AC-7.8/T6.8）。
+ * v1 用保守正则：字母/数字开头，允许 `.`/`_`/`/`/`-`。git CLI 自身规则更细（禁 `..`/空格/`~^:` 等），
+ * 此正则拦住明显非法名；真正边界交 git checkout -b 的非 0 退出码转 GitError。
+ */
+const VALID_BRANCH_NAME = /^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/
+
 /** 非 git 仓库 / git 不可用时的降级结果（GitZone 隐藏）。 */
 function notRepoResult(sessionId: string): GitStatusResult {
   return {
@@ -223,6 +230,35 @@ export class GitService {
     const res = await this.execSafe(cwd, 'checkout', [name])
     if (res.exitCode !== 0) {
       throw new GitError('git_failed', res.stderr.trim() || `git checkout ${name} 失败`)
+    }
+  }
+
+  /**
+   * 创建并检出分支（#7 创建分支 modal，§4.4）。
+   *
+   * 数据流：handler → createBranch(sessionId,name) → execSafe(cwd,'checkout',['-b',name]) →
+   * git CLI → exit 0 成功 / 非0 失败转 GitError。ack 走 'message.status'（status='branch_created'）。
+   *
+   * 安全（T6.8 NFR）：分支名 runtime 二次校验——防前端绕过直调 createBranch 传非法名（空格/`..` 等）。
+   * 非法名在 exec 前被拒（不触达 git CLI），抛 GitError('invalid_branch_name')。
+   *
+   * 失败路径（§4.4）:
+   * - session 不存在 → GitError('session_not_found')
+   * - 分支名非法 → GitError('invalid_branch_name')（exec 未调）
+   * - 已存在 / 其它 git 错误 → execSafe 非0 → GitError('git_failed')（E10）
+   * - 超时 → port GitExecutorError(timeout) → execSafe 转 GitError('git_unavailable')（E11，port 继承 8000ms）
+   *
+   * 复用 GitCommand 'checkout' 白名单（Wave 2 已扩），`checkout -b` 与 `checkout` 共用白名单项。
+   */
+  async createBranch(sessionId: string, name: string): Promise<void> {
+    const cwd = this.requireCwd(sessionId)
+    const trimmed = name.trim()
+    if (!VALID_BRANCH_NAME.test(trimmed) || trimmed.includes('..')) {
+      throw new GitError('invalid_branch_name', `非法分支名: ${name}`)
+    }
+    const res = await this.execSafe(cwd, 'checkout', ['-b', trimmed])
+    if (res.exitCode !== 0) {
+      throw new GitError('git_failed', res.stderr.trim() || `git checkout -b ${trimmed} 失败`)
     }
   }
 

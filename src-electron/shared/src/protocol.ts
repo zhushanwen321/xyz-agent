@@ -28,7 +28,7 @@ export type ClientMessageType =
   | 'plugin.config.get' | 'plugin.config.set'
   | 'plugin.uiResponse'
   | 'file.read'
-  | 'git.status' | 'git.stage' | 'git.unstage' | 'git.commit' | 'git.checkout'
+  | 'git.status' | 'git.stage' | 'git.unstage' | 'git.commit' | 'git.checkout' | 'git.createBranch'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -105,6 +105,7 @@ export interface ClientMessageMap {
   'git.unstage': { sessionId: string; filePaths?: string[] }
   'git.commit': { sessionId: string; message?: string }
   'git.checkout': { sessionId: string; name: string }
+  'git.createBranch': { sessionId: string; name: string }
 }
 
 export type ClientMessage =
@@ -167,6 +168,7 @@ export type ClientMessage =
   | { type: 'git.unstage'; id?: string; payload: ClientMessageMap['git.unstage'] }
   | { type: 'git.commit'; id?: string; payload: ClientMessageMap['git.commit'] }
   | { type: 'git.checkout'; id?: string; payload: ClientMessageMap['git.checkout'] }
+  | { type: 'git.createBranch'; id?: string; payload: ClientMessageMap['git.createBranch'] }
 
 // ── 辅助类型 ────────────────────────────────────────────────────
 

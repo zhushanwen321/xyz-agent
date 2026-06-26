@@ -9,6 +9,7 @@
  * - git.unstage → gitService.unstage   → reply 'message.status' {status:'unstaged'}
  * - git.commit  → gitService.commit    → reply 'message.status' {status:'committed'}
  * - git.checkout → gitService.checkout → reply 'message.status' {status:'switched'}  （#6 选分支 popover）
+ * - git.createBranch → gitService.createBranch → reply 'message.status' {status:'branch_created'} （#7 创建分支 modal）
  *
  * 错误：GitError → error envelope（D10/P0-B）。code 取自 GitError.code；
  * sessionId 透传 details。GitExecutorError 已在 GitService.execSafe 中转为 GitError。
@@ -31,7 +32,7 @@ export class GitMessageHandler {
   constructor(private ctx: GitHandlerContext) {}
 
   /** D1: 本 handler 认领的 ClientMessageType 清单。 */
-  readonly handles: ClientMessageType[] = ['git.status', 'git.stage', 'git.unstage', 'git.commit', 'git.checkout']
+  readonly handles: ClientMessageType[] = ['git.status', 'git.stage', 'git.unstage', 'git.commit', 'git.checkout', 'git.createBranch']
 
   async handleGitMessage(msg: ClientMessage, ws: WsType): Promise<void> {
     switch (msg.type) {
@@ -80,12 +81,21 @@ export class GitMessageHandler {
           return this.sendGitError(ws, msg.id, sessionId, e)
         }
       }
+      case 'git.createBranch': {
+        const { sessionId, name } = msg.payload
+        try {
+          await this.ctx.gitService.createBranch(sessionId, name)
+          return this.ctx.reply(ws, msg.id, 'message.status', { sessionId, status: 'branch_created' })
+        } catch (e) {
+          return this.sendGitError(ws, msg.id, sessionId, e)
+        }
+      }
     }
   }
 
   /**
    * 统一 git 错误回复（D10/P0-B）。
-   * - GitError → 取其 code（session_not_found / path_not_allowed / git_conflict / commit_message_required / *_failed / git_unavailable / git_failed）
+   * - GitError → 取其 code（session_not_found / path_not_allowed / git_conflict / commit_message_required / *_failed / invalid_branch_name / git_unavailable / git_failed）
    * - 其它 → 'git_failed' + toErrorMessage
    */
   private sendGitError(ws: WsType, id: string | undefined, sessionId: string, e: unknown): void {
