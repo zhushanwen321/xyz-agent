@@ -276,45 +276,45 @@ graph LR
 
 | 用例 ID | 归属 UC | 来源 | 断言摘要 | 归属 Wave | 状态 |
 |---------|--------|------|---------|----------|------|
-| T1.1 | UC-1+UC-2 | A 功能 | 主流程 ⌘N→create(cwd)→state=landing | Wave 1 | 待验 |
-| T1.2 | UC-1+UC-2 | A 功能 | 首次启动 cwd=undefined→chip 空态+发送 disabled（延迟 create） | Wave 1 | 待验 |
-| T1.3 | UC-1+UC-2 | A 功能 | E1 双击并发→in-flight 标记忽略只建 1 session | Wave 1 | 待验 |
-| T1.4 | UC-1+UC-2 | A 功能 | E2 非法 cwd→runtime reject 显错不静默回退 | Wave 1 | 待验 |
-| T1.5 | UC-1+UC-2 | A 功能 | E3 pi spawn 失败→回滚 session 实体不留僵尸 | Wave 1 | 待验 |
-| T1.6 | UC-1+UC-2 | A 功能 | landing 渲染 messageCount===0 && !isGenerating | Wave 1 | 待验 |
-| T1.7 | UC-1+UC-2 | A 功能 | isGenerating=true 优先不渲染 landing | Wave 1 | 待验 |
-| T1.8 | UC-1+UC-2 | B NFR | getHistory 失败 landing 有重试按钮不永久卡住 | Wave 1 | 待验 |
-| T1.9 | UC-1(fork) | B NFR | forkSession 后 cwd=源 cwd（非最近活跃） | 独立 ticket #8 | 待验（独立） |
-| T3.1 | UC-3+UC-5 | A 功能 | 点 recentWorkspaces 列表项→selectWorkspace→chip 回灌 | Wave 2 | 待验 |
-| T3.2 | UC-3+UC-5 | A 功能 | E4 空列表首次启动→空态文案 | Wave 2 | 待验 |
-| T3.3 | UC-3+UC-5 | A 功能 | OS dialog 选中→canceled=false→chip 回灌新 cwd | Wave 2 | 待验 |
-| T3.4 | UC-3+UC-5 | A 功能 | OS dialog 取消→落回 popover chip 不变 | Wave 2 | 待验 |
-| T3.5 | UC-3+UC-5 | A 功能 | E5 IPC 抛错 getFocusedWindow null→popover 显错 toast 不崩 | Wave 2 | 待验 |
-| T4.1 | UC-4 | A 功能 | 选干净分支→gitApi.checkout→chip 回灌 | Wave 2 | 待验 |
-| T4.2 | UC-4 | A 功能 | dirty 确认切走→checkout 未提交改动留工作区 | Wave 2 | 待验 |
-| T4.3 | UC-4 | A 功能 | E7 unborn HEAD→空态文案引导首次 commit | Wave 2 | 待验 |
-| T4.4 | UC-4 | A 功能 | E6 非 git 目录 gitInfo==null→branch chip 隐藏 popover 不可达 | Wave 2 | 待验 |
-| T4.5 | UC-4 | A 功能 | E8 checkout 冲突→留 popover 显错工作区不变 | Wave 2 | 待验 |
-| T4.6 | UC-4 | A 功能 | getStatus execSync 失败→popover 显错不崩 | Wave 2 | 待验 |
-| T4.7 | UC-4 | B NFR | getStatus per-cwd 缓存命中→同 cwd 连续开两次零 spawn（**条件性**：④NFR v1 可不加缓存，P99>200ms 才触发；不加则 `[DEVIATED]④允许`） | Wave 2 | 条件性待验 |
-| T4.8 | UC-4 | A 功能 | Esc 排队 getStatus 同步阻塞期间按 Esc→阻塞后状态机按队列转移不丢事件 | Wave 2 | 待验 |
-| T4.9 | UC-4 | A 功能 | 分支 100+→虚拟滚动/限制渲染+搜索过滤不卡 DOM | Wave 2 | 待验 |
-| T6.1 | UC-6 | A 功能 | 创建成功 checkout -b→state=landing chip 回灌 | Wave 3 | 待验 |
-| T6.2 | UC-6 | A 功能 | 非法分支名→按钮 disabled+错误提示 | Wave 3 | 待验 |
-| T6.3 | UC-6 | A 功能 | E10 已存在→留 modal 显错（D-7 不关 modal 可重试） | Wave 3 | 待验 |
-| T6.4 | UC-6 | A 功能 | E11 超时 .git/index.lock→port 超时 8000ms 留 modal 显错 | Wave 3 | 待验 |
-| T6.5 | UC-6 | A 功能 | E9 非法来源→抛错回 idle | Wave 3 | 待验 |
-| T6.6 | UC-6 | A 功能 | 飞行中重复点击→按钮 disabled 防重复 | Wave 3 | 待验 |
-| T6.7 | UC-6 | A 功能 | 飞行中 Esc 关 modal→孤儿 promise 忽略不回灌 chip | Wave 3 | 待验 |
-| T6.8 | UC-6 | B NFR | runtime 分支名二次校验→前端绕过被 runtime 拒绝 | Wave 3 | 待验 |
-| T7.1 | UC-7 | A 功能 | 非 git 目录 gitInfo==null→守卫抛错回 idle 状态机只走子集 | Wave 1 | 待验 |
-| T7.2 | UC-7 | A 功能 | 非 git 变 git 恢复→branch chip 恢复显示（依赖 git-info 既有缓存） | Wave 1 | 待验 |
-| T8.1 | 跨UC | A 功能 | overlay 互斥 dir-popover 下点 branch chip→先关再开至多 1 个 | Wave 1 | 待验 |
-| T8.2 | 跨UC | A 功能 | modal 内 Esc→关当前 modal 不影响 composer/浮层 | Wave 1 | 待验 |
-| T8.3 | 跨UC | A 功能 | overlay 打开时切 session→overlay 自动关+state=cancelled 不卡死 | Wave 1 | 待验 |
-| T8.4 | 跨UC | A 功能 | cancelled 重入切回空 session→state=cancelled→landing 复活 | Wave 1 | 待验 |
-| T8.5 | 跨UC | A 功能 | completed 终态首条消息成功→⌘N→销毁重建 idle→landing | Wave 1 | 待验 |
-| T8.6 | 跨UC | A 功能 | 非法转换 idle 下直接 openBranchModal→抛错回 idle Vue 错误边界兜底不崩 | Wave 1 | 待验 |
+| T1.1 | UC-1+UC-2 | A 功能 | 主流程 ⌘N→create(cwd)→state=landing | Wave 1 | PASS |
+| T1.2 | UC-1+UC-2 | A 功能 | 首次启动 cwd=undefined→chip 空态+发送 disabled（延迟 create） | Wave 1 | PASS |
+| T1.3 | UC-1+UC-2 | A 功能 | E1 双击并发→in-flight 标记忽略只建 1 session | Wave 1 | PASS |
+| T1.4 | UC-1+UC-2 | A 功能 | E2 非法 cwd→runtime reject 显错不静默回退 | Wave 1 | PASS |
+| T1.5 | UC-1+UC-2 | A 功能 | E3 pi spawn 失败→回滚 session 实体不留僵尸 | Wave 1 | PASS |
+| T1.6 | UC-1+UC-2 | A 功能 | landing 渲染 messageCount===0 && !isGenerating | Wave 1 | PASS |
+| T1.7 | UC-1+UC-2 | A 功能 | isGenerating=true 优先不渲染 landing | Wave 1 | PASS |
+| T1.8 | UC-1+UC-2 | B NFR | getHistory 失败 landing 有重试按钮不永久卡住 | Wave 1 | PASS |
+| T1.9 | UC-1(fork) | B NFR | forkSession 后 cwd=源 cwd（非最近活跃） | 独立 ticket #8 | 待验（独立 ticket #8，fork-session.test.ts 未建，未实现） |
+| T3.1 | UC-3+UC-5 | A 功能 | 点 recentWorkspaces 列表项→selectWorkspace→chip 回灌 | Wave 2 | PASS |
+| T3.2 | UC-3+UC-5 | A 功能 | E4 空列表首次启动→空态文案 | Wave 2 | PASS |
+| T3.3 | UC-3+UC-5 | A 功能 | OS dialog 选中→canceled=false→chip 回灌新 cwd | Wave 2 | PASS（auto mock 分支）；待走查 M-1（真实 OS dialog 选中） |
+| T3.4 | UC-3+UC-5 | A 功能 | OS dialog 取消→落回 popover chip 不变 | Wave 2 | PASS（auto mock 分支）；待走查 M-1（真实 OS dialog 取消） |
+| T3.5 | UC-3+UC-5 | A 功能 | E5 IPC 抛错 getFocusedWindow null→popover 显错 toast 不崩 | Wave 2 | PASS |
+| T4.1 | UC-4 | A 功能 | 选干净分支→gitApi.checkout→chip 回灌 | Wave 2 | PASS |
+| T4.2 | UC-4 | A 功能 | dirty 确认切走→checkout 未提交改动留工作区 | Wave 2 | PASS |
+| T4.3 | UC-4 | A 功能 | E7 unborn HEAD→空态文案引导首次 commit | Wave 2 | PASS（auto mock 分支）；待走查（真实 unborn 仓库，见 test-cases-layered manual 清单） |
+| T4.4 | UC-4 | A 功能 | E6 非 git 目录 gitInfo==null→branch chip 隐藏 popover 不可达 | Wave 2 | PASS |
+| T4.5 | UC-4 | A 功能 | E8 checkout 冲突→留 popover 显错工作区不变 | Wave 2 | PASS（auto mock 分支）；待走查 M-3（真实工作区文件不变） |
+| T4.6 | UC-4 | A 功能 | getStatus execSync 失败→popover 显错不崩 | Wave 2 | PASS |
+| T4.7 | UC-4 | B NFR | getStatus per-cwd 缓存命中→同 cwd 连续开两次零 spawn（**条件性**：④NFR v1 可不加缓存，P99>200ms 才触发；不加则 `[DEVIATED]④允许`） | Wave 2 | [DEVIATED]④NFR 允许 v1 不加缓存 |
+| T4.8 | UC-4 | A 功能 | Esc 排队 getStatus 同步阻塞期间按 Esc→阻塞后状态机按队列转移不丢事件 | Wave 2 | ⚠️ auto 单测缺失（设计的 describe('Esc 排队') 未实现，待 Wave 2 补）；待走查（真实 execSync 阻塞） |
+| T4.9 | UC-4 | A 功能 | 分支 100+→虚拟滚动/限制渲染+搜索过滤不卡 DOM | Wave 2 | PASS |
+| T6.1 | UC-6 | A 功能 | 创建成功 checkout -b→state=landing chip 回灌 | Wave 3 | PASS |
+| T6.2 | UC-6 | A 功能 | 非法分支名→按钮 disabled+错误提示 | Wave 3 | PASS |
+| T6.3 | UC-6 | A 功能 | E10 已存在→留 modal 显错（D-7 不关 modal 可重试） | Wave 3 | PASS |
+| T6.4 | UC-6 | A 功能 | E11 超时 .git/index.lock→port 超时 8000ms 留 modal 显错 | Wave 3 | PASS |
+| T6.5 | UC-6 | A 功能 | E9 非法来源→抛错回 idle | Wave 3 | PASS |
+| T6.6 | UC-6 | A 功能 | 飞行中重复点击→按钮 disabled 防重复 | Wave 3 | PASS |
+| T6.7 | UC-6 | A 功能 | 飞行中 Esc 关 modal→孤儿 promise 忽略不回灌 chip | Wave 3 | PASS |
+| T6.8 | UC-6 | B NFR | runtime 分支名二次校验→前端绕过被 runtime 拒绝 | Wave 3 | PASS |
+| T7.1 | UC-7 | A 功能 | 非 git 目录 gitInfo==null→守卫抛错回 idle 状态机只走子集 | Wave 1 | PASS |
+| T7.2 | UC-7 | A 功能 | 非 git 变 git 恢复→branch chip 恢复显示（依赖 git-info 既有缓存） | Wave 1 | 待走查（pure manual，非 git→git 恢复，见 test-cases-layered manual 清单） |
+| T8.1 | 跨UC | A 功能 | overlay 互斥 dir-popover 下点 branch chip→先关再开至多 1 个 | Wave 1 | PASS |
+| T8.2 | 跨UC | A 功能 | modal 内 Esc→关当前 modal 不影响 composer/浮层 | Wave 1 | PASS |
+| T8.3 | 跨UC | A 功能 | overlay 打开时切 session→overlay 自动关+state=cancelled 不卡死 | Wave 1 | PASS |
+| T8.4 | 跨UC | A 功能 | cancelled 重入切回空 session→state=cancelled→landing 复活 | Wave 1 | PASS |
+| T8.5 | 跨UC | A 功能 | completed 终态首条消息成功→⌘N→销毁重建 idle→landing | Wave 1 | PASS |
+| T8.6 | 跨UC | A 功能 | 非法转换 idle 下直接 openBranchModal→抛错回 idle Vue 错误边界兜底不崩 | Wave 1 | PASS |
 
 **闭环要求：**
 - 清单用例 ID 集合 = ⑤test-matrix 全量（39 个），无遗漏无多余
