@@ -23,6 +23,7 @@ import { useNavigationStore } from '@/stores/navigation'
 import { usePanelStore } from '@/stores/panel'
 import { useSessionStore } from '@/stores/session'
 import { useSidebarStore } from '@/stores/sidebar'
+import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import type { DerivedStatus } from '@/types'
 
 /**
@@ -129,8 +130,14 @@ export function useSidebar() {
    *
    * opts.panelId：强制载入指定 panel（而非默认的 active/sync 路径），用于「新建会话替换待机侧」——
    * 载入待机 panel 并 setActive 聚焦，active 侧 session 不动（panel/spec.md 状态与交互）。
+   *
+   * NewTaskFlow 联动（#3 AC-3.10）：overlay 打开时切 session → cancelFlow（overlay 自动关 + state=cancelled，不卡死）。
    */
   async function selectSession(id: string, opts?: { panelId?: string }): Promise<void> {
+    // overlay 打开时切 session → cancelled（AC-3.10，避免 overlay 卡死在新 session 上）
+    const flow = useNewTaskFlow()
+    if (flow.isOverlay.value) flow.cancelFlow()
+
     await sessionApi.switchSession(id)
     session.activeId = id
     if (opts?.panelId) {
@@ -141,33 +148,76 @@ export function useSidebar() {
     }
     navigation.push({ view: 'chat', sessionId: id })
     // 历史回填：features 层跨 api+stores，是 hydrate 的正确编排点
+    // getHistory 失败 → 标记 failedHistory，landing 显重试出口（AC-2.6），不永久卡住
     if (!chat.isHydrated(id)) {
-      const history = await chatApi.getHistory(id)
-      chat.hydrate(id, history)
+      try {
+        const history = await chatApi.getHistory(id)
+        chat.hydrate(id, history)
+        chat.clearHistoryError(id)
+      } catch {
+        chat.markHistoryFailed(id)
+      }
     }
   }
 
   /**
-   * 新建 session：create api → 加入 session.list → select。
-   * 返回新 session id 供调用方（如 ⌘N）使用。
+   * 重试加载历史（landing 重试按钮，#2 AC-2.6）：清失败态 + 重新拉取 hydrate。
    */
-  async function newSession(): Promise<string> {
-    const created = await sessionApi.create()
-    session.appendSession(created)
-    await selectSession(created.id)
-    return created.id
+  async function retryHistory(sessionId: string): Promise<void> {
+    chat.clearHistoryError(sessionId)
+    try {
+      const history = await chatApi.getHistory(sessionId)
+      chat.hydrate(sessionId, history)
+    } catch {
+      chat.markHistoryFailed(sessionId)
+    }
+  }
+
+  /**
+   * 新建 session（薄封装，#3）：委托 useNewTaskFlow.startFlow 编排状态机 + create(cwd)（常态）/
+   * 延迟 create（首次启动 AC-1.7），再 appendSession + selectSession 让 6 触发点行为不变（仍创建+选中空 session）。
+   * 返回新 session id；首次启动延迟 create 时返回 null（Panel 渲染 landing 空态）。
+   */
+  let newTaskInFlight = false
+  async function newSession(): Promise<string | null> {
+    if (newTaskInFlight) return null
+    newTaskInFlight = true
+    try {
+      const flow = useNewTaskFlow()
+      await flow.startFlow()
+      const created = flow.currentSession.value
+      if (!created) {
+        // 首次启动延迟 create（AC-1.7）：无 session 可选，进 chat view 让 Panel 渲染 landing 空态
+        navigation.push({ view: 'chat' })
+        return null
+      }
+      session.appendSession(created)
+      await selectSession(created.id)
+      return created.id
+    } finally {
+      newTaskInFlight = false
+    }
   }
 
   /**
    * 新建会话到待机侧（双 panel，panel/spec.md「替换待机侧为新 session 并聚焦」）：
-   * 复用 newSession 的 create 流程，但通过 selectSession(panelId) 把新 session 载入非 active panel
-   * 并聚焦——active 侧 session 保持不变。单 panel 时回退到 newSession（载入唯一 panel）。
+   * 复用 newSession 的 startFlow 流程，但通过 selectSession(panelId) 把新 session 载入非 active panel
+   * 并聚焦——active 侧 session 保持不变。单 panel 时回退到载入唯一 panel。首次启动延迟 create 时 no-op。
    */
   async function newSessionToStandby(): Promise<void> {
-    const created = await sessionApi.create()
-    session.appendSession(created)
-    const standby = panel.panels.find((p) => p.id !== panel.activePanelId)
-    await selectSession(created.id, standby ? { panelId: standby.id } : undefined)
+    if (newTaskInFlight) return
+    newTaskInFlight = true
+    try {
+      const flow = useNewTaskFlow()
+      await flow.startFlow()
+      const created = flow.currentSession.value
+      if (!created) return // 首次启动延迟 create
+      session.appendSession(created)
+      const standby = panel.panels.find((p) => p.id !== panel.activePanelId)
+      await selectSession(created.id, standby ? { panelId: standby.id } : undefined)
+    } finally {
+      newTaskInFlight = false
+    }
   }
 
   /**
@@ -303,6 +353,7 @@ export function useSidebar() {
     selectSession,
     newSession,
     newSessionToStandby,
+    retryHistory,
     goOverview,
     loadSessions,
     toggleCollapse,

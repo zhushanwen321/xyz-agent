@@ -46,7 +46,7 @@ describe('FG1 mock + chat store 数据流', () => {
 
   it('session.create 追加并返回新 session', async () => {
     const before = (await mockApi.session.list()).flatMap((g) => g.sessions).length
-    const s = await mockApi.session.create('测试会话')
+    const s = await mockApi.session.create(undefined, '测试会话')
     const after = (await mockApi.session.list()).flatMap((g) => g.sessions).length
     expect(s.label).toBe('测试会话')
     expect(s.status).toBe('active')

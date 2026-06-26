@@ -36,6 +36,15 @@ export function onFullscreenChanged(cb: (isFullscreen: boolean) => void): () => 
   return api?.onFullscreenChanged(({ isFullscreen }) => cb(isFullscreen)) ?? (() => {})
 }
 
+/**
+ * 选择目录（OS 原生目录选择器，#5 步骤 4a 接入 preload handler）。
+ * web/mock 环境无 preload → 返回 canceled，让上层落回 popover（AC-5.3）。
+ */
+export async function pickDirectory(): Promise<{ canceled: boolean; path: string | null }> {
+  if (!api?.pickDirectory) return { canceled: true, path: null }
+  return api.pickDirectory()
+}
+
 /** win/linux 自绘 traffic light 点击：最小化窗口（mac 系统圆点不走此处） */
 export function windowMinimize(): Promise<void> {
   return api?.windowMinimize() ?? Promise.resolve()

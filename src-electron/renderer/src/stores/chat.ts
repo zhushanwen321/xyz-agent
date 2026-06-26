@@ -46,6 +46,8 @@ export const useChatStore = defineStore('chat', () => {
   const queueStates = ref<Map<string, QueueState>>(new Map())
   /** 按 `${sessionId}:${messageId}` 分区的变更集状态（W10，ChangeSetCard 5 态） */
   const changeSetStatuses = ref<Map<string, ChangeSetStatus>>(new Map())
+  /** getHistory 加载失败的 session（#2 AC-2.6：landing 重试出口，不永久卡住） */
+  const failedHistory = ref<Set<string>>(new Set())
 
   /** 取指定 session 的消息数组（空时返回空数组，不写入 Map） */
   function getMessages(sessionId: string): Message[] {
@@ -75,6 +77,18 @@ export const useChatStore = defineStore('chat', () => {
   /** 是否已加载历史（用于决定是否调 api.chat.getHistory） */
   function isHydrated(sessionId: string): boolean {
     return hydrated.value.has(sessionId)
+  }
+
+  /** 标记某 session 的历史加载失败（landing 显重试出口，AC-2.6） */
+  function markHistoryFailed(sessionId: string): void {
+    failedHistory.value = new Set(failedHistory.value).add(sessionId)
+  }
+
+  /** 清除某 session 的历史加载失败态（重试成功后） */
+  function clearHistoryError(sessionId: string): void {
+    const next = new Set(failedHistory.value)
+    next.delete(sessionId)
+    failedHistory.value = next
   }
 
   /**
@@ -215,12 +229,15 @@ export const useChatStore = defineStore('chat', () => {
     retryStates,
     queueStates,
     changeSetStatuses,
+    failedHistory,
     getMessages,
     getRetryState,
     getQueueState,
     getChangeSetStatus,
     setChangeSetStatus,
     isHydrated,
+    markHistoryFailed,
+    clearHistoryError,
     hydrate,
     appendUser,
     appendAssistantChunk,
