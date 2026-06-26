@@ -34,8 +34,6 @@
       :current-cwd="sessionDir || undefined"
       :git-branch="gitBranch"
       :history-error="historyError"
-      @open-dir="onOpenDir"
-      @open-branch="onOpenBranch"
       @retry="onRetryHistory"
     />
     <div v-else class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4 text-center">
@@ -88,7 +86,6 @@ import Landing from '@/components/new-task/Landing.vue'
 import { useSideDrawer } from '@/composables/features/useSideDrawer'
 import { useChatStore } from '@/stores/chat'
 import { useSidebar } from '@/composables/features/useSidebar'
-import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 
 const props = defineProps<{
   panelId: string
@@ -140,13 +137,6 @@ const historyError = computed(() =>
   props.sessionId ? chat.failedHistory.has(props.sessionId) : false,
 )
 
-/** Landing chip → NewTaskFlow popover（#3） */
-function onOpenDir(): void {
-  useNewTaskFlow().openDirPopover()
-}
-function onOpenBranch(): void {
-  useNewTaskFlow().openBranchPopover()
-}
 /** Landing 重试 → useSidebar.retryHistory（#2 AC-2.6） */
 function onRetryHistory(): void {
   if (props.sessionId) void useSidebar().retryHistory(props.sessionId)

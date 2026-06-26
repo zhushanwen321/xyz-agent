@@ -12,7 +12,7 @@
  *
  * 运行：cd src-electron/renderer && npx vitest run src/__tests__/new-task/landing.test.ts
  */
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import Landing from '@/components/new-task/Landing.vue'
@@ -20,8 +20,26 @@ import Panel from '@/components/panel/Panel.vue'
 import { useChatStore } from '@/stores/chat'
 import type { DerivedStatus } from '@/types'
 
+// Landing 绑定 useNewTaskFlow（chip→popover 渲染绑定 #5/#6）。mock 捕获方法调用
+const flowMock = vi.hoisted(() => ({
+  openDirPopover: vi.fn(),
+  openBranchPopover: vi.fn(),
+  closeOverlay: vi.fn(),
+  selectWorkspace: vi.fn(),
+  selectBranch: vi.fn(),
+  confirmDirtySwitch: vi.fn(),
+  openDirDialog: vi.fn(),
+  openBranchModal: vi.fn(),
+  state: { value: 'idle' as string },
+}))
+vi.mock('@/composables/features/useNewTaskFlow', () => ({
+  useNewTaskFlow: () => flowMock,
+  resetNewTaskFlow: vi.fn(),
+}))
+
 beforeEach(() => {
   setActivePinia(createPinia())
+  vi.clearAllMocks()
 })
 
 const DONE = 'done' as DerivedStatus
@@ -106,20 +124,20 @@ describe('Landing 组件（presentational）', () => {
     expect(chip.text()).toContain('选择目录')
   })
 
-  it('点 directory chip → emit open-dir', async () => {
+  it('点 directory chip → 调 useNewTaskFlow.openDirPopover（#5 渲染绑定）', async () => {
     const wrapper = mount(Landing, {
       props: { sessionId: 's1', currentCwd: '/repo', gitBranch: 'main' },
     })
     await wrapper.find('[data-testid="chip-directory"]').trigger('click')
-    expect(wrapper.emitted('open-dir')).toBeTruthy()
+    expect(flowMock.openDirPopover).toHaveBeenCalled()
   })
 
-  it('点 branch chip → emit open-branch', async () => {
+  it('点 branch chip → 调 useNewTaskFlow.openBranchPopover（#6 渲染绑定）', async () => {
     const wrapper = mount(Landing, {
       props: { sessionId: 's1', currentCwd: '/repo', gitBranch: 'main' },
     })
     await wrapper.find('[data-testid="chip-branch"]').trigger('click')
-    expect(wrapper.emitted('open-branch')).toBeTruthy()
+    expect(flowMock.openBranchPopover).toHaveBeenCalled()
   })
 })
 
