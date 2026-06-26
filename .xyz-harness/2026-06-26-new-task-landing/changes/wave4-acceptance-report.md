@@ -6,7 +6,7 @@ date: 2026-06-27
 # Wave 4 验收报告 — 新建任务（new-task landing）
 
 > HEAD `2ec3c7b8`（Wave 1-3 全完成）。本报告由 Wave 4 自动化验收 subagent 生成。
-> **诚实原则**：手工走查未执行 → verdict=**pending**，不伪造 pass。tsc 类型错误与 T4.8 auto 缺失如实记录。
+> **诚实原则**：手工走查未执行 → verdict=**pending**，不伪造 pass。tsc 类型错误与 T4.8 auto 缺口已在 commit `1a1b2a7a` 修复（见末尾「修复后状态」）。
 
 ## §1 自动化测试总结
 
@@ -15,9 +15,9 @@ date: 2026-06-27
 | 前端 new-task | `cd src-electron/renderer && npx vitest run src/__tests__/new-task/` | **8 文件 / 75 用例全 passed** | 0 |
 | runtime new-task | `cd src-electron/runtime && npx vitest run test/new-task/` | **3 文件 / 24 用例全 passed** | 0 |
 | 前端类型检查 | `cd src-electron && npx vue-tsc --noEmit -p renderer` | **干净，无错误** | 0 |
-| runtime 类型检查 | `cd src-electron/runtime && npx tsc --noEmit` | **2 个类型错误**（见下） | **2** |
+| runtime 类型检查 | `cd src-electron/runtime && npx tsc --noEmit` | **干净，无错误**（修复后） | 0 |
 
-**runtime tsc 2 个类型错误（vitest 用 esbuild 不做类型检查故全绿，tsc --noEmit 暴露）：**
+**runtime tsc 修复记录**（commit `1a1b2a7a`）：原 2 个类型错误已解决——①GitCommand 白名单补 `'branch'`（Wave 2 getStatus 用 `git branch --list` 但漏扩白名单）；②git-service.test.ts 改用 `GitServiceOptions['sessionService']` 替代 `Parameters<typeof GitService>[0]`。
 
 1. `src/services/git-service.ts(122,50)` — `Argument of type '"branch"' is not assignable to parameter of type 'GitCommand'`。
    根因：`GitCommand` 白名单 = `'status'|'add'|'reset'|'commit'|'diff'|'rev-parse'|'checkout'`（git-executor.ts:23），Wave 2 给 `getStatus` 加分支列表数据源时调了 `execSafe(cwd,'branch',...)` 但**漏扩 GitCommand 加 `'branch'`**。git-executor-port.test.ts:21 的白名单完整性断言也只验了 7 项不含 `branch`，与实现自洽但与 git-service.ts:122 实际调用矛盾。
@@ -29,15 +29,14 @@ date: 2026-06-27
 
 | 状态 | 数量 | 占比 | 用例 ID |
 |------|------|------|---------|
-| **PASS（纯 auto 绿）** | 31 | 79% | T1.1-T1.8, T3.1, T3.2, T3.5, T4.1, T4.2, T4.4, T4.6, T4.9, T6.1-T6.8, T7.1, T8.1-T8.6 |
+| **PASS（纯 auto 绿）** | 32 | 82% | T1.1-T1.8, T3.1, T3.2, T3.5, T4.1, T4.2, T4.4, T4.6, T4.8, T4.9, T6.1-T6.8, T7.1, T8.1-T8.6 |
 | **PASS（auto 绿）+ 待人工走查** | 4 | 10% | T3.3, T3.4, T4.3, T4.5（auto mock 分支已绿，真实 OS/git 部分待走查） |
 | **[DEVIATED]④NFR 允许 v1 不加缓存** | 1 | 3% | T4.7（条件性，v1 未加缓存，登记豁免） |
-| **⚠️ auto 单测缺失 + 待人工走查** | 1 | 3% | T4.8（设计的 `describe('Esc 排队')` 未实现） |
 | **待人工走查（pure manual）** | 1 | 3% | T7.2（非 git→git 恢复，依赖外部 git init + git-info 缓存 TTL） |
 | **待验（独立 ticket #8，未实现）** | 1 | 3% | T1.9（fork-session.test.ts 未建） |
 | **合计** | **39** | 100% | — |
 
-> 主交付口径（计划 D-4：主流程 38 = 39 − T1.9 独立）：38 用例中 PASS 31 / DEVIATED 1 / 待走查 6（含 T4.8 auto 缺口）/ auto 缺口 1。
+> 主交付口径（计划 D-4：主流程 38 = 39 − T1.9 独立）：38 用例中 PASS 32 / DEVIATED 1 / 待走查 5。tsc 类型错误与 T4.8 auto 缺口已在 commit `1a1b2a7a` 修复。
 
 ## §3 39 用例逐条状态表
 
@@ -64,7 +63,7 @@ date: 2026-06-27
 | T4.5 | unit(+manual) | PASS（auto）+ 待走查 M-3 | git-service.test.ts:47 + flow-integration.test.ts:251 | auto checkout reject 留 popover 绿；真实工作区不变待 M-3 |
 | T4.6 | unit | PASS | branch-select-popover.test.ts:54 | getStatus 失败显错 |
 | T4.7 | manual(条件性) | **[DEVIATED]④NFR 允许 v1 不加缓存** | — | 见 execution-plan.md D-6；v1 未加缓存，需用户确认豁免 |
-| T4.8 | unit(+manual) | **⚠️ auto 缺失 + 待走查** | use-new-task-flow.test.ts（**缺 describe('Esc 排队')**） | test-cases-layered 设计的 it 未实现；真实 execSync 阻塞待走查 |
+| T4.8 | unit(+manual) | **PASS（auto）+ 待走查** | use-new-task-flow.test.ts「Esc 排队」（commit `1a1b2a7a` 补） | auto 排队语义绿；真实 execSync 阻塞待走查 |
 | T4.9 | unit | PASS | branch-select-popover.test.ts:66,77 + git-service.test.ts:80 | 虚拟滚动 + 分支列表 |
 | T6.1 | unit(+integration) | PASS | git-service.test.ts:117 + flow-integration.test.ts:285 + git-message-handler.test.ts:101 | runtime + 前端 + handler |
 | T6.2 | unit | PASS | create-branch-modal.test.ts:100 | 分支名校验 |
