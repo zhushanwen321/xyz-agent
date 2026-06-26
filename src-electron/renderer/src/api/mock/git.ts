@@ -75,4 +75,8 @@ export const git = {
   async commit(_sessionId: string, _message?: string): Promise<void> {
     await sleep(TIMING.ack)
   },
+  // 与 real api/domains/git.ts 同构：切换分支（#6）。mock 仅 ack，不模拟真实 checkout/dirty 冲突
+  async checkout(_sessionId: string, _name: string): Promise<void> {
+    await sleep(TIMING.ack)
+  },
 }

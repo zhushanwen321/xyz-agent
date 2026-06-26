@@ -49,3 +49,14 @@ export function commit(sessionId: string, message?: string): Promise<void> {
   transport.send({ type: 'git.commit', id, payload: { sessionId, message: message ?? '' } })
   return result
 }
+
+/**
+ * 切换分支（#6 选分支 popover）。ack 复用 'message.status' {status:'switched'}。
+ * 分支不存在 / dirty 冲突 / 非 git → runtime GitError → Promise reject（调用方留 popover 显错）。
+ */
+export function checkout(sessionId: string, name: string): Promise<void> {
+  const id = pending.create()
+  const result = pending.register<void>(id)
+  transport.send({ type: 'git.checkout', id, payload: { sessionId, name } })
+  return result
+}

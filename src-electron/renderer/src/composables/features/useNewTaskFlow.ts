@@ -18,7 +18,7 @@
 import { ref, computed, readonly } from 'vue'
 import type { Ref, ComputedRef } from 'vue'
 import type { SessionSummary } from '@xyz-agent/shared'
-import { session as sessionApi } from '@/api'
+import { session as sessionApi, git as gitApi } from '@/api'
 import { resolveDefaultCwd } from '@/lib/utils'
 import { pickDirectory } from '@/lib/ipc'
 import { useSessionStore } from '@/stores/session'
@@ -193,39 +193,51 @@ export function useNewTaskFlow() {
    *
    * 数据流：dir-popover → ipc.pickDirectory → OS dialog →
    * 选中→delete+create(newCwd)+landing / 取消→落回 dir-popover（AC-5.3）。
+   * E5 IPC 招错（getFocusedWindow null）→落回 dir-popover + 向上抛（调用方接 toast，AC-5.6），
+   * 状态不卡在 dir-dialog（错误路径重置状态，CLAUDE.md #3）。
    */
   async function openDirDialog(): Promise<void> {
     transition('dir-dialog') // dir-popover→dir-dialog
-    const result = await pickDirectory()
-    if (result.canceled || !result.path) {
-      transition('dir-popover') // 取消落回（AC-5.3）
-      return
+    try {
+      const result = await pickDirectory()
+      if (result.canceled || !result.path) {
+        transition('dir-popover') // 取消落回（AC-5.3）
+        return
+      }
+      // 选中：与 selectWorkspace 同语义（delete 空旧 + create 新 cwd）
+      if (currentSessionId.value && result.path !== currentCwd.value) {
+        await sessionApi.remove(currentSessionId.value)
+      }
+      if (result.path !== currentCwd.value) {
+        currentSession.value = await sessionApi.create(result.path)
+      }
+      transition('landing') // dir-dialog→landing（chip 回灌新 cwd）
+    } catch (e) {
+      // E5：IPC 招错 → 落回 dir-popover + 重抛（调用方显错 toast），不卡 dir-dialog
+      transition('dir-popover')
+      throw e
     }
-    // 选中：与 selectWorkspace 同语义（delete 空旧 + create 新 cwd）
-    if (currentSessionId.value && result.path !== currentCwd.value) {
-      await sessionApi.remove(currentSessionId.value)
-    }
-    if (result.path !== currentCwd.value) {
-      currentSession.value = await sessionApi.create(result.path)
-    }
-    transition('landing') // dir-dialog→landing（chip 回灌新 cwd）
   }
 
   /**
-   * selectBranch —— 选干净分支直切（§4.3）。
-   * Wave 2 #6 接入 gitApi.checkout 后补全；本 Wave 守状态转换 + 桩。
+   * selectBranch —— 选干净分支直切（§4.3，#6）。
+   * checkout reject（冲突/分支不存在）→ 向上抛，state 留 branch-popover 显错（AC-6.4）；成功→landing。
    */
-  async function selectBranch(_name: string): Promise<void> {
+  async function selectBranch(name: string): Promise<void> {
     if (!currentSessionId.value) throw new Error('NewTaskFlow: 无绑定 session，无法切换分支')
-    // TODO(#6 Wave 2): await gitApi.checkout(currentSessionId.value, name); transition('landing')
-    throw new Error('selectBranch: Wave 2 #6 未实现（gitApi.checkout 待接入）')
+    await gitApi.checkout(currentSessionId.value, name) // reject 则留 branch-popover
+    transition('landing') // branch-popover→landing
   }
 
-  /** confirmDirtySwitch —— dirty 分支二次确认后切走（§4.3，AC-6.2）。Wave 2 #6 接入。 */
-  async function confirmDirtySwitch(_name: string): Promise<void> {
+  /**
+   * confirmDirtySwitch —— dirty 分支二次确认后切走（§4.3，AC-6.2，#6）。
+   * v1 选「留在工作区」：仅 git checkout（git 默认携带未提交改动），不 stash、不丢弃。
+   * 与 selectBranch 同语义（确认动作在组件 inline 条，composable 只执行切走）。
+   */
+  async function confirmDirtySwitch(name: string): Promise<void> {
     if (!currentSessionId.value) throw new Error('NewTaskFlow: 无绑定 session，无法切换分支')
-    // TODO(#6 Wave 2): await gitApi.checkout(currentSessionId.value, name); transition('landing')
-    throw new Error('confirmDirtySwitch: Wave 2 #6 未实现（gitApi.checkout 待接入）')
+    await gitApi.checkout(currentSessionId.value, name)
+    transition('landing') // branch-popover→landing
   }
 
   /**

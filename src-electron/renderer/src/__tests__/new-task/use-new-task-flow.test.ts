@@ -183,6 +183,29 @@ describe('useNewTaskFlow 状态机', () => {
     })
   })
 
+  describe('UC-7 非 git 不可达（T4.4）', () => {
+    it('gitInfo==null（非 git 目录）→branch chip 隐藏的派生为 null、openBranchPopover 不可达', async () => {
+      const noGit: SessionSummary = {
+        id: 'nogit2',
+        label: 'plain',
+        cwd: '/plain',
+        status: 'idle',
+        lastActiveAt: 100,
+        modelId: 'm',
+        tokenCount: 0,
+      }
+      setGroups([noGit])
+      useSessionStore().activeId = 'nogit2'
+      const flow = useNewTaskFlow()
+      await flow.startFlow()
+      // gitInfo 派生为 null → Landing 的 branch chip 隐藏（gitBranch 空态，AC-2.2/3.7）
+      expect(flow.gitInfo.value).toBeNull()
+      // 状态机守卫：branch 相关动作不可达
+      expect(() => flow.openBranchPopover()).toThrow()
+      expect(flow.state.value).toBe('idle')
+    })
+  })
+
   describe('openBranchModal 来源守卫（T6.5）', () => {
     it('非 branch-popover 来源（landing）→抛错回 idle', async () => {
       setGroups([gitSession({ id: 'git-s', cwd: '/repo' })])
