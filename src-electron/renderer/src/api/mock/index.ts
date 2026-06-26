@@ -144,9 +144,9 @@ export const session = {
     return buildGroups()
   },
 
-  async create(title?: string): Promise<SessionSummary> {
+  async create(cwd?: string, label?: string): Promise<SessionSummary> {
     await sleep(TIMING.ack)
-    const s = createSession(title)
+    const s = createSession(cwd, label)
     fixtureSessions.push(s)
     // 模拟 runtime create 后 broadcastSessionList（server-push 全量分组）
     pushSessionList()

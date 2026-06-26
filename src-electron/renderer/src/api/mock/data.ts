@@ -236,12 +236,13 @@ export const fixtureMessages: Record<string, Message[]> = {
 let createSeq = 0
 
 /** 创建新 session（内存 push，返回深拷贝避免外部突变 fixture） */
-export function createSession(label?: string): SessionSummary {
+export function createSession(cwd?: string, label?: string): SessionSummary {
   createSeq += 1
   const session: SessionSummary = {
     id: `mock-${NOW + createSeq}`,
     label: label ?? `新会话 ${createSeq}`,
-    cwd: '/Users/zhushanwen/Code/xyz-agent',
+    // cwd 透传（#1）；undefined 时保持 mock 默认目录（与 runtime 回退 process.cwd() 同语义）
+    cwd: cwd ?? '/Users/zhushanwen/Code/xyz-agent',
     status: 'active',
     lastActiveAt: Date.now(),
     modelId: 'claude-sonnet-4',

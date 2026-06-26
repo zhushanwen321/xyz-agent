@@ -26,13 +26,22 @@ export async function list(): Promise<SessionGroup[]> {
   return (await result).groups
 }
 
-/** 创建新 session（可选默认标题）。
- *  runtime session.created reply envelope 是 `{ session }`（session-message-handler.ts:39），
- *  与 list() 解包 `.groups` 同理，此处解包 `.session` 返 SessionSummary。 */
-export async function create(title?: string): Promise<SessionSummary> {
+/**
+ * 创建新 session（#1 cwd 透传，位置参数 create(cwd?, label?)，issues #1 方案 A）。
+ *
+ * 边界：cwd=undefined → payload 不含 cwd 键（runtime 回退 process.cwd()，AC-1.2 回归）；
+ * 非法 cwd → runtime reject → 本 Promise reject（§4.1 E2）。runtime session.create handler
+ * 负责 cwd 校验 + pi spawn，失败回滚 session 实体不留僵尸（NFR④#1）。
+ * runtime session.created reply envelope 是 `{ session }`（session-message-handler.ts），解包 `.session`。
+ */
+export async function create(cwd?: string, label?: string): Promise<SessionSummary> {
   const id = pending.create()
   const result = pending.register<{ session: SessionSummary }>(id)
-  transport.send({ type: 'session.create', id, payload: { label: title } })
+  // cwd/label 为 undefined 时不写入 payload 键（AC-1.1/1.2），让 runtime 回退默认
+  const payload: { cwd?: string; label?: string } = {}
+  if (cwd !== undefined) payload.cwd = cwd
+  if (label !== undefined) payload.label = label
+  transport.send({ type: 'session.create', id, payload })
   return (await result).session
 }
 
