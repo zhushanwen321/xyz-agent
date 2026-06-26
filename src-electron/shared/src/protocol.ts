@@ -28,7 +28,7 @@ export type ClientMessageType =
   | 'plugin.config.get' | 'plugin.config.set'
   | 'plugin.uiResponse'
   | 'file.read'
-  | 'git.status' | 'git.stage' | 'git.unstage' | 'git.commit'
+  | 'git.status' | 'git.stage' | 'git.unstage' | 'git.commit' | 'git.checkout'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -104,6 +104,7 @@ export interface ClientMessageMap {
   'git.stage': { sessionId: string; filePaths?: string[] }
   'git.unstage': { sessionId: string; filePaths?: string[] }
   'git.commit': { sessionId: string; message?: string }
+  'git.checkout': { sessionId: string; name: string }
 }
 
 export type ClientMessage =
@@ -165,6 +166,7 @@ export type ClientMessage =
   | { type: 'git.stage'; id?: string; payload: ClientMessageMap['git.stage'] }
   | { type: 'git.unstage'; id?: string; payload: ClientMessageMap['git.unstage'] }
   | { type: 'git.commit'; id?: string; payload: ClientMessageMap['git.commit'] }
+  | { type: 'git.checkout'; id?: string; payload: ClientMessageMap['git.checkout'] }
 
 // ── 辅助类型 ────────────────────────────────────────────────────
 
@@ -397,6 +399,9 @@ export type GitStatusResult = {
   stats: { add: number; del: number }
   hasConflict: boolean
   files: GitFileStatus[]
+  /** 本地分支名列表（#6 选分支 popover 数据源，架构 §4.3 GitStatusResult 含分支列表）。
+   *  由 getStatus 经 `git branch --list` 填充；unborn HEAD / 列举失败 → []。 */
+  branches?: string[]
 }
 
 /** 单文件的 git 状态（git --porcelain 的 XY 码解析结果）。

@@ -15,11 +15,12 @@ import type { GitFileStatus } from '@xyz-agent/shared'
  * - status / diff / rev-parse：只读查询（status 用于全量状态、diff --numstat 取行数、rev-parse 验仓库）
  * - add / reset：暂存/取消暂存
  * - commit：提交
+ * - checkout：切换分支（#6 `checkout <name>`）/ 创建并检出分支（#7 `checkout -b <name>`），共用白名单项
  *
- * 路径/message 作为 args 数组元素传入（如 ['--', 'src/a.ts']、['-m', 'msg']），
+ * 路径/message/分支名 作为 args 数组元素传入（如 ['--', 'src/a.ts']、['-m', 'msg']、['main']），
  * 由 GitService 保证语义正确，executor 只负责以数组形式交给 execFileSync。
  */
-export type GitCommand = 'status' | 'add' | 'reset' | 'commit' | 'diff' | 'rev-parse'
+export type GitCommand = 'status' | 'add' | 'reset' | 'commit' | 'diff' | 'rev-parse' | 'checkout'
 
 /** IGitExecutor.exec 的返回。exitCode 非 0 时 GitService 按 stderr 判定失败类型。 */
 export interface GitExecutorResult {

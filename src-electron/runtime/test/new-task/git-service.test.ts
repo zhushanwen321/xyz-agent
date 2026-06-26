@@ -1,0 +1,114 @@
+/**
+ * GitService.checkout + getStatus 分支列表单测（#6，T4.1/T4.5 + T4.3/T4.9 数据源）。
+ *
+ * 覆盖：
+ * - T4.1 干净分支：checkout → execSafe(cwd,'checkout',[name]) exit 0 → resolve
+ * - T4.5 E8 冲突：exitCode 非 0 → throw GitError('git_failed')
+ * - T4.3 unborn HEAD：getStatus → branches=[]（无 commit），isRepo=true
+ * - T4.9 分支列表：getStatus → branches 含本地分支
+ * - session 不存在 → GitError('session_not_found')；port 超时 → GitError('git_unavailable')
+ *
+ * mock 策略（test-strategy §2.2）：IGitExecutor 构造注入，sessionService.getSummary 提供 cwd。
+ * 不起真实 git 进程。
+ *
+ * 运行：cd src-electron/runtime && npx vitest run test/new-task/git-service.test.ts
+ */
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { GitService, GitError } from '../../src/services/git-service.js'
+import { GitExecutorError } from '../../src/services/ports/git-executor.js'
+import type { IGitExecutor, GitExecutorResult } from '../../src/services/ports/git-executor.js'
+
+const executor = { exec: vi.fn() }
+const sessionService = { getSummary: vi.fn() }
+
+function svc(): GitService {
+  return new GitService({
+    sessionService: sessionService as unknown as Parameters<typeof GitService>[0]['sessionService'],
+    executor: executor as unknown as IGitExecutor,
+  })
+}
+
+function res(over: Partial<GitExecutorResult> = {}): GitExecutorResult {
+  return { stdout: '', stderr: '', exitCode: 0, ...over }
+}
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  sessionService.getSummary.mockReturnValue({ cwd: '/repo' })
+})
+
+describe('GitService.checkout (#6 选分支 popover)', () => {
+  it('T4.1 干净分支→execSafe(cwd,checkout,[name]) exit 0→resolve', async () => {
+    executor.exec.mockResolvedValueOnce(res())
+    await expect(svc().checkout('s1', 'main')).resolves.toBeUndefined()
+    expect(executor.exec).toHaveBeenCalledWith('/repo', 'checkout', ['main'])
+  })
+
+  it('T4.5 E8 冲突/分支不存在→exitCode 非0→throw GitError', async () => {
+    executor.exec.mockResolvedValueOnce(res({ exitCode: 1, stderr: 'error: Your local changes would be overwritten' }))
+    await expect(svc().checkout('s1', 'feature')).rejects.toBeInstanceOf(GitError)
+    expect(executor.exec).toHaveBeenCalledWith('/repo', 'checkout', ['feature'])
+  })
+
+  it('非0 退出的 GitError code=git_failed（handler 据此转 error envelope）', async () => {
+    executor.exec.mockResolvedValueOnce(res({ exitCode: 128, stderr: 'fatal: not a valid object name' }))
+    await expect(svc().checkout('s1', 'nope')).rejects.toMatchObject({
+      name: 'GitError',
+      code: 'git_failed',
+    })
+  })
+
+  it('session 不存在（cwd 空）→GitError(session_not_found)，不触达 exec', async () => {
+    sessionService.getSummary.mockReturnValue({ cwd: '' })
+    await expect(svc().checkout('s1', 'main')).rejects.toMatchObject({
+      name: 'GitError',
+      code: 'session_not_found',
+    })
+    expect(executor.exec).not.toHaveBeenCalled()
+  })
+
+  it('port 超时→GitExecutorError(timeout)→GitError(git_unavailable)', async () => {
+    executor.exec.mockRejectedValueOnce(new GitExecutorError('timeout', 'timed out'))
+    await expect(svc().checkout('s1', 'main')).rejects.toMatchObject({
+      name: 'GitError',
+      code: 'git_unavailable',
+    })
+  })
+})
+
+describe('GitService.getStatus 分支列表（#6 popover 数据源）', () => {
+  it('T4.9 正常仓库→isRepo=true 且 branches 含本地分支列表', async () => {
+    // status 头 + 干净工作区；branch --list 返回两个本地分支
+    executor.exec
+      .mockResolvedValueOnce(res({ stdout: '## main\u0000' })) // status
+      .mockResolvedValueOnce(res({ stdout: '' })) // diff numstat（空）
+      .mockResolvedValueOnce(res({ stdout: 'main\nfeature/x\n' })) // branch --list
+    const r = await svc().getStatus('s1')
+    expect(r.isRepo).toBe(true)
+    expect(r.branch).toBe('main')
+    expect(r.branches).toEqual(['main', 'feature/x'])
+  })
+
+  it('T4.3 unborn HEAD（无首次提交）→isRepo=true、branches=[]、branch=undefined', async () => {
+    // status 在 unborn 仓库 exit 0，头为 "## No commits yet on main"；branch --list 空
+    executor.exec
+      .mockResolvedValueOnce(res({ stdout: '## No commits yet on main\u0000' })) // status exit 0
+      .mockResolvedValueOnce(res({ stdout: '', exitCode: 128 })) // diff HEAD 失败（无 HEAD）→ stats 0
+      .mockResolvedValueOnce(res({ stdout: '' })) // branch --list 空
+    const r = await svc().getStatus('s1')
+    expect(r.isRepo).toBe(true)
+    expect(r.branch).toBeUndefined()
+    expect(r.branches).toEqual([])
+  })
+
+  it('branch --list 失败（非0）→branches 兜底为空数组，不影响主状态', async () => {
+    executor.exec
+      .mockResolvedValueOnce(res({ stdout: '## main\u0000' }))
+      .mockResolvedValueOnce(res({ stdout: '' }))
+      .mockResolvedValueOnce(res({ exitCode: 128, stderr: 'err' })) // branch 列举失败
+    const r = await svc().getStatus('s1')
+    expect(r.isRepo).toBe(true)
+    expect(r.branch).toBe('main')
+    expect(r.branches).toEqual([])
+  })
+})

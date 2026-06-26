@@ -108,10 +108,23 @@ export class GitService {
         stats = parseNumstat(diffRes.stdout)
       }
 
+      // 本地分支列表（#6 选分支 popover 数据源，架构 §4.3 GitStatusResult 含分支列表）。
+      // --format=%(refname:short) 输出干净的短分支名（无 `*` 当前标记、无缩进），每行一个；
+      // unborn HEAD（无 commit）/ 列举失败 → []。currentBranch 由上方 parseBranchHeader 给出。
+      let branches: string[] = []
+      const branchRes = await this.execSafe(cwd, 'branch', ['--list', '--format=%(refname:short)'])
+      if (branchRes.exitCode === 0) {
+        branches = branchRes.stdout
+          .split('\n')
+          .map((b) => b.trim())
+          .filter((b) => b.length > 0)
+      }
+
       return {
         sessionId,
         isRepo: true,
         branch,
+        branches,
         stagedCount,
         unstagedCount,
         stats,
@@ -192,9 +205,27 @@ export class GitService {
   }
 
   /**
-   * 安全执行 git 命令，将 GitExecutorError（git 不可用/超时）和未知错误统一转为 GitError。
-   * 非零退出码原样返回（由各方法按 stderr/exitCode 语义判定失败类型）。
+   * 切换分支（#6 选分支 popover）。
+   *
+   * 数据流：handler → checkout(sessionId,name) → execSafe(cwd,'checkout',[name]) →
+   * git CLI → exit 0 成功 / 非0 失败转 GitError。ack 走 'message.status'（status='switched'）。
+   *
+   * 失败路径（§4.3 E8）：
+   * - session 不存在 → GitError('session_not_found')
+   * - 分支不存在 / dirty 冲突 → exitCode 非0、stderr 含 fatal/error → GitError('git_failed')
+   * - 超时 → port GitExecutorError(timeout) → execSafe 转 GitError('git_unavailable')（§3.8 NFR 约束，port 继承 8000ms）
+   *
+   * SDK 契约：经 IGitExecutor port（白名单含 'checkout'），数组参数 ['checkout', name] 不经 shell。
+   * 分支名不需越界校验（非路径），runtime 依赖 git CLI 自身拒绝非法分支名。
    */
+  async checkout(sessionId: string, name: string): Promise<void> {
+    const cwd = this.requireCwd(sessionId)
+    const res = await this.execSafe(cwd, 'checkout', [name])
+    if (res.exitCode !== 0) {
+      throw new GitError('git_failed', res.stderr.trim() || `git checkout ${name} 失败`)
+    }
+  }
+
   private async execSafe(cwd: string, command: GitCommand, args: string[] = []): Promise<GitExecutorResult> {
     try {
       return await this.opts.executor.exec(cwd, command, args)
