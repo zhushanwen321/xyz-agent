@@ -15,7 +15,7 @@
           <Label class="text-[12px] text-fg">语言</Label>
           <Select
             :model-value="system.locale"
-            @update:model-value="emit('update', { locale: $event as 'zh-CN' | 'en-US' })"
+            @update:model-value="emit('update', { locale: $event as SystemSettings['locale'] })"
           >
             <SelectTrigger class="h-8 w-[200px] px-2 text-[12px]">
               <SelectValue />
@@ -31,7 +31,7 @@
           <Label class="text-[12px] text-fg">外观模式</Label>
           <Select
             :model-value="system.theme"
-            @update:model-value="emit('update', { theme: $event as 'light' | 'dark' | 'system' })"
+            @update:model-value="emit('update', { theme: $event as SystemSettings['theme'] })"
           >
             <SelectTrigger class="h-8 w-[200px] px-2 text-[12px]">
               <SelectValue />
@@ -93,13 +93,14 @@
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import type { SystemSettings } from '@/stores/settings'
 
 defineProps<{
-  system: { locale: string; theme: string; themePreset: string }
+  system: SystemSettings
 }>()
 
 const emit = defineEmits<{
-  update: [patch: Record<string, unknown>]
+  update: [patch: Partial<SystemSettings>]
 }>()
 
 const mutedSwatches = [

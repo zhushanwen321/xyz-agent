@@ -19,6 +19,9 @@ import { MOCK_MODELS, mockModelToInfo } from './composer-data'
 import { runSendStream, type Timing } from './run-send-stream'
 import { makeMockSubscription, type GlobalHandler } from './subscription'
 import * as events from '../events'
+// settings 的纯前端偏好（getSystem/updateSystem）与 transport 无关，复用 real 实现消除手工同构；
+// mock 域隔离原则针对 transport/events/pending，localStorage 偏好不在此列。
+import { getSystem as realGetSystem, updateSystem as realUpdateSystem } from '../domains/settings'
 
 // mock/git.ts 的 git domain + fixtureGitStatus 透出（Wave 1a real git domain 落地后由 api/index 接线）
 export { git, fixtureGitStatus } from './git'
@@ -445,10 +448,8 @@ export const plugin = {
   onPlugins: (h: (plugins: PluginInfo[]) => void) => pluginsSub.subscribe(h),
 }
 
-/* ── Settings mock（对齐新契约：转发 config/extension 订阅 + localStorage 偏好）── */
+/* ── Settings mock（对齐新契约：转发 config/extension 订阅 + 复用 real 的 localStorage 偏好）── */
 /* 必须在 config/extension 块之后（转发引用它们） */
-
-const SYSTEM_KEY = 'xyz-agent:system-settings'
 
 export const settings = {
   // 订阅（转发到 mock sub）
@@ -461,36 +462,7 @@ export const settings = {
   listProviders: config.listProviders,
   // 动作
   setProvider: config.setProvider,
-  // 纯前端偏好（localStorage，与 real 一致）
-  async getSystem(): Promise<{locale:'zh-CN'|'en-US',theme:'light'|'dark'|'system',themePreset:string}> {
-    const raw = localStorage.getItem(SYSTEM_KEY)
-    let parsed: Record<string, unknown> = {}
-    if (raw) {
-      try {
-        parsed = JSON.parse(raw) as Record<string, unknown>
-      } catch {
-        // 数据损坏：显式回退到默认值（空对象 → 下行 spread 自动用默认兜底）
-        parsed = {}
-      }
-    }
-    return {
-      locale: 'zh-CN',
-      theme: 'dark',
-      themePreset: 'cold-blue',
-      ...parsed,
-    }
-  },
-  async updateSystem(patch: Record<string, unknown>): Promise<void> {
-    const raw = localStorage.getItem(SYSTEM_KEY)
-    let cur: Record<string, unknown> = {}
-    if (raw) {
-      try {
-        cur = JSON.parse(raw) as Record<string, unknown>
-      } catch {
-        // 数据损坏：显式回退到默认值（空对象 → 下行 spread 自动用 patch 兜底）
-        cur = {}
-      }
-    }
-    localStorage.setItem(SYSTEM_KEY, JSON.stringify({ ...cur, ...patch }))
-  },
+  // 纯前端偏好（localStorage）：复用 real 实现，两侧契约由类型保证一致，不再手工复制。
+  getSystem: realGetSystem,
+  updateSystem: realUpdateSystem,
 }

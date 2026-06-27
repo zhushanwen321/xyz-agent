@@ -1,61 +1,153 @@
 /**
- * Settings store —— 应用级配置状态（主题 / 语言 / 配色主题）。
+ * Settings store —— 应用级配置的「单一真相源」。
  *
- * 模式参考 navigation.ts / sidebar.ts：defineStore + setup 语法（ref/computed），
- * 注释规范（依赖方向、骨架阶段说明）。
+ * 重构前问题（2026-06-27 架构返工）：
+ * 1. SettingsModal 自管 ref + onMounted 订阅 5 域 + props 下传，是全项目唯一的「组件内状态孤岛」
+ *    （其余特性如 sidebar/session/navigation 均为 Pinia 单向流）。settings 数据无法被外部消费。
+ * 2. SystemPage 调 settings.updateSystem 只写 localStorage，从不写 DOM → 主题/locale 切换是死设置。
+ * 3. i18n 用独立 key 持久化 locale，与 system 偏好分裂成两份真相源。
  *
- * 依赖方向：无（stores 间禁止互相 import；跨 store 协调由 composables/features 做）。
- * 骨架阶段：state/getter 合法初始值，action 简单赋值 + DOM data-theme 同步。
+ * 重构后职责：
+ * - 持有 providers / skills / agents / extensions / system 五份状态，统一对外。
+ * - init()：幂等挂载 5 域订阅（去重），同步 system 偏好到 DOM + i18n。
+ * - setSystem(patch)：写 localStorage + 同步 data-theme + 调 i18n.setLocale。
+ *   （themePreset 状态保留供 SystemPage 选中态，CSS 切换暂未实装）
+ *
+ * 依赖方向（stores 间禁止互相 import；跨域协调由 composables/features 做）：
+ * - 读 @/api（config / extension / settings 域订阅与请求）+ @/i18n（locale 切换）。
+ * - 写 document.documentElement（data-theme 槽位）。
  */
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { ref } from 'vue'
+import type { ProviderInfo, SkillInfo, AgentInfo } from '@xyz-agent/shared'
+import { config, extension as extensionApi, settings as settingsApi } from '@/api'
+import type { SystemSettings } from '@/api'
+import { setLocale } from '@/i18n'
 
-/** 外观模式：暗色 / 亮色（ADR-0021-B 暗色为真默认） */
-export type ThemeMode = 'dark' | 'light'
+/** 外观模式：暗色 / 亮色 / 跟随系统（与 api SystemSettings.theme 对齐） */
+export type ThemeMode = SystemSettings['theme']
 
 /** 配色主题：由 settings-shell spec §4 System 菜单定义，默认 cold-blue */
 export type ColorTheme = string
 
+export type { SystemSettings }
+
+/**
+ * Extension 本地桥接类型：shared ExtensionInfo 暂无 tools，
+ * ExtensionPage 模板依赖 tools 字段；real 订阅实装时再与 shared 统一。
+ * （与 SettingsModal 原本地 ExtensionItem 同构，上提到 store 作为单一类型。）
+ */
+export interface ExtensionItem {
+  name: string
+  version: string
+  description: string
+  enabled: boolean
+  tools: string[]
+}
+
+const DEFAULT_SYSTEM: SystemSettings = {
+  locale: 'zh-CN',
+  theme: 'dark',
+  themePreset: 'cold-blue',
+}
+
 export const useSettingsStore = defineStore('settings', () => {
-  // State
-  const theme = ref<ThemeMode>('dark')
-  const language = ref<string>('zh-CN')
+  // ── State ──
+  const providers = ref<ProviderInfo[]>([])
+  const skills = ref<SkillInfo[]>([])
+  const agents = ref<AgentInfo[]>([])
+  const extensions = ref<ExtensionItem[]>([])
+  const system = ref<SystemSettings>({ ...DEFAULT_SYSTEM })
+
+  /** 订阅句柄（init 幂等去重用） */
+  const unsubs: Array<() => void> = []
+  let initialized = false
+
+  // ── Actions ──
 
   /**
-   * 配色主题（外观项扩展）。
-   * 依据：settings-shell spec §4 System 菜单列出「配色主题」，draft 默认 cold-blue。
-   * 骨架阶段仅保留内存状态，不持久化。
+   * 幂等初始化：挂载 5 域常驻订阅 + 同步 system 偏好到 DOM / i18n。
+   * 由 AppShell（应用级，常驻）调用一次即可；多次调用安全（initialized 去重）。
+   * 订阅常驻不随 modal 关闭断开，保证 settings 数据全局可消费。
    */
-  const colorTheme = ref<ColorTheme>('cold-blue')
+  async function init(): Promise<void> {
+    if (initialized) return
+    initialized = true
 
-  // Getters
-  const isDark = computed(() => theme.value === 'dark')
+    unsubs.push(config.onProviders((p) => { providers.value = p }))
+    unsubs.push(config.onSkills((s) => { skills.value = s }))
+    unsubs.push(config.onAgents((a) => { agents.value = a }))
+    unsubs.push(extensionApi.onExtensions((e) => { extensions.value = e as ExtensionItem[] }))
 
-  // Actions
+    // system 是纯前端偏好（localStorage），初始化时读并同步到 DOM + i18n
+    system.value = await settingsApi.getSystem()
+    applySystemToDom(system.value)
+  }
+
   /**
-   * 设置外观模式并同步到 DOM 的 [data-theme] 槽位。
-   * 消费方：T01 已在 style.css 预留 [data-theme] 选择器。
+   * 打开 modal 时刷新 providers（拿最新快照）；skills/agents 靠订阅，不主动拉。
+   * 失败时不阻塞 UI：onProviders 订阅会兜底推回最新数据。
    */
-  function setTheme(t: ThemeMode): void {
-    theme.value = t
-    document.documentElement.setAttribute('data-theme', t)
+  async function refreshProviders(): Promise<void> {
+    try {
+      providers.value = await config.listProviders()
+    // eslint-disable-next-line taste/no-silent-catch -- 拉取失败不阻塞 UI：onProviders 订阅会兜底推回最新数据，无需打扰用户
+    } catch (e) {
+      console.warn('[settings] listProviders 失败，依赖订阅兜底', e)
+    }
   }
 
-  function setLanguage(l: string): void {
-    language.value = l
+  /**
+   * 更新 system 偏好：合并本地态 → 写 localStorage → 同步 DOM + i18n。
+   * 消灭「死设置」：theme/locale 切换现在真正生效。
+   */
+  async function setSystem(patch: Partial<SystemSettings>): Promise<void> {
+    system.value = { ...system.value, ...patch }
+    await settingsApi.updateSystem(patch)
+    applySystemToDom(system.value)
   }
 
-  function setColorTheme(c: ColorTheme): void {
-    colorTheme.value = c
+  /** 销毁订阅（AppShell 卸载时调用，应用生命周期内通常不触发）。 */
+  function dispose(): void {
+    unsubs.splice(0).forEach((u) => u())
+    initialized = false
   }
 
   return {
-    theme,
-    language,
-    colorTheme,
-    isDark,
-    setTheme,
-    setLanguage,
-    setColorTheme,
+    // state
+    providers,
+    skills,
+    agents,
+    extensions,
+    system,
+    // actions
+    init,
+    refreshProviders,
+    setSystem,
+    dispose,
   }
 })
+
+// ── 内部工具 ──
+
+/**
+ * 把 system 偏好同步到运行时副作用：
+ * - theme → <html data-theme>（style.css :root 暗默认 / [data-theme=light] 亮色槽位）
+ * - locale → i18n.setLocale（切换实际语言）
+ *
+ * theme='system' 时按 prefers-color-scheme 解析为 light/dark 写入 data-theme
+ * （避免 CSS 用 media query 又叠一层，统一走 data-theme 单一通道）。
+ *
+ * 注：themePreset（palette）暂未实装 CSS 切换（11 个配色 swatch 的 --accent 覆盖待做），
+ * 故此处不写 data-theme-preset；store 仍持有 themePreset 状态供 SystemPage 选中态使用。
+ */
+function applySystemToDom(s: SystemSettings): void {
+  if (typeof document === 'undefined') return
+
+  const resolvedTheme = s.theme === 'system'
+    ? (window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+    : s.theme
+  document.documentElement.setAttribute('data-theme', resolvedTheme)
+
+  if (s.locale) setLocale(s.locale)
+}

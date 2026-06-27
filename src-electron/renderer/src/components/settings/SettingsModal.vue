@@ -1,12 +1,12 @@
+<!--
+  容器组件 · Settings modal（settings/spec.md · 居中 modal + 模糊背景）。
+  数据来自 settings store（单一真相源：providers/skills/agents/extensions/system）。
+  store 由 AppShell 应用级 init（常驻订阅），本组件只读 store + open 时刷新 providers。
+  5 菜单导航 + 右侧对应页面组件。
+-->
 <template>
-  <!--
-    容器组件 · Settings modal（settings/spec.md · 居中 modal + 模糊背景）。
-    数据来自 @/api/settings（mock: fixtureProviders/Skills/Agents/Extensions/System）。
-    5 菜单导航 + 右侧对应页面组件。
-  -->
   <Dialog :open="open" @update:open="emit('update:open', $event)">
     <DialogContent
-      aria-modal="true"
       hide-close
       class="flex max-w-[900px] flex-col gap-0 overflow-hidden p-0 sm:rounded-lg"
     >
@@ -76,7 +76,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { Settings, Sparkles, Bot, Blocks, SlidersHorizontal, X } from '@lucide/vue'
 import {
   Dialog,
@@ -88,23 +89,12 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { settings, type SystemSettings } from '@/api'
-import type { ProviderInfo, SkillInfo, AgentInfo } from '@xyz-agent/shared'
+import { useSettingsStore, type SystemSettings } from '@/stores/settings'
 import ProviderPage from './ProviderPage.vue'
 import SkillPage from './SkillPage.vue'
 import AgentPage from './AgentPage.vue'
 import ExtensionPage from './ExtensionPage.vue'
 import SystemPage from './SystemPage.vue'
-
-// ExtensionPage 模板用到 ext.tools（fixture FixtureExtension 有此字段）；
-// shared 的 ExtensionInfo 暂无 tools，real 订阅实装（第3项）时再统一，故本地保留此类型。
-interface ExtensionItem {
-  name: string
-  version: string
-  description: string
-  enabled: boolean
-  tools: string[]
-}
 
 const menus = [
   { id: 'provider', label: 'Provider', icon: Settings, desc: '配置模型供应商与 API Key' },
@@ -120,33 +110,14 @@ const emit = defineEmits<{ 'update:open': [value: boolean] }>()
 const activeMenu = ref<(typeof menus)[number]['id']>('provider')
 const currentMenu = computed(() => menus.find((m) => m.id === activeMenu.value) ?? menus[0])
 
-// 数据状态（订阅驱动：组件挂载即注册，sendInitialState/广播推回数据）
-const providers = ref<ProviderInfo[]>([])
-const skills = ref<SkillInfo[]>([])
-const agents = ref<AgentInfo[]>([])
-const extensions = ref<ExtensionItem[]>([])
-const system = ref<SystemSettings>({ locale: 'zh-CN', theme: 'dark', themePreset: 'cold-blue' })
+// 数据来自 settings store（单一真相源，AppShell 应用级 init 常驻订阅）。
+// storeToRefs 保持响应性解构。
+const settingsStore = useSettingsStore()
+const { providers, skills, agents, extensions, system } = storeToRefs(settingsStore)
 
-const unsubs: Array<() => void> = []
-
-onMounted(async () => {
-  // 订阅常驻：providers/skills/agents/extensions 由 sendInitialState + 变更广播驱动
-  unsubs.push(settings.onProviders((p) => { providers.value = p }))
-  unsubs.push(settings.onSkills((s) => { skills.value = s }))
-  unsubs.push(settings.onAgents((a) => { agents.value = a }))
-  unsubs.push(settings.onExtensions((e) => { extensions.value = e as ExtensionItem[] }))
-  // system 是纯前端偏好（localStorage），挂载时同步读
-  system.value = await settings.getSystem()
-})
-
-onBeforeUnmount(() => { unsubs.forEach((u) => u()) })
-
-// 打开时可选刷新 providers（拿最新）；skills/agents 靠订阅，不再主动拉
+// 打开时刷新 providers（拿最新快照）；skills/agents/extensions 靠订阅，无需主动拉。
 watch(() => props.open, (isOpen) => {
-  if (!isOpen) return
-  settings.listProviders()
-    .then((p) => { providers.value = p })
-    .catch(() => { /* 订阅会兜底 */ })
+  if (isOpen) settingsStore.refreshProviders()
 })
 
 function getItemCount(id: string): number {
@@ -159,8 +130,8 @@ function getItemCount(id: string): number {
   }
 }
 
-async function onSystemUpdate(patch: Record<string, unknown>) {
-  Object.assign(system.value, patch)
-  await settings.updateSystem(patch)
+/** SystemPage 偏好更新 → 走 store（写 localStorage + 同步 DOM data-theme + i18n）。 */
+function onSystemUpdate(patch: Partial<SystemSettings>) {
+  settingsStore.setSystem(patch)
 }
 </script>

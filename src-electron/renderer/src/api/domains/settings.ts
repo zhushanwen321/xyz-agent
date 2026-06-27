@@ -33,7 +33,7 @@ export const listProviders = configDomain.listProviders
 // ── 动作 ──
 export const setProvider = configDomain.setProvider
 
-// ── 纯前端偏好（localStorage，不走 transport）──
+// ── 纯前端偏好（localStorage，不走 transport；mock 侧直接复用本实现，消除手工同构）──
 export function getSystem(): Promise<SystemSettings> {
   const raw = localStorage.getItem(SYSTEM_KEY)
   let parsed: Partial<SystemSettings> = {}
