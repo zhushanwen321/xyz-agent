@@ -44,8 +44,8 @@
     <!-- ③④ companion zones：progress / composer 垂直 6px 紧凑成「带」。
          git-zone（zone ⑤，FR-12）置于 composer 下方，与 progress/composer 共享视觉带。 -->
     <div class="composer-band flex flex-shrink-0 flex-col gap-1.5">
-      <!-- ③ progress-zone（composer 上方） -->
-      <ProgressZone phase="running" />
+      <!-- ③ progress-zone（composer 上方）：真实任务态未就绪时不渲染（组件内 v-if="state" 自隐藏） -->
+      <ProgressZone />
 
       <!-- ④ composer（FG5，S1/S2/S5/S6 主路径）。landing 态由 Landing 内部渲染 composer 卡片，
            此处 band 不重复渲染（showPanelComposer：非 landing 才挂）。 -->

@@ -17,9 +17,9 @@
         "
         title="上下文容量"
       >
-        <span class="tabular-nums">{{ usedWan }}</span>
+        <span class="tabular-nums">{{ hasData ? usedWan : '—' }}</span>
         <span aria-hidden="true">·</span>
-        <span class="tabular-nums">{{ stats.percent }}%</span>
+        <span class="tabular-nums">{{ hasData ? `${stats.percent}%` : '—' }}</span>
       </Button>
     </HoverCardTrigger>
     <HoverCardContent side="top" class="w-[260px] p-0">
@@ -28,7 +28,7 @@
         class="flex items-center justify-between border-b border-border bg-white/[0.015] px-2.5 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-subtle"
       >
         <span>上下文容量</span>
-        <span>{{ stats.modelId }}</span>
+        <span>{{ stats.modelId ?? '—' }}</span>
       </div>
       <!-- bar -->
       <div class="mx-2.5 mt-2.5 h-1.5 overflow-hidden rounded-full bg-surface-2">
@@ -41,21 +41,21 @@
       <div class="grid grid-cols-2 gap-x-3.5 gap-y-2 px-2.5 py-2.5">
         <div class="flex flex-col gap-0.5">
           <span class="font-mono text-[10px] uppercase tracking-[0.05em] text-subtle">已用</span>
-          <span class="font-sans text-[14px] font-semibold tabular-nums text-fg">{{ usedWan }}</span>
+          <span class="font-sans text-[14px] font-semibold tabular-nums text-fg">{{ hasData ? usedWan : '—' }}</span>
         </div>
         <div class="flex flex-col gap-0.5">
           <span class="font-mono text-[10px] uppercase tracking-[0.05em] text-subtle">总量</span>
-          <span class="font-sans text-[14px] font-semibold tabular-nums text-fg">{{ totalWan }}</span>
+          <span class="font-sans text-[14px] font-semibold tabular-nums text-fg">{{ hasData ? totalWan : '—' }}</span>
         </div>
         <div class="flex flex-col gap-0.5">
           <span class="font-mono text-[10px] uppercase tracking-[0.05em] text-subtle">使用率</span>
-          <span class="font-sans text-[14px] font-semibold tabular-nums text-fg">{{ stats.percent }}%</span>
+          <span class="font-sans text-[14px] font-semibold tabular-nums text-fg">{{ hasData ? `${stats.percent}%` : '—' }}</span>
         </div>
         <div class="flex flex-col gap-0.5">
           <span class="font-mono text-[10px] uppercase tracking-[0.05em] text-subtle">缓存命中</span>
           <span
             :class="cn('font-sans text-[14px] font-semibold tabular-nums', cacheHitClass)"
-          >{{ stats.cacheHit }}%</span>
+          >{{ stats.cacheHit != null ? `${stats.cacheHit}%` : '—' }}</span>
         </div>
       </div>
     </HoverCardContent>
@@ -73,18 +73,18 @@ interface ContextStats {
   used: number
   total: number
   percent: number
-  cacheHit: number
-  modelId: string
+  cacheHit: number | null
+  modelId: string | null
 }
 
-// 初始值用原 fixture 数值（context.update 推送前显示，不塌陷）。
-// cacheHit / modelId 无 runtime 来源（D9）：保留静态占位，UI 不塌陷。
+// 初始全 0/null：未收到 context.update 推送前不显示假数字（hasData=false 时关键数字显「—」）。
+// cacheHit / modelId 无 runtime 来源（D9）：保持 null，UI 显「—」。
 const stats = ref<ContextStats>({
-  used: 69000,
-  total: 1000000,
-  percent: 6.9,
-  cacheHit: 98.7,
-  modelId: 'claude-sonnet-4.5',
+  used: 0,
+  total: 0,
+  percent: 0,
+  cacheHit: null,
+  modelId: null,
 })
 
 const props = defineProps<{
@@ -139,6 +139,9 @@ function formatWan(n: number): string {
 const usedWan = computed(() => formatWan(stats.value.used))
 const totalWan = computed(() => formatWan(stats.value.total))
 
+/** 是否已收到 context.update（total>0 判定）；推送前关键数字显「—」 */
+const hasData = computed(() => stats.value.total > 0)
+
 const isHigh = computed(() => stats.value.percent > HIGH_THRESHOLD)
 const isDanger = computed(() => stats.value.percent > DANGER_THRESHOLD)
 
@@ -148,7 +151,9 @@ const barClass = computed(() => {
   return 'bg-gradient-to-r from-accent to-accent-hover'
 })
 
-const cacheHitClass = computed(() =>
-  stats.value.cacheHit < CACHE_LOW_THRESHOLD ? 'text-warning' : 'text-success',
-)
+const cacheHitClass = computed(() => {
+  const hit = stats.value.cacheHit
+  if (hit == null) return 'text-subtle'
+  return hit < CACHE_LOW_THRESHOLD ? 'text-warning' : 'text-success'
+})
 </script>

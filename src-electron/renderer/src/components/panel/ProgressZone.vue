@@ -3,7 +3,7 @@
     展示组件 · progress-zone（panel/spec.md zone ③，composer 上方）。
     draft-companion-zones §1：三态纯只读（待办/进行/完成）。
     head 可点击折叠（chevron 提示），折叠态隐藏 bar/todos。
-    数据：mock/composer-data.ts MOCK_PROGRESS_STATES（runtime Flow3 落地后改真实数据源）。
+    真实数据源（runtime Flow3 任务状态）未接入前 state 恒 null → v-if="state" 整组件自隐藏。
   -->
   <div
     v-if="state"
@@ -86,20 +86,34 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { Check, ChevronRight } from '@lucide/vue'
-import { MOCK_PROGRESS_STATES, type MockProgressState, type TodoStatus } from '@/api/mock/composer-data'
 
-const props = withDefaults(
-  defineProps<{
-    /** 演示态（mock 期）：idle / running / done。runtime 落地后改真实 phase 数据源 */
-    phase?: 'idle' | 'running' | 'done'
-  }>(),
-  { phase: 'running' },
-)
+type TodoStatus = 'pending' | 'active' | 'done'
+
+interface ProgressTodo {
+  id: string
+  label: string
+  status: TodoStatus
+  pct?: number
+}
+
+interface ProgressState {
+  phase: 'idle' | 'running' | 'done'
+  title: string
+  step: string
+  summaryPct: number
+  todos: ProgressTodo[]
+}
+
+defineProps<{
+  /** runtime Flow3 任务态：idle / running / done。真实数据源未接入前 state 恒 null，组件自隐藏 */
+  phase?: 'idle' | 'running' | 'done'
+}>()
 
 /** head 折叠态（用户点击切换） */
 const collapsed = ref(false)
 
-const state = computed<MockProgressState | null>(() => MOCK_PROGRESS_STATES[props.phase] ?? null)
+/** 真实进度数据源（runtime Flow3 任务状态）未接入前恒 null → v-if="state" 整组件自隐藏，不渲染假任务 */
+const state = computed<ProgressState | null>(() => null)
 
 function statusLabel(s: TodoStatus): string {
   return s === 'done' ? '完成' : s === 'active' ? '进行中' : '待开始'

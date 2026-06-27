@@ -129,8 +129,8 @@ const retryState = computed(() => (props.sessionId ? chatStore.getRetryState(pro
 const queueState = computed(() => (props.sessionId ? chatStore.getQueueState(props.sessionId) : undefined))
 
 const draft = ref('')
-/** 当前选中模型 id（占位，后续接 store/订阅 model.switched；runtime 切换属后续真实集成） */
-const currentModelId = ref('claude-sonnet-4.5')
+/** 当前选中模型 id：真实选中从 model.list + session 默认模型派生（后续接 model.switched 订阅），未派生前为空 */
+const currentModelId = ref('')
 /** ComposerInput 实例 ref：清空/恢复草稿用 */
 const inputRef = ref<InstanceType<typeof ComposerInput> | null>(null)
 /** 命令浮层状态（§2d @/#//） */
