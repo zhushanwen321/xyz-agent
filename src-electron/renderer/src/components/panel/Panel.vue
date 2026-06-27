@@ -25,17 +25,29 @@
       @close="emit('close')"
     />
 
-    <!-- messageCount>0 → 对话流；messageCount===0 && !isGenerating → Landing 落地空态（#2）；
-         isGenerating 优先不渲染 Landing（AC-2.8）。 -->
+    <!-- 渲染分支对齐 NewTaskFlow 状态机（修恢复空 session 的 chip 死锁）：
+         - messageCount>0 → 对话流
+         - new-task landing（无 session 或 flow.state==='landing'）→ Landing（chip 合法）
+         - 已有空 session（有 sid 非 landing 态）→ 空对话态 + band composer（用户直输发该 session，不走 chip）
+         - isGenerating 优先不渲染 Landing（AC-2.8）。
+         旧逻辑仅凭 messageCount===0 渲染 Landing，恢复空 session 时 flow.state=idle → chip transition
+         非法（idle→dir-popover）抛错。对齐 flow 后 Landing 只在 landing 态渲染，空 session 走空对话态。 -->
     <MessageStream v-if="sessionId && messageCount > 0" :session-id="sessionId" />
     <Landing
-      v-else-if="!isGenerating"
+      v-else-if="!isGenerating && isLandingView"
       :session-id="sessionId"
       :current-cwd="sessionDir || undefined"
       :git-branch="gitBranch"
       :history-error="historyError"
       @retry="onRetryHistory"
     />
+    <div
+      v-else-if="!isGenerating && sessionId"
+      class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4 text-center"
+    >
+      <MessageSquare class="size-6 text-subtle opacity-40" />
+      <p class="text-[12px] text-subtle opacity-70">输入消息开始对话</p>
+    </div>
     <div v-else class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4 text-center">
       <MessageSquare class="size-6 text-subtle opacity-40" />
       <p class="text-[12px] text-subtle opacity-70">选择左侧会话开始</p>
@@ -47,8 +59,9 @@
       <!-- ③ progress-zone（composer 上方）：真实任务态未就绪时不渲染（组件内 v-if="state" 自隐藏） -->
       <ProgressZone />
 
-      <!-- ④ composer（FG5，S1/S2/S5/S6 主路径）。landing 态由 Landing 内部渲染 composer 卡片，
-           此处 band 不重复渲染（showPanelComposer：非 landing 才挂）。 -->
+      <!-- ④ composer（FG5，S1/S2/S5/S6 主路径）。new-task landing 态由 Landing 内部渲染 composer
+           卡片，此处 band 不重复渲染（showPanelComposer：非 landing 才挂）。已绑空 session
+           （恢复的僵尸空 session）走空对话态，band 渲染 composer 供用户直输发该 session。 -->
       <Composer v-if="showPanelComposer" :session-id="sessionId" />
 
       <!-- ⑤ git-zone（FR-12 加回，非 git 仓库时组件内部自隐藏） -->
@@ -85,6 +98,7 @@ import GitZone from './GitZone.vue'
 import SideDrawer from './SideDrawer.vue'
 import Landing from '@/components/new-task/Landing.vue'
 import { useSideDrawer } from '@/composables/features/useSideDrawer'
+import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useChatStore } from '@/stores/chat'
 import { useSidebar } from '@/composables/features/useSidebar'
 
@@ -127,16 +141,24 @@ function onPanelMouseDown(e: MouseEvent): void {
 
 const chat = useChatStore()
 
-/** 当前 session 消息数（未 hydrate / 无 session → 0，landing 渲染判据 D-3） */
+const flow = useNewTaskFlow()
+
+/** 当前 session 消息数（未 hydrate / 无 session → 0） */
 const messageCount = computed(() =>
   props.sessionId ? chat.getMessages(props.sessionId).length : 0,
 )
 /** 生成态优先：isStreaming 时不渲染 landing（AC-2.8） */
 const isGenerating = computed(() => chat.isStreaming)
-/** band 内 Composer 渲染：landing 态（无 session / 无消息 且 非生成）已由 Landing 内嵌 composer
- *  卡片承接，band 不重复渲染。生成态即使 messageCount=0 也需 band composer 接收流式。 */
+/** new-task landing 视图判据：完全无 session（首次启动/点新建）或 NewTaskFlow 处于 landing 态。
+ *  Landing 的 directory/branch chip 仅在 flow.state==='landing' 时点击合法，故 Landing 只在此态渲染；
+ *  恢复空 session（有 sid 无消息 但 flow.state=idle）不走 landing，避免 chip transition 非法死锁。 */
+const isLandingView = computed(
+  () => !props.sessionId || flow.state.value === 'landing',
+)
+/** band 内 Composer 渲染：new-task landing 态由 Landing 内嵌 composer 卡片承接，band 不重复渲染；
+ *  已绑 session（含恢复的空 session，非 landing 态）→ band 渲染 composer 供直输；生成态始终挂。 */
 const showPanelComposer = computed(
-  () => (!!props.sessionId && messageCount.value > 0) || isGenerating.value,
+  () => (!!props.sessionId && !isLandingView.value) || isGenerating.value,
 )
 /** getHistory 失败态（landing 重试出口，AC-2.6） */
 const historyError = computed(() =>

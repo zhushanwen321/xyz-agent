@@ -48,12 +48,13 @@ beforeEach(() => {
 
 const DONE = 'done' as DerivedStatus
 
-/** mount Panel 时 stub 掉所有重子组件，只验 landing v-if 分支 */
+/** mount Panel 时 stub 掉所有重子组件，只验 landing v-if 分支。
+ *  Composer stub 带 testid 供「band composer 是否渲染」断言（恢复空 session 回归用）。 */
 const panelStubs = {
   PanelHeader: { template: '<div />' },
   ProgressZone: { template: '<div />' },
   MessageStream: { template: '<div />' },
-  Composer: { template: '<div />' },
+  Composer: { template: '<div data-testid="band-composer" />' },
   GitZone: { template: '<div />' },
   SideDrawer: { template: '<div />' },
 }
@@ -83,12 +84,38 @@ function mountPanel(overrides: Record<string, unknown> = {}) {
 }
 
 describe('Landing 渲染条件（Panel v-if 分支）', () => {
-  it('T1.6 messageCount===0 && !isGenerating → 渲染 landing', () => {
+  it('T1.6 new-task landing 态（flow=landing 且无消息）→ 渲染 landing', () => {
     const chat = useChatStore()
     chat.isStreaming = false // !isGenerating
+    flowMock.state.value = 'landing' // new-task flow 激活 landing 态（Landing chip 合法前提）
     // session 's1' 未 hydrate → getMessages 返回 [] → messageCount=0
     const wrapper = mountPanel({ sessionId: 's1' })
     expect(wrapper.findComponent(Landing).exists()).toBe(true)
+  })
+
+  it('恢复空 session（有 sid 无消息，flow=idle）→ 不渲染 Landing（无 chip 死锁），渲染空对话态 + band composer', () => {
+    const chat = useChatStore()
+    chat.isStreaming = false
+    flowMock.state.value = 'idle' // 恢复 session 不激活 new-task flow（selectSession 不 startFlow）
+    // 僵尸空 session：有 sid 无消息，flow 停 idle
+    const wrapper = mountPanel({ sessionId: 'empty-session' })
+    // 核心：Landing 不渲染 → directory/branch chip 不存在 → 不会触发 idle→dir-popover 非法 transition
+    expect(wrapper.findComponent(Landing).exists()).toBe(false)
+    // 空对话态文案（区别于无 session 兑底的「选择左侧会话开始」）
+    expect(wrapper.text()).toContain('输入消息开始对话')
+    // band composer 渲染（用户直输发该 session，不走 chip 流程）
+    expect(wrapper.find('[data-testid="band-composer"]').exists()).toBe(true)
+  })
+
+  it('首次启动 new-task（sid=null, flow=landing）→ 渲染 Landing（正向不回归）', () => {
+    const chat = useChatStore()
+    chat.isStreaming = false
+    flowMock.state.value = 'landing'
+    const wrapper = mountPanel({ sessionId: null })
+    expect(wrapper.findComponent(Landing).exists()).toBe(true)
+    // new-task landing 态 composer 由 Landing 内嵌；band 不重复挂（showPanelComposer=false）。
+    // 注：band-composer testid 也出现在 Landing 内嵌 Composer stub 上，无法区分，
+    // 改由「恢复空 session」用例验证 band composer 渲染（该用例 Landing 不渲染，testid 唯一）。
   })
 
   it('T1.7 messages 空但 isGenerating=true → 不渲染 landing（生成态优先）', () => {
