@@ -1,7 +1,8 @@
 <template>
   <!--
     容器组件 · Panel（panel/spec.md 5 zone 编排，承载一个 Session）。
-    自上而下：① panel-header → ② message-stream → ③ progress-zone → ④ composer → ⑤ git-zone。
+    自上而下：① panel-header → ② message-stream → ③ progress-zone → ④ composer（companion 带）。
+    git 状态移入 SideDrawer git tab（原底部 zone ⑤ 摘牌，panel/spec.md），入口为 header 右侧 git 按钮。
     激活标识（workspace/spec.md）：rounded-lg + ring-1 accent + bg-elevated 浮起；非激活 opacity 0.5。
     点击 panel body 切 active（主从焦点，非按钮区域）。
     [HISTORICAL] 原「左 2px 竖条 + inset box-shadow ring」双叠加导致激活 panel 左边 3px、其余边 1px，
@@ -17,12 +18,14 @@
       :session-label="sessionLabel"
       :session-dir="sessionDir"
       :git-branch="gitBranch"
+      :git-indicator="gitIndicator"
       :status="status"
       :active="active"
       :is-dual="isDual"
       @split="emit('split')"
       @new-session="emit('new-session')"
       @close="emit('close')"
+      @open-git="openDrawer('git')"
     />
 
     <!-- 渲染分支对齐 NewTaskFlow 状态机（修恢复空 session 的 chip 死锁）：
@@ -54,7 +57,7 @@
     </div>
 
     <!-- ③④ companion zones：progress / composer 垂直 6px 紧凑成「带」。
-         git-zone（zone ⑤，FR-12）置于 composer 下方，与 progress/composer 共享视觉带。 -->
+         git 状态已移入 SideDrawer git tab（原 zone ⑤ 摘牌），此带仅 progress/composer。 -->
     <div class="composer-band flex flex-shrink-0 flex-col gap-1.5">
       <!-- ③ progress-zone（composer 上方）：真实任务态未就绪时不渲染（组件内 v-if="state" 自隐藏） -->
       <ProgressZone />
@@ -63,16 +66,10 @@
            卡片，此处 band 不重复渲染（showPanelComposer：非 landing 才挂）。已绑空 session
            （恢复的僵尸空 session）走空对话态，band 渲染 composer 供用户直输发该 session。 -->
       <Composer v-if="showPanelComposer" :session-id="sessionId" />
-
-      <!-- ⑤ git-zone（FR-12 加回，非 git 仓库时组件内部自隐藏） -->
-      <GitZone
-        v-if="sessionId"
-        :session-id="sessionId"
-        @open-side-drawer="openDrawer"
-      />
     </div>
 
     <!-- SideDrawer：右抽屉容器（§4.10 F10），固定挂本 Panel（panel/spec.md）。
+         Terminal/Browser/Git 三 tab。git 数据由 Panel 经 GIT_STATUS_KEY provide，GitPanel inject。
          状态控制下沉 useSideDrawer（§6.3 点5），Panel 仅作 slot 容器不持有 tab/dock 状态。 -->
     <SideDrawer
       :is-open="drawerOpen"
@@ -94,10 +91,10 @@ import PanelHeader from './PanelHeader.vue'
 import ProgressZone from './ProgressZone.vue'
 import MessageStream from './MessageStream.vue'
 import Composer from './Composer.vue'
-import GitZone from './GitZone.vue'
 import SideDrawer from './SideDrawer.vue'
 import Landing from '@/components/new-task/Landing.vue'
 import { useSideDrawer } from '@/composables/features/useSideDrawer'
+import { provideGitStatus } from '@/composables/features/useGitStatus'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useChatStore } from '@/stores/chat'
 import { useSidebar } from '@/composables/features/useSidebar'
@@ -131,6 +128,11 @@ const {
   toggleDock: toggleDrawerDock,
 } = useSideDrawer()
 
+/** git 状态唯一数据源（panel/spec.md：git 移入抽屉后）。
+ *  Panel 持有实例 → GIT_STATUS_KEY provide → GitPanel（抽屉内）与 PanelHeader 脏状态点共享。
+ *  单实例避免双实例 stale（抽屉内 stage 后 header 点同步更新）。getter 形式随 props.sessionId 响应。 */
+const git = provideGitStatus(() => props.sessionId)
+
 /** 点击 panel body 切 active（双 panel 主从焦点）；点 header 按钮不误切（按钮自身 stopPropagation） */
 function onPanelMouseDown(e: MouseEvent): void {
   if (!props.isDual || props.active) return
@@ -142,6 +144,9 @@ function onPanelMouseDown(e: MouseEvent): void {
 const chat = useChatStore()
 
 const flow = useNewTaskFlow()
+
+/** header 脏状态点所需指示（解包 git.indicator 供 template 透传给 PanelHeader props） */
+const gitIndicator = computed(() => git.indicator.value)
 
 /** 当前 session 消息数（未 hydrate / 无 session → 0） */
 const messageCount = computed(() =>

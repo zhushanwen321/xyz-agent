@@ -55,7 +55,6 @@ const panelStubs = {
   ProgressZone: { template: '<div />' },
   MessageStream: { template: '<div />' },
   Composer: { template: '<div data-testid="band-composer" />' },
-  GitZone: { template: '<div />' },
   SideDrawer: { template: '<div />' },
 }
 

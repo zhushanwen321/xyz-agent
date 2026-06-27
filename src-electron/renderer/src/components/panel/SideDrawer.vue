@@ -1,11 +1,14 @@
 <!--
   SideDrawer —— 右抽屉容器（issues.md #9 / code-architecture §4.10 / panel/spec.md）。
-  Terminal/Browser 两 tab（§6.3 点2，不含 Diff——Diff 审批 Out-of-scope，见 spec FR-8）。
+  Terminal/Browser/Git 三 tab（§6.3 点2）。Git tab 承载全量 git 状态（GitPanel.vue），
+  原 Panel 底部 zone ⑤ 移入抽屉；Terminal/Browser 走 widget 订阅。
   与 Panel 数据强耦合，固定挂触发 Panel（panel/spec.md），由 Panel.vue 渲染为 section 内 absolute 浮层。
 
   状态控制走 useSideDrawer（§6.3 点5 架构解耦）：本组件只接收 isOpen/activeTab/docked props
   + emit close/set-tab/toggle-dock，不持有状态。widget 订阅（#11 W3a）在本组件按 props.sessionId
   接入 extension.onWidget，按 widgetKey 路由到 terminal/browser tab。
+  Git tab 不走 widget——数据由 Panel 经 GIT_STATUS_KEY provide，GitPanel 自行 inject，
+  本通用容器不持有 git props（保持容器纯净，不污染通用 tab 范式）。
 -->
 <template>
   <Transition name="drawer-slide">
@@ -51,13 +54,16 @@
         </Button>
       </header>
 
-      <!-- 内容区：Terminal / Browser（widget 订阅 #11 W3a）。
-           按 widgetKey 路由到 tab（mapWidgetKeyToTab）；未匹配 widgetKey 走 fallback。
-           空态：widget 未推送或 session 未连接。 -->
+      <!-- 内容区：Git / Terminal / Browser。
+           Git tab → GitPanel（inject GIT_STATUS_KEY，自取 git 全量状态；非 git 仓库组件内自隐藏走空态）。
+           Terminal/Browser → widget 订阅（#11 W3a），按 widgetKey 路由（mapWidgetKeyToTab），
+           未匹配 widgetKey 走 fallback。空态：widget 未推送或 session 未连接。 -->
       <div class="min-h-0 flex-1 overflow-auto">
+        <!-- Git tab：全量 git 状态 + 暂存/提交（非 git 仓库 GitPanel 内自隐藏，此处显空态） -->
+        <GitPanel v-if="activeTab === 'git'" />
         <!-- active tab 有 widget 内容 → 渲染等宽文本输出（每行一个 div，font-mono + pre-wrap） -->
         <div
-          v-if="activeLines.length"
+          v-else-if="activeLines.length"
           class="flex h-full flex-col gap-0 overflow-auto p-2"
           :class="activeLinesMeta.unknown ? 'opacity-80' : ''"
         >
@@ -107,8 +113,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { Component } from 'vue'
-import { Terminal as TerminalIcon, Globe, Pin, PinOff, X } from '@lucide/vue'
+import { Terminal as TerminalIcon, Globe, GitBranch, Pin, PinOff, X } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
+import GitPanel from './GitPanel.vue'
 import type { SideDrawerTab } from '@/composables/features/useSideDrawer'
 import { extension } from '@/api'
 
@@ -134,7 +141,7 @@ interface TabMeta {
   emptyHint: string
 }
 
-/** tab 元信息（§6.3 点2：Terminal/Browser，不含 Diff） */
+/** tab 元信息（§6.3 点2：Terminal/Browser/Git）。Git tab 内容为 GitPanel（inject 数据）。 */
 const tabs: TabMeta[] = [
   {
     key: 'terminal',
@@ -149,6 +156,13 @@ const tabs: TabMeta[] = [
     icon: Globe,
     emptyText: '暂无浏览器预览',
     emptyHint: 'extension 推送 browser widget 后显示预览',
+  },
+  {
+    key: 'git',
+    label: 'Git',
+    icon: GitBranch,
+    emptyText: '当前目录非 git 仓库',
+    emptyHint: '在 git 仓库内打开 session 后可查看状态并暂存/提交',
   },
 ]
 

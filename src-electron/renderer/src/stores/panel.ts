@@ -37,8 +37,9 @@ export const usePanelStore = defineStore('panel', () => {
     return panels.value.find((p) => p.sessionId === sessionId) ?? null
   }
 
-  /** 把 session 载入 active panel（单 panel 默认载入根节点） */
-  function loadSession(panelId: string, sessionId: string): void {
+  /** 把 session 载入 active panel（单 panel 默认载入根节点）。
+   *  传 null → 清空该 panel 的 session 绑定（new-task flow 进 landing 时用，强制不变量） */
+  function loadSession(panelId: string, sessionId: string | null): void {
     layout.value = updateLeaf(layout.value, panelId, (leaf) => ({ ...leaf, sessionId }))
   }
 
