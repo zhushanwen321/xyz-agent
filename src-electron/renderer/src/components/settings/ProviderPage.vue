@@ -32,11 +32,14 @@
       <div class="flex items-center gap-3 px-4 py-3">
         <span class="size-[7px] shrink-0 rounded-full" :class="statusDot(p.status)" />
 
-        <!-- 启用开关（名称左侧）：调 config.setProvider 持久化 enabled -->
-        <Label class="relative inline-flex shrink-0 cursor-pointer" @click.stop>
-          <input type="checkbox" :checked="p.enabled" class="peer sr-only" @change="onToggleEnabled(p, ($event.target as HTMLInputElement).checked)" />
-          <div class="h-5 w-9 rounded-full bg-border-strong after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-all peer-checked:bg-accent peer-checked:after:translate-x-full" />
-        </Label>
+        <!-- 启用开关（名称左侧）：Switch 原语，调 config.setProvider 持久化 enabled -->
+        <Switch
+          :model-value="p.enabled"
+          class="shrink-0"
+          :aria-label="`${p.name} 启用开关`"
+          @click.stop
+          @update:model-value="onToggleEnabled(p, $event)"
+        />
 
         <!-- 供应商名称（点击展开/收起） -->
         <span
@@ -147,9 +150,9 @@
     <!-- 编辑弹窗 -->
     <ProviderEditModal :provider="editingProvider" @close="editingProvider = null" />
 
-    <!-- 删除确认弹窗 -->
+    <!-- 删除确认弹窗（hide-close：内容区已有「取消」按钮作为唯一关闭入口，避免右上角默认 X 与之重复） -->
     <Dialog :open="!!deleteTarget" @update:open="deleteTarget = null">
-      <DialogContent class="max-w-[360px]">
+      <DialogContent hide-close class="max-w-[360px]">
         <DialogHeader>
           <DialogTitle>删除 {{ deleteTarget?.name }}？</DialogTitle>
           <DialogDescription>将移除其下所有模型配置。此操作不可撤销。</DialogDescription>
@@ -172,7 +175,7 @@ import { Settings, Plus, Pencil, Trash2, FileText, ImageIcon } from '@lucide/vue
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
-import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import type { ProviderInfo } from '@xyz-agent/shared'
 import { config } from '@/api'
 import ProviderEditModal from './ProviderEditModal.vue'

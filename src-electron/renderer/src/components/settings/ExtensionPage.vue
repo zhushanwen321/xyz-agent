@@ -52,16 +52,14 @@
           v-for="c in discovered.candidates"
           :key="c.dirName"
           class="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-surface"
-          @click="toggleCandidate(c.dirName)"
         >
-          <!-- 自定义 checkbox 替代：xyz-ui 无 Checkbox 组件，用 div 模拟选中态（CLAUDE.md 禁止原生表单元素） -->
-          <div
-            class="flex size-4 shrink-0 items-center justify-center rounded-sm border transition-colors"
-            :class="selected.has(c.dirName) ? 'border-accent bg-accent' : 'border-border bg-transparent'"
-          >
-            <svg v-if="selected.has(c.dirName)" class="size-3 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
-          </div>
-          <div class="min-w-0 flex-1">
+          <!-- 候选多选：Checkbox 受控（selected Set 管理，dirName 为 key）；点击 Label 文字区也触发切换 -->
+          <Checkbox
+            :model-value="selected.has(c.dirName)"
+            class="shrink-0"
+            @update:model-value="toggleCandidate(c.dirName)"
+          />
+          <div class="min-w-0 flex-1" @click="toggleCandidate(c.dirName)">
             <div class="flex items-center gap-2">
               <span class="truncate text-[12px] text-fg">{{ c.name }}</span>
               <span class="rounded-sm bg-surface px-1 py-0.5 font-mono text-[10px] text-subtle">{{ c.dirName }}</span>
@@ -100,23 +98,13 @@
             <span v-for="t in ext.tools" :key="t" class="rounded-sm bg-surface px-1 py-0.5 font-mono text-[10px] text-subtle">{{ t }}</span>
           </div>
         </div>
-        <!-- 启用开关：xyz-ui 无 Switch 组件，用 div 模拟滑动开关（CLAUDE.md 禁止原生表单元素；与候选选择器一致的 div 方案） -->
-        <div
-          role="switch"
-          tabindex="0"
-          :aria-checked="ext.enabled"
-          class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-          :class="ext.enabled ? 'bg-accent' : 'bg-border-strong'"
-          :title="ext.enabled ? '点击禁用' : '点击启用'"
-          @click.stop="onToggle(ext, !ext.enabled)"
-          @keydown.enter.prevent="onToggle(ext, !ext.enabled)"
-          @keydown.space.prevent="onToggle(ext, !ext.enabled)"
-        >
-          <span
-            class="pointer-events-none inline-block size-4 rounded-full bg-white transition-transform"
-            :class="ext.enabled ? 'translate-x-4' : 'translate-x-0.5'"
-          />
-        </div>
+        <!-- 启用开关：Switch 原语（状态经 onExtensions 订阅推回） -->
+        <Switch
+          :model-value="ext.enabled"
+          class="shrink-0"
+          :aria-label="ext.enabled ? '禁用扩展' : '启用扩展'"
+          @update:model-value="onToggle(ext, $event)"
+        />
         <!-- 卸载按钮 -->
         <Button
           variant="ghost"
@@ -129,9 +117,9 @@
       </div>
     </section>
 
-    <!-- 卸载确认弹窗 -->
+    <!-- 卸载确认弹窗（hide-close：内容区已有「取消」按钮作为唯一关闭入口） -->
     <Dialog :open="!!confirmTarget" @update:open="confirmTarget = ''">
-      <DialogContent class="max-w-[360px]">
+      <DialogContent hide-close class="max-w-[360px]">
         <DialogHeader>
           <DialogTitle>卸载 {{ confirmTarget }}？</DialogTitle>
           <DialogDescription>此操作不可撤销，扩展将从本地移除。</DialogDescription>
@@ -156,6 +144,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
+import { Checkbox } from '@/components/ui/checkbox'
 import { extension as extensionApi } from '@/api'
 
 interface ExtensionItem {

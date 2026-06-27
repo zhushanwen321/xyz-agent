@@ -10,7 +10,6 @@
   -->
   <Dialog :open="open" @update:open="emit('update:open', $event)">
     <DialogContent
-      aria-modal="true"
       class="gap-0 overflow-hidden p-0 sm:max-w-[620px] sm:rounded-lg"
     >
       <DialogHeader class="sr-only">

@@ -22,7 +22,7 @@
         <div class="px-3 py-2 text-[11px] text-muted">可选目录（可勾选、可拖动排序）</div>
         <div v-for="dir in optionalDirs" :key="dir.path" class="flex items-center gap-2 border-t border-border px-3 py-2 text-[12px]">
           <span class="cursor-grab text-subtle hover:text-fg" title="拖动排序">&#x2801;&#x2801;</span>
-          <input type="checkbox" :checked="dir.enabled" class="size-3.5 shrink-0 accent-[var(--accent)]" />
+          <Checkbox :model-value="dir.enabled" class="shrink-0" :aria-label="`启用目录 ${dir.path}`" />
           <span class="font-mono text-fg">{{ dir.path }}</span>
         </div>
       </div>
@@ -62,11 +62,14 @@
       <div v-for="sk in filteredSkills" :key="sk.id" class="flex items-center gap-2 rounded-md border border-border bg-bg px-3 py-2">
         <span class="flex-1 truncate text-[12px] font-medium text-fg">{{ sk.name }}</span>
         <span class="rounded-sm px-1.5 py-0.5 text-[10px]" :class="sourceBadgeClass(sk.source)">{{ sk.source }}</span>
-        <!-- 启用开关：调 config.setSkill 持久化 enabled -->
-        <Label class="relative inline-flex shrink-0 cursor-pointer" @click.stop>
-          <input type="checkbox" :checked="sk.enabled" class="peer sr-only" @change="onToggleEnabled(sk, ($event.target as HTMLInputElement).checked)" />
-          <div class="h-4 w-7 rounded-full bg-border-strong after:absolute after:left-[2px] after:top-[2px] after:h-3 after:w-3 after:rounded-full after:bg-white after:transition-all peer-checked:bg-accent peer-checked:after:translate-x-full" />
-        </Label>
+        <!-- 启用开关：Switch 原语，调 config.setSkill 持久化 enabled -->
+        <Switch
+          :model-value="sk.enabled"
+          class="shrink-0"
+          :aria-label="`${sk.name} 启用开关`"
+          @click.stop
+          @update:model-value="onToggleEnabled(sk, $event)"
+        />
         <span v-if="sk.enabled" class="rounded-sm bg-accent-soft px-1.5 py-0.5 text-[10px] text-accent">生效</span>
         <span class="max-w-[200px] truncate text-[11px] text-subtle" :title="sk.description">{{ sk.description }}</span>
         <Button
@@ -80,9 +83,9 @@
       </div>
     </section>
 
-    <!-- 删除确认弹窗 -->
+    <!-- 删除确认弹窗（hide-close：内容区已有「取消」按钮作为唯一关闭入口） -->
     <Dialog :open="!!deleteTarget" @update:open="deleteTarget = null">
-      <DialogContent class="max-w-[360px]">
+      <DialogContent hide-close class="max-w-[360px]">
         <DialogHeader>
           <DialogTitle>删除 {{ deleteTarget?.name }}？</DialogTitle>
           <DialogDescription>将从已发现清单移除。此操作不可撤销。</DialogDescription>
@@ -103,7 +106,8 @@ import { computed, ref } from 'vue'
 import { RefreshCw, Trash2 } from '@lucide/vue'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
+import { Checkbox } from '@/components/ui/checkbox'
 import type { SkillInfo } from '@xyz-agent/shared'
 import { config } from '@/api'
 
