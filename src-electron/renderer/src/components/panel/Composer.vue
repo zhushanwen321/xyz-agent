@@ -105,6 +105,7 @@ import ContextChipsBar from './ContextChipsBar.vue'
 import RetryIndicator from './RetryIndicator.vue'
 import QueueBubble from './QueueBubble.vue'
 import { useChat } from '@/composables/features/useChat'
+import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
 import { model as modelApi, session as sessionApi } from '@/api'
@@ -121,6 +122,7 @@ const chatStore = useChatStore()
 const sessionStore = useSessionStore()
 const { isStreaming } = storeToRefs(chatStore)
 const { send, steer, followUp, abort, compact } = useChat()
+const { submitFirstMessage } = useNewTaskFlow()
 
 /** 当前 session 的思考等级（从 SessionSummary.thinkingLevel 透传给 ThinkingLevelPopover） */
 const currentThinkingLevel = computed(() => sessionStore.active?.thinkingLevel)
@@ -194,8 +196,9 @@ async function onThinkingSelect(level: string): Promise<void> {
 }
 
 const hasInput = computed(() => draft.value.trim().length > 0)
-/** 可发送：有输入且非 streaming 非 sending 非 compacting */
-const canSend = computed(() => hasInput.value && !!props.sessionId && !isStreaming.value && !isSending.value && !isCompacting.value)
+/** 可发送：有输入且非 streaming 非 sending 非 compacting。
+ *  landing 态（sessionId=null）也允许——首发提交走 submitFirstMessage 延迟 create。 */
+const canSend = computed(() => hasInput.value && !isStreaming.value && !isSending.value && !isCompacting.value)
 
 /**
  * composer-box class（draft）：
@@ -219,18 +222,33 @@ const placeholder = computed(() =>
 
 /**
  * 发送：S2 → S5（sending）→ S6（streaming）→ 完成回 S1。
- * /compact slash chip 是操作型前缀：提交时走专用 compact RPC（#6），不走普通 send。
+ * landing 态（sessionId=null）首发提交走 submitFirstMessage（延迟 create session 后再发）；
+ * 非 landing 走 useChat.send。/compact slash chip 是操作型前缀：提交时走专用 compact RPC（#6）。
  * 检测：slash chip 的命令名（如 '/compact'）会被 ComposerInput.getText 读入 draft，
  * 故 draft 恰为 '/compact'（chip 单独存在，无附加文本）时判定为 compact 操作。
  */
 async function onSend(): Promise<void> {
   if (!canSend.value) return
-  if (draft.value.trim() === '/compact') {
+  const text = draft.value
+  // landing 态首发提交：统一延迟 create（无 sid）→ submitFirstMessage 负责 create+载入+发送
+  if (!props.sessionId) {
+    clearInput()
+    isSending.value = true
+    try {
+      await submitFirstMessage(text)
+    } catch (e) {
+      restoreInput(text)
+      throw e
+    } finally {
+      isSending.value = false
+    }
+    return
+  }
+  if (text.trim() === '/compact') {
     clearInput()
     await compact()
     return
   }
-  const text = draft.value
   clearInput()
   isSending.value = true
   try {

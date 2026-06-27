@@ -77,12 +77,6 @@ const isBranchOpen = computed({
 /** 创建分支 modal 渲染绑定（#7）：state===branch-modal 时挂载 CreateBranchModal（Dialog teleport 到 body） */
 const isBranchModalOpen = computed(() => flow.state.value === 'branch-modal')
 
-function onDir(): void {
-  flow.openDirPopover()
-}
-function onBranch(): void {
-  flow.openBranchPopover()
-}
 function onSelectWorkspace(payload: { cwd: string }): void {
   flow.selectWorkspace(payload.cwd)
 }
@@ -145,7 +139,6 @@ function onRetry(): void {
                 variant="ghost"
                 class="h-auto gap-1.5 px-2 py-1 text-[12.5px] text-subtle hover:bg-surface-hover hover:text-fg [&_svg]:size-3.5"
                 :class="{ '!text-accent': !cwd }"
-                @click="onDir"
               >
                 <Folder class="shrink-0" />
                 <span class="font-mono">{{ dirLabel }}</span>
@@ -167,7 +160,6 @@ function onRetry(): void {
                 data-testid="chip-branch"
                 variant="ghost"
                 class="h-auto gap-1.5 px-2 py-1 text-[12.5px] text-subtle hover:bg-surface-hover hover:text-fg [&_svg]:size-3.5"
-                @click="onBranch"
               >
                 <GitBranch class="shrink-0" />
                 <span class="font-mono">{{ branch }}</span>

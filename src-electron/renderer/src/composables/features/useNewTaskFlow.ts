@@ -22,6 +22,9 @@ import { session as sessionApi, git as gitApi } from '@/api'
 import { resolveDefaultCwd } from '@/lib/utils'
 import { pickDirectory } from '@/lib/ipc'
 import { useSessionStore } from '@/stores/session'
+import { usePanelStore } from '@/stores/panel'
+import { useNavigationStore } from '@/stores/navigation'
+import { useChat } from '@/composables/features/useChat'
 
 /** NewTaskFlow 8 态枚举（②§5） */
 export type NewTaskFlowState =
@@ -65,9 +68,11 @@ const ALLOWED: Record<NewTaskFlowState, NewTaskFlowState[]> = {
 
 // ── 模块级单实例状态（Q2=A 单实例：composable 模块单例）──
 const state: Ref<NewTaskFlowState> = ref('idle')
-/** 当前 flow 绑定的 session（id/cwd 经 computed 派生，selectWorkspace 比对 cwd 用，保持②Session.cwd 不变式） */
+/** 当前 flow 绑定的 session（统一延迟 create 后，landing 态恒为 null，首发提交 submitFirstMessage 才绑定） */
 const currentSession: Ref<SessionSummary | null> = ref(null)
-/** startFlow in-flight 标记（AC-1.5 幂等：双击并发只建 1 session） */
+/** landing 态用户选定但尚未 create 的 cwd（选目录只记值不建 session；首发提交才用它 create）。null=空 chip 态 */
+const pendingCwd: Ref<string | null> = ref(null)
+/** submitFirstMessage in-flight 标记（双击并发只建 1 session） */
 const createInFlight = ref(false)
 /** submitCreateBranch in-flight 标记（AC-7.9 飞行中 disabled 防重复 + T6.6 composable 层守卫） */
 const branchCreateInFlight = ref(false)
@@ -79,28 +84,32 @@ const branchCreateInFlight = ref(false)
 export function resetNewTaskFlow(): void {
   state.value = 'idle'
   currentSession.value = null
+  pendingCwd.value = null
   createInFlight.value = false
   branchCreateInFlight.value = false
 }
 
 export function useNewTaskFlow() {
   const session = useSessionStore()
+  const panel = usePanelStore()
+  const navigation = useNavigationStore()
+  const chat = useChat()
 
-  /** 当前 flow 绑定 session 的 id（landing 态常态非 null；首次启动延迟 create 时为 null） */
+  /** 当前 flow 绑定 session 的 id（统一延迟 create 后，landing 态恒为 null） */
   const currentSessionId: ComputedRef<string | null> = computed(
     () => currentSession.value?.id ?? null,
   )
-  /** 当前 flow 绑定 session 的 cwd（chip 回灌 / selectWorkspace 比对用） */
+  /** 当前 flow 工作的 cwd（chip 回灌）：session 已建用 session.cwd，否则用 landing 选定的 pendingCwd */
   const currentCwd: ComputedRef<string | null> = computed(
-    () => currentSession.value?.cwd ?? null,
+    () => currentSession.value?.cwd ?? pendingCwd.value,
   )
 
   /**
-   * gitInfo（UC-7 chip 可见性派生）：从当前活跃 session 的 gitBranch 派生。
-   * null → 非 git 目录，branch chip 隐藏且 branch-popover/branch-modal 不可达（状态机守卫 AC-3.7）。
+   * gitInfo（UC-7 chip 可见性派生）：从当前 flow 绑定 session 的 gitBranch 派生。
+   * 统一延迟 create 后 landing 态无 session → null → branch chip 隐藏（分支切换需已建 session）。
    */
   const gitInfo: ComputedRef<GitInfo | null> = computed(() => {
-    const s = session.active
+    const s = currentSession.value
     if (!s?.gitBranch) return null
     return { branch: s.gitBranch, isRepo: true }
   })
@@ -119,38 +128,58 @@ export function useNewTaskFlow() {
   }
 
   /**
-   * startFlow —— 触发新建（§4.1 主流程）。
+   * startFlow —— 触发新建（§4.1 主流程，统一延迟 create）。
    *
-   * 数据流：触发点 → startFlow → resolveDefaultCwd(sessions) → sessionApi.create(cwd) → state=landing。
-   * - completed 终态再触发 → 销毁重建 idle（AC-3.12），再走常态/首次启动分支
-   * - in-flight 标记防重复（E1/AC-1.5）：create 飞行中再触发 → 忽略
-   * - cwd=undefined（首次启动，AC-1.7 延迟 create）→ 不调 create，currentSession=null，chip 空态+发送 disabled
-   * - cwd 合法（常态）→ create(cwd) 绑定 session，进 landing；create reject（E2/E3）→ 状态留 idle，错误向上抛
+   * 需求修正：点「新建任务」后**不立即 create session**，只进 landing 空 chip 态。
+   * 首次/非首次一致（推翻原「触发即创建」+ G1.1「非首次沿用上次 cwd」）。
+   * session 由首发提交 submitFirstMessage 创建；选目录只记 pendingCwd 不建 session。
+   * - completed 终态再触发→先销毁重建 idle（AC-3.12）再进 landing
+   * - createInFlight 守卫：submitFirstMessage 飞行中再触发→忽略（防并发重复建 session）
    */
   async function startFlow(): Promise<void> {
     // 终态重建（AC-3.12）：completed 后 ⌘N 销毁重建
     if (state.value === 'completed') {
       state.value = 'idle'
       currentSession.value = null
+      pendingCwd.value = null
     }
-    if (createInFlight.value) return // E1 幂等保护（AC-1.5）
-    const cwd = resolveDefaultCwd(session.list)
-    // 首次启动：无可用 cwd → 延迟 create，仅进 landing 待选目录（AC-1.7）
-    if (!cwd) {
-      transition('landing') // idle→landing
-      currentSession.value = null
-      return
+    if (createInFlight.value) return // submitFirstMessage 飞行中，忽略重复触发
+    pendingCwd.value = null // 进 landing 前清空选定 cwd（空 chip 态）
+    transition('landing') // idle→landing
+    currentSession.value = null
+  }
+
+  /**
+   * submitFirstMessage —— landing 态首发提交：延迟 create session + 载入 panel + 发消息。
+   *
+   * 编排点（跨 api+stores+chat 的唯一合法层）：
+   * - cwd 来源：landing 选定的 pendingCwd → 否则 resolveDefaultCwd（最近 session cwd）→ runtime process.cwd 兑底
+   * - 已绑定 session（上次 create 成功但 send 失败的重试）→ 跳过 create 直接重发，不建重复 session
+   * - create 后 appendSession + activeId + 载入 active panel + push 导航栈，再 completeFlow 进终态
+   * - activeId 已设 → useChat.send 取到 sid 正常发送
+   */
+  async function submitFirstMessage(text: string): Promise<void> {
+    const trimmed = text.trim()
+    if (!trimmed) return
+    if (state.value !== 'landing') {
+      throw new Error('NewTaskFlow: 非 landing 态不可首发提交')
     }
+    if (createInFlight.value) return
+    const cwd = pendingCwd.value ?? resolveDefaultCwd(session.list)
     createInFlight.value = true
     try {
-      // [内] 真接线 sessionApi.create（常态路径）；spawn 失败/非法 cwd 由 runtime reject → 向上抛（E2/E3）
-      const created = await sessionApi.create(cwd)
-      currentSession.value = created
-      // 同步 sessionStore（§4.1「绑定 sessionId」）：useChat.send 读 session.activeId 取 sid，
-      // 不同步则首发 send 取不到 sid。appendSession 入组 + activeId 绑定。
-      session.appendSession(created)
-      session.activeId = created.id
-      transition('landing') // idle→landing
+      // 已绑定 session（重试场景）→ 跳过 create，避免重复建 session
+      if (!currentSession.value) {
+        const created = await sessionApi.create(cwd)
+        currentSession.value = created
+        session.appendSession(created)
+        session.activeId = created.id
+        panel.loadSession(panel.activePanelId, created.id)
+        navigation.push({ view: 'chat', sessionId: created.id })
+      }
+      // activeId 已设 → useChat.send 能取到 sid
+      await chat.send(trimmed)
+      transition('completed') // landing→completed（首发成功，终态）
     } finally {
       createInFlight.value = false
     }
@@ -177,33 +206,21 @@ export function useNewTaskFlow() {
   }
 
   /**
-   * selectWorkspace —— dir-popover 选已有 workspace（§4.2，Wave 2 #5 完整接入）。
+   * selectWorkspace —— dir-popover 选已有 workspace（§4.2）。
    *
-   * 不变式（保持②Session.cwd）：cwd 变了 → delete 空旧 session + create 新 session(newCwd)；
-   * cwd 未变 → noop（仅关 popover）。dir-popover→landing。
+   * 统一延迟 create：选目录只记 pendingCwd（不 delete/create session），首发提交才建 session。
+   * cwd 未变→noop（仅关 popover）；cwd 变→记 pendingCwd（chip 回灌）。dir-popover→landing。
    */
   async function selectWorkspace(cwd: string): Promise<void> {
-    if (cwd === currentCwd.value) {
-      transition('landing') // noop：仅关 popover
-      return
-    }
-    const oldId = currentSessionId.value
-    if (oldId) {
-      await sessionApi.remove(oldId)
-      session.removeFromList(oldId) // 同步 store：旧空 session 从列表移除
-    }
-    const created = await sessionApi.create(cwd)
-    currentSession.value = created
-    session.appendSession(created)
-    session.activeId = created.id
-    transition('landing') // dir-popover→landing（chip 回灌新 cwd）
+    if (cwd !== currentCwd.value) pendingCwd.value = cwd
+    transition('landing') // dir-popover→landing（关 popover）
   }
 
   /**
    * openDirDialog —— 打开 OS 目录选择器（§4.2）。
    *
-   * 数据流：dir-popover → ipc.pickDirectory → OS dialog →
-   * 选中→delete+create(newCwd)+landing / 取消→落回 dir-popover（AC-5.3）。
+   * 统一延迟 create：选中只记 pendingCwd（不 delete/create），首发提交才建 session。
+   * 选中→pendingCwd 记值 + landing（chip 回灌）；取消→落回 dir-popover（AC-5.3）。
    * E5 IPC 招错（getFocusedWindow null）→落回 dir-popover + 向上抛（调用方接 toast，AC-5.6），
    * 状态不卡在 dir-dialog（错误路径重置状态，CLAUDE.md #3）。
    */
@@ -215,18 +232,7 @@ export function useNewTaskFlow() {
         transition('dir-popover') // 取消落回（AC-5.3）
         return
       }
-      // 选中：与 selectWorkspace 同语义（delete 空旧 + create 新 cwd + 同步 store）
-      const oldId = currentSessionId.value
-      if (oldId && result.path !== currentCwd.value) {
-        await sessionApi.remove(oldId)
-        session.removeFromList(oldId)
-      }
-      if (result.path !== currentCwd.value) {
-        const created = await sessionApi.create(result.path)
-        currentSession.value = created
-        session.appendSession(created)
-        session.activeId = created.id
-      }
+      pendingCwd.value = result.path // 记选定 cwd（不建 session）
       transition('landing') // dir-dialog→landing（chip 回灌新 cwd）
     } catch (e) {
       // E5：IPC 招错 → 落回 dir-popover + 重抛（调用方显错 toast），不卡 dir-dialog
@@ -320,6 +326,7 @@ export function useNewTaskFlow() {
     isBranchCreating: readonly(branchCreateInFlight),
     isOverlay: computed(() => OVERLAY_STATES.has(state.value)),
     startFlow,
+    submitFirstMessage,
     openDirPopover,
     openBranchPopover,
     selectWorkspace,
