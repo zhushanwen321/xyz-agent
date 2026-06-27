@@ -142,7 +142,10 @@ function activate(idx: number): void {
         :data-active="ws.cwd === props.currentCwd"
         variant="ghost"
         class="h-auto w-full justify-start gap-2 rounded-none px-3 py-2 text-[13px] text-fg hover:bg-surface-hover [&_svg]:size-4"
-        :class="isActiveItem(i) ? 'bg-surface-hover' : ''"
+        :class="[
+          ws.cwd === props.currentCwd ? 'bg-surface-2 ring-1 ring-inset ring-accent-ring' : '',
+          isActiveItem(i) ? 'bg-surface-hover' : '',
+        ]"
         @click="selectWorkspace(ws)"
         @mouseenter="activeIndex = i"
       >

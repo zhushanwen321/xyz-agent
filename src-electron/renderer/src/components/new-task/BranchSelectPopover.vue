@@ -18,7 +18,7 @@
  * - Esc → emit('close')
  */
 import { ref, computed, onMounted, nextTick } from 'vue'
-import { GitBranch, Plus, GitGraph, TriangleAlert } from '@lucide/vue'
+import { GitBranch, Plus, GitGraph, TriangleAlert, Check } from '@lucide/vue'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { git as gitApi } from '@/api'
@@ -200,22 +200,29 @@ function activate(idx: number): void {
         :data-active="name === currentBranch"
         variant="ghost"
         class="h-auto w-full justify-start gap-2 rounded-none px-3 py-2 text-[13px] text-fg hover:bg-surface-hover [&_svg]:size-4"
-        :class="isActiveItem(i) ? 'bg-surface-hover' : ''"
+        :class="[
+          name === currentBranch ? 'bg-surface-2 ring-1 ring-inset ring-accent-ring' : '',
+          isActiveItem(i) ? 'bg-surface-hover' : '',
+        ]"
         @click="selectBranch(name)"
         @mouseenter="activeIndex = i"
       >
         <GitBranch class="shrink-0 text-subtle" />
         <span class="flex min-w-0 flex-1 flex-col items-start gap-0.5">
           <span class="truncate font-mono text-fg">{{ name }}</span>
-          <!-- 当前分支 dirty subline（spec §3.3 warning 色） -->
+          <!-- 当前分支 dirty subline（spec §3.3 warning dot + mono 小字） -->
           <span
             v-if="name === currentBranch && isDirty"
             class="flex items-center gap-1 text-[11px] text-warning"
           >
-            <TriangleAlert class="size-3" />
+            <span class="size-1.5 shrink-0 rounded-full bg-warning" />
             未提交的更改：{{ dirtyCount }} 个文件
           </span>
         </span>
+        <Check
+          v-if="name === currentBranch"
+          class="size-4 shrink-0 text-accent"
+        />
       </Button>
 
       <div class="my-1 h-px bg-border" />
