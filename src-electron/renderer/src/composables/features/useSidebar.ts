@@ -15,7 +15,7 @@
  */
 import { computed, onScopeDispose } from 'vue'
 import type { ComputedRef } from 'vue'
-import type { SessionGroup } from '@xyz-agent/shared'
+import type { SessionGroup, SessionSummary } from '@xyz-agent/shared'
 import { chat as chatApi, session as sessionApi } from '@/api'
 import * as events from '@/api/events'
 import { useChatStore } from '@/stores/chat'
@@ -86,6 +86,16 @@ function unbindSessionListBroadcast(): void {
     sessionListUnsub()
     sessionListUnsub = null
   }
+}
+
+// ── App 启动编排幂等守卫（#1/#3：连接建立后只触发一次自动 startFlow / 恢复最近 session）──
+// 模块级跨 useSidebar 实例共享：App.vue watch connected → initApp()。HMR 重连 / 断线重连时
+// state 再次变 connected，appBootstrapped 已 true → 跳过，不重复 startFlow（newTaskInFlight 另有守卫）。
+let appBootstrapped = false
+
+/** 测试隔离：重置启动编排守卫（与 resetNewTaskFlow 配合，beforeEach 调）。 */
+export function resetAppBootstrap(): void {
+  appBootstrapped = false
 }
 
 export function useSidebar() {
@@ -312,6 +322,39 @@ export function useSidebar() {
     )
   }
 
+  /**
+   * 应用启动编排（#1/#3 启动钩子，连接建立后由 App.vue 触发）：自动进入正确视图。
+   *
+   * 修复 App 启动从未触发 startFlow → state 停 idle 的死锁：首次打开非 landing（问题1）+
+   * chip 点击 transition 非法抛错回 idle（问题3），两问题同源（state 从未离开 idle）。
+   *
+   * 分支：
+   * - 首次启动（session.list 空）→ newSession()（startFlow 延迟 create 分支：state=landing + push chat view）
+   * - 非首次启动（有历史 session）→ 恢复最近活跃 session（G1.1「沿用最近活跃 session 的目录」）
+   *
+   * 幂等：appBootstrapped 守卫只触发一次；失败重置允许下次 connected 重试，不永久卡空态。
+   */
+  async function initApp(): Promise<void> {
+    if (appBootstrapped) return
+    appBootstrapped = true
+    try {
+      await loadSessions()
+      // 取最近活跃 session（lastActiveAt 最大），与 resolveDefaultCwd 同源逻辑
+      let recent: SessionSummary | undefined
+      for (const s of session.list) {
+        if (!recent || s.lastActiveAt > recent.lastActiveAt) recent = s
+      }
+      if (recent) {
+        await selectSession(recent.id) // G1.1 恢复最近活跃 session（载入 panel + push chat view + hydrate）
+      } else {
+        await newSession() // 首次启动：startFlow 延迟 create → state=landing（chip 可点）
+      }
+    } catch {
+      // 启动编排失败（list/switch/getHistory reject）→ 重置允许下次 connected 重试
+      appBootstrapped = false
+    }
+  }
+
   /** 切换折叠态（C）。展开/折叠 toggle，spec §收起态。 */
   function toggleCollapse(): void {
     sidebar.collapsed = !sidebar.collapsed
@@ -356,6 +399,7 @@ export function useSidebar() {
     retryHistory,
     goOverview,
     loadSessions,
+    initApp,
     toggleCollapse,
     syncSessionToPanel,
     derivedStatus,
