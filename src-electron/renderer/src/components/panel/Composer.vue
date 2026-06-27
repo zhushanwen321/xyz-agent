@@ -18,7 +18,7 @@
       ref="commandPopoverRef"
       v-model:open="cmdOpen"
       :type="cmdType"
-      :session-id="sessionId"
+      :session-id="sessionId ?? undefined"
       @select="onCmdSelect"
     >
       <div class="composer-box relative rounded-lg border bg-bg-input" :class="boxClass">
@@ -39,7 +39,7 @@
         <AddMenuPopover @select="onAddSelect" />
         <span class="flex-1" />
         <!-- 上下文容量（spec §2a：hover 出容量 popover；session 通道订阅 context.update） -->
-        <ContextCapacityPopover :session-id="sessionId" />
+        <ContextCapacityPopover :session-id="sessionId ?? undefined" />
         <!-- 模型（spec §2b：click 出模型切换 popover） -->
         <ModelSelectPopover :selected="currentModelId" @select="onModelSelect" />
         <!-- 思考等级（spec §2c：click 出 6 级 popover；level 从 session 透传） -->
@@ -108,7 +108,7 @@ import { useSessionStore } from '@/stores/session'
 import { model as modelApi, session as sessionApi } from '@/api'
 
 const props = defineProps<{
-  sessionId: string
+  sessionId: string | null
 }>()
 
 const chatStore = useChatStore()
@@ -119,8 +119,8 @@ const { send, steer, followUp, abort, compact } = useChat()
 /** 当前 session 的思考等级（从 SessionSummary.thinkingLevel 透传给 ThinkingLevelPopover） */
 const currentThinkingLevel = computed(() => sessionStore.active?.thinkingLevel)
 /** #13 retry/queue 指示位数据源（store 由 W0/#8 维护，不可变 Map 更新触发响应） */
-const retryState = computed(() => chatStore.getRetryState(props.sessionId))
-const queueState = computed(() => chatStore.getQueueState(props.sessionId))
+const retryState = computed(() => (props.sessionId ? chatStore.getRetryState(props.sessionId) : undefined))
+const queueState = computed(() => (props.sessionId ? chatStore.getQueueState(props.sessionId) : undefined))
 
 const draft = ref('')
 /** 当前选中模型 id（占位，后续接 store/订阅 model.switched；runtime 切换属后续真实集成） */
@@ -134,7 +134,7 @@ const commandPopoverRef = ref<InstanceType<typeof CommandPopover> | null>(null)
 /** 发送中（S5）：useChat.send 的 Promise 在途 */
 const isSending = ref(false)
 /** 当前 panel 的 session 是否正在压缩上下文（#6，per-session） */
-const isCompacting = computed(() => chatStore.isCompacting(props.sessionId))
+const isCompacting = computed(() => (props.sessionId ? chatStore.isCompacting(props.sessionId) : false))
 
 /** ComposerInput input 事件 → 维护 draft（纯文本，用于发送判断） */
 function onInputChange(text: string): void {
@@ -176,18 +176,20 @@ function onCmdSelect(payload: { type: 'mention' | 'file' | 'slash'; name: string
 
 /** 模型切换：调 runtime model.switch（sessionId + provider + modelId）；成功后回写本地 ref */
 async function onModelSelect(payload: { modelId: string; provider: string }): Promise<void> {
+  if (!props.sessionId) return // landing 态延迟 create（sid=null）时不切换模型
   currentModelId.value = payload.modelId
   await modelApi.switchModel(props.sessionId, payload.provider, payload.modelId)
 }
 
 /** 思考等级切换：调 runtime session.setThinkingLevel（成功后 session store 持久） */
 async function onThinkingSelect(level: string): Promise<void> {
+  if (!props.sessionId) return // landing 态延迟 create（sid=null）时不切思考等级
   await sessionApi.setThinkingLevel(props.sessionId, level)
 }
 
 const hasInput = computed(() => draft.value.trim().length > 0)
 /** 可发送：有输入且非 streaming 非 sending 非 compacting */
-const canSend = computed(() => hasInput.value && !isStreaming.value && !isSending.value && !isCompacting.value)
+const canSend = computed(() => hasInput.value && !!props.sessionId && !isStreaming.value && !isSending.value && !isCompacting.value)
 
 /**
  * composer-box class（draft）：
