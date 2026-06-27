@@ -5,7 +5,8 @@
     所有表单控件使用 ui 基础组件（Input / Select / Button），无原生 select/button。
   -->
   <Dialog :open="!!provider" @update:open="emit('close')">
-    <DialogContent class="flex max-w-[780px] flex-col overflow-hidden p-0">
+    <!-- hide-close：标题栏已自绘关闭 X，隐藏 DialogContent 默认右上角 X，避免双 X（同 SettingsModal） -->
+    <DialogContent hide-close class="flex max-w-[780px] flex-col overflow-hidden p-0">
       <!-- 标题栏 -->
       <div class="flex items-center justify-between border-b border-border px-5 py-4">
         <span class="text-[15px] font-semibold text-fg">{{ provider ? '编辑供应商' : '添加供应商' }}</span>
@@ -117,63 +118,73 @@
             </Button>
           </div>
 
-          <!-- 手动添加模型表单 -->
-          <div v-if="showAddModel" class="flex items-end gap-2 border-b border-border bg-surface px-5 py-3">
-            <div class="flex-1">
-              <Label class="mb-1 block text-[10px] text-muted">模型名称</Label>
-              <Input v-model="newModel.name" placeholder="gpt-4o" class="h-8 text-[12px]" />
-            </div>
-            <div>
-              <Label class="mb-1 block text-[10px] text-muted">输入类型</Label>
-              <div class="flex h-8 gap-0.5 rounded-md border border-border bg-surface-2 p-0.5">
-                <Button
-                  variant="ghost"
-                  class="h-full gap-1 rounded-sm px-2 text-[10px] hover:bg-transparent [&_svg]:size-3"
-                  :class="newModel.inputType === 'text' ? 'bg-accent-soft text-accent' : 'text-muted hover:text-fg'"
-                  @click="newModel.inputType = 'text'"
-                ><FileText /> 文本</Button>
-                <Button
-                  variant="ghost"
-                  class="h-full gap-1 rounded-sm px-2 text-[10px] hover:bg-transparent [&_svg]:size-3"
-                  :class="newModel.inputType === 'image' ? 'bg-accent-soft text-accent' : 'text-muted hover:text-fg'"
-                  @click="newModel.inputType = 'image'"
-                ><ImageIcon /> 图片</Button>
+          <!-- 手动添加模型表单（两行：模型名 + 输入类型 / 上下文 + 思考 + 添加）。
+               原单行把名称列挤到过窄、输入类型按钮占宽过大；改两行给名称留足空间。 -->
+          <div v-if="showAddModel" class="border-b border-border bg-surface px-5 py-3">
+            <!-- 第 1 行：模型名称（占满）+ 输入类型分段 -->
+            <div class="flex items-end gap-3">
+              <div class="min-w-0 flex-1">
+                <Label class="mb-1 block text-[10px] text-muted">模型名称</Label>
+                <Input v-model="newModel.name" placeholder="gpt-4o" class="h-8 text-[12px]" />
+              </div>
+              <div>
+                <Label class="mb-1 block text-[10px] text-muted">输入类型</Label>
+                <div class="flex h-8 gap-0.5 rounded-md border border-border bg-surface-2 p-0.5">
+                  <Button
+                    variant="ghost"
+                    class="h-full gap-1 rounded-sm px-2 text-[10px] hover:bg-transparent [&_svg]:size-3"
+                    :class="newModel.inputType === 'text' ? 'bg-accent-soft text-accent' : 'text-muted hover:text-fg'"
+                    @click="newModel.inputType = 'text'"
+                  ><FileText /> 文本</Button>
+                  <Button
+                    variant="ghost"
+                    class="h-full gap-1 rounded-sm px-2 text-[10px] hover:bg-transparent [&_svg]:size-3"
+                    :class="newModel.inputType === 'image' ? 'bg-accent-soft text-accent' : 'text-muted hover:text-fg'"
+                    @click="newModel.inputType = 'image'"
+                  ><ImageIcon /> 图片</Button>
+                </div>
               </div>
             </div>
-            <div>
-              <Label class="mb-1 block text-[10px] text-muted">上下文</Label>
-              <Select v-model="newModel.contextWindow">
-                <SelectTrigger class="h-8 w-[84px] px-2 text-[11px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem v-for="o in ctxOptions" :key="o.value" :value="o.value">{{ o.label }}</SelectItem>
-                </SelectContent>
-              </Select>
+            <!-- 第 2 行：上下文 + 思考 + 添加 -->
+            <div class="mt-3 flex items-end gap-3">
+              <div>
+                <Label class="mb-1 block text-[10px] text-muted">上下文</Label>
+                <Select v-model="newModel.contextWindow">
+                  <SelectTrigger class="h-8 w-[110px] px-2 text-[11px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem v-for="o in ctxOptions" :key="o.value" :value="o.value">{{ o.label }}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label class="mb-1 block text-[10px] text-muted">思考</Label>
+                <Select v-model="newModel.thinking">
+                  <SelectTrigger class="h-8 w-[130px] px-2 text-[11px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem v-for="s in thinkingStrategies" :key="s.key" :value="s.key">{{ s.fullLabel }}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button class="h-8 shrink-0 px-3 text-[12px]" @click="addModel">添加</Button>
             </div>
-            <div>
-              <Label class="mb-1 block text-[10px] text-muted">思考</Label>
-              <Select v-model="newModel.thinking">
-                <SelectTrigger class="h-8 w-[96px] px-2 text-[11px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem v-for="s in thinkingStrategies" :key="s.key" :value="s.key">{{ s.fullLabel }}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <Button class="h-8 shrink-0 px-3 text-[12px]" @click="addModel">添加</Button>
           </div>
 
           <!-- 模型列表 -->
           <div class="min-h-0 flex-1 overflow-y-auto">
             <div v-if="!localModels.length" class="py-8 text-center text-[12px] text-muted">暂无模型</div>
 
-            <!-- 表头 -->
-            <div v-if="localModels.length" class="flex items-center border-b border-border bg-surface px-5 py-2 text-right text-[10px] uppercase tracking-wider text-subtle">
+            <!-- 表头。非名称列统一 text-center，与下方行 value 单元格对齐方式一致，
+                 解决 head(text-right) 与 value(icon 居中 / select 左对齐) 错位。
+                 列宽收窄：右三列原 80/96/112=288 → 56/80/96=232，给「模型」名列腾出 56px，
+                 避免 glm-5-turbo / claude-sonnet-4-5 等较长 id 被 truncate。 -->
+            <div v-if="localModels.length" class="flex items-center border-b border-border bg-surface px-5 py-2 text-center text-[10px] uppercase tracking-wider text-subtle">
               <span class="flex-1 text-left">模型</span>
-              <span class="w-16">输入</span>
-              <span class="w-20">上下文</span>
+              <span class="w-14">输入</span>
+              <span class="w-[80px]">上下文</span>
               <span class="w-24">思考</span>
               <span class="w-8" />
             </div>
@@ -184,31 +195,33 @@
               class="flex items-center border-b border-border px-5 py-2 text-[12px]"
             >
               <span class="flex-1 truncate font-mono text-fg">{{ m.id }}</span>
-              <!-- 输入类型 icon 按钮 -->
-              <div class="flex w-16 justify-center gap-0.5">
+              <!-- 输入类型 icon 按钮：紧贴 icon，不撑满整行高。
+                   Button 默认 h-9 撑满行高，显式 h-auto + p-1 让按钮贴合 icon（约 20px 见方）。 -->
+              <div class="flex w-14 items-center justify-center gap-1">
                 <Button
                   variant="ghost"
-                  class="rounded-sm p-0.5 hover:bg-transparent [&_svg]:size-3"
-                  :class="m.input?.includes('text') ? 'text-info' : 'text-subtle opacity-40'"
+                  class="h-auto shrink-0 rounded-sm border p-1 hover:bg-transparent [&_svg]:size-3.5"
+                  :class="m.input?.includes('text') ? 'border-accent bg-accent-soft text-accent' : 'border-border text-subtle opacity-60 hover:opacity-100'"
                   title="文本输入"
                   @click.stop="toggleInput(m, 'text')"
                 ><FileText /></Button>
                 <Button
                   variant="ghost"
-                  class="rounded-sm p-0.5 hover:bg-transparent [&_svg]:size-3"
-                  :class="m.input?.includes('image') ? 'text-info' : 'text-subtle opacity-40'"
+                  class="h-auto shrink-0 rounded-sm border p-1 hover:bg-transparent [&_svg]:size-3.5"
+                  :class="m.input?.includes('image') ? 'border-accent bg-accent-soft text-accent' : 'border-border text-subtle opacity-60 hover:opacity-100'"
                   title="图片输入"
                   @click.stop="toggleInput(m, 'image')"
                 ><ImageIcon /></Button>
               </div>
-              <!-- 上下文（弹出 select） -->
-              <div class="w-20">
+              <!-- 上下文（弹出 select）。placeholder 兜底 contextWindow=undefined（发现来的模型），
+                   否则 SelectValue 无值时留空，触发器看起来「没文字」。 -->
+              <div class="flex w-[80px] justify-center">
                 <Select
                   :model-value="m.contextWindow"
                   @update:model-value="updateCtx(m, $event as number)"
                 >
-                  <SelectTrigger class="h-6 w-full px-1.5 py-0 text-[10px]">
-                    <SelectValue />
+                  <SelectTrigger class="h-7 w-[72px] px-1.5 py-0 text-[11px]">
+                    <SelectValue placeholder="—" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem v-for="o in ctxOptions" :key="o.value" :value="o.value">{{ o.label }}</SelectItem>
@@ -216,13 +229,13 @@
                 </Select>
               </div>
               <!-- 思考策略（弹出 select） -->
-              <div class="w-24">
+              <div class="flex w-24 justify-center">
                 <Select
                   :model-value="getStrategyFromMap(m.thinkingLevelMap)"
                   @update:model-value="pickStrategy(m, $event as ThinkingStrategy)"
                 >
-                  <SelectTrigger class="h-6 w-full px-1.5 py-0 text-[10px]">
-                    <SelectValue />
+                  <SelectTrigger class="h-7 w-[88px] px-1.5 py-0 text-[11px]">
+                    <SelectValue placeholder="—" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem v-for="s in thinkingStrategies" :key="s.key" :value="s.key">{{ s.fullLabel }}</SelectItem>
