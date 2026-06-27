@@ -22,6 +22,10 @@ import type { DerivedStatus } from '@/types'
 
 // Landing 绑定 useNewTaskFlow（chip→popover 渲染绑定 #5/#6）。mock 捕获方法调用
 const flowMock = vi.hoisted(() => ({
+  // landing 态 session/cwd/branch 真源 computed refs（landing.vue 的 composerSid/cwd/branch 依赖）
+  currentSessionId: { value: null as string | null },
+  currentCwd: { value: null as string | null },
+  gitInfo: { value: null as { branch: string } | null },
   openDirPopover: vi.fn(),
   openBranchPopover: vi.fn(),
   closeOverlay: vi.fn(),
@@ -52,6 +56,14 @@ const panelStubs = {
   Composer: { template: '<div />' },
   GitZone: { template: '<div />' },
   SideDrawer: { template: '<div />' },
+}
+
+/** Landing 现内嵌 Composer 卡片，directory/branch chip 在 Composer 的 #meta-row slot 内。
+ *  mount(Landing) 若渲染真实 Composer 会触发其重依赖（useChat/useChatStore/多个 Popover）崩溃。
+ *  解法：stub Composer 为「渲染 meta-row slot」的空壳——chip 仍进 DOM 可查（点 chip 测试依赖），
+ *  Composer 内部逻辑不在此测（首屏冒烟 landing-smoke.test.ts 才验真实 composer）。 */
+const landingStubs = {
+  Composer: { template: '<div data-testid="composer-stub"><slot name="meta-row" /></div>' },
 }
 
 function mountPanel(overrides: Record<string, unknown> = {}) {
@@ -101,6 +113,7 @@ describe('Landing 组件（presentational）', () => {
   it('渲染问候语 + directory chip（T1.6 landing 内容）', () => {
     const wrapper = mount(Landing, {
       props: { sessionId: 's1', currentCwd: '/repo', gitBranch: 'main' },
+      global: { stubs: landingStubs },
     })
     expect(wrapper.text()).toContain('有什么想让我帮忙的吗')
     expect(wrapper.find('[data-testid="chip-directory"]').exists()).toBe(true)
@@ -110,6 +123,7 @@ describe('Landing 组件（presentational）', () => {
   it('gitBranch 为空 → branch chip 隐藏（UC-7 非 git 目录，AC-2.2）', () => {
     const wrapper = mount(Landing, {
       props: { sessionId: 's1', currentCwd: '/plain' },
+      global: { stubs: landingStubs },
     })
     expect(wrapper.find('[data-testid="chip-branch"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="chip-directory"]').exists()).toBe(true)
@@ -118,6 +132,7 @@ describe('Landing 组件（presentational）', () => {
   it('currentCwd 为空（首次启动延迟 create）→ directory chip 显空态文案', () => {
     const wrapper = mount(Landing, {
       props: { sessionId: null, currentCwd: null },
+      global: { stubs: landingStubs },
     })
     const chip = wrapper.find('[data-testid="chip-directory"]')
     expect(chip.exists()).toBe(true)
@@ -127,6 +142,7 @@ describe('Landing 组件（presentational）', () => {
   it('点 directory chip → 调 useNewTaskFlow.openDirPopover（#5 渲染绑定）', async () => {
     const wrapper = mount(Landing, {
       props: { sessionId: 's1', currentCwd: '/repo', gitBranch: 'main' },
+      global: { stubs: landingStubs },
     })
     await wrapper.find('[data-testid="chip-directory"]').trigger('click')
     expect(flowMock.openDirPopover).toHaveBeenCalled()
@@ -135,6 +151,7 @@ describe('Landing 组件（presentational）', () => {
   it('点 branch chip → 调 useNewTaskFlow.openBranchPopover（#6 渲染绑定）', async () => {
     const wrapper = mount(Landing, {
       props: { sessionId: 's1', currentCwd: '/repo', gitBranch: 'main' },
+      global: { stubs: landingStubs },
     })
     await wrapper.find('[data-testid="chip-branch"]').trigger('click')
     expect(flowMock.openBranchPopover).toHaveBeenCalled()
@@ -145,6 +162,7 @@ describe('Landing getHistory 失败重试（T1.8）', () => {
   it('historyError=true → 渲染重试按钮，点击 emit retry（不永久卡住）', async () => {
     const wrapper = mount(Landing, {
       props: { sessionId: 's1', currentCwd: '/repo', historyError: true },
+      global: { stubs: landingStubs },
     })
     const retry = wrapper.find('[data-testid="retry-history"]')
     expect(retry.exists()).toBe(true)
@@ -155,6 +173,7 @@ describe('Landing getHistory 失败重试（T1.8）', () => {
   it('historyError=false → 不渲染重试按钮', () => {
     const wrapper = mount(Landing, {
       props: { sessionId: 's1', currentCwd: '/repo', historyError: false },
+      global: { stubs: landingStubs },
     })
     expect(wrapper.find('[data-testid="retry-history"]').exists()).toBe(false)
   })

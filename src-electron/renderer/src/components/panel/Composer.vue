@@ -7,7 +7,7 @@
       S3/S4（@/#// 附件浮层 G2-002）、S7-S9 双队列视图/失败回退/已排队多条。
     steer/followUp：isStreaming 时 ⏎ 追加 steer，Alt+⏎ 追加 followUp，都不打断当前回合。
   -->
-  <div class="composer mx-3.5">
+  <div class="composer" :class="props.variant === 'landing' ? 'mx-auto w-full max-w-[720px]' : 'mx-3.5'">
     <!-- retry/queue 指示位（spec C10，#13，composer 上方独立行）：
          auto_retry_end / message_start 到达时 store 自动清 → state=undefined → 组件 v-if 消失 -->
     <RetryIndicator :state="retryState" />
@@ -21,7 +21,9 @@
       :session-id="sessionId ?? undefined"
       @select="onCmdSelect"
     >
-      <div class="composer-box relative rounded-lg border bg-bg-input" :class="boxClass">
+      <div class="composer-box relative rounded-lg border bg-bg-input" :class="boxClass" data-testid="composer-box">
+        <!-- 顶部元信息行 slot（landing 态：directory/branch chip；panel 态留空） -->
+        <slot name="meta-row" />
         <!-- 已附上下文 chip 行（§2f，hover 出详情列表）。mock 演示始终显示，runtime 后按实际附件显隐 -->
         <ContextChipsBar />
         <!-- 输入区：contenteditable 富文本（draft §1/§2e，支持 slash chip 与 @/# mention 内联） -->
@@ -107,9 +109,13 @@ import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
 import { model as modelApi, session as sessionApi } from '@/api'
 
-const props = defineProps<{
-  sessionId: string | null
-}>()
+const props = withDefaults(
+  defineProps<{
+    sessionId: string | null
+    variant?: 'panel' | 'landing'
+  }>(),
+  { variant: 'panel' },
+)
 
 const chatStore = useChatStore()
 const sessionStore = useSessionStore()

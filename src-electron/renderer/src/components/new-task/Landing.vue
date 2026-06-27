@@ -17,6 +17,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import DirSelectPopover from './DirSelectPopover.vue'
 import BranchSelectPopover from './BranchSelectPopover.vue'
 import CreateBranchModal from './CreateBranchModal.vue'
+import Composer from '@/components/panel/Composer.vue'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 
 const props = withDefaults(
@@ -39,13 +40,20 @@ const emit = defineEmits<{
   (e: 'retry'): void
 }>()
 
+const flow = useNewTaskFlow()
+// landing 态 session 真源是 NewTaskFlow（selectWorkspace/openDirDialog create 的 session 不经
+// useSidebar，panel leaf.sessionId 滞后）。优先 flow 真源，props 作 fallback（常态新建两者一致）。
+const composerSid = computed(() => flow.currentSessionId.value ?? props.sessionId)
+const cwd = computed(() => flow.currentCwd.value ?? props.currentCwd)
+const branch = computed(() => flow.gitInfo.value?.branch ?? props.gitBranch ?? null)
+
 /** directory chip 文案：有 cwd 显示目录名，否则首次启动空态（AC-1.7） */
 const dirLabel = computed(() => {
-  const cwd = props.currentCwd
-  if (!cwd) return '选择目录'
+  const c = cwd.value
+  if (!c) return '选择目录'
   // 取末段目录名（与 PanelHeader mono cwd 风格一致）
-  const seg = cwd.split('/').filter(Boolean).pop()
-  return seg ?? cwd
+  const seg = c.split('/').filter(Boolean).pop()
+  return seg ?? c
 })
 
 /** 时段问候语前缀（spec §3.1「上午好呀/下午好呀/晚上好呀」） */
@@ -58,10 +66,6 @@ const greetingPrefix = computed(() => {
   if (h < HOUR_EVENING) return '下午好呀'
   return '晚上好呀'
 })
-
-// popover 渲染绑定（#5/#6 AC-5.1/6.1 视觉弹出）：chip 用 Popover 包，
-// open 双向绑 useNewTaskFlow.state（dir-popover/branch-popover 态）。select/confirm 动作接 composable。
-const flow = useNewTaskFlow()
 const isDirOpen = computed({
   get: () => flow.state.value === 'dir-popover',
   set: (v) => { if (!v) flow.closeOverlay(); else flow.openDirPopover() },
@@ -116,55 +120,6 @@ function onRetry(): void {
       {{ greetingPrefix }}，有什么想让我帮忙的吗
     </h1>
 
-    <!-- composer 顶部元信息行：directory chip（左）+ branch chip（右，UC-7 守卫） -->
-    <div class="z-10 flex items-center gap-2 rounded-[var(--radius-lg)] border border-border bg-bg-input px-2 py-1.5">
-      <Popover v-model:open="isDirOpen">
-        <PopoverTrigger as-child>
-          <Button
-            data-testid="chip-directory"
-            variant="ghost"
-            class="h-auto gap-1.5 px-2 py-1 text-[12.5px] text-subtle hover:bg-surface-hover hover:text-fg [&_svg]:size-3.5"
-            :class="{ '!text-accent': !currentCwd }"
-            @click="onDir"
-          >
-            <Folder class="shrink-0" />
-            <span class="font-mono">{{ dirLabel }}</span>
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent side="top" class="w-[380px] p-0">
-          <DirSelectPopover
-            :current-cwd="currentCwd ?? null"
-            @select="onSelectWorkspace"
-            @open-dir-dialog="flow.openDirDialog()"
-            @close="flow.closeOverlay()"
-          />
-        </PopoverContent>
-      </Popover>
-      <span v-if="gitBranch" aria-hidden="true" class="h-3.5 w-px bg-border" />
-      <Popover v-if="gitBranch" v-model:open="isBranchOpen">
-        <PopoverTrigger as-child>
-          <Button
-            data-testid="chip-branch"
-            variant="ghost"
-            class="h-auto gap-1.5 px-2 py-1 text-[12.5px] text-subtle hover:bg-surface-hover hover:text-fg [&_svg]:size-3.5"
-            @click="onBranch"
-          >
-            <GitBranch class="shrink-0" />
-            <span class="font-mono">{{ gitBranch }}</span>
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent side="top" class="w-[420px] p-0">
-          <BranchSelectPopover
-            :session-id="sessionId"
-            @select="onSelectBranch"
-            @confirm-dirty-switch="onConfirmDirtySwitch"
-            @open-branch-modal="flow.openBranchModal()"
-            @close="flow.closeOverlay()"
-          />
-        </PopoverContent>
-      </Popover>
-    </div>
-
     <!-- getHistory 失败重试出口（AC-2.6，不永久卡住） -->
     <Button
       v-if="historyError"
@@ -176,6 +131,61 @@ function onRetry(): void {
       <RefreshCw class="shrink-0" />
       重试加载历史
     </Button>
+
+    <!-- composer 卡片（variant=landing：720px 居中，--bg-input + --border + --radius-lg）。
+         spec §3.1：chip 是 composer 卡片顶部元信息行，非悬空 → 经 #meta-row slot 注入。
+         landing 态 session 真源用 flow（composerSid），props 作 fallback。 -->
+    <Composer variant="landing" :session-id="composerSid">
+      <template #meta-row>
+        <div class="flex items-center gap-2 px-2.5 pt-2.5">
+          <Popover v-model:open="isDirOpen">
+            <PopoverTrigger as-child>
+              <Button
+                data-testid="chip-directory"
+                variant="ghost"
+                class="h-auto gap-1.5 px-2 py-1 text-[12.5px] text-subtle hover:bg-surface-hover hover:text-fg [&_svg]:size-3.5"
+                :class="{ '!text-accent': !cwd }"
+                @click="onDir"
+              >
+                <Folder class="shrink-0" />
+                <span class="font-mono">{{ dirLabel }}</span>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent side="top" class="w-[380px] p-0">
+              <DirSelectPopover
+                :current-cwd="currentCwd ?? null"
+                @select="onSelectWorkspace"
+                @open-dir-dialog="flow.openDirDialog()"
+                @close="flow.closeOverlay()"
+              />
+            </PopoverContent>
+          </Popover>
+          <span v-if="branch" aria-hidden="true" class="h-3.5 w-px bg-border" />
+          <Popover v-if="branch" v-model:open="isBranchOpen">
+            <PopoverTrigger as-child>
+              <Button
+                data-testid="chip-branch"
+                variant="ghost"
+                class="h-auto gap-1.5 px-2 py-1 text-[12.5px] text-subtle hover:bg-surface-hover hover:text-fg [&_svg]:size-3.5"
+                @click="onBranch"
+              >
+                <GitBranch class="shrink-0" />
+                <span class="font-mono">{{ branch }}</span>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent side="top" class="w-[420px] p-0">
+              <BranchSelectPopover
+                :session-id="sessionId"
+                @select="onSelectBranch"
+                @confirm-dirty-switch="onConfirmDirtySwitch"
+                @open-branch-modal="flow.openBranchModal()"
+                @close="flow.closeOverlay()"
+              />
+            </PopoverContent>
+          </Popover>
+        </div>
+      </template>
+    </Composer>
 
     <!-- 创建分支 modal（#7）：BranchSelectPopover emit open-branch-modal → openBranchModal → state=branch-modal → 渲染。modal 内 Esc/提交失败留 modal（D-7）。 -->
     <CreateBranchModal v-if="isBranchModalOpen" />

@@ -47,8 +47,9 @@
       <!-- ③ progress-zone（composer 上方） -->
       <ProgressZone phase="running" />
 
-      <!-- ④ composer（FG5，S1/S2/S5/S6 主路径） -->
-      <Composer v-if="sessionId" :session-id="sessionId" />
+      <!-- ④ composer（FG5，S1/S2/S5/S6 主路径）。landing 态由 Landing 内部渲染 composer 卡片，
+           此处 band 不重复渲染（showPanelComposer：非 landing 才挂）。 -->
+      <Composer v-if="showPanelComposer" :session-id="sessionId" />
 
       <!-- ⑤ git-zone（FR-12 加回，非 git 仓库时组件内部自隐藏） -->
       <GitZone
@@ -132,6 +133,11 @@ const messageCount = computed(() =>
 )
 /** 生成态优先：isStreaming 时不渲染 landing（AC-2.8） */
 const isGenerating = computed(() => chat.isStreaming)
+/** band 内 Composer 渲染：landing 态（无 session / 无消息 且 非生成）已由 Landing 内嵌 composer
+ *  卡片承接，band 不重复渲染。生成态即使 messageCount=0 也需 band composer 接收流式。 */
+const showPanelComposer = computed(
+  () => (!!props.sessionId && messageCount.value > 0) || isGenerating.value,
+)
 /** getHistory 失败态（landing 重试出口，AC-2.6） */
 const historyError = computed(() =>
   props.sessionId ? chat.failedHistory.has(props.sessionId) : false,
