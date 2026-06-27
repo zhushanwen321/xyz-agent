@@ -9,6 +9,8 @@
     --bg:#0d0d0f; --surface:#151519; --surface-2:#1b1b20; --surface-hover:#1f1f26;
     --bg-input:#101013; --bg-elevated:#1c1c20;
     --fg:#f0f0f5; --muted:#8a8a95; --subtle:#5a5a65;
+    --text-primary:#e8e8ea; --text-secondary:#8a8a95; --text-tertiary:#5a5a65;
+    --bg-hover:#232328;
     --border:rgba(255,255,255,0.06); --border-strong:rgba(255,255,255,0.12);
     --accent:#4f8ef7; --accent-hover:#6ba3ff; --accent-soft:rgba(79,142,247,0.12);
     --accent-ring:rgba(79,142,247,0.45);
@@ -65,67 +67,74 @@
 
   /* ===== Landing（与 draft-landing.html 一致，popover 锚定在 chip 上方） ===== */
   .landing{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
-    padding:32px 24px 64px;position:relative;overflow:hidden;background:var(--bg)}
+    padding:32px 24px 64px;position:relative;overflow:visible;background:var(--bg)}
   .watermark{position:absolute;left:50%;top:50%;transform:translate(-50%,-65%);
     font:600 220px/1 var(--font-sans);color:transparent;
     -webkit-text-stroke:1px rgba(255,255,255,0.045);letter-spacing:-0.04em;user-select:none;pointer-events:none}
   .greeting{font-size:22px;font-weight:650;letter-spacing:-0.01em;color:var(--fg);
     margin:0 0 28px;text-align:center;position:relative;z-index:1}
 
-  .composer{width:100%;max-width:720px;position:relative;z-index:1;
+  /* composer 与 landing/panel 同构：composer 无背景无裁切，composer-box 承载背景。popover 作为 composer-box 兄弟，脱离裁切 */
+  .composer{width:100%;max-width:720px;position:relative;z-index:1;padding:10px 0 0}
+  .composer-box{
     background:var(--bg-input);border:1px solid var(--border);
-    border-radius:var(--radius-lg);overflow:hidden}
-  .composer.focus{border-color:var(--border-strong);box-shadow:0 0 0 3px rgba(255,255,255,0.04)}
+    border-radius:var(--radius-lg);position:relative;overflow:hidden;
+    transition:border-color var(--duration) var(--ease),box-shadow var(--duration) var(--ease);
+  }
+  .composer-box.focus{border-color:var(--border-strong);box-shadow:0 0 0 2px rgba(255,255,255,0.04)}
   .meta-row{display:flex;align-items:center;padding:10px 10px 0;gap:0}
   .chip{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 9px;
     background:transparent;border:1px solid transparent;border-radius:var(--radius);
-    color:var(--muted);font:500 12px/1 var(--font-sans);cursor:pointer;
+    color:var(--text-secondary);font:500 12px/1 var(--font-sans);cursor:pointer;
     max-width:200px;transition:background var(--duration-fast) var(--ease),color var(--duration-fast) var(--ease)}
-  .chip:hover{background:var(--surface-hover);color:var(--fg)}
-  .chip.open{background:var(--surface-2);color:var(--fg);box-shadow:inset 0 0 0 1px var(--accent-ring)}
+  .chip:hover{background:var(--bg-hover);color:var(--text-primary)}
+  .chip.open{background:var(--surface-2);color:var(--text-primary);box-shadow:inset 0 0 0 1px var(--accent-ring)}
   .chip svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
   .chip .ch-name{max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:550}
-  .chip .ch-chev{color:var(--subtle);width:11px;height:11px}
+  .chip .ch-chev{color:var(--text-tertiary);width:11px;height:11px}
   .chip.branch-chip .ch-ic{color:var(--accent)}
   .meta-sep{width:1px;height:18px;background:var(--border);margin:0 6px;flex-shrink:0}
-  .composer-area{min-height:80px;width:100%;border:0;outline:0;background:transparent;
-    color:var(--fg);font:14px/1.55 var(--font-sans);padding:14px 16px 8px}
-  .composer-area[data-placeholder]:empty:before{content:attr(data-placeholder);color:var(--subtle);pointer-events:none}
-  .tok-acc{color:var(--accent);font-weight:550}
-  .tok-cmd{color:var(--reasoning);font-weight:550}
-  .tok-skl{color:var(--success);font-weight:550}
-  .tok-ask{color:var(--info);font-weight:550}
-  .composer-bar{display:flex;align-items:center;gap:2px;padding:0 8px 8px 10px}
-  .c-insert{width:28px;height:28px;border:0;background:transparent;border-radius:var(--radius-sm);
-    color:var(--subtle);display:grid;place-items:center;cursor:pointer}
-  .c-insert:hover{background:var(--surface-hover);color:var(--muted)}
-  .c-insert svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5}
-  .perm{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 9px;
-    background:transparent;border:0;border-radius:var(--radius-sm);
-    color:var(--warning);font:500 12px/1 var(--font-sans);cursor:pointer}
-  .perm:hover{background:var(--surface-hover)}
-  .perm svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.5}
-  .perm .ch-chev{color:var(--warning);width:11px;height:11px;opacity:0.7}
-  .bar-spacer{flex:1}
-  .bar-sel{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 9px;
-    background:transparent;border:0;border-radius:var(--radius-sm);
-    color:var(--muted);font:500 12px/1 var(--font-sans);cursor:pointer}
-  .bar-sel:hover{background:var(--surface-hover);color:var(--fg)}
-  .bar-sel .dot-o{width:6px;height:6px;border-radius:50%;background:var(--muted)}
-  .bar-sel .brain{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.5;color:var(--muted)}
-  .bar-sel .ch-chev{color:var(--subtle);width:11px;height:11px}
-  .send{width:32px;height:32px;border:0;background:var(--surface-2);
-    border-radius:var(--radius);color:var(--muted);display:grid;place-items:center;cursor:pointer}
-  .send:hover{background:var(--surface-hover);color:var(--fg)}
-  .send svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2}
+  .composer-area{
+    width:100%;min-height:40px;max-height:120px;overflow-y:auto;
+    border:0;outline:0;background:transparent;
+    color:var(--text-primary);font:13px/1.55 var(--font-sans);
+    padding:11px 13px 4px;white-space:pre-wrap;word-break:break-word;
+  }
+  .composer-area[contenteditable][data-placeholder]:empty:before{
+    content:attr(data-placeholder);color:var(--text-tertiary);pointer-events:none;
+  }
+  .composer-bar{display:flex;align-items:center;gap:2px;padding:0 8px 8px 10px;flex-wrap:nowrap}
+  .c-insert{width:28px;height:28px;border-radius:var(--radius-sm);border:0;background:transparent;
+    color:var(--text-tertiary);display:grid;place-items:center;cursor:pointer;
+    transition:all var(--duration) var(--ease);flex-shrink:0}
+  .c-insert:hover{background:var(--bg-hover);color:var(--text-secondary)}
+  .c-insert svg{width:16px;height:16px}
+  .c-text{font:500 11.5px/1 var(--font-sans);color:var(--text-tertiary);
+    background:transparent;border:0;padding:6px 8px;border-radius:var(--radius-sm);
+    cursor:pointer;display:inline-flex;align-items:center;gap:5px;
+    transition:all var(--duration) var(--ease);flex-shrink:0;letter-spacing:0.005em}
+  .c-text:hover{background:var(--bg-hover);color:var(--text-secondary)}
+  .c-text .chev{color:var(--text-tertiary);font-size:9px;margin-left:1px}
+  .c-text .num{font-variant-numeric:tabular-nums}
+  .c-text .dot{width:3px;height:3px;border-radius:50%;background:var(--text-tertiary);opacity:0.5}
+  .c-text.think[data-lvl="max"]{color:#fff;background:rgba(167,139,250,0.85);box-shadow:0 0 12px rgba(167,139,250,0.4)}
+  .c-send{margin-left:6px;width:30px;height:30px;border-radius:var(--radius);
+    border:0;background:var(--accent);color:#fff;cursor:pointer;
+    display:grid;place-items:center;flex-shrink:0;
+    transition:background var(--duration) var(--ease)}
+  .c-send:hover{background:var(--accent-hover)}
+  .c-send svg{width:15px;height:15px}
+  .c-send:disabled{background:transparent;color:var(--text-tertiary);cursor:default;opacity:0.5}
+  .composer-hint{font:10px/1.3 var(--font-mono);color:var(--text-tertiary);padding:6px 4px 0}
+  .composer-hint .kbd{background:var(--surface-2);border:1px solid var(--border);padding:1px 4px;border-radius:3px}
 
-  /* ===== Directory Popover（核心 demo） ===== */
+  /* ===== Directory Popover（核心 demo）· 锚定在 .composer（composer-box 兄弟，脱离 overflow:hidden） ===== */
   .ds-popover{position:absolute;width:380px;background:var(--surface-2);
     border:1px solid var(--border-strong);border-radius:var(--radius);
     box-shadow:0 0 0 1px rgba(0,0,0,0.3),0 16px 48px rgba(0,0,0,0.6);
-    overflow:hidden;z-index:50}
-  /* popover 锚定：在 chip 上方 6px，水平居中对齐 chip */
-  .ds-popover{left:50%; transform:translateX(-50%); bottom:calc(100% - 10px)}
+    overflow:visible;z-index:50}
+  /* popover 锚定：相对 .composer（positioned），底边贴 chip 上方 */
+  .ds-popover{left:50%; transform:translateX(-50%); bottom:calc(100% - 26px)}
   /* 三角指 dis （简化为 border + 阴影） */
   .ds-popover::after{content:"";position:absolute;left:50%;bottom:-5px;transform:translateX(-50%) rotate(45deg);
     width:8px;height:8px;background:var(--surface-2);
@@ -231,23 +240,8 @@
         <span class="watermark">xyz</span>
         <h2 class="greeting">上午好呀，有什么想让我帮忙的吗</h2>
 
-        <div class="composer focus">
-          <!-- 顶部元信息行 -->
-          <div class="meta-row">
-            <button class="chip open">
-              <svg viewBox="0 0 16 16" style="color:var(--accent)"><use href="#i-folder"/></svg>
-              <span class="ch-name">refactor-goal-extension</span>
-              <svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg>
-            </button>
-            <div class="meta-sep"></div>
-            <button class="chip branch-chip">
-              <svg viewBox="0 0 16 16"><use href="#i-branch"/></svg>
-              <span class="ch-name">refactor-goal-…</span>
-              <svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg>
-            </button>
-          </div>
-
-          <!-- Popover 锚定在 chip 上方 -->
+        <div class="composer">
+          <!-- Popover 作为 composer-box 兄弟（锚定在 .composer，脱离 composer-box overflow:hidden） -->
           <div class="ds-popover">
             <span class="anno a" style="right:-12px; top:8px; transform:translateX(100%);">z-index 50 · Card-Elevated</span>
             <span class="anno a" style="left:-12px; top:8px; transform:translateX(-100%);">向上展开 · 锚定 chip 中心</span>
@@ -304,15 +298,33 @@
             </div>
           </div>
 
-          <div class="composer-area" data-placeholder="向 ZCode 提问…" contenteditable="true"></div>
-          <div class="composer-bar">
-            <button class="c-insert"><svg viewBox="0 0 16 16"><use href="#i-plus"/></svg></button>
-            <button class="perm"><svg viewBox="0 0 16 16"><use href="#i-shield"/></svg>完全访问<svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg></button>
-            <div class="bar-spacer"></div>
-            <button class="bar-sel"><span class="dot-o"></span>GLM-5.2<svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg></button>
-            <button class="bar-sel"><svg class="brain" viewBox="0 0 16 16"><use href="#i-brain"/></svg>最高<svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg></button>
-            <button class="send"><svg viewBox="0 0 16 16"><use href="#i-send"/></svg></button>
+          <div class="composer-box focus">
+          <!-- 顶部元信息行 -->
+          <div class="meta-row">
+            <button class="chip open">
+              <svg viewBox="0 0 16 16" style="color:var(--accent)"><use href="#i-folder"/></svg>
+              <span class="ch-name">refactor-goal-extension</span>
+              <svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg>
+            </button>
+            <div class="meta-sep"></div>
+            <button class="chip branch-chip">
+              <svg viewBox="0 0 16 16"><use href="#i-branch"/></svg>
+              <span class="ch-name">refactor-goal-…</span>
+              <svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg>
+            </button>
           </div>
+
+          <div class="composer-area" contenteditable="true" data-placeholder="描述你想让 AI 做什么，或 @ 引用、# 文件、/ 命令…"></div>
+          <div class="composer-bar">
+            <button class="c-insert" title="添加内容"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></button>
+            <span style="margin-left:auto"></span>
+            <button class="c-text ctx" title="上下文容量"><span class="num">0</span><span class="dot"></span><span>0%</span></button>
+            <button class="c-text model" title="模型">sonnet-4.5 <span class="chev">▾</span></button>
+            <button class="c-text think" data-lvl="max" title="思考等级">思考 最高 <span class="chev">▾</span></button>
+            <button class="c-send" disabled title="发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 14 0M13 6l6 6-6 6"/></svg></button>
+          </div>
+          </div>
+          <div class="composer-hint"><span class="kbd">⏎</span> 发送 · <span class="kbd">⇧⏎</span> 换行 · <span class="kbd">@</span> 引用 · <span class="kbd">#</span> 文件 · <span class="kbd">/</span> 命令</div>
         </div>
       </div>
     </div>

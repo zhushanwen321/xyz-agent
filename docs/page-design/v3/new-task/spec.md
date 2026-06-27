@@ -14,13 +14,14 @@
 | 1 | 落地空态（Greeting） | workspace 内 empty composer + 问候语 | 步骤 0 触发 | 步骤 2 / 3（用户主动） |
 | 2 | 选目录 | composer 顶部 directory chip 上方 popover | 点 directory chip | 选中 → 落回步骤 1；或「打开文件夹」→ 步骤 4a |
 | 3 | 选分支 | composer 顶部 branch chip 上方 popover | 点 branch chip | 选中 → 落回步骤 1；或「创建并检出新分支」→ 步骤 4b |
-| 4a | 系统目录选择器 | 居中 modal，模拟系统 file picker | 步骤 2 「打开文件夹」 | 选中 → 落回步骤 1 并更新 directory chip；取消 → 落回步骤 2 |
+| 4a | 打开文件夹 | <b>系统原生目录选择器</b>（Electron <code>dialog.showOpenDialog</code>，不自绘） | 步骤 2 「打开文件夹」 | 选中 → 落回步骤 1 并更新 directory chip；取消 → 落回步骤 2 |
 | 4b | 创建并检出新分支 | 居中 modal，表单式 | 步骤 3 「创建并检出新分支...」 | 创建 → 落回步骤 1 并更新 branch chip；取消 → 落回步骤 3 |
 
 **关键观察**：步骤 1 是「常态」，步骤 2 / 3 是「临时浮层」，步骤 4 是「深一层模态」。三者用 **3 种不同的层级**——这种分层是 v3 反复验证的「最短路径」原则：
 
 - **同层 popover**（步骤 2 / 3）：用户在 composer 内调整元信息，不打断主任务流。键盘 `Esc` / 点 chip 区域外即关闭，零副作用。
-- **居中 modal**（步骤 4a / 4b）：用户要做「不可逆选择」（创建新分支 / 选系统目录）才升级模态。模糊背景 + 居中卡片，强制聚焦。
+- **系统原生 dialog**（步骤 4a）：「打开文件夹」直接调 OS 原生目录选择器（<code>dialog.showOpenDialog</code>），<b>不自绘</b>——应用零干预，选中/导航/权限全交 OS。
+- **居中 modal**（步骤 4b）：用户要做「不可逆选择」（创建新分支）才升级模态。模糊背景 + 居中卡片，强制聚焦。
 - **落地空态**（步骤 1）：唯一「无前置交互」形态，所有后续动作都从这里派生。
 
 ## 2. 设计意图（为什么这么拆）
@@ -126,31 +127,21 @@ composer 顶部的 directory / branch chip 是「触发器」+「状态显示」
 - 确认条文案：`「refactor-goal-extension」有 2 个未提交更改，切走将保留为 stash / 留在工作区 · 切走 / 取消`
   - v1 选「留在工作区」（不自动 stash，git 自然行为，不主动制造用户没要求的副作用）
 
-### 3.4 步骤 4a · 系统目录选择器（draft-directory-picker §1）
+### 3.4 步骤 4a · 打开文件夹 · 系统原生目录选择器（draft-directory-picker §1）
 
 **触发**：步骤 2 选「打开文件夹」
-**形态**：居中 modal，宽 720px、高 520px，模糊背景
+**形态**：<b>操作系统原生目录选择器</b>（Electron <code>dialog.showOpenDialog({ properties: ['openDirectory'] })</code>），<b>应用不自绘 picker</b>
 
-**结构**：
-- 顶部 title bar：「选择工作区目录」+ 关闭 X
-- 顶部路径条：`/Users/zhushanwen/.../[父目录]` mono 路径 + breadcrumb 分段
-- 左侧边栏（170px）：收藏位置（Desktop / Documents / Downloads / Home / Workspace）+ Volumes
-- 右侧文件列表：列名 / 修改日期 / 类型 / 大小，**当前选中行 = Card-Active**
-- 底部：「取消」+「打开」（主操作，需选中一个目录才可点，禁用态 `opacity 0.4`）
+**为什么走系统原生而非自绘**：
+- 原生体验用户最熟悉（系统级收藏 / 搜索 / 快捷键开箱即用）
+- 免维护 mac / win / linux 三套 picker UI，且自绘永远不如原生
+- 文件权限由 OS 托管（沙盒授权 / UAC / 文件系统权限），应用不重复造轮子
 
-**键盘**：
-- `↑` / `↓` 列表导航
-- `Enter` 打开（目录 → 切到该目录显示子项；选定 → 关闭 modal 落回步骤 1）
-- `Esc` 取消
-- 在路径条可点击分段 breadcrumb 跳转
+**数据流**：点「打开文件夹」→ renderer 经 IPC 调 `dialog.showOpenDialog` → OS 弹原生 dialog → 返回 `{ canceled, filePaths }` → 未取消则 `filePaths[0]` 回灌 directory chip + 载入工作区；取消则落回 directory popover。
 
-**为什么是 modal 而非 OS 系统 dialog**：
-- v1 走 Electron `dialog.showOpenDialog`（原生 OS picker）——v0 截图原型是这个
-- v2 决定走**自绘 picker**——理由：
-  - 视觉一致性（OS dialog 跟冷蓝暗色主题断联）
-  - 跨平台一致（mac / win / linux picker 长得不一样，破坏体验）
-  - 未来可扩展（集成 workspace 历史 / 收藏 / 搜索）
-- 本 draft 是 v2 的设计稿，实际实现可走「自绘 picker」或「自绘 picker + native dialog 双模式」
+**键盘 / 权限**：完全跟随 OS（应用不定义）。mac NSOpenPanel / win IFileOpenDialog / linux GTK FileChooserDialog，行为由各自平台决定。
+
+**裁决 reversal**：v0 截图原型 + 早期 draft 曾走自绘 picker（理由：视觉一致性 / 跨平台一致）。现推翻——原生优先，自绘是维护负担且体验不如原生。
 
 ### 3.5 步骤 4b · 创建并检出新分支（draft-directory-picker §2）
 
@@ -182,7 +173,7 @@ composer 顶部的 directory / branch chip 是「触发器」+「状态显示」
 | 落地空态用户不点 chip 直接打字 | composer 正常工作，沿用上一会话的 directory / branch |
 | 选目录 popover 内用户点 chip 区域外 | popover 关闭，不改 chip 状态 |
 | 选分支 popover 内选到 dirty 分支 | 弹 inline 二次确认条（见 §3.3） |
-| 系统目录 picker 用户没选中就点「打开」 | 按钮 disabled（`opacity 0.4`） |
+| 系统原生 dialog 取消 | `result.canceled === true` → 落回 directory popover，chip 不变（应用零干预） |
 | 创建分支 modal 用户没填名就点「创建并切换」 | 按钮 disabled |
 | 创建分支 modal 用户填了已有分支名 | input 边框转 `--danger` + 下方「该分支已存在」红字（design-system §4 错误态） |
 | `Esc` 优先级冲突 | 模态内 `Esc` 关闭当前模态；composer `Esc` 清空输入；浮层 `Esc` 关闭浮层。三者互不冲突（同一时刻只有一层） |
@@ -195,7 +186,7 @@ composer 顶部的 directory / branch chip 是「触发器」+「状态显示」
 | 问候语字号 | v0 26px | v3 22px | v3 收一档，给 composer 让位（composer 是真正的工作区，greeting 是仪式） |
 | directory chip 选中态 | v0 直接在 chip 上画 ✓ | v3 选中态走 Card-Active（popover 内），chip 本身只显当前值 | chip 是触发器+状态显示二合一，✓ 在 popover 内即足够；chip 内画 ✓ 会让 chip 自身变成 Card-Active 风格但跟 popover 双重高亮打架 |
 | 创建分支按钮文案 | v0 「创建并切换」 | v3 「创建并切换」 | 保持——动词开头（design-system §9） |
-| 系统目录 picker | v0 走 OS 原生 | v3 自绘（mock） | 理由见 §3.4 |
+| 系统目录选择器 | v0 走 OS 原生 / draft 曾自绘 | v3 回归 <b>系统原生</b>（<code>dialog.showOpenDialog</code>），不自绘 | 理由见 §3.4：原生优先，自绘是维护负担 |
 | 路径显示 | v0 完整绝对路径 | v3 monospace 路径 + 截断（>30 字符省略前缀） | 长路径会撑破 chip，monospace 保证等宽视觉 |
 
 ## 6. 遗留待裁决

@@ -119,84 +119,35 @@
     border-radius:var(--radius-lg);box-shadow:var(--shadow-modal);z-index:201;
     display:flex;flex-direction:column;overflow:hidden}
 
-  /* ===== §1 系统目录选择器 · 720×520 ===== */
-  .picker{top:50%;left:50%;transform:translate(-50%,-50%);
-    width:720px;height:520px}
-  .picker-head{display:flex;align-items:center;gap:10px;padding:11px 14px;
-    border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0}
-  .picker-title{font-size:14px;font-weight:650;color:var(--fg);flex:1;min-width:0;
-    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .picker-title .pt-path{color:var(--subtle);font-weight:450;margin-left:6px;
-    font-family:var(--font-mono);font-size:11.5px}
-  .picker-close{display:grid;place-items:center;width:28px;height:28px;border:0;
-    border-radius:var(--radius-sm);background:transparent;color:var(--muted);cursor:pointer;flex-shrink:0}
-  .picker-close:hover{color:var(--fg);background:var(--surface-hover)}
-  .picker-close svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.6}
-
-  /* 路径条（breadcrumb） */
-  .picker-crumb{display:flex;align-items:center;gap:0;padding:8px 14px;
-    background:var(--bg-input);border-bottom:1px solid var(--border);flex-shrink:0;
-    overflow-x:auto;white-space:nowrap}
-  .picker-crumb::-webkit-scrollbar{height:0}
-  .picker-crumb .pc-seg{font:500 12px/1 var(--font-mono);color:var(--muted);
-    padding:4px 8px;border-radius:var(--radius-sm);cursor:pointer}
-  .picker-crumb .pc-seg:hover{background:var(--surface-hover);color:var(--fg)}
-  .picker-crumb .pc-seg.cur{color:var(--fg);background:var(--surface-2);cursor:default}
-  .picker-crumb .pc-sep{color:var(--subtle);font-size:10px;margin:0 1px}
-
-  /* body：左侧收藏 + 右侧文件列表 */
-  .picker-body{flex:1;display:flex;min-height:0}
-  .picker-side{width:170px;flex-shrink:0;background:var(--surface);
-    border-right:1px solid var(--border);padding:8px;overflow-y:auto}
-  .picker-side-title{font:500 10px/1 var(--font-mono);color:var(--subtle);
-    text-transform:uppercase;letter-spacing:0.08em;padding:8px 8px 4px}
-  .picker-side-i{display:flex;align-items:center;gap:9px;padding:6px 9px;
-    border-radius:var(--radius-sm);cursor:pointer;color:var(--muted);
-    font:500 12.5px/1 var(--font-sans);transition:background var(--duration-fast) var(--ease),color var(--duration-fast) var(--ease)}
-  .picker-side-i:hover{background:var(--surface-hover);color:var(--fg)}
-  .picker-side-i.sel{background:var(--surface-2);color:var(--fg);box-shadow:inset 0 0 0 1px var(--accent-ring)}
-  .picker-side-i svg{width:15px;height:15px;flex-shrink:0;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
-
-  .picker-main{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--bg)}
-  .picker-toolbar{display:flex;align-items:center;gap:6px;padding:6px 10px;
-    border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0}
-  .picker-tb-btn{width:24px;height:24px;border:0;background:transparent;border-radius:var(--radius-sm);
-    color:var(--muted);display:grid;place-items:center;cursor:pointer}
-  .picker-tb-btn:hover{background:var(--surface-hover);color:var(--fg)}
-  .picker-tb-btn svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
-  .picker-tb-search{margin-left:auto;display:flex;align-items:center;gap:6px;
-    background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);
-    padding:3px 8px;width:200px}
-  .picker-tb-search svg{width:12px;height:12px;color:var(--subtle);fill:none;stroke:currentColor;stroke-width:1.5}
-  .picker-tb-search input{flex:1;background:transparent;border:0;outline:0;
-    color:var(--fg);font:12px/1 var(--font-sans)}
-  .picker-tb-search input::placeholder{color:var(--subtle)}
-
-  /* 文件列表（表头 + 行） */
-  .picker-list{flex:1;overflow:auto;font-size:12.5px}
-  .picker-list::-webkit-scrollbar{width:8px;height:8px}
-  .picker-list::-webkit-scrollbar-thumb{background:var(--surface);border-radius:4px}
-  .pl-head{display:grid;grid-template-columns:1.6fr 0.9fr 0.6fr 0.5fr;
-    padding:5px 12px;background:var(--surface);border-bottom:1px solid var(--border);
-    font:500 10px/1 var(--font-mono);color:var(--subtle);
-    text-transform:uppercase;letter-spacing:0.06em;position:sticky;top:0;z-index:1}
-  .pl-head .ph-sort{display:inline-flex;align-items:center;gap:3px}
-  .pl-head .ph-sort svg{width:9px;height:9px;color:var(--accent)}
-  .pl-row{display:grid;grid-template-columns:1.6fr 0.9fr 0.6fr 0.5fr;
-    padding:5px 12px;align-items:center;cursor:pointer;
-    border-bottom:1px solid rgba(255,255,255,0.02);
-    transition:background var(--duration-fast) var(--ease)}
-  .pl-row:hover{background:var(--surface-hover)}
-  .pl-row.sel{background:var(--surface-2);box-shadow:inset 0 0 0 1px var(--accent-ring)}
-  .pl-row .pl-name{display:flex;align-items:center;gap:7px;color:var(--fg);font-weight:450;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .pl-row .pl-name svg{width:14px;height:14px;color:var(--muted);flex-shrink:0;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
-  .pl-row.dir .pl-name svg{color:var(--accent)}
-  .pl-row .pl-sub{color:var(--subtle);font:11px/1 var(--font-mono);font-weight:400}
-  .pl-row .pl-size{color:var(--subtle);font:11px/1 var(--font-mono);text-align:right;padding-right:8px}
-
-  /* footer */
-  .picker-foot{display:flex;align-items:center;gap:8px;padding:10px 14px;
-    border-top:1px solid var(--border);background:var(--surface);flex-shrink:0}
+  /* ===== §1 系统原生目录选择器说明（不自绘，调用 OS dialog） ===== */
+  .native-flow{display:flex;align-items:stretch;gap:10px;margin:16px 0}
+  .native-step{flex:1;background:var(--surface);border:1px solid var(--border);
+    border-radius:var(--radius);padding:13px 14px;display:flex;flex-direction:column;gap:7px}
+  .native-step .ns-num{font:600 10px/1 var(--font-mono);color:var(--accent);
+    background:var(--accent-soft);padding:4px 7px;border-radius:var(--radius-sm);align-self:flex-start;letter-spacing:0.04em}
+  .native-step .ns-title{font-size:13px;font-weight:600;color:var(--fg)}
+  .native-step .ns-desc{font:12px/1.5 var(--font-sans);color:var(--muted)}
+  .native-step .ns-desc code{font-size:11px}
+  .native-arrow{display:grid;place-items:center;color:var(--subtle);font-size:18px;flex-shrink:0}
+  /* OS 原生 UI 占位框（虚线，表示应用不渲染） */
+  .os-placeholder{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+    width:420px;border:1.5px dashed var(--border-strong);border-radius:var(--radius);
+    background:rgba(28,28,32,0.7);padding:26px 24px;text-align:center;z-index:201}
+  .os-placeholder .op-ic{width:40px;height:40px;margin:0 auto 12px;color:var(--subtle);
+    fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
+  .os-placeholder .op-title{font-size:14px;font-weight:600;color:var(--fg);margin-bottom:5px}
+  .os-placeholder .op-sub{font:12px/1.55 var(--font-sans);color:var(--muted)}
+  .os-placeholder .op-tag{display:inline-block;margin-top:12px;font:600 10px/1 var(--font-mono);
+    color:var(--warning);background:rgba(245,165,36,0.1);border:1px solid rgba(245,165,36,0.3);
+    padding:4px 8px;border-radius:var(--radius-sm);letter-spacing:0.04em}
+  /* IPC 代码块（静态展示） */
+  .code-block{background:var(--bg-input);border:1px solid var(--border);
+    border-radius:var(--radius);padding:14px 16px;margin:14px 0;
+    font:12px/1.7 var(--font-mono);color:var(--muted);overflow-x:auto;white-space:pre}
+  .code-block .ck{color:var(--reasoning)}
+  .code-block .cs{color:var(--success)}
+  .code-block .cc{color:var(--subtle)}
+  .code-block .cf{color:var(--accent)}
   .picker-foot .pf-hint{margin-right:auto;font:500 11px/1.4 var(--font-mono);color:var(--subtle)}
   .picker-foot .pf-hint b{color:var(--fg)}
   .btn{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;
@@ -277,25 +228,45 @@
   </defs>
 </svg>
 
-<h1>系统目录选择器 + 创建并检出分支 · modals</h1>
+<h1>创建并检出分支 · modal（目录选择走系统原生）</h1>
 <p class="lede">
-  「新建任务」流程的<b>第 4 步</b>——两个 <b>居中 modal</b>，分别处理「不可逆选择」。
-  §1 是 directory popover 「打开文件夹」触发的 <b>系统目录选择器</b>，§2 是 branch popover 「创建并检出新分支...」触发的 <b>创建分支表单</b>。
+  「新建任务」流程的<b>第 4 步</b>。<b>打开文件夹</b> 走 <b>操作系统原生目录选择器</b>（Electron <code>dialog.showOpenDialog</code>，不自绘，§1）；<b>创建并检出新分支</b> 是居中表单 modal（§2）。
 </p>
 <div class="meta">
-  <span>层级 <b>L1 · 全局 modal</b></span>
-  <span>触发 <b>directory popover §1 / branch popover §2</b></span>
-  <span>形态 <b>居中 · 模糊背景 · z-index 200</b></span>
-  <span>归属 <b>overlays 单元 · 全局 modal（不属任何 Region）</b></span>
+  <span>层级 <b>L1 · §1 OS 原生 / §2 全局 modal</b></span>
+  <span>触发 <b>directory popover「打开文件夹」 / branch popover「创建分支」</b></span>
+  <span>形态 <b>§1 OS dialog · §2 居中模糊 modal</b></span>
+  <span>归属 <b>overlays 单元</b></span>
   <span>token <b>zcode 冷蓝</b></span>
 </div>
 
-<h2><span class="num">§1</span>系统目录选择器 · modal（自绘 file picker）</h2>
+<h2><span class="num">§1</span>打开文件夹 · 系统原生目录选择器（不自绘）</h2>
 <p class="lede">
-  用户在 directory popover 点「打开文件夹」后唤起。<b>v2 决策：自绘 picker（不走 OS 原生 dialog）</b>——
-  理由：① 视觉一致性（OS dialog 跟冷蓝暗色主题断联）；② 跨平台一致（mac / win / linux picker 长得不一样）；
-  ③ 未来可扩展（集成 workspace 历史 / 收藏 / 搜索）。
+  用户在 directory popover 点「打开文件夹」后，<b>直接调用操作系统原生目录选择器</b>（Electron <code>dialog.showOpenDialog</code>）。
+  理由：① 原生体验用户最熟悉（系统级收藏 / 搜索 / 快捷键开箱即用）；② 免维护 mac / win / linux 三套 picker UI，且自绘永远不如原生；
+  ③ 文件权限由 OS 托管，应用不重复造轮子。
 </p>
+
+<!-- 触发流程示意（三步横向） -->
+<div class="native-flow">
+  <div class="native-step">
+    <span class="ns-num">① 触发</span>
+    <span class="ns-title">点「打开文件夹」</span>
+    <span class="ns-desc">directory popover 动作项 → renderer 经 IPC 调 <code>dialog.showOpenDialog</code></span>
+  </div>
+  <div class="native-arrow">→</div>
+  <div class="native-step">
+    <span class="ns-num">② OS 原生</span>
+    <span class="ns-title">系统目录选择器</span>
+    <span class="ns-desc">mac NSOpenPanel / win IFileOpenDialog / linux GTK · <b>应用不渲染此 UI</b>，全权交 OS</span>
+  </div>
+  <div class="native-arrow">→</div>
+  <div class="native-step">
+    <span class="ns-num">③ 回灌</span>
+    <span class="ns-title">选中目录回 chip</span>
+    <span class="ns-desc">返回 <code>filePaths[0]</code> → 更新 directory chip + 重新载入工作区</span>
+  </div>
+</div>
 
 <div class="window-mock">
   <div class="traffic-light"><span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span></div>
@@ -331,117 +302,13 @@
         </div>
         <!-- backdrop 模糊背景 -->
         <div class="backdrop"></div>
-        <!-- 模态本体 -->
-        <div class="modal picker">
-          <span class="anno a" style="right:-12px; top:14px; transform:translateX(100%);">modal · z-index 201</span>
-          <span class="anno m" style="left:-12px; top:14px; transform:translateX(-100%);">自绘 picker · v2 决策</span>
-
-          <!-- 头部 -->
-          <div class="picker-head">
-            <div class="picker-title">
-              选择工作区目录
-              <span class="pt-path">/Users/zhushanwen/Code/xyz-agent-workspace</span>
-            </div>
-            <button class="picker-close" title="关闭（Esc）"><svg viewBox="0 0 16 16"><use href="#i-x"/></svg></button>
-          </div>
-
-          <!-- 路径条（breadcrumb） -->
-          <div class="picker-crumb">
-            <span class="pc-seg cur">xyz-agent-workspace</span>
-          </div>
-
-          <!-- body：左侧收藏 + 右侧文件列表 -->
-          <div class="picker-body">
-            <div class="picker-side">
-              <div class="picker-side-title">收藏位置</div>
-              <div class="picker-side-i"><svg viewBox="0 0 16 16"><use href="#i-home"/></svg>家目录</div>
-              <div class="picker-side-i"><svg viewBox="0 0 16 16"><use href="#i-desktop"/></svg>桌面</div>
-              <div class="picker-side-i"><svg viewBox="0 0 16 16"><use href="#i-doc"/></svg>文稿</div>
-              <div class="picker-side-i"><svg viewBox="0 0 16 16"><use href="#i-download"/></svg>下载</div>
-              <div class="picker-side-i sel"><svg viewBox="0 0 16 16"><use href="#i-cloud"/></svg>工作区</div>
-
-              <div class="picker-side-title" style="margin-top:8px">位置</div>
-              <div class="picker-side-i"><svg viewBox="0 0 16 16"><use href="#i-disk"/></svg>本地磁盘</div>
-              <div class="picker-side-i"><svg viewBox="0 0 16 16"><use href="#i-cloud"/></svg>iCloud Drive</div>
-            </div>
-
-            <div class="picker-main">
-              <div class="picker-toolbar">
-                <button class="picker-tb-btn" title="上一级"><svg viewBox="0 0 16 16"><use href="#i-up"/></svg></button>
-                <button class="picker-tb-btn" title="切换视图"><svg viewBox="0 0 16 16"><use href="#i-views"/></svg></button>
-                <div class="picker-tb-search">
-                  <svg viewBox="0 0 16 16"><use href="#i-search"/></svg>
-                  <input value="" placeholder="过滤文件名…" />
-                </div>
-              </div>
-
-              <div class="picker-list">
-                <div class="pl-head">
-                  <span class="ph-sort">名称 <svg viewBox="0 0 16 16"><path d="M4 11l4-4 4 4"/></svg></span>
-                  <span>修改日期</span>
-                  <span>类型</span>
-                  <span style="text-align:right;padding-right:8px">大小</span>
-                </div>
-                <!-- 目录行（用 folder icon） -->
-                <div class="pl-row dir">
-                  <span class="pl-name"><svg viewBox="0 0 16 16"><use href="#i-folder"/></svg>.bare</span>
-                  <span class="pl-sub">2026-06-11</span>
-                  <span class="pl-sub">文件夹</span>
-                  <span class="pl-size">—</span>
-                </div>
-                <div class="pl-row dir sel">
-                  <span class="pl-name"><svg viewBox="0 0 16 16"><use href="#i-folder"/></svg>main</span>
-                  <span class="pl-sub">2026-06-23</span>
-                  <span class="pl-sub">文件夹</span>
-                  <span class="pl-size">—</span>
-                </div>
-                <div class="pl-row dir">
-                  <span class="pl-name"><svg viewBox="0 0 16 16"><use href="#i-folder"/></svg>refactor-arch-render-runtime</span>
-                  <span class="pl-sub">2026-06-24</span>
-                  <span class="pl-sub">文件夹</span>
-                  <span class="pl-size">—</span>
-                </div>
-                <div class="pl-row dir">
-                  <span class="pl-name"><svg viewBox="0 0 16 16"><use href="#i-folder"/></svg>refactor-coding-workflow-design</span>
-                  <span class="pl-sub">2026-06-19</span>
-                  <span class="pl-sub">文件夹</span>
-                  <span class="pl-size">—</span>
-                </div>
-                <div class="pl-row dir">
-                  <span class="pl-name"><svg viewBox="0 0 16 16"><use href="#i-folder"/></svg>refactor-goal-extension</span>
-                  <span class="pl-sub">2026-06-22</span>
-                  <span class="pl-sub">文件夹</span>
-                  <span class="pl-size">—</span>
-                </div>
-                <div class="pl-row dir">
-                  <span class="pl-name"><svg viewBox="0 0 16 16"><use href="#i-folder"/></svg>refactor-architecture-design</span>
-                  <span class="pl-sub">2026-06-15</span>
-                  <span class="pl-sub">文件夹</span>
-                  <span class="pl-size">—</span>
-                </div>
-                <!-- 隐藏文件 -->
-                <div class="pl-row dir" style="opacity:0.55">
-                  <span class="pl-name"><svg viewBox="0 0 16 16"><use href="#i-folder"/></svg>.electron-dist-cache</span>
-                  <span class="pl-sub">2026-06-18</span>
-                  <span class="pl-sub">文件夹</span>
-                  <span class="pl-size">—</span>
-                </div>
-                <div class="pl-row dir" style="opacity:0.55">
-                  <span class="pl-name"><svg viewBox="0 0 16 16"><use href="#i-folder"/></svg>.pi-binary-cache</span>
-                  <span class="pl-sub">2026-06-18</span>
-                  <span class="pl-sub">文件夹</span>
-                  <span class="pl-size">—</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- footer -->
-          <div class="picker-foot">
-            <div class="pf-hint">选中 <b>main</b> · 该目录含 git 仓库</div>
-            <button class="btn">取消</button>
-            <button class="btn primary">打开</button>
-          </div>
+        <!-- OS 原生目录选择器占位（应用不渲染此 UI，全权交 OS） -->
+        <div class="os-placeholder">
+          <svg class="op-ic" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M3 13l5-3 4 3 3-2 6 4"/></svg>
+          <div class="op-title">系统目录选择器</div>
+          <div class="op-sub">此处为操作系统原生 UI<br/>mac NSOpenPanel · win IFileOpenDialog · linux GTK</div>
+          <span class="op-tag">应用不渲染 · OS 托管</span>
+          <span class="anno a" style="left:50%; bottom:-30px; transform:translateX(-50%);">z-index 由 OS 决定 · 浮于应用窗口之上</span>
         </div>
       </div>
     </div>
@@ -450,23 +317,29 @@
 
 <div class="note">
   <b>关键裁决</b>：
-  ① <b>头部</b> = 标题 + 当前路径（mono 字 + subtle 色），<b>不画完整路径面包屑</b>，避免顶部与「路径条」重复；
-  ② <b>路径条</b> = 当前目录的 <b>可点击面包屑</b>，每段 mono 字 + subtle 色，hover 出底色，<b>当前段不画箭头不画链接</b>；
-  ③ <b>左侧收藏</b> 选中态走 <b>Card-Active inset ring</b>（同 sidebar session-item / search modal 选中态同源）；
-  ④ <b>右侧文件列表</b> 选中行走 Card-Active；隐藏文件（<code>.</code> 开头）<code>opacity 0.55</code> 退后（不画斜体，斜体在 mono 环境难读）；
-  ⑤ <b>排序</b> 仅「名称」列带箭头指示当前排序列，其他列无箭头——避免视觉噪声；
-  ⑥ <b>底部</b> 取消（secondary）+ 打开（primary，accent 实色），「打开」在没选中目录时 <code>disabled</code>（<code>opacity 0.4</code> + <code>not-allowed</code>）。
+  ① <b>不自绘 picker</b>——三平台原生 picker 已足够好，自绘只会增加维护成本且永远不如原生；
+  ② <b>应用零干预</b>——选中 / 取消 / 导航 / 权限全部由 OS 处理，renderer 只拿 <code>filePaths[0]</code> 结果；
+  ③ <b>无键盘契约章节</b>——键盘行为完全跟随 OS（本应用不定义）；
+  ④ <b>取消处理</b>：<code>result.canceled === true</code> 时落回 directory popover，chip 不变。
 </div>
 
-<h3>§1.1 键盘契约（系统目录选择器）</h3>
+<h3>§1.1 IPC 调用（main 进程 · 经 preload 暴露）</h3>
+<div class="code-block"><span class="cc">// main：响应 renderer 的「打开文件夹」IPC</span>
+<span class="ck">const</span> result = <span class="ck">await</span> dialog.<span class="cf">showOpenDialog</span>({
+  <span class="cf">properties</span>: [<span class="cs">'openDirectory'</span>],
+  <span class="cf">defaultPath</span>: lastDirectory,  <span class="cc">// 默认起始位置（上次目录 / cwd）</span>
+})
+<span class="ck">if</span> (!result.canceled) {
+  <span class="ck">const</span> dir = result.filePaths[<span class="cs">0</span>]  <span class="cc">// → 回灌 directory chip + 载入工作区</span>
+}</div>
+
+<h3>§1.2 平台行为（OS 托管，应用不干预）</h3>
 <table class="flow-table">
-  <thead><tr><th>键</th><th>行为</th></tr></thead>
+  <thead><tr><th>平台</th><th>原生组件</th><th>键盘 / 收藏 / 搜索</th><th>权限</th></tr></thead>
   <tbody>
-    <tr><td><code>↑</code> <code>↓</code></td><td>列表上下移动（扁平化，跨目录 + 隐藏文件）</td></tr>
-    <tr><td><code>Enter</code></td><td>目录 → 进入子目录；选定 → 关闭 modal 落回 landing</td></tr>
-    <tr><td><code>Backspace</code></td><td>路径条 <b>回退一级</b>（同 OS picker 行为）</td></tr>
-    <tr><td><code>Esc</code></td><td>取消，关闭 modal</td></tr>
-    <tr><td>路径条点击</td><td>跳到该层级</td></tr>
+    <tr><td>macOS</td><td>NSOpenPanel</td><td>系统标准（<code>⌘↑</code> 上级 / 侧栏收藏 / 搜索框）</td><td>沙盒需「文件和文件夹」授权</td></tr>
+    <tr><td>Windows</td><td>IFileOpenDialog</td><td>系统标准（<code>Alt+↑</code> / 快速访问 / 搜索）</td><td>UAC（受保护目录）</td></tr>
+    <tr><td>Linux</td><td>GTK FileChooserDialog</td><td>桌面环境决定（GNOME / KDE）</td><td>文件系统权限</td></tr>
   </tbody>
 </table>
 
@@ -638,7 +511,8 @@
   <tbody>
     <tr><td>workspace / sidebar / composer</td><td>常态</td><td>auto</td><td>无</td><td>—</td></tr>
     <tr><td>directory popover / branch popover</td><td>局部浮层</td><td>50</td><td>无（<b>不模糊</b>）</td><td>composer 保留 focus</td></tr>
-    <tr><td>系统目录 picker / 创建分支 modal</td><td>居中 modal</td><td>201（>popover）</td><td><b>有 · 模糊背景</b></td><td>落回上一 popover / landing</td></tr>
+    <tr><td>系统原生目录选择器</td><td>OS 原生 dialog</td><td>OS 层（浮于应用之上）</td><td>无（OS 接管）</td><td>落回 directory popover</td></tr>
+    <tr><td>创建分支 modal</td><td>居中 modal</td><td>201（>popover）</td><td><b>有 · 模糊背景</b></td><td>落回 branch popover / landing</td></tr>
     <tr><td>系统 toast</td><td>短暂反馈</td><td>300（>modal）</td><td>无</td><td>自动消失</td></tr>
   </tbody>
 </table>
@@ -652,13 +526,12 @@
 <ul style="font-size:13px;color:var(--muted);line-height:1.85;padding-left:18px">
   <li><b>backdrop</b>：<code>rgba(7,7,9,0.55)</code> + <code>backdrop-filter:blur(10px)</code>，与 <code>settings/draft-settings-shell.html</code> 同源；点击 backdrop 关闭 modal（与 Esc 等价）。</li>
   <li><b>modal 阴影</b>：<code>box-shadow: 0 0 0 1px rgba(0,0,0,0.3), 0 24px 70px rgba(0,0,0,0.55)</code>——描边 + 浮起阴影，与 Card-Elevated 手法一致。</li>
-  <li><b>系统目录 picker 实现</b>：v2 自绘 = Electron <code>dialog.showOpenDialog</code> fallback + 内部 file list state（<code>fs.readdir</code> 懒加载）。<b>macOS 隐私权限</b>：选 <code>~/Library/Mobile Documents/</code> 之类需先在系统设置授权「文件和文件夹」。</li>
-  <li><b>picker 列表行高</b>：<code>5px 12px</code> padding → 行高约 24px（与 sidebar session-item 同高），保持列表密度一致。</li>
-  <li><b>排序箭头</b>：仅当前排序列画向下箭头，其他列不画——避免视觉噪声。</li>
+  <li><b>系统目录选择器</b>：Electron <code>dialog.showOpenDialog({ properties: ['openDirectory'] })</code>，<b>不自绘</b>。返回 <code>{ canceled, filePaths }</code>，<code>canceled</code> 时落回 directory popover。</li>
+  <li><b>macOS 隐私权限</b>：选 <code>~/Library/Mobile Documents/</code> 等受保护位置，系统会弹授权提示（应用不预处理，交给 OS）。</li>
   <li><b>创建分支 IPC</b>：renderer → runtime → <code>git checkout -b &lt;name&gt;</code>，runtime 回 success/fail，失败时 input 转 has-error + 错误文案（与已有错误态同源）。</li>
   <li><b>提交 spinner</b>：用 <code>border-top-color:#fff</code> 配合父按钮的 accent 底，<b>无需</b>额外色 token；动画 <code>0.8s linear infinite</code>。</li>
   <li><b>无障碍</b>：两个 modal 都 <code>role="dialog"</code> + <code>aria-modal="true"</code>；打开时 trap focus 在 modal 内，关闭后焦点还给触发元素（popover chip）。</li>
-  <li><b>v1 范围说明</b>：选目录 picker 不实现「创建新文件夹」动作（避免 v1 范围爆炸），只走「打开已有目录」单动作；创建分支只支持基于 HEAD，<b>不接</b> git ref picker / tag / commit SHA。</li>
+  <li><b>v1 范围说明</b>：创建分支只支持基于 HEAD，<b>不接</b> git ref picker / tag / commit SHA。目录选择完全委托 OS 原生（含新建文件夹等系统自带能力）。</li>
 </ul>
 
 </body>

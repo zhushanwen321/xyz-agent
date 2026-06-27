@@ -10,6 +10,8 @@
     --bg:#0d0d0f; --surface:#151519; --surface-2:#1b1b20; --surface-hover:#1f1f26;
     --bg-input:#101013; --bg-elevated:#1c1c20;
     --fg:#f0f0f5; --muted:#8a8a95; --subtle:#5a5a65;
+    --text-primary:#e8e8ea; --text-secondary:#8a8a95; --text-tertiary:#5a5a65;
+    --bg-hover:#232328;
     --border:rgba(255,255,255,0.06); --border-strong:rgba(255,255,255,0.12);
     --accent:#4f8ef7; --accent-hover:#6ba3ff; --accent-soft:rgba(79,142,247,0.12);
     --accent-ring:rgba(79,142,247,0.45);
@@ -107,71 +109,77 @@
   .greeting{font-size:22px;font-weight:650;letter-spacing:-0.01em;color:var(--fg);
     margin:0 0 28px;text-align:center;position:relative;z-index:1}
 
-  /* composer 卡片 */
-  .composer{width:100%;max-width:720px;position:relative;z-index:1;
+  /* composer 容器（landing 居中卡片；composer-box 承载背景/边框，与 panel/draft-composer-states.html 同构） */
+  .composer{width:100%;max-width:720px;position:relative;z-index:1;padding:10px 0 0}
+  .composer-box{
     background:var(--bg-input);border:1px solid var(--border);
-    border-radius:var(--radius-lg);padding:0;overflow:hidden;
-    transition:border-color var(--duration) var(--ease),box-shadow var(--duration) var(--ease)}
-  .composer.focus{border-color:var(--border-strong);box-shadow:0 0 0 3px rgba(255,255,255,0.04)}
+    border-radius:var(--radius-lg);position:relative;overflow:hidden;
+    transition:border-color var(--duration) var(--ease),box-shadow var(--duration) var(--ease);
+  }
+  /* 普通聚焦：中性 ring，不染 accent——accent 蓝专属 steer 信号 */
+  .composer-box.focus{border-color:var(--border-strong);box-shadow:0 0 0 2px rgba(255,255,255,0.04)}
 
-  /* 顶部元信息行：directory chip + branch chip */
+  /* 顶部元信息行：directory chip + branch chip（landing 新增组件；点开走步骤 2/3） */
   .meta-row{display:flex;align-items:center;padding:10px 10px 0;gap:0}
   .chip{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 9px;
     background:transparent;border:1px solid transparent;border-radius:var(--radius);
-    color:var(--muted);font:500 12px/1 var(--font-sans);cursor:pointer;
+    color:var(--text-secondary);font:500 12px/1 var(--font-sans);cursor:pointer;
     max-width:200px;transition:background var(--duration-fast) var(--ease),color var(--duration-fast) var(--ease)}
-  .chip:hover{background:var(--surface-hover);color:var(--fg)}
-  .chip.open{background:var(--surface-2);color:var(--fg);box-shadow:inset 0 0 0 1px var(--accent-ring)}
+  .chip:hover{background:var(--bg-hover);color:var(--text-primary)}
+  .chip.open{background:var(--surface-2);color:var(--text-primary);box-shadow:inset 0 0 0 1px var(--accent-ring)}
   .chip svg{width:14px;height:14px;flex-shrink:0;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
   .chip .ch-name{max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:550}
-  .chip .ch-chev{color:var(--subtle);flex-shrink:0;width:11px;height:11px}
+  .chip .ch-chev{color:var(--text-tertiary);flex-shrink:0;width:11px;height:11px}
   .chip.branch-chip .ch-ic{color:var(--accent)}
   .meta-sep{width:1px;height:18px;background:var(--border);margin:0 6px;flex-shrink:0}
 
-  /* 主输入区（contenteditable placeholder） */
-  .composer-area{min-height:80px;max-height:240px;width:100%;
-    border:0;outline:0;background:transparent;color:var(--fg);
-    font:14px/1.55 var(--font-sans);padding:14px 16px 8px;white-space:pre-wrap;word-break:break-word}
-  .composer-area[data-placeholder]:empty:before{content:attr(data-placeholder);
-    color:var(--subtle);pointer-events:none;white-space:pre-wrap}
-  /* 多色 slash 提示（v0 是统一灰，v3 按 token 分色） */
-  .tok-acc{color:var(--accent);font-weight:550}
-  .tok-cmd{color:var(--reasoning);font-weight:550}
-  .tok-skl{color:var(--success);font-weight:550}
-  .tok-ask{color:var(--info);font-weight:550}
+  /* 输入区（与 panel composer 同构：contenteditable + :empty 显 placeholder） */
+  .composer-area{
+    width:100%;min-height:40px;max-height:120px;overflow-y:auto;
+    border:0;outline:0;background:transparent;
+    color:var(--text-primary);font:13px/1.55 var(--font-sans);
+    padding:11px 13px 4px;white-space:pre-wrap;word-break:break-word;
+  }
+  .composer-area[contenteditable][data-placeholder]:empty:before{
+    content:attr(data-placeholder);color:var(--text-tertiary);pointer-events:none;
+  }
 
-  /* 底部工具条 */
-  .composer-bar{display:flex;align-items:center;gap:2px;padding:0 8px 8px 10px}
-  .c-insert{width:28px;height:28px;border-radius:var(--radius-sm);border:0;background:transparent;
-    color:var(--subtle);cursor:pointer;display:grid;place-items:center;
-    transition:all var(--duration-fast) var(--ease)}
-  .c-insert:hover{background:var(--surface-hover);color:var(--muted)}
-  .c-insert svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
-  /* 权限下拉（完全访问，warning 橙） */
-  .perm{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 9px;
-    background:transparent;border:0;border-radius:var(--radius-sm);
-    color:var(--warning);font:500 12px/1 var(--font-sans);cursor:pointer;
-    transition:background var(--duration-fast) var(--ease)}
-  .perm:hover{background:var(--surface-hover)}
-  .perm svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
-  .perm .ch-chev{color:var(--warning);width:11px;height:11px;opacity:0.7}
-  .bar-spacer{flex:1}
-  .bar-sel{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 9px;
-    background:transparent;border:0;border-radius:var(--radius-sm);
-    color:var(--muted);font:500 12px/1 var(--font-sans);cursor:pointer;
-    transition:background var(--duration-fast) var(--ease),color var(--duration-fast) var(--ease)}
-  .bar-sel:hover{background:var(--surface-hover);color:var(--fg)}
-  .bar-sel .dot-o{width:6px;height:6px;border-radius:50%;background:var(--muted)}
-  .bar-sel .brain{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;color:var(--muted)}
-  .bar-sel .ch-chev{color:var(--subtle);width:11px;height:11px}
-  /* 发送按钮 */
-  .send{width:32px;height:32px;border:0;background:var(--surface-2);
-    border-radius:var(--radius);color:var(--muted);cursor:pointer;display:grid;place-items:center;
-    transition:background var(--duration-fast) var(--ease),color var(--duration-fast) var(--ease)}
-  .send:hover{background:var(--surface-hover);color:var(--fg)}
-  .send.ready{background:var(--accent);color:#fff}
-  .send.ready:hover{background:var(--accent-hover)}
-  .send svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+  /* 工具条：无强分隔线，留白呼吸（同 panel composer §1） */
+  .composer-bar{display:flex;align-items:center;gap:2px;padding:0 8px 8px 10px;flex-wrap:nowrap}
+  /* + 添加（左锚定） */
+  .c-insert{
+    width:28px;height:28px;border-radius:var(--radius-sm);border:0;background:transparent;
+    color:var(--text-tertiary);cursor:pointer;display:grid;place-items:center;
+    transition:all var(--duration) var(--ease);flex-shrink:0;
+  }
+  .c-insert:hover{background:var(--bg-hover);color:var(--text-secondary)}
+  .c-insert svg{width:16px;height:16px}
+  /* 右锚定区：上下文/模型/思考，无边框纯文字，与背景融合 */
+  .c-text{
+    font:500 11.5px/1 var(--font-sans);color:var(--text-tertiary);
+    background:transparent;border:0;padding:6px 8px;border-radius:var(--radius-sm);
+    cursor:pointer;display:inline-flex;align-items:center;gap:5px;
+    transition:all var(--duration) var(--ease);flex-shrink:0;letter-spacing:0.005em;
+  }
+  .c-text:hover{background:var(--bg-hover);color:var(--text-secondary)}
+  .c-text .chev{color:var(--text-tertiary);font-size:9px;margin-left:1px;transition:transform var(--duration) var(--ease)}
+  .c-text .num{font-variant-numeric:tabular-nums}
+  .c-text .dot{width:3px;height:3px;border-radius:50%;background:var(--text-tertiary);opacity:0.5}
+  /* 思考按钮：max 级实色紫块 + 外发光（同 panel composer） */
+  .c-text.think[data-lvl="max"]{color:#fff;background:rgba(167,139,250,0.85);box-shadow:0 0 12px rgba(167,139,250,0.4)}
+  /* 发送（最右，唯一实色） */
+  .c-send{
+    margin-left:6px;width:30px;height:30px;border-radius:var(--radius);
+    border:0;background:var(--accent);color:#fff;cursor:pointer;
+    display:grid;place-items:center;flex-shrink:0;
+    transition:background var(--duration) var(--ease);
+  }
+  .c-send:hover{background:var(--accent-hover)}
+  .c-send svg{width:15px;height:15px}
+  .c-send:disabled{background:transparent;color:var(--text-tertiary);cursor:default;opacity:0.5}
+  /* 快捷键提示行（panel composer 同源） */
+  .composer-hint{font:10px/1.3 var(--font-mono);color:var(--text-tertiary);padding:6px 4px 0}
+  .composer-hint .kbd{background:var(--surface-2);border:1px solid var(--border);padding:1px 4px;border-radius:3px}
 
   /* 元信息行 tag（与 sidebar/overlays 一致） */
   .label-pill{display:inline-flex;align-items:center;gap:5px;font:500 10px/1 var(--font-mono);
@@ -219,7 +227,8 @@
 <p class="lede">
   触发「新建任务」后 workspace 内的<b>空态</b>：问候语 + zcode 浅水印 + 居中 composer。
   composer 顶部嵌 <b>directory chip</b> + <b>branch chip</b> 两个元信息触发器（点开分别对应
-  <code>draft-directory-select.html</code> / <code>draft-branch-select.html</code>），底部走常规工具条。
+  <code>draft-directory-select.html</code> / <code>draft-branch-select.html</code>），composer 本体与
+  <code>panel/draft-composer-states.html</code> <b>同构</b>（同 <code>composer-box</code> 容器、同工具条右对齐、同快捷键 hint），仅多顶部 chip 行。
 </p>
 <div class="meta">
   <span>层级 <b>L1 流程 · 步骤 1 落地空态</b></span>
@@ -274,43 +283,40 @@
         <span class="anno a" style="left:50%; top:18%; transform:translateX(-50%);">watermark · opacity 0.045 · 仅装饰</span>
         <h2 class="greeting">上午好呀，有什么想让我帮忙的吗</h2>
 
-        <!-- Composer 卡片 -->
-        <div class="composer focus">
-          <span class="anno a" style="left:50%; top:-22px; transform:translateX(-50%);">composer · bg-input + border + radius-lg · max-width 720px</span>
-          <!-- 顶部元信息行 -->
-          <div class="meta-row">
-            <button class="chip open" title="切换目录">
-              <svg viewBox="0 0 16 16" style="color:var(--accent)"><use href="#i-folder"/></svg>
-              <span class="ch-name">refactor-goal-extension</span>
-              <svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg>
-            </button>
-            <div class="meta-sep"></div>
-            <button class="chip branch-chip" title="切换分支">
-              <svg viewBox="0 0 16 16"><use href="#i-branch"/></svg>
-              <span class="ch-name">refactor-goal-…</span>
-              <svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg>
-            </button>
-            <span class="anno a" style="right:8px; top:8px;">点开 → 步骤 2 / 3（draft-directory-select / draft-branch-select）</span>
-          </div>
+        <!-- Composer 卡片（与 panel/draft-composer-states.html 同构，仅顶部多 directory/branch chip） -->
+        <div class="composer">
+          <span class="anno a" style="left:50%; top:-22px; transform:translateX(-50%);">composer · 与 panel composer 同构 · 顶部多 directory/branch chip</span>
+          <div class="composer-box focus">
+            <!-- 顶部元信息行：directory chip + branch chip（landing 新增组件） -->
+            <div class="meta-row">
+              <button class="chip open" title="切换目录">
+                <svg viewBox="0 0 16 16" style="color:var(--accent)"><use href="#i-folder"/></svg>
+                <span class="ch-name">refactor-goal-extension</span>
+                <svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg>
+              </button>
+              <div class="meta-sep"></div>
+              <button class="chip branch-chip" title="切换分支">
+                <svg viewBox="0 0 16 16"><use href="#i-branch"/></svg>
+                <span class="ch-name">refactor-goal-…</span>
+                <svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg>
+              </button>
+              <span class="anno a" style="right:8px; top:8px;">点开 → 步骤 2 / 3（draft-directory-select / draft-branch-select）</span>
+            </div>
 
-          <!-- 主输入区 -->
-          <div class="composer-area" data-placeholder="向 ZCode 提问，输入 <tk>@</tk> 添加文件，<tk>/</tk> 使用命令，<tk>$</tk> 使用技能，<tk>#</tk> 关联对话" contenteditable="true">
-向 <span class="tok-acc">@</span>Code 提问，输入 <span class="tok-acc">@</span> 添加文件，<span class="tok-cmd">/</span> 使用命令，<span class="tok-skl">$</span> 使用技能，<span class="tok-ask">#</span> 关联对话
-          </div>
+            <!-- 输入区（空态显 placeholder；与 panel composer 同一 contenteditable 原语） -->
+            <div class="composer-area" contenteditable="true" data-placeholder="描述你想让 AI 做什么，或 @ 引用、# 文件、/ 命令…"></div>
 
-          <!-- 底部工具条 -->
-          <div class="composer-bar">
-            <button class="c-insert" title="添加文件/资源"><svg viewBox="0 0 16 16"><use href="#i-plus"/></svg></button>
-            <button class="perm" title="权限范围">
-              <svg viewBox="0 0 16 16"><use href="#i-shield"/></svg>
-              完全访问
-              <svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg>
-            </button>
-            <div class="bar-spacer"></div>
-            <button class="bar-sel" title="模型"><span class="dot-o"></span>GLM-5.2<svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg></button>
-            <button class="bar-sel" title="思考等级"><svg class="brain" viewBox="0 0 16 16"><use href="#i-brain"/></svg>最高<svg class="ch-chev" viewBox="0 0 16 16"><use href="#i-chev"/></svg></button>
-            <button class="send" title="发送（Enter）"><svg viewBox="0 0 16 16"><use href="#i-send"/></svg></button>
+            <!-- 工具条：左 + 添加，右对齐 上下文/模型/思考/发送（与 panel composer §1 一致） -->
+            <div class="composer-bar">
+              <button class="c-insert" title="添加内容（附件 / @ 引用 / 命令）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></button>
+              <span style="margin-left:auto"></span>
+              <button class="c-text ctx" title="上下文容量"><span class="num">0</span><span class="dot"></span><span>0%</span></button>
+              <button class="c-text model" title="模型">sonnet-4.5 <span class="chev">▾</span></button>
+              <button class="c-text think" data-lvl="max" title="思考等级">思考 最高 <span class="chev">▾</span></button>
+              <button class="c-send" disabled title="发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 14 0M13 6l6 6-6 6"/></svg></button>
+            </div>
           </div>
+          <div class="composer-hint"><span class="kbd">⏎</span> 发送 · <span class="kbd">⇧⏎</span> 换行 · <span class="kbd">@</span> 引用 · <span class="kbd">#</span> 文件 · <span class="kbd">/</span> 命令</div>
         </div>
       </div>
     </div>
@@ -394,10 +400,10 @@
 <h2><span class="num">§5</span>实现要点</h2>
 <ul style="font-size:13px;color:var(--muted);line-height:1.85;padding-left:18px">
   <li><b>watermark</b>：用 <code>-webkit-text-stroke</code> 描边 + <code>color:transparent</code>，低 opacity 0.045。比 SVG 轻、不影响 a11y（<code>pointer-events:none</code>）。</li>
-  <li><b>composer-area</b>：<code>contenteditable</code> + <code>min-height:80px</code> + <code>max-height:240px</code> 自动滚动，placeholder 用 <code>:empty:before</code> 注入多色 HTML（<code>&lt;span class="tok-acc"&gt;@&lt;/span&gt;</code> 等）。</li>
-  <li><b>slash-token</b>：与 <code>panel/draft-composer-states.html</code> §3.1 同源，<b>共用</b> <code>.slash-token</code> 类，<b>不另造</b>。</li>
+  <li><b>composer-area</b>：<code>contenteditable</code> + <code>min-height:40px</code> + <code>max-height:120px</code> 自动滚动，placeholder 用 <code>:empty:before</code> 注入纯文字（文案与 panel composer 一致：<code>描述你想让 AI 做什么，或 @ 引用、# 文件、/ 命令…</code>）。</li>
+  <li><b>工具条</b>：<b>左</b> <code>c-insert</code>（+ 添加）；<b>右对齐</b> 上下文容量 <code>c-text.ctx</code> / 模型 <code>c-text.model</code> / 思考 <code>c-text.think</code> / 发送 <code>c-send</code>——三者<b>无边框、透明底、纯文字</b>，hover 才浮 <code>--bg-hover</code>；发送是唯一实色。与 panel composer §1 <b>共用同类名</b>，不另造。</li>
+  <li><b>slash-token</b>：与 <code>panel/draft-composer-states.html</code> §2e 同源，<b>共用</b> <code>.slash-token</code> 类，<b>不另造</b>。</li>
   <li><b>chip 选中态</b>：用 <code>.open</code> 加 <code>inset 0 0 0 1px var(--accent-ring)</code>，与 sidebar / search modal 选中态同源，<b>不画左色条</b>（design-system §2 反模式）。</li>
-  <li><b>权限下拉</b>：<code>--warning</code> 色 + shield 图标，<b>不抢</b>主色（accent 蓝）。橙 + shield 的语义是「警示但当前授权足够」，与 danger 红（出错）严格区分。</li>
   <li><b>窗口 <code>data-fullscreen</code></b>：监听 Electron <code>enter/leave-full-screen</code> 切换属性，traffic-light opacity 与 app-nav left 同步 <b>320ms</b> 平移（<code>--duration-slow</code>），参 <code>shell/spec.md</code> §二。</li>
   <li><b>traffic light 安全区</b>：<code>.aside-region padding-top:52px</code>，与 <code>shell/spec.md</code> §三 严格一致（mac 32 + 呼吸 20，三平台统一）。</li>
 </ul>
@@ -406,9 +412,9 @@
   <b>截图中确认的设计点</b>：
   ① 问候语位置（中央偏上）+ watermark 浮在 greeting 后方（z-index 关系） ✅
   ② composer 顶部 directory + branch chip（chip 内不画 ✓，选中态走 inset ring） ✅
-  ③ placeholder 多色提示（<code>@</code> accent / <code>/</code> reasoning / <code>$</code> success / <code>#</code> info） ✅
-  ④ 权限下拉用 warning 橙 + shield ✅
-  ⑤ 发送按钮默认 ghost（<code>--surface-2</code> 底），输入后才转 accent（ready 态） ✅
+  ③ composer 本体与 <code>panel/draft-composer-states.html</code> 同构（同一套 <code>composer-box</code> / 工具条 / hint） ✅
+  ④ 发送按钮空态 <code>disabled</code>（透明文字），输入后转 accent 实色 ✅
+  ⑤ <b>思考默认最高</b>（max 级实色紫块常驻），与 panel composer 一致 ✅
 </div>
 
 </body>
