@@ -141,12 +141,15 @@ export function useSidebar() {
    * opts.panelId：强制载入指定 panel（而非默认的 active/sync 路径），用于「新建会话替换待机侧」——
    * 载入待机 panel 并 setActive 聚焦，active 侧 session 不动（panel/spec.md 状态与交互）。
    *
-   * NewTaskFlow 联动（#3 AC-3.10）：overlay 打开时切 session → cancelFlow（overlay 自动关 + state=cancelled，不卡死）。
+   * NewTaskFlow 联动（#3 AC-3.10）：flow 活跃时（landing/overlay）切 session → cancelFlow，
+   * 让 flow 退到 cancelled（overlay 自动关 + state 不残留 landing）。
+   * landing 态覆盖：initApp/点新建后停在 landing，此时点侧栏历史会话须 cancelFlow，
+   * 否则 state 残留 landing → isLandingView 仍 true → composer 被误抑制（new-task 渲染撕裂）。
    */
   async function selectSession(id: string, opts?: { panelId?: string }): Promise<void> {
-    // overlay 打开时切 session → cancelled（AC-3.10，避免 overlay 卡死在新 session 上）
+    // flow 活跃（landing/overlay）时切 session → cancelled（AC-3.10，避免 overlay 卡死 + landing 残留）
     const flow = useNewTaskFlow()
-    if (flow.isOverlay.value) flow.cancelFlow()
+    if (flow.isActive.value) flow.cancelFlow()
 
     await sessionApi.switchSession(id)
     session.activeId = id
@@ -187,14 +190,17 @@ export function useSidebar() {
    * 新建 session（薄封装，#3）：委托 useNewTaskFlow.startFlow 编排状态机 + create(cwd)（常态）/
    * 延迟 create（首次启动 AC-1.7），再 selectSession 载入 panel（startFlow 已负责 appendSession + activeId 同步）。
    * 返回新 session id；首次启动延迟 create 时返回 null（Panel 渲染 landing 空态）。
+   *
+   * presetCwd：可选，预设落地页 chip 的 cwd（initApp 用最近 session 目录预填，G1.1「沿用目录做新任务」）。
+   * 未传→空 chip 态；用户点侧栏「新建任务」/⌘N 时不传（空 chip 从头选）。
    */
   let newTaskInFlight = false
-  async function newSession(): Promise<string | null> {
+  async function newSession(presetCwd?: string): Promise<string | null> {
     if (newTaskInFlight) return null
     newTaskInFlight = true
     try {
       const flow = useNewTaskFlow()
-      await flow.startFlow()
+      await flow.startFlow(presetCwd)
       const created = flow.currentSession.value
       if (!created) {
         // 首次启动延迟 create（AC-1.7）：无 session 可选，进 chat view 让 Panel 渲染 landing 空态
@@ -323,14 +329,15 @@ export function useSidebar() {
   }
 
   /**
-   * 应用启动编排（#1/#3 启动钩子，连接建立后由 App.vue 触发）：自动进入正确视图。
+   * 应用启动编排（#1/#3 启动钩子，连接建立后由 App.vue 触发）：**永远进入新建任务落地页**。
    *
-   * 修复 App 启动从未触发 startFlow → state 停 idle 的死锁：首次打开非 landing（问题1）+
-   * chip 点击 transition 非法抛错回 idle（问题3），两问题同源（state 从未离开 idle）。
+   * 设计裁决（产品对齐 G1.1 字面意）：每次启动都是「新任务」心智——首屏恒为 Landing，
+   * 不恢复历史会话对话（恢复整个会话是旧实现，与「沿用目录」的 G1.1 原意不符）。
+   * 最近活跃 session 的 cwd 预填到落地页 chip（所见即所得），首发提交据此 create。
+   * 历史会话仍在侧栏，随时点回（selectSession 路径不变）。
    *
-   * 分支：
-   * - 首次启动（session.list 空）→ newSession()（startFlow 延迟 create 分支：state=landing + push chat view）
-   * - 非首次启动（有历史 session）→ 恢复最近活跃 session（G1.1「沿用最近活跃 session 的目录」）
+   * 此前实现：有历史 session 则 selectSession 恢复整个会话（含对话）→ 首屏显示旧对话，
+   * 与用户「启动进落地页」预期相反。现统一走 newSession()。
    *
    * 幂等：appBootstrapped 守卫只触发一次；失败重置允许下次 connected 重试，不永久卡空态。
    */
@@ -339,16 +346,14 @@ export function useSidebar() {
     appBootstrapped = true
     try {
       await loadSessions()
-      // 取最近活跃 session（lastActiveAt 最大），与 resolveDefaultCwd 同源逻辑
+      // 取最近活跃 session（lastActiveAt 最大），仅用于预填落地页 cwd（G1.1「沿用目录」做新任务）
       let recent: SessionSummary | undefined
       for (const s of session.list) {
         if (!recent || s.lastActiveAt > recent.lastActiveAt) recent = s
       }
-      if (recent) {
-        await selectSession(recent.id) // G1.1 恢复最近活跃 session（载入 panel + push chat view + hydrate）
-      } else {
-        await newSession() // 首次启动：startFlow 延迟 create → state=landing（chip 可点）
-      }
+      // 始终进落地页（newSession → startFlow：state=landing + 清空 activeId/panel session）。
+      // 预设最近 session 的 cwd 到落地页 chip（G1.1「沿用目录做新任务」，所见即所得）。
+      await newSession(recent?.cwd)
     } catch {
       // 启动编排失败（list/switch/getHistory reject）→ 重置允许下次 connected 重试
       appBootstrapped = false

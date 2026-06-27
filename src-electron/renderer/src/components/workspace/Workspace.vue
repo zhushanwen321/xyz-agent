@@ -6,10 +6,11 @@
     无 session 时空态引导（spec §8.5 基础空态：欢迎语）。
   -->
   <div class="flex h-full w-full flex-col overflow-hidden">
-    <!-- hasSession 守卫放行 new-task landing 态：首次启动延迟 create 时 activeId=null，
-         但 flow.state==='landing'（AC-1.3 要求此时显示 Landing 空态 chip + 发送 disabled）。
-         Sparkles 空态仅作异常兜底（initApp 失败且无 session 时）。 -->
-    <PanelContainer v-if="hasSession || isNewTaskLanding" />
+    <!-- hasSession 守卫放行整个 new-task flow 活跃态（landing + 各 overlay）：
+         统一延迟 create 下 flow 活跃期间 activeId 恒 null，但 UI 须保持 Landing 挂载，
+         否则用户点 chip 进 overlay 态会瞬间卸载 Landing 跳兜底页、系统目录选择器视觉丢失。
+         Sparkles 空态仅作异常兜底（initApp 失败且 flow 未离开 idle 时）。 -->
+    <PanelContainer v-if="hasSession || flow.isActive" />
     <div
       v-else
       class="flex flex-1 flex-col items-center justify-center gap-4 p-8 text-center"
@@ -46,9 +47,6 @@ const flow = useNewTaskFlow()
 
 /** 是否有激活 session（决定渲染 panel 还是空态） */
 const hasSession = computed(() => session.activeId !== null)
-
-/** 是否处于 new-task landing 态（首次启动延迟 create，activeId=null 但应显示 Landing，AC-1.3） */
-const isNewTaskLanding = computed(() => flow.state.value === 'landing')
 
 async function onNewSession(): Promise<void> {
   await newSession()

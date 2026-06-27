@@ -201,4 +201,60 @@ describe('useNewTaskFlow 状态机', () => {
 
   // 新设计下 landing 态 branch 链路不可达（gitInfo 恒 null），
   // 原 Esc 排队（T4.8）依赖 branch-popover 的测试已删（场景不可达）。
+
+  /**
+   * isActive 派生语义锁定：landing + 全部 overlay 态 → true（Workspace 渲染守卫依赖，
+   * 延迟 create 下活跃期间 activeId=null 但须保持 Landing 挂载）；idle/completed/cancelled → false。
+   * 防护：未来改状态枚举时若误把活跃态从集合移除，Workspace 守卫会静默回退到卸载 Landing，
+   * 本块立刻红。
+   */
+  describe('isActive 派生（Workspace 渲染守卫真相源）', () => {
+    it('idle → false（异常兜底态，无 session 无活跃 flow）', () => {
+      const flow = useNewTaskFlow()
+      expect(flow.state.value).toBe('idle')
+      expect(flow.isActive.value).toBe(false)
+    })
+
+    it('landing → true（首次启动延迟 create，activeId=null 但须显示 Landing）', async () => {
+      const flow = useNewTaskFlow()
+      await flow.startFlow()
+      expect(flow.state.value).toBe('landing')
+      expect(flow.isActive.value).toBe(true)
+    })
+
+    it('dir-popover → true（点 directory chip 进 overlay，Landing 须保持挂载）', async () => {
+      const flow = useNewTaskFlow()
+      await flow.startFlow()
+      flow.openDirPopover()
+      expect(flow.state.value).toBe('dir-popover')
+      expect(flow.isActive.value).toBe(true)
+    })
+
+    it('cancelled → false（overlay 打开时切 session，AC-3.10）', async () => {
+      const flow = useNewTaskFlow()
+      await flow.startFlow()
+      flow.openDirPopover()
+      flow.cancelFlow()
+      expect(flow.state.value).toBe('cancelled')
+      expect(flow.isActive.value).toBe(false)
+    })
+
+    it('cancelled → reenterFlow → landing → isActive 回 true（重选空 session 复活）', async () => {
+      const flow = useNewTaskFlow()
+      await flow.startFlow()
+      flow.cancelFlow()
+      expect(flow.isActive.value).toBe(false)
+      flow.reenterFlow()
+      expect(flow.state.value).toBe('landing')
+      expect(flow.isActive.value).toBe(true)
+    })
+
+    it('completed → false（首发成功终态，已绑定 activeId，由 hasSession 接管渲染）', async () => {
+      const flow = useNewTaskFlow()
+      await flow.startFlow()
+      flow.completeFlow()
+      expect(flow.state.value).toBe('completed')
+      expect(flow.isActive.value).toBe(false)
+    })
+  })
 })

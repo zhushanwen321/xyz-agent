@@ -69,7 +69,7 @@ function mkSession(over: Partial<SessionSummary>): SessionSummary {
   }
 }
 
-describe('App 启动编排（initApp：连接建立后自动进 landing / 恢复最近 session）', () => {
+describe('App 启动编排（initApp：连接建立后始终进 landing 落地页）', () => {
   it('首次启动（无 session）：initApp → startFlow 延迟 create → state=landing（不是 idle）→ chip 可点', async () => {
     sessionCtrl.list.mockResolvedValue([]) // 无历史 → resolveDefaultCwd=undefined → 延迟 create
     await useSidebar().initApp()
@@ -99,20 +99,24 @@ describe('App 启动编排（initApp：连接建立后自动进 landing / 恢复
     expect(flow.state.value).toBe('idle')
   })
 
-  it('非首次启动（有历史 session）：initApp → 恢复最近活跃 session，不 create 新 session（G1.1）', async () => {
+  it('非首次启动（有历史 session）：initApp → 仍进落地页，cwd 预填最近 session 目录（G1.1「沿用目录做新任务」）', async () => {
     sessionCtrl.list.mockResolvedValue([
       { cwd: '/a', sessions: [mkSession({ id: 'a', cwd: '/a', lastActiveAt: 100 })] },
       { cwd: '/b', sessions: [mkSession({ id: 'recent', cwd: '/b', lastActiveAt: 900 })] },
     ])
     await useSidebar().initApp()
 
-    // G1.1：非首次不强制 new-task（不 create 新 session）
+    const flow = useNewTaskFlow()
+    // G1.1 字面意：有历史也进新任务落地页（不恢复整个会话对话）
+    expect(flow.state.value).toBe('landing')
+    // 不 create 新 session（落地页延迟 create，首发提交才建）
     expect(sessionCtrl.create).not.toHaveBeenCalled()
-    // 恢复最近活跃（lastActiveAt=900 → recent），switchSession 载入
-    expect(sessionCtrl.switchSession).toHaveBeenCalledWith('recent')
-    expect(useSessionStore().activeId).toBe('recent')
-    // 非首次启动不进 new-task flow（state 仍 idle，最近 session 走对话流而非 landing）
-    expect(useNewTaskFlow().state.value).toBe('idle')
+    // 不 switchSession（不恢复历史会话）
+    expect(sessionCtrl.switchSession).not.toHaveBeenCalled()
+    // cwd 预填最近活跃 session 的目录（chip 所见即所得；landing 态 currentCwd 取自 pendingCwd）
+    expect(flow.currentCwd.value).toBe('/b')
+    // activeId 被清空（landing 态无 session 绑定，不变量强制）
+    expect(useSessionStore().activeId).toBeNull()
   })
 
   it('HMR/重连幂等：appBootstrapped 守卫，第二次 initApp 直接 return 不重复编排', async () => {

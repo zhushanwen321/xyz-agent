@@ -52,6 +52,20 @@ const OVERLAY_STATES: ReadonlySet<NewTaskFlowState> = new Set([
 ])
 
 /**
+ * 活跃态集合（landing + 全部 overlay；排除 idle/completed/cancelled）。
+ * Workspace 渲染守卫用：统一延迟 create 下，flow 活跃期间 activeId 恒 null，
+ * 但 UI 须保持 Landing 挂载——否则用户点 chip 进 overlay 态（dir-popover/dir-dialog…）
+ * 会瞬间卸载 Landing → 跳兜底空态页，系统目录选择器视觉上"没弹"。isOverlay ⊂ isActive。
+ */
+const ACTIVE_STATES: ReadonlySet<NewTaskFlowState> = new Set([
+  'landing',
+  'dir-popover',
+  'branch-popover',
+  'dir-dialog',
+  'branch-modal',
+])
+
+/**
  * 合法转换表（§4.6 守卫表落地）。未列出的 from→to 组合 = 非法 → 抛错回 idle（AC-3.1/3.11）。
  * 终态：仅 completed（实例销毁）。cancelled 可重入（reenterFlow → landing）。
  */
@@ -135,8 +149,16 @@ export function useNewTaskFlow() {
    * session 由首发提交 submitFirstMessage 创建；选目录只记 pendingCwd 不建 session。
    * - completed 终态再触发→先销毁重建 idle（AC-3.12）再进 landing
    * - createInFlight 守卫：submitFirstMessage 飞行中再触发→忽略（防并发重复建 session）
+   * - presetCwd：可选，进 landing 时预设 chip 的 cwd（initApp 用最近 session 目录预填）。
+   *   未传→空 chip 态（默认）；传值→chip 所见即所得（G1.1「沿用目录做新任务」）。
+   *
+   * 不变量强制（根治 new-task 渲染撕裂）：flow 进 landing 时，编排层主动清空
+   * activeId + active panel 的 leaf.sessionId。此前该不变量只写在注释（ACTIVE_STATES
+   * 注释「flow 活跃期间 activeId 恒 null」），从未被代码执行——会话中点新建时旧
+   * sessionId 残留，Panel.vue 第一条 v-if 用旧 sessionId 命中 MessageStream，导致
+   * 「页面不跳转、只 composer 消失」。此处清空后 sessionId=null → Landing 正确渲染。
    */
-  async function startFlow(): Promise<void> {
+  async function startFlow(presetCwd?: string): Promise<void> {
     // 终态重建（AC-3.12）：completed 后 ⌘N 销毁重建
     if (state.value === 'completed') {
       state.value = 'idle'
@@ -144,9 +166,14 @@ export function useNewTaskFlow() {
       pendingCwd.value = null
     }
     if (createInFlight.value) return // submitFirstMessage 飞行中，忽略重复触发
-    pendingCwd.value = null // 进 landing 前清空选定 cwd（空 chip 态）
+    // 进 landing：预设 cwd（有则 chip 所见即所得，无则空 chip 态）
+    pendingCwd.value = presetCwd ?? null
     transition('landing') // idle→landing
     currentSession.value = null
+    // 强制不变量：landing 态无 session 绑定。清 activeId + active panel leaf.sessionId，
+    // 让 Panel 的 sessionId prop 变 null → 渲染落到 Landing（而非旧会话 MessageStream）。
+    session.activeId = null
+    panel.loadSession(panel.activePanelId, null)
   }
 
   /**
@@ -325,6 +352,7 @@ export function useNewTaskFlow() {
     isInflight: readonly(createInFlight),
     isBranchCreating: readonly(branchCreateInFlight),
     isOverlay: computed(() => OVERLAY_STATES.has(state.value)),
+    isActive: computed(() => ACTIVE_STATES.has(state.value)),
     startFlow,
     submitFirstMessage,
     openDirPopover,
