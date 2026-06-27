@@ -255,6 +255,30 @@ SKIP_ALL_CHECKS=1 git commit            # 跳过所有（仅紧急情况）
 
 4. **subagent task prompt 必须明确测试框架**: 派遣编码 subagent 时，task prompt 中必须写明 "测试框架使用 vitest（从 vitest 导入 describe/it/expect/vi），运行命令 npx vitest run，禁止 node:test 和 tsx --test"。
 
+### 测试视角与覆盖质量 [HISTORICAL — 2026-06-27「新建任务」事故]
+
+> 事故：「新建任务」功能 77 单测 + 24 集成全绿、vue-tsc/tsc EXIT 0、verdict pass，用户手动打开却发现 Landing 态根本没有 composer 输入区——阻塞级 bug。根因：测试只做了构建者（白盒）视角（验状态机/API 契约），缺使用者（黑盒：能否完成目标）与观察者（形态：渲染长什么样）两个视角。
+
+5. **每条集成/E2E 用例至少一个用户可见断言** [MANDATORY]：每条 `it` 至少含一个 `wrapper.find(...).exists()` / `wrapper.text()` / `wrapper.html()` 断言（DOM 元素存在、文案渲染、可见状态）。纯内部断言（`state.value`、`expect(apiMock).toHaveBeenCalled`）不计入 DoD 覆盖。反模式：39 用例全断言 state/testid，零个断言「用户能否看到输入框」。
+
+6. **集成/E2E 测试必须 mount 文档指定入口** [MANDATORY]：必须 mount test-strategy.md 集成章节指定的组件树入口（如 `Panel`），断言渲染结果。禁止悄悄用更小被测对象替换（文档写 `mount(Panel)`，代码却只调 `useNewTaskFlow()` 断言 `state.value`）。入口确无法 mount 时必须显式说明并降级入口，不得擅改。
+
+7. **用户旅程步骤不可降级** [MANDATORY]：E2E 场景表里每个用户操作步骤必须有对应 DOM 断言。不得因某步「难 mock」跳过整步或降级成内部状态断言。某步确实无法自动化（OS 原生 dialog 等），标注 `[需手工]` 并保留该步占位断言，**不得删除该步骤**。
+
+8. **测试验收 DoD 增加「渲染 gate」** [MANDATORY]：DoD 第三项——mount 功能顶层容器，断言 spec 结构章节（§3.x 等）列出的每个「结构元素」对应 DOM 节点存在。**spec 结构条目 = 渲染断言清单**（spec 写了 composer，测试就验证 composer 在 DOM 里）。只数用例编号 + 测试全绿不构成 DoD。
+
+**首屏冒烟模板**（每功能必含 1 条）：mount 顶层容器，断言关键交互元素**存在于 DOM**。本次 bug 回归防护：
+
+```typescript
+it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
+  const wrapper = mount(Panel, { props: { sessionId: null } })
+  expect(wrapper.find('[data-testid="composer-input"]').exists()).toBe(true)
+  expect(wrapper.find('[data-testid="chip-directory"]').exists()).toBe(true)
+})
+```
+
+> 三视角缺一不可：构建者（白盒）+ 使用者（黑盒）+ 观察者（形态）。任一缺失即重蹈「测试全绿但功能不可用」。
+
 ## 前端编码规范
 
 **权威标准文档**: `~/Code/xyz-ui/CONVENTIONS.md`
