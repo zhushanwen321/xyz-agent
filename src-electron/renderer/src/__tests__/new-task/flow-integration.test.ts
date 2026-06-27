@@ -216,11 +216,7 @@ describe('选分支链路（selectBranch / confirmDirtySwitch，#6）', () => {
     const created = mkSession({ id: 'cur', cwd: '/repo', gitBranch: 'main' })
     createCtrl.create.mockResolvedValue(created)
     const flow = useNewTaskFlow()
-    await flow.startFlow()
-    // startFlow 创建的 session 需进 store，否则 session.active 为 null → gitInfo null（useSidebar.selectSession 负责此步）
-    const store = useSessionStore()
-    store.appendSession(created)
-    store.activeId = 'cur'
+    await flow.startFlow() // 同步 store（appendSession + activeId=cur）→ gitInfo 可用
     flow.openBranchPopover() // landing→branch-popover（gitInfo 非 null）
     expect(flow.state.value).toBe('branch-popover')
 
@@ -236,10 +232,7 @@ describe('选分支链路（selectBranch / confirmDirtySwitch，#6）', () => {
     const created = mkSession({ id: 'cur', cwd: '/repo', gitBranch: 'main' })
     createCtrl.create.mockResolvedValue(created)
     const flow = useNewTaskFlow()
-    await flow.startFlow()
-    const store = useSessionStore()
-    store.appendSession(created)
-    store.activeId = 'cur'
+    await flow.startFlow() // 同步 store → gitInfo 可用
     flow.openBranchPopover()
 
     await flow.confirmDirtySwitch('feature/y')
@@ -255,10 +248,7 @@ describe('选分支链路（selectBranch / confirmDirtySwitch，#6）', () => {
     const created = mkSession({ id: 'cur', cwd: '/repo', gitBranch: 'main' })
     createCtrl.create.mockResolvedValue(created)
     const flow = useNewTaskFlow()
-    await flow.startFlow()
-    const store = useSessionStore()
-    store.appendSession(created)
-    store.activeId = 'cur'
+    await flow.startFlow() // 同步 store → gitInfo 可用
     flow.openBranchPopover()
     gitCtrl.checkout.mockRejectedValue(new Error('checkout conflict'))
     await expect(flow.selectBranch('feature/z')).rejects.toThrow('checkout conflict')
@@ -273,10 +263,7 @@ describe('创建分支链路（submitCreateBranch，#7）', () => {
     const created = mkSession({ id: 'cur', cwd: '/repo', gitBranch: 'main' })
     createCtrl.create.mockResolvedValue(created)
     const flow = useNewTaskFlow()
-    await flow.startFlow()
-    const store = useSessionStore()
-    store.appendSession(created)
-    store.activeId = 'cur'
+    await flow.startFlow() // 同步 store → gitInfo 可用
     flow.openBranchPopover()
     flow.openBranchModal()
     expect(flow.state.value).toBe('branch-modal')
@@ -330,5 +317,56 @@ describe('创建分支链路（submitCreateBranch，#7）', () => {
     gitCtrl.createBranch.mockRejectedValue(new Error('branch exists'))
     await expect(flow.submitCreateBranch('feat/dup')).rejects.toThrow('branch exists')
     expect(flow.state.value).toBe('branch-modal') // D-7 留 modal 可重试
+  })
+})
+
+describe('sessionStore 同步（create/remove 联动 store，§4.1 绑定 sessionId）', () => {
+  it('startFlow 常态：create 成功后 activeId 绑定新 session + appendSession 入组', async () => {
+    setGroups([mkSession({ id: 'old', cwd: '/repo', lastActiveAt: 1 })])
+    createCtrl.create.mockResolvedValue(mkSession({ id: 'new-1', cwd: '/repo' }))
+    const store = useSessionStore()
+    expect(store.activeId).toBeNull() // 初始
+
+    const flow = useNewTaskFlow()
+    await flow.startFlow()
+
+    // create 成功→同步 sessionStore：activeId 绑定 + list 含新 session
+    expect(store.activeId).toBe('new-1')
+    expect(store.list.map((s) => s.id)).toContain('new-1')
+  })
+
+  it('selectWorkspace：切 cwd→remove 旧 session 同步 removeFromList + create 新 session 同步 appendSession+activeId', async () => {
+    setGroups([mkSession({ id: 'old', cwd: '/repo', lastActiveAt: 1 })])
+    createCtrl.create.mockResolvedValue(mkSession({ id: 'cur', cwd: '/repo' }))
+    const store = useSessionStore()
+    const flow = useNewTaskFlow()
+    await flow.startFlow() // cur 入组 + activeId=cur
+    expect(store.list.map((s) => s.id)).toContain('cur')
+    flow.openDirPopover()
+
+    // 切到不同 cwd
+    createCtrl.create.mockResolvedValue(mkSession({ id: 'new-2', cwd: '/other-repo' }))
+    await flow.selectWorkspace('/other-repo')
+
+    // 旧 cur 被 remove→removeFromList（list 不含 cur）；新 new-2 入组 + activeId 绑定
+    expect(store.list.map((s) => s.id)).not.toContain('cur')
+    expect(store.list.map((s) => s.id)).toContain('new-2')
+    expect(store.activeId).toBe('new-2')
+  })
+
+  it('startFlow 首次启动：cwd=undefined→不 create→activeId 不变（null）+ currentSessionId=null', async () => {
+    setGroups([]) // 无历史→resolveDefaultCwd=undefined
+    const store = useSessionStore()
+    expect(store.activeId).toBeNull()
+
+    const flow = useNewTaskFlow()
+    await flow.startFlow()
+
+    expect(createCtrl.create).not.toHaveBeenCalled()
+    expect(flow.state.value).toBe('landing')
+    expect(flow.currentSessionId.value).toBeNull()
+    // activeId 保持初始 null（未被同步成某个值）
+    expect(store.activeId).toBeNull()
+    expect(store.list).toHaveLength(0)
   })
 })

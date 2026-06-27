@@ -175,7 +175,7 @@ export function useSidebar() {
 
   /**
    * 新建 session（薄封装，#3）：委托 useNewTaskFlow.startFlow 编排状态机 + create(cwd)（常态）/
-   * 延迟 create（首次启动 AC-1.7），再 appendSession + selectSession 让 6 触发点行为不变（仍创建+选中空 session）。
+   * 延迟 create（首次启动 AC-1.7），再 selectSession 载入 panel（startFlow 已负责 appendSession + activeId 同步）。
    * 返回新 session id；首次启动延迟 create 时返回 null（Panel 渲染 landing 空态）。
    */
   let newTaskInFlight = false
@@ -191,7 +191,7 @@ export function useSidebar() {
         navigation.push({ view: 'chat' })
         return null
       }
-      session.appendSession(created)
+      // startFlow 已 appendSession + activeId=created.id；此处只补 panel 载入 + history hydrate
       await selectSession(created.id)
       return created.id
     } finally {
@@ -212,7 +212,7 @@ export function useSidebar() {
       await flow.startFlow()
       const created = flow.currentSession.value
       if (!created) return // 首次启动延迟 create
-      session.appendSession(created)
+      // startFlow 已 appendSession + activeId；载入待机 panel 并聚焦
       const standby = panel.panels.find((p) => p.id !== panel.activePanelId)
       await selectSession(created.id, standby ? { panelId: standby.id } : undefined)
     } finally {

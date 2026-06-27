@@ -115,10 +115,9 @@ describe('useNewTaskFlow 状态机', () => {
   describe('overlay 互斥（T8.1）', () => {
     it('dir-popover 下 openBranchPopover→先关再开，至多 1 个 overlay', async () => {
       setGroups([gitSession({ id: 'git-s', cwd: '/repo' })])
-      const session = useSessionStore()
-      session.activeId = 'git-s' // gitInfo 非 null
+      apiMock.create.mockResolvedValueOnce(gitSession({ id: "created", cwd: "/repo" }))
       const flow = useNewTaskFlow()
-      await flow.startFlow()
+      await flow.startFlow() // 同步 activeId=created(git) → gitInfo 非 null
       flow.openDirPopover()
       expect(flow.state.value).toBe('dir-popover')
       flow.openBranchPopover() // 互斥：先关 dir-popover 再开 branch-popover
@@ -129,9 +128,9 @@ describe('useNewTaskFlow 状态机', () => {
   describe('Esc 优先级（T8.2）', () => {
     it('branch-modal→closeOverlay→landing（只关当前 modal）', async () => {
       setGroups([gitSession({ id: 'git-s', cwd: '/repo' })])
-      useSessionStore().activeId = 'git-s'
+      apiMock.create.mockResolvedValueOnce(gitSession({ id: "created", cwd: "/repo" }))
       const flow = useNewTaskFlow()
-      await flow.startFlow()
+      await flow.startFlow() // 同步 activeId=created(git) → gitInfo 非 null
       flow.openBranchPopover()
       flow.openBranchModal()
       expect(flow.state.value).toBe('branch-modal')
@@ -218,9 +217,9 @@ describe('useNewTaskFlow 状态机', () => {
 
     it('branch-popover 来源→正常进 branch-modal', async () => {
       setGroups([gitSession({ id: 'git-s', cwd: '/repo' })])
-      useSessionStore().activeId = 'git-s'
+      apiMock.create.mockResolvedValueOnce(gitSession({ id: "created", cwd: "/repo" }))
       const flow = useNewTaskFlow()
-      await flow.startFlow()
+      await flow.startFlow() // 同步 activeId=created(git) → gitInfo 非 null
       flow.openBranchPopover()
       flow.openBranchModal()
       expect(flow.state.value).toBe('branch-modal')
@@ -233,9 +232,9 @@ describe('useNewTaskFlow 状态机', () => {
     // pending resolve 后状态机已正确转移到 landing，不丢事件、不崩。
     it('branch-popover 态 closeOverlay（Esc）→landing，异步 status 后续 resolve 不影响已定状态', async () => {
       setGroups([gitSession({ id: 'git-s', cwd: '/repo' })])
-      useSessionStore().activeId = 'git-s'
+      apiMock.create.mockResolvedValueOnce(gitSession({ id: "created", cwd: "/repo" }))
       const flow = useNewTaskFlow()
-      await flow.startFlow()
+      await flow.startFlow() // 同步 activeId=created(git) → gitInfo 非 null
       flow.openBranchPopover()
       expect(flow.state.value).toBe('branch-popover')
 
@@ -250,9 +249,9 @@ describe('useNewTaskFlow 状态机', () => {
 
     it('landing 态重复 closeOverlay→状态机守卫拦（非法转换抛错，UI 层应仅在 overlay 态绑 Esc）', async () => {
       setGroups([gitSession({ id: 'git-s', cwd: '/repo' })])
-      useSessionStore().activeId = 'git-s'
+      apiMock.create.mockResolvedValueOnce(gitSession({ id: "created", cwd: "/repo" }))
       const flow = useNewTaskFlow()
-      await flow.startFlow()
+      await flow.startFlow() // 同步 activeId=created(git) → gitInfo 非 null
       flow.openBranchPopover()
       flow.closeOverlay() // branch-popover→landing（首次合法）
       expect(flow.state.value).toBe('landing')

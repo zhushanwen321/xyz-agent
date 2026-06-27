@@ -146,6 +146,10 @@ export function useNewTaskFlow() {
       // [内] 真接线 sessionApi.create（常态路径）；spawn 失败/非法 cwd 由 runtime reject → 向上抛（E2/E3）
       const created = await sessionApi.create(cwd)
       currentSession.value = created
+      // 同步 sessionStore（§4.1「绑定 sessionId」）：useChat.send 读 session.activeId 取 sid，
+      // 不同步则首发 send 取不到 sid。appendSession 入组 + activeId 绑定。
+      session.appendSession(created)
+      session.activeId = created.id
       transition('landing') // idle→landing
     } finally {
       createInFlight.value = false
@@ -183,11 +187,15 @@ export function useNewTaskFlow() {
       transition('landing') // noop：仅关 popover
       return
     }
-    if (currentSessionId.value) {
-      await sessionApi.remove(currentSessionId.value)
+    const oldId = currentSessionId.value
+    if (oldId) {
+      await sessionApi.remove(oldId)
+      session.removeFromList(oldId) // 同步 store：旧空 session 从列表移除
     }
     const created = await sessionApi.create(cwd)
     currentSession.value = created
+    session.appendSession(created)
+    session.activeId = created.id
     transition('landing') // dir-popover→landing（chip 回灌新 cwd）
   }
 
@@ -207,12 +215,17 @@ export function useNewTaskFlow() {
         transition('dir-popover') // 取消落回（AC-5.3）
         return
       }
-      // 选中：与 selectWorkspace 同语义（delete 空旧 + create 新 cwd）
-      if (currentSessionId.value && result.path !== currentCwd.value) {
-        await sessionApi.remove(currentSessionId.value)
+      // 选中：与 selectWorkspace 同语义（delete 空旧 + create 新 cwd + 同步 store）
+      const oldId = currentSessionId.value
+      if (oldId && result.path !== currentCwd.value) {
+        await sessionApi.remove(oldId)
+        session.removeFromList(oldId)
       }
       if (result.path !== currentCwd.value) {
-        currentSession.value = await sessionApi.create(result.path)
+        const created = await sessionApi.create(result.path)
+        currentSession.value = created
+        session.appendSession(created)
+        session.activeId = created.id
       }
       transition('landing') // dir-dialog→landing（chip 回灌新 cwd）
     } catch (e) {
