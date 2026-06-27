@@ -6,7 +6,10 @@
     无 session 时空态引导（spec §8.5 基础空态：欢迎语）。
   -->
   <div class="flex h-full w-full flex-col overflow-hidden">
-    <PanelContainer v-if="hasSession" />
+    <!-- hasSession 守卫放行 new-task landing 态：首次启动延迟 create 时 activeId=null，
+         但 flow.state==='landing'（AC-1.3 要求此时显示 Landing 空态 chip + 发送 disabled）。
+         Sparkles 空态仅作异常兜底（initApp 失败且无 session 时）。 -->
+    <PanelContainer v-if="hasSession || isNewTaskLanding" />
     <div
       v-else
       class="flex flex-1 flex-col items-center justify-center gap-4 p-8 text-center"
@@ -34,13 +37,18 @@ import { Plus, Sparkles } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { useSessionStore } from '@/stores/session'
 import { useSidebar } from '@/composables/features/useSidebar'
+import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import PanelContainer from './PanelContainer.vue'
 
 const session = useSessionStore()
 const { newSession } = useSidebar()
+const flow = useNewTaskFlow()
 
 /** 是否有激活 session（决定渲染 panel 还是空态） */
 const hasSession = computed(() => session.activeId !== null)
+
+/** 是否处于 new-task landing 态（首次启动延迟 create，activeId=null 但应显示 Landing，AC-1.3） */
+const isNewTaskLanding = computed(() => flow.state.value === 'landing')
 
 async function onNewSession(): Promise<void> {
   await newSession()
