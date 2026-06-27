@@ -102,29 +102,36 @@
 
 /* ============================================================
    亮色主题槽位（data-theme 切换）
-   design-tokens.md 仅给出部分亮色值，未给全前不臆造落地。
-   settingsStore 接入后会切换 <html data-theme="light">。
+   settings store.setSystem({theme}) 同步 <html data-theme>（暗为默认 :root）。
+   值源自 design-tokens.md「色彩 — 亮色」+ v3/settings/draft-system.html §token。
+   --accent-soft / --accent-ring 用 color-mix 派生（draft 已验证方案）：
+   跟随当前 --accent 自动适配明暗，无需逐主题手写。
    ============================================================ */
 [data-theme="light"] {
-  /* ── 背景层级（design-tokens.md 已给值）──────────────────── */
+  /* ── 背景层级（亮色：bg 最浅 → surface 纯白 → surface-2 略灰 → hover 更灰）── */
   --bg: #f8f9fb;
   --surface: #ffffff;
-  /* --surface-hover / --surface-2 / --bg-elevated / --bg-input 待设计确认 */
+  --surface-2: #f1f3f6;
+  --surface-hover: #e9ecef;
+  --bg-elevated: #ffffff;   /* 浮起面板用纯白 + shadow-2 区分层级，避免亮色叠灰显脏 */
+  --bg-input: #f1f3f6;      /* 输入区沉于 surface，对齐 surface-2 同层级 */
 
-  /* ── 文字（design-tokens.md 已给值）──────────────────────── */
+  /* ── 文字（亮色下 muted/subtle 明度对调：muted 深、subtle 浅）── */
   --fg: #0d0d0f;
   --muted: #5a5a65;
-  /* --subtle 待设计确认 */
+  --subtle: #8a8a95;
 
-  /* ── 边框/分隔（design-tokens.md 已给值）────────────────── */
+  /* ── 边框/分隔（亮色边框用黑半透，比暗色略强保证可见）── */
   --border: rgba(0, 0, 0, 0.08);
-  /* --border-strong 待设计确认 */
+  --border-strong: rgba(0, 0, 0, 0.14);
 
-  /* ── 主色（design-tokens.md 已给值）──────────────────────── */
+  /* ── 主色（亮色加深保证白底对比度；hover 提亮一档）── */
   --accent: #2563eb;
-  /* --accent-hover / --accent-soft / --accent-ring 待设计确认 */
+  --accent-hover: #3b82f6;
+  --accent-soft: color-mix(in oklch, var(--accent) 13%, transparent);
+  --accent-ring: color-mix(in oklch, var(--accent) 30%, transparent);
 
-  /* ── 状态色 / 字体 / 圆角 / 间距 / 阴影 / 动效 等待设计确认 ─ */
+  /* ── 状态色 / 字体 / 圆角 / 间距 / 阴影 / 动效：亮暗共用（同色相，不单独覆盖）── */
 }
 
 /* ============================================================
