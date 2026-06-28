@@ -4,23 +4,16 @@
     base 平铺（bg-bg）+ aside 透明融合 + main float-panel 浮起。
     traffic light 安全区在 AsideRegion 内（padding-top:52px 恒定，spec §三）。
   -->
-  <div class="app-shell relative flex h-screen w-screen gap-3 overflow-hidden rounded-[10px] bg-bg p-3">
+  <!-- gap 折叠态→0：aside 归零后 gap 仍占位会让 MainPanel 左缘=24（右缘=12）不对称。
+       折叠态 gap:0 使 MainPanel 左右边距对称（各 12px = p-3），workspace 居中贴窗口边。
+       !important 必须：gap-0 与 gap-3 同特异性，Tailwind 源码顺序 gap-0 先于 gap-3 生成，
+       不加 ! 会被 gap-3 永久覆盖（死代码 bug）。 -->
+  <div
+    class="app-shell relative flex h-screen w-screen gap-3 overflow-hidden rounded-[10px] bg-bg p-3"
+    :class="sidebar.collapsed ? '!gap-0' : ''"
+  >
     <AsideRegion />
     <AppNavControls />
-    <!-- 折叠态左缘唤回细条（sidebar spec §收起态「左缘细条 hover」三路唤回之一）。
-         absolute 浮 app-shell 左缘（aside 折叠后 width:0+overflow-hidden 会切内含元素，放父层才可见）。
-         hover 加宽 + 变 accent，click/Enter/Space toggleCollapsed 唤回。 -->
-    <div
-      v-if="sidebar.collapsed"
-      class="rail-restore absolute bottom-0 left-0 top-0 z-20 w-[3px] cursor-pointer bg-border-strong transition-[width] duration-[var(--duration-slow)] ease-[var(--ease)] hover:w-[6px] hover:bg-accent"
-      role="button"
-      tabindex="0"
-      title="展开侧栏（⌘B）"
-      aria-label="展开侧栏"
-      @click="sidebar.toggleCollapsed()"
-      @keydown.enter="sidebar.toggleCollapsed()"
-      @keydown.space.prevent="sidebar.toggleCollapsed()"
-    />
     <MainPanel />
     <SettingsModal v-model:open="settingsOpen" />
   </div>

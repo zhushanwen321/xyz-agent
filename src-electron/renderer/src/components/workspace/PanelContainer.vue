@@ -11,7 +11,7 @@
     :class="panel.isDual ? 'gap-px bg-border' : ''"
   >
     <Panel
-      v-for="leaf in panel.panels"
+      v-for="(leaf, i) in panel.panels"
       :key="leaf.id"
       :panel-id="leaf.id"
       :session-id="leaf.sessionId"
@@ -21,6 +21,7 @@
       :status="statusOf(leaf)"
       :active="leaf.id === panel.activePanelId"
       :is-dual="panel.isDual"
+      :is-first-panel="i === 0"
       @activate="panel.setActive"
       @split="onSplit"
       @new-session="onNewSession"

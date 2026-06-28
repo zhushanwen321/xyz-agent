@@ -4,15 +4,22 @@
     收起侧栏 / ← 后退 / → 前进，浮在 traffic-light 右侧。
     全屏态 isFullscreen=true 时 left→20px（响应式 :class 绑定，替代旧 [data-fullscreen] 祖先选择器，
     320ms 平移与 traffic-light opacity 同步）。
+
+    渲染条件（draft-collapsed-state.html 卡 A/B/C）：
+    - 非折叠态（① 展开+非全屏 / ② 展开+全屏）：浮此浮层。展开=chrome 跟随 traffic-light 在 AppShell 层，
+      全屏态 left:20px 占红黄绿位（红黄绿 OS 隐藏）。
+    - 折叠态（③ 折叠+非全屏 / ④ 折叠+全屏）：隐藏此浮层 → chrome 已迁入 P1 PanelHeader（卡 A/B/C）。
+      折叠一律由 header 承接，避免与浮层重复渲染两套 chrome。
   -->
   <div
-    class="app-nav-controls absolute top-[16px] left-[90px] z-10 flex gap-0.5 transition-[left] duration-[var(--duration-slow)] ease-[var(--ease)]"
-    :class="{ 'left-[20px]': isFullscreen }"
+    v-if="!sidebar.collapsed"
+    class="app-nav-controls absolute top-[21px] left-[80px] z-10 flex gap-0.5 transition-[left] duration-[var(--duration-slow)] ease-[var(--ease)]"
+    :class="{ 'left-[16px]': isFullscreen }"
   >
     <Button
       variant="ghost"
       size="icon"
-      class="nav-btn h-[22px] w-[26px] rounded-md text-subtle hover:bg-surface-hover hover:text-fg"
+      class="nav-btn h-[22px] w-[26px] rounded-md text-subtle hover:bg-surface-hover hover:text-fg [-webkit-app-region:no-drag]"
       :title="sidebar.collapsed ? '展开侧栏' : '收起侧栏'"
       aria-label="切换侧栏"
       @click="sidebar.toggleCollapsed()"
@@ -23,7 +30,7 @@
     <Button
       variant="ghost"
       size="icon"
-      class="nav-btn h-[22px] w-[26px] rounded-md text-subtle hover:bg-surface-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-subtle"
+      class="nav-btn h-[22px] w-[26px] rounded-md text-subtle hover:bg-surface-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-subtle [-webkit-app-region:no-drag]"
       :disabled="!navigation.canBack"
       title="后退"
       aria-label="后退"
@@ -34,7 +41,7 @@
     <Button
       variant="ghost"
       size="icon"
-      class="nav-btn h-[22px] w-[26px] rounded-md text-subtle hover:bg-surface-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-subtle"
+      class="nav-btn h-[22px] w-[26px] rounded-md text-subtle hover:bg-surface-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-subtle [-webkit-app-region:no-drag]"
       :disabled="!navigation.canForward"
       title="前进"
       aria-label="前进"

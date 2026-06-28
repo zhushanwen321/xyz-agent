@@ -8,10 +8,56 @@
     split 单 session 场景（G-023）/ close 确认流（G-013）DEFERRED：v1 渲染按钮但 split 触发结构切换，
     close 双→单可用；更多菜单（G2-005 rename 等）DEFERRED hide。
     拖拽区（shell/spec §七-6）：header 空白 -webkit-app-region:drag，交互元素 no-drag。
+    折叠态 chrome 落位（sidebar/spec.md §收起态 + draft-collapsed-state.html 卡 A/B/C）：
+    sidebar 折叠 && P1 时，收起/←/→ 三按钮迁入此 header 最左侧（chrome 槽位）。
+    安全区 padding：非全屏留 pl-[88px] 让位窗口左上 traffic-light（红黄绿 x16~68，header 内容从 x12+88=100 起，
+    chrome 按钮与红黄绿拉开 32px 呼吸）；全屏态红黄绿 OS 隐藏，header pl-4（卡 B「h-nav 紧贴左」）。
+    仅 P1 承载（window-level chrome 属一个地方）；P2 header 不变。唤回侧栏靠 ⌘B + 此 chrome 按钮（rail-restore 已移除）。
   -->
   <header
-    class="flex h-[38px] flex-shrink-0 items-center gap-2 border-b border-border px-3.5 pl-4 [-webkit-app-region:drag]"
+    class="flex h-[38px] flex-shrink-0 items-center gap-2 border-b border-border px-3.5 [-webkit-app-region:drag]"
+    :class="showChrome && !isFullscreen ? 'pl-[88px]' : 'pl-4'"
   >
+    <!-- 折叠态 P1 chrome 槽位：收起/←/→ 三按钮（sidebar/spec §收起态「导航能力迁移」）。
+         整组 no-drag（修折叠态浮层按钮被 drag 区拦截的 bug）；flex-shrink:0 让 breadcrumb 自动右移。 -->
+    <div
+      v-if="showChrome"
+      class="flex shrink-0 items-center gap-0.5 [-webkit-app-region:no-drag]"
+    >
+      <Button
+        variant="ghost"
+        size="icon"
+        class="nav-btn h-[22px] w-[26px] rounded-md text-subtle hover:bg-surface-hover hover:text-fg"
+        :title="sidebar.collapsed ? '展开侧栏' : '收起侧栏'"
+        aria-label="切换侧栏"
+        @click="sidebar.toggleCollapsed()"
+      >
+        <PanelLeftOpen v-if="sidebar.collapsed" class="size-[14px]" />
+        <PanelLeftClose v-else class="size-[14px]" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        class="nav-btn h-[22px] w-[26px] rounded-md text-subtle hover:bg-surface-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-subtle"
+        :disabled="!navigation.canBack"
+        title="后退"
+        aria-label="后退"
+        @click="navigation.back()"
+      >
+        <ArrowLeft class="size-[14px]" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        class="nav-btn h-[22px] w-[26px] rounded-md text-subtle hover:bg-surface-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-subtle"
+        :disabled="!navigation.canForward"
+        title="前进"
+        aria-label="前进"
+        @click="navigation.forward()"
+      >
+        <ArrowRight class="size-[14px]" />
+      </Button>
+    </div>
     <span
       class="size-[7px] shrink-0 rounded-full"
       :class="statusDotClass"
@@ -112,8 +158,11 @@
 <script setup lang="ts">
 /* eslint-disable no-magic-numbers */
 import { computed } from 'vue'
-import { Folder, Columns2, X, ChevronRight, Plus, GitBranch } from '@lucide/vue'
+import { Folder, Columns2, X, ChevronRight, Plus, GitBranch, PanelLeftOpen, PanelLeftClose, ArrowLeft, ArrowRight } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
+import { useNavigationStore } from '@/stores/navigation'
+import { useSidebarStore } from '@/stores/sidebar'
+import { usePlatformChrome } from '@/composables/effects/usePlatformChrome'
 import type { DerivedStatus } from '@/types'
 import type { GitIndicator } from '@/composables/features/useGitStatus'
 
@@ -126,6 +175,8 @@ const props = defineProps<{
   status: DerivedStatus
   active: boolean
   isDual: boolean
+  /** 是否为 P1（panel.panels[0]）—— 折叠态 chrome 仅落 P1 header */
+  isFirstPanel: boolean
 }>()
 
 const emit = defineEmits<{
@@ -135,6 +186,19 @@ const emit = defineEmits<{
   /** 打开 SideDrawer git tab（panel/spec.md：git 入口落 per-session header） */
   openGit: []
 }>()
+
+const navigation = useNavigationStore()
+const sidebar = useSidebarStore()
+const { isFullscreen } = usePlatformChrome()
+
+/**
+ * 折叠态 chrome 落位判据（draft-collapsed-state.html 卡 A/B/C + sidebar/spec §收起态）：
+ * sidebar 折叠 && P1 → 收起/←/→ 三按钮迁入此 header。
+ * P2 永不落 chrome（window-level chrome 属一个地方）。
+ * 安全区 padding 由 template 的 `showChrome && !isFullscreen` 二级判断：
+ * 非全屏留 pl-[88px] 让位 traffic-light（红黄绿 x16~68）；全屏（卡 B）红黄绿 OS 隐藏，header pl-4 不让位。
+ */
+const showChrome = computed(() => props.isFirstPanel && sidebar.collapsed)
 
 /** 工作目录名（cwd 末段），长路径只显末段防溢出 */
 const dirName = computed(() => {

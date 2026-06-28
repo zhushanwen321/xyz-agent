@@ -70,9 +70,19 @@ export async function createWindow(
     show: false,
     title: 'xyz-agent',
     // 跨平台窗口装饰（shell spec §五方案 X）
-    // mac：hiddenInset 让系统画红黄绿浮 sidebar 左上；win/linux：frame:false 应用自绘圆点 mimic mac
+    // mac：hidden + trafficLightPosition 精确控制红黄绿位置（对齐 chrome 按钮中线 + 侧边栏左缘）。
+    //   不用 hiddenInset：inset 模式强制红黄绿水平内缩，trafficLightPosition.x 被系统忽略。
+    //   hidden 模式下红黄绿仍由 OS 绘制（点击/全屏 hover 行为不变），但位置完全可控。
+    //   三处 chrome（红黄绿 / AppNavControls 浮层 / PanelHeader 内按钮）统一对齐到 header 中线 y=32px：
+    //     PanelHeader 高 38px，顶 y=13（12 pad + 1 MainPanel border），items-center → 中线 y=32；
+    //     红黄绿高 12 → y=26（32-6），与 header chrome 按钮同一条水平中线。
+    //   x=16 → 红黄绿左缘（侧边栏左缘 12 + 4 呼吸），右缘 16+52=68；header pl-[88px]（chrome 按钮从 x100 起，与红黄绿拉开 32px）。
+    // win/linux：frame:false 应用自绘圆点 mimic mac（位置由 renderer TrafficLight.vue 控制，同步 x16/y26）。
     ...(process.platform === 'darwin'
-      ? { titleBarStyle: 'hiddenInset' as const }
+      ? {
+        titleBarStyle: 'hidden' as const,
+        trafficLightPosition: { x: 16, y: 26 },
+      }
       : { frame: false }),
     webPreferences: {
       preload: path.join(app.getAppPath(), 'dist/preload/preload.cjs'),

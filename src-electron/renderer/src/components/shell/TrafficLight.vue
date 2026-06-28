@@ -7,7 +7,7 @@
     mac 系统 hover 浮层独立不参与。
   -->
   <div
-    class="traffic-light absolute left-[20px] top-[20px] flex gap-2 z-10 transition-opacity duration-[var(--duration-slow)] ease-[var(--ease)] group"
+    class="traffic-light absolute left-[16px] top-[26px] flex gap-2 z-10 transition-opacity duration-[var(--duration-slow)] ease-[var(--ease)] group"
     :class="{ 'opacity-0': isFullscreen }"
   >
     <template v-if="!isMac">

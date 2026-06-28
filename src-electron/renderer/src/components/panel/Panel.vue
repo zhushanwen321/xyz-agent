@@ -22,6 +22,7 @@
       :status="status"
       :active="active"
       :is-dual="isDual"
+      :is-first-panel="isFirstPanel"
       @split="emit('split')"
       @new-session="emit('new-session')"
       @close="emit('close')"
@@ -108,6 +109,8 @@ const props = defineProps<{
   status: DerivedStatus
   active: boolean
   isDual: boolean
+  /** 是否为 P1（panel.panels[0]，DFS 顺序即 split 的 left）—— 折叠态 chrome 仅 P1 落 header */
+  isFirstPanel: boolean
 }>()
 
 const emit = defineEmits<{
