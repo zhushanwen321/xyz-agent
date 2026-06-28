@@ -7,8 +7,9 @@
  * 不包含：路径解析（pi-paths）、session 扫描（pi-config-bridge）、agent 管理（pi-config-bridge）
  */
 
-import { existsSync, readdirSync, mkdirSync, renameSync, rmdirSync, cpSync } from 'node:fs'
+import { existsSync, readdirSync, mkdirSync, renameSync, rmdirSync, cpSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { homedir } from 'node:os'
 import { toErrorMessage } from '../../utils/errors.js'
 import { isPackaged } from '../../utils/runtime-env.js'
 import { JsonStore } from '../../utils/json-store.js'
@@ -20,6 +21,13 @@ import {
   updateSettingsSync,
   invalidateSettingsCache,
 } from './pi-settings-store.js'
+// discovery.json 是 skill/agent 加载路径的 SSOT（ADR-0020 §1）。
+// skill 路径函数代理 discovery-store，settings.json.skills 仅作派生投影（pi 原生读此加载 skill）。
+import {
+  getSkillDirs as getDiscoverySkillDirs,
+  setSkillDirs as setDiscoverySkillDirs,
+  readDiscovery,
+} from './discovery-store.js'
 
 // ── 类型定义（对齐 pi models.json / settings.json 的 schema）────
 
@@ -289,27 +297,117 @@ export function setDefaultThinkingLevel(level: string): void {
   updateSettingsSync(s => { s.defaultThinkingLevel = level })
 }
 
-// ── Skill 路径管理（读写 settings.json 的 skills 字段）───────────
+// ── Skill 路径管理（ADR-0020：discovery.json 是 SSOT，settings.json 是派生投影）──
+//
+// 数据流（方案 C 决策）：
+//   UI 读写 → discovery.json.skillDirs（SSOT，有序数组 = 优先级）
+//   discovery.json 变更 → syncSkillDirsToSettings() 同步投影到 settings.json.skills
+//   pi 启动 → collectSettingsSkillPaths 读 settings.json.skills 加载 skill（pi 官方扩展点）
+//
+// 这保证 xyz-agent 完全控制优先级（discovery 数组顺序），同时复用 pi 原生 skill 加载链路。
+
+/**
+ * 把 discovery.json.skillDirs 投影到 settings.json.skills（pi 原生读此加载 skill）。
+ * 在 setSkillPaths/addSkillPath/removeSkillPath 写入 discovery 后调用，保持派生缓存一致。
+ */
+function syncSkillDirsToSettings(): void {
+  updateSettingsSync(s => { s.skills = getDiscoverySkillDirs() })
+}
+
+/**
+ * 判断目录是否是「skill 容器」（含 ≥1 个带 SKILL.md 的子目录）。
+ * 用于迁移时区分容器目录（如 ~/.pi/agent/skills）与单 skill 目录（如 .../skills/anysearch）。
+ * ADR-0020 §1：discovery.json 存容器目录粒度，目录内资源全开。
+ */
+function isSkillContainer(dirPath: string): boolean {
+  if (!existsSync(dirPath)) return false
+  let entries: string[]
+  try {
+    entries = readdirSync(dirPath)
+  } catch {
+    return false
+  }
+  for (const name of entries) {
+    try {
+      if (statSync(join(dirPath, name)).isDirectory() && existsSync(join(dirPath, name, 'SKILL.md'))) {
+        return true
+      }
+    } catch {
+      continue
+    }
+  }
+  return false
+}
+
+/**
+ * 一次性迁移：把旧版本 settings.json.skills（粒度错误：存的是单 skill 目录）
+ * 归并为 ADR-0020 §1 的容器目录粒度，提升为 discovery.json SSOT。
+ *
+ * 旧数据问题：旧 addSkillPath(dirname(skill.sourcePath)) 把每个 skill 的父目录
+ * 单独塞进 settings.json.skills（如 ~/.pi/agent/skills/anysearch），而非容器目录
+ * （~/.pi/agent/skills）。44 条单 skill 路径去重父目录后只有 2 个容器。
+ *
+ * 归并策略：对每条旧路径取父目录 → 去重 → 仅保留确实是容器（含 ≥1 个 SKILL.md 子目录）的。
+ * 幂等：discovery 已有容器目录数据则 no-op。
+ * 由 ConfigService 初始化时调用。
+ */
+export function migrateSettingsSkillsToDiscovery(): void {
+  const discovery = readDiscovery()
+  // discovery 已有「有效容器」数据则 no-op（幂等）。
+  // 注意：不能仅凭 skillDirs.length>0 判定——可能存有脏数据（/path/a 等测试残留），
+  // 故用 isSkillContainer 校验每条；全无效则继续迁移覆盖。
+  if (discovery.skillDirs.length > 0 && discovery.skillDirs.some(c => isSkillContainer(c))) return
+  const legacy = readSettings().skills ?? []
+  if (legacy.length === 0) return
+
+  // 取父目录去重（旧路径是 <container>/<skillName>，父目录才是容器）
+  const containers = new Set<string>()
+  for (const p of legacy) {
+    const idx = p.lastIndexOf('/')
+    const parent = idx > 0 ? p.slice(0, idx) : p
+    containers.add(parent)
+  }
+
+  // 仅保留确实是容器的父目录（含 ≥1 个带 SKILL.md 的子目录）
+  const validContainers = [...containers].filter(c => isSkillContainer(c))
+  if (validContainers.length === 0) return
+  // 归一化为 ~ 形式（家目录下的路径用 ~ 前缀），与预设候选 ~/.pi/agent/skills 等保持一致，
+  // 避免 buildDirConfigs 的字符串匹配因 ~ vs 绝对路径失配而重复显示。
+  const normalized = validContainers.map(normalizeToHome)
+  setDiscoverySkillDirs(normalized)
+  syncSkillDirsToSettings()
+  console.log(`[provider-store] migrated ${legacy.length} legacy skill paths → ${normalized.length} container dirs in discovery.json`)
+}
+
+/**
+ * 家目录下的绝对路径归一化为 ~ 前缀（~/.pi/agent/skills），便于与 UI 预设候选统一比较。
+ * 非家目录路径原样返回。与 scanner-base.expandHome 互逆。
+ */
+function normalizeToHome(p: string): string {
+  const home = homedir()
+  if (p === home) return '~'
+  if (p.startsWith(`${home}/`)) return `~${p.slice(home.length)}`
+  return p
+}
 
 export function getSkillPaths(): string[] {
-  return readSettings().skills ?? []
+  return getDiscoverySkillDirs()
 }
 
 export function setSkillPaths(paths: string[]): void {
-  updateSettingsSync(s => { s.skills = paths })
+  setDiscoverySkillDirs(paths)
+  syncSkillDirsToSettings()
 }
 
 export function addSkillPath(path: string): void {
-  const paths = getSkillPaths()
+  const paths = getDiscoverySkillDirs()
   if (!paths.includes(path)) {
-    paths.push(path)
-    setSkillPaths(paths)
+    setSkillPaths([...paths, path])
   }
 }
 
 export function removeSkillPath(path: string): void {
-  const paths = getSkillPaths().filter(p => p !== path)
-  setSkillPaths(paths)
+  setSkillPaths(getDiscoverySkillDirs().filter(p => p !== path))
 }
 
 // ── 缓存控制 ─────────────────────────────────────────────────

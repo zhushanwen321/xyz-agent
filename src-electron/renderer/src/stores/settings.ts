@@ -19,7 +19,7 @@
  */
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { ProviderInfo, SkillInfo, AgentInfo } from '@xyz-agent/shared'
+import type { ProviderInfo, SkillInfo, AgentInfo, SkillDirConfig } from '@xyz-agent/shared'
 import { config, extension as extensionApi, settings as settingsApi } from '@/api'
 import type { SystemSettings } from '@/api'
 import { setLocale } from '@/i18n'
@@ -58,6 +58,9 @@ export const useSettingsStore = defineStore('settings', () => {
   const agents = ref<AgentInfo[]>([])
   const extensions = ref<ExtensionItem[]>([])
   const system = ref<SystemSettings>({ ...DEFAULT_SYSTEM })
+  // ADR-0020 §1 加载路径配置（层 A 勾选/拖动用）：预设候选 + enabled 状态
+  const skillDirs = ref<SkillDirConfig[]>([])
+  const agentDirs = ref<SkillDirConfig[]>([])
 
   /** 订阅句柄（init 幂等去重用） */
   const unsubs: Array<() => void> = []
@@ -77,6 +80,8 @@ export const useSettingsStore = defineStore('settings', () => {
     unsubs.push(config.onProviders((p) => { providers.value = p }))
     unsubs.push(config.onSkills((s) => { skills.value = s }))
     unsubs.push(config.onAgents((a) => { agents.value = a }))
+    unsubs.push(config.onSkillDirs((d) => { skillDirs.value = d }))
+    unsubs.push(config.onAgentDirs((d) => { agentDirs.value = d }))
     unsubs.push(extensionApi.onExtensions((e) => { extensions.value = e as ExtensionItem[] }))
 
     // system 是纯前端偏好（localStorage），初始化时读并同步到 DOM + i18n
@@ -107,6 +112,21 @@ export const useSettingsStore = defineStore('settings', () => {
     applySystemToDom(system.value)
   }
 
+  /**
+   * 覆盖 skill 加载路径（ADR-0020 §1 目录级管道）。
+   * dirs 是启用的路径有序数组（靠前覆盖靠后）。
+   * 只负责发请求持久化 + 让后端广播推回权威值（buildDirConfigs 补全预设候选）。
+   * 拖拽的即时性由 LoadPaths 的本地状态保证，store 不做乐观更新（避免两套本地状态打架）。
+   */
+  async function setSkillDirs(dirs: string[]): Promise<void> {
+    await config.setSkillDirs(dirs)
+  }
+
+  /** 覆盖 agent 加载路径（ADR-0020 §1 目录级管道），语义同 setSkillDirs。 */
+  async function setAgentDirs(dirs: string[]): Promise<void> {
+    await config.setAgentDirs(dirs)
+  }
+
   /** 销毁订阅（AppShell 卸载时调用，应用生命周期内通常不触发）。 */
   function dispose(): void {
     unsubs.splice(0).forEach((u) => u())
@@ -120,10 +140,14 @@ export const useSettingsStore = defineStore('settings', () => {
     agents,
     extensions,
     system,
+    skillDirs,
+    agentDirs,
     // actions
     init,
     refreshProviders,
     setSystem,
+    setSkillDirs,
+    setAgentDirs,
     dispose,
   }
 })

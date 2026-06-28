@@ -7,8 +7,9 @@
  */
 import { createServer, type Server as HttpServer } from 'node:http'
 import { resolve } from 'node:path'
+import { homedir } from 'node:os'
 import { WebSocketServer, WebSocket, type WebSocket as WsType } from 'ws'
-import type { ClientMessage, ClientMessageType, ServerMessage, ServerMessageType } from '@xyz-agent/shared'
+import type { ClientMessage, ClientMessageType, ServerMessage, ServerMessageType, SkillDirConfig } from '@xyz-agent/shared'
 import type { ISessionService, IConfigService, IModelService, IMessageBroker, IExtensionService, IPluginService } from '../interfaces.js'
 import type { GitService } from '../services/git-service.js'
 import { ExtensionTimeoutManager } from '../services/extension-timeout-manager.js'
@@ -27,6 +28,67 @@ const HTTP_NOT_FOUND = 404
 const MAX_WS_CLOSE_CODE = 4000
 const WS_OPEN = WebSocket.OPEN
 const HEARTBEAT_TIMEOUT_MS = 45_000
+
+/**
+ * ADR-0020 §2/§3 预设可选目录候选（层 A「可选目录」的固定来源）。
+ * 用户可勾选启用/可拖排序；勾选的进 discovery.json 数组。
+ * 强制目录（~/.xyz-agent/...）不在此列（UI 另行只读展示）。
+ */
+const PRESET_SKILL_DIRS = [
+  '~/.pi/agent/skills',
+  '~/.claude/skills',
+  '~/.agents/skills',
+  '.agents/skills',
+]
+const PRESET_AGENT_DIRS = [
+  '~/.pi/agent/agents',
+  '~/.claude/agents',
+  '~/.agents/agents',
+  '.agents/agents',
+]
+
+/**
+ * 把预设候选目录 + discovery 启用列表 组合成 UI 用的 SkillDirConfig[]。
+ *
+ * 顺序语义（ADR-0020 §1.1：靠前覆盖靠后）——**discovery 数组顺序即优先级**：
+ *   1. discovery 里启用的目录，按 discovery 数组顺序排列（用户拖拽排序的结果）
+ *   2. 预设候选中未启用的，按 preset 固定顺序追加在后（供用户勾选）
+ *   3. discovery 里有但不在预设里的自定义路径（已启用），紧随其后
+ *
+ * 这保证用户拖拽改变 discovery 顺序后，广播回来的 UI 列表顺序与之一致，
+ * 不会被 preset 固定顺序覆盖（否则拖拽排序失效）。
+ *
+ * 过滤：不存在 / 非 skill 容器的启用路径不展示（脏数据，如 /path/a）。ADR §5。
+ * 归一化：比较时展开 ~，避免 ~/.pi 与 /Users/.../pi 因字符串不同而重复。
+ */
+function buildDirConfigs(preset: string[], enabledDirs: string[]): SkillDirConfig[] {
+  const presetNormalized = new Set(preset.map(normalizeDirPath))
+  const configs: SkillDirConfig[] = []
+
+  // 1. discovery 启用目录，按 discovery 顺序（= 用户拖拽优先级，靠前覆盖靠后）
+  for (const dir of enabledDirs) {
+    configs.push({ path: dir, enabled: true })
+  }
+
+  // 2. 预设候选中尚未启用的，按 preset 固定顺序追加（供勾选）
+  const enabledNormalized = new Set(enabledDirs.map(normalizeDirPath))
+  for (const path of preset) {
+    if (!enabledNormalized.has(normalizeDirPath(path))) {
+      configs.push({ path, enabled: false })
+    }
+  }
+  return configs
+}
+
+/** 展开 ~ 前缀（与 scanner-base.expandHome 对齐）。 */
+function expandHomePath(p: string): string {
+  return p.startsWith('~') ? `${homedir()}${p.slice(1)}` : p
+}
+
+/** 归一化目录路径用于比较：展开 ~ 后取绝对路径（~/.pi 与 /Users/.../pi 归一为同值）。 */
+function normalizeDirPath(p: string): string {
+  return expandHomePath(p)
+}
 
 export class RuntimeServer implements IMessageBroker {
   private httpServer: HttpServer
@@ -99,6 +161,8 @@ export class RuntimeServer implements IMessageBroker {
       broadcastProviderList: () => this.broadcastProviderList(),
       broadcastSkillList: () => this.broadcastSkillList(),
       broadcastAgentList: () => this.broadcastAgentList(),
+      broadcastSkillDirs: () => this.broadcastSkillDirs(),
+      broadcastAgentDirs: () => this.broadcastAgentDirs(),
     })
     this.sessionHandler = new SessionMessageHandler({
       ...messaging,
@@ -258,8 +322,16 @@ export class RuntimeServer implements IMessageBroker {
         run: () => this.send(ws, { type: 'config.skills', id: this.nextPushId(), payload: { skills: this.configService.loadSkills(this.projectRoot) } }),
       },
       {
+        label: 'config.skillDirs',
+        run: () => this.send(ws, { type: 'config.skillDirs', id: this.nextPushId(), payload: { dirs: buildDirConfigs(PRESET_SKILL_DIRS, this.configService.getSkillDirs()) } }),
+      },
+      {
         label: 'config.agents',
         run: () => this.send(ws, { type: 'config.agents', id: this.nextPushId(), payload: { agents: this.configService.loadAgents(this.projectRoot) } }),
+      },
+      {
+        label: 'config.agentDirs',
+        run: () => this.send(ws, { type: 'config.agentDirs', id: this.nextPushId(), payload: { dirs: buildDirConfigs(PRESET_AGENT_DIRS, this.configService.getAgentDirs()) } }),
       },
       {
         label: 'config.plugins',
@@ -345,6 +417,14 @@ export class RuntimeServer implements IMessageBroker {
   }
   private broadcastAgentList(): void {
     this.broadcast({ type: 'config.agents', id: this.nextPushId(), payload: { agents: this.configService.loadAgents(this.projectRoot) } })
+  }
+  /** 广播 skill 加载路径配置（ADR-0020 §1 discovery.json SSOT 的 UI 视图）。 */
+  private broadcastSkillDirs(): void {
+    this.broadcast({ type: 'config.skillDirs', id: this.nextPushId(), payload: { dirs: buildDirConfigs(PRESET_SKILL_DIRS, this.configService.getSkillDirs()) } })
+  }
+  /** 广播 agent 加载路径配置（ADR-0020 §1 discovery.json SSOT 的 UI 视图）。 */
+  private broadcastAgentDirs(): void {
+    this.broadcast({ type: 'config.agentDirs', id: this.nextPushId(), payload: { dirs: buildDirConfigs(PRESET_AGENT_DIRS, this.configService.getAgentDirs()) } })
   }
 
   // ── Extension timeout delegation ─────────────────────────────────

@@ -77,13 +77,27 @@ export interface IConfigStore {
   /** 翻译 xyz provider type → pi api 标识（pi 协议翻译，归属 infra）。 */
   applyTypeTranslation(type: string): string
 
-  // ── Skill paths（pi settings.json）──
+  // ── Skill paths（discovery.json SSOT，ADR-0020 §1）──
   getSkillPaths(): string[]
+  /** 覆盖 skillDirs（有序数组 = 优先级，靠前覆盖靠后）。写 discovery.json + 同步投影 settings.json。 */
+  setSkillPaths(paths: string[]): void
   addSkillPath(dir: string): void
   removeSkillPath(dir: string): void
+  /** 一次性迁移：settings.json.skills → discovery.json（首启用，幂等）。 */
+  migrateSettingsSkillsToDiscovery(): void
 
-  // ── Agent files（pi agents 目录）──
-  listAgentFiles(): AgentFileEntry[]
+  // ── Agent dirs（discovery.json SSOT，ADR-0020 §1）──
+  getAgentDirs(): string[]
+  /** 覆盖 agentDirs（有序数组 = 优先级，靠前覆盖靠后）。写 discovery.json。 */
+  setAgentDirs(dirs: string[]): void
+
+  // ── Agent files（强制目录 + discovery 多目录扫描）──
+  /**
+   * 扫描 agent .md 文件。
+   * - 不带参：扫默认强制目录（向后兼容）。
+   * - 带 dirs：扫多目录，同名按数组顺序去重（靠前覆盖靠后）。
+   */
+  listAgentFiles(dirs?: string[]): AgentFileEntry[]
   writeAgentFile(name: string, content: string): void
   deleteAgentFile(name: string): boolean
 

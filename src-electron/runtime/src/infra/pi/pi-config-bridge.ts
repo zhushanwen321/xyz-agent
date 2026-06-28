@@ -143,21 +143,49 @@ export function scanPiSessions(): Array<{
 // ── Agent 管理 ────────────────────────────────────────────────
 
 export { getAgentsDir } from './pi-paths.js'
-export function listAgentFiles(): Array<{ name: string; path: string; content: string }> {
-  if (!existsSync(getAgentsDir())) return []
-  const results: Array<{ name: string; path: string; content: string }> = []
-  const files = readdirSync(getAgentsDir()).filter(f => f.endsWith('.md'))
-  for (const file of files) {
-    const filePath = join(getAgentsDir(), file)
+
+/** Agent 文件扫描结果（单目录版，保持向后兼容）。 */
+interface AgentFileEntry {
+  name: string
+  path: string
+  content: string
+  sourceType?: string
+}
+
+/**
+ * 扫描 agent .md 文件。
+ * - 不带参：扫默认强制目录 getAgentsDir()（向后兼容，旧调用方）。
+ * - 带 dirs：扫多目录（ADR-0020 §1.1 层 3），同名按数组顺序去重（靠前覆盖靠后）。
+ *   dirs 数组顺序 = 优先级（与 discovery.json.agentDirs 顺序一致）。
+ */
+export function listAgentFiles(dirs?: string[]): AgentFileEntry[] {
+  const scanDirs = dirs ?? [getAgentsDir()]
+  const seen = new Map<string, AgentFileEntry>() // name → entry，先到先得（靠前胜出）
+
+  for (const rawDir of scanDirs) {
+    if (!rawDir) continue
+    if (!existsSync(rawDir)) continue
+    let files: string[]
     try {
-      const content = readFileSync(filePath, 'utf-8')
-      results.push({ name: file.replace(/\.md$/, ''), path: filePath, content })
-    // eslint-disable-next-line taste/no-silent-catch -- scanning: skip unreadable agent files
+      files = readdirSync(rawDir).filter(f => f.endsWith('.md'))
     } catch {
-      // skip unreadable files
+      continue
+    }
+    for (const file of files) {
+      const filePath = join(rawDir, file)
+      const name = file.replace(/\.md$/, '')
+      if (seen.has(name)) continue // 同名去重，靠前目录胜出
+      try {
+        const content = readFileSync(filePath, 'utf-8')
+        seen.set(name, { name, path: filePath, content })
+      // eslint-disable-next-line taste/no-silent-catch -- scanning: skip unreadable agent files
+      } catch {
+        // skip unreadable files
+      }
     }
   }
-  return results
+
+  return [...seen.values()]
 }
 
 export function writeAgentFile(name: string, content: string): void {

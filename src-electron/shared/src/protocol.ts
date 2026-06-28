@@ -1,6 +1,6 @@
 // Client → Runtime message types
 
-import type { ProviderInfo, SkillInfo, AgentInfo, ModelInfo } from './provider'
+import type { ProviderInfo, SkillInfo, AgentInfo, ModelInfo, SkillDirConfig } from './provider'
 import type { SessionGroup } from './session'
 import type { FileChange, ChangeSetStatus } from './message'
 
@@ -14,6 +14,7 @@ export type ClientMessageType =
   | 'config.discoverModels'
   | 'config.scanSkills' | 'config.setSkill' | 'config.deleteSkill'
   | 'config.scanAgents' | 'config.setAgent' | 'config.deleteAgent'
+  | 'config.setSkillDirs' | 'config.setAgentDirs'
   | 'model.list' | 'model.switch' | 'session.setThinkingLevel'
   | 'tool.approve' | 'tool.deny' | 'tool.always_allow'
   | 'extension.ui_response' | 'extension.toggle' | 'extension.list'
@@ -74,6 +75,9 @@ export interface ClientMessageMap {
   'config.scanAgents': { sources: string[] }
   'config.setAgent': { agent: AgentInfo }
   'config.deleteAgent': { agentId: string }
+  /** 目录级管道写入（ADR-0020 §5）：dirs 为有序数组，靠前覆盖靠后。写 discovery.json。 */
+  'config.setSkillDirs': { dirs: string[] }
+  'config.setAgentDirs': { dirs: string[] }
   'model.list': Record<string, never>
   'model.switch': { sessionId: string; provider: string; modelId: string }
   'session.setThinkingLevel': { sessionId: string; level: string }
@@ -137,6 +141,8 @@ export type ClientMessage =
   | { type: 'config.scanAgents'; id?: string; payload: ClientMessageMap['config.scanAgents'] }
   | { type: 'config.setAgent'; id?: string; payload: ClientMessageMap['config.setAgent'] }
   | { type: 'config.deleteAgent'; id?: string; payload: ClientMessageMap['config.deleteAgent'] }
+  | { type: 'config.setSkillDirs'; id?: string; payload: ClientMessageMap['config.setSkillDirs'] }
+  | { type: 'config.setAgentDirs'; id?: string; payload: ClientMessageMap['config.setAgentDirs'] }
   | { type: 'model.list'; id?: string; payload: Record<string, never> }
   | { type: 'model.switch'; id?: string; payload: ClientMessageMap['model.switch'] }
   | { type: 'session.setThinkingLevel'; id?: string; payload: ClientMessageMap['session.setThinkingLevel'] }
@@ -192,6 +198,7 @@ export type ServerMessageType =
   | 'config.scannedSkills' | 'config.skillUpdated' | 'config.skillDeleted'
   | 'config.scannedAgents' | 'config.agentUpdated' | 'config.agentDeleted'
   | 'config.skills' | 'config.agents'
+  | 'config.skillDirs' | 'config.agentDirs'
   | 'model.list' | 'model.switched'
   | 'session.thinkingLevelSet'
   | 'pong' | 'error'
@@ -233,6 +240,9 @@ export interface ServerMessageMapBase {
   'config.providers': { providers: ProviderInfo[] }
   'config.skills': { skills: SkillInfo[] }
   'config.agents': { agents: AgentInfo[] }
+  /** discovery.json 加载路径广播（ADR-0020 §1，目录级管道配置） */
+  'config.skillDirs': { dirs: SkillDirConfig[] }
+  'config.agentDirs': { dirs: SkillDirConfig[] }
   'config.defaults': { defaultModel: string }
   'config.extensions': { extensions: ExtensionInfo[] }
   'config.plugins': { plugins: PluginInfo[] }

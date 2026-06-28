@@ -8,7 +8,7 @@
   <Dialog :open="open" @update:open="emit('update:open', $event)">
     <DialogContent
       hide-close
-      class="flex max-w-[900px] flex-col gap-0 overflow-hidden p-0 sm:rounded-lg"
+      class="flex max-h-[85vh] max-w-[900px] flex-col gap-0 overflow-hidden p-0 sm:rounded-lg"
     >
       <!-- modal-head -->
       <div class="modal-head flex h-[44px] flex-none items-center gap-2.5 border-b border-border px-3.5">
@@ -58,8 +58,18 @@
           <ScrollArea class="min-h-0 flex-1">
             <div class="px-6 py-4">
               <ProviderPage v-if="activeMenu === 'provider'" :providers="providers" />
-              <SkillPage v-else-if="activeMenu === 'skill'" :skills="skills" />
-              <AgentPage v-else-if="activeMenu === 'agent'" :agents="agents" />
+              <SkillPage
+                v-else-if="activeMenu === 'skill'"
+                :skills="skills"
+                :skill-dirs="skillDirs"
+                @update-skill-dirs="onUpdateSkillDirs"
+              />
+              <AgentPage
+                v-else-if="activeMenu === 'agent'"
+                :agents="agents"
+                :agent-dirs="agentDirs"
+                @update-agent-dirs="onUpdateAgentDirs"
+              />
               <ExtensionPage v-else-if="activeMenu === 'extension'" :extensions="extensions" />
               <SystemPage v-else-if="activeMenu === 'system'" :system="system" @update="onSystemUpdate" />
             </div>
@@ -90,6 +100,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useSettingsStore, type SystemSettings } from '@/stores/settings'
+import type { SkillDirConfig } from '@xyz-agent/shared'
 import ProviderPage from './ProviderPage.vue'
 import SkillPage from './SkillPage.vue'
 import AgentPage from './AgentPage.vue'
@@ -113,7 +124,7 @@ const currentMenu = computed(() => menus.find((m) => m.id === activeMenu.value) 
 // 数据来自 settings store（单一真相源，AppShell 应用级 init 常驻订阅）。
 // storeToRefs 保持响应性解构。
 const settingsStore = useSettingsStore()
-const { providers, skills, agents, extensions, system } = storeToRefs(settingsStore)
+const { providers, skills, agents, extensions, system, skillDirs, agentDirs } = storeToRefs(settingsStore)
 
 // 打开时刷新 providers（拿最新快照）；skills/agents/extensions 靠订阅，无需主动拉。
 watch(() => props.open, (isOpen) => {
@@ -133,5 +144,16 @@ function getItemCount(id: string): number {
 /** SystemPage 偏好更新 → 走 store（写 localStorage + 同步 DOM data-theme + i18n）。 */
 function onSystemUpdate(patch: Partial<SystemSettings>) {
   settingsStore.setSystem(patch)
+}
+
+/** SkillPage 加载路径变更 → 走 store（写 discovery.json，ADR-0020 §1）。 */
+function onUpdateSkillDirs(dirs: SkillDirConfig[]) {
+  // 只把 enabled 路径写进 discovery（目录在 = 启用，ADR §5）
+  settingsStore.setSkillDirs(dirs.filter((d) => d.enabled).map((d) => d.path))
+}
+
+/** AgentPage 加载路径变更 → 走 store（写 discovery.json）。 */
+function onUpdateAgentDirs(dirs: SkillDirConfig[]) {
+  settingsStore.setAgentDirs(dirs.filter((d) => d.enabled).map((d) => d.path))
 }
 </script>

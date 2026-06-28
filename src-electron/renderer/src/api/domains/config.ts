@@ -15,6 +15,7 @@ import type {
   SkillInfo,
   AgentInfo,
   SetProviderData,
+  SkillDirConfig,
 } from '@xyz-agent/shared'
 import * as transport from '../transport'
 import * as pending from '../pending'
@@ -82,6 +83,18 @@ export function onAgents(handler: (agents: AgentInfo[]) => void): () => void {
   })
 }
 
+export function onSkillDirs(handler: (dirs: SkillDirConfig[]) => void): () => void {
+  return events.onGlobalType('config.skillDirs', (msg) => {
+    handler(msg.payload.dirs)
+  })
+}
+
+export function onAgentDirs(handler: (dirs: SkillDirConfig[]) => void): () => void {
+  return events.onGlobalType('config.agentDirs', (msg) => {
+    handler(msg.payload.dirs)
+  })
+}
+
 export function onDefaults(handler: (defaultModel: string) => void): () => void {
   return events.onGlobalType('config.defaults', (msg) => {
     handler(msg.payload.defaultModel)
@@ -89,6 +102,24 @@ export function onDefaults(handler: (defaultModel: string) => void): () => void 
 }
 
 // ── 动作-ack（状态变更由对应订阅通道推回）──
+/**
+ * 目录级管道写入（ADR-0020 §1）：覆盖 discovery.json.skillDirs（有序数组 = 优先级，靠前覆盖靠后）。
+ * 状态变更经 onSkills + onSkillDirs 订阅推回（后端 setSkillDirs 后广播）。
+ */
+export function setSkillDirs(dirs: string[]): Promise<void> {
+  const id = pending.create()
+  const result = pending.register<void>(id)
+  transport.send({ type: 'config.setSkillDirs', id, payload: { dirs } })
+  return result
+}
+
+export function setAgentDirs(dirs: string[]): Promise<void> {
+  const id = pending.create()
+  const result = pending.register<void>(id)
+  transport.send({ type: 'config.setAgentDirs', id, payload: { dirs } })
+  return result
+}
+
 export function setProvider(providerId: string, data: SetProviderData): Promise<void> {
   const id = pending.create()
   const result = pending.register<void>(id)

@@ -60,25 +60,27 @@ export const fixtureProviders: ProviderInfo[] = [
 ]
 
 /* ── Skill ── */
+// ADR-0020 §5：目录在 = 启用，enabled 恒 true（前端不再渲染文件级开关）。
+// effective 标生效（多来源时最高优先那条）；sources 是多来源 badge 链（单来源可省略）。
 
 export const fixtureSkills: SkillInfo[] = [
-  { id: 'sk-code-review', name: 'code-review', description: '审查代码变更', enabled: true, source: 'agents', triggers: ['review', '审查代码'], sourcePath: '~/.agents/skills/code-review/SKILL.md' },
-  { id: 'sk-diagnose', name: 'diagnose', description: '诊断 bug 和性能问题', enabled: true, source: 'agents', triggers: ['diagnose', 'debug'], sourcePath: '~/.agents/skills/diagnose/SKILL.md' },
-  { id: 'sk-impeccable', name: 'impeccable', description: '前端界面设计与优化', enabled: true, source: 'claude', triggers: ['impeccable'], sourcePath: '~/.claude/skills/impeccable/SKILL.md' },
-  { id: 'sk-fallow', name: 'fallow', description: '代码库健康分析', enabled: true, source: 'pi', triggers: ['fallow'], sourcePath: '~/.pi/agent/skills/fallow/SKILL.md' },
-  { id: 'sk-tavily', name: 'tavily-web-search', description: '网络搜索', enabled: true, source: 'agents', triggers: ['搜索', 'search'], sourcePath: '~/.agents/skills/tavily-web-search/SKILL.md' },
-  { id: 'sk-batch-tracer', name: 'batch-tracer', description: '批量代码分析', enabled: false, source: 'agents', triggers: ['批量分析'], sourcePath: '~/.agents/skills/batch-tracer/SKILL.md' },
-  { id: 'sk-pi-goal', name: 'pi-goal', description: '目标驱动的任务管理', enabled: true, source: 'piinstall', triggers: ['goal'], sourcePath: '~/.pi/agent/skills/pi-goal/' },
+  { id: 'sk-code-review', name: 'code-review', description: '审查代码变更', enabled: true, source: 'agents', triggers: ['review', '审查代码'], sourcePath: '~/.agents/skills/code-review/SKILL.md', effective: true },
+  { id: 'sk-diagnose', name: 'diagnose', description: '诊断 bug 和性能问题', enabled: true, source: 'agents', triggers: ['diagnose', 'debug'], sourcePath: '~/.agents/skills/diagnose/SKILL.md', effective: true },
+  { id: 'sk-impeccable', name: 'impeccable', description: '前端界面设计与优化', enabled: true, source: 'claude', triggers: ['impeccable'], sourcePath: '~/.claude/skills/impeccable/SKILL.md', effective: true },
+  { id: 'sk-fallow', name: 'fallow', description: '代码库健康分析', enabled: true, source: 'pi', triggers: ['fallow'], sourcePath: '~/.pi/agent/skills/fallow/SKILL.md', effective: true },
+  { id: 'sk-tavily', name: 'tavily-web-search', description: '网络搜索', enabled: true, source: 'agents', triggers: ['搜索', 'search'], sourcePath: '~/.agents/skills/tavily-web-search/SKILL.md', effective: true },
+  { id: 'sk-batch-tracer', name: 'batch-tracer', description: '批量代码分析', enabled: true, source: 'agents', triggers: ['批量分析'], sourcePath: '~/.agents/skills/batch-tracer/SKILL.md', effective: true },
+  { id: 'sk-pi-goal', name: 'pi-goal', description: '目标驱动的任务管理', enabled: true, source: 'piinstall', triggers: ['goal'], sourcePath: '~/.pi/agent/skills/pi-goal/', effective: true },
 ]
 
 /* ── Agent ── */
 
 export const fixtureAgents: AgentInfo[] = [
-  { id: 'ag-worker', name: 'worker', description: '轻量实现 agent，继承父模型', enabled: true, modelStrategy: 'inherit', source: 'agents' },
-  { id: 'ag-reviewer', name: 'reviewer', description: '通用代码审查专家', enabled: true, modelStrategy: 'inherit', source: 'agents' },
-  { id: 'ag-planner', name: 'planner', description: '从上下文和需求创建实施计划', enabled: true, modelStrategy: 'inherit', source: 'agents' },
-  { id: 'ag-oracle', name: 'oracle', description: '高上下文决策一致性守护者', enabled: true, modelStrategy: 'inherit', source: 'claude' },
-  { id: 'ag-scout', name: 'scout', description: '快速代码侦察', enabled: true, modelStrategy: 'inherit', source: 'agents' },
+  { id: 'ag-worker', name: 'worker', description: '轻量实现 agent，继承父模型', enabled: true, modelStrategy: 'inherit', source: 'agents', effective: true },
+  { id: 'ag-reviewer', name: 'reviewer', description: '通用代码审查专家', enabled: true, modelStrategy: 'inherit', source: 'agents', effective: true },
+  { id: 'ag-planner', name: 'planner', description: '从上下文和需求创建实施计划', enabled: true, modelStrategy: 'inherit', source: 'agents', effective: true },
+  { id: 'ag-oracle', name: 'oracle', description: '高上下文决策一致性守护者', enabled: true, modelStrategy: 'inherit', source: 'claude', effective: true },
+  { id: 'ag-scout', name: 'scout', description: '快速代码侦察', enabled: true, modelStrategy: 'inherit', source: 'agents', effective: true },
 ]
 
 /* ── Extension (MCP) ── */

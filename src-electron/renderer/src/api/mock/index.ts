@@ -12,6 +12,7 @@
 import type {
   Message, ModelInfo, ServerMessage, SessionSummary, SessionGroup, ProviderInfo,
   SkillInfo, AgentInfo, PluginInfo, SetProviderData, ExtensionWidgetPayload, ExtensionStatusPayload,
+  SkillDirConfig,
 } from '@xyz-agent/shared'
 import { createSession, fixtureMessages, fixtureSessions } from './data'
 import { fixtureProviders, fixtureSkills, fixtureAgents, fixtureExtensions, toCandidate } from './settings-data'
@@ -279,6 +280,25 @@ const skillsSub = makeMockSubscription(() => fixtureSkills.map((s) => ({ ...s })
 const agentsSub = makeMockSubscription(() => fixtureAgents.map((a) => ({ ...a })))
 const defaultsSub = makeMockSubscription(() => 'Anthropic/claude-sonnet-4.5')
 
+// ADR-0020 §1 discovery.json 加载路径配置（目录级管道，UI 层 A 勾选/拖动用）
+// fixtureSkillDirs/fixtureAgentDirs 是「预设候选 + enabled 状态」的 UI 视图，对齐 server.ts buildDirConfigs
+const PRESET_SKILL_DIRS = ['~/.pi/agent/skills', '~/.claude/skills', '~/.agents/skills', '.agents/skills']
+const PRESET_AGENT_DIRS = ['~/.pi/agent/agents', '~/.claude/agents', '~/.agents/agents', '.agents/agents']
+let mockSkillDirPaths = ['~/.pi/agent/skills', '~/.claude/skills', '~/.agents/skills'] // 启用的 skillDirs（有序 = 优先级）
+let mockAgentDirPaths = ['~/.agents/agents'] // 启用的 agentDirs
+function buildMockDirConfigs(preset: string[], enabledPaths: string[]): SkillDirConfig[] {
+  // ADR-0020 §1.1：discovery 数组顺序即优先级（靠前覆盖靠后）。
+  // 顺序：启用的按 discovery 顺序（用户拖拽排序）→ 未启用的预设候选按固定顺序追加。
+  const enabledSet = new Set(enabledPaths)
+  const configs = enabledPaths.map((path) => ({ path, enabled: true }))
+  for (const path of preset) {
+    if (!enabledSet.has(path)) configs.push({ path, enabled: false })
+  }
+  return configs
+}
+const skillDirsSub = makeMockSubscription(() => buildMockDirConfigs(PRESET_SKILL_DIRS, mockSkillDirPaths).map((d) => ({ ...d })))
+const agentDirsSub = makeMockSubscription(() => buildMockDirConfigs(PRESET_AGENT_DIRS, mockAgentDirPaths).map((d) => ({ ...d })))
+
 export const config = {
   // 请求型：直接返 fixture 深拷贝（不依赖 sub）
   async listProviders() {
@@ -296,6 +316,8 @@ export const config = {
   onSkills: (h: (skills: SkillInfo[]) => void) => skillsSub.subscribe(h),
   onAgents: (h: (agents: AgentInfo[]) => void) => agentsSub.subscribe(h),
   onDefaults: (h: (defaultModel: string) => void) => defaultsSub.subscribe(h),
+  onSkillDirs: (h: (dirs: SkillDirConfig[]) => void) => skillDirsSub.subscribe(h),
+  onAgentDirs: (h: (dirs: SkillDirConfig[]) => void) => agentDirsSub.subscribe(h),
   // 动作型：mock 同构——更新 fixture 后经订阅广播推回（与 real sendInitialState/广播一致）
   async setProvider(providerId: string, data: SetProviderData) {
     await sleep(TIMING.ack)
@@ -324,6 +346,13 @@ export const config = {
     // 扫描后广播当前 skills 快照（runtime scan 后会刷新 config.skills）
     skillsSub.broadcast(fixtureSkills.map((s) => ({ ...s })))
   },
+  /** ADR-0020 §1 目录级管道写入：更新 mock skillDirs + 广播 skill 列表 + 目录配置 */
+  async setSkillDirs(dirs: string[]) {
+    await sleep(TIMING.ack)
+    mockSkillDirPaths = dirs
+    skillDirsSub.broadcast(buildMockDirConfigs(PRESET_SKILL_DIRS, dirs).map((d) => ({ ...d })))
+    skillsSub.broadcast(fixtureSkills.map((s) => ({ ...s })))
+  },
   async setSkill(skill: SkillInfo) {
     await sleep(TIMING.ack)
     const idx = fixtureSkills.findIndex((s) => s.id === skill.id)
@@ -338,6 +367,13 @@ export const config = {
   },
   async scanAgents(_sources: string[]) {
     await sleep(TIMING.ack)
+    agentsSub.broadcast(fixtureAgents.map((a) => ({ ...a })))
+  },
+  /** ADR-0020 §1 目录级管道写入：更新 mock agentDirs + 广播 agent 列表 + 目录配置 */
+  async setAgentDirs(dirs: string[]) {
+    await sleep(TIMING.ack)
+    mockAgentDirPaths = dirs
+    agentDirsSub.broadcast(buildMockDirConfigs(PRESET_AGENT_DIRS, dirs).map((d) => ({ ...d })))
     agentsSub.broadcast(fixtureAgents.map((a) => ({ ...a })))
   },
   async setAgent(agent: AgentInfo) {

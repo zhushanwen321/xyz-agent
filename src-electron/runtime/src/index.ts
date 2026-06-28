@@ -86,6 +86,9 @@ async function main(): Promise<void> {
   })
   const treeService = new TreeService(pm, new SessionTreeReaderAdapter())
   const configService = new ConfigService(effectiveRoot, configStore)
+  // ADR-0020 §1 一次性迁移：旧版本 skill 路径存在 settings.json.skills，
+  // 首启用时提升为 discovery.json SSOT。幂等：discovery 已有数据则 no-op。
+  configService.migrateSettingsSkillsToDiscovery()
   const modelService = new ModelService(modelSource)
 
   // ── Phase 2: create services that reference other services via closures / deps ──

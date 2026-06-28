@@ -14,6 +14,11 @@ import type {
   ConfigModelsConfig,
 } from '../../services/ports/config.js'
 import * as piBridge from './pi-config-bridge.js'
+import { migrateSettingsSkillsToDiscovery } from './pi-provider-store.js'
+import {
+  getAgentDirs as getDiscoveryAgentDirs,
+  setAgentDirs as setDiscoveryAgentDirs,
+} from './discovery-store.js'
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -75,10 +80,14 @@ export class PiConfigStore implements IConfigStore {
     return piBridge.removeProvider(providerId)
   }
 
-  // ── Skill paths ──
+  // ── Skill paths（discovery.json SSOT）──
 
   getSkillPaths(): string[] {
     return piBridge.getSkillPaths()
+  }
+
+  setSkillPaths(paths: string[]): void {
+    piBridge.setSkillPaths(paths)
   }
 
   addSkillPath(dir: string): void {
@@ -89,10 +98,24 @@ export class PiConfigStore implements IConfigStore {
     piBridge.removeSkillPath(dir)
   }
 
+  migrateSettingsSkillsToDiscovery(): void {
+    migrateSettingsSkillsToDiscovery()
+  }
+
+  // ── Agent dirs（discovery.json SSOT）──
+
+  getAgentDirs(): string[] {
+    return getDiscoveryAgentDirs()
+  }
+
+  setAgentDirs(dirs: string[]): void {
+    setDiscoveryAgentDirs(dirs)
+  }
+
   // ── Agent files ──
 
-  listAgentFiles() {
-    return piBridge.listAgentFiles()
+  listAgentFiles(dirs?: string[]) {
+    return piBridge.listAgentFiles(dirs)
   }
 
   writeAgentFile(name: string, content: string): void {

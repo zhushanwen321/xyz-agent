@@ -166,13 +166,28 @@ export interface IConfigService {
   deleteProvider(providerId: string): { removed: boolean; newDefault?: { provider: string; modelId: string } }
   getProvider(providerId: string): { apiKey?: string; name?: string; type?: string; baseUrl?: string; models?: unknown[]; enabled?: boolean } | undefined
   updateToolPermissions(permissions: Record<string, string>): void
+  // ── Skill/Agent 加载路径（ADR-0020 §1 discovery.json SSOT）──
+  /** 覆盖 skillDirs（有序数组 = 优先级，靠前覆盖靠后）。写 discovery.json + 投影 settings.json。 */
+  setSkillDirs(dirs: string[]): void
+  /** 读取 skillDirs（有序数组）。 */
+  getSkillDirs(): string[]
+  /** 覆盖 agentDirs（有序数组 = 优先级，靠前覆盖靠后）。写 discovery.json。 */
+  setAgentDirs(dirs: string[]): void
+  /** 读取 agentDirs（有序数组）。 */
+  getAgentDirs(): string[]
+  /** 一次性迁移：settings.json.skills → discovery.json（首启用，幂等）。 */
+  migrateSettingsSkillsToDiscovery(): void
   loadSkills(projectRoot: string): SkillInfo[]
   saveSkills(projectRoot: string, skills: SkillInfo[]): void
+  /** @deprecated ADR-0020 §5：目录级管道模型，无文件级 CRUD。保留为兼容 no-op。 */
   upsertSkill(skill: SkillInfo): void
+  /** @deprecated ADR-0020 §5：目录级管道模型，无文件级 CRUD。保留为兼容 no-op。 */
   deleteSkill(skillId: string): void
   loadAgents(projectRoot: string): AgentInfo[]
   saveAgents(projectRoot: string, agents: AgentInfo[]): void
+  /** @deprecated ADR-0020 §5：目录级管道模型，无文件级 CRUD。保留为兼容 no-op。 */
   upsertAgent(agent: AgentInfo): void
+  /** @deprecated ADR-0020 §5：目录级管道模型，无文件级 CRUD。保留为兼容 no-op。 */
   deleteAgent(agentId: string): void
   scanSkills(sources: string[], existingIds: Set<string>): ScannedSkillInfo[]
   scanAgents(sources: string[], existingIds: Set<string>): ScannedAgentInfo[]

@@ -25,10 +25,15 @@ function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; delete
     scanSkills: vi.fn().mockReturnValue([]),
     upsertSkill: vi.fn(),
     deleteSkill: vi.fn(),
+    setSkillDirs: vi.fn(),
+    getSkillDirs: vi.fn().mockReturnValue([]),
+    migrateSettingsSkillsToDiscovery: vi.fn(),
     loadAgents: vi.fn().mockReturnValue([]),
     scanAgents: vi.fn().mockReturnValue([]),
     upsertAgent: vi.fn(),
     deleteAgent: vi.fn(),
+    setAgentDirs: vi.fn(),
+    getAgentDirs: vi.fn().mockReturnValue([]),
   }
   const modelService = {
     aggregateModels: overrides.aggregate ?? vi.fn().mockReturnValue([{ id: 'm1' }]),
@@ -49,6 +54,8 @@ function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; delete
     broadcastProviderList: vi.fn(),
     broadcastSkillList: vi.fn(),
     broadcastAgentList: vi.fn(),
+    broadcastSkillDirs: vi.fn(),
+    broadcastAgentDirs: vi.fn(),
   }
   const handler = new SettingsMessageHandler(ctx as unknown as ConstructorParameters<typeof SettingsMessageHandler>[0])
   return { ctx, replies, broadcasts, handler }
@@ -105,10 +112,32 @@ describe('SettingsMessageHandler', () => {
       expect(ctx.modelService.switchModel).toHaveBeenCalledWith('s1', 'p1', 'm1')
       expect(replies[0]).toMatchObject({ type: 'model.switched' })
     })
-    it('config.scanSkills → reply scannedSkills', async () => {
-      const { replies, handler } = makeHandler()
+    it('config.scanSkills → reply scannedSkills + 广播 config.skills（修裂缝①）', async () => {
+      const { replies, ctx, handler } = makeHandler()
       await handler.handleSettingsMessage(msg('config.scanSkills', { sources: ['/x'] }), WS)
       expect(replies[0]).toMatchObject({ type: 'config.scannedSkills', payload: { success: true } })
+      // 裂缝①核心修复：扫描后必须广播，让前端 onSkills 订阅推回
+      expect(ctx.broadcastSkillList).toHaveBeenCalledOnce()
+    })
+    it('config.scanAgents → 广播 config.agents（修裂缝①）', async () => {
+      const { ctx, handler } = makeHandler()
+      await handler.handleSettingsMessage(msg('config.scanAgents', { sources: ['/x'] }), WS)
+      expect(ctx.broadcastAgentList).toHaveBeenCalledOnce()
+    })
+    it('config.setSkillDirs → 写 discovery + 广播 skill 列表 + 目录配置', async () => {
+      const { replies, ctx, handler } = makeHandler()
+      await handler.handleSettingsMessage(msg('config.setSkillDirs', { dirs: ['~/.pi/agent/skills', '~/.claude/skills'] }), WS)
+      expect(ctx.configService.setSkillDirs).toHaveBeenCalledWith(['~/.pi/agent/skills', '~/.claude/skills'])
+      expect(replies[0]).toMatchObject({ type: 'config.skillDirs' })
+      expect(ctx.broadcastSkillList).toHaveBeenCalledOnce()
+      expect(ctx.broadcastSkillDirs).toHaveBeenCalledOnce()
+    })
+    it('config.setAgentDirs → 写 discovery + 广播 agent 列表 + 目录配置', async () => {
+      const { ctx, handler } = makeHandler()
+      await handler.handleSettingsMessage(msg('config.setAgentDirs', { dirs: ['~/.agents/agents'] }), WS)
+      expect(ctx.configService.setAgentDirs).toHaveBeenCalledWith(['~/.agents/agents'])
+      expect(ctx.broadcastAgentList).toHaveBeenCalledOnce()
+      expect(ctx.broadcastAgentDirs).toHaveBeenCalledOnce()
     })
     it('tool.approve → no-op return true', async () => {
       const { handler } = makeHandler()
