@@ -2,11 +2,16 @@
   <!--
     容器组件 · message-stream（panel/spec.md zone ②，draft-message-stream）。
     读 chat store 按 sessionId 分区的消息 → groupTurns 分回合 → 渲染 Turn 列表。
-    auto-scroll 基础版（spec §8.5）：messages 变化 → scrollToBottom。
-    高级行为（上滚暂停/跳底提示）DEFERRED（G2-007）。
+    auto-scroll（spec §8.5 + G2-007）：stickToBottom 判定，上滚脱离锚定不强制拉回，
+    非贴底有新内容显「回到底部」浮层，点浮层平滑滚回并恢复锚定。
     空 session 显示欢迎语（G2-004 空态收敛）。
   -->
-  <div ref="scrollEl" class="message-stream flex min-h-0 flex-1 flex-col gap-[22px] overflow-y-auto px-5 py-[18px]">
+  <div class="relative flex min-h-0 flex-1 flex-col">
+    <div
+      ref="scrollEl"
+      class="message-stream flex flex-1 flex-col gap-[22px] overflow-y-auto px-5 py-[18px]"
+      @scroll.passive="onScroll"
+    >
     <template v-for="(item, idx) in renderItems" :key="renderKey(item)">
       <Turn
         v-if="item.kind === 'turn'"
@@ -22,12 +27,28 @@
       <Sparkles class="size-6 text-accent opacity-70" />
       <p class="text-[13px] text-muted">开始对话，或从左侧选择一个会话</p>
     </div>
+    </div>
+
+    <!-- 回到底部浮层：非贴底且有未读时显示，点之平滑滚回并恢复锚定 -->
+    <Transition name="fade">
+      <Button
+        v-if="unreadBelow"
+        variant="default"
+        size="icon"
+        class="absolute bottom-4 left-1/2 z-10 size-9 -translate-x-1/2 rounded-full shadow-lg"
+        title="回到底部"
+        @click="scrollToBottom('smooth', true)"
+      >
+        <ChevronDown class="size-4" />
+      </Button>
+    </Transition>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, watch } from 'vue'
-import { Sparkles } from '@lucide/vue'
+import { ChevronDown, Sparkles } from '@lucide/vue'
+import { Button } from '@/components/ui/button'
 import { useChatStore } from '@/stores/chat'
 import { useChatScroll } from '@/composables/effects/useChatScroll'
 import { toRenderItems, renderKey } from '@/composables/logic/messageTurns'
@@ -68,8 +89,8 @@ const lastRenderTurn = computed(() => {
   return null
 })
 
-/** auto-scroll：监听 messages 长度 + streaming 内容变化 → 滚到底 */
-const { scrollEl, scrollToBottom } = useChatScroll()
+/** auto-scroll：stickToBottom guard —— 非贴底时不强制拉回，仅标记未读显「回到底部」浮层 */
+const { scrollEl, unreadBelow, onScroll, scrollToBottom } = useChatScroll()
 
 watch(
   () => currentMessages.value.length,
@@ -92,10 +113,10 @@ watch(
   },
 )
 
-// 切换 session → 滚到底（展示最新内容）
+// 切换 session → 强制滚到底（展示最新内容，不受 guard）
 watch(
   () => props.sessionId,
-  () => scrollToBottom('auto'),
+  () => scrollToBottom('auto', true),
 )
 </script>
 
@@ -107,4 +128,8 @@ watch(
   border-radius: 4px;
 }
 .message-stream::-webkit-scrollbar-thumb:hover { background: var(--subtle); }
+
+/* 回到底部浮层过渡 */
+.fade-enter-active, .fade-leave-active { transition: opacity var(--duration-fast, 150ms) ease; }
+.fade-enter-from, .fade-leave-to { opacity: 0; }
 </style>

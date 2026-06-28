@@ -29,6 +29,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6",
+    "@vitest/coverage-v8": "^4.1.9",
     "@vue/test-utils": "^2.4.10",
     "autoprefixer": "^10",
     "happy-dom": "^20.9.0",

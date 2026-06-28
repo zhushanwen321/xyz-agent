@@ -12,16 +12,16 @@
     <div v-if="type === 'thinking'" class="trace-think">
       <div
         class="flex cursor-pointer select-none items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.06em] text-reasoning transition-colors hover:text-[var(--reasoning)]"
-        :title="thinkingCollapsed ? '展开推理' : '收起推理'"
-        @click="thinkingCollapsed = !thinkingCollapsed"
+        :title="thinkingExpanded ? '收起推理' : '展开推理'"
+        @click="toggleThinking"
       >
-        <ChevronRight class="size-2.5 transition-transform" :class="thinkingCollapsed ? '' : 'rotate-90'" />
+        <ChevronRight class="size-2.5 transition-transform" :class="thinkingExpanded ? 'rotate-90' : ''" />
         <Brain class="size-3" />
         <span class="whitespace-nowrap">思考</span>
-        <span v-if="thinkingCollapsed" class="ml-0.5 truncate text-muted">· {{ previewText }}</span>
+        <span v-if="!thinkingExpanded" class="ml-0.5 truncate text-muted">· {{ previewText }}</span>
       </div>
       <!-- text-[12px] 对齐 tool 详情字号（曾用继承字号偏大） -->
-      <p v-if="!thinkingCollapsed" class="mt-1 text-[12px] italic leading-relaxed text-muted">{{ content }}</p>
+      <p v-if="thinkingExpanded" class="mt-1 text-[12px] italic leading-relaxed text-muted">{{ content }}</p>
     </div>
 
     <!-- 中间产出 text 块（draft §4 Output Text 中间：折进执行流程，下划线行，markdown 渲染） -->
@@ -35,7 +35,7 @@
         class="flex cursor-pointer select-none items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.06em] transition-opacity hover:opacity-80"
         :class="isFailed ? 'text-danger' : 'text-info'"
         :title="toolExpanded ? '收起' : '展开'"
-        @click="toolCollapsed = !toolCollapsed"
+        @click="toggleTool"
       >
         <ChevronRight class="size-2.5 transition-transform" :class="toolExpanded ? 'rotate-90' : ''" />
         <Wrench class="size-3" />
@@ -76,10 +76,18 @@ const props = defineProps<{
   tool?: ToolCall
   /** thinking 块初始折叠态（来自 ThinkingBlock.collapsed，默认收起） */
   collapsed?: boolean
+  /** working 态（turn 进行中）：thinking/tool 强制全展开且不可手动收（draft §1 无背景下划线展开） */
+  working?: boolean
 }>()
 
-/* ── thinking 独立折叠（draft §4「长块可单独再折叠」）：本地态，由 collapsed prop 初始化 ── */
+/* ── thinking 折叠：working 态强制展开且不可收（draft §1）；非 working 由本地态 toggle ── */
 const thinkingCollapsed = ref(props.collapsed ?? true)
+const thinkingExpanded = computed(() => props.working || !thinkingCollapsed.value)
+
+function toggleThinking(): void {
+  if (props.working) return
+  thinkingCollapsed.value = !thinkingCollapsed.value
+}
 
 /** 收起态的正文预览（截断，draft：收起时显一行摘要） */
 const PREVIEW_LIMIT = 60
@@ -95,11 +103,17 @@ const toolName = computed(() => props.tool?.toolName ?? 'tool')
 const result = computed(() => props.tool?.output)
 
 /**
- * tool 折叠：默认收起，点击展开；running 态强制展开（实时可见）。
- * trace 默认收起要求（问题 3）：点击「已工作」展开后 tool 也应默认折叠，仅 running 强制可见。
+ * tool 折叠：默认收起，点击展开。
+ * 强制展开态：working（流程实时可见）/ running（进行中）/ failed（错误须直视）。
+ * trace 默认收起要求（问题 3）：非强制态点击「已工作」展开后 tool 默认折叠。
  */
 const toolCollapsed = ref(true)
-const toolExpanded = computed(() => isRunning.value || !toolCollapsed.value)
+const toolExpanded = computed(() => props.working || isRunning.value || isFailed.value || !toolCollapsed.value)
+
+function toggleTool(): void {
+  if (props.working) return
+  toolCollapsed.value = !toolCollapsed.value
+}
 
 /** 从 input 提取可读参数（path / command 等），简化展示 */
 const argPath = computed(() => {

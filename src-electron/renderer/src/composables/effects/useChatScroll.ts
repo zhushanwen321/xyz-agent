@@ -1,31 +1,56 @@
 /**
  * useChatScroll —— message-stream auto-scroll 副作用（R2 effects 层）。
  *
- * v1 基础版（spec §8.5）：新消息到达 → scrollToBottom。
- * DEFERRED（G2-007）：用户上滚暂停、新消息「跳到底部」提示——stickToBottom ref 暴露占位，
- * 但检测逻辑不实现（始终 true，保证新消息总能滚到底）。
+ * 职责：
+ * - onScroll：读滚动位置维护 stickToBottom（距底 ≤ BOTTOM_THRESHOLD 视为贴底），
+ *   回贴底时清零 unreadBelow。
+ * - scrollToBottom(behavior, force)：force=false（默认，程序自动滚动）受 stickToBottom
+ *   guard——非贴底时不滚、置 unreadBelow=true（新内容在下方不可见）；force=true
+ *   （用户「回到底部」浮层）强制滚动并恢复贴底态。
  *
  * 依赖方向：仅 vue ref（effects 不跨 api/stores，纯 DOM 副作用）。
  */
 import { nextTick, ref } from 'vue'
 import type { Ref } from 'vue'
 
+/** 距底小于该阈值（px）视为贴底 */
+const BOTTOM_THRESHOLD = 40
+
 export function useChatScroll() {
   /** 滚动容器引用（由 MessageStream 绑定 ref） */
   const scrollEl: Ref<HTMLElement | null> = ref(null)
-  /**
-   * 是否贴底（v1 恒 true，高级上滚暂停逻辑 DEFERRED）。
-   * 保留 ref 形态让消费方未来接入 G2-007 时无需改签名。
-   */
+  /** 是否贴底（onScroll 维护） */
   const stickToBottom = ref(true)
+  /** 非贴底时有新内容到达 → 置 true（驱动「回到底部」浮层）；回贴底清零 */
+  const unreadBelow = ref(false)
 
-  /** 滚动到底部（nextTick 确保 DOM 更新后再滚） */
-  async function scrollToBottom(behavior: ScrollBehavior = 'smooth'): Promise<void> {
+  /** scroll 事件回调：据距底距离判定贴底，回贴底清未读标记 */
+  function onScroll(): void {
+    const el = scrollEl.value
+    if (!el) return
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight
+    const stick = distance <= BOTTOM_THRESHOLD
+    stickToBottom.value = stick
+    if (stick) unreadBelow.value = false
+  }
+
+  /**
+   * 滚动到底部。
+   * - force=false（默认）：受 stickToBottom guard，非贴底时不滚只置 unreadBelow（程序自动跟随用）
+   * - force=true：强制滚动并恢复贴底态（用户「回到底部」浮层点击用）
+   */
+  async function scrollToBottom(behavior: ScrollBehavior = 'smooth', force = false): Promise<void> {
+    if (!force && !stickToBottom.value) {
+      unreadBelow.value = true
+      return
+    }
     await nextTick()
     const el = scrollEl.value
     if (!el) return
     el.scrollTo({ top: el.scrollHeight, behavior })
+    stickToBottom.value = true
+    unreadBelow.value = false
   }
 
-  return { scrollEl, stickToBottom, scrollToBottom }
+  return { scrollEl, stickToBottom, unreadBelow, onScroll, scrollToBottom }
 }
