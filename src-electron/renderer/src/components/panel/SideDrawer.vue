@@ -1,20 +1,26 @@
 <!--
-  SideDrawer —— 右抽屉容器（issues.md #9 / code-architecture §4.10 / panel/spec.md）。
+  SideDrawer —— workspace-body 级抽屉（panel/spec.md §未决项#1 v2 形态裁决 / draft-detail-pane.html）。
   Terminal/Browser/Git 三 tab（§6.3 点2）。Git tab 承载全量 git 状态（GitPanel.vue），
-  原 Panel 底部 zone ⑤ 移入抽屉；Terminal/Browser 走 widget 订阅。
-  与 Panel 数据强耦合，固定挂触发 Panel（panel/spec.md），由 Panel.vue 渲染为 section 内 absolute 浮层。
+  Terminal/Browser 走 widget 订阅。
 
-  状态控制走 useSideDrawer（§6.3 点5 架构解耦）：本组件只接收 isOpen/activeTab/docked props
+  形态（v2 裁决：占另一半）—— drawer 是 PanelContainer（workspace-body）的 absolute 浮层，
+  width:50%，覆盖 workspace 的另一半空间，不参与 panel 的 flex 均分布局（panel 始终 flex-1 撑满/均分）：
+  · 单 panel：drawer 覆盖 workspace 右（或左）半；
+  · 双 panel：drawer 覆盖对侧 standby panel。
+  方向：host=P1 → drawer 贴右（direction='right'）；host=P2 → drawer 贴左（direction='left'）。
+
+  状态控制走 useSideDrawer（§6.3 点5 架构解耦）：本组件只接收 isOpen/activeTab/docked/direction props
   + emit close/set-tab/toggle-dock，不持有状态。widget 订阅（#11 W3a）在本组件按 props.sessionId
   接入 extension.onWidget，按 widgetKey 路由到 terminal/browser tab。
-  Git tab 不走 widget——数据由 Panel 经 GIT_STATUS_KEY provide，GitPanel 自行 inject，
+  Git tab 不走 widget——数据由 PanelContainer 经 GIT_STATUS_KEY provide，GitPanel 自行 inject，
   本通用容器不持有 git props（保持容器纯净，不污染通用 tab 范式）。
 -->
 <template>
-  <Transition name="drawer-slide">
+  <Transition :name="direction === 'left' ? 'drawer-slide-left' : 'drawer-slide-right'">
     <aside
       v-if="isOpen"
-      class="absolute right-0 top-0 z-30 flex h-full w-[340px] flex-col border-l border-border-strong bg-bg-elevated shadow-2xl"
+      class="absolute top-0 z-30 flex h-full w-1/2 flex-col bg-bg-elevated shadow-2xl"
+      :class="direction === 'left' ? 'left-0 border-r border-border-strong' : 'right-0 border-l border-border-strong'"
       aria-label="侧边抽屉"
     >
       <!-- header：tab 栏（左）+ 钉住/关闭（右） -->
@@ -123,6 +129,8 @@ const props = defineProps<{
   isOpen: boolean
   activeTab: SideDrawerTab
   docked: boolean
+  /** 抽屉贴边方向（panel/spec.md v2）：host=P1→'right'（贴右），host=P2→'left'（贴左） */
+  direction: 'right' | 'left'
   /** widget 订阅的 session 标识（#11 W3a）：为 null 不订阅 */
   sessionId: string | null
 }>()
@@ -243,22 +251,53 @@ watch(
   { immediate: true },
 )
 
+/**
+ * ESC 关闭抽屉（panel/spec.md：抽屉是浮层，ESC 收起）。
+ * 仅在 isOpen 时挂监听，避免抽屉关闭后仍抢全局 keydown（如 composer 输入态）。
+ */
+function onKeyDown(e: KeyboardEvent): void {
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    emit('close')
+  }
+}
+watch(
+  () => props.isOpen,
+  (open) => {
+    if (open) window.addEventListener('keydown', onKeyDown)
+    else window.removeEventListener('keydown', onKeyDown)
+  },
+  { immediate: true },
+)
+
 onBeforeUnmount(() => {
   unsubWidget?.()
   unsubStatus?.()
+  window.removeEventListener('keydown', onKeyDown)
 })
 </script>
 
 <style scoped>
-/* 抽屉从右滑入/滑出（panel/spec.md 右抽屉从右滑出）。
+/* 抽屉滑入/滑出（panel/spec.md v2：dir-right 从右滑出 translateX(100%)，dir-left 从左滑出 translateX(-100%)）。
    escape hatch：Vue Transition 类无法用 Tailwind 表达（需 enter-from/leave-to 同时变换）。 */
-.drawer-slide-enter-from,
-.drawer-slide-leave-to {
-  transform: translateX(100%);
+.drawer-slide-right-enter-from,
+.drawer-slide-right-leave-to,
+.drawer-slide-left-enter-from,
+.drawer-slide-left-leave-to {
   opacity: 0;
 }
-.drawer-slide-enter-active,
-.drawer-slide-leave-active {
+.drawer-slide-right-enter-from,
+.drawer-slide-right-leave-to {
+  transform: translateX(100%);
+}
+.drawer-slide-left-enter-from,
+.drawer-slide-left-leave-to {
+  transform: translateX(-100%);
+}
+.drawer-slide-right-enter-active,
+.drawer-slide-right-leave-active,
+.drawer-slide-left-enter-active,
+.drawer-slide-left-leave-active {
   transition:
     transform var(--duration-slow) var(--ease),
     opacity var(--duration-slow) var(--ease);

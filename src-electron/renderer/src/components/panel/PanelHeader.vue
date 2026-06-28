@@ -62,24 +62,18 @@
       class="size-[7px] shrink-0 rounded-full"
       :class="statusDotClass"
     />
-    <!-- breadcrumb（shell/spec §四：项目 ▸ 会话 ▸ 分支，落点在 main-header 内） -->
-    <nav class="flex min-w-0 items-center gap-1 [-webkit-app-region:no-drag]">
+    <!-- breadcrumb（shell/spec §四：项目 ▸ 分支，落点在 main-header 内）。
+         不显会话名（仅目录 + 分支两段），避免与目录视觉重复。
+         shrink + min-w-0：长目录+分支时截断优先发生于此，绝不盖右侧 3 按钮（按钮组 ml-auto + shrink-0）。 -->
+    <nav class="flex min-w-0 shrink items-center gap-1 [-webkit-app-region:no-drag]">
       <ol class="flex min-w-0 items-center gap-1 text-[12.5px]">
         <li class="flex min-w-0 items-center gap-1.5">
           <Folder class="size-3 shrink-0 opacity-70 text-subtle" />
           <span
-            class="truncate font-mono text-[11px] text-subtle"
+            class="truncate font-mono text-[12px] font-semibold"
+            :class="active ? 'text-fg' : 'text-muted'"
             :title="`工作目录：${sessionDir}`"
           >{{ dirName }}</span>
-        </li>
-        <li aria-hidden="true" class="text-subtle opacity-50">
-          <ChevronRight class="size-3 shrink-0" />
-        </li>
-        <li class="min-w-0">
-          <span
-            class="truncate font-semibold"
-            :class="active ? 'text-fg' : 'text-muted'"
-          >{{ sessionLabel }}</span>
         </li>
         <template v-if="gitBranch">
           <li aria-hidden="true" class="text-subtle opacity-50">
@@ -156,7 +150,7 @@
 </template>
 
 <script setup lang="ts">
-/* eslint-disable no-magic-numbers */
+ 
 import { computed } from 'vue'
 import { Folder, Columns2, X, ChevronRight, Plus, GitBranch, PanelLeftOpen, PanelLeftClose, ArrowLeft, ArrowRight } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
@@ -200,10 +194,10 @@ const { isFullscreen } = usePlatformChrome()
  */
 const showChrome = computed(() => props.isFirstPanel && sidebar.collapsed)
 
-/** 工作目录名（cwd 末段），长路径只显末段防溢出 */
+/** 工作目录名（cwd 末段）：只显最后一级目录，避免目录+分支过长盖住右侧按钮（title 仍显全路径）。 */
 const dirName = computed(() => {
   const segs = props.sessionDir.split('/').filter(Boolean)
-  return segs.length > 1 ? `${segs[segs.length - 2]}/${segs[segs.length - 1]}` : (segs[0] ?? props.sessionDir)
+  return segs.length ? segs[segs.length - 1] : props.sessionDir
 })
 
 /** 状态点 5 态色（design-tokens SSOT，与 sidebar 一致）。running 用 animate-pulse 呼吸。 */

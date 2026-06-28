@@ -26,7 +26,7 @@
       @split="emit('split')"
       @new-session="emit('new-session')"
       @close="emit('close')"
-      @open-git="openDrawer('git')"
+      @open-git="emit('openGit')"
     />
 
     <!-- 渲染分支对齐 NewTaskFlow 状态机（修恢复空 session 的 chip 死锁）：
@@ -68,19 +68,6 @@
            （恢复的僵尸空 session）走空对话态，band 渲染 composer 供用户直输发该 session。 -->
       <Composer v-if="showPanelComposer" :session-id="sessionId" />
     </div>
-
-    <!-- SideDrawer：右抽屉容器（§4.10 F10），固定挂本 Panel（panel/spec.md）。
-         Terminal/Browser/Git 三 tab。git 数据由 Panel 经 GIT_STATUS_KEY provide，GitPanel inject。
-         状态控制下沉 useSideDrawer（§6.3 点5），Panel 仅作 slot 容器不持有 tab/dock 状态。 -->
-    <SideDrawer
-      :is-open="drawerOpen"
-      :active-tab="drawerTab"
-      :docked="drawerDocked"
-      :session-id="sessionId"
-      @close="closeDrawer"
-      @set-tab="setDrawerTab"
-      @toggle-dock="toggleDrawerDock"
-    />
   </section>
 </template>
 
@@ -88,14 +75,12 @@
 import { computed } from 'vue'
 import { MessageSquare } from '@lucide/vue'
 import type { DerivedStatus } from '@/types'
+import type { GitIndicator } from '@/composables/features/useGitStatus'
 import PanelHeader from './PanelHeader.vue'
 import ProgressZone from './ProgressZone.vue'
 import MessageStream from './MessageStream.vue'
 import Composer from './Composer.vue'
-import SideDrawer from './SideDrawer.vue'
 import Landing from '@/components/new-task/Landing.vue'
-import { useSideDrawer } from '@/composables/features/useSideDrawer'
-import { provideGitStatus } from '@/composables/features/useGitStatus'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useChatStore } from '@/stores/chat'
 import { useSidebar } from '@/composables/features/useSidebar'
@@ -106,6 +91,8 @@ const props = defineProps<{
   sessionLabel: string
   sessionDir: string
   gitBranch?: string
+  /** git 脏状态指示（PanelContainer 统一提供，透传给 PanelHeader；hasRepo=false 不渲染 git 按钮） */
+  gitIndicator?: GitIndicator
   status: DerivedStatus
   active: boolean
   isDual: boolean
@@ -118,23 +105,9 @@ const emit = defineEmits<{
   split: []
   'new-session': []
   close: []
+  /** 打开 SideDrawer git tab（PanelContainer 统一渲染抽屉，事件上抛） */
+  openGit: []
 }>()
-
-/** SideDrawer 控制（§6.3 点5 架构解耦）：open/dock/tab 状态下沉 composable，Panel 不直接持有 */
-const {
-  isOpen: drawerOpen,
-  activeTab: drawerTab,
-  docked: drawerDocked,
-  open: openDrawer,
-  close: closeDrawer,
-  setTab: setDrawerTab,
-  toggleDock: toggleDrawerDock,
-} = useSideDrawer()
-
-/** git 状态唯一数据源（panel/spec.md：git 移入抽屉后）。
- *  Panel 持有实例 → GIT_STATUS_KEY provide → GitPanel（抽屉内）与 PanelHeader 脏状态点共享。
- *  单实例避免双实例 stale（抽屉内 stage 后 header 点同步更新）。getter 形式随 props.sessionId 响应。 */
-const git = provideGitStatus(() => props.sessionId)
 
 /** 点击 panel body 切 active（双 panel 主从焦点）；点 header 按钮不误切（按钮自身 stopPropagation） */
 function onPanelMouseDown(e: MouseEvent): void {
@@ -147,9 +120,6 @@ function onPanelMouseDown(e: MouseEvent): void {
 const chat = useChatStore()
 
 const flow = useNewTaskFlow()
-
-/** header 脏状态点所需指示（解包 git.indicator 供 template 透传给 PanelHeader props） */
-const gitIndicator = computed(() => git.indicator.value)
 
 /** 当前 session 消息数（未 hydrate / 无 session → 0） */
 const messageCount = computed(() =>
@@ -178,7 +148,9 @@ function onRetryHistory(): void {
   if (props.sessionId) void useSidebar().retryHistory(props.sessionId)
 }
 
-/** 激活标识（workspace/spec.md）：单 panel 无标识；双 active = bg-elevated + ring-1 accent + opacity 1；双 standby = opacity 0.5 hover 回升 0.78 */
+/** 激活标识（workspace/spec.md）：单 panel 无标识；双 active = bg-elevated + ring-1 accent + opacity 1；双 standby = opacity 0.5 hover 回升 0.78。
+ *  SideDrawer 是 workspace-body 级 absolute 浮层（w-1/2，覆盖对侧），不参与 panel 的 flex 布局——
+ *  panel 始终 flex-1 均分（单 panel 撑满、双 panel 各半），与 drawer 完全解耦，避免收窄态引发宽度异常。 */
 const panelStateClass = computed(() => {
   if (props.active && props.isDual) {
     return 'bg-bg-elevated opacity-100 ring-1 ring-[var(--accent-ring)]'

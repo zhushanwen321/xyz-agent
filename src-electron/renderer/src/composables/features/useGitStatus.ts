@@ -47,7 +47,7 @@ export interface UseGitStatusReturn {
   commit: () => Promise<void>
 }
 
-/** provide/inject key：Panel 持有唯一实例 → GitPanel 注入（跳过通用容器 SideDrawer） */
+/** provide/inject key：PanelContainer 持有唯一实例（跟随 active panel 的 session）→ GitPanel 注入 */
 export const GIT_STATUS_KEY: InjectionKey<UseGitStatusReturn> = Symbol('git-status')
 
 /**
@@ -184,7 +184,7 @@ export function useGitStatus(sessionIdRef: Ref<string | null> | (() => string | 
   }
 }
 
-/** 便捷封装：在 Panel.vue 提供 git 状态实例（唯一数据源） */
+/** 便捷封装：在 PanelContainer 提供 git 状态实例（唯一数据源，跟随 active panel 的 session） */
 export function provideGitStatus(sessionIdRef: Ref<string | null> | (() => string | null)): UseGitStatusReturn {
   const git = useGitStatus(sessionIdRef)
   provide(GIT_STATUS_KEY, git)
@@ -195,7 +195,7 @@ export function provideGitStatus(sessionIdRef: Ref<string | null> | (() => strin
 export function useGitStatusOrFail(): UseGitStatusReturn {
   const git = inject(GIT_STATUS_KEY, null)
   if (!git) {
-    throw new Error('useGitStatusOrFail: GIT_STATUS_KEY 未注入——GitPanel 必须挂在 Panel 之下')
+    throw new Error('useGitStatusOrFail: GIT_STATUS_KEY 未注入——GitPanel 必须挂在 PanelContainer 之下')
   }
   return git
 }
