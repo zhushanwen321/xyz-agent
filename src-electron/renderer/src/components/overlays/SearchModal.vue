@@ -4,7 +4,7 @@
     ⌘K / Ctrl+K 唤起的全局搜索浮层：模糊遮罩 + 居中浮层，浮于所有 Region 之上。
     范围：全局·跨项目（命令/文件/符号/会话四类分组）。
 
-    当前：本地 mock 数据 + 子串过滤 + 匹配高亮 + recents + ↑↓/Enter 键盘导航。
+    当前：api.search.query()（mock 走 api/mock/search-data.ts）+ 匹配高亮 + recents + ↑↓/Enter 键盘导航。
     DEFERRED：真实数据源（命令注册表 / 项目索引 LSP / 会话库）、scope 过滤条与 Tab 切类、
               确认后的真实跳转（emit('select') 已透出，父组件暂未接入）、recents 持久化。
   -->
@@ -101,82 +101,41 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { search, type SearchItem } from '@/api'
 
-type SearchType = 'command' | 'file' | 'symbol' | 'session'
-interface MockItem { type: SearchType; title: string; sub: string }
-interface IdxItem extends MockItem { idx: number }
+type SearchType = SearchItem['type']
+interface IdxItem extends SearchItem { idx: number }
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{
   'update:open': [value: boolean]
-  'select': [item: MockItem]
+  'select': [item: SearchItem]
 }>()
 
-/** 四类 mock 数据（移植自 v3-demo/overlays/draft-search-modal.html DATA） */
-const MOCK: Record<SearchType, MockItem[]> = {
-  command: [
-    { type: 'command', title: '新建任务', sub: '创建一个新会话 · ⌘N' },
-    { type: 'command', title: '切换分支', sub: 'git checkout' },
-    { type: 'command', title: '收起侧栏', sub: 'toggle sidebar · ⌘B' },
-    { type: 'command', title: '打开概览', sub: 'Mission Control' },
-    { type: 'command', title: '提交并推送', sub: 'git commit && push' },
-  ],
-  file: [
-    { type: 'file', title: 'auth/session.ts', sub: 'refactor-arch/src/auth' },
-    { type: 'file', title: 'auth/token.ts', sub: 'refactor-arch/src/auth' },
-    { type: 'file', title: 'use-auth.ts', sub: 'refactor-arch/src/composables' },
-    { type: 'file', title: 'session-store.ts', sub: 'refactor-arch/src/stores' },
-    { type: 'file', title: 'Sidebar.vue', sub: 'refactor-arch/src/components/sidebar' },
-  ],
-  symbol: [
-    { type: 'symbol', title: 'authenticate()', sub: 'auth/session.ts:42' },
-    { type: 'symbol', title: 'AuthToken', sub: 'auth/token.ts:8' },
-    { type: 'symbol', title: 'SessionStore', sub: 'session-store.ts:12' },
-    { type: 'symbol', title: 'useAuth()', sub: 'use-auth.ts:4' },
-  ],
-  session: [
-    { type: 'session', title: 'Auth 重构 · token 轮转', sub: 'refactor-arch · main · 14:32' },
-    { type: 'session', title: '搜索浮层设计', sub: 'refactor-arch · feat-search' },
-    { type: 'session', title: 'Workspace 双 Panel', sub: 'agent-skeleton · main' },
-    { type: 'session', title: 'git 工作流打磨', sub: 'feat-gitflow · dev' },
-  ],
-}
-const LABEL: Record<SearchType, string> = { command: '命令', file: '文件', symbol: '符号', session: '会话' }
-const TYPES: SearchType[] = ['command', 'file', 'symbol', 'session']
 const ICON: Record<SearchType, Component> = { command: Terminal, file: FileText, symbol: Code, session: MessageSquare }
-
-/** 空查询时的「最近」与「建议命令」（recents 持久化 DEFERRED，先用静态样本） */
-const RECENTS: MockItem[] = [
-  { type: 'file', title: 'auth/session.ts', sub: 'refactor-arch/src/auth' },
-  { type: 'session', title: 'Auth 重构 · token 轮转', sub: 'refactor-arch · main' },
-  { type: 'command', title: '切换分支', sub: 'git checkout' },
-]
-const SUGGESTED_COUNT = 3
-const SUGGESTED: MockItem[] = MOCK.command.slice(0, SUGGESTED_COUNT)
 
 const query = ref('')
 const selIdx = ref(0)
 const resultsRef = ref<HTMLElement | null>(null)
 
+/** 从 api.search 拉取的结果缓存 */
+const remoteSections = ref<{ label: string; items: SearchItem[] }[]>([])
+let loadSeq = 0
+async function loadResults(): Promise<void> {
+  const q = query.value.trim()
+  const seq = ++loadSeq
+  const s = await search.query(q)
+  if (seq === loadSeq) remoteSections.value = s
+}
+
 /** 当前可见分组（每项带跨组扁平 idx，供键盘导航） */
 const sections = computed<{ label: string; items: IdxItem[] }[]>(() => {
-  const q = query.value.trim()
-  const raw: { label: string; items: MockItem[] }[] = !q
-    ? [
-      { label: '最近', items: RECENTS },
-      { label: '建议命令', items: SUGGESTED },
-    ]
-    : TYPES.map((t) => ({ label: LABEL[t], items: MOCK[t].filter((it) => match(it, q.toLowerCase())) }))
-      .filter((s) => s.items.length)
+  const raw = remoteSections.value
   let base = 0
   return raw.map((s) => ({ label: s.label, items: s.items.map((it) => ({ ...it, idx: base++ })) }))
 })
 const flatItems = computed<IdxItem[]>(() => sections.value.flatMap((s) => s.items))
 const total = computed(() => flatItems.value.length)
-
-function match(it: MockItem, ql: string): boolean {
-  return it.title.toLowerCase().includes(ql) || it.sub.toLowerCase().includes(ql)
-}
 
 /** 把文本按查询拆成命中/未命中文本段，供模板渲染 <mark>（Vue 自动转义，无 XSS） */
 function segments(text: string, q: string): { text: string; hit: boolean }[] {
@@ -217,7 +176,11 @@ function confirmSel() {
   emit('update:open', false)
 }
 
-/** 查询变化重置选中；关闭清空查询（恢复 recents 空查询态） */
-watch(query, () => { selIdx.value = 0 })
-watch(() => props.open, (isOpen) => { if (!isOpen) query.value = '' })
+/** 查询变化重置选中并拉新结果 */
+watch(query, () => { selIdx.value = 0; void loadResults() })
+/** 打开时加载初始结果（recent + suggested），关闭时清空查询 */
+watch(() => props.open, (isOpen) => {
+  if (isOpen) void loadResults()
+  else query.value = ''
+})
 </script>

@@ -355,9 +355,72 @@ skillRenderedContent.value = await renderFull(payload.content, theme, { codeThem
 
 ---
 
-## 8. 自动化检查
+## 8. Mock 规范
 
-### 8.1 现有检查工具
+### 8.1 核心原则：只 Mock 后端接口返回数据，禁止 Mock 页面数据
+
+前端 mock 有且只有一个合法入口：**`api/mock/` 层**。该层镜像 `api/domains/` 的接口签名，模拟 runtime WS 协议返回的数据（`session`、`chat`、`config`、`model`、`extension`、`plugin`、`settings`）。`api/index.ts` 通过 `VITE_MOCK` 环境变量切换 real/mock 实现。
+
+**允许的 mock 方式：**
+- `api/mock/data.ts` — 模拟 runtime 的 `session.list` / `chat.getHistory` 返回的会话和消息数据
+- `api/mock/index.ts` — 模拟 runtime WS 协议的全部 domain（`session`/`chat`/`config`/`model`/`extension`/`plugin`/`settings`）
+- `api/mock/settings-data.ts` — 模拟 `config.listProviders` 等返回的 providers/skills/agents 数据
+- `api/mock/composer-data.ts` — 模拟 runtime 推送的 models/mentions/files/slash-commands 数据
+- `api/mock/git.ts` — 模拟 `git.status` 返回的仓库状态数据
+- `api/mock/run-send-stream.ts` — 模拟 `chat.send` 后的流式 ServerMessage 序列
+- `mock/mock-ws.ts` — 模拟 WebSocket 连接生命周期（connecting → connected）
+
+上述文件均通过 `api/index.ts` 门面统一接入，调用方（composables/features）只依赖 `@/api` 的接口，不感知底层是 real 还是 mock。
+
+**禁止的 mock 方式：**
+- **禁止在 Vue 组件（`.vue`）中内联硬编码 mock 数据** — 包括但不限于 `const MOCK = [...]`、`const RECENTS = [...]`、`const SUGGESTED = [...]` 等
+- **禁止在 panel/composables/lib 中定义静态 fixture 数据供组件直接消费** — 所有 mock 数据必须流经 `api/mock/` 层，走统一的 WS 协议模拟通路
+- **禁止组件直接 `import` `api/mock/` 下的任何文件** — 组件应通过 `@/api` 或 `events` 获取数据
+
+### 8.2 为什么禁止组件级 mock
+
+| 问题 | 说明 |
+|------|------|
+| **真 runtime 联调时遗漏** | 组件内联 mock 数据在 `VITE_MOCK=false` 时仍存在，真联调时容易遗忘替换，导致上线后混入伪造数据 |
+| **数据一致性无保证** | 组件级 mock 数据不与 runtime 协议对齐，真数据到达时字段/结构不一致会导致 UI 崩溃或静默丢失 |
+| **mock/real 切换不彻底** | 整个应用的 mock 切换应通过 `VITE_MOCK` 一个开关完成。组件级 mock 绕过此机制，造成部分数据 mock、部分真实，调试困难 |
+| **阻碍联调进度** | 同一数据源存在两套实现（api/mock 层 + 组件内联），联调时需要改多处，增加遗漏风险 |
+
+### 8.3 正确的 mock 扩展方式
+
+新增功能需要 mock 数据时：
+
+1. 在 `api/mock/` 目录下定义 fixture 数据
+2. 在 `api/mock/index.ts` 中实现对应的 domain 方法（签名与 `api/domains/` 一致）
+3. 组件通过 `@/api` 的 domain 接口获取数据（不感知 real/mock）
+
+```ts
+// ✅ 正确：api/mock/index.ts 中新增 domain 方法
+export const search = {
+  async query(q: string): Promise<SearchResult[]> {
+    await sleep(TIMING.ack)
+    return fixtureSearchResults.filter(r => r.title.includes(q))
+  },
+}
+
+// ❌ 错误：组件中直接写死 mock 数据
+const MOCK: SearchItem[] = [
+  { type: 'command', title: '新建任务', sub: '创建一个新会话' },
+]
+```
+
+### 8.4 例外
+
+以下场景不视为 mock 违规：
+- **UI 固定枚举常量**（如 `thinking-levels.ts` 的 6 级思考等级）— 后端不推送等级列表，前端自行定义
+- **空占位函数** — 如 `function cycleThinking() { /* mock */ }` 仅作为未联调功能的骨架占位
+- **`__tests__/` 中的测试 mock** — 测试文件独立于运行时，不参与页面渲染
+
+---
+
+## 9. 自动化检查
+
+### 9.1 现有检查工具
 
 | 工具 | 覆盖范围 | 触发时机 |
 |------|---------|---------|
@@ -365,7 +428,7 @@ skillRenderedContent.value = await renderFull(payload.content, theme, { codeThem
 | vue_rules_checker.py | 行数上限 / CSS 选择器 / Tab 缩进 / 原生元素 / emoji / v-model | pre-commit |
 | pre-commit hook | ESLint + vue_rules_checker | git commit |
 
-### 8.2 共享类型同步
+### 9.2 共享类型同步
 
 `src-electron/shared/` 中的类型定义是前端与 runtime 的唯一协议源。修改协议类型时：
 

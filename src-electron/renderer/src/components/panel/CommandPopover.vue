@@ -58,12 +58,7 @@ import { Braces, FileText, Folder, Star, Terminal, Wrench } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import * as events from '@/api/events'
-import {
-  MENTION_CANDIDATES,
-  FILE_CANDIDATES,
-  type MentionCandidate,
-  type FileCandidate,
-} from './command-candidates'
+import { composer } from '@/api'
 
 type CmdType = 'mention' | 'file' | 'slash'
 
@@ -91,6 +86,24 @@ const activeIndex = ref(0)
 
 // slash 命令：runtime 推送的扩展命令（session.commands 通道）。无推送时为空（@/# 仍走常量）。
 // @ 引用 / # 文件是搜索能力（后端从零），保持常量，不订阅。
+const mentionCandidates = ref<Array<{ id: string; name: string; kind: string; icon: string; path?: string }>>([])
+const fileCandidates = ref<Array<{ id: string; name: string; kind: string; path?: string }>>([])
+
+// 异步加载 @/# 候选（mock 立即返回，real 后端就绪后零改动）
+// 独立数据源用 allSettled 允许部分降级
+let loaded = false
+async function loadCandidates(): Promise<void> {
+  if (loaded) return
+  const [mentionsR, filesR] = await Promise.allSettled([
+    composer.getMentionCandidates(),
+    composer.getFileCandidates(),
+  ])
+  if (mentionsR.status === 'fulfilled') mentionCandidates.value = mentionsR.value
+  if (filesR.status === 'fulfilled') fileCandidates.value = filesR.value
+  loaded = true
+}
+onMounted(() => { void loadCandidates() })
+
 const slashCommands = ref<Array<{ id: string; name: string; kind: string; icon: string }>>([])
 
 /**
@@ -131,7 +144,7 @@ function iconForSource(source: string): string {
 /** 统一候选项视图（三种数据源归一为 { id, name, kind, icon }） */
 const items = computed(() => {
   if (props.type === 'mention') {
-    return MENTION_CANDIDATES.map((m: MentionCandidate) => ({
+    return mentionCandidates.value.map((m) => ({
       id: m.id,
       name: m.name,
       kind: m.kind,
@@ -139,7 +152,7 @@ const items = computed(() => {
     }))
   }
   if (props.type === 'file') {
-    return FILE_CANDIDATES.map((f: FileCandidate) => ({
+    return fileCandidates.value.map((f) => ({
       id: f.id,
       name: f.name,
       kind: f.kind,

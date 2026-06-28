@@ -32,6 +32,11 @@ export const plugin = isMock ? mockApi.plugin : realPlugin
 export const settings = isMock ? mockApi.settings : realSettings
 export const git = isMock ? mockApi.git : realGit
 
+// composer & search 暂无 real domain，始终走 mock（后端就绪后接线）
+export const composer = mockApi.composer
+export const search = mockApi.search
+
 // 类型 re-export（供组件 import 类型用）
 export type { ModelInfo } from './domains/model'
 export type { SystemSettings } from './domains/settings'
+export type { SearchItem } from './mock/search-data'

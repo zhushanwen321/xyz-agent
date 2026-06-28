@@ -83,15 +83,15 @@ export const MOCK_CONTEXT_STATS: MockContextStats = {
 }
 
 // ── 4. @ 引用候选（文件 / 符号 / 技能）（§2d @） ────────────────────────
-export interface MockMentionItem {
+export interface MentionCandidate {
   id: string
   name: string
-  kind: '文件' | '符号' | '技能'
-  icon: 'file' | 'symbol' | 'skill'
+  kind: string
+  icon: string
   path?: string
 }
 
-export const MOCK_MENTIONS: MockMentionItem[] = [
+export const MENTION_CANDIDATES: MentionCandidate[] = [
   { id: 'mention-auth-service', name: 'AuthService.ts', kind: '文件', icon: 'file', path: 'src/auth/AuthService.ts' },
   { id: 'mention-token-validator', name: 'TokenValidator', kind: '符号', icon: 'symbol' },
   { id: 'mention-form-validation', name: '表单校验规范', kind: '技能', icon: 'skill' },
@@ -99,18 +99,24 @@ export const MOCK_MENTIONS: MockMentionItem[] = [
 ]
 
 // ── 5. # 文件候选（文件 / 目录）（§2d #） ───────────────────────────────
-export interface MockFileItem {
+export interface FileCandidate {
   id: string
   name: string
-  kind: '文件' | '目录'
+  kind: string
   path?: string
 }
 
-export const MOCK_FILES: MockFileItem[] = [
+export const FILE_CANDIDATES: FileCandidate[] = [
   { id: 'file-src-auth', name: 'src/auth/', kind: '目录', path: 'src/auth/' },
   { id: 'file-auth-service', name: 'AuthService.ts', kind: '文件', path: 'src/auth/AuthService.ts' },
   { id: 'file-token', name: 'token.ts', kind: '文件', path: 'src/auth/token.ts' },
 ]
+
+// 保留旧名兼容（避免改动所有引用方），指向新名
+export type MockMentionItem = MentionCandidate
+export type MockFileItem = FileCandidate
+export const MOCK_MENTIONS = MENTION_CANDIDATES
+export const MOCK_FILES = FILE_CANDIDATES
 
 // ── 6. / 斜杠命令候选（§2d /） ──────────────────────────────────────────
 export interface MockSlashCommand {

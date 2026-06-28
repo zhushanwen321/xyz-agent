@@ -16,7 +16,8 @@ import type {
 } from '@xyz-agent/shared'
 import { createSession, fixtureMessages, fixtureSessions } from './data'
 import { fixtureProviders, fixtureSkills, fixtureAgents, fixtureExtensions, toCandidate } from './settings-data'
-import { MOCK_MODELS, mockModelToInfo } from './composer-data'
+import { MOCK_MODELS, mockModelToInfo, MENTION_CANDIDATES, FILE_CANDIDATES } from './composer-data'
+import { SEARCH_MOCK, SEARCH_RECENTS, SEARCH_SUGGESTED_COUNT, type SearchItem } from './search-data'
 import { runSendStream, type Timing } from './run-send-stream'
 import { makeMockSubscription, type GlobalHandler } from './subscription'
 import * as events from '../events'
@@ -482,6 +483,45 @@ const pluginsSub = makeMockSubscription((): PluginInfo[] => [])
 
 export const plugin = {
   onPlugins: (h: (plugins: PluginInfo[]) => void) => pluginsSub.subscribe(h),
+}
+
+/* ── Composer mock（@ 引用 / # 文件候选，纯静态 fixture；后端搜索能力就绪后接 real domain）── */
+
+export const composer = {
+  async getMentionCandidates() {
+    await sleep(TIMING.ack)
+    return MENTION_CANDIDATES.map((m) => ({ ...m }))
+  },
+  async getFileCandidates() {
+    await sleep(TIMING.ack)
+    return FILE_CANDIDATES.map((f) => ({ ...f }))
+  },
+}
+
+/* ── Search mock（全局搜索浮层 ⌘K；后端 LSP/命令注册表就绪后接 real domain）── */
+
+export const search = {
+  /** 按查询过滤四类数据，空查询返回 recent + suggested */
+  async query(q: string): Promise<{ label: string; items: SearchItem[] }[]> {
+    await sleep(TIMING.ack)
+    const trimmed = q.trim().toLowerCase()
+    if (!trimmed) {
+      return [
+        { label: '最近', items: SEARCH_RECENTS.map((i) => ({ ...i })) },
+        { label: '建议命令', items: SEARCH_MOCK.command.slice(0, SEARCH_SUGGESTED_COUNT).map((i) => ({ ...i })) },
+      ]
+    }
+    const TYPES: SearchItem['type'][] = ['command', 'file', 'symbol', 'session']
+    const LABEL: Record<SearchItem['type'], string> = { command: '命令', file: '文件', symbol: '符号', session: '会话' }
+    return TYPES
+      .map((t) => ({
+        label: LABEL[t],
+        items: SEARCH_MOCK[t]
+          .filter((it) => it.title.toLowerCase().includes(trimmed) || it.sub.toLowerCase().includes(trimmed))
+          .map((it) => ({ ...it })),
+      }))
+      .filter((s) => s.items.length > 0)
+  },
 }
 
 /* ── Settings mock（对齐新契约：转发 config/extension 订阅 + 复用 real 的 localStorage 偏好）── */
