@@ -166,9 +166,13 @@ export function useNewTaskFlow() {
       pendingCwd.value = null
     }
     if (createInFlight.value) return // submitFirstMessage 飞行中，忽略重复触发
+    // 幂等：已 landing 态再 startFlow（initApp 重试 / 多次 ⌘N）→ 不翻 state（landing→landing
+    // 非法），只刷新 cwd + 不变量。避免 loadSessions 失败后 initApp 重试时 transition 抛错。
+    if (state.value !== 'landing') {
+      transition('landing') // idle→landing
+    }
     // 进 landing：预设 cwd（有则 chip 所见即所得，无则空 chip 态）
     pendingCwd.value = presetCwd ?? null
-    transition('landing') // idle→landing
     currentSession.value = null
     // 强制不变量：landing 态无 session 绑定。清 activeId + active panel leaf.sessionId，
     // 让 Panel 的 sessionId prop 变 null → 渲染落到 Landing（而非旧会话 MessageStream）。
@@ -230,6 +234,23 @@ export function useNewTaskFlow() {
     }
     if (state.value === 'dir-popover') state.value = 'landing'
     transition('branch-popover')
+  }
+
+  /**
+   * presetCwd —— landing 态回灌预设 cwd（启动编排用，G1.1「沿用最近 session 目录」）。
+   *
+   * 与 startFlow(presetCwd) 同语义（写 pendingCwd → chip 所见即所得），但用于 startFlow
+   * 已先进 landing、cwd 还需异步加载后才确定的场景：
+   * initApp 必须在 await loadSessions() **之前**同步 startFlow() 进 landing，否则
+   * 「连接成功→AppShell 渲染 Landing」与 startFlow 之间会有 flow.state=idle 的启动窗口，
+   * 此时点 directory chip 触发 idle→dir-popover 非法转换抛错。故顺序定为先 startFlow（空 chip）
+   * → loadSessions → presetCwd 回灌。
+   *
+   * 守卫：仅 landing 态生效（其他态 noop，避免污染 overlay/终态流程）。
+   */
+  function presetCwd(cwd: string): void {
+    if (state.value !== 'landing') return
+    pendingCwd.value = cwd
   }
 
   /**
@@ -355,6 +376,7 @@ export function useNewTaskFlow() {
     isActive: computed(() => ACTIVE_STATES.has(state.value)),
     startFlow,
     submitFirstMessage,
+    presetCwd,
     openDirPopover,
     openBranchPopover,
     selectWorkspace,

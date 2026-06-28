@@ -339,21 +339,32 @@ export function useSidebar() {
    * 此前实现：有历史 session 则 selectSession 恢复整个会话（含对话）→ 首屏显示旧对话，
    * 与用户「启动进落地页」预期相反。现统一走 newSession()。
    *
+   * 时序关键（修复 idle→dir-popover 崩溃）：**startFlow 必须在 await loadSessions() 之前同步执行**。
+   * App.vue watch connectionState==='connected' → `void initApp()`（异步，未 await）→ Vue 同步重渲染
+   * 立刻挂载 AppShell/Workspace/Panel/Landing（sessionId===null → isLandingView=true，与 flow.state 无关）。
+   * 若先 await loadSessions()（WS 往返 + 全量 history hydrate）再 startFlow，渲染 Landing 与 state 进 landing
+   * 之间存在 flow.state=idle 的启动窗口——此窗口内点 directory chip 会触发 idle→dir-popover 非法转换抛错。
+   * 故改为：先 newSession()（空 chip 态同步进 landing）→ loadSessions() → presetCwd() 回灌最近 cwd。
+   *
    * 幂等：appBootstrapped 守卫只触发一次；失败重置允许下次 connected 重试，不永久卡空态。
    */
   async function initApp(): Promise<void> {
     if (appBootstrapped) return
     appBootstrapped = true
+    const flow = useNewTaskFlow()
     try {
+      // 1) 同步进 landing（空 chip 态）：AppShell 渲染 Landing 时 state 已是 landing → chip 合法可点。
+      //    必须先于 await loadSessions()，消除「渲染 Landing 时 state=idle」的启动窗口。
+      await newSession()
+      // 2) 异步加载侧栏列表（WS 往返 + 全量 history hydrate），不阻塞 landing 渲染。
       await loadSessions()
-      // 取最近活跃 session（lastActiveAt 最大），仅用于预填落地页 cwd（G1.1「沿用目录」做新任务）
+      // 3) 预填 cwd（G1.1「沿用最近 session 目录」做新任务，chip 所见即所得）：
+      //    startFlow 已先进 landing（pendingCwd=null），这里用最近活跃 session 的 cwd 回灌。
       let recent: SessionSummary | undefined
       for (const s of session.list) {
         if (!recent || s.lastActiveAt > recent.lastActiveAt) recent = s
       }
-      // 始终进落地页（newSession → startFlow：state=landing + 清空 activeId/panel session）。
-      // 预设最近 session 的 cwd 到落地页 chip（G1.1「沿用目录做新任务」，所见即所得）。
-      await newSession(recent?.cwd)
+      if (recent?.cwd) flow.presetCwd(recent.cwd)
     } catch {
       // 启动编排失败（list/switch/getHistory reject）→ 重置允许下次 connected 重试
       appBootstrapped = false
