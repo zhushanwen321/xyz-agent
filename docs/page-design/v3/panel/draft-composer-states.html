@@ -420,7 +420,7 @@
     </div>
   </div>
   <div class="an-callouts">
-    <div class="an-co"><span class="n">①</span><span class="t"><b>+ 添加</b> —— 左锚定。点开浮层含「附件 / @ 引用 / # 文件 / / 命令」四路；也可直接在输入区敲对应符号触发。</span></div>
+    <div class="an-co"><span class="n">①</span><span class="t"><b>+ 添加</b> —— 左锚定。点开浮层含「附件 / @ 引用 / # 文件 / / 命令」四路；也可直接在输入区敲对应符号触发。<b>/</b> 需在输入流<b>最左且左侧无内容</b>时触发，右侧内容作过滤 query，<span class="kbd">⏎</span>/<span class="kbd">Tab</span> 选中确认。</span></div>
     <div class="an-co"><span class="n">②</span><span class="t"><b>上下文（token 容量）</b> —— 文字显当前用量 <code>6.9万 · 6.9%</code>，<b>hover</b> 出容量 popover（已用/总量/百分比/缓存命中率）。用量高自动转 warning 色。详见 §2a。</span></div>
     <div class="an-co"><span class="n">③</span><span class="t"><b>模型</b> —— <b>click</b> 出 provider 分组 select（Anthropic / OpenAI / Google …，<b>非级联</b>，平铺单层选）。详见 §2b。</span></div>
     <div class="an-co"><span class="n">④</span><span class="t"><b>思考等级</b> —— <b>click</b> 出 6 级（off/low/medium/high/xhigh/max），可用等级随模型变。<b>级别越高越偏紫 + 发光</b>，max 变实色块。详见 §2c。</span></div>
@@ -430,7 +430,8 @@
 
 <div class="note">
   <b>「与背景融合」的 4 条规则</b>：① 上下文/模型/思考共享 <code>.c-text</code> 类——<code>border:0</code>、<code>background:transparent</code>、文字 <code>--text-tertiary</code>；② hover 才浮一层 <code>--bg-hover</code>，移开即隐；③ 三者间隙靠 <code>gap:2px</code> + 各自 padding，<b>不画分隔线</b>；④ 发送是唯一的实色锚点，把右侧三颗文字按钮「压」成一组。<br>
-  <b>舒适流畅</b>：所有态切换 <code>220ms cubic-bezier</code>；聚焦 ring 作用于整个 composer-box（不抖盒模型）；按钮无硬边框，视觉上输入区与工具区是同一张皮。
+  <b>舒适流畅</b>：所有态切换 <code>220ms cubic-bezier</code>；聚焦 ring 作用于整个 composer-box（不抖盒模型）；按钮无硬边框，视觉上输入区与工具区是同一张皮。<br>
+  <b>输入区与工具栏 4px 间隔</b>（composer-bar <code>mt-1</code>）：偏离原「同一张皮」无 gap，加 4px 呼吸，保留无分隔线的融合观感（用户拍板）。
 </div>
 
 <!-- §2 工具区浮层 -->
@@ -501,7 +502,7 @@
   <!-- §2d 命令浮层 @ # / -->
   <div class="panel" style="grid-column:1 / -1">
     <h3>§2d 命令浮层 · @ 引用 / # 文件 / / 命令</h3>
-    <p class="lede" style="margin-bottom:10px">三路共享 <code>.cmd-pop</code> 容器，差异在<b>触发符、候选源、选中后形态</b>。<code>/</code> 仅在<b>输入区为空</b>时触发；选中后以 <b>slash 内联 token</b> 插入输入流（见 §2e），不像附件浮在上方。</p>
+    <p class="lede" style="margin-bottom:10px">三路共享 <code>.cmd-pop</code> 容器，差异在<b>触发符、候选源、选中后形态</b>。<code>/</code> 在输入流<b>最左且左侧无内容</b>时触发（<b>不是</b>“输入区为空”——右侧可有过滤 query），右侧内容作实时过滤 query；<span class="kbd">⏎</span> 或 <span class="kbd">Tab</span> 选中确认；选中后以 <b>slash 内联 token</b> 插入输入流（见 §2e），不像附件浮在上方。</p>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
       <div class="pop cmd-pop" style="box-shadow:none">
         <div class="cp-filter">引用 <span class="q">@Auth</span> · 4 项</div>
@@ -536,7 +537,7 @@
       <tbody>
         <tr><td><code>@</code></td><td>文件 / 符号 / 技能 / 命令别名</td><td>任意位置</td><td>内联蓝名（<code>.mention-inline</code>）</td></tr>
         <tr><td><code>#</code></td><td>文件 / 目录（精准文件系统）</td><td>任意位置</td><td>内联绿名</td></tr>
-        <tr><td><code>/</code></td><td>斜杠命令</td><td><b>仅输入区为空</b></td><td>紫 slash-token chip（§2e）</td></tr>
+        <tr><td><code>/</code></td><td>斜杠命令</td><td><b>/ 在最左且左侧无内容</b>（右侧作 query）</td><td>紫 slash-token chip（§2e）</td></tr>
       </tbody>
     </table>
   </div>

@@ -1,0 +1,249 @@
+/**
+ * Composer slash 命令触发补全 单测（W1）。
+ *
+ * 覆盖三组件的垂直切片：
+ * - U1-U5 ComposerInput.onInput 触发检测（DOM 查询 + startsWith，不靠 getText 判 chip）
+ * - U6-U8 CommandPopover.items query 过滤（slash 路径）
+ * - U9-U10 Composer wiring（slash-trigger 事件路由 + +菜单不回归守卫）
+ *
+ * mock 策略：
+ * - U1-U5 直挂载 ComposerInput（根元素即 contenteditable div），setTextContent + trigger('input')，
+ *   断言 emitted('slash-trigger')。happy-dom 支持 TreeWalker/querySelector。
+ * - U6-U8 直挂载 CommandPopover（attachTo:body，reka-ui PopoverContent  teleport 到 body），
+ *   经 events.dispatchSession 推 session.commands，setProps({query})，断言 body 内 item 按钮数。
+ * - U9-U10 mount Composer（stub 子组件 + 真 pinia + mock useChat/useNewTaskFlow/@/api），
+ *   从 stub emit slash-trigger/select，断言 CommandPopover stub 收到的 props。
+ *
+ * 运行：cd src-electron/renderer && npx vitest run src/__tests__/panel/composer-slash-trigger.test.ts
+ */
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { mount, flushPromises } from '@vue/test-utils'
+import { nextTick, defineComponent } from 'vue'
+import { createPinia, setActivePinia } from 'pinia'
+import * as events from '@/api/events'
+import type { ServerMessage } from '@xyz-agent/shared'
+
+// ── Composer 路径 mock（U9-U10）—— vi.mock factory 必须早于 import ──
+vi.mock('@/composables/features/useChat', () => ({
+  useChat: () => ({
+    send: vi.fn(),
+    steer: vi.fn(),
+    followUp: vi.fn(),
+    abort: vi.fn(),
+    compact: vi.fn(),
+    editAndResend: vi.fn(),
+    hydrateHistory: vi.fn(),
+  }),
+}))
+vi.mock('@/composables/features/useNewTaskFlow', () => ({
+  useNewTaskFlow: () => ({ submitFirstMessage: vi.fn() }),
+  resetNewTaskFlow: vi.fn(),
+}))
+vi.mock('@/api', () => ({
+  model: { switchModel: vi.fn() },
+  session: { setThinkingLevel: vi.fn() },
+}))
+
+import ComposerInput from '@/components/panel/ComposerInput.vue'
+import CommandPopover from '@/components/panel/CommandPopover.vue'
+import Composer from '@/components/panel/Composer.vue'
+
+beforeEach(() => {
+  setActivePinia(createPinia())
+})
+
+// ─────────────────────── U1-U5 ComposerInput 触发检测 ───────────────────────
+
+describe('ComposerInput slash-trigger（U1-U5）', () => {
+  // ComposerInput template 含注释+div 两个根节点（fragment），wrapper.element 是注释节点。
+  // 用 role="textbox" 选择器定位真实 contenteditable div 再触发 input。
+  async function type(wrapper: ReturnType<typeof mount>, html: string): Promise<void> {
+    const div = wrapper.find('[role="textbox"]')
+    ;(div.element as HTMLDivElement).innerHTML = html
+    await div.trigger('input')
+  }
+
+  it('U1 输入 / → emit slash-trigger {query:""}', async () => {
+    const wrapper = mount(ComposerInput)
+    await type(wrapper, '/')
+    expect(wrapper.emitted('slash-trigger')!.at(-1)![0]).toEqual({ query: '' })
+  })
+
+  it('U2 输入 /commit → emit slash-trigger {query:"commit"}', async () => {
+    const wrapper = mount(ComposerInput)
+    await type(wrapper, '/commit')
+    expect(wrapper.emitted('slash-trigger')!.at(-1)![0]).toEqual({ query: 'commit' })
+  })
+
+  it('U3 已有 slash-chip → emit slash-trigger null（不重触发，DOM 查询判定）', async () => {
+    const wrapper = mount(ComposerInput)
+    // chip 本体文本 /commit 会被 getText 读入，但 querySelector 查到 chip → 不触发
+    await type(wrapper, '<span class="slash-chip">/commit</span>')
+    expect(wrapper.emitted('slash-trigger')!.at(-1)![0]).toBeNull()
+  })
+
+  it('U4 非 / 开头（foo/）→ emit slash-trigger null', async () => {
+    const wrapper = mount(ComposerInput)
+    await type(wrapper, 'foo/')
+    expect(wrapper.emitted('slash-trigger')!.at(-1)![0]).toBeNull()
+  })
+
+  it('U5 触发后清空 → emit slash-trigger null（关闭浮层）', async () => {
+    const wrapper = mount(ComposerInput)
+    await type(wrapper, '/commit')
+    expect(wrapper.emitted('slash-trigger')!.at(-1)![0]).toEqual({ query: 'commit' })
+    await type(wrapper, '')
+    expect(wrapper.emitted('slash-trigger')!.at(-1)![0]).toBeNull()
+  })
+})
+
+// ─────────────────────── U6-U8 CommandPopover query 过滤 ───────────────────────
+
+/** 4 条 mock slash 命令（与 MOCK_COMMANDS 三 source 对齐） */
+const MOCK_CMDS = [
+  { name: '/commit', source: 'extension' },
+  { name: '/review', source: 'extension' },
+  { name: '/fix', source: 'skill' },
+  { name: '/compact', source: 'builtin' },
+]
+
+/** 推 session.commands 到 sessionId 订阅者（CommandPopover 用 events.on(sessionId) 订阅） */
+function pushCommands(sessionId: string): void {
+  const msg = {
+    type: 'session.commands',
+    payload: { sessionId, commands: MOCK_CMDS },
+  } as ServerMessage<'session.commands'>
+  events.dispatchSession(sessionId, msg)
+}
+
+/** reka-ui PopoverContent teleport 到 body：在 body 内找 item 按钮（v-for Button 渲染为 native <button>） */
+function bodyItemButtons(): HTMLElement[] {
+  return Array.from(document.body.querySelectorAll('button')).filter((b) =>
+    /\//.test(b.textContent ?? ''),
+  )
+}
+
+describe('CommandPopover slash query 过滤（U6-U8）', () => {
+  let wrapper: ReturnType<typeof mount> | null = null
+
+  afterEach(() => {
+    wrapper?.unmount()
+    wrapper = null
+    document.body.innerHTML = ''
+  })
+
+  async function mountPopover(query: string): Promise<void> {
+    wrapper = mount(CommandPopover, {
+      attachTo: document.body,
+      props: { open: true, type: 'slash', sessionId: 's1', query },
+    })
+    await flushPromises()
+    pushCommands('s1')
+    await flushPromises()
+    await nextTick()
+  }
+
+  it('U6 query="comm" → 仅渲染 /commit（1 项）', async () => {
+    await mountPopover('comm')
+    const btns = bodyItemButtons()
+    expect(btns).toHaveLength(1)
+    expect(btns[0].textContent).toContain('/commit')
+  })
+
+  it('U7 query="" → 渲染全部 4 项', async () => {
+    await mountPopover('')
+    expect(bodyItemButtons()).toHaveLength(4)
+  })
+
+  it('U8 query="zzz" → 0 项，PopoverContent 不渲染（v-if items.length>0）', async () => {
+    await mountPopover('zzz')
+    expect(bodyItemButtons()).toHaveLength(0)
+    // PopoverContent 整体未挂载（无命令项按钮，无 cmd-pop 容器）
+    expect(document.body.querySelector('[data-radix-popper-content-wrapper]')).toBeNull()
+  })
+})
+
+// ─────────────────────── U9-U10 Composer wiring ───────────────────────
+// global.stubs 的 stub 不留组件实例（findComponent 不可见），改用 DOM 验证：
+// - ComposerInput 真实渲染（不 stub），通过 contenteditable div 操作触发 slash-trigger
+// - CommandPopover stub 把 open/type/query 反映到 data-* 属性供 DOM 断言
+// - AddMenuPopover stub 渲染可点击按钮 emit select
+
+/** CommandPopover stub：把 props 反映到 data-* 属性供 DOM 断言 */
+const CommandPopoverStub = defineComponent({
+  name: 'CommandPopover',
+  props: {
+    open: { type: Boolean, default: false },
+    type: { type: String, default: 'mention' },
+    sessionId: { type: String, default: undefined },
+    query: { type: String, default: '' },
+  },
+  methods: {
+    handleKeydown() {
+      return false
+    },
+  },
+  template:
+    '<div data-testid="cp" :data-open="String(open)" :data-type="type" :data-query="query"><slot /></div>',
+})
+
+/** AddMenuPopover stub：点击 emit select('slash')，模拟 +菜单选命令 */
+const AddMenuPopoverStub = defineComponent({
+  name: 'AddMenuPopover',
+  emits: ['select'],
+  template: '<button data-testid="add-slash" @click="$emit(\'select\', \'slash\')" />',
+})
+
+const SIMPLE = { template: '<div />' }
+/** ComposerInput 保持真实（需通过 contenteditable 触发 slash-trigger） */
+const composerStubs = {
+  CommandPopover: CommandPopoverStub,
+  AddMenuPopover: AddMenuPopoverStub,
+  ContextChipsBar: SIMPLE,
+  ContextCapacityPopover: SIMPLE,
+  ModelSelectPopover: SIMPLE,
+  ThinkingLevelPopover: SIMPLE,
+  RetryIndicator: SIMPLE,
+  QueueBubble: SIMPLE,
+}
+
+function mountComposer() {
+  return mount(Composer, {
+    props: { sessionId: 's1', variant: 'panel' },
+    global: { stubs: composerStubs },
+  })
+}
+
+/** 在真实 ComposerInput 的 contenteditable div 内键入并触发 slash-trigger */
+async function typeIntoComposerInput(wrapper: ReturnType<typeof mount>, text: string): Promise<void> {
+  const input = wrapper.find('[role="textbox"]')
+  ;(input.element as HTMLDivElement).textContent = text
+  await input.trigger('input')
+  await nextTick()
+}
+
+describe('Composer slash-trigger wiring（U9-U10）', () => {
+  it('U9 ComposerInput emit slash-trigger {query:"co"} → CommandPopover 收到 open/type/query', async () => {
+    const wrapper = mountComposer()
+    await flushPromises()
+    // 真实 ComposerInput：键入 /co 触发 slash-trigger → Composer 路由到 CommandPopover
+    await typeIntoComposerInput(wrapper, '/co')
+    const cp = wrapper.find('[data-testid="cp"]')
+    expect(cp.attributes('data-open')).toBe('true')
+    expect(cp.attributes('data-type')).toBe('slash')
+    expect(cp.attributes('data-query')).toBe('co')
+  })
+
+  it('U10 +菜单打开浮层后 emit slash-trigger null → 浮层不误关（slashTriggerActive=false 守卫）', async () => {
+    const wrapper = mountComposer()
+    await flushPromises()
+    // ① +菜单选 slash → 打开浮层（onAddSelect，slashTriggerActive 仍 false）
+    await wrapper.find('[data-testid="add-slash"]').trigger('click')
+    await nextTick()
+    expect(wrapper.find('[data-testid="cp"]').attributes('data-open')).toBe('true')
+    // ② ComposerInput 键入普通文本 x（非 / 开头）→ emit slash-trigger null
+    //    → slashTriggerActive=false（+菜单路径）→ 不误关浮层
+    await typeIntoComposerInput(wrapper, 'x')
+    expect(wrapper.find('[data-testid="cp"]').attributes('data-open')).toBe('true')
+  })
+})

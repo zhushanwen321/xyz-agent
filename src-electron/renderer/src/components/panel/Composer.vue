@@ -19,6 +19,7 @@
       v-model:open="cmdOpen"
       :type="cmdType"
       :session-id="sessionId ?? undefined"
+      :query="slashQuery"
       @select="onCmdSelect"
     >
       <div class="composer-box relative rounded-lg border bg-bg-input" :class="boxClass" data-testid="composer-box">
@@ -33,11 +34,12 @@
           :disabled="isSending"
           @input="onInputChange"
           @keydown="onKeydown"
+          @slash-trigger="onSlashTrigger"
         />
 
       <!-- 工具条（panel/spec §composer line 51）：上下文/模型/thinking-level 展示型 + 发送位三态。
            gap-0：三触发器贴合紧凑成一条工具带（draft「不画分隔线」，仅靠 padding 区隔），发送位 ml-1.5 独立锚点。 -->
-      <div class="composer-bar flex flex-wrap items-center justify-end gap-0 px-2.5 pb-2">
+      <div class="composer-bar flex flex-wrap items-center justify-end gap-0 px-2.5 pb-2 mt-1">
         <!-- + 添加内容（左锚定，spec §1 ①，click 出 4 路浮层） -->
         <AddMenuPopover @select="onAddSelect" />
         <span class="flex-1" />
@@ -148,6 +150,12 @@ const inputRef = ref<InstanceType<typeof ComposerInput> | null>(null)
 /** 命令浮层状态（§2d @/#//） */
 const cmdOpen = ref(false)
 const cmdType = ref<'mention' | 'file' | 'slash'>('mention')
+/** slash 触发态标记：区分「输入区 / 触发」与「+菜单触发」两条打开浮层路径。
+ *  仅输入区 / 触发打开时为 true，使后续 slash-trigger:null 能正确关闭；
+ *  +菜单路径（onAddSelect）不设 true，避免用户敲普通键误关 +菜单浮层。 */
+const slashTriggerActive = ref(false)
+/** slash 命令过滤 query（输入区 / 后内容），透传给 CommandPopover 过滤 */
+const slashQuery = ref('')
 const commandPopoverRef = ref<InstanceType<typeof CommandPopover> | null>(null)
 /** 发送中（S5）：useChat.send 的 Promise 在途 */
 const isSending = ref(false)
@@ -171,21 +179,38 @@ function restoreInput(text: string): void {
   inputRef.value?.setText(text)
 }
 
-/** + 菜单选择：打开对应命令浮层（§2d @/#//） */
+/** 输入区 slash-trigger 事件路由：
+ *  - payload 非 null（/ 在最左且无 chip）→ 打开 slash 浮层，记录 query 透传过滤，标记 slashTriggerActive
+ *  - payload 为 null 且 slashTriggerActive → 关闭浮层（仅输入区触发路径；+菜单路径 slashTriggerActive=false 不受影响） */
+function onSlashTrigger(payload: { query: string } | null): void {
+  if (payload) {
+    slashTriggerActive.value = true
+    slashQuery.value = payload.query
+    cmdType.value = 'slash'
+    cmdOpen.value = true
+  } else if (slashTriggerActive.value) {
+    cmdOpen.value = false
+    slashTriggerActive.value = false
+  }
+}
+
+/** + 菜单选择：打开对应命令浮层（§2d @/#//）。slashTriggerActive 不设 true——
+ *  +菜单路径的浮层不受后续 slash-trigger:null 影响（防用户敲普通键误关）。 */
 function onAddSelect(type: 'attach' | 'mention' | 'file' | 'slash'): void {
   if (type === 'attach') return // TODO: 附件上传（未来功能）
-  // 打开命令浮层（输入区符号触发为后续增强）
   inputRef.value?.saveSelection()
   inputRef.value?.focus()
   cmdType.value = type === 'mention' ? 'mention' : type === 'file' ? 'file' : 'slash'
   cmdOpen.value = true
 }
 
-/** 命令浮层选中：插 slash chip / mention chip */
+/** 命令浮层选中：插 slash chip / mention chip。slash 分支先清掉 /query 过滤文本再插 chip。 */
 function onCmdSelect(payload: { type: 'mention' | 'file' | 'slash'; name: string }): void {
   cmdOpen.value = false
+  slashTriggerActive.value = false // 复位触发态标记
   inputRef.value?.focus()
   if (payload.type === 'slash') {
+    inputRef.value?.clearSlashQueryText()
     inputRef.value?.insertSlashChip(payload.name)
   } else {
     inputRef.value?.insertMentionChip(payload.type === 'mention' ? '@' : '#', payload.name)

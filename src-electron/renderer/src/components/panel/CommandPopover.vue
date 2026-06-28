@@ -72,6 +72,8 @@ const props = defineProps<{
   type: CmdType
   /** session 通道订阅键（D8：session.commands 带 sessionId，走 events.on(sessionId)） */
   sessionId?: string
+  /** slash 命令过滤 query（输入区 / 后的内容，空串/缺省=不过滤；仅 type==='slash' 生效） */
+  query?: string
 }>()
 
 const emit = defineEmits<{
@@ -144,7 +146,11 @@ const items = computed(() => {
       icon: f.kind === '目录' ? 'folder' : 'file',
     }))
   }
-  return slashCommands.value.map((c) => ({
+  const all = slashCommands.value
+  // slash 路径按 query 过滤（@/# 不过滤，走常量候选）；query 仅影响 slash 命令
+  const q = props.type === 'slash' ? (props.query ?? '').trim().toLowerCase() : ''
+  const filtered = q ? all.filter((c) => c.name.toLowerCase().includes(q)) : all
+  return filtered.map((c) => ({
     id: c.id,
     name: c.name,
     kind: c.kind,
@@ -196,7 +202,7 @@ function handleKeydown(e: KeyboardEvent): boolean {
     activeIndex.value = (activeIndex.value - 1 + list.length) % list.length
     return true
   }
-  if (e.key === 'Enter') {
+  if (e.key === 'Enter' || e.key === 'Tab') {
     e.preventDefault()
     onSelect(list[activeIndex.value])
     return true
@@ -233,7 +239,7 @@ if (typeof window !== 'undefined') {
 
 // 浮层打开时重置高亮到第一项；type 切换也重置
 watch(
-  () => [props.open, props.type],
+  () => [props.open, props.type, props.query],
   () => {
     activeIndex.value = 0
   },
