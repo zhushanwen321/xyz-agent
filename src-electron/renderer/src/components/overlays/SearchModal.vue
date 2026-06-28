@@ -37,7 +37,7 @@
               class="flex items-center gap-2 px-4 pb-1 pt-2 font-mono text-[10px] uppercase tracking-wider text-subtle"
             >
               <span>{{ s.label }}</span>
-              <span class="text-tertiary">{{ s.items.length }}</span>
+              <span class="text-subtle">{{ s.items.length }}</span>
             </div>
             <div
               v-for="it in s.items"
@@ -62,7 +62,7 @@
                     <template v-else>{{ seg.text }}</template>
                   </template>
                 </span>
-                <span class="truncate font-mono text-[11px] text-tertiary">
+                <span class="truncate font-mono text-[11px] text-subtle">
                   <template v-for="(seg, i) in segments(it.sub, query.trim())" :key="i">
                     <mark v-if="seg.hit" class="bg-transparent font-semibold text-accent">{{ seg.text }}</mark>
                     <template v-else>{{ seg.text }}</template>
@@ -71,7 +71,7 @@
               </span>
               <Clock
                 v-if="!query.trim()"
-                class="size-[13px] flex-shrink-0 text-tertiary"
+                class="size-[13px] flex-shrink-0 text-subtle"
               />
             </div>
           </div>
@@ -79,11 +79,11 @@
 
         <!-- 空结果 -->
         <div v-else class="flex flex-col items-center gap-2 px-6 py-10 text-center">
-          <Search class="size-7 text-tertiary" />
+          <Search class="size-7 text-subtle" />
           <p class="text-[14px] text-fg">
             未找到「{{ query.trim() }}」的相关结果
           </p>
-          <p class="text-[12px] text-tertiary">换个关键词试试</p>
+          <p class="text-[12px] text-subtle">换个关键词试试</p>
         </div>
       </div>
     </DialogContent>

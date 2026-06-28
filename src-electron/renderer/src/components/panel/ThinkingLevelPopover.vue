@@ -2,52 +2,50 @@
   <!--
     思考等级 popover（draft-composer-states §2c）。
     click 触发，6 级：off / low / medium / high / xhigh / max（默认 max）。
-    触发器与列表项点随等级染色（紫相递进），max 整颗紫底白字 + 外发光（最强权重）。
+    触发器与列表均中性配色（与上下文容量 / 模型触发器同款 text-subtle），仅选中态走 accent，
+    不再按等级染紫相（去色要求）。等级强度靠 popover 内 off→max 的语义表达。
   -->
   <Popover v-model:open="open">
     <PopoverTrigger as-child>
       <Button
         variant="ghost"
-        class="h-7 rounded-sm px-2 text-[11.5px] transition-colors"
-        :class="thinkTriggerClass"
-        :style="thinkTriggerStyle"
+        class="h-7 gap-1 rounded-sm px-2 text-[11.5px] text-subtle transition-colors hover:text-muted"
         title="思考等级"
       >
-        <span>思考 {{ currentLabel }}</span>
+        <Brain class="size-3 shrink-0" />
+        <span>{{ currentLabel }}</span>
         <ChevronDown
-          class="size-3 transition-transform duration-200"
+          class="ml-px size-[9px] transition-transform duration-200"
           :class="open && 'rotate-180'"
         />
       </Button>
     </PopoverTrigger>
-    <PopoverContent side="top" class="w-[260px] p-0">
+    <PopoverContent side="top" class="w-[180px] p-0">
       <!-- head -->
       <div
         class="flex items-center justify-between border-b border-border bg-white/[0.015] px-2.5 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-subtle"
       >
         <span>思考等级</span>
-        <span>sonnet-4.5</span>
       </div>
       <!-- 6 级列表 -->
       <Button
         v-for="opt in THINKING_LEVELS"
         :key="opt.level"
         variant="ghost"
-        class="flex w-full items-center gap-2.5 rounded-none px-2.5 py-2 text-[13px] text-muted hover:bg-surface-hover"
+        class="flex w-full items-center gap-2 rounded-none px-2.5 py-2 text-[13px] text-muted hover:bg-surface-hover hover:text-fg"
         :class="[
-          level === opt.level && 'bg-[rgba(167,139,250,0.1)]',
+          level === opt.level && 'bg-accent-soft text-accent hover:bg-accent-soft hover:text-accent',
           !opt.available && 'cursor-not-allowed opacity-50',
         ]"
         @click="onSelect(opt)"
       >
         <span
           class="size-[7px] shrink-0 rounded-full"
-          :class="dotClass[opt.level]"
-          :style="dotStyle(opt.level)"
+          :class="level === opt.level ? 'bg-accent' : 'bg-subtle'"
         />
-        <span class="flex-1" :class="nameClass[opt.level]">{{ opt.label }} {{ opt.en }}</span>
+        <span class="flex-1 text-left">{{ opt.label }} {{ opt.en }}</span>
         <Check
-          class="size-[13px] text-reasoning transition-opacity"
+          class="size-[13px] text-accent transition-opacity"
           :class="level === opt.level ? 'opacity-100' : 'opacity-0'"
         />
       </Button>
@@ -56,9 +54,8 @@
 </template>
 
 <script setup lang="ts">
-import type { CSSProperties } from 'vue'
 import { computed, ref, watch } from 'vue'
-import { Check, ChevronDown } from '@lucide/vue'
+import { Check, ChevronDown, Brain } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { THINKING_LEVELS, type ThinkingLevelOption, type ThinkingLevel } from './thinking-levels'
@@ -89,65 +86,6 @@ watch(() => props.level, (v) => {
 const currentLabel = computed(
   () => THINKING_LEVELS.find((l) => l.level === level.value)?.label ?? '思考',
 )
-
-// 触发器文字配色随等级（draft .c-text.think[data-lvl] 已定稿）
-// off/low 灰 → medium 柔紫 → high/xhigh 实色紫 → max 白字（底色见 thinkTriggerStyle）
-const thinkTriggerClass = computed(() => {
-  switch (level.value) {
-    case 'medium':
-      return 'text-[#b9a5e6]'
-    case 'high':
-    case 'xhigh':
-      return 'text-reasoning'
-    case 'max':
-      return 'text-white'
-    default:
-      return 'text-subtle/80 hover:text-muted'
-  }
-})
-
-// xhigh 文字柔光 + max 紫底外发光用 :style：
-// Tailwind v3 无 text-shadow 工具类；max 的 box-shadow 与底色同源紫，集中表达更直观
-const thinkTriggerStyle = computed<CSSProperties>(() => {
-  switch (level.value) {
-    case 'xhigh':
-      return { textShadow: '0 0 8px rgba(167,139,250,0.5)' }
-    case 'max':
-      return {
-        backgroundColor: 'rgba(167,139,250,0.85)',
-        boxShadow: '0 0 12px rgba(167,139,250,0.4)',
-      }
-    default:
-      return {}
-  }
-})
-
-// 列表项小点配色（off→max 强度递进，draft .th-dot[data-lvl]）
-const dotClass: Record<ThinkingLevel, string> = {
-  off: 'bg-subtle',
-  low: 'bg-muted',
-  medium: 'bg-[rgba(167,139,250,0.55)]',
-  high: 'bg-reasoning',
-  xhigh: 'bg-reasoning',
-  max: 'bg-reasoning',
-}
-
-// xhigh/max 光环（box-shadow ring），同样用 :style
-function dotStyle(lvl: ThinkingLevel): CSSProperties {
-  if (lvl === 'xhigh') return { boxShadow: '0 0 0 3px rgba(167,139,250,0.22)' }
-  if (lvl === 'max') return { boxShadow: '0 0 0 4px rgba(167,139,250,0.32)' }
-  return {}
-}
-
-// 名称配色：high/xhigh 紫，max 浅紫加粗
-const nameClass: Record<ThinkingLevel, string> = {
-  off: '',
-  low: '',
-  medium: '',
-  high: 'text-reasoning',
-  xhigh: 'text-reasoning',
-  max: 'text-[#c9b6f5] font-semibold',
-}
 
 function onSelect(opt: ThinkingLevelOption): void {
   if (!opt.available) return

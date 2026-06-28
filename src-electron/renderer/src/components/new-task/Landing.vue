@@ -137,7 +137,7 @@ function onRetry(): void {
               <Button
                 data-testid="chip-directory"
                 variant="ghost"
-                class="h-auto gap-1.5 px-2 py-1 text-[12.5px] text-subtle hover:bg-surface-hover hover:text-fg [&_svg]:size-3.5"
+                class="h-auto gap-1.5 px-2 py-1 text-[12.5px] text-muted hover:bg-surface-hover hover:text-fg [&_svg]:size-3.5"
                 :class="{ '!text-accent': !cwd }"
               >
                 <Folder class="shrink-0" />
@@ -159,7 +159,7 @@ function onRetry(): void {
               <Button
                 data-testid="chip-branch"
                 variant="ghost"
-                class="h-auto gap-1.5 px-2 py-1 text-[12.5px] text-subtle hover:bg-surface-hover hover:text-fg [&_svg]:size-3.5"
+                class="h-auto gap-1.5 px-2 py-1 text-[12.5px] text-muted hover:bg-surface-hover hover:text-fg [&_svg]:size-3.5"
               >
                 <GitBranch class="shrink-0" />
                 <span class="font-mono">{{ branch }}</span>

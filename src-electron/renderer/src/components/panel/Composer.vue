@@ -35,8 +35,9 @@
           @keydown="onKeydown"
         />
 
-      <!-- 工具条（panel/spec §composer line 51）：上下文/模型/thinking-level 展示型 + 发送位三态。 -->
-      <div class="composer-bar flex flex-wrap items-center justify-end gap-0.5 px-2.5 pb-2">
+      <!-- 工具条（panel/spec §composer line 51）：上下文/模型/thinking-level 展示型 + 发送位三态。
+           gap-0：三触发器贴合紧凑成一条工具带（draft「不画分隔线」，仅靠 padding 区隔），发送位 ml-1.5 独立锚点。 -->
+      <div class="composer-bar flex flex-wrap items-center justify-end gap-0 px-2.5 pb-2">
         <!-- + 添加内容（左锚定，spec §1 ①，click 出 4 路浮层） -->
         <AddMenuPopover @select="onAddSelect" />
         <span class="flex-1" />
@@ -76,7 +77,7 @@
           v-else
           variant="default"
           size="icon"
-          class="ml-1.5 size-[30px] rounded-md bg-[var(--accent)] text-white transition-colors enabled:hover:bg-[var(--accent-hover)] disabled:bg-transparent disabled:text-[var(--subtle)] disabled:opacity-50"
+          class="ml-1.5 size-[30px] rounded-md bg-[var(--accent)] text-white transition-colors enabled:hover:bg-[var(--accent-hover)] disabled:bg-transparent disabled:text-[var(--subtle)]"
           :disabled="!canSend"
           :title="canSend ? '发送 · ⏎' : '输入内容后发送'"
           @click="onSend"
@@ -108,6 +109,7 @@ import { useChat } from '@/composables/features/useChat'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
+import { useSettingsStore } from '@/stores/settings'
 import { model as modelApi, session as sessionApi } from '@/api'
 
 const props = withDefaults(
@@ -120,6 +122,7 @@ const props = withDefaults(
 
 const chatStore = useChatStore()
 const sessionStore = useSessionStore()
+const settingsStore = useSettingsStore()
 const { isStreaming } = storeToRefs(chatStore)
 const { send, steer, followUp, abort, compact } = useChat()
 const { submitFirstMessage } = useNewTaskFlow()
@@ -131,8 +134,15 @@ const retryState = computed(() => (props.sessionId ? chatStore.getRetryState(pro
 const queueState = computed(() => (props.sessionId ? chatStore.getQueueState(props.sessionId) : undefined))
 
 const draft = ref('')
-/** 当前选中模型 id：真实选中从 model.list + session 默认模型派生（后续接 model.switched 订阅），未派生前为空 */
-const currentModelId = ref('')
+/**
+ * 当前选中模型 id —— "provider/modelId" 复合串（与 SessionSummary.modelId / config.defaults 同格式）。
+ * 优先取 active session 的 modelId（per-session 真值）；landing 态（无 active session）
+ * 回退到全局默认模型（settingsStore.defaultModel，经 config.defaults 订阅）。
+ * runtime model.switch 成功后回推 session summary / config.defaults → 自动同步。
+ */
+const currentModelId = computed(
+  () => sessionStore.active?.modelId ?? settingsStore.defaultModel ?? '',
+)
 /** ComposerInput 实例 ref：清空/恢复草稿用 */
 const inputRef = ref<InstanceType<typeof ComposerInput> | null>(null)
 /** 命令浮层状态（§2d @/#//） */
@@ -182,10 +192,11 @@ function onCmdSelect(payload: { type: 'mention' | 'file' | 'slash'; name: string
   }
 }
 
-/** 模型切换：调 runtime model.switch（sessionId + provider + modelId）；成功后回写本地 ref */
+/** 模型切换：调 runtime model.switch（sessionId + provider + modelId）；
+ * 成功后 runtime 回推 session summary（modelId 更新）→ currentModelId 自动同步。
+ * landing 态（sid=null）延迟 create，不切换模型。 */
 async function onModelSelect(payload: { modelId: string; provider: string }): Promise<void> {
   if (!props.sessionId) return // landing 态延迟 create（sid=null）时不切换模型
-  currentModelId.value = payload.modelId
   await modelApi.switchModel(props.sessionId, payload.provider, payload.modelId)
 }
 
@@ -217,7 +228,7 @@ const boxClass = computed(() => [
 const placeholder = computed(() =>
   isStreaming.value
     ? '想补充什么？⏎ 加入当前任务 · Alt+⏎ 排到下一轮…'
-    : '描述你想让 AI 做什么…',
+    : '描述你想让 AI 做什么，或 @ 引用、# 文件、/ 命令…',
 )
 
 /**

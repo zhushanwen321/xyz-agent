@@ -30,7 +30,7 @@ export const fixtureSessions: SessionSummary[] = [
     gitIsWorktree: true,
     status: 'active',
     lastActiveAt: NOW - 2 * HOUR,
-    modelId: 'claude-sonnet-4',
+    modelId: 'Anthropic/claude-sonnet-4.5',
     thinkingLevel: 'medium',
     tokenCount: 12_300,
   },
@@ -42,7 +42,7 @@ export const fixtureSessions: SessionSummary[] = [
     gitIsWorktree: true,
     status: 'active',
     lastActiveAt: NOW - 30 * MINUTE,
-    modelId: 'claude-sonnet-4',
+    modelId: 'Anthropic/claude-sonnet-4.5',
     tokenCount: 5_400,
   },
   {
@@ -52,7 +52,7 @@ export const fixtureSessions: SessionSummary[] = [
     gitBranch: 'main',
     status: 'idle',
     lastActiveAt: NOW - 5 * DAY,
-    modelId: 'deepseek-v3',
+    modelId: 'OpenAI/gpt-5',
     tokenCount: 8_700,
   },
   {
@@ -61,7 +61,7 @@ export const fixtureSessions: SessionSummary[] = [
     cwd: '/Users/zhushanwen/Code/work-project',
     status: 'active',
     lastActiveAt: NOW - 4 * MINUTE,
-    modelId: 'claude-sonnet-4',
+    modelId: 'Anthropic/claude-sonnet-4.5',
     tokenCount: 820,
   },
   {
@@ -72,7 +72,7 @@ export const fixtureSessions: SessionSummary[] = [
     gitIsWorktree: true,
     status: 'idle',
     lastActiveAt: NOW - 60 * MINUTE,
-    modelId: 'claude-sonnet-4',
+    modelId: 'Anthropic/claude-sonnet-4.5',
     tokenCount: 2_400,
   },
 ]
@@ -245,7 +245,7 @@ export function createSession(cwd?: string, label?: string): SessionSummary {
     cwd: cwd ?? '/Users/zhushanwen/Code/xyz-agent',
     status: 'active',
     lastActiveAt: Date.now(),
-    modelId: 'claude-sonnet-4',
+    modelId: 'Anthropic/claude-sonnet-4.5',
     tokenCount: 0,
   }
   return session

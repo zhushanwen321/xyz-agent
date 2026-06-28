@@ -61,6 +61,10 @@ export const useSettingsStore = defineStore('settings', () => {
   // ADR-0020 §1 加载路径配置（层 A 勾选/拖动用）：预设候选 + enabled 状态
   const skillDirs = ref<SkillDirConfig[]>([])
   const agentDirs = ref<SkillDirConfig[]>([])
+  // 默认模型（"provider/modelId" 复合串，与 SessionSummary.modelId 同格式）。
+  // runtime 在连接 / model.switch / provider 增删时经 config.defaults 推送；
+  // landing 态（无 active session）的 composer 模型选择器取它作 fallback。
+  const defaultModel = ref('')
 
   /** 订阅句柄（init 幂等去重用） */
   const unsubs: Array<() => void> = []
@@ -82,6 +86,7 @@ export const useSettingsStore = defineStore('settings', () => {
     unsubs.push(config.onAgents((a) => { agents.value = a }))
     unsubs.push(config.onSkillDirs((d) => { skillDirs.value = d }))
     unsubs.push(config.onAgentDirs((d) => { agentDirs.value = d }))
+    unsubs.push(config.onDefaults((m) => { defaultModel.value = m }))
     unsubs.push(extensionApi.onExtensions((e) => { extensions.value = e as ExtensionItem[] }))
 
     // system 是纯前端偏好（localStorage），初始化时读并同步到 DOM + i18n
@@ -142,6 +147,7 @@ export const useSettingsStore = defineStore('settings', () => {
     system,
     skillDirs,
     agentDirs,
+    defaultModel,
     // actions
     init,
     refreshProviders,
