@@ -29,8 +29,8 @@ Sidebar 早期被当成「会话列表」单一组件设计，导致 Search Moda
 - **触发**：① 点 segmented tab；② 快捷键 ⌘1（会话）/ ⌘2（文件）（待定，见遗留）。
 - **互斥**：Session List 与 File View 同时只显一个，共享同一容器盒。
 - **状态保持**：tab 选择持久化，切换 session / 收起再展开 / 刷新均恢复上次 tab。File View 的目录展开态同理持久化。
-- **tab 计数**：每 tab 右侧小字计数（会话 N / 文件 M），不切换即知规模。File View 计数 = **当前 active session** 的改动文件数，非全项目。
-- **active session 联动**：切 session 时，File View 自动刷新为新 session 改动；Session List 则迁移高亮。
+- **tab 计数**：每 tab 右侧小字计数（会话 N / 文件 M），不切换即知规模。File View 计数 = **当前 active session 工作目录（cwd）下的项目文件总数**（另标 git 改动数，如「148 ·12改」）。**[BACKFED from clarity on 2026-06-28]** 推翻旧定义「改动文件数」——File View 现为全项目文件树（见 §File View 语义裁决），不再是改动清单。
+- **active session 联动**：切 session 时，File View 自动刷新为新 session cwd 的完整文件树 + git 标注；Session List 则迁移高亮。
 - **分层理由**：主操作是**动作**（点即触发即结束），视图切换是**状态**（点即停留）——性质不同，故 tab 与 nav 分层，不混排。
 
 ## 收起态（C）· 导航能力迁移
@@ -55,9 +55,28 @@ Session List 内一行 = 状态点 + 标题 + 目录·分支小字 + 时间；ho
 | 场景 | 处理 |
 |---|---|
 | 收起态下切 tab | 不支持，恢复后再切（tab 状态已持久化） |
-| File View 点击文件 | 当前仅跳转 Workspace；是否在 Right Drawer 预览 diff 待定 |
-| 嵌套目录 >3 层 | 横向省略策略待定（当前每层缩进 10px） |
+| File View 点击文件 | **[BACKFED from clarity on 2026-06-28]** 打开 Panel 右侧 SideDrawer detail-pane 预览（文件内容/diff），结构对齐 `panel/draft-detail-pane.html`（D-005 裁决）|
+| 嵌套目录 >3 层 | 横向省略策略待定（当前每层缩进 16px） |
+| 无 active session | File View 显示空态，引导用户新建/选择 session（无 cwd 则无文件树根） |
+| 非 git 仓库 | 无 git 角标，文件树正常浏览；.gitignore 过滤降级（仍隐藏 .git 目录） |
 | ~~收起左缘细条误触~~ | **[2026-06-28 已解决]** rail-restore 左缘细条已移除，误触问题不复存在；唤回改走 ⌘B + header chrome 按钮 |
+
+## File View 语义裁决（2026-06-28）
+
+> **[BACKFED from clarity on 2026-06-28]** 本节由 `.xyz-harness/2026-06-28-sidebar-project-file-tree/` 设计裁决确立，推翻本 spec 早先的「改动文件清单」定义。
+
+**File View = active session 工作目录（cwd）下的完整项目文件树 + git 状态标注。**
+
+| 维度 | 定义 |
+|---|---|
+| 数据源 | `file.tree`（全树骨架，runtime 待建）+ `git.status`（标注层，已就绪）。**非** `message.file_changes`（仅 agent 本次改动） |
+| 树内容 | cwd 下全部文件 · 未改动文件无角标 · 改动文件标 M/A/D/U · 默认遵循 .gitignore（眼睛开关显示忽略项，灰斜体） |
+| 根目录 | `session.cwd` |
+| 样式 | 文件/目录名默认亮色(fg)，选中(accent-soft 底 + accent 粗体)；忽略项灰斜体(muted)。字号 12px |
+| 点击落地 | SideDrawer detail-pane 预览（D-005），对齐 `panel/draft-detail-pane.html` |
+| 配套 draft | `draft-file-view.html`（已重写为全项目树语义）|
+
+完整裁决记录：`.xyz-harness/2026-06-28-sidebar-project-file-tree/decisions.md`（D-001~D-007）。
 
 ## 遗留
 
