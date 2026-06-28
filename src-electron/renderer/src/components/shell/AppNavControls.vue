@@ -4,19 +4,21 @@
     收起侧栏 / ← 后退 / → 前进，浮在 traffic-light 右侧。
     非全屏 left:100px 与折叠态 header 内 chrome 槽位（header pl-[88px] → 按钮起 x100）位置一致，
     实现「折叠/非折叠 chrome 三按钮位置完全相同」（红黄绿右缘 68 + 32px 呼吸）。
-    全屏态 isFullscreen=true 时 left→16px（红黄绿 OS 隐藏，按钮左移占位，响应式 :class 绑定，
-    替代旧 [data-fullscreen] 祖先选择器，320ms 平移与 traffic-light opacity 同步）。
+    全屏态 isFullscreen=true 时 left→16px（红黄绿 OS 隐藏，按钮左移占红黄绿位，与折叠态全屏 header
+    chrome 的 x16 一致）。!important 必须：left-[16px]（动态）与 left-[100px]（静态）同特异性，
+    Tailwind 源码顺序不保证 16 覆盖 100，不加 ! 全屏态按钮会卡在 100px（gap-0 同款 bug）。
+    320ms 平移与 traffic-light opacity 同步。
 
     渲染条件（draft-collapsed-state.html 卡 A/B/C）：
     - 非折叠态（① 展开+非全屏 / ② 展开+全屏）：浮此浮层。展开=chrome 跟随 traffic-light 在 AppShell 层，
-      全屏态 left:20px 占红黄绿位（红黄绿 OS 隐藏）。
+      全屏态 left:16px 占红黄绿位（红黄绿 OS 隐藏）。
     - 折叠态（③ 折叠+非全屏 / ④ 折叠+全屏）：隐藏此浮层 → chrome 已迁入 P1 PanelHeader（卡 A/B/C）。
       折叠一律由 header 承接，避免与浮层重复渲染两套 chrome。
   -->
   <div
     v-if="!sidebar.collapsed"
     class="app-nav-controls absolute top-[21px] left-[100px] z-10 flex gap-0.5 transition-[left] duration-[var(--duration-slow)] ease-[var(--ease)]"
-    :class="{ 'left-[16px]': isFullscreen }"
+    :class="{ '!left-[16px]': isFullscreen }"
   >
     <Button
       variant="ghost"
