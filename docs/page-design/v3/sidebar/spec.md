@@ -15,7 +15,7 @@ Sidebar 早期被当成「会话列表」单一组件设计，导致 Search Moda
 |---|---|---|---|
 | **A** | 会话列表（Session List） | 默认子视图 | 进入应用 / 点「会话」tab |
 | **B** | 文件视图（File View） | 子视图（与 A 互斥） | 点「文件」tab |
-| **C** | 收起态（Collapsed） | 容器整体隐藏 | ⌘B / 顶栏按钮 / 左缘条 |
+| **C** | 收起态（Collapsed） | 容器整体隐藏 | ⌘B / P1 header chrome 按钮 |
 | **D** | 空状态（Empty） | 数据空态（非视图切换） | 会话数=0 |
 
 > 原「Sidebar 五态」中的**搜索浮层（Search Modal）已剥离**：它是 ⌘K 触发的独立 Overlay（模糊背景浮于 Sidebar 之上），不归属 Sidebar 容器。视觉设计见 `overlays/draft-search-modal.html`。Sidebar 仅保留「搜索」**触发入口**（nav 项 + ⌘K）。
@@ -35,12 +35,14 @@ Sidebar 早期被当成「会话列表」单一组件设计，导致 Search Moda
 
 ## 收起态（C）· 导航能力迁移
 
-Sidebar 完全隐藏（非 56px 折叠条），Workspace 占满全宽。导航能力不丢，三路唤回 + 三按钮迁移：
+Sidebar 完全隐藏（非 56px 折叠条），Workspace 占满全宽。导航能力不丢，两路唤回 + 三按钮迁移：
+
+> **[2026-06-28 更新]** 原设计「三路唤回」含左缘细条 hover（rail-restore），实施时移除——唤回路径收敛为 **⌘B + P1 header chrome 按钮**两路（rail-restore 与 header chrome 功能重复且增加视觉噪声）。下表「左缘细条」一列据此删除。
 
 | 能力 | 展开态位置 | 收起态位置 |
 |---|---|---|
-| 展开 Sidebar | — | Workspace 顶栏「展开侧栏」按钮 / ⌘B / 左缘细条 hover |
-| 后退 / 前进 | 顶部 chrome ⌘[ ⌘] | Workspace 顶栏同名按钮 |
+| 展开 Sidebar | — | P1 header chrome「展开侧栏」按钮 / ⌘B |
+| 后退 / 前进 | 顶部 chrome ⌘[ ⌘] | P1 header chrome 同名按钮 |
 | 新建 / 搜索 | Sidebar nav ⌘N ⌘K | 仅快捷键 ⌘N ⌘K（不进顶栏） |
 | 视图切换 tab | segmented tab | **不迁移**——恢复后回到隐藏前 tab |
 
@@ -55,7 +57,7 @@ Session List 内一行 = 状态点 + 标题 + 目录·分支小字 + 时间；ho
 | 收起态下切 tab | 不支持，恢复后再切（tab 状态已持久化） |
 | File View 点击文件 | 当前仅跳转 Workspace；是否在 Right Drawer 预览 diff 待定 |
 | 嵌套目录 >3 层 | 横向省略策略待定（当前每层缩进 10px） |
-| 收起左缘细条误触 | 实机验证，必要时改为纯 ⌘B + 顶栏按钮 |
+| ~~收起左缘细条误触~~ | **[2026-06-28 已解决]** rail-restore 左缘细条已移除，误触问题不复存在；唤回改走 ⌘B + header chrome 按钮 |
 
 ## 遗留
 

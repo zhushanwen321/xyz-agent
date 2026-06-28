@@ -300,13 +300,15 @@ it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
 9. **禁止魔数间距** — 用标准 Tailwind scale，不用 `p-[17px]`
 10. **border-radius 遵循 v3 design-tokens**（`--radius-sm:3px` / `--radius:8px` / `--radius-lg:12px`）— `rounded-sm`(3px) 默认，`rounded-md`/`rounded-lg`(8/12px) 特殊场景。SSOT 见 [docs/page-design/design-tokens.md](docs/page-design/design-tokens.md)，裁决依据 ADR-0018（旧 Warm 时期的 1px/2px 规则已推翻）。详见 docs/standards.md §7.1
 11. **窗口顶部 traffic light 安全区（v3 shell 拓扑）** — v3 重建采用 zcode-demo 拓扑：base 平铺全屏 → sidebar 透明融合 → main 是唯一 float-panel 浮起。traffic light 靠 **aside-region 顶部留白**兼容，而非旧版 padding-left 避让。具体要求：
-    - `.aside-region` 恒定 `padding-top: 52px`（安全区 32 + 呼吸 20），**三平台统一，全屏也保留**（mac 全屏 hover 时系统下拉覆盖层会落进这块留白）
-    - `--tl-safe-width: 72px`（mac 三按钮宽）、`--tl-safe-height: 32px`
-    - app-nav-controls（收起侧栏/←/→）浮在 aside 安全区，非全屏 `left:90px`，全屏 `left:20px`（320ms 平移与 traffic-light opacity 同步）
-    - 全屏两态：非全屏（traffic light opacity 1，按钮 left:90px）/ 全屏（opacity 0，按钮左移）。**无第三态**，mac 全屏 hover 红黄绿由系统提供，应用不渲染
+    - `.aside-region` 恒定 `padding-top: 52px`（安全区），**三平台统一，全屏也保留**（mac 全屏 hover 时系统下拉覆盖层会落进这块留白）
+    - mac 红黄绿位置由主进程 `titleBarStyle:'hidden'` + `trafficLightPosition:{x:16,y:26}` 精确控制（**不用 hiddenInset**——inset 模式强制水平内缩，`trafficLightPosition.x` 被系统忽略）；win/linux 自绘圆点 `left:16px top:26px`（TrafficLight.vue，与 mac 同位）
+    - app-nav-controls（收起侧栏/←/→）浮在 aside 安全区，**非折叠态** `left:100px top:21px`，全屏 `left:16px`（320ms 平移与 traffic-light opacity 同步）。三处 chrome（红黄绿 / 浮层按钮 / PanelHeader 内按钮）统一对齐到 header 中线 y=32px
+    - **折叠态** chrome 迁入 P1 PanelHeader 内（header `pl-[88px]` 让位），与浮层位置一致（按钮起 x=100），切换折叠无跳动；AppShell 折叠态 `!gap-0`（强制覆盖 gap-3，否则 MainPanel 左右不对称）
+    - 全屏两态：非全屏（traffic light opacity 1，按钮 left:100px）/ 全屏（opacity 0，按钮左移）。**无第三态**，mac 全屏 hover 红黄绿由系统提供，应用不渲染
     - win/linux 走 mimic_mac：自绘彩色圆点放左侧模拟 mac，三平台左上视觉统一
+    - 唤回侧栏：⌘B + header chrome 按钮（**rail-restore 左缘细条已移除**）
     - 新增或修改任何窗口顶部区域 UI 时，必须读 [shell spec](docs/page-design/v3/shell/spec.md) 确认拓扑一致
-    - 设计决策记录：[ADR 0016](docs/architecture/adr/0016-macos-traffic-light-safe-zone.md)（旧版 padding-left 方案，**已推翻**）、[v3 shell spec](docs/page-design/v3/shell/spec.md)（现版 SSOT，2026-06-18 修正）
+    - 设计决策记录：[ADR 0016](docs/architecture/adr/0016-macos-traffic-light-safe-zone.md)（旧版 padding-left 方案，**已 Superseded**）、[v3 shell spec](docs/page-design/v3/shell/spec.md)（现版 SSOT，2026-06-18 修正）
 
 ### 自动化检查
 

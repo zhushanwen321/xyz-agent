@@ -1,7 +1,13 @@
 # 0016: macOS Traffic Light Safe Zone + Sidebar Expand Button
 
-**Status**: Accepted
+**Status**: Superseded（被 [shell spec](../../page-design/v3/shell/spec.md) + 2026-06-28 折叠态 chrome 落位取代）
 **Date**: 2026-06-06
+**Superseded by**: `docs/page-design/v3/shell/spec.md`（zcode-demo 拓扑）+ 折叠态 chrome 迁入 P1 PanelHeader 方案
+
+> **[2026-06-28 更新]** 本 ADR 的 v2 方案（PanelBar `padding-left:78px` safe-zone + 左缘 floating pill expand button）**已全部废弃**：
+> - safe-zone 改为红黄绿位置由主进程 `titleBarStyle:'hidden'` + `trafficLightPosition:{16,26}` 精确控位，header 用 `pl-[88px]` 让位（折叠态）
+> - floating pill expand button + rail-restore 左缘细条**均已移除**，唤回改走 ⌘B + P1 header chrome 按钮
+> - 现版 SSOT 见 [shell spec](../../page-design/v3/shell/spec.md)。下文为历史决策原文，保留供追溯。
 
 ## Context
 

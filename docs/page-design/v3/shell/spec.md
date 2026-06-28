@@ -4,6 +4,7 @@
 > **2026-06 修正**：横跨 overlay 与 zcode-demo「base 平铺 / sidebar 透明 / main 浮起」双语义冲突，回归 zcode-demo 纯拓扑，traffic light 靠 sidebar 顶部留白兼容。
 > **2026-06-18 更新**（cross-platform-controls form）：① 增「应用导航按钮」（收起侧栏 / ← 后退 / → 前进），浮在 traffic light 右侧，三平台统一；② 全屏 hover 红黄绿改由 mac 系统提供，应用只画「非全屏 / 全屏」两态；③ 窗口控制走流派 A（各平台原生 + 应用按钮统一）；④ logo 定为 xyz-agent，新建/搜索标 ⌘N/⌘K。
 > **2026-06-18 再更新**（win-controls-visual form）：流派 A 实测两个 bug——win/linux 左上应用按钮撞 logo（padding-top:12px 不足）、右上角窗口控制侵入 main 浮起区（breadcrumb 被迫 padding-right:120px 避让）。决策改走**方案 X**：win/linux 自绘彩色圆点放左侧完全模拟 mac（mimic_mac，hover 显 close/min/max 符号），三平台左上视觉完全统一；logo 下移到按钮排下方（logo_below，三平台 padding-top 统一 52px）。流派 A 弃用。
+> **2026-06-28 更新**（折叠态 chrome 落位实施后）：① 红黄绿主进程改用 `titleBarStyle:'hidden'` + `trafficLightPosition:{x:16,y:26}` 精确控位（弃用 `hiddenInset`，因其强制水平内缩使 `trafficLightPosition.x` 失效）；② 三处 chrome（红黄绿 / 浮层按钮 / PanelHeader 内按钮）统一对齐到 header 中线 y=32px；③ 折叠态 chrome 迁入 P1 PanelHeader（`pl-[88px]` 让位），与非折叠浮层位置一致（按钮起 x=100）；④ rail-restore 左缘细条移除，唤回靠 ⌘B + header chrome 按钮。下文 §二/§三/§五/§七 坐标已据此更新。
 
 ## 决策演进（为何从 Overlay C 改成 zcode-demo 拓扑）
 
@@ -38,9 +39,12 @@
 
 | 状态 | traffic light | 应用按钮 (app-nav-controls) | sidebar 内容位置 |
 |------|--------------|----------------------------|-----------------|
-| **非全屏（窗口）** | opacity 1，常驻 | `left:90px`，紧跟红黄绿右侧 | padding-top:52px 不变 |
-| **全屏** | opacity 0，隐藏 | `left:20px`，**左移占红黄绿位**（**320ms** 平移 = `--duration-slow`，与 traffic-light 同步） | padding-top:52px 不变 |
+| **非折叠（窗口）** | opacity 1，常驻 | 浮层 `left:100px`，紧跟红黄绿右侧 | padding-top:52px 不变 |
+| **折叠（非全屏）** | opacity 1，常驻 | **浮层隐藏**，chrome 三按钮迁入 P1 PanelHeader（`pl-[88px]`，按钮起 x=100，与浮层位置一致） | aside 归零，AppShell `!gap-0` |
+| **全屏** | opacity 0，隐藏 | 浮层 `left:16px`，**左移占红黄绿位**（**320ms** 平移 = `--duration-slow`，与 traffic-light 同步） | padding-top:52px 不变 |
 | **全屏 · hover** | 系统下拉覆盖层 | **应用不变**（同全屏静止） | 不变 |
+
+> **折叠/非折叠 chrome 一致性**：非折叠浮层与折叠 header 内的 chrome 三按钮水平位置完全一致（按钮左缘均 x=100），切换折叠无跳动。红黄绿右缘 x=68 + 32px 呼吸 = 100。
 
 **应用按钮三件套**（应用自绘 DOM，三平台统一）：
 - `收起` → toggle sidebar 宽度（200px ↔ 折叠态）
@@ -77,19 +81,20 @@ on ⌘B:
 
 **配套文档**：决策矩阵与状态流转图见 `docs/page-design/v3/panel/draft-breadcrumb-popovers.html` 卡 E（⌘B 状态矩阵）。
 
-**流畅命门**：两态间 sidebar 内容（logo/nav/user）位置**像素级不变**，唯一位移是 `app-nav-controls` 的 `left` 从 90px 平移到 20px（**320ms** 过渡 = `--duration-slow`），与 `traffic-light` opacity（同为 320ms、同曲线）**同时长同步**——两者是同一态变换。**win/linux** 两元素皆应用自绘、严格同步；**mac** traffic-light 由 OS 绘制（时长不可控），应用只保证 app-nav-controls 用 320ms。全屏 hover 红黄绿由 mac 系统落进 52px 留白里，不挡 nav。
+**流畅命门**：两态间 sidebar 内容（logo/nav/user）位置**像素级不变**，唯一位移是 `app-nav-controls` 的 `left` 从 100px 平移到 16px（**320ms** 过渡 = `--duration-slow`），与 `traffic-light` opacity（同为 320ms、同曲线）**同时长同步**——两者是同一态变换。**win/linux** 两元素皆应用自绘、严格同步；**mac** traffic-light 由 OS 绘制（时长不可控），应用只保证 app-nav-controls 用 320ms。全屏 hover 红黄绿由 mac 系统落进 52px 留白里，不挡 nav。
 
 ## 三、安全区尺寸
 
 | token | 值 | 用途 |
 |-------|-----|------|
-| `--tl-safe-width` | 72px | mac traffic light 三按钮宽（3×12 + 2×8 + 余量） |
-| `--tl-safe-height` | 32px | 按钮高 + 上下边距 |
-| `.aside-region padding-top` | **52px** | sidebar 内容起始 Y（安全区 32 + 呼吸 20） |
-| `.traffic-light left/top` | 20px / 20px | 绝对定位到 window-mock 左上 |
-| `.app-nav-controls left`（非全屏） | 90px | 应用按钮紧跟 traffic light 右侧（72 + 18 呼吸） |
-| `.app-nav-controls left`（全屏） | 20px | 红黄绿隐藏，按钮左移占位（**320ms** 平移 = `--duration-slow`，与 traffic-light 同步） |
-| win/linux `padding-top` | **52px** | 与 mac 一致留安全区；mimic_mac 圆点浮左上，app-nav-controls left:90px |
+| `.aside-region padding-top` | **52px** | sidebar 内容起始 Y（三平台统一安全区） |
+| `.traffic-light left/top`（win/linux） | **16px / 26px** | 绝对定位到窗口左上（应用自绘圆点，与 mac 同位） |
+| mac `trafficLightPosition` | **{x:16, y:26}** | 主进程控制 OS 红黄绿（红黄绿高 12，中线 y=32）；**必须 titleBarStyle:'hidden'**（hiddenInset 会使 x 失效） |
+| `.app-nav-controls left`（非折叠） | **100px** | 应用按钮紧跟红黄绿右侧（红黄绿右缘 68 + 32px 呼吸），top:21px（中线 32） |
+| `.app-nav-controls left`（全屏） | **16px** | 红黄绿隐藏，按钮左移占位（**320ms** 平移 = `--duration-slow`，与 traffic-light 同步） |
+| PanelHeader `pl`（折叠+非全屏） | **88px** | P1 header 让位红黄绿，chrome 按钮起 x=12+88=100（与浮层一致） |
+| AppShell `gap`（折叠态） | **!gap-0** | aside 归零后强制 gap:0（必须 `!`，否则被 gap-3 同特异性覆盖为死代码），MainPanel 左右对称各 12px |
+| win/linux `padding-top` | **52px** | 与 mac 一致留安全区；mimic_mac 圆点浮左上，app-nav-controls left:100px |
 | 全屏 hover（mac） | 系统提供 | mac 下拉覆盖层显示红黄绿，应用不渲染第三态 |
 
 ## 四、Breadcrumb 位置变更
@@ -104,10 +109,10 @@ on ⌘B:
 
 | 平台 | traffic light / 窗口控制 | 应用按钮（收起/←/→） | sidebar 安全区 |
 |------|---------------------------|----------------------|---------------|
-| **macOS** | 红黄绿浮 sidebar 左上（**OS 系统绘制**） | left:90px（非全屏）/ 20px（全屏） | padding-top:52px |
-| **Windows/Linux** | 自绘彩色圆点浮左上（**mimic mac**，hover 显 close/min/max 符号） | left:90px（非全屏）/ 20px（全屏），与 mac 一致 | padding-top:52px |
+| **macOS** | 红黄绿浮窗口左上（**OS 系统绘制**，`titleBarStyle:'hidden'` + `trafficLightPosition:{16,26}` 控位） | 浮层 left:100px（非折叠）/ 16px（全屏）；折叠态迁入 P1 header（pl-88） | padding-top:52px |
+| **Windows/Linux** | 自绘彩色圆点浮左上（**mimic mac**，`left:16px top:26px`，hover 显 close/min/max 符号） | left:100px（非折叠）/ 16px（全屏），与 mac 一致 | padding-top:52px |
 
-**方案 X 取舍**：win/linux 用 `frame:false` + 自绘 3 个彩色圆点（复用 `.traffic-light` DOM），完全模拟 mac 红黄绿，hover 整组时圆点上显 close/min/max 符号。三平台左上视觉与交互完全一致。代价是 win/linux ~1 天工程量 + Windows 用户肌肉记忆（对开发者受众而言收益更大：VS Code/Cursor 在 Linux 均自绘控制）。**应用按钮三平台恒 left:90px**（全屏左移 20px）。
+**方案 X 取舍**：win/linux 用 `frame:false` + 自绘 3 个彩色圆点（复用 `.traffic-light` DOM），完全模拟 mac 红黄绿，hover 整组时圆点上显 close/min/max 符号。三平台左上视觉与交互完全一致。代价是 win/linux ~1 天工程量 + Windows 用户肌肉记忆（对开发者受众而言收益更大：VS Code/Cursor 在 Linux 均自绘控制）。**应用按钮三平台恒 left:100px**（全屏左移 16px）。
 
 **为何放弃流派 A**：流派 A（窗口控制各平台原生）实测两个 bug——① win/linux `padding-top:12px` 不足，应用按钮 left:20px 撞 logo；② 右上角窗口控制侵入 main 浮起区，breadcrumb 被迫 `padding-right:120px` 避让。方案 X 同时消灭这两个 bug。
 
@@ -125,10 +130,10 @@ on ⌘B:
 
 ## 七、实现要点（交付给前端）
 
-1. **Electron 主进程**：保持 `titleBarStyle: 'hiddenInset'`（mac）。traffic light 由系统绘制并自动浮最顶，CSS 不画真实按钮，只在 sidebar 顶部留 `padding-top:52px`。
-2. **应用导航按钮**（收起/←/→）是**应用自绘 DOM**，三平台统一渲染。收起 → toggle sidebar 宽度（折叠态细节属 sidebar L2）；←/→ → **导航历史栈** back/forward（浏览器式，栈条目 = (会话, 视图节点)）。**←/→ 与 Flow 4「回退分支」解耦**——分支回退走 Session Tree + 分支 pill。
-3. **按钮位移**：监听 `enter/leave-full-screen` 给根加 `data-fullscreen`，CSS `[data-fullscreen] .app-nav-controls{left:20px}` 触发 **320ms（= --duration-slow）**平移，traffic-light opacity 同为 320ms 同曲线。**win/linux 两元素皆应用自绘、严格同步**；**mac** traffic-light 由 OS 绘制（时长不可控），应用只保证 app-nav-controls 用 320ms。**全屏 hover 红黄绿由 mac 系统提供，应用不画第三态。**
-4. **跨平台判定**：renderer 根 `<html data-platform="mac|win|linux">`。三平台 `.aside-region` 均 `padding-top:52px`。mac：`titleBarStyle:'hiddenInset'`，红黄绿 OS 绘制；win/linux：`frame:false` + 自绘 3 个彩色圆点（复用 `.traffic-light` DOM）浮左上，hover 显 close/min/max 符号，点击 IPC 调 `win.minimize/maximize/close`。`app-nav-controls` 三平台恒 `left:90px`（全屏左移 20px）。
+1. **Electron 主进程**：mac 用 `titleBarStyle:'hidden'` + `trafficLightPosition:{x:16,y:26}` 精确控制红黄绿位置（**不用 hiddenInset**——inset 模式强制红黄绿水平内缩，`trafficLightPosition.x` 被系统忽略）。traffic light 仍由 OS 绘制并自动浮最顶，CSS 不画真实按钮，只在 sidebar 顶部留 `padding-top:52px`。
+2. **应用导航按钮**（收起/←/→）是**应用自绘 DOM**，三平台统一渲染。收起 → toggle sidebar 宽度（折叠态细节属 sidebar L2）；←/→ → **导航历史栈** back/forward（浏览器式，栈条目 = (会话, 视图节点)）。**←/→ 与 Flow 4「回退分支」解耦**——分支回退走 Session Tree + 分支 pill。**折叠态**此组按钮迁入 P1 PanelHeader（chrome 槽位 `pl-[88px]`），浮层隐藏；非折叠态沿用 AppShell 浮层 `left:100px`，两态位置一致（按钮起 x=100）。
+3. **按钮位移**：监听 `enter/leave-full-screen` 给根加 `data-fullscreen`，CSS `[data-fullscreen] .app-nav-controls{left:16px}` 触发 **320ms（= --duration-slow）**平移，traffic-light opacity 同为 320ms 同曲线。**win/linux 两元素皆应用自绘、严格同步**；**mac** traffic-light 由 OS 绘制（时长不可控），应用只保证 app-nav-controls 用 320ms。**全屏 hover 红黄绿由 mac 系统提供，应用不画第三态。**
+4. **跨平台判定**：renderer 根 `<html data-platform="mac|win|linux">`。三平台 `.aside-region` 均 `padding-top:52px`。mac：`titleBarStyle:'hidden'` + `trafficLightPosition:{16,26}`，红黄绿 OS 绘制；win/linux：`frame:false` + 自绘 3 个彩色圆点（复用 `.traffic-light` DOM，`left:16px top:26px`）浮左上，hover 显 close/min/max 符号，点击 IPC 调 `win.minimize/maximize/close`。`app-nav-controls` 三平台恒 `left:100px`（全屏左移 16px）。折叠态 AppShell 加 `!gap-0`（强制覆盖 gap-3，使 MainPanel 左右对称）。唤回侧栏靠 ⌘B + header chrome 按钮（rail-restore 已移除）。
 5. **全局快捷键**：注册 `⌘N`（新建任务）、`⌘K`（搜索）—— sidebar nav item 的 `.a-kbd` 是其视觉提示。mac 用 ⌘、win/linux 用 Ctrl。
 6. **拖拽区**：main-header 空白区 `-webkit-app-region: drag`，按钮/breadcrumb 设 `no-drag`。
 7. **修复已存在 bug**：真实 renderer 当前 `grep -webkit-app-region` 全空——sidebar logo 会被 traffic light 压住。本设计顺手把这个 bug 设计掉了（padding-top 安全区 + app-nav-controls 落点）。
@@ -140,5 +145,5 @@ on ⌘B:
 - [x] 收起侧栏后的折叠态布局未定（logo 是否保留 / 折叠宽度 / 展开手势）——属 L2 模块 → `docs/page-design/v3/sidebar/draft-collapsed-state.html`（2026-06-19 定：3 路唤回冗余 + 320ms 同步 + 顶栏 3 按钮 + 状态保留）
 - [x] breadcrumb 三段点击跳转目标屏幕未定（项目切换器 / 会话树 / 分支选择器）——属 L2 模块 → `docs/page-design/v3/panel/draft-breadcrumb-popovers.html`（2026-06-19 定：项目 360 / 会话 380 / 分支 320 三 popover，互斥 + 状态联动）
 - [x] ←/→ 定为**导航历史**（浏览器模型，2026-06-19 定，**已确认 · unified_nav**）：栈条目 = (会话, 视图节点)，会话切换与会话内跳转都 push。**与 Flow 4「回退分支」解耦**——分支回退是对话级动作走 Session Tree + 分支 pill，不走 chrome ←/→（原「需对齐 Flow 4」依赖撤销）
-- [ ] 真实代码（System D 漂移）需同步：sidebar 加 `padding-top` 安全区 + `data-platform` 判定 + app-nav-controls（属 ADR-0018 代码修复清单）
+- [x] 真实代码（System D 漂移）已同步（2026-06-28）：sidebar `padding-top` 安全区 + `data-platform` 判定 + app-nav-controls + titleBarStyle:'hidden' + trafficLightPosition 控位 + 折叠态 chrome 落 P1 header
 - [x] 视觉探索稿：`docs/page-design/v3/shell/draft-overlay-states.html`（两态对比 + 拓扑示意 + 应用按钮 + 跨平台方案 X mimic_mac + 尺寸表）
