@@ -33,6 +33,7 @@
 | `--danger` | `#ef4444` | 错误/危险 | 补全 |
 | `--info` | `#38bdf8` | 信息/提示 | 补全 |
 | `--reasoning` | `#a78bfa` | 思考块色相（draft-message-stream §4 + composer 思考等级） | 补全（v3 重建 Wave 1） |
+| `--reasoning-soft` | `color-mix(in oklch, var(--reasoning) 18%, transparent)` | slash 命令 chip 背景（与 `--accent-soft` 同构派生：跟随 --reasoning 自动适配明暗） | 补全 |
 
 ## 字体
 

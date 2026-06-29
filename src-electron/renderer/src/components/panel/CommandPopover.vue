@@ -62,6 +62,7 @@ import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import * as events from '@/api/events'
 import { composer } from '@/api'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
+import { useCommandStore, type RawCommand } from '@/stores/command'
 
 type CmdType = 'mention' | 'file' | 'slash'
 
@@ -87,8 +88,10 @@ const controlledOpen = computed({
 
 const activeIndex = ref(0)
 
-// slash 命令：runtime 推送的扩展命令（session.commands 通道）。无推送时为空（@/# 仍走常量）。
-// @ 引用 / # 文件是搜索能力（后端从零），保持常量，不订阅。
+const commandStore = useCommandStore()
+
+// slash 命令：从 commandStore 读取（session-scoped，组件 v-if 重建不丢数据）。
+// @ 引用 / # 文件是搜索能力（后端从零），保持常量，不订阅、不进 store。
 const mentionCandidates = ref<Array<{ id: string; name: string; kind: string; icon: string; path?: string }>>([])
 const fileCandidates = ref<Array<{ id: string; name: string; kind: string; path?: string }>>([])
 
@@ -107,12 +110,12 @@ async function loadCandidates(): Promise<void> {
 }
 onMounted(() => { void loadCandidates() })
 
-const slashCommands = ref<Array<{ id: string; name: string; kind: string; icon: string; description?: string }>>([])
+/** 当前 session 的 slash 命令（响应式：store 更新即重算） */
+const slashCommands = computed(() => (props.sessionId ? commandStore.getCommands(props.sessionId) : []))
 
 /**
  * 订阅 session.commands（D8：走 session 通道 events.on(sessionId)，非 onGlobalType）。
- * payload 已契约化：{ commands: Array<{ name, description?, source }> }。
- * 命令 kind 取 source（extension/skill 等），icon 按 source 推断，description 透传供浮层提示行 + chip 展示。
+ * 收到后写入 commandStore（持久化，跨组件重建）而非局部 ref。
  * sessionId 变化时重订（Composer 切 session）。
  */
 let unsubCommands: (() => void) | null = null
@@ -124,26 +127,13 @@ function subscribeCommands(sid: string | undefined): void {
     if (msg.type !== 'session.commands') return
     // msg 经 type 守卫后 payload 仍为联合宽类型（events.on 非 onGlobalType，无 per-type 泛型收窄），
     // 故窄断言取 commands（payload 已契约化，见 protocol.ts ServerMessageMap）
-    const cmds = (msg.payload as { commands: Array<{ name: string; description?: string; source: string }> }).commands
-    slashCommands.value = cmds.map((c: { name: string; description?: string; source: string }) => ({
-      id: c.name,
-      name: c.name,
-      kind: c.source,
-      icon: iconForSource(c.source),
-      description: c.description,
-    }))
+    const cmds = (msg.payload as { commands: RawCommand[] }).commands
+    commandStore.applyCommands(sid, cmds)
   })
 }
 onMounted(() => subscribeCommands(props.sessionId))
 onBeforeUnmount(() => unsubCommands?.())
 watch(() => props.sessionId, (sid) => subscribeCommands(sid))
-
-/** source → icon 映射（extension→terminal, skill→star, 默认 wrench） */
-function iconForSource(source: string): string {
-  if (source === 'extension') return 'terminal'
-  if (source === 'skill') return 'star'
-  return 'wrench'
-}
 
 /** 统一候选项视图（三种数据源归一为 { id, name, kind, icon, description? }） */
 const items = computed(() => {

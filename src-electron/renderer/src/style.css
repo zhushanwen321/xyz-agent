@@ -49,6 +49,8 @@
   --info: #38bdf8;
   /* reasoning 紫：思考块色相（draft-message-stream §4 + composer 思考等级） */
   --reasoning: #a78bfa;
+  /* reasoning 软底：slash 命令 chip 背景（与 --accent-soft 同构，color-mix 派生跟随主题） */
+  --reasoning-soft: color-mix(in oklch, var(--reasoning) 18%, transparent);
 
   /* ── 字体 ───────────────────────────────────────────────── */
   --font-sans: Inter, 'SF Pro Display', 'PingFang SC', system-ui, sans-serif;

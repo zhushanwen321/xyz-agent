@@ -25,6 +25,7 @@ import { pickDirectory } from '@/lib/ipc'
 import { useSessionStore } from '@/stores/session'
 import { usePanelStore } from '@/stores/panel'
 import { useNavigationStore } from '@/stores/navigation'
+import { useCommandStore } from '@/stores/command'
 import { useChat } from '@/composables/features/useChat'
 
 /** NewTaskFlow 8 态枚举（②§5） */
@@ -108,6 +109,7 @@ export function useNewTaskFlow() {
   const session = useSessionStore()
   const panel = usePanelStore()
   const navigation = useNavigationStore()
+  const commandStore = useCommandStore()
   const chat = useChat()
 
   /** 当前 flow 绑定 session 的 id（统一延迟 create 后，landing 态恒为 null） */
@@ -271,8 +273,10 @@ export function useNewTaskFlow() {
     session.appendSession(created)
     // create 的 broadcast commands 发生在 currentSession 绑定（订阅重订）前→丢失。
     // 这里在绑定后主动拉取并本地 dispatch，保证命令到达 CommandPopover。
+    // 同时写入 commandStore（持久化，组件 v-if 重建后仍可读，修复 slash 浮层对话后失效）。
     try {
       const { commands } = await sessionApi.getCommands(created.id)
+      commandStore.applyCommands(created.id, commands)
       events.dispatchSession(created.id, { type: 'session.commands', payload: { sessionId: created.id, commands } })
       // eslint-disable-next-line taste/no-silent-catch -- getCommands 失败不阻断预创建（命令缺失仅致 slash 浮层空，可后补）；与 runtime fetchAndBroadcastCommands 同策略
     } catch (e) {

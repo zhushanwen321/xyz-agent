@@ -19,6 +19,7 @@ import type { SessionGroup, SessionSummary } from '@xyz-agent/shared'
 import { chat as chatApi, session as sessionApi } from '@/api'
 import * as events from '@/api/events'
 import { useChatStore } from '@/stores/chat'
+import { useCommandStore } from '@/stores/command'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePanelStore } from '@/stores/panel'
 import { useSessionStore } from '@/stores/session'
@@ -104,6 +105,7 @@ export function useSidebar() {
   const chat = useChatStore()
   const sidebar = useSidebarStore()
   const panel = usePanelStore()
+  const commandStore = useCommandStore()
 
   /**
    * session.list server-push 订阅（#7 方案 A）。
@@ -175,9 +177,11 @@ export function useSidebar() {
     // broadcast session.commands 发生在本函数 await switchSession resolve 之前，
     // 此时 session.activeId 还是旧值，CommandPopover 未订阅新 sessionId 通道，broadcast 被丢弃。
     // 这里在 activeId 更新（订阅已重订）后主动拉取并本地 dispatch，保证命令到达订阅者。
+    // 同时写入 commandStore（持久化，组件 v-if 重建后仍可读，修复 slash 浮层对话后失效）。
     // getCommands 失败不阻断切 session（命令缺失不致命，输入 / 时浮层空，可后补）。
     try {
       const { commands } = await sessionApi.getCommands(id)
+      commandStore.applyCommands(id, commands)
       events.dispatchSession(id, { type: 'session.commands', payload: { sessionId: id, commands } })
       // eslint-disable-next-line taste/no-silent-catch -- getCommands 失败不阻断 session 切换（命令缺失仅致 slash 浮层空，可后补）；与 runtime fetchAndBroadcastCommands 同策略
     } catch (e) {

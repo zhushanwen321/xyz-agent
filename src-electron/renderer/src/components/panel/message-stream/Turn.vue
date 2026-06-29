@@ -28,12 +28,20 @@
           </div>
         </div>
       </div>
-      <!-- 展示态气泡：右下尖角（user content 走 markdown 渲染） -->
+      <!-- 展示态气泡：右下尖角（user content 走 markdown 渲染；slash 命令前缀渲染为 chip） -->
       <div
         v-else
         class="max-w-[76%] rounded-[14px_14px_4px_14px] border border-border-strong bg-surface-hover px-[13px] py-[9px] text-[13.5px] leading-[1.55] text-fg"
       >
-        <MarkdownRenderer :content="turn.user.content" />
+        <!-- slash 命令 chip（与 composer 同款紫色 chip + source icon），后接剩余文本 -->
+        <span
+          v-if="slashChip"
+          class="mr-1 inline-flex items-center gap-1 rounded-sm bg-[var(--reasoning-soft)] px-1.5 py-px font-mono text-[12px] font-medium leading-[1.4] text-reasoning"
+        >
+          <component :is="slashChip.iconComp" class="size-[12px] shrink-0" />
+          <span>{{ slashChip.name }}</span>
+        </span>
+        <MarkdownRenderer v-if="!slashChip || slashChip.rest" :content="slashChip ? slashChip.rest : turn.user.content" />
       </div>
       <!-- hover actions：复制常驻 hover；编辑仅 AI 停止（isStreaming=false）时显示 -->
       <div
@@ -189,7 +197,9 @@ import { assistantToMarkdown } from '@/composables/logic/messageFormat'
 import ChangeSetCard from './ChangeSetCard.vue'
 import { useChat } from '@/composables/features/useChat'
 import { useChatStore } from '@/stores/chat'
+import { useCommandStore } from '@/stores/command'
 import { useSidebar } from '@/composables/features/useSidebar'
+import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
 import Block from './Block.vue'
 import ForkConfirmModal from './ForkConfirmModal.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
@@ -213,6 +223,28 @@ const chat = useChatStore()
 const { isStreaming } = storeToRefs(chat)
 const { editAndResend } = useChat()
 const { forkSession } = useSidebar()
+const commandStore = useCommandStore()
+
+/**
+ * 用户气泡 slash 命令检测：content 以已知 slash 命令开头（如 /commit）时，
+ * 渲染 composer 同款 chip（icon + 紫色底）+ 命令名后的剩余文本。
+ * slash chip 发送时被 getText 扁平化为纯文本（/commit），此处从 command store
+ * 解析回 icon（SSOT：与选择框/chip 同源），不改 Message 协议。
+ * 匹配规则：content 以 command.name 开头，且其后是空格或字符串结束（避免 /co 误命中 /commit）。
+ */
+const slashChip = computed(() => {
+  const content = props.turn.user?.content ?? ''
+  if (!content.startsWith('/')) return null
+  const commands = commandStore.getCommands(props.sessionId)
+  // 取最长匹配（避免 /commit 命中 /c）：按 name 长度降序
+  const matched = commands
+    .filter((c) => content === c.name || content.startsWith(c.name + ' '))
+    .sort((a, b) => b.name.length - a.name.length)[0]
+  if (!matched) return null
+  const rest = content.slice(matched.name.length).trim()
+  const iconComp = SLASH_ICON_COMPONENTS[matched.icon as keyof typeof SLASH_ICON_COMPONENTS] ?? SLASH_ICON_COMPONENTS.wrench
+  return { name: matched.name, rest, iconComp }
+})
 
 /** 全局流式态（当前活跃 session）：streaming 时禁编辑/fork */
 // isStreaming 来自 storeToRefs（上）
