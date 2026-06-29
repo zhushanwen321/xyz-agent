@@ -53,6 +53,19 @@ export function switchSession(sessionId: string): Promise<void> {
   return result
 }
 
+/**
+ * 拉取 session 的扩展命令（pi getCommands）。
+ * 修复 broadcast 与订阅时序竞争：session.switch 的 ensureActive 内部 broadcast commands
+ * 发生在 renderer 订阅建立之前会被丢弃；renderer 切 session 后主动调本方法拉取。
+ * reply type 为 session.commands，payload 是 { sessionId, commands }，调用方负责本地 dispatch。
+ */
+export function getCommands(sessionId: string): Promise<{ sessionId: string; commands: Array<{ name: string; description?: string; source: string }> }> {
+  const id = pending.create()
+  const result = pending.register<{ sessionId: string; commands: Array<{ name: string; description?: string; source: string }> }>(id)
+  transport.send({ type: 'session.getCommands', id, payload: { sessionId } })
+  return result
+}
+
 /** 重命名 session（label 更新） */
 export function rename(sessionId: string, label: string): Promise<void> {
   const id = pending.create()

@@ -21,7 +21,7 @@ export class SessionMessageHandler {
 
   /** D1: 本 handler 认领的 ClientMessageType 清单（session.compact 单独路由，故不在此列）。 */
   readonly handles: ClientMessageType[] = [
-    'session.create', 'session.delete', 'session.list', 'session.switch', 'session.history', 'session.rename',
+    'session.create', 'session.delete', 'session.list', 'session.switch', 'session.history', 'session.rename', 'session.getCommands',
     'message.send', 'message.abort', 'message.steer', 'message.follow_up',
   ]
 
@@ -76,6 +76,13 @@ export class SessionMessageHandler {
       case 'session.history': {
         const messages = await this.ctx.sessionService.getHistory(msg.payload.sessionId)
         return this.ctx.reply(ws, msg.id, 'session.history', { sessionId: msg.payload.sessionId, messages })
+      }
+      case 'session.getCommands': {
+        // renderer 切 session 后主动拉取命令（修复 broadcast 与订阅时序竞争）。
+        // reply session.commands payload，renderer 收到后 events.dispatchSession 本地投递给 CommandPopover。
+        const { sessionId } = msg.payload
+        const commands = await this.ctx.sessionService.getCommands(sessionId)
+        return this.ctx.reply(ws, msg.id, 'session.commands', { sessionId, commands })
       }
       case 'session.rename': {
         await this.ctx.sessionService.renameSession(msg.payload.sessionId, msg.payload.name)

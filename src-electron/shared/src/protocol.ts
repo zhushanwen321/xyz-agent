@@ -7,7 +7,7 @@ import type { FileChange, ChangeSetStatus } from './message'
 // ── ClientMessageType（保持向后兼容）──────────────────────────
 
 export type ClientMessageType =
-  | 'session.create' | 'session.delete' | 'session.list' | 'session.switch' | 'session.history'
+  | 'session.create' | 'session.delete' | 'session.list' | 'session.switch' | 'session.history' | 'session.getCommands'
   | 'session.compact' | 'session.rename'
   | 'message.send' | 'message.abort' | 'message.steer' | 'message.follow_up'
   | 'config.getProviders' | 'config.setProvider' | 'config.deleteProvider' | 'config.setToolPermissions'
@@ -53,6 +53,7 @@ export interface ClientMessageMap {
   'session.list': Record<string, never>
   'session.switch': { sessionId: string }
   'session.history': { sessionId: string }
+  'session.getCommands': { sessionId: string }
   'session.compact': { sessionId: string }
   'session.rename': { sessionId: string; name: string }
   'message.send': { sessionId: string; content: string; subagent?: { agent: string; task: string } }
@@ -119,6 +120,7 @@ export type ClientMessage =
   | { type: 'session.list'; id?: string; payload: Record<string, never> }
   | { type: 'session.switch'; id?: string; payload: ClientMessageMap['session.switch'] }
   | { type: 'session.history'; id?: string; payload: ClientMessageMap['session.history'] }
+  | { type: 'session.getCommands'; id?: string; payload: ClientMessageMap['session.getCommands'] }
   | { type: 'session.compact'; id?: string; payload: ClientMessageMap['session.compact'] }
   | { type: 'session.rename'; id?: string; payload: ClientMessageMap['session.rename'] }
   | { type: 'message.send'; id?: string; payload: ClientMessageMap['message.send'] }

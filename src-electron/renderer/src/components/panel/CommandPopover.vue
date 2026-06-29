@@ -20,7 +20,6 @@
       :side-offset="6"
       :collision-padding="8"
       class="w-[320px] overflow-hidden p-0"
-      @keydown="onContentKeydown"
     >
       <!-- filter header -->
       <div class="flex items-center gap-1.5 border-b border-border bg-white/[0.015] px-2.5 py-1.5 font-mono text-[11px] text-subtle">
@@ -229,16 +228,9 @@ function handleKeydown(e: KeyboardEvent): boolean {
 }
 
 /**
- * PopoverContent 自身 keydown 监听：reka-ui 打开浮层后 auto-focus 到内容，
- * 键盘事件直达 content 不经过 ComposerInput。这里直接调 handleKeydown 完成导航。
- */
-function onContentKeydown(e: KeyboardEvent): void {
-  handleKeydown(e)
-}
-
-/**
- * window keydown 监听（capture 阶段）：兜底保障，即使 reka-ui 把焦点抢到 content，
- * 方向键/Enter/Esc 仍能被 handleKeydown 处理。仅在 open 时生效。
+ * window keydown 监听（capture 阶段）：键盘导航的唯一入口。
+ * capture 在目标阶段前触发，先于任何组件的 keydown，保证浮层 open 时
+ * 方向键/Enter/Esc/Tab 稳定命中（不依赖焦点在哪、不依赖 PopoverContent 透传 keydown）。
  */
 function onWindowKeydown(e: KeyboardEvent): void {
   if (!props.open) return

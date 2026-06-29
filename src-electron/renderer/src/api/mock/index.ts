@@ -167,6 +167,12 @@ export const session = {
     pushSessionState(id)
   },
 
+  /** 拉取 session 扩展命令（与 real domain 同接口，mock 返回 MOCK_COMMANDS） */
+  async getCommands(id: string): Promise<{ sessionId: string; commands: typeof MOCK_COMMANDS }> {
+    await sleep(TIMING.ack)
+    return { sessionId: id, commands: MOCK_COMMANDS.map((c) => ({ ...c })) }
+  },
+
   async rename(sessionId: string, label: string): Promise<void> {
     await sleep(TIMING.ack)
     const target = fixtureSessions.find((s) => s.id === sessionId)

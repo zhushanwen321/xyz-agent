@@ -73,6 +73,8 @@ export interface ISessionService {
   switchModel(sessionId: string, provider: string, modelId: string): Promise<string>
   compact(sessionId: string): Promise<void>
   getHistory(sessionId: string): Promise<Message[]>
+  /** 查询 session 的扩展命令（pi getCommands）。纯查询无副作用，用于 renderer 主动拉取。 */
+  getCommands(sessionId: string): Promise<Array<{ name: string; description?: string; source: string }>>
   restoreSession(sessionId: string): Promise<SessionSummary>
   /** Fork 后重新绑定 session（更新 runtime 和 process manager 的 key） */
   rebindAfterFork(oldSessionId: string, newSessionId: string, label: string, sessionFilePath?: string): Promise<void>

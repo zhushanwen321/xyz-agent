@@ -19,6 +19,7 @@ import { ref, computed, readonly } from 'vue'
 import type { Ref, ComputedRef } from 'vue'
 import type { SessionSummary } from '@xyz-agent/shared'
 import { session as sessionApi, git as gitApi } from '@/api'
+import * as events from '@/api/events'
 import { resolveDefaultCwd } from '@/lib/utils'
 import { pickDirectory } from '@/lib/ipc'
 import { useSessionStore } from '@/stores/session'
@@ -181,13 +182,11 @@ export function useNewTaskFlow() {
   }
 
   /**
-   * submitFirstMessage —— landing 态首发提交：延迟 create session + 载入 panel + 发消息。
+   * submitFirstMessage —— landing 态首发提交：载入 panel + 发消息。
    *
-   * 编排点（跨 api+stores+chat 的唯一合法层）：
-   * - cwd 来源：landing 选定的 pendingCwd → 否则 resolveDefaultCwd（最近 session cwd）→ runtime process.cwd 兑底
-   * - 已绑定 session（上次 create 成功但 send 失败的重试）→ 跳过 create 直接重发，不建重复 session
-   * - create 后 appendSession + activeId + 载入 active panel + push 导航栈，再 completeFlow 进终态
-   * - activeId 已设 → useChat.send 取到 sid 正常发送
+   * 预创建后 session 已在选目录时建立，这里只负责载入 panel + 发送。
+   * - 无绑定 session（未选目录直接输入发送，用 resolveDefaultCwd 兑底 create）→ create 后发送
+   * - 已绑定 session（选过目录预建 / 重试场景）→ 直接载入 + 发送，不重复 create
    */
   async function submitFirstMessage(text: string): Promise<void> {
     const trimmed = text.trim()
@@ -196,18 +195,19 @@ export function useNewTaskFlow() {
       throw new Error('NewTaskFlow: 非 landing 态不可首发提交')
     }
     if (createInFlight.value) return
-    const cwd = pendingCwd.value ?? resolveDefaultCwd(session.list)
     createInFlight.value = true
     try {
-      // 已绑定 session（重试场景）→ 跳过 create，避免重复建 session
+      // 未选目录直接发送（用默认 cwd 兑底 create），或重试场景已绑定
       if (!currentSession.value) {
+        const cwd = pendingCwd.value ?? resolveDefaultCwd(session.list)
         const created = await sessionApi.create(cwd)
         currentSession.value = created
         session.appendSession(created)
-        session.activeId = created.id
-        panel.loadSession(panel.activePanelId, created.id)
-        navigation.push({ view: 'chat', sessionId: created.id })
       }
+      // 载入 panel + 设 activeId（预建或刚建统一处理）
+      session.activeId = currentSession.value!.id
+      panel.loadSession(panel.activePanelId, currentSession.value!.id)
+      navigation.push({ view: 'chat', sessionId: currentSession.value!.id })
       // activeId 已设 → useChat.send 能取到 sid
       await chat.send(trimmed)
       transition('completed') // landing→completed（首发成功，终态）
@@ -254,23 +254,55 @@ export function useNewTaskFlow() {
   }
 
   /**
+   * 预创建 session 并拉取命令（selectWorkspace / openDirDialog 共用）。
+   * - 删旧 session（landing 态未 send 的空 session，删除安全）
+   * - create 新 session 并绑定 currentSession
+   * - 主动拉 commands 并本地 dispatch（修复 create 时 broadcast 早于订阅的时序竞争，同 useSidebar.selectSession）
+   * getCommands 失败不阻断（命令缺失仅影响 slash 浮层）。
+   */
+  async function precreateSessionAndLoadCommands(cwd: string): Promise<void> {
+    if (currentSession.value) {
+      await sessionApi.remove(currentSession.value.id)
+      currentSession.value = null
+    }
+    const created = await sessionApi.create(cwd)
+    currentSession.value = created
+    pendingCwd.value = cwd
+    session.appendSession(created)
+    // create 的 broadcast commands 发生在 currentSession 绑定（订阅重订）前→丢失。
+    // 这里在绑定后主动拉取并本地 dispatch，保证命令到达 CommandPopover。
+    try {
+      const { commands } = await sessionApi.getCommands(created.id)
+      events.dispatchSession(created.id, { type: 'session.commands', payload: { sessionId: created.id, commands } })
+      // eslint-disable-next-line taste/no-silent-catch -- getCommands 失败不阻断预创建（命令缺失仅致 slash 浮层空，可后补）；与 runtime fetchAndBroadcastCommands 同策略
+    } catch (e) {
+      console.warn('[useNewTaskFlow] getCommands failed, slash popover will be empty:', e)
+    }
+  }
+
+  /**
    * selectWorkspace —— dir-popover 选已有 workspace（§4.2）。
    *
-   * 统一延迟 create：选目录只记 pendingCwd（不 delete/create session），首发提交才建 session。
-   * cwd 未变→noop（仅关 popover）；cwd 变→记 pendingCwd（chip 回灌）。dir-popover→landing。
+   * 预创建 session：选目录即 create session 并绑定（不再延迟到首发提交），
+   * 让 Landing 态 currentSessionId 非 null → CommandPopover 能拿到真实命令 → slash 浮层可用。
+   * - cwd 未变→noop（仅关 popover）
+   * - cwd 变→预创建新 session（删旧建新，不留空 session）
    */
   async function selectWorkspace(cwd: string): Promise<void> {
-    if (cwd !== currentCwd.value) pendingCwd.value = cwd
+    if (cwd === currentCwd.value) {
+      transition('landing') // dir-popover→landing（关 popover）
+      return
+    }
+    await precreateSessionAndLoadCommands(cwd)
     transition('landing') // dir-popover→landing（关 popover）
   }
 
   /**
    * openDirDialog —— 打开 OS 目录选择器（§4.2）。
    *
-   * 统一延迟 create：选中只记 pendingCwd（不 delete/create），首发提交才建 session。
-   * 选中→pendingCwd 记值 + landing（chip 回灌）；取消→落回 dir-popover（AC-5.3）。
-   * E5 IPC 招错（getFocusedWindow null）→落回 dir-popover + 向上抛（调用方接 toast，AC-5.6），
-   * 状态不卡在 dir-dialog（错误路径重置状态，CLAUDE.md #3）。
+   * 预创建 session：选中目录即 create session 并绑定（同 selectWorkspace 语义）。
+   * 选中→（删旧 +）create 新 + landing；取消→落回 dir-popover（AC-5.3）。
+   * E5 IPC 招错→落回 dir-popover + 向上抛（调用方接 toast，AC-5.6）。
    */
   async function openDirDialog(): Promise<void> {
     transition('dir-dialog') // dir-popover→dir-dialog
@@ -280,7 +312,8 @@ export function useNewTaskFlow() {
         transition('dir-popover') // 取消落回（AC-5.3）
         return
       }
-      pendingCwd.value = result.path // 记选定 cwd（不建 session）
+      const cwd = result.path
+      await precreateSessionAndLoadCommands(cwd)
       transition('landing') // dir-dialog→landing（chip 回灌新 cwd）
     } catch (e) {
       // E5：IPC 招错 → 落回 dir-popover + 重抛（调用方显错 toast），不卡 dir-dialog

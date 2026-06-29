@@ -171,6 +171,18 @@ export function useSidebar() {
         chat.markHistoryFailed(id)
       }
     }
+    // 命令拉取：修复 broadcast 与订阅时序竞争——session.switch 的 ensureActive 内部
+    // broadcast session.commands 发生在本函数 await switchSession resolve 之前，
+    // 此时 session.activeId 还是旧值，CommandPopover 未订阅新 sessionId 通道，broadcast 被丢弃。
+    // 这里在 activeId 更新（订阅已重订）后主动拉取并本地 dispatch，保证命令到达订阅者。
+    // getCommands 失败不阻断切 session（命令缺失不致命，输入 / 时浮层空，可后补）。
+    try {
+      const { commands } = await sessionApi.getCommands(id)
+      events.dispatchSession(id, { type: 'session.commands', payload: { sessionId: id, commands } })
+      // eslint-disable-next-line taste/no-silent-catch -- getCommands 失败不阻断 session 切换（命令缺失仅致 slash 浮层空，可后补）；与 runtime fetchAndBroadcastCommands 同策略
+    } catch (e) {
+      console.warn('[useSidebar] getCommands failed, slash popover will be empty:', e)
+    }
   }
 
   /**

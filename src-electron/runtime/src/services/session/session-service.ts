@@ -284,10 +284,21 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     })
   }
 
+  /**
+   * 查询 session 的扩展命令（pi getCommands）。纯查询，无副作用。
+   * 用于 renderer 切 session 后主动拉取（修复 broadcast 与订阅时序竞争）。
+   * @throws session 未激活或 pi getCommands 失败时抛（调用方 try-catch）
+   */
+  async getCommands(sessionId: string): Promise<Array<{ name: string; description?: string; source: string }>> {
+    const client = this.pm.getClient(sessionId)
+    if (!client) throw new Error(`session ${sessionId} not active`)
+    return client.getCommands() as Promise<Array<{ name: string; description?: string; source: string }>>
+  }
+
   /** Query pi extension commands + register navigate capability。失败不阻塞 session。 */
   private async fetchAndBroadcastCommands(id: string, client: IPiEngine, interceptor: INavigateInterceptor): Promise<void> {
     try {
-      const commands = await client.getCommands() as Array<{ name: string; description?: string; source: string }>
+      const commands = await this.getCommands(id)
       console.log(`[session-service] getCommands returned ${commands.length} commands:`, commands.map(c => c.name))
       this.broker.broadcast({ type: 'session.commands', payload: { sessionId: id, commands } })
       const navCapable = commands.some(c => c.name === 'xyz-navigate' && c.source === 'extension')
