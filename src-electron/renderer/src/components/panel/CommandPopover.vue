@@ -63,6 +63,7 @@ import * as events from '@/api/events'
 import { composer } from '@/api'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
 import { useCommandStore, type RawCommand } from '@/stores/command'
+import { useSettingsStore } from '@/stores/settings'
 
 type CmdType = 'mention' | 'file' | 'slash'
 
@@ -89,6 +90,7 @@ const controlledOpen = computed({
 const activeIndex = ref(0)
 
 const commandStore = useCommandStore()
+const settingsStore = useSettingsStore()
 
 // slash 命令：从 commandStore 读取（session-scoped，组件 v-if 重建不丢数据）。
 // @ 引用 / # 文件是搜索能力（后端从零），保持常量，不订阅、不进 store。
@@ -110,8 +112,29 @@ async function loadCandidates(): Promise<void> {
 }
 onMounted(() => { void loadCandidates() })
 
-/** 当前 session 的 slash 命令（响应式：store 更新即重算） */
-const slashCommands = computed(() => (props.sessionId ? commandStore.getCommands(props.sessionId) : []))
+/**
+ * slash 命令源（双源，按 session 有无切换）：
+ * - session 态：commandStore（pi get_commands 真实命令，含 builtin/extension）。
+ * - landing 态（无 session）：settingsStore.skills（config.skills 全局扫描结果）。
+ *   landing 无 pi 子进程，get_commands 不可达；skills 扫描目录集（discovery.json +
+ *   强制目录）与 pi 实际加载目录集同源，create session 后 fetchAndBroadcastCommands
+ *   刷新 commandStore，切回 session 源时失效 skill 自然消失。
+ *   builtin/extension 命令（/compact 等）在 landing 无意义，故不含。
+ *
+ * SkillInfo.name（无 / 前缀，如 "code-review"）→ 补 "/" 前缀（如 "/code-review"），
+ *   与 runtime get_commands 返回格式对齐——chip label 显示与 draft 检测（如 /compact）
+ *   都依赖 / 前缀。icon 统一 'star'（与 iconKeyForSource('skill')='star' 一致）。
+ */
+const slashCommands = computed(() => {
+  if (props.sessionId) return commandStore.getCommands(props.sessionId)
+  return settingsStore.skills.map((s) => ({
+    id: s.name,
+    name: `/${s.name}`,
+    kind: 'skill',
+    icon: 'star',
+    description: s.description,
+  }))
+})
 
 /**
  * 订阅 session.commands（D8：走 session 通道 events.on(sessionId)，非 onGlobalType）。
