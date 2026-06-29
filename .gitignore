@@ -39,3 +39,10 @@ src-electron/resources/pi/agent/*
 .electron-dist/
 **/__pycache__/
 *.pyc
+
+# Playwright E2E artifacts (test results / reports / cache)
+/test-results/
+/playwright-report/
+/playwright/.cache/
+/blob-report/
+/playwright/.auth/

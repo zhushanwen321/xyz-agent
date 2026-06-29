@@ -101,7 +101,16 @@ export async function createWindow(
     win.show()
   })
 
-  if (deps.isDev) {
+  // E2E 是一类部署形态（已构建产物 + mock 注入），架构正确归位是独立分支而非 hack isDev：
+  //   - 跳过 Vite dev server 轮询（E2E 不起 dev server，否则 waitForVite 30s 超时）
+  //   - 加载构建产物 index.html（与 prod 同源，验证真实渲染链路）
+  //   - mock 数据由 renderer 侧 import.meta.env.VITE_E2E 注入（main 不参与）
+  const isE2E = process.env.XYZ_E2E === '1'
+  if (isE2E) {
+    const query: Record<string, string> = { windowId }
+    if (options?.sessionId) query.sessionId = options.sessionId
+    win.loadFile(path.join(app.getAppPath(), 'renderer/dist/index.html'), { query })
+  } else if (deps.isDev) {
     const params = new URLSearchParams({ windowId })
     if (options?.sessionId) params.set('sessionId', options.sessionId)
     await waitForVite(VITE_DEV_URL)

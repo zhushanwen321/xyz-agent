@@ -16,6 +16,10 @@
  */
 import type { SessionSummary, Message } from '@xyz-agent/shared'
 
+// E2E 构建期由 Vite define 注入（renderer/vite.config.ts）：E2E 构建时替换为 sample-project 绝对路径，
+// 否则空串。用裸标识符而非 globalThis.X —— Vite define 只替换裸标识符引用，globalThis.X 是属性访问不被替换。
+declare const __E2E_SAMPLE_PROJECT_CWD__: string
+
 const HOUR = 3_600_000
 const DAY = 86_400_000
 const MINUTE = 60_000
@@ -231,6 +235,27 @@ export const fixtureMessages: Record<string, Message[]> = {
       timestamp: NOW - 59 * MINUTE,
     },
   ],
+}
+
+/**
+ * E2E fixture session：cwd 指向 e2e/fixtures/sample-project（文件树渲染测试用）。
+ *
+ * 注入机制（方案 A，侵入小）：VITE_E2E === 'true' 时由 mock/index.ts 的 buildGroups
+ * 优先注入此 session，让 W8 文件树 E2E 拿到带确定 cwd 的 session（无需 runtime 子进程）。
+ *
+ * cwd 路径在构建期由 Vite define 注入（__E2E_SAMPLE_PROJECT_CWD__，见 renderer/vite.config.ts）：
+ * renderer 是浏览器环境读不到 process.env / __dirname，必须用构建期常量。
+ * 非 E2E 构建时该常量为空串，buildGroups 检测 VITE_E2E 后才使用，故不影响 dev/prod。
+ */
+export const e2eTestSession: SessionSummary = {
+  id: 'e2e-files',
+  label: 'E2E 文件树测试',
+  // 构建期注入的绝对路径（E2E 构建时 define 为 e2e/fixtures/sample-project 绝对路径，非 E2E 为空串）
+  cwd: __E2E_SAMPLE_PROJECT_CWD__,
+  status: 'active',
+  lastActiveAt: Date.now(),
+  modelId: 'Anthropic/claude-sonnet-4.5',
+  tokenCount: 0,
 }
 
 let createSeq = 0

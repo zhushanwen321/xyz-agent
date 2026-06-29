@@ -1,14 +1,22 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
 import { readFileSync } from 'fs'
 
 const pkg = JSON.parse(readFileSync(resolve(__dirname, '../package.json'), 'utf-8')) as { version: string }
 
-export default defineConfig({
-  define: {
-    __APP_VERSION__: JSON.stringify(pkg.version),
-  },
+export default defineConfig(({ mode }) => {
+  // loadEnv 读取 renderer 目录下的 .env + 按前缀过滤；同时并入 process.env 中已存在的 VITE_ 变量
+  // （E2E 构建时由 e2e/fixtures 注入 VITE_MOCK / VITE_E2E）。
+  const env = { ...loadEnv(mode, __dirname, ''), ...process.env }
+  // E2E 构建期注入 sample-project 绝对路径（renderer 是浏览器环境读不到 process.env / __dirname）
+  const e2eSampleCwd = resolve(__dirname, '../../e2e/fixtures/sample-project')
+  return {
+    define: {
+      __APP_VERSION__: JSON.stringify(pkg.version),
+      // 仅在 E2E 构建时注入真实路径，否则注入空串（mock/data.ts 检测 VITE_E2E 后才使用）
+      __E2E_SAMPLE_PROJECT_CWD__: JSON.stringify(env.VITE_E2E === 'true' ? e2eSampleCwd : ''),
+    },
   // 打包后通过 file:// 协议加载，必须用相对路径，否则 /assets/ 解析到文件系统根目录
   base: './',
   plugins: [vue()],
@@ -29,4 +37,5 @@ export default defineConfig({
       },
     },
   },
+  }
 })

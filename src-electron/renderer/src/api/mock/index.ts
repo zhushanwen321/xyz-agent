@@ -14,7 +14,7 @@ import type {
   SkillInfo, AgentInfo, PluginInfo, SetProviderData, ExtensionWidgetPayload, ExtensionStatusPayload,
   SkillDirConfig,
 } from '@xyz-agent/shared'
-import { createSession, fixtureMessages, fixtureSessions } from './data'
+import { createSession, fixtureMessages, fixtureSessions, e2eTestSession } from './data'
 import { fixtureProviders, fixtureSkills, fixtureAgents, fixtureExtensions, toCandidate } from './settings-data'
 import { MOCK_MODELS, mockModelToInfo, MENTION_CANDIDATES, FILE_CANDIDATES } from './composer-data'
 import { SEARCH_MOCK, SEARCH_RECENTS, SEARCH_SUGGESTED_COUNT, type SearchItem } from './search-data'
@@ -38,9 +38,18 @@ function pushSession(sessionId: string, msg: ServerMessage): void {
   events.dispatchSession(sessionId, msg)
 }
 
+/**
+ * E2E 注入：VITE_E2E === 'true' 时把 e2eTestSession（cwd 指向 e2e/fixtures/sample-project）
+ * 并入 fixtureSessions 快照，让 W8 文件树 E2E 拿到带确定 cwd 的 session。
+ * renderer 是浏览器环境读不到 process.env，故用 Vite 构建期注入的 import.meta.env.VITE_E2E。
+ */
+const isE2E = import.meta.env.VITE_E2E === 'true'
+
 /** 按 cwd 聚合 fixtureSessions 为 SessionGroup[]（session.list reply 与 server-push 共用） */
 function buildGroups(): SessionGroup[] {
-  const snapshots = fixtureSessions.map((s) => ({ ...s }))
+  // E2E 模式注入 fixture session（不修改 fixtureSessions 源数组，保持 idempotent）
+  const base = fixtureSessions.map((s) => ({ ...s }))
+  const snapshots = isE2E && e2eTestSession.cwd ? [e2eTestSession, ...base] : base
   const byCwd = new Map<string, SessionSummary[]>()
   for (const s of snapshots) {
     const bucket = byCwd.get(s.cwd)
@@ -160,7 +169,9 @@ export const session = {
 
   async switchSession(id: string): Promise<void> {
     await sleep(TIMING.switchCmd)
-    if (!fixtureSessions.some((s) => s.id === id)) {
+    // E2E 注入的 session 不在 fixtureSessions 数组中，单独放行
+    const exists = isE2E && id === e2eTestSession.id ? true : fixtureSessions.some((s) => s.id === id)
+    if (!exists) {
       throw new Error(`mock: session ${id} 不存在`)
     }
     // 模拟 runtime session 激活后的 server-push（session.commands + context.update）
