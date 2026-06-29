@@ -19,6 +19,7 @@ import * as realExtension from './domains/extension'
 import * as realPlugin from './domains/plugin'
 import * as realSettings from './domains/settings'
 import * as realGit from './domains/git'
+import * as realFile from './domains/file'
 import * as mockApi from './mock'
 
 const isMock = import.meta.env.VITE_MOCK === 'true'
@@ -31,6 +32,7 @@ export const extension = isMock ? mockApi.extension : realExtension
 export const plugin = isMock ? mockApi.plugin : realPlugin
 export const settings = isMock ? mockApi.settings : realSettings
 export const git = isMock ? mockApi.git : realGit
+export const file = isMock ? mockApi.file : realFile
 
 // composer & search 暂无 real domain，始终走 mock（后端就绪后接线）
 export const composer = mockApi.composer

@@ -14,8 +14,10 @@ export default defineConfig(({ mode }) => {
   return {
     define: {
       __APP_VERSION__: JSON.stringify(pkg.version),
-      // 仅在 E2E 构建时注入真实路径，否则注入空串（mock/data.ts 检测 VITE_E2E 后才使用）
-      __E2E_SAMPLE_PROJECT_CWD__: JSON.stringify(env.VITE_E2E === 'true' ? e2eSampleCwd : ''),
+      // 仅在 E2E 构建时注入真实路径，否则注入空串（mock/data.ts 检测 VITE_E2E 后才使用）。
+      // 用 globalThis.__X__ 形式：vite define 会替换 globalThis 属性访问（vitest 不继承 build 的 define，
+      // 但 data.ts 用可选链兜底，vitest 下为 undefined → 空串，不影响测试）。
+      'globalThis.__E2E_SAMPLE_PROJECT_CWD__': JSON.stringify(env.VITE_E2E === 'true' ? e2eSampleCwd : ''),
     },
   // 打包后通过 file:// 协议加载，必须用相对路径，否则 /assets/ 解析到文件系统根目录
   base: './',

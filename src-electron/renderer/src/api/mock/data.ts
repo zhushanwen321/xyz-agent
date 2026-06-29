@@ -16,9 +16,10 @@
  */
 import type { SessionSummary, Message } from '@xyz-agent/shared'
 
-// E2E 构建期由 Vite define 注入（renderer/vite.config.ts）：E2E 构建时替换为 sample-project 绝对路径，
-// 否则空串。用裸标识符而非 globalThis.X —— Vite define 只替换裸标识符引用，globalThis.X 是属性访问不被替换。
-declare const __E2E_SAMPLE_PROJECT_CWD__: string
+// E2E 构建期由 Vite define 注入 globalThis.__E2E_SAMPLE_PROJECT_CWD__（renderer/vite.config.ts）：
+// E2E 构建时替换为 sample-project 绝对路径。vitest/非 E2E 构建时该属性 undefined → 空串兜底。
+// 用 globalThis 访问 + 可选链：vitest 运行时无 define，globalThis 上无此属性 → undefined → 空串，不报错。
+const E2E_SAMPLE_CWD = (globalThis as unknown as { __E2E_SAMPLE_PROJECT_CWD__?: string }).__E2E_SAMPLE_PROJECT_CWD__ ?? ''
 
 const HOUR = 3_600_000
 const DAY = 86_400_000
@@ -251,7 +252,7 @@ export const e2eTestSession: SessionSummary = {
   id: 'e2e-files',
   label: 'E2E 文件树测试',
   // 构建期注入的绝对路径（E2E 构建时 define 为 e2e/fixtures/sample-project 绝对路径，非 E2E 为空串）
-  cwd: __E2E_SAMPLE_PROJECT_CWD__,
+  cwd: E2E_SAMPLE_CWD,
   status: 'active',
   lastActiveAt: Date.now(),
   modelId: 'Anthropic/claude-sonnet-4.5',

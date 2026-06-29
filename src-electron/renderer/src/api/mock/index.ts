@@ -27,6 +27,8 @@ import { getSystem as realGetSystem, updateSystem as realUpdateSystem } from '..
 
 // mock/git.ts 的 git domain + fixtureGitStatus 透出（Wave 1a real git domain 落地后由 api/index 接线）
 export { git, fixtureGitStatus } from './git'
+// mock/file.ts 的 file domain 透出（W3 file-tree real domain 落地后由 api/index 接线）
+export { file } from './file'
 
 /**
  * Mock 模拟 runtime session 通道推送（dispatchSession）。

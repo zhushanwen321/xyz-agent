@@ -39,11 +39,13 @@ export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 're
 function routeInbound(msg: ServerMessage): void {
   if (msg.id) {
     if (msg.type === 'error') {
-      // type==='error' 已窄化 payload 为 error envelope（含 message）。窄断言取字段，避免联合上直接访问。
-      const message = typeof (msg.payload as { message?: string }).message === 'string'
-        ? (msg.payload as { message: string }).message
-        : 'request failed'
-      pending.reject(msg.id, new Error(message))
+      // type==='error' 已窄化 payload 为 error envelope（含 code + message）。
+      // 透传 code 到 reject 的 Error（D-021：NodeState.reason 需要 error code 区分失败类型，
+      // 如 out_of_cwd / permission_denied / timeout）。此前只透传 message 丢了 code。
+      const payload = msg.payload as { code?: string; message?: string }
+      const message = typeof payload.message === 'string' ? payload.message : 'request failed'
+      const code = typeof payload.code === 'string' ? payload.code : 'unknown'
+      pending.reject(msg.id, Object.assign(new Error(message), { code }))
     } else {
       pending.resolve(msg.id, msg.payload)
     }
