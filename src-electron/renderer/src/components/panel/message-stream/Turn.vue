@@ -34,13 +34,22 @@
         class="max-w-[76%] rounded-[14px_14px_4px_14px] border border-border-strong bg-surface-hover px-[13px] py-[9px] text-[13.5px] leading-[1.55] text-fg"
       >
         <!-- slash 命令 chip（与 composer 同款紫色 chip + source icon），后接剩余文本 -->
-        <span
+        <!-- slash 命令 chip（与 composer 同款紫色 chip + source icon），可点击在 drawer 查看文档。
+             Button as-child 让 reka-ui Primitive 合并到 span，保留 chip 行内样式 + 按钮语义 -->
+        <Button
           v-if="slashChip"
-          class="mr-1 inline-flex items-center gap-1 rounded-sm bg-[var(--reasoning-soft)] px-1.5 py-px font-mono text-[12px] font-medium leading-[1.4] text-reasoning"
+          as-child
+          variant="ghost"
+          title="查看命令文档"
+          @click.stop="openCommandDoc(slashChip.name)"
         >
-          <component :is="slashChip.iconComp" class="size-[12px] shrink-0" />
-          <span>{{ slashChip.name }}</span>
-        </span>
+          <span
+            class="mr-1 inline-flex cursor-pointer items-center gap-1 rounded-sm bg-[var(--reasoning-soft)] px-1.5 py-px font-mono text-[12px] font-medium leading-[1.4] text-reasoning transition-colors hover:bg-[color-mix(in_oklch,var(--reasoning)_32%,transparent)]"
+          >
+            <component :is="slashChip.iconComp" class="size-[12px] shrink-0" />
+            <span>{{ slashChip.name }}</span>
+          </span>
+        </Button>
         <MarkdownRenderer v-if="!slashChip || slashChip.rest" :content="slashChip ? slashChip.rest : turn.user.content" />
       </div>
       <!-- hover actions：复制常驻 hover；编辑仅 AI 停止（isStreaming=false）时显示 -->
@@ -198,6 +207,7 @@ import ChangeSetCard from './ChangeSetCard.vue'
 import { useChat } from '@/composables/features/useChat'
 import { useChatStore } from '@/stores/chat'
 import { useCommandStore } from '@/stores/command'
+import { useSideDrawer } from '@/composables/features/useSideDrawer'
 import { useSidebar } from '@/composables/features/useSidebar'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
 import Block from './Block.vue'
@@ -223,7 +233,13 @@ const chat = useChatStore()
 const { isStreaming } = storeToRefs(chat)
 const { editAndResend } = useChat()
 const { forkSession } = useSidebar()
+const { open: openDrawer } = useSideDrawer()
 const commandStore = useCommandStore()
+
+/** 点击用户气泡 slash chip → 打开 drawer Doc tab 展示命令/skill 文档 */
+function openCommandDoc(commandName: string): void {
+  openDrawer('doc', { commandName })
+}
 
 /**
  * 用户气泡 slash 命令检测：content 以已知 slash 命令开头（如 /commit）时，

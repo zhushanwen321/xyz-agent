@@ -67,6 +67,8 @@
       <div class="min-h-0 flex-1 overflow-auto">
         <!-- Git tab：全量 git 状态 + 暂存/提交（非 git 仓库 GitPanel 内自隐藏，此处显空态） -->
         <GitPanel v-if="activeTab === 'git'" />
+        <!-- Doc tab：命令/skill 详细文档（selectedCommandName 指定，CommandDocPanel 内自取 commandStore + skills） -->
+        <CommandDocPanel v-else-if="activeTab === 'doc'" :session-id="sessionId" />
         <!-- active tab 有 widget 内容 → 渲染等宽文本输出（每行一个 div，font-mono + pre-wrap） -->
         <div
           v-else-if="activeLines.length"
@@ -119,9 +121,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { Component } from 'vue'
-import { Terminal as TerminalIcon, Globe, GitBranch, Pin, PinOff, X } from '@lucide/vue'
+import { Terminal as TerminalIcon, Globe, GitBranch, BookOpen, Pin, PinOff, X } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import GitPanel from './GitPanel.vue'
+import CommandDocPanel from './CommandDocPanel.vue'
 import type { SideDrawerTab } from '@/composables/features/useSideDrawer'
 import { extension } from '@/api'
 
@@ -171,6 +174,13 @@ const tabs: TabMeta[] = [
     icon: GitBranch,
     emptyText: '当前目录非 git 仓库',
     emptyHint: '在 git 仓库内打开 session 后可查看状态并暂存/提交',
+  },
+  {
+    key: 'doc',
+    label: 'Doc',
+    icon: BookOpen,
+    emptyText: '未选择命令',
+    emptyHint: '点击用户气泡中的命令 chip 查看命令/skill 文档',
   },
 ]
 
