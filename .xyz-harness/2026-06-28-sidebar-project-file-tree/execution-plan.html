@@ -1,0 +1,1034 @@
+<!DOCTYPE html>
+<!--
+  execution-plan.html 骨架 — design-execution（⑤b 执行计划）阶段产物模板。
+  主角图：Wave 依赖 DAG（hero，graph LR，含并行组色标 classDef：prefactor/p0/p1/acceptance）。
+  严格对齐同目录 system-architecture.html / issues.html 风格：复用公共 design.css + zoom.js，
+  阶段特有类（.wave-card 系列）放局部 style，参照 issues.html 的 .issue 卡片范式。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>执行计划 — 全项目文件树</title>
+<style>
+/*
+ * design.css — design-visual-explainer 公共样式
+ * 从 issues.html (feat-system-prompt-loader) 抽出，作为 6 阶段产物骨架的统一底座。
+ * 阶段特有类（.wave-card / .issue / .uc / .risk-* 等）放各骨架局部 style，不在此文件。
+ */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --font-body: 'Bricolage Grotesque', 'PingFang SC', system-ui, sans-serif;
+  --font-mono: 'Space Mono', 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+  --bg: #f6f8f8; --surface: #ffffff; --surface-2: #eef2f1; --surface-elevated: #ffffff;
+  --border: rgba(15, 40, 40, 0.08); --border-bright: rgba(15, 40, 40, 0.16);
+  --text: #0f2a2a; --text-dim: #5a6b6b;
+  --accent: #0d9488; --accent-dim: rgba(13, 148, 136, 0.10);
+  --slate: #334155; --slate-dim: rgba(51, 65, 85, 0.10);
+  --green: #059669; --green-dim: rgba(5, 150, 105, 0.12);
+  --red: #dc2626; --red-dim: rgba(220, 38, 38, 0.10);
+  --orange: #c2410c; --orange-dim: rgba(194, 65, 12, 0.10);
+  --amber: #b45309; --amber-dim: rgba(180, 83, 9, 0.12);
+  --violet: #7c3aed; --violet-dim: rgba(124, 58, 237, 0.12);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0a1414; --surface: #111d1d; --surface-2: #182626; --surface-elevated: #162121;
+    --border: rgba(180, 220, 220, 0.07); --border-bright: rgba(180, 220, 220, 0.15);
+    --text: #e3efee; --text-dim: #8aa0a0;
+    --accent: #2dd4bf; --accent-dim: rgba(45, 212, 191, 0.13);
+    --slate: #94a3b8; --slate-dim: rgba(148, 163, 184, 0.12);
+    --green: #34d399; --green-dim: rgba(52, 211, 153, 0.13);
+    --red: #f87171; --red-dim: rgba(248, 113, 113, 0.12);
+    --orange: #fb923c; --orange-dim: rgba(251, 146, 60, 0.12);
+    --amber: #fbbf24; --amber-dim: rgba(251, 191, 36, 0.14);
+    --violet: #a78bfa; --violet-dim: rgba(167, 139, 250, 0.14);
+  }
+}
+html { scroll-behavior: smooth; }
+body { font-family: var(--font-body); color: var(--text); line-height: 1.65; background: var(--bg); background-image: radial-gradient(ellipse at 50% -5%, var(--accent-dim) 0%, transparent 55%); padding: 32px; overflow-wrap: break-word; }
+.grid > *, .flex > *, [style*="display:grid"] > *, [style*="display:flex"] > * { min-width: 0; }
+h1 { font-size: 38px; font-weight: 700; letter-spacing: -1px; margin-bottom: 6px; text-wrap: balance; }
+h2 { font-size: 22px; font-weight: 600; letter-spacing: -0.3px; margin: 56px 0 18px; padding-bottom: 10px; border-bottom: 1px solid var(--border); scroll-margin-top: 70px; }
+h3 { font-size: 16px; font-weight: 700; margin: 26px 0 12px; color: var(--accent); font-family: var(--font-mono); letter-spacing: 0.2px; scroll-margin-top: 70px; }
+h4 { font-size: 13px; font-weight: 600; margin: 18px 0 8px; color: var(--slate); font-family: var(--font-mono); }
+p { margin-bottom: 12px; }
+.subtitle { color: var(--text-dim); font-size: 13px; margin-bottom: 8px; font-family: var(--font-mono); }
+code { font-family: var(--font-mono); font-size: 0.92em; }
+strong { font-weight: 600; }
+
+/* Layout: TOC + main 双栏 */
+.wrap { max-width: 1380px; margin: 0 auto; display: grid; grid-template-columns: 168px 1fr; gap: 0 44px; }
+.main { min-width: 0; }
+header.doc-head { margin-bottom: 28px; }
+.badge-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.tag { font-family: var(--font-mono); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; padding: 4px 10px; border-radius: 20px; background: var(--accent-dim); color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
+.tag--slate { background: var(--slate-dim); color: var(--slate); border-color: color-mix(in srgb, var(--slate) 30%, transparent); }
+.tag--green { background: var(--green-dim); color: var(--green); border-color: color-mix(in srgb, var(--green) 30%, transparent); }
+.tag--amber { background: var(--amber-dim); color: var(--amber); border-color: color-mix(in srgb, var(--amber) 30%, transparent); }
+.tag--violet { background: var(--violet-dim); color: var(--violet); border-color: color-mix(in srgb, var(--violet) 30%, transparent); }
+
+/* TOC sidebar + scroll-spy */
+.toc { position: sticky; top: 24px; align-self: start; padding: 14px 0; grid-row: 1/-1; max-height: calc(100dvh - 48px); overflow-y: auto; }
+.toc-title { font-family: var(--font-mono); font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; color: var(--text-dim); padding: 0 0 10px; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
+.toc a { display: block; font-size: 11px; color: var(--text-dim); text-decoration: none; padding: 4px 8px; border-radius: 5px; border-left: 2px solid transparent; transition: all .15s; line-height: 1.35; margin-bottom: 1px; }
+.toc a:hover { color: var(--text); background: var(--surface-2); }
+.toc a.active { color: var(--text); border-left-color: var(--accent); background: var(--accent-dim); }
+
+/* TL;DR 摘要框 */
+.tldr { background: var(--surface-elevated); border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); border-radius: 14px; padding: 20px 24px; margin: 24px 0 8px; box-shadow: 0 4px 18px rgba(13,148,136,.06); }
+.tldr__label { font-family: var(--font-mono); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.8px; color: var(--accent); margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+.tldr__label::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.tldr ul { list-style: none; padding: 0; }
+.tldr li { padding: 5px 0 5px 18px; position: relative; font-size: 14px; line-height: 1.55; }
+.tldr li::before { content: '→'; position: absolute; left: 0; color: var(--accent); font-weight: 600; }
+.tldr code { font-family: var(--font-mono); font-size: 12px; background: var(--accent-dim); color: var(--accent); padding: 1px 6px; border-radius: 3px; }
+
+/* Mermaid zoom/pan 外壳（与 zoom.js 的选择器契约绑定，勿改名） */
+.mermaid-wrap { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 32px 24px; overflow: auto; margin-bottom: 24px; display: flex; justify-content: center; align-items: center; min-height: 400px; cursor: grab; }
+.mermaid-wrap.is-panning { cursor: grabbing; user-select: none; }
+.zoom-controls { position: absolute; top: 8px; right: 8px; display: flex; gap: 2px; z-index: 10; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 2px; }
+.zoom-controls button { width: 28px; height: 28px; border: none; background: transparent; color: var(--text-dim); font-family: var(--font-mono); font-size: 14px; cursor: pointer; border-radius: 4px; display: flex; align-items: center; justify-content: center; transition: background .15s, color .15s; }
+.zoom-controls button:hover { background: var(--border); color: var(--text); }
+.diagram-shell { position: relative; }
+.diagram-shell__hint { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); margin-bottom: 8px; opacity: .7; }
+.mermaid-viewport { position: relative; overflow: hidden; width: 100%; height: 100%; min-height: 300px; }
+.mermaid-canvas { position: absolute; top: 0; left: 0; }
+.zoom-label { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); padding: 0 6px; white-space: nowrap; }
+.mermaid .nodeLabel { font-family: var(--font-body) !important; font-size: 14px !important; }
+.mermaid .edgeLabel { font-family: var(--font-mono) !important; font-size: 12px !important; }
+.mermaid .node rect, .mermaid .node circle, .mermaid .node polygon { stroke-width: 1.5px !important; }
+
+/* 数据表格（调度表 / 验收清单 / subagent 配置） */
+.table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin: 16px 0 24px; }
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.data-table { width: 100%; border-collapse: collapse; font-size: 13px; line-height: 1.55; }
+.data-table thead { position: sticky; top: 0; z-index: 2; }
+.data-table th { background: var(--surface-2); font-family: var(--font-mono); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); text-align: left; padding: 13px 16px; border-bottom: 2px solid var(--border-bright); white-space: nowrap; }
+.data-table td { padding: 11px 16px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.data-table tbody tr:nth-child(even) { background: var(--accent-dim); }
+.data-table tbody tr:hover { background: var(--border); }
+.data-table tbody tr:last-child td { border-bottom: none; }
+.data-table code { font-family: var(--font-mono); font-size: 11px; background: var(--accent-dim); color: var(--accent); padding: 1px 5px; border-radius: 3px; }
+/* subagent 配置表（窄二列）不斑马 */
+.table--kv tbody tr:nth-child(even) { background: transparent; }
+.table--kv td:first-child { font-family: var(--font-mono); font-size: 11px; font-weight: 600; color: var(--text-dim); white-space: nowrap; width: 1%; }
+
+/* Callout 提示框 */
+.callout { background: var(--surface-2); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 14px 18px; font-size: 13px; line-height: 1.6; color: var(--text-dim); margin: 20px 0; }
+.callout strong { color: var(--text); font-weight: 600; }
+.callout code { font-family: var(--font-mono); font-size: 11px; background: var(--accent-dim); color: var(--accent); padding: 1px 5px; border-radius: 3px; }
+.callout--warn { border-left-color: var(--amber); }
+.callout--warn code { background: var(--amber-dim); color: var(--amber); }
+
+/* 章节小标题（mono 大写，区别于 h2） */
+.sec-head { font-family: var(--font-mono); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; color: var(--accent); margin: 40px 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+
+/* 卡片组件（架构概览 / 决策记录） */
+.ve-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column; gap: 8px; }
+.ve-card--elevated { box-shadow: 0 4px 18px rgba(13,148,136,.06); }
+.ve-card__label { font-family: var(--font-mono); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: var(--accent); display: flex; align-items: center; gap: 6px; }
+.ve-card__label::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.ve-card h3 { margin: 0; color: var(--text); font-family: var(--font-body); font-size: 17px; letter-spacing: -0.2px; }
+.ve-card p { margin: 0; font-size: 13.5px; color: var(--text-dim); line-height: 1.55; }
+.card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin: 18px 0 28px; }
+.node-list { list-style: none; padding: 0; margin: 0; }
+.node-list li { padding: 4px 0 4px 16px; position: relative; font-size: 13px; line-height: 1.5; color: var(--text-dim); }
+.node-list li::before { content: '›'; position: absolute; left: 0; color: var(--accent); font-weight: 700; }
+.node-list code { font-family: var(--font-mono); font-size: 11.5px; background: var(--accent-dim); color: var(--accent); padding: 1px 5px; border-radius: 3px; }
+
+/* 状态药丸（验收清单 状态列） */
+.status { display: inline-flex; align-items: center; gap: 5px; font-family: var(--font-mono); font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 5px; white-space: nowrap; }
+.status::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.status--match { background: var(--green-dim); color: var(--green); }
+.status--warn { background: var(--amber-dim); color: var(--amber); }
+.status--gap { background: var(--red-dim); color: var(--red); }
+.status--na { background: var(--slate-dim); color: var(--slate); }
+
+/* 图例 */
+.legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 16px 0; font-size: 12px; color: var(--text-dim); font-family: var(--font-mono); }
+.legend-item { display: flex; align-items: center; gap: 6px; }
+.legend-swatch { width: 14px; height: 14px; border-radius: 3px; }
+
+/* Footer */
+footer.doc-foot { margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-dim); font-family: var(--font-mono); }
+
+/* 入场动画 */
+@keyframes fadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+.animate { animation: fadeUp .35s ease-out both; animation-delay: calc(var(--i, 0) * .04s); }
+
+/* 响应式 */
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+@media (max-width: 1000px) {
+  .wrap { grid-template-columns: 1fr; }
+  .toc { position: sticky; top: 0; z-index: 200; max-height: none; display: flex; gap: 4px; align-items: center; overflow-x: auto; background: var(--bg); border-bottom: 1px solid var(--border); padding: 10px 0; grid-row: auto; }
+  .toc-title { display: none; }
+  .toc a { white-space: nowrap; flex-shrink: 0; border-left: none; border-bottom: 2px solid transparent; border-radius: 4px 4px 0 0; padding: 6px 10px; font-size: 10px; }
+  .toc a.active { border-left: none; border-bottom-color: var(--accent); background: var(--surface); }
+  h2, h3 { scroll-margin-top: 60px; }
+  body { padding: 16px; }
+}
+@media (max-width: 768px) { body { padding: 12px; } h1 { font-size: 26px; } }
+
+
+/* === execution-plan 阶段特有样式（参照 issues.html .issue 范式） === */
+.wave-card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 22px 26px; margin-bottom: 22px; scroll-margin-top: 70px; }
+.wave-card--prefactor { border-left: 4px solid var(--violet); }
+.wave-card--p0 { border-left: 4px solid var(--red); }
+.wave-card--p1 { border-left: 4px solid var(--amber); }
+.wave-card--acceptance { border-left: 4px solid var(--green); }
+.wave-card__head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 6px; flex-wrap: wrap; }
+.wave-card__num { font-family: var(--font-mono); font-size: 18px; font-weight: 700; color: var(--accent); }
+.wave-card--prefactor .wave-card__num { color: var(--violet); }
+.wave-card--p0 .wave-card__num { color: var(--red); }
+.wave-card--acceptance .wave-card__num { color: var(--green); }
+.wave-card__title { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; flex: 1; }
+.wave-card__meta { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--text-dim); margin: 10px 0 14px; font-family: var(--font-mono); }
+.wave-card__meta strong { color: var(--text); }
+.wave-card__meta .pill { background: var(--surface-2); padding: 1px 7px; border-radius: 4px; }
+.wave-card__section { margin: 16px 0; }
+.wave-card__section h4 { font-size: 11px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--accent); margin-bottom: 8px; }
+.file-list { list-style: none; padding: 0; margin: 0; }
+.file-list li { font-size: 13px; line-height: 1.6; padding: 3px 0 3px 18px; position: relative; color: var(--text-dim); }
+.file-list li::before { content: '›'; position: absolute; left: 2px; color: var(--accent); font-weight: 700; }
+.file-list code { font-family: var(--font-mono); font-size: 11.5px; background: var(--accent-dim); color: var(--accent); padding: 1px 5px; border-radius: 3px; }
+.case-pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.case-pills .pill { display: inline-block; font-family: var(--font-mono); font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 5px; background: var(--surface-2); color: var(--text-dim); border: 1px solid var(--border); }
+.ac-list { list-style: none; padding: 0; }
+.ac-list li { font-size: 13px; line-height: 1.6; padding: 5px 0 5px 26px; position: relative; }
+.ac-list li::before { content: '☐'; position: absolute; left: 4px; color: var(--accent); font-size: 14px; }
+.ac-list code { font-family: var(--font-mono); font-size: 11px; background: var(--surface-2); color: var(--text-dim); padding: 1px 5px; border-radius: 3px; }
+.note { font-size: 12.5px; color: var(--text-dim); line-height: 1.55; margin: 6px 0; }
+.warn-inline { background: var(--amber-dim); color: var(--amber); padding: 1px 5px; border-radius: 3px; font-family: var(--font-mono); font-size: 11px; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav class="toc" id="toc">
+  <div class="toc-title">目录</div>
+  <a href="#tldr">TL;DR</a>
+  <a href="#overview">Wave 编排总览</a>
+  <a href="#hero">依赖 DAG</a>
+  <a href="#schedule">调度表</a>
+  <a href="#parallel">并行约束</a>
+  <a href="#waves">Wave 详情</a>
+  <a href="#iterations">后续迭代</a>
+  <a href="#manifest">测试验收清单</a>
+  <a href="#handoff">执行交接</a>
+  <a href="#pending">待确认</a>
+</nav>
+<main class="main">
+<header class="doc-head">
+  <h1>执行计划</h1>
+  <p class="subtitle">全项目文件树 · ⑤b 执行计划 · upstream: code-architecture.md · downstream: coding</p>
+  <div class="badge-row">
+    <span class="tag">verdict: pass</span>
+    <span class="tag tag--violet">W0 Prefactor</span>
+    <span class="tag tag--amber">W1-W7 功能</span>
+    <span class="tag tag--green">W8 验收</span>
+    <span class="tag tag--slate">方式 B 手动执行</span>
+  </div>
+</header>
+
+<!-- 承接说明 -->
+<div class="tldr" id="tldr">
+  <div class="tldr__label">TL;DR · Wave 编排要点</div>
+  <ul>
+    <li>承接 <code>code-architecture.md</code>（⑤）。把⑤§4 时序图拆为可执行的 <strong>9 个 Wave</strong>（W0 Prefactor + W1-W7 功能 + W8 验收），每 Wave 粒度约为一个 subagent 可高度专注完成的垂直切片。</li>
+    <li><strong>W0 新增 Playwright E2E harness</strong>（用户硬要求「新增 Playwright 真 E2E」）。项目当前零 E2E 基础设施，故编排 W0 Prefactor 作为后续 e2e 层测试前置。</li>
+    <li><strong>W1 是唯一 P0 阻塞项</strong>（前端无数据可渲染），必须先完成；W3/W8 依赖其 FileNode 类型与 protocol。</li>
+    <li><strong>红队审查并入</strong>：原 W8（file.write 骨架）已并入 W1（文件完全重叠 + 消除 AC-14.4 疑点），验收 Wave 顺延为 W8。</li>
+    <li><strong>编码完成的定义 = 测试验收清单全绿</strong>（末尾验收 Wave W8 blocked_by 全部功能 Wave，不绿 = 未完成）。</li>
+  </ul>
+</div>
+
+<h2 id="overview">Wave 编排总览</h2>
+
+<h3 id="stance">设计立场</h3>
+<p>⑤§2 裁决「核心计算是技术编排，领域贫乏，不引入 domain 层」。Wave 编排遵循<strong>垂直切片原则</strong>（每 Wave 切穿所有层可独立验证，不水平切片），依赖从⑤§4 时序图直接读出。</p>
+<div class="callout callout--warn">
+  <strong>本轮新增约束</strong>：用户要求「新增 Playwright 真 E2E」。项目当前零 E2E 基础设施（无 Playwright/Cypress，Electron 主进程是副作用脚本不可导入，官方 TEST-STRATEGY.md 定 E2E 手工）。故编排 <strong>W0 Prefactor</strong> 建 E2E harness，作为后续 e2e 层测试的前置。
+</div>
+
+<!-- 主角图：Wave 依赖 DAG（hero，graph LR，并行组色标 classDef） -->
+<div class="diagram-shell" id="hero">
+  <p class="diagram-shell__hint">Wave 依赖 DAG · 节点=Wave，边=blocked_by · 色标=并行组（prefactor/p0/p1/acceptance）· 拖动平移、Ctrl+滚轮缩放</p>
+  <div class="mermaid-wrap">
+    <div class="zoom-controls">
+      <button data-action="zoom-in" title="放大">+</button>
+      <button data-action="zoom-out" title="缩小">−</button>
+      <button data-action="zoom-fit" title="适配">⊡</button>
+      <button data-action="zoom-one" title="1:1">1:1</button>
+      <button data-action="zoom-expand" title="新窗口">⤢</button>
+      <span class="zoom-label">— contain</span>
+    </div>
+    <div class="mermaid-viewport"><div class="mermaid mermaid-canvas"></div></div>
+  </div>
+  <script type="text/plain" class="diagram-source">
+graph LR
+    W0["W0 Prefactor<br/>Playwright E2E harness"]:::prefactor
+    W1["W1 runtime 后端<br/>P0 #1+#2+#14"]:::p0
+    W2["W2 git.diff+file.read<br/>P1 #5+#7"]:::p1
+    W3["W3 前端 store<br/>P1 #3"]:::p1
+    W4["W4 前端 view<br/>P1 #4+#10"]:::p1
+    W5["W5 预览 SideDrawer<br/>P1 #6"]:::p1
+    W6["W6 失效+搭便车<br/>P1 #3.11+#8+#9"]:::p1
+    W7["W7 showIgnored<br/>P1 #16"]:::p1
+    Wacc["W8 验收<br/>Acceptance Wave"]:::acceptance
+
+    W0 --> W1
+    W1 --> W2
+    W1 --> W3
+    W2 --> W5
+    W3 --> W4
+    W3 --> W5
+    W3 --> W6
+    W3 --> W7
+    W4 --> W7
+    W6 --> W7
+    W4 --> Wacc
+    W5 --> Wacc
+    W6 --> Wacc
+    W7 --> Wacc
+    W1 --> Wacc
+    W2 --> Wacc
+    W3 --> Wacc
+    W0 --> Wacc
+    classDef prefactor fill:#1e1b3a,stroke:#a78bfa,stroke-width:2px,color:#ddd6fe
+    classDef p0 fill:#3f1818,stroke:#f87171,stroke-width:2px,color:#fecaca
+    classDef p1 fill:#0c2a28,stroke:#2dd4bf,stroke-width:2px,color:#99f6e4
+    classDef acceptance fill:#06281c,stroke:#34d399,stroke-width:2px,color:#a7f3d0
+  </script>
+</div>
+
+<!-- 图例 -->
+<div class="legend">
+  <div class="legend-item"><span class="legend-swatch" style="background:#1e1b3a;border:1px solid #a78bfa"></span>prefactor · 基础设施</div>
+  <div class="legend-item"><span class="legend-swatch" style="background:#3f1818;border:1px solid #f87171"></span>P0 · 阻塞项</div>
+  <div class="legend-item"><span class="legend-swatch" style="background:#0c2a28;border:1px solid #2dd4bf"></span>P1 · 功能切片</div>
+  <div class="legend-item"><span class="legend-swatch" style="background:#06281c;border:1px solid #34d399"></span>acceptance · 验收</div>
+</div>
+
+<h3 id="schedule">调度表</h3>
+<div class="table-wrap"><div class="table-scroll">
+<table class="data-table">
+  <thead><tr><th>Wave</th><th>切片</th><th>P级</th><th>Blocked by</th><th>并行组</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><strong>W0</strong></td><td>Prefactor: Playwright E2E harness</td><td>—</td><td>无（可立即开始）</td><td>—</td><td>主进程入口重构 + _electron 启动 + fixture。e2e 层测试前置</td></tr>
+    <tr><td><strong>W1</strong></td><td>runtime 后端（shared+FileService+fs-executor+handler+protocol F-3）</td><td><span class="status status--gap">P0</span></td><td>W0</td><td>A</td><td>#1+#2。前端无数据可渲染的唯一阻塞项</td></tr>
+    <tr><td><strong>W2</strong></td><td>git.diff 全链路 + file.read 权限放开</td><td>P1</td><td>W1</td><td>A</td><td>#5+#7。改既有 server.ts/git-service.ts</td></tr>
+    <tr><td><strong>W3</strong></td><td>前端 fileTreeStore + useFileTree + api/file</td><td>P1</td><td>W1</td><td>B</td><td>#3。按 D-021 目标结构（nodeStates 对象化+per-session+setNodeState）</td></tr>
+    <tr><td><strong>W4</strong></td><td>FileView/FileTreeRow 重写 + TreeNode→FileNode 迁移</td><td>P1</td><td>W3</td><td>B</td><td>#4+#10</td></tr>
+    <tr><td><strong>W5</strong></td><td>DetailPane + useDetailPane + SideDrawer 改造</td><td>P1</td><td>W2, W3</td><td>B</td><td>#6。点文件预览全链</td></tr>
+    <tr><td><strong>W6</strong></td><td>跨 store 失效 + 修 G1 cwd + 修 G5 history</td><td>P1</td><td>W3</td><td>C</td><td>#3 AC-3.11 + #8 + #9 搭便车</td></tr>
+    <tr><td><strong>W7</strong></td><td>showIgnored 开关 + 灰斜体</td><td>P1</td><td>W3, W4</td><td>C</td><td>#16（D-020）</td></tr>
+    <tr><td><strong>W8</strong></td><td>验收 Wave（Acceptance）</td><td>—</td><td>全部功能 Wave（W0-W7）</td><td>—</td><td>跑测试验收清单全量三层（unit+integration+e2e）</td></tr>
+  </tbody>
+</table>
+</div></div>
+
+<h3 id="parallel">并行约束</h3>
+<ul class="node-list">
+  <li>同组最多 <strong>3 个 subagent 并行</strong>（AGENTS.md subagent 约束）</li>
+  <li><strong>W1 必须先完成</strong>（P0 阻塞项，W3/W8 依赖其 FileNode 类型与 protocol）</li>
+  <li>并行组 A/B/C 内 Wave 理论可并行，但<strong>有文件冲突的串行</strong>：
+    <ul style="margin:6px 0 6px 8px;">
+      <li>W1 与 W2 都改 <code>runtime/src/</code> + <code>shared/src/protocol.ts</code>（W1 一次性写全 file.*/git.diff/file.write.* 类型，W2 仅复核 git.diff result map）→ <strong>W1→W2 串行</strong>避免 protocol.ts 合并冲突</li>
+      <li>W3 与 W7 都改 <code>stores/fileTree.ts</code> → <strong>W7 blocked_by W3</strong></li>
+      <li>W6 与 W7 都改 <code>composables/useFileTree.ts</code>（W6 加 invalidateOnFileChanges watch、W7 加 toggleShowIgnored）→ 组 C 内 <strong>W6→W7 串行</strong></li>
+      <li>W4 与 W5 都改前端组件 → <strong>W5 blocked_by W3</strong>（store）和 W2（git.diff api）</li>
+    </ul>
+  </li>
+  <li>前端 Wave（W3-W7）需对应后端 API 就绪（W1/W2）</li>
+</ul>
+
+<h2 id="waves">Wave 详情</h2>
+
+<!-- ===== W0 Prefactor ===== -->
+<div class="wave-card wave-card--prefactor" id="w0">
+  <div class="wave-card__head"><span class="wave-card__num">W0</span><span class="wave-card__title">Prefactor — Playwright E2E harness</span></div>
+  <div class="wave-card__meta">
+    <span><span class="pill">切片类型</span> <strong>prefactor</strong></span>
+    <span><span class="pill">P级</span> <strong>—</strong>（基础设施，非业务 issue）</span>
+    <span><span class="pill">Blocked by</span> 无（可立即开始）</span>
+    <span><span class="pill">并行关系</span> 串行起始（后续所有 e2e 测试依赖）</span>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>包含的功能 / issue</h4>
+    <p class="note">功能：E2E 测试基础设施搭建（用户硬要求「新增 Playwright 真 E2E」）。无对应 issue（基础设施，源自用户指令非⑤设计）。</p>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>文件影响</h4>
+    <ul class="file-list">
+      <li><strong>创建</strong>：<code>e2e/fixtures/launch-app.ts</code>（_electron.launch 封装）、<code>e2e/fixtures/mock-runtime.ts</code>（fixture session/runtime 注入）、<code>e2e/file-tree.spec.ts</code>（占位，W8 填实现）、<code>playwright.config.ts</code></li>
+      <li><strong>修改</strong>：<code>src-electron/main/main.ts</code>（抽 <code>createMainWindow(app)</code> 可测函数，保留 whenReady 副作用）、<code>package.json</code>（+playwright devDep + e2e script）</li>
+    </ul>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>覆盖的 test-matrix 用例 ID</h4>
+    <p class="note">无（基础设施 Wave，不直接覆盖功能用例；为 T1.8 及 e2e 层用例提供运行环境）。</p>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>Subagent 配置</h4>
+    <div class="table-wrap"><div class="table-scroll">
+    <table class="data-table table--kv">
+      <tbody>
+        <tr><td>Agent</td><td>general-purpose</td></tr>
+        <tr><td>注入上下文</td><td>用户指令「新增 Playwright 真 E2E」+ 探查结论（主进程 main.ts:140 whenReady 副作用不可导入）+ TEST-STRATEGY.md 现状（E2E 手工）</td></tr>
+        <tr><td>读取文件</td><td><code>src-electron/main/main.ts</code>、<code>src-electron/package.json</code>、<code>TEST-STRATEGY.md</code></td></tr>
+        <tr><td>修改/创建文件</td><td>见「文件影响」</td></tr>
+      </tbody>
+    </table>
+    </div></div>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>风险与缓解</h4>
+    <p class="note"><strong>风险</strong>：主进程重构可能影响 <code>npm run dev</code>。<strong>缓解</strong>：重构保持行为等价（抽函数不改变 whenReady 时序）+ preflight-check.sh 验证 + <code>npm run dev</code> 手动冒烟。</p>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>验收标准</h4>
+    <ul class="ac-list">
+      <li><code>createMainWindow(app)</code> 抽出，main.ts 行为等价（dev 可正常启动）</li>
+      <li><code>_electron.launch()</code> 能启动应用并拿到 BrowserWindow</li>
+      <li>fixture 能注入测试 session（带 cwd）</li>
+      <li><code>e2e/file-tree.spec.ts</code> 占位可跑（even if empty/skip）</li>
+      <li><code>npm run dev</code> 不受影响（preflight + 手动冒烟）</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ===== W1 P0 ===== -->
+<div class="wave-card wave-card--p0" id="w1">
+  <div class="wave-card__head"><span class="wave-card__num">W1</span><span class="wave-card__title">runtime 后端（P0 #1+#2+#14）</span></div>
+  <div class="wave-card__meta">
+    <span><span class="pill">切片类型</span> <strong>垂直切片</strong></span>
+    <span><span class="pill">P级</span> <span class="warn-inline">P0</span>（#1+#2）+ P1（#14 骨架并入）</span>
+    <span><span class="pill">Blocked by</span> W0</span>
+    <span><span class="pill">并行关系</span> 组 A 起始</span>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>包含的功能 / issue</h4>
+    <p class="note">功能：文件树首加载后端（⑤§4 功能1 后端部分）+ file.write 协议骨架（D-018，红队审查并入：W8 文件与 W1 完全重叠，独立 Wave 制造 AC-14.4 疑点，并入后 W1 一次性写全 file.* handler 含 write 的 NotImplemented 骨架 + try-catch 转 FileWriteResult，疑点根本不产生）。Issue：<strong>#1</strong>（shared 基础+协议）、<strong>#2</strong>（FileService+fs-executor+handler）、<strong>#14</strong>（file.write 协议骨架，D-018 实现延后仅骨架）。</p>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>文件影响</h4>
+    <ul class="file-list">
+      <li><strong>创建</strong>：<code>shared/src/file-tree.ts</code>、<code>shared/src/path-guard.ts</code>、<code>shared/src/ignore-parser.ts</code>、<code>runtime/src/services/file-service.ts</code>（含 createFile/renameFile/deleteFile 抛 NotImplemented 骨架）、<code>runtime/src/services/file-error.ts</code>（FileErrorCode 含 not_implemented）、<code>runtime/src/services/ports/file-executor.ts</code>、<code>runtime/src/infra/fs-executor.ts</code>、<code>runtime/src/transport/file-message-handler.ts</code>（file.* 全路由含 write.*，handleWrite try-catch 转 FileWriteResult AC-14.4 闭环）</li>
+      <li><strong>修改</strong>：<code>shared/src/protocol.ts</code>（F-3 闭环：+file.tree/expand/git.diff/file.write.* 的 ClientMessageType + ServerMessageType + Map，一次性写全）、<code>runtime/src/transport/server.ts</code>（注册 file handler，删 handleFileRead 内联 K-3）、<code>runtime/src/index.ts</code>（装配 FileService）</li>
+      <li><strong>测试</strong>：<code>runtime/test/file-service.test.ts</code>、<code>runtime/test/file-write-skeleton.test.ts</code>（AC-14.4 结构化响应）、<code>shared/__tests__/path-guard.test.ts</code>、<code>shared/__tests__/ignore-parser.test.ts</code></li>
+    </ul>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>覆盖的 test-matrix 用例 ID</h4>
+    <div class="case-pills">
+      <span class="pill">T1.1</span><span class="pill">T1.2</span><span class="pill">T1.3</span><span class="pill">T1.4</span><span class="pill">T1.5</span><span class="pill">T1.6</span><span class="pill">T1.9</span><span class="pill">T2.1</span><span class="pill">T2.10</span><span class="pill">AC-14.1~14.4</span>
+    </div>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>Subagent 配置</h4>
+    <div class="table-wrap"><div class="table-scroll">
+    <table class="data-table table--kv">
+      <tbody>
+        <tr><td>Agent</td><td>general-purpose（TDD 链）</td></tr>
+        <tr><td>注入上下文</td><td>requirements UC-1 + issues #1/#2/#14 方案 + code-architecture §4 功能1 时序图 + §6 对应用例 + 骨架 code-skeleton/shared + code-skeleton/runtime（接线参考，结构以§3 D-021 签名表为准）+ D-013（ignore 纯函数）+ D-016/D-018（file.write 骨架不延后，实现延后）+ BC-3（file.read 原3目录白名单）</td></tr>
+        <tr><td>读取文件</td><td>骨架 8 个 runtime/shared 文件、<code>runtime/src/transport/server.ts:200-209,472-498</code>、<code>runtime/src/index.ts:167</code>、<code>shared/src/protocol.ts:9-32,191-291</code>、骨架 protocol-additions.ts:52-72（file.write 类型）</td></tr>
+        <tr><td>修改/创建文件</td><td>见「文件影响」</td></tr>
+      </tbody>
+    </table>
+    </div></div>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>验收标准</h4>
+    <ul class="ac-list">
+      <li>AC-1.1~1.5（shared 类型/grep 守卫）全过</li>
+      <li>AC-2.1~2.8（FileService 行为 + 三层 grep AC）全过</li>
+      <li>AC-14.1~14.4（file.write 骨架：类型 + 签名 + 路由 + 结构化响应闭环 try-catch）全过</li>
+      <li>T1.1~1.6, T1.9, T2.1, T2.10 对应测试全 PASS</li>
+      <li>§11 grep AC（AC-1/2/2b/3/6）路径作用域内通过</li>
+      <li>FileErrorCode 含 not_implemented；handleWrite try-catch 转 FileWriteResult 非 500</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ===== W2 ===== -->
+<div class="wave-card wave-card--p1" id="w2">
+  <div class="wave-card__head"><span class="wave-card__num">W2</span><span class="wave-card__title">git.diff 全链路 + file.read 权限放开（P1 #5+#7）</span></div>
+  <div class="wave-card__meta">
+    <span><span class="pill">切片类型</span> <strong>垂直切片</strong></span>
+    <span><span class="pill">P级</span> <strong>P1</strong></span>
+    <span><span class="pill">Blocked by</span> W1</span>
+    <span><span class="pill">并行关系</span> 组 A（与 W1 串行，protocol.ts 冲突）</span>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>包含的功能 / issue</h4>
+    <p class="note">功能：点文件预览后端（⑤§4 功能3 后端部分）+ file.read 三层重构。Issue：<strong>#5</strong>（git.diff）、<strong>#7</strong>（file.read 权限 BC-3）。</p>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>文件影响</h4>
+    <ul class="file-list">
+      <li><strong>修改</strong>：<code>runtime/src/services/git-service.ts</code>（+getFileDiff 合并 git-service-extension.ts:44，K-6 新写越界）、<code>runtime/src/transport/git-message-handler.ts</code>（+git.diff 路由，改既有）、<code>runtime/src/transport/server.ts</code>（git handler 注册 diff）、<code>shared/src/protocol.ts</code>（<strong>git.diff 类型在 W1 已定义</strong>，本 Wave 仅复核 git.diff ServerMessageType/result map 完整，非重复新增）、<code>renderer/src/api/domains/git.ts</code>（+getDiff，改既有）</li>
+      <li><strong>测试</strong>：<code>runtime/test/git-service-diff.test.ts</code>、<code>runtime/test/file-read-permission.test.ts</code></li>
+    </ul>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>覆盖的 test-matrix 用例 ID</h4>
+    <div class="case-pills">
+      <span class="pill">T6.1</span><span class="pill">T6.3</span><span class="pill">T6.8</span><span class="pill">T6.9</span><span class="pill">T6.11</span><span class="pill">T6.13</span><span class="pill">T6.14</span>
+    </div>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>Subagent 配置</h4>
+    <div class="table-wrap"><div class="table-scroll">
+    <table class="data-table table--kv">
+      <tbody>
+        <tr><td>Agent</td><td>general-purpose（TDD 链）</td></tr>
+        <tr><td>注入上下文</td><td>requirements UC-6 + issues #5/#7 方案 + code-architecture §4 功能3 时序图 + 骨架 git-service-extension.ts + git-executor.ts:24（白名单已含 diff）+ NFR-AC-S3（数组形式防注入）+ K-6（diff 越界新写非复用）+ BC-3（原3目录）</td></tr>
+        <tr><td>读取文件</td><td>骨架 git-service-extension.ts、<code>runtime/src/services/git-service.ts:63-87,265-274</code>、<code>runtime/src/services/ports/git-executor.ts:24</code>、<code>runtime/src/transport/git-message-handler.ts</code>、<code>renderer/src/api/domains/git.ts:19-24</code></td></tr>
+        <tr><td>修改/创建文件</td><td>见「文件影响」</td></tr>
+      </tbody>
+    </table>
+    </div></div>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>验收标准</h4>
+    <ul class="ac-list">
+      <li>AC-5.1~5.6（git.diff 全态）全过</li>
+      <li>AC-7.1~7.5（file.read 权限+三层 grep）全过</li>
+      <li>T6.1, T6.3, T6.8, T6.9, T6.11, T6.13, T6.14 测试全 PASS</li>
+      <li>交叉命中 gap 修复：git-service-extension 不再重定义 IGitExecutorLike，import 真 IGitExecutor port</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ===== W3 ===== -->
+<div class="wave-card wave-card--p1" id="w3">
+  <div class="wave-card__head"><span class="wave-card__num">W3</span><span class="wave-card__title">前端 fileTreeStore + useFileTree + api/file（P1 #3）</span></div>
+  <div class="wave-card__meta">
+    <span><span class="pill">切片类型</span> <strong>垂直切片</strong></span>
+    <span><span class="pill">P级</span> <strong>P1</strong></span>
+    <span><span class="pill">Blocked by</span> W1</span>
+    <span><span class="pill">并行关系</span> 组 B 起始</span>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>包含的功能 / issue</h4>
+    <p class="note">功能：文件树前端 store + 编排（⑤§4 功能1/2 前端部分）。Issue：<strong>#3</strong>（store+composable+api）。</p>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>文件影响</h4>
+    <ul class="file-list">
+      <li><strong>创建</strong>：<code>renderer/src/stores/fileTree.ts</code>、<code>renderer/src/composables/useFileTree.ts</code>、<code>renderer/src/api/domains/file.ts</code></li>
+      <li><strong>测试</strong>：<code>renderer/src/__tests__/stores/fileTree.test.ts</code>、<code>renderer/src/__tests__/composables/useFileTree.test.ts</code></li>
+    </ul>
+  </div>
+
+  <div class="wave-card__section">
+    <h4><span class="warn-inline">⚠ D-021 强制对齐项</span></h4>
+    <p class="note">骨架 store 是旧结构（nodeStatus 光杆 string + per-path）。<strong>必须按 §3 签名表 D-021 目标结构重写</strong>：</p>
+    <ul class="node-list">
+      <li><code>nodeStates: Map&lt;sid, Map&lt;path, NodeState&gt;&gt;</code>（对象化，非光杆 string）</li>
+      <li><code>gitOverlay: Map&lt;sid, Map&lt;path, GitFileStatus&gt;&gt;</code>（per-session 分桶）</li>
+      <li><code>setNodeState(sid, path, state)</code> 单一原子入口（同步 status + merge children）</li>
+      <li>NodeState = <code>{ status: LoadStatus, reason?: FileErrorCode }</code>，reason 来自 WS error envelope</li>
+    </ul>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>覆盖的 test-matrix 用例 ID</h4>
+    <div class="case-pills">
+      <span class="pill">T2.2</span><span class="pill">T2.3</span><span class="pill">T2.4</span><span class="pill">T2.5</span><span class="pill">T2.6</span><span class="pill">T2.7</span><span class="pill">T2.8</span><span class="pill">T2.8b</span><span class="pill">T2.9</span><span class="pill">T4.6</span>
+    </div>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>Subagent 配置</h4>
+    <div class="table-wrap"><div class="table-scroll">
+    <table class="data-table table--kv">
+      <tbody>
+        <tr><td>Agent</td><td>general-purpose（TDD 链）</td></tr>
+        <tr><td>注入上下文</td><td>requirements UC-1/2/3 + issues #3 方案 + code-architecture §4 功能1/2 时序图 + §3 store 签名表（D-021 目标结构，<strong>非骨架旧结构</strong>）+ D-012（树/标注分离）+ D-019（rehydrate）+ D-021（对象化+per-session+setNodeState）+ K-9（跨 store 编排在 composable）</td></tr>
+        <tr><td>读取文件</td><td>骨架 renderer/stores/fileTree.ts + composables/useFileTree.ts + api/domains/file.ts（接线参考，结构以§3为准）、<code>renderer/src/api/domains/git.ts:19-24</code>（WS 封装范式）、<code>renderer/src/stores/chat.ts:196-222</code>（fileChangesSignal 源）</td></tr>
+        <tr><td>修改/创建文件</td><td>见「文件影响」</td></tr>
+      </tbody>
+    </table>
+    </div></div>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>验收标准</h4>
+    <ul class="ac-list">
+      <li>AC-3.1~3.13 全过（含 D-021 结构对齐）</li>
+      <li>T2.2~2.9, T4.6 测试全 PASS</li>
+      <li>store 结构与 §3 签名表 D-021 完全一致（非骨架旧结构）</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ===== W4 ===== -->
+<div class="wave-card wave-card--p1" id="w4">
+  <div class="wave-card__head"><span class="wave-card__num">W4</span><span class="wave-card__title">FileView/FileTreeRow 重写 + TreeNode→FileNode 迁移（P1 #4+#10）</span></div>
+  <div class="wave-card__meta">
+    <span><span class="pill">切片类型</span> <strong>垂直切片</strong></span>
+    <span><span class="pill">P级</span> <strong>P1</strong></span>
+    <span><span class="pill">Blocked by</span> W3</span>
+    <span><span class="pill">并行关系</span> 组 B</span>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>包含的功能 / issue</h4>
+    <p class="note">功能：文件树渲染（⑤§4 功能1/2 渲染层）。Issue：<strong>#4</strong>（FileView/FileTreeRow 重写）、<strong>#10</strong>（TreeNode→FileNode 迁移，搭便车 D-010③）。</p>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>文件影响</h4>
+    <ul class="file-list">
+      <li><strong>修改</strong>：<code>renderer/src/components/sidebar/FileView.vue</code>（rewrite，删本地 TreeNode :63-74）、<code>renderer/src/components/sidebar/FileTreeRow.vue</code>（rewrite，删本地 TreeNode :58-68）</li>
+      <li><strong>测试</strong>：<code>renderer/src/__tests__/components/FileView.test.ts</code>、<code>renderer/src/__tests__/components/FileTreeRow.test.ts</code></li>
+    </ul>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>覆盖的 test-matrix 用例 ID</h4>
+    <div class="case-pills">
+      <span class="pill">T4.1</span><span class="pill">T4.2</span><span class="pill">T4.4</span><span class="pill">T4.5</span>
+    </div>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>Subagent 配置</h4>
+    <div class="table-wrap"><div class="table-scroll">
+    <table class="data-table table--kv">
+      <tbody>
+        <tr><td>Agent</td><td>general-purpose（TDD 链）</td></tr>
+        <tr><td>注入上下文</td><td>requirements UC-1/4 + issues #4/#10 方案 + code-architecture §4 功能1 渲染 + GAP-S6（FileNode 统一）+ D-007（文件名亮色/选中蓝粗/忽略灰斜体）+ D-009（懒加载默认顶层）+ 三视角测试规范（含首屏冒烟模板）</td></tr>
+        <tr><td>读取文件</td><td><code>renderer/src/components/sidebar/FileView.vue</code>（现状 :63-74 TreeNode）、<code>FileTreeRow.vue</code>（现状 :58-68）、<code>shared/src/file-tree.ts</code>（FileNode）、W3 产出的 fileTreeStore</td></tr>
+        <tr><td>修改/创建文件</td><td>见「文件影响」</td></tr>
+      </tbody>
+    </table>
+    </div></div>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>验收标准</h4>
+    <ul class="ac-list">
+      <li>AC-4.1~4.14 全过（含 AC-4.13 grep 无本地 TreeNode）</li>
+      <li>AC-10.1~10.3（迁移回归）全过</li>
+      <li>T4.1, T4.2, T4.4, T4.5 测试全 PASS</li>
+      <li>首屏冒烟测试（mount FileView，断 DOM 含树节点）存在</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ===== W5 ===== -->
+<div class="wave-card wave-card--p1" id="w5">
+  <div class="wave-card__head"><span class="wave-card__num">W5</span><span class="wave-card__title">DetailPane + useDetailPane + SideDrawer 改造（P1 #6）</span></div>
+  <div class="wave-card__meta">
+    <span><span class="pill">切片类型</span> <strong>垂直切片</strong></span>
+    <span><span class="pill">P级</span> <strong>P1</strong></span>
+    <span><span class="pill">Blocked by</span> W2, W3</span>
+    <span><span class="pill">并行关系</span> 组 B</span>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>包含的功能 / issue</h4>
+    <p class="note">功能：点文件预览前端（⑤§4 功能3 前端部分）。Issue：<strong>#6</strong>（DetailPane+useDetailPane+SideDrawer）。</p>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>文件影响</h4>
+    <ul class="file-list">
+      <li><strong>创建</strong>：<code>renderer/src/components/panel/DetailPane.vue</code>、<code>renderer/src/composables/useDetailPane.ts</code></li>
+      <li><strong>修改</strong>：<code>renderer/src/components/panel/SideDrawer.vue</code>（+detail tab + DetailPane 挂载，现状 :30-36 仅 4 tab）</li>
+      <li><strong>测试</strong>：<code>renderer/src/__tests__/components/DetailPane.test.ts</code>、<code>renderer/src/__tests__/composables/useDetailPane.test.ts</code></li>
+    </ul>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>覆盖的 test-matrix 用例 ID</h4>
+    <div class="case-pills">
+      <span class="pill">T6.2</span><span class="pill">T6.4</span><span class="pill">T6.5</span><span class="pill">T6.6</span><span class="pill">T6.7</span><span class="pill">T6.10</span><span class="pill">T6.12</span>
+    </div>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>Subagent 配置</h4>
+    <div class="table-wrap"><div class="table-scroll">
+    <table class="data-table table--kv">
+      <tbody>
+        <tr><td>Agent</td><td>general-purpose（TDD 链）</td></tr>
+        <tr><td>注入上下文</td><td>requirements UC-6 + issues #6 方案 + code-architecture §4 功能3 + draft-detail-pane.html（设计稿）+ NFR-AC-S4（禁 v-html）+ D-5（截断/二进制）</td></tr>
+        <tr><td>读取文件</td><td><code>renderer/src/components/panel/SideDrawer.vue:30-36,68-71,126-128</code>、<code>docs/page-design/v3/</code>（draft-detail-pane 参考）、W2 产出的 git.getDiff api、W3 产出的 store</td></tr>
+        <tr><td>修改/创建文件</td><td>见「文件影响」</td></tr>
+      </tbody>
+    </table>
+    </div></div>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>验收标准</h4>
+    <ul class="ac-list">
+      <li>AC-6.1~6.8 全过</li>
+      <li>T6.2, T6.4, T6.5, T6.6, T6.7, T6.10, T6.12 测试全 PASS</li>
+      <li>禁 v-html（文本插值/<code>&lt;pre&gt;</code>），T6.10 XSS 断言通过</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ===== W6 ===== -->
+<div class="wave-card wave-card--p1" id="w6">
+  <div class="wave-card__head"><span class="wave-card__num">W6</span><span class="wave-card__title">跨 store 失效 + 修 G1 cwd + 修 G5 history（P1 #3.11+#8+#9）</span></div>
+  <div class="wave-card__meta">
+    <span><span class="pill">切片类型</span> <strong>垂直切片（搭便车）</strong></span>
+    <span><span class="pill">P级</span> <strong>P1</strong></span>
+    <span><span class="pill">Blocked by</span> W3（改 useFileTree.ts，W3 产出；#8/#9 修复点与 W2 零重叠，原 W2 依赖误植已修正）</span>
+    <span><span class="pill">并行关系</span> 组 C（与 W7 串行——同改 useFileTree.ts）</span>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>包含的功能 / issue</h4>
+    <p class="note">功能：跨 store 失效编排（⑤§4 功能4）+ 搭便车修 G1/G5。Issue：<strong>#3 AC-3.11</strong>、<strong>#8</strong>（G1 cwd）、<strong>#9</strong>（G5 history）。</p>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>文件影响</h4>
+    <ul class="file-list">
+      <li><strong>修改</strong>：<code>renderer/src/composables/useFileTree.ts</code>（+invalidateOnFileChanges watch）、<code>runtime/src/index.ts:111-149</code>（createAdapter 注入 cwd，#8）、<code>runtime/src/infra/pi/event-adapter.ts</code>（cwd 字段使用）、<code>runtime/src/infra/pi/message-converter.ts:30</code>（convertPiHistory 还原 fileChanges，#9）</li>
+      <li><strong>测试</strong>：<code>renderer/src/__tests__/composables/useFileTree-invalidation.test.ts</code>、<code>runtime/test/event-adapter-cwd.test.ts</code>、<code>runtime/test/message-converter-history.test.ts</code></li>
+    </ul>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>覆盖的 test-matrix 用例 ID</h4>
+    <div class="case-pills">
+      <span class="pill">T11.1</span><span class="pill">T11.2</span><span class="pill">T1.7</span>
+    </div>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>Subagent 配置</h4>
+    <div class="table-wrap"><div class="table-scroll">
+    <table class="data-table table--kv">
+      <tbody>
+        <tr><td>Agent</td><td>general-purpose（TDD 链）</td></tr>
+        <tr><td>注入上下文</td><td>requirements UC-11 + issues #3 AC-3.11/#8/#9 + code-architecture §4 功能4 + D-017（失效转移）+ K-9（composable 层编排）+ BC-5（G1）/BC-6（G5）+ ⑤搭便车工作量核对（#8 一行/#9 中等）</td></tr>
+        <tr><td>读取文件</td><td><code>renderer/src/composables/useFileTree.ts</code>（W3 产出）、<code>runtime/src/index.ts:111-149</code>、<code>runtime/src/infra/pi/event-adapter.ts:49,66,238-255</code>、<code>runtime/src/infra/pi/message-converter.ts:30</code>、<code>renderer/src/stores/chat.ts:196-222</code>、<code>renderer/src/stores/chat-chunk-processor.ts:385-392</code></td></tr>
+        <tr><td>修改/创建文件</td><td>见「文件影响」</td></tr>
+      </tbody>
+    </table>
+    </div></div>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>验收标准</h4>
+    <ul class="ac-list">
+      <li>AC-3.11（跨 store 失效，composable watch）过</li>
+      <li>AC-8.1~8.3（G1 cwd 修复 + BC-1 回归）全过</li>
+      <li>AC-9.1~9.3（G5 history 还原 + BC-1 回归 + graceful 降级）全过</li>
+      <li>T11.1, T11.2, T1.7 测试全 PASS</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ===== W7 ===== -->
+<div class="wave-card wave-card--p1" id="w7">
+  <div class="wave-card__head"><span class="wave-card__num">W7</span><span class="wave-card__title">showIgnored 开关 + 灰斜体（P1 #16）</span></div>
+  <div class="wave-card__meta">
+    <span><span class="pill">切片类型</span> <strong>垂直切片</strong></span>
+    <span><span class="pill">P级</span> <strong>P1</strong></span>
+    <span><span class="pill">Blocked by</span> W3（store）, W4（FileView.vue，W4 重写产出）</span>
+    <span><span class="pill">并行关系</span> 组 C（与 W6 串行——同改 useFileTree.ts）</span>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>包含的功能 / issue</h4>
+    <p class="note">功能：显示忽略项开关（D-020）。Issue：<strong>#16</strong>（原 #15 提级）。</p>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>文件影响</h4>
+    <ul class="file-list">
+      <li><strong>修改</strong>：<code>renderer/src/stores/fileTree.ts</code>（+showIgnored state，W3 已建）、<code>renderer/src/components/sidebar/FileView.vue</code>（+开关 UI + 灰斜体渲染，W4 已重写）、<code>renderer/src/composables/useFileTree.ts</code>（toggleShowIgnored）</li>
+      <li><strong>测试</strong>：<code>renderer/src/__tests__/stores/fileTree-showIgnored.test.ts</code></li>
+    </ul>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>覆盖的 test-matrix 用例 ID</h4>
+    <div class="case-pills">
+      <span class="pill">无独立 T 编号（AC-16.1~16.5 覆盖）</span>
+    </div>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>Subagent 配置</h4>
+    <div class="table-wrap"><div class="table-scroll">
+    <table class="data-table table--kv">
+      <tbody>
+        <tr><td>Agent</td><td>general-purpose（TDD 链）</td></tr>
+        <tr><td>注入上下文</td><td>issues #16 方案 + D-020（FileNode ignored 字段 + 双模式）+ D-004（显示忽略项开关）+ D-007②（灰斜体）</td></tr>
+        <tr><td>读取文件</td><td>W3 产出 store、W4 产出 FileView、骨架 shared/ignore-parser.ts（matchPath 双模式）</td></tr>
+        <tr><td>修改/创建文件</td><td>见「文件影响」</td></tr>
+      </tbody>
+    </table>
+    </div></div>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>验收标准</h4>
+    <ul class="ac-list">
+      <li>AC-16.1~16.5 全过</li>
+      <li>灰斜体渲染（muted + italic）DOM 断言通过</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ===== W8 Acceptance ===== -->
+<div class="wave-card wave-card--acceptance" id="w8">
+  <div class="wave-card__head"><span class="wave-card__num">W8</span><span class="wave-card__title">验收 Wave（Acceptance）</span></div>
+  <div class="callout callout--warn" style="margin-top:6px;">
+    <strong>注</strong>：原 W8（file.write 骨架）已并入 W1（红队审查：文件完全重叠 + 消除 AC-14.4 疑点）。Wave 编号顺延——验收 Wave 现为 W8（原 W9）。
+  </div>
+  <div class="wave-card__meta">
+    <span><span class="pill">切片类型</span> <strong>验收（非功能开发）</strong></span>
+    <span><span class="pill">P级</span> —</span>
+    <span><span class="pill">Blocked by</span> W0, W1, W2, W3, W4, W5, W6, W7（全部功能 Wave）</span>
+    <span><span class="pill">并行关系</span> 必须最后</span>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>职责</h4>
+    <p class="note">读测试验收清单全量 → 跑三层测试（unit + integration + e2e）→ 每条 PASS/FAIL/缺失映射回用例 ID → 任一用例无对应测试或 FAIL = 整个实现未完成 → 输出覆盖率报告。</p>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>测试执行分层</h4>
+    <ul class="node-list">
+      <li><strong>unit 层</strong>：<code>cd src-electron/runtime && npx vitest run</code> + <code>cd src-electron/renderer && npx vitest run</code>（Wave 内 dev 阶段已写）</li>
+      <li><strong>integration 层</strong>：同上 vitest（含 mount 旅程 + runtime 真起 server）</li>
+      <li><strong>e2e 层</strong>：<code>npx playwright test</code>（W0 harness + 各功能 e2e 用例）</li>
+    </ul>
+  </div>
+
+  <div class="wave-card__section">
+    <h4>验收标准</h4>
+    <ul class="ac-list">
+      <li>测试验收清单全量用例状态 = PASS（无 FAIL/未实现/[DEVIATED] 未确认）</li>
+      <li>三层测试全绿</li>
+      <li>覆盖率报告：每条用例 → 对应测试文件:行</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="iterations">后续迭代（P3 延后项）</h2>
+<div class="card-grid">
+  <div class="ve-card">
+    <div class="ve-card__label">Issue #11 · P3</div>
+    <h3>文件操作 fs 写实现</h3>
+    <p>create/rename/delete 真实逻辑。<strong>延后理由</strong>：依赖 runtime file-service 写协议 G4 当前缺失，D-016 裁决本轮仅骨架（W1）。</p>
+  </div>
+  <div class="ve-card">
+    <div class="ve-card__label">Issue #12 · P3?</div>
+    <h3>message-stream ChangeSetCard 点击联动</h3>
+    <p>迷雾，未展开。</p>
+  </div>
+  <div class="ve-card">
+    <div class="ve-card__label">Issue #13 · P3?</div>
+    <h3>SideDrawer tab registry 抽象</h3>
+    <p>迷雾，当前 4+1 tab 无需抽。</p>
+  </div>
+</div>
+
+<h2 id="manifest">测试验收清单（Test Acceptance Manifest）</h2>
+<div class="callout">
+  <strong>实现阶段的 Definition of Done。</strong> 用例 ID 集合 = ⑤test-matrix 全量（来源 A 功能 + 来源 B NFR）。状态：<code>待验</code>（设计期）→ 实现期填 <code>PASS</code>/<code>FAIL</code>/<code>未实现</code>/<code>[DEVIATED]原因</code>。
+</div>
+<div class="table-wrap"><div class="table-scroll">
+<table class="data-table">
+  <thead><tr><th>用例 ID</th><th>归属 UC</th><th>来源</th><th>断言摘要</th><th>功能归属 Wave</th><th>测试执行层</th><th>状态</th></tr></thead>
+  <tbody>
+    <tr><td><code>T1.1</code></td><td>UC-1</td><td>A 功能</td><td>首加载顶层+一级子 FileNode[]</td><td>W1</td><td>integration</td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T1.2</code></td><td>UC-1</td><td>A 功能</td><td>cwd 空目录 → FileNode[]=[] 不 error</td><td>W1</td><td>integration</td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T1.3</code></td><td>UC-1</td><td>A 功能</td><td>listTree 越界 → FileError('out_of_cwd')</td><td>W1</td><td>integration</td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T1.4</code></td><td>UC-1</td><td>A 功能</td><td>EACCES → FileError('permission_denied')</td><td>W1</td><td>integration</td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T1.5</code></td><td>UC-1</td><td>A 功能</td><td>listDir 超时 → FileError('timeout')</td><td>W1</td><td>integration</td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T1.6</code></td><td>UC-1</td><td>A 功能</td><td>bad sessionId → FileError('session_not_found')</td><td>W1</td><td>integration</td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T1.7</code></td><td>UC-1</td><td>A 功能</td><td>切回 session 展开态恢复，已删路径 graceful</td><td>W6</td><td>integration</td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T1.8</code></td><td>UC-1</td><td>A 功能</td><td>UI 切 tab → 渲染，顶层节点 DOM 可见（全链）</td><td>W8</td><td><strong>e2e</strong></td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T1.9</code></td><td>UC-1</td><td>B NFR</td><td><code>..</code> 穿越/末尾斜杠/相对路径恶意输入判 false（纯函数）</td><td>W1</td><td><strong>unit</strong></td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T2.1</code></td><td>UC-2</td><td>A 功能</td><td>展开未加载目录 → 单层子节点</td><td>W1</td><td>integration</td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T2.2</code></td><td>UC-2</td><td>A 功能</td><td>loaded 复用缓存，折叠再展开不重请求</td><td>W3</td><td>integration</td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T2.3</code></td><td>UC-2</td><td>B NFR</td><td>loading 态再点 → 不发新请求（幂等去重）</td><td>W3</td><td><strong>integration</strong></td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T2.4</code></td><td>UC-2</td><td>B NFR</td><td>expand 在途切 session → stale 丢弃</td><td>W3</td><td><strong>integration</strong></td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T2.5</code></td><td>UC-2</td><td>A 功能</td><td>error 态折叠再展开 → 重发</td><td>W3</td><td>integration</td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T2.6</code></td><td>UC-2</td><td>A 功能</td><td>overlay 先于 tree 到达 → loaded 后挂载</td><td>W3</td><td>integration</td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T2.7</code></td><td>UC-2</td><td>A 功能</td><td>git.status 失败 → overlay 空，树仍渲染</td><td>W3</td><td>integration</td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T2.8</code></td><td>UC-2</td><td>A 功能</td><td>M/A/D/U 全态角标</td><td>W3</td><td>integration</td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T2.8b</code></td><td>UC-2</td><td>A 功能</td><td>untracked <code>??</code> → 绿 A</td><td>W3</td><td>integration</td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T2.9</code></td><td>UC-2</td><td>A 功能</td><td>非 git 仓库 → 无角标树可浏览</td><td>W3</td><td>integration</td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T2.10</code></td><td>UC-2</td><td>B NFR</td><td>expandDir(sessionId,"/etc") → out_of_cwd</td><td>W1</td><td><strong>integration</strong></td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T4.1</code></td><td>UC-4</td><td>A 功能</td><td>输入关键词 → 已加载节点过滤+高亮</td><td>W4</td><td>integration</td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T4.2</code></td><td>UC-4</td><td>A 功能</td><td>无匹配 → 「无匹配文件」态</td><td>W4</td><td>integration</td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T4.4</code></td><td>UC-4</td><td>A 功能</td><td>过滤框触发 → 无 ⌘K overlay</td><td>W4</td><td>integration</td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T4.5</code></td><td>UC-4</td><td>A 功能</td><td>清空关键词 → 恢复完整树</td><td>W4</td><td>integration</td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T4.6</code></td><td>UC-4</td><td>A 功能</td><td>invalidated 态过滤 → graceful 不报错</td><td>W3</td><td>integration</td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T6.1</code></td><td>UC-6</td><td>A 功能</td><td>M 文件 → 显示 diff</td><td>W2</td><td>integration</td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T6.2</code></td><td>UC-6</td><td>A 功能</td><td>普通文件 → 显示内容</td><td>W5</td><td>integration</td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T6.3</code></td><td>UC-6</td><td>A 功能</td><td>cwd 外非3目录 file.read → out_of_cwd</td><td>W2</td><td>integration</td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T6.4</code></td><td>UC-6</td><td>A 功能</td><td>权限/不存在 → DetailPane 错误态</td><td>W5</td><td>integration</td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T6.5</code></td><td>UC-6</td><td>A 功能</td><td>&gt;1MB 未改动文件 → 截断+提示</td><td>W5</td><td>integration</td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T6.6</code></td><td>UC-6</td><td>A 功能</td><td>二进制改动文件 → 友好占位</td><td>W5</td><td>integration</td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T6.7</code></td><td>UC-6</td><td>A 功能</td><td>异步返回前 → 骨架态非空白</td><td>W5</td><td>integration</td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T6.8</code></td><td>UC-6</td><td>B NFR</td><td>getFileDiff 经 executor.exec + 防注入 + grep 无直接 exec</td><td>W2</td><td><strong>integration</strong></td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T6.9</code></td><td>UC-6</td><td>B NFR</td><td>git.diff(sessionId,"/etc/passwd") → path_not_allowed</td><td>W2</td><td><strong>integration</strong></td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T6.10</code></td><td>UC-6</td><td>B NFR</td><td>含 <code>&lt;script&gt;</code> 文件内容被转义不执行（禁 v-html）</td><td>W5</td><td><strong>integration</strong></td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T6.11</code></td><td>UC-6</td><td>A 功能</td><td>~/.agents/skills 下文件可读 + 路径形态不变</td><td>W2</td><td>integration</td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T6.12</code></td><td>UC-6</td><td>A 功能</td><td>SideDrawer 已开点新文件 → 切换非新开</td><td>W5</td><td>integration</td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T6.13</code></td><td>UC-6</td><td>A 功能</td><td>git.diff 超时 → GitError('timeout')</td><td>W2</td><td>integration</td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T6.14</code></td><td>UC-6</td><td>A 功能</td><td>cwd 非 repo → 空 patch</td><td>W2</td><td>integration</td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T11.1</code></td><td>UC-11</td><td>B NFR</td><td>agent_end ready 帧 → 相关节点 invalidated</td><td>W6</td><td><strong>integration</strong></td><td><span class="status status--na">待验</span></td></tr>
+    <tr><td><code>T11.2</code></td><td>UC-11</td><td>B NFR</td><td>他 session ready → 不污染本 session</td><td>W6</td><td><strong>integration</strong></td><td><span class="status status--na">待验</span></td></tr>
+  </tbody>
+</table>
+</div></div>
+
+<h3>E2E 层补充用例（W8 跑，基于 W0 harness）</h3>
+<div class="card-grid">
+  <div class="ve-card">
+    <div class="ve-card__label">E2E-1</div>
+    <h3>切「文件」tab</h3>
+    <p>顶层节点 DOM 可见（T1.8 e2e 化）。</p>
+  </div>
+  <div class="ve-card">
+    <div class="ve-card__label">E2E-2</div>
+    <h3>点目录展开</h3>
+    <p>子节点 DOM 出现 → 角标渲染（UC-1+UC-2 旅程）。</p>
+  </div>
+  <div class="ve-card">
+    <div class="ve-card__label">E2E-3</div>
+    <h3>点文件</h3>
+    <p>SideDrawer 打开 → 内容/diff 显示（UC-6 旅程）。</p>
+  </div>
+  <div class="ve-card">
+    <div class="ve-card__label">E2E-4</div>
+    <h3>切 session 再切回</h3>
+    <p>展开态恢复（AC-3.5 rehydrate 旅程）。</p>
+  </div>
+</div>
+
+<h2 id="handoff">执行交接（硬契约）</h2>
+<p>本计划完成后，进入编码实现。<strong>编码完成的定义 = 测试验收清单全绿。</strong></p>
+<ul class="node-list">
+  <li><strong>末尾验收 Wave（W8）blocked_by 所有功能 Wave</strong>，未绿 = 实现未完成</li>
+  <li><strong>方式 B（手动执行）</strong>：每个 Wave 派一个 fresh subagent，按 Wave 内 TDD 链；末尾验收 Wave 最后跑</li>
+  <li><strong>偏离通道</strong>：编码中发现用例设计错误/不可行，走 <code>[DEVIATED]</code> 登记（附原因 + 用户确认），不可静默跳过</li>
+  <li><strong>三层测试 gate</strong>：unit 在 Wave dev 阶段 / integration 在 Wave 内或 phase-test / e2e 在 W8 独立 gate</li>
+</ul>
+
+<h2 id="pending">待确认（Step 1 必问决策点，审查前定）</h2>
+<div class="card-grid">
+  <div class="ve-card ve-card--elevated">
+    <div class="ve-card__label">决策点 1 · W0 范围</div>
+    <h3>Playwright harness 范围</h3>
+    <p>本轮本地可跑即可，CI 跨平台配置列后续迭代？（默认：本地优先，CI 后续）</p>
+  </div>
+  <div class="ve-card ve-card--elevated">
+    <div class="ve-card__label">决策点 2 · 并行组</div>
+    <h3>并行组划分确认</h3>
+    <p>A/B/C 三组的 Wave 分配是否合理？W1 与 W2 因 protocol.ts 冲突建议串行而非并行，是否接受？（默认：接受串行）</p>
+  </div>
+</div>
+
+<footer class="doc-foot">全项目文件树 · 执行计划 · upstream: code-architecture.md · downstream: coding · W0-W8</footer>
+</main>
+</div>
+
+<script type="module">/*
+ * zoom.js — design-visual-explainer 公共脚本
+ * 含 Mermaid zoom/pan/fit/expand + TOC scroll-spy。
+ * 依赖：mermaid@11 + @mermaid-js/layout-elk（CDN ESM import）。
+ * CSS 契约：.diagram-shell 及内部 .mermaid-wrap/.mermaid-viewport/.mermaid-canvas/.diagram-source/.zoom-label
+ *          + [data-action] 按钮（zoom-in/out/fit/one/expand）— 类名与 design.css 绑定，勿改名。
+ */
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+import elkLayouts from 'https://cdn.jsdelivr.net/npm/@mermaid-js/layout-elk/dist/mermaid-layout-elk.esm.min.mjs';
+
+const config = { fitPadding: 28, minHeight: 360, maxHeightPx: 960, maxHeightVh: 0.84, maxInitialZoom: 1.8, minZoom: 0.08, maxZoom: 6.5, zoomStep: 0.14, readabilityFloor: 0.58 };
+const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+let activeDrag = null;
+addEventListener('mousemove', (e) => activeDrag?.onMove(e));
+addEventListener('mouseup', () => { activeDrag?.onEnd(); activeDrag = null; });
+const isDark = matchMedia('(prefers-color-scheme: dark)').matches;
+
+mermaid.registerLayoutLoaders(elkLayouts);
+mermaid.initialize({
+  startOnLoad: false, theme: 'base', look: 'classic', layout: 'elk',
+  themeVariables: {
+    fontFamily: "'Bricolage Grotesque', 'PingFang SC', system-ui, sans-serif", fontSize: '14px',
+    primaryColor: isDark ? '#0d2424' : '#ccfbf1', primaryBorderColor: isDark ? '#5eead4' : '#0d9488', primaryTextColor: isDark ? '#e3efee' : '#134e3a',
+    secondaryColor: isDark ? '#111d1d' : '#fffbeb', secondaryBorderColor: isDark ? '#115e59' : '#d97706', secondaryTextColor: isDark ? '#5eead4' : '#92400e',
+    tertiaryColor: isDark ? '#1a1a1a' : '#f8fafc', tertiaryBorderColor: isDark ? '#64748b' : '#64748b', tertiaryTextColor: isDark ? '#e2e8f0' : '#334155',
+    lineColor: isDark ? '#5eead4' : '#5f8a85',
+    noteBkgColor: isDark ? '#0d2424' : '#f0fdfa', noteTextColor: isDark ? '#e3efee' : '#134e3a', noteBorderColor: isDark ? '#2dd4bf' : '#0d9488',
+  }
+});
+
+function initDiagram(shell) {
+  const wrap = shell.querySelector('.mermaid-wrap');
+  const viewport = shell.querySelector('.mermaid-viewport');
+  const canvas = shell.querySelector('.mermaid-canvas');
+  const source = shell.querySelector('.diagram-source');
+  const label = shell.querySelector('.zoom-label');
+  if (!wrap || !viewport || !canvas || !source || !label) { console.error('initDiagram: missing elements', shell); return; }
+  let zoom = 1, fitMode = 'contain', panX = 0, panY = 0, svgW = 0, svgH = 0;
+  let sx = 0, sy = 0, spx = 0, spy = 0, touchDist = 0, touchCx = 0, touchCy = 0;
+  function constrainPan() { const vpW = viewport.clientWidth, vpH = viewport.clientHeight; const rW = svgW*zoom, rH = svgH*zoom, pad = config.fitPadding; panX = (rW+pad*2<=vpW)?(vpW-rW)/2:clamp(panX,vpW-rW-pad,pad); panY = (rH+pad*2<=vpH)?(vpH-rH)/2:clamp(panY,vpH-rH-pad,pad); }
+  function applyTransform() { const svg = canvas.querySelector('svg'); if (!svg||!svgW) return; constrainPan(); svg.style.width=(svgW*zoom)+'px'; svg.style.height=(svgH*zoom)+'px'; canvas.style.transform=`translate(${panX}px,${panY}px)`; label.textContent=Math.round(zoom*100)+'% \u2014 '+fitMode; }
+  function canPan() { return svgW*zoom+config.fitPadding*2>viewport.clientWidth || svgH*zoom+config.fitPadding*2>viewport.clientHeight; }
+  function computeSmartFit() { const vpW=viewport.clientWidth,vpH=viewport.clientHeight; const aW=Math.max(80,vpW-config.fitPadding*2),aH=Math.max(80,vpH-config.fitPadding*2); const contain=Math.min(aW/svgW,aH/svgH); let z=contain,mode='contain'; if(contain<config.readabilityFloor){const chartR=svgH/svgW,vpR=vpH/Math.max(vpW,1); if(chartR>=vpR){z=aW/svgW;mode='width-priority';}else{z=aH/svgH;mode='height-priority';}} return {zoom:clamp(z,config.minZoom,config.maxInitialZoom),mode}; }
+  function fitDiagram() { if(!svgW)return; const fit=computeSmartFit(); zoom=fit.zoom; fitMode=fit.mode; panX=(viewport.clientWidth-svgW*zoom)/2; panY=(viewport.clientHeight-svgH*zoom)/2; applyTransform(); }
+  function setOneToOne() { zoom=clamp(1,config.minZoom,config.maxZoom); fitMode='1:1'; panX=(viewport.clientWidth-svgW*zoom)/2; panY=(viewport.clientHeight-svgH*zoom)/2; applyTransform(); }
+  function zoomAround(factor,cx,cy) { const next=clamp(zoom*factor,config.minZoom,config.maxZoom); const ratio=next/zoom; panX=cx-ratio*(cx-panX); panY=cy-ratio*(cy-panY); zoom=next; fitMode='custom'; applyTransform(); }
+  function readSvgNaturalSize(svg) { let w=0,h=0; if(svg.viewBox?.baseVal?.width>0){w=svg.viewBox.baseVal.width;h=svg.viewBox.baseVal.height;} if(!w){w=parseFloat(svg.getAttribute('width'))||0;h=parseFloat(svg.getAttribute('height'))||0;} if(!w){const b=svg.getBBox();w=b.width;h=b.height;} if(!w){const r=svg.getBoundingClientRect();w=r.width||1000;h=r.height||700;} if(!svg.getAttribute('viewBox'))svg.setAttribute('viewBox',`0 0 ${w} ${h}`); return {w,h}; }
+  function setAdaptiveHeight() { if(!svgW)return; const usableW=Math.max(280,wrap.getBoundingClientRect().width-2); const idealH=(svgH/svgW)*usableW+config.fitPadding*2; const maxVp=Math.floor(innerHeight*config.maxHeightVh); const hardMax=Math.min(config.maxHeightPx,Math.max(config.minHeight+40,maxVp)); wrap.style.height=Math.round(clamp(idealH,config.minHeight,hardMax))+'px'; }
+  function openInNewTab() { const svg=canvas.querySelector('svg'); if(!svg)return; const clone=svg.cloneNode(true); clone.style.width=''; clone.style.height=''; const bg=isDark?'#0a1414':'#f6f8f8'; const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Diagram</title><style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:${bg};padding:40px;box-sizing:border-box}svg{max-width:100%;max-height:90vh;height:auto}</style></head><body>${clone.outerHTML}</body></html>`; open(URL.createObjectURL(new Blob([html],{type:'text/html'})),'_blank'); }
+  async function render() { try { const code=source.textContent.trim(); if(!code){label.textContent='Error: Empty source';return;} const id='diagram-'+Date.now()+'-'+Math.random().toString(36).slice(2,8); const {svg}=await mermaid.render(id,code); canvas.innerHTML=svg; const svgNode=canvas.querySelector('svg'); if(!svgNode){label.textContent='Error: No SVG';return;} const size=readSvgNaturalSize(svgNode); svgW=size.w; svgH=size.h; svgNode.removeAttribute('width'); svgNode.removeAttribute('height'); svgNode.style.maxWidth='none'; svgNode.style.display='block'; setAdaptiveHeight(); fitDiagram(); } catch(err){ console.error('Mermaid render failed:',err); label.textContent='Error: '+(err.message||'Render failed'); } }
+  const actions = { 'zoom-in':()=>zoomAround(1+config.zoomStep,viewport.clientWidth/2,viewport.clientHeight/2), 'zoom-out':()=>zoomAround(1/(1+config.zoomStep),viewport.clientWidth/2,viewport.clientHeight/2), 'zoom-fit':fitDiagram, 'zoom-one':setOneToOne, 'zoom-expand':openInNewTab };
+  Object.entries(actions).forEach(([a,h])=>wrap.querySelector(`[data-action="${a}"]`)?.addEventListener('click',h));
+  viewport.addEventListener('dblclick',fitDiagram);
+  viewport.addEventListener('wheel',(e)=>{ if(e.ctrlKey||e.metaKey){e.preventDefault();const rect=viewport.getBoundingClientRect();const f=e.deltaY<0?1+config.zoomStep:1/(1+config.zoomStep);zoomAround(f,e.clientX-rect.left,e.clientY-rect.top);return;} if(canPan()){e.preventDefault();panX-=e.deltaX;panY-=e.deltaY;applyTransform();} },{passive:false});
+  viewport.addEventListener('mousedown',(e)=>{ if(e.target.closest('.zoom-controls')||!canPan())return; wrap.classList.add('is-panning'); sx=e.clientX;sy=e.clientY;spx=panX;spy=panY;e.preventDefault(); activeDrag={onMove:(ev)=>{panX=spx+(ev.clientX-sx);panY=spy+(ev.clientY-sy);applyTransform();},onEnd:()=>wrap.classList.remove('is-panning')}; });
+  viewport.addEventListener('touchstart',(e)=>{ if(e.touches.length===1){sx=e.touches[0].clientX;sy=e.touches[0].clientY;spx=panX;spy=panY;} else if(e.touches.length===2){const dx=e.touches[0].clientX-e.touches[1].clientX,dy=e.touches[0].clientY-e.touches[1].clientY;touchDist=Math.sqrt(dx*dx+dy*dy);const r=viewport.getBoundingClientRect();touchCx=(e.touches[0].clientX+e.touches[1].clientX)/2-r.left;touchCy=(e.touches[0].clientY+e.touches[1].clientY)/2-r.top;} },{passive:true});
+  viewport.addEventListener('touchmove',(e)=>{ if(e.touches.length===1&&canPan()){if(touchDist>0){sx=e.touches[0].clientX;sy=e.touches[0].clientY;spx=panX;spy=panY;touchDist=0;}e.preventDefault();panX=spx+(e.touches[0].clientX-sx);panY=spy+(e.touches[0].clientY-sy);applyTransform();}else if(e.touches.length===2&&touchDist>0){e.preventDefault();const dx=e.touches[0].clientX-e.touches[1].clientX,dy=e.touches[0].clientY-e.touches[1].clientY;const d=Math.sqrt(dx*dx+dy*dy);zoomAround(d/touchDist,touchCx,touchCy);touchDist=d;} },{passive:false});
+  new ResizeObserver(()=>{if(svgW){setAdaptiveHeight();fitDiagram();}}).observe(wrap);
+  render();
+}
+document.querySelectorAll('.diagram-shell').forEach(initDiagram);
+
+/* TOC scroll-spy：高亮当前 section 对应的 TOC 链接 */
+(function() {
+  const toc = document.getElementById('toc'); if (!toc) return;
+  const links = toc.querySelectorAll('a'); const sections = [];
+  links.forEach(link => { const el = document.getElementById(link.getAttribute('href').slice(1)); if (el) sections.push({ el, link }); });
+  sections.forEach(s => new IntersectionObserver(entries => { entries.forEach(entry => { if (entry.isIntersecting) { links.forEach(l => l.classList.remove('active')); s.link.classList.add('active'); if (innerWidth <= 1000) s.link.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' }); } }); }, { rootMargin: '-10% 0px -80% 0px' }).observe(s.el));
+  links.forEach(link => link.addEventListener('click', e => { e.preventDefault(); const el = document.getElementById(link.getAttribute('href').slice(1)); if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); history.replaceState(null, '', '#' + el.id); } }));
+})();
+</script>
+</body>
+</html>
