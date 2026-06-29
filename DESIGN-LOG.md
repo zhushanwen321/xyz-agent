@@ -10,9 +10,9 @@
 |-------|------|
 | `2026-05-06-hello-pi` | MVP 起点：pi GUI 壳（原设计 Tauri+Radix，后迁 Electron） |
 | `2026-05-22-pixyz-agent-1-...-pi` | 跨平台打包 + pi 与 xyz-agent 边界厘清 |
+| `2026-05-21-runtime-frontend-arch-refactor` | Runtime 提取 Service 层（拆 server.ts/session-pool.ts 上帝类），前端死代码清理 + refCount 修复 → 奠定 Runtime transport/services/infra 三层基础 |
 | `2026-06-20-frontend-rebuild` | 前端 v3 重建（L0-L4 组件分层） |
 | `2026-06-23-render-runtime-integration` | renderer + runtime 集成 |
-| `2026-05-21-` | （主题名缺失，待补） |
 
 ### Runtime / 进程 / 隔离
 
@@ -90,6 +90,7 @@
 ## 关键决策节点（影响架构）
 
 - **2026-05-22**：确定 Electron（弃 Tauri）+ Runtime 独立 Node WebSocket 服务架构
+- **2026-05-21 runtime-frontend-arch-refactor**：Runtime 提取 Service 层，拆 server.ts/session-pool.ts 上帝类 → 奠定 transport/services/infra 三层基础
 - **2026-05-27 clarify-plugin-phase1**：Plugin Worker Thread 隔离模型确立（trusted 共享 / untrusted 独占）
 - **2026-06-07 instance-isolation**：dev/prod 数据隔离方案（XYZ_AGENT_DATA_DIR SSOT）→ NFR.md
 - **2026-06-08 agent-run-block-refactor**：AgentRunBlock 折叠模型（MergeBlock）确立，不改共享 message.ts 契约
