@@ -204,14 +204,15 @@ function onAddSelect(type: 'attach' | 'mention' | 'file' | 'slash'): void {
   cmdOpen.value = true
 }
 
-/** 命令浮层选中：插 slash chip / mention chip。slash 分支先清掉 /query 过滤文本再插 chip。 */
-function onCmdSelect(payload: { type: 'mention' | 'file' | 'slash'; name: string }): void {
+/** 命令浮层选中：插 slash chip / mention chip。slash 分支先清掉 /query 过滤文本再插 chip。
+ *  icon 按 source 透传给 chip（extension→terminal / skill→star / 默认 wrench），与选择框图标一致。 */
+function onCmdSelect(payload: { type: 'mention' | 'file' | 'slash'; name: string; icon?: string; description?: string }): void {
   cmdOpen.value = false
   slashTriggerActive.value = false // 复位触发态标记
   inputRef.value?.focus()
   if (payload.type === 'slash') {
     inputRef.value?.clearSlashQueryText()
-    inputRef.value?.insertSlashChip(payload.name)
+    inputRef.value?.insertSlashChip(payload.name, payload.icon)
   } else {
     inputRef.value?.insertMentionChip(payload.type === 'mention' ? '@' : '#', payload.name)
   }

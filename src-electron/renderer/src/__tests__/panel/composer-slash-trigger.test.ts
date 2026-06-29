@@ -161,6 +161,23 @@ describe('CommandPopover slash query 过滤（U6-U8）', () => {
     // PopoverContent 整体未挂载（无命令项按钮，无 cmd-pop 容器）
     expect(document.body.querySelector('[data-radix-popper-content-wrapper]')).toBeNull()
   })
+
+  // ── U8b 键盘导航幂等（回归：window capture + 事件冒泡双入口曾导致 ↑↓ 跳两项）──
+  // handleKeydown 对同一个 KeyboardEvent 第二次调用必须 no-op（defaultPrevented 守卫），
+  // 否则 activeIndex 被增减两次 → 方向键跳两项。
+  it('U8b ArrowDown 同一事件二次调用 handleKeydown → activeIndex 只进 1（幂等守卫）', async () => {
+    await mountPopover('')
+    const vm = wrapper!.vm as unknown as { handleKeydown: (e: KeyboardEvent) => boolean }
+    // 第一次（模拟 window capture 入口）：消费成功，preventDefault
+    const e1 = new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })
+    expect(vm.handleKeydown(e1)).toBe(true)
+    expect(e1.defaultPrevented).toBe(true)
+    // 第二次（模拟事件冒泡到 Composer 入口）：同一事件已 defaultPrevented → no-op，返回 false
+    const before = (vm as unknown as { activeIndex: number }).activeIndex
+    const ret2 = vm.handleKeydown(e1)
+    expect(ret2).toBe(false)
+    expect((vm as unknown as { activeIndex: number }).activeIndex).toBe(before) // 未二次跳动
+  })
 })
 
 // ─────────────────────── U9-U10 Composer wiring ───────────────────────

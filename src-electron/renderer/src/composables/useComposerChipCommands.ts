@@ -1,4 +1,6 @@
 import { type Ref } from 'vue'
+import { createVNode, render } from 'vue'
+import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
 
 /**
  * Composer 富文本 chip 的 DOM 操作（slash 命令 chip / @·# mention chip）。
@@ -64,8 +66,24 @@ export function useComposerChipCommands(
     return x
   }
 
-  /** 插入 slash 命令 chip（§2e：必须在最前，只允许一个，整体可删，× 可点删） */
-  function insertSlashChip(command: string): void {
+  /**
+   * 把 lucide 图标组件渲染进容器元素（contenteditable chip 走手动 DOM，无法用 <component>）。
+   * render 到空容器再 appendChild：把生成的 <svg> 挂到 chip 文本前。
+   * getText 的 TreeWalker(SHOW_TEXT) 不会读到 svg（无文本子节点），故图标不影响发送文本。
+   */
+  function renderIconInto(container: HTMLElement, iconKey?: string): void {
+    const Comp = iconKey ? SLASH_ICON_COMPONENTS[iconKey as keyof typeof SLASH_ICON_COMPONENTS] : undefined
+    if (!Comp) return
+    const host = document.createElement('span')
+    host.className = 'chip-icon'
+    host.setAttribute('aria-hidden', 'true')
+    render(createVNode(Comp, { size: 12 }), host)
+    container.appendChild(host)
+  }
+
+  /** 插入 slash 命令 chip（§2e：必须在最前，只允许一个，整体可删，× 可点删）。
+   *  icon 按 source 透传（extension→terminal / skill→star / 默认 wrench），与选择框图标一致。 */
+  function insertSlashChip(command: string, icon?: string): void {
     const el = getEl()
     if (!el) return
     el.focus()
@@ -74,7 +92,11 @@ export function useComposerChipCommands(
     const chip = document.createElement('span')
     chip.className = 'slash-chip'
     chip.contentEditable = 'false'
-    chip.textContent = command
+    renderIconInto(chip, icon)
+    const label = document.createElement('span')
+    label.className = 'chip-label'
+    label.textContent = command
+    chip.appendChild(label)
     chip.appendChild(makeXButton(chip))
     // chip 必须在输入流最前（slash 命令是操作模式前缀）
     el.insertBefore(chip, el.firstChild)

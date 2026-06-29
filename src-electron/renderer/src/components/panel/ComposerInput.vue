@@ -7,8 +7,8 @@
   -->
   <div
     ref="elRef"
-    class="composer-input min-h-[60px] max-h-[120px] overflow-y-auto px-3.5 pb-1 pt-[11px] text-[13px] leading-[1.55] text-fg outline-none"
-    :class="{ 'is-empty': isEmpty }"
+    class="composer-input relative min-h-[60px] max-h-[120px] overflow-y-auto px-3.5 pb-1 pt-[11px] text-[13px] leading-[1.55] text-fg outline-none"
+    :class="{ 'is-empty': isEmpty, 'is-focused': isFocused }"
     :contenteditable="!disabled"
     :data-placeholder="placeholder"
     role="textbox"
@@ -18,9 +18,10 @@
     @input="onInput"
     @keydown="onKeydown"
     @paste="onPaste"
+    @focus="isFocused = true"
+    @blur="onBlur"
     @compositionstart="composing = true"
     @compositionend="onCompositionEnd"
-    @blur="saveSelection"
     @mouseup="saveSelection"
   />
 </template>
@@ -47,6 +48,8 @@ const emit = defineEmits<{
 const elRef = ref<HTMLDivElement | null>(null)
 const composing = ref(false)
 const isEmpty = ref(true)
+/** 聚焦态：控制 placeholder 显隐（仅未聚焦且空时显）与光标可见性（未聚焦不显光标） */
+const isFocused = ref(false)
 /** 保存的光标 Range：命令浮层打开会夺走焦点，选中后需恢复光标再插 chip */
 let savedRange: Range | null = null
 
@@ -135,6 +138,12 @@ function saveSelection(): void {
   }
 }
 
+/** blur：清聚焦态（隐藏光标 + 末尾不再闪），并保存选区供命令浮层后恢复光标 */
+function onBlur(): void {
+  isFocused.value = false
+  saveSelection()
+}
+
 /** 恢复选区（插 chip 前调用） */
 function restoreSelection(): void {
   const el = getEl()
@@ -212,6 +221,7 @@ function setText(text: string): void {
 }
 
 function focus(): void {
+  isFocused.value = true
   getEl()?.focus()
 }
 
@@ -238,9 +248,14 @@ onMounted(() => {
    用 --subtle（三级文字/占位，design-tokens SSOT + design-system §4 明确）。
    设计意图：占位是三级最暗层，与输入正文 --fg 拉开梯度，弱化提示语。
    原 var(--text-tertiary) 未定义会回退到 inherit → --fg（与正文同亮，丧失占位语义），
-   style.css 已加 --text-tertiary: var(--subtle) 兜底别名；此处显式用 --subtle 对齐 SSOT。 */
-.composer-input.is-empty::before {
+   style.css 已加 --text-tertiary: var(--subtle) 兜底别名；此处显式用 --subtle 对齐 SSOT。
+   —— absolute 脱文档流：不占行内位，光标始终在内容区最左（开头）而非 placeholder 末尾。
+   —— 仅未聚焦且空时显（is-empty && !is-focused）：聚焦即隐，光标停在开头闪烁。 */
+.composer-input.is-empty:not(.is-focused)::before {
   content: attr(data-placeholder);
+  position: absolute;
+  inset: 0;
+  padding: inherit;
   color: var(--subtle);
   pointer-events: none;
 }
@@ -257,6 +272,15 @@ onMounted(() => {
   color: var(--reasoning);
   font: 500 12px / 1.4 var(--font-sans);
   user-select: none;
+}
+.composer-input :deep(.slash-chip .chip-icon) {
+  display: inline-flex;
+  align-items: center;
+  color: var(--reasoning);
+}
+.composer-input :deep(.slash-chip .chip-icon svg) {
+  width: 12px;
+  height: 12px;
 }
 .composer-input :deep(.slash-chip .chip-x) {
   cursor: pointer;

@@ -6,6 +6,12 @@
     **anchor 是 slot 传入的 composer-box**：composer-box 内任何 focus 都算 inside，
     不触发 onFocusOutside dismiss（修复 focus-outside 误关 bug）。
     键盘事件（↑↓ ⏎ Esc）由 Composer 在 ComposerInput keydown 时调 handleKeydown 路由进来。
+    **@open-auto-focus.prevent**：禁掉 reka-ui PopoverContent 的 FocusScope 自动聚焦——
+    否则浮层打开会把焦点抢到首个命令按钮，contenteditable 不再收键，导致
+    「敲 / 后无法继续输入做实时筛选」（query 实时过滤依赖焦点留在输入区）。
+    键盘导航走 window capture 监听，与焦点位置无关，故禁自动聚焦不影响 ↑↓⏎Esc。
+    **宽度**：min-w 取 --reka-popper-anchor-width（= composer-box 宽），覆盖 composer；
+    右侧提示词列透传 slash 命令 description（skill 描述等），无则退显 kind 标签。
   -->
   <Popover v-model:open="controlledOpen">
     <!-- anchor：composer-box 本身（由调用方通过 slot 传入），DOM contains 成立 →
@@ -19,7 +25,8 @@
       align="start"
       :side-offset="6"
       :collision-padding="8"
-      class="w-[320px] overflow-hidden p-0"
+      class="min-w-[var(--reka-popper-anchor-width)] max-w-[560px] overflow-hidden p-0"
+      @open-auto-focus.prevent
     >
       <!-- filter header -->
       <div class="flex items-center gap-1.5 border-b border-border bg-white/[0.015] px-2.5 py-1.5 font-mono text-[11px] text-subtle">
@@ -28,7 +35,7 @@
         <span>· {{ items.length }} 项</span>
       </div>
       <!-- list -->
-      <div class="max-h-[132px] overflow-y-auto py-1">
+      <div class="max-h-[180px] overflow-y-auto py-1">
         <Button
           v-for="(item, i) in items"
           :key="item.id"
@@ -43,8 +50,10 @@
             class="size-[15px] shrink-0"
             :class="i === activeIndex ? 'text-accent' : 'text-subtle'"
           />
-          <span class="flex-1 truncate">{{ item.name }}</span>
-          <span class="ml-auto shrink-0 font-mono text-[10px] text-subtle">{{ item.kind }}</span>
+          <span class="shrink-0 font-mono" :class="i === activeIndex ? 'text-accent' : 'text-fg'">{{ item.name }}</span>
+          <!-- 右侧提示词：slash 命令透传 description（skill 描述等）；无则退显 kind 标签 -->
+          <span v-if="item.description" class="ml-auto shrink-0 truncate max-w-[260px] text-subtle">{{ item.description }}</span>
+          <span v-else class="ml-auto shrink-0 font-mono text-[10px] text-subtle">{{ item.kind }}</span>
         </Button>
       </div>
     </PopoverContent>
@@ -52,12 +61,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, markRaw, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Braces, FileText, Folder, Star, Terminal, Wrench } from '@lucide/vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import * as events from '@/api/events'
 import { composer } from '@/api'
+import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
 
 type CmdType = 'mention' | 'file' | 'slash'
 
@@ -72,7 +81,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:open': [value: boolean]
-  select: [payload: { type: CmdType; name: string }]
+  select: [payload: { type: CmdType; name: string; icon?: string; description?: string }]
 }>()
 
 /** 受控 open：双向同步 props.open ↔ emit update:open */
@@ -103,12 +112,12 @@ async function loadCandidates(): Promise<void> {
 }
 onMounted(() => { void loadCandidates() })
 
-const slashCommands = ref<Array<{ id: string; name: string; kind: string; icon: string }>>([])
+const slashCommands = ref<Array<{ id: string; name: string; kind: string; icon: string; description?: string }>>([])
 
 /**
  * 订阅 session.commands（D8：走 session 通道 events.on(sessionId)，非 onGlobalType）。
  * payload 已契约化：{ commands: Array<{ name, description?, source }> }。
- * 命令 kind 取 source（extension/skill 等），icon 按 source 推断。
+ * 命令 kind 取 source（extension/skill 等），icon 按 source 推断，description 透传供浮层提示行 + chip 展示。
  * sessionId 变化时重订（Composer 切 session）。
  */
 let unsubCommands: (() => void) | null = null
@@ -121,11 +130,12 @@ function subscribeCommands(sid: string | undefined): void {
     // msg 经 type 守卫后 payload 仍为联合宽类型（events.on 非 onGlobalType，无 per-type 泛型收窄），
     // 故窄断言取 commands（payload 已契约化，见 protocol.ts ServerMessageMap）
     const cmds = (msg.payload as { commands: Array<{ name: string; description?: string; source: string }> }).commands
-    slashCommands.value = cmds.map((c: { name: string; source: string }) => ({
+    slashCommands.value = cmds.map((c: { name: string; description?: string; source: string }) => ({
       id: c.name,
       name: c.name,
       kind: c.source,
       icon: iconForSource(c.source),
+      description: c.description,
     }))
   })
 }
@@ -140,7 +150,7 @@ function iconForSource(source: string): string {
   return 'wrench'
 }
 
-/** 统一候选项视图（三种数据源归一为 { id, name, kind, icon }） */
+/** 统一候选项视图（三种数据源归一为 { id, name, kind, icon, description? }） */
 const items = computed(() => {
   if (props.type === 'mention') {
     return mentionCandidates.value.map((m) => ({
@@ -148,6 +158,7 @@ const items = computed(() => {
       name: m.name,
       kind: m.kind,
       icon: m.icon,
+      description: undefined,
     }))
   }
   if (props.type === 'file') {
@@ -156,6 +167,7 @@ const items = computed(() => {
       name: f.name,
       kind: f.kind,
       icon: f.kind === '目录' ? 'folder' : 'file',
+      description: undefined,
     }))
   }
   const all = slashCommands.value
@@ -167,6 +179,7 @@ const items = computed(() => {
     name: c.name,
     kind: c.kind,
     icon: c.icon,
+    description: c.description,
   }))
 })
 
@@ -178,30 +191,29 @@ const symbolClass = computed(() => ({
   'text-reasoning': props.type === 'slash',
 }))
 
-/** icon 字段 → lucide 组件 */
-const ICONS = {
-  file: markRaw(FileText),
-  symbol: markRaw(Braces),
-  skill: markRaw(Star),
-  folder: markRaw(Folder),
-  terminal: markRaw(Terminal),
-  wrench: markRaw(Wrench),
-  star: markRaw(Star),
-}
+/** icon 字段 → lucide 组件（slash chip 复用同一映射，保证选择框/内联 chip 图标一致） */
+const ICONS = SLASH_ICON_COMPONENTS
 function iconFor(item: { icon: string }) {
   return ICONS[item.icon as keyof typeof ICONS] ?? ICONS.file
 }
 
-function onSelect(item: { name: string }): void {
-  emit('select', { type: props.type, name: item.name })
+function onSelect(item: { name: string; icon?: string; description?: string }): void {
+  emit('select', { type: props.type, name: item.name, icon: item.icon, description: item.description })
 }
 
 /**
  * Composer 在 ComposerInput keydown 时调用：浮层 open 则处理 ↑↓ ⏎ Esc。
  * 返回 true 表示已消费（Composer 不再走发送逻辑）。
+ *
+ * 幂等守卫（defaultPrevented）：浮层 open 时键盘导航有两条入口都会触达本函数——
+ *   ① window capture（onWindowKeydown，目标阶段前先到）
+ *   ② 事件冒泡到 contenteditable → Composer.onKeydown → 本函数
+ * 焦点留在输入区时两条都命中同一个 KeyboardEvent，若不守卫 ↑↓ 会增减两次（跳两项）。
+ * 用 e.defaultPrevented 做幂等闸：① 先 preventDefault，② 看到 defaultPrevented 直接 return false。
  */
 function handleKeydown(e: KeyboardEvent): boolean {
   if (!props.open) return false
+  if (e.defaultPrevented) return false // 幂等守卫：① 已消费则 ② 不再重复处理
   const list = items.value
   if (list.length === 0) return false
   if (e.key === 'ArrowDown') {
