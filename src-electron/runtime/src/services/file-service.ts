@@ -27,6 +27,12 @@ import { FileError } from './file-error.js'
 export interface FileServiceOptions {
   sessionService: ISessionService
   executor: IFileExecutor
+  /**
+   * file.read 的白名单目录（BC-3，#7）：file.read protocol payload 只有 path 无 sessionId，
+   * 无法走 cwd 守门。这些全局白名单目录（~/.agents/skills、piAgentDir/skills、piAgentDir/npm）
+   * 允许无 session 读取（skill 文件预览）。装配时（index.ts）从 configService 算出传入。
+   */
+  allowedReadDirs?: string[]
 }
 
 /** 读取超时（ms），listDir/stat/readFile 共用（NFR ④K-2）。导出供测试 advanceTimersByTime 用。 */
@@ -87,6 +93,28 @@ export class FileService {
     if (!isUnderOrEqual(cwd, resolvePath_)) throw new FileError('out_of_cwd', path)
     const statResult = await this.callFs(() => this.opts.executor.stat(resolvePath_))
     const full = await this.callFs(() => this.opts.executor.readFile(resolvePath_))
+    if (statResult.size > MAX_FILE_SIZE) {
+      return { content: full.slice(0, MAX_FILE_SIZE), truncated: true }
+    }
+    return { content: full, truncated: false }
+  }
+
+  /**
+   * 从白名单目录读文件（BC-3，#7，T6.11）。file.read protocol payload 只有 path 无 sessionId，
+   * 无法走 cwd 守门，改走 allowedReadDirs 全局白名单（~/.agents/skills 等 skill 目录）。
+   *
+   * 原 server.ts handleFileRead 内联逻辑下沉至此（解三层违纪 AC-2b）。白名单目录由装配时传入。
+   * @throws FileError('out_of_cwd' | 'not_found' | 'permission_denied' | 'timeout' | 'read_failed')
+   */
+  async readFileFromWhitelist(path: string): Promise<{ content: string; truncated: boolean }> {
+    const allowed = this.opts.allowedReadDirs ?? []
+    const absPath = resolvePath(path)
+    // 白名单守门（与旧 server.ts handleFileRead 一致：absPath 必须在某白名单目录之下）
+    if (!allowed.some((dir) => isUnderOrEqual(dir, absPath))) {
+      throw new FileError('out_of_cwd', `路径不在允许的 skill 目录内: ${path}`)
+    }
+    const statResult = await this.callFs(() => this.opts.executor.stat(absPath))
+    const full = await this.callFs(() => this.opts.executor.readFile(absPath))
     if (statResult.size > MAX_FILE_SIZE) {
       return { content: full.slice(0, MAX_FILE_SIZE), truncated: true }
     }

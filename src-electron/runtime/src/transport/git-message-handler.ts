@@ -32,7 +32,7 @@ export class GitMessageHandler {
   constructor(private ctx: GitHandlerContext) {}
 
   /** D1: 本 handler 认领的 ClientMessageType 清单。 */
-  readonly handles: ClientMessageType[] = ['git.status', 'git.stage', 'git.unstage', 'git.commit', 'git.checkout', 'git.createBranch']
+  readonly handles: ClientMessageType[] = ['git.status', 'git.diff', 'git.stage', 'git.unstage', 'git.commit', 'git.checkout', 'git.createBranch']
 
   async handleGitMessage(msg: ClientMessage, ws: WsType): Promise<void> {
     switch (msg.type) {
@@ -41,6 +41,15 @@ export class GitMessageHandler {
         try {
           const result = await this.ctx.gitService.getStatus(sessionId)
           return this.ctx.reply(ws, msg.id, 'git.status:result', result as unknown as Record<string, unknown>)
+        } catch (e) {
+          return this.sendGitError(ws, msg.id, sessionId, e)
+        }
+      }
+      case 'git.diff': {
+        const { sessionId, path } = msg.payload
+        try {
+          const result = await this.ctx.gitService.getFileDiff(sessionId, path)
+          return this.ctx.reply(ws, msg.id, 'git.diff:result', { sessionId, patch: result.patch, binary: result.binary })
         } catch (e) {
           return this.sendGitError(ws, msg.id, sessionId, e)
         }

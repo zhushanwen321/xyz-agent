@@ -149,6 +149,33 @@ export class GitService {
   }
 
   /**
+   * 取单文件 diff（#5，UC-6 点文件预览的后端）。
+   *
+   * 数据流：getCwd → 新写越界校验（K-6，仿 resolveFilePaths 但 diff 路径无先例）→
+   *   executor.exec(cwd, 'diff', ['--', path])（NFR-AC-S3 经 port 数组形式）。
+   *
+   * 边界（AC-5.1~5.5）：
+   * - session 不存在 → GitError('session_not_found')
+   * - 路径越界 cwd → GitError('path_not_allowed')（NFR-AC-S5，K-6 新增非复用）
+   * - 非 git 仓库 / 路径无效 → git diff 退出码非 0，返回空 patch（AC-5.3，T6.14）
+   * - 二进制文件 → stdout 含 "Binary files differ"，binary=true（AC-5.5，T6.6）
+   * - 超时 → execSafe 抛 GitExecutorError → 转 GitError('git_failed')（AC-5.4，T6.13）
+   */
+  async getFileDiff(sessionId: string, path: string): Promise<{ patch: string; binary: boolean }> {
+    const cwd = this.requireCwd(sessionId)
+    // K-6：新写越界校验（diff 路径无先例，不复用 resolveFilePaths——那个只处理写操作的批量路径）
+    const absPath = resolvePath(cwd, path)
+    if (!isUnderOrEqual(cwd, absPath)) {
+      throw new GitError('path_not_allowed', `路径越界，禁止读取 cwd 之外的文件: ${path}`)
+    }
+    const result = await this.execSafe(cwd, 'diff', ['--', path])
+    // 二进制文件：git diff 输出 "Binary files a/x and b/x differ"
+    const binary = result.stdout.includes('Binary files') && result.stdout.includes('differ')
+    // 非 git 仓库 / 路径无效 → exitCode 非 0 + 空 stdout → 返回空 patch（T6.14 cwd 非 repo）
+    return { patch: result.stdout, binary }
+  }
+
+  /**
    * 暂存文件（git add）。空 filePaths → git add -A（全量暂存）。
    * 路径越界 → GitError('path_not_allowed')。
    */

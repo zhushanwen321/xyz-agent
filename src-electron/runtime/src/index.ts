@@ -17,7 +17,7 @@ import { PiExtensionSettings } from './infra/pi/pi-extension-settings.js'
 import { EventAdapter } from './infra/pi/event-adapter.js'
 import { NavigateInterceptorFactory } from './infra/pi/navigate-interceptor.js'
 import { SessionTreeReaderAdapter } from './infra/pi/session-tree-reader-adapter.js'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import type { INavigateInterceptor } from './services/ports/tree.js'
 import { ExtensionService } from './services/extension-service.js'
 import { PluginRegistry } from './services/plugin-service/plugin-registry.js'
@@ -169,7 +169,19 @@ async function main(): Promise<void> {
   const gitService = new GitService({ sessionService, executor: new GitExecutor() })
   // FileService：对称注入 infra FsExecutor（node:fs/promises adapter）+ sessionService（取 cwd 做越界守门）。
   // 经 server.setServices 注入到 FileMessageHandler（file.tree/expand/write.* 路由）。
-  const fileService = new FileService({ sessionService, executor: new FsExecutor() })
+  // allowedReadDirs：file.read 的 BC-3 白名单（~/.agents/skills、piAgentDir/skills、piAgentDir/npm），
+  //   从 configService 算出传入（FileService 不直接依赖 configService，保持单一职责）。
+  const piAgentDir = configService.getPiAgentDir()
+  const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? ''
+  const fileService = new FileService({
+    sessionService,
+    executor: new FsExecutor(),
+    allowedReadDirs: [
+      resolve(homeDir, '.agents/skills'),
+      resolve(piAgentDir, 'skills'),
+      resolve(piAgentDir, 'npm'),
+    ],
+  })
 
   modelService.setServices(sessionService, configService, server)
   server.setServices(sessionService, configService, modelService, treeService, extensionService, pluginService, gitService, fileService)

@@ -23,6 +23,14 @@ export function status(sessionId: string): Promise<GitStatusResult> {
   return result
 }
 
+/** 单文件 diff patch（#5，UC-6 点文件预览）。越界/超时/非 repo → Promise reject（error envelope）。 */
+export function getDiff(sessionId: string, path: string): Promise<{ patch: string; binary: boolean }> {
+  const id = pending.create()
+  const result = pending.register<{ patch: string; binary: boolean }>(id)
+  transport.send({ type: 'git.diff', id, payload: { sessionId, path } })
+  return result
+}
+
 /** 暂存文件。空 filePaths → git add -A（全量暂存）。 */
 export function stage(sessionId: string, filePaths?: string[]): Promise<void> {
   const id = pending.create()

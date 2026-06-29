@@ -207,10 +207,9 @@ export class RuntimeServer implements IMessageBroker {
     }
 
     // ── Build the central dispatch table (D1) ───────────────────────
-    // ping/file.read 内联（file.read 旧内联 BC-3 白名单，W2 迁入 fileMessageHandler）；settings 走兜底（见 handleMessage）。
+    // ping 内联（无对应 handler）；file.read 已迁入 fileMessageHandler（W2）；settings 走兜底（见 handleMessage）。
     this.routes = new Map([
       ['ping', (msg, ws) => this.reply(ws, msg.id, 'pong', {})],
-      ['file.read', (msg, ws) => this.handleFileRead(msg, ws)],
       ['session.compact', (msg, ws) => this.sessionHandler.handleSessionCompact(msg as Extract<ClientMessage, { type: 'session.compact' }>, ws)],
       ...this.sessionHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => this.sessionHandler.handleSessionMessage(msg, ws)] as const),
       ...this.treeMessageHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => this.treeMessageHandler.handleTreeMessage(msg, ws)] as const),
@@ -477,36 +476,6 @@ export class RuntimeServer implements IMessageBroker {
 
   handleStatusSetUpdate(payload: { sessionId: string; key: string; text: string }): void {
     this.bridgeHandler.handleStatusSetUpdate(payload)
-  }
-
-  /** Handle file.read — reads a skill file and returns its text content.
-   *  Restricted to skill directories for security (no arbitrary file read). */
-  private async handleFileRead(msg: ClientMessage, ws: WsType): Promise<void> {
-    const { path: filePath } = msg.payload as { path: string }
-    if (!filePath || typeof filePath !== 'string') {
-      this.sendError(ws, 'invalid_path', 'Missing or invalid path', msg.id)
-      return
-    }
-    const normalize = (p: string) => p.split(/[/\\]/).join('/')
-    const absPath = normalize(resolve(filePath))
-    const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? ''
-    const allowedPrefixes = [
-      // ~/.agents/skills is a global skill directory (not affected by XYZ_AGENT_DATA_DIR)
-      normalize(resolve(homeDir, '.agents/skills')),
-      normalize(resolve(this.configService.getPiAgentDir(), 'skills')),
-      normalize(resolve(this.configService.getPiAgentDir(), 'npm')),
-    ]
-    if (!allowedPrefixes.some(prefix => absPath.startsWith(prefix + '/'))) {
-      this.sendError(ws, 'path_not_allowed', 'Path outside allowed skill directories', msg.id, { path: filePath })
-      return
-    }
-    try {
-      const fs = await import('fs/promises')
-      const content = await fs.readFile(filePath, 'utf-8')
-      this.reply(ws, msg.id, 'file.read:result', { content, path: filePath })
-    } catch (e) {
-      this.sendError(ws, 'file_read_failed', toErrorMessage(e), msg.id, { path: filePath })
-    }
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────

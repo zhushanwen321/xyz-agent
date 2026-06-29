@@ -31,14 +31,13 @@ export class FileMessageHandler {
 
   /**
    * D1: 本 handler 认领的 ClientMessageType 清单。
-   * 注：file.read 暂不在 handles 中——W1b 阶段 file.read 仍走 server.ts 旧内联 handleFileRead
-   * （BC-3 三目录白名单，不依赖 cwd/sessionId）。W2 扩展 file.read 权限（加 sessionId + cwd 守门 +
-   * BC-3 兼容）后，把 file.read 迁入此 handler 并从 server.ts 删除内联。
-   * file.tree/expand/write.* 是新增消息类型，本 Wave 直接路由。
+   * file.read 已从 server.ts 内联迁入（W2，解三层违纪 AC-2b）：走 FileService.readFileFromWhitelist
+   * （BC-3 三目录白名单：~/.agents/skills、piAgentDir/skills、piAgentDir/npm）。
    */
   readonly handles: ClientMessageType[] = [
     'file.tree',
     'file.tree.expand',
+    'file.read',
     'file.write.create',
     'file.write.rename',
     'file.write.delete',
@@ -65,16 +64,11 @@ export class FileMessageHandler {
         }
       }
       case 'file.read': {
-        // file.read 的 sessionId：当前 protocol file.read payload 只有 path（无 sessionId）。
-        // FileService.readFile 需要 sessionId 取 cwd 做越界守门。此处 sessionId 缺失时用空串，
-        // FileService 会抛 session_not_found。W2 扩展 file.read 权限时若需 sessionId 会同步扩 protocol。
+        // file.read payload 只有 path（无 sessionId），走 BC-3 白名单守门（readFileFromWhitelist）。
+        // W2 从 server.ts 内联迁入此 handler，白名单目录由装配时传入 FileService。
         const { path } = msg.payload
-        // file.read 无 sessionId 字段——BC-3 原设计是 3 目录白名单（不依赖 cwd）。
-        // W1b FileService.readFile 走 cwd 守门；W2 会扩 BC-3 白名单兼容旧 skill 目录读取。
-        // 此处暂以 undefined sessionId 调用，FileService 会抛 session_not_found（预期：W1b 阶段 file.read 暂不可用，W2 修）。
-        // 为不破坏现有 skill 文件读取，W1b 保留 server.ts handleFileRead 作为 file.read 的临时路由（见 server.ts routes）。
         try {
-          const result = await this.ctx.fileService.readFile('', path)
+          const result = await this.ctx.fileService.readFileFromWhitelist(path)
           return this.ctx.reply(ws, msg.id, 'file.read:result', { content: result.content, truncated: result.truncated, path })
         } catch (e) {
           return this.sendFileError(ws, msg.id, '', e)
