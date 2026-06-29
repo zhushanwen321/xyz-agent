@@ -3,6 +3,7 @@
 import type { ProviderInfo, SkillInfo, AgentInfo, ModelInfo, SkillDirConfig } from './provider'
 import type { SessionGroup } from './session'
 import type { FileChange, ChangeSetStatus } from './message'
+import type { FileNode } from './file-tree'
 
 // ── ClientMessageType（保持向后兼容）──────────────────────────
 
@@ -29,6 +30,9 @@ export type ClientMessageType =
   | 'plugin.config.get' | 'plugin.config.set'
   | 'plugin.uiResponse'
   | 'file.read'
+  | 'file.tree' | 'file.tree.expand'
+  | 'git.diff'
+  | 'file.write.create' | 'file.write.rename' | 'file.write.delete'
   | 'git.status' | 'git.stage' | 'git.unstage' | 'git.commit' | 'git.checkout' | 'git.createBranch'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
@@ -105,6 +109,12 @@ export interface ClientMessageMap {
   'plugin.config.set': { pluginId: string; key: string; value: unknown }
   'plugin.uiResponse': { requestId: string; result: unknown }
   'file.read': { path: string }
+  'file.tree': { sessionId: string; showIgnored?: boolean }
+  'file.tree.expand': { sessionId: string; path: string; showIgnored?: boolean }
+  'git.diff': { sessionId: string; path: string }
+  'file.write.create': { sessionId: string; path: string; content: string }
+  'file.write.rename': { sessionId: string; oldPath: string; newPath: string }
+  'file.write.delete': { sessionId: string; path: string }
   'git.status': { sessionId: string }
   'git.stage': { sessionId: string; filePaths?: string[] }
   'git.unstage': { sessionId: string; filePaths?: string[] }
@@ -171,6 +181,12 @@ export type ClientMessage =
   | { type: 'plugin.config.set'; id?: string; payload: ClientMessageMap['plugin.config.set'] }
   | { type: 'plugin.uiResponse'; id?: string; payload: ClientMessageMap['plugin.uiResponse'] }
   | { type: 'file.read'; id?: string; payload: ClientMessageMap['file.read'] }
+  | { type: 'file.tree'; id?: string; payload: ClientMessageMap['file.tree'] }
+  | { type: 'file.tree.expand'; id?: string; payload: ClientMessageMap['file.tree.expand'] }
+  | { type: 'git.diff'; id?: string; payload: ClientMessageMap['git.diff'] }
+  | { type: 'file.write.create'; id?: string; payload: ClientMessageMap['file.write.create'] }
+  | { type: 'file.write.rename'; id?: string; payload: ClientMessageMap['file.write.rename'] }
+  | { type: 'file.write.delete'; id?: string; payload: ClientMessageMap['file.write.delete'] }
   | { type: 'git.status'; id?: string; payload: ClientMessageMap['git.status'] }
   | { type: 'git.stage'; id?: string; payload: ClientMessageMap['git.stage'] }
   | { type: 'git.unstage'; id?: string; payload: ClientMessageMap['git.unstage'] }
@@ -221,6 +237,9 @@ export type ServerMessageType =
   | 'message.stream_error'
   | 'message.file_changes'
   | 'file.read:result'
+  | 'file.tree:result' | 'file.tree.expand:result'
+  | 'git.diff:result'
+  | 'file.write.create:result' | 'file.write.rename:result' | 'file.write.delete:result'
   | 'git.status:result'
 
 /**
@@ -279,6 +298,16 @@ export interface ServerMessageMapBase {
   // git.status:result：git.status 请求的同步 reply（Wave 1a git domain 经 pending.resolve 消费）。
   // git.stage/unstage/commit 的 ack 复用既有 'message.status'（payload {sessionId, status}），非新增。
   'git.status:result': GitStatusResult
+  /** file.tree:result：文件树首加载 reply，顶层+一级子 FileNode[] */
+  'file.tree:result': { sessionId: string; tree: FileNode[] }
+  /** file.tree.expand:result：展开目录 reply，单层子 FileNode[] */
+  'file.tree.expand:result': { sessionId: string; children: FileNode[] }
+  /** git.diff:result：文件 diff reply（patch + binary 标志） */
+  'git.diff:result': { sessionId: string; patch: string; binary: boolean }
+  /** file.write.*.result：文件操作骨架 reply（D-018 实现延后，AC-14.4 结构化「待实现」） */
+  'file.write.create:result': { sessionId: string; path: string; implemented: false }
+  'file.write.rename:result': { sessionId: string; newPath: string; implemented: false }
+  'file.write.delete:result': { sessionId: string; path: string; implemented: false }
 
   // ── 消息流控制（W11+ 审查补充类型）──
   'message.auto_retry_start': { sessionId: string; attempt: number; maxAttempts?: number; delayMs?: number; errorMessage?: string }
