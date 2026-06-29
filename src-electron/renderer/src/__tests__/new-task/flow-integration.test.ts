@@ -12,8 +12,8 @@
  * - submitFirstMessage（landing 态首发）：create+appendSession+activeId+loadSession+navigation.push+send+completed
  *
  * 覆盖（选目录 #5）：
- * - T3.1 selectWorkspace：cwd 变→预创建 session；cwd 未变→noop
- * - T3.3 openDirDialog：pickDirectory canceled=false→预创建 session
+ * - T3.1 selectWorkspace：cwd 变→只记 pendingCwd（延迟 create）；cwd 未变→noop
+ * - T3.3 openDirDialog：pickDirectory canceled=false→只记 pendingCwd（延迟 create）
  * - T3.4 openDirDialog：canceled=true→落回 dir-popover，cwd 不变，不 create
  * - T3.5 E5 IPC 抛错：pickDirectory reject→openDirDialog reject 显错不崩、state 落回不卡死
  * 覆盖（submitFirstMessage 延迟 create）：
@@ -35,7 +35,7 @@ import type { SessionSummary, SessionGroup } from '@xyz-agent/shared'
 
 // 可控依赖：测试按需让 create/pickDirectory/chat.send pending/resolve/reject
 const createCtrl = vi.hoisted(() => ({
-  // 预创建语义下 selectWorkspace/openDirDialog 会调 create + getCommands，需返回有效值
+  // submitFirstMessage（延迟 create）会调 create，需返回有效值
   create: vi.fn<(cwd?: string) => Promise<SessionSummary>>().mockImplementation((cwd) =>
     Promise.resolve({
       id: `s-${Math.random().toString(36).slice(2, 8)}`,
@@ -48,8 +48,6 @@ const createCtrl = vi.hoisted(() => ({
     }),
   ),
   remove: vi.fn<(sessionId: string) => Promise<void>>().mockResolvedValue(undefined),
-  getCommands: vi.fn<(sid: string) => Promise<{ sessionId: string; commands: Array<{ name: string; source: string }> }>>()
-    .mockResolvedValue({ sessionId: 'x', commands: [{ name: '/commit', source: 'extension' }] }),
 }))
 const pickCtrl = vi.hoisted(() => ({
   pickDirectory: vi.fn<() => Promise<{ canceled: boolean; path: string | null }>>(),
@@ -59,7 +57,7 @@ const chatMock = vi.hoisted(() => ({
 }))
 
 vi.mock('@/api', () => ({
-  session: { create: createCtrl.create, remove: createCtrl.remove, getCommands: createCtrl.getCommands },
+  session: { create: createCtrl.create, remove: createCtrl.remove },
 }))
 vi.mock('@/lib/ipc', () => ({ pickDirectory: pickCtrl.pickDirectory }))
 // submitFirstMessage 终端调用 useChat.send；mock 掉避免拖入 chat 订阅机制（useChat 自有单测）
@@ -122,7 +120,7 @@ describe('⌘N 主流程（startFlow 统一延迟 create）', () => {
 })
 
 describe('选目录链路（selectWorkspace / openDirDialog，#5）', () => {
-  it('T3.1 cwd 变→预创建 session，chip 回灌新 cwd', async () => {
+  it('T3.1 cwd 变→只记 pendingCwd（延迟 create，不建 session），chip 回灌新 cwd', async () => {
     setGroups([mkSession({ id: 'old', cwd: '/repo', lastActiveAt: 1 })])
     const flow = useNewTaskFlow()
     await flow.startFlow()
@@ -132,34 +130,35 @@ describe('选目录链路（selectWorkspace / openDirDialog，#5）', () => {
     createCtrl.create.mockClear()
     await flow.selectWorkspace('/other-repo')
 
-    // 预创建语义：选目录即 create session（首次选无旧 session，不删）
+    // 延迟 create：选目录不建 session（首发提交才建），只记 pendingCwd
+    expect(createCtrl.create).not.toHaveBeenCalled()
     expect(createCtrl.remove).not.toHaveBeenCalled()
-    expect(createCtrl.create).toHaveBeenCalledWith('/other-repo')
     expect(flow.state.value).toBe('landing')
-    expect(flow.currentCwd.value).toBe('/other-repo') // chip 回灌新 cwd
+    expect(flow.currentCwd.value).toBe('/other-repo') // chip 回灌 pendingCwd
+    expect(flow.currentSessionId.value).toBeNull() // 恒 null
   })
 
-  it('T3.1 cwd 未变→noop（不重复建删，仅关 popover）', async () => {
+  it('T3.1 cwd 未变→noop（不重复操作，仅关 popover）', async () => {
     setGroups([mkSession({ id: 'old', cwd: '/repo', lastActiveAt: 1 })])
     const flow = useNewTaskFlow()
     await flow.startFlow()
     flow.openDirPopover()
-    await flow.selectWorkspace('/repo') // 首次选→预建
+    await flow.selectWorkspace('/repo') // 首次记 pendingCwd
     expect(flow.currentCwd.value).toBe('/repo')
 
     flow.openDirPopover()
     createCtrl.create.mockClear()
     createCtrl.remove.mockClear()
     await flow.selectWorkspace('/repo') // 同值→noop
-    expect(createCtrl.create).not.toHaveBeenCalled() // 不重复建
-    expect(createCtrl.remove).not.toHaveBeenCalled() // 不删
+    expect(createCtrl.create).not.toHaveBeenCalled()
+    expect(createCtrl.remove).not.toHaveBeenCalled()
     expect(flow.state.value).toBe('landing') // 仅关 popover
     expect(flow.currentCwd.value).toBe('/repo')
   })
 })
 
 describe('OS dialog 分支（openDirDialog，#5）', () => {
-  it('T3.3 pickDirectory canceled=false→预创建 session，chip 回灌新 cwd', async () => {
+  it('T3.3 pickDirectory canceled=false→只记 pendingCwd（延迟 create，不建 session），chip 回灌新 cwd', async () => {
     setGroups([mkSession({ id: 'old', cwd: '/repo', lastActiveAt: 1 })])
     const flow = useNewTaskFlow()
     await flow.startFlow()
@@ -170,11 +169,12 @@ describe('OS dialog 分支（openDirDialog，#5）', () => {
     createCtrl.create.mockClear()
     await flow.openDirDialog()
 
-    // 预创建语义：选中即 create session
+    // 延迟 create：选中目录不建 session，只记 pendingCwd
+    expect(createCtrl.create).not.toHaveBeenCalled()
     expect(createCtrl.remove).not.toHaveBeenCalled()
-    expect(createCtrl.create).toHaveBeenCalledWith('/picked-dir')
     expect(flow.state.value).toBe('landing')
-    expect(flow.currentCwd.value).toBe('/picked-dir') // chip 回灌新 cwd
+    expect(flow.currentCwd.value).toBe('/picked-dir') // chip 回灌 pendingCwd
+    expect(flow.currentSessionId.value).toBeNull()
   })
 
   it('T3.4 pickDirectory canceled=true→落回 dir-popover，cwd 不变，不 create', async () => {
@@ -182,7 +182,7 @@ describe('OS dialog 分支（openDirDialog，#5）', () => {
     const flow = useNewTaskFlow()
     await flow.startFlow()
     flow.openDirPopover()
-    await flow.selectWorkspace('/preselected') // 先选目录预建（currentCwd=/preselected）
+    await flow.selectWorkspace('/preselected') // 先记 pendingCwd（currentCwd=/preselected）
     flow.openDirPopover()
     pickCtrl.pickDirectory.mockResolvedValue({ canceled: true, path: null })
 

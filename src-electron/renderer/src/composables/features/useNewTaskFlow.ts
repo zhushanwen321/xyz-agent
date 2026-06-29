@@ -19,13 +19,11 @@ import { ref, computed, readonly } from 'vue'
 import type { Ref, ComputedRef } from 'vue'
 import type { SessionSummary } from '@xyz-agent/shared'
 import { session as sessionApi, git as gitApi } from '@/api'
-import * as events from '@/api/events'
 import { resolveDefaultCwd } from '@/lib/utils'
 import { pickDirectory } from '@/lib/ipc'
 import { useSessionStore } from '@/stores/session'
 import { usePanelStore } from '@/stores/panel'
 import { useNavigationStore } from '@/stores/navigation'
-import { useCommandStore } from '@/stores/command'
 import { useChat } from '@/composables/features/useChat'
 
 /** NewTaskFlow 8 态枚举（②§5） */
@@ -109,7 +107,6 @@ export function useNewTaskFlow() {
   const session = useSessionStore()
   const panel = usePanelStore()
   const navigation = useNavigationStore()
-  const commandStore = useCommandStore()
   const chat = useChat()
 
   /** 当前 flow 绑定 session 的 id（统一延迟 create 后，landing 态恒为 null） */
@@ -256,56 +253,28 @@ export function useNewTaskFlow() {
   }
 
   /**
-   * 预创建 session 并拉取命令（selectWorkspace / openDirDialog 共用）。
-   * - 删旧 session（landing 态未 send 的空 session，删除安全）
-   * - create 新 session 并绑定 currentSession
-   * - 主动拉 commands 并本地 dispatch（修复 create 时 broadcast 早于订阅的时序竞争，同 useSidebar.selectSession）
-   * getCommands 失败不阻断（命令缺失仅影响 slash 浮层）。
-   */
-  async function precreateSessionAndLoadCommands(cwd: string): Promise<void> {
-    if (currentSession.value) {
-      await sessionApi.remove(currentSession.value.id)
-      currentSession.value = null
-    }
-    const created = await sessionApi.create(cwd)
-    currentSession.value = created
-    pendingCwd.value = cwd
-    session.appendSession(created)
-    // create 的 broadcast commands 发生在 currentSession 绑定（订阅重订）前→丢失。
-    // 这里在绑定后主动拉取并本地 dispatch，保证命令到达 CommandPopover。
-    // 同时写入 commandStore（持久化，组件 v-if 重建后仍可读，修复 slash 浮层对话后失效）。
-    try {
-      const { commands } = await sessionApi.getCommands(created.id)
-      commandStore.applyCommands(created.id, commands)
-      events.dispatchSession(created.id, { type: 'session.commands', payload: { sessionId: created.id, commands } })
-      // eslint-disable-next-line taste/no-silent-catch -- getCommands 失败不阻断预创建（命令缺失仅致 slash 浮层空，可后补）；与 runtime fetchAndBroadcastCommands 同策略
-    } catch (e) {
-      console.warn('[useNewTaskFlow] getCommands failed, slash popover will be empty:', e)
-    }
-  }
-
-  /**
    * selectWorkspace —— dir-popover 选已有 workspace（§4.2）。
    *
-   * 预创建 session：选目录即 create session 并绑定（不再延迟到首发提交），
-   * 让 Landing 态 currentSessionId 非 null → CommandPopover 能拿到真实命令 → slash 浮层可用。
+   * 延迟 create：选目录只记 pendingCwd（chip 回灌所见即所得），不 create session。
+   * session 由首发提交 submitFirstMessage 创建。slash 浮层在 landing 态用 config.skills
+   * 全局扫描结果（CommandPopover 双源），不再依赖预建 session 取真实命令。
    * - cwd 未变→noop（仅关 popover）
-   * - cwd 变→预创建新 session（删旧建新，不留空 session）
+   * - cwd 变→记 pendingCwd + 关 popover
    */
   async function selectWorkspace(cwd: string): Promise<void> {
     if (cwd === currentCwd.value) {
       transition('landing') // dir-popover→landing（关 popover）
       return
     }
-    await precreateSessionAndLoadCommands(cwd)
-    transition('landing') // dir-popover→landing（关 popover）
+    pendingCwd.value = cwd
+    transition('landing') // dir-popover→landing（关 popover，chip 回灌新 cwd）
   }
 
   /**
    * openDirDialog —— 打开 OS 目录选择器（§4.2）。
    *
-   * 预创建 session：选中目录即 create session 并绑定（同 selectWorkspace 语义）。
-   * 选中→（删旧 +）create 新 + landing；取消→落回 dir-popover（AC-5.3）。
+   * 延迟 create：选中目录只记 pendingCwd，不 create session（同 selectWorkspace 语义）。
+   * 选中→记 pendingCwd + landing；取消→落回 dir-popover（AC-5.3）。
    * E5 IPC 招错→落回 dir-popover + 向上抛（调用方接 toast，AC-5.6）。
    */
   async function openDirDialog(): Promise<void> {
@@ -316,8 +285,7 @@ export function useNewTaskFlow() {
         transition('dir-popover') // 取消落回（AC-5.3）
         return
       }
-      const cwd = result.path
-      await precreateSessionAndLoadCommands(cwd)
+      pendingCwd.value = result.path
       transition('landing') // dir-dialog→landing（chip 回灌新 cwd）
     } catch (e) {
       // E5：IPC 招错 → 落回 dir-popover + 重抛（调用方显错 toast），不卡 dir-dialog
