@@ -24,6 +24,8 @@ import { PluginRegistry } from './services/plugin-service/plugin-registry.js'
 import { PluginService } from './services/plugin-service/plugin-service.js'
 import { GitService } from './services/git-service.js'
 import { GitExecutor } from './infra/git-executor.js'
+import { FileService } from './services/file-service.js'
+import { FsExecutor } from './infra/fs-executor.js'
 
 function parseArgs(): { port: number; projectRoot?: string } {
   // eslint-disable-next-line no-magic-numbers -- argv[0] is node, argv[1] is script
@@ -165,9 +167,12 @@ async function main(): Promise<void> {
   // GitService：composition root 注入 infra executor（数组参数防注入）+ sessionService（取 cwd）。
   // 经 server.setServices 注入到 GitMessageHandler（git.* 路由）。
   const gitService = new GitService({ sessionService, executor: new GitExecutor() })
+  // FileService：对称注入 infra FsExecutor（node:fs/promises adapter）+ sessionService（取 cwd 做越界守门）。
+  // 经 server.setServices 注入到 FileMessageHandler（file.tree/expand/write.* 路由）。
+  const fileService = new FileService({ sessionService, executor: new FsExecutor() })
 
   modelService.setServices(sessionService, configService, server)
-  server.setServices(sessionService, configService, modelService, treeService, extensionService, pluginService, gitService)
+  server.setServices(sessionService, configService, modelService, treeService, extensionService, pluginService, gitService, fileService)
 
   // Graceful shutdown on signals
   let shuttingDown = false

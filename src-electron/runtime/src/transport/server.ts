@@ -12,6 +12,7 @@ import { WebSocketServer, WebSocket, type WebSocket as WsType } from 'ws'
 import type { ClientMessage, ClientMessageType, ServerMessage, ServerMessageType, SkillDirConfig } from '@xyz-agent/shared'
 import type { ISessionService, IConfigService, IModelService, IMessageBroker, IExtensionService, IPluginService } from '../interfaces.js'
 import type { GitService } from '../services/git-service.js'
+import type { FileService } from '../services/file-service.js'
 import { ExtensionTimeoutManager } from '../services/extension-timeout-manager.js'
 import { BridgeHandler } from './bridge-handler.js'
 import { SettingsMessageHandler } from './settings-message-handler.js'
@@ -20,6 +21,7 @@ import { ExtensionMessageHandler } from './extension-message-handler.js'
 import { PluginMessageHandler } from './plugin-message-handler.js'
 import { TreeMessageHandler } from './tree-message-handler.js'
 import { GitMessageHandler } from './git-message-handler.js'
+import { FileMessageHandler } from './file-message-handler.js'
 import type { MessageHandlerContext, ErrorDetails } from './message-context.js'
 import { toErrorMessage } from '../utils/errors.js'
 
@@ -104,6 +106,7 @@ export class RuntimeServer implements IMessageBroker {
   private extensionService?: IExtensionService
   private pluginService!: IPluginService
   private gitService?: GitService
+  private fileService?: FileService
 
   // ── Message handlers (extracted) ────────────────────────────────
   // Constructed in setServices() — not at field-init time — so `this` is fully
@@ -117,6 +120,7 @@ export class RuntimeServer implements IMessageBroker {
   private pluginMessageHandler!: PluginMessageHandler
   private treeMessageHandler!: TreeMessageHandler
   private gitMessageHandler!: GitMessageHandler
+  private fileMessageHandler!: FileMessageHandler
 
   /**
    * D1: 中央分发表。此前是 55 行 switch，每个 case 纯转发、零逻辑。
@@ -127,8 +131,9 @@ export class RuntimeServer implements IMessageBroker {
    */
   private routes!: Map<ClientMessageType, (msg: ClientMessage, ws: WsType) => Promise<unknown> | unknown>
 
-  setServices(session: ISessionService, config: IConfigService, model: IModelService, tree: import('../services/tree-service.js').TreeService, extension?: IExtensionService, plugin?: IPluginService, git?: GitService): void {
+  setServices(session: ISessionService, config: IConfigService, model: IModelService, tree: import('../services/tree-service.js').TreeService, extension?: IExtensionService, plugin?: IPluginService, git?: GitService, file?: FileService): void {
     this.gitService = git
+    this.fileService = file
     this.sessionService = session
     this.configService = config
     this.modelService = model
@@ -194,9 +199,15 @@ export class RuntimeServer implements IMessageBroker {
         gitService: this.gitService,
       })
     }
+    if (this.fileService) {
+      this.fileMessageHandler = new FileMessageHandler({
+        ...messaging,
+        fileService: this.fileService,
+      })
+    }
 
     // ── Build the central dispatch table (D1) ───────────────────────
-    // ping/file.read 内联（无对应 handler）；settings 走兜底（见 handleMessage）。
+    // ping/file.read 内联（file.read 旧内联 BC-3 白名单，W2 迁入 fileMessageHandler）；settings 走兜底（见 handleMessage）。
     this.routes = new Map([
       ['ping', (msg, ws) => this.reply(ws, msg.id, 'pong', {})],
       ['file.read', (msg, ws) => this.handleFileRead(msg, ws)],
@@ -206,6 +217,7 @@ export class RuntimeServer implements IMessageBroker {
       ...this.extensionHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => this.extensionHandler.handleExtensionMessage(msg, ws)] as const),
       ...this.pluginMessageHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => this.pluginMessageHandler.handlePluginMessage(msg, ws)] as const),
       ...(this.gitMessageHandler ? this.gitMessageHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => this.gitMessageHandler.handleGitMessage(msg, ws)] as const) : []),
+      ...(this.fileMessageHandler ? this.fileMessageHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => this.fileMessageHandler.handleFileMessage(msg, ws)] as const) : []),
     ] as Array<[ClientMessageType, (msg: ClientMessage, ws: WsType) => Promise<unknown> | unknown]>)
   }
 
