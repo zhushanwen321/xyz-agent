@@ -19,6 +19,8 @@ product
 
 xyz-agent 是一个 AI Agent 桌面工作台。与 Claude Code、Pi 等工具类似，但核心差异在于**专注长任务管理和 SubAgent 并行执行的可视化**。
 
+> **现状锦点（2026-06）**：愿景强调 SubAgent 并行可视化（P4 分屏/P5 任务树/P6 RPC 桥接仍在路上），实际已落地的差异化亮点是 **多 Session/Panel 工作台 + Session Tree/Fork 导航 + AgentRunBlock 过程折叠 + Markdown 增强 + Plugin 扩展骨架**。本文件描述的是愿景态，落地进度见 ARCHITECTURE.md + DESIGN-LOG.md。
+
 产品要解决的核心问题：
 1. 当 AI Agent 自动拆分出多个 SubAgent 并行工作时，用户如何直观地看到整体进度？
 2. 当某个 SubAgent 需要用户确认时，如何在不影响当前工作流的情况下及时通知？
@@ -72,3 +74,30 @@ xyz-agent 是一个 AI Agent 桌面工作台。与 Claude Code、Pi 等工具类
 - 支持 `prefers-reduced-motion`：关闭圆点脉冲动画、简化过渡效果
 - 状态圆点最低 opacity 0.35，保证可见性
 - 对比度：Dark theme 的 `--fg` 与 `--bg` 比值 > 7:1
+
+## 功能边界（已实现）
+
+| 模块 | 关键能力 |
+|------|----------|
+| 多 Session/Panel | 按 cwd 分组、CRUD、切换、搜索；flat `.jsonl` 持久化；Panel↔Session 全局唯一绑定 |
+| Session Tree | navigate/fork/clone（经 pi extension，leafId 指针移动） |
+| Composer | contenteditable 富文本（slash chip / @mention / #file）、发送/steer/followUp 双队列、slash 命令浮层 |
+| Slash 命令 | local（/clear /help）/ protocol（/compact）/ skill（/skill:\<name>）三类；CMD/SK tag 分类 |
+| AgentRunBlock | 折叠渲染（thinking/tool 合并 MergeBlock，write/edit 独立卡片，chip 摘要条） |
+| Markdown | Shiki 高亮 + 行号 + 复制 + 折叠、GFM 表格、KaTeX、Mermaid 懒加载、DOMPurify 净化 |
+| Settings | Provider/Skill/Agent/System 四 tab；Skill/Agent 扫描导入四步流程；实时 WS 同步 |
+| Plugin 系统 | Worker Thread 隔离、JSON-RPC 2.0、懒激活、KV 持久化 |
+| Provider 管理 | API Key 增删改、默认模型、复用 pi 配置 |
+
+## 非目标 / DEFERRED
+
+**明确不做**：
+- Markdown：LaTeX 实时编辑器、Mermaid 交互、代码块 diff 视图、图片渲染优化、代码块内搜索
+- slash 命令：自然语言匹配（预留字段）、新增 ws 协议类型（复用已有）、Skill 管理（独立 SkillPane）
+- Tree：Summarize(branch summary)、Label 编辑、直接写入 JSONL
+- Agent 配置：OverrideParams、ToolPermissions（默认全部允许）
+- 前端：原生 HTML 表单元素、Emoji、硬编码颜色、魔数间距
+
+**DEFERRED 到后续 Phase**：
+- SubAgent 拆分/Tab/任务树（P5）、RPC 桥接交互式通信（P6）、Overview 全局鸟瞰（P4）、Drawer 右侧面板（P5）、分屏模式（P4）
+- Plugin Phase 2+：完整 agentAPI、Pi 事件桥接、权限检查+Worker 沙箱、安装/卸载 UI、插件间通信隔离、热重载、脚手架 SDK

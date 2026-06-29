@@ -20,6 +20,15 @@ xyz-agent 的后端 Node.js 服务进程。托管 pi 子进程生命周期、协
 ### TaskNode / ToolCall
 树形任务引擎节点 / pi 单次工具调用记录（底层概念，详见完整版）。
 
+### Generating State
+两标志共同描述 session 运行态：
+- `isGenerating`：pi 是否处理中（发消息即 true，agent_end 即 false）
+- `streamingMessage`：当前逐字输出消息
+- 两者可能不同步：`isGenerating=true && streamingMessage=null` = pi 已收请求但未开始输出
+
+### Tool Approval / Human Confirm
+危险操作确认机制。三选一：Allow（本次允许）/ Deny（拒绝）/ Always（永久允许）。任务级操作开放输入框。UI 弹窗 60s 超时自动关闭。
+
 ## 本主题相关语义
 
 - **「新建任务」**：用户从「无活跃会话」进入「准备开聊」的业务动作。终点是 session 发出第一条消息。5 步流程：落地空态 → 选目录 popover → 选分支 popover → 系统原生目录选择器 → 创建分支 modal。

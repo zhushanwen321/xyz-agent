@@ -335,6 +335,7 @@ it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
 - **共享类型**: `src-electron/shared/src/` 通过 npm workspace 在前端和 runtime 间共享
 - **Runtime 通信**: WebSocket，前端通过 `ws-client.ts` + `event-bus.ts` 消息分发
 - **Electron IPC**: 主进程通过 preload 暴露 `window.electronAPI`，渲染进程不直接使用 `ipcRenderer`
+- **Runtime broadcast 时序竞争 [HISTORICAL]**: session 级 broadcast（如 `session.commands`）若在 session 激活/创建流程内部发出（`ensureActive`/`lifecycle.create` 内的 `fetchAndBroadcastCommands`），会**早于** renderer 订阅该 sessionId 通道——订阅依赖 `switchSession`/`create` 的 RPC resolve → `activeId`/`currentSessionId` 更新 → `CommandPopover` 的 `watch(sessionId)` 重订，而 broadcast 已在此之前发出 → 消息丢失，renderer transport 只收到同流程的 `reply`（RPC 响应，走 pending map，不依赖订阅）。**约束：renderer 切换/创建 session 后需立即消费的 session 级状态，必须主动拉取**（新增 `session.getCommands` RPC，`useSidebar.selectSession` / `useNewTaskFlow.precreateSessionAndLoadCommands` 在 session 建立后调它 + `events.dispatchSession` 本地投递），不可依赖 broadcast 到达。新增任何 session 级 broadcast 必须对照本条评估。
 
 ## 发布与 CI 验证 [HISTORICAL]
 
