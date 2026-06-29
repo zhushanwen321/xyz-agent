@@ -12,6 +12,7 @@
     键盘导航走 window capture 监听，与焦点位置无关，故禁自动聚焦不影响 ↑↓⏎Esc。
     **宽度**：min-w 取 --reka-popper-anchor-width（= composer-box 宽），覆盖 composer；
     右侧提示词列透传 slash 命令 description（skill 描述等），无则退显 kind 标签。
+    无 header 行（去掉「命令 / · xx 项」），列表直接展示，提示列更宽（max-w-[520px]）。
   -->
   <Popover v-model:open="controlledOpen">
     <!-- anchor：composer-box 本身（由调用方通过 slot 传入），DOM contains 成立 →
@@ -25,15 +26,9 @@
       align="start"
       :side-offset="6"
       :collision-padding="8"
-      class="min-w-[var(--reka-popper-anchor-width)] max-w-[560px] overflow-hidden p-0"
+      class="min-w-[var(--reka-popper-anchor-width)] max-w-[820px] overflow-hidden p-0"
       @open-auto-focus.prevent
     >
-      <!-- filter header -->
-      <div class="flex items-center gap-1.5 border-b border-border bg-white/[0.015] px-2.5 py-1.5 font-mono text-[11px] text-subtle">
-        <span>{{ typeLabel }}</span>
-        <span :class="symbolClass">{{ symbol }}</span>
-        <span>· {{ items.length }} 项</span>
-      </div>
       <!-- list -->
       <div class="max-h-[180px] overflow-y-auto py-1">
         <Button
@@ -52,7 +47,7 @@
           />
           <span class="shrink-0 font-mono" :class="i === activeIndex ? 'text-accent' : 'text-fg'">{{ item.name }}</span>
           <!-- 右侧提示词：slash 命令透传 description（skill 描述等）；无则退显 kind 标签 -->
-          <span v-if="item.description" class="ml-auto shrink-0 truncate max-w-[260px] text-subtle">{{ item.description }}</span>
+          <span v-if="item.description" class="ml-auto shrink-0 truncate max-w-[520px] text-subtle">{{ item.description }}</span>
           <span v-else class="ml-auto shrink-0 font-mono text-[10px] text-subtle">{{ item.kind }}</span>
         </Button>
       </div>
@@ -182,14 +177,6 @@ const items = computed(() => {
     description: c.description,
   }))
 })
-
-const symbol = computed(() => (props.type === 'mention' ? '@' : props.type === 'file' ? '#' : '/'))
-const typeLabel = computed(() => (props.type === 'mention' ? '引用' : props.type === 'file' ? '文件' : '命令'))
-const symbolClass = computed(() => ({
-  'text-accent': props.type === 'mention',
-  'text-success': props.type === 'file',
-  'text-reasoning': props.type === 'slash',
-}))
 
 /** icon 字段 → lucide 组件（slash chip 复用同一映射，保证选择框/内联 chip 图标一致） */
 const ICONS = SLASH_ICON_COMPONENTS
