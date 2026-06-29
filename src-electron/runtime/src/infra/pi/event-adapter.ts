@@ -443,6 +443,14 @@ function handleMessageStart(event: PiEvent, ctx: HandlerContext): HandlerResult 
 
   const role = msg.role as string | undefined
 
+  // toolResult 是 pi agent-core 工具执行完毕的内部记账（agent-loop.js emitToolResultMessage：
+  // executeToolCalls 后 emit message_start/end{role:'toolResult'}）。
+  // 前端已通过 tool_execution_end 拿到 output，toolResult message_start 对前端是噪声——
+  // 若转发，chat-chunk-processor 会建空 assistant message，干扰 findLastAssistantIndex
+  // 导致后续 tool_call_end 匹配错位（toolCall 永久卡 running）。
+  // 与历史路径 message-converter.ts:36（toolResult 合并进父 assistant，非独立消息）语义一致。
+  if (role === 'toolResult') return null
+
   if (role === 'bashExecution') {
     return {
       type: 'message.bashExecution',

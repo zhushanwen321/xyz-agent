@@ -122,3 +122,35 @@ describe('Block working 态 · tool 块', () => {
     expect(wrapper.text()).toContain('command failed')
   })
 })
+
+describe('Block working 态 · end_not_received（未收到结果）', () => {
+  it('U12: end_not_received header 显「未收到结果」，不走红框，不强制展开', () => {
+    const wrapper = mount(Block, {
+      props: { type: 'tool', tool: makeTool({ status: 'end_not_received', output: undefined }), working: false },
+    })
+    // header 含「未收到结果」文案
+    expect(wrapper.text()).toContain('未收到结果')
+    // 不走红框（border-danger 不存在）
+    expect(wrapper.find('.border-danger').exists()).toBe(false)
+    // 工具名仍可见
+    expect(wrapper.text()).toContain('edit')
+  })
+
+  it('U13: end_not_received 初始收起，点击 header 可 toggle（不像 running 锁死）', async () => {
+    const wrapper = mount(Block, {
+      props: { type: 'tool', tool: makeTool({ status: 'end_not_received', output: undefined }), working: false },
+    })
+    const header = wrapper.find('.cursor-pointer')
+    // 初始收起：工具名+参数路径在 header 行可见，但详情区（argPath 行 mt-1）不渲染
+    expect(header.exists()).toBe(true)
+    await header.trigger('click')
+    // 展开后 argPath 区出现（mt-1 div 含 toolName）
+    const detailLines = wrapper.findAll('.mt-1.font-mono')
+    expect(detailLines.length).toBeGreaterThan(0)
+    await header.trigger('click')
+    // 收起后详情区消失
+    const afterCollapse = wrapper.findAll('.mt-1.font-mono')
+    // 注：result 区因 output undefined 不渲染，只剩 argPath 行，收起后应消失
+    expect(afterCollapse.length).toBeLessThan(detailLines.length)
+  })
+})

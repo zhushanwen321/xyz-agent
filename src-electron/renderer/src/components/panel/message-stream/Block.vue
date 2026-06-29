@@ -33,13 +33,13 @@
     <div v-else class="trace-tool">
       <div
         class="flex cursor-pointer select-none items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.06em] transition-opacity hover:opacity-80"
-        :class="isFailed ? 'text-danger' : 'text-info'"
+        :class="isFailed ? 'text-danger' : isUnfinished ? 'text-subtle' : 'text-info'"
         :title="toolExpanded ? '收起' : '展开'"
         @click="toggleTool"
       >
         <ChevronRight class="size-2.5 transition-transform" :class="toolExpanded ? 'rotate-90' : ''" />
         <Wrench class="size-3" />
-        <span class="whitespace-nowrap">工具{{ isFailed ? ' · 失败' : isRunning ? ' · 进行中' : '' }}</span>
+        <span class="whitespace-nowrap">工具{{ isFailed ? ' · 失败' : isRunning ? ' · 进行中' : isUnfinished ? ' · 未收到结果' : '' }}</span>
         <span class="normal-case tracking-normal">{{ toolName }}</span>
       </div>
       <template v-if="toolExpanded">
@@ -99,12 +99,16 @@ const previewText = computed(() => {
 
 const isFailed = computed(() => props.tool?.status === 'error')
 const isRunning = computed(() => props.tool?.status === 'running')
+/** 流结束未收到 tool_call_end（进程崩溃/WS 断连/event-adapter 乱序丢消息）。
+ *  诚实态，区别于 running（实时进行中）和 error（明确失败）——未收到结果不代表失败。 */
+const isUnfinished = computed(() => props.tool?.status === 'end_not_received')
 const toolName = computed(() => props.tool?.toolName ?? 'tool')
 const result = computed(() => props.tool?.output)
 
 /**
  * tool 折叠：默认收起，点击展开。
  * 强制展开态：working（流程实时可见）/ running（进行中）/ failed（错误须直视）。
+ * end_not_received 不强制展开（已结束，非实时进行中，可收起）。
  * trace 默认收起要求（问题 3）：非强制态点击「已工作」展开后 tool 默认折叠。
  */
 const toolCollapsed = ref(true)

@@ -19,7 +19,7 @@ export function assistantToMarkdown(msg: Message): string {
   }
 
   for (const tc of msg.toolCalls ?? []) {
-    const status = tc.status === 'error' ? '（失败）' : ''
+    const status = tc.status === 'error' ? '（失败）' : tc.status === 'end_not_received' ? '（未收到结果）' : ''
     let block = `**工具 \`${tc.toolName}\`**${status}`
     const input = tc.input
     if (input && Object.keys(input as object).length > 0) {

@@ -64,6 +64,27 @@ export function findLastAssistantIndex(list: Message[]): number {
 }
 
 /**
+ * 按 toolCallId 全局查找所属 assistant message 的下标（ID 锚定，不靠位置）。
+ *
+ * [HISTORICAL] 为什么不用 findLastAssistantIndex：event-adapter 并行处理 pi 事件
+ * （void this.handleEvent 不 await），tool_execution_end 的 async handler（含 hook + git 对账）
+ * 可能晚于下一个 message_start 发送。若用「最后一条 assistant」定位，end 会命中错位的 message
+ * （如 toolResult 假 message_start 建的空 message），更新静默失败，toolCall 永久卡 running。
+ *
+ * 按 toolCallId 锚定让乱序无害化：无论事件到达顺序，end/update 都精确命中真正含该 toolCall 的 message。
+ * 从后往前扫：toolCall 总是挂在最近的 assistant message（多 assistant turn 时命中最新）。
+ * 消息量通常 <100，O(n) 可接受；性能瓶颈出现再加索引。
+ */
+export function findToolCallOwner(list: Message[], toolCallId: string): number {
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    if (list[i].role === 'assistant' && list[i].toolCalls?.some((tc) => tc.id === toolCallId)) {
+      return i
+    }
+  }
+  return -1
+}
+
+/**
  * 按 ServerMessage.type 追加/更新流式 chunk。
  * 不可变更新（新数组 + Map.set）保证 Vue 对 Map 的集合响应性可靠触发。
  */
@@ -152,9 +173,12 @@ export function applyChunk(ctx: ChunkContext, sessionId: string, msg: ServerMess
       break
     }
     case 'message.tool_call_end': {
-      const idx = findLastAssistantIndex(prev)
-      if (idx < 0) return
       const callId = readString(msg.payload, 'toolCallId')
+      // ID 锚定：按 toolCallId 精确定位所属 assistant message（见 findToolCallOwner 注释），
+      // 不靠 findLastAssistantIndex（位置定位会被乱序/噪声 message 干扰）。
+      // callId 缺失或未命中时降级为最后一条 assistant（防御：兼容异常事件）。
+      const idx = callId ? findToolCallOwner(prev, callId) : findLastAssistantIndex(prev)
+      if (idx < 0) return
       const next = [...prev]
       const toolCalls = (next[idx].toolCalls ?? []).map((c) =>
         c.id === callId
@@ -174,10 +198,11 @@ export function applyChunk(ctx: ChunkContext, sessionId: string, msg: ServerMess
     case 'message.tool_call_update': {
       // W05-A：Extension 工具调用进度更新。event-adapter tool_execution_update
       // 生产端只发 detail（string | object），消费对齐生产端（不臆造 progress）。
-      const idx = findLastAssistantIndex(prev)
-      if (idx < 0) return
       const callId = readString(msg.payload, 'toolCallId')
       if (!callId) return
+      // ID 锚定（见 tool_call_end 注释），避免乱序命中错误 message。
+      const idx = findToolCallOwner(prev, callId)
+      if (idx < 0) return
       const detail = readDetail(msg.payload, 'detail')
       const next = [...prev]
       const toolCalls = (next[idx].toolCalls ?? []).map((c) =>
@@ -193,13 +218,26 @@ export function applyChunk(ctx: ChunkContext, sessionId: string, msg: ServerMess
       const last = prev[idx]
       if (last.status !== 'streaming') return
       const stopReason = readString(msg.payload, 'stopReason')
-      const next = [...prev]
+      const isErrorStop = stopReason === 'error'
+      // 收口兜底：流结束时仍 status:'running' 的 toolCall 说明未收到 tool_call_end
+      // （进程崩溃/WS 断连/abort/event-adapter 乱序丢消息）。强收口避免 Block.vue
+      // 永久锁定展开（isRunning → toolExpanded 恒 true）。
+      // - error stopReason → 收口为 error（保留失败语义）
+      // - 其它 → 收口为 end_not_received（诚实态，区别于假装成功的 completed）
+      // 延迟到达的真实 tool_call_end 会用真实 output 覆盖收口值（end_not_received → completed）。
+      const finalizedToolCalls = (last.toolCalls ?? []).map((c) =>
+        c.status === 'running'
+          ? { ...c, status: (isErrorStop ? 'error' : 'end_not_received') as ToolCall['status'], endTime: c.endTime ?? Date.now() }
+          : c,
+      )
       // W05-A：消费 message.complete.usage（{inputTokens,outputTokens,totalTokens}）
       // 回填 Message.usage（字段已存在 message.ts:99）。stopReason:error → status:error。
       const usage = readUsage(msg.payload)
+      const next = [...prev]
       next[idx] = {
         ...last,
-        status: stopReason === 'error' ? 'error' : 'complete',
+        status: isErrorStop ? 'error' : 'complete',
+        toolCalls: finalizedToolCalls,
         ...(usage ? { usage } : {}),
       }
       messages.value.set(sessionId, next)

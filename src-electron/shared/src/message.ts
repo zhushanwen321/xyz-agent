@@ -1,6 +1,6 @@
 export type MessageRole = 'user' | 'assistant' | 'system'
 export type MessageStatus = 'streaming' | 'complete' | 'error'
-export type ToolCallStatus = 'running' | 'completed' | 'error'
+export type ToolCallStatus = 'running' | 'completed' | 'error' | 'end_not_received'
 
 export interface ToolCall {
   id: string
