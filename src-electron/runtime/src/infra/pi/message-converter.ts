@@ -2,7 +2,7 @@ import type {
   PiHistoryMessage,
   PiHistoryToolResult,
 } from './pi-protocol.js'
-import type { Message, ThinkingBlock, ToolCall } from '@xyz-agent/shared'
+import type { Message, ThinkingBlock, ToolCall, FileChange } from '@xyz-agent/shared'
 
 /**
  * Parse `<skill name="xxx" location="...">...</skill>` blocks from
@@ -18,6 +18,36 @@ function parseSkillBlock(text: string): { skillName: string; skillLocation?: str
     skillLocation: match[2] || undefined,
     userText: match[3].trim(),
   }
+}
+
+/**
+ * [W6 #9 G5] 从历史 assistant 消息的 toolCalls 提取 fileChanges（write/edit 工具）。
+ *
+ * 历史路径无 cwd 做 existsSync 判定（write added/modified 无法区分），
+ * 按 AC-9.3 graceful 降级：write 一律标 modified（方案 B 兜底，与 event-adapter 缺 cwd 时一致），
+ * edit 恒 modified。filePath 取 toolCall.arguments.path（pi 契约权威参数名，file_path 防御 fallback）。
+ *
+ * 与实时路径（event-adapter extractWriteChange/extractEditChange）语义对齐，但历史路径不计算行数
+ * （patch 不在历史 toolCall 里，需 toolResult 解析，复杂度高且非 file-tree 主链路，留 TODO）。
+ */
+const WRITE_TOOL_NAMES = new Set(['write', 'write_file', 'writeFile', 'create_file'])
+const EDIT_TOOL_NAMES = new Set(['edit', 'edit_file', 'editFile', 'str_replace', 'replace'])
+
+function extractHistoryFileChanges(toolCalls: ToolCall[]): FileChange[] {
+  const changes: FileChange[] = []
+  const seen = new Set<string>()
+  for (const tc of toolCalls) {
+    const isWrite = WRITE_TOOL_NAMES.has(tc.toolName)
+    const isEdit = EDIT_TOOL_NAMES.has(tc.toolName)
+    if (!isWrite && !isEdit) continue
+    const args = (tc.input ?? {}) as Record<string, unknown>
+    const filePath = typeof args.path === 'string' ? args.path : typeof args.file_path === 'string' ? args.file_path : ''
+    if (!filePath || seen.has(filePath)) continue
+    seen.add(filePath)
+    // write 历史无 cwd 无法判 added/modified，一律 modified（graceful，AC-9.3）；edit 恒 modified
+    changes.push({ filePath, status: 'modified' })
+  }
+  return changes
 }
 
 /**
@@ -103,6 +133,11 @@ export function convertPiHistory(raw: unknown[]): Message[] {
       ...(thinking.length > 0 && { thinking }),
       ...(toolCalls.length > 0 && { toolCalls }),
       ...(contentBlocks.length > 0 && { contentBlocks }),
+      // [W6 #9 G5] 历史路径还原 fileChanges（write/edit 工具提取，AC-9.1/9.3）
+      ...(m.role === 'assistant' && toolCalls.length > 0 && (() => {
+        const fc = extractHistoryFileChanges(toolCalls)
+        return fc.length > 0 ? { fileChanges: fc } : {}
+      })()),
       // Extract usage from pi assistant messages (input/output token counts)
       ...(() => {
         if (m.role !== 'assistant') return {}

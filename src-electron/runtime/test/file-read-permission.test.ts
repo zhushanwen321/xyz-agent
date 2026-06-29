@@ -80,3 +80,59 @@ describe('FileService.readFileFromWhitelist (#7 BC-3 白名单)', () => {
     })
   })
 })
+
+/**
+ * FileService.readFile(sessionId, path) 单测（W5 #7 BC-3 扩展：cwd 子树守门）。
+ *
+ * 覆盖 file.read 有 sessionId 的分流路径（file-message-handler 根据 sessionId 有无分流）：
+ * - sessionId 存在 → readFile(sessionId, path) 走 cwd 守门（isUnderOrEqual(cwd, resolvedPath)）
+ * - cwd 内文件可读（相对路径 + 绝对路径穿越）
+ * - cwd 外路径 → FileError('out_of_cwd')
+ * - bad sessionId → FileError('session_not_found')
+ * - >1MB 截断
+ */
+describe('FileService.readFile (W5 #7 cwd 子树守门)', () => {
+  const CWD = '/project/sample'
+
+  beforeEach(() => {
+    sessionService.getSummary.mockReturnValue({ cwd: CWD })
+  })
+
+  it('cwd 内相对路径文件可读', async () => {
+    executor.stat.mockResolvedValueOnce({ type: 'file', size: 100 })
+    executor.readFile.mockResolvedValueOnce('file content')
+    const result = await svc().readFile('sess-1', 'src/index.ts')
+    expect(result.content).toBe('file content')
+    expect(result.truncated).toBe(false)
+  })
+
+  it('cwd 外路径 → FileError(out_of_cwd)', async () => {
+    await expect(svc().readFile('sess-1', '../../../etc/passwd')).rejects.toMatchObject({
+      code: 'out_of_cwd',
+    })
+    expect(executor.readFile).not.toHaveBeenCalled()
+  })
+
+  it('bad sessionId（无 cwd）→ FileError(session_not_found)', async () => {
+    sessionService.getSummary.mockReturnValueOnce(null)
+    await expect(svc().readFile('bad-sess', 'src/index.ts')).rejects.toMatchObject({
+      code: 'session_not_found',
+    })
+  })
+
+  it('>1MB 文件 → truncated=true', async () => {
+    const big = 'x'.repeat(2_000_000)
+    executor.stat.mockResolvedValueOnce({ type: 'file', size: 2_000_000 })
+    executor.readFile.mockResolvedValueOnce(big)
+    const result = await svc().readFile('sess-1', 'big.log')
+    expect(result.truncated).toBe(true)
+    expect(result.content.length).toBe(1_048_576)
+  })
+
+  it('文件不存在 → FileError(not_found)', async () => {
+    executor.stat.mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))
+    await expect(svc().readFile('sess-1', 'missing.ts')).rejects.toMatchObject({
+      code: 'not_found',
+    })
+  })
+})

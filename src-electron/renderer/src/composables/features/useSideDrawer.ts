@@ -18,7 +18,7 @@
  */
 import { ref } from 'vue'
 
-export type SideDrawerTab = 'terminal' | 'browser' | 'git' | 'doc'
+export type SideDrawerTab = 'terminal' | 'browser' | 'git' | 'doc' | 'detail'
 
 /** drawer open 的可选参数：打开时指定要展示的 slash 命令名（Doc tab 用） */
 export interface OpenDrawerOptions {

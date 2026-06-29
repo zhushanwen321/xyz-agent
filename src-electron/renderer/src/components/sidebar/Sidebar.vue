@@ -86,10 +86,20 @@
         </template>
         <template v-else>
           <FileView
-            :changes="fileChanges"
+            v-if="session.activeId"
+            :session-id="session.activeId"
             :session-label="currentSession?.label"
             :branch="currentSession?.gitBranch"
           />
+          <!-- 无 active session（如 Overview 态）→ 文件视图空态占位 -->
+          <div
+            v-else
+            class="flex flex-col items-center justify-center gap-2 py-10 text-center"
+            data-testid="file-view-no-session"
+          >
+            <FolderOpen class="size-5 text-subtle opacity-40" />
+            <p class="text-[11.5px] text-subtle opacity-55">选择会话查看文件</p>
+          </div>
         </template>
       </div>
 
@@ -127,7 +137,7 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, ref } from 'vue'
 import { useEventListener } from '@vueuse/core'
-import { Plus, LayoutGrid, Search, Settings } from '@lucide/vue'
+import { Plus, LayoutGrid, Search, Settings, FolderOpen } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import SearchModal from '@/components/overlays/SearchModal.vue'
@@ -140,14 +150,12 @@ import SessionList from './SessionList.vue'
 import FileView from './FileView.vue'
 import RenameSessionDialog from './RenameSessionDialog.vue'
 import DeleteSessionDialog from './DeleteSessionDialog.vue'
-import { useChatStore } from '@/stores/chat'
-import { mergeFileChanges } from '@/stores/chat-readers'
-import type { FileChange } from '@xyz-agent/shared'
+import { useFileTreeStore } from '@/stores/fileTree'
 
 const navigation = useNavigationStore()
 const session = useSessionStore()
 const sidebar = useSidebarStore()
-const chatStore = useChatStore()
+const fileTreeStore = useFileTreeStore()
 const { selectSession, newSession, goOverview, loadSessions, derivedStatus, renameSession, deleteSession } = useSidebar()
 const openSettings = inject<() => void>('openSettings', () => {})
 
@@ -170,22 +178,15 @@ const isOverviewActive = computed(() => navigation.current.view === 'overview')
 const currentSession = computed(() => session.active)
 
 /**
- * 当前 active session 的改动文件（#10）。
- * 聚合 chat store 该 session 所有 assistant message 的 fileChanges，
- * 同 filePath 取最新 status/行数（复用 mergeFileChanges 的按 path merge 语义）。
+ * 文件 tab 计数（当前 session 文件树顶层节点数）。
+ * W4 重写：文件视图从「改动文件列表」改为「完整文件树浏览器」，
+ * 计数改为读 fileTreeStore 该 session 的顶层节点数（W4 UC-1 浏览完整结构）。
  */
-const fileChanges = computed<FileChange[]>(() => {
+const fileCount = computed(() => {
   const sid = session.activeId
-  if (!sid) return []
-  const all = chatStore
-    .getMessages(sid)
-    .filter((m) => m.role === 'assistant')
-    .flatMap((m) => m.fileChanges ?? [])
-  return mergeFileChanges(all, [])
+  if (!sid) return 0
+  return fileTreeStore.getTree(sid)?.length ?? 0
 })
-
-/** 文件 tab 计数（当前 session 改动文件数，spec §tab 计数） */
-const fileCount = computed(() => fileChanges.value.length)
 
 /** 状态点派生（D6）：useSidebar 读 chat+session store 派生 5 态 */
 function statusOf(id: string) {

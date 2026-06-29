@@ -48,7 +48,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   constructor(
     private readonly pm: IProcessManager,
     private readonly broker: IMessageBroker,
-    private readonly adapterFactory: (sessionId: string, interceptor: INavigateInterceptor) => IEventAdapter,
+    private readonly adapterFactory: (sessionId: string, interceptor: INavigateInterceptor, cwd?: string) => IEventAdapter,
     private readonly projectRoot: string,
     private readonly treeService: TreeService,
     private readonly extensionService: IExtensionService,
@@ -250,7 +250,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     id: string, client: IPiEngine, cwd: string, label: string, sessionFilePath?: string,
   ): Promise<IManagedSessionView> {
     const interceptor = this.navigateFactory.createNavigateInterceptor((msg) => this.broker.broadcast(msg))
-    const adapter = this.adapterFactory(id, interceptor)
+    // #8 G1：传 cwd 给 EventAdapter（write added/modified 判定 + agent_end git 对账用）
+    const adapter = this.adapterFactory(id, interceptor, cwd)
     adapter.attach(client)
     const unsubUsage = this.attachUsageListener(id, client)
     const modelRef = this.configStore.getDefaultModel()

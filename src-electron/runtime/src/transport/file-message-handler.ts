@@ -64,14 +64,16 @@ export class FileMessageHandler {
         }
       }
       case 'file.read': {
-        // file.read payload 只有 path（无 sessionId），走 BC-3 白名单守门（readFileFromWhitelist）。
-        // W2 从 server.ts 内联迁入此 handler，白名单目录由装配时传入 FileService。
-        const { path } = msg.payload
+        // file.read 分流（#7 BC-3 扩展）：有 sessionId → readFile(sessionId, path) cwd 守门（文件树预览）；
+        // 无 sessionId → readFileFromWhitelist（BC-3 三目录白名单：skill 文件预览，向后兼容）。
+        const { path, sessionId } = msg.payload
         try {
-          const result = await this.ctx.fileService.readFileFromWhitelist(path)
+          const result = sessionId
+            ? await this.ctx.fileService.readFile(sessionId, path)
+            : await this.ctx.fileService.readFileFromWhitelist(path)
           return this.ctx.reply(ws, msg.id, 'file.read:result', { content: result.content, truncated: result.truncated, path })
         } catch (e) {
-          return this.sendFileError(ws, msg.id, '', e)
+          return this.sendFileError(ws, msg.id, sessionId ?? '', e)
         }
       }
       case 'file.write.create': {

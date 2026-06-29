@@ -12,9 +12,10 @@
  * 依赖方向：useFileTree → fileTreeStore + api/domains（file/git）。不直接 import chat store
  * （W6 的 invalidateOnFileChanges 经 composable 层 watch，不违反 stores 间禁 import）。
  */
+import { watch, type Ref } from 'vue'
 import { useFileTreeStore } from '@/stores/fileTree'
-import * as fileApi from '@/api/domains/file'
-import * as gitApi from '@/api/domains/git'
+import { useChatStore } from '@/stores/chat'
+import { file as fileApi, git as gitApi } from '@/api'
 import type { FileNode } from '@xyz-agent/shared'
 
 /** 在途请求追踪（expandNode 幂等去重：同 path loading 时不重发） */
@@ -93,11 +94,24 @@ export function useFileTree() {
       store.addExpanded(sessionId, path)
       return
     }
+    // [D-009] 树首加载已带 children 的目录（顶层 dir 的一级子）→ 视为 loaded 复用，不重发 expand
+    // （首加载 file.tree 返回顶层+一级子，src 等已含 children，展开时直接复用避免被空响应覆盖）
+    if (state.status === 'unloaded') {
+      const nodes = store.getTree(sessionId)
+      if (nodes) {
+        const node = findNodeByPath(nodes, path)
+        if (node && node.children && node.children.length > 0) {
+          store.setNodeState(sessionId, path, { status: 'loaded' })
+          store.addExpanded(sessionId, path)
+          return
+        }
+      }
+    }
     // loading → 幂等去重（T2.3）
     if (state.status === 'loading' || isInFlight(sessionId, path)) {
       return
     }
-    // error/unloaded/invalidated → 发请求（T2.5 error 重试也走此分支）
+    // error/invalidated/unloaded（无缓存 children）→ 发请求（T2.5 error 重试也走此分支）
 
     store.setNodeState(sessionId, path, { status: 'loading' })
     markInFlight(sessionId, path)
@@ -162,6 +176,52 @@ export function useFileTree() {
     }
   }
 
+  /**
+   * [K-9/W6 #3.11] 跨 store 失效编排：watch chat store 该 session 的 fileChanges 变化
+   * → 提取最新 filePaths → store.invalidate（loaded→invalidated）。
+   *
+   * composable 层 watch（stores 间禁止 import，但 composable 可 watch 多个 store）。
+   * file_changes ready 帧由 chat-chunk-processor 合并进 message.fileChanges，
+   * 此处 watch 其变化触发失效。 invalidated 节点下次展开时重发请求（expandNode 的 invalidated 分支）。
+   *
+   * @param sessionIdRef session id 的 ref（变化时重订阅）
+   * @returns unwatch 函数（组件 onBeforeUnmount 调用，避免泄漏）
+   */
+  function setupInvalidation(sessionIdRef: Ref<string>): () => void {
+    const chatStore = useChatStore()
+    // 上次处理的 fileChanges paths 快照（去重：仅 paths 集合变化时才 invalidate）
+    let lastPaths = new Set<string>()
+
+    const unwatch = watch(
+      [() => sessionIdRef.value, () => chatStore.messages],
+      () => {
+        const sid = sessionIdRef.value
+        if (!sid) {
+          lastPaths = new Set()
+          return
+        }
+        // 提取该 session 所有 assistant message 的 fileChanges paths
+        const msgs = chatStore.getMessages(sid)
+        const currentPaths = new Set<string>()
+        for (const m of msgs) {
+          if (m.role !== 'assistant') continue
+          for (const fc of m.fileChanges ?? []) {
+            currentPaths.add(fc.filePath)
+          }
+        }
+        // 仅当 paths 集合变化时 invalidate（避免每帧重复）
+        const changed = [...currentPaths].filter((p) => !lastPaths.has(p))
+        if (changed.length > 0) {
+          store.invalidate(sid, changed)
+        }
+        lastPaths = currentPaths
+      },
+      { deep: true, immediate: true },
+    )
+
+    return unwatch
+  }
+
   return {
     loadTree,
     expandNode,
@@ -169,6 +229,7 @@ export function useFileTree() {
     selectFile,
     setFilter,
     toggleShowIgnored,
+    setupInvalidation,
   }
 }
 
@@ -179,4 +240,16 @@ function findNodePath(nodes: FileNode[], path: string): boolean {
     if (node.children && findNodePath(node.children, path)) return true
   }
   return false
+}
+
+/** 在 FileNode[] 树中按 path 查找节点（深度优先，expandNode 复用 children 用） */
+function findNodeByPath(nodes: FileNode[], path: string): FileNode | null {
+  for (const node of nodes) {
+    if (node.path === path) return node
+    if (node.children) {
+      const found = findNodeByPath(node.children, path)
+      if (found) return found
+    }
+  }
+  return null
 }

@@ -110,7 +110,10 @@ async function main(): Promise<void> {
   // Note: onContextUpdate also references `sessionService` (assigned below) as a self-reference —
   // the adapter queries its owning session's data. createAdapter is only called at session
   // creation time, so sessionService is always set by then.
-  const createAdapter = (sessionId: string, interceptor: INavigateInterceptor) => new EventAdapter(sessionId, interceptor.send, {
+  const createAdapter = (sessionId: string, interceptor: INavigateInterceptor, cwd?: string) => new EventAdapter(sessionId, interceptor.send, {
+    // #8 G1 cwd：注入 session cwd（write 工具 added/modified 判定 + agent_end git 对账用）。
+    // SessionService.initializeManagedSession 调用时传入（该处已有 cwd 参数）。
+    cwd,
     onExtensionUIRequest: (requestId, sid, method) => {
       server.registerExtensionTimeout(sid, requestId, method)
     },

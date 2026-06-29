@@ -36,12 +36,15 @@ export function expand(sessionId: string, path: string, showIgnored?: boolean): 
 }
 
 /**
- * 读文件内容（UC-6 前置，走 BC-3 白名单）。
- * @param path 绝对路径（白名单目录内）
+ * 读文件内容（UC-6 前置）。
+ * - 有 sessionId：走 cwd 守门（readFile(sessionId, path)），用于文件树预览 session cwd 内文件（#7 BC-3 扩展）
+ * - 无 sessionId：走 BC-3 三目录白名单（skill 文件预览，向后兼容）
+ * @param path 文件路径（有 sessionId 时相对 cwd，无 sessionId 时为白名单目录内绝对路径）
+ * @param sessionId 可选，文件树预览时传入
  */
-export function read(path: string): Promise<{ content: string; truncated: boolean }> {
+export function read(path: string, sessionId?: string): Promise<{ content: string; truncated: boolean }> {
   const id = pending.create()
   const result = pending.register<{ content: string; truncated: boolean; path: string }>(id)
-  transport.send({ type: 'file.read', id, payload: { path } })
+  transport.send({ type: 'file.read', id, payload: sessionId ? { path, sessionId } : { path } })
   return result.then((r) => ({ content: r.content, truncated: r.truncated }))
 }

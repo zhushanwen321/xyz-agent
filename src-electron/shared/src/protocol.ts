@@ -108,7 +108,7 @@ export interface ClientMessageMap {
   'plugin.config.get': { pluginId: string; key?: string }
   'plugin.config.set': { pluginId: string; key: string; value: unknown }
   'plugin.uiResponse': { requestId: string; result: unknown }
-  'file.read': { path: string }
+  'file.read': { path: string; sessionId?: string }
   'file.tree': { sessionId: string; showIgnored?: boolean }
   'file.tree.expand': { sessionId: string; path: string; showIgnored?: boolean }
   'git.diff': { sessionId: string; path: string }

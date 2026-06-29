@@ -66,6 +66,31 @@ export const git = {
     await sleep(TIMING.ack)
     return { ...fixtureGitStatus, sessionId, files: fixtureGitStatus.files.map((f) => ({ ...f })) }
   },
+  /**
+   * 单文件 diff patch（#5，UC-6 点文件预览）。与 real api/domains/git.getDiff 同接口。
+   * mock：按 path 返回固定 patch（fixtureGitStatus 中标 modified/added/deleted 的文件），
+   * 含 <script> 的 path 用于 T6.10 XSS 断言。非改动文件 → 空 patch。
+   */
+  async getDiff(_sessionId: string, path: string): Promise<{ patch: string; binary: boolean }> {
+    await sleep(TIMING.ack)
+    // T6.10 XSS：含 script 的 diff 内容应被转义（DetailPane 禁 v-html）
+    if (path.includes('xss') || path.includes('script')) {
+      return { patch: `diff --git a/${path} b/${path}\n+<script>alert(1)</script>`, binary: false }
+    }
+    // fixtureGitStatus 中的改动文件 → 返回模拟 patch
+    const changed = fixtureGitStatus.files.find((f) => f.path === path)
+    if (changed) {
+      return {
+        patch: `diff --git a/${path} b/${path}\nindex 111..222 100644\n--- a/${path}\n+++ b/${path}\n@@ -1,3 +1,5 @@\n line1\n+new line\n line2\n+added line`,
+        binary: false,
+      }
+    }
+    // 非改动文件 / binary 模拟
+    if (path.endsWith('.png') || path.endsWith('.jpg')) {
+      return { patch: '', binary: true }
+    }
+    return { patch: '', binary: false }
+  },
   async stage(_sessionId: string, _filePaths?: string[]): Promise<void> {
     await sleep(TIMING.ack)
   },
