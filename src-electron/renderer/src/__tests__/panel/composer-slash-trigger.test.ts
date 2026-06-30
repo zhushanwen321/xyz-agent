@@ -42,6 +42,12 @@ vi.mock('@/composables/features/useNewTaskFlow', () => ({
 vi.mock('@/api', () => ({
   model: { switchModel: vi.fn() },
   session: { setThinkingLevel: vi.fn() },
+  // CommandPopover.loadCandidates onMounted 调 composer.getMentionCandidates/getFileCandidates，
+  // mock 遗漏会导致 unhandled rejection（test 期间的 4 个 unhandled errors 根因）
+  composer: {
+    getMentionCandidates: vi.fn().mockResolvedValue([]),
+    getFileCandidates: vi.fn().mockResolvedValue([]),
+  },
 }))
 
 import ComposerInput from '@/components/panel/ComposerInput.vue'

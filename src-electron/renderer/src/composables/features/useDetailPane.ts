@@ -69,16 +69,11 @@ export function useDetailPane(sessionId: Ref<string | null>) {
    */
   async function openPreview(sid: string, path: string): Promise<void> {
     state.value = { ...initialState(), status: 'loading', path, viewMode: state.value.viewMode }
-    // 判断 git 改动：gitOverlay per-session 查
+    // 判断 git 改动：gitOverlay per-session 查（含 untracked，T2.8b untracked 也算改动可 diff）
     const gitStatus = store.getGitStatus(sid, path)?.status
-    const hasGitChange = !!gitStatus && gitStatus !== 'untracked' ? true : !!gitStatus
-    state.value.hasGitChange = hasGitChange
+    state.value.hasGitChange = !!gitStatus
     // 默认 viewMode：有 git 改动 → diff；无 → preview（首次加载时定，不覆盖用户手动切换）
-    if (hasGitChange) {
-      state.value.viewMode = 'diff'
-    } else {
-      state.value.viewMode = 'preview'
-    }
+    state.value.viewMode = gitStatus ? 'diff' : 'preview'
 
     try {
       if (state.value.viewMode === 'diff') {

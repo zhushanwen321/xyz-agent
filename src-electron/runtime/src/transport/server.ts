@@ -6,7 +6,6 @@
  * ServerMessages back to TUI clients via WebSocket.
  */
 import { createServer, type Server as HttpServer } from 'node:http'
-import { resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { WebSocketServer, WebSocket, type WebSocket as WsType } from 'ws'
 import type { ClientMessage, ClientMessageType, ServerMessage, ServerMessageType, SkillDirConfig } from '@xyz-agent/shared'
@@ -64,7 +63,6 @@ const PRESET_AGENT_DIRS = [
  * 归一化：比较时展开 ~，避免 ~/.pi 与 /Users/.../pi 因字符串不同而重复。
  */
 function buildDirConfigs(preset: string[], enabledDirs: string[]): SkillDirConfig[] {
-  const presetNormalized = new Set(preset.map(normalizeDirPath))
   const configs: SkillDirConfig[] = []
 
   // 1. discovery 启用目录，按 discovery 顺序（= 用户拖拽优先级，靠前覆盖靠后）

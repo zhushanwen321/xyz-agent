@@ -15,6 +15,8 @@ export default [
       'vendor/**',
       'src-electron/resources/pi/**',
       '.pi/**',
+      // .xyz-harness 是设计文档/骨架代码（spec/plan/code-skeleton），非项目源码，不参与 lint
+      '.xyz-harness/**',
     ],
   },
 ];

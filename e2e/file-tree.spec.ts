@@ -18,14 +18,24 @@
  */
 import { test, expect } from './fixtures/launch-app'
 
-/** 激活 e2e-files session 并切到文件 tab（多数用例前置） */
+/**
+ * 激活 e2e-files session 并切到文件 tab（多数用例前置）。
+ *
+ * app 初始状态不确定（可能在 Landing 态 / files tab / sessions tab），此函数确保：
+ * 1. 切到 sessions tab（让 SessionList 渲染）
+ * 2. 等 session list 数据加载（mock TIMING.ack ≈ 40ms）
+ * 3. 点 e2e-files session 激活（退出 Landing 态 + 设 activeId）
+ * 4. 切到 files tab 等 FileView 加载
+ */
 async function gotoFileTree(page: import('@playwright/test').Page): Promise<void> {
-  // 等待 session list 渲染（mock TIMING.ack ≈ 40ms）
+  // 先切到 sessions tab（SegmentedTab 按文本，按钮 name 含计数如「会话 6」）
+  await page.getByRole('button', { name: /^会话/ }).click()
+  // 等 session list 渲染（mock session.list 40ms 延迟）
   await expect(page.getByText('E2E 文件树测试')).toBeVisible({ timeout: 10_000 })
-  // 点 e2e-files session 激活（SessionItem 文本匹配）
+  // 点 e2e-files session 激活（SessionItem 文本匹配，激活后退出 Landing 态）
   await page.getByText('E2E 文件树测试').click()
-  // 切到「文件」tab（SegmentedTab 按文本）
-  await page.getByRole('button', { name: /文件/ }).click()
+  // 切到「文件」tab（SegmentedTab 按文本，按钮 name 含计数如「文件 4」）
+  await page.getByRole('button', { name: /^文件/ }).click()
   // 等 FileView 加载完成（mock file.tree 40ms + git.status 40ms）
   await expect(page.getByTestId('file-view-root')).toBeVisible({ timeout: 10_000 })
 }

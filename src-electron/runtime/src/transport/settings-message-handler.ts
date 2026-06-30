@@ -74,7 +74,7 @@ export class SettingsMessageHandler {
       case 'config.setSkillDirs': {
         // ADR-0020 §1 目录级管道：覆盖 discovery.json.skillDirs（有序数组 = 优先级）
         this.ctx.configService.setSkillDirs(msg.payload.dirs)
-        this.ctx.reply(ws, msg.id, 'config.skillDirs', { dirs: msg.payload.dirs.map((path, i) => ({ path, enabled: true })) })
+        this.ctx.reply(ws, msg.id, 'config.skillDirs', { dirs: msg.payload.dirs.map((path) => ({ path, enabled: true })) })
         // 目录变更 → skill 列表重算 + 目录配置广播
         this.ctx.broadcastSkillList()
         this.ctx.broadcastSkillDirs()
@@ -104,7 +104,7 @@ export class SettingsMessageHandler {
       case 'config.setAgentDirs': {
         // ADR-0020 §1 目录级管道：覆盖 discovery.json.agentDirs（有序数组 = 优先级）
         this.ctx.configService.setAgentDirs(msg.payload.dirs)
-        this.ctx.reply(ws, msg.id, 'config.agentDirs', { dirs: msg.payload.dirs.map((path, i) => ({ path, enabled: true })) })
+        this.ctx.reply(ws, msg.id, 'config.agentDirs', { dirs: msg.payload.dirs.map((path) => ({ path, enabled: true })) })
         this.ctx.broadcastAgentList()
         this.ctx.broadcastAgentDirs()
         return true
