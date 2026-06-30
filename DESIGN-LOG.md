@@ -71,7 +71,7 @@
 | `2026-05-10-window-management` | 多窗口管理 |
 | `2026-06-01-global-nav-stack` / `-navigation` | 全局导航栈 |
 | `2026-06-22-sidebar-polish` | 侧栏打磨 |
-| `2026-06-28-sidebar-project-file-tree` | 侧栏项目文件树 |
+| `2026-06-28-sidebar-project-file-tree` | 侧栏项目文件树（archived 2026-06-30 → ADR-0025/0026/0027, NFR.md, TEST-STRATEGY.md §2）|
 
 ### 渲染 / Markdown / 状态展示
 

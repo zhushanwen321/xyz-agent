@@ -79,5 +79,6 @@ pi 子进程事件 → infra/pi/event-adapter(翻译) → ServerMessage(WS)
 - [`docs/architecture/runtime-module-map.md`](docs/architecture/runtime-module-map.md) — Runtime 模块清单 + ports 接口
 - [`docs/architecture/context.md`](docs/architecture/context.md) — 领域术语表完整版
 - [`docs/architecture/design.md`](docs/architecture/design.md) — ⚠️ 旧四层设计，部分已 superseded
+- **文件树子系统架构决策**：[ADR-0025](docs/architecture/adr/0025-file-view-full-project-tree.md)（File View 全项目树语义）/ [ADR-0026](docs/architecture/adr/0026-file-tree-lazy-loading.md)（懒加载）/ [ADR-0027](docs/architecture/adr/0027-fileservice-three-layer.md)（FileService 三层）。`[from: 2026-06-28-sidebar-project-file-tree §子系统]`
 - [`docs/standards.md`](docs/standards.md) — 编码标准（streaming 生命周期/mock 策略/路径规范等）
 - [`CONTEXT.md`](CONTEXT.md) — design workflow 精简统一语言（指向 context.md 完整版）

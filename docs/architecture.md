@@ -111,7 +111,7 @@ Node.js WebSocket 服务，三层架构（端口-适配器模式，[ADR 驱动](
 
 ## 架构决策（ADR）
 
-[ADR 目录](architecture/adr/) — 共 24 条（0001–0024）。重要的几条：
+[ADR 目录](architecture/adr/) — 共 27 条（0001–0027）。重要的几条：
 
 - [ADR-0005 Bun 编译二进制 vs npm 包](architecture/adr/0005-bun-binary-over-npm-package.md)
 - [ADR-0009 xyz-agent 数据目录与 pi 隔离](architecture/adr/0009-xyz-agent-data-dir-isolation-from-pi.md)
@@ -119,10 +119,14 @@ Node.js WebSocket 服务，三层架构（端口-适配器模式，[ADR 驱动](
 - [ADR-0018 视觉方向收敛到冷蓝暗色](architecture/adr/0018-visual-direction.md)（推翻旧 Warm & Soft）
 - [ADR-0021 默认主题（暗色冷蓝）](architecture/adr/0021-default-theme-direction.md)
 - [ADR-0024 filechanges 通道](architecture/adr/0024-filechanges-channel.md)
+- [ADR-0025 File View 全项目文件树](architecture/adr/0025-file-view-full-project-tree.md)
+- [ADR-0026 文件树懒加载策略](architecture/adr/0026-file-tree-lazy-loading.md)
+- [ADR-0027 FileService 三层 + ignore 纯函数](architecture/adr/0027-fileservice-three-layer.md)
 
 ## 子系统架构
 
 - [Plugin 子系统](architecture/subsystems/plugin/README.md) — Worker Thread 隔离 + Hook 链 + Tool RPC 路由
+- **文件树子系统**（FileService + fileTreeStore）— 三层架构（[ADR-0027](architecture/adr/0027-fileservice-three-layer.md)）+ 懒加载（[ADR-0026](architecture/adr/0026-file-tree-lazy-loading.md)）。runtime FileService 编排（cwd 守门/越界校验/ignore 双模式）→ 前端 fileTreeStore（D-021 per-session 4 facet + setNodeState 原子入口）→ FileView/FileTreeRow 渲染 + DetailPane 预览（禁 v-html）。工程约束见 [NFR.md](NFR.md) `[from: 2026-06-28-sidebar-project-file-tree §子系统]`
 
 ## 演进 / 调研 / 历史
 

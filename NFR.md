@@ -14,6 +14,9 @@
 | Plugin Worker Thread 隔离 | 每个插件独立 Worker，崩溃不影响主进程；sandbox 插件受 PermissionChecker 约束，trusted(built-in) 不受限 | `2026-05-27-clarify-plugin-phase1/spec.md` FR-3 |
 | Tool Approval / Human Confirm | 危险操作三选一(Allow/Deny/Always)；UI 弹窗 60s 超时自动关闭，用户可取消 | context.md「Tool Approval」 |
 | findFiles 范围限定 | 限定 `process.cwd()`，自动忽略 `.git`/`node_modules`，插件不能搜项目外 | `2026-05-29-plugin-remaining-phases` NFR §5 |
+| 文件树/git 路径越界守门 | 所有接收 path 的文件树/git 操作入口必须调 `isUnderOrEqual(cwd, resolvedPath)`，越界抛 `FileError('out_of_cwd')`/`GitError('path_not_allowed')`；防 `../../etc/passwd` 穿越。词法判定不解析 symlink（接受理由：用户对 cwd 内容负责） | `runtime/services/file-service.ts` + `git-service.ts` getFileDiff；`[from: 2026-06-28-sidebar-project-file-tree §S-1/S-5]` |
+| git 命令防注入 | git CLI 必须经 `IGitExecutor.exec(cwd, cmd, args[])` port，`execFileSync('git',[cmd,...args])` 数组形式，禁函数体直接 exec/execSync 字符串拼接 | `runtime/infra/git-executor.ts`；`[from: 2026-06-28-sidebar-project-file-tree §S-3]` |
+| 文件预览禁 v-html | 渲染用户可控的文件内容/diff 禁 v-html，用 `{{ }}`/`<pre>` 文本插值；高亮复用 shiki 单例，禁引第二套高亮库 | `renderer/components/panel/DetailPane.vue` grep 无 v-html；`[from: 2026-06-28-sidebar-project-file-tree §S-4]` |
 
 ## 2. 数据
 
@@ -46,6 +49,8 @@
 - **WS 重连**：退避上限后报错，不自动重试到死循环；重连成功后对所有 `isGenerating=true` 的 session 调 `markSessionError('连接已重置')` 收尾（不续传中断的 streaming，pi 上下文已丢失）
 - **错误不变量集中**：`chatStore.markSessionError(sid, err)` 单一入口重置 isGenerating + streamingMessage（防 UI 卡「思考中」）。验证：CLAUDE.md 规则#3
 - **命令超时善后**：默认 30s，超时 reject + 删 pending Map + 迟到响应静默丢弃
+- **文件操作超时**：FileService listDir/stat/readFile 共用 `READ_TIMEOUT_MS=10_000`（10s），超时抛 `FileError('timeout')`；withTimeout 用单 Promise 构造器 + 手动 settle 避免 unhandledRejection。验证：`runtime/services/file-service.ts`。`[from: 2026-06-28-sidebar-project-file-tree §K-2]`
+- **展开请求幂等去重**：同 path expand 在途时不重发（inFlight Map），loaded 复用缓存。验证：`renderer/composables/features/useFileTree.ts`。`[from: 2026-06-28-sidebar-project-file-tree §AC-3.8]`
 
 ## 6. 兼容性
 
@@ -53,6 +58,8 @@
 - **pi fork 版本锁定**：必须用 `xyz-pi`（fork，含 `leafId` 字段），不能用原版 `@mariozechner/pi`，否则 session tree 失效
 - **旧消息兼容**：不含 contentBlocks 的历史消息走 `groupByLegacyFields`，渲染不变
 - **plugin manifest 向后兼容**：semver 兼容性检查（`engines.xyz-agent`），不兼容跳过扫描
+- **shared 层禁 node 内置模块**：`src-electron/shared/src/` 是浏览器/runtime 共享层，禁 import `node:` 内置（node:path/fs/crypto），浏览器环境 vite externalize 成空代理访问即崩。验证：`grep -rn "from 'node:" src-electron/shared/src/` 返回空。事故来源：W1a 误迁 isUnderOrEqual 到 shared 导致 dev 崩溃（E2E mock 掩盖 8 Wave）。`[from: 2026-06-28-sidebar-project-file-tree §3.1]`（教训固化为 2026-06-30-e2e-retrospect）
+- **跨 store 编排在 composable 层**：stores 间禁互相 import，跨 store 编排（如 fileTreeStore 监听 chatStore）在 composable 层 watch + 派发 store action。验证：`useFileTree.ts` setupInvalidation。`[from: 2026-06-28-sidebar-project-file-tree §K-9]`
 
 ## 7. 可观测性
 

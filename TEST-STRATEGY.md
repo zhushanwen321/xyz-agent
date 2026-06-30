@@ -15,7 +15,10 @@
 |----|------|------|---------|
 | 单元测试 | renderer（happy-dom）/ runtime | 纯逻辑、纯函数、单模块、状态机 | 见下 |
 | 集成测试 | renderer（mount 组件树，`@vue/test-utils`） | 组件协作、store 联动、WS 事件流 | 见下 |
-| E2E | **手动**，无 playwright/cypress | 全链路用户旅程（含 OS 原生 dialog 等无法自动化的步标 `[需手工]`） | 手动 |
+| E2E（mock 轨）| Playwright `_electron` + VITE_MOCK | 全链路用户旅程（renderer 渲染 + 交互逻辑），OS 原生 dialog 标 `[需手工]` | `npx playwright test` |
+| **dev 冒烟**（闸门）| chromium + vite dev server | 模块加载健康（拦 node:path externalize 类 bug，mock 轨盲区）| `node scripts/dev-smoke.mjs`（待建） |
+
+> **[HISTORICAL] E2E 从手动升级为 Playwright**：原「E2E 手动，无 playwright/cypress」（2026-06-28 sidebar-project-file-tree W0 引入 Playwright 覆盖）。mock 轨验证渲染/交互，但**验证不了模块加载期副作用**——`node:path` 类错误在 vite build 期被 externalize 成惰性代理，mock 模式不触发 getter，E2E 全绿却 dev 崩溃（2026-06-30 事故）。**必须配套 dev 冒烟闸门**。详见 `.xyz-harness/2026-06-30-e2e-retrospect/`。`[from: 2026-06-28-sidebar-project-file-tree §2/W8]`
 
 ### 运行命令（cwd 敏感）
 
