@@ -9,7 +9,7 @@
   <aside
     class="relative flex flex-col overflow-hidden pt-[52px]"
     :style="{
-      flexBasis: sidebar.collapsed ? '0px' : '200px',
+      flexBasis: sidebar.collapsed ? '0px' : '340px',
       flexGrow: '0',
       flexShrink: '0',
       minWidth: '0px',

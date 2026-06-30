@@ -10,7 +10,7 @@
     class="sidebar h-full transition-[width,opacity] duration-[var(--duration-slow)] ease-[var(--ease)]"
     :class="{ 'w-0 opacity-0 overflow-hidden': sidebar.collapsed }"
   >
-    <div class="sidebar__inner flex h-full w-[200px] flex-col pl-0.5">
+    <div class="sidebar__inner flex h-full w-[340px] flex-col pl-0.5">
       <!-- Brand -->
       <div class="flex items-center gap-2 px-2 pb-3.5 text-[13px] font-semibold">
         <span class="grid size-[22px] place-items-center rounded-md bg-accent text-[11px] font-bold text-white">x</span>

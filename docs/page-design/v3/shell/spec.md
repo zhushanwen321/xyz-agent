@@ -20,7 +20,7 @@
 ```
 窗口 (bg-base #0d0d0f 平铺全屏, border-radius:10px, 浮于桌面)
   .app-shell  flex  p-3(12px)  gap-3(12px)
-    .aside-region (width 200px, 无 background —— 透明，融在 base 上)
+    .aside-region (width 340px, 无 background —— 透明，融在 base 上)
       ├── padding-top: 52px        ← traffic light 安全区（三平台统一）
       ├── .a-logo / .a-nav / .a-user
     .main-panel (float-panel: bg-panel + border + radius:12px + shadow —— 浮起)
@@ -47,7 +47,7 @@
 > **折叠/非折叠 chrome 一致性**：非折叠浮层与折叠 header 内的 chrome 三按钮水平位置完全一致（按钮左缘均 x=100），切换折叠无跳动。红黄绿右缘 x=68 + 32px 呼吸 = 100。
 
 **应用按钮三件套**（应用自绘 DOM，三平台统一）：
-- `收起` → toggle sidebar 宽度（200px ↔ 折叠态）
+- `收起` → toggle sidebar 宽度（340px ↔ 折叠态）
 - `← 后退` / `→ 前进` → **导航历史栈** back/forward（浏览器式）：栈条目 = (会话, 视图节点)，会话切换与会话内跳转都 push。**与 Flow 4「回退分支」解耦**——分支回退是对话级动作，走 Session Tree + 分支 pill，不走 chrome ←/→
 
 ### 全局快捷键 · ⌘B 三态优先级（2026-06-19 定）
