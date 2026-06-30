@@ -43,6 +43,8 @@ const emit = defineEmits<{
   keydown: [e: KeyboardEvent]
   /** slash 命令触发检测：{query} 表示 / 在最左且无 chip；null 表示应关闭触发浮层 */
   'slash-trigger': [payload: { query: string } | null]
+  /** # 文件触发检测：{query} 表示光标前有「空格/行首 + # + 非空白」序列；null 表示应关闭触发浮层 */
+  'file-trigger': [payload: { query: string } | null]
 }>()
 
 const elRef = ref<HTMLDivElement | null>(null)
@@ -80,6 +82,35 @@ function syncEmpty(): void {
   isEmpty.value = getText().trim() === ''
 }
 
+/**
+ * # 文件触发检测（§2d：任意位置触发）。
+ *
+ * 与 slash 不同（slash 靠 text.startsWith('/') 判最左），# 是「任意位置」触发：
+ * 必须基于光标位置判断——取光标前到所属文本节点开头的文本，正则匹配「空格/行首 + # + 非空白序列到光标」。
+ *
+ * 触发条件（用户确认）：
+ * - # 前是空格或行首，# 后紧跟非空白 → 触发（query=# 后到光标的内容，可为空串）
+ * - # 后遇空格（query 末尾是空格）→ 不匹配（终止浮层）
+ *
+ * @returns 触发时 { query }；否则 null（关闭浮层）
+ */
+function detectHashTrigger(): { query: string } | null {
+  const el = getEl()
+  if (!el) return null
+  const sel = window.getSelection()
+  // 非折叠选区（用户选中一段文本）不触发；光标不在输入区内不触发
+  if (!sel || !sel.isCollapsed || sel.rangeCount === 0) return null
+  const node = sel.anchorNode
+  if (!node || !el.contains(node)) return null
+  const offset = sel.anchorOffset
+  // 光标必须在文本节点内（chip 是 contentEditable=false 的元素节点，光标在其后由 spacer 文本节点承接）
+  if (node.nodeType !== Node.TEXT_NODE) return null
+  const beforeCursor = (node.textContent ?? '').slice(0, offset)
+  // (?:^|\s)：# 前是行首或空白；# 后 (\S*) 到光标必须全非空白（遇空格则不匹配 → 终止）
+  const m = /(?:^|\s)#(\S*)$/.exec(beforeCursor)
+  return m ? { query: m[1] } : null
+}
+
 function onInput(): void {
   syncEmpty()
   const text = getText()
@@ -89,6 +120,8 @@ function onInput(): void {
   // startsWith('/') 已隐含「/ 在最左且左侧无内容」，无需额外判断。
   const hasChip = !!getEl()?.querySelector('.slash-chip, .mention-chip')
   emit('slash-trigger', !hasChip && text.startsWith('/') ? { query: text.slice(1) } : null)
+  // # 文件触发检测：基于光标位置（任意位置触发，不靠整框文本）
+  emit('file-trigger', detectHashTrigger())
 }
 
 function onCompositionEnd(): void {
@@ -185,6 +218,43 @@ function clearSlashQueryText(): void {
   sel?.addRange(range)
 }
 
+/**
+ * 清掉光标处的 #query 文本（选中文件后，Composer 调它清掉过滤文本，再调 insertMentionChip 插 chip）。
+ *
+ * 与 clearSlashQueryText 的关键差异：# 是任意位置触发，#query 可能在文本中间
+ * （如 "code #auth|"），不能清整框——只删 # 到光标这段。
+ *
+ * 实现：基于当前 selection 定位光标文本节点内的 # 起点，构建 Range 删除 #query。
+ * 降级：selection 失效（happy-dom / 光标已移）时直接 return，不阻断——chip 仍能插入，
+ * 最多残留 #query 文本（后续可手动删）。
+ */
+function clearHashQueryText(): void {
+  const el = getEl()
+  if (!el) return
+  const sel = window.getSelection()
+  if (!sel || !sel.isCollapsed || sel.rangeCount === 0) return
+  const node = sel.anchorNode
+  if (!node || !el.contains(node)) return
+  if (node.nodeType !== Node.TEXT_NODE) return
+  const offset = sel.anchorOffset
+  const text = node.textContent ?? ''
+  const beforeCursor = text.slice(0, offset)
+  const m = /(?:^|\s)#(\S*)$/.exec(beforeCursor)
+  if (!m) return // 光标前无 # 触发序列，无需清理
+  // m.index 是匹配起点（含 # 前的空格/行首边界字符）；# 实际位置在 m.index + 边界字符长度
+  const boundaryLen = m[0].length - 1 - m[1].length // m[0]=边界+#+query，减去 # 和 query 长度
+  const hashStart = (m.index ?? 0) + boundaryLen
+  const range = document.createRange()
+  range.setStart(node, hashStart)
+  range.setEnd(node, offset)
+  range.deleteContents()
+  // 光标留在 # 原（已删）位置，供 insertMentionChip 的 restoreSelection + insertNode 接管
+  sel.removeAllRanges()
+  sel.addRange(range)
+  syncEmpty()
+  emit('input', getText())
+}
+
 function clear(): void {
   const el = getEl()
   if (!el) return
@@ -234,6 +304,7 @@ defineExpose({
   insertSlashChip,
   insertMentionChip,
   clearSlashQueryText,
+  clearHashQueryText,
   saveSelection,
   restoreSelection,
 })

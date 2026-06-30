@@ -1,9 +1,9 @@
 <template>
   <!--
     + 添加内容 popover（draft-composer-states §1 ①）。
-    click 触发，三路：附件 / # 文件 / / 命令。
-    点击 # / 由父组件插入对应符号到输入区（进而触发命令浮层 §2d）。
-    landing 守门（G10）：无 session 时隐藏「文件」入口（无 cwd，# 无意义）。
+    click 触发，两路：附件 / / 命令。
+    # 文件已移除入口——改走输入区敲 # 的 inline 触发（§2d，见 CommandPopover file 分支）。
+    附件暂为 TODO（附件功能单独开任务，涉及系统文件对话框 + pi 对接）。
   -->
   <Popover v-model:open="open">
     <PopoverTrigger as-child>
@@ -11,7 +11,7 @@
         variant="ghost"
         size="icon"
         class="size-[28px] shrink-0 rounded-sm text-subtle transition-colors hover:bg-surface-hover hover:text-muted"
-        title="添加内容（附件 / 文件 / 命令）"
+        title="添加内容（附件 / 命令）"
       >
         <Plus class="size-4" />
       </Button>
@@ -33,17 +33,20 @@
 </template>
 
 <script setup lang="ts">
-import { computed, markRaw, ref } from 'vue'
-import { Hash, Paperclip, Plus, Slash } from '@lucide/vue'
+import { markRaw, ref } from 'vue'
+import type { Component } from 'vue'
+import { Paperclip, Plus, Slash } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 
-type AddType = 'attach' | 'file' | 'slash'
+type AddType = 'attach' | 'slash'
 
-const props = defineProps<{
-  /** 当前 session id（无值=landing 态，隐藏「文件」入口） */
-  sessionId?: string | null
-}>()
+interface AddItem {
+  type: AddType
+  label: string
+  icon: Component
+  hint?: string
+}
 
 const emit = defineEmits<{
   select: [type: AddType]
@@ -51,14 +54,13 @@ const emit = defineEmits<{
 
 const open = ref(false)
 
-const ALL_ITEMS = [
-  { type: 'attach' as const, label: '附件', icon: markRaw(Paperclip) },
-  { type: 'file' as const, label: '文件', hint: '#', icon: markRaw(Hash) },
-  { type: 'slash' as const, label: '命令', hint: '/', icon: markRaw(Slash) },
+const ITEMS: AddItem[] = [
+  { type: 'attach', label: '附件', icon: markRaw(Paperclip) },
+  { type: 'slash', label: '命令', hint: '/', icon: markRaw(Slash) },
 ]
 
-/** landing 守门：无 session 时隐藏「文件」入口（无 cwd，# 无意义） */
-const items = computed(() => (props.sessionId ? ALL_ITEMS : ALL_ITEMS.filter((i) => i.type !== 'file')))
+// file 入口移除后无 session 守门需求（attach/slash 均与 cwd 无关），items 退化为常量
+const items = ITEMS
 
 function onSelect(type: AddType): void {
   open.value = false

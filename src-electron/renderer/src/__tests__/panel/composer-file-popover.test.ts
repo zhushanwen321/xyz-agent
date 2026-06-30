@@ -96,33 +96,19 @@ describe('CommandPopover file 分支', () => {
   })
 })
 
-describe('AddMenuPopover 去 @ 入口 + landing 守门', () => {
-  it('U30 有 session → 含「文件」「命令」，不含「引用」', async () => {
+describe('AddMenuPopover 入口（# 文件改走 inline 触发，+菜单只剩 附件/命令）', () => {
+  it('U30 +菜单含「附件」「命令」，不含「文件」「引用」', async () => {
     const wrapper = mount(AddMenuPopover, {
       attachTo: document.body,
-      props: { sessionId: 's1' },
     })
     // 触发 Popover 打开（click trigger）
     await wrapper.find('button').trigger('click')
     await nextTick()
 
     const texts = Array.from(document.body.querySelectorAll('button')).map((b) => b.textContent ?? '')
-    expect(texts.some((t) => t.includes('文件'))).toBe(true)
+    expect(texts.some((t) => t.includes('附件'))).toBe(true)
     expect(texts.some((t) => t.includes('命令'))).toBe(true)
-    expect(texts.some((t) => t.includes('引用'))).toBe(false)
-    wrapper.unmount()
-  })
-
-  it('U31 无 session（landing）→ 不含「文件」「引用」，含「命令」', async () => {
-    const wrapper = mount(AddMenuPopover, {
-      attachTo: document.body,
-      props: { sessionId: undefined },
-    })
-    await wrapper.find('button').trigger('click')
-    await nextTick()
-
-    const texts = Array.from(document.body.querySelectorAll('button')).map((b) => b.textContent ?? '')
-    expect(texts.some((t) => t.includes('命令'))).toBe(true)
+    // # 文件已移除入口（改走 inline 触发）；@ 引用早已废弃
     expect(texts.some((t) => t.includes('文件'))).toBe(false)
     expect(texts.some((t) => t.includes('引用'))).toBe(false)
     wrapper.unmount()

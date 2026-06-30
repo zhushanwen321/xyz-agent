@@ -26,12 +26,19 @@ export interface FileCandidate {
 
 /**
  * FileNode[] → FileCandidate[] 映射。
- * 目录 name 补尾随斜杠，kind 用中文（对齐 CommandPopover 图标判定逻辑）。
+ *
+ * name 策略（对齐设计稿 §2d 行 519-521）：
+ * - 目录：用相对 path 补尾随斜杠（如 `src/auth/`），而非裸 basename。
+ *   原因：同名不同位置的目录（src/utils/ vs tools/utils/）靠 basename 不可辨，
+ *   相对 path 天然区分，无需在提示列重复显示路径。
+ * - 文件：保持 basename（如 `AuthService.ts`），文件名通常已足够辨识。
+ *
+ * kind 用中文（目录/文件），对齐 CommandPopover 图标判定逻辑。
  */
 export function toFileCandidates(nodes: FileNode[]): FileCandidate[] {
   return nodes.map((n) => ({
     id: n.path,
-    name: n.type === 'dir' ? `${n.name}/` : n.name,
+    name: n.type === 'dir' ? `${n.path}/` : n.name,
     kind: n.type === 'dir' ? '目录' : '文件',
     path: n.path,
     type: n.type,

@@ -19,7 +19,7 @@
       v-model:open="cmdOpen"
       :type="cmdType"
       :session-id="sessionId ?? undefined"
-      :query="slashQuery"
+      :query="cmdType === 'file' ? fileQuery : slashQuery"
       @select="onCmdSelect"
     >
       <div class="composer-box relative rounded-lg border bg-bg-input" :class="boxClass" data-testid="composer-box">
@@ -35,13 +35,14 @@
           @input="onInputChange"
           @keydown="onKeydown"
           @slash-trigger="onSlashTrigger"
+          @file-trigger="onFileTrigger"
         />
 
       <!-- 工具条（panel/spec §composer line 51）：上下文/模型/thinking-level 展示型 + 发送位三态。
            gap-0：三触发器贴合紧凑成一条工具带（draft「不画分隔线」，仅靠 padding 区隔），发送位 ml-1.5 独立锚点。 -->
       <div class="composer-bar flex flex-wrap items-center justify-end gap-0 px-2.5 pb-2 mt-1">
-        <!-- + 添加内容（左锚定，spec §1 ①，click 出 3 路浮层） -->
-        <AddMenuPopover :session-id="sessionId" @select="onAddSelect" />
+        <!-- + 添加内容（左锚定，spec §1 ①，click 出浮层：附件 / 命令；# 文件改走 inline 触发） -->
+        <AddMenuPopover @select="onAddSelect" />
         <span class="flex-1" />
         <!-- 上下文容量（spec §2a：hover 出容量 popover；session 通道订阅 context.update） -->
         <ContextCapacityPopover :session-id="sessionId ?? undefined" />
@@ -156,6 +157,10 @@ const cmdType = ref<'file' | 'slash'>('file')
 const slashTriggerActive = ref(false)
 /** slash 命令过滤 query（输入区 / 后内容），透传给 CommandPopover 过滤 */
 const slashQuery = ref('')
+/** # 文件触发态标记：同 slashTriggerActive 语义，区分输入区 # 触发与 +菜单触发两条路径 */
+const fileTriggerActive = ref(false)
+/** # 文件过滤 query（输入区 # 后内容），透传给 CommandPopover 过滤 */
+const fileQuery = ref('')
 const commandPopoverRef = ref<InstanceType<typeof CommandPopover> | null>(null)
 /** 发送中（S5）：useChat.send 的 Promise 在途 */
 const isSending = ref(false)
@@ -194,26 +199,45 @@ function onSlashTrigger(payload: { query: string } | null): void {
   }
 }
 
-/** + 菜单选择：打开对应命令浮层（§2d #//）。slashTriggerActive 不设 true——
- *  +菜单路径的浮层不受后续 slash-trigger:null 影响（防用户敲普通键误关）。 */
-function onAddSelect(type: 'attach' | 'file' | 'slash'): void {
-  if (type === 'attach') return // TODO: 附件上传（未来功能）
+/** 输入区 file-trigger 事件路由（同 onSlashTrigger 语义，对应 # 文件浮层）：
+ *  - payload 非 null（光标前有「空格/行首 + # + 非空白」）→ 打开 file 浮层，记录 query 透传过滤
+ *  - payload 为 null 且 fileTriggerActive → 关闭浮层（# 后遇空格等终止场景） */
+function onFileTrigger(payload: { query: string } | null): void {
+  if (payload) {
+    fileTriggerActive.value = true
+    fileQuery.value = payload.query
+    cmdType.value = 'file'
+    cmdOpen.value = true
+  } else if (fileTriggerActive.value) {
+    cmdOpen.value = false
+    fileTriggerActive.value = false
+  }
+}
+
+/** + 菜单选择：打开命令浮层（slash）。slashTriggerActive 不设 true——
+ *  +菜单路径的浮层不受后续 slash-trigger:null 影响（防用户敲普通键误关）。
+ *  attach 暂为 TODO（附件功能单独开任务）；file 已移除入口（# 改走 inline 触发）。 */
+function onAddSelect(type: 'attach' | 'slash'): void {
+  if (type === 'attach') return // TODO: 附件上传（附件功能单独开任务）
   inputRef.value?.saveSelection()
   inputRef.value?.focus()
-  cmdType.value = type === 'file' ? 'file' : 'slash'
+  cmdType.value = 'slash'
   cmdOpen.value = true
 }
 
-/** 命令浮层选中：插 slash chip / file chip。slash 分支先清掉 /query 过滤文本再插 chip。
+/** 命令浮层选中：插 slash chip / file chip。slash 分支先清掉 /query 过滤文本再插 chip；
+ *  file 分支先清掉 #query 过滤文本（任意位置，只删 # 到光标这段）再插 mention chip。
  *  icon 按 source 透传给 chip（extension→terminal / skill→star / 默认 wrench），与选择框图标一致。 */
 function onCmdSelect(payload: { type: 'file' | 'slash'; name: string; icon?: string; description?: string }): void {
   cmdOpen.value = false
   slashTriggerActive.value = false // 复位触发态标记
+  fileTriggerActive.value = false // 复位 # 触发态标记
   inputRef.value?.focus()
   if (payload.type === 'slash') {
     inputRef.value?.clearSlashQueryText()
     inputRef.value?.insertSlashChip(payload.name, payload.icon)
   } else {
+    inputRef.value?.clearHashQueryText()
     inputRef.value?.insertMentionChip('#', payload.name)
   }
 }
@@ -254,7 +278,7 @@ const boxClass = computed(() => [
 const placeholder = computed(() =>
   isStreaming.value
     ? '想补充什么？⏎ 加入当前任务 · Alt+⏎ 排到下一轮…'
-    : '描述你想让 AI 做什么，或 @ 引用、# 文件、/ 命令…',
+    : '描述你想让 AI 做什么，或 # 文件、/ 命令…',
 )
 
 /**

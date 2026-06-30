@@ -73,7 +73,7 @@ const props = defineProps<{
   type: CmdType
   /** session 通道订阅键（D8：session.commands 带 sessionId，走 events.on(sessionId)） */
   sessionId?: string
-  /** slash 命令过滤 query（输入区 / 后的内容，空串/缺省=不过滤；仅 type==='slash' 生效） */
+  /** 过滤 query（输入区 / 或 # 后的内容，空串/缺省=不过滤；file 按 name+path 过滤，slash 按命令名过滤） */
   query?: string
 }>()
 
@@ -160,7 +160,15 @@ watch(() => props.sessionId, (sid) => subscribeCommands(sid))
 /** 统一候选项视图（file/slash 两路归一为 { id, name, kind, icon, description? }） */
 const items = computed(() => {
   if (props.type === 'file') {
-    return fileCandidates.value.map((f) => ({
+    // file 路径：按 query 过滤 name + path（大小写不敏感），无 query 走全量。
+    // name 已携带路径信息（目录用相对 path 补斜杠，见 toFileCandidates），
+    // 故不重复在 description 显示 path——退回 kind 标签（对齐设计稿 §2d）。
+    const fq = (props.query ?? '').trim().toLowerCase()
+    const fAll = fileCandidates.value
+    const fFiltered = fq
+      ? fAll.filter((f) => f.name.toLowerCase().includes(fq) || (f.path ?? '').toLowerCase().includes(fq))
+      : fAll
+    return fFiltered.map((f) => ({
       id: f.id,
       name: f.name,
       kind: f.kind,
@@ -169,8 +177,8 @@ const items = computed(() => {
     }))
   }
   const all = slashCommands.value
-  // slash 路径按 query 过滤（# 不过滤，走全量候选）；query 仅影响 slash 命令
-  const q = props.type === 'slash' ? (props.query ?? '').trim().toLowerCase() : ''
+  // slash 路径按 query 过滤（命令名子串匹配）
+  const q = (props.query ?? '').trim().toLowerCase()
   const filtered = q ? all.filter((c) => c.name.toLowerCase().includes(q)) : all
   return filtered.map((c) => ({
     id: c.id,
