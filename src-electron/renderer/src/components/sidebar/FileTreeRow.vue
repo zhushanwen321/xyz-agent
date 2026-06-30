@@ -4,71 +4,88 @@
     - 目录（可折叠，展开态从 fileTreeStore.expandedPaths 读，toggle 走 useFileTree）
     - 文件（图标按扩展名 + git overlay 角标，点击触发 selectFile）
     data-testid 用 path（E2E 选择器），dir/file 区分前缀
+
+    [HISTORICAL v-if/v-else 链断裂事故] 目录行 + 展开子节点必须包进同一个
+    <template v-if="node.type === 'dir'">，文件行 v-else 紧随其后。
+    原实现把「展开子节点」写成独立的 <template v-if="...&& isExpanded">，插在目录 v-if
+    与文件 v-else 之间 → v-else 错误绑定到展开判断 → 折叠目录时 v-else 命中，同一节点
+    被同时渲染为目录行 + 同名文件行（「文件打不开」假象）。绝不可在目录 v-if 与文件 v-else
+    之间插入任何条件块。
   -->
   <div>
-    <!-- 目录 -->
-    <div
-      v-if="node.type === 'dir'"
-      class="flex cursor-pointer items-center gap-1.5 rounded-md py-1 pr-2 text-[11px] transition-colors hover:bg-surface-hover"
-      :style="{ paddingLeft: `${depth * 10 + 8}px` }"
-      :data-testid="`file-tree-dir-${node.path}`"
-      @click="toggle"
-    >
-      <ChevronRight
-        class="size-3 shrink-0 text-subtle transition-transform"
-        :class="{ 'rotate-90': isExpanded }"
-      />
-      <Folder class="size-3.5 shrink-0 text-muted" />
-      <span class="flex-1 truncate" :class="node.ignored ? 'text-subtle italic' : 'text-muted'">{{ node.name }}</span>
-    </div>
-    <template v-if="node.type === 'dir' && isExpanded">
-      <!-- 展开在途：loading 指示（nodeStates[path].status==='loading'） -->
+    <!-- 目录（行 + 展开子节点同属一个 v-if 块，保证下方文件 v-else 正确绑定） -->
+    <template v-if="node.type === 'dir'">
       <div
-        v-if="dirState === 'loading'"
-        class="flex items-center gap-1.5 py-1 pr-2 text-[10.5px] text-subtle"
-        :style="{ paddingLeft: `${(depth + 1) * 10 + 8}px` }"
-        :data-testid="`file-tree-loading-${node.path}`"
+        class="flex cursor-pointer items-center gap-1.5 rounded-md py-1 pr-2 font-mono text-[12px] transition-colors hover:bg-surface-hover"
+        :style="rowPaddingStyle"
+        :data-testid="`file-tree-dir-${node.path}`"
+        @click="toggle"
       >
-        <Loader2 class="size-3 animate-spin opacity-60" />
-        <span>加载...</span>
+        <span :class="chevronSlotClass" data-testid="chevron-slot">
+          <ChevronRight
+            class="size-3 text-subtle transition-transform"
+            :class="{ 'rotate-90': isExpanded }"
+          />
+        </span>
+        <Folder class="size-3.5 shrink-0 text-muted" />
+        <span class="flex-1 truncate" :class="node.ignored ? 'text-subtle italic' : 'text-fg'">{{ node.name }}</span>
       </div>
-      <div
-        v-else-if="dirState === 'error'"
-        class="flex items-center gap-1.5 py-1 pr-2 text-[10.5px] text-danger"
-        :style="{ paddingLeft: `${(depth + 1) * 10 + 8}px` }"
-        :data-testid="`file-tree-error-${node.path}`"
-      >
-        <AlertCircle class="size-3" />
-        <span>加载失败（点击重试）</span>
-      </div>
-      <template v-else>
-        <FileTreeRow
-          v-for="child in node.children"
-          :key="child.path"
-          :node="child"
-          :depth="depth + 1"
-          :session-id="sessionId"
-        />
-        <!-- 已加载但空目录 -->
+
+      <!-- 展开态子节点 -->
+      <template v-if="isExpanded">
+        <!-- 展开在途：loading 指示（nodeStates[path].status==='loading'） -->
         <div
-          v-if="node.children && node.children.length === 0"
-          class="py-1 pr-2 text-[10.5px] text-subtle italic"
-          :style="{ paddingLeft: `${(depth + 1) * 10 + 18}px` }"
+          v-if="dirState === 'loading'"
+          class="flex items-center gap-1.5 py-1 pr-2 font-mono text-[10.5px] text-subtle"
+          :style="childHintPaddingStyle"
+          :data-testid="`file-tree-loading-${node.path}`"
         >
-          （空目录）
+          <span :class="chevronSlotClass" data-testid="chevron-slot" />
+          <Loader2 class="size-3 animate-spin opacity-60" />
+          <span>加载...</span>
         </div>
+        <div
+          v-else-if="dirState === 'error'"
+          class="flex items-center gap-1.5 py-1 pr-2 font-mono text-[10.5px] text-danger"
+          :style="childHintPaddingStyle"
+          :data-testid="`file-tree-error-${node.path}`"
+          @click="toggle"
+        >
+          <span :class="chevronSlotClass" data-testid="chevron-slot" />
+          <AlertCircle class="size-3" />
+          <span>加载失败（点击重试）</span>
+        </div>
+        <template v-else>
+          <FileTreeRow
+            v-for="child in node.children"
+            :key="child.path"
+            :node="child"
+            :depth="depth + 1"
+            :session-id="sessionId"
+          />
+          <!-- 已加载但空目录 -->
+          <div
+            v-if="node.children && node.children.length === 0"
+            class="py-1 pr-2 font-mono text-[10.5px] text-subtle italic"
+            :style="childHintPaddingStyle"
+          >
+            （空目录）
+          </div>
+        </template>
       </template>
     </template>
 
-    <!-- 文件 -->
+    <!-- 文件（v-else 紧邻上方目录 <template v-if>，绑定到 node.type 判断） -->
     <div
       v-else
-      class="flex cursor-pointer items-center gap-2 rounded-md py-1 pr-2 transition-colors hover:bg-surface-hover"
+      class="flex cursor-pointer items-center gap-1.5 rounded-md py-1 pr-2 transition-colors hover:bg-surface-hover"
       :class="{ 'bg-accent-soft': isSelected }"
-      :style="{ paddingLeft: `${depth * 10 + 18}px` }"
+      :style="rowPaddingStyle"
       :data-testid="`file-tree-file-${node.path}`"
       @click="onSelectFile"
     >
+      <!-- D-022：chevron 槽固定宽度占位，使文件 icon 与目录 folder icon 垂直对齐 -->
+      <span :class="chevronSlotClass" data-testid="chevron-slot" />
       <component :is="fileIcon" class="size-3.5 shrink-0" :class="fileIconColor" />
       <span
         class="flex-1 truncate font-mono text-[12px]"
@@ -106,6 +123,31 @@ const props = defineProps<{
 const store = useFileTreeStore()
 const { expandNode, collapseNode, selectFile } = useFileTree()
 const drawer = useSideDrawer()
+
+/** 缩进步进（px）：每层级增加的 padding-left，对齐 chevron 槽宽度（D-022） */
+const INDENT_STEP = 14
+/** 行 padding 基线（px）：depth=0 时的起始 padding-left（D-022） */
+const BASE_PADDING = 8
+/**
+ * chevron 槽 Tailwind 类（D-022）：固定宽度 inline-flex 占位，目录放 ChevronRight、
+ * 文件空占位，使目录 folder icon 与文件 file icon 垂直对齐。
+ * 注意：宽度必须写死 14px 静态字符串，Tailwind JIT 不识别运行时拼接的任意值类。
+ * 与 INDENT_STEP 保持同步（缩进单位 = chevron 槽宽度）。
+ */
+const chevronSlotClass = 'w-[14px] shrink-0 inline-flex items-center justify-center'
+
+/**
+ * 行 padding-left（D-022 单一公式）：目录行与文件行共用，不再用文件行 +10 数值补偿。
+ * 每层缩进 INDENT_STEP px（视觉上一级缩进 ≈ 一个 chevron 位）。
+ */
+const rowPaddingStyle = computed(() => ({
+  paddingLeft: `${props.depth * INDENT_STEP + BASE_PADDING}px`,
+}))
+
+/** 子层提示行（loading/error/空目录）padding：在当前 depth 基础上 +1 层缩进 */
+const childHintPaddingStyle = computed(() => ({
+  paddingLeft: `${(props.depth + 1) * INDENT_STEP + BASE_PADDING}px`,
+}))
 
 /** 展开态从 store 读（D-019 rehydrate：切回 session 自动恢复） */
 const isExpanded = computed(() => store.getExpanded(props.sessionId).has(props.node.path))
