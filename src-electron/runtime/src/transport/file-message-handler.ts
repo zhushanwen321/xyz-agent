@@ -37,6 +37,7 @@ export class FileMessageHandler {
   readonly handles: ClientMessageType[] = [
     'file.tree',
     'file.tree.expand',
+    'file.search',
     'file.read',
     'file.write.create',
     'file.write.rename',
@@ -59,6 +60,17 @@ export class FileMessageHandler {
         try {
           const children = await this.ctx.fileService.expandDir(sessionId, path, showIgnored)
           return this.ctx.reply(ws, msg.id, 'file.tree.expand:result', { sessionId, children: children as unknown as Record<string, unknown>[] })
+        } catch (e) {
+          return this.sendFileError(ws, msg.id, sessionId, e)
+        }
+      }
+      case 'file.search': {
+        // composer # 文件候选：全量递归当前 cwd（受 ignore + 深度上限 + 结果数上限）。
+        // searchFiles 内部 per-dir 容错（单子目录错误跳过不中断），仅 session_not_found 抛出。
+        const { sessionId, showIgnored } = msg.payload
+        try {
+          const files = await this.ctx.fileService.searchFiles(sessionId, showIgnored)
+          return this.ctx.reply(ws, msg.id, 'file.search:result', { sessionId, files: files as unknown as Record<string, unknown>[] })
         } catch (e) {
           return this.sendFileError(ws, msg.id, sessionId, e)
         }
