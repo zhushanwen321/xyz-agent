@@ -1,6 +1,6 @@
 ---
 verdict: pass
-backfed_from: []
+backfed_from: [nfr, code-arch]
 ---
 
 # ⌘K 全局搜索浮层（Search Modal）
@@ -18,17 +18,17 @@ backfed_from: []
   - G1.3: 会话可达——用户跨项目找到历史会话
   - G1.4: 符号可达（降级）——符号类占位，不阻断主流程
 
-- **G2: 消除当前 mock 数据造成的误导** — 成功标准：`npm run dev` 默认 real 模式下，搜索浮层展示真实数据（命令注册表/项目文件/会话库），无写死假数据。**含 search 域**——现状 `api/index.ts` 将 search 硬编码常驻 mock（不随 VITE_MOCK 切换），G2 要求 search 同样接 real domain
+- **G2: 消除当前 mock 数据造成的误导** — 成功标准：`npm run dev` 默认 real 模式下，搜索浮层展示真实数据（命令注册表/项目文件/会话库），无写死假数据。**含 search 域**——现状 `api/index.ts` 将 search 硬编码常驻 mock（不随 VITE_MOCK 切换），G2 要求 search 同样接真实编排 `[BACKFED from code-arch on 2026-06-30] D-026：search 编排归 composable（useSearch），不新建 search domain——编排跨 commandStore+fileSearchStore+composer/session 违反「domain 只调 transport+pending」铁律`
 
 ### 达成路线
 
 | 目标 | 路线/策略 | 对应用例 |
 |------|---------|---------|
 | G1.1 | 统一命令注册表（应用命令 + pi slash 命令），浮层内查询命中即执行 | UC-1, UC-2 |
-| G1.2 | 复用 runtime 现有 `file-service.searchFiles`（全树递归，深度 8/上限 500/内建 ignore，已接 `file.search` handler + real composer domain），按路径**子串匹配** | UC-1, UC-3 |
+| G1.2 | 复用 runtime 现有 `file-service.searchFiles`（全树递归，深度 8/上限 5000/内建 ignore，已接 `file.search` handler + real composer domain），按路径**子串匹配** | UC-1, UC-3 |
 | G1.3 | 复用 session.list 全量会话库，前端内存过滤，跨项目搜索 | UC-1, UC-4 |
 | G1.4 | 符号类 UI 保留分组位，结果区显示降级提示，不接真实数据 | UC-1（边界） |
-| G2 | 新建 search real domain，替换 mock；runtime 新增 search.handler | UC-1~UC-4 |
+| G2 | 新建 useSearch composable 替换 mock；SearchModal 改调 useSearch.query（不再导出 api/index.ts 的 search 门面）`[BACKFED from code-arch on 2026-06-30] D-026：编排归 composable 非 domain` | UC-1~UC-4 |
 
 ## 2. 业务用例
 
@@ -188,7 +188,7 @@ graph LR
 | 数据 | 来源 | 处理 | 消费者 | 归档策略 | 敏感级别 |
 |------|------|------|--------|---------|---------|
 | 命令注册表 | 应用命令（前端注册）+ pi slash（runtime session.getCommands） | 合并统一列表（pi 命令带 `/` 前缀天然不与应用命令撞名，无需复杂去重，按 name 唯一标识） | 匹配引擎 → 命令分组 | 不持久化（运行时聚合） | 内部 |
-| 项目文件树 | runtime 现有 `file-service.searchFiles`（全树递归，深度 8/上限 500/内建 ignore，已接 `file.search` handler） | 按相对路径**子串匹配**（runtime 查询） | 匹配引擎 → 文件分组 | 不持久化（实时扫描） | 内部 |
+| 项目文件树 | runtime 现有 `file-service.searchFiles`（全树递归，深度 8/上限 5000/内建 ignore，已接 `file.search` handler） | 按相对路径**子串匹配**（runtime 查询） | 匹配引擎 → 文件分组 | 不持久化（实时扫描） | 内部 |
 | 会话库 | runtime session.list（全量跨项目） | 按 label/cwd/gitBranch **子串匹配**（前端内存过滤；**gitBranch 缺失时降级为仅匹配 label/cwd**，非 git 目录 gitBranch 为 undefined） | 匹配引擎 → 会话分组 | 不持久化（session.list 实时） | 内部 |
 | recents | 用户确认行为产生 | 每类保留 5 项，FIFO 淘汰 | 匹配引擎 → recents 分组 | localStorage（跨会话持久） | 内部 |
 
@@ -209,7 +209,7 @@ graph LR
 | F6 | 复用 file.search（searchFiles 全递归）+ 路径子串搜索 + DetailPane 打开 | UC-3 | G1.2 |
 | F7 | 会话库跨项目搜索 + session 切换 | UC-4 | G1.3 |
 | F8 | 符号占位降级提示 | UC-5 | G1.4 |
-| F9 | search real domain（替换 mock） | UC-1~UC-4 | G2 |
+| F9 | useSearch composable（编排 4 数据源查询，替换 mock）`[BACKFED from code-arch on 2026-06-30] D-026：编排归 composable 非 domain` | UC-1~UC-4 | G2 |
 | F10 | 空态/加载态/错误态处理 | UC-1~UC-4 | G1 |
 | F11 | 无障碍契约（role=dialog + aria-modal + focus trap + role=listbox/option，见 spec §实现要点·无障碍） | UC-1~UC-4 | G1 |
 

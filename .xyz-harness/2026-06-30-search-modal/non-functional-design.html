@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>非功能性设计 — ⌘K 全局搜索浮层</title>
+<style>
+/* =========================================================================
+   公共 CSS 底座 — 冷蓝暗色 v3（与 issues.html 同调色板，保证风格一致）
+   ========================================================================= */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --font-body: 'Inter', 'SF Pro Display', 'PingFang SC', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+  --bg: #0d0d0f; --surface: #151519; --surface-2: #1b1b20; --surface-elevated: #1c1c20;
+  --border: rgba(255,255,255,0.06); --border-bright: rgba(255,255,255,0.12);
+  --text: #f0f0f5; --text-dim: #8a8a95;
+  --accent: #4f8ef7; --accent-dim: rgba(79,142,247,0.12);
+  --slate: #94a3b8; --slate-dim: rgba(148,163,184,0.12);
+  --green: #22c55e; --green-dim: rgba(34,197,94,0.12);
+  --red: #ef4444; --red-dim: rgba(239,68,68,0.10);
+  --orange: #fb923c; --orange-dim: rgba(251,146,60,0.12);
+  --amber: #f5a524; --amber-dim: rgba(245,165,36,0.14);
+  --reasoning: #a78bfa; --reasoning-dim: rgba(167,139,250,0.14);
+  --bg-input: #101013;
+  --shadow-2: 0 8px 24px rgba(0,0,0,0.4);
+  /* 风险矩阵热力图专属色块 */
+  --ok: #0d2922; --ok-bright: #1f7a4d; --ok-fg: #4ade80;
+  --warn: #38250d; --warn-bright: #b4620f; --warn-fg: #fbbf24;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f8f9fb; --surface: #ffffff; --surface-2: #f1f3f6; --surface-elevated: #ffffff;
+    --border: rgba(0,0,0,0.08); --border-bright: rgba(0,0,0,0.14);
+    --text: #0d0d0f; --text-dim: #5a5a65;
+    --accent: #2563eb; --accent-dim: rgba(37,99,235,0.10);
+    --slate: #64748b; --slate-dim: rgba(100,116,139,0.10);
+    --green: #16a34a; --green-dim: rgba(22,163,74,0.10);
+    --red: #dc2626; --red-dim: rgba(220,38,38,0.08);
+    --orange: #ea580c; --orange-dim: rgba(234,88,12,0.10);
+    --amber: #d97706; --amber-dim: rgba(217,119,6,0.12);
+    --reasoning: #7c3aed; --reasoning-dim: rgba(124,58,237,0.10);
+    --bg-input: #f1f3f6;
+    --shadow-2: 0 8px 24px rgba(0,0,0,0.10);
+    --ok: #dcfce7; --ok-bright: #4ade80; --ok-fg: #15803d;
+    --warn: #fef3c7; --warn-bright: #f59e0b; --warn-fg: #92400e;
+  }
+}
+html { scroll-behavior: smooth; }
+body { font-family: var(--font-body); color: var(--text); line-height: 1.65; background: var(--bg); background-image: radial-gradient(ellipse at 50% -5%, var(--accent-dim) 0%, transparent 55%); padding: 32px; overflow-wrap: break-word; }
+.grid > *, .flex > *, [style*="display:grid"] > *, [style*="display:flex"] > * { min-width: 0; }
+h1 { font-size: 38px; font-weight: 700; letter-spacing: -1px; margin-bottom: 6px; text-wrap: balance; }
+h2 { font-size: 22px; font-weight: 600; letter-spacing: -0.3px; margin: 56px 0 18px; padding-bottom: 10px; border-bottom: 1px solid var(--border); scroll-margin-top: 70px; }
+h3 { font-size: 16px; font-weight: 700; margin: 26px 0 12px; color: var(--accent); font-family: var(--font-mono); letter-spacing: 0.2px; scroll-margin-top: 70px; }
+h4 { font-size: 13px; font-weight: 600; margin: 18px 0 8px; color: var(--slate); font-family: var(--font-mono); }
+p { margin-bottom: 12px; }
+.subtitle { color: var(--text-dim); font-size: 13px; margin-bottom: 8px; font-family: var(--font-mono); }
+code { font-family: var(--font-mono); font-size: 0.92em; }
+strong { font-weight: 600; }
+
+/* Layout: TOC + main 双栏 */
+.wrap { max-width: 1380px; margin: 0 auto; display: grid; grid-template-columns: 172px 1fr; gap: 0 44px; }
+.main { min-width: 0; }
+header.doc-head { margin-bottom: 28px; }
+.badge-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.tag { font-family: var(--font-mono); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; padding: 4px 10px; border-radius: 20px; background: var(--accent-dim); color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
+.tag--slate { background: var(--slate-dim); color: var(--slate); border-color: color-mix(in srgb, var(--slate) 30%, transparent); }
+.tag--green { background: var(--green-dim); color: var(--green); border-color: color-mix(in srgb, var(--green) 30%, transparent); }
+.tag--amber { background: var(--amber-dim); color: var(--amber); border-color: color-mix(in srgb, var(--amber) 30%, transparent); }
+.tag--reasoning { background: var(--reasoning-dim); color: var(--reasoning); border-color: color-mix(in srgb, var(--reasoning) 30%, transparent); }
+
+/* TOC sidebar */
+.toc { position: sticky; top: 24px; align-self: start; padding: 14px 0; grid-row: 1/-1; max-height: calc(100dvh - 48px); overflow-y: auto; }
+.toc-title { font-family: var(--font-mono); font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; color: var(--text-dim); padding: 0 0 10px; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
+.toc a { display: block; font-size: 11px; color: var(--text-dim); text-decoration: none; padding: 4px 8px; border-radius: 5px; border-left: 2px solid transparent; transition: all .15s; line-height: 1.35; margin-bottom: 1px; }
+.toc a:hover { color: var(--text); background: var(--surface-2); }
+.toc a.lvl2 { padding-left: 18px; font-size: 10px; }
+
+/* TL;DR 摘要框 */
+.tldr { background: var(--surface-elevated); border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); border-radius: 14px; padding: 20px 24px; margin: 24px 0 8px; box-shadow: 0 4px 18px rgba(79,142,247,.06); }
+.tldr__label { font-family: var(--font-mono); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.8px; color: var(--accent); margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+.tldr__label::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.tldr ul { list-style: none; padding: 0; }
+.tldr li { padding: 5px 0 5px 18px; position: relative; font-size: 14px; line-height: 1.55; }
+.tldr li::before { content: '→'; position: absolute; left: 0; color: var(--accent); font-weight: 600; }
+.tldr code { font-family: var(--font-mono); font-size: 12px; background: var(--accent-dim); color: var(--accent); padding: 1px 6px; border-radius: 3px; }
+
+/* 章节小标题 */
+.sec-head { font-family: var(--font-mono); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; color: var(--accent); margin: 40px 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+
+/* Callout 提示框 */
+.callout { background: var(--surface-2); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 14px 18px; font-size: 13px; line-height: 1.6; color: var(--text-dim); margin: 20px 0; }
+.callout strong { color: var(--text); font-weight: 600; }
+.callout code { font-family: var(--font-mono); font-size: 11px; background: var(--accent-dim); color: var(--accent); padding: 1px 5px; border-radius: 3px; }
+.callout--amber { border-left-color: var(--amber); }
+.callout--red { border-left-color: var(--red); }
+.callout--reasoning { border-left-color: var(--reasoning); }
+
+/* =========================================================================
+   主角图：风险矩阵热力图（issue × 7 维度）
+   ========================================================================= */
+.matrix-wrap { background: var(--surface); border: 1px solid var(--border-bright); border-radius: 14px; padding: 6px; margin: 20px 0 10px; box-shadow: var(--shadow-2); }
+.matrix-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.matrix { width: 100%; border-collapse: separate; border-spacing: 4px; font-size: 13px; min-width: 760px; }
+.matrix th, .matrix td { text-align: center; padding: 0; }
+.matrix thead th {
+  font-family: var(--font-mono); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px;
+  color: var(--text-dim); padding: 12px 4px 14px; white-space: nowrap;
+}
+.matrix thead th.dim-h { color: var(--accent); }
+.matrix tbody th.row-h {
+  text-align: left; padding: 14px 12px; background: var(--surface-2); border-radius: 8px;
+  font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; border-left: 3px solid var(--accent);
+}
+.matrix tbody th.row-h .rid { font-family: var(--font-mono); color: var(--accent); margin-right: 6px; }
+.matrix tbody th.row-h .rplan { display: block; font-family: var(--font-mono); font-size: 10px; font-weight: 500; color: var(--text-dim); margin-top: 2px; }
+.matrix tbody th.row-h.new-issue { border-left-color: var(--amber); }
+.matrix tbody th.row-h.new-issue .rid { color: var(--amber); }
+
+/* 单元格着色 */
+.cell { width: 52px; height: 48px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 18px; transition: transform .12s; }
+.cell:hover { transform: scale(1.12); }
+.cell-ok { background: var(--ok); color: var(--ok-fg); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ok-bright) 40%, transparent); }
+.cell-warn { background: var(--warn); color: var(--warn-fg); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn-bright) 50%, transparent); }
+
+.matrix-legend { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; margin: 14px 4px 4px; padding: 12px 16px; background: var(--surface-2); border-radius: 8px; font-size: 12px; color: var(--text-dim); font-family: var(--font-mono); }
+.matrix-legend .lg-item { display: inline-flex; align-items: center; gap: 7px; }
+.matrix-legend .lg-swatch { width: 18px; height: 18px; border-radius: 5px; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 12px; }
+.lg-swatch--ok { background: var(--ok); color: var(--ok-fg); }
+.lg-swatch--warn { background: var(--warn); color: var(--warn-fg); }
+
+.matrix-kpi { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 16px 0 4px; }
+.kpi { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+.kpi__n { font-family: var(--font-mono); font-size: 22px; font-weight: 700; color: var(--accent); line-height: 1; }
+.kpi__n.warn { color: var(--amber); }
+.kpi__l { font-size: 11px; color: var(--text-dim); margin-top: 5px; font-family: var(--font-mono); }
+
+/* =========================================================================
+   Issue 分析卡片（详细分析章节）
+   ========================================================================= */
+.issue { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; margin: 22px 0; overflow: hidden; scroll-margin-top: 70px; }
+.issue__head { padding: 18px 22px 14px; border-bottom: 1px solid var(--border); background: linear-gradient(180deg, var(--surface-2), transparent); }
+.issue__head h3 { margin: 0 0 8px; color: var(--text); font-size: 16px; }
+.issue__head h3 .rid { color: var(--accent); }
+.issue.new .issue__head h3 .rid { color: var(--amber); }
+.issue__head .plan { font-family: var(--font-mono); font-size: 12px; color: var(--slate); }
+.issue__summary { display: inline-block; font-family: var(--font-mono); font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 20px; margin-left: 8px; vertical-align: 2px; }
+.issue__summary.all-ok { background: var(--green-dim); color: var(--green); }
+.issue__summary.has-warn { background: var(--amber-dim); color: var(--amber); }
+.issue__body { padding: 16px 22px; }
+.issue__body > p { font-size: 13.5px; color: var(--text-dim); line-height: 1.7; }
+.issue__body strong { color: var(--text); }
+.dim-block { margin: 14px 0; padding: 12px 16px; border-radius: 8px; background: var(--surface-2); border-left: 3px solid var(--green); }
+.dim-block.warn { border-left-color: var(--amber); }
+.dim-block h4 { margin: 0 0 6px; display: flex; align-items: center; gap: 8px; }
+.dim-mark { font-family: var(--font-mono); font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 4px; }
+.dim-mark.ok { background: var(--green-dim); color: var(--green); }
+.dim-mark.warn { background: var(--amber-dim); color: var(--amber); }
+.dim-block p { margin: 0 0 6px; font-size: 13px; color: var(--text-dim); line-height: 1.65; }
+.dim-block p:last-child { margin-bottom: 0; }
+.dim-block ul { margin: 6px 0 0; padding-left: 20px; font-size: 13px; color: var(--text-dim); line-height: 1.7; }
+.dim-block ul li { margin-bottom: 3px; }
+.dim-block code { font-family: var(--font-mono); font-size: 11px; background: var(--accent-dim); color: var(--accent); padding: 1px 5px; border-radius: 3px; }
+.finding { background: color-mix(in srgb, var(--amber) 10%, var(--surface-2)); border: 1px solid color-mix(in srgb, var(--amber) 28%, var(--border)); border-left: 3px solid var(--amber); border-radius: 0 8px 8px 0; padding: 12px 16px; margin: 12px 0; font-size: 13px; line-height: 1.65; color: var(--text); }
+.finding__tag { font-family: var(--font-mono); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--amber); margin-right: 8px; }
+.finding code { font-family: var(--font-mono); font-size: 11px; background: var(--amber-dim); color: var(--amber); padding: 1px 5px; border-radius: 3px; }
+
+/* =========================================================================
+   数据表格（缓解登记 / 残余风险 / ⑤骨架验证）
+   ========================================================================= */
+.table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin: 16px 0 24px; }
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.data-table { width: 100%; border-collapse: collapse; font-size: 12.5px; line-height: 1.55; min-width: 720px; }
+.data-table thead th { background: var(--surface-2); font-family: var(--font-mono); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .8px; color: var(--text-dim); text-align: left; padding: 12px 14px; border-bottom: 2px solid var(--border-bright); white-space: nowrap; }
+.data-table td { padding: 11px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.data-table tbody tr:nth-child(even) { background: var(--accent-dim); }
+.data-table tbody tr:hover { background: var(--border); }
+.data-table tbody tr:last-child td { border-bottom: none; }
+.data-table code { font-family: var(--font-mono); font-size: 11px; background: var(--accent-dim); color: var(--accent); padding: 1px 5px; border-radius: 3px; }
+.mr-id { font-family: var(--font-mono); font-weight: 700; color: var(--accent); font-size: 12px; }
+.dim-tag { font-family: var(--font-mono); font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 4px; background: var(--reasoning-dim); color: var(--reasoning); white-space: nowrap; }
+.dest-tag { font-family: var(--font-mono); font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 4px; white-space: nowrap; }
+.dest-tag.t5 { background: var(--accent-dim); color: var(--accent); }
+.dest-tag.t3 { background: var(--green-dim); color: var(--green); }
+.status-pill { font-family: var(--font-mono); font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 20px; white-space: nowrap; }
+.status-pill.todo { background: var(--amber-dim); color: var(--amber); }
+.status-pill.done { background: var(--green-dim); color: var(--green); }
+
+/* 决策记录卡片 */
+.decision { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px; margin: 12px 0; border-left: 3px solid var(--reasoning); }
+.decision__id { font-family: var(--font-mono); font-size: 11px; font-weight: 700; color: var(--reasoning); margin-bottom: 6px; }
+.decision p { margin: 0; font-size: 13px; color: var(--text-dim); line-height: 1.65; }
+.decision strong { color: var(--text); }
+.decision code { font-family: var(--font-mono); font-size: 11px; background: var(--reasoning-dim); color: var(--reasoning); padding: 1px 5px; border-radius: 3px; }
+
+footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid var(--border); font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); }
+
+@media (max-width: 920px) {
+  .wrap { grid-template-columns: 1fr; }
+  .toc { display: none; }
+  body { padding: 18px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<!-- ============ TOC ============ -->
+<nav class="toc">
+  <div class="toc-title">非功能性设计</div>
+  <a href="#tldr">TL;DR</a>
+  <a href="#matrix">风险矩阵热力图</a>
+  <a href="#analysis">详细分析</a>
+  <div class="toc-title" style="margin-top:14px">登记与回灌</div>
+  <a href="#mitigation" class="lvl2">缓解项回灌登记</a>
+  <a href="#residual" class="lvl2">残余风险登记</a>
+  <a href="#skeleton" class="lvl2">需⑤骨架验证</a>
+  <a href="#decisions" class="lvl2">决策记录</a>
+</nav>
+
+<!-- ============ MAIN ============ -->
+<main class="main">
+
+<header class="doc-head">
+  <div class="subtitle">verdict: pass · upstream: issues.md · downstream: code-architecture.md · backfed_from: []</div>
+  <h1>非功能性设计 — ⌘K 全局搜索浮层</h1>
+  <div class="badge-row">
+    <span class="tag">11 issue × 7 维度</span>
+    <span class="tag tag--amber">14 缓解项</span>
+    <span class="tag tag--slate">4 残余风险</span>
+    <span class="tag tag--reasoning">5 决策记录</span>
+    <span class="tag tag--green">无 BLOCK</span>
+  </div>
+  <p style="margin-top:14px;color:var(--text-dim);font-size:13.5px;max-width:880px">
+    评估 <code style="font-family:var(--font-mono);font-size:12px;background:var(--accent-dim);color:var(--accent);padding:1px 6px;border-radius:3px">issues.md</code> 每个 issue 解决方案对系统的副作用，并给出缓解方案。大量「副作用」已在 issues.md 的 AC（验收标准）中显式覆盖（loadSeq 守卫 / debounce / error 冒泡链 / BC 清单），本文件的<strong>增量价值</strong>是识别 issues.md AC 未充分覆盖的非功能性风险。
+  </p>
+</header>
+
+<!-- ============ TL;DR ============ -->
+<section class="tldr" id="tldr">
+  <div class="tldr__label">TL;DR</div>
+  <ul>
+    <li>风险集中在 <code>#3/#4/#6/#7</code>（涉及外部边界：localStorage / runtime WS / file.read / 快速 open-close 竞态）；<code>#5</code> 兼容性（DTO 映射）/ <code>#8</code> 安全（错误脱敏）是追踪发现的<strong>增量风险</strong>。</li>
+    <li><strong>F-1 WS 断连挂死漏洞</strong>新建 <code>#17</code> [P1] 根因修复——ws-client onclose 不 reject in-flight pending，致 <code>Promise.allSettled</code> 永久 await，浮层永久 loading 挂死。修复：domain query() 对 WS 源加 10s 超时 race（MR-17.1）。</li>
+    <li><strong>GAP-2 file 跳转吞错层</strong>——<code>useDetailPane.openPreview</code> try/catch 吞错，致 <code>AC-6.5</code>「file.read 失败→toast」假性 PASS。#6 补 <code>AC-6.9</code>（直调 <code>fileApi.read</code> 不经吞错层，与 #4 error 冒泡链对称）。</li>
+    <li><strong>14 条缓解项回灌</strong>：⑤test-matrix 5 条 + ⑤骨架约束 2 条 + ③issues 已覆盖 4 条 + ③待落 4 条（含新 issue #17）。4 项残余风险均接受（桌面应用单用户场景，诊断价值 > 泄漏风险）。</li>
+  </ul>
+</section>
+
+<!-- ============ HERO: 风险矩阵热力图 ============ -->
+<div class="sec-head" id="matrix">主角图 · 风险矩阵热力图（issue × 7 维度）</div>
+
+<div class="matrix-wrap">
+<div class="matrix-scroll">
+<table class="matrix">
+  <thead>
+    <tr>
+      <th style="text-align:left;padding-left:12px;width:auto">Issue / 方案</th>
+      <th class="dim-h">安全</th>
+      <th class="dim-h">数据</th>
+      <th class="dim-h">性能</th>
+      <th class="dim-h">并发</th>
+      <th class="dim-h">稳定性</th>
+      <th class="dim-h">兼容性</th>
+      <th class="dim-h">可观测</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th class="row-h"><span class="rid">#1</span>匹配引擎提取<span class="rplan">A 双函数</span></th>
+      <td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-ok">✓</span></td>
+      <td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-ok">✓</span></td>
+    </tr>
+    <tr>
+      <th class="row-h"><span class="rid">#2</span>命令注册表<span class="rplan">A 扩 store</span></th>
+      <td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-ok">✓</span></td>
+      <td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-ok">✓</span></td>
+    </tr>
+    <tr>
+      <th class="row-h"><span class="rid">#3</span>recents composable<span class="rplan">A localStorage</span></th>
+      <td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-warn">!</span></td><td><span class="cell cell-ok">✓</span></td>
+      <td><span class="cell cell-warn">!</span></td><td><span class="cell cell-warn">!</span></td><td><span class="cell cell-warn">!</span></td><td><span class="cell cell-ok">✓</span></td>
+    </tr>
+    <tr>
+      <th class="row-h"><span class="rid">#4</span>search real domain<span class="rplan">A allSettled</span></th>
+      <td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-warn">!</span></td><td><span class="cell cell-warn">!</span></td>
+      <td><span class="cell cell-warn">!</span></td><td><span class="cell cell-warn">!</span></td><td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-warn">!</span></td>
+    </tr>
+    <tr>
+      <th class="row-h"><span class="rid">#5</span>api 接线<span class="rplan">A 三元切换</span></th>
+      <td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-ok">✓</span></td>
+      <td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-warn">!</span></td><td><span class="cell cell-ok">✓</span></td>
+    </tr>
+    <tr>
+      <th class="row-h"><span class="rid">#6</span>跳转编排<span class="rplan">A switch 分发</span></th>
+      <td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-ok">✓</span></td>
+      <td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-warn">!</span></td><td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-warn">!</span></td>
+    </tr>
+    <tr>
+      <th class="row-h"><span class="rid">#7</span>SearchModal 改造<span class="rplan">A 渐进</span></th>
+      <td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-ok">✓</span></td>
+      <td><span class="cell cell-warn">!</span></td><td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-warn">!</span></td><td><span class="cell cell-ok">✓</span></td>
+    </tr>
+    <tr>
+      <th class="row-h"><span class="rid">#8</span>loading+error 态<span class="rplan">A 延迟+toast</span></th>
+      <td><span class="cell cell-warn">!</span></td><td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-ok">✓</span></td>
+      <td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-ok">✓</span></td>
+    </tr>
+    <tr>
+      <th class="row-h"><span class="rid">#9</span>Tab 切类<span class="rplan">A activeType</span></th>
+      <td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-ok">✓</span></td>
+      <td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-ok">✓</span></td>
+    </tr>
+    <tr>
+      <th class="row-h"><span class="rid">#10</span>搭便车 2 项<span class="rplan">A 顺势</span></th>
+      <td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-ok">✓</span></td>
+      <td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-ok">✓</span></td>
+    </tr>
+    <tr>
+      <th class="row-h new-issue"><span class="rid">#17</span>WS 源超时 race<span class="rplan">新建 · 根因修复</span></th>
+      <td><span class="cell cell-warn">!</span></td><td><span class="cell cell-warn">!</span></td><td><span class="cell cell-warn">!</span></td>
+      <td><span class="cell cell-warn">!</span></td><td><span class="cell cell-warn">!</span></td><td><span class="cell cell-ok">✓</span></td><td><span class="cell cell-warn">!</span></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="matrix-kpi">
+  <div class="kpi"><div class="kpi__n">11</div><div class="kpi__l">评估 issue（含新建 #17）</div></div>
+  <div class="kpi"><div class="kpi__n">77</div><div class="kpi__l">维度单元格（11×7）</div></div>
+  <div class="kpi"><div class="kpi__n warn">21</div><div class="kpi__l">⚠️ WARN（已缓解）</div></div>
+  <div class="kpi"><div class="kpi__n">56</div><div class="kpi__l">✓ OK（无风险）</div></div>
+  <div class="kpi"><div class="kpi__n">0</div><div class="kpi__l">BLOCK / NA</div></div>
+</div>
+
+<div class="matrix-legend">
+  <div class="lg-item"><span class="lg-swatch lg-swatch--ok">✓</span> OK — 无风险</div>
+  <div class="lg-item"><span class="lg-swatch lg-swatch--warn">!</span> WARN — 有风险已缓解</div>
+  <div class="lg-item">BLOCK — 不可接受需回退（本表无）</div>
+  <div class="lg-item">NA — 不适用（本表无）</div>
+</div>
+</div>
+
+<div class="callout callout--amber">
+  <strong>风险集中在 #3/#4/#6/#7</strong>——这四个 issue 涉及外部边界（localStorage / runtime WS / file.read / 快速 open-close 竞态）。<strong>#5</strong> 兼容性 ⚠️（DTO 映射）、<strong>#8</strong> 安全 ⚠️（错误文本脱敏）是追踪发现的增量风险。<strong>#17</strong>（新建）是 F-1 WS 断连挂死漏洞的根因修复，其 ⚠️ 集中在实现期的并发/稳定性/可观测，本质是稳定性提升。其余 issue（#1/#2/#9/#10）是纯前端内存计算，7 维度全部 ✓。
+</div>
+
+<!-- ============ 详细分析 ============ -->
+<div class="sec-head" id="analysis">详细分析</div>
+
+<!-- #1 -->
+<article class="issue" id="i1">
+  <div class="issue__head">
+    <h3><span class="rid">#1</span> 匹配引擎提取为纯函数模块 <span class="issue__summary all-ok">全部 ✓ · 纯函数无副作用</span></h3>
+    <div class="plan">方案 A（双函数）</div>
+  </div>
+  <div class="issue__body">
+    <div class="dim-block">
+      <h4><span class="dim-mark ok">✓</span> 安全 / 数据 / 并发 / 稳定性 / 兼容性 / 可观测</h4>
+      <p>纯函数无 I/O、无外部依赖、无状态。AC-1.2 已强制无副作用（grep ref/reactive/api/transport 无输出）。</p>
+    </div>
+    <div class="dim-block">
+      <h4><span class="dim-mark ok">✓</span> 性能</h4>
+      <p>子串匹配是线性 indexOf（非 O(text×q) 嵌套），红队审查 AH-B5 已降级（⌘K 输入手敲无粘贴路径，200+ 字符近乎不可达）。</p>
+    </div>
+  </div>
+</article>
+
+<!-- #2 -->
+<article class="issue" id="i2">
+  <div class="issue__head">
+    <h3><span class="rid">#2</span> 命令注册表 <span class="issue__summary all-ok">全部 ✓ · 内存数据结构扩展</span></h3>
+    <div class="plan">方案 A（扩 command store + composable）</div>
+  </div>
+  <div class="issue__body">
+    <div class="dim-block">
+      <h4><span class="dim-mark ok">✓</span> 安全</h4>
+      <p>应用命令 action 是编译期静态注册（非运行时外部输入），无注入面；pi slash 命令经 runtime getCommands 透传，已是现有受控边界。</p>
+    </div>
+    <div class="dim-block">
+      <h4><span class="dim-mark ok">✓</span> 数据 / 并发</h4>
+      <p>D-016 两区物理隔离（appCommands 静态 ref + slashCommands per-session Map），AC-2.2 已守 session 切换不重算应用命令区。无跨表事务、无持久化。</p>
+    </div>
+    <div class="dim-block">
+      <h4><span class="dim-mark ok">✓</span> 性能 / 稳定性 / 兼容性 / 可观测</h4>
+      <p>应用命令 &lt;20 项静态，slash 命令 per-session 小集合，computed 合并开销可忽略。复用现有 store 基建，无新增故障面；扩展不破坏现有 SessionCommand 消费者（applyCommands/clearCommands 不变）。</p>
+    </div>
+  </div>
+</article>
+
+<!-- #3 -->
+<article class="issue" id="i3">
+  <div class="issue__head">
+    <h3><span class="rid">#3</span> recents composable <span class="issue__summary has-warn">4 项 ⚠️ · localStorage 边界</span></h3>
+    <div class="plan">方案 A（localStorage 持久化）</div>
+  </div>
+  <div class="issue__body">
+    <div class="dim-block">
+      <h4><span class="dim-mark ok">✓</span> 安全</h4>
+      <p>Electron 桌面应用（非浏览器），无公网 XSS 注入面（content 非用户可控 HTML，渲染进程加载本地 bundle）；recents 内容是用户自己的文件路径/会话标题（非跨用户数据）。</p>
+    </div>
+    <div class="dim-block warn">
+      <h4><span class="dim-mark warn">!</span> 数据一致性影响</h4>
+      <p><strong>事务边界</strong>：单次 write 是 localStorage 单 key 整体写入（JSON.stringify 整个 recents 对象），原子性由 setItem 保证（非跨 key 事务，无部分写入）。</p>
+      <p><strong>并发场景</strong>：单实例桌面应用无多用户并发；同进程内 useRecents 是单例 composable，无并发写。</p>
+      <p><strong>迁移方案</strong>：首次使用（无 recents key）→ read() 返回空数组（AC-3.3），write 时创建 key。无存量迁移。</p>
+      <p><strong>回滚策略</strong>：recents 是偏好数据非业务数据，损坏/丢失可接受（最坏清空 key 重建）。</p>
+    </div>
+    <div class="dim-block warn">
+      <h4><span class="dim-mark warn">!</span> 并发控制（追踪 G-3.1 修订）</h4>
+      <p><strong>竞态场景</strong>：同毫秒连续 write——Date.now() 精度不足致 FIFO 排序不确定。</p>
+      <p><strong>幂等策略</strong>：AC-3.5 同 key 重复确认更新 timestamp 而非新增（幂等）。</p>
+      <p><strong>锁策略</strong>：无锁（单实例单线程）；AC-3.6 timestamp 计数器兜底（<code>Math.max(stored)+1</code>）而非裸 Date.now()，是并发竞态缓解。</p>
+      <p><strong>分布式考虑</strong>：N/A——单实例桌面应用。</p>
+    </div>
+    <div class="dim-block warn">
+      <h4><span class="dim-mark warn">!</span> 稳定性影响（追踪 G-3.2 修订）</h4>
+      <p><strong>故障场景</strong>：localStorage 配额满 / JSON.parse 失败（脏数据/格式升级）。</p>
+      <p><strong>降级方案</strong>：read() try/catch JSON.parse 失败→空数组；write() 配额满 catch 降级（<strong>内存态保留本次写入，不回滚</strong>——见 MR-3.3，本次会话内仍显示成功，reload 后丢失，符合「偏好数据可丢失」容忍度）。</p>
+      <p><strong>熔断/限流</strong>：N/A。<strong>重试策略</strong>：不自动重试（偏好数据，下次 write 覆盖）。<strong>SLA 影响</strong>：无。</p>
+    </div>
+    <div class="dim-block warn">
+      <h4><span class="dim-mark warn">!</span> 兼容性影响</h4>
+      <p><strong>API 变更</strong>：无（纯前端 localStorage）。</p>
+      <p><strong>数据兼容</strong>：RecentEntry 结构变更（未来加字段）须处理存量旧格式——read() try/catch JSON.parse 失败降级空数组（MR-3.1）。</p>
+      <p><strong>客户端影响</strong>：recents 跨 reload 保留（D-007 跨会话保留），跨应用版本升级须向后兼容旧 RecentEntry 格式。</p>
+      <p><strong>灰度/回滚</strong>：桌面应用本地无灰度；回滚时旧 key 残留无害（不被读）。</p>
+      <p><strong>key 命名（G-3.4 修订）</strong>：recents key 用 <code>xyz-agent:search-recents</code>（对齐现有 <code>xyz-agent:system-settings</code> 冒号命名约定）。</p>
+    </div>
+    <div class="dim-block">
+      <h4><span class="dim-mark ok">✓</span> 性能 / 可观测</h4>
+      <p>localStorage 同步 API 但 recents &lt;20 项小数据，序列化开销可忽略。无关键操作需日志（recents 是偏好数据）。</p>
+    </div>
+  </div>
+</article>
+
+<!-- #4 -->
+<article class="issue" id="i4">
+  <div class="issue__head">
+    <h3><span class="rid">#4</span> search real domain <span class="issue__summary has-warn">5 项 ⚠️ · runtime WS 边界 + F-1 挂死漏洞</span></h3>
+    <div class="plan">方案 A（单 domain + allSettled + 分组）</div>
+  </div>
+  <div class="issue__body">
+    <div class="dim-block">
+      <h4><span class="dim-mark ok">✓</span> 安全</h4>
+      <p>query 是用户输入的搜索词，进 matchFilter 子串匹配（indexOf，非 eval/SQL），无注入面。</p>
+    </div>
+    <div class="dim-block warn">
+      <h4><span class="dim-mark warn">!</span> 数据一致性影响（追踪 K-1 补充）</h4>
+      <p><strong>事务边界</strong>：domain 是只读查询编排，无写入（recents 写入归 #3/#6）；allSettled 不保证跨源一致性（各源独立 resolve）。</p>
+      <div class="finding"><span class="finding__tag">K-1 · 关键约束</span><strong>error 冒泡链（AC-4.5）是数据完整性不变式</strong>——domain 编排 file 源<strong>必须直调 <code>composer.getFileCandidates</code></strong>（经 pending reject 透传 error envelope），<strong>不经 <code>useFileSearch.load</code></strong>（其在 useFileSearch.ts:39-43 静默 catch 吞错降级空数组）。若经吞错层，file 源失败永不冒泡到 domain catch，<code>AC-8.2</code>「不静默」假性 PASS。</div>
+      <p><strong>迁移/回滚</strong>：N/A（只读）。</p>
+    </div>
+    <div class="dim-block warn">
+      <h4><span class="dim-mark warn">!</span> 性能影响</h4>
+      <p><strong>预期负载</strong>：单用户查询，非高并发。但每次按键（无 debounce 时）触发 allSettled 并行查 3 源（命令/文件/会话）——file.search 是 runtime 全量递归（深度 8 / 上限 5000），session.list 是全量跨项目扫描。</p>
+      <p><strong>关键路径延迟</strong>：file.search 全量递归是大仓库主延迟源；P99 目标单次查询 &lt;500ms（用户感知流畅阈值）。</p>
+      <p><strong>扩展性瓶颈</strong>：大仓库（&gt;5000 文件）触发 MAX_SEARCH_RESULTS 截断（file-service.ts:59，D-021 已反哺 5000）；多项目会话库增长时 session.list 扫描耗时线性增长。</p>
+      <p><strong>优化方案</strong>：① debounce(120ms) 已按 D-020 提前到 #7；② file 源复用 useFileSearch 的 session 级缓存（AC-4.9）；③ matchFilter 前端过滤（全量候选拉取后本地子串匹配）。</p>
+    </div>
+    <div class="dim-block warn">
+      <h4><span class="dim-mark warn">!</span> 并发控制</h4>
+      <p><strong>竞态场景</strong>：快速连续查询——旧响应晚到覆盖新结果（check-then-act：loadSeq++ → await → seq===loadSeq 才写）。</p>
+      <p><strong>幂等策略</strong>：BC-9 loadSeq 序列号守卫——domain query() 内部维护自增 seq，await 后比对，旧响应丢弃。</p>
+      <p><strong>锁策略</strong>：无锁（单用户单实例，loadSeq 足够）；loadSeq 迁移正确性是关键不变式（D-022 + MR-4.1）。</p>
+    </div>
+    <div class="dim-block warn">
+      <h4><span class="dim-mark warn">!</span> 稳定性影响</h4>
+      <p><strong>故障场景</strong>：① runtime WS 断连——file.search/session.list 永不 resolve（pending）或 reject；② session 不存在（AC-4.8）——file 源无 sessionId 取 cwd + slash 源分区空。</p>
+      <p><strong>降级方案</strong>：allSettled 容错——单源失败（reject）不阻塞其他源，失败源返回空 section（AC-4.8）。</p>
+      <div class="finding"><span class="finding__tag">F-1 · 追踪关键漏洞（D-023 新建 #17）</span><strong>ws-client.ts onclose 不 reject in-flight pending</strong>（pending.ts 无 clear/flush），file/session 源的 pending<strong>永远不 settle</strong> → <code>Promise.allSettled</code> 只在所有输入 settled 后才 resolve → domain query() 永久 await → <strong>浮层永久 loading 挂死，无 toast 无降级</strong>。MR-4.2 测试只 mock 立即 reject，掩盖了这条永不 settle 路径。<strong>修复</strong>：新建 #17 [P1]，domain query() 对 WS 源加超时 race（10s 量级，对齐 runtime），超时→reject→allSettled settle→分组空态+toast。根因修复。</div>
+      <p><strong>熔断/限流</strong>：debounce(120ms) 是客户端侧软限流。<strong>重试策略</strong>：不自动重试（用户每次按键是新查询）。<strong>SLA</strong>：无可用性目标（桌面应用本地运行）；WS 断连时浮层降级运行（命令源仍工作，因命令注册表是内存）。</p>
+    </div>
+    <div class="dim-block warn">
+      <h4><span class="dim-mark warn">!</span> 可观测性</h4>
+      <p><strong>日志</strong>：domain catch 错误须 toast 反馈用户（AC-8.2，no-silent-catch lint 强制）；但 allSettled 单源 reject 的<strong>静默降级</strong>（AC-4.8 转空 section）是预期行为，不应 toast 噪音——须区分「单源失败降级」（静默，分组空态）vs「全源失败/跳转失败」（toast）。</p>
+      <p><strong>指标/追踪/告警/审计</strong>：无业务指标/跨服务追踪/告警需求（单进程内调用）；recents 写入是用户行为日志（D-007 明确），无需额外审计。</p>
+    </div>
+    <div class="dim-block warn">
+      <h4><span class="dim-mark warn">!</span> 缓存失效竞态（追踪 K-3 补充）</h4>
+      <p><strong>竞态场景</strong>：AC-4.9 要求复用 useFileSearch 的 session 级缓存，但该缓存失效靠 <code>useFileSearch.setupInvalidation</code> 驱动（watch chatStore fileChanges → invalidate），目前由 CommandPopover onMounted 绑定。新 search domain 消费缓存时<strong>谁绑失效 watch 未定义</strong>——若 CommandPopover 未挂载，agent 改文件不触发 invalidate → stale cache，用户搜不到刚改的文件。</p>
+      <p><strong>缓解</strong>：补 AC-4.10（MR-4.4）——search domain 消费缓存时须自绑 setupInvalidation watch（不依赖 CommandPopover 挂载），或在 query() 调用前校验缓存新鲜度。</p>
+    </div>
+  </div>
+</article>
+
+<!-- #5 -->
+<article class="issue" id="i5">
+  <div class="issue__head">
+    <h3><span class="rid">#5</span> api/index.ts 接线 <span class="issue__summary has-warn">1 项 ⚠️ · DTO 映射兼容性</span></h3>
+    <div class="plan">方案 A（三元切换）</div>
+  </div>
+  <div class="issue__body">
+    <div class="dim-block warn">
+      <h4><span class="dim-mark warn">!</span> 兼容性影响（追踪 GAP-BL-1 修订）</h4>
+      <p><strong>API 变更</strong>：无 WS API 变更（search 是纯前端 domain，不新增 runtime handler）。</p>
+      <div class="finding"><span class="finding__tag">GAP-BL-1 · 关键修订（D-025）</span><strong>mock SearchItem（<code>{type,title,sub}</code>）与 real domain 输出异构</strong>——real 源返回的是 FileNode / SessionSummary / SessionCommand，<strong>非 SearchItem 形态</strong>（requirements.md:137/192 明确 session sub 须组装 <code>label+cwd+gitBranch</code>）。domain 必须做 <strong>DTO 映射</strong>（参考 <code>lib/file-candidates.ts</code> 模式），把异构 DTO 映射为统一 SearchItem。映射正确性由 #4 AC-4.1/4.2/4.3（命中断言）+ ⑤test-matrix 兜底。</div>
+      <p><strong>客户端影响</strong>：mock 模式（VITE_MOCK=true）走 mockApi.search（固定 SearchItem fixture），real 模式走 realSearch（DTO 映射后 SearchItem）——两者输出形态对齐（都是 SearchItem[]），消费者 SearchModal 无感。</p>
+      <p><strong>灰度/回滚</strong>：桌面应用本地无灰度。</p>
+    </div>
+    <div class="dim-block">
+      <h4><span class="dim-mark ok">✓</span> 其余维度（安全/数据/性能/并发/稳定性/可观测）</h4>
+      <p>与现有 9 个 domain 切换模式 100% 一致（一致性 &gt; 品味），grep AC-5.1 验收。</p>
+    </div>
+  </div>
+</article>
+
+<!-- #6 -->
+<article class="issue" id="i6">
+  <div class="issue__head">
+    <h3><span class="rid">#6</span> 跳转编排 <span class="issue__summary has-warn">2 项 ⚠️ · 稳定性/可观测 + GAP-2 吞错层</span></h3>
+    <div class="plan">方案 A（switch 分发）</div>
+  </div>
+  <div class="issue__body">
+    <div class="dim-block">
+      <h4><span class="dim-mark ok">✓</span> 安全</h4>
+      <p>跳转目标是 SearchItem（来自受控数据源），非用户自由输入 URL/路径；file.read 走 runtime 受控路径校验。</p>
+    </div>
+    <div class="dim-block">
+      <h4><span class="dim-mark ok">✓</span> 数据</h4>
+      <p>recents 写入归 #3 的数据一致性（单 key 原子写）；session.switch 是现有受控操作。<strong>部分失败容忍（GAP-1）</strong>：跳转成功 + recents 写入失败（localStorage 配额满）是部分失败——MR-3.3 已定义降级（内存态保留，reload 后丢失），符合「recents 是偏好数据可丢失」容忍度，不阻断跳转成功路径。</p>
+    </div>
+    <div class="dim-block">
+      <h4><span class="dim-mark ok">✓</span> 性能 / 并发 / 兼容性</h4>
+      <p>跳转是单次用户操作，无性能/并发面；复用现有 useDetailPane/selectSession 不破坏现有消费者。</p>
+    </div>
+    <div class="dim-block warn">
+      <h4><span class="dim-mark warn">!</span> 稳定性影响</h4>
+      <p><strong>故障场景</strong>：跳转目标失效——① file.read 失败（文件被删/权限）；② session.switch 失败（session 文件损坏/失效，注意 pi 延迟写入见 AGENTS.md 规则#6——但 session.switch 是进程激活层非文件层，正交）；③ 应用命令 action 抛错。</p>
+      <div class="finding"><span class="finding__tag">GAP-2 · 假性 PASS 漏洞（D-024 补 AC-6.9）</span>与 #4 AH-E1/E2 同构——file 跳转调 <code>useDetailPane.openPreview</code>，但后者 try/catch <strong>吞错</strong>（设 status='error' 不抛出）。file.read 失败时 useSearchJump 的 catch 永不触发，<strong><code>AC-6.5</code>「file.read 失败→toast」假性 PASS</strong>。<strong>修复</strong>：#6 补 <code>AC-6.9</code>——file 跳转须直调 <code>fileApi.read</code> 校验不经吞错层，与 #4 AC-4.5 error 冒泡链对称。</div>
+      <p><strong>降级方案</strong>：三类跳转失败均 toast 错误反馈（AC-6.5/6.6/6.8 + 新 AC-6.9），不静默失败。<strong>关键</strong>：AC-6.7 异常恢复——跳转先 await 成功再关浮层，失败保持打开让用户重选。</p>
+      <p><strong>熔断/限流</strong>：N/A（用户主动单次操作）。<strong>重试策略</strong>：不自动重试；session.switch 失败时 AC-6.6 刷新会话列表（消除失效 session）。</p>
+    </div>
+    <div class="dim-block warn">
+      <h4><span class="dim-mark warn">!</span> 可观测性</h4>
+      <p><strong>日志</strong>：跳转失败 toast 是用户可见反馈（AC-6.5/6.6/6.8/6.9）；但跳转成功路径无日志（成功是默认期望，无需日志噪音）。<strong>指标/追踪/告警</strong>：无。<strong>审计</strong>：跳转后写 recents（AC-6.4）是用户行为记录，无需额外审计。</p>
+    </div>
+  </div>
+</article>
+
+<!-- #7 -->
+<article class="issue" id="i7">
+  <div class="issue__head">
+    <h3><span class="rid">#7</span> SearchModal 改造 <span class="issue__summary has-warn">2 项 ⚠️ · 并发竞态 + ⌘K toggle 变更</span></h3>
+    <div class="plan">方案 A（渐进改造）</div>
+  </div>
+  <div class="issue__body">
+    <div class="dim-block">
+      <h4><span class="dim-mark ok">✓</span> 安全 / 数据 / 性能 / 稳定性 / 可观测</h4>
+      <p>UI 组件改造，BC 清单逐条验收保证行为等价（AC-7.1~7.9）；渐进改造降低破坏既有交互风险；行数上限 AC-7.12（script ≤300 / template ≤400）。debounce(120ms) 是性能护栏（D-020 提前到 #7）；改造后 LOC 收敛。</p>
+    </div>
+    <div class="dim-block warn">
+      <h4><span class="dim-mark warn">!</span> 并发控制</h4>
+      <p><strong>竞态场景</strong>：浮层快速 open/close 交替——① open 触发 loadResults（watch open）+ query 变化触发 loadResults（watch query），两者并发；② close 时 query 清空（BC-11）与 pending loadResults 的竞态；③ debounce 定时器残留（close 后仍 fire）。</p>
+      <div class="finding"><span class="finding__tag">G1 · close 触发孤儿查询</span>现状 <code>watch(open)</code> close 分支执行 <code>query.value=''</code>（SearchModal.vue:184）→ 立即触发 <code>watch(query)</code>（:180）→ <code>loadResults('')</code> <strong>再发一次 runtime 全量查询（浮层已关）</strong>。loadSeq 能丢弃结果（无害），但<strong>查询本身不被阻止</strong>——debounce 后 AC-7.14 验收可能假性 PASS。<strong>缓解</strong>：MR-7.1 补充——close 时不仅 clearTimeout 还须守卫该孤儿查询（open flag 检查，close 后 loadResults 直接 return）。</div>
+      <p><strong>幂等策略</strong>：AC-7.14——loadSeq 守卫已覆盖结果竞态；debounce 的 setTimeout 须在 close 时 clearTimeout（与 AC-8.4 loading setTimeout 清理同模式）+ 孤儿查询守卫。<strong>锁策略</strong>：无锁（loadSeq + clearTimeout + open flag 守卫足够）。</p>
+    </div>
+    <div class="dim-block warn">
+      <h4><span class="dim-mark warn">!</span> 兼容性影响（追踪 G2 修订）</h4>
+      <p><strong>⌘K toggle 变更（G2）</strong>：AC-7.1 是 <strong>[等价/变更]</strong>（<code>=true</code>→toggle，源码核验 Sidebar.vue:236 确为非 toggle）——「再按⌘K 关闭」是<strong>行为变更非保持</strong>。兼容性维度须识别用户肌肉记忆变化（连按⌘K 从无反应→toggle）。本表 §#10 已承认此变更（AH-C5），#7 改造时 AC-7.1 须显式实现 toggle 逻辑（与 AC-10.1 协同）。</p>
+      <p><strong>BC 清单等价性</strong>：其余 BC-2~BC-12 保持项（↑↓导航/高亮/空结果态/图标/loadSeq/鼠标/生命周期/边缘不变式）逐条验收保证等价。</p>
+    </div>
+  </div>
+</article>
+
+<!-- #8 -->
+<article class="issue" id="i8">
+  <div class="issue__head">
+    <h3><span class="rid">#8</span> loading 态 + error 态 <span class="issue__summary has-warn">1 项 ⚠️ · toast 错误文本脱敏</span></h3>
+    <div class="plan">方案 A（延迟显示 + toast）</div>
+  </div>
+  <div class="issue__body">
+    <div class="dim-block warn">
+      <h4><span class="dim-mark warn">!</span> 安全影响（追踪 GAP-BL-2 补充）</h4>
+      <p><strong>风险</strong>：no-silent-catch lint 强制 catch，但 <code>routeInbound</code>（useConnection.ts:46）原样透传 runtime <code>payload.message</code> → Error.message → toast。message 可能含<strong>绝对路径</strong>（用户目录结构泄漏）+ 内部 code（out_of_cwd/permission_denied/TIMEOUT/AUTH_ERROR，见 shared/errors.ts）。现有 codebase（useDetailPane/useGitStatus）均无脱敏约定。</p>
+      <p><strong>影响范围</strong>：toast 错误反馈文本（用户可见）。</p>
+      <p><strong>缓解方案</strong>：⚠️ 本期接受为残余风险（见残余风险登记）——错误文本含绝对路径是诊断价值（用户排错需要），桌面应用单用户无跨用户泄漏面；内部 code 是技术标识非敏感数据。后续若加多用户/远程模式再引入脱敏层。</p>
+    </div>
+    <div class="dim-block">
+      <h4><span class="dim-mark ok">✓</span> 其余维度（数据/性能/并发/兼容性/可观测）</h4>
+      <p>loading 是 transient ref（setTimeout 驱动，AC-8.4 clearTimeout 清理防泄漏）；error 是 transient ref（AC-8.5 新查询/close 时重置）；AH-S2 对齐实现机制（查询单源失败=分组空态非全局 error，跳转失败=全局 error toast）。</p>
+    </div>
+    <div class="dim-block">
+      <h4><span class="dim-mark ok">✓</span> 稳定性（提升）</h4>
+      <p>error 态补齐<strong>提升</strong>稳定性（no-silent-catch lint 硬阻断 → 必须处理错误，消除静默吞错）。</p>
+    </div>
+  </div>
+</article>
+
+<!-- #9 -->
+<article class="issue" id="i9">
+  <div class="issue__head">
+    <h3><span class="rid">#9</span> Tab 切类 <span class="issue__summary all-ok">全部 ✓ · 纯前端 UI 状态</span></h3>
+    <div class="plan">方案 A（activeType ref）</div>
+  </div>
+  <div class="issue__body">
+    <div class="dim-block">
+      <h4><span class="dim-mark ok">✓</span> 全维度</h4>
+      <p>activeType 是 computed 过滤的派生态（D-014），无 I/O / 无并发 / 无外部依赖。AC-9.3 守 selIdx 重置，AC-9.4 守 recents 态正交。</p>
+    </div>
+  </div>
+</article>
+
+<!-- #10 -->
+<article class="issue" id="i10">
+  <div class="issue__head">
+    <h3><span class="rid">#10</span> 搭便车 2 项 <span class="issue__summary all-ok">全部 ✓ · 待⑤骨架验证</span></h3>
+    <div class="plan">方案 A（顺势纳入 #2/#7 PR）</div>
+  </div>
+  <div class="issue__body">
+    <div class="dim-block">
+      <h4><span class="dim-mark ok">✓</span> 全维度</h4>
+      <p>① Sidebar keydown 接命令注册表消除硬编码（D-004），⌘K 从 <code>=true</code> 改 toggle 是行为变更（AH-C5），AC-10.1 验收；② scrollIntoView→scrollIntoViewIfNeeded 是 spec 合规（BC-7），AC-10.2 验收。两项工作量到⑤骨架验证确认（D-019），若超预期降级 P3。</p>
+    </div>
+  </div>
+</article>
+
+<!-- #17 新建 -->
+<article class="issue new" id="i17">
+  <div class="issue__head">
+    <h3><span class="rid">#17</span> WS 源超时 race <span class="issue__summary has-warn">新建 [P1] · F-1 根因修复 · blocked_by #4</span></h3>
+    <div class="plan">新建 issue · MR-17.1 落地</div>
+  </div>
+  <div class="issue__body">
+    <div class="callout callout--amber" style="margin-top:0">
+      <strong>来源</strong>：④非功能设计追踪发现 F-1 漏洞（D-023）。ws-client.ts onclose 不 reject in-flight pending（pending.ts 无 clear/flush），致 domain query() 对 file/session WS 源的 <code>Promise.allSettled</code> 永久 await，浮层永久 loading 挂死，无 toast 无降级。这是 transport 层遗漏的根因修复。
+    </div>
+    <div class="dim-block warn">
+      <h4><span class="dim-mark warn">!</span> 安全 / 数据 / 性能 / 并发 / 稳定性 / 可观测（实现期）</h4>
+      <p><strong>修复方案</strong>：domain query() 对 file/session WS 源加超时 race（10s 量级，对齐 runtime），超时→reject→allSettled settle→分组空态+toast。</p>
+      <ul>
+        <li><strong>安全 ⚠️</strong>：超时 reject 透传的 error envelope 可能含路径/code（与 #8 GAP-BL-2 同类，归残余风险）。</li>
+        <li><strong>数据 ⚠️</strong>：超时后该源降级空 section，结果不完整（预期降级行为，AC-4.8 范畴）。</li>
+        <li><strong>性能 ⚠️</strong>：超时 10s 是延迟代价（最坏用户感知 10s 后才 toast），对齐 runtime 超时量级。</li>
+        <li><strong>并发 ⚠️</strong>：race 实现涉及 timer 与 pending 的并发控制，须 clearTimeout 防泄漏（与 AC-8.4 同模式）。</li>
+        <li><strong>稳定性 ⚠️</strong>：本质是稳定性<strong>提升</strong>（消除挂死），但实现期是风险点（race 逻辑错误会引入新竞态）。</li>
+        <li><strong>可观测 ⚠️</strong>：超时须 toast 反馈用户（AC-8.2 no-silent-catch）。</li>
+      </ul>
+    </div>
+    <div class="dim-block">
+      <h4><span class="dim-mark ok">✓</span> 兼容性</h4>
+      <p>纯 domain 内部加超时 race，不改变 WS API 契约，不影响现有 runtime 消费者。</p>
+    </div>
+  </div>
+</article>
+
+<!-- ============ 缓解项回灌登记 ============ -->
+<div class="sec-head" id="mitigation">缓解项回灌登记（Mitigation Rollback）</div>
+<p style="color:var(--text-dim);font-size:13px;margin-bottom:16px">每条缓解落地为下游可执行项。「验收方式」决定是否进⑤test-matrix。</p>
+
+<div class="table-wrap"><div class="table-scroll">
+<table class="data-table">
+  <thead>
+    <tr>
+      <th>缓解项</th><th>来源#</th><th>维度</th><th>回灌去向</th><th>落地为</th><th>验收</th><th>状态</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td><span class="mr-id">MR-3.1</span> localStorage 读写 try/catch 降级</td><td>#3</td><td><span class="dim-tag">稳定性/数据</span></td><td><span class="dest-tag t5">⑤test-matrix</span></td><td>read() JSON.parse 失败→空数组；write() 配额满→catch 降级（不崩溃）</td><td>代码测试</td><td><span class="status-pill todo">待落</span></td></tr>
+    <tr><td><span class="mr-id">MR-3.2</span> localStorage key 命名空间隔离</td><td>#3</td><td><span class="dim-tag">兼容性</span></td><td><span class="dest-tag t5">⑤骨架约束</span></td><td>recents key 用 <code>xyz-agent:search-recents</code>（对齐冒号约定）</td><td>骨架约束</td><td><span class="status-pill todo">待落</span></td></tr>
+    <tr><td><span class="mr-id">MR-3.3</span> 配额满内存态保留（G-3.3）</td><td>#3</td><td><span class="dim-tag">稳定性</span></td><td><span class="dest-tag t5">⑤test-matrix</span></td><td>write() 配额满 catch 后内存态保留（不回滚），本次会话成功，reload 后丢失</td><td>代码测试</td><td><span class="status-pill todo">待落</span></td></tr>
+    <tr><td><span class="mr-id">MR-3.4</span> FIFO 淘汰时机用例（G-3.5）</td><td>#3</td><td><span class="dim-tag">数据/并发</span></td><td><span class="dest-tag t5">⑤test-matrix</span></td><td>类满 5 项+新 key（淘汰最旧）+ 同 key 重复（更新 ts）+ 计数器兜底（同毫秒连续 write）</td><td>代码测试</td><td><span class="status-pill todo">待落</span></td></tr>
+    <tr><td><span class="mr-id">MR-4.1</span> loadSeq 守卫迁移正确性</td><td>#4</td><td><span class="dim-tag">并发</span></td><td><span class="dest-tag t5">⑤骨架约束</span></td><td>loadSeq 字段+守卫逻辑在 search domain query() 内部，⑤骨架 tsc 验证存在</td><td>骨架约束</td><td><span class="status-pill todo">待落</span></td></tr>
+    <tr><td><span class="mr-id">MR-4.2</span> allSettled 单源 reject 静默 vs 全源失败 toast</td><td>#4</td><td><span class="dim-tag">可观测</span></td><td><span class="dest-tag t5">⑤test-matrix</span></td><td>单源 reject→对应分组空态（不 toast）；全源/跳转失败→toast（AC-4.8 + AH-S2）</td><td>代码测试</td><td><span class="status-pill todo">待落</span></td></tr>
+    <tr><td><span class="mr-id">MR-4.3</span> 文件截断提示（AC-4.7，D-021 反哺 5000）</td><td>#4</td><td><span class="dim-tag">性能/可观测</span></td><td><span class="dest-tag t3">③issues #4 AC-4.7</span></td><td>文件数超 MAX_SEARCH_RESULTS=5000 时分组显示截断提示</td><td>代码测试</td><td><span class="status-pill done">已在③（待反哺 5000）</span></td></tr>
+    <tr><td><span class="mr-id">MR-4.4</span> 缓存失效竞态（K-3）</td><td>#4</td><td><span class="dim-tag">数据/性能</span></td><td><span class="dest-tag t3">③issues #4 新 AC-4.10</span></td><td>search domain 消费缓存时须自绑 setupInvalidation watch（不依赖 CommandPopover 挂载），防 stale cache</td><td>代码测试</td><td><span class="status-pill todo">待落</span></td></tr>
+    <tr><td><span class="mr-id">MR-4.5</span> error 冒泡链不变式（K-1，已在 AC-4.5）</td><td>#4</td><td><span class="dim-tag">数据完整性</span></td><td><span class="dest-tag t3">③issues #4 AC-4.5</span></td><td>domain 直调 composer.getFileCandidates 不经 useFileSearch.load 吞错层</td><td>代码测试</td><td><span class="status-pill done">已在③</span></td></tr>
+    <tr><td><span class="mr-id">MR-6.1</span> 跳转失败 toast + 浮层保持打开</td><td>#6</td><td><span class="dim-tag">稳定性</span></td><td><span class="dest-tag t3">③issues #6 AC-6.5/6.6/6.7/6.8</span></td><td>file.read/session.switch/应用命令失败→toast + 浮层不关</td><td>代码测试</td><td><span class="status-pill done">已在③</span></td></tr>
+    <tr><td><span class="mr-id">MR-6.2</span> file 跳转吞错层（GAP-2，D-024）</td><td>#6</td><td><span class="dim-tag">稳定性</span></td><td><span class="dest-tag t3">③issues #6 新 AC-6.9</span></td><td>file 跳转须直调 fileApi.read 校验不经 useDetailPane.openPreview 吞错层（与 AC-4.5 对称）</td><td>代码测试</td><td><span class="status-pill todo">待落</span></td></tr>
+    <tr><td><span class="mr-id">MR-7.1</span> debounce setTimeout + 孤儿查询守卫（G1）</td><td>#7</td><td><span class="dim-tag">并发</span></td><td><span class="dest-tag t3">③issues #7 AC-7.14/7.15</span></td><td>watch query 的 debounce 定时器在 close 时 clearTimeout；close 触发的孤儿查询须被 open flag 守卫阻止</td><td>代码测试</td><td><span class="status-pill todo">待落</span></td></tr>
+    <tr><td><span class="mr-id">MR-8.1</span> loading setTimeout 资源清理</td><td>#8</td><td><span class="dim-tag">性能/资源</span></td><td><span class="dest-tag t3">③issues #8 AC-8.4</span></td><td>loading 的 setTimeout 在查询返回/组件卸载时 clearTimeout</td><td>代码测试</td><td><span class="status-pill done">已在③</span></td></tr>
+    <tr><td><span class="mr-id">MR-17.1</span> WS 源超时 race（新 issue #17）</td><td>#17</td><td><span class="dim-tag">稳定性</span></td><td><span class="dest-tag t3">③issues #17</span></td><td>domain query() 对 file/session WS 源加超时 race（10s），超时→reject→allSettled settle→分组空态+toast，防 WS 断连浮层挂死</td><td>代码测试</td><td><span class="status-pill todo">待落</span></td></tr>
+  </tbody>
+</table>
+</div></div>
+
+<div class="callout">
+  <strong>回灌去向统计</strong>：⑤test-matrix <strong>5 条</strong>（MR-3.1/3.3/3.4/4.2，NFR 新增 AC）；⑤骨架约束 <strong>2 条</strong>（MR-3.2/4.1）；③issues 已覆盖 <strong>4 条</strong>（MR-4.3/4.5/6.1/8.1）+ 待落 <strong>4 条</strong>（MR-4.4 新 AC-4.10 / MR-6.2 新 AC-6.9 / MR-7.1 补充 / MR-17.1 新 issue #17）。
+</div>
+<div class="callout callout--reasoning">
+  <strong>③ 指针即时承诺核查</strong>：本表「回灌去向=③issues」的条目均指向 issues.md 真实存在的 AC（#4/#6/#7/#8 + 新增 #17 待 Step 6b 反哺到 issues.md）。⑤指针（⑤test-matrix / ⑤骨架）是延期承诺，由⑤code-arch §6「来源 B」反向核对闭合。
+</div>
+
+<!-- ============ 残余风险登记 ============ -->
+<div class="sec-head" id="residual">残余风险登记</div>
+
+<div class="table-wrap"><div class="table-scroll">
+<table class="data-table">
+  <thead>
+    <tr><th>风险</th><th>影响</th><th>接受理由</th><th>监控方式</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>localStorage 配额满（极端情况）</td>
+      <td>recents 写入失败</td>
+      <td>recents 是偏好数据非业务数据，丢失可接受；MR-3.1/MR-3.3 catch 降级保证不崩溃</td>
+      <td>用户反馈（无自动监控，桌面应用）</td>
+    </tr>
+    <tr>
+      <td>大仓库（&gt;5000 文件）深层文件截断</td>
+      <td>深层文件搜不到</td>
+      <td>MAX_SEARCH_RESULTS=5000 覆盖正常项目全量；截断提示（AC-4.7）告知用户细化查询；超大仓库是边缘场景</td>
+      <td>截断提示 UI 反馈</td>
+    </tr>
+    <tr>
+      <td>session.list 全量扫描耗时（多项目会话库增长）</td>
+      <td>查询延迟上升</td>
+      <td>debounce(120ms) + session 级缓存缓解；多项目会话库增长是渐进问题，后续可加分页/索引</td>
+      <td>无（YAGNI，后续按需）</td>
+    </tr>
+    <tr>
+      <td>toast 错误文本含绝对路径/内部 code（GAP-BL-2）</td>
+      <td>用户目录结构/技术标识可见</td>
+      <td>桌面应用单用户无跨用户泄漏面；错误文本诊断价值 &gt; 泄漏风险；后续多用户/远程模式再引入脱敏</td>
+      <td>无</td>
+    </tr>
+  </tbody>
+</table>
+</div></div>
+
+<!-- ============ 需⑤骨架验证的副作用 ============ -->
+<div class="sec-head" id="skeleton">需⑤骨架验证的副作用</div>
+
+<div class="table-wrap"><div class="table-scroll">
+<table class="data-table">
+  <thead>
+    <tr><th>副作用</th><th>验证什么</th><th>预期结论方向</th><th>stub 落点</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>loadSeq 守卫迁移（前端→domain）</td>
+      <td>loadSeq 字段+守卫逻辑在 search domain query() 内部正确编译+调用链通</td>
+      <td>守卫存在且 BC-9 乱序响应保护等价（D-022 标骨架约束）</td>
+      <td>⑤骨架 search domain query() 含 loadSeq 字段</td>
+    </tr>
+    <tr>
+      <td>debounce + loadSeq 协同（快速输入）</td>
+      <td>debounce(120ms) 与 loadSeq 守卫协同不产生结果闪烁/竞态；验证场景（K1）：debounce 窗口内连续输入「ab」「abc」→ 只发一次 loadResults('abc')，seq 单调递增，旧 seq 结果丢弃</td>
+      <td>debounce 合并高频输入（120ms 内只触发一次 loadResults），loadSeq 守卫乱序，两者正交无冲突（AC-7.14/7.15）</td>
+      <td>⑤骨架 SearchModal watch query 含 debounce</td>
+    </tr>
+    <tr>
+      <td>allSettled 单源 reject 静默降级</td>
+      <td>mock file 源 reject 时不弹 toast（仅分组空态），全源失败才 toast</td>
+      <td>单源失败=分组空态（静默），全源/跳转失败=toast（MR-4.2）</td>
+      <td>⑤test-matrix NFR-AC</td>
+    </tr>
+    <tr>
+      <td>WS 源超时 race（新 issue #17）</td>
+      <td>runtime WS 断连时 file/session 源 pending 在 10s 后超时 reject，allSettled settle，浮层显示分组空态+toast，不挂死</td>
+      <td>超时 race 正确触发，allSettled 不再永久 await（MR-17.1）</td>
+      <td>⑤骨架 search domain query() 含超时 race</td>
+    </tr>
+    <tr>
+      <td>close 触发孤儿查询守卫（G1）</td>
+      <td>close 时 query='' 触发的 loadResults 被 open flag 守卫阻止（不再发 runtime 全量查询）</td>
+      <td>close 后 loadResults 直接 return，不发孤儿查询（MR-7.1）</td>
+      <td>⑤骨架 SearchModal loadResults 含 open flag 守卫</td>
+    </tr>
+  </tbody>
+</table>
+</div></div>
+
+<!-- ============ 决策记录 ============ -->
+<div class="sec-head" id="decisions">决策记录</div>
+<p style="color:var(--text-dim);font-size:13px;margin-bottom:8px">完整决策账本见 <code style="font-family:var(--font-mono);font-size:12px;background:var(--accent-dim);color:var(--accent);padding:1px 6px;border-radius:3px">decisions.md</code>。本阶段新增决策：</p>
+
+<div class="decision">
+  <div class="decision__id">D-021 · AC-4.7 反哺修订</div>
+  <p>MAX_SEARCH_RESULTS 引用值从 500 校正为 <strong>5000</strong>（file-service.ts:59 真实值，2026-06 已调整）。事实性错误反哺。</p>
+</div>
+<div class="decision">
+  <div class="decision__id">D-022 · loadSeq 验收方式</div>
+  <p>仅标<strong>正确性不变式</strong>（骨架约束），不单独生成 NFR-AC（避免与 AC-4.4 重复）。</p>
+</div>
+<div class="decision">
+  <div class="decision__id">D-023 · F-1 漏洞修复（新建 issue #17）</div>
+  <p>WS 断连 pending 永不 settle 致浮层挂死，新建 <strong>#17 [P1]</strong> 加 WS 超时 race。<strong>D-不可逆</strong>（transport 层错误处理语义）。</p>
+</div>
+<div class="decision">
+  <div class="decision__id">D-024 · GAP-2 修复（#6 补 AC-6.9）</div>
+  <p>file 跳转经 useDetailPane 吞错层致 <code>AC-6.5</code> 假性 PASS，补 <strong>AC-6.9</strong>（直调 <code>fileApi.read</code> 不经吞错层）。</p>
+</div>
+<div class="decision">
+  <div class="decision__id">D-025 · GAP-BL-1 修复（#5 DTO 映射）</div>
+  <p>mock SearchItem 与 real DTO 异构，domain 须 <strong>DTO 映射</strong>（参考 file-candidates.ts）。</p>
+</div>
+
+<footer>
+  非功能性设计 · ⌘K 全局搜索浮层 · verdict: pass · upstream: issues.md · downstream: code-architecture.md · 渲染自 non-functional-design.md（真相源）
+</footer>
+
+</main>
+</div>
+</body>
+</html>

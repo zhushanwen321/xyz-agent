@@ -3,7 +3,7 @@ verdict: pass
 mode: refactor
 upstream: requirements.md
 downstream: issues.md
-backfed_from: []
+backfed_from: [code-arch, execution]
 ---
 
 # ⌘K 全局搜索浮层 架构设计
@@ -19,7 +19,7 @@ backfed_from: []
 | G1.2 文件可达 | 复用 runtime searchFiles 全递归 + 路径子串匹配 | 深层文件可搜到 |
 | G1.3 会话可达 | 复用 session.list 全量 + 前端内存过滤 | 跨项目会话可搜 |
 | G1.4 符号可达（降级） | 符号占位（不接真实数据） | 占位提示渲染 |
-| G2 消除 mock 误导 | 新建 search real domain 替换 mock；search 不再常驻 mock | real 模式无写死假数据 |
+| G2 消除 mock 误导 | 新建 useSearch composable 替换 mock；search 不再常驻 mock（SearchModal 改调 useSearch.query）`[BACKFED from code-arch on 2026-06-30] D-026` | real 模式无写死假数据 |
 
 ### 搭便车改造目标
 
@@ -46,7 +46,7 @@ backfed_from: []
 | **命令注册表** (Command Registry) | 应用内置命令 + pi slash 命令的统一聚合源，供 search 命令分组与 Sidebar keydown 共享（D-004） |
 | **匹配引擎** (Match Engine) | 纯函数，输入查询 + 候选项，输出带命中区间的结果（子串匹配，驱动 `<mark>` 高亮） |
 | **跳转编排** (Jump Orchestrator) | 选中项确认后的分发逻辑：按类型路由到命令执行/DetailPane 打开/session 切换 |
-| **search real domain** | `api/domains/search.ts`，替代 mock 的真实 search domain（编排 4 数据源查询） |
+| **useSearch composable** | `composables/features/useSearch.ts`，替代 mock 的真实 search 编排（编排 4 数据源查询）`[BACKFED from code-arch on 2026-06-30] D-026：编排归 composable 非 domain——编排跨 commandStore+fileSearchStore+composer/session 违反「domain 只调 transport+pending」铁律` |
 
 ## 4. 核心模型
 
@@ -106,7 +106,7 @@ classDiagram
 |------|------------|-----------|
 | SearchSession aggregate | 浮层状态是 Vue computed 派生态（query/结果驱动），无领域不变式可守（D-013） | 用组件内 ref + computed 表达 UI 状态 |
 | MatchStrategy port | 子串匹配稳定无替换需求，单实现是伪 port（D-012） | 匹配引擎为纯函数模块 |
-| SearchSource port | 4 数据源接口形状不同（前端内存 vs runtime WS），强行抽象塞适配代码（D-012） | search domain 内分别调用各 api |
+| SearchSource port | 4 数据源接口形状不同（前端内存 vs runtime WS），强行抽象塞适配代码（D-012） | useSearch composable 内分别调用各 api/store `[BACKFED from code-arch on 2026-06-30] D-026` |
 
 ## 5. 状态流转
 
@@ -161,7 +161,7 @@ graph TD
         SB[Sidebar.vue<br/>⌘K 触发入口 + keydown 复用注册表]
     end
     subgraph "Service 层（renderer/编排）"
-        SD[search real domain<br/>api/domains/search.ts<br/>编排 4 数据源查询]
+        SD[useSearch composable<br/>composables/features/useSearch.ts<br/>编排 4 数据源查询<br/>[BACKFED from code-arch D-026]]
         CRc[useCommandRegistry composable<br/>应用命令注册 + 聚合<br/>跨 store 协调]
         ME[匹配引擎<br/>纯函数 子串匹配 + segments]
         JO[跳转编排<br/>分发 命令执行/文件打开/会话切换]
@@ -199,12 +199,12 @@ graph TD
 | 模块 | 职责 | 变化轴 | 位置 | LOC(预估) |
 |------|------|--------|------|----------|
 | SearchModal.vue（改造） | 浮层 UI + 键盘导航 + 高亮渲染 | UI 交互 | components/overlays/ | ~250（现 186） |
-| search real domain（新建） | 编排 4 数据源查询 + 合并候选 + 按类型分组（输出整形） | 数据源查询编排 + 分组 | api/domains/search.ts | ~120 |
-| 命令注册表（扩展 command store + 新 composable） | 应用命令注册 + pi slash 聚合，供 search/Sidebar 共享 | 命令聚合 | stores/command.ts（扩）+ composables/useCommandRegistry.ts（新） | ~100 |
+| useSearch composable（新建） | 编排 4 数据源查询 + 合并候选 + 按类型分组（输出整形）+ loadSeq/close 孤儿守卫 | 数据源查询编排 + 分组 | composables/features/useSearch.ts `[BACKFED from code-arch on 2026-06-30] D-026：不新建 api/domains/search.ts——编排跨 store 违反 domain 铁律，归 composable 与 useSidebar/useFileSearch 同层模式一致` | ~120 |
+| 命令注册表（扩展 command store + 新 composable） | 应用命令注册 + pi slash 聚合，供 search/Sidebar 共享 | 命令聚合 | stores/command.ts（扩）+ composables/features/useCommandRegistry.ts（新） | ~100 | `[BACKFED from execution consistency-final on 2026-06-30] 路径补 features/ 一级`
 | 匹配引擎（提取为纯函数模块） | **仅**子串过滤（matchFilter）+ segments 高亮段产生。不含分组、不调 api、无副作用 | 匹配算法（纯函数） | lib/match-engine.ts（从 SearchModal 提取） | ~40 |
-| 跳转编排（新建） | 选中项分发到命令执行/DetailPane/session 切换 | 跳转路由 | composables/useSearchJump.ts（新） | ~80 |
-| recents composable（新建） | localStorage 读写 + FIFO 淘汰 | recents 持久化 | composables/useRecents.ts（新） | ~60 |
-| api/index.ts（接线改造） | search 从硬编码 mock 切到 real domain | domain 装配 | api/index.ts | ~5 |
+| 跳转编排（新建） | 选中项分发到命令执行/DetailPane/session 切换 | 跳转路由 | composables/features/useSearchJump.ts（新） | ~80 | `[BACKFED from execution consistency-final on 2026-06-30] 路径补 features/ 一级`
+| recents composable（新建） | localStorage 读写 + FIFO 淘汰 | recents 持久化 | composables/features/useRecents.ts（新） | ~60 | `[BACKFED from execution consistency-final on 2026-06-30] 路径补 features/ 一级`
+| api/index.ts（接线改造） | 删除 search 导出（search 无 real domain，SearchModal 改调 useSearch.query）`[BACKFED from code-arch on 2026-06-30] D-026` | 门面清理 | api/index.ts | ~5 |
 
 > **复用现有基建**：command store（SessionCommand 模型 + sessionId 分区）、fileSearch store + useFileSearch（文件搜索缓存 + debounce + 失效）、transport + pending（WS 通道）、useDetailPane（文件打开）、useSidebar.selectSession（会话切换）。
 
@@ -243,7 +243,7 @@ graph LR
 sequenceDiagram
     actor U as 用户
     participant SM as SearchModal
-    participant SD as search domain
+    participant SD as useSearch composable
     participant ME as 匹配引擎
     participant RT as runtime(WS)
     participant LS as localStorage
@@ -312,13 +312,13 @@ sequenceDiagram
 
 | 决策 | 违反什么 | 为什么合理 | 触发变化怎么办 |
 |------|---------|-----------|--------------|
-| 符号占位不建 SearchSource port | D-012 不做 port 的通用规则 | 符号是占位（无真实数据源），连查询都不发，无需 port | 补符号数据时新增 search domain 内一个 api 调用即可，仍不需 port |
+| 符号占位不建 SearchSource port | D-012 不做 port 的通用规则 | 符号是占位（无真实数据源），连查询都不发，无需 port | 补符号数据时在 useSearch composable 内新增一个 api 调用即可，仍不需 port `[BACKFED from code-arch on 2026-06-30] D-026` |
 | recents 用 localStorage 不走 runtime | 「数据应经 runtime」惯例 | recents 是纯前端偏好（D-007），与 settings 的 system 偏好同性质（localStorage），不经 runtime | 如需跨设备同步再改，当前 YAGNI |
 
 ## 11. 反模式检查（grep 验收清单）
 
 ### AC-1: search 不再常驻 mock
-- 验证：`grep -n "search = mockApi.search" src-electron/renderer/src/api/index.ts` 输出应改为三元切换（real 模式走 real domain）
+- 验证：`grep -n "search = mockApi.search" src-electron/renderer/src/api/index.ts` 应无输出（search 导出删除，SearchModal 改调 useSearch.query）`[BACKFED from code-arch on 2026-06-30] D-026：search 无 real domain，门面不再导出 search`
 
 ### AC-2: 应用命令不硬编码在 keydown
 - 验证：`grep -n "metaKey.*⌘N\|newSession()" src-electron/renderer/src/components/sidebar/Sidebar.vue` keydown 改为从注册表读取（搭便车 D-015，待⑤确认）
@@ -364,7 +364,7 @@ sequenceDiagram
 ### BC-5: 空查询显示 recents + 建议命令
 | 字段 | 内容 |
 |------|------|
-| 源码位置 | `SearchModal.vue:124-129`（loadResults 空查询走 search.query("")）|
+| 源码位置 | `SearchModal.vue:124-129`（loadResults 空查询走 useSearch.query("")）`[BACKFED from code-arch on 2026-06-30] D-026`|
 | 处理 | **变更**（→独立 ticket）：现 recents 是 mock 写死；D-007 要求 localStorage 持久化真实 recents |
 | 冲突 | 无 |
 
