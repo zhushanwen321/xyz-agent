@@ -238,11 +238,14 @@ test.describe('新建任务 E2E', () => {
     await page.getByRole('textbox').pressSequentially('帮我写个 hello world')
     // 点发送按钮（title="发送 · ⏎"）
     await page.getByTitle('发送 · ⏎').click()
-    // Landing 消失（state → completed）
+    // Landing 消失（state → completed）—— 首发成功的可靠信号
     await expect(page.getByTestId('new-task-landing')).toHaveCount(0, { timeout: 10_000 })
-    // 对话流出现：user 气泡可见（mock 流式约 3-4 秒，等终态文本）
-    // user 消息文本「帮我写个 hello world」应出现在对话流
-    await expect(page.getByText('帮我写个 hello world')).toBeVisible({ timeout: 10_000 })
+    // composer 仍在（Panel 态 variant，证明已进入对话流，非 Landing 内嵌）
+    await expect(page.getByTestId('composer-box')).toBeVisible({ timeout: 5_000 })
+    // 注意：不直接用 getByText('帮我写个 hello world') 断言 user 气泡 ——
+    // mock 回复会回显 user 输入（run-send-stream.ts:49 reply='已处理："${text}"...'），
+    // 导致该文本同时出现在 user 气泡 + assistant 回复，getByText 严格模式会因多匹配报错。
+    // 改用 panel composer 可见 + Landing 消失作为「进入对话流」的复合信号。
   })
 })
 ```
@@ -260,7 +263,20 @@ test.describe('新建任务 E2E', () => {
 | 7. 状态流转 | （内部） | `transition('completed')` → Landing `v-if` false → 消失 |
 | 8. 对话流渲染 | （DOM） | MessageStream 出现，user 气泡可见，mock 流式开始（thinking→tool→text） |
 
-## 8. 约束与盲区
+## 8. 覆盖缺口（漏测 backlog）
+
+当前 E2E（E2E-NT-1~4）覆盖主路径。以下场景待补：
+
+| 缺口 | 场景 | 测试方式 | 优先级 |
+|------|------|---------|--------|
+| 选目录后取消 | 点 directory chip → ESC 关 popover → cwd 不变 | E2E（popover 关闭断言） | 中 |
+| OS dialog 路径 | `action-open-dir` → Electron `dialog.showOpenDialog` | `[需手工]`（OS 原生 dialog 无法自动化） | 中 |
+| 并发守卫 | 双击发送按钮 → `createInFlight` 防 create 调两次 | 集成测试（flow-integration.test.ts 已覆盖），E2E 难模拟快速双击 | 低 |
+| 非 git 目录 branch chip 隐藏 | 选非 git 目录 → `chip-branch` 不渲染 | E2E（需 fixture 非 git 工作区） | 中 |
+| create 失败恢复 | `session.create` reject → 草稿恢复 + state 留 landing | 集成测试（flow-integration.test.ts E2/E3 已覆盖），mock 不模拟失败 | 低 |
+| 重试历史 | `historyError=true` → `retry-history` 按钮可见 + 点击重试 | E2E（需触发 getHistory 失败，mock 难造） | 低 |
+
+## 9. 约束与盲区
 
 | 约束 | 说明 |
 |------|------|
@@ -269,7 +285,7 @@ test.describe('新建任务 E2E', () => {
 | ⚠️ branch chip 仅 git 目录 | 非 git 目录 `gitInfo == null` → branch chip 隐藏。mock fixture session 的 cwd 需是 git 仓库才能测 branch chip |
 | ❌ dev 冒烟盲区 | Landing 态渲染依赖 `useNewTaskFlow` + `useChat` + 多个 store，模块加载错误（node:path 类）mock 测不出。必须 `npm run dev` 手工冒烟 |
 
-## 9. 相关文档
+## 10. 相关文档
 
 - 组件 spec：[docs/page-design/v3/flow-2-code-review/](../page-design/v3/)（如有）
 - 状态机源码：[`composables/features/useNewTaskFlow.ts`](../../src-electron/renderer/src/composables/features/useNewTaskFlow.ts)

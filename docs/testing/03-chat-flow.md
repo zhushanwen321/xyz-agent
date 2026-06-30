@@ -290,16 +290,23 @@ test.describe('对话流 E2E', () => {
   })
 
   test('E2E-CF-2: 流式 thinking + tool 可见（文本锚点）', async ({ page }) => {
+    // ⚠️ thinking 可见性时序（Block.vue:85）：
+    //   thinkingExpanded = computed(() => props.working || !thinkingCollapsed.value)
+    //   - 流式中（working=true）→ 强制展开，全文可见
+    //   - 流式完成（complete 后 working=false）→ 收起，全文 v-if 不在 DOM，只剩 header + preview
+    //   mock 流式约 3-4 秒完成，故全文断言存在时序竞争（可能错过 working 窗口）。
+    //   稳定策略：断言 thinking header（「思考」恒显）+ 收起态 preview（截断预览，收起后仍在 DOM）。
     await page.getByRole('button', { name: /^会话/ }).click()
     await page.getByText('API 性能优化').click()
     await page.getByRole('textbox').click()
     await page.getByRole('textbox').pressSequentially('展示 thinking 和 tool')
     await page.getByRole('textbox').press('Enter')
-    // mock thinking 文本
-    await expect(page.getByText(/让我分析一下这个请求/)).toBeVisible({ timeout: 10_000 })
-    // mock tool（read 工具，toolGap 90ms × 3）
-    // tool 块含工具名 'read'（Block.vue 渲染）
-    await expect(page.getByText(/read/)).toBeVisible({ timeout: 10_000 })
+    // thinking header 恒显（Block.vue:37「思考」文案，不受 working/collapsed 影响）
+    await expect(page.getByText('思考', { exact: true }).first()).toBeVisible({ timeout: 15_000 })
+    // tool 块 header：mock toolCall toolName='read', input.path='/mock/file.ts'
+    // Block.vue:47-48 渲染「read(/mock/file.ts)」（toolName + argPath）。
+    // 用精确 path 锚点，避免宽泛 'read' 匹配到 readme/already/readFile 等无关文本。
+    await expect(page.getByText(/read\(\/mock\/file\.ts\)/).first()).toBeVisible({ timeout: 15_000 })
   })
 
   test('E2E-CF-3: fileChanges 变更集卡可见', async ({ page }) => {
@@ -309,10 +316,11 @@ test.describe('对话流 E2E', () => {
     await page.getByRole('textbox').pressSequentially('展示变更集')
     await page.getByRole('textbox').press('Enter')
     // mock fileChanges（accumulating → ready，约 120ms × 2 + 文本流式）
-    // ChangeSetCard 含文件路径 src/mock-feature.ts
-    await expect(page.getByText(/src\/mock-feature\.ts/)).toBeVisible({ timeout: 15_000 })
-    // 变更集状态 badge（ready → '待审查'）
-    await expect(page.getByText(/待审查|变更集/)).toBeVisible({ timeout: 5_000 })
+    // ChangeSetCard 文件行渲染完整 filePath（ChangeSetCard.vue:39 {{ c.filePath }}）
+    // 用 .first() 防 accumulating/ready 两帧瞬时双匹配
+    await expect(page.getByText(/src\/mock-feature\.ts/).first()).toBeVisible({ timeout: 15_000 })
+    // 变更集状态 badge：ready → '待审查'（ChangeSetCard.vue:69）；'变更集' 恒显（line 18）
+    await expect(page.getByText('待审查').first()).toBeVisible({ timeout: 5_000 })
   })
 
   test('E2E-CF-4: retry 关键词触发重试指示', async ({ page }) => {
@@ -328,29 +336,30 @@ test.describe('对话流 E2E', () => {
   })
 
   test('E2E-CF-5: 历史 session 渲染（s1 error 态）', async ({ page }) => {
-    // s1 含 error tool（bash EBUSY）+ status:'error'
+    // s1 fixture 回合2 含 error tool（bash EBUSY）：output='EBUSY: 文件被外部进程占用，写入失败', status='error'
+    // data.ts:164-165。error tool Block 默认强制展开（isFailed → toolExpanded=true，Block.vue:110-111）
+    // 用 error tool 的 output 文本作锚点（稳定，不受 class 命名重构影响）
     await page.getByRole('button', { name: /^会话/ }).click()
     await page.getByText('重构 auth 模块').click()
-    // 等 MessageStream 渲染历史
-    // s1 有 2 回合，回合2 含 error tool
-    // error tool Block 红框（border-danger class）
-    await expect(page.locator('.border-danger').first()).toBeVisible({ timeout: 10_000 })
+    // 等 MessageStream 渲染历史，error tool output 可见（Block.vue:51-57 result 区）
+    await expect(page.getByText(/EBUSY|文件被外部进程占用/).first()).toBeVisible({ timeout: 10_000 })
   })
 
   test('E2E-CF-6: session 隔离（切 session 消息不串扰）', async ({ page }) => {
-    // 激活 s1（2 回合）
+    // 激活 s1（2 回合）。s1 label「重构 auth 模块」，用 EBUSY error 文本作消息存在锚点
+    // （'auth' 太宽泛，会匹配 README/auth 相关无关文本；EBUSY 是 s1 独有的 error tool output）
     await page.getByRole('button', { name: /^会话/ }).click()
     await page.getByText('重构 auth 模块').click()
-    const s1Text = await page.getByText(/auth/).first().textContent()
-    // 切到 s3（空）
+    await expect(page.getByText(/EBUSY/).first()).toBeVisible({ timeout: 10_000 })
+    // 切到 s3（空，无 EBUSY）
     await page.getByRole('button', { name: /^会话/ }).click()
     await page.getByText('API 性能优化').click()
-    // s3 空态欢迎语
-    await expect(page.getByText(/输入消息开始对话|开始对话/)).toBeVisible({ timeout: 5_000 })
-    // 切回 s1，消息仍在
+    // s3 空态：EBUSY 不应可见（隔离验证）
+    await expect(page.getByText(/EBUSY/)).toHaveCount(0)
+    // 切回 s1，消息仍在（EBUSY 重新可见）
     await page.getByRole('button', { name: /^会话/ }).click()
     await page.getByText('重构 auth 模块').click()
-    await expect(page.getByText(/auth/).first()).toBeVisible({ timeout: 5_000 })
+    await expect(page.getByText(/EBUSY/).first()).toBeVisible({ timeout: 5_000 })
   })
 })
 ```
@@ -373,7 +382,22 @@ test.describe('对话流 E2E', () => {
 | 12. complete | （mock 推） | `setStreaming(false)`；turn 复位完成态；usage 回填 |
 | 13. 终态断言 | （验证） | 收尾 summary「好的，我来处理这个请求」可见 |
 
-## 11. 约束与盲区
+## 11. 覆盖缺口（漏测 backlog）
+
+当前 E2E（E2E-CF-1~6）覆盖发送 + 流式 + 历史 + retry + 隔离。以下场景待补：
+
+| 缺口 | 场景 | 测试方式 | 优先级 |
+|------|------|---------|--------|
+| compact 压缩 | `/compact` 或自动触发 → compacting/compacted 态 | E2E（需补 testid，当前 composer 压缩态靠 title 锚点） | 高 |
+| fork 会话 | 点 user 气泡编辑 → ForkConfirmModal → fork 新会话 | E2E（需补 Turn/ForkConfirmModal testid） | 中 |
+| editAndResend | 编辑历史 user 消息 → 截断 + 重发 | 集成测试为主（useChat.editAndResend），E2E 需补 testid | 中 |
+| 错误路径 | message.error / stream_error → UI 复位不卡死 | **集成测试必做**（chat-streaming-reset.test.ts 已覆盖），mock 不模拟错误 | 高 |
+| tool 失败流式 | tool_call_end status='error' → 红框 + 强制展开 | 集成测试（block-working.test.ts U8），E2E 用 s1 历史 fixture（CF-5 已覆盖静态态） | 低 |
+| thinking 完整文本 | 收起态点展开 → 完整 thinking 可见 | E2E（点击「思考」header toggle 后断言全文） | 低 |
+| ChangeSetCard 审查交互 | 用户 Accept/Reject → partially-reviewed/resolved | E2E（需补 ChangeSetCard testid + 审查按钮锚点） | 中 |
+| queue steer/followUp | 流式中 steer → queue_update → QueueBubble 指示 | E2E（需补 QueueBubble testid） | 低 |
+
+## 12. 约束与盲区
 
 | 约束 | 说明 |
 |------|------|
@@ -384,7 +408,7 @@ test.describe('对话流 E2E', () => {
 | ⚠️ turn-meta 文本锚点 | 「工作中」/「已工作」文本可能随 UI 调整变化，不如 testid 稳定 |
 | ⚠️ ChangeSetCard 5 态 | mock 只演示 accumulating→ready，resolved/superseded/partially-reviewed 需手工触发（用户 Accept/Reject） |
 
-## 12. 相关文档
+## 13. 相关文档
 
 - 组件源码：[`components/panel/MessageStream.vue`](../../src-electron/renderer/src/components/panel/MessageStream.vue) / [`message-stream/`](../../src-electron/renderer/src/components/panel/message-stream/)
 - 流式处理：[`stores/chat-chunk-processor.ts`](../../src-electron/renderer/src/stores/chat-chunk-processor.ts)

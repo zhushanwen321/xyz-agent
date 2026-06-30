@@ -42,19 +42,34 @@ Sidebar.vue
 
 ## 3. data-testid 清单
 
-| testid | 文件 | 触发/可见条件 |
-|--------|------|--------------|
-| `file-view-root` | FileView.vue | 文件 tab 激活 + 有 session 时恒显 |
-| `file-filter-input` | FileView.vue | 恒显（过滤输入框） |
-| `file-show-ignored-toggle` | FileView.vue | 恒显（showIgnored 开关） |
-| `file-loading` | FileView.vue | 加载中 |
-| `file-error` | FileView.vue | 加载失败 |
-| `file-empty` | FileView.vue | 过滤无匹配 / 树空 |
-| `file-tree-dir-{path}` | FileTreeRow.vue | 目录节点（path 如 `src`、`src/utils`） |
-| `file-tree-file-{path}` | FileTreeRow.vue | 文件节点（path 如 `README.md`、`src/index.ts`） |
-| `file-view-no-session` | Sidebar.vue | 无活跃 session 时 |
+| testid | 文件:行 | 触发/可见条件 |
+|--------|---------|--------------|
+| `file-view-root` | FileView.vue:13 | 文件 tab 激活 + 有 session 时恒显 |
+| `file-filter-input` | FileView.vue:28 | 恒显（过滤输入框） |
+| `file-show-ignored-toggle` | FileView.vue:40 | 恒显（showIgnored 开关） |
+| `file-loading` | FileView.vue:53 | 加载中 |
+| `file-error` | FileView.vue:63 | 加载失败 |
+| `file-retry` | FileView.vue:67 | 加载失败时的「重试」按钮 |
+| `file-empty` | FileView.vue:74 | 过滤无匹配 / 树空 |
+| `file-tree-dir-{path}` | FileTreeRow.vue:21 | 目录节点（path 如 `src`、`src/utils`） |
+| `file-tree-loading-{path}` | FileTreeRow.vue:41 | 该目录展开加载中（子节点异步加载态） |
+| `file-tree-error-{path}` | FileTreeRow.vue:51 | 该目录展开加载失败 |
+| `file-tree-file-{path}` | FileTreeRow.vue:84 | 文件节点（path 如 `README.md`、`src/index.ts`） |
+| `chevron-slot` | FileTreeRow.vue:24/43/54/88 | 展开/折叠箭头（每个节点都有，无 path 后缀，E2E 查询时需限定父节点） |
+| `file-view-no-session` | Sidebar.vue:98 | 无活跃 session 时 |
 
-**testid 命名规则**：`file-tree-{dir|file}-{相对路径}`，路径用 `/` 分隔（如 `src/index.ts`）。
+**testid 命名规则**：
+- 节点：`file-tree-{dir|file}-{相对路径}`，路径用 `/` 分隔（如 `src/index.ts`）
+- 节点态：`file-tree-{loading|error}-{path}`（展开该目录时的异步态）
+- `chevron-slot` 是公共箭头标识，无 path 后缀，E2E 查询时用 `page.getByTestId('file-tree-dir-src').locator('.chevron-slot')` 限定到具体节点
+
+**E2E 查询示例**（限定 chevron 到具体节点）：
+```typescript
+// 展开特定目录（点击其 chevron 而非整行，避免误触子节点）
+await page.getByTestId('file-tree-dir-src').click()  // 整行可点
+// 或精确点 chevron
+await page.getByTestId('file-tree-dir-src').getByTestId('chevron-slot').click()
+```
 
 ## 4. 数据流（useFileTree + fileTreeStore）
 

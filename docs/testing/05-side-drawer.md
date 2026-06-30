@@ -245,7 +245,22 @@ test.describe('SideDrawer E2E', () => {
 | 8. 渲染 | （DOM） | `detail-content` 含 'export function'；无 `detail-view-toggle` |
 | 9. 断言 | （验证） | detail-content 文本匹配 + view-toggle count=0 |
 
-## 9. 约束与盲区
+## 9. 覆盖缺口（漏测 backlog）
+
+当前 E2E（E2E-SD-1~5）覆盖 detail tab 主路径。以下场景待补：
+
+| 缺口 | 场景 | 测试方式 | 优先级 |
+|------|------|---------|--------|
+| 钉住（dock） | 点钉住按钮 → drawer 持续打开（切 session 不关） | E2E（需补 dock 按钮 testid） | 中 |
+| terminal tab widget | extension:widget widgetKey='terminal' 推送 → 渲染 | E2E（mock 推 widget，需补 tab testid） | 中 |
+| browser tab widget | widgetKey='browser' 推送 → 渲染 | E2E（同上） | 低 |
+| doc tab | slash 命令 chip 点击 → doc tab 展示 CommandDocPanel | E2E（需补 CommandDocPanel testid） | 中 |
+| git tab 全量状态 | GitPanel 显示 git status + 暂存/提交 | E2E（需补 GitPanel testid） | 高 |
+| 大文件截断 | file.read >1MB → detail-truncated 显示 | 非 MOCK（mock file.read 恒小文本） | 低 |
+| 二进制文件 | 图片等 → detail-binary 显示 | 非 MOCK（mock 不返回二进制标记） | 低 |
+| diff/preview 切换持久 | 切走再切回 → viewMode 记忆 | E2E（需补 store 持久化验证） | 低 |
+
+## 10. 约束与盲区
 
 | 约束 | 说明 |
 |------|------|
@@ -256,7 +271,7 @@ test.describe('SideDrawer E2E', () => {
 | ❌ 真实 git diff 格式 | mock getDiff 返回固定 patch，真实 git（binary/rename）只能非 MOCK 测 |
 | ❌ widget 订阅 | terminal/browser tab 走 extension.onWidget，mock 推送有限，真实 widget 内容只能非 MOCK 测 |
 
-## 10. 相关文档
+## 11. 相关文档
 
 - 组件源码：[`components/panel/SideDrawer.vue`](../../src-electron/renderer/src/components/panel/SideDrawer.vue) / [`DetailPane.vue`](../../src-electron/renderer/src/components/panel/DetailPane.vue)
 - composable：[`composables/features/useDetailPane.ts`](../../src-electron/renderer/src/composables/features/useDetailPane.ts) / [`useSideDrawer.ts`](../../src-electron/renderer/src/composables/features/useSideDrawer.ts)

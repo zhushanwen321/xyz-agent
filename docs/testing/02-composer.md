@@ -319,7 +319,22 @@ test.describe('Composer E2E', () => {
 | 6. CommandPopover 渲染 | （DOM） | Popover portal 到 body，渲染命令 button × 4（/commit /review /fix /compact） |
 | 7. 断言 | （验证） | `getByRole('button', { name: /\/commit/ })` 可见 |
 
-## 9. 约束与盲区
+## 9. 覆盖缺口（漏测 backlog）
+
+当前 E2E（E2E-C-1~5）覆盖 slash 浮层 + 发送主路径。以下场景待补：
+
+| 缺口 | 场景 | 测试方式 | 优先级 |
+|------|------|---------|--------|
+| steer/followUp | 流式中输入 + ⏎ 追加 steer / Alt+⏎ 追加 followUp | E2E（需先发消息等 isStreaming，再输入追加） | 高 |
+| stop 按钮 | 流式中点 stop → abort | E2E（title="停止"），但 mock abort 不真实中断 pi | 中 |
+| mention(@) 浮层 | 输入 @ → mention 浮层 + 选中插 chip | E2E（`MENTION_CANDIDATES` mock 有数据） | 中 |
+| file(#) 浮层 | 输入 # → file 浮层 + 选中插 chip | E2E（`FILE_CANDIDATES` mock 有数据） | 中 |
+| +菜单触发路径 | 点 AddMenu → 选命令/引用/文件 → 浮层打开 | E2E（与 slash-trigger 路径互斥验证） | 中 |
+| /compact 操作型前缀 | draft === '/compact' → 走 compact RPC 非 send | 集成测试为主，E2E 需断言不调 send | 中 |
+| landing 态 slash 源 | landing 态 slash 命令来自 settingsStore.skills（不含 builtin） | E2E（对比 landing 与 session 态命令列表差异） | 低 |
+| 模型/思考等级切换 | ModelSelectPopover / ThinkingLevelPopover 切换 | E2E（mock model.switch/setThinkingLevel） | 低 |
+
+## 10. 约束与盲区
 
 | 约束 | 说明 |
 |------|------|
@@ -330,7 +345,7 @@ test.describe('Composer E2E', () => {
 | ❌ mock 不模拟 send 失败 | mock `chat.send` 恒成功。失败路径（hook 拦截/WS 断连）只能集成测试验证 |
 | ❌ happy-dom 对 contenteditable 支持有限 | 集成测试（happy-dom）测 contenteditable 用 textContent + dispatch input event，不要依赖真实光标操作（Selection/Range）。见 [TEST-STRATEGY.md §5](../../TEST-STRATEGY.md) |
 
-## 10. 相关文档
+## 11. 相关文档
 
 - 组件源码：[`components/panel/Composer.vue`](../../src-electron/renderer/src/components/panel/Composer.vue) / [`CommandPopover.vue`](../../src-electron/renderer/src/components/panel/CommandPopover.vue)
 - 集成测试：[`__tests__/panel/composer-slash-trigger.test.ts`](../../src-electron/renderer/src/__tests__/panel/composer-slash-trigger.test.ts)
