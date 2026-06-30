@@ -1,0 +1,144 @@
+{
+  "version": 1,
+  "topic": "2026-06-30-search-modal",
+  "phases": {
+    "init": {
+      "phase": "init",
+      "status": "completed",
+      "loopRound": 0,
+      "startedAt": "2026-06-28T05:31:06.037Z",
+      "currentStep": "6",
+      "completedAt": "2026-06-28T05:31:06.238Z"
+    },
+    "clarity": {
+      "phase": "clarity",
+      "status": "completed",
+      "loopRound": 0,
+      "startedAt": "2026-06-30T09:19:44.993Z",
+      "currentStep": "6",
+      "completedAt": "2026-06-30T09:19:45.186Z"
+    },
+    "architecture": {
+      "phase": "architecture",
+      "status": "completed",
+      "loopRound": 0,
+      "startedAt": "2026-06-30T09:19:45.248Z",
+      "currentStep": "6",
+      "completedAt": "2026-06-30T10:22:40.824Z"
+    },
+    "issues": {
+      "phase": "issues",
+      "status": "completed",
+      "loopRound": 0,
+      "startedAt": "2026-06-30T10:44:37.678Z",
+      "currentStep": "1",
+      "completedAt": "2026-06-30T12:11:50.991Z"
+    },
+    "nfr": {
+      "phase": "nfr",
+      "status": "in_progress",
+      "loopRound": 0,
+      "startedAt": "2026-06-30T12:31:23.875Z",
+      "currentStep": "1"
+    },
+    "code-arch": {
+      "phase": "code-arch",
+      "status": "not_started",
+      "loopRound": 0
+    },
+    "execution": {
+      "phase": "execution",
+      "status": "not_started",
+      "loopRound": 0
+    }
+  },
+  "gaps": [],
+  "history": [
+    {
+      "timestamp": "2026-06-30T09:19:44.993Z",
+      "phase": "clarity",
+      "action": "start_phase",
+      "from": "not_started",
+      "to": "in_progress"
+    },
+    {
+      "timestamp": "2026-06-30T09:19:45.052Z",
+      "phase": "clarity",
+      "action": "advance",
+      "note": "step 1→6"
+    },
+    {
+      "timestamp": "2026-06-30T09:19:45.116Z",
+      "phase": "clarity",
+      "action": "review_phase",
+      "from": "in_progress",
+      "to": "under_review"
+    },
+    {
+      "timestamp": "2026-06-30T09:19:45.186Z",
+      "phase": "clarity",
+      "action": "complete_phase",
+      "from": "under_review",
+      "to": "completed",
+      "note": "gate PASS"
+    },
+    {
+      "timestamp": "2026-06-30T09:19:45.248Z",
+      "phase": "architecture",
+      "action": "start_phase",
+      "from": "not_started",
+      "to": "in_progress"
+    },
+    {
+      "timestamp": "2026-06-30T10:22:11.892Z",
+      "phase": "architecture",
+      "action": "advance",
+      "note": "step 1→6"
+    },
+    {
+      "timestamp": "2026-06-30T10:22:11.952Z",
+      "phase": "architecture",
+      "action": "review_phase",
+      "from": "in_progress",
+      "to": "under_review"
+    },
+    {
+      "timestamp": "2026-06-30T10:22:40.824Z",
+      "phase": "architecture",
+      "action": "complete_phase",
+      "from": "under_review",
+      "to": "completed",
+      "note": "gate PASS"
+    },
+    {
+      "timestamp": "2026-06-30T10:44:37.678Z",
+      "phase": "issues",
+      "action": "start_phase",
+      "from": "not_started",
+      "to": "in_progress"
+    },
+    {
+      "timestamp": "2026-06-30T12:11:50.928Z",
+      "phase": "issues",
+      "action": "review_phase",
+      "from": "in_progress",
+      "to": "under_review"
+    },
+    {
+      "timestamp": "2026-06-30T12:11:50.991Z",
+      "phase": "issues",
+      "action": "complete_phase",
+      "from": "under_review",
+      "to": "completed",
+      "note": "gate PASS"
+    },
+    {
+      "timestamp": "2026-06-30T12:31:23.875Z",
+      "phase": "nfr",
+      "action": "start_phase",
+      "from": "not_started",
+      "to": "in_progress"
+    }
+  ],
+  "updatedAt": "2026-06-30T12:31:23.875Z"
+}

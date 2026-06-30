@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>系统架构设计 — ⌘K 全局搜索浮层</title>
+<style>
+/* =========================================================================
+   design.css (公共底座) — 内联，调色板改写为「冷蓝暗色」(design-tokens.md SSOT)
+   ========================================================================= */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --font-body: 'Inter', 'SF Pro Display', 'PingFang SC', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+  /* 冷蓝暗色 — design-tokens.md (暗色优先/默认) */
+  --bg: #0d0d0f; --surface: #151519; --surface-2: #1b1b20; --surface-elevated: #1c1c20;
+  --border: rgba(255,255,255,0.06); --border-bright: rgba(255,255,255,0.12);
+  --text: #f0f0f5; --text-dim: #8a8a95;
+  --accent: #4f8ef7; --accent-dim: rgba(79,142,247,0.12);
+  --slate: #94a3b8; --slate-dim: rgba(148,163,184,0.12);
+  --green: #22c55e; --green-dim: rgba(34,197,94,0.12);
+  --red: #ef4444; --red-dim: rgba(239,68,68,0.10);
+  --orange: #fb923c; --orange-dim: rgba(251,146,60,0.12);
+  --amber: #f5a524; --amber-dim: rgba(245,165,36,0.14);
+  --reasoning: #a78bfa; --reasoning-dim: rgba(167,139,250,0.14);
+  --bg-input: #101013;
+  --shadow-2: 0 8px 24px rgba(0,0,0,0.4);
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f8f9fb; --surface: #ffffff; --surface-2: #f1f3f6; --surface-elevated: #ffffff;
+    --border: rgba(0,0,0,0.08); --border-bright: rgba(0,0,0,0.14);
+    --text: #0d0d0f; --text-dim: #5a5a65;
+    --accent: #2563eb; --accent-dim: rgba(37,99,235,0.10);
+    --slate: #64748b; --slate-dim: rgba(100,116,139,0.10);
+    --green: #16a34a; --green-dim: rgba(22,163,74,0.10);
+    --red: #dc2626; --red-dim: rgba(220,38,38,0.08);
+    --orange: #ea580c; --orange-dim: rgba(234,88,12,0.10);
+    --amber: #d97706; --amber-dim: rgba(217,119,6,0.12);
+    --reasoning: #7c3aed; --reasoning-dim: rgba(124,58,237,0.10);
+    --bg-input: #f1f3f6;
+    --shadow-2: 0 8px 24px rgba(0,0,0,0.10);
+  }
+}
+html { scroll-behavior: smooth; }
+body { font-family: var(--font-body); color: var(--text); line-height: 1.65; background: var(--bg); background-image: radial-gradient(ellipse at 50% -5%, var(--accent-dim) 0%, transparent 55%); padding: 32px; overflow-wrap: break-word; }
+.grid > *, .flex > *, [style*="display:grid"] > *, [style*="display:flex"] > * { min-width: 0; }
+h1 { font-size: 38px; font-weight: 700; letter-spacing: -1px; margin-bottom: 6px; text-wrap: balance; }
+h2 { font-size: 22px; font-weight: 600; letter-spacing: -0.3px; margin: 56px 0 18px; padding-bottom: 10px; border-bottom: 1px solid var(--border); scroll-margin-top: 70px; }
+h3 { font-size: 16px; font-weight: 700; margin: 26px 0 12px; color: var(--accent); font-family: var(--font-mono); letter-spacing: 0.2px; scroll-margin-top: 70px; }
+h4 { font-size: 13px; font-weight: 600; margin: 18px 0 8px; color: var(--slate); font-family: var(--font-mono); }
+p { margin-bottom: 12px; }
+.subtitle { color: var(--text-dim); font-size: 13px; margin-bottom: 8px; font-family: var(--font-mono); }
+code { font-family: var(--font-mono); font-size: 0.92em; }
+strong { font-weight: 600; }
+
+/* Layout: TOC + main 双栏 */
+.wrap { max-width: 1380px; margin: 0 auto; display: grid; grid-template-columns: 172px 1fr; gap: 0 44px; }
+.main { min-width: 0; }
+header.doc-head { margin-bottom: 28px; }
+.badge-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.tag { font-family: var(--font-mono); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; padding: 4px 10px; border-radius: 20px; background: var(--accent-dim); color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
+.tag--slate { background: var(--slate-dim); color: var(--slate); border-color: color-mix(in srgb, var(--slate) 30%, transparent); }
+.tag--green { background: var(--green-dim); color: var(--green); border-color: color-mix(in srgb, var(--green) 30%, transparent); }
+.tag--amber { background: var(--amber-dim); color: var(--amber); border-color: color-mix(in srgb, var(--amber) 30%, transparent); }
+.tag--reasoning { background: var(--reasoning-dim); color: var(--reasoning); border-color: color-mix(in srgb, var(--reasoning) 30%, transparent); }
+
+/* TOC sidebar + scroll-spy */
+.toc { position: sticky; top: 24px; align-self: start; padding: 14px 0; grid-row: 1/-1; max-height: calc(100dvh - 48px); overflow-y: auto; }
+.toc-title { font-family: var(--font-mono); font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; color: var(--text-dim); padding: 0 0 10px; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
+.toc a { display: block; font-size: 11px; color: var(--text-dim); text-decoration: none; padding: 4px 8px; border-radius: 5px; border-left: 2px solid transparent; transition: all .15s; line-height: 1.35; margin-bottom: 1px; }
+.toc a:hover { color: var(--text); background: var(--surface-2); }
+.toc a.active { color: var(--text); border-left-color: var(--accent); background: var(--accent-dim); }
+
+/* TL;DR 摘要框 */
+.tldr { background: var(--surface-elevated); border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); border-radius: 14px; padding: 20px 24px; margin: 24px 0 8px; box-shadow: 0 4px 18px rgba(79,142,247,.06); }
+.tldr__label { font-family: var(--font-mono); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.8px; color: var(--accent); margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+.tldr__label::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.tldr ul { list-style: none; padding: 0; }
+.tldr li { padding: 5px 0 5px 18px; position: relative; font-size: 14px; line-height: 1.55; }
+.tldr li::before { content: '→'; position: absolute; left: 0; color: var(--accent); font-weight: 600; }
+.tldr code { font-family: var(--font-mono); font-size: 12px; background: var(--accent-dim); color: var(--accent); padding: 1px 6px; border-radius: 3px; }
+
+/* Mermaid zoom/pan 外壳（与 zoom.js 的选择器契约绑定，勿改名） */
+.mermaid-wrap { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 32px 24px; overflow: auto; margin-bottom: 24px; display: flex; justify-content: center; align-items: center; min-height: 400px; cursor: grab; }
+.mermaid-wrap.is-panning { cursor: grabbing; user-select: none; }
+.zoom-controls { position: absolute; top: 8px; right: 8px; display: flex; gap: 2px; z-index: 10; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 2px; }
+.zoom-controls button { width: 28px; height: 28px; border: none; background: transparent; color: var(--text-dim); font-family: var(--font-mono); font-size: 14px; cursor: pointer; border-radius: 4px; display: flex; align-items: center; justify-content: center; transition: background .15s, color .15s; }
+.zoom-controls button:hover { background: var(--border); color: var(--text); }
+.diagram-shell { position: relative; }
+.diagram-shell__hint { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); margin-bottom: 8px; opacity: .7; }
+.mermaid-viewport { position: relative; overflow: hidden; width: 100%; height: 100%; min-height: 300px; }
+.mermaid-canvas { position: absolute; top: 0; left: 0; }
+.zoom-label { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); padding: 0 6px; white-space: nowrap; }
+.mermaid .nodeLabel { font-family: var(--font-body) !important; font-size: 14px !important; }
+.mermaid .edgeLabel { font-family: var(--font-mono) !important; font-size: 12px !important; }
+.mermaid .node rect, .mermaid .node circle, .mermaid .node polygon { stroke-width: 1.5px !important; }
+
+/* 数据表格 */
+.table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin: 16px 0 24px; }
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.data-table { width: 100%; border-collapse: collapse; font-size: 13px; line-height: 1.55; }
+.data-table thead { position: sticky; top: 0; z-index: 2; }
+.data-table th { background: var(--surface-2); font-family: var(--font-mono); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); text-align: left; padding: 13px 16px; border-bottom: 2px solid var(--border-bright); white-space: nowrap; }
+.data-table td { padding: 11px 16px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.data-table tbody tr:nth-child(even) { background: var(--accent-dim); }
+.data-table tbody tr:hover { background: var(--border); }
+.data-table tbody tr:last-child td { border-bottom: none; }
+.data-table code { font-family: var(--font-mono); font-size: 11px; background: var(--accent-dim); color: var(--accent); padding: 1px 5px; border-radius: 3px; }
+
+/* Callout 提示框 */
+.callout { background: var(--surface-2); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 14px 18px; font-size: 13px; line-height: 1.6; color: var(--text-dim); margin: 20px 0; }
+.callout strong { color: var(--text); font-weight: 600; }
+.callout code { font-family: var(--font-mono); font-size: 11px; background: var(--accent-dim); color: var(--accent); padding: 1px 5px; border-radius: 3px; }
+.callout--slate { border-left-color: var(--slate); }
+.callout--amber { border-left-color: var(--amber); }
+.callout--reasoning { border-left-color: var(--reasoning); }
+
+/* 章节小标题（mono 大写，区别于 h2） */
+.sec-head { font-family: var(--font-mono); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; color: var(--accent); margin: 40px 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+
+/* 卡片组件 */
+.ve-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column; gap: 8px; }
+.ve-card--elevated { box-shadow: var(--shadow-2); }
+.ve-card__label { font-family: var(--font-mono); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: var(--accent); display: flex; align-items: center; gap: 6px; }
+.ve-card__label::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.ve-card h3 { margin: 0; color: var(--text); font-family: var(--font-body); font-size: 17px; letter-spacing: -0.2px; }
+.ve-card p { margin: 0; font-size: 13.5px; color: var(--text-dim); line-height: 1.55; }
+.card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin: 18px 0 28px; }
+.node-list { list-style: none; padding: 0; margin: 0; }
+.node-list li { padding: 4px 0 4px 16px; position: relative; font-size: 13px; line-height: 1.5; color: var(--text-dim); }
+.node-list li::before { content: '›'; position: absolute; left: 0; color: var(--accent); font-weight: 700; }
+.node-list code { font-family: var(--font-mono); font-size: 11.5px; background: var(--accent-dim); color: var(--accent); padding: 1px 5px; border-radius: 3px; }
+
+/* 状态药丸 */
+.status { display: inline-flex; align-items: center; gap: 5px; font-family: var(--font-mono); font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 5px; white-space: nowrap; }
+.status::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.status--match { background: var(--green-dim); color: var(--green); }
+.status--warn { background: var(--amber-dim); color: var(--amber); }
+.status--gap { background: var(--red-dim); color: var(--red); }
+.status--na { background: var(--slate-dim); color: var(--slate); }
+
+/* 图例 */
+.legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 16px 0; font-size: 12px; color: var(--text-dim); font-family: var(--font-mono); }
+.legend-item { display: flex; align-items: center; gap: 6px; }
+.legend-swatch { width: 14px; height: 14px; border-radius: 3px; }
+
+/* BC 变更标记 */
+.bc-table td:first-child { white-space: nowrap; }
+.bc-change { color: var(--amber); font-weight: 600; }
+
+/* Footer */
+footer.doc-foot { margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-dim); font-family: var(--font-mono); }
+
+/* 入场动画 */
+@keyframes fadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+.animate { animation: fadeUp .35s ease-out both; animation-delay: calc(var(--i, 0) * .04s); }
+
+/* 响应式 */
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+@media (max-width: 1000px) {
+  .wrap { grid-template-columns: 1fr; }
+  .toc { position: sticky; top: 0; z-index: 200; max-height: none; display: flex; gap: 4px; align-items: center; overflow-x: auto; background: var(--bg); border-bottom: 1px solid var(--border); padding: 10px 0; grid-row: auto; }
+  .toc-title { display: none; }
+  .toc a { white-space: nowrap; flex-shrink: 0; border-left: none; border-bottom: 2px solid transparent; border-radius: 4px 4px 0 0; padding: 6px 10px; font-size: 10px; }
+  .toc a.active { border-left: none; border-bottom-color: var(--accent); background: var(--surface); }
+  h2, h3 { scroll-margin-top: 60px; }
+  body { padding: 16px; }
+}
+@media (max-width: 768px) { body { padding: 12px; } h1 { font-size: 26px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav class="toc" id="toc">
+  <div class="toc-title">目录</div>
+  <a href="#tldr">TL;DR</a>
+  <a href="#s1">1. 目标转换</a>
+  <a href="#s2">2. 设计立场</a>
+  <a href="#s3">3. 统一语言</a>
+  <a href="#s4">4. 核心模型</a>
+  <a href="#s5">5. 状态流转</a>
+  <a href="#s6">6. 分层架构</a>
+  <a href="#s7">7. 模块划分</a>
+  <a href="#s8">8. Context 边界</a>
+  <a href="#s9">9. 泳道图</a>
+  <a href="#s10">10. 决策</a>
+  <a href="#s11">11. 反模式检查</a>
+  <a href="#s12">12. 行为契约</a>
+  <a href="#downstream">下游衔接</a>
+</nav>
+<main class="main">
+<header class="doc-head">
+  <h1>系统架构设计</h1>
+  <p class="subtitle">⌘K 全局搜索浮层 · ② 系统设计 · upstream: requirements.md</p>
+  <div class="badge-row">
+    <span class="tag tag--green">verdict: pass</span>
+    <span class="tag tag--slate">mode: refactor</span>
+    <span class="tag tag--amber">3 搭便车候选</span>
+    <span class="tag tag--reasoning">5 决策记录</span>
+  </div>
+</header>
+
+<!-- ============================= TL;DR ============================= -->
+<div class="tldr animate" id="tldr" style="--i:0">
+  <div class="tldr__label">TL;DR · 核心结论</div>
+  <ul>
+    <li><strong>本质是技术流程编排</strong>——聚合 4 个异构数据源（命令注册表 / 项目文件 / 会话库 / recents），经统一子串匹配引擎过滤，按四类分组渲染，选中后分发跳转。</li>
+    <li><strong>三层架构（Interface / Service / Infrastructure）</strong>，不做 DDD 四层——Domain 层无规则可放会是空壳（D-011）。</li>
+    <li><strong>不做 port（D-012）</strong>：4 数据源接口形状不同，强制抽象是伪 port；匹配引擎提为纯函数模块。</li>
+    <li><strong>松散状态机（D-014）</strong>：仅 <code>closed↔open</code> 是独立状态变量，open 内视图态全部由 Vue computed 派生。</li>
+    <li><strong>新建 search real domain 替换 mock</strong>（消除误导）+ 命令注册表扩展（应用命令区 + slash 命令区物理隔离）+ 匹配/跳转/recents 三模块提取。</li>
+  </ul>
+</div>
+
+<!-- ============================= 主角图：分层架构图 + 状态机图 ============================= -->
+<h2 class="sec-head" id="hero">主角图 — 分层架构 & 状态机</h2>
+
+<section class="diagram-shell animate" style="--i:1">
+  <p class="diagram-shell__hint">分层架构（Interface / Service / Store / Infrastructure）· Ctrl/Cmd+wheel 缩放 · 拖动平移</p>
+  <div class="mermaid-wrap">
+    <div class="zoom-controls">
+      <button type="button" data-action="zoom-in" title="放大">+</button>
+      <button type="button" data-action="zoom-out" title="缩小">&minus;</button>
+      <button type="button" data-action="zoom-fit" title="适配">⊡</button>
+      <button type="button" data-action="zoom-one" title="1:1">1:1</button>
+      <button type="button" data-action="zoom-expand" title="新窗口">⤢</button>
+      <span class="zoom-label">Loading...</span>
+    </div>
+    <div class="mermaid-viewport"><div class="mermaid mermaid-canvas"></div></div>
+  </div>
+  <script type="text/plain" class="diagram-source">
+graph TD
+    subgraph IF["Interface 层 renderer UI"]
+        SM["SearchModal.vue<br/>⌘K 浮层 UI + 键盘导航 + 高亮渲染"]
+        SB["Sidebar.vue<br/>⌘K 触发入口 + keydown 复用注册表"]
+    end
+    subgraph SVC["Service 层 renderer 编排"]
+        SD["search real domain<br/>编排 4 数据源查询"]
+        CRc["useCommandRegistry composable<br/>应用命令注册 + 聚合"]
+        ME["匹配引擎<br/>纯函数 子串匹配 + segments"]
+        JO["跳转编排<br/>分发 命令/文件/会话"]
+        RC["recents composable<br/>localStorage 持久化"]
+    end
+    subgraph ST["Store 层 renderer 状态"]
+        CS["command store<br/>全局应用命令区 + slash 命令区"]
+    end
+    subgraph INF["Infrastructure 层 runtime + 通道"]
+        TR["transport + domains<br/>file.search / session.list / file.read"]
+        RT["runtime<br/>FileService / SessionService"]
+        LS["localStorage<br/>recents"]
+    end
+    SM --> SD
+    SM --> ME
+    SM --> JO
+    SM --> RC
+    SM --> CRc
+    SB --> CRc
+    CRc --> CS
+    SD --> TR
+    JO --> TR
+    TR --> RT
+    RC --> LS
+    classDef layerIf fill:#10204a,stroke:#4f8ef7,stroke-width:1.6px,color:#cfe0ff
+    classDef layerSvc fill:#0c2a2a,stroke:#22c55e,stroke-width:1.6px,color:#b8ffdf
+    classDef layerSt fill:#2a1f0c,stroke:#f5a524,stroke-width:1.6px,color:#ffe2ad
+    classDef layerInf fill:#2a1230,stroke:#a78bfa,stroke-width:1.6px,color:#ecd9ff
+    class SM,SB layerIf
+    class SD,CRc,ME,JO,RC layerSvc
+    class CS layerSt
+    class TR,RT,LS layerInf
+  </script>
+</section>
+
+<section class="diagram-shell animate" style="--i:2">
+  <p class="diagram-shell__hint">浮层生命周期状态机 · closed↔open 唯一独立状态变量，open 内视图态为派生</p>
+  <div class="mermaid-wrap">
+    <div class="zoom-controls">
+      <button type="button" data-action="zoom-in" title="放大">+</button>
+      <button type="button" data-action="zoom-out" title="缩小">&minus;</button>
+      <button type="button" data-action="zoom-fit" title="适配">⊡</button>
+      <button type="button" data-action="zoom-one" title="1:1">1:1</button>
+      <button type="button" data-action="zoom-expand" title="新窗口">⤢</button>
+      <span class="zoom-label">Loading...</span>
+    </div>
+    <div class="mermaid-viewport"><div class="mermaid mermaid-canvas"></div></div>
+  </div>
+  <script type="text/plain" class="diagram-source">
+flowchart TD
+    Start(( )) -->|"⌘K / Ctrl+K / 搜索按钮"| Open
+    Closed(["closed"]) -->|"⌘K / Ctrl+K / 搜索按钮"| Open(["open"])
+    Open -->|"Esc / 再按⌘K / 点遮罩 / 确认跳转后"| Closed
+    Open --> Recents
+    Recents["recents<br/>query 空"] -->|"输入查询"| QueryResults
+    QueryResults["query-results<br/>有命中"] -->|"清空查询"| Recents
+    QueryResults -->|"无命中"| Empty
+    Empty["empty"] -->|"修改查询有命中"| QueryResults
+    QueryResults -->|"查询大于200ms"| Loading
+    Loading["loading"] -->|"查询返回有命中"| QueryResults
+    Loading -->|"查询返回无命中"| Empty
+    QueryResults -->|"Tab 切类"| TypeFiltered
+    TypeFiltered["type-filtered"] -->|"Tab 切回全部"| QueryResults
+    classDef closedS fill:#1b1b20,stroke:#8a8a95,stroke-width:2px,color:#f0f0f5
+    classDef openS fill:#10204a,stroke:#4f8ef7,stroke-width:2px,color:#cfe0ff
+    classDef derivedS fill:#0c2a2a,stroke:#22c55e,stroke-width:1.4px,color:#b8ffdf
+    classDef transientS fill:#2a1f0c,stroke:#f5a524,stroke-width:1.4px,stroke-dasharray:4 2,color:#ffe2ad
+    class Closed closedS
+    class Open openS
+    class Recents,QueryResults,Empty,TypeFiltered derivedS
+    class Loading transientS
+  </script>
+</section>
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-swatch" style="background:#10204a;border:1.5px solid #4f8ef7"></div>独立状态变量</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#0c2a2a;border:1.5px solid #22c55e"></div>派生视图态（computed）</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#2a1f0c;border:1.5px dashed #f5a524"></div>transient 标志（ref + setTimeout）</div>
+</div>
+
+<!-- ============================= §1 目标转换 ============================= -->
+<h2 id="s1">1. 目标转换</h2>
+
+<h3>业务目标 → 系统目标</h3>
+<div class="table-wrap">
+  <div class="table-scroll">
+    <table class="data-table">
+      <thead><tr><th>业务目标 (requirements)</th><th>转换为系统目标</th><th>衡量标准</th></tr></thead>
+      <tbody>
+        <tr><td>G1 快速定位跳转（≤3 次按键）</td><td>多数据源聚合查询 + 统一匹配 + 跳转分发</td><td>四类分组渲染 ≤200ms；跳转闭环</td></tr>
+        <tr><td>G1.1 命令可达</td><td>命令注册表聚合（应用命令 + pi slash），浮层内查询执行</td><td>命令命中即执行</td></tr>
+        <tr><td>G1.2 文件可达</td><td>复用 runtime searchFiles 全递归 + 路径子串匹配</td><td>深层文件可搜到</td></tr>
+        <tr><td>G1.3 会话可达</td><td>复用 session.list 全量 + 前端内存过滤</td><td>跨项目会话可搜</td></tr>
+        <tr><td>G1.4 符号可达（降级）</td><td>符号占位（不接真实数据）</td><td>占位提示渲染</td></tr>
+        <tr><td>G2 消除 mock 误导</td><td>新建 search real domain 替换 mock；search 不再常驻 mock</td><td>real 模式无写死假数据</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<h3>搭便车改造目标</h3>
+<div class="table-wrap">
+  <div class="table-scroll">
+    <table class="data-table">
+      <thead><tr><th>改造目标</th><th>动机</th><th>关联业务目标</th><th>状态</th></tr></thead>
+      <tbody>
+        <tr><td>Sidebar keydown 接入命令注册表</td><td>消除 <code>Sidebar.vue:227</code> 硬编码 if/else（⌘N/⌘K/⌘B），命令注册表为单一权威源</td><td>G1.1（命令注册表复用）</td><td><span class="status status--warn">候选</span></td></tr>
+        <tr><td>scrollIntoView → scrollIntoViewIfNeeded</td><td><code>SearchModal.vue:167</code> 违反 spec（避免 OD 预览 iframe 滚动冲突）</td><td>G1（浮层体验）</td><td><span class="status status--warn">候选</span></td></tr>
+        <tr><td>查询 debounce(120ms)</td><td><code>SearchModal.vue:124</code> 现无 debounce，spec 要求 120ms</td><td>G1（性能）</td><td><span class="status status--warn">候选</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+<div class="callout callout--amber">
+  三项状态均为 <strong>候选</strong>，待 ⑤骨架验证确认真实工作量。design-code-arch Step7 强制核对。
+</div>
+
+<!-- ============================= §2 设计立场 ============================= -->
+<h2 id="s2">2. 设计立场</h2>
+<p><strong>核心计算是什么？</strong> 技术流程编排——把 4 个异构数据源（命令注册表 / 项目文件 / 会话库 / recents）的查询结果聚合，经统一子串匹配引擎过滤，按四类分组渲染，选中后分发到对应跳转目标（命令执行 / 文件打开 / 会话切换）。</p>
+<p><strong>分层决策</strong>：三层架构（Interface / Service / Infrastructure）。无复杂业务规则 / 策略引擎，核心是「查询-匹配-渲染-跳转」的编排流水线。DDD 四层的 Domain 层会是空壳（无领域规则可放），违反复杂度归位（<code>D-011</code>）。</p>
+
+<!-- ============================= §3 统一语言 ============================= -->
+<h2 id="s3">3. 统一语言（Ubiquitous Language）</h2>
+<div class="callout callout--slate">项目根 <code>CONTEXT.md</code> 为权威源。本节列本次新增 / 修改术语。</div>
+<div class="table-wrap">
+  <div class="table-scroll">
+    <table class="data-table">
+      <thead><tr><th>术语</th><th>含义</th></tr></thead>
+      <tbody>
+        <tr><td><strong>命令注册表</strong> (Command Registry)</td><td>应用内置命令 + pi slash 命令的统一聚合源，供 search 命令分组与 Sidebar keydown 共享（<code>D-004</code>）</td></tr>
+        <tr><td><strong>匹配引擎</strong> (Match Engine)</td><td>纯函数，输入查询 + 候选项，输出带命中区间的结果（子串匹配，驱动 <code>&lt;mark&gt;</code> 高亮）</td></tr>
+        <tr><td><strong>跳转编排</strong> (Jump Orchestrator)</td><td>选中项确认后的分发逻辑：按类型路由到命令执行 / DetailPane 打开 / session 切换</td></tr>
+        <tr><td><strong>search real domain</strong></td><td><code>api/domains/search.ts</code>，替代 mock 的真实 search domain（编排 4 数据源查询）</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ============================= §4 核心模型 ============================= -->
+<h2 id="s4">4. 核心模型</h2>
+<div class="table-wrap">
+  <div class="table-scroll">
+    <table class="data-table">
+      <thead><tr><th>模型</th><th>类型</th><th>不变式</th><th>建模理由</th></tr></thead>
+      <tbody>
+        <tr><td><code>SearchItem</code></td><td>DTO（已有）</td><td>type ∈ &#123;command,file,symbol,session&#125;；title/sub 非空</td><td>四类分组的统一渲染项（search-data.ts 已定义，复用）</td></tr>
+        <tr><td><code>SessionCommand</code></td><td>DTO（已有）</td><td>id 唯一；name 非空；kind/icon 推导自 source</td><td>pi slash 命令的归一化模型（command store 已定义）</td></tr>
+        <tr><td><code>AppCommand</code></td><td>命令对象（新增，含 action 行为）</td><td>id 唯一；name/shortcut/action 非空</td><td>应用内置命令（⌘N/⌘B/⌘, 等），命令注册表的应用命令部分。带 action 故非纯值对象</td></tr>
+        <tr><td><code>RecentEntry</code></td><td>值对象（新增）</td><td>type+key 唯一；timestamp 单调</td><td>recents 持久化项（localStorage，FIFO 每类 5 项）</td></tr>
+        <tr><td><code>MatchSegment</code></td><td>值对象（已有）</td><td>hit 标记 + text</td><td>高亮渲染段（SearchModal.segments 已实现）</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<h3>模型关联图</h3>
+<div class="callout callout--slate">模型 ≥ 2 且存在引用关系，出 classDiagram。<code>SearchItem</code> 是渲染统一态；SessionCommand/AppCommand 是源态，经转换函数映射。RecentEntry 不持有 SearchItem 引用（localStorage 序列化只存标识）。</div>
+<section class="diagram-shell">
+  <p class="diagram-shell__hint">模型关联 · SearchItem 是统一渲染态，源态经转换映射</p>
+  <div class="mermaid-wrap">
+    <div class="zoom-controls">
+      <button type="button" data-action="zoom-in" title="放大">+</button>
+      <button type="button" data-action="zoom-out" title="缩小">&minus;</button>
+      <button type="button" data-action="zoom-fit" title="适配">⊡</button>
+      <button type="button" data-action="zoom-one" title="1:1">1:1</button>
+      <button type="button" data-action="zoom-expand" title="新窗口">⤢</button>
+      <span class="zoom-label">Loading...</span>
+    </div>
+    <div class="mermaid-viewport"><div class="mermaid mermaid-canvas"></div></div>
+  </div>
+  <script type="text/plain" class="diagram-source">
+classDiagram
+    class SearchItem {
+        +type SearchType
+        +title string
+        +sub string
+        +icon Component
+    }
+    class SessionCommand {
+        +id string
+        +name string
+        +kind string
+        +icon string
+        +description string
+    }
+    class AppCommand {
+        +id string
+        +name string
+        +shortcut string
+        +action function
+    }
+    class RecentEntry {
+        +type SearchType
+        +key string
+        +timestamp number
+    }
+    class MatchSegment {
+        +text string
+        +hit boolean
+    }
+    SearchItem <.. SessionCommand : pi slash 转 SearchItem
+    SearchItem <.. AppCommand : 应用命令转 SearchItem
+    RecentEntry --> SearchItem : 引用 独立生命周期
+    MatchSegment "0..*" ..> SearchItem : 匹配引擎从 title 产生
+  </script>
+</section>
+
+<h3>降级决策（主动不建模）</h3>
+<div class="table-wrap">
+  <div class="table-scroll">
+    <table class="data-table">
+      <thead><tr><th>概念</th><th>为什么不建模</th><th>应有的处理</th></tr></thead>
+      <tbody>
+        <tr><td>SearchSession aggregate</td><td>浮层状态是 Vue computed 派生态（query/结果驱动），无领域不变式可守（<code>D-013</code>）</td><td>用组件内 ref + computed 表达 UI 状态</td></tr>
+        <tr><td>MatchStrategy port</td><td>子串匹配稳定无替换需求，单实现是伪 port（<code>D-012</code>）</td><td>匹配引擎为纯函数模块</td></tr>
+        <tr><td>SearchSource port</td><td>4 数据源接口形状不同（前端内存 vs runtime WS），强行抽象塞适配代码（<code>D-012</code>）</td><td>search domain 内分别调用各 api</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ============================= §5 状态流转 ============================= -->
+<h2 id="s5">5. 状态流转</h2>
+<h3>Status 枚举（浮层生命周期，只描述阶段）</h3>
+<p><code>closed</code> → <code>open</code>（open 内含多个派生视图态）</p>
+<p>open 内视图态（<strong>派生态，非独立状态变量</strong>，由 query/结果/loading computed 推导）：</p>
+<ul class="node-list">
+  <li><code>recents</code>（query 空）</li>
+  <li><code>query-results</code>（query 非空 + 有命中）</li>
+  <li><code>empty</code>（query 非空 + 无命中）</li>
+  <li><code>loading</code>（查询中 &gt;200ms）</li>
+  <li><code>error</code>（查询/跳转失败）</li>
+  <li><code>type-filtered</code>（Tab 切类激活时）</li>
+</ul>
+<h4>Reason 字段</h4>
+<p>无独立 Reason——error 态的原因由具体 api 调用的 catch 表达（toast 反馈），不进状态机。</p>
+
+<div class="callout callout--reasoning">
+  <strong>松散状态机（D-014）</strong>：上述视图态是 Vue computed 派生（<code>currentView = query空 ? recents : hasResults ? query-results : empty</code>），不建显式转换表。<code>closed↔open</code> 是仅有的独立状态变量（<code>props.open</code>）。loading/error 是 transient 标志（ref + setTimeout/catch 驱动）。状态机详见上方主角图。
+</div>
+
+<!-- ============================= §6 分层架构 ============================= -->
+<h2 id="s6">6. 分层架构</h2>
+<h3>层级图</h3>
+<div class="callout callout--slate">完整分层图见上方主角图。下表为 Port 清单——本设计按 <code>D-012</code> 不做 port。</div>
+<h3>Port 清单</h3>
+<div class="table-wrap">
+  <div class="table-scroll">
+    <table class="data-table">
+      <thead><tr><th>Port</th><th>价值定位</th><th>实现数</th></tr></thead>
+      <tbody>
+        <tr><td>（无）</td><td><code>D-012</code> 不做 port，4 数据源直接调 api，扁平结构</td><td>—</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card-grid">
+  <div class="ve-card">
+    <div class="ve-card__label">Interface 层</div>
+    <h3>renderer / UI</h3>
+    <p>SearchModal.vue（浮层 UI + 键盘导航 + 高亮渲染）+ Sidebar.vue（⌘K 触发入口 + keydown 复用注册表）</p>
+  </div>
+  <div class="ve-card">
+    <div class="ve-card__label" style="color: var(--green);">Service 层</div>
+    <h3>renderer / 编排</h3>
+    <p>search real domain（编排 4 数据源）· useCommandRegistry（命令聚合）· 匹配引擎（纯函数）· 跳转编排 · recents composable</p>
+  </div>
+  <div class="ve-card">
+    <div class="ve-card__label" style="color: var(--amber);">Store 层</div>
+    <h3>renderer / 状态</h3>
+    <p>command store（stores 无外部依赖铁律）：全局应用命令区 + sessionId 分区 slash 命令</p>
+  </div>
+  <div class="ve-card">
+    <div class="ve-card__label" style="color: var(--reasoning);">Infrastructure 层</div>
+    <h3>runtime + 通道</h3>
+    <p>transport + domains/*（file.search / session.list / file.read）· runtime · localStorage（recents）</p>
+  </div>
+</div>
+
+<!-- ============================= §7 模块划分 ============================= -->
+<h2 id="s7">7. 模块划分与变化轴</h2>
+<div class="table-wrap">
+  <div class="table-scroll">
+    <table class="data-table">
+      <thead><tr><th>模块</th><th>职责</th><th>变化轴</th><th>位置</th><th>LOC(预估)</th></tr></thead>
+      <tbody>
+        <tr><td>SearchModal.vue（改造）</td><td>浮层 UI + 键盘导航 + 高亮渲染</td><td>UI 交互</td><td><code>components/overlays/</code></td><td>~250（现 186）</td></tr>
+        <tr><td>search real domain（新建）</td><td>编排 4 数据源查询 + 合并候选 + 按类型分组（输出整形）</td><td>数据源查询编排 + 分组</td><td><code>api/domains/search.ts</code></td><td>~120</td></tr>
+        <tr><td>命令注册表（扩展 store + 新 composable）</td><td>应用命令注册 + pi slash 聚合，供 search/Sidebar 共享</td><td>命令聚合</td><td><code>stores/command.ts</code>（扩）+ <code>composables/useCommandRegistry.ts</code>（新）</td><td>~100</td></tr>
+        <tr><td>匹配引擎（提取为纯函数模块）</td><td><strong>仅</strong>子串过滤（matchFilter）+ segments 高亮段产生。不含分组、不调 api、无副作用</td><td>匹配算法（纯函数）</td><td><code>lib/match-engine.ts</code>（从 SearchModal 提取）</td><td>~40</td></tr>
+        <tr><td>跳转编排（新建）</td><td>选中项分发到命令执行/DetailPane/session 切换</td><td>跳转路由</td><td><code>composables/useSearchJump.ts</code>（新）</td><td>~80</td></tr>
+        <tr><td>recents composable（新建）</td><td>localStorage 读写 + FIFO 淘汰</td><td>recents 持久化</td><td><code>composables/useRecents.ts</code>（新）</td><td>~60</td></tr>
+        <tr><td>api/index.ts（接线改造）</td><td>search 从硬编码 mock 切到 real domain</td><td>domain 装配</td><td><code>api/index.ts</code></td><td>~5</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+<div class="callout">
+  <strong>复用现有基建</strong>：command store（SessionCommand 模型 + sessionId 分区）、fileSearch store + useFileSearch（文件搜索缓存 + debounce + 失效）、transport + pending（WS 通道）、useDetailPane（文件打开）、useSidebar.selectSession（会话切换）。
+</div>
+
+<!-- ============================= §8 Context 边界 ============================= -->
+<h2 id="s8">8. 系统间上下文边界（Context Map）</h2>
+<section class="diagram-shell">
+  <p class="diagram-shell__hint">Context Map · renderer ↔ runtime(WS) ↔ pi(RPC) ↔ localStorage</p>
+  <div class="mermaid-wrap">
+    <div class="zoom-controls">
+      <button type="button" data-action="zoom-in" title="放大">+</button>
+      <button type="button" data-action="zoom-out" title="缩小">&minus;</button>
+      <button type="button" data-action="zoom-fit" title="适配">⊡</button>
+      <button type="button" data-action="zoom-one" title="1:1">1:1</button>
+      <button type="button" data-action="zoom-expand" title="新窗口">⤢</button>
+      <span class="zoom-label">Loading...</span>
+    </div>
+    <div class="mermaid-viewport"><div class="mermaid mermaid-canvas"></div></div>
+  </div>
+  <script type="text/plain" class="diagram-source">
+graph LR
+    subgraph R["renderer 进程"]
+        SEARCH["search-modal 系统"]
+    end
+    subgraph RT2["runtime 进程 Node 子进程"]
+        FS["FileService.searchFiles"]
+        SS["SessionService.list/getCommands"]
+        FR["FileService.readFile"]
+    end
+    PI[("pi 子进程 slash 命令源")]
+    LS[("localStorage")]
+    SEARCH -->|"WS file.search"| FS
+    SEARCH -->|"WS session.list"| SS
+    SEARCH -->|"WS session.getCommands"| SS
+    SEARCH -->|"WS file.read"| FR
+    SS -->|"RPC getCommands"| PI
+    SEARCH -->|"浏览器 API"| LS
+  </script>
+</section>
+
+<div class="table-wrap">
+  <div class="table-scroll">
+    <table class="data-table">
+      <thead><tr><th>关联系统</th><th>关系模式</th><th>交互方式</th><th>契约稳定性</th></tr></thead>
+      <tbody>
+        <tr><td>runtime</td><td>客户-供应商（renderer 依赖 runtime 已有 handler）</td><td>WS（复用 file.search / session.list / session.getCommands / file.read）</td><td><span class="status status--match">自有可控</span></td></tr>
+        <tr><td>pi</td><td>经 runtime 透传（renderer 不直连 pi）</td><td>runtime RPC → pi getCommands</td><td><span class="status status--match">自有可控（fork 版本）</span></td></tr>
+        <tr><td>localStorage</td><td>共享内核（浏览器标准）</td><td>同步 API</td><td><span class="status status--match">稳定</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ============================= §9 泳道图 ============================= -->
+<h2 id="s9">9. 泳道图（Swimlane）</h2>
+<section class="diagram-shell">
+  <p class="diagram-shell__hint">主流程 · 唤起 → 查询(并行 3 源 + 前端过滤) → 渲染 → 确认跳转 → 写 recents</p>
+  <div class="mermaid-wrap">
+    <div class="zoom-controls">
+      <button type="button" data-action="zoom-in" title="放大">+</button>
+      <button type="button" data-action="zoom-out" title="缩小">&minus;</button>
+      <button type="button" data-action="zoom-fit" title="适配">⊡</button>
+      <button type="button" data-action="zoom-one" title="1:1">1:1</button>
+      <button type="button" data-action="zoom-expand" title="新窗口">⤢</button>
+      <span class="zoom-label">Loading...</span>
+    </div>
+    <div class="mermaid-viewport"><div class="mermaid mermaid-canvas"></div></div>
+  </div>
+  <script type="text/plain" class="diagram-source">
+sequenceDiagram
+    actor U as 用户
+    participant SM as SearchModal
+    participant SD as search domain
+    participant CRc as 命令注册表
+    participant ME as 匹配引擎
+    participant RT as runtime(WS)
+    participant LS as localStorage
+    participant JO as 跳转编排
+    U->>SM: ⌘K 唤起
+    SM->>LS: 读 recents
+    LS-->>SM: recents[]
+    SM->>ME: 匹配 recents 空查询
+    ME-->>SM: 分组 空查询=recents
+    SM-->>U: 渲染 recents
+    U->>SM: 输入查询 debounce 120ms
+    SM->>SD: query q
+    par 并行查 3 源 全量返回 无服务端过滤
+        SD->>RT: file.search 返回全量 FileNode[]
+        SD->>RT: session.list 全量 SessionGroup[]
+        SD->>CRc: 读命令注册表 应用+slash 内存
+    end
+    RT-->>SD: 全量 FileNode[] / SessionGroup[]
+    CRc-->>SD: 命令列表
+    SD->>ME: matchFilter 合并全量候选 q 前端过滤 仅返回命中项
+    ME-->>SD: 命中候选 不分箱
+    SD->>SD: 按类型分组成四类 section 输出整形
+    SD-->>SM: 四类分组
+    SM-->>U: 渲染 子串高亮
+    U->>SM: Enter 选中
+    SM->>JO: 确认 SearchItem
+    alt 命令
+        JO->>JO: 执行命令 pi 注入 / 应用动作
+    else 文件
+        JO->>RT: file.read
+        JO->>SM: DetailPane 打开
+    else 会话
+        JO->>RT: session.switch
+    end
+    SM->>LS: 写 recents FIFO 淘汰
+    SM-->>U: 关闭浮层 + toast
+  </script>
+</section>
+
+<!-- ============================= §10 决策 ============================= -->
+<h2 id="s10">10. 挑战与决策</h2>
+<div class="card-grid">
+  <div class="ve-card ve-card--elevated">
+    <div class="ve-card__label">D-011 · 三层 vs DDD 四层</div>
+    <h3>三层架构</h3>
+    <p><strong>张力</strong>：架构纯粹性（DDD 四层）vs 复杂度归位（核心无领域规则）</p>
+    <p><strong>理由</strong>：核心是技术流程编排，Domain 层无规则可放会是空壳。</p>
+  </div>
+  <div class="ve-card ve-card--elevated">
+    <div class="ve-card__label">D-012 · port 边界</div>
+    <h3>不做 port</h3>
+    <p><strong>张力</strong>：可扩展性（为数据源/匹配做 port）vs 伪 port 成本</p>
+    <p><strong>理由</strong>：4 数据源接口形状不同，删/翻/挪证伪为伪 port；匹配策略稳定无替换需求。</p>
+  </div>
+  <div class="ve-card ve-card--elevated">
+    <div class="ve-card__label">D-013 · 领域模型深度</div>
+    <h3>纯 DTO/值对象，无 aggregate</h3>
+    <p><strong>张力</strong>：建模完整性 vs 过度建模</p>
+    <p><strong>理由</strong>：无领域不变式可守，建 SearchSession aggregate 是「装着 UI 逻辑的对象」反模式。</p>
+  </div>
+  <div class="ve-card ve-card--elevated">
+    <div class="ve-card__label">D-016 · 命令注册表归属</div>
+    <h3>扩展 command store（全局应用命令区 + slash 命令区物理隔离）</h3>
+    <p><strong>张力</strong>：command store 已管 pi slash（按 sessionId 分区），应用命令是全局的（无 sessionId）。</p>
+    <p><strong>理由</strong>：复用现有 SessionCommand 模型 + store 基建；应用命令与 slash 命令同属「命令」概念，内聚。</p>
+    <p><strong>物理隔离</strong>（应对 S5）：两区失效语义不同——应用命令区静态注册（启动时一次性，无失效）；slash 命令区 per-session 动态（session 切换/创建时刷新）。store 内用两个独立 ref：<code>appCommands: Ref&lt;AppCommand[]&gt;</code> + <code>slashCommands: Map&lt;sessionId, SessionCommand[]&gt;</code>，不揉进同一响应式根。</p>
+  </div>
+</div>
+
+<h3>特化决策</h3>
+<div class="table-wrap">
+  <div class="table-scroll">
+    <table class="data-table">
+      <thead><tr><th>决策</th><th>违反什么</th><th>为什么合理</th><th>触发变化怎么办</th></tr></thead>
+      <tbody>
+        <tr><td>符号占位不建 SearchSource port</td><td><code>D-012</code> 不做 port 的通用规则</td><td>符号是占位（无真实数据源），连查询都不发，无需 port</td><td>补符号数据时新增 search domain 内一个 api 调用即可，仍不需 port</td></tr>
+        <tr><td>recents 用 localStorage 不走 runtime</td><td>「数据应经 runtime」惯例</td><td>recents 是纯前端偏好（<code>D-007</code>），与 settings 的 system 偏好同性质，不经 runtime</td><td>如需跨设备同步再改，当前 YAGNI</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ============================= §11 反模式检查 ============================= -->
+<h2 id="s11">11. 反模式检查（grep 验收清单）</h2>
+<div class="table-wrap">
+  <div class="table-scroll">
+    <table class="data-table">
+      <thead><tr><th>AC</th><th>验证（grep 命令）</th><th>预期</th></tr></thead>
+      <tbody>
+        <tr><td><strong>AC-1</strong> search 不再常驻 mock</td><td><code>grep -n "search = mockApi.search" src-electron/renderer/src/api/index.ts</code></td><td>输出应改为三元切换（real 模式走 real domain）</td></tr>
+        <tr><td><strong>AC-2</strong> 应用命令不硬编码在 keydown</td><td><code>grep -n "metaKey.*⌘N\|newSession()" .../components/sidebar/Sidebar.vue</code></td><td>keydown 改为从注册表读取（搭便车 D-015，待⑤确认）</td></tr>
+        <tr><td><strong>AC-3</strong> 无伪 port</td><td><code>grep -rn "interface SearchSource\|interface MatchStrategy" src-electron/renderer/src/</code></td><td>无输出（<code>D-012</code> 不做 port）</td></tr>
+        <tr><td><strong>AC-4</strong> 匹配引擎为纯函数</td><td><code>grep -n "export function match\|export function segments" .../lib/match-engine.ts</code></td><td>存在且无副作用（无 ref/reactive/import api）</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ============================= §12 行为契约 ============================= -->
+<h2 id="s12">12. 行为契约保持清单（refactor 模式）</h2>
+<div class="callout">SearchModal.vue 现有行为，架构改造需保持等价（变更/删除须独立 ticket）。</div>
+<div class="table-wrap bc-table">
+  <div class="table-scroll">
+    <table class="data-table">
+      <thead><tr><th>BC</th><th>行为</th><th>源码位置</th><th>处理</th><th>冲突</th></tr></thead>
+      <tbody>
+        <tr><td><code>BC-1</code></td><td>⌘K/Ctrl+K 唤起 + Esc 关闭</td><td><code>SearchModal.vue:11</code> + <code>Sidebar.vue:228-241</code></td><td>保持（Esc 直接关闭非先清空）</td><td>无</td></tr>
+        <tr><td><code>BC-2</code></td><td>↑↓ 跨组扁平化键盘导航</td><td><code>SearchModal.vue:157-162</code></td><td>保持</td><td>无</td></tr>
+        <tr><td><code>BC-3</code></td><td>Enter 确认 + emit('select') + 关闭</td><td><code>SearchModal.vue:171-177</code></td><td><span class="bc-change">变更 → 独立 ticket</span>：从 emit 改为调跳转编排（JO）。前置依赖：跳转编排模块（§7）骨架须先建</td><td>无（D-006 明确要求接入）</td></tr>
+        <tr><td><code>BC-4</code></td><td>segments 子串高亮（&lt;mark&gt; accent 色）</td><td><code>SearchModal.vue:141-155</code> + <code>:60-69</code></td><td>保持（提取为匹配引擎纯函数模块，行为等价）</td><td>无</td></tr>
+        <tr><td><code>BC-5</code></td><td>空查询显示 recents + 建议命令</td><td><code>SearchModal.vue:124-129</code></td><td><span class="bc-change">变更 → 独立 ticket</span>：现 recents 是 mock 写死；<code>D-007</code> 要求 localStorage 持久化真实 recents</td><td>无</td></tr>
+        <tr><td><code>BC-6</code></td><td>空结果显示「未找到」态</td><td><code>SearchModal.vue:80-87</code></td><td>保持</td><td>无</td></tr>
+        <tr><td><code>BC-7</code></td><td>scrollIntoView 滚动到选中项</td><td><code>SearchModal.vue:164-169</code></td><td><span class="bc-change">变更 → 搭便车 D-015</span>（以 ⑤骨架验证确认为前提）：scrollIntoView → scrollIntoViewIfNeeded。不纳入则回退为「保持」</td><td>无</td></tr>
+        <tr><td><code>BC-8</code></td><td>四类图标映射（command/file/symbol/session）</td><td><code>SearchModal.vue:115</code></td><td>保持（symbol 图标保留，占位态仍渲染图标）</td><td>无</td></tr>
+        <tr><td><code>BC-9</code></td><td>乱序响应保护（loadSeq 序列号守卫）</td><td><code>SearchModal.vue:123</code> + <code>:126-128</code></td><td><strong>保持</strong>（正确性不变式——乱序响应不覆盖新结果，refactor 重写 loadResults 时极易丢失）</td><td>无</td></tr>
+        <tr><td><code>BC-10</code></td><td>鼠标交互路径（hover 同步选中 + click 确认）</td><td><code>SearchModal.vue:50</code> + <code>:51</code></td><td>保持（鼠标与键盘共享 selIdx + confirmSel，与 BC-2/BC-3 等价）</td><td>无</td></tr>
+        <tr><td><code>BC-11</code></td><td>查询/开关生命周期副作用</td><td><code>SearchModal.vue:180</code> + <code>:183</code> + <code>:184</code></td><td>保持</td><td>无</td></tr>
+        <tr><td><code>BC-12</code></td><td>边缘不变式（空结果禁用键盘 / 循环包裹 / Clock 图标 / a11y 属性）</td><td><code>:158</code> / <code>:159-160</code> / <code>:72-75</code> / <code>:15-18,44-46</code></td><td>保持</td><td>无</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ============================= 下游衔接 ============================= -->
+<h2 id="downstream">下游衔接</h2>
+<h3>喂给 Step 3（Issue 拆分）的部分</h3>
+<div class="table-wrap">
+  <div class="table-scroll">
+    <table class="data-table">
+      <thead><tr><th>本文档章节</th><th>issue 拆分用途</th></tr></thead>
+      <tbody>
+        <tr><td>§7 模块划分</td><td>每个「新建/改造」模块 = 一个 issue 候选</td></tr>
+        <tr><td>§12 行为契约 BC-3/5/7（变更项）</td><td>独立 ticket（行为变更不裹进架构 PR）</td></tr>
+        <tr><td>§1 搭便车候选（3 项）</td><td>待⑤确认后纳入或回流</td></tr>
+        <tr><td>§11 grep AC</td><td>issue 验收标准来源</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<footer class="doc-foot">⌘K 全局搜索浮层 · 系统架构设计 · upstream: requirements.md · downstream: issues.md</footer>
+</main>
+</div>
+
+<script type="module">
+/* =========================================================================
+   zoom.js (公共脚本) — 内联
+   依赖：mermaid@11 + @mermaid-js/layout-elk（CDN ESM import）
+   themeVariables 改写为冷蓝暗色配色（design-tokens.md）
+   ========================================================================= */
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+import elkLayouts from 'https://cdn.jsdelivr.net/npm/@mermaid-js/layout-elk/dist/mermaid-layout-elk.esm.min.mjs';
+
+const config = { fitPadding: 28, minHeight: 360, maxHeightPx: 960, maxHeightVh: 0.84, maxInitialZoom: 1.8, minZoom: 0.08, maxZoom: 6.5, zoomStep: 0.14, readabilityFloor: 0.58 };
+const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+let activeDrag = null;
+addEventListener('mousemove', (e) => activeDrag?.onMove(e));
+addEventListener('mouseup', () => { activeDrag?.onEnd(); activeDrag = null; });
+const isDark = matchMedia('(prefers-color-scheme: dark)').matches;
+
+mermaid.registerLayoutLoaders(elkLayouts);
+mermaid.initialize({
+  startOnLoad: false, theme: 'base', look: 'classic', layout: 'elk',
+  themeVariables: {
+    fontFamily: "'Inter', 'SF Pro Display', 'PingFang SC', system-ui, sans-serif", fontSize: '14px',
+    /* 冷蓝暗色 — 深色填充节点 + 亮色边框/文字，保持页面 bg #0d0d0f 与 lineColor #4f8ef7 完整 */
+    primaryColor: isDark ? '#10204a' : '#dbeafe', primaryBorderColor: isDark ? '#4f8ef7' : '#2563eb', primaryTextColor: isDark ? '#cfe0ff' : '#0d0d0f',
+    secondaryColor: isDark ? '#151519' : '#f1f3f6', secondaryBorderColor: isDark ? '#4f8ef7' : '#2563eb', secondaryTextColor: isDark ? '#cfe0ff' : '#0d0d0f',
+    tertiaryColor: isDark ? '#1b1b20' : '#ffffff', tertiaryBorderColor: isDark ? '#5a5a65' : '#64748b', tertiaryTextColor: isDark ? '#f0f0f5' : '#334155',
+    lineColor: isDark ? '#4f8ef7' : '#2563eb',
+    noteBkgColor: isDark ? '#10204a' : '#dbeafe', noteTextColor: isDark ? '#cfe0ff' : '#0d0d0f', noteBorderColor: isDark ? '#4f8ef7' : '#2563eb',
+  }
+});
+
+function initDiagram(shell) {
+  const wrap = shell.querySelector('.mermaid-wrap');
+  const viewport = shell.querySelector('.mermaid-viewport');
+  const canvas = shell.querySelector('.mermaid-canvas');
+  const source = shell.querySelector('.diagram-source');
+  const label = shell.querySelector('.zoom-label');
+  if (!wrap || !viewport || !canvas || !source || !label) { console.error('initDiagram: missing elements', shell); return; }
+  let zoom = 1, fitMode = 'contain', panX = 0, panY = 0, svgW = 0, svgH = 0;
+  let sx = 0, sy = 0, spx = 0, spy = 0, touchDist = 0, touchCx = 0, touchCy = 0;
+  function constrainPan() { const vpW = viewport.clientWidth, vpH = viewport.clientHeight; const rW = svgW*zoom, rH = svgH*zoom, pad = config.fitPadding; panX = (rW+pad*2<=vpW)?(vpW-rW)/2:clamp(panX,vpW-rW-pad,pad); panY = (rH+pad*2<=vpH)?(vpH-rH)/2:clamp(panY,vpH-rH-pad,pad); }
+  function applyTransform() { const svg = canvas.querySelector('svg'); if (!svg||!svgW) return; constrainPan(); svg.style.width=(svgW*zoom)+'px'; svg.style.height=(svgH*zoom)+'px'; canvas.style.transform=`translate(${panX}px,${panY}px)`; label.textContent=Math.round(zoom*100)+'% \u2014 '+fitMode; }
+  function canPan() { return svgW*zoom+config.fitPadding*2>viewport.clientWidth || svgH*zoom+config.fitPadding*2>viewport.clientHeight; }
+  function computeSmartFit() { const vpW=viewport.clientWidth,vpH=viewport.clientHeight; const aW=Math.max(80,vpW-config.fitPadding*2),aH=Math.max(80,vpH-config.fitPadding*2); const contain=Math.min(aW/svgW,aH/svgH); let z=contain,mode='contain'; if(contain<config.readabilityFloor){const chartR=svgH/svgW,vpR=vpH/Math.max(vpW,1); if(chartR>=vpR){z=aW/svgW;mode='width-priority';}else{z=aH/svgH;mode='height-priority';}} return {zoom:clamp(z,config.minZoom,config.maxInitialZoom),mode}; }
+  function fitDiagram() { if(!svgW)return; const fit=computeSmartFit(); zoom=fit.zoom; fitMode=fit.mode; panX=(viewport.clientWidth-svgW*zoom)/2; panY=(viewport.clientHeight-svgH*zoom)/2; applyTransform(); }
+  function setOneToOne() { zoom=clamp(1,config.minZoom,config.maxZoom); fitMode='1:1'; panX=(viewport.clientWidth-svgW*zoom)/2; panY=(viewport.clientHeight-svgH*zoom)/2; applyTransform(); }
+  function zoomAround(factor,cx,cy) { const next=clamp(zoom*factor,config.minZoom,config.maxZoom); const ratio=next/zoom; panX=cx-ratio*(cx-panX); panY=cy-ratio*(cy-panY); zoom=next; fitMode='custom'; applyTransform(); }
+  function readSvgNaturalSize(svg) { let w=0,h=0; if(svg.viewBox?.baseVal?.width>0){w=svg.viewBox.baseVal.width;h=svg.viewBox.baseVal.height;} if(!w){w=parseFloat(svg.getAttribute('width'))||0;h=parseFloat(svg.getAttribute('height'))||0;} if(!w){const b=svg.getBBox();w=b.width;h=b.height;} if(!w){const r=svg.getBoundingClientRect();w=r.width||1000;h=r.height||700;} if(!svg.getAttribute('viewBox'))svg.setAttribute('viewBox',`0 0 ${w} ${h}`); return {w,h}; }
+  function setAdaptiveHeight() { if(!svgW)return; const usableW=Math.max(280,wrap.getBoundingClientRect().width-2); const idealH=(svgH/svgW)*usableW+config.fitPadding*2; const maxVp=Math.floor(innerHeight*config.maxHeightVh); const hardMax=Math.min(config.maxHeightPx,Math.max(config.minHeight+40,maxVp)); wrap.style.height=Math.round(clamp(idealH,config.minHeight,hardMax))+'px'; }
+  function openInNewTab() { const svg=canvas.querySelector('svg'); if(!svg)return; const clone=svg.cloneNode(true); clone.style.width=''; clone.style.height=''; const bg=isDark?'#0d0d0f':'#f8f9fb'; const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Diagram</title><style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:${bg};padding:40px;box-sizing:border-box}svg{max-width:100%;max-height:90vh;height:auto}</style></head><body>${clone.outerHTML}</body></html>`; open(URL.createObjectURL(new Blob([html],{type:'text/html'})),'_blank'); }
+  async function render() { try { const code=source.textContent.trim(); if(!code){label.textContent='Error: Empty source';return;} const id='diagram-'+Date.now()+'-'+Math.random().toString(36).slice(2,8); const {svg}=await mermaid.render(id,code); canvas.innerHTML=svg; const svgNode=canvas.querySelector('svg'); if(!svgNode){label.textContent='Error: No SVG';return;} const size=readSvgNaturalSize(svgNode); svgW=size.w; svgH=size.h; svgNode.removeAttribute('width'); svgNode.removeAttribute('height'); svgNode.style.maxWidth='none'; svgNode.style.display='block'; setAdaptiveHeight(); fitDiagram(); } catch(err){ console.error('Mermaid render failed:',err); label.textContent='Error: '+(err.message||'Render failed'); } }
+  const actions = { 'zoom-in':()=>zoomAround(1+config.zoomStep,viewport.clientWidth/2,viewport.clientHeight/2), 'zoom-out':()=>zoomAround(1/(1+config.zoomStep),viewport.clientWidth/2,viewport.clientHeight/2), 'zoom-fit':fitDiagram, 'zoom-one':setOneToOne, 'zoom-expand':openInNewTab };
+  Object.entries(actions).forEach(([a,h])=>wrap.querySelector(`[data-action="${a}"]`)?.addEventListener('click',h));
+  viewport.addEventListener('dblclick',fitDiagram);
+  viewport.addEventListener('wheel',(e)=>{ if(e.ctrlKey||e.metaKey){e.preventDefault();const rect=viewport.getBoundingClientRect();const f=e.deltaY<0?1+config.zoomStep:1/(1+config.zoomStep);zoomAround(f,e.clientX-rect.left,e.clientY-rect.top);return;} if(canPan()){e.preventDefault();panX-=e.deltaX;panY-=e.deltaY;applyTransform();} },{passive:false});
+  viewport.addEventListener('mousedown',(e)=>{ if(e.target.closest('.zoom-controls')||!canPan())return; wrap.classList.add('is-panning'); sx=e.clientX;sy=e.clientY;spx=panX;spy=panY;e.preventDefault(); activeDrag={onMove:(ev)=>{panX=spx+(ev.clientX-sx);panY=spy+(ev.clientY-sy);applyTransform();},onEnd:()=>wrap.classList.remove('is-panning')}; });
+  viewport.addEventListener('touchstart',(e)=>{ if(e.touches.length===1){sx=e.touches[0].clientX;sy=e.touches[0].clientY;spx=panX;spy=panY;} else if(e.touches.length===2){const dx=e.touches[0].clientX-e.touches[1].clientX,dy=e.touches[0].clientY-e.touches[1].clientY;touchDist=Math.sqrt(dx*dx+dy*dy);const r=viewport.getBoundingClientRect();touchCx=(e.touches[0].clientX+e.touches[1].clientX)/2-r.left;touchCy=(e.touches[0].clientY+e.touches[1].clientY)/2-r.top;} },{passive:true});
+  viewport.addEventListener('touchmove',(e)=>{ if(e.touches.length===1&&canPan()){if(touchDist>0){sx=e.touches[0].clientX;sy=e.touches[0].clientY;spx=panX;spy=panY;touchDist=0;}e.preventDefault();panX=spx+(e.touches[0].clientX-sx);panY=spy+(e.touches[0].clientY-sy);applyTransform();}else if(e.touches.length===2&&touchDist>0){e.preventDefault();const dx=e.touches[0].clientX-e.touches[1].clientX,dy=e.touches[0].clientY-e.touches[1].clientY;const d=Math.sqrt(dx*dx+dy*dy);zoomAround(d/touchDist,touchCx,touchCy);touchDist=d;} },{passive:false});
+  new ResizeObserver(()=>{if(svgW){setAdaptiveHeight();fitDiagram();}}).observe(wrap);
+  render();
+}
+document.querySelectorAll('.diagram-shell').forEach(initDiagram);
+
+/* TOC scroll-spy */
+(function() {
+  const toc = document.getElementById('toc'); if (!toc) return;
+  const links = toc.querySelectorAll('a'); const sections = [];
+  links.forEach(link => { const el = document.getElementById(link.getAttribute('href').slice(1)); if (el) sections.push({ el, link }); });
+  sections.forEach(s => new IntersectionObserver(entries => { entries.forEach(entry => { if (entry.isIntersecting) { links.forEach(l => l.classList.remove('active')); s.link.classList.add('active'); if (innerWidth <= 1000) s.link.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' }); } }); }, { rootMargin: '-10% 0px -80% 0px' }).observe(s.el));
+  links.forEach(link => link.addEventListener('click', e => { e.preventDefault(); const el = document.getElementById(link.getAttribute('href').slice(1)); if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); history.replaceState(null, '', '#' + el.id); } }));
+})();
+</script>
+</body>
+</html>
