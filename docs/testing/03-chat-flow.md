@@ -304,13 +304,13 @@ test.describe('对话流 E2E', () => {
     await page.getByRole('textbox').press('Enter')
     // thinking header 恒显（Block.vue:20「思考」文案，不受 working/collapsed 影响）
     await expect(page.getByText('思考', { exact: true }).first()).toBeVisible({ timeout: 15_000 })
-    // tool 块 header 恒显（Block.vue:42-43「工具」+ toolName）。
-    // mock toolCall toolName='read'（run-send-stream.ts:98），header 裸显 toolName 无括号。
-    // 注意：完整「read(/mock/file.ts)」（toolName+argPath）在**展开态详情区**（Block.vue:47-48，
-    // v-if="toolExpanded"），仅 working/running/failed 时渲染；流式完成后 working=false 收起，
-    // 详情区卸载 → 时序竞争。故断言 header 恒显的 toolName「工具 read」而非展开态详情。
-    // { exact: false } 因 header 是「工具...read」组合文案，用 contains 匹配 toolName 片段。
-    await expect(page.getByText(/工具.*read/).first()).toBeVisible({ timeout: 15_000 })
+    // tool 块 header 恒显（Block.vue:42-43 两个 span：「工具」+ toolName）。
+    // mock toolCall toolName='read'（run-send-stream.ts:98）。注意 header 是两个独立 span，
+    // getByText 跨 span 匹配不可靠；用 .trace-tool（Block.vue:33 tool 块容器 class）限定后
+    // 断言 toolName span 文本，规避跨 span 合并问题 + 「read」宽泛匹配（限定在 trace-tool 内唯一）。
+    // 完整「read(/mock/file.ts)」在展开态详情区（Block.vue:47-48 v-if=toolExpanded），仅
+    // working/running/failed 渲染，流式完成后收起有时序竞争，故不断言展开态详情。
+    await expect(page.locator('.trace-tool').first()).toContainText('read', { timeout: 15_000 })
   })
 
   test('E2E-CF-3: fileChanges 变更集卡可见', async ({ page }) => {

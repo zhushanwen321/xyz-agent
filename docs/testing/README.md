@@ -9,13 +9,14 @@
 | 文档 | 功能 | MOCK 测试 | 非 MOCK 测试 | Playwright E2E |
 |------|------|----------|-------------|----------------|
 | [00-test-strategy-overview.md](./00-test-strategy-overview.md) | 测试流程总览（双轨制 / harness / 公共前置） | — | — | — |
-| [01-new-task.md](./01-new-task.md) | 新建任务（Landing + 选目录 + 首发提交） | ✅ | ✅ | ✅ |
-| [02-composer.md](./02-composer.md) | Composer（输入框 + slash 命令浮层 + 三态） | ✅ | ⚠️ | ✅ |
-| [03-chat-flow.md](./03-chat-flow.md) | 对话流（流式消息 + 工具调用 + 变更集） | ✅ | ✅ | ⚠️ 待补 testid |
-| [04-file-tree.md](./04-file-tree.md) | 文件树（懒加载 + 过滤 + git 角标） | ✅ | ✅ | ✅（已落地） |
-| [05-side-drawer.md](./05-side-drawer.md) | SideDrawer（文件预览 / diff / 其他 tab） | ✅ | ✅ | ✅（detail 已落地） |
+| [01-new-task.md](./01-new-task.md) | 新建任务（Landing + 选目录 + 首发提交） | ✅ | ✅ | ✅ 范例（未落地 spec） |
+| [02-composer.md](./02-composer.md) | Composer（输入框 + slash 命令浮层 + 三态） | ✅ | ⚠️ | ✅ 范例（未落地 spec） |
+| [03-chat-flow.md](./03-chat-flow.md) | 对话流（流式消息 + 工具调用 + 变更集） | ✅ | ✅ | ⚠️ 范例（文本锚点可跑，补 testid 更稳） |
+| [04-file-tree.md](./04-file-tree.md) | 文件树（懒加载 + 过滤 + git 角标） | ✅ | ✅ | ✅ **已落地**（11 用例） |
+| [05-side-drawer.md](./05-side-drawer.md) | SideDrawer（文件预览 / diff / git tab） | ✅ | ✅ | ✅ 范例（detail + git tab 有可跑断言） |
 
-> 图例：✅ = 可测且稳定 / ⚠️ = 有约束或待补 / ❌ = 不可测（需手工）
+> 图例：✅ = 可测且稳定 / ⚠️ = 有约束或待补 / ❌ = 不可测（需手工）。
+> **已落地** = spec 文件存在于 `e2e/` 且能跑通；**范例** = 文档内有完整可跑代码但尚未落地为 spec 文件。
 
 ## 快速导航
 

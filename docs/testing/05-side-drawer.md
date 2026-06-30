@@ -219,22 +219,26 @@ test.describe('SideDrawer E2E', () => {
     await expect(page.getByTestId('detail-content')).toContainText('diff --git')
   })
 
-  test('E2E-SD-5: 切 git tab（[需先补 testid]）', async ({ page }) => {
-    // ⚠️ 此用例落地前必须先给 SideDrawer tab 补 data-testid（如 drawer-tab-git）。
-    // 当前 tab 按钮无 testid，文本查询有双匹配问题：
-    //   - SideDrawer git tab 按钮 title="Git"（SideDrawer.vue:175）
-    //   - PanelHeader git 按钮 title="Git 状态 · 打开侧栏"（PanelHeader.vue:102）
-    //   getByRole('button', { name: /git|Git/i }) 会匹配到两个 → strict violation。
-    // 临时方案：用 PanelHeader 的 git 按钮（title 更具体），它触发 openGit 打开 drawer 到 git tab。
+  test('E2E-SD-5: 切 git tab → GitPanel 渲染全量状态', async ({ page }) => {
+    // 入口选择：SideDrawer 的 git tab 按钮与 PanelHeader 的 git 按钮都含 "Git" 文本，
+    // getByRole(button, name:/git/i) 会双匹配。改用 PanelHeader git 按钮（title 更具体
+    // 「Git 状态 · 打开侧栏」，PanelHeader.vue:102），点击触发 openGit → openDrawer('git')
+    //（PanelContainer.vue:39）→ drawer 切到 git tab → GitPanel 挂载。
     await gotoFileTree(page)
     await page.getByTestId('file-tree-dir-src').click()
     await page.getByTestId('file-tree-file-src/index.ts').click()
     await expect(page.getByTestId('detail-pane')).toBeVisible({ timeout: 5_000 })
-    // 临时：点 PanelHeader 的 git 按钮（title 含「Git 状态」，比 drawer tab 的「Git」更具体）
+    // 点 PanelHeader git 按钮（唯一匹配，title 含「Git 状态」）
     await page.getByTitle('Git 状态 · 打开侧栏').click()
-    // drawer 切到 git tab（GitPanel 渲染）。
-    // GitPanel 无 testid，断言依赖其内部文本。落地时需先补 GitPanel testid 或用具体 git 文本。
-    // 占位断言：[需手工] 确认 git tab 激活（tab 栏 Git 按钮高亮 + GitPanel 内容可见）
+    // GitPanel 渲染（GitPanel.vue，数据来自 inject GIT_STATUS_KEY → useGitStatus →
+    // gitApi.status → mock fixtureGitStatus）。无 testid，用稳定文本断言：
+    //   - 分支名 main（GitPanel.vue:35 {{ result.branch }}，mock git.ts:41 branch:'main'）
+    await expect(page.getByText('main').first()).toBeVisible({ timeout: 5_000 })
+    //   - stats +42 −7（GitPanel.vue:40-41，mock git.ts:44 stats:{add:42,del:7}）
+    await expect(page.getByText('+42').first()).toBeVisible()
+    await expect(page.getByText('−7').first()).toBeVisible()
+    //   - 文件列表含 mock fixture 路径（GitPanel.vue:59 v-for files，mock git.ts:47-53）
+    await expect(page.getByText('src/new-feature.ts').first()).toBeVisible()
   })
 })
 ```
@@ -255,7 +259,7 @@ test.describe('SideDrawer E2E', () => {
 
 ## 9. 覆盖缺口（漏测 backlog）
 
-当前 E2E（E2E-SD-1~5）覆盖 detail tab 主路径。以下场景待补：
+当前 E2E（E2E-SD-1~5）覆盖 detail tab 主路径 + git tab 全量状态渲染。以下场景待补：
 
 | 缺口 | 场景 | 测试方式 | 优先级 |
 |------|------|---------|--------|
@@ -263,7 +267,7 @@ test.describe('SideDrawer E2E', () => {
 | terminal tab widget | extension:widget widgetKey='terminal' 推送 → 渲染 | E2E（mock 推 widget，需补 tab testid） | 中 |
 | browser tab widget | widgetKey='browser' 推送 → 渲染 | E2E（同上） | 低 |
 | doc tab | slash 命令 chip 点击 → doc tab 展示 CommandDocPanel | E2E（需补 CommandDocPanel testid） | 中 |
-| git tab 全量状态 | GitPanel 显示 git status + 暂存/提交 | E2E（需补 GitPanel testid） | 高 |
+| git tab 暂存/提交交互 | stage/unstage/commit 操作（E2E-SD-5 已覆盖只读渲染） | E2E（需补操作按钮 testid） | 中 |
 | 大文件截断 | file.read >1MB → detail-truncated 显示 | 非 MOCK（mock file.read 恒小文本） | 低 |
 | 二进制文件 | 图片等 → detail-binary 显示 | 非 MOCK（mock 不返回二进制标记） | 低 |
 | diff/preview 切换 | 点 detail-view-toggle 在 diff/preview 间切换（每次切换重新拉数据） | E2E（E2E-SD-4 已覆盖单次切换） | — |
