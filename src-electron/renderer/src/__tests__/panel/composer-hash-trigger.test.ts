@@ -193,17 +193,21 @@ describe('CommandPopover file query 过滤 + 路径展示（U7-U9）', () => {
     expect(document.body.querySelector('[data-radix-popper-content-wrapper]')).toBeNull()
   })
 
-  it('U9 目录 name 含相对路径（解决同名目录不可辨），文件用 basename', async () => {
-    // 用全量候选（空 query），验证 name 生成策略
+  it('U9 两行展示：文件名主行 + 父目录路径副行（区分同名文件）', async () => {
+    // 用全量候选（空 query），验证两行布局
     await mountFilePopover('')
     const btns = bodyButtons()
-    const texts = btns.map((b) => b.textContent ?? '')
-    // 目录 src/utils → name 应为相对路径 src/utils/（非裸 utils/），解决重复目录歧义
-    expect(texts.some((t) => t.includes('src/utils/'))).toBe(true)
-    expect(texts.some((t) => t.match(/(?<!src\/)utils\//))).toBe(false) // 不应出现裸 utils/
-    // 文件保持 basename（token.ts），不含路径前缀
-    expect(texts.some((t) => t.includes('token.ts'))).toBe(true)
-    expect(texts.some((t) => t.includes('src/auth/token.ts'))).toBe(false) // 文件不带路径前缀
+    // src/auth/token.ts → 主行 token.ts + 副行 src/auth/
+    const tokenBtn = btns.find((b) => (b.textContent ?? '').includes('token.ts'))
+    expect(tokenBtn).toBeDefined()
+    expect(tokenBtn?.textContent ?? '').toContain('src/auth/') // 副行显示父目录路径
+    // 目录 src/utils → 主行 utils/（basename+/）+ 副行 src/（父目录）
+    // 同名目录靠副行父路径区分（src/utils/ vs tools/utils/）
+    const utilsBtn = btns.find((b) => {
+      const t = b.textContent ?? ''
+      return t.includes('utils/') && t.includes('src/')
+    })
+    expect(utilsBtn).toBeDefined()
   })
 })
 

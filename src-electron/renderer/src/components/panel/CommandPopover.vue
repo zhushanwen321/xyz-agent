@@ -45,10 +45,17 @@
             class="size-[15px] shrink-0"
             :class="i === activeIndex ? 'text-accent' : 'text-subtle'"
           />
-          <span class="shrink-0 font-mono" :class="i === activeIndex ? 'text-accent' : 'text-fg'">{{ item.name }}</span>
-          <!-- 右侧提示词：slash 命令透传 description（skill 描述等）；无则退显 kind 标签 -->
-          <span v-if="item.description" class="ml-auto shrink-0 truncate max-w-[520px] text-subtle">{{ item.description }}</span>
-          <span v-else class="ml-auto shrink-0 font-mono text-[10px] text-subtle">{{ item.kind }}</span>
+          <!-- file 类型：两行（basename 主 + 父目录路径暗色小字），区分同名文件 + 知道文件位置 -->
+          <div v-if="props.type === 'file'" class="min-w-0 flex-1">
+            <div class="truncate font-mono text-[12px]" :class="i === activeIndex ? 'text-accent' : 'text-fg'">{{ item.name }}</div>
+            <div v-if="item.dirPath" class="truncate font-mono text-[10px] leading-tight text-subtle">{{ item.dirPath }}</div>
+          </div>
+          <!-- slash 类型：保持单行（命令名 + 右侧 description/kind 提示词） -->
+          <template v-else>
+            <span class="shrink-0 font-mono" :class="i === activeIndex ? 'text-accent' : 'text-fg'">{{ item.name }}</span>
+            <span v-if="item.description" class="ml-auto shrink-0 truncate max-w-[520px] text-subtle">{{ item.description }}</span>
+            <span v-else class="ml-auto shrink-0 font-mono text-[10px] text-subtle">{{ item.kind }}</span>
+          </template>
         </Button>
       </div>
     </PopoverContent>
@@ -65,6 +72,7 @@ import { useCommandStore, type RawCommand } from '@/stores/command'
 import { useSettingsStore } from '@/stores/settings'
 import { useFileSearch } from '@/composables/features/useFileSearch'
 import { toFileCandidates } from '@/lib/file-candidates'
+import { filterAndSortFileCandidates } from '@/lib/file-match'
 
 type CmdType = 'file' | 'slash'
 
@@ -160,21 +168,25 @@ watch(() => props.sessionId, (sid) => subscribeCommands(sid))
 /** 统一候选项视图（file/slash 两路归一为 { id, name, kind, icon, description? }） */
 const items = computed(() => {
   if (props.type === 'file') {
-    // file 路径：按 query 过滤 name + path（大小写不敏感），无 query 走全量。
-    // name 已携带路径信息（目录用相对 path 补斜杠，见 toFileCandidates），
-    // 故不重复在 description 显示 path——退回 kind 标签（对齐设计稿 §2d）。
-    const fq = (props.query ?? '').trim().toLowerCase()
-    const fAll = fileCandidates.value
-    const fFiltered = fq
-      ? fAll.filter((f) => f.name.toLowerCase().includes(fq) || (f.path ?? '').toLowerCase().includes(fq))
-      : fAll
-    return fFiltered.map((f) => ({
-      id: f.id,
-      name: f.name,
-      kind: f.kind,
-      icon: f.kind === '目录' ? 'folder' : 'file',
-      description: undefined,
-    }))
+    // file 路径：filterAndSortFileCandidates 按匹配度分级排序（basename 前缀 > path 子串）+
+    // 文件优先 + 路径浅优先。无 query 走全量（次级排序）。
+    const fq = (props.query ?? '').trim()
+    const sorted = filterAndSortFileCandidates(fileCandidates.value, fq)
+    return sorted.map((f) => {
+      // dirPath：path 去掉 basename 段的父目录路径（供两行展示第二行）。
+      // 'src/auth/token.ts' → 'src/auth/'；'AGENTS.md'（根目录）→ ''（不显第二行）
+      const path = f.path ?? ''
+      const slashIdx = path.lastIndexOf('/')
+      const dirPath = slashIdx >= 0 ? path.slice(0, slashIdx + 1) : ''
+      return {
+        id: f.id,
+        name: f.name,
+        kind: f.kind,
+        icon: f.kind === '目录' ? 'folder' : 'file',
+        description: undefined,
+        dirPath,
+      }
+    })
   }
   const all = slashCommands.value
   // slash 路径按 query 过滤（命令名子串匹配）
@@ -186,6 +198,7 @@ const items = computed(() => {
     kind: c.kind,
     icon: c.icon,
     description: c.description,
+    dirPath: undefined,
   }))
 })
 

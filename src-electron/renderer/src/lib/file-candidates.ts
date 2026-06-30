@@ -22,25 +22,29 @@ export interface FileCandidate {
   kind: string
   path?: string
   type?: 'dir' | 'file'
+  /** 原始 basename（FileNode.name，纯文件名/目录名，不含路径）。
+   *  排序匹配度基于此字段（非加工后的 name），保证 name=AGENTS.md 与 query=agents 的前缀匹配判定正确。 */
+  basename?: string
 }
 
 /**
  * FileNode[] → FileCandidate[] 映射。
  *
- * name 策略（对齐设计稿 §2d 行 519-521）：
- * - 目录：用相对 path 补尾随斜杠（如 `src/auth/`），而非裸 basename。
- *   原因：同名不同位置的目录（src/utils/ vs tools/utils/）靠 basename 不可辨，
- *   相对 path 天然区分，无需在提示列重复显示路径。
- * - 文件：保持 basename（如 `AuthService.ts`），文件名通常已足够辨识。
+ * name 策略（两行展示，主行用 basename）：
+ * - 目录：basename 补尾随斜杠（如 `auth/`），完整路径由 CommandPopover 第二行（dirPath）展示。
+ * - 文件：保持 basename（如 `token.ts`），父目录路径由第二行展示。
  *
+ * 同名不同位置的文件/目录（src/utils/ vs tools/utils/）靠第二行父路径区分，
+ * 主行 name 统一用 basename，视觉一致。
  * kind 用中文（目录/文件），对齐 CommandPopover 图标判定逻辑。
  */
 export function toFileCandidates(nodes: FileNode[]): FileCandidate[] {
   return nodes.map((n) => ({
     id: n.path,
-    name: n.type === 'dir' ? `${n.path}/` : n.name,
+    name: n.type === 'dir' ? `${n.name}/` : n.name,
     kind: n.type === 'dir' ? '目录' : '文件',
     path: n.path,
     type: n.type,
+    basename: n.name,
   }))
 }
