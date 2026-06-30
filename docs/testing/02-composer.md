@@ -350,4 +350,4 @@ test.describe('Composer E2E', () => {
 - 组件源码：[`components/panel/Composer.vue`](../../src-electron/renderer/src/components/panel/Composer.vue) / [`CommandPopover.vue`](../../src-electron/renderer/src/components/panel/CommandPopover.vue)
 - 集成测试：[`__tests__/panel/composer-slash-trigger.test.ts`](../../src-electron/renderer/src/__tests__/panel/composer-slash-trigger.test.ts)
 - 命令 store：[`stores/command.ts`](../../src-electron/renderer/src/stores/command.ts)
-- 发送链路：[03-chat-flow.md](./03-chat-flow.md)（Composer.onSend → useChat.send 的完整流式链路）
+- 发送链路：[03-chat-flow.md](./03-chat-flow.md)（Composer.onSend → chat.send 的完整流式链路）

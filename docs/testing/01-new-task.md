@@ -287,7 +287,7 @@ test.describe('新建任务 E2E', () => {
 
 ## 10. 相关文档
 
-- 组件 spec：[docs/page-design/v3/flow-2-code-review/](../page-design/v3/)（如有）
+- 组件 spec：[docs/page-design/v3/flow-2-code-review/](../page-design/v3/flow-2-code-review/)（如有）
 - 状态机源码：[`composables/features/useNewTaskFlow.ts`](../../src-electron/renderer/src/composables/features/useNewTaskFlow.ts)
 - 集成测试：[`__tests__/new-task/`](../../src-electron/renderer/src/__tests__/new-task/)
 - composer 子组件测试：[02-composer.md](./02-composer.md)

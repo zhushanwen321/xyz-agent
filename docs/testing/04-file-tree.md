@@ -77,12 +77,15 @@ await page.getByTestId('file-tree-dir-src').getByTestId('chevron-slot').click()
 
 ```
 FileView.onMounted → useFileTree.setupInvalidation(sessionId)
-  ├─ watch chatStore.fileChanges → store.invalidate（变更后重新加载）
+  ├─ watch [sessionIdRef, chatStore.messages]（deep）→ 遍历 messages 提取 fileChanges
+  │    → 命中变更路径 → store.invalidate（仅标记 loaded→invalidated，下次 expand 重发，不清空 tree）
   └─ store.load(sessionId)  ← 首次加载
        └─ fileApi.tree(sessionId) → mock file.tree（返回 MOCK_TREE）
             → store.setTree(sessionId, nodes)
             → store.setGitStatus(sessionId, ...)（mock git.status 并行）
 ```
+
+> 注：chatStore 无顶层 `fileChanges` 属性，fileChanges 是 per-message 字段（`message.fileChanges`）。setupInvalidation 通过 deep watch 整个 `messages` Map 后过滤出 fileChanges 路径来触发失效。
 
 ### 4.2 展开链路（D-009 懒加载）
 

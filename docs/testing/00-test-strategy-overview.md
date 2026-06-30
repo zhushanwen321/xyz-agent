@@ -167,7 +167,7 @@ api/index.ts
 
 ## 4. 公共前置：激活 session（多数 E2E 用例的入口）
 
-E2E 启动后 app 初始状态不确定（可能在 Landing 态 / files tab / sessions tab）。多数功能测试需要先激活一个 session。统一封装为 helper（各功能文档会引用）：
+E2E 启动后 app 初始状态不确定（可能在 Landing 态 / files tab / sessions tab）。多数功能测试需要先激活一个 session。下面是**参考实现**——各功能文档（01-05）按需内联变体（如 04/05 的 `gotoFileTree` 额外切到「文件」tab），不强制引用本 helper：
 
 ```typescript
 /**

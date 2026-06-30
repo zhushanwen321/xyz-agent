@@ -8,7 +8,7 @@
 
 对话流是 xyz-agent 的核心高频路径。用户发送消息 → pi 流式回复（thinking → tool call → text）→ 渲染回合。涉及：
 
-- **发送链路**：`useChat.send` → `chatApi.send`（ack）+ `streamSubscribe`（长订阅收 chunk）
+- **发送链路**：`chat.send` → `chatApi.send`（ack）+ `streamSubscribe`（长订阅收 chunk）
 - **流式 chunk 处理**：`chatStore.appendAssistantChunk` → `applyChunk` 分发到 messages Map
 - **回合分组**：`messageTurns.toRenderItems` 纯函数动态计算（user + assistants 成一组）
 - **session 隔离**：所有状态按 sessionId 分区（messages/retry/queue/changeSetStatuses）
@@ -196,7 +196,7 @@ message.complete {messageId, stopReason:'complete', usage:{inputTokens:1280, out
 
 | 测试文件 | 覆盖 |
 |---------|------|
-| [`__tests__/composables/useChat.test.ts`](../../src-electron/renderer/src/__tests__/composables/useChat.test.ts) | ensureStreamSubscription 幂等；send 三守卫；事件驱动 setStreaming；compact 状态机 |
+| [`__tests__/useChat.test.ts`](../../src-electron/renderer/src/__tests__/useChat.test.ts) | ensureStreamSubscription 幂等；send 三守卫；事件驱动 setStreaming；compact 状态机 |
 | [`__tests__/chat-streaming-reset.test.ts`](../../src-electron/renderer/src/__tests__/chat-streaming-reset.test.ts) | **规则#3 复位**：error 路径重置 streaming/streamingMessage（否则 UI 卡死） |
 | [`__tests__/fg5-message-stream.test.ts`](../../src-electron/renderer/src/__tests__/fg5-message-stream.test.ts)（18KB 最全） | applyChunk 全分支：thinking/tool/error/retry/queue/fileChanges；session 隔离；system 消息；历史 fixture |
 | [`__tests__/panel/block-working.test.ts`](../../src-electron/renderer/src/__tests__/panel/block-working.test.ts) | Block working 态折叠（thinking/tool/end_not_received） |
@@ -205,7 +205,7 @@ message.complete {messageId, stopReason:'complete', usage:{inputTokens:1280, out
 
 **运行**：
 ```bash
-cd src-electron/renderer && npx vitest run src/__tests__/fg5-message-stream.test.ts src/__tests__/composables/useChat.test.ts src/__tests__/chat-streaming-reset.test.ts
+cd src-electron/renderer && npx vitest run src/__tests__/fg5-message-stream.test.ts src/__tests__/useChat.test.ts src/__tests__/chat-streaming-reset.test.ts
 ```
 
 ### 8.2 历史 fixture（`mock/data.ts` fixtureMessages）

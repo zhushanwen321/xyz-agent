@@ -78,7 +78,7 @@ fileTreeStore.selectedPath 变化（点文件触发）
             → state.content = 结果；state.status = 'ready'
 ```
 
-**viewMode 切换**（detail-view-toggle）：文件既有 git 改动又是普通文件时，用户可手动在 diff/preview 间切换。
+**viewMode 切换**（detail-view-toggle）：`detail-view-toggle` 仅在 `hasGitChange=true` 时渲染（`DetailPane.vue:17` v-if）。点击切换 viewMode 并**重新拉数据**（diff→preview 调 `fileApi.read`，preview→diff 调 `gitApi.getDiff`，设 `status:'loading'`）。守卫仅检查 `viewMode !== mode`，不额外校验「可读/可 diff」——无 git 改动的文件切 diff 会调 getDiff，若返回空则显空内容（不崩）。
 
 **XSS 安全**（[NFR.md](../../NFR.md) no-v-html 约束）：DetailPane **禁用 v-html**，内容用 `<pre>{{ state.content }}</pre>` 文本插值。mock file.read / git.getDiff 含 `<script>` 路径用于验证 XSS 防护。
 
@@ -258,7 +258,9 @@ test.describe('SideDrawer E2E', () => {
 | git tab 全量状态 | GitPanel 显示 git status + 暂存/提交 | E2E（需补 GitPanel testid） | 高 |
 | 大文件截断 | file.read >1MB → detail-truncated 显示 | 非 MOCK（mock file.read 恒小文本） | 低 |
 | 二进制文件 | 图片等 → detail-binary 显示 | 非 MOCK（mock 不返回二进制标记） | 低 |
-| diff/preview 切换持久 | 切走再切回 → viewMode 记忆 | E2E（需补 store 持久化验证） | 低 |
+| diff/preview 切换 | 点 detail-view-toggle 在 diff/preview 间切换（每次切换重新拉数据） | E2E（E2E-SD-4 已覆盖单次切换） | — |
+
+> ⚠️ **viewMode 不持久（已知限制，非 backlog）**：`useDetailPane.state` 是组件级 `ref`（`useDetailPane.ts:61`），`DetailPane` 在 `SideDrawer.vue:72` 是 `v-else-if` 条件挂载——切走（切到 git/doc tab）即 unmount，state 销毁；切回重新 `useDetailPane()` → `initialState()` → viewMode 复位为 `'preview'`（`useDetailPane.ts:54`）。**无 store/localStorage 持久化**。如需「切走再切回记忆 viewMode」是功能增强需求，需改造成 store 或 module 级缓存，当前不作为测试 backlog（测了也是验证缺陷）。
 
 ## 10. 约束与盲区
 
