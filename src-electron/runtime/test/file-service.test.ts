@@ -324,3 +324,197 @@ describe('FileService.readFile (#7 截断 + 越界)', () => {
     })
   })
 })
+
+describe('FileService.searchFiles (#composer 文件候选全量递归)', () => {
+  /**
+   * searchFiles 与 listTree 的关键差异：
+   * - 全量递归（listTree 仅 2 层），深度上限 8（根 cwd=depth 0）
+   * - 返回扁平 FileNode[]（非嵌套树，给候选列表用）
+   * - per-directory try/catch 容错（单子目录 EACCES 跳过不中断，listTree 则整体 reject）
+   * - visited Set 防 symlink 成环
+   * - 内建 ignore（node_modules 等）独立短路，不可被 .gitignore ! 覆盖
+   * - 结果数上限 500
+   */
+
+  it('U1 正常：递归展开多层（path 相对 cwd，扁平数组）', async () => {
+    executor.readFile.mockRejectedValueOnce(fsErr('ENOENT')) // 无 .gitignore
+    executor.listDir
+      // 顶层 /repo
+      .mockResolvedValueOnce([
+        { name: 'src', type: 'dir' },
+        { name: 'README.md', type: 'file', size: 100 },
+      ] as FsEntry[])
+      // /repo/src
+      .mockResolvedValueOnce([{ name: 'index.ts', type: 'file', size: 50 }] as FsEntry[])
+
+    const files = await svc().searchFiles('s1')
+
+    // 扁平数组含 3 项（src 目录壳 + README.md + src/index.ts）
+    expect(files).toHaveLength(3)
+    const paths = files.map((f) => f.path).sort()
+    expect(paths).toEqual(['README.md', 'src', 'src/index.ts'])
+    const srcNode = files.find((f) => f.path === 'src')
+    expect(srcNode?.type).toBe('dir')
+  })
+
+  it('U2 内建 ignore：node_modules 即使无 .gitignore 也被短路', async () => {
+    executor.readFile.mockRejectedValueOnce(fsErr('ENOENT')) // 无 .gitignore
+    executor.listDir
+      .mockResolvedValueOnce([
+        { name: 'node_modules', type: 'dir' },
+        { name: 'src', type: 'dir' },
+      ] as FsEntry[])
+      // node_modules 被内建 ignore 短路，不展开；仅 src 展开
+      .mockResolvedValueOnce([] as FsEntry[])
+
+    const files = await svc().searchFiles('s1')
+
+    // 不含任何 node_modules 前缀项
+    expect(files.every((f) => !f.path.startsWith('node_modules'))).toBe(true)
+    // node_modules 未触达其 listDir（内建 ignore 在递归前短路）
+    expect(executor.listDir).toHaveBeenCalledTimes(2) // 顶层 + src
+  })
+
+  it('U3 .gitignore 含 dist/ → matchPath 剪枝不下钻', async () => {
+    executor.readFile.mockResolvedValueOnce('dist/\n') // /repo/.gitignore
+    executor.listDir
+      .mockResolvedValueOnce([
+        { name: 'dist', type: 'dir' },
+        { name: 'src', type: 'dir' },
+      ] as FsEntry[])
+      // dist 被 ignore 剪枝不下钻；仅 src 展开
+      .mockResolvedValueOnce([] as FsEntry[])
+
+    const files = await svc().searchFiles('s1')
+
+    expect(files.every((f) => !f.path.startsWith('dist'))).toBe(true)
+    // dist 未下钻（matchPath 剪枝）
+    expect(executor.listDir).toHaveBeenCalledTimes(2)
+  })
+
+  it('U4 深度上限：第 8 层节点返回，第 9 层不递归', async () => {
+    executor.readFile.mockRejectedValueOnce(fsErr('ENOENT'))
+    // 构造 8 层嵌套 a/b/c/d/e/f/g/h，每层 1 个 dir
+    // 顶层 /repo: [a]
+    // /repo/a: [b], /repo/a/b: [c], ... /repo/a/b/c/d/e/f/g: [h]
+    // /repo/a/b/c/d/e/f/g/h: [leaf.txt]（第 9 层，不应出现）
+    executor.listDir
+      .mockResolvedValueOnce([{ name: 'a', type: 'dir' }] as FsEntry[]) // depth0 顶层
+      .mockResolvedValueOnce([{ name: 'b', type: 'dir' }] as FsEntry[]) // depth1 a
+      .mockResolvedValueOnce([{ name: 'c', type: 'dir' }] as FsEntry[]) // depth2 b
+      .mockResolvedValueOnce([{ name: 'd', type: 'dir' }] as FsEntry[]) // depth3 c
+      .mockResolvedValueOnce([{ name: 'e', type: 'dir' }] as FsEntry[]) // depth4 d
+      .mockResolvedValueOnce([{ name: 'f', type: 'dir' }] as FsEntry[]) // depth5 e
+      .mockResolvedValueOnce([{ name: 'g', type: 'dir' }] as FsEntry[]) // depth6 f
+      .mockResolvedValueOnce([{ name: 'h', type: 'dir' }] as FsEntry[]) // depth7 g
+    // 注意：h 在 depth8，h 本身返回但不再下钻其子（leaf.txt 不出现）
+
+    const files = await svc().searchFiles('s1')
+
+    const paths = files.map((f) => f.path)
+    // 含 a..h 的路径前缀
+    expect(paths).toContain('a')
+    expect(paths).toContain('a/b/c/d/e/f/g/h')
+    // 第 9 层 leaf.txt 不出现
+    expect(paths.some((p) => p.includes('leaf.txt'))).toBe(false)
+  })
+
+  it('U5 深度上限：第 8 层是目录时返回壳但不展开（listDir 未调用）', async () => {
+    executor.readFile.mockRejectedValueOnce(fsErr('ENOENT'))
+    // 7 层到 g（depth7），g 下 h_dir（depth8，是 dir）
+    executor.listDir
+      .mockResolvedValueOnce([{ name: 'a', type: 'dir' }] as FsEntry[]) // depth0
+      .mockResolvedValueOnce([{ name: 'b', type: 'dir' }] as FsEntry[]) // depth1
+      .mockResolvedValueOnce([{ name: 'c', type: 'dir' }] as FsEntry[]) // depth2
+      .mockResolvedValueOnce([{ name: 'd', type: 'dir' }] as FsEntry[]) // depth3
+      .mockResolvedValueOnce([{ name: 'e', type: 'dir' }] as FsEntry[]) // depth4
+      .mockResolvedValueOnce([{ name: 'f', type: 'dir' }] as FsEntry[]) // depth5
+      .mockResolvedValueOnce([{ name: 'g', type: 'dir' }] as FsEntry[]) // depth6
+      .mockResolvedValueOnce([{ name: 'h_dir', type: 'dir' }] as FsEntry[]) // depth7 g→h_dir(depth8)
+
+    const files = await svc().searchFiles('s1')
+
+    // h_dir 目录壳返回
+    expect(files.map((f) => f.path)).toContain('a/b/c/d/e/f/g/h_dir')
+    // h_dir 未被下钻（depth=8 守门，不再调 listDir）
+    // 共 8 次 listDir：顶层 + a..g（7 次），h_dir 不调用
+    expect(executor.listDir).toHaveBeenCalledTimes(8)
+  })
+
+  it('U6 session 不存在 → FileError(session_not_found)，不触达 executor', async () => {
+    sessionService.getSummary.mockReturnValue(undefined)
+
+    await expect(svc().searchFiles('s1')).rejects.toMatchObject({
+      name: 'FileError',
+      code: 'session_not_found',
+    })
+    expect(executor.listDir).not.toHaveBeenCalled()
+  })
+
+  it('U7 单子目录 EACCES 容错：跳过该目录继续（不中断整体）', async () => {
+    executor.readFile.mockRejectedValueOnce(fsErr('ENOENT'))
+    executor.listDir
+      .mockResolvedValueOnce([
+        { name: 'good', type: 'dir' },
+        { name: 'locked', type: 'dir' },
+      ] as FsEntry[])
+      // good 可读
+      .mockResolvedValueOnce([{ name: 'a.ts', type: 'file', size: 1 }] as FsEntry[])
+      // locked 抛 EACCES
+      .mockRejectedValueOnce(fsErr('EACCES'))
+
+    const files = await svc().searchFiles('s1')
+
+    // 整体 resolve 不抛错，good/a.ts 出现
+    expect(files.map((f) => f.path)).toContain('good/a.ts')
+    // locked 目录壳出现（顶层 entry 先 push 再尝试下钻），但其下子文件不出现（容错跳过）
+    expect(files.map((f) => f.path)).toContain('locked')
+    expect(files.every((f) => !f.path.startsWith('locked/'))).toBe(true)
+  })
+
+  /**
+   * symlink 成环防护不在 service 层测——由 executor 层保证（fs-executor.ts Dirent.isDirectory()
+   * 不 follow symlink，symlink 目录不会作为 dir 进入 FsEntry）。service 层靠深度上限 8
+   * 作为递归硬限制（U4/U5 覆盖），无需 visited Set（service 层禁 import node:fs，无法 realpath）。
+   */
+
+  it('U9 空目录 → resolve []', async () => {
+    executor.readFile.mockRejectedValueOnce(fsErr('ENOENT'))
+    executor.listDir.mockResolvedValueOnce([] as FsEntry[])
+
+    const files = await svc().searchFiles('s1')
+
+    expect(files).toEqual([])
+  })
+
+  it('U10 结果数上限：>500 文件截断到 500', async () => {
+    executor.readFile.mockRejectedValueOnce(fsErr('ENOENT'))
+    // 顶层 600 个文件
+    const many: FsEntry[] = Array.from({ length: 600 }, (_, i) => ({
+      name: `f${i}.ts`,
+      type: 'file' as const,
+      size: 1,
+    }))
+    executor.listDir.mockResolvedValueOnce(many)
+
+    const files = await svc().searchFiles('s1')
+
+    expect(files).toHaveLength(500)
+  })
+
+  it('U11 内建 ignore 不可被 .gitignore ! 覆盖', async () => {
+    // .gitignore 尝试用 !dist/keep.ts 取反，但内建 ignore 含 dist，独立关卡优先
+    executor.readFile.mockResolvedValueOnce('!dist/keep.ts\n') // /repo/.gitignore
+    executor.listDir
+      .mockResolvedValueOnce([
+        { name: 'dist', type: 'dir' },
+        { name: 'src', type: 'dir' },
+      ] as FsEntry[])
+      .mockResolvedValueOnce([] as FsEntry[]) // src 展开
+
+    const files = await svc().searchFiles('s1')
+
+    // dist/keep.ts 不出现（内建 ignore 独立短路，! 无法覆盖）
+    expect(files.every((f) => !f.path.startsWith('dist'))).toBe(true)
+  })
+})

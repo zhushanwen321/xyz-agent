@@ -40,6 +40,23 @@ export interface FileServiceOptions {
 export const READ_TIMEOUT_MS = 10_000
 /** 文件大小截断阈值（1MB，readFile 用，AC-6.7）。导出供测试断言用。 */
 export const MAX_FILE_SIZE = 1_048_576
+/**
+ * searchFiles 递归深度上限（根 cwd=depth 0，顶层 entry=depth 1，... 第 8 层 entry 返回但不展开子）。
+ * 防深层嵌套目录树无下限耗时；导出供测试断言用。
+ */
+export const MAX_SEARCH_DEPTH = 8
+/**
+ * searchFiles 结果数上限（达上限停止收集，横向截断）。
+ * 防超大批量目录（如未 ignore 的 vendor）无上限耗时；导出供测试断言用。
+ */
+export const MAX_SEARCH_RESULTS = 500
+/**
+ * searchFiles 内建 ignore 目录名（安全兜底，独立于 .gitignore，不可被 `!` 取反覆盖）。
+ * 常见依赖产物/构建/缓存目录，几乎不应出现在 composer 文件候选里。
+ */
+export const BUILTIN_IGNORE_DIRS = new Set([
+  'node_modules', '.git', 'dist', 'build', 'coverage', '.next', '.cache', '.turbo',
+])
 
 export class FileService {
   constructor(private opts: FileServiceOptions) {}
@@ -121,6 +138,73 @@ export class FileService {
       return { content: full.slice(0, MAX_FILE_SIZE), truncated: true }
     }
     return { content: full, truncated: false }
+  }
+
+  /**
+   * composer `#` 文件候选：全量递归当前 cwd（受 ignore + 深度上限 + 结果数上限）。
+   *
+   * 与 listTree 的关键差异（全量递归场景的安全要求）：
+   * - **全量递归**（listTree 仅 2 层），深度上限 `MAX_SEARCH_DEPTH`（根 cwd=depth 0）
+   * - **per-directory try/catch 容错**：单子目录 EACCES/ENOENT 跳过继续，不中断整体
+   *   （listTree 抛错即终止——对全量递归不可接受，大仓库几乎必有无权目录）
+   * - **内建 ignore 独立短路**：BUILTIN_IGNORE_DIRS（node_modules 等）命中即跳过，
+   *   不走 matchPath，不可被 .gitignore `!` 取反覆盖（安全兜底，与 matchPath 两道独立关卡）
+   * - **matchPath 剪枝**：.gitignore 命中的目录不下钻（showIgnored=false）；showIgnored=true
+   *   时标记但**仍不递归**（避免 node_modules 等爆量，composer 场景永远不传 true）
+   * - **结果数上限**：收集到 MAX_SEARCH_RESULTS 即停止（横向截断，防超大批量目录耗时）
+   * - **symlink 防环**：由 executor 层保证（Dirent.isDirectory() 不 follow symlink），
+   *   深度上限 8 作递归硬限制兜底
+   *
+   * 返回扁平 FileNode[]（非嵌套树，给候选列表用）。排序同 sortNodes（dir 在前 + name 降序）。
+   * @throws FileError('session_not_found') —— 仅 session 不存在抛（其余 fs 错误 per-dir 容错）
+   */
+  async searchFiles(sessionId: string, showIgnored?: boolean): Promise<FileNode[]> {
+    const cwd = this.requireCwd(sessionId)
+    const matcher = await this.loadMatcher(cwd)
+    const showIgn = showIgnored ?? false
+    const result: FileNode[] = []
+
+    /**
+     * 递归单层（depth-limited + per-dir 容错）。
+     * @param absPath  目录绝对路径
+     * @param relParent 相对 cwd 的目录路径（顶层 ''）
+     * @param depth 当前深度（cwd=0，顶层 entry=1...）
+     */
+    const walk = async (absPath: string, relParent: string, depth: number): Promise<void> => {
+      // 结果数上限：达上限即停止（横向截断）
+      if (result.length >= MAX_SEARCH_RESULTS) return
+
+      let entries: FsEntry[]
+      try {
+        entries = await this.callFs(() => this.opts.executor.listDir(absPath))
+      } catch {
+        // per-directory 容错：单目录 EACCES/ENOENT/timeout 跳过，不中断整体递归
+        return
+      }
+
+      for (const e of entries) {
+        if (result.length >= MAX_SEARCH_RESULTS) return
+        const node = this.entryToNode(e, relParent)
+
+        // 关卡 1：内建 ignore 独立短路（node_modules 等，不可被 .gitignore ! 覆盖）
+        if (BUILTIN_IGNORE_DIRS.has(e.name)) continue
+
+        // 关卡 2：.gitignore matchPath 判定
+        const ignored = matchPath(matcher, node.path)
+        if (ignored && !showIgn) continue // 默认隐藏：跳过不下钻
+        if (ignored) node.ignored = true // 显示模式：标记但下面仍不递归（防爆量）
+
+        result.push(node)
+
+        // 目录：深度未达上限才下钻
+        if (e.type === 'dir' && depth < MAX_SEARCH_DEPTH) {
+          await walk(join(absPath, e.name), node.path, depth + 1)
+        }
+      }
+    }
+
+    await walk(cwd, '', 1)
+    return FileService.sortNodes(result)
   }
 
   // ── file.write 骨架（#14，AC-14.2/14.4，G4 实现延后）──
