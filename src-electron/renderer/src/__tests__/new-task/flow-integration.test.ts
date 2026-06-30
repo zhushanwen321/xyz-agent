@@ -219,8 +219,8 @@ describe('submitFirstMessage（landing 态首发提交：延迟 create+载入+�
 
     await flow.submitFirstMessage('hello world')
 
-    // create 用 resolveDefaultCwd（最近 session cwd=/repo）
-    expect(createCtrl.create).toHaveBeenCalledWith('/repo')
+    // create 用 resolveDefaultCwd（最近 session cwd=/repo）；label=提示词前10字（'hello world' 11 字符 → 截断+省略号）
+    expect(createCtrl.create).toHaveBeenCalledWith('/repo', 'hello worl…')
     expect(session.activeId).toBe('new-1') // activeId 绑定
     expect(session.list.map((s) => s.id)).toContain('new-1') // appendSession 入组
     // panel 载入 active panel
@@ -243,8 +243,8 @@ describe('submitFirstMessage（landing 态首发提交：延迟 create+载入+�
 
     await flow.submitFirstMessage('go')
 
-    // create 用 pendingCwd（/picked），而非 resolveDefaultCwd（/last-repo）
-    expect(createCtrl.create).toHaveBeenCalledWith('/picked')
+    // create 用 pendingCwd（/picked），而非 resolveDefaultCwd（/last-repo）；label='go'（≤10 原文）
+    expect(createCtrl.create).toHaveBeenCalledWith('/picked', 'go')
   })
 
   it('cwd 来源：无 pendingCwd 时用 resolveDefaultCwd', async () => {
@@ -255,8 +255,8 @@ describe('submitFirstMessage（landing 态首发提交：延迟 create+载入+�
 
     await flow.submitFirstMessage('go')
 
-    // create 用 resolveDefaultCwd（最近活跃 cwd=/last-repo）
-    expect(createCtrl.create).toHaveBeenCalledWith('/last-repo')
+    // create 用 resolveDefaultCwd（最近活跃 cwd=/last-repo）；label='go'（≤10 原文）
+    expect(createCtrl.create).toHaveBeenCalledWith('/last-repo', 'go')
   })
 
   it('重试场景（currentSession 已存在）→跳过 create 直接 send', async () => {

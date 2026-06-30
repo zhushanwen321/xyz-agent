@@ -38,11 +38,15 @@ const apiMock = vi.hoisted(() => ({
       }),
   ),
   remove: vi.fn((): Promise<void> => Promise.resolve()),
+  // submitFirstMessage → useChat.send → chatApi.send/streamSubscribe 需要 mock 占位
+  chatSend: vi.fn((): Promise<void> => Promise.resolve()),
+  streamSubscribe: vi.fn((): (() => void) => () => {}),
 }))
 
 vi.mock('@/api', () => ({
   session: { create: apiMock.create, remove: apiMock.remove },
   git: {},
+  chat: { send: apiMock.chatSend, streamSubscribe: apiMock.streamSubscribe },
 }))
 
 import { useNewTaskFlow, resetNewTaskFlow } from '@/composables/features/useNewTaskFlow'
@@ -90,6 +94,41 @@ describe('useNewTaskFlow 状态机', () => {
       expect(apiMock.create).not.toHaveBeenCalled()
       expect(flow.currentSessionId.value).toBeNull()
       expect(flow.state.value).toBe('landing')
+    })
+  })
+
+  /**
+   * submitFirstMessage label 派生：session 名默认取首条提示词前 10 字符 + 省略号，
+   * 取代旧的 basename(cwd)。防护：未来若误把 label 传成 undefined/cwd，侧栏与目录列表
+   * 会回退到目录名，与产品诉求「提示词前 10 字」背离，本块立刻红。
+   */
+  describe('submitFirstMessage label 派生（session 名 = 提示词前 10 字）', () => {
+    it('未选目录直接发送 → create 收到 (cwd, label)，label 是提示词前 10 字', async () => {
+      setGroups([gitSession({ id: 'hist', cwd: '/repo', lastActiveAt: 1 })])
+      const flow = useNewTaskFlow()
+      await flow.startFlow()
+      await flow.submitFirstMessage('一二三四五六七八九十十一') // 11 字
+      expect(apiMock.create).toHaveBeenCalledTimes(1)
+      // cwd 兑底用最近 session 的 /repo；label 截断为前 10 字 + 省略号
+      expect(apiMock.create).toHaveBeenCalledWith('/repo', '一二三四五六七八九十…')
+    })
+
+    it('短提示词 → label = 原文（不加省略号），与提示词一致', async () => {
+      setGroups([gitSession({ id: 'hist', cwd: '/repo', lastActiveAt: 1 })])
+      const flow = useNewTaskFlow()
+      await flow.startFlow()
+      await flow.submitFirstMessage('修 bug') // 4 字
+      expect(apiMock.create).toHaveBeenCalledWith('/repo', '修 bug')
+    })
+
+    it('selectedWorkspace 选定 cwd 后发送 → create 第 1 参数用选定 cwd 而非兑底', async () => {
+      setGroups([gitSession({ id: 'hist', cwd: '/repo', lastActiveAt: 1 })])
+      const flow = useNewTaskFlow()
+      await flow.startFlow()
+      flow.openDirPopover() // landing→dir-popover（selectWorkspace 须从 dir-popover 调用）
+      await flow.selectWorkspace('/custom/path') // dir-popover→landing，记 pendingCwd
+      await flow.submitFirstMessage('hello world!')
+      expect(apiMock.create).toHaveBeenCalledWith('/custom/path', 'hello worl…')
     })
   })
 

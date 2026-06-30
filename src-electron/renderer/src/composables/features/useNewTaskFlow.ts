@@ -19,7 +19,7 @@ import { ref, computed, readonly } from 'vue'
 import type { Ref, ComputedRef } from 'vue'
 import type { SessionSummary } from '@xyz-agent/shared'
 import { session as sessionApi, git as gitApi } from '@/api'
-import { resolveDefaultCwd } from '@/lib/utils'
+import { resolveDefaultCwd, deriveSessionLabel } from '@/lib/utils'
 import { pickDirectory } from '@/lib/ipc'
 import { useSessionStore } from '@/stores/session'
 import { usePanelStore } from '@/stores/panel'
@@ -199,7 +199,9 @@ export function useNewTaskFlow() {
       // 未选目录直接发送（用默认 cwd 兑底 create），或重试场景已绑定
       if (!currentSession.value) {
         const cwd = pendingCwd.value ?? resolveDefaultCwd(session.list)
-        const created = await sessionApi.create(cwd)
+        // session 名默认取首条提示词前 10 字符（codePoint 计 + 省略号），取代旧的 basename(cwd)
+        const label = deriveSessionLabel(trimmed)
+        const created = await sessionApi.create(cwd, label)
         currentSession.value = created
         session.appendSession(created)
       }

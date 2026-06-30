@@ -129,8 +129,8 @@ describe('Landing 选目录延迟 create（不预建 session）', () => {
 
     await flow.submitFirstMessage('hello')
 
-    // 首发提交才 create，用 pendingCwd（/picked）而非 resolveDefaultCwd（/elsewhere）
+    // 首发提交才 create，用 pendingCwd（/picked）而非 resolveDefaultCwd（/elsewhere）；label='hello'（≤10 原文）
     expect(apiMock.create).toHaveBeenCalledTimes(1)
-    expect(apiMock.create).toHaveBeenCalledWith('/picked')
+    expect(apiMock.create).toHaveBeenCalledWith('/picked', 'hello')
   })
 })

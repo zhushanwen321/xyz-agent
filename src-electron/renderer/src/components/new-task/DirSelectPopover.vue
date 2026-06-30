@@ -52,9 +52,8 @@ const workspaces = computed<RecentWorkspace[]>(() => recentWorkspaces(session.li
 const filtered = computed<RecentWorkspace[]>(() => {
   const q = search.value.trim().toLowerCase()
   if (!q) return workspaces.value
-  return workspaces.value.filter(
-    (w) => w.label.toLowerCase().includes(q) || w.cwd.toLowerCase().includes(q),
-  )
+  // label 已是 cwd basename，是其全路径 cwd 的子串，单独按 cwd 匹配即可覆盖两者
+  return workspaces.value.filter((w) => w.cwd.toLowerCase().includes(q))
 })
 
 /** 空态：无最近工作区，或搜索无命中 */

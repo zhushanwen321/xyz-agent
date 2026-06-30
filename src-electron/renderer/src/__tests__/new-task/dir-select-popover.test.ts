@@ -87,7 +87,7 @@ describe('DirSelectPopover 列表选择', () => {
 })
 
 describe('DirSelectPopover 搜索过滤', () => {
-  it('输入关键词 → 列表即时过滤命中（label 或 cwd）', async () => {
+  it('输入关键词 → 列表即时过滤命中（按 cwd 匹配，basename 是其子串）', async () => {
     setSessions([mkSession('/work/alpha', 'alpha'), mkSession('/work/beta', 'beta')])
     const wrapper = mount(DirSelectPopover, { props: { currentCwd: null } })
     await wrapper.find('input').setValue('alpha')
@@ -102,5 +102,22 @@ describe('DirSelectPopover 搜索过滤', () => {
     await wrapper.find('input').setValue('zzz-no-match')
     expect(wrapper.findAll('[data-testid="workspace-item"]')).toHaveLength(0)
     expect(wrapper.text()).toContain('暂无最近工作区')
+  })
+})
+
+/**
+ * [回归] 列表项主标题渲染目录名（cwd basename），不渗入 session 名。
+ * 事故：session 被 rename 后 session.label 变自定义文本，旧逻辑把它当目录名展示。
+ * 本块做渲染 gate：mount 组件断言 DOM 文案，防止 recentWorkspaces 改回取 s.label。
+ */
+describe('DirSelectPopover 列表项显示目录名（非 session 名）[回归]', () => {
+  it('session 被 rename 后，列表项 DOM 含目录名、不含 session 自定义名', () => {
+    // label='我的自定义会话名' 模拟 rename 后的 session 名；cwd basename 是 'bar'
+    setSessions([mkSession('/foo/bar', '我的自定义会话名', 100)])
+    const wrapper = mount(DirSelectPopover, { props: { currentCwd: null } })
+    const item = wrapper.find('[data-testid="workspace-item"]')
+    expect(item.exists()).toBe(true)
+    expect(item.text()).toContain('bar') // 目录名
+    expect(item.text()).not.toContain('我的自定义会话名') // session 名不应渗入
   })
 })

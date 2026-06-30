@@ -34,6 +34,7 @@ const streamSubscriptions = new Map<string, () => void>()
 function ensureStreamSubscription(
   sid: string,
   chat: ReturnType<typeof useChatStore>,
+  sessionStore: ReturnType<typeof useSessionStore>,
 ): void {
   if (streamSubscriptions.has(sid)) return
   const unsub = chatApi.streamSubscribe(sid, (msg) => {
@@ -58,6 +59,15 @@ function ensureStreamSubscription(
         // #6：compact 生命周期结束（成功/失败均广播）。错误反馈走 compact() 的 catch，此处仅复位态。
         chat.setCompacting(sid, false)
         break
+      case 'session.renamed': {
+        // pi 改写 session 名（session_info_changed → session.renamed，见 event-adapter.ts）。
+        // guard：payload.name 为空时跳过 —— 防 pi 推空名/旧名覆盖用户手动 rename 的值。
+        const payload = msg.payload as { sessionId?: string; name?: string }
+        if (payload.sessionId && payload.name) {
+          sessionStore.updateLabel(payload.sessionId, payload.name)
+        }
+        break
+      }
       default:
         break
     }
@@ -82,7 +92,7 @@ export function useChat() {
     if (!trimmed || chat.isStreaming) return
 
     chat.appendUser(sid, trimmed)
-    ensureStreamSubscription(sid, chat)
+    ensureStreamSubscription(sid, chat, session)
 
     await chatApi.send(sid, trimmed)
   }
@@ -135,7 +145,7 @@ export function useChat() {
   async function compact(): Promise<void> {
     const sid = session.activeId
     if (!sid) return
-    ensureStreamSubscription(sid, chat)
+    ensureStreamSubscription(sid, chat, session)
     try {
       await chatApi.compact(sid)
     } catch (e) {
@@ -160,7 +170,7 @@ export function useChat() {
     if (!trimmed || chat.isStreaming) return
     chat.truncateFrom(sessionId, userMessageId, true)
     chat.appendUser(sessionId, trimmed)
-    ensureStreamSubscription(sessionId, chat)
+    ensureStreamSubscription(sessionId, chat, session)
     await chatApi.send(sessionId, trimmed)
   }
 

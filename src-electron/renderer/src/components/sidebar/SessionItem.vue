@@ -20,9 +20,6 @@
       <div class="mt-0.5 truncate font-mono text-[10.5px] leading-[1.3] text-subtle">
         {{ dirName }}
       </div>
-      <div v-if="session.gitBranch" class="mt-0.5 truncate font-mono text-[10.5px] leading-[1.3] text-accent">
-        {{ session.gitBranch }}
-      </div>
     </div>
     <span class="shrink-0 pt-1 font-mono text-[10px] leading-[1.35] text-subtle">
       {{ timeLabel }}
@@ -63,7 +60,6 @@ const props = defineProps<{
     id: string
     label: string
     cwd: string
-    gitBranch?: string
     lastActiveAt: number
   }
   active: boolean

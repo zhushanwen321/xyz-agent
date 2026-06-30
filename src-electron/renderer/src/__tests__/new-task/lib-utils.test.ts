@@ -11,7 +11,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import type { SessionSummary } from '@xyz-agent/shared'
-import { resolveDefaultCwd, recentWorkspaces } from '@/lib/utils'
+import { resolveDefaultCwd, recentWorkspaces, deriveSessionLabel } from '@/lib/utils'
 
 /** 构造 SessionSummary 测试桩（仅本期派生用到的字段有意义） */
 function mk(partial: Partial<SessionSummary>): SessionSummary {
@@ -64,10 +64,10 @@ describe('recentWorkspaces', () => {
     expect(recentWorkspaces([])).toEqual([])
   })
 
-  it('单 session → 单元素列表', () => {
+  it('单 session → 单元素列表（label = cwd basename）', () => {
     const result = recentWorkspaces([mk({ cwd: '/a', lastActiveAt: 1, label: 'A' })])
     expect(result).toHaveLength(1)
-    expect(result[0]).toMatchObject({ cwd: '/a', lastActiveAt: 1, label: 'A' })
+    expect(result[0]).toMatchObject({ cwd: '/a', lastActiveAt: 1, label: 'a' })
   })
 
   it('多 session 同 cwd → distinct 去重保留 lastActiveAt 最新者（AC-4.6）', () => {
@@ -80,7 +80,18 @@ describe('recentWorkspaces', () => {
     expect(result).toHaveLength(2)
     const shared = result.find((w) => w.cwd === '/shared')
     expect(shared?.lastActiveAt).toBe(500)
-    expect(shared?.label).toBe('new')
+    // label 取 cwd basename 而非 session label，与去重保留哪条无关
+    expect(shared?.label).toBe('shared')
+  })
+
+  it('[回归] session 被 rename 后，目录列表 label 仍是目录名（basename），不渗入 session 名', () => {
+    // 事故场景：rename 后 session.label 变自定义文本，旧逻辑把它当目录名展示
+    const sessions = [
+      mk({ cwd: '/foo/bar', lastActiveAt: 100, label: '我的自定义会话名' }),
+    ]
+    const result = recentWorkspaces(sessions)
+    expect(result[0].label).toBe('bar')
+    expect(result[0].label).not.toBe('我的自定义会话名')
   })
 
   it('按 lastActiveAt 倒序排列（AC-4.1）', () => {
@@ -107,5 +118,50 @@ describe('recentWorkspaces', () => {
     const result = recentWorkspaces(sessions)
     expect(result).toHaveLength(1)
     expect(result[0].cwd).toBe('/ok')
+  })
+})
+
+describe('deriveSessionLabel', () => {
+  it('空字符串 → 兜底文案『无提示词』', () => {
+    expect(deriveSessionLabel('')).toBe('无提示词')
+  })
+
+  it('纯空白（空格/换行/Tab）→ trim 后为空 → 兜底文案', () => {
+    expect(deriveSessionLabel('   \n\t  ')).toBe('无提示词')
+  })
+
+  it('中文 ≤10 字 → 原文（不加省略号）', () => {
+    expect(deriveSessionLabel('帮我修复登录')).toBe('帮我修复登录') // 6 字
+  })
+
+  it('中文正好 10 字 → 原文（边界，不加省略号）', () => {
+    const text = '一二三四五六七八九十' // 正好 10 字
+    expect(deriveSessionLabel(text)).toBe(text)
+  })
+
+  it('中文 >10 字 → 前 10 字 + 省略号', () => {
+    const text = '一二三四五六七八九十十一十二' // 12 字
+    expect(deriveSessionLabel(text)).toBe('一二三四五六七八九十…')
+  })
+
+  it('英文 >10 字符 → 前 10 字符 + 省略号（按 codePoint，不切断单词边界）', () => {
+    const text = 'fix the login bug please'
+    expect(deriveSessionLabel(text)).toBe('fix the lo…')
+  })
+
+  it('带换行的多行提示词 → trim 后取前 10 字符（换行不进 label）', () => {
+    const text = '第一行内容\n第二行内容\n第三行'
+    // trim 去首尾空白但不去中间换行；Array.from 按 codePoint，\n 算 1 字
+    const expected = Array.from(text.trim()).slice(0, 10).join('') + '…'
+    expect(deriveSessionLabel(text)).toBe(expected)
+  })
+
+  it('emoji 算 1 字（codePoint 拆分，不按 UTF-16 代理对截断成乱码）', () => {
+    const text = '🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀' // 12 个 emoji
+    expect(deriveSessionLabel(text)).toBe('🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀…')
+  })
+
+  it('首尾空白被 trim（前导空格不计入前 10 字符）', () => {
+    expect(deriveSessionLabel('     帮我修复登录')).toBe('帮我修复登录')
   })
 })
