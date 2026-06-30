@@ -1,11 +1,15 @@
 /**
- * Command store —— slash 命令（按 sessionId 分区）。
+ * Command store —— slash 命令（按 sessionId 分区）+ 全局应用命令（静态）。
  *
- * 职责：持有 runtime 推送的扩展命令（session.commands 通道），按 sessionId 隔离。
- * 解决的问题：CommandPopover 曾把 slashCommands 存在局部 ref，组件被 v-if 销毁重建
- * （landing→panel 切换 / isGenerating 变化）时数据丢失，且 session.commands 只在
- * 切换/创建时推一次（runtime 不重广播 active session），重建后无补拉机制 → slash 浮层空。
- * 归位 store 后，组件重建读 store 即有数据（与 chat store 的 messages 分区同构，AGENTS.md 规则 7）。
+ * 职责：
+ *  - slash 命令：持有 runtime 推送的扩展命令（session.commands 通道），按 sessionId 隔离。
+ *    解决的问题：CommandPopover 曾把 slashCommands 存在局部 ref，组件被 v-if 销毁重建
+ *    （landing→panel 切换 / isGenerating 变化）时数据丢失，且 session.commands 只在
+ *    切换/创建时推一次（runtime 不重广播 active session），重建后无补拉机制 → slash 浮层空。
+ *    归位 store 后，组件重建读 store 即有数据（与 chat store 的 messages 分区同构，AGENTS.md 规则 7）。
+ *  - 应用命令：全局内置命令（新建/搜索等），静态、与 session 无关。D-016 物理隔离——
+ *    appCommands 独立 ref，session 切换只动 commandsBySession，不触发 appCommands 重算。
+ *    两区物理分离：slash 命令带 / 前缀，与应用命令天然不撞（D-009）。
  *
  * 依赖方向：无（stores 间禁止互相 import；跨 store 协调由 composables/features 做）。
  *
@@ -13,9 +17,11 @@
  *   runtime broadcast / RPC getCommands → CommandPopover 订阅 handler / useSidebar / useNewTaskFlow
  *     → commandStore.applyCommands(sid, cmds)
  *   CommandPopover.items / Turn.vue 用户气泡 chip → commandStore.getCommands(sid) 读取
+ *   启动期 useCommandRegistry.registerApp → commandStore.registerApp(appCmds) 一次性写应用命令区
  */
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
+import type { AppCommand } from '@/lib/search-types'
 
 /** slash 命令项（runtime session.commands payload 归一化 + icon key 推断） */
 export interface SessionCommand {
@@ -47,6 +53,13 @@ export const useCommandStore = defineStore('command', () => {
   /** 按 sessionId 分区的命令表（UC-2 隔离，同 chat store messages 模式） */
   const commandsBySession = ref<Map<string, SessionCommand[]>>(new Map())
 
+  /**
+   * 全局应用命令区（D-016 物理隔离）：静态、与 session 无关。
+   * 独立 ref —— session 切换只动 commandsBySession，不触发 appCommands 重算（AC-2.2）。
+   * 启动时 registerApp 一次性写入，组件重建读 store 即有数据（同 slash 命令归位动机）。
+   */
+  const appCommands = ref<AppCommand[]>([])
+
   /** 取指定 session 的命令（无则空数组，不写入 Map） */
   function getCommands(sessionId: string): SessionCommand[] {
     return commandsBySession.value.get(sessionId) ?? []
@@ -60,6 +73,22 @@ export const useCommandStore = defineStore('command', () => {
   /** 响应式视图：指定 session 的命令（供 CommandPopover computed 订阅） */
   function commandsOf(sessionId: string) {
     return computed(() => commandsBySession.value.get(sessionId) ?? [])
+  }
+
+  /**
+   * slash 命令响应式视图（同 commandsOf 语义，显式命名供 useCommandRegistry 调用，
+   * 明确读的是 per-session slash 区而非全局应用命令区）。
+   */
+  function slashCommandsOf(sessionId: string) {
+    return commandsOf(sessionId)
+  }
+
+  /**
+   * 注册应用命令（启动期一次性）。幂等覆盖：重复调用以最后一次为准，非累加（AC-2.4）。
+   * 不写 commandsBySession —— 应用命令与 session 无关（D-016 物理隔离）。
+   */
+  function registerApp(cmds: AppCommand[]): void {
+    appCommands.value = cmds
   }
 
   /** 写入命令（runtime 推送 / RPC 拉取后调用）。不可变更新确保 Map 响应性触发 */
@@ -81,5 +110,15 @@ export const useCommandStore = defineStore('command', () => {
     commandsBySession.value.delete(sessionId)
   }
 
-  return { commandsBySession, getCommands, findCommandByName, commandsOf, applyCommands, clearCommands }
+  return {
+    commandsBySession,
+    appCommands,
+    getCommands,
+    findCommandByName,
+    commandsOf,
+    slashCommandsOf,
+    registerApp,
+    applyCommands,
+    clearCommands,
+  }
 })

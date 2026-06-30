@@ -3,14 +3,13 @@
  *
  * 数据源：移植自 SearchModal.vue 内联 MOCK/RECENTS/SUGGESTED。
  * 后端搜索（LSP / 命令注册表 / 会话库）就绪后接 real domain 替换。
+ *
+ * D-028 架构修复：SearchType/SearchItem 定义迁至 @/lib/search-types（领域 SSOT），
+ * mock 反向 import（mock 依赖领域类型，方向正确）。
  */
-export type SearchType = 'command' | 'file' | 'symbol' | 'session'
-
-export interface SearchItem {
-  type: SearchType
-  title: string
-  sub: string
-}
+import type { SearchItem, SearchType } from '@/lib/search-types'
+// re-export 保持 mock 内部消费方（mock/index.ts）无需改导入路径
+export type { SearchItem, SearchType }
 
 export const SEARCH_MOCK: Record<SearchType, SearchItem[]> = {
   command: [

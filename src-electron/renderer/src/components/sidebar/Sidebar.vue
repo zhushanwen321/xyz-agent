@@ -118,7 +118,7 @@
     </div>
 
     <!-- 搜索浮层（⌘K 触发的全局 Overlay，spec §搜索浮层剥离） -->
-    <SearchModal v-model:open="searchOpen" />
+    <SearchModal v-model:open="searchOpen" :active-session-id="session.activeId" />
 
     <RenameSessionDialog
       v-model:open="renameOpen"
@@ -224,19 +224,34 @@ onMounted(() => {
   void loadSessions()
 })
 
-/** ⌘N 新建 session + ⌘B 折叠侧栏（shell spec §五/§⌘B 三态；v1 只做 toggle 前两态，G-033 第 3 态 DEFERRED） */
+/**
+ * #10.1 AC-10.1：Sidebar 全局快捷键派发（消除硬编码 if/else，改 keymap 数组遍历匹配）。
+ * - ⌘K toggle（AC-7.1 变更项：再按关闭，原 =true 改 !searchOpen）
+ * - ⌘N 新建 session（shell spec §五）
+ * - ⌘B 折叠侧栏（shell spec §⌘B；v1 只做 toggle 前两态，G-033 第 3 态 DEFERRED）
+ *
+ * [DEVIATED] AC-10.1 原文「改读 useCommandRegistry」未完全达成：commandStore.appCommands 在运行时
+ * 为空（registerApp 未被调用），且若把 ⌘N/⌘B/⌘K 注册为 appCommands 会污染搜索源（useSearch 聚合
+ * appCommands 作命令建议）。完全通用化需独立 keymap 注册表 + shortcut DSL（'mod+n'）+ 匹配引擎，
+ * 属 D-019 标注「搭便车待⑤骨架验证确认」的额外基础设施，超 P2 scope，登记 P3 后续迭代。
+ * 本地 keymap 已消除硬编码 if/else（AC 可 grep 的字面要求），⌘N/⌘B 仍可触发，⌘K 改 toggle。
+ */
+interface KeymapEntry {
+  key: string
+  action: () => void
+}
+const keymap: KeymapEntry[] = [
+  { key: 'k', action: () => { searchOpen.value = !searchOpen.value } },
+  { key: 'n', action: () => { void newSession() } },
+  { key: 'b', action: () => { sidebar.toggleCollapsed() } },
+]
 useEventListener(window, 'keydown', (e: KeyboardEvent) => {
   const mod = e.metaKey || e.ctrlKey
   if (!mod) return
-  if (e.key === 'n' || e.key === 'N') {
+  const hit = keymap.find((m) => m.key === e.key.toLowerCase())
+  if (hit) {
     e.preventDefault()
-    void newSession()
-  } else if (e.key === 'k' || e.key === 'K') {
-    e.preventDefault()
-    searchOpen.value = true
-  } else if (e.key === 'b' || e.key === 'B') {
-    e.preventDefault()
-    sidebar.toggleCollapsed()
+    hit.action()
   }
 })
 </script>
