@@ -24,11 +24,12 @@
         {{ session.gitBranch }}
       </div>
     </div>
-    <span class="shrink-0 pt-1 font-mono text-[10px] leading-[1.35] text-subtle group-hover:invisible">
+    <span class="shrink-0 pt-1 font-mono text-[10px] leading-[1.35] text-subtle">
       {{ timeLabel }}
     </span>
-    <!-- hover 操作按钮（重命名/删除），时间隐去后浮现（draft-five-states §1） -->
-    <div class="absolute right-2 top-1.5 hidden gap-1 group-hover:flex">
+    <!-- hover 操作按钮（重命名/删除）放卡片右下角，不再遮盖右上角的时间展示。
+         按钮浮于 dirName/gitBranch 之上，底色保证可读。 -->
+    <div class="absolute bottom-1 right-1.5 hidden gap-1 group-hover:flex">
       <Button
         variant="ghost"
         size="icon"
