@@ -214,7 +214,7 @@ cd src-electron/renderer && npx vitest run src/__tests__/fg5-message-stream.test
 
 | id | label | 状态 | 内容 |
 |----|-------|------|------|
-| `s1` | 重构 auth 模块 | error | 2 回合；回合2 含 error tool（bash EBUSY）+ status:'error' |
+| `s1` | 重构 auth 模块 | error | 2 回合：回合1 thinking + 2 completed tool（read/edit）；回合2 error tool（bash EBUSY）+ status:'error'。**历史 fixture 无 fileChanges**（fileChanges 只在 run-send-stream 流式出现） |
 | `s2` | Lint 排查中 | waiting | 末 assistant 含 running toolCall（bash） |
 | `s3` | API 性能优化 | done | `[]` 空数组（验证欢迎语） |
 | `s4` | Promise 代码评审 | running | 末 assistant status:'streaming'（纯文本流式中） |
@@ -283,9 +283,10 @@ test.describe('对话流 E2E', () => {
     await page.getByRole('textbox').click()
     await page.getByRole('textbox').pressSequentially('测试对话流 e2e')
     await page.getByRole('textbox').press('Enter')
-    // user 气泡可见
-    await expect(page.getByText('测试对话流 e2e')).toBeVisible({ timeout: 10_000 })
-    // mock 流式完成（约 3-4 秒）→ 收尾 summary 出现
+    // 发送成功的可靠信号：mock 流式完成后的收尾 summary（约 3-4 秒）。
+    // 不直接断言 user 气泡 getByText('测试对话流 e2e') —— mock 回复会回显 user 输入
+    //（run-send-stream.ts:49 '已处理："${text}"...'），该文本双匹配（user 气泡 + assistant
+    // 回复），getByText 严格模式会报错。收尾 summary 是 mock 固定 CANNED_REPLY，单匹配稳定。
     await expect(page.getByText(/好的，我来处理这个请求/)).toBeVisible({ timeout: 15_000 })
   })
 
@@ -301,12 +302,15 @@ test.describe('对话流 E2E', () => {
     await page.getByRole('textbox').click()
     await page.getByRole('textbox').pressSequentially('展示 thinking 和 tool')
     await page.getByRole('textbox').press('Enter')
-    // thinking header 恒显（Block.vue:37「思考」文案，不受 working/collapsed 影响）
+    // thinking header 恒显（Block.vue:20「思考」文案，不受 working/collapsed 影响）
     await expect(page.getByText('思考', { exact: true }).first()).toBeVisible({ timeout: 15_000 })
-    // tool 块 header：mock toolCall toolName='read', input.path='/mock/file.ts'
-    // Block.vue:47-48 渲染「read(/mock/file.ts)」（toolName + argPath）。
-    // 用精确 path 锚点，避免宽泛 'read' 匹配到 readme/already/readFile 等无关文本。
-    await expect(page.getByText(/read\(\/mock\/file\.ts\)/).first()).toBeVisible({ timeout: 15_000 })
+    // tool 块 header 恒显（Block.vue:42-43「工具」+ toolName）。
+    // mock toolCall toolName='read'（run-send-stream.ts:98），header 裸显 toolName 无括号。
+    // 注意：完整「read(/mock/file.ts)」（toolName+argPath）在**展开态详情区**（Block.vue:47-48，
+    // v-if="toolExpanded"），仅 working/running/failed 时渲染；流式完成后 working=false 收起，
+    // 详情区卸载 → 时序竞争。故断言 header 恒显的 toolName「工具 read」而非展开态详情。
+    // { exact: false } 因 header 是「工具...read」组合文案，用 contains 匹配 toolName 片段。
+    await expect(page.getByText(/工具.*read/).first()).toBeVisible({ timeout: 15_000 })
   })
 
   test('E2E-CF-3: fileChanges 变更集卡可见', async ({ page }) => {

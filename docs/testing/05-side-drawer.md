@@ -213,20 +213,28 @@ test.describe('SideDrawer E2E', () => {
     await expect(page.getByTestId('detail-content')).toBeVisible({ timeout: 5_000 })
     // 切回 diff
     await page.getByTestId('detail-view-toggle').click()
+    // toggleView 切换时先设 status='loading'（useDetailPane.ts:104），detail-content（v-else
+    // 非_loading）短暂从 DOM 消失显 detail-loading。需先等 toBeVisible 再断文本，避免 flaky。
+    await expect(page.getByTestId('detail-content')).toBeVisible({ timeout: 5_000 })
     await expect(page.getByTestId('detail-content')).toContainText('diff --git')
   })
 
-  test('E2E-SD-5: 切 git tab（文本锚点）', async ({ page }) => {
+  test('E2E-SD-5: 切 git tab（[需先补 testid]）', async ({ page }) => {
+    // ⚠️ 此用例落地前必须先给 SideDrawer tab 补 data-testid（如 drawer-tab-git）。
+    // 当前 tab 按钮无 testid，文本查询有双匹配问题：
+    //   - SideDrawer git tab 按钮 title="Git"（SideDrawer.vue:175）
+    //   - PanelHeader git 按钮 title="Git 状态 · 打开侧栏"（PanelHeader.vue:102）
+    //   getByRole('button', { name: /git|Git/i }) 会匹配到两个 → strict violation。
+    // 临时方案：用 PanelHeader 的 git 按钮（title 更具体），它触发 openGit 打开 drawer 到 git tab。
     await gotoFileTree(page)
     await page.getByTestId('file-tree-dir-src').click()
     await page.getByTestId('file-tree-file-src/index.ts').click()
     await expect(page.getByTestId('detail-pane')).toBeVisible({ timeout: 5_000 })
-    // 切到 git tab（tab 按钮无 testid，按文本查）
-    // 注意：tab 文本可能随 UI 调整，建议补 testid
-    await page.getByRole('button', { name: /git|Git/i }).click()
-    // GitPanel 渲染（mock git 状态）— 断言 git 相关文本可见
-    // 具体 git 文本依赖 GitPanel 实现，此处用通用占位
-    // await expect(page.getByText(/暂存|提交|变更/)).toBeVisible({ timeout: 5_000 })
+    // 临时：点 PanelHeader 的 git 按钮（title 含「Git 状态」，比 drawer tab 的「Git」更具体）
+    await page.getByTitle('Git 状态 · 打开侧栏').click()
+    // drawer 切到 git tab（GitPanel 渲染）。
+    // GitPanel 无 testid，断言依赖其内部文本。落地时需先补 GitPanel testid 或用具体 git 文本。
+    // 占位断言：[需手工] 确认 git tab 激活（tab 栏 Git 按钮高亮 + GitPanel 内容可见）
   })
 })
 ```

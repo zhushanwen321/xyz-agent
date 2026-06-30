@@ -155,7 +155,7 @@ test('用例名', async ({ page, electronApp }) => {
 ```
 api/index.ts
   ├─ VITE_MOCK=true → 走 mock/index.ts（聚合所有 domain mock）
-  │    ├─ session domain → mock/data.ts fixtureSessions（5 个固定 session：s1-s5 + e2eTestSession）
+  │    ├─ session domain → mock/data.ts fixtureSessions（5 个固定 session：s1-s5）+ e2eTestSession（VITE_E2E 构建期注入，非 data.ts 原生）
   │    ├─ chat domain → mock/run-send-stream.ts（流式 chunk 序列）
   │    ├─ file domain → mock/file.ts（MOCK_TREE）
   │    ├─ git domain → mock/git.ts（fixtureGitStatus）
@@ -194,12 +194,12 @@ async function activateSession(
 }
 ```
 
-**可用的 fixture session label**（来自 `mock/data.ts`）：
+**可用的 fixture session label**（s1-s5 来自 `mock/data.ts`；`e2e-files` 由 VITE_E2E 构建期注入）：
 
 | id | label | 用途 |
 |----|-------|------|
-| `e2e-files` | `E2E 文件树测试` | 文件树 E2E（cwd=sample-project） |
-| `s1` | `重构 auth 模块` | 含最丰富块类型（error tool、thinking、fileChanges） |
+| `e2e-files` | `E2E 文件树测试` | 文件树 E2E（cwd=sample-project，构建期 Vite define 注入） |
+| `s1` | `重构 auth 模块` | 含最丰富块类型（2 回合：回合1 thinking + 2 completed tool；回合2 error tool bash EBUSY + status:error）。注：fileChanges 只在流式（run-send-stream）出现，历史 fixture 无 fileChanges |
 | `s2` | `Lint 排查中` | 末 assistant 含 running toolCall |
 | `s3` | `API 性能优化` | 空消息（验证欢迎语） |
 | `s4` | `Promise 代码评审` | 末 assistant streaming 态 |

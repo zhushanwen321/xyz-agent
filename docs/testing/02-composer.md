@@ -133,8 +133,8 @@ function onCmdSelect(payload: { type, name, icon?, description? }) {
 |------|------|
 | `MENTION_CANDIDATES` | @ 引用候选（id/name/kind/icon） |
 | `FILE_CANDIDATES` | # 文件候选 |
-| `MOCK_SLASH_COMMANDS` | / 命令（/commit /review /fix /compact，含 source: extension/skill/builtin） |
-| `MOCK_COMMANDS`（mock/index.ts） | session.commands 推送用（与 MOCK_SLASH_COMMANDS 同源） |
+| `MOCK_SLASH_COMMANDS`（composer-data.ts） | / 命令静态数据（/commit /review /fix，**3 个**，kind: 提交/审查/修复） |
+| `MOCK_COMMANDS`（mock/index.ts） | session.commands 推送用（/commit /review /fix /compact，**4 个**，含 builtin /compact；与 MOCK_SLASH_COMMANDS **不同源**——多了 /compact 且字段名不同 source vs kind） |
 
 **session 激活后推送**（`pushSessionState`，mock/index.ts line 81）：
 ```typescript
@@ -301,8 +301,12 @@ test.describe('Composer E2E', () => {
     await page.getByRole('textbox').pressSequentially('测试消息 e2e')
     // 按 ⏎ 发送（或点发送按钮）
     await page.getByRole('textbox').press('Enter')
-    // user 气泡可见（mock 流式约 3-4 秒）
-    await expect(page.getByText('测试消息 e2e')).toBeVisible({ timeout: 10_000 })
+    // 发送成功的可靠信号：mock 流式完成后的收尾 summary（约 3-4 秒）。
+    // 注意：不直接用 getByText('测试消息 e2e') 断言 user 气泡 ——
+    // mock 回复回显 user 输入（run-send-stream.ts:49 '已处理："${text}"...'），
+    // 该文本同时出现在 user 气泡 + assistant 回复，getByText 严格模式会因多匹配报错。
+    // 收尾 summary 是 mock 固定 CANNED_REPLY，单匹配稳定。
+    await expect(page.getByText(/好的，我来处理这个请求/)).toBeVisible({ timeout: 15_000 })
   })
 })
 ```

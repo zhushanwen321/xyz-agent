@@ -194,13 +194,16 @@ import { test, expect } from './fixtures/launch-app'
 
 test.describe('新建任务 E2E', () => {
   test('E2E-NT-1: 首屏 Landing 态渲染（composer 输入区 + chip 行）', async ({ page }) => {
-    // app 启动后默认 Landing 态（无活跃 session）
-    // 断言三视角的「观察者」视角：DOM 结构存在
+    // app 启动后默认 Landing 态（无活跃 session）。
+    // 注意：initApp 会用最近活跃 session 的 cwd 预填 chip（useSidebar.ts:217 注释
+    // 「initApp 用最近 session 目录预填」）。E2E 下 e2eTestSession.lastActiveAt=Date.now()
+    //（data.ts:257，是最新），其 cwd 是 sample-project → chip 预填「sample-project」，
+    // **不是**空态「选择目录」。空态只在真正首次启动（无任何历史 session）时出现。
     await expect(page.getByTestId('new-task-landing')).toBeVisible({ timeout: 10_000 })
     await expect(page.getByTestId('composer-box')).toBeVisible()
     await expect(page.getByTestId('chip-directory')).toBeVisible()
-    // directory chip 默认空态文案（首次启动延迟 create，无 cwd）
-    await expect(page.getByTestId('chip-directory')).toContainText('选择目录')
+    // chip 预填了最近 session 的 cwd（sample-project 末段目录名）
+    await expect(page.getByTestId('chip-directory')).toContainText('sample-project')
   })
 
   test('E2E-NT-2: 点 directory chip → 弹出选目录浮层', async ({ page }) => {
@@ -214,19 +217,20 @@ test.describe('新建任务 E2E', () => {
   })
 
   test('E2E-NT-3: 选目录 → chip 回灌目录名', async ({ page }) => {
+    // 注意：app 启动时 chip 已被 initApp 预填（e2eTestSession 的 cwd=sample-project，
+    // 见 NT-1）。recentWorkspaces 首项也是 sample-project（lastActiveAt=Date.now 最新）。
+    // 若点 .first()（sample-project），与预填 cwd 相同 → selectWorkspace 走 noop 分支
+    //（useNewTaskFlow.ts:265 cwd===currentCwd 仅关 popover 不改 chip）→ 测不出回灌。
+    // 故点 .nth(1)（第 2 个，fixtureSessions 去 cwd 重后 = xyz-agent，s1/s2/s5 的 cwd
+    // /Users/zhushanwen/Code/xyz-agent 末段）。
     await page.getByTestId('chip-directory').click()
     await expect(page.getByTestId('dir-select-popover')).toBeVisible({ timeout: 5_000 })
-    // 点第一个工作区
-    const firstWorkspace = page.getByTestId('workspace-item').first()
-    const workspaceText = await firstWorkspace.textContent()
-    await firstWorkspace.click()
+    // 点第 2 个工作区（非预填的 sample-project）
+    await page.getByTestId('workspace-item').nth(1).click()
     // popover 关闭
     await expect(page.getByTestId('dir-select-popover')).toHaveCount(0)
-    // chip 显示目录名（不再显示「选择目录」）
-    await expect(page.getByTestId('chip-directory')).not.toContainText('选择目录')
-    // chip 文本包含工作区名（取末段目录名）
-    const chipText = await page.getByTestId('chip-directory').textContent()
-    expect(chipText).toBeTruthy()
+    // chip 回灌所选工作区末段目录名（xyz-agent），正向断言（非永真的反向断言）
+    await expect(page.getByTestId('chip-directory')).toContainText('xyz-agent')
   })
 
   test('E2E-NT-4: 首发提交 → 离开 Landing 进入对话流', async ({ page }) => {
