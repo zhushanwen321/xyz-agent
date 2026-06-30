@@ -39,5 +39,4 @@ export type {
 export * from './extension'
 export { BASE_PORT, DEV_PORT_OFFSET, MAX_PORT, ENV_WHITELIST_PREFIXES } from './constants'
 export * from './file-tree'
-export * from './path-guard'
 export * from './ignore-parser'

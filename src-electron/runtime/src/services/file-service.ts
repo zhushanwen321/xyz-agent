@@ -18,7 +18,8 @@
  */
 import { resolve as resolvePath, join, relative } from 'node:path'
 import type { FileNode, IgnoreMatcher } from '@xyz-agent/shared'
-import { isUnderOrEqual, compileIgnoreRules, matchPath } from '@xyz-agent/shared'
+import { compileIgnoreRules, matchPath } from '@xyz-agent/shared'
+import { isUnderOrEqual } from '../utils/path-utils.js'
 import type { IFileExecutor, FsEntry } from './ports/file-executor.js'
 import type { ISessionService } from '../interfaces.js'
 import { FileError } from './file-error.js'
