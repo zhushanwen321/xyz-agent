@@ -11,11 +11,26 @@
   -->
   <ScrollArea class="h-full">
     <div class="flex flex-col gap-0.5 px-1" data-testid="file-view-root">
-      <!-- 头部：当前 session 标签 + 分支 -->
-      <div v-if="sessionLabel" class="truncate px-2 py-1.5 font-mono text-[10.5px] text-muted">
-        <span class="text-fg">{{ sessionLabel }}</span>
-        <span v-if="branch" class="opacity-60"> · </span>
-        <span v-if="branch" class="text-accent">{{ branch }}</span>
+      <!-- 头部：当前 session 标签 + 分支（左）× showIgnored 开关（右），同一行。
+           D-020/D-004：忽略项开关从过滤框下方上移至此（与会话名同行：会话名左、忽略项右）。 -->
+      <div v-if="sessionLabel" class="flex items-center gap-2 px-2 py-1.5">
+        <div class="min-w-0 flex-1 truncate font-mono text-[10.5px] text-muted">
+          <span class="text-fg">{{ sessionLabel }}</span>
+          <span v-if="branch" class="opacity-60"> · </span>
+          <span v-if="branch" class="text-accent">{{ branch }}</span>
+        </div>
+        <Button
+          variant="ghost"
+          class="h-5 shrink-0 gap-1 rounded-sm px-1.5 text-[10px]"
+          :class="store.showIgnored ? 'text-accent' : 'text-subtle'"
+          :title="store.showIgnored ? '隐藏忽略文件' : '显示忽略文件'"
+          data-testid="file-show-ignored-toggle"
+          @click="onToggleShowIgnored"
+        >
+          <EyeOff v-if="store.showIgnored" class="size-3" />
+          <Eye v-else class="size-3" />
+          <span>忽略项</span>
+        </Button>
       </div>
 
       <!-- 过滤框：实时按 path 模糊匹配（store.filterText，useFileTree.setFilter 驱动） -->
@@ -28,22 +43,6 @@
           data-testid="file-filter-input"
           @update:model-value="onFilter"
         />
-      </div>
-
-      <!-- showIgnored 开关（D-020/D-004：显示被 gitignore 忽略的文件，灰斜体渲染） -->
-      <div class="flex items-center justify-end gap-1 px-2 pb-1">
-        <Button
-          variant="ghost"
-          class="h-5 gap-1 rounded-sm px-1.5 text-[10px]"
-          :class="store.showIgnored ? 'text-accent' : 'text-subtle'"
-          :title="store.showIgnored ? '隐藏忽略文件' : '显示忽略文件'"
-          data-testid="file-show-ignored-toggle"
-          @click="onToggleShowIgnored"
-        >
-          <EyeOff v-if="store.showIgnored" class="size-3" />
-          <Eye v-else class="size-3" />
-          <span>忽略项</span>
-        </Button>
       </div>
 
       <!-- 加载态（loadTree 在途） -->

@@ -10,10 +10,13 @@
     浮层、width:50%，固定挂本容器（单实例，跟随 active panel）。drawer 不参与 panel 的 flex 布局——
     panel 始终 flex-1 均分（单 panel 撑满、双 panel 各半），drawer 直接覆盖 workspace 的另一半空间。
     方向：host=P1 → drawer 贴右（direction='right'）；host=P2 → drawer 贴左（direction='left'）。
+    overflow-hidden：drawer 是 absolute 子元素，溢出本容器时必须被裁，否则关闭按钮等右缘内容会
+    飘出窗口不可见（sidebar 加宽后 workspace 变窄放大了该问题）。drawer 的滑入/滑出改用 opacity
+    淡入（SideDrawer.vue transition），避免 translateX 位移被裁导致看不到动画。
     git 状态唯一数据源在此层 provide（按 active panel 的 session），GitPanel 注入共享。
   -->
   <div
-    class="panel-container relative flex min-h-0 flex-1"
+    class="panel-container relative flex min-h-0 flex-1 overflow-hidden"
     :class="panel.isDual ? 'gap-px bg-border' : ''"
   >
     <Panel

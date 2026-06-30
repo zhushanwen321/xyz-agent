@@ -23,20 +23,19 @@
       :class="direction === 'left' ? 'left-0 border-r border-border-strong' : 'right-0 border-l border-border-strong'"
       aria-label="侧边抽屉"
     >
-      <!-- header：tab 栏（左）+ 钉住/关闭（右） -->
+      <!-- header：tab 栏（仅 icon，左）+ 钉住/关闭（右）。label 收进 title 供 hover 查看。 -->
       <header class="flex items-center gap-1 border-b border-border px-2 py-1.5">
         <div class="flex flex-1 gap-0.5">
           <Button
             v-for="t in tabs"
             :key="t.key"
             variant="ghost"
-            class="h-7 gap-1 rounded-sm px-2 text-[12px]"
+            class="size-7 shrink-0 justify-center rounded-sm p-0"
             :class="activeTab === t.key ? 'bg-accent-soft text-accent' : 'text-muted'"
             :title="t.label"
             @click="emit('set-tab', t.key)"
           >
-            <component :is="t.icon" class="size-3" />
-            {{ t.label }}
+            <component :is="t.icon" class="size-3.5" />
           </Button>
         </div>
 
@@ -298,28 +297,20 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-/* 抽屉滑入/滑出（panel/spec.md v2：dir-right 从右滑出 translateX(100%)，dir-left 从左滑出 translateX(-100%)）。
-   escape hatch：Vue Transition 类无法用 Tailwind 表达（需 enter-from/leave-to 同时变换）。 */
+/* 抽屉淡入/淡出（panel/spec.md v2）。
+   原 translateX 位移动画被 PanelContainer 的 overflow-hidden 裁掉（drawer 是 absolute 子元素，
+   溢出定位容器必须被裁以防止关闭按钮飘出窗口），改为纯 opacity 淡入淡出。
+   escape hatch：Vue Transition 类无法用 Tailwind 表达（需 enter-from/leave-to 同时设 opacity）。 */
 .drawer-slide-right-enter-from,
 .drawer-slide-right-leave-to,
 .drawer-slide-left-enter-from,
 .drawer-slide-left-leave-to {
   opacity: 0;
 }
-.drawer-slide-right-enter-from,
-.drawer-slide-right-leave-to {
-  transform: translateX(100%);
-}
-.drawer-slide-left-enter-from,
-.drawer-slide-left-leave-to {
-  transform: translateX(-100%);
-}
 .drawer-slide-right-enter-active,
 .drawer-slide-right-leave-active,
 .drawer-slide-left-enter-active,
 .drawer-slide-left-leave-active {
-  transition:
-    transform var(--duration-slow) var(--ease),
-    opacity var(--duration-slow) var(--ease);
+  transition: opacity var(--duration-slow) var(--ease);
 }
 </style>

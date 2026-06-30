@@ -2,8 +2,7 @@
   <!--
     展示组件 · segmented 视图切换 tab（draft-five-states §3）。
     两子视图互斥（sessions | files）；active 态 = accent-soft 背景 + accent 文字 + 半透边。
-    每个 tab 右侧小字计数（会话 N / 文件 M），不切换即知规模。
-    files tab 的计数 = 当前 active session 改动文件数（G2-003 defer 内容，v1 计数置 0）。
+    仅 icon（label + 计数收进 title 供 hover 查看），宽度自适应内容（不再 flex-1 撑满）。
   -->
   <div class="flex gap-0.5 px-1 pb-1">
     <Button
@@ -11,19 +10,15 @@
       :key="tab.value"
       variant="ghost"
       :class="cn(
-        'h-auto flex-1 justify-center gap-1.5 rounded-[5px] border border-transparent px-2 py-[5px] text-[11.5px]',
+        'h-auto justify-center gap-1.5 rounded-[5px] border border-transparent px-2.5 py-[5px] text-[11.5px]',
         modelValue === tab.value
-          ? 'bg-accent-soft text-accent hover:bg-accent-soft hover:text-accent'
+          ? 'border-border-strong bg-accent-soft text-accent hover:bg-accent-soft hover:text-accent'
           : 'text-muted hover:bg-surface-hover hover:text-fg',
       )"
+      :title="`${tab.label} (${tab.count})`"
       @click="emit('update:modelValue', tab.value)"
     >
       <component :is="tab.icon" class="size-[13px]" />
-      <span>{{ tab.label }}</span>
-      <span
-        class="font-mono text-[10px]"
-        :class="modelValue === tab.value ? 'text-accent opacity-80' : 'text-subtle opacity-70'"
-      >{{ tab.count }}</span>
     </Button>
   </div>
 </template>
