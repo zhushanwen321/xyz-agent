@@ -111,7 +111,7 @@ export interface ClientMessageMap {
   'file.read': { path: string; sessionId?: string }
   'file.tree': { sessionId: string; showIgnored?: boolean }
   'file.tree.expand': { sessionId: string; path: string; showIgnored?: boolean }
-  /** file.search：composer # 文件候选，全量递归当前 cwd（受 ignore 过滤 + 深度上限 + 结果数上限）*/
+  /** file.search：composer # 文件候选，全量递归当前 cwd（受 ignore 过滤 + 深度上限 8 + DoS 上限 5000）*/
   'file.search': { sessionId: string; showIgnored?: boolean }
   'git.diff': { sessionId: string; path: string }
   'file.write.create': { sessionId: string; path: string; content: string }
@@ -305,7 +305,7 @@ export interface ServerMessageMapBase {
   'file.tree:result': { sessionId: string; tree: FileNode[] }
   /** file.tree.expand:result：展开目录 reply，单层子 FileNode[] */
   'file.tree.expand:result': { sessionId: string; children: FileNode[] }
-  /** file.search:result：composer # 文件候选 reply，全量递归 FileNode[]（受 ignore + 深度 8 + 上限 500）*/
+  /** file.search:result：composer # 文件候选 reply，全量递归 FileNode[]（受 ignore + 深度 8 + DoS 上限 5000）*/
   'file.search:result': { sessionId: string; files: FileNode[] }
   /** git.diff:result：文件 diff reply（patch + binary 标志） */
   'git.diff:result': { sessionId: string; patch: string; binary: boolean }

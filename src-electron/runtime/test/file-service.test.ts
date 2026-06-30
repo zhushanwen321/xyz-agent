@@ -19,7 +19,7 @@
  * 运行：cd src-electron/runtime && npx vitest run test/file-service.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { FileService, READ_TIMEOUT_MS, MAX_FILE_SIZE, type FileServiceOptions } from '../src/services/file-service.js'
+import { FileService, READ_TIMEOUT_MS, MAX_FILE_SIZE, MAX_SEARCH_RESULTS, type FileServiceOptions } from '../src/services/file-service.js'
 import { FileError } from '../src/services/file-error.js'
 import type { IFileExecutor, FsEntry } from '../src/services/ports/file-executor.js'
 
@@ -333,7 +333,7 @@ describe('FileService.searchFiles (#composer 文件候选全量递归)', () => {
    * - per-directory try/catch 容错（单子目录 EACCES 跳过不中断，listTree 则整体 reject）
    * - visited Set 防 symlink 成环
    * - 内建 ignore（node_modules 等）独立短路，不可被 .gitignore ! 覆盖
-   * - 结果数上限 500
+   * - DoS 防护上限 MAX_SEARCH_RESULTS（5000）
    */
 
   it('U1 正常：递归展开多层（path 相对 cwd，扁平数组）', async () => {
@@ -487,10 +487,10 @@ describe('FileService.searchFiles (#composer 文件候选全量递归)', () => {
     expect(files).toEqual([])
   })
 
-  it('U10 结果数上限：>500 文件截断到 500', async () => {
+  it('U10 DoS 上限：超过 MAX_SEARCH_RESULTS 文件截断到上限', async () => {
     executor.readFile.mockRejectedValueOnce(fsErr('ENOENT'))
-    // 顶层 600 个文件
-    const many: FsEntry[] = Array.from({ length: 600 }, (_, i) => ({
+    // 顶层超上限 100 个文件（引用常量，避免改上限时测试不同步）
+    const many: FsEntry[] = Array.from({ length: MAX_SEARCH_RESULTS + 100 }, (_, i) => ({
       name: `f${i}.ts`,
       type: 'file' as const,
       size: 1,
@@ -499,7 +499,7 @@ describe('FileService.searchFiles (#composer 文件候选全量递归)', () => {
 
     const files = await svc().searchFiles('s1')
 
-    expect(files).toHaveLength(500)
+    expect(files).toHaveLength(MAX_SEARCH_RESULTS)
   })
 
   it('U11 内建 ignore 不可被 .gitignore ! 覆盖', async () => {

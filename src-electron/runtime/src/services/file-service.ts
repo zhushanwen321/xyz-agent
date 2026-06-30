@@ -46,10 +46,17 @@ export const MAX_FILE_SIZE = 1_048_576
  */
 export const MAX_SEARCH_DEPTH = 8
 /**
- * searchFiles 结果数上限（达上限停止收集，横向截断）。
- * 防超大批量目录（如未 ignore 的 vendor）无上限耗时；导出供测试断言用。
+ * searchFiles DoS 防护上限（达上限停止收集，横向截断）。
+ *
+ * 设计定位：安全兜底，非功能限制——正常项目（通常 <5000 文件）不触发，
+ * 全量返回供前端缓存 + 本地过滤（composer # 候选按 query 即时过滤 name+path）。
+ * 仅防未 ignore 的超大批量目录（如 vendor / monorepo 产物）无上限耗时。
+ *
+ * 500→5000 调整背景：原 500 截断导致深度优先遍历中靠后位置的文件丢失
+ * （如根目录的 AGENTS.md），前端在已截断子集上过滤永远筛不到。5000 覆盖
+ * 正常项目全量，前端能找到任意文件；超大项目（>5000）仍截断作 DoS 兜底。
  */
-export const MAX_SEARCH_RESULTS = 500
+export const MAX_SEARCH_RESULTS = 5000
 /**
  * searchFiles 内建 ignore 目录名（安全兜底，独立于 .gitignore，不可被 `!` 取反覆盖）。
  * 常见依赖产物/构建/缓存目录，几乎不应出现在 composer 文件候选里。
