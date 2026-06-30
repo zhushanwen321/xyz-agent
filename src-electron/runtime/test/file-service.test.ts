@@ -517,4 +517,21 @@ describe('FileService.searchFiles (#composer 文件候选全量递归)', () => {
     // dist/keep.ts 不出现（内建 ignore 独立短路，! 无法覆盖）
     expect(files.every((f) => !f.path.startsWith('dist'))).toBe(true)
   })
+
+  it('U12 showIgnored=true：.gitignore 命中的文件标记 ignored=true 但不递归 ignore 目录', async () => {
+    // composer 场景不传 showIgnored=true，但覆盖防御分支：true 时标记不递归
+    executor.readFile.mockResolvedValueOnce('*.log\n') // /repo/.gitignore
+    executor.listDir
+      .mockResolvedValueOnce([
+        { name: 'debug.log', type: 'file', size: 1 },
+        { name: 'src', type: 'dir' },
+      ] as FsEntry[])
+      .mockResolvedValueOnce([] as FsEntry[]) // src 展开（非 ignore 目录正常递归）
+
+    const files = await svc().searchFiles('s1', true)
+
+    // debug.log 标记 ignored=true（显示模式保留+标记）
+    const log = files.find((f) => f.path === 'debug.log')
+    expect(log?.ignored).toBe(true)
+  })
 })
