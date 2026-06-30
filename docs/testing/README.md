@@ -14,6 +14,7 @@
 | [03-chat-flow.md](./03-chat-flow.md) | 对话流（流式消息 + 工具调用 + 变更集） | ✅ | ✅ | ⚠️ 范例（文本锚点可跑，补 testid 更稳） |
 | [04-file-tree.md](./04-file-tree.md) | 文件树（懒加载 + 过滤 + git 角标） | ✅ | ✅ | ✅ **已落地**（11 用例） |
 | [05-side-drawer.md](./05-side-drawer.md) | SideDrawer（文件预览 / diff / git tab） | ✅ | ✅ | ✅ 范例（detail + git tab 有可跑断言） |
+| [06-search-modal.md](./06-search-modal.md) | 搜索浮层（⌘K 四类分组 + 跳转 + loading·error） | ✅ | ✅ | ⚠️ 待落地（vitest 集成测已覆盖渲染+交互） |
 
 > 图例：✅ = 可测且稳定 / ⚠️ = 有约束或待补 / ❌ = 不可测（需手工）。
 > **已落地** = spec 文件存在于 `e2e/` 且能跑通；**范例** = 文档内有完整可跑代码但尚未落地为 spec 文件。
