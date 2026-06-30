@@ -31,6 +31,9 @@ vi.mock('@/api', () => ({
     setThinkingLevel: vi.fn(() => Promise.resolve()),
   },
   chat: { getHistory: vi.fn(() => Promise.resolve([])) },
+  // selectSession 触发 loadTree（文件树预加载），补 file/git domain mock 避免 unhandled rejection
+  file: { tree: vi.fn(() => Promise.resolve([])), expand: vi.fn(() => Promise.resolve([])) },
+  git: { status: vi.fn(() => Promise.resolve({ sessionId: 's1', isRepo: false, files: [] })) },
 }))
 
 import { session as sessionMock } from '@/api'

@@ -163,6 +163,38 @@ describe('FileService.listTree (#2 首加载)', () => {
     expect(src).toBeDefined()
     expect(src!.ignored).toBeUndefined() // 非 ignore 节点不标记
   })
+
+  it('AC-2.x 排序：dir 在前、同类型内 name 降序（listTree 顶层 + 子层一致）', async () => {
+    // 顶层混合 dir/file + 同类型多元素，验证排序规则全树一致
+    executor.readFile.mockResolvedValueOnce('') // /repo/.gitignore 空（不过滤）
+    executor.listDir
+      // 顶层：故意喂无序 + 大小写混合（z.ts/a.md/Bdir/adir）
+      .mockResolvedValueOnce([
+        { name: 'z.ts', type: 'file', size: 1 },
+        { name: 'Bdir', type: 'dir' },
+        { name: 'a.md', type: 'file', size: 1 },
+        { name: 'adir', type: 'dir' },
+      ] as FsEntry[])
+      // Bdir 展开一级子（验证子层也排序）
+      .mockResolvedValueOnce([
+        { name: 'y.ts', type: 'file', size: 1 },
+        { name: 'x.ts', type: 'file', size: 1 },
+      ] as FsEntry[])
+      // adir 展开一级子（验证子层 dir/file 混排）
+      .mockResolvedValueOnce([
+        { name: 'inner.ts', type: 'file', size: 1 },
+        { name: 'sub', type: 'dir' },
+      ] as FsEntry[])
+
+    const tree = await svc().listTree('s1')
+
+    // 顶层：dir 在前（降序 adir > Bdir），file 在后（降序 z.ts > a.md）
+    expect(tree.map((n) => n.name)).toEqual(['adir', 'Bdir', 'z.ts', 'a.md'])
+    // Bdir 子层（纯 file，降序 y.ts > x.ts）
+    expect(tree[1].children?.map((c) => c.name)).toEqual(['y.ts', 'x.ts'])
+    // adir 子层（dir 在前 sub，file 在后 inner.ts）
+    expect(tree[0].children?.map((c) => c.name)).toEqual(['sub', 'inner.ts'])
+  })
 })
 
 describe('FileService.expandDir (#3 展开目录)', () => {
@@ -179,10 +211,11 @@ describe('FileService.expandDir (#3 展开目录)', () => {
     const nodes = await svc().expandDir('s1', 'src')
 
     expect(nodes).toHaveLength(2)
-    expect(nodes[0]).toMatchObject({ path: 'src/main.ts', type: 'file', size: 50 })
-    expect(nodes[1]).toMatchObject({ path: 'src/sub', type: 'dir' })
+    // 排序后 dir 在前：sub(dir) 排到 main.ts(file) 之前
+    expect(nodes[0]).toMatchObject({ path: 'src/sub', type: 'dir' })
+    expect(nodes[1]).toMatchObject({ path: 'src/main.ts', type: 'file', size: 50 })
     // 单层：不递归，dir 子节点无 children（懒加载未展开）
-    expect(nodes[1].children).toBeUndefined()
+    expect(nodes[0].children).toBeUndefined()
     // listDir 以绝对路径调用（cwd 子树内）
     expect(executor.listDir).toHaveBeenCalledWith('/repo/src')
   })

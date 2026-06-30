@@ -48,6 +48,7 @@ export class FileService {
    * 文件树首加载（UC-1，#2，AC-2.1/2.2/2.4，T1.1-1.6）。
    * 编排：顶层 listDir(cwd) + 对每个顶层 dir 再 listDir（1+M 次，F-1）→ ignore 双模式过滤。
    * 顶层 FileNode.path = name（相对 cwd）；dir 的一级子 children.path = name/sub（相对 cwd）。
+   * 返回前按 sortNodes 排序（dir 在前、同类型内 name 降序），与 listLevel 一致。
    * @throws FileError('session_not_found' | 'permission_denied' | 'timeout')
    */
   async listTree(sessionId: string, showIgnored?: boolean): Promise<FileNode[]> {
@@ -67,7 +68,7 @@ export class FileService {
       }
       topNodes.push(node)
     }
-    return topNodes
+    return FileService.sortNodes(topNodes)
   }
 
   /**
@@ -149,6 +150,7 @@ export class FileService {
 
   /**
    * 列单层并映射 FileNode（ignore 双模式过滤，D-020）。
+   * 返回前按 sortNodes 排序（dir 在前、同类型内 name 降序）。
    * @param absPath  目录绝对路径（executor.listDir 用）
    * @param relParent 相对 cwd 的目录路径（FileNode.path 前缀，顶层为 ''）
    */
@@ -167,7 +169,21 @@ export class FileService {
       if (ignored) node.ignored = true // 显示模式：保留并标记
       nodes.push(node)
     }
-    return nodes
+    return FileService.sortNodes(nodes)
+  }
+
+  /**
+   * 文件节点排序（展示偏好，单一权威源）：目录在前，同类型内按 name 字典序降序。
+   * 用原生 < / > 比较（非 localeCompare）：跨平台/ICU 数据一致、可预测，不依赖运行环境 locale。
+   * 静态方法：listTree（顶层）与 listLevel（子层）共用，确保全树一致有序。
+   */
+  private static sortNodes(nodes: FileNode[]): FileNode[] {
+    return nodes.sort((a, b) => {
+      // dir 排在 file 前（type 权重：dir=0, file=1）
+      if (a.type !== b.type) return a.type === 'dir' ? -1 : 1
+      // 同类型内按 name 字典序降序（b 在前 = 降序）
+      return a.name < b.name ? 1 : a.name > b.name ? -1 : 0
+    })
   }
 
   /** FsEntry → FileNode 映射。path = relParent ? `${relParent}/${name}` : name（相对 cwd，无前导斜杠）。 */

@@ -25,6 +25,7 @@ import { usePanelStore } from '@/stores/panel'
 import { useSessionStore } from '@/stores/session'
 import { useSidebarStore } from '@/stores/sidebar'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
+import { useFileTree } from '@/composables/features/useFileTree'
 import type { DerivedStatus } from '@/types'
 
 /**
@@ -187,6 +188,12 @@ export function useSidebar() {
     } catch (e) {
       console.warn('[useSidebar] getCommands failed, slash popover will be empty:', e)
     }
+
+    // 文件树预加载：切 session 即拉取，使侧栏「文件」tab 计数（fileCount 读 store.getTree）
+    // 立即更新——不依赖用户切到文件 tab 才触发 FileView 的 loadTree。loadTree 内部缓存复用
+    // （已加载则 rehydrate 直接返回），FileView 挂载时再调会命中缓存，无重复请求。
+    // fire-and-forget：失败不阻断切 session（文件树缺失仅致 tab 数字为 0，切到文件 tab 仍可重试）。
+    void useFileTree().loadTree(id)
   }
 
   /**
