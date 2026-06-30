@@ -98,7 +98,13 @@ export async function createWindow(
   })
 
   win.once('ready-to-show', () => {
-    win.show()
+    // E2E 模式用 showInactive：窗口渲染但不抢焦点，避免跑 E2E 时打断用户工作
+    // （Playwright Electron 不支持 headless，macOS 无 xvfb；showInactive 是不抢焦点的唯一干净方案）
+    if (process.env.XYZ_E2E === '1') {
+      win.showInactive()
+    } else {
+      win.show()
+    }
   })
 
   // E2E 是一类部署形态（已构建产物 + mock 注入），架构正确归位是独立分支而非 hack isDev：
