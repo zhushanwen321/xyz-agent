@@ -1,8 +1,9 @@
 <template>
   <!--
     + 添加内容 popover（draft-composer-states §1 ①）。
-    click 触发，四路：附件 / @ 引用 / # 文件 / / 命令。
-    点击 @ # / 由父组件插入对应符号到输入区（进而触发命令浮层 §2d）。
+    click 触发，三路：附件 / # 文件 / / 命令。
+    点击 # / 由父组件插入对应符号到输入区（进而触发命令浮层 §2d）。
+    landing 守门（G10）：无 session 时隐藏「文件」入口（无 cwd，# 无意义）。
   -->
   <Popover v-model:open="open">
     <PopoverTrigger as-child>
@@ -10,7 +11,7 @@
         variant="ghost"
         size="icon"
         class="size-[28px] shrink-0 rounded-sm text-subtle transition-colors hover:bg-surface-hover hover:text-muted"
-        title="添加内容（附件 / @ 引用 / 命令）"
+        title="添加内容（附件 / 文件 / 命令）"
       >
         <Plus class="size-4" />
       </Button>
@@ -32,12 +33,17 @@
 </template>
 
 <script setup lang="ts">
-import { markRaw, ref } from 'vue'
-import { AtSign, Hash, Paperclip, Plus, Slash } from '@lucide/vue'
+import { computed, markRaw, ref } from 'vue'
+import { Hash, Paperclip, Plus, Slash } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 
-type AddType = 'attach' | 'mention' | 'file' | 'slash'
+type AddType = 'attach' | 'file' | 'slash'
+
+const props = defineProps<{
+  /** 当前 session id（无值=landing 态，隐藏「文件」入口） */
+  sessionId?: string | null
+}>()
 
 const emit = defineEmits<{
   select: [type: AddType]
@@ -45,12 +51,14 @@ const emit = defineEmits<{
 
 const open = ref(false)
 
-const items = [
+const ALL_ITEMS = [
   { type: 'attach' as const, label: '附件', icon: markRaw(Paperclip) },
-  { type: 'mention' as const, label: '引用', hint: '@', icon: markRaw(AtSign) },
   { type: 'file' as const, label: '文件', hint: '#', icon: markRaw(Hash) },
   { type: 'slash' as const, label: '命令', hint: '/', icon: markRaw(Slash) },
 ]
+
+/** landing 守门：无 session 时隐藏「文件」入口（无 cwd，# 无意义） */
+const items = computed(() => (props.sessionId ? ALL_ITEMS : ALL_ITEMS.filter((i) => i.type !== 'file')))
 
 function onSelect(type: AddType): void {
   open.value = false

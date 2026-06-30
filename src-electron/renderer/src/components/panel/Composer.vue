@@ -40,8 +40,8 @@
       <!-- 工具条（panel/spec §composer line 51）：上下文/模型/thinking-level 展示型 + 发送位三态。
            gap-0：三触发器贴合紧凑成一条工具带（draft「不画分隔线」，仅靠 padding 区隔），发送位 ml-1.5 独立锚点。 -->
       <div class="composer-bar flex flex-wrap items-center justify-end gap-0 px-2.5 pb-2 mt-1">
-        <!-- + 添加内容（左锚定，spec §1 ①，click 出 4 路浮层） -->
-        <AddMenuPopover @select="onAddSelect" />
+        <!-- + 添加内容（左锚定，spec §1 ①，click 出 3 路浮层） -->
+        <AddMenuPopover :session-id="sessionId" @select="onAddSelect" />
         <span class="flex-1" />
         <!-- 上下文容量（spec §2a：hover 出容量 popover；session 通道订阅 context.update） -->
         <ContextCapacityPopover :session-id="sessionId ?? undefined" />
@@ -147,9 +147,9 @@ const currentModelId = computed(
 )
 /** ComposerInput 实例 ref：清空/恢复草稿用 */
 const inputRef = ref<InstanceType<typeof ComposerInput> | null>(null)
-/** 命令浮层状态（§2d @/#//） */
+/** 命令浮层状态（§2d #//） */
 const cmdOpen = ref(false)
-const cmdType = ref<'mention' | 'file' | 'slash'>('mention')
+const cmdType = ref<'file' | 'slash'>('file')
 /** slash 触发态标记：区分「输入区 / 触发」与「+菜单触发」两条打开浮层路径。
  *  仅输入区 / 触发打开时为 true，使后续 slash-trigger:null 能正确关闭；
  *  +菜单路径（onAddSelect）不设 true，避免用户敲普通键误关 +菜单浮层。 */
@@ -194,19 +194,19 @@ function onSlashTrigger(payload: { query: string } | null): void {
   }
 }
 
-/** + 菜单选择：打开对应命令浮层（§2d @/#//）。slashTriggerActive 不设 true——
+/** + 菜单选择：打开对应命令浮层（§2d #//）。slashTriggerActive 不设 true——
  *  +菜单路径的浮层不受后续 slash-trigger:null 影响（防用户敲普通键误关）。 */
-function onAddSelect(type: 'attach' | 'mention' | 'file' | 'slash'): void {
+function onAddSelect(type: 'attach' | 'file' | 'slash'): void {
   if (type === 'attach') return // TODO: 附件上传（未来功能）
   inputRef.value?.saveSelection()
   inputRef.value?.focus()
-  cmdType.value = type === 'mention' ? 'mention' : type === 'file' ? 'file' : 'slash'
+  cmdType.value = type === 'file' ? 'file' : 'slash'
   cmdOpen.value = true
 }
 
-/** 命令浮层选中：插 slash chip / mention chip。slash 分支先清掉 /query 过滤文本再插 chip。
+/** 命令浮层选中：插 slash chip / file chip。slash 分支先清掉 /query 过滤文本再插 chip。
  *  icon 按 source 透传给 chip（extension→terminal / skill→star / 默认 wrench），与选择框图标一致。 */
-function onCmdSelect(payload: { type: 'mention' | 'file' | 'slash'; name: string; icon?: string; description?: string }): void {
+function onCmdSelect(payload: { type: 'file' | 'slash'; name: string; icon?: string; description?: string }): void {
   cmdOpen.value = false
   slashTriggerActive.value = false // 复位触发态标记
   inputRef.value?.focus()
@@ -214,7 +214,7 @@ function onCmdSelect(payload: { type: 'mention' | 'file' | 'slash'; name: string
     inputRef.value?.clearSlashQueryText()
     inputRef.value?.insertSlashChip(payload.name, payload.icon)
   } else {
-    inputRef.value?.insertMentionChip(payload.type === 'mention' ? '@' : '#', payload.name)
+    inputRef.value?.insertMentionChip('#', payload.name)
   }
 }
 

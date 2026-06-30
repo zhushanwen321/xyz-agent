@@ -60,12 +60,13 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import * as events from '@/api/events'
-import { composer } from '@/api'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
 import { useCommandStore, type RawCommand } from '@/stores/command'
 import { useSettingsStore } from '@/stores/settings'
+import { useFileSearch } from '@/composables/features/useFileSearch'
+import { toFileCandidates } from '@/lib/file-candidates'
 
-type CmdType = 'mention' | 'file' | 'slash'
+type CmdType = 'file' | 'slash'
 
 const props = defineProps<{
   open: boolean
@@ -91,26 +92,24 @@ const activeIndex = ref(0)
 
 const commandStore = useCommandStore()
 const settingsStore = useSettingsStore()
+const { load: loadFileCandidates } = useFileSearch()
 
 // slash 命令：从 commandStore 读取（session-scoped，组件 v-if 重建不丢数据）。
-// @ 引用 / # 文件是搜索能力（后端从零），保持常量，不订阅、不进 store。
-const mentionCandidates = ref<Array<{ id: string; name: string; kind: string; icon: string; path?: string }>>([])
-const fileCandidates = ref<Array<{ id: string; name: string; kind: string; path?: string }>>([])
+// # 文件候选：经 useFileSearch（session 级缓存）拉 file.search 结果 → toFileCandidates 映射。
+const fileCandidates = ref<ReturnType<typeof toFileCandidates>>([])
 
-// 异步加载 @/# 候选（mock 立即返回，real 后端就绪后零改动）
-// 独立数据源用 allSettled 允许部分降级
+// 异步加载 # 文件候选（session 级缓存命中则不重拉；无 session 时不加载）
 let loaded = false
 async function loadCandidates(): Promise<void> {
   if (loaded) return
-  const [mentionsR, filesR] = await Promise.allSettled([
-    composer.getMentionCandidates(),
-    composer.getFileCandidates(),
-  ])
-  if (mentionsR.status === 'fulfilled') mentionCandidates.value = mentionsR.value
-  if (filesR.status === 'fulfilled') fileCandidates.value = filesR.value
   loaded = true
+  if (!props.sessionId) return // landing 态无 cwd，不加载文件候选
+  const nodes = await loadFileCandidates(props.sessionId)
+  fileCandidates.value = toFileCandidates(nodes)
 }
 onMounted(() => { void loadCandidates() })
+// sessionId 变化时重新加载（切 session，loaded 复位触发重拉新 session 缓存）
+watch(() => props.sessionId, () => { loaded = false; void loadCandidates() })
 
 /**
  * slash 命令源（双源，按 session 有无切换）：
@@ -158,17 +157,8 @@ onMounted(() => subscribeCommands(props.sessionId))
 onBeforeUnmount(() => unsubCommands?.())
 watch(() => props.sessionId, (sid) => subscribeCommands(sid))
 
-/** 统一候选项视图（三种数据源归一为 { id, name, kind, icon, description? }） */
+/** 统一候选项视图（file/slash 两路归一为 { id, name, kind, icon, description? }） */
 const items = computed(() => {
-  if (props.type === 'mention') {
-    return mentionCandidates.value.map((m) => ({
-      id: m.id,
-      name: m.name,
-      kind: m.kind,
-      icon: m.icon,
-      description: undefined,
-    }))
-  }
   if (props.type === 'file') {
     return fileCandidates.value.map((f) => ({
       id: f.id,
@@ -179,7 +169,7 @@ const items = computed(() => {
     }))
   }
   const all = slashCommands.value
-  // slash 路径按 query 过滤（@/# 不过滤，走常量候选）；query 仅影响 slash 命令
+  // slash 路径按 query 过滤（# 不过滤，走全量候选）；query 仅影响 slash 命令
   const q = props.type === 'slash' ? (props.query ?? '').trim().toLowerCase() : ''
   const filtered = q ? all.filter((c) => c.name.toLowerCase().includes(q)) : all
   return filtered.map((c) => ({

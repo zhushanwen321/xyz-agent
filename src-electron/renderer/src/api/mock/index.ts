@@ -12,7 +12,7 @@
 import type {
   Message, ModelInfo, ServerMessage, SessionSummary, SessionGroup, ProviderInfo,
   SkillInfo, AgentInfo, PluginInfo, SetProviderData, ExtensionWidgetPayload, ExtensionStatusPayload,
-  SkillDirConfig,
+  SkillDirConfig, FileNode,
 } from '@xyz-agent/shared'
 import { createSession, fixtureMessages, fixtureSessions, e2eTestSession } from './data'
 import { fixtureProviders, fixtureSkills, fixtureAgents, fixtureExtensions, toCandidate } from './settings-data'
@@ -504,16 +504,23 @@ export const plugin = {
   onPlugins: (h: (plugins: PluginInfo[]) => void) => pluginsSub.subscribe(h),
 }
 
-/* ── Composer mock（@ 引用 / # 文件候选，纯静态 fixture；后端搜索能力就绪后接 real domain）── */
+/* ── Composer mock（@ 引用 / # 文件候选；# 已接 real domain，mock 模式仍用 fixture 演示）── */
+/* 门面三元同构：getFileCandidates 返回 FileNode[]（与 real composer domain 一致），
+   FILE_CANDIDATES（UI 形状）→ FileNode 映射在此处，消费侧 lib/file-candidates.ts 统一做 FileNode→候选映射。 */
 
 export const composer = {
   async getMentionCandidates() {
     await sleep(TIMING.ack)
     return MENTION_CANDIDATES.map((m) => ({ ...m }))
   },
-  async getFileCandidates() {
+  async getFileCandidates(): Promise<FileNode[]> {
     await sleep(TIMING.ack)
-    return FILE_CANDIDATES.map((f) => ({ ...f }))
+    // FILE_CANDIDATES（UI 形状 {name,kind,path}）→ FileNode（{path,name,type}），与 real 同构
+    return FILE_CANDIDATES.map((f) => ({
+      path: f.path ?? f.name,
+      name: f.name.replace(/\/$/, ''),
+      type: (f.kind === '目录' ? 'dir' : 'file') as FileNode['type'],
+    }))
   },
 }
 

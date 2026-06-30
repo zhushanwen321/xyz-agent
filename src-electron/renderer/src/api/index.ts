@@ -20,6 +20,7 @@ import * as realPlugin from './domains/plugin'
 import * as realSettings from './domains/settings'
 import * as realGit from './domains/git'
 import * as realFile from './domains/file'
+import * as realComposer from './domains/composer'
 import * as mockApi from './mock'
 
 const isMock = import.meta.env.VITE_MOCK === 'true'
@@ -34,8 +35,10 @@ export const settings = isMock ? mockApi.settings : realSettings
 export const git = isMock ? mockApi.git : realGit
 export const file = isMock ? mockApi.file : realFile
 
-// composer & search 暂无 real domain，始终走 mock（后端就绪后接线）
-export const composer = mockApi.composer
+// composer：`#` 文件候选已接 real domain（file.search）；`@` 候选 real 返回空（已废弃）。
+// mock 模式仍走 mockApi.composer（fixture 演示）。
+export const composer = isMock ? mockApi.composer : realComposer
+// search（⌘K 全局搜索）暂无 real domain，始终走 mock
 export const search = mockApi.search
 
 // 类型 re-export（供组件 import 类型用）
