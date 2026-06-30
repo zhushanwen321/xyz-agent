@@ -1,0 +1,265 @@
+# 05 · SideDrawer 测试流程
+
+> 覆盖：SideDrawer 抽屉（5 tab：terminal/browser/git/doc/detail）、文件预览（detail tab，diff/preview 切换）、git 面板
+>
+> 先读 [00-test-strategy-overview.md](./00-test-strategy-overview.md) 理解双轨制和公共前置。
+
+## 1. 功能概述
+
+SideDrawer 是 workspace-body 级的右侧抽屉，承载 5 个 tab：
+
+| tab | 内容 | 数据来源 |
+|-----|------|---------|
+| `terminal` | 终端 widget（extension:widget, widgetKey='terminal'） | extension.onWidget 订阅 |
+| `browser` | 浏览器 widget（widgetKey='browser'） | extension.onWidget 订阅 |
+| `git` | 全量 git 状态 + 暂存/提交（GitPanel） | provide/inject GIT_STATUS_KEY |
+| `doc` | 命令/skill 详细文档（CommandDocPanel） | commandStore + skills |
+| `detail` | 文件预览（DetailPane，diff/preview 切换，禁 v-html） | useDetailPane watch selectedPath |
+
+**detail tab** 是文件树点文件的落点（见 [04-file-tree.md](./04-file-tree.md) E2E-3）：点文件 → `fileTreeStore.selectFile` → SideDrawer `open('detail')` → DetailPane 挂载 → useDetailPane 加载内容。
+
+## 2. 组件树
+
+```
+PanelContainer.vue
+  └─ SideDrawer.vue（props: open, activeTab, sessionId）  ← 容器
+       ├─ header
+       │    ├─ tab 栏（terminal/browser/git/doc/detail，button × 5，无 testid）
+       │    ├─ 钉住按钮（无 testid）
+       │    └─ 关闭按钮（无 testid）
+       └─ content（按 activeTab 切换）
+            ├─ terminal/browser tab → widget 内容（extension.onWidget）或空态
+            ├─ GitPanel.vue（v-if activeTab==='git'，无 testid）  ← git 全量状态
+            ├─ CommandDocPanel.vue（v-if activeTab==='doc'）  ← 命令文档
+            └─ DetailPane.vue（v-else-if activeTab==='detail'）  ← 文件预览
+                 ├─ detail-pane (data-testid="detail-pane")  ← 容器
+                 ├─ detail-view-toggle (data-testid="detail-view-toggle")  ← diff/preview 切换（有 git 改动时）
+                 ├─ detail-loading (data-testid="detail-loading")
+                 ├─ detail-error (data-testid="detail-error")
+                 ├─ detail-empty (data-testid="detail-empty")
+                 ├─ detail-binary (data-testid="detail-binary")
+                 ├─ detail-content (data-testid="detail-content")  ← 内容区（<pre> 文本插值）
+                 └─ detail-truncated (data-testid="detail-truncated")  ← 截断提示（>1MB）
+```
+
+## 3. data-testid 清单
+
+| testid | 文件:行 | 触发/可见条件 |
+|--------|---------|--------------|
+| `detail-pane` | DetailPane.vue:11 | detail tab 激活时恒显 |
+| `detail-view-toggle` | DetailPane.vue:17 | **仅有 git 改动时**显示（diff/preview 切换） |
+| `detail-loading` | DetailPane.vue:39 | 加载中 |
+| `detail-error` | DetailPane.vue:49 | 加载失败 |
+| `detail-empty` | DetailPane.vue:60 | 空内容 |
+| `detail-binary` | DetailPane.vue:70 | 二进制文件 |
+| `detail-content` | DetailPane.vue:78 | 内容区（恒显，加载完成后） |
+| `detail-truncated` | DetailPane.vue:83 | 文件 >1MB 截断 |
+
+> ⚠️ **SideDrawer 本身 + GitPanel + CommandDocPanel + tab 栏按钮无 testid**。E2E 查 tab 靠文本，查 git/doc 内容靠内部元素文本。建议补：
+> - SideDrawer tab 按钮 → `data-testid="drawer-tab-{key}"`
+> - SideDrawer 根 → `data-testid="side-drawer-root"`
+> - GitPanel → `data-testid="git-panel"`
+
+## 4. detail tab 数据流（useDetailPane）
+
+[`composables/features/useDetailPane.ts`](../../src-electron/renderer/src/composables/features/useDetailPane.ts)：
+
+```
+fileTreeStore.selectedPath 变化（点文件触发）
+  └─ useDetailPane watch (selectedPath + sessionId)
+       └─ openPreview(sid, path)
+            ├─ store.getGitStatus(sid, path)?.status  ← 查 gitOverlay
+            ├─ hasGitChange = !!gitStatus
+            ├─ 默认 viewMode：有改动 → 'diff'；无 → 'preview'
+            ├─ if viewMode === 'diff':
+            │    gitApi.getDiff(sid, path) → mock 返回 patch
+            └─ else:
+                 fileApi.read(path, sid) → mock 返回内容（cwd 守门，sessionId 路径）
+            → state.content = 结果；state.status = 'ready'
+```
+
+**viewMode 切换**（detail-view-toggle）：文件既有 git 改动又是普通文件时，用户可手动在 diff/preview 间切换。
+
+**XSS 安全**（[NFR.md](../../NFR.md) no-v-html 约束）：DetailPane **禁用 v-html**，内容用 `<pre>{{ state.content }}</pre>` 文本插值。mock file.read / git.getDiff 含 `<script>` 路径用于验证 XSS 防护。
+
+## 5. mock 数据
+
+| 数据 | 内容 |
+|------|------|
+| `file.read(path, sid)` mock | 按扩展名返回内容（.ts 含 'export function'；含 `<script>` 路径用于 XSS 测试） |
+| `git.getDiff(sid, path)` mock | 按路径返回 patch（含 'diff --git'；含 `<script>` 用于 XSS；二进制返回空 patch） |
+
+## 6. MOCK 模式测试
+
+### 6.1 MOCK dev 手工测试
+
+```bash
+cd src-electron && npm run dev:mock
+```
+
+| 步骤 | 操作 | 期望 |
+|------|------|------|
+| 1 | 激活 e2e-files session，切文件 tab | 文件树加载 |
+| 2 | 点 src/index.ts（未改动） | drawer 打开 detail tab，显示 file.read 内容（含 'export function'） |
+| 3 | 点 src/new-feature.ts（git added） | drawer 切到该文件，显示 git.getDiff patch（含 'diff --git'），detail-view-toggle 可见 |
+| 4 | 点 detail-view-toggle | diff ↔ preview 切换 |
+| 5 | 切到 git tab | GitPanel 显示（mock git 状态） |
+| 6 | 切到 terminal tab | widget 内容或空态 |
+
+### 6.2 集成测试
+
+DetailPane / useDetailPane 的单测在 [`__tests__/`](../../src-electron/renderer/src/__tests__)（搜索 detail/useDetailPane）。
+
+## 7. 非 MOCK 模式测试
+
+```bash
+cd src-electron && npm run dev
+```
+
+**手工冒烟清单**：
+
+| 步骤 | 操作 | 期望 |
+|------|------|------|
+| 1 | 激活真实 session，点文件 | drawer 打开，runtime `file.read` 真实内容 |
+| 2 | 点 git 改动文件 | runtime `git.getDiff` 真实 patch |
+| 3 | 切 git tab | GitPanel 显示真实 `git status` + 暂存/提交 |
+| 4 | 大文件（>1MB） | detail-truncated 显示 |
+| 5 | 二进制文件（图片） | detail-binary 显示 |
+
+**关键验证点**（MOCK 测不出）：
+- runtime `file.read` / `git.getDiff` 真实 RPC（含 BC-3 路径守卫：read 允许 3 全局目录 + cwd 子树）
+- 真实 git diff 格式（binary/rename/copy）
+- 大文件截断逻辑（>1MB）
+- GitPanel 真实 git status + 暂存/提交流程
+
+## 8. Playwright E2E 测试（detail tab 已落地）
+
+### 8.1 现有覆盖
+
+detail tab 的 E2E 已在 [`e2e/file-tree.spec.ts`](../../e2e/file-tree.spec.ts) 落地（E2E-3a/3b/3c，见 [04-file-tree.md §8.3](./04-file-tree.md)）。复用 gotoFileTree helper。
+
+### 8.2 测试场景
+
+| 场景 | testid 锚点 | 期望 |
+|------|------------|------|
+| E2E-SD-1：点未改动文件 → 内容预览 | `detail-pane` / `detail-content` | 内容含 'export function' |
+| E2E-SD-2：点改动文件 → diff + XSS 安全 | `detail-content` | 含 'diff --git'；`detail-content script` count=0 |
+| E2E-SD-3：drawer 已开点新文件 → 切换 | `detail-pane` count | 切换前后 count 不变 |
+| E2E-SD-4：detail-view-toggle 切换 | `detail-view-toggle` | 有 git 改动时可见，点击切换 diff/preview |
+| E2E-SD-5：切其他 tab 再回 detail | tab 文本按钮 | detail 内容恢复 |
+
+### 8.3 完整 E2E 示例代码（含 tab 切换）
+
+> 注意：tab 切换部分（git/doc/terminal）是**范例模板**，detail 部分已落地在 file-tree.spec.ts。
+
+```typescript
+import { test, expect } from './fixtures/launch-app'
+
+async function gotoFileTree(page: import('@playwright/test').Page): Promise<void> {
+  await page.getByRole('button', { name: /^会话/ }).click()
+  await expect(page.getByText('E2E 文件树测试')).toBeVisible({ timeout: 10_000 })
+  await page.getByText('E2E 文件树测试').click()
+  await page.getByRole('button', { name: /^文件/ }).click()
+  await expect(page.getByTestId('file-view-root')).toBeVisible({ timeout: 10_000 })
+}
+
+test.describe('SideDrawer E2E', () => {
+  test('E2E-SD-1: 点未改动文件 → 内容预览', async ({ page }) => {
+    await gotoFileTree(page)
+    await page.getByTestId('file-tree-dir-src').click()
+    await page.getByTestId('file-tree-file-src/index.ts').click()
+    await expect(page.getByTestId('detail-pane')).toBeVisible({ timeout: 5_000 })
+    await expect(page.getByTestId('detail-content')).toBeVisible({ timeout: 5_000 })
+    await expect(page.getByTestId('detail-content')).toContainText('export function')
+    // 未改动文件 → 无 detail-view-toggle
+    await expect(page.getByTestId('detail-view-toggle')).toHaveCount(0)
+  })
+
+  test('E2E-SD-2: 点改动文件 → diff + XSS 安全', async ({ page }) => {
+    await gotoFileTree(page)
+    await page.getByTestId('file-tree-dir-src').click()
+    await page.getByTestId('file-tree-file-src/new-feature.ts').click()
+    await expect(page.getByTestId('detail-pane')).toBeVisible({ timeout: 5_000 })
+    // 改动文件 → 默认 diff，有 detail-view-toggle
+    await expect(page.getByTestId('detail-view-toggle')).toBeVisible()
+    await expect(page.getByTestId('detail-content')).toContainText('diff --git')
+    // XSS 安全：<script> 不执行（禁 v-html）
+    const scriptCount = await page.locator('detail-content script').count()
+    expect(scriptCount).toBe(0)
+  })
+
+  test('E2E-SD-3: drawer 已开点新文件 → 切换非新开', async ({ page }) => {
+    await gotoFileTree(page)
+    await page.getByTestId('file-tree-dir-src').click()
+    await page.getByTestId('file-tree-file-src/index.ts').click()
+    await expect(page.getByTestId('detail-pane')).toBeVisible({ timeout: 5_000 })
+    const countBefore = await page.getByTestId('detail-pane').count()
+    // 点第二个文件（切换）
+    await page.getByTestId('file-tree-file-src/existing.ts').click()
+    await expect(page.getByTestId('detail-pane')).toBeVisible({ timeout: 5_000 })
+    const countAfter = await page.getByTestId('detail-pane').count()
+    expect(countAfter).toBe(countBefore)  // 仍 1 个（切换非新开）
+  })
+
+  test('E2E-SD-4: detail-view-toggle 切换 diff/preview', async ({ page }) => {
+    await gotoFileTree(page)
+    await page.getByTestId('file-tree-dir-src').click()
+    await page.getByTestId('file-tree-file-src/new-feature.ts').click()
+    await expect(page.getByTestId('detail-pane')).toBeVisible({ timeout: 5_000 })
+    // 默认 diff
+    await expect(page.getByTestId('detail-content')).toContainText('diff --git')
+    // 点 toggle 切到 preview
+    await page.getByTestId('detail-view-toggle').click()
+    await expect(page.getByTestId('detail-content')).toBeVisible({ timeout: 5_000 })
+    // 切回 diff
+    await page.getByTestId('detail-view-toggle').click()
+    await expect(page.getByTestId('detail-content')).toContainText('diff --git')
+  })
+
+  test('E2E-SD-5: 切 git tab（文本锚点）', async ({ page }) => {
+    await gotoFileTree(page)
+    await page.getByTestId('file-tree-dir-src').click()
+    await page.getByTestId('file-tree-file-src/index.ts').click()
+    await expect(page.getByTestId('detail-pane')).toBeVisible({ timeout: 5_000 })
+    // 切到 git tab（tab 按钮无 testid，按文本查）
+    // 注意：tab 文本可能随 UI 调整，建议补 testid
+    await page.getByRole('button', { name: /git|Git/i }).click()
+    // GitPanel 渲染（mock git 状态）— 断言 git 相关文本可见
+    // 具体 git 文本依赖 GitPanel 实现，此处用通用占位
+    // await expect(page.getByText(/暂存|提交|变更/)).toBeVisible({ timeout: 5_000 })
+  })
+})
+```
+
+### 8.4 每步期望输入输出（E2E-SD-1 内容预览）
+
+| 步骤 | 输入 | 输出 |
+|------|------|------|
+| 1. gotoFileTree | （helper） | 文件树可见 |
+| 2. 展开 src | 点 `file-tree-dir-src` | 子节点可见 |
+| 3. 点 index.ts | 点 `file-tree-file-src/index.ts` | `fileTreeStore.selectFile('src/index.ts')` → SideDrawer `open('detail')` |
+| 4. DetailPane 挂载 | （DOM） | `detail-pane` 可见 |
+| 5. useDetailPane watch | （内部） | `openPreview('e2e-files', 'src/index.ts')` |
+| 6. 查 gitStatus | （内部） | `store.getGitStatus` 无记录 → hasGitChange=false → viewMode='preview' |
+| 7. file.read | （mock） | `fileApi.read('src/index.ts', 'e2e-files')` → 返回 .ts 内容（含 'export function'） |
+| 8. 渲染 | （DOM） | `detail-content` 含 'export function'；无 `detail-view-toggle` |
+| 9. 断言 | （验证） | detail-content 文本匹配 + view-toggle count=0 |
+
+## 9. 约束与盲区
+
+| 约束 | 说明 |
+|------|------|
+| ⚠️ tab 栏无 testid | SideDrawer tab 按钮（terminal/browser/git/doc/detail）无 testid，E2E 靠文本查（脆弱）。建议补 `drawer-tab-{key}` |
+| ⚠️ GitPanel/CommandDocPanel 无 testid | git/doc tab 内容查询靠内部元素文本。建议补 testid |
+| ✅ DetailPane testid 完整 | detail tab 有完整 testid（detail-pane/content/loading/error/empty/binary/truncated/toggle），E2E 稳定 |
+| ❌ mock 不模拟大文件/二进制 | detail-truncated（>1MB）/ detail-binary 只能非 MOCK 测（mock file.read 恒小文本） |
+| ❌ 真实 git diff 格式 | mock getDiff 返回固定 patch，真实 git（binary/rename）只能非 MOCK 测 |
+| ❌ widget 订阅 | terminal/browser tab 走 extension.onWidget，mock 推送有限，真实 widget 内容只能非 MOCK 测 |
+
+## 10. 相关文档
+
+- 组件源码：[`components/panel/SideDrawer.vue`](../../src-electron/renderer/src/components/panel/SideDrawer.vue) / [`DetailPane.vue`](../../src-electron/renderer/src/components/panel/DetailPane.vue)
+- composable：[`composables/features/useDetailPane.ts`](../../src-electron/renderer/src/composables/features/useDetailPane.ts) / [`useSideDrawer.ts`](../../src-electron/renderer/src/composables/features/useSideDrawer.ts)
+- E2E（detail tab）：[`e2e/file-tree.spec.ts`](../../e2e/file-tree.spec.ts) E2E-3a/3b/3c
+- 文件树入口：[04-file-tree.md](./04-file-tree.md)（点文件 → drawer detail）
+- NFR no-v-html：[NFR.md](../../NFR.md)（XSS 安全约束）

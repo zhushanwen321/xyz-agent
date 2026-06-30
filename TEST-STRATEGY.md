@@ -1,6 +1,14 @@
 # 测试策略（TEST-STRATEGY）
 
 > 测试体系 SSOT。CLAUDE.md「测试规范」章节是规则载体，本文件补充分层策略 + 回归基线 + mock 策略 + 运行手册。两者互补不冲突。
+>
+> **各功能具体测试步骤**（MOCK/非MOCK/Playwright 调用链 + 每步期望输入输出）见 [docs/testing/](docs/testing/) 测试手册：
+> - [00-test-strategy-overview.md](docs/testing/00-test-strategy-overview.md) — 双轨制 + Playwright harness + 公共前置（入口篇，必读）
+> - [01-new-task.md](docs/testing/01-new-task.md) — 新建任务（Landing + 选目录 + 首发提交）
+> - [02-composer.md](docs/testing/02-composer.md) — Composer（输入框 + slash 命令浮层 + 三态）
+> - [03-chat-flow.md](docs/testing/03-chat-flow.md) — 对话流（流式消息 + 工具调用 + 变更集）
+> - [04-file-tree.md](docs/testing/04-file-tree.md) — 文件树（懒加载 + 过滤 + git 角标，11 E2E 用例已落地）
+> - [05-side-drawer.md](docs/testing/05-side-drawer.md) — SideDrawer（文件预览 / diff / git tab）
 
 ## 1. 测试框架 [HISTORICAL]
 
