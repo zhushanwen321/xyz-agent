@@ -31,6 +31,21 @@ export function onRuntimeError(cb: (error: { message: string }) => void): () => 
   return api?.onRuntimeError(cb) ?? (() => {})
 }
 
+/** 监听 runtime 崩溃后重启中事件（supervisor 正在拉起新实例），返回取消函数 */
+export function onRuntimeRestarting(cb: (payload: { attempt: number }) => void): () => void {
+  return api?.onRuntimeRestarting(cb) ?? (() => {})
+}
+
+/** 监听 runtime 重启用尽事件（需用户手动重试），返回取消函数 */
+export function onRuntimeFailed(cb: (payload: { attempts: number; message: string }) => void): () => void {
+  return api?.onRuntimeFailed(cb) ?? (() => {})
+}
+
+/** 请求手动重启 runtime（崩溃重启用尽后用户点重试触发）。无 IPC 时 no-op */
+export function restartRuntime(): Promise<void> {
+  return api?.restartRuntime() ?? Promise.resolve()
+}
+
 /** 监听窗口全屏态变化（mac enter/leave-full-screen，main 已发 IPC），返回取消函数 */
 export function onFullscreenChanged(cb: (isFullscreen: boolean) => void): () => void {
   return api?.onFullscreenChanged(({ isFullscreen }) => cb(isFullscreen)) ?? (() => {})

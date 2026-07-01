@@ -6,6 +6,12 @@ export interface ElectronAPI {
   onRuntimePort(callback: (port: number) => void): () => void
   /** 监听 runtime 启动失败事件 */
   onRuntimeError(callback: (error: { message: string }) => void): () => void
+  /** 监听 runtime 崩溃后重启中事件（supervisor 正在拉起新实例） */
+  onRuntimeRestarting(callback: (payload: { attempt: number }) => void): () => void
+  /** 监听 runtime 重启用尽事件（需用户手动重试） */
+  onRuntimeFailed(callback: (payload: { attempts: number; message: string }) => void): () => void
+  /** 请求手动重启 runtime（用户从「runtime 不可用」状态条点重试触发） */
+  restartRuntime(): Promise<void>
   /** 监听快捷键事件（替代 @tauri-apps/api/event 的 listen('shortcut')） */
   onShortcut(callback: (type: string) => void): () => void
   /** 获取 runtime 端口 */
@@ -55,6 +61,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('runtime-error', handler)
     return () => ipcRenderer.removeListener('runtime-error', handler)
   },
+  onRuntimeRestarting: (callback: (payload: { attempt: number }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: { attempt: number }) => callback(payload)
+    ipcRenderer.on('runtime-restarting', handler)
+    return () => ipcRenderer.removeListener('runtime-restarting', handler)
+  },
+  onRuntimeFailed: (callback: (payload: { attempts: number; message: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: { attempts: number; message: string }) => callback(payload)
+    ipcRenderer.on('runtime-failed', handler)
+    return () => ipcRenderer.removeListener('runtime-failed', handler)
+  },
+  restartRuntime: () => ipcRenderer.invoke('runtime-restart'),
   onShortcut: (callback: (type: string) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, type: string) => callback(type)
     ipcRenderer.on('shortcut', handler)

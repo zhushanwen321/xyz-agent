@@ -46,6 +46,13 @@ export interface IRuntimeSupervisor {
   startAndNotify(win: BrowserWindow): Promise<number>
 
   /**
+   * 手动重启 runtime（用户从「runtime 不可用」状态条点击重试时调）。
+   * 重置策略计数后走 start()，成功广播 runtime-port，失败广播 runtime-failed。
+   * runtime 已存活时幂等（直接广播端口）。
+   */
+  restartRuntime(): Promise<void>
+
+  /**
    * 停止 runtime 子进程及其整棵进程树（包括 pi），等待退出或超时。
    * @param timeoutMs SIGTERM 后等待 exit 的超时，超时则 SIGKILL 进程树
    */

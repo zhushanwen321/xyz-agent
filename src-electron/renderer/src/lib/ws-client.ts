@@ -19,7 +19,13 @@ import { ref, readonly } from 'vue'
 import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
 import { mockConnect, mockSend, mockDisconnect } from '../mock/mock-ws'
 
-export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting'
+export type ConnectionState =
+  | 'disconnected'
+  | 'connecting'
+  | 'connected'
+  | 'reconnecting'
+  | 'restarting' // runtime 崩溃，主进程正在拉起新实例（来自 IPC runtime-restarting）
+  | 'failed'     // runtime 重启用尽，需用户手动重试（来自 IPC runtime-failed）
 
 // ── 常量 ────────────────────────────────────────────────────
 const HEARTBEAT_INTERVAL_MS = 15_000
@@ -55,6 +61,26 @@ export function onMessage(cb: (msg: ServerMessage) => void): () => void {
 /** 连接状态（只读 ref，供 UI 消费） */
 export function getState() {
   return readonly(state)
+}
+
+/**
+ * 设置为 restarting 态（收到 IPC runtime-restarting 时调，useConnection 编排）。
+ * 断开当前 WS（死端口）并停止自动重连——等主进程拉起新实例后推新端口再 connect。
+ */
+export function setRestarting(): void {
+  if (isMock) return
+  disconnect() // 停止在死端口上的自动重连，避免与 restarting 状态打架
+  state.value = 'restarting'
+}
+
+/**
+ * 设置为 failed 态（收到 IPC runtime-failed 时调）。
+ * 停止自动重连，等用户手动重试。
+ */
+export function setFailed(): void {
+  if (isMock) return
+  clearTimers()
+  state.value = 'failed'
 }
 
 /** 建立连接（已连接/连接中时幂等 no-op） */

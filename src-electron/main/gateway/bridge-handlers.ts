@@ -27,6 +27,12 @@ export function registerBridgeHandlers(deps: IpcHandlerDeps): void {
   ipcMain.handle('get-runtime-port', () => deps.runtime.port)
   ipcMain.handle('get-runtime-port-offset', () => deps.runtime.portOffset)
 
+  // ── runtime 手动重启（崩溃重启用尽后，用户从状态条点重试触发）─────────
+  // 委托 supervisor.restartRuntime：重置策略 + start + 广播端口/失败
+  ipcMain.handle('runtime-restart', async () => {
+    await deps.runtime.restartRuntime()
+  })
+
   // ── 窗口管理 ─────────────────────────────────────────────────────
   ipcMain.handle('create-window', async (_event, options?: { sessionId?: string }) => {
     const windowId = deps.windowManager.generateId()

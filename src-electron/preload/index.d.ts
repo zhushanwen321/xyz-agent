@@ -1,6 +1,12 @@
 export interface ElectronAPI {
   onRuntimePort(callback: (port: number) => void): () => void
   onRuntimeError(callback: (error: { message: string }) => void): () => void
+  /** 监听 runtime 崩溃后重启中事件 */
+  onRuntimeRestarting(callback: (payload: { attempt: number }) => void): () => void
+  /** 监听 runtime 重启用尽事件 */
+  onRuntimeFailed(callback: (payload: { attempts: number; message: string }) => void): () => void
+  /** 请求手动重启 runtime */
+  restartRuntime(): Promise<void>
   onShortcut(callback: (type: string) => void): () => void
   getRuntimePort(): Promise<number>
   /** 获取 runtime 端口偏移（dev 模式 +100，prod 模式 0） */

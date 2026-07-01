@@ -13,15 +13,28 @@
  *
  * 依赖方向：useConnection → ws-client + ipc + shared（BASE_PORT/DEV_PORT_OFFSET）
  */
-import { connect, disconnect, getState } from '../lib/ws-client'
-import { getRuntimePort, getRuntimePortOffset, onRuntimePort } from '../lib/ipc'
+import { connect, disconnect, getState, setRestarting, setFailed } from '../lib/ws-client'
+import {
+  getRuntimePort,
+  getRuntimePortOffset,
+  onRuntimePort,
+  onRuntimeRestarting,
+  onRuntimeFailed,
+  restartRuntime,
+} from '../lib/ipc'
 import { BASE_PORT, DEV_PORT_OFFSET } from '@xyz-agent/shared'
 import type { ServerMessage } from '@xyz-agent/shared'
 import * as transport from '../api/transport'
 import * as pending from '../api/pending'
 import * as events from '../api/events'
 
-export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting'
+export type ConnectionStatus =
+  | 'disconnected'
+  | 'connecting'
+  | 'connected'
+  | 'reconnecting'
+  | 'restarting'
+  | 'failed'
 
 /**
  * 入站消息分发器（features 层串联 transport→pending/events 的唯一桥）。
@@ -81,6 +94,8 @@ async function resolveFallbackPort(): Promise<number> {
 
 let initialised = false
 let removeRuntimePortListener: (() => void) | null = null
+let removeRuntimeRestartingListener: (() => void) | null = null
+let removeRuntimeFailedListener: (() => void) | null = null
 
 export function useConnection() {
   const state = getState()
@@ -98,18 +113,28 @@ export function useConnection() {
     }
     initialised = true
 
-    // mock 模式：走 mock，不需要端口发现
+    // mock 模式：走 mock，不需要端口发现，也不监听 runtime 崩溃事件（mock 无 runtime 进程）
     if (import.meta.env.VITE_MOCK === 'true') {
       connect('mock://localhost')
       return
     }
 
-    // 监听 runtime 端口推送（runtime 重启后重连）
+    // 监听 runtime 端口推送（runtime 重启成功后推新端口 → 断开重连）
     removeRuntimePortListener = onRuntimePort((newPort) => {
       if (newPort && state.value !== 'disconnected') {
         disconnect()
         connect('ws://localhost:' + newPort)
       }
+    })
+
+    // 监听 runtime 崩溃重启中（主进程正在拉起新实例 → 进 restarting 态，停自动重连）
+    removeRuntimeRestartingListener = onRuntimeRestarting(() => {
+      setRestarting()
+    })
+
+    // 监听 runtime 重启用尽（主进程放弃 → 进 failed 态，等用户手动重试）
+    removeRuntimeFailedListener = onRuntimeFailed(() => {
+      setFailed()
     })
 
     // 尝试从主进程获取已知端口
@@ -123,10 +148,27 @@ export function useConnection() {
     connect('ws://localhost:' + await resolveFallbackPort())
   }
 
+  /**
+   * 手动重试（用户从「runtime 不可用」状态条点重试触发）。
+   * 委托 IPC runtime-restart → 主进程 supervisor.restartRuntime。
+   * supervisor 重启成功会广播 runtime-port（onRuntimePort 监听自动重连）。
+   */
+  async function retryRuntime(): Promise<void> {
+    await restartRuntime()
+  }
+
   function teardown(): void {
     if (removeRuntimePortListener) {
       removeRuntimePortListener()
       removeRuntimePortListener = null
+    }
+    if (removeRuntimeRestartingListener) {
+      removeRuntimeRestartingListener()
+      removeRuntimeRestartingListener = null
+    }
+    if (removeRuntimeFailedListener) {
+      removeRuntimeFailedListener()
+      removeRuntimeFailedListener = null
     }
     if (removeTransportListener) {
       removeTransportListener()
@@ -137,5 +179,5 @@ export function useConnection() {
     initialised = false
   }
 
-  return { state, init, teardown }
+  return { state, init, teardown, retryRuntime }
 }
