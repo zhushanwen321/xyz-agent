@@ -52,14 +52,13 @@ export function useSearchJump() {
   }
 
   /**
-   * command 分支：区分 AppCommand（应用命令，name 不以 / 开头）vs slash 命令（name 以 / 开头）。
-   * - 应用命令：commandStore.appCommands 找 name 匹配项，调 cmd.action()（AC-6.8 action 抛错→{ok:false}）
-   * - slash 命令：commandStore.requestSlashInjection 写一次性通道，Composer watch 消费（landing 态也放行，sessionId 透传 null）
+   * command 分支：按 commandKind 区分应用命令 vs slash 命令（不靠 title 前缀猜测）。
+   * - 应用命令（commandKind='app'）：commandStore.appCommands 找 name 匹配项，调 cmd.action()（AC-6.8 action 抛错→{ok:false}）
+   * - slash 命令（commandKind='slash'）：commandStore.requestSlashInjection 写一次性通道，Composer watch 消费（landing 态也放行，sessionId 透传 null）
    */
   async function confirmCommand(item: SearchItem, ctx: JumpCtx): Promise<JumpResult> {
     try {
-      const isSlash = item.title.startsWith('/')
-      if (isSlash) {
+      if (item.commandKind === 'slash') {
         // slash 命令注入 composer：写 commandStore.pendingSlash 一次性通道。
         // landing 态（ctx.activeSessionId=null）也放行——landing composer 存在，sessionId 透传 null
         // 供消费侧 Composer 按 sessionId 过滤（双方 null 命中 landing composer）。

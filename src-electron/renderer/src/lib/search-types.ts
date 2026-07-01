@@ -25,6 +25,12 @@ export interface SearchItem {
    *  仅 slash 命令项携带（从 SessionCommand.icon 透传），应用命令/文件/符号/会话项无此字段。
    *  供 chip 注入时透传给 insertSlashChip(name, icon)，保证搜索注入的 chip 与 CommandPopover 选中的 chip 图标一致。 */
   icon?: string
+  /** 命令细分类型（仅 type='command' 项携带）。
+   *  'app' = 应用内置命令（走 commandStore.appCommands action 执行）；
+   *  'slash' = pi 扩展命令（走 pendingSlash 注入 composer chip）。
+   *  存在动机：pi get_commands 返回的命令名不带 / 前缀（如 'goal'/'skill:code-review'），
+   *  无法靠 title.startsWith('/') 区分两类，故在 DTO 映射时显式标记，useSearchJump 据此精确分发。 */
+  commandKind?: 'app' | 'slash'
 }
 
 /** 应用内置命令（#2，含 action 行为故非纯值对象） */

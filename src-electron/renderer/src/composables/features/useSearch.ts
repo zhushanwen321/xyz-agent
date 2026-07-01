@@ -255,13 +255,14 @@ export function useSearch(activeSessionId: { value: string | null }) {
 
   function toCommandItem(c: UnifiedCommand): SearchItem {
     if (isAppCommand(c)) {
-      // AppCommand：title=name，sub 优先 shortcut 无则 id
-      return { type: 'command', title: c.name, sub: c.shortcut ?? c.id }
+      // AppCommand：title=name，sub 优先 shortcut 无则 id。commandKind='app' 供 useSearchJump 精确分发
+      return { type: 'command', title: c.name, sub: c.shortcut ?? c.id, commandKind: 'app' }
     }
     if (isSessionCommand(c)) {
-      // SessionCommand（slash 命令，name 带 / 前缀如 '/commit'）：title=name，sub 优先 description 无则 kind。
-      // icon 透传给 chip 注入侧（保证搜索注入 chip 与 CommandPopover 选中的 chip 图标一致）。
-      return { type: 'command', title: c.name, sub: c.description ?? c.kind, icon: c.icon }
+      // SessionCommand（pi 扩展命令，name 不带 / 前缀如 'goal'/'skill:code-review'）：
+      // title=name，sub 优先 description 无则 kind；icon + commandKind 透传给注入侧。
+      // commandKind='slash' 是 useSearchJump 区分注入分支的唯一依据（不可靠 title 前缀猜测）。
+      return { type: 'command', title: c.name, sub: c.description ?? c.kind, icon: c.icon, commandKind: 'slash' }
     }
     // 防御性兜底（不应到达：UnifiedCommand 二选一）
     return { type: 'command', title: String((c as { name?: unknown }).name ?? ''), sub: '' }

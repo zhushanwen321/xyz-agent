@@ -13,14 +13,15 @@ export type { SearchItem, SearchType }
 
 export const SEARCH_MOCK: Record<SearchType, SearchItem[]> = {
   command: [
-    // 应用命令（name 不带 / 前缀）
-    { type: 'command', title: '新建任务', sub: '创建一个新会话 · ⌘N' },
-    { type: 'command', title: '收起侧栏', sub: 'toggle sidebar · ⌘B' },
-    { type: 'command', title: '概览', sub: 'Mission Control' },
-    // slash 命令（name 带 / 前缀，icon 与 CommandPopover SLASH_ICON_COMPONENTS 同源）。
+    // 应用命令（commandKind='app'，走 action 执行）
+    { type: 'command', title: '新建任务', sub: '创建一个新会话 · ⌘N', commandKind: 'app' },
+    { type: 'command', title: '收起侧栏', sub: 'toggle sidebar · ⌘B', commandKind: 'app' },
+    { type: 'command', title: '概览', sub: 'Mission Control', commandKind: 'app' },
+    // slash 命令（commandKind='slash'，name 不带 / 前缀——对齐真实 pi get_commands 格式）。
+    // icon 与 CommandPopover SLASH_ICON_COMPONENTS 同源。
     // E2E 前置：mock 模式需能搜到 slash 命令，否则无法验证「搜到→点击→注入 chip」链路。
-    { type: 'command', title: '/commit', sub: '提交改动', icon: 'terminal' },
-    { type: 'command', title: '/review', sub: '代码评审', icon: 'star' },
+    { type: 'command', title: 'commit', sub: '提交改动', icon: 'terminal', commandKind: 'slash' },
+    { type: 'command', title: 'review', sub: '代码评审', icon: 'star', commandKind: 'slash' },
   ],
   file: [
     { type: 'file', title: 'auth/session.ts', sub: 'refactor-arch/src/auth' },
