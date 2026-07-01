@@ -11,6 +11,7 @@
 import type { ProviderInfo, ModelInfo } from '@xyz-agent/shared'
 import type { IModelService, ISessionService, IConfigService, IMessageBroker } from '../interfaces.js'
 import type { IModelSource } from './ports/model.js'
+import { readPiState } from './ports/pi-engine.js'
 
 /** 百分比上限（与 index.ts onContextUpdate 一致） */
 const MAX_PERCENT = 100
@@ -69,7 +70,7 @@ export class ModelService implements IModelService {
     }
 
     // 3. Broadcast session 级状态变更（modelId + 按新 contextWindow 重算用量 + thinkingLevel）
-    this.broadcastSessionState(sessionId, provider, modelId)
+    await this.broadcastSessionState(sessionId, provider, modelId)
 
     // 4. Broadcast 全局默认模型（landing 态 Composer 的 fallback）
     this.broker.broadcast({
@@ -81,11 +82,31 @@ export class ModelService implements IModelService {
 
   /**
    * 广播 session.state_changed：切换模型后立即把新 modelId + 按新 contextWindow 重算的用量
-   * 推给前端，无需等下一次 agent_end。算法与 index.ts onContextUpdate 一致。
+   * + pi 当前 thinkingLevel 推给前端，无需等下一次 agent_end。
+   *
+   * thinkingLevel 从 pi get_state 查询（而非依赖 thinking_level_changed 事件）：
+   * pi 切模型时若新模型的 thinkingLevel 与当前相同则不 emit 事件（agent-session.ts setThinkingLevel
+   * 的 isChanging 守卫），导致 summary.thinkingLevel 恒为 undefined。get_state 是可靠来源。
    */
-  private broadcastSessionState(sessionId: string, provider: string, modelId: string): void {
+  private async broadcastSessionState(sessionId: string, provider: string, modelId: string): Promise<void> {
     const summary = this.sessionService.getSummary(sessionId)
     if (!summary) return // session 不在活跃 Map（磁盘 session），无法重算
+    // 查 pi get_state 拿当前 thinkingLevel 并回写 session 缓存
+    const client = this.sessionService.getRpcClient(sessionId)
+    let thinkingLevel = summary.thinkingLevel
+    if (client) {
+      try {
+        const state = await readPiState(client)
+        const level = state?.thinkingLevel as string | undefined
+        if (level) {
+          this.sessionService.setThinkingLevelCache(sessionId, level)
+          thinkingLevel = level
+        }
+      // eslint-disable-next-line taste/no-silent-catch -- get_state 失败不阻塞切换：thinkingLevel 回退到 summary 值
+      } catch (e) {
+        console.error('[ModelService] get_state for thinkingLevel failed:', e)
+      }
+    }
     const providers = this.configService.listProviders()
     const models = this.aggregateModels(providers)
     const model = models.find(m => m.providerId === provider && m.id === modelId)
@@ -100,7 +121,7 @@ export class ModelService implements IModelService {
       payload: {
         sessionId,
         modelId: summary.modelId,
-        thinkingLevel: summary.thinkingLevel,
+        thinkingLevel,
         usagePercent,
         inputTokens,
         contextLimit: contextWindow,

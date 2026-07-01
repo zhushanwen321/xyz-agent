@@ -692,6 +692,38 @@ describe('SessionService · Facade', () => {
     })
   })
 
+  describe('setInputTokens 回写缓存（onContextUpdate 打通用例）', () => {
+    it('U-setInput-1：setInputTokens 写入后 getInputTokens 读回正确值', async () => {
+      const { id } = await setup.seedSession()
+      setup.service.setInputTokens(id, 12345)
+      expect(setup.service.getInputTokens(id)).toBe(12345)
+    })
+
+    it('U-setInput-2：setInputTokens 对不存在的 session 不抛错（静默忽略）', () => {
+      expect(() => setup.service.setInputTokens('nonexistent', 100)).not.toThrow()
+      expect(setup.service.getInputTokens('nonexistent')).toBe(0)
+    })
+  })
+
+  describe('setThinkingLevelCache 回写缓存（thinking_level_changed 打通用例）', () => {
+    it('U-setThinking-1：setThinkingLevelCache 写入后 getSummary().thinkingLevel 读回正确值', async () => {
+      const { id } = await setup.seedSession()
+      setup.service.setThinkingLevelCache(id, 'high')
+      expect(setup.service.getSummary(id)?.thinkingLevel).toBe('high')
+    })
+
+    it('U-setThinking-2：setThinkingLevelCache 传 undefined 时不覆盖已有值', async () => {
+      const { id } = await setup.seedSession()
+      setup.service.setThinkingLevelCache(id, 'high')
+      setup.service.setThinkingLevelCache(id, undefined)
+      expect(setup.service.getSummary(id)?.thinkingLevel).toBe('high')
+    })
+
+    it('U-setThinking-2b：setThinkingLevelCache 对不存在的 session 不抛错', () => {
+      expect(() => setup.service.setThinkingLevelCache('ghost', 'high')).not.toThrow()
+    })
+  })
+
   describe('inputTokens 缓存（attachUsageListener）', () => {
     it('agent_end 的 usage.inputTokens 被缓存到 session，getInputTokens 可读', async () => {
       const { id, client } = await setup.seedSession()

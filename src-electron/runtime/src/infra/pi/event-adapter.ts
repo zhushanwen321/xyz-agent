@@ -54,6 +54,8 @@ export interface EventAdapterOptions {
   onStatusSetUpdate?: (payload: { sessionId: string; key: string; text: string }) => void
   /** Called after agent_end with usage data for context window tracking. */
   onContextUpdate?: (sessionId: string, data: { inputTokens: number; totalTokens: number }) => void
+  /** Called when pi emits thinking_level_changed (切模型 / 用户手切档位)。回写 session 缓存供 switchModel 广播。 */
+  onThinkingLevelChanged?: (sessionId: string, level: string | undefined) => void
   /** Called by EventAdapter to execute plugin hooks on tool/message events. */
   onHookExecute?: (hookType: string, context: Record<string, unknown>) => Promise<import('../../services/plugin-service/plugin-types.js').HookResult>
   /**
@@ -525,11 +527,14 @@ function handleSessionInfoChanged(event: PiEvent, ctx: HandlerContext): HandlerR
   }
 }
 
-/** thinking_level_changed → session.thinkingLevelSet */
+/** thinking_level_changed → session.thinkingLevelSet + 回写 session 缓存 */
 function handleThinkingLevelChanged(event: PiEvent, ctx: HandlerContext): HandlerResult {
+  const level = event.level as string | undefined
+  // 回写 session.thinkingLevel 缓存，供 switchModel 的 broadcastSessionState 读到真值
+  ctx.options?.onThinkingLevelChanged?.(ctx.sessionId, level)
   return {
     type: 'session.thinkingLevelSet',
-    payload: { sessionId: ctx.sessionId, level: event.level as string | undefined },
+    payload: { sessionId: ctx.sessionId, level },
   }
 }
 

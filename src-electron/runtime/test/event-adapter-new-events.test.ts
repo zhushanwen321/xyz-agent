@@ -18,7 +18,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { EventAdapter, type WsSender } from '../src/infra/pi/event-adapter.js'
+import { EventAdapter, type WsSender, type EventAdapterOptions } from '../src/infra/pi/event-adapter.js'
 import type { ServerMessage } from '@xyz-agent/shared'
 import type { PiMessage } from '../src/infra/pi/rpc-client.js'
 
@@ -30,10 +30,10 @@ function piEvent(fields: PiTestEvent): PiTestEvent {
   return fields
 }
 
-function createAdapter(): { adapter: EventAdapter; sent: ServerMessage[] } {
+function createAdapter(options?: EventAdapterOptions): { adapter: EventAdapter; sent: ServerMessage[] } {
   const sent: ServerMessage[] = []
   const send: WsSender = (msg) => { sent.push(msg) }
-  const adapter = new EventAdapter('test-session-1', send)
+  const adapter = new EventAdapter('test-session-1', send, options)
   return { adapter, sent }
 }
 
@@ -306,6 +306,21 @@ describe('EventAdapter: new event translations (FR-1~FR-6)', () => {
       expect(sent[0].payload).toMatchObject({
         level: 'high',
       })
+    })
+
+    it('U-adapter-1：thinking_level_changed 触发 onThinkingLevelChanged 回调并广播 session.thinkingLevelSet', async () => {
+      const onThinkingLevelChanged = vi.fn()
+      const { adapter, sent } = createAdapter({ onThinkingLevelChanged })
+      dispatchOne(adapter, { type: 'thinking_level_changed', level: 'high' })
+      await flushAsync()
+
+      // 回调被调用，参数为 (sessionId, 'high')
+      expect(onThinkingLevelChanged).toHaveBeenCalledTimes(1)
+      expect(onThinkingLevelChanged).toHaveBeenCalledWith('test-session-1', 'high')
+      // 产出 session.thinkingLevelSet 消息
+      expect(sent).toHaveLength(1)
+      expect(sent[0].type).toBe('session.thinkingLevelSet')
+      expect(sent[0].payload).toMatchObject({ level: 'high' })
     })
   })
 

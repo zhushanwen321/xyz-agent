@@ -124,3 +124,63 @@ describe('session.state_changed 事件 → store 状态同步', () => {
     expect(updated?.thinkingLevel).toBe('max')
   })
 })
+
+describe('session.thinkingLevelSet 事件 → store thinkingLevel 同步', () => {
+  it('U-TLSet-1: payload 含 sessionId + level → updateSessionState 更新 thinkingLevel', async () => {
+    // 注：streamSubscriptions 是 useChat 模块级单例，跨用例复用 sid 会跳过订阅，故用唯一 sid。
+    const sid = 'tlset-1'
+    seedSession({
+      id: sid, label: 'test', cwd: '/repo', status: 'idle',
+      lastActiveAt: 100, modelId: 'm', thinkingLevel: 'low', tokenCount: 0,
+    })
+    const chat = useChat()
+    await chat.send('触发订阅')
+    expect(streamCbHolder.current).not.toBeNull()
+
+    const updateSpy = vi.spyOn(useSessionStore(), 'updateSessionState')
+    streamCbHolder.current!({
+      type: 'session.thinkingLevelSet',
+      payload: { sessionId: sid, level: 'high' },
+    })
+
+    expect(updateSpy).toHaveBeenCalledWith(sid, { thinkingLevel: 'high' })
+  })
+
+  it('U-TLSet-2: level 缺省时跳过更新', async () => {
+    const sid = 'tlset-2'
+    seedSession({
+      id: sid, label: 'test', cwd: '/repo', status: 'idle',
+      lastActiveAt: 100, modelId: 'm', thinkingLevel: 'low', tokenCount: 0,
+    })
+    const chat = useChat()
+    await chat.send('触发订阅')
+    expect(streamCbHolder.current).not.toBeNull()
+
+    const updateSpy = vi.spyOn(useSessionStore(), 'updateSessionState')
+    streamCbHolder.current!({
+      type: 'session.thinkingLevelSet',
+      payload: { sessionId: sid, level: undefined },
+    })
+
+    expect(updateSpy).not.toHaveBeenCalled()
+  })
+
+  it('U-TLSet-3: sessionId 缺省时跳过更新', async () => {
+    const sid = 'tlset-3'
+    seedSession({
+      id: sid, label: 'test', cwd: '/repo', status: 'idle',
+      lastActiveAt: 100, modelId: 'm', thinkingLevel: 'low', tokenCount: 0,
+    })
+    const chat = useChat()
+    await chat.send('触发订阅')
+    expect(streamCbHolder.current).not.toBeNull()
+
+    const updateSpy = vi.spyOn(useSessionStore(), 'updateSessionState')
+    streamCbHolder.current!({
+      type: 'session.thinkingLevelSet',
+      payload: { sessionId: undefined, level: 'high' },
+    })
+
+    expect(updateSpy).not.toHaveBeenCalled()
+  })
+})

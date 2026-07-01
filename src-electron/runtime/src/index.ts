@@ -136,6 +136,9 @@ async function main(): Promise<void> {
       const contextWindow = model?.contextWindow
       const inputTokens = ctxData.inputTokens
       if (!inputTokens || inputTokens === 0) return
+      // 回写 session 缓存：打通 context.update 与 switchModel 的 broadcastSessionState 数据源，
+      // 使 switchModel 重算 usagePercent 时读到真实值而非恒 0（2026-07-01 inputTokens 竞态修复）
+      sessionService.setInputTokens(sid, inputTokens)
       const usagePercent = contextWindow
         ? Math.min(Math.round((inputTokens / contextWindow) * MAX_PERCENT), MAX_PERCENT)
         : 0
@@ -144,6 +147,11 @@ async function main(): Promise<void> {
         id: `ctx_${Date.now()}`,
         payload: { sessionId: sid, usagePercent, inputTokens, contextLimit: contextWindow ?? 0 },
       })
+    },
+    onThinkingLevelChanged: (sid, level) => {
+      // pi 切模型 / 用户手切档位后推 thinking_level_changed 事件。
+      // 回写 session 缓存，使后续 broadcastSessionState 读到真值（而非 undefined）。
+      sessionService.setThinkingLevelCache(sid, level)
     },
     onHookExecute: (hookType, context) => pluginService.executeHooks(hookType, {
       pluginId: '',

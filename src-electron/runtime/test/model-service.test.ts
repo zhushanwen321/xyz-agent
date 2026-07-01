@@ -19,8 +19,14 @@ function makeMockSessionService(overrides: Partial<ISessionService> = {}): ISess
   return {
     switchModel: vi.fn(async () => 's1'),
     setThinkingLevel: vi.fn(async () => undefined),
+    setThinkingLevelCache: vi.fn(),
     getSummary: vi.fn((): SessionSummary | undefined => undefined),
     getInputTokens: vi.fn((): number => 0),
+    setInputTokens: vi.fn(),
+    // getRpcClient 返回 mock pi engine：sendCommand('get_state') 返回含 thinkingLevel 的 state
+    getRpcClient: vi.fn(() => ({
+      sendCommand: vi.fn(async () => ({ data: { thinkingLevel: 'high' } })),
+    })),
     ...overrides,
   } as unknown as ISessionService
 }
@@ -165,6 +171,39 @@ describe('ModelService · switchModel 广播 session.state_changed', () => {
       inputTokens: 0,
       usagePercent: 0,
       contextLimit: 128000,
+    })
+  })
+
+  it('U-broadcast-1：switchModel 广播的 state_changed 中 inputTokens 来自 getInputTokens（验证 onContextUpdate 回写打通）', async () => {
+    const providers = [makeProvider('anthropic', 'claude-4', 200000)]
+    const sessionSummary: SessionSummary = {
+      id: 's1', label: 'test', cwd: '/tmp', status: 'idle',
+      lastActiveAt: Date.now(), modelId: 'anthropic/claude-4', tokenCount: 50000,
+    } as SessionSummary
+    // 模拟 onContextUpdate 已回写过 inputTokens 缓存（真实场景由 EventAdapter onContextUpdate 写入）
+    const sessionService = makeMockSessionService({
+      getSummary: vi.fn(() => sessionSummary),
+      getInputTokens: vi.fn(() => 50000),
+    })
+    const configService = makeMockConfigService(providers)
+    const { broker, broadcasts } = makeMockBroker()
+
+    const svc = new ModelService(modelSource)
+    svc.setServices(sessionService, configService, broker)
+
+    await svc.switchModel('s1', 'anthropic', 'claude-4')
+
+    expect(broker.broadcast).toHaveBeenCalled()
+    const stateChanged = broadcasts.find((m) => m.type === 'session.state_changed')
+    expect(stateChanged).toBeDefined()
+    // inputTokens 来自 getInputTokens 回写值（不是 0）
+    expect(stateChanged!.payload).toMatchObject({
+      sessionId: 's1',
+      inputTokens: 50000,
+      contextLimit: 200000,
+      usagePercent: 25, // Math.round(50000 / 200000 * 100)
+      // thinkingLevel 从 pi get_state 查询回写（mock 返回 'high'）
+      thinkingLevel: 'high',
     })
   })
 

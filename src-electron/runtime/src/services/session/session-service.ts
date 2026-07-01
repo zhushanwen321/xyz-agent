@@ -122,6 +122,12 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     const client = this.pm.getClient(sessionId)
     if (client) await client.setThinkingLevel(level)
   }
+  /** 仅回写 thinkingLevel 缓存（不调 pi RPC），供 thinking_level_changed 事件 callback 用 */
+  setThinkingLevelCache(sessionId: string, level: string | undefined): void {
+    if (level === undefined) return
+    const session = this.sessions.get(sessionId)
+    if (session) session.thinkingLevel = level
+  }
 
   hasActiveSession(sessionId: string): boolean { return this.pm.hasClient(sessionId) }
   getRpcClient(sessionId: string): IPiEngine | undefined { return this.pm.getClient(sessionId) }
@@ -175,6 +181,10 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
 
   getInputTokens(sessionId: string): number {
     return this.sessions.get(sessionId)?.inputTokens ?? 0
+  }
+  setInputTokens(sessionId: string, tokens: number): void {
+    const s = this.sessions.get(sessionId)
+    if (s && typeof tokens === 'number') s.inputTokens = tokens
   }
 
   async destroyAll(): Promise<void> {

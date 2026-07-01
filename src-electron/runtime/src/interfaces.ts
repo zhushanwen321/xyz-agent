@@ -82,6 +82,10 @@ export interface ISessionService {
   getSummary(sessionId: string): SessionSummary | undefined
   /** 取 session 缓存的最近 inputTokens（供 model.switch 重算 usagePercent，见 onContextUpdate/attachUsageListener） */
   getInputTokens(sessionId: string): number
+  /** 回写 session 缓存的 inputTokens（onContextUpdate 拿到真实值后同步写入，打通 context.update 与 state_changed 数据源） */
+  setInputTokens(sessionId: string, tokens: number): void
+  /** 仅回写 thinkingLevel 缓存（不调 pi RPC），供 thinking_level_changed 事件 callback 用 */
+  setThinkingLevelCache(sessionId: string, level: string | undefined): void
   /** Get the underlying RpcClient for direct command sending (e.g., extension responses). */
   getRpcClient(sessionId: string): IRpcClient | undefined
 

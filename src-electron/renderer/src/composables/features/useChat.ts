@@ -81,6 +81,17 @@ function ensureStreamSubscription(
         }
         break
       }
+      case 'session.thinkingLevelSet': {
+        // pi 切模型 / 用户手切档位后推 thinking_level_changed（runtime event-adapter 转为此类型）。
+        // 补 state_changed 的时序缺口：switchModel 的 broadcastSessionState 在 set_model RPC resolve 后
+        // 立即广播，而 thinking_level_changed 事件可能晚到（异步），此时 state_changed 的 thinkingLevel 为空。
+        // 本 handler 独立更新 thinkingLevel，不依赖两条消息的先后顺序。
+        const p = msg.payload as { sessionId?: string; level?: string }
+        if (p.sessionId && p.level) {
+          sessionStore.updateSessionState(p.sessionId, { thinkingLevel: p.level })
+        }
+        break
+      }
       default:
         break
     }
