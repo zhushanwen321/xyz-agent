@@ -195,6 +195,14 @@ export class RuntimeServer implements IMessageBroker {
         ...messaging,
         sessionService: this.sessionService,
         gitService: this.gitService,
+        broadcastChangeSetInvalidated: (sessionId, reason) => {
+          // 广播给所有连接（session 级消息，前端按 payload.sessionId 路由到正确 panel）。
+          this.broadcast({
+            type: 'message.changeSetInvalidated',
+            id: this.nextPushId(),
+            payload: { sessionId, reason },
+          })
+        },
       })
     }
     if (this.fileService) {

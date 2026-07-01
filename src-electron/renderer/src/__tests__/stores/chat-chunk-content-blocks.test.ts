@@ -15,13 +15,14 @@ import type { Message, ServerMessage } from '@xyz-agent/shared'
 
 const SID = 's-test'
 
-/** 构造 ChunkContext：真实 vue ref + applyFileChanges mock（流式 contentBlocks 不走它） */
+/** 构造 ChunkContext：真实 vue ref + applyFileChanges/markChangeSetsSuperseded mock（流式 contentBlocks 不走它们） */
 function makeCtx(initial: Message[] = []): ChunkContext {
   return {
     messages: ref(new Map([[SID, initial]])),
     retryStates: ref(new Map()),
     queueStates: ref(new Map()),
     applyFileChanges: vi.fn(),
+    markChangeSetsSuperseded: vi.fn(),
   }
 }
 

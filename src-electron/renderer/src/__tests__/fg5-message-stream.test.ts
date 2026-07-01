@@ -379,46 +379,52 @@ describe('FG5 chat store 块类型扩展', () => {
   })
 
   // ── W10: FileChanges 通道（applyFileChanges + message.file_changes case）──
+  // ADR-0024 D5 重构：baseline diff，isFullSet 恒 true（每次 diff 都是全量结果，全集替换不增量合并）。
 
-  it('message.file_changes accumulating 增量合并到 assistant message.fileChanges', () => {
+  it('message.file_changes accumulating 全集替换（baseline diff 每次 diff 是全量结果）', () => {
     const store = useChatStore()
     store.appendAssistantChunk('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
-    // 第一条 write：新增文件
+    // 第一次 diff：写了一个文件
     store.appendAssistantChunk('sx', {
       type: 'message.file_changes',
       payload: {
         sessionId: 'sx', messageId: 'a1',
         fileChanges: [{ filePath: 'src/a.ts', status: 'added', addLines: 10 }],
-        changeSetStatus: 'accumulating', isFullSet: false,
+        changeSetStatus: 'accumulating', isFullSet: true,
       },
     })
-    // 第二条 edit：修改既有文件
+    // 第二次 diff：写了两个文件（包含第一次的）—— isFullSet=true 全集替换
     store.appendAssistantChunk('sx', {
       type: 'message.file_changes',
       payload: {
         sessionId: 'sx', messageId: 'a1',
-        fileChanges: [{ filePath: 'src/b.ts', status: 'modified', addLines: 3, delLines: 1 }],
-        changeSetStatus: 'accumulating', isFullSet: false,
+        fileChanges: [
+          { filePath: 'src/a.ts', status: 'added', addLines: 10 },
+          { filePath: 'src/b.ts', status: 'modified', addLines: 3, delLines: 1 },
+        ],
+        changeSetStatus: 'accumulating', isFullSet: true,
       },
     })
     const msg = store.getMessages('sx')[0]
+    // 全集替换：最终结果是第二次的两条，不是增量合并
     expect(msg.fileChanges).toHaveLength(2)
+    expect(msg.fileChanges?.map((c) => c.filePath).sort()).toEqual(['src/a.ts', 'src/b.ts'])
     expect(store.getChangeSetStatus('sx', 'a1')).toBe('accumulating')
   })
 
-  it('message.file_changes ready 全集替换（git 对账真值收口）', () => {
+  it('message.file_changes ready 全集替换（agent_end 最终对账）', () => {
     const store = useChatStore()
     store.appendAssistantChunk('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
-    // accumulating 增量
+    // accumulating（agent 还在跑）
     store.appendAssistantChunk('sx', {
       type: 'message.file_changes',
       payload: {
         sessionId: 'sx', messageId: 'a1',
         fileChanges: [{ filePath: 'old.ts', status: 'modified' }],
-        changeSetStatus: 'accumulating', isFullSet: false,
+        changeSetStatus: 'accumulating', isFullSet: true,
       },
     })
-    // ready 全集替换（git 发现完全不同的文件集）
+    // ready 全集替换（agent_end 最终 diff 发现完全不同的文件集）
     store.appendAssistantChunk('sx', {
       type: 'message.file_changes',
       payload: {
@@ -431,6 +437,49 @@ describe('FG5 chat store 块类型扩展', () => {
     expect(msg.fileChanges).toHaveLength(2)
     expect(msg.fileChanges?.map((c) => c.filePath).sort()).toEqual(['new1.ts', 'new2.ts'])
     expect(store.getChangeSetStatus('sx', 'a1')).toBe('ready')
+  })
+
+  it('message.changeSetInvalidated 把该 session 的 changeSet 推 superseded（commit 后过期）', () => {
+    const store = useChatStore()
+    store.appendAssistantChunk('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
+    // 先有一条 ready changeSet
+    store.appendAssistantChunk('sx', {
+      type: 'message.file_changes',
+      payload: {
+        sessionId: 'sx', messageId: 'a1',
+        fileChanges: [{ filePath: 'src/a.ts', status: 'added', addLines: 10 }],
+        changeSetStatus: 'ready', isFullSet: true,
+      },
+    })
+    expect(store.getChangeSetStatus('sx', 'a1')).toBe('ready')
+    // git commit 成功 → runtime 广播 changeSetInvalidated
+    store.appendAssistantChunk('sx', {
+      type: 'message.changeSetInvalidated',
+      payload: { sessionId: 'sx', reason: 'committed' },
+    })
+    expect(store.getChangeSetStatus('sx', 'a1')).toBe('superseded')
+  })
+
+  it('message.changeSetInvalidated 不覆盖已 resolved 的 changeSet（保留审查记录）', () => {
+    const store = useChatStore()
+    store.appendAssistantChunk('sx', { type: 'message.message_start', payload: { sessionId: 'sx', messageId: 'a1' } })
+    store.appendAssistantChunk('sx', {
+      type: 'message.file_changes',
+      payload: {
+        sessionId: 'sx', messageId: 'a1',
+        fileChanges: [{ filePath: 'src/a.ts', status: 'added', addLines: 10 }],
+        changeSetStatus: 'ready', isFullSet: true,
+      },
+    })
+    // 用户已 accept（标 resolved）
+    store.setChangeSetStatus('sx', 'a1', 'resolved')
+    expect(store.getChangeSetStatus('sx', 'a1')).toBe('resolved')
+    // commit 后广播失效 —— resolved 不应被覆盖
+    store.appendAssistantChunk('sx', {
+      type: 'message.changeSetInvalidated',
+      payload: { sessionId: 'sx', reason: 'committed' },
+    })
+    expect(store.getChangeSetStatus('sx', 'a1')).toBe('resolved')
   })
 
   it('setChangeSetStatus 驱动审查态（partially-reviewed/resolved）', () => {

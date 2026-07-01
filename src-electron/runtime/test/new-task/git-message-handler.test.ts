@@ -24,13 +24,16 @@ interface Captured {
 function makeHandler(
   checkoutImpl: ReturnType<typeof vi.fn> = vi.fn().mockResolvedValue(undefined),
   createBranchImpl: ReturnType<typeof vi.fn> = vi.fn().mockResolvedValue(undefined),
+  commitImpl: ReturnType<typeof vi.fn> = vi.fn().mockResolvedValue(undefined),
 ) {
   const cap: Captured = { replies: [], errors: [] }
+  /** 捕获 broadcastChangeSetInvalidated 调用（D5 重构：commit 后广播） */
+  const invalidations: { sessionId: string; reason: 'committed' }[] = []
   const gitService = {
     getStatus: vi.fn(),
     stage: vi.fn(),
     unstage: vi.fn(),
-    commit: vi.fn(),
+    commit: commitImpl,
     checkout: checkoutImpl,
     createBranch: createBranchImpl,
   }
@@ -44,9 +47,12 @@ function makeHandler(
     }),
     sessionService: { getSummary: vi.fn() },
     gitService,
+    broadcastChangeSetInvalidated: vi.fn((sessionId: string, reason: 'committed') => {
+      invalidations.push({ sessionId, reason })
+    }),
   }
   const handler = new GitMessageHandler(ctx as unknown as ConstructorParameters<typeof GitMessageHandler>[0])
-  return { cap, handler, gitService }
+  return { cap, handler, gitService, invalidations }
 }
 
 function checkoutMsg(sessionId: string, name: string, id = 'm1'): ClientMessage {
@@ -120,6 +126,46 @@ describe('GitMessageHandler git.createBranch 路由（#7）', () => {
     expect(cap.errors).toHaveLength(1)
     expect(cap.errors[0]).toMatchObject({
       id: 'm1', code: 'git_failed', message: 'branch exists', details: { sessionId: 's1' } })
+    expect(cap.replies).toHaveLength(0)
+  })
+})
+
+describe('GitMessageHandler git.commit 路由（D5 重构：commit 后广播 changeSetInvalidated）', () => {
+  function commitMsg(sessionId: string, message: string, id = 'm1'): ClientMessage {
+    return { type: 'git.commit', id, payload: { sessionId, message } } as unknown as ClientMessage
+  }
+
+  it("handles 清单含 'git.commit'", () => {
+    const { handler } = makeHandler()
+    expect(handler.handles).toContain('git.commit')
+  })
+
+  it('commit 成功→gitService.commit 调用 + 广播 changeSetInvalidated + reply committed', async () => {
+    const { cap, handler, gitService, invalidations } = makeHandler()
+    await handler.handleGitMessage(commitMsg('s1', 'fix: changeSet baseline diff'), WS)
+    expect(gitService.commit).toHaveBeenCalledWith('s1', 'fix: changeSet baseline diff')
+    // 广播必须在 reply 之前（避免前端短暂停留在 ready 态）
+    expect(invalidations).toEqual([{ sessionId: 's1', reason: 'committed' }])
+    expect(cap.replies[0]).toMatchObject({
+      id: 'm1',
+      type: 'message.status',
+      payload: { sessionId: 's1', status: 'committed' },
+    })
+    expect(cap.errors).toHaveLength(0)
+  })
+
+  it('commit 失败(GitError nothing_to_commit)→error envelope，不广播不 reply', async () => {
+    const { cap, handler, invalidations } = makeHandler(
+      vi.fn(),
+      vi.fn(),
+      vi.fn().mockRejectedValue(new GitError('nothing_to_commit', 'no changes')),
+    )
+    await handler.handleGitMessage(commitMsg('s1', 'msg'), WS)
+    expect(cap.errors).toHaveLength(1)
+    expect(cap.errors[0]).toMatchObject({
+      id: 'm1', code: 'nothing_to_commit', message: 'no changes', details: { sessionId: 's1' } })
+    // commit 失败时不应广播失效（工作区未变）
+    expect(invalidations).toHaveLength(0)
     expect(cap.replies).toHaveLength(0)
   })
 })

@@ -54,6 +54,8 @@ export interface ChunkContext {
     changeSetStatus: ChangeSetStatus,
     isFullSet: boolean,
   ) => void
+  /** D5 重构：changeSetInvalidated case 调 store.markChangeSetsSuperseded（commit 后旧卡片过期） */
+  markChangeSetsSuperseded: (sessionId: string) => void
 }
 
 /** 从后往前找最后一条 assistant message 的下标 */
@@ -394,13 +396,19 @@ export function applyChunk(ctx: ChunkContext, sessionId: string, msg: ServerMess
       break
     }
     case 'message.file_changes': {
-      // W10：FileChanges 通道（ADR-0024 D7）。accumulating 增量合并，ready 全集替换。
+      // W10：FileChanges 通道（ADR-0024 D5 重构：baseline diff）。isFullSet 恒 true，全集替换。
       const messageId = readString(msg.payload, 'messageId')
       if (!messageId) return
       const fileChanges = readFileChanges(msg.payload)
       const status = readChangeSetStatus(msg.payload)
       const isFullSet = readBool(msg.payload, 'isFullSet')
       ctx.applyFileChanges(sessionId, messageId, fileChanges, status, isFullSet)
+      break
+    }
+    case 'message.changeSetInvalidated': {
+      // D5 重构：commit 成功后工作区 diff 重置，旧 changeSet 卡片需标为已过期。
+      // 前端按 payload.sessionId 路由，把该 session 非 resolved 态的 changeSet 推 superseded。
+      ctx.markChangeSetsSuperseded(sessionId)
       break
     }
     default:

@@ -130,7 +130,7 @@ export const useChatStore = defineStore('chat', () => {
    */
   function appendAssistantChunk(sessionId: string, msg: ServerMessage): void {
     applyChunk(
-      { messages, retryStates, queueStates, applyFileChanges },
+      { messages, retryStates, queueStates, applyFileChanges, markChangeSetsSuperseded },
       sessionId,
       msg,
     )
@@ -222,6 +222,26 @@ export const useChatStore = defineStore('chat', () => {
     changeSetStatuses.value = new Map(changeSetStatuses.value).set(statusKey, changeSetStatus)
   }
 
+  /**
+   * 标记指定 session 的所有变更集为已过期（superseded）。
+   *
+   * D5 重构：git.commit 成功后工作区 diff 重置，runtime 广播 message.changeSetInvalidated，
+   * 前端把该 session 的非 resolved 态 changeSet 推 superseded（保留已 resolved 的历史审查记录）。
+   * resolved 态不覆盖——用户已明确接受的变更不应因后续 commit 而状态丢失。
+   */
+  function markChangeSetsSuperseded(sessionId: string): void {
+    const prefix = `${sessionId}:`
+    let changed = false
+    const next = new Map(changeSetStatuses.value)
+    for (const [key, status] of next) {
+      if (key.startsWith(prefix) && status !== 'resolved') {
+        next.set(key, 'superseded')
+        changed = true
+      }
+    }
+    if (changed) changeSetStatuses.value = next
+  }
+
   return {
     messages,
     isStreaming,
@@ -235,6 +255,7 @@ export const useChatStore = defineStore('chat', () => {
     getQueueState,
     getChangeSetStatus,
     setChangeSetStatus,
+    markChangeSetsSuperseded,
     isHydrated,
     markHistoryFailed,
     clearHistoryError,

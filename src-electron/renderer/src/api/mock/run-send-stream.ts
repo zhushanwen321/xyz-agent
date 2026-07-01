@@ -140,7 +140,8 @@ export async function runSendStream(sessionId: string, text: string, deps: SendS
     })
   }
 
-  // file_changes（accumulating → ready），证明 ChangeSetCard/FileView 渲染 + 跨帧合并。
+  // file_changes（accumulating → ready），证明 ChangeSetCard/FileView 渲染。
+  // ADR-0024 D5 重构：baseline diff，isFullSet 恒 true（每次 diff 都是全量结果，全集替换不增量合并）。
   // 任务4：ready 帧加 unmerged 样本，让 FileView U 标注在 mock 下可验。
   if (isCancelled(sessionId)) return
   await sleep(TIMING.fileChangesGap)
@@ -153,7 +154,7 @@ export async function runSendStream(sessionId: string, text: string, deps: SendS
         { filePath: 'src/mock-feature.ts', status: 'modified', addLines: 10, delLines: 2 },
       ],
       changeSetStatus: 'accumulating',
-      isFullSet: false,
+      isFullSet: true,
     },
   })
   await sleep(TIMING.fileChangesGap)

@@ -26,6 +26,11 @@ import { toErrorMessage } from '../utils/errors.js'
 export interface GitHandlerContext extends MessageHandlerContext {
   sessionService: ISessionService
   gitService: GitService
+  /**
+   * 广播 changeSet 失效通知（ADR-0024 D5 重构）。commit 成功后工作区 diff 已重置，
+   * 旧的 changeSet 卡片成为过期数据。server 注入此方法向所有订阅该 session 的前端广播。
+   */
+  broadcastChangeSetInvalidated: (sessionId: string, reason: 'committed') => void
 }
 
 export class GitMessageHandler {
@@ -76,6 +81,10 @@ export class GitMessageHandler {
         const { sessionId, message } = msg.payload
         try {
           await this.ctx.gitService.commit(sessionId, message)
+          // commit 成功后工作区 diff 已重置，通知前端旧 changeSet 失效（ADR-0024 D5 重构）。
+          // 必须在 reply 之前广播——前端收到 status:'committed' 后可能立即刷新 git zone，
+          // changeSetInvalidated 先到可避免卡片短暂停留在 ready 态。
+          this.ctx.broadcastChangeSetInvalidated(sessionId, 'committed')
           return this.ctx.reply(ws, msg.id, 'message.status', { sessionId, status: 'committed' })
         } catch (e) {
           return this.sendGitError(ws, msg.id, sessionId, e)
