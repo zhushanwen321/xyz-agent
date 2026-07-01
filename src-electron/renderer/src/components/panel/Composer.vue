@@ -141,10 +141,12 @@ const draft = ref('')
  * 当前选中模型 id —— "provider/modelId" 复合串（与 SessionSummary.modelId / config.defaults 同格式）。
  * 优先取 active session 的 modelId（per-session 真值）；landing 态（无 active session）
  * 回退到全局默认模型（settingsStore.defaultModel，经 config.defaults 订阅）。
- * runtime model.switch 成功后回推 session summary / config.defaults → 自动同步。
+ *
+ * 用 || 而非 ??：session.list 广播里的已退出/磁盘 session 的 modelId 硬编码为 ''（空串），
+ * ?? 不兜底空串（'' ?? fallback === ''），导致模型显示消失。|| 兜底空串到 defaultModel。
  */
 const currentModelId = computed(
-  () => sessionStore.active?.modelId ?? settingsStore.defaultModel ?? '',
+  () => sessionStore.active?.modelId || settingsStore.defaultModel || '',
 )
 /** ComposerInput 实例 ref：清空/恢复草稿用 */
 const inputRef = ref<InstanceType<typeof ComposerInput> | null>(null)
@@ -243,11 +245,17 @@ function onCmdSelect(payload: { type: 'file' | 'slash'; name: string; icon?: str
 }
 
 /** 模型切换：调 runtime model.switch（sessionId + provider + modelId）；
- * 成功后 runtime 回推 session summary（modelId 更新）→ currentModelId 自动同步。
+ * 成功后乐观更新 sessionStore（立即生效，不依赖 state_changed 广播到达——
+ * 未发消息的 session 可能无 streamSubscription，广播会丢）。
+ * runtime 广播 session.state_changed 作为多 panel 同步的补充。
  * landing 态（sid=null）延迟 create，不切换模型。 */
 async function onModelSelect(payload: { modelId: string; provider: string }): Promise<void> {
   if (!props.sessionId) return // landing 态延迟 create（sid=null）时不切换模型
   await modelApi.switchModel(props.sessionId, payload.provider, payload.modelId)
+  // 乐观更新：立即同步 active.modelId（复合串 "provider/modelId"）
+  sessionStore.updateSessionState(props.sessionId, {
+    modelId: `${payload.provider}/${payload.modelId}`,
+  })
 }
 
 /** 思考等级切换：调 runtime session.setThinkingLevel（成功后 session store 持久） */

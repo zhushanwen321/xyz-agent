@@ -57,7 +57,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
 import { Check, ChevronDown } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -74,12 +74,8 @@ const props = defineProps<{
 }>()
 
 const open = ref(false)
-const selected = ref(props.selected ?? '')
 const query = ref('')
 const models = ref<ModelInfo[]>([])
-
-// 外部 selected 变化时同步本地（单向：父 → 子）
-watch(() => props.selected, (v) => { if (v) selected.value = v })
 
 /**
  * 拆出裸 modelId：selected 可能是 "provider/modelId" 复合串
@@ -121,18 +117,20 @@ const groups = computed<ModelGroup[]>(() => {
   return [...map.values()]
 })
 
+/** 当前选中值（纯受控：直接用 props，不存本地副本，避免 watch 拉回导致 UI 闪退） */
+const selectedValue = computed(() => props.selected ?? '')
+
 const currentName = computed(() => {
-  const id = bareModelId(selected.value)
+  const id = bareModelId(selectedValue.value)
   return models.value.find((m) => m.id === id)?.name ?? id
 })
 
 /** 列表项是否选中（兼容复合串 "provider/modelId" 与裸 id 两种来源） */
 function isSelected(modelId: string): boolean {
-  return bareModelId(selected.value) === modelId
+  return bareModelId(selectedValue.value) === modelId
 }
 
 function onSelect(id: string, provider: string): void {
-  selected.value = id
   open.value = false
   emit('select', { modelId: id, provider })
 }
