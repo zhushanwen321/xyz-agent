@@ -93,9 +93,12 @@ const props = defineProps<{
 }>()
 
 /**
- * 订阅 context.update（D8：session 通道）。
+ * 订阅 context.update + session.state_changed（D8：session 通道）。
  * 字段映射（D9）：used←inputTokens / total←contextLimit / percent←usagePercent。
  * cacheHit / modelId 无来源，保持占位。sessionId 变化时重订。
+ *
+ * session.state_changed：模型切换后 runtime 推送（含按新 contextWindow 重算的用量），
+ * 使用量随模型切换立即刷新，无需等下一次 agent_end。
  */
 let unsubContext: (() => void) | null = null
 function subscribeContext(sid: string | undefined): void {
@@ -103,7 +106,7 @@ function subscribeContext(sid: string | undefined): void {
   unsubContext = null
   if (!sid) return
   unsubContext = events.on(sid, (msg) => {
-    if (msg.type !== 'context.update') return
+    if (msg.type !== 'context.update' && msg.type !== 'session.state_changed') return
     // msg 经 type 守卫后 payload 仍为联合宽类型（events.on 非 onGlobalType，无 per-type 泛型收窄），
     // 故窄断言取字段（payload 已契约化，见 protocol.ts ServerMessageMap）
     const { inputTokens, contextLimit, usagePercent } = msg.payload as {
