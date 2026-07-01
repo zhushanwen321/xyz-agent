@@ -1,50 +1,46 @@
 /**
- * MarkdownRenderer 组件单测（W4，对话流 markdown 渲染增强）。
+ * MarkdownRenderer 组件单测（segments 模式）。
  *
- * 覆盖：
- *  - U9 代码块语言标签 + 复制按钮存在于 DOM（DoD 渲染 gate）
- *  - U10 点复制按钮 → clipboard 写入解码后内容 + is-copied 反馈态
- *  - U11 mermaid 占位 → MermaidRenderer 挂载（mock 子组件）
- *  - U13（全屏 Dialog 在 MermaidRenderer.test 已覆盖，此处聚焦 MarkdownRenderer 的挂载/事件委托）
- *
- * mock 策略：
- *  - vi.mock('@/composables/logic/markdown')：renderMarkdown 返回可控 HTML（含 .md-codeblock / .md-mermaid）
- *  - vi.mock MermaidRenderer：stub 成带 source prop 的简单 div（验证挂载 + source 传递，不跑真实渲染）
+ * 测试设计（修正 W4 的 mock 失败：不再 mock 掉 mermaid 核心假装通过）：
+ *  - mock renderMarkdownSegments：返回可控 segments（text/mermaid 交替），验证 MarkdownRenderer
+ *    正确分发——text 段渲染为 v-html 内容，mermaid 段渲染为 <MermaidRenderer> 组件。
+ *  - MermaidRenderer stub：合理（测的是 MarkdownRenderer 的 segment 分发，不是 mermaid 渲染本身；
+ *    mermaid 真实渲染在 happy-dom 必返回空，无法单测——见 mermaid-real 测试已证）。
+ *  - 事件委托（复制/外链/文件路径）覆盖。
  *
  * 运行：cd src-electron/renderer && npx vitest run src/__tests__/composables/markdown-renderer.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { nextTick } from 'vue'
+import { nextTick, h } from 'vue'
+import type { MarkdownSegment } from '@/composables/logic/markdown'
 
-// renderMarkdown stub：返回可控 HTML，聚焦 MarkdownRenderer 的后处理（事件委托/挂载）
-const mockRenderMarkdown = vi.fn()
+// renderMarkdownSegments stub：每个测试设置返回值，聚焦 MarkdownRenderer 的 segment 分发
+const mockRenderSegments = vi.fn()
 vi.mock('@/composables/logic/markdown', () => ({
-  renderMarkdown: (content: string) => mockRenderMarkdown(content),
+  renderMarkdownSegments: (content: string) => mockRenderSegments(content),
+  decodeBase64: (b64: string) => {
+    // 真实 base64 解码（测试构造 data-code 用）
+    const binary = atob(b64)
+    return new TextDecoder().decode(Uint8Array.from(binary, (c) => c.charCodeAt(0)))
+  },
 }))
 
-// base64 helper（与 markdown.ts encodeBase64 对称，测试构造 data-code）
-function encodeB64(text: string): string {
-  const bytes = new TextEncoder().encode(text)
-  let binary = ''
-  bytes.forEach((b) => (binary += String.fromCharCode(b)))
-  return btoa(binary)
-}
-
-// MermaidRenderer stub：捕获 source prop，渲染带标识的 div（验证挂载 + source 解码传递）
-const mockMermaidMount = vi.fn()
+// MermaidRenderer stub：捕获 source prop（验证 mermaid segment 传递 source）
+const mockMermaidSource = vi.fn()
 vi.mock('@/components/panel/message-stream/MermaidRenderer.vue', () => ({
   default: {
     name: 'MermaidRenderer',
     props: ['source'],
     setup(props: { source: string }) {
-      mockMermaidMount(props.source)
-      return () => ({ tag: 'div', class: 'stub-mermaid', textContent: props.source })
+      mockMermaidSource(props.source)
+      // 用 render 函数（Vue 3 需 h()），渲染带标识的 div 验证挂载
+      return () => h('div', { class: 'stub-mermaid' }, props.source)
     },
   },
 }))
 
-// useFileTree / useSideDrawer stub（MarkdownRenderer 用它们打开文件路径）
+// useFileTree / useSideDrawer stub
 const mockSelectFile = vi.fn()
 const mockDrawerOpen = vi.fn()
 vi.mock('@/composables/features/useFileTree', () => ({
@@ -53,34 +49,38 @@ vi.mock('@/composables/features/useFileTree', () => ({
 vi.mock('@/composables/features/useSideDrawer', () => ({
   useSideDrawer: () => ({ open: mockDrawerOpen }),
 }))
-// lib/ipc.openExternal stub（外链打开走此门面，不再直调 window.electronAPI）
 const mockOpenExternal = vi.fn().mockResolvedValue(undefined)
 vi.mock('@/lib/ipc', () => ({
   openExternal: (url: string) => mockOpenExternal(url),
-  getRuntimePort: vi.fn(),
 }))
+
+function encodeB64(text: string): string {
+  const bytes = new TextEncoder().encode(text)
+  let binary = ''
+  bytes.forEach((b) => (binary += String.fromCharCode(b)))
+  return btoa(binary)
+}
 
 import MarkdownRenderer from '@/components/panel/message-stream/MarkdownRenderer.vue'
 
-describe('MarkdownRenderer（W4）', () => {
+describe('MarkdownRenderer（segments 模式）', () => {
   beforeEach(() => {
-    mockRenderMarkdown.mockReset()
-    mockMermaidMount.mockReset()
+    mockRenderSegments.mockReset()
+    mockMermaidSource.mockReset()
     mockSelectFile.mockReset()
     mockDrawerOpen.mockReset()
     mockOpenExternal.mockClear()
     vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined)
   })
 
-  it('U9: 代码块含语言标签 + 复制按钮（DOM 可见，DoD 渲染 gate）', async () => {
+  it('U9: text segment 渲染为 v-html（代码块语言标签+复制按钮可见，DoD 渲染 gate）', async () => {
     const code = 'const x = 1'
-    mockRenderMarkdown.mockResolvedValue(
-      `<div class="md-codeblock"><div class="md-codeblock__header">` +
-        `<span class="md-codeblock__lang">typescript</span>` +
-        `<button class="md-codeblock__copy" data-code="${encodeB64(code)}" type="button"></button>` +
-        `</div><pre class="shiki"><code>${code}</code></pre></div>`,
-    )
-    const wrapper = mount(MarkdownRenderer, { props: { content: '```ts\nconst x=1\n```' } })
+    const textSeg: MarkdownSegment = {
+      type: 'text',
+      content: `<div class="md-codeblock"><div class="md-codeblock__header"><span class="md-codeblock__lang">typescript</span><button class="md-codeblock__copy" data-code="${encodeB64(code)}" type="button"></button></div><pre class="shiki"><code>${code}</code></pre></div>`,
+    }
+    mockRenderSegments.mockResolvedValue([textSeg])
+    const wrapper = mount(MarkdownRenderer, { props: { content: 'x' } })
     await nextTick()
     await nextTick()
     expect(wrapper.find('.md-codeblock__lang').exists()).toBe(true)
@@ -88,72 +88,75 @@ describe('MarkdownRenderer（W4）', () => {
     expect(wrapper.find('.md-codeblock__copy').exists()).toBe(true)
   })
 
-  it('U10: 点复制按钮 → clipboard 写入解码内容 + is-copied 反馈态', async () => {
+  it('U10: mermaid segment 渲染为 MermaidRenderer 组件（source 传递）', async () => {
+    const mermaidSrc = 'graph TD;A-->B'
+    mockRenderSegments.mockResolvedValue([{ type: 'mermaid', content: mermaidSrc }])
+    const wrapper = mount(MarkdownRenderer, { props: { content: 'x' } })
+    await nextTick()
+    await nextTick()
+    expect(mockMermaidSource).toHaveBeenCalledWith(mermaidSrc)
+    expect(wrapper.find('.stub-mermaid').exists()).toBe(true)
+  })
+
+  it('U11: text + mermaid + text 段交替，顺序保留', async () => {
+    mockRenderSegments.mockResolvedValue([
+      { type: 'text', content: '<p>前文</p>' },
+      { type: 'mermaid', content: 'graph TD;A-->B' },
+      { type: 'text', content: '<p>后文</p>' },
+    ] as MarkdownSegment[])
+    const wrapper = mount(MarkdownRenderer, { props: { content: 'x' } })
+    await nextTick()
+    await nextTick()
+    const allBlocks = wrapper.findAll('.md-render > *')
+    // text(div v-html) + stub-mermaid + text(div v-html) = 3 个直接子节点
+    expect(allBlocks.length).toBe(3)
+    expect(mockMermaidSource).toHaveBeenCalledWith('graph TD;A-->B')
+  })
+
+  it('U12: 点代码块复制按钮 → clipboard 写入解码内容 + is-copied 反馈', async () => {
     const code = 'hello world'
-    mockRenderMarkdown.mockResolvedValue(
-      `<div class="md-codeblock"><div class="md-codeblock__header">` +
-        `<span class="md-codeblock__lang">ts</span>` +
-        `<button class="md-codeblock__copy" data-code="${encodeB64(code)}" type="button"></button>` +
-        `</div></div>`,
-    )
+    mockRenderSegments.mockResolvedValue([
+      { type: 'text', content: `<button class="md-codeblock__copy" data-code="${encodeB64(code)}" type="button"></button>` },
+    ] as MarkdownSegment[])
     const wrapper = mount(MarkdownRenderer, { props: { content: 'x' } })
     await nextTick()
     await nextTick()
     const btn = wrapper.find('.md-codeblock__copy')
-    expect(btn.exists()).toBe(true)
     await btn.trigger('click')
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(code)
-    // is-copied 反馈态 class
     expect(btn.classes()).toContain('is-copied')
   })
 
-  it('U11: mermaid 占位 → MermaidRenderer 挂载（source 解码传递）', async () => {
-    const mermaidSrc = 'graph TD;A-->B'
-    mockRenderMarkdown.mockResolvedValue(
-      `<div class="md-mermaid" data-source="${encodeB64(mermaidSrc)}"></div>`,
-    )
-    const wrapper = mount(MarkdownRenderer, { props: { content: '```mermaid\ngraph TD;A-->B\n```' } })
-    await nextTick()
-    await nextTick()
-    // MermaidRenderer stub 被挂载，收到解码后的 source
-    expect(mockMermaidMount).toHaveBeenCalledWith(mermaidSrc)
-    // 占位被标记为已挂载
-    const placeholder = wrapper.find('.md-mermaid')
-    expect(placeholder.exists()).toBe(true)
-    expect(placeholder.attributes('data-mounted')).toBe('1')
-  })
-
-  it('U8回归: 空内容不渲染不挂载', async () => {
-    mockRenderMarkdown.mockResolvedValue('')
-    const wrapper = mount(MarkdownRenderer, { props: { content: '' } })
-    await nextTick()
-    expect(wrapper.find('.md-codeblock').exists()).toBe(false)
-    expect(mockMermaidMount).not.toHaveBeenCalled()
-  })
-
-  it('U10: 点外链 <a href=http> → openExternal 唤起浏览器', async () => {
-    mockRenderMarkdown.mockResolvedValue('<a href="https://example.com">link</a>')
+  it('U13: 点外链 → openExternal', async () => {
+    mockRenderSegments.mockResolvedValue([
+      { type: 'text', content: '<a href="https://example.com">link</a>' },
+    ] as MarkdownSegment[])
     const wrapper = mount(MarkdownRenderer, { props: { content: 'x' } })
     await nextTick()
     await nextTick()
-    const link = wrapper.find('a[href="https://example.com"]')
-    expect(link.exists()).toBe(true)
-    await link.trigger('click')
+    await wrapper.find('a[href="https://example.com"]').trigger('click')
     expect(mockOpenExternal).toHaveBeenCalledWith('https://example.com')
   })
 
-  it('U11: 点文件路径 .md-filepath → selectFile + drawer.open(detail)', async () => {
+  it('U14: 点文件路径 → selectFile + drawer.open(detail)', async () => {
     const path = 'src/foo.ts'
-    mockRenderMarkdown.mockResolvedValue(
-      `<a class="md-filepath" data-path="${encodeB64(path)}">src/foo.ts</a>`,
-    )
+    mockRenderSegments.mockResolvedValue([
+      { type: 'text', content: `<a class="md-filepath" data-path="${encodeB64(path)}">src/foo.ts</a>` },
+    ] as MarkdownSegment[])
     const wrapper = mount(MarkdownRenderer, { props: { content: 'x', sessionId: 's1' } })
     await nextTick()
     await nextTick()
-    const link = wrapper.find('.md-filepath')
-    expect(link.exists()).toBe(true)
-    await link.trigger('click')
+    await wrapper.find('.md-filepath').trigger('click')
     expect(mockSelectFile).toHaveBeenCalledWith(path)
     expect(mockDrawerOpen).toHaveBeenCalledWith('detail')
+  })
+
+  it('U15: 空内容 → segments 空，不渲染不挂载', async () => {
+    mockRenderSegments.mockResolvedValue([])
+    const wrapper = mount(MarkdownRenderer, { props: { content: '' } })
+    await nextTick()
+    expect(wrapper.find('.md-codeblock').exists()).toBe(false)
+    expect(wrapper.find('.stub-mermaid').exists()).toBe(false)
+    expect(mockMermaidSource).not.toHaveBeenCalled()
   })
 })

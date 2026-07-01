@@ -236,11 +236,58 @@ function escapeHtml(s: string): string {
 
 /**
  * 把 markdown 文本渲染成 HTML 字符串。
- * 首次调用 await shiki 加载（异步）；之后 markdown-it 实例缓存，渲染同步。
+ * 首次调用 await shiki 加载（异步）；之后 markdown-it 实例缓存，后续渲染同步。
  */
 export async function renderMarkdown(content: string): Promise<string> {
   const md = await getMarkdown()
   return md.render(content)
+}
+
+/** markdown 渲染段（供 MarkdownRenderer 按 segment 分别渲染，mermaid 段走 MermaidRenderer 组件） */
+export interface MarkdownSegment {
+  /** text 段：渲染后的 HTML 字符串（含代码块/链接等，走 v-html）；mermaid 段：原始 mermaid 源码 */
+  type: 'text' | 'mermaid'
+  /** text: HTML；mermaid: 源码（MermaidRenderer 渲染） */
+  content: string
+}
+
+/** 占位正则：匹配 fence 规则产出的 mermaid 占位（data-source base64） */
+const MERMAID_PLACEHOLDER_RE = /<div class="md-mermaid" data-source="([^"]*)"><\/div>/g
+
+/**
+ * 把 markdown 渲染成 segment 数组：text 段（HTML）+ mermaid 段（源码）交替。
+ * MarkdownRenderer 用 v-for 渲染：text 走 v-html，mermaid 走 <MermaidRenderer> 组件。
+ * 替代 v-html 占位 + Vue render 函数动态挂载的脆弱模式——segments 让 mermaid 成为
+ * template 里的正常组件，响应式可靠。
+ */
+export async function renderMarkdownSegments(content: string): Promise<MarkdownSegment[]> {
+  const html = await renderMarkdown(content)
+  const segments: MarkdownSegment[] = []
+  let lastIndex = 0
+  MERMAID_PLACEHOLDER_RE.lastIndex = 0
+  let match: RegExpExecArray | null
+  while ((match = MERMAID_PLACEHOLDER_RE.exec(html)) !== null) {
+    // 占位之前的 HTML 作为 text 段
+    if (match.index > lastIndex) {
+      segments.push({ type: 'text', content: html.slice(lastIndex, match.index) })
+    }
+    // mermaid 段：解码 base64 source
+    const source = decodeBase64(match[1])
+    segments.push({ type: 'mermaid', content: source })
+    lastIndex = match.index + match[0].length
+  }
+  // 剩余 HTML 作为 text 段
+  if (lastIndex < html.length) {
+    segments.push({ type: 'text', content: html.slice(lastIndex) })
+  }
+  return segments
+}
+
+/** base64 解码（UTF-8 安全，与 encodeBase64 对称） */
+export function decodeBase64(b64: string): string {
+  const binary = atob(b64)
+  const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0))
+  return new TextDecoder().decode(bytes)
 }
 
 /**

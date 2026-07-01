@@ -3,20 +3,25 @@
     展示组件 · Markdown 渲染（W03）。
     shiki 代码高亮（VSCode 级）+ markdown-it 结构解析（标题/列表/表格/行内代码/链接）。
 
+    渲染模式：renderMarkdownSegments 把 markdown 拆成 text 段（HTML，走 v-html）+ mermaid 段
+    （源码，走 <MermaidRenderer> 组件）交替。mermaid 作为 template 里的正常 Vue 组件，
+    无 Vue render 函数动态挂载（该模式不可靠，曾导致渲染失败）。
+
     代码块增强（fence 规则覆盖，markdown.ts）：语言标签 + 复制按钮（事件委托）。
-    mermaid 块：v-html 注入占位 <div class="md-mermaid" data-source>，watch html 后
-    动态挂载 MermaidRenderer 子实例（render 函数模式）到占位点，实现异步渲染 + 全屏 Dialog。
 
     双主题（ADR-0021-B：暗为默认）：shiki defaultColor:false 产出 --shiki-dark(暗)/--shiki-light(亮)
     双套 span，由 :root(暗默认) / [data-theme="light"] 的 scoped 样式切换，走 design-tokens 体系。
 
     v-html：shiki + markdown-it(html:false) 的输出是 XSS 安全的——
     shiki codeToHtml 转义所有非 token 文本（只发 scoped <span>），markdown-it 不透传用户原始 HTML，
-    代码/mermaid 源码经 base64 编码进 data 属性。故在此受控渲染点局部放开 taste-lint vue/no-v-html。仅此组件。
+    代码源码经 base64 编码进 data 属性。故在此受控渲染点局部放开 taste-lint vue/no-v-html。仅此组件。
   -->
   <div class="md-render select-text" @click="onClick">
-    <!-- eslint-disable-next-line vue/no-v-html -- shiki+markdown-it(html:false) 输出 XSS 安全：shiki 转义所有非 token 文本（只发 scoped span），markdown-it 不透传用户原始 HTML，code/mermaid 经 base64 编码。仅此受控渲染点放开。 -->
-    <div ref="contentEl" v-html="html" />
+    <template v-for="(seg, i) in segments" :key="i">
+      <!-- eslint-disable-next-line vue/no-v-html -- text 段是 shiki+markdown-it(html:false) 安全输出，仅此受控点放开。 -->
+      <div v-if="seg.type === 'text'" v-html="seg.content" />
+      <MermaidRenderer v-else :source="seg.content" />
+    </template>
   </div>
 </template>
 
@@ -25,10 +30,11 @@
  * Markdown 渲染器。
  * - 首次渲染需 await shiki 加载（异步），期间显示空（极短，highlighter 单例只建一次）。
  * - content 变化（流式增量）触发重新渲染；markdown-it 实例已缓存，后续渲染同步。
- * - 代码块复制按钮用事件委托（v-html 内不能绑 Vue 事件），mermaid 占位动态挂载 MermaidRenderer。
+ * - 渲染为 segments 数组：text 段走 v-html，mermaid 段走 <MermaidRenderer> 组件（template v-for）。
+ * - 代码块复制按钮/链接点击用事件委托（v-html 内不能绑 Vue 事件）。
  */
-import { ref, watch, onUpdated, onBeforeUnmount, nextTick, h, render, type VNode } from 'vue'
-import { renderMarkdown } from '@/composables/logic/markdown'
+import { ref, watch, onBeforeUnmount } from 'vue'
+import { renderMarkdownSegments, decodeBase64, type MarkdownSegment } from '@/composables/logic/markdown'
 import { useFileTree } from '@/composables/features/useFileTree'
 import { useSideDrawer } from '@/composables/features/useSideDrawer'
 import { openExternal } from '@/lib/ipc'
@@ -40,8 +46,7 @@ const props = defineProps<{
   sessionId?: string | null
 }>()
 
-const html = ref('')
-const contentEl = ref<HTMLElement | null>(null)
+const segments = ref<MarkdownSegment[]>([])
 let renderSeq = 0
 
 /** 文件路径打开 SideDrawer detail tab（复用 FileTreeRow/GitPanel/useSearchJump 的双步模式） */
@@ -50,13 +55,6 @@ const drawer = useSideDrawer()
 
 /** 复制反馈持续时长（ms）—— 与 useCopy composable 保持一致（事件委托场景无法复用 ref，用同等常量） */
 const COPY_FEEDBACK_MS = 1200
-
-/** base64 解码（UTF-8 安全，与 markdown.ts encodeBase64 对称） */
-function decodeBase64(b64: string): string {
-  const binary = atob(b64)
-  const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0))
-  return new TextDecoder().decode(bytes)
-}
 
 /* ── 代码块复制按钮：事件委托 ── */
 let copyResetTimer: ReturnType<typeof setTimeout> | null = null
@@ -119,66 +117,24 @@ function onClick(e: MouseEvent): void {
   }
 }
 
-/* ── mermaid 占位 → 动态挂载 MermaidRenderer ──
-   v-html 产出的 <div class="md-mermaid" data-source> 是纯 HTML，不能直接变 Vue 组件。
-   用 Vue render 函数模式：对每个占位，createVNode(MermaidRenderer) + render 到占位容器。
-   流式增量重渲时先卸载旧的再挂新的（避免泄漏 + 保证 source 最新）。 */
-const mermaidMounts: { host: HTMLElement; vnode: VNode }[] = []
-
-function unmountAllMermaid(): void {
-  for (const m of mermaidMounts) {
-    // render(null, host) 触发子组件 onUnmounted（清理 MutationObserver 等）
-    render(null, m.host)
-  }
-  mermaidMounts.length = 0
-}
-
-async function mountMermaidBlocks(): Promise<void> {
-  const root = contentEl.value
-  if (!root) return
-  // 先卸载上一轮挂载的（html 重渲会重建 DOM，旧 vnode 失效）
-  unmountAllMermaid()
-  const placeholders = root.querySelectorAll<HTMLElement>('.md-mermaid:not([data-mounted])')
-  for (const ph of placeholders) {
-    const b64 = ph.dataset.source ?? ''
-    if (!b64) continue
-    const source = decodeBase64(b64)
-    ph.dataset.mounted = '1' // 标记已处理（防 onUpdated 重复挂载同一占位）
-    // 清空占位原内容（base64 source 文本），挂 MermaidRenderer
-    ph.textContent = ''
-    const vnode = h(MermaidRenderer, { source })
-    render(vnode, ph)
-    mermaidMounts.push({ host: ph, vnode })
-  }
-}
-
 watch(
   () => props.content,
   async (text) => {
     if (!text.trim()) {
-      html.value = ''
-      unmountAllMermaid()
+      segments.value = []
       return
     }
     // 流式增量会高频触发：用序号守卫，只采纳最新一次的渲染结果（防旧渲染覆盖新内容）
     const seq = ++renderSeq
-    const rendered = await renderMarkdown(text)
+    const segs = await renderMarkdownSegments(text)
     if (seq === renderSeq) {
-      html.value = rendered
-      await nextTick()
-      mountMermaidBlocks()
+      segments.value = segs
     }
   },
   { immediate: true },
 )
 
-// onUpdated 兜底：html 变化已 watch 处理，但防御性补一次（极少数 DOM 更新时序）
-onUpdated(() => {
-  mountMermaidBlocks()
-})
-
 onBeforeUnmount(() => {
-  unmountAllMermaid()
   if (copyResetTimer) clearTimeout(copyResetTimer)
 })
 </script>

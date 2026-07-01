@@ -37,6 +37,20 @@ async function freshRender(content: string): Promise<string> {
   return renderMarkdown(content)
 }
 
+/** 同 freshRender 但返回 segments（text/mermaid 拆分） */
+async function freshRenderSegments(content: string): Promise<{ type: string; content: string }[]> {
+  vi.resetModules()
+  vi.doMock('shiki', () => ({
+    createHighlighter: () =>
+      Promise.resolve({
+        codeToHtml: fakeCodeToHtml,
+        getLoadedLanguages: () => ['typescript', 'javascript', 'vue'],
+      }),
+  }))
+  const { renderMarkdownSegments } = await import('@/composables/logic/markdown')
+  return renderMarkdownSegments(content)
+}
+
 describe('markdown fence 规则覆盖（W3）', () => {
   beforeEach(() => {
     fakeCodeToHtml.mockClear()
@@ -134,5 +148,40 @@ describe('markdown fence 规则覆盖（W3）', () => {
     // 反引号内是 code token，不应被 filepath rule 消费
     expect(html).not.toContain('md-filepath')
     expect(html).toContain('<code>')
+  })
+})
+
+describe('renderMarkdownSegments（text/mermaid 拆分）', () => {
+  beforeEach(() => {
+    fakeCodeToHtml.mockClear()
+    vi.resetModules()
+  })
+
+  it('S1: 纯文本 → 单个 text segment', async () => {
+    const segs = await freshRenderSegments('普通段落\n')
+    expect(segs.length).toBe(1)
+    expect(segs[0].type).toBe('text')
+    expect(segs[0].content).toContain('<p>普通段落</p>')
+  })
+
+  it('S2: mermaid 块 → text(前) + mermaid + text(后)', async () => {
+    const segs = await freshRenderSegments('前文\n\n```mermaid\ngraph TD;A-->B\n```\n\n后文\n')
+    // 3 段：前文 text、mermaid、后文 text
+    expect(segs.length).toBe(3)
+    expect(segs[0].type).toBe('text')
+    expect(segs[0].content).toContain('前文')
+    expect(segs[1].type).toBe('mermaid')
+    expect(segs[1].content).toBe('graph TD;A-->B\n')
+    expect(segs[2].type).toBe('text')
+    expect(segs[2].content).toContain('后文')
+  })
+
+  it('S3: 多个 mermaid 块交替', async () => {
+    const md = '```mermaid\ngraph TD;A-->B\n```\n中文字\n```mermaid\nsequenceDiagram\nA>>B\n```\n'
+    const segs = await freshRenderSegments(md)
+    // mermaid + text + mermaid
+    expect(segs.filter((s) => s.type === 'mermaid').length).toBe(2)
+    expect(segs.filter((s) => s.type === 'text').length).toBeGreaterThanOrEqual(1)
+    expect(segs[0].type).toBe('mermaid')
   })
 })
