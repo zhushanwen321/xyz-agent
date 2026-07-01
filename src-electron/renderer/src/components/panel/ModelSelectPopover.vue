@@ -57,12 +57,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
+import { computed, ref } from 'vue'
 import { Check, ChevronDown } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { model as modelApi, type ModelInfo } from '@/api'
+import type { ModelInfo } from '@/api'
+import { useSettingsStore } from '@/stores/settings'
 
 const emit = defineEmits<{
   select: [payload: { modelId: string; provider: string }]
@@ -73,9 +74,9 @@ const props = defineProps<{
   selected?: string
 }>()
 
+const settingsStore = useSettingsStore()
 const open = ref(false)
 const query = ref('')
-const models = ref<ModelInfo[]>([])
 
 /**
  * 拆出裸 modelId：selected 可能是 "provider/modelId" 复合串
@@ -87,13 +88,9 @@ function bareModelId(v: string): string {
   return i >= 0 ? v.slice(i + 1) : v
 }
 
-// 订阅模型列表（sendInitialState 推 model.list；组件挂载即得初始列表）
-let unsub: (() => void) | null = null
-onMounted(() => {
-  unsub = modelApi.onModels((list) => { models.value = list })
-})
-onBeforeUnmount(() => { unsub?.() })
-
+// 模型列表从 settingsStore 常驻订阅读取（init 在 AppShell 根注册，不随组件卸载断开）。
+// 旧实现用 onMounted 本地订阅，组件随 Composer v-if 重新挂载时会错过 sendInitialState
+// 一次性推送 → 列表空（2026-07-01 竞态修复）。
 interface ModelGroup {
   providerId: string
   provider: string
@@ -104,7 +101,7 @@ interface ModelGroup {
 const groups = computed<ModelGroup[]>(() => {
   const q = query.value.trim().toLowerCase()
   const map = new Map<string, ModelGroup>()
-  for (const m of models.value) {
+  for (const m of settingsStore.models) {
     if (q && !m.name.toLowerCase().includes(q)) continue
     const key = m.providerId
     let g = map.get(key)
@@ -122,7 +119,7 @@ const selectedValue = computed(() => props.selected ?? '')
 
 const currentName = computed(() => {
   const id = bareModelId(selectedValue.value)
-  return models.value.find((m) => m.id === id)?.name ?? id
+  return settingsStore.models.find((m) => m.id === id)?.name ?? id
 })
 
 /** 列表项是否选中（兼容复合串 "provider/modelId" 与裸 id 两种来源） */

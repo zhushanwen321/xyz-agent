@@ -19,8 +19,8 @@
  */
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { ProviderInfo, SkillInfo, AgentInfo, SkillDirConfig } from '@xyz-agent/shared'
-import { config, extension as extensionApi, settings as settingsApi } from '@/api'
+import type { ProviderInfo, SkillInfo, AgentInfo, SkillDirConfig, ModelInfo } from '@xyz-agent/shared'
+import { config, model as modelApi, extension as extensionApi, settings as settingsApi } from '@/api'
 import type { SystemSettings } from '@/api'
 import { setLocale } from '@/i18n'
 
@@ -54,6 +54,14 @@ const DEFAULT_SYSTEM: SystemSettings = {
 export const useSettingsStore = defineStore('settings', () => {
   // ── State ──
   const providers = ref<ProviderInfo[]>([])
+  /**
+   * 聚合模型列表（runtime aggregateModels 产出，config.providers 解析后的扁平模型）。
+   * 与 providers 同源（sendInitialState 同 step 推、broadcastProviderList 同步广播），
+   * 故同样走常驻订阅（init 注册，应用生命周期不断开）。
+   * 放 store 而非 ModelSelectPopover 本地：组件随 Composer v-if 反复挂载卸载，
+   * 本地 onMounted 订阅会错过 sendInitialState 一次性推送 → 列表空（2026-07-01 竞态修复）。
+   */
+  const models = ref<ModelInfo[]>([])
   const skills = ref<SkillInfo[]>([])
   const agents = ref<AgentInfo[]>([])
   const extensions = ref<ExtensionItem[]>([])
@@ -82,6 +90,8 @@ export const useSettingsStore = defineStore('settings', () => {
     initialized = true
 
     unsubs.push(config.onProviders((p) => { providers.value = p }))
+    // models 与 providers 同源（sendInitialState 同 step 推、provider 增删同广播），故常驻订阅
+    unsubs.push(modelApi.onModels((m) => { models.value = m }))
     unsubs.push(config.onSkills((s) => { skills.value = s }))
     unsubs.push(config.onAgents((a) => { agents.value = a }))
     unsubs.push(config.onSkillDirs((d) => { skillDirs.value = d }))
@@ -141,6 +151,7 @@ export const useSettingsStore = defineStore('settings', () => {
   return {
     // state
     providers,
+    models,
     skills,
     agents,
     extensions,
