@@ -177,6 +177,47 @@ describe('T3.1（D-025 DTO 映射）文件相对路径', () => {
   })
 })
 
+describe('T3.10（D-029）file 源复用 composer # 分级匹配排序', () => {
+  // 复用 filterAndSortFileCandidates：basename 前缀命中 > path 子串命中
+  it('query("auth") → basename 前缀命中(auth.ts)排在 path 子串命中(src/auth/session.ts)前', async () => {
+    // 构造两个 file：一个 basename 以 auth 开头（前缀匹配），一个 basename 是 session.ts 但 path 含 auth（path 子串匹配）
+    // 原始顺序故意把 path 子串命中的放前面，验证排序后 basename 前缀命中排前
+    mockGetFileCandidates.mockResolvedValue([
+      fileNode('src/auth/session.ts'), // path 含 auth（MATCH_PATH），basename session.ts 不含 auth
+      fileNode('utils/auth.ts'),       // basename auth.ts 以 auth 开头（MATCH_PREFIX）
+    ])
+    const sid = ref<string | null>('s1')
+    const { query } = useSearch(sid)
+
+    const sections = await query('auth', { activeSessionId: 's1' })
+    const fileSection = findSection(sections, '文件')
+    expect(fileSection).toBeTruthy()
+    const titles = fileSection!.items.map((it) => it.title)
+    // 两个都命中（filterAndSortFileCandidates 不过滤掉 path 子串命中）
+    expect(titles).toContain('auth.ts')
+    expect(titles).toContain('session.ts')
+    // basename 前缀命中（auth.ts）排在 path 子串命中（session.ts）前面
+    expect(titles.indexOf('auth.ts')).toBeLessThan(titles.indexOf('session.ts'))
+  })
+
+  it('不匹配 query 的文件被过滤（filterAndSortFileCandidates 返回 null 级别）', async () => {
+    mockGetFileCandidates.mockResolvedValue([
+      fileNode('src/auth/token.ts'), // 命中 auth
+      fileNode('README.md'),         // 不命中 auth
+    ])
+    const sid = ref<string | null>('s1')
+    const { query } = useSearch(sid)
+
+    const sections = await query('auth', { activeSessionId: 's1' })
+    const fileSection = findSection(sections, '文件')
+    expect(fileSection).toBeTruthy()
+    const titles = fileSection!.items.map((it) => it.title)
+    expect(titles).toContain('token.ts')
+    // README.md 不命中（basename/path 都不含 auth）→ 被过滤
+    expect(titles).not.toContain('README.md')
+  })
+})
+
 describe('T3.2（AC-4.9）缓存命中', () => {
   it('fileSearchStore.get(sid) 返缓存 → 不调 composer.getFileCandidates', async () => {
     mockStoreGet.mockReturnValue([fileNode('cached.ts')])

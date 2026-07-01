@@ -21,6 +21,9 @@
  */
 import { ref, watch, onScopeDispose } from 'vue'
 import { matchFilter } from '@/lib/match-engine'
+import { toFileCandidates } from '@/lib/file-candidates'
+import type { FileCandidate } from '@/lib/file-candidates'
+import { filterAndSortFileCandidates } from '@/lib/file-match'
 import {
   WS_SOURCE_TIMEOUT_MS,
   type SearchCtx,
@@ -133,24 +136,27 @@ export function useSearch(activeSessionId: { value: string | null }) {
     }
 
     // 非空查询：allSettled 并行查 3 源
+    // file 源在源内用 filterAndSortFileCandidates 过滤+排序（与 composer # 同管线，复用同一套文件匹配算法），
+    // 故 file 结果不再进 matchFilter 二次过滤；command/session 仍走 matchFilter（纯子串，与 composer slash 同款）。
     const [commandRes, fileRes, sessionRes] = await Promise.allSettled([
       queryCommandSource(), // 内存，无 WS
-      queryFileSource(ctx.activeSessionId), // WS 缓存优先 + #17 超时 race
-      querySessionSource(), // WS + #17 超时 race
+      queryFileSource(ctx.activeSessionId, q), // WS 缓存优先 + #17 超时 race + 源内分级匹配
+      querySessionSource(q), // WS + #17 超时 race + 源内子串过滤
     ])
 
     // BC-9 守卫：旧响应丢弃（seq !== loadSeq 说明有更新查询）
     if (seq !== loadSeq) return []
 
-    // 合并候选 + matchFilter 过滤（MR-4.2：单源 rejected 取空，不阻断其他源）
+    // MR-4.2：单源 rejected 取空，不阻断其他源。file/session 源内已过滤，直接合并
     const commands = commandRes.status === 'fulfilled' ? commandRes.value : []
     const files = fileRes.status === 'fulfilled' ? fileRes.value : []
     const sessions = sessionRes.status === 'fulfilled' ? sessionRes.value : []
-    const allCandidates = [...commands, ...files, ...sessions]
-    const filtered = matchFilter(allCandidates, q)
+    // command 源返回全量（未过滤），此处统一 matchFilter；file/session 已在源内过滤
+    const filteredCommands = matchFilter(commands, q)
+    const allCandidates = [...filteredCommands, ...files, ...sessions]
 
     // 按类型分组 + 符号占位（D-001，GAP-E1 归 domain→归 useSearch D-026）
-    return groupByType(filtered)
+    return groupByType(allCandidates)
   }
 
   /** 命令源（内存，无 WS）：useCommandRegistry 聚合 → SearchItem 映射 */
@@ -159,13 +165,15 @@ export function useSearch(activeSessionId: { value: string | null }) {
   }
 
   /**
-   * file 源（WS 缓存优先 + #17 超时 race）。
+   * file 源（WS 缓存优先 + #17 超时 race + 源内分级匹配）。
+   * 复用 composer # 的同一套匹配管线：FileNode[] → toFileCandidates → filterAndSortFileCandidates
+   * （basename 前缀 > path 子串 + 文件优先 + 路径浅优先 + 排序），保证两处文件搜索行为一致。
    * AC-4.9：缓存命中直返（不重复递归）。
    * AC-4.5：缓存未命中直调 composer.getFileCandidates（不经 useFileSearch.load 吞错层）。
    * AC-4.10：消费缓存须自绑 setupInvalidation watch（实现期在 useSearch 初始化时绑，不依赖 CommandPopover 挂载）。
    * #17：WS 源包 Promise.race timeout（防 pending 永不 settle）。
    */
-  async function queryFileSource(sid: string | null): Promise<SearchItem[]> {
+  async function queryFileSource(sid: string | null, q: string): Promise<SearchItem[]> {
     if (!sid) return [] // AC-4.8 无 session → file 源空
     const cached = fileSearchStore.get(sid)
     let nodes: FileNode[]
@@ -177,14 +185,19 @@ export function useSearch(activeSessionId: { value: string | null }) {
       nodes = await withWsTimeout(composerApi.getFileCandidates(sid))
       fileSearchStore.set(sid, nodes) // 写缓存供下次命中
     }
-    return mapFilesToItems(nodes)
+    // 复用 composer # 管线：DTO 映射 + 分级匹配过滤+排序（同一套算法）
+    const candidates = toFileCandidates(nodes)
+    const filtered = filterAndSortFileCandidates(candidates, q)
+    return mapFileCandidatesToItems(filtered)
   }
 
-  /** session 源（WS + #17 超时 race）：session.list 全量跨项目 → 内存 matchFilter 过滤 */
-  async function querySessionSource(): Promise<SearchItem[]> {
+  /** session 源（WS + #17 超时 race + 源内子串过滤）：session.list 全量跨项目 */
+  async function querySessionSource(q: string): Promise<SearchItem[]> {
     // #17：WS 超时 race
     const groups = await withWsTimeout(sessionApi.list())
-    return mapSessionsToItems(groups)
+    const items = mapSessionsToItems(groups)
+    // session 源内子串过滤（与 matchFilter 同款，避免后续重复过滤）
+    return matchFilter(items, q)
   }
 
   /**
@@ -211,16 +224,20 @@ export function useSearch(activeSessionId: { value: string | null }) {
   function mapCommandsToItems(cmds: UnifiedCommand[]): SearchItem[] {
     return cmds.map((c) => toCommandItem(c))
   }
-  function mapFilesToItems(nodes: FileNode[]): SearchItem[] {
-    // AC-4.7 + D-021：只取文件节点（搜索文件不搜目录）+ 截断 MAX_SEARCH_RESULTS
-    // 截断提示由 UI 层基于 items.length===MAX_SEARCH_RESULTS 判断（本 composable 只负责 slice）
-    return nodes
-      .filter((n) => n.type === 'file')
+  /**
+   * file 候选（已 filterAndSortFileCandidates 过滤+排序）→ SearchItem 映射。
+   * AC-4.7 + D-003：SearchModal 只搜文件不搜目录（composer # 允许目录，两处语义不同——
+   * 复用的是匹配+排序算法，非全行为），映射时排除目录（kind==='目录'）。
+   * AC-4.7 + D-021：截断 MAX_SEARCH_RESULTS，防大仓库全量结果拖垮渲染。
+   */
+  function mapFileCandidatesToItems(candidates: FileCandidate[]): SearchItem[] {
+    return candidates
+      .filter((c) => c.kind !== '目录')
       .slice(0, MAX_SEARCH_RESULTS)
-      .map((n) => ({
+      .map((c) => ({
         type: 'file' as const,
-        title: n.name,
-        sub: n.path, // AC-3.1 相对路径展示（非绝对路径）
+        title: c.basename ?? c.name,
+        sub: c.path ?? c.name, // AC-3.1 相对路径展示（非绝对路径）
       }))
   }
   function mapSessionsToItems(groups: SessionGroup[]): SearchItem[] {
