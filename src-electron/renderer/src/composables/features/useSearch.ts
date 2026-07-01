@@ -259,8 +259,9 @@ export function useSearch(activeSessionId: { value: string | null }) {
       return { type: 'command', title: c.name, sub: c.shortcut ?? c.id }
     }
     if (isSessionCommand(c)) {
-      // SessionCommand（slash 命令，name 带 / 前缀如 '/commit'）：title=name，sub 优先 description 无则 kind
-      return { type: 'command', title: c.name, sub: c.description ?? c.kind }
+      // SessionCommand（slash 命令，name 带 / 前缀如 '/commit'）：title=name，sub 优先 description 无则 kind。
+      // icon 透传给 chip 注入侧（保证搜索注入 chip 与 CommandPopover 选中的 chip 图标一致）。
+      return { type: 'command', title: c.name, sub: c.description ?? c.kind, icon: c.icon }
     }
     // 防御性兜底（不应到达：UnifiedCommand 二选一）
     return { type: 'command', title: String((c as { name?: unknown }).name ?? ''), sub: '' }

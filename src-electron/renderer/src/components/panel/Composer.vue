@@ -95,7 +95,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { ArrowRight, Loader2, Square } from '@lucide/vue'
 import { storeToRefs } from 'pinia'
 import { Button } from '@/components/ui/button'
@@ -113,6 +113,7 @@ import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
 import { useSettingsStore } from '@/stores/settings'
+import { useCommandStore } from '@/stores/command'
 import { model as modelApi, session as sessionApi } from '@/api'
 
 const props = withDefaults(
@@ -126,6 +127,7 @@ const props = withDefaults(
 const chatStore = useChatStore()
 const sessionStore = useSessionStore()
 const settingsStore = useSettingsStore()
+const commandStore = useCommandStore()
 const { isStreaming } = storeToRefs(chatStore)
 const { send, steer, followUp, abort, compact } = useChat()
 const { submitFirstMessage } = useNewTaskFlow()
@@ -150,6 +152,25 @@ const currentModelId = computed(
 )
 /** ComposerInput 实例 ref：清空/恢复草稿用 */
 const inputRef = ref<InstanceType<typeof ComposerInput> | null>(null)
+/**
+ * 消费搜索浮层的 slash 注入请求（store 驱动模式，替代断链的 injectSlash 回调）。
+ * SearchModal → useSearchJump.confirmCommand → commandStore.requestSlashInjection 写入 pendingSlash，
+ * 本 watch 按 sessionId 过滤消费，命中则调 insertSlashChip 注入 chip 并 clearPendingSlash。
+ *
+ * 非 immediate：防 Composer 后挂载时读到旧 pendingSlash 残留值误注入（挂载时 store 可能已有
+ * 给前一个 Composer 的请求，immediate 会立即误触发）。仅响应挂载后的新写入。
+ * sessionId 匹配：含双方 null（landing 态）。不匹配分支不 clear（防误清留给其他 Composer 的请求）。
+ * 注入顺序：先 insertSlashChip 后 clearPendingSlash（防先清后注入读到 null）。
+ */
+watch(
+  () => commandStore.pendingSlash,
+  (req) => {
+    if (!req) return
+    if (req.sessionId !== props.sessionId) return // 仅消费目标 session 的请求
+    inputRef.value?.insertSlashChip(req.command, req.icon)
+    commandStore.clearPendingSlash()
+  },
+)
 /** 命令浮层状态（§2d #//） */
 const cmdOpen = ref(false)
 const cmdType = ref<'file' | 'slash'>('file')

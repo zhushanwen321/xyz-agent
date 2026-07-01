@@ -3,7 +3,7 @@
  *
  * 覆盖：
  * - T2.2 选中应用命令执行 + 写 recents：confirm({type:'command',title:'新建'}) → action 调用 + recents.write + {ok:true}
- * - T2.3 选中 slash 命令注入：confirm({type:'command',title:'/commit'}) → injectSlash 调用 + {ok:true}
+ * - U7 选中 slash 命令注入：confirm({type:'command',title:'/commit'}) → commandStore.pendingSlash 写入 + {ok:true}
  * - T2.6（AC-6.8）command action 抛错：action throw → {ok:false,error}（浮层保持打开）
  * - T2.7 跳转成功关闭：confirm 成功 → {ok:true}
  * - T3.4（AC-6.5/6.9）file.read 失败：fileApi.read reject → {ok:false,error} + 未调 openPreview（grep 验收）
@@ -78,19 +78,81 @@ describe('T2.2 选中应用命令执行 + 写 recents', () => {
   })
 })
 
-describe('T2.3 选中 slash 命令注入', () => {
-  it('confirm({type:command,title:/commit}) → injectSlash 调用 + {ok:true}', async () => {
-    const injectSlash = vi.fn()
-    const { confirm } = useSearchJump({ injectSlash })
-    const item: SearchItem = { type: 'command', title: '/commit', sub: '提交改动' }
+describe('U7 选中 slash 命令 → 写 commandStore.pendingSlash（icon 从 item.icon 透传）', () => {
+  it('confirm(slash 命令带 icon:wrench) → {ok:true} + pendingSlash.icon===wrench（非 terminal，证明从 item.icon 透传）+ recents 写入', async () => {
+    const commandStore = useCommandStore()
+    const { confirm } = useSearchJump()
+    // icon 故意用 wrench（与 /commit 常规图标 terminal 不同），锁定数据来自 item.icon 而非按 name 重查
+    const item: SearchItem = { type: 'command', title: '/commit', sub: '提交改动', icon: 'wrench' }
 
     const result = await confirm(item, { activeSessionId: 's1' })
 
     expect(result).toEqual({ ok: true })
-    // slash 命令名注入 composer
-    expect(injectSlash).toHaveBeenCalledTimes(1)
-    expect(injectSlash).toHaveBeenCalledWith('/commit')
+    // pendingSlash 已写入，icon 从 item.icon 透传（wrench 非 terminal）
+    expect(commandStore.pendingSlash).not.toBeNull()
+    expect(commandStore.pendingSlash!.command).toBe('/commit')
+    expect(commandStore.pendingSlash!.icon).toBe('wrench')
+    expect(commandStore.pendingSlash!.sessionId).toBe('s1')
+    expect(typeof commandStore.pendingSlash!.ts).toBe('number')
+    // AC-6.4：跳转成功后写 recents
     expect(recentsWriteMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('U8 landing 态放行（修现有 bug：原返「无活动会话」错误）', () => {
+  it('confirm(slash 命令, activeSessionId:null) → {ok:true} + pendingSlash.sessionId===null + recents 写入', async () => {
+    const commandStore = useCommandStore()
+    const { confirm } = useSearchJump()
+    const item: SearchItem = { type: 'command', title: '/goal', sub: '目标驱动', icon: 'star' }
+
+    const result = await confirm(item, { activeSessionId: null })
+
+    // landing 态放行（不再返「无活动会话」错误）
+    expect(result).toEqual({ ok: true })
+    expect(commandStore.pendingSlash!.sessionId).toBe(null)
+    // 放行走 ok 路径，recents 被写（与原返错不写 recents 的行为变化需锁定）
+    expect(recentsWriteMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('U9 icon undefined 透传（缺省态）', () => {
+  it('confirm(slash 命令无 icon) → {ok:true} + pendingSlash.icon===undefined（透传 undefined，不兜底不报错）', async () => {
+    const commandStore = useCommandStore()
+    const { confirm } = useSearchJump()
+    const item: SearchItem = { type: 'command', title: '/goal', sub: '' }
+
+    const result = await confirm(item, { activeSessionId: 's1' })
+
+    expect(result).toEqual({ ok: true })
+    expect(commandStore.pendingSlash!.icon).toBeUndefined()
+  })
+})
+
+describe('U10 useSearchJump 不传选项 + slash confirm 仍成功（不再依赖 injectSlash 回调）', () => {
+  it('useSearchJump() 空调用 + slash confirm → {ok:true}（不因 injectSlash undefined 返错）', async () => {
+    const { confirm } = useSearchJump()
+    const item: SearchItem = { type: 'command', title: '/goal', sub: '', icon: 'star' }
+
+    const result = await confirm(item, { activeSessionId: 's1' })
+
+    expect(result).toEqual({ ok: true })
+  })
+})
+
+describe('U11 应用命令分支不受影响（回归）', () => {
+  it('confirm(应用命令) → {ok:true} + action 调用 + pendingSlash 未被写入（仍 null）', async () => {
+    const commandStore = useCommandStore()
+    const action = vi.fn()
+    registerAppCmds({ id: 'new', name: '新建', action })
+    const { confirm } = useSearchJump()
+    const item: SearchItem = { type: 'command', title: '新建', sub: '' }
+
+    const result = await confirm(item, { activeSessionId: 's1' })
+
+    expect(result).toEqual({ ok: true })
+    expect(action).toHaveBeenCalledTimes(1)
+    // 应用命令走 action 不写 pendingSlash
+    expect(commandStore.pendingSlash).toBeNull()
   })
 })
 

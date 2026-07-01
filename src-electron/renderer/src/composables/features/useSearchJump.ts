@@ -6,14 +6,14 @@
  *
  * 数据流：SearchModal.confirmSel → confirm(item, ctx) → type switch →
  *   command: AppCommand（name 不以 / 开头）→ commandStore 取 action 执行；
- *            slash 命令（name 以 / 开头）→ injectSlash 注入 composer（DOM 层 chip，由调用方接线 insertSlashChip）
+ *            slash 命令（name 以 / 开头）→ commandStore.requestSlashInjection 写一次性通道（Composer watch 消费调 insertSlashChip）
  *   file: 直调 fileApi.read（AC-6.9 不经 useDetailPane 的预览加载吞错层）→ 成功后 selectFile 触发 useDetailPane watch 链渲染
  *   session: useSidebar.selectSession（id 经 sessionApi.list 按 title 反查，因 SearchItem 无 id 字段）
  *   symbol: 占位不跳转（D-001）
  * → useRecents.write + 返回 JumpResult（AC-6.7：成功才关浮层，失败浮层保持打开）
  *
  * 失败路径（AC-6.5/6.6/6.8/6.9）：
- *  - command action 抛错 / injectSlash 抛错 → {ok:false} + toast + 浮层保持打开（AC-6.8）
+ *  - command action 抛错 → {ok:false} + toast + 浮层保持打开（AC-6.8）
  *  - file.read reject → {ok:false} + toast + 浮层保持打开（AC-6.5/6.9，直调不经吞错层）
  *  - session.switch reject / id 反查失败 → {ok:false} + toast + 浮层保持打开（AC-6.6）
  *
@@ -28,20 +28,7 @@ import { useSidebar } from '@/composables/features/useSidebar'
 import { useCommandStore } from '@/stores/command'
 import { useFileTreeStore } from '@/stores/fileTree'
 
-/**
- * slash 注入器（将 slash 命令名注入 pi composer）。
- *
- * 接线约束：composer domain（api/domains/composer.ts）无 inject 方法（只有 getFileCandidates），
- * slash 注入的唯一路径是 useComposerChipCommands.insertSlashChip——DOM 层 contenteditable chip 操作，
- * 需 ComposerInput 的元素 ref（features/composable 层无法访问）。故以回调注入：调用方（SearchModal）
- * 接线 ComposerInput ref.insertSlashChip(command, icon)，本编排层只持有「注入动作」接口，不耦合 DOM。
- * 无 injectSlash 时（未接线）→ 视为注入失败返 {ok:false}，让调用方据 ok 决定关浮层（安全降级）。
- */
-export interface UseSearchJumpOptions {
-  injectSlash?: (command: string) => void
-}
-
-export function useSearchJump(options: UseSearchJumpOptions = {}) {
+export function useSearchJump() {
   const recents = useRecents()
   const commandStore = useCommandStore()
   const fileTreeStore = useFileTreeStore()
@@ -67,20 +54,21 @@ export function useSearchJump(options: UseSearchJumpOptions = {}) {
   /**
    * command 分支：区分 AppCommand（应用命令，name 不以 / 开头）vs slash 命令（name 以 / 开头）。
    * - 应用命令：commandStore.appCommands 找 name 匹配项，调 cmd.action()（AC-6.8 action 抛错→{ok:false}）
-   * - slash 命令：injectSlash 注入 composer（注入需 activeSessionId——slash 是 session 级命令）
+   * - slash 命令：commandStore.requestSlashInjection 写一次性通道，Composer watch 消费（landing 态也放行，sessionId 透传 null）
    */
   async function confirmCommand(item: SearchItem, ctx: JumpCtx): Promise<JumpResult> {
     try {
       const isSlash = item.title.startsWith('/')
       if (isSlash) {
-        // slash 命令注入 composer（需 active session，slash 是 per-session 命令）
-        if (!ctx.activeSessionId) {
-          return { ok: false, error: '无活动会话，无法注入 slash 命令' }
-        }
-        if (!options.injectSlash) {
-          return { ok: false, error: 'slash 命令注入未接线' }
-        }
-        options.injectSlash(item.title)
+        // slash 命令注入 composer：写 commandStore.pendingSlash 一次性通道。
+        // landing 态（ctx.activeSessionId=null）也放行——landing composer 存在，sessionId 透传 null
+        // 供消费侧 Composer 按 sessionId 过滤（双方 null 命中 landing composer）。
+        // icon 从 item.icon 透传（保证搜索注入 chip 与 CommandPopover 选中 chip 图标一致）。
+        commandStore.requestSlashInjection({
+          command: item.title,
+          icon: item.icon,
+          sessionId: ctx.activeSessionId,
+        })
       } else {
         // 应用命令：commandStore.appCommands 取 action 执行
         const cmd = commandStore.appCommands.find((c) => c.name === item.title)
@@ -92,7 +80,7 @@ export function useSearchJump(options: UseSearchJumpOptions = {}) {
       writeRecent(item)
       return { ok: true }
     } catch (e) {
-      // AC-6.8：action 抛错 / injectSlash 抛错 → {ok:false,error}
+      // AC-6.8：action 抛错 → {ok:false,error}
       return { ok: false, error: (e as Error)?.message ?? '命令执行失败' }
     }
   }

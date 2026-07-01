@@ -412,3 +412,26 @@ describe('T1.5（AC-9.1~9.4）Tab/Shift+Tab 循环切类', () => {
     expect(has('[data-testid="search-section-最近"]')).toBe(true)
   })
 })
+
+describe('U17 点击 slash 命令项 → confirm ok → 关浮层', () => {
+  it('mock query 返含 slash 项分组 + confirm 返 {ok:true} → 点击 search-item-0 → emit update:open false', async () => {
+    // mock query 返含 slash 项的命令分组
+    mockQuery.mockResolvedValue(
+      sectionsOf({ label: '命令', items: [item('command', '/commit', '提交改动')] }),
+    )
+    // mock confirm 返成功（slash 命令注入走 ok 路径）
+    mockConfirm.mockResolvedValue({ ok: true } as JumpResult)
+    await mountOpen()
+    await flushPromises()
+    // 点击 search-item-0
+    await $('[data-testid="search-item-0"]').trigger('click')
+    await flushPromises()
+    // confirm 被调
+    expect(mockConfirm).toHaveBeenCalledTimes(1)
+    // emit update:open false（浮层关闭）
+    const emitted = currentWrapper!.emitted('update:open')
+    expect(emitted).toBeTruthy()
+    // 最后一次 emit 的值是 false（关闭）
+    expect(emitted![emitted!.length - 1]).toEqual([false])
+  })
+})

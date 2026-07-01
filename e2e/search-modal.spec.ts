@@ -12,6 +12,10 @@
  * - SM-E2E-4（键盘导航）：↑↓ 选中态切换 + Enter confirm（命令类，mock 不执行真实 action）
  * - SM-E2E-5（Esc 关闭）：Esc → modal DOM 消失
  * - SM-E2E-6（recents 持久化）：confirm 一项 → 重新唤起 → 最近分组含该项
+ * - SM-E2E-7（slash 命令注入活跃 composer）：搜 commit → confirm → panel composer 含 /commit chip（核心 bug 回归）
+ * - SM-E2E-8（slash chip 图标）：搜 review → composer 含 /review chip + 星标 svg 图标（icon 透传）
+ * - SM-E2E-9（landing 态 slash 注入）：未激活 session → 搜 slash 命令 → landing composer 注入 chip
+ * - SM-E2E-10（回归：应用命令 confirm 不注入 chip）：搜新建 → confirm → composer 不出现 slash-chip
  *
  * 三视角覆盖：
  * - 构建者（白盒）：useSearch 编排/matchEngine/useRecents 已在 vitest 86 用例覆盖
@@ -22,6 +26,17 @@
  * 重建产物（改 renderer 代码后）：npm run build:e2e
  */
 import { test, expect } from './fixtures/launch-app'
+
+/**
+ * 激活 session（panel composer 出现）。
+ * 复用 composer.spec.ts 的模式：点会话按钮 → 点 'API 性能优化' session → 等 composer-box。
+ */
+async function activateSession(page: import('@playwright/test').Page): Promise<void> {
+  await page.getByRole('button', { name: /^会话/ }).click()
+  await expect(page.getByText('API 性能优化')).toBeVisible({ timeout: 10_000 })
+  await page.getByText('API 性能优化').click()
+  await expect(page.getByTestId('composer-box')).toBeVisible({ timeout: 5_000 })
+}
 
 /**
  * 唤起搜索浮层。
@@ -122,5 +137,88 @@ test.describe('搜索浮层 E2E', () => {
     const recentsSection = page.getByTestId('search-section-最近')
     await expect(recentsSection).toBeVisible({ timeout: 5_000 })
     await expect(recentsSection).toContainText('auth/session.ts')
+  })
+
+  test('SM-E2E-7（slash 命令注入活跃 composer）：搜 commit → confirm → composer 含 /commit chip', async ({ page }) => {
+    // 前置：激活 session（panel composer 可见）
+    await activateSession(page)
+    await expect(page.getByTestId('composer-box')).toBeVisible({ timeout: 5_000 })
+
+    // 唤起搜索
+    await openSearch(page)
+    // 输入 commit（mock SEARCH_MOCK.command 含 '/commit'，sub='提交改动' 含 commit）
+    await page.getByTestId('search-input').pressSequentially('commit')
+    // 等命令分组出现 + 含 /commit 项
+    await expect(page.getByTestId('search-section-命令')).toBeVisible({ timeout: 5_000 })
+    await expect(page.getByTestId('search-section-命令')).toContainText('/commit')
+
+    // Enter confirm 第一项（/commit 应排前）
+    await page.getByTestId('search-input').press('Enter')
+    // 搜索浮层关闭（confirm ok:true）
+    await expect(page.getByTestId('search-modal-root')).not.toBeVisible({ timeout: 5_000 })
+
+    // composer 输入区含 /commit chip（slash-chip 内 chip-label 文本）
+    const composer = page.getByTestId('composer-box')
+    await expect(composer.locator('.slash-chip')).toBeVisible({ timeout: 3_000 })
+    await expect(composer.locator('.slash-chip .chip-label')).toContainText('/commit')
+  })
+
+  test('SM-E2E-8（slash chip 图标）：搜 review → composer 出现 /review chip 含星标 svg 图标', async ({ page }) => {
+    await activateSession(page)
+    await expect(page.getByTestId('composer-box')).toBeVisible({ timeout: 5_000 })
+
+    await openSearch(page)
+    // 输入 review（mock 含 '/review'，icon:star）
+    await page.getByTestId('search-input').pressSequentially('review')
+    await expect(page.getByTestId('search-section-命令')).toBeVisible({ timeout: 5_000 })
+    await expect(page.getByTestId('search-section-命令')).toContainText('/review')
+
+    await page.getByTestId('search-input').press('Enter')
+    await expect(page.getByTestId('search-modal-root')).not.toBeVisible({ timeout: 5_000 })
+
+    // composer 含 /review chip + chip 内含 svg 图标（star icon 渲染为 svg 元素）
+    const composer = page.getByTestId('composer-box')
+    const chip = composer.locator('.slash-chip')
+    await expect(chip).toBeVisible({ timeout: 3_000 })
+    await expect(chip.locator('.chip-label')).toContainText('/review')
+    // chip-icon 内含 svg（star 图标渲染为 svg 元素）
+    await expect(chip.locator('.chip-icon svg')).toBeVisible()
+  })
+
+  test('SM-E2E-9（landing 态 slash 注入）：未激活 session → 搜 slash 命令 → landing composer 注入 chip', async ({ page }) => {
+    // 前置：landing 态（默认启动未激活 session，landing composer 可见）
+    // landing composer 也有 composer-box testid（Composer.vue 同组件，variant=landing）
+    await expect(page.getByTestId('composer-box')).toBeVisible({ timeout: 10_000 })
+
+    await openSearch(page)
+    // 输入 commit 搜 slash 命令
+    await page.getByTestId('search-input').pressSequentially('commit')
+    await expect(page.getByTestId('search-section-命令')).toBeVisible({ timeout: 5_000 })
+    await expect(page.getByTestId('search-section-命令')).toContainText('/commit')
+
+    await page.getByTestId('search-input').press('Enter')
+    await expect(page.getByTestId('search-modal-root')).not.toBeVisible({ timeout: 5_000 })
+
+    // landing composer（role=textbox）出现 /commit chip
+    const composer = page.getByTestId('composer-box')
+    await expect(composer.locator('.slash-chip')).toBeVisible({ timeout: 3_000 })
+    await expect(composer.locator('.slash-chip .chip-label')).toContainText('/commit')
+  })
+
+  test('SM-E2E-10（回归：应用命令 confirm 不注入 chip）：搜新建 → confirm → composer 不出现 chip', async ({ page }) => {
+    await activateSession(page)
+    await expect(page.getByTestId('composer-box')).toBeVisible({ timeout: 5_000 })
+
+    await openSearch(page)
+    // 输入「新建」（应用命令，非 slash）
+    await page.getByTestId('search-input').pressSequentially('新建')
+    await expect(page.getByTestId('search-section-命令')).toBeVisible({ timeout: 5_000 })
+    await expect(page.getByTestId('search-section-命令')).toContainText('新建任务')
+
+    await page.getByTestId('search-input').press('Enter')
+    // 应用命令走 action（不注入 chip）。confirm 结果可能 ok 或失败（mock action 实现），
+    // 关键断言：composer 不出现 slash-chip
+    const composer = page.getByTestId('composer-box')
+    await expect(composer.locator('.slash-chip')).toHaveCount(0)
   })
 })

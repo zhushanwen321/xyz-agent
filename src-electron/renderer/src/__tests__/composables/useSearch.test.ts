@@ -462,3 +462,50 @@ describe('T5.2 占位不随查询变化', () => {
     expect(symbolA).toEqual(symbolB) // 恒定占位
   })
 })
+
+/**
+ * U5/U6 toCommandItem icon 透传（W1 slash 注入 chip 图标一致性）。
+ *
+ * toCommandItem 是 useSearch 内部私有函数，通过 query() 间接测试（与 T2.1 同模式）。
+ * 测试走 real 轨（vitest 未设 VITE_MOCK，isMock=false）：
+ *  - SessionCommand 由 commandStore.applyCommands 经 iconKeyForSource 归一化（source→icon key），
+ *    toCommandItem SessionCommand 分支透传 icon（c.icon）。
+ *  - AppCommand 分支不写 icon（undefined）。
+ */
+describe('U5/U6 toCommandItem icon 透传', () => {
+  it('U5 SessionCommand 映射带 icon（star）', async () => {
+    const store = useCommandStore()
+    // applyCommands 把 source:'skill' 归一化为 icon:'star'（iconKeyForSource）
+    store.applyCommands('s1', [{ name: '/goal', description: '设定目标', source: 'skill' }])
+    const sid = ref<string | null>('s1')
+    const { query } = useSearch(sid)
+
+    const sections = await query('goal', { activeSessionId: 's1' })
+
+    const cmdSection = findSection(sections, '命令')
+    expect(cmdSection).toBeTruthy()
+    const hit = cmdSection!.items.find((it) => it.title === '/goal')
+    expect(hit).toBeTruthy()
+    // SessionCommand 分支透传 icon（star）
+    expect(hit!.icon).toBe('star')
+  })
+
+  it('U6 AppCommand 映射无 icon（undefined）', async () => {
+    const store = useCommandStore()
+    const appCmd: AppCommand = { id: 'new', name: '新建', shortcut: '⌘N', action: noop }
+    const sid = ref<string | null>('s1')
+    const { query } = useSearch(sid)
+    store.registerApp([appCmd])
+
+    const sections = await query('新建', { activeSessionId: 's1' })
+
+    const cmdSection = findSection(sections, '命令')
+    expect(cmdSection).toBeTruthy()
+    const hit = cmdSection!.items.find((it) => it.title === '新建')
+    expect(hit).toBeTruthy()
+    // AppCommand 分支不写 icon
+    expect(hit!.icon).toBeUndefined()
+    // sub 优先 shortcut（与 T2.1 一致）
+    expect(hit!.sub).toBe('⌘N')
+  })
+})

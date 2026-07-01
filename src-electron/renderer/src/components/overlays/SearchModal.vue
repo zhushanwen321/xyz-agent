@@ -262,8 +262,8 @@ function scrollToSel() {
 async function confirmSel(): Promise<void> {
   const cur = flatItems.value[selIdx.value]
   if (!cur) return
-  const { type, title, sub } = cur
-  const result = await confirm({ type, title, sub }, { activeSessionId: props.activeSessionId ?? null })
+  const { type, title, sub, icon } = cur
+  const result = await confirm({ type, title, sub, icon }, { activeSessionId: props.activeSessionId ?? null })
   if (result.ok) {
     // file 跳转返 drawerTab:'detail'：打开 SideDrawer detail tab 让 DetailPane 挂载渲染文件内容。
     // （DetailPane 只在 activeTab==='detail' 时挂载；useSearchJump 编排层不直接调 drawer，由本组件接线）

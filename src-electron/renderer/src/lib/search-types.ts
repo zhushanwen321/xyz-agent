@@ -21,6 +21,10 @@ export interface SearchItem {
   type: SearchType
   title: string
   sub: string
+  /** slash 命令 icon key（star/terminal/wrench，与 CommandPopover SLASH_ICON_COMPONENTS 同源）。
+   *  仅 slash 命令项携带（从 SessionCommand.icon 透传），应用命令/文件/符号/会话项无此字段。
+   *  供 chip 注入时透传给 insertSlashChip(name, icon)，保证搜索注入的 chip 与 CommandPopover 选中的 chip 图标一致。 */
+  icon?: string
 }
 
 /** 应用内置命令（#2，含 action 行为故非纯值对象） */

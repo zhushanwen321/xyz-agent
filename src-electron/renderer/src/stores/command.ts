@@ -34,6 +34,21 @@ export interface SessionCommand {
   description?: string
 }
 
+/**
+ * 一次性 slash 注入请求（SearchModal 写入 → Composer 消费 → clearPendingSlash 清除）。
+ * 设计动机：SearchModal（Sidebar 中的全局浮层）无法直接拿到活跃 Panel 内 ComposerInput 的 DOM ref
+ * （ref 链在 Composer 层终止，Composer 无 defineExpose 上抛 insertSlashChip）。
+ * 用 store 作为一次性消息通道（写→消费→清），与现有 retryState/queueState 瞬时状态同构。
+ * sessionId：注入目标 session（null = landing 态），消费侧 Composer 据此过滤，避免广播。
+ * ts：时间戳，用于 watch 触发（同命令重复点击靠 ts 变化触发引用变化）。
+ */
+export interface PendingSlash {
+  command: string
+  icon?: string
+  sessionId: string | null
+  ts: number
+}
+
 /** runtime 原始命令 payload（protocol.ts ServerMessageMap['session.commands']） */
 export interface RawCommand {
   name: string
@@ -59,6 +74,27 @@ export const useCommandStore = defineStore('command', () => {
    * 启动时 registerApp 一次性写入，组件重建读 store 即有数据（同 slash 命令归位动机）。
    */
   const appCommands = ref<AppCommand[]>([])
+
+  /**
+   * 一次性 slash 注入请求槽位（store 驱动模式）。
+   * 写入方：useSearchJump.confirmCommand（slash 分支）。
+   * 消费方：Composer watch(pendingSlash) 按 sessionId 过滤后调 insertSlashChip + clearPendingSlash。
+   * null 表示无待消费请求。
+   */
+  const pendingSlash = ref<PendingSlash | null>(null)
+
+  /**
+   * 写入 slash 注入请求（幂等覆盖：连续调用以最后一次为准，非累加——与 registerApp 同语义）。
+   * ts 由调用方不传，内部用 Date.now() 标记（供 watch 触发 + 重复点击同命令时引用变化）。
+   */
+  function requestSlashInjection(payload: Omit<PendingSlash, 'ts'>): void {
+    pendingSlash.value = { ...payload, ts: Date.now() }
+  }
+
+  /** 消费清除（Composer 消费后立即调用，防重复注入 + 防 watch 残留触发） */
+  function clearPendingSlash(): void {
+    pendingSlash.value = null
+  }
 
   /** 取指定 session 的命令（无则空数组，不写入 Map） */
   function getCommands(sessionId: string): SessionCommand[] {
@@ -113,6 +149,7 @@ export const useCommandStore = defineStore('command', () => {
   return {
     commandsBySession,
     appCommands,
+    pendingSlash,
     getCommands,
     findCommandByName,
     commandsOf,
@@ -120,5 +157,7 @@ export const useCommandStore = defineStore('command', () => {
     registerApp,
     applyCommands,
     clearCommands,
+    requestSlashInjection,
+    clearPendingSlash,
   }
 })
