@@ -10,7 +10,7 @@
     - sessionId 由 Sidebar 注入（当前 active session），切 session 触发 loadTree
   -->
   <ScrollArea class="h-full">
-    <div class="flex flex-col gap-0.5 px-1" data-testid="file-view-root">
+    <div class="flex w-max min-w-full flex-col gap-0.5 px-1" data-testid="file-view-root">
       <!-- 头部：当前 session 标签 + 分支（左）× showIgnored 开关（右），同一行。
            D-020/D-004：忽略项开关从过滤框下方上移至此（与会话名同行：会话名左、忽略项右）。 -->
       <div v-if="sessionLabel" class="flex items-center gap-2 px-2 py-1.5">

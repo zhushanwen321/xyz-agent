@@ -139,7 +139,7 @@ describe('FileTreeRow 视觉一致性（D-007 字号 / D-022 chevron 槽）', ()
     const node: FileNode = { path: 'a.ts', name: 'a.ts', type: 'file' }
     const wrapper = mountRow({ node })
     // 文件行字号在 name span 上（文件行容器无字号 class，name span 自带 font-mono text-[12px]）
-    const nameSpan = wrapper.find('[data-testid="file-tree-file-a.ts"] .flex-1')
+    const nameSpan = wrapper.find('[data-testid="file-tree-file-a.ts"] .shrink')
     expect(nameSpan.classes()).toContain('text-[12px]')
     expect(nameSpan.classes()).toContain('font-mono')
   })
@@ -151,7 +151,7 @@ describe('FileTreeRow 视觉一致性（D-007 字号 / D-022 chevron 槽）', ()
     const fileWrapper = mountRow({ node: fileNode })
 
     const dirRow = dirWrapper.find('[data-testid="file-tree-dir-src"]')
-    const fileNameSpan = fileWrapper.find('[data-testid="file-tree-file-a.ts"] .flex-1')
+    const fileNameSpan = fileWrapper.find('[data-testid="file-tree-file-a.ts"] .shrink')
     // 两处都声明 12px（目录在行容器、文件在 name span），均不含旧的 11px
     expect(dirRow.classes()).toContain('text-[12px]')
     expect(dirRow.classes()).not.toContain('text-[11px]')

@@ -16,7 +16,7 @@
     <!-- 目录（行 + 展开子节点同属一个 v-if 块，保证下方文件 v-else 正确绑定） -->
     <template v-if="node.type === 'dir'">
       <div
-        class="flex cursor-pointer items-center gap-1.5 rounded-md py-1 pr-2 font-mono text-[12px] transition-colors hover:bg-surface-hover"
+        class="flex w-max min-w-full cursor-pointer items-center gap-1.5 rounded-md py-0.5 pr-2 font-mono text-[12px] transition-colors hover:bg-surface-hover"
         :style="rowPaddingStyle"
         :data-testid="`file-tree-dir-${node.path}`"
         @click="toggle"
@@ -28,7 +28,7 @@
           />
         </span>
         <Folder class="size-3.5 shrink-0 text-muted" />
-        <span class="flex-1 truncate" :class="node.ignored ? 'text-subtle italic' : 'text-fg'">{{ node.name }}</span>
+        <span class="shrink whitespace-nowrap" :class="node.ignored ? 'text-subtle italic' : 'text-fg'">{{ node.name }}</span>
         <!-- W2 目录改动数徽章（子树改动文件数，>0 才显） -->
         <span
           v-if="dirChangeCount > 0"
@@ -84,7 +84,7 @@
     <!-- 文件（v-else 紧邻上方目录 <template v-if>，绑定到 node.type 判断） -->
     <div
       v-else
-      class="flex cursor-pointer items-center gap-1.5 rounded-md py-1 pr-2 transition-colors hover:bg-surface-hover"
+      class="flex w-max min-w-full cursor-pointer items-center gap-1.5 rounded-md py-0.5 pr-2 transition-colors hover:bg-surface-hover"
       :class="{ 'bg-accent-soft': isSelected }"
       :style="rowPaddingStyle"
       :data-testid="`file-tree-file-${node.path}`"
@@ -94,7 +94,7 @@
       <span :class="chevronSlotClass" data-testid="chevron-slot" />
       <component :is="fileIcon" class="size-3.5 shrink-0" :class="fileIconColor" />
       <span
-        class="flex-1 truncate font-mono text-[12px]"
+        class="shrink whitespace-nowrap font-mono text-[12px]"
         :class="[
           node.ignored ? 'text-subtle italic' : 'text-fg',
           isSelected ? 'font-semibold text-accent' : '',
